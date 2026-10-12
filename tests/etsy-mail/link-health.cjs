@@ -25,7 +25,8 @@ const fails = [];
 const check = (ok, what) => { if (!ok) fails.push(what); console.log((ok ? "  ok   " : "  FAIL ") + what); };
 const MIN = 60e3, HOUR = 60 * MIN;
 const realDateNow = Date.now; let clock = null; Date.now = () => (clock == null ? realDateNow() : clock);
-const T0 = realDateNow(); clock = T0;
+// a fixed Wednesday noon on the US East coast: the reading limits depend on the hour (the extension reads at a human pace, slower at night)
+const T0 = Date.UTC(2026, 9, 14, 16, 0, 0); clock = T0;
 const at = ms => new TS(ms);
 
 // ── a healthy line, then one thing broken at a time ──
@@ -44,6 +45,21 @@ r = judge({ helper: null });
 check(r.level === "warn" && /not heard from/i.test(r.short), "helper never heard from is amber, not green (" + r.short + ")");
 check(judge({ helper: { seenAtMs: T0 - 13 * MIN } }).level === "warn" && judge({ helper: { seenAtMs: T0 - 31 * MIN } }).level === "down", "helper silent 13 min: amber; 31 min: red, with nothing waiting");
 check(judge({ helper: { seenAtMs: T0 - 7 * MIN }, queuedDrafts: [T0 - 6 * MIN] }).level === "warn" && judge({ helper: { seenAtMs: T0 - 17 * MIN }, queuedDrafts: [T0 - 16 * MIN] }).level === "down", "helper quiet with a message waiting: amber at 5 min, red at 15");
+// the words: "last checked 18 min ago" (never "checked in"), one plain thing to do, and the severity words follow the thresholds
+{
+  const w = min => judge({ helper: { seenAtMs: T0 - min * MIN } });
+  const q = w(18), d = w(31), ok = w(2);
+  check(q.level === "warn" && q.problem === "The inbox's Etsy helper last checked 18 min ago. " + LH.HELPER_DO, "quiet 18 min: amber, 'last checked 18 min ago' then what to do: " + q.problem);
+  check(d.level === "down" && /last checked 31 min ago, so new answers are not being read\. Open Chrome on the computer that has the inbox's Etsy extension; messages wait and nothing is lost\.$/.test(d.problem), "silent 31 min: red, says answers are not being read, then what to do");
+  check(/^Last checked 2 min ago$/.test(ok.checks.find(c => c.id === "helper").text), "a healthy helper reads 'Last checked 2 min ago'");
+  const busy = judge({ helper: { seenAtMs: T0 - 24 * MIN }, scrapeJobs: [T0 - 17 * MIN] });
+  check(busy.level === "down" && /last checked 24 min ago, and a message has been waiting 17 min for it\. Open Chrome/.test(busy.problem), "red at 24 min only because a message has waited 17 min, and the sentence says so: " + busy.problem);
+  const slow = judge({ helper: { seenAtMs: T0 - 13 * MIN }, scrapeJobs: [T0 - 6 * MIN] });
+  check(slow.level === "warn" && /last checked 13 min ago, and a message has been waiting 6 min for it/.test(slow.problem), "amber when a message has waited 6 min: " + slow.problem);
+  check(!/checked in/i.test(JSON.stringify([q, d, ok, busy, slow, judge({ helper: null })])), "no 'checked in' anywhere in the helper's words");
+  check(/has not been heard from yet\. Open Chrome/.test(judge({ helper: null }).problem), "never heard from: the same one thing to do");
+  check(q.problem.length < 200, "short enough to read at a glance (" + q.problem.length + " characters)");
+}
 check(judge({ watcher: { enabled: false } }).level === "down" && judge({ watcher: null }).level === "down", "Gmail watcher off or missing: red");
 r = judge({ gmail: { lastSyncCompletedAt: at(T0 - 3 * MIN), lastSyncError: 'Gmail token refresh failed: 400 {"error":"invalid_grant"}', lastSyncErrorAt: at(T0 - 60e3) } });
 check(r.level === "down" && /Gmail sign-in expired/.test(r.short) && !/invalid_grant|400/.test(r.problem), "an expired Gmail sign-in is named in plain words (red), without the raw error: " + r.problem.slice(0, 60));
@@ -69,6 +85,18 @@ check(r.level === "warn" && r.short === "Etsy sign-in" && /sign-in needs renewin
 check(judge({ mirror: { enabled: true, lastSyncCompletedAt: at(T0 - 2 * MIN), lastSyncErrorMsg: null } }).level === "ok", "no error recorded by the last order-data run: green");
 check(judge({ consistency: { atMs: T0 - HOUR, checked: 100, mismatched: 3 } }).level === "warn", "the nightly check finding missing messages: amber");
 check(judge({ consistency: { atMs: T0 - HOUR, checked: 100, mismatched: 0 } }).level === "ok", "the nightly check finding nothing: still green");
+// the helper is heard from every 30 s, but its scrape poll skips ticks at random, most of all at night: a new Etsy message may wait
+// most of an hour for its turn while the helper is well. That is slow, not stuck (and a helper nobody hears from is judged on its own)
+{
+  const NIGHT = Date.UTC(2026, 9, 14, 7, 0, 0);   // 3 am on the East coast
+  const at3 = (jobMin, helperSec) => LH.evaluate(Object.assign(healthy(), { helper: { seenAtMs: NIGHT - helperSec * 1000 }, scrapeJobs: [NIGHT - jobMin * MIN], bell: { reconcileAtMs: NIGHT - 2 * MIN }, monitor: { atMs: NIGHT - 2 * MIN }, gmail: { lastSyncCompletedAt: at(NIGHT - MIN) }, mirror: { enabled: true, lastSyncCompletedAt: at(NIGHT - 3 * MIN) } }), NIGHT);
+  check(LH.scrapeChance(NIGHT) === 0.03 && LH.scrapeChance(T0) === 0.9 && LH.scrapeChance(Date.UTC(2026, 9, 17, 7, 0, 0)) < 0.02, "the reading chance follows the extension's own hours (3 % at 3 am, 90 % at noon, less at weekends)");
+  check(at3(25, 20).level === "ok" && at3(45, 20).level === "ok", "3 am, helper heard 20 s ago: a message waiting 25 or 45 min is not an alarm");
+  check(at3(55, 20).level === "warn" && at3(150, 20).level === "down", "3 am, helper well: amber at 55 min, red after 2 hours");
+  check(at3(25, 20 * 60).level === "down", "3 am, the helper itself silent 20 min with a message waiting 25 min: red (judged on the helper)");
+  check(judge({ scrapeJobs: [T0 - 11 * MIN] }).level === "warn" && judge({ scrapeJobs: [T0 - 31 * MIN] }).level === "down", "at noon the old limits stand: amber at 10 min, red at 30");
+  check(LH.readLimits(NIGHT, false).warn === 10 * MIN && LH.readLimits(NIGHT, false).down === 30 * MIN, "a helper not heard from lately gets no extra time");
+}
 for (const name of ["watcher", "gmail", "helper", "jobs", "drafts", "bell", "monitor"]) {
   const x = judge({ readOk: { [name]: false } });
   check(x.level !== "ok", "a read that failed (" + name + ") is never taken as fine (" + x.level + ")");

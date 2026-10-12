@@ -82,6 +82,7 @@ const { requireExtensionAuth, CORS } = require("./_etsyMailAuth");
 const { buildOptimisticDoc } = require("./etsyMailOptimisticMessage");
 const _trk = require("./_etsyMailTrackingResolve");
 const Q = require("./_etsyMailSendQueue");        // the dispatcher: one queue, one lease, one message in flight
+const { noteHelper } = require("./_etsyMailHelperSeen");   // the Etsy helper's sign of life
 let attachClaimedCollateral = null;
 let missingAttachmentClaims = null;
 let describeClaims = null;
@@ -1390,6 +1391,7 @@ exports.handler = async (event) => {
     if (op === "peek") {
       const { threadId } = body;
       if (!threadId) return bad("Missing threadId");
+      await noteHelper("peek");   // the helper's sign of life from an open Etsy tab (see _etsyMailHelperSeen.js)
 
       // v0.9.1 #8: kill-switch — peek returns no work if disabled
       const ks = await getKillSwitch();

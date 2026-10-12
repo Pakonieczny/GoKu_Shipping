@@ -20,8 +20,9 @@ const RANK = { ok: 0, wait: 0, warn: 1, down: 2 };
 
 // How long each part may be quiet before it is called slow (amber) or stopped (red).
 const T = {
-  helperWarn: 12 * MIN, helperDown: 30 * MIN,        // the Etsy helper (Chrome extension) checks in every ~20 s; it may idle a few minutes
+  helperWarn: 12 * MIN, helperDown: 30 * MIN,        // the Etsy helper (Chrome extension) is heard from every ~30 s (see _etsyMailHelperSeen.js); it may idle a few minutes
   helperBusyWarn: 5 * MIN, helperBusyDown: 15 * MIN, // ...with work waiting for it
+  helperAlive: 4 * MIN,                              // heard from this lately: alive, whatever the scrape poll's own random pauses
   workWarn: 5 * MIN, workDown: 15 * MIN,             // a message waiting to be sent
   readWarn: 10 * MIN, readDown: 30 * MIN,            // a new Etsy message waiting to be read in
   gmailWarn: 10 * MIN, gmailDown: 30 * MIN,          // the Gmail watcher polls every minute
@@ -42,6 +43,32 @@ function tsMs(v) {
 const clean = (s, n) => String(s == null ? "" : s).replace(/\s+/g, " ").trim().slice(0, n || 140);
 const ago = ms => ms < 90 * 1000 ? Math.max(1, Math.round(ms / 1000)) + " s"
   : ms < 90 * MIN ? Math.round(ms / MIN) + " min" : ms < 48 * HOUR ? Math.round(ms / HOUR) + " h" : Math.round(ms / DAY) + " days";
+
+/** What a person does when the Etsy helper is quiet: one plain line, and the promise that nothing is lost. */
+const HELPER_DO = "Open Chrome on the computer that has the inbox's Etsy extension; messages wait and nothing is lost.";
+
+/**
+ * The extension reads Etsy at a human pace on purpose: each 30-second tick of its scrape poll it skips at random, mostly at
+ * night (its getActivityProfile, on its own computer's clock: 3 % of ticks go ahead before 6 am, 30 % before 8, 85 % to noon,
+ * 90 % to 6 pm, 70 % to 9 pm, 40 % to 11 pm, 10 % after; two thirds of that at weekends). A new Etsy message can therefore
+ * wait most of an hour for its turn at night while the helper is perfectly well. Assumes that computer is on US Eastern
+ * time, like Paul; a wrong guess only moves the quiet hours, and a helper that is NOT heard from is judged on its own.
+ */
+function scrapeChance(now) {
+  let hour, weekday;
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hourCycle: "h23", weekday: "short" }).formatToParts(new Date(now));
+    hour = Number(parts.find(p => p.type === "hour").value); weekday = parts.find(p => p.type === "weekday").value;
+  } catch (e) { const d = new Date(now - 4 * HOUR); hour = d.getUTCHours(); weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getUTCDay()]; }
+  const p = hour < 6 ? 0.03 : hour < 8 ? 0.30 : hour < 12 ? 0.85 : hour < 18 ? 0.90 : hour < 21 ? 0.70 : hour < 23 ? 0.40 : 0.10;
+  return weekday === "Sat" || weekday === "Sun" ? p * 0.65 : p;
+}
+/** How long a new Etsy message may wait to be read before it is slow (amber) or stuck (red): longer at night, while the helper is heard from. */
+function readLimits(now, helperAlive) {
+  if (!helperAlive) return { warn: T.readWarn, down: T.readDown };
+  const gap = 30 * 1000 / scrapeChance(now);   // the usual wait for the next turn
+  return { warn: Math.max(T.readWarn, Math.min(HOUR, 3 * gap)), down: Math.max(T.readDown, Math.min(3 * HOUR, 8 * gap)) };
+}
 
 /** The plain-words reason behind a raw error (what the person reads, never a stack or a JSON body). */
 function plainError(raw) {
@@ -84,14 +111,14 @@ function evaluate(ev, now) {
   const seenAt = Math.max(hp && hp.seenAtMs || 0, ev.queue && ev.queue.helperSeenAtMs || 0);
   const seen = seenAt ? now - seenAt : null;
   const stuck = Math.max(oldest, late);
-  const offline = `The inbox's Etsy helper (its Chrome extension) last checked in ${seen == null ? "" : ago(seen) + " ago"}. Until it is back, messages wait and answers are not read.`;
+  const waitNote = stuck > T.helperBusyWarn ? ` and a message has been waiting ${ago(stuck)} for it` : "";
   if (!ok("helper")) add("helper", "Etsy helper", "warn", "Could not look at the Etsy helper's last check-in.", "Helper unknown", 1);
-  else if (seen == null) add("helper", "Etsy helper", "warn", "The inbox's Etsy helper (its Chrome extension) has not been heard from yet. Is a browser with the extension open?", "Helper not heard from", 1);
-  else if (seen > T.helperBusyWarn && stuck > T.helperBusyDown) add("helper", "Etsy helper", "down", offline, "Helper offline", 1);
-  else if (seen > T.helperBusyWarn && stuck > T.helperBusyWarn) add("helper", "Etsy helper", "warn", `The inbox's Etsy helper last checked in ${ago(seen)} ago, and work is waiting for it.`, "Helper slow", 1);
-  else if (seen > T.helperDown) add("helper", "Etsy helper", "down", offline, "Helper offline", 1);
-  else if (seen > T.helperWarn) add("helper", "Etsy helper", "warn", `The inbox's Etsy helper last checked in ${ago(seen)} ago. Is a browser with the inbox's extension open?`, "Helper quiet", 1);
-  else add("helper", "Etsy helper", "ok", `Checked in ${ago(seen)} ago`);
+  else if (seen == null) add("helper", "Etsy helper", "warn", `The inbox's Etsy helper (its Chrome extension) has not been heard from yet. ${HELPER_DO}`, "Helper not heard from", 1);
+  else if (seen > T.helperBusyWarn && stuck > T.helperBusyDown) add("helper", "Etsy helper", "down", `The inbox's Etsy helper last checked ${ago(seen)} ago,${waitNote}. ${HELPER_DO}`, "Helper offline", 1);
+  else if (seen > T.helperBusyWarn && stuck > T.helperBusyWarn) add("helper", "Etsy helper", "warn", `The inbox's Etsy helper last checked ${ago(seen)} ago,${waitNote}. ${HELPER_DO}`, "Helper slow", 1);
+  else if (seen > T.helperDown) add("helper", "Etsy helper", "down", `The inbox's Etsy helper last checked ${ago(seen)} ago, so new answers are not being read. ${HELPER_DO}`, "Helper offline", 1);
+  else if (seen > T.helperWarn) add("helper", "Etsy helper", "warn", `The inbox's Etsy helper last checked ${ago(seen)} ago. ${HELPER_DO}`, "Helper quiet", 1);
+  else add("helper", "Etsy helper", "ok", `Last checked ${ago(seen)} ago`);
 
   // ── sending: the inbox's switch, messages waiting for the helper, and MAILQUEUE's queue (EtsyMail_SendQueue) when it is there ──
   const q = ev.queue || null;   // { queued, claimed, sending, failed, needsAttention, oldestQueuedAtMs, helperSeenAtMs, stalled }
@@ -125,6 +152,7 @@ function evaluate(ev, now) {
   // ── reading answers in: each new message is a scrape job for the helper, and its page must still be readable ──
   const sh = ev.scrapeHealth || null;
   const badRun = sh && (sh.consecutiveBad || 0) >= T.pageBadRuns && typeof sh.lastBadAtMs === "number" && now - sh.lastBadAtMs < DAY;
+  const lim = readLimits(now, seen != null && seen < T.helperAlive && ok("helper"));   // longer at night, while the helper is heard from
   const waitText = `${ns}${ns >= 40 ? "+" : ""} new Etsy ${ns === 1 ? "message is" : "messages are"} waiting to be read into the inbox, the oldest for ${ago(late)}.`;
   if (badRun) {
     const signedOut = sh.lastBadReason === "Etsy signed the extension out";
@@ -135,8 +163,8 @@ function evaluate(ev, now) {
     signedOut ? "Signed out of Etsy" : "Etsy page not read", 4);
   }
   else if (!ok("jobs") || !jobs) add("read", "Reading answers", "warn", "Could not look at the messages waiting to be read.", "Reading unknown", 4);
-  else if (late > T.readDown) add("read", "Reading answers", "down", waitText, "Answers delayed", 4);
-  else if (late > T.readWarn) add("read", "Reading answers", "warn", waitText, "Answers delayed", 4);
+  else if (late > lim.down) add("read", "Reading answers", "down", waitText, "Answers delayed", 4);
+  else if (late > lim.warn) add("read", "Reading answers", "warn", waitText, "Answers delayed", 4);
   else add("read", "Reading answers", "ok", ns ? `${ns} being read now` : "Nothing waiting to be read");
 
   // ── the catch-up pass (the reaper's order_links pass): runs every five minutes and re-reads anything a scrape missed ──
@@ -234,4 +262,4 @@ function nextDoc(prev, res, now) {
 /** The four fields every sorter reads in its sync answer. */
 const summaryOf = d => ({ level: d.level, short: d.short, problem: d.problem, atMs: d.atMs, downSinceMs: d.downSinceMs || 0, incidentId: d.incidentId || "" });
 
-module.exports = { evaluate, gather, nextDoc, summaryOf, plainError, T, RANK, tsMs, ago };
+module.exports = { evaluate, gather, nextDoc, summaryOf, plainError, scrapeChance, readLimits, HELPER_DO, T, RANK, tsMs, ago };

@@ -297,24 +297,57 @@
   const linkSig = () => { const st = M.key ? lightState() : null; return st ? st.tone + "|" + st.word + "|" + st.text : ""; };
   /** The light's problem (amber or red) as the top-bar envelope shows it, or null. */
   const linkProblem = () => { if (!M.key) return null; const st = lightState(); return st.tone === "warn" || st.tone === "down" ? st : null; };
-  /* An alert Paul will see: once per incident, only after the trouble has lasted 5 minutes (a blip says nothing), again if
-     it gets worse, and once when it clears. A toast and a ding in the tab being looked at; in a tab that is not, the title
-     and (when allowed) a desktop notification. What was told is remembered, so a reload does not repeat it. */
+  /* An alert Paul will see: ONE red notice per incident, only after the trouble has lasted 5 minutes (a blip says nothing).
+     It is the same notice from then on: each new judgement of the monitor (every 5 minutes) changes its words in place, so
+     "last checked 13 min ago" becomes "18 min ago" rather than a second notice; it gets a ding and a desktop notification
+     only when it first appears and when it gets worse ("needs attention", then "is down"). A person who closes it is not
+     bothered again until the state changes (worse, or a new incident). When the line works again the red notice goes and
+     one plain line says so. What was told is remembered, so a reload does not repeat it. In a tab that is not being looked
+     at, the title carries a mark. */
+  const LINK_TOAST_KEY = "email-link";
+  let linkToast = null;   // the one red notice of the incident now on screen, in this tab
+  const sayKeyed = (msg, kind, ms, key) => { try { return toast(msg, kind, ms, key) || null; } catch (_) { return null; } };
+  const linkAlive = () => !!linkToast && linkToast.isConnected && linkToast.style.opacity !== "0";
+  /** The notice's words: how bad it is, then the monitor's sentence (which says what to do when the Etsy helper is quiet). */
+  const linkMessage = l => `${l.level === "down" ? "The email link is down" : "The email link needs attention"}: ${l.problem || l.short || "see the light under the message box"}`;
+  /** Closing the red notice is remembered for this incident and this level. */
+  function watchLinkToast(el, id, level) {
+    linkToast = el;
+    if (!el || el._cmLink) return;
+    el._cmLink = true;
+    const closed = () => { const t = get(LS.linkTold, null) || {}; if (t.id === id) put(LS.linkTold, Object.assign({}, t, { dismissed: level })); if (linkToast === el) linkToast = null; };
+    el.addEventListener("click", closed);
+    const x = el.querySelector && el.querySelector(".c"); if (x) x.addEventListener("click", closed);
+  }
   function linkAlert(l) {
     if (!l || !M.key) return;
     const told = get(LS.linkTold, null) || {}, now = Date.now();
     if (l.level === "warn" || l.level === "down") {
       if (!l.incidentId || !l.downSinceMs || now - l.downSinceMs < ALERT_AFTER) return;
-      if (told.id === l.incidentId && (told.level === "down" || l.level !== "down")) return;
-      put(LS.linkTold, { id: l.incidentId, level: l.level, at: now });
-      const msg = `${l.level === "down" ? "The email link is down" : "The email link needs attention"}: ${l.problem || l.short || "see the light under the message box"}`;
-      say(msg, "bad", 15000);
-      try { if (typeof ding === "function") ding(); } catch (_) {}
-      try { if (typeof notifyPerson === "function") notifyPerson("Customer email link", msg); } catch (_) {}
-      if (document.hidden) { if (titleBase == null) titleBase = document.title; document.title = `⚠ Email link · ${titleBase}`; }
-    } else if (l.level === "ok" && told.id && !told.cleared) {
-      put(LS.linkTold, Object.assign({}, told, { cleared: now }));
-      if (now - (told.at || 0) < 3 * 3600000) say("The email link is working again.", "ok", 8000);
+      const msg = linkMessage(l);
+      if (told.id !== l.incidentId || (l.level === "down" && told.level !== "down")) {
+        // a new incident, or the same one gone from "needs attention" to "is down": the notice appears (or its words change in
+        // place), with a ding and a desktop notification
+        put(LS.linkTold, { id: l.incidentId, level: l.level, at: now, seen: now, msg });
+        watchLinkToast(sayKeyed(msg, "bad", 15000, LINK_TOAST_KEY), l.incidentId, l.level);
+        try { if (typeof ding === "function") ding(); } catch (_) {}
+        try { if (typeof notifyPerson === "function") notifyPerson("Customer email link", msg); } catch (_) {}
+        if (document.hidden) { if (titleBase == null) titleBase = document.title; document.title = `⚠ Email link · ${titleBase}`; }
+        return;
+      }
+      // the same incident, told already: new numbers change the words where they are, quietly; closed means closed
+      if (told.msg !== msg) put(LS.linkTold, Object.assign({}, told, { level: told.level === "down" ? "down" : l.level, seen: now, msg }));
+      if (linkAlive()) {
+        if (told.dismissed) linkToast._go && linkToast._go();   // closed in another tab of this browser
+        else if (linkToast.dataset.msg !== msg) sayKeyed(msg, "bad", 15000, LINK_TOAST_KEY);
+      }
+    } else if (l.level === "ok") {
+      if (linkAlive()) { if (linkToast._go) linkToast._go(); }   // the red notice has nothing left to say, in whichever tab shows it
+      linkToast = null;
+      if (told.id && !told.cleared) {
+        put(LS.linkTold, Object.assign({}, told, { cleared: now }));
+        if (now - (told.seen || told.at || 0) < 3 * 3600000) say("The email link is working again.", "ok", 8000);
+      }
     }
   }
   function lightHtml(st) {

@@ -221,6 +221,7 @@
     "_etsyMailCarriersRouter.js",
     "_etsyMailEtsy.js",
     "_etsyMailGmail.js",
+    "_etsyMailHelperSeen.js",
     "_etsyMailKnowledge.js",
     "_etsyMailLearning.js",
     "_etsyMailLinkConsistency.js",

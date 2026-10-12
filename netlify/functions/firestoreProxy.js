@@ -25,6 +25,7 @@
 const admin = require("./firebaseAdmin");
 const { requireExtensionAuth } = require("./_etsyMailAuth");
 const { requireOwner, requireAnyRole, requireSession, logUnauthorized } = require("./_etsyMailRoles");
+const { noteHelper, isQueuedDraftsPoll } = require("./_etsyMailHelperSeen");
 const db    = admin.firestore();
 const FV    = admin.firestore.FieldValue;
 
@@ -285,6 +286,9 @@ exports.handler = async (event) => {
         const coll = qs.coll;
         if (!coll) return bad("Missing coll");
         assertColl(coll);
+        // The Etsy helper's own check for messages waiting to be sent (every 30 s, never thinned) is also its sign of life
+        // (_etsyMailHelperSeen.js): one small write a minute at most, and never a reason to fail the read.
+        if (isQueuedDraftsPoll(method, qs)) await noteHelper("poll");
 
         let q = db.collection(coll);
 
