@@ -1,9 +1,12 @@
+// (12 Oct 2026: the head card lost its Sheet button and its sheet chips, Paul: "remove all buttons from this UI including the Sheet shortcuts". What answers for ONE piece
+//  now is the Sheet TAB (greyed with the very reason the button gave, "Not on a sheet yet: ...") and the status chip on each piece's row, a button that opens that piece's sheet
+//  and only words for a piece on none; the head card is asserted to hold no control at all.)
 // The order window's Sheet affordances answer for ONE piece (Paul, 5 Oct 2026, point 5):
 //  "When I'm on the charm that has no SKU and I click on any of the 'Sheet' buttons/options then it takes me to the sheet that
 //   has the other charm ... the option to go to a sheet for a charm that is not yet nested should be greyed out and unavailable."
 // Fixtures: order 4170408845 (Emily Chambers: CUTE TRICERATOPS W/ HEARTS has an unknown SKU and no sheet, HEALTH1 is on GF
 // Sheet 1), and a 3-piece order (one on GF Sheet 1, one with no SKU, one on SS Sheet 1, another metal).
-// Proves, from each piece's side and from "All pieces": the Sheet button, the sheet chips, the Sheet tab (and its count) and the
+// Proves, from each piece's side and from "All pieces": the Sheet tab (and its count), the pieces' status chips and the
 // panel's tabs are greyed / inert / scoped for a piece on no sheet, with one plain reason on a press and on focus; the Sheet
 // view of such a piece is "Not on a sheet yet" and never another piece's sheet; counts are real sheets only; a click on a
 // piece of another sheet in the panel moves the scope to that piece; every entry point that opens an order on a piece
@@ -72,19 +75,21 @@ async function main() {
       [order(OT.rid, 'Olive Other', [line(OT.ta, 'OTHER_GF', 'gold', '14k Gold Filled')]), [pid(OT, 'ta')]]] });
     const keyOf = (o, t) => `${o.rid}_${o[t]}`, hasOP = await page.evaluate(() => !!window.OrderPieces);
     // (open, with the order's records read: no piece is still 'loading', and the card has been drawn for them)
-    const settle = () => page.waitForFunction(() => { if (!OrderWin.isOpen()) return false; const sc = OrderWin._scope(); return sc && sc.all.every(p => !p.loading) && document.querySelectorAll('#owNowCard .owShChip').length >= sc.all.length; }, null, { timeout: 8000 });
+    const settle = () => page.waitForFunction(() => { if (!OrderWin.isOpen()) return false; const sc = OrderWin._scope(); return sc && sc.all.every(p => !p.loading) && !document.getElementById('owNowCard').hidden && document.querySelectorAll('#owPcSum .owPcRow[data-piece]').length >= sc.all.length; }, null, { timeout: 8000 });
     const closeWin = async () => { await page.evaluate(() => OrderWin.isOpen() && OrderWin.close()); await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 4000 }); };
     // what the window shows about its Sheet controls right now
     const ui = () => page.evaluate(() => {
-      const q = s => document.querySelector(s), t = q('.owTabsV [data-ow-view="sheet"]'), btn = q('#owNowCard [data-go="sheet"]');
-      const chip = c => ({ text: c.querySelector('b').textContent.trim(), sub: c.querySelector('b').nextElementSibling.textContent.trim(), off: c.getAttribute('aria-disabled') === 'true', why: c.dataset.why || '' });
+      const q = s => document.querySelector(s), t = q('.owTabsV [data-ow-view="sheet"]');
+      // (a piece's row: its status chip is a button that opens its sheet, or only words)
+      const rowChip = r => { const c = r.querySelector('.st .pcSt'); return { k: r.dataset.piece, side: r.dataset.side || '', text: c ? c.textContent.trim() : '', button: !!c && c.tagName === 'BUTTON', label: c ? c.getAttribute('aria-label') || '' : '', sheet: c ? c.dataset.sheet || '' : '' }; };
       return { view: OrderWin.view(), piece: OrderWin._scope() && OrderWin._scope().piece,
         pills: [...document.querySelectorAll('#owPcSum .owPcRow[data-piece]')].map(b => ({ k: b.dataset.piece, on: b.classList.contains('sel'), t: b.querySelector('.owPcName').textContent.trim().slice(0, 30) })),
         tab: { off: t.getAttribute('aria-disabled') === 'true', cls: t.classList.contains('off'), why: t.dataset.why || '', count: document.getElementById('owShCount').textContent, sel: t.getAttribute('aria-selected') },
-        btn: btn && { off: btn.getAttribute('aria-disabled') === 'true', why: btn.dataset.why || '', tabbable: btn.tabIndex >= 0 },
-        chips: [...document.querySelectorAll('#owNowCard .owShChip')].map(chip),
+        card: document.querySelectorAll('#owNowCard button, #owNowCard a[href], #owNowCard .shs, #owNowCard .owShChip, #owNowCard [data-go], #owNowCard [data-pc]').length,
+        rowChips: [...document.querySelectorAll('#owPcSum .owPcRow[data-piece]')].map(rowChip),
         note: [...document.querySelectorAll('.mNote .mNoteT')].map(n => n.textContent) };
     });
+    const doors = u => u.rowChips.filter(c => c.button).map(c => [c.k, c.text]);   // (the pieces whose row chip opens a sheet, and the sheet it names)
     const pick = key => page.evaluate(k => { OrderWin.selectPiece(k); }, key);   // (the Its pieces list's own switch: the rows are on the Overview only)
     const pickAll = () => page.evaluate(() => { OrderWin.selectPiece(null); });
     const sheetPanel = () => page.evaluate(() => ({ tabs: [...document.querySelectorAll('#owSheetPanel .owShTabs button')].map(b => b.textContent.trim()), on: document.querySelector('#owSheetPanel .owShTabs button.on')?.textContent.trim() || null,
@@ -103,29 +108,27 @@ async function main() {
     let u = await ui();
     assert.equal(u.view, 'info'); assert.equal(u.piece, null, 'all pieces');
     assert.deepEqual(u.pills.map(p => p.t.split(' ')[0]), ['CUTE', 'HEALTH1'], JSON.stringify(u.pills)); assert(u.pills.every(p => !p.on), 'all pieces: no row marked');
-    // the Sheet button answers for the piece on show (CUTE): greyed, inert, its reason in plain words
-    assert(u.btn.off && /^Not on a sheet yet: its SKU is not in any master file$/.test(u.btn.why), 'Sheet button greyed with its reason: ' + JSON.stringify(u.btn));
-    assert(u.tab.off && u.tab.cls && u.tab.count === '', 'the Sheet tab is greyed too and counts nothing: ' + JSON.stringify(u.tab));
-    // each piece's own sheet, separately: HEALTH1's chip is open, CUTE's is muted and inert
-    assert.deepEqual(u.chips.map(c => [c.text, c.sub, c.off]), [['Not on a sheet yet', 'CUTE TRICERATOPS W/ HEARTS', true], ['GF Sheet 1', 'HEALTH1', false]], JSON.stringify(u.chips));
-    assert(/^Not on a sheet yet: its SKU is not in any master file$/.test(u.chips[0].why), u.chips[0].why);
+    // the head card holds no Sheet button and no chip; the Sheet tab answers for the piece on show (CUTE): greyed, inert, its reason in plain words (the button's own)
+    assert.equal(u.card, 0, 'the head card has no button and no sheet chip');
+    assert(u.tab.off && u.tab.cls && /^Not on a sheet yet: its SKU is not in any master file$/.test(u.tab.why) && u.tab.count === '', 'the Sheet tab is greyed with its reason and counts nothing: ' + JSON.stringify(u.tab));
+    // each piece's own sheet, separately: HEALTH1's row chip is a button that opens GF Sheet 1, the CUTE rows only say where the piece is
+    assert.deepEqual(doors(u), [[keyOf(I5, 'tb'), 'GF Sheet 1']], JSON.stringify(u.rowChips));
+    assert(u.rowChips.filter(c => c.k === keyOf(I5, 'ta')).length >= 1 && u.rowChips.filter(c => c.k === keyOf(I5, 'ta')).every(c => !c.button && c.text), 'the CUTE piece\'s row chip is words only: ' + JSON.stringify(u.rowChips));
     await shot('1-overview-all-opened-on-cute');
-    // pressing the greyed Sheet button, its chip and the Sheet tab: nothing opens; the reason is said, once
-    await page.click('#owNowCard [data-go="sheet"]', { force: true });
-    u = await ui(); assert.equal(u.view, 'info', 'the Sheet button went nowhere'); assert.equal(u.note.length, 1); assert.match(u.note[0], /^Not on a sheet yet: its SKU is not in any master file$/);
-    await shot('2-reason-on-press');
-    await page.click('#owNowCard .owShChip.off', { force: true });
-    await oneNote(); u = await ui(); assert.equal(u.view, 'info'); assert.equal(u.note.length, 1, 'one note at a time: ' + JSON.stringify(u.note));
+    // pressing the greyed Sheet tab (twice): nothing opens; the reason is said, once at a time
     await page.click('.owTabsV [data-ow-view="sheet"]', { force: true });
-    await oneNote(); u = await ui(); assert.equal(u.view, 'info', 'the Sheet tab of a piece on no sheet is not opened'); assert.equal(u.tab.sel, 'false'); assert.equal(u.note.length, 1);
+    await oneNote(); u = await ui(); assert.equal(u.view, 'info', 'the Sheet tab went nowhere'); assert.equal(u.note.length, 1); assert.match(u.note[0], /^Not on a sheet yet: its SKU is not in any master file$/);
+    await shot('2-reason-on-press');
+    await page.click('.owTabsV [data-ow-view="sheet"]', { force: true });
+    await oneNote(); u = await ui(); assert.equal(u.view, 'info', 'the Sheet tab of a piece on no sheet is not opened'); assert.equal(u.tab.sel, 'false'); assert.equal(u.note.length, 1, 'one note at a time: ' + JSON.stringify(u.note));
     await clearNotes();
     // the keyboard reaches the greyed tab (arrow keys), says why on focus, and does not open it
     await page.focus('.owTabsV [data-ow-view="info"]'); await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight');
     u = await ui(); assert.equal(u.view, 'timeline', 'only the Timeline opened'); assert.equal(await page.evaluate(() => document.activeElement.dataset.owView), 'sheet', 'focus is on the greyed tab'); assert.match(u.note.join('|'), /not on a sheet yet/i);
     await page.keyboard.press('Enter'); u = await ui(); assert.equal(u.view, 'timeline', 'Enter on the greyed tab opens nothing');
     await page.evaluate(() => OrderWin.setView('info')); await clearNotes();
-    // HEALTH1's chip is open: it takes to GF Sheet 1 with HEALTH1's charm chosen
-    await page.click('#owNowCard .owShChip:not(.off)');
+    // HEALTH1's row chip is open: it takes to GF Sheet 1 with HEALTH1's charm chosen
+    await page.click('#owPcSum button[data-pc-sheet]');
     await drawn(GF1);
     let sp = await sheetPanel();
     assert.equal(sp.sheet, GF1); assert.deepEqual(sp.tabs, ['GF Sheet 1']);
@@ -140,11 +143,11 @@ async function main() {
     await pick(keyOf(I5, 'ta'));
     u = await ui();
     assert.equal(u.piece, keyOf(I5, 'ta'));
-    assert(u.btn.off && /^This piece is not on a sheet yet: its SKU is not in any master file$/.test(u.btn.why), JSON.stringify(u.btn));
-    assert.deepEqual(u.chips.map(c => [c.text, c.sub, c.off]), [['Not on a sheet yet', 'Its SKU is not in any master file', true]], 'one muted chip, no sheet of the other piece: ' + JSON.stringify(u.chips));
-    assert(u.tab.off && u.tab.count === '', JSON.stringify(u.tab));
+    assert.equal(u.card, 0, 'no control on the head card');
+    assert(u.tab.off && /^This piece is not on a sheet yet: its SKU is not in any master file$/.test(u.tab.why) && u.tab.count === '', JSON.stringify(u.tab));
+    assert(u.rowChips.filter(c => c.k === keyOf(I5, 'ta')).every(c => !c.button), 'the picked CUTE piece\'s own chip opens nothing: ' + JSON.stringify(u.rowChips));
     await shot('3-overview-cute-picked');
-    await page.click('#owNowCard [data-go="sheet"]', { force: true }); u = await ui(); assert.equal(u.view, 'info'); assert.match(u.note.join('|'), /^This piece is not on a sheet yet: its SKU is not in any master file$/); await clearNotes();
+    await page.click('.owTabsV [data-ow-view="sheet"]', { force: true }); u = await ui(); assert.equal(u.view, 'info'); assert.match(u.note.join('|'), /^This piece is not on a sheet yet: its SKU is not in any master file$/); await clearNotes();
     // reached by another way (the view asked for directly): "Not on a sheet yet", the reason, and NOT the other piece's sheet
     await page.evaluate(() => OrderWin.setView('sheet'));
     await page.waitForFunction(() => document.querySelector('#owPlateWrap .owPlateNone[data-none]'), null, { timeout: 8000 });
@@ -166,9 +169,9 @@ async function main() {
     await page.evaluate(k => OrderWin.open(k), keyOf(I5, 'ta')); await settle();
     await pick(keyOf(I5, 'tb'));
     u = await ui();
-    assert(!u.btn.off && !u.tab.off && u.tab.count === '1 sheet', JSON.stringify([u.btn, u.tab]));
-    assert.deepEqual(u.chips.map(c => [c.text, c.sub, c.off]), [['GF Sheet 1', 'open it', false]]);
-    await page.click('#owNowCard [data-go="sheet"]'); await drawn(GF1);
+    assert(!u.tab.off && u.tab.count === '1 sheet' && u.card === 0, JSON.stringify([u.tab, u.card]));
+    assert.deepEqual(doors(u), [[keyOf(I5, 'tb'), 'GF Sheet 1']], 'its row chip names its sheet: ' + JSON.stringify(u.rowChips));
+    await page.click('.owTabsV [data-ow-view="sheet"]'); await drawn(GF1);
     sp = await sheetPanel(); assert.deepEqual(sp.tabs, ['GF Sheet 1']); assert.equal(sp.count, '1 sheet');
     await closeWin();
 
@@ -176,14 +179,15 @@ async function main() {
     const kA = keyOf(T3, 'ta'), kB = keyOf(T3, 'tb'), kC = keyOf(T3, 'tc');
     await page.evaluate(k => OrderWin.open(k), kA); await settle();
     u = await ui();   // all pieces, opened on A (on GF Sheet 1)
-    assert(!u.btn.off && !u.tab.off && u.tab.count === '2 sheets', 'all pieces: two real sheets: ' + JSON.stringify([u.btn, u.tab]));
-    assert.deepEqual(u.chips.map(c => [c.text, c.sub, c.off]), [['GF Sheet 1', 'HEART A', false], ['Not on a sheet yet', 'Charm earrings', true], ['SS Sheet 1', 'STAR C', false]], JSON.stringify(u.chips));
+    assert(!u.tab.off && u.tab.count === '2 sheets' && u.card === 0, 'all pieces: two real sheets: ' + JSON.stringify([u.tab, u.card]));
+    assert.deepEqual(doors(u), [[kA, 'GF Sheet 1'], [kC, 'SS Sheet 1']], 'A and C have their own sheet in their row, B (no SKU) none: ' + JSON.stringify(u.rowChips));
+    assert(u.rowChips.filter(c => c.k === kB).length >= 1 && u.rowChips.filter(c => c.k === kB).every(c => !c.button), 'B\'s row chip is words only: ' + JSON.stringify(u.rowChips));
     // three pieces: the chip row that sat beside the live line is gone; nothing in the tab row is cut
     await page.waitForTimeout(1300);   // (the window has settled: its live line and the Skip label at their full width)
     const room = await page.evaluate(() => { const t = document.querySelector('.owTabsV .owTools'); return { chipRow: !!document.getElementById('owPieceSw'), cut: [...t.querySelectorAll('*')].filter(x => x.scrollWidth > x.clientWidth + 1 && getComputedStyle(x).overflowX !== 'visible').map(x => x.textContent.trim().slice(0, 30)) }; });
     assert(!room.chipRow && room.cut.length === 0, 'no chip row, and the live line is not cut: ' + JSON.stringify(room));
     await shot('5-three-pieces-all');
-    await pick(kA); u = await ui(); assert.equal(u.tab.count, '1 sheet'); assert.deepEqual(u.chips.map(c => c.text), ['GF Sheet 1']);
+    await pick(kA); u = await ui(); assert.equal(u.tab.count, '1 sheet'); assert.equal(u.rowChips.find(c => c.k === kA).text, 'GF Sheet 1');
     await page.click('.owTabsV [data-ow-view="sheet"]'); await drawn(GF1); sp = await sheetPanel(); assert.deepEqual(sp.tabs, ['GF Sheet 1'], 'A: only its own sheet'); assert.equal(await page.evaluate(() => document.querySelector('#owSheetPanel .owCharm b').textContent), 'HEART_A');
     // from A's Sheet view, the panel's list says where the others are; a piece with no sheet is greyed and inert there
     const rows = await page.evaluate(() => [...document.querySelectorAll('#owSheetPanel .owPieces li')].map(li => ({ t: li.innerText.replace(/\s+/g, ' ').trim(), cls: li.className, dis: li.getAttribute('aria-disabled') })));
@@ -194,31 +198,29 @@ async function main() {
     assert.equal(await page.evaluate(() => document.querySelector('#owSheetPanel .owCharm b').textContent), 'STAR_C');
     // B's side (no SKU): greyed; a click does nothing; the view, asked for anyway, is the empty state
     await page.evaluate(() => OrderWin.setView('info')); await pick(kB);
-    u = await ui(); assert(u.btn.off && /^This piece is not on a sheet yet: it has no SKU$/.test(u.btn.why), JSON.stringify(u.btn)); assert(u.tab.off && u.tab.count === '');
-    assert.deepEqual(u.chips.map(c => [c.text, c.off]), [['Not on a sheet yet', true]]);
+    u = await ui(); assert(u.tab.off && /^This piece is not on a sheet yet: it has no SKU$/.test(u.tab.why) && u.tab.count === '', JSON.stringify(u.tab)); assert.equal(u.card, 0);
     await page.evaluate(() => OrderWin.setView('sheet')); await page.waitForFunction(() => document.querySelector('#owPlateWrap .owPlateNone[data-none]'), null, { timeout: 8000 });
     sp = await sheetPanel(); assert.match(sp.none, /^Not on a sheet yet It has no SKU\./); assert.equal(sp.sheet, null);
     // C's side (the other metal): its own sheet, counted once
     await page.evaluate(() => OrderWin.setView('info')); await pick(kC);
-    u = await ui(); assert(!u.btn.off && u.tab.count === '1 sheet' && u.chips.length === 1 && u.chips[0].text === 'SS Sheet 1', JSON.stringify(u));
-    await page.click('#owNowCard [data-go="sheet"]'); await drawn(SS1); sp = await sheetPanel(); assert.deepEqual(sp.tabs, ['SS Sheet 1']);
+    u = await ui(); assert(!u.tab.off && u.tab.count === '1 sheet' && u.card === 0 && u.rowChips.find(c => c.k === kC).text === 'SS Sheet 1', JSON.stringify(u));
+    await page.click('.owTabsV [data-ow-view="sheet"]'); await drawn(SS1); sp = await sheetPanel(); assert.deepEqual(sp.tabs, ['SS Sheet 1']);
     await closeWin();
-    // opened on B (no SKU) with all pieces in front: the Sheet button and tab answer for B (greyed); A's and C's chips stay open
+    // opened on B (no SKU) with all pieces in front: the Sheet tab answers for B (greyed); A's and C's row chips stay open
     await page.evaluate(k => OrderWin.open(k), kB); await settle();
-    u = await ui(); assert(u.btn.off && u.tab.off, JSON.stringify([u.btn, u.tab]));
-    assert.deepEqual(u.chips.map(c => [c.text, c.off]), [['GF Sheet 1', false], ['Not on a sheet yet', true], ['SS Sheet 1', false]]);
-    await page.click('#owNowCard .owShChip[data-sheet="' + SS1 + '"]'); await drawn(SS1); sp = await sheetPanel();
-    assert(sp.tabs.includes('SS Sheet 1')); await closeWin();
+    u = await ui(); assert(u.tab.off, JSON.stringify(u.tab)); assert.deepEqual(doors(u), [[kA, 'GF Sheet 1'], [kC, 'SS Sheet 1']]);
+    await page.click('#owPcSum button[data-pc-sheet][data-sheet="' + SS1 + '"]'); await drawn(SS1); sp = await sheetPanel();
+    assert(sp.tabs.includes('SS Sheet 1')); assert.equal(sp.sheet, SS1, 'the chip of C opens C\'s own sheet, never B\'s (B has none)'); await closeWin();
 
     // ── 5 · an order outside the pull (a search), one piece on a sheet and one pooled and not placed yet ──
     await page.evaluate(rid => OrderWin.openOrder(rid, { highlight: true }), OUT.rid);
     await page.waitForFunction(() => OrderWin.isOpen() && document.getElementById('owLoading').hidden && document.querySelectorAll('#owPcSum .owPcRow[data-piece]').length === 2, null, { timeout: 20000 });   // (the order's two pieces, one row each: the chip row's 'All' button, which made it 3, is gone)
     u = await ui();
-    assert.equal(u.chips.filter(c => !c.off).map(c => c.text).join(), 'SS Sheet 1'); assert.equal(u.chips.filter(c => c.off).length, 1, 'the pooled piece has its muted chip: ' + JSON.stringify(u.chips));
+    assert.deepEqual(doors(u).map(d => d[1]), ['SS Sheet 1']); assert.equal(u.rowChips.filter(c => !c.button).length, 1, 'the pooled piece\'s row chip is words only: ' + JSON.stringify(u.rowChips));
     const outKeys = await page.evaluate(() => OrderWin._scope().all.map(p => [p.key, p.nested, p.why]));
     const cold = outKeys.find(x => !x[1]); assert(cold && /^it is waiting to be placed$/.test(cold[2]), JSON.stringify(outKeys));
     await pick(cold[0]);
-    u = await ui(); assert(u.btn.off && u.tab.off && /^This piece is not on a sheet yet: it is waiting to be placed$/.test(u.btn.why), JSON.stringify([u.btn, u.tab]));
+    u = await ui(); assert(u.tab.off && /^This piece is not on a sheet yet: it is waiting to be placed$/.test(u.tab.why), JSON.stringify(u.tab));
     await closeWin();
 
     // ── 5b · the other doors into an order on a given piece: a Review card (its piece's row), the Library's "Open order" (no piece named) ──
@@ -226,19 +228,19 @@ async function main() {
       await page.evaluate(({ rid, key, pool }) => { const b = document.createElement('button'); b.id = 'psbDoor'; document.body.appendChild(b); openOrderFrom(b, rid, { row: { key }, poolId: pool }); }, { rid: I5.rid, key: keyOf(I5, k), pool: pid(I5, k) });
       await settle(); u = await ui();
       assert.equal(u.view, 'info'); assert.equal(u.piece, null, 'all pieces in front, the piece of the card shown');
-      if (k === 'ta') { assert(u.btn.off && /^Not on a sheet yet: /.test(u.btn.why), what + ': ' + JSON.stringify(u.btn)); assert(u.tab.off, what); }
-      else { assert(!u.btn.off && !u.tab.off && u.tab.count === '1 sheet', what + ': ' + JSON.stringify([u.btn, u.tab])); }
-      assert.deepEqual(u.chips.map(c => [c.text, c.off]), [['Not on a sheet yet', true], ['GF Sheet 1', false]], what + ': ' + JSON.stringify(u.chips));
+      if (k === 'ta') { assert(u.tab.off && /^Not on a sheet yet: /.test(u.tab.why), what + ': ' + JSON.stringify(u.tab)); }
+      else { assert(!u.tab.off && u.tab.count === '1 sheet', what + ': ' + JSON.stringify(u.tab)); }
+      assert.equal(u.card, 0, what + ': no control on the head card'); assert.deepEqual(doors(u), [[keyOf(I5, 'tb'), 'GF Sheet 1']], what + ': ' + JSON.stringify(u.rowChips));
       await closeWin(); await page.evaluate(() => document.getElementById('psbDoor').remove());
     }
     await page.evaluate(rid => { const b = document.createElement('button'); b.id = 'psbDoor'; document.body.appendChild(b); openOrderFrom(b, rid); }, I5.rid);   // (the Library: the order, no piece named: its first)
-    await settle(); u = await ui(); assert(u.btn.off && u.tab.off, "the Library's Open order, first piece CUTE: " + JSON.stringify([u.btn, u.tab]));
-    assert.deepEqual(u.chips.map(c => [c.text, c.off]), [['Not on a sheet yet', true], ['GF Sheet 1', false]]);
+    await settle(); u = await ui(); assert(u.tab.off, "the Library's Open order, first piece CUTE: " + JSON.stringify(u.tab));
+    assert.deepEqual(doors(u), [[keyOf(I5, 'tb'), 'GF Sheet 1']]);
     await closeWin(); await page.evaluate(() => document.getElementById('psbDoor').remove());
 
     // ── 6 · the Timeline lists one piece's steps alone, and opens no sheet at all ──
     // (the pane under the chart, whose "Open sheet" answered for one piece, went on 5 Oct 2026, so a step on the Timeline never leads to a
-    //  sheet any more; the Sheet tab and the chips on the Overview are the doors, and sections 1-5 hold them. What stays here is that the
+    //  sheet any more; the Sheet tab and the pieces' row chips on the Overview are the doors, and sections 1-5 hold them. What stays here is that the
     //  steps are the picked piece's own, that none of them is a way to another piece's sheet, and that pressing one does nothing.)
     const stalePlaced = ev('placed', 3000, { sheet: 'GF Sheet 1', sheetId: GF1, lineKey: `${I5.rid}_${I5.ta}`, data: { poolId: pid(I5, 'ta') } });   // (a step of the CUTE piece, older, on a sheet it has since left)
     await page.evaluate(k => OrderWin.open(k), keyOf(I5, 'ta')); await settle();
@@ -289,7 +291,7 @@ async function main() {
     await pick(keyOf(T3, 'tc')); await page.waitForFunction(() => { const x = document.querySelector('#owRail .tlStop[data-stage="sheet"]'); return x && x.classList.contains('d'); }, null, { timeout: 8000 });
     await closeWin();
     assert.deepEqual(errors, [], 'no page errors');
-    console.log('  ✓ piece-scoped Sheet affordances: greyed and inert for a piece on no sheet (button, chip, tab, panel), reason on press and focus, empty state not another piece\'s sheet, counts of real sheets, scope follows a piece chosen in the panel, same from the Orders list and an order outside the pull');
+    console.log('  ✓ piece-scoped Sheet affordances: greyed and inert for a piece on no sheet (the tab and the panel; the head card has no button or chip, a piece row chip is words only), reason on press and focus, empty state not another piece\'s sheet, counts of real sheets, scope follows a piece chosen in the panel, same from the Orders list and an order outside the pull');
   } finally { await browser.close(); srv.close(); }
 }
 main().then(() => console.log('Piece Sheet buttons OK')).catch(e => { console.error(e); process.exit(1); });
