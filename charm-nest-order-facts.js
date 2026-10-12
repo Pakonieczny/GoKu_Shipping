@@ -159,7 +159,7 @@
   const moreHtml = rove => `<button type="button" class="owfMore" data-owf-item aria-expanded="false" aria-controls="owfDetails" tabindex="${rove ? 0 : -1}"><span>Details</span>${ic('chevron-down', { size: 14, weight: 2 })}</button>`;
   /** The first row of the glance line. The chips that tell which order it is (order, buyer, time, ship-by, metal) are ONE row and Details is its last item, right after the
    *  metal (after the last of them when there is no metal chip): the toggle always sits on the line of that chip, never alone on the next. The row does not break inside while
-   *  the buyer, then the time and the ship-by, can give way (see .owfCore in charm-nest-1.html); the chips that come later (pairs, a custom order, engraving, message) follow it
+   *  the buyer and the ship-by can give way (see .owfCore in charm-nest-1.html); the chips that come later (pairs, a custom order, engraving, message) follow it
    *  and are the ones that wrap. A state that needs a look is the pill at the right end. DOM order is the visual order, so the Tab and arrow keys walk the line as it reads. */
   const CORE = ['order', 'buyer', 'purchased', 'ship', 'metal'];
   function barHtml(chips, f) {
