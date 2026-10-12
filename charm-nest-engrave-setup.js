@@ -12,9 +12,11 @@
  *                                   opts: { compact, open, onSaved(result), jobs(), save(patch), undo() }  -> { destroy(), refresh() }
  *   html(row, opts) / bind(el, row, handlers)   the same in two steps (el holds ONLY the control). handlers: { save(patch), undo(), jobs() } (defaults: the bridge's Engrave.saveSetup /
  *                                   undoSetup / jobsOf)
- *   read(row, { jobs })             pure view model of the control (setup, per-face rows, why, source, edited, raw words, locks)
- *   setupFor(row, noOverride)       the line's effective setup (CharmNestEngraveFaces.setupOf over the reading, TAGSKU's tag option when the intake has not read the line yet, and the override)
- *   buildOverride(line, patch, by, now)   pure: the row.engravingOverride of CONTRACT 3 (merges the previous one; a face the mode does not engrave is dropped)
+ *   read(row, { jobs, slot })       pure view model of the control (setup, per-face rows, why, source, edited, raw words, locks); `slot` ('L' | 'R' | 'D2' ...): ONE piece's view (its own words, its own jobs, vm.jobKeys)
+ *   setupFor(row, slot?, noOverride?)  the line's effective setup (CharmNestEngraveFaces.setupOf over the reading, TAGSKU's tag option when the intake has not read the line yet, and the override); with a slot: that piece's words
+ *                                   (engravingOverride.pieces[slot][face], else the line's). Legacy setupFor(row, true) still means noOverride.
+ *   buildOverride(line, patch, by, now)   pure: the row.engravingOverride of CONTRACT 3 (merges the previous one; a face the mode does not engrave is dropped). patch.slot: the words go to pieces[slot][face] (one piece),
+ *                                   the mode and the line-level words stay the line's; an empty text on a piece face removes that piece's entry (it inherits the line's again)
  *   sig(row)                        what the control would show, as a short string (a host that caches its card draws it again when this changes)
  *   consequences(line, jobs, nextSetup, prevSetup)   pure: what a save does to the jobs, in plain lines + the jobs it removes / cuts plain / opens / adds
  *   apply(line, patch, env, opts)   the save path (name -> override -> ensureJobs -> reconcile -> seed), all side effects through `env` (the bridge's Engrave.saveSetup builds it); opts.undo removes the override
@@ -83,11 +85,12 @@
     return derivedReading(line);
   }
   /** The line's effective setup (CharmNestEngraveFaces.setupOf over the reading), or null for a row with no spec. */
-  function setupFor(row, noOverride) {
+  function setupFor(row, slot, noOverride) {
+    if (typeof slot === 'boolean') { noOverride = slot; slot = null; }   // (the old call: setupFor(row, true) = without the person's override)
     const F = Faces(), line = lineOf(row); if (!F || !line || !line.spec) return null;
     const read = readingOf(line), own = line.spec.engraving;
     const spec = read && read !== own ? Object.assign({}, line.spec, { engraving: read }) : line.spec;
-    return F.setupOf({ spec }, noOverride ? null : (line.engravingOverride || null));
+    return F.setupOf({ spec }, noOverride ? null : (line.engravingOverride || null), slot || null);
   }
 
   /* ── fonts ─────────────────────────────────────────────────────────────────── */
@@ -108,31 +111,36 @@
   /* ── the view model ────────────────────────────────────────────────────────── */
   const SRC = { option: o => (o && o.name ? `the ${o.name} option` : 'the option'), title: () => 'the listing title', note: () => "the buyer's note", person: () => 'a person', default: () => '' };
   /** What the control shows for a line. null when the line has nothing to say (no spec, left the pull, done by hand, mode none with no edit). */
+  const SLOT_RX = /^(L|R|D\d{1,2})$/;
+  const slotOfJob = j => (j && (j.slot || (Faces() && Faces().parseKey(j.key).slot))) || null;
   function read(row, o) {
     const F = Faces(), line = lineOf(row); if (!F || !line || !line.spec) return null;
     if (F.neverOf && F.neverOf(line)) return null;   // (NO EARRING IS EVER ENGRAVED, charm-nest-orders.js section 3d: nothing to verify and nothing to edit, so the control is not drawn)
-    const setup = setupFor(line); if (!setup) return null;
+    const slot = o && o.slot && SLOT_RX.test(String(o.slot)) ? String(o.slot) : null;
+    const setup = setupFor(line, slot); if (!setup) return null;
     if (line.state === 'gone' || (line.spec.customDone && line.spec.customDone.state !== 'open')) return null;
     const jobs = ((o && o.jobs) || (root.Engrave && root.Engrave.jobsOf ? root.Engrave.jobsOf(line) : []) || []).filter(Boolean);
+    const pieceJobs = slot ? jobs.filter(j => slotOfJob(j) === slot) : jobs;   // (ONE piece asked for: only its own jobs are read, locked or shown)
     if (setup.mode === 'none' && !setup.edited && !jobs.length && !readingOf(line)) return null;
-    const base = setup.edited ? setupFor(line, true) : setup, lineFont = faceFont(line, null);
+    const base = setup.edited ? setupFor(line, slot, true) : setup, lineFont = faceFont(line, null);
     const rows = setup.faces.map(face => {
-      const mine = jobs.filter(j => faceOfJob(j) === face), wordsList = mine.map(wordsOfJob).filter(Boolean), distinct = [...new Set(wordsList)];
-      const perPiece = distinct.length > 1, w = setup[face];
+      const mine = pieceJobs.filter(j => faceOfJob(j) === face), wordsList = mine.map(wordsOfJob).filter(Boolean), distinct = [...new Set(wordsList)];
+      const perPiece = !slot && distinct.length > 1, w = setup[face];
       const lines = perPiece ? [] : distinct.length ? distinct[0].split('\n') : (w ? w.lines.slice() : []);
       const locked = mine.find(j => DECIDED.includes(j.state) && j.state !== 'none') || null;
       const by = locked ? str(locked.approvedBy || locked.decidedBy || (locked.decision && locked.decision.by)) : '';
       const ft = faceFont(line, w && w.fontWord);
-      return { face, label: cap1(face), lines, text: lines.join('\n'), fontWord: (w && w.fontWord) || '', font: ft, perPiece, locked: !!locked, lockState: locked ? locked.state : '', lockBy: by, state: mine.length ? mine.map(j => j.state)[0] : '', jobs: mine };
+      return { face, label: cap1(face), key: mine.length === 1 ? mine[0].key : (slot || !mine.length ? F.keyOf(line, face, slot) : ''), lines, text: lines.join('\n'), fontWord: (w && w.fontWord) || '', font: ft, perPiece, locked: !!locked, lockState: locked ? locked.state : '', lockBy: by, state: mine.length ? mine.map(j => j.state)[0] : '', jobs: mine };
     });
     const e = readingOf(line) || {}, pct = Math.round((+setup.confidence || 0) * 100);
     const src = setup.edited ? 'person' : setup.source, srcText = (SRC[src] || (() => ''))(setup.option || e.option);
-    return { ok: true, line, key: line.key, setup, base, mode: setup.mode, modeLabel: F.modeLabel(setup.mode), rows, jobs, lineFont, edited: setup.edited, by: setup.by, at: setup.at,
+    return { ok: true, line, key: line.key, slot, pieceKey: F.pieceKeyOf(F.keyOf(line, 'back', slot)), jobKeys: { front: F.keyOf(line, 'front', slot), back: F.keyOf(line, 'back', slot) },
+      setup, base, mode: setup.mode, modeLabel: F.modeLabel(setup.mode), rows, jobs, pieceJobs, lineFont, edited: setup.edited, pieceEdited: !!setup.pieceEdited, by: setup.by, at: setup.at,
       why: setup.edited ? `Set by ${setup.by || 'a person'}${setup.at ? ' on ' + new Date(setup.at).toLocaleDateString() : ''}` : str(setup.why),
       reading: setup.edited ? F.describe(base) : '', from: setup.edited ? '' : srcText ? `from ${srcText}${pct > 0 && setup.source !== 'default' ? ` · ${pct}% sure` : ''}` : (setup.source === 'default' ? 'nothing in the listing or the note says otherwise' : ''),
       raw: rawOf(line), needsPerson: setup.needsPerson, textSource: setup.textSource,
       prompt: setup.needsPerson ? (setup.mode === 'both' ? 'Say which words go on the front and which on the back' : `Say which words go on the ${setup.faces[0] || 'charm'}`) : '',
-      cut: CUT.includes(line.state), sig: JSON.stringify([setup.mode, rows.map(r => [r.text, r.fontWord, r.locked, r.perPiece]), setup.edited, setup.needsPerson, CUT.includes(line.state)]) };
+      cut: CUT.includes(line.state), sig: JSON.stringify([slot, setup.mode, rows.map(r => [r.text, r.fontWord, r.locked, r.perPiece]), setup.edited, setup.pieceEdited, setup.needsPerson, CUT.includes(line.state)]) };
   }
 
   /* ── the override ───────────────────────────────────────────────────────────── */
@@ -140,13 +148,24 @@
    *  does not engrave is dropped (the reading's words come back if the mode comes back). `by` is the signed-in login. */
   function buildOverride(line, patch, by, now) {
     const F = Faces(), prev = line && line.engravingOverride && typeof line.engravingOverride === 'object' ? line.engravingOverride : {}, p = patch || {};
+    const slot = p.slot && SLOT_RX.test(String(p.slot)) ? String(p.slot) : null;
     const mode = F.MODES.includes(p.mode) ? p.mode : (F.MODES.includes(prev.mode) ? prev.mode : undefined);
     const out = {}; if (mode) out.mode = mode;
     const live = mode === 'both' ? ['front', 'back'] : mode === 'front' ? ['front'] : mode === 'back' ? ['back'] : mode === 'none' ? [] : ['front', 'back'];
+    // the line's own words: a patch for a PIECE (patch.slot) never touches them
     for (const face of live) {
-      if (p[face] !== undefined) out[face] = F.normFace(p[face]);
+      if (!slot && p[face] !== undefined) out[face] = F.normFace(p[face]);
       else if (prev[face] !== undefined) out[face] = prev[face];
     }
+    // one piece's own words (ENGLINK): pieces[slot][face]; the other pieces' entries are kept exactly as they were (disc 2 is never disc 1)
+    const pieces = {};
+    if (prev.pieces && typeof prev.pieces === 'object') for (const sl of Object.keys(prev.pieces)) if (SLOT_RX.test(sl) && prev.pieces[sl] && typeof prev.pieces[sl] === 'object') pieces[sl] = Object.assign({}, prev.pieces[sl]);
+    if (slot) {
+      const q = pieces[slot] || (pieces[slot] = {});
+      for (const face of ['front', 'back']) if (p[face] !== undefined) { const n = F.normFace(p[face]); if (n) q[face] = n; else delete q[face]; }   // (no words = this piece goes back to the line's)
+    }
+    for (const sl of Object.keys(pieces)) { const q = pieces[sl]; for (const face of ['front', 'back']) if (!live.includes(face)) delete q[face]; if (!Object.keys(q).length) delete pieces[sl]; }
+    if (Object.keys(pieces).length) out.pieces = pieces;
     out.by = str(by); out.at = now == null ? Date.now() : now;
     return out;
   }
@@ -219,9 +238,12 @@
       }
       // an undecided face job the setup still asks for whose words differ from the person's words takes them (no paid reading; also while a new face is still pending, since nothing is removed or cut here);
       // a job still being classified takes its words from the setup itself
+      const only = patch && patch.slot && SLOT_RX.test(String(patch.slot)) ? String(patch.slot) : null;
       for (const j of env.jobsOf(line)) {
         const face = faceOfJob(j); if (!setup.faces.includes(face) || DECIDED.includes(j.state) || OPEN_STATES.includes(j.state)) continue;
-        const seed = F.seedFor(setup, face); if (!seed || sameWords(j, seed)) continue;
+        const at = slotOfJob(j);
+        if (only && at !== only) continue;   // (a piece's own edit re-seeds that piece's jobs only: disc 2 never reaches disc 1)
+        const seed = F.seedFor(setup, face, at); if (!seed || sameWords(j, seed)) continue;
         await env.seed(j, Object.assign({}, seed, { by })); res.seeded.push(j.key);
       }
     } catch (e) {
@@ -294,7 +316,8 @@
   }
   const facesOf = mode => (mode === 'both' ? ['front', 'back'] : mode === 'front' ? ['front'] : mode === 'back' ? ['back'] : []);
   function patchOf(vm, d) {
-    const patch = {}; if (d.mode !== vm.mode) patch.mode = d.mode;
+    const patch = {}; if (vm.slot) patch.slot = vm.slot;   // (one piece's edit says which piece: buildOverride / apply keep it to that piece)
+    if (d.mode !== vm.mode) patch.mode = d.mode;
     for (const f of facesOf(d.mode)) {
       const cur = vm.rows.find(r => r.face === f), x = d.faces[f] || { text: '', font: '' }, text = linesOf(x.text).join('\n');
       if (cur && cur.locked) continue;
@@ -307,7 +330,7 @@
   const hasPatch = p => !!(p.mode || p.front !== undefined || p.back !== undefined);
   function nextSetupOf(vm, patch) {
     const F = Faces(), line = vm.line, r = readingOf(line), spec = r && r !== line.spec.engraving ? Object.assign({}, line.spec, { engraving: r }) : line.spec;
-    return F.setupOf({ spec }, buildOverride(line, patch, 'x', 0));
+    return F.setupOf({ spec }, buildOverride(line, patch, 'x', 0), vm.slot || null);
   }
 
   /** "Ace → Jost": the word the buyer picked and the installed font it engraves in (just the one when they are the same). */
