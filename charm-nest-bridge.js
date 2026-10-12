@@ -6313,13 +6313,17 @@ const Engrave = window.Engrave = (() => {
   /** A person's words for an existing, undecided job (the setup editor): the words are theirs and settled (no paid reading), the placement is made again. */
   async function seedWords(job, seed) {
     const row = job.row, by = seed.by || employeeName() || "", face = (window.CharmNestEngraveFaces && CharmNestEngraveFaces.faceOf(job)) || "back", was = job.text;
+    const keep = job.nudged && job.fit ? { centre: job.fit.centre.slice(), angle: job.fit.angle } : null;   // (a position a person set stays through new words or a new font, as fitNewWords keeps it)
     job.lineInput = null; job.lineMode = "auto"; job.wantSize = null; job.fit = null;
     Object.assign(job, { text: seed.text, lines: seed.lines.slice(), source: "person", quote: null, confidence: 1, questions: [], claudeReasoning: null, requests: { side: face, font: null, handwriting: false, image: false },
-      wordsSource: "spec.engraving", decision: { by, at: Date.now(), text: seed.text, note: "edited" } });
+      wordsSource: "spec.engraving", decision: { by, at: Date.now(), text: seed.text, note: "edited" }, faceFontWord: seed.fontWord || null });   // (faceFontWord: the font the person picked for this face, which ensureJobFont fits it in; null = the line's font)
     if (seed.fontWord) job.fontAsked = seed.fontWord;
     wordsEvent(job, by, was, "words"); Review.remove("eng:" + job.key);
     await setReady(job);
-    if (job.state === "ready" && canFit(job)) fitJob(job).catch(() => {});   // (drawn by the card as it fits)
+    if (job.state === "ready" && canFit(job)) fitJob(job).then(() => {   // (drawn by the card as it fits)
+      if (!keep || !job.fit || job.state !== "review") return;
+      if (refit(job, keep)) { Session.schedule(); refresh(job); } else { job.nudged = false; toast("The new words do not fit where they had been moved, so they were placed again", "", 6000); }
+    }).catch(() => {});
     return job;
   }
   function setupEnv() {
@@ -6334,15 +6338,13 @@ const Engrave = window.Engrave = (() => {
     };
   }
   /** Save the choice (patch: { mode?, front?, back? }): see CharmNestEngraveSetup.apply. Resolves { ok, cancelled?, message?, pending?, removed, plain, none, reopened, seeded, added }. */
-  async function saveSetup(row, patch, o) {
+  async function saveSetup(row, patch) {
     const CS = window.CharmNestEngraveSetup, line = lineOf(row);
     if (!CS || !line) return { ok: false, message: "The engraving setup is not loaded yet." };
     if (setupBusy.has(line.key)) return { ok: false, message: "The last change to this piece is still being saved." };
     setupBusy.add(line.key);
-    try { return await CS.apply(line, patch, setupEnv(), o); } finally { setupBusy.delete(line.key); }
+    try { return await CS.apply(line, patch, setupEnv()); } finally { setupBusy.delete(line.key); }
   }
-  /** Take a person's edit back: the system's own reading of the line comes back (the jobs follow it, as for any change). */
-  const undoSetup = row => saveSetup(row, null, { undo: true });
   async function prepareApproval(job, by, at) {
     const charm=charmFor(job),view=job.view,fit=job.fit;
     if(!charm || !view || !job.copies?.length || job.copies.some(id=>!sheetFor(job,id)))throw new Error("The charm needs its current sheet and outline before approval.");
@@ -7836,7 +7838,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, undoSetup, seedWords, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
@@ -16181,7 +16183,6 @@ const OrderWin = window.OrderWin = (() => {
       if(i>=0){SV.at=i;SV.focus=pid;sheetDraw();return;}
       SV.disc={key:k,focus:SV.focus};paintPanel(SV.info);
     };
-    { const sec = panel.querySelector('[data-engraving-panel]'), su = sec && document.createElement('div'); if (su && window.CharmNestEngraveSetup) { su.className = 'owEngSetup'; sec.appendChild(su); CharmNestEngraveSetup.mount(su, (eng.job && eng.job.row) || lr, { compact: true }); } }   // (the line's engraving setup, one control: charm-nest-engrave-setup.js)
     CNEngravingSeals.wirePanel(panel.querySelector('[data-engraving-panel]'),eng,{
       imageUrl:url=>/^https?:/.test(url)?cors(url):url,pick:pickDisc,
       // "Approve both faces": the ordinary approval of the charm's Front, then its Back (two approvals, two seals, two back files); only when the model's gate allows it

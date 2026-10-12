@@ -71,7 +71,7 @@ async function main() {
         const host = document.getElementById('owMeta'), end = host.querySelector('.owfEnd'), win = document.getElementById('orderWin');
         const pcs = [...win.querySelectorAll('.owPcRow .st')].map(x => x.textContent.replace(/\s+/g, ' ').trim()), dots = win.querySelectorAll('.owPcRow .steps [data-pdot]').length;
         return {
-          chips: [...host.querySelectorAll('.owfBar [data-owf-chip]')].map(c => c.dataset.owfChip), pill: [...host.querySelectorAll('.owfState')].map(c => c.textContent.trim()), end: end ? [...end.children].map(c => c.className.split(' ')[0]) : null,
+          chips: [...host.querySelectorAll('.owfBar [data-owf-chip]')].map(c => c.dataset.owfChip), pill: [...host.querySelectorAll('.owfState')].map(c => c.textContent.trim()), end: end ? [...end.children].map(c => c.className.split(' ')[0]) : null, detailsInRow: !!host.querySelector('.owfCore > .owfTail > .owfMore'),
           meta: host.innerText.replace(/\s+/g, ' ').trim(), win: win.innerText.replace(/\s+/g, ' ').trim(),
           stops: [...win.querySelectorAll('#owRail .tlStop')].map(s => s.textContent.replace(/\s+/g, ' ').trim()), pcs, dots
         };
@@ -84,7 +84,9 @@ async function main() {
         assert(det.labels.includes('State') && det.cells.some(c => /^State held$/i.test(c)), state + ': ... and its State fact: ' + JSON.stringify(det.cells));
       } else {
         assert(!r.chips.includes('state') && r.pill.length === 0, state + ': no pill beside Details (it said "' + said + '")');
-        assert.deepEqual(r.end, ['owfMore'], state + ': the end of the line is Details alone: ' + JSON.stringify(r.end));
+        // (Details sits in the first row, right after the metal chip: DETAILSPOS, 12 Oct 2026; with no pill there is nothing at the end of the line)
+        assert.equal(r.end, null, state + ': nothing at the end of the line (no pill): ' + JSON.stringify(r.end));
+        assert(r.detailsInRow, state + ': Details is in the first row, after the metal chip');
         assert(!det.labels.includes('State'), state + ': no STATE fact in the Details grid: ' + det.labels.join(','));
         assert(det.labels.includes('Ship by') && det.labels.includes('Order') && det.labels.includes('Metal'), state + ': the rest of the grid is there, closed up: ' + det.labels.join(','));
         assert.deepEqual(det.bare, [], state + ': no cell is left empty');

@@ -2322,8 +2322,6 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     host.innerHTML = CNEngravingSeals.panel(shown);
     CNEngravingSeals.wirePanel(host,shown,{approve:b=>approveHere(x,b),open:b=>goEngrave(x,b),stale:()=>renderEng(x),pick:k=>pickDisc(x,cyc,k),imageUrl:url=>/^https?:/.test(url)?cors(url):url,zoom:{id:'sw:eng',key:(x.rid||'')+'|'+(x.poolId||x.id||x.key||'')}});
     if (flash) host.querySelector('.swEng')?.classList.add('flash');
-    // the line's engraving setup (None / Front only / Back only / Front + back, each face's words and font): one control for every card, charm-nest-engrave-setup.js
-    if (window.CharmNestEngraveSetup && (e.job || rowOf(x))) { const su = document.createElement('div'); su.className = 'swEngSetup'; host.appendChild(su); su.addEventListener('cn-engrave-setup', () => { if (W.sel === x) renderEng(x); }); tryDo(() => CharmNestEngraveSetup.mount(su, e.job ? e.job.row : rowOf(x), { compact: true })); }
   }
 
   /** The switch the card shows for a piece: the discs of a counted order (the order window's own cycle) and, for a piece engraved on both faces, its Front | Back. A piece with no front gets
