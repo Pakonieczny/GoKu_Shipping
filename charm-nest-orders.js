@@ -1200,6 +1200,7 @@
     for (let n = 0; n <= 12; n++) for (const sep of [" ", "-", "_", ""]) add(base + sep + n + (want === "huggie" ? " (HUGGIE)" : ""), n, `numbered version ${n} of ${base}`);
     return out.sort((a, b) => a.n - b.n || a.sku.localeCompare(b.sku)).slice(0, 12);
   }
+  const ZODIAC_AUTO = new Set(["transaction", "spelling", "variation", "typo", "named", "inventory"]);   // (ZODSIGN: the automatic sources a shared zodiac SKU may be read again from)
   const FORM_AUTO = new Set(["transaction", "spelling", "variation", "typo", "named", "inventory", "letter"]);   // (a person's answer, "alias" / "option" / a saved pair, is never in this list)
   const FORM_THIS = { huggie: "a huggie design", earring: "an earring design", necklace: "a necklace design" }, FORM_LINE = { huggie: "huggie hoops", earring: "a pair of earrings", necklace: "a necklace" };
   /** The ONE plain line for a held line: what the design is and what the listing is. */
@@ -1867,6 +1868,130 @@
     if (!own) return { why: `Etsy's SKU for ${sign}, ${skus[0]}, is not in any master file` };
     if (skuFamilyConflict(own, line)) { const f = lineFamily(line); return { why: `Etsy's SKU for ${sign}, ${own}, is a ${skuFamily(own)} design and this line is ${f === "earring" ? "earrings" : f}` }; }
     return { sku: own, etsy: skus[0] };
+  }
+
+  /* ═══ 3c · a SHARED zodiac SKU and the sign the buyer named (ZODSIGN, Paul, 12 Oct 2026, order 4200256896) ═════════════════════════════════════
+     Paul, on the zodiac huggie hoops (Etsy SKU HUGGIE HOOPS-ZODIAC, drop-downs METAL CHOICE and HOOP SIZE, the buyer's sign typed in the personalisation box): "the buyer chose the Capricorn zodiac
+     option … however you chose the Libra vector file".
+     THE CAUSE, read with the real code: the SKU HUGGIE HOOPS-ZODIAC is not one sign's: the listing sells all twelve under it. But the master carries that SKU on ONE drawing, the Libra huggie
+     (HUGGIE HOOPS- ZODIAC, HUGGIE HOOPS- ZODIAC AVATAR and ZODIAC ICONS LIBRA (HUGGIE) are one design file). resolveSku trusts a SKU the master knows (source "spelling": the master writes it with a
+     space), and nothing read the personalisation box for a sign: the only sign readers were the "2 symbols" pair (signsOfLine) and an option that has a SKU of its own. So every sign of that listing was
+     Libra, in silence, with no hold, and the word in the box fell to the engraving reader.
+     THE RULE (read by interpretLine after the SKU and a person's answers; nothing here runs without ctx.masterSkus, the page's master list):
+       · a SHARED zodiac SKU is a master SKU that says ZODIAC, names no sign, is no numbered family member (ZODIAC_EARRINGS-6 is its own sign) and sits on the drawing of a master SKU that names ONE sign
+         and says ZODIAC (the master keeps it as a second name of that sign's drawing). Exactly this evidence: a SKU that merely holds the word (ZODIAC_39104, "ZODIAC") is left as it was;
+       · the sign is what the BUYER named: an option value, the personalisation box, the buyer's note, the staff note (English names and the shop languages the 2-symbols reader knows, typo tolerance
+         for the English names in the box and in long words: Capricon, Sagitarius), never the title. Two different signs, or none, wait ("Which zodiac sign?"): never guessed;
+       · its charm is the master design that NAMES the sign and says ZODIAC, of the FORM of the line (section 3b reads the forms: huggie hoops take the huggie one, never the necklace-size twin); else, for
+         a family whose drawing is a numbered one (ZODIAC DISC is ZODIAC_NECKLACE_DISC-7) the member at the sign's place, only when the master's own sign names agree with that numbering;
+       · a sign with no such design in the repo (today Capricorn, Aquarius, Gemini, Cancer and Sagittarius, for huggies) waits with ONE plain line, "The Capricorn charm is not in the repo yet", and is
+         never another sign's file; the held line is read again when the library grows, so it clears the day a master for the sign exists;
+       · a person's saved answer wins (an alias, an option map for the value, a saved pair): this reading replaces only an automatic match, as the form guard does; and a line the form guard holds
+         (a necklace on a huggie SKU) stays the guard's.
+     The sign word is NOT engraving text: spec.zodiacSign says the buyer chose it (textOnly: the box held nothing else), and the order's reading says so in one line. */
+  const SIGN_ORDER = Object.keys(SIGN_WORDS);   // Aries … Pisces: the shop's own numbering of its twelve-sign families (ZODIAC_EARRINGS-0 is Aries, -11 Pisces)
+  const skuTokens = sku => upSku(sku).split(/[^A-Z]+/).filter(Boolean);
+  /** The one sign a master SKU's text names, by its English name as a whole word ("ZODIAC ICONS LIBRA (HUGGIE)" → Libra; SCORPION and LEOPARD name none: whole words only), else "". */
+  function skuSign(sku) { const t = skuTokens(sku), f = SIGN_ORDER.filter(s => t.includes(s.toUpperCase())); return f.length === 1 ? f[0] : ""; }
+  const skuZodiac = sku => skuTokens(sku).some(w => w === "ZODIAC" || w === "ZODIACS");
+  /** The sign a master SKU is the design of: it names one sign and says ZODIAC itself or through a name its drawing carries (ARIES, with ZODIAC ICONS ARIES on the same file). "" when it is not. */
+  function zodiacSignOf(sku, ctx) {
+    const sign = skuSign(sku); if (!sign) return "";
+    if (skuZodiac(sku)) return sign;
+    const share = ctx && typeof ctx.masterShared === "function" ? ctx.masterShared(upSku(sku)) || [] : [];
+    return share.some(k => skuZodiac(k) && skuSign(k) === sign) ? sign : "";
+  }
+  /** { sku, named } when this SKU is a shared zodiac SKU (see the rule above), else null. */
+  function sharedZodiac(sku, ctx) {
+    const me = ctx && ctx.masterEntry, s = upSku(sku);
+    if (!me || !s || !me(s) || typeof ctx.masterShared !== "function" || skuSign(s) || !skuZodiac(s) || skuIndexFamily(s, me)) return null;
+    const named = (ctx.masterShared(s) || []).map(upSku).filter(k => k !== s && skuSign(k) && skuZodiac(k));
+    return named.length ? { sku: s, named } : null;
+  }
+  /* Misspelt sign names. English names only (the shop-language words are read exactly, as the 2-symbols reader reads them), one edit (two for 10 letters and more), a word of 5 letters or more, and
+     a word of 5 or 6 letters only in a short text (3 words at most: the box). Words that are one edit from a sign and are ordinary words are never a sign. */
+  const SIGN_STOP = new Set(["pieces", "piece", "cancel", "cancels", "cancelled", "canceled", "dancer", "dancers", "lancer", "aquarium", "aquariums", "libre", "arise", "arises", "aires", "ares", "gemin", "virgin"]);
+  const SIGN_FUZZ = SIGN_ORDER.map(s => s.toLowerCase()).filter(w => w.length >= 5);
+  function fuzzySign(word, words) {
+    const w = plainText(word).replace(/[^a-z]/g, ""); if (w.length < 5 || SIGN_STOP.has(w) || SIGN_OF.has(w) || (w.length < 7 && words > 3)) return "";
+    const max = w.length >= 10 ? 2 : 1; let best = max + 1, hit = new Set();
+    for (const t of SIGN_FUZZ) { const d = damerau(w, t, max); if (d < best) { best = d; hit = new Set([SIGN_OF.get(t)]); } else if (d === best && d <= max) hit.add(SIGN_OF.get(t)); }
+    return best <= max && hit.size === 1 ? [...hit][0] : "";
+  }
+  /** The signs a text names, in order, each once: [{ sign, word, typo }] (typo: a misspelt English name, when fuzzy). */
+  function signsInText(text, fuzzy) {
+    const toks = plainText(visible(text)).split(/[^a-z]+/).filter(Boolean), out = [];
+    for (const w of toks) { let s = SIGN_OF.get(w), typo = false; if (!s && fuzzy) { s = fuzzySign(w, toks.length); typo = !!s; } if (s && !out.some(x => x.sign === s)) out.push({ sign: s, word: w, typo }); }
+    return out;
+  }
+  const SIGN_FILLER = new Set(["zodiac", "sign", "signs", "star", "symbol", "charm", "astrology", "horoscope", "my", "is", "the", "a", "an", "please", "thanks", "thank", "you", "one", "and", "for", "of", "i", "it", "me", "with"]);
+  const SIGN_FROM = { option: "the option", box: "the personalisation box", note: "the buyer's note", staff: "the staff note" };
+  /** What the buyer named, from the sources in the order they are trusted (the sign options, the personalisation box, the buyer's note, the staff note): { signs: [{ sign, from, word, typo, text, name?, variation? }], box: [texts], textOnly }. */
+  function signsNamed(line, order) {
+    line = line || {}; const found = [], add = (sign, rec) => { if (!found.some(x => x.sign === sign)) found.push(Object.assign({ sign }, rec)); }, boxVals = [];
+    for (const v of line.variations || []) {
+      const name = lvName(v), value = lvValue(v).trim(); if (!name || !value) continue;
+      if (isPersonalisation(name)) { boxVals.push(value); continue; }
+      if (isMetalVariation(name, value) || isSizeOption(name) || isChainOption(name) || isPriceOption(name)) continue;
+      for (const r of signsInText(value, false)) add(r.sign, { from: "option", word: r.word, typo: false, text: value, name, variation: v });
+    }
+    const box = uniqStr([].concat(line.personalization || [], boxVals).map(t => visible(t).trim()).filter(Boolean));
+    const groups = [["box", box], ["note", [line.buyerMessage || (order && order.buyerMessage) || ""]], ["staff", [line.staffNote || (order && order.staffNote) || ""]]];
+    for (const [from, texts] of groups) for (const t of texts) { const tt = visible(t).trim(); if (tt) for (const r of signsInText(tt, true)) add(r.sign, { from, word: r.word, typo: r.typo, text: tt }); }
+    // the box held nothing but sign words (and filler): the buyer's word is the sign, there is no text to engrave
+    const textOnly = box.length > 0 && found.some(x => x.from === "box") && box.every(t => plainText(t).split(/[^a-z]+/).filter(Boolean).every(w => SIGN_OF.has(w) || SIGN_FILLER.has(w) || !!fuzzySign(w, 1)));
+    return { signs: found, box, textOnly };
+  }
+  const signFormOk = (want, f) => !want || (want === "necklace" ? f === "necklace" || f === "unknown" : f === want);
+  /** The master design that is sign S's own, of the form `want` ("" = any): { sku } | { ambiguous: [sku, sku] } (two drawings) | { other: [{ sku, form }] } (the sign has designs, none of this form) | {} (none). */
+  function signDesign(sign, want, ctx) {
+    const me = ctx.masterEntry, guard = { masterEntry: me, masterLoose: ctx.masterLoose, masterShared: ctx.masterShared }, seen = new Set(), by = new Map(), other = [];
+    for (const raw of ctx.masterSkus() || []) {
+      const k = upSku(raw); if (!k || seen.has(k) || skuSign(k) !== sign) continue; seen.add(k);
+      if (!me(k) || !zodiacSignOf(k, ctx)) continue;
+      const f = masterForm(k, guard).form;
+      if (!signFormOk(want, f)) { other.push({ sku: k, form: f }); continue; }
+      const file = designFile(me(k)) || k; if (!by.has(file)) by.set(file, []); by.get(file).push(k);
+    }
+    // (one drawing under several names: the one that names the sign and the kind, the shortest)
+    const best = list => list.slice().sort((a, b) => (want === "huggie" ? (/\(HUGGIE\)$/.test(b) ? 1 : 0) - (/\(HUGGIE\)$/.test(a) ? 1 : 0) : 0) || a.length - b.length || a.localeCompare(b))[0];
+    if (by.size === 1) return { sku: best([...by.values()][0]) };
+    if (by.size > 1) return { ambiguous: [...by.values()].map(best).sort() };
+    return other.length ? { other } : {};
+  }
+  /** The member of a NUMBERED family the shared SKU's drawing belongs to, at the sign's place (Aries 0 … Pisces 11): only when the family holds all twelve and the master's own sign names agree with the
+   *  numbering (every named zodiac design sharing a drawing with a member sits at its sign's place, at least two do). null otherwise. */
+  function signIndexed(sign, fam, want, ctx) {
+    const me = ctx.masterEntry, at = SIGN_ORDER.indexOf(sign), guard = { masterEntry: me, masterLoose: ctx.masterLoose, masterShared: ctx.masterShared };
+    for (const k of ctx.masterShared(fam.sku) || []) {
+      const F = skuIndexFamily(k, me); if (!F) continue;
+      for (let i = 0; i < 12; i++) if (!me(F.base + i)) return null;
+      if (at < 0 || !signFormOk(want, masterForm(F.base + at, guard).form)) return null;
+      let agree = 0;
+      for (let i = 0; i < 12; i++) for (const n of ctx.masterShared(F.base + i) || []) { const t = zodiacSignOf(n, ctx); if (!t) continue; if (SIGN_ORDER.indexOf(t) !== i) return null; agree++; }
+      return agree >= 2 ? { sku: upSku(F.base + at), base: F.base } : null;
+    }
+    return null;
+  }
+  const joinSigns = signs => signs.length > 1 ? signs.slice(0, -1).join(", ") + " and " + signs[signs.length - 1] : signs[0] || "";
+  /** What a line with a shared zodiac SKU reads as: null (not one, no master list, or the form guard's line) | { family, sign?, from?, word?, typo?, text?, textOnly, variation?, pick?: { sku, how }, hold?: { kind, reason }, note }.
+   *  lf / df: the line's form and the shared SKU's own design form (section 3b). */
+  function zodiacRead(line, order, sku, lf, df, ctx) {
+    if (!ctx || typeof ctx.masterSkus !== "function") return null;
+    const fam = sharedZodiac(sku, ctx); if (!fam || formClash(lf, df)) return null;
+    const etsy = upSku(line && line.sku) || fam.sku, nm = signsNamed(line, order), base = { family: fam.sku, textOnly: nm.textOnly };
+    const shared = `SKU “${etsy}” is shared by every sign of this listing`;
+    if (!nm.signs.length) return Object.assign(base, { hold: { kind: "which", reason: `Which zodiac sign? ${shared} and the buyer named none (${nm.box.length ? `the personalisation box says “${clip(nm.box.join(" · "), 40)}”` : "the personalisation box is empty"})` } });
+    if (nm.signs.length > 1) return Object.assign(base, { hold: { kind: "which", reason: `Which zodiac sign? The buyer names ${joinSigns(nm.signs.map(x => x.sign))} (${shared})` } });
+    const one = nm.signs[0], want = lf && lf.form && lf.form !== "unknown" ? lf.form : df && df.form && df.form !== "unknown" ? df.form : "";
+    const note = `Zodiac sign: ${one.sign}, from ${one.from === "option" ? `the “${clip(one.name, 30)}” option` : SIGN_FROM[one.from]}${one.typo ? ` (typed “${clip(one.text, 30)}”)` : ""}`;
+    const out = Object.assign(base, { sign: one.sign, from: one.from, word: one.word, typo: one.typo, text: one.text, note }, one.variation ? { variation: one.variation } : {});
+    let r = signDesign(one.sign, want, ctx), how = "name";
+    if (!r.sku && !r.ambiguous) { const ix = signIndexed(one.sign, fam, want, ctx); if (ix) { r = { sku: ix.sku }; how = "numbered"; } }
+    if (r.sku) return Object.assign(out, { pick: { sku: r.sku, how } });
+    if (r.ambiguous) return Object.assign(out, { hold: { kind: "many", reason: `The ${one.sign} charm has more than one design of this kind in the repo (${r.ambiguous.slice(0, 3).join(", ")}): a person picks` } });
+    const o = (r.other || [])[0], kind = !o ? "" : FORM_THIS[o.form === "unknown" ? "necklace" : o.form] || "";
+    return Object.assign(out, { hold: { kind: "missing", reason: `The ${one.sign} charm is not in the repo yet${o ? ` (the repo has it only as ${kind}: ${o.sku})` : ""}` } });
   }
 
   /** The pair of designs a person saved for this line's listing and SKU ({ L, R }, aliasPut pair), or null. The listing's own record and the SKU as the line carries it: no other listing, no other SKU, no title. */
@@ -2688,6 +2813,14 @@
     // nothing closes its order until its own designs are sent to a sheet or a person completes it), and nothing is asked about it: no metal, SKU or option question, no engraving
     const own = !!(special && special.own && !special.notCut);
     const quiet = noDesign || own;
+    // ZODSIGN (section 3c): a SHARED zodiac SKU (HUGGIE HOOPS-ZODIAC, one drawing in the master, the Libra huggie, for all twelve signs) takes the sign the buyer NAMED (an option, the personalisation box, the
+    // buyer's note): that sign's charm of the line's form, or a plain wait ("The Capricorn charm is not in the repo yet" / "Which zodiac sign?"), never another sign's file. Only an automatic match is replaced:
+    // a person's saved answer (alias, option map, saved pair) and every other reading stand.
+    let zodiac = null;
+    try {
+      if (!quiet && !set && !viaPick && !viaLetter && !members && me && sku && ZODIAC_AUTO.has(skuSource)) zodiac = zodiacRead(line, order, sku, lf, masterForm(sku, guardCtx), ctx);
+    } catch (_) { zodiac = null; }
+    if (zodiac && zodiac.pick) { sku = zodiac.pick.sku; skuSource = "zodiac"; }
     // HUGGIEGUARD (stage B): an automatic match never crosses forms (see section 3b). A person's answer (source alias / option / a saved pair) and a line that is not cut are never held.
     let formHold = null, df = { form: "unknown", by: "none" };
     try {
@@ -2746,6 +2879,8 @@
       if (!mapped && fr && fr.asked !== value) { const h = optionLookup(ctx.optionMaps, line.listingId, name, fr.asked); if (h) mapped = { field: h.field, value: h.value, source: h.source }; }
       // the drop-down value that says "2 symbols" and leaves the signs to the note ("2 symbols-leave note"): once the note's two signs are two charms, the option is answered by them
       if (!mapped && members && members.source === "signs" && members.byNote && name === members.optionName && value === members.optionValue) mapped = { field: "design", value: members.members[0].sku, source: "rule:signs-in-note" };
+      // ZODSIGN: the option that named the sign of a shared zodiac SKU is answered by that sign's charm (a sign with no charm yet leaves the option as it was, beside the line's plain wait)
+      if (!mapped && zodiac && zodiac.pick && zodiac.variation === v) mapped = { field: "design", value: zodiac.pick.sku, source: "rule:zodiac-sign" };
       // a Left-ear / Right-ear option whose value is a master design is that side's design (the pair's members): nothing to ask about it
       if (!mapped && members && members.source === "options" && SIDE_THING.test(name)) { const k = /\bleft\b/i.test(name) ? "L" : /\bright\b/i.test(name) ? "R" : "", m = k && members.members.find(x => x.side === k); if (m) mapped = { field: "design", value: m.sku, source: "rule:pair-side" }; }
       if (!mapped) {                                                            // deterministic name rules, no free-text reading
@@ -2828,6 +2963,11 @@
     spec.pieceCount = pieceCountOf(spec);
     spec.pair.kind = kindFor(spec.pair, spec.pieceCount);
     spec.pair.sides = sidesOf(spec);
+    // ZODSIGN: the sign the buyer chose, said once in the order's reading (the Pieces line) and kept as a fact; the sign word in the box is the buyer's choice of sign, never words to engrave (textOnly: nothing else was written)
+    if (zodiac && zodiac.sign) {
+      spec.zodiacSign = { sign: zodiac.sign, from: zodiac.from, word: zodiac.word, typo: !!zodiac.typo, text: zodiac.text, textOnly: !!zodiac.textOnly, family: zodiac.family, design: zodiac.pick ? zodiac.pick.sku : null, how: zodiac.pick ? zodiac.pick.how : "", held: zodiac.hold ? zodiac.hold.kind : "", note: zodiac.note };
+      spec.pair.notes.push(zodiac.note);
+    }
     /* SCHROLINK (Paul, 12 Oct 2026): a pair of designs a person saved for this listing and SKU whose designs are NOT both in the master any more (renamed, deleted, blocked out of the index) must never let
        a necklace fall back, in silence, to one piece of the SKU's own design (that was the mistake: the huggie skull cat for a necklace of two cats). On a line that is not a single earring it waits for a
        person, with the reason (an earring line that says two different designs keeps its own question, asked above). It ends by itself when both designs are in the master again. */
@@ -2872,6 +3012,13 @@
       spec.formHold = { sku: spec.boughtSku, design: formHold.design, lineForm: lf.form, designForm: formHold.df.form, reason, siblings: sibs };
       spec.siblings = sibs; spec.designSku = null; spec.skuSource = null; spec.sources.sku = null;
       problems.unshift({ kind: "unmatchedSku", reason, sku: spec.boughtSku, listingId: String(line.listingId || ""), title: line.title || "", formHold: true, lineForm: lf.form, designForm: formHold.df.form, siblings: sibs });
+    } else if (zodiac && zodiac.hold) {
+      // ZODSIGN: a sign the repo has no charm of (yet), several signs, or none: the line waits with ONE plain line and no design on the row (the held line is made by no pool: the form guard's own hold, makePool).
+      // The decision is per sign (problem.zodiac), so each missing sign is its own card; the line is read again whenever the library grows, so the hold clears the day the sign's master exists.
+      const reason = zodiac.hold.reason;
+      spec.formHold = { sku: spec.boughtSku, design: "", lineForm: lf.form, designForm: df.form, reason, siblings: [], zodiac: zodiac.hold.kind, sign: zodiac.sign || "" };
+      spec.designSku = null; spec.skuSource = null; spec.sources.sku = null;
+      problems.unshift({ kind: "unmatchedSku", reason, sku: spec.boughtSku, listingId: String(line.listingId || ""), title: line.title || "", formHold: true, zodiac: zodiac.hold.kind + ":" + (zodiac.sign || ""), lineForm: lf.form, designForm: df.form, siblings: [] });
     }
     return spec;
   }
@@ -3248,5 +3395,6 @@
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar, tagOptionOf, tagOptionRead, TAG_SHAPES,
     KNOWN_SKU_NAMES, knownName, namedSku, sameDesign, designFile, FORMS, formOfText, masterForm, lineForm, formClash, siblingsOf, formOfLine,
+    SIGN_ORDER, skuSign, sharedZodiac, signsInText, signsNamed, zodiacRead,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });
