@@ -104,7 +104,7 @@
     const lineWord = str(lf.word || lf.name || 'Default'), lineKey = str(lf.word).toLowerCase();
     const fam = word => { try { if (!P || !P.fontFamilyOf || !P.fontIdOf) return ''; const id = P.fontIdOf(vm.line, 'back', word); return id ? ` style="font-family:${esc(P.fontFamilyOf(id))}"` : ''; } catch (_) { return ''; } };
     const have = list.some(c => c.word === value);
-    const opts = [`<option value=""${fam(lf.word)}${!value ? ' selected' : ''}${lf.name ? ` title="${esc(lf.name)}"` : ''}>${esc(lineWord)}</option>`];
+    const opts = [`<option value=""${fam(lf.word)}${!value || str(value).toLowerCase() === lineKey ? ' selected' : ''}${lf.name ? ` title="${esc(lf.name)}"` : ''}>${esc(lineWord)}</option>`];
     for (const c of list) { if (lineKey && c.word.toLowerCase() === lineKey) continue; opts.push(`<option value="${esc(c.word)}"${fam(c.word)}${c.word === value ? ' selected' : ''}${c.name ? ` title="${esc(c.name)}"` : ''}>${esc(c.word)}</option>`); }
     if (value && !have && str(value).toLowerCase() !== lineKey) opts.push(`<option value="${esc(value)}" selected>${esc(value)}</option>`);
     return opts.join('');
@@ -121,7 +121,7 @@
 
   function faceHtml(vm, d, face, id, slot) {
     const cur = vm.rows.find(r => r.face === face), x = d.faces[face] || { text: '', font: '' }, locked = !!(cur && cur.locked), per = !!(cur && cur.perPiece), dis = d.busy ? ' disabled' : '';
-    const words = `<textarea class="engpWords" id="${id}" data-engp="words" data-face="${face}" rows="2" placeholder="Words for the ${face}" aria-label="${cap1(face)} words"${locked || per || d.busy ? ' disabled' : ''}>${esc(per ? '' : x.text)}</textarea>`;
+    const words = `<div class="engpBox"><textarea class="engpWords" id="${id}" data-engp="words" data-face="${face}" rows="2" placeholder="Words for the ${face}" aria-label="${cap1(face)} words"${locked || per || d.busy ? ' disabled' : ''}>${esc(per ? '' : x.text)}</textarea>${locked || per ? '' : `<button type="button" class="btn ghost xs engpEmoji emBtn" data-emoji${d.busy ? ' disabled' : ''} title="Choose an emoji the laser can engrave and put it in the words">Emoji</button>`}</div>`;
     const font = `<select class="engpFont" data-engp="font" data-face="${face}" aria-label="${cap1(face)} font"${locked || d.busy ? ' disabled' : ''}>${fontOptions(vm, x.font)}</select>`;
     const job = faceJobOf(vm, face, slot), P = Pos();
     const can = !job || locked ? false : P && P.canMove ? tryDo(() => P.canMove(job), false) : !!(job.fit && job.state === 'review');
@@ -153,6 +153,8 @@
   /* ── the look ──────────────────────────────────────────────────────────────── */
   const CSS = `.engp{display:grid;gap:10px;min-width:0;container-type:inline-size;font:12px var(--sans,system-ui);color:var(--ink,#1c1a17)}
 .engp[hidden]{display:none!important}
+.engpCard{margin-bottom:10px}
+.engpCard:empty{display:none}
 .engpMode{display:flex;flex-wrap:nowrap;gap:2px;padding:2px;min-width:0;border:1px solid var(--line,#e4ddd0);border-radius:9px;background:var(--paper2,#ebe5d9)}
 .engpSeg{flex:1 1 auto;min-width:0;white-space:nowrap;padding:5px 8px;border:0;border-radius:7px;background:transparent;font:600 11px var(--sans,system-ui);color:inherit;cursor:pointer}
 .engpSeg[aria-checked=true]{background:var(--card,#fffefb);box-shadow:0 0 0 1px rgba(28,26,23,.42)}
@@ -160,7 +162,9 @@
 @container (max-width:239px){.engpSeg{padding:5px 4px;font-size:10.5px}}
 .engpFace{display:grid;gap:8px;min-width:0}
 .engpWords,.engpFont{display:block;width:100%;min-width:0;box-sizing:border-box;border:1px solid var(--line,#e4ddd0);border-radius:8px;background:var(--card,#fffefb);color:inherit}
-.engpWords{min-height:56px;resize:none;padding:6px 8px;font:13px/1.4 var(--sans,system-ui);overflow-y:auto}
+.engpBox{position:relative;min-width:0}
+.engpWords{min-height:64px;resize:none;padding:6px 8px 26px;font:13px/1.4 var(--sans,system-ui);overflow-y:auto}
+.engpEmoji{position:absolute;right:5px;bottom:5px;padding:2px 8px}
 .engpFont{padding:6px 8px;font:13px var(--sans,system-ui)}
 .engpWords:disabled,.engpFont:disabled{background:var(--paper2,#ebe5d9);color:var(--ink70,#5b554c)}
 .engpPos{display:grid;gap:4px}
@@ -190,7 +194,7 @@
     const slot = opts.slot !== undefined ? opts.slot : opts.job ? slotOfJob(opts.job) : null, key = pieceKeyOf(line, slot);
     const jobs = () => (opts.jobs ? opts.jobs() : (Eng() && Eng().jobsOf ? Eng().jobsOf(line) : [])) || [];
     const me = { el, key, draw: null };
-    const track = () => { let set = LIVE.get(key); if (!set) LIVE.set(key, set = new Set()); set.add(me); };
+    const track = () => { let set = LIVE.get(key); if (!set) LIVE.set(key, set = new Set()); for (const b of [...set]) if (b !== me && b.el && !b.el.isConnected) set.delete(b); set.add(me); };   // (a card drawn again leaves its old panel behind: forgotten here)
     const untrack = () => { const set = LIVE.get(key); if (set) { set.delete(me); if (!set.size) LIVE.delete(key); } };
     const model = () => {
       const S = Setup(), vm = S && S.read ? S.read(line, { slot: slot || undefined, jobs: jobs() }) : null; if (!vm) return null;
@@ -217,6 +221,23 @@
       tryDo(() => P.update(host, part));
     };
     const paintAll = (vm, d) => { for (const f of ['front', 'back']) paint(vm, d, f); };
+    /* While words, font or mode are staged and not saved, the card's Approve buttons (and its A key) must not approve the OLD fitted words: they are dimmed with a title and a press is stopped before the card sees it. */
+    const GATE = '[data-a="approve"],[data-a="approveBoth"],[data-a="approveFaces"]', GATE_WHY = 'Save or Cancel the edit first';
+    let gateCard = null, gateOn = false;
+    const blockClick = e => { if (gateOn && e.target && e.target.closest && e.target.closest(GATE)) { e.preventDefault(); e.stopImmediatePropagation(); } };
+    const blockKey = e => { if (gateOn && e.key && e.key.toLowerCase() === 'a' && !e.metaKey && !e.ctrlKey && !e.altKey && e.target && e.target.closest && !e.target.closest('input,textarea,select,[contenteditable]')) { e.preventDefault(); e.stopImmediatePropagation(); } };
+    const hookCard = () => {
+      const card = el.closest ? el.closest('.rvItem') : null; if (!card || card === gateCard) return;
+      if (gateCard) { gateCard.removeEventListener('click', blockClick, true); gateCard.removeEventListener('keydown', blockKey, true); }
+      card.addEventListener('click', blockClick, true); card.addEventListener('keydown', blockKey, true); gateCard = card;
+    };
+    const applyGate = on => {
+      gateOn = !!on; hookCard(); if (!gateCard) return;
+      for (const b of gateCard.querySelectorAll(GATE)) {
+        if (on) { if (!b.dataset.engpWas) b.dataset.engpWas = JSON.stringify([b.disabled, b.title]); b.disabled = true; b.title = GATE_WHY; }
+        else if (b.dataset.engpWas) { const [dis, ttl] = tryDo(() => JSON.parse(b.dataset.engpWas), [b.disabled, b.title]); delete b.dataset.engpWas; b.disabled = !!dis; b.title = ttl; }
+      }
+    };
     const draw = () => {
       if (dead) return;
       const m = model(), fs = focusState();
@@ -226,13 +247,16 @@
       el.innerHTML = html(vm, d, { slot, faceSwitch: !!opts.faceSwitch });
       const ta = el.querySelector('.engpWords'); if (ta) growBox(ta);
       { const fs = el.querySelector('.engpFont'); if (fs && fs.selectedOptions[0] && fs.selectedOptions[0].style.fontFamily) fs.style.fontFamily = fs.selectedOptions[0].style.fontFamily; }
+      { const eb = el.querySelector('[data-emoji]'), tb = el.querySelector('.engpWords'), CE = el.ownerDocument.defaultView && el.ownerDocument.defaultView.CNEmojiPicker;   // (Paul's own Emoji button, as the words box of the card had it: it types into the box, so the panel sees an ordinary input)
+        if (eb && !(CE && tb && tryDo(() => CE.attach({ textarea: tb, button: eb, key: 'engp:' + key + ':' + d.face }), false))) eb.remove(); }
+      hookCard(); applyGate(hasPatch(Setup().patchOf(vm, d)));
       const P = Prev(); if (P && P.warm && !draw.warmed) { draw.warmed = true; tryDo(() => P.warm()); }
       const want = fs || (d.focus && el.ownerDocument.activeElement === el.ownerDocument.body ? d.focus : null);
       restoreFocus(want);
       if (want && !el.isConnected) Promise.resolve().then(() => restoreFocus(want));   // (a card is built before it is put in the page)
     };
     me.draw = draw;
-    const redrawLive = () => { for (const b of [...(LIVE.get(key) || [])]) tryDo(() => b.draw()); };
+    const redrawLive = () => { const set = LIVE.get(key); for (const b of [...(set || [])]) { if (b !== me && b.el && !b.el.isConnected) { set.delete(b); continue; } tryDo(() => b.draw()); } };
     const changed = (kind, face) => { try { if (typeof opts.onChange === 'function') opts.onChange({ face, kind, key }); } catch (_) { /* the host's own */ } };
     const setFace = face => {
       const m = model(); if (!m || !['front', 'back'].includes(face) || modesFor(line).length === 0) return;
@@ -298,6 +322,7 @@
       d.dirty = true; d.confirm = ''; d.error = ''; d.noRoom = {};
       const S = Setup(), p = S.patchOf(vm, d), sv = el.querySelector('[data-engp="save"]'), cn = el.querySelector('[data-engp="cancel"]');
       if (sv) sv.disabled = !hasPatch(p) && !d.posTouched;
+      applyGate(hasPatch(p));
       if (cn) cn.disabled = false;
       if (t.dataset.engp === 'font' && t.tagName === 'SELECT') t.style.fontFamily = (t.selectedOptions[0] && t.selectedOptions[0].style.fontFamily) || '';
       paint(vm, d, f); changed(t.dataset.engp, f);
@@ -313,7 +338,7 @@
     const ev = [['click', click], ['input', input], ['change', input], ['keydown', key_], ['focusin', focusin], ['focusout', focusout]];
     for (const [t, f] of ev) el.addEventListener(t, f);
     // the first paint of the thumbnails: the face's own words and position (the card drew them from the job; this makes them the staged ones)
-    return { draw, refresh: draw, setFace, destroy() { dead = true; untrack(); for (const [t, f] of ev) el.removeEventListener(t, f); }, paintAll: () => { const m = model(); if (m) paintAll(m.vm, m.d); } };
+    return { draw, refresh: draw, setFace, destroy() { dead = true; untrack(); for (const [t, f] of ev) el.removeEventListener(t, f); gateOn = false; if (gateCard) { gateCard.removeEventListener('click', blockClick, true); gateCard.removeEventListener('keydown', blockKey, true); } }, paintAll: () => { const m = model(); if (m) paintAll(m.vm, m.d); } };
   }
 
   const BOUND = new WeakMap();
@@ -330,6 +355,12 @@
     } catch (e) { if (typeof console !== 'undefined') console.warn('engraving panel', e); return none; }
   }
 
+  /** A line's piece name, as the order window names it (a necklace of saved charms by all of them, else the design's SKU, the line's SKU or title). */
+  function lineName(x) {
+    const O = dep('CharmNestOrders', './charm-nest-orders.js'), set = O && O.setDesignsOf ? tryDo(() => O.setDesignsOf(x && x.spec), null) : null;
+    return str(set && set.length ? set.join(' + ') : (x && x.spec && x.spec.designSku) || (x && x.line && (x.line.sku || x.line.title)) || '').replace(/_+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, set && set.length ? 80 : 32);
+  }
+
   /** The slot of the Engrave detail card: the Front / Back thumbnails (when the page has CharmNestEngraveCard) above the panel, each click on a thumbnail picking the face the panel edits. */
   function mountPiece(slot, job, o) {
     const none = { destroy() {}, refresh() {}, setFace() {}, panel: null, card: null };
@@ -342,7 +373,7 @@
       slot.appendChild(cardHost); slot.appendChild(panelHost);
       const C = root.CharmNestEngraveCard; let card = null, panel = null;
       const pick = f => { if (panel) panel.setFace(f); };
-      if (C && C.mountPiece) card = tryDo(() => C.mountPiece(cardHost, { row: line, key: job.key, face, onPick: pick, approve: false }), null);
+      if (C && C.mountPiece) card = tryDo(() => C.mountPiece(cardHost, { row: line, key: job.key, face, onPick: pick, approve: false, nameOf: o.nameOf || lineName, isWorking: Eng() && Eng().isWorking ? Eng().isWorking : undefined }), null);
       if (!card) cardHost.remove();
       panel = mount(panelHost, line, {
         job, face, scope: slot, faceSwitch: !card, onVisible: v => { slot.hidden = !v && !card; }, thumb: f => (card && card.thumb ? card.thumb(f) : null),

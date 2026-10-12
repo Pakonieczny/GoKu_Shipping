@@ -65,8 +65,8 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       check(m.panel.w >= 232 - 1, `${w}px: the panel is at least 232px wide: ${Math.round(m.panel.w)}px`);
       check(m.taW >= 200 && m.ta.w >= 200, `${w}px: the text area is a normal width: ${Math.round(m.ta.w)}px (computed ${Math.round(m.taW)})`);
       check(m.sel.t >= m.ta.b - 0.5 && m.sel.w >= 200, `${w}px: the font drop-down is under the text area, full width, touching nothing: select top ${Math.round(m.sel.t)} >= text bottom ${Math.round(m.ta.b)}, width ${Math.round(m.sel.w)}`);
-      const acts = m.buttons.filter(b => !/^(None|Front|Back|Front \+ back)$/.test(b));
-      check(acts.join('|') === 'Save|Cancel', `${w}px: Save and Cancel are the only action buttons: ${acts.join(' | ')}`);
+      const acts = m.buttons.filter(b => !/^(None|Front|Back|Front \+ back|Emoji)$/.test(b));   // (Emoji is Paul's own picker button, beside the words)
+      check(acts.join('|') === 'Save|Cancel', `${w}px: Save and Cancel are the only action buttons (besides the quiet Emoji button): ${acts.join(' | ')}`);
       check(!/ENGRAVES|system read|nothing in the listing|Undo|sure|%/i.test(m.text), `${w}px: none of the old words in the panel: "${m.text.slice(0, 120)}"`);
       if (shots) await page.screenshot({ path: path.join(shots, `panel-${w}.png`) });
     }
@@ -95,6 +95,65 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     }, KEY);
     check(odd.ask.prompt && odd.ask.raw === 'Name One Name Two', 'words nobody could place: the panel asks in one line and shows the buyer\'s own words: ' + JSON.stringify(odd.ask));
     check(odd.locked.words && odd.locked.font && odd.locked.lock === 'Approved by Name One' && odd.locked.pos, 'an approved face is locked (words, font, position off) and says by whom: ' + JSON.stringify(odd.locked));
+
+    // ── the Engrave detail itself: the Emoji button is there, and a staged edit stops Approve from approving the OLD words ──
+    await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: null }); Engrave.render(); });
+    await page.waitForSelector('.pvSetup .engp .engpWords', { timeout: 20000 });
+    const em = await page.evaluate(() => ({ btn: document.querySelectorAll('.pvSetup [data-emoji]').length, picker: !!window.CNEmojiPicker, approve: !!document.querySelector('[data-a=approve]') }));
+    check(!em.picker || em.btn === 1, 'one quiet Emoji button beside the words (the page\'s own picker, attached to the panel\'s text box): ' + JSON.stringify(em));
+    if (em.approve) {
+      const probe = () => page.evaluate(() => { const c = document.querySelector('.rvItem[data-kind=placement]'), t = c.querySelector('.pvH'); let hit = 0; const f = () => { hit++; }; t.addEventListener('keydown', f); t.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true })); t.removeEventListener('keydown', f); return { hit, dis: c.querySelector('[data-a=approve]').disabled, title: c.querySelector('[data-a=approve]').title }; });
+      const before = await probe();
+      await page.fill('.pvSetup .engpWords', 'Name Three');
+      const staged = await probe();
+      check(staged.dis && /Save or Cancel/.test(staged.title) && staged.hit === 0, 'with words staged and not saved, Approve is dimmed ("Save or Cancel the edit first") and the A key never reaches the card: ' + JSON.stringify(staged) + ' (before: ' + JSON.stringify({ hit: before.hit, dis: before.dis }) + ')');
+      await page.click('.pvSetup [data-engp=cancel]');
+      const after = await probe();
+      check(after.dis === before.dis && after.title === before.title && after.hit === before.hit, 'after Cancel Approve and the A key are as they were: ' + JSON.stringify({ hit: after.hit, dis: after.dis }));
+    }
+
+    // ── 7a · in the Engrave detail itself, with the card's Front / Back thumbnails (when this build has the card): a click on a thumbnail picks the face the panel edits ──
+    const hasCard = await page.evaluate(() => !!(window.CharmNestEngraveCard && CharmNestEngraveCard.mountPiece));
+    if (hasCard) {
+      await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: null }); Engrave.render(); });
+      await page.waitForSelector('.pvSetup .engp .engpWords', { timeout: 20000 });
+      const thumbs = await page.evaluate(() => ({ n: document.querySelectorAll('.pvSetup .engFace .engThumb').length, faceSw: !!document.querySelector('.pvSetup .engpFaceSw'), cur: document.querySelector('.pvSetup .engFace[aria-current=true]')?.dataset.face || null, face: document.querySelector('.pvSetup .engp').dataset.face }));
+      check(thumbs.n === 2 && !thumbs.faceSw, 'the card\'s two thumbnails (Front, Back) are above the panel, and the panel\'s own face switch is gone: ' + JSON.stringify(thumbs));
+      check(thumbs.cur === thumbs.face, 'the thumbnail marked current is the face the panel edits: ' + thumbs.cur + ' / ' + thumbs.face);
+      const other = thumbs.face === 'back' ? 'front' : 'back';
+      await page.click(`.pvSetup .engFace[data-face=${other}] .engThumb`);
+      await page.waitForFunction(f => document.querySelector('.pvSetup .engp') && document.querySelector('.pvSetup .engp').dataset.face === f && document.querySelector('.pvSetup .engFace[aria-current=true]')?.dataset.face === f, other, { timeout: 15000 });
+      check(true, 'a click on the ' + other + ' thumbnail switches the editor to the ' + other);
+      await page.fill('.pvSetup .engpWords', 'Name Two');
+      const live = await page.evaluate(f => { const t = document.querySelector(`.pvSetup .engFace[data-face=${f}] .engpvText`), o = f === 'front' ? 'back' : 'front', u = document.querySelector(`.pvSetup .engFace[data-face=${o}] .engpvText`); return { mine: t && t.textContent, other: u && u.textContent }; }, other);
+      check(/name two/i.test(live.mine || '') && !/name two/i.test(live.other || ''), 'typing shows on that face\'s thumbnail in the card at once, not on the other: ' + JSON.stringify(live));
+    } else console.log('  (no CharmNestEngraveCard in this build: the thumbnail checks were skipped)');
+
+    // ── 8 · two discs of one line (when the model has the per-piece override: ENGLINK): disc 2 is edited alone, its draft and its save never touch disc 1 ──
+    const perPiece = await page.evaluate(() => !!(window.CharmNestEngraveFaces && CharmNestEngraveFaces.keyOf));
+    if (perPiece) {
+      const disc = await page.evaluate(KEY => {
+        const row = B.orders.byKey.get(KEY), mk = (slot, text) => ({ key: KEY + '#' + slot, slot, row, state: 'review', text, lines: [text], fit: { centre: [0, 0], angle: 0, size: 10, weight: 'Regular' } }), jobs = [mk('D1', 'Name One'), mk('D2', 'Name Two')];
+        const out = {}; let got = null;
+        CharmNestEngravePanel.DRAFTS.clear();
+        const s = document.createElement('div'); document.body.appendChild(s);
+        const h = CharmNestEngravePanel.mount(s, row, { jobs: () => jobs, job: jobs[1], face: 'back', save: async p => { got = p; return { ok: true }; } });
+        const ta = s.querySelector('.engpWords'); out.text = ta && ta.value; out.disabled = !!(ta && ta.disabled); out.keys = [...CharmNestEngravePanel.DRAFTS.keys()];
+        ta.value = 'Name Three'; ta.dispatchEvent(new Event('input', { bubbles: true }));
+        s.querySelector('[data-engp=save]').click();
+        out.patch = got && JSON.parse(JSON.stringify(got));
+        out.override = got && JSON.parse(JSON.stringify(CharmNestEngraveSetup.buildOverride(row, got, 'Name One', 0)));
+        // disc 1 has a draft of its own
+        const s1 = document.createElement('div'); document.body.appendChild(s1);
+        CharmNestEngravePanel.mount(s1, row, { jobs: () => jobs, job: jobs[0], face: 'back', save: async p => ({ ok: true }) });
+        out.disc1 = s1.querySelector('.engpWords') && s1.querySelector('.engpWords').value; out.keys2 = [...CharmNestEngravePanel.DRAFTS.keys()];
+        h.destroy(); s.remove(); s1.remove(); CharmNestEngravePanel.DRAFTS.clear(); return out;
+      }, KEY);
+      check(disc.text === 'Name Two' && !disc.disabled && disc.keys.join() === KEY + '#D2', 'disc 2 shows its own words in an editable box and has its own draft: ' + JSON.stringify({ text: disc.text, keys: disc.keys }));
+      check(disc.patch && disc.patch.slot === 'D2' && disc.patch.back && disc.patch.back.text === 'Name Three' && !disc.patch.front && !disc.patch.mode, 'Save sends only disc 2\'s back words, marked with its slot: ' + JSON.stringify(disc.patch));
+      check(disc.override && disc.override.pieces && disc.override.pieces.D2 && disc.override.pieces.D2.back.text === 'Name Three' && !disc.override.pieces.D1 && !disc.override.back, 'which becomes pieces.D2.back only: no disc 1 entry, no line-level words: ' + JSON.stringify(disc.override));
+      check(disc.disc1 === 'Name One' && disc.keys2.length === 2, 'disc 1 shows its own words and its own draft: ' + JSON.stringify({ disc1: disc.disc1, keys: disc.keys2 }));
+    } else console.log('  (no per-piece override in this build: the two-disc checks were skipped)');
 
     // ── 7b · the REAL preview component (charm-nest-engrave-preview.js): typing and picking a font change what the thumbnail draws, at once ──
     const real = await page.evaluate(async KEY => {

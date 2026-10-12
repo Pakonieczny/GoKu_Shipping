@@ -7,9 +7,12 @@
  * two independent jobs (own words, font, fit, card, approval, seals, file, record) tied together only by the line: the line is engraved when EVERY face it
  * expects is done. A line with no `spec.engraving`, or with mode "back" and nothing said, runs the code it ran before this file existed.
  *
- *   identity    faceOf(x) · isFront(x) · jobKey(lineKey, slot, face) · parseKey(key) -> { key, lineKey, rowKey, slot, face, pieceKey } · pieceKeyOf(key)
+ *   identity    faceOf(x) · isFront(x) · jobKey(lineKey, slot, face) · parseKey(key) -> { key, lineKey, rowKey, slot, face, pieceKey } · pieceKeyOf(key | x)
+ *               keyOf(x, face?, slot?) -> THE job key of (piece, face), from a job / row / side row / piece record / key (ENGLINK: one key for cards, thumbs, panel, previews, position)
+ *               facesOfPiece(piece, jobs?, setup?) -> { pieceKey, slot, never, faces: [{ face, key, job, expected, state }] }   (Front first; an earring never has a Back slot)
  *               recKey(poolId, face) · parseRecKey(k) -> { poolId, face } · label(face) · title(face) · tag(face)
- *   the line    setupOf(rowOrSpec, override?) -> { mode, faces, front, back, needsPerson, source, why, edited, multi, textSource, confidence, option }
+ *   the line    setupOf(rowOrSpec, override?, slot?) -> { mode, faces, front, back, needsPerson, source, why, edited, multi, textSource, confidence, option, pieces, slot, pieceEdited }
+ *               (slot given: the words of THAT piece: engravingOverride.pieces[slot][face], else the line's; no slot: the line's, with `pieces` also carrying every person's per-piece words)
  *               modeLabel(mode) · describe(setup) · seedFor(setup, face) -> { lines, text, fontWord, how } | null (null: ask the reader (back) / a person)
  *   the plan    planFaces(setup, slots) -> [{ slot, face }]   (slot major, Front before Back) · reconcile(setup, jobs, slots) -> { add, drop, keep }
  *   pieces      groupPieces(jobs) -> [{ slot, pieceKey, label, front, back, jobs }] · pieceCount(jobs) · faceJobs(jobs, slot) -> { front, back }
@@ -55,7 +58,25 @@
     const lineKey = m ? m[1] : k, slot = m && m[2] ? m[2] : null, face = m && m[3] ? FRONT : BACK;
     return { key: k, lineKey, rowKey: lineKey, slot, face, pieceKey: lineKey + (slot ? '#' + slot : '') };
   }
-  const pieceKeyOf = key => parseKey(key).pieceKey;
+  const SLOT_RX = /^(L|R|D\d{1,2})$/, POOL_RX = /^(\d{4,20})_([^_]*)_(\d{1,3})$/;
+  /** What a job, a line row, a side row, a piece record or a key string names: { lineKey, slot, face } (face = what x itself says; a bare line row says back). */
+  function identOf(x) {
+    if (x == null) return { lineKey: '', slot: null, face: BACK };
+    if (typeof x === 'string') { const p = parseKey(x); return { lineKey: p.lineKey, slot: p.slot, face: p.face }; }
+    const k = typeof x.key === 'string' ? parseKey(x.key) : typeof x.pieceKey === 'string' ? parseKey(x.pieceKey) : null;
+    // (a piece of OrderPieces has key = its pool id and its line in `lineKey`; a side row has key = its job key and its line in parentRow; a job has rowKey)
+    const lineKey = str(x.rowKey || x.lineKey || (x.parentRow && x.parentRow.key) || (k ? k.lineKey : ''));
+    const slot = (SLOT_RX.test(str(x.slot)) ? x.slot : null) || (k && k.slot) || (x.side === 'L' || x.side === 'R' ? x.side : null) || null;
+    return { lineKey, slot, face: faceOf(x) };
+  }
+  /** THE one key of an engraving: the job key of (piece, face) = Faces.jobKey(lineKey, slot, face). Everything that shows, edits, approves, previews or positions an engraving carries THIS key, so a face of one
+   *  piece can never be taken for another face or another piece. `face` defaults to the face x itself says (a back for a bare line row); `slot` names the piece for a bare line row (an ear, a disc). */
+  function keyOf(x, face, slot) {
+    const id = identOf(x), f = face === FRONT || face === BACK ? face : id.face;
+    return jobKey(id.lineKey, slot !== undefined && slot !== null ? (SLOT_RX.test(str(slot)) ? slot : null) : id.slot, f);
+  }
+  /** The key of the piece (its faces share it): `<lineKey>[#slot]`. Takes a key as before, or anything keyOf takes. */
+  const pieceKeyOf = x => { const id = identOf(x); return id.lineKey + (id.slot ? '#' + id.slot : ''); };
   /** The key of a saved record: the poolId for a back (unchanged), "<poolId>~front" for a front. */
   const recKey = (poolId, face) => str(poolId) + (face === FRONT ? SUFFIX : '');
   function parseRecKey(k) { k = str(k); return k.endsWith(SUFFIX) ? { poolId: k.slice(0, -SUFFIX.length), face: FRONT } : { poolId: k, face: BACK }; }
@@ -86,16 +107,19 @@
   /** The line's effective engraving setup: spec.engraving (the intake's reading) under the row's engravingOverride (a person's word, which always wins).
    *  `x` is a row ({ spec, engravingOverride }), a spec ({ engraving, engraveCandidate }) or a bare engraving object. No reading at all: today's setup (back when the line has
    *  anything to engrave, none otherwise). */
-  function setupOf(x, override) {
+  function setupOf(x, override, slot) {
     const row = x && typeof x === 'object' ? x : {};
     const spec = row.spec && typeof row.spec === 'object' ? row.spec : (row.engraving !== undefined || row.engraveCandidate !== undefined ? row : null);
     // an earring is never engraved, whatever the reading says and whatever a person picked later: the pick is not in force (it is kept as it was saved, never rewritten), nothing asks
     const never = neverOf(spec ? { spec } : null);
-    if (never) return { v: 1, mode: 'none', faces: [], front: null, back: null, needsPerson: false, source: 'rule', edited: false, multi: false, pieces: null, reviewKind: null, raw: '', textSource: 'none', confidence: 1, why: str(never.why) || NEVER_REASON, option: null, sides: null, by: '', at: 0, never: true };
+    if (never) return { v: 1, mode: 'none', faces: [], front: null, back: null, needsPerson: false, source: 'rule', edited: false, multi: false, pieces: null, reviewKind: null, raw: '', textSource: 'none', confidence: 1, why: str(never.why) || NEVER_REASON, option: null, sides: null, by: '', at: 0, never: true, slot: slot || null, pieceEdited: false };
     let base = spec && spec.engraving && typeof spec.engraving === 'object' ? spec.engraving : (!spec && validMode(row.mode) ? row : null);
     if (base && !validMode(base.mode)) base = null;
     const ov0 = override !== undefined ? override : row.engravingOverride;
-    const ov = ov0 && typeof ov0 === 'object' && (validMode(ov0.mode) || ov0.front !== undefined || ov0.back !== undefined) ? ov0 : null;
+    // a person's words for ONE piece (ENGLINK, Paul 12 Oct 2026 point 6): engravingOverride.pieces[slot][face]; the line-level front / back stay the fallback for every piece without its own entry (old records have none)
+    const ovp = ov0 && typeof ov0 === 'object' && ov0.pieces && typeof ov0.pieces === 'object' ? ov0.pieces : null;
+    const hasPieceWords = !!ovp && Object.keys(ovp).some(sl => SLOT_RX.test(sl) && ovp[sl] && typeof ovp[sl] === 'object' && (ovp[sl].front !== undefined || ovp[sl].back !== undefined));
+    const ov = ov0 && typeof ov0 === 'object' && (validMode(ov0.mode) || ov0.front !== undefined || ov0.back !== undefined || hasPieceWords) ? ov0 : null;
     const candidate = spec ? spec.engraveCandidate !== false : true;
     let mode = ov && validMode(ov.mode) ? ov.mode : base ? base.mode : (candidate ? BACK : 'none');
     // a line the intake calls "none" while a person (or the line itself) has words stays what the intake said unless a person overrides it
@@ -108,18 +132,33 @@
     const front = pick(FRONT), back = pick(BACK);
     const faces = mode === 'both' ? [FRONT, BACK] : mode === FRONT ? [FRONT] : mode === BACK ? [BACK] : [];
     const personalWords = !!(ov && (ov.front !== undefined || ov.back !== undefined));
-    const lacking = faces.some(f => !(f === FRONT ? front : back));
-    // a reading the intake marked for a person (an unlabelled "both", a conflict, one set of words for each ear) stays so until a person speaks; a person who changed only the mode keeps the flag for a face still without words
-    const needsPerson = !!(base && base.needsPerson) && !personalWords && (!ov || lacking) ? true : false;
-    const source = ov ? 'person' : base ? str(base.source) || 'default' : 'default';
-    // words that differ from one ear / disc to the next ({ L: { front, back }, R: ... }): kept as the intake read them, until a person gives the line words of their own
+    // words that differ from one ear / disc to the next ({ L: { front, back }, R: ... }): kept as the intake read them, until a person gives the line words of their own; a person's words for one piece lay over them
     let pieces = null;
     if (base && base.pieces && typeof base.pieces === 'object' && !personalWords && mode !== 'none') {
       for (const sl of Object.keys(base.pieces)) { const q = base.pieces[sl]; if (!q || typeof q !== 'object') continue; const f = mode === BACK ? null : normFace(q.front), b = mode === FRONT ? null : normFace(q.back); if (f || b) (pieces = pieces || {})[sl] = { front: f, back: b }; }
     }
-    return { v: 1, mode, faces, front, back, needsPerson, source, edited: !!ov, multi: faces.length > 1, pieces, reviewKind: base && base.reviewKind ? str(base.reviewKind) : null, raw: base && base.raw ? str(base.raw) : '',
+    if (hasPieceWords && mode !== 'none') {
+      for (const sl of Object.keys(ovp)) {
+        const q = ovp[sl]; if (!SLOT_RX.test(sl) || !q || typeof q !== 'object') continue;
+        // (a piece's own words keep the face's font word when the person named none for the piece: editing the words of disc 2 does not reset the font the face was given)
+        const inh = (n, line) => (n && !n.fontWord && line && line.fontWord ? Object.assign({}, n, { fontWord: line.fontWord }) : n);
+        const f = mode === BACK ? null : inh(normFace(q.front), front), b = mode === FRONT ? null : inh(normFace(q.back), back), was = pieces && pieces[sl];
+        if (f || b) (pieces = pieces || {})[sl] = { front: f || (was && was.front) || null, back: b || (was && was.back) || null };
+      }
+    }
+    // the piece asked for: its own words, else the line's (a face the piece has none for keeps the line's words)
+    const sl0 = slot && SLOT_RX.test(str(slot)) ? slot : null, own = sl0 && pieces ? pieces[sl0] : null;
+    const pieceEdited = !!(sl0 && hasPieceWords && ovp[sl0] && typeof ovp[sl0] === 'object' && (ovp[sl0].front !== undefined || ovp[sl0].back !== undefined));
+    const frontS = (own && own.front) || front, backS = (own && own.back) || back;
+    const lacking = faces.some(f => !(f === FRONT ? frontS : backS));
+    // a reading the intake marked for a person (an unlabelled "both", a conflict, one set of words for each ear) stays so until a person speaks; a person who changed only the mode keeps the flag for a face still without words;
+    // for ONE piece it clears when that piece (or the whole line) has words from a person
+    const spoken = personalWords || pieceEdited;
+    const needsPerson = !!(base && base.needsPerson) && !spoken && (!ov || lacking || (hasPieceWords && !personalWords)) ? true : false;   // (another piece's words from a person do not settle this piece's question)
+    const source = ov ? 'person' : base ? str(base.source) || 'default' : 'default';
+    return { v: 1, mode, faces, front: frontS, back: backS, needsPerson, source, edited: !!ov, multi: faces.length > 1, pieces, reviewKind: base && base.reviewKind ? str(base.reviewKind) : null, raw: base && base.raw ? str(base.raw) : '',
       textSource: base ? str(base.textSource) || 'none' : 'none', confidence: base && Number.isFinite(+base.confidence) ? +base.confidence : (base ? 0.5 : 1),
-      why: ov ? `Set by ${str(ov.by) || 'a person'}` : base ? str(base.why) : '', option: base && base.option ? base.option : null, sides: base && base.sides && typeof base.sides === 'object' ? base.sides : null, by: ov ? str(ov.by) : '', at: ov ? +ov.at || 0 : 0 };
+      why: ov ? `Set by ${str(ov.by) || 'a person'}` : base ? str(base.why) : '', option: base && base.option ? base.option : null, sides: base && base.sides && typeof base.sides === 'object' ? base.sides : null, by: ov ? str(ov.by) : '', at: ov ? +ov.at || 0 : 0, slot: sl0, pieceEdited };
   }
   const modeLabel = mode => ({ none: 'No engraving', front: 'Front only', back: 'Back only', both: 'Front + back' }[mode] || '');
   const joinWords = f => (f && f.lines ? f.lines.join(' / ') : '');
@@ -185,6 +224,36 @@
     const out = [...by.values()].sort((a, b) => slotOrder(a.slot) - slotOrder(b.slot));
     for (const g of out) { g.jobs = [g.front, g.back].filter(Boolean); g.faces = [g.front && FRONT, g.back && BACK].filter(Boolean); }
     return out;
+  }
+
+  /** The jobs of the page (the Engrave module's), for a caller that hands none: nothing in node. */
+  const pageJobs = () => { try { const g = typeof self !== 'undefined' ? self : globalThis, E = g && g.Engrave; return E && E.items ? [...E.items().values()] : []; } catch (_) { return []; } };
+  /** The faces of ONE piece (ENGLINK): what a card shows as its Front and Back slots, each with the key every handler carries. `piece`: a piece key (`<lineKey>[#slot]`), a pool id (`<line>_<n>`: found through the
+   *  copies a job holds), a job, a row / side row, or { lineKey, slot }. `jobs`: the page's jobs (default: Engrave.items()). `setup`: the line's setupOf (marks a face the setup asks for before its job exists).
+   *  → { pieceKey, slot, never, faces: [{ face, key, job|null, expected, state }], legacy: [jobs hidden by the earring rule] }, Front first.
+   *  A normal piece shows both slots (a face nobody engraves is a quiet empty slot: expected false). An earring (spec.engraveNever) never has a Back slot and nothing is expected on it; a Front slot is shown only
+   *  for a front job that already exists (a decided legacy one); a back job it still holds is listed under `legacy`, never as a slot. The copies of a plain quantity-N line share one job: one slot, `job.copies` says how many. */
+  function facesOfPiece(piece, jobs, setup) {
+    const list = (Array.isArray(jobs) ? jobs : pageJobs()).filter(j => j && !j.editingBack);
+    let mine = [], pk = '', slot = null;
+    if (typeof piece === 'string' && POOL_RX.test(piece)) {
+      mine = list.filter(j => (j.copies || []).includes(piece));
+      if (mine.length) { const p0 = parseKey(mine[0].key); pk = p0.pieceKey; slot = p0.slot; mine = list.filter(j => parseKey(j.key).pieceKey === pk); }
+    } else {
+      const id = identOf(piece); pk = id.lineKey + (id.slot ? '#' + id.slot : ''); slot = id.slot;
+      mine = list.filter(j => parseKey(j.key).pieceKey === pk);
+    }
+    const rowOf = piece && typeof piece === 'object' ? piece : (mine[0] && mine[0].row) || null;
+    const never = !!(neverOf(rowOf) || mine.some(j => neverOf(j.row)));
+    const lineKey = pk ? parseKey(pk).lineKey : '';
+    const faces = [], legacy = [];
+    for (const f of FACES) {
+      const job = mine.find(j => faceOf(j) === f) || null;
+      if (never && (f === BACK || !job)) { if (job) legacy.push(job); continue; }
+      const expected = !never && ((!!job && job.state !== 'none') || !!(setup && setup.faces && setup.faces.includes(f)));
+      faces.push({ face: f, key: jobKey(lineKey, slot, f), job, expected, state: job ? str(job.state) : '' });
+    }
+    return { pieceKey: pk, slot, never, faces, legacy };
   }
 
   /* ── status ─────────────────────────────────────────────────────────────── */
@@ -280,5 +349,5 @@
 
   return { FRONT, BACK, FACES, MODES, SUFFIX, STATE_ORDER, DECIDED, faceOf, isFront, label, title, tag, jobKey, parseKey, pieceKeyOf, recKey, parseRecKey, recKeyOf,
     normFace, setupOf, modeLabel, describe, seedFor, planFaces, reconcile, pieceCount, faceJobs, groupPieces, slotLabel, faceStatus, bothFacesDone, bothFacesWritten, combine,
-    approveAllGate, dedupe, pickRecord, recordsOf, panelRows, isDecided, review, neverOf, NEVER_REASON };
+    approveAllGate, dedupe, pickRecord, recordsOf, panelRows, isDecided, review, neverOf, NEVER_REASON, keyOf, facesOfPiece };
 });

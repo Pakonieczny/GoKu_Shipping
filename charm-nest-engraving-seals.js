@@ -22,7 +22,10 @@
     }
     return [...stamps.values()].sort((a,b)=>a.at-b.at || a.id.localeCompare(b.id));
   }
-  function list(job){const seals=merge(job,job?.row?.engrave,...(job?.backs || []),job?.editOriginal);if(!seals.length && (['approved','written','skipped'].includes(job?.state) || job?.needed && job?.approved))seals.push({id:'legacy:'+job.key,how:job.state==='skipped'?'engravePlain':'engraveApproved',at:0,by:job.approvedBy || job.decision?.by || '',...(frontOf(job)?{face:'front'}:{})});return seals;}
+  /* A FRONT job's own record (job.row.engrave: approvedAt, approvedBy, state, no `key` and no `face`) is read as the job's face: without this its bare approvedAt made a BACK seal of the same instant on the front
+     (ENGLINK, 12 Oct 2026: approving the front stamped "BACK ENGRAVING" on the front's card and in the line's seal list). A back's record is read as it always was. */
+  const faced=(job,rec)=>rec && typeof rec==='object' && frontOf(job) && rec.face!=='front'?Object.assign({},rec,{face:'front'}):rec;
+  function list(job){const seals=merge(job,faced(job,job?.row?.engrave),...(job?.backs || []),job?.editOriginal);if(!seals.length && (['approved','written','skipped'].includes(job?.state) || job?.needed && job?.approved))seals.push({id:'legacy:'+job.key,how:job.state==='skipped'?'engravePlain':'engraveApproved',at:0,by:job.approvedBy || job.decision?.by || '',...(frontOf(job)?{face:'front'}:{})});return seals;}
   function keep(job){const seals=list(job);job.engravingSeals=seals;if(job.row){job.row.engrave ||= {};job.row.engrave.seals=seals;}return seals;}
   function fromEvents(events,row){
     const rid=String(row.order?.receiptId || ''),tx=String(row.line?.transactionId || ''),copies=new Set(row.poolIds || []);
@@ -37,7 +40,7 @@
   const regularSize=()=>root?.Seal?.BASE_SIZE || 50;
   function html(job){const seals=list(job);return seals.length && root?.Seal?`<span class="sealRow engravingSeals" data-seal-group data-seal-count="${seals.length}" role="group" aria-label="Engraving approval history">${seals.map(s=>root.Seal.html(s,regularSize(),'engravingSeal')).join('')}</span>`:'';}
   const esc=s=>String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  function record(e){return {key:e.job?.key,engravingSeals:merge(e.job,e.job?.row?.engrave,...(e.job?.backs || []),e.job?.editOriginal,e.back,e.saved),state:e.kind==='approved'?'approved':e.kind==='skipped'?'skipped':e.job?.state,approvedAt:e.kind==='approved'?e.at:0,approvedBy:e.kind==='approved'?e.by:'',decidedAt:e.kind==='skipped'?e.at:0,decidedBy:e.kind==='skipped'?e.by:''};}
+  function record(e){return {key:e.job?.key,engravingSeals:merge(e.job,faced(e.job,e.job?.row?.engrave),...(e.job?.backs || []),e.job?.editOriginal,e.back,faced(e.job,e.saved)),state:e.kind==='approved'?'approved':e.kind==='skipped'?'skipped':e.job?.state,approvedAt:e.kind==='approved'?e.at:0,approvedBy:e.kind==='approved'?e.by:'',decidedAt:e.kind==='skipped'?e.at:0,decidedBy:e.kind==='skipped'?e.by:''};}
   /* ── the back engraving card, one card for every place an order is shown (the order window's Overview and Sheet tab, the sheet window) ──
    * What it says is read from the real data the host hands over (e: {kind, job, text, note, working, reason, back, by, at, saved,
    * pieceLabel, pieceMeta, compact}): one quiet status, the plain reason what is missing, the words as read and what is unclear, the back

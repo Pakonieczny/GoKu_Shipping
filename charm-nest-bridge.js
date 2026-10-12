@@ -5713,7 +5713,9 @@ const Engrave = window.Engrave = (() => {
     for (const pg of allSheets()) {
       if (!pg.recalled) continue;
       for (const bk of pg.backPool || []) {
-        const row = rows.find(r => (bk.poolId && r.poolIds.includes(bk.poolId)) || (String(r.order.receiptId) === String(bk.order) && (!bk.sku || (r.spec && r.spec.designSku) === bk.sku || r.line.sku === bk.sku)));
+        // (the piece's own pool id names its line first; only a record whose piece is in no line is matched by its order and SKU, and then only when ONE line fits: two lines of one SKU in an order are never taken for each other)
+        const mine = rows.filter(r => String(r.order.receiptId) === String(bk.order) && (!bk.sku || (r.spec && r.spec.designSku) === bk.sku || r.line.sku === bk.sku)), byTx = bk.transactionId ? mine.filter(r => String(r.line.transactionId) === String(bk.transactionId)) : [];
+        const row = (bk.poolId && rows.find(r => r.poolIds.includes(bk.poolId))) || (byTx.length === 1 ? byTx[0] : mine.length === 1 ? mine[0] : null);
         if (!row) continue;
         const j = jobForRecord(row, bk);
         const lines = bk.lines && bk.lines.length ? bk.lines : String(bk.text || "").split("\n").filter(Boolean);
@@ -5775,7 +5777,8 @@ const Engrave = window.Engrave = (() => {
     const setup = F.setupOf(row);
     // (a reading the intake marked for a person goes to the cards for a person too: the paid reader never decides it)
     // (BFSIDES: a back line whose words the intake itself read, "2 sides" on a design with its own front art, is read from the setup too: no paid reading, nothing guessed)
-    return jobs.some(isFront) || setup.faces.includes("front") || (setup.faces.includes("back") && setup.back && (setup.edited || setup.sides)) || setup.needsPerson ? setup : null;
+    const ownPieces = !!(setup.edited && setup.pieces && row.engravingOverride && row.engravingOverride.pieces);   // (a person gave a piece its own words)
+    return jobs.some(isFront) || setup.faces.includes("front") || (setup.faces.includes("back") && (setup.back || ownPieces) && (setup.edited || setup.sides)) || setup.needsPerson ? setup : null;
   }
   /** engraveCandidate is the intake's word about WORDS ("something is written to engrave"). A line the buyer asked to engrave on a face without writing any (the intake's reading: needsPerson, "nowords"), or
    *  that a person set up with faces, is raised here so a person is asked rather than the line being cut plain. Custom, add-on and no-design lines are never raised. In memory only: it is read again on every pull. */
@@ -5810,18 +5813,20 @@ const Engrave = window.Engrave = (() => {
     const sp = row.spec, owner = items(), job = jobs[0], F = FACES();
     const todo = jobs.filter(j => ["classify", "reclassify"].includes(j.state) && items().get(j.key) === j);
     const quote = (sp.personalization || []).join(" / ") || setup.raw || null;   // (words only in a note: the intake keeps them as `raw`, so the card shows what the buyer wrote)
+    // (a person's words for ONE piece, engravingOverride.pieces[slot]: that job is read from its own piece's setup, so it needs no one while a sibling piece still does)
+    const pieceSetup = j => (j.slot && row.engravingOverride && row.engravingOverride.pieces && F ? F.setupOf(lineOf(row), undefined, j.slot) : setup);
     for (const j of todo) {
-      const face = faceOf(j), seed = seedOf(setup, j);
+      const face = faceOf(j), sj = pieceSetup(j), seed = seedOf(sj, j);
       j.state = "classify"; j.row.engrave = { needed: false, state: "classify", seals: CNEngravingSeals.merge(j.row.engrave, j) };
       j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
-      if (seed && !setup.needsPerson) {
+      if (seed && !sj.needsPerson) {
         delete j.seededFrom;
         Object.assign(j, { text: seed.text, lines: seed.lines.slice(), source: seed.source, quote, confidence: seed.confidence, questions: [], claudeReasoning: null, requests: { side: face, font: seed.fontWord || null, handwriting: false, image: false }, wordsSource: "spec.engraving", faceFontWord: seed.fontWord || null, ...(seed.how === "single" ? { wordsHow: "single" } : {}) });
         agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}${j.slot ? " · " + SIDES().earOf(j.slot) : ""} · ${face}: "${seed.text.replace(/\n/g, " / ")}" taken from ${seed.how === "person" ? "the person's setup" : "the order"} (${setup.why || setup.mode}), no paid reading`);
         await setReady(j);
       } else {
         // a face with no words, or a reading the intake marked for a person: the card asks (with the intake's own reason), the words it found stand as the proposal, nothing is approved and nothing is paid for
-        const why = setup.needsPerson ? (setup.why || "The note does not say which words go on the front and which on the back") : `The order gives no words for the ${face}`;
+        const why = sj.needsPerson ? (sj.why || "The note does not say which words go on the front and which on the back") : `The order gives no words for the ${face}`;
         const proposal = seed ? seed.text : setup.mode === "none" ? (sp.personalization || []).join("\n") : "", lines = proposal.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
         Object.assign(j, { text: lines.join("\n"), lines, source: "personalization", quote, confidence: 0, questions: [why], claudeReasoning: null, requests: { side: face, font: seed && seed.fontWord || null, handwriting: false, image: false }, wordsSource: "spec.engraving", faceFontWord: seed && seed.fontWord || null });
         toWords(j, why);
@@ -5946,7 +5951,7 @@ const Engrave = window.Engrave = (() => {
     by = by || employeeName() || await needEmployee("Kept with your decision on these words."); if (!by) return;      // (put away: calm, nothing happens, nothing typed is lost)
     const wasText = job.text;
     if (none) { setNone(job, `no ${facedJob(job) ? faceWord(job) + " " : ""}engraving — decided by ${by}`); job.decision = { by, at: Date.now(), none: true }; wordsEvent(job, by, wasText, "none"); Review.remove("eng:" + job.key); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: no engraving (${by})`); Orders.render(); RunCtl.poke(); return job; }
-    job.lineInput = null; job.lineMode = "auto"; job.text = String(text || "").trim(); job.lines = job.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); job.decision = { by, at: Date.now(), text: job.text, note: note || null }; job.questions = []; job.requests = { side: "back", font: null, handwriting: false, image: false }; job.confidence = 1;
+    job.lineInput = null; job.lineMode = "auto"; job.text = String(text || "").trim(); job.lines = job.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); job.decision = { by, at: Date.now(), text: job.text, note: note || null }; job.questions = []; job.requests = { side: faceOf(job), font: null, handwriting: false, image: false }; job.confidence = 1;   // (the face this job is: a front's confirmed words never say "back")
     if (!job.editingBack && !facedJob(job) && job.text && job.text !== (job.row.spec.personalization || []).join("\n")) { try { await DesignLink.call("notes.set", { receiptId: job.row.order.receiptId, text: `${job.row.spec.staffNote ? job.row.spec.staffNote + "\n" : ""}Engrave (${by}): ${job.text.replace(/\n/g, " / ")}` }); } catch (e) { agent({ engrave: true }, "warn", `staff note not saved: ${e.message}`); } }
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: words decided by ${by}: "${job.text.replace(/\n/g, " / ")}"`); wordsEvent(job, by, wasText, "words");
     Review.remove("eng:" + job.key);
@@ -5968,9 +5973,18 @@ const Engrave = window.Engrave = (() => {
     // NO EARRING IS EVER ENGRAVED (ZODNOBACK): a person's pick for an earring is dropped quietly: nothing is stored, no job is made, nothing asks
     if (neverEngraves(row)) return { ok: true, never: true, setup: F.setupOf(row), added: [], dropped: [], skipped: [], kept: [] };
     by = by || employeeName() || await needEmployee("Kept with this change to the engraving."); if (!by) return { ok: false, error: "No name signed in" };
-    const owner = items(), was = F.setupOf(row), at = Date.now(), clean = {};
+    const owner = items(), was = F.setupOf(row), prevOv = row.engravingOverride || null, at = Date.now(), clean = {};
     for (const k of ["mode", "front", "back"]) if (patch && patch[k] !== undefined) clean[k] = patch[k];
+    // a patch for ONE piece (patch.slot, ENGLINK): its words go to engravingOverride.pieces[slot][face], never to the line's, and only that piece's jobs read them again
+    const only = patch && /^(L|R|D\d{1,2})$/.test(String(patch.slot)) ? String(patch.slot) : null;
+    if (only) {
+      const pcs = Object.assign({}, prevOv && prevOv.pieces), q = Object.assign({}, pcs[only]);
+      for (const f of ["front", "back"]) if (clean[f] !== undefined) { const n = F.normFace(clean[f]); if (n) q[f] = n; else delete q[f]; delete clean[f]; }
+      if (Object.keys(q).length) pcs[only] = q; else delete pcs[only];
+      if (Object.keys(pcs).length) clean.pieces = pcs; else clean.pieces = undefined;
+    }
     row.engravingOverride = Object.assign({}, row.engravingOverride || {}, clean, { by, at });
+    if (row.engravingOverride.pieces === undefined) delete row.engravingOverride.pieces;
     const now = F.setupOf(row), before = new Set(jobsOf(row).map(j => j.key)), out = { ok: true, setup: now, added: [], dropped: [], skipped: [], kept: [] };
     raiseCandidate(row);   // (a person who sets faces on a line with no words has made it one to engrave)
     // 1 · the faces the setup no longer asks for
@@ -5986,7 +6000,10 @@ const Engrave = window.Engrave = (() => {
     const sig = (st, f) => JSON.stringify(st[f] || null);
     for (const j of jobsOf(row)) {
       const f = faceOf(j); if (!now.faces.includes(f)) continue;
-      const changed = !was.faces.includes(f) || sig(was, f) !== sig(now, f);
+      if (only && (j.slot || null) !== only) continue;   // (one piece's own words: the other pieces' jobs are not read again)
+      // (each job is compared with ITS piece's words before and after: a piece with its own words is not changed by a sibling's)
+      const wasJ = j.slot ? F.setupOf(row, prevOv, j.slot) : was, nowJ = j.slot ? F.setupOf(row, undefined, j.slot) : now;
+      const changed = !wasJ.faces.includes(f) || sig(wasJ, f) !== sig(nowJ, f);
       if (!changed) continue;
       if (j.state === "none") { Object.assign(j, { state: "classify", fit: null, verify: null, view: null, mask: null, decision: null, lineInput: null, wantSize: null, reason: null, missing: null }); j.row.engrave = { needed: false, state: "classify", seals: CNEngravingSeals.merge(j.row.engrave, j) }; Review.remove("eng:" + j.key); continue; }   // (a person's setup is the newer word over a plain decision)
       if (DECIDED.includes(j.state) || j.state === "none") { out.kept.push(j.key); continue; }
