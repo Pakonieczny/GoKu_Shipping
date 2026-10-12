@@ -121,9 +121,10 @@ const fromQuery = async q => { const r = await lib.handler({ httpMethod: 'GET', 
   { const same = read('4171010675', null, ctx({ optionMaps: { [LID]: { [O.norm('Two designs on this line')]: { [O.norm('4171010675/5213678588')]: { field: 'ignore', value: null } } } } })).spec;
     ok(!same.pair.mismatched && same.pair.second && same.pair.second.answered === 'same', 'a person said "the same on both ears" for that one order: it is read as that');
     ok(read('4173373368', null, ctx({ optionMaps: { [LID]: { [O.norm('Two designs on this line')]: { [O.norm('4171010675/5213678588')]: { field: 'ignore', value: null } } } } })).spec.pair.source === 'alias', 'and the other order keeps the link'); }
-  // a line that is not sold as earrings is never split into ears by a link (nothing changes for a necklace)
+  // a line that is not sold as earrings is never split into ears by a link: with the saved link it is a necklace of TWO charms (SCHROLINK, 12 Oct 2026: one piece of each design, no Left or Right, nothing turned over)
   { const neck = read('4171010675', { title: 'Tennis Ball Racket Charm Necklace', variations: [V('Metal Choice', 'Silver')] }, ctx({ aliases: { [LID]: { pairBySku: { 'HUGGIE HOOPS-TENNIS BALL/RACKET3': { L: BALL, R: RACKET } } } } }), null).spec;
-    ok(!neck.pair.earring && neck.pieceCount === 1, 'a necklace line is one piece, no Left and Right (' + neck.pieceCount + ')'); }
+    ok(!neck.pair.earring && !neck.pair.mismatched && !!neck.pair.set && neck.pieceCount === 2, 'a necklace line is two pieces, one of each design (' + neck.pieceCount + ')');
+    eq([neck.pair.sides, neck.pair.set.designs, neck.pair.members], [[null, null], [BALL, RACKET], null], 'no Left and no Right: the two designs are told as a set only'); }
   pass('B2 · the link is this listing\'s and this SKU\'s only, beats the words, never takes a look-alike, a similar title elsewhere still asks, a person\'s one-order answer stands');
 
   // the old one-design alias path is unchanged
