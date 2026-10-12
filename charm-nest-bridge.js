@@ -14862,16 +14862,19 @@ const OrderWin = window.OrderWin = (() => {
     const sealNow = sealKeyOf(st && st.seal);
     if (!W.nowSeal || W.nowSeal.key !== sealNow) { W.nowSeal = { key: sealNow }; paintPieceSum(); }
     const recent = st ? st.recent : "";
-    // (the Sheet button and the sheet chips answer for one piece each: a piece on no sheet has them greyed, never another piece's)
-    const sh = sheetCard(r);
-    card.hidden = false; card.className = "owNowCard" + (n.tone === "bad" ? " bad" : "") + (st && st.seal ? " sealed" : "");
     // the blocker is the card's own line then, so it is never said twice
     const head = bl && String(bl.text || "").trim() ? { k: bl.label, t: bl.text, row: "" } : { k: n.k, t: n.t || "", row: recent };
     // (with a seal, no "who · time" line beside it: the seal says who and when, Paul 29 Sep 00:19, "the Seal is what matters")
-    const html = `${st ? st.seal : ""}<div><div class="k">${esc(head.k)}</div><div class="t">${esc(head.t)}</div>${splitLine(r)}${st && st.seal ? "" : who}<div class="row">${head.row}<button type="button" class="btn ghost xs" data-go="timeline">Open timeline</button>${sh.btn}</div></div><div class="shs">${sh.chips}</div>`;
+    // The head card is a label, a title and the seal, and nothing to press (Paul, 12 Oct 2026: "remove all buttons from this UI including the
+    // Sheet shortcuts ... extend the title text all the way to the right"). Open timeline and Sheet are the Timeline and Sheet tabs; a piece's own
+    // sheet is its row's status chip (and the Sheet view's tabs); the seal still opens the Timeline on its step. What is left of the old button row
+    // (a split pair's sentence, who did it when no seal says so, a cancelled order's steps) is ONE quiet line under the title.
+    const sub = [splitLine(r), st && st.seal ? "" : who, head.row].filter(Boolean).join("");
+    card.hidden = false; card.className = "owNowCard" + (n.tone === "bad" ? " bad" : "") + (st && st.seal ? " sealed" : "") + (sub ? " hasSub" : "");
+    const html = `${st ? st.seal : ""}<div class="tx"><div class="k">${esc(head.k)}</div><div class="t" title="${esc(head.t)}">${esc(head.t)}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
     if (card._html === html) return; card._html = html; card.innerHTML = html;
-    card.querySelectorAll("[data-go]").forEach(b => b.onclick = () => setView(b.dataset.go));
-    card.querySelectorAll("[data-pc]:not([aria-disabled])").forEach(b => b.onclick = () => openSheetOf(b.dataset.pc, b.dataset.sheet, b.dataset.pool));
+    // (the full words of a cut-short line: the title's is its attribute, the steps of a cancelled order and the split pair's sentence are theirs)
+    card.querySelectorAll(".sub .tlCxList, .sub .owSplit").forEach(x => { x.title = [...x.querySelectorAll(":scope > span")].map(c => [...c.childNodes].map(k => k.textContent.trim()).filter(Boolean).join(" ")).join("\n") || x.textContent.trim(); });
     if (st) tryDo(() => UI.wireNow(card, ev => { setView("timeline"); tryDo(() => W.tl && W.tl.focus(ev)); }));
     // hovering the seal or a stamp says what the step needs (timeline-ui's step explainer); a click pins it on the Timeline
     const rid = String(r.order.receiptId);
@@ -15291,15 +15294,6 @@ const OrderWin = window.OrderWin = (() => {
   /** The small seal of a piece completed by hand (its record, the piece's line key): the press that completed it and "+N" for the rest, Seal.compact, the very
    *  component of the one-line bar; the order's timeline fills in a completion the record does not carry. "" when nothing was recorded (no seal is made up). */
   const handSealOf = (rec, lineKey) => { try { return window.Seal && Seal.compact ? Seal.compact(rec || null, { lineKey, events: W.events || null }) : ""; } catch (_) { return ""; } };
-  /** The completion seal of a piece completed by hand, small, for its "Completed by hand" box (Paul, 5 Oct 2026: "The Complete orders/pieces are missing their
-   *  associated stamp/seal"). One helper (Seal.pieceRow) reads it: the piece's own record by its LINE key (stamps; else what the record names), else what the
-   *  permanent timeline kept of that piece. Nothing recorded: no seal and no words (nothing is invented). */
-  function handBoxSealOf(p, r) {
-    if (!p || !window.Seal || !Seal.pieceRow) return "";
-    const x = p.row || {}, rec = handOfRow(x) || (B.maps.customDone && B.maps.customDone[p.key]) || (x.spec && x.spec.customDone) || null;
-    const events = r && W.evFor === String(r.order.receiptId) ? W.events : null;
-    return tryDo(() => Seal.pieceRow(rec, { events, lineKey: p.key, only: "completion", size: 22 })) || "";
-  }
   /** Why a line is on no sheet, in a few plain words. */
   function pieceWhy(x) {
     const sp = x.spec || {}, pb = (x.problems || [])[0] || null, kind = pb && pb.kind, st = x.state, sku = String(sp.designSku || (x.line && x.line.sku) || "").trim();
@@ -15445,35 +15439,6 @@ const OrderWin = window.OrderWin = (() => {
     const sc = sheetScope(r), p = sc.focus; if (!p || p.loading || p.nested) return null;
     if (p.hand) return sc.multi && !sc.sel ? "Completed by hand: it needs no sheet" : "This piece was completed by hand: it needs no sheet";   // (resolved, never "not on a sheet yet")
     return `${sc.multi && !sc.sel ? "Not on a sheet yet" : "This piece is not on a sheet yet"}: ${p.why}`;   // (all pieces in front: the chip beside it names the piece)
-  }
-  /** The Overview card's own Sheet affordances: its Sheet button and one chip for each sheet of the scope's pieces (all pieces:
-   *  each piece's own, named; a piece on none: a muted chip, inert). */
-  function sheetCard(r) {
-    const sc0 = sheetScope(r), block = sheetBlock(r), list = SV.list && SV.rid === String(r.order.receiptId) ? SV.list : null, chips = [];
-    // (a mismatched pair: when its Left and its Right are not both on ONE sheet each has its own box, "<design> · Left" / "· Right"; both on one sheet it is one box for the pair)
-    const together = p => p.sides && p.sides.length > 1 && p.sides.every(q => q.nested) && new Set(p.sides.flatMap(q => q.sheets.map(h => h.id || h.page || h.label))).size === 1;
-    // (boxes are for the sheets a piece IS on, as they always were: an ear on no sheet gets no grey box when its pair has an ear on one, the sentence under the pill says where it is; a pair with no ear on a sheet is the line's one grey box)
-    const sc = Object.assign({}, sc0, { mine: sc0.mine.flatMap(p => p.sides && p.sides.length > 1 ? (together(p) ? [Object.assign({}, p, { name: p.name + " · Left + Right" })] : p.nested ? p.sides.filter(q => q.nested) : [p]) : [p]) });
-    const named = (sc0.multi && !sc0.sel) || sc0.mine.some(p => p.sides && p.sides.length > 1);
-    for (const p of sc.mine) {
-      if (p.loading) continue;
-      if (p.nested) for (const h of p.sheets) {
-        const e = list && list.find(s => h.id && s.id ? h.id === s.id : h.page && s.page === h.page), state = (e && e.state) || "";
-        chips.push(`<button type="button" class="owShChip" data-pc="${esc(p.key)}" data-sheet="${esc(h.id || "")}" data-pool="${esc(h.pools[0] || "")}" style="--c:${esc(colorOf(h.metal || p.metal))}"><i></i><span><b>${esc(e ? sheetName(e) : h.label)}</b><span>${esc(named ? p.name + (state ? " · " + state : "") : state || "open it")}</span></span></button>`);
-      } else if (p.hand) {
-        const why = named ? "Completed by hand: it needs no sheet" : "This piece was completed by hand: it needs no sheet";   // (resolved: the chip is greyed, and says so)
-        const chip = `<button type="button" class="owShChip off" data-pc="${esc(p.key)}" data-hand="1" aria-disabled="true" data-why="${esc(why)}" title="${esc(why)}"><i></i><span><b>Completed by hand</b><span>${esc(named ? p.name : "It needs no sheet")}</span></span></button>`;
-        // (with several pieces each box is its own piece's: it draws that piece's completion seal. A single piece's seal is the card's own, drawn once beside it)
-        const seal = named ? handBoxSealOf(p, r) : "";
-        chips.push(seal ? `<span class="owShItem">${chip}${seal}</span>` : chip);
-      } else {
-        const why = `${named ? "Not on a sheet yet" : "This piece is not on a sheet yet"}: ${p.why}`;   // (named: the chip says whose it is)
-        chips.push(`<button type="button" class="owShChip off" data-pc="${esc(p.key)}" aria-disabled="true" data-why="${esc(why)}" title="${esc(why)}"><i></i><span><b>Not on a sheet yet</b><span>${esc(named ? p.name : upperFirst(p.why))}</span></span></button>`);
-      }
-    }
-    const shown = chips.slice(0, 4);
-    return { btn: `<button type="button" class="btn ghost xs${block ? " off" : ""}" data-go="sheet"${block ? ` aria-disabled="true" data-why="${esc(block)}" title="${esc(block)}"` : ""}>Sheet</button>`,
-      chips: shown.join("") + (chips.length > shown.length ? `<span class="owShMore">+${chips.length - shown.length} more</span>` : "") };
   }
   /** A chip for one piece's own sheet: the Sheet view opens on that sheet, with that piece's charm chosen. */
   function openSheetOf(key, sid, pool) {

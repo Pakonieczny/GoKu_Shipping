@@ -5,7 +5,7 @@
 // Proved here, in headless Chromium over the real charmNestLibrary ops and an in-memory store (nothing live, no Etsy, no paid call):
 //  - every state the row can be in says ONE short plain thing: "GF Sheet 1" (on a sheet), the same with a small check (cut, or its set sent to the
 //    laser), "Waiting for a sheet", "On hold", "Cancelled", "Sorted", "Shipped", "Completed"; never "On ...", never "next: ..." anywhere in the window
-//  - the chip is the Sheet card's own (owShChip), in the app's type (not monospace, not brown), never cut short with an ellipsis, a dot in the
+//  - the chip is the old Sheet card's chip style (owShChip; the card itself has no chips since 12 Oct), in the app's type (not monospace, not brown), never cut short with an ellipsis, a dot in the
 //    sheet's metal; hollow for waiting and cancelled; the Hold button's orange for on hold
 //  - a sheet's chip is a button (aria-label "Open GF Sheet 1", in the tab order): a press or Enter opens that sheet in the Sheet view (no pop-up
 //    over the pop-up), and does not press the row; the others only say where the piece is
@@ -266,7 +266,9 @@ async function main() {
       assert(held.every(r => r.chip.cls === 'hold' && r.chip.tag === 'SPAN' && r.chip.aria === null), what + ': said, not pressed (there is no sheet to open): ' + JSON.stringify(held.map(r => r.chip)));
       assert.equal(R.every(r => r.hold === 0), plainRows, what + ': ' + (plainRows ? 'no Hold button of its own (the order is held)' : 'the Hold button is still there'));
       assert((await scopeOf()).every(p => !p.nested), what + ': the Sheet tab agrees: on no sheet ' + JSON.stringify(await scopeOf()));
-      assert.equal(await page.evaluate(() => document.querySelectorAll('#owNowCard .owShChip.off').length), 2, what + ': the card above says Not on a sheet yet, twice');
+      // (the card above no longer carries a Sheet button or a sheet chip per piece, Paul 12 Oct 2026: the Sheet tab, greyed above, and these rows say it)
+      assert.equal(await page.evaluate(() => document.querySelectorAll('#owNowCard button, #owNowCard .owShChip, #owNowCard .shs, #owNowCard [data-go], #owNowCard [data-pc]').length), 0, what + ': the card above has no buttons and no sheet chips');
+      assert.equal(await page.evaluate(() => document.querySelector('.owTabsV [data-ow-view="sheet"]').getAttribute('aria-disabled')), 'true', what + ': the Sheet tab says it too: no sheet to open');
       const said = await page.evaluate(() => document.getElementById('owPcSum').textContent);
       assert(!/next\s*:|Waiting|Engraved|Laser|Nested|Sorted/i.test(said.replace(/ITS PIECES.*?SLOWEST ONE IS/i, '')), what + ': no step after the sheet, no "Waiting", no "next: ...": ' + said);
       await nothing(what);
@@ -328,7 +330,7 @@ async function main() {
     await page3.route(u => /\/charm-nest-bridge\.js(\?|$)/.test(u.pathname + u.search), r => r.fulfill(js(forgot)));
     await seedPage(page3, errors3);
     await page3.evaluate(k => OrderWin.open(k), kOf(F2, 'h1'));
-    await page3.waitForFunction(() => document.querySelectorAll('#owPcSum .pcSt').length === 2 && [...document.querySelectorAll('#owNowCard .owShChip')].length === 2, null, { timeout: 20000 });
+    await page3.waitForFunction(() => document.querySelectorAll('#owPcSum .pcSt').length === 2 && !document.getElementById('owNowCard').hidden, null, { timeout: 20000 });
     const mutantChips = await page3.evaluate(() => [...document.querySelectorAll('#owPcSum .pcSt')].map(c => c.textContent.trim()));
     assert.notDeepEqual(mutantChips, ['On hold', 'On hold'], 'the mutant that forgets the hold is caught by the held case: ' + JSON.stringify(mutantChips));
     await page3.close();
