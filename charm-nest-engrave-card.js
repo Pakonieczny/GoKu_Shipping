@@ -8,7 +8,7 @@
  *       state (of a face and of the card, the worst of its faces): words | busy | approve | approved | plain.   o: { nameOf(row), isWorking(job), seen(job), events }
  *       ENGSMART (Paul, 12 Oct 2026, round 2: "if there is no engraving, it should not show it, if there is only back engraving then show that, only front then show only that, both then both"):
  *       a face the engraving does not need is null and is NOT drawn at all: no dashed empty slot, no "Front" over nothing. The faces are the line's setup (what the system read or a person chose), or, while a
- *       person is changing the mode in the Engrave tab's panel, the STAGED mode (o.stage = { mode, faces: { front: { text, font }, back: {...} } }); an approved face is shown whatever the setup says now.
+ *       person is changing the mode in the Engrave tab's panel, the STAGED mode (o.stage = { mode, faces: { front: { text, font }, back: {...} } }); a face that has a live placement job (not cut plain) is shown too: it is what will be approved.
  *       A line that engraves nothing has no card (o.keepEmpty: the Engrave detail keeps the piece's header while None is staged). Back is ALWAYS null for an earring (CharmNestEngraveFaces.neverOf): an
  *       earring has no card at all unless a decided front job is already there, and then only its Front.
  *   CharmNestEngraveCard.html(piece, o)      the card's markup (o.approve === false: no Approve / Approved block, the Engrave detail's card; o.current: the face shown, aria-current)
