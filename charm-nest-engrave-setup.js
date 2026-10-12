@@ -221,7 +221,7 @@
       // a job still being classified takes its words from the setup itself
       for (const j of env.jobsOf(line)) {
         const face = faceOfJob(j); if (!setup.faces.includes(face) || DECIDED.includes(j.state) || OPEN_STATES.includes(j.state)) continue;
-        const seed = F.seedFor(setup, face); if (!seed || sameWords(j, seed)) continue;
+        const seed = F.seedFor(setup, face); if (!seed || (sameWords(j, seed) && !(patch && patch[face] !== undefined && str(j.faceFontWord) !== str(seed.fontWord)))) continue;   // (the words, or the font the person picked for this face, differ from the job's)
         await env.seed(j, Object.assign({}, seed, { by })); res.seeded.push(j.key);
       }
     } catch (e) {

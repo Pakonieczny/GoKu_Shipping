@@ -60,7 +60,7 @@
     let d = DRAFTS.get(key);
     if (d && d.sig !== vm.sig && !d.dirty && !d.posTouched && !d.busy) d = null;   // what the piece says changed under an untouched draft: start again from it
     if (!d) {
-      d = { key, sig: vm.sig, mode: vm.mode, face: null, shown: '', faces: {}, dirty: false, posTouched: false, snaps: {}, moved: {}, busy: '', error: '', confirm: '', confirmLines: null, focus: null };
+      d = { key, sig: vm.sig, mode: vm.mode, face: null, shown: '', faces: {}, dirty: false, posTouched: false, snaps: {}, moved: {}, noRoom: {}, busy: '', error: '', confirm: '', confirmLines: null, focus: null };
       for (const f of ['front', 'back']) { const r = vm.rows.find(x => x.face === f); d.faces[f] = { text: r ? r.text : '', font: r ? r.fontWord : '' }; }
       DRAFTS.set(key, d);
     }
@@ -117,15 +117,17 @@
   };
   const POS_BUTTONS = [['left', 'Move left'], ['up', 'Move up'], ['down', 'Move down'], ['right', 'Move right'], ['centre', 'Centre'], ['smaller', 'Smaller'], ['larger', 'Larger']];
   const posButton = (k, t, off) => `<button type="button" class="engpPb" data-engp="pos" data-act="${k}" title="${esc(off || t)}" aria-label="${esc(t)}"${off ? ' disabled' : ''}><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg></button>`;
-  const NOFIT = 'Placed once the words are fitted';
+  const NOFIT = 'Placed once the words are fitted', NOROOM = 'No room that way';
 
   function faceHtml(vm, d, face, id, slot) {
     const cur = vm.rows.find(r => r.face === face), x = d.faces[face] || { text: '', font: '' }, locked = !!(cur && cur.locked), per = !!(cur && cur.perPiece), dis = d.busy ? ' disabled' : '';
     const words = `<textarea class="engpWords" id="${id}" data-engp="words" data-face="${face}" rows="2" placeholder="Words for the ${face}" aria-label="${cap1(face)} words"${locked || per || d.busy ? ' disabled' : ''}>${esc(per ? '' : x.text)}</textarea>`;
     const font = `<select class="engpFont" data-engp="font" data-face="${face}" aria-label="${cap1(face)} font"${locked || d.busy ? ' disabled' : ''}>${fontOptions(vm, x.font)}</select>`;
     const job = faceJobOf(vm, face, slot), P = Pos();
-    const off = locked ? 'Approved: nothing moves' : !job || !job.fit ? NOFIT : (job.state && job.state !== 'review' ? NOFIT : '');
-    const pos = P ? `<div class="engpPos"><span class="engpLbl">Position</span><span class="engpRow" role="group" aria-label="${cap1(face)} position">${POS_BUTTONS.map(([k, t]) => posButton(k, t, d.busy ? NOFIT : off)).join('')}</span></div>` : '';
+    const can = !job || locked ? false : P && P.canMove ? tryDo(() => P.canMove(job), false) : !!(job.fit && job.state === 'review');
+    const off = locked || (job && !can && job.state && job.state !== 'review') ? 'Approved: nothing moves' : !can ? NOFIT : '';
+    const stuck = (job && d.noRoom && d.noRoom[job.key]) || {};
+    const pos = P ? `<div class="engpPos"><span class="engpLbl">Position</span><span class="engpRow" role="group" aria-label="${cap1(face)} position">${POS_BUTTONS.map(([k, t]) => posButton(k, t, d.busy ? NOFIT : off || (stuck[k] ? NOROOM : ''))).join('')}</span></div>` : '';
     const lock = locked ? `<div class="engpLock" role="status">${cur.lockState === 'skipped' ? 'Cut plain' : 'Approved'}${cur.lockBy ? ' by ' + esc(cur.lockBy) : ''}</div>` : per ? `<div class="engpLock" role="status">Differs per piece</div>` : '';
     return `<div class="engpFace" data-face="${face}">${words}${font}${pos}${lock}</div>`;
   }
@@ -280,7 +282,10 @@
         if (act === 'left') r = P.nudge(job, -step, 0); else if (act === 'right') r = P.nudge(job, step, 0);
         else if (act === 'up') r = P.nudge(job, 0, step); else if (act === 'down') r = P.nudge(job, 0, -step);
         else if (act === 'centre') r = P.centre(job); else if (act === 'smaller') r = P.size(job, 0.95); else if (act === 'larger') r = P.size(job, 1.05);
-        if (r && r.ok === false) return;                      // (no room: the text stays; the page already said so)
+        // no room (refused, or stopped at the edge of the safe area): that button looks off, with its title; any other move that works gives the room back
+        const stuck = !!r && (r.ok === false || r.clamped === true);
+        if (stuck) d.noRoom[job.key] = { [act]: true }; else delete d.noRoom[job.key];
+        if (r && r.ok === false) { draw(); return; }          // (the text stays; the page already said so)
         d.posTouched = true; d.moved[job.key] = true; draw(); paintAll(vm, d); changed('position', d.face);
       }
     };
@@ -289,7 +294,7 @@
       const m = model(); if (!m) return; const { vm, d } = m, f = t.dataset.face; if (!f) return;
       const x = d.faces[f] || (d.faces[f] = { text: '', font: '' });
       if (t.dataset.engp === 'words') { x.text = t.value; growBox(t); } else if (t.dataset.engp === 'font') x.font = t.value; else return;
-      d.dirty = true; d.confirm = ''; d.error = '';
+      d.dirty = true; d.confirm = ''; d.error = ''; d.noRoom = {};
       const S = Setup(), p = S.patchOf(vm, d), sv = el.querySelector('[data-engp="save"]'), cn = el.querySelector('[data-engp="cancel"]');
       if (sv) sv.disabled = !hasPatch(p) && !d.posTouched;
       if (cn) cn.disabled = false;
@@ -339,7 +344,7 @@
       if (C && C.mountPiece) card = tryDo(() => C.mountPiece(cardHost, { row: line, key: job.key, face, onPick: pick, approve: false }), null);
       if (!card) cardHost.remove();
       panel = mount(panelHost, line, {
-        job, face, scope: slot, faceSwitch: !card, onVisible: v => { slot.hidden = !v && !card; },
+        job, face, scope: slot, faceSwitch: !card, onVisible: v => { slot.hidden = !v && !card; }, thumb: f => (card && card.thumb ? card.thumb(f) : null),
         onFace: f => {
           if (card && card.update) tryDo(() => card.update({ face: f }));
           // the card in front is for the face being edited: another face that has its own placement is shown by the tab itself (its card is drawn again; the staged edit stays)
