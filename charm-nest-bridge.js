@@ -1414,7 +1414,7 @@ const Orders = window.Orders = (() => {
   const mapsSame = () => mapsRead[0] === B.maps.optionMaps && mapsRead[1] === B.maps.aliases && mapsRead[2] === B.maps.noDesign;
   // FLAGWHY: what the orders the page holds say about each listing's SKUs (O.seenSkus, rebuilt on every pass of interpretAll): a line's SKU is told to be an option's own, or shared, from them
   let seenIx = {};
-  const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, listingSkus: B.maps.listingSkus, seen: seenIx, masterEntry: sku => Master.entryFor(sku), masterLoose: sku => Master.looseFor(sku) });
+  const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, listingSkus: B.maps.listingSkus, seen: seenIx, masterEntry: sku => Master.entryFor(sku), masterLoose: sku => Master.looseFor(sku), masterShared: sku => Master.sharedFor(sku) });
   /** The pull rule (Settings → Pull orders): every open order, those due by a date, or the N most urgent by ship-by date. */
   function applyPullRule(orders) {
     const mode = S.settings.pullMode || "all";
@@ -1431,6 +1431,7 @@ const Orders = window.Orders = (() => {
   const typoOf = sku => (O.knownTypo ? O.knownTypo(sku) : "");   // (the one known typo, KNOWN_SKU_TYPOS in charm-nest-orders.js: the design it stands for is read from the library like any SKU's)
   const nameOf = sku => (O.knownName ? O.knownName(sku) : "");   // (a SKU Paul named as a design, KNOWN_SKU_NAMES in charm-nest-orders.js: read from the library the same way)
   const libFacts = sku => { const e = sku ? Master.entryFor(sku) : null; return e ? `${e.blocked ? "b:" + e.blocked : "ok"}|${e.sizes ? Object.entries(e.sizes).map(([k, v]) => (v ? "+" : "-") + k).join("\n") : ""}` : ""; };
+  const formFacts = sku => { try { const f = O.masterForm ? O.masterForm(sku, { masterEntry: s => Master.entryFor(s), masterShared: s => Master.sharedFor(s) }) : null; return f ? f.form + "/" + f.by : ""; } catch (_) { return ""; } };
   function inputsOf(row) {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
     const own = m.listingSkus && O.inventorySku(l, m.listingSkus[String(l.listingId)]);
@@ -1443,6 +1444,8 @@ const Orders = window.Orders = (() => {
       libFacts(Master.looseFor(l.sku)), m.listingSkus, own ? libFacts(own.sku) + "|" + libFacts(Master.looseFor(own.sku)) + "|" + libFacts(typoOf(own.sku)) + "|" + libFacts(nameOf(own.sku)) : "",
       // a SKU that is exactly a known typo reads as its master design: the line is read again when the library gets, loses or blocks that design
       libFacts(typoOf(l.sku)), libFacts(nameOf(l.sku)),   // (and the design Paul named for the SKU: the line is read again when the library gets MUSIC4)
+      // the form of the design the SKU is (huggie, earring, necklace: read from every name its drawing carries) and, for a line the form guard holds or that waits for an unknown SKU, the library's size (the siblings it offers are read from it): HUGGIEGUARD
+      formFacts(l.sku), row.spec && (row.spec.formHold || (row.spec.problems || []).some(p => p.kind === "unmatchedSku")) ? B.master.entries.size : 0,
       // the two designs of a saved pair and the library's word on each; a line that waits for its second design is read again when the library gets more designs (the one its words name may just have been indexed)
       link ? libFacts(String(link.L || "").trim().toUpperCase()) + "|" + libFacts(String(link.R || "").trim().toUpperCase()) : "",
       row.spec && row.spec.pair && row.spec.pair.second && !row.spec.pair.second.answered ? B.master.entries.size : 0,
@@ -2315,6 +2318,15 @@ const Master = window.Master = (() => {
     if (looseIx.entries !== e || looseIx.size !== e.size) { const m = new Map(); for (const k of e.keys()) { const key = O.looseKey(k); m.set(key, m.has(key) ? "" : k); } looseIx = { entries: e, size: e.size, map: m }; }
     return looseIx.map.get(O.looseKey(sku)) || "";
   }
+  /* The master SKUs that hold the same design file as a SKU (HUGGIEGUARD, 12 Oct 2026): the library keeps one drawing under several names ("SCHRODINGER CAT" and "SCHRODINGER CAT 2 (HUGGIE)" are one file), and the
+     orders module reads a design's FORM from every name it carries (charm-nest-orders.js masterForm). Made again when the library held is replaced or grows, like looseFor. */
+  let sharedIx = { entries: null, size: -1, map: null };
+  function sharedFor(sku) {
+    const e = B.master.entries;
+    if (sharedIx.entries !== e || sharedIx.size !== e.size) { const m = new Map(); for (const [k, v] of e) { const f = O.designFile(v); if (!f) continue; const a = m.get(f); if (a) a.push(k); else m.set(f, [k]); } sharedIx = { entries: e, size: e.size, map: m }; }
+    const own = e.get(String(sku || "").toUpperCase()), f = own ? O.designFile(own) : "";
+    return f ? sharedIx.map.get(f) || [] : [];
+  }
   let showAll = false;                                              // the grid draws 600 tiles until asked for the rest
   let reindexAll = false;                                           // by default a SKU the library already holds is left alone
   /* The Charm Repo is locked for everything that adds, removes, changes or hands out a charm file (Paul, 11 Oct 2026): ONE password
@@ -3003,7 +3015,7 @@ const Master = window.Master = (() => {
     // a charm's .ai file is handed out only with the download password: the server mints the link, the browser saves the bytes
     each("dl", b => b.onclick = () => downloadCharm(b.dataset.dl, b.dataset.size || "", b));
   }
-  return { entryFor, looseFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, unlockUpload, addFiles, downloadCharm, looksLikeMaster, render, patch, patchMany, saveCustom, sameDesign, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
+  return { entryFor, looseFor, sharedFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, unlockUpload, addFiles, downloadCharm, looksLikeMaster, render, patch, patchMany, saveCustom, sameDesign, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();
 
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
@@ -3272,8 +3284,10 @@ const Pool = window.Pool = (() => {
     if (sp.ownDesign) { row.state = "held"; row.reason = O.specialOf.addOn.wait; return null; }
     row.problems = row.problems.filter(p => !["unmatchedSku", "blockedSku", "missingSize", "oversize"].includes(p.kind));   // re-derived below on every attempt
     if (row.problems.length) { row.state = "held"; row.reason = Review.problemText(row.problems[0]); return null; }
+    // HUGGIEGUARD: a line the form guard holds (a necklace that read as a huggie design, charm-nest-orders.js section 3b) has no design on the row and is never pooled: it waits for a person with the plain line
+    if (sp.formHold) { const hp = (sp.problems || []).find(p => p.formHold); if (hp) row.problems.push(hp); row.state = "unmatched"; row.reason = sp.formHold.reason; return null; }
     let entry = Master.entryFor(sp.designSku) || await Master.fetchEntry(sp.designSku);
-    if (!entry) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push({ kind: "unmatchedSku", reason: "not in any master file", sku: sp.designSku, listingId: String(row.line.listingId || ""), title: row.line.title }); agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: not in any master file`); return null; }
+    if (!entry) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push(Object.assign({ kind: "unmatchedSku", reason: "not in any master file", sku: sp.designSku, listingId: String(row.line.listingId || ""), title: row.line.title }, sp.siblings && sp.siblings.length ? { siblings: sp.siblings } : {})); agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: not in any master file`); return null; }
     if (entry.blocked) { row.state = "held"; row.reason = `SKU blocked: ${entry.blocked}`; row.problems.push({ kind: "blockedSku", reason: entry.blocked, sku: sp.designSku }); return null; }
     if (entry.sizes && Object.keys(entry.sizes).length && !(sp.size && entry.sizes[sp.size])) { row.state = "held"; row.reason = `no design for size ${sp.size || "(none)"}`; row.problems.push({ kind: "missingSize", sku: sp.designSku, size: sp.size, available: Object.keys(entry.sizes) }); return null; }
     const src = await masterCharm(entry, sp.size);
@@ -11834,7 +11848,7 @@ const Review = window.Review = (() => {
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
-  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.letter ? `option "${p.optionName}: ${p.optionValue}" \u2014 ${p.letter.why}` : p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
+  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.letter ? `option "${p.optionName}: ${p.optionValue}" \u2014 ${p.letter.why}` : p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? (p.formHold ? p.reason : `SKU ${p.sku || "?"}: ${p.reason}`) : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
    *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
@@ -15306,6 +15320,7 @@ const OrderWin = window.OrderWin = (() => {
     if (st === "gone") return "it was cancelled";
     if (st === "skipped") return "it is skipped";
     if (!x.hold && handOfRow(x)) return HAND_WHY;
+    if (sp.formHold) return sp.formHold.reason;   // (HUGGIEGUARD: the design its SKU names is another form than the listing)
     if (kind === "unmatchedSku" || st === "unmatched" || (x.hold && /master file|unknown sku/i.test(String(x.reason || "")))) return sku ? "its SKU is not in any master file" : "it has no SKU";
     if (kind === "needsMapping") return "one of its options is not mapped yet";
     if (kind === "needsMaterial") return "its metal is not chosen yet";

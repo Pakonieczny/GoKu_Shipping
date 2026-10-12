@@ -701,6 +701,102 @@
     const bad = k => (skuFamilyConflict(k, o.line) ? 2 : 0) + (/\(HUGGIE\)\s*$/i.test(k) && !huggieLine ? 1 : 0);
     return [...found.values()].sort((a, b) => a.rank - b.rank || (a.rank ? bad(a.sku) - bad(b.sku) : 0) || a.sku.length - b.sku.length || a.sku.localeCompare(b.sku)).slice(0, max).map(x => ({ sku: x.sku, why: x.why }));
   }
+  /* ═══ 3b · THE FORM GUARD (HUGGIEGUARD, 12 Oct 2026) ═════════════════════════════════════════════════════════════════════
+     Paul, on order 4198409468 (Etsy SKU "SCHRODINGER CAT", Jewellery: Necklace, Silver, 18"): "This order is a dual piece/charm necklace and the SKU you currently have associated with is
+     for the (Huggie) version of this charm. Since this is a necklace piece how did this get past your safeguards? This should be an obvious one."
+     WHY IT GOT PAST: resolveSku takes a transaction SKU that is a master SKU as it stands (source "transaction"), and nothing else looked at WHAT that master entry is. The only
+     form check there was (skuFamilyConflict) reads the WORDS NECKLACE / EARRING / STUD / HUGGIE / HOOP in the SKU text, and only on the paths that come from Etsy's inventory table; the
+     master's plain "SCHRODINGER CAT" has none of those words. It is the same drawing as "SCHRODINGER CAT 2 (HUGGIE)" (one design file, charmnest/master/SCHRODINGER_CAT.ai, 21.2 x 24.3 pt:
+     the library keeps one drawing under several SKU names), while the necklace charms are the numbered "SCHRODINGER CAT 1" and "SCHRODINGER CAT 2" (29 to 31 pt). The line read as that huggie drawing,
+     with no question, and its vector picture showed the huggie skull cat.
+     THE GUARD: every master entry and every line gets a FORM, "huggie" | "earring" | "necklace" | "unknown", from signals that already exist:
+       a master entry: its SKU text ("(HUGGIE)", "HUGGIE HOOPS- X", "HOOPS- X", an EARRING or STUD word, a NECKLACE / CHOKER / PENDANT word; two families in one SKU say nothing); else the design FILE it
+         shares with other SKUs (ctx.masterShared: the library keeps one drawing under several names): a plain-named SKU on a drawing that a (HUGGIE)-named SKU also holds is the huggie drawing when
+         the huggie names are at least as many as the plain ones (SCHRODINGER CAT and "SCHRODINGER CAT 2 (HUGGIE)": one each), and the drawing's file is named for a huggie (".._HUGGIE_.ai",
+         "HUGGIE_HOOPS-_X.ai") counts as one more huggie name; a drawing that six plain SKUs hold and one (HUGGIE) SKU is not a huggie drawing; else a plain X whose "X (HUGGIE)" (or "HUGGIE HOOPS- X")
+         is a DIFFERENT drawing is the necklace-size charm of that design (1,330 of the master's SKUs: the shop draws the huggie version apart, "soft": it only keeps a huggie line off it);
+       a line: a Huggie CHARM SET option; an option that says the form (Type / Style / Necklace or Earrings, a person's saved form answer first); a necklace length option; the earring words
+         (lineSignals: earring, stud, huggies, hoop words, the shop's own earring SKUs) and a person's answer to "is this a pair of earrings?"; the title's family when it says necklace; the -CO charm-only mark.
+     THE RULE: an automatic match (the transaction SKU as it stands, its master spelling, -CO, a known typo or name, Etsy's inventory SKU, a letter-family member, two designs named in words) never
+     crosses these forms: a NECKLACE line never takes a huggie design, a HUGGIE line never takes a necklace design, an EARRING (stud) line never takes a huggie design. An unknown form on either
+     side never clashes, and the SKU-word checks that already existed (a necklace SKU on an earrings listing and the reverse) are left exactly as they were. A clash is not cut: the line waits for a
+     person with ONE plain line, and the numbered siblings of the same name that fit the line are offered (spec.siblings).
+     A person's saved answer for the listing and SKU (alias, option map, saved pair) is never touched: it wins, also over an exact master SKU (resolveSku trusts the exact SKU; the answer is read here). */
+  const FORMS = Object.freeze(["huggie", "earring", "necklace", "unknown"]);
+  const FORM_TEXT = { huggie: [/\(\s*HUGGIES?\s*\)/, /(?:^|[^A-Z0-9_])HUGGIES?(?![A-Z0-9_])/, /HUGGIE[\s_-]*HOOPS?(?![A-Z])/, /^\s*HOOPS?\s*-/], earring: [/(?:^|[^A-Z])(?:EARRINGS?|STUDS?)(?=[^A-Z]|$)/], necklace: [/(?:^|[^A-Z])(?:NECKLACES?|CHOKERS?|CHOCKERS?|PENDANTS?)(?=[^A-Z]|$)/] };
+  /** The form a SKU's TEXT says: "huggie" | "earring" | "necklace", or "" when it says none or two families ("HUGGIE_3722", a numbered design named Huggie, says nothing). */
+  function formOfText(sku) {
+    const s = upSku(sku), h = FORM_TEXT.huggie.some(r => r.test(s)), e = FORM_TEXT.earring.some(r => r.test(s)), n = FORM_TEXT.necklace.some(r => r.test(s));
+    if (n && (h || e)) return "";
+    return h ? "huggie" : e ? "earring" : n ? "necklace" : "";
+  }
+  const HUGGIE_FILE = /^HUGGIE_?HOOPS?|[A-Z0-9]_HUGGIE(?:_|\.)/i;   // (a design file named for a huggie: "HUGGIE_HOOPS-_UNICORN.ai", "CROWN_2_HUGGIE_.ai"; never "HUGGIE_3722.ai")
+  const fileOf = e => { const p = e && e.aiPath ? String(e.aiPath) : ""; return p.slice(p.lastIndexOf("/") + 1); };
+  /** The form of a master design, from its SKU and what the library says of its drawing. ctx: { masterEntry, masterShared? (sku → the master SKUs that share its design file; none: SKU text only) }.
+   *  → { form: "huggie" | "earring" | "necklace" | "unknown", by: "text" | "shared" | "twin" | "none", soft? (a necklace read only from a distinct huggie twin) } */
+  function masterForm(sku, ctx) {
+    ctx = ctx || {}; const s = upSku(sku); if (!s) return { form: "unknown", by: "none" };
+    const t = formOfText(s); if (t) return { form: t, by: "text" };
+    const me = ctx.masterEntry, e = me ? me(s) : null; if (!e) return { form: "unknown", by: "none" };
+    let H = HUGGIE_FILE.test(fileOf(e)) ? 1 : 0, P = 1, X = 0; const plain = [s];
+    if (typeof ctx.masterShared === "function") for (const k of ctx.masterShared(s) || []) { const u = upSku(k); if (!u || u === s) continue; const f = formOfText(u); if (f === "huggie") H++; else if (f) X++; else { P++; plain.push(u); } }
+    if (H >= 1 && !X && H >= P) return { form: "huggie", by: "shared" };
+    // (a design is one form whatever name it is asked under: "MUSIC 4" and "MUSIC4" are one drawing, so any of its plain names with a distinct huggie twin makes it the necklace-size charm)
+    const mine = designFile(e);
+    for (const n of plain) for (const twin of [n + " (HUGGIE)", "HUGGIE HOOPS- " + n]) { const te = me(twin); if (te && mine && designFile(te) && designFile(te) !== mine) return { form: "necklace", by: "twin", soft: true }; }
+    return { form: "unknown", by: "none" };
+  }
+  const HUGG_WORD = /\bhugg(?:ie|y|ies)\b/i;
+  /** The form a LINE is, by the words and options it already carries. o: { optionMaps } (a person's saved form answers are read first). → { form, by } (by: the plain words for what said it). */
+  function lineForm(line, o) {
+    line = line || {}; o = o || {};
+    if (huggieSet(line)) return { form: "huggie", by: "its Huggie CHARM SET option" };
+    const vars = (line.variations || []).map(v => ({ name: lvName(v), value: lvValue(v) })).filter(v => v.name && v.value && !isPersonalisation(v.name)), opts = vars.filter(v => !isMetalOption(v.name));
+    const hug = HUGG_WORD.test([String(line.title || "")].concat(opts.map(v => v.value)).join(" ")) || FORM_TEXT.huggie.some(r => r.test(upSku(line.sku)));
+    const f = formOfLine(line, o.optionMaps);
+    if (f === "necklace") return { form: "necklace", by: "its option says necklace" };
+    if (f === "huggie") return { form: "huggie", by: "its option says huggie" };
+    if (f === "earrings" || f === "earring-single") return { form: hug ? "huggie" : "earring", by: "its option says earrings" };
+    if (opts.some(v => /\bnecklace\b/i.test(v.name) && isChainOption(v.name) && looksLikeLength(v.value))) return { form: "necklace", by: "it has a necklace length option" };
+    if (f === "charm" && opts.some(v => /^\s*charm\s*[+&]\s*engraving\s*$/i.test(v.value))) return { form: "necklace", by: "its option is the necklace charm" };
+    const sig = lineSignals(line); let ear = sig.soldAs ? (hug ? "huggie" : "earring") : "";
+    if (!ear && sig.ask && o.optionMaps) { const ans = optionLookup(o.optionMaps, line.listingId, EARS_OPT, sig.ask.value); if (ans && ans.field === "form" && (ans.value === "earrings" || ans.value === "huggie")) ear = ans.value === "huggie" ? "huggie" : "earring"; }
+    if (ear) return { form: ear, by: "its earring words" };
+    if (lineFamily(line) === "necklace") return { form: "necklace", by: "its title says necklace" };
+    if (variationBase(upSku(line.sku))) return { form: "necklace", by: "its SKU is the charm-only mark" };
+    return { form: "unknown", by: "none" };
+  }
+  /** Does a line's form clash with a design's form? Exactly the three crossings GUARD-API.md names: a NECKLACE line on a huggie design, a HUGGIE line on a necklace design, an EARRING (stud) line on a huggie design.
+   *  Everything else (`unknown` on either side, a huggie line on an earring design, a necklace SKU on an earrings listing and the reverse) is NOT this guard's: the SKU-word family check
+   *  (skuFamilyConflict, on Etsy's inventory SKUs) keeps deciding those exactly as it did. */
+  function formClash(lf, df) {
+    if (lf && typeof lf === "object") lf = lf.form;
+    if (df && typeof df === "object") df = df.form;
+    return (lf === "necklace" && df === "huggie") || (lf === "huggie" && df === "necklace") || (lf === "earring" && df === "huggie");
+  }
+  // (what a person may be OFFERED for a line: any design that is not of another known form; a necklace read only from a distinct huggie twin (soft) never stops an earring line)
+  const formFits = (want, f) => !want || want === "unknown" || !f || f.form === "unknown" || f.form === want || (want === "huggie" && f.form === "earring") || (want === "earring" && f.form === "necklace" && !!f.soft);
+  /** The numbered siblings of a SKU the master holds ("SCHRODINGER CAT" → "SCHRODINGER CAT 1", "SCHRODINGER CAT 2"), the ones whose form fits a line of form o.form, numbers only (never the -CO or (HUGGIE) twin of the
+   *  plain name unless the line is a huggie: then "X 1 (HUGGIE)" and the huggie twins of X itself). → [{ sku, form, why, n, widthPt?, heightPt? }] by number, at most 12. ctx: { masterEntry, masterLoose?, masterShared? }. */
+  function siblingsOf(etsySku, ctx, o) {
+    ctx = ctx || {}; o = o || {}; const me = ctx.masterEntry, own = upSku(etsySku); if (!me || !own) return [];
+    const base = own.replace(/\s*\(\s*HUGGIES?\s*\)\s*$/, "").trim(), want = o.form || "unknown", out = [], seen = new Set([own]);
+    const add = (cand, n, why) => {
+      const k = masterSku(cand, me, ctx.masterLoose); if (!k || seen.has(k)) return;
+      const mf = masterForm(k, ctx); if (!formFits(want, mf)) return;
+      seen.add(k); const e = me(k) || {}; out.push(Object.assign({ sku: k, form: mf.form, why, n }, Number.isFinite(e.widthPt) ? { widthPt: e.widthPt } : {}, Number.isFinite(e.heightPt) ? { heightPt: e.heightPt } : {}));
+    };
+    if (want === "huggie") { add(base + " (HUGGIE)", 0, `the huggie version of ${base}`); add("HUGGIE HOOPS- " + base, 0, `the huggie version of ${base}`); }
+    // the same name written for the line's family ("GREEKGODDESS_NECKLACE_4" on an earrings line: "GREEKGODDESS_EARRING_4"), when the master holds it
+    const fam = want === "necklace" ? "necklace" : want === "earring" || want === "huggie" ? "earring" : "";
+    if (fam) for (const t of familyTwins(own, fam, me, ctx.masterLoose)) add(t, 0, `the ${fam} version of ${own} (same number)`);
+    for (let n = 0; n <= 12; n++) for (const sep of [" ", "-", "_", ""]) add(base + sep + n + (want === "huggie" ? " (HUGGIE)" : ""), n, `numbered version ${n} of ${base}`);
+    return out.sort((a, b) => a.n - b.n || a.sku.localeCompare(b.sku)).slice(0, 12);
+  }
+  const FORM_AUTO = new Set(["transaction", "spelling", "variation", "typo", "named", "inventory", "letter"]);   // (a person's answer, "alias" / "option" / a saved pair, is never in this list)
+  const FORM_THIS = { huggie: "a huggie design", earring: "an earring design", necklace: "a necklace design" }, FORM_LINE = { huggie: "huggie hoops", earring: "a pair of earrings", necklace: "a necklace" };
+  /** The ONE plain line for a held line: what the design is and what the listing is. */
+  const formReason = (etsy, design, df, lf) => (etsy === design ? `SKU “${etsy}” is ${FORM_THIS[df.form]} in the library` : `SKU “${etsy}” reads as “${design}”, which is ${FORM_THIS[df.form]} in the library`) + `, but this listing is ${FORM_LINE[lf.form]}`;   // (starts "SKU ": QUESTION_REASON reads a stored hold that begins so as a question)
   function resolveSku(line, aliases, masterEntry, noDesign, masterLoose) {
     const raw = upSku(line.sku);
     const a = aliases && aliases[String(line.listingId)], up = s => s ? String(s).trim().toUpperCase() : "";
@@ -1515,11 +1611,11 @@
   const perUnitOf = p => Math.max(1, Math.floor(+(p && p.perUnit)) || 1);
   /** The form a RAW line's options choose (necklace, earrings, huggie, charm...), by the deterministic rules interpretLine applies to a line with no
    *  learned answers: a Huggie CHARM SET value, the default option map, a form word in a Type / Style / chain option. null when none. */
-  function formOfLine(line) {
+  function formOfLine(line, maps) {   // (maps: a person's saved option maps, read first: HUGGIEGUARD; none = the default rules only, as before)
     for (const v of (line && line.variations) || []) {
       const name = lvName(v), value = lvValue(v).trim(); if (!name || !value || isMetalOption(name) || isPersonalisation(name)) continue;
       if (HUGGIE_SET.test(value)) return "huggie";
-      const hit = optionLookup(null, line.listingId, name, value); if (hit && hit.field === "form") return hit.value;
+      const hit = optionLookup(maps || null, line.listingId, name, value); if (hit && hit.field === "form") return hit.value;
       const byName = isChainOption(name) || isFormOption(name) || isEarFormOption(name), asForm = byName ? formByWords(value) : EAR_NEG_TEST.test(value) && formByWords(value) === "charm" ? "charm" : null;   // ("Charm only (no hoops)" is the loose charm under any name)
       if (asForm) return asForm;
     }
@@ -2032,6 +2128,18 @@
     const set = huggieSet(line), bought = set ? huggieSku(line.sku, me) : upSku(line.sku);
     let { sku, source: skuSource } = resolveSku(set ? Object.assign({}, line, { sku: bought }) : line, ctx.aliases, me, ctx.noDesign, loose);
     if (viaInventory && skuSource !== "alias") skuSource = "inventory";
+    // HUGGIEGUARD (stage A): what the line IS, and a person's saved answer for this listing and SKU. resolveSku trusts an exact master SKU before any saved answer, so when the exact design's form clashes
+    // with the line (below) the saved answer is read here: another design wins (source "alias"), the same design is the person's word that it is right (formSaid: never held again)
+    const guardCtx = { masterEntry: me, masterLoose: loose, masterShared: ctx.masterShared };
+    let lf = { form: "unknown", by: "none" }, formSaid = false;
+    try {
+      lf = lineForm(line, { optionMaps: ctx.optionMaps });
+      if (me && sku && !set && FORM_AUTO.has(skuSource)) {
+        const a0 = ctx.aliases && ctx.aliases[String(line.listingId)], r0 = upSku(line.sku);
+        const saved = a0 ? upSku((r0 && a0.bySku ? bySkuOf(a0.bySku, r0) : "") || (a0.sku && !a0.v && !/\(HUGGIE\)$/.test(r0) ? a0.sku : "")) : "";
+        if (saved && formClash(lf, masterForm(sku, guardCtx))) { if (saved !== sku) { sku = saved; skuSource = "alias"; } else formSaid = true; }
+      }
+    } catch (_) { /* the guard never stops a line from being read */ }
     // the SKU of the variation bought, when it is a design's own and the inventory ties it to an option's value, is that
     // option's answer: the option is not asked, and no charm a person once picked for it stands over the SKU
     const sold = viaInventory && viaInventory.etsy || upSku(line.sku), named = !!(sku && me && me(sku)), tied = v => named && tiesToOption(table, v, sold);
@@ -2089,6 +2197,15 @@
     // nothing closes its order until its own designs are sent to a sheet or a person completes it), and nothing is asked about it: no metal, SKU or option question, no engraving
     const own = !!(special && special.own && !special.notCut);
     const quiet = noDesign || own;
+    // HUGGIEGUARD (stage B): an automatic match never crosses forms (see section 3b). A person's answer (source alias / option / a saved pair) and a line that is not cut are never held.
+    let formHold = null, df = { form: "unknown", by: "none" };
+    try {
+      if (me && sku) df = masterForm(sku, guardCtx);
+      if (!quiet && me && sku && !formSaid) {
+        const named = skuSource === "pair" && members && (members.source === "skus" || members.source === "title");   // (two designs named in words: each is checked)
+        if (FORM_AUTO.has(skuSource) || named) for (const d of named ? members.members.map(m => m.sku) : [sku]) { if (!me(d)) continue; const f = masterForm(d, guardCtx); if (formClash(lf, f)) { formHold = { design: d, df: f }; break; } }
+      }
+    } catch (_) { formHold = null; }
     const metalKey = String(line.metalKey || "");
     const material = METAL_TO_CARD[metalKey] || null;
     if (!quiet && !material) problems.push({ kind: "needsMaterial", metalKey: metalKey || null, metalLabel: line.metalLabel || "", listingId: String(line.listingId || ""), options: (line.variations || []).map(v => `${v.name}: ${v.value}`), title: line.title || "" });
@@ -2204,7 +2321,12 @@
       : { kind: "unmatchedSku", reason: "no SKU on the transaction and no alias for the listing", listingId: String(line.listingId || ""), title: line.title || "" });
     if (ctx.masterEntry && sku && !quiet) {
       const entry = ctx.masterEntry(sku);
-      if (!entry) { if (!optionOpen) problems.push({ kind: "unmatchedSku", reason: set && skuSource === "transaction" ? "Huggie CHARM SET: its huggie design is not in any master file" : "not in any master file", sku, listingId: String(line.listingId || ""), title: line.title || "" }); }
+      if (!entry) {
+        // HUGGIEGUARD: the numbered siblings of the SKU the master does hold ("X 1", "X 2" for an "X" it has not), the ones that fit the line: for whoever offers them (spec.siblings)
+        let sib = []; try { sib = siblingsOf(sku, guardCtx, { form: lf.form }); } catch (_) { sib = []; }
+        if (sib.length) spec.siblings = sib;
+        if (!optionOpen) problems.push(Object.assign({ kind: "unmatchedSku", reason: set && skuSource === "transaction" ? "Huggie CHARM SET: its huggie design is not in any master file" : "not in any master file", sku, listingId: String(line.listingId || ""), title: line.title || "" }, sib.length ? { siblings: sib } : {}));
+      }
       else if (entry.blocked) problems.push({ kind: "blockedSku", reason: entry.blocked, sku });
       else if (entry.sizes && Object.keys(entry.sizes).length) { if (!spec.size || !entry.sizes[spec.size]) problems.push({ kind: "missingSize", sku, size: spec.size, available: Object.keys(entry.sizes) }); }
     }
@@ -2240,6 +2362,14 @@
       const eng = engravingOf(line, spec);
       if (eng) spec.engraving = eng;
     } catch (_) { /* a reading that fails leaves the line as it always was */ }
+    // HUGGIEGUARD: the line's form and the design's form are always told; a clash holds the line with ONE plain line and the siblings that fit (spec.formHold), and no design is on the row
+    spec.lineForm = lf.form; spec.designForm = df.soft ? "unknown" : df.form;   // (a necklace read only from a distinct huggie twin is not told: it only keeps a huggie line off the plain design)
+    if (formHold) {
+      const etsy = upSku(line.sku) || spec.boughtSku, sibs = siblingsOf(etsy, guardCtx, { form: lf.form }), reason = formReason(etsy, formHold.design, formHold.df, lf);
+      spec.formHold = { sku: spec.boughtSku, design: formHold.design, lineForm: lf.form, designForm: formHold.df.form, reason, siblings: sibs };
+      spec.siblings = sibs; spec.designSku = null; spec.skuSource = null; spec.sources.sku = null;
+      problems.unshift({ kind: "unmatchedSku", reason, sku: spec.boughtSku, listingId: String(line.listingId || ""), title: line.title || "", formHold: true, lineForm: lf.form, designForm: formHold.df.form, siblings: sibs });
+    }
     return spec;
   }
   /** A line held (or unmatched) because of a question its fresh reading no longer raises: true when it may go back to the intake. `prev` is the spec it was read as before (the question it
@@ -2614,6 +2744,6 @@
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar, tagOptionOf, tagOptionRead, TAG_SHAPES,
-    KNOWN_SKU_NAMES, knownName, namedSku, sameDesign,
+    KNOWN_SKU_NAMES, knownName, namedSku, sameDesign, designFile, FORMS, formOfText, masterForm, lineForm, formClash, siblingsOf, formOfLine,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });
