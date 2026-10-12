@@ -149,17 +149,20 @@
     }
     return { mode: a.mode, faces };
   }
-  /** The reason a person gave for the saved override (ENGWHY: engravingOverride.reason { code, text, by, at }), as one read-only line, or ''. */
-  function reasonLine(line) {
-    const ov = line && line.engravingOverride, r = ov && typeof ov === 'object' ? ov.reason : null; if (!r) return '';
-    const t = typeof r === 'string' ? r : str(r.text).trim() || str(r.label).trim() || cap1(str(r.code).replace(/[_-]+/g, ' ').trim());
-    const by = typeof r === 'object' ? str(r.by).trim() : '';
-    return t ? t + (by ? ' · ' + by : '') : '';
+  /** The reason a person gave for the saved override (ENGWHY: engravingOverride.reason { code, text, by, at, slot? }), as one read-only line for a title, or ''. ENGWHY's own reader says it when the page has it
+   *  ("Changed: Customer asked · Name One · Oct 12, 3:04 PM"); else the same words are made here from the record. */
+  function reasonLine(line, slot) {
+    const W = root && root.CharmNestEngraveWhy;
+    if (W && typeof W.reasonOf === 'function') { const r = tryDo(() => W.reasonOf(line, slot || null), null); return r && str(r.text).trim() ? str(r.title || r.line) : ''; }
+    const ov = line && line.engravingOverride, r = ov && typeof ov === 'object' ? ov.reason : null; if (!r || typeof r !== 'object') return '';
+    if (slot && r.slot && r.slot !== slot) return '';
+    const t = str(r.text).trim() || cap1(str(r.code).replace(/[_-]+/g, ' ').trim()), by = str(r.by).trim();
+    return t ? 'Changed: ' + t + (by ? ' \u00b7 ' + by : '') : '';
   }
   /** The pure model of the highlight for the face shown: { sys, mode: {sys, same}, words: {sys, same}|null, font: {sys (drop-down value), label, same}|null, reason }. `same` = what is on the panel now (the staged edit) IS the system's. */
   function hiModel(vm, d, face, slot) {
     const sys = systemChoice(vm, slot), on = facesOf(d.mode).includes(face), sf = face ? sys.faces[face] : null, x = (face && d.faces[face]) || { text: '', font: '' };
-    const m = { sys, mode: { sys: sys.mode, same: d.mode === sys.mode }, words: null, font: null, reason: reasonLine(vm.line) };
+    const m = { sys, mode: { sys: sys.mode, same: d.mode === sys.mode }, words: null, font: null, reason: reasonLine(vm.line, slot || vm.slot) };
     if (sf && sf.text) m.words = { sys: sf.text, same: on && normWords(x.text) === sf.text };
     if (sf) {
       const sv = fontValueOf(vm, face, sf, slot), lf = vm.lineFont || {};

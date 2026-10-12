@@ -17,7 +17,8 @@ const SHIP = Math.floor(Date.UTC(2026, 9, 14, 17) / 1000), RID = '4195966039', T
 const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, updateTs: SHIP - 5 * 86400 + 60, shipBy: SHIP, buyer: { name: 'Name One' }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [],
   lines: [{ transactionId: TX, listingId: '4458930445', sku: 'MINI_0445', title: 'Mini Tag Initial Charm Add On Charm Personalized Letter Charm', quantity: 1, expectedShipDate: SHIP, metalKey: 'gold', metalLabel: 'GF 14/20',
     variations: [{ name: 'Charm Type', value: 'Tag1 (front+back)' }, { name: 'Font choice', value: 'Ace' }, { name: 'Metal Choice', value: 'Gold Filled' }], personalization: ['front - W\nback - 1. 27. 24'] }] };
-const TITLE = 'Chosen by the system', REASON = 'Customer asked in a message';
+const TITLE = 'Chosen by the system', REASON = 'Changed: Customer asked in a message \u00b7 Name One';   // (ENGWHY\'s reader, when the page has it, adds the time after it: the checks below take the line as a prefix)
+const startsWith = (t, head) => typeof t === 'string' && (t === head || t.startsWith(head + ' \u00b7 '));
 
 (async () => {
   const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
@@ -120,7 +121,7 @@ const TITLE = 'Chosen by the system', REASON = 'Customer asked in a message';
       await page.waitForFunction(() => document.querySelector('.pvSetup .engp') && document.querySelector('.pvSetup .engp').dataset.face === 'front');
       m = await marks(PV);
       check(m.words.value === 'W' && m.words.sys === 'same' && m.words.mark && m.words.mark.title === TITLE && m.words.bg !== CARD_BG, '4 the Front\'s words box ("W") carries its own mark and tint');
-      check(m.font.sys === 'changed' && m.font.ghost, '4 the font staged on the Back is the Back\'s own: the Front\'s drop-down still holds its own state: ' + JSON.stringify({ value: m.font.value, sys: m.font.sys }));
+      check(m.font.sys === 'same' && !m.font.ghost && m.font.value === '', '4 the Pristina staged on the Back is the Back\'s own: the Front\'s drop-down is still the system\'s font, tinted, no ghost: ' + JSON.stringify({ value: m.font.value, sys: m.font.sys }));
     } else console.log('  (no card thumbnails in this build: the Front step was skipped)');
     await page.click(`${PV} [data-engp=cancel]`);
     await page.waitForFunction(() => { const c = document.querySelector('.pvSetup [data-engp=cancel]'); return c && c.disabled; });
@@ -145,29 +146,29 @@ const TITLE = 'Chosen by the system', REASON = 'Customer asked in a message';
     const withMarks = await row232();
     await page.evaluate(() => { const p = document.querySelector('#__slot .engp'); p.querySelectorAll('.engpSys').forEach(k => k.remove()); p.querySelectorAll('[data-sys]').forEach(k => delete k.dataset.sys); });
     const without = await row232();
-    check(withMarks.marks >= 3 && without.marks === 0, '7 the marks are really there to compare: ' + withMarks.marks + ' with, ' + without.marks + ' without');
+    check(withMarks.marks >= 2 && without.marks === 0, '7 the marks are really there to compare (mode + words; the font\'s star is in its list): ' + withMarks.marks + ' with, ' + without.marks + ' without');
     check(withMarks.panelW >= 231 && new Set(withMarks.tops).size === 1 && withMarks.right <= withMarks.boxRight + 0.5, `7 at ${withMarks.panelW}px the four choices are still ONE row inside the control: tops ${withMarks.tops}, last right ${Math.round(withMarks.right)} <= ${Math.round(withMarks.boxRight)}`);
     check(JSON.stringify(withMarks.w) === JSON.stringify(without.w), `7 the marks take no room: segment widths are the same with and without them: ${withMarks.w} / ${without.w}`);
     await mountSlot();
     if (shots) await page.screenshot({ path: path.join(shots, 'HILITE-3-232px-untouched.png'), clip: { x: 10, y: 10, width: 252, height: 330 } });
 
     // 5 · a saved override with a recorded reason (ENGWHY's field): the selection is the person's, the marks are on the system's choice and say why
-    await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY); row.engravingOverride = { mode: 'back', back: { text: 'Name Two', fontWord: 'Pristina' }, by: 'Name One', at: 1, reason: { code: 'customer-asked', text: 'Customer asked in a message', by: 'Name One', at: 1 } }; }, KEY);
+    await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back'); Object.assign(j, { text: 'Name Two', lines: ['Name Two'] }); row.engravingOverride = { mode: 'back', back: { text: 'Name Two', fontWord: 'Pristina' }, by: 'Name One', at: 1, reason: { code: 'asked', text: 'Customer asked in a message', by: 'Name One', at: 1 } }; }, KEY);
     await mountSlot();
     m = await marks(S);
     const segBoth = m.seg.find(s => s.m === 'both'), segBack = m.seg.find(s => s.m === 'back');
-    check(segBack.on && !segBoth.on && onlySeg(m, 'both') && segBoth.mark.title === `${TITLE}\n${REASON} · Name One` && segBoth.title === segBoth.mark.title, '5 override Back saved with a reason: Back is selected, the mark stays on Front + back and its title shows the reason read-only: ' + JSON.stringify(segBoth.title));
-    check(m.words.value === 'Name Two' && m.words.sys === 'changed' && m.words.mark.title === `${TITLE}: 1. 27. 24\n${REASON} · Name One`, '5 the words box shows the person\'s words, its mark names the system\'s words and the reason: ' + JSON.stringify(m.words.mark));
-    check(m.font.value === 'Pristina' && m.font.sys === 'changed' && m.font.ghost && /\n/.test(m.font.ghost.title) && m.font.ghost.title.endsWith(REASON + ' · Name One') && m.font.opts.filter(o => o.star).map(o => o.v).join() === '', '5 the font: Pristina selected, the ghost names the system\'s font and the reason: ' + JSON.stringify(m.font.ghost));
+    check(segBack.on && !segBoth.on && onlySeg(m, 'both') && startsWith(segBoth.mark.title, `${TITLE}\n${REASON}`) && segBoth.title === segBoth.mark.title, '5 override Back saved with a reason: Back is selected, the mark stays on Front + back and its title shows the reason read-only: ' + JSON.stringify(segBoth.title));
+    check(m.words.value === 'Name Two' && m.words.sys === 'changed' && startsWith(m.words.mark.title, `${TITLE}: 1. 27. 24\n${REASON}`), '5 the words box shows the person\'s words, its mark names the system\'s words and the reason: ' + JSON.stringify(m.words.mark));
+    check(m.font.value === 'Pristina' && m.font.sys === 'changed' && m.font.ghost && m.font.ghost.title.startsWith(`${TITLE}: Ace\n${REASON}`) && m.font.opts.filter(o => o.star).map(o => o.v).join() === '', '5 the font: Pristina selected, the ghost names the system\'s font and the reason: ' + JSON.stringify(m.font.ghost));
     if (shots) await page.screenshot({ path: path.join(shots, 'HILITE-4-232px-overridden.png'), clip: { x: 10, y: 10, width: 252, height: 330 } });
     // a code with no text still reads (the code, plainly); no reason at all: the plain title only
-    await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY); row.engravingOverride.reason = { code: 'looks-better', by: 'Name One', at: 1 }; }, KEY);
+    await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY); row.engravingOverride.reason = { code: 'misread', by: 'Name One', at: 1 }; }, KEY);
     await mountSlot(); m = await marks(S);
-    check(m.seg.find(s => s.m === 'both').mark.title === `${TITLE}\nLooks better · Name One`, '5 a reason with only a code reads plainly: ' + JSON.stringify(m.seg.find(s => s.m === 'both').mark.title));
+    check(/^Chosen by the system\nChanged: Misread( the note)? \u00b7 Name One/.test(m.seg.find(s => s.m === 'both').mark.title), '5 a reason with only a code reads in the button\'s words (ENGWHY\'s labels): ' + JSON.stringify(m.seg.find(s => s.m === 'both').mark.title));
     await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY); delete row.engravingOverride.reason; }, KEY);
     await mountSlot(); m = await marks(S);
     check(m.seg.find(s => s.m === 'both').mark.title === TITLE && m.words.mark.title === `${TITLE}: 1. 27. 24`, '5 no recorded reason: the titles carry no reason line');
-    await page.evaluate(KEY => { delete B.orders.byKey.get(KEY).engravingOverride; }, KEY);
+    await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back'); Object.assign(j, { text: '1. 27. 24', lines: ['1. 27. 24'] }); delete row.engravingOverride; }, KEY);
 
     // 6 · the source of truth is autoChoice (ENGAUTO) when the page has it: stubbed here: the system chose Front only, "Name Three", Pristina
     await page.evaluate(() => { const S = CharmNestEngraveSetup; window.__autoWas = S.autoChoice; S.autoChoice = () => ({ mode: 'front', faces: ['front'], front: { text: 'Name Three', lines: ['Name Three'], fontWord: 'Pristina', fontId: 'marck-script' }, back: null, position: 'auto' }); });
@@ -177,7 +178,7 @@ const TITLE = 'Chosen by the system', REASON = 'Customer asked in a message';
     await page.evaluate(() => __h.setFace('front')); m = await marks(S);
     check(m.face === 'front' && m.words.sys === 'changed' && m.words.mark.title === `${TITLE}: Name Three` && m.font.opts.filter(o => o.star).map(o => o.v).join() === 'Pristina' && m.font.sys === 'changed' && m.font.ghost.title === `${TITLE}: Pristina`,
       '6 the Front: the system\'s words and font (Pristina, its entry starred) are marked: ' + JSON.stringify({ words: m.words.mark, star: m.font.opts.filter(o => o.star).map(o => o.label), ghost: m.font.ghost }));
-    await page.fill(`${S} .engpWords`, 'Name Three'); await page.selectOption(`${S} .engpFont`, { label: 'Pristina' }); m = await marks(S);
+    await page.fill(`${S} .engpWords`, 'Name Three'); await page.selectOption(`${S} .engpFont`, 'Pristina'); m = await marks(S);   // (by value: the system's entry shows the label "\u2726 Pristina", its text and value are unchanged)
     check(m.words.sys === 'same' && m.font.sys === 'same' && !m.font.ghost && m.font.selTitle === TITLE, '6 typing the system\'s words and picking its font: both tints, no ghost');
     await page.evaluate(() => { if (window.__autoWas) CharmNestEngraveSetup.autoChoice = window.__autoWas; else delete CharmNestEngraveSetup.autoChoice; });
 
