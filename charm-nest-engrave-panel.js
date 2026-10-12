@@ -124,6 +124,12 @@
   const HI_GLYPH = '✦';   // (the same four-point star, as the text mark in front of the system's entry of the font list: an <option> can only hold text)
   const normWords = v => linesOf(v).join('\n');
   const sameWord = (a, b) => str(a).trim().toLowerCase() === str(b).trim().toLowerCase();
+  /** The same words? What the engine does to a face's words is not a person's change: a capitals font (Ace) engraves "Name One" as "NAME ONE" and the automatic line split puts it on two lines ("NAME" / "ONE"), so
+   *  the staged words are compared as one run of words (line breaks as spaces) and, for a capitals font, in capitals. Any other difference (a letter, a digit, a space between words) is the person's. */
+  function sameWords(a, b, fontId) {
+    const O = dep('CharmNestOrders', './charm-nest-orders.js'), run = v => linesOf(v).join(' '), caps = t => { try { return O && O.capsText && fontId ? str(O.capsText(t, fontId)) : t; } catch (_) { return t; } };
+    return caps(run(a)) === caps(run(b));
+  }
   const rowFor = (vm, slot) => (slot || vm.slot ? Object.assign({}, vm.line, { slot: slot || vm.slot }) : vm.line);
   /** The installed font id of a font word on a face of this piece ('' when the page cannot say). */
   function fontIdFor(vm, face, word, slot) {
@@ -165,7 +171,7 @@
   function hiModel(vm, d, face, slot) {
     const sys = systemChoice(vm, slot), on = facesOf(d.mode).includes(face), sf = face ? sys.faces[face] : null, x = (face && d.faces[face]) || { text: '', font: '' };
     const m = { sys, mode: { sys: sys.mode, same: d.mode === sys.mode }, words: null, font: null, reason: reasonLine(vm.line, slot || vm.slot) };
-    if (sf && sf.text) m.words = { sys: sf.text, same: on && normWords(x.text) === sf.text };
+    if (sf && sf.text) m.words = { sys: sf.text, same: on && sameWords(x.text, sf.text, fontIdFor(vm, face, x.font, slot)) };
     if (sf) {
       const sv = fontValueOf(vm, face, sf, slot), lf = vm.lineFont || {};
       m.font = { sys: sv, label: sv || str(lf.word || lf.name), same: on && fontValueOf(vm, face, { fontWord: x.font }, slot) === sv };
@@ -175,8 +181,8 @@
   const HI_CSS = `.engpSys{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;color:var(--gold,#a9823f);cursor:default}
 .engpSys svg{display:block;width:10px;height:10px}
 .engpSys[data-st=changed]{opacity:.6}
-.engpSeg[data-sys]{position:relative;background:var(--goldSoft,#f0e6cd)}
-.engpSeg[data-sys][aria-checked=true]{background:var(--goldSoft,#f0e6cd)}
+.engpSeg[data-sys]{position:relative;background:var(--goldSoft,#f0e6cd);box-shadow:inset 0 0 0 1px var(--goldLine,#e3d3a6)}
+.engpSeg[data-sys][aria-checked=true]{background:var(--goldSoft,#f0e6cd);box-shadow:0 0 0 1px rgba(28,26,23,.42)}
 .engpSeg>.engpSys{position:absolute;top:-4px;right:-3px;width:12px;height:12px;pointer-events:none}
 .engpSeg>.engpSys svg{width:9px;height:9px}
 .engpBox[data-sys]>.engpWords{padding-right:24px}

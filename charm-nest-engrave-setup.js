@@ -41,7 +41,14 @@
   const FACE_NAME = { front: 'front', back: 'back' };
   const cap1 = s => s.charAt(0).toUpperCase() + s.slice(1);
   const linesOf = v => (Array.isArray(v) ? v : str(v).split(/\r?\n/)).map(x => str(x).replace(/\s+/g, ' ').trim()).filter(Boolean);
-  const wordsOfJob = j => linesOf((j && (j.lines && j.lines.length ? j.lines : j.text)) || '').join('\n');
+  /** One run of words: line breaks as spaces, and (for a font with no lowercase, Ace) in capitals: the same words however the fit laid them out. */
+  const runOf = (v, fontId) => { let t = linesOf(v).join(' ').replace(/\s+/g, ' ').trim(); try { const O = Orders(); if (fontId && O && O.fontCaps && O.fontCaps(fontId)) t = O.capsText(t, fontId); } catch (_) { /* as written */ } return t; };
+  /** The words of a job as they were GIVEN: the fit lays them out again (job.lines is the cut's layout: "NAME" / "ONE", capitals for Ace), but job.lineInput keeps what went in. A job a person decided, or laid out by hand (lineMode "preserve"), shows its lines as they are. */
+  const wordsOfJob = j => {
+    const ls = linesOf((j && (j.lines && j.lines.length ? j.lines : j.text)) || '');
+    if (j && !DECIDED.includes(j.state) && j.lineMode !== 'preserve' && Array.isArray(j.lineInput) && j.lineInput.length) { const li = linesOf(j.lineInput); if (li.length && runOf(li).toLowerCase() === runOf(ls).toLowerCase()) return li.join('\n'); }
+    return ls.join('\n');
+  };
   const faceOfJob = j => { const F = Faces(); return F ? F.faceOf(j) : 'back'; };
 
   /* ── the buyer's words ─────────────────────────────────────────────────────── */
@@ -168,8 +175,9 @@
     for (const face of faces(mode)) {
       const a = auto[face], n = now[face] || { text: '', fontWord: null }, nt = n.text != null ? n.text : n.lines, text = linesOf(nt).join('\n');
       if (!a) { if (text) parts.push(face + '.text'); continue; }
-      if (text !== a.text && !(a.provisional && !text)) parts.push(face + '.text');
-      if (fontIdOf(row, face, n.fontWord || n.font || null, slot) !== a.fontId) parts.push(face + '.font');
+      const nid = fontIdOf(row, face, n.fontWord || n.font || null, slot);
+      if (runOf(text, nid) !== runOf(a.text, nid) && !(a.provisional && !text)) parts.push(face + '.text');   // (the same words in the fit's line split, or in capitals for Ace, are no change)
+      if (nid !== a.fontId) parts.push(face + '.font');
     }
     return { changed: parts.length > 0, parts, auto };
   }
@@ -207,8 +215,10 @@
     const rows = setup.faces.map(face => {
       const mine = pieceJobs.filter(j => faceOfJob(j) === face), wordsList = mine.map(wordsOfJob).filter(Boolean), distinct = [...new Set(wordsList)];
       const perPiece = !slot && distinct.length > 1, w = setup[face];
-      const lines = perPiece ? [] : distinct.length ? distinct[0].split('\n') : (w ? w.lines.slice() : []);
       const locked = mine.find(j => DECIDED.includes(j.state) && j.state !== 'none') || null;
+      let lines = perPiece ? [] : distinct.length ? distinct[0].split('\n') : (w ? w.lines.slice() : []);
+      // (the words the system or the person gave, not the fit's own line split and capitals: the panel opens on exactly the choice, and a font-only save never sends the cut's layout as "words")
+      if (!perPiece && !locked && distinct.length && w && w.lines && w.lines.length) { const fid = fontIdOf(line, face, w.fontWord, slot); if (runOf(lines, fid) === runOf(w.lines, fid)) lines = w.lines.slice(); }
       const by = locked ? str(locked.approvedBy || locked.decidedBy || (locked.decision && locked.decision.by)) : '';
       const ft = faceFont(line, w && w.fontWord);
       return { face, label: cap1(face), key: mine.length === 1 ? mine[0].key : (slot || !mine.length ? F.keyOf(line, face, slot) : ''), lines, text: lines.join('\n'), fontWord: (w && w.fontWord) || '', font: ft, perPiece, locked: !!locked, lockState: locked ? locked.state : '', lockBy: by, state: mine.length ? mine.map(j => j.state)[0] : '', jobs: mine };
@@ -326,7 +336,11 @@
         const face = faceOfJob(j); if (!setup.faces.includes(face) || DECIDED.includes(j.state) || OPEN_STATES.includes(j.state)) continue;
         const at = slotOfJob(j);
         if (only && at !== only) continue;   // (a piece's own edit re-seeds that piece's jobs only: disc 2 never reaches disc 1)
-        const seed = F.seedFor(setup, face, at); if (!seed || (sameWords(j, seed) && !(patch && patch[face] !== undefined && str(j.faceFontWord) !== str(seed.fontWord)))) continue;   // (the words, or the font the person picked for this face, differ from the job's)
+        const seed = F.seedFor(setup, face, at); if (!seed) continue;
+        const touched = !!(patch && patch[face] !== undefined);
+        // a face the person did not touch keeps its job when the words are the same words however the fit laid them out ("NAME" / "ONE" in capitals is "Name One");
+        // a face the person edited re-seeds when the words, or the font picked for this face, differ from the job's
+        if (touched ? (sameWords(j, seed) && str(j.faceFontWord) === str(seed.fontWord)) : (sameWords(j, seed) || runOf(wordsOfJob(j), fontIdOf(line, face, j.faceFontWord || seed.fontWord || null, at)) === runOf(seed.lines, fontIdOf(line, face, seed.fontWord || j.faceFontWord || null, at)))) continue;
         await env.seed(j, Object.assign({}, seed, { by, ...(whyText ? { why: whyText } : {}) })); res.seeded.push(j.key);
       }
     } catch (e) {

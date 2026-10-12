@@ -56,7 +56,10 @@ const ORDERS = {
   discs: { rid: '4290000105', sku: 'COMET_9427', listing: '1890000105', title: 'Initial Disc Necklace, Personalized Letter Discs', buyer: 'Name Five', placed: { day: 0, h: 9, m: 50 }, ship: SHIP_DAYS, variations: [V('Metal choice', 'Gold'), V('Number of Discs', '3 Discs')], personalization: ['Tag 1: A, Tag 2: B, Tag 3: C'] },
   earrings: { rid: '4290000106', sku: 'COMET_9427', listing: '1890000106', title: 'Comet Stud Earrings, Celestial Earrings in 14k Gold Fill', buyer: 'Name Six', placed: { day: 0, h: 10, m: 0 }, ship: SHIP_DAYS, variations: [V('Metal choice', 'Gold'), V('Style', 'Stud earrings')], personalization: [] }
 };
-const NAMES = Object.keys(ORDERS);
+// REFERENCE orders for engrave-realtime.cjs (the same charm as `back`, one thing different each: what the page's own pipeline draws for that word / font is the yardstick a staged edit is measured against). Not in NAMES: build them by name.
+ORDERS.refAnna = Object.assign({}, ORDERS.back, { rid: '4290000111', listing: '1890000111', buyer: 'Name Seven', personalization: ['Anna'] });
+ORDERS.refMarck = Object.assign({}, ORDERS.back, { rid: '4290000112', listing: '1890000112', buyer: 'Name Eight', variations: [V('Metal choice', 'Gold'), V('Font Choice', 'Pristina')] });
+const NAMES = ['back', 'front', 'both', 'tag', 'discs', 'earrings'];
 const keyOf = n => `${ORDERS[n].rid}_${ORDERS[n].rid}1`;
 
 /** the master library: put every real design's index entry and file into the fake site's Firestore / Storage (before the page reads the master) */
