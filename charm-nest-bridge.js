@@ -16545,11 +16545,13 @@ const OrderWin = window.OrderWin = (() => {
     // the surface starts in the colour of what was clicked and takes its own as it grows
     const tint = bgOf(from); if (tint) { const t = el("i", "owTint"); t.style.background = tint; d.appendChild(t); const a = run(t, [{ opacity: 1 }, { opacity: 0 }], { duration: 260, easing: "cubic-bezier(.4,0,.6,1)", fill: "forwards" }); if (a) a.finished.then(() => t.remove(), () => t.remove()); }
   }
-  async function shut() {
+  /** `into` (ENGANIM): an element on the page behind the view that it goes back into instead of the one it grew out of (the
+   *  Engraving tab's detail, drawn behind this view by EngraveLink before the view goes); the very same flight. */
+  async function shut(into) {
     await window.Seal?.whenIdle?.();
     const d = W.dlg; if (!d || !d.open || W.closing) return;
     W.closing = true; stopMotion(); sheetPause();
-    const from = still() ? null : origin(), r = rectOf(from), A = [];
+    const from = still() ? null : into && into.nodeType === 1 && rectOf(into) ? into : origin(), r = rectOf(from), A = [];
     giveBack(r ? 420 : still() ? 110 : 170);
     if (r) {
       d.classList.add("owBack");
@@ -16787,7 +16789,7 @@ const OrderWin = window.OrderWin = (() => {
     show((opts.row && opts.row.key && rows.find(r => r.key === opts.row.key)) || ofPool(rows, opts.poolId) || rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId, pick: o.pick }); shown();
   }
   // (a repaint asked from outside, an image or a record arriving, waits for the view to land)
-  return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v),
+  return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: o => shut(o && o.into), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v),
     // the piece shown in the order window (Paul, 5 Oct, round 16: the "Its pieces" rows are the selector): selectPiece(key | null for all pieces) -> whether it is shown now
     selectPiece: k => selectPiece(k), selectedPiece: () => (W.pieces || []).length > 1 ? W.piece || null : null, selectedSide: () => (W.side && narrowSide()) ? W.side : null, repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed,
     // (read-only, for the checks: the pieces of the order on screen, each with the sheets it is on, and the one in focus)

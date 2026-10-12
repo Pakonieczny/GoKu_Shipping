@@ -29,7 +29,7 @@
   if (window.EngraveLink) return;
   const DONE = ["approved", "written", "skipped"];                                  // the Decided tab's
   const PLACE = ["review", "words", "blocked", "classify", "ready", "fitting"];     // the Placements tab's
-  const WAIT_MS = 7000, STEP_MS = 120, SHUT_MS = 2500, LAND_MS = 4000;
+  const WAIT_MS = 7000, STEP_MS = 120, SHUT_MS = 2500, LAND_MS = 4000, WAIT_SPIN_MS = 350;
   const digits = v => String(v == null ? "" : v).replace(/\D/g, "");
   const lead = v => { const m = /^(\d{4,20})(?:[_:\-]|$)/.exec(String(v == null ? "" : v)); return m ? m[1] : ""; };
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -99,12 +99,12 @@
 
   /** The caller's window, the order window, and the Sheet window (an order view opened from the sheet window gives it
    *  back as it closes: it goes too). Waits for a seal being pressed first, as the windows themselves do. */
-  async function shut(extra) {
+  async function shut(extra, into) {
     try { await window.Seal?.whenIdle?.(); } catch (_) {}
     if (typeof extra === "function") { try { await bounded(extra(), SHUT_MS); } catch (_) {} }
     const OW = window.OrderWin;
     if (OW && OW.isOpen && OW.isOpen()) {
-      await bounded(OW.close && OW.close(), SHUT_MS);
+      await bounded(OW.close && OW.close(into ? { into } : undefined), SHUT_MS);
       const d = document.getElementById("orderWin"); if (OW.isOpen()) { try { d.close(); } catch (_) { d && d.removeAttribute("open"); } }
     }
     const SW = window.SheetWin;
@@ -127,6 +127,13 @@
     const card = root.querySelector("#egQueue .rvItem"); return !!card && card.dataset.key === job.key;
   }
 
+  /** The piece's own card (or decided row) as the Engraving tab shows it now, or null. */
+  const cardOf = (job, done) => {
+    const root = document.getElementById("engraveView"); if (!root) return null;
+    const n = done ? root.querySelector(".doneRow.open") : root.querySelector("#egQueue .rvItem");
+    return n && n.dataset.key === job.key ? n : null;
+  };
+
   async function land(job, rid) {
     const E = window.Engrave, done = tab(job) === "done", v = E.view();
     widen(done ? "engrave-done" : "engrave-place", [job]);
@@ -140,6 +147,24 @@
     if (s === true && done) { try { const row = document.querySelector("#engraveView .doneRow.open"); if (row) row.scrollIntoView({ block: "nearest" }); } catch (_) {} }
     const w = E.view();
     return s === true || (s === null && w.tab === (done ? "done" : "place") && (done || w.focus === job.key));
+  }
+
+  /** One frame for the pressed control to paint its own busy state before the page does its drawing (a hidden tab draws no frames: never waited on). */
+  const frame = () => new Promise(res => { const t = setTimeout(res, 80); try { requestAnimationFrame(() => { clearTimeout(t); setTimeout(res, 0); }); } catch (_) {} });
+
+  /** The Engraving tab drawn behind the order window, the window still in front: the same landing as before, only drawn
+   *  first, so the order window can go back into the piece's card (OrderWin.close({into})) with the very flight it always
+   *  had, instead of into the row it grew out of, and the card is there as it lands (no cut, nothing blank). A wait over
+   *  WAIT_SPIN_MS is said with the small labelled spinner. */
+  async function landBehind(job, rid, my) {
+    await frame(); if (my !== seq) return null;
+    try { await window.Seal?.whenIdle?.(); } catch (_) {}
+    if (my !== seq) return null;
+    let sp = null; const late = setTimeout(() => { sp = spinner("Opening Engraving…"); }, WAIT_SPIN_MS);
+    try {
+      const ok = await land(job, rid);
+      return { ok, el: ok ? cardOf(job, tab(job) === "done") : null };
+    } finally { clearTimeout(late); if (sp) sp.remove(); }
   }
 
   /** The Engraving tab filtered to the order (a list, nothing chosen), with the reason said. */
@@ -178,10 +203,18 @@
       } finally { sp.remove(); }
       if (my !== seq) return false;
     }
-    await shut(t.closeFirst);
-    if (my !== seq) return false;
     try {
-      if (r.job && r.tab) return await land(r.job, r.rid || ridOfJob(r.job));
+      const rid = r.rid || ridOfJob(r.job), OW = window.OrderWin, SW = window.SheetWin;
+      // (only the order window is open, nobody else closes it: the piece's card is drawn behind it first, and the window goes back into that card)
+      if (r.job && r.tab && typeof t.closeFirst !== "function" && OW && OW.isOpen && OW.isOpen() && !(SW && SW.isOpen && SW.isOpen())) {
+        const b = await landBehind(r.job, rid, my); if (!b || my !== seq) return false;
+        await shut(null, b.el);
+        if (my !== seq) return false;
+        return b.ok && b.el ? true : await land(r.job, rid);
+      }
+      await shut(t.closeFirst);
+      if (my !== seq) return false;
+      if (r.job && r.tab) return await land(r.job, rid);
       fallback(r.rid, r.job ? "none" : waited ? "late" : "missing");
     } catch (e) { console.warn("engrave link:", e); throw e; }
     return false;
