@@ -1427,7 +1427,7 @@ const Orders = window.Orders = (() => {
   const mapsSame = () => mapsRead[0] === B.maps.optionMaps && mapsRead[1] === B.maps.aliases && mapsRead[2] === B.maps.noDesign;
   // FLAGWHY: what the orders the page holds say about each listing's SKUs (O.seenSkus, rebuilt on every pass of interpretAll): a line's SKU is told to be an option's own, or shared, from them
   let seenIx = {};
-  const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, listingSkus: B.maps.listingSkus, seen: seenIx, masterEntry: sku => Master.entryFor(sku), masterLoose: sku => Master.looseFor(sku), masterShared: sku => Master.sharedFor(sku) });
+  const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, listingSkus: B.maps.listingSkus, seen: seenIx, masterEntry: sku => Master.entryFor(sku), masterLoose: sku => Master.looseFor(sku), masterShared: sku => Master.sharedFor(sku), masterSkus: () => [...B.master.entries.keys()] });   // (masterSkus: every SKU the library holds; read only by a line whose SKU is a shared zodiac SKU, ZODSIGN)
   /** The pull rule (Settings → Pull orders): every open order, those due by a date, or the N most urgent by ship-by date. */
   function applyPullRule(orders) {
     const mode = S.settings.pullMode || "all";
@@ -12048,7 +12048,7 @@ const Review = window.Review = (() => {
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
   const SEP = "\u0000";
   function decisionKey(row, p) {
-    if (p.kind === "unmatchedSku") return p.sku ? `ord:sku:${p.sku}` : `ord:listing:${p.listingId || row.key}${p.huggie ? SEP + "huggie" : ""}`;   // a huggie set's is its own
+    if (p.kind === "unmatchedSku") return p.sku ? `ord:sku:${p.sku}${p.zodiac ? SEP + p.zodiac : ""}` : `ord:listing:${p.listingId || row.key}${p.huggie ? SEP + "huggie" : ""}`;   // a huggie set's is its own
     if (p.kind === "blockedSku") return `ord:blocked:${p.sku}`;
     if (p.kind === "needsMapping") return `ord:opt:${p.optionName}${SEP}${p.optionValue}`;
     if (p.kind === "needsMaterial") return `ord:mat:${p.listingId || row.key}${SEP}${p.metalLabel || ""}`;
