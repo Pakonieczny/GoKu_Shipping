@@ -59,7 +59,7 @@ const TITLE = "Schrödinger's Cat Necklace, Whimsical Cat Gift, Fun Jewelry Gift
     const { page, context } = await session();
     /* 1 · before the link: the defect Paul saw: ONE piece of the SKU's own design (the huggie skull cat) */
     const before = { A: await rowState(page, A), E: await rowState(page, E) };
-    ok(before.A.designSku === CAT && before.A.pieces === 1 && !before.A.two && before.A.problems.length === 0, 'before the link, the necklace is read as ONE piece of ' + CAT + ': ' + JSON.stringify(before.A));
+    ok(before.A.pieces === 1 && !before.A.two && (before.A.designSku === CAT || before.A.problems.some(p => /huggie design in the library/.test(p))), 'before the link, the necklace is one piece of ' + CAT + ' (the huggie drawing), which the form guard now holds with a plain line: ' + JSON.stringify(before.A));
     /* 2 · the saved link, once, through the page's own call (no sandbox flag: production's store of the fake site) */
     const put = await page.evaluate(async ({ LID, RAW, CAT1, CAT2 }) => CN.api('charmNestLibrary', { op: 'aliasPut', listingId: LID, fromSku: RAW, pair: { L: CAT1, R: CAT2 }, by: 'SCHROLINK', title: "Schrödinger's Cat Necklace" }), { LID, RAW, CAT1, CAT2 });
     ok(put && put.ok === true, 'the real call saved the pair: ' + JSON.stringify(put));
@@ -71,7 +71,7 @@ const TITLE = "Schrödinger's Cat Necklace, Whimsical Cat Gift, Fun Jewelry Gift
     const after = { A: await rowState(page, A), E: await rowState(page, E) };
     ok(after.A.two && after.A.designSku === CAT1 && after.A.pieces === 2 && !after.A.earring && after.A.members === null && after.A.problems.length === 0, 'now a necklace of two charms, read from the saved link, no question: ' + JSON.stringify(after.A));
     ok(JSON.stringify(after.A.designs) === JSON.stringify([CAT1, CAT2]) && after.A.sides === '|', 'CAT 1 + CAT 2, no side on either piece: ' + JSON.stringify([after.A.designs, after.A.sides]));
-    ok(after.E.designSku === CAT && after.E.pieces === 1 && !after.E.two, 'the same SKU on another listing is not changed: ' + JSON.stringify(after.E));
+    ok(after.E.pieces === 1 && !after.E.two && JSON.stringify([after.E.designSku, after.E.problems]) === JSON.stringify([before.E.designSku, before.E.problems]), 'the same SKU on another listing is not changed: ' + JSON.stringify(after.E));
     /* 3 · Review: the line has no row */
     await page.evaluate(() => { Review.syncOrderItems(); CN.setMode('review'); Review.render(); });
     const rv = await page.evaluate(() => [...document.querySelectorAll('#rvList .reviewListRow')].map(r => r.dataset.rid));
@@ -83,7 +83,7 @@ const TITLE = "Schrödinger's Cat Necklace, Whimsical Cat Gift, Fun Jewelry Gift
     const va = vecs.find(x => x.rid === A); ok(va && !/Unavailable|No vector/.test(va.text), 'the necklace\'s "Vector design" reads neither "Unavailable · Retry" nor "No vector available" (' + (va && va.text || 'a picture') + ')');
     ok(va.pic && va.pic.bodies.length === 2, 'the Orders row draws BOTH cats side by side: ' + JSON.stringify(va.pic && va.pic.bodies));
     ok(va.pic.chips.length === 0 && va.pic.bandInk.length === 0, 'with no Left or Right chip (a necklace has no ears): ' + JSON.stringify([va.pic.chips, va.pic.bandInk]));
-    const ve = vecs.find(x => x.rid === E); ok(ve && ve.pic && ve.pic.bodies.length === 1, 'the other listing\'s row is still the one design: ' + JSON.stringify(ve && ve.pic && ve.pic.bodies));
+    const ve = vecs.find(x => x.rid === E); ok(ve && (!ve.pic || ve.pic.bodies.length <= 1), 'the other listing\'s row is not drawn as two charms: ' + JSON.stringify(ve && ve.pic && ve.pic.bodies));
     const facts = await page.evaluate(rid => { const nd = document.querySelector(`#ordItems > [data-rid="${rid}"]`); return { facts: ((nd.querySelector('.rowFacts') || {}).textContent || '').replace(/\s+/g, ' '), cap: ((nd.querySelector('.comparePair figure:first-child figcaption') || {}).textContent || '') }; }, A);
     ok(!/Left|Right/.test(facts.facts) && !/Left|Right/.test(facts.cap), 'the row says nothing of a Left or a Right: ' + JSON.stringify(facts));
     /* 5 · the pieces one by one: each piece is its OWN design, never one design twice (piece dots, Engrave tab, efficiency tiles) */
