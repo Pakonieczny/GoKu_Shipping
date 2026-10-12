@@ -356,21 +356,21 @@
         told0 = ''; return;
       }
       waitEl = null; host.hidden = false;
-      const next = new Map(), els = [];
+      const next = new Map(), els = []; let built = false;
       for (const p of r.pieces) {
         const k = keyOf(p), old = cards.get(k);
         // (a piece being approved keeps the card it has until the approval stands)
         if (old && old.el.isConnected && (busy.has(k) || (!force && old.sig === sigs.get(k)))) { next.set(k, old); els.push(old.el); continue; }
-        const el = mkCard(p); next.set(k, { el, sig: sigs.get(k) }); els.push(el);
+        const el = mkCard(p); built = true; next.set(k, { el, sig: sigs.get(k) }); els.push(el);
       }
       const same = els.length === host.children.length && els.every((e, i) => host.children[i] === e);
       if (!same) host.replaceChildren(...els);
       cards.clear(); for (const [k, v] of next) cards.set(k, v);
       for (const p of r.pieces) for (const j of p.jobs) seen.add(j.key);
-      tryDo(() => root.Seal && root.Seal.fitGroups && root.Seal.fitGroups(host));
-      const first = told0 === null; told0 = kinds;
-      if (!first && !quiet && kinds !== kindsSeen) told();
-      kindsSeen = kinds;
+      if (built || !same) tryDo(() => root.Seal && root.Seal.fitGroups && root.Seal.fitGroups(host));
+      // (kindsSeen is set BEFORE the host is told: told() draws the order window again, which calls update() -> refresh() while this call is still on the stack)
+      const first = told0 === null, was = kindsSeen; told0 = kinds; kindsSeen = kinds;
+      if (!first && !quiet && kinds !== was) told();
     }
     const id0 = ++nextId;
     function reset() {
