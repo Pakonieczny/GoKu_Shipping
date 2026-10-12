@@ -6336,15 +6336,13 @@ const Engrave = window.Engrave = (() => {
     };
   }
   /** Save the choice (patch: { mode?, front?, back? }): see CharmNestEngraveSetup.apply. Resolves { ok, cancelled?, message?, pending?, removed, plain, none, reopened, seeded, added }. */
-  async function saveSetup(row, patch, o) {
+  async function saveSetup(row, patch) {
     const CS = window.CharmNestEngraveSetup, line = lineOf(row);
     if (!CS || !line) return { ok: false, message: "The engraving setup is not loaded yet." };
     if (setupBusy.has(line.key)) return { ok: false, message: "The last change to this piece is still being saved." };
     setupBusy.add(line.key);
-    try { return await CS.apply(line, patch, setupEnv(), o); } finally { setupBusy.delete(line.key); }
+    try { return await CS.apply(line, patch, setupEnv()); } finally { setupBusy.delete(line.key); }
   }
-  /** Take a person's edit back: the system's own reading of the line comes back (the jobs follow it, as for any change). */
-  const undoSetup = row => saveSetup(row, null, { undo: true });
   async function prepareApproval(job, by, at) {
     const charm=charmFor(job),view=job.view,fit=job.fit;
     if(!charm || !view || !job.copies?.length || job.copies.some(id=>!sheetFor(job,id)))throw new Error("The charm needs its current sheet and outline before approval.");
@@ -7838,7 +7836,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, undoSetup, seedWords, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 
 /* ═══ 22 · Sets — production evidence and release ═══ */

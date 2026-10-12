@@ -2,7 +2,7 @@
 // The pure parts are proved in engrave-setup.cjs; this proves the page's side of it:
 //   1  order 4195966039 read by the real intake (Charm Type "Tag1 (front+back)", Font "Ace", "front - W / back - 1. 27. 24") is told by the control as Front + back, W, 1. 27. 24, Ace
 //   2  Engrave.saveSetup stores row.engravingOverride on the LINE with the signed-in name, lineRecord keeps it and rowFromRecord brings it back, a fresh pull (Carry.adopt) keeps it
-//   3  an undecided job takes the person's new words (no paid call), the control says it was edited, Undo brings the system's reading back
+//   3  an undecided job takes the person's new words (no paid call), the control says it was edited and offers no Undo (point 8); saving the reading's own words is how a person gets them back
 //   4  a DECIDED face is never deleted: mode "none" cuts it plain through the page's own skip (a "cut plain" seal by the person), the job and its seals stay
 //   5  the control is mounted in the Engrave tab's card ONLY: the order window's card and the sheet window's card carry none (ENGMODAL, Paul 12 Oct 2026: "it should only be part of the detailed Engraving modal popup within the Engraving tab")
 //   6  nothing asked Etsy or the reader: the fake site saw no engraveIntent call and no notes.set
@@ -69,7 +69,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     const ov = await page.evaluate(KEY => { const r = B.orders.byKey.get(KEY); return r.engravingOverride; }, KEY);
     check(ov && ov.mode === 'back' && ov.by === 'Test Operator' && ov.at > 0, 'saved as row.engravingOverride by the signed-in login: ' + JSON.stringify(ov));
     t = (await shown()).text;
-    check(/Set by Test Operator/.test(t) && /The system read: Front: W · Back: 1\. 27\. 24/.test(t) && /Undo my edit/.test(t), 'the control says it was edited and what the system read');
+    check(/Set by Test Operator/.test(t) && /The system read: Front: W · Back: 1\. 27\. 24/.test(t) && !/Undo|back to the system/i.test(t), 'the control says it was edited and what the system read, and offers no Undo');
     const rec = await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY), [k, r] = Orders.lineRecord(row), back = Orders.rowFromRecord(k, JSON.parse(JSON.stringify(r))); return { rec: r.engravingOverride, back: back.engravingOverride, key: k, plain: Orders.lineRecord(Object.assign({}, row, { engravingOverride: undefined }))[1] }; }, KEY);
     check(JSON.stringify(rec.rec) === JSON.stringify(ov) && JSON.stringify(rec.back) === JSON.stringify(ov), 'lineRecord keeps it and rowFromRecord brings it back');
     check(!('engravingOverride' in rec.plain), 'a line with no edit has no such key in its record (records are byte for byte as before)');
@@ -80,20 +80,19 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     const jobAfter = await page.evaluate(KEY => { const j = Engrave.jobOf(B.orders.byKey.get(KEY)); return { state: j.state, lines: j.lines, face: j.face || 'back' }; }, KEY);
     check(jobAfter.state === 'review' && jobAfter.lines.join('/') === '1. 27. 24', 'the undecided back job is as it was: ' + JSON.stringify(jobAfter));
 
-    // ── 3 · new words for the undecided back, then Undo ──
+    // ── 3 · new words for the undecided back; no Undo; the reading's own words saved again ──
     await mountIt(); await page.click('#__slot [data-su=edit]');
     await page.fill('#__slot textarea[data-face=back]', '2. 3. 25'); await page.click('#__slot [data-su=save]');
     await page.waitForFunction(KEY => { const j = Engrave.jobOf(B.orders.byKey.get(KEY)); return j.lines.join('/') === '2. 3. 25'; }, KEY, { timeout: 10000 });
     const seeded = await page.evaluate(KEY => { const j = Engrave.jobOf(B.orders.byKey.get(KEY)); return { state: j.state, by: j.decision && j.decision.by, source: j.source, conf: j.confidence, ws: j.wordsSource }; }, KEY);
     check(seeded.by === 'Test Operator' && seeded.source === 'person' && seeded.conf === 1 && seeded.ws === 'spec.engraving' && ['ready', 'fitting', 'review'].includes(seeded.state), 'the undecided job took the new words as the person\'s own, no reading: ' + JSON.stringify(seeded));
-    await mountIt(); await page.waitForSelector('#__slot [data-su=undo]', { timeout: 15000 }).catch(async () => { console.log('  (no Undo button; the control says: ' + (await shown()).text.slice(0, 300) + ')'); });
-    await page.click('#__slot [data-su=undo]');
-    await page.waitForFunction(KEY => !B.orders.byKey.get(KEY).engravingOverride, KEY, { timeout: 10000 });
-    t = (await shown()).text;
-    check(/Front \+ back/.test(t) && /Saved/.test(t) && !/Undo my edit/.test(t), 'Undo brings the system\'s reading back: ' + t.slice(0, 200));
+    await mountIt(); t = (await shown()).text;
+    check(!(await page.$('#__slot [data-su=undo]')) && !(await page.$('#__slot [data-su=undoYes]')) && !/Undo|back to the system/i.test(t) && !(await page.evaluate(() => [...document.querySelectorAll('#__slot button')].some(b => /undo|revert/i.test(b.textContent + ' ' + (b.title || ''))))), 'an edited line offers no Undo / revert control: ' + t.slice(0, 200));
+    const again = await page.evaluate(async KEY => { const row = B.orders.byKey.get(KEY), r = await Engrave.saveSetup(row, { mode: 'both', front: { text: 'W' }, back: { text: '1. 27. 24' } }); return { ok: r.ok, mode: row.engravingOverride && row.engravingOverride.mode, hasUndo: typeof Engrave.undoSetup }; }, KEY);
+    check(again.ok && again.mode === 'both' && again.hasUndo === 'undefined', 'saving the reading\'s own words is a plain save (the page has no undoSetup): ' + JSON.stringify(again));
 
     const back2 = await page.evaluate(KEY => Engrave.jobOf(B.orders.byKey.get(KEY), null, 'back').lines.join('/'), KEY);   // (the line has a front job again: the back job is asked for by its face)
-    check(back2 === '1. 27. 24', 'and the undecided back takes the system\'s words again: ' + back2);
+    check(back2 === '1. 27. 24', 'and the undecided back has those words again: ' + back2);
 
     // ── 4 · a decided face is never deleted: mode none cuts it plain ──
     const dec = await page.evaluate(async KEY => {
