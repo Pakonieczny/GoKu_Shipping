@@ -3307,20 +3307,32 @@ const Pool = window.Pool = (() => {
   const setToldFixed = new Set();
   function noticeSet(row, live) {
     try {
-      const sp = row.spec, want = O.setDesignsOf(sp);
+      const sp = row.spec, set = O.setDesignsOf(sp);
+      // COMETMAP (12 Oct 2026): ONE design a person saved for this listing and SKU (source "alias": "Use this charm", aliasPut bySku) is the same kind of change when the line was pooled as another drawing
+      // (the Etsy SKU read as a look-alike master entry: CELESTIAL3-COMET, a comet with no loop, before the link to CELESTIAL 3 - COMET). Only that source, and only a line that reads clean and is not made by hand
+      const one = !set && sp && sp.skuSource === "alias" && sp.designSku && !sp.noDesign && !sp.ownDesign && !sp.customDone && !(sp.problems || []).length ? [String(sp.designSku)] : null, want = set || one;
       if (!want || ["gone", "committed"].includes(row.state) || row.hold) return;
       if (row.changePending && row.repoolChanged && ((B.review && B.review.items) || []).some(x => x.key === "chg:" + row.key)) return;   // (already offered: the card stands until a person answers it)
       const units = Math.max(1, Math.round(+sp.quantity || 1)), expect = []; for (let u = 0; u < units; u++) for (const d of want) expect.push(d.toUpperCase());
       const made = live.slice().sort((a, b) => (+a.copy || 0) - (+b.copy || 0)).map(r => String(r.sku || "").toUpperCase());
-      if (made.length === expect.length && made.every((s, i) => s === expect[i])) return;   // (already made as the link says)
+      if (set ? made.length === expect.length && made.every((s, i) => s === expect[i]) : made.length > 0 && made.every(s => O.sameDesign(s, want[0], k => Master.entryFor(k)))) return;   // (already made as the link says: for one design, every piece is that drawing, under whichever of its names)
+      if (one && (!made.length || made.some(s => !s))) return;   // (nothing made yet: the line is simply made up from the link; a piece whose record names no design is not guessed at)
       const ids = new Set(row.poolIds || []), cut = sh => !!sh.roseCutAt || Sets.ofRun(sh.runId).some(s => s.committedAt && s.sheetIds.includes(sh.sheetId));
       const fixed = allSheets().filter(sh => (cut(sh) || sh.releaseFull || sh.recalled || Gate.modern(sh.runId) && sh.setId && !sh.draft) && sh.charms.some(c => ids.has(c.poolId)));
-      if (fixed.length) { if (!setToldFixed.has(row.key)) { setToldFixed.add(row.key); agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · a saved link makes this line a set of charms (${want.join(" + ")}), but its piece is on ${fixed.map(sh => sh.fileBase || sh.sheetId).join(", ")}, released or cut: left as it was`); } return; }
+      if (fixed.length) {
+        if (!setToldFixed.has(row.key)) {
+          setToldFixed.add(row.key); const where = fixed.map(sh => sh.fileBase || sh.sheetId).join(", ");
+          agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · a saved link makes this line ${one ? want[0] : "a set of charms (" + want.join(" + ") + ")"}, but its piece is on ${where}, released or cut: left as it was`);
+          // (one design: the order window already says "Read as <the linked design>" while the sheet still holds the old drawing; its timeline says so too, in words, once. Nothing is written to a sheet.)
+          if (one) try { TL.line(row, "interpreted", { id: `${row.key}.relink.${TL.hash(want[0] + "|" + made.join(","))}`, once: true, text: `Saved link: now ${want[0]}, but ${[...new Set(made)].join(" + ") || "its piece"} is on ${where}, released or cut, so the sheet was left as it was`.slice(0, 200), data: { sku: want[0], was: made.slice(0, 6), sheets: fixed.map(sh => sh.sheetId).slice(0, 4) } }); } catch (_) {}
+        }
+        return;
+      }
       row.changePending = true; row.repoolChanged = true;
-      const was = made.length ? made.join(" + ") : "nothing yet";
+      const was = made.length ? (one ? [...new Set(made)] : made).join(" + ") : "nothing yet", pcs = one ? Math.max(1, Math.round(+sp.pieceCount || expect.length)) : expect.length;
       Review.add({ kind: "orderChanged", key: "chg:" + row.key, row, old: { text: "", spec: { designSku: was, material: sp.material, form: sp.form || "", size: sp.size || "", personalization: sp.personalization } },
-        why: `Now ${want.length === 2 ? "two" : want.length} charms, ${want.join(" + ")} (a saved link). Accept the new order to make it up again as ${expect.length} pieces: the old ${was} comes off the open sheet it is on. Nothing cut or released is touched.` });
-    } catch (e) { console.warn("[bridge] saved two-charm link not noticed:", e && e.message); }
+        why: `Now ${one ? want[0] : (want.length === 2 ? "two" : want.length) + " charms, " + want.join(" + ")} (a saved link). Accept the new order to make it up again as ${pcs} piece${pcs === 1 ? "" : "s"}: the old ${was} comes off the open sheet it is on. Nothing cut or released is touched.` });
+    } catch (e) { console.warn("[bridge] saved link not noticed:", e && e.message); }
   }
   function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); delete k.frontAt; return k; }   // (a copy never carries another order's place in the queue)
   /** §6.4 · one pooled charm per copy of the line, on the material card the ORDER says. */
@@ -12180,6 +12192,9 @@ const Review = window.Review = (() => {
     }
     if(row.repoolChanged){
       const old=new Set(row.poolIds || []);
+      // a line made up again as ANOTHER drawing (a saved link: COMETMAP / SCHROLINK) has the engraving it was fitted to the old outline asked again, as an Etsy change does (once: an invalidated job is not invalidated twice)
+      try { const was=[...old].map(id=>B.pool.rows.get(id)).filter(Boolean).map(r=>String(r.sku || "")), to=O.setDesignsOf(row.spec) || [row.spec && row.spec.designSku];
+        if(row.engrave && was.length && to.every(Boolean) && !was.every(w=>to.some(t=>O.sameDesign(w,t,k=>Master.entryFor(k))))){ row.engrave.invalidatedBy="design changed"; row.engrave.approved=false; row.engrave.state="reclassify"; Engrave.invalidate(row,"design changed"); } } catch(_) {}
       // (a sheet already released keeps its set and gets its QR label made again for the orders left on it: it used to leave
       // the set without a label and wait to fill again, as a sheet did after charms were taken off by hand, 26 Sep)
       for(const sh of allSheets())if(sh.charms.some(c=>old.has(c.poolId))){Gate.keep(sh);sh.charms=sh.charms.filter(c=>!old.has(c.poolId));sh.placements=sh.placements.filter(pl=>sh.charms.some(c=>c.id===pl.id));Orders.keepRest(sh);}
