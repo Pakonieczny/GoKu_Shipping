@@ -7589,7 +7589,7 @@ const Engrave = window.Engrave = (() => {
     // card, so what was typed stays (charm-nest-mail.js)
     cardMessages(card, job);
     // what the system decided for this LINE (None / Front only / Back only / Front + back, each face's words and font), checked and edited right here: charm-nest-engrave-setup.js (one control for every card)
-    { const su = card.querySelector("[data-engsetup]"); if (su && window.CharmNestEngraveSetup) CharmNestEngraveSetup.mount(su, job.row); }
+    { const su = card.querySelector("[data-engsetup]"); if (ctx && su && window.CharmNestEngravePanel) CharmNestEngravePanel.mountPiece(su, job); }   // (charm-nest-engrave-panel.js: the Front / Back thumbnails and the one panel, inline in the Engrave detail only)
     card.querySelectorAll("[data-ask]").forEach(b => b.onclick = () => window.CustomerMail?.cardAsk?.(job, b.dataset.ask));
     if (wordsJob) { const bh = card.querySelector(".backHost"); bh.innerHTML = `<div class="noBack">${esc(job.state === "blocked" ? (job.reason || "This preview needs attention — use the words to retry.") : waitingReason(job))}</div>`; }
     const ta = card.querySelector('[data-f="words"]'), use = card.querySelector('[data-a="usewords"]');

@@ -110,12 +110,13 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     const hosts = await page.evaluate(async ({ KEY, RID }) => {
       const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back');
       Object.assign(j, { state: 'review', approvedBy: null, approvedAt: null, decidedAt: null, decidedBy: null }); Object.assign(row.engrave, { state: 'review', approved: false, needed: true }); delete row.engravingOverride; CharmNestEngraveSetup.DRAFTS.clear();
-      const card = Engrave.placementCard(j, 1), engTab = !!card.querySelector('[data-engsetup] .egSetup');
+      const card = Engrave.placementCard(j, 1, {}), engTab = !!card.querySelector('[data-engsetup] .engp'), review = Engrave.placementCard(j, 1).querySelector('[data-engsetup]').children.length === 0;   // (the Engrave tab passes a ctx; the Review tab's card has none and no panel)
       const box = document.createElement('div'); document.body.appendChild(box); box.className = 'owEng'; OrderEngraving.mount(box, { rid: RID, key: KEY, compact: false });
       await new Promise(r => setTimeout(r, 400));
-      return { engTab, tabText: card.querySelector('[data-engsetup]').textContent.replace(/\s+/g, ' ').trim(), ow: !!box.querySelector('.owEngSetup .egSetup'), owAny: !!box.querySelector('.egSetup, .owEngSetup, textarea, select') };
+      return { engTab, review, tabText: card.querySelector('[data-engsetup]').textContent.replace(/\s+/g, ' ').trim(), ow: !!box.querySelector('.owEngSetup .egSetup'), owAny: !!box.querySelector('.egSetup, .owEngSetup, textarea, select') };
     }, { KEY, RID }).catch(e => ({ err: String(e.message || e) }));
-    check(hosts.engTab, 'the Engrave tab\'s card carries the control: ' + (hosts.tabText || hosts.err || '').slice(0, 120));
+    check(hosts.engTab, 'the Engrave tab\'s card carries the panel (charm-nest-engrave-panel.js): ' + (hosts.tabText || hosts.err || '').slice(0, 120));
+    check(hosts.review, 'the Review tab\'s card (no ctx) has no panel');
     check(hosts.ow === false && hosts.owAny === false, 'the order window\'s engraving card carries no engraving menu: ' + JSON.stringify({ ow: hosts.ow, any: hosts.owAny, err: hosts.err })); 
 
     // ── 5b · and NOT in the sheet window's engraving card ──
