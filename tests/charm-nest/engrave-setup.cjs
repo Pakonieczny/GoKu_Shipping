@@ -6,7 +6,7 @@
 //      confidence; the same from TAGSKU's tag option alone (the intake has not written spec.engraving yet); a back-only line is ONE quiet line and nothing else
 //   2  mount: draws into a slot, Edit opens it inline (no dialog), every mode button (None / Front only / Back only / Front + back) shows the right boxes, Cancel puts it away
 //   3  edits: words, a font per face (default: the line's font), the patch carries only what was touched, Save is off until something changed
-//   4  the override: by = the signed-in name (never typed), kept from the previous one, a face the mode drops is dropped; JSON round trip; the system's reading comes back on Undo
+//   4  the override: by = the signed-in name (never typed), kept from the previous one, a face the mode drops is dropped; JSON round trip (there is no Undo: ENGUNDO, engrave-no-undo.cjs)
 //   5  the save path (apply): store -> ensureJobs -> reconcile; an UNDECIDED face job is removed, a DECIDED one is cut plain (never deleted) and says so first (a second press);
 //      nothing is touched while the front jobs cannot be made; mode none ends undecided jobs; a face asked for again is opened again; the name put away changes nothing
 //   6  waits and failures: a small labelled spinner while saving, one plain line on failure with the edit kept; a card drawn again gets the staged edit back
@@ -114,7 +114,7 @@ const job = (face, state, lines, extra = {}) => Object.assign({ key: F.jobKey(LK
     // saved: the card is closed and tells the edit
     const t = text(slot);
     ok('closed again', slot.querySelector('[data-open="0"]')); ok('says it was edited by the login', /Set by Ana_M/.test(t));
-    ok('the system\'s reading is kept beside', /The system read: Front: W · Back: 1\. 27\. 24/.test(t)); ok('Undo my edit is offered', !!slot.querySelector('[data-su=undo]'));
+    ok('the system\'s reading is kept beside', /The system read: Front: W · Back: 1\. 27\. 24/.test(t)); ok('no Undo / revert control is offered (point 8)', !slot.querySelector('[data-su=undo]') && !/Undo|back to the system/i.test(t) && ![...slot.querySelectorAll('button')].some(b => /undo|revert/i.test(b.textContent + ' ' + (b.title || ''))));
     ok('the new words and font show', /Front W\./.test(t) && /Vibur/.test(t));
     eq('the face font', S.read(line, { jobs: [] }).rows[1].fontWord, 'Vibur');
   }
@@ -211,10 +211,10 @@ const job = (face, state, lines, extra = {}) => Object.assign({ key: F.jobKey(LK
     const gone = mkLine({ row: { state: 'gone' } }); ok('a line that left the pull is not changed', !(await S.apply(gone, { mode: 'back' }, fakeEnv([]))).ok);
   }
   { reset();
-    // undo: the system's reading comes back; undecided jobs follow the reading
+    // there is no undo option on the save path any more (point 8): an old { undo: true } call is an ordinary save and the stored override is never cleared by it
     const line = mkLine({ row: { engravingOverride: { mode: 'front', front: { text: 'W', lines: ['W'], fontWord: null }, by: 'Ana_M', at: 1 } } }); const jobs = [job('front', 'review', ['W'])];
-    const env = fakeEnv(jobs), res = await S.apply(line, null, env, { undo: true });
-    ok('undone', res.ok && !line.engravingOverride); eq('the back is made again (asked for by the reading)', jobs.map(j => j.face), ['front', 'back']);
+    const env = fakeEnv(jobs), res = await S.apply(line, { front: { text: 'W2' } }, env, { undo: true });
+    ok('an old undo option does not clear the override', res.ok && !!line.engravingOverride && line.engravingOverride.mode === 'front' && line.engravingOverride.front.text === 'W2');
   }
   { reset();
     // an undecided job takes the person's new words (no paid reading); a job still classifying is left to the pipeline
@@ -252,7 +252,7 @@ const job = (face, state, lines, extra = {}) => Object.assign({ key: F.jobKey(LK
       const slotB = fresh(); slotB.addEventListener('cn-engrave-setup', e => { heardB = e.detail; }); S.mount(slotB, line, o6); slotA.remove();
       ok('the new slot shows the wait too', slotB.querySelector('.owSpin') && /Saving/.test(text(slotB)));
       line.engravingOverride = S.buildOverride(line, { mode: 'back' }, 'Ana_M', 9); go({ ok: true, plain: [] }); await tick();
-      ok('and is told it ended: no spinner, the plain Saved line, Undo on offer', !slotB.querySelector('.owSpin') && /Saved/.test(text(slotB)) && slotB.querySelector('[data-su=undo]'));
+      ok('and is told it ended: no spinner, the plain Saved line, no Undo', !slotB.querySelector('.owSpin') && /Saved/.test(text(slotB)) && !slotB.querySelector('[data-su=undo]'));
       ok('the announcement reaches the slot that is on screen', heardB && heardB.key === LK);
       delete line.engravingOverride; S.DRAFTS.clear(); S.NOTES.clear(); }
     // the name put away: calm, nothing said
