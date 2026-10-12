@@ -356,8 +356,8 @@ ok('a front seal keeps its face through merge, list and the timeline\'s events',
   });
 }
 
-/* 8c ── the card mounted in a host: ENGSETUP's line editor goes under it ──────────── */
-okA('mount: a faced card with its Front | Back switch; the ENGSETUP editor mounted under the card when it is on the page', async () => {
+/* 8c ── the card mounted in a host: no line editor under it (ENGMODAL: the menu is only in the Engraving tab) ──────────── */
+okA('mount: a faced card with its Front | Back switch; no engraving menu under the card, even with the component on the page', async () => {
   reset(); w.Element.prototype.getClientRects = function () { return [{}]; };   // (jsdom has no layout: a card is drawn only where it can be seen)
   const host = d.createElement('div'); d.body.appendChild(host);
   const h = OE.mount(host, { rid: '4195966039', key: charm.key, poolId: 'p1', row: charm });
@@ -368,8 +368,7 @@ okA('mount: a faced card with its Front | Back switch; the ENGSETUP editor mount
   assert.equal(host.querySelector('.owEngSetup'), null, 'no editor while the component is not on the page');
   w.eval(src('charm-nest-engrave-setup.js'));   // (the real component, ENGSETUP's: mounted by its one call under every card)
   h.refresh(true, true); await new Promise(r => setTimeout(r, 30));
-  assert.equal(host.querySelectorAll('.owEngCard .owEngSetup').length, 1, 'inside the card, under its buttons');
-  const line = host.querySelector('.owEngSetup .egSetup'); assert(line, 'the line\'s editor is drawn'); assert(/Front \+ back|Front and back|both/i.test(line.textContent), line.textContent.slice(0, 120));
+  assert.equal(host.querySelectorAll('.owEngSetup, .egSetup, textarea, select').length, 0, 'the order window card carries no engraving menu (it lives only in the Engraving tab)');
   // a list of cards (a pair: a card for each ear), each with its Front | Back
   const lh = d.createElement('div'); d.body.appendChild(lh);
   const ps = [{ key: earLF.key, slot: 'L', poolId: 'pL', row: earLF.row }, { key: earRF.key, slot: 'R', poolId: 'pR', row: earRF.row }];
