@@ -135,7 +135,11 @@
     if (dot.getAttribute('data-pd-none') === '1') return { none: true, key: '', row: null };
     const o = dot.getAttribute('data-pd-o') || '', p = dot.getAttribute('data-pd-p') || '', l = dot.getAttribute('data-pd-l') || '';
     const row = rowFor(o, l, p), LM = root.PieceMedia || root.ListMedia;
-    const sd = dot.getAttribute('data-pd-s'), opts = sd === 'L' || sd === 'R' ? { highlight: sd, side: sd, mirror: dot.getAttribute('data-pd-m') === '1' } : null;   // (an earring's own ear: no opts for any other piece, so nothing else changes)
+    const sd = dot.getAttribute('data-pd-s');
+    let opts = sd === 'L' || sd === 'R' ? { highlight: sd, side: sd, mirror: dot.getAttribute('data-pd-m') === '1' } : null;   // (an earring's own ear: no opts for any other piece, so nothing else changes)
+    // a necklace of saved charms (spec.pair.set): piece 1 of each unit is the first design, piece 2 the second; its picture is that design alone, as drawn (SCHROLINK)
+    const set = row && row.spec && row.spec.pair && row.spec.pair.set && Array.isArray(row.spec.pair.set.designs) && row.spec.pair.set.designs.length > 1 ? row.spec.pair.set.designs : null;
+    if (!opts && set) { const n = parseInt(String(p).split('_').pop(), 10) || parseInt(dot.getAttribute('data-pd-n'), 10) || 1; opts = { design: String(set[(n - 1) % set.length]) }; }
     let key = '';
     if (row) { try { key = LM && typeof LM.vectorKey === 'function' ? (opts ? LM.vectorKey(row, opts) : LM.vectorKey(row)) || '' : (row.spec && row.spec.noDesign ? '' : 'sku:' + String((row.spec && row.spec.designSku) || (row.line && row.line.sku) || '').toUpperCase()); } catch (e) { warn('design key', e); } }
     const out = key && key !== 'sku:' ? { none: false, key, row, opts } : { none: true, key: '', row };

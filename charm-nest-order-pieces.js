@@ -155,7 +155,8 @@
       // that still places it is the person's own screen and stands; a sheet already cut keeps the piece (it is held AND physically there).
       const hold = heldRow(p);
       if (hold && holder && via !== 'page' && !cut(holder)) { holder = null; via = null; }
-      const l = o.line, sp = (l && l.spec) || {}, sku = (l && (l.sku || sp.designSku)) || (p && p.sku) || '', metal = (l && (l.material || sp.material)) || (p && p.material) || (holder && holder.metal) || null;
+      const l = o.line, sp = (l && l.spec) || {}, set = !!(p && p.sku && sp.pair && sp.pair.set && Array.isArray(sp.pair.set.designs) && sp.pair.set.designs.length > 1);   // (a necklace of saved charms: each piece is its own design, the pool row's SKU, not the line's first one)
+      const sku = (set ? p.sku : '') || (l && (l.sku || sp.designSku)) || (p && p.sku) || '', metal = (l && (l.material || sp.material)) || (p && p.material) || (holder && holder.metal) || null;
       const problem = problemOf(l, sku, hold);
       const nested = !!holder, state = !holder ? 'unnested' : via === 'page' && !holder.id ? 'nested' : cut(holder) ? 'cut' : 'sheeted';
       // (completed by hand: a piece that needs no sheet is not waiting for the sheets to be read, and never "not on a sheet yet";

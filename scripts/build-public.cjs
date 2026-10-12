@@ -149,6 +149,7 @@ const assets = [
   "charm-nest-readiness.js",
   "charm-nest-order-pieces.js",
   "charm-nest-order-facts.js",
+  "charm-nest-order-rows.js",
   "charm-nest-piece-placement.js",
   "charm-nest-placement-feed.js",
   "charm-nest-order-engraving.js",

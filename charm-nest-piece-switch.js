@@ -22,6 +22,8 @@
  *   chipHtml(piece)             the little tag ("DISC 2 of 3"), as the lists and the switch draw it
  *   html(pieces, key, o)        the switch itself, the markup of the Left | Right switch for any number of pieces (class egEarSwitch / egEarTab, data-a="ear",
  *                               data-ear=<job key>; egMany besides on a switch of discs or other pieces, which may wrap on a narrow window); o.fonts: add each piece's font by name to its button (the discs do; the ears keep the markup they always had)
+ *                               o.compact: the same switch with one small tag per piece ("Left", "Right", "Disc 2") and no words or stage, for a list row (the order window's Its pieces: ONEROW);
+ *                               o.titleOf(piece, shown): the button's title
  *   bind(host, onPick)          press handler for every button of a switch inside `host`: onPick(key, button); returns a function that takes it off again
  *   kindOf(pieces)              "ears" | "discs" | "pieces"
  *   fontText(font)              "Special Elite" (the font the piece is engraved in), "Typewriter (asked)" when the buyer's font has no match yet, "" when none is known
@@ -114,6 +116,12 @@
     return `<span class="egEarSwitch${kind === 'ears' ? '' : ' egMany'}" role="group" aria-label="${aria}">${ps.map(p => {
       const on = p.key === key, ft = o.fonts ? fontText(p.font) : '', fn = o.fonts ? fontNote(p.font) : '';
       const what = kind === 'ears' ? 'the ' + p.name.toLowerCase() : p.name.toLowerCase();
+      // COMPACT (the order window's "Its pieces" row, ONEROW 12 Oct 2026): the very same switch for a list row that has no room for words and stages: one small tag per piece
+      // ("Left", "Right", "Disc 2"), the title the host gives (o.titleOf(piece, on)) or "Show only the left ear". Same classes, same data-a / data-ear, so bind() handles it.
+      if (o.compact) {
+        const t = o.titleOf ? o.titleOf(p, on) : (on ? 'Showing only ' : 'Show only ') + what;
+        return `<button type="button" class="egEarTab egCompact" data-a="ear" data-ear="${esc(p.key)}" aria-pressed="${on}" title="${esc(t)}"><span class="egPiece" data-slot="${esc(p.slot)}">${esc(p.label || p.tag)}</span></button>`;
+      }
       return `<button type="button" class="egEarTab" data-a="ear" data-ear="${esc(p.key)}" aria-pressed="${on}" title="${on ? 'Shown now' : 'Show'}: ${esc(what)} · ${esc(p.words || 'words not settled')}${fn ? ' · ' + esc(fn) : ''} · ${esc(p.stage)}">${chipHtml(p)}<span class="egEarWords">${esc(p.words || '…')}</span>${ft ? `<span class="egEarFont">${esc(ft)}</span>` : ''}<span class="egEarStage">${esc(p.stage)}</span></button>`;
     }).join('')}</span>`;
   }

@@ -35,8 +35,10 @@
   const reduced = () => { try { return root.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (_) { return false; } };
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
   const PDOT = '[data-pdot]';
-  const CIRCLE = '.flowRail .flowDot[data-zoom-dot], [data-pdot][data-zoom-dot]';
-  const isP = d => !!(d && d.hasAttribute && d.hasAttribute('data-pdot'));
+  const CIRCLE = '.flowRail .flowDot[data-zoom-dot], [data-pdot][data-zoom-dot], [data-pcard][data-zoom-dot]';
+  // (a piece row's dot [data-pdot], or its status chip [data-pcard="<step>"]: ONEROW, 12 Oct 2026: the chip of an earring pair or a set opens the same card, listing each piece)
+  const isP = d => !!(d && d.hasAttribute && (d.hasAttribute('data-pdot') || d.hasAttribute('data-pcard')));
+  const pAttr = d => (d && d.hasAttribute && d.hasAttribute('data-pcard') ? 'data-pcard' : 'data-pdot');
   const API = root.RailTip = root.RailTip || {};   // (the page may have put its resolver on it before this file ran)
   const st = { el: null, tip: null, box: null, flow: '', step: '', kind: '', rid: '', piece: '', sig: '', text: '', anim: null, mo: null, watch: 0, wait: 0, held: 0, heldAt: 0, over: false, sealOn: false };
 
@@ -55,6 +57,14 @@
 .rtLine,.rtBy{margin:3px 0 0;overflow-wrap:anywhere}
 .railTip{display:flex;flex-direction:column}
 .rtSeal{display:flex;justify-content:center;margin:7px 0 1px}
+.railTip.rtMany{max-width:min(272px,calc(100vw - 16px))}
+.rtPc{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:7px;padding-top:6px;border-top:1px solid var(--line2,#efe9dd)}
+.rtPcTx{min-width:0;flex:1 1 auto}
+.rtPcHd{display:flex;align-items:baseline;gap:6px;min-width:0}.rtPcHd b{font:600 11.5px/1.3 var(--sans,system-ui,sans-serif);color:var(--ink,#1c1a17)}
+.rtPc[data-state="Done"] .rtState{color:var(--sage,#5f7a5b)}
+.rtPc[data-state=""] .rtPcHd b{font-weight:500;color:var(--muted,#8a8378)}
+.rtPc .rtSeal{margin:0;flex:0 0 auto}
+.railTip.below .rtPc .rtSeal{order:0;margin:0}
 .railTip.below .rtSeal{order:-1;margin:1px 0 7px}
 .railTip .rtSeal.live .seal{pointer-events:auto}
 .rtBy{font-size:10px;color:var(--ink45,#938c80)}
@@ -79,29 +89,45 @@
   function infoOf(d) {
     if (isP(d)) {
       let i = null; try { i = typeof API.pieceDot === 'function' ? API.pieceDot(d) : null; } catch (e) { try { console.warn('Piece dot card', e); } catch (_) {} }
-      return i && i.name ? { name: String(i.name), state: String(i.state || ''), line: String(i.line || ''), by: String(i.by || ''), seal: i.seal || null } : null;
+      // pieces (ONEROW): a row that stands for several pieces (an earring pair, a set) lists each one's own state, line, time and seal under the step's name
+      const pcs = i && Array.isArray(i.pieces) ? i.pieces.filter(x => x && x.label).map(x => ({ label: String(x.label), state: String(x.state || ''), line: String(x.line || ''), by: String(x.by || ''), seal: x.seal || null })) : [];
+      return i && i.name ? { name: String(i.name), state: String(i.state || ''), line: String(i.line || ''), by: String(i.by || ''), seal: i.seal || null, pieces: pcs } : null;
     }
     const [name = '', state = '', line = '', by = ''] = parts(d);
     return name ? { name, state, line, by, seal: null } : null;
   }
-  const keyOf = i => JSON.stringify([i.name, i.state, i.line, i.by, i.seal ? String(i.seal.outerHTML || i.seal) : '']);
+  const sealKey = x => (x ? String(x.outerHTML || x) : '');
+  const keyOf = i => JSON.stringify([i.name, i.state, i.line, i.by, sealKey(i.seal), (i.pieces || []).map(p => [p.label, p.state, p.line, p.by, sealKey(p.seal)])]);
   const sigOf = d => isP(d) ? (d.getAttribute('aria-label') || '') + '|' + (d.getAttribute('data-pdot-sig') || '') : d.getAttribute('data-tip') || '';
   function fill(t, d, info) {
     info = info || infoOf(d) || { name: '', state: '', line: '', by: '', seal: null };
     const node = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; n.textContent = text; return n; };
     const head = doc.createElement('div'); head.className = 'rtHead'; head.append(...[node('b', '', info.name), info.state && node('span', 'rtState', info.state)].filter(Boolean));
     t.dataset.state = info.state; st.text = keyOf(info); st.sig = sigOf(d);
-    let seal = null;
-    if (info.seal) {   // (the seal slot: what PieceSeals drew for this step, the real seal of a done step or its unfinished version; in the card it is only looked at)
-      seal = doc.createElement('div'); seal.className = 'rtSeal';
-      if (typeof info.seal === 'string') seal.innerHTML = info.seal; else if (info.seal.nodeType === 1) seal.append(info.seal);
-      if (!seal.firstChild) seal = null;
-      else if (seal.querySelector('.seal')) {   // (a real seal: it takes the pointer; the card is aria-hidden and goes with focus, so it is no Tab stop here)
-        seal.classList.add('live');
-        for (const n of seal.querySelectorAll('[tabindex]')) n.setAttribute('tabindex', '-1');
+    const sealOf = from => {
+      let seal = null;
+      if (from) {   // (the seal slot: what PieceSeals drew for this step, the real seal of a done step or its unfinished version; in the card it is only looked at)
+        seal = doc.createElement('div'); seal.className = 'rtSeal';
+        if (typeof from === 'string') seal.innerHTML = from; else if (from.nodeType === 1) seal.append(from.cloneNode ? from.cloneNode(true) : from);
+        if (!seal.firstChild) seal = null;
+        else if (seal.querySelector('.seal')) {   // (a real seal: it takes the pointer; the card is aria-hidden and goes with focus, so it is no Tab stop here)
+          seal.classList.add('live');
+          for (const n of seal.querySelectorAll('[tabindex]')) n.setAttribute('tabindex', '-1');
+        }
       }
-    }
-    t.replaceChildren(...[head, info.line && node('p', 'rtLine', info.line), info.by && node('p', 'rtBy', info.by), seal].filter(Boolean));
+      return seal;
+    };
+    const seal = sealOf(info.seal);
+    // each piece of a row that stands for several (ONEROW): its name and state, its words and time, its seal at the right
+    const pcs = (info.pieces || []).map(p => {
+      const box = doc.createElement('div'); box.className = 'rtPc'; box.dataset.state = p.state;
+      const hd = doc.createElement('div'); hd.className = 'rtPcHd'; hd.append(...[node('b', '', p.label), p.state && node('span', 'rtState', p.state)].filter(Boolean));   // (a piece that has not reached the step says no state, as the card's head does: Paul, 12 Oct, no "Not yet"; its name is quieter)
+      const tx = doc.createElement('div'); tx.className = 'rtPcTx'; tx.append(...[hd, p.line && node('p', 'rtLine', p.line), p.by && node('p', 'rtBy', p.by)].filter(Boolean));
+      const sl = sealOf(p.seal); box.append(...[tx, sl].filter(Boolean)); if (sl) box.classList.add('hasSeal');
+      return box;
+    });
+    t.classList.toggle('rtMany', pcs.length > 0);
+    t.replaceChildren(...[head, info.line && node('p', 'rtLine', info.line), info.by && node('p', 'rtBy', info.by), ...pcs, seal].filter(Boolean));
   }
   /* above the circle (where the engine will have grown it to), below it when there is no room above; inside the screen sideways, under the top bar */
   function place(d) {
@@ -133,7 +159,7 @@
     unhold();
     st.el = d; st.kind = isP(d) ? 'pdot' : 'rail';
     st.box = st.kind === 'pdot' ? d.closest('.owPcSum') || d.parentElement : d.closest('.flowBox');
-    st.flow = st.kind === 'rail' && st.box ? st.box.dataset.flowFor || '' : ''; st.step = st.kind === 'rail' ? d.getAttribute('data-step') || '' : d.getAttribute('data-pdot') || '';
+    st.flow = st.kind === 'rail' && st.box ? st.box.dataset.flowFor || '' : ''; st.pa = pAttr(d); st.step = st.kind === 'rail' ? d.getAttribute('data-step') || '' : d.getAttribute(st.pa) || '';
     st.rid = d.getAttribute('data-pdot-rid') || ''; st.piece = d.getAttribute('data-pdot-piece') || '';
     if (st.anim) { st.anim.cancel(); st.anim = null; }   // (placed from where it rests: a running slide would be measured as an offset)
     fill(t, d, info);
@@ -207,7 +233,7 @@
   function successor() {
     const q = x => String(x).replace(/["\\]/g, '');
     if (st.kind === 'pdot') {   // (a row drawn again: the same dot of the same piece of the same order)
-      const n = doc.querySelector(`${PDOT}[data-pdot="${q(st.step)}"][data-pdot-rid="${q(st.rid)}"][data-pdot-piece="${q(st.piece)}"]`);
+      const pa = st.pa || 'data-pdot', n = doc.querySelector(`[${pa}="${q(st.step)}"][data-pdot-rid="${q(st.rid)}"][data-pdot-piece="${q(st.piece)}"]`);
       return n && n.isConnected ? n : null;
     }
     const sel = `.flowBox[data-flow-for="${q(st.flow)}"] .flowDot[data-step="${q(st.step)}"]`;

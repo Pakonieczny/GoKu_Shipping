@@ -234,9 +234,9 @@ PT.use(Pair);
     // the order window's header: the same picture, from the same component
     await page.evaluate(A => { OrderWin.open(B.orders.rows.find(r => r.order.receiptId === A).key, { view: 'info' }); }, A);
     await page.waitForFunction(() => { const v = document.getElementById('owVector'); return v && v.querySelector('img') && v.getAttribute('aria-busy') !== 'true'; }, null, { timeout: 30000 });
-    const head = await page.evaluate(async () => { const im = document.querySelector('#owVector img'); return { pic: await window.__ink(im.src), pieces: [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => r.dataset.side || '') }; });
+    const head = await page.evaluate(async () => { const im = document.querySelector('#owVector img'); return { pic: await window.__ink(im.src), pieces: [...document.querySelectorAll('#owPcSum .owPcSub[data-side]')].map(r => r.dataset.side || ''), rows: document.querySelectorAll('#owPcSum > .owPcRow').length }; });
     ok(head.pic.bodies.length === 2 && head.pic.chips.length === 2, 'the order window header shows the pair side by side ' + JSON.stringify(head.pic.bodies));
-    ok(head.pieces.filter(Boolean).join() === 'L,R', 'its pieces list still has the Left and the Right piece rows: ' + head.pieces);
+    ok(head.rows === 1 && head.pieces.filter(Boolean).join() === 'L,R', 'its pieces list is ONE row (ONEROW, 12 Oct) with the Left and the Right piece as the two lines of its drawer: ' + JSON.stringify(head));
     await page.evaluate(() => OrderWin.close()); await page.waitForTimeout(300);
     // counts that say orders and pieces truthfully (the Review card of several lines says "N pieces · M orders"): a pair is 1 order and 2 pieces; every other line counts as the one it always did
     const counts = await page.evaluate(({ A, B2, C, E, F, G, H }) => {

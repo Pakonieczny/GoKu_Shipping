@@ -809,39 +809,38 @@ dialog.phv.layer.phvIn{background:transparent}
    shrunk to a line. The sheet's name in the app's own type (never mono, never cut short), a dot in the sheet's metal, a small check once the sheet is cut or
    sent; waiting and cancelled are its dashed, hollow form, on hold takes the Hold button's orange and completed the Completed button's green. The chip of a
    sheet opens it (a button); the others only say where the piece is. The hover is a tint fading in and a 1px lift: opacity and transform only. */
-.owPcRow .st{display:flex;align-items:center;justify-content:flex-end;min-width:0;font:inherit;color:inherit}
-.owPcRow .pcSt{position:relative;isolation:isolate;display:inline-flex;align-items:center;gap:7px;max-width:100%;border-radius:999px;padding:3px 10px 3px 8px;background:var(--card2);box-shadow:none;white-space:nowrap;transition:transform .18s cubic-bezier(.2,.8,.2,1)}
-.owPcRow .pcSt i{width:8px;height:8px}
-.owPcRow .pcSt span{font:600 11.5px/1.35 var(--sans);color:var(--ink70)}
-.owPcRow .pcSt::before{content:"";position:absolute;inset:-1px;z-index:-1;border-radius:inherit;background:var(--goldSoft);opacity:0;transition:opacity .18s;pointer-events:none}
-.owPcRow button.pcSt:hover,.owPcRow button.pcSt:focus-visible{transform:translateY(-1px);border-color:var(--line);box-shadow:none}
-.owPcRow button.pcSt:hover::before,.owPcRow button.pcSt:focus-visible::before{opacity:1}
-.owPcRow span.pcSt{cursor:inherit}.owPcRow span.pcSt:hover{transform:none;border-color:var(--line);box-shadow:none}
-.owPcRow .pcSt.off{background:transparent}
-.owPcRow .pcCk{width:10px;height:10px;flex:none;color:var(--sage)}
-.owPcRow .pcMore{font:600 10.5px var(--sans);font-style:normal;color:var(--ink45)}
-.owPcRow .pcSt[data-k=hold]{background:#f8eee3;border-color:#e6cdb2}.owPcRow .pcSt[data-k=hold] span{color:var(--warn,#a2591c)}.owPcRow .pcSt[data-k=hold]::before{background:#f1dcc3}
-.owPcRow .pcSt[data-k=done]{background:#e8f1ea;border-color:#b6d2bf}.owPcRow .pcSt[data-k=done] span{color:#19663f}.owPcRow .pcSt[data-k=done]::before{background:#d9eadf}
+:is(.owPcRow,.owPcSub) .st{display:flex;align-items:center;justify-content:flex-end;min-width:0;font:inherit;color:inherit}
+:is(.owPcRow,.owPcSub) .pcSt{position:relative;isolation:isolate;display:inline-flex;align-items:center;gap:7px;max-width:100%;border-radius:999px;padding:3px 10px 3px 8px;background:var(--card2);box-shadow:none;white-space:nowrap;transition:transform .18s cubic-bezier(.2,.8,.2,1)}
+:is(.owPcRow,.owPcSub) .pcSt i{width:8px;height:8px}
+:is(.owPcRow,.owPcSub) .pcSt span{font:600 11.5px/1.35 var(--sans);color:var(--ink70)}
+:is(.owPcRow,.owPcSub) .pcSt::before{content:"";position:absolute;inset:-1px;z-index:-1;border-radius:inherit;background:var(--goldSoft);opacity:0;transition:opacity .18s;pointer-events:none}
+:is(.owPcRow,.owPcSub) button.pcSt:hover,:is(.owPcRow,.owPcSub) button.pcSt:focus-visible{transform:translateY(-1px);border-color:var(--line);box-shadow:none}
+:is(.owPcRow,.owPcSub) button.pcSt:hover::before,:is(.owPcRow,.owPcSub) button.pcSt:focus-visible::before{opacity:1}
+:is(.owPcRow,.owPcSub) span.pcSt{cursor:inherit}:is(.owPcRow,.owPcSub) span.pcSt:hover{transform:none;border-color:var(--line);box-shadow:none}
+:is(.owPcRow,.owPcSub) .pcSt.off{background:transparent}
+:is(.owPcRow,.owPcSub) .pcCk{width:10px;height:10px;flex:none;color:var(--sage)}
+:is(.owPcRow,.owPcSub) .pcMore{font:600 10.5px var(--sans);font-style:normal;color:var(--ink45)}
+:is(.owPcRow,.owPcSub) .pcSt[data-k=hold]{background:#f8eee3;border-color:#e6cdb2}:is(.owPcRow,.owPcSub) .pcSt[data-k=hold] span{color:var(--warn,#a2591c)}:is(.owPcRow,.owPcSub) .pcSt[data-k=hold]::before{background:#f1dcc3}
+:is(.owPcRow,.owPcSub) .pcSt[data-k=done]{background:#e8f1ea;border-color:#b6d2bf}:is(.owPcRow,.owPcSub) .pcSt[data-k=done] span{color:#19663f}:is(.owPcRow,.owPcSub) .pcSt[data-k=done]::before{background:#d9eadf}
 .owPcRow.slow .pcSt{border-color:var(--goldLine)}   /* (the slowest piece, where the order is: a gold hairline, no longer brown words) */
-@media(prefers-reduced-motion:reduce){.owPcRow .pcSt,.owPcRow .pcSt::before{transition:none}}
+@media(prefers-reduced-motion:reduce){:is(.owPcRow,.owPcSub) .pcSt,:is(.owPcRow,.owPcSub) .pcSt::before{transition:none}}
 /* the Left and the Right of a mismatched pair (one row each, bridge paintPieceSum sideRows): a small picture of the pair with the other body washed out, and the side's own name tag */
-.owPcRow .owSidePic{display:inline-block;vertical-align:middle;width:34px;height:26px;margin-right:9px;border-radius:6px;background:var(--card2);overflow:hidden;box-shadow:inset 0 0 0 1px var(--line)}
-.owPcRow .owSidePic{font-size:0;line-height:0}.owPcRow .owSidePic img,.owPcRow .owSidePic canvas{display:block;width:100%;height:100%;object-fit:contain}
-.owPcRow .owSidePic[role=button]::after{content:"\21bb";font:12px/26px var(--sans);color:var(--ink45);display:block;text-align:center}
-.owPcRow .owSidePic .thumbLoading{transform:scale(.5)}.owPcRow .owSidePic .thumbLoading .srOnly{display:none}
-.owPcRow .owPcSide{display:inline-block;padding:0 7px;border-radius:999px;background:var(--card2);box-shadow:inset 0 0 0 1px var(--line);font:700 10.5px/1.7 var(--sans);letter-spacing:.05em;text-transform:uppercase;color:var(--ink70)}
-.owPcRow.owPcSideRow .nm{white-space:normal}
+:is(.owPcRow,.owPcSub) .owSidePic{display:inline-block;vertical-align:middle;width:34px;height:26px;margin-right:9px;border-radius:6px;background:var(--card2);overflow:hidden;box-shadow:inset 0 0 0 1px var(--line)}
+:is(.owPcRow,.owPcSub) .owSidePic{font-size:0;line-height:0}:is(.owPcRow,.owPcSub) .owSidePic img,:is(.owPcRow,.owPcSub) .owSidePic canvas{display:block;width:100%;height:100%;object-fit:contain}
+:is(.owPcRow,.owPcSub) .owSidePic[role=button]::after{content:"\21bb";font:12px/26px var(--sans);color:var(--ink45);display:block;text-align:center}
+:is(.owPcRow,.owPcSub) .owSidePic .thumbLoading{transform:scale(.5)}:is(.owPcRow,.owPcSub) .owSidePic .thumbLoading .srOnly{display:none}
+:is(.owPcRow,.owPcSub) .owPcSide{display:inline-block;padding:0 7px;border-radius:999px;background:var(--card2);box-shadow:inset 0 0 0 1px var(--line);font:700 10.5px/1.7 var(--sans);letter-spacing:.05em;text-transform:uppercase;color:var(--ink70)}
 .owSplit{margin-top:3px;font:600 12px/1.4 var(--sans);color:var(--warn,#a2591c)}
-.owPcRow .steps{display:inline-flex;gap:4px}
-.owPcRow .steps i{width:6px;height:6px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--ink25);transition:background .3s}
-.owPcRow .steps i.on{background:var(--sage);box-shadow:none}
+:is(.owPcRow,.owPcSub) .steps{display:inline-flex;gap:4px}
+:is(.owPcRow,.owPcSub) .steps i{width:6px;height:6px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--ink25);transition:background .3s}
+:is(.owPcRow,.owPcSub) .steps i.on{background:var(--sage);box-shadow:none}
 /* the dots are circles with a card (charm-nest-rail-tip.js, Seal.zoom): a hit area a little wider than the dot so no gap between two is dead (the dots never
    take the row's press), the grown dot keeps its look and takes a thin soft ring (transform and opacity only move, the ring is drawn once) */
-.owPcRow .steps i[data-pdot]{position:relative;cursor:default}
-.owPcRow .steps i[data-pdot]::before{content:"";position:absolute;inset:-8px -2px}
-.owPcRow .steps i[data-pdot]:focus-visible{outline:2px solid var(--slate);outline-offset:2px}
-.owPcRow .steps i.sealZoomed{box-shadow:inset 0 0 0 1px var(--ink45)}
-.owPcRow .steps i.on.sealZoomed{box-shadow:0 0 0 calc(1.5px / var(--zk,1)) rgba(95,122,91,.38)}
+:is(.owPcRow,.owPcSub) .steps i[data-pdot]{position:relative;cursor:default}
+:is(.owPcRow,.owPcSub) .steps i[data-pdot]::before{content:"";position:absolute;inset:-8px -2px}
+:is(.owPcRow,.owPcSub) .steps i[data-pdot]:focus-visible{outline:2px solid var(--slate);outline-offset:2px}
+:is(.owPcRow,.owPcSub) .steps i.sealZoomed{box-shadow:inset 0 0 0 1px var(--ink45)}
+:is(.owPcRow,.owPcSub) .steps i.on.sealZoomed{box-shadow:0 0 0 calc(1.5px / var(--zk,1)) rgba(95,122,91,.38)}
 /* a piece that is in the Review tab has its card's own buttons and seals here, at the right end of its row, where the words of the other
    pieces sit (Paul, 5 Oct, round 8: "to the right side of the chain only listing and NOT below it"): the name, then the buttons, right
    aligned and wrapping among themselves when the room is short, then the dots. Never under the name, at any width. */
@@ -870,6 +869,72 @@ dialog.phv.layer.phvIn{background:transparent}
   .owPcRow.hasWords .st{grid-column:2 / -1;grid-row:2;justify-content:flex-start;margin-top:3px}
   .owPcSum .owPcRow:not(.hasAct){grid-template-columns:8px minmax(0,1fr) auto;row-gap:1px}   /* (a row with no Hold: the same, its dots stay at the right end) */
   .owPcRow:not(.hasAct) .st{grid-column:2 / -1;grid-row:2;justify-content:flex-start;margin-top:3px}
+}
+/* ── ONE ROW PER ORDER ITEM (ONEROW, 12 Oct 2026; bridge paintPieceSum, charm-nest-order-rows.js) ──
+   An earring pair or a set is ONE row of the height of an ordinary row: the dot, the name once, a small Left | Right marker (charm-nest-piece-switch.js drawn compact), ONE status,
+   the six dots of its slowest piece, one quiet chevron. What belongs to one piece is in the drawer the chevron opens (.owPcDrawer, one .owPcSub line for each piece); of the actions only
+   the main one shows, the rest are behind the three dots (.owPcMenu), which appear on hover, on focus and on a tap. */
+.owPcSum .owPcRow.owPcMulti{grid-template-columns:8px minmax(7em,1fr) auto auto auto 22px;gap:0 10px;padding-top:5px;padding-bottom:5px}
+.owPcMulti .owPcWho{display:flex;align-items:center;gap:9px;min-width:0}
+.owPcRow.owPcMulti .owPcName{flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;overflow-wrap:normal;text-overflow:ellipsis}   /* (one line, whatever the name: it gives way with an ellipsis, never a second line: the row stays as tall as an ordinary one) */
+.owPcPair{flex:none;display:inline-flex}
+.owPcPair .egEarSwitch{gap:1px;padding:1px;border-radius:999px}
+.owPcPair .egEarTab{padding:0;gap:0}
+.owPcPair .egEarTab .egPiece{padding:1px 8px;font-size:9px;line-height:1.35;letter-spacing:.06em;text-transform:none;font-family:var(--sans);font-weight:600}
+.owPcPair .egEarTab:focus-visible{outline:2px solid var(--slate);outline-offset:1px}
+.owPcMulti .st{justify-content:flex-end}
+.owPcMulti.isDone .st .pcSt{display:none}
+.owPcMulti .pcAct{flex-wrap:nowrap;gap:4px 6px}
+.owPcMulti .pcAct:empty{display:none}
+.owPcTools{display:flex;align-items:center;justify-content:center;width:22px}
+.owPcX{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--ink25);cursor:pointer;transition:color .18s,background .18s}
+.owPcX svg{transition:transform .18s cubic-bezier(.2,.8,.2,1)}
+.owPcX.open svg{transform:rotate(90deg)}
+.owPcRow:hover .owPcX,.owPcRow.sel .owPcX,.owPcX.open,.owPcX:focus-visible{color:var(--ink70)}
+.owPcX:hover{background:var(--card2);color:var(--ink)}
+.owPcX:focus-visible,.owPcMoreBtn:focus-visible{outline:2px solid var(--slate);outline-offset:1px}
+.owPcSum.hasTools .owPcRow:not(.owPcMulti){grid-template-columns:8px minmax(0,1fr) auto auto 22px}
+.owPcSum.hasTools .owPcRow.hasAct:not(.owPcMulti){grid-template-columns:8px minmax(8em,1fr) auto auto 22px}
+.owPcSum.hasTools .owPcRow.hasWords:not(.owPcMulti){grid-template-columns:8px minmax(8em,1fr) auto auto auto 22px}
+.owPcMenuWrap{position:relative;display:inline-flex;flex:none}
+.owPcMoreBtn{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:0;border-radius:8px;background:transparent;color:var(--ink45);cursor:pointer;opacity:0;transition:opacity .16s,background .16s}
+.owPcRow:hover .owPcMoreBtn,.owPcRow:focus-within .owPcMoreBtn,.owPcRow.sel .owPcMoreBtn,.owPcMenuWrap.open .owPcMoreBtn,.owPcMoreBtn:focus-visible{opacity:1}
+.owPcMoreBtn:hover,.owPcMenuWrap.open .owPcMoreBtn{background:var(--card2);color:var(--ink)}
+@media (hover:none){.owPcMoreBtn{opacity:1}}
+.owPcRow.menuOpen{z-index:6}
+.owPcMenu{position:absolute;right:0;top:calc(100% + 4px);z-index:30;min-width:176px;display:grid;gap:3px;padding:6px;border:1px solid var(--line);border-radius:12px;background:var(--card);box-shadow:0 12px 30px rgba(30,26,20,.16);animation:owUp .16s cubic-bezier(.2,.8,.2,1) both}
+.owPcMenu[hidden]{display:none}
+.owPcMenuWrap.up .owPcMenu{top:auto;bottom:calc(100% + 4px)}
+.owPcMenuWrap.lft .owPcMenu{right:auto;left:0}
+.owPcMenuItem{display:flex;align-items:center;gap:8px;min-width:0}
+.owPcMenu .btn{flex:1 1 auto;justify-content:flex-start;text-align:left;white-space:nowrap;width:100%}
+.owPcMenu .holdSlot{display:contents}
+.owPcDrawer{margin:0 0 3px 18px;padding:0 0 0 12px;border-left:1px solid var(--line)}
+.owPcDrawer[hidden]{display:none}
+.owPcDrawerIn{display:grid;gap:1px;padding:2px 0}
+.owPcSub{position:relative;display:grid;grid-template-columns:34px 60px minmax(0,1fr) auto;align-items:center;gap:0 10px;min-height:32px;padding:3px 8px;border-radius:9px;font:12.5px var(--sans);color:var(--ink70);cursor:pointer;transition:background .18s}
+.owPcSub.owPcPieceSub{grid-template-columns:minmax(6em,1fr) auto}
+.owPcSub:hover{background:var(--card2)}
+.owPcSub.sel{background:var(--goldSoft)}
+.owPcSub .owSidePic{margin-right:0}
+.owPcSub .st{justify-content:flex-start}
+.owPcPieceSub .st{justify-content:flex-end}
+.owPcSubName{border:0;background:transparent;padding:0;margin:0;font:inherit;color:inherit;text-align:left;cursor:pointer;border-radius:999px}
+.owPcSubName:focus-visible{outline:2px solid var(--slate);outline-offset:2px}
+.owPcSubTag{font-weight:600;color:var(--ink);cursor:inherit}
+.owPcSub .steps{justify-self:end}
+@media (prefers-reduced-motion:reduce){.owPcX svg,.owPcMoreBtn,.owPcSub{transition:none}.owPcMenu{animation:none}}
+@container (max-width:470px){
+  .owPcSum .owPcRow.owPcMulti{grid-template-columns:8px minmax(0,1fr) auto 22px;row-gap:3px}
+  .owPcSum.hasTools .owPcRow.hasWords:not(.owPcMulti){grid-template-columns:8px minmax(8em,1fr) auto auto 22px}   /* (dot, name, buttons, dots, the chevron's place; the status is on the second line) */
+  .owPcSum.hasTools .owPcRow:not(.hasAct):not(.owPcMulti){grid-template-columns:8px minmax(0,1fr) auto 22px}
+  .owPcMulti .owPcWho{grid-column:2 / 4;grid-row:1}   /* (the name and the marker have the whole first line: the chevron's column is all that is beside them) */
+  .owPcMulti .st{grid-column:2;grid-row:2;justify-content:flex-start}
+  .owPcMulti .steps{grid-column:3 / 5;grid-row:2;justify-self:end}
+  .owPcMulti .pcAct{grid-column:2 / -1;grid-row:3;justify-content:flex-start}
+  .owPcMulti .owPcTools{grid-column:4;grid-row:1}
+  .owPcSub{grid-template-columns:34px auto minmax(0,1fr);row-gap:2px}
+  .owPcSub .steps{grid-column:2 / -1}
 }
 /* what is being waited for, said on one line */
 .owLoading{display:flex;align-items:center;gap:9px;padding:8px 18px;font:12px var(--sans);color:var(--ink70);border-bottom:1px solid var(--line2);background:var(--card2)}
@@ -3390,7 +3455,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-engrave-faces.js?v=20261011-fb1-fb2-sd1"></script>
 <script src="charm-nest-engrave-sides.js?v=20261009-pe1-nk1-dr1-ko1-fb1-fb2"></script>
 <script src="charm-nest-engrave-rows.js?v=20261010-re1-dc1-fb1"></script>
-<script src="charm-nest-piece-switch.js?v=20261010-dc1-fb1"></script>
+<script src="charm-nest-piece-switch.js?v=20261010-dc1-fb1-or1"></script>
 <script src="charm-nest-backs.js?v=20261005-engtog1-pe1-fb1-eu3"></script>
 <script src="charm-nest-engraving-toggle.js?v=20261005-engtog1-eu3"></script>
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
@@ -3403,9 +3468,10 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-export.js?v=20261009-cutfill-plb1-bf1-ba1-ef1"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
-<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1-bf1-sd1"></script>
+<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1-bf1-sd1-sl1"></script>
 <script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1-dm1-ko1"></script>
-<script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po2-adv2-cg1-sn1-dr2"></script>
+<script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po2-adv2-cg1-sn1-dr2-sl1"></script>
+<script src="charm-nest-order-rows.js?v=20261012-or1"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2-cg1"></script>
 <script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1-dm1-su1-ui2"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2-sn1"></script>
@@ -7479,7 +7545,7 @@ boot();
 <script src="charm-nest-siblings.js?v=20261012-sg1"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-fa1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -7556,9 +7622,9 @@ try {
 <script src="charm-nest-options-history.js?v=20261007-oh1-cards"></script>
 <script src="charm-nest-options-modal.js?v=20261007-os2-mn3-inc1-sn1"></script>
 <script src="charm-nest-library-engraving.js?v=20261005-egl1-eu3"></script>
-<script src="charm-nest-piece-dots.js?v=20261005-pd1-pow2"></script>
+<script src="charm-nest-piece-dots.js?v=20261005-pd1-pow2-sl1"></script>
 <script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1-noset1-one1-five1-pd1-psw1-al2-eu3"></script>
-<script src="charm-nest-rail-tip.js?v=20261005-rt2-pdot1-tn1"></script>
+<script src="charm-nest-rail-tip.js?v=20261005-rt2-pdot1-tn1-or1"></script>
 <script src="charm-nest-piece-seals.js?v=20261005-pg1-pow1-ui2"></script>
 <script src="charm-nest-cancel-ui.js?v=20261005-cx1-pf2"></script>
 <script src="charm-nest-shared-orders-modal.js?v=20261005-so5-gc2-ps1"></script>
