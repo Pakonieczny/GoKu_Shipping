@@ -113,9 +113,9 @@ async function main() {
     const buyerEl = await page.$('#owMeta [data-owf-chip=buyer]'); await buyerEl.scrollIntoViewIfNeeded(); const buyerBox = await buyerEl.boundingBox(); await page.mouse.move(buyerBox.x + buyerBox.width / 2, buyerBox.y + buyerBox.height / 2); await page.waitForTimeout(120);
     const t1 = await page.evaluate(() => ({ title: document.querySelector('#owMeta [data-owf-chip=buyer]').getAttribute('title'), order: document.querySelector('#owMeta [data-owf-chip=order]').getAttribute('title') }));
     assert.equal(t1.title, cut.full, 'the cut name is the chip\'s title'); assert.equal(t1.order, null, 'a chip that fits has no title');
-    await page.mouse.move(2, 2); await page.keyboard.press('Escape');
+    await page.mouse.move(2, 2); await shut(page);
     await page.setViewportSize({ width: 1920, height: 900 }); await page.waitForTimeout(150);
-    await paintAndMeasure(page, CASES[0]);
+    await open(page, 'single'); await paintAndMeasure(page, CASES[0]);
     const bEl = await page.$('#owMeta [data-owf-chip=buyer]'); await bEl.scrollIntoViewIfNeeded(); const bb = await bEl.boundingBox(); await page.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2); await page.waitForTimeout(120);
     assert.equal(await page.evaluate(() => document.querySelector('#owMeta [data-owf-chip=buyer]').getAttribute('title')), null, 'a buyer name that fits has no title');
     ok('4 a cut buyer name says its full name in its title once the pointer is on it; a chip that fits has none', true);
