@@ -4247,7 +4247,7 @@ const Gate = window.Gate = (() => {
     // a sheet a person took out: back into the set it was taken from (Rose Gold is not: the Library lets it join a committed set only by its own Cut Sheet press, so it is the run's Include, as any held sheet)
     if (want && !inSetNow(sh) && sh.leftSet && sh.metal !== "rose" && !committedSheet(sh)) return { edit: "in" };
     if (!membershipEditable(sh)) return { no: sh.recalled ? "Saved sheet. Its set is fixed." : run && ["complete", "abandoned"].includes(run.status) ? "The run is finished." : "Its set is fixed." };
-    if (sh.roseCutAt) return { no: "Already cut." };
+    if (sh.roseCutAt && inSetNow(sh)) return { no: "Already cut." };   // (a cut sheet in a set stays; one in NO set may be included, Paul 12 Oct)
     return {};
   }
   /** Out of a committed set, or back into it, through LibraryFlow (the Library's own path). Resolves "" when done, or a short line to show (a warning); throws said() for a refusal. */

@@ -46,7 +46,7 @@
   /** Why a sheet cannot change set at all (cut, completed, or in a set sent to the station); '' when it can. */
   function fixedWhy(rec, set) {
     if (!rec) return '';
-    if (rec.roseCutAt) return 'its Rose Gold cut is recorded';
+    if (rec.roseCutAt && effectiveSet(rec)) return 'its Rose Gold cut is recorded';      // (a cut sheet that is in NO set is free to join one, Paul 12 Oct: its green line is cut; one in a set stays in it)
     if (+rec.laserDoneAt > 0) return 'it was marked completed';
     if (set && committedSet(set)) return `${setLabelOf(set)} was committed to the Design Station`;
     return '';
