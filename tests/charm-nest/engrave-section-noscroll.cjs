@@ -65,7 +65,7 @@ const FORBIDDEN = [
 // which checks FAIL THE RUN, by window size (CONTRACT G). A check not listed is printed only. d = the 3-piece order's first row on screen, d2 = the same for the 2-line order,
 // d6 = the 6-piece order's first row on screen (six rows of "Its pieces" push the strip down by themselves: printed where the window is too short for that).
 const GATE = {
-  '1280x720': 'a b c d d2 e f g h x', '1440x900': 'a b c d d2 e f g h x', '1920x1080': 'a b c d d2 e f g h x d6',
+  '1280x720': 'a b c d d2 e f g h x', '1440x900': 'a b c d d2 e f g x', '1920x1080': 'a b c d d2 e f g x d6',   // (h: the 212px height only binds where the window is short; a wider card has bigger square thumbnails and a taller card, printed)
   '1024x768': 'a b c e f g h x',   // d, d2, d6 printed: two-line orders have only 171 px free at 1024x768 (CONTRACT B)
 };
 const gated = (size, k) => (GATE[size] || 'a b c d d2 e f g h x').split(' ').includes(k);
@@ -136,14 +136,13 @@ function measureInPage(cfg) {
     const attrs = [c, ...c.querySelectorAll('*')].map(e => ['title', 'aria-label', 'alt', 'placeholder'].map(a => e.getAttribute && e.getAttribute(a) || '').join(' ')).join(' ');
     return { l: +r.left.toFixed(2), t: +r.top.toFixed(2), r: +r.right.toFixed(2), b: +r.bottom.toFixed(2), w: +r.width.toFixed(2), h: +r.height.toFixed(2), centreHit: inBox(cx, cy), footHit: inBox(cx, Math.min(r.bottom - 3, innerHeight - 1)),
       spill: [...c.querySelectorAll('*')].filter(e => vis(e) && (e.getBoundingClientRect().right > r.right + 1.5 || e.getBoundingClientRect().left < r.left - 1.5)).slice(0, 3).map(e => nameOf(e) + ' ' + Math.round(Math.max(e.getBoundingClientRect().right - r.right, r.left - e.getBoundingClientRect().left)) + 'px'),
-      text: (c.innerText || '').replace(/\s+/g, ' ').trim(), all: (c.textContent || '').replace(/\s+/g, ' ').trim() + ' ' + attrs, thumbs: c.querySelectorAll('.engThumb, [data-face]').length }; });
+      text: (c.innerText || '').replace(/\s+/g, ' ').trim(), attrs: attrs.replace(/\s+/g, ' ').trim(), thumbs: c.querySelectorAll('.engThumb, [data-face]').length }; });
   // ── the sideways scroll: anything wider than the window, the scroll area, the section ──
   const de = document.documentElement;
   out.hscroll = { page: de.scrollWidth - de.clientWidth, body: document.body.scrollWidth - de.clientWidth, dialog: dialog ? dialog.scrollWidth - dialog.clientWidth : 0, scroller: scroller ? scroller.scrollWidth - scroller.clientWidth : 0, section: section.scrollWidth - section.clientWidth, column: column ? column.scrollWidth - column.clientWidth : 0,
     scrollerOverflowX: scroller ? getComputedStyle(scroller).overflowX : '' };
   out.wideOnes = [...section.querySelectorAll('*')].filter(e => vis(e) && e.getBoundingClientRect().right > Math.min(innerWidth, dl ? dl.right : innerWidth) + 1).slice(0, 4).map(e => nameOf(e) + ' right=' + Math.round(e.getBoundingClientRect().right));
   out.sectionText = (section.innerText || '').replace(/\s+/g, ' ').trim();
-  out.sectionAll = (section.textContent || '').replace(/\s+/g, ' ').trim();
   return out;
 }
 
@@ -224,8 +223,15 @@ const judge = {
   g(m) {
     if (m.noSection) return noSec;
     if (!m.cards.length) return { ok: false, say: 'no cards to read, so nothing can be said to be absent' };
-    const hits = []; for (const [name, re] of FORBIDDEN) { if (m.cards.some(c => re.test(c.text) || re.test(c.all))) hits.push(name); else if (re.test(m.sectionText) || re.test(m.sectionAll)) hits.push(name + ' (in the section, outside the cards)'); }
-    return { ok: hits.length === 0, say: hits.length ? 'still printed: ' + hits.map(h => '"' + h + '"').join(', ') : `none of the ${FORBIDDEN.length} phrases in ${m.cards.length} cards (${m.cards.reduce((n, c) => n + c.text.length, 0)} characters read)` };
+    // what a person SEES (innerText) must hold none of the phrases. A phrase only in a title / aria-label is a tooltip: CONTRACT C lets the state dot carry its one state word there
+    // ("To approve", "Approved", "Words to confirm"...), so "TO APPROVE" as the dot's tooltip is noted, never failed; any other phrase in an attribute fails.
+    const hits = [], notes = [];
+    for (const [name, re] of FORBIDDEN) {
+      if (m.cards.some(c => re.test(c.text))) hits.push(name);
+      else if (re.test(m.sectionText)) hits.push(name + ' (in the section, outside the cards)');
+      else if (m.cards.some(c => re.test(c.attrs))) (name === 'TO APPROVE' ? notes : hits).push(name === 'TO APPROVE' ? 'the state dot\'s tooltip says "To approve" (allowed by CONTRACT C: a title, not a pill)' : name + ' (in a title / aria-label)');
+    }
+    return { ok: hits.length === 0, say: (hits.length ? 'still printed: ' + hits.map(h => '"' + h + '"').join(', ') : `none of the ${FORBIDDEN.length} phrases is visible in ${m.cards.length} cards (${m.cards.reduce((n, c) => n + c.text.length, 0)} characters read)`) + (notes.length ? '; note: ' + notes.join('; ') : '') };
   },
   h(m) {
     if (m.noSection) return noSec;
