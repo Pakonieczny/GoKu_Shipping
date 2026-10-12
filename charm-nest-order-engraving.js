@@ -290,6 +290,8 @@
       const cur = last.get(k) || piece, ap = cur.approve; if (!ap || !ap.ok) { refresh(true, true); return; }
       const jobs = ap.jobs.filter(j => j.state === 'review'); if (!jobs.length) { refresh(false, true); return; }
       // (a card that is out of date approves nothing: only the placements it showed, still waiting for approval, are approved)
+      const drawn = (btn.closest('.engCard') || {})._drawn;
+      if (drawn && jobs.some(j => !drawn.has(j) || drawn.get(j)[0] !== j.fit || drawn.get(j)[1] !== j.view)) { refresh(true, true); return; }
       const was = new Map(jobs.map(j => [j, [j.fit, j.view]]));
       let who = S.who();
       if (typeof who !== 'string') {
@@ -325,6 +327,8 @@
     const cssEsc = v => (root.CSS && root.CSS.escape ? root.CSS.escape(v) : String(v).replace(/["\\]/g, '\\$&'));
     const mkCard = piece => {
       const C = CARD(), el = C.card(piece, { imageUrl: u => (/^https?:/.test(u) ? cors(u) : u), onOpen: (face, key, btn, p) => openEngrave(face, key, btn, p || piece) });
+      // (what each placement looked like when this card was drawn: an approval presses only what the person saw)
+      el._drawn = new Map(piece.jobs.map(j => [j, [j.fit, j.view]]));
       const b = el.querySelector('[data-e=approve]'); if (b) b.addEventListener('click', () => { if (!b.disabled) approve(piece, b); });
       const f = fails.get(keyOf(piece)); if (f && piece.state === 'approve') showFail(el, f); else fails.delete(keyOf(piece));
       return el;

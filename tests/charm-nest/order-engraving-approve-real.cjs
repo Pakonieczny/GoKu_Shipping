@@ -1,13 +1,13 @@
 // The back engraving card's Approve engraving, driven for real (Paul, 5 Oct 2026, 17:47 UTC: "quick link buttons to the engraving panel to fix it and
 // also to approve engraving"). order-engraving-states.cjs (EN2) draws every state of the card but STUBS Engrave.approve; an approval is permanent (a BACK
-// ENGRAVING seal is written), so this test does not: it makes the fake site (bridge-server.cjs) run a whole Auto set for a handful of personalised orders
+// ENGRAVING seal is written), so this test does not (the order window's Engraving section draws charm-nest-engrave-card.js's card, ENGCARD 12 Oct 2026; the Sheet tab and Sheet window keep the old card): it makes the fake site (bridge-server.cjs) run a whole Auto set for a handful of personalised orders
 // (the real master file, nesting, the real fitting, the real review) and then presses the card's buttons, with nothing replaced:
 //   the name asked for in the small bar inside the window (never a browser pop-up on the order window) · exactly one approval and one server write (double
 //   click, Enter then click, a repaint during the write) · the permanent seal on the card, the Timeline, the Engraving panel's Decided row, the Sheet tab and
 //   the Sheet window · the counts agree · a reload keeps it · the data written is what the Engraving panel's own Approve writes (field by field) ·
 //   Approve disabled and impossible while the words are unconfirmed or the back is being prepared · one piece of an order never approves another ·
 //   a failed write: a plain message IN the card (a toast would sit under the modal order window), no seal before the checkpoint, no second seal on retry ·
-//   Fix / View in Engraving land on the right order and piece from the Overview, the Sheet tab and the Sheet window · the sandbox's card approves only
+//   a press on a face of the Engraving section's card (and Fix / View in Engraving on the Sheet tab and the Sheet window) lands on the right order, piece and face · the sandbox's card approves only
 //   the sandbox's records · seals are never removed or replaced · the card at 280, 390 and 700 px · Paul's words.
 // Headless Chromium against the local fake site; nothing live is touched, no paid model is called (the fake model answers), no Etsy call.
 //   SHOTS=<dir> node tests/charm-nest/order-engraving-approve-real.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>, ONLY=<phase,phase>, SKIP_SANDBOX=1)
@@ -144,6 +144,14 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
     read: sel => page.evaluate(sel => {
       const card = document.querySelector(sel); if (!card) return null;
       const r = card.getBoundingClientRect(), q = s => card.querySelector(s), out = [];
+      if (card.classList.contains('engCard')) {   // (the Engraving section's card: one dot, Front and Back, ONE Approve button, the failure line)
+        for (const n of card.querySelectorAll('*')) { if (n.closest('.seal, .sealTool, .sealRing') || !n.getClientRects().length) continue; const b = n.getBoundingClientRect(); if (b.width && b.height && (b.right > r.right + .5 || b.left < r.left - .5)) out.push(n.tagName.toLowerCase() + '.' + String(n.className).split(' ')[0]); }
+        const sl = [...card.querySelectorAll('.seal svg[data-seal-model]')].map(s => { try { const m = JSON.parse(s.getAttribute('data-seal-model')); return `${m.action}|${m.by}|${m.at}`; } catch (_) { return '?'; } });
+        const ab = q('.egApproveButton'), fl = q('.engFail'), cue = q('.engTxt.engCue'), face = f => { const e = q(`.engFace[data-face=${f}] .engTxt`); return e ? e.title || '' : ''; };
+        return { state: card.dataset.state, w: Math.round(r.width), out, scrollOver: card.scrollWidth - card.clientWidth, pill: (q('.engDot') || {}).getAttribute ? q('.engDot').getAttribute('aria-label') : '', why: '', sub: cue ? cue.textContent.trim() : '', words: face('back') || face('front'),
+          approve: ab ? { text: ab.textContent.trim(), disabled: ab.disabled, live: !!q('[data-e=approve]'), spin: !!ab.querySelector('.spin'), busy: ab.getAttribute('aria-busy') } : null, offWhy: ab ? ab.title : '', fail: fl && !fl.hidden ? fl.textContent.trim() : '', failRole: fl ? fl.getAttribute('role') : null,
+          open: '', seals: sl, sealCount: card.querySelectorAll('.seal').length, buttons: [...card.querySelectorAll('button:not(.engThumb)')].map(b => b.textContent.trim()), text: card.innerText.replace(/\s+/g, ' ') };
+      }
       for (const n of card.querySelectorAll('*')) { if (n.closest('.seal, .sealTool, .sealRing') || !n.getClientRects().length) continue; const b = n.getBoundingClientRect(); if (b.width && b.height && (b.right > r.right + .5 || b.left < r.left - .5)) out.push(n.tagName.toLowerCase() + '.' + String(n.className).split(' ')[0]); }
       const seals = [...card.querySelectorAll('.seal svg[data-seal-model]')].map(s => { try { const m = JSON.parse(s.getAttribute('data-seal-model')); return `${m.action}|${m.by}|${m.at}`; } catch (_) { return '?'; } });
       const ab = q('.egApproveButton'), op = q('[data-e=engrave]');
@@ -178,7 +186,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
     const calls = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__calls)));
     const states = A.states;
     check(Object.keys(states).length >= NJOBS && states[K.A] === 'review' && states[K.B] === 'review' && states[K.O2] === 'review' && states[K.O3] === 'words', 'the real run reached the engraving review: ' + JSON.stringify(Object.fromEntries(Object.entries(states).map(([k, v]) => [k.slice(-4), v]))));
-    const OV = '#owEng .swEng', OVA = '#owEng > .owEng:nth-of-type(1) .swEng', OVB = '#owEng > .owEng:nth-of-type(2) .swEng', TAB = '#owSheetPanel [data-engraving-panel] .swEng', WIN = '[data-r2=eng] .swEng';
+    const OV = '#owEng .engCard', OVA = `#owEng .engCard[data-key="${K.A}"]`, OVB = `#owEng .engCard[data-key="${K.B}"]`, thumbOf = (sel, face) => `${sel} .engFace[data-face=${face}] .engThumb`, TAB = '#owSheetPanel [data-engraving-panel] .swEng', WIN = '[data-r2=eng] .swEng';
 
     // (a phase that stops on an error says so and the next one goes on: the window is put away, a picture is kept)
     const phase = async (name, fn) => {
@@ -200,7 +208,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       window.__w = [];
       const snap = () => {
         const c = document.querySelector(sel); if (!c) return;
-        const b = c.querySelector('.egApproveButton'), sub = c.querySelector('.egSub'), f = c.querySelector('.egFail'), ow = c.querySelector('.egOffWhy');
+        const eng = c.classList.contains('engCard'), b = c.querySelector('.egApproveButton'), sub = eng ? c.querySelector('.engTxt.engCue') : c.querySelector('.egSub'), f = eng ? c.querySelector('.engFail:not([hidden])') : c.querySelector('.egFail'), ow = eng ? (b && b.disabled && b.title ? { textContent: b.title } : null) : c.querySelector('.egOffWhy');
         const s = [c.dataset.state, b ? b.textContent.trim() + (b.disabled ? ' (off' : ' (on') + (b.hasAttribute('data-e') ? ',live' : ',inert') + (b.querySelector('.spin') ? ',spin' : '') + ')' : '-', sub ? 'note: ' + sub.textContent.trim() + (sub.querySelector('.owSpin') ? ' +spin' : '') : '', ow ? 'why: ' + ow.textContent.trim() : '', f ? 'FAIL: ' + f.textContent.trim() : ''].filter(Boolean).join(' | ');
         if (window.__w[window.__w.length - 1] !== s) window.__w.push(s);
         // (while the back is being prepared: the off button is clicked and Enter pressed on it, in the very turn it is seen)
@@ -224,18 +232,12 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       console.log('· disabled while the words are unconfirmed');
       await h.openWin(K.O3); await h.waitState(OV, 'words');
       let c = await h.read(OV), w0 = (await calls()).approve.length, n0 = net.log.length;
-      check(c.state === 'words' && c.pill === 'Words to confirm' && c.approve && c.approve.disabled && !c.approve.live && /Confirm the words in Engraving first/.test(c.offWhy), 'words to confirm: Approve engraving is disabled, one plain line says why: ' + JSON.stringify([c.pill, c.approve, c.offWhy]));
+      check(c.state === 'words' && c.pill === 'Words to confirm' && !c.approve && c.buttons.length === 0, 'words to confirm: the card has its dot and no Approve at all (nothing to press): ' + JSON.stringify([c.pill, c.approve, c.buttons]));
       await shot(page, 'real-words-disabled', '#owEng');
-      const tried = await page.evaluate(async () => {
-        const b = document.querySelector('#owEng .egApproveButton'), seen = []; const L = ev => seen.push(ev.type); b.addEventListener('click', L, true);
-        b.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); b.click(); b.focus();
-        const focused = document.activeElement === b;
-        await new Promise(r => setTimeout(r, 300)); return { focused, seen };
-      });
-      await page.keyboard.press('Tab'); await page.keyboard.press('Enter'); await page.keyboard.press('Space'); await page.waitForTimeout(400);
+      const tried = await page.evaluate(async () => { await new Promise(r => setTimeout(r, 300)); return { buttons: document.querySelectorAll('#owEng .egApproveButton, #owEng [data-e=approve]').length }; });
       const w1 = (await calls()).approve.length, writes = net.log.slice(n0).filter(engW(K.O3));
-      check(!tried.focused, 'it takes no focus (a disabled button is skipped by the keyboard): ' + JSON.stringify(tried));
-      check(w1 === w0 && writes.length === 0 && (await h.job(K.O3)).state === 'words' && (await h.job(K.O3)).seals.length === 0, 'a click, Enter and Space do nothing: no approval call, no write, no seal (' + (w1 - w0) + ' approvals, ' + writes.length + ' writes)');
+      check(tried.buttons === 0, 'there is no Approve button to click, focus or press with Enter: ' + JSON.stringify(tried));
+      check(w1 === w0 && writes.length === 0 && (await h.job(K.O3)).state === 'words' && (await h.job(K.O3)).seals.length === 0, 'so no approval call, no write, no seal (' + (w1 - w0) + ' approvals, ' + writes.length + ' writes)');
       check(A.dialogs.length === 0, 'and nothing was asked (no browser pop-up): ' + JSON.stringify(A.dialogs));
       await h.closeWin();
     });
@@ -243,11 +245,11 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
     // ═══ 2 · the happy path from the card: O2 (one piece), the real Engrave.approve, nothing stubbed ═══
     let ref2 = null;
     await phase('approve', async () => {
-      console.log('· Approve engraving on the card, for real (O2)');
+      console.log('· Approve on the card, for real (O2)');
       net.delayMs = 700;                                  // (the cloud answers slowly: the waits and the repaints can be seen)
       await h.openWin(K.O2); await h.waitState(OV, 'approve');
       let c = await h.read(OV);
-      check(c.state === 'approve' && c.approve && !c.approve.disabled && c.approve.live && c.words === 'CARLA' && c.sealCount === 0, 'To approve: Approve engraving is live, the words are CARLA, no seal yet: ' + JSON.stringify([c.state, c.approve, c.words]));
+      check(c.state === 'approve' && c.approve && !c.approve.disabled && c.approve.live && c.words === 'CARLA' && c.sealCount === 0, 'To approve: Approve is live, the words are CARLA, no seal yet: ' + JSON.stringify([c.state, c.approve, c.words]));
       const before = { counts: await (async () => { await page.evaluate(() => CN.setMode('library')); await page.waitForTimeout(3500); const x = await h.counts(); await page.evaluate(() => CN.setMode('orders')); return x; })(), docs: docsNow(), blobs: new Set(st.blobs.keys()), n: net.log.length, calls: await calls(), revCard: await page.evaluate(k => Review.items().some(i => i.key === 'eng:' + k), K.O2) };
       await h.openWin(K.O2); await h.waitState(OV, 'approve');
       // no name saved on this computer: a small bar in the window asks (never a browser pop-up on the window)
@@ -261,7 +263,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       // put away: nothing was approved, nothing written, the button is as it was
       await page.click('.cnNameBar .cnNbX'); await page.waitForTimeout(500);
       c = await h.read(OV);
-      check(c.state === 'approve' && c.approve && !c.approve.disabled && c.approve.text === 'Approve engraving' && c.sealCount === 0 && (await calls()).approve.length === before.calls.approve.length && !net.log.slice(before.n).some(engW(K.O2)), 'the name bar put away: no approval, no write, no seal, the button is as it was: ' + JSON.stringify([c.state, c.approve]));
+      check(c.state === 'approve' && c.approve && !c.approve.disabled && c.approve.text === 'Approve' && c.sealCount === 0 && (await calls()).approve.length === before.calls.approve.length && !net.log.slice(before.n).some(engW(K.O2)), 'the name bar put away: no approval, no write, no seal, the button is as it was: ' + JSON.stringify([c.state, c.approve]));
       // again, with a name
       await page.click(OV + ' [data-e=approve]'); await page.waitForSelector('.cnNameBar', { timeout: 4000 });
       await page.fill('.cnNameBar input', 'Test Operator');
@@ -282,7 +284,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       // (the stamp lands; the card must turn green Approved within a second of it, not after the back file is saved)
       await page.waitForFunction(() => window.__calls.press.length >= 1, null, { timeout: 30000 });
       const stampAt = Date.now();
-      await page.waitForFunction(() => document.querySelector('#owEng .swEng[data-state=approved]'), null, { timeout: 30000 });
+      await page.waitForFunction(() => document.querySelector('#owEng .engCard[data-state=approved]'), null, { timeout: 30000 });
       const approvedAfter = Date.now() - stampAt, jobAt = await h.job(K.O2);
       check(approvedAfter < 2600 || jobAt.state === 'written', 'the card turned Approved when the stamp landed, not when the back file finished saving (' + approvedAfter + ' ms after the press; the job: ' + jobAt.state + ')');
       await page.waitForFunction(k => Engrave.items().get(k).state === 'written', K.O2, { timeout: 60000 });
@@ -293,7 +295,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       check(presses.length === 1 && presses[0].how === 'engraveApproved' && presses[0].by === 'Test Operator', 'one stamp was pressed: ' + JSON.stringify(presses));
       const writes = net.log.slice(before.n).filter(x => WRITE_OP.test(x.op)), count = op => writes.filter(x => x.op === op && (op !== 'backPut' && op !== 'poolUpdate' || JSON.stringify(x.body).includes(poolOf(K.O2)))).length;
       check(count('backPut') === 1 && count('poolUpdate') === 1 && count('timelineAdd') >= 1 && timelineSeals(R.O2, poolOf(K.O2)).length === 1 && !!st.doc('Charm_Pool_Back', poolOf(K.O2)), 'the server wrote it once: backPut ' + count('backPut') + ', poolUpdate ' + count('poolUpdate') + ', one engraveApproved on the timeline (' + timelineSeals(R.O2, poolOf(K.O2)).length + '), the back record is there');
-      check(c.state === 'approved' && c.pill === 'Approved' && c.approve && c.approve.disabled && c.approve.text === 'Approved' && /^View in Engraving/.test(c.open) && c.seals.length === 1 && /^BACK ENGRAVING\|Test Operator\|/.test(c.seals[0]) && c.out.length === 0, 'the card is green Approved with one BACK ENGRAVING seal on the button and View in Engraving: ' + JSON.stringify([c.state, c.approve, c.open, c.seals]));
+      check(c.state === 'approved' && c.pill === 'Approved' && !c.approve && c.buttons.length === 0 && c.seals.length === 1 && /^BACK ENGRAVING\|Test Operator\|/.test(c.seals[0]) && c.out.length === 0, 'the card has its green dot and one BACK ENGRAVING seal where the button was, and no button: ' + JSON.stringify([c.state, c.approve, c.seals]));
       check(job.state === 'written' && job.seals.length === 1 && job.backs === 1 && !job.backPending && !job.preparing && !job.stamping, 'the piece is written, one seal, its back file saved: ' + JSON.stringify(job));
       await shot(page, 'real-approved-card', '#owEng');
       const dAfter = docsNow(), dDiff = engDocs(diffDocs(before.docs, dAfter)).filter(([, k]) => k.includes(poolOf(K.O2)) || String((dAfter.get(k) || {}).orderId) === R.O2);
@@ -318,11 +320,11 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       await page.waitForFunction(() => !(SheetWin.isOpen && SheetWin.isOpen()), null, { timeout: 8000 }).catch(() => {});
       // View in Engraving: the Engraving panel opens on this piece's Decided row, which carries the same seal, once
       await h.openWin(K.O2); await h.waitState(OV, 'approved');
-      await page.click(OV + ' [data-e=engrave]');
+      await page.click(thumbOf(OV, 'back'));
       await page.waitForFunction(() => CN.S.mode === 'engrave' && document.querySelector('#engraveView .doneRow.open[data-key]'), null, { timeout: 20000 }).catch(() => {});
       await page.waitForTimeout(1200);
       const dec = await page.evaluate(k => { const row = document.querySelector('#engraveView .doneRow.open[data-key]'), v = Engrave.view(); const seals = row ? [...row.querySelectorAll('.seal svg[data-seal-model]')].map(s => { try { const m = JSON.parse(s.getAttribute('data-seal-model')); return `${m.action}|${m.by}|${m.at}`; } catch (_) { return '?'; } }) : []; return { key: row && row.dataset.key, seals, tab: v.tab, text: row ? row.innerText.replace(/\s+/g, ' ') : '', dialogs: document.querySelectorAll('dialog[open]').length, orderWin: document.getElementById('orderWin').open }; }, K.O2);
-      check(dec.key === K.O2 && /CARLA/.test(dec.text) && dec.seals.includes(c.seals[0]) && dec.seals.filter(x => x === c.seals[0]).length === 1 && dec.dialogs === 0 && !dec.orderWin, 'View in Engraving opens the Engraving panel on this piece\'s Decided row, with the same seal, once: ' + JSON.stringify(dec));
+      check(dec.key === K.O2 && /CARLA/.test(dec.text) && dec.seals.includes(c.seals[0]) && dec.seals.filter(x => x === c.seals[0]).length === 1 && dec.dialogs === 0 && !dec.orderWin, 'a press on the Back opens the Engraving panel on this piece\'s Decided row, with the same seal, once: ' + JSON.stringify(dec));
       // the counts agree
       await page.evaluate(() => CN.setMode('library')); await page.waitForTimeout(3500);
       const after = await h.counts(); const p0 = before.counts, num = x => +(/^(\d+)/.exec(x.lib) || [])[1] || 0;
@@ -380,7 +382,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       const s0 = await h.read(OV), n0 = net.log.length, j0 = await h.job(K.O2);
       const r = await page.evaluate(async k => {
         const j = Engrave.items().get(k), b = document.querySelector('#owEng .egApproveButton');
-        b.click(); b.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        if (b) { b.click(); b.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); }
         await Engrave.approve(j, 'Someone Else', b); await Engrave.approve(j, 'Someone Else');
         const owner = document.getElementById('owEng'); try { OrderWin.paint(); } catch (_) {} try { Orders.render(); } catch (_) {} try { owner._orderEngraving.refresh(true); } catch (_) {}
         return { state: j.state, by: j.approvedBy, seals: (j.engravingSeals || []).length, tools: document.querySelectorAll('#owEng .seal button, #owEng .seal [role=button], #owEng .seal a, #owEng .sealTool').length, ctl: [...document.querySelectorAll('#owEng [data-e]')].map(n => n.dataset.e) };
@@ -389,7 +391,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       const s1 = await h.read(OV), j1 = await h.job(K.O2);
       check(JSON.stringify(s1.seals) === JSON.stringify(s0.seals) && s1.seals.length === 1, 'drawn again, the card holds the same one seal: ' + JSON.stringify(s1.seals));
       check(r.state === 'written' && r.by === j0.by && j1.seals.join() === j0.seals.join() && !net.log.slice(n0).some(engW(K.O2)), 'pressing the Approved button, and asking for the approval again as another person: nothing changes, nothing is written, the seal and its name stand: ' + JSON.stringify([r, j1.seals]));
-      check(s1.buttons.join('|') === 'Approved|View in Engraving →' && r.tools === 0 && r.ctl.join() === 'engrave', 'the approved card has no way to remove or replace a seal (buttons ' + JSON.stringify(s1.buttons) + ', controls on the seals ' + r.tools + ', actions ' + JSON.stringify(r.ctl) + ')');
+      check(s1.buttons.length === 0 && r.tools === 0 && r.ctl.every(x => x === 'open'), 'the approved card has no way to remove or replace a seal (buttons ' + JSON.stringify(s1.buttons) + ', controls on the seals ' + r.tools + ', actions ' + JSON.stringify(r.ctl) + ')');
       await h.closeWin();
     });
 
@@ -397,22 +399,22 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
     await phase('multi', async () => {
       console.log('· an order of several pieces: each card approves only its own piece (O1)');
       await asNamed('Test Operator'); net.delayMs = 0;
-      const pieces = () => page.evaluate(() => [...document.querySelectorAll('#owEng .swEng')].map(c => ({ state: c.dataset.state, words: (c.querySelector('.words') || {}).textContent || '', live: !!c.querySelector('[data-e=approve]'), seals: c.querySelectorAll('.seal').length })));
+      const pieces = () => page.evaluate(() => [...document.querySelectorAll('#owEng .engCard')].map(c => ({ state: c.dataset.state, words: (c.querySelector('.engFace[data-face=back] .engTxt') || {}).title || '', live: !!c.querySelector('[data-e=approve]'), seals: c.querySelectorAll('.seal').length })));
       await h.openWin(K.A);
-      await page.waitForFunction(() => { const c = [...document.querySelectorAll('#owEng .swEng')]; return c.length >= 2 && c.every(x => x.dataset.state === 'approve'); }, null, { timeout: 40000 });
+      await page.waitForFunction(() => { const c = [...document.querySelectorAll('#owEng .engCard')]; return c.length >= 2 && c.every(x => x.dataset.state === 'approve'); }, null, { timeout: 40000 });
       let cards = await pieces();
-      check(cards.length === 2 && cards.map(x => x.words).join() === 'ANNA,BELLA' && cards.every(x => x.live), '"All pieces": ANNA and BELLA each have their own card with a live Approve engraving; the plain piece has none: ' + JSON.stringify(cards));
-      // Fix in Engraving on BELLA's card opens BELLA's own piece (EngraveLink.open with the order and that piece), with no pop-up on the window
+      check(cards.length === 2 && cards.map(x => x.words).join() === 'ANNA,BELLA' && cards.every(x => x.live), '"All pieces": ANNA and BELLA each have their own card with a live Approve; the plain piece has none: ' + JSON.stringify(cards));
+      // a press on BELLA's Back opens BELLA's own piece (EngraveLink.open with the order and that piece), with no pop-up on the window
       const o0 = (await calls()).open.length;
-      await page.click(OVB + ' [data-e=engrave]');
+      await page.click(thumbOf(OVB, 'back'));
       await page.waitForFunction(() => CN.S.mode === 'engrave' && document.querySelector('#engraveView .rvItem[data-key]'), null, { timeout: 20000 }).catch(() => {});
       await page.waitForTimeout(500);
       let lnd = await openLanding(), op = (await calls()).open.slice(o0);
-      check(op.length === 1 && op[0].rid === R.O1 && op[0].piece === K.B && lnd.mode === 'engrave' && lnd.key === K.B && lnd.q === R.O1 && lnd.dialogs === 0 && !lnd.orderWin && A.dialogs.length === 0, 'Fix in Engraving on BELLA\'s card opens the Engraving panel on BELLA\'s piece of order ' + R.O1 + ': ' + JSON.stringify([op, lnd]));
+      check(op.length === 1 && op[0].rid === R.O1 && op[0].piece === K.B && lnd.mode === 'engrave' && lnd.key === K.B && lnd.q === R.O1 && lnd.dialogs === 0 && !lnd.orderWin && A.dialogs.length === 0, 'a press on BELLA\'s Back opens the Engraving panel on BELLA\'s piece of order ' + R.O1 + ': ' + JSON.stringify([op, lnd]));
       await page.evaluate(() => CN.setMode('orders'));
       // approve BELLA only
       await h.openWin(K.A);
-      await page.waitForFunction(() => document.querySelectorAll('#owEng .swEng').length >= 2, null, { timeout: 30000 });
+      await page.waitForFunction(() => document.querySelectorAll('#owEng .engCard').length >= 2, null, { timeout: 30000 });
       const n0 = net.log.length, c0 = await calls(), pend0 = await page.evaluate(() => Engrave.pendingCount());
       await page.click(OVB + ' [data-e=approve]');
       const okB = await written(K.B);
@@ -426,17 +428,17 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       const pend1 = await page.evaluate(() => Engrave.pendingCount());
       check(pend1 === pend0 - 1, 'the Engraving count went down by one: ' + pend0 + ' → ' + pend1);
       const sealB = (await h.read(OVB)).seals;
-      // ANNA picked on her own (the piece list's own switch): her card approves her piece, and BELLA's seal is not touched
+      // ANNA's own card (the piece list's own switch picks ANNA, whether or not the section follows it): it approves her piece, and BELLA's seal is not touched
       await page.evaluate(k => OrderWin.selectPiece(k), K.A);
-      await page.waitForFunction(() => { const c = document.querySelectorAll('#owEng .swEng'); return c.length === 1 && c[0].dataset.state === 'approve' && !c[0].classList.contains('egCompact'); }, null, { timeout: 20000 });
+      await page.waitForFunction(k => { const c = document.querySelector(`#owEng .engCard[data-key="${k}"]`); return c && c.dataset.state === 'approve'; }, K.A, { timeout: 20000 });
       const c1 = await calls(), n1 = net.log.length;
-      await page.click(OV + ' [data-e=approve]');
+      await page.click(OVA + ' [data-e=approve]');
       const okA = await written(K.A), a2 = await h.job(K.A), b2 = await h.job(K.B), cl2 = (await calls()).approve.slice(c1.approve.length);
-      check(okA && cl2.length === 1 && cl2[0].key === K.A && a2.seals.length === 1 && b2.seals.join() === b1.seals.join() && b2.seals.length === 1, 'ANNA picked on her own approves ANNA only (' + JSON.stringify(cl2.map(x => x.key.slice(-2))) + '); BELLA still has her one seal ' + JSON.stringify(b2.seals));
+      check(okA && cl2.length === 1 && cl2[0].key === K.A && a2.seals.length === 1 && b2.seals.join() === b1.seals.join() && b2.seals.length === 1, 'ANNA\'s own card approves ANNA only (' + JSON.stringify(cl2.map(x => x.key.slice(-2))) + '); BELLA still has her one seal ' + JSON.stringify(b2.seals));
       const wr2 = net.log.slice(n1).filter(x => ['backPut', 'poolUpdate'].includes(x.op)), s2 = JSON.stringify(wr2.map(x => x.body));
       check(wr2.length === 2 && s2.includes(poolOf(K.A)) && !s2.includes(poolOf(K.B)), 'and the cloud was written for ANNA\'s piece only');
       await page.evaluate(() => OrderWin.selectPiece(null));
-      await page.waitForFunction(() => document.querySelectorAll('#owEng .swEng').length >= 2, null, { timeout: 20000 });
+      await page.waitForFunction(() => document.querySelectorAll('#owEng .engCard').length >= 2, null, { timeout: 20000 });
       await page.waitForTimeout(800);
       cards = await pieces();
       check(cards.length === 2 && cards.every(x => x.state === 'approved' && x.seals === 1 && !x.live) && (await h.read(OVB)).seals.join() === sealB.join(), 'back on "All pieces": two Approved cards, one seal each, BELLA\'s unchanged: ' + JSON.stringify(cards));
@@ -567,12 +569,12 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       // the piece is sent back for a new placement from another place (the engine then fits the words again by itself: the card passes Being prepared);
       // the card's Approve button is pressed in the same breath, and the off button is pressed while it is prepared
       const r = await page.evaluate(k => { const j = Engrave.items().get(k), b = document.querySelector('#owEng [data-e=approve]'); Engrave.sendBack(j, 'sent back from the Engraving panel'); const s0 = j.state; b.click(); b.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); return { state: s0 }; }, K.O10);
-      await page.waitForFunction(() => window.__w.some(s => /^(preparing|words)/.test(s)), null, { timeout: 30000 }).catch(() => {});
+      await page.waitForFunction(() => window.__w.some(s => /^(busy|words)/.test(s)), null, { timeout: 30000 }).catch(() => {});
       await h.waitState(OV, 'approve', 120000);
       await page.waitForTimeout(500);
       const log = await watched(), poked = await page.evaluate(() => { window.__poke = false; return window.__poked; });
-      const prep = log.filter(s => /^preparing/.test(s));
-      check(r.state === 'words' && prep.length >= 1 && prep.every(s => /Approve engraving \(off,inert\)/.test(s)) && prep.some(s => /why: Not ready to approve: the back is still being prepared\./.test(s)), 'sent back elsewhere: the card says Being prepared, Approve is off and cannot be pressed, and one plain line says why (' + prep.length + ' looks, the off button and the old button pressed ' + poked + ' times): ' + JSON.stringify(prep));
+      const prep = log.filter(s => /^(busy|words)/.test(s));
+      check(r.state === 'words' && prep.length >= 1 && prep.every(s => /^(busy|words) \| -/.test(s)), 'sent back elsewhere: the card goes to its Words to confirm / Preparing dot and has no Approve to press at all (' + prep.length + ' looks, the old button pressed once): ' + JSON.stringify(prep));
       const cl = (await calls()).approve.slice(c0.approve.length), jn = await h.job(K.O10);
       check(cl.length === 0 && jn.seals.length === 0 && jn.state === 'review' && !net.log.slice(n0).some(engW(K.O10)), 'the button pressed as the piece was sent back (and the off button pressed while it was prepared) reached no approval (' + cl.length + ' calls), sealed nothing, wrote nothing; the card then offers Approve again: ' + JSON.stringify({ calls: cl.length, state: jn.state, seals: jn.seals, wrote: net.log.slice(n0).filter(engW(K.O10)).map(x => x.fn + ':' + x.op) }));
       // a card that is out of date while its button is still there: the placement changed since the card was drawn; pressing it approves nothing and the card is drawn again
@@ -580,7 +582,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       const st1 = await page.evaluate(k => { const j = Engrave.items().get(k), b = document.querySelector('#owEng [data-e=approve]'); const live = !!b && b.isConnected && !b.disabled; j.fit = Object.assign({}, j.fit); b.click(); return { live, state: j.state }; }, K.O10);
       await page.waitForTimeout(1000);
       const cl2 = (await calls()).approve.slice(c1.approve.length), j2 = await h.job(K.O10), c2 = await h.read(OV);
-      check(st1.live && st1.state === 'review' && cl2.length === 0 && j2.seals.length === 0 && !net.log.slice(n2).some(engW(K.O10)) && c2.state === 'approve' && c2.approve && c2.approve.live && !c2.approve.disabled && c2.approve.text === 'Approve engraving', 'a card out of date with its button still there (the placement changed since it was drawn): pressing it approves nothing, the card is drawn again and Approve is offered again: ' + JSON.stringify([st1, cl2.length, j2.seals.length, c2.state, c2.approve]));
+      check(st1.live && st1.state === 'review' && cl2.length === 0 && j2.seals.length === 0 && !net.log.slice(n2).some(engW(K.O10)) && c2.state === 'approve' && c2.approve && c2.approve.live && !c2.approve.disabled && c2.approve.text === 'Approve', 'a card out of date with its button still there (the placement changed since it was drawn): pressing it approves nothing, the card is drawn again and Approve is offered again: ' + JSON.stringify([st1, cl2.length, j2.seals.length, c2.state, c2.approve]));
       await h.closeWin();
       // a piece whose words still need a decision: the approval called directly does nothing either
       const n1 = net.log.length;
@@ -599,10 +601,10 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       let n0 = net.log.length, c0 = await calls();
       await watchCard(OV);
       await page.click(OV + ' [data-e=approve]');
-      await page.waitForFunction(() => document.querySelector('#owEng .egFail'), null, { timeout: 40000 }).catch(() => {});
+      await page.waitForFunction(() => document.querySelector('#owEng .engFail:not([hidden])'), null, { timeout: 40000 }).catch(() => {});
       await page.waitForTimeout(600);
       let c = await h.read(OV), j = await h.job(K.O6), log = await watched();
-      check(c.state === 'approve' && /could not be saved on this browser/.test(c.fail) && plain(c.fail) && c.failRole === 'alert' && c.approve && !c.approve.disabled && c.approve.live && c.approve.text === 'Approve engraving' && !c.approve.spin && c.sealCount === 0, 'checkpoint fails: the card is still To approve, says so in plain words where the button is, and gives the button back: ' + JSON.stringify([c.state, c.fail, c.approve]));
+      check(c.state === 'approve' && /could not be saved on this browser/.test(c.fail) && plain(c.fail) && c.failRole === 'alert' && c.approve && !c.approve.disabled && c.approve.live && c.approve.text === 'Approve' && !c.approve.spin && c.sealCount === 0, 'checkpoint fails: the card is still To approve, says so in plain words where the button is, and gives the button back: ' + JSON.stringify([c.state, c.fail, c.approve]));
       check(log.some(s => /^approve \| Approving… \(off,live,spin\)/.test(s)) && !log.some(s => /^approved/.test(s)), 'the wait was said with a small spinner, and the card never said Approved: ' + JSON.stringify(log));
       check(j.state === 'review' && j.seals.length === 0 && !j.stamping && !j.preparing && (await calls()).press.length === c0.press.length && !net.log.slice(n0).some(engW(K.O6)), 'no seal was pressed and nothing was written: ' + JSON.stringify(j));
       await shot(page, 'real-failed-checkpoint', '#owEng');
@@ -625,7 +627,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       await page.waitForFunction(k => { const x = Engrave.items().get(k); return x && x.backPending; }, K.O7, { timeout: 60000 }).catch(() => {});
       await page.waitForTimeout(1500);
       c = await h.read(OV); j = await h.job(K.O7); log = await watched();
-      check(c.state === 'approved' && c.seals.length === 1 && /waits for the cloud/.test(c.sub) && plain(c.text) && c.fail === '' && c.out.length === 0, 'the cloud refuses (500): the card is Approved with its one seal and says in plain words that the back file waits for the cloud: ' + JSON.stringify([c.state, c.sub, c.seals]));
+      check(c.state === 'approved' && c.seals.length === 1 && !!j.backPending && plain(c.text) && c.fail === '' && c.out.length === 0, 'the cloud refuses (500): the card is Approved with its one seal (the back file waits for the cloud: that is the Engraving tab\'s to say, the card stays quiet): ' + JSON.stringify([c.state, c.sub, c.seals, j.backPending]));
       check(j.state === 'approved' && j.backPending && j.seals.length === 1 && !st.doc('Charm_Pool_Back', poolOf(K.O7)) && timelineSeals(R.O7, poolOf(K.O7)).length === 1 && (await calls()).press.length - c0.press.length === 1, 'nothing half-written: no back record yet, one approval on the timeline, one stamp: ' + JSON.stringify([j.state, j.seals]));
       await shot(page, 'real-cloud-waits', '#owEng');
       await fitAt('the back file waits note');
@@ -645,7 +647,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       await page.waitForFunction(k => { const x = Engrave.items().get(k); return x && x.backPending; }, K.O8, { timeout: 60000 }).catch(() => {});
       await page.waitForTimeout(1500);
       c = await h.read(OV); j = await h.job(K.O8);
-      check(c.state === 'approved' && c.seals.length === 1 && /waits for the cloud/.test(c.sub) && plain(c.text) && j.seals.length === 1 && (await calls()).press.length - c0.press.length === 1, 'no network: the approval stands on this computer, one seal, and the card says the back file waits for the cloud: ' + JSON.stringify([c.state, c.sub, c.seals]));
+      check(c.state === 'approved' && c.seals.length === 1 && !!j.backPending && plain(c.text) && j.seals.length === 1 && (await calls()).press.length - c0.press.length === 1, 'no network: the approval stands on this computer, one seal, the back file waits for the cloud: ' + JSON.stringify([c.state, c.sub, c.seals, j.backPending]));
       await A.ctx.setOffline(false);
       await page.evaluate(() => window.dispatchEvent(new Event('online')));
       ok = await written(K.O8, 120000); await page.waitForTimeout(800);
@@ -663,7 +665,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       await page.waitForFunction(k => { const x = Engrave.items().get(k); return x && x.backPending; }, K.O11, { timeout: 60000 }).catch(() => {});
       await page.waitForTimeout(1200);
       c = await h.read(OV); j = await h.job(K.O11);
-      check(c.state === 'approved' && c.seals.length === 1 && /waits for the cloud/.test(c.sub) && plain(c.text) && j.seals.length === 1, '409 on the back record: the approval stands, one seal, the card says the file waits for the cloud: ' + JSON.stringify([c.state, c.sub, c.seals]));
+      check(c.state === 'approved' && c.seals.length === 1 && !!j.backPending && plain(c.text) && j.seals.length === 1, '409 on the back record: the approval stands, one seal, the file waits for the cloud: ' + JSON.stringify([c.state, c.sub, c.seals, j.backPending]));
       for (let i = 0; i < 2; i++) {
         await page.evaluate(() => window.dispatchEvent(new Event('online')));
         if (await written(K.O11, i ? 90000 : 15000)) break;
@@ -687,7 +689,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
           await h.openWin(key); if (!(await h.waitState(sel, state, 25000))) { check(false, `${state} card at ${w} px did not draw`); await h.closeWin(); continue; }
           await page.waitForTimeout(500);
           const c = await h.read(sel);
-          const text = await page.evaluate(() => { const win = document.getElementById('orderWin'), t = [win.innerText]; for (const n of win.querySelectorAll('[title],[aria-label],[alt],[placeholder]')) for (const a of ['title', 'aria-label', 'alt', 'placeholder']) if (n.getAttribute(a)) t.push(n.getAttribute(a)); const card = [...document.querySelectorAll('#owEng .swEng')].map(e => e.innerText + ' ' + [...e.querySelectorAll('[title],[aria-label]')].map(n => (n.getAttribute('title') || '') + ' ' + (n.getAttribute('aria-label') || '')).join(' ')).join('\n'); return { win: t.join('\n'), card, over: win.scrollWidth - win.clientWidth }; });
+          const text = await page.evaluate(() => { const win = document.getElementById('orderWin'), t = [win.innerText]; for (const n of win.querySelectorAll('[title],[aria-label],[alt],[placeholder]')) for (const a of ['title', 'aria-label', 'alt', 'placeholder']) if (n.getAttribute(a)) t.push(n.getAttribute(a)); const card = [...document.querySelectorAll('#owEng .engCard')].map(e => e.innerText + ' ' + [...e.querySelectorAll('[title],[aria-label]')].map(n => (n.getAttribute('title') || '') + ' ' + (n.getAttribute('aria-label') || '')).join(' ')).join('\n'); return { win: t.join('\n'), card, over: win.scrollWidth - win.clientWidth }; });
           check(c.out.length === 0 && c.scrollOver <= 0 && c.w > 0, `${state} card at ${w} px: nothing outside its box, no sideways scroll (card ${c.w} px wide, outside the card: ${JSON.stringify(c.out)}, the card's own overflow ${c.scrollOver})`);
           if (text.over > 1) console.log(`  – (the order window itself is ${text.over} px wider than its box at ${w} px with the ${state} card: not the card's)`);
           check(!/\blines?\b/i.test(text.card) && !/still to be settled/i.test(text.win), `${state} card at ${w} px: Pieces, never "lines"; no "still to be settled" anywhere in the order window`);
@@ -700,7 +702,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
 
     // ═══ 10b · the words confirmed in Engraving (the panel's own Confirm: no paid model), then approved from the card (O3) ═══
     await phase('confirmed', async () => {
-      console.log('· the words confirmed in Engraving, then Approve engraving on the card (O3)');
+      console.log('· the words confirmed in Engraving, then Approve on the card (O3)');
       await asNamed('Test Operator'); net.delayMs = 0;
       await h.openWin(K.O3); await h.waitState(OV, 'words');
       await watchCard(OV);
@@ -708,12 +710,12 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       await page.evaluate(k => { Engrave.decideWords(Engrave.items().get(k), { text: 'WHICH ONE', note: 'confirmed' }); }, K.O3);
       await h.waitState(OV, 'approve', 120000);
       await page.waitForTimeout(500);
-      const log = await watched(), meta = await page.evaluate(() => (document.querySelector('#owEng .egMeta') || {}).textContent || ''), c = await h.read(OV);
-      check(log[0].startsWith('words') && c.state === 'approve' && c.approve && c.approve.live && !c.approve.disabled && c.words.replace(/\s+/g, ' ') === 'WHICH ONE' && /Words confirmed by Test Operator/.test(meta), 'confirmed in Engraving: the card went from Words to confirm to To approve with Approve engraving live, and says who confirmed the words: ' + JSON.stringify([log.map(s => s.split(' | ')[0]), c.state, c.words, meta]));
+      const log = await watched(), c = await h.read(OV);
+      check(log[0].startsWith('words') && c.state === 'approve' && c.approve && c.approve.live && !c.approve.disabled && c.words.replace(/\s+/g, ' ') === 'WHICH ONE', 'confirmed in Engraving: the card went from Words to confirm to To approve with Approve live, with the confirmed words: ' + JSON.stringify([log.map(s => s.split(' | ')[0]), c.state, c.words]));
       await page.click(OV + ' [data-e=approve]');
       const ok = await written(K.O3); await page.waitForTimeout(600);
       const job = await h.job(K.O3), cc = await h.read(OV), cl = (await calls()).approve.slice(c0.approve.length);
-      check(ok && cl.length === 1 && cl[0].key === K.O3 && job.seals.length === 1 && job.text.replace(/\s+/g, ' ') === 'WHICH ONE' && cc.state === 'approved' && cc.seals.length === 1 && cc.words.replace(/\s+/g, ' ') === 'WHICH ONE' && st.calls.filter(x => x.op === 'backPut' && JSON.stringify(x.body).includes(poolOf(K.O3))).length === 1 && timelineSeals(R.O3, poolOf(K.O3)).length === 1, 'Approve engraving on the confirmed words: one approval, one seal, the words written are the confirmed ones, one back record, one timeline entry: ' + JSON.stringify([cl.length, job.seals, cc.state, cc.words]));
+      check(ok && cl.length === 1 && cl[0].key === K.O3 && job.seals.length === 1 && job.text.replace(/\s+/g, ' ') === 'WHICH ONE' && cc.state === 'approved' && cc.seals.length === 1 && cc.words.replace(/\s+/g, ' ') === 'WHICH ONE' && st.calls.filter(x => x.op === 'backPut' && JSON.stringify(x.body).includes(poolOf(K.O3))).length === 1 && timelineSeals(R.O3, poolOf(K.O3)).length === 1, 'Approve on the confirmed words: one approval, one seal, the words written are the confirmed ones, one back record, one timeline entry: ' + JSON.stringify([cl.length, job.seals, cc.state, cc.words]));
       await h.closeWin();
     });
 
@@ -729,7 +731,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       const job = await h.job(K.O2);
       check(back && job && job.seals.join() === ref.seals.join() && job.seals.length === 1, 'after a reload the piece is still approved, with the same single seal: ' + JSON.stringify(job));
       await h.openWin(K.O2); const ok = await h.waitState(OV, 'approved', 40000); const c = await h.read(OV);
-      check(ok && c.seals.length === 1 && c.seals[0].replace(/^BACK ENGRAVING\|/, 'engraveApproved|') === ref.seals[0], 'its card is green Approved with the same seal: ' + JSON.stringify([c.state, c.seals]));
+      check(ok && c.seals.length === 1 && c.seals[0].replace(/^BACK ENGRAVING\|/, 'engraveApproved|') === ref.seals[0], 'its card is Approved (green dot) with the same seal: ' + JSON.stringify([c.state, c.seals]));
       const again = net.log.slice(n0).filter(x => ['backPut', 'poolUpdate'].includes(x.op) && JSON.stringify(x.body).includes(poolOf(K.O2)));
       check(again.length === 0 && timelineSeals(R.O2, poolOf(K.O2)).length === 1, 'the reload wrote the approval nowhere again (' + again.length + ' writes; one engraveApproved on the timeline)');
       await h.closeWin();
