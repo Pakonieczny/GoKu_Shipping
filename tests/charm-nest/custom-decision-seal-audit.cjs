@@ -101,7 +101,8 @@ function auditReview() {
     const row = view.querySelector('.reviewListRow[data-rid="4171770802"]');
     assert.equal(row.querySelectorAll('.seal-sheet').length, 1, 'the actual Completed row of a send has one original send seal');
     assert.doesNotMatch(row.querySelector('.seal-sheet svg').textContent, /paul|COMPLETE|QR LABEL/);
-    assert.match(row.textContent, /2\/5 nested/, 'live progress remains visible');
+    assert.doesNotMatch(row.textContent, /\d\/5|\bnested\b/, 'the numbered stage (2/5 nested) is printed nowhere now (Paul, 12 Oct 2026); the seal and the sheet buttons say where it is');
+    assert.match(row.textContent, /Sent to Sheet/, 'the row still says it was sent to the sheet');
     assert.deepEqual(Array.from(row.querySelectorAll('.rowActions button'), button => button.textContent).filter(t => t !== 'Hold'), ['View designs', 'Open sheet', 'History']);
     row.querySelector('[data-cu-sheet]').click(); row.querySelector('[data-cu-history]').click();
     assert.deepEqual(opened, [{ key: '4171770802_1', view: 'sheet' }, { key: '4171770802_1', view: 'timeline' }], 'links reach the actual sheet and history views');
