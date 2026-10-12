@@ -158,11 +158,19 @@
 
   /* ── the picture of a face: ONE place (thumbOf). The live-font component when it is on the page, else the app's own drawing ── */
   const PX = 160;
+  /** The saved picture (PNG) of a face's approved file, when it has one: the picture of last resort when the page holds no geometry to draw the charm from. */
+  function savedPicture(job, face, o) {
+    const back = job ? (job.backs || []).filter(b => b && faceOf(b) === face).reduce((a, b) => (!a || (+b.approvedAt || 0) >= (+a.approvedAt || 0) ? b : a), null) : null;
+    const src = back && ((back.outputs && back.outputs.png && back.outputs.png.url) || back.png || back.preview);
+    return src ? (o && o.imageUrl ? o.imageUrl(src) : src) : '';
+  }
   function thumbOf(btn, piece, face, o) {
     const f = piece.faces[face]; btn.replaceChildren(); if (!f || f.plain) return;
     const P = root && root.CharmNestEngravePreview;
     if (P && P.render) {
-      try { P.render(btn, { row: lineOf(piece.row), text: f.text, fontId: f.fontId, fontWord: f.fontWord, position: f.position, face }); return; } catch (_) { btn.replaceChildren(); }
+      // ENGTHUMB (round 2): the picture is the CHARM seen from this side (the job's own view, else the piece's pool charm; the front with the design's engraved art), the words laid on it where the job
+      // puts them (the preview's own positionOf: the work area's frame). A face with no geometry at all keeps the saved picture of its approved file, else the line's Vector design (the preview's own fallbacks).
+      try { P.render(btn, { row: lineOf(piece.row), job: f.job, slot: piece.slot, text: f.text, fontId: f.fontId, fontWord: f.fontWord, position: P.positionOf ? P.positionOf(f.job, { row: lineOf(piece.row), slot: piece.slot }) : f.position, face, image: savedPicture(f.job, face, o) }); return; } catch (_) { btn.replaceChildren(); }
     }
     const E = root && root.Engrave, job = f.job;
     // the placement as it is cut (the fitted words on the charm), when the job has one

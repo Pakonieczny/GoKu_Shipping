@@ -96,7 +96,7 @@
   const snapOf = job => { const P = Pos(); return job && P && P.snapshot ? tryDo(() => P.snapshot(job), null) : null; };
   /** The snapshot of a face's placement, taken right before the panel's first move of it (what the placement was when the person began; kept with the draft, so it survives every redraw of the card, until Save or Cancel). */
   function snapBeforeMove(d, job) { if (job && job.key && !d.moved[job.key]) d.snaps[job.key] = snapOf(job); }
-  const positionOf = job => { const P = Pos(); return job && P && P.of ? tryDo(() => P.of(job), null) : null; };
+  const positionOf = job => { const V = Prev(); if (V && V.positionOf) return job ? tryDo(() => V.positionOf(job), null) : null; const P = Pos(); return job && P && P.of ? tryDo(() => P.of(job), null) : null; };   // (ENGTHUMB: the thumbnails draw the work area's frame, where the job's words sit is the preview's own positionOf; ENGPOS's `of` is the as-drawn picture)
 
   /* ── the font drop-down ────────────────────────────────────────────────────── */
   function fontOptions(vm, value) {
