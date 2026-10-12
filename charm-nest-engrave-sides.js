@@ -155,7 +155,7 @@
       side: { value: slot === 'L' || slot === 'R' ? slot : null, enumerable: true, configurable: true },
       parentRow: { value: parent, enumerable: false, configurable: true },
       poolIds: { get() { return slot ? idsOfSlot(ctx, parent, slot) : (parent && Array.isArray(parent.poolIds) ? parent.poolIds.slice() : []); }, enumerable: true, configurable: true },   // (no slot: the whole line's pieces, as the job under the line key always had; only a front job or the back of a line with a front gets such a row)
-      engrave: { get() { return job.engraveRec; }, set(v) { job.engraveRec = v; }, enumerable: true, configurable: true }
+      engrave: { get() { const r = job.engraveRec; if (face === 'front' && r && typeof r === 'object' && r.face !== 'front') r.face = 'front'; return r; }, set(v) { job.engraveRec = v; }, enumerable: true, configurable: true }   // (a front's record says so: its approvedAt is a FRONT approval wherever it is merged into a seal list)
     });
     if (face === 'front') Object.defineProperty(row, 'face', { value: 'front', enumerable: true, configurable: true });   // (a back row has no `face`: the row is what it always was)
     return row;
@@ -196,7 +196,8 @@
     out.decidedAt = Math.max(0, ...recs.map(x => +x.rec.decidedAt || 0)) || undefined;
     const reason = recs.map(x => x.rec.reason).filter(Boolean); if (reason.length && !out.approved) out.reason = reason[0];
     const merge = ctx && ctx.mergeSeals;
-    out.seals = merge ? merge(legacy, ...recs.map(x => x.rec)) : [].concat(...recs.map(x => x.rec.seals || []));
+    const asFace = x => (isFront(x.job) && x.rec && typeof x.rec === 'object' && x.rec.face !== 'front' ? Object.assign({}, x.rec, { face: 'front' }) : x.rec);   // (each record says the face of ITS job: a front's approval is never a back seal in the line's list)
+    out.seals = merge ? merge(legacy, ...recs.map(asFace)) : [].concat(...recs.map(x => x.rec.seals || []));
     const pieces = {};
     if (!anyFront) for (const x of recs) for (const id of x.job.copies || []) pieces[id] = { needed: !!x.rec.needed, state: x.rec.state, approved: !!x.rec.approved };
     else {
