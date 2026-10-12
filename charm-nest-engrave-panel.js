@@ -63,6 +63,7 @@
     if (!d) {
       d = { key, sig: vm.sig, mode: vm.mode, face: null, shown: '', faces: {}, dirty: false, posTouched: false, snaps: {}, moved: {}, noRoom: {}, busy: '', error: '', confirm: '', confirmLines: null, focus: null, ask: null, why: null };
       for (const f of ['front', 'back']) { const r = vm.rows.find(x => x.face === f); d.faces[f] = { text: r ? r.text : '', font: r ? r.fontWord : '' }; }
+      d.init = { front: Object.assign({}, d.faces.front), back: Object.assign({}, d.faces.back) };   // (the faces as the panel opened them: what the person has not touched is the system's own, CharmNestEngraveWhy.changes)
       DRAFTS.set(key, d);
     }
     return d;

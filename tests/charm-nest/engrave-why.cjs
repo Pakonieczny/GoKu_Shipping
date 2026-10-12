@@ -178,7 +178,8 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     check(!(await page.evaluate(() => __calls.slice())).length, 'no staff note, no paid reading');
 
     // ═══ 6b · THE WRITE COUNT: the same save with a reason writes exactly what the old way wrote ═══
-    const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
+    const sorted = o => JSON.stringify(Object.keys(o).sort().map(k => [k, o[k]]));
+    const same = (x, y) => sorted(x) === sorted(y);
     check(oldWay.sets === newWay.sets && oldWay.dels === newWay.dels, 'Firestore document writes and deletes: old way ' + oldWay.sets + ' written / ' + oldWay.dels + ' deleted, with a reason ' + newWay.sets + ' / ' + newWay.dels + ' (the same documents, by collection: ' + JSON.stringify(newWay.setKinds) + ')');
     check(same(oldWay.setKinds, newWay.setKinds) && same(oldWay.delKinds, newWay.delKinds), 'the same collections are written: old ' + JSON.stringify(oldWay.setKinds) + ' new ' + JSON.stringify(newWay.setKinds));
     check(same(oldWay.calls, newWay.calls), 'the same function calls: old ' + JSON.stringify(oldWay.calls) + ' new ' + JSON.stringify(newWay.calls));
@@ -263,6 +264,51 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
 
     check(errors.length === 0, 'no page errors: ' + errors.join(' | '));
   } finally { await browser.close(); srv.close(); }
+
+  // ═══ the REAL-DRAWING world (ENGLIVE): real charm drawings, real jobs, the engraver's own layout and capitals. The panel opens on the jobs' words ("NAME\nONE", Ace), the system says "Name One": an untouched face
+  //     is never a words override, so a font-only or a position-only Save is asked as exactly that ═══
+  let R = null; try { R = require('./_engraveRealWorld.cjs'); } catch (_) { /* this build has no real world */ }
+  if (R) {
+    const w = await R.world({ viewport: { width: 1440, height: 900 } });
+    if (!w) console.log('  (no playwright-core: the real-world checks were skipped)');
+    else try {
+      const made = await R.build(w, ['both']); const key = made.both.key, page = w.page;
+      await R.openEngraveDetail(w, 'both', { face: 'back' });
+      const P = '.pvSetup', ovOf = () => page.evaluate(k => { const o = B.orders.byKey.get(k).engravingOverride; return o ? JSON.parse(JSON.stringify(o)) : null; }, key);
+      const info = await page.evaluate(k => { const row = B.orders.byKey.get(k), vm = CharmNestEngraveSetup.read(row), a = CharmNestEngraveSetup.autoChoice(row, null); return { panel: document.querySelector('.pvSetup .engpWords').value, auto: a.back.text, mode: a.mode, nudgeable: [...document.querySelectorAll('.pvSetup .engpPb')].some(b => !b.disabled), jobText: vm.rows.find(r => r.face === 'back').text }; }, key);
+      console.log('    real world, untouched Back: panel ' + JSON.stringify(info.panel) + ' / system ' + JSON.stringify(info.auto) + ' / position buttons on: ' + info.nudgeable);
+      const ask = async (what) => { await page.click(P + ' [data-engp=save]'); await page.waitForSelector(P + ' .engpWhy', { timeout: 10000 }); };
+      const answer = async () => { await page.click(P + ' [data-engp=why][data-code=asked]'); await page.waitForFunction(k => { const o = B.orders.byKey.get(k).engravingOverride; return o && o.reason; }, key, { timeout: 60000 }); await page.waitForTimeout(500); };
+      const reopen = async () => { await page.evaluate(k => { delete B.orders.byKey.get(k).engravingOverride; CharmNestEngravePanel.DRAFTS.clear(); }, key); await R.openEngraveDetail(w, 'both', { face: 'back' }); };
+      // a position move with the real position control
+      let ov; const pos = await page.evaluate(() => !!document.querySelector('.pvSetup .engpPb[data-act=right]:not([disabled])'));
+      if (pos) {
+        await page.click(P + ' [data-act=right]'); await ask(); await answer();
+        ov = await ovOf();
+        check(ov.reason.of === 'position' && !ov.back && !ov.mode, 'moving the words with the real position buttons is asked as the POSITION only: ' + JSON.stringify(ov.reason));
+      } else console.log('  (the real job cannot move yet in this run: the position check was skipped)');
+      await reopen();
+      // a font pick alone
+      const fonts = await page.evaluate(() => [...document.querySelectorAll('.pvSetup .engpFont option')].map(o => o.value).filter(Boolean));
+      await page.selectOption(P + ' .engpFont', fonts.find(f => /stylish/i.test(f)) || fonts[0]);
+      await ask(); await answer();
+      ov = await ovOf();
+      check(ov.reason.of === 'font', 'a font pick alone is asked as the FONT only (the untouched words, capitals and line split of the engraver, are not a words override): ' + JSON.stringify(ov.reason));
+      check(ov.was.back.text === info.auto && ov.was.mode === 'both', 'and the record keeps the system\'s words and mode: ' + JSON.stringify(ov.was));
+      // typed words
+      await reopen();
+      await page.fill(P + ' .engpWords', 'Name Two'); await ask(); await answer();
+      ov = await ovOf();
+      check(ov.reason.of === 'back' && ov.back.text === 'Name Two', 'new words are asked as the BACK words: ' + JSON.stringify({ of: ov.reason.of, back: ov.back && ov.back.text }));
+      // the same words typed again in other capitals: nothing to ask in a capitals font
+      await reopen();
+      await page.fill(P + ' .engpWords', 'NAME ONE');
+      const same = await page.evaluate(() => { const b = document.querySelector('.pvSetup [data-engp=save]'); return { saveOn: !!b && !b.disabled }; });
+      if (same.saveOn) { await page.click(P + ' [data-engp=save]'); await page.waitForTimeout(400); }
+      check(!(await page.evaluate(() => !!document.querySelector('.pvSetup .engpWhy'))), 'the system\'s own name retyped in capitals (Ace engraves capitals) asks nothing');
+      check(w.errors.length === 0, 'no page errors in the real world: ' + w.errors.join(' | '));
+    } finally { await w.close(); }
+  }
   if (fails.length) { console.log('\nengrave-why: ' + fails.length + ' failed'); fails.forEach(f => console.log('  - ' + f)); process.exit(1); }
   console.log('\nengrave-why: ok');
 })().catch(e => { console.error(e); process.exit(1); });

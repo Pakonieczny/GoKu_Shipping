@@ -49,9 +49,20 @@
   const labelOf = code => { const r = REASONS.find(x => x.code === code); return r ? r.label : code === 'other' ? 'Something else' : ''; };
   const clip = (s, n) => str(s).replace(/\s+/g, ' ').trim().slice(0, n || MAX_TEXT);
   
-  /** What a staged edit overrides. `draft` = the panel's draft ({ mode, faces: { front: { text, font }, back: ... } }). The decision is ENGAUTO's CharmNestEngraveSetup.diffFromAuto (the system's own choice, whatever a
-   *  person saved before; only the faces the staged mode engraves; fonts by the installed font id). A face the system gave NO words (it asked a person which words go where) is never an override: the person is
-   *  answering, not replacing, so a `.text` part on such a face is dropped. opts: { jobs: the piece's jobs, positionMoved: the person moved the words on the charm }.
+  const flat = t => str(t).replace(/\s+/g, ' ').trim();
+  /** The same words? Line breaks and runs of spaces are layout, not words (the engraver splits a long name over lines itself: "NAME\nONE" is "Name One"), and a capitals font (Ace) engraves capitals whatever was typed
+   *  (CharmNestOrders.capsText), so "Name One" and "NAME ONE" are one engraving there; in a font with lowercase "name" and "Name" differ (a spelling fix). */
+  function sameWords(a, b, fontId) {
+    const O = dep('CharmNestOrders', './charm-nest-orders.js'), caps = t => (O && O.capsText && fontId ? tryDo(() => O.capsText(t, fontId), t) : t);
+    return flat(caps(a)) === flat(caps(b));
+  }
+  /** What a staged edit overrides. `draft` = the panel's draft ({ mode, faces: { front: { text, font }, back: ... }, init: the faces as the panel opened them }). The decision is ENGAUTO's
+   *  CharmNestEngraveSetup.diffFromAuto (the system's own choice, whatever a person saved before; only the faces the staged mode engraves; fonts by the installed font id), MINUS what only looks different:
+   *   - words: tolerant (sameWords: line breaks, spaces, capitals of a capitals font), and a face the person did not touch while nothing was saved before is the system's own (the panel opens on the jobs' words,
+   *     which the engraver has already laid out and put in capitals) and is never a words override;
+   *   - font: a face whose font was not touched while nothing was saved before is the system's own;
+   *   - a face the system gave NO words (it asked a person which words go where) is never an override: the person is answering, not replacing.
+   *  opts: { jobs: the piece's jobs, positionMoved: the person moved the words on the charm }.
    *  -> { any, of: ['mode' | 'front' | 'back' | 'font' | 'position', ...], was }  (was = the system's choice as it is stored; null when nothing is known) */
   function changes(vm, draft, opts) {
     const none = { any: false, of: [], was: null }, S = Setup(), o = opts || {};
@@ -59,12 +70,22 @@
     const faceNow = f => { const x = (draft.faces && draft.faces[f]) || {}; return { text: str(x.text), fontWord: str(x.font).trim() || null }; };
     const d = tryDo(() => S.diffFromAuto(vm.line, vm.slot || null, { mode: draft.mode, front: faceNow('front'), back: faceNow('back') }, o.jobs ? { jobs: o.jobs } : undefined), null);
     if (!d || !d.auto) return none;
-    const auto = d.auto, of = [];
+    const auto = d.auto, of = [], saved = !!vm.edited, init = draft.init || {};
+    const fontOf = f => tryDo(() => S.fontIdOf(vm.line, f, faceNow(f).fontWord, vm.slot || null), '') || (auto[f] && auto[f].fontId) || '';
     for (const part of d.parts || []) {
       const [face, what] = part.split('.');
       if (part === 'mode') of.push('mode');
-      else if (what === 'text') { if (auto[face] && auto[face].text) of.push(face); }
-      else if (what === 'font') of.push('font');
+      else if (what === 'text') {
+        const mine = faceNow(face).text, was = init[face] ? str(init[face].text) : null;
+        if (!auto[face] || !auto[face].text) continue;
+        if (!saved && was !== null && flat(was) === flat(mine)) continue;   // (not touched: the system's own words, as the engraver laid them out)
+        if (sameWords(mine, auto[face].text, fontOf(face))) continue;
+        of.push(face);
+      } else if (what === 'font') {
+        const was = init[face] ? str(init[face].font).trim() : null;
+        if (!saved && was !== null && was === str(faceNow(face).fontWord)) continue;   // (not touched)
+        of.push('font');
+      }
     }
     if (o.positionMoved) of.push('position');
     const uniq = of.filter((k, i) => of.indexOf(k) === i), was = { mode: auto.mode };
@@ -121,5 +142,5 @@
     return { code: str(r.code), label: labelOf(str(r.code)), text, by, at, of: str(r.of), slot: str(r.slot), was, line: line1, title: `${line1}${when ? ' · ' + when : ''}` };
   }
 
-  return { REASONS, CODES, MAX_TEXT, labelOf, changes, patchWith, fold, say, reasonOf, flatWas };
+  return { REASONS, CODES, MAX_TEXT, labelOf, changes, sameWords, sameWords, patchWith, fold, say, reasonOf, flatWas };
 });
