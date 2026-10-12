@@ -79,15 +79,16 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     }, { orders: ORDERS, WORDS, k: { 1: key(R1, 2), 2: key(R1, 3), 3: key(R2, 1), 4: key(R2, 2) }, p: { 1: pool(R1, 2) }, R1, R2, SHEET });
     const calls = () => page.evaluate(() => ({ approve: __approve.map(a => a.key + '|' + a.by + '|' + a.button), poke: __poke, nudge: __nudge, links: __links }));
     const DEL = ['TO APPROVE', 'To approve', 'Waiting for your approval', 'WORDS ON THE BACK', 'Words on the back', 'Read from', 'sure', 'Fix in Engraving', 'View in Engraving', 'ENGRAVES', 'nothing in the listing', 'The system read', 'Undo'];
-    const card = (sel = '.engCard') => page.evaluate(sel => {
-      const h = document.getElementById('owEng'), c = h.querySelector(sel), q = s => c && c.querySelector(s);
-      const seals = [...h.querySelectorAll('.engCard .egButtonSeal .seal svg[data-seal-model]')].map(s => { try { const m = JSON.parse(s.getAttribute('data-seal-model')); return m.action + '|' + m.by; } catch (_) { return '?'; } });
-      const face = f => { const e = q(`.engFace[data-face=${f}]`); return e ? { empty: e.dataset.empty === '1', text: (e.querySelector('.engTxt') || {}).title || '', label: (e.querySelector('.engLbl') || {}).textContent, picture: !!e.querySelector('.engThumb canvas, .engThumb img') } : null; };
+    // (a piece's card is found by its line key, whatever else the section shows: the section never follows the piece switcher)
+    const card = (lk) => page.evaluate(lk => {
+      const h = document.getElementById('owEng'), c = h.querySelector(`.engCard[data-key="${lk || window.__k.r}"]`), q = s => c && c.querySelector(s);
+      const seals = [...(c ? c.querySelectorAll('.egButtonSeal .seal svg[data-seal-model]') : [])].map(s => { try { const m = JSON.parse(s.getAttribute('data-seal-model')); return m.action + '|' + m.by; } catch (_) { return '?'; } });
+      const face = f => { const e = q(`.engFace[data-face=${f}]`); return e ? { empty: e.dataset.empty === '1', text: (e.querySelector('.engTxt') || {}).title || '', label: (e.querySelector('.engLbl') || {}).textContent, picture: !!e.querySelector('.engThumb canvas, .engThumb img, .engThumb .engpv'), laid: ((e.querySelector('.engpvText') || {}).textContent || '') } : null; };
       const ab = q('.egApproveButton');
       return { hidden: h.hidden, n: h.querySelectorAll('.engCard').length, direct: [...h.children].every(x => x.classList.contains('engCard')), state: c && c.dataset.state, dot: q('.engDot') && q('.engDot').getAttribute('aria-label'), dots: c ? c.querySelectorAll('.engDot').length : 0, name: q('.engName') && q('.engName').textContent,
-        front: face('front'), back: face('back'), thumbs: c ? c.querySelectorAll('.engThumb').length : 0, approve: !!q('[data-e=approve]'), disabled: ab && ab.disabled, approveText: ab && ab.textContent.trim(), buttons: c ? c.querySelectorAll('button:not(.engThumb)').length : 0, seals,
+        front: face('front'), back: face('back'), thumbs: c ? c.querySelectorAll('.engThumb').length : 0, approve: !!q('[data-e=approve]'), disabled: ab && ab.disabled, approveText: ab && ab.textContent.trim(), header: q('.engHd') ? [...q('.engHd').children].map(x => x.className.split(' ')[0]).join(',') : '', height: c && Math.round(c.getBoundingClientRect().height), buttons: c ? c.querySelectorAll('button:not(.engThumb)').length : 0, seals,
         wait: h.querySelector('.owEngWait') && h.querySelector('.owEngWait').textContent, text: c ? c.textContent.replace(/\s+/g, ' ').trim() : '', settledText: /still to be settled/i.test(document.getElementById('orderWin').textContent) };
-    }, sel);
+    }, lk);
     const none = c => DEL.filter(w => c.text.includes(w));
     // (an order of several opens on "All pieces"; one piece's card is read by picking the piece)
     const open = async (k, extra) => { await page.evaluate(k => OrderWin.open(k), k); await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && !document.querySelector('#orderWin').getAnimations({ subtree: true }).some(a => a.playState === 'running' && a.effect && a.effect.getTiming().iterations !== Infinity), k, { timeout: 15000 });
@@ -96,72 +97,71 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     const pick = async n => { await page.evaluate(i => { const rows = [...document.querySelectorAll('#owPcSum .owPcRow[data-piece]')]; OrderWin.selectPiece(i === 1 ? null : rows[i - 2].dataset.piece); }, n); };
     const k = { c: key(R1, 1), g: key(R1, 2), r: key(R1, 3) }; await page.evaluate(k => { window.__k = k; }, k);
     const cardOf = lk => `.engCard[data-key="${lk}"]`;
+    const thumb = (lk, face) => `${cardOf(lk)} .engFace[data-face=${face}] .engThumb`;
 
     // 1 · the Overview of the RG middle (piece 3 of 3): ONE card, Front (a quiet empty slot) and Back (its words) side by side, one dot, one Approve
     await open(k.r);
-    await page.waitForFunction(() => document.querySelector('#owEng .engCard[data-state=approve] .engFace[data-face=back] canvas'), null, { timeout: 10000 });
+    await page.waitForFunction(() => document.querySelector('#owEng .engCard[data-state=approve] .engFace[data-face=back] .engThumb .engpv, #owEng .engCard[data-state=approve] .engFace[data-face=back] .engThumb canvas'), null, { timeout: 10000 });
     await settled(); await page.mouse.move(700, 880);
     let c = await card();
-    check(!c.hidden && c.n === 1 && c.direct && c.state === 'approve' && c.dot === 'To approve' && c.dots === 1, 'the Overview shows the piece\'s card, a direct child of the host, with ONE state dot: ' + JSON.stringify([c.n, c.state, c.dot, c.dots]));
+    check(!c.hidden && c.n >= 1 && c.direct && c.state === 'approve' && c.dot === 'To approve' && c.dots === 1, 'the Overview shows the piece\'s card, a direct child of the host, with ONE state dot: ' + JSON.stringify([c.n, c.state, c.dot, c.dots]));
+    check(c.header === 'engDot,engName,engAct', 'one header row: the dot, the piece\'s name and the Approve button (the faces below it): ' + c.header);
     check(c.thumbs === 2 && c.front.label === 'Front' && c.back.label === 'Back' && c.front.empty && !c.front.text && !c.front.picture && !c.back.empty && c.back.text === 'KMB //\nSMH' && c.back.picture, 'Front is a quiet empty slot, Back has its words and its placement picture: ' + JSON.stringify([c.front, c.back]));
     check(c.approve && c.approveText === 'Approve' && c.buttons === 1 && none(c).length === 0, 'ONE Approve button and none of the old words: ' + JSON.stringify([c.approveText, c.buttons, none(c)]));
     check(!c.settledText, 'the words "still to be settled" appear nowhere in the order window while the engraving is not settled');
     if (shots) { await page.screenshot({ path: path.join(shots, 'overview-approve.png') }); await page.locator('#owEng').screenshot({ path: path.join(shots, 'card-approve.png') }); }
 
-    // 2 · the pieces: each has its own back and approval; nothing of another piece shows
+    // 2 · every engraved piece has its own card, whichever piece the window holds (the section never follows the piece switcher); nothing of one piece shows on another's card
     await page.evaluate(() => { const h = document.getElementById('owEng'); window.__log = []; new MutationObserver(() => __log.push({ key: OrderWin.key(), hidden: h.hidden, cards: [...h.querySelectorAll('.engCard')].map(e => e.dataset.key + ':' + e.dataset.state + ':' + ((e.querySelector('.engFace[data-face=back] .engTxt') || {}).title || '')), wait: !!h.querySelector('.owEngWait') })).observe(h, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] }); });
-    await pick(2); await page.waitForFunction(k => OrderWin.key() === k && document.getElementById('owEng').hidden, k.c, { timeout: 8000 });
-    c = await card(); check(c.hidden && !c.state, 'the chain (piece 1) has no engraving: no card, the host is hidden');
-    await pick(3); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owEng .engCard[data-state=approved]'), k.g, { timeout: 8000 });
-    c = await card();
-    check(c.state === 'approved' && c.dot === 'Approved' && c.back.text === 'I\ndissent' && c.disabled === true && !c.approve && c.approveText === 'Approved' && none(c).length === 0, 'the GF middle (piece 2) shows its own approved card: ' + JSON.stringify([c.state, c.back.text, c.approveText]));
-    check(c.seals.length === 1 && c.seals[0] === 'BACK ENGRAVING|Giovanna', 'with Giovanna\'s BACK ENGRAVING seal: ' + JSON.stringify(c.seals));
-    if (shots) await page.locator('#owEng').screenshot({ path: path.join(shots, 'card-approved.png') });
-    await pick(4); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owEng .engCard[data-state=approve]'), k.r, { timeout: 8000 });
-    c = await card(); check(c.state === 'approve' && c.back.text === 'KMB //\nSMH' && c.seals.length === 0, 'the RG middle (piece 3) is its own: to approve, no seal');
-    await pick(1);   // All 3 pieces: one card for each piece that has an engraving (the chain has none)
+    await pick(1);   // All 3 pieces
     await page.waitForFunction(() => document.querySelectorAll('#owEng .engCard').length === 2, null, { timeout: 8000 });
-    const all2 = await page.evaluate(() => [...document.querySelectorAll('#owEng .engCard')].map(e => e.dataset.state + ':' + e.querySelector('.engFace[data-face=back] .engTxt').title));
-    check(all2.join('|') === 'approve:KMB //\nSMH|approved:I\ndissent', '"All pieces": a card for each piece with an engraving, none for the chain, the piece the window holds first: ' + JSON.stringify(all2));
-    await pick(4); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owEng .engCard[data-state=approve]'), k.r, { timeout: 8000 });
+    const all2 = await page.evaluate(() => [...document.querySelectorAll('#owEng .engCard')].map(e => e.dataset.key + ':' + e.dataset.state + ':' + e.querySelector('.engFace[data-face=back] .engTxt').title).sort());
+    check(all2.join('|') === [`${k.g}:approved:I\ndissent`, `${k.r}:approve:KMB //\nSMH`].sort().join('|'), 'a card for each piece with an engraving (the GF middle, the RG middle), none for the chain: ' + JSON.stringify(all2));
+    c = await card(k.g);
+    check(c.state === 'approved' && c.dot === 'Approved' && c.back.text === 'I\ndissent' && !c.approve && c.buttons === 0 && none(c).length === 0, 'the GF middle (piece 2) shows its own approved card, with no button: ' + JSON.stringify([c.state, c.back.text, c.buttons]));
+    check(c.seals.length === 1 && c.seals[0] === 'BACK ENGRAVING|Giovanna' && c.header === 'engDot,engName,engAct', 'with Giovanna\'s BACK ENGRAVING seal, in the header row where the button would be: ' + JSON.stringify([c.seals, c.header]));
+    if (shots) await page.locator('#owEng').screenshot({ path: path.join(shots, 'card-approved.png') });
+    c = await card(k.r); check(c.state === 'approve' && c.back.text === 'KMB //\nSMH' && c.seals.length === 0, 'the RG middle (piece 3) is its own: to approve, no seal');
+    check(!(await page.evaluate(k => !!document.querySelector(`#owEng .engCard[data-key="${k}"]`), k.c)), 'the chain (piece 1) has no engraving: no card');
+    await pick(4); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector(`#owEng .engCard[data-key="${k}"][data-state=approve]`), k.r, { timeout: 8000 });
     const log = await page.evaluate(() => __log);
-    const bad = log.filter(l => l.cards.length === 1 && l.cards[0].split(':').slice(2).join(':') && l.cards[0].split(':').slice(2).join(':') !== (WORDS[l.key] || '#none#'));
-    check(log.length > 0 && bad.length === 0 && !log.some(l => l.key === k.c && !l.hidden && l.cards.length), 'at no moment did a piece show another piece\'s words or a card on the chain (' + log.length + ' changes seen)');
+    const bad = log.filter(l => l.cards.some(x => { const [lk, , ...w] = x.split(':'); return w.join(':') && w.join(':') !== (WORDS[lk] || '#none#'); }));
+    check(bad.length === 0 && !log.some(l => l.cards.some(x => x.startsWith(k.c + ':'))), 'at no moment did a piece show another piece\'s words or a card on the chain (' + log.length + ' changes seen)');
 
     // 3 · approve: the name is asked as everywhere (me() || askEmployee()), Engrave.approve gets the very button, the seal lands on it
     await page.evaluate(() => { window.__prompts = 0; window.prompt = () => { __prompts++; return null; }; B.employee = ''; try { localStorage.removeItem('cn.employee'); } catch (_) {} });
     const nameless = await page.evaluate(() => (window.CNEmployee.name() || '') === '');
     if (nameless) {
       // (the name is asked in the small name bar inside the order window, never as a browser pop-up over it; "Not now" approves nothing)
-      await page.click('#owEng [data-e=approve]'); await page.waitForSelector('#orderWin .cnNameBar input', { timeout: 4000 });
+      await page.click(`${cardOf(k.r)} [data-e=approve]`); await page.waitForSelector('#orderWin .cnNameBar input', { timeout: 4000 });
       await page.click('#orderWin .cnNameBar .cnNbX'); await page.waitForTimeout(250);
-      check((await calls()).approve.length === 0 && (await page.evaluate(() => __prompts)) === 0 && !(await page.$('.cnNameBar')) && (await card()).approve, 'with no name, the name bar asks for it in the window and "Not now" approves nothing (the button stays)');
-      await page.click('#owEng [data-e=approve]'); await page.waitForSelector('#orderWin .cnNameBar input', { timeout: 4000 });
+      check((await calls()).approve.length === 0 && (await page.evaluate(() => __prompts)) === 0 && !(await page.$('.cnNameBar')) && (await card(k.r)).approve, 'with no name, the name bar asks for it in the window and "Not now" approves nothing (the button stays)');
+      await page.click(`${cardOf(k.r)} [data-e=approve]`); await page.waitForSelector('#orderWin .cnNameBar input', { timeout: 4000 });
       await page.fill('#orderWin .cnNameBar input', 'Zed Tester'); await page.click('#orderWin .cnNameBar button[type=submit]');
-    } else { console.log('  – the name could not be cleared here: the ask-for-a-name path was not run'); await page.click('#owEng [data-e=approve]'); }
+    } else { console.log('  – the name could not be cleared here: the ask-for-a-name path was not run'); await page.click(`${cardOf(k.r)} [data-e=approve]`); }
     await page.waitForFunction(() => __approve.length === 1, null, { timeout: 8000 });
-    const during = await page.evaluate(() => { const b = document.querySelector('#owEng .egApproveButton'); return { disabled: b.disabled, busy: b.getAttribute('aria-busy'), pending: !!document.querySelector('#owEng .seal.pending, #owEng .egButtonSeal .seal') }; });
+    const during = await page.evaluate(k => { const b = document.querySelector(`#owEng .engCard[data-key="${k}"] .egApproveButton`); return { disabled: b.disabled, busy: b.getAttribute('aria-busy'), pending: !!document.querySelector(`#owEng .engCard[data-key="${k}"] .seal.pending, #owEng .engCard[data-key="${k}"] .egButtonSeal .seal`) }; }, k.r);
     check(during.disabled && during.busy === 'true' && during.pending, 'pressed: the button waits (disabled, busy) while the seal is pressed on it: ' + JSON.stringify(during));
-    await page.waitForFunction(() => document.querySelector('#owEng .engCard[data-state=approved]') && !document.querySelector('#owEng .seal.pending'), null, { timeout: 20000 });
+    await page.waitForFunction(k => document.querySelector(`#owEng .engCard[data-key="${k}"][data-state=approved]`) && !document.querySelector('#owEng .seal.pending'), k.r, { timeout: 20000 });
     await settled();
-    c = await card(); const who = nameless ? 'Zed Tester' : 'Test Operator';
+    c = await card(k.r); const who = nameless ? 'Zed Tester' : 'Test Operator';
     check((await calls()).approve.length === 1 && (await calls()).approve[0] === `${k.r}|${who}|true`, 'Engrave.approve was called once, for this piece\'s job, with the name and the button on screen: ' + JSON.stringify((await calls()).approve));
-    check(c.state === 'approved' && c.disabled === true && !c.approve && c.approveText === 'Approved' && c.seals.length === 1 && c.seals[0] === `BACK ENGRAVING|${who}`, 'the card is approved, the button settled and the BACK ENGRAVING seal on it, once: ' + JSON.stringify([c.state, c.seals]));
+    check(c.state === 'approved' && !c.approve && c.buttons === 0 && c.seals.length === 1 && c.seals[0] === `BACK ENGRAVING|${who}` && c.header === 'engDot,engName,engAct', 'the card is approved: the button is gone, the BACK ENGRAVING seal stands in its place, once: ' + JSON.stringify([c.state, c.seals, c.header]));
     check(!c.settledText, 'and still nowhere once it is settled');
     const after = await calls(); check(after.poke >= 1 && after.nudge >= 1, `the run and the order's timeline feed were told (RunCtl.poke ${after.poke}, OrderWin.nudge ${after.nudge})`);
     if (shots) { await page.screenshot({ path: path.join(shots, 'overview-approved.png') }); await page.locator('#owEng').screenshot({ path: path.join(shots, 'card-approved-by-me.png') }); }
     // permanent, never duplicated: away and back, and the window closed and opened again
-    await pick(3); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owEng .engCard[data-state=approved]'), k.g, { timeout: 8000 });
-    await pick(4); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owEng .engCard[data-state=approved] .egButtonSeal .seal'), k.r, { timeout: 8000 });
+    await pick(3); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector(`#owEng .engCard[data-key="${k}"][data-state=approved]`), k.g, { timeout: 8000 });
+    await pick(4); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector(`#owEng .engCard[data-key="${k}"][data-state=approved] .egButtonSeal .seal`), k.r, { timeout: 8000 });
     await page.waitForTimeout(1300);
-    c = await card(); check(c.seals.length === 1 && c.seals[0] === `BACK ENGRAVING|${who}`, 'switching away and back: the seal is there, once');
-    await page.evaluate(() => { const b = document.querySelector('#owEng .egApproveButton'); b.click(); });
+    c = await card(k.r); check(c.seals.length === 1 && c.seals[0] === `BACK ENGRAVING|${who}`, 'switching away and back: the seal is there, once');
+    await page.evaluate(k => { const b = document.querySelector(`#owEng .engCard[data-key="${k}"] .egApproveButton`); b && b.click(); }, k.r);
     await page.waitForTimeout(300);
-    check((await calls()).approve.length === 1 && (await card()).seals.length === 1, 'pressing it again approves nothing and adds no seal');
+    check((await calls()).approve.length === 1 && (await card(k.r)).seals.length === 1 && !(await card(k.r)).approve, 'there is no button to press again: nothing is approved twice and no seal is added');
     await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open, null, { timeout: 4000 });
     check(await page.evaluate(() => !document.getElementById('owEng')._orderEngraving && !document.getElementById('owEng').firstChild), 'the window closed: the cards and their timer are gone');
-    await open(k.r); await page.waitForFunction(() => document.querySelector('#owEng .engCard[data-state=approved] .egButtonSeal .seal'), null, { timeout: 10000 }); await page.waitForTimeout(1200);
-    c = await card(); check(c.seals.length === 1 && c.back.text === 'KMB //\nSMH', 'opened again: still approved, one seal');
+    await open(k.r); await page.waitForFunction(k => document.querySelector(`#owEng .engCard[data-key="${k}"][data-state=approved] .egButtonSeal .seal`), k.r, { timeout: 10000 }); await page.waitForTimeout(1200);
+    c = await card(k.r); check(c.seals.length === 1 && c.back.text === 'KMB //\nSMH', 'opened again: still approved, one seal');
 
     // 4 · the Sheet tab shows the approval made here, with its own card (kept as it is), and the timeline got it
     await page.click('.owTabsV [data-ow-view="sheet"]');
@@ -174,57 +174,57 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
 
     // 5 · a press on a thumbnail opens THAT face of THAT piece in Engraving: EngraveLink when it is there, else the Sheet tab's own way
     if (await page.evaluate(() => !!(window.EngraveLink && EngraveLink.open))) {
-      await page.click('#owEng .engFace[data-face=back] .engThumb');
+      await page.click(thumb(k.r, 'back'));
       await page.waitForFunction(() => !OrderWin.isOpen() && CN.S.mode === 'engrave', null, { timeout: 15000 });
       const rv = await page.evaluate(() => Engrave.view());
       check(rv.tab === 'done' && rv.chosen === true && rv.list === false, 'with the real EngraveLink: the window closed and the Engraving tab is on the approved piece: ' + JSON.stringify({ tab: rv.tab, q: rv.q, chosen: rv.chosen, list: rv.list }));
       await page.waitForTimeout(600); await page.evaluate(() => CN.setMode('orders')); await open(k.r);
-      await page.waitForFunction(() => document.querySelector('#owEng .engCard[data-state=approved] .egButtonSeal .seal'), null, { timeout: 10000 });
+      await page.waitForFunction(k => document.querySelector(`#owEng .engCard[data-key="${k}"][data-state=approved] .egButtonSeal .seal`), k.r, { timeout: 10000 });
     }
     await page.evaluate(() => { window.EngraveLink = { open: async t => { __links.push(t); await new Promise(r => setTimeout(r, 1500)); } }; });
-    await page.click('#owEng .engFace[data-face=back] .engThumb');
-    const mid = await page.evaluate(() => { const b = document.querySelector('#owEng .engFace[data-face=back] .engThumb'); return { busy: b.getAttribute('aria-busy'), spin: !!b.querySelector('.owSpin') }; });
+    await page.click(thumb(k.r, 'back'));
+    const mid = await page.evaluate(sel => { const b = document.querySelector(sel); return { busy: b.getAttribute('aria-busy'), spin: !!b.querySelector('.owSpin') }; }, thumb(k.r, 'back'));
     check(mid.busy === 'true' && mid.spin, 'while it opens the thumbnail says so, with a small spinner: ' + JSON.stringify(mid));
     await page.waitForFunction(() => __links.length === 1, null, { timeout: 4000 });
-    await page.waitForFunction(() => { const b = document.querySelector('#owEng .engFace[data-face=back] .engThumb'); return b && b.getAttribute('aria-busy') !== 'true'; }, null, { timeout: 4000 });
+    await page.waitForFunction(sel => { const b = document.querySelector(sel); return b && b.getAttribute('aria-busy') !== 'true'; }, thumb(k.r, 'back'), { timeout: 4000 });
     const links = (await calls()).links;
     check(links.length === 1 && JSON.stringify(links[0]) === JSON.stringify({ rid: R1, key: k.r, poolId: pool(R1, 3), piece: k.r, face: 'back' }), 'it called EngraveLink.open({rid, key, poolId, piece, face}) for this piece\'s back: ' + JSON.stringify(links[0]));
-    await page.click('#owEng .engFace[data-face=front] .engThumb'); await page.waitForFunction(() => __links.length === 2, null, { timeout: 4000 });
+    await page.click(thumb(k.r, 'front')); await page.waitForFunction(() => __links.length === 2, null, { timeout: 4000 });
     check((await calls()).links[1].face === 'front' && (await calls()).links[1].key === k.r, 'an empty Front slot opens the same piece, asking for the front: ' + JSON.stringify((await calls()).links[1]));
     check(await page.evaluate(() => OrderWin.isOpen()), 'and the window was left to EngraveLink (it closes it first)');
-    await pick(3); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owEng .engCard[data-state=approved]'), k.g, { timeout: 8000 });
-    await page.click('#owEng .engFace[data-face=back] .engThumb'); await page.waitForFunction(() => __links.length === 3, null, { timeout: 4000 });
+    await pick(3); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector(`#owEng .engCard[data-key="${k}"][data-state=approved]`), k.g, { timeout: 8000 });
+    await page.click(thumb(k.g, 'back')); await page.waitForFunction(() => __links.length === 3, null, { timeout: 4000 });
     check(JSON.stringify((await calls()).links[2]) === JSON.stringify({ rid: R1, key: k.g, poolId: pool(R1, 2), piece: k.g, face: 'back' }), 'the other piece asks for its own: ' + JSON.stringify((await calls()).links[2]));
     // (until EngraveLink exists: the Sheet tab's way, the window closes and the Engraving tab is set to that order and piece)
     await page.evaluate(() => { delete window.EngraveLink; });
-    await page.click('#owEng .engFace[data-face=back] .engThumb');
+    await page.click(thumb(k.g, 'back'));
     await page.waitForFunction(() => !OrderWin.isOpen() && CN.S.mode === 'engrave', null, { timeout: 8000 });
     const v1 = await page.evaluate(() => Engrave.view());
     check(v1.tab === 'done' && v1.q === R1 && v1.chosen === true && v1.list === false && !v1.focus, 'without EngraveLink: the window closes and the Engraving tab opens on the approved piece\'s order: ' + JSON.stringify({ tab: v1.tab, q: v1.q, chosen: v1.chosen, list: v1.list }));
     await page.evaluate(() => CN.setMode('orders'));
 
     // 6 · live: an approval made in the Engraving tab / Sheet tab / sheet window (Engrave's own job), and one another computer made
-    await open(key(R2, 1)); await page.waitForFunction(() => document.querySelector('#owEng .engCard[data-state=approve] [data-e=approve]'), null, { timeout: 10000 });
-    c = await card(); check(c.state === 'approve' && c.back.text === 'Aster' && !c.settledText, 'order 2, piece 1: to approve, with no "still to be settled" text');
+    await open(key(R2, 1)); await page.waitForFunction(k => document.querySelector(`#owEng .engCard[data-key="${k}"][data-state=approve] [data-e=approve]`), key(R2, 1), { timeout: 10000 });
+    c = await card(key(R2, 1)); check(c.state === 'approve' && c.back.text === 'Aster' && !c.settledText, 'order 2, piece 1: to approve, with no "still to be settled" text');
     const t0 = Date.now();
     await page.evaluate(k => { const j = Engrave.items().get(k), at = Date.now(); CNEngravingSeals.add(j, 'engraveApproved', 'Sam Tester', at); Object.assign(j, { state: 'approved', approvedBy: 'Sam Tester', approvedAt: at }); Object.assign(j.row.engrave, { state: 'approved', approved: true, approvedBy: 'Sam Tester', approvedAt: at }); }, key(R2, 1));
-    await page.waitForFunction(() => document.querySelector('#owEng .engCard[data-state=approved]'), null, { timeout: 5000 });
-    const took = Date.now() - t0; c = await card();
-    check(took <= 3000 && !c.approve && c.disabled === true && c.seals.length === 1 && c.seals[0] === 'BACK ENGRAVING|Sam Tester', `approved in the Engraving tab or the sheet window: the card follows within ${took} ms, with the seal`);
+    await page.waitForFunction(k => document.querySelector(`#owEng .engCard[data-key="${k}"][data-state=approved]`), key(R2, 1), { timeout: 5000 });
+    const took = Date.now() - t0; c = await card(key(R2, 1));
+    check(took <= 3000 && !c.approve && c.buttons === 0 && c.seals.length === 1 && c.seals[0] === 'BACK ENGRAVING|Sam Tester', `approved in the Engraving tab or the sheet window: the card follows within ${took} ms, with the seal`);
     // another computer: only the timeline knows (its feed is read by the open window already)
-    await page.evaluate(k => OrderWin.selectPiece(k), key(R2, 2)); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owEng .engCard[data-state=approve]'), key(R2, 2), { timeout: 8000 });
+    await page.evaluate(k => OrderWin.selectPiece(k), key(R2, 2)); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector(`#owEng .engCard[data-key="${k}"][data-state=approve]`), key(R2, 2), { timeout: 8000 });
     const t1 = Date.now();
     await page.evaluate(({ R2, k }) => { const at = Date.now(); window.__evs[R2] = [{ id: R2 + '~arrived', orderId: R2, type: 'arrived', at: at - 3600e3, by: 'Etsy', source: 'etsy' }, { id: `${k}_1-${at}`, orderId: R2, type: 'engraveApproved', at, by: 'Giovanna', source: 'sorter', station: 'sorter', lineKey: k, transactionId: k.split('_')[1], text: '“Leaf”', data: { text: 'Leaf', poolId: k + '_1', copy: 1 } }]; OrderWin._feed().refresh({ force: true }); }, { R2, k: key(R2, 2) });
-    await page.waitForFunction(() => document.querySelector('#owEng .engCard[data-state=approved]'), null, { timeout: 6000 });
-    const took2 = Date.now() - t1; c = await card();
+    await page.waitForFunction(k => document.querySelector(`#owEng .engCard[data-key="${k}"][data-state=approved]`), key(R2, 2), { timeout: 6000 });
+    const took2 = Date.now() - t1; c = await card(key(R2, 2));
     check(took2 <= 3500 && !c.approve && c.back.text === 'Leaf' && c.seals.length === 1 && c.seals[0] === 'BACK ENGRAVING|Giovanna', `approved on another computer: the card shows it ${took2} ms after the timeline feed read it, nobody can approve it twice here: ` + JSON.stringify([c.state, c.back.text, c.seals]));
     check((await page.evaluate(k => Engrave.items().get(k).state, key(R2, 2))) === 'review', 'and Engrave\'s own job was not touched by showing it');
-    const n0 = (await calls()).approve.length; await page.evaluate(() => { const b = document.querySelector('#owEng .egApproveButton'); b && b.click(); }); await page.waitForTimeout(200);
-    check((await calls()).approve.length === n0, 'no second approval is possible from the card');
+    const n0 = (await calls()).approve.length; await page.evaluate(k => { const b = document.querySelector(`#owEng .engCard[data-key="${k}"] .egApproveButton`); b && b.click(); }, key(R2, 2)); await page.waitForTimeout(200);
+    check((await calls()).approve.length === n0 && !(await card(key(R2, 2))).approve, 'no second approval is possible from the card (it has no button)');
 
     // 7 · an order with one piece and no engraving: no card; an order still being read says what it waits for
     await open(key(R3, 1)); await page.waitForTimeout(500);
-    c = await card(); check(c.hidden && !c.state && !c.wait, 'an order with no engraving shows no card');
+    c = await card(key(R3, 1)); check(c.hidden && !c.state && !c.wait && c.n === 0, 'an order with no engraving shows no card');
     const early = await page.evaluate(() => { OrderWin.openOrder('4179990001', { q: '4179990001', row: null }); const h = document.getElementById('owEng'); return { hidden: h.hidden, wait: h.querySelector('.owEngWait')?.textContent || '' }; });
     check(!early.hidden && /Reading/.test(early.wait), 'an order still being read: a small spinner with its words, not a stale card: ' + JSON.stringify(early));
     await page.waitForTimeout(800);

@@ -72,7 +72,8 @@
   /** The seals of a piece, every face's: the one merge the rest of the page uses (CNEngravingSeals.merge reads a job, its record, its saved backs). */
   function sealsOf(jobs, extra) {
     const S = root && root.CNEngravingSeals; if (!S || !S.merge) return [];
-    const recs = []; for (const j of jobs || []) recs.push(j, j && j.row && j.row.engrave, ...((j && j.backs) || []), j && j.editOriginal);
+    // (the line's own record, row.engrave, is the piece's only when the piece has one job: with a Front and a Back it is shared and carries no face, so it would read as a second Back seal)
+    const recs = [], shared = (jobs || []).length < 2; for (const j of jobs || []) recs.push(j, shared && j && j.row && j.row.engrave, ...((j && j.backs) || []), j && j.editOriginal);
     return tryDo(() => S.merge(...recs, ...(extra || [])), []) || [];
   }
 
@@ -131,19 +132,18 @@
     } else txt = '<span class="engTxt"></span>';
     return `<div class="engFace" data-face="${face}" data-key="${esc(key)}" data-empty="${empty ? 1 : 0}"${cur}><button type="button" class="engThumb" data-e="open" aria-label="${faceTitle(face)} engraving: open"></button><span class="engLbl">${faceTitle(face)}</span>${txt}</div>`;
   }
-  /** The Approve block: one button when a face waits for approval (disabled, with a title, until every placement is ready), else "Approved" with the seals pressed beside it, else the seals alone. */
+  /** The Approve block, in the card's header row (a card of 207px is 170px tall, not 210): one small Approve button while a face waits for approval (disabled, with a title, until every placement is ready;
+   *  an empty small seal row waits beside it, the seal is pressed on it); once the piece is approved its seals, small, in the button's place. Nothing else. */
+  const SEAL_PX = 24;
   function actHtml(piece, o) {
     const S = root && root.CNEngravingSeals, Seal = root && root.Seal, seals = piece.seals || [];
-    const sealRow = seals.length && Seal && S ? `<span class="sealRow egButtonSeal" data-seal-group data-seal-count="${seals.length}" role="group" aria-label="Engraving approval history">${seals.map(s => Seal.html(s, Seal.BASE_SIZE || 50, 'engravingSeal')).join('')}</span>` : '';
+    const row = (n, inner) => `<span class="sealRow egButtonSeal" data-seal-group data-seal-max="${SEAL_PX}" data-seal-count="${n}" role="group" aria-label="Engraving approval history">${inner}</span>`;
     if (piece.approve) {
       const ap = piece.approve;
-      return `<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton egAsk${ap.ok ? '' : ' egOff'}" data-e="approve"${ap.ok ? '' : ` disabled title="${esc(ap.why || 'Not ready to approve')}"`}>Approve</button>${sealRow}</span>`;
+      return `<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton egAsk${ap.ok ? '' : ' egOff'}" data-e="approve"${ap.ok ? '' : ` disabled title="${esc(ap.why || 'Not ready to approve')}"`}>Approve</button>${row(0, '')}</span>`;
     }
-    if (piece.state === 'approved' || (piece.state === 'plain' && seals.length)) {
-      const all = piece.state === 'approved';
-      return `<span class="egApproveWrap">${all ? '<button type="button" class="btn sage sm egApproveButton" disabled>Approved</button>' : ''}${sealRow}</span>`;
-    }
-    return seals.length ? `<span class="egApproveWrap">${sealRow}</span>` : '';
+    if (seals.length && Seal && S && (piece.state === 'approved' || piece.state === 'plain')) return `<span class="egApproveWrap">${row(seals.length, seals.map(s => Seal.html(s, SEAL_PX, 'engravingSeal')).join(''))}</span>`;
+    return '';
   }
   function html(piece, o) {
     o = o || {}; const word = WORD[piece.state] || '';
@@ -151,9 +151,9 @@
     const shown = piece.never ? ['front'] : faces;
     const act = o.approve === false ? '' : actHtml(piece, o);
     return `<article class="engCard" data-piece="${esc(piece.pieceKey)}" data-state="${esc(piece.state)}" data-rid="${esc(piece.rid)}" data-key="${esc(piece.lineKey)}"${piece.slot ? ` data-slot="${esc(piece.slot)}"` : ''}>`
-      + `<header class="engHd"><b class="engName" title="${esc(piece.title)}">${esc(piece.title)}</b><i class="engDot" data-s="${esc(piece.state)}" role="img" aria-label="${esc(word)}" title="${esc(word)}"></i></header>`
+      + `<header class="engHd"><i class="engDot" data-s="${esc(piece.state)}" role="img" aria-label="${esc(word)}" title="${esc(word)}"></i><b class="engName" title="${esc(piece.title)}">${esc(piece.title)}</b>${act ? `<span class="engAct">${act}</span>` : ''}</header>`
       + `<div class="engFaces" data-n="${shown.length}">${shown.map(f => faceHtml(piece, f, o)).join('')}</div>`
-      + (act ? `<div class="engAct">${act}</div>` : '') + '<div class="engFail" role="alert" hidden></div></article>';
+      + '<div class="engFail" role="alert" hidden></div></article>';
   }
 
   /* ── the picture of a face: ONE place (thumbOf). The live-font component when it is on the page, else the app's own drawing ── */
@@ -182,6 +182,11 @@
     for (const face of ['front', 'back']) { const b = card.querySelector(`.engFace[data-face="${face}"] .engThumb`); if (b) thumbOf(b, piece, face, o); }
     tryDo(() => root.Seal && root.Seal.fitGroups && root.Seal.fitGroups(card));
   }
+  /** Paints the live previews of a card (or of every card inside `scope`) again, once the card is in the page: the preview scales long words down to the box it finds, and a card is built before it has one. */
+  function repaint(scope) {
+    const U = root && root.CharmNestEngravePreview; if (!U || !U.update || !scope || !scope.querySelectorAll) return;
+    for (const b of scope.querySelectorAll('.engThumb')) if (b._engpv && b.isConnected) tryDo(() => U.update(b, {}));
+  }
   const ids = typeof WeakMap === 'function' ? new WeakMap() : null; let idN = 0;
   const idOf = x => { if (!x || typeof x !== 'object' || !ids) return 0; let n = ids.get(x); if (!n) ids.set(x, n = ++idN); return n; };
   function sig(piece, o) {
@@ -190,21 +195,22 @@
   }
 
   /* ── the card's own rules (the Sheet tab's card keeps its own) ── */
-  const CSS = '.engCard{container:engc/inline-size;box-sizing:border-box;width:100%;min-width:0;padding:10px;border:1px solid var(--line);border-radius:12px;background:var(--card);display:grid;gap:6px;align-content:start;overflow-wrap:anywhere}'
-    + '.engHd{display:flex;align-items:center;gap:6px;min-width:0}.engName{flex:1 1 0;min-width:0;font:600 12.5px/1.3 var(--sans);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
+  const CSS = '.engCard{container:engc/inline-size;box-sizing:border-box;width:100%;min-width:0;padding:7px;border:1px solid var(--line);border-radius:12px;background:var(--card);display:grid;gap:4px;align-content:start;overflow-wrap:anywhere}'
+    + '.engHd{display:flex;align-items:center;gap:6px;min-width:0;min-height:22px}'
     + '.engDot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--ink45);opacity:.85}.engDot[data-s=words]{background:#b04a32;opacity:1}.engDot[data-s=approve]{background:#b8892f;opacity:1}.engDot[data-s=approved]{background:#5f7a5b;opacity:1}.engDot[data-s=plain]{background:var(--line);opacity:1}'
-    + '.engFaces{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-width:0}'
-    + '.engFace{display:flex;flex-direction:column;gap:3px;min-width:0}.engLbl{order:-1;font:600 11px/1.2 var(--sans);color:var(--ink)}.engFace[data-empty="1"] .engLbl{opacity:.4}'
-    + '.engThumb{appearance:none;display:block;position:relative;box-sizing:border-box;width:100%;min-width:0;aspect-ratio:1;padding:0;margin:0;border:1px solid var(--line);border-radius:9px;background:#fff;overflow:hidden;cursor:pointer;font:inherit;color:inherit}'
+    + '.engName{flex:1 1 0;min-width:0;font:600 12.5px/1.3 var(--sans);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
+    + '.engAct{flex:none;display:flex;align-items:center;min-width:0}.engAct:empty{display:none}.engCard .egApproveWrap{position:relative;display:flex;align-items:center;margin:0;min-width:0;overflow:visible}'
+    + '.engCard .egApproveWrap>.egButtonSeal{position:static;left:auto;top:auto;z-index:auto;width:auto;height:auto;margin:0;padding:0;gap:2px;max-width:none;flex:none;justify-content:flex-start}.engCard .egApproveWrap>.egApproveButton~.egButtonSeal{position:absolute;right:-4px;left:auto;top:50%;width:24px;height:24px;margin:-12px 0 0}'
+    + '.engCard .engAct .btn.egApproveButton{min-width:0;height:22px;padding:0 10px;font-size:12px;line-height:1;white-space:nowrap}.engCard .engAct .btn.egApproveButton:disabled{opacity:1;cursor:default}.engCard .engAct .btn.egOff{background:var(--card2);border-color:var(--line);color:var(--ink45)}'
+    + '.engFaces{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;min-width:0}'
+    + '.engFace{display:flex;flex-direction:column;gap:2px;min-width:0}.engLbl{order:-1;font:600 11px/13px var(--sans);color:var(--ink)}.engFace[data-empty="1"] .engLbl{opacity:.4}'
+    + '.engThumb{appearance:none;display:block;position:relative;box-sizing:border-box;width:100%;max-width:104px;min-width:0;aspect-ratio:1;padding:0;margin:0;border:1px solid var(--line);border-radius:9px;background:#fff;overflow:hidden;cursor:pointer;font:inherit;color:inherit}'
     + '.engThumb canvas,.engThumb img,.engThumb svg{width:100%;height:100%;object-fit:contain;display:block}.engThumb:focus-visible{outline:2px solid var(--slate,#68899d);outline-offset:2px}.engThumb[aria-busy=true]{cursor:progress}'
     + '.engFace[data-empty="1"] .engThumb{border-style:dashed;background:transparent}.engFace[aria-current=true] .engThumb{outline:2px solid var(--gold,#a9823f);outline-offset:0}'
-    + '.engTxt{display:block;min-height:1.3em;font:12.5px/1.3 var(--serif);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.engTxt.engCue{display:flex;align-items:center;gap:5px;font-style:italic;color:var(--ink45);font-size:11.5px}'
+    + '.engTxt{display:block;min-height:14px;font:12px/14px var(--serif);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.engTxt.engCue{display:flex;align-items:center;gap:5px;font-style:italic;color:var(--ink45);font-size:11px}'
     + '.engTxt .owSpin{flex:none;width:10px;height:10px}.engOpening{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.85)}'
-    + '.engAct{display:grid;min-width:0}.engAct:empty{display:none}.engCard .egApproveWrap{display:grid;gap:4px;width:100%;min-width:0;margin:0}'
-    + '.engCard .egApproveWrap>.egButtonSeal{position:static;left:auto;top:auto;width:auto;height:auto;max-width:100%;margin:0;padding:0;gap:4px;justify-content:center}'
-    + '.engCard .engAct .btn.egApproveButton{min-width:0;width:100%;height:30px;padding:4px 8px;font-size:13px;white-space:nowrap}.engCard .engAct .btn.egApproveButton:disabled{opacity:1;cursor:default}.engCard .engAct .btn.egOff{background:var(--card2);border-color:var(--line);color:var(--ink45)}'
     + '.engFail{font:11.5px/1.35 var(--sans);color:#8a3a26;background:var(--claySoft);border-radius:8px;padding:5px 8px;min-width:0}.engFail[hidden]{display:none}'
-    + '@container engc (max-width:150px){.engCard{padding:6px;gap:4px}.engFaces{gap:4px}.engName{font-size:11px}.engLbl{font-size:10px}.engTxt{font-size:11px}.engCard .engAct .btn.egApproveButton{height:26px;font-size:12px}}';
+    + '@container engc (max-width:150px){.engCard{padding:5px;gap:3px}.engHd{flex-wrap:wrap;row-gap:3px}.engName{font-size:11px}.engAct{flex:1 1 100%}.engCard .egApproveWrap{width:100%}.engCard .engAct .btn.egApproveButton{width:100%}.engFaces{gap:4px}.engLbl{font-size:10px}.engTxt{font-size:11px}}';
   function css() {
     const d = root && root.document; if (!d || d.getElementById('engCardCss')) return;
     const s = d.createElement('style'); s.id = 'engCardCss'; s.textContent = CSS; (d.head || d.documentElement).appendChild(s);
@@ -239,12 +245,12 @@
       if (gone) return; const p = find();
       if (!p) { last = ''; slot.replaceChildren(); el = null; return; }
       const s = sig(p, o()); if (!force && s === last && el && el.isConnected) return; last = s;
-      const n = card(p, o()); if (el && el.isConnected) el.replaceWith(n); else slot.replaceChildren(n); el = n;
+      const n = card(p, o()); if (el && el.isConnected) el.replaceWith(n); else slot.replaceChildren(n); el = n; repaint(n);
     }
     draw(true);
     return { get el() { return el; }, update(patch) { if (patch) Object.assign(ctx, patch); draw(false); }, refresh() { draw(true); }, destroy() { gone = true; slot.replaceChildren(); el = null; },
       thumb: face => (el ? el.querySelector(`.engFace[data-face="${face}"] .engThumb`) : null) };
   }
 
-  return { piecesOf, facesOf, stateOf, html, fill, card, sig, mountPiece, thumbOf, sealsOf, css, WORD };
+  return { piecesOf, facesOf, stateOf, html, fill, card, sig, mountPiece, thumbOf, repaint, sealsOf, css, WORD };
 });

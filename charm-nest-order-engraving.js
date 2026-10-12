@@ -367,7 +367,7 @@
       if (!same) host.replaceChildren(...els);
       cards.clear(); for (const [k, v] of next) cards.set(k, v);
       for (const p of r.pieces) for (const j of p.jobs) seen.add(j.key);
-      if (built || !same) tryDo(() => root.Seal && root.Seal.fitGroups && root.Seal.fitGroups(host));
+      if (built || !same) { tryDo(() => root.Seal && root.Seal.fitGroups && root.Seal.fitGroups(host)); tryDo(() => C.repaint && C.repaint(host)); }   // (the live previews are scaled to the box they find: the cards are in the page now)
       // (kindsSeen is set BEFORE the host is told: told() draws the order window again, which calls update() -> refresh() while this call is still on the stack)
       const first = told0 === null, was = kindsSeen; told0 = kinds; kindsSeen = kinds;
       if (!first && !quiet && kinds !== was) told();

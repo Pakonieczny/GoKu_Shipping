@@ -5,7 +5,7 @@
 //   2  a tag with front and back: ONE card with two thumbnails (Front, Back) side by side, the words under each, ONE Approve button
 //   3  an earring: no card; a legacy decided front job: a card with the Front only, never a Back slot (even for a legacy approved back job)
 //   4  a counted line: one card for each disc, each with its own faces
-//   5  Approve is there only when a face waits for approval (and off, with a title, until every placement is ready); an approved card says "Approved"; words to confirm has no button
+//   5  Approve is there only when a face waits for approval (and off, with a title, until every placement is ready), in the header row beside the name; an approved card has its green dot and its seals there, no button; words to confirm has no button
 //   6  none of the deleted words is on any card
 //   node tests/charm-nest-engrave-card.cjs
 'use strict';
@@ -71,7 +71,8 @@ let n = 0; const ok = m => console.log('  ✓ ' + m);
   const W = world({ K4: [d1, d2] }), C = W.CharmNestEngraveCard, ps = C.piecesOf([row], { nameOf: () => 'DISC' });
   assert.equal(ps.length, 2); assert.equal(ps.map(p => p.title).join('|'), 'DISC · Disc 1|DISC · Disc 2'); assert.equal(ps.map(p => p.state).join('|'), 'approve|approved');
   const h1 = C.html(ps[0]), h2 = C.html(ps[1]);
-  assert.equal(count(h1, /data-e="approve"/g), 1); assert.ok(/>Approved</.test(h2) && !/data-e="approve"/.test(h2), 'the approved disc says Approved and has no Approve');
+  assert.equal(count(h1, /data-e="approve"/g), 1); assert.ok(/class="engDot" data-s="approved"/.test(h2) && !/data-e="approve"/.test(h2) && /egButtonSeal/.test(h2) && !/<button[^>]*egApproveButton/.test(h2), 'the approved disc has its green dot and its seal in the Approve button\'s place, and no button');
+  assert.ok(h1.indexOf('class="engDot"') < h1.indexOf('class="engName"') && h1.indexOf('class="engName"') < h1.indexOf('data-e="approve"') && h1.indexOf('data-e="approve"') < h1.indexOf('class="engFaces"'), 'one header row: dot, name, Approve; the faces after it');
   ok('counted line: one card for each disc, its own state and button'); n++;
 }
 // 5 ── Approve only when needed
@@ -80,7 +81,7 @@ let n = 0; const ok = m => console.log('  ✓ ' + m);
   for (const [state, want, dot] of [['review', 1, 'approve'], ['words', 0, 'words'], ['fitting', 0, 'busy'], ['approved', 0, 'approved']]) {
     const C = mk(state, state === 'words' ? '' : 'Name One'), p = C.piecesOf([row], {})[0], h = C.html(p);
     assert.equal(count(h, /data-e="approve"/g), want, `${state}: Approve ${want ? 'present' : 'absent'}`); assert.equal(p.state, dot); assert.match(h, new RegExp(`class="engDot" data-s="${dot}"`));
-    if (state === 'words') assert.ok(h.includes('Words to confirm')); if (state === 'fitting') assert.ok(h.includes('Preparing')); if (state === 'approved') assert.ok(h.includes('>Approved<'));
+    if (state === 'words') assert.ok(h.includes('Words to confirm')); if (state === 'fitting') assert.ok(h.includes('Preparing')); if (state === 'approved') assert.ok(!h.includes('>Approved<') && !/<button/.test(h.replace(/<button[^>]*engThumb[^>]*>[^<]*<\/button>/g, '')), 'approved: no button at all');
     noDeleted(h, state);
   }
   ok('Approve only when a face waits for approval; words to confirm / preparing / approved have none'); n++;
