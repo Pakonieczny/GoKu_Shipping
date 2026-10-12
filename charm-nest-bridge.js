@@ -1427,7 +1427,7 @@ const Orders = window.Orders = (() => {
   const mapsSame = () => mapsRead[0] === B.maps.optionMaps && mapsRead[1] === B.maps.aliases && mapsRead[2] === B.maps.noDesign;
   // FLAGWHY: what the orders the page holds say about each listing's SKUs (O.seenSkus, rebuilt on every pass of interpretAll): a line's SKU is told to be an option's own, or shared, from them
   let seenIx = {};
-  const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, listingSkus: B.maps.listingSkus, seen: seenIx, masterEntry: sku => Master.entryFor(sku), masterLoose: sku => Master.looseFor(sku) });
+  const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, listingSkus: B.maps.listingSkus, seen: seenIx, masterEntry: sku => Master.entryFor(sku), masterLoose: sku => Master.looseFor(sku), masterShared: sku => Master.sharedFor(sku) });
   /** The pull rule (Settings → Pull orders): every open order, those due by a date, or the N most urgent by ship-by date. */
   function applyPullRule(orders) {
     const mode = S.settings.pullMode || "all";
@@ -1444,6 +1444,7 @@ const Orders = window.Orders = (() => {
   const typoOf = sku => (O.knownTypo ? O.knownTypo(sku) : "");   // (the one known typo, KNOWN_SKU_TYPOS in charm-nest-orders.js: the design it stands for is read from the library like any SKU's)
   const nameOf = sku => (O.knownName ? O.knownName(sku) : "");   // (a SKU Paul named as a design, KNOWN_SKU_NAMES in charm-nest-orders.js: read from the library the same way)
   const libFacts = sku => { const e = sku ? Master.entryFor(sku) : null; return e ? `${e.blocked ? "b:" + e.blocked : "ok"}|${e.sizes ? Object.entries(e.sizes).map(([k, v]) => (v ? "+" : "-") + k).join("\n") : ""}` : ""; };
+  const formFacts = sku => { try { const f = O.masterForm ? O.masterForm(sku, { masterEntry: s => Master.entryFor(s), masterShared: s => Master.sharedFor(s) }) : null; return f ? f.form + "/" + f.by : ""; } catch (_) { return ""; } };
   function inputsOf(row) {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
     const own = m.listingSkus && O.inventorySku(l, m.listingSkus[String(l.listingId)]);
@@ -1456,6 +1457,8 @@ const Orders = window.Orders = (() => {
       libFacts(Master.looseFor(l.sku)), m.listingSkus, own ? libFacts(own.sku) + "|" + libFacts(Master.looseFor(own.sku)) + "|" + libFacts(typoOf(own.sku)) + "|" + libFacts(nameOf(own.sku)) : "",
       // a SKU that is exactly a known typo reads as its master design: the line is read again when the library gets, loses or blocks that design
       libFacts(typoOf(l.sku)), libFacts(nameOf(l.sku)),   // (and the design Paul named for the SKU: the line is read again when the library gets MUSIC4)
+      // the form of the design the SKU is (huggie, earring, necklace: read from every name its drawing carries) and, for a line the form guard holds or that waits for an unknown SKU, the library's size (the siblings it offers are read from it): HUGGIEGUARD
+      formFacts(l.sku), row.spec && (row.spec.formHold || (row.spec.problems || []).some(p => p.kind === "unmatchedSku")) ? B.master.entries.size : 0,
       // the two designs of a saved pair and the library's word on each; a line that waits for its second design is read again when the library gets more designs (the one its words name may just have been indexed)
       link ? libFacts(String(link.L || "").trim().toUpperCase()) + "|" + libFacts(String(link.R || "").trim().toUpperCase()) : "",
       row.spec && row.spec.pair && row.spec.pair.second && !row.spec.pair.second.answered ? B.master.entries.size : 0,
@@ -2328,6 +2331,15 @@ const Master = window.Master = (() => {
     if (looseIx.entries !== e || looseIx.size !== e.size) { const m = new Map(); for (const k of e.keys()) { const key = O.looseKey(k); m.set(key, m.has(key) ? "" : k); } looseIx = { entries: e, size: e.size, map: m }; }
     return looseIx.map.get(O.looseKey(sku)) || "";
   }
+  /* The master SKUs that hold the same design file as a SKU (HUGGIEGUARD, 12 Oct 2026): the library keeps one drawing under several names ("SCHRODINGER CAT" and "SCHRODINGER CAT 2 (HUGGIE)" are one file), and the
+     orders module reads a design's FORM from every name it carries (charm-nest-orders.js masterForm). Made again when the library held is replaced or grows, like looseFor. */
+  let sharedIx = { entries: null, size: -1, map: null };
+  function sharedFor(sku) {
+    const e = B.master.entries;
+    if (sharedIx.entries !== e || sharedIx.size !== e.size) { const m = new Map(); for (const [k, v] of e) { const f = O.designFile(v); if (!f) continue; const a = m.get(f); if (a) a.push(k); else m.set(f, [k]); } sharedIx = { entries: e, size: e.size, map: m }; }
+    const own = e.get(String(sku || "").toUpperCase()), f = own ? O.designFile(own) : "";
+    return f ? sharedIx.map.get(f) || [] : [];
+  }
   let showAll = false;                                              // the grid draws 600 tiles until asked for the rest
   let reindexAll = false;                                           // by default a SKU the library already holds is left alone
   /* The Charm Repo is locked for everything that adds, removes, changes or hands out a charm file (Paul, 11 Oct 2026): ONE password
@@ -3016,7 +3028,7 @@ const Master = window.Master = (() => {
     // a charm's .ai file is handed out only with the download password: the server mints the link, the browser saves the bytes
     each("dl", b => b.onclick = () => downloadCharm(b.dataset.dl, b.dataset.size || "", b));
   }
-  return { entryFor, looseFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, unlockUpload, addFiles, downloadCharm, looksLikeMaster, render, patch, patchMany, saveCustom, sameDesign, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
+  return { entryFor, looseFor, sharedFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, unlockUpload, addFiles, downloadCharm, looksLikeMaster, render, patch, patchMany, saveCustom, sameDesign, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();
 
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
@@ -3331,8 +3343,10 @@ const Pool = window.Pool = (() => {
     if (sp.ownDesign) { row.state = "held"; row.reason = O.specialOf.addOn.wait; return null; }
     row.problems = row.problems.filter(p => !["unmatchedSku", "blockedSku", "missingSize", "oversize"].includes(p.kind));   // re-derived below on every attempt
     if (row.problems.length) { row.state = "held"; row.reason = Review.problemText(row.problems[0]); return null; }
+    // HUGGIEGUARD: a line the form guard holds (a necklace that read as a huggie design, charm-nest-orders.js section 3b) has no design on the row and is never pooled: it waits for a person with the plain line
+    if (sp.formHold) { const hp = (sp.problems || []).find(p => p.formHold); if (hp) row.problems.push(hp); row.state = "unmatched"; row.reason = sp.formHold.reason; return null; }
     let entry = Master.entryFor(sp.designSku) || await Master.fetchEntry(sp.designSku);
-    if (!entry) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push({ kind: "unmatchedSku", reason: "not in any master file", sku: sp.designSku, listingId: String(row.line.listingId || ""), title: row.line.title }); agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: not in any master file`); return null; }
+    if (!entry) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push(Object.assign({ kind: "unmatchedSku", reason: "not in any master file", sku: sp.designSku, listingId: String(row.line.listingId || ""), title: row.line.title }, sp.siblings && sp.siblings.length ? { siblings: sp.siblings } : {})); agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: not in any master file`); return null; }
     if (entry.blocked) { row.state = "held"; row.reason = `SKU blocked: ${entry.blocked}`; row.problems.push({ kind: "blockedSku", reason: entry.blocked, sku: sp.designSku }); return null; }
     if (entry.sizes && Object.keys(entry.sizes).length && !(sp.size && entry.sizes[sp.size])) { row.state = "held"; row.reason = `no design for size ${sp.size || "(none)"}`; row.problems.push({ kind: "missingSize", sku: sp.designSku, size: sp.size, available: Object.keys(entry.sizes) }); return null; }
     const src = await masterCharm(entry, sp.size);
@@ -4016,11 +4030,25 @@ const Gate = window.Gate = (() => {
     if (!ready.has(p)) return "its sheet files are not saved yet";
     return "";
   }
-  /** Marks the run's pages (p.cardinalPull / p.cardinalHold / p.cardinalNote) from the live pages: assembleNow and validateRelease. */
-  function cardinalApply(run, pages, set, choices = selected()) {
-    for (const p of allSheets().filter(p => p.runId === run.runId)) { delete p.cardinalPull; delete p.cardinalHold; delete p.cardinalNote; }
+  /** The run's sets that are still being made: its uncommitted dispatch sets, in set order. (Paul, 12 Oct: a run has several now, the sets that have formed, closed to automatic joining, beside the one that is forming.) */
+  const openSetsOf = runId => Sets.ofRun(runId).filter(s => s.group === "dispatch" && !s.committedAt);
+  const membersOfSet = set => allSheets().filter(p => p.runId === set.runId && p.setId === set.setId && !p.draft);
+  /** True when a set has formed and takes no sheet on its own any more (charm-nest-set-rules.js closed(): the one closing rule). A page without the module never closes a set (as before). */
+  const closedSet = set => !!set && !!window.CharmNestSetRules && window.CharmNestSetRules.closed(membersOfSet(set));
+  /** The set the run's next completed sheets join on their own: its newest open set while that has not formed; none when there is no open set or the newest has formed (a new set forms then). */
+  function collectingOf(runId) { const open = openSetsOf(runId), last = open[open.length - 1]; return last && !closedSet(last) ? last : null; }
+  /** The run's newest open set, formed or not: the set a 10K, 14K or Rose Gold sheet is ticked into, and the one whose number Rose Gold's even-numbered rule reads. */
+  const newestOpenOf = runId => { const open = openSetsOf(runId); return open[open.length - 1] || null; };
+  /** Marks the run's pages (p.cardinalPull / p.cardinalHold / p.cardinalNote / p.cardinalHome) from the live pages: assembleNow and validateRelease. `sets`: the run's open sets (one set is read as a list of one).
+   *  Paul, 12 Oct: a partner sheet that cannot join yet (Rose Gold before its Cut Sheet press, a sheet still being saved) no longer holds the whole group out. The sheets that can join go in,
+   *  each sheet of the group says plainly which partner to add ("orders shared with RG Draft 1: add that sheet to this set"), and the set cannot be approved until that sheet is in it
+   *  (charm-nest-set-rules.js gate, Sets.validateRelease, the server's completion). cardinalHome: the open set that already holds a sheet of the group: the group's other sheets join THAT set,
+   *  closed or not. A group already spread over two open sets is left as it is (never moved) and nothing joins a set because of it. */
+  function cardinalApply(run, pages, sets, choices = selected()) {
+    for (const p of allSheets().filter(p => p.runId === run.runId)) { delete p.cardinalPull; delete p.cardinalHold; delete p.cardinalNote; delete p.cardinalHome; }
     const V = cardinalView(run); if (!V) return [];
-    const ready = new Set(pages), seq = set ? set.seq : 2, wants = p => basePolicy(p, seq, choices).include, inSetNow = p => !!set && p.setId === set.setId && !p.draft;
+    const open = (Array.isArray(sets) ? sets : sets ? [sets] : []).filter(Boolean), last = open[open.length - 1] || null, collecting = last && !closedSet(last) ? last : null;
+    const ready = new Set(pages), homeOf = p => (p.setId && !p.draft && open.find(s => s.setId === p.setId)) || null;
     const out = [];
     for (const g of V.SO.core.groups(V.sheets)) {
       const members = g.ids.map(id => V.page.get(id)).filter(Boolean), orders = g.orders, fixed = g.ids.filter(id => V.norm.get(id).fixed), tell = tellOf(V, g.ids);
@@ -4032,21 +4060,27 @@ const Gate = window.Gate = (() => {
         out.push({ ids: g.ids, orders, state: "fixed", why });
         continue;
       }
-      const wanting = members.filter(wants); if (!wanting.length) continue;
-      const need = members.filter(p => !wants(p)), stuck = need.map(p => ({ p, w: cannotJoin(p, ready) })).filter(x => x.w);
+      const homes = [...new Set(members.map(homeOf).filter(Boolean))], home = homes.length === 1 ? homes[0] : null;
+      // (the set number Rose Gold's even-numbered rule reads: the group's own set; else the set that is forming; none yet = no guess, so a set number is never taken for a sheet that then cannot join)
+      const seq = home ? home.seq : collecting ? collecting.seq : 0, wants = p => basePolicy(p, seq, choices).include, inHome = p => !!home && homeOf(p) === home;
+      const wanting = members.filter(wants), need = members.filter(p => !wants(p)), stuck = need.map(p => ({ p, w: cannotJoin(p, ready) })).filter(x => x.w), stuckSet = new Set(stuck.map(x => x.p));
       const together = o => `Shares ${ordersWords(orders, tell)} with ${members.filter(m => m !== o).map(sheetNameOf).join(", ")}`;
-      if (!stuck.length) { for (const p of need) p.cardinalPull = together(p); out.push({ ids: g.ids, orders, state: "together", why: "" }); continue; }
-      const waits = stuck.map(x => `${sheetNameOf(x.p)} (${x.w})`).join("; ");
-      if (wanting.some(inSetNow)) {
-        // the set is started: the sheets that can come do, the rest are told about
-        for (const p of need) if (!stuck.some(x => x.p === p)) p.cardinalPull = together(p);
-        for (const p of members) p.cardinalNote = `${ordersWords(orders, tell)} also on ${stuck.map(x => sheetNameOf(x.p)).join(", ")}, which cannot join the set yet: ${stuck.map(x => x.w).join("; ")}`;
-        out.push({ ids: g.ids, orders, state: "partial", why: waits });
+      if (homes.length > 1) {
+        // already spread over several sets (flagged as ever, never moved): the sheets outside wait until a person puts the group right; a sheet already in a set stays where it is
+        for (const p of wanting) if (!homeOf(p)) p.cardinalHold = `Waits: sheets that share ${ordersWords(orders, tell)} are already in ${homes.map(s => s.name || `Set ${s.seq}`).join(" and ")}: put them in one set first`;
+        for (const p of need) if (homeOf(p) && !stuckSet.has(p)) p.cardinalPull = together(p);
+        out.push({ ids: g.ids, orders, state: "spread", why: homes.map(s => s.name).join(", ") });
         continue;
       }
-      // nothing of it is in the set yet: nobody starts a split; the sheets that want in wait for the others
-      for (const p of wanting) p.cardinalHold = `Waits for ${waits}: sheets that share ${ordersWords(orders, tell)} go into the set together`;
-      out.push({ ids: g.ids, orders, state: "waiting", why: waits });
+      if (!wanting.length) continue;
+      // (a partner that cannot join yet, a Rose Gold sheet before its Cut Sheet press, still belongs to the group's set: nothing else may take it into another set meanwhile)
+      for (const p of need) if (!stuckSet.has(p)) { p.cardinalPull = together(p); if (home && !inHome(p)) p.cardinalHome = home.setId; } else if (home && !inHome(p)) p.cardinalHome = home.setId;
+      if (home) for (const p of wanting) if (!inHome(p)) p.cardinalHome = home.setId;
+      if (!stuck.length) { out.push({ ids: g.ids, orders, state: "together", why: "" }); continue; }
+      // some partner cannot join yet: the others go in, and every sheet of the group says which to add
+      const waits = stuck.map(x => `${sheetNameOf(x.p)} (${x.w})`).join("; "), names = stuck.map(x => sheetNameOf(x.p));
+      for (const p of members) if (!stuckSet.has(p)) p.cardinalNote = `${ordersWords(orders, tell).replace(/^o/, "O")} shared with ${names.join(" and ")}: add ${names.length > 1 ? "those sheets" : "that sheet"} to ${home ? home.name || `Set ${home.seq}` : "this set"} (${stuck.map(x => x.w).join("; ")})`;
+      out.push({ ids: g.ids, orders, state: "partial", why: waits, stuck: names });
     }
     return out;
   }
@@ -4056,7 +4090,7 @@ const Gate = window.Gate = (() => {
     const run = B.run, V = run && sh.runId === run.runId ? cardinalView(run) : null, me = V && V.idOf.get(sh);
     if (!V || !me) return { list: [sh], blocked: "", orders: [] };
     const g = V.SO.core.groupOf(V.sheets, me); if (g.ids.length < 2) return { list: [sh], blocked: "", orders: [] };
-    const members = g.ids.map(id => V.page.get(id)).filter(Boolean), set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt), seq = set ? set.seq : 2;
+    const members = g.ids.map(id => V.page.get(id)).filter(Boolean), set = newestOpenOf(run.runId), seq = set ? set.seq : 2;
     const list = members.filter(p => solid(p.metal) && membershipEditable(p) && (p === sh || picked(p) !== !!included)), stays = [];
     const shares = p => g.orders.filter(o => V.norm.get(V.idOf.get(p)).pieces.some(x => x.orderId === o));   // (the orders this sheet carries of the group's)
     for (const p of members) {
@@ -4087,25 +4121,58 @@ const Gate = window.Gate = (() => {
     if (!modern(run?.runId) || !run) return;
     const committedSheets = new Set(Sets.ofRun(run.runId).filter(s => s.committedAt).flatMap(s => s.sheetIds));
     const pages = allSheets().filter(p => p.runId === run.runId && p.outputs && p.persistedDone && !committedSheets.has(p.sheetId));
-    let set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt);
-    cardinalApply(run, pages, set, choices);   // (sheets that share a multi-piece order come in together, or wait together)
+    const SR = window.CharmNestSetRules;
+    let open = openSetsOf(run.runId);
+    cardinalApply(run, pages, open, choices);   // (sheets that share a multi-piece order come in together; a partner that cannot join yet is named, never waited for)
     /* Paul, 10 Oct: "In order for a Set of Sheets to be allowed to exist there must be at minimum 1 Completed GF Sheet and 1 Completed SS Sheet."
-       (charm-nest-set-rules.js, the one definition; the server and the Library read the same). The sheets that want in now (full sheets, rose
-       by its rule, and the partners the cardinal rule pulls with them) join only when the set would then be valid: a set that does not exist is
-       not made for them, and a set that exists but still lacks a class takes only a batch that completes it. The others wait outside any set,
-       each with the reason on its card (p.setWait: derived, never saved, like the cardinal marks); a partial sheet never makes a set on its own. */
+       Paul, 12 Oct: "as soon as the minimum criteria is met, and none of the other stipulations are conflicting, the set should be formed and as a result all following sheets
+       should go into a following new set." (charm-nest-set-rules.js form/closed, the one definition; the server and the Library read the same.) The free sheets (full, in no set,
+       and the partners the cardinal rule pulls with them) form a set the moment they hold a completed GF and a completed SS sheet; the newest open set takes them only while it
+       has not formed (a set that has formed is closed to automatic joining), otherwise they form the NEXT set. 10K, 14K and Rose Gold join by their own rules (Include, Cut Sheet,
+       an even-numbered set) and never start a set. A sheet that cannot go in waits outside any set with the reason on its card (p.setWait: derived, never saved, like the cardinal
+       marks); a partial sheet never makes a set on its own. Back engraving is no part of any of this: it only decides when a set may go to the laser. */
     for (const p of allSheets()) if (p.runId === run.runId) delete p.setWait;
-    if (window.CharmNestSetRules) {
-      const inOpen = p => !!set && p.setId === set.setId && !p.draft, wanting = pages.filter(p => !inOpen(p) && release(p, set ? set.seq : 2).include);
-      const settled = window.CharmNestSetRules.settle(allSheets().filter(p => p.runId === run.runId && inOpen(p)), wanting);
-      for (const w of settled.wait) w.sheet.setWait = w.why;
+    const inOpen = p => !!p.setId && !p.draft && open.some(s => s.setId === p.setId), adder = p => p.metal === "rose" || solid(p.metal);
+    // a person's drop of a sheet on one of the run's open sets (the Library, charm-nest-sheetwin.js joinSet sets p.handSet for this assembly only): that set takes it, formed or not
+    const handOf = p => (p.handSet && !p.cardinalHome && !adder(p) && open.some(s => s.setId === p.handSet && !s.committedAt)) ? p.handSet : null;
+    const last = open[open.length - 1] || null, lastClosed = !!last && !!SR && SR.closed(membersOfSet(last));
+    let target = null, addTarget = null;       // target: the set the free sheets join now · addTarget: the set 10K, 14K and Rose Gold may join now
+    if (SR) {
+      const free = pages.filter(p => !inOpen(p) && !p.cardinalHome && !handOf(p) && !adder(p) && release(p, last && !lastClosed ? last.seq : 0).include);
+      const f = SR.form(last ? membersOfSet(last) : [], free, !!last, last && last.name);
+      for (const w of f.wait) w.sheet.setWait = w.why;
+      if (f.where === "last") target = last;
+      else if (f.where === "new") target = await Sets.ensure(run.runId, "dispatch", last ? { follow: last } : {});
+      if (f.where === "new" && !target) return;      // (the cloud deferred the number: nothing joins now)
+      if (target) open = openSetsOf(run.runId);
+      addTarget = target || (last && lastClosed ? last : null);
+      const adders = pages.filter(p => !inOpen(p) && !p.cardinalHome && adder(p) && release(p, (addTarget || last) ? (addTarget || last).seq : 0).include);
+      if (!addTarget && adders.length) for (const w of SR.settle(last ? membersOfSet(last) : [], adders).wait) w.sheet.setWait = w.why;
+    } else {
+      // (a page without the set rules: every sheet that wants in joins the run's open set, as it did before)
+      const regular = pages.filter(p => !inOpen(p) && p.metal !== "rose" && release(p, 2).include), roses = pages.filter(p => !inOpen(p) && p.metal === "rose" && release(p, 2).include);
+      target = last || (regular.length || roses.length ? await Sets.ensure(run.runId, "dispatch", { roseOnly: !regular.length && choices.rose !== true }) : null);
+      addTarget = target;
+      if (target) open = openSetsOf(run.runId);
     }
-    const regular = pages.filter(p => p.metal !== "rose" && release(p, 2).include);
-    const roses = pages.filter(p => p.metal === "rose" && release(p, 2).include);
-    if (!set && (regular.length || roses.length)) set = await Sets.ensure(run.runId, "dispatch", { roseOnly: !regular.length && choices.rose !== true });
-    if (!set) { run.heldSheets = pages.length; return; }
-    if (set.committedAt) return;
-    cardinalApply(run, pages, set, choices);   // (again with the set's own number: Rose Gold's even-numbered rule reads it)
+    if (!open.length) { run.heldSheets = pages.length; return; }
+    cardinalApply(run, pages, open, choices);   // (again with the sets' own numbers: Rose Gold's even-numbered rule reads them)
+    // a sheet of the run joins this set when it is the set's own (the cardinal rule: a mate is in it already), or when it is a free sheet the set takes now
+    const admits = (sh, set) => sh.cardinalHome ? sh.cardinalHome === set.setId : handOf(sh) ? handOf(sh) === set.setId : adder(sh) ? !!addTarget && addTarget.setId === set.setId : !!target && target.setId === set.setId;
+    for (const set of open) {
+      if (set.committedAt) continue;
+      const wasThere = membersOfSet(set).length, kept = set.sheetIds.length, forming = target && target.setId === set.setId;
+      await tendSet(run, set, pages, choices, release, admits);
+      // (a set that formed earlier and nothing changed in is not saved again at every look)
+      if (forming || membersOfSet(set).length !== wasThere || set.sheetIds.length !== kept || set.touched) { delete set.touched; await Sets.save(set); }
+    }
+    for (const p of pages) delete p.handSet;      // (a drop is read by one assembly)
+    run.heldSheets = pages.filter(p => p.draft).length;
+    refreshAllCards();
+    if (S.mode === "library") CN.loadLibrary().catch(e=>toast("Library refresh: "+e.message,"bad"));
+  }
+  /** One open set of the run, kept as the rules say: a sheet that no longer qualifies goes back out, the set's lists follow, a sheet the set takes now joins with its number and QR label. */
+  async function tendSet(run, set, pages, choices, release, admits) {
     // (a sheet being rewritten by hand in the sheet window keeps its place and gets its new label once it is written)
     for (const sh of allSheets().filter(p => p.runId === run.runId && p.setId === set.setId && !holding(p) && !release(p, set.seq).include)) {
       const previous = {draft:sh.draft,setId:sh.setId,seq:sh.seq,sheetIndex:sh.sheetIndex,label:sh.label};
@@ -4116,7 +4183,7 @@ const Gate = window.Gate = (() => {
         if (sh.sheetId) await api("charmNestLibrary", { op:"putSheet", sheet:{ id:sh.sheetId, draft:true, setId:null, setSeq:null, sheetIndex:null, label:null, solidIncluded:solid(sh.metal) ? picked(sh, choices) : null } });
       } catch(e) { Object.assign(sh,previous); sh.problem="Set membership was not saved: "+e.message; throw e; }
       for (const row of Orders.rows()) if (row.poolIds.some(id => sh.charms.some(c => c.poolId === id))) row.state = "pooled";
-      sh.problem=null;set.labels = null;
+      sh.problem=null;set.labels = null;set.touched = true;
     }
     const included = new Set(allSheets().filter(p => p.setId === set.setId && !p.draft).map(p => p.sheetId));
     set.sheetIds = set.sheetIds.filter(id => included.has(id)); set.labelFiles = set.labelFiles.filter(f => included.has(f.sheetId));
@@ -4130,9 +4197,11 @@ const Gate = window.Gate = (() => {
       // Membership can have been saved before a label upload was interrupted.
       // Retry the QR alone without re-nesting or publishing the sheet twice.
       if (sh.setId === set.setId) {
-        if (!Sets.labelsReady(sh, set)) await Sets.onSheetSaved(sh, sh.charms, undefined, {labelsOnly:true,setOverride:set});
+        if (!Sets.labelsReady(sh, set)) { await Sets.onSheetSaved(sh, sh.charms, undefined, {labelsOnly:true,setOverride:set}); set.touched = true; }
         continue;
       }
+      if (sh.setId && !sh.draft) continue;      // (in another open set of the run: only a person, or the cardinal rule through that set, moves it)
+      if (!admits(sh, set)) continue;
       const previous = { draft:sh.draft, setId:sh.setId, setDay:sh.setDay, seq:sh.seq, group:sh.group, sheetIndex:sh.sheetIndex, fileBase:sh.fileBase };
       sh.draft = false; sh.setId = set.setId; sh.setDay = set.day; sh.seq = set.seq; sh.group = "dispatch";
       // after the highest number in use, and after any number that was ever in use in this set (set.sheetNos): a sheet that left the set must not leave its number to be taken twice.
@@ -4154,10 +4223,8 @@ const Gate = window.Gate = (() => {
         sh.problem = null;
       } catch (e) { Object.assign(sh, previous); sh.problem = "Set membership was not saved: " + e.message; throw e; }
       RunCtl.onSheetDone(sh);
+      set.touched = true;
     }
-    run.heldSheets = pages.filter(p => p.draft).length;
-    await Sets.save(set); refreshAllCards();
-    if (S.mode === "library") CN.loadLibrary().catch(e=>toast("Library refresh: "+e.message,"bad"));
   }
   function editable(sh) {
     // Stock dimensions are shared only by pages of this material. Independent
@@ -4328,7 +4395,7 @@ const Gate = window.Gate = (() => {
     // a sheet a person took out: back into the set it was taken from (Rose Gold is not: the Library lets it join a committed set only by its own Cut Sheet press, so it is the run's Include, as any held sheet)
     if (want && !inSetNow(sh) && sh.leftSet && sh.metal !== "rose" && !committedSheet(sh)) return { edit: "in" };
     if (!membershipEditable(sh)) return { no: sh.recalled ? "Saved sheet. Its set is fixed." : run && ["complete", "abandoned"].includes(run.status) ? "The run is finished." : "Its set is fixed." };
-    if (sh.roseCutAt) return { no: "Already cut." };
+    if (sh.roseCutAt && inSetNow(sh)) return { no: "Already cut." };   // (a cut sheet in a set stays; one in NO set may be included, Paul 12 Oct)
     return {};
   }
   /** Out of a committed set, or back into it, through LibraryFlow (the Library's own path). Resolves "" when done, or a short line to show (a warning); throws said() for a refusal. */
@@ -4423,7 +4490,7 @@ const Gate = window.Gate = (() => {
     OptionsStudio.open({ sh, node, box: node._optBox, opener: node.querySelector(".sheetOptionsBtn"), title: optionsTitle(sh) });
   }
   function renderRelease(sh, node) {
-    const m = sh.metal, seq = Sets.ofRun(B.run?.runId).find(s => s.group === "dispatch" && !s.committedAt)?.seq;
+    const m = sh.metal, seq = newestOpenOf(B.run?.runId)?.seq;
     seat(sh, node, "head");
     node.className = "shGate";
     if (!solid(m) && m !== "rose") {
@@ -5222,7 +5289,7 @@ const Gate = window.Gate = (() => {
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
   return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
-     splitWith, cardinalFor, cardinalApply, cardinalSplit, changeMembership, cutInclude, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
+     splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -8518,20 +8585,21 @@ const Sets = window.Sets = (() => {
   async function allocate(runId, group, opts) {
     const k = keyOf(runId, group);
     const prior=byRun().get(k);
-    if(group === "dispatch" && prior?.committedAt){byRun().set(keyOf(runId,"committed:"+prior.setId),prior);byRun().delete(k);}
+    // a set that was committed, or that has formed (Paul, 12 Oct: closed to automatic joining; assembleNow asks for the next set with {follow: that set}), keeps its place beside the next one
+    if(group === "dispatch" && prior && (prior.committedAt || (opts.follow && opts.follow.setId === prior.setId))){byRun().set(keyOf(runId,(prior.committedAt ? "committed:" : "closed:")+prior.setId),prior);byRun().delete(k);}
     if (byRun().has(k) && !byRun().get(k).offline) return byRun().get(k);
     if (!S.cloud.ok) throw new Error("Reconnect to the cloud before numbering a new set; the layout is kept locally");
     const day = today();
     // A run keeps releasing after a commit: its next dispatch set follows the newest committed one and gets a number of
     // its own, where asking again for the run's dispatch set would hand back the set already cut.
-    const followed = group === "dispatch" ? ofRun(runId).filter(s => s.group === "dispatch" && s.committedAt).sort((a, b) => (+b.committedAt || 0) - (+a.committedAt || 0))[0] || null : null;
+    const followed = group === "dispatch" ? (opts.follow && opts.follow.setId ? opts.follow : ofRun(runId).filter(s => s.group === "dispatch" && s.committedAt).sort((a, b) => (+b.committedAt || 0) - (+a.committedAt || 0))[0] || null) : null;
     const after = followed?.setId || null;
     // The server numbers a follow-on set only once the set it follows is recorded as committed. A commit whose record
     // did not save is saved again first: a refusal then names its cause, and every later set used to be refused.
     // A commit whose record did save is not saved again: the server checks its readiness against the run's current lines,
     // and an order in it that changed on Etsy after the cut (its line back in review) refused that save and stopped every
     // later intake for good.
-    if (followed && followed.savedCommit !== followed.committedAt) await save(followed);
+    if (followed && (followed.committedAt ? followed.savedCommit !== followed.committedAt : true)) await save(followed);   // (a set that formed but is not committed: its sheets are on the cloud before the next set is numbered after it)
     let set;
     if (S.cloud.ok) { const r = await api("charmNestLibrary", { op: "setAllocate", day, runId, group: group || "", roseOnly: !!opts.roseOnly, after }, { label: "Numbering the set" }); if (r.deferred) return null; set = { setId: r.setId, seq: r.seq, day: r.day || day, runId, group: group || null, name: O.setLabel(r.seq), folder: O.setFolder(r.day || day, r.seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], sheetNos: {}, status: "open" }; }
 
@@ -8796,7 +8864,22 @@ const Sets = window.Sets = (() => {
       group.updatedAt=Math.max(+group.updatedAt || 0,+sheet.updatedAt || 0);
       for (const id of sheet.orders || []) if (!group.orders?.[id]) (group.orders ||= {})[id]={};
     }
+    partnersOf([...groups.values()]);
     return [...groups.values()].sort((a,b)=>a.setId && b.setId ? O.compareCompleted(a,b) : a.setId ? -1 : b.setId ? 1 : String(b.day || "").localeCompare(String(a.day || "")));
+  }
+  /** (Paul, 12 Oct) A set formed with the sheets that could join. The sheets outside it that share a multi-piece order with a sheet of it, and could still join it (not cut, not in a set
+   *  sent to the station), are named on the set as `cardinalWait` ("orders shared with RG Draft 1: add that sheet to this set"): its Approve for laser cutting stays grey with that one line
+   *  until they are in it (charm-nest-set-rules.js gate, read by CharmNestReadiness). Derived from the sheets at every drawing, never saved. */
+  function partnersOf(list) {
+    const SO = typeof window !== "undefined" ? window.SharedOrders : null; if (!SO || typeof SO.sheets !== "function" || !SO.core) return;
+    let all; try { all = SO.sheets(); } catch (_) { return; }
+    const by = new Map(all.map(x => [x.id, x]));
+    for (const g of list) {
+      if (!g.setId || g.committedAt || /^complete|superseded/.test(String(g.status || "")) || !g.sheets.length) continue;
+      let items; try { items = SO.core.between(all, g.sheets.map(r => r.id), g.setId); } catch (_) { continue; }
+      const free = [...new Set(items.flatMap(it => it.thereIds).filter(i => by.get(i) && !by.get(i).fixed))];
+      if (free.length) g.cardinalWait = free.map(i => ({ label: by.get(i).label, id: i }));
+    }
   }
   let _cache = null, libraryRequest = 0;
   /** One set's card, its sheets side by side with their QR labels (the Library's Sets view, and a set opened in its
@@ -9380,8 +9463,11 @@ const RunCtl = window.RunCtl = (() => {
       const sr = await api("charmNestLibrary", { op: "setGet", setId: sid }); const sd = sr.set; if (!sd) continue;
       const set = { setId: sd.setId, seq: sd.seq, day: sd.day, runId: rec.runId, group: sd.group || null, name: sd.name || O.setLabel(sd.seq), folder: sd.folder || O.setFolder(sd.day, sd.seq), orders: Object.fromEntries(Object.entries(sd.orders || {}).map(([rid, o]) => [rid, { held: o.held || null, lines: Object.fromEntries((o.lines || []).map(l => [l.transactionId, l])) }])), sheetIds: sd.sheetIds || [], materials: sd.materials || [], labelFiles: sd.labelFiles || [], labels: sd.labels || null, status: sd.status || "open", committedAt: sd.committedAt || null, completedAt: sd.completedAt || null, completionDay: sd.completionDay || null, committed: sd.committed || null, refused: sd.refused || null, backCount: sd.backCount || 0, sheetNos: sd.sheetNos || {} };
       set.committedAt = sd.committedAt || null; set.completedAt = sd.completedAt || null; set.completionDay = sd.completionDay || null; set.savedCommit = set.committedAt;
-      Sets.byRun().set(Sets.keyOf(rec.runId, set.committedAt ? "committed:" + set.setId : set.group), set); sets.push(set);
+      sets.push(set);
     }
+    // (Paul, 12 Oct: a run holds several open sets, the ones that have formed beside the one that is forming: the newest keeps the run's own place, the others each have theirs)
+    const newestOpen = sets.filter(x => !x.committedAt && x.group === "dispatch").sort((a, b) => (a.seq || 0) - (b.seq || 0)).pop() || null;
+    for (const set of sets) Sets.byRun().set(Sets.keyOf(rec.runId, set.committedAt ? "committed:" + set.setId : set.group === "dispatch" && set !== newestOpen ? "closed:" + set.setId : set.group), set);
     const bySet = new Map(sets.map(x => [x.setId, x]));
     const ls = await api("charmNestLibrary", { op: "listSheets", limit: 500, runId: rec.runId }, { all: "sheets" });
 
@@ -11915,7 +12001,7 @@ const Review = window.Review = (() => {
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
-  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.letter ? `option "${p.optionName}: ${p.optionValue}" \u2014 ${p.letter.why}` : p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
+  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.letter ? `option "${p.optionName}: ${p.optionValue}" \u2014 ${p.letter.why}` : p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? (p.formHold ? p.reason : `SKU ${p.sku || "?"}: ${p.reason}`) : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
    *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
@@ -14652,12 +14738,12 @@ const OrderWin = window.OrderWin = (() => {
       const now = x.steps.find(t => !pdotOn(x, t));
       const ask = () => {
         const q = tryDo(() => UI.requirementsOf(i, { events: x.events, cancelled: W.cancelled, stages: x.steps, context: pdotContext(rid, key), place: x._pl || undefined }));
-        const need = (q && q.need) || [], pick = ["person", "wait", "next", "after"].map(k => need.find(n => n.kind === k && !/^Not on a sheet now$/i.test(n.t))).find(Boolean) || need.find(n => !/^Not on a sheet now$/i.test(n.t) && n.kind !== "was");
+        const need = (q && q.need) || [], pick = ["person", "wait"].map(k => need.find(n => n.kind === k && !/^Not on a sheet now$/i.test(n.t))).find(Boolean) || need.find(n => !/^Not on a sheet now$/i.test(n.t) && n.kind !== "was");
         if (!pick) return "";
         const t = String(pick.t).replace(/\s+/g, " ").trim(), u = t.charAt(0).toUpperCase() + t.slice(1);
         return u.length > 150 ? u.slice(0, 147).trimEnd() + "…" : u;
       };
-      if (now && now !== s) line = `After ${now.l}`;   // (a step further on waits for the one before it: that is the one with something to do)
+      if (now && now !== s) line = "";   // (a step further on has nothing to say of its own: no "After Nested", no "Next": where the piece is, the dots show; Paul, 12 Oct 2026)
       else if (s.k === "sheet" && pdotFenced(x)) {
         // (the piece is on no sheet now, whatever its history says: said so, then where it was, or why it is not, or what it waits on. The history's seal stays: see the seal slot)
         const pl = x._pl, w = pl.wasOn || null;
@@ -14672,7 +14758,7 @@ const OrderWin = window.OrderWin = (() => {
     // come, nothing for a step that has none. The words beside it are this card's own (who, where, when), so the seal's caption is off.
     const ps = window.PieceSeals;
     const seal = ps && typeof ps.render === "function" ? tryDo(() => ps.render(s.k, Object.assign({}, x, { pieces: (W.pieces && W.pieces.length) ? W.pieces : [x.p], place: x._pl || undefined }), { done: st.done, caption: false, size: 40 })) : null;
-    return { name: s.l, state: st.word, line, by, seal: seal || null };
+    return { name: s.l, state: st.word === "Not yet" ? "" : st.word, line, by, seal: seal || null };   // ("Not yet" is the hollow dot's to say, as "To come" is the rail's: the card names a state only when it is Done, Skipped or Won't happen)
   }
   { const RT = window.RailTip = window.RailTip || {}; RT.pieceDot = pieceDotInfo; }   // (charm-nest-rail-tip.js draws the card: it asks this when a dot's card opens)
   /** A redraw of the rows keeps the keyboard where it was: the dot that has it, found again by its order, piece and step. */
@@ -15454,6 +15540,7 @@ const OrderWin = window.OrderWin = (() => {
     if (st === "gone") return "it was cancelled";
     if (st === "skipped") return "it is skipped";
     if (!x.hold && handOfRow(x)) return HAND_WHY;
+    if (sp.formHold) return sp.formHold.reason;   // (HUGGIEGUARD: the design its SKU names is another form than the listing)
     if (kind === "unmatchedSku" || st === "unmatched" || (x.hold && /master file|unknown sku/i.test(String(x.reason || "")))) return sku ? "its SKU is not in any master file" : "it has no SKU";
     if (kind === "needsMapping") return "one of its options is not mapped yet";
     if (kind === "needsMaterial") return "its metal is not chosen yet";

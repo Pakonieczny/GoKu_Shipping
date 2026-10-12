@@ -2,6 +2,7 @@
 // One offline suite: the shared definition (charm-nest-set-rules.js) read by the page's assembly (settle), the readiness gate (the Approve button, the card line,
 // the set's place), the Library plan (a New set drop, taking a sheet out), SetEdit.verifyMoves, the server's completion of a set (op setUpdate, fake Firestore that
 // refuses nested arrays), and the staged repair of the sandbox state of image 1 (scripts/set-repair-1010.cjs). Nothing here touches the network or a real record.
+// Paul, 12 Oct: back engraving is not a criterion for a set to exist (section 3), and a set formed beside a partner sheet that cannot join yet waits for it at Approve (section 3); how a set forms and closes: sets-follow.cjs.
 'use strict';
 const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm');
 const refuseNestedArrays = require('./_noNestedArrays.cjs');
@@ -65,6 +66,17 @@ const set1 = () => ({ setId: 'set-1', seq: 1, name: 'Set-1', group: 'dispatch', 
   const right = members.concat([{ ...S.ss1, ...inSet1, sheetIndex: 2 }]), setRight = { ...set1(), sheetIds: set1().sheetIds.concat(S.ss1.id) };
   assert.equal(R.laserGroup(setRight, clone(right)).ready, true, 'with a completed SS sheet the same set is ready'); assert.equal(R.setGate(setRight, clone(right)).ready, true);
   assert.equal(R.laserGroup(set1(), clone(members.map(m => m === S.sp ? { ...m, releaseFull: true } : m))).ready, true, 'the partial SS sheet reaching its fill (released) is enough as well');
+  // Paul, 12 Oct: back engraving is NOT a criterion for a set to exist or to form (backs 0 / N on every card of his picture): the same set with no back engraving done is still a valid set,
+  // each sheet is still Completed; only Approve for laser cutting waits for the backs (that gate is unchanged)
+  const noBacks = clone(right).map(s => ({ ...s, backPool: [] }));
+  assert.deepEqual([Rules.validSet(noBacks).ok, Rules.gate(setRight, noBacks).ok, noBacks.every(s => !['gold', 'silver'].includes(s.metal) || !s.releaseFull || Rules.isCompleted(s))], [true, true, true], 'no back engraving done: the set exists and its sheets count');
+  assert.equal(R.laserGroup(setRight, noBacks).ready, false, 'Approve for laser cutting still waits for the backs'); assert.match(R.setGate(setRight, noBacks).reason, /back engravings 0 of 1/);
+  // a set formed beside a partner sheet that cannot join yet (the page derives set.cardinalWait, never saved): grey with that one reason until the partner is in the set
+  const waiting = { ...setRight, cardinalWait: [{ label: 'RG Draft 1', id: 'rose-1' }] };
+  assert.equal(R.laserGroup(setRight, clone(right)).ready, true, 'without the partner outside, every sheet is ready'); assert.equal(R.laserGroup(waiting, clone(right)).ready, false, 'the same sheets, the set waits for the partner'); const wg = R.setGate(waiting, clone(right));
+  assert.deepEqual([wg.ready, wg.reason, wg.blockers[0].rule], [false, 'Set-1 · orders shared with RG Draft 1: add that sheet to this set', 'setPrinciple']);
+  assert.equal(R.explain(waiting, { kind: 'set', sheets: clone(right) }).nextText, 'Waiting: orders shared with RG Draft 1: add that sheet to this set, so that orders are not spread over two sets.');
+  assert.equal(R.setGate(setRight, clone(right)).ready, true, 'the partner in the set: nothing in the way');
   const committed = { ...set1(), status: 'complete', committedAt: 5 };
   assert.deepEqual([Rules.gate(committed, members).applies, R.laserGroup(committed, clone(members)).ready], [false, true], 'a set committed before is never blocked afterwards');
   assert.equal(Rules.gate(set1(), members.map(({ releaseFull, ...m }) => m)).applies, false, 'records without a completion mark are not judged');

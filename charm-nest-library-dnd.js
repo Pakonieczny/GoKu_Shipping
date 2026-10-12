@@ -623,8 +623,12 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     catch (_) { wait.stop(); return null; }       // (the move below asks again and says what went wrong)
     wait.stop();
     const plan = normPlan(raw), c = plan.confirm.find(x => x.key === 'roseLine');
-    // the green dash line is the only yes this window covers, and only for a move that is otherwise allowed: anything else is the move's own business
-    if (!c || plan.needs.length || plan.ok === false || plan.confirm.some(x => x.key !== 'roseLine')) return { o: Object.assign({}, o, { plan0: raw }) };
+    // the green dash line is the only yes this window covers, and only for a move that is otherwise allowed: anything else is the move's own business.
+    // A DROP ON A SET (Paul, 12 Oct: a 10K, 14K or Rose Gold sheet joins a set when the person approves the green line cut right at the drop) is the same window and the same yes; the yes
+    // also covers a Rose Gold sheet's own "add it to the set" (it joins by the same press), and any other yes the move asks (the partners that come with it, a set that waits) is asked
+    // after it, in the move's own card. The press itself follows the membership, at the commit: nothing is drawn before this yes, and nothing by the window.
+    const own = hit.set ? ['roseLine', 'roseSet'] : ['roseLine'];
+    if (!c || plan.needs.length || plan.ok === false || (!hit.set && plan.confirm.some(x => x.key !== 'roseLine'))) return { o: Object.assign({}, o, { plan0: raw }) };
     const again = base => {      // the card lifted again where it stands (as "Move to…" does), for the flight that follows
       const h = elOf(item), lift = h ? makeLift(item, null, { still: true }) : null;
       if (h && lift) h.classList.add('dndSource');
@@ -635,9 +639,10 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     if (o.dock) { try { o.dock.close(); } catch (_) { /* gone */ } }
     const lift = m.lift; m.lift = null;
     await settleBack(item, lift);
-    const yes = await CL.ask(item, c, { from: elOf(item) || home, dest: name, fromName: here ? here.name : 'In progress', what: item.kind === 'set' ? label : '' });
+    const yes = await CL.ask(item, c, { from: elOf(item) || home, dest: name, fromName: here ? here.name : 'In progress', what: item.kind === 'set' ? label : '', also: hit.set ? (plan.notes.find(n => /joins a set by metal/i.test(String(n))) || '') : '' });
     if (yes === null) return { o: again(Object.assign({}, o, { plan0: raw })) };         // (no window here: the bar of the move asks, as before)
     if (!yes) { refocus(item, o); return { stop: true, result: { ok: false, plan: raw, cancelled: true } }; }
+    if (hit.set) return { o: again(Object.assign({}, o, { plan0: raw, pre: plan.confirm.filter(x => own.includes(x.key)).map(x => x.key) })) };       // (the press follows the membership, in the commit)
     const ids = c.sheetIds && c.sheetIds.length ? c.sheetIds : hit.hits;
     const res = await CL.make({ ids, el: elOf(item) || home, run: onStep => f.cutLine({ kind: item.kind, id: item.id, sheetIds: c.sheetIds, by: who(), onStep }) });   // (the sheets the window listed: a sheet of a set moves with its set)
     if (!res || res.ok === false) { refocus(item, o); return { stop: true, result: { ok: false, plan: raw, error: res && res.error } }; }
@@ -769,15 +774,18 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
       return { ok: false, plan: raw };
     }
     // 2. something needs a person's own yes: the bar waits for it, and only a press passes a key on to commit
+    //    (o.pre: the keys the green dash line window already got a real press for, a drop on a set: they are not asked twice; only the rest is asked)
     let confirmed = [];
-    if (plan.confirm.length) {
+    const pre = new Set(Array.isArray(o.pre) ? o.pre : []), preKeys = plan.confirm.map(c => c.key).filter(k => pre.has(k)), ask = plan.confirm.filter(c => !pre.has(c.key));
+    if (ask.length) {
       m.state = 'review';
-      present();
+      if (pre.size) { const r2 = Object.assign({}, raw, { confirm: ask }); present(r2, normPlan(r2)); } else present();
       const got = await asked;
-      const allowed = new Set(plan.confirm.map(c => c.key));
+      const allowed = new Set(ask.map(c => c.key));
       confirmed = got ? got.keys.filter(k => allowed.has(k)) : [];
       if (!got || !confirmed.length) { await back(1800); return { ok: false, plan: raw, cancelled: true }; }
-    } else present();
+      confirmed = confirmed.concat(preKeys);
+    } else { confirmed = preKeys; present(); }
     // 3. the write starts now (the flight is not waited for); the engine itself refuses what was not confirmed
     m.state = 'committing';
     if (!shown) bar.wait('Moving…');

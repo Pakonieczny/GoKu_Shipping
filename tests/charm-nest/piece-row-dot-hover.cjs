@@ -11,7 +11,7 @@
 //  4  a click opens it at once and holds it (a second click, Esc, a scroll or moving away puts it back); a tap too; the click never selects the row or
 //     reaches the row's own press
 //  5  the card: a done step says its name, "Done", when and who ("Oct 3 · 4:12 PM · Ana P. at Sorting", the shop's time), where; a step still to do says
-//     "Not yet" and what it waits on; a step further on says what it comes after; never the word "lines"
+//     only what holds the piece back, if anything (Paul, 12 Oct 2026: no "Not yet", no "Next", no "After Assembled": the dots and the bar show where it is); never the word "lines"
 //  6  the keyboard: Tab opens the card at once, the arrows move along the row, Esc closes it, Enter or Space on the dot too
 //  7  the card never takes a press: the row's buttons (Hold, Print QR label, Complete Order) are what is under every point of it, and it never sits over the
 //     buttons of the row it belongs to (above the dot, below it only when there is no room)
@@ -22,7 +22,7 @@
 // 11  a mutant with no delay is caught by check 2
 // 12  (C1, PiecePlacement) the dots follow where the pieces are NOW: a held order of two pieces that were nested and then taken off their sheets has one solid dot (Order
 //     in), Nested hollow, its card says "Not on a sheet now", "Was on GF Sheet 2 until Paul took it off, <when>" and "On hold", the real ON SHEET seal stays in it (a seal
-//     is history), every later card says "After Nested"; a held piece the history shows laser cut and sorted is not clamped; a mutant that ignores the placement is caught
+//     is history), every later card names nothing (no "After Nested": Paul, 12 Oct 2026); a held piece the history shows laser cut and sorted is not clamped; a mutant that ignores the placement is caught
 //   node tests/charm-nest/piece-row-dot-hover.cjs   (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>, SHOTS=<dir> saves screenshots)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
@@ -123,7 +123,7 @@ async function main() {
   const read = (page, sel) => page.evaluate(sel => {
     const d = document.querySelector(sel), r = d.getBoundingClientRect(), t = document.querySelector('.railTip'), tr = t && t.getBoundingClientRect(), cs = getComputedStyle(d), on = !!(t && t.hasAttribute('data-on') && getComputedStyle(t).visibility === 'visible' && +getComputedStyle(t).opacity > 0.5);
     return { k: +(r.width / d.offsetWidth).toFixed(3), cls: d.className, shown: on, step: d.getAttribute('data-pdot'),
-      tip: on ? { name: t.querySelector('b')?.textContent, state: t.querySelector('.rtState')?.textContent, line: t.querySelector('.rtLine')?.textContent || '', by: t.querySelector('.rtBy')?.textContent || '', seal: t.querySelector('.rtSeal')?.innerHTML || '', text: t.textContent.replace(/\s+/g, ' ').trim(), below: t.classList.contains('below'), l: tr.left, t: tr.top, r: tr.right, b: tr.bottom, w: tr.width, h: tr.height, ax: parseFloat(t.style.getPropertyValue('--ax')), pe: getComputedStyle(t).pointerEvents, inDialog: !!t.closest('dialog') } : null,
+      tip: on ? { name: t.querySelector('b')?.textContent, state: t.querySelector('.rtState')?.textContent || '', line: t.querySelector('.rtLine')?.textContent || '', by: t.querySelector('.rtBy')?.textContent || '', seal: t.querySelector('.rtSeal')?.innerHTML || '', text: t.textContent.replace(/\s+/g, ' ').trim(), below: t.classList.contains('below'), l: tr.left, t: tr.top, r: tr.right, b: tr.bottom, w: tr.width, h: tr.height, ax: parseFloat(t.style.getPropertyValue('--ax')), pe: getComputedStyle(t).pointerEvents, inDialog: !!t.closest('dialog') } : null,
       dot: { l: r.left, t: r.top, r: r.right, b: r.bottom }, vw: innerWidth, vh: innerHeight, scrollW: document.documentElement.scrollWidth, ring: cs.boxShadow };
   }, sel);
   // (polls: the card fades in over 150 ms)
@@ -214,14 +214,14 @@ async function main() {
       sel = dot(gf, 'laser'); await rest(page, sel, 650); m = await read(page, sel);
       assert.equal(m.tip.state, 'Done'); assert.equal(m.tip.by, `${when(AT.laserDone)} · Paul at Laser`); assert.equal(m.tip.line, 'On GF Sheet 1'); await away(page);
       sel = dot(gf, 'arrived'); await rest(page, sel, 650); m = await read(page, sel); assert.equal(m.tip.name, 'Order in'); assert.equal(m.tip.state, 'Done'); assert.match(m.tip.by, new RegExp('^' + when(AT.arrived).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' · Etsy')); await away(page);
-      // a step still to do: what it waits on
+      // a step still to do: only what holds the piece back (nothing to say when nothing does: no "Not yet", no "Next: scan at Assembly")
       sel = dot(gf, 'assembled'); await rest(page, sel, 650); m = await read(page, sel);
-      assert.equal(m.tip.name, 'Assembled'); assert.equal(m.tip.state, 'Not yet'); assert(m.tip.line.length > 8, 'it says what it waits on: ' + m.tip.line); assert.equal(m.tip.by, '', 'no who and when for a step nobody did'); assert.doesNotMatch(m.tip.text, /\blines?\b/i, 'pieces, never lines');
-      assert.match(m.tip.line, /^[A-Z]/); await away(page);
-      // a step further on: the one it comes after
-      sel = dot(gf, 'shipped'); await rest(page, sel, 650); m = await read(page, sel); assert.equal(m.tip.state, 'Not yet'); assert.equal(m.tip.line, 'After Assembled'); await away(page);
-      sel = dot(rg, 'laser'); await rest(page, sel, 650); m = await read(page, sel); assert.equal(m.tip.state, 'Not yet'); assert(m.tip.line.length > 8, 'the RG piece\'s laser step says what it waits on: ' + m.tip.line); await away(page);
-      sel = dot(cable, 'sheet'); await rest(page, sel, 650); m = await read(page, sel); assert.equal(m.tip.name, 'Nested'); assert.equal(m.tip.state, 'Not yet'); assert(m.tip.line.length > 8, 'the piece in Review says what it waits on: ' + m.tip.line); await away(page);
+      assert.equal(m.tip.name, 'Assembled'); assert.equal(m.tip.state, '', 'no "Not yet"'); assert.equal(m.tip.line, '', 'nothing holds it back, so the card names nothing it will do: ' + m.tip.line); assert.equal(m.tip.by, '', 'no who and when for a step nobody did'); assert.doesNotMatch(m.tip.text, /\blines?\b|\bnext\b|not yet|after /i, 'pieces, never lines; nothing about what comes next');
+      await away(page);
+      // a step further on: nothing (no "After Assembled")
+      sel = dot(gf, 'shipped'); await rest(page, sel, 650); m = await read(page, sel); assert.equal(m.tip.state, ''); assert.equal(m.tip.line, '', 'a step further on names no other step'); await away(page);
+      sel = dot(rg, 'laser'); await rest(page, sel, 650); m = await read(page, sel); assert.equal(m.tip.state, ''); assert.doesNotMatch(m.tip.text, /\bnext\b|after /i, 'the RG piece\'s laser card: ' + m.tip.text); await away(page);
+      sel = dot(cable, 'sheet'); await rest(page, sel, 650); m = await read(page, sel); assert.equal(m.tip.name, 'Nested'); assert.equal(m.tip.state, ''); assert(m.tip.line.length > 8, 'the piece in Review says what holds it: ' + m.tip.line); await away(page);
       assert.equal(await page.evaluate(() => document.querySelectorAll('[title]:not([title=""])').length && [...document.querySelectorAll('#owPcSum [data-pdot]')].filter(d => d.title).length), 0, 'no native tooltip on a dot'); }
 
     // ── 6 · the keyboard ──
@@ -290,7 +290,7 @@ async function main() {
     // ── 9 · 1440, 900, 390: the card fits, the page is not made wider ──
     for (const [w, h] of [[1440, 900], [900, 800], [390, 844]]) {
       await page.setViewportSize({ width: w, height: h }); await sleep(500);
-      for (const [key, step, state] of [[gf, 'sorted', 'Done'], [gf, 'assembled', 'Not yet'], [gf, 'arrived', 'Done'], [gf, 'shipped', 'Not yet']]) {
+      for (const [key, step, state] of [[gf, 'sorted', 'Done'], [gf, 'assembled', ''], [gf, 'arrived', 'Done'], [gf, 'shipped', '']]) {
         const sel = dot(key, step), base = await page.evaluate(() => document.documentElement.scrollWidth); await rest(page, sel, 700); const m = await read(page, sel);
         assert.equal(m.shown, true, `${w}: the ${step} card opens`); assert.equal(m.tip.state, state);
         assert(m.tip.l >= 7.5 && m.tip.r <= m.vw - 7.5 && m.tip.t >= 7.5 && m.tip.b <= m.vh - 7.5, `${w}: ${step} card inside the screen (${m.tip.l}..${m.tip.r} of ${m.vw}, ${m.tip.t}..${m.tip.b} of ${m.vh})`);
@@ -305,7 +305,7 @@ async function main() {
     await page.setViewportSize({ width: 1440, height: 900 }); await sleep(500);
 
     // ── 10 · a redraw under the pointer: the step is done while the card is open ──
-    { const sel = dot(gf, 'assembled'); await rest(page, sel, 650); let m = await read(page, sel); assert.equal(m.tip.state, 'Not yet');
+    { const sel = dot(gf, 'assembled'); await rest(page, sel, 650); let m = await read(page, sel); assert.equal(m.tip.state, '');
       const before = await page.evaluate(sel => { const d = document.querySelector(sel); d.__mine = 1; return 1; }, sel);
       ev('assembled', 5, { by: 'Mia K.', source: 'station', station: 'assembly', lineKey: gf });
       await page.waitForFunction(sel => document.querySelector(sel).classList.contains('on') && !document.querySelector(sel).__mine, sel, { timeout: 20000 });
@@ -352,7 +352,7 @@ async function main() {
       await openOrder(HELD, 12, 6); await heldIsFenced();
       // the Nested card of the first piece: where it is now, where it was, the hold, and the history's real seal (a seal is permanent)
       let sel = dot(ha, 'sheet'); await rest(hp, sel); let m = await read(hp, sel);
-      assert.equal(m.shown, true); assert.equal(m.tip.name, 'Nested'); assert.equal(m.tip.state, 'Not yet'); assert.equal(m.tip.line, 'Not on a sheet now', 'the Nested card says where the piece is now: ' + m.tip.text);
+      assert.equal(m.shown, true); assert.equal(m.tip.name, 'Nested'); assert.equal(m.tip.state, ''); assert.equal(m.tip.line, 'Not on a sheet now', 'the Nested card says where the piece is now: ' + m.tip.text);
       assert.equal(m.tip.by, `Was on GF Sheet 2 until Paul took it off, ${when(HOLD_AT.a)} · On hold`, 'and where it was, who took it off and when, and that it is on hold: ' + m.tip.by);
       assert(!/\blines?\b/i.test(m.tip.text), 'pieces, never lines');
       const sealOf = () => hp.evaluate(() => { const q = document.querySelector('.railTip[data-on] .rtSeal'); return q ? { real: !!q.querySelector('.seal'), ghost: !!q.querySelector('.pgGhost') } : null; });
@@ -362,8 +362,8 @@ async function main() {
       await away(hp);
       // the second piece, off its own sheet (RG Sheet 2), says the same of its own sheet
       sel = dot(hb, 'sheet'); await rest(hp, sel); m = await read(hp, sel); assert.equal(m.tip.line, 'Not on a sheet now'); assert.match(m.tip.by, /^Was on RG Sheet 2 until Paul took it off, /); await away(hp);
-      // every later step waits for Nested
-      for (const k of ['laser', 'sorted', 'assembled', 'shipped']) { sel = dot(ha, k); await rest(hp, sel); m = await read(hp, sel); assert.equal(m.tip.state, 'Not yet'); assert.equal(m.tip.line, 'After Nested', `${k}: the step ahead names the one it waits on`); await away(hp); }
+      // every later step names nothing (no "After Nested": the bar and the dots show where the piece is)
+      for (const k of ['laser', 'sorted', 'assembled', 'shipped']) { sel = dot(ha, k); await rest(hp, sel); m = await read(hp, sel); assert.equal(m.tip.state, ''); assert.equal(m.tip.line, '', `${k}: the step ahead names no other step`); await away(hp); }
       // Order in stays Done, with its seal
       sel = dot(ha, 'arrived'); await rest(hp, sel); m = await read(hp, sel); assert.equal(m.tip.state, 'Done'); assert.deepEqual(await sealOf(), { real: true, ghost: false }); await away(hp);
       // a piece the history shows laser cut and sorted is not clamped (it cannot un-cut); its sibling, nested only, is
