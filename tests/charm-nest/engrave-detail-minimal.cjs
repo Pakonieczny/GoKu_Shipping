@@ -1,11 +1,13 @@
-// ENGTRIM (engrave-ui-1012), step 1: the Engrave tab's detail (placementCard) draws no second route to the words and no reference picture. Paul, 12 Oct 2026: the engraving UI is "full of needless text ... way too many
-// needless text and titles and stuff. keep it very simple and minimalist". The options panel (charm-nest-engrave-panel.js) already edits the words, font, position and mode of each face, and the card's Front / Back
-// thumbnails (charm-nest-engrave-card.js) are the pictures of the piece and pick the face.
+// ENGTRIM (engrave-ui-1012): the Engrave tab's detail (placementCard) is minimal. Paul, 12 Oct 2026: the engraving UI is "full of needless text ... way too many needless text and titles and stuff. keep it very
+// simple and minimalist". The options panel (charm-nest-engrave-panel.js) already edits the words, the font, the position and the mode of each face, and the card's Front / Back thumbnails pick the face, so the detail
+// must not draw a second route to the same words, a second face switch, a reference picture of the other face, a "From the order" list, a "NN% sure" pill or the block titles. What a person has to decide or fix stays.
 // Real charm-nest-1.html in headless Chromium over the fake loopback site (bridge-server.cjs): no Etsy, no paid reading, no live write. Names are made up.
-//   1  a settled read, the detail at 1280x720: ABSENT: the "Words on the ..." box and its "Use these words", the "Front/Back . reference" picture and the big picture's title (when the card's thumbnails are on the page);
-//      PRESENT: the panel (one words box, font, Save, Cancel, ONE Emoji button), Approve, "No engraving", the big picture, Open order
-//   2  words still to decide (state words): ONE small "Engrave these words" button (the panel cannot confirm a read as it stands), the reason said once in the empty picture, one "No engraving" button
-//   3  the Review tab's placement card (no panel there) is untouched: its words box and its pill are still drawn
+//   1  a settled read (97%, personalisation box, no staff note), the detail at 1280x720: ABSENT: the "Words on the ..." box and its "Use these words", the "Front/Back . reference" picture (when the card's thumbnails are on
+//      the page), the "From the order" list, the "NN% sure" pill, every block title, the head's Front | Back switch; PRESENT: the panel (one words box, font, Save, Cancel, ONE Emoji button), Approve, "No engraving", the big picture, Open order
+//   2  an unsettled read (45%, or words still to decide) keeps ONE quiet box of the buyer's own words (Personalization / Buyer's note / Staff note, no title, no "Reading", no "Font", no "Decided by"); a staff note keeps it too
+//   3  words still to decide (state words): ONE small "Engrave these words" button (the panel cannot confirm a read as it stands), the reason said once in the empty picture, one "No engraving" button
+//   4  the Review tab's placement card (no panel there) is untouched: its words box and its pill are still drawn
+//   5  a decided row's opened detail does not repeat the words or who decided (the row and its seals say it), and keeps the size, the file and the pieces
 //   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-detail-minimal.cjs
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '../..');
@@ -72,6 +74,10 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     check(d.has && d.panel === 1, 'the Engrave detail is open and carries the options panel');
     check(d.words === 0 && d.oldBox === 0 && d.use.length === 0 && d.textareas === 1 && d.panelWords === 1, 'no second words box: no "Words on the ..." box, no "Use these words"; the panel\'s box is the one text area of the detail: ' + JSON.stringify({ words: d.words, oldBox: d.oldBox, use: d.use, textareas: d.textareas }));
     check(!/Words on the|Use these words|Engrave these words/i.test(d.text), 'and none of those words are on the detail');
+    check(d.order === 0 && !/From the order|Reading|Decided by|Personalization|Buyer's note|Staff note/.test(d.text), 'no "From the order" list (a settled read, no staff note): ' + d.order);
+    check(d.conf === 0 && !/\d+\s*%\s*sure|\bsure\b/i.test(d.text), 'no "NN% sure" pill, no percentage');
+    check(d.checkTitle === 0 && d.orderTitle === 0 && !/To check with the buyer/.test(d.text), 'no "To check with the buyer" / "From the order" titles');
+    check(d.faceSw === 0, 'the head draws no Front | Back switch (the panel picks the face: ' + (d.thumbs ? 'the card\'s thumbnails' : 'its own switch ' + d.faceSwitchOfPanel) + ')');
     if (hasCard) {
       check(d.ref === 0 && !/reference/i.test(d.text), 'no "Front . reference" picture: the card\'s Front and Back thumbnails (' + d.thumbs + ') are the pictures of the piece');
       check(d.thumbs === 2 && d.engCard === 1 && d.mainTitle === 0, 'the card is on the page with its two thumbnails and the big picture has no title of its own: ' + JSON.stringify({ thumbs: d.thumbs, cards: d.engCard, mainTitle: d.mainTitle }));
@@ -81,21 +87,43 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     check(d.approve === 1 && d.skip === 1 && /^No back engraving/.test(d.skipText) && d.backHost === 1 && d.openOrder === 1, 'Approve, the one "No engraving" button, the big picture and Open order stay: ' + JSON.stringify({ approve: d.approve, skip: d.skip, skipText: d.skipText, backHost: d.backHost, openOrder: d.openOrder }));
     if (shots) await page.screenshot({ path: path.join(shots, 'detail-settled.png') });
 
+    // ── 2 · an unsettled read keeps ONE quiet box of the buyer's own words; a staff note keeps it too ──
+    d = await detail({ confidence: 0.45 }, {});
+    check(d.order === 1 && d.orderTitle === 0 && /Personalization/.test(d.orderText) && /front - W/.test(d.orderText) && /Buyer's note/.test(d.orderText) && /Please put the date/.test(d.orderText), 'a 45% read: one quiet box of the buyer\'s own words, no title: "' + d.orderText + '"');
+    check(!/Reading|Font|Decided by/.test(d.orderText) && d.conf === 0 && !/%/.test(d.text), 'it carries no "Reading", no "Font", no "Decided by" and no percentage');
+    d = await detail({ source: 'buyerMessage' }, {});
+    check(d.order === 1, 'a read taken from the buyer\'s message (not the personalisation box) keeps the box as well');
+    d = await detail({}, { staffNote: 'Name Two asked to change the date' });
+    check(d.order === 1 && /Staff note/.test(d.orderText) && /change the date/.test(d.orderText), 'a staff note keeps the box even on a settled read: "' + d.orderText + '"');
+    d = await detail({ confidence: 0.45, decision: { by: 'Name One', at: Date.now(), text: '1. 27. 24', note: 'confirmed' } }, {});
+    check(d.order === 0, 'a read a person has decided on is settled: no box');
 
-    // ── 2 · words still to decide ──
+    // ── 3 · words still to decide ──
     d = await detail({ state: 'words', reason: 'Say what to engrave on the back', fit: null, view: null }, {});
     check(d.use.length === 1 && d.use[0] === 'Engrave these words' && d.words === 0 && d.oldBox === 0 && d.textareas === 1, 'words still to decide: ONE small "Engrave these words" button and still no second words box: ' + JSON.stringify({ use: d.use, words: d.words, textareas: d.textareas }));
     check(d.noBack.length === 1 && d.noBack[0] === 'Say what to engrave on the back' && d.why === 0, 'the reason is said once, in the empty picture, not again under a box: ' + JSON.stringify({ noBack: d.noBack, why: d.why }));
-    check(d.skip === 1, 'one "No engraving" button (it used to be drawn twice)');
+    check(d.skip === 1 && d.order === 1, 'one "No engraving" button (it used to be drawn twice), and the buyer\'s own words in the one quiet box');
     d = await detail({ state: 'classify', fit: null, view: null }, {});
     check(d.noBack.length === 1 && /Processing stopped before these words were read\.$/.test(d.noBack[0]) && !/below/.test(d.noBack[0]), 'a stopped read says so without pointing at a box "below": "' + d.noBack[0] + '"');
     d = await detail({ state: 'fitting', fit: null, view: null }, {});
-    check(d.use.length === 0, 'a placement being prepared offers no confirm button');
+    check(d.use.length === 0 && d.order === 0, 'a placement being prepared offers no confirm button and no box');
 
-    // ── 3 · the Review tab's card is untouched ──
+    // ── 4 · the Review tab's card is untouched ──
     const rv = await page.evaluate(KEY => { const j = Engrave.jobOf(B.orders.byKey.get(KEY), null, 'back'), c = Engrave.placementCard(j, 1); return { words: c.querySelectorAll('.pvWords').length, box: c.querySelectorAll('textarea[data-f=words]').length, use: [...c.querySelectorAll('[data-a=usewords]')].map(b => b.textContent.trim()), conf: c.querySelectorAll('.rh .conf').length, panel: c.querySelectorAll('.engp').length, order: c.querySelectorAll('.pvOrder').length }; }, KEY);
     check(rv.words === 1 && rv.box === 1 && rv.use.join() === 'Use these words' && rv.conf === 1 && rv.panel === 0 && rv.order === 1, 'the Review tab\'s placement card (no panel there) still has its words box, "Use these words", its pill and "From the order": ' + JSON.stringify(rv));
 
+    // ── 5 · a decided row's opened detail ──
+    const dd = await page.evaluate(async KEY => {
+      const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back'), was = { state: j.state, by: j.approvedBy, at: j.approvedAt, decision: j.decision };
+      Object.assign(j, { state: 'approved', approvedBy: 'Name One', approvedAt: Date.now() - 60e3, decision: { by: 'Name One', at: Date.now() - 60e3, text: j.text } });
+      setMode('engrave'); Engrave.restoreView({ tab: 'done', list: false, chosen: true, openDone: j.key }); Engrave.render();
+      const r = document.querySelector('#egDone .doneRow.open'), det = r && r.querySelector('.doneDetail');
+      const out = { open: !!det, dts: det ? [...det.querySelectorAll('dt')].map(x => x.textContent.trim()) : [], rowWords: r && r.querySelector('.w') ? r.querySelector('.w').textContent.trim() : '', seals: r ? r.querySelectorAll('.sealRow, .engravingSeals').length : 0 };
+      Object.assign(j, was); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: j.key }); Engrave.render();
+      return out;
+    }, KEY);
+    check(dd.open && dd.rowWords === '1. 27. 24' && dd.seals >= 1, 'the decided row says the words and carries the seals: ' + JSON.stringify({ rowWords: dd.rowWords, seals: dd.seals }));
+    check(!dd.dts.includes('Words') && !dd.dts.includes('Decided') && dd.dts.includes('Size'), 'its opened detail does not say the words or the decision again, and keeps the size: ' + dd.dts.join(', '));
 
     // the page was never asked anything it must not be
     const net = await page.evaluate(() => __calls.slice());

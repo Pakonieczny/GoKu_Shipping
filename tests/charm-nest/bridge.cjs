@@ -262,7 +262,7 @@ const receipts = [
         assert(/^\d{6,}$/.test(eg.head.ttl.trim()), 'the order number is the heading: ' + eg.head.ttl);
         assert(/ANNA/.test(eg.head.words), 'and the words that will be cut are beside the preview (in the options panel; the second words box is gone): ' + eg.head.words);
         assert.strictEqual(eg.head.oldBox, false, 'the Engrave detail draws no second words box');
-        assert.strictEqual(eg.head.confs, 1, 'one confidence score, not several');
+        assert.strictEqual(eg.head.confs, 0, 'and no "NN% sure" score in the Engrave detail (Paul: any percentage is needless)');
         assert(eg.canvasW <= Math.round(eg.inner.w * 0.6) && eg.canvasH <= Math.round(eg.inner.h * 0.7),
           `the back preview fits the window: ${eg.canvasW}x${eg.canvasH} in ${eg.inner.w}x${eg.inner.h}`);
         assert(eg.canvasW >= 180 && eg.canvasH >= 180, `and is drawn large enough to judge: ${eg.canvasW}x${eg.canvasH}`);

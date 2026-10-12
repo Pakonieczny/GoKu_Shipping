@@ -20,13 +20,13 @@ const tx = (rid, i, listing, sku, vars, text) => ({ transaction_id: Number(`${ri
   variations: [{ formatted_name: 'Metal', formatted_value: 'Sterling Silver' }].concat(vars, [{ formatted_name: 'Personalization', formatted_value: text || 'CARLA' }]) });
 const receipt = (rid, txs) => ({ receipt_id: rid, order_number: rid, name: 'Buyer ' + rid, country_iso: 'US', city: 'Austin', message_from_buyer: '', update_timestamp: day, create_timestamp: day - 3600, status: 'Paid', is_shipped: false, transactions: txs });
 const SCENES = [
-  { rid: '3521300001', listing: 1714117116, name: 'Font Choice (see listing photo for choices)', value: 'Vibur', font: 'vibur', fontName: 'Vibur', card: /Font\s+Vibur → Vibur(?! \()/i, shot: 'tag-vibur' },
-  { rid: '3521300006', listing: 4458930445, name: 'Font Choice', value: 'Ace', text: 'carla', words: 'CARLA', font: 'jost-ace', fontName: 'Jost Slashed Zero', card: /Font\s+Ace → Jost Slashed Zero · capitals only/i, shot: 'tag-ace' },
-  { rid: '3521300007', listing: 4458930445, name: 'Font Choice', value: 'Britannic Bold', font: 'libre-franklin', fontName: 'Libre Franklin', card: /Font\s+Britannic Bold → Libre Franklin/i, shot: 'tag-britannic' },
-  { rid: '3521300002', listing: 234758391, name: 'Font', value: 'Stylish', font: 'playwrite-us-trad', fontName: 'Playwrite US Trad', card: /Font\s+Stylish → Playwrite US Trad/i, shot: 'disc-stylish' },
-  { rid: '3521300003', listing: 1008014571, name: 'Fonts', value: '16"/ Typewriter', font: 'crimson-text', fontName: 'Crimson Text', card: /Font\s+Typewriter → Crimson Text/i, shot: 'disc-typewriter' },
+  { rid: '3521300001', listing: 1714117116, name: 'Font Choice (see listing photo for choices)', value: 'Vibur', font: 'vibur', fontName: 'Vibur', panel: ['Vibur', 'Vibur'], shot: 'tag-vibur' },
+  { rid: '3521300006', listing: 4458930445, name: 'Font Choice', value: 'Ace', text: 'carla', words: 'CARLA', font: 'jost-ace', fontName: 'Jost Slashed Zero', panel: ['Ace', 'Jost Slashed Zero'], shot: 'tag-ace' },
+  { rid: '3521300007', listing: 4458930445, name: 'Font Choice', value: 'Britannic Bold', font: 'libre-franklin', fontName: 'Libre Franklin', panel: ['Britannic Bold', 'Libre Franklin'], shot: 'tag-britannic' },
+  { rid: '3521300002', listing: 234758391, name: 'Font', value: 'Stylish', font: 'playwrite-us-trad', fontName: 'Playwrite US Trad', panel: ['Stylish', 'Playwrite US Trad'], shot: 'disc-stylish' },
+  { rid: '3521300003', listing: 1008014571, name: 'Fonts', value: '16"/ Typewriter', font: 'crimson-text', fontName: 'Crimson Text', panel: ['Typewriter', 'Crimson Text'], shot: 'disc-typewriter' },
   { rid: '3521300004', listing: 1999000111, name: 'Font', value: 'Cooper Black', font: 'source-sans-3', fontName: 'Source Sans 3', card: /Requested font: Cooper Black \(engraved in Source Sans 3\)/, shot: 'unknown-cooper' },
-  { rid: '3521300005', listing: 1999000222, text: 'ANNA', note: 'Pristina', font: 'marck-script', fontName: 'Marck Script', card: /Font\s+Pristina → Marck Script \(asked in the note\)/i, shot: 'note-pristina' }   // no drop-down: the buyer wrote "font: Pristina" in the note
+  { rid: '3521300005', listing: 1999000222, text: 'ANNA', note: 'Pristina', font: 'marck-script', fontName: 'Marck Script', card: /Pristina → Marck Script \(asked in the note\)/i, shot: 'note-pristina' }   // no drop-down: the buyer wrote "font: Pristina" in the note
 ];
 const receipts = SCENES.map(s => receipt(s.rid, [tx(s.rid, 1, s.listing, 'BR-TST-04', s.name ? [{ formatted_name: s.name, formatted_value: s.value }] : [], s.text)]));
 const keyOf = s => s.rid + '_' + s.rid + '1';
@@ -93,9 +93,12 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
     // the card of each piece says which font it is engraved in
     for (const s of SCENES) {
       await page.evaluate(k => { CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', chosen: true, list: false, focus: k }); Engrave.render(); }, keyOf(s));
-      await page.waitForSelector('#egQueue .rvItem[data-kind=placement] .engp .engpFont');   // (ENGTRIM: the words box is the panel's now; the card is drawn once the panel is)
-      const text = await page.evaluate(() => document.querySelector('#egQueue .rvItem').innerText.replace(/\s+/g, ' '));
-      check(s.card.test(text), `${s.rid}: the engraving card says "${(s.card.exec(text) || [''])[0] || 'nothing: ' + text.slice(text.indexOf('From the order'), text.indexOf('From the order') + 160)}"`);
+      await page.waitForSelector('#egQueue .rvItem[data-kind=placement] .engp .engpFont');
+      // the card says which font the piece is engraved in: the options panel's font drop-down (the shop's word, the installed font as its title) for a font the line chose; one quiet line of what the buyer asked
+      // for (the check list) when the font came from the note or is one the shop does not have. "From the order" and the words box are not drawn in the Engrave tab.
+      const got = await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem'), sel = c.querySelector('.engp .engpFont'), o = sel.selectedOptions[0]; return { text: c.innerText.replace(/\s+/g, ' '), word: o ? o.textContent.trim() : '', name: o ? o.title : '', box: !!c.querySelector('[data-f=words]'), order: !!c.querySelector('.pvOrder') }; });
+      check(s.panel ? got.word === s.panel[0] && got.name === s.panel[1] : s.card.test(got.text), s.panel ? `${s.rid}: the panel's font drop-down says "${got.word}" (${got.name})` : `${s.rid}: the engraving card says "${(s.card.exec(got.text) || [''])[0] || 'nothing: ' + got.text.slice(0, 200)}"`);
+      check(!got.box && !got.order, `${s.rid}: no second words box and no "From the order" list in the Engrave detail`);
       if (shots) await (await page.$('#egQueue .rvItem')).screenshot({ path: path.join(shots, `card-${s.shot}.png`) });
     }
 
