@@ -1427,7 +1427,9 @@ const Orders = window.Orders = (() => {
   const mapsSame = () => mapsRead[0] === B.maps.optionMaps && mapsRead[1] === B.maps.aliases && mapsRead[2] === B.maps.noDesign;
   // FLAGWHY: what the orders the page holds say about each listing's SKUs (O.seenSkus, rebuilt on every pass of interpretAll): a line's SKU is told to be an option's own, or shared, from them
   let seenIx = {};
-  const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, listingSkus: B.maps.listingSkus, seen: seenIx, masterEntry: sku => Master.entryFor(sku), masterLoose: sku => Master.looseFor(sku), masterShared: sku => Master.sharedFor(sku), masterSkus: () => [...B.master.entries.keys()] });   // (masterSkus: every SKU the library holds; read only by a line whose SKU is a shared zodiac SKU, ZODSIGN)
+  /** NOSKU: the library has been read WHOLE (its index is here, or a full load finished), so a title is never matched against the few designs a page happened to fetch one by one. */
+  const libraryWhole = () => !!(B.master.index || (B.master.loadedAt && B.master.entries.size));
+  const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, listingSkus: B.maps.listingSkus, seen: seenIx, masterEntry: sku => Master.entryFor(sku), masterLoose: sku => Master.looseFor(sku), masterShared: sku => Master.sharedFor(sku), masterSkus: () => [...B.master.entries.keys()], masterKey: B.master.entries, masterSize: B.master.entries.size, masterReady: libraryWhole() });   // (masterSkus: every SKU the library holds; read by a line whose SKU is a shared zodiac SKU, ZODSIGN, and by a line with no SKU at all, whose title is read against it, NOSKU: the library as a whole, B.master.index set, and the same Map until it is loaded again)
   /** The pull rule (Settings → Pull orders): every open order, those due by a date, or the N most urgent by ship-by date. */
   function applyPullRule(orders) {
     const mode = S.settings.pullMode || "all";
@@ -1458,7 +1460,7 @@ const Orders = window.Orders = (() => {
       // a SKU that is exactly a known typo reads as its master design: the line is read again when the library gets, loses or blocks that design
       libFacts(typoOf(l.sku)), libFacts(nameOf(l.sku)),   // (and the design Paul named for the SKU: the line is read again when the library gets MUSIC4)
       // the form of the design the SKU is (huggie, earring, necklace: read from every name its drawing carries) and, for a line the form guard holds or that waits for an unknown SKU, the library's size (the siblings it offers are read from it): HUGGIEGUARD
-      formFacts(l.sku), row.spec && (row.spec.formHold || (row.spec.problems || []).some(p => p.kind === "unmatchedSku")) ? B.master.entries.size : 0,
+      formFacts(l.sku), row.spec && (row.spec.formHold || row.spec.titleMatch || (row.spec.problems || []).some(p => p.kind === "unmatchedSku")) ? B.master.entries.size + (libraryWhole() ? "+" : "-") : 0,   // (NOSKU: a line with no SKU, or matched by its title, is read again when the library is loaded or changes)
       // the two designs of a saved pair and the library's word on each; a line that waits for its second design is read again when the library gets more designs (the one its words name may just have been indexed)
       link ? libFacts(String(link.L || "").trim().toUpperCase()) + "|" + libFacts(String(link.R || "").trim().toUpperCase()) : "",
       row.spec && row.spec.pair && row.spec.pair.second && !row.spec.pair.second.answered ? B.master.entries.size : 0,
@@ -1470,11 +1472,11 @@ const Orders = window.Orders = (() => {
   function readEvent(row) {
     try {
       const s = row.spec; if (!s) return;
-      const qs = (s.problems || []).map(p => p.kind), sig = [s.designSku, s.material, s.form, s.size, s.chain, s.quantity, s.special ? s.special.kind : "", s.noDesign ? "nd" : "", qs.slice().sort().join("+")].join("|");
+      const qs = (s.problems || []).map(p => p.kind), sig = [s.designSku, s.material, s.form, s.size, s.chain, s.quantity, s.special ? s.special.kind : "", s.noDesign ? "nd" : "", qs.slice().sort().join("+"), s.titleMatch ? "title" : ""].join("|");
       if (readSaid.get(row.key) === sig) return; readSaid.set(row.key, sig);
       const what = s.noDesign ? `not cut (${s.noDesignWhy || "no design"})` : [(O.setDesignsOf(s) || []).join(" + ") || s.designSku || "no SKU", s.material ? labelOf(s.material) : "metal not read", s.form, s.size].filter(Boolean).join(" · ");
-      TL.line(row, "interpreted", { id: row.key + "." + TL.hash(sig), once: true, text: `Read as ${what}${qs.length ? ` · ${qs.length} question${qs.length === 1 ? "" : "s"}` : ""}`.slice(0, 200),
-        data: { sku: s.designSku || null, material: s.material || null, form: s.form || null, size: s.size || null, chain: s.chain || null, quantity: s.quantity || 1, special: s.special ? s.special.kind : null, noDesign: !!s.noDesign, questions: qs } });
+      TL.line(row, "interpreted", { id: row.key + "." + TL.hash(sig), once: true, text: `Read as ${what}${s.titleMatch ? " · matched by the listing's title" : ""}${qs.length ? ` · ${qs.length} question${qs.length === 1 ? "" : "s"}` : ""}`.slice(0, 200),
+        data: { titleMatch: s.titleMatch ? s.titleMatch.sku : null, sku: s.designSku || null, material: s.material || null, form: s.form || null, size: s.size || null, chain: s.chain || null, quantity: s.quantity || 1, special: s.special ? s.special.kind : null, noDesign: !!s.noDesign, questions: qs } });
     } catch (_) {}
   }
   function interpretAll() {
@@ -12001,7 +12003,9 @@ const Review = window.Review = (() => {
       const fw = it.job ? faceWordOf(it.job) : "";   // (a line engraved on both faces asks once for each: the front's question has its own id and says "Front")
       for (const r of rowsOf(it)) for (const p of probs) {
         const id = r.key + "." + p.kind + (fw === "Front" ? ".front" : ""); if (!p.kind || askedSeen.has(id)) continue; askedSeen.add(id);
-        TL.line(r, "needsDecision", { id, once: true, text: `${KIND_WORDS[p.kind] || p.kind}${fw ? " · " + fw : ""}: ${it.kind === "customOrder" || !it.why ? problemText(p) : it.why}`.slice(0, 200), data: { kind: p.kind, custom: it.kind === "customOrder", why: String(it.kind === "customOrder" || !it.why ? problemText(p) : it.why).slice(0, 300) } });
+        // (NOSKU: a listing with no SKU on Etsy says so in one plain sentence, never "Unknown SKU: SKU ?: ...")
+        const noSku = p.kind === "unmatchedSku" && p.nosku && p.nosku.short ? p.nosku.short : "";
+        TL.line(r, "needsDecision", { id, once: true, text: (noSku || `${KIND_WORDS[p.kind] || p.kind}${fw ? " · " + fw : ""}: ${it.kind === "customOrder" || !it.why ? problemText(p) : it.why}`).slice(0, 200), data: { kind: p.kind, custom: it.kind === "customOrder", why: String(it.kind === "customOrder" || !it.why ? problemText(p) : it.why).slice(0, 300) } });
       }
     } catch (_) {}
   }
@@ -12057,7 +12061,7 @@ const Review = window.Review = (() => {
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
-  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.letter ? `option "${p.optionName}: ${p.optionValue}" \u2014 ${p.letter.why}` : p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? (p.formHold ? p.reason : `SKU ${p.sku || "?"}: ${p.reason}`) : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
+  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.letter ? `option "${p.optionName}: ${p.optionValue}" \u2014 ${p.letter.why}` : p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? (p.formHold ? p.reason : !p.sku ? p.reason : `SKU ${p.sku}: ${p.reason}`) : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
    *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
@@ -12263,6 +12267,21 @@ const Review = window.Review = (() => {
       return Object.assign({}, lead, { rows });
     } catch (_) { return null; }
   }
+  /* NOSKU (12 Oct 2026): a listing with no SKU anywhere used to ask with nothing to tap. The line's TITLE is read against the library (charm-nest-orders.js section 3d, problem.nosku): the charms it
+     names, best first, are drawn as the same one-tap choices a numbered design has. A tap is a person's word: it saves the listing's link for good (saveCharm, the "Use this charm" answer) and the line is
+     read again. Nothing here is written by code. */
+  function titleOffer(p) {
+    const n = p && p.nosku; if (!n || !Array.isArray(n.candidates)) return null;
+    const list = n.candidates.filter(c => c && c.sku && B.master.entries.has(c.sku)); if (!list.length) return null;
+    return { state: n.state, list, more: n.more || 0, said: n.said || "" };
+  }
+  const titleAsk = o => o.state === "several" ? "Which charm is it? Tap the one that matches the listing:" : o.state === "one" ? "The title points to this charm. Tap it to use it for this listing:" : "The nearest charms by the title. Tap the right one:";
+  function titleButtons(o) {
+    const pic = k => (Master.pictureTag(Master.entryFor(k)) || "");
+    return o.list.map(c => `<button type="button" class="btn ghost sm dsPick" data-dsku="${esc(c.sku)}" title="${esc(`${c.why} · tap to use ${c.sku} for this listing (kept for good)`)}">${pic(c.sku)}${esc(c.sku)}</button>`).join("")
+      + (o.more ? `<span class="dsFor">and ${o.more} more: type the SKU in the box below</span>` : "");
+  }
+  const titleStamp = p => { const o = titleOffer(p); return o ? o.list.map(c => c.sku + "=" + (Master.thumbOf(Master.entryFor(c.sku) || {}) || "")) : ""; };
   /** The listing and the SKU each line of a card came with (a huggie set's "X (HUGGIE)"): on a listing whose variations each have a SKU, the others keep theirs; a huggie set with no SKU answers for the listing's huggie, never its necklace. */
   const answerKeysOf = (it, rows) => new Map((rows || rowsOf(it)).map(x => { const from = x.spec && x.spec.boughtSku != null ? x.spec.boughtSku : String(x.line.sku || "").trim().toUpperCase(), hug = !from && !!(x.spec && x.spec.huggieSet); return [String(x.line.listingId) + "\u0000" + from + (hug ? "\u0000huggie" : ""), { lid: String(x.line.listingId), from, hug, title: x.line.title }]; }));
   /** "Use this charm" for an unmatched SKU: the saved alias, for every listing the card covers (kept for good, aliasPut), then the lines are read again. */
@@ -12294,7 +12313,7 @@ const Review = window.Review = (() => {
       + (sib.siblings.length > 8 ? `<span class="dsFor">and ${sib.siblings.length - 8} more: pick them in the master index</span>` : "");
   }
   /** What the offer is drawn from (a row or card redraws when it changes: the designs it names and their pictures, which arrive with the library). */
-  const siblingStamp = it => { if (it.kind !== "unmatchedSku" || it.done || it.decided) return ""; const row = it.row || rowsOf(it)[0], s = row ? siblingOffer(row, it.problem || {}, rowsOf(it)) : null; return s ? [s.pair.L, s.pair.R, s.siblings.map(x => x.sku + "=" + (Master.thumbOf(Master.entryFor(x.sku) || {}) || "")), s.ask] : ""; };
+  const siblingStamp = it => { if (it.kind !== "unmatchedSku" || it.done || it.decided) return ""; const row = it.row || rowsOf(it)[0], s = row ? siblingOffer(row, it.problem || {}, rowsOf(it)) : null; return s ? [s.pair.L, s.pair.R, s.siblings.map(x => x.sku + "=" + (Master.thumbOf(Master.entryFor(x.sku) || {}) || "")), s.ask] : titleStamp(it.problem || {}); };
   /** The two kinds of button an offer has, wired: `guard` wraps a save so the buttons hold while it saves and a failure says so. */
   function wireSib(host, it, p, sib, guard) {
     host.querySelectorAll("[data-dsku]").forEach(b => { b.onclick = guard(() => saveCharm(it, p, b.dataset.dsku, sib && sib.rows)); });
@@ -12307,6 +12326,39 @@ const Review = window.Review = (() => {
     if (!dl) { dl = document.createElement("datalist"); dl.id = "cnMasterSkus"; document.body.appendChild(dl); }
     if (skuListFor === B.master.entries && dl.childElementCount === B.master.entries.size) return;
     skuListFor = B.master.entries; dl.innerHTML = [...B.master.entries.keys()].sort().map(s => `<option value="${esc(s)}">`).join("");
+  }
+  /** NOSKU: "Use another charm" on a line the listing's TITLE matched (the order window's "Matched by title" chip). A small window with the nearest other charms by the same title and a search box; a pick is a person's word
+   *  (saveCharm: the listing's link, kept for good) and the line is read again. Cancel changes nothing. */
+  function useAnotherCharm(r) {
+    const sp = r && r.spec, tm = sp && sp.titleMatch; if (!tm || document.querySelector("dialog.titleDlg[open]")) return;
+    const lid = String(r.line.listingId || "");
+    let alt = [];
+    try {
+      const c = ctx(), tr = O.noSkuRead(r.line, { index: O.titleIndexFor(c), masterEntry: c.masterEntry, masterLoose: c.masterLoose, masterShared: c.masterShared, lf: O.lineForm(r.line, { optionMaps: B.maps.optionMaps }), aliases: B.maps.aliases, own: lid, etsyKnown: true });
+      alt = tr.candidates.filter(x => x.sku !== tm.sku && B.master.entries.has(x.sku));
+    } catch (_) { alt = []; }
+    masterSkuList();
+    const d = document.createElement("dialog"); d.className = "splitDlg titleDlg"; d.setAttribute("aria-labelledby", "titleDlgT");
+    d.innerHTML = `<div class="dlg"><div class="dlgHead"><h3 id="titleDlgT">Use another charm</h3></div>
+      <div class="dlgBody"><p>This listing has no SKU on Etsy. The app matched it to <b class="mono">${esc(tm.sku)}</b> by the listing's title (${esc(tm.why)}). Pick the charm it should use instead; every order of this listing uses it from now on.</p>
+      ${alt.length ? `<div class="sibOffer"><div class="sibAsk">The nearest by the same title:</div><div class="sibPicks">${titleButtons({ list: alt, more: 0 })}</div></div>` : ""}
+      <div class="fixes"><input list="cnMasterSkus" data-f="sku" placeholder="or type a charm from the master index…" aria-label="Charm SKU"><button type="button" class="btn gold sm" data-a="use">Use this charm</button></div></div>
+      <div class="dlgFoot"><div class="left"><button type="button" class="btn ghost sm" data-k="cancel">Cancel</button></div></div></div>`;
+    document.body.appendChild(d);
+    const done = () => { if (d.open) d.close(); d.remove(); };
+    const pick = async sku => {
+      sku = String(sku || "").trim().toUpperCase(); if (!sku) return;
+      const rows = Orders.rows().filter(x => String(x.line.listingId) === lid && x.spec && x.spec.titleMatch && x.state !== "gone");
+      d.querySelectorAll("button").forEach(b => { b.disabled = true; });
+      try { await saveCharm({ kind: "unmatchedSku", rows }, { sku: "" }, sku, rows); done(); }
+      catch (e) { toast("Could not save that: " + e.message, "bad", 7000); d.querySelectorAll("button").forEach(b => { b.disabled = false; }); }
+    };
+    d.querySelectorAll("[data-dsku]").forEach(b => { b.onclick = () => pick(b.dataset.dsku); });
+    d.querySelector("[data-a=use]").onclick = () => pick(d.querySelector("[data-f=sku]").value);
+    d.querySelector("[data-f=sku]").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); pick(e.target.value); } });
+    d.querySelector("[data-k=cancel]").onclick = done;
+    d.addEventListener("cancel", e => { e.preventDefault(); done(); });
+    d.showModal(); Master.mountPictures(d); d.querySelector("[data-f=sku]").focus();
   }
   /** "Accept the new order" on an Order changed item (an order Etsy changed after the pull, or a line a saved link now reads another way): the answer is recorded, the item leaves Review, and the line is made up again at
    *  what it reads as now (repool: its old pieces come off the open sheet they are on; a piece on a sheet already released or cut is held for a person instead, never touched). The one routine behind the card's button
@@ -12465,15 +12517,16 @@ const Review = window.Review = (() => {
       /* SIBLINGS (Paul, 12 Oct 2026, order 4198409468, SKU "SCHRODINGER CAT" on a necklace of two cats): when the SKU names no design but the library holds its numbered designs and the line is a necklace
          (or says two charms), ONE quiet tap offers both ("Use both: X 1 + X 2", their two thumbnails) beside each design as a single choice. Only a suggestion: a person taps, never automatic
          (a number after a name is often an alternative, not a set). The tap saves the pair for this listing and SKU for good (the saved pair link, aliasPut pair) and the line then makes two pieces of one group. */
-      const sib = it.kind === "unmatchedSku" ? siblingOffer(r, p, group) : null;
+      const sib = it.kind === "unmatchedSku" ? siblingOffer(r, p, group) : null, tix = !sib && it.kind === "unmatchedSku" ? titleOffer(p) : null;
       const sibHtml = sib ? `<div class="ask">${esc(sib.ask)}</div>
-        <div class="fixes pick sibs">${sibButtons(sib)}</div>` : "";
+        <div class="fixes pick sibs">${sibButtons(sib)}</div>` : tix ? `<div class="ask">${esc(titleAsk(tix))}</div>
+        <div class="fixes pick sibs">${titleButtons(tix)}</div>` : "";
       c.innerHTML = head(it.kind === "blockedSku" ? "SKU blocked" : "Unmatched SKU", p.sku || "no SKU", orderSub) + (it.kind === "unmatchedSku" && !it.nested ? CustomRead.panel(r, group) : "") + `<div class="why">${esc(p.reason || it.why)}</div>${sibHtml}
         <div class="fixes"><input list="rvSkus" data-f="sku" placeholder="pick the charm from the master index…"><datalist id="rvSkus">${skus.map(s => `<option value="${esc(s)}">`).join("")}</datalist><button class="btn gold sm" data-a="alias" title="every piece of this listing with this SKU uses that charm from now on">Use this charm</button><button class="btn ghost sm" data-a="nodesign" title="this piece never needs a design — remembered, so it stops asking">Nothing to cut</button><button class="btn ghost sm" data-a="hold" title="hold the whole order until someone sorts it out">Hold order</button>${it.kind === "blockedSku" ? `<button class="btn ghost sm" data-a="master">Open Master</button>` : ""}</div>`;
-      if (sib) Master.mountPictures(c);
+      if (sib || tix) Master.mountPictures(c);
       bindNeeds(c, "alias", "sku"); CustomRead.wire(c, group);
       c.querySelector("[data-a=alias]").onclick = saving(c, () => saveCharm(it, p, c.querySelector("[data-f=sku]").value));
-      wireSib(c, it, p, sib, fn => saving(c, fn));
+      wireSib(c, it, p, sib, fn => saving(c, fn));   // (also the title offer's choices: each is a data-dsku button)
       // "Nothing to cut" with no SKU is a title rule; a no-SKU huggie set's matches only "<title> (HUGGIE)", never its necklace
       c.querySelector("[data-a=nodesign]").onclick = saving(c, async () => { const who = by(); if (!who) return; const sku = p.sku || (sp && sp.designSku); if (sku) await api("charmNestLibrary", { op: "noDesignPut", sku, by: who, note: r.line.title }); else await api("charmNestLibrary", { op: "noDesignPut", pattern: p.huggie ? "^" + String(r.line.title).slice(0, 40).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ".*\\(HUGGIE\\)$" : "^" + String(r.line.title).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 40), by: who, note: p.huggie ? "by title · Huggie CHARM SET" : "by title" }); answered(it, "decided", "Nothing to cut", { noDesign: true, sku: sku || null }, who); await Orders.loadMaps(true); await repoolAll(it); });
       const mb = c.querySelector("[data-a=master]");
@@ -12784,13 +12837,13 @@ const Review = window.Review = (() => {
       +(cu&&printable(it)&&!cs?.busy?CustomPrint.buttonHtml(it,'print',printed?'sealedPrint':'ghost',printed?'Print again':'Print QR label',`print this order's 1 × 1 in QR sticker for the sorting station${printed?' again':''}`,'sm','data-seal-btn'):'')+seals
       +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:''))+placedActs;
     // SIBLINGS (Paul, 12 Oct 2026): an unknown SKU whose numbered designs sit in the library, on a necklace (or two charms): ONE quiet tap, "Use both", with the two thumbnails, and each design as a single choice, in the row itself
-    const pk=it.problem||{},sib=!cu&&!it.done&&!it.decided&&row&&it.kind==='unmatchedSku'?siblingOffer(row,pk,group):null;
+    const pk=it.problem||{},sib=!cu&&!it.done&&!it.decided&&row&&it.kind==='unmatchedSku'?siblingOffer(row,pk,group):null,tix=!sib&&!cu&&!it.done&&!it.decided&&row&&it.kind==='unmatchedSku'?titleOffer(pk):null;
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
-    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind)+(it.job&&faceWordOf(it.job)?' · '+faceWordOf(it.job):''))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${sib?`<div class="sibOffer" data-sib="${esc(JSON.stringify(siblingStamp(it)))}"><div class="sibAsk">${esc(sib.ask)}</div><div class="sibPicks">${sibButtons(sib)}</div></div>`:''}${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${it.kind==='orderChanged'&&row&&!it.decided?'<button type="button" class="btn gold sm" data-rv-accept title="make this order up again as it reads now: the old pieces come off the sheet they are on (a sheet already released or cut is never touched)">Accept the new order</button>':''}${holdSlotFor(row,it,busy)}</div>${cs?CustomSheet.stripHtml(cx):''}`;
+    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind)+(it.job&&faceWordOf(it.job)?' · '+faceWordOf(it.job):''))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${sib?`<div class="sibOffer" data-sib="${esc(JSON.stringify(siblingStamp(it)))}"><div class="sibAsk">${esc(sib.ask)}</div><div class="sibPicks">${sibButtons(sib)}</div></div>`:tix?`<div class="sibOffer titleOffer" data-sib="${esc(JSON.stringify(siblingStamp(it)))}"><div class="sibAsk">${esc(titleAsk(tix))}</div><div class="sibPicks">${titleButtons(tix)}</div></div>`:''}${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${it.kind==='orderChanged'&&row&&!it.decided?'<button type="button" class="btn gold sm" data-rv-accept title="make this order up again as it reads now: the old pieces come off the sheet they are on (a sheet already released or cut is never touched)">Accept the new order</button>':''}${holdSlotFor(row,it,busy)}</div>${cs?CustomSheet.stripHtml(cx):''}`;
     // (a row drawn again for another reason keeps the offer's loaded thumbnails, as it keeps its .comparePair: they are not asked for twice)
-    if(sib&&cached?.node){const was=cached.node.querySelector('.sibOffer'),now=node.querySelector('.sibOffer');if(was&&now&&was.dataset.sib===now.dataset.sib)now.replaceWith(was);}
-    if(sib){Master.mountPictures(node);wireSib(node,it,pk,sib,fn=>saving(node,fn,'.sibOffer button'));}   // (the saved pair link or alias, for good; the buttons hold while it saves)
+    if((sib||tix)&&cached?.node){const was=cached.node.querySelector('.sibOffer'),now=node.querySelector('.sibOffer');if(was&&now&&was.dataset.sib===now.dataset.sib)now.replaceWith(was);}
+    if(sib||tix){Master.mountPictures(node);wireSib(node,it,pk,sib,fn=>saving(node,fn,'.sibOffer button'));}   // (the saved pair link or alias, for good; the buttons hold while it saves)
     if(window.HoldUI)HoldUI.fill(node);   // (the one orange Hold button, beside Print QR label / Complete Order / Reopen)
     // (its custom buttons as a custom card's, and a click on the card opens its order; one whose line has left the pull
     // opens the order by its number)
@@ -13023,7 +13076,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, leaveCard, problemText, syncOrderItems, focus, showCard, repool, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, leaveCard, problemText, syncOrderItems, focus, useAnotherCharm, showCard, repool, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -14414,7 +14467,7 @@ const OrderWin = window.OrderWin = (() => {
    *  form, size, chain, the engraving, everything picked at the purchase, listing, title). Nothing here reads a record or the network. */
   function factsOf(r) {
     const sp = r.spec || {}, rid = String(r.order.receiptId), onum = String(r.order.orderNumber || ""), buyer = r.order.buyer && r.order.buyer.name ? String(r.order.buyer.name) : "";
-    const on = { customer: () => tryDo(() => window.CustomerMail && CustomerMail.setTab && CustomerMail.setTab("customer", true)) };
+    const on = { customer: () => tryDo(() => window.CustomerMail && CustomerMail.setTab && CustomerMail.setTab("customer", true)), otherCharm: () => tryDo(() => Review.useAnotherCharm(r)) };
     // (an order still being read: its number and what is known of it; the rest is a skeleton where it is coming)
     if (r.loading) return { key: r.key, loading: true, order: { id: rid, num: "" }, buyer: { name: buyer, gift: false }, cells: [], on };
     const st = tryDo(() => Orders.statePill(r)) || ["neutral", r.state || "—"], sheetCell = sheetCellOf(r);
@@ -14447,6 +14500,7 @@ const OrderWin = window.OrderWin = (() => {
     if (bought.length) bought.forEach(o => cell(o.name || "Option", o.value)); else (sp.options || []).filter(o => o.mapped).forEach(o => cell(o.name, o.value));
     cell("Listing", String(r.line.listingId || "—"), r.line.listingId ? { copy: String(r.line.listingId), mono: 1 } : { mono: 1 });
     cell("Title", r.line.title || "—", { wide: 1 });
+    if (sp.titleMatch) cell("Matched by", `the listing's title: ${sp.titleMatch.sku} (${sp.titleMatch.why})`, { wide: 1 });   // NOSKU: a listing with no SKU on Etsy, its charm read from its title
     // the glance: what matters at a glance, and for each the card it opens
     const quiet = /cancel|gone|complete/i.test(st[1]) || r.state === "gone";   // (a cancelled or finished order is told its date, never alarmed by it)
     const engMode = tryDo(() => window.CharmNestEngraveFaces && CharmNestEngraveFaces.setupOf(r).mode) || "", news = tryDo(() => window.CustomerMail && CustomerMail.tabNews && CustomerMail.tabNews(rid)) || null;
@@ -14464,6 +14518,7 @@ const OrderWin = window.OrderWin = (() => {
       engraving: hasEng ? { chip: engMode === "both" ? "Front + back" : engMode === "front" ? "Front only" : "Engraving", html: engHtml, approved: !!(r.engrave && r.engrave.approved) } : read ? { chip: read.chip, html: read.html, approved: false } : null,
       message: bm || gm || (news && (news.unread || news.bad)) ? { buyer: bm, gift: gm, unread: news && news.unread ? 1 : 0, bad: !!(news && news.bad) } : null,
       listing: { id: String(r.line.listingId || ""), title: String(r.line.title || "") },
+      titleMatch: sp.titleMatch ? { sku: sp.titleMatch.sku, why: sp.titleMatch.why } : null,
       state: { tone: st[0] || "neutral", text: st[1], sheet: sheetCell || "" }
     };
   }
@@ -14498,7 +14553,7 @@ const OrderWin = window.OrderWin = (() => {
     // photo alone, or "no image" while the photo was not ready)
     const vh = byId("owVector"); if (vh) { if (W.zoom) tryDo(() => W.zoom.vector.key(vectorKey(r))); tryDo(() => ListMedia.vectorInto(vh, r)); }
     // (the SKU alone, as the Copy button copies it: an earring pair says its Left and Right in its pieces and facts, not on this line: Paul, 12 Oct 2026)
-    byId("owSku").textContent = "SKU: " + ((O.setDesignsOf(sp) || []).join(" + ") || sp.designSku || r.line.sku || "—");   // (a necklace of saved charms names them all)
+    byId("owSku").textContent = "SKU: " + ((O.setDesignsOf(sp) || []).join(" + ") || sp.designSku || r.line.sku || "—") + (sp.titleMatch ? " · matched by the listing's title" : "");   // (a necklace of saved charms names them all; NOSKU: a listing with no SKU on Etsy shows how its charm was found)
     paintEng(r);
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller
     const said = [];
@@ -15276,6 +15331,13 @@ const OrderWin = window.OrderWin = (() => {
       if (x.materialOverride) kinds.delete("needsMaterial");
       if (x.sizeOverride) kinds.delete("missingSize");
       return kinds.has(kind);
+    },
+    // NOSKU: the sentence a line asks NOW (an event written before the plain wording still says "Unknown SKU: SKU ?: ..."); "" for anything else, so the stored sentence stands
+    text: (lineKey, kind) => {
+      if (kind !== "unmatchedSku") return "";
+      const x = mine.get(String(lineKey)); if (!x || x.state === "gone") return "";
+      const p = [].concat(x.spec.problems, x.problems || []).find(q => q && q.kind === "unmatchedSku" && q.nosku && q.nosku.short);
+      return p ? p.nosku.short : "";
     } };
   }
   function nowOf(r) {
