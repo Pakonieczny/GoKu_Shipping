@@ -12021,7 +12021,7 @@ const Review = window.Review = (() => {
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
   const SEP = "\u0000";
   function decisionKey(row, p) {
-    if (p.kind === "unmatchedSku") return p.sku ? `ord:sku:${p.sku}${p.zodiac ? SEP + p.zodiac : ""}` : `ord:listing:${p.listingId || row.key}${p.huggie ? SEP + "huggie" : ""}`;   // a huggie set's is its own
+    if (p.kind === "unmatchedSku") return p.sku ? `ord:sku:${p.sku}${p.zodiac ? SEP + p.zodiac : ""}${p.generic ? SEP + "L" + p.generic : ""}` : `ord:listing:${p.listingId || row.key}${p.huggie ? SEP + "huggie" : ""}`;   // a huggie set's is its own
     if (p.kind === "blockedSku") return `ord:blocked:${p.sku}`;
     if (p.kind === "needsMapping") return `ord:opt:${p.optionName}${SEP}${p.optionValue}`;
     if (p.kind === "needsMaterial") return `ord:mat:${p.listingId || row.key}${SEP}${p.metalLabel || ""}`;

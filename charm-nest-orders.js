@@ -797,6 +797,15 @@
   const huggieSku = (raw, masterEntry) => { const s = upSku(raw).replace(/\s+/g, " "); if (!s || /\(HUGGIE\)$/.test(s)) return s;
     const base = variationBase(s), real = !!base && !!masterEntry && !!(masterEntry(s) || masterEntry(s + " (HUGGIE)")); return (base && !real ? base : s) + " (HUGGIE)"; };
   const variationBase = raw => { const m = /^(.+?)[\s_-]+CO$/i.exec(String(raw || "").trim()); return m ? m[1].trim().toUpperCase() : ""; };
+  /* CHAMMAP (Paul, 12 Oct 2026, order 4199572384): the Etsy listing 4494184284 "Chameleon Charm Necklace" is a necklace that was read as an ASTRONAUT. Its charm-only products carry the shop's SHARED placeholder SKU
+     "CO-GoldCharmO" (the same five, CO-GoldCharmO / CO-SilverChar / CO-RoseCharmO / CO-10kSolidCh / CO-14kSolidCh, are on the Wolf Face listing 4494182906 too; "CO" = charm only, then the metal and "Charm O(nly)",
+     cut at 13 characters), and the master holds the label "CO-GOLDCHARMO" on the astronaut's drawing (also "CHARM" and "SILVER CHARM", labels on other drawings). The Etsy SKU matched that master entry
+     exactly, at once, and nothing asked whether such a name could name ONE design: it cannot, it is on listings of every design. genericSku says what such a SKU looks like (the charm-only mark "CO", a
+     separator, metal words, then "charm" or the start of "charm only"; or only metal words and the word "charm"); resolveSku never takes it as an automatic match (see there): the line takes the listing's
+     saved answer for that SKU, or waits for a person with one plain line. Exact words only: "COBRA 1", "CO-OWL", "CO-ROSE", "ROSE CHARM", "BEADY CHARM" are designs. */
+  const GENERIC_METAL = "(?:GOLD|SILVER|ROSEGOLD|ROSE|RG|YG|GF|SS|VERMEIL|STERLING|SOLID|FILLED|\\d{1,2}K)";
+  const GENERIC_WITH_CO = new RegExp("^" + GENERIC_METAL + "*CH(?:A(?:R(?:M(?:S|O(?:N(?:LY?)?)?)?)?)?)?$"), GENERIC_NO_CO = /^(?:GOLD|SILVER|ROSEGOLD|RG|YG|GF|SS|VERMEIL|STERLING|SOLID|FILLED|\d{1,2}K)*(?:CHARMS?|CHARMONLY|CHARMO)$/;
+  const genericSku = raw => { const s = upSku(raw), m = /^CO[\s_.-]+(.+)$/.exec(s); return !s ? false : m ? GENERIC_WITH_CO.test(m[1].replace(/[\s_.-]+/g, "")) : GENERIC_NO_CO.test(s.replace(/[\s_.-]+/g, "")); };
   /* The SKU Etsy keeps for the variation bought comes before anything else (Paul, 9 Oct: a listing whose drop-down options
      carry SKUs, "the choice the user made … will directly correlate to the charm that has to be located from the repository").
      Etsy puts that SKU on the receipt transaction; the listing's inventory (one table per listing, cached by the cloud:
@@ -1216,6 +1225,9 @@
     // is not blocked. The Etsy SKU "DACHSHUND" is also a master entry (a cat disc filed under that name); Paul linked the listing to DACHSHUND_36943 and the exact match kept winning. Never the reverse:
     // no saved link (or one naming a design the master does not hold, or the same SKU) reads exactly as before. Only the SKU's own answer (own), never the listing-wide one (whole).
     const ownEntry = held && own && own !== raw && masterEntry ? masterEntry(own) : null, ownWins = !!(ownEntry && !ownEntry.blocked);
+    // CHAMMAP (12 Oct 2026): a master entry filed under the shop's SHARED charm-only placeholder ("CO-GOLDCHARMO", a label on the astronaut; see genericSku) is no automatic match for any listing: the listing's
+    // own saved answer for the SKU stands (ownWins above, or its listing-wide one), else the line waits (source "generic", held in interpretLine). A SKU on the no-design list is still that.
+    if (held && !held.blocked && !ownWins && !isNoDesign(raw, noDesign) && genericSku(raw)) return own ? { sku: own, source: "alias" } : whole ? { sku: whole, source: "alias" } : { sku: raw, source: "generic" };
     if (raw && (!masterEntry || (held && !(own && (held.blocked || ownWins))) || isNoDesign(raw, noDesign))) return { sku: raw, source: "transaction" };
     if (own) return { sku: own, source: "alias" };
     // the master's own spelling of the SKU (a person's answer for the SKU as written came first), then the charm-only mark
@@ -2747,7 +2759,7 @@
     // the SKU as bought: a charm-only listing's Huggie CHARM SET is its SKU's huggie design
     const set = huggieSet(line), bought = set ? huggieSku(line.sku, me) : upSku(line.sku);
     let { sku, source: skuSource } = resolveSku(set ? Object.assign({}, line, { sku: bought }) : line, ctx.aliases, me, ctx.noDesign, loose);
-    if (viaInventory && skuSource !== "alias") skuSource = "inventory";
+    if (viaInventory && skuSource !== "alias" && skuSource !== "generic") skuSource = "inventory";   // (CHAMMAP: a placeholder SKU Etsy's table gives the product is as generic as one on the transaction)
     // HUGGIEGUARD (stage A): what the line IS, and a person's saved answer for this listing and SKU. resolveSku trusts an exact master SKU before any saved answer, so when the exact design's form clashes
     // with the line (below) the saved answer is read here: another design wins (source "alias"), the same design is the person's word that it is right (formSaid: never held again)
     const guardCtx = { masterEntry: me, masterLoose: loose, masterShared: ctx.masterShared };
@@ -3023,6 +3035,13 @@
       spec.formHold = { sku: spec.boughtSku, design: "", lineForm: lf.form, designForm: df.form, reason, siblings: [], zodiac: zodiac.hold.kind, sign: zodiac.sign || "" };
       spec.designSku = null; spec.skuSource = null; spec.sources.sku = null;
       problems.unshift({ kind: "unmatchedSku", reason, sku: spec.boughtSku, listingId: String(line.listingId || ""), title: line.title || "", formHold: true, zodiac: zodiac.hold.kind + ":" + (zodiac.sign || ""), lineForm: lf.form, designForm: df.form, siblings: [] });
+    } else if (skuSource === "generic" && !quiet && me && spec.designSku) {
+      // CHAMMAP: the SKU is the shop's shared charm-only placeholder (genericSku) and this listing has no saved answer for it: the master label of that name is on some other design (the astronaut), so no design is on
+      // the row and nothing is pooled; the line waits for a person with ONE plain line (the form guard's own hold, makePool). The decision is per LISTING (problem.generic): one listing's answer is never another's.
+      const etsy = upSku(line.sku) || spec.boughtSku, reason = `SKU “${etsy}” is a generic charm-only SKU the shop uses on many listings, so it does not say which charm this listing is: say which charm it is`;
+      spec.formHold = { sku: spec.boughtSku, design: "", lineForm: lf.form, designForm: df.form, reason, siblings: [], generic: true };
+      spec.designSku = null; spec.skuSource = null; spec.sources.sku = null;
+      problems.unshift({ kind: "unmatchedSku", reason, sku: spec.boughtSku, listingId: String(line.listingId || ""), title: line.title || "", formHold: true, generic: String(line.listingId || "?"), lineForm: lf.form, designForm: df.form, siblings: [] });
     }
     return spec;
   }
@@ -3393,7 +3412,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,

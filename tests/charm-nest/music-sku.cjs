@@ -117,9 +117,11 @@ const SAVED = '/mnt/project-files/plans/flag-fix-1011/master-skus-1011.json';
 if (fs.existsSync(SAVED)) {
   const list = JSON.parse(fs.readFileSync(SAVED, 'utf8')), skus = list.map(e => e.sku), all = master(skus), twice = master(skus.concat(['MUSIC4']));
   eq(skus.length, new Set(skus).size, 'the saved master list has no SKU twice');
-  let named = 0, odd = [];
-  for (const m of [all, twice]) for (const s of skus.concat(['MUSIC4'])) { const r = O.resolveSku({ sku: s, listingId: '1' }, {}, m.entry, {}, m.loose); if (m.entry(s)) { if (r.sku !== s || r.source !== 'transaction') odd.push(s); } if (r.source === 'named') named++; }
+  let named = 0, odd = []; const generic = new Set();
+  // (CHAMMAP, 12 Oct 2026: a master label that is one of the shop's shared charm-only placeholders - CHARM, SILVER CHARM, CO-GOLDCHARMO - is not read as its drawing from the Etsy SKU alone: source "generic", held until a person says which charm)
+  for (const m of [all, twice]) for (const s of skus.concat(['MUSIC4'])) { const r = O.resolveSku({ sku: s, listingId: '1' }, {}, m.entry, {}, m.loose); if (m.entry(s)) { const g = O.genericSku(s); if (g) generic.add(s); if (r.sku !== s || r.source !== (g ? 'generic' : 'transaction')) odd.push(s); } if (r.source === 'named') named++; }
   eq([named, odd], [0, []], `${skus.length} master SKUs (before and after the write): each reads as itself, none through the named table`);
+  eq([...generic].sort(), ['CHARM', 'CO-GOLDCHARMO', 'SILVER CHARM'], 'the only master SKUs read as a shared placeholder are the three charm-only labels');
   // the probes: "<master SKU> - SINGLE W/ DOUBLE LINE" and a few other descriptors, for every master SKU: only the named SKU's own spellings change
   const changed = [];
   for (const s of skus) for (const d of [' - SINGLE W/ DOUBLE LINE', ' - DOUBLE NOTE', ' - BEADY', ' - DISC']) { const r = O.resolveSku({ sku: s + d, listingId: '1' }, {}, all.entry, {}, all.loose); if (r.source === 'named') changed.push(s + d + ' -> ' + r.sku + ' (' + r.source + ')'); }
