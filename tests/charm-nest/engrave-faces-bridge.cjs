@@ -353,6 +353,35 @@ const shape = j => { const o = {}; for (const k of Object.keys(j).sort()) if (k 
     }
     assert.ok(total > 300 && faced > 0, 'swept ' + total + ' lines, ' + faced + ' faced, ' + backOld + ' back, ' + raised + ' raised'); console.log('      (swept ' + total + ' lines: ' + faced + ' with a front / a person to ask, ' + backOld + ' back-only readings through the old reader, ' + raised + ' raised from "no words")');
   });
+  /* 10 ── BFSIDES: a side count ("Gold - 16\" - 2 sides") on a design with its own front art, order 4200828980 */
+  await t('10 "2 sides" on the marigold disc: ONE back job with the buyer\'s name and date taken from the reading (no paid reading, no front job), the font word comes along; "1 side" is cut plain with its reason; the reader still decides what the intake leaves open; a person\'s setup wins', async () => {
+    const ENT = { 'BIRTHFLOWER_NECKLACE_DISC-9': { sku: 'BIRTHFLOWER_NECKLACE_DISC-9', members: 2, holes: 0, backKeepOut: [], widthPt: 48.354, heightPt: 56.287 } };
+    const ictx = { optionMaps: {}, aliases: {}, noDesign: {}, listingSkus: {}, masterEntry: k => ENT[String(k || '').toUpperCase()] || null, masterLoose: () => '' };
+    const spec = (value, pers) => Orders.interpretLine({ receiptId: '4200828980', updateTs: 0 }, { transactionId: 't1', listingId: '870782383', sku: 'BIRTHFLOWER_NECKLACE_DISC-9', title: 'Birth Flower Necklace', quantity: 1, metalKey: 'gold', metalLabel: 'Gold', personalization: pers, variations: [{ name: 'Birth Flower', value: 'Marigold' }, { name: 'Length/Engrave:1 side/2 sides?', value: value }] }, ictx);
+    const rowOf = (sp, extra) => { const r = mk(BASE.one, sp.engraving, extra); r.spec.personalization = sp.personalization.slice(); r.spec.engraveCandidate = sp.engraveCandidate; return r; };
+    const WORDS = ['Typewriter font\n\nGeorgia Andy Margot Jaarsma\nOctober 26 2020'];
+    // 2 sides
+    const row = rowOf(spec('Gold - 16" - 2 sides', WORDS)), h = harness([row]); await h.ctx.classify(row);
+    assert.equal(h.asked.length, 0, 'no paid reading'); assert.deepEqual([...h.jobs.keys()], [row.key], 'one job, the back, under the line\'s own key'); const j = h.jobs.get(row.key);
+    assert.equal('face' in j, false); assert.equal(j.state, 'ready'); assert.equal(j.text, 'Georgia Andy Margot Jaarsma\nOctober 26 2020'); assert.equal(j.source, 'option'); assert.equal(j.wordsSource, 'spec.engraving');
+    assert.equal(j.requests.side, 'back'); assert.equal(j.requests.font, 'Typewriter'); assert.equal(j.wordsHow, 'single'); assert.equal(j.approvedAt == null, true); assert.equal(row.engrave.approved, false); assert.equal(row.engrave.state, 'ready');
+    assert.equal(h.events.filter(e => e.type === 'engraveNeeded').length, 1); assert.match(h.events.find(e => e.type === 'engraveNeeded').text, /^Back engraving: “Georgia Andy Margot Jaarsma \/ October 26 2020”/);
+    assert.equal(h.ctx.setupOf(row).mode, 'back'); assert.deepEqual(h.ctx.setupOf(row).back.lines, ['Georgia Andy Margot Jaarsma', 'October 26 2020']);
+    // 1 side: cut plain, the reason says why, nothing asked, nothing paid
+    const one = rowOf(spec('Gold - 16" - 1 side', WORDS)), h1 = harness([one]); await h1.ctx.classify(one);
+    assert.equal(h1.asked.length, 0); const j1 = h1.jobs.get(one.key); assert.equal(j1.state, 'none'); assert.match(j1.reason, /^Buyer chose 1 side; words not engraved: “Georgia Andy Margot Jaarsma \/ October 26 2020”$/); assert.equal(one.engrave.approved, true); assert.equal(one.engrave.needed, false);
+    // 2 sides, words that are no plain inscription: the engraving reader decides, as it does for every back line
+    const long = rowOf(spec('Gold - 16" - 2 sides', ['Please engrave my name Anna and the date 10.26.20 in the centre of the back, thank you so much'])), hl = harness([long], { reading: { engrave: true, text: 'Anna\n10.26.20', source: 'personalization', confidence: .9, questions: [], requests: { side: 'back', font: null } } });
+    await hl.ctx.classify(long); assert.equal(hl.asked.length, 1, 'one paid reading, as before'); assert.equal(hl.jobs.get(long.key).text, 'Anna\n10.26.20'); assert.equal(hl.jobs.size, 1);
+    // 2 sides, no words at all: a person is asked (never cut plain, never guessed)
+    const nw = rowOf(spec('Gold - 16" - 2 sides', [])), hn = harness([nw]); await hn.ctx.classify(nw);
+    assert.equal(hn.asked.length, 0); const jn = hn.jobs.get(nw.key); assert.equal(jn.state, 'words'); assert.match(jn.questions[0], /2 sides were chosen/); assert.equal(jn.approvedAt == null, true);
+    // a person's setup wins: words for a 1 side line, no engraving for a 2 sides line
+    const mine = rowOf(spec('Gold - 16" - 1 side', WORDS), { engravingOverride: { mode: 'back', back: { text: 'ANNA' }, by: 'Rita', at: 5 } }), hm = harness([mine]); await hm.ctx.classify(mine);
+    assert.equal(hm.asked.length, 0); const jm = hm.jobs.get(mine.key); assert.equal(jm.state, 'ready'); assert.equal(jm.text, 'ANNA'); assert.equal(jm.source, 'person');
+    const no = rowOf(spec('Gold - 16" - 2 sides', WORDS), { engravingOverride: { mode: 'none', by: 'Rita', at: 5 } }), hz = harness([no]); await hz.ctx.classify(no);
+    assert.equal(hz.asked.length, 0); assert.equal(hz.jobs.get(no.key).state, 'none'); assert.match(hz.jobs.get(no.key).reason, /decided by Rita/);
+  });
   const failed = results.filter(([, e]) => e);
   console.log(`\n${results.length - failed.length}/${results.length} passed`);
   if (failed.length) process.exit(1);
