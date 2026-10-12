@@ -6568,6 +6568,8 @@ const Engrave = window.Engrave = (() => {
     if (!n) { n = document.createElement("div"); n.className = "engwNote"; n.setAttribute("role", "status"); host.appendChild(n); }
     const html = (rec.wait === "font" ? '<span class="owSpin" aria-hidden="true"></span>' : "") + esc(label);
     if (n.dataset.k !== html) { n.dataset.k = html; n.innerHTML = html; n.setAttribute("aria-label", label); }
+    const bc = host.querySelector("canvas");   // (in the corner of the drawing, not of the whole work area, which is taller than the picture)
+    if (bc && bc.offsetWidth) { n.style.left = (bc.offsetLeft + 8) + "px"; n.style.bottom = Math.max(8, host.clientHeight - (bc.offsetTop + bc.offsetHeight) + 8) + "px"; }
   }
   /** Works out what the work area draws for a draft (sets rec.fit / rec.wait / rec.note); never touches the job. */
   function draftCompute(job, rec) {

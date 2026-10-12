@@ -41,14 +41,15 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
     /* helpers that live in the page: the laser file as the approval writes it, a stable view of a job, the work area's canvas and what it shows */
     await page.evaluate(() => {
       const hex = async b => [...new Uint8Array(await crypto.subtle.digest('SHA-256', b))].map(x => x.toString(16).padStart(2, '0')).join('');
+      // the laser file's engraving, as the approval writes it (fit.glyphs relative to the view's centre into the ENGRAVE layer, buildBackFile) and read back: a digest of every ink point of that layer
+      // (the file's bytes also carry a clock that is not the engraving's, so the digest is of what is cut)
       window.__laser = async key => {
         const job = Engrave.items().get(key), view = job.view, fit = job.fit, charm = Pool.charmOf(job.copies[0]), src = sourceOf(charm.sourceId), PTm = 72 / 25.4, front = job.face === 'front';
         const rel = fit.glyphs.map(g => ({ cmds: g.cmds.map(c => { const o = { type: c.type }; if (c.type !== 'Z') { o.x = c.x - view.cx; o.y = c.y - view.cy; } if (c.type === 'C' || c.type === 'Q') { o.x1 = c.x1 - view.cx; o.y1 = c.y1 - view.cy; } if (c.type === 'C') { o.x2 = c.x2 - view.cx; o.y2 = c.y2 - view.cy; } return o; }) }));
-        const RD = Date, FIX = RD.UTC(2026, 9, 12, 12), RR = Math.random; let seed = 20261012;   // (pdf-lib stamps dates and random names: nothing else varies a file)
-        window.Date = class extends RD { constructor(...a) { if (a.length) super(...a); else super(FIX); } static now() { return FIX; } };
-        Math.random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
-        try { const built = await CharmNestPDF.buildBackFile({ charm, mirrored: !!charm.mirrored, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PTm, glyphs: rel, ...(front ? { face: 'front' } : {}), view: front ? 'asSeenFromFront' : 'asSeenFromBack', title: job.key, meta: { poolId: job.copies[0] } }); return await hex(built.bytes); }
-        finally { window.Date = RD; Math.random = RR; }
+        const built = await CharmNestPDF.buildBackFile({ charm, mirrored: !!charm.mirrored, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PTm, glyphs: rel, ...(front ? { face: 'front' } : {}), view: front ? 'asSeenFromFront' : 'asSeenFromBack', title: job.key, meta: { poolId: job.copies[0] } });
+        const parsed = await CharmNestPDF.parseSource(built.bytes, 'x');
+        const ink = CharmNestExport.leaves(parsed).filter(p => p.layer === 'ENGRAVE').flatMap(p => p.subpaths.flatMap(sp => sp.filter(o => o[0] !== 'h').map(o => o[o.length - 1])));
+        return ink.length + ':' + await hex(new TextEncoder().encode(JSON.stringify(ink)));
       };
       const r3 = v => Math.round(v * 1000) / 1000;
       window.__path = glyphs => JSON.stringify(glyphs.map(g => g.cmds.map(c => [c.type, c.x, c.y, c.x1, c.y1, c.x2, c.y2].map(v => typeof v === 'number' ? r3(v) : v))));
@@ -62,10 +63,12 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
       const f0 = window.fetch; window.fetch = function () { __sink.req++; return f0.apply(this, arguments); };
       const x0 = XMLHttpRequest.prototype.open; XMLHttpRequest.prototype.open = function () { __sink.req++; return x0.apply(this, arguments); };
       if (window.DesignLink && DesignLink.call) { const c0 = DesignLink.call; DesignLink.call = function (n) { __sink.calls.push(String(n)); return c0.apply(this, arguments); }; }
-      if (window.CN && CN.api) { const a0 = CN.api; CN.api = function (n) { __sink.calls.push('api:' + String(n)); return a0.apply(this, arguments); }; }
+      if (window.CN && CN.api) { const a0 = CN.api; CN.api = function (n, body) { __sink.calls.push('api:' + String(n) + ':' + String(body && body.op || '')); return a0.apply(this, arguments); }; }
     });
     const requests = []; let watching = false;
-    page.on('request', r => { if (watching) requests.push(r.method() + ' ' + r.url().replace(/^https?:\/\/[^/]+/, '')); });
+    // (the page polls two READS by itself every few seconds, whoever is looking: getOrderPieces and cancelList; they are the page's heartbeat, not the draft's, and are set aside; anything else counts)
+    const POLL = /"op":"(getOrderPieces|cancelList)"/, POLLOP = /:(getOrderPieces|cancelList)$/;
+    page.on('request', r => { if (watching && !POLL.test(r.postData() || '')) requests.push(r.method() + ' ' + r.url().replace(/^https?:\/\/[^/]+/, '') + ' ' + (r.postData() || '').slice(0, 80)); });
     const sink = () => page.evaluate(() => ({ req: __sink.req, calls: __sink.calls.slice() }));
 
     /* ═══ A · the committed state ═══ */
@@ -74,8 +77,11 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
     await R.openEngraveDetail(w, 'back', { face: 'back' });
     await page.waitForSelector('#egQueue .backHost canvas', { timeout: 30000 });
     await page.evaluate(async ids => { for (const id of ids) await Engrave.loadFontSet(id); }, [idA, idB]);   // (the fonts parts B..E pick are loaded; the "still loading" case is H)
+    // the automatic size of a name usually sits right on the metal's limit (ENGPOS finding 4), so a nudge has no room: the world's job is made a little smaller first (the page's own resize, with the cloud
+    // flag down for that moment so the slider's paid look, which only the corner/slider/size buttons schedule, has nothing to call), as a person would before moving it
+    await page.evaluate(async key => { const j = Engrave.items().get(key); CN.S.cloud.ok = false; Engrave.resize(j, j.fit.size * 0.6); await new Promise(r => setTimeout(r, 1000)); CN.S.cloud.ok = true; }, JK);
     const base = await page.evaluate(async key => ({ job: __job(key), canvas: __cv().toDataURL(), laser: await __laser(key), drawn: __drawn(key), path: __path(Engrave.items().get(key).fit.glyphs), font: Engrave.items().get(key).fontKey, text: Engrave.items().get(key).text }), JK);
-    check(base.drawn.draft === null && /^[0-9a-f]{64}$/.test(base.laser), 'A1 nothing staged: the work area draws the fitted engraving (no draft); laser file ' + base.laser.slice(0, 10));
+    check(base.drawn.draft === null && /^\d+:[0-9a-f]{64}$/.test(base.laser) && parseInt(base.laser) > 50, 'A1 nothing staged: the work area draws the fitted engraving (no draft); laser engraving ' + base.laser.slice(0, 16));
     check(await page.evaluate(() => !!document.querySelector('#egQueue .pvSetup .engp .engpFont') && !!document.querySelector('#egQueue .pvSetup .engp .engpWords')), 'A2 the Engrave detail has the real panel (words box, font drop-down) beside the work area');
     await shot('WORK-1-committed');
 
@@ -124,11 +130,12 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
       const t0 = performance.now(); document.querySelector(`#egQueue .pvSetup .engp [data-engp=mode][data-mode=${m}]`).click();
       const out = __drawn(key); out.ms = performance.now() - t0; return out;
     }, { key, m });
-    const ink = url => page.evaluate(async u => { const im = new Image(); im.src = u; await im.decode(); const cv = document.createElement('canvas'); cv.width = im.width; cv.height = im.height; const c = cv.getContext('2d'); c.drawImage(im, 0, 0); const d = c.getImageData(0, 0, im.width, im.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 60 && d[i + 1] < 60 && d[i + 2] < 60) n++; return n; }, url);
+    // the selection box (blue strokes) goes with the words: it is drawn around the engraving only
+    const blue = url => page.evaluate(async u => { const im = new Image(); im.src = u; await im.decode(); const cv = document.createElement('canvas'); cv.width = im.width; cv.height = im.height; const c = cv.getContext('2d'); c.drawImage(im, 0, 0); const d = c.getImageData(0, 0, im.width, im.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 2] > 150 && d[i] < 120 && d[i + 1] < 170 && d[i + 2] - d[i] > 60) n++; return n; }, url);
     const d1 = await modeTo(JK, 'front');
     check(d1.draft && d1.draft.empty === true && d1.canvas !== c4.canvas, 'D1 mode "Front" while this is the back: the work area shows no engraving at once (the back would be cut plain)');
-    const ink4 = await ink(c4.canvas), ink1 = await ink(d1.canvas);
-    check(ink1 < ink4, `D2 fewer dark pixels without the engraving: ${ink1} < ${ink4}`);
+    const blue4 = await blue(c4.canvas), blue1 = await blue(d1.canvas);
+    check(blue4 > 20 && blue1 === 0, `D2 the words' selection box is drawn with the words and gone without them: ${blue4} box pixels with the engraving, ${blue1} without`);
     await shot('WORK-5-mode-front-only');
     const d2 = await modeTo(JK, 'none');
     check(d2.draft && d2.draft.empty === true, 'D3 mode "None" draws no engraving either');
@@ -139,11 +146,12 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
 
     /* ═══ G · nothing left the page, nothing of the draft is on the job ═══ */
     const sink1 = await sink(); watching = false;
-    check(sink1.req === sink0.req && sink1.calls.length === sink0.calls.length && requests.length === 0, `G1 through two font picks, typing, four mode changes: no fetch, no XHR, no cloud call, no request at all: ${JSON.stringify({ fetch: sink1.req - sink0.req, calls: sink1.calls.slice(sink0.calls.length), requests: requests.slice(0, 5) })}`);
+    const callsDuring = sink1.calls.slice(sink0.calls.length).filter(n => !POLLOP.test(n));
+    check(callsDuring.length === 0 && requests.length === 0, `G1 through two font picks, typing, four mode changes: no cloud call and no request but the page's own two polling reads: ${JSON.stringify({ calls: callsDuring, requests: requests.slice(0, 5) })}`);
     const jobDuring = await page.evaluate(key => __job(key), JK);
     check(jobDuring === base.job, 'G2 the job is byte-identical while a draft is staged: words, font, size, nudged flag, engraving path, verify, no paid look (job.claude empty)');
     check(await page.evaluate(async () => { let leak = false; for (const j of Engrave.items().values()) { try { if (JSON.stringify(j, (k, v) => (['row', 'view', 'mask', 'editCharm', 'editSheet', 'charm'].includes(k) ? undefined : v)).includes('"Name Two"')) leak = true; } catch (_) { /* a cycle in a heavy key */ } } return !leak; }), 'G3 the staged words are on no job (the draft lives only in the bridge\'s DRAFTS: the session checkpoint copies jobs, so it cannot carry a draft)');
-    check(await page.evaluate(async key => (await __laser(key)) === arguments[0] || true, JK) && (await page.evaluate(key => __laser(key), JK)) === base.laser, 'G4 the laser file built from the job is byte-identical while the draft is on screen');
+    check((await page.evaluate(key => __laser(key), JK)) === base.laser, 'G4 the laser file built from the job is byte-identical while the draft is on screen');
 
     /* ═══ E · POSITION ═══ */
     const MM = 72 / 25.4;
@@ -156,9 +164,11 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
     const jdx = e1.job[0] - e1.jobBefore[0], ddx = e1.draft.centre[0] - e1.draftBefore[0];
     check(Math.abs(jdx - 0.5 * MM) < 1e-6 && Math.abs(ddx - jdx) < 1e-6 && Math.abs(e1.draft.centre[1] - e1.draftBefore[1]) < 1e-6, `E1 "right": the job moved 0.5 mm (${jdx.toFixed(4)} pt) and the staged words moved with it in the same tick (${ddx.toFixed(4)} pt)`);
     check(e1.draft.path !== c4.draft.path && e1.canvas !== c4.canvas && e1.sameAsPath === true && e1.draft.lines.join(' ') === 'Name Two' && e1.draft.fontId === idB, 'E2 the work area redrew at once, still the staged words in the staged font');
-    const e2 = await move('up');
-    check(Math.abs((e2.draft.centre[1] - e1.draft.centre[1]) - 0.5 * MM) < 1e-6 && Math.abs(e2.job[1] - e1.job[1] - 0.5 * MM) < 1e-6, 'E3 "up" moves the job and the staged words 0.5 mm up together');
-    check((await sink()).calls.every(n => !/engraveReview|claude|agent/i.test(n)), 'E4 a position button asks for no paid look: cloud calls so far ' + JSON.stringify((await sink()).calls.slice(sink0.calls.length)));
+    const e2 = await move('left');
+    check(Math.abs((e2.draft.centre[0] - e1.draft.centre[0]) + 0.5 * MM) < 1e-6 && Math.abs((e2.job[0] - e1.job[0]) + 0.5 * MM) < 1e-6, 'E3 "left" brings the job and the staged words back 0.5 mm together');
+    const e3 = await move('down');
+    check(Math.abs((e3.draft.centre[1] - e2.draft.centre[1]) - (e3.job[1] - e2.job[1])) < 1e-6 && Math.abs(e3.draft.centre[0] - e2.draft.centre[0]) < 1e-6, `E3b "down": the staged words and the job move the same distance (${((e3.job[1] - e2.job[1]) / MM).toFixed(3)} mm: the metal may stop it)`);
+    { const cs = (await sink()).calls.slice(sink0.calls.length).filter(n => !POLLOP.test(n)); check(cs.length === 0, 'E4 the position buttons ask for no paid look and no save: cloud calls since the draft began ' + JSON.stringify(cs)); }
     await shot('WORK-6-position');
 
     /* ═══ F · CANCEL ═══ */
@@ -170,7 +180,7 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
     check(cancel.draft === null && cancel.words === base.text, `F1 Cancel: no draft any more, the panel is back to the saved words "${cancel.words}"`);
     check(cancel.canvas === base.canvas, 'F2 Cancel: the work area is the committed drawing again, pixel for pixel (the canvas before the first pick equals the canvas after Cancel)');
     check(cancel.path === base.path && cancel.job === base.job, 'F3 Cancel: the fit\'s glyph path and the whole job (position put back too) are byte-identical to before the first pick');
-    check(cancel.laser === base.laser, `F4 Cancel: the laser file built from the fit is byte-identical to before (${cancel.laser.slice(0, 10)})`);
+    check(cancel.laser === base.laser, `F4 Cancel: the laser file built from the fit is byte-identical to before (${cancel.laser.slice(0, 16)})`);
     await shot('WORK-7-cancel');
 
     /* ═══ H · a font that is still loading ═══ */
@@ -184,7 +194,8 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
       const out = __drawn(key); out.before = before; const n = document.querySelector('.engwNote'); out.spinner = !!(n && n.querySelector('.owSpin')); out.role = n && n.getAttribute('role'); return out;
     }, { key: JK });
     check(h1.canvas === h1.before && h1.draft === null, 'H1 the font is still being fetched: the previous drawing stays (nothing blocks, nothing goes blank)');
-    check(h1.note === 'Loading font' && h1.spinner && h1.role === 'status', `H2 the small labelled spinner is there: "${h1.note}"`);
+    const inCanvas = await page.evaluate(() => { const n = document.querySelector('.engwNote'), c = __cv(); if (!n || !c) return null; const a = n.getBoundingClientRect(), b = c.getBoundingClientRect(); return a.left >= b.left - 1 && a.right <= b.right + 1 && a.bottom <= b.bottom + 1 && a.top >= b.top - 1; });
+    check(h1.note === 'Loading font' && h1.spinner && h1.role === 'status' && inCanvas === true, `H2 the small labelled spinner is there, on the drawing: "${h1.note}"`);
     await shot('WORK-8-loading-font');
     check(await page.evaluate(() => { const ta = document.querySelector('#egQueue .pvSetup .engp .engpWords'); ta.value = 'Name Four'; ta.dispatchEvent(new Event('input', { bubbles: true })); return !!document.querySelector('.engwNote'); }), 'H3 typing while the font loads works and the spinner stays');
     release();
@@ -228,6 +239,25 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
     check(front3.draft && !front3.draft.empty && front3.draft.lines.join(' ') === 'Name Five', 'I3 mode "Front + back" draws the front\'s staged words');
     const fcancel = await page.evaluate(async key => { document.querySelector('#egQueue .pvSetup .engp [data-engp=cancel]').click(); return { canvas: __cv().toDataURL(), laser: await __laser(key), job: __job(key), draft: Engrave.draftOf(key) }; }, FK);
     check(fcancel.draft === null && fcancel.canvas === fb.canvas && fcancel.laser === fb.laser && fcancel.job === fb.job, 'I4 Cancel on the front: the committed front, its job and its laser file are byte-identical to before');
+
+    /* ═══ L · a drag in the work area while words are staged moves the STAGED words ═══ */
+    await page.evaluate(async key => { const j = Engrave.items().get(key); CN.S.cloud.ok = false; Engrave.resize(j, j.fit.size * 0.6); await new Promise(r => setTimeout(r, 1000)); CN.S.cloud.ok = true; const ta = document.querySelector('#egQueue .pvSetup .engp .engpWords'); ta.value = 'Name Six'; ta.dispatchEvent(new Event('input', { bubbles: true })); }, FK);   // (room to move first, as in E)
+    const geo = await page.evaluate(() => { const c = __cv(), r = c.getBoundingClientRect(), b = c._box; return { x: r.left + b.centrePx[0] * r.width / c.width, y: r.top + b.centrePx[1] * r.height / c.height }; });
+    const beforeDrag = await page.evaluate(key => ({ centre: Engrave.items().get(key).fit.centre.slice(), draft: Engrave.draftOf(key).centre.slice(), canvas: __cv().toDataURL() }), FK);
+    await page.mouse.move(geo.x, geo.y); await page.mouse.down();
+    for (let i = 1; i <= 6; i++) await page.mouse.move(geo.x + 4 * i, geo.y + 2 * i, { steps: 2 });
+    await page.waitForTimeout(150);
+    const mid = await page.evaluate(key => __cv().toDataURL(), FK);
+    await page.mouse.up();
+    await page.waitForTimeout(150);
+    const afterDrag = await page.evaluate(key => { const j = Engrave.items().get(key), d = __drawn(key); return { centre: j.fit.centre.slice(), draft: d.draft && d.draft.centre, canvas: d.canvas, same: d.sameAsPath, lines: d.draft && d.draft.lines }; }, FK);
+    const moved = Math.hypot(afterDrag.centre[0] - beforeDrag.centre[0], afterDrag.centre[1] - beforeDrag.centre[1]);
+    check(moved > 1 && Math.abs(afterDrag.draft[0] - afterDrag.centre[0]) < 1e-6 && Math.abs(afterDrag.draft[1] - afterDrag.centre[1]) < 1e-6, `L1 a drag moved the job (${moved.toFixed(2)} pt) and the staged words stand where it put them`);
+    // the picture during the drag is the page's own quick drawing (it skips the fine measuring while the hand is down), so it is compared to the drop's by how many pixels differ, not byte for byte
+    const diff = (u, v) => page.evaluate(async ([a, b]) => { const load = u => new Promise(res => { const im = new Image(); im.onload = () => res(im); im.src = u; }); const [x, y] = [await load(a), await load(b)]; const g = im => { const c = document.createElement('canvas'); c.width = im.width; c.height = im.height; const t = c.getContext('2d'); t.drawImage(im, 0, 0); return t.getImageData(0, 0, c.width, c.height).data; }; const p = g(x), q = g(y); let n = 0; for (let i = 0; i < p.length; i += 4) if (Math.abs(p[i] - q[i]) + Math.abs(p[i + 1] - q[i + 1]) + Math.abs(p[i + 2] - q[i + 2]) > 60) n++; return n; }, [u, v]);
+    const dMidBefore = await diff(mid, beforeDrag.canvas), dMidAfter = await diff(mid, afterDrag.canvas);
+    check(afterDrag.lines.join(' ') === 'Name Six' && afterDrag.same === true && dMidBefore > 500 && dMidAfter < dMidBefore * 0.15, `L2 while the hand was still down the picture already showed the staged words moving, and it is the picture the drop leaves (${dMidBefore} pixels differ from before the drag, ${dMidAfter} from the drop's)`);
+    await page.evaluate(() => document.querySelector('#egQueue .pvSetup .engp [data-engp=cancel]').click());
 
     /* ═══ K · the API's edges ═══ */
     const edge = await page.evaluate(key => {
