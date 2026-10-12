@@ -113,6 +113,32 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       check(/name two/i.test(live.mine || '') && !/name two/i.test(live.other || ''), 'typing shows on that face\'s thumbnail in the card at once, not on the other: ' + JSON.stringify(live));
     } else console.log('  (no CharmNestEngraveCard in this build: the thumbnail checks were skipped)');
 
+    // ── 8 · two discs of one line (when the model has the per-piece override: ENGLINK): disc 2 is edited alone, its draft and its save never touch disc 1 ──
+    const perPiece = await page.evaluate(() => !!(window.CharmNestEngraveFaces && CharmNestEngraveFaces.keyOf));
+    if (perPiece) {
+      const disc = await page.evaluate(KEY => {
+        const row = B.orders.byKey.get(KEY), mk = (slot, text) => ({ key: KEY + '#' + slot, slot, row, state: 'review', text, lines: [text], fit: { centre: [0, 0], angle: 0, size: 10, weight: 'Regular' } }), jobs = [mk('D1', 'Name One'), mk('D2', 'Name Two')];
+        const out = {}; let got = null;
+        CharmNestEngravePanel.DRAFTS.clear();
+        const s = document.createElement('div'); document.body.appendChild(s);
+        const h = CharmNestEngravePanel.mount(s, row, { jobs: () => jobs, job: jobs[1], face: 'back', save: async p => { got = p; return { ok: true }; } });
+        const ta = s.querySelector('.engpWords'); out.text = ta && ta.value; out.disabled = !!(ta && ta.disabled); out.keys = [...CharmNestEngravePanel.DRAFTS.keys()];
+        ta.value = 'Name Three'; ta.dispatchEvent(new Event('input', { bubbles: true }));
+        s.querySelector('[data-engp=save]').click();
+        out.patch = got && JSON.parse(JSON.stringify(got));
+        out.override = got && JSON.parse(JSON.stringify(CharmNestEngraveSetup.buildOverride(row, got, 'Name One', 0)));
+        // disc 1 has a draft of its own
+        const s1 = document.createElement('div'); document.body.appendChild(s1);
+        CharmNestEngravePanel.mount(s1, row, { jobs: () => jobs, job: jobs[0], face: 'back', save: async p => ({ ok: true }) });
+        out.disc1 = s1.querySelector('.engpWords') && s1.querySelector('.engpWords').value; out.keys2 = [...CharmNestEngravePanel.DRAFTS.keys()];
+        h.destroy(); s.remove(); s1.remove(); CharmNestEngravePanel.DRAFTS.clear(); return out;
+      }, KEY);
+      check(disc.text === 'Name Two' && !disc.disabled && disc.keys.join() === KEY + '#D2', 'disc 2 shows its own words in an editable box and has its own draft: ' + JSON.stringify({ text: disc.text, keys: disc.keys }));
+      check(disc.patch && disc.patch.slot === 'D2' && disc.patch.back && disc.patch.back.text === 'Name Three' && !disc.patch.front && !disc.patch.mode, 'Save sends only disc 2\'s back words, marked with its slot: ' + JSON.stringify(disc.patch));
+      check(disc.override && disc.override.pieces && disc.override.pieces.D2 && disc.override.pieces.D2.back.text === 'Name Three' && !disc.override.pieces.D1 && !disc.override.back, 'which becomes pieces.D2.back only: no disc 1 entry, no line-level words: ' + JSON.stringify(disc.override));
+      check(disc.disc1 === 'Name One' && disc.keys2.length === 2, 'disc 1 shows its own words and its own draft: ' + JSON.stringify({ disc1: disc.disc1, keys: disc.keys2 }));
+    } else console.log('  (no per-piece override in this build: the two-disc checks were skipped)');
+
     // ── 7b · the REAL preview component (charm-nest-engrave-preview.js): typing and picking a font change what the thumbnail draws, at once ──
     const real = await page.evaluate(async KEY => {
       const P = window.CharmNestEngravePreview; if (!P) return { skipped: true };
