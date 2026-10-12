@@ -318,11 +318,17 @@
     const own = spec && Array.isArray(spec.fontPieces) && index != null ? spec.fontPieces[index] : null;
     // a FACE that names its own font word (front + back engraving: spec.engraving[face].fontWord, CONTRACT section 8) is read like a drop-down word; every other face uses the line's font (one font per purchase line)
     const fw = faceFontWord(spec, face), fid = fw ? fontOfPhrase(fw) : "";
-    const f = fid ? { id: fid, asked: fw, source: "face" } : own || (spec && spec.font) || null, askedOnly = fw && !fid ? fw : "";
+    let f = fid ? { id: fid, asked: fw, source: "face" } : own || (spec && spec.font) || null; const askedOnly = fw && !fid ? fw : "";
+    // BFFONT: a font the buyer named in the message (spec.fontText) serves a piece that no person, no face and no font option settled: it comes after the drop-down's own font and before the listing's
+    // usual one. An exact word or a spelling of one is the shop's font (mapped); a font that is not ours, or only a kind of font, is engraved in the nearest installed one and stays a request to look at.
+    const ft = !fid && !askedOnly && spec && spec.fontText && spec.fontText.asked && !(f && f.id && !f.listing && !(FONT_MESSAGE_OVER_OPTION && spec.fontText.id)) ? spec.fontText : null;
+    if (ft) f = { id: ft.id || "", asked: ft.asked, source: "message" };
     const inst = (f && f.id && fontById(f.id)) || fontById(DEFAULT_FONT);
     const listing = !!(f && f.listing), asked = askedOnly || (f && f.asked ? String(f.asked) : "");
     // (a listing's usual font that stands in for a word the shop does not offer is still a request to look at: not "mapped")
-    return { id: inst.id, name: inst.name, asked, mapped: !!(f && f.id && fontById(f.id)) && !(listing && asked) && !askedOnly, listing, caps: !!inst.caps, source: f && f.source ? f.source : "default" };
+    const out = { id: inst.id, name: inst.name, asked, mapped: !!(f && f.id && fontById(f.id)) && !(listing && asked) && !askedOnly, listing, caps: !!inst.caps, source: f && f.source ? f.source : "default" };
+    if (ft) { const same = ft.how === "exact" || ft.how === "spelling" || ft.how === "usual"; Object.assign(out, { mapped: same && !!ft.id, via: "message", how: ft.how, style: ft.style || "", substituted: !!ft.id && !same }); }
+    return out;
   }
   /** The font word a face of a front + back line names for itself (spec.engraving[face].fontWord), "" when it names none (the line's font then serves both faces).
    *  No face means the back, as everywhere else (CONTRACT: an absent face is "back"). */
@@ -341,12 +347,392 @@
   }
   /** The one plain line the cards show: "Font: Stylish → Playwrite US Trad", or for a font the shop does not offer "Requested font: Script (engraved in Source Sans 3)"; "" when the line has no font. */
   function fontLine(spec, index, face) {
-    const f = spec && (spec.font || (spec.fontPieces && spec.fontPieces[index]) || (faceFontWord(spec, face) && {})); if (!f) return "";
+    const f = spec && (spec.font || (spec.fontPieces && spec.fontPieces[index]) || (faceFontWord(spec, face) && {}) || (spec.fontText && spec.fontText.asked && {})); if (!f) return "";
     const p = pieceFont(spec, index, face), asked = clip(p.asked, 40), caps = p.caps ? " · capitals only" : "";
+    // BFFONT: a font the buyer wrote in the message says so ("from the message"); a stand-in says which kind it is the nearest of
+    if (p.via === "message") {
+      if (p.how === "usual") return `Font: ${p.name} (the usual font; the buyer asked for “${asked}”, from the message)`;
+      if (p.mapped) return `Font: ${asked ? asked + " → " : ""}${p.name}${caps} (from the message)`;
+      const kind = fontStyleLabel(p.style);
+      return p.substituted ? `Requested font: ${asked} (engraved in ${p.name}, the nearest ${kind ? kind + " " : ""}font we have${caps}; from the message)` : `Requested font: ${asked} (engraved in ${p.name}, the usual font; from the message)`;
+    }
     if (p.listing) return asked ? `Requested font: ${asked} (engraved in ${p.name}, the usual font of this listing${caps})` : `Font: ${p.name} (the usual font of this listing: the buyer named none${caps})`;
     return p.mapped ? `Font: ${asked ? asked + " → " : ""}${p.name}${caps}` : asked ? `Requested font: ${asked} (engraved in ${p.name})` : "";
   }
   const fontWhy = fr => `font “${clip(fr.asked, 40)}” is not one of the engraving fonts (${fr.pick.length === 1 ? "the app engraves in " : "the app has "}${fr.pick.map(f => f.name).join(", ")}): a person picks`;
+
+  /* ═══ 2c · a font named in the buyer's own words (BFFONT, Paul 12 Oct 2026) ═══════════════════════════════════════════════════════════════
+     (Paul, order 4200828980, personalisation "Typewriter font" / "Georgia Andy Margot Jaarsma" / "October 26 2020": "Sometimes users will stipulate the font choice in the message, so the
+     message has to be parsed for font choices, and that has to have some flexibility for wrongly spelled fonts or similar fonts to what we have in our repository that can be substituted in
+     case of not exact match.") One reader for EVERY listing: fontReadText(text) finds the font requests in free text (the personalisation box, the buyer's message, a staff note), says which
+     lines are only a request (they are not words to engrave), and fontTextOf(spec) keeps the one reading on the line as spec.fontText. A drop-down font (spec.font) is read exactly as before.
+     THE RULE (fontScanLine). A word is a font request only beside a CUE, never because it looks like a font:
+       · label       "Font: Pristina", "font Angelina", "Font style: Stylish", "Fuente: ..."  - a line that starts with the word font / typeface / lettering is a font line, whatever follows;
+       · font cue    "Typewriter font", "the Pristina font", "font Pristina", "in the uppercase Ace font", "letra typewriter" - the name touches the word font (before or after it);
+       · style cue   "Angelina script", "Pristina Style", "Cursive text - Izzy", "block letters" - a shop font word (never Ace) or a style word before script / style / text / letters / writing;
+       · weak cue    "in Comic Sans please", "using Vibur", "Evie in cursive", "with Typewriter." - in / with / using / use / choose / pick / select + a font name, ONLY when the name ENDS the phrase (end of the
+                     line, punctuation, please / thanks / and) and is a shop word, a two-word font name (Courier New) or cursive / script / calligraphy: "in Georgia Andy" is no request;
+       · bare line   "Pristina" alone on its own line: a font ONLY when it is one of the shop's own font stems (Stylish, Pristina, Typewriter, Comic, Vibur, Britannic Bold) and other lines carry the words.
+                     Angelina and Ace are first names as often as fonts: alone on a line they stay words and ONE plain line asks a person (fontText.asks), nothing is guessed.
+       A single-word font name of someone else's (Georgia, Courier, Arial, Times) needs the word font / typeface or a label: "Georgia Andy Margot Jaarsma" has no cue, so it is the buyer's NAME.
+       A word after no / not / don't / without / never is not asked for ("No cursive pls"); a question ("Can this be in cursive?") is put to the shop, not a choice; "font #3" names a picture on the
+       listing and is asked, never guessed; the buyer's own handwriting (a photo, "in his handwriting") is no font.
+     SPELLING (fontPhrase): case, spaces, punctuation, plurals and the shop's seven Typewriter spellings are set aside (fontKey); then the stems (typewr...), Comic Sans / Comic Sans MS, and an edit distance
+       (Damerau-Levenshtein, the same first letter, 1 edit for 5-9 letters, 2 for 10+: Typewritter, Tipewriter, Pristine, Angelia, Britanic, Viber, Cursiv) - spelling is forgiven only beside a font / style
+       cue or a label, never after a bare "in" ("in pristine condition" is no font).
+     NEAREST (FONT_STYLES, ONE table of data): a font that is not ours (Courier New, Georgia, Brush Script) or only a kind of font (cursive, serif, bold, handwriting) is engraved in the first INSTALLED font
+       of its style's ordered preference list; the buyer's own words stay beside it ("Requested font: Courier New (engraved in Crimson Text, the nearest typewriter-style font we have; from the message)")
+       so a person sees it. It never holds an order. Fonts that are only a taste (nice, pretty, italic, custom) pick nothing: the usual font and the same plain line. To add a font to the app: install
+       it (ENGRAVING_FONTS) and put its id FIRST in the lists of its styles below. jost-ace is capitals only and is never a stand-in.
+     WHERE IT COUNTS (pieceFont): after a person's saved choice, a font the buyer names for that face, and the drop-down's own font (which wins when the message names another one: spec.fontText.differs says so);
+       before the listing's usual font (FONT_LISTINGS). The words of a line that is only a request are taken out of the engraved words (engravingOf, the reader's result, a reading that failed). */
+  /** WHO WINS when the order's font OPTION (the drop-down: what the buyer bought) and a font written in the MESSAGE name different fonts. The default (Paul, 12 Oct 2026, from the audit): the drop-down wins,
+   *  and the plain lines say "Buyer's message also asks for X" - never a hold. Set this to true to let a message font that is one of ours (or the nearest of a kind) win instead: it is the only place that decides. */
+  const FONT_MESSAGE_OVER_OPTION = false;
+  /** The one plain sentence for a drop-down and a message that disagree ("" when they do not). */
+  const fontDisagree = (spec, short) => { const ft = spec && spec.fontText; if (!ft || !ft.differs || faceFontWord(spec, "front") || faceFontWord(spec, "back")) return "";   // (a face that names its own font is a face font, as ever)
+    if (short) return FONT_MESSAGE_OVER_OPTION && ft.id ? `Buyer's message asks for ${ft.asked}, not the option's ${ft.differs} (the message wins)` : `Buyer's message also asks for ${ft.asked} (the font option wins)`;
+    return FONT_MESSAGE_OVER_OPTION && ft.id ? `The font option chose ${ft.differs}; the buyer's message asks for ${ft.asked} and that is what is engraved` : `Buyer's message also asks for ${ft.asked}; the font option chose ${ft.differs} and that is what is engraved`; };
+  const FONT_STYLES = [
+    // style (row order is the priority when a phrase holds several style words), label (in the plain line), prefer (installed font ids, best first), names (other people's fonts, whole names), words (kind-of-font words)
+    { style: "typewriter", label: "typewriter-style", prefer: ["crimson-text", "source-sans-3"],
+      names: ["courier", "courier new", "courier prime", "american typewriter", "special elite", "prestige elite", "lucida console", "consolas", "monaco", "menlo", "andale mono", "letter gothic", "old typewriter", "monospace", "monospaced"],
+      words: ["monospace", "monospaced", "mono"] },
+    { style: "brush", label: "brush-script", prefer: ["vibur", "marck-script", "playwrite-us-modern", "playwrite-us-trad"],
+      names: ["brush script", "brush script mt", "brush lettering", "marker felt"], words: ["brush", "brushed", "signature", "marker"] },
+    { style: "script", label: "script", prefer: ["marck-script", "playwrite-us-trad", "vibur", "playwrite-us-modern"],
+      names: ["edwardian script", "edwardian script itc", "french script", "french script mt", "freestyle script", "kunstler script", "palace script", "palace script mt", "vivaldi", "zapfino", "mistral", "lucida calligraphy",
+        "bickham script", "great vibes", "allura", "alex brush", "parisienne", "dancing script", "sacramento", "tangerine", "italianno", "pinyon script", "playlist script", "petit formal script"],
+      words: ["script", "scripted", "scripts", "calligraphy", "calligraphic", "fancy", "elegant", "formal", "wedding", "ornate", "decorative", "flourish", "swash", "scrolly"] },
+    { style: "cursive", label: "cursive", prefer: ["playwrite-us-trad", "playwrite-us-modern", "marck-script", "vibur"],
+      names: ["monotype corsiva", "snell roundhand", "apple chancery", "zapf chancery", "lucida handwriting", "segoe script", "pacifico", "lobster", "yellowtail", "kaushan script", "satisfy", "courgette"],
+      words: ["cursive", "joined", "looped", "loopy", "swirly", "wavy", "flowing", "curly", "connected", "longhand"] },
+    { style: "handwriting", label: "handwriting", prefer: ["mynerve", "vibur", "playwrite-us-modern"],
+      names: ["bradley hand", "segoe print", "kristen itc", "ink free", "chalkboard", "chalkboard se", "indie flower", "caveat", "patrick hand", "permanent marker", "shadows into light", "amatic sc", "gloria hallelujah"],
+      words: ["handwriting", "handwritten", "handlettered", "casual", "childlike", "childish"] },
+    { style: "blackletter", label: "old-style", prefer: ["crimson-text", "marck-script"],
+      names: ["old english", "old english text", "old english text mt", "blackletter", "black letter", "fraktur", "gothic script", "textura", "chancery"], words: ["blackletter", "fraktur"] },
+    { style: "slab", label: "slab-serif", prefer: ["crimson-text", "libre-franklin"],
+      names: ["rockwell", "clarendon", "roboto slab", "museo slab", "slab serif", "egyptienne"], words: ["slab"] },
+    { style: "serif", label: "serif", prefer: ["crimson-text"],
+      names: ["times", "times new roman", "georgia", "garamond", "eb garamond", "palatino", "palatino linotype", "book antiqua", "bookman", "baskerville", "libre baskerville", "bodoni", "didot", "playfair", "playfair display",
+        "cambria", "century schoolbook", "caslon", "minion", "cormorant", "merriweather", "lora", "crimson", "crimson pro", "perpetua", "goudy", "sabon", "cochin"],
+      words: ["serif", "serifs", "classic", "classical", "traditional", "oldstyle"] },
+    { style: "rounded", label: "rounded", prefer: ["jost", "source-sans-3"],
+      names: ["arial rounded", "arial rounded mt bold", "vag rounded", "varela round", "quicksand", "nunito", "comfortaa", "fredoka"], words: ["rounded", "round", "bubble", "bubbly", "balloon", "puffy"] },
+    { style: "geometric", label: "geometric sans", prefer: ["jost", "source-sans-3"],
+      names: ["futura", "century gothic", "avenir", "avenir next", "montserrat", "gotham", "poppins", "josefin sans", "josefin", "raleway", "avant garde", "itc avant garde", "league spartan", "lexend", "urbanist"], words: ["geometric"] },
+    { style: "comic", label: "comic", prefer: ["source-sans-3"], names: ["comic sans", "comic sans ms", "comic neue", "comic relief"], words: ["cartoon", "cartoony"] },
+    { style: "bold", label: "bold sans", prefer: ["libre-franklin", "alegreya-sans", "source-sans-3"],
+      names: ["impact", "arial black", "cooper black", "cooper", "bold clare", "franklin gothic", "franklin gothic heavy", "bebas neue", "anton"], words: ["bold", "bolder", "heavy", "thick", "chunky", "extrabold", "block", "blocks", "blocky"] },
+    { style: "sans", label: "sans-serif", prefer: ["source-sans-3"], usual: ["plain", "simple", "clean", "normal", "standard", "default", "regular", "basic", "minimal", "minimalist", "usual", "neutral"],
+      names: ["arial", "helvetica", "helvetica neue", "calibri", "verdana", "tahoma", "trebuchet", "trebuchet ms", "open sans", "roboto", "lato", "segoe ui", "gill sans", "myriad", "myriad pro", "noto sans", "ubuntu", "proxima nova", "lucida sans",
+        "sans serif", "sans-serif", "san serif", "sansserif"], words: ["sans", "sanserif"] },
+    // a taste, not a style: nothing is picked for these (the usual font, and the plain line says what was asked)
+    { style: "vague", label: "", prefer: [], words: ["nice", "pretty", "cute", "beautiful", "lovely", "classy", "delicate", "dainty", "pleasant", "unique", "special", "different", "custom", "personal", "artistic", "creative", "fun", "funky",
+      "funny", "playful", "cool", "italic", "italics", "light", "thin"] }
+  ];
+  /** Words that, with the word font beside them, never name a font (colours and finishes: "black font", "darkened font"). */
+  const FONT_VETO = new Set("black white gold golden silver rose red blue green pink dark darker darken darkened lighter deeper deep engraved engraving size sizes smaller bigger larger small big large tiny whole same other another next previous".split(" "));
+  /** Class words allowed after a bare in / with / using (a plain "in cursive please"); every other class word needs the word font or a style cue. */
+  const FONT_WEAK_CLASS = new Set(["cursive", "script", "scripted", "calligraphy", "calligraphic"]);
+  /** A few shop-font spellings beyond FONT_STEMS: the Comic Sans family is the shop's Comic. */
+  const FONT_ALIASES = [{ id: "source-sans-3", rx: /^comic(?:sans(?:ms)?|neue|relief|book)?$/ }];
+  /** Shop words that are first names as often as fonts: "ace" counts only beside the word font / typeface (strict), "angelina" beside any cue but never bare or after a bare in (strong). */
+  const FONT_NAMELIKE = { ace: "strict", angelina: "strong" };
+  // ── the vocabulary, folded once (fontKey: case, accents, spaces and punctuation set aside) ──
+  const EXT_NAME = new Map(), CLS_WORD = new Map(), USUAL_WORD = new Set();
+  FONT_STYLES.forEach(row => {
+    for (const n of row.names || []) { const k = fontKey(n); if (k && !EXT_NAME.has(k)) EXT_NAME.set(k, row); }
+    for (const w of row.words || []) { const k = fontKey(w); if (k && !CLS_WORD.has(k)) CLS_WORD.set(k, row); }
+    for (const w of row.usual || []) { const k = fontKey(w); if (k && !CLS_WORD.has(k)) { CLS_WORD.set(k, row); USUAL_WORD.add(k); } }
+  });
+  /** Class words allowed beside a style cue (script, style, text, letters, writing): the unambiguous kinds only ("wedding style" is no font). */
+  const FONT_CORE_CLASS = new Set("cursive script scripted scripts calligraphy calligraphic handwriting handwritten serif sans slab block blocks bold monospace monospaced brush rounded geometric blackletter fraktur".split(" "));
+  const FONT_FUZZY = [...SHOP_WORDS].filter(k => k.length >= 5 && !/lowercase|capsonly|allcaps/.test(k)).map(k => ({ key: k, id: WORD_FONT.get(k) }));
+  const CLS_FUZZY = [...CLS_WORD.keys()].filter(k => k.length >= 7 || (k.length >= 5 && FONT_CORE_CLASS.has(k)));   // (a long kind-of-font word may be one edit off; a short one only when it is a plain kind: "Sarif", "Serrif")
+  /** The fonts of a style, best first: the first INSTALLED one that is not capitals-only. The ONE place that decides "nearest". */
+  function nearestFont(style) {
+    const row = FONT_STYLES.find(r => r.style === style);
+    const id = row && (row.prefer || []).find(x => { const f = fontById(x); return f && !f.caps; });
+    return id || DEFAULT_FONT;
+  }
+  const fontStyleLabel = style => { const row = FONT_STYLES.find(r => r.style === style); return row ? row.label : ""; };
+  /** Optimal-string-alignment (Damerau-Levenshtein) distance of two folded words; max + 1 as soon as it is certain to exceed max. */
+  function damerau(a, b, max) {
+    if (a === b) return 0;
+    const la = a.length, lb = b.length; if (Math.abs(la - lb) > max) return max + 1;
+    let p2 = null, p1 = Array.from({ length: lb + 1 }, (_, j) => j);
+    for (let i = 1; i <= la; i++) {
+      const cur = [i]; let low = i;
+      for (let j = 1; j <= lb; j++) {
+        let v = Math.min(p1[j] + 1, cur[j - 1] + 1, p1[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, p2[j - 2] + 1);
+        cur[j] = v; if (v < low) low = v;
+      }
+      if (low > max) return max + 1;
+      p2 = p1; p1 = cur;
+    }
+    return p1[lb];
+  }
+  /** How many edits a word of this many letters may be off: none up to 4 letters (ace, mono), one for 5-9, two for 10 and more. */
+  const fontEdits = len => (len >= 10 ? 2 : len >= 5 ? 1 : 0);
+  /** The key with a plural or a possessive set aside ("scripts", "typewriters", "pristina's"): the key itself first. */
+  const fontForms = k => { const v = [k]; if (k.length > 3 && /s$/.test(k)) v.push(k.slice(0, -1)); if (k.length > 4 && /es$/.test(k)) v.push(k.slice(0, -2)); return v; };
+  const shopCanon = k => (/^ace/.test(k) ? "ace" : k);
+  const readOf = (id, how, canon, extra) => Object.assign({ id, how, canon: canon || "", style: "", type: "shop" }, extra || {});
+  const styleRead = (row, how, canon) => (row.style === "vague" ? { id: "", how: "vague", style: "vague", canon, type: "class" } : { id: nearestFont(row.style), how, style: row.style, canon, type: how === "near" ? "external" : "class" });
+  /** A folded phrase as one of the SHOP's font words: exact ("pristina"), a spelling of it (the typewr... stems, Comic Sans, a plural), or - when `fuzzy` - within the edit distance of one. */
+  function asShop(k, o) {
+    for (const v of fontForms(k)) {
+      const sid = SHOP_WORDS.has(v) ? WORD_FONT.get(v) : "";
+      if (sid) return readOf(sid, v === k ? "exact" : "spelling", shopCanon(v));
+      const iid = o.shopOnly ? "" : WORD_FONT.get(v);   // (the installed fonts' own names: "Jost font", "Mynerve")
+      if (iid) return readOf(iid, v === k ? "exact" : "spelling", shopCanon(v));
+      const st = stemFont(v) || (FONT_ALIASES.find(a => a.rx.test(v)) || {}).id || "";
+      if (st) return readOf(st, "spelling", shopCanon(v));
+    }
+    if (o.fuzzy && k.length >= 5) {
+      let best = null, tie = false; const max = fontEdits(k.length);
+      for (const t of FONT_FUZZY) {
+        if (t.key[0] !== k[0]) continue;
+        const d = damerau(k, t.key, max); if (d > max) continue;
+        if (!best || d < best.d) { best = { d, t }; tie = false; } else if (d === best.d && t.id !== best.t.id) tie = true;
+      }
+      if (best && !tie) return readOf(best.t.id, "spelling", shopCanon(best.t.key));
+    }
+    return null;
+  }
+  const asExternal = k => { for (const v of fontForms(k)) { const row = EXT_NAME.get(v); if (row) return styleRead(row, "near", v); } return null; };
+  function asClass(k, o) {
+    for (const v of fontForms(k)) { const row = CLS_WORD.get(v); if (row) return Object.assign(styleRead(row, USUAL_WORD.has(v) ? "usual" : "class", v), { core: FONT_CORE_CLASS.has(v), weak: FONT_WEAK_CLASS.has(v) }); }
+    if (o && o.fuzzy && k.length >= 5) {
+      let best = null, tie = false; const max = fontEdits(k.length);
+      for (const t of CLS_FUZZY) { if (t[0] !== k[0]) continue; const d = damerau(k, t, max); if (d > max) continue; if (!best || d < best.d) { best = { d, t }; tie = false; } else if (d === best.d && CLS_WORD.get(t) !== CLS_WORD.get(best.t)) tie = true; }
+      if (best && !tie) { const row = CLS_WORD.get(best.t); return Object.assign(styleRead(row, "class", best.t), { core: FONT_CORE_CLASS.has(best.t), weak: FONT_WEAK_CLASS.has(best.t) }); }
+    }
+    return null;
+  }
+  /** The reading of ONE phrase (keys: its folded words) beside a cue: { id, how: exact | spelling | near | class | usual | vague, style, canon, kind } or null.
+   *  cue: "label" | "font" (the word font touches it) | "style" (script / style / text / letters / writing after it) | "weak" (a bare in / with / using) | "bare" (the whole line). */
+  function fontName(keys, o) {
+    const k = keys.join(""); if (k.length < 3 || (keys.length === 1 && FONT_VETO.has(k))) return null;   // ("black font" is a colour; "Cooper Black" is a font)
+    const cue = o.cue, strong = cue === "label" || cue === "font", style = cue === "style";
+    let h = asShop(k, { fuzzy: (strong || style) && (keys.length === 1 || keys.every(x => x.length >= 3)), shopOnly: cue === "weak" || cue === "bare" });   // (an initial before the name is not part of it: "A Angelina font")
+    if (h) {
+      const nl = FONT_NAMELIKE[h.canon];
+      if (nl === "strict" && !strong) return null;
+      if (nl === "strong" && !(strong || style)) return null;
+      return h;
+    }
+    if (cue === "bare") return null;
+    if (strong || keys.length >= 2) { h = asExternal(k); if (h && (strong || keys.length >= 2)) return h; }
+    h = asClass(k, { fuzzy: strong });
+    if (!h) return null;
+    if (strong) return h;
+    if (h.how === "vague" || h.how === "usual") return null;
+    return cue === "weak" ? (h.weak ? h : null) : h.core ? h : null;
+  }
+  const FONT_CUE = new Set("font fonts typeface typefaces lettering letra letras fuente fuentes tipografia police schriftart schrift lettertype fonte carattere".split(" "));
+  const FONT_STYLE_CUE = new Set("script style styles text letters letter writing".split(" "));
+  const FONT_WEAK_CUE = new Set("in with using use uses choose pick select prefer".split(" "));
+  const FONT_DET = new Set("the a an my your this that those some our".split(" "));
+  const FONT_INTENSIFIER = new Set("really very so super extra quite too truly".split(" "));
+  const FONT_NEG = new Set("no not dont don never without avoid nor except instead rather non".split(" "));
+  const FONT_END = new Set("please pls plz thanks thank thx ty if for on at and but then kindly".split(" "));
+  const FONT_STOPRUN = new Set("in with using use uses choose pick select prefer is are be was want wants like need would please pls and or but so then".split(" "));
+  const FONT_SKIP_AFTER = new Set("is are called named of in a an the to be would like".split(" "));
+  const FONT_LABEL = /^\s*(?:(?:\d{1,2}\s*[.)]|[-*•])\s*)?(?:the\s+)?(font\s*(?:choice|style|name|type|selection|option)s?|fonts?|typefaces?|lettering|letra|fuente|police|schriftart)\b\s*(?:(?:is|are|will\s+be|should\s+be|to\s+be)\b)?\s*([:=#\-–—]*)\s*(.*?)\s*$/iu;
+  const FONT_TOKEN = /#?\d+|[\p{L}][\p{L}\p{N}'’]*/gu;
+  const fontTokens = line => { const out = [], re = new RegExp(FONT_TOKEN.source, "gu"); for (let m; (m = re.exec(line));) out.push({ t: m[0], k: fontKey(m[0].replace(/['’]s$/i, "")), s: m.index, e: m.index + m[0].length }); return out; };
+  const styleIx = h => { const i = FONT_STYLES.findIndex(r => r.style === h.style); return i < 0 ? 99 : i; };
+
+  /** Every font request on ONE line: { hits: [{ cue, id, how, style, canon, type, ns, ne (the name), s, e (the whole request, to take out), question }], asks: [plain lines] }.
+   *  o.others: the text has other non-blank lines (a bare font word counts only then). */
+  function fontScanLine(line, o) {
+    o = o || {}; line = String(line == null ? "" : line);
+    const toks = fontTokens(line), K = toks.map(t => t.k), n = toks.length, hits = [], asks = [];
+    if (!n) return { hits, asks };
+    const question = /\?/.test(line), say = t => clip(String(t).trim(), 50);
+    const gapOk = (a, b) => /^[\s\-–—'"“”‘’*_]*$/.test(line.slice(toks[a].e, toks[b].s));      // token a then token b, nothing but spaces (and a dash or a quote) between
+    const brk = (a, b) => /[.!?;:,()\/|\\\[\]{}]/.test(line.slice(toks[a].e, toks[b].s));
+    const negated = i => { for (let j = i - 1; j >= 0 && j >= i - 3; j--) { if (brk(j, j + 1)) break; if (FONT_NEG.has(K[j])) return true; } return false; };
+    const joined = (a, b) => { for (let q = a; q < b; q++) if (!gapOk(q, q + 1)) return false; return true; };
+    const taken = (a, b) => hits.some(h => !(b < h.i0 || a > h.i1));
+    const push = (h, a, b, cueIx) => { if (taken(a, b)) return false; hits.push(Object.assign({ question, i0: a, i1: b }, h)); return true; };
+    // "font #3", "font 3", "font number 3", "font no. 3": a picture on the listing, not a font name
+    const numbered = c => (c + 1 < n && /^#?\d{1,2}$/.test(toks[c + 1].t)) || (c + 2 < n && /^(?:no|nr|num|number)$/.test(K[c + 1]) && /^\d{1,2}$/.test(toks[c + 2].t));
+
+    // 1 · a label: "Font: Pristina", "font Angelina", "Font style: Stylish", "Font: As discussed in messages, Slab Serif"
+    const lab = FONT_LABEL.exec(line);
+    if (lab && lab[3]) {
+      const sep = lab[2], rest = lab[3], at = line.lastIndexOf(rest);
+      const cut = rest.search(/\s[\/|]\s|;/), value = (cut > 0 ? rest.slice(0, cut) : rest).replace(/[\s.!]+$/, "").replace(/\s*(?:please|pls|thanks?)$/i, "").trim();
+      const ts = fontTokens(value), ks = ts.map(t => t.k);
+      let h = null, from = 0, upto = 0;
+      if (ts.length && (/^(?:#\s*|no\.?\s*|nr\.?\s*|number\s*)\d{1,2}\b/i.test(value) || (sep && /^\d{1,2}$/.test(value)) || (/#/.test(sep) && /^\d{1,2}\b/.test(value)))) asks.push(`the message names “${say(line)}”, a number on the listing's photo: a person picks the font`);
+      else {
+        for (let len = Math.min(5, ts.length); len >= 1 && !h; len--) { h = fontName(ks.slice(0, len), { cue: "label" }); if (h) upto = len; }
+        for (let st = 1; st < ts.length && !h; st++) for (let len = Math.min(3, ts.length - st); len >= 1 && !h; len--) { const g = fontName(ks.slice(st, st + len), { cue: "label" }); if (g && g.how !== "vague") { h = g; from = st; upto = len; } }
+        if (h) hits.push(Object.assign({ question, cue: "label", i0: 0, i1: n - 1, ns: at + ts[from].s, ne: at + ts[from + upto - 1].e, s: 0, e: cut > 0 ? at + cut : line.length }, h));
+        else if (sep && ts.length <= 8 && !question) hits.push({ question, cue: "label", i0: 0, i1: n - 1, ns: at, ne: at + value.length, s: 0, e: cut > 0 ? at + cut : line.length, id: "", how: "none", style: "", canon: "", asked: value });
+      }
+    }
+
+    // 2 · the word font beside the name: "Typewriter font", "the uppercase Ace font", "font Pristina", "a nice pretty font"
+    for (let c = 0; c < n; c++) {
+      if (!FONT_CUE.has(K[c]) || taken(c, c)) continue;
+      let found = null;
+      for (let len = Math.min(4, c); len >= 1 && !found; len--) {
+        const a = c - len; if (!joined(a, c)) continue;
+        const h = fontName(K.slice(a, c), { cue: "font" });
+        if (h && !negated(a) && !negated(c)) found = { h, a, b: c, ns: toks[a].s, ne: toks[c - 1].e, s: toks[a].s, e: toks[c].e };
+      }
+      if (!found && c > 0) {   // a run of kind-of-font words: "clean all-caps block font", "in a nice pretty font"
+        let a = c; while (a > 0 && c - a < 3 && gapOk(a - 1, a) && !FONT_STOPRUN.has(K[a - 1])) a--;
+        let best = null, at = -1;
+        for (let q = c - 1; q >= a; q--) { const w = asClass(K[q], { fuzzy: true }); if (w && !FONT_VETO.has(K[q]) && (!best || styleIx(w) < styleIx(best))) { best = w; at = q; } }
+        if (best && !negated(at) && !negated(c)) found = { h: best, a, b: c, ns: toks[a].s, ne: toks[c - 1].e, s: toks[a].s, e: toks[c].e };
+      }
+      if (!found) {   // the name after the word: "font Pristina", "Font: Vibur", "font #3"
+        if (!/^[\s:=#\-–—(\[“"']*$/.test(c + 1 < n ? line.slice(toks[c].e, toks[c + 1].s) : "")) continue;
+        if (numbered(c)) { asks.push(`the message names “${say(line)}”, a number on the listing's photo: a person picks the font`); continue; }
+        let q = c + 1; while (q < n && q <= c + 3 && FONT_SKIP_AFTER.has(K[q]) && joined(q - 1, q)) q++;
+        for (let len = Math.min(4, n - q); len >= 1 && !found; len--) {
+          if (q + len > n || !joined(q, q + len - 1)) continue;
+          const h = fontName(K.slice(q, q + len), { cue: "font" });
+          if (h && h.how !== "vague" && h.how !== "usual" && !negated(c)) found = { h, a: c, b: q + len - 1, ns: toks[q].s, ne: toks[q + len - 1].e, s: toks[c].s, e: toks[q + len - 1].e };
+        }
+      }
+      if (found && found.a > 0) {   // the taste words in front of a name belong to the request: "a really nice pretty script font", "the nice Pristina font"
+        let a = found.a, swallowed = false;
+        while (a > 0 && found.b - a < 5 && gapOk(a - 1, a) && (FONT_INTENSIFIER.has(K[a - 1]) || ((CLS_WORD.get(K[a - 1]) || {}).style === "vague" && !FONT_VETO.has(K[a - 1])))) { a--; swallowed = true; }
+        const words = a;
+        if (swallowed && a > 0 && FONT_DET.has(K[a - 1]) && gapOk(a - 1, a)) a--;
+        if (a < found.a && !negated(a)) { found.a = a; found.s = toks[a].s; if (found.h.how === "vague") found.ns = toks[words].s; }   // (a taste is asked in all its words: "nice pretty")
+      }
+      if (found && push(Object.assign({ cue: "font", ns: found.ns, ne: found.ne, s: found.s, e: found.e }, found.h), found.a, found.b)) { /* taken */ }
+    }
+
+    // 3 · the name before a style word: "Angelina script", "Pristina Style", "Cursive text", "block letters"
+    for (let c = 1; c < n; c++) {
+      if (!FONT_STYLE_CUE.has(K[c]) || taken(c, c)) continue;
+      for (let len = Math.min(3, c + 1); len >= 2; len--) {   // (a font NAME that ends in the style word: "Brush Script", "Edwardian Script ITC" is read whole)
+        const a = c - len + 1; if (a < 0 || !joined(a, c) || taken(a, c)) continue;
+        const h = asExternal(K.slice(a, c + 1).join("")); if (h && !negated(a) && push(Object.assign({ cue: "style", ns: toks[a].s, ne: toks[c].e, s: toks[a].s, e: toks[c].e }, h), a, c)) break;
+      }
+      if (taken(c, c)) continue;
+      for (let len = Math.min(3, c); len >= 1; len--) {
+        const a = c - len; if (!joined(a, c) || taken(a, c)) continue;
+        const h = fontName(K.slice(a, c), { cue: "style" });
+        if (h && !negated(a) && push(Object.assign({ cue: "style", ns: toks[a].s, ne: toks[c - 1].e, s: toks[a].s, e: toks[c].e }, h), a, c)) break;
+      }
+    }
+
+    // 4 · a bare in / with / using + a name that ENDS the phrase: "in Comic Sans please", "Evie in cursive", "using Vibur."
+    for (let w = 0; w < n; w++) {
+      if (!FONT_WEAK_CUE.has(K[w]) || taken(w, w)) continue;
+      let q = w + 1; while (q < n && FONT_DET.has(K[q]) && joined(q - 1, q)) q++;
+      if (q >= n || (!joined(w, w + 1) && q === w + 1)) continue;
+      let adj = 0; while (adj < 2 && q + adj < n - 1 && (CLS_WORD.get(K[q + adj]) || {}).style === "vague" && joined(q + adj, q + adj + 1)) adj++;   // ("in a pretty cursive": the taste words before the style are part of the request)
+      for (let len = Math.min(3, n - q - adj); len >= 1; len--) {
+        const first = q + adj, last = first + len - 1; if (!joined(first, last) || taken(w, last)) continue;
+        const h = fontName(K.slice(first, last + 1), { cue: "weak" });
+        if (!h || negated(w)) continue;
+        if (!(last === n - 1 || FONT_END.has(K[last + 1]) || brk(last, last + 1))) continue;
+        if (push(Object.assign({ cue: "weak", ns: toks[first].s, ne: toks[last].e, s: toks[w].s, e: toks[last].e }, h), w, last)) break;
+      }
+    }
+
+    // 5 · the whole line is one of the shop's font words (and other lines carry the words)
+    if (!hits.length && o.others) {
+      let a = 0; if (n > 1 && /^\d{1,2}$/.test(toks[0].t) && /^\s*[.)]\s*$/.test(line.slice(toks[0].e, toks[1].s))) a = 1;   // ("3. Typewriter")
+      const keys = K.slice(a); const lead = line.slice(0, toks[a].s), tail = line.slice(toks[n - 1].e);
+      if (keys.length && keys.length <= 3 && joined(a, n - 1) && /^[\s\-–—*•"'“”‘’(]*$/.test(lead) && /^[\s.!,\-–—*"'“”‘’)]*$/.test(tail)) {
+        const h = fontName(keys, { cue: "bare" });
+        if (h) hits.push(Object.assign({ question, cue: "bare", i0: a, i1: n - 1, ns: toks[a].s, ne: toks[n - 1].e, s: 0, e: line.length }, h));
+        else { const sh = asShop(keys.join(""), { shopOnly: true }); if (sh && FONT_NAMELIKE[sh.canon]) asks.push(`“${say(line)}” is alone on a line: a name or the ${sh.canon === "ace" ? "Ace" : "Angelina"} font? It stays in the words; a person checks`); }
+      }
+    }
+    hits.sort((x, y) => x.i0 - y.i0);
+    return { hits, asks };
+  }
+
+  const FONT_EDGE_L = /^(?:[\s,;:.!\-–—|\/&+*"'“”‘’()\[\]]|(?:please|pls|plz|kindly|thanks|thx|and|in|with|using|use)\b)+/i;
+  const FONT_EDGE_R = /(?:[\s,;:.!\-–—|\/&+*"'“”‘’()\[\]]|\b(?:please|pls|plz|kindly|thanks|thx|and|in|with|using|use|the|for|on|at|to|of)|\bthank\s*you)+$/i;
+  const FONT_SENT = new Set("i i'd id i'll please pls engrave engraved engraving write written put add make want wanted like would could can you name names word words letter letters initial initials is are be will text".split(" "));
+  /** A line's leftover after a request is taken out: still words to engrave ("D", "Evie", "Sarah & Tom") and not a sentence or an instruction. */
+  const fontCleanRest = r => { if (r === "I") return true; /* (the initial I: "I font Stylish") */ const ts = r.toLowerCase().split(/\s+/).map(x => x.replace(/^[^\p{L}\p{N}']+|[^\p{L}\p{N}']+$/gu, "")).filter(Boolean); return r.length <= 45 && ts.length > 0 && ts.length <= 5 && !ts.some(t => FONT_SENT.has(t)) && !/\b(?:font|typeface|script|cursive|capitals?|uppercase|lowercase|caps|centre?d?|cent(?:er|re))\b/i.test(r); };
+  const fontFiller = r => { const w = r.toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").split(/\s+/).filter(Boolean); return w.length > 0 && w.every(x => new Set("please pls kindly can could would you i id i'd to have has put place write add engrave engraved engraving the my this that following text words word wording on at in for it and thanks thank thx want like need use using with a an be is".split(" ")).has(x)) && !(w.length === 1 && (w[0] === "i" || w[0] === "id" || w[0] === "a")); };
+  /** The font requests of a free text and the text without them: { text, lines, requests: [{ asked, id, how, style, canon, cue, line, quote }], asks: [plain lines], removed: [quotes], changed }.
+   *  A line that is only a request goes; a request at the edge of a short line of words ("D font Stylish", "Evie in cursive please") is cut out of it; a request inside a sentence stays where it is (the font is
+   *  read, the sentence is a person's or the paid reader's to settle). o.keepFaceLines: a line that names the front or the back is left to the face reader; o.cueOnly: a bare font word on a line of its own is not read (the paid reader's own words). Text with no request is answered unchanged. */
+  function fontReadText(text, o) {
+    o = o || {}; const raw = String(text == null ? "" : text), src = raw.replace(/\r/g, "").split("\n");
+    const others = !o.cueOnly && src.filter(l => l.trim()).length > 1, out = [], requests = [], asks = [], removed = []; let changed = false;
+    src.forEach((line, ix) => {
+      if (!line.trim()) { out.push(line); return; }
+      const sc = fontScanLine(line.length > 1500 ? line.slice(0, 1500) : line, { others });   // (a long message is read as far as its first 1,500 letters of a line)
+      for (const a of sc.asks) asks.push(a);
+      const use = [];
+      for (const h of sc.hits) {
+        if (h.question) { asks.push(`the buyer asks about a font (“${clip(line.trim(), 50)}”): the shop answers`); continue; }
+        use.push(h);
+        requests.push({ asked: h.asked != null ? h.asked : line.slice(h.ns, h.ne).trim(), id: h.id, how: h.how, style: h.style || "", canon: h.canon || "", cue: h.cue, line: ix, quote: clip(line.trim(), 60) });
+      }
+      if (!use.length) { out.push(line); return; }
+      // the request, with the in / using / please that leads into it and the please / thanks that follows
+      let rest = line;
+      for (const h of use.slice().sort((a, b) => b.s - a.s)) {
+        let s = h.s, e = h.e;
+        if (h.cue !== "label" && h.cue !== "bare") {
+          const head = rest.slice(0, s).replace(/\s+$/, ""), m = /(?:^|[\s,;])((?:(?:please|pls|plz|kindly)\s+)?(?:in|with|using|use|uses|choose|pick|select|prefer)\s+(?:(?:the|a|an|my|your)\s+)?)$/i.exec(head + " ");
+          if (m) s = Math.max(0, head.length + 1 - m[1].length);
+          const t = /^\s*(?:,?\s*(?:please|pls|plz|kindly|thanks?|thank\s*you|thx))?[\s.!]*/i.exec(rest.slice(e)); if (t) e += t[0].length;
+        }
+        rest = rest.slice(0, s) + " " + rest.slice(e);
+      }
+      rest = rest.replace(/[ \t]+/g, " ").replace(FONT_EDGE_L, "").replace(FONT_EDGE_R, "").trim().replace(/^(?:\d{1,2}\s*[.)]?|[-*•])$/, "");   // ("3. Typewriter Font": the list number goes with it)
+      const faced = o.keepFaceLines && /(?:^|[^\p{L}\p{N}_])(?:front|back)(?![\p{L}\p{N}_])/iu.test(line);
+      if (/^(?:a|an|the)$/.test(rest) && use.every(h => h.type === "class")) rest = "";   // ("a nice font": the article goes with it; an initial after a font NAME stays)
+      if (!rest || fontFiller(rest)) { removed.push(clip(line.trim(), 60)); changed = true; }
+      else if (!faced && fontCleanRest(rest)) { out.push(rest); removed.push(clip(line.trim(), 60)); changed = true; }
+      else out.push(line);
+    });
+    let outText = raw;
+    if (changed) outText = out.join("\n").replace(/^(?:[ \t]*\n)+/, "").replace(/(?:\n[ \t]*)+$/, "").replace(/\n[ \t]*(?:\n[ \t]*){2,}/g, "\n\n");
+    return { text: outText, lines: outText.split("\n").map(x => x.trim()).filter(Boolean), requests, asks, removed, changed };
+  }
+  /** A font phrase the paid reader or a face gave ("cursive", "Typewriter font", "Courier New", "Pristine"): { id, how, style, canon } - id "" when nothing can be chosen. Exact readings are the shop's (fontOfPhrase). */
+  function fontResolve(phrase) {
+    const s = String(phrase == null ? "" : phrase).trim(); if (!s) return { id: "", how: "none", style: "", canon: "" };
+    const exact = fontOfPhrase(s); if (exact) return { id: exact, how: "exact", style: "", canon: "" };
+    const ts = fontTokens(s).filter(t => !FONT_CUE.has(t.k)), ks = ts.map(t => t.k);
+    for (let len = Math.min(5, ks.length); len >= 1; len--) for (let st = 0; st + len <= ks.length; st++) { const h = fontName(ks.slice(st, st + len), { cue: "label" }); if (h && h.how !== "vague") return h; }
+    const vague = ks.map(k => asClass(k, { fuzzy: true })).find(h => h && h.how === "vague");
+    return vague || { id: "", how: "none", style: "", canon: "" };
+  }
+  /** The font the buyer's own words ask for, as spec.fontText: { asked, id, name, how, style, from, quote, cue, also?, asks? } or null when the words name no font and raise no question.
+   *  Read in this order: the staff note (the shop's own word), the personalisation box, the buyer's message; the first one that names a font decides, the others are listed in `also`. */
+  function fontTextOf(spec) {
+    if (!spec || spec.noDesign) return null;
+    const pools = [["staffNote", spec.staffNote], ["personalization", (spec.personalization || []).join("\n")], ["buyerMessage", spec.buyerMessage]];
+    let main = null; const also = [], asks = [];
+    for (const [from, txt] of pools) {
+      if (!txt || !String(txt).trim()) continue;
+      const r = fontReadText(visible(txt));
+      for (const a of r.asks) if (!asks.includes(a)) asks.push(a);
+      for (const q of r.requests) {
+        if (!main) { if (q.id || q.asked) main = Object.assign({}, q, { from }); }
+        else if (q.asked && fontKey(q.asked) !== fontKey(main.asked) && !also.includes(q.asked)) also.push(q.asked);
+      }
+    }
+    if (!main && !asks.length) return null;
+    if (!main) return { asked: "", id: "", name: "", how: "ask", asks };
+    const f = main.id ? fontById(main.id) : null;
+    return Object.assign({ asked: main.asked, id: f ? f.id : "", name: f ? f.name : "", how: main.id ? main.how : main.how === "vague" ? "vague" : "none", style: main.style, from: main.from, quote: main.quote, cue: main.cue },
+      also.length ? { also: also.slice(0, 3) } : {}, asks.length ? { asks: asks.slice(0, 3) } : {});
+  }
 
   /** { field, value, source } for one option, or null when nothing deterministic applies. */
   function optionLookup(maps, listingId, name, value) {
@@ -1852,11 +2238,18 @@
     const titleMode = engravingModeIn(title, true);
     // font lines ("font: Ace", "Ace font") are not words to engrave: set aside and read as the buyer's font
     let noteFont = "";
-    const stripFont = txt => String(txt || "").split("\n").filter(l => {
+    // BFFONT: and the lines / phrases the tolerant font reader knows (a misspelling, "Pristine font", "in cursive please", "Courier New font", "3. Typewriter Font"): their font is spec.fontText, they are not words to engrave
+    const stripFont = txt => fontReadText(String(txt || "").split("\n").filter(l => {
       const f = /^\s*(?:(?:the\s+)?font(?:\s+choice)?|typeface|lettering)\s*(?:is|[:=\-–—])\s*(.+?)\s*$/i.exec(l) || /^\s*(.+?)\s+font\s*$/i.exec(l);
-      if (f && fontOfPhrase(f[1])) { noteFont = noteFont || f[1].trim(); return false; }
+      if (f && fontOfPhrase(f[1])) {
+        // (a line that holds WORDS beside the font - "D+R in the Ace font", "please engrave “MC” in the uppercase Ace font" - is never dropped whole: the reader below takes the font phrase out and leaves the
+        //  words; a sentence stays whole for the front / back checks that hold a non-plain inscription. Only a line that is nothing but the font goes, as it always did.)
+        const rd = fontReadText(l, { keepFaceLines: true });
+        if (rd.requests.length && (rd.text.trim() || !rd.changed)) return true;
+        noteFont = noteFont || f[1].trim(); return false;
+      }
       return true;
-    }).join("\n");
+    }).join("\n"), { keepFaceLines: true }).text;
     const persText = stripFont(pers.join("\n"));
     const pools = [["staffNote", staff], ["personalization", persText], ["buyerMessage", buyer], ["messages", msgs.join("\n")]].map(([k, t]) => ({ k, text: k === "personalization" ? t : stripFont(t) })).filter(p => p.text.trim());
     const readPool = p => {
@@ -1971,7 +2364,9 @@
     if (mode === "back") { eng.front = null; eng.back = null; }   // (back only: the engraving reader reads the words as it always did)
     // ── the plain line, the confidence and what a person is asked ──
     const fw = eng.front && eng.front.fontWord, bw = eng.back && eng.back.fontWord, lineFont = !fw && !bw && spec.font && spec.font.asked ? String(spec.font.asked) : "";
-    const fontSay = fw && bw && fw !== bw ? ` · fonts ${fw} / ${bw}` : fw || bw ? ` · font ${fw || bw}` : lineFont ? ` · font ${lineFont}` : "";
+    // (the message's font, when no face and no option names one: "· font Courier New → Crimson Text (from the message)")
+    const msgFont = !fw && !bw && !lineFont && spec.fontText && spec.fontText.asked ? (() => { const p = pieceFont(spec, null); return ` · font ${clip(spec.fontText.asked, 30)}${p.name && spec.fontText.id && p.name.toLowerCase() !== String(spec.fontText.asked).toLowerCase() ? " → " + p.name : ""} (from the message)`; })() : "";
+    const fontSay = (fw && bw && fw !== bw ? ` · fonts ${fw} / ${bw}` : fw || bw ? ` · font ${fw || bw}` : lineFont ? ` · font ${lineFont}` : msgFont) + (!fw && !bw && fontDisagree(spec) ? ` · ${fontDisagree(spec, true)}` : "");
     if (review) {
       eng.needsPerson = true; eng.reviewKind = review.kind; eng.why = review.reason; eng.raw = raw;
       eng.textSource = mode === "none" || review.kind === "nowords" || picture ? "none" : pick && !pick.problems.length ? "labelled" : "unlabelled";
@@ -2232,6 +2627,12 @@
     // a line that says two different designs but names one waits: the second design, or "the same on both ears" (one plain question, like an unmatched SKU)
     if (!quiet && spec.pair.second && !spec.pair.second.answered && !spec.pair.second.viaOption && secondId) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: SECOND_OPT, optionValue: secondId, title: line.title || "", pair: { second: true }, pairSecond: { why: spec.pair.second.why } });
     spec.engraveCandidate = !quiet && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.some(m => engravingNote(m && m.text)));
+    // BFFONT: a font the buyer named in their own words (personalisation, message, staff note), whatever the listing: spec.fontText (fontTextOf). A font option is read as before (spec.font) and wins over
+    // it; nothing is added to a line whose words name no font. Before the faces reading (engravingOf), which takes the words of a font request out of the engraved words.
+    try {
+      const ft = fontTextOf(spec);
+      if (ft) { if (spec.font && spec.font.id && !spec.font.listing && ft.id && ft.id !== spec.font.id) ft.differs = spec.font.asked || spec.font.name || ""; spec.fontText = ft; }
+    } catch (_) { /* a font reading that fails leaves the line as it was */ }
     // front and back engraving (ENGINTAKE): what the buyer chose and wrote about the faces, for EVERY line; null (nothing added to the spec) when the line has no front / back word.
     // ENGINTAKE (CONTRACT section 2): what the buyer chose for the faces, for EVERY line. A line with no face word has no `spec.engraving` (the faces model reads that as the default back); a person's
     // word is never here (it is row.engravingOverride). Nothing else of the spec is touched, engraveCandidate included: a front / both-faces line with no words says so in its reading
@@ -2611,7 +3012,7 @@
   }
   return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse,
-    ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord,
+    ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar, tagOptionOf, tagOptionRead, TAG_SHAPES,
     KNOWN_SKU_NAMES, knownName, namedSku, sameDesign,
