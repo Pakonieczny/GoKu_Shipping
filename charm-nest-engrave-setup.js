@@ -142,12 +142,15 @@
     out.source = setup.sides ? 'sides' : rd && rd !== own ? 'tag' : ['option', 'title', 'note'].includes(setup.source) ? setup.source : 'default';
     // the reader found nothing to engrave (a job it put away as "no engraving", nobody decided otherwise): the system's choice is none
     const mineJobs = jobs.filter(j => j && (!sl || slotOfJob(j) === sl));
-    if (!rd && mineJobs.length && mineJobs.every(j => j.state === 'none' && !j.decision)) { out.mode = 'none'; out.faces = []; out.source = 'reader'; out.why = str(mineJobs[0].reason) || 'The reader found no engraving'; return out; }
+    if (!rd && setup.mode !== 'none' && mineJobs.length && mineJobs.every(j => j.state === 'none' && !j.decision)) { out.mode = 'none'; out.faces = []; out.source = 'reader'; out.why = str(mineJobs[0].reason) || 'The reader found no engraving'; return out; }
     for (const face of out.faces) {
       const w = setup[face]; let lines = w && w.lines && w.lines.length ? w.lines.slice() : null, provisional = false, from = lines ? 'intake' : '';
       if (!lines && !setup.needsPerson && face === 'back') {
         lines = readerLines(face, sl, jobs); if (lines) from = 'reader';
-        else if (setup.mode === 'back') { lines = plainOwnWords(line); if (lines) { provisional = true; from = 'personalization'; } }
+        else if (setup.mode === 'back') {
+          const lab = labelled(rawOf(line)); lines = lab.back && lab.back.length ? lab.back.slice() : plainOwnWords(line);   // ("back: 21": the label is no part of the words)
+          if (lines) { provisional = true; from = 'personalization'; }
+        }
       }
       const fontWord = (w && w.fontWord) || null, id = fontIdOf(line, face, fontWord, sl);
       out[face] = { text: lines ? lines.join('\n') : '', lines: lines || [], fontWord, fontId: id, fontName: fontNameOf(id), ...(provisional ? { provisional: true } : {}), from };

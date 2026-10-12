@@ -2594,6 +2594,15 @@
   const sayFace = f => (f && f.text ? `“${clip(f.text, 30)}”` : "nothing");
   const uniqStr = arr => [...new Set(arr)];
   const pieceName = s => (s === "L" ? "the left ear" : s === "R" ? "the right ear" : "disc " + String(s).slice(1));
+  /** CUSTOMER INSTRUCTIONS IN A MESSAGE (ENGAUTO, Paul 12 Oct 2026, point 5: the defaults follow "customer instructions"). A buyer's message (never "front desk" or "back at work") that ASKS for engraving on a face with words between the verb
+   *  and the face ("please put rr on the front", "can you engrave my initials on the front?"): the faces it names, [] when none. engravingModeIn needs the engraving word right beside the face, so these were read as nothing
+   *  and the line was engraved on the back as if the message had never been written. Asking only: the caller never takes words from a message. */
+  const MSG_FACE_ASK = /\b(?:engrav\w*|inscri\w*|etch\w*|put|add|write|place|want|need|like)\b[^.!?\n]{0,60}?\b(?:on|at)\s+(?:the\s+|its\s+|my\s+)?(front|back)\b(?!\s+(?:side\s+)?of\s+(?:the\s+)?(?:box|package|packaging|card|envelope|bag|order|receipt))/gi;
+  function messageFaceAsk(texts) {
+    const out = new Set();
+    for (const t of texts) { const body = decodeEntities(String(t || "")); MSG_FACE_ASK.lastIndex = 0; for (let m; (m = MSG_FACE_ASK.exec(body));) out.add(m[1].toLowerCase()); }
+    return ["front", "back"].filter(f => out.has(f));
+  }
   /** What the buyer chose and wrote about the faces of ONE line (the CONTRACT's spec.engraving, plans/front-back-1011/CONTRACT.md section 2). line: the Etsy line (variations, title,
    *  personalization); spec: its reading (personalization, buyerMessage, staffNote, messages, font, pair, pieceCount). null when the line has no face word anywhere: such a line has no
    *  `spec.engraving`, which the faces model reads as today's default (the back, as the engraving reader always read it). Never a person's word: that is row.engravingOverride. */
@@ -2675,7 +2684,13 @@
     const labelled = parsed.filter(p => p.n > 0 || p.pieces);
     const noneHit = noneOpt ? (pools.some(p => p.k === "personalization" && FB_WORD.test(p.text)) ? noneOpt : null) : blankOpt;
     const anyFace = hits.length || titleMode || labelled.length || pools.some(p => engravingModeIn(p.text, p.k !== "personalization")) || noneHit;
-    if (!anyFace) return null;
+    if (!anyFace) {
+      // a message that asks for the FRONT (or both faces) while nothing else says which face: the line is not read "as before" in silence, a person says what goes on each face (only a back asked for in a message is the default anyway)
+      const ask = messageFaceAsk([buyer].concat(msgs));
+      if (!ask.includes("front")) return null;
+      const raw0 = [pers.join("\n"), buyer || msgs.join("\n")].filter(Boolean).join("\n").slice(0, 300);
+      return { v: 1, mode: "both", source: "note", front: null, back: null, textSource: "unlabelled", needsPerson: true, confidence: 0.3, why: clip(`the buyer's message asks for engraving on the ${ask.join(" and the ")}, but nothing else says which words go where: a person says what goes on each face`, 170), option: null, reviewKind: "texts", raw: raw0 };
+    }
     const lf = noteFont ? { word: noteFont } : spec.font && spec.font.asked ? { word: String(spec.font.asked), line: true } : { word: "" };
     const faceOut = f => {
       if (!f || !f.text) return null;

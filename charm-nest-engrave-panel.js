@@ -111,6 +111,112 @@
     return opts.join('');
   }
 
+  /* ── the system's own choice, kept in sight (ENGHILITE; Paul, 12 Oct 2026, point 7: "Highlight the AI chosen engraving options, so they're clearly visible to the user for a particular order/listing,
+   *    unless the user decides to override those selections") ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   * What the system chose is CharmNestEngraveSetup.autoChoice(line, slot) (ENGAUTO) when the page has it, else the reading under the person's override (vm.base). It is MARKED, never moved: a small gold sparkle on the
+   * system's mode segment, on the system's font (its entry in the drop-down list, and a ghost beside the closed drop-down once another font is picked) and on the words box of the face shown; the control whose value IS the
+   * system's takes a quiet gold tint too. A person's pick moves the selection (the ring, the words, the font), never the marker, so the system's choice and the person's change are both on the screen. The only words are
+   * titles: "Chosen by the system" (+ what the system chose, and after an override the recorded reason, read-only: engravingOverride.reason). It decorates the panel after it is drawn (hiDecorate), so the panel's own markup,
+   * its widths (the sparkle takes no room: the mode control stays one row at 232px) and its handlers are untouched. */
+  const HI_TITLE = 'Chosen by the system';
+  const HI_SPARK = '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false"><path d="M6 .4C6.4 3.8 8.2 5.6 11.6 6 8.2 6.4 6.4 8.2 6 11.6 5.6 8.2 3.8 6.4 .4 6 3.8 5.6 5.6 3.8 6 .4Z" fill="currentColor"/></svg>';
+  const HI_GLYPH = '✦';   // (the same four-point star, as the text mark in front of the system's entry of the font list: an <option> can only hold text)
+  const normWords = v => linesOf(v).join('\n');
+  const sameWord = (a, b) => str(a).trim().toLowerCase() === str(b).trim().toLowerCase();
+  const rowFor = (vm, slot) => (slot || vm.slot ? Object.assign({}, vm.line, { slot: slot || vm.slot }) : vm.line);
+  /** The installed font id of a font word on a face of this piece ('' when the page cannot say). */
+  function fontIdFor(vm, face, word, slot) {
+    const P = Prev(); try { if (P && P.fontIdOf) return str(P.fontIdOf(rowFor(vm, slot), face, word)); } catch (_) { /* below */ }
+    const O = dep('CharmNestOrders', './charm-nest-orders.js'); try { return O && O.fontOfPhrase && word ? str(O.fontOfPhrase(word)) : ''; } catch (_) { return ''; }
+  }
+  /** The drop-down value that stands for a font on a face: '' = the line's own font (the first entry), else the shop's word. Fonts are compared by the installed font they resolve to, never by the word. */
+  function fontValueOf(vm, face, f, slot) {
+    const S = Setup(), list = S && S.fontChoices ? S.fontChoices() : [], lineKey = str(vm.lineFont && vm.lineFont.word).toLowerCase(), word = str(f && f.fontWord).trim();
+    const values = [''].concat(list.filter(c => c.word.toLowerCase() !== lineKey).map(c => c.word));
+    if (word) { if (word.toLowerCase() === lineKey) return ''; const hit = values.find(v => v && sameWord(v, word)); if (hit) return hit; }
+    const id = str(f && f.fontId) || (word ? fontIdFor(vm, face, word, slot) : '');
+    if (id) { const hit = values.find(v => fontIdFor(vm, face, v, slot) === id); if (hit !== undefined) return hit; }
+    return word;
+  }
+  /** What the system chose for the piece: { mode, faces: { front: {text, fontWord, fontId}|null, back: ... } } (a face the system's mode does not engrave is null). */
+  function systemChoice(vm, slot) {
+    const S = Setup(); let a = null;
+    if (S && typeof S.autoChoice === 'function') a = tryDo(() => S.autoChoice(vm.line, slot || vm.slot || undefined, { jobs: vm.jobs }), null);
+    if (!a || !MODES.some(([m]) => m === a.mode)) { const b = vm.base || vm.setup || {}; a = { mode: b.mode, front: b.front, back: b.back }; }
+    const faces = {};
+    for (const f of ['front', 'back']) {
+      const x = a[f], on = facesOf(a.mode).includes(f);
+      faces[f] = on && x ? { text: normWords(x.lines && x.lines.length ? x.lines : x.text), fontWord: str(x.fontWord).trim(), fontId: str(x.fontId) } : on ? { text: '', fontWord: '', fontId: '' } : null;
+    }
+    return { mode: a.mode, faces };
+  }
+  /** The reason a person gave for the saved override (ENGWHY: engravingOverride.reason { code, text, by, at, slot? }), as one read-only line for a title, or ''. ENGWHY's own reader says it when the page has it
+   *  ("Changed: Customer asked · Name One · Oct 12, 3:04 PM"); else the same words are made here from the record. */
+  function reasonLine(line, slot) {
+    const W = root && root.CharmNestEngraveWhy;
+    if (W && typeof W.reasonOf === 'function') { const r = tryDo(() => W.reasonOf(line, slot || null), null); return r && str(r.text).trim() ? str(r.title || r.line) : ''; }
+    const ov = line && line.engravingOverride, r = ov && typeof ov === 'object' ? ov.reason : null; if (!r || typeof r !== 'object') return '';
+    if (slot && r.slot && r.slot !== slot) return '';
+    const t = str(r.text).trim() || cap1(str(r.code).replace(/[_-]+/g, ' ').trim()), by = str(r.by).trim();
+    return t ? 'Changed: ' + t + (by ? ' \u00b7 ' + by : '') : '';
+  }
+  /** The pure model of the highlight for the face shown: { sys, mode: {sys, same}, words: {sys, same}|null, font: {sys (drop-down value), label, same}|null, reason }. `same` = what is on the panel now (the staged edit) IS the system's. */
+  function hiModel(vm, d, face, slot) {
+    const sys = systemChoice(vm, slot), on = facesOf(d.mode).includes(face), sf = face ? sys.faces[face] : null, x = (face && d.faces[face]) || { text: '', font: '' };
+    const m = { sys, mode: { sys: sys.mode, same: d.mode === sys.mode }, words: null, font: null, reason: reasonLine(vm.line, slot || vm.slot) };
+    if (sf && sf.text) m.words = { sys: sf.text, same: on && normWords(x.text) === sf.text };
+    if (sf) {
+      const sv = fontValueOf(vm, face, sf, slot), lf = vm.lineFont || {};
+      m.font = { sys: sv, label: sv || str(lf.word || lf.name), same: on && fontValueOf(vm, face, { fontWord: x.font }, slot) === sv };
+    }
+    return m;
+  }
+  const HI_CSS = `.engpSys{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;color:var(--gold,#a9823f);cursor:default}
+.engpSys svg{display:block;width:10px;height:10px}
+.engpSys[data-st=changed]{opacity:.6}
+.engpSeg[data-sys]{position:relative;background:var(--goldSoft,#f0e6cd)}
+.engpSeg[data-sys][aria-checked=true]{background:var(--goldSoft,#f0e6cd)}
+.engpSeg>.engpSys{position:absolute;top:-4px;right:-3px;width:12px;height:12px;pointer-events:none}
+.engpSeg>.engpSys svg{width:9px;height:9px}
+.engpBox[data-sys]>.engpWords{padding-right:24px}
+.engpBox>.engpSys{position:absolute;top:4px;right:5px}
+.engpBox[data-sys=same]>.engpWords{background:var(--goldSoft,#f0e6cd);background:color-mix(in srgb,var(--goldSoft,#f0e6cd) 60%,var(--card,#fffefb))}
+.engpFontBox{display:block;position:relative;min-width:0}
+.engpFontBox>.engpSys{position:absolute;top:50%;right:30px;transform:translateY(-50%)}
+.engpFontBox[data-sys=same]>.engpFont{background:var(--goldSoft,#f0e6cd);background:color-mix(in srgb,var(--goldSoft,#f0e6cd) 60%,var(--card,#fffefb))}`;
+  function ensureHiCss(doc) {
+    try { if (!doc || doc.getElementById('engpHiCss')) return; const s = doc.createElement('style'); s.id = 'engpHiCss'; s.textContent = HI_CSS; (doc.head || doc.documentElement).appendChild(s); } catch (_) { /* unmarked is still usable */ }
+  }
+  /** Put the system's marks on a drawn panel (`el` holds the panel), or bring them up to date after a typed word / a picked font (every step finds what it made before). Never moves a control, never throws. */
+  function hiDecorate(el, vm, d, slot) {
+    try {
+      const doc = el && el.ownerDocument, p = el && el.querySelector('.engp'); if (!doc || !p || !vm || !d) return;
+      ensureHiCss(doc);
+      const face = p.dataset.face || '', m = hiModel(vm, d, face, slot), why = m.reason ? '\n' + m.reason : '';
+      const put = (host, st, title) => { let k = host.querySelector(':scope > .engpSys'); if (!k) { k = doc.createElement('i'); k.className = 'engpSys'; k.innerHTML = HI_SPARK; host.appendChild(k); } k.dataset.st = st; k.title = title; return k; };
+      const drop = host => { const k = host && host.querySelector(':scope > .engpSys'); if (k) k.remove(); };
+      // the mode: the sparkle and the tint stay on the system's segment whatever is selected (the ring is the selection)
+      for (const seg of p.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg[data-engp="mode"]')) {
+        if (seg.dataset.mode === m.mode.sys) { const t = HI_TITLE + (m.mode.same ? '' : why); seg.dataset.sys = m.mode.same ? 'same' : 'changed'; seg.title = t; put(seg, 'same', t); }
+        else { delete seg.dataset.sys; seg.removeAttribute('title'); drop(seg); }
+      }
+      // the words of the face shown
+      const box = p.querySelector('.engpBox');
+      if (box) {
+        if (m.words) { const t = HI_TITLE + (m.words.same ? '' : ': ' + m.words.sys.replace(/\n/g, ' / ') + why); box.dataset.sys = m.words.same ? 'same' : 'changed'; put(box, m.words.same ? 'same' : 'changed', t); }
+        else { delete box.dataset.sys; drop(box); }
+      }
+      // the font of the face shown: its entry in the list always carries the star; beside the closed drop-down a ghost star once another font is picked
+      const sel = p.querySelector('.engpFont');
+      if (sel) {
+        let fb = sel.parentElement; if (!fb || !fb.classList.contains('engpFontBox')) { fb = doc.createElement('span'); fb.className = 'engpFontBox'; sel.parentNode.insertBefore(fb, sel); fb.appendChild(sel); }
+        for (const o of sel.options) { const mine = !!m.font && o.value === m.font.sys; if (mine) { o.label = HI_GLYPH + ' ' + o.text; o.dataset.sys = '1'; } else if (o.dataset.sys) { o.label = ''; o.removeAttribute('label'); delete o.dataset.sys; } }
+        if (m.font) { fb.dataset.sys = m.font.same ? 'same' : 'changed'; if (m.font.same) { drop(fb); sel.title = HI_TITLE; } else { put(fb, 'changed', HI_TITLE + ': ' + m.font.label + why); sel.removeAttribute('title'); } }
+        else { delete fb.dataset.sys; drop(fb); sel.removeAttribute('title'); }
+      }
+    } catch (_) { /* the panel works without its marks */ }
+  }
+
   /* ── the markup ────────────────────────────────────────────────────────────── */
   const ICON = {
     left: '<path d="M10 3 5 8l5 5"/>', right: '<path d="m6 3 5 5-5 5"/>', up: '<path d="m3 10 5-5 5 5"/>', down: '<path d="m3 6 5 5 5-5"/>',
@@ -267,6 +373,7 @@
       { const fs = el.querySelector('.engpFont'); if (fs && fs.selectedOptions[0] && fs.selectedOptions[0].style.fontFamily) fs.style.fontFamily = fs.selectedOptions[0].style.fontFamily; }
       { const eb = el.querySelector('[data-emoji]'), tb = el.querySelector('.engpWords'), CE = el.ownerDocument.defaultView && el.ownerDocument.defaultView.CNEmojiPicker;   // (Paul's own Emoji button, as the words box of the card had it: it types into the box, so the panel sees an ordinary input)
         if (eb && !(CE && tb && tryDo(() => CE.attach({ textarea: tb, button: eb, key: 'engp:' + key + ':' + d.face }), false))) eb.remove(); }
+      hiDecorate(el, vm, d, slot);   // (ENGHILITE: the system's own choice stays marked)
       hookCard(); applyGate(hasPatch(Setup().patchOf(vm, d)));
       const P = Prev(); if (P && P.warm && !draw.warmed) { draw.warmed = true; tryDo(() => P.warm()); }
       const want = fs || (d.focus && el.ownerDocument.activeElement === el.ownerDocument.body ? d.focus : null);
@@ -363,6 +470,7 @@
       applyGate(hasPatch(p));
       if (cn) cn.disabled = false;
       if (t.dataset.engp === 'font' && t.tagName === 'SELECT') t.style.fontFamily = (t.selectedOptions[0] && t.selectedOptions[0].style.fontFamily) || '';
+      hiDecorate(el, vm, d, slot);   // (ENGHILITE: the tint follows the staged words / font; the marks stay)
       paint(vm, d, f); changed(t.dataset.engp, f);
     };
     const key_ = e => {
@@ -431,5 +539,5 @@
     } catch (e) { if (typeof console !== 'undefined') console.warn('engraving panel slot', e); return none; }
   }
 
-  return { mount, mountPiece, html, bind, modesFor, seedText, DRAFTS, MODES };
+  return { mount, mountPiece, html, bind, modesFor, seedText, DRAFTS, MODES, hilite: { model: hiModel, decorate: hiDecorate, systemChoice, reasonLine, HI_TITLE } };
 });
