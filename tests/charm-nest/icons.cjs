@@ -109,7 +109,7 @@ const inner = s => s.replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '');
     assert.ok(at('charm-nest-icons.js') >= 0, 'the page has no script tag for the icons'); assert.equal(tags.filter(m => m[1] === 'charm-nest-icons.js').length, 1);
     assert.equal(at('charm-nest-icons.js') + 1, at('charm-nest-bridge.js'), 'the icons are the tag right before the bridge');
     assert.match(tags[at('charm-nest-icons.js')][2] || '', /^\?v=2026\d{4}-[a-z0-9-]+$/, 'a fresh ?v= token');
-    assert.match(tags[at('charm-nest-bridge.js')][2], /-sui1$/, 'the bridge token keeps its earlier suffixes');
+    assert.match(tags[at('charm-nest-bridge.js')][2], /^\?v=20261005-lis2-cardinal4-.*-sui1(?:-[a-z0-9]+)*$/, 'the bridge token keeps its earlier suffixes');
     const list = fs.readFileSync(path.join(root, 'scripts/build-public.cjs'), 'utf8'); assert.ok(list.includes('"charm-nest-icons.js"'), 'scripts/build-public.cjs does not serve it');
     assert.ok(/\.ic\{[^}]*flex:none/.test(html), 'the page has the .ic base rule');
   });
