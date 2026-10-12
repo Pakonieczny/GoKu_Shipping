@@ -14110,7 +14110,8 @@ const OrderWin = window.OrderWin = (() => {
     // the charm's vector design under the listing photo, as the lists show the two side by side (the window showed the
     // photo alone, or "no image" while the photo was not ready)
     const vh = byId("owVector"); if (vh) { if (W.zoom) tryDo(() => W.zoom.vector.key(vectorKey(r))); tryDo(() => ListMedia.vectorInto(vh, r)); }
-    byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—") + (pairSides(r).length ? " · Left + Right" : "");
+    // (the SKU alone, as the Copy button copies it: an earring pair says its Left and Right in its pieces and facts, not on this line: Paul, 12 Oct 2026)
+    byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
     paintEng(r);
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller
     const said = [];
