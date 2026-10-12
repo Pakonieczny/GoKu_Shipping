@@ -16,6 +16,8 @@ const W = require('./_orderFactsWorld.cjs');
 const shots = process.env.CN_SHOTS || null;
 let n = 0; const ok = (name, c) => { assert(c !== false, name); n++; console.log('  ✓ ' + name); };
 
+/** what a drawn card looks like (the old card: .swEng inside .owEngCard; ENGCARD's: the .engCard itself) */
+const CARD = '.swEng, .engCard, .owEngCard';
 const PIECE = (sku, title) => ({ sku, title, variations: [{ name: 'Metal choice', value: 'Gold' }] });
 const FX = {
   three: { rid: '4196000001', sku: 'LEAF_CHARM', title: 'Pressed leaf charm necklace in 14k gold fill', buyer: 'Name One', placed: { day: 0, h: 11, m: 2 }, ship: 6, variations: [{ name: 'Metal choice', value: 'Gold' }], more: [PIECE('ASTER_FLOWER', 'Aster flower charm necklace'), PIECE('MINI_0445', 'Mini tag charm necklace')] },
@@ -55,7 +57,7 @@ const idle = page => page.waitForFunction(() => { const d = document.getElementB
 async function open(page, name, cards) {
   await page.evaluate(rid => OrderWin.openOrder(rid), FX[name].rid);
   await page.waitForFunction(() => document.getElementById('orderWin').open && document.querySelector('#owMeta .owfBar'), null, { timeout: 15000 });
-  if (cards) await page.waitForFunction(k => document.querySelectorAll('#owEng > * .swEng, #owEng > .owEngCard .swEng, #owEng .swEng').length >= k && !document.querySelector('#owEng .owEngWait'), cards, { timeout: 15000 });
+  if (cards) await page.waitForFunction(({ k, CARD }) => { const g = document.getElementById('owEng'), isCard = c => c.matches(CARD) || !!c.querySelector(CARD); return [...g.children].filter(c => !c.hidden && c.getClientRects().length && isCard(c)).length >= k && !g.querySelector('.owEngWait'); }, { k: cards, CARD }, { timeout: 15000 });
   await idle(page); await page.waitForTimeout(250);
 }
 const shut = async page => { await page.evaluate(() => { const d = document.getElementById('orderWin'); if (d.open) d.dispatchEvent(new Event('cancel', { cancelable: true })); }); await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 8000 }).catch(() => {}); };
@@ -65,14 +67,14 @@ const look = page => page.evaluate(() => {
   const sec = document.querySelector('#orderWin .engSec'), grid = document.getElementById('owEng'), meta = document.getElementById('owMeta'), hd = sec && sec.querySelector('.engSecHd'), main = document.querySelector('#orderWin .owMain');
   const cs = e => e && getComputedStyle(e);
   // a card slot = a direct child of the grid that holds a drawn card (a wait line is not one)
-  const cells = grid ? [...grid.children].filter(c => !c.hidden && c.getClientRects().length && c.querySelector('.swEng, .engCard, .owEngCard') && !/owEngHead/.test(c.className)).map(box) : [];
+  const cells = grid ? [...grid.children].filter(c => !c.hidden && c.getClientRects().length && (c.matches('.swEng, .engCard, .owEngCard') || c.querySelector('.swEng, .engCard, .owEngCard'))).map(box) : [];
   return {
     vw: innerWidth, vh: innerHeight,
     secIn: !!sec && !!sec.closest('.owInfoMain'), secAfterMeta: !!sec && !!meta && meta.compareDocumentPosition(sec) === Node.DOCUMENT_POSITION_FOLLOWING && sec.parentElement === meta.parentElement,
     nextSibling: meta && meta.nextElementSibling === sec, sec: box(sec), meta: box(meta), grid: box(grid), hd: box(hd), hdText: hd && hd.textContent, hdDisplay: hd && cs(hd).display, hdFont: hd && parseFloat(cs(hd).fontSize),
     border: sec && cs(sec).borderTopWidth, borderStyle: sec && cs(sec).borderTopStyle, gridHidden: grid && grid.hidden, gridDisplay: grid && cs(grid).display, cols: grid && cs(grid).gridTemplateColumns.split(' ').length,
     cells, scrollTop: main && main.scrollTop, mainScrollW: main && main.scrollWidth, mainClientW: main && main.clientWidth, docScrollW: document.documentElement.scrollWidth,
-    inPics: !!document.querySelector('#orderWin .owPics #owEng, #orderWin .owPics .swEng, #orderWin .owPics .owEngCard'), titles: [...document.querySelectorAll('#orderWin .engSecHd')].length,
+    inPics: !!document.querySelector('#orderWin .owPics #owEng, #orderWin .owPics .swEng, #orderWin .owPics .owEngCard, #orderWin .owPics .engCard'), titles: [...document.querySelectorAll('#orderWin .engSecHd')].length,
     text: sec ? sec.innerText.replace(/\s+/g, ' ').trim() : ''
   };
 });
