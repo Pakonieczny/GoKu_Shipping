@@ -203,7 +203,10 @@ async function partB() {
       await page.waitForTimeout(1200);
       return page.evaluate(() => {
         const txt = n => n ? n.textContent.replace(/\s+/g, ' ').trim() : '';
-        return { rows: [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => ({ side: r.dataset.side || '', piece: r.dataset.piece || '', tag: txt(r.querySelector('.owPcSide')), st: txt(r.querySelector('.pcSt span')) || txt(r.querySelector('.owPcSr')), dots: r.querySelectorAll('.steps i').length, thumb: !!r.querySelector('.owSidePic'), mirror: !!r.querySelector('.owSidePic[data-pc-mirror]'), name: txt(r.querySelector('.owPcName')) })),
+        // (ONEROW, 12 Oct 2026: a pair is ONE row, its Left and its Right are the two lines of that row's drawer: read here as the side rows they were, each with the line it belongs to)
+        const side = r => { const d = r.closest('.owPcDrawer'), row = d && d.previousElementSibling; return { side: r.dataset.side, piece: row ? row.dataset.piece || row.dataset.item || '' : '', tag: txt(r.querySelector('.owPcSide')), st: txt(r.querySelector('.pcSt span')), dots: r.querySelectorAll('.steps i').length, thumb: !!r.querySelector('.owSidePic'), mirror: !!r.querySelector('.owSidePic[data-pc-mirror]'), name: txt(r.querySelector('.owPcSubName')) }; };
+        return { items: [...document.querySelectorAll('#owPcSum > .owPcRow')].length, pairRows: [...document.querySelectorAll('#owPcSum > .owPcRow.owPc-pair')].map(r => ({ piece: r.dataset.piece || r.dataset.item || '', ears: [...r.querySelectorAll('.owPcWho .egEarTab')].map(b => txt(b)) })),
+          rows: [...document.querySelectorAll('#owPcSum > .owPcRow:not(.owPcMulti)')].map(r => ({ side: '', piece: r.dataset.piece || '', tag: '', st: txt(r.querySelector('.pcSt span')) || txt(r.querySelector('.owPcSr')), dots: r.querySelectorAll('.steps i').length, thumb: !!r.querySelector('.owSidePic'), mirror: false, name: txt(r.querySelector('.owPcName')) })).concat([...document.querySelectorAll('#owPcSum .owPcSub[data-side]')].map(side)),
           head: txt(document.getElementById('owPcSum')?.querySelector('.owPcHd')), sub: txt(document.getElementById('owSub')), sku: txt(document.getElementById('owSku')), meta: txt(document.getElementById('owMeta')), split: txt(document.querySelector('#owNowCard .owSplit')), cardControls: document.querySelectorAll('#owNowCard button, #owNowCard a[href], #owNowCard .shs, #owNowCard .owShChip, #owNowCard .owShItem, #owNowCard [data-go], #owNowCard [data-pc]').length, cardH: Math.round(document.getElementById('owNowCard').getBoundingClientRect().height * 100) / 100,
           caption: [...document.querySelectorAll('#owPhoto, .owPics figcaption')].map(txt).join('|') };
       });
@@ -212,18 +215,19 @@ async function partB() {
     let w = await open(P, P.tx);
     if (process.env.POW_SHOT) await page.locator('#orderWin').screenshot({ path: process.env.POW_SHOT });
     const sides = w.rows.filter(r => r.side);
+    assert.equal(w.items, 1, 'ONE row for the pair (ONEROW): its Left and Right are the two lines of its drawer, not rows of their own: ' + JSON.stringify(w.pairRows)); assert.deepEqual(w.pairRows.map(x => x.ears), [['Left', 'Right']], 'the Left | Right marker on that one row');
     assert.deepEqual(sides.map(r => r.tag), ['Left', 'Right'], JSON.stringify(w)); assert.deepEqual(sides.map(r => r.st), ['GF Sheet 1', 'GF Sheet 2'], JSON.stringify(w));
     assert.ok(sides.every(r => r.dots >= 4 && r.thumb), 'each side has its own dots and its own picture box');
     assert.equal(w.head, 'Its pieces'); assert.match(w.sub, /2 pieces/); assert.equal(w.sku, 'SKU: MISMATCHED_7134'); assert.ok(!/Left \+ Right/.test(w.sku), 'the Vector design panel line is the SKU alone: ' + w.sku); assert.match(w.meta, /Pair.*Mismatched/); assert.match(w.meta, /Left GF Sheet 1 · Right GF Sheet 2/);
-    assert.match(w.split, /Its pair: the left earring on GF Sheet 1 and the right earring on GF Sheet 2\./); ok('B1 a split pair: a row for Left and one for Right, each with its own sheet, dots and picture; the card says the pair is split');
+    assert.match(w.split, /Its pair: the left earring on GF Sheet 1 and the right earring on GF Sheet 2\./); ok('B1 a split pair: ONE row (Left | Right marker); the drawer has a line for Left and one for Right, each with its own sheet, dots and picture; the card says the pair is split');
     // (the head card has no sheet boxes any more, Paul 12 Oct 2026: nothing to press on it, one height; the pair's sentence above is its one quiet line, the rows name the sides)
-    assert.equal(w.cardControls, 0, 'no box or button on the head card'); assert.equal(w.cardH, 79, 'one height, split sentence or not'); ok('B1b the head card has no boxes for the sides: the split sentence is its one quiet line, the rows name the sides');
+    assert.equal(w.cardControls, 0, 'no box or button on the head card'); assert.equal(w.cardH, 79, 'one height, split sentence or not'); ok('B1b the head card has no boxes for the sides: the split sentence is its one quiet line, the drawer names the sides');
     // the Copy button beside that line copies the SKU alone (no side words)
     const copied = await page.evaluate(async () => { let got = null; try { Object.defineProperty(navigator, 'clipboard', { value: { writeText: async t => { got = t; } }, configurable: true }); } catch (_) {} document.getElementById('owCopy').click(); await new Promise(r => setTimeout(r, 150)); return got; });
     assert.equal(copied, 'MISMATCHED_7134', 'Copy copies the SKU only: ' + copied); ok('B1c the Vector design panel line reads "SKU: <sku>" with no "Left + Right", and Copy copies the SKU only');
     // 2 · both on one sheet
     w = await open(Q, Q.tx);
-    assert.deepEqual(w.rows.filter(r => r.side).map(r => [r.tag, r.st]), [['Left', 'GF Sheet 1'], ['Right', 'GF Sheet 1']], JSON.stringify(w)); assert.equal(w.split, ''); assert.equal(w.cardControls, 0); ok('B2 a pair on one sheet: both rows say GF Sheet 1, nothing says it is split, no box on the head card');
+    assert.deepEqual(w.rows.filter(r => r.side).map(r => [r.tag, r.st]), [['Left', 'GF Sheet 1'], ['Right', 'GF Sheet 1']], JSON.stringify(w)); assert.equal(w.split, ''); assert.equal(w.cardControls, 0); ok('B2 a pair on one sheet: both lines of its drawer say GF Sheet 1, nothing says it is split, no box on the head card');
     // 3 · a pair plus another line, the Right not placed yet
     w = await open(R, R.tx);
     assert.deepEqual(w.rows.filter(r => r.side).map(r => [r.tag, r.st]), [['Left', 'GF Sheet 1'], ['Right', 'Waiting for a sheet']], JSON.stringify(w));
@@ -231,8 +235,8 @@ async function partB() {
     assert.match(w.split, /Its pair: the left earring on GF Sheet 1 and the right earring on no sheet\./); ok('B3 a pair and another line: the Right is waiting, the Left is on its sheet, the other line has its own row');
     assert.equal(await page.evaluate(() => (document.querySelector('#owPcSum .owPcState') || {}).textContent), 'Showing all 3 pieces', 'the pair counts as two pieces beside the other line'); ok('B3a the quiet line counts pieces: a pair (2) and another line (1) are 3');
     // a press on the Right row picks the line, a second press shows all pieces again
-    await page.evaluate(() => document.querySelector('#owPcSum .owPcRow[data-side="R"] .owPcName').click()); await page.waitForTimeout(300);
-    assert.equal(await page.evaluate(() => OrderWin.selectedPiece()), `${R.rid}_${R.tx}`); ok('B3b a press on a side row picks its line');
+    await page.evaluate(() => document.querySelector('#owPcSum .owPcSub[data-side="R"] .owPcSubName').click()); await page.waitForTimeout(300);
+    assert.equal(await page.evaluate(() => OrderWin.selectedPiece()), `${R.rid}_${R.tx}`); ok('B3b a press on a side line of the drawer picks its line');
     // 4 · a matching quantity-2 line stays as it was: one row, no sides, no split sentence
     w = await open(M, M.tx);
     assert.equal(w.rows.filter(r => r.side).length, 0); assert.ok(!/Left|Right/.test(w.sku + w.meta + w.sub), JSON.stringify(w)); assert.equal(w.split, ''); ok('B4 a matching line (quantity 2, two sheets) is drawn exactly as before: no side rows, no pair words');
@@ -242,7 +246,7 @@ async function partB() {
     assert.deepEqual(es.map(r => [r.tag, r.st]), [['Left', 'GF Sheet 1'], ['Right', 'GF Sheet 2']], JSON.stringify(w));
     assert.deepEqual(es.map(r => r.mirror), [false, true], 'the Right picture is the one turned over');
     assert.match(w.sub, /2 pieces/); assert.equal(w.sku, 'SKU: HEART_STUD'); assert.ok(!/Left \+ Right/.test(w.sku), 'the Vector design panel line is the SKU alone: ' + w.sku); assert.match(w.meta, /Pair.*Matching/); assert.ok(!/Mismatched/.test(w.meta));
-    assert.match(w.split, /Its pair: the left earring on GF Sheet 1 and the right earring on GF Sheet 2\./); ok('B5 a matching earring pair: a Left and a Right row, the Right drawn turned over, the pair said to be matching');
+    assert.match(w.split, /Its pair: the left earring on GF Sheet 1 and the right earring on GF Sheet 2\./); ok('B5 a matching earring pair: a Left and a Right line, the Right drawn turned over, the pair said to be matching');
     // 6 · the run banner counts PIECES: a pair is two (PAIRFLOW's hand-over), a charm or a disc line as many as it always counted
     const ban = await page.evaluate(() => ({ pull: RunCtl.stepDetail({ step: 'pull' }), pool: RunCtl.stepDetail({ step: 'pool' }), lines: Orders.rows().filter(x => x.state !== 'gone').length, per: Orders.rows().map(x => [x.key, x.state, RunCtl.bannerPieces(x), x.spec && x.spec.form]) }));
     assert.equal(ban.lines, 6, JSON.stringify(ban)); assert.deepEqual(ban.per.map(x => x[3]), ['earrings', 'earrings', 'earrings', null, null, 'earrings'], JSON.stringify(ban)); assert.equal(ban.pull, ' \u00b7 10 pieces', JSON.stringify(ban)); assert.equal(ban.pool, ' \u00b7 10 of 10 pieces', JSON.stringify(ban)); ok('B6 the run banner counts pieces: four pair lines and two other lines make 10 pieces, not 6');

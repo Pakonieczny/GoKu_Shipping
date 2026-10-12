@@ -238,13 +238,12 @@ async function main() {
     // pool holds no pieces of any more (held, completed by hand) draws TWO rows, the Left and the Right, both under the line's own key; a line whose
     // pool rows are the old one-row-per-copy shape (this fixture's pooled orders) stays one row; a cancelled order has no list.
     const earsOfTruth = t => (t.state === 'hold' || t.state === 'hand') ? 2 : t.state === 'cancelled' ? 0 : 1;
-    const rowsOf = o => Object.values(TRUTH[o.rid]).reduce((n, t) => n + earsOfTruth(t), 0);
     const openWin = async (o, n) => {
       // (a cancelled order is not in the pull: it opens from its records by its number, and has no list of pieces)
       const cancelled = o === CANC, key = cancelled ? o.rid : kOf(o, 'hug');
       if (cancelled) await page.evaluate(rid => OrderWin.openOrder(rid, {}), o.rid); else await page.evaluate(k => OrderWin.open(k), key);
-      try { await page.waitForFunction(([k, n, cx]) => OrderWin.key() === k && document.querySelectorAll('#owPcSum .owPcRow').length === n && OrderWin._feed() && OrderWin._feed().answer && (!cx || /Cancelled/.test(document.getElementById('owNow').textContent)), [key, cancelled ? 0 : n, cancelled], { timeout: 25000 }); }
-      catch (e) { const got = await page.evaluate(() => ({ key: OrderWin.key(), rows: document.querySelectorAll('#owPcSum .owPcRow').length, feed: !!(OrderWin._feed() && OrderWin._feed().answer), hidden: document.getElementById('owPcSum').hidden })); throw new Error(`the window of ${o.rid} did not settle: ${JSON.stringify(got)}`); }
+      try { await page.waitForFunction(([k, n, cx]) => OrderWin.key() === k && document.querySelectorAll('#owPcSum > .owPcRow').length === n && OrderWin._feed() && OrderWin._feed().answer && (!cx || /Cancelled/.test(document.getElementById('owNow').textContent)), [key, cancelled ? 0 : n, cancelled], { timeout: 25000 }); }
+      catch (e) { const got = await page.evaluate(() => ({ key: OrderWin.key(), rows: document.querySelectorAll('#owPcSum > .owPcRow').length, feed: !!(OrderWin._feed() && OrderWin._feed().answer), hidden: document.getElementById('owPcSum').hidden })); throw new Error(`the window of ${o.rid} did not settle: ${JSON.stringify(got)}`); }
       await page.mouse.move(3, 3); await page.waitForTimeout(1800); await idle();
     };
     const view = async v => { await page.evaluate(x => OrderWin.setView(x), v); await page.mouse.move(3, 3); await page.waitForTimeout(1800); await idle(); };
@@ -257,10 +256,13 @@ async function main() {
       // (the head card has nothing to press and no sheet shortcut: Paul, 12 Oct 2026. The pieces' own status chips are the doors to their sheets)
       const cardControls = card.querySelectorAll('button, a[href], input, select, textarea, [role=button], .shs, .owShChip, .owShItem, [data-go], [data-pc]').length;
       const rows = {}, ears = {};
-      for (const r of document.querySelectorAll('#owPcSum .owPcRow')) {
-        const k = r.dataset.piece || '', chip = r.querySelector('.st .pcSt'), sr = r.querySelector('.st.owPcSr');
-        rows[k] = { st: t(chip) || t(sr), k: chip ? chip.dataset.k : null, open: !!chip && chip.tagName === 'BUTTON', dots: [...r.querySelectorAll('.steps i')].map(i => i.classList.contains('on')), side: r.dataset.side || '' };
-        (ears[k] = ears[k] || []).push(rows[k]);
+      // (ONEROW, 12 Oct 2026: an earring pair is ONE row that speaks for its slowest ear; its Left and its Right are the two lines of its drawer: each is read as the ear row it was)
+      for (const r of document.querySelectorAll('#owPcSum > .owPcRow')) {
+        const k = r.dataset.piece || '', chip = r.querySelector(':scope > .st .pcSt'), sr = r.querySelector(':scope > .st.owPcSr');
+        rows[k] = { st: t(chip) || t(sr), k: chip ? chip.dataset.k : null, open: !!chip && chip.tagName === 'BUTTON', dots: [...r.querySelectorAll(':scope > .steps i')].map(i => i.classList.contains('on')), side: '' };
+        const dr = r.nextElementSibling && r.nextElementSibling.matches('.owPcDrawer') ? r.nextElementSibling : null, subs = dr ? [...dr.querySelectorAll('.owPcSub[data-side]')] : [];
+        if (subs.length) ears[k] = subs.map(x => { const c = x.querySelector('.pcSt'); return { st: t(c), k: c ? c.dataset.k : null, open: !!c && c.tagName === 'BUTTON', dots: [...x.querySelectorAll('.steps i')].map(i => i.classList.contains('on')), side: x.dataset.side || '' }; });
+        else (ears[k] = ears[k] || []).push(rows[k]);
       }
       const rail = [...document.querySelectorAll('#owRail .tlStop')].map(s => ({ k: s.dataset.stage, cls: s.className.replace('tlStop', '').trim(), cnt: t(s.querySelector('.tlCnt')) }));
       const tab = document.querySelector('.owTabsV [data-ow-view="sheet"]');
@@ -350,7 +352,7 @@ async function main() {
       return out;
     };
     const run = async (o, withTimeline = true) => {
-      await openWin(o, rowsOf(o));
+      await openWin(o, o === CANC ? 0 : Object.keys(TRUTH[o.rid]).length);   // (one row for each line: a pair is one row, its ears are the lines of its drawer)
       const s = await snap(); let tl = null;
       if (withTimeline) { await view('timeline'); tl = await timelineSnap(); await view('info'); }
       if (probe) {

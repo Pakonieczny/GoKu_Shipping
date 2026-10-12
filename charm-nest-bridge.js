@@ -14570,16 +14570,17 @@ const OrderWin = window.OrderWin = (() => {
     const multi = sibs.length > 1 && !r.loading;
     const ps = multi ? piecesOf(sibs) : [];
     W.pieces = ps;
-    if (W.piece && !ps.some(p => p.key === W.piece)) W.piece = null;
+    if (W.piece && !ps.some(p => p.key === W.piece)) { W.piece = null; W.side = null; }
+    if (W.side) { const ln = ps.find(p => p.key === (W.piece || W.key)) || (!multi ? tryDo(() => piecesOf([r])[0]) : null); if (!(ln && ln.sides && ln.sides.some(q => q.side === W.side))) W.side = null; }
     const dir = W.pieceDir; W.pieceDir = 0;
     refreshPlacement(r); W.placeDrawn = W.placeSig;   // (where each piece IS now, before the mounts draw: they ask for it, opts.placement)
     for (const m of [W.rail, W.tl]) if (m && m.setPieces) tryDo(() => m.setPieces(ps, W.piece, dir));
   }
   /** A piece chosen (null: all of them): the Overview shows that piece's line, and every view crosses over to it. */
-  function pickPiece(key) {
-    key = key || null; if (key === W.piece) return;
+  function pickPiece(key, side) {
+    key = key || null; side = side || null; if (key === W.piece && side === (W.side || null)) return;
     const order = [null].concat(W.pieces.map(p => p.key)); W.pieceDir = order.indexOf(key) > order.indexOf(W.piece) ? 1 : -1;
-    const dir = W.pieceDir; W.piece = key;
+    const dir = W.pieceDir; W.piece = key; W.side = side;   // (the Left or the Right of the pair, ONEROW: that ear of the line picked, or null for the whole item)
     markPieces();   // (the row is marked at once, whatever the repaint waits for)
     const r = rowOf(W.key); if (!r) return;
     const to = key && key !== r.key ? linesOf(r).find(x => x.key === key) : null;
@@ -14596,13 +14597,20 @@ const OrderWin = window.OrderWin = (() => {
   function selectPiece(key) {
     key = key || null;
     if (!W.dlg || !W.dlg.open || W.closing) return false;
-    if (key && !(W.pieces || []).some(p => p.key === key)) return false;
-    if (key === W.piece) return true;
-    const box = byId("owPcSum"), at = key || W.piece, rowFor = k => box && k ? box.querySelector(`.owPcRow[data-piece="${CSS.escape(k)}"]`) : null;
+    // (a key is a line of the order, or one ear of a pair line, "<line>#L" / "<line>#R", the Left | Right marker on its row)
+    const m = key && /^(.+)#(L|R)$/.exec(key), side = m ? m[2] : null, line = m ? m[1] : key, multi = (W.pieces || []).length > 1;
+    if (line && !(W.pieces || []).some(p => p.key === line)) {
+      const r = rowOf(W.key), one = side && !multi && r && !r.loading && r.key === line ? tryDo(() => piecesOf([r])[0]) : null;   // (a single-line order has no list of pieces to find it in)
+      if (!(one && one.sides && one.sides.some(q => q.side === side))) return false;
+    }
+    if (side && multi) { const p = W.pieces.find(q => q.key === line); if (!(p && p.sides && p.sides.some(q => q.side === side))) return false; }
+    const toPiece = multi ? line : null;
+    if (toPiece === W.piece && side === (W.side || null)) return true;
+    const box = byId("owPcSum"), at = line || W.piece, rowFor = k => box && k ? box.querySelector(`.owPcRow[data-piece="${CSS.escape(k)}"]`) : null;
     const was = box && box.contains(document.activeElement) && document.activeElement.closest(".owPcRow") ? document.activeElement.closest(".owPcRow").dataset.piece : null;
     const sc = scrollerOf(box), top = k => { const e = rowFor(k); return e && !box.hidden ? e.getBoundingClientRect().top : null; };
     const t0 = top(at);
-    pickPiece(key);
+    pickPiece(toPiece, side);
     // (the rows above this one may now be taller or shorter: the scroller is moved by what the pressed row moved; where it cannot be, the list
     // glides from where it was to where it is now, transform only, instead of jumping from under the pointer)
     const gliding = () => box.getAnimations().some(a => a.id === "owPcFlip");
@@ -14611,8 +14619,8 @@ const OrderWin = window.OrderWin = (() => {
     const t1 = top(at);
     if (t0 != null && t1 != null && Math.abs(t1 - t0) > 1 && !still()) { const a = box.animate([{ transform: `translateY(${t0 - t1}px)` }, { transform: "none" }], { duration: 180, easing: EASE }); a.id = "owPcFlip"; }
     requestAnimationFrame(keep);
-    if (was != null) { const nm = rowFor(was) && rowFor(was).querySelector(".owPcName"); if (nm && document.activeElement !== nm) nm.focus({ preventScroll: true }); }
-    return W.piece === key;
+    if (was != null) { const nm = rowFor(was) && rowFor(was).querySelector(".owPcName"); if (nm && document.activeElement !== nm && !box.contains(document.activeElement)) nm.focus({ preventScroll: true }); }
+    return W.piece === toPiece && (W.side || null) === side;
   }
   /** The nearest ancestor of `n` that scrolls (the Overview's own column; the whole view where the window is narrow). */
   function scrollerOf(n) {
@@ -14625,17 +14633,27 @@ const OrderWin = window.OrderWin = (() => {
    *  on its dot (.pics); the header says what is shown, and "Show all" is the way back. */
   function markPieces() {
     const box = byId("owPcSum"); if (!box || box.hidden) return;
-    const ps = W.pieces || [], multi = ps.length > 1, sel = multi ? W.piece : null, r0 = rowOf(W.key), shown = multi && r0 ? r0.key : null;
+    const ps = W.pieces || [], multi = ps.length > 1, sel = multi ? W.piece : null, r0 = rowOf(W.key), shown = multi && r0 ? r0.key : null, sk = selSideKey();
     box.querySelectorAll(".owPcRow[data-piece]").forEach(row => {
       const key = row.dataset.piece, on = key === sel, nm = row.querySelector(".owPcName"), dot = row.querySelector(".dot");
       row.classList.toggle("sel", on); row.classList.toggle("pics", !sel && key === shown);
       if (on) row.setAttribute("aria-current", "true"); else row.removeAttribute("aria-current");
-      if (nm) { nm.setAttribute("aria-pressed", on ? "true" : "false"); nm.title = on ? "Showing only this piece · press to show all pieces" : "Show only this piece"; }
+      if (nm) { nm.setAttribute("aria-pressed", on && !sk ? "true" : "false"); nm.title = on && !sk ? "Showing only this piece · press to show all pieces" : "Show only this piece"; }
       if (dot && !row.style.getPropertyValue("--pc")) row.style.setProperty("--pc", dot.style.getPropertyValue("--c") || "var(--gold)");
+    });
+    // (one ear of a pair picked: its tag on the row's Left | Right marker is pressed, and so is its line in the drawer; the row itself stays marked as the item shown)
+    box.querySelectorAll('.egEarTab[data-ear]').forEach(b => {
+      const on = b.dataset.ear === sk, tag = (b.textContent || "").trim().toLowerCase();
+      b.setAttribute("aria-pressed", on ? "true" : "false"); b.title = on ? `Showing only the ${tag} · press to show all pieces` : `Show only the ${tag}`;
+    });
+    box.querySelectorAll(".owPcSub[data-sub]").forEach(sub => {
+      const on = sub.dataset.sub === sk, nm = sub.querySelector(".owPcSubName");
+      sub.classList.toggle("sel", on); if (nm) nm.setAttribute("aria-pressed", on ? "true" : "false");
     });
     const st = box.querySelector(".owPcState"); if (!st) return;
     const p = sel && ps.find(x => x.key === sel), total = ps.reduce((n, x) => n + (x.sides ? x.sides.reduce((m, sd) => m + sd.qty, 0) : x.qty), 0);   // (a pair line counts its Left and its Right)
-    const html = p ? `Showing <b>${esc(p.name)}</b><i aria-hidden="true"> · </i><button type="button" class="owPcAll" data-pc-all>Show all</button>` : `Showing all ${total} pieces`;
+    const ear = p && W.side && p.sides ? sideWord(W.side) : "";
+    const html = p ? `Showing <b>${esc(p.name + (ear ? " · " + ear : ""))}</b><i aria-hidden="true"> · </i><button type="button" class="owPcAll" data-pc-all>Show all</button>` : `Showing all ${total} pieces`;
     if (st._h !== html) { st._h = html; st.innerHTML = html; }
   }
   /** The presses on the "Its pieces" list: a press on a row's own body (its name, its words, the empty room) picks the piece, or all pieces
@@ -14644,14 +14662,33 @@ const OrderWin = window.OrderWin = (() => {
    *  to the row above or below (Home and End: the first and the last). */
   function wirePcSum(box) {
     if (!box || box._wired) return; box._wired = true;
-    const own = (t, row) => { const x = t.closest && t.closest("button, a, input, textarea, select, label, [role=button], [data-no-select], .pcAct, .steps, .seal, .sealRow, [data-seal-model]"); return x && x !== row && !x.classList.contains("owPcName") && row.contains(x); };
+    const isName = c => c.classList.contains("owPcName") || c.classList.contains("owPcSubName");
+    const own = (t, row) => { const x = t.closest && t.closest("button, a, input, textarea, select, label, [role=button], [data-no-select], .pcAct, .steps, .seal, .sealRow, [data-seal-model], .owPcTools, .owPcMenuWrap"); return x && x !== row && !isName(x) && row.contains(x); };
     box.addEventListener("click", e => {
       const all = e.target.closest && e.target.closest("[data-pc-all]"); if (all) { selectPiece(null); return; }
+      // (the Left | Right marker of a pair's row, the very switch the Engrave tab draws: it picks that ear; the ear picked again goes back to all pieces)
+      const ear = e.target.closest && e.target.closest('.egEarTab[data-a="ear"][data-ear]');
+      if (ear && box.contains(ear)) { e.preventDefault(); const k = ear.dataset.ear; selectPiece(k === selSideKey() ? null : k); return; }
+      // (a line of the drawer: its own ear is picked, a disc or piece picks the item)
+      const sub = e.target.closest && e.target.closest(".owPcSub[data-sub]");
+      if (sub && box.contains(sub)) {
+        if (own(e.target, sub)) return;
+        const k = sub.dataset.sub, side = /#(L|R)$/.test(k);
+        if (side) selectPiece(k === selSideKey() ? null : k);
+        else { const ln = k.replace(/#.+$/, ""); selectPiece(ln === W.piece && !W.side ? null : ln); }
+        return;
+      }
       const row = e.target.closest && e.target.closest(".owPcRow[data-piece]"); if (!row || !box.contains(row) || own(e.target, row)) return;
-      const key = row.dataset.piece; selectPiece(key === W.piece ? null : key);
+      const key = row.dataset.piece; selectPiece(key === W.piece && !W.side ? null : key);
     });
     box.addEventListener("keydown", e => {
       const nm = e.target.closest && e.target.closest(".owPcName"); if (!nm || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      // (a row with a drawer: Right opens it, Left closes it, as in any list that unfolds)
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+        const ch = nm.closest(".owPcRow").querySelector(".owPcX"); if (!ch) return;
+        const open = ch.getAttribute("aria-expanded") === "true"; if ((e.key === "ArrowRight") === open) return;
+        e.preventDefault(); ch.click(); return;
+      }
       const rows = [...box.querySelectorAll(".owPcRow[data-piece]")], i = rows.indexOf(nm.closest(".owPcRow"));
       const j = i < 0 ? -1 : e.key === "ArrowDown" ? i + 1 : e.key === "ArrowUp" ? i - 1 : e.key === "Home" ? 0 : e.key === "End" ? rows.length - 1 : -1;
       if (j < 0) return;
@@ -14662,9 +14699,23 @@ const OrderWin = window.OrderWin = (() => {
     });
   }
 
+  /** The ear of an earring pair the window is narrowed to (W.side, "L" | "R": the Left | Right marker on the pair's row, or a press on its line in the drawer), as { line, side } with the
+   *  line's piece and the side's own (key "<line>#L"); null when no ear is picked or the line no longer has sides. W.side belongs to the line shown (W.piece, or the one line of a
+   *  single-line order). */
+  function narrowSide() {
+    if (!W.side) return null;
+    const key = W.piece || W.key, r = rowOf(W.key);
+    const line = (W.pieces || []).find(x => x.key === key) || (r && !r.loading && r.key === key ? tryDo(() => piecesOf([r])[0]) : null);
+    const sd = line && line.sides && line.sides.find(q => q.side === W.side);
+    return sd ? { line, side: sd } : null;
+  }
+  /** The key of the ear picked ("<line>#L"), else null. */
+  const selSideKey = () => (W.side ? `${W.piece || W.key}#${W.side}` : null);
   /** The order's events as the Overview shows them: the piece chosen's alone, or all of them. */
   function shownEvents() {
-    const UI = window.OrderTimelineUI, p = W.piece && W.pieces.find(x => x.key === W.piece);
+    const UI = window.OrderTimelineUI, p = W.piece && W.pieces.find(x => x.key === W.piece), ns = narrowSide();
+    // (the Left or the Right of a pair picked on its row: that ear's own events, as its row, its dots and its placement read them)
+    if (ns && W.events && UI && UI.ofPiece) return W.events.filter(e => UI.ofPiece(e, ns.side, [ns.line].concat(W.pieces || [])));
     return p && W.events && UI && UI.ofPiece ? W.events.filter(e => UI.ofPiece(e, p, W.pieces)) : W.events;
   }
   /** All pieces of an order of several: the events of its slowest piece, where the order is (else null). */
@@ -14711,12 +14762,16 @@ const OrderWin = window.OrderWin = (() => {
   };
   /** The state of a step of a piece, in the words of the card and the dot's label: Done, Not yet, Skipped (the piece was completed by hand), Won't happen (cancelled). */
   const pdotState = (x, s) => pdotOn(x, s) ? { done: true, word: "Done" } : x.D.cancelled ? { done: false, word: "Won't happen" } : x.D.hand ? { done: false, word: "Skipped" } : { done: false, word: "Not yet" };
-  /** One piece's row of dots (x: a piece of UI.summary's each; rid: the order). One Tab stop for the row, on the step the piece is working towards. */
-  function pieceDotsHtml(x, rid) {
+  /** One piece's row of dots (x: a piece of UI.summary's each; rid: the order). One Tab stop for the row, on the step the piece is working towards.
+   *  o (ONEROW, 12 Oct 2026: one row for an earring pair or a set): { line: the item's key (the row's, not the piece's), pieces: [the keys of every piece the row speaks for], sig, name }:
+   *  the dots are the SLOWEST piece's, and their card lists every piece's own step (pieceDotInfo reads data-pdot-pieces). */
+  function pieceDotsHtml(x, rid, o) {
+    o = o || {};
     pdotPlace(x, rid);
-    const at = x.steps.findIndex(s => !pdotOn(x, s)), tab = at < 0 ? x.steps.length - 1 : at, grp = `${rid}|${x.p.key}`;
-    const dots = x.steps.map((s, i) => `<i class="${pdotOn(x, s) ? "on" : ""}" data-pdot="${s.k}" data-pdot-rid="${esc(rid)}" data-pdot-piece="${esc(x.p.key)}" data-pdot-sig="${esc(x._pl && x._pl.sig || "")}" data-zoom-dot="${PDOT_ZOOM}" data-zoom-delay="${PDOT_REST}" data-zoom-group="${esc(grp)}" role="img" tabindex="${i === tab ? 0 : -1}" title="" aria-label="${esc(`${s.l}, ${pdotState(x, s).word.toLowerCase()}`)}"></i>`).join("");
-    return `<span class="steps" role="group" data-pdot-group title="" aria-label="${esc(`${x.p.name} · progress`)}">${dots}</span>`;
+    const at = x.steps.findIndex(s => !pdotOn(x, s)), tab = at < 0 ? x.steps.length - 1 : at, pk = o.line || x.p.key, grp = `${rid}|${pk}`;
+    const many = o.pieces && o.pieces.length > 1 ? ` data-pdot-pieces="${esc(o.pieces.join("|"))}"` : "", sig = esc((x._pl && x._pl.sig || "") + (o.sig || ""));
+    const dots = x.steps.map((s, i) => `<i class="${pdotOn(x, s) ? "on" : ""}" data-pdot="${s.k}" data-pdot-rid="${esc(rid)}" data-pdot-piece="${esc(pk)}"${many} data-pdot-sig="${sig}" data-zoom-dot="${PDOT_ZOOM}" data-zoom-delay="${PDOT_REST}" data-zoom-group="${esc(grp)}" role="img" tabindex="${i === tab ? 0 : -1}" title="" aria-label="${esc(`${s.l}, ${pdotState(x, s).word.toLowerCase()}`)}"></i>`).join("");
+    return `<span class="steps" role="group" data-pdot-group title="" aria-label="${esc(`${o.name || x.p.name} · progress`)}">${dots}</span>`;
   }
   // when a step was done, as the Library's cards say it: "Oct 3 · 4:12 PM" in the shop's own time (the year only when it is not this year)
   const pdotZone = "America/Toronto", pdotFmt = o => { try { return new Intl.DateTimeFormat("en-US", Object.assign({ timeZone: pdotZone }, o)); } catch (_) { return null; } };
@@ -14731,8 +14786,8 @@ const OrderWin = window.OrderWin = (() => {
     const v = tryDo(() => tlContext(rid, key)) || null; W.pdCtx = { rid, key, at: Date.now(), v }; return v;
   }
   /** What the card over a dot says: { name, state, line, by, seal } for RailTip.pieceDot, or null when the piece is not drawn any more. */
-  function pieceDotInfo(d) {
-    const UI = window.OrderTimelineUI, rid = d.getAttribute("data-pdot-rid") || "", key = d.getAttribute("data-pdot-piece") || "", sk = d.getAttribute("data-pdot") || "";
+  function pieceDotOne(rid, key, sk, size) {
+    const UI = window.OrderTimelineUI;
     const sum = W.pcSum, x = UI && sum && sum.rid === rid ? sum.each.find(e => e.p.key === key) : null, s = x && x.steps.find(t => t.k === sk);
     if (!x || !s) return null;
     pdotPlace(x, rid);
@@ -14771,8 +14826,19 @@ const OrderWin = window.OrderWin = (() => {
     // the seal slot (PieceSeals, charm-nest-piece-seals.js: which step has a seal is its to say): the real seal of a done step, the unfinished one of a step still to
     // come, nothing for a step that has none. The words beside it are this card's own (who, where, when), so the seal's caption is off.
     const ps = window.PieceSeals;
-    const seal = ps && typeof ps.render === "function" ? tryDo(() => ps.render(s.k, Object.assign({}, x, { pieces: (W.pieces && W.pieces.length) ? W.pieces : [x.p], place: x._pl || undefined }), { done: st.done, caption: false, size: 40 })) : null;
+    const seal = ps && typeof ps.render === "function" ? tryDo(() => ps.render(s.k, Object.assign({}, x, { pieces: (W.pieces && W.pieces.length) ? W.pieces : [x.p], place: x._pl || undefined }), { done: st.done, caption: false, size: size || 40 })) : null;
     return { name: s.l, state: st.word === "Not yet" ? "" : st.word, line, by, seal: seal || null };   // ("Not yet" is the hollow dot's to say, as "To come" is the rail's: the card names a state only when it is Done, Skipped or Won't happen)
+  }
+  /** What the card over a dot (or over a row's status chip) says. A row that stands for several pieces (an earring pair: ONEROW, 12 Oct 2026) carries data-pdot-pieces: the card then names
+   *  the step once and lists each piece's own state, words, time and seal (the heading says "1 of 2" while only one has reached it). A row of one piece: exactly the card it always had. */
+  function pieceDotInfo(d) {
+    const rid = d.getAttribute("data-pdot-rid") || "", key = d.getAttribute("data-pdot-piece") || "", sk = d.getAttribute("data-pdot") || d.getAttribute("data-pcard") || "";
+    const keys = (d.getAttribute("data-pdot-pieces") || "").split("|").filter(Boolean);
+    if (keys.length < 2) return pieceDotOne(rid, key, sk);
+    const pcs = keys.map(k => { const i = pieceDotOne(rid, k, sk, 34), side = (/#(L|R)$/.exec(k) || [])[1]; return i && { label: sideWord(side) || "Piece", state: i.state, line: i.line, by: i.by, seal: i.seal, name: i.name }; }).filter(Boolean);
+    if (!pcs.length) return null;
+    const done = pcs.filter(q => q.state === "Done").length, state = done === pcs.length ? "Done" : done === 0 ? pcs[0].state : `${done} of ${pcs.length}`;
+    return { name: pcs[0].name, state, line: "", by: "", seal: null, pieces: pcs };
   }
   { const RT = window.RailTip = window.RailTip || {}; RT.pieceDot = pieceDotInfo; }   // (charm-nest-rail-tip.js draws the card: it asks this when a dot's card opens)
   /** A redraw of the rows keeps the keyboard where it was: the dot that has it, found again by its order, piece and step. */
@@ -14790,15 +14856,66 @@ const OrderWin = window.OrderWin = (() => {
    *  sheet there. EVERY other piece, in a card or not (an ordinary piece on a sheet), has the orange Hold at the right end of its row, where its words
    *  sit (Paul, 5 Oct: Hold matters most for ordinary orders): the same HoldUI button as the cards', and a single piece with nothing else to press has
    *  a row of its own for it. */
+  /* ── ONE ROW PER ORDER ITEM (Paul, 12 Oct 2026, image 1: "Each order should only take up one line and you need to amalgamate multi charm orders, including all earring orders ...
+     stay minimalist ... hide options that are not immediately necessary behind hover states or drop-down menus") ──
+     An earring pair (matching or mismatched) is ONE row: the name once, the metal dot, a small Left | Right marker (charm-nest-piece-switch.js, the very switch the Engrave tab draws),
+     ONE status and the six dots of its SLOWEST piece (the heading says the order is where the slowest one is); hovering the dots or the status opens the card that lists each
+     piece's own step and seal. A set or a necklace of several discs is ONE row too, with its piece count. What belongs to one piece (its own sheet, status, dots) is in a drawer under
+     the row that ONE quiet chevron opens; of the row's actions only the main one shows (Print QR label, else Complete Order, else Hold), the rest are behind the three dots
+     (charm-nest-order-rows.js). A row of one piece is drawn exactly as it always was. */
+  const PC_OPEN = new Set();   // the items whose drawer is open ("<order>|<line key>"): a redraw puts every one back as it was
+  const pcIcon = (name, size, fallback) => { const I = window.CharmNestIcons; const svg = I && typeof I.svg === "function" ? tryDo(() => I.svg(name, { size: size || 14 })) : ""; return svg || `<span aria-hidden="true">${fallback || ""}</span>`; };
+  /** A piece of a counted line (an OrderPieces entry) as a scope piece, for pieceStatusOf: the sheet it is on, whether it waits, is completed by hand or not read yet. */
+  const pcScopeOf = (c, line) => ({ key: line ? line.key : c.lineKey, nested: !!c.nested, hand: !!c.hand, loading: !c.nested && !c.hand && !!(c.loading || c.unsure), row: line && line.row || null, why: c.reason || "",
+    sheets: c.nested ? [{ id: c.sheetId || null, page: null, label: c.sheetLabel || "", metal: c.metal || null, n: c.sheetNo, setId: c.setId || null, cut: c.state === "cut", pools: [String(c.poolId || c.key)] }] : [] });
+  /** What one order item is: { kind: "pair" | "counted" | "single", x (the line's summary), subs (its pieces: a pair's Left and Right, a counted line's discs), lead (the piece the row speaks for), step }. */
+  function pcItemOf(x, ctx) {
+    const OR = window.CharmNestOrderRows, p = x.p, lineScope = ctx.scope && ctx.scope.find(q => q.key === p.key) || null, STAGES = window.OrderTimelineUI.STAGES;
+    const stepOf = y => (y.D.hand ? STAGES.length - 1 : y.D.step);
+    if (p.sides && ctx.sideEach && p.sides.every(sp => ctx.sideEach.get(sp.key))) {
+      const subs = p.sides.map(sp => ({ key: sp.key, side: sp.side, qty: sp.qty, mirror: !!sp.mirror, x: ctx.sideEach.get(sp.key), sp: lineScope && lineScope.sides && lineScope.sides.find(q => q.key === sp.key) || null }));
+      const lead = subs[Math.max(0, OR.slowest(subs.map(q => ({ step: q.x.D.step, hand: !!q.x.D.hand }))))];
+      return { kind: "pair", x, subs, lead, lineScope, step: stepOf(lead.x) };
+    }
+    if (p.counted) {
+      const r = rowOf(p.key), pcs = r && window.OrderPieces ? tryDo(() => OrderPieces.ofRow(r)) || [] : [];
+      if (pcs.length > 1) {
+        const noun = ((r && countedOf(r)) || {}).noun || "piece", n = pcs.length, tag = noun === "disc" ? "D" : "P";
+        const subs = pcs.map((c, i) => ({ key: `${p.key}#${tag}${i + 1}`, c, label: OR.subLabel("counted", i, n, { noun }), x, sp: pcScopeOf(c, lineScope) }));
+        return { kind: "counted", x, subs, lead: null, lineScope, step: stepOf(x), placed: pcs.filter(c => c.nested).length, total: n };
+      }
+    }
+    return { kind: "single", x, subs: [], lead: null, lineScope, step: stepOf(x) };
+  }
+  /** The Left | Right marker of a pair's row: charm-nest-piece-switch.js drawn compact (one small tag for each ear). Nothing is pressed in the markup: markPieces says which ear is picked. */
+  function pcMarkerHtml(it) {
+    const PS = window.CharmNestPieceSwitch; if (!PS || !PS.list) return "";
+    const pcs = tryDo(() => PS.list(it.subs.map(q => ({ key: q.key, slot: q.side })), { of: it.subs.length }));
+    if (!pcs || !pcs.length) return "";
+    const nm = it.x.p.name;
+    return `<span class="owPcPair" data-no-select>${PS.html(pcs, null, { compact: true, titleOf: q => `Show only the ${q.label.toLowerCase()} of ${nm}` })}</span>`;
+  }
+  /** One line of a drawer: a piece's own status and sheet (a button that opens it), and for an ear its picture and its own six dots. */
+  function pcSubHtml(it, sub, rid, nm) {
+    if (it.kind === "pair") {
+      const side = sideWord(sub.side);
+      return `<div class="owPcSub owPcSideSub" data-sub="${esc(sub.key)}" data-side="${esc(sub.side)}" role="group" aria-label="${esc(nm + " · " + side)}">` +
+        `<span class="owSidePic" data-pc-thumb="${esc(sub.side)}" data-pc-thumb-line="${esc(it.x.p.key)}"${sub.mirror ? ' data-pc-mirror="1"' : ""} aria-hidden="true"></span>` +
+        `<button type="button" class="owPcSubName" aria-pressed="false" title="Show only the ${esc(side.toLowerCase())}"><span class="owPcSide" data-side="${esc(sub.side)}">${esc(window.CharmNestOrderRows.subLabel("pair", 0, 2, { side: sub.side, qty: sub.qty }))}</span></button>` +
+        pieceStatusHtml(sub.x, sub.sp, { inButton: false }) + pieceDotsHtml(sub.x, rid, { name: nm + " · " + side }) + `</div>`;
+    }
+    return `<div class="owPcSub owPcPieceSub" data-sub="${esc(sub.key)}" role="group" aria-label="${esc(nm + " · " + sub.label)}"><span class="owPcSubName owPcSubTag">${esc(sub.label)}</span>` +
+      pieceStatusHtml(sub.x, sub.sp, { inButton: false }) + `</div>`;
+  }
   function paintPieceSum() {
     const box = byId("owPcSum"); if (!box) return;
-    // (an order of several keeps EVERY piece on a row, whichever is shown: the one picked is marked in place by markPieces, never drawn alone)
+    // (an order of several keeps EVERY item on a row, whichever is shown: the one picked is marked in place by markPieces, never drawn alone)
     const UI = window.OrderTimelineUI, ps = W.pieces || [], all = ps.length > 1, r0 = rowOf(W.key), rid = r0 ? String(r0.order.receiptId) : "";
     let list = ps;
     if (!all) { const key = W.piece || W.key, p = ps.find(x => x.key === key) || (r0 && !r0.loading && r0.key === key ? tryDo(() => piecesOf([r0])[0]) : null); list = p ? [p] : []; }
     // (an order of several waits for its timeline; one piece's row is drawn at once, its buttons never wait for it)
     const sum = list.length && UI && UI.summary && (!all || W.events) ? tryDo(() => UI.summary(W.events || [], list, W.cancelled, placeOfKey)) : null;
-    // (a mismatched pair line: its Left and Right are summarised on their own, from their own events and placement; `each` of the order's cards holds them too, by their keys "<line>#L" / "<line>#R")
+    // (a pair line: its Left and Right are summarised on their own, from their own events and placement; `each` of the order's cards holds them too, by their keys "<line>#L" / "<line>#R")
     const sidePs = sum ? list.flatMap(p => p.sides || []) : [], sideSum = sidePs.length ? tryDo(() => UI.summary(W.events || [], sidePs, W.cancelled, placeOfKey)) : null;
     const sideEach = sideSum ? new Map(sideSum.each.map(e => [e.p.key, e])) : null;
     W.pcSum = sum ? Object.assign({ rid }, sum, sideSum ? { each: sum.each.concat(sideSum.each) } : {}) : null;   // (what the dots' cards read, pieceDotInfo)
@@ -14806,27 +14923,42 @@ const OrderWin = window.OrderWin = (() => {
     // (the Hold of a piece that has no buttons of its own: a place for it, empty when the order cannot be held, or HoldUI is not there)
     const holds = sum ? new Map(sum.each.map(x => [x.p.key, ctls.get(x.p.key) ? "" : holdSlotOfKey(x.p.key)])) : null;
     if (!sum || (!all && !ctls.get(list[0].key) && !holds.get(list[0].key) && !(sideEach && list[0].sides))) { box.hidden = true; box._h = ""; box.innerHTML = ""; return; }
-    const at = s => UI.STAGES.indexOf(s);
     const scope = r0 && !r0.loading ? tryDo(() => scopePieces(r0)) : null;   // (the sheets each piece's copies are on: its status names one)
-    // The rows of a mismatched pair line, one for its Left and one for its Right (Paul, 9 Oct 2026: "each charm identified as the left and right of the same order"): a small picture of the
-    // pair with the other body washed out, the side's own name, status chip (its own sheet), dots and seals. The line stays the one thing picked: a press on either row picks the line.
-    // The Review card's buttons (or the Hold) of the line stand on the first row, once: they act on the whole order.
-    const sideRows = (x, slow) => x.p.sides.map((sp, i) => {
-      const sx = sideEach.get(sp.key); if (!sx) return "";
-      const lineScope = scope && scope.find(q => q.key === x.p.key), ssp = lineScope && lineScope.sides && lineScope.sides.find(q => q.key === sp.key) || null;
-      const dot = `<i class="dot" style="--c:${esc(colorOf(sp.metal))}"></i>`, side = sideWord(sp.side), meta = pieceMeta(sp);
-      const nm = `<span class="owSidePic" data-pc-thumb="${esc(sp.side)}" data-pc-thumb-line="${esc(x.p.key)}"${sp.mirror ? ' data-pc-mirror="1"' : ""} aria-hidden="true"></span><b>${esc(x.p.name)}</b> · <span class="owPcSide" data-side="${esc(sp.side)}">${esc(side)}</span>${meta ? " · " + esc(meta) : ""}`;
-      const aria = `${x.p.name} · ${side}${meta ? " · " + meta : ""}`;
-      const ctl = i === 0 ? ctls.get(x.p.key) : null, hold = i === 0 ? holds.get(x.p.key) : "";
-      const act = ctl ? `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${ctl.html}</span>` : hold ? `<span class="pcAct" data-pc-hold>${hold}</span>` : `<span class="pcAct" aria-hidden="true"></span>`;
-      return `<div class="owPcRow owPcSideRow hasAct hasHold hasWords${all ? "" : " solo"}${slow ? " slow" : ""}" data-side="${esc(sp.side)}"${all ? ` data-piece="${esc(x.p.key)}"` : ""} role="group" aria-label="${esc(aria)}">${dot}` +
-        (all ? `<button type="button" class="nm owPcName" title="Show only this order line">${nm}</button>` : `<span class="nm owPcName">${nm}</span>`) +
-        pieceStatusHtml(sx, ssp, { inButton: false }) + act + pieceDotsHtml(sx, rid) + `</div>`;
-    }).join("");
-    const html = `<div class="owPcHd"><span class="fLabel">${all ? "Its pieces · the order is where the slowest one is" : list[0] && (list[0].sides || list[0].counted) ? "Its pieces" : "Its piece"}</span>${all ? '<span class="owPcState" aria-live="polite"></span>' : ""}</div>` + sum.each.map(x => {
-      const slow = all && x.D.step === sum.step;
-      if (x.p.sides && sideEach) return sideRows(x, slow);
-      const dot = `<i class="dot" style="--c:${esc(colorOf(x.p.metal))}"></i>`, nm = `<b>${esc(x.p.name)}</b> · ${esc(pieceMeta(x.p))}`;
+    const OR = window.CharmNestOrderRows;
+    const items = sum.each.map(x => pcItemOf(x, { scope, sideEach })), orderStep = items.length ? Math.min(...items.map(it => it.step)) : -1;
+    const hasTools = items.some(it => it.kind !== "single");
+    const html = `<div class="owPcHd"><span class="fLabel">${all ? "Its pieces · the order is where the slowest one is" : list[0] && (list[0].sides || list[0].counted) ? "Its pieces" : "Its piece"}</span>${all ? '<span class="owPcState" aria-live="polite"></span>' : ""}</div>` + items.map((it, n) => {
+      const x = it.x, slow = all && it.step === orderStep, tools = hasTools && it.kind === "single" ? '<span class="owPcTools" aria-hidden="true"></span>' : "";
+      const dot = `<i class="dot" style="--c:${esc(colorOf(x.p.metal))}"></i>`;
+      if (it.kind !== "single") {
+        // an earring pair or a set: one row (ONEROW)
+        const p = x.p, pair = it.kind === "pair", key = p.key, ctl = ctls.get(key), hold = holds.get(key), drawer = `owPcD${n}`;
+        const units = pair ? Math.max(1, it.subs[0].qty || 1) : 1;
+        const meta = pair ? pieceMeta(Object.assign({}, p, { qty: 1, counted: false })) + (units > 1 ? (pieceMeta(Object.assign({}, p, { qty: 1, counted: false })) ? " · " : "") + units + " pairs" : "") : pieceMeta(p);
+        const nm = `<b>${esc(p.name)}</b>${meta ? " · " + esc(meta) : ""}${ctl && ctl.label ? ` · <span class="kind" title="${esc(ctl.why)}">${esc(ctl.label)}</span>` : ""}`;
+        const aria = p.name + (meta ? " · " + meta : "") + (pair ? " · Left and Right" : "");
+        let st, steps;
+        if (pair) {
+          // the slowest ear speaks for the row; the other ear's sheet is a "+1" when it sits on another one; the chip opens the card that lists both ears, as the dots do
+          const lead = it.lead, other = it.subs.find(q => q !== lead), moreSheets = lead.sp && other && other.sp && lead.sp.nested && other.sp.nested ? other.sp.sheets.filter(h => !lead.sp.sheets.some(l => (l.id || l.page) === (h.id || h.page))).length : 0;
+          pdotPlace(lead.x, rid); if (other) pdotPlace(other.x, rid);
+          const cur = lead.x.steps.find(q => !pdotOn(lead.x, q)) || lead.x.steps[lead.x.steps.length - 1], keys = it.subs.map(q => q.key), sig = (other && other.x._pl && other.x._pl.sig) || "";
+          const card = cur ? ` data-pcard="${cur.k}" data-pdot-rid="${esc(rid)}" data-pdot-piece="${esc(key)}" data-pdot-pieces="${esc(keys.join("|"))}" data-pdot-sig="${esc((lead.x._pl && lead.x._pl.sig || "") + sig)}" data-zoom-dot="1.04" data-zoom-delay="${PDOT_REST}" data-zoom-group="${esc(rid + "|" + key + "|st")}"` : "";
+          st = pieceStatusHtml(lead.x, lead.sp, { inButton: false, more: moreSheets, card });
+          steps = pieceDotsHtml(lead.x, rid, { line: key, pieces: keys, sig, name: p.name });
+        } else {
+          const part = it.placed > 0 && it.placed < it.total ? { hint: `${it.placed} of ${it.total}`, hintTitle: `${it.placed} of its ${it.total} pieces are on a sheet` } : {};
+          st = pieceStatusHtml(x, it.lineScope, Object.assign({ inButton: false }, part)); steps = pieceDotsHtml(x, rid);
+        }
+        const act = ctl ? `<span class="pcAct" data-pc-act="${esc(key)}">${ctl.html}</span>` : hold ? `<span class="pcAct" data-pc-hold>${hold}</span>` : `<span class="pcAct" aria-hidden="true"></span>`;
+        const chev = `<span class="owPcTools"><button type="button" class="owPcX" data-line="${esc(key)}" aria-expanded="false" aria-controls="${drawer}" title="Show each piece" aria-label="${esc("Each piece of " + p.name)}">${pcIcon("chevron-right", 14, "›")}</button></span>`;
+        const marker = pair ? pcMarkerHtml(it) : "";
+        return `<div class="owPcRow owPcMulti owPc-${it.kind} hasAct hasHold hasWords${all ? "" : " solo"}${slow ? " slow" : ""}"${all ? ` data-piece="${esc(key)}"` : ""} data-item="${esc(key)}" data-name="${esc(p.name)}" role="group" aria-label="${esc(aria)}">${dot}` +
+          `<span class="owPcWho">${all ? `<button type="button" class="nm owPcName" title="Show only this piece">${nm}</button>` : `<span class="nm owPcName">${nm}</span>`}${marker}</span>` +
+          st + act + steps + chev + `</div>` +
+          `<div class="owPcDrawer" id="${drawer}" data-for="${esc(key)}" role="group" aria-label="${esc("Each piece of " + p.name)}" hidden><div class="owPcDrawerIn">${it.subs.map(q => pcSubHtml(it, q, rid, p.name)).join("")}</div></div>`;
+      }
+      const nm = `<b>${esc(x.p.name)}</b> · ${esc(pieceMeta(x.p))}`;
       const steps = pieceDotsHtml(x, rid);   // (the dots: a card for each, see pieceDotsHtml)
       // a piece that is in the Review tab has that card's own buttons (and seals) here, in place of its words: a press is a press
       // there; a piece in no card keeps its words
@@ -14834,31 +14966,37 @@ const OrderWin = window.OrderWin = (() => {
       // (a piece in no card keeps its words, and its Hold at the right end of the row; nothing nests in a button, so with a Hold the row is a
       // group like the card rows are, its name the button that opens the piece, and a press anywhere else on it still does the same)
       const hold = holds.get(x.p.key);
-      // (its status, said once: a chip, a button that opens its sheet (every row is a group now, its name the button that picks the piece); or only
+      // (its status, said once: a chip, a button that opens that sheet (every row is a group now, its name the button that picks the piece); or only
       // for a screen reader where the row says it another way: the Review card's buttons, or the one piece the window shows)
-      const sp = scope && scope.find(q => q.key === x.p.key) || null, st = pieceStatusHtml(x, sp, { inButton: false }), stSr = pieceStatusHtml(x, sp, { sr: true });
+      const sp = it.lineScope, st = pieceStatusHtml(x, sp, { inButton: false }), stSr = pieceStatusHtml(x, sp, { sr: true });
       if (!ctl && hold) {
         const aria = x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : "");
         return `<div class="owPcRow hasAct hasHold${all ? " hasWords" : " solo"}${slow ? " slow" : ""}"${all ? ` data-piece="${esc(x.p.key)}"` : ""} role="group" aria-label="${esc(aria)}">${dot}` +
           (all ? `<button type="button" class="nm owPcName" title="Show only this piece">${nm}</button>` : `<span class="nm owPcName">${nm}</span>`) +
-          (all ? st : stSr) + `<span class="pcAct" data-pc-hold>${hold}</span>${steps}</div>`;
+          (all ? st : stSr) + `<span class="pcAct" data-pc-hold>${hold}</span>${steps}${tools}</div>`;
       }
-      if (!ctl) return `<div class="owPcRow${slow ? " slow" : ""}" data-piece="${esc(x.p.key)}" role="group" aria-label="${esc(x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : ""))}">${dot}<button type="button" class="nm owPcName" title="Show only this piece">${nm}</button>${st}${steps}</div>`;
+      if (!ctl) return `<div class="owPcRow${slow ? " slow" : ""}" data-piece="${esc(x.p.key)}" role="group" aria-label="${esc(x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : ""))}">${dot}<button type="button" class="nm owPcName" title="Show only this piece">${nm}</button>${st}${steps}${tools}</div>`;
       // (what the card is, said beside the name: the kind of custom order it is, which the bar used to say)
       const meta = [pieceMeta(x.p) ? esc(pieceMeta(x.p)) : "", ctl.label ? `<span class="kind" title="${esc(ctl.why)}">${esc(ctl.label)}</span>` : ""].filter(Boolean).join(" · ");
       const name = `<b>${esc(x.p.name)}</b>${meta ? " · " + meta : ""}`, aria = x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : "") + (ctl.label ? " · " + ctl.label : "");
       return `<div class="owPcRow hasAct${slow ? " slow" : ""}${all ? "" : " solo"}"${all ? ` data-piece="${esc(x.p.key)}"` : ""} role="group" aria-label="${esc(aria)}">${dot}` +
         (all ? `<button type="button" class="nm owPcName" title="Show only this piece">${name}</button>` : `<span class="nm owPcName">${name}</span>`) +
-        `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${ctl.html}</span>${stSr}${steps}</div>`;
+        `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${ctl.html}</span>${stSr}${steps}${tools}</div>`;
     }).join("");
-    box.hidden = false;
+    box.hidden = false; box.dataset.rid = rid; box.classList.toggle("hasTools", hasTools);
     if (box._h === html) { markPieces(); return; }
     // (a name being typed in a row's question is carried over a redraw, the field and where its cursor was)
     const typed = [...box.querySelectorAll("[data-cu-name]")].map(i => ({ key: i.closest("[data-pc-act]")?.dataset.pcAct, v: i.value, on: document.activeElement === i, a: i.selectionStart, b: i.selectionEnd })).filter(t => t.key);
     const held = pdotHeld(box);
     box._h = html; box.innerHTML = html; pdotBack(box, held);
+    // (a row of several pieces: its one main action stays, the rest go behind the three dots; the drawers are put as they were)
+    if (OR) {
+      OR.mount(box, { open: PC_OPEN, rid: () => { const r = rowOf(W.key); return r ? String(r.order.receiptId) : ""; } });
+      box.querySelectorAll(".owPcMulti .pcAct").forEach(h => { const row = h.closest(".owPcRow"); tryDo(() => OR.tidy(h, { label: row ? row.dataset.name : "", icon: pcIcon("more", 16, "···") })); if (row) row.classList.toggle("isDone", !!h.querySelector("[data-cu-done]")); });   // (a completed piece: its green Completed button says it, so its status chip is not said twice)
+      OR.apply(box);
+    }
     wirePcSheet(box);
-    // (the small pictures of the Left and Right rows: the pair's own picture with the other body washed out, from the one renderer the other pictures use; a picture already drawn is kept)
+    // (the small pictures of the Left and Right lines: the pair's own picture with the other body washed out, from the one renderer the other pictures use; a picture already drawn is kept)
     box.querySelectorAll("[data-pc-thumb]").forEach(h => { const pr = rowOf(h.dataset.pcThumbLine); if (pr) tryDo(() => { const o = { highlight: h.dataset.pcThumb, side: h.dataset.pcThumb, mirror: h.dataset.pcMirror === "1", px: 120 }; ListMedia.watch(h, () => ListMedia.vectorThumb(pr, o), ListMedia.vectorKey(pr, o)); }); });
     box.querySelectorAll("[data-pc-act]").forEach(h => wirePcAct(h, typed));
     if (window.HoldUI) tryDo(() => HoldUI.fill(box));   // (the Hold of the rows that have no card's buttons)
@@ -14907,8 +15045,11 @@ const OrderWin = window.OrderWin = (() => {
   function pieceStatusHtml(x, sp, o) {
     const s = pieceStatusOf(x, sp); o = o || {};
     if (o.sr) return `<span class="st owPcSr">${esc(s.say || s.text)}</span>`;
+    // (ONEROW: a row for several pieces says the slowest piece's status; o.more: other sheets the rest are on, o.hint: "2 of 3" when only some of a set are on a sheet,
+    //  o.card: the attributes that make the chip open the card that lists each piece, like the dots)
+    if (s.k === "sheet" && +o.more > 0) s.more = (s.more || 0) + (+o.more);
     const hollow = s.k === "wait" || s.k === "cancel", c = s.k === "hold" ? "var(--warn,#a2591c)" : s.k === "done" ? "var(--sage)" : colorOf(s.metal || x.p.metal);
-    const at = `class="owShChip pcSt${hollow ? " off" : ""}" data-k="${s.k}" style="--c:${esc(c)}"`, inner = `<i></i><span>${esc(s.text)}</span>${s.check ? PC_CK : ""}${s.more ? `<em class="pcMore">+${s.more}</em>` : ""}`;
+    const at = `class="owShChip pcSt${hollow ? " off" : ""}" data-k="${s.k}" style="--c:${esc(c)}"${o.card || ""}`, inner = `<i></i><span>${esc(s.text)}</span>${s.check ? PC_CK : ""}${s.more ? `<em class="pcMore">+${s.more}</em>` : ""}${o.hint ? `<em class="pcMore" title="${esc(o.hintTitle || "")}">${esc(o.hint)}</em>` : ""}`;
     const chip = s.sheet && !o.inButton
       ? `<button type="button" ${at} data-pc-sheet="${esc(x.p.key)}" data-sheet="${esc(s.sheet.id)}" data-pool="${esc(s.sheet.pool)}" aria-label="${esc(s.name ? "Open " + s.name : "Open its sheet")}">${inner}</button>`
       : `<span ${at}>${inner}</span>`;
@@ -14919,7 +15060,7 @@ const OrderWin = window.OrderWin = (() => {
   function wirePcSheet(box) {
     box.querySelectorAll("button[data-pc-sheet]").forEach(b => b.addEventListener("click", e => {
       e.stopPropagation();
-      const key = String(b.dataset.pcSheet).replace(/#[LR]$/, ""), sid = b.dataset.sheet, pool = b.dataset.pool;   // (a side's chip opens its own sheet; the piece picked is the line)
+      const key = String(b.dataset.pcSheet).replace(/#(L|R|D\d+|P\d+)$/, ""), sid = b.dataset.sheet, pool = b.dataset.pool;   // (a side's chip opens its own sheet; the piece picked is the line)
       if (!W.dlg || !W.dlg.open || !rowOf(W.key)) return;
       if (W.piece && W.piece !== key) (typeof selectPiece === "function" ? selectPiece : pickPiece)(key);
       openSheetOf(key, sid, pool);
@@ -15623,7 +15764,10 @@ const OrderWin = window.OrderWin = (() => {
   /** The scope: all (every piece of the order), shown (the piece the window shows), sel (the piece picked, else null), focus
    *  (sel, else shown), mine (the pieces the Sheet view answers for). */
   function sheetScope(r) {
-    const all = scopePieces(r), shown = all.find(p => p.key === r.key) || all[0] || null, sel = W.piece ? all.find(p => p.key === W.piece) || null : null;
+    const all = scopePieces(r), shown = all.find(p => p.key === r.key) || all[0] || null;
+    let sel = W.piece ? all.find(p => p.key === W.piece) || null : null;
+    // (an ear of a pair picked on its row: the Sheet view, the chips and the pill answer for that ear alone)
+    if (W.side) { const ln = sel || all.find(p => p.key === r.key), sd = ln && ln.sides && ln.sides.find(q => q.side === W.side); if (sd) sel = sd; }
     return { all, shown, sel, focus: sel || shown, mine: sel ? [sel] : all, multi: all.length > 1 };
   }
   /* ── where each piece IS now: ONE answer for every surface of this window (PiecePlacement, charm-nest-piece-placement.js) ──
@@ -15676,7 +15820,7 @@ const OrderWin = window.OrderWin = (() => {
   /** The Placement of one piece (its line key), or the order's roll-up (no key); null while it is not worked out (or PiecePlacement is not loaded). */
   const placeOfKey = key => !W.place ? null : key ? W.place.get(key) || null : W.placeAll || null;
   /** The placement the window's scope answers for: the piece picked, else all of them. */
-  const placeInScope = () => placeOfKey(W.piece || null);
+  const placeInScope = () => placeOfKey(selSideKey() || W.piece || null);
   const holds = (p, s) => !!(p && s) && p.sheets.some(h => h.id && s.id ? h.id === s.id : !!(h.page && s.page && h.page === s.page));
   const sheetKeyOf = h => h.id || h.page;
   /** The Sheet view's own sheets: those of the piece picked (a piece on none: none), else all of the order's. When no piece
@@ -16274,7 +16418,7 @@ const OrderWin = window.OrderWin = (() => {
     if (!fresh && (other || opts.dir)) W.from = null;
     showOrder(rid, r);
     W.key = key;
-    if (other) W.piece = null; else if (W.piece && W.piece !== key) W.piece = key;
+    if (other) { W.piece = null; W.side = null; } else if (W.piece && W.piece !== key) W.piece = key;
     // (a piece dot's press, Paul 5 Oct round 15: the window opens with that piece SELECTED (its row on the Its pieces list marked, W.piece), so the Overview, the Sheet tab, the back engraving and the pictures are its own at once; an order of one line has nothing to select)
     if (opts.pick && r.key === key && !r.loading && linesOf(r).length > 1) W.piece = key;
     if (other) sheetWant = null;
@@ -16465,7 +16609,7 @@ const OrderWin = window.OrderWin = (() => {
   // (a repaint asked from outside, an image or a record arriving, waits for the view to land)
   return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v),
     // the piece shown in the order window (Paul, 5 Oct, round 16: the "Its pieces" rows are the selector): selectPiece(key | null for all pieces) -> whether it is shown now
-    selectPiece: k => selectPiece(k), selectedPiece: () => (W.pieces || []).length > 1 ? W.piece || null : null, repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed,
+    selectPiece: k => selectPiece(k), selectedPiece: () => (W.pieces || []).length > 1 ? W.piece || null : null, selectedSide: () => (W.side && narrowSide()) ? W.side : null, repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed,
     // (read-only, for the checks: the pieces of the order on screen, each with the sheets it is on, and the one in focus)
     _scope: () => { const r = rowOf(W.key); if (!r) return null; const sc = sheetScope(r), cut = p => p && { key: p.key, name: p.name, nested: p.nested, loading: p.loading, why: p.why, sheets: p.sheets.map(h => ({ id: h.id, label: h.label })) }; return { all: sc.all.map(cut), focus: sc.focus && sc.focus.key, sel: sc.sel && sc.sel.key, piece: W.piece, block: sheetBlock(r) }; },
     // the order number of the open view, and "something was just done here": its timeline reads now and again 1.5 s later
