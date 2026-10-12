@@ -30,7 +30,8 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
   mk('gf-6', 'gold', ['3800000061_1_1']);
   mk('rg-7', 'rose', ['3800000071_1_1'], { roseStockId: 'stock-1' });
   mk('gf-8', 'gold', ['3800000081_1_1'], { laserDoneAt: now - 1000 });                                // completed
-  mk('gf-9', 'gold', ['3800000091_1_1'], { roseCutAt: now - 1000 });                                  // cut (permanent)
+  mk('gf-9', 'gold', ['3800000091_1_1'], { roseCutAt: now - 1000 });                                  // cut (permanent), in no set: it may still join one (Paul, 12 Oct: the green line is cut)
+  mk('cut-in', 'gold', ['3800000121_1_1'], { draft: false, setId: 'set-9', setSeq: 9, sheetIndex: 2, roseCutAt: now - 1000 });   // cut AND in a set: it stays in that set
   mk('gf-10', 'gold', ['3800000101_1_1']);
   mk('in-set', 'gold', ['3800000111_1_1'], { draft: false, setId: 'set-9', setSeq: 9, sheetIndex: 1 });
   mkSet('set-9', ['in-set'], { status: 'open' });                                                     // the run's open set, once it exists
@@ -41,7 +42,8 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
   for (const id of ['k14-1', 'gf-2', 'ss-3', 'gf-4', 'ss-5', 'gf-6', 'gf-10']) draft(id);
   draft('rg-7', { rose: { full: false }, can: { ok: true, byHand: false } });
   draft('gf-8', { can: { ok: false, reason: 'It is already cut.' } });
-  draft('gf-9', { can: { ok: false, reason: 'It is already cut.' } });
+  draft('gf-9');                                         // (SheetWin.joinInfo: "already cut" only for a sheet that is completed or cut and in a set)
+  L['cut-in'] = { runHere: true, draft: false, dispatchSetId: 'set-9', can: { ok: false, reason: 'It is already cut.' }, split: [] };
   L['in-set'] = { runHere: true, draft: false, dispatchSetId: 'set-9', can: { ok: false, reason: 'It is already in a set.' }, split: [] };
   const joins = [], pulls = {}, down = new Set();     // pulls: { sheet: [sheets the cardinal rule brings in with it] } as Gate.assemble would
   const opened = id => { st.put(S, id, { draft: false, setId: 'set-8', setSeq: 8 }); L[id] = { ...L[id], draft: false }; const d8 = st.doc(SET, 'set-8'); if (d8) st.put(SET, 'set-8', { sheetIds: [...new Set([...(d8.sheetIds || []), id])] }); else mkSet('set-8', [id]); for (const k of Object.keys(L)) if (k !== 'in-set') L[k].dispatchSetId = 'set-8'; };
@@ -82,7 +84,8 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
     const refused = (a, b, re) => { const r = LF.sheetZone({ kind: 'sheet', id: a }, b, { self: a, name: b }); assert.equal(r.ok, false, a + ' on ' + b); assert.match(r.reason, re, r.reason); return r; };
     refused('k14-1', 'rg-7', /Rose Gold.*Cut Sheet press/); refused('rg-7', 'k14-1', /Rose Gold.*Cut Sheet press/);
     refused('k14-1', 'in-set', /already in a set: drop k14-1 on that set/); refused('in-set', 'k14-1', /already in a set/);
-    refused('k14-1', 'gf-9', /not ready to join a set\. It is already cut/); refused('k14-1', 'nope', /not on this page/);
+    refused('k14-1', 'cut-in', /already in a set|already cut/); refused('k14-1', 'nope', /not on this page/);
+    assert.equal(LF.sheetZone({ kind: 'sheet', id: 'k14-1' }, 'gf-9', { self: 'k14-1', name: 'gf-9' }).ok, true, 'a cut sheet that is in no set may be combined: its green line is cut');
     L['gf-6'].can = { ok: false, reason: 'Its layout has not been verified yet.' }; refused('k14-1', 'gf-6', /not ready to join a set\. Its layout has not been verified yet/); L['gf-6'].can = { ok: true, byHand: true };
     L['gf-6'].runHere = false; refused('k14-1', 'gf-6', /not on a page of the open run/); L['gf-6'].runHere = true;
 
@@ -133,7 +136,8 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
     const blocked = async (a, b, key, re) => { joins.length = 0; const q = await plan(a, { sheet: b }); assert.equal(q.ok, false, a + ' on ' + b); assert(keys(q).includes(key), a + ' on ' + b + ': ' + key + ' in ' + JSON.stringify(q.needs)); assert.match(q.needs.find(n => n.key === key).label + ' ' + q.needs.find(n => n.key === key).detail, re); const c = await LF.commit(q, { by: 'Paul' }); assert.equal(c.ok, false); assert.equal(joins.length, 0, 'nothing written'); return q; };
     await blocked('k14-1', 'rg-7', 'roseCombine', /Rose Gold.*Cut Sheet press/);
     await blocked('rg-7', 'k14-1', 'roseCombine', /Rose Gold.*Cut Sheet press/);
-    await blocked('gf-6', 'gf-9', 'sheetCut', /was already cut|permanent/);
+    await blocked('gf-6', 'cut-in', 'sheetCut', /was already cut|permanent/);
+    p = await plan('gf-6', { sheet: 'gf-9' }); assert.equal(p.ok, true, 'a cut sheet in no set joins (Paul, 12 Oct): ' + JSON.stringify(p.needs));
     await blocked('gf-6', 'gf-8', 'sheetCompleted', /is completed/);
     st.put(S, 'in-set', { draft: false, setId: 'set-9' }); await blocked('gf-6', 'in-set', 'alsoInSet', /already in/);
     L['gf-10'].can = { ok: false, reason: 'It is still being nested or saved.' }; await blocked('gf-6', 'gf-10', 'include', /GF Draft 10 is not ready to join a set.*nested or saved/); L['gf-10'].can = { ok: true, byHand: true };
