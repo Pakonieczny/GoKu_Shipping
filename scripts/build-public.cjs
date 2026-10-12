@@ -142,6 +142,7 @@ const assets = [
   "charm-nest-zodiac-etsy.js",
   "charm-nest-backs.js",
   "charm-nest-engrave-faces.js",
+  "charm-nest-engrave-position.js",
   "charm-nest-engrave-sides.js",
   "charm-nest-engrave-rows.js",
   "charm-nest-engrave-setup.js",
