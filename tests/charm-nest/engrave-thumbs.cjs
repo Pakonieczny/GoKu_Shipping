@@ -194,6 +194,7 @@ function install() {
     }
     ok('typing changes the shown face\'s box at every keystroke, in the same tick (capitals for Ace), and leaves the other face alone', tick.keys.join('|') === 'Q|QQ|QQ|QQ Z|QQ ZZ' && tick.typedBack === 'QQ ZZ' && tick.frontKept === 'W');
     ok('a font pick changes the family in the same tick', /jost-ace/.test(tick.famBefore) && /playwrite-us-trad/.test(tick.famAfter));
+    if (shots) { await page.waitForTimeout(600); await R.shot(w, 'THUMB-detail-staged'); }
     ok('the charm is NOT drawn again by any of it: the same canvas elements', tick.sameCanvas);
     ok('typing and a font pick made no request (the charm is drawn from the page\'s own geometry; fonts are files of this site): ' + JSON.stringify(typedRequests), typedRequests.length === 0);
     // the other face is picked by its thumbnail: typing there lands in its own box and the first face keeps its staged words
