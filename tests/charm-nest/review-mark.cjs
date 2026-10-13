@@ -70,7 +70,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(await A.is(R1), false); assert.deepEqual((await A.rows()).filter(r => r.kind === 'Marked'), [], 'nothing is marked at the start');
 
     /* ── 1 · mark ── */
-    const t0 = Date.now();
+    const t0 = Date.now(), opsBefore = Bc.ops.length;
     const r1 = await A.page.evaluate(rid => CharmNestReviewMark.mark(rid), R1);
     assert.deepEqual(r1, { ok: true, already: false, rid: R1 }); log('mark answered in', Date.now() - t0, 'ms');
     assert.equal(await A.is(R1), true, 'marked at once');
@@ -87,12 +87,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.deepEqual(await A.page.evaluate(rid => CharmNestReviewMark.mark(rid), R1), { ok: true, already: true, rid: R1 });
     const both = await A.page.evaluate(rid => Promise.all([CharmNestReviewMark.mark(rid), CharmNestReviewMark.mark(rid)]), R2);
     assert.ok(both[0].ok && both[1].ok, 'both answer ok'); assert.equal(writes().length, 2, 'a double press on a new order is one write (one for R1, one for R2)');
+    if (process.env.SHOT) { await A.page.click('#reviewView .ordBar [data-k="reviewMark"]'); await A.page.waitForTimeout(800); await A.page.screenshot({ path: process.env.SHOT }); await A.page.click('#reviewView .ordBar [data-k="reviewMark"]'); }
     rows = await A.rows(); assert.equal(rows.find(r => r.rid === R2 && r.kind === 'Marked').slots, 2, 'a two-line order has a slot for each line');
-    assert.ok(!srv.st.list('Charm_Nest_Timeline').some(x => /seal/i.test(x.type || '')) && !srv.st.list('Order_Timeline').some(x => /^seal/.test(x.type || '')), 'no seal on the timeline');
+    // the order's timeline gets one plain line (a note), never a seal
+    const tlEvents = () => srv.st.calls.filter(c => c.name === 'charmNestLibrary' && c.body && c.body.op === 'timelineAdd').flatMap(c => Array.isArray(c.body.events) ? c.body.events : []);
+    for (let i = 0; i < 60 && !tlEvents().some(e => /Sent to Review by Name Alpha/.test(e.text || '')); i++) await sleep(100);
+    const line = tlEvents().find(e => /Sent to Review by Name Alpha/.test(e.text || ''));
+    assert.ok(line, 'a plain line on the order\'s timeline'); assert.equal(line.type, 'note'); assert.equal(String(line.orderId), R1);
+    assert.ok(!tlEvents().some(e => /^seal/.test(e.type || '')), 'no seal on the timeline');
     log('marked: one document, no seal, a row with a slot per line and Mark OK; a repeated or double press writes nothing more');
 
     /* ── 2 · the other computer holds it through the existing feed ── */
-    const opsBefore = Bc.ops.length, tB = Date.now();
+    const tB = Date.now();
     await waitFor(Bc, rid => CharmNestReviewMark.isMarked(rid), R1, 'B holding the mark');
     log('B holds the mark', Date.now() - tB, 'ms after A wrote it; ops B made meanwhile:', [...new Set(Bc.ops.slice(opsBefore))].join(','));
     assert.ok(Bc.ops.slice(opsBefore).includes('customGet') && !Bc.ops.slice(opsBefore).some(o => /reviewMark/.test(o)), 'B learned of it from the existing changes feed (customGet); it made no call of its own for it');
