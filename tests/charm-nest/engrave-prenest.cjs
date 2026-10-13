@@ -312,6 +312,8 @@ async function main() {
           stopped: /Processing stopped/i.test((c.querySelector('.backHost') || c).innerText), work: (c.querySelector('.backHost') || c).innerText.replace(/\s+/g, ' ').slice(0, 90) };
       }, T.rid);
       const click = sel => P.evaluate(sel => { const b = document.querySelector(sel); if (b) b.click(); return !!b; }, sel);
+      // the earlier checks left the Engrave list filtered to the HELD order's number (PN8) and its detail open: this case starts from a clean Engrave view (no filter, nothing focused) so that it judges the twin, not what was left behind
+      await P.evaluate(() => { try { OrderWin.close(); } catch (_) {} Engrave.restoreView({ tab: 'place', focus: null, list: true, chosen: true, q: '', openDone: null }); CN.setMode('engrave'); Engrave.render(); }); await R.settle(P, 900);
       await R.openEngraveDetail(w, 'discTwin', { face: 'back' }); await R.settle(P, 900);
       const f0 = await look();
       await click(QS + ' .engpSeg[data-mode="both"]'); await R.settle(P, 900);

@@ -57,6 +57,9 @@
    * small label, and, only when the piece has BOTH faces, which words are engraved on which: "Front W  Back Name One". Nothing for a line the customer wrote and chose nothing for; no title, no sentence, no percentage.
    * The words and the options are read by charm-nest-engrave-said.js (the Engrave tab's box reads the same); when that file is not on the page the three plain parts are read here. */
   const oneLine = t => String(t == null ? '' : t).split(/\r?\n/).map(x => x.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' / ');
+  /** The customer's words as text (ENGTEXT, Paul 13 Oct 2026: the block printed "There&#39;s"): Etsy hands them over HTML-escaped and the app keeps them as they came, so they are decoded WHEN DRAWN, by the app's one decoder
+   *  (CharmNestOrders.decodeEntities: &#39; &amp; &quot; &lt; &gt;, numeric and hex, as many passes as it takes). Nothing stored is changed; the result is escaped again by esc() when it is drawn, so a "<b>" in a note is still only text. */
+  const asText = t => { const O = root.CharmNestOrders; return O && typeof O.decodeEntities === 'function' ? tryDo(() => O.decodeEntities(t), String(t == null ? '' : t)) : String(t == null ? '' : t); };
   function saidRows(row) {
     const S = root.CharmNestEngraveSaid, L = (row && row.parentRow) || row || {}, sp = L.spec || {}, line = L.line || {}, O = root.CharmNestOrders;
     let rows = S && S.rowsOf ? tryDo(() => S.rowsOf(L), null) : null;
@@ -68,7 +71,7 @@
       if (vis(sp.staffNote)) rows.push(['Staff note', vis(sp.staffNote)]);
     }
     // (Paul, 13 Oct 2026: "Do not show the Options text in this view": the Engrave tab's box and the Overview read the Options row from the same reader and keep it; this block never draws it, and a line whose only words were options says nothing)
-    return rows.filter(r => r && r[0] !== 'Options').map(([k, v]) => [String(k), oneLine(v)]).filter(([, v]) => v);
+    return rows.filter(r => r && r[0] !== 'Options').map(([k, v]) => [String(k), oneLine(asText(v))]).filter(([, v]) => v);
   }
   /** The block's data: one entry per line that has a card, { name, rows: [[label, text]], faces: [['Front', words], ['Back', words]] | null }; the lines the customer wrote and chose nothing for are left out. */
   function saidOf(rows, pieces) {
