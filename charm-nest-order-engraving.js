@@ -57,6 +57,9 @@
    * small label, and, only when the piece has BOTH faces, which words are engraved on which: "Front W  Back Name One". Nothing for a line the customer wrote and chose nothing for; no title, no sentence, no percentage.
    * The words and the options are read by charm-nest-engrave-said.js (the Engrave tab's box reads the same); when that file is not on the page the three plain parts are read here. */
   const oneLine = t => String(t == null ? '' : t).split(/\r?\n/).map(x => x.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' / ');
+  /** The customer's words as text (ENGTEXT, Paul 13 Oct 2026: the block printed "There&#39;s"): Etsy hands them over HTML-escaped and the app keeps them as they came, so they are decoded WHEN DRAWN, by the app's one decoder
+   *  (CharmNestOrders.decodeEntities: &#39; &amp; &quot; &lt; &gt;, numeric and hex, as many passes as it takes). Nothing stored is changed; the result is escaped again by esc() when it is drawn, so a "<b>" in a note is still only text. */
+  const asText = t => { const O = root.CharmNestOrders; return O && typeof O.decodeEntities === 'function' ? tryDo(() => O.decodeEntities(t), String(t == null ? '' : t)) : String(t == null ? '' : t); };
   function saidRows(row) {
     const S = root.CharmNestEngraveSaid, L = (row && row.parentRow) || row || {}, sp = L.spec || {}, line = L.line || {}, O = root.CharmNestOrders;
     let rows = S && S.rowsOf ? tryDo(() => S.rowsOf(L), null) : null;
@@ -68,7 +71,7 @@
       if (vis(sp.staffNote)) rows.push(['Staff note', vis(sp.staffNote)]);
     }
     // (Paul, 13 Oct 2026: "Do not show the Options text in this view": the Engrave tab's box and the Overview read the Options row from the same reader and keep it; this block never draws it, and a line whose only words were options says nothing)
-    return rows.filter(r => r && r[0] !== 'Options').map(([k, v]) => [String(k), oneLine(v)]).filter(([, v]) => v);
+    return rows.filter(r => r && r[0] !== 'Options').map(([k, v]) => [String(k), oneLine(asText(v))]).filter(([, v]) => v);
   }
   /** The block's data: one entry per line that has a card, { name, rows: [[label, text]], faces: [['Front', words], ['Back', words]] | null }; the lines the customer wrote and chose nothing for are left out. */
   function saidOf(rows, pieces) {
@@ -80,7 +83,7 @@
       const parts = saidRows(line), one = mine.length === 1 ? mine[0] : null, f = one && one.faces || {};
       const faces = f.front && f.back && f.front.text && f.back.text && !f.front.plain && !f.back.plain ? [['Front', oneLine(f.front.text)], ['Back', oneLine(f.back.text)]] : null;
       if (!parts.length) continue;   // (the customer wrote and chose nothing: nothing is said, whatever the faces read)
-      out.push({ name: mine[0].name || '', rows: parts, faces });
+      out.push({ name: (mine[0].name || '') + (mine[0].many && mine[0].metal ? ' · ' + mine[0].metal : ''), rows: parts, faces });   // (ENGPICK: two pieces of one design are told apart by their metal, as their cards are: "COMET 9427 · SS")
     }
     return out;
   }
@@ -324,7 +327,11 @@
     function read() {
       const C = CARD(), only = onlyOf(), vis = visible();
       // (ENGSEL: the lines of the piece picked, or of every piece; the words block below the cards is drawn from these same rows and pieces, so it follows too)
-      const rows = rowsOf().filter(r => !only || !only.line || (((r && r.parentRow) || r || {}).key === only.line));
+      const every = rowsOf();
+      // (ENGPICK: a line that carries an engraving but has no job yet (on hold, waiting, never nested; its setup is the plain default, so it draws no card) is asked for its job once per window, whichever piece is picked:
+      //  Engrave.early makes it on the charm the piece will have and pools and moves nothing, so every engraved piece of the order has its card and none can be passed by unseen)
+      const E = root.Engrave; if (E && E.early && E.earlyWanted && E.jobsOf) for (const r of every) { const ln = (r && r.parentRow) || r; if (ln && ln.key && !asked.has(ln.key) && tryDo(() => E.earlyWanted(ln), false) && !tryDo(() => E.jobsOf(ln), []).length) { asked.add(ln.key); tryDo(() => { const p = E.early(ln); if (p && p.catch) p.catch(() => {}); }); } }
+      const rows = every.filter(r => !only || !only.line || (((r && r.parentRow) || r || {}).key === only.line));
       const popt = { nameOf, isWorking, seen: j => vis || seen.has(j.key) };
       let pieces = []; if (C) { try { pieces = C.piecesOf(rows, popt); } catch (e) { pieces = []; for (const r of rows) { try { pieces.push(...C.piecesOf([r], popt)); } catch (e2) { tryDo(() => console.warn('order engraving: one line could not be read', e2)); } } } }   // (ENGCRASH: a line that cannot be read leaves the other lines' cards drawn)
       if (only && only.side) pieces = pieces.filter(p => !p.slot || p.slot === only.side);   // (one ear of a pair picked: that ear's card alone)
