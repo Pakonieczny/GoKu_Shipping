@@ -114,6 +114,23 @@
 .egEarTab .egEarWords{font:600 12px var(--serif);max-width:14ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .egEarTab .egEarStage{font:10.5px var(--sans);color:var(--ink45);white-space:nowrap}
 .egEarTab .egEarFont{font:600 10.5px var(--sans);color:var(--ink45);white-space:nowrap}
+/* the PIECES of one order in the Engrave detail's header (ENGPIECES, charm-nest-engrave-order.js stripHtml): "Piece 1 of 2" and one small button for each piece (number, metal dot, label, a tick once approved), the one shown pressed.
+   Drawn only for an order with two or more pieces on two or more lines; the card's own Left | Right / Disc switch gives way to it. */
+.egPcStrip{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;max-width:100%}
+.egPcOf{font:600 11px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink70);white-space:nowrap}
+.egPcTab{display:inline-flex;align-items:center;gap:5px;min-width:0;border:1px solid var(--line);border-radius:999px;background:var(--paper2);color:inherit;font:600 12px var(--sans);padding:1px 9px 1px 2px;cursor:pointer}
+.egPcTab:hover{border-color:var(--ink25)}
+.egPcTab:focus-visible{outline:2px solid var(--slate);outline-offset:1px}
+.egPcTab[aria-pressed=true]{background:var(--card);box-shadow:0 0 0 1px var(--ink45);cursor:default}
+.egPcNo{display:inline-grid;place-items:center;min-width:18px;height:18px;border-radius:50%;background:var(--card);color:var(--ink70);font:700 11px var(--mono)}
+.egPcTab[aria-pressed=true] .egPcNo{background:var(--ink);color:var(--card)}
+.egPcDot{width:8px;height:8px;border-radius:50%;background:var(--ink45);flex:0 0 auto}
+.egPcDot[data-metal=GF],.egPcDot[data-metal="14K"],.egPcDot[data-metal="10K"]{background:var(--gold2)}
+.egPcDot[data-metal=SS]{background:#9aa0ab}
+.egPcDot[data-metal=RG]{background:#d49a86}
+.egPcLbl{white-space:nowrap}
+.egPcTick{color:var(--sage);font:700 12px var(--sans)}
+.egPcTab[data-state=approved]:not([aria-pressed=true]){color:var(--ink70)}
 /* the discs of one order, one at a time, inside a back engraving card (charm-nest-engraving-seals.js cycleHtml): the Engrave editor's own switch, a Back / Next beside it */
 .egCycle{flex:1 1 100%;display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;min-width:0}
 .egCycle .egEarSwitch{display:flex;flex-direction:column;width:100%;border-radius:14px}

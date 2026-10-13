@@ -149,7 +149,7 @@ const root = path.join(__dirname, '../..');
     await page.evaluate(() => { const j = Engrave.items().get('4175370240_1#D1'); j.state = 'approved'; j.approvedBy = 'Tester'; j.approvedAt = Date.now(); j.backs = []; j.row.engrave = { needed: true, state: 'approved', approved: true }; Engrave.render(); });
     await settle(); c = await cardInfo();
     check(c.key === keyOf('4175370240', 'D2') && c.tabs.length === 0 && c.plainTag === 'DISC 2 of 2', `one disc approved: the editor stays on the order, on Disc 2, as a single piece's card: ${c.key} ${c.plainTag}`);
-    check(c.kind === '2 of 5 · 1 done', `the counter counts orders: 1 decided row + the 4 still to settle: ${c.kind}`);
+    check(c.kind === '1 of 4 · 0 done', `the counter counts orders, and an order is done only when EVERY piece is (ENGPIECES: Disc 1 approved, Disc 2 still to settle: this order is not done): ${c.kind}`);
     await view({ tab: 'done', list: true }); await settle();
     const dec = await page.evaluate(() => [...document.querySelectorAll('#egDone .decidedRow')].map(r => ({ rid: r.dataset.rid, tag: (r.querySelector('.engravingOrder .egPiece') || {}).textContent, reopen: [...r.querySelectorAll('[data-a="reopen"]')].map(n => n.textContent), badge: document.querySelector('.egTab[data-tab="done"] b').textContent })));
     check(dec.length === 1 && dec[0].rid === '4175370240' && dec[0].tag === 'DISC 1 of 2' && JSON.stringify(dec[0].reopen) === '["Reopen"]' && dec[0].badge === '1', `Decided lists Disc 1 as a single piece's row, tagged: ${JSON.stringify(dec)}`);
