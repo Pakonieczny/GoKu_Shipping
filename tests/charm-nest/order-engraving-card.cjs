@@ -175,7 +175,7 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     // 5 · a press on a thumbnail opens THAT face of THAT piece in Engraving: EngraveLink when it is there, else the Sheet tab's own way
     if (await page.evaluate(() => !!(window.EngraveLink && EngraveLink.open))) {
       await page.click(thumb(k.r, 'back'));
-      await page.waitForFunction(() => !OrderWin.isOpen() && CN.S.mode === 'engrave', null, { timeout: 15000 });
+      await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open && CN.S.mode === 'engrave', null, { timeout: 15000 });
       const rv = await page.evaluate(() => Engrave.view());
       check(rv.tab === 'done' && rv.chosen === true && rv.list === false, 'with the real EngraveLink: the window closed and the Engraving tab is on the approved piece: ' + JSON.stringify({ tab: rv.tab, q: rv.q, chosen: rv.chosen, list: rv.list }));
       await page.waitForTimeout(600); await page.evaluate(() => CN.setMode('orders')); await open(k.r);
@@ -199,7 +199,7 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     // (until EngraveLink exists: the Sheet tab's way, the window closes and the Engraving tab is set to that order and piece)
     await page.evaluate(() => { delete window.EngraveLink; });
     await page.click(thumb(k.g, 'back'));
-    await page.waitForFunction(() => !OrderWin.isOpen() && CN.S.mode === 'engrave', null, { timeout: 8000 });
+    await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open && CN.S.mode === 'engrave', null, { timeout: 8000 });
     const v1 = await page.evaluate(() => Engrave.view());
     check(v1.tab === 'done' && v1.q === R1 && v1.chosen === true && v1.list === false && !v1.focus, 'without EngraveLink: the window closes and the Engraving tab opens on the approved piece\'s order: ' + JSON.stringify({ tab: v1.tab, q: v1.q, chosen: v1.chosen, list: v1.list }));
     await page.evaluate(() => CN.setMode('orders'));

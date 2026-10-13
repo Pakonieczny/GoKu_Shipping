@@ -3346,11 +3346,24 @@ const Pool = window.Pool = (() => {
         }
         return;
       }
+      // REVHOLD: an order in Review (or one a person just answered with a pick) keeps its piece on its sheet, so the card that would take it off to make it up again is not offered: the line is left as it was and the log says so once
+      if (keepsPlace(row)) {
+        if (!setToldFixed.has(row.key)) {
+          setToldFixed.add(row.key); const line = `a saved link makes this line ${one ? want[0] : "a set of charms (" + want.join(" + ") + ")"}, but its piece stays on its sheet because the order was sent to Review: the sheet keeps ${[...new Set(made)].join(" + ") || "its piece"}`;
+          agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · ${line}`);
+          try { TL.line(row, "interpreted", { id: `${row.key}.relink.kept.${TL.hash(want.join("+") + "|" + made.join(","))}`, once: true, text: ("Saved link: " + line).slice(0, 200), data: { sku: want[0], was: made.slice(0, 6) } }); } catch (_) {}
+        }
+        return;
+      }
       row.changePending = true; row.repoolChanged = true;
       const was = made.length ? (one ? [...new Set(made)] : made).join(" + ") : "nothing yet", pcs = one ? Math.max(1, Math.round(+sp.pieceCount || expect.length)) : expect.length;
       Review.add({ kind: "orderChanged", key: "chg:" + row.key, row, old: { text: "", spec: { designSku: was, material: sp.material, form: sp.form || "", size: sp.size || "", personalization: sp.personalization } },
         why: `Now ${one ? want[0] : (want.length === 2 ? "two" : want.length) + " charms, " + want.join(" + ")} (a saved link). Accept the new order to make it up again as ${pcs} piece${pcs === 1 ? "" : "s"}: the old ${was} comes off the open sheet it is on. Nothing cut or released is touched.` });
     } catch (e) { console.warn("[bridge] saved link not noticed:", e && e.message); }
+  }
+  /** REVHOLD: the line's pieces are on a sheet and the order is in Review (or a person just answered its Review by picking the charm): they stay where they are (never lifted, never nested again). Derived from the review record (CharmNestReviewHold), not remembered. */
+  function keepsPlace(row) {
+    try { const rid = row && row.order && row.order.receiptId, H = window.CharmNestReviewHold; if (!rid || !H || typeof H.keepsPlace !== "function" || !H.keepsPlace(rid)) return false; const on = index().charm; return (row.poolIds || []).some(id => !!id && on.has(id)); } catch (_) { return false; }
   }
   function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); delete k.frontAt; return k; }   // (a copy never carries another order's place in the queue)
   /** §6.4 · one pooled charm per copy of the line, on the material card the ORDER says. */
@@ -3773,7 +3786,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched };
+  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, keepsPlace, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -5765,8 +5778,9 @@ const Engrave = window.Engrave = (() => {
     try {
       const t = String(job.text || "").trim(), d = job.decision || {}, at = (how === "skipped" ? job.decidedAt : d.at) || Date.now();
       const dsc = discSay(job), of = dsc ? ` · ${dsc}` : "", fw = facedJob(job) ? (isFront(job) ? "Front " : "Back ") : "";   // (a line with a front names the face; every other line reads as it did)
-      const text = how === "none" ? `No ${fw ? fw.toLowerCase() + "engraving" : "engraving"}${of} — decided by ${by}` : how === "skipped" ? `${fw ? fw + "engraving" : "Engraving"} skipped${of} by ${by} — cut plain` : `${fw ? fw + "engraving" : "Engraving"} ${d.note === "edited" ? "edited" : "confirmed"}${of} by ${by}: “${t.replace(/\n/g, " / ")}”`;
-      TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null, ...(isFront(job) ? { face: "front" } : {}) } });
+      const why = how !== "skipped" && d.why ? ` (${String(d.why).slice(0, 80)})` : "";   // (ENGWHY: the person's reason for an override rides in this existing line; no extra write)
+      const text = how === "none" ? `No ${fw ? fw.toLowerCase() + "engraving" : "engraving"}${of} — decided by ${by}${why}` : how === "skipped" ? `${fw ? fw + "engraving" : "Engraving"} skipped${of} by ${by} — cut plain` : `${fw ? fw + "engraving" : "Engraving"} ${d.note === "edited" ? "edited" : "confirmed"}${of} by ${by}${why}: “${t.replace(/\n/g, " / ")}”`;
+      TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null, ...(d.why && how !== "skipped" ? { why: String(d.why).slice(0, 80) } : {}), ...(isFront(job) ? { face: "front" } : {}) } });
     } catch (_) {}
   }
   /** The words of each disc of a counted line, from its personalisation field alone (charm-nest-engrave-sides.js splitWords), or null when the note does not say plainly. */
@@ -6336,7 +6350,7 @@ const Engrave = window.Engrave = (() => {
     const keep = job.nudged && job.fit ? { centre: job.fit.centre.slice(), angle: job.fit.angle } : null;   // (a position a person set stays through new words or a new font, as fitNewWords keeps it)
     job.lineInput = null; job.lineMode = "auto"; job.wantSize = null; job.fit = null;
     Object.assign(job, { text: seed.text, lines: seed.lines.slice(), source: "person", quote: null, confidence: 1, questions: [], claudeReasoning: null, requests: { side: face, font: null, handwriting: false, image: false },
-      wordsSource: "spec.engraving", decision: { by, at: Date.now(), text: seed.text, note: "edited" }, faceFontWord: seed.fontWord || null });   // (faceFontWord: the font the person picked for this face, which ensureJobFont fits it in; null = the line's font)
+      wordsSource: "spec.engraving", decision: { by, at: Date.now(), text: seed.text, note: "edited", ...(seed.why ? { why: seed.why } : {}) }, faceFontWord: seed.fontWord || null });   // (faceFontWord: the font the person picked for this face, which ensureJobFont fits it in; null = the line's font)
     if (seed.fontWord) job.fontAsked = seed.fontWord;
     wordsEvent(job, by, was, "words"); Review.remove("eng:" + job.key);
     await setReady(job);
@@ -6353,7 +6367,7 @@ const Engrave = window.Engrave = (() => {
       now: () => Date.now(), store: setupStore, jobsOf: line => jobsOf(line), ensureJobs: line => { raiseCandidate(line); const had = jobsOf(line), out = ensureJobs(line); for (const j of had) if (items().get(j.key) !== j) dropped.push(j.key); return out; },
       slots: line => { const S = SIDES(); if (!S) return [null]; try { return S.plan(sidesCtx, line, jobsOf(line)).slots || [null]; } catch (_) { return [null]; } },
       remove: removeJob, skip: (job, by) => skip(job, by), reopen: reopenJob, seed: seedWords,
-      setNone: (job, why, by) => { const was = job.text; setNone(job, why); if (by) { job.decision = { by, at: Date.now(), none: true }; wordsEvent(job, by, was, "none"); } },
+      setNone: (job, why, by, reason) => { const was = job.text; setNone(job, why); if (by) { job.decision = { by, at: Date.now(), none: true, ...(reason ? { why: reason } : {}) }; wordsEvent(job, by, was, "none"); } },
       changed: (line, res) => { try { if (res && Array.isArray(res.removed)) for (const k of dropped) if (!res.removed.includes(k)) res.removed.push(k); } catch (_) {} try { const S = SIDES(); if (S && line._engraveLinked) S.linkParent(sidesCtx, line, jobsOf(line)); } catch (_) {} try { Orders.render(); } catch (_) {} try { render(); } catch (_) {} try { Review.render(); } catch (_) {} try { if (window.OrderWin && OrderWin.isOpen && OrderWin.isOpen()) OrderWin.nudge(); } catch (_) {} try { RunCtl.poke(); } catch (_) {} }
     };
   }
@@ -12396,6 +12410,15 @@ const Review = window.Review = (() => {
       agent({run:B.run?.runId},"warn",`${row.order.receiptId}: ${row.hold}`);
       syncOrderItems();Orders.render();RunCtl.poke();return;
     }
+    // REVHOLD: an order in Review (or one a person just answered with a pick) keeps its place on its sheet. Accepting the new order leaves its pieces where they are, with the drawing they have
+    // (nothing swaps a drawing in place): never lifted, never nested again, and a piece cut or released was left alone above.
+    if(row.repoolChanged && Pool.keepsPlace(row)){
+      row.repoolChanged=false;
+      const kept="Kept on its sheet with its old drawing: the order was sent to Review";
+      try { toast(kept,"warn",6000); } catch(_) {}
+      agent({run:B.run?.runId},"warn",`${row.order.receiptId}: ${kept}`);
+      if(!Pool.onSheets(row)){ row.changePending=false;syncOrderItems();Orders.render();RunCtl.poke();return; }
+    }
     // Lifting a hold, or accepting a change that leaves the pieces as they are, keeps the pieces already on sheets:
     // making the line up again put a second copy of each on the intake sheet under the same pool id.
     if(!row.repoolChanged && Pool.onSheets(row)){
@@ -16732,11 +16755,13 @@ const OrderWin = window.OrderWin = (() => {
     // the surface starts in the colour of what was clicked and takes its own as it grows
     const tint = bgOf(from); if (tint) { const t = el("i", "owTint"); t.style.background = tint; d.appendChild(t); const a = run(t, [{ opacity: 1 }, { opacity: 0 }], { duration: 260, easing: "cubic-bezier(.4,0,.6,1)", fill: "forwards" }); if (a) a.finished.then(() => t.remove(), () => t.remove()); }
   }
-  async function shut() {
+  /** `into` (ENGANIM): an element on the page behind the view that it goes back into instead of the one it grew out of (the
+   *  Engraving tab's detail, drawn behind this view by EngraveLink before the view goes); the very same flight. */
+  async function shut(into) {
     await window.Seal?.whenIdle?.();
     const d = W.dlg; if (!d || !d.open || W.closing) return;
     W.closing = true; stopMotion(); sheetPause();
-    const from = still() ? null : origin(), r = rectOf(from), A = [];
+    const from = still() ? null : into && into.nodeType === 1 && rectOf(into) ? into : origin(), r = rectOf(from), A = [];
     giveBack(r ? 420 : still() ? 110 : 170);
     if (r) {
       d.classList.add("owBack");
@@ -16744,6 +16769,8 @@ const OrderWin = window.OrderWin = (() => {
       // (the clip alone: an opacity on the full-screen surface as well made every frame of the close a repaint)
       d.style.willChange = "clip-path";
       A.push(d.animate([{ clipPath: "inset(0px 0px 0px 0px round 0px)" }, { clipPath: clipOf(r) }], { duration: 420, easing: GROW, fill: "forwards" }));
+      // (into a card drawn behind the view (ENGANIM): the view's last 160 ms dissolve into it, so the card is not swapped in blank-to-full on the frame the view closes)
+      if (into && from === into) A.push(d.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, delay: 260, easing: "ease-in", fill: "forwards" }));
     } else A.push(d.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: still() ? "none" : "scale(.985)" }], { duration: still() ? 110 : 170, easing: "ease", fill: "forwards" }));
     W.anims.push(...A);
     // (a hidden tab draws no frames: the close never waits on them)
@@ -16974,7 +17001,7 @@ const OrderWin = window.OrderWin = (() => {
     show((opts.row && opts.row.key && rows.find(r => r.key === opts.row.key)) || ofPool(rows, opts.poolId) || rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId, pick: o.pick }); shown();
   }
   // (a repaint asked from outside, an image or a record arriving, waits for the view to land)
-  return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v),
+  return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: o => shut(o && o.into), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v),
     // the piece shown in the order window (Paul, 5 Oct, round 16: the "Its pieces" rows are the selector): selectPiece(key | null for all pieces) -> whether it is shown now
     selectPiece: k => selectPiece(k), selectedPiece: () => (W.pieces || []).length > 1 ? W.piece || null : null, selectedSide: () => (W.side && narrowSide()) ? W.side : null, repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed,
     // (read-only, for the checks: the pieces of the order on screen, each with the sheets it is on, and the one in focus)

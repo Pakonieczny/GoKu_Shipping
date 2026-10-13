@@ -76,7 +76,7 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
     const sleep = ms => page.waitForTimeout(ms);
     // (the Engrave detail has no words box of its own any more: the words are typed in the options panel, whose box carries the one Emoji button; typing there is staged until Save)
     const ta = '#egQueue .engp .engpWords', btn = '#egQueue [data-emoji]', pop = '.emPop:not([hidden])';
-    const save = async () => { await page.evaluate(() => document.querySelector('#egQueue [data-engp=save]').click()); };   // (a script click: the open picker sits over the button)
+    const save = async () => { await page.evaluate(() => { document.querySelector('#egQueue [data-engp=save]').click(); const why = document.querySelector('#egQueue [data-engp=why]'); if (why) why.click(); }); };   // (a script click: the open picker sits over the button; words that differ from the system's ask "Why change it?" first: the first quick button answers)
     const words = async () => {
       const r = await page.evaluate(sel => { const t = document.querySelector(sel); return t ? { v: t.value, s: t.selectionStart, e: t.selectionEnd, focus: document.activeElement === t } : null; }, ta);
       if (r) return r;
