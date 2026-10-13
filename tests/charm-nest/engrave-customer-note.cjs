@@ -102,7 +102,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     check(d.saidText.includes(WORDS.buyer), 'it holds the buyer\'s message exactly: "' + WORDS.buyer + '"');
     check(d.saidText.includes(WORDS.staff), 'it holds the staff note exactly: "' + WORDS.staff + '"');
     check(d.labels.join('|') === 'Personalisation|Buyer message|Staff note|Options', 'each part under its own small label: ' + d.labels.join('|'));
-    check(/Charm Type: Tag1 \(front\+back\)/.test(d.saidText) && /Font choice: Ace/.test(d.saidText), 'the customer\'s engraving options are in it (front + back, the font): "' + d.saidText.replace(/^.*Options/, 'Options') + '"');
+    check(/Charm Type: Tag1 \(front\+back\)/.test(d.saidText) && /Font: Ace/.test(d.saidText), 'the customer\'s engraving options are in it (front + back, the font): "' + d.saidText.replace(/^.*Options/, 'Options') + '"');
     check(!/Metal Choice|Gold Filled/.test(d.saidText), 'an option that is not about the engraving (the metal) is not in it');
     await shot('said-settled-1280');
     d = await detail({ patch: { confidence: 0.45 } });
@@ -128,7 +128,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     d = await detail(NONE);
     check(d.has && d.panel === 1 && d.said === 0 && !/What the customer wrote/.test(d.text) && d.titles.length === 0, 'the customer wrote and chose nothing: no box and no title: ' + JSON.stringify({ said: d.said, titles: d.titles }));
     d = await detail({ spec: NONE.spec, line: { variations: METAL.concat([{ name: 'Font choice', value: 'Ace' }]), personalization: [] } });
-    check(d.said === 1 && d.labels.join('|') === 'Options' && /Font choice: Ace/.test(d.saidText), 'only an engraving option chosen: the box holds only the options: ' + d.labels.join('|'));
+    check(d.said === 1 && d.labels.join('|') === 'Options' && /Font: Ace/.test(d.saidText), 'only an engraving option chosen: the box holds only the options: ' + d.labels.join('|'));
     d = await detail({ spec: { personalization: [WORDS.pers], buyerMessage: '', staffNote: '' }, line: { variations: METAL, personalization: [WORDS.pers] } });
     check(d.said === 1 && d.labels.join('|') === 'Personalisation', 'only the personalisation written: the box holds only that: ' + d.labels.join('|'));
     d = await detail({ spec: { personalization: [], buyerMessage: '  ', staffNote: '' }, line: { variations: METAL, personalization: [] } });
@@ -153,7 +153,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       return out;
     }, { KEY, patch });
     let dd = await decided({});
-    check(dd.open && dd.said === 1 && /what the customer wrote/i.test(dd.text) && dd.text.includes(WORDS.buyer) && dd.text.includes(WORDS.staff) && /Font choice: Ace/.test(dd.text), 'a decided row\'s opened detail shows the box with the customer\'s words and options: "' + dd.text.slice(0, 120) + '"');
+    check(dd.open && dd.said === 1 && /what the customer wrote/i.test(dd.text) && dd.text.includes(WORDS.buyer) && dd.text.includes(WORDS.staff) && /Font: Ace/.test(dd.text), 'a decided row\'s opened detail shows the box with the customer\'s words and options: "' + dd.text.slice(0, 120) + '"');
     check(dd.wide >= dd.detW - 4 && dd.rowWords === 'Name One' && dd.seals >= 1 && dd.dts.includes('Size') && !dd.dts.includes('Words') && !dd.dts.includes('Decided'), 'it spans the detail, and the decided row is otherwise as ENGTRIM left it: ' + JSON.stringify({ box: dd.wide, detail: dd.detW, dts: dd.dts }));
     dd = await decided({ spec: NONE.spec, line: NONE.line });
     check(dd.open && dd.said === 0, 'a decided piece whose customer wrote and chose nothing: no box');

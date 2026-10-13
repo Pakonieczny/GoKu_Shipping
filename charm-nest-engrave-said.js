@@ -4,7 +4,8 @@
  * The customer's own words about an order line, as one small labelled box: the personalisation text, the buyer's message, the staff note, and the choices the customer made among the listing's options that are
  * about the engraving (the font, front / back / both sides, engraving or not, where). Pure reading of the line the page already holds: no network, no clock, no paid call, nothing written.
  *
- *   rowsOf(row)    -> [[label, text]]   Personalisation | Buyer message | Staff note | Options (one "Name: value" per line); a part the customer left empty is not in the list
+ *   rowsOf(row)    -> [[label, text]]   Personalisation | Buyer message | Staff note | Options (one "Name: value" per line, said as CharmNestOrders.optionViews says it: "Metal: Gold · Engraved", OPTTIDY 13 Oct 2026;
+ *                                       the original is the label's hover); a part the customer left empty is not in the list
  *   choicesOf(row) -> [{ name, value }] the engraving-related option choices of the line (the order window's one extra line)
  *   html(row)      -> string            `<section class="pvSec pvSaid" data-said>` with the title "What the customer wrote" and the `.owSaid` box the order window uses ("" when the customer wrote nothing:
  *                                       no empty box); `html(row, { bare: true })` is the box without the section's title (not used by the screens, for a caller that draws its own)
@@ -43,6 +44,16 @@
     }).map(v => ({ name: str(v.name), value: str(v.value) }));
   }
 
+  /** OPTTIDY (Paul, 13 Oct 2026: "strip out the needless/filler text from these options and only show the relevant information from each dropdown selection"): the choices as the app's one display reader
+   *  tidies them (CharmNestOrders.optionViews: "Metal: Gold · Engraved", "Length: 16" & 18" · Font: Angelina"); null when the reader is not on the page, and the plain "name: value" lines are drawn. DISPLAY ONLY:
+   *  choicesOf still answers the options as the line holds them, and the original reads in the label's title. */
+  function viewsOf(row, ch) {
+    const L = lineOf(row), sp = L.spec || (row && row.spec) || {}, line = L.line || (row && row.line) || {}, o = O();
+    if (!o || typeof o.optionViews !== 'function') return null;
+    let all = ch; try { all = o.purchaseOptions(line, sp) || ch; } catch (_) { all = ch; }
+    try { return o.optionViews(ch, line, all); } catch (_) { return null; }
+  }
+  const plainLine = c => (c.name ? c.name + ': ' + c.value : c.value);
   /** What the customer wrote and chose about this line, part by part: [[label, text]], empty when they wrote and chose nothing. */
   function rowsOf(row) {
     const L = lineOf(row), sp = L.spec || (row && row.spec) || {}, line = L.line || (row && row.line) || {};
@@ -51,14 +62,16 @@
     if (pers.length) out.push(['Personalisation', pers.join('\n')]);
     const bm = visible(sp.buyerMessage); if (bm) out.push(['Buyer message', bm]);
     const sn = visible(sp.staffNote); if (sn) out.push(['Staff note', sn]);
-    const ch = choicesOf(row); if (ch.length) out.push(['Options', ch.map(c => c.name ? c.name + ': ' + c.value : c.value).join('\n')]);
+    const ch = choicesOf(row); if (ch.length) { const vs = viewsOf(row, ch); out.push(['Options', (vs ? vs.map(v => v.line) : ch.map(plainLine)).join('\n')]); }
     return out;
   }
 
   /** The box: a title that says plainly what it is, then each part under its small label (the look of the order window's "What the customer wrote"). "" when there is nothing to show. */
   function html(row, o) {
     const rows = rowsOf(row); if (!rows.length) return '';
-    const box = `<div class="owSaid">${rows.map(([k, v]) => `<span class="lbl">${esc(k)}</span> ${esc(v)}`).join('')}</div>`;
+    // (the Options label carries the choices exactly as the order has them when any was tidied: a hover, no extra line)
+    const asOrdered = (() => { const ch = choicesOf(row), vs = ch.length ? viewsOf(row, ch) : null; return vs && vs.some(v => v.changed) ? 'As ordered:\n' + vs.map(v => v.was).join('\n') : ''; })();
+    const box = `<div class="owSaid">${rows.map(([k, v]) => `<span class="lbl"${k === 'Options' && asOrdered ? ` title="${esc(asOrdered)}"` : ''}>${esc(k)}</span> ${esc(v)}`).join('')}</div>`;
     return `<section class="pvSec pvSaid" data-said>${o && o.bare ? '' : '<h4 class="pvH">What the customer wrote</h4>'}${box}</section>`;
   }
 

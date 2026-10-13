@@ -46,7 +46,7 @@ async function main() {
     await page.click('#owMeta .owfMore'); await page.waitForTimeout(260);
     const det = await page.evaluate(() => { const d = document.querySelector('#owMeta .owfDetails'); return { shown: !d.hidden && d.getBoundingClientRect().height > 40, labels: [...d.querySelectorAll('.m i')].map(i => i.textContent), cols: getComputedStyle(d.querySelector('.owfList')).gridTemplateColumns.split(' ').length, expanded: document.querySelector('#owMeta .owfMore').getAttribute('aria-expanded') }; });
     assert(det.shown); assert.equal(det.expanded, 'true'); assert.equal(det.cols, 2, 'two columns');
-    assert.deepEqual(det.labels, ['Order', 'Purchased', 'Buyer', 'Quantity', 'Metal', 'State', 'Ship by', 'Chain', 'Metal choice', 'Chain length', 'Listing', 'Title']);
+    assert.deepEqual(det.labels, ['Order', 'Purchased', 'Buyer', 'Quantity', 'Metal', 'State', 'Ship by', 'Chain', 'Metal', 'Length', 'Listing', 'Title']);   // (OPTTIDY, Paul 13 Oct: the option cells say "Metal" and "Length", not "Metal choice" and "Chain length"; the cells are all still there)
     ok('1c Details opens the complete old grid in two columns, every label in its old order', true);
     if (shots) { await page.screenshot({ path: path.join(shots, 'FACTS-single-details.png'), clip: await page.evaluate(() => { const m = document.querySelector('#orderWin .owInfoMain').getBoundingClientRect(), r = document.getElementById('owMeta').getBoundingClientRect(); return { x: m.left - 10, y: r.top - 10, width: m.width + 20, height: r.height + 20 }; }) }); }
     await page.click('#owMeta .owfMore'); await page.waitForTimeout(260);
@@ -63,7 +63,7 @@ async function main() {
     await hover(page, 'order'); await page.waitForTimeout(600);
     p = await popState(page); assert.match(p.text, new RegExp(W.FIXTURES.pairMatching.rid)); assert.match(p.text, /1737560072/); assert.match(p.text, /Theatre Happy Sad Drama Mask Earrings available in 14k Gold Fill, Sterling Silver, 14k Rose Gold Fill or 14K Solid Gold Earrings/);
     ok('2b the order chip\'s card holds the listing number and the full listing title', true);
-    await hover(page, 'metal'); await page.waitForTimeout(600); p = await popState(page); assert.match(p.text, /Metal choice\s+Gold/i); ok('2c the metal card holds the buyer\'s metal choice', true);
+    await hover(page, 'metal'); await page.waitForTimeout(600); p = await popState(page); assert.match(p.text, /GF 14\/20\s+Gold/i); ok('2c the metal card holds the buyer\'s metal choice (OPTTIDY: under the card\'s own title, without the words "Metal choice")', true);
     await hover(page, 'purchased'); await page.waitForTimeout(600); p = await popState(page); assert.match(p.text, /Monday, October 12, 2026/); assert.match(p.text, /11:02 AM/); ok('2d the purchase card holds the full date', true);
 
     await shut(page); await open(page, 'multi');

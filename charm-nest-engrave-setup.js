@@ -75,7 +75,7 @@
     if (!t || !['front', 'both', 'back'].includes(t.mode)) return null;
     const raw = rawOf(line), lab = labelled(raw), whole = linesOf(raw), mk = ls => (ls && ls.length ? { text: ls.join('\n'), lines: ls.slice(), fontWord: null } : null);
     const o = { v: 1, mode: t.mode, source: 'option', front: null, back: null, textSource: 'none', needsPerson: false, confidence: 0.9, option: { name: str(t.name), value: str(t.value) } };
-    const asks = t.mode === 'both' ? 'asks for both faces' : `asks for the ${t.mode} only`, said = `${o.option.name || 'The option'} “${o.option.value}” ${asks}`;
+    const asks = t.mode === 'both' ? 'asks for both faces' : `asks for the ${t.mode} only`, ov = optView(o.option.name, o.option.value), said = ov && ov.paired ? `“${ov.line}” ${asks}` : `${(ov && ov.label) || o.option.name || 'The option'} “${(ov && ov.text) || o.option.value}” ${asks}`;
     if (t.mode === 'both') {
       if (lab.front || lab.back) { o.front = mk(lab.front); o.back = mk(lab.back); o.textSource = 'labelled'; o.needsPerson = !(lab.front && lab.back); o.confidence = lab.front && lab.back ? 0.95 : 0.6; }
       else if (whole.length) { o.textSource = 'unlabelled'; o.needsPerson = true; o.confidence = 0.5; }
@@ -198,7 +198,18 @@
   }
 
   /* ── the view model ────────────────────────────────────────────────────────── */
-  const SRC = { option: o => (o && o.name ? `the ${o.name} option` : 'the option'), title: () => 'the listing title', note: () => "the buyer's note", person: () => 'a person', default: () => '' };
+  /* OPTTIDY (Paul, 13 Oct 2026): an option named in these words is named as the app's one display reader says it ("the Length · Font option", not "the Necklace Length&middot;FONT option"); display only. */
+  const optView = (name, value) => { const O = Orders(); try { return O && typeof O.optionView === 'function' ? O.optionView(name, value) : null; } catch (_) { return null; } };
+  // (the system's reason, decoded to text; and the option it quotes, "the option “Metal &middot; #Characters?: GOLD·Set·ENGRAVED”", said as the display reader says it. Only that quote: the buyer's own words are never touched. A clipped quote stays.)
+  const shownWhy = t => {
+    const O = Orders();
+    try {
+      if (!O || typeof O.shownText !== 'function') return str(t);
+      const s = O.shownText(t);
+      return typeof O.optionView !== 'function' ? s : s.replace(/(\bthe option )\u201c([^\u201d]+)\u201d/g, (m, lead, q) => { const i = q.indexOf(': '); if (i <= 0 || /\u2026$/.test(q)) return m; const v = O.optionView(q.slice(0, i), q.slice(i + 2)); return v.changed ? lead + '\u201c' + v.line + '\u201d' : m; });
+    } catch (_) { return str(t); }
+  };
+  const SRC = { option: o => { const v = o && o.name ? optView(o.name, o.value) : null; return o && o.name ? `the ${(v && (v.names || v.label)) || o.name} option` : 'the option'; }, title: () => 'the listing title', note: () => "the buyer's note", person: () => 'a person', default: () => '' };
   /** What the control shows for a line. null when the line has nothing to say (no spec, left the pull, done by hand, mode none with no edit). */
   const SLOT_RX = /^(L|R|D\d{1,2})$/;
   const slotOfJob = j => (j && (j.slot || (Faces() && Faces().parseKey(j.key).slot))) || null;
@@ -227,7 +238,7 @@
     const src = setup.edited ? 'person' : setup.source, srcText = (SRC[src] || (() => ''))(setup.option || e.option);
     return { ok: true, line, key: line.key, slot, pieceKey: F.pieceKeyOf(F.keyOf(line, 'back', slot)), jobKeys: { front: F.keyOf(line, 'front', slot), back: F.keyOf(line, 'back', slot) },
       setup, base, mode: setup.mode, modeLabel: F.modeLabel(setup.mode), rows, jobs, pieceJobs, lineFont, edited: setup.edited, pieceEdited: !!setup.pieceEdited, by: setup.by, at: setup.at,
-      why: setup.edited ? `Set by ${setup.by || 'a person'}${setup.at ? ' on ' + new Date(setup.at).toLocaleDateString() : ''}` : str(setup.why),
+      why: setup.edited ? `Set by ${setup.by || 'a person'}${setup.at ? ' on ' + new Date(setup.at).toLocaleDateString() : ''}` : shownWhy(setup.why),
       reading: setup.edited ? F.describe(base) : '', from: setup.edited ? '' : srcText ? `from ${srcText}${pct > 0 && setup.source !== 'default' ? ` · ${pct}% sure` : ''}` : (setup.source === 'default' ? 'nothing in the listing or the note says otherwise' : ''),
       raw: rawOf(line), needsPerson: setup.needsPerson, textSource: setup.textSource,
       prompt: setup.needsPerson ? (setup.mode === 'both' ? 'Say which words go on the front and which on the back' : `Say which words go on the ${setup.faces[0] || 'charm'}`) : '',
