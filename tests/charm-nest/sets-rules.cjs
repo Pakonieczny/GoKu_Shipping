@@ -82,7 +82,8 @@ assert.strictEqual(R.closed(null), false);
 R.CLOSING.afterFormation = false; assert.strictEqual(R.closed([gfDone('a'), ssDone('b')]), false, 'the one switch: a set keeps taking sheets until it is approved (the older reading)'); R.CLOSING.afterFormation = true;
 // form(): where the free sheets go now
 let f = R.form([], [gfDone('g1'), ssDone('s1'), sh('p', 'gold')], false);
-assert.deepStrictEqual([f.where, f.join.length, f.wait.length, f.closed], ['new', 3, 0, false], 'no set yet: the completed GF and SS form Set 1 and the partial sheet that comes with them (the cardinal rule) joins');
+assert.deepStrictEqual([f.where, f.join.length, f.wait.length, f.closed], ['new', 2, 1, false], 'no set yet: the completed GF and SS form Set 1; the partial sheet never joins (Paul, 13 Oct)');
+assert.strictEqual(f.wait[0].why, R.partialWhy(f.wait[0].sheet), 'the partial sheet says why in its own one line');
 f = R.form([], [gfDone('g1'), sh('s0', 'silver')], false);
 assert.deepStrictEqual([f.where, f.join.length, f.wait.length], [null, 0, 2], 'a completed GF with only a partial SS: no set, both wait');
 assert.ok(/^Waits for a completed SS sheet/.test(f.wait[0].why), f.wait[0].why);
@@ -109,5 +110,51 @@ g = R.gate({ setId: 's', status: 'awaiting review', cardinalWait: [{ label: 'RG 
 assert.deepStrictEqual([g.ok, g.missing], [false, ['SS']], 'a set short of a completed SS sheet says that first');
 g = R.gate({ setId: 's', status: 'complete', committedAt: 5, cardinalWait: [{ label: 'RG Draft 1' }] }, members); assert.strictEqual(g.applies, false, 'a set committed before is never blocked afterwards');
 g = R.gate({ setId: 's', cardinalWait: [] }, members); assert.strictEqual(g.ok, true, 'an empty list is no partner');
+
+// ── Paul, 13 Oct 2026: a PARTIAL GF or SS sheet (not fully nested) never joins a set, by any route ──
+const part = (id, metal, o = {}) => sh(id, metal, Object.assign({ draft: true, page: 3, density: 0.65 }, o));
+assert.strictEqual(R.isPartial(part('p', 'gold')), true, 'a GF that is still filling');
+assert.strictEqual(R.isPartial(part('p', 'silver')), true, 'an SS that is still filling');
+assert.strictEqual(R.isPartial(gfDone('a')), false); assert.strictEqual(R.isPartial(ssDone('b')), false);
+assert.strictEqual(R.isPartial(part('c', 'gold', { releaseFull: true })), false, 'released = completed (the sheet window\'s Make QR label writes it)');
+assert.strictEqual(R.isPartial(part('d', 'silver', { laserDoneAt: 1700000000000 })), false, 'cut by the laser');
+assert.strictEqual(R.isPartial(part('r', 'rose')), false, 'Rose Gold keeps its own two conditions: never "partial"');
+assert.strictEqual(R.isPartial(part('k', 'gold10k')), false); assert.strictEqual(R.isPartial(part('k', 'gold14k')), false);
+assert.strictEqual(R.isPartial(part('x', 'gold', { archived: true })), false); assert.strictEqual(R.isPartial(null), false);
+assert.strictEqual(R.isPartial({ id: 'page', metal: 'gold', placements: [{ id: 1 }] }), true, 'a page sheet with no release mark yet is still filling');
+assert.strictEqual(R.recordPartial({ id: 'old', metal: 'gold', placedCount: 5 }), false, 'a record that carries no completion mark is unknown, not partial');
+assert.strictEqual(R.recordPartial(part('p', 'gold')), true);
+assert.strictEqual(R.partialLine(part('p', 'gold')), 'GF Draft 3 is not full yet (65% full)');
+assert.strictEqual(R.partialLine(part('p', 'silver', { density: 0 })), 'SS Draft 3 is not full yet');
+assert.strictEqual(R.partialDetail, 'A partial sheet never joins a set.');
+assert.strictEqual(R.partialWhy(part('p', 'gold')), 'GF Draft 3 is not full yet (65% full): a partial sheet never joins a set');
+// settle: a partial sheet waits whatever else is going on; it neither forms a set nor joins a formed one, and the others are settled without it
+let t = R.settle([], [gfDone('g1'), ssDone('s1'), part('p', 'gold')]);
+assert.deepStrictEqual([t.formed, t.join.length, t.wait.length], [true, 2, 1]); assert.strictEqual(t.wait[0].sheet.id, 'p');
+t = R.settle([gfDone('g1'), ssDone('s1')], [part('p', 'silver')]); assert.deepStrictEqual([t.join.length, t.wait.length], [0, 1], 'a formed set does not take it either');
+t = R.settle([], [part('p1', 'gold'), part('p2', 'silver')]); assert.deepStrictEqual([t.formed, t.join.length, t.wait.length], [false, 0, 2], 'partial sheets only: no set');
+// form: the partial sheet keeps its own line even when the newest set has formed already (it is not told "waits for the next set")
+f = R.form([gfDone('g1'), ssDone('s1')], [gfDone('g2'), part('p', 'silver')], true, 'Set-1');
+assert.deepStrictEqual([f.where, f.join.length, f.wait.length], [null, 0, 2]); assert.ok(/^SS Draft 3 is not full yet \(65% full\): a partial sheet never joins a set$/.test(f.wait.find(w => w.sheet.id === 'p').why));
+assert.ok(/^Set-1 has formed, so this sheet waits for the next set/.test(f.wait.find(w => w.sheet.id === 'g2').why));
+// the group rule: sheets that share an order are one group; eligible only when no GF/SS sheet of it outside a set is partial
+let gw = R.groupWait([gfDone('g1'), ssDone('s1')]); assert.deepStrictEqual([gw.ok, gw.partial.length, gw.line], [true, 0, '']);
+gw = R.groupWait([gfDone('g1'), ssDone('s1'), part('p', 'gold')]); assert.strictEqual(gw.ok, false); assert.strictEqual(gw.line, 'GF Draft 3 is not full yet, so the sheets that share an order with it wait outside any set until it is full');
+gw = R.groupWait([gfDone('g1'), part('p', 'gold'), part('q', 'silver', { page: 4 })]); assert.strictEqual(gw.line, 'GF Draft 3 and SS Draft 4 are not full yet, so the sheets that share an order with them wait outside any set until they are full');
+gw = R.groupWait([gfDone('g1'), part('p', 'gold', { setId: 's1', draft: false })], s => !!s.setId); assert.strictEqual(gw.ok, true, 'a partial sheet already in a set (made before this rule) is left as it is');
+gw = R.groupWait([gfDone('g1'), part('r', 'rose'), part('k', 'gold14k')]); assert.strictEqual(gw.ok, true, 'gold sheets are never partial');
+// partner words and the gate: a partner that is not full yet cannot be added, it joins by itself once full
+assert.strictEqual(R.partnerWords(['GF Draft 3'], ['GF Draft 3']), 'orders shared with GF Draft 3, which is not full yet: it joins this set once it is full');
+assert.strictEqual(R.partnerWords(['GF Draft 3', 'SS Draft 4'], ['GF Draft 3', 'SS Draft 4']), 'orders shared with GF Draft 3 and SS Draft 4, which are not full yet: they join this set once they are full');
+assert.strictEqual(R.partnerWords(['RG Draft 1', 'GF Draft 3'], ['GF Draft 3']), 'orders shared with RG Draft 1 and GF Draft 3: add RG Draft 1 to this set; GF Draft 3 joins it once it is full');
+g = R.gate({ setId: 's', status: 'awaiting review', cardinalWait: [{ label: 'GF Draft 3', id: 'p', partial: true }] }, members);
+assert.deepStrictEqual([g.applies, g.ok], [true, false]); assert.strictEqual(g.short, 'orders shared with GF Draft 3, which is not full yet: it joins this set once it is full');
+// a set made before the rule that holds a partial sheet is FLAGGED (derived, never blocking): its readiness is exactly what it was
+const oldSet = [gfDone('g1'), ssDone('s1'), sh('p', 'gold', { setId: 's', draft: false, sheetIndex: 3 })];
+g = R.gate({ setId: 's', status: 'awaiting review' }, oldSet);
+assert.deepStrictEqual([g.applies, g.ok], [true, true], 'flagged, not blocked'); assert.deepStrictEqual(g.partial, ['GF Sheet 3']);
+g = R.gate({ setId: 's', status: 'complete', committedAt: 5 }, oldSet); assert.deepStrictEqual([g.applies, g.ok, g.partial], [false, true, ['GF Sheet 3']], 'a committed set is flagged as well and never blocked');
+assert.deepStrictEqual(R.gate({ setId: 's' }, members).partial, [], 'a set with only completed sheets has nothing to flag');
+assert.deepStrictEqual(R.gate({ setId: 's' }, [{ id: 'old', metal: 'gold' }, { id: 'old2', metal: 'silver' }]).partial, [], 'records with no completion mark are never flagged');
 
 console.log('sets-rules: ok');

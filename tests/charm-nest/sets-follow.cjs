@@ -3,7 +3,8 @@
 //  should be formed and as a result all following sheets should go into a following new set etc... Back engraving completed is not one of the criteria for a set to exist."
 // The page's own assembly (Gate.assemble, charm-nest-bridge.js) over the SIX sheets of Paul's picture (GF 76/73/65 %, RG 23 %, SS 75/48 %, backs 0 / N, all drafts, one shared-order
 // chain that ties five of them to the Rose Gold sheet), with the page's own set rules (charm-nest-set-rules.js). No cloud, no browser: the harness answers the writes.
-//   1 the picture forms Set 1 at once with the completed sheets (never an empty Set 1, never a hold for the Rose Gold sheet), back engraving is never read
+//   1 Paul, 13 Oct: a PARTIAL sheet never joins a set. GF Draft 3 (65 %) shares an order with the group, so the picture forms NO set until GF Draft 3 is full: the completed sheets of its group
+//     wait with it, each with one plain line (nothing is split, nothing dissolved). When GF Draft 3 is full, Set 1 forms at once with the completed sheets (never an empty Set 1, never a hold for the Rose Gold sheet), back engraving is never read
 //   2 the Rose Gold sheet is named on every sheet it shares orders with ("orders shared with RG Draft 1: add that sheet to this set"), joins by no other route, and is not taken to Set 2
 //   3 Set 1 is then closed: a later completed pair forms Set 2, a lone completed sheet waits, the next completed SS forms Set 3; a sheet that shares an order with Set 1 still joins Set 1
 //   4 the sandbox's empty Set-1 (made by the old logic) is the set that forms; partial sheets and a lone completed GF never make a set
@@ -64,18 +65,31 @@ const Sets={onSheetSaved:async(sh,_c,_u,o)=>{const set=o&&o.setOverride;if(!set.
   };
   return w;
 }
+const FULL3 = () => PICTURE.map(x => x.id === 'gold-s3-mv5do6pe' ? { ...x, full: true } : x);      // the picture once GF Draft 3 has reached its fill
+const Gate_policy = (w, k) => { w.c.__k = page(w, k); return JSON.parse(vm.runInContext('JSON.stringify(Gate.policy(__k, 0))', w.c)); };
 const ID = { GF1: 'gold-mv5cm5zt', GF2: 'gold-s2-mv5d5ei5', GF3: 'gold-s3-mv5do6pe', RG1: 'rose-mv5cnguj-j4lm0fnguj', SS1: 'silver-mv5cmca2', SS2: 'silver-s2-mv5deyoz' };
 const idsOf = (...k) => k.map(x => ID[x]).sort();
 const page = (w, k) => w.pages.find(p => p.sheetId === ID[k]);
 
 (async () => {
-  /* 1 · the picture: Set 1 forms at once with the completed sheets, the Rose Gold sheet and the partial sheet SS2 stay outside, nothing is held */
+  /* 1a · (Paul, 13 Oct) the picture as it was: GF Draft 3 is a PARTIAL sheet that shares an order with the group (through the Rose Gold sheet). A partial sheet never joins a set, and a group
+         is eligible for a set only when every GF and SS sheet of it is full: so NO set forms, nothing is split, nothing is dissolved, and each waiting sheet says why in one plain line */
   let w = world();
+  await w.assemble();
+  assert.equal(w.allocations(), 0, 'no set was numbered: the group waits for its partial sheet'); assert.equal(w.sets().length, 0);
+  for (const k of ['GF1', 'GF2', 'SS1']) { const p = page(w, k); assert.equal(p.draft, true, k + ' stays a draft'); assert(!p.setId); assert.match(p.cardinalHold, /^Waits: orders? [\d, ]+(and more)? shared with GF Draft 3, which is not full yet, so they stay out of a set together$/, k + ': ' + p.cardinalHold); assert.equal(Gate_policy(w, k).include, false, k + ' is not released'); }
+  for (const k of ['GF3', 'RG1', 'SS2']) { assert.equal(page(w, k).draft, true); assert(!page(w, k).setId, k + ' is in no set'); assert(!page(w, k).cardinalPull, k + ' is never pulled in'); }
+  assert.equal(Gate_policy(w, 'GF3').reason, 'Partial · held for a later set', 'the partial sheet says it is partial');
+  assert(w.c.writes.filter(x => x.n === 'charmNestLibrary').length === 0, 'nothing at all was written');
+  const quiet = w.writes(); await w.assemble(); assert.equal(w.writes(), quiet, 'looked at again: nothing moves');
+  // GF Draft 3 reaches its fill (the app's own mark: released/full): the group is eligible, Set 1 forms
+  page(w, 'GF3').releaseFull = true;
   await w.assemble();
   assert.equal(w.allocations(), 1, 'one set was numbered, and it is not empty');
   let sets = w.sets(); assert.equal(sets.length, 1);
   assert.equal(sets[0].name, 'Set-1');
-  assert.deepEqual(w.ids(sets[0]), idsOf('GF1', 'GF2', 'GF3', 'SS1'), 'Set 1 = the three completed sheets, with the partial GF Draft 3 that shares an order with them (the cardinal rule pulls a partial partner along)');
+  assert.deepEqual(w.ids(sets[0]), idsOf('GF1', 'GF2', 'GF3', 'SS1'), 'Set 1 = the four sheets of the group, now that every GF and SS sheet of it is full');
+  for (const k of ['GF1', 'GF2', 'SS1', 'GF3']) assert(!page(w, k).cardinalHold, k + ' is no longer held');
   for (const k of ['GF1', 'GF2', 'SS1', 'GF3']) { const p = page(w, k); assert.equal(p.draft, false, k + ' left Draft'); assert.equal(p.setId, 'set-1'); assert(p.sheetIndex >= 1, k + ' has its number inside the set: GF Sheet n / SS Sheet n'); assert(!p.cardinalHold, k + ' is not held'); assert(!p.setWait); }
   assert.deepEqual([page(w, 'GF1').sheetIndex, page(w, 'GF2').sheetIndex, page(w, 'SS1').sheetIndex], [1, 2, 1], 'loose GF Draft 1 and 2 became GF Sheet 1 and 2, SS Draft 1 became SS Sheet 1');
   for (const k of ['RG1', 'SS2']) { assert.equal(page(w, k).draft, true, k + ' stays a draft'); assert(!page(w, k).setId); }
@@ -123,6 +137,8 @@ const page = (w, k) => w.pages.find(p => p.sheetId === ID[k]);
 
   /* 4 · the sandbox state of the picture: Set-1 already exists, EMPTY (the old logic numbered it and then held the group). It is the set that forms: no second number is taken */
   w = world({ emptySet: true, firstSeq: 1 });
+  await w.assemble(); assert.equal(w.allocations(), 0); assert.deepEqual(w.ids(w.sets()[0]), [], 'with GF Draft 3 still partial the group waits: the empty Set-1 stays empty and nothing joins it');
+  w = world({ emptySet: true, firstSeq: 1, sheets: FULL3() });
   await w.assemble(); sets = w.sets();
   assert.equal(w.allocations(), 0, 'no new number: the empty Set-1 is the set that forms'); assert.equal(sets.length, 1);
   assert.deepEqual(w.ids(sets[0]), idsOf('GF1', 'GF2', 'GF3', 'SS1'));
@@ -141,7 +157,7 @@ const page = (w, k) => w.pages.find(p => p.sheetId === ID[k]);
   assert(w.pages.every(p => !p.cardinalNote), 'nothing is waiting for a partner when there is none');
 
   /* 6 · Approve for laser cutting stays grey, with that one line, until the partner sheet is in the set; back engraving still gates the approval (the readiness suites prove the rest) */
-  w = world(); await w.assemble();
+  w = world({ sheets: FULL3() }); await w.assemble();
   const pc = vm.createContext({ SO, window: { SharedOrders: { core: SO.core, sheets: () => w.pages.map(p => SO.fromPage(p)).filter(Boolean) } } });
   vm.runInContext(PARTNERS, pc);
   const group = () => { const set = w.sets()[0], g = { setId: 'set-1', seq: 1, name: 'Set-1', status: 'awaiting review', sheets: w.pages.filter(p => p.setId === 'set-1').map(p => ({ id: p.sheetId })) }; return { set, g }; };
