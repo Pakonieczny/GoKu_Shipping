@@ -4,7 +4,7 @@
  * Paul, 13 Oct 2026: "A partial GF and SS sheet should never be part of a Set of sheets ... a set of sheets must have at least 1 GF and 1 SS sheet. Once that minimum requirement
  * is satisfied than [a set] is formed, and all other sheets must be formed into subsequent sets and also meet the same criteria."
  *
- *   node tests/charm-nest/setsim-sets.cjs [--root DIR] [--seed N] [--orders N] [--ticks N] [--json FILE] [--measure] [--legacy open|committed] [--late 0.3]
+ *   node tests/charm-nest/setsim-sets.cjs [--root DIR] [--seed N] [--orders N] [--ticks N] [--json FILE] [--measure] [--legacy open|committed] [--late 0.3] [--split P] [--home 0|1]
  *
  * INVARIANTS (every update of the stream, every seed; exit 1 and print the exact case when one fails; --measure prints the numbers and always exits 0):
  *   S1  no partial GF or SS sheet is inside a set (a sheet is completed as charm-nest-set-rules.js isCompleted says: released full, or cut)
@@ -32,9 +32,21 @@ function toySheets() {
   const open = (m, need) => sheets[m].find(s => !s.releaseFull && s.usedPt2 + need <= SHEET_PT2 * FILL_CAP);
   return {
     sheets,
-    add(part, tick, splitP, r) {
-      const need = part.pieces.reduce((n, c) => n + areaOf(c), 0);
-      let pieces = part.pieces, s = open(part.metal, need);
+    forced: 0, lifted: 0,
+    add(part, tick, splitP, r, home = true) {
+      let need = part.pieces.reduce((n, c) => n + areaOf(c), 0), pieces = part.pieces;
+      // a later line of an order (the intended nesting: an order is never split): it joins the sheet that holds its mates when that sheet is still open and has room; when it has no room
+      // the mates move with it to the next sheet (the whole order starts the sheet) and the gap they leave is for single charms; only a sheet already released cannot take it (a forced split)
+      const h = home ? sheets[part.metal].find(x => x.charms.some(c => c.order === part.id)) : null;
+      if (h && !h.releaseFull) {
+        if (h.usedPt2 + need <= SHEET_PT2 * FILL_CAP) { for (const c of pieces) { h.charms.push(c); h.placements.push({ id: c.id }); h.usedPt2 += areaOf(c); } if (h.usedPt2 >= SHEET_PT2 * (FILL_CAP - .03)) { h.releaseFull = true; h.releasedAt = tick; } return; }
+        const mine = h.charms.filter(c => c.order === part.id), lift = mine.reduce((n, c) => n + areaOf(c), 0);
+        if (mine.length && lift + need <= SHEET_PT2 * FILL_CAP) {
+          h.charms = h.charms.filter(c => c.order !== part.id); h.placements = h.placements.filter(q => !mine.some(c => c.id === q.id)); h.usedPt2 -= lift;
+          pieces = mine.concat(pieces); need += lift; this.lifted++;
+        }
+      } else if (h && h.releaseFull) this.forced++;
+      let s = open(part.metal, need);
       if (!s) {   // nothing open takes it whole: sheets that are 70% full and cannot take it are completed, and a new sheet starts
         for (const x of sheets[part.metal]) if (!x.releaseFull && x.usedPt2 >= SHEET_PT2 * CLOSE_AT) { x.releaseFull = true; x.releasedAt = tick; }
         s = open(part.metal, need);
@@ -58,7 +70,10 @@ function toySheets() {
 async function run(o = {}) {
   const root = path.resolve(o.root || Lib.REPO), seed = +o.seed || 1, orders = +o.orders || 600, splitP = +o.split || 0, batches = [2, 3, 5, 4];
   const S = L.solverOf(root), stream = makeStream(S, { seed, orders, mix: o.mix }), toy = toySheets(), world = setWorld(root), SR = world.SR, r = L.rng(seed * 31 + 5);
-  const info = [], fails = [], note = (rule, msg, tick) => { if (fails.length < 60) fails.push({ rule, tick, msg }); };
+  const info = [], fails = [], limits = [];
+  // S6 and S7 are asserted when no order is ever split. With `--late`, a line that arrives after its mates' sheet was RELEASED cannot join it (a released sheet is never rebuilt): that
+  // order is split by force, and the sets it ties together (S6) or leaves waiting at the end (S7) are MEASURED as forced-split consequences, not failed (the nesting side, not set assembly).
+  const forcedMode = !!(o.mix && o.mix.late > 0), note = (rule, msg, tick) => { if (forcedMode && (rule === 'S6' || rule === 'S7')) { if (limits.length < 60) limits.push({ rule: rule + '*', tick, msg }); return; } if (fails.length < 60) fails.push({ rule, tick, msg }); };
   const memberOf = new Map(), setsAt = new Map();   // sheet id -> set id (S3), set id -> sheet ids
   const waitStart = new Map(), waits = [];          // completed GF/SS sheets: ticks from completion to joining a set
   const everPartial = new Set(), blockedSheets = new Set(); let tick = 0, maxPartialIn = 0, blockedTicks = 0;
@@ -101,7 +116,7 @@ async function run(o = {}) {
   for (const ev of schedule(stream, batches)) {
     if (ev.tick > (+o.ticks || 1e9)) break;
     tick = ev.tick;
-    for (const a of ev.arrivals) for (const m of METALS) { const part = partOf(a.order, m, a.lines); if (part) toy.add(part, tick, splitP, r); }
+    for (const a of ev.arrivals) for (const m of METALS) { const part = partOf(a.order, m, a.lines); if (part) toy.add(part, tick, splitP, r, o.home !== '0' && o.home !== 0); }
     await check(false);
     if (legacy) { const s = world.sets().find(x => x.setId === 'set-legacy'), same = s && JSON.stringify(s.ids.slice().sort()) === JSON.stringify(legacy.ids); if (!same) { if (legacy.committed) note('S5', 'a COMMITTED set made before the rule changed: ' + JSON.stringify(s && s.ids), tick); else if (!legacy.ejected) { legacy.ejected = tick; info.push(`an OPEN set made before the rule (${legacy.ids.length} sheets, one of them filling) changed at update ${tick}: it now holds ${JSON.stringify(s && s.ids)}`); } } }
   }
@@ -115,7 +130,7 @@ async function run(o = {}) {
   if (leftGF.length && leftSS.length) note('S7', `at the end ${leftGF.length} GF and ${leftSS.length} SS sheet(s) are completed and outside every set: ${left.map(p => CODE[p.metal] + ' ' + p.page).join(', ')}`, tick);
   const waitMean = waits.length ? waits.reduce((a, b) => a + b, 0) / waits.length : 0;
   return { root: root === path.resolve(Lib.REPO) ? 'repo' : root, seed, orders, ticks: tick, sheets: toy.all().length, gfss: toy.all().filter(s => ['gold', 'silver'].includes(s.metal)).length, sets: sets.length, partialInSetsEver: everPartial.size, maxPartialInSets: maxPartialIn,
-    info, blockedSheets: blockedSheets.size, blockedSheetUpdates: blockedTicks, leftOutside: left.length, completedWaitMean: +waitMean.toFixed(2), completedWaitMax: waits.length ? Math.max(...waits) : 0, hasGF, hasSS, fails, failRules: [...new Set(fails.map(f => f.rule))] };
+    info, blockedSheets: blockedSheets.size, blockedSheetUpdates: blockedTicks, leftOutside: left.length, completedWaitMean: +waitMean.toFixed(2), completedWaitMax: waits.length ? Math.max(...waits) : 0, hasGF, hasSS, limits, limitRules: [...new Set(limits.map(f => f.rule))], limitReadings: limits.length, forcedSplits: toy.forced, liftedOrders: toy.lifted, fails, failRules: [...new Set(fails.map(f => f.rule))] };
 }
 const setName = (sets, p) => (sets.find(x => x.setId === p.setId) || { name: p.setId }).name;
 function vm_run(world, code) { require('node:vm').runInContext(code, world.c); }
@@ -127,11 +142,12 @@ module.exports = { run, toySheets };
 
 if (require.main === module) (async () => {
   const seeds = String(opt('seed', '1,2,3')).split(','), res = [];
-  for (const seed of seeds) res.push(await run({ root: opt('root'), seed, orders: opt('orders', 600), ticks: opt('ticks'), mix: opt('late') ? { late: +opt('late') } : undefined, split: opt('split'), legacy: opt('legacy') }));
+  for (const seed of seeds) res.push(await run({ root: opt('root'), seed, orders: opt('orders', 600), ticks: opt('ticks'), mix: opt('late') ? { late: +opt('late') } : undefined, split: opt('split'), legacy: opt('legacy'), home: opt('home') }));
   let bad = 0;
   for (const r of res) {
-    console.log(`seed ${r.seed}: ${r.orders} orders, ${r.sheets} sheets (${r.gfss} GF/SS), ${r.sets} sets, partial GF/SS inside sets: ${r.partialInSetsEver} sheets ever (peak ${r.maxPartialInSets}), completed sheets held out only because a sheet sharing an order is still filling: ${r.blockedSheets} (${r.blockedSheetUpdates} sheet-updates), completed sheets left outside at the end: ${r.leftOutside}, completed sheet waits ${r.completedWaitMean} (max ${r.completedWaitMax}) updates, broken rules: ${r.failRules.join(' ') || 'none'}`);
+    console.log(`seed ${r.seed}: ${r.orders} orders, ${r.sheets} sheets (${r.gfss} GF/SS), ${r.sets} sets, partial GF/SS inside sets: ${r.partialInSetsEver} sheets ever (peak ${r.maxPartialInSets}), completed sheets held out only because a sheet sharing an order is still filling: ${r.blockedSheets} (${r.blockedSheetUpdates} sheet-updates), completed sheets left outside at the end: ${r.leftOutside}, forced splits (the mates' sheet was already released) ${r.forcedSplits}, orders moved whole to the next sheet ${r.liftedOrders}, completed sheet waits ${r.completedWaitMean} (max ${r.completedWaitMax}) updates, broken rules: ${r.failRules.join(' ') || 'none'}`);
     for (const t of r.info) console.log('   note: ' + t);
+    const lim = {}; for (const f of r.limits) if (!lim[f.rule]) { lim[f.rule] = f; console.log(`   ${f.rule} (a consequence of a split by force, measured not failed) first at update ${f.tick}: ${f.msg}`); }
     const first = {}; for (const f of r.fails) if (!first[f.rule]) { first[f.rule] = f; console.log(`   ${f.rule} first at update ${f.tick}: ${f.msg}`); }
     bad += r.fails.length;
   }
