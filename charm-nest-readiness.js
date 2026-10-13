@@ -15,6 +15,7 @@
    * a reader without that module (the server, a test) reads exactly what it always read. A sheet already cut (laserDoneAt) or cut once before (completedBefore), and a piece a person
    * already released by hand, cannot be held: nothing here touches them. */
   const gl=()=>typeof self!=='undefined'?self:globalThis;
+  const swapOf=why=>/^In Review/.test(String(why || ''))?{}:{swap:true};   // (a Review a person answered by a pick whose new drawing is not on the sheet yet: the same stop, other words)
   const reviewWhy=id=>{try{const H=gl().CharmNestReviewHold;return H && typeof H.reason==='function'?String(H.reason(String(id)) || ''):'';}catch(_){return '';}};
   /* Paul, 10 Oct: a Set of Sheets may exist only with at least 1 Completed GF sheet and 1 Completed SS sheet (charm-nest-set-rules.js, the one definition).
    * An uncommitted set without them is not ready, whatever its sheets have done: it waits, and says so. A set already committed, completed or replaced is never
@@ -219,7 +220,7 @@
           if(hand && !hold)continue;
           let block=null;
           if(hold)block={key:'held',why:hold};
-          else if(rv && !hand && !(on.length && on.every(x=>+x.laserDoneAt>0)))block={key:'held',review:true,why:rv};   // (a piece on a sheet already cut cannot be held)
+          else if(rv && !hand && !(on.length && on.every(x=>+x.laserDoneAt>0)))block={key:'held',review:true,...swapOf(rv),why:rv};   // (a piece on a sheet already cut cannot be held)
           else if(!on.length)block=problem?{key:problem.key,why:problem.why}:made && listed.size && !listed.has(pid)?{key:'pooled',missing:true,why:`${whoOf(l,pid,`${made}`)} is missing: only ${listed.size} of this line's ${made} pieces were made, so it is on no sheet`}:{key:'pooled',why:'A piece is not on a saved sheet yet'};
           // one piece listed by two saved sheets would be cut twice: the order waits until a person takes it off one of them (the sheets are the ones already read: no read of its own)
           else if(on.length>1)block={key:'doubled',why:`${whoOf(l,pid,'this order')} is listed on both ${on.map(sheetLabel).join(' and ')}, so it would be cut twice`};
@@ -244,7 +245,7 @@
   function orderReports(rows,sheets,opts){
     const out={};
     for(const [id,o] of readOrders(rows,sheets,opts)){
-      const blocks=o.pieces.filter(p=>p.block).map(p=>({key:p.block.key,index:p.index,label:p.label,poolId:p.poolId,lineKey:p.lineKey,sheetId:p.sheetId,sheetLabel:p.sheetLabel,...(p.block.side?{side:p.block.side}:{}),...(p.block.missing?{missing:true}:{}),...(p.block.review?{review:true}:{}),...(p.sheetIds.length>1?{sheetIds:p.sheetIds}:{}),why:p.block.why,...(p.block.stage?{stage:p.block.stage}:{}),...(p.block.key==='otherSheetNotReady'?{setId:p.block.setId,setLabel:p.block.setLabel,...(p.sheetIds.length>1?{setIds:p.block.setIds}:{})}:{})}));
+      const blocks=o.pieces.filter(p=>p.block).map(p=>({key:p.block.key,index:p.index,label:p.label,poolId:p.poolId,lineKey:p.lineKey,sheetId:p.sheetId,sheetLabel:p.sheetLabel,...(p.block.side?{side:p.block.side}:{}),...(p.block.missing?{missing:true}:{}),...(p.block.review?{review:true}:{}),...(p.block.swap?{swap:true}:{}),...(p.sheetIds.length>1?{sheetIds:p.sheetIds}:{}),why:p.block.why,...(p.block.stage?{stage:p.block.stage}:{}),...(p.block.key==='otherSheetNotReady'?{setId:p.block.setId,setLabel:p.block.setLabel,...(p.sheetIds.length>1?{setIds:p.block.setIds}:{})}:{})}));
       out[id]=blocks.length?{ready:false,...head(blocks),blocks,onSheets:[...new Set(o.pieces.flatMap(p=>p.sheetIds))],pieceCount:o.pieces.length,customer:o.customer,listingId:o.listingId}:{ready:true};
     }
     return out;
@@ -269,7 +270,7 @@
    *  The cloud's own blocks are kept; the stop is one 'held' block per piece (review:true), which forSheet keeps wherever the piece sits. */
   function reviewReport(prev,rid,s,why,list){
     const sid=s.id || s.sheetId,old=prev && Array.isArray(prev.blocks)?prev.blocks.filter(b=>!b.review):[];
-    const add=(list || []).map((p,i)=>({key:'held',review:true,index:p.index || i+1,label:p.label || '',poolId:p.poolId,lineKey:p.lineKey || '',sheetId:p.sheetId || null,sheetLabel:p.sheetLabel || null,...(p.side?{side:p.side}:{}),...(Array.isArray(p.sheetIds) && p.sheetIds.length>1?{sheetIds:p.sheetIds}:{}),why}));
+    const add=(list || []).map((p,i)=>({key:'held',review:true,...swapOf(why),index:p.index || i+1,label:p.label || '',poolId:p.poolId,lineKey:p.lineKey || '',sheetId:p.sheetId || null,sheetLabel:p.sheetLabel || null,...(p.side?{side:p.side}:{}),...(Array.isArray(p.sheetIds) && p.sheetIds.length>1?{sheetIds:p.sheetIds}:{}),why}));
     const blocks=old.concat(add);
     if(!blocks.length)return prev || {ready:true};
     const onSheets=[...new Set([...((prev && prev.onSheets) || []),sid,...add.flatMap(b=>b.sheetIds || [b.sheetId]).filter(Boolean)])];
@@ -281,7 +282,7 @@
     const sid=s.id || s.sheetId,mine=setOf(s),out=[];
     for(const id of orderIds(s)){
       const r=forSheet(s.orderReadiness?.[id],sid,mine),b=r && r.ready!==true && Array.isArray(r.blocks)?r.blocks.find(x=>x.review):null;
-      if(b)out.push({id,why:b.why});
+      if(b)out.push({id,why:b.why,...(b.swap?{swap:true}:{})});
     }
     return out;
   }
@@ -546,9 +547,9 @@
       if(blockers.length)hard.orders=true;
     }
     ok.orders=st.orders && st.qr;
-    const first=items.orders.find(i=>i.part!=='qr' && i.kind==='order'),inRev=checked && blockers.length>0 && blockers.every(x=>x.pieces && x.pieces.length && x.pieces.every(p=>p.review));   // (every order that holds it is in Review: the words say that, not "other pieces")
-    const waitsDetail=checked?inRev?`${blockers.length===1?'An order':count(blockers.length,'order')} on it ${blockers.length===1?'is':'are'} in Review. It stays on the sheet, and the sheet goes on once ${blockers.length===1?'it is':'they are'} resolved there.`:`${blockers.length} of ${count(ids.length,'order')} ${blockers.length===1?'waits':'wait'} for other pieces to be ready.`:'Its orders have not been checked yet.';
-    const waitsShort=!checked?'its orders have not been checked yet':!blockers.length?'its orders wait for other pieces':inRev?blockers.length===1?`${N.order(blockers[0].orderId)} is in Review`:`${count(blockers.length,'order')} are in Review, for example ${N.order(blockers[0].orderId)}`:blockers.length===1?`${N.order(blockers[0].orderId)} waits for another piece: ${lower(first.why)}`:`${count(blockers.length,'order')} wait for other pieces, for example ${N.order(blockers[0].orderId)}: ${lower(first.why)}`;
+    const first=items.orders.find(i=>i.part!=='qr' && i.kind==='order'),inRev=checked && blockers.length>0 && blockers.every(x=>x.pieces && x.pieces.length && x.pieces.every(p=>p.review)),inSwap=inRev && blockers.every(x=>x.pieces.every(p=>p.swap));   // (every order that holds it is in Review: the words say that, not "other pieces")
+    const waitsDetail=checked?inSwap?`${blockers.length===1?'An order':count(blockers.length,'order')} on it ${blockers.length===1?'has':'have'} a new drawing chosen. It stays on the sheet, and the sheet goes on once the new drawing is swapped on it.`:inRev?`${blockers.length===1?'An order':count(blockers.length,'order')} on it ${blockers.length===1?'is':'are'} in Review. It stays on the sheet, and the sheet goes on once ${blockers.length===1?'it is':'they are'} resolved there.`:`${blockers.length} of ${count(ids.length,'order')} ${blockers.length===1?'waits':'wait'} for other pieces to be ready.`:'Its orders have not been checked yet.';
+    const waitsShort=!checked?'its orders have not been checked yet':!blockers.length?'its orders wait for other pieces':inSwap?blockers.length===1?`${N.order(blockers[0].orderId)}: new drawing chosen, swap it on the sheet`:`${count(blockers.length,'order')} have a new drawing chosen, for example ${N.order(blockers[0].orderId)}`:inRev?blockers.length===1?`${N.order(blockers[0].orderId)} is in Review`:`${count(blockers.length,'order')} are in Review, for example ${N.order(blockers[0].orderId)}`:blockers.length===1?`${N.order(blockers[0].orderId)} waits for another piece: ${lower(first.why)}`:`${count(blockers.length,'order')} wait for other pieces, for example ${N.order(blockers[0].orderId)}: ${lower(first.why)}`;
     detail.orders=ok.orders?(ids.length?`All ${count(ids.length,'order')} on this sheet have every other piece ready.`:'No orders to check.'):[qrDetail,st.orders?'':waitsDetail].filter(Boolean).join(' ');
     short.orders=st.qr?waitsShort:st.orders?qrShort:`${qrShort}, and ${waitsShort}`;
     return {id,label,r,again,ok,hard,items,detail,short};
@@ -578,14 +579,14 @@
       const b=bs[0];
       return b.key==='doubled'?sentence(b.why).replace(/\.$/,''):b.key==='pooled'?(b.missing?sentence(b.why).replace(/\.$/,''):'Its other piece is not on a sheet yet'):b.key==='noSku'?'Its other piece has no SKU':b.key==='held'?(b.review?sentence(b.why).replace(/\.$/,''):`A piece of this order is held: ${b.why}`):b.key==='otherSheetNotReady'?(noSetFrom(b,me)?`Its other piece is on ${b.sheetLabel || 'another sheet'}, which is in no set${b.stage==='included'?'':`, and ${MISSING[b.stage] || 'it is not ready'}`}`:`${splitFrom(b,me)?`${splitWords(b,me)}: its`:'Its'} other piece is on ${b.sheetLabel || 'another sheet'}, and ${MISSING[b.stage] || 'it is not ready'}`):`Its other piece: ${b.why}`;
     }
-    const phrase=b=>(b.review?'in Review':PIECE_PHRASE[b.key]) || (b.key==='otherSheetNotReady'?`on ${b.sheetLabel || 'another sheet'}${splitFrom(b,me)?' (another set)':noSetFrom(b,me)?' (in no set)':''}`:b.why);
+    const phrase=b=>(b.review?b.swap?'new drawing chosen':'in Review':PIECE_PHRASE[b.key]) || (b.key==='otherSheetNotReady'?`on ${b.sheetLabel || 'another sheet'}${splitFrom(b,me)?' (another set)':noSetFrom(b,me)?' (in no set)':''}`:b.why);
     return `${bs.length} of its other pieces wait: ${[...new Set(bs.map(phrase))].join(', ')}`;
   }
   // me: the asking sheet's own set ({setId,setLabel}), to tell an order split across sets from a wait inside the sheet's own set
   function orderIssue(id,r,ctx,me){
     const bs=Array.isArray(r.blocks)?r.blocks:[],h=bs.length?head(bs):null,first=h && bs.find(b=>b.key===h.key),sp=bs.find(b=>splitFrom(b,me)),ns=!sp && bs.find(b=>noSetFrom(b,me));
     return {step:'orders',key:h?h.key:'unverified',orderId:id,orderLabel:`Order ${id}`,customer:r.customer || '',listingId:r.listingId || '',thumb:typeof ctx.thumb==='function'?ctx.thumb(id) || null:null,
-      pieceCount:r.pieceCount || 0,pieces:bs.map(b=>({index:b.index,key:b.poolId,poolId:b.poolId,label:b.label,kind:b.key,...(b.review?{review:true}:{}),...(b.side?{side:b.side}:{}),sheetId:b.sheetId || null,sheetLabel:b.sheetLabel || null,stage:b.stage || '',...(b.fr?{fr:true}:{}),why:pieceLine(b,me),...(splitFrom(b,me)?{split:true,setLabel:b.setLabel || ''}:noSetFrom(b,me)?{noSet:true}:{})})),
+      pieceCount:r.pieceCount || 0,pieces:bs.map(b=>({index:b.index,key:b.poolId,poolId:b.poolId,label:b.label,kind:b.key,...(b.review?{review:true}:{}),...(b.swap?{swap:true}:{}),...(b.side?{side:b.side}:{}),sheetId:b.sheetId || null,sheetLabel:b.sheetLabel || null,stage:b.stage || '',...(b.fr?{fr:true}:{}),why:pieceLine(b,me),...(splitFrom(b,me)?{split:true,setLabel:b.setLabel || ''}:noSetFrom(b,me)?{noSet:true}:{})})),
       why:orderWhy(r,me),open:{type:'order',id,...(first?{poolId:first.poolId}:{})},...(h && h.sheetId?{otherSheetId:h.sheetId}:{}),...(sp?{split:true,...(me.setLabel && sp.setLabel && me.setLabel!==sp.setLabel?{sets:[me.setLabel,sp.setLabel]}:{})}:ns?{noSet:true}:{})};
   }
   // the sheet's own current blocker: the first of its own steps still behind, as a short label (no counts, no engraving rows)
@@ -686,7 +687,7 @@
     if(laying(s))return {step:'nesting',stepLabel:stepName('nesting'),why:'still being laid out',counter:null};
     if(!joinedNow(s))return {step:'nesting',stepLabel:stepName('nesting'),why:s.draft?'still a draft':'not included in a set yet',counter:null};
     const rh=reviewHolds(s);   // an order of this sheet is in Review: the sheet waits for the person's answer there, and proceeds by itself when it comes
-    if(rh.length)return {step:'orders',stepLabel:stepName('orders'),why:`held in Review: ${rh.length===1?'order '+rh[0].id:count(rh.length,'order')+' ('+rh.slice(0,2).map(x=>x.id).join(', ')+(rh.length>2?', and more':'')+')'}`,counter:null,review:true};
+    if(rh.length){const who=rh.length===1?'order '+rh[0].id:count(rh.length,'order')+' ('+rh.slice(0,2).map(x=>x.id).join(', ')+(rh.length>2?', and more':'')+')';return {step:'orders',stepLabel:stepName('orders'),why:rh.every(x=>x.swap)?`new drawing chosen, swap it on the sheet: ${who}`:`held in Review: ${who}`,counter:null,review:true};}
     return null;
   }
   function setGate(set,sheets){
