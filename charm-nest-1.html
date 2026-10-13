@@ -2352,8 +2352,6 @@ details.masterHist>summary{white-space:nowrap}
 .placeView .ctl .lineControl{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink45)}
 .placeView .ctl .lineControl select{border:1px solid var(--line);border-radius:7px;padding:3px 6px;font:12px var(--sans);color:var(--ink);background:var(--card)}
 .pvWords .why{font:12px var(--sans);color:var(--warn,#a2591c);margin-top:6px}
-.placeView .ctl .angle{display:inline-flex;align-items:center;gap:2px;font:11.5px var(--mono);color:var(--ink45)}
-.placeView .ctl .angle input{width:52px;border:1px solid var(--line);border-radius:7px;padding:3px 4px;font:12px var(--mono);background:var(--card);text-align:right}
 .placeView .noBack{width:100%;min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--ink45);font-size:12.5px;border:1px dashed var(--line);border-radius:10px;padding:16px;text-align:center}
 .rvItem[data-engp-nojob] .pvApproval,.rvItem[data-engp-nojob] .ctl{visibility:hidden}.placeView .backHost:has(.engpNoJob)>canvas{display:none}
 .placeView .noBack .spin{width:11px;height:11px;flex:0 0 11px;margin-right:8px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite}
@@ -2394,7 +2392,6 @@ details.masterHist>summary{white-space:nowrap}
 .spacingControl output{font:600 12px var(--mono);min-width:4ch;text-align:right;color:var(--ink70)}
 .spacingIcon{display:grid;gap:calc(1px + 2px * var(--spacing));width:15px;align-content:center;min-height:22px}
 .spacingIcon i{height:2px;background:var(--gold);border-radius:1px}
-.quarterTurns{display:inline-flex;gap:3px;align-items:center}
 @container (max-width:380px){.spacingControl{flex-wrap:wrap}.placeView .ctl .spacingControl input{width:76px}}
 /* Related controls share a group; only the boundaries between tasks get a divider. */
 .controlGroup{display:inline-flex;align-items:center;gap:7px;min-width:0}
@@ -2417,7 +2414,6 @@ details.masterHist>summary{white-space:nowrap}
 .libBar input[type=search]{min-width:150px;width:220px;flex:1 1 220px}
 .assetFailed{cursor:pointer;object-fit:contain;color:var(--clay);font:12px var(--sans)}
 .libBar #libKind{border-radius:0;border-top:0;border-right:0;border-bottom:0;background:transparent}
-.placeView .quarterTurns{border-left:1px solid #d5cdbf;padding-left:9px;margin-left:2px}
 /* with On hold or Cancelled beside Open Orders the bar keeps one line under 1400 px: the charm count steps aside, the filters narrow */
 @media(max-width:1399px){#ordChips:has(.egTab + .egTab) ~ .charmTotal,#ordChips:has(.egTab + .egTab) .ordLong{display:none}.ordCompact .ordMetal{max-width:112px}.ordCompact:has(#ordChips .egTab + .egTab + .egTab) .ordMetal{max-width:100px}.ordCompact:has(#ordChips .egTab + .egTab + .egTab) .ordSort{max-width:96px}.ordCompact:has(#ordChips .egTab + .egTab + .egTab) .ordSearch{width:80px;min-width:80px;flex-basis:80px}.ordCompact:has(#ordChips .egTab + .egTab + .egTab) .egTab{padding:4px 7px}}
 @media(max-width:1100px){.ordCompact{gap:8px}.ordCompact .controlGroup+.controlGroup{padding-left:8px}.ordCompact .ordMetal{max-width:106px}.ordCompact .ordSort{max-width:140px}.ordCompact .ordSearch{width:120px}}
@@ -2990,17 +2986,59 @@ button.approveReason:focus-visible{outline:2px solid var(--gold);outline-offset:
 .placeView .ctl .spacingControl input{width:72px;flex:0 1 72px;min-width:34px}
 .placeView .ctl .spacingControl output{font-size:11px}
 .placeView .ctl .spacingIcon{min-height:18px}
-.placeView .quarterTurns{padding-left:7px;margin-left:1px;gap:2px}
-.placeView .ctl .quarterTurns .btn.sm{padding:4px 7px}
-.placeView .ctl .angle input{width:46px;padding:2px 3px;font-size:11px}
 .placeView .ctl .rest{flex-wrap:nowrap}
-@container egctl (max-width:640px){.placeView .ctl .btn .k{display:none}}
-@container egctl (max-width:600px){.placeView .ctl .turnDeg{display:none}}
-@container egctl (max-width:860px){.placeView .ctl:has(.spacingControl:not([hidden])) .btn .k{display:none}}
-@container egctl (max-width:820px){.placeView .ctl .spacingWord{display:none}}
-@container egctl (max-width:760px){.placeView .ctl:has(.spacingControl:not([hidden])) .turnDeg{display:none}}
+/* ROTBAR (Paul, 13 Oct 2026: "Enlarge the height of the entire bottom row ... also enlarge each component in the row concurrently. Make them really easy to click and simple to interact with with clear feedback."):
+   the bottom row of the Engrave work area is bigger throughout: every control is 44px tall (it was 26px; the row 32px, now 53px), the type 14.5px (it was 11px), the select, the cap-height number, the line-spacing slider and
+   the new turn box with its two step buttons alike. Hover, the keyboard focus ring (:focus-visible), the pressed state, the disabled state and a brief "applied" glow say what a control is doing. It still fits at 1024 to 1920px:
+   below 900px of row the key hint goes, below 760px the "Line spacing" word goes and the pieces compress; when even that is not enough the row wraps onto a second line, never sideways, never over the work area. */
+.placeView .ctl{--egH:44px;--egF:14.5px;gap:8px;padding-top:8px;flex-wrap:wrap;row-gap:6px;align-items:center}
+.placeView .ctl .btn.sm,.placeView .ctl .btn.ghost.sm{min-height:var(--egH);height:var(--egH);box-sizing:border-box;padding:0 18px;font-size:var(--egF);border-radius:11px;display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1}
+.placeView .ctl .btn .k{font-size:11.5px;padding:2px 6px;margin-left:6px;border-radius:5px}
+.placeView .ctl .lineControl{gap:8px;font-size:var(--egF);flex:0 1 auto;min-width:0;color:var(--ink70)}
+.placeView .ctl .lineControl select{min-height:var(--egH);height:var(--egH);box-sizing:border-box;padding:0 30px 0 14px;font-size:var(--egF);font-weight:600;border-radius:11px;min-width:0;cursor:pointer;color:var(--ink)}
+.placeView .ctl .dim{font-size:var(--egF);padding:0 4px;white-space:nowrap;color:var(--ink70)}
+.placeView .ctl .spacingControl{min-height:var(--egH);height:var(--egH);box-sizing:border-box;padding:0 14px;gap:10px;font-size:var(--egF);flex:0 1 auto;flex-wrap:nowrap;min-width:0;border-radius:11px;cursor:pointer}
+.placeView .ctl .spacingControl input{width:96px;flex:0 1 96px;min-width:44px;height:var(--egH);cursor:pointer}
+.placeView .ctl .spacingControl output{font-size:var(--egF);min-width:4ch}
+.placeView .ctl .spacingIcon{min-height:24px;width:20px}
+.placeView .ctl .spacingIcon i{height:2.5px}
+.placeView .ctl .rest{gap:8px;flex-wrap:nowrap}
+/* the turn box: [ clockwise step | degrees | counter-clockwise step ], one bordered control */
+.placeView .ctl .egTurn{position:relative;display:inline-flex;align-items:stretch;height:var(--egH);border-radius:11px;background:var(--card);overflow:hidden;margin-left:2px;transition:box-shadow .15s}
+.placeView .ctl .egTurn::after{content:"";position:absolute;inset:0;border:1px solid var(--line);border-radius:11px;pointer-events:none;transition:border-color .15s}   /* (the border is drawn over the parts, so every part is the full 44px tall) */
+.placeView .ctl .egTurn:hover::after{border-color:var(--gold2)}
+.placeView .ctl .egTurn:focus-within{box-shadow:0 0 0 3px rgba(169,130,63,.28)}
+.placeView .ctl .egTurn:focus-within::after{border-color:var(--gold)}
+.placeView .ctl .egTurn.applied{box-shadow:0 0 0 3px rgba(95,122,91,.30)}
+.placeView .ctl .egTurn.applied::after{border-color:var(--sage)}
+.placeView .ctl .egTurnStep{appearance:none;border:0;background:var(--card2);color:var(--ink);width:46px;min-width:46px;font:600 22px/1 var(--sans);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0;transition:background .12s,transform .08s;user-select:none;touch-action:manipulation}
+.placeView .ctl .egTurnStep:first-child{border-right:1px solid var(--line)}
+.placeView .ctl .egTurnStep:last-child{border-left:1px solid var(--line)}
+.placeView .ctl .egTurnStep:hover{background:var(--goldSoft)}
+.placeView .ctl .egTurnStep:active{background:var(--goldLine);transform:translateY(1px)}
+.placeView .ctl .egTurnStep:disabled{opacity:.45;cursor:not-allowed}
+.placeView .ctl .egTurnField{display:inline-flex;align-items:center;gap:1px;padding:0 10px 0 6px;font:600 var(--egF) var(--mono);color:var(--ink);cursor:text}
+.placeView .ctl .egTurnField input{width:5.2ch;min-width:0;height:100%;border:0;outline:0;background:transparent;font:600 17px var(--mono);color:var(--ink);text-align:right;padding:0;-moz-appearance:textfield}
+.placeView .ctl .egTurnField input::-webkit-outer-spin-button,.placeView .ctl .egTurnField input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.placeView .ctl .egTurnField input:disabled{opacity:.45;cursor:not-allowed}
+.placeView .ctl .egTurnDeg{font:600 17px var(--mono);color:var(--ink70)}
+/* hover, focus ring, pressed, disabled on every control of the row */
+.placeView .ctl .btn.ghost.sm:hover{background:var(--goldSoft);border-color:var(--gold2);opacity:1}
+.placeView .ctl .btn.ghost.sm:active{background:var(--goldLine);transform:translateY(1px);box-shadow:inset 0 2px 4px rgba(60,40,10,.14)}
+.placeView .ctl .btn:disabled,.placeView .ctl .btn[aria-disabled="true"]{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+.placeView .ctl .lineControl select:hover{border-color:var(--gold2);background:var(--goldSoft)}
+.placeView .ctl .lineControl select:active{background:var(--goldLine)}
+.placeView .ctl .lineControl select:disabled{opacity:.45;cursor:not-allowed}
+.placeView .ctl .btn:focus-visible,.placeView .ctl select:focus-visible,.placeView .ctl .egTurnStep:focus-visible,.placeView .ctl .spacingControl input:focus-visible{outline:3px solid var(--gold);outline-offset:2px;position:relative;z-index:1}
+.placeView .ctl .egTurnField input:focus-visible{outline:0}
+.placeView .ctl .spacingControl:hover,.placeView .ctl .spacingControl:focus-within{border-color:var(--gold);background:var(--goldSoft)}
+.rvItem:has(.egApproveButton[aria-busy="true"]) .placeView .ctl .egTurn,.rvItem:has(.egApproveButton[aria-busy="true"]) .placeView .ctl .egTurnField input{opacity:.5;pointer-events:none}   /* (a placement being approved does not move) */
+@media (prefers-reduced-motion:reduce){.placeView .ctl .egTurn,.placeView .ctl .egTurnStep,.placeView .ctl .btn{transition:none}}
+@container egctl (max-width:1000px){.placeView .ctl .egFw{display:none}.placeView .ctl .btn .k{display:none}.placeView .ctl .btn.sm,.placeView .ctl .btn.ghost.sm{padding:0 14px}.placeView .ctl .spacingWord{display:none}.placeView .ctl .spacingControl input{width:76px;flex-basis:76px}.placeView .ctl{gap:6px}}
+@container egctl (max-width:880px){.placeView .ctl{gap:4px}.placeView .ctl .btn.sm,.placeView .ctl .btn.ghost.sm{padding:0 11px}.placeView .ctl .lineControl{gap:5px}.placeView .ctl .lineControl select{padding:0 24px 0 10px}.placeView .ctl .dim{padding:0}.placeView .ctl .spacingControl{padding:0 9px;gap:7px}.placeView .ctl .spacingControl input{width:56px;flex-basis:56px;min-width:40px}.placeView .ctl .egTurnField{padding:0 6px 0 3px}.placeView .ctl .egTurnField input{width:4.3ch}}   /* (a faced piece's two-line row, with its spacing control, still fits one line down to about 800px of row) */
+@container egctl (max-width:760px){.placeView .ctl .lineControl{gap:6px}.placeView .ctl .lineControl select{padding:0 24px 0 10px}.placeView .ctl .egTurnStep{width:44px;min-width:44px}.placeView .ctl .egFw{display:none}.placeView .ctl .btn.sm,.placeView .ctl .btn.ghost.sm{padding:0 12px}.placeView .ctl .egTurnField{padding:0 8px 0 4px}}
 /* a narrower card: the front and the back side by side, the controls under both, the conversation below (the card scrolls) */
-@container (max-width:900px){.placeView{grid-template-columns:clamp(200px,28%,280px) minmax(0,1fr);grid-template-areas:"side main" "ctl ctl" "mail mail";grid-template-rows:clamp(300px,calc(100vh - 205px),680px) auto auto}}
+@container (max-width:900px){.placeView{grid-template-columns:clamp(200px,28%,280px) minmax(0,1fr);grid-template-areas:"side main" "ctl ctl" "mail mail";grid-template-rows:clamp(300px,calc(100vh - 226px),680px) auto auto}}   /* ROTBAR: 226 = 205 + the 21px the bigger bottom row added, so the row still ends where the card does */
 @container (max-width:900px){.placeView{grid-template-columns:clamp(236px,30%,280px) minmax(0,1fr)}}   /* ENGPANEL: the same column for the engraving panel in the two-column card (232px usable) */
 /* stacked on a narrow screen, the back is sized from the window (see mountBack): the rule for the full card used to keep
    its box at the minimum height, so the preview stayed thumbnail-sized there */
@@ -3549,7 +3587,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2"></script>
 <script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1"></script>
-<script src="charm-nest-geom.js?v=20261009-flat-col-fb1-fb2-fr1"></script>
+<script src="charm-nest-geom.js?v=20261009-flat-col-fb1-fb2-fr1-rb1"></script>
 <script src="charm-nest-pair.js?v=20261009-pr1-mi3-mi4-mi5-mi6-mi7-pm8-pm9-cg1-nk1-lm1-ko1"></script>
 <script src="charm-nest-pair-thumb.js?v=20261009-pt3-mi2-rlp1-rlp3-lm1"></script>
 <script src="charm-nest-pool-pieces.js?v=20261009-pp1-adv2-cg1"></script>
@@ -3558,7 +3596,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-thumbs.js?v=20261009-th1"></script>
 <script src="charm-nest-master-cache.js?v=20261009-mc1"></script>
 <script src="charm-nest-engrave-faces.js?v=20261011-fb1-fb2-sd1-nb1-el1"></script>
-<script src="charm-nest-engrave-position.js?v=20261012-ep1"></script>
+<script src="charm-nest-engrave-position.js?v=20261012-ep1-rb1"></script>
 <script src="charm-nest-engrave-sides.js?v=20261009-pe1-nk1-dr1-ko1-fb1-fb2-el1"></script>
 <script src="charm-nest-engrave-rows.js?v=20261010-re1-dc1-fb1"></script>
 <script src="charm-nest-engrave-order.js?v=20261013-pc1"></script>
@@ -3569,7 +3607,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-activity.js?v=20261001-compact-controls-lo1"></script>
 <script src="charm-nest-zoompan.js?v=20261005-zp1"></script>
 <script src="charm-nest-engrave-setup.js?v=20261011-su1-bf1-nb1-ud1-pv1-el1-au1-au2-au3-wy1"></script>
-<script src="charm-nest-engrave-panel.js?v=20261012-ep1-ep2-hl1-hl2-sm1-r2wk1-wy1-r2th1-fr1"></script>
+<script src="charm-nest-engrave-panel.js?v=20261012-ep1-ep2-hl1-hl2-sm1-r2wk1-wy1-r2th1-fr1-rb1"></script>
 <script src="charm-nest-engrave-why.js?v=20261012-wy1"></script>
 <script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1-fnt1-dm1-vf1-fb1-ui2-sd1-el1-wy1"></script>
 <script src="charm-nest-sheet-name.js?v=20261010-sn1"></script>
@@ -7758,7 +7796,7 @@ boot();
 <script src="charm-nest-review-link.js?v=20261013-rlk2"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-rb1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4"></script>

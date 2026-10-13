@@ -467,7 +467,7 @@
   /** The mark a placement's back view carries once it was made with the long-axis rule. */
   const ORIENT = "flat1";
   /** Which turn a placement's back view starts from (the one place the engraving fit decides it).
-   *    p = { editingBack, savedUp, charmUp, entry, nudged, viewUp, oriented, face }  (face "front": the FRONT view, see backView)
+   *    p = { editingBack, savedUp, charmUp, entry, nudged, viewUp, oriented, face, turnUp }  (face "front": the FRONT view, see backView; turnUp: the up angle a person turned the piece to, ROTBAR)
    *  · a back that was already decided or approved (editingBack) keeps the angle it was saved with, and the original
    *    hoop-up rule if none was recorded: a saved engraving is never turned;
    *  · a placement a person moved or turned before the long-axis rule, and not yet re-made with it, keeps its old view;
@@ -477,6 +477,9 @@
   function viewOptionsFor(p) {
     p = p || {}; const entry = p.entry || {}, o = { res: 6, materialVersion: 2 };
     if (p.face === "front") o.face = "front";                                      // (the front view: backView and upAngleOf read it; the library's typed up angle is the back's, never the front's)
+    // ROTBAR (Paul, 13 Oct 2026): a person turned the WHOLE piece (charm and engraving, one body) in the work area's degree box: that up angle is theirs and stands for every later fit of this face (new words, a new font),
+    // before the saved-back, moved-before-the-long-axis-rule and library rules below, which are all the SYSTEM's or an older decision (job.turnUp, charm-nest-bridge.js turnTo)
+    if (p.turnUp != null && p.turnUp !== "" && Number.isFinite(+p.turnUp)) { o.upAngle = +p.turnUp; o.holeOnly = true; return o; }
     if (p.editingBack) { const up = p.savedUp != null ? p.savedUp : p.charmUp; if (up != null) o.upAngle = +up; o.holeOnly = true; return o; }
     if (p.nudged && !p.oriented && p.viewUp != null) { o.upAngle = +p.viewUp; o.holeOnly = true; return o; }
     if (p.face !== "front" && entry.upSource === "operator" && entry.upAngle != null) o.upAngle = +entry.upAngle;

@@ -11,7 +11,7 @@
  *   nudge(job, dxMm, dyMm) -> { ok, clamped, moved: { dx, dy }, why }  move by millimetres (dx > 0 right, dy > 0 up, in the placement picture of the Engrave tab); stops at the safe area
  *   centre(job)            -> { ok, clamped, moved, why }              to the middle of the metal the words may use
  *   size(job, factor)      -> { ok, atLimit, why }                     1.05 = 5% bigger, 0.95 = 5% smaller, from the size on the charm now
- *   snapshot(job)          -> snap | null     restore(job, snap) -> boolean     the placement as it was, and back to it (Cancel)
+ *   snapshot(job)          -> snap | null     restore(job, snap) -> boolean     the placement as it was, and back to it (Cancel); ROTBAR: it includes the piece's orientation (view, mask, job.turnUp), so a turn made with the work area's degree box is undone too
  *   mirrorDx(job, dxMm)    -> dx for a Left ear / any other piece, -dx for the Right ear (the pair's two views are mirror images): for a caller that moves both ears as mirrors
  *   canMove(job)           -> boolean     (the placement is in front of a person: state "review" with a fit and a mask)
  *
@@ -125,17 +125,26 @@
   function snapshot(job) {
     if (!job || !job.fit || !Array.isArray(job.fit.centre)) return null;
     const f = job.fit;
-    return { v: 1, key: job.key, mask: job.mask, text: job.text, lines: (job.lines || []).slice(), centre: f.centre.slice(), angle: f.angle || 0, size: f.size, wantSize: job.wantSize == null ? null : job.wantSize,
+    // ROTBAR: the piece's own orientation is part of the placement (the work area's turn box): the view, and the up angles that make it, are kept so Cancel can turn the whole piece back
+    return { v: 1, key: job.key, mask: job.mask, view: job.view, turnUp: job.turnUp == null ? null : job.turnUp, upSystem: job.upSystem == null ? null : job.upSystem, text: job.text, lines: (job.lines || []).slice(), centre: f.centre.slice(), angle: f.angle || 0, size: f.size, wantSize: job.wantSize == null ? null : job.wantSize,
       nudged: !!job.nudged, fit: Object.assign({}, f, { centre: f.centre.slice() }) };
   }
-  const same = (job, s) => !!job.fit && job.fit.size === s.size && (job.fit.angle || 0) === s.angle && job.fit.centre[0] === s.centre[0] && job.fit.centre[1] === s.centre[1] && (job.lines || []).join('\n') === s.lines.join('\n');
+  const same = (job, s) => !!job.fit && job.fit.size === s.size && (job.fit.angle || 0) === s.angle && job.fit.centre[0] === s.centre[0] && job.fit.centre[1] === s.centre[1] && (job.lines || []).join('\n') === s.lines.join('\n') && (!s.view || job.view === s.view);
   /** Put the words back where the snapshot had them. false when the job is not the one the snapshot was taken of any more (it was fitted again: other words, another font, the charm changed) or is
    *  decided: nothing is touched then. */
   function restore(job, snap) {
     if (!job || !snap || snap.v !== 1 || !canMove(job)) return false;
-    if (job.key !== snap.key || job.mask !== snap.mask || job.text !== snap.text) return false;
+    // (the mask of a piece the person TURNED since the snapshot is another object than the snapshot's, but of the same lineage (mask.lin, set by Engrave.turnTo): the same piece, not one fitted again)
+    if (job.key !== snap.key || (job.mask !== snap.mask && !(snap.view && snap.mask && snap.mask.lin && job.mask && job.mask.lin === snap.mask.lin)) || job.text !== snap.text) return false;
     if (same(job, snap)) { job.nudged = snap.nudged; return true; }
+    const turned = !!snap.view && job.view !== snap.view;
+    if (turned) {   // the whole piece back to the orientation it had: the view and mask first, then the words on them
+      job.view = snap.view; job.mask = snap.mask;
+      if (snap.turnUp == null) delete job.turnUp; else job.turnUp = snap.turnUp;
+      if (snap.upSystem == null) delete job.upSystem; else job.upSystem = snap.upSystem;
+    }
     restoreFit(job, snap.fit, snap.centre, snap);
+    if (turned) { try { const E = engrave(); if (E && E.repaintTurn) E.repaintTurn(job); } catch (_) { /* the next draw shows it */ } }
     return true;
   }
   /** Reinstate a saved fit and let the engine draw it again (a nudge of nothing: it repaints the picture and schedules the checkpoint). */

@@ -544,7 +544,14 @@
     const ev = [['click', click], ['input', input], ['change', input], ['keydown', key_], ['focusin', focusin], ['focusout', focusout]];
     for (const [t, f] of ev) el.addEventListener(t, f);
     // the first paint of the thumbnails: the face's own words and position (the card drew them from the job; this makes them the staged ones)
-    return { draw, refresh: draw, setFace, destroy() { dead = true; untrack(); sweepSoon(); for (const [t, f] of ev) el.removeEventListener(t, f); gateOn = false; if (gateCard) { gateCard.removeEventListener('click', blockClick, true); gateCard.removeEventListener('keydown', blockKey, true); } }, paintAll: () => { const m = model(); if (m) paintAll(m.vm, m.d); } };
+    /* ROTBAR: a turn of the WHOLE piece made with the work area's degree box (the bottom row of the card, charm-nest-bridge.js turnTo) is a position change like the Position buttons: `beforeMove(job)` keeps the placement as it was
+     * (once, until Save or Cancel), `moved(job, kind)` marks the face moved, so Save and Cancel come on (Save asks "Why change it?" as for any position change; Cancel turns the piece back). It changes no word, font or mode. */
+    const beforeMove = job => { const m = model(); if (!m || !job || !job.key) return false; snapBeforeMove(m.d, job); return true; };
+    const moved = (job, kind) => {
+      const m = model(); if (!m || !job || !job.key) return false; const { vm, d } = m;
+      d.posTouched = true; d.moved[job.key] = true; d.why = null; d.noRoom = {}; draw(); paintAll(vm, d); changed(kind || 'position', d.face); return true;
+    };
+    return { draw, refresh: draw, setFace, beforeMove, moved, destroy() { dead = true; untrack(); sweepSoon(); for (const [t, f] of ev) el.removeEventListener(t, f); gateOn = false; if (gateCard) { gateCard.removeEventListener('click', blockClick, true); gateCard.removeEventListener('keydown', blockKey, true); } }, paintAll: () => { const m = model(); if (m) paintAll(m.vm, m.d); } };
   }
 
   const BOUND = new WeakMap();
@@ -598,7 +605,7 @@
         },
         onChange: ev => {
           if (card && ev) {
-            if (ev.kind === 'mode' || ev.kind === 'saved' || ev.kind === 'cancel') follow(ev.face);
+            if (ev.kind === 'mode' || ev.kind === 'saved' || ev.kind === 'cancel' || ev.kind === 'turn') follow(ev.face);   // (a turn of the whole piece: the thumbnails draw the charm turned, so they are drawn again)
             else if (ev.kind === 'words' && card.label) { const d = DRAFTS.get(ev.key), x = d && d.faces[ev.face]; tryDo(() => card.label(ev.face, x ? x.text : '')); }   // (the words under the picture are the words being typed)
           }
           if (typeof o.onChange === 'function') tryDo(() => o.onChange(ev));

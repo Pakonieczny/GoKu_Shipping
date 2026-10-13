@@ -6319,7 +6319,7 @@ const Engrave = window.Engrave = (() => {
     // objects and any DOM references from the structured-clone payload.
     return {charm:charm && {outline:charm.outline,members:charm.members,bbox:charm.bbox,widthPt:charm.widthPt,heightPt:charm.heightPt,upAngle:charm.upAngle},
       lines:(job.lineInput || job.lines).slice(),lineMode:job.lineMode || "auto",opts:fitOpts(job),fontKey:fontIdOf(job),
-      viewOptions:G.viewOptionsFor({editingBack:!!job.editingBack,savedUp:job.editingBack ? job.editOriginal.upAngle : null,charmUp:charm?.upAngle,entry,nudged:!!job.nudged,viewUp:job.view?.upAngle,oriented:job.orientVersion === G.ORIENT,...(isFront(job) ? {face:"front"} : {})}),
+      viewOptions:G.viewOptionsFor({editingBack:!!job.editingBack,savedUp:job.editingBack ? job.editOriginal.upAngle : null,charmUp:charm?.upAngle,entry,nudged:!!job.nudged,viewUp:job.view?.upAngle,oriented:job.orientVersion === G.ORIENT,turnUp:job.turnUp,...(isFront(job) ? {face:"front"} : {})}),
       maskOptions:{marginMm:+S.settings.engraveMarginMm || .8,keepOut:(isFront(job) ? charm?.frontKeepOut : charm?.backKeepOut) || []}};
   }
   const fitStamp = ({charm, ...options}) => JSON.stringify(options);
@@ -6364,7 +6364,7 @@ const Engrave = window.Engrave = (() => {
     const {view,mask,fit,lines,check}=result;
     // materialVersion marks a fit made with the current material model; Pool.repairRecoveredGeometry refits only older
     // ones on restore. Without the mark every fit (and every nudge, turn and resize on it) was thrown away on reload.
-    job.view=view; job.mask=mask; job.lines=lines; job.text=lines.join("\n"); job.fit=fit; job.fitAt=Date.now(); job.materialVersion=2; if(!input.viewOptions?.holeOnly)job.orientVersion=G.ORIENT;   // (a view kept as it was saved is not one made with the long-axis rule)
+    job.view=view; job.mask=mask; if(job.turnUp == null && view && Number.isFinite(view.upAngle))job.upSystem=view.upAngle; job.lines=lines; job.text=lines.join("\n"); job.fit=fit; job.fitAt=Date.now(); job.materialVersion=2; if(!input.viewOptions?.holeOnly)job.orientVersion=G.ORIENT;   // (a view kept as it was saved is not one made with the long-axis rule)
     if(!fit) {
       job.state="review";job.reason=result.reason;job.row.engrave.state="review";
       if(!job.editingBack)Review.add({kind:"placement",key:"eng:"+job.key,row:(job.row.parentRow || job.row),job,why:result.reason});
@@ -6535,6 +6535,68 @@ const Engrave = window.Engrave = (() => {
   function moveTo(job, centre) { if (!job.fit) return false; const ok = refit(job, { centre, angle: job.fit.angle }); if (ok) refresh(job); return ok; }
   /** Turn the text about its centre. Within three degrees of straight or upright it snaps there. */
   function rotateTo(job, angle) { if (!job.fit) return false; angle = ((angle % 360) + 360) % 360; for (const snap of [0, 90, 180, 270, 360]) if (Math.abs(angle - snap) < 3) angle = snap % 360; const ok = refit(job, { centre: job.fit.centre, angle }); if (!ok) toast("The text does not fit at that angle", "bad"); else Session.schedule(); refresh(job); return ok; }
+  /* ROTBAR (Paul, 13 Oct 2026): "Sometimes the system makes mistakes in how the rotational placement of the charm is decided. The user needs the ability to quickly and in real-time update the rotation of the
+     entire charm including the engraving text contained within the charm." The charm's orientation in the work area is the view's up angle (charm-nest-geom.js backView: mirror for a back, then turn by 90 - up),
+     decided by the system (upAngleOf: hanging hole up, a long charm flat). A person's turn REPLACES that angle for this one face job: job.turnUp = the up angle they chose, job.upSystem = what the system chose
+     (so the box reads 0 where the system placed it). The whole piece turns as ONE body: the view (outline, cut-outs, hole) and the mask are made again at the new angle, the words keep their place ON the
+     charm (centre turned about the charm's centre, text angle turned by the same amount) and their size, so what the laser cuts is the same engraving on the same metal, drawn the way the person set the piece
+     up. Everything that already reads the job's orientation reads the new one: the written back file (prepareApproval: view.angleDeg, view.cutMembers), the record's upAngle, the sheet views (charm-nest-backs.js
+     engraveOn), a re-read of the saved back (backView with the saved upAngle) and every later fit (G.viewOptionsFor turnUp). Local compute only (about 20 ms): nothing is read, written or sent. */
+  const wrap180 = d => { d = ((d % 360) + 360) % 360; return d > 180 ? d - 360 : d; };   // (-179 .. 180)
+  const rnd6 = v => Math.round(v * 1e6) / 1e6;
+  const upSystemOf = job => (job.upSystem != null && Number.isFinite(+job.upSystem) ? +job.upSystem : job.view && Number.isFinite(+job.view.upAngle) ? +job.view.upAngle : 90);
+  /** How far this piece is turned from the placement the system chose, in whole degrees: counter-clockwise is plus, 0 = the system's own. */
+  function turnOf(job) {
+    if (!job || !job.view || !Number.isFinite(+job.view.upAngle)) return 0;
+    const d = wrap180(upSystemOf(job) - job.view.upAngle), r = Math.round(d * 1000) / 1000;
+    return Math.abs(r - Math.round(r)) < 0.0015 ? Math.round(r) : r;
+  }
+  /** The work area draws a different view now (the piece was turned, or turned back by Cancel): the canvas is made again for it, the two thumbnails follow. */
+  function repaintTurn(job) {
+    const c = EG.card;
+    if (!c || !c.isConnected || EG.cardKey !== job.key) return false;
+    try { if (c._remountWork) c._remountWork(); else refresh(job); } catch (e) { console.warn("Engraving turn view", e); }
+    try { const f = c.querySelector('input[data-a="turn"]'); if (f && document.activeElement !== f) f.value = String(turnOf(job)); } catch (_) {}
+    return true;
+  }
+  /** Turn the WHOLE piece (charm + engraving) to `deg` degrees from the system's placement, at once. -> { ok, same?, turn, why? }; nothing changes when it is refused. */
+  function turnTo(job, deg) {
+    const no = why => ({ ok: false, why, turn: turnOf(job) });
+    if (!job || !job.fit || !job.view || !job.mask) return no("not placed");
+    if (job.state !== "review" || job.approvalPreparing || job.stamping || job.backSaving) return no("locked");
+    deg = Math.round(+deg); if (!Number.isFinite(deg)) return no("not a number");
+    deg = wrap180(deg);
+    const was = turnOf(job); if (deg === was) return { ok: true, same: true, turn: was };
+    const charm = charmFor(job); if (!charm) return no("no charm");
+    const base = upSystemOf(job), front = isFront(job);
+    let view, mask;
+    try {
+      view = G.backView(charm, { res: 6, upAngle: base - deg, holeOnly: true, ...(front ? { face: "front" } : {}) });
+      mask = G.engraveMask(view, { marginMm: +S.settings.engraveMarginMm || .8, keepOut: (front ? charm.frontKeepOut : charm.backKeepOut) || [] });
+    } catch (e) { return no(e && e.message ? e.message : "the charm could not be turned"); }
+    // the words keep their place on the charm: about the charm's own centre, by the step this change adds (the view's turn is about that same centre)
+    const f0 = job.fit, step = wrap180(deg - was) * Math.PI / 180, ca = Math.cos(step), sa = Math.sin(step), cx = view.cx, cy = view.cy, dx = f0.centre[0] - cx, dy = f0.centre[1] - cy;
+    const centre = [rnd6(cx + dx * ca - dy * sa), rnd6(cy + dx * sa + dy * ca)], angle = rnd6((((f0.angle || 0) + wrap180(deg - was)) % 360 + 360) % 360);
+    const keep = { view: job.view, mask: job.mask, fit: job.fit, lines: job.lines, text: job.text, wantSize: job.wantSize, verify: job.verify, nudged: job.nudged, claude: job.claude, turnUp: job.turnUp, upSystem: job.upSystem };
+    const undo = () => { job.view = keep.view; job.mask = keep.mask; job.fit = keep.fit; job.lines = keep.lines; job.text = keep.text; job.wantSize = keep.wantSize; job.verify = keep.verify; job.nudged = keep.nudged; job.claude = keep.claude; if (keep.turnUp == null) delete job.turnUp; else job.turnUp = keep.turnUp; if (keep.upSystem == null) delete job.upSystem; else job.upSystem = keep.upSystem; };
+    keep.mask.lin = keep.mask.lin || "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); mask.lin = keep.mask.lin;   // (one lineage for every mask this piece's turns make: CharmNestEngravePosition.restore knows a turned piece from one fitted again)
+    job.view = view; job.mask = mask;
+    let ok = false;
+    // exactly: the same lines, the same size, every letter turned with the charm (a rigid turn; the raster of the new mask can differ from the old by a pixel at a tight edge, then the engine's own refit below takes over)
+    // (a letter that touched the old mask's edge can land a raster pixel over the new one's: the same words are tried a pixel or two aside, at most 2 pixels = 0.12 mm, before anything is made smaller)
+    try {
+      const font = fontFor(f0.weight, job), gap = fitOpts(job).lineGap, px = 1 / mask.res;
+      const at = c => { const L = G.layoutLines(job.lines, font, f0.size, gap, angle, c), chk = G.verifyInk(L.cmds, mask); return chk.ok ? { L, chk, c } : null; };
+      let hit = at(centre);
+      for (const r of hit ? [] : [0.5, 1, 1.5, 2]) { for (let i = 0; i < 12 && !hit; i++) { const t = i * Math.PI / 6; hit = at([rnd6(centre[0] + Math.cos(t) * r * px), rnd6(centre[1] + Math.sin(t) * r * px)]); } if (hit) break; }
+      if (hit) { job.fit = Object.assign({}, f0, { centre: hit.c, angle, layout: hit.L, glyphs: hit.L.glyphs, cmds: hit.L.cmds }); job.verify = { geometry: hit.chk, at: Date.now() }; job.nudged = true; job.claude = null; ok = true; }
+    } catch (_) { ok = false; }
+    if (!ok) { try { ok = refit(job, { centre, angle }); } catch (_) { ok = false; } }
+    if (!ok) { undo(); return no("The words do not fit with the charm turned that far"); }
+    job.upSystem = base; if (deg === 0) delete job.turnUp; else job.turnUp = view.upAngle;
+    try { Session.schedule(); } catch (_) {}
+    return { ok: true, turn: deg };
+  }
   /** The box around the text: its centre, its width and height in the text's own frame, and its angle. */
   function textBox(glyphs, centre, angleDeg) {
     const a = -(angleDeg || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
@@ -6589,7 +6651,7 @@ const Engrave = window.Engrave = (() => {
   function reopenJob(job) {
     if (neverEngraves(job.row)) return job;   // (NO EARRING IS EVER ENGRAVED: a face is never asked for again on an earring)
     const face = (window.CharmNestEngraveFaces && CharmNestEngraveFaces.faceOf(job)) || "back";
-    job.decision = null; job.decidedAt = null; job.decidedBy = null; job.approvedBy = null; job.approvedAt = null; job.fit = null; job.view = null; job.mask = null; job.backs = [];
+    job.decision = null; job.decidedAt = null; job.decidedBy = null; job.approvedBy = null; job.approvedAt = null; job.fit = null; job.view = null; job.mask = null; job.backs = []; delete job.turnUp; delete job.upSystem;   // (ROTBAR: a face asked for again starts from the system's own orientation)
     toWords(job, `Say what to engrave on the ${face}`);
     return job;
   }
@@ -7698,7 +7760,7 @@ const Engrave = window.Engrave = (() => {
     const f = job.fit; if (!f) { render(); return; }
     const bc = c.querySelector(".backHost canvas"); if (bc && bc._paint) { bc._paint(); markShown(job); c._syncBoth?.(); }
     const cap = c.querySelector("[data-cap]"); if (cap) cap.textContent = capText(f);
-    const an = c.querySelector('input[data-a="angle"]'); if (an && document.activeElement !== an) an.value = String(Math.round(f.angle || 0));
+    const tn = c.querySelector('input[data-a="turn"]'); if (tn && document.activeElement !== tn) tn.value = String(turnOf(job));   // (ROTBAR: the one degree box is the turn of the whole piece)
     const sl = c.querySelector('input[data-a="resize"]');
     if (sl && document.activeElement !== sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); sl.value = f.size.toFixed(2); }
     else if (sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); }
@@ -8083,8 +8145,8 @@ const Engrave = window.Engrave = (() => {
     card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a line's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? " (an order's discs are one placement: Back and Next go through every disc)" : " (an earring line's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${ears ? earSwitchHtml(job, ears, panelOn) : faced ? (panelOn ? "" : faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`)) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().tagOf(job.slot, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain">${byCard ? "" : `<h4 class="pvH">${cap1(fw)} · engraving</h4>`}<div class="pvApproval">${f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the ${fw} file">Approve</button></span>` : ""}${f && !wordsJob && ears ? approveBothHtml(ears, job) : ""}</div><div class="backHost"></div></div>
-        <div class="ctl">${!f && !wordsJob && panelOn && job.reason ? `<span class="why" role="status">${esc(isFrontJob(job) ? String(job.reason).replace(/\bback area\b/, "front area") : job.reason)}</span>` : ""}${f && !wordsJob ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="quarterTurns" role="group" aria-label="Rotate text"><button class="btn ghost sm" data-a="turnLeft" title="Rotate text 90° counterclockwise" aria-label="Rotate text 90° counterclockwise">↶<span class="turnDeg"> +90°</span></button><button class="btn ghost sm" data-a="turnRight" title="Rotate text 90° clockwise" aria-label="Rotate text 90° clockwise">↷<span class="turnDeg"> −90°</span></button></span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
-          <span class="rest"><button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its ${fw}">${faced ? `No ${fw} engraving` : "No engraving"} <b class="k">S</b></button></span></div>
+        <div class="ctl">${!f && !wordsJob && panelOn && job.reason ? `<span class="why" role="status">${esc(isFrontJob(job) ? String(job.reason).replace(/\bback area\b/, "front area") : job.reason)}</span>` : ""}${f && !wordsJob ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="egTurn" role="group" aria-label="Turn the whole charm and its engraving" title="Turn the whole charm and its engraving together, in degrees. Counter-clockwise is plus. 0 is where the system placed it."><button type="button" class="egTurnStep" data-a="turnStep" data-step="-1" title="Turn 1° clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree clockwise">↷</button><label class="egTurnField"><input type="number" data-a="turn" inputmode="numeric" min="-360" max="360" step="1" value="${turnOf(job)}" aria-label="Turn the whole charm and its engraving, in degrees"><span class="egTurnDeg" aria-hidden="true">°</span></label><button type="button" class="egTurnStep" data-a="turnStep" data-step="1" title="Turn 1° counter-clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree counter-clockwise">↶</button></span>` : ""}
+          <span class="rest"><button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its ${fw}">${faced ? `No<span class="egFw"> ${fw}</span> engraving` : "No engraving"} <b class="k">S</b></button></span></div>
         <div class="pvSide">
           ${said}<section class="pvSec pvSetup" data-engsetup hidden></section>
           ${byCard ? "" : `<section class="pvSec pvRef"><h4 class="pvH">${fw === "front" ? "Back" : "Front"} · reference</h4><div class="frontHost"></div></section>`}
@@ -8129,7 +8191,7 @@ const Engrave = window.Engrave = (() => {
     };
     card._stripSync();
     // what the system decided for this LINE (None / Front only / Back only / Front + back, each face's words and font), checked and edited right here: charm-nest-engrave-setup.js (one control for every card)
-    { const su = card.querySelector("[data-engsetup]"); if (ctx && su && window.CharmNestEngravePanel) CharmNestEngravePanel.mountPiece(su, job); }   // (charm-nest-engrave-panel.js: the Front / Back thumbnails and the one panel, inline in the Engrave detail only)
+    { const su = card.querySelector("[data-engsetup]"); if (ctx && su && window.CharmNestEngravePanel) card._pieceMount = CharmNestEngravePanel.mountPiece(su, job); }   // (charm-nest-engrave-panel.js: the Front / Back thumbnails and the one panel, inline in the Engrave detail only)
     card.querySelectorAll("[data-ask]").forEach(b => b.onclick = () => window.CustomerMail?.cardAsk?.(job, b.dataset.ask));
     if (wordsJob) { const bh = card.querySelector(".backHost"); if (readsFree(job) && !preparingNow(job)) setTimeout(() => prepareLate(job.row).catch(() => {}), 0);   // (a press on a face that nobody has started reading starts it: prepareLate)
       const busy = (["ready", "fitting"].includes(job.state) && canFit(job)) || (OPENREAD.includes(job.state) && (preparingNow(job) || readsFree(job)));
@@ -8240,7 +8302,6 @@ const Engrave = window.Engrave = (() => {
           ang = ((ang % 360) + 360) % 360; for (const snap of [0, 90, 180, 270, 360]) if (Math.abs(ang - snap) < 3) ang = snap % 360;
           drag.pendingAngle = ang;
           queueFlow();
-          const an = card.querySelector('input[data-a="angle"]'); if (an) an.value = String(Math.round(ang));
         } else {
           const c = [drag.c[0] + dx, drag.c[1] + dy];
           // within a third of a millimetre of the charm's own centre line, the text takes it
@@ -8295,7 +8356,8 @@ const Engrave = window.Engrave = (() => {
       }
     };
     raf = requestAnimationFrame(() => { raf = 0; mountBack(); });
-    card._dispose = () => { disposed = true; cancelAnimationFrame(raf); card._ro?.disconnect(); };
+    card._remountWork = () => { if (disposed) return; if (raf) { cancelAnimationFrame(raf); raf = 0; } framed = null; mounted = [0, 0]; mountedBelow = -1; mountBack(); };   // (ROTBAR: the piece was turned, so the work area draws another view: framed again round it, at once)
+    card._dispose = () => { disposed = true; cancelAnimationFrame(raf); card._ro?.disconnect(); card._turnDispose?.(); };
     if (window.ResizeObserver) { const ro = new ResizeObserver(() => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); }); ro.observe(backHost); const ap = card.querySelector(".pvApproval"); if (ap) ro.observe(ap); card._ro = ro; }
     const spacing = card.querySelector('[data-a="spacing"]');
     if(spacing) {
@@ -8355,7 +8417,6 @@ const Engrave = window.Engrave = (() => {
       else if (a === "ear") { const other = items().get(b && b.dataset.ear); if (other && other !== job) { goes(job, { enter: "fade", quick: true }, card); EG.focus = other.key; EG.card = null; EG.cardKey = null; render(); } }
       else if (a === "piece") { const to = b && b.dataset.piece; if (to && to !== pieceKeyOfJob(job)) openPiece(ridOfJob(job), to, undefined, { card }); }   // (ENGPIECES: the header strip of an order's pieces)
       else if (a === "centre") centreText(job);
-      else if (a === "turnLeft" || a === "turnRight") rotateTo(job, (job.fit?.angle || 0) + (a === "turnLeft" ? 90 : -90));
       else if (a === "close") {
         if (!noGuard && leaveGuard(job, () => cardAction("close", b, true))) return;   // (ENGAPPROVE's guide: pieces of this order still to approve are said before the detail is left)
         if (job.editingBack) { goes(job, { fold: true }, card); if (!["approved", "written", "skipped"].includes(job.state)) items().delete(job.key); Review.remove("eng:" + job.key); }
@@ -8378,7 +8439,53 @@ const Engrave = window.Engrave = (() => {
         }
       } else if (a === "resplit") resplit(job); else if (a === "skip") skip(job); else if (a === "back") { humanAct("reject", { orderId: String(job.row.order.receiptId), detail: "engraving sent back to the words" }); sendBack(job); }
     };
-    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "usewords" || a === "linecount" || a === "spacing") return; if (a === "angle") { b.onchange = () => { if (approvalBusy()) return; card._flushSpacing?.(); const v = +b.value; if (Number.isFinite(v)) rotateTo(job, v); }; b.addEventListener("keydown", e => e.stopPropagation()); return; } b.onclick = () => cardAction(a, b); });
+    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "usewords" || a === "linecount" || a === "spacing" || a === "turn" || a === "turnStep") return; b.onclick = () => cardAction(a, b); });
+    /* ROTBAR: the degree box and its two step buttons turn the WHOLE piece (charm + engraving) live. Typing, an arrow key (Shift: 15), the wheel over the focused box or a held step button turns it in the work area at once, one repaint
+       per frame; Enter or leaving the box settles the value on screen (0 is the system's own placement; -179 to 180) and a garbage entry is ignored without losing the value. With the panel on the card the turn enables its
+       Save and Cancel exactly as a Position button does (it asks the same "Why change it?" on Save; Cancel puts the system's placement back). Nothing is read, written or sent by a turn. */
+    const turnBox = card.querySelector('input[data-a="turn"]');
+    if (turnBox) {
+      const group = turnBox.closest(".egTurn"), steps = [...card.querySelectorAll('[data-a="turnStep"]')], panelOf = () => card._pieceMount && card._pieceMount.panel;
+      let frame = 0, want = null, flashT = 0, holdT = 0, holdI = 0, holder = null;
+      const live = () => !!job.fit && job.state === "review" && items().get(job.key) === job && !approvalBusy();
+      const flash = () => { if (!group) return; group.classList.add("applied"); clearTimeout(flashT); flashT = setTimeout(() => group.classList.remove("applied"), 650); };
+      const show = () => { turnBox.value = String(turnOf(job)); };
+      const run = deg => {
+        frame = 0; want = null;
+        if (!live()) { show(); return false; }
+        const was = turnOf(job); try { panelOf()?.beforeMove?.(job); } catch (_) {}   // (the placement as it was, kept for Cancel until Save or Cancel)
+        const r = turnTo(job, deg);
+        if (!r.ok) { toast(r.why === "not a number" ? "Type the turn in whole degrees" : r.why === "locked" ? "This placement is being approved" : r.why, "bad"); show(); return false; }
+        if (r.same) return true;
+        if (!repaintTurn(job)) refresh(job);
+        markShown(job);
+        try { panelOf()?.moved?.(job, "turn"); } catch (_) {}
+        void was; return true;
+      };
+      const queue = deg => { want = deg; if (!frame) frame = requestAnimationFrame(() => { const d = want; frame = 0; if (d != null) run(d); }); };
+      const settle = () => { if (frame) { cancelAnimationFrame(frame); frame = 0; if (want != null) run(want); } want = null; show(); flash(); };
+      const nudgeBy = n => { const cur = want != null ? want : turnOf(job), next = wrap180(Math.round(cur) + n); turnBox.value = String(next); queue(next); };
+      turnBox.addEventListener("input", () => { const n = turnBox.valueAsNumber; if (!Number.isFinite(n)) return; queue(Math.round(n)); });
+      turnBox.addEventListener("change", () => { if (!Number.isFinite(turnBox.valueAsNumber)) { show(); return; } settle(); });
+      turnBox.addEventListener("blur", () => { if (frame || want != null) settle(); else show(); });
+      turnBox.addEventListener("keydown", e => {
+        e.stopPropagation();   // (the card's own keys, S for "No engraving", A for Approve and the arrows that nudge the words, are not for a number being typed)
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); nudgeBy((e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 15 : 1)); }
+        else if (e.key === "Enter") { e.preventDefault(); settle(); }
+        else if (e.key === "Escape") { e.preventDefault(); if (frame) { cancelAnimationFrame(frame); frame = 0; } want = null; show(); }
+      });
+      turnBox.addEventListener("keyup", e => { if (e.key === "ArrowUp" || e.key === "ArrowDown") { if (frame) { cancelAnimationFrame(frame); frame = 0; if (want != null) run(want); } want = null; flash(); } });
+      turnBox.addEventListener("wheel", e => { if (document.activeElement !== turnBox || !e.deltaY) return; e.preventDefault(); nudgeBy((e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 15 : 1)); clearTimeout(turnBox._wheelT); turnBox._wheelT = setTimeout(settle, 220); }, { passive: false });
+      const stopHold = () => { clearTimeout(holdT); clearInterval(holdI); holdT = holdI = 0; };
+      const stepNow = n => { const cur = want != null ? want : turnOf(job), next = wrap180(Math.round(cur) + n); if (frame) { cancelAnimationFrame(frame); frame = 0; } want = null; turnBox.value = String(next); run(next); };
+      for (const b of steps) {
+        const by = e => (+b.dataset.step || 0) * (e && e.shiftKey ? 15 : 1);
+        b.addEventListener("pointerdown", e => { if (e.button) return; stopHold(); holder = b; const n = by(e); stepNow(n); holdT = setTimeout(() => { holdI = setInterval(() => stepNow(n), 70); }, 380); });   // (a held button repeats)
+        for (const ev of ["pointerup", "pointerleave", "pointercancel", "blur"]) b.addEventListener(ev, () => { if (holder === b && (holdT || holdI)) { holder = null; stopHold(); show(); flash(); } });   // (only the button being held ends its own hold: the other button losing focus must not)
+        b.addEventListener("click", e => { if (e.detail === 0) { stepNow(by(e)); flash(); } });   // (a key press on the focused button; a mouse press was handled at pointerdown)
+      }
+      card._turnDispose = () => { clearTimeout(flashT); stopHold(); if (frame) cancelAnimationFrame(frame); };
+    }
     const lineControl=card.querySelector('[data-a="linecount"]');
     if(lineControl) lineControl.onchange=async()=>{
       if (approvalBusy()) return;
@@ -8396,7 +8503,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
