@@ -17,6 +17,7 @@
      .sheetsHeldBy(rid) -> [{ sheetId, name, setId }]                                the sheets an unresolved Review on that order holds
      .canHold(rid) -> { ok:true, sheets:[{sheetId,name,setId}] } | { ok:false, why }   why: ONE plain line (the piece was released / the sheet is already cut)
      .onChange(fn) -> unsubscribe          fn({ rids, sheetIds }) after the held set changed (a mark, a resolve, a piece moved, a reload)
+     .inReview(rid) -> boolean            the order is in Review and not resolved (sync); automatic movers (Hold's fill) leave such an order where it is
      .openInReview(rid) -> boolean         opens that order's card in the Review tab
      .reason(rid) -> '' | 'In Review: ...' (readiness' source)      .overlay(record) -> record with the stop on its orderReadiness      .overlayFlow(record) -> the same, and its laser report
    Pure of its page: every lookup is made when asked (root.CharmNestReviewMark, root.OrderPieces, root.CharmNestReadiness), so the script order does not matter and a page without them is
@@ -176,5 +177,5 @@
     let tries = 0; const t = setInterval(() => { wire(); if (wired || ++tries > 40) clearInterval(t); }, 500);
   }
 
-  return { heldBy, isHeld, reasonFor, sheetsHeldBy, canHold, onChange, openInReview, reason, overlay, overlayFlow, _check: check, _reset: () => { sig = null; prev = new Map(); asked.clear(); subs.clear(); wired = false; } };
+  return { inReview: isMarked, heldBy, isHeld, reasonFor, sheetsHeldBy, canHold, onChange, openInReview, reason, overlay, overlayFlow, _check: check, _reset: () => { sig = null; prev = new Map(); asked.clear(); subs.clear(); wired = false; } };
 });
