@@ -161,6 +161,7 @@
       const acts = el("div", "elActs"), go = el("button", "btn gold xs", "Put SKU on Etsy"), no = el("button", "btn ghost xs", "Close");
       go.type = "button"; no.type = "button"; go.disabled = true; go.setAttribute("data-repo", "modify");
       acts.append(go, no); panel.append(head); if (sel) panel.append(sel); panel.append(picks, input, say, acts);
+      try { if (root.CharmNestEtsyBatch) root.CharmNestEtsyBatch.attach(panel, { repoApi: o.repoApi, toast: o.toast, who: o.who, hold: on => { busy = on; } }); } catch (_) { /* the batch line is optional (charm-nest-etsy-batch.js) */ }
       row.after(panel);
       try { if (root.CharmNestRepoLock) root.CharmNestRepoLock.mark(panel); } catch (_) { /* the padlock is only a hint */ }
       chip.setAttribute("aria-expanded", "true");
