@@ -138,6 +138,19 @@ const CASES = [
     const ear = rowOf(Object.assign({}, HUGGIE, { personalization: ['Capricorn'] }), null);
     assert.equal(Setup.diffFromAuto(ear, null, { mode: 'back', back: { text: 'Capricorn' } }, { jobs: [] }).parts.join(','), 'mode,back.text', 'an earring: any engraving is a change against "none"');
   });
+  await t('2e the fit lays the words out again (Ace: capitals, one word a line): the same words, so no change and the words stay the system\'s', () => {
+    const row = rowOf(Object.assign({}, MINI, { variations: TAGV('Tag3 (back engraving)'), personalization: ['Name One'] }), null), key = row.key;
+    const job = { key, row, state: 'ready', face: 'back', lines: ['NAME', 'ONE'], text: 'NAME\nONE', lineInput: ['Name One'], source: 'personalization', decision: null };
+    const a = Setup.autoChoice(row, null, { jobs: [job] });
+    assert.deepEqual([a.mode, a.back.text, a.back.fontId], ['back', 'Name One', ACE], 'autoChoice keeps the words as the buyer gave them');
+    const d = now => Setup.diffFromAuto(row, null, now, { jobs: [job] }).parts.join(',');
+    assert.equal(d({ mode: 'back', back: { text: 'NAME\nONE' } }), '', 'the fit\'s layout of the same words is no change');
+    assert.equal(d({ mode: 'back', back: { text: 'Name One' } }), '', 'the same words');
+    assert.equal(d({ mode: 'back', back: { text: 'Name Two' } }), 'back.text', 'other words are a change');
+    assert.equal(d({ mode: 'back', back: { text: 'Name One', fontWord: 'Vibur' } }), 'back.font', 'a font alone changes the font and not the words');
+    const ss = base();
+    assert.equal(Setup.diffFromAuto(ss, null, { mode: 'both', front: { text: 'RR' }, back: { text: '21' } }, { jobs: [] }).parts.join(','), 'front.text', 'a font with lowercase: capitals are another spelling and a change');
+  });
   await t('2d a row with no spec, or nothing to say, gives null; the shape holds no nested arrays', () => {
     assert.equal(Setup.autoChoice(null), null); assert.equal(Setup.autoChoice({ key: 'x' }), null);
     const a = Setup.autoChoice(base(), null, { jobs: [] }); const noNested = require('./_noNestedArrays.cjs'); noNested(J(a), 'autoChoice');
@@ -147,7 +160,7 @@ const CASES = [
   const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
   let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { try { ({ chromium } = require('/opt/node22/lib/node_modules/playwright/node_modules/playwright-core')); } catch (__) { chromium = null; } }
   if (!chromium) console.log('engrave-auto: playwright-core not found, the page checks were skipped');
-  else await pageChecks(chromium);
+  else { await pageChecks(chromium); await realChecks(); }
 
   console.log(`\nengrave-auto: ${passed} checks passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
@@ -271,4 +284,61 @@ async function pageChecks(chromium) {
     check(lock.words && lock.font && lock.pos && lock.save && lock.locks.join('|') === 'Approved by Name One' && !lock.emoji, 'an approved face: words, font, position and Save are off, the Emoji button is gone, ONE line says "Approved by Name One": ' + JSON.stringify(lock));
     check(errors.length === 0, 'no page error: ' + errors.slice(0, 2).join(' | '));
   } finally { await browser.close(); await srv.close(); }
+}
+
+/* ═══ 4 · ENGLIVE's real-drawing world: real charm drawings, real jobs (the page's classifier and fit), the real Engrave detail and order window ═══ */
+async function realChecks() {
+  let R; try { R = require('./_engraveRealWorld.cjs'); } catch (_) { console.log('engrave-auto: tests/charm-nest/_engraveRealWorld.cjs is not in this build, the real-drawing checks were skipped'); return; }
+  const w = await R.world({ viewport: { width: 1440, height: 900 }, shots: process.env.SHOTS || '/tmp/engrave-auto-shots' });
+  if (!w) { console.log('engrave-auto: no playwright-core for the real-drawing world, skipped'); return; }
+  try {
+    const made = await R.build(w);
+    const auto = (key, slot) => w.page.evaluate(({ key, slot }) => JSON.parse(JSON.stringify(CharmNestEngraveSetup.autoChoice(B.orders.byKey.get(key), slot))), { key, slot });
+    // the Engrave tab's detail on one piece's face job: what the card and the panel OPEN on
+    const detail = async (name, face, slot) => {
+      const jkey = await R.openEngraveDetail(w, name, { face, slot });
+      if (!jkey) return null;
+      return w.page.evaluate(key => {
+        const row = B.orders.byKey.get(key), S = CharmNestEngraveSetup, p = document.querySelector('.pvSetup .engp'); if (!p) return { panel: false };
+        const sel = p.querySelector('.engpFont'), ta = p.querySelector('.engpWords'), seg = p.querySelector('.engpMode:not(.engpFaceSw) .engpSeg[aria-checked=true]');
+        const faces = [...document.querySelectorAll('.pvSetup .engFace')].map(f => ({ face: f.dataset.face, empty: f.dataset.empty === '1', text: (f.querySelector('.engTxt') || {}).textContent || '', current: f.getAttribute('aria-current') === 'true', pic: !!f.querySelector('.engpv .engpvDraw canvas, .engpv .engpvDraw svg, .engpv .engpvDraw img') }));
+        return { panel: true, mode: seg && seg.dataset.mode, face: p.dataset.face, text: ta ? ta.value : null, fontId: sel ? S.fontIdOf(row, p.dataset.face, sel.value) : null, faces, save: p.querySelector('[data-engp=save]').disabled };
+      }, made[name].key);
+    };
+    // the card prints the cut's layout ("NAME / ONE" for Ace): the same words, in capitals, a slash between the lines
+    const run = t => String(t || '').replace(/\s*\/\s*|\s+/g, ' ').trim().toLowerCase();
+    for (const name of ['back', 'front', 'both', 'tag']) {
+      const m = made[name], a = await auto(m.key);
+      check(m.jobs.length === a.faces.length && m.jobs.every(j => a.faces.includes(j.face)), `${name} (real jobs): the jobs the page made are the faces the system chose (${a.faces.join(' + ')}): ${m.jobs.map(j => j.face + ':' + j.state).join(', ')}`);
+      for (const f of a.faces) {
+        const d = await detail(name, f);
+        check(!!d && d.panel && d.mode === a.mode, `${name}/${f} (real detail): the panel opens on the system's mode (${a.mode}): ${d && d.mode}`);
+        check(!!d && d.face === f && d.text === a[f].text, `${name}/${f}: the words open as the system's ("${a[f].text}"): "${d && d.text}"`);
+        check(!!d && d.fontId === a[f].fontId, `${name}/${f}: the font opens as the system's (${a[f].fontId}): ${d && d.fontId}`);
+        check(!!d && d.save === true, `${name}/${f}: nothing is staged on open (Save is off)`);
+        const shown = d ? d.faces.filter(x => !x.empty).map(x => x.face).join('+') : '';
+        check(shown === a.faces.join('+'), `${name}/${f}: the card above the panel shows the faces the system chose (${a.faces.join('+')}): ${shown}`);
+        check(!!d && d.faces.every(x => x.empty || run(x.text) === run(a[x.face].text)), `${name}/${f}: and each face's words are the system's (the card prints the cut's layout): ${d && JSON.stringify(d.faces.map(x => [x.face, x.text]))}`);
+      }
+      // the order window's card
+      await R.openOrderWindow(w, name);
+      const card = await w.page.evaluate(() => [...document.querySelectorAll('#owEng .engCard')].map(c => ({ piece: c.dataset.piece, faces: [...c.querySelectorAll('.engFace')].map(f => ({ face: f.dataset.face, empty: f.dataset.empty === '1', text: (f.querySelector('.engTxt') || {}).textContent || '' })) })));
+      check(card.length === 1 && card[0].faces.filter(x => !x.empty).map(x => x.face).join('+') === a.faces.join('+') && card[0].faces.every(x => x.empty || run(x.text) === run(a[x.face].text)), `${name} (real order window): one card with the faces and words the system chose: ${JSON.stringify(card.map(c => c.faces.map(x => x.empty ? x.face + ':-' : x.face + ':' + x.text)))}`);
+    }
+    // counted discs: each disc its own words
+    const dm = made.discs;
+    for (const slot of ['D1', 'D2', 'D3']) {
+      const a = await auto(dm.key, slot), d = await detail('discs', 'back', slot);
+      check(!!d && d.panel && a.slot === slot && d.text === a.back.text && d.mode === a.mode && d.fontId === a.back.fontId, `discs/${slot} (real detail): the panel opens on that disc's own words ("${a.back && a.back.text}"): ${d && JSON.stringify({ mode: d.mode, text: d.text })}`);
+    }
+    await R.openOrderWindow(w, 'discs');
+    const discCards = await w.page.evaluate(() => [...document.querySelectorAll('#owEng .engCard')].map(c => [c.dataset.piece.split('#')[1] || '', (c.querySelector('.engFace[data-face=back] .engTxt') || {}).textContent || '']));
+    check(discCards.length === 3 && discCards.map(x => x.join(':')).join() === 'D1:A,D2:B,D3:C', 'discs (real order window): three cards, each with its own disc words: ' + JSON.stringify(discCards));
+    // the earring pair: never engraved: no choice but none, no card, no job, no panel
+    const em = made.earrings, ea = await auto(em.key);
+    await R.openOrderWindow(w, 'earrings');
+    const earCards = await w.page.evaluate(() => document.querySelectorAll('#owEng .engCard').length);
+    check(ea.mode === 'none' && ea.never === true && ea.source === 'rule' && em.jobs.every(j => j.state === 'none') && earCards === 0, `earrings (real): the system's choice is none by the rule, no card: ${JSON.stringify({ mode: ea.mode, source: ea.source, jobs: em.jobs.map(j => j.state), cards: earCards })}`);
+    check(w.errors.length === 0, 'no page error in the real world: ' + w.errors.slice(0, 2).join(' | '));
+  } finally { await w.close(); }
 }
