@@ -3,7 +3,8 @@
 // server: it answers the repo password door like the real one (a throwaway password that exists only in this process, a session token as the real door gives) and answers the op
 // listingEtsySkuWrite with the REAL op (netlify/functions/_charmNestEtsyLink.js `make`) on the in-memory Firestore and Storage (tests/charm-nest/_sandboxFakes.cjs) and a FAKE ETSY
 // that serves the nine listings of the queue in the shapes Paul's shop has: a single SKU (swan 9, cat 12, dove 12, lion 12 products), two SKUs X / X-CO (monkey 60, bike 40), 40 blank + 5
-// shop-wide placeholder SKUs (chameleon 60, wolf 60) and the 816-product bar. NO real Etsy request exists here: every request that is not loopback is aborted, the fake Etsy is an object.
+// shop-wide placeholder SKUs (chameleon 60, wolf 60) and the 816-product bar. Bike, monkey, wolf, chameleon, dove and lion are the REAL products (ids, SKUs, option names and texts of the
+// read-only Etsy reads of 13 Oct 2026: tests/charm-nest/etsy-link-families-data.json, ETSYFAM); prices, stock, readiness, the SKU list, swan, cat and the bar's options are stand-ins. NO real Etsy request exists here: every request that is not loopback is aborted, the fake Etsy is an object.
 // EVERYTHING IN THIS FILE RAN ON THE OFFLINE FAKE ETSY. Only Paul's press settles the real write (listings_w, Etsy accepting the PUTs, the 816-product write time).
 // It proves, for the page and the one press:
 //   · the Etsy chip's panel gets ONE extra line, "Put all 9 queued SKUs on Etsy"; looking sends nothing; pressing it shows ONE plain confirm line and the nine listings with their SKU, in the queue's order;
@@ -112,19 +113,22 @@ function makeEtsy() {
 }
 
 /* the nine listings, in the shapes the findings files describe (the real read of each is in plans/*sku-1013/dryrun; here the grids are rebuilt: sizes, SKU families, option lists) */
-const PH = ['CO-GoldCharmO', 'CO-SilverChar', 'CO-RoseCharmO', 'CO-10kSolidCh', 'CO-14kSolidCh'];
-const LENGTHS = ['14"', '16"', '18"', 'Charm Only-No Chain'];
 const metals = k => Array.from({ length: k }, (_, i) => 'Metal ' + (i + 1));
 const grid = (ms, ls, skuFor, lists, extra) => mkInv(ms.flatMap((m, i) => ls.map((l, j) => ({ sku: skuFor(i, j, m, l), pv: [[514, 'Metal Choice', m], [513, 'Necklace Length', l]], price: 20 + i + j * 2, qty: 999, on: !(extra && extra.off && extra.off(i, j)) }))), lists);
+const REAL = require('./etsy-link-families-data.json');   // the real products of bike, monkey, wolf, chameleon, dove, lion (stored as plain text; the fake serves them escaped, as Etsy does)
+const realInv = d => ({ products: d.products.map((p, i) => ({ product_id: p.product_id, sku: p.sku, is_deleted: false,
+    property_values: p.property_values.map(v => ({ property_id: v.property_id, property_name: v.property_name == null ? v.property_name : unesc(v.property_name), scale_id: v.scale_id, value_ids: v.value_ids.slice(), values: v.values.map(unesc) })),
+    offerings: [{ offering_id: p.product_id * 10, price: 28 + (i % 4) * 4 + (i % 7), quantity: i === 5 ? 0 : 999, is_enabled: i !== 5, readiness_state_id: 7001 }] })),   // (stand-ins: prices, stock, one disabled product, readiness)
+  price_on_property: d.price_on_property.slice(), quantity_on_property: d.quantity_on_property.slice(), sku_on_property: d.sku_on_property.slice() });
 const SHAPE = {
   '1700763608': () => grid(metals(3), ['16"', '18"', '20"'], () => 'Swan_3608', { price_on_property: [514, 513] }),
   '1801964156': () => grid(metals(4), ['Necklace CHARM', 'Huggie CHARM SET', 'CHARM + Engraving'], () => 'CAT 1- Sitting Cat', { price_on_property: [514, 513] }),
-  '1816178147': () => grid(metals(4), ['Necklace CHARM', 'Huggie CHARM SET', 'CHARM + Engraving'], () => 'DOVE 4', { price_on_property: [514, 513] }),
-  '1801980518': () => grid(metals(4), ['Necklace CHARM', 'Huggie CHARM SET', 'CHARM + Engraving'], () => 'CUTE LION', { price_on_property: [514, 513] }),
-  '4494184284': () => grid(metals(15), LENGTHS, i => (i < 10 ? '' : PH[i - 10]), { price_on_property: [514, 513], sku_on_property: [514] }),
-  '4494182906': () => grid(metals(15), LENGTHS, i => (i < 10 ? '' : PH[i - 10]), { price_on_property: [514, 513], sku_on_property: [514] }),
-  '1745415868': () => grid(metals(15), LENGTHS, i => (i < 10 ? 'Hear No Evil Monkey' : 'Hear No Evil Monkey-CO'), { price_on_property: [514, 513], sku_on_property: [514] }),
-  '1734130419': () => grid(metals(10), LENGTHS, i => (i < 5 ? 'Sports 27-Bike' : 'Sports 27-Bike-CO'), { price_on_property: [514, 513], sku_on_property: [514] }),
+  '1816178147': () => realInv(REAL.dove),
+  '1801980518': () => realInv(REAL.lion),
+  '4494184284': () => realInv(REAL.chameleon),
+  '4494182906': () => realInv(REAL.wolf),
+  '1745415868': () => realInv(REAL.monkey),
+  '1734130419': () => realInv(REAL.bike),
   '1830130714': () => grid(metals(12), Array.from({ length: 68 }, (_, j) => 'Band ' + (j + 1)), () => 'BEADY', { price_on_property: [514, 513] }, { off: (i, j) => j % 12 === 11 })   // 816 products, 68 of them disabled
 };
 const COUNTS = { '1700763608': 9, '1801964156': 12, '1816178147': 12, '1801980518': 12, '4494184284': 60, '4494182906': 60, '1745415868': 60, '1734130419': 40, '1830130714': 816 };
@@ -149,6 +153,7 @@ let W = null;
 (async () => {
   /* ═══ 0 · the committed queue (no browser) ═══ */
   ok(QUEUE.length === 9 && QUEUE.map(q => q.id + '|' + q.key).join('~') === WANT.map(w => w.join('|')).join('~'), 'the committed queue holds the nine listings Paul asked for, with their exact repo SKUs, in the order of the run: ' + QUEUE.map(q => q.id).join(','));
+  ok([['1816178147', 'dove'], ['1801980518', 'lion'], ['4494184284', 'chameleon'], ['4494182906', 'wolf'], ['1745415868', 'monkey'], ['1734130419', 'bike']].every(([id, k]) => REAL[k].listingId === id && QUEUE.find(q => q.id === id).key === REAL[k].key), 'the real product data (ETSYFAM) is of exactly the queue\'s listings and keys');
   ok(QUEUE.every(q => /^[\x21-\x7e]+(?: [\x21-\x7e]+)*$/.test(q.key) && q.key.length <= 32), 'every key is plain printable ASCII, single spaces, at most 32 characters (the op would refuse anything else with no Etsy request)');
   ok(QUEUE[8].id === '1830130714' && QUEUE.find(q => q.id === '4494184284').after === '1700763608' && QUEUE.filter(q => q.after).length === 1, 'the 816-product bar runs last; the chameleon comes after the swan (Paul: the chameleon after the swan press succeeds)');
   const raw = JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf8'));
@@ -298,7 +303,8 @@ let W = null;
   ok(s.rows.length === 9 && s.rows.every((r, i) => r.head === WANT[i][0] + '  ' + WANT[i][1]), 'the result list is the confirm list, one row per listing, in the same order');
   ok(s.rows.every(r => r.cls === 'done') && s.say === '9 listings: 9 done.' && s.sayCls.includes('ok'), 'every listing is done: "' + s.say + '"');
   const sayings = s.rows.map(r => r.st);
-  ok(WANT.every(([id, key], i) => sayings[i].startsWith(word(key, id, COUNTS[id]).replace(/\.$/, '.'))), 'each row uses the single press\'s own words: ' + [0, 4, 8].map(i => sayings[i]).join(' / '));
+  const REPLACED = new Set(['4494184284', '4494182906', '1745415868', '1734130419']);   // (listings whose products carried two or more different SKUs: the answer says what was replaced)
+  ok(WANT.every(([id, key], i) => (REPLACED.has(id) ? sayings[i].startsWith(word(key, id, COUNTS[id])) && /It replaced \d+ x /.test(sayings[i]) : sayings[i] === word(key, id, COUNTS[id]))), 'each row uses the single press\'s own words, a single-SKU listing exactly as before and a two-SKU listing with what it replaced: ' + sayings[0] + ' / ' + sayings[7]);
   ok(W.ops.length === 9 && W.ops.map(o => o.id).join() === WANT.map(w => w[0]).join() && W.ops.every((o, i) => o.sku === WANT[i][1]), 'ONE request per listing, in the queue\'s order: ' + W.ops.map(o => o.id).join(','));
   ok(W.ops.every(o => o.keys === 'by,listingId,op,repoToken,sku' && o.by === 'Tester' && o.token) && W.maxInflight === 1, 'each request is exactly {op, listingId, sku, by, repoToken} and they never overlap (at most ' + W.maxInflight + ' at a time)');
   ok(W.unlocks.length === 1 && W.unlocks[0].ok, 'the password was entered ONCE: one repoUnlock call for the whole run');
