@@ -145,8 +145,43 @@ async function mode(sb) {
     const r = await P.save(row, 'STAR_PISCES_B'); ok(r.ok && r.proof.ok && r.proof.skuSource === 'alias', W + ': the next order reads it: ' + JSON.stringify(r.proof));
     eq(l.Alias().bySku, { STAR_PISCES: 'STAR_PISCES_B' }, W + ': one link for this product, none for the others');
     eq(designOf(P.read(mk(listing, 'UMBRELLA', [V('Sign', 'Aries', '2001', '3002'), V('Metal Choice', 'Gold Filled')], { productId: '502' })).spec), ['STAR_ARIES', 'inventory'], W + ': the other products of the listing are untouched');
-    ok(r.proof.withoutTable && r.proof.withoutTable.ok === false, W + ': the proof says what a page WITHOUT Etsy\'s table would read: ' + JSON.stringify(r.proof.withoutTable));
-    pass(W + ' · 5 · the variation\'s inventory SKU is the key; the proof tells when a link depends on the table'); }
+    // 5b · the table is NOT needed to find it again: the pick also names WHICH PRODUCT it was for (byVia), so a page that never asked Etsy for the table (or holds an older copy) reads a new order of it by the link
+    ok(r.proof.withoutTable && r.proof.withoutTable.ok === true && r.proof.withoutTable.skuSource === 'alias', W + ': the proof reads a new order WITHOUT Etsy\'s table too: ' + JSON.stringify(r.proof.withoutTable));
+    eq(l.Alias().byVia, { P501: 'STAR_PISCES', 'O2001:3001': 'STAR_PISCES' }, W + ': the link names the product (product id, option ids), kept beside bySku, in the one write');
+    ok(r.readBack && r.readBack.key === 'STAR_PISCES', W + ': read back by the cloud (verified)');
+    { const none = page(sb); await none.load();   // a fresh computer: the alias documents only, NO table
+      const next = none.read(mk(listing, 'UMBRELLA', [V('Sign', 'Pisces', '2001', '3001'), V('Metal Choice', 'Gold Filled')], { productId: '501' }));
+      eq(designOf(next.spec), ['STAR_PISCES_B', 'alias'], W + ': a NEW order of that product, no table on the page: matched by the saved link');
+      eq(next.spec.problems.map(p => p.kind), [], W + ': no question, so no Review and no Etsy table is asked for');
+      eq([next.spec.viaInventory.by, next.spec.viaInventory.sku, next.spec.boughtSku], ['link', 'STAR_PISCES', 'STAR_PISCES'], W + ': read under the SKU the link is kept under');
+      eq(designOf(none.read(mk(listing, 'UMBRELLA', [V('Sign', 'Pisces', '2001', '3001')], {})).spec), ['STAR_PISCES_B', 'alias'], W + ': a transaction with no product id is found by its option ids');
+      // never another product's link: the Aries product, the same shared SKU, on the same page, is NOT read as Pisces' pick
+      const other = none.read(mk(listing, 'UMBRELLA', [V('Sign', 'Aries', '2001', '3002'), V('Metal Choice', 'Gold Filled')], { productId: '502' }));
+      ok(other.spec.designSku !== 'STAR_PISCES_B' && other.spec.viaInventory === undefined, W + ': another product of the listing is not read by this link: ' + JSON.stringify(designOf(other.spec)));
+      const noIds = none.read(mk(listing, 'UMBRELLA', [V('Sign', 'Pisces'), V('Metal Choice', 'Gold Filled')], {}));
+      ok(noIds.spec.designSku !== 'STAR_PISCES_B', W + ': a line that names no product by id is not guessed from the options\' words');
+      ok(!none.calls.some(c => /listingSkus/.test(c)), W + ': no table was asked for'); }
+    pass(W + ' · 5b · the variation\'s link is found again with no Etsy table on the page (by its product), and never for another product'); }
+
+  /* ── 5c · a listing of ONE product: when exactly one link exists and nothing can tell it from another, it is its link; never otherwise ── */
+  { const listing = newListing(), l = L(listing), P = page(sb);
+    const first = P.read(mk(listing, 'ODD_SKU_ONE', [V('Personalization', 'Name One')], {}));
+    ok(first.spec.problems.some(p => p.kind === 'unmatchedSku'), W + ': the first order of the listing asks (its SKU names no design)');
+    const r = await P.save(first, 'ANIMAL_ONE'); ok(r.ok && !l.Alias().byVia, W + ': a plain line records no product keys (it was read by its own SKU)');
+    const fresh = page(sb); await fresh.load();
+    eq(designOf(fresh.read(mk(listing, 'ODD_SKU_ONE', [V('Personalization', 'Name One')], {})).spec), ['ANIMAL_ONE', 'alias'], W + ': the same SKU again: the link');
+    eq(designOf(fresh.read(mk(listing, '', [], {})).spec), ['ANIMAL_ONE', 'alias'], W + ': the shop took the SKU off the listing (no SKU, no option, no product to tell apart): one link, one product: its link');
+    // a SKU of its own is a variation of its own ("Use this charm" is the variation's): never given the other's link
+    ok(fresh.read(mk(listing, 'ODD_SKU_TWO', [V('Personalization', 'Name One')], {})).spec.designSku !== 'ANIMAL_ONE', W + ': another SKU of the listing is asked about, not given it');
+    // a line that names an option the link cannot be told from, or a SKU that names a design, is NOT read by it
+    ok(fresh.read(mk(listing, '', [V('Size', 'Large')], {})).spec.designSku !== 'ANIMAL_ONE', W + ': a line with an option of its own waits for a person');
+    ok(fresh.read(mk(listing, 'PICK_ONE', [V('Personalization', 'Name One')], {})).spec.designSku === 'PICK_ONE', W + ': a SKU that names a design stands');
+    // two links for the listing: the line's SKU cannot tell them apart, so a person decides
+    await P.save(P.read(mk(listing, 'ODD_SKU_THREE', [V('Size', 'Large')], {})), 'ANIMAL_TWO');   // (a second answer for the listing, for a line with an option of its own)
+    const two = page(sb); await two.load(); eq(Object.keys(two.maps.aliases[listing].bySku).sort(), ['ODD_SKU_ONE', 'ODD_SKU_THREE'], W + ': two links now');
+    const unsure = two.read(mk(listing, '', [V('Personalization', 'Name One')], {}));
+    ok(unsure.spec.designSku !== 'ANIMAL_ONE' && unsure.spec.designSku !== 'ANIMAL_TWO' && unsure.spec.problems.some(p => p.kind === 'unmatchedSku'), W + ': several links and no way to tell them apart: it waits for a person, never guesses: ' + JSON.stringify(designOf(unsure.spec)));
+    pass(W + ' · 5c · exactly one link for a one-product listing is its link; several, or an option, wait for a person'); }
 
   /* ── 6 · the library is the only authority on a charm ── */
   { const P = page(sb), listing = newListing(), l = L(listing); Fk.writes.length = 0;
