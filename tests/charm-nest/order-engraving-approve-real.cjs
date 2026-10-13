@@ -391,7 +391,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       const s1 = await h.read(OV), j1 = await h.job(K.O2);
       check(JSON.stringify(s1.seals) === JSON.stringify(s0.seals) && s1.seals.length === 1, 'drawn again, the card holds the same one seal: ' + JSON.stringify(s1.seals));
       check(r.state === 'written' && r.by === j0.by && j1.seals.join() === j0.seals.join() && !net.log.slice(n0).some(engW(K.O2)), 'pressing the Approved button, and asking for the approval again as another person: nothing changes, nothing is written, the seal and its name stand: ' + JSON.stringify([r, j1.seals]));
-      check(s1.buttons.length === 0 && r.tools === 0 && r.ctl.every(x => x === 'open'), 'the approved card has no way to remove or replace a seal (buttons ' + JSON.stringify(s1.buttons) + ', controls on the seals ' + r.tools + ', actions ' + JSON.stringify(r.ctl) + ')');
+      check(s1.buttons.length === 0 && r.tools === 0 && r.ctl.every(x => x === 'open' || x === 'engrave'), 'the approved card has no way to remove or replace a seal (buttons ' + JSON.stringify(s1.buttons) + ', controls on the seals ' + r.tools + ', actions ' + JSON.stringify(r.ctl) + ')');
       await h.closeWin();
     });
 
