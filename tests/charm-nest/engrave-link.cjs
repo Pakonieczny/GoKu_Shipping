@@ -9,7 +9,7 @@
 //   · the Sheet window's own (the window closes, the way back stays);
 //   · a piece whose job is not loaded yet is waited for (small labelled spinner, bounded), a missing job moves NOTHING (ENGCRASH, 12 Oct:
 //     no window closed, the Engraving tab keeps its view and its search box) and one plain line says why, a Sandbox order is never
-//     opened from the production page (the piece on hold / on no sheet yet: tests/charm-nest/engrave-no-job-click.cjs).
+//     opened from the production page (a piece on hold or on no sheet yet is opened, not refused: tests/charm-nest/engrave-no-job-click.cjs, engrave-prenest-job.cjs).
 // Headless Chromium against the fake site (bridge-server.cjs); every request that is not to the loopback is aborted.
 //   node tests/charm-nest/engrave-link.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
 const path = require('path'), assert = require('assert/strict');
