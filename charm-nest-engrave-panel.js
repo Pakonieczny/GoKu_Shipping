@@ -407,6 +407,17 @@
         else if (b.dataset.engpWas) { const [dis, ttl] = tryDo(() => JSON.parse(b.dataset.engpWas), [b.disabled, b.title]); delete b.dataset.engpWas; b.disabled = !!dis; b.title = ttl; }
       }
     };
+    /** ENGFRONT: the face being edited has NO job to draw (the front is asked for in the mode and not saved yet, or its job is "no engraving"): the work area would go on drawing the OTHER face's engraving
+     *  while this face's thumbnail is marked. It says so in one plain line instead (the card's own empty-box markup; the drawing under it is hidden while the line is there), and the line goes with the next draw. */
+    const noJob = (vm, d) => {
+      const card = el.closest ? el.closest('.rvItem') : null, host = card ? card.querySelector('.backHost') : null; if (!card || !host) return;
+      const job = facesOf(d.mode).includes(d.face) ? faceJobOf(vm, d.face, slot) : undefined, old = host.querySelector('.engpNoJob');
+      const want = job === null ? `Save to see the ${d.face} engraving here.` : job && job.state === 'none' ? `No ${d.face} engraving.` : '';
+      if (!want) { if (old) old.remove(); delete card.dataset.engpNojob; return; }
+      card.dataset.engpNojob = d.face;
+      const box = old || host.appendChild(el.ownerDocument.createElement('div'));
+      box.className = 'noBack engpNoJob'; box.setAttribute('role', 'status'); if (box.textContent !== want) box.textContent = want;
+    };
     const draw = () => {
       if (dead) return;
       const m = model(), fs = focusState();
@@ -420,6 +431,7 @@
         if (eb && !(CE && tb && tryDo(() => CE.attach({ textarea: tb, button: eb, key: 'engp:' + key + ':' + d.face }), false))) eb.remove(); }
       hiDecorate(el, vm, d, slot);   // (ENGHILITE: the system's own choice stays marked)
       hookCard(); applyGate(hasPatch(Setup().patchOf(vm, d)));
+      noJob(vm, d);
       const P = Prev(); if (P && P.warm && !draw.warmed) { draw.warmed = true; tryDo(() => P.warm()); }
       const want = fs || (d.focus && el.ownerDocument.activeElement === el.ownerDocument.body ? d.focus : null);
       restoreFocus(want);
@@ -578,7 +590,9 @@
           follow(f);   // (the card draws its thumbnails from the saved jobs: the staged words go back on them)
           // the card in front is for the face being edited: another face that has its own placement is shown by the tab itself (its card is drawn again; the staged edit stays)
           const E = Eng(), other = E && E.jobsOf ? E.jobsOf(line).find(j => (slotOfJob(j) || null) === (slotOfJob(job) || null) && F && F.faceOf(j) === f) : null;
-          if (other && other !== job && E.restoreView && E.render && typeof o.refocus !== 'function') { tryDo(() => { E.restoreView({ focus: other.key }); E.render(); }); }
+          // (ENGFRONT: a face that is already decided lives in the Decided list, where the app opens it (EngraveLink): the Placements card cannot show it, so the press used to snap back to the other face)
+          if (other && other !== job && ['approved', 'written', 'skipped'].includes(other.state) && root.EngraveLink && root.EngraveLink.open && typeof o.refocus !== 'function') { tryDo(() => { Promise.resolve(root.EngraveLink.open({ piece: other.key, face: f })).catch(() => {}); }); }
+          else if (other && other !== job && E.restoreView && E.render && typeof o.refocus !== 'function') { tryDo(() => { E.restoreView({ focus: other.key }); E.render(); }); }
           else if (other && other !== job && typeof o.refocus === 'function') tryDo(() => o.refocus(other));
           if (typeof o.onFace === 'function') tryDo(() => o.onFace(f));
         },
