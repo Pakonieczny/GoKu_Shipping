@@ -24,6 +24,8 @@
  *   lastSheet       a set is never emptied
  *   setOpen         the set is still being made by a run that is open on ANOTHER screen (two screens would undo each other); the screen that
  *                   holds the run passes `owned` (its run ids) and may change it; a set of a finished run has no such owner
+ *   sheetPartial    (Paul, 13 Oct) a GF or SS sheet that is not Completed (not fully nested) joins no set at all; taking one OUT of a set is never refused for this, and the cardinal rule
+ *                   does not keep it in (charm-nest-set-rules.js recordPartial: only a record that carries the completion mark is read)
  *   backsNotApproved (Paul, 12 Oct) a 10K, 14K or Rose Gold sheet in no set joins one once its back engraving is approved
  *   setCompleted / setClosed / missing / noSet / notInSet   as before (roseSet is gone: Rose Gold joins a committed set like any sheet, with its own Cut Sheet yes)
  * ONE rule, for the server and the page (charmNestLibrary.js requires this file; the page's plan reads it too):
@@ -76,6 +78,12 @@
     if (!L || L.stages.approval !== false) return null;
     const E = L.faces || L, fr = !!L.faces, w = wordOf(rec), what = fr ? 'engravings' : 'back engraving', n = +E.approved || 0, of = +E.required || 0;
     return { key: 'backsNotApproved', label: `${w}: ${what} not approved yet${of ? ` (${n} of ${of} approved)` : ''}`, detail: 'A 10K, 14K or Rose Gold sheet joins a set once its back engraving is approved.', extra: { sheetId: idOf(rec) } };
+  }
+  /** Paul, 13 Oct: a partial GF or SS sheet never joins a set. The one plain line ({key:'sheetPartial', label, detail}), or null: for a sheet that is Completed, a metal that is not GF/SS, a record with no completion mark. */
+  function partialGap(rec) {
+    const R = RULES();
+    if (!rec || !R || typeof R.recordPartial !== 'function' || !R.recordPartial(rec)) return null;
+    return { key: 'sheetPartial', label: R.partialLine(rec), detail: R.partialDetail, extra: { sheetId: idOf(rec) } };
   }
   const joinWords = labels => labels.length <= 1 ? (labels[0] || '') : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
   /** "Order 4171450075 has pieces on GF Sheet 1 and SS Sheet 1: they stay in one set": orders with the same sheets are said together. */
@@ -142,6 +150,8 @@
       if (c) { add(c.key, c.label, c.detail, { sheetId: id }); continue; }
       // (Paul, 12 Oct) a sheet with a green line joins a set once its back engraving is approved: `inp.engravings` (the server's readiness read) or the record's own report says
       if (to && !from) { const g = inp.engravings && Object.prototype.hasOwnProperty.call(inp.engravings, id) ? inp.engravings[id] : engravingGap(r); if (g) { add(g.key, g.label, g.detail, { sheetId: id }); continue; } }
+      // (Paul, 13 Oct) a partial GF or SS sheet joins no set, whether it comes from outside or from another set; it may always leave one
+      if (to) { const g = partialGap(r); if (g) { add(g.key, g.label, g.detail, { sheetId: id }); continue; } }
       real.push(id);
       if (from) {
         const F = sets[from];
@@ -176,9 +186,11 @@
     if (reasons.length || !real.length) return { ok: reasons.length === 0, reasons, shared: [], noop: !real.length && !reasons.length };
     // the cardinal rule over where every sheet ends up
     const all = [].concat(Object.values(recs), ...Object.values(sets).map(s => s.members || []), inp.others || []);
-    const shared = splitOrders(all, Object.fromEntries(real.map(id => [id, moves[id]])), inp.meta);
+    // (Paul, 13 Oct) a partial GF or SS sheet that leaves a set is not kept by the cardinal rule: the sheets that share an order with it wait for it to be full and join by themselves
+    const bound = real.filter(id => !(moves[id] === null && partialGap(recs[id])));
+    const shared = splitOrders(all, Object.fromEntries(bound.map(id => [id, moves[id]])), inp.meta);
     // rule A is per sheet: two sheets that share an order do not leave their set together either (each one is checked on its own)
-    for (const id of real) if (inSetOf(recs[id]) && !moves[id]) for (const it of splitOrders(all, { [id]: null }, inp.meta)) if (!shared.some(x => x.orderId === it.orderId)) shared.push(it);
+    for (const id of bound) if (inSetOf(recs[id]) && !moves[id]) for (const it of splitOrders(all, { [id]: null }, inp.meta)) if (!shared.some(x => x.orderId === it.orderId)) shared.push(it);
     if (shared.length) {
       const leaves = real.some(id => !!inSetOf(recs[id])), mates = [...new Set(shared.flatMap(i => i.thereIds))].filter(id => !real.includes(id));
       add('sharedOrders', 'Orders shared with another sheet', sharedWords(shared, leaves ? 'they stay in one set' : 'they go into one set together'), { items: shared, mates });
@@ -379,5 +391,5 @@
     try { if (sheets.length && C && C.loadLibrary) Promise.resolve(C.loadLibrary()).catch(() => {}); } catch (_) { /* refreshed at its next read */ }
   }
 
-  return { relabel, remakeFiles, applyMembership, verifyMoves, principleReasons, sayWhy, spanLines, sideTag, splitOrders, sharedWords, cutReason, engravingGap, indexFor, setAfter, wordOf, setWord, committedSet, inSetOf, finished, orderIdsOf, isDone };
+  return { relabel, remakeFiles, applyMembership, verifyMoves, principleReasons, sayWhy, spanLines, sideTag, splitOrders, sharedWords, cutReason, engravingGap, partialGap, indexFor, setAfter, wordOf, setWord, committedSet, inSetOf, finished, orderIdsOf, isDone };
 });

@@ -121,14 +121,20 @@ function pageWorld(root, ctl, extra = []) {
   ctx.stockFor = () => ctl.stock; ctx.angleSet = () => ctl.angles();
   vm.createContext(ctx);
   // pairs and groups, keepOrdersWhole, overflowToNextSheet, then sheetFull / the gap fill (TOPUP, topupSettle, topupRoom ...), then the feed (feedTurn, nestItems, feedOn)
-  vm.runInContext(sliceBetween(html, 'function groupOf(', 'function inflatedArea(', 'groupOf .. overflowToNextSheet'), ctx);
-  vm.runInContext(sliceBetween(html, 'function inflatedArea(', 'function usableArea(', 'inflatedArea .. topupRoom'), ctx);
-  vm.runInContext(sliceBetween(html, 'const FEED_ORDERS', '/* A stopped run starts none of its sheets', 'the feed'), ctx);
+  const ran = [], run = text => { ran.push(text); vm.runInContext(text, ctx); };
+  run(sliceBetween(html, 'function groupOf(', 'function inflatedArea(', 'groupOf .. overflowToNextSheet'));
+  run(sliceBetween(html, 'function inflatedArea(', 'function usableArea(', 'inflatedArea .. topupRoom'));
+  run(sliceBetween(html, 'function usableArea(', '/** ρ_target', 'usableArea'));   // (the sheet's usable area: keepOrdersWhole reads it)
+  run(sliceBetween(html, 'const FEED_ORDERS', '/* A stopped run starts none of its sheets', 'the feed'));
   // the solver job exactly as the page builds it (buildJob and what it reads); the runner only replaces the angles and the budget
-  vm.runInContext(sliceBetween(html, 'const CAREFUL_ANGLES', 'function packingKey(', 'buildJob'), ctx);
+  run(sliceBetween(html, 'const CAREFUL_ANGLES', 'function packingKey(', 'buildJob'));
   // the intake: which sheet an order's pieces go on (LiveNest.intakePage and the closed test it uses)
-  vm.runInContext(sliceBetween(bridge, "// the page's own marks first; the sets of its run are looked at only when none says so", 'async function add(run) {', 'LiveNest.intakePage'), ctx);
-  for (const f of extra) vm.runInContext(read(root, f), ctx);
+  run(sliceBetween(bridge, 'function prepareSheet(sh) {', 'async function add(run) {', 'LiveNest.prepareSheet .. intakePage'));   // (prepareSheet pins what a sheet already holds, as saved pieces: arrivalPin)
+  for (const f of extra) run(read(root, f));
+  // a page function the sliced code asks for with `typeof name === "function"` and that is not in this world is silently skipped by the page code: say so, so that a skipped
+  // rule is never read as a failing one (a worker who adds such a helper outside the slices tells SETSIM, or the slice list here grows)
+  ctl.missing = [...new Set(ran.flatMap(t => [...t.matchAll(/typeof\s+([A-Za-z_$][\w$]*)\s*(?:===|!==|==|!=)\s*["']function["']/g)].map(m => m[1])))].filter(n => { try { return vm.runInContext('typeof ' + n, ctx) !== 'function'; } catch (_) { return true; } });
+  if (ctl.missing.length && !process.env.SETSIM_QUIET) console.error('setsim: page functions asked for with typeof but not in the simulated world (their rules are skipped here): ' + ctl.missing.join(', '));
   // every time a sheet passes orders on to the next one, who and from where (the runner reports it: orders passed over, hops)
   const passOn = ctx.overflowToNextSheet; ctl.passes = [];
   ctx.overflowToNextSheet = (sh, announce) => { const ids = new Set(sh.rejects || []); const orders = [...new Set((sh.charms || []).filter(c => ids.has(c.id)).map(c => c.order))]; const next = passOn(sh, announce); if (orders.length) ctl.passes.push({ tick: ctl.tick || 0, metal: sh.metal, from: sh.page, to: next && next.page, orders }); return next; };
@@ -160,10 +166,10 @@ class MetalSim {
     const ctx = this.sim.ctx, S = this.S;
     let items = ctx.activeCharms(sh);
     if (!items.length) return;
+    ctx.prepareSheet(sh);   // (startNest does this for a sheet of a run: fill phase, and what is already placed is pinned as a saved piece, arrivalPin)
     items = ctx.feedTurn(sh, items);
     const onSheet = new Set(items.map(c => c.id)), kept = (sh.placements || []).filter(p => onSheet.has(p.id));
     sh.nestInitial = kept.length ? kept.map(p => ({ ...p })) : null;
-    for (const c of items) { const p = kept.find(q => q.id === c.id); c.pinned = p ? { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle } : null; }
     sh.placements = kept.map(p => ({ ...p })); sh.rejects = [];
     sh.runSeed = this.sim.opts.seed || 1; const job = this.buildJob(sh), t0 = Date.now();
     const result = await S.solve(job, {});
@@ -171,9 +177,9 @@ class MetalSim {
     sh.status = 'finishing'; sh.endedBy = result.endedBy; sh.placements = result.placements.map(p => ({ ...p })); sh.rejects = result.rejects.slice();
     const byId = new Map(items.map(c => [c.id, c]));
     ctx.keepOrdersWhole(sh, byId, new Set(result.pocketFilled || []));
-    const movedIds = new Set((result.unjam && result.unjam.moved) || []);
-    if (movedIds.size && job.lockedPlacements) job.lockedPlacements = job.lockedPlacements.map(p => movedIds.has(p.id) ? { ...sh.placements.find(q => q.id === p.id) } : p);
-    sh.verification = { ok: S.verify(job, sh.placements, 4).ok };
+    // (finishNest: pieces the making-room pass moved are saved at their new spots, and the check builds the job again from the sheet as it now stands)
+    if (result.unjam && result.unjam.moved && result.unjam.moved.length && sh.nestInitial) { const moved = new Set(result.unjam.moved), now = new Map(sh.placements.map(p => [p.id, p])); sh.nestInitial = sh.nestInitial.map(p => moved.has(p.id) && now.has(p.id) ? { ...now.get(p.id), scale: p.scale } : p); }
+    sh.verification = { ok: S.verify(this.buildJob(sh), sh.placements, 4).ok };
     if (!sh.verification.ok) throw new Error('layout failed verification on ' + this.metal + ' page ' + sh.page);
     sh.liveInfo = { freePt2: result.freePt2, usablePt2: result.usablePt2, placedPt2: result.placedPt2, pocket: result.pocket, placed: result.placements.length, total: items.length };
     sh.result = result; sh.density = result.density; sh.usablePt2 = result.usablePt2; sh.freePt2 = result.freePt2; sh.placedPt2 = result.placedPt2;

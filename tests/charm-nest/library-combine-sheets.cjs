@@ -14,7 +14,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
   const srv = await start({ receipts: [] }), { st } = srv, now = Date.now(), ts = { toMillis: () => now }, day = '2026-10-03';
   const image = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="30" height="20"><rect width="30" height="20"/></svg>');
   // a draft sheet of the open run holding `pieces` (pool ids "order_line_copy")
-  const mk = (id, metal, pieces, extra = {}) => st.put(S, id, { id, runId: 'run-live', metal, day, status: 'complete', draft: true, placedCount: pieces.length, charmCount: pieces.length, density: .36, stock: { wIn: 6, hIn: 4.5 },
+  const mk = (id, metal, pieces, extra = {}) => st.put(S, id, { id, runId: 'run-live', metal, day, status: 'complete', draft: true, releaseFull: true, placedCount: pieces.length, charmCount: pieces.length, density: .36, stock: { wIn: 6, hIn: 4.5 },
     poolIds: pieces, orders: [...new Set(pieces.map(p => p.split('_')[0]))], verification: { ok: true }, outputs: { ai: { path: id + '.ai', url: srv.sorterOrigin + '/' + id + '.ai' }, preview: { path: id + '.png', url: image } },
     page: +id.split('-').pop() || 1, sheetIndex: null, updatedAt: ts, createdAt: ts, ...extra });
   const mkSet = (setId, sheetIds, extra = {}) => st.put(SET, setId, { setId, seq: +setId.replace(/\D/g, '') || 1, day, runId: 'run-live', sheetIds, materials: ['gold'], orders: {}, status: 'open', updatedAt: ts, createdAt: ts, ...extra });
