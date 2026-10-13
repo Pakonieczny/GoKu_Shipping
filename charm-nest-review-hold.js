@@ -151,6 +151,7 @@
     queued = false;
     const now = held(), s = signature(now); if (s === sig) return; const was = prev; sig = s; prev = now;
     const rids = uniq([...now.keys(), ...was.keys()].filter(r => now.get(r) !== was.get(r)));
+    if (!rids.length) return;   // (the first look at a page with nothing in Review: nobody is told)
     const sheetIds = uniq(rids.flatMap(r => String(now.get(r) || '').split(',').concat(String(was.get(r) || '').split(','))));
     const released = rids.some(r => !now.has(r) && was.has(r));
     for (const fn of [...subs]) safe(() => fn({ rids, sheetIds }), null);
