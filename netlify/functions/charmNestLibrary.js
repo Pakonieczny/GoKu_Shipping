@@ -62,7 +62,11 @@ const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(R
    option, a no-design SKU) is a relationship between a listing/SKU and a design, and it must reach neither production nor
    the next replay of the same real order (Paul, 3 Oct: the sandbox kept the relationships he had given). Reads merge the
    two, the sandbox's own answer first; Reset deletes the copy. Set per request; a function instance handles one request
-   at a time. ── */
+   at a time.
+   EXCEPTION (REVLINK, Paul 12 Oct 2026: "if I make choices, those choices should be saved moving forward whether I'm doing it in sandbox or in
+   live mode"): a person's PICK OF A CHARM for a listing (aliasPut: "Use this charm", a saved pair; optionMapPut with field design: an option that
+   picks the charm) is written to the SHARED store in the sandbox too, read back, and never reaches Reset or Purge. The sandbox and production
+   read the same links. An answer the sandbox kept before that (its own copy) is still read, the later write of the two standing for a key. ── */
 let PREFIX = "";
 const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Remnants", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
 const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
@@ -3000,7 +3004,15 @@ async function op_aliasGet(b = {}) {
   docs.forEach(d => { out[d.id] = d.data(); });
   // the sandbox's own answer for a listing stands over the shared one's, field by field (its per-SKU answers join the shared ones)
   // (a listing's saved pairs of two designs, pairBySku, join the same way)
-  own.forEach(d => { const mine = d.data(), was = out[d.id]; out[d.id] = was ? Object.assign({}, was, mine, was.bySku || mine.bySku ? { bySku: Object.assign({}, was.bySku, mine.bySku) } : {}, was.pairBySku || mine.pairBySku ? { pairBySku: Object.assign({}, was.pairBySku, mine.pairBySku) } : {}) : mine; });
+  // REVLINK: a person's pick is written to the shared store in the sandbox too (aliasPut), so a copy the sandbox kept BEFORE that stands only while it is the later write:
+  // the sandbox's old copy never hides a pick made since (the SKU answers sku / v / huggie, bySku and pairBySku follow the document's own update time)
+  own.forEach(d => {
+    const mine = d.data(), was = out[d.id]; if (!was) { out[d.id] = mine; return; }
+    const sharedLater = (ms(was.updatedAt) || 0) > (ms(mine.updatedAt) || 0), a = sharedLater ? mine : was, z = sharedLater ? was : mine;   // (z = the later write of the two)
+    const next = Object.assign({}, was, mine, was.bySku || mine.bySku ? { bySku: Object.assign({}, a.bySku, z.bySku) } : {}, was.pairBySku || mine.pairBySku ? { pairBySku: Object.assign({}, a.pairBySku, z.pairBySku) } : {});
+    if (sharedLater) { for (const k of ["sku", "v", "huggie"]) { if (was[k] !== undefined) next[k] = was[k]; else if (k === "v" && was.sku !== undefined) delete next.v; } }
+    out[d.id] = next;
+  });
   return Object.assign({ aliases: out, truncated }, sig ? { sig } : {});
 }
 /* "Use this charm": for the listing and the SKU the line came with (fromSku, kept under bySku), so on a listing whose
@@ -3017,15 +3029,27 @@ async function putPairAlias(b, lid, from) {
   if (!Master.isSku(L) || !Master.isSku(R) || L === R) return { error: "pair.L and pair.R are two different master SKUs" };
   for (const k of [L, R]) { const s = await db.collection(Master.INDEX).doc(k).get(); if (!s.exists || !(s.data() || {}).sku) return { error: `${k} is not in the master index` }; }
   const doc = { listingId: lid, by: str(b.by || "operator", 80), title: str(b.title, 200), updatedAt: FV.serverTimestamp(), pairBySku: { [from]: { L, R, by: str(b.by || "operator", 80), at: Date.now() } } };
-  await db.collection(PREFIX + ALIASES).doc(lid).set(doc, { merge: true }); return { ok: true };   // (a sandbox answer is the sandbox's own copy only)
+  // REVLINK: a person's pick is kept in the shared store in the sandbox too, and read back before it is called saved
+  const ref = db.collection(ALIASES).doc(lid); await ref.set(doc, { merge: true });
+  const got = (((await ref.get()).data() || {}).pairBySku || {})[from];
+  if (!got || String(got.L) !== L || String(got.R) !== R) return { error: "the pair was written but could not be read back, so it is not counted as saved: press the choice again", status: 500 };
+  return { ok: true, verified: true, kind: "pair", listingId: lid, key: from, sku: L + " + " + R };
 }
 async function op_aliasPut(b) {
   const lid = str(b.listingId, 30).replace(/\D/g, ""), sku = String(b.sku || "").trim().toUpperCase(), from = String(b.fromSku || "").trim().toUpperCase().slice(0, 120);
   if (b.pair) return putPairAlias(b, lid, from);
   if (!lid || !Master.isSku(sku)) return { error: "listingId and sku required" };
+  // REVLINK: a link names a design the library holds now (the page checks it too), never one that is not there
+  { const held = await db.collection(Master.INDEX).doc(sku).get(); if (!held.exists || !(held.data() || {}).sku) return { error: `${sku} is not in the master index`, status: 409 }; }
   const doc = { listingId: lid, by: str(b.by || "operator", 80), title: str(b.title, 200), updatedAt: FV.serverTimestamp() };
+  const kind = from ? "bySku" : b.huggie === true ? "huggie" : "sku";
   if (from) doc.bySku = { [from]: sku }; else if (b.huggie === true) doc.huggie = sku; else { doc.sku = sku; doc.v = 2; }
-  await db.collection(PREFIX + ALIASES).doc(lid).set(doc, { merge: true }); return { ok: true };   // (a sandbox answer is the sandbox's own copy only)
+  // REVLINK (Paul, 12 Oct 2026): a person's pick is kept in the SHARED store in the sandbox too (Reset and Purge never reach it, production reads it), written once and read back
+  // before it is called saved. Asked of the document just written, so the proof is the stored link itself, not the answer of the write.
+  const ref = db.collection(ALIASES).doc(lid); await ref.set(doc, { merge: true });
+  const back = (await ref.get()).data() || {}, got = kind === "bySku" ? (back.bySku || {})[from] : kind === "huggie" ? back.huggie : back.sku;
+  if (String(got || "").toUpperCase() !== sku) return { error: "the link was written but could not be read back, so it is not counted as saved: press the choice again", status: 500 };
+  return { ok: true, verified: true, kind, listingId: lid, key: from || null, sku };
 }
 /* A listing's kind, as a person says it (charm-nest-orders.js addOnOf, 10 Oct 2026: "Huggie Charm + Shipping" is an add-on listing, every order of it a custom order).
    Kept on the listing's own document in the aliases map, Charm_Sku_Aliases/{listing id}.listingKind = { kind, by, at, title, note }, beside the SKU answers
@@ -3065,7 +3089,15 @@ async function op_optionMapGet(b = {}) {
   const { docs, own = [], truncated } = await mapDocs(OPTMAP), out = {};
   docs.forEach(d => { out[d.id] = d.data().map || {}; });
   // the sandbox's own answer for an option value stands over the shared one's (the listing's other answers are kept)
-  own.forEach(d => { const mine = d.data().map || {}, was = out[d.id] || {}, next = {}; for (const n of new Set([...Object.keys(was), ...Object.keys(mine)])) next[n] = Object.assign({}, was[n], mine[n]); out[d.id] = next; });
+  // REVLINK: except a person's pick of the charm an option gives (field design), which is written to the shared store in the sandbox too: a copy the sandbox kept before stands only while it is the later pick (its `at`)
+  own.forEach(d => {
+    const mine = d.data().map || {}, was = out[d.id] || {}, next = {};
+    for (const n of new Set([...Object.keys(was), ...Object.keys(mine)])) {
+      next[n] = Object.assign({}, was[n], mine[n]);
+      for (const v of Object.keys(was[n] || {})) { const w = was[n][v], m = mine[n] && mine[n][v]; if (m && w && w.field === "design" && (+w.at || 0) > (+m.at || 0)) next[n][v] = w; }
+    }
+    out[d.id] = next;
+  });
   return Object.assign({ maps: out, truncated }, sig ? { sig } : {});
 }
 async function op_optionMapPut(b) {
@@ -3078,10 +3110,15 @@ async function op_optionMapPut(b) {
   // design: the option picks the charm (Zodiac Sign: Pisces), for one listing, a SKU of the master index
   const design = field === "design" ? String(m.value || "").trim().toUpperCase() : "";
   if (field === "design" && (lid === "*" || !Master.isSku(design))) return { error: "the charm an option picks is saved for one listing, as a master SKU" };
-  const ref = db.collection(PREFIX + OPTMAP).doc(lid); const snap = await ref.get(); const cur = snap.exists ? (snap.data().map || {}) : {};   // (the sandbox's copy starts from its own answers, never from production's)
+  // REVLINK: the charm an option picks is a person's pick of a vector file for a listing: kept in the SHARED store in the sandbox too (Reset never reaches it, production reads it) and read back; the other answers stay the sandbox's own copy
+  if (field === "design") { const held = await db.collection(Master.INDEX).doc(design).get(); if (!held.exists || !(held.data() || {}).sku) return { error: `${design} is not in the master index`, status: 409 }; }
+  const ref = db.collection((field === "design" ? "" : PREFIX) + OPTMAP).doc(lid); const snap = await ref.get(); const cur = snap.exists ? (snap.data().map || {}) : {};   // (the sandbox's copy starts from its own answers, never from production's)
   cur[name] = cur[name] || {}; cur[name][value] = { field, value: field === "ignore" ? null : field === "count" ? String(count) : design || str(m.value, 80), by: str(b.by || "operator", 80), at: Date.now() };
   await ref.set({ listingId: lid, map: cur, updatedAt: FV.serverTimestamp() }, { merge: true });
-  return { ok: true };
+  if (field !== "design") return { ok: true };
+  const got = ((((await ref.get()).data() || {}).map || {})[name] || {})[value];
+  if (!got || got.field !== "design" || String(got.value || "").toUpperCase() !== design) return { error: "the choice was written but could not be read back, so it is not counted as saved: press it again", status: 500 };
+  return { ok: true, verified: true, kind: "option", listingId: lid, key: name + "=" + value, sku: design };
 }
 
 // ── Custom Orders: a special line (custom, rework, chain only, add-on…) finished by hand ──
