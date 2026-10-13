@@ -19,6 +19,8 @@
  *                                 written piece that let go of its geometry) as a fraction of the picture's box; angle counter-clockwise as job.fit.angle. null: no placement yet (the words are then centred)
  *   frameFor(o) -> frame | null    the charm's geometry as this face is cut (the work area's own frame: charm-nest-geom.js backView turned over for the back, the front as it is, long charms laid flat)
  *   fitLinesOf(o, fontId) -> lines | null   the lines the job's own fit laid the words in (Ace: NAME over ONE) when o.text and the font are the job's own (that is what is cut); null once words or font were changed
+ *   draftOf(o, fontId) -> draft | null   the work area's own DRAFT of the job (ENGWORK Engrave.draftOf: lines, centre, angle, size) when it is the words and font shown: a staged edit is drawn in the box with the
+ *                                 same lines, place and size as in the big drawing; while that draft is still being made (its font is being read) the box asks again every 150 ms, at most 20 times
  *   fontStatus(fontId) 'idle'|'loading'|'ready'|'failed' · layoutOf(o) · CAP_PER_EM · linesOf
  *
  * o / partial
@@ -30,7 +32,7 @@
  *               the back is cut). Drawn once per view / charm and face (cached), never again per keystroke
  *   job         the face's Engrave job (its view and fit give the picture and the words' place); slot the piece's own slot ('L' | 'R' | 'D1'..) for a face with no job yet; image a saved picture of the
  *               face (the approved back file's PNG) used only when no geometry can be had
- *   text        the words: a string (line breaks kept) or an array of lines. None: the quiet empty slot, nothing is written
+ *   text        the words: a string (line breaks kept) or an array of lines. None: nothing is written (the charm drawing alone; the dashed place for the words only where no charm can be drawn)
  *   fontId      an installed font id (Orders.ENGRAVING_FONTS)  |  fontWord  the shop's word for it ("Ace" is Jost Slashed Zero; a word the shop does not offer is the app's own font)
  *   face        'front' | 'back'. The BACK flips only the drawing (scaleX(-1), the charm turned over); the words always read the right way
  *   position    { x, y, size, angle } the way CharmNestEngravePosition.of(job) gives it, each 0..1 of the drawing box: x, y the centre of the words, size the em as a fraction of
@@ -122,6 +124,21 @@
     return { cap, gap, pitch: cap + gap, totalH, rows: lines.map((text, i) => ({ text, y: totalH / 2 - cap - i * (cap + gap) })) };
   }
   const runOf = v => linesOf(v).join(' ').toLocaleLowerCase('en-US');   // the words as one run (case and line breaks aside)
+  /** The work area's DRAFT of this job (ENGWORK: Engrave.draftOf, local, never saved) when it is the words and the font shown: the same lines, place and size as the big drawing, so a staged edit looks the same
+   *  in the box as on the work area. null when nothing is staged (the committed fit stands) or the draft is of other words. */
+  function draftOf(o, id) {
+    const j = o && o.job, E = root && root.Engrave; if (!j || !j.key || !E || typeof E.draftOf !== 'function') return null;
+    let d = null; try { d = E.draftOf(j.key); } catch (_) { return null; }
+    if (!d || d.empty || !Array.isArray(d.lines) || !d.lines.length || !Array.isArray(d.centre) || !d.centre.every(fin)) return null;
+    if (runOf(d.lines) !== runOf(o.text) || (d.fontId && idOf(d.fontId) !== id)) return null;
+    return d;
+  }
+  /** A staged edit the work area has not drawn yet (its font is still being read: ENGWORK keeps the old drawing meanwhile)? Then this is asked again shortly, a few times, so the box ends up the same as the big drawing. */
+  function draftPending(o, id, d) {
+    const j = o && o.job, E = root && root.Engrave; if (!j || !j.key || !j.fit || !j.view || !E || typeof E.draftOf !== 'function' || d) return false;
+    const own = linesOf(j.fit.lines && j.fit.lines.length ? j.fit.lines : j.lines);
+    return runOf(o.text) !== runOf(own) || (!!j.fontKey && idOf(j.fontKey) !== id);
+  }
   /** The lines the job's own fit laid the words in (Ace: NAME over ONE), when the words and the font shown are the job's own: that is what the laser cuts, so that is what the picture shows. Words or a font typed since are shown as typed. */
   function fitLinesOf(o, id) {
     const j = o && o.job, f = j && (j.fit || j.writtenFit); if (!f) return null;
@@ -347,12 +364,17 @@
       N.wait.querySelector('.engpvWaitT').textContent = waitWord;
       if (status === 'failed' && fs && fs.error) N.wait.title = fs.error; else N.wait.removeAttribute('title');
       // where the words go: the position (merged key by key over the middle), the size from the picture box's height
-      const p = Object.assign({}, AUTO, st.pos || {}), size = num(o.size, NaN), em = Number.isFinite(size) && size > 0 && !(st.pos && Number.isFinite(+st.pos.size)) ? size : num(p.size, AUTO.size), angle = num(p.angle, 0);
+      const dr = src.kind === 'frame' ? draftOf(o, id) : null, dp = dr ? placeOf(dr, src.frame.box) : null;   // (a staged edit: the work area's own draft, the same lines, place and size)
+      if (st.retry) { try { clearTimeout(st.retry); } catch (_) { /* gone */ } st.retry = 0; }
+      if (!st.again) st.tries = 0; st.again = false;   // (a paint a person's edit made starts the count again; one this timer made goes on)
+      if (src.kind === 'frame' && st.tries < 20 && draftPending(o, id, dr)) { st.tries++; st.retry = setTimeout(() => { st.retry = 0; if (el._engpv === st && el.isConnected) { st.again = true; paint(el); } }, 150); }
+      const p = Object.assign({}, AUTO, st.pos || {}, dp || {}), size = num(o.size, NaN), em = !dp && Number.isFinite(size) && size > 0 && !(st.pos && Number.isFinite(+st.pos.size)) ? size : num(p.size, AUTO.size), angle = num(p.angle, 0);
       const x = num(p.x, AUTO.x), y = num(p.y, AUTO.y);
-      let lines = src.baked ? [] : (fitLinesOf(o, id) || linesOf(o.text)); if (lines.length && O && O.fontCaps && O.fontCaps(id)) lines = lines.map(l => (O.capsText ? O.capsText(l, id) : l.toLocaleUpperCase('en-US')));
+      let lines = src.baked ? [] : dr ? linesOf(dr.lines) : (fitLinesOf(o, id) || linesOf(o.text)); if (lines.length && O && O.fontCaps && O.fontCaps(id)) lines = lines.map(l => (O.capsText ? O.capsText(l, id) : l.toLocaleUpperCase('en-US')));
       N.root.dataset.state = src.baked ? 'baked' : lines.length ? 'ready' : 'empty';
       const pos = `left:${+(x * 100).toFixed(3)}%;top:${+(y * 100).toFixed(3)}%;`;
       if (src.baked) { N.slot.hidden = true; N.text.hidden = true; N.text.textContent = ''; N.root.dataset.size = ''; return; }   // (a saved picture has its words in it already)
+      if (!lines.length && src.kind === 'frame') { N.slot.hidden = true; N.text.hidden = true; N.text.textContent = ''; N.root.dataset.size = ''; return; }   // (the charm itself is the picture of a face with no words yet: no dashed slot on it)
       if (!lines.length) {   // the quiet empty slot: a dashed place where the words will go, turned as they would be
         const w = Math.min(0.46, Math.max(0.2, em * 3)), h = Math.min(0.14, Math.max(0.06, em * 0.7));
         N.slot.style.cssText = `${pos}width:${(w * 100).toFixed(2)}%;height:${(h * 100).toFixed(2)}%;border-radius:${(h * 50).toFixed(2)}cqh;transform:translate(-50%,-50%) rotate(${-angle}deg)`;
@@ -419,5 +441,5 @@
     return { unlink() { for (const f of offs.splice(0)) f(); }, sync: go };
   }
 
-  return { render, update, ensure, ready, fontFamilyOf, fontIdOf, warm, link, positionOf, frameFor, fontStatus: statusOf, layoutOf, CAP_PER_EM, linesOf, fitLinesOf };
+  return { render, update, ensure, ready, fontFamilyOf, fontIdOf, warm, link, positionOf, frameFor, fontStatus: statusOf, layoutOf, CAP_PER_EM, linesOf, fitLinesOf, draftOf };
 });

@@ -70,7 +70,7 @@ function install() {
     const made = await R.build(w, ['both', 'tag', 'discs', 'back']);
     await page.evaluate(install);
     // (the world's own fit passes can end before the last job is fitted on a busy machine: finish them here)
-    await page.evaluate(async () => { for (let i = 0; i < 160; i++) { const js = [...Engrave.items().values()]; if (js.length && !js.some(j => ['classify', 'ready', 'fitting'].includes(j.state))) break; try { await Engrave.fitAll(); } catch (_) { /* again */ } await new Promise(r => setTimeout(r, 250)); } });
+    await page.evaluate(async keys => { for (let i = 0; i < 240; i++) { const js = [...Engrave.items().values()], every = keys.every(k => Engrave.jobsOf(B.orders.byKey.get(k)).length); if (every && js.length && !js.some(j => ['classify', 'ready', 'fitting'].includes(j.state))) break; try { await Engrave.fitAll(); } catch (_) { /* again */ } await new Promise(r => setTimeout(r, 250)); } }, ['both', 'tag', 'discs', 'back'].map(k => made[k].key));
     for (const k of ['both', 'tag', 'discs', 'back']) made[k].jobs = await page.evaluate(key => Engrave.jobsOf(B.orders.byKey.get(key)).map(j => ({ key: j.key, state: j.state, reason: j.reason, hasView: !!j.view, fitted: !!j.fit && !!j.fit.cmds })), made[k].key);
     ok('the real world made jobs with real views and fits: ' + JSON.stringify(['both', 'tag', 'discs', 'back'].map(k => made[k].jobs.filter(j => !(j.hasView && j.fitted)))), ['both', 'tag', 'discs', 'back'].every(k => made[k].jobs.length && made[k].jobs.every(j => j.hasView && j.fitted)));
     const settleFonts = () => page.evaluate(async () => { const P = CharmNestEngravePreview; await Promise.all(['jost-ace', 'source-sans-3', 'playwrite-us-trad'].map(id => P.ensure(id))); await new Promise(r => setTimeout(r, 50)); [...document.querySelectorAll('.engThumb')].forEach(b => { if (b._engpv) CharmNestEngravePreview.update(b, {}); }); });
@@ -184,6 +184,14 @@ function install() {
     });
     await page.waitForTimeout(400); const typedRequests = requests.splice(0).filter(u => !/ (getOrderPieces|cancelList)$|messagesFor=/.test(u));   // (the page's own background reads are not the thumbnails')
     ok('the panel is there', tick.hasPanel);
+    {   // a staged edit: the box shows what the work area shows (Engrave.draftOf: the same lines, the same place), not a layout of its own
+      const dr = await page.evaluate(key => {
+        const d = typeof Engrave.draftOf === 'function' ? Engrave.draftOf(key) : undefined, t = document.querySelector('.engpCard .engFace[data-face="back"] .engThumb .engpvText'), pv = document.querySelector('.engpCard .engFace[data-face="back"] .engThumb .engpv');
+        return { has: !!d, lines: d && d.lines, shown: t ? t.textContent.split('\n') : null, size: pv && +pv.dataset.size, angle: t ? (/rotate\((-?[\d.]+)deg\)/.exec(t.getAttribute('style') || '') || [])[1] : null, dAngle: d && d.angle };
+      }, jkey);
+      if (dr.has) ok('the staged words in the box are in the work area\'s own lines ' + JSON.stringify(dr), dr.lines.length === dr.shown.length && dr.lines.every((s, i) => s.toUpperCase() === dr.shown[i].toUpperCase()) && Math.abs(-(+dr.angle) - dr.dAngle) < 0.2);
+      else ok('(no work-area draft on this build: the box shows the typed words)', dr.shown && dr.shown.join(' ').toUpperCase() === 'QQ ZZ');
+    }
     ok('typing changes the shown face\'s box at every keystroke, in the same tick (capitals for Ace), and leaves the other face alone', tick.keys.join('|') === 'Q|QQ|QQ|QQ Z|QQ ZZ' && tick.typedBack === 'QQ ZZ' && tick.frontKept === 'W');
     ok('a font pick changes the family in the same tick', /jost-ace/.test(tick.famBefore) && /playwrite-us-trad/.test(tick.famAfter));
     ok('the charm is NOT drawn again by any of it: the same canvas elements', tick.sameCanvas);
