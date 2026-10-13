@@ -18,6 +18,7 @@
      .canHold(rid) -> { ok:true, sheets:[{sheetId,name,setId}] } | { ok:false, why }   why: ONE plain line (the piece was released / the sheet is already cut)
      .onChange(fn) -> unsubscribe          fn({ rids, sheetIds }) after the held set changed (a mark, a resolve, a piece moved, a reload)
      .inReview(rid) -> boolean            the order is in Review and not resolved (sync); automatic movers (Hold's fill) leave such an order where it is
+     .keepsPlace(rid) -> boolean           in Review, or its Review was just answered by a pick: a saved link / an "Order changed" card never lifts its piece off a sheet (bridge Pool.keepsPlace)
      .openInReview(rid) -> boolean         opens that order's card in the Review tab
      .reason(rid) -> '' | 'In Review: ...' (readiness' source)      .overlay(record) -> record with the stop on its orderReadiness      .overlayFlow(record) -> the same, and its laser report
    Pure of its page: every lookup is made when asked (root.CharmNestReviewMark, root.OrderPieces, root.CharmNestReadiness), so the script order does not matter and a page without them is
@@ -40,6 +41,12 @@
   };
   const isMarked = rid => { const M = MARK(); rid = ridOf(rid); return !!(rid && M && typeof M.isMarked === 'function' && safe(() => M.isMarked(rid), false)); };
   const markWhy = rid => { const M = MARK(); const w = safe(() => (M && typeof M.reasonOf === 'function' ? String(M.reasonOf(rid) || '') : ''), ''); return w.replace(/\s+/g, ' ').trim().slice(0, 120); };
+  /** The order's pieces keep their place on their sheet: it is in Review, or a person just answered its Review by picking the charm (the saved link that pick makes must not lift the piece off its sheet to make it up again). Derived from the review record, as isMarked is. */
+  function keepsPlace(rid) {
+    rid = ridOf(rid); if (!rid) return false; if (isMarked(rid)) return true;
+    const M = MARK(); const i = M && typeof M.info === 'function' ? safe(() => M.info(rid), null) : null;
+    return !!(i && i.state === 'done' && i.how === 'pick');
+  }
   /** The line readiness reads an order in Review by ('' when it is not): always starts "In Review". */
   function reason(rid) { rid = ridOf(rid); if (!rid || !isMarked(rid)) return ''; const w = markWhy(rid); return w ? `In Review: ${w}` : 'In Review'; }
 
@@ -177,5 +184,5 @@
     let tries = 0; const t = setInterval(() => { wire(); if (wired || ++tries > 40) clearInterval(t); }, 500);
   }
 
-  return { inReview: isMarked, heldBy, isHeld, reasonFor, sheetsHeldBy, canHold, onChange, openInReview, reason, overlay, overlayFlow, _check: check, _reset: () => { sig = null; prev = new Map(); asked.clear(); subs.clear(); wired = false; } };
+  return { inReview: isMarked, keepsPlace, heldBy, isHeld, reasonFor, sheetsHeldBy, canHold, onChange, openInReview, reason, overlay, overlayFlow, _check: check, _reset: () => { sig = null; prev = new Map(); asked.clear(); subs.clear(); wired = false; } };
 });

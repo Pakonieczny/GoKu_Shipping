@@ -8,7 +8,8 @@ globalThis.CharmNestReviewHold = H;
 
 // ── the review record (stub of charm-nest-review-mark.js) and the pieces (stub of OrderPieces) ──
 const open = new Set(), markSubs = [], pieceSubs = [], pcs = {};
-globalThis.CharmNestReviewMark = { isMarked: r => open.has(String(r)), markedRids: () => [...open], reasonOf: r => open.has(String(r)) ? 'Sent to Review by Name One' : '', onChange: f => { markSubs.push(f); return () => {}; } };
+const doneHow = new Map();   // rid -> how a resolved review was answered ('pick' | 'ok')
+globalThis.CharmNestReviewMark = { info: r => open.has(String(r)) ? { rid: String(r), state: 'open' } : doneHow.has(String(r)) ? { rid: String(r), state: 'done', how: doneHow.get(String(r)) } : null, isMarked: r => open.has(String(r)), markedRids: () => [...open], reasonOf: r => open.has(String(r)) ? 'Sent to Review by Name One' : '', onChange: f => { markSubs.push(f); return () => {}; } };
 globalThis.OrderPieces = { of: rid => pcs[rid] || [], subscribe: f => { pieceSubs.push(f); }, load: () => Promise.resolve() };
 const mark = rid => { open.add(rid); markSubs.forEach(f => f({ rid, kind: 'mark' })); };
 const unmark = rid => { open.delete(rid); markSubs.forEach(f => f({ rid, kind: 'resolve' })); };
@@ -166,5 +167,60 @@ const A = '9100000001', B = '9100000002';
   refusal = await gctx.approveGate([{ type: 'seal', kind: 'sheet', id: 'sheet2' }]); assert.equal(refusal, null, 'a sheet of another order is not held by it');
   reviewDocs.get(rid1).review.state = 'done';
   assert.equal(await gctx.approveGate([{ type: 'seal', kind: 'sheet', id: 'sheet1' }]), null, 'resolved: approved by itself');
+
+  // 11. the saved link / "Order changed" card never lifts a piece off a sheet for an order in Review, or one just answered by a pick (bridge Pool.keepsPlace + repoolLine)
+  { const K = H.keepsPlace; const rid = '4197740562';
+    assert.equal(K(rid), false, 'not in Review: nothing is kept');
+    mark(rid); assert.equal(K(rid), true, 'in Review: keeps its place');
+    unmark(rid); doneHow.set(rid, 'pick'); assert.equal(K(rid), true, 'just answered by a pick: keeps its place');
+    doneHow.set(rid, 'ok'); assert.equal(K(rid), false, 'marked OK: the saved link has nothing to do with it');
+    doneHow.delete(rid); assert.equal(K(rid), false); assert.equal(K(''), false); assert.equal(K(null), false);
+    const OLD = 'CELESTIAL3-COMET', NEW = 'CELESTIAL 3 - COMET', LID = '1687890868', TITLE = 'Comet Pendant Charm Necklace';
+    const O = require('../../charm-nest-orders.js'), keyWorld = require('./_keyWorld.cjs')(require('path').join(__dirname, '../..')), { DESIGNS, world, lineRow } = keyWorld, F = require('./pairs-fixtures.cjs');
+    const real = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, 'fixtures/comet-master-entries.json'), 'utf8')).entries;
+    const lib = new Map(real.map(e => [e.sku, e])), loose = {}; for (const k of lib.keys()) { const l = O.looseKey(k); loose[l] = l in loose ? '' : k; };
+    const ctx = aliases => ({ optionMaps: {}, aliases, noDesign: { patterns: [], skus: [] }, customDone: {}, customRead: {}, customDecided: {}, listingSkus: {}, masterEntry: s => lib.get(String(s || '').toUpperCase()) || null, masterLoose: s => loose[O.looseKey(s)] || '' });
+    const line = { transactionId: '5246703786', listingId: LID, sku: 'Celestial3-Comet', title: TITLE, quantity: 1, metalKey: 'silver', metalLabel: 'Silver', personalization: [], buyerMessage: '', variations: [{ name: 'Metal Choice', value: 'Silver' }] };
+    DESIGNS[OLD] = () => F.charmOf('ONE-PENDANT'); DESIGNS[NEW] = () => F.charmOf('PAIR-HOOP'); DESIGNS['COMET_9427'] = () => F.charmOf('PAIR-HOOP');
+    const worldOf = () => {
+      const w = world([OLD, NEW, 'COMET_9427']), reviews = [], timeline = [], toasts = [], calls = [];
+      w.c.Review = { add: it => reviews.push(it) }; w.c.B.review = { items: reviews }; w.c.Sets = { ofRun: () => [] }; w.c.Gate = { modern: () => false };
+      w.c.TL = { line: (row, type, o) => { timeline.push({ type, o }); return true; }, hash: x => String(x).length.toString(36) };
+      w.c.window.CharmNestReviewHold = H; return Object.assign(w, { reviews, timeline, toasts, calls });
+    };
+    const rowOf = () => { const spec = O.interpretLine({ receiptId: rid, updateTs: 1 }, line, ctx({ [LID]: { v: 2, bySku: { [OLD]: NEW }, by: 'X' } })); spec.material = 'gold'; return Object.assign(lineRow(rid, '5246703786', spec.designSku, 1, {}), { spec, line: { transactionId: line.transactionId, listingId: LID, sku: line.sku, title: TITLE } }); };
+    const placed = (w, row, onSheet) => { const id = rid + '_5246703786_1'; row.poolIds = [id]; w.c.B.pool.rows.set(id, { poolId: id, state: 'ready', sku: OLD, copy: 1, quantity: 1, charmHash: 'x' }); if (onSheet) { w.pages.gold.charms.push({ poolId: id }); w.pages.gold.draft = true; w.pages.gold.fileBase = 'SS Draft 2'; } return id; };
+    const logsOf = w => w.logs.filter(t => /stays on its sheet/.test(t)).length;
+    // (a) not in Review: an open sheet is still offered the card, as before
+    { const w = worldOf(), row = rowOf(); placed(w, row, true); w.Pool.pinPooled(row); assert.deepEqual([row.changePending, row.repoolChanged, w.reviews.length], [true, true, 1], 'baseline: offered'); }
+    // (b) in Review, on an open sheet: no card, nothing flagged, said once in the log and once on the timeline; asked again it says nothing more
+    mark(rid);
+    { const w = worldOf(), row = rowOf(), id = placed(w, row, true); w.Pool.pinPooled(row); w.Pool.pinPooled(row);
+      assert.deepEqual([row.changePending || false, row.repoolChanged || false, w.reviews.length, row.poolIds], [false, false, 0, [id]], 'in Review on a sheet: no card, the piece stays');
+      assert.equal(logsOf(w), 1, 'said once in the log'); assert.equal(w.timeline.length, 1); assert.match(w.timeline[0].o.text, /^Saved link: a saved link makes this line CELESTIAL 3 - COMET, but its piece stays on its sheet because the order was sent to Review/);
+      assert.equal(w.pages.gold.charms.length, 1, 'the sheet is untouched'); assert.equal(w.calls.filter(c => /pool|sheet/i.test((c.body && c.body.op) || '')).length, 0, 'nothing written'); }
+    // (c) in Review but its piece is not on a sheet yet: the card is offered as before (nothing to lift)
+    { const w = worldOf(), row = rowOf(); placed(w, row, false); w.Pool.pinPooled(row); assert.equal(w.reviews.length, 1, 'no piece on a sheet: nothing to keep'); }
+    // (d) just answered by a pick, piece on an open sheet: still no card
+    unmark(rid); doneHow.set(rid, 'pick');
+    { const w = worldOf(), row = rowOf(); placed(w, row, true); w.Pool.pinPooled(row); assert.deepEqual([row.repoolChanged || false, w.reviews.length], [false, 0], 'after a pick: no card'); }
+    doneHow.set(rid, 'ok');
+    { const w = worldOf(), row = rowOf(); placed(w, row, true); w.Pool.pinPooled(row); assert.equal(w.reviews.length, 1, 'marked OK: the card is offered as before'); }
+    // (e) a card already offered, then the order goes to Review (or is picked): Accept the new order keeps the piece where it is (never lifted, never nested again)
+    for (const state of ['review', 'pick']) {
+      const w = worldOf(), row = rowOf(), id = placed(w, row, true); doneHow.delete(rid); unmark(rid); w.Pool.pinPooled(row); assert.equal(row.repoolChanged, true, 'offered first');
+      if (state === 'review') mark(rid); else doneHow.set(rid, 'pick');
+      const src = keyWorld.src, a = src.indexOf('async function repoolLine(row) {'), b = src.indexOf('\n  const by = () => employeeName()', a); assert(a > 0 && b > a, 'repoolLine is where the test expects it');
+      const updates = []; Object.assign(w.c, { CNListActivity: { touch() {} }, syncOrderItems() {}, renderRail() {}, updateTopSub() {}, refreshAllCards() {}, OrderWin: { isOpen: () => false }, toast: m => w.toasts.push(m), sheetName: sh => sh.fileBase, add() {}, RunCtl: { poke() {} }, Orders: { interpretAll() {}, render() {}, keepRest() {} } });
+      w.c.Pool = Object.assign({}, w.Pool, { update: async (ids, patch) => { updates.push({ ids, patch }); } });
+      w.c.window.Pool = w.c.Pool; w.c.B.run = null; w.c.Sets = { ofRun: () => [] }; w.c.Gate = { modern: () => false }; w.c.allSheets = () => Object.values(w.pages);
+      require('vm').runInContext(src.slice(a, b) + '\nwindow.__repoolLine = repoolLine;', w.c);
+      row.hold = null; await w.c.window.__repoolLine(row);
+      assert.deepEqual([row.poolIds, row.repoolChanged, row.changePending, updates.length, w.pages.gold.charms.length], [[id], false, false, 0, 1], `${state}: the piece is not lifted, not superseded, not made up again`);
+      assert.equal(w.toasts.length, 1); assert.match(w.toasts[0], /^Kept on its sheet with its old drawing: the order was sent to Review$/); assert.equal(row.state !== 'pulled', true, 'it was not made up again (no re-pool)');
+    }
+    // (f) a piece cut or released is never touched: the old held-by-hand path still answers it
+    unmark(rid); doneHow.delete(rid);
+  }
   console.log('review-hold: ok');
 })().catch(e => { console.error(e); process.exit(1); });
