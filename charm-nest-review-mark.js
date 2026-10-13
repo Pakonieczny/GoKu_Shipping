@@ -172,6 +172,10 @@
     return out.sort((a, b) => b.t - a.t).slice(0, 200);
   }
 
+  const rowHooks = new Set();
+  /** onRow(fn): fn(node, item) is called each time a Review row of an open mark is BUILT (the row is kept while it reads the same), after its slots exist: REVSUGGEST fills the slots there. Returns an unsubscribe. */
+  function onRow(fn) { if (typeof fn !== "function") return () => {}; rowHooks.add(fn); return () => rowHooks.delete(fn); }
+
   /** A Review row of an open mark (Review.reviewRow, once, when it is built): one empty slot for each line, where the suggested charms go (REVSUGGEST; an empty slot is nothing), and the one button that says the match was right. */
   function decorateRow(node, it) {
     try {
@@ -197,6 +201,7 @@
         };
         acts.appendChild(b);
       }
+      for (const fn of [...rowHooks]) { try { fn(node, it); } catch (e) { console.warn("[ReviewMark] row hook", e); } }
     } catch (e) { console.warn("[ReviewMark] row", e); }
   }
 
@@ -210,5 +215,5 @@
   /** A sandbox reset cleared the records: forget them here too. */
   function reset() { const B = root.B; if (B && B.maps) B.maps.reviewMarks = {}; seen.clear(); doneCache.clear(); }
 
-  root.CharmNestReviewMark = { mark, resolve, isMarked, markedRids, openRids: markedRids, info, reasonOf, onChange, open, itemsFor, doneSettled, decorateRow, sync, reset, _key: keyOf, _sandbox: sandbox };
+  root.CharmNestReviewMark = { mark, resolve, isMarked, markedRids, openRids: markedRids, info, reasonOf, onChange, onRow, open, itemsFor, doneSettled, decorateRow, sync, reset, _key: keyOf, _sandbox: sandbox };
 })(typeof window !== "undefined" ? window : globalThis);
