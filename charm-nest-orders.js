@@ -1128,7 +1128,7 @@
       if (plain.length === vw.length && vw.every(x => plain.includes(x))) put(k, 1, "named exactly like the option");
       else if (one) continue;
       else if (vw.every(x => set.has(x))) put(k, 2, "its name holds the option's words");
-      else if (lead && lead.length >= 4 && set.has(lead) && vw.length > 1) put(k, 4, `its name holds “${lead.toLowerCase()}”`);
+      else if (lead && lead.length >= 4 && set.has(lead) && vw.length > 1 && o.lead !== false) put(k, 4, `its name holds “${lead.toLowerCase()}”`);   // (o.lead false: the SKU-like list of REVSUGGEST, charm-nest-siblings.js similar, never a one-word guess)
     }
     // a letter: its member of every 26-letter family the master holds that is named for letters (INITIAL_*, LETTER_*), best fitting the line first (below)
     const li = letterIndex(o.value);

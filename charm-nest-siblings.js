@@ -126,5 +126,45 @@
     return { base, form: kind.family, noun, siblings, pair, rest, numbers, ask, why: `the SKU names no design, and the library holds ${base} ${numbers.join(", ")}`, says: !!kind.says };
   }
 
-  return { suggest, scan, index, numbered, lineKind, NUMBERED, TWO_CHARMS };
+  /* ═══ SIMILAR CHARMS for ANY order in Review (REVSUGGEST, 12 Oct 2026) ═══════════════════════════════════════════════════
+     Paul, 12 Oct 2026: "every time an order goes into the review tab ... the system should identify and present to the user multiple options that match the current SKU ... If there are no similar matches
+     for charm SKU then don't show any suggestive charms." The numbered designs above only answer a necklace whose SKU is the base of "X 1", "X 2". This is the same kind of list for every other line, matched or not
+     (an order a person sends to Review because its charm looks wrong is matched already): the library's charms that read like the line's own SKU, composed from what the page already has and nothing new:
+       · the master SKUs that read the same with spacing and punctuation set aside (Master.likeFor, LOOKALIKE: "CELESTIAL3-COMET" and "CELESTIAL 3 - COMET"),
+       · the master SKUs named exactly like the SKU, or whose name holds ALL its words (CharmNestOrders.suggestCharms, the list Review's option cards already offer),
+       · not a blocked design, not another FORM's design (the form guard, formOk: a necklace never sees a huggie design), one entry for a drawing that has several names (a person has nothing to choose),
+       · at most `max` (8) are listed, the rest only counted ("and N more"); a name that fits more than 12 designs is a word, not a design: only the exact and the same-reading ones stay.
+     It only SUGGESTS: nothing here picks a design, writes, reads the cloud, calls Etsy or an AI; the caller's tap is the person's pick (the saved link, aliasPut). A line with no SKU, or one whose SKU is the shop's
+     shared charm-only placeholder (genericSku), has nothing to be similar to: no list (never guessed from the title: Paul, 12 Oct 2026, "no exact match = no match").
+     o: { skus: the master's SKUs (any iterable), like?: sku → master SKUs that read the same, blocked?: sku → bool, formOk?: sku → bool, entryFor?: sku → master entry (one entry per drawing),
+          current?: the master SKUs the line is matched to now (marked, listed first), exclude?: SKUs another offer of the same row already lists, max?, base?: the SKU to read (default the line's) }
+     → null (nothing similar to choose from) | { base, choices: [{ sku, why, current }], extra: n (similar ones not listed) } */
+  const SIMILAR_MAX = 8, WORD_FITS = 12;
+  function similar(line, o) {
+    o = o || {}; if (!line) return null;
+    const oo = O(); if (!oo || typeof oo.suggestCharms !== "function") return null;
+    const raw = up(o.base != null ? o.base : line.sku); if (!raw) return null;
+    if (typeof oo.genericSku === "function" && oo.genericSku(raw)) return null;
+    const base = (typeof oo.variationBase === "function" && oo.variationBase(raw)) || raw, max = o.max > 0 ? Math.floor(o.max) : SIMILAR_MAX;
+    const cur = [...new Set((o.current || []).map(up).filter(Boolean))], gone = new Set((o.exclude || []).map(up));
+    const ok = k => !(typeof o.blocked === "function" && o.blocked(k)) && !(typeof o.formOk === "function" && !o.formOk(k));
+    const same = (a, b) => { try { return typeof o.entryFor === "function" && oo.sameDesign ? oo.sameDesign(a, b, o.entryFor) : a === b; } catch (_) { return a === b; } };
+    const found = [], seen = new Set();
+    const add = (sku, why, rank) => { const k = up(sku); if (!k || seen.has(k) || gone.has(k)) return; seen.add(k); if (cur.includes(k) || ok(k)) found.push({ sku: k, why, rank }); };
+    for (const k of typeof o.like === "function" ? o.like(base) || [] : []) add(k, "reads the same without its spacing and punctuation", 0);
+    let named = []; try { named = oo.suggestCharms({ value: base, line, skus: o.skus || [], max: 400, lead: false }) || []; } catch (_) { named = []; }
+    const words = named.filter(x => !/^named exactly/.test(x.why || ""));
+    const keepWords = words.length <= WORD_FITS;
+    for (const x of named) { const exact = /^named exactly/.test(x.why || ""); if (exact || keepWords) add(x.sku, exact ? "named like the SKU" : "its name holds all the words of the SKU", exact ? 1 : 2); }
+    // one entry for a drawing that carries several names: the line's own current name first, else the best ranked
+    const out = [];
+    for (const x of found) { const twin = out.findIndex(y => same(x.sku, y.sku)); if (twin < 0) out.push(x); else if (cur.includes(x.sku) && !cur.includes(out[twin].sku)) out[twin] = x; }
+    const others = out.filter(x => !cur.includes(x.sku));
+    if (!others.length) return null;
+    const mine = cur.map(k => out.find(x => x.sku === k) || { sku: k, why: "matched now", rank: -1 }).filter(x => !others.includes(x) && !gone.has(x.sku));
+    const shown = others.slice(0, max);
+    return { base, choices: mine.map(x => ({ sku: x.sku, why: x.why, current: true })).concat(shown.map(x => ({ sku: x.sku, why: x.why, current: false }))), extra: others.length - shown.length };
+  }
+
+  return { suggest, scan, index, numbered, lineKind, similar, NUMBERED, TWO_CHARMS };
 });
