@@ -30,6 +30,19 @@
  *  Dependencies are injected (make({ db, FV, bucket, etsy:{get,put}, meter, now, timeoutMs?, maxCalls? })), so a test runs on fakes and needs no token;
  *  `ops` builds the real ones on first use exactly as _charmNestEtsySku.js does.
  *
+ *  LEAVE THE HUGGIE PRODUCTS ALONE (DOVEHUG, 13 Oct 2026; Paul, 18:09 UTC, listing 1816178147: "This listing also has a Huggie option so what I'm asking for is only the Necklace option"):
+ *  an OPTIONAL request flag, off unless a queue entry carries it (charm-nest-etsy-queue.json "leaveHuggie": true, "huggieOldSku": "DOVE 4"); every other request is exactly what it was.
+ *    { listingId, sku, by, leaveHuggie: true, huggieOldSku? }  →  the products with a Huggie option value (a value naming Huggie, any case: the app's own word, charm-nest-orders.js HUGG_WORD)
+ *    are NOT part of the key write. Every other product takes the key. A Huggie product that carries the key right now (an earlier replace-all press put it there) goes BACK to its old SKU:
+ *    what the FIRST safety copy of the listing says for that product (the listing as it was before any write of ours: record.backups[0], else the conventional -before.json name; matched by
+ *    option text, else by product id), else the request's own huggieOldSku; a product with neither is left alone and reported (`huggie.left`). A Huggie product that does not carry the key is
+ *    never touched. All of it is ONE PUT with every rule above (read first, a NEW safety copy that never overwrites the first, echo compared product by product, repo password). Only `sku` changes,
+ *    with ONE exception Etsy itself demands: SKUs can differ between products only over the properties named in sku_on_property, so when the planned SKUs differ where the listing does not
+ *    declare it (a listing with ONE SKU everywhere declares none), sku_on_property is widened to ALL the listing's properties (value-preserving: every product carries its own SKU, exactly the
+ *    widening the rule above already does for the other lists). An earlier plain press leaves a "linked" record; a request with the flag reads the listing live instead of trusting it (once:
+ *    the record it leaves carries leaveHuggie, and from then on the record answers "already" with no Etsy call).
+ *    "Already there" = every non-Huggie product carries the key and no Huggie product does, no write. Answer adds  huggie: { products, keyed, restored: [{ sku, n }], left }.
+ *
  *  The record (Charm_Custom_Saves/link-{listingId}; no buyer data): { kind, listingId, sku, by, at, earlier[], link:{ state, at, calls, ... } }
  *  link.state: pending | writing (the before-copy is safe, the PUT is leaving or has left) | linked | failed | unverified (the PUT may have landed: a later press
  *  reads the listing first; it links when the SKU is there, sends once more ONLY if the listing is still exactly as the before-copy was, and otherwise stops).
@@ -49,7 +62,7 @@ const { decodeOnce, buildPutBody, selfCheck, compareInventories, looksLikeFreshI
 const SAVES = "Charm_Custom_Saves", MIRROR = "EtsyMail_Listings", SITE = "custom.skuLink";
 const MAX_CALLS = 3, TIMEOUT_MS = 8000, LEASE_MS = 60000, MAX_ATTEMPTS = 3, ETSY_SKU_MAX = 32;
 const LISTING_RE = /^\d{3,20}$/, PLAIN_SKU = /^[\x21-\x7e]+(?: [\x21-\x7e]+)*$/;   // printable ASCII words, one space between them, none at either end
-const CARRY = ["attempts", "backups", "beforePath", "beforeHash", "beforeCanon", "products", "putSent", "replaced", "replacedMore"];   // what a `link` record keeps from one run to the next
+const CARRY = ["attempts", "backups", "beforePath", "beforeHash", "beforeCanon", "products", "putSent", "replaced", "replacedMore", "huggie"];   // what a `link` record keeps from one run to the next
 
 const REASONS = {
   scope: { text: "Etsy refused the change. Paul needs to re-authorise Etsy with listings_w", retry: true, needs: "listings_w" },
@@ -69,6 +82,8 @@ const REASONS = {
   sandbox: { text: "nothing is written to Etsy from the sandbox", retry: false },
   "sku-not-in-master": { text: "that SKU is not in the master repository", retry: false },
   "sku-blocked": { text: "that master design is blocked until its conflict is settled", retry: false },
+  "huggie-unknown": { text: "Huggie products carry the SKU and no earlier SKU is known for them, so they were left alone and nothing was changed", retry: false },
+  "only-huggie": { text: "every product of the listing is a Huggie product, so none takes the SKU and nothing was changed", retry: false },
   "sku-shape": { text: o => "Etsy would not keep that SKU as it is" + (o.details && o.details[0] ? " (" + o.details[0] + ")" : ""), retry: false },
   "bad-request": { text: "the request is not complete: a listing (number or link) and a master SKU", retry: false },
   internal: { text: "the change was stopped by a safety check", retry: false }
@@ -127,6 +142,74 @@ function skuProblem(sku) {
 const linkId = listingId => "link-" + listingId;
 const slug = sku => sku.replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "SKU";
 
+/* ── LEAVE THE HUGGIE PRODUCTS ALONE (DOVEHUG): the pure parts ── */
+const HUGGIE_WORD = /\bhugg(?:ie|y|ies)\b/i;   // the app's own word for a huggie (charm-nest-orders.js HUGG_WORD), tested on the products' option VALUES
+const idsOf = x => (Array.isArray(x) ? x : []).map(Number).filter(Number.isFinite);
+const listKey = x => JSON.stringify([...new Set(idsOf(x))].sort((a, b) => a - b));
+const skuText = p => decodeOnce(p && p.sku != null ? p.sku : "");   // (as the PUT sends an untouched product's SKU: HTML-escaping undone once, nothing trimmed)
+/** A product the rule leaves out of the key write: one of its option values names a huggie ("Huggie CHARM SET"). */
+const isHuggieProduct = p => (Array.isArray(p && p.property_values) ? p.property_values : []).some(v => (Array.isArray(v && v.values) ? v.values : []).some(x => HUGGIE_WORD.test(decodeOnce(String(x)))));
+/** Why a stated old SKU cannot be put on Etsy as written ("" = it can): the shape Etsy keeps as written, and not the SKU being written. */
+function oldSkuProblem(old, key) {
+  if (old.length > ETSY_SKU_MAX) return "longer than Etsy's " + ETSY_SKU_MAX + " characters";
+  if (!PLAIN_SKU.test(old)) return "it has a space at an end, two spaces in a row or a character Etsy may trim";
+  if (old === key) return "it is the SKU being written";
+  return "";
+}
+/** The product of an earlier copy of the listing that is this product: the same option text, else the same product id (each only when it names exactly one). */
+function matchEarlier(list, p) {
+  const k = Canon.comboKey(p);
+  let hit = k ? list.filter(b => Canon.comboKey(b) === k) : [];
+  if (hit.length !== 1) { const id = p.product_id == null ? "" : String(p.product_id); hit = id ? list.filter(b => String(b.product_id) === id) : []; }
+  return hit.length === 1 ? hit[0] : null;
+}
+/** Do the planned SKUs agree with the properties the listing declares its SKU varies over? (Etsy: products that share every declared property's value must share the SKU.) */
+function skuConsistent(live, target, declared) {
+  const d = new Set(idsOf(declared)), seen = new Map();
+  for (const p of live) {
+    const g = (Array.isArray(p.property_values) ? p.property_values : []).filter(v => d.has(Number(v.property_id))).map(v => Number(v.property_id) + ":" + (Array.isArray(v.values) ? v.values : []).map(String).join("/")).sort().join("|"), t = target(p);
+    if (seen.has(g) && seen.get(g) !== t) return false;
+    seen.set(g, t);
+  }
+  return true;
+}
+/** [{ sku, n }] of the restored values, biggest first. */
+function restoredGroups(restore) {
+  const by = new Map();
+  for (const v of restore.values()) by.set(v, (by.get(v) || 0) + 1);
+  return [...by.entries()].map(([sku, n]) => ({ sku, n })).sort((a, b) => b.n - a.n || (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0));
+}
+const huggieInfoOf = plan => (plan.huggie.size ? { products: plan.huggie.size, keyed: plan.keyed.length, restored: restoredGroups(plan.restore), left: plan.left.length } : null);
+/** The body of the one PUT under the rule: buildPutBody's proven body for the products that take the key, the Huggie products that go back with their old SKU, everything else as read.
+ *  → { body, invB, keySet, widen, target } (invB: the inventory with sku_on_property widened to every property when the planned SKUs need it) */
+function ruleBuild(inv, live, key, plan) {
+  const order = Canon.productPropertyOrder({ products: live });
+  const target = p => (plan.restore.has(p) ? plan.restore.get(p) : plan.huggie.has(p) ? skuText(p) : key);
+  const widen = !skuConsistent(live, target, inv.sku_on_property);
+  const invB = widen ? Object.assign({}, inv, { sku_on_property: order.slice() }) : inv;
+  const keySet = new Set(plan.keyed);
+  const body = buildPutBody(invB, live, keySet, key);
+  live.forEach((p, i) => { if (plan.restore.has(p)) body.products[i].sku = plan.restore.get(p); });
+  return { body, invB, keySet, widen, target };
+}
+/** The rule's body against what was read, apart from buildPutBody: selfCheck's field-by-field check on the body with the restored SKUs set back to what was read, then every product's SKU, then the SKU declaration. → [reasons] */
+function ruleProblems(inv, live, key, plan, built) {
+  const { body, invB, keySet, widen, target } = built;
+  const asRead = Object.assign({}, body, { products: body.products.map((b, i) => (plan.restore.has(live[i]) ? Object.assign({}, b, { sku: skuText(live[i]) }) : b)) });
+  const bad = selfCheck(invB, live, asRead, keySet, key);
+  live.forEach((p, i) => {
+    const got = body.products[i] && body.products[i].sku, k = "product " + (i + 1);
+    if (plan.restore.has(p)) { const v = plan.restore.get(p); if (got !== v || v.length > ETSY_SKU_MAX || v.trim() === "" || v.trim() === key) bad.push(k + " restored sku"); }
+    else if (plan.huggie.has(p)) { if (got !== skuText(p)) bad.push(k + " huggie sku moved"); }
+    else if (got !== key) bad.push(k + " sku");
+  });
+  const order = Canon.productPropertyOrder({ products: live });
+  const was = idsOf(inv.sku_on_property), full = listKey(body.sku_on_property) === listKey(order);   // (as read; or every property: by this rule when the SKUs differ, or by the proven widening of a partial list beside a full one)
+  if (!(listKey(body.sku_on_property) === listKey(inv.sku_on_property) || (full && (widen || (was.length > 0 && was.length < order.length))))) bad.push("sku_on_property");
+  if (!skuConsistent(live, target, body.sku_on_property)) bad.push("sku_on_property does not cover how the SKUs differ");
+  return bad;
+}
+
 function make(deps) {
   const { db, bucket, etsy, meter } = deps;
   const clock = typeof deps.now === "function" ? deps.now : Date.now;
@@ -134,7 +217,7 @@ function make(deps) {
   const maxCalls = deps.maxCalls > 0 ? Math.min(deps.maxCalls, MAX_CALLS) : MAX_CALLS;   // (a test may only LOWER the cap)
 
   /* the record is read, checked and the run claimed in ONE transaction: a second press while a run is in flight is refused (a lease of 60 s) */
-  async function claim(ref, listingId, sku, by) {
+  async function claim(ref, listingId, sku, by, leave) {
     const t = clock();
     return db.runTransaction(async tx => {
       const snap = await tx.get(ref), d = snap.exists ? snap.data() || {} : null;
@@ -144,7 +227,12 @@ function make(deps) {
         earlier = earlier.concat([{ sku: d.sku, state: prev.state, beforePath: prev.beforePath || null, at: prev.at || d.at || null }]).slice(-5);
         prev = { state: "pending" };
       }
-      if (prev.state === "linked") return { linked: { prev } };
+      if (prev.state === "linked") {
+        if (!leave || prev.leaveHuggie === true) return { linked: { prev } };
+        // an earlier plain press put the key on EVERY product and left this record: a request that leaves the Huggie products alone is a new job on a listing that press finished (the listing is read live, not trusted from the record);
+        // only the names of the safety copies carry over (the first one is the listing as it was before any write of ours)
+        prev = clean({ state: "pending", backups: prev.backups, kept: clean(prev) });   // (`kept`: that press's whole record, put back as it was, plus the rule's mark, if this run finds no Huggie product at all)
+      }
       if (+prev.runningUntil > t) return { refusal: "running" };
       if (prev.state === "failed" && (prev.reason === "rejected" || prev.reason === "verify")) return { blocked: prev };   // never sent again unchanged: a person looks first
       if ((+prev.attempts || 0) >= MAX_ATTEMPTS) return { refusal: "attempts" };
@@ -160,7 +248,7 @@ function make(deps) {
       return typeof v === "string" && v.trim() ? v.trim().toLowerCase() : null;
     } catch (_) { return null; }
   }
-  const linkedAnswer = (listingId, sku, prev) => ({ ok: true, state: "linked", calls: 0, listingId, sku, productIds: (Array.isArray(prev.productIds) ? prev.productIds : []).map(String), products: +prev.products || 0, verified: prev.verified !== false, ...(prev.already ? { already: true } : {}), ...(prev.beforePath ? { beforePath: prev.beforePath } : {}), ...(Array.isArray(prev.replaced) && prev.replaced.length ? { replaced: prev.replaced.map(g => ({ sku: String(g.sku == null ? "" : g.sku), n: +g.n || 0 })), ...(+prev.replacedMore > 0 ? { replacedMore: +prev.replacedMore } : {}) } : {}) });
+  const linkedAnswer = (listingId, sku, prev) => ({ ok: true, state: "linked", calls: 0, listingId, sku, productIds: (Array.isArray(prev.productIds) ? prev.productIds : []).map(String), products: +prev.products || 0, verified: prev.verified !== false, ...(prev.already ? { already: true } : {}), ...(prev.leaveHuggie === true && prev.huggie && typeof prev.huggie === "object" ? { huggie: prev.huggie } : {}), ...(prev.beforePath ? { beforePath: prev.beforePath } : {}), ...(Array.isArray(prev.replaced) && prev.replaced.length ? { replaced: prev.replaced.map(g => ({ sku: String(g.sku == null ? "" : g.sku), n: +g.n || 0 })), ...(+prev.replacedMore > 0 ? { replacedMore: +prev.replacedMore } : {}) } : {}) });
 
   async function listingEtsySkuWrite(body) {
     body = body && typeof body === "object" ? body : {};
@@ -168,6 +256,8 @@ function make(deps) {
     const listingId = listingIdOf(body.listingId), sku = typeof body.sku === "string" ? body.sku : "";
     if (!listingId || !sku) return answer("bad-request");
     const shape = skuProblem(sku); if (shape) return answer("sku-shape", { details: [shape] });
+    const leave = body.leaveHuggie === true, oldSku = leave && typeof body.huggieOldSku === "string" ? body.huggieOldSku : "";   // (DOVEHUG: the optional rule; anything but true leaves the request exactly as it always was)
+    if (oldSku) { const bad = oldSkuProblem(oldSku, sku); if (bad) return answer("sku-shape", { details: ["the Huggie products' old SKU: " + bad] }); }
     const by = String(body.by == null ? "" : body.by).replace(/[^\w .'-]/g, "").trim().slice(0, 80) || "operator";
     try {   // the master holds EXACTLY this SKU (the entry's own spelling), and it is not blocked
       const s = await db.collection(Master.INDEX).doc(sku).get(), e = s.exists ? s.data() || {} : null;
@@ -176,16 +266,41 @@ function make(deps) {
     } catch (e) { console.error("[etsyLink] master read", listingId, e && e.message); return answer("internal", { details: [e && e.message] }); }
     const ref = db.collection(SAVES).doc(linkId(listingId));
     let got;
-    try { got = await claim(ref, listingId, sku, by); } catch (e) { console.error("[etsyLink] claim", listingId, e && e.message); return answer("internal", { details: [e && e.message] }); }
+    try { got = await claim(ref, listingId, sku, by, leave); } catch (e) { console.error("[etsyLink] claim", listingId, e && e.message); return answer("internal", { details: [e && e.message] }); }
     if (got.refusal) return answer(got.refusal);
     if (got.blocked) return answer(got.blocked.reason, { details: got.blocked.details, beforePath: got.blocked.beforePath, skuMissing: got.blocked.skuMissing });
     if (got.linked) return linkedAnswer(listingId, sku, got.linked.prev);
-    const out = await run(ref, listingId, sku, got.prev, got.lease);
+    const out = await run(ref, listingId, sku, got.prev, got.lease, leave ? { old: oldSku } : null);
     if (out.calls && meter && typeof meter.flushNow === "function") { try { await meter.flushNow(); } catch (_) { /* the counters are best effort */ } }
     return out;
   }
 
-  async function run(ref, listingId, sku, prev, lease) {
+  /** The first safety copy of the listing (the listing as it was before any write of ours): the oldest name the record keeps, else the conventional one → its live products, or null when it cannot be read. */
+  async function firstCopy(listingId, sku, cur) {
+    const dir = "charmnest/custom-saves/" + listingId + "/";
+    const named = (Array.isArray(cur.backups) ? cur.backups : []).filter(x => typeof x === "string" && x.startsWith(dir) && x.endsWith(".json"));
+    for (const path of [named[0], dir + "link-" + slug(sku) + "-before.json"].filter(Boolean)) {
+      try {
+        const j = JSON.parse((await bucket.file(path).download())[0].toString("utf8")), list = Array.isArray(j && j.products) ? j.products.filter(p => p && typeof p === "object" && !p.is_deleted) : [];
+        if (list.length) return list;
+      } catch (_) { /* the next name, else the request's own old SKU */ }
+    }
+    return null;
+  }
+  /** The rule's plan for these live products: who takes the key, which Huggie products carrying the key go back (and to what), which cannot (left alone). */
+  async function leavePlan(listingId, sku, live, rule, cur) {
+    const huggie = new Set(live.filter(isHuggieProduct)), carries = p => skuText(p).trim() === sku;
+    const keyed = live.filter(p => !huggie.has(p)), back = live.filter(p => huggie.has(p) && carries(p)), restore = new Map(), left = [];
+    const first = back.length ? await firstCopy(listingId, sku, cur) : null;
+    for (const p of back) {
+      const hit = first ? matchEarlier(first, p) : null, was = hit ? skuText(hit) : "";
+      const v = was.trim() && was.trim() !== sku && was.length <= ETSY_SKU_MAX ? was : rule.old;   // what the first copy says for this product, else the request's own old SKU; never anything else
+      if (v) restore.set(p, v); else left.push(p);
+    }
+    return { huggie, keyed, restore, left };
+  }
+
+  async function run(ref, listingId, sku, prev, lease, rule) {
     let calls = 0, putSent = false;
     let cur = {};   // the `link` record as this run writes it
     for (const k of CARRY) if (prev[k] !== undefined) cur[k] = prev[k];
@@ -232,30 +347,47 @@ function make(deps) {
       try { inv = await call(() => etsy.get("/listings/" + listingId + "/inventory", { legacy: false })); } catch (e) { return await stopOn(e); }
       const live = (Array.isArray(inv && inv.products) ? inv.products : []).filter(p => p && typeof p === "object" && !p.is_deleted);
       if (!live.length) return await stop("no-products");
-      const groups = skuGroups(live);   // what the products carry now (for the answer and the record when it is more than one SKU)
+      const plan = rule ? await leavePlan(listingId, sku, live, rule, cur) : null;   // (the rule: DOVEHUG; null = every product takes the key, as always)
+      if (plan && !plan.keyed.length) return await stop("only-huggie");
+      /* the rule on a listing with NO Huggie product at all (every product takes the key, as the earlier plain press did): a strict no-op, the plain press's own answer. One inventory read, no PUT, no safety copy;
+         the record keeps what that press left (only the rule's mark is added, so the next press answers from it with no Etsy request). */
+      if (plan && !plan.huggie.size && prev.kept && live.every(p => decodeOnce(p.sku == null ? "" : p.sku).trim() === sku)) {
+        const k = prev.kept, out = Object.assign(linkedAnswer(listingId, sku, k), { calls, already: true });
+        try { await ref.update({ link: clean(Object.assign({}, k, { leaveHuggie: true })) }); }
+        catch (e) { console.warn("[etsyLink] could not update the record for", listingId, e && e.message); out.recorded = false; }
+        return out;
+      }
+      const groups = skuGroups(plan ? plan.keyed : live);   // what the products that take the key carry now (for the answer and the record when it is more than one SKU)
+      const carries = p => decodeOnce(p.sku == null ? "" : p.sku).trim() === sku;
 
-      if (live.every(p => decodeOnce(p.sku == null ? "" : p.sku).trim() === sku)) {   // already on Etsy (an earlier try landed, or a person set it): no write
+      if (plan ? plan.keyed.every(carries) && !plan.restore.size : live.every(carries)) {   // already on Etsy (an earlier try landed, or a person set it): no write
+        if (plan && plan.left.length) return await stop("huggie-unknown", { details: [plan.left.length + " Huggie product" + (plan.left.length === 1 ? "" : "s") + " carry " + sku + " and no earlier SKU is known for " + (plan.left.length === 1 ? "it" : "them")] });
         let verified = false;
         if (cur.beforePath) {   // we wrote it: the live listing must be the before-copy with only the SKU changed
           let before = null;
           try { before = JSON.parse((await bucket.file(cur.beforePath).download())[0].toString("utf8")); } catch (_) { before = null; }
           const bl = before && Array.isArray(before.products) ? before.products.filter(p => p && !p.is_deleted) : null;
           if (bl && bl.length) {
-            const cmp = compareInventories(buildPutBody(before, bl, new Set(bl), sku), inv);
+            let expected;
+            if (plan) { const bp = await leavePlan(listingId, sku, bl, rule, cur); expected = ruleBuild(before, bl, sku, bp).body; }   // (what the rule would have sent for that copy)
+            else expected = buildPutBody(before, bl, new Set(bl), sku);
+            const cmp = compareInventories(expected, inv);
             if (!cmp.ok) return await stop("verify", { details: cmp.differences, beforePath: cur.beforePath });
             verified = true;
           }
         }
-        return await linked(listingId, sku, inv, live.length, calls, verified, settle, { already: !cur.beforePath || undefined, beforePath: cur.beforePath, replaced: cur.replaced, replacedMore: cur.replacedMore });
+        return await linked(listingId, sku, inv, live.length, calls, verified, settle, { already: !cur.beforePath || undefined, beforePath: cur.beforePath, replaced: cur.replaced, replacedMore: cur.replacedMore, ...(plan ? { leave: true, huggie: cur.huggie || huggieInfoOf(plan) } : {}) });
       }
       // an earlier try may have put: the listing must still be exactly as the before-copy was (Etsy did not apply it) before another PUT; anything else is for a person
       const canonNow = Canon.snapshotHash(inv);
       if (priorPut && cur.beforeCanon && canonNow !== cur.beforeCanon) return await stop("changed", { beforePath: cur.beforePath });
 
       /* 3 · the body, checked against what was read before it can leave */
-      const all = new Set(live), putBody = buildPutBody(inv, live, all, sku);
-      const problems = selfCheck(inv, live, putBody, all, sku);
+      let putBody, problems;
+      if (plan) { const built = ruleBuild(inv, live, sku, plan); putBody = built.body; problems = ruleProblems(inv, live, sku, plan, built); }
+      else { const all = new Set(live); putBody = buildPutBody(inv, live, all, sku); problems = selfCheck(inv, live, putBody, all, sku); }
       if (problems.length) return await stop("internal", { details: problems });
+      const info = plan ? huggieInfoOf(plan) : null;
 
       /* 4 · the before-copy, in Storage and on the record, BEFORE the PUT; if either fails, nothing is sent */
       let attempt = (+cur.attempts || 0) + 1, beforePath = "";
@@ -271,7 +403,7 @@ function make(deps) {
         await bucket.file(beforePath).save(Buffer.from(beforeText, "utf8"), { resumable: false, contentType: "application/json", metadata: { cacheControl: "no-store" } });
         const [there] = await bucket.file(beforePath).exists();
         if (!there) throw new Error("the safety copy is not in Storage after the save");
-        cur = Object.assign({}, cur, { attempts: attempt, backups: [...(Array.isArray(cur.backups) ? cur.backups : []), beforePath], beforePath, beforeHash, beforeCanon: canonNow, products: live.length, putSent: true }, replacedOf(groups));   // (the old SKUs are in the before-copy; the record says which and how many)
+        cur = Object.assign({}, cur, { attempts: attempt, backups: [...(Array.isArray(cur.backups) ? cur.backups : []), beforePath], beforePath, beforeHash, beforeCanon: canonNow, products: live.length, putSent: true }, replacedOf(groups), info ? { huggie: info } : {});   // (the old SKUs are in the before-copy; the record says which and how many)
         if (!(await settle("writing", {}, true))) throw new Error("the safety copy is not noted on the record");
       } catch (e) {
         console.warn("[etsyLink] backup failed for", listingId, e && e.message);
@@ -288,7 +420,7 @@ function make(deps) {
       if (!looksLikeFreshInventory(echo, putBody.products.length)) return await stop("unverified", { beforePath });
       const cmp = compareInventories(putBody, echo);
       if (!cmp.ok) return await stop("verify", { details: cmp.differences, skuMissing: cmp.differences.some(x => /SKU/.test(x)), beforePath });
-      return await linked(listingId, sku, echo, live.length, calls, true, settle, { beforePath, replaced: cur.replaced, replacedMore: cur.replacedMore });
+      return await linked(listingId, sku, echo, live.length, calls, true, settle, { beforePath, replaced: cur.replaced, replacedMore: cur.replacedMore, ...(plan ? { leave: true, huggie: info } : {}) });
     } catch (e) {
       console.error("[etsyLink]", listingId, e && e.message);
       return await stop("internal", { state: putSent ? "unverified" : undefined, details: [e && e.message] });
@@ -299,11 +431,12 @@ function make(deps) {
   async function linked(listingId, sku, readBack, n, calls, verified, settle, o) {
     const productIds = (Array.isArray(readBack && readBack.products) ? readBack.products : []).filter(p => p && !p.is_deleted).map(p => String(p.product_id == null ? "" : p.product_id)).filter(Boolean);
     const at = clock();
-    const recorded = await settle("linked", { productIds, verified, sku, products: n, already: o.already, putSent: undefined });
+    const recorded = await settle("linked", { productIds, verified, sku, products: n, already: o.already, putSent: undefined, ...(o.leave ? { leaveHuggie: true, huggie: o.huggie || undefined } : {}) });
     try { await db.collection(ListingSkus.COLL).doc(listingId).set(clean(ListingSkus.toStored(ListingSkus.compact(readBack, at)))); }
     catch (e) { console.warn("[etsyLink] SKU table not refreshed for", listingId, e && e.message); }
     const out = { ok: true, state: "linked", calls, listingId, sku, productIds, products: n, verified };
     if (o.already) out.already = true;
+    if (o.huggie) out.huggie = o.huggie;
     if (o.beforePath) out.beforePath = o.beforePath;
     if (Array.isArray(o.replaced) && o.replaced.length) { out.replaced = o.replaced; if (+o.replacedMore > 0) out.replacedMore = +o.replacedMore; }
     if (!recorded) out.recorded = false;   // Etsy has the SKU; only the record could not be updated (a press makes one GET and writes it)

@@ -19,14 +19,18 @@
       "key": "BEADY DOVE 4",
       "products": 12,
       "askedAt": "2026-10-13T02:17Z",
-      "note": "dove"
+      "note": "dove (Necklace and Engraving options only; the Huggie products keep or get back DOVE 4)",
+      "leaveHuggie": true,
+      "huggieOldSku": "DOVE 4"
     },
     {
       "listingId": "1801980518",
       "key": "BEADY CUTE LION",
       "products": 12,
       "askedAt": "2026-10-13T02:25Z",
-      "note": "lion"
+      "note": "lion (leaves Huggie products alone if it has any; none is proven)",
+      "leaveHuggie": true,
+      "huggieOldSku": "CUTE LION"
     },
     {
       "listingId": "4494184284",

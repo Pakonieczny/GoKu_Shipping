@@ -23,8 +23,11 @@
  *    · a listing that comes "after" another (the chameleon after the swan, as Paul asked) is not tried unless that one is done.
  *
  *    CharmNestEtsyBatch.attach(panel, { repoApi, toast, who, hold })   adds the line to one Etsy panel (called by CharmNestEtsyLink.mount)
- *    CharmNestEtsyBatch.normalize(json)                                the queue's listings: [{ id, key, after }]
+ *    CharmNestEtsyBatch.normalize(json)                                the queue's listings: [{ id, key, after, leaveHuggie?, huggieOldSku? }]
  *    CharmNestEtsyBatch.summary(rows)                                  { text, kind } for a finished run
+ *  LEAVE THE HUGGIE PRODUCTS ALONE (DOVEHUG, 13 Oct 2026): a queue entry may carry "leaveHuggie": true (and "huggieOldSku": "DOVE 4"). Its request then also carries those two fields and
+ *  the SERVER applies the rule (netlify/functions/_charmNestEtsyLink.js): the products with a Huggie option value are not part of the key write, and one that carries the key goes back to its old
+ *  SKU. Every other entry's request is exactly {op, listingId, sku, by} as before. The row says so in words; this file decides nothing about Etsy.
  *  Everything is drawn with textContent.
  *  ═══════════════════════════════════════════════════════════════════════ */
 (function (root) {
@@ -34,7 +37,7 @@
   const STOP_ALL = new Set(["scope", "busy", "offline"]);   // the server's reasons that would repeat for every later listing
   const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
 
-  /** The queue file → [{ id, key, after }] in file order (a listing twice, a bad number or an empty SKU is left out). */
+  /** The queue file → [{ id, key, after, leaveHuggie?, huggieOldSku? }] in file order (a listing twice, a bad number or an empty SKU is left out). */
   function normalize(json) {
     const arr = Array.isArray(json) ? json : json && Array.isArray(json.listings) ? json.listings : [];
     const seen = new Set(), items = [];
@@ -44,10 +47,14 @@
       if (!LISTING.test(id) || !key || seen.has(id)) continue;
       seen.add(id);
       const after = String(x.after == null ? "" : x.after).trim();
-      items.push({ id, key, after: LISTING.test(after) ? after : "" });
+      const old = typeof x.huggieOldSku === "string" ? x.huggieOldSku : "";
+      items.push(Object.assign({ id, key, after: LISTING.test(after) ? after : "" }, x.leaveHuggie === true ? Object.assign({ leaveHuggie: true }, old ? { huggieOldSku: old } : {}) : {}));
     }
     return items;
   }
+
+  /** What a row shows beside its listing number: the SKU, and for an entry that leaves the Huggie products alone, that. */
+  const shownKey = i => (i.leaveHuggie ? `${i.key} (not the Huggie products${i.huggieOldSku ? `; any that carry it go back to ${i.huggieOldSku}` : ""})` : i.key);
 
   /** The words for a finished run, from its rows (state: done | already | stop | skip). */
   function summary(rows) {
@@ -86,7 +93,7 @@
     if (R.running || !items.length) return;
     const L = root.CharmNestRepoLock, E = root.CharmNestEtsyLink;
     R.running = true; R.say = ""; R.kind = "";
-    R.rows = items.map(i => ({ id: i.id, key: i.key, after: i.after, state: "wait", text: "", kind: "" }));
+    R.rows = items.map(i => ({ id: i.id, key: i.key, shown: shownKey(i), after: i.after, leaveHuggie: !!i.leaveHuggie, huggieOldSku: i.huggieOldSku || "", state: "wait", text: "", kind: "" }));
     const rows = R.rows;
     let note = "";   // why the run stopped early, when it did
     const stopFrom = (from, text) => { for (let j = from; j < rows.length; j++) if (rows[j].state === "wait") { rows[j].state = "skip"; rows[j].text = "Not tried."; } note = text; };
@@ -117,7 +124,7 @@
       if (i > 0 && !L.unlocked("modify")) { stopFrom(i, "The repo unlock ended, so nothing more was sent. Press again to unlock and carry on: what is done is skipped."); break; }
       row.state = "work"; changed();
       let r = null, err = null;
-      try { r = await o.repoApi("modify", { what: `Putting the SKU ${row.key} on Etsy listing ${row.id}.`, target: `${row.key} → Etsy ${row.id}`, go: "Put SKU on Etsy" }, { op: "listingEtsySkuWrite", listingId: row.id, sku: row.key, by }); }
+      try { r = await o.repoApi("modify", { what: `Putting the SKU ${row.key} on Etsy listing ${row.id}${row.leaveHuggie ? ", leaving its Huggie products alone" : ""}.`, target: `${row.key} → Etsy ${row.id}`, go: "Put SKU on Etsy" }, Object.assign({ op: "listingEtsySkuWrite", listingId: row.id, sku: row.key, by }, row.leaveHuggie ? Object.assign({ leaveHuggie: true }, row.huggieOldSku ? { huggieOldSku: row.huggieOldSku } : {}) : {})); }
       catch (e) { err = e || new Error("no answer"); }
       if (err) {
         if (err.cancelled) { row.state = "skip"; row.text = "Not sent."; stopFrom(i + 1, "Nothing more was sent: the repo stayed locked."); break; }
@@ -194,11 +201,11 @@
       const running = R.running, kept = list.scrollTop;
       list.textContent = "";
       if (asking && !running) {   // the one plain confirm line, then every listing and its SKU
-        say.className = "elBtSay"; say.textContent = `Every product of these ${plural(n, "Etsy listing")} will carry the SKU beside it, one listing after another. Prices, stock and options stay as they are; each listing as it is now is kept first, and one already done is skipped.`;
-        for (const i of items) list.appendChild(row(i.id, i.key, "", ""));
+        say.className = "elBtSay"; say.textContent = `Every product of these ${plural(n, "Etsy listing")} will carry the SKU beside it, one listing after another. Prices, stock and options stay as they are; each listing as it is now is kept first, and one already done is skipped.${items.some(i => i.leaveHuggie) ? " Where a row says \"not the Huggie products\", those products are left out." : ""}`;
+        for (const i of items) list.appendChild(row(i.id, shownKey(i), "", ""));
       } else if (running || R.rows.length) {
         say.className = "elBtSay" + (R.kind ? " " + R.kind : ""); say.textContent = R.say;
-        for (const r of R.rows) list.appendChild(row(r.id, r.key, r.state === "wait" ? "Waiting" : r.state === "work" ? "Putting the SKU on Etsy…" : r.text, r.state, r.state === "work"));
+        for (const r of R.rows) list.appendChild(row(r.id, r.shown || r.key, r.state === "wait" ? "Waiting" : r.state === "work" ? "Putting the SKU on Etsy…" : r.text, r.state, r.state === "work"));
       } else { say.className = "elBtSay"; say.textContent = ""; }
       list.scrollTop = kept;
       const w = list.querySelector(".work");   // the listing in progress stays in view inside the list

@@ -13,6 +13,9 @@
 //   · each listing gets its safety copy BEFORE its PUT and exactly one PUT; only the SKUs change; at most 3 Etsy requests per listing and about 30 for the whole run;
 //   · a listing that stops in the middle is reported and the rest still run; a second press says "Already there" for everything and makes no Etsy request; "needs listings_w" stops the whole run; the
 //     chameleon waits for the swan; a closed tab loses nothing and pressing again resumes; the password is never in a URL, a log, the page or a stored value.
+//   · DOVEHUG (13 Oct 2026, Paul 18:09 UTC: "only the Necklace option" of the dove listing 1816178147): the dove entry alone carries "leaveHuggie": true and "huggieOldSku": "DOVE 4"; its row says so, its request carries those two
+//     fields (every other request is exactly {op, listingId, sku, by, repoToken}), the server leaves its 4 Huggie products out of the key write and puts back any that carry the key (section 16 is the real transition: the plain press of
+//     04:06 UTC put the key on all 12, then this one press says "1 done, 13 already there"); the op's own proof is tests/charm-nest/etsy-link-huggie.cjs.
 //   PW_DIR=<dir with playwright-core> CHROMIUM=<chrome> node tests/charm-nest/etsy-link-batch.cjs      (skipped without a browser)
 'use strict';
 const fs = require('fs'), path = require('path'), assert = require('assert'), crypto = require('crypto');
@@ -41,6 +44,14 @@ const QUEUE = Batch.normalize(JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf8')));
 const WANT = [   // the fourteen, in the order of the run (Paul's asks of 12-13 Oct; ETSYLIST's runOrder: single SKUs first, the pairs and placeholders next, the 816-product bar; then the kite necklace, asked 13 Oct 04:42 UTC and appended as the 10th, then the reptile chameleon necklace, asked 13 Oct 13:43 UTC and appended as the 11th, then the ping pong disc necklace, asked 13 Oct 14:11 UTC and appended as the 12th, then the second tiny bar necklace, asked 13 Oct 14:25 UTC and appended as the 13th, then the caduceus necklace, asked 13 Oct 14:47 UTC and appended as the 14th)
   ['1700763608', 'BEADY SWAN'], ['1801964156', 'CAT 1 - SITTING CAT'], ['1816178147', 'BEADY DOVE 4'], ['1801980518', 'BEADY CUTE LION'], ['4494184284', 'CHAMELEON_28151'],
   ['4494182906', 'WOLF_67948'], ['1745415868', 'BEADY MONKEY HEAR NO EVIL3'], ['1734130419', 'SPORTS 27'], ['1830130714', 'CURB'], ['1759609265', 'BEADY KITE'], ['1726597659', 'REPTILE 3'], ['1716044982', 'SPORTS 20'], ['1445686334', 'CURB'], ['1746441188', 'BEADY HEALTH 11']];
+const DOVE = '1816178147', LION = '1801980518', RULED = { [DOVE]: 'DOVE 4', [LION]: 'CUTE LION' };   // DOVEHUG: the two entries that carry "leaveHuggie": true, with their stated old SKU
+const keyOf = id => WANT.find(w => w[0] === id)[1];
+const ruledRow = id => keyOf(id) + ' (not the Huggie products; any that carry it go back to ' + RULED[id] + ')';
+const DONE_BACK = id => `Done: ${keyOf(id)} is on the 8 products of listing ${id} that are not Huggie. 4 Huggie products put back to ${RULED[id]}. The listing as it was is kept.`;
+const DONE_LEFT = id => `Done: ${keyOf(id)} is on the 8 products of listing ${id} that are not Huggie. The 4 Huggie products were left alone. The listing as it was is kept.`;
+const ALREADY_RULED = id => `Already there: the 8 products of listing ${id} that are not Huggie carry ${keyOf(id)}, and the 4 Huggie products do not. Nothing was changed.`;
+const alreadyText = (id, key) => (id in RULED ? ALREADY_RULED(id) : `Already there: all ${COUNTS[id]} products of listing ${id} carry ${key}. Nothing was changed.`);   // (DOVEHUG: the two ruled listings' own words, when their Huggie products are left alone; every other listing's are what they were)
+const rowHead = (id, key) => id + '  ' + (id in RULED ? ruledRow(id) : key);
 const NN = WANT.length, KITE = '1759609265', REPT = '1726597659', PING = '1716044982', BAR2 = '1445686334', HEALTH = '1746441188';   // (every count below is NN, so the next listing Paul asks for is one more line in the queue file and in WANT)
 const BUDGET = 3 * NN + 3;   // Etsy requests for a whole run: at most 3 per listing and 3 to spare (33 for the ten, 36 for the eleven, 39 for the twelve, 42 for the thirteen, 45 for the fourteen)
 
@@ -171,6 +182,13 @@ function world() {   // a fresh database, a fresh fake Etsy with the fourteen li
   return { E, mod, ops: [], inflight: 0, maxInflight: 0, delayMs: 0, unlocks: [], held: new Map() };
 }
 let W = null;
+/** Paul's earlier presses, run for real on the fake through the REAL op (each leaves its record). The dove is pressed with its own entry's request (the Huggie rule, once), so these sections stay about the OTHER listings; the dove's real transition (the plain press of 04:06 UTC, then this release) is section 16. */
+async function prepress(list) {
+  for (const [id, key] of list) {
+    const r0 = await W.mod.listingEtsySkuWrite(Object.assign({ listingId: id, sku: key, by: 'Paul' }, id in RULED ? { leaveHuggie: true, huggieOldSku: RULED[id] } : {}));
+    assert(r0.ok && !r0.already, 'the earlier press of ' + id + ' ran for real on the fake: ' + JSON.stringify(r0));
+  }
+}
 
 (async () => {
   /* ═══ 0 · the committed queue (no browser) ═══ */
@@ -190,14 +208,16 @@ let W = null;
   ok(QUEUE[13].key === 'BEADY HEALTH 11' && [...QUEUE[13].key].map(c => c.codePointAt(0).toString(16)).join(' ') === '42 45 41 44 59 20 48 45 41 4c 54 48 20 31 31' && rawHealth.listingId === HEALTH && rawHealth.note === 'caduceus necklace' && rawHealth.askedAt === '2026-10-13T14:47Z' && rawHealth.products === 40 && !('after' in rawHealth), 'the 14th entry is listing 1746441188 with the key BEADY HEALTH 11 (the title of the card of Paul\'s image 1, whose other SKU is HEALTH 11; not HEALTH11, a different 6.9 x 9.9 mm master, and not the Etsy SKU the order reads today, HEALTH11 - SNAKE/STICK, which no master holds: fifteen plain characters, two spaces), asked 13 Oct 14:47Z, 40 products as the stored table says, no after');
   ok(JSON.stringify(JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf8')).listings.slice(0, 13).map(l => [l.listingId, l.key])) === JSON.stringify(WANT.slice(0, 13)), 'the thirteen earlier entries are exactly as they were (listing and key)');
   const raw = JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf8'));
-  ok(raw.listings.every(l => Object.keys(l).every(k => ['listingId', 'key', 'products', 'askedAt', 'note', 'after'].includes(k))) && !/@|name|address|email|buyer/i.test(JSON.stringify(raw.listings)), 'the queue file holds listing numbers, SKUs, counts and dates only: no buyer data');
+  ok(raw.listings.every(l => Object.keys(l).every(k => ['listingId', 'key', 'products', 'askedAt', 'note', 'after', 'leaveHuggie', 'huggieOldSku'].includes(k))) && !/@|name|address|email|buyer/i.test(JSON.stringify(raw.listings)), 'the queue file holds listing numbers, SKUs, counts and dates only: no buyer data');
+  ok(raw.listings.filter(l => 'leaveHuggie' in l || 'huggieOldSku' in l).map(l => l.listingId).join() === DOVE + ',' + LION && raw.listings[2].leaveHuggie === true && raw.listings[2].huggieOldSku === 'DOVE 4' && raw.listings[3].leaveHuggie === true && raw.listings[3].huggieOldSku === 'CUTE LION' && QUEUE[2].leaveHuggie === true && QUEUE[3].leaveHuggie === true && QUEUE.filter(q => 'leaveHuggie' in q || 'huggieOldSku' in q).length === 2 && QUEUE.length === 14, 'DOVEHUG: the rule "leave the Huggie products alone" is on the dove entry (old SKU DOVE 4) and the lion entry (old SKU CUTE LION) ONLY, the queue still has 14 entries, no other entry carries it');
   const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8'), build = fs.readFileSync(path.join(root, 'scripts/build-public.cjs'), 'utf8');
-  ok(/<script src="charm-nest-etsy-batch\.js\?v=[^"]+"><\/script>/.test(html) && html.indexOf('charm-nest-etsy-batch.js') > html.indexOf('charm-nest-etsy-link.js') && /charm-nest-etsy-link\.js\?v=[^"]*-bt1"/.test(html), 'the page loads the batch file after the single press\'s file, and the single press\'s cache token carries -bt1 (its hook line changed)');
+  ok(/<script src="charm-nest-etsy-batch\.js\?v=[^"]+"><\/script>/.test(html) && html.indexOf('charm-nest-etsy-batch.js') > html.indexOf('charm-nest-etsy-link.js') && /charm-nest-etsy-link\.js\?v=[^"]*-bt1(?:-dh1)?"/.test(html) && /charm-nest-etsy-link\.js\?v=[^"]*-dh1"/.test(html) && /charm-nest-etsy-batch\.js\?v=[^"]*-dh1"/.test(html), 'the page loads the batch file after the single press\'s file, and the single press\'s cache token carries -bt1 (its hook line changed)');
   ok(/"charm-nest-etsy-batch\.js"/.test(build) && /"charm-nest-etsy-queue\.json"/.test(build), 'both new public files are in the public build manifest (scripts/build-public.cjs)');
   const sm = Batch.summary([{ state: 'done' }, { state: 'done' }, { state: 'already' }, { state: 'stop' }, { state: 'skip' }]);
   ok(sm.text === '5 listings: 2 done, 1 already there, 1 stopped, 1 not tried.' && sm.kind === 'bad' && Batch.summary([{ state: 'done' }]).text === '1 listing: 1 done.' && Batch.summary([{ state: 'already' }, { state: 'already' }]).kind === 'ok', 'the end-of-run line counts done / already there / stopped / not tried: ' + sm.text);
   const norm = Batch.normalize({ listings: [{ listingId: '1234', key: 'A' }, { listingId: '1234', key: 'B' }, { listingId: 'abc', key: 'C' }, { listingId: '5678', key: '' }, null, { listingId: 9876543, key: 'D E', after: '1234' }, { listingId: '5555', key: 'F', after: 'zz' }] });
   ok(JSON.stringify(norm) === JSON.stringify([{ id: '1234', key: 'A', after: '' }, { id: '9876543', key: 'D E', after: '1234' }, { id: '5555', key: 'F', after: '' }]), 'the queue reader keeps a listing once, drops a bad number or an empty SKU, keeps the order: ' + JSON.stringify(norm));
+  ok(JSON.stringify(Batch.normalize({ listings: [{ listingId: '1234', key: 'A', leaveHuggie: true, huggieOldSku: 'B C' }, { listingId: '5678', key: 'D', leaveHuggie: 'true', huggieOldSku: 'E' }, { listingId: '9999', key: 'F', leaveHuggie: true }] })) === JSON.stringify([{ id: '1234', key: 'A', after: '', leaveHuggie: true, huggieOldSku: 'B C' }, { id: '5678', key: 'D', after: '' }, { id: '9999', key: 'F', after: '', leaveHuggie: true }]), 'DOVEHUG: the queue reader keeps the rule only for an entry that says leaveHuggie: true (and its stated old SKU); anything else is the plain entry');
   ok(Batch.normalize(null).length === 0 && Batch.normalize({}).length === 0 && Batch.normalize([{ listingId: '1234', key: 'A' }]).length === 1, 'nothing queued (or a file that is not the queue) gives an empty list: no line is shown');
 
   const srv = await start({ receipts: [], repoSeed: false });
@@ -246,7 +266,7 @@ let W = null;
       if (b.op === 'listingEtsySkuWrite') {
         const t = W.held.get(b.repoToken);
         if (!b.repoToken || !t || Date.now() > t.exp) return json(401, { error: 'repo-locked', need: 'modify', once: false, why: !b.repoToken ? 'missing' : 'invalid' });
-        const rec = { id: b.listingId, sku: b.sku, by: b.by, keys: Object.keys(b).sort().join(','), token: !!b.repoToken, n: W.ops.length, out: null };
+        const rec = { id: b.listingId, sku: b.sku, by: b.by, keys: Object.keys(b).sort().join(','), token: !!b.repoToken, leaveHuggie: b.leaveHuggie, huggieOldSku: b.huggieOldSku, n: W.ops.length, out: null };
         W.ops.push(rec); W.inflight++; W.maxInflight = Math.max(W.maxInflight, W.inflight);
         try {
           if (W.delayMs) await sleep(W.delayMs);
@@ -289,13 +309,14 @@ let W = null;
   const press = async (page) => { await page.locator('#mGrid .elBatch .elBtGo').click(); await page.locator('#mGrid .elBatch .elBtYes').click(); };
   const reset = () => { W = world(); };
   const sku = (inv) => [...new Set(inv.products.map(p => unesc(p.sku)))];
-  const check = (E, id, key) => {   // every product carries the key and nothing else moved (a disabled product is sent at zero stock, the sku list may be widened to every option property: both are the op's proven rules)
+  const isHug = p => p.property_values.some(v => v.values.some(x => /huggie/i.test(x)));
+  const check = (E, id, key) => {   // every product carries the key and nothing else moved (a disabled product is sent at zero stock, the sku list may be widened to every option property: both are the op's proven rules); the DOVE and the LION: their Huggie products carry what they carried (DOVE 4, CUTE LION) and the SKU list is widened to both options (DOVEHUG)
     const S = E.L.get(id), a = S.original, b = S.stored; if (a.products.length !== b.products.length) return false;
     const props = [...new Set(a.products.flatMap(p => p.property_values.map(v => v.property_id)))];
     const okLists = JSON.stringify(a.price_on_property) === JSON.stringify(b.price_on_property) && JSON.stringify(a.quantity_on_property) === JSON.stringify(b.quantity_on_property)
-      && (JSON.stringify(a.sku_on_property) === JSON.stringify(b.sku_on_property) || (a.sku_on_property.length > 0 && a.sku_on_property.length < props.length && b.sku_on_property.length === props.length));
+      && (JSON.stringify(a.sku_on_property) === JSON.stringify(b.sku_on_property) || (a.sku_on_property.length > 0 && a.sku_on_property.length < props.length && b.sku_on_property.length === props.length) || (id in RULED && b.sku_on_property.length === props.length));
     return okLists && b.products.every((p, i) => { const o = a.products[i], f = p.offerings[0], g = o.offerings[0];
-      return p.sku === key && JSON.stringify(p.property_values) === JSON.stringify(o.property_values) && f.price === g.price && f.is_enabled === g.is_enabled && f.readiness_state_id === g.readiness_state_id && f.quantity === (g.is_enabled ? g.quantity : 0); });
+      return p.sku === (id in RULED && isHug(o) ? o.sku : key) && JSON.stringify(p.property_values) === JSON.stringify(o.property_values) && f.price === g.price && f.is_enabled === g.is_enabled && f.readiness_state_id === g.readiness_state_id && f.quantity === (g.is_enabled ? g.quantity : 0); });
   };
   const word = (key, id, cnt) => `Done: ${key} is now on all ${cnt} products of listing ${id}.`;
 
@@ -310,8 +331,8 @@ let W = null;
   ok(W.ops.length === 0 && W.E.calls.length === 0 && W.unlocks.length === 0 && st.calls.every(c => c.op !== 'listingEtsySkuWrite'), 'looking and opening the panel sent nothing to the write, asked for no password and made no Etsy request');
   await page.locator('#mGrid .elBatch .elBtGo').click();
   s = await state(page);
-  const confirmLine = `Every product of these ${NN} Etsy listings will carry the SKU beside it, one listing after another. Prices, stock and options stay as they are; each listing as it is now is kept first, and one already done is skipped.`;
-  ok(s.say === confirmLine && s.rows.length === NN && s.rows.every((r, i) => r.head === WANT[i][0] + '  ' + WANT[i][1] && r.st === ''), 'pressing it shows ONE plain confirm line and the ' + NN + ' listings with the SKU each will carry, in the order of the run: ' + s.rows.map(r => r.head).join(' | '));
+  const confirmLine = `Every product of these ${NN} Etsy listings will carry the SKU beside it, one listing after another. Prices, stock and options stay as they are; each listing as it is now is kept first, and one already done is skipped. Where a row says "not the Huggie products", those products are left out.`;
+  ok(s.say === confirmLine && s.rows.length === NN && s.rows.every((r, i) => r.head === rowHead(WANT[i][0], WANT[i][1]) && r.st === ''), 'pressing it shows ONE plain confirm line and the ' + NN + ' listings with the SKU each will carry, in the order of the run: ' + s.rows.map(r => r.head).join(' | '));
   ok(s.yes.vis && s.yes.text === `Put all ${NN} SKUs on Etsy` && s.no.vis && s.no.text === 'Cancel' && !s.go.vis && s.dialogs === 0, 'with the one button that goes, and Cancel; no password dialog yet');
   ok(W.ops.length === 0 && W.unlocks.length === 0 && W.E.calls.length === 0, 'the confirm sent nothing');
   if (SHOTS) { await page.waitForTimeout(300); await tile(page, 'BEADY SWAN').screenshot({ path: path.join(SHOTS, 'etsybatch-1-confirm.png') }); }
@@ -352,13 +373,13 @@ let W = null;
   W.delayMs = 0;
   s = await state(page);
   if (SHOTS) { await page.waitForTimeout(300); await tile(page, 'BEADY SWAN').screenshot({ path: path.join(SHOTS, 'etsybatch-3-done.png') }); }
-  ok(s.rows.length === NN && s.rows.every((r, i) => r.head === WANT[i][0] + '  ' + WANT[i][1]), 'the result list is the confirm list, one row per listing, in the same order');
+  ok(s.rows.length === NN && s.rows.every((r, i) => r.head === rowHead(WANT[i][0], WANT[i][1])), 'the result list is the confirm list, one row per listing, in the same order');
   ok(s.rows.every(r => r.cls === 'done') && s.say === `${NN} listings: ${NN} done.` && s.sayCls.includes('ok'), 'every listing is done: "' + s.say + '"');
   const sayings = s.rows.map(r => r.st);
   const REPLACED = new Set(['4494184284', '4494182906', '1745415868', '1734130419', KITE, REPT, PING, BAR2, HEALTH]);   // (listings whose products carried two or more different SKUs: the answer says what was replaced)
-  ok(WANT.every(([id, key], i) => (REPLACED.has(id) ? sayings[i].startsWith(word(key, id, COUNTS[id])) && /It replaced \d+ x /.test(sayings[i]) : sayings[i] === word(key, id, COUNTS[id]))), 'each row uses the single press\'s own words, a single-SKU listing exactly as before and a two-SKU listing with what it replaced: ' + sayings[0] + ' / ' + sayings[7]);
+  ok(WANT.every(([id, key], i) => (id in RULED ? sayings[i] === DONE_LEFT(id) : REPLACED.has(id) ? sayings[i].startsWith(word(key, id, COUNTS[id])) && /It replaced \d+ x /.test(sayings[i]) : sayings[i] === word(key, id, COUNTS[id]))), 'each row uses the single press\'s own words, a single-SKU listing exactly as before and a two-SKU listing with what it replaced: ' + sayings[0] + ' / ' + sayings[7]);
   ok(W.ops.length === NN && W.ops.map(o => o.id).join() === WANT.map(w => w[0]).join() && W.ops.every((o, i) => o.sku === WANT[i][1]), 'ONE request per listing, in the queue\'s order: ' + W.ops.map(o => o.id).join(','));
-  ok(W.ops.every(o => o.keys === 'by,listingId,op,repoToken,sku' && o.by === 'Tester' && o.token) && W.maxInflight === 1, 'each request is exactly {op, listingId, sku, by, repoToken} and they never overlap (at most ' + W.maxInflight + ' at a time)');
+  ok(W.ops.every(o => o.keys === (o.id in RULED ? 'by,huggieOldSku,leaveHuggie,listingId,op,repoToken,sku' : 'by,listingId,op,repoToken,sku') && o.by === 'Tester' && o.token) && W.ops.every(o => (o.id in RULED ? o.leaveHuggie === true && o.huggieOldSku === RULED[o.id] : o.leaveHuggie === undefined && o.huggieOldSku === undefined)) && W.ops.filter(o => o.leaveHuggie !== undefined).length === 2 && W.maxInflight === 1, 'each request is exactly {op, listingId, sku, by, repoToken}, the dove\'s and the lion\'s also {leaveHuggie: true, huggieOldSku: "DOVE 4" / "CUTE LION"} and no other, and they never overlap (at most ' + W.maxInflight + ' at a time)');
   ok(W.unlocks.length === 1 && W.unlocks[0].ok, 'the password was entered ONCE: one repoUnlock call for the whole run');
   ok(WANT.every(([id, key]) => check(W.E, id, key)), 'on the fake Etsy every product of all ' + NN + ' listings now carries its SKU, and EVERYTHING else (prices, stock, enabled state, options, readiness) is as it was, 816-product bar included');
   ok(W.E.puts.length === NN && new Set(W.E.puts.map(p => p.id)).size === NN && W.E.puts.every(p => p.safetyCopyFirst), 'each listing got exactly ONE PUT, and its safety copy was already in Storage when the PUT left');
@@ -379,7 +400,7 @@ let W = null;
   const calls0 = W.E.calls.length, puts0 = W.E.puts.length, w0 = writes.length, f0 = fileWrites.length;
   await press(page);
   await finished(page); s = await state(page);
-  ok(s.say === `${NN} listings: ${NN} already there.` && s.rows.every((r, i) => r.cls === 'already' && r.st === `Already there: all ${COUNTS[WANT[i][0]]} products of listing ${WANT[i][0]} carry ${WANT[i][1]}. Nothing was changed.`), 'pressing again: every listing says "Already there", with the same words as the single press: "' + s.rows[0].st + '"');
+  ok(s.say === `${NN} listings: ${NN} already there.` && s.rows.every((r, i) => r.cls === 'already' && r.st === alreadyText(WANT[i][0], WANT[i][1])), 'pressing again: every listing says "Already there", with the same words as the single press: "' + s.rows[0].st + '"');
   ok(W.E.calls.length === calls0 && W.E.puts.length === puts0 && W.ops.length === 2 * NN && fileWrites.length === f0 && s.dialogs === 0 && W.unlocks.length === 1, 'and it made no Etsy request, no PUT, wrote no safety copy and asked for no password');
   ok(ctx.__errors.length === 0, 'no page error: ' + ctx.__errors.join(' | '));
   await ctx.close();
@@ -484,7 +505,7 @@ let W = null;
   /* ═══ 11 · the kite, the reptile chameleon, the ping pong disc, the second tiny bar and the caduceus necklaces: Paul's earlier press already did the first nine (04:06 UTC); the five newest are new, and the BEADY KITE card's own chip carries the line ═══ */
   reset();
   const OLD = WANT.slice(0, 9), FRESH = WANT.slice(9), FRESH_IDS = FRESH.map(w => w[0]);
-  for (const [id, key] of OLD) { const r0 = await W.mod.listingEtsySkuWrite({ listingId: id, sku: key, by: 'Paul' }); assert(r0.ok && !r0.already, 'the earlier press of ' + id + ' ran for real on the fake: ' + JSON.stringify(r0)); }   // (the earlier press, done on the fake Etsy through the REAL op: each has its record)
+  await prepress(OLD);   // (the earlier press, done on the fake Etsy through the REAL op: each has its record)
   const calls11 = W.E.calls.length, puts11 = W.E.puts.length;
   ok(puts11 === 9 && !W.E.puts.some(p => FRESH_IDS.includes(p.id)) && FRESH.every(([id, key]) => W.E.L.get(id).stored.products.every(p => p.sku !== key)), 'before the press: the first 9 listings carry their SKU (as after Paul\'s earlier press) and the kite, reptile chameleon, ping pong disc, second tiny bar and caduceus necklaces do not');
   ctx = await newContext(); page = await openPage(ctx);
@@ -497,7 +518,7 @@ let W = null;
   await press(page);
   await page.waitForSelector('dialog.repoDlg[open]'); await typeAndGo(page, RIGHT);
   await finished(page); s = await state(page);
-  ok(s.say === `${NN} listings: ${FRESH.length} done, 9 already there.` && s.rows.slice(0, 9).every((r, i) => r.cls === 'already' && r.st === `Already there: all ${COUNTS[WANT[i][0]]} products of listing ${WANT[i][0]} carry ${WANT[i][1]}. Nothing was changed.`) && s.rows.slice(9).every(r => r.cls === 'done'), 'the press: the 9 earlier listings say "Already there", the kite, reptile chameleon, ping pong disc, second tiny bar and caduceus necklaces are done: ' + s.say);
+  ok(s.say === `${NN} listings: ${FRESH.length} done, 9 already there.` && s.rows.slice(0, 9).every((r, i) => r.cls === 'already' && r.st === alreadyText(WANT[i][0], WANT[i][1])) && s.rows.slice(9).every(r => r.cls === 'done'), 'the press: the 9 earlier listings say "Already there", the kite, reptile chameleon, ping pong disc, second tiny bar and caduceus necklaces are done: ' + s.say);
   ok(W.E.calls.length - calls11 === 3 * FRESH.length && W.E.calls.slice(calls11).every(c => FRESH_IDS.includes(c.id)) && W.E.puts.length === puts11 + FRESH.length && W.E.puts.slice(puts11).map(p => p.id).join() === FRESH_IDS.join() && W.E.puts.slice(puts11).every(p => p.safetyCopyFirst), 'the press made ' + 3 * FRESH.length + ' Etsy requests, 3 for each new listing (state, inventory, ONE PUT after its safety copy); the 9 earlier made none');
   ok(W.ops.length === NN && W.ops.slice(0, 9).every(o => o.out && o.out.ok && o.out.calls === 0) && W.ops[9].id === KITE && W.ops[9].sku === 'BEADY KITE' && W.ops[10].id === REPT && W.ops[10].sku === 'REPTILE 3' && W.ops[11].id === PING && W.ops[11].sku === 'SPORTS 20' && W.ops[12].id === BAR2 && W.ops[12].sku === 'CURB' && W.ops[13].id === HEALTH && W.ops[13].sku === 'BEADY HEALTH 11', 'the server answered the 9 earlier ones from their records (0 Etsy calls each) and ran the kite, the reptile chameleon, the ping pong disc, the second tiny bar and the caduceus necklaces');
   ok(check(W.E, KITE, 'BEADY KITE') && W.E.L.get(KITE).stored.products.length === 20 && /^Done: BEADY KITE is now on all 20 products of listing 1759609265\. It replaced 8 x \(no SKU\), 8 x KITE and 4 x KITE-CO; the listing as it was is kept\.$/.test(s.rows[9].st), 'every kite product (Metal Choice x Necklace Length; KITE / blank / KITE-CO before) now carries BEADY KITE, only sku changed; words: ' + s.rows[9].st);
@@ -515,7 +536,7 @@ let W = null;
   /* ═══ 12 · the reptile chameleon and the ping pong disc necklaces (REPTSKU 13:43, PINGSKU 14:11 UTC): the first ten are already done (04:06 and the kite's press, 13:22 UTC); none of the listings after the first ten was pressed yet, so they are all new in ONE press (the reptile chameleon, the ping pong disc, the second tiny bar and the caduceus necklaces), and the REPTILE 3 card's own chip carries the line ═══ */
   reset();
   const OLD10 = WANT.slice(0, 10), FRESH2 = WANT.slice(10), FRESH2_IDS = FRESH2.map(w => w[0]);
-  for (const [id, key] of OLD10) { const r0 = await W.mod.listingEtsySkuWrite({ listingId: id, sku: key, by: 'Paul' }); assert(r0.ok && !r0.already, 'the earlier press of ' + id + ' ran for real on the fake: ' + JSON.stringify(r0)); }
+  await prepress(OLD10);
   const calls12 = W.E.calls.length, puts12 = W.E.puts.length;
   ok(puts12 === 10 && !W.E.puts.some(p => FRESH2_IDS.includes(p.id)) && W.E.L.get(REPT).stored.products.every(p => p.sku !== 'REPTILE 3') && W.E.L.get(REPT).stored.products.some(p => p.sku === 'REPTILE 3-CHAMELEON'), 'before the press: the first 10 listings carry their SKU and none of the later ones does (the reptile one carries REPTILE 3-CHAMELEON, blanks and a -CO variant)');
   ctx = await newContext(); page = await openPage(ctx);
@@ -534,7 +555,7 @@ let W = null;
   await press(page);
   await page.waitForSelector('dialog.repoDlg[open]'); await typeAndGo(page, RIGHT);
   await finished(page); s = await state(page);
-  ok(s.say === `${NN} listings: ${FRESH2.length} done, 10 already there.` && s.rows.slice(0, 10).every((r, i) => r.cls === 'already' && r.st === `Already there: all ${COUNTS[WANT[i][0]]} products of listing ${WANT[i][0]} carry ${WANT[i][1]}. Nothing was changed.`) && s.rows.slice(10).every(r => r.cls === 'done'), 'the press: the 10 earlier listings say "Already there", the reptile chameleon, the ping pong disc, the second tiny bar and the caduceus necklaces are done: ' + s.say);
+  ok(s.say === `${NN} listings: ${FRESH2.length} done, 10 already there.` && s.rows.slice(0, 10).every((r, i) => r.cls === 'already' && r.st === alreadyText(WANT[i][0], WANT[i][1])) && s.rows.slice(10).every(r => r.cls === 'done'), 'the press: the 10 earlier listings say "Already there", the reptile chameleon, the ping pong disc, the second tiny bar and the caduceus necklaces are done: ' + s.say);
   ok(W.E.calls.length - calls12 === 3 * FRESH2.length && W.E.calls.slice(calls12).every(c => FRESH2_IDS.includes(c.id)) && W.E.puts.length === puts12 + FRESH2.length && W.E.puts.slice(puts12).map(p => p.id).join() === FRESH2_IDS.join() && W.E.puts.slice(puts12).every(p => p.safetyCopyFirst), 'the press made ' + 3 * FRESH2.length + ' Etsy requests, 3 for each of the ' + FRESH2.length + ' (state, inventory, ONE PUT after its safety copy); the 10 earlier made none');
   ok(W.ops.length === NN && W.ops.slice(0, 10).every(o => o.out && o.out.ok && o.out.calls === 0) && W.ops[10].id === REPT && W.ops[10].sku === 'REPTILE 3' && W.ops[11].id === PING && W.ops[11].sku === 'SPORTS 20' && W.ops[12].id === BAR2 && W.ops[12].sku === 'CURB' && W.ops[13].id === HEALTH && W.ops[13].sku === 'BEADY HEALTH 11', 'the server answered the 10 earlier ones from their records (0 Etsy calls each) and ran REPTILE 3, SPORTS 20, CURB and BEADY HEALTH 11');
   ok(check(W.E, REPT, 'REPTILE 3') && W.E.L.get(REPT).stored.products.length === 15 && new Set(W.E.L.get(REPT).stored.products.map(p => p.sku)).size === 1, 'all 15 products of the reptile listing carry exactly REPTILE 3 (the REPTILE 3-CHAMELEON, blank and -CO ones replaced), and nothing but sku moved: prices, stock, enabled state, options and readiness are as they were; words: ' + s.rows[10].st);
@@ -553,7 +574,7 @@ let W = null;
   /* ═══ 13 · the ping pong disc necklace (PINGSKU, Paul 13 Oct 14:11 UTC): every other listing is already done (the reptile one pressed first); only SPORTS 20 is new, and the SPORTS 20 card's own chip carries the line ═══ */
   reset();
   const PI = WANT.findIndex(w => w[0] === PING), OLD11 = WANT.filter(w => w[0] !== PING);   // (the ping pong disc necklace is the 12th row; the listings queued after it are done too)
-  for (const [id, key] of OLD11) { const r0 = await W.mod.listingEtsySkuWrite({ listingId: id, sku: key, by: 'Paul' }); assert(r0.ok && !r0.already, 'the earlier press of ' + id + ' ran for real on the fake: ' + JSON.stringify(r0)); }
+  await prepress(OLD11);
   const calls13 = W.E.calls.length, puts13 = W.E.puts.length;
   ok(puts13 === NN - 1 && !W.E.puts.some(p => p.id === PING) && W.E.L.get(PING).stored.products.every(p => p.sku !== 'SPORTS 20') && new Set(W.E.L.get(PING).stored.products.map(p => unesc(p.sku))).size === 4, 'before the press: the other ' + (NN - 1) + ' listings carry their SKU and the ping pong disc necklace does not (four different values: SPORTS 20-PING PONG DISC, SPORTS 20- PING PONG DISC, blank, SPORTS 20-PING PONG DISC-CO)');
   ctx = await newContext(); page = await openPage(ctx);
@@ -572,7 +593,7 @@ let W = null;
   await press(page);
   await page.waitForSelector('dialog.repoDlg[open]'); await typeAndGo(page, RIGHT);
   await finished(page); s = await state(page);
-  ok(s.say === `${NN} listings: 1 done, ${NN - 1} already there.` && s.rows.every((r, i) => (i === PI ? r.cls === 'done' : r.cls === 'already' && r.st === `Already there: all ${COUNTS[WANT[i][0]]} products of listing ${WANT[i][0]} carry ${WANT[i][1]}. Nothing was changed.`)), 'the press: the ' + (NN - 1) + ' other listings say "Already there", the ping pong disc necklace is done: ' + s.say);
+  ok(s.say === `${NN} listings: 1 done, ${NN - 1} already there.` && s.rows.every((r, i) => (i === PI ? r.cls === 'done' : r.cls === 'already' && r.st === alreadyText(WANT[i][0], WANT[i][1]))), 'the press: the ' + (NN - 1) + ' other listings say "Already there", the ping pong disc necklace is done: ' + s.say);
   ok(W.E.calls.length - calls13 === 3 && W.E.calls.slice(calls13).every(c => c.id === PING) && W.E.puts.length === puts13 + 1 && W.E.puts[puts13].id === PING && W.E.puts[puts13].safetyCopyFirst, 'the press made 3 Etsy requests, every one for the ping pong disc necklace (state, inventory, ONE PUT after its safety copy); the earlier ' + (NN - 1) + ' made none');
   ok(W.ops.length === NN && W.ops.every((o, i) => (i === PI ? o.id === PING && o.sku === 'SPORTS 20' : o.out && o.out.ok && o.out.calls === 0)), 'the server answered the ' + (NN - 1) + ' other ones from their records (0 Etsy calls each) and ran SPORTS 20');
   ok(check(W.E, PING, 'SPORTS 20') && W.E.L.get(PING).stored.products.length === 10 && new Set(W.E.L.get(PING).stored.products.map(p => p.sku)).size === 1 && PING_DONE.test(s.rows[PI].st), 'all 10 products carry exactly SPORTS 20 (the SPORTS 20-PING PONG DISC, SPORTS 20- PING PONG DISC, blank and -CO ones replaced), and nothing but sku moved: prices, stock, enabled state, options and readiness are as they were; words: ' + s.rows[PI].st);
@@ -588,7 +609,7 @@ let W = null;
   /* ═══ 14 · the second tiny bar necklace (BARSKU2, Paul 13 Oct 14:25 UTC): every other listing is already done (the 816-product bar of the same card was pressed 04:06 UTC with the same key CURB); only listing 1445686334 is new, and the card titled ADD-ON of Paul's image 1 carries the line ═══ */
   reset();
   const BI = WANT.findIndex(w => w[0] === BAR2), OLD12 = WANT.filter(w => w[0] !== BAR2);
-  for (const [id, key] of OLD12) { const r0 = await W.mod.listingEtsySkuWrite({ listingId: id, sku: key, by: 'Paul' }); assert(r0.ok && !r0.already, 'the earlier press of ' + id + ' ran for real on the fake: ' + JSON.stringify(r0)); }
+  await prepress(OLD12);
   const calls14 = W.E.calls.length, puts14 = W.E.puts.length;
   const realOf = inv => inv.products.find(p => p.property_values.some(v => unesc(v.values[0]) === 'GOLD · Blank') && p.property_values.some(v => unesc(v.values[0]) === '16"·PRISTINA·Center'));   // (the product Paul's order bought)
   ok(puts14 === NN - 1 && !W.E.puts.some(p => p.id === BAR2) && W.E.L.get(BAR2).stored.products.every(p => p.sku !== 'CURB') && new Set(W.E.L.get(BAR2).stored.products.map(p => p.sku)).size === 3 && W.E.L.get(BAR2).stored.products.some(p => p.sku === 'BEADY') && W.E.L.get(BAR2).stored.products.some(p => p.sku === '') && W.E.L.get(BAR2).stored.products.some(p => p.sku === 'BEADY-CO'), 'before the press: the other ' + (NN - 1) + ' listings carry their SKU and the second tiny bar listing does not (three values: BEADY, blank, BEADY-CO)');
@@ -611,7 +632,7 @@ let W = null;
   await press(page);
   await page.waitForSelector('dialog.repoDlg[open]'); await typeAndGo(page, RIGHT);
   await finished(page); s = await state(page);
-  ok(s.say === `${NN} listings: 1 done, ${NN - 1} already there.` && s.rows.every((r, i) => (i === BI ? r.cls === 'done' : r.cls === 'already' && r.st === `Already there: all ${COUNTS[WANT[i][0]]} products of listing ${WANT[i][0]} carry ${WANT[i][1]}. Nothing was changed.`)), 'the press: the ' + (NN - 1) + ' other listings say "Already there" (the 816-product bar, which carries CURB too, included), the second tiny bar necklace is done: ' + s.say);
+  ok(s.say === `${NN} listings: 1 done, ${NN - 1} already there.` && s.rows.every((r, i) => (i === BI ? r.cls === 'done' : r.cls === 'already' && r.st === alreadyText(WANT[i][0], WANT[i][1]))), 'the press: the ' + (NN - 1) + ' other listings say "Already there" (the 816-product bar, which carries CURB too, included), the second tiny bar necklace is done: ' + s.say);
   ok(W.E.calls.length - calls14 === 3 && W.E.calls.slice(calls14).every(c => c.id === BAR2) && W.E.puts.length === puts14 + 1 && W.E.puts[puts14].id === BAR2 && W.E.puts[puts14].safetyCopyFirst, 'the press made 3 Etsy requests, every one for the second tiny bar necklace (state, inventory, ONE PUT after its safety copy); the other ' + (NN - 1) + ' made none');
   ok(W.ops.length === NN && W.ops.every((o, i) => (i === BI ? o.id === BAR2 && o.sku === 'CURB' && o.out.ok && o.out.calls === 3 : o.out && o.out.ok && o.out.calls === 0)) && W.unlocks.length === 1, 'the request for the listing carried the key CURB although the ADD-ON card\'s box said ADD-ON; the server answered the ' + (NN - 1) + ' other ones from their records (0 Etsy calls each); one password');
   ok(check(W.E, BAR2, 'CURB') && W.E.L.get(BAR2).stored.products.length === 80 && new Set(W.E.L.get(BAR2).stored.products.map(p => p.sku)).size === 1 && BAR2_DONE.test(s.rows[BI].st), 'all 80 products carry exactly CURB (the BEADY, blank and BEADY-CO ones replaced), and nothing but sku moved: prices, stock, enabled state, options and readiness are as they were; words: ' + s.rows[BI].st);
@@ -631,7 +652,7 @@ let W = null;
   /* ═══ 15 · the caduceus necklace (HEALTHSKU, Paul 13 Oct 14:47 UTC): every other listing is already done; only listing 1746441188 is new, and the card titled BEADY HEALTH 11 of Paul's image 1 (TWO SKUs, one drawing) carries the line ═══ */
   reset();
   const HI = WANT.findIndex(w => w[0] === HEALTH), OLD13 = WANT.filter(w => w[0] !== HEALTH);
-  for (const [id, key] of OLD13) { const r0 = await W.mod.listingEtsySkuWrite({ listingId: id, sku: key, by: 'Paul' }); assert(r0.ok && !r0.already, 'the earlier press of ' + id + ' ran for real on the fake: ' + JSON.stringify(r0)); }
+  await prepress(OLD13);
   const calls15 = W.E.calls.length, puts15 = W.E.puts.length;
   const hproducts = () => W.E.L.get(HEALTH).stored.products, hold = () => W.E.L.get(HEALTH).original.products;
   const hvals = inv => new Set(inv.map(p => unesc(p.sku)));
@@ -660,7 +681,7 @@ let W = null;
   await press(page);
   await page.waitForSelector('dialog.repoDlg[open]'); await typeAndGo(page, RIGHT);
   await finished(page); s = await state(page);
-  ok(s.say === `${NN} listings: 1 done, ${NN - 1} already there.` && s.rows.every((r, i) => (i === HI ? r.cls === 'done' : r.cls === 'already' && r.st === `Already there: all ${COUNTS[WANT[i][0]]} products of listing ${WANT[i][0]} carry ${WANT[i][1]}. Nothing was changed.`)), 'the press: the ' + (NN - 1) + ' other listings say "Already there", the caduceus necklace is done: ' + s.say);
+  ok(s.say === `${NN} listings: 1 done, ${NN - 1} already there.` && s.rows.every((r, i) => (i === HI ? r.cls === 'done' : r.cls === 'already' && r.st === alreadyText(WANT[i][0], WANT[i][1]))), 'the press: the ' + (NN - 1) + ' other listings say "Already there", the caduceus necklace is done: ' + s.say);
   ok(W.E.calls.length - calls15 === 3 && W.E.calls.slice(calls15).every(c => c.id === HEALTH) && W.E.puts.length === puts15 + 1 && W.E.puts[puts15].id === HEALTH && W.E.puts[puts15].safetyCopyFirst, 'the press made 3 Etsy requests, every one for the caduceus necklace (state, inventory, ONE PUT after its safety copy); the other ' + (NN - 1) + ' made none');
   ok(W.ops.length === NN && W.ops.every((o, i) => (i === HI ? o.id === HEALTH && o.sku === 'BEADY HEALTH 11' && o.out.ok && o.out.calls === 3 : o.out && o.out.ok && o.out.calls === 0)) && W.unlocks.length === 1, 'the request for the listing carried the key BEADY HEALTH 11; the server answered the ' + (NN - 1) + ' other ones from their records (0 Etsy calls each); one password');
   ok(check(W.E, HEALTH, 'BEADY HEALTH 11') && hproducts().length === 40 && hvals(hproducts()).size === 1 && HEALTH_DONE.test(s.rows[HI].st), 'all 40 products carry exactly BEADY HEALTH 11 (the Health11 - snake/stick and Health11 - snake/stick-CO ones replaced), and nothing but sku moved: prices, stock, enabled state, options and readiness are as they were; words: ' + s.rows[HI].st);
@@ -675,6 +696,62 @@ let W = null;
   const calls15b = W.E.calls.length, puts15b = W.E.puts.length;
   await press(page); await finished(page); s = await state(page);
   ok(s.say === `${NN} listings: ${NN} already there.` && s.rows[HI].st === 'Already there: all 40 products of listing 1746441188 carry BEADY HEALTH 11. Nothing was changed.' && W.E.calls.length === calls15b && W.E.puts.length === puts15b && s.dialogs === 0, 'a second press: "' + s.say + '", the caduceus necklace says "Already there", no Etsy request, no PUT, no password');
+  ok(ctx.__errors.length === 0 && aborted.length === 0, 'no page error, no outside request: ' + ctx.__errors.concat(aborted).join(' | '));
+  await ctx.close();
+
+  /* ═══ 16 · DOVEHUG, the real transition: the plain press of 04:06 UTC put the key on ALL 12 products of the dove and the lion (the Huggie ones too, if a listing has any); the other 12 are done; ONE press now ═══ */
+  const plainAll = async () => { for (const [id, key] of WANT) { const r0 = await W.mod.listingEtsySkuWrite({ listingId: id, sku: key, by: 'Paul' }); assert(r0.ok && !r0.already, 'the earlier plain press of ' + id + ' ran for real on the fake: ' + JSON.stringify(r0)); } };   // (the plain request, the one the queue sent before this release: the key on every product)
+  const prods = id => W.E.L.get(id).stored.products;
+  const huggieBack = id => prods(id).filter(p => !isHug(p)).length === 8 && prods(id).filter(p => !isHug(p)).every(p => p.sku === keyOf(id)) && prods(id).filter(isHug).length === 4 && prods(id).filter(isHug).every(p => p.sku === RULED[id]);
+  const slug16 = id => 'charmnest/custom-saves/' + id + '/link-' + keyOf(id).replace(/[^A-Z0-9]+/g, '_') + '-before';
+  const shapeLions = (withHuggie) => { const inv = realInv(REAL.lion); if (!withHuggie) for (const p of inv.products) for (const v of p.property_values) v.values = v.values.map(x => (/huggie/i.test(x) ? 'Stud earrings SET' : x)); return inv; };
+
+  /* 16a · both have Huggie products (the family's shape): both are put back */
+  reset(); await plainAll();
+  ok([DOVE, LION].every(id => prods(id).length === 12 && prods(id).every(p => p.sku === keyOf(id)) && prods(id).filter(isHug).length === 4) && W.E.puts.length === NN, 'before the press: the incident as it is live (the 04:06 UTC press): all 12 dove products and all 12 lion products, the 4 Huggie CHARM SET ones too, carry their BEADY key; every listing has had its one PUT');
+  const calls16 = W.E.calls.length, puts16 = W.E.puts.length, files16 = fileWrites.length, firstBytes = Object.fromEntries([DOVE, LION].map(id => [id, blobs.get(slug16(id) + '.json').buf.toString('utf8')]));
+  ctx = await newContext(); page = await openPage(ctx); await openChip(page);
+  s = await state(page);
+  ok(s.go.text === `Put all ${NN} queued SKUs on Etsy` && s.go.vis, 'the one-press line still says "Put all ' + NN + ' queued SKUs on Etsy": ' + s.go.text);
+  await page.locator('#mGrid .elBatch .elBtGo').click(); s = await state(page);
+  ok(s.rows.length === NN && s.rows.every((r, i) => r.head === rowHead(WANT[i][0], WANT[i][1])) && s.rows[2].head === '1816178147  BEADY DOVE 4 (not the Huggie products; any that carry it go back to DOVE 4)' && s.rows[3].head === '1801980518  BEADY CUTE LION (not the Huggie products; any that carry it go back to CUTE LION)', 'the confirm shows the dove\'s and the lion\'s rows with their rule in words ("' + s.rows[2].head + '" / "' + s.rows[3].head + '") and the other 12 rows as they were');
+  if (SHOTS) { await page.waitForTimeout(300); await tile(page, 'BEADY SWAN').screenshot({ path: path.join(SHOTS, 'dovehug-1-confirm.png') }); }
+  await page.locator('#mGrid .elBatch .elBtYes').click();
+  await page.waitForSelector('dialog.repoDlg[open]'); await typeAndGo(page, RIGHT);
+  await finished(page); s = await state(page);
+  if (SHOTS) { await page.waitForTimeout(300); await tile(page, 'BEADY SWAN').screenshot({ path: path.join(SHOTS, 'dovehug-2-done.png') }); }
+  ok(s.say === `${NN} listings: 2 done, ${NN - 2} already there.` && s.sayCls.includes('ok'), 'the press ends "' + s.say + '"');
+  ok([2, 3].every(i => s.rows[i].cls === 'done' && s.rows[i].st === DONE_BACK(WANT[i][0])) && s.rows.every((r, i) => (i === 2 || i === 3 || (r.cls === 'already' && r.st === alreadyText(WANT[i][0], WANT[i][1])))), 'the dove row says: "' + s.rows[2].st + '"; the lion row: "' + s.rows[3].st + '"; the other 12 say "Already there" in the words they always had');
+  ok(W.ops.length === NN && W.ops.every((o, i) => (i === 2 || i === 3 ? o.id === WANT[i][0] && o.leaveHuggie === true && o.huggieOldSku === RULED[o.id] && o.out.ok && !o.out.already && o.out.calls === 2 && o.keys === 'by,huggieOldSku,leaveHuggie,listingId,op,repoToken,sku' : o.out && o.out.ok && o.out.calls === 0 && o.keys === 'by,listingId,op,repoToken,sku' && o.leaveHuggie === undefined)) && W.unlocks.length === 1, 'ONE request per listing: the dove\'s and the lion\'s carried the rule and made 2 Etsy requests each, the other 12 were answered from their records with 0, one password entry');
+  ok(W.E.calls.length - calls16 === 4 && W.E.calls.slice(calls16).every(c => c.id === DOVE || c.id === LION) && W.E.puts.length === puts16 + 2 && W.E.puts.slice(puts16).map(p => p.id).join() === DOVE + ',' + LION && W.E.puts.slice(puts16).every(p => p.safetyCopyFirst), 'Etsy was asked 4 times in all (inventory + ONE PUT for each of the two) and nothing else: ' + JSON.stringify(W.E.calls.slice(calls16).map(c => c.method + ' ' + c.id + ' ' + c.kind)));
+  ok(huggieBack(DOVE) && huggieBack(LION), 'in both: the 8 Necklace CHARM / CHARM + Engraving products carry BEADY DOVE 4 / BEADY CUTE LION and the 4 Huggie CHARM SET products are back on DOVE 4 / CUTE LION');
+  ok(check(W.E, DOVE, 'BEADY DOVE 4') && check(W.E, LION, 'BEADY CUTE LION') && WANT.filter(w => !(w[0] in RULED)).every(([id, key]) => W.E.L.get(id).stored.products.every(p => p.sku === key)), 'on the fake Etsy only the Huggie skus of the two moved (prices, stock, enabled state, options, readiness as they were); the other 12 listings still carry their key on every product');
+  ok([DOVE, LION].every(id => blobs.get(slug16(id) + '.json').buf.toString('utf8') === firstBytes[id] && JSON.parse(firstBytes[id]).products.every(p => p.sku === RULED[id]) && blobs.has(slug16(id) + '-2.json')) && fileWrites.length === files16 + 2, 'the FIRST safety copy of each (every product DOVE 4 / CUTE LION) is untouched; one NEW copy (-before-2) each was written before its PUT');
+  const calls16b = W.E.calls.length, puts16b = W.E.puts.length, files16b = fileWrites.length;
+  await press(page); await finished(page); s = await state(page);
+  ok(s.say === `${NN} listings: ${NN} already there.` && s.rows.every((r, i) => r.cls === 'already' && r.st === alreadyText(WANT[i][0], WANT[i][1])) && W.E.calls.length === calls16b && W.E.puts.length === puts16b && fileWrites.length === files16b && s.dialogs === 0 && W.unlocks.length === 1, 'a second press: "' + s.say + '", no Etsy request, no PUT, no file, no password; the dove says "' + s.rows[2].st + '"');
+  ok(huggieBack(DOVE) && huggieBack(LION), 'and both are as they were after the first press');
+  const dsku = store.get('Charm_Listing_Skus/' + DOVE);
+  ok(dsku && Array.isArray(dsku.products) && dsku.products.length === 12 && dsku.products.filter(p => p.sku === 'DOVE 4').length === 4 && dsku.products.filter(p => p.sku === 'BEADY DOVE 4').length === 8, 'the SKU table the page reads for the dove now shows 8 x BEADY DOVE 4 and 4 x DOVE 4 (the op stores the read-back table)');
+  ok(ctx.__errors.length === 0 && aborted.length === 0, 'no page error, no outside request: ' + ctx.__errors.concat(aborted).join(' | '));
+  await ctx.close();
+
+  /* 16b · the LION has no Huggie product at all (never seen either way): for it the rule is a strict no-op and the row reads "Already there" exactly as today */
+  reset(); W.E.add(LION, shapeLions(false)); await plainAll();
+  ok(prods(LION).length === 12 && prods(LION).every(p => p.sku === 'BEADY CUTE LION') && !prods(LION).some(isHug) && prods(DOVE).filter(isHug).length === 4, 'before the press (a lion with no Huggie value): all 12 lion products carry BEADY CUTE LION, none names a Huggie; the dove has its 4');
+  const lionStored0 = clone(W.E.L.get(LION).stored), lionRec0 = clone(store.get('Charm_Custom_Saves/link-' + LION).link), lionTab0 = clone(store.get('Charm_Listing_Skus/' + LION));
+  const c16 = W.E.calls.length, p16 = W.E.puts.length, f16 = fileWrites.length;
+  ctx = await newContext(); page = await openPage(ctx); await openChip(page); await press(page);
+  await page.waitForSelector('dialog.repoDlg[open]'); await typeAndGo(page, RIGHT);
+  await finished(page); s = await state(page);
+  ok(s.say === `${NN} listings: 1 done, ${NN - 1} already there.` && s.rows[2].cls === 'done' && s.rows[2].st === DONE_BACK(DOVE) && s.rows[3].cls === 'already' && s.rows[3].st === 'Already there: all 12 products of listing 1801980518 carry BEADY CUTE LION. Nothing was changed.' && s.rows.every((r, i) => i === 2 || (r.cls === 'already' && r.st === (i === 3 ? 'Already there: all 12 products of listing 1801980518 carry BEADY CUTE LION. Nothing was changed.' : alreadyText(WANT[i][0], WANT[i][1])))), 'the press ends "' + s.say + '"; the lion row reads, word for word as today: "' + s.rows[3].st + '"');
+  const lionOp = W.ops.find(o => o.id === LION);
+  ok(lionOp.leaveHuggie === true && lionOp.huggieOldSku === 'CUTE LION' && lionOp.out.ok && lionOp.out.already === true && lionOp.out.calls === 1 && !('huggie' in lionOp.out), 'the lion\'s request carried the rule; the server answered "already" after ONE Etsy request (its inventory)');
+  ok(W.E.calls.length - c16 === 3 && W.E.calls.slice(c16).filter(c => c.id === LION).length === 1 && W.E.calls.slice(c16).find(c => c.id === LION).method === 'GET' && W.E.puts.length === p16 + 1 && W.E.puts[p16].id === DOVE && fileWrites.length === f16 + 1, 'Etsy was asked 3 times in all: the dove\'s inventory + its ONE PUT, the lion\'s inventory read; no PUT and no safety copy for the lion');
+  ok(JSON.stringify(W.E.L.get(LION).stored) === JSON.stringify(lionStored0) && JSON.stringify(store.get('Charm_Custom_Saves/link-' + LION).link) === JSON.stringify(Object.assign({}, lionRec0, { leaveHuggie: true })) && JSON.stringify(store.get('Charm_Listing_Skus/' + LION)) === JSON.stringify(lionTab0), 'the lion on Etsy, its record (apart from the rule\'s mark) and its SKU table are exactly as they were');
+  const c16b = W.E.calls.length;
+  await press(page); await finished(page); s = await state(page);
+  ok(s.say === `${NN} listings: ${NN} already there.` && s.rows[3].st === 'Already there: all 12 products of listing 1801980518 carry BEADY CUTE LION. Nothing was changed.' && W.E.calls.length === c16b, 'a second press: "' + s.say + '", no Etsy request');
   ok(ctx.__errors.length === 0 && aborted.length === 0, 'no page error, no outside request: ' + ctx.__errors.concat(aborted).join(' | '));
   await ctx.close();
 

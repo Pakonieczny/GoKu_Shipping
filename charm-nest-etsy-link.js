@@ -99,10 +99,22 @@
     return parts.length > 1 ? parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1] : parts[0] || "";
   }
 
+  /** DOVEHUG: the words for an answer that left the Huggie products alone (`huggie`: { products, keyed, restored: [{ sku, n }], left }); a listing without Huggie products has the words it always had. */
+  function huggieWording(r, listingId, sku, h) {
+    const H = +h.products || 0, K = +h.keyed || 0, L = +h.left || 0, one = n => (n === 1 ? "is" : "are"), carries = n => (n === 1 ? "carries" : "carry");
+    const restored = (Array.isArray(h.restored) ? h.restored : []).filter(x => x && (+x.n || 0) > 0), R = restored.reduce((n, x) => n + (+x.n || 0), 0);
+    const huggies = plural(H, "Huggie product"), others = `the ${plural(K, "product")} of listing ${listingId} that ${one(K)} not Huggie`;
+    const stuck = L > 0 ? ` ${plural(L, "Huggie product")} still ${carries(L)} ${sku}: no earlier SKU is known for ${L === 1 ? "it" : "them"}, so ${L === 1 ? "it was" : "they were"} left alone.` : "";
+    if (r.already) { const rest = H - L, tail = rest > 0 ? `, and the ${L > 0 ? "other " : ""}${plural(rest, "Huggie product")} ${rest === 1 ? "does" : "do"} not` : ""; return { text: `Already there: ${others} ${carries(K)} ${sku}${tail}.${stuck} Nothing was changed.`, kind: "ok", again: false }; }
+    const parts = restored.map(x => `${plural(+x.n || 0, "Huggie product")} put back to ${plainSku(x.sku)}`), back = R > 0 ? ` ${parts.length > 1 ? parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1] : parts[0]}.` : ` The ${huggies} ${H === 1 ? "was" : "were"} left alone.`;
+    const said = Array.isArray(r.replaced) && r.replaced.length ? ` It replaced ${groupsText(r.replaced, r.replacedMore)}.` : "";
+    return { text: `Done: ${sku} is on the ${plural(K, "product")} of listing ${listingId} that ${one(K)} not Huggie.${said}${back}${stuck}${r.beforePath ? " The listing as it was is kept." : ""}${r.verified === false ? " (Etsy's answer was not compared.)" : ""}`, kind: "ok", again: false };
+  }
   /* what the server answered, in the panel's words */
   function wording(r, listingId, sku) {
     if (!r || typeof r !== "object") return { text: "Etsy was not changed: the server sent no answer.", kind: "bad", again: true };
     if (r.ok) {
+      if (r.huggie && typeof r.huggie === "object" && +r.huggie.products > 0) return huggieWording(r, listingId, sku, r.huggie);
       const n = +r.products || (Array.isArray(r.productIds) ? r.productIds.length : 0), all = n ? "all " + plural(n, "product") : "every product";
       if (r.already) return { text: `Already there: ${all} of listing ${listingId} carry ${sku}. Nothing was changed.`, kind: "ok", again: false };
       const said = Array.isArray(r.replaced) && r.replaced.length ? ` It replaced ${groupsText(r.replaced, r.replacedMore)}${r.beforePath ? "; the listing as it was is kept" : ""}.` : "";   // (the products carried several different SKUs)
