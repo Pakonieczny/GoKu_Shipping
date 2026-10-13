@@ -181,13 +181,9 @@
     const shown = ['front', 'back'].filter(f => piece.faces && piece.faces[f]);
     const face = shown.reduce((a, f) => (!a || (RANK[piece.faces[f].state] || 0) > (RANK[piece.faces[a].state] || 0) ? f : a), '') || 'front';
     const L = root && root.EngraveLink, E = root && root.Engrave, line = lineOf(piece.row);
-    let say = false, why = line && line.state === 'gone' ? 'This order has left the pull' : root && root.document && !(L && L.open) && !(E && E.restoreView) ? 'Engraving is not ready' : '';   // (the model alone, with no page, has nothing to wait for)
-    // a piece with no engraving job that none is coming for (on hold, or on no sheet yet): there is nothing to open, and EngraveLink says so in its own plain line inside the open window when it is pressed (`say`)
-    if (!why && L && L.resolve && !(piece.jobs || []).length) {
-      const any = (piece.jobs || [])[0], t = { rid: piece.rid, key: piece.lineKey, poolId: (any && (any.copies || [])[0]) || (line && (line.poolIds || [])[0]) || '', piece: any ? any.key : '', face };
-      const r = tryDo(() => L.resolve(t), null); if (r && !r.job && r.why) { why = r.why; say = true; }
-    }
-    return { face, done: piece.state === 'approved' || piece.state === 'plain', words: piece.state === 'words', ok: !why, why, say };
+    // (ENGPRE, Paul 13 Oct: "a charm does not have to be placed on that sheet for it to be approved/updated": a piece on hold, waiting, pulled or on no sheet yet is opened like any other, its job is made at once, Engrave.early; only the reasons below keep the button off)
+    const why = line && line.state === 'gone' ? 'This order has left the pull' : root && root.document && !(L && L.open) && !(E && E.restoreView) ? 'Engraving is not ready' : '';   // (the model alone, with no page, has nothing to wait for)
+    return { face, done: piece.state === 'approved' || piece.state === 'plain', words: piece.state === 'words', ok: !why, why };
   }
   function openHtml(piece) {
     const g = openOf(piece), word = g.done ? OPEN_WORD.view : OPEN_WORD.fix;
@@ -324,15 +320,15 @@
     const things = () => [...(btn ? [btn] : []), ...el.querySelectorAll('.engFace .engThumb')];
     /** Is the piece openable NOW? Asked again at every press, hover and focus (a piece that was on hold may have reached its sheet since the card was drawn): the button and the pictures follow it. */
     const sync = () => {
-      const g = btn ? openOf(piece) : { ok: true, why: '', say: false };
+      const g = btn ? openOf(piece) : { ok: true, why: '' };
       for (const t of things()) {
-        if (g.ok || (g.say && t !== btn)) { if (t.getAttribute('aria-disabled')) { t.removeAttribute('aria-disabled'); t.removeAttribute('title'); } }   // (the pictures of a piece with no job keep the card's own tooltip and stay pressable: the press is answered)
+        if (g.ok) { if (t.getAttribute('aria-disabled')) { t.removeAttribute('aria-disabled'); t.removeAttribute('title'); } }
         else { t.setAttribute('aria-disabled', 'true'); t.title = g.why; }
       }
       return g;
     };
     const press = (face, from) => {
-      if (busy) return; const g = sync(); if (!g.ok && !g.say) return;   // (a button that looks off because EngraveLink has no job to open still passes the press on: the link says why, in the open window)
+      if (busy) return; const g = sync(); if (!g.ok) return;
       let run = null;
       try { run = o && o.onOpen ? o.onOpen(face, keyOf(face), from, piece) : null; } catch (e) { tryDo(() => console.warn('engraving card: open', e)); return; }
       if (!run || typeof run.then !== 'function') return;
