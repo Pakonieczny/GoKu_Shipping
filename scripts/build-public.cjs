@@ -160,6 +160,7 @@ const assets = [
   "charm-nest-order-pieces.js",
   "charm-nest-order-facts.js",
   "charm-nest-order-rows.js",
+  "charm-nest-order-group.js",
   "charm-nest-piece-placement.js",
   "charm-nest-placement-feed.js",
   "charm-nest-engrave-card.js",

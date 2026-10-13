@@ -2712,6 +2712,32 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
  .comparePair figcaption{font-size:8px;gap:0}.thumbReset{font-size:12px;padding:2px}
 }
 @media(prefers-reduced-motion:reduce){.comparePair .placementThumb img,.comparePair .placementThumb canvas{transition:none}}
+/* ONE ORDER, ONE ROW (ENGONE, 13 Oct 2026; bridge groupNode, charm-nest-order-group.js): the lines of one order are ONE card, its top said once (number, time, piece count, personalisation, Ship by, its buttons), each piece under it as the row it always was */
+.ogHead{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px 32px;min-width:0}
+.ogHead .engravingIdentity{align-content:start;gap:5px;min-width:0}
+.ogHead .engravingOrder{margin:0;gap:3px 10px;align-items:baseline}
+.ogHead .onum{display:flex;gap:7px;align-items:baseline;flex-wrap:wrap;font-size:12.5px;min-width:0}.ogHead .orderTime{font-size:10px;font-weight:400}
+.ogHead .ogSaid{flex:1 1 200px}.ogHead .rowExcerpt{line-height:1.6;-webkit-line-clamp:3}
+.ogHead .ogActs{margin-left:auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px 12px;border:0;padding:0;min-width:0}
+.ogHead .ogActs .revSendMsg{flex:1 0 100%;max-width:none;text-align:right}
+.ogPiece{min-width:0}
+.ordList .ordGroup,.ordList .ordGroup:hover{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--slate);border-radius:9px;width:100%;min-width:0;box-sizing:border-box;cursor:pointer;text-align:left;font-size:12.5px}
+.ordList .ordGroup:hover{border-color:var(--ink45);border-left-color:var(--slate)}
+.ordGroup.cnBusy{transform:translateY(-2px);transition:transform .24s cubic-bezier(.2,.8,.2,1)}
+@media(prefers-reduced-motion:reduce){.ordGroup.cnBusy{transform:none;transition:none}}
+.mGhost>.ordGroup.mCopy{transition:none}
+.ordList .ordGroup .ogHead{padding:14px 16px 10px 14px}
+.ordList .ordGroup .ogPiece.doneRow.workRow{border:0;border-top:1px solid var(--line2);border-radius:0;background:transparent;box-shadow:none;min-height:0;padding:12px 16px 12px 14px}
+.ordList .ordGroup .ogPiece.doneRow.workRow:hover{background:var(--paper2)}
+.ordList .ordGroup .ogPiece.doneRow.workRow:last-child{border-radius:0 0 8px 6px}
+.ordList .ordGroup .ogPiece.doneRow.workRow:focus-visible{outline-offset:-2px}
+.ordCards .ordGroup{grid-column:1/-1}
+.ordCards .ordGroup .ogHead{padding:0 0 10px;border-bottom:1px solid var(--line2)}
+.ordCards .ordGroup .ogActs{border:0;padding:0}
+.ordCards .ordGroup .ogPieces{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px 0}
+.ordCards .ordGroup .ogPiece{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-content:start;padding:0 12px;border-left:1px solid var(--line2);cursor:pointer}
+.ordCards .ordGroup .ogPiece:first-child{padding-left:0;border-left:0}.ordCards .ordGroup .ogPiece:last-child{padding-right:0}
+.ordCards .ordGroup .ogPiece:focus-visible{outline:2px solid var(--gold2);outline-offset:2px}
 
 /* ── Room for the work (Paul, 25 Sep: "maximize the work area"). The menus are secondary, so every tab gives its height
    to what the tab is for: the list, the sheets, the charm being engraved. The bars are thinner with their controls about
@@ -3557,6 +3583,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1-dm1-ko1"></script>
 <script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po2-adv2-cg1-sn1-dr2-sl1"></script>
 <script src="charm-nest-order-rows.js?v=20261012-or1"></script>
+<script src="charm-nest-order-group.js?v=20261013-on1"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2-cg1"></script>
 <script src="charm-nest-engrave-card.js?v=20261012-ec1-sm1-r2th1-bt1-bg1-pn1-pk1"></script>
 <script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1-dm1-su1-ui2-egm1-el1-ec1-mg1-crash1-sel1-op1-pn1-tx1-pk1"></script>
@@ -7730,7 +7757,7 @@ boot();
 <script src="charm-nest-review-link.js?v=20261013-rlk2"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-en1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4"></script>

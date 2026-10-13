@@ -2031,13 +2031,13 @@ const Orders = window.Orders = (() => {
     if (window.MutationObserver) new MutationObserver(() => { if (v.classList.contains("hidden")) drawnOn = ""; }).observe(v, { attributes: true, attributeFilter: ["class"] });
   }
   const lit = n => { n.classList.remove("mFound"); void n.offsetWidth; n.classList.add("mFound"); setTimeout(() => n.classList.remove("mFound"), 2600); };
-  const lineNode = key => [...document.querySelectorAll('#ordItems [data-mkey^="ord:"]')].find(n => n.dataset.key === key) || null;
+  const lineNode = key => [...document.querySelectorAll('#ordItems [data-mkey^="ord:"], #ordItems .ogPiece')].find(n => n.dataset.key === key) || null;
   /** "Show" in a note: the pile that holds the line now, scrolled to it and marked (filters let go when they hide it). */
   function showLine(key, pile) {
     OV.pile = pile || null;
     if (!visibleRows().some(x => x.key === key)) { OV.metal = OV.form = OV.eng = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; }
     if (!onScreen() && typeof setMode === "function") setMode("orders"); else renderNow();
-    const i = visibleRows().findIndex(x => x.key === key);
+    const i = groupsOf(visibleRows()).findIndex(g => g.rows.some(x => x.key === key));
     if (i >= (OV.limit || 48)) { OV.limit = i + 12; renderBody(); }
     const n = lineNode(key); if (n) { n.scrollIntoView({ behavior: "smooth", block: "center" }); lit(n); }
   }
@@ -2074,7 +2074,7 @@ const Orders = window.Orders = (() => {
    *  order: its other lines fly with it in silence. */
   function leaveFor(noted) {
     return (mk, node) => {
-      const rid = node.dataset.rid, key = node.dataset.key; if (!key || !mine(rid)) return null;
+      const rid = node.dataset.rid, key = node.dataset.key || node.dataset.first; if (!key || !mine(rid)) return null;
       // (Release hold lifts the hold while its film plays in the Nest tab: the film has its own flight and its own note at the end, so the line folds away here; this list's flight and note were drawn at the top left corner, over the tabs, and said "1 still on hold" while the whole order was being released)
       if (window.HoldUI && HoldUI.busy && HoldUI.busy(rid)) return null;
       const r = rowsOf().find(x => x.key === key), first = !noted.has(rid); noted.add(rid);
@@ -2103,6 +2103,74 @@ const Orders = window.Orders = (() => {
     nodes.forEach((n, i) => { if (list.children[i] !== n) list.insertBefore(n, list.children[i] || null); });
     const keep = new Set(nodes); for (const c of [...list.children]) if (!keep.has(c)) c.remove();
   }
+  /* ── ONE ORDER, ONE ROW (ENGONE, 13 Oct 2026; charm-nest-order-group.js) ──
+     An order of two lines (one Silver, one Gold) was drawn as two rows, each with its own number, time, personalisation and Send to Review. The lines of one order now stand together
+     in ONE card: the order's number, time, piece count, personalisation (when every piece says the same), Ship by and its buttons (Send to Review, Release hold, Cancel Order, the mail
+     marks) once at the top; under it each piece as the row it always was (its pictures, design, sheet, jewellery and options, state, seals, Qty). A press on a piece opens the order
+     window on that piece (it is the one picked in "Its pieces"); a press on the top opens the order. An order that shows one line is drawn exactly as before. */
+  const groupsOf = rows => {
+    const OG = window.CharmNestOrderGroup, at = new Map(rowsOf().map((r, i) => [r, i]));
+    return OG ? OG.groupRows(rows, r => at.get(r)) : rows.map(r => ({ rid: String(r.order.receiptId), rows: [r] }));
+  };
+  /** What the list says of one line (a row, or a piece of a grouped order), worked out once. */
+  function lineView(r) {
+    const sp = r.spec || {}, m = r.material || "none";
+    const st = stateWords(r), shown = stageText(st[1]) ? null : st, due = dueOf(r), where = placeOf(r), fc = faceChip(r);
+    const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
+    const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
+    const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
+    const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = window.TeamMail ? TeamMail.stamp(r) : "";
+    // the seals this piece's record keeps (Complete Order, each print; a reopened piece's too: they are for good), drawn small beside its state
+    const sealRec=window.CustomPrint&&window.Seal?CustomPrint.recordOfRow(r):null,seals=sealRec?CustomPrint.sealsOfRow(r,28):"";
+    const held=heldNow(r);
+    return { r, sp, m, st, shown, due, where, fc, attn, why, gateBtn, mail, team, sealRec, seals, held };
+  }
+  /** The pictures a node of an earlier drawing holds for a line (a row, or a piece of a grouped order), to carry over when the node is drawn again. */
+  const pairIn = (node, key) => { const p = node.classList.contains("ordGroup") ? [...node.querySelectorAll(".ogPiece")].find(n => n.dataset.key === key) : node; return p ? p.querySelector(".comparePair") : null; };
+  const wireGate = n => { const gb = n.querySelector("[data-gate]"); if (gb) gb.onclick = e => { e.stopPropagation(); gb.disabled = true; (gb.dataset.gate === "release" ? Gate.release(gb.dataset.gm) : Gate.cutAnyway(gb.dataset.gm)).catch(err => toast(err.message, "bad", 6000)); }; };
+  function groupNode(g, date, cards, env) {
+    const OG = window.CharmNestOrderGroup, rows = g.rows, first = rows[0], rid = String(first.order.receiptId), V = rows.map(lineView);
+    const held = V.filter(v => v.held), due = V[0].due, mail = V[0].mail, team = V[0].team, attn = V.some(v => v.attn);
+    const label = v => wordsOf(v.sp) ? "Personalisation" : "Item", text = v => wordsOf(v.sp) || v.r.line.title || "No title";
+    const said = OG.sameOf(V.map(v => label(v) + "|" + text(v)));   // (what every piece says alike is said once at the top, else on each piece)
+    const total = rows.reduce((n, r) => n + (O.pieceCountOf(r) || 1), 0), cancelable = held.length > 0 && OV.pile === "hold" && !!window.CancelUI;
+    const stamp = JSON.stringify(["group", cards, first.order, due, date, mail, team, cancelable, V.map(v => [v.r.key, v.r.line, v.r.spec, v.r.state, v.st, v.r.hold, v.held, v.r.wait, v.why, v.where, v.seals && CustomPrint.sealSig(v.sealRec), v.fc[1]])]);
+    const cached = orderNodes.get(first.key);
+    if (cached?.stamp === stamp) {
+      orderNodes.delete(first.key); orderNodes.set(first.key, cached);
+      for (const n of cached.node.querySelectorAll(".ogPiece")) { const r = rows.find(x => x.key === n.dataset.key); if (r) env.mounts.push([n, r, "media"]); }
+      env.mounts.push([cached.node, first, "review"]);
+      return cached.node;
+    }
+    const node = el("div", (cards ? "ocard " : "") + "ordGroup hoverItem" + (attn ? " attn" : ""));
+    const ms = [...new Set(V.map(v => v.m))]; node.dataset.m = ms.length === 1 ? ms[0] : "mixed";
+    node.setAttribute("role", "group"); node.setAttribute("aria-label", `Order ${rid}, ${OG.countWord(total)}`);
+    node.dataset.mkey = "ord:" + first.key; node.dataset.rid = rid; node.dataset.first = first.key;
+    const qtyOf = v => v.sp.quantity || v.r.line.quantity || 1;
+    const piece = v => `<div class="ogPiece${cards ? "" : " doneRow workRow orderListRow"}" role="button" tabindex="0" data-key="${esc(v.r.key)}" data-m="${esc(v.m)}" title="${esc(v.r.order.receiptId + " · " + (v.sp.designSku || v.r.line.sku || "no SKU") + " — " + v.r.line.title)}">`
+      + ListMedia.pair(v.r) + `<div class="engravingIdentity"><div class="engravingOrder"><span class="sku mono">${esc(v.sp.designSku || v.r.line.sku || "No SKU")}</span></div>${said ? "" : `<span class="purchaseLabel">${label(v)}</span><span class="rowExcerpt" title="${esc(text(v))}">${esc(text(v))}</span>`}${v.where ? `<span class="rowExcerpt dim">${esc(v.where.set)} · ${esc(v.where.sheet)}</span>` : ""}</div>`
+      + `<div class="purchaseSummary">${purchaseMarkup(v.r)}</div><div class="rowActions">${v.shown ? `<span class="ost ${v.shown[0]}">${esc(v.shown[1])}</span>` : ""}${v.fc[1] ? `<span class="ost ${v.fc[0]} engFaces" title="${v.fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${v.fc[1]}</span>` : ""}${v.seals}<span class="rowFacts">Qty ${qtyOf(v)}${earPairRow(v.r) ? pairFactOf(qtyOf(v)) : O.countedFact(v.r)}</span>${v.why ? `<span class="rowExcerpt reviewReason" title="${esc(v.why)}">${esc(v.why)}</span>` : ""}${v.gateBtn}</div></div>`;
+    node.innerHTML = `<div class="ogHead"><div class="engravingIdentity ogId"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(rid)}</b><span class="groupScope">${OG.countWord(total)}</span></div></div>`
+      + (said ? `<div class="engravingIdentity ogSaid"><span class="purchaseLabel">${label(V[0])}</span><span class="rowExcerpt" title="${esc(text(V[0]))}">${esc(text(V[0]))}</span></div>` : "")
+      + `<div class="rowActions ogActs">${team ? TeamMail.mark(first) : ""}${mail && mail !== "null" ? CustomerMail.badge(rid) : ""}<span class="rowFacts"><span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${held.length ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ""}</div></div>`
+      + `<div class="ogPieces">${V.map(piece).join("")}</div>`;
+    const number = node.querySelector(".onum"); if (number) { const time = el("span", "orderTime"); time.textContent = date.time; time.title = date.label; number.appendChild(time); }
+    // a press on a piece opens the order window on THAT piece (picked in "Its pieces"); a press on the top, the order
+    for (const n of node.querySelectorAll(".ogPiece")) {
+      const r = rows.find(x => x.key === n.dataset.key), go = () => OrderWin.open(r.key, { from: n, pick: true });
+      n.onclick = e => { const b = e.target.closest("button,[role=button]"); if (b && b !== n) return; e.stopPropagation(); go(); };
+      n.onkeydown = e => { if (e.target === n && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); e.stopPropagation(); go(); } };
+      wireGate(n);
+    }
+    node.onclick = e => { if (e.target.closest("button,[role=button],a")) return; OrderWin.open(first.key, { from: node }); };
+    { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); const back = () => { for (const v of held) Review.repool(v.r); render(); }; if (window.HoldUI && HoldUI.canRelease()) { HoldUI.release(rid, { button: rh }).then(x => { if (x && x.used === false) back(); }); return; } back(); }; }
+    if (cancelable) { try { CancelUI.mount(node, (held.find(v => v.r.hold) || held[0]).r); } catch (err) { console.warn("Cancel Order button", err); } }
+    if (cached?.node) { for (const r of rows) { const pair = pairIn(cached.node, r.key), n = [...node.querySelectorAll(".ogPiece")].find(x => x.dataset.key === r.key); if (pair && n) env.pairs.push([n, pair]); } env.rebuilt.push(node); }
+    orderNodes.delete(first.key); orderNodes.set(first.key, { stamp, node });
+    for (const n of node.querySelectorAll(".ogPiece")) env.mounts.push([n, rows.find(x => x.key === n.dataset.key), "media"]);
+    env.mounts.push([node, first, "review"]);
+    return node;
+  }
   function renderBody() {
     if(window.Seal?.defer('orders-list',renderBody) || window.CharmNestInteraction?.defer('orders-list',renderBody))return;
     const host = document.getElementById("ordBody"); if (!host) return;
@@ -2126,7 +2194,7 @@ const Orders = window.Orders = (() => {
     const cards = viewMode() === "cards";
     let list=host.querySelector('#ordItems');if(!list){host.innerHTML='<div id="ordItems"></div>';list=host.firstElementChild;}list.className=cards?'ordCards':'ordList';
     // an empty pile says so in the list itself, so the last row out is still seen going (and the words come in softly)
-    const wanted=[],mounts=[],pairs=[],rebuilt=[];let shown=[];
+    const wanted=[],mounts=[],pairs=[],rebuilt=[];let shown=[],groupTotal=0;
     if (!rowsOf().length && (window.Sandbox?.held?.() || window.Sandbox?.pulling?.())) {
       // a cleaned sandbox waits for Start: the calm line and the one button that begins the replay (turning Auto on or Pull orders do too)
       const n = blank("held", '<span class="sbWait"></span><button class="btn gold sm" type="button" data-sb-start>Start</button>', n => { const go = n.querySelector("[data-sb-start]"); go.onclick = () => { go.disabled = true; Sandbox.start().catch(err => { toast(err.message, "bad", 7000); go.disabled = false; }); }; });
@@ -2140,22 +2208,17 @@ const Orders = window.Orders = (() => {
     else if (!rows.length) wanted.push(blank("filters", 'Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button>', n => { n.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; render(); }; }));
     else {
     let lastDay=null;
-    shown=rows.slice(0,OV.limit || 48);
+    // (ONE ORDER, ONE ROW, 13 Oct 2026: the lines of one order stand together where its first line stood; a group of one is a row as it always was)
+    const groups=groupsOf(rows);groupTotal=groups.length;
+    shown=groups.slice(0,OV.limit || 48);
     // a heading counts its day's orders in the list: counted only where headings are drawn, for the days on screen
     const dayCounts=new Map();
-    if(OV.sort==='arrival'){for(const r of shown)dayCounts.set(dayOf(r).key,new Set());for(const row of rows){const ids=dayCounts.get(dayOf(row).key);if(ids)ids.add(row.order.receiptId);}}
-    for (const r of shown) {
-      const date=dayOf(r);
+    if(OV.sort==='arrival'){for(const g of shown)dayCounts.set(dayOf(g.rows[0]).key,new Set());for(const row of rows){const ids=dayCounts.get(dayOf(row).key);if(ids)ids.add(row.order.receiptId);}}
+    for (const g of shown) {
+      const r=g.rows[0],date=dayOf(r);
       if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;heading.dataset.mkey='day:'+date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} order${dayCounts.get(date.key).size === 1 ? "" : "s"} · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;wanted.push(heading);lastDay=date.key;}
-      const sp = r.spec || {}, m = r.material || "none";
-      const st = stateWords(r), shown = stageText(st[1]) ? null : st, due = dueOf(r), where = placeOf(r), fc = faceChip(r);
-      const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
-      const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
-      const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
-      const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = window.TeamMail ? TeamMail.stamp(r) : "";
-      // the seals this piece's record keeps (Complete Order, each print; a reopened piece's too: they are for good), drawn small beside its state
-      const sealRec=window.CustomPrint&&window.Seal?CustomPrint.recordOfRow(r):null,seals=sealRec?CustomPrint.sealsOfRow(r,28):"";
-      const held=heldNow(r);
+      if (g.rows.length > 1) { wanted.push(groupNode(g, date, cards, { mounts, pairs, rebuilt })); continue; }
+      const { sp, m, st, shown, due, where, fc, attn, why, gateBtn, mail, team, sealRec, seals, held } = lineView(r);
       const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,held,r.wait,why,where,due,date,mail,team,held && OV.pile === "hold" && !!window.CancelUI,seals&&CustomPrint.sealSig(sealRec),fc[1]]);
       const cached=orderNodes.get(r.key);
       if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);wanted.push(cached.node);mounts.push([cached.node,r]);continue;}
@@ -2171,16 +2234,16 @@ const Orders = window.Orders = (() => {
       node.onkeydown=e=>{if(e.target===node && (e.key==="Enter" || e.key===" ")){e.preventDefault();OrderWin.open(r.key, { from: node });}};
       // Release hold: the line goes back in line; drawn at once, so it is seen leaving On hold for Open Orders
       { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); if (window.HoldUI && HoldUI.canRelease()) { HoldUI.release(String(r.order.receiptId), { button: rh }).then(x => { if (x && x.used === false) { Review.repool(r); render(); } }); return; } Review.repool(r); render(); }; }
-      { const gb = node.querySelector("[data-gate]"); if (gb) gb.onclick = e => { e.stopPropagation(); gb.disabled = true; (gb.dataset.gate === "release" ? Gate.release(gb.dataset.gm) : Gate.cutAnyway(gb.dataset.gm)).catch(err => toast(err.message, "bad", 6000)); }; }
+      wireGate(node);
       // Cancel Order beside Release hold, on the On hold pile only (charm-nest-cancel-ui.js; the stamp above carries the pile)
       if (held && OV.pile === "hold" && window.CancelUI) { try { CancelUI.mount(node, r); } catch (err) { console.warn("Cancel Order button", err); } }
       // an order can be several lines on several cards: hovering one lifts all of them, the way the station does
       node.dataset.rid = String(r.order.receiptId);
       // (the old node's decoded pictures move over once the update has measured where the old node stood)
-      if(cached?.node){const pair=cached.node.querySelector('.comparePair');if(pair)pairs.push([node,pair]);rebuilt.push(node);}
+      if(cached?.node){const pair=pairIn(cached.node,r.key);if(pair)pairs.push([node,pair]);rebuilt.push(node);}
       wanted.push(node);orderNodes.delete(r.key);orderNodes.set(r.key,{stamp,node});mounts.push([node,r]);
     }
-    if(orderNodes.size>NODES_KEPT){const onList=new Set(shown.map(r=>r.key));for(const key of orderNodes.keys()){if(orderNodes.size<=NODES_KEPT)break;if(!onList.has(key))orderNodes.delete(key);}}
+    if(orderNodes.size>NODES_KEPT){const onList=new Set(shown.flatMap(g=>g.rows.map(r=>r.key)));for(const key of orderNodes.keys()){if(orderNodes.size<=NODES_KEPT)break;if(!onList.has(key))orderNodes.delete(key);}}
     }
     // the pile and view on screen, drawn before: what changed is seen changing (not "Show more", which only adds below)
     const same = drawnOn === nextKey && drawnLimit === OV.limit && list.childElementCount > 0;
@@ -2191,8 +2254,8 @@ const Orders = window.Orders = (() => {
     if (window.Motion) Motion.reconcile(list, wanted, { animate: same, leave: leaveFor(new Set()), get clip() { settle(); return host; } });
     else put(list, wanted);
     for (const [node, pair] of pairs) node.querySelector('.comparePair')?.replaceWith(pair);
-    for (const [node, r] of mounts) { ListMedia.mount(node, r); if (window.ReviewSend) ReviewSend.mount(node, r); }   // (Send to Review: the one button under Qty · Ship by, charm-nest-review-send.js; it draws nothing until the Review mark API is there)
-    ListMedia.more(list,rows.length,shown.length,()=>{OV.limit=(OV.limit || 48)+48;renderBody();});
+    for (const [node, r, only] of mounts) { if (only !== "review") ListMedia.mount(node, r); if (only !== "media" && window.ReviewSend) ReviewSend.mount(node, r); }   // (a grouped order's pieces mount their pictures, its one card mounts the button; Send to Review: the one button under Qty · Ship by, charm-nest-review-send.js; it draws nothing until the Review mark API is there)
+    ListMedia.more(list,groupTotal||rows.length,shown.length,()=>{OV.limit=(OV.limit || 48)+48;renderBody();});
     settle();
     drawnOn = onScreen() ? nextKey : ""; drawnLimit = OV.limit;
     // what a person changed that stays in this pile (Release hold under Open Orders, Send now) is marked where it is
@@ -2329,7 +2392,7 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
+  return { view: () => OV, walkRows: () => groupsOf(visibleRows()).flatMap(g => g.rows), showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
@@ -14874,7 +14937,7 @@ const OrderWin = window.OrderWin = (() => {
     paintTray();
   }
   /** The lines the Orders tab is showing, so Previous and Next walk what the person is actually looking at. */
-  const siblings = () => Orders.visibleRows();
+  const siblings = () => (Orders.walkRows ? Orders.walkRows() : Orders.visibleRows());   // (the lines in the order the Orders list draws them: an order's pieces together, ONE ORDER ONE ROW)
   function step(d) {
     if (!W.walk) return;
     const list = siblings(); const i = list.findIndex(r => r.key === W.key);
