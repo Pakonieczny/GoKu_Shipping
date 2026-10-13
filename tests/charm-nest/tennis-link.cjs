@@ -31,7 +31,7 @@ const fromQuery = async q => { const r = await lib.handler({ httpMethod: 'GET', 
   eq((await fromQuery({ op: 'aliasGet' })).body.aliases, {}, 'production starts with no saved alias (as read live at 16:07 UTC: 0 documents)');
   Fk.writes.length = 0;
   const put = await call({ op: 'aliasPut', listingId: LID, fromSku: RAW, pair: { L: BALL, R: RACKET }, by: 'TENNISLINK', title: 'Mismatched Tennis Ball and Raquet Huggie Hoops Charm' });
-  eq([put.status, put.body], [200, { ok: true }], 'the pair is saved');
+  eq([put.status, put.body], [200, { ok: true, verified: true, kind: 'pair', listingId: LID, key: RAW, sku: BALL + ' + ' + RACKET }], 'the pair is saved and read back (REVLINK)');
   eq(Fk.writes.map(w => w.kind + ' ' + w.path), ['set Charm_Sku_Aliases/' + LID], 'exactly ONE record is written, the listing\'s own (no sandbox copy, no option map, no master change, no other document)');
   const doc = Fk.store.get('Charm_Sku_Aliases/' + LID);
   eq(Object.keys(doc).sort(), ['by', 'listingId', 'pairBySku', 'title', 'updatedAt'], 'the record holds the answer and who gave it, nothing else');
@@ -59,16 +59,17 @@ const fromQuery = async q => { const r = await lib.handler({ httpMethod: 'GET', 
   await refuse({ pair: { L: BALL, R: RACKET }, listingId: '' }, /listingId and fromSku/, 'no listing');
   await refuse({ pair: { L: BALL, R: ['TENNIS', 'RACKET'] } }, /two different|not in the master/, 'an array for a design');
   eq(Fk.writes, [], 'a refused pair writes nothing');
-  // the sandbox: its answers are its own copy; it READS production's (so a sandbox wipe never removes the production link and real orders use it)
+  // the sandbox (REVLINK, 12 Oct 2026): a person's PICK of a charm, a pair included, is saved in the SHARED store from the sandbox too (Reset never reaches it); the sandbox and production read the same links
   Fk.writes.length = 0;
   await call({ op: 'aliasPut', sandbox: true, listingId: LID, fromSku: 'SANDBOX ONLY', sku: BALL, by: 's' });
-  eq(Fk.writes.map(w => w.path), ['Sandbox_Charm_Sku_Aliases/' + LID], 'a sandbox answer is written to the sandbox copy only');
+  eq(Fk.writes.map(w => w.path), ['Charm_Sku_Aliases/' + LID], 'a sandbox pick is saved in the shared store, none in a sandbox copy');
   const sbx = (await call({ op: 'aliasGet', sandbox: true })).body.aliases[LID];
-  eq([sbx.pairBySku[RAW].R, sbx.bySku], [RACKET, { 'SANDBOX ONLY': BALL }], 'the sandbox reads production\'s pair together with its own one-design answer');
+  eq([sbx.pairBySku[RAW].R, sbx.bySku], [RACKET, { 'SANDBOX ONLY': BALL }], 'the sandbox reads production\'s pair together with the one-design answer it saved');
   await call({ op: 'aliasPut', sandbox: true, listingId: LID, fromSku: 'SANDBOX PAIR', pair: { L: RACKET, R: BALL }, by: 's' });
   const sbx2 = (await call({ op: 'aliasGet', sandbox: true })).body.aliases[LID];
-  eq(Object.keys(sbx2.pairBySku).sort(), [RAW, 'SANDBOX PAIR'].sort(), 'and a sandbox pair joins production\'s, it does not replace it');
-  eq(Object.keys((await call({ op: 'aliasGet' })).body.aliases[LID].pairBySku), [RAW], 'production never sees the sandbox pair');
+  eq(Object.keys(sbx2.pairBySku).sort(), [RAW, 'SANDBOX PAIR'].sort(), 'and a pair saved in the sandbox joins production\'s, it does not replace it');
+  eq(Object.keys((await call({ op: 'aliasGet' })).body.aliases[LID].pairBySku).sort(), [RAW, 'SANDBOX PAIR'].sort(), 'production reads the pair the sandbox saved: they share their links');
+  Fk.store.delete('Charm_Sku_Aliases/' + LID); await call({ op: 'aliasPut', listingId: LID, fromSku: RAW, pair: { L: BALL, R: RACKET }, by: 'TENNISLINK', title: 'Mismatched Tennis Ball and Raquet Huggie Hoops Charm' });   // (back to the single answer, for the rest)
   pass('A · the store: one record, a map, only for this listing and SKU, two different master designs, the sandbox reads production\'s');
 
   /* ── B · the reading ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── */

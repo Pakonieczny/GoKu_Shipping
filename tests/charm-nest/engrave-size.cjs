@@ -27,7 +27,7 @@ const first = (lines, keepOut = []) => Fit.calculate({ charm: bar(), lines, line
 const grab = (a, b) => { const i = source.indexOf(a), j = source.indexOf(b, i); assert(i > 0 && j > i, 'bridge section not found: ' + a); return source.slice(i, j); };
 function editor(job, toasts) {
   const frames = new Map(), handlers = {}, paints = [], capNode = { textContent: '' }; let frameId = 0;
-  const ctx = { G, S: { settings }, PT, job, fontFor: w => fonts[w] || fonts.Regular, toast: (m, kind) => toasts.push({ m, kind }), refresh() {}, reRead() {},
+  const ctx = { G, S: { settings }, PT, job, fontFor: w => fonts[w] || fonts.Regular, draftSource: () => null /* (ENGWORK: no words staged in this sandbox) */, toast: (m, kind) => toasts.push({ m, kind }), refresh() {}, reRead() {},
     card: { querySelector: q => q === '[data-cap]' ? capNode : null }, requestAnimationFrame: fn => { frames.set(++frameId, fn); return frameId; }, cancelAnimationFrame: id => frames.delete(id) };
   vm.createContext(ctx);
   vm.runInContext(grab('  const fitOpts =', '  const items =') + '\nthis.fitOpts=fitOpts;', ctx);                                  // the real fitOpts, with the real Settings keys

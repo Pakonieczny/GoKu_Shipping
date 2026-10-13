@@ -546,8 +546,9 @@
       if(blockers.length)hard.orders=true;
     }
     ok.orders=st.orders && st.qr;
-    const first=items.orders.find(i=>i.part!=='qr' && i.kind==='order'),waitsDetail=checked?`${blockers.length} of ${count(ids.length,'order')} ${blockers.length===1?'waits':'wait'} for other pieces to be ready.`:'Its orders have not been checked yet.';
-    const waitsShort=!checked?'its orders have not been checked yet':!blockers.length?'its orders wait for other pieces':blockers.length===1?`${N.order(blockers[0].orderId)} waits for another piece: ${lower(first.why)}`:`${count(blockers.length,'order')} wait for other pieces, for example ${N.order(blockers[0].orderId)}: ${lower(first.why)}`;
+    const first=items.orders.find(i=>i.part!=='qr' && i.kind==='order'),inRev=checked && blockers.length>0 && blockers.every(x=>x.pieces && x.pieces.length && x.pieces.every(p=>p.review));   // (every order that holds it is in Review: the words say that, not "other pieces")
+    const waitsDetail=checked?inRev?`${blockers.length===1?'An order':count(blockers.length,'order')} on it ${blockers.length===1?'is':'are'} in Review. It stays on the sheet, and the sheet goes on once ${blockers.length===1?'it is':'they are'} resolved there.`:`${blockers.length} of ${count(ids.length,'order')} ${blockers.length===1?'waits':'wait'} for other pieces to be ready.`:'Its orders have not been checked yet.';
+    const waitsShort=!checked?'its orders have not been checked yet':!blockers.length?'its orders wait for other pieces':inRev?blockers.length===1?`${N.order(blockers[0].orderId)} is in Review`:`${count(blockers.length,'order')} are in Review, for example ${N.order(blockers[0].orderId)}`:blockers.length===1?`${N.order(blockers[0].orderId)} waits for another piece: ${lower(first.why)}`:`${count(blockers.length,'order')} wait for other pieces, for example ${N.order(blockers[0].orderId)}: ${lower(first.why)}`;
     detail.orders=ok.orders?(ids.length?`All ${count(ids.length,'order')} on this sheet have every other piece ready.`:'No orders to check.'):[qrDetail,st.orders?'':waitsDetail].filter(Boolean).join(' ');
     short.orders=st.qr?waitsShort:st.orders?qrShort:`${qrShort}, and ${waitsShort}`;
     return {id,label,r,again,ok,hard,items,detail,short};
@@ -584,7 +585,7 @@
   function orderIssue(id,r,ctx,me){
     const bs=Array.isArray(r.blocks)?r.blocks:[],h=bs.length?head(bs):null,first=h && bs.find(b=>b.key===h.key),sp=bs.find(b=>splitFrom(b,me)),ns=!sp && bs.find(b=>noSetFrom(b,me));
     return {step:'orders',key:h?h.key:'unverified',orderId:id,orderLabel:`Order ${id}`,customer:r.customer || '',listingId:r.listingId || '',thumb:typeof ctx.thumb==='function'?ctx.thumb(id) || null:null,
-      pieceCount:r.pieceCount || 0,pieces:bs.map(b=>({index:b.index,key:b.poolId,poolId:b.poolId,label:b.label,kind:b.key,...(b.side?{side:b.side}:{}),sheetId:b.sheetId || null,sheetLabel:b.sheetLabel || null,stage:b.stage || '',...(b.fr?{fr:true}:{}),why:pieceLine(b,me),...(splitFrom(b,me)?{split:true,setLabel:b.setLabel || ''}:noSetFrom(b,me)?{noSet:true}:{})})),
+      pieceCount:r.pieceCount || 0,pieces:bs.map(b=>({index:b.index,key:b.poolId,poolId:b.poolId,label:b.label,kind:b.key,...(b.review?{review:true}:{}),...(b.side?{side:b.side}:{}),sheetId:b.sheetId || null,sheetLabel:b.sheetLabel || null,stage:b.stage || '',...(b.fr?{fr:true}:{}),why:pieceLine(b,me),...(splitFrom(b,me)?{split:true,setLabel:b.setLabel || ''}:noSetFrom(b,me)?{noSet:true}:{})})),
       why:orderWhy(r,me),open:{type:'order',id,...(first?{poolId:first.poolId}:{})},...(h && h.sheetId?{otherSheetId:h.sheetId}:{}),...(sp?{split:true,...(me.setLabel && sp.setLabel && me.setLabel!==sp.setLabel?{sets:[me.setLabel,sp.setLabel]}:{})}:ns?{noSet:true}:{})};
   }
   // the sheet's own current blocker: the first of its own steps still behind, as a short label (no counts, no engraving rows)
