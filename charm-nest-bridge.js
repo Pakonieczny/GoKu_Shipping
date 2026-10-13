@@ -1788,7 +1788,9 @@ const Orders = window.Orders = (() => {
           const oldText = r.engrave && r.engrave.text; const oldSpec = r.spec;
           r.order = d.order; if (nl) r.line = nl; else { r.state = "gone"; r.reason = "piece vanished from the order"; continue; }
           r.spec = O.interpretLine(r.order, r.line, ctx()); r.problems = r.spec.problems.slice(); r.material = r.spec.material;
-          const textInputsChanged = JSON.stringify([oldSpec && oldSpec.personalization, oldSpec && oldSpec.buyerMessage, oldSpec && oldSpec.staffNote]) !== JSON.stringify([r.spec.personalization, r.spec.buyerMessage, r.spec.staffNote]);
+          // (ENGENT: a spec read before the customer's words were read decoded is compared as it reads now: Etsy's entities alone are no change of the customer's words, and never revoke an engraving)
+          const wordsKey = sp => { const c = sp && O.decodeWords ? O.decodeWords(Object.assign({}, sp)) : sp; return JSON.stringify([c && c.personalization, c && c.buyerMessage, c && c.staffNote]); };
+          const textInputsChanged = wordsKey(oldSpec) !== wordsKey(r.spec);
           const materialChanged = oldSpec && oldSpec.material !== r.spec.material, skuChanged = oldSpec && !O.sameDesign(oldSpec.designSku, r.spec.designSku, sku => Master.entryFor(sku));   // (the same drawing under another of its names is no change: a design the library keeps under two spellings)
           const shapeChanged=materialChanged || skuChanged || oldSpec && (oldSpec.size!==r.spec.size || oldSpec.quantity!==r.spec.quantity);
           // An update that changes nothing this line is made from (Etsy moves an order's update time for an address, a
@@ -5987,10 +5989,13 @@ const Engrave = window.Engrave = (() => {
     // (a line cut into slots names them in the question, so the model says which words go on which ear or disc; any other line asks exactly as before)
     const slots = jobs.length > 1 ? jobs.map(j => j.slot).filter(Boolean) : null;
     const ask = { order: row.order.receiptId, sku: sp.designSku, title: row.line.title, form: sp.form, quantity: sp.quantity, engravable, personalization: sp.personalization, buyerMessage: sp.buyerMessage, staffNote: sp.staffNote, messages: sp.messages, ...(slots && slots.length > 1 ? { slots } : {}) };
-    let key = 2166136261; for (const ch of JSON.stringify(ask)) key = Math.imul(key ^ ch.charCodeAt(0), 16777619); key = (key >>> 0).toString(36);
+    // (ENGENT: the question carries the words decoded; its key is made from the words as Etsy gave them, as it always was, so a reading already asked for before the words were decoded is taken up again, never paid for twice)
+    let key = 2166136261; for (const ch of JSON.stringify(Object.assign({}, ask, O.rawWords(row.order, row.line)))) key = Math.imul(key ^ ch.charCodeAt(0), 16777619); key = (key >>> 0).toString(36);
     const prior = job.claudeJob && job.claudeJob.ask === key ? job.claudeJob.id : null;
     try { r = await agentCall("engraveIntent", ask, { label: `Claude reads the words of ${row.order.receiptId}`, background: true, existingId: prior, retryFailed: !!prior, onStarted: id => { job.claudeJob = { id, ask: key }; } }); }
     catch (e) { r = { skipped: e.message }; }
+    // ENGENT: the reader's answer is the customer's words read back; an answer to a question asked before the words were decoded may still carry Etsy's entities ("&#39;"): the words are read decoded, nothing is asked again
+    if (r && !r.skipped && !r.error) { const d = x => (typeof x === "string" && x.indexOf("&") >= 0 ? O.decodeEntities(x) : x); r = Object.assign({}, r, { text: d(r.text), sourceQuote: d(r.sourceQuote) }, Array.isArray(r.pieces) ? { pieces: r.pieces.map(p => (p && typeof p.text === "string" ? Object.assign({}, p, { text: d(p.text) }) : p)) } : {}); }
     const live = jobs.filter(j => items().get(j.key) === j && j.state === "classify");
     if (items() !== owner || row.state === "gone" || !live.length) return job;
     for (const j of live) await settleReading(j, r);
@@ -12331,11 +12336,12 @@ const CustomRead = window.CustomRead = (() => {
     const det = O.specialOf(l, { sku: sp.designSku, masterEntry: sku => Master.entryFor(sku), optionMaps: B.maps.optionMaps });
     const hints = []; if (det) hints.push(`${det.label} (${det.why})`); if (!l.sku) hints.push("the piece has no SKU");
     const others = Orders.rows().filter(r => r !== row && r.order.receiptId === o.receiptId && r.state !== "gone").slice(0, 6);
+    const rw = O.rawWords(o, l);   // (ENGENT: the words as Etsy gave them, as before the spec read them decoded: this payload's hash finds the readings already kept, so no line is asked (and paid for) again)
     return {
       key: row.key, order: String(o.receiptId), listingId: String(l.listingId || ""), sku: sp.designSku || l.sku || "", title: l.title || "",
       quantity: sp.quantity || 1, jewellery: detail.type, metal: sp.materialLabel || "", options: detail.options.map(v => ({ name: v.name, value: v.value })),
-      personalization: sp.personalization || [], buyerMessage: sp.buyerMessage || "", staffNote: sp.staffNote || "",
-      team: (sp.messages || []).map(m => ({ who: m.senderName || "", text: m.text || "" })),
+      personalization: rw.personalization, buyerMessage: rw.buyerMessage, staffNote: rw.staffNote,
+      team: rw.messages.map(m => ({ who: m.senderName || "", text: m.text || "" })),
       otherLines: others.map(r => { const s = (r.spec && r.spec.designSku) || r.line.sku || ""; return { sku: s, title: r.line.title || "", known: !!(s && Master.entryFor(s)) }; }), hints
     };
   }
@@ -15155,10 +15161,12 @@ const OrderWin = window.OrderWin = (() => {
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller
     const said = [];
     // a line read before the placeholder cleanup (CharmNestOrders.visible) shows clean too
-    const pers = (sp.personalization || r.line.personalization || []).map(x => O.visible(x).trim()).filter(Boolean), bm = O.visible(sp.buyerMessage).trim();
+    // (ENGENT: Etsy hands the customer's words HTML-escaped; they are read decoded here and escaped again when drawn, so "Mom&#39;s" reads "Mom's" and "&lt;b&gt;" stays text)
+    const words = x => O.decodeEntities(O.visible(x)).trim();
+    const pers = (sp.personalization || r.line.personalization || []).map(words).filter(Boolean), bm = words(sp.buyerMessage);
     if (pers.length) said.push(["Personalisation", pers.join("\n")]);
     if (bm) said.push(["Buyer message", bm]);
-    const gm = O.visible(r.order.giftMessage).trim();
+    const gm = words(r.order.giftMessage);
     if (gm) said.push(["Gift message", gm]);
     // the team's messages are in the Team tab beside this, in full: not repeated here among what the customer wrote
     const notes = byId("owNotes");
@@ -18475,6 +18483,22 @@ const Session = window.Session = (() => {
     const cks = sent.filter(e => !held.has(e.ck)).map(e => e.ck);
     return { all: cks.length > 0 && cks.length === every.length, cks };
   }
+  /** ENGENT: an engraving job saved with Etsy's entities in its words ("Name One&#39;s &amp; Date One"; in a capitals font the uppercased "&AMP;") reads decoded when the workspace comes back. Only a job nobody has decided: not
+   *  approved, written, skipped or cut plain, no approval or stamp under way, no person's move on its placement (a job someone moved is theirs to change). Its words, lines, line split and quote are read decoded; the fit drawn
+   *  from the old words is dropped and the job goes back to "ready", so Session.restore asks Engrave.fitJob (the free offline fit: no paid reading, no Etsy) to draw it again from the real characters. A person's decision and font stay. Nothing is written. */
+  function wordsRead(j) {
+    try {
+      if (!j || j.editingBack || ["approved", "written", "skipped", "none"].includes(j.state) || j.approvedAt || j.approvalIntent || j.approvalPreparing || j.stamping || j.backSaving || j.nudged) return false;
+      const has = x => typeof x === "string" && x.indexOf("&") >= 0, caps = !!(O.fontCaps && O.fontCaps(j.fontKey));
+      const dec = x => { if (!has(x)) return x; const up = { AMP: "&", QUOT: '"', APOS: "'", LT: "<", GT: ">" }; return O.decodeEntities(caps ? x.replace(/&(AMP|QUOT|APOS|LT|GT);/g, (m, n) => up[n]) : x); };
+      const was = JSON.stringify([j.text, j.lines, j.lineInput, j.quote]);
+      j.text = dec(j.text); if (Array.isArray(j.lines)) j.lines = j.lines.map(dec); if (Array.isArray(j.lineInput)) j.lineInput = j.lineInput.map(dec); j.quote = dec(j.quote);
+      const e = j.row && j.row.engrave; if (e && !e.approved && has(e.text)) e.text = dec(e.text);
+      if (JSON.stringify([j.text, j.lines, j.lineInput, j.quote]) === was || !j.fit) return false;
+      j.fit = null; j.verify = null; delete j.writtenFit; if (["review", "fitting"].includes(j.state)) j.state = "ready";
+      return true;   // (a job to fit again)
+    } catch (_) { return false; /* the job is read as it was saved */ }
+  }
   async function restore() {
     let d; try { d = await io(); } catch (e) { toast(`Workspace recovery unavailable: ${e.message}`, "bad"); return false; }
     if (!d || d.v !== 1) { sweepBest(new Set()); return false; }
@@ -18542,13 +18566,16 @@ const Session = window.Session = (() => {
         }
         prim.active = Math.min(group.active || 0, prim.pages.length - 1); CN.showPage(group.metal, prim.active);
       }
+      const refit = [];   // (ENGENT: undecided jobs saved with Etsy's entities in their words, read decoded below and fitted again from the real characters)
       B.engrave.items = new Map((d.jobs || []).filter(j => j.editingBack && j.editRow || B.orders.byKey.has(j.rowKey || j.key)).map(j => {
         j.lineGap ??= .18; j.row = j.editingBack ? j.editRow : B.orders.byKey.get(j.rowKey || j.key); if (j.state === "fitting") j.state = "ready";
+        if (wordsRead(j)) refit.push(j);   // (a decided job is never touched)
         return [j.key, j];
       }));
       Engrave.relinkAll();                                              // (a job of a pair's ear or a disc gets its own row again from its line)
       B.review.items = (d.review || []).map(it => Object.assign(it, { row: B.orders.byKey.get(it.rowKey) || B.engrave.items.get(it.jobKey)?.row, job: B.engrave.items.get(it.jobKey) }));
       Engrave.recoverApprovals?.();
+      for (const j of refit) setTimeout(() => { try { Promise.resolve(Engrave.fitJob(j)).catch(() => {}); } catch (_) {} }, 1500);   // (ENGENT: free, offline, no paid reading; the job still in the workspace only)
       CustomRead.later();                                                // the lines come back with their last reading: look again
       Engrave.restoreView?.(d.engravingView);
       // (a workspace saved while Review had a Decided segment says "sent": that segment is Completed now, so it is opened there)

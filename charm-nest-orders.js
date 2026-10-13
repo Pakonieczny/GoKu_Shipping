@@ -22,7 +22,7 @@
      where the sorter takes the Etsy orders in (DesignLink, charm-nest-bridge.js) and where it reads a stored line back
      (rowFromRecord); cleanMaps does the same for the SKUs a person's saved answers are keyed by. upSku, norm and bySkuOf below read
      the decoded form too, so a SKU that carries no entity resolves exactly as it did, and one that does resolves as its decoded self.
-     The customer's own words (personalisation, buyer message, notes) are NOT touched here. */
+     The customer's own words (personalisation, buyer message, notes) are NOT touched here: what is stored stays as Etsy gave it. They are READ decoded where a line becomes a spec (interpretLine, decodeWords below). */
   const ENTITY = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|(amp|apos|quot|lt|gt));/g;
   const NAMED_ENTITY = { amp: "&", apos: "'", quot: '"', lt: "<", gt: ">" };
   const decodeEntities = v => {
@@ -38,6 +38,25 @@
     }
     return s;
   };
+  /** ENGENT (Paul, 13 Oct 2026: a buyer who writes "Mom's" or "Mom & Dad" got "&#39;" / "&AMP;" in the preview and on the laser job): the customer's own words as the ENGRAVING reads them. Every engraving job's words
+   *  (the card, the picture, the fit, the file) come from the spec's personalisation, buyer message, staff note and messages, so this is the ONE place they are decoded: a spec is read from a line each time the page reads
+   *  the line (a pulled order, a stored line read back, a restored workspace), so a line that still carries Etsy's entities reads decoded, and decoding twice is decoding once. Only the spec is changed, never the line or
+   *  the order (what is stored stays as Etsy gave it). Answers the spec. */
+  function decodeWords(spec) {
+    if (!spec || typeof spec !== "object") return spec;
+    const has = s => typeof s === "string" && s.indexOf("&") >= 0, dec = s => visible(decodeEntities(s)).trim();
+    if (Array.isArray(spec.personalization) && spec.personalization.some(has)) spec.personalization = spec.personalization.map(s => has(s) ? dec(s) : s).filter(Boolean);
+    if (has(spec.buyerMessage)) spec.buyerMessage = visible(decodeEntities(spec.buyerMessage));
+    if (has(spec.staffNote)) spec.staffNote = decodeEntities(spec.staffNote);
+    if (Array.isArray(spec.messages) && spec.messages.some(m => m && has(m.text))) spec.messages = spec.messages.map(m => m && has(m.text) ? Object.assign({}, m, { text: decodeEntities(m.text) }) : m);
+    return spec;
+  }
+  /** The customer's words as the line reader took them BEFORE they were read decoded (the same four fields of the spec literal in interpretLine, as Etsy gave them): the keys of the PAID readings (the custom-order reader's
+   *  payload hash, the engraving reader's ask key) are made from these, so a reading already paid for and kept is found again and no line is read twice because its words are now shown decoded. */
+  function rawWords(order, line) {
+    order = order || {}; line = line || {};
+    return { personalization: (line.personalization || []).map(s => visible(s).trim()).filter(Boolean), buyerMessage: visible(line.buyerMessage || order.buyerMessage || ""), staffNote: String(line.staffNote || order.staffNote || ""), messages: (line.messages || order.messages || []).slice(-5) };
+  }
   /** A line as the Etsy transaction gave it, with its SKU, title and the names and values of its options decoded; the line itself is changed (it is a fresh copy the station sent, or one the page built) and answered. */
   function cleanLine(line) {
     if (!line || typeof line !== "object") return line;
@@ -2997,6 +3016,7 @@
     const material = METAL_TO_CARD[metalKey] || null;
     if (!quiet && !material) problems.push({ kind: "needsMaterial", metalKey: metalKey || null, metalLabel: line.metalLabel || "", listingId: String(line.listingId || ""), options: (line.variations || []).map(v => `${v.name}: ${v.value}`), title: line.title || "" });
     const spec = { designSku: sku || null, skuSource, material, materialKey: metalKey || null, materialLabel: line.metalLabel || (material ? CARD_LABEL[material] : ""), form: null, size: null, chain: null, quantity: Math.max(1, Math.round(+line.quantity || 1)), personalization: (line.personalization || []).map(s => visible(s).trim()).filter(Boolean), buyerMessage: visible(line.buyerMessage || order.buyerMessage || ""), staffNote: String(line.staffNote || order.staffNote || ""), messages: (line.messages || order.messages || []).slice(-5), updateTs: +order.updateTs || 0, options: [], problems, noDesign, sources: { material: "station classifier (Metal/Colour option first)", sku: skuSource } };
+    decodeWords(spec);   // (ENGENT: the customer's words are read decoded: "Mom&#39;s" is "Mom's" on the card, in the picture and on the laser job; the line and the order keep what Etsy gave)
     if (special) spec.special = special;
     if (done) spec.customDone = done;
     spec.boughtSku = bought; if (set) spec.huggieSet = true;
@@ -3572,7 +3592,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY, earringNeverBackEngraves, EAR_NEVER_WHY,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,

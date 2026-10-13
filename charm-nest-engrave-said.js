@@ -19,7 +19,8 @@
   const str = x => String(x == null ? '' : x);
   const esc = s => str(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const lineOf = row => (row && row.parentRow) || row || {};
-  const visible = x => { const o = O(); return (o && o.visible ? o.visible(x) : str(x)).trim(); };
+  // (ENGENT: Etsy hands the customer's words HTML-escaped, "Mom&#39;s &amp; Dad"; they are read decoded with the app's one decoder and escaped again by esc() when drawn, so "&lt;b&gt;" stays text. Display only: nothing stored changes.)
+  const visible = x => { const o = O(), t = o && o.visible ? o.visible(x) : str(x); return (o && typeof o.decodeEntities === 'function' ? o.decodeEntities(t) : t).trim(); };
   // an option is "about the engraving" when its name or its value says so: a font, an engraving word, a face (front / back / both) or a count of sides, a place for the words
   const ENGRAVING_WORD = /engrav|font|typeface|lettering|inscri|monogram|etch|writing|alignment|placement|position|location|\b(?:front|back|both|sides?|sided|faces?)\b|\bblank\b/i;
   const norm = s => str(s).replace(/\s+/g, ' ').trim().toLowerCase();
