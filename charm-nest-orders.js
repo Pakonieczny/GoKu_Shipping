@@ -1624,6 +1624,8 @@
   const pairModule = () => { try { const g = typeof self !== "undefined" ? self : typeof globalThis !== "undefined" ? globalThis : null; if (g && g.CharmNestPair) return g.CharmNestPair; if (typeof require === "function") return require("./charm-nest-pair.js"); } catch (_) { /* the page without the module: the old words */ } return null; };
   const alikeKnown = o => { try { const M = pairModule(); return !!(M && typeof M.alikeDesign === "function" && M.alikeDesign(Object.assign({ sku: o && o.sku }, (o && o.entry) || {})) === true); } catch (_) { return false; } };
   const ONE_WORDS = (index, count, why) => `the design draws ${count || 2} bodies (${why || "a left and a right charm"}) but the line is not an earring pair: made as ONE charm, the ${index === 1 ? "right" : "left"} body only, no Left or Right, nothing duplicated or mirrored`;
+  /** A design a person named as ONE body (CharmNestPair.onlyBodyOf, the WOLF: Paul, 13 Oct 2026), by the master entry alone: { index, words, ... } or null. */
+  const namedOne = o => { try { const M = pairModule(); return M && typeof M.onlyBodyOf === "function" ? M.onlyBodyOf(Object.assign({ sku: o && o.sku }, (o && o.entry) || {})) : null; } catch (_) { return null; } };
   const MIS_WORD = /\bmis-?match(?:ed)?\b/i;
   const TWO_DESIGNS = /\b(?:2|two)\s+(?:different\s+)?(?:symbols?|designs?|signs?)\b|\bdifferent\s+(?:designs?|charms?|symbols?)\b|\b(?:one|1)\s+of\s+each\b/i;
   const SIDE_NAME = /\b(?:left|right)\b/i, SIDE_THING = /\b(?:ear(?:ring)?s?|charm|design|stud|huggie|hoop|side)\b/i;
@@ -2261,8 +2263,9 @@
     if (info.mismatched && info.source === "alias") info.notes.push("the Left and the Right are the two designs a person saved for this listing and SKU");
     if (info.set) info.notes.push(`two designs a person saved for this listing and SKU, ${info.set.designs.join(" and ")}: two pieces of one order line, no Left or Right, nothing mirrored`);
     // (the same outline twice, two keys or two mittens, on a line that is not an earring pair: ONE charm. A single earring that names no ear is such a line too.)
-    if ((info.twoBodies || (info.single && info.mismatched && !info.sideSaid)) && alikeKnown(o)) info.oneBody = { index: 0, count: 2, rule: "the left body" };
-    if (info.oneBody) info.notes.push(ONE_WORDS(info.oneBody.index, info.oneBody.count, "the same outline twice"));
+    // (a design a person named as ONE body, the wolf of WOLF.ai, is the same, with its own words: the master draws a wolf and a moon, the necklace charm is the wolf)
+    if ((info.twoBodies || (info.single && info.mismatched && !info.sideSaid)) && alikeKnown(o)) { const nm = namedOne(o); info.oneBody = nm ? { index: nm.index, count: 2, rule: "a person's word" } : { index: 0, count: 2, rule: "the left body" }; }
+    if (info.oneBody) { const nm = info.oneBody.rule === "a person's word" ? namedOne(o) : null; info.notes.push(ONE_WORDS(info.oneBody.index, info.oneBody.count, nm ? nm.words : "the same outline twice")); }
     else if (info.twoBodies) info.notes.push("the design draws two bodies (a left and a right charm) but the line is not an earring pair: made as one piece with both bodies, no Left or Right, nothing mirrored");
     else if (info.twoNamed) info.notes.push("the line names two designs but is not an earring pair: made as one piece of the first design, no Left or Right");
     if (cr.note && !cr.answered && !(cr.certain && cr.n === cr.note.n) && !info.asks.length && !info.earring) info.notes.push(`the buyer's note says “${clip(cr.note.text, 30)}” but no option gives that count: made as ${info.perUnit}`);
@@ -2357,7 +2360,7 @@
     pr.oneBody = { index: one.index, count: +one.count || 2, rule: String(one.rule || "the left body") };
     if (was && was.index === pr.oneBody.index && was.rule === pr.oneBody.rule) return spec;
     pr.notes = (Array.isArray(pr.notes) ? pr.notes : []).filter(n => !/made as one piece with both bodies|made as ONE charm, the (?:left|right) body only|made as one glued piece/.test(String(n)));
-    pr.notes.push(ONE_WORDS(one.index, one.count, "the same outline twice"));
+    pr.notes.push(ONE_WORDS(one.index, one.count, one.why || "the same outline twice"));
     return spec;
   }
   /** single | pair | mismatched | multi, as CharmNestPair.kindOf says it, from the pair facts and the number of pieces */

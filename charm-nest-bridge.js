@@ -205,7 +205,7 @@ const ListMedia = (() => {
     if (!CP.oneChoice(Object.assign({}, row.line, { spec: sp, form: sp.form }), e)) return -1;
     // (a line pooled before this, its pool rows holding the folded charm, is the whole charm it was cut as)
     const live = (row.poolIds || []).map(id => window.B && B.pool.rows.get(id)).filter(r => r && r.charmHash && !["abandoned", "superseded"].includes(r.state));
-    if (live.length) { const g = window.Pool && Pool.sizeEntry(e, sp.size), whole = String((g && g.charmHash) || e.charmHash || ""); if (whole && live.some(r => String(r.charmHash) === whole)) return -1; }
+    if (live.length) { const PL = window.Pool, whole = PL && PL.wholeHashes ? PL.wholeHashes(e, sp.size) : new Set(); if (whole.size && live.some(r => whole.has(String(r.charmHash)))) return -1; if (CP.onlyBodyOf && CP.onlyBodyOf(e) && PL && PL.designLoaded && !PL.designLoaded(e, sp.size)) return -1; }   // (a design a person named as ONE body, charm-nest-pair.js 4d, whose file this page has not read: a pooled piece's hash cannot be told from the folded charm's here, so it is taken as made whole, as every piece pooled before the rule was)
     const ob = sp.pair && sp.pair.oneBody; if (ob && Number.isInteger(ob.index) && ob.index >= 0) return ob.index;
     return CP.alikeDesign(e) === true ? 0 : -1;
   } catch (_) { return -1; } };
@@ -2461,6 +2461,7 @@ const Master = window.Master = (() => {
      indexing time and the drawing code, so a refresh draws nothing and asks for nothing. The picture itself is still drawn by
      Pool.masterPreview, the tile's look is unchanged. Without the module the plain loader below runs as it always did. */
   let previewMount=null;
+  const oneOf=host=>{const n=host&&host.dataset?host.dataset.one:null;return n!=null&&n!==""&&Number.isInteger(+n)&&+n>=0?{one:+n}:null;};   // (a tile of a design named as ONE body: the options Pool.masterPreview draws it with)
   function mountMasterPreviews(grid) {
     const T=window.CharmNestThumbs;
     previewMount?.stop();previewMount=null;
@@ -2469,8 +2470,9 @@ const Master = window.Master = (() => {
     previewMount=T.mount(grid,{
       selector:'[data-preview-sku]',concurrency:6,keep:false,   // (Pool.masterPreview keeps the picture itself, under this same key, for every list that draws a design)
       // (a design the pool already holds is drawn from that copy at once, no download: nothing to keep, and its picture stays as it was)
-      keyOf:host=>{const entry=entryFor(host.dataset.previewSku),geom=entry&&Pool.sizeEntry(entry,sizeOf(entry));return geom&&geom.aiPath&&!B.pool.sources.has(geom.aiPath)?T.designKey(geom.aiPath,geom.charmHash||entry.charmHash,entry.indexedAt):"";},
-      produce:host=>{const entry=entryFor(host.dataset.previewSku);return entry?Pool.masterPreview(entry,sizeOf(entry)):null;},
+      // (data-one: a design a person named as ONE body, charm-nest-pair.js section 4d: its card draws that body alone, under a key of its own, so a picture kept before is never shown for it)
+      keyOf:host=>{const entry=entryFor(host.dataset.previewSku),geom=entry&&Pool.sizeEntry(entry,sizeOf(entry));return geom&&geom.aiPath&&!B.pool.sources.has(geom.aiPath)?T.designKey(geom.aiPath+(oneOf(host)?"#one"+oneOf(host).one:""),geom.charmHash||entry.charmHash,entry.indexedAt):"";},
+      produce:host=>{const entry=entryFor(host.dataset.previewSku);return entry?Pool.masterPreview(entry,sizeOf(entry),false,oneOf(host)||undefined):null;},
       paint:(host,thumb)=>{const img=document.createElement("img");img.alt="";img.src=thumb;host.replaceChildren(img);},
       fail:host=>{if(host.isConnected&&entryFor(host.dataset.previewSku))host.textContent="Preview unavailable";}
     });
@@ -2483,7 +2485,7 @@ const Master = window.Master = (() => {
       const size=entry?.sizes && Object.keys(entry.sizes)[0] || null;
       if(!entry || !host.isConnected)return;
       try {
-        const thumb=await Pool.masterPreview(entry,size);
+        const thumb=await Pool.masterPreview(entry,size,false,oneOf(host)||undefined);
         if(!host.isConnected)return;
         const img=document.createElement("img");img.alt="";img.src=thumb;
         host.replaceChildren(img);
@@ -3074,15 +3076,17 @@ const Master = window.Master = (() => {
       return fc.bodies ? fc.bodies.map(bd => box(bd.value, bd.options, ` data-body="${bd.index}"`)).join("") : box(fc.value, fc.options);
     };
     grid.innerHTML = shown.map(d => {
-      const e = d.head, keys = esc(d.skus.join("|"));
+      const e0 = d.head, keys = esc(d.skus.join("|"));
+      // a design a person named as ONE body (charm-nest-pair.js section 4d, the wolf of WOLF.ai): the card shows that body alone, with its own size, holes and up angle; the record (the pair's, the moon's hole) is not changed
+      const ob = window.CharmNestPair && window.CharmNestPair.onlyBodyOf ? window.CharmNestPair.onlyBodyOf(e0) : null, e = ob ? Object.assign({}, e0, { pair: null, widthPt: ob.widthPt, heightPt: ob.heightPt, holes: ob.holes, upAngle: ob.upAngle, upSource: ob.upSource }) : e0;
       const blocked = [...new Set(d.list.map(x => x.blocked).filter(Boolean))].join("; ");
       const sizes = e.sizes ? Object.entries(e.sizes) : [];
       return `<div class="skuTile hoverItem${blocked ? " blocked" : ""}" data-sku="${esc(e.sku)}">` +
-        `<div data-preview-sku="${esc(e.sku)}" style="aspect-ratio:1;background:#ece7dc;border-radius:6px;overflow:hidden;display:grid;place-items:center;color:var(--ink45)">Loading preview…</div>` +
+        `<div data-preview-sku="${esc(e.sku)}"${ob ? ` data-one="${ob.index}"` : ""} style="aspect-ratio:1;background:#ece7dc;border-radius:6px;overflow:hidden;display:grid;place-items:center;color:var(--ink45)">Loading preview…</div>` +
         `<div class="sku" title="${esc(d.skus.join(", "))}">${esc(e.sku)}</div>` +
         (d.skus.length > 1 ? `<div class="meta">${d.skus.slice(1).map(s => `<div>${esc(s)}</div>`).join("")}</div>` : "") +
         (e.pair && e.pair.mismatched ? `<div class="meta"><span class="pill ok" title="A mismatched pair: two different charms under one SKU, a left earring and a right earring. Both are drawn side by side, each marked Left or Right.">Left + Right pair</span></div>` : "") +
-        `<div class="meta">${(e.widthPt * MM).toFixed(1)} × ${(e.heightPt * MM).toFixed(1)} mm${e.pair && e.pair.mismatched ? " both together" : ""} · ${e.holes} hole${e.holes === 1 ? "" : "s"}${sizes.length ? ` · sizes ${sizes.map(([k]) => k).join("/")}` : ""}${d.skus.length > 1 ? ` · ${d.skus.length} SKUs` : ""}</div>` +
+        `<div class="meta"${ob ? ` title="A necklace charm: ${esc(ob.what)} only. The master file still holds the other body; it is not shown, cut or counted."` : ""}>${(e.widthPt * MM).toFixed(1)} × ${(e.heightPt * MM).toFixed(1)} mm${e.pair && e.pair.mismatched ? " both together" : ""} · ${e.holes} hole${e.holes === 1 ? "" : "s"}${sizes.length ? ` · sizes ${sizes.map(([k]) => k).join("/")}` : ""}${d.skus.length > 1 ? ` · ${d.skus.length} SKUs` : ""}</div>` +
         `<div class="meta">up ${e.upAngle == null ? "as drawn" : Math.round(e.upAngle) + "°"}${e.upSource === "long" ? " (long side flat)" : ""} · ${esc(e.labelSource || "text")}${e.hashSource === "server" ? " · server" : ""}</div>` +
         (blocked ? `<div class="bad">${esc(blocked)}</div>` : "") +
         `<div class="row">` +
@@ -3195,6 +3199,8 @@ const Pool = window.Pool = (() => {
       for (const c of made) delete c.frontAt;
       await P.buildSilhouettes(src.parsed, made, +S.settings.silhouetteRes || 6);
       for (const c of made) { c.backKeepOut = Master.keepOutOf(c); c.frontKeepOut = Master.keepOutOf(c, "front"); }
+      // (a design a person named as ONE body, charm-nest-pair.js 4d: the record's up angle is the other body's hole, 97 degrees for the wolf's moon; the named body keeps the up angle it is drawn with)
+      const nm = Pair.onlyBodyOf && Pair.onlyBodyOf(charm.sku || src.sku); if (nm && made[nm.index] && Number.isFinite(nm.upAngle)) made[nm.index].upAngle = nm.upAngle;
       return (src.solo = made);
     } catch (e) { src.solo = null; agent({ pool: true }, "warn", `${src.sku}: one of its bodies could not be cut alone (${e.message}) — a line of it keeps both bodies`); return null; }
     finally { src.soloChecked = true; }
@@ -3240,10 +3246,13 @@ const Pool = window.Pool = (() => {
   async function masterPreview(entry,size,front,opts) {
     const path=sizeEntry(entry,size)?.aiPath;
     if(!path)throw new Error("No design file");
-    const draw=charm=>front&&P.frontPreview?P.frontPreview(oneBody(charm,opts),220,opts):P.thumbnail(charm,168);   // (opts.highlight "L" | "R": a mismatched pair with the other body washed out; opts.body 0 | 1: that ear alone; opts.mirror / opts.side: one piece of an earring pair turned over / with its chip; a plain call is the design once, as drawn)
-    const cached=B.pool.sources.get(path);if(cached)return front&&P.frontPreview?draw(cached.charms[0]):cached.charms[0].thumb;
-    const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+(opts&&opts.mirror!=null?"m"+opts.mirror:"")+(opts&&opts.side||"")+(opts&&opts.pair?"pair"+(opts.facing||""):"")+(opts&&opts.one!=null?"#one"+opts.one:"")+":":"")+path;
+    // (opts.one on the tight thumbnail: the card of a design a person named as ONE body, charm-nest-pair.js section 4d, draws that body alone, no chips; its own key keeps it apart from the design's picture of both)
+    const one1=!front&&opts&&Number.isInteger(opts.one)&&opts.one>=0;
+    const draw=charm=>front&&P.frontPreview?P.frontPreview(oneBody(charm,opts),220,opts):P.thumbnail(one1?oneBody(charm,opts):charm,168);   // (opts.highlight "L" | "R": a mismatched pair with the other body washed out; opts.body 0 | 1: that ear alone; opts.mirror / opts.side: one piece of an earring pair turned over / with its chip; a plain call is the design once, as drawn)
+    const cached=B.pool.sources.get(path);if(cached&&!one1)return front&&P.frontPreview?draw(cached.charms[0]):cached.charms[0].thumb;
+    const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+(opts&&opts.mirror!=null?"m"+opts.mirror:"")+(opts&&opts.side||"")+(opts&&opts.pair?"pair"+(opts.facing||""):"")+(opts&&opts.one!=null?"#one"+opts.one:"")+":":"")+path+(one1?"#one"+opts.one:"");
     if(masterPreviewCache.has(key))return masterPreviewCache.get(key);
+    if(cached){const task=Promise.resolve(draw(cached.charms[0]));masterPreviewCache.set(key,task);while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);try{return await task;}catch(e){masterPreviewCache.delete(key);throw e;}}   // (a design the pool already holds: drawn from that copy at once, no download)
     // a finished picture is kept on this computer (charm-nest-thumbs.js) under the design file, its indexing time and the drawing code, so the
     // Master tab, the Orders list and the piece dots draw each design once, not once per refresh; the key carries every option of `key`
     const T=window.CharmNestThumbs,geom=sizeEntry(entry,size),keep=T&&T.designKey?T.designKey(key,geom.charmHash||entry.charmHash,entry.indexedAt):"";
@@ -3364,6 +3373,10 @@ const Pool = window.Pool = (() => {
     }
     return repaired.size;
   }
+  /** The hashes a line's folded (whole) charm goes by: the master record's (the indexer's: for a design of two bodies it is NOT the page's own hash of the folded charm) and the hash of the folded charm this page
+   *  traced from the design file, when it has read it. A pool row holding one of them is a piece cut whole. */
+  const wholeHashes = (e, size) => { const out = new Set(); try { const g = sizeEntry(e, size) || e, src = g && g.aiPath && B.pool.sources.get(g.aiPath), h = src && src.charms && src.charms[0] && src.charms[0].hash; for (const x of [g && g.charmHash, e && e.charmHash, h]) if (x) out.add(String(x)); } catch (_) { /* nothing known */ } return out; };
+  const designLoaded = (e, size) => { try { const g = sizeEntry(e, size) || e; return !!(g && g.aiPath && B.pool.sources.has(g.aiPath)); } catch (_) { return false; } };
   /** A line already pooled keeps the pieces it was pooled with: the number its pool rows say they were made as (a row's `quantity` is the pieces of
    *  its line at that time; for a line pooled before the pair and count rule it is the Etsy quantity). spec.pieceCount becomes that number and
    *  spec.pieceNote says in plain words what the rule gives now. Nothing is added to the pool or taken from it. A line changed on Etsy is made up
@@ -3375,7 +3388,7 @@ const Pool = window.Pool = (() => {
     const live = (row.poolIds || []).map(id => B.pool.rows.get(id)).filter(r => r && !["abandoned", "superseded"].includes(r.state));
     if (live.length) { const g = Math.max(0, ...live.map(r => +r.groupSize || 0)); if (g > 1) row.groupSize = g; else delete row.groupSize; }
     // a line pooled before one body was made of a design drawn twice (a live pool row of it holds the folded charm's hash) is the whole charm it was cut as: the intake's words about one body are taken back
-    if (sp.pair && sp.pair.oneBody && live.length) { const e = Master.entryFor(sp.designSku), g = e && sizeEntry(e, sp.size), whole = String((g && g.charmHash) || (e && e.charmHash) || ""); if (whole && live.some(r => String(r.charmHash) === whole)) O.solo(sp, null); }
+    if (sp.pair && sp.pair.oneBody && live.length) { const e = Master.entryFor(sp.designSku), whole = e ? wholeHashes(e, sp.size) : new Set(); if ((whole.size && live.some(r => whole.has(String(r.charmHash)))) || (e && window.CharmNestPair && window.CharmNestPair.onlyBodyOf && window.CharmNestPair.onlyBodyOf(e) && !designLoaded(e, sp.size))) O.solo(sp, null); }   // (a design named as ONE body whose file is not read yet: the pooled piece is taken as made whole, see oneRow)
     if (live.length) noticeSet(row, live);
     if (row.repoolChanged || row.changePending) return;
     // (a row taken off its sheet on purpose, abandoned or superseded, is not a piece the line still has: a line taken off is made up new at the rule's count)
@@ -3914,7 +3927,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig };
+  return { pinPooled, wholeHashes, designLoaded, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
