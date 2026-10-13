@@ -10,14 +10,19 @@
 // 1356x768 (Paul's own width), 1024x768 and 1920x1080, the order window scrolled to its top, and checks:
 //   (a) the engraving section sits directly below the head chip strip (same column, after it in the DOM, not in the left pictures column)
 //   (b) a thin divider and an "Engraving" title at the section's top-left
-//   (c) the first row holds at least THREE cards side by side (same top within 2 px, every width at least the card minimum)
-//   (d) the bottom edge of the first row is inside what the person sees (the scroll area, minus a small margin), nothing covers a card: all three cards, NO scrolling
+//   (c) the grid has at least 3 tracks from a 1200px window (2 at 1024), a card is one track wide (one face) or two tracks (front + back), at least the card minimum, and the first row holds as many cards as fit
+//   (d) the first row starts inside what the person sees (the scroll area, minus a small margin) and its PICTURES are whole on screen, NO scrolling, nothing covers a card (the words and the button under them:
+//       (dc) below)
+//   (dc) the whole first row, with its words and its Engraving button, is on screen without scrolling
 //   (e) the page has no horizontal scrollbar (nothing wider than the window, the scroll area or the section)
-//   (f) with SIX pieces the next row wraps correctly: same columns as the first row, below it, nothing overlapping
+//   (f) with SIX pieces the next row wraps correctly: the same tracks as the first row, below it, nothing overlapping
 //   (g) no text of the deleted list in the cards (TO APPROVE, Waiting for your approval, WORDS ON THE BACK, Read from the personalisation box, "NN% sure",
 //       "nothing in the listing or the note says otherwise", Undo my edit, The system read)
-//   (h) a card is at most 212 px tall (CONTRACT B: the height the 1280x720 arithmetic leaves)
-//   (x) one or two pieces: the card is as wide as in the 3-piece order and at most a third of the grid (never stretched)
+//   (h) a card is at most 290 px tall with the 160px pictures (340 px with the 208px ones, a wider section): ENGBIG's height; it was 212 px with 80px pictures (CONTRACT B)
+//   (x) one or two pieces: a card is exactly one track (one face) or two (front + back) wide, as in the 3-piece order, left-aligned (never stretched)
+// ENGBIG (Paul, 13 Oct 2026 03:04 UTC: "Enlarge the engraving thumbnail size in this modal to be 2x larger"): the pictures are twice as large (160px, 208px in a wider section), so the old rule "the first row
+// of THREE cards whole on screen at 1280x720" cannot hold: a track is at least 176px, a front + back card spans two tracks and is about 270px tall. This test now asserts the intended behaviour (c, d, f, h, x
+// above) and PRINTS how much of the first row lies below the fold (dc); the window's own scrolling reaches it (checked by engrave-thumb-size.cjs).
 //   (i) an earring pair gets no card and no Back slot (CONTRACT: no earring is ever engraved), printed only
 //   (j) nothing inside a card spills sideways out of it, printed only
 // WHICH checks fail the run is the table GATE below (coordinator, 12 Oct: (d) is HARD for the Paul-like orders at 1280x720, 1440x900, 1356x768 and 1920x1080; the worst-case
@@ -49,8 +54,9 @@ const SEL = {
 };
 const SIZES = [[1280, 720], [1440, 900], [1356, 768], [1024, 768], [1920, 1080]];     // [width, height]; 1356 is the width of Paul's own screenshots
 const T = {
-  CARD_MIN: n => +process.env.CARD_MIN || (n < 1200 ? 118 : 200),   // px, CONTRACT G: 118 at 1024 wide, 200 from 1280 (ENGLAYOUT's hard minimum is 112)
-  CARD_MAX_H: 212,  // px, CONTRACT B: the card height the 1280x720 arithmetic leaves (not a CSS cap; this test asserts it)
+  CARD_MIN: n => +process.env.CARD_MIN || 176,   // px: a track holds a 160px picture and the card's padding (ENGBIG, 13 Oct 2026; it was 118 at 1024 wide and 200 from 1280 with 80px pictures)
+  CARD_MAX_H: S => +process.env.CARD_MAX_H || (S >= 714 && S <= 839 || S >= 955 && S <= 1059 || S >= 1196 ? 340 : 290),   // px for a section S px wide: the card height with the 208px / 160px pictures (not a CSS cap; this test asserts it; it was 212 with 80px pictures)
+  NEED_TRACKS: n => (n >= 1200 ? 3 : 2),   // the least number of tracks for a window n px wide (a 1024px window has a 386px centre column: 2 tracks of 188px)
   SAFE_BOTTOM: +process.env.SAFE_BOTTOM || 8,   // px kept free at the foot of what is seen (the scroll area has 28px padding of its own; nothing else sits there)
   TOP_TOL: 2,       // px: "the same top"
   GAP_MAX: 24,      // px, CONTRACT G: the most air between the chip strip and the section
@@ -67,13 +73,19 @@ const FORBIDDEN = [
 // which checks FAIL THE RUN, by window size (CONTRACT G). A check not listed is printed only. d = the 3-piece order's first row on screen, d2 = the same for the 2-line order,
 // d6 = the 6-piece order's first row on screen (six rows of "Its pieces" push the strip down by themselves: printed where the window is too short for that).
 const GATE = {
-  '1280x720': 'a b c d d1 d2 e f g h x', '1440x900': 'a b c d d1 d2 e f g x', '1356x768': 'a b c d d1 d2 e f g h x', '1920x1080': 'a b c d d1 d2 e f g x d6',
-  '1024x768': 'a b c e f g h x',   // d, d1, d2, d6 printed: two-line orders have only ~170 px free at 1024x768 (CONTRACT B)
+  // ENGBIG (13 Oct 2026): the pictures are twice as large. The 3-line order's first row (its strip is 2 rows and its "Its pieces" list 3) starts at y=531 of 720 at 1280x720: its pictures end 26px below the fold, the whole row 76px
+  // below; the 1-line order's whole card is on screen (8px spare) and the 2-line order's pictures are (the words and button 37px below). So (d) for 3 lines and (dc) are gated only from 1440x900 up; (d1) and (d2)
+  // everywhere but 1024x768; (r) the window's own scrolling reaches every card, everywhere.
+  '1280x720': 'a b c d1 d2 e f g h x r', '1440x900': 'a b c d d1 d2 e f g x dc dc1 dc2 r', '1356x768': 'a b c d1 d2 e f g h x r', '1920x1080': 'a b c d d1 d2 e f g x d6 dc dc1 dc2 r',
+  '1024x768': 'a b c e f g h x r',   // d, d1, d2, d6 printed: the 1024px window's centre column is 386px: 2 tracks, a 3-row chip strip
+  // dc, dc1, dc2 (the whole first row, words and button too, on screen) are gated only where the window is tall enough for it (1440x900, 1920x1080) and printed with the numbers elsewhere: at 1280x720 and 1356x768 the
+  // pictures twice as large push the rest of the first row below the fold (ENGBIG, the intended trade); the window's own scrolling reaches it
   // dw1 / dw3 (the worst-case fixture: a wide "GF 14/20" metal chip makes the chip strip 3 rows tall) are printed at every size and never fail the run.
 };
-const TABLE_LABEL = { d: 'first row on screen, no scrolling: 3 lines (Paul-like)', d1: 'first row on screen, no scrolling: 1 line (Paul-like)', d2: 'first row on screen, no scrolling: 2 lines (Paul-like)', d6: 'first row on screen, no scrolling: 6 pieces (Paul-like)', dw1: 'worst case (wide GF 14/20 chip): 1 line on screen', dw3: 'worst case (wide GF 14/20 chip): 3 lines on screen' };
+const TABLE_LABEL = { d: 'first row, pictures on screen, no scrolling: 3 lines (Paul-like)', d1: 'first row, pictures on screen, no scrolling: 1 line (Paul-like)', d2: 'first row, pictures on screen, no scrolling: 2 lines (Paul-like)', d6: 'first row, pictures on screen, no scrolling: 6 pieces (Paul-like)', dc: 'whole first row (words, button) on screen: 3 lines (Paul-like)', r: 'the window scrolls to every card (3 lines, and 6 pieces)', dc1: 'whole first row on screen: 1 line (Paul-like)', dc2: 'whole first row on screen: 2 lines (Paul-like)', dw1: 'worst case (wide GF 14/20 chip): 1 line on screen', dw3: 'worst case (wide GF 14/20 chip): 3 lines on screen' };
 const gated = (size, k) => (GATE[size] || 'a b c d d1 d2 e f g h x').split(' ').includes(k);
-const LABEL = { a: 'section directly below the chip strip', b: 'thin divider and "Engraving" title at the top-left', c: 'first row holds 3+ cards side by side, wide enough', d: 'first row fully on screen, no scrolling (3 lines, Paul-like strip)', d1: 'first row fully on screen, no scrolling (1 line, Paul-like strip)', d2: 'first row fully on screen, no scrolling (2 lines, Paul-like strip)', d6: 'first row fully on screen, no scrolling (6 pieces, Paul-like strip)', dw1: 'WORST CASE (wide GF 14/20 chip: 3-row strip): 1 line on screen', dw3: 'WORST CASE (wide GF 14/20 chip: 3-row strip): 3 lines on screen', e: 'no horizontal scrollbar', f: '6 pieces: the second row wraps correctly', g: 'no text of the deleted list', h: `card at most ${T.CARD_MAX_H}px tall`, x: '1 or 2 pieces: card not stretched', i: 'earring pair: no card, no Back slot', j: 'nothing inside a card spills out of it' };
+const edgeOf = S => ((S >= 714 && S <= 839) || (S >= 955 && S <= 1059) || S >= 1196 ? 208 : 160);   // the picture's edge in a section S px wide (charm-nest-1.html --engPx), printed
+const LABEL = { a: 'section directly below the chip strip', b: 'thin divider and "Engraving" title at the top-left', c: 'the tracks (3+ from 1200px, 2 at 1024), card = 1 or 2 tracks, wide enough, row filled', d: 'first row and its pictures on screen, no scrolling (3 lines, Paul-like strip)', d1: 'first row and its pictures on screen, no scrolling (1 line, Paul-like strip)', d2: 'first row and its pictures on screen, no scrolling (2 lines, Paul-like strip)', d6: 'first row and its pictures on screen, no scrolling (6 pieces, Paul-like strip)', dc: 'WHOLE first row (words, button) on screen, no scrolling (3 lines)', dc1: 'WHOLE first row on screen (1 line)', dc2: 'WHOLE first row on screen (2 lines)', dw1: 'WORST CASE (wide GF 14/20 chip: 3-row strip): 1 line on screen', dw3: 'WORST CASE (wide GF 14/20 chip: 3-row strip): 3 lines on screen', e: 'no horizontal scrollbar', f: '6 pieces: the second row wraps correctly', g: 'no text of the deleted list', h: 'card at most 290px tall (340px with 208px pictures)', r: 'the window\'s own scrolling reaches every card', x: '1 or 2 pieces: card one or two tracks wide, not stretched', i: 'earring pair: no card, no Back slot', j: 'nothing inside a card spills out of it' };
 
 /* ═══════════════════════════ the measurement (runs in the page) ═══════════════════════════ */
 // Pure reading of the page: no judgement. `cfg` = { SEL (selectors), titleSrc, titleFlags }. Returns plain JSON. Must stay self-contained (it is serialised into the page).
@@ -141,7 +153,10 @@ function measureInPage(cfg) {
     const attrs = [c, ...c.querySelectorAll('*')].map(e => ['title', 'aria-label', 'alt', 'placeholder'].map(a => e.getAttribute && e.getAttribute(a) || '').join(' ')).join(' ');
     return { l: +r.left.toFixed(2), t: +r.top.toFixed(2), r: +r.right.toFixed(2), b: +r.bottom.toFixed(2), w: +r.width.toFixed(2), h: +r.height.toFixed(2), centreHit: inBox(cx, cy), footHit: inBox(cx, Math.min(r.bottom - 3, innerHeight - 1)),
       spill: [...c.querySelectorAll('*')].filter(e => vis(e) && (e.getBoundingClientRect().right > r.right + 1.5 || e.getBoundingClientRect().left < r.left - 1.5)).slice(0, 3).map(e => nameOf(e) + ' ' + Math.round(Math.max(e.getBoundingClientRect().right - r.right, r.left - e.getBoundingClientRect().left)) + 'px'),
-      text: (c.innerText || '').replace(/\s+/g, ' ').trim(), attrs: attrs.replace(/\s+/g, ' ').trim(), thumbs: c.querySelectorAll('.engThumb, [data-face]').length }; });
+      text: (c.innerText || '').replace(/\s+/g, ' ').trim(), attrs: attrs.replace(/\s+/g, ' ').trim(), thumbs: c.querySelectorAll('.engThumb, [data-face]').length,
+      pics: [...c.querySelectorAll('.engThumb')].map(t => { const q = t.getBoundingClientRect(); return { l: +q.left.toFixed(2), t: +q.top.toFixed(2), r: +q.right.toFixed(2), b: +q.bottom.toFixed(2), w: +q.width.toFixed(2), h: +q.height.toFixed(2) }; }) }; });
+  // ── does the window's own scrolling reach the cards? (ENGBIG: the pictures twice as large push the foot of the first row below the fold at 1280x720): scroll the area to its end, read each card's bottom, put it back ──
+  if (scroller) { const was = scroller.scrollTop; scroller.scrollTop = scroller.scrollHeight; out.reach = { scrolled: +scroller.scrollTop.toFixed(1), bottoms: cards.map(c => +c.getBoundingClientRect().bottom.toFixed(2)), overflowY: getComputedStyle(scroller).overflowY }; scroller.scrollTop = was; }
   // ── the sideways scroll: anything wider than the window, the scroll area, the section ──
   const de = document.documentElement;
   out.hscroll = { page: de.scrollWidth - de.clientWidth, body: document.body.scrollWidth - de.clientWidth, dialog: dialog ? dialog.scrollWidth - dialog.clientWidth : 0, scroller: scroller ? scroller.scrollWidth - scroller.clientWidth : 0, section: section.scrollWidth - section.clientWidth, column: column ? column.scrollWidth - column.clientWidth : 0,
@@ -160,6 +175,9 @@ function rowsOf(cards, tol) {
   rows.forEach(r => r.sort((x, y) => x.l - y.l)); return rows;
 }
 const firstRow = m => rowsOf(m.cards, T.TOP_TOL)[0] || [];
+/** the grid's tracks (ENGBIG: a front + back card spans two): the widths from the computed columns, the gap, how many tracks a card covers */
+const tracksOf = m => { const g = m.grid, cols = g && g.cols ? g.cols.split(/\s+/).filter(Boolean).map(parseFloat).filter(Number.isFinite) : [], gap = g ? g.colGap : 0, track = cols[0] || 0;
+  return { n: cols.length, track, gap, left: g && g.r ? g.r.l : 0, span: c => (track > 0 ? Math.max(1, Math.round((c.w + gap) / (track + gap))) : 1), widthOf: k => k * track + (k - 1) * gap }; };
 const noSec = { ok: false, say: 'no engraving section in the order window (looked for ' + SEL.section.join(', ') + ')' };
 /** every check, from one measurement `m` (+ `x`: { cardMin }). Each -> { ok, say } (say = the numbers). */
 const judge = {
@@ -188,20 +206,35 @@ const judge = {
   },
   c(m, x) {
     if (m.noSection) return noSec;
-    const rows = rowsOf(m.cards, T.TOP_TOL), first = rows[0] || [], widths = first.map(c => c.w), n = first.length, g = m.grid, min = x.cardMin;
-    const minW = widths.length ? Math.min(...widths) : 0, why = [];
-    if (n < 3) { const gap = g ? g.colGap : 0; why.push(`only ${n} card(s) in the first row; 3 cards need ${px(3 * min + 2 * gap)} at the ${min}px minimum, the grid is ${g ? px(g.inner) : px(m.section.w)} wide${m.column ? ', the centre column ' + px(m.column.w) : ''}`); }
-    if (n >= 3 && minW < min) why.push(`narrowest card ${px(minW)} < minimum ${min}px`);
-    return { ok: why.length === 0, say: `${n} card(s) in the first row of ${m.cards.length}, widths [${widths.map(w => Math.round(w)).join(', ')}] (minimum ${min}px)${g ? `, grid ${px(g.inner)} wide, gap ${g.colGap}px, columns "${g.cols}"` : ', no grid found'}${why.length ? ' => ' + why.join('; ') : ''}` };
+    const rows = rowsOf(m.cards, T.TOP_TOL), first = rows[0] || [], widths = first.map(c => c.w), g = m.grid, min = x.cardMin, tk = tracksOf(m), why = [];
+    const need = T.NEED_TRACKS(x.vw), used = first.reduce((n, c) => n + tk.span(c), 0), next = rows[1] && rows[1][0];
+    if (tk.n < need) why.push(`the grid has ${tk.n} track(s), at least ${need} are wanted in a ${x.vw}px window (${g ? px(g.inner) : px(m.section.w)} wide${m.column ? ', the centre column ' + px(m.column.w) : ''})`);
+    if (widths.length && Math.min(...widths) < min) why.push(`narrowest card ${px(Math.min(...widths))} < minimum ${min}px (a 160px picture and the card's padding)`);
+    for (const c of m.cards) { const k = tk.span(c), want = tk.widthOf(k); if (!near(c.w, want, 2) || k > 2) why.push(`a card ${px(c.w)} wide is not one or two tracks (${px(tk.widthOf(1))}, ${px(tk.widthOf(2))})`); }
+    if (next && tk.n - used >= tk.span(next)) why.push(`the first row leaves ${tk.n - used} track(s) free although the next card (${tk.span(next)} track(s)) fits`);
+    if (!first.length) why.push('no cards');
+    return { ok: why.length === 0, say: `${first.length} card(s) in the first row of ${m.cards.length}, widths [${widths.map(w => Math.round(w)).join(', ')}] covering ${used} of ${tk.n} track(s) of ${px(tk.track)} (minimum card ${min}px)${g ? `, grid ${px(g.inner)} wide, gap ${g.colGap}px, columns "${g.cols}"` : ', no grid found'}${why.length ? ' => ' + why.join('; ') : ''}` };
   },
-  d(m) {
+  /** the first row starts on screen and its PICTURES are whole on screen; `whole`: the whole row, the words and the Engraving button under the pictures too (dc). ENGBIG: with pictures twice as large the rest of the
+   *  card may lie below the fold at 1280x720 (printed in both), and the window's own scrolling reaches it. */
+  d(m, whole) {
     if (m.noSection) return noSec;
     const first = firstRow(m);
     if (!first.length) return { ok: false, say: 'no cards' };
     const bottom = Math.max(...first.map(c => c.b)), top = Math.min(...first.map(c => c.t)), limit = m.visibleBottom - T.SAFE_BOTTOM, need = bottom - limit;
+    const pics = first.flatMap(c => c.pics || []), picBottom = pics.length ? Math.max(...pics.map(p => p.b)) : bottom, picNeed = picBottom - limit;
     const covered = first.filter(c => c.centreHit === false || c.footHit === false).length, off = first.filter(c => c.centreHit === null || c.footHit === null).length;
-    const want = Math.min(3, m.cards.length), ok = bottom <= limit && top >= m.visibleTop - 1 && covered === 0 && off === 0 && first.length >= want;
-    return { ok, say: `first row of ${first.length}: top ${px(top)}, bottom ${px(bottom)}; the window shows down to ${px(m.visibleBottom)} (viewport ${m.vh}, scroll area bottom ${m.scroller ? px(m.scroller.b) : '?'}), minus ${T.SAFE_BOTTOM}px margin = ${px(limit)} => ${need > 0 ? px(need) + ' BELOW the fold (scroll needed)' : px(-need) + ' to spare'}; room for a card ${px(limit - top)} (${m.strip ? px(top - m.strip.b) + ' of rule, title and gaps sit between the chip strip and the cards, ' : ''}tallest card ${px(Math.max(...first.map(c => c.h)))})${first.length < want ? '; fewer than ' + want + ' cards in the first row' : ''}${covered ? '; ' + covered + ' card(s) covered by something else' : ''}${off ? '; ' + off + ' card(s) cut off by the window' : ''}; scroll tops ${JSON.stringify(m.scrollTops)}, the scroll area could scroll ${m.scrollerScrollable}px` };
+    const want = Math.min(3, m.cards.length), ok = (whole ? bottom : picBottom) <= limit && top >= m.visibleTop - 1 && covered === 0 && (whole ? off === 0 : true) && first.length >= (whole ? 1 : 1);
+    return { ok, say: `first row of ${first.length}: top ${px(top)}, pictures end ${px(picBottom)}, card bottom ${px(bottom)}; the window shows down to ${px(m.visibleBottom)} (viewport ${m.vh}, scroll area bottom ${m.scroller ? px(m.scroller.b) : '?'}), minus ${T.SAFE_BOTTOM}px margin = ${px(limit)} => pictures ${picNeed > 0 ? px(picNeed) + ' BELOW the fold' : px(-picNeed) + ' to spare'}, whole card ${need > 0 ? px(need) + ' BELOW the fold (scroll needed)' : px(-need) + ' to spare'}; room for a card ${px(limit - top)} (${m.strip ? px(top - m.strip.b) + ' of rule, title and gaps sit between the chip strip and the cards, ' : ''}tallest card ${px(Math.max(...first.map(c => c.h)))})${covered ? '; ' + covered + ' card(s) covered by something else' : ''}${off && whole ? '; ' + off + ' card(s) cut off by the window' : ''}; scroll tops ${JSON.stringify(m.scrollTops)}, the scroll area could scroll ${m.scrollerScrollable}px` };
+  },
+  /** (r) the window's own scrolling reaches every card: at the end of the scroll area each card's bottom is inside what is seen, and no card is taller than what is seen */
+  r(m) {
+    if (m.noSection) return noSec;
+    if (!m.reach) return { ok: false, say: 'no scroll area found' };
+    const seen = m.visibleBottom - m.visibleTop, bad = [];
+    m.cards.forEach((c, i) => { if (m.reach.bottoms[i] > m.visibleBottom + 0.5) bad.push(`card ${i + 1} ends at ${px(m.reach.bottoms[i])}, below the window's ${px(m.visibleBottom)} at the end of the scroll`); if (c.h > seen) bad.push(`card ${i + 1} is ${px(c.h)} tall, the window shows ${px(seen)}`); });
+    if (/hidden|clip/.test(m.reach.overflowY || '')) bad.push('the scroll area does not scroll (overflow-y ' + m.reach.overflowY + ')');
+    return { ok: bad.length === 0, say: `scrolling the window to its end (${px(m.reach.scrolled)} down of ${m.scrollerScrollable}) puts the last card's bottom at ${px(Math.max(...m.reach.bottoms))} of the ${px(m.visibleBottom)} the window shows${bad.length ? ' => ' + bad.join('; ') : ''}` };
   },
   e(m) {
     if (m.noSection) return noSec;
@@ -209,21 +242,19 @@ const judge = {
     const ok = h.page <= 0 && h.body <= 0 && h.dialog <= 1 && h.scroller <= 1 && h.section <= 1 && h.column <= 1 && over === 0 && !(m.wideOnes || []).length;
     return { ok, say: `overflow-x px: page ${h.page}, dialog ${h.dialog}, scroll area ${h.scroller} (overflow-x ${h.scrollerOverflowX}), column ${h.column}, section ${h.section}; cards outside the section ${over}${(m.wideOnes || []).length ? '; past the window: ' + m.wideOnes.join(', ') : ''}` };
   },
-  f(m6) {
+  f(m6, x) {
     if (m6.noSection) return noSec;
-    const rows = rowsOf(m6.cards, T.TOP_TOL), n = m6.cards.length, cols = rows[0] ? rows[0].length : 0, why = [];
+    const rows = rowsOf(m6.cards, T.TOP_TOL), n = m6.cards.length, tk = tracksOf(m6), why = [], need = T.NEED_TRACKS(x.vw), total = m6.cards.reduce((t, c) => t + tk.span(c), 0);
     if (n !== 6) why.push(`${n} cards for 6 pieces`);
-    if (cols < 3) why.push(`first row holds ${cols}`);
-    if (cols < 6 && rows.length < 2) why.push('no second row although the first holds only ' + cols);
-    const lefts = (rows[0] || []).map(c => c.l);
-    rows.slice(1).forEach((row, i) => {
-      const prevBottom = Math.max(...rows[i].map(c => c.b));
-      if (row[0].t < prevBottom - 1) why.push(`row ${i + 2} starts at ${px(row[0].t)}, above row ${i + 1}'s bottom ${px(prevBottom)}`);
-      for (const c of row) if (!lefts.some(l => near(l, c.l, T.TOP_TOL))) why.push(`row ${i + 2} card at left ${px(c.l)} is under no column of row 1 [${lefts.map(Math.round).join(', ')}]`);
-      for (const c of row) if (rows[0].every(r1 => !near(r1.w, c.w, T.TOP_TOL + 1))) why.push(`row ${i + 2} card is ${px(c.w)} wide, row 1's are [${rows[0].map(r1 => Math.round(r1.w)).join(', ')}]`);
+    if (tk.n < need) why.push(`the grid has ${tk.n} track(s), at least ${need} are wanted`);
+    if (total > tk.n && rows.length < 2) why.push(`no second row although the cards need ${total} tracks and the row has ${tk.n}`);
+    const lefts = Array.from({ length: tk.n }, (_, i) => tk.left + i * (tk.track + tk.gap));
+    rows.forEach((row, i) => {
+      if (i) { const prevBottom = Math.max(...rows[i - 1].map(c => c.b)); if (row[0].t < prevBottom - 1) why.push(`row ${i + 1} starts at ${px(row[0].t)}, above row ${i}'s bottom ${px(prevBottom)}`); }
+      for (const c of row) { if (!lefts.some(l => near(l, c.l, T.TOP_TOL))) why.push(`row ${i + 1} card at left ${px(c.l)} is under no track [${lefts.map(Math.round).join(', ')}]`); if (!near(c.w, tk.widthOf(tk.span(c)), 2) || tk.span(c) > 2) why.push(`row ${i + 1} card is ${px(c.w)} wide: not one or two tracks`); }
     });
     for (let i = 0; i < m6.cards.length; i++) for (let j = i + 1; j < m6.cards.length; j++) { const p = m6.cards[i], q = m6.cards[j]; if (Math.min(p.r, q.r) - Math.max(p.l, q.l) > 1 && Math.min(p.b, q.b) - Math.max(p.t, q.t) > 1) why.push(`cards ${i + 1} and ${j + 1} overlap`); }
-    return { ok: why.length === 0, say: `${n} cards in ${rows.length} row(s) of [${rows.map(r => r.length).join(', ')}]; row tops [${rows.map(r => Math.round(r[0].t)).join(', ')}], first-row widths [${(rows[0] || []).map(c => Math.round(c.w)).join(', ')}]${why.length ? ' => ' + [...new Set(why)].join('; ') : ''}` };
+    return { ok: why.length === 0, say: `${n} cards in ${rows.length} row(s) of [${rows.map(r => r.length).join(', ')}] on ${tk.n} track(s) of ${px(tk.track)}; row tops [${rows.map(r => Math.round(r[0].t)).join(', ')}], first-row widths [${(rows[0] || []).map(c => Math.round(c.w)).join(', ')}]${why.length ? ' => ' + [...new Set(why)].join('; ') : ''}` };
   },
   g(m) {
     if (m.noSection) return noSec;
@@ -241,8 +272,8 @@ const judge = {
   h(m) {
     if (m.noSection) return noSec;
     if (!m.cards.length) return { ok: false, say: 'no cards' };
-    const hs = m.cards.map(c => c.h), mx = Math.max(...hs);
-    return { ok: mx <= T.CARD_MAX_H + 0.5, say: `card heights [${hs.map(Math.round).join(', ')}], limit ${T.CARD_MAX_H}px` };
+    const hs = m.cards.map(c => c.h), mx = Math.max(...hs), lim = T.CARD_MAX_H(m.section.w);
+    return { ok: mx <= lim + 0.5, say: `card heights [${hs.map(Math.round).join(', ')}], limit ${lim}px (the pictures are ${edgeOf(m.section.w)}px in a ${px(m.section.w)} section)` };
   },
   /** nothing inside a card spills sideways out of it (a 122px card at 1024 is cramped, not broken) */
   j(m) {
@@ -250,14 +281,17 @@ const judge = {
     const bad = m.cards.map((c, i) => c.spill.length ? `card ${i + 1}: ${c.spill.join(', ')}` : '').filter(Boolean);
     return { ok: bad.length === 0, say: bad.length ? 'spills out of its card: ' + bad.join('; ') : `nothing spills out of ${m.cards.length} card(s)` };
   },
-  /** one and two pieces (m1, m2) against the three-piece order (m3): the same card width, at most a third of the grid */
+  /** one and two pieces (m1, m2) against the three-piece order (m3): the same track, a card exactly one track (one face) or two (front + back) wide, the first card at the grid's left */
   x(m1, m2, m3) {
     if (m1.noSection || m2.noSection || m3.noSection) return noSec;
-    const w3 = m3.cards.length ? Math.max(...m3.cards.map(c => c.w)) : 0, bad = [];
-    const say = [[m1, 1], [m2, 2]].map(([m, n]) => { const w = m.cards.length ? Math.max(...m.cards.map(c => c.w)) : 0, third = m.grid ? (m.grid.inner - 2 * m.grid.colGap) / 3 : 0;
-      if (m.cards.length !== n) bad.push(`${m.cards.length} cards for ${n} piece(s)`); if (!near(w, w3, 2)) bad.push(`${n} piece(s): card ${px(w)} wide, the 3-piece order's ${px(w3)}`); if (m.grid && w > third + 1) bad.push(`${n} piece(s): card ${px(w)} is wider than a third of the grid (${px(third)})`);
-      return `${n} piece(s): card ${px(w)}`; });
-    return { ok: bad.length === 0, say: `${say.join(', ')}; 3 pieces: ${px(w3)}${bad.length ? ' => ' + bad.join('; ') : ''}` };
+    const t3 = tracksOf(m3), bad = [];
+    const say = [[m1, 1], [m2, 2]].map(([m, n]) => { const t = tracksOf(m), ws = m.cards.map(c => c.w);
+      if (m.cards.length !== n) bad.push(`${m.cards.length} cards for ${n} piece(s)`);
+      if (!near(t.track, t3.track, 2)) bad.push(`${n} piece(s): a track is ${px(t.track)} wide, the 3-piece order's ${px(t3.track)}`);
+      for (const c of m.cards) { const k = t.span(c); if (k > 2 || !near(c.w, t.widthOf(k), 2)) bad.push(`${n} piece(s): a card ${px(c.w)} wide is not one or two tracks (${px(t.widthOf(1))}, ${px(t.widthOf(2))}): stretched`); }
+      const lefts = m.cards.length ? Math.min(...m.cards.map(c => c.l)) : 0; if (m.grid && m.grid.r && !near(lefts, m.grid.r.l, 2)) bad.push(`${n} piece(s): not left-aligned`);
+      return `${n} piece(s): cards [${ws.map(Math.round).join(', ')}]`; });
+    return { ok: bad.length === 0, say: `${say.join(', ')}; track ${px(t3.track)}${bad.length ? ' => ' + bad.join('; ') : ''}` };
   },
   /** the earring pair (m, with `m.earringNever` from the seed): no card for it, no Back slot anywhere for it */
   i(m, earring) {
@@ -272,14 +306,14 @@ module.exports = { SEL, T, FORBIDDEN, GATE, measureInPage, judge, rowsOf };
 // A tiny stand-in of the order window with the SAME ids and classes the page uses (#orderWin .owMain .owInfoMain #owMeta #owEngSec #owEng .engCard). `o` switches one fault on.
 function synthetic(o) {
   o = o || {};
-  const card = i => `<div><article class="engCard"><b>Piece ${i + 1}</b><div class="th"><i></i><i></i></div><span>${o.badText && i === 0 ? 'Waiting for your approval · 97% sure' : 'Name ' + (i + 1)}</span></article></div>`;
+  const card = i => `<div><article class="engCard"><b>Piece ${i + 1}</b><div class="th"><i class="engThumb"></i><i class="engThumb"></i></div><span>${o.badText && i === 0 ? 'Waiting for your approval · 97% sure' : 'Name ' + (i + 1)}</span></article></div>`;
   const cards = Array.from({ length: o.count || 3 }, (_, i) => card(i)).join('');
   const sec = `<section id="owEngSec">${o.noTitle ? '' : '<h4 class="fLabel owEngTitle">Engraving</h4>'}<div id="owEng" class="owEng owEngGrid">${cards}</div></section>`;
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     *{box-sizing:border-box}html,body{margin:0;height:100%}body{font:14px sans-serif}
     #orderWin{position:fixed;inset:0;display:grid;grid-template-rows:60px 1fr;background:#fff;border:0;padding:0;margin:0;width:100vw;height:100vh;max-width:none;max-height:none}
     .owHead{height:60px;border-bottom:1px solid #ddd}
-    .owVInfo{position:relative;overflow:hidden}.owMain{position:absolute;inset:0;overflow:auto;padding:18px 22px 28px 18px;display:grid;grid-template-columns:196px minmax(0,1fr);gap:22px;align-content:start}
+    .owVInfo{position:relative;overflow:hidden}.owMain{position:absolute;inset:0;overflow:${o.noScroll ? 'hidden' : 'auto'};padding:18px 22px 28px 18px;display:grid;grid-template-columns:196px minmax(0,1fr);gap:22px;align-content:start}
     .owInfoMain{min-width:0}
     #owMeta{height:96px;display:block}.owfBar{height:50px;border:1px solid #bbb;border-radius:20px}
     .pad{height:${o.padAbove || 0}px}
@@ -303,19 +337,20 @@ const MUTANTS = [
   { name: 'title on the right', o: { titleRight: 1 }, expect: 'b' },
   { name: 'no divider line', o: { noDivider: 1 }, expect: 'b' },
   { name: 'cards too narrow (6 across at 1280 is 100px each)', o: { narrow: 1 }, expect: 'c' },
-  { name: 'first row below the fold', o: { padAbove: 400 }, expect: 'd' },
+  { name: 'first row below the fold', o: { padAbove: 520 }, expect: 'd' },
+  { name: 'the window cannot scroll to the cards', o: { padAbove: 600, noScroll: 1 }, expect: 'r' },
   { name: 'a bar covers the cards', o: { cover: 1 }, expect: 'd' },
   { name: 'a sideways scrollbar', o: { hscroll: 2400 }, expect: 'e' },
   { name: 'a second row overlaps the first', o: { overlap: 1 }, expect: 'f' },
   { name: 'a deleted phrase in a card', o: { badText: 1 }, expect: 'g' },
-  { name: 'a card 260px tall', o: { tall: 260 }, expect: 'h' },
+  { name: 'a card 380px tall (the limit is 290px with 160px pictures, 340px with 208px ones)', o: { tall: 380 }, expect: 'h' },
 ];
 async function selfTest(browser) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } }), page = await ctx.newPage(), results = [];
   const run = async o => { await page.setContent(synthetic(o)); return page.evaluate(measureInPage, cfgOf()); };
   for (const mu of MUTANTS) {
-    const m = await run(mu.o), m6 = await run(Object.assign({}, mu.o, { count: 6 })), x = { cardMin: T.CARD_MIN(1280) };
-    const res = { a: judge.a(m), b: judge.b(m), c: judge.c(m, x), d: judge.d(m), e: judge.e(m), f: judge.f(m6), g: judge.g(m), h: judge.h(m) };
+    const m = await run(mu.o), m6 = await run(Object.assign({}, mu.o, { count: 6 })), x = { cardMin: T.CARD_MIN(1280), vw: 1280 };
+    const res = { a: judge.a(m), b: judge.b(m), c: judge.c(m, x), d: judge.d(m), e: judge.e(m), f: judge.f(m6, x), g: judge.g(m), h: judge.h(m), r: judge.r(m) };
     const failing = Object.keys(res).filter(k => !res[k].ok);
     results.push({ name: mu.name, expect: mu.expect, failing, ok: mu.expect === 'all pass' ? failing.length === 0 : failing.includes(mu.expect), say: failing.map(k => k + ': ' + res[k].say.slice(0, 120)).join(' | ') });
   }
@@ -436,7 +471,7 @@ async function main() {
     earring = seeded.ear.find(x => !x.mode) || null;
     if (debug) console.log('  seeded: ' + JSON.stringify(seeded));
     for (const [vw, vh] of sizes) {
-      const size = `${vw}x${vh}`; await page.setViewportSize({ width: vw, height: vh }); const t = table[size] = {}, x = { cardMin: T.CARD_MIN(vw) };
+      const size = `${vw}x${vh}`; await page.setViewportSize({ width: vw, height: vh }); const t = table[size] = {}, x = { cardMin: T.CARD_MIN(vw), vw };
       const get = async o => { await openOrder(page, o.receiptId); return page.evaluate(measureInPage, cfgOf()); };
       const m3 = await get(fx.p3);
       if (debug) console.log(JSON.stringify(m3, null, 1));
@@ -444,8 +479,9 @@ async function main() {
         await page.screenshot({ path: path.join(shots, `NOSCROLL-${size}.png`), ...(clip && clip.width > 20 && clip.height > 20 ? { clip } : {}) }); await page.screenshot({ path: path.join(shots, `NOSCROLL-${size}-window.png`) }); }
       const m1 = await get(fx.p1), m2 = await get(fx.p2), m6 = await get(fx.p6), mw1 = await get(fx.w1), mw3 = await get(fx.w3), me = await get(fx.ear);
       if (debug) console.log(JSON.stringify(m6.cards.map(c => [c.l, c.t, c.w, c.h])));
-      const r = { a: judge.a(m3), b: judge.b(m3), c: judge.c(m3, x), d: judge.d(m3), d1: judge.d(m1), d2: judge.d(m2), e: judge.e(m3), f: judge.f(m6), g: judge.g(m3), h: judge.h(m3), d6: judge.d(m6), x: judge.x(m1, m2, m3), i: judge.i(me, earring), j: judge.j(m3), dw1: judge.d(mw1), dw3: judge.d(mw3) };
+      const r = { a: judge.a(m3), b: judge.b(m3), c: judge.c(m3, x), d: judge.d(m3), d1: judge.d(m1), d2: judge.d(m2), dc: judge.d(m3, true), dc1: judge.d(m1, true), dc2: judge.d(m2, true), e: judge.e(m3), r: judge.r(m3), r6: judge.r(m6), f: judge.f(m6, x), g: judge.g(m3), h: judge.h(m3), d6: judge.d(m6), x: judge.x(m1, m2, m3), i: judge.i(me, earring), j: judge.j(m3), dw1: judge.d(mw1), dw3: judge.d(mw3) };
       r.c6 = judge.c(m6, x); r.f.ok = r.f.ok && r.c6.ok; if (!r.c6.ok) r.f.say += ' | first row of 6: ' + r.c6.say;
+      r.r.ok = r.r.ok && r.r6.ok; if (!r.r6.ok) r.r.say += ' | 6 pieces: ' + r.r6.say; delete r.r6;
       for (const k of Object.keys(r)) t[k] = r[k].ok;
       const fbot = m => m.cards.length ? px(Math.max(...firstRow(m).map(c => c.b))) : '-', free = m => m.strip ? px(m.visibleBottom - m.strip.b) : '?';
       const strip = m => m.stripChips ? `${m.stripRows} row(s): ${m.stripChips.map(c => c.text.replace(/\s+/g, ' ')).join(' | ')}` : '?';
@@ -453,7 +489,7 @@ async function main() {
       numbers.push(`${size}: worst-case strip (${strip(mw3)}): free height 1 line ${free(mw1)}, 3 lines ${free(mw3)}; first row bottom ${fbot(mw3)} vs the window's ${px(mw3.visibleBottom)}`);
       numbers.push(`${size}: centre column ${m3.column ? px(m3.column.w) : '?'} wide; section ${m3.section ? px(m3.section.w) + ' at top ' + px(m3.section.t) : 'none'}; chip strip bottom ${m3.strip ? px(m3.strip.b) : '?'}; first row bottom: 1 line ${fbot(m1)}, 2 lines ${fbot(m2)}, 3 lines ${fbot(m3)}, 6 pieces ${fbot(m6)}; the window shows down to ${px(m3.visibleBottom)}; card widths (3 lines) [${m3.cards.map(c => Math.round(c.w)).join(', ')}], heights [${m3.cards.map(c => Math.round(c.h)).join(', ')}]`);
       console.log(`\n  ── ${size} ──`);
-      for (const k of ['a', 'b', 'c', 'd', 'd1', 'd2', 'e', 'f', 'g', 'h', 'd6', 'x', 'dw1', 'dw3', 'i', 'j']) { if (k === 'i' || k === 'j') { say(null, `${size} (${k}) ${LABEL[k]}: ${r[k].say}`); continue; } const hard = gated(size, k); say(hard ? r[k].ok : null, `${size} (${k}) ${LABEL[k]}${hard ? '' : ` [printed only: ${r[k].ok ? 'would pass' : 'would FAIL'}]`}: ${r[k].say}`); }
+      for (const k of ['a', 'b', 'c', 'd', 'd1', 'd2', 'dc', 'dc1', 'dc2', 'r', 'e', 'f', 'g', 'h', 'd6', 'x', 'dw1', 'dw3', 'i', 'j']) { if (k === 'i' || k === 'j') { say(null, `${size} (${k}) ${LABEL[k]}: ${r[k].say}`); continue; } const hard = gated(size, k); say(hard ? r[k].ok : null, `${size} (${k}) ${LABEL[k]}${hard ? '' : ` [printed only: ${r[k].ok ? 'would pass' : 'would FAIL'}]`}: ${r[k].say}`); }
     }
     if (!w.errors.length) say(true, 'no script error on the page throughout'); else { say(false, 'script errors: ' + w.errors.slice(0, 3).join(' | ')); failed++; }
   } finally { await w.close(); }
@@ -462,13 +498,13 @@ async function main() {
   const sizesDone = Object.keys(table);
   console.log('\n  CHECK TABLE   (PASS / FAIL gating; pass / fail printed only)');
   console.log('  ' + 'check'.padEnd(66) + sizesDone.map(s => s.padEnd(11)).join(''));
-  for (const k of ['a', 'b', 'c', 'd', 'd1', 'd2', 'd6', 'e', 'f', 'g', 'h', 'x', 'dw1', 'dw3']) {
+  for (const k of ['a', 'b', 'c', 'd', 'd1', 'd2', 'd6', 'dc', 'dc1', 'dc2', 'r', 'e', 'f', 'g', 'h', 'x', 'dw1', 'dw3']) {
     const cells = sizesDone.map(s => { const hard = gated(s, k), ok = table[s][k]; if (hard && !ok) failed++; return (hard ? (ok ? 'PASS' : 'FAIL') : (ok ? 'pass' : 'fail')).padEnd(11); });
     console.log('  ' + `(${k}) ${TABLE_LABEL[k] || LABEL[k]}`.padEnd(66) + cells.join(''));
   }
   console.log('\n  MEASURED');
   for (const n of numbers) console.log('  ' + n);
-  console.log(`\n  card minimum ${sizesDone.map(s => s + ': ' + T.CARD_MIN(+s.split('x')[0]) + 'px').join(', ')}; safe bottom margin ${T.SAFE_BOTTOM}px; card height limit ${T.CARD_MAX_H}px`);
+  console.log(`\n  card minimum ${sizesDone.map(s => s + ': ' + T.CARD_MIN(+s.split('x')[0]) + 'px').join(', ')}; safe bottom margin ${T.SAFE_BOTTOM}px; card height limit ${T.CARD_MAX_H(642)}px with the 160px pictures, ${T.CARD_MAX_H(774)}px with the 208px ones`);
   console.log('  not proved by this run: real drawings, real fonts and real Engrave jobs (the fake site has none: thumbnails are stand-ins or empty), a live order, any browser but headless Chromium');
   console.log(failed ? `\nengrave-section-noscroll: ${failed} gating failure(s)` : '\nengrave-section-noscroll: every gating check passes');
   return failed ? 1 : 0;

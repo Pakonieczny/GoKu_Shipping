@@ -492,8 +492,9 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 /* ── the Engraving section of the Overview (Paul, 12 Oct 2026; CONTRACT.md B): directly under the chip strip, ruled off by a thin line, "Engraving" small at its top-left, one card per piece SIDE BY SIDE,
    at least THREE to a row. #owEng.engGrid is the grid; OrderEngraving.mount draws one cell (a direct child) per piece; the section is hidden with it, so an order with nothing to engrave shows
    no title and no line. The centre column (between the picture column and the chat) is ~386px wide in a 1024px window, ~642px at 1280, ~718px at 1356 (Paul's), ~774px at 1440, ~1198px at 1920.
-   THE GRID RULE: exactly 3 equal tracks (a card is ~122px at 1024, ~207px at 1280, ~233px at 1356, ~251px at 1440: the HARD MINIMUM card width is 118px, the centre at a 1024px window), 4 tracks from
-   an 840px section, 5 from 1060px, 2 only under 360px (a phone). The tracks are fixed in number, never auto-fit, so ONE or TWO cards stay one third of the row wide, left-aligned: never stretched. ── */
+   THE GRID RULE: 3 equal tracks (a card is ~207px at 1280, ~233px at 1356, ~251px at 1440), 4 tracks from an 840px section, 5 from 1060px; ENGBIG (13 Oct 2026) made the pictures twice as large, so a track is never
+   under 176px: 2 tracks under a 548px section (~122px cards at 1024 became 2 cards of ~188px), 1 under 362px (a phone). The tracks are fixed in number, never auto-fit, so ONE or TWO cards stay one track wide,
+   left-aligned: never stretched (a front + back card spans two tracks, see below). ── */
 .engSec{margin-top:10px;padding-top:6px;border-top:1px solid var(--line);container:eng/inline-size;min-width:0}
 /* (nothing to engrave: no rule, no title, no room. The section keeps a box of no height rather than display:none, because OrderEngraving looks at the host's parent to know whether a card hidden
    for lack of anything to show may be drawn when something comes: a parent with no box at all would never be drawn again) */
@@ -506,7 +507,27 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 #owEng.engGrid>.fLabel{display:none}   /* (the old list's own "Back engraving" label: the section's title is the one title) */
 @container eng (min-width:840px){#owEng.engGrid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @container eng (min-width:1060px){#owEng.engGrid{grid-template-columns:repeat(5,minmax(0,1fr))}}
-@container eng (max-width:359px){#owEng.engGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container eng (max-width:547px){#owEng.engGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container eng (max-width:361px){#owEng.engGrid{grid-template-columns:minmax(0,1fr)}}
+/* ── the pictures of the cards, twice as large (ENGBIG; Paul, 13 Oct 2026 03:04 UTC: "Enlarge the engraving thumbnail size in this modal to be 2x larger"). They were 80px in a card under 232px wide and 104px in a wider one
+   (charm-nest-engrave-card.js: the card's own rules, which the Engrave tab's detail card keeps); here, in the order window's grid only, they are 160px and 208px. --engPx is the picture's edge: the card's own container
+   query cannot give it, because a front + back card spans two tracks and must draw the same picture as a single card, so it is set by the section's width, at the same cards (a track is 232px or wider from a 714px
+   section with 3 tracks, 955px with 4, 1196px with 5). A track is at least 176px (a 160px picture and the card's padding), so the grid has 3 tracks from a 548px section (the centre of a ~1186px window), 2 under that, 1 under 362px.
+   One face: label, picture, words, one under the other, in the same column (160px plus 31px of air at 1280). Front + back: the card spans two tracks (one when the grid has one) and the two pictures stand side by side in it;
+   in a card too narrow for both (a phone) they stand one over the other. Nothing is clipped: the picture is never wider than its column. ── */
+#owEng.engGrid{--engPx:160px}
+@container eng (min-width:714px) and (max-width:839px){#owEng.engGrid{--engPx:208px}}
+@container eng (min-width:955px) and (max-width:1059px){#owEng.engGrid{--engPx:208px}}
+@container eng (min-width:1196px){#owEng.engGrid{--engPx:208px}}
+#owEng.engGrid>.engCard:has(.engFaces[data-n="2"]){grid-column:span 2}
+@container eng (max-width:361px){#owEng.engGrid>.engCard:has(.engFaces[data-n="2"]){grid-column:auto}}
+#owEng .engCard .engFaces{grid-template-columns:repeat(2,minmax(0,1fr));justify-content:start}
+#owEng .engCard .engFaces[data-n="1"]{grid-template-columns:minmax(0,1fr)}
+#owEng .engCard .engFaces[data-n="1"] .engFace{display:flex}
+#owEng .engCard .engFaces[data-n="1"] .engLbl{order:-1}
+#owEng .engCard .engFaces[data-n="1"] .engTxt{-webkit-line-clamp:2}
+#owEng .engCard .engThumb{max-width:var(--engPx)}
+@container engc (max-width:325px){#owEng .engCard .engFaces[data-n="2"]{grid-template-columns:minmax(0,1fr)}}
 /* (a chip's card hangs over the section: the facts sit above the cards' own positioned parts, the section being a later sibling with its own stacking context) */
 #orderWin .owInfoMain>#owMeta{z-index:3}
 .owVector{width:100%;aspect-ratio:1;background:#fff;border:1px solid var(--line);border-radius:11px;display:grid;place-items:center;overflow:hidden;position:relative;font:11px var(--sans);color:var(--ink45);text-align:center}
@@ -3483,7 +3504,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-rose.js?v=20261007-edges-gc1-gf1"></script>
 <script src="charm-nest-partial.js?v=20261007-ps4-fit75-pp1-cg1"></script>
-<script src="charm-nest-solver.js?v=20261009-unjam1-pair2-ln1-cg1-nestfront"></script>
+<script src="charm-nest-solver.js?v=20261009-unjam1-pair2-ln1-cg1-nestfront-nq1"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1"></script>
@@ -3519,13 +3540,13 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1-bf1-sd1-sl1-pm1-zs1-dm1-nb1-ch1-ns1-lk1-nr1-au1-rlk2-rs1"></script>
 <script src="charm-nest-engrave-said.js?v=20261012-nt1"></script>
-<script src="charm-nest-engrave-preview.js?v=20261012-pv1-r2th1"></script>
+<script src="charm-nest-engrave-preview.js?v=20261012-pv1-r2th1-th2-bg1"></script>
 <script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1-dm1-ko1"></script>
 <script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po2-adv2-cg1-sn1-dr2-sl1"></script>
 <script src="charm-nest-order-rows.js?v=20261012-or1"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2-cg1"></script>
-<script src="charm-nest-engrave-card.js?v=20261012-ec1-sm1-r2th1-bt1"></script>
-<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1-dm1-su1-ui2-egm1-el1-ec1-mg1-crash1"></script>
+<script src="charm-nest-engrave-card.js?v=20261012-ec1-sm1-r2th1-bt1-bg1"></script>
+<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1-dm1-su1-ui2-egm1-el1-ec1-mg1-crash1-sel1-op1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2-sn1"></script>
 <script src="charm-nest-set-rules.js?v=20261010-sf2-sp1"></script>
 <script src="charm-nest-set-edit.js?v=20261007-ls2a-ps1-plb1-cg1-ld1-sn1-dm1-sp1"></script>
@@ -4544,6 +4565,21 @@ function splitGroups(pages, only) {
   for (const [group, pieces] of by) { const at = [...new Set(pieces.map(x => x.sh))]; if (pieces.length > 1 && at.length > 1) out.push({ group, pieces, pages: at }); }
   return out;
 }
+/** The orders (of `only`, a Set of order keys, or all) with pieces on two or more of these sheets (pages of one metal; an order's pieces of another metal are another
+    metal's sheet by nature). Pure: reads the pages it is given, no cloud call. The order, not the line, is the unit that stays whole (Paul, 13 Oct 2026).
+    [{ order, pieces:[{c, sh}], pages:[sh] }] */
+function orderSplits(pages, only) {
+  const by = new Map();
+  for (const sh of pages || []) for (const c of sh.charms || []) {
+    if (c.excluded) continue;
+    const k = String(c.order || c.id); if (only && !only.has(k)) continue;
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push({ c, sh });
+  }
+  const out = [];
+  for (const [order, pieces] of by) { const at = [...new Set(pieces.map(x => x.sh))]; if (pieces.length > 1 && at.length > 1) out.push({ order, pieces, pages: at }); }
+  return out;
+}
 /** A split in plain words: "Left on sheet 1, Right on sheet 2" (a pair of one design: "1 piece on sheet 1, 1 piece on sheet 2"). */
 function splitWords(g, nameOf) {
   return g.pages.map(sh => { const here = g.pieces.filter(x => x.sh === sh).map(x => x.c), sides = here.map(sideWord).filter(Boolean);
@@ -4570,10 +4606,34 @@ function keepOrdersWhole(sh, byId, pocket) {
   const missed = new Set(sh.rejects.map(id => gid(byId.get(id))).filter(Boolean)), fixed = new Set((sh.roseProtected?.placements || []).map(p => p.id));
   const mates = missed.size && !sh._mergeNext ? sh.placements.filter(p => locked.has(p.id) && !lifted.includes(p) && !fixed.has(p.id) && missed.has(gid(byId.get(p.id))) && !(byId.get(p.id)?.pinned && !byId.get(p.id)?.arrivalPin)) : [];
   lifted.push(...mates);
+  // The ORDER is the unit (Paul, 13 Oct 2026: "the priority should be to maintain all of the pieces for each given order on that one sheet"): a piece of an
+  // order that did not fit takes the order's other SAVED pieces off this sheet with it (another line of the order, a copy of a plain quantity-N line),
+  // so the whole order starts the next sheet, and the small room they leave is filled by single charms (the gap fill). Only when the whole order fits one
+  // empty sheet (otherwise lifting gains nothing), when other pieces stay on this sheet (an emptied sheet cannot pass anything on), and never a protected
+  // Rose Gold piece or one a person pinned; the same exceptions as for a pair's mates.
+  const wholeMates = orderMatesOf(sh, byId, bad, orderOf, locked, fixed, lifted);
+  lifted.push(...wholeMates);
   if (!lifted.length) return;
   sh.placements = sh.placements.filter(p => !lifted.includes(p));
   sh.rejects.push(...lifted.map(p => p.id));
-  agent({ metal: sh.metal }, "nest", `Orders kept whole and oldest first: ${lifted.length} placed piece(s) of ${new Set(lifted.map(p => orderOf(p.id))).size} order(s) lifted off — the order moves to the next sheet as one${mates.length ? `; ${mates.length} saved piece(s) of ${new Set(mates.map(p => gid(byId.get(p.id)))).size} pair/line(s) whose other piece did not fit come with it, so none is left half on this sheet` : ""}`);
+  // a saved piece lifted off is no longer a saved placement of this sheet: the check that follows holds the saved layout in place (buildJob lockedPlacements) and would
+  // flag the sheet for a "moved" piece that was taken off on purpose
+  if (sh.nestInitial && lifted.some(p => sh.nestInitial.some(q => q.id === p.id))) sh.nestInitial = sh.nestInitial.filter(q => !lifted.some(p => p.id === q.id));
+  agent({ metal: sh.metal }, "nest", `Orders kept whole and oldest first: ${lifted.length} placed piece(s) of ${new Set(lifted.map(p => orderOf(p.id))).size} order(s) lifted off — the order moves to the next sheet as one${mates.length ? `; ${mates.length} saved piece(s) of ${new Set(mates.map(p => gid(byId.get(p.id)))).size} pair/line(s) whose other piece did not fit come with it, so none is left half on this sheet` : ""}${wholeMates.length ? `; ${wholeMates.length} saved piece(s) of ${new Set(wholeMates.map(p => String(orderOf(p.id)))).size} order(s) whose other piece did not fit come with it, so the order stays on one sheet` : ""}`);
+}
+/** The saved pieces keepOrdersWhole lifts with an order one of whose pieces did not fit (see there): placements of `sh` that are locked, not lifted yet, not protected, not
+    pinned by a person, of an order in `bad`, when that whole order fits one empty sheet (its area, grown by half the clearance, under ORDER_ROOM of the sheet's
+    usable area at the fill ceiling) and the sheet keeps some other piece. [] when the sheet's usable area is not known (a page without usableArea) or a Merge sheets rerun. */
+const ORDER_ROOM = 0.7;
+function orderMatesOf(sh, byId, bad, orderOf, locked, fixed, lifted) {
+  if (!bad.size || sh._mergeNext || typeof usableArea !== "function") return [];
+  const key = id => String(orderOf(id)), badKeys = new Set([...bad].map(String));
+  const cap = +(typeof S !== "undefined" && S.settings && S.settings.maxFill) || .80, room = usableArea(sh) * cap * ORDER_ROOM;
+  if (!(room > 0)) return [];
+  const area = new Map();
+  for (const c of sh.charms || []) if (!c.excluded) { const k = String(c.order || c.id); area.set(k, (area.get(k) || 0) + (typeof inflatedArea === "function" ? inflatedArea(c) : +c.areaPt2 || 0)); }
+  const mates = sh.placements.filter(p => locked.has(p.id) && !lifted.includes(p) && !fixed.has(p.id) && badKeys.has(key(p.id)) && !(byId.get(p.id)?.pinned && !byId.get(p.id)?.arrivalPin) && (area.get(key(p.id)) || 0) <= room);
+  return mates.length && sh.placements.length - lifted.length - mates.length > 0 ? mates : [];
 }
 function orderSummary(charms) {
   const by = new Map(); for (const c of charms) { const k = c.order || c.id; by.set(k, (by.get(k) || 0) + 1); }
@@ -4627,6 +4687,9 @@ function overflowToNextSheet(sh, announce = true) {
     for (const g of split.slice(0, 5)) agent({ metal: sh.metal }, "warn", `Split pair/line ${g.group} (it could not stay whole): ${splitWords(g, p => `sheet ${p.page}`)} — both sheets must go in one set`);
     if (announce) toast(`${labelOf(sh.metal)}: ${split.length === 1 ? "a pair/line is" : split.length + " pairs/lines are"} split across sheets — ${splitWords(split[0], p => `sheet ${p.page}`)}`, "bad", 7000);
   }
+  // an ORDER (any lines, not only a pair) that still has pieces on another sheet of this metal after the move: said in the log, with the reason it could not stay whole
+  { const apart = typeof orderSplits === "function" ? orderSplits(prim.pages, new Set(moving.map(c => String(c.order || c.id)))) : [];
+    for (const o of apart.slice(0, 5)) agent({ metal: sh.metal }, "warn", `Split order ${o.order} (it could not stay on one sheet): ${o.pages.map(p => `${o.pieces.filter(x => x.sh === p).length} piece(s) on sheet ${p.page}`).join(", ")} — both sheets must go in one set`); }
   if (announce) toast(`${labelOf(sh.metal)}: ${moving.length} charm(s) moved to sheet ${next.page} — nesting it now`, "ok", 4200);   // after a nest, its own toast already said "… still waiting for sheet N"
   renderRail(); updateTopSub();
   if (!after) startNest(next);
@@ -4686,6 +4749,7 @@ function topupSettle(sh, result, full) {
     delete sh.releaseWhy;
     sh.topup = { at: topupNow(), base: +result.density.toFixed(4), tried: [], placed: sh.placements.length };
     log(sh, `Filling its gaps at ${fmt.pct(result.density)}: the order that missed moves to the next sheet, and the next ${TOPUP.orders} orders try this sheet first`);
+    notePassed(sh);
     return false;
   }
   if (t.closedAt) return full;
@@ -4694,7 +4758,7 @@ function topupSettle(sh, result, full) {
   const before = new Set((sh.nestInitial || []).map(p => p.id)), tried = new Set(t.tried || []), untried = untriedIds(result);
   const skipped = new Set(nestItems(sh).filter(c => untried.has(c.id)).map(c => c.order || c.id));
   for (const c of nestItems(sh)) if (!before.has(c.id) && !skipped.has(c.order || c.id)) tried.add(c.order || c.id);
-  t.tried = [...tried]; t.placed = sh.placements.length;
+  t.tried = [...tried]; t.placed = sh.placements.length; notePassed(sh);
   if (!live || atCeiling || reached || noRoom || t.tried.length >= TOPUP.orders) {
     t.closedAt = topupNow(); t.density = +result.density.toFixed(4);
     const why = reached ? `${fmt.pct(shownFull(result))} full` : atCeiling ? "at the fill ceiling" : noRoom ? "no room left for even the smallest charms" : !live ? "the run stopped bringing orders" : `${TOPUP.orders} later orders tried`;
@@ -4722,6 +4786,36 @@ function topupRoom(sh, waiting = true) {
   let room = TOPUP.orders - tried.size;
   if (waiting) { const placed = new Set(sh.placements.map(p => p.id)); room -= new Set(activeCharms(sh).filter(c => !placed.has(c.id)).map(orderKey).filter(o => !tried.has(o))).size; }
   return room;
+}
+/* A multi-piece order that cannot fit a nearly finished sheet whole waits for the next sheet; the small gaps are for single-charm
+   orders (Paul, 13 Oct 2026: "If her sheet is close to being full and you want to add a multipiece order that has to spill over to
+   the next sheet, then keep that in queue and then add it to the next sheet and wait for an order that has a single charm orders
+   to fill in small remaining gaps on all nearly finished sheets"). Nothing is split, nothing waits on a clock: the order goes
+   on to the next sheet at once (LiveNest.intakePage, feedOn), and the tries a gap fill has left (topupRoom) go to single-charm
+   orders first (turnOrder). */
+/** The share of the room a gap-filling sheet has left under the fill ceiling that a whole multi-piece order can fill. The room is split
+    into pockets and slivers, so an order of several pieces, each needing its own pocket, fits only when it asks for a small part of it.
+    Measured on made-up Gold streams (3 seeds of 30 orders, 40% multi-piece, 60 x 40 mm sheets; plans/sets-whole-orders-1013/NESTQUEUE-findings.md):
+    of 40 multi-piece orders that tried a gap fill 2 fitted, asking for 20% and 23% of the room, and 38 did not (the smallest of them 29%);
+    single-charm orders fitted at 13% to 36%. Half is a margin over the two that fitted. */
+const GAP_PACK = .5;
+/** Whether an order (its `pieces`, charms with areaPt2) should try the gaps of `sh`: always, but a multi-piece order that asks for more than
+    GAP_PACK of the room a gap-filling sheet showed last time (the free area, or what is left under the fill ceiling if that is less) cannot
+    fit whole, so it goes on to the next sheet without costing the sheet a try. */
+function topupTakes(sh, pieces) {
+  if (!gapFilling(sh) || !pieces || pieces.length < 2) return true;
+  const info = sh.liveInfo; if (!info || !(+info.usablePt2 > 0)) return true;
+  const room = Math.min(+info.freePt2 || 0, (+S.settings.maxFill || .8) * info.usablePt2 - (+info.placedPt2 || 0));
+  return pieces.reduce((n, c) => n + inflatedArea(c), 0) <= Math.max(0, room) * GAP_PACK;
+}
+/** Notes the multi-piece orders a gap fill turned away this update (they go on to the next sheet whole: sh.topup.passed, said in the card's hover text and the sheet's log). */
+function notePassed(sh) {
+  const t = sh.topup; if (!t) return;
+  const items = nestItems(sh), byId = new Map(items.map(c => [c.id, c])), size = orderSizes(items), seen = new Set((t.passed || []).map(String)), fresh = [];
+  for (const id of sh.rejects) { const c = byId.get(id); if (c && size.get(orderKey(c)) > 1 && !seen.has(orderKey(c))) { seen.add(orderKey(c)); fresh.push(orderKey(c)); } }
+  if (!fresh.length) return;
+  t.passed = [...seen];
+  log(sh, `Gap fill: ${fresh.length} multi-piece order${fresh.length === 1 ? "" : "s"} did not fit whole and went on to the next sheet, none is split; the gaps wait for single-charm orders`);
 }
 /* Gap fill also ends when no more orders will come to try it (Paul, 27 Sep: a sandbox batch ended with its Gold sheet 73%
    full, 29 of 35 orders tried, and the sheet never got its QR label). topupSettle closes a gap fill only when the sheet
@@ -4869,7 +4963,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront");
+    const w = new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message }, idx);
     sh.workers.push(w);
@@ -4910,7 +5004,8 @@ function buildJob(sh) {
     // Gold and Silver cut nothing, so the block's price for growing the front eases off over the second half of the sheet (blockEase in the solver)
     block: careful, ...(careful && ["gold", "silver"].includes(sh.metal) ? { blockEase: { from: .45, to: .7, scale: .25 } } : {}),
     initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.80, nearFullContact: !(sh.metal==="rose"||(typeof CharmNestRose!=="undefined"&&CharmNestRose.cuts(sh.metal))),
-    // filling its gaps, a sheet takes any later order that fits, not only the oldest
+    // filling its gaps, a sheet takes any later order that fits, not only the oldest; the pockets go to single-charm orders before a multi-piece order that was turned away (solver: singlesFirst)
+    ...(gapFilling(sh) ? { singlesFirst: true } : {}),
     pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : orderRank(c), pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null, hold: !!(c.pinned && !c.arrivalPin), ...(typeof CharmNestSolver !== "undefined" && CharmNestSolver.pairFields ? CharmNestSolver.pairFields(c) : {}) }))   // (hold: pinned by a person, never lifted; the run's own pin on every placed charm is arrivalPin; pairFields: the group, side and "seat near its mate" of a pair's pieces, nothing for any other charm)
   };
 }
@@ -5044,18 +5139,32 @@ const orderKey = c => String(c.order || c.id);
 /* The date the nest's oldest-first rule reads for a piece: its order's date, and for a piece of an order released from hold
    (frontAt) a time ahead of every real order date, so it is placed first, in the order the holds were released (Paul, 5 Oct). */
 const orderRank = c => (typeof CharmNestOrders !== "undefined" && CharmNestOrders.rankDate ? CharmNestOrders.rankDate(c) : +(c && c.orderDate) || 0);
+/** A Gold or Silver sheet filling its gaps (see topupSettle). */
+const gapFilling = sh => !!sh && !!sh.topup && !sh.topup.closedAt && ["gold", "silver"].includes(sh.metal);
+/** How many pieces each order of `charms` has: Map order -> count. */
+const orderSizes = charms => { const by = new Map(); for (const c of charms) { const k = orderKey(c); by.set(k, (by.get(k) || 0) + 1); } return by; };
+/** The order the orders of a sheet take their turn in: oldest first. A sheet filling its gaps takes the single-charm orders first (oldest
+    first among them) and the multi-piece orders after, so its few tries left go to the orders that fit a small gap (Paul, 13 Oct 2026). */
+function turnOrder(sh, items) {
+  const age = (a, b) => orderRank(a) - orderRank(b) || orderKey(a).localeCompare(orderKey(b));
+  if (!gapFilling(sh)) return age;
+  const size = orderSizes(items);
+  return (a, b) => ((size.get(orderKey(a)) > 1) - (size.get(orderKey(b)) > 1)) || age(a, b);
+}
 /** The charms this search places, and those it leaves waiting for their turn (sh.feedWait). */
 function feedTurn(sh, items) {
   sh.feedWait = null;
   if (!carefulNest(sh) || sh.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(sh.metal)) || !sh.runId || (S.settings.engine || "solver") === "ai") return items;
   const placed = new Set(sh.placements.map(p => p.id));
-  const fresh = items.filter(c => !placed.has(c.id)).sort((a, b) => orderRank(a) - orderRank(b) || orderKey(a).localeCompare(orderKey(b)));
+  const fresh = items.filter(c => !placed.has(c.id)).sort(turnOrder(sh, items));
   // a sheet filling its gaps: the orders it still owes a try try it together, in one search (topupRoom)
   const turn = new Set([...new Set(fresh.map(orderKey))].slice(0, sh.topup && !sh.topup.closedAt ? Math.max(1, topupRoom(sh, false)) : FEED_ORDERS));
   // a pair (a line of pieces) with a piece already placed on this sheet has its other pieces come in this turn, whatever their order's rank:
   // they join their mate's sheet and are never left waiting to be passed on alone (rule R2; a line with nothing placed is unchanged)
-  const gid = typeof groupOf === "function" ? groupOf : () => null, placedLines = new Set(items.filter(c => placed.has(c.id)).map(gid).filter(Boolean));
-  if (placedLines.size) for (const c of fresh) if (!turn.has(orderKey(c)) && placedLines.has(gid(c))) turn.add(orderKey(c));
+  // The same for any piece of an ORDER with a piece already placed on this sheet (another line of the order, a copy that came in after its mates were saved;
+  // Paul, 13 Oct 2026: all the pieces of an order on one sheet): it takes this turn with them, not the order's place in line.
+  const gid = typeof groupOf === "function" ? groupOf : () => null, placedLines = new Set(items.filter(c => placed.has(c.id)).map(gid).filter(Boolean)), placedOrders = new Set(items.filter(c => placed.has(c.id)).map(orderKey));
+  if (placedLines.size || placedOrders.size) for (const c of fresh) if (!turn.has(orderKey(c)) && (placedOrders.has(orderKey(c)) || placedLines.has(gid(c)))) turn.add(orderKey(c));
   const wait = fresh.filter(c => !turn.has(orderKey(c)));
   if (!wait.length) return items;
   sh.feedWait = wait.map(c => c.id);
@@ -5079,7 +5188,9 @@ function feedOn(sh) {
   // a sheet filling its gaps keeps only the orders it still owes a try, oldest first; the rest of the batch goes on to the
   // next sheet now, which starts on them at once (topupRoom)
   if (sh.topup && !sh.topup.closedAt && sh.placements.length && sh.endedBy !== "stopped") {
-    const keep = new Set([...new Set(left.slice().sort((a, b) => orderRank(a) - orderRank(b) || orderKey(a).localeCompare(orderKey(b))).map(orderKey))].slice(0, Math.max(0, topupRoom(sh, false))));
+    // (single-charm orders keep the tries first, a multi-piece order that gets none goes on whole: turnOrder)
+    const turn = typeof turnOrder === "function" ? turnOrder(sh, activeCharms(sh)) : (a, b) => orderRank(a) - orderRank(b) || orderKey(a).localeCompare(orderKey(b));
+    const keep = new Set([...new Set(left.slice().sort(turn).map(orderKey))].slice(0, Math.max(0, topupRoom(sh, false))));
     const pass = left.filter(c => !keep.has(orderKey(c)));
     if (pass.length) { sh.rejects = pass.map(c => c.id); overflowToNextSheet(sh, false); }
     if (pass.length === left.length) return true;
@@ -6478,7 +6589,7 @@ function renderCard(sh) {
   if (dayTxt) bits.push(esc(dayTxt));
   if (rc) bits.push("recalled");
   // a Gold or Silver sheet filling its gaps is not released yet: say so where the set is named (see topupSettle)
-  if (sh.topup && !sh.topup.closedAt) bits.push(`<span title="Goes to the laser at ${TOPUP.target * 100}% full or once ${TOPUP.orders} later orders have tried its gaps">filling gaps · ${(sh.topup.tried || []).length} of ${TOPUP.orders} orders tried</span>`);
+  if (sh.topup && !sh.topup.closedAt) bits.push(`<span title="${esc(`Goes to the laser at ${TOPUP.target * 100}% full or once ${TOPUP.orders} later orders have tried its gaps${(sh.topup.passed || []).length ? `. ${sh.topup.passed.length} multi-piece order${sh.topup.passed.length === 1 ? "" : "s"} did not fit whole and went on to the next sheet (none is split); its small gaps are kept for single-charm orders` : ""}`)}">filling gaps · ${(sh.topup.tried || []).length} of ${TOPUP.orders} orders tried</span>`);
   { const qr = qrRetryNote(sh); if (qr) bits.push(qr); }   // a stream release still owed its QR label (settleTopups)
   { const rb = releasedBelowTarget(sh, sh.sat ? sh.sat.fullPct : sh.density); if (rb) bits.push(`<span title="${esc(`A Gold or Silver sheet waits for ${TOPUP.target * 100}% full or for ${TOPUP.orders} later orders to try its gaps, unless not even the smallest charms still fit it. This one went to the laser earlier: ${rb}.`)}">${esc(rb)}</span>`); }
   { const cu = sh.charms.filter(c => c.custom && !c.excluded).length; if (cu) bits.push(`<span class="cuTag" title="Custom orders' own designs on this sheet, tinted plum">${cu} custom</span>`); }
@@ -7437,7 +7548,7 @@ function compareGPUSpeed() {
   const sh=allSheets().filter(sh=>activeCharms(sh).length).sort((a,b)=>activeCharms(b).length-activeCharms(a).length)[0];
   const job=sh?buildJob(sh):null,id=uid();
   let worker;
-  try{worker=new Worker('charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
+  try{worker=new Worker('charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
   gpuComparison=worker;button.textContent="Cancel comparison";output.textContent="Checking GPU availability…";
   const finish=text=>{if(gpuComparison!==worker)return;output.textContent=text;button.textContent="Compare speed";worker.terminate();gpuComparison=null;};
   worker.onmessage=({data:m})=>{
@@ -7568,8 +7679,8 @@ async function boot() {
   refreshAllCards(); updateTopSub();
   window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, flushManualIntake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
     activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log,
-    RESUME_STAGE, heldForResume, resumeQueueChanged, dropResumeQueue, topupRoom, settleTopups,
-    solverWorker: () => new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
+    RESUME_STAGE, heldForResume, resumeQueueChanged, dropResumeQueue, topupRoom, topupTakes, settleTopups,
+    solverWorker: () => new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
   window.CharmNestOperations?.subscribe(()=>flushManualIntake());
 }
 boot();
@@ -7591,9 +7702,11 @@ boot();
 <script src="charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1-spl1-sv1"></script>
 <script src="charm-nest-repo-lock.js?v=20261011-rpu1-as1-sv1"></script>
 <!-- put a master charm's SKU on one existing Etsy listing (charm-nest-etsy-link.js, SWANSKU 12 Oct 2026): the Etsy chip on a master card of the Library, behind the repo password -->
-<script src="charm-nest-etsy-link.js?v=20261012-el1-cs1"></script>
+<script src="charm-nest-etsy-link.js?v=20261012-el1-cs1-fm1-bt1"></script>
+<!-- put ALL the queued SKUs on Etsy in one press (charm-nest-etsy-batch.js + charm-nest-etsy-queue.json, ETSYBATCH 13 Oct 2026): one more line in the Etsy chip's panel, one password entry, one request per listing -->
+<script src="charm-nest-etsy-batch.js?v=20261013-bt1"></script>
 <!-- the Etsy ZODIAC SIGN drop-down row of Settings (charm-nest-zodiac-etsy.js, ZODWRITE 12 Oct 2026): DORMANT, two password-gated steps (check, then write with typed words); the server decides -->
-<script src="charm-nest-zodiac-etsy.js?v=20261012-ze1"></script>
+<script src="charm-nest-zodiac-etsy.js?v=20261012-ze1-zg1"></script>
 <!-- save a custom design to the charm repository and link its listing (Paul, 11 Oct 2026): the SKU rule (charm-nest-sku.js) and the save engine (charm-nest-keep.js), which the designs window's save strip drives (charm-nest-bridge.js, CustomSheet) -->
 <script src="charm-nest-sku.js?v=20261011-sv1"></script>
 <script src="charm-nest-keep.js?v=20261011-sv1"></script>
@@ -7604,7 +7717,7 @@ boot();
 <script src="charm-nest-review-link.js?v=20261013-rlk2"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-fr1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-fr1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4"></script>

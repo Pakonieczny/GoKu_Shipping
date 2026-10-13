@@ -195,7 +195,7 @@ async function build(w, names) {
       const jobs = [...Engrave.items().values()].filter(j => rows.includes(j.row) || (j.row && j.row.parentRow && rows.includes(j.row.parentRow)));
       res[n] = { rid, key: rows[0] && rows[0].key, state: rows[0] && rows[0].state, why: (rows[0] && (rows[0].reason || (rows[0].problems || [])[0] || (rows[0].spec && rows[0].spec.hold))) ? String(rows[0].reason || (rows[0].problems || [])[0] || '').slice(0, 120) : '', poolIds: rows[0] && rows[0].poolIds, never: !!(rows[0] && rows[0].spec && rows[0].spec.engraveNever), pieceCount: rows[0] && rows[0].spec && rows[0].spec.pieceCount,
         mode: rows[0] && rows[0].spec && rows[0].spec.engraving && rows[0].spec.engraving.mode || null,
-        jobs: jobs.map(j => ({ key: j.key, face: j.face === 'front' ? 'front' : 'back', slot: j.slot || null, state: j.state, text: j.text, fontKey: j.fontKey || null, fitted: !!(j.fit && j.fit.glyphs && j.fit.glyphs.length || j.fit && j.fit.cmds), hasMask: !!j.mask, hasView: !!j.view, reason: j.reason || null })) };
+        jobs: jobs.map(j => ({ key: j.key, face: j.face === 'front' ? 'front' : 'back', slot: j.slot || null, state: j.state, text: j.text, fontKey: j.fontKey || null, fitted: !!(j.fit && j.fit.glyphs && j.fit.glyphs.length || j.fit && j.fit.cmds), hasMask: !!j.mask, hasView: !!j.view, reason: j.reason || null, questions: (j.questions || []).slice(0, 2) })) };
     }
     return res;
   }, names.map(n => [n, ORDERS[n].rid]));

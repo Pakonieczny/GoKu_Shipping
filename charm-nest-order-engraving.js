@@ -7,7 +7,10 @@
  *   OrderEngraving.mount(host, { rid, key, rows?, nameOf?, poolId?, piece?, row?, events?, changed?, sheetEng?, label?, meta?, compact?, pieces? })
  *       -> { update(ctx), destroy(), refresh(), el, mode: 'one' | 'list' }
  *       rid     the order (receipt id)           key    the order line's key
- *       rows    a function giving every line of the order (the cards of all of them: the section never follows the piece switcher); else `pieces` ([{ key, row, label }]), else the line `row`/`key`
+ *       rows    a function giving every line of the order; else `pieces` ([{ key, row, label }]), else the line `row`/`key`
+ *       only    (ENGSEL, Paul 13 Oct 2026: "if I select a certain piece, then the back engraving should reflect the selected piece") a function (or object) saying which piece the order window is narrowed to: null
+ *               for "Show all", else { line: the piece's line key, side?: 'L' | 'R' (one ear of a pair) }. Only that piece's cards and words are drawn; a piece with nothing to engrave (an earring, a plain piece) leaves
+ *               the host hidden, so the section has no title, rule or room. It is read at every look, so the host only has to call refresh() (or update()) when the selection changes; nothing polls for it.
  *       nameOf  the name of a line, as the card says it (default: its design's name)
  *       events  the order's timeline events (an array, or a function giving them): an approval another computer makes shows here from them, within the timeline feed's own 2.5 s read
  *       changed called when something other than this card's own press changed the engraving, and after this card's own approval: the host repaints what depends on it
@@ -64,7 +67,8 @@
       if (vis(sp.buyerMessage)) rows.push(['Buyer message', vis(sp.buyerMessage)]);
       if (vis(sp.staffNote)) rows.push(['Staff note', vis(sp.staffNote)]);
     }
-    return rows.map(([k, v]) => [String(k), k === 'Options' ? String(v).split(/\r?\n/).map(x => x.trim()).filter(Boolean).join(' \u00b7 ') : oneLine(v)]).filter(([, v]) => v);
+    // (Paul, 13 Oct 2026: "Do not show the Options text in this view": the Engrave tab's box and the Overview read the Options row from the same reader and keep it; this block never draws it, and a line whose only words were options says nothing)
+    return rows.filter(r => r && r[0] !== 'Options').map(([k, v]) => [String(k), oneLine(v)]).filter(([, v]) => v);
   }
   /** The block's data: one entry per line that has a card, { name, rows: [[label, text]], faces: [['Front', words], ['Back', words]] | null }; the lines the customer wrote and chose nothing for are left out. */
   function saidOf(rows, pieces) {
@@ -83,9 +87,8 @@
   function saidHtml(entries) {
     const many = entries.length > 1, row = ([k, v]) => `<div class="esRow" data-said="${esc(k)}"><i>${esc(k)}</i> ${esc(v)}</div>`;
     return entries.map(e => (many && e.name ? `<div class="esName">${esc(e.name)}</div>` : '')
-      + e.rows.filter(r => r[0] !== 'Options').map(row).join('')
-      + (e.faces ? `<div class="esRow esFaces" data-said="faces">${e.faces.map(([f, t]) => `<i>${esc(f)}</i> ${esc(t)}`).join(' <span class="esSep" aria-hidden="true">\u00b7</span> ')}</div>` : '')
-      + e.rows.filter(r => r[0] === 'Options').map(row).join('')).join('');
+      + e.rows.map(row).join('')
+      + (e.faces ? `<div class="esRow esFaces" data-said="faces">${e.faces.map(([f, t]) => `<i>${esc(f)}</i> ${esc(t)}`).join(' <span class="esSep" aria-hidden="true">\u00b7</span> ')}</div>` : '')).join('');
   }
 
 
@@ -301,7 +304,8 @@
     const busy = new Set(), seen = new Set(), fails = new Map();   // pieces being approved; job keys put in front of the person; the one failure line of a card
     let last = new Map(), asking = false, waitEl = null, kindsSeen = '', loading = false;
     const mode = Array.isArray(ctx0 && ctx0.pieces) && ctx0.pieces.length > 1 ? 'list' : 'one';
-    const ident = c => [c.rid, c.key].join('|');
+    // (a host that hands the rows of the whole order is the same section whichever piece it is on: the piece picked is `only`, not a new section, so the cards of the pieces that stay are not drawn again)
+    const ident = c => (typeof c.rows === 'function' ? [c.rid] : [c.rid, c.key]).join('|');
     // (a host we hid ourselves has no box: the order window being open is what counts, as the window being drawn)
     const visible = () => { if (!host.isConnected) return false; const dlg = host.closest && host.closest('dialog'); if (dlg) return !!dlg.open; const n = host.hidden ? host.parentElement : host; return !!(n && n.getClientRects().length); };
     const poke = () => { tryDo(() => root.RunCtl && root.RunCtl.poke && root.RunCtl.poke()); tryDo(() => root.OrderWin && root.OrderWin.nudge && root.OrderWin.nudge()); };
@@ -314,13 +318,18 @@
     const nameOf = row => { const n = typeof ctx.nameOf === 'function' ? tryDo(() => ctx.nameOf(row), '') : ''; return n || (ctx.label && !ctx.pieces && !ctx.rows ? ctx.label : '') || defaultName(row); };
     const events = () => (typeof ctx.events === 'function' ? tryDo(() => ctx.events(), null) : ctx.events);
     const isWorking = j => !!(root.Engrave && root.Engrave.isWorking && tryDo(() => root.Engrave.isWorking(j), false));
+    /** The piece the window is narrowed to ({ line, side } or null for all), read now. */
+    const onlyOf = () => { const o = typeof ctx.only === 'function' ? tryDo(() => ctx.only(), null) : ctx.only; return o && typeof o === 'object' && (o.line || o.side) ? { line: o.line ? String(o.line) : '', side: o.side ? String(o.side) : '' } : null; };
     /** What the cards show now, as data. */
     function read() {
-      const C = CARD(), rows = rowsOf(), vis = visible();
+      const C = CARD(), only = onlyOf(), vis = visible();
+      // (ENGSEL: the lines of the piece picked, or of every piece; the words block below the cards is drawn from these same rows and pieces, so it follows too)
+      const rows = rowsOf().filter(r => !only || !only.line || (((r && r.parentRow) || r || {}).key === only.line));
       const popt = { nameOf, isWorking, seen: j => vis || seen.has(j.key) };
       let pieces = []; if (C) { try { pieces = C.piecesOf(rows, popt); } catch (e) { pieces = []; for (const r of rows) { try { pieces.push(...C.piecesOf([r], popt)); } catch (e2) { tryDo(() => console.warn('order engraving: one line could not be read', e2)); } } } }   // (ENGCRASH: a line that cannot be read leaves the other lines' cards drawn)
+      if (only && only.side) pieces = pieces.filter(p => !p.slot || p.slot === only.side);   // (one ear of a pair picked: that ear's card alone)
       const ev = events(); for (const p of pieces) withForeign(p, ev, seenAt);
-      return { rows, pieces, loading: rows.some(r => r && r.loading) };
+      return { rows, pieces, loading: rows.some(r => r && r.loading), only: only ? only.line + '|' + only.side : '' };
     }
     const keyOf = p => p.pieceKey + '|' + p.rid + '|' + p.lineKey;
     /** The customer's words block: the host's next sibling inside the section (never a child of the host: the host's children are the cards). Drawn again only when what it says changes. */
@@ -406,12 +415,19 @@
       return el;
     };
     /** Look again; draw only the cards whose content has changed (or all at once when asked). `quiet`: the host is not told. */
+    let onlySeen = '';
     function refresh(force, quiet) {
       if (gone || !host.isConnected) return;
       attached = true;
       const C = CARD(); if (!C) return;
       const r = read(), vis = visible();
       paintSaid(r);
+      // (ENGSEL: the piece picked changed: the window is repainting itself because of it, so the host is not told, and a card of a piece that is not shown now goes at once, whatever keeps the rest from being
+      //  drawn this moment (the window not on screen, a seal being pressed): no stale card is ever left on show, and a section with no card left has no title, rule or room)
+      if (r.only !== onlySeen) { onlySeen = r.only; quiet = true; }
+      const shown = new Set(r.pieces.map(keyOf));
+      for (const [k, c] of [...cards]) if (!shown.has(k)) { tryDo(() => c.el.remove()); cards.delete(k); }
+      if (!r.pieces.length && !r.loading && (!host.hidden || host.firstChild)) { waitEl = null; host.replaceChildren(); host.hidden = true; }
       // (this card's own approval is on its way: its card is left as it is until the approval stands, i.e. the stamp has landed)
       const stamping = r.pieces.some(p => p.jobs.some(j => j.stamping));
       for (const p of r.pieces) last.set(keyOf(p), p);
@@ -464,7 +480,7 @@
         const was = ident(ctx); ctx = Object.assign({}, next);
         if (ident(ctx) !== was) { reset(); refresh(true, true); } else refresh(false);
       },
-      refresh(force) { refresh(force); },
+      refresh(force, quiet) { refresh(force, quiet); },
       destroy() {
         if (gone) return; gone = true; live.delete(handle); disarm();
         if (ro) { tryDo(() => ro.disconnect()); ro = null; }

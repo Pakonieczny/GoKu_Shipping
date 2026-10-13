@@ -347,6 +347,45 @@ async function main() {
   ok(sim.every.every(c => ['SCOPES /scopes', 'GET /listings/' + LID + '/inventory', 'PUT /listings/' + LID + '/inventory'].includes(c.kind + ' ' + c.path)), 'every request Etsy ever got was the scopes check, the inventory read or the inventory PUT');
   for (const k of Object.keys(Mod.REASONS)) { const t = Mod.REASONS[k]; ok(typeof t === 'function' || /^[a-zA-Z].{10,}/.test(t), 'plain words for ' + k); }
 
+  /* ═══ 6b · THE FENCE (ZODGO): the other Etsy inventory writers and this listing ═══ */
+  {
+    store.clear(); blobs.clear(); writes.length = 0; fileWrites.length = 0;
+    const fence = Mod.fenceWith(db), rec = (id, state) => store.set('config/zodiacEtsy_' + id, { v: 1, listingId: id, state });
+    eq([...Mod.FENCE_STATES].sort(), ['mismatch', 'putting', 'unknown', 'writing', 'written'], 'the states that fence a listing: the change was sent, is being sent, may have landed, landed, or does not match');
+    eq(await fence({ listingId: LID, sku: 'X' }), null, 'a listing with no zodiac record passes (every other listing is untouched)');
+    for (const st of ['none', 'blocked', 'prepared', 'stale', 'refused']) { rec(LID, st); eq(await fence({ listingId: LID }), null, 'a record that only checked, or that Etsy refused (nothing changed): ' + st + ' passes'); }
+    for (const st of ['writing', 'putting', 'unknown', 'mismatch', 'written']) { rec(LID, st); const r = await fence({ listingId: LID }); eq([r.ok, r.reason, r.state, r.calls], [false, 'fenced', st, 0], st + ': refused, no Etsy call'); ok(/ZODIAC SIGN/.test(r.text) && /does not touch/.test(r.text), 'in plain words: ' + r.text); }
+    rec(LID, 'written');
+    eq((await fence({ listingId: 'https://www.etsy.com/listing/' + LID + '/huggie-hoop-earrings?ref=x' })).reason, 'fenced', 'a pasted link is read as the same listing');
+    eq(await fence({ listingId: '1718000099' }), null, 'another listing passes'); eq(await fence({ listingId: 'not a number' }), null, 'a bad number is left to the op (it refuses it)'); eq(await fence({}), null); eq(await fence(null), null);
+    eq(await fence({ listingId: LID, sandbox: true }), null, 'the sandbox is not asked (the ops refuse it themselves)');
+    const broken = Mod.fenceWith({ collection: () => ({ doc: () => ({ get: async () => { throw new Error('database down'); } }) }) }), warn0 = console.warn; console.warn = () => {};
+    const rd = await broken({ listingId: LID }); console.warn = warn0; eq([rd.ok, rd.reason, rd.calls], [false, 'fence-read', 0], 'a record that cannot be read refuses (fail closed): the op would have failed on the same database');
+    // the library's handler asks fenceFor(op, body): only the named ops are asked, the rest pass without any read
+    eq(Mod.FENCED_OPS, ['listingEtsySkuWrite'], 'the fenced ops'); let reads = 0; const counting = async b => { reads++; return fence(b); };
+    eq((await Mod.fenceFor('listingEtsySkuWrite', { listingId: LID, sku: 'X' }, counting)).reason, 'fenced', 'the SKU tool on a written zodiac listing: refused'); eq(reads, 1, 'with one read');
+    eq(await Mod.fenceFor('listingEtsySkuWrite', { listingId: '1718000099', sku: 'X' }, counting), null, 'the SKU tool on another listing: passes'); eq(reads, 2);
+    for (const op of ['customEtsySkuWrite', 'aliasPut', 'listingSkus', 'zodiacListingPrepare', 'poolList', undefined]) eq(await Mod.fenceFor(op, { listingId: LID }, counting), null, String(op) + ' is not a fenced op: passes without a read'); eq(reads, 2, 'no read for any op that is not named');
+    eq(writes.length, 0, 'the fence wrote nothing'); store.clear();
+    // every file that writes an Etsy listing inventory is known: a new one must be decided here (fence its op, or say why it cannot reach this listing)
+    const fs = require('fs'), KNOWN = {
+      '_charmNestEtsyZodiac.js': 'this write',
+      '_charmNestEtsyLink.js': 'op listingEtsySkuWrite: FENCED above (it puts one SKU on every product; a listing whose zodiac record says sent/written is refused before any read)',
+      '_charmNestEtsySku.js': 'op customEtsySkuWrite: works from a saved custom design\'s order {rid}, so its listing is that order\'s own custom listing, never this one',
+      'duplicateListing.js': 'creates a NEW listing and writes only that new listing\'s inventory',
+      'etsyMailListingCreator-background.js': 'creates a NEW draft listing and writes only that draft\'s inventory',
+      'etsyUpdateListingInventoryProxy.js': 'the pricing and SKU consoles\' endpoint (a page picks the listing): NOT fenced here (a separate function); Etsy refuses a three-drop-down inventory sent without max_variations_supported=3',
+      'updateListingInventory.js': 'an old console endpoint (a page picks the listing): NOT fenced here; same Etsy refusal',
+      'updateInventory.js': 'an old console endpoint (a page picks the listing): NOT fenced here; same Etsy refusal',
+      'etsyPricingBatch-background.js': 'the pricing batch: writes through etsyUpdateListingInventoryProxy; NOT fenced here; same Etsy refusal'
+    };
+    const strip = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const writer = f => { const t = strip(fs.readFileSync(path.join(fnDir, f), 'utf8')); return (/\/inventory/.test(t) && /method:\s*["']PUT["']|\.put\(|jput\(|["']PUT["']/.test(t)) || /etsyUpdateListingInventoryProxy|updateListingInventory\b/.test(t); };
+    const found = fs.readdirSync(fnDir).filter(f => /\.js$/.test(f) && writer(f)).sort();
+    for (const f of found) ok(f in KNOWN, 'a file that writes an Etsy inventory is not in the zodiac fence list (decide: fence its op, or say why it cannot reach the zodiac listing): ' + f);
+    for (const f of Object.keys(KNOWN)) ok(fs.existsSync(path.join(fnDir, f)), 'the listed file still exists: ' + f);
+  }
+
   /* ═══ 7 · through the real wiring: the Charm repo password door, the real etsyFetch, the real background function ═══ */
   {
     store.clear(); blobs.clear(); writes.length = 0; fileWrites.length = 0;
@@ -413,6 +452,14 @@ async function main() {
     // a second press through the door, and a kick with the right shape but no claim
     eq((await call('POST', body({ op: 'zodiacListingWrite', repoToken: await tokenFor('modify'), confirm: PHRASE, payloadHash: hash }))).body.reason, 'already'); eq(etsyReq.length, 4);
     const stray = await bgHandler({ httpMethod: 'POST', headers: {}, body: JSON.stringify({ listingId: LID, writeId: 'c'.repeat(32) }) }); eq(JSON.parse(stray.body).skipped, 'not-claimed', 'a stray call of the background function sends nothing'); eq(etsyReq.length, 4);
+    // THE FENCE through the real door and the real library: the SKU tool of the Library chip (listingEtsySkuWrite) is refused for the written zodiac listing, with no Etsy call and nothing written
+    { const mine = () => writes.filter(x => !String(x.path).startsWith('CharmRepo_')).length, w0 = mine(), f0 = fileWrites.length, sku = SEVEN[0];   // (the password tokens are records of their own)
+      for (const [tok, why] of [[undefined, 'no token'], ['made-up', 'a made-up token']]) { const r = await call('POST', { op: 'listingEtsySkuWrite', listingId: LID, sku, repoToken: tok }); eq([r.status, r.body.error], [401, 'repo-locked'], 'the SKU tool: ' + why + ' is still refused by the door first'); }
+      let r = await call('POST', { op: 'listingEtsySkuWrite', listingId: LID, sku, by: 'Paul', repoToken: await tokenFor('modify') });
+      eq([r.body.ok, r.body.reason, r.body.state, r.body.calls], [false, 'fenced', 'written', 0], 'the SKU tool, with a good password, on the written zodiac listing: refused ("fenced")'); ok(/ZODIAC SIGN/.test(r.body.text), 'in plain words: ' + r.body.text);
+      eq(etsyReq.length, 4, 'no Etsy call'); eq(mine(), w0, 'nothing written'); eq(fileWrites.length, f0, 'no file written'); ok(!store.has('Charm_Custom_Saves/link-' + LID), 'no SKU-link record was made for it');
+      r = await call('POST', { op: 'listingEtsySkuWrite', listingId: LID, sku, by: 'Paul', repoToken: await tokenFor('modify'), sandbox: true }); eq(r.body.reason, 'sandbox', 'the sandbox still answers as before');
+      r = await call('POST', { op: 'listingEtsySkuWrite', listingId: '1718000555', sku: 'NOT IN THE MASTER AT ALL', by: 'Paul', repoToken: await tokenFor('modify') }); eq(r.body.reason, 'sku-not-in-master', 'another listing reaches the SKU tool\'s own checks as before (the fence does not touch it)'); eq(etsyReq.length, 4); }
     // a kick that cannot be delivered
     store.clear(); blobs.clear(); E2.S.stored = clone(zodInv()); etsyReq.length = 0; store.set('config/etsyOauth', { access_token: 'tok-fresh', refresh_token: 'ref-1', expires_at_ms: Date.now() + 3600e3 }); store.set('EtsyMail_Listings/' + LID, { state: 'active' }); for (const s of SEVEN) store.set('Charm_Master_Index/' + s.toUpperCase(), { sku: s.toUpperCase() });
     r = await call('POST', body({ op: 'zodiacListingPrepare', repoToken: await tokenFor('modify') })); ok(r.body.ready, 'prepared again'); kickBlocked = true;

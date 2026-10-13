@@ -205,7 +205,7 @@
   }
 
   /* ── the picture of a face: ONE place (thumbOf). The live-font component when it is on the page, else the app's own drawing ── */
-  const PX = 160;
+  const PX = 416;   // (ENGBIG: the fallback drawings below, used only when the live preview is not on the page, are made for the order window's largest picture, 208px, at twice the pixel density; the preview itself draws its own)
   /** The saved picture (PNG) of a face's approved file, when it has one: the picture of last resort when the page holds no geometry to draw the charm from. */
   function savedPicture(job, face, o) {
     const back = job ? (job.backs || []).filter(b => b && faceOf(b) === face).reduce((a, b) => (!a || (+b.approvedAt || 0) >= (+a.approvedAt || 0) ? b : a), null) : null;
@@ -286,7 +286,7 @@
     + '.engThumb{transition:transform .13s ease,border-color .13s ease,box-shadow .17s ease}'
     + `.engThumb${NOPE}:hover{border-color:var(--ink45);box-shadow:0 4px 12px rgba(20,16,10,.14)}.engThumb${NOPE}:active{border-color:var(--ink);box-shadow:none;transform:translateY(1px)}`
     + '.engThumb[aria-disabled=true]{cursor:not-allowed;opacity:.7}'
-    // (the room for the button row: the card keeps its height at about 175px at 207px wide, so the three-card row still fits a 1280x720 window without scrolling: a gap less, a pixel less above and below, and the two pictures 80px)
+    // (the room for the button row: a gap less, a pixel less above and below, and the two pictures 80px. These are the card's own rules, kept by the Engrave tab's detail card; the order window's Engraving section sets its pictures twice as large (160px and 208px) in charm-nest-1.html, ENGBIG)
     + '.engCard{gap:3px;padding:6px 7px}@container engc (max-width:215px){.engFaces{grid-template-columns:repeat(2,minmax(0,80px));justify-content:space-between}.engThumb{max-width:80px}}'
     + '@container engc (max-width:150px){.engCard .egOpen{padding:0 4px;font-size:11px}.engCard .egOpen span[aria-hidden]{display:none}.engCard .egOpen[aria-busy=true]{height:auto;min-height:22px;padding:3px 4px;line-height:1.15;white-space:normal;text-align:center}}'   // (a card of 122px, the 1024px window: "Fix in Engraving" on one line without its arrow; while it opens the words may take two lines)
     + '@media (prefers-reduced-motion:reduce){.engThumb{transition:none}.engThumb:active{transform:none}}';

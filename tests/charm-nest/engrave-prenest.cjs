@@ -18,7 +18,7 @@
 //   CONTROLS  a red test is worth something only if the same measure goes green on a right picture and red on the wrong one: C1 = the TWIN's Back thumbnail (the page's own drawing) must pass the three picture checks; C2 = a drawn
 //             copy of the live bug (the front view with one wide line of words across it) must be caught by them.
 //
-//   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-prenest.cjs      (CHROMIUM=<chrome> if the default path is missing; SHOTS=<dir> for the screenshots; PN_ONLY=card|open|edit)
+//   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-prenest.cjs      (CHROMIUM=<chrome> if the default path is missing; SHOTS=<dir> for the screenshots; PN_ONLY=card|open|edit|front)
 //   Every line is  PASS|FAIL  id  evidence  [owner]. Exit code 1 while any check is red. Many checks are RED on a build that has not got the ENGPRE / ENGTHUMB fixes: that is the point.
 // What a pass does NOT prove: a live order, the live font files, any browser but headless Chromium, a real sheet; the held order is a pulled line with a hold flag, as the live one is, but its Hold came from this world.
 'use strict';
@@ -31,7 +31,7 @@ const SHOTS = process.env.SHOTS || '/mnt/project-files/plans/engrave-prenest-101
 const ONLY = process.env.PN_ONLY || '';
 
 const RESULTS = [];
-const OWNERS = { thumb: 'ENGTHUMB', pre: 'ENGPRE', world: 'ENGLIVE' };
+const OWNERS = { thumb: 'ENGTHUMB', pre: 'ENGPRE', front: 'ENGFRONT', world: 'ENGLIVE' };
 function check(id, ownerKey, ok, evidence) {
   const owner = OWNERS[ownerKey] || ownerKey;
   RESULTS.push({ id, owner, ok: !!ok, evidence });
@@ -155,7 +155,7 @@ async function main() {
       'world', !info.err && Math.abs(info.w - 34) < 1 && info.h > info.w && info.cut >= 2 && info.art >= 5 && info.font === 'crimson-text'
         && tw.jobs.length === 1 && tj.fitted && tj.hasMask && tj.hasView && tj.fontKey === 'crimson-text' && tj.text === 'Name One\nName Two\nDate One' && tw.mode === 'back'
         && s0.h && s0.h.state === 'pulled' && !!s0.h.hold && s0.h.poolIds.length === 0 && s0.h.poolRows === 0 && s0.h.onSheet === 0 && s0.h.place === 'hold' && hd.mode === 'back' && hd.jobs.length === 0,
-      `disc ${info.w}x${info.h} pt, ${info.cut} cut paths, ${info.art} art paths, "Typewriter" -> ${info.font}; twin job ${tj ? tj.state + ' ' + tj.fontKey + (tj.fitted ? ' fitted' : ' NOT fitted') : 'none'} ${JSON.stringify(tj && tj.text)}; held row ${JSON.stringify(s0.h && { state: s0.h.state, hold: !!s0.h.hold, pool: s0.h.poolRows, sheet: s0.h.onSheet, place: s0.h.place, jobs: s0.h.jobs.length })}, mode ${hd.mode}${info.err ? ' ' + info.err : ''}`);
+      `disc ${info.w}x${info.h} pt, ${info.cut} cut paths, ${info.art} art paths, "Typewriter" -> ${info.font}; twin job ${tj ? tj.state + ' ' + tj.fontKey + (tj.fitted ? ' fitted' : ' NOT fitted') + (tj.reason ? ' (' + tj.reason + ')' : '') + (tj.questions && tj.questions.length ? ' asks ' + JSON.stringify(tj.questions) : '') : 'none'} ${JSON.stringify(tj && tj.text)}; held row ${JSON.stringify(s0.h && { state: s0.h.state, hold: !!s0.h.hold, pool: s0.h.poolRows, sheet: s0.h.onSheet, place: s0.h.place, jobs: s0.h.jobs.length })}, mode ${hd.mode}${info.err ? ' ' + info.err : ''}`);
 
     const thumbSel = (face) => `#owEng .engCard .engFace[data-face="${face}"] .engThumb`;
     // a Back picture, waited for (a font being fetched hides the words for a moment: the picture is taken again, at most 4 times, until it has words)
@@ -246,14 +246,20 @@ async function main() {
       const rows = () => [...w.srv.st.docs.keys()].filter(k => !docs0.has(k) && k.includes(H.rid));
       const opened = await page.evaluate(async ({ rid, key }) => { try { const ok = await EngraveLink.open({ rid, key }); return ok === true && !!document.querySelector('#egQueue .rvItem[data-kind=placement] .engp'); } catch (e) { return false; } }, { rid: H.rid, key: H.key });
       await R.settle(page, 900);
+      // the job's fit runs in the background (a small labelled wait is fine): the detail is judged once it has settled (the page's own Retry for a fit that outran its limit on a loaded machine, at most 4 times)
+      let fitted = null;
+      if (opened) for (let i = 0; i < 160; i++) { fitted = await page.evaluate(rid => { const r = Orders.rows().find(x => x.order.receiptId === rid), j = r && Engrave.jobsOf(r)[0]; if (!j) return null; if (j.state === 'blocked' && /took too long/.test(j.reason || '') && (j.__r = (j.__r || 0) + 1) <= 4) Engrave.fitJob(j); return { state: j.state, fit: !!j.fit, view: !!j.view }; }, H.rid); if (fitted && fitted.state === 'review' && fitted.fit && fitted.view) break; await R.settle(page, 1500); }
+      await R.settle(page, 900);
       const det = opened ? await page.evaluate(() => {
         const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'), cv = c && c.querySelector('.backHost canvas'), fontEl = c && c.querySelector('.engpFont');
-        return { words: c && c.querySelector('.engpWords') && c.querySelector('.engpWords').value, font: fontEl ? (fontEl.value || fontEl.textContent || '').trim() : null, canvas: !!cv && cv.width > 0, front: !!(c && c.querySelector('.engFace[data-face=front]')), approve: !!(c && c.querySelector('[data-a=approve]')), focus: Engrave.view().focus || null };
+        let ink = null; try { const x = cv && cv.getContext && cv.getContext('2d'); if (x) { const d = x.getImageData(0, 0, cv.width, cv.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 40 && (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200)) n++; ink = n; } } catch (_) { ink = null; }
+        const r = cv && cv.getBoundingClientRect();
+        return { words: c && c.querySelector('.engpWords') && c.querySelector('.engpWords').value, font: fontEl ? String(fontEl.value || '').trim() : null, canvas: !!cv && cv.width > 0 && r.width >= 150 && r.height >= 150 && (ink === null || ink > 200), ink, size: r && [Math.round(r.width), Math.round(r.height)], waitText: c ? (c.querySelector('.backHost') || c).innerText.replace(/\s+/g, ' ').slice(0, 80) : '', front: !!(c && c.querySelector('.engFace[data-face=front]')), approve: !!(c && c.querySelector('[data-a=approve]')), focus: Engrave.view().focus || null };
       }) : null;
       const stD = await state(H.rid), jb = stD.jobs[0] || {};
       check('PN9 the Engrave detail of the held order: its own job under the key the line will have when it is pooled, the three lines in the box, the work area drawn, no Front box', 'pre',
         !!det && det.focus === H.key && jb.key === H.key && jb.face === 'back' && jb.hasFit && jb.hasView && det.words === 'Name One\nName Two\nDate One' && det.canvas && !det.front,
-        det ? `focus ${det.focus}, job ${jb.key} ${jb.state} (fit ${jb.hasFit}, view ${jb.hasView}), the line's key is ${H.key}, words ${JSON.stringify(det.words)}, font box "${det.font}", work area ${det.canvas ? 'drawn' : 'missing'}, front face ${det.front ? 'DRAWN' : 'not drawn'}` : 'the detail did not open, so there is nothing to look at');
+        det ? `focus ${det.focus}, job ${jb.key} ${jb.state} (fit ${jb.hasFit}, view ${jb.hasView}), the line's key is ${H.key}, words ${JSON.stringify(det.words)}, font box "${det.font}", work area ${det.canvas ? 'drawn' : 'MISSING'} (${JSON.stringify(det.size)}, ${det.ink === null ? 'ink not readable' : det.ink + ' inked px'}${det.canvas ? '' : ', says "' + det.waitText + '"'}), job settled ${JSON.stringify(fitted)}, front face ${det.front ? 'DRAWN' : 'not drawn'}` : 'the detail did not open, so there is nothing to look at');
       // a staged edit: other words, Save, the reason prompt (ENGWHY) answered with its first quick button
       let ed = null;
       if (det && det.words) {
@@ -292,6 +298,41 @@ async function main() {
         !!end && end.state === 'pulled' && !!end.hold && end.poolIds.length === 0 && end.poolRows === 0 && end.onSheet === 0 && end.place === 'hold' && !end.placeOn && end.poolSize === s0.t.poolSize && tEnd.poolSize === s0.t.poolSize,
         end ? `state ${end.state}, hold ${JSON.stringify(end.hold)}, poolIds ${end.poolIds.length}, pool rows ${end.poolRows}, on a sheet ${end.onSheet}, placement ${end.place} (on a sheet: ${end.placeOn}); the pool holds ${end.poolSize} row(s) (${s0.t.poolSize} before: the twin's)` : 'the row is gone');
       void before;
+    }
+    if (!ONLY || ONLY === 'front') {
+      // ── 4 · ENGFRONT's case (Paul, 13 Oct 02:20): a FRONT engraving added to a charm that has a fitted back, then the Front thumbnail pressed: the work area must show the front charm with the words (never the
+      //        "Processing stopped before these words were read." text of a job that was simply never started, never a blank), and Back again must still show the back. On the twin (the same disc, a real job and sheet). ──
+      const P = page, QS = '#egQueue .rvItem[data-kind=placement]';
+      const look = () => P.evaluate(rid => {
+        const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (!c) return { card: false };
+        const row = Orders.rows().find(r => r.order.receiptId === rid), jobs = row ? Engrave.jobsOf(row).map(j => ({ face: j.face === 'front' ? 'front' : 'back', state: j.state, fit: !!j.fit, view: !!j.view })) : [];
+        const cv = c.querySelector('.backHost canvas'); let ink = null; try { const x = cv && cv.getContext && cv.getContext('2d'); if (x) { const d = x.getImageData(0, 0, cv.width, cv.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 40 && (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200)) n++; ink = n; } } catch (_) { ink = null; }
+        const r = cv && cv.getBoundingClientRect();
+        return { card: true, cur: [...c.querySelectorAll('.engFace')].filter(f => f.getAttribute('aria-current')).map(f => f.dataset.face)[0] || null, words: (c.querySelector('.engpWords') || {}).value || '', jobs, canvas: !!cv && r.width >= 150 && r.height >= 150 && (ink === null || ink > 200), ink,
+          stopped: /Processing stopped/i.test((c.querySelector('.backHost') || c).innerText), work: (c.querySelector('.backHost') || c).innerText.replace(/\s+/g, ' ').slice(0, 90) };
+      }, T.rid);
+      const click = sel => P.evaluate(sel => { const b = document.querySelector(sel); if (b) b.click(); return !!b; }, sel);
+      await R.openEngraveDetail(w, 'discTwin', { face: 'back' }); await R.settle(P, 900);
+      const f0 = await look();
+      await click(QS + ' .engpSeg[data-mode="both"]'); await R.settle(P, 900);
+      await click(QS + ' .engFace[data-face=front] .engThumb'); await R.settle(P, 900);
+      await P.evaluate(() => { const t = document.querySelector('#egQueue .rvItem[data-kind=placement] .engpWords'); if (!t) return; const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; t.focus(); set.call(t, 'B'); t.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'B' })); t.dispatchEvent(new Event('keyup', { bubbles: true })); });
+      await R.settle(P, 700); await click(QS + ' [data-engp=save]'); await R.settle(P, 900);
+      await P.evaluate(() => { const g = document.querySelector('#egQueue .rvItem[data-kind=placement] .engpWhy'), b = g && g.querySelector('[data-engp=why]'); if (b) b.click(); }); await R.settle(P, 1500);
+      // the front job is made now; it is given time to be read and fitted (the page's own Retry for a fit that outran its limit on a loaded machine)
+      let jobs = [];
+      for (let i = 0; i < 120; i++) {
+        jobs = await P.evaluate(rid => { const row = Orders.rows().find(r => r.order.receiptId === rid); return row ? Engrave.jobsOf(row).map(j => { if (j.state === 'blocked' && /took too long/.test(j.reason || '') && (j.__r = (j.__r || 0) + 1) <= 4) Engrave.fitJob(j); return { face: j.face === 'front' ? 'front' : 'back', state: j.state, fit: !!j.fit, view: !!j.view }; }) : []; }, T.rid);
+        const fr = jobs.find(j => j.face === 'front'); if (fr && fr.fit && fr.view && jobs.length >= 2) break; await R.settle(P, 1500);
+      }
+      await click(QS + ' .engFace[data-face=front] .engThumb'); await R.settle(P, 1500);
+      const fF = await look(); await R.shot(w, 'ENGLIVE-prenest-front-pressed');
+      await click(QS + ' .engFace[data-face=back] .engThumb'); await R.settle(P, 1500);
+      const fB = await look();
+      const fj = fF.jobs && fF.jobs.find(j => j.face === 'front');
+      check('PN13 a front engraving added LATER to a charm with a fitted back: pressing the Front thumbnail shows the front charm with its words (no "Processing stopped" text, no blank work area), and Back again still shows the back', 'front',
+        f0.card && !!fj && fj.fit && fj.view && fF.cur === 'front' && fF.words === 'B' && fF.canvas && !fF.stopped && fB.cur === 'back' && fB.canvas && !fB.stopped && /Name One/.test(fB.words),
+        `before: back job fitted ${JSON.stringify(f0.jobs)}; after adding Front + back and the words "B": jobs ${JSON.stringify(fF.jobs)}; Front pressed: ${fF.card ? `current ${fF.cur}, words ${JSON.stringify(fF.words)}, work area ${fF.canvas ? 'drawn (' + fF.ink + ' inked px)' : 'NOT drawn'}${fF.stopped ? ', says "' + fF.work + '"' : ''}` : 'no card'}; Back pressed again: ${fB.card ? `current ${fB.cur}, words ${JSON.stringify((fB.words || '').slice(0, 30))}, work area ${fB.canvas ? 'drawn (' + fB.ink + ' inked px)' : 'NOT drawn'}${fB.stopped ? ', says "' + fB.work + '"' : ''}` : 'no card'}`);
     }
     check('Z0 no page errors', 'world', !w.errors.length, w.errors.slice(0, 3).join(' | ').slice(0, 300) || 'none');
   } catch (e) { console.error(e); code = 2; }

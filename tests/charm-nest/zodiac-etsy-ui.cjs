@@ -49,6 +49,7 @@ body{margin:0;padding:12px;font:13px system-ui;background:#faf8f3}.field{display
       window.CharmNestRepoLock = { mark() {}, unlocked: () => true, cancelled: e => !!e && e.cancelled === true, call: async (action, ask, fn) => { const cancel = await window.__asked({ action, target: ask && ask.target }); if (cancel) throw Object.assign(new Error('Not done: the charm repo password was not given'), { cancelled: true }); return fn('stub-token'); } };
       window.api = async (fnName, body) => { const r = await window.__server(body); return r; };
     });
+    if (o.B) await page.evaluate(b => { window.B = b; }, o.B);   // (the sorter's own data, as the page holds it, before the row mounts)
     await page.addScriptTag({ path: path.join(root, 'charm-nest-zodiac-etsy.js') });
     return { ctx, page, log, asks };
   }
@@ -129,6 +130,85 @@ body{margin:0;padding:12px;font:13px system-ui;background:#faf8f3}.field{display
     await page.fill('#zeListing', LID); await page.getByRole('button', { name: 'Check the listing' }).click(); await page.getByRole('button', { name: 'Add the drop-down' }).waitFor();
     const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     ok(over <= 1, 'the row fits a 390 px wide screen without sideways scrolling (' + over + ' px over)'); await ctx.close(); }
+
+  /* 7 · ZODGO: the listing is worked out from the sorter's own data (orders, SKU tables, saved links): in memory only, no call at all */
+  const TITLE = 'Huggie Hoop Earrings with Astrological Charm, Handcrafted in Gold Vermeil, Silver, Solid 14k Gold';
+  const rowOf = (rid, lid, sku, title) => ({ order: { receiptId: rid }, line: { listingId: lid, sku, title: title == null ? '' : title }, state: 'pooled' });
+  const mkB = (rows, tables, aliases) => ({ orders: { rows }, maps: { listingSkus: tables || {}, aliases: aliases || {} } });
+  { // the finder itself (pure: it reads the data it is given and nothing else)
+    const g = globalThis; delete g.CharmNestZodiacEtsy; require(path.join(root, 'charm-nest-zodiac-etsy.js')); const F = g.CharmNestZodiacEtsy.findListings;
+    const eq = (a, b, m) => { assert.deepStrictEqual(JSON.parse(JSON.stringify(a)), b, m); n++; console.log('  ok  ' + m); };
+    eq(F(undefined), [], 'no data: nobody named'); eq(F({}), [], 'an empty page: nobody named'); eq(F(mkB([])), [], 'no orders: nobody named');
+    const one = F(mkB([rowOf('1', '1718000001', 'HUGGIE HOOPS-ZODIAC', TITLE), rowOf('2', '1718000001', ' huggie hoops-zodiac ', ''), rowOf('2', '1718000001', 'HUGGIE HOOPS-ZODIAC', TITLE)]));
+    eq(one, [{ id: '1718000001', title: TITLE, orders: 2, lines: 3, table: false, link: false }], 'three lines of two orders with the SKU (any case, spaces trimmed): one listing, its title, 2 orders');
+    eq(F(mkB([rowOf('1', '1718000001', 'HUGGIE HOOPS- ZODIAC', TITLE), rowOf('2', '1718000001', 'HUGGIE HOOPS- ZODIAC AVATAR', TITLE), rowOf('3', '1718000001', 'ZODIAC ICONS LIBRA (HUGGIE)', TITLE), rowOf('4', '1744372161', 'Huggie Hoops-Tennis Ball/Racket3', 'Tennis')])), [], 'the other SKUs (the master spellings, the Libra SKU, another huggie listing) are not this listing');
+    eq(F(mkB([rowOf('1', 'abc', 'HUGGIE HOOPS-ZODIAC', TITLE), rowOf('2', '', 'HUGGIE HOOPS-ZODIAC', TITLE), rowOf('3', null, 'HUGGIE HOOPS-ZODIAC', TITLE), rowOf('4', '12', 'HUGGIE HOOPS-ZODIAC', TITLE)])), [], 'a line without a real listing number names nobody');
+    eq(F(mkB([null, {}, { line: null }, { line: { sku: 5 } }, { line: { listingId: {}, sku: 'HUGGIE HOOPS-ZODIAC' } }, 7, 'x'], { '1718000001': null, '5': 'x' }, { '1': 5, '2': { bySku: 'x' } })), [], 'broken rows and tables are not evidence and do not throw');
+    eq(F(mkB([], { '1718000001': { at: 1, n: 6, uni: 'HUGGIE HOOPS-ZODIAC' } })), [{ id: '1718000001', title: '', orders: 0, lines: 0, table: true, link: false }], 'a SKU table whose products all carry the SKU names the listing');
+    eq(F(mkB([], { '1718000001': { at: 1, n: 0, gone: true, uni: 'HUGGIE HOOPS-ZODIAC' }, '1718000002': { at: 1, n: 72, products: [{ id: '1', sku: 'ZODIAC VIRGO (HUGGIE)', d: 0, pv: [] }, { id: '2', sku: 'ZODIAC ICONS LEO (HUGGIE)', d: 0, pv: [] }], names: {}, props: {} } })), [], 'a listing Etsy no longer has, or one already carrying twelve SKUs, is not named');
+    eq(F(mkB([], {}, { '1718000001': { title: TITLE, bySku: { 'HUGGIE HOOPS-ZODIAC': { sku: 'X' } } }, '1718000002': { title: 'Other', pairBySku: { 'SOMETHING ELSE': {} } } })), [{ id: '1718000001', title: TITLE, orders: 0, lines: 0, table: false, link: true }], 'a saved link on that SKU names the listing and its title');
+    const two = F(mkB([rowOf('1', '1718000001', 'HUGGIE HOOPS-ZODIAC', TITLE), rowOf('2', '1718000002', 'HUGGIE HOOPS-ZODIAC', 'Another zodiac hoop'), rowOf('3', '1718000002', 'HUGGIE HOOPS-ZODIAC', 'Another zodiac hoop')], { '1718000001': { at: 1, n: 6, uni: 'HUGGIE HOOPS-ZODIAC' } }));
+    eq(two.map(c => [c.id, c.orders, c.table]), [['1718000002', 2, false], ['1718000001', 1, true]], 'two listings: the one with more orders first; the table evidence joins the orders'); }
+
+  { // exactly one listing: filled in and named; nothing is called until a press
+    const W = world(), B = mkB([rowOf('9001', LID, 'HUGGIE HOOPS-ZODIAC', TITLE), rowOf('9002', LID, 'HUGGIE HOOPS-ZODIAC', TITLE), rowOf('9003', '1744372161', 'Huggie Hoops-Tennis Ball/Racket3', 'Tennis')]);
+    const { ctx, page, log, asks } = await open(W, { B });
+    ok(await page.inputValue('#zeListing') === LID, 'ONE listing carries the SKU in the page\'s orders: its number is filled into the box');
+    const said = await text(page, row);
+    ok(said.includes('Found it from the orders this page holds: listing ' + LID) && said.includes('Huggie Hoop Earrings with Astrological Charm') && /2 order lines in this sorter carry the SKU HUGGIE HOOPS-ZODIAC/.test(said), 'and it says so in plain words, with the title and the number: ' + said.slice(0, 260));
+    ok(/Press Check the listing/.test(await text(page, row + ' .zeHead')), 'the row says what to press');
+    ok(log.length === 0 && asks.length === 0 && W.S.calls.length === 0, 'filling it in made no cloud call at all, asked for no password, touched no Etsy');
+    ok(await page.getByRole('button', { name: 'Check the listing' }).isEnabled(), 'Check the listing is lit');
+    ok(!(await page.getByRole('button', { name: 'Add the drop-down' }).isVisible()), 'Add the drop-down is still not shown before a check');
+    // the typed go-ahead words are NOT removed by this piece: the check still ends in the exact words to type
+    await page.getByRole('button', { name: 'Check the listing' }).click(); await page.getByRole('button', { name: 'Add the drop-down' }).waitFor();
+    ok(asks.length === 1 && W.S.calls.length === 2 && W.S.puts.length === 0, 'Check from the filled-in number: one password ask, two Etsy calls, no write');
+    ok((await text(page, row)).includes('type exactly: ADD ZODIAC DROPDOWN ' + LID) && await page.getByRole('button', { name: 'Add the drop-down' }).isDisabled(), 'the exact words are still asked for and the write button stays dark until they are typed');
+    // a rescan never overwrites what the person did
+    await page.fill('#zeListing', '1718000009'); await page.evaluate(() => window.CharmNestZodiacEtsy.rescan());
+    ok(await page.inputValue('#zeListing') === '1718000009', 'a number typed by the person is never replaced by a rescan');
+    await ctx.close(); }
+
+  { // exactly one listing, named only by a SKU table (no orders): the number is filled in, the title is honestly unknown; markup in a title stays text
+    const W = world(), { ctx, page } = await open(W, { B: mkB([], { [LID]: { at: Date.now(), n: 6, uni: 'HUGGIE HOOPS-ZODIAC' } }) });
+    ok(await page.inputValue('#zeListing') === LID && /the sorter does not know its title/.test(await text(page, row)), 'a SKU table alone fills it in and says the title is not known'); await ctx.close();
+    const W2 = world(), { ctx: c2, page: p2 } = await open(W2, { B: mkB([rowOf('1', LID, 'HUGGIE HOOPS-ZODIAC', '<img src=x onerror="window.__pwned=1"> Huggie Hoop')]) });
+    ok(await p2.locator(row + ' img').count() === 0 && !(await p2.evaluate(() => window.__pwned)) && /<img src=x/.test(await text(p2, row)), 'markup in an order line\'s title is drawn as text'); await c2.close(); }
+
+  { // several listings: listed with their titles and counts, the person picks, nothing is guessed or filled
+    const W = world(), B = mkB([rowOf('1', LID, 'HUGGIE HOOPS-ZODIAC', TITLE), rowOf('2', '1718000002', 'HUGGIE HOOPS-ZODIAC', 'A second zodiac hoop listing'), rowOf('3', '1718000002', 'HUGGIE HOOPS-ZODIAC', 'A second zodiac hoop listing')]);
+    const { ctx, page, log, asks } = await open(W, { B });
+    ok(await page.inputValue('#zeListing') === '', 'TWO listings carry the SKU: the box stays empty (never a guess)');
+    const said = await text(page, row);
+    ok(/2 listings carry the SKU HUGGIE HOOPS-ZODIAC/.test(said) && said.includes('isting ' + LID) && said.includes('isting 1718000002') && said.includes('A second zodiac hoop listing') && said.includes('Huggie Hoop Earrings with Astrological Charm'), 'both are listed with number and title: ' + said.slice(0, 300));
+    ok(await page.getByRole('button', { name: 'Use this one' }).count() === 2 && await page.getByRole('button', { name: 'Check the listing' }).isDisabled(), 'one "Use this one" per listing; Check is dark until one is chosen');
+    ok(log.length === 0 && asks.length === 0 && W.S.calls.length === 0, 'listing them called nothing');
+    await page.getByRole('button', { name: 'Use this one' }).nth(1).click();
+    ok(await page.inputValue('#zeListing') === LID && await page.getByRole('button', { name: 'Check the listing' }).isEnabled() && await page.getByRole('button', { name: 'Chosen' }).count() === 1, 'choosing one fills its number, lights Check and marks it Chosen');
+    ok(log.length === 0 && W.S.calls.length === 0, 'choosing called nothing either'); await ctx.close(); }
+
+  { // none: the paste box exactly as today
+    const W = world(), { ctx, page, log, asks } = await open(W, { B: mkB([rowOf('1', '1744372161', 'Huggie Hoops-Tennis Ball/Racket3', 'Tennis'), rowOf('2', '1700763608', 'SWAN', 'Swan')]) });
+    ok(await page.inputValue('#zeListing') === '' && await page.getByRole('button', { name: 'Check the listing' }).isDisabled(), 'no listing carries the SKU: the box is empty and Check is dark, as before');
+    ok(/Paste the listing's Etsy link or number/.test(await text(page, row + ' .zeHead')) && await page.locator(row + ' .zeFound').isHidden(), 'the row still says to paste the link or number, and shows no found line');
+    ok(log.length === 0 && asks.length === 0 && W.S.calls.length === 0, 'nothing called'); await ctx.close(); }
+
+  { // the data arrives after the row is on screen: a rescan fills one, and a second listing appearing later withdraws the fill (never a guess)
+    const W = world(), { ctx, page } = await open(W, { B: mkB([]) });
+    ok(await page.inputValue('#zeListing') === '', 'no orders yet: empty');
+    await page.evaluate(([lid, t]) => { window.B.orders.rows.push({ order: { receiptId: '1' }, line: { listingId: lid, sku: 'HUGGIE HOOPS-ZODIAC', title: t }, state: 'pooled' }); window.CharmNestZodiacEtsy.rescan(); }, [LID, TITLE]);
+    ok(await page.inputValue('#zeListing') === LID, 'the orders came in: the listing is filled in');
+    await page.evaluate(() => { window.B.orders.rows.push({ order: { receiptId: '2' }, line: { listingId: '1718000002', sku: 'HUGGIE HOOPS-ZODIAC', title: 'Second' }, state: 'pooled' }); window.CharmNestZodiacEtsy.rescan(); });
+    ok(await page.inputValue('#zeListing') === '' && await page.getByRole('button', { name: 'Use this one' }).count() === 2 && await page.getByRole('button', { name: 'Check the listing' }).isDisabled(), 'a second listing appears: the filled-in number is withdrawn and the person picks'); await ctx.close(); }
+
+  { // Settings is a dialog: the row is hidden while it is closed. Opening it (the row becoming visible) is what makes the page look at its data again, with no timer and no call
+    const W = world(), { ctx, page, log } = await open(W);
+    await page.evaluate(() => { document.body.insertAdjacentHTML('afterbegin', '<div id="wrap" style="display:none"></div>'); document.getElementById('wrap').appendChild(document.getElementById('stZodiacEtsy')); });
+    await page.evaluate(([lid, t]) => { window.B = { orders: { rows: [{ order: { receiptId: '1' }, line: { listingId: lid, sku: 'HUGGIE HOOPS-ZODIAC', title: t }, state: 'pooled' }] }, maps: { listingSkus: {}, aliases: {} } }; }, [LID, TITLE]);
+    await page.waitForTimeout(200); ok(await page.inputValue('#zeListing') === '', 'while the dialog is closed the data is not even looked at');
+    await page.evaluate(() => { document.getElementById('wrap').style.display = 'block'; });
+    await page.waitForFunction(id => document.getElementById('zeListing').value === id, LID, { timeout: 3000 });
+    ok(await page.inputValue('#zeListing') === LID && log.length === 0 && W.S.calls.length === 0, 'opening it looks at the page\'s own orders once, fills the listing in and calls nothing'); await ctx.close(); }
 
   await browser.close();
   console.log('zodiac-etsy-ui OK: ' + n + ' checks');

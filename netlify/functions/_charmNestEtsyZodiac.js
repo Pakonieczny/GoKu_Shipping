@@ -106,6 +106,8 @@ const REASONS = {
   "no-more": "Etsy was asked three times already: a person should look at the listing",
   nothing: "there is nothing to check for this listing yet",
   prepare: "another check of this listing is running",
+  fenced: "this listing carries the ZODIAC SIGN drop-down (12 signs, one SKU each) or its change is being made, so this tool, which would put one SKU on every product, does not touch it",
+  "fence-read": "the zodiac drop-down record of this listing could not be read, so nothing was sent: try again in a minute",
   internal: "the step was stopped by a safety check"
 };
 function answer(reason, o) {
@@ -796,6 +798,34 @@ function real() {
   }
   return shared;
 }
+/* THE FENCE (ZODGO, 13 Oct 2026). After this write the listing has 72 products and 12 SKUs. Another tool that "puts one SKU on every product" of a listing it is pointed at
+   would flatten them (the SKU tool of the Library chip stopped at "mixed-skus" only because it refused two or more SKUs, and that stop is being replaced by a replace-all write;
+   without ?max_variations_supported=3 Etsy refuses a three-drop-down inventory, but that is Etsy's refusal, not ours, and Etsy's default may change). So an op that takes a
+   {listingId} and writes that listing's inventory is checked here, from the zodiac side only (the library's HTTP handler asks `fenceFor` right after the password door, so none of
+   those op files or their op table is touched): when this listing's zodiac record says the change was sent, is being sent, may have landed or landed (writing, putting, unknown,
+   mismatch, written), the press is answered with a plain refusal before the op reads or sends anything.
+   One Firestore read (config/zodiacEtsy_{listingId}) per press of such an op, only after the password door has let the press in; a listing without a record, or one only checked
+   or refused, passes untouched. A read that fails refuses (fail closed): the op's own first step would have failed on the same database. The sandbox is not asked (those ops refuse it).
+   Not covered, by design: customEtsySkuWrite (it works from a saved custom design's order, whose listing is that order's own custom listing, never this one) and the pricing
+   console's endpoints (separate functions, not ops here); tests/charm-nest/zodiac-etsy-write.cjs lists every file that writes an inventory and fails when a new one appears. */
+const FENCE_STATES = new Set(["writing", "putting", "unknown", "mismatch", "written"]);
+function fenceWith(db) {
+  return async function fence(body) {
+    if (isSandbox(body)) return null;
+    const listingId = parseListingId(body && body.listingId);
+    if (!listingId) return null;   // not a listing number: the op's own checks refuse it
+    let d = null;
+    try { const s = await db.collection(CONFIG).doc(recName(listingId)).get(); d = s.exists ? s.data() || {} : null; }
+    catch (e) { console.warn("[etsyZodiac] fence not read for", listingId, e && e.message); return answer("fence-read", { state: "unread" }); }
+    return d && FENCE_STATES.has(d.state) ? answer("fenced", { state: d.state }) : null;
+  };
+}
+const FENCED_OPS = ["listingEtsySkuWrite"];   // every charmNestLibrary op that takes {listingId} and writes that listing's Etsy inventory (the registry test names the files that write one)
+/** null: let the op run; else the refusal to answer instead. Only the ops named in FENCED_OPS are asked. `fence` is for a test; the real one reads Firestore. */
+async function fenceFor(op, body, fence) {
+  if (!FENCED_OPS.includes(op)) return null;
+  return (fence || fenceWith(require("./firebaseAdmin").firestore()))(body);
+}
 const ops = {
   zodiacListingPrepare: async body => (isSandbox(body) ? answer("sandbox") : real().prepare(body)),
   zodiacListingWrite: async body => (isSandbox(body) ? answer("sandbox") : real().write(body)),
@@ -803,4 +833,4 @@ const ops = {
   zodiacListingStatus: async body => real().status(body)
 };
 
-module.exports = { make, ops, real, REASONS, SIGNS, OLD_SKU, QUERY, STORE, parseListingId, phraseFor, internals: { build, validate, listingProblems, restoreOf, describe, canonText, sha256 } };
+module.exports = { make, ops, real, fenceWith, fenceFor, FENCED_OPS, FENCE_STATES, REASONS, SIGNS, OLD_SKU, QUERY, STORE, parseListingId, phraseFor, internals: { build, validate, listingProblems, restoreOf, describe, canonText, sha256 } };

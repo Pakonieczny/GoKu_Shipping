@@ -3048,7 +3048,7 @@ const Master = window.Master = (() => {
     // a charm's .ai file is handed out only with the download password: the server mints the link, the browser saves the bytes
     each("dl", b => b.onclick = () => downloadCharm(b.dataset.dl, b.dataset.size || "", b));
     // the Etsy chip (charm-nest-etsy-link.js, SWANSKU 12 Oct 2026): this charm's SKU on one existing Etsy listing, behind the repo password; a card with several SKUs offers each
-    each("etsylink", (b, skus) => { if (window.CharmNestEtsyLink) CharmNestEtsyLink.mount(b, { skus, repoApi, toast, who: employeeName }); });
+    each("etsylink", (b, skus) => { if (window.CharmNestEtsyLink) CharmNestEtsyLink.mount(b, { skus, repoApi, toast, who: employeeName, skuTable: id => api("charmNestLibrary", { op: "listingSkus", listingIds: [id] }, { quiet: true }) }); });   // (skuTable: the SKUs now on that listing's products, from the stored table: no password; ETSYFAM 13 Oct)
   }
   return { entryFor, looseFor, sharedFor, likeFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, unlockUpload, addFiles, downloadCharm, looksLikeMaster, render, patch, patchMany, saveCustom, sameDesign, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();
@@ -3596,7 +3596,7 @@ const Pool = window.Pool = (() => {
     // the sheets that already hold other pieces of this line (a pair's other piece, a disc necklace's other discs): a late piece goes to them (rule R2)
     const matePages = on.size ? [...holding(on)] : [];
     for (const [metal, list] of byMetal) {
-      let page=window.LiveNest ? LiveNest.intakePage(metal, run, row.order.receiptId) : pagesOf(metal).at(-1);
+      let page=window.LiveNest ? LiveNest.intakePage(metal, run, row.order.receiptId, list) : pagesOf(metal).at(-1);
       // (a sheet kept for this order's own release stays open to the rest of the order's pieces: the order goes on one sheet whole)
       const shut = p => { const k = row.releasing && p.keepRelease && p.keepRelease.rid === String(row.order.receiptId) ? p.keepRelease : null; if (k) p.keepRelease = null; try { return !!(window.LiveNest && LiveNest.closed(p)); } finally { if (k) p.keepRelease = k; } };
       // (the line's own sheet first, when it still takes pieces: the order's home sheet can be an earlier one, and a pair is never put half on each)
@@ -14815,11 +14815,14 @@ const OrderWin = window.OrderWin = (() => {
     const sheetEngOf = x => () => { const m = SV.info && (SV.info.mine || []).find(y => y.poolId && (x.poolIds || []).includes(y.poolId)); return (m && m.eng) || null; };
     // (an earring pair: which pool piece is the Left and which the Right, and which is the mirror image, for a card that engraves each ear on its own; none for any other line)
     const earsOf = x => { const sd = tryDo(() => pairSides(x)) || []; return sd.length ? sd.map(c => ({ poolId: String(c.poolId || c.key), side: c.side, mirror: !!c.mirror })) : undefined; };
-    // The Engraving section (CONTRACT.md B; Paul, 12 Oct 2026) shows EVERY piece of the order side by side, whichever piece the switcher has picked: it never follows the switcher. So the same ctx for every order:
+    // The Engraving section (CONTRACT.md B; Paul, 12 Oct 2026) shows the engraved pieces of the order side by side, and (Paul, 13 Oct 2026: "if I select a certain piece, then the back engraving should reflect the selected
+    // piece") FOLLOWS the piece picked on the Its pieces list: only that piece's cards and words, every engraved piece with "Show all", and no section at all for a piece with nothing to engrave (an earring, a plain piece).
     //   rows()    every line of the order, in listed order        nameOf(line)  a line's piece name        (what the cards read)
+    //   only()    the piece picked, read at every look (W.piece / W.side, the same as OrderWin.selectedPiece / selectedSide): { line, side } or null for all pieces
     //   pieces    the same lines, one entry each, for an order of several (what OrderEngraving.mount drew its list from, and still does until its cards are rewritten)
+    const only = () => { const k = (W.pieces || []).length > 1 ? W.piece || "" : "", sd = W.side && narrowSide() ? W.side : ""; return k || sd ? { line: k, side: sd } : null; };
     const ctx = { rid, key: r.key, poolId: (r.poolIds || [])[0] || "", piece: r.key, row: r, ears: earsOf(r), label: "", meta: "",
-      rows: () => linesOf(r), nameOf: pieceName,
+      rows: () => linesOf(r), only, nameOf: pieceName,
       events: () => (W.evFor === rid ? W.events : null),
       sheetEng: sheetEngOf(r),
       pieces: multi ? ps.map(p => { const x = rowOf(p.key); return x && { key: p.key, poolId: (p.pools || [])[0] || (x.poolIds || [])[0] || "", row: x, ears: earsOf(x), label: p.name, meta: meta(p), sheetEng: sheetEngOf(x) }; }).filter(Boolean) : undefined,
@@ -15130,6 +15133,7 @@ const OrderWin = window.OrderWin = (() => {
     const order = [null].concat(W.pieces.map(p => p.key)); W.pieceDir = order.indexOf(key) > order.indexOf(W.piece) ? 1 : -1;
     const dir = W.pieceDir; W.piece = key; W.side = side;   // (the Left or the Right of the pair, ONEROW: that ear of the line picked, or null for the whole item)
     markPieces();   // (the row is marked at once, whatever the repaint waits for)
+    tryDo(() => W.engCard && W.engCard.refresh(false, true));   // (the Engraving section follows the pick in the same tick, even when the repaint below has to wait for a seal)
     const r = rowOf(W.key); if (!r) return;
     const to = key && key !== r.key ? linesOf(r).find(x => x.key === key) : null;
     if (to) show(to, {}); else paint();
@@ -18786,16 +18790,19 @@ const LiveNest = window.LiveNest = (() => {
      that misses its gaps moves on to the next sheet, and the earlier sheet stays first in line: once a newer page existed
      it used to be passed over for good, short of full, so it was never released and its orders, the oldest, never cut.
      Rose Gold keeps the newest sheet, where its green line is. */
-  function intakePage(m, run, orderId) {
-    const pages = pagesOf(m), newest = pages.at(-1);
-    if (!O.FAST_MATERIALS.has(m)) return newest;
+  function intakePage(m, run, orderId, pieces) {
+    const pages = pagesOf(m), newest = pages.at(-1), fast = O.FAST_MATERIALS.has(m);
     const open = p => p.charms.length && run && p.runId === run.runId && !closed(p);
-    // an order goes onto one sheet whole: a line joins the order's lines already waiting on a sheet in line
-    const home = orderId != null && pages.find(p => open(p) && p.charms.some(c => String(c.order) === String(orderId)));
+    // an order goes onto one sheet whole: a line joins the order's lines already waiting on a sheet in line. Every metal (Paul, 13 Oct 2026: all the pieces
+    // of an order on one sheet); a Rose Gold, 10K or 14K sheet whose contour is planned or protected is not looked at, those metals keep their newest sheet
+    const home = orderId != null && pages.find(p => open(p) && (fast || !(p.rosePlan || p.roseProtected)) && p.charms.some(c => String(c.order) === String(orderId)));
     if (home) return home;
+    if (!fast) return newest;
     // a sheet filling its gaps takes only the orders it still owes a try; the rest of a batch starts the next sheet at once
     // (CN.topupRoom; Paul, 27 Sep: a whole batch waited on the full sheet and the next sheet was not started)
-    const room = p => !window.CN?.topupRoom || window.CN.topupRoom(p) > 0;
+    // (and a multi-piece order that cannot fit a gap-filling sheet whole goes on to the next sheet without costing the sheet a try: single-charm
+    // orders fill its small gaps, CN.topupTakes; Paul, 13 Oct 2026)
+    const room = p => (!window.CN?.topupRoom || window.CN.topupRoom(p) > 0) && (!pieces || !window.CN?.topupTakes || window.CN.topupTakes(p, pieces));
     const pick = pages.find(p => p !== newest && open(p) && room(p)) || newest;
     return pick === newest && open(newest) && !room(newest) ? addPage(m) : pick;
   }

@@ -11,9 +11,11 @@
  *  INVENTORY of the listing, so a body wrong in one field changes what buyers pay or can buy. So:
  *    · it refuses unless the master index holds EXACTLY that SKU (the entry's own spelling) and the entry is not blocked; it never runs in the
  *      sandbox; the SKU must be one Etsy keeps as written (printable text, single spaces, at most 32 characters: "BEADY SWAN" is fine);
- *    · it reads the listing's live inventory FIRST (the only way to know what is there) and changes nothing unless the live products carry ONE
- *      SKU between them (blank counts as none): a listing whose products carry several different SKUs is a person's decision, so it stops
- *      and names them ("mixed-skus"); a listing that already carries the SKU is "already", no write;
+ *    · it reads the listing's live inventory FIRST (the only way to know what is there); a listing whose products all carry the SKU already is
+ *      "already", no write. Otherwise EVERY live product takes the SKU, whatever the products carry now (one SKU, several different ones such as
+ *      X and X-CO, blanks, the shop's placeholder SKUs): Paul, 13 Oct 2026, "Replace each set of etsy SKU's with the provided charm repo SKU".
+ *      It no longer stops as "mixed-skus"; when the products carried two or more different SKUs (blank counts as one value) the answer says what was
+ *      replaced (`replaced`: [{ sku, n }]) and the before-copy below keeps every old SKU, so they can be put back;
  *    · every live product then takes the SKU and EVERYTHING ELSE goes back unchanged (price, stock, enabled state, readiness, options, the
  *      *_on_property lists), built by the rules etsyUpdateListingInventoryProxy.js proved and checked field by field against what was read
  *      (selfCheck) before it leaves; Etsy's own echo is compared with what was sent after;
@@ -33,7 +35,7 @@
  *  reads the listing first; it links when the SKU is there, sends once more ONLY if the listing is still exactly as the before-copy was, and otherwise stops).
  *
  *  Answer (always HTTP 200 for an expected refusal; the key is `reason`, never `error`):
- *    { ok:true,  state:"linked", calls, listingId, sku, productIds, products, verified, already?, beforePath? }
+ *    { ok:true,  state:"linked", calls, listingId, sku, productIds, products, verified, already?, beforePath?, replaced?: [{ sku, n }] (only when the products carried 2+ different SKUs; blank is sku ""), replacedMore? }
  *    { ok:false, state:"failed"|"unverified", reason, text, retry, calls, needs?, details?, beforePath? }
  *  ═══════════════════════════════════════════════════════════════════════ */
 "use strict";
@@ -47,7 +49,7 @@ const { decodeOnce, buildPutBody, selfCheck, compareInventories, looksLikeFreshI
 const SAVES = "Charm_Custom_Saves", MIRROR = "EtsyMail_Listings", SITE = "custom.skuLink";
 const MAX_CALLS = 3, TIMEOUT_MS = 8000, LEASE_MS = 60000, MAX_ATTEMPTS = 3, ETSY_SKU_MAX = 32;
 const LISTING_RE = /^\d{3,20}$/, PLAIN_SKU = /^[\x21-\x7e]+(?: [\x21-\x7e]+)*$/;   // printable ASCII words, one space between them, none at either end
-const CARRY = ["attempts", "backups", "beforePath", "beforeHash", "beforeCanon", "products", "putSent"];   // what a `link` record keeps from one run to the next
+const CARRY = ["attempts", "backups", "beforePath", "beforeHash", "beforeCanon", "products", "putSent", "replaced", "replacedMore"];   // what a `link` record keeps from one run to the next
 
 const REASONS = {
   scope: { text: "Etsy refused the change. Paul needs to re-authorise Etsy with listings_w", retry: true, needs: "listings_w" },
@@ -57,7 +59,6 @@ const REASONS = {
   "listing-state": { text: o => "the listing is " + (o.listingState || "not active") + " on Etsy", retry: true },
   "listing-gone": { text: "Etsy no longer has this listing", retry: false },
   "no-products": { text: "the listing has no products on Etsy", retry: false },
-  "mixed-skus": { text: o => "the listing's products carry different SKUs (" + ((o.details || []).join(", ") || "several") + "): nothing was changed, a person decides which products take this SKU", retry: false },
   changed: { text: "the listing on Etsy is neither as it was before the first try nor as wanted: nothing was changed", retry: false },
   verify: { text: o => o.skuMissing ? "Etsy did not keep the new SKU as it was sent; the safety copy is kept" : "Etsy's listing is not what was sent; the safety copy is kept", retry: false },
   "backup-failed": { text: "the safety copy could not be saved", retry: true },
@@ -83,7 +84,21 @@ function answer(reason, o) {
 }
 const isSandbox = b => !!b && (b.sandbox === true || b.sandbox === 1 || b.sandbox === "1" || b.sandbox === "true");
 const sha256 = t => crypto.createHash("sha256").update(t).digest("hex");
-const skuNorm = s => decodeOnce(s == null ? "" : s).trim().toUpperCase();
+const MAX_REPLACED = 12;
+/** What the live products carry now, one group per SKU (HTML-escaping undone, spaces at the ends and capitals set aside; a blank SKU is its own group "") → [{ sku (the first spelling Etsy showed), n }], biggest first. */
+function skuGroups(live) {
+  const by = new Map();
+  for (const p of live) { const t = decodeOnce(p.sku == null ? "" : p.sku).trim(), k = t.toUpperCase(), g = by.get(k); if (g) g.n++; else by.set(k, { sku: t.slice(0, 40), n: 1 }); }
+  return [...by.values()].sort((a, b) => b.n - a.n || (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0));
+}
+/** The groups to report: only when the products carried two or more different SKUs; at most MAX_REPLACED groups, the products of the others counted in `replacedMore`. → { replaced?, replacedMore? } */
+function replacedOf(groups) {
+  if (groups.length < 2) return {};
+  const out = { replaced: groups.slice(0, MAX_REPLACED).map(g => ({ sku: g.sku, n: g.n })) };
+  const more = groups.slice(MAX_REPLACED).reduce((n, g) => n + g.n, 0);
+  if (more) out.replacedMore = more;
+  return out;
+}
 const clean = v => {   // Firestore refuses undefined
   if (Array.isArray(v)) return v.map(clean);
   if (v && typeof v === "object") { const o = {}; for (const k of Object.keys(v)) if (v[k] !== undefined) o[k] = clean(v[k]); return o; }
@@ -145,7 +160,7 @@ function make(deps) {
       return typeof v === "string" && v.trim() ? v.trim().toLowerCase() : null;
     } catch (_) { return null; }
   }
-  const linkedAnswer = (listingId, sku, prev) => ({ ok: true, state: "linked", calls: 0, listingId, sku, productIds: (Array.isArray(prev.productIds) ? prev.productIds : []).map(String), products: +prev.products || 0, verified: prev.verified !== false, ...(prev.already ? { already: true } : {}), ...(prev.beforePath ? { beforePath: prev.beforePath } : {}) });
+  const linkedAnswer = (listingId, sku, prev) => ({ ok: true, state: "linked", calls: 0, listingId, sku, productIds: (Array.isArray(prev.productIds) ? prev.productIds : []).map(String), products: +prev.products || 0, verified: prev.verified !== false, ...(prev.already ? { already: true } : {}), ...(prev.beforePath ? { beforePath: prev.beforePath } : {}), ...(Array.isArray(prev.replaced) && prev.replaced.length ? { replaced: prev.replaced.map(g => ({ sku: String(g.sku == null ? "" : g.sku), n: +g.n || 0 })), ...(+prev.replacedMore > 0 ? { replacedMore: +prev.replacedMore } : {}) } : {}) });
 
   async function listingEtsySkuWrite(body) {
     body = body && typeof body === "object" ? body : {};
@@ -217,7 +232,7 @@ function make(deps) {
       try { inv = await call(() => etsy.get("/listings/" + listingId + "/inventory", { legacy: false })); } catch (e) { return await stopOn(e); }
       const live = (Array.isArray(inv && inv.products) ? inv.products : []).filter(p => p && typeof p === "object" && !p.is_deleted);
       if (!live.length) return await stop("no-products");
-      const olds = [...new Set(live.map(p => skuNorm(p.sku)).filter(Boolean))];
+      const groups = skuGroups(live);   // what the products carry now (for the answer and the record when it is more than one SKU)
 
       if (live.every(p => decodeOnce(p.sku == null ? "" : p.sku).trim() === sku)) {   // already on Etsy (an earlier try landed, or a person set it): no write
         let verified = false;
@@ -231,9 +246,8 @@ function make(deps) {
             verified = true;
           }
         }
-        return await linked(listingId, sku, inv, live.length, calls, verified, settle, { already: !cur.beforePath || undefined, beforePath: cur.beforePath });
+        return await linked(listingId, sku, inv, live.length, calls, verified, settle, { already: !cur.beforePath || undefined, beforePath: cur.beforePath, replaced: cur.replaced, replacedMore: cur.replacedMore });
       }
-      if (olds.length > 1) return await stop("mixed-skus", { details: olds });   // the products tell variations apart by SKU: not for this op to flatten
       // an earlier try may have put: the listing must still be exactly as the before-copy was (Etsy did not apply it) before another PUT; anything else is for a person
       const canonNow = Canon.snapshotHash(inv);
       if (priorPut && cur.beforeCanon && canonNow !== cur.beforeCanon) return await stop("changed", { beforePath: cur.beforePath });
@@ -257,7 +271,7 @@ function make(deps) {
         await bucket.file(beforePath).save(Buffer.from(beforeText, "utf8"), { resumable: false, contentType: "application/json", metadata: { cacheControl: "no-store" } });
         const [there] = await bucket.file(beforePath).exists();
         if (!there) throw new Error("the safety copy is not in Storage after the save");
-        cur = Object.assign({}, cur, { attempts: attempt, backups: [...(Array.isArray(cur.backups) ? cur.backups : []), beforePath], beforePath, beforeHash, beforeCanon: canonNow, products: live.length, putSent: true });
+        cur = Object.assign({}, cur, { attempts: attempt, backups: [...(Array.isArray(cur.backups) ? cur.backups : []), beforePath], beforePath, beforeHash, beforeCanon: canonNow, products: live.length, putSent: true }, replacedOf(groups));   // (the old SKUs are in the before-copy; the record says which and how many)
         if (!(await settle("writing", {}, true))) throw new Error("the safety copy is not noted on the record");
       } catch (e) {
         console.warn("[etsyLink] backup failed for", listingId, e && e.message);
@@ -274,7 +288,7 @@ function make(deps) {
       if (!looksLikeFreshInventory(echo, putBody.products.length)) return await stop("unverified", { beforePath });
       const cmp = compareInventories(putBody, echo);
       if (!cmp.ok) return await stop("verify", { details: cmp.differences, skuMissing: cmp.differences.some(x => /SKU/.test(x)), beforePath });
-      return await linked(listingId, sku, echo, live.length, calls, true, settle, { beforePath });
+      return await linked(listingId, sku, echo, live.length, calls, true, settle, { beforePath, replaced: cur.replaced, replacedMore: cur.replacedMore });
     } catch (e) {
       console.error("[etsyLink]", listingId, e && e.message);
       return await stop("internal", { state: putSent ? "unverified" : undefined, details: [e && e.message] });
@@ -291,6 +305,7 @@ function make(deps) {
     const out = { ok: true, state: "linked", calls, listingId, sku, productIds, products: n, verified };
     if (o.already) out.already = true;
     if (o.beforePath) out.beforePath = o.beforePath;
+    if (Array.isArray(o.replaced) && o.replaced.length) { out.replaced = o.replaced; if (+o.replacedMore > 0) out.replacedMore = +o.replacedMore; }
     if (!recorded) out.recorded = false;   // Etsy has the SKU; only the record could not be updated (a press makes one GET and writes it)
     return out;
   }
