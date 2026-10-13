@@ -48,12 +48,12 @@
     ready() { const m = MARK(); return !!(m && typeof m.mark === "function" && typeof m.isMarked === "function"); },
     marked(rid) { try { return !!MARK().isMarked(rid); } catch (_) { return false; } },
     mark(rid, by) { return Promise.resolve().then(() => MARK().mark(rid, { by })); },
-    // an order a person did not mark can be in Review all the same (the system put it there): the Review tab's own list says so
+    // an order a person did not mark can be in Review all the same (the system put it there): the Review tab's own list says so (a person's mark is isMarked's: the mark API owns when it is open or resolved)
     natural(rid, row) {
       try {
         const R = root.Review; if (!R || typeof R.items !== "function") return null;
         const own = new Set(rowKeys(rid)); if (row && row.key) own.add(row.key);
-        return R.items().find(it => it && !it.done && !it.decided && !/^(eng|held):/.test(String(it.key || "")) && (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).some(r => r && own.has(r.key) && r.state !== "gone")) || null;
+        return R.items().find(it => it && it.kind !== "reviewMark" && !it.done && !it.decided && !/^(eng|held):/.test(String(it.key || "")) && (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).some(r => r && own.has(r.key) && r.state !== "gone")) || null;
       } catch (_) { return null; }
     },
     inReview(rid, row) { return api.marked(rid) || !!api.natural(rid, row); },

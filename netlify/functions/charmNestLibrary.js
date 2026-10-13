@@ -3091,7 +3091,7 @@ const lineKeyOk = s => /^[\w\-]{3,120}$/.test(String(s || ""));
 // sticker, is read by its key when that sticker is printed again. The lists read every field but the sticker (up to 20 KB
 // each); a record written before hasLabel was kept is taken to have one (every print hands one), and printing it again
 // reads it by its key and says so when there is none.
-const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "completedAt", "completedBy", "how", "stamps", "history", "reopenedAt", "reopenedBy", "updatedAtMs", "hasLabel"];
+const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "completedAt", "completedBy", "how", "stamps", "history", "reopenedAt", "reopenedBy", "updatedAtMs", "hasLabel", "review"];
 const customRow = (d, withLabel) => { const x = Object.assign({}, d); delete x.updatedAt; if (!withLabel) { x.hasLabel = typeof x.hasLabel === "boolean" ? x.hasLabel : x.label !== undefined ? !!x.label : true; delete x.label; } return x; };
 async function op_customGet(b) {
   if (b.key != null) { const key = String(b.key); if (!lineKeyOk(key)) return { error: "bad key" }; const s = await col(CUSTOM).doc(key).get(); return { record: s.exists ? customRow(s.data(), true) : null }; }
@@ -3342,6 +3342,38 @@ async function op_customPut(b) {
   return { ok: true, record: customRow(Object.assign({}, cur || {}, doc), false) };
 }
 const STAMPS_MAX = 2000;
+/* ── Send to Review (Paul, 12 Oct 2026): a person puts an ORDER into the Review tab by hand, and takes it out again. One document per
+   order, "{receiptId}_review", beside the custom-order records (so it travels in the Review tab's 2 s changes feed and the maps' list,
+   with no read of its own, and the sandbox keeps its own copy and a reset clears it). It is NOT a completion and carries no seal or
+   stamp: state stays "open", kind "reviewMark"; the mark is review {state "open" | "done", markedAt/By, doneAt/By, how "ok" | "pick",
+   sku}. Marking an order already marked (and not resolved) and resolving one not marked change nothing (already: true). A mark made
+   again after a resolve starts a new cycle; the earlier one is kept in review.earlier. Never writes Etsy. ── */
+async function op_reviewMarkPut(b) {
+  const rid = String(b.rid != null ? b.rid : b.receiptId == null ? "" : b.receiptId).replace(/\D/g, "").slice(0, 30); if (!rid) return { error: "rid (the order's receipt id) required" };
+  const action = b.action === "resolve" ? "resolve" : b.action === "mark" ? "mark" : ""; if (!action) return { error: "action must be mark or resolve" };
+  const key = rid + "_review", ref = col(CUSTOM).doc(key), now = Date.now(), who = str(b.by || "operator", 80);
+  const snap = await ref.get(), cur = snap.exists ? snap.data() : null, rv = cur && cur.review && typeof cur.review === "object" ? cur.review : null, open = !!rv && rv.state === "open";
+  if (action === "resolve") {
+    if (!open) return { ok: true, already: true, record: cur ? customRow(cur, false) : null };
+    const review = Object.assign({}, rv, { state: "done", doneAt: now, doneBy: who, how: b.how === "pick" ? "pick" : b.how === "ok" ? "ok" : "other" });
+    if (b.sku) review.sku = str(b.sku, 60);
+    if (b.rowKey) review.rowKey = str(b.rowKey, 120);
+    const doc = { review, updatedAtMs: now, updatedAt: FV.serverTimestamp() };
+    await ref.set(doc, { merge: true });
+    return { ok: true, record: customRow(Object.assign({}, cur, doc), false) };
+  }
+  if (open) return { ok: true, already: true, record: customRow(cur, false) };
+  const earlier = rv ? [Object.assign({}, rv)].concat(Array.isArray(rv.earlier) ? rv.earlier : []).map(e => { const o = Object.assign({}, e); delete o.earlier; return o; }).slice(0, 10) : [];
+  const doc = { key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", hasLabel: false, review: Object.assign({ state: "open", markedAt: now, markedBy: who }, earlier.length ? { earlier } : {}), updatedAtMs: now, updatedAt: FV.serverTimestamp() };
+  await ref.set(doc);
+  return { ok: true, record: customRow(doc, false) };
+}
+/* reviewMarkOpen {rids}: which of these orders are in Review now (open marks), one batch get by key, no query. For a gate that must see the cloud's own answer; the page reads its map and needs none. */
+async function op_reviewMarkOpen(b) {
+  const ids = [...new Set((Array.isArray(b.rids) ? b.rids : []).map(x => String(x == null ? "" : x).replace(/\D/g, "")).filter(Boolean))].slice(0, 500), out = [];
+  for (let i = 0; i < ids.length; i += 100) for (const s of await db.getAll(...ids.slice(i, i + 100).map(r => col(CUSTOM).doc(r + "_review")), { fieldMask: ["review", "receiptId"] })) if (s.exists && s.data().review && s.data().review.state === "open") out.push(String(s.data().receiptId || s.id.replace(/_review$/, "")));
+  return { rids: out };
+}
 // where a Complete Order or a Reopen was pressed (the order window, a Review card: the page says so), for its point on
 // the order's timeline (Paul, 29 Sep 02:08)
 const pressedIn = b => (b && b.from ? { pressedIn: str(b.from, 40) } : {});
@@ -3539,7 +3571,7 @@ const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneL
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
   cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
   listingSkus: op_listingSkus, aliasGet: op_aliasGet, aliasPut: op_aliasPut, listingKindPut: op_listingKindPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
-  customSheetGet: op_customSheetGet, customSheetPut: op_customSheetPut, customGet: op_customGet, customPut: op_customPut, customReopen: op_customReopen, customDelete: op_customReopen };
+  customSheetGet: op_customSheetGet, customSheetPut: op_customSheetPut, customGet: op_customGet, customPut: op_customPut, reviewMarkPut: op_reviewMarkPut, reviewMarkOpen: op_reviewMarkOpen, customReopen: op_customReopen, customDelete: op_customReopen };
 
 /* ── sign-in time (Paul, 28 Sep 23:53; plans/sign-in-sessions.md part L): sessionsList {since, until, limit} is the
    sorter's read of Station_Sessions, one document per sign-in, which the stations write through firebaseOrders

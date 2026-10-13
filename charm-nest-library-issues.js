@@ -61,6 +61,8 @@
     // one piece listed by two saved sheets would be cut twice: a person takes it off one of them
     doubled: { tone: 'clay', group: () => 'On two sheets', chip: () => 'On two sheets' },
     held: { tone: 'clay', group: () => 'On hold', chip: () => 'On hold' },
+    // an order a person sent to the Review tab while a piece of it sits on this sheet (REVHOLD: a 'held' issue whose words start "In Review")
+    review: { tone: 'clay', group: () => 'In Review', chip: () => 'In Review' },
     otherSheetNotReady: { tone: 'slate', group: s => `Waits on ${s}`, chip: (n, s) => `Waits on ${s}` },
     // an order split between two sets (the other piece is on a not-ready sheet of ANOTHER set): a real issue, said as the split it is
     split: { tone: 'slate', group: s => `Split from ${s}`, chip: (n, s) => `Split from ${s}` },
@@ -147,7 +149,21 @@
   }
 
   /* ═══ the model: what the panel shows, from the issues (pure) ═══ */
-  function reasonOf(it) {
+  /* An order in the Review tab holds the sheet its piece sits on (Paul, 12 Oct 2026): the readiness lists it as a 'held' issue whose words start "In Review" and the
+     row says so ("In Review: left earring"), not "On hold". The piece comes from the hold itself when the page has it (LibraryReviewHold), else from those words. */
+  const IN_REVIEW = /^\s*in review\b[\s:·,\-–—]*/i, HELD_TAIL = /^.*\bheld:\s*/i;
+  const reviewWords = it => {
+    if (!it || it.key !== 'held') return null;
+    for (const t of [...(Array.isArray(it.pieces) ? it.pieces : []).map(p => p && p.why), it.why]) { const w = String(t || '').replace(HELD_TAIL, ''); if (IN_REVIEW.test(w)) return w.replace(IN_REVIEW, '').replace(/[.\s]+$/, ''); }
+    return null;
+  };
+  const isReview = it => reviewWords(it) !== null;
+  function reviewPiece(it, sheetId) {
+    try { const RH = root.LibraryReviewHold, r = RH && sheetId ? RH.rows(sheetId).find(x => x.rid === String(it.orderId)) : null; if (r) return r.piece; } catch (e) { warn('review hold', e); }
+    return tidy(reviewWords(it) || '').replace(/…$/, '').replace(/^[(\s]+|[)\s]+$/g, '').split(' ').slice(0, 4).join(' ').toLowerCase();
+  }
+  function reasonOf(it, sheetId) {
+    if (isReview(it)) { const pc = reviewPiece(it, sheetId); return { id: 'review', tone: 'clay', chip: 'In Review' + (pc ? ': ' + pc : ''), group: REASON.review.group() }; }
     const pieces = Array.isArray(it.pieces) ? it.pieces : [], n = Math.max(1, pieces.length || +it.pieceCount || 1);
     const labels = [...new Set(pieces.map(p => p && p.sheetLabel).filter(Boolean))];
     const split = it.key === 'otherSheetNotReady' && (it.split === true || pieces.some(p => p && p.split === true));
@@ -188,7 +204,7 @@
         const id = String(it.orderId);
         if (seen.has('o:' + id)) continue;   // an order is listed once
         seen.add('o:' + id);
-        const r = reasonOf(it), pool = it.open && it.open.poolId, type = (it.open && it.open.type) || 'order', pieces = Array.isArray(it.pieces) ? it.pieces : [];
+        const r = reasonOf(it, feed && feed.id), pool = it.open && it.open.poolId, type = (it.open && it.open.type) || 'order', pieces = Array.isArray(it.pieces) ? it.pieces : [];
         const bad = Math.max(1, pieces.length), total = clamp(Math.max(+it.pieceCount || 0, bad + 1), 2, 6);
         // one dot per piece (the PieceDots component draws them): a ring for each piece that holds the order back, in the colour of the sheet it sits on (its
         // metal's colour once known, else this sheet's: PieceDots), a filled dot for the rest; each says which piece it is, so a press opens that piece
@@ -199,7 +215,7 @@
         }
         while (dots.length < total) dots.unshift({ ring: false, metal: '', kind: '', n: 0, pool: '', line: '', state: '', none: false });
         const cust = String(it.customer || '').trim();
-        m.orders.push({ k: 'o:' + id, orderId: id, key: it.key || '', customer: cust, listingId: it.listingId ? String(it.listingId) : '', thumb: typeof it.thumb === 'string' ? it.thumb : (it.thumb && it.thumb.url) || '', reason: r, dots, pieceTotal: Math.max(+it.pieceCount || 0, dots.length), sheetMetal: m.metal, go: type === 'piece' ? 'piece' : type === 'sheet' ? 'sheet' : 'order', target: String((it.open && it.open.id) || id), pool: pool ? String(pool) : '' });
+        m.orders.push({ k: 'o:' + id, orderId: id, key: it.key || '', customer: cust, listingId: it.listingId ? String(it.listingId) : '', thumb: typeof it.thumb === 'string' ? it.thumb : (it.thumb && it.thumb.url) || '', reason: r, dots, pieceTotal: Math.max(+it.pieceCount || 0, dots.length), sheetMetal: m.metal, go: isReview(it) ? 'review' : type === 'piece' ? 'piece' : type === 'sheet' ? 'sheet' : 'order', target: String((it.open && it.open.id) || id), pool: pool ? String(pool) : '' });
         if (HARD.has(it.key)) m.hard = true;
       } else if (it.key === 'unverified' && !it.orderId) {   // the sheet's orders could not be read yet: ONE quiet chip for the whole sheet, worded from the readiness' own label
         if (seen.has('n:unverified')) continue;
@@ -408,7 +424,15 @@ button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba
     try { f = L.issuesOf(id, anchor); } catch (e) { warn('read', e); }
     if (!f) return null;
     if (!Array.isArray(f.issues)) f = Object.assign({}, f, { issues: adapt(f.explain, f) });
-    return f;
+    return withHolds(f);
+  }
+  /* an order the hold names for this sheet that the readiness did not list is listed here, so the panel always names the exact order that holds the sheet back */
+  function withHolds(f) {
+    const RH = root.LibraryReviewHold; if (!RH || !f || !f.id) return f;
+    let rs = []; try { rs = RH.rows(f.id); } catch (e) { warn('review hold', e); }
+    const have = new Set(f.issues.filter(i => i && i.orderId).map(i => String(i.orderId))), add = rs.filter(r => !have.has(r.rid));
+    if (!add.length) return f;
+    return Object.assign({}, f, { issues: f.issues.concat(add.map(r => ({ step: 'orders', key: 'held', orderId: r.rid, orderLabel: 'Order ' + r.rid, customer: '', pieceCount: 0, pieces: [{ index: 1, kind: 'held', why: 'In Review' + (r.piece ? ': ' + r.piece : '') }], why: 'A piece of this order is held: In Review', open: { type: 'order', id: r.rid } }))) });
   }
   const buttons = () => doc.querySelectorAll('[data-issues-open]');
   const idOf = b => b.dataset.issuesId || b.dataset.sheetId || '';
@@ -632,9 +656,16 @@ button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba
     const row = back && st.body.querySelector(`.lisBlk[data-k="${String(back.k || '').replace(/"/g, '')}"] .lisGo`);
     (row || st.body.querySelector('.lisGo') || p).focus({ preventScroll: true });
   }
+  // an order in Review: its Review card, in the Review tab (this panel goes: it is a list of the Library); where that cannot be done, the order's own window as for any row
+  function reviewTab(el, rid) {
+    let ok = false; try { ok = !!(root.LibraryReviewHold && root.LibraryReviewHold.open(rid)); } catch (e) { warn('review tab', e); }
+    if (ok) { close(); return; }
+    handOver(el, () => openOrder(el, rid));
+  }
   function go(el) {
     const kind = el.dataset.go, id = el.dataset.id, pool = el.dataset.pool;
     if (kind === 'engraving') { engravingTab(); return; }
+    if (kind === 'review') { reviewTab(el, id); return; }
     if (kind === 'order') handOver(el, () => openOrder(el, id));
     else if (kind === 'piece') handOver(el, () => openOrder(el, id, pool ? { poolId: pool } : {}));
     else if (kind === 'sheet') handOver(el, () => openSheet(el, id));
