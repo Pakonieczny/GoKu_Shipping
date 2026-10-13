@@ -27,7 +27,7 @@
 "use strict";
 
 const COLL = "Charm_Listing_Skus", BUDGET_ID = "_budget";
-const TTL_MS = 7 * 86400000, DAY_CAP = 60, CALL_CAP = 6, MAX_ASK = 25, MAX_PRODUCTS = 1500;
+const TTL_MS = 7 * 86400000, DAY_CAP = Infinity, CALL_CAP = 6, MAX_ASK = 25, MAX_PRODUCTS = 1500;   // NOLIMIT (Paul, 13 Oct 2026): no daily limit on listing look-ups (it was 60); CALL_CAP is only how many one request asks
 const SANDBOX_CAP = DAY_CAP;   // SBCAP (Paul, 13 Oct 2026: "remove this limit for now"): the sandbox no longer has a share of its own (it was 30 of the day's 60, so production kept half); it may spend up to the whole day's DAY_CAP. To bring the share back, put 30 here.
 
 const sku = v => String(v == null ? "" : v).trim().slice(0, 80);

@@ -187,13 +187,13 @@ pass('every way the lookup can fail is told in one line and picks nothing; a per
   { // Etsy gave no value texts: names {} stored once; the next ask for names is a cache hit
     const w = mk(stored0, { noNames: true }), r = await T.lookup([LID], Object.assign(w.env, { nameIds: [LID] })); eq([w.etsy.length, r.tables[LID].names], [1, {}], 'no texts from Etsy: names {} stored');
     const again = await T.lookup([LID], Object.assign(mk(Object.fromEntries(w.docs)).env, { nameIds: [LID] })); eq(again.etsyCalls, 0, 'and not asked for again'); }
-  { // the day's cap and a stale table still hold: 60 used = no call, the old table answered
+  { // NOLIMIT (Paul, 13 Oct 2026): there is no daily cap any more: with the old 60 already counted today, a table without names is still asked for, once, and answered; the count goes on
     const w = mk(Object.assign({ _budget: { day: new Date(NOW + 1000).toISOString().slice(0, 10), n: 60, at: NOW } }, stored0)), r = await T.lookup([LID], Object.assign(w.env, { nameIds: [LID] }));
-    eq([w.etsy.length, r.pending, r.why], [0, [LID], 'day'], 'the day\'s 60 are used: no call, the old table answered, pending'); }
+    eq([w.etsy, r.etsyCalls, r.pending, r.why, r.cap.used, !!r.tables[LID].names], [[LID], 1, [], null, 61, true], 'the old 60 are counted, not a stop: ONE Etsy GET, the names answered, nothing pending, why never "day"'); ok(r.cap.max === Infinity, 'and there is no daily maximum'); }
   { // an Etsy failure is never stored and never repeated within the request
     const w = mk(stored0); w.env.fetchInventory = async id => { w.etsy.push(id); const e = new Error('Etsy 503'); e.status = 503; throw e; };
     const r = await T.lookup([LID], Object.assign(w.env, { nameIds: [LID] })); eq([w.etsy.length, r.pending, r.why, w.calls.set.filter(x => x !== '_budget').length], [1, [LID], 'error', 0], 'a failed GET: no table stored (only the day\'s count), pending, said "error"'); }
-  pass('the cache asks Etsy once for the names (never in the sandbox, never past the day\'s cap), a table without names is the only one asked again');
+  pass('the cache asks Etsy once for the names (never in the cache-only ask, and with no daily cap: the old 60 a day stop nothing), a table without names is the only one asked again');
 
   /* ── 7 · the page: a held line re-reads when the names arrive, and keeps its pieces ─────────────────────────────────────────────────────────────────────── */
   const src = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8'), a = src.indexOf('  const TABLES_LS = "cn.listingSkus.v1"'), b = src.indexOf('  async function pull(');

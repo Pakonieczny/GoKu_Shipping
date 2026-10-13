@@ -63,7 +63,7 @@ function closedWhy(r) {
 const fresh = (led, day) => (led && led.day === day
   ? { day, pulls: +led.pulls || 0, calls: +led.calls || 0, tokenRefreshes: +led.tokenRefreshes || 0, starts: Array.isArray(led.starts) ? led.starts : [], claim: led.claim || null }
   : { day, pulls: 0, calls: 0, tokenRefreshes: 0, starts: [], claim: null });
-const budget = led => ({ day: led.day, pullsToday: led.pulls, cap: MAX_PULLS, capLeft: Math.max(0, MAX_PULLS - led.pulls), callsToday: led.calls, callsCap: MAX_CALLS });
+const budget = led => ({ day: led.day, pullsToday: led.pulls, cap: null, capLeft: null, callsToday: led.calls, callsCap: null });   // (NOLIMIT, Paul 13 Oct 2026: no daily limit on the sandbox's pulls or calls: nothing is capped here, only counted)
 /** For sandboxStatus: today's budget (one read). */
 async function readBudget(now) {
   const s = await ledgerRef().get();
@@ -84,11 +84,11 @@ function clampWant(x) {
 /** The one plain line when a number had to be held: what the limit is and why. */
 const clampLine = value => (value <= MIN_WANT
   ? `Held to ${MIN_WANT}: the fewest one pull may bring.`
-  : `Held to ${MAX_WANT}: the most one pull may bring (${pagesFor(MAX_WANT)} Etsy calls, and the sandbox may use ${MAX_CALLS} a day).`);
+  : `Held to ${MAX_WANT}: the most one pull may bring (${pagesFor(MAX_WANT)} Etsy calls).`);
 /** What the browser shows for a number: the limits and what a pull costs (about: a token refresh can add one call). */
 function limitInfo(value, o) {
   const pages = pagesFor(value);
-  return Object.assign({ limit: value, def: WANT, min: MIN_WANT, max: MAX_WANT, perPage: PAGE, callsPerPull: pages, pullsPerDay: Math.max(1, Math.min(MAX_PULLS, Math.floor(MAX_CALLS / pages))), callsCap: MAX_CALLS, pullsCap: MAX_PULLS,
+  return Object.assign({ limit: value, def: WANT, min: MIN_WANT, max: MAX_WANT, perPage: PAGE, callsPerPull: pages, pullsPerDay: null, callsCap: null, pullsCap: null,
     isDefault: value === WANT, isSet: false, setBy: null, setAt: null }, o || {});
 }
 /** The number now (one read of one document): 250 when nothing was ever set, a stored number held to the limits whatever was written. */
@@ -234,8 +234,7 @@ async function pull(b, ctx, deps) {
     if (led.claim && now - (+led.claim.at || 0) < CLAIM_MS) return { kind: "busy", led };
     const mine = led.starts.find(x => x.id === startId);
     if (mine && mine.ok) return { kind: "startUsed", led };
-    if (led.pulls >= MAX_PULLS || led.calls + plan.length > MAX_CALLS) return { kind: "cap", led, byPulls: led.pulls >= MAX_PULLS };
-    const next = Object.assign({}, led, { pulls: led.pulls + 1, claim: { startId, at: now } });
+        const next = Object.assign({}, led, { pulls: led.pulls + 1, claim: { startId, at: now } });
     tx.set(ledgerRef(), Object.assign({}, next, { updatedAt: FV.serverTimestamp() }));
     return { kind: "go", led: next };
   });

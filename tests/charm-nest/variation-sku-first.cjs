@@ -145,7 +145,7 @@ async function part2() {
   // 10 listings asked at once: 6 Etsy calls at most; the rest are pending, the stored ones are not asked again
   const ids = Array.from({ length: 10 }, (_, i) => String(7000000 + i));
   let r = await T.lookup(ids, env());
-  assert.equal(r.etsyCalls, 6); assert.equal(calls.length, 6); assert.equal(Object.keys(r.tables).length, 6); assert.equal(r.pending.length, 4); assert.equal(r.why, 'batch'); assert.deepEqual(r.cap, { used: 6, max: 60 });
+  assert.equal(r.etsyCalls, 6); assert.equal(calls.length, 6); assert.equal(Object.keys(r.tables).length, 6); assert.equal(r.pending.length, 4); assert.equal(r.why, 'batch'); assert.deepEqual(r.cap, { used: 6, max: Infinity }, 'counted, with no daily maximum (NOLIMIT, 13 Oct 2026; Infinity is null once the op serialises it)');
   assert.equal(reads, 11, 'one read per listing asked about, plus the day\'s budget'); assert.equal(writes, 7, 'one write per listing fetched, plus the budget');
   calls = []; reads = writes = 0;
   r = await T.lookup(ids, env({ now: now + 60000 }));
@@ -155,16 +155,18 @@ async function part2() {
   assert.equal(calls.length, 0, 'a stored table is not asked of Etsy again inside 7 days'); assert.equal(writes, 0, 'and nothing is written'); assert.equal(reads, 11);
   ok('cloud: at most 6 Etsy calls a request; a stored table costs one Firestore read and no Etsy call');
 
-  // the day\'s 60: the 61st is not asked; a new day starts again; a week later a table is asked again
+  // NOLIMIT (Paul, 13 Oct 2026): no daily cap. Past the old 60 a day every request still asks its 6 (CALL_CAP is only the size of ONE request), why is "batch" and never
+  // "day" or "sandbox", and the count just goes on; a new day counts from 1 again; a week later a table is asked again
   const many = Array.from({ length: 25 }, (_, i) => String(8000000 + i)); calls = [];
-  let total = 0, last;
-  for (let i = 0; i < 12; i++) { last = await T.lookup(many.map((x, j) => String(8000000 + i * 25 + j)), env({ now: now + 3600000 + i * 1000 })); total += last.etsyCalls; }
-  assert.equal(total, 60 - 10, 'the day\'s 60 include the 10 already made'); assert.equal(last.why, 'day'); assert(last.pending.length > 0);
+  let total = 0, last; const whys = new Set();
+  for (let i = 0; i < 12; i++) { last = await T.lookup(many.map((x, j) => String(8000000 + i * 25 + j)), env({ now: now + 3600000 + i * 1000, sandbox: i % 2 === 1 })); total += last.etsyCalls; whys.add(last.why); assert.equal(last.etsyCalls, 6, 'request ' + (i + 1) + ' asked its six'); }
+  assert.equal(total, 72, '12 requests x 6 calls: well past the old 60 a day (82 with the 10 already made)'); assert.deepEqual([...whys], ['batch'], 'a request is only ever held by its own 6, never by the day: ' + [...whys]); assert(last.pending.length > 0);
+  assert.equal(last.cap.used, 82); assert.equal(last.cap.max, Infinity, 'no daily maximum'); assert.equal(last.sandboxCap.used, 36, 'the sandbox half is counted too'); assert.equal(last.sandboxCap.max, Infinity, 'and has no share of its own');
   calls = []; r = await T.lookup(['8100000'], env({ now: now + 86400000 + 3600000 * 2 }));
   assert.equal(calls.length, 1, 'next day: asked'); assert.equal(r.cap.used, 1);
   calls = []; r = await T.lookup([ids[0]], env({ now: now + 8 * 86400000 }));
   assert.equal(calls.length, 1, 'after 7 days a table is asked again');
-  ok('cloud: 60 Etsy calls a day for the whole shop; a table older than 7 days is refreshed');
+  ok('cloud: no daily limit (82 Etsy calls in a day, none refused, only counted); a new day counts from 1; a table older than 7 days is refreshed');
 
   // an Etsy failure (limit, network) is not stored, is not retried in the same request, and the older table still answers
   calls = []; store.set('Charm_Listing_Skus/9000001', { at: now - 9 * 86400000, n: 2, uni: 'OLD' });

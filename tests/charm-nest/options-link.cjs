@@ -7,7 +7,7 @@
 //   · every one of these transactions carries the LISTING's shared SKU ("Viking Rune", "Greek Goddess", "Zodiac REVAMP", "Birth_6106"…),
 //     never the option's: only the listing's inventory knows the SKU Etsy keeps for the option bought (step 2 of Paul's order);
 //   · the sandbox then read the cache only and production had stored nothing for these listings, so the page had no table and every row waited
-//     (since FLAGLOAD, 11 Oct 2026, the sandbox asks Etsy for the listings it waits on, inside the same 60 a day: tests/charm-nest/table-load.cjs);
+//     (since FLAGLOAD, 11 Oct 2026, the sandbox asks Etsy for the listings it waits on, with no daily cap since NOLIMIT, 13 Oct 2026: tests/charm-nest/table-load.cjs);
 //   · with the table, the code already named the charm for 13 lines; one more is fixed here: Greek Goddess EARRINGS (Etsy's SKU for Vesta is
 //     the NECKLACE pendant GREEKGODDESS_NECKLACE_4, the earring is GREEKGODDESS_EARRING_4: the listing's five SKUs all have an earring twin,
 //     so each is read as its twin) and the listing's umbrella design "GREEK GODDESS" is in the master, so the inventory was never asked
@@ -84,16 +84,16 @@ async function cloud() {
     // a request that says cacheOnly asks Etsy nothing (the sandbox no longer reads the cache only: FLAGLOAD, 11 Oct 2026, see table-load.cjs)
     let r = await post({ op: 'listingSkus', listingIds: ids, sandbox: true, cacheOnly: true });
     assert.equal(asked.length, 0); assert.equal(r.why, 'cache'); assert.equal(r.pending.length, ids.length); assert.deepEqual(r.tables, {});
-    // the sandbox (where Paul's rows are) asks like production: 6 a request at most, one per listing, 10 listings = 10 calls in all, inside the shop's 60 a day
+    // the sandbox (where Paul's rows are) asks like production: 6 a request at most, one per listing, 10 listings = 10 calls in all, counted but never capped by the day (NOLIMIT, 13 Oct 2026)
     r = await post({ op: 'listingSkus', listingIds: ids, sandbox: true });
     assert.equal(r.etsyCalls, 6); assert.equal(r.why, 'batch'); assert.equal(asked.length, 6);
     r = await post({ op: 'listingSkus', listingIds: ids, sandbox: true });
-    assert.equal(r.etsyCalls, 4); assert.equal(asked.length, 10); assert.equal(new Set(asked).size, 10, 'each listing exactly once'); assert.deepEqual(r.cap, { used: 10, max: 60 }); assert.deepEqual(r.sandboxCap, { used: 10, max: 60 });
+    assert.equal(r.etsyCalls, 4); assert.equal(asked.length, 10); assert.equal(new Set(asked).size, 10, 'each listing exactly once'); assert.deepEqual(r.cap, { used: 10, max: null }, 'the count is kept, there is no daily maximum'); assert.deepEqual(r.sandboxCap, { used: 10, max: null }, 'and no share of its own for the sandbox');
     r = await post({ op: 'listingSkus', listingIds: ids });
     assert.equal(r.etsyCalls, 0); assert.equal(asked.length, 10, 'production finds the tables the sandbox stored: a stored table is not asked of Etsy again');
     r = await get({ op: 'listingSkus', listingIds: ids.join(','), cacheOnly: '1' });
     assert.equal(r.etsyCalls, 0); assert.equal(asked.length, 10, 'a stored table is not asked of Etsy again');
-    ok('cloud: the sandbox asks Etsy once per listing (6 + 4 calls for the 10 listings, cap 60 a day); a second ask, from either side, costs none');
+    ok('cloud: the sandbox asks Etsy once per listing (6 + 4 calls for the 10 listings, counted, no daily cap); a second ask, from either side, costs none');
     // every stored document passed the no-array-in-array check (the fake refuses it); what the page reads has the shape it always had
     for (const [k, v] of store) refuseNestedArrays(v, k);
     r = await post({ op: 'listingSkus', listingIds: ids, sandbox: true });

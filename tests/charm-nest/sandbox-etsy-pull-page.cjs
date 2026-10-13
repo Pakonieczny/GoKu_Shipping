@@ -8,7 +8,8 @@
 //     stream (oldest first); the old orders and the old browser copy never reach the sorter; production is untouched;
 //   · a plain reload with the sandbox on makes no pull and no wipe, and the stream plays on;
 //   · Reset followed by Start (pressed three ways at once: Start, Pull orders, Auto's pull) pulls once, with a NEW startId;
-//   · a failed pull (the daily cap; Etsy down) leaves the sandbox EMPTY with the op's own line, costs exactly what the op
+//   · there is no daily cap (NOLIMIT, Paul 13 Oct 2026): with the day's old limit (6 pulls, 18 calls) already spent, Start still pulls and plays, and nothing
+//     says "used up" or "of 20 today"; a failed pull (Etsy down) leaves the sandbox EMPTY with the op's own line, costs exactly what the op
 //     says, is never retried by the page (a reload neither), and the next Start asks again;
 //   · switching back to the real orders touches no sandbox record and makes no call that writes;
 //   · a sandbox with no pulled set (the old Sep 17 snapshot) waits empty for Start instead of playing it;
@@ -140,7 +141,7 @@ const PROD_COLLECTIONS = ['Charm_Custom_Orders', 'Charm_Pool', 'Charm_Nest_Sheet
   assert(seen.spin && /Pulling the 250 newest orders…/.test(seen.button), 'the Orders tab button shows a spinner and says what it waits for: ' + seen.button);
   assert(/clearing the old orders, then pulling the 250 newest|Asking Etsy/.test(seen.starting + ' ' + (seen.line || '')), 'the empty Orders tab says what is happening: ' + seen.starting + ' / ' + seen.line);
   const toast1 = [...seen.toasts].find(t => /newest Etsy orders are open and play/.test(t));
-  assert(toast1 && toast1.includes(`${OPEN_IDS.length} of 250 newest Etsy orders are open and play · 3 Etsy calls`) && /\(3 of 20 today, 5 pulls left\)/.test(toast1), 'the Etsy call count the op reports is shown: ' + [...seen.toasts].join(' | '));
+  assert(toast1 && toast1.includes(`${OPEN_IDS.length} of 250 newest Etsy orders are open and play · 3 Etsy calls`) && /\(3 today\)/.test(toast1) && !/of 20|pulls? left|used up/.test(toast1), 'the Etsy call count the op reports is shown, counted and not capped: ' + [...seen.toasts].join(' | '));
   assert(!/until you press Start/.test([...seen.toasts].join(' ')), 'the start does not say the sandbox waits for Start: ' + [...seen.toasts].join(' | '));
   // the stream plays the NEW set, oldest first, and none of the old orders ever reaches the sorter
   const s1 = stream(); assert(s1.on && s1.total === OPEN_IDS.length && s1.snapshotPath === cur1.path, 'the stream plays the pulled set: ' + JSON.stringify(s1));
@@ -188,7 +189,7 @@ const PROD_COLLECTIONS = ['Charm_Custom_Orders', 'Charm_Pool', 'Charm_Nest_Sheet
   console.log('3 ok · reset + start:', pulls().length, 'pulls in all');
 
   // ══ 4 · failures leave the sandbox EMPTY, say why in the op's words, and are never retried by the page ══
-  // 4a · the daily cap (the ledger the wipe keeps)
+  // 4a · NOLIMIT: the old daily limit (6 pulls / 18 calls in the ledger the wipe keeps) refuses nothing now: Start pulls, plays, and the ledger only counts
   await page.evaluate(() => { window.__old = true; window.__reset = Sandbox.reset({}); });
   await until(() => !window.__old && window.Sandbox && Sandbox.held(), 90000, 'waiting again'); await booted();
   const today = new Date().toISOString().slice(0, 10);
@@ -196,18 +197,21 @@ const PROD_COLLECTIONS = ['Charm_Custom_Orders', 'Charm_Pool', 'Charm_Nest_Sheet
   const n4 = { pulls: pulls().length, etsy: etsy.calls.length, wipes: wipes().length };
   await page.evaluate(() => { CN.setMode('orders'); Orders.render(); });
   await page.click('[data-sb-start]');
-  await until(() => Sandbox.held() && /used up/.test(Sandbox.heldText()), 60000, 'the cap message');
-  const cap = await page.evaluate(() => ({ text: Sandbox.heldText(), btn: document.querySelector('[data-sb-start]').textContent.trim(), disabled: document.querySelector('[data-sb-start]').disabled, stream: !!Sandbox.stream(), rows: B.orders.rows.length, shown: document.querySelector('.sbWait').textContent }));
-  assert.strictEqual(cap.text, "Sandbox is empty. Today's 6 sandbox pulls from Etsy are used up, so the sandbox stays empty until tomorrow (UTC midnight).", 'the cap: the op\'s own line, shown as it is: ' + cap.text);
-  assert(cap.btn === 'Start' && !cap.disabled && !cap.stream && cap.rows === 0 && cap.shown === cap.text, 'empty, with Start ready again: ' + JSON.stringify(cap));
-  assert(!current() && !stream(), 'the cloud holds no orders after the refused pull (never the old ones)');
-  await sleep(5000);
-  assert.strictEqual(pulls().length, n4.pulls + 1, 'one request, no retry');
-  assert.strictEqual(etsy.calls.length, n4.etsy, 'a refused pull makes no Etsy call');
+  await until(() => Sandbox.stream() && Sandbox.pulling() === '' && !Sandbox.held(), 90000, 'the pull with the old limit already spent');
+  assert.strictEqual(pulls().length, n4.pulls + 1, 'one request'); assert.strictEqual(etsy.calls.length, n4.etsy + 3, 'and it went to Etsy: 3 calls, not refused');
+  assert(current() && current().source === 'etsy-pull' && current().count === 250 && stream().on, 'the sandbox plays the new set');
+  const led4 = st.doc('Charm_Sandbox', 'pulls'); assert(led4.pulls === 7 && led4.calls === 21, 'the ledger only counts: ' + JSON.stringify({ pulls: led4.pulls, calls: led4.calls }));
+  const ok4 = await page.evaluate(() => ({ held: Sandbox.held(), text: Sandbox.heldText(), body: document.body.innerText }));
+  assert(ok4.held === false && !/used up|until tomorrow|of 20 today|pulls? left/.test(ok4.text + ' ' + ok4.body), 'nothing on the page says a limit was reached: ' + JSON.stringify(ok4.text));
+  const set4 = await page.evaluate(() => { openSettings(); return new Promise(res => setTimeout(() => { const t = document.getElementById('stSandbox').closest('.field').innerText + ' ‖ ' + document.getElementById('stSbPullNote').textContent + ' ‖ ' + document.getElementById('stSbPull').closest('.field').innerText; closeDlg(document.getElementById('dlgSettings')); res(t); }, 400)); });
+  assert(!/a day|per day|daily|used up|\bat most \d+ starts?\b/i.test(set4), 'Settings state no daily limit: ' + set4); assert(/about 3 Etsy calls;/.test(set4) && / ‖ About 3 Etsy calls per pull\. ‖ /.test(set4) && !/up to \d+ pulls?/.test(set4), 'only the cost of one pull is stated (the number box says exactly "About 3 Etsy calls per pull."): ' + set4);
+  await sleep(3000);
+  assert.strictEqual(pulls().length, n4.pulls + 1, 'no retry, no second pull'); assert.strictEqual(etsy.calls.length, n4.etsy + 3);
   await page.reload(); await booted(); await sleep(2500);
-  assert(pulls().length === n4.pulls + 1 && wipes().length === n4.wipes && etsy.calls.length === n4.etsy, 'a reload after a failed pull neither pulls nor clears');
-  assert(await page.evaluate(() => Sandbox.held() && /used up/.test(Sandbox.heldText()) && !Sandbox.stream()), 'the sandbox is still empty and still says why');
-  assert.strictEqual((await rows()).length, 0, 'no old orders');
+  assert(pulls().length === n4.pulls + 1 && etsy.calls.length === n4.etsy + 3 && wipes().length === n4.wipes, 'a reload pulls and clears nothing'); assert(await page.evaluate(() => !Sandbox.held() && !!Sandbox.stream()), 'and the stream plays on');
+  // back to an empty sandbox for the failures below
+  await page.evaluate(() => { window.__old = true; window.__reset = Sandbox.reset({}); });
+  await until(() => !window.__old && window.Sandbox && Sandbox.held(), 90000, 'waiting again for the failures'); await booted();
   // 4b · Etsy down: one call, the op's own line, the count it reports
   st.put('Charm_Sandbox', 'pulls', { day: today, pulls: 2, calls: 6, tokenRefreshes: 0, starts: [], claim: null });
   etsy.status = 503; const e4 = etsy.calls.length, p4 = pulls().length;
@@ -224,7 +228,7 @@ const PROD_COLLECTIONS = ['Charm_Custom_Orders', 'Charm_Pool', 'Charm_Nest_Sheet
   await until(() => Sandbox.stream() && Sandbox.pulling() === '' && !Sandbox.held(), 90000, 'the pull after the failure');
   assert.strictEqual(etsy.calls.length, e5 + 3, 'the next press made its one pull of 3 calls');
   assert(current().source === 'etsy-pull' && stream().on, 'the sandbox plays the new set');
-  console.log('4 ok · cap, Etsy down, recovery: Etsy calls in all', etsy.calls.length);
+  console.log('4 ok · no cap, Etsy down, recovery: Etsy calls in all', etsy.calls.length);
 
   // ══ 5 · back to the real orders: no sandbox record touched, nothing written ══
   await page.evaluate(() => { openSettings(); document.getElementById('stSbOn').click(); });

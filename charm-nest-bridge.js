@@ -14099,8 +14099,8 @@ const Sandbox = window.Sandbox = (() => {
       if (!r || r.ok === false) throw new Error((r && r.error) || "Etsy gave no orders, so the sandbox is empty.");
       remember(r); setCheck = Promise.resolve(true); if (+r.want > 0 && (!pullCfg || +pullCfg.limit !== +r.want)) pullCfg = Object.assign({}, pullCfg || {}, { limit: +r.want, isDefault: +r.want === PULL_DEFAULT });
       adopt(r.stream && r.stream.on ? r.stream : null);
-      agent({ bridge: true }, "ok", `Sandbox: ${r.count} newest Etsy orders pulled (${r.open} open), ${calls(r.calls || 0)}${r.callsToday != null ? `, ${r.callsToday} of ${r.callsCap || 20} today` : ""}`);
-      toast(`${r.open} of ${r.count} newest Etsy orders are open and play · ${calls(r.calls || 0)}${r.callsToday != null ? ` (${r.callsToday} of ${r.callsCap || 20} today, ${r.capLeft} pull${r.capLeft === 1 ? "" : "s"} left)` : ""}`, "ok", 9000);
+      agent({ bridge: true }, "ok", `Sandbox: ${r.count} newest Etsy orders pulled (${r.open} open), ${calls(r.calls || 0)}${r.callsToday != null ? `, ${r.callsToday} today` : ""}`);
+      toast(`${r.open} of ${r.count} newest Etsy orders are open and play · ${calls(r.calls || 0)}${r.callsToday != null ? ` (${r.callsToday} today)` : ""}`, "ok", 9000);
       return r;
     } catch (e) {
       // the sandbox stays empty and waits (the cloud holds no orders after a failed pull, and none are played from before)
@@ -14504,18 +14504,18 @@ const Sandbox = window.Sandbox = (() => {
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   /** What `n` means: the number held to the limits (held: it had to be), its Etsy calls per pull and the pulls a day those calls allow. */
   function pullFacts(n) {
-    const c = pullCfg || {}, min = +c.min || 10, max = +c.max || 500, per = +c.perPage || 100, cap = +c.callsCap || 20, most = +c.pullsCap || 6;
+    const c = pullCfg || {}, min = +c.min || 10, max = +c.max || 500, per = +c.perPage || 100, cap = +c.callsCap || 0, most = +c.pullsCap || 0;
     const r = Math.round(+n), v = Math.min(max, Math.max(min, r)), calls = Math.ceil(v / per);
-    return { value: v, held: v !== r, min, max, calls, cap, pulls: Math.max(1, Math.min(most, Math.floor(cap / calls))) };
+    return { value: v, held: v !== r, min, max, calls, cap, pulls: cap && most ? Math.max(1, Math.min(most, Math.floor(cap / calls))) : 0 };   // (NOLIMIT: no cap, no pulls-a-day figure)
   }
   /** The one plain line under the box: the cost of a number, and (when it had to be held) why it was. */
   function pullLine(f) {
-    return `${f.held ? `Held to ${f.value}: the ${f.value <= f.min ? "fewest" : "most"} one pull may bring. ` : ""}About ${plural(f.calls, "Etsy call", "Etsy calls")} per pull, up to ${plural(f.pulls, "pull", "pulls")} a day (the sandbox may use ${f.cap} Etsy calls a day).`;
+    return `${f.held ? `Held to ${f.value}: the ${f.value <= f.min ? "fewest" : "most"} one pull may bring. ` : ""}About ${plural(f.calls, "Etsy call", "Etsy calls")} per pull.`;
   }
   /** The numbers written into the Settings help texts (a span each), so they follow the setting. */
   function paintPullWords() {
     const f = pullFacts(want());
-    for (const [a, v] of [["sbn", String(f.value)], ["sbc", plural(f.calls, "Etsy call", "Etsy calls")], ["sbp", plural(f.pulls, "start", "starts")]]) document.querySelectorAll(`[data-${a}]`).forEach(n => { if (n.textContent !== v) n.textContent = v; });
+    for (const [a, v] of [["sbn", String(f.value)], ["sbc", plural(f.calls, "Etsy call", "Etsy calls")]]) document.querySelectorAll(`[data-${a}]`).forEach(n => { if (n.textContent !== v) n.textContent = v; });
   }
   function pullSay(text, bad) { const n = byId("stSbPullNote"); if (!n) return; if (n.textContent !== text) n.textContent = text; n.style.color = bad ? "var(--clay)" : ""; }
   let savingPull = false;

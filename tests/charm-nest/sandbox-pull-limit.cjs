@@ -10,7 +10,8 @@
 //   · the number is a setting, not sandbox data: the wipe (sandboxReset, run to its end) and the registry leave it alone, and nothing pulls by itself
 //     after the wipe (the sandbox stays empty until a pull is asked for, and no Etsy call is made);
 //   · a pull uses the number: 120 = 2 calls (100 + 20), 30 = 1 call, 500 = 5 calls; the answer says what was asked for (want), the ledger counts the
-//     calls made, and the daily cap (20 calls, 6 pulls) is respected for the bigger pulls (a plain refusal, the sandbox empty, no Etsy call).
+//     calls made, and since NOLIMIT (Paul, 13 Oct 2026: "I don't want any of these limits") there is NO daily cap on pulls or Etsy calls: the status and the
+//     answers carry no cap (null), and a pull of 500 orders repeated 10 times in a day is never refused (the old gate stopped at 20 calls / 6 pulls, so after 4).
 //   node tests/charm-nest/sandbox-pull-limit.cjs
 'use strict';
 const path = require('path'), assert = require('assert'), Module = require('module');
@@ -68,7 +69,7 @@ const limitOf = async () => (await post({ op: 'sandboxStatus', sandbox: true }))
 
   /* ═══ 1 · nothing set: 250, exactly as today ═══ */
   let lim = await limitOf();
-  assert(lim && lim.limit === 250 && lim.isDefault === true && lim.isSet === false && lim.def === 250 && lim.min === 10 && lim.max === 500 && lim.perPage === 100 && lim.callsPerPull === 3 && lim.pullsPerDay === 6 && lim.callsCap === 20, 'no document = 250: ' + JSON.stringify(lim));
+  assert(lim && lim.limit === 250 && lim.isDefault === true && lim.isSet === false && lim.def === 250 && lim.min === 10 && lim.max === 500 && lim.perPage === 100 && lim.callsPerPull === 3 && lim.pullsPerDay === null && lim.callsCap === null && lim.pullsCap === null, 'no document = 250: ' + JSON.stringify(lim));
   assert(!store.has(CFG), 'reading the number writes nothing');
   let r = await pullOp('start-default-01');
   assert(r.status === 200 && r.body.count === 250 && r.body.want === 250 && r.body.calls === 3, 'the default pull brings 250 with 3 calls: ' + JSON.stringify(r.body).slice(0, 200));
@@ -109,7 +110,7 @@ const limitOf = async () => (await post({ op: 'sandboxStatus', sandbox: true }))
 
   // the right token: what the dialog gets for "modify" (an upload token and an "other" token open it too, as the lock's own table says)
   r = await setOp(120);
-  assert(r.status === 200 && r.body.ok && r.body.limit === 120 && r.body.clamped === false && r.body.note === '' && r.body.isSet === true && r.body.callsPerPull === 2 && r.body.pullsPerDay === 6, 'a modify token writes: ' + JSON.stringify(r.body));
+  assert(r.status === 200 && r.body.ok && r.body.limit === 120 && r.body.clamped === false && r.body.note === '' && r.body.isSet === true && r.body.callsPerPull === 2 && r.body.pullsPerDay === null, 'a modify token writes: ' + JSON.stringify(r.body));
   assert.strictEqual(store.get(CFG).limit, 120); assert.strictEqual(store.get(CFG).v, 1); assert.strictEqual(store.get(CFG).by, 'Paul');
   assert.deepStrictEqual(Object.keys(store.get(CFG)).sort(), ['at', 'by', 'limit', 'updatedAt', 'v'], 'one small flat document');
   assert.strictEqual((await setOp(130, 'upload')).status, 200, 'an upload token opens it'); assert.strictEqual((await setOp(140, 'other')).status, 200, 'an "other" token opens it');
@@ -119,7 +120,7 @@ const limitOf = async () => (await post({ op: 'sandboxStatus', sandbox: true }))
   assert.strictEqual(store.get(CFG).limit, 160);
 
   // the server holds the number to the limits and says so in one plain line
-  r = await setOp(5000); assert(r.status === 200 && r.body.limit === 500 && r.body.clamped === true && /^Held to 500: the most one pull may bring \(5 Etsy calls, and the sandbox may use 20 a day\)\.$/.test(r.body.note) && r.body.callsPerPull === 5 && r.body.pullsPerDay === 4, 'over: ' + JSON.stringify(r.body));
+  r = await setOp(5000); assert(r.status === 200 && r.body.limit === 500 && r.body.clamped === true && r.body.note === 'Held to 500: the most one pull may bring (5 Etsy calls).' && r.body.callsPerPull === 5 && r.body.pullsPerDay === null, 'over: ' + JSON.stringify(r.body));
   assert.strictEqual(store.get(CFG).limit, 500);
   r = await setOp(3); assert(r.status === 200 && r.body.limit === 10 && r.body.clamped === true && r.body.note === 'Held to 10: the fewest one pull may bring.' && r.body.callsPerPull === 1, 'under: ' + JSON.stringify(r.body));
   assert.strictEqual(store.get(CFG).limit, 10);
@@ -155,15 +156,26 @@ const limitOf = async () => (await post({ op: 'sandboxStatus', sandbox: true }))
   { const keep = SHOP.splice(60); store.set(CFG, { v: 1, limit: 200 }); etsy.calls.length = 0; r = await pullOp('start-limit-short1'); SHOP.push(...keep);
     assert(r.status === 200 && r.body.count === 60 && r.body.want === 200 && r.body.calls === 1, 'a small shop: ' + JSON.stringify(r.body).slice(0, 160)); assert.deepStrictEqual(offsets(), [[0, 100]], 'a short first page ends the pull'); }
 
-  /* ── the daily cap still holds, and the bigger pulls feel it first ── */
+  /* ── NOLIMIT (13 Oct 2026): no daily cap. The old gate refused a 500 pull at 16 of 20 calls and any pull at 6 of 6; neither is a reason to stop now, and the day's ledger only counts ── */
   store.set(CFG, { v: 1, limit: 500 });
-  store.set('Charm_Sandbox/pulls', { day: todayKey(), pulls: 3, calls: 16, tokenRefreshes: 0, starts: [], claim: null });   // 16 of 20 calls used: 500 needs 5
+  store.set('Charm_Sandbox/pulls', { day: todayKey(), pulls: 3, calls: 16, tokenRefreshes: 0, starts: [], claim: null });   // (the old gate: 16 of 20 calls used, 500 needs 5)
   etsy.calls.length = 0; r = await pullOp('start-cap-calls01');
-  assert(r.status === 429 && r.body.reason === 'cap' && r.body.empty === true && r.body.calls === 0 && etsy.calls.length === 0 && empty() && /^Today's 20 Etsy calls for the sandbox are used up \(a pull of 500 orders needs 5\), so the sandbox stays empty until tomorrow \(UTC midnight\)\.$/.test(r.body.error), 'calls cap, 500: ' + JSON.stringify(r.body));
-  assert.strictEqual(ledger().pulls, 3, 'a refused pull is not counted'); assert.strictEqual(ledger().calls, 16);
-  store.set(CFG, { v: 1, limit: 250 }); r = await pullOp('start-cap-calls02'); assert(r.status === 200 && r.body.calls === 3 && r.body.callsToday === 19, 'the same day still has room for a 250 pull: ' + JSON.stringify([r.status, r.body.calls, r.body.callsToday]));
-  store.set('Charm_Sandbox/pulls', { day: todayKey(), pulls: 6, calls: 18, tokenRefreshes: 0, starts: [], claim: null }); store.set(CFG, { v: 1, limit: 10 });
-  etsy.calls.length = 0; r = await pullOp('start-cap-pulls01'); assert(r.status === 429 && r.body.error === "Today's 6 sandbox pulls from Etsy are used up, so the sandbox stays empty until tomorrow (UTC midnight)." && etsy.calls.length === 0 && empty(), 'six pulls a day, whatever the number: ' + JSON.stringify(r.body));
+  assert(r.status === 200 && r.body.ok && r.body.count === 500 && r.body.calls === 5 && r.body.callsToday === 21 && r.body.pullsToday === 4 && etsy.calls.length === 5 && !empty(), 'a 500 pull at 16 calls used goes through: ' + JSON.stringify(r.body).slice(0, 200));
+  assert.strictEqual(ledger().pulls, 4, 'and is counted'); assert.strictEqual(ledger().calls, 21);
+  store.set(CFG, { v: 1, limit: 10 }); store.set('Charm_Sandbox/pulls', { day: todayKey(), pulls: 6, calls: 18, tokenRefreshes: 0, starts: [], claim: null });   // (the old gate: 6 of 6 pulls)
+  etsy.calls.length = 0; r = await pullOp('start-cap-pulls01');
+  assert(r.status === 200 && r.body.ok && r.body.count === 10 && r.body.pullsToday === 7 && r.body.callsToday === 19 && etsy.calls.length === 1 && !empty(), 'the seventh pull of the day goes through, whatever the number: ' + JSON.stringify(r.body).slice(0, 200));
+  // the answers and the status carry no cap at all (null), only the counts
+  for (const x of [r.body, (await post({ op: 'sandboxStatus', sandbox: true })).body.budget]) assert(x.cap === null && x.capLeft === null && x.callsCap === null && x.pullsToday === 7 && x.callsToday === 19, 'no cap in the budget: ' + JSON.stringify(x));
+  // a pull of 500 orders, ten times in one day: every one goes through (the old gate refused the fifth, at 20 calls), each is 5 Etsy calls, and the ledger counts them all
+  store.set(CFG, { v: 1, limit: 500 }); store.set('Charm_Sandbox/pulls', { day: todayKey(), pulls: 0, calls: 0, tokenRefreshes: 0, starts: [], claim: null }); etsy.calls.length = 0;
+  for (let i = 1; i <= 10; i++) {
+    r = await pullOp('start-500x10-' + String(i).padStart(2, '0'));
+    assert(r.status === 200 && r.body.ok && r.body.reason === undefined && r.body.count === 500 && r.body.calls === 5 && r.body.pullsToday === i && r.body.callsToday === 5 * i, `pull ${i} of 500 orders is not refused: ` + JSON.stringify(r.body).slice(0, 200));
+    assert(!empty() && r.body.empty !== true, `pull ${i}: the sandbox holds its 500`);
+  }
+  assert.strictEqual(etsy.calls.length, 50, 'ten pulls, five Etsy calls each, none held back'); assert.strictEqual(ledger().pulls, 10); assert.strictEqual(ledger().calls, 50);
+  assert.deepStrictEqual(JSON.parse(blobs.get(store.get('Charm_Sandbox/current').path).buf.toString('utf8')).receipts.map(x => x.receipt_id), NEWEST(500).map(x => x.receipt_id), 'and the last one holds the 500 newest');
 
   /* ═══ 5 · the number is a setting: the wipe leaves it, and the sandbox stays empty after a reset until a pull is asked for ═══ */
   store.set('Charm_Sandbox/pulls', { day: todayKey(), pulls: 0, calls: 0, tokenRefreshes: 0, starts: [], claim: null });

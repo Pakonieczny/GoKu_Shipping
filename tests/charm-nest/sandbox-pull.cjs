@@ -4,12 +4,12 @@
 // REFUSES nested arrays (as Firestore does) and an in-memory Storage, against the REAL charmNestLibrary, etsySandbox and
 // _etsyMailEtsy (production's own token helper) code. No network, no live record. It proves:
 //   · one pull = exactly 3 Etsy calls (offsets 0/100/200, limits 100/100/50, newest first, any status, the key and token
-//     production uses) and no other Etsy request at all; the answer says so (calls 3, callsToday, capLeft);
+//     production uses) and no other Etsy request at all; the answer says so (calls 3, callsToday; no cap: cap / capLeft / callsCap are null);
 //   · the 250 are stored as one file + the pointer Charm_Sandbox/current (with the start id as the retry marker); the
 //     previous set (an old snapshot, an old pull, its stream) is gone first; sheets and the like are not touched;
 //   · the stream plays only the open ones, oldest first; shipped / cancelled / unpaid receipts are kept but never listed;
 //   · the same start id again returns the same set with 0 new calls; a busy claim, a used start id, a bad id answer plainly;
-//   · the daily cap (6 pulls) refuses with no Etsy call and leaves the sandbox EMPTY; a failed pull (Etsy down, a page
+//   · there is NO daily cap (NOLIMIT, Paul 13 Oct 2026): the 6th, 7th and 8th pull of a day all go through and are only counted; a failed pull (Etsy down, a page
 //     failing, a limit, a missing token) leaves it EMPTY, counts exactly the calls it made, and never falls back;
 //   · the old Sep 17 snapshot (a pointer without source "etsy-pull") is no set, and a warm emulator never serves a wiped set.
 //   node tests/charm-nest/sandbox-pull.cjs
@@ -131,7 +131,7 @@ const openOf = list => list.filter(r => r.is_paid !== false && !r.is_shipped && 
   assert(a.ok && !a.already && a.calls === 3 && a.tokenRefreshes === 0 && a.count === 250 && a.source === 'etsy-pull' && a.label === '250 newest Etsy orders' && a.startId === 'start-0001-aaaa', JSON.stringify(a).slice(0, 400));
   const wantOpen = openOf(NEWEST).length;
   assert(wantOpen < 250 && wantOpen > 150 && a.open === wantOpen && a.closed === 250 - wantOpen && a.closedBy.shipped + a.closedBy.canceled + a.closedBy.unpaid === a.closed && a.closedBy.shipped > 0 && a.closedBy.canceled > 0 && a.closedBy.unpaid > 0, 'open / closed counts: ' + JSON.stringify([a.open, a.closed, a.closedBy]));
-  assert(a.callsToday === 3 && a.pullsToday === 1 && a.cap === 6 && a.capLeft === 5 && a.callsCap === 20, 'the budget in the answer: ' + JSON.stringify([a.callsToday, a.pullsToday, a.cap, a.capLeft]));
+  assert(a.callsToday === 3 && a.pullsToday === 1 && a.cap === null && a.capLeft === null && a.callsCap === null, 'the budget in the answer (counted, not capped): ' + JSON.stringify([a.callsToday, a.pullsToday, a.cap, a.capLeft]));
   assert(a.pulledAt > 0 && a.newestAt === NEWEST[0].created_timestamp * 1000 && a.oldestAt === NEWEST[249].created_timestamp * 1000 && a.stream && a.stream.seed === 777 && a.stream.total === wantOpen && a.stream.tick === 0, 'newest and oldest, and the stream started for the set: ' + JSON.stringify(a.stream));
   // the previous set is gone, the new one stands, the rest is untouched
   const cur = store.get('Charm_Sandbox/current');
@@ -143,7 +143,7 @@ const openOf = list => list.filter(r => r.is_paid !== false && !r.is_shipped && 
   assert.deepStrictEqual(file.receipts, NEWEST, 'the 250 newest, as Etsy returned them, transactions included, newest first');
   assert(store.get('Charm_Sandbox/stream').snapshotPath === a.path && store.get('Charm_Sandbox/stream').seed === 777, 'the stream plays this set');
   assert(ledger().pulls === 1 && ledger().calls === 3 && ledger().day === todayKey() && ledger().claim === null && ledger().starts[0].id === 'start-0001-aaaa', 'the ledger counts the pull: ' + JSON.stringify(ledger()));
-  st = await post({ op: 'sandboxStatus', sandbox: true }); assert(st.body.snapshot.source === 'etsy-pull' && st.body.snapshot.open === wantOpen && st.body.budget.capLeft === 5 && st.body.budget.callsToday === 3, 'status shows the pull and the budget');
+  st = await post({ op: 'sandboxStatus', sandbox: true }); assert(st.body.snapshot.source === 'etsy-pull' && st.body.snapshot.open === wantOpen && st.body.budget.capLeft === null && st.body.budget.cap === null && st.body.budget.callsCap === null && st.body.budget.pullsToday === 1 && st.body.budget.callsToday === 3, 'status shows the pull and the budget');
   assert(!JSON.stringify(a).includes('tok-fresh') && !JSON.stringify(a).includes('test-secret'), 'no token or secret in an answer');
 
   // ── the stream plays the open ones, oldest first; the closed ones are kept but never listed ──
@@ -172,7 +172,7 @@ const openOf = list => list.filter(r => r.is_paid !== false && !r.is_shipped && 
   // ── a new start replaces the set completely (the old file goes, the stream starts over) ──
   const oldPath = a.path; resetEtsy();
   r = await pullOp('start-0002-bbbb', { seed: 5 });
-  assert(r.status === 200 && !r.body.already && r.body.calls === 3 && r.body.pullsToday === 2 && r.body.callsToday === 6 && r.body.capLeft === 4 && r.body.path !== oldPath, 'start 2: ' + JSON.stringify(r.body).slice(0, 200));
+  assert(r.status === 200 && !r.body.already && r.body.calls === 3 && r.body.pullsToday === 2 && r.body.callsToday === 6 && r.body.capLeft === null && r.body.path !== oldPath, 'start 2: ' + JSON.stringify(r.body).slice(0, 200));
   assert(!blobs.has(oldPath) && [...blobs.keys()].filter(k => k.startsWith('charmnest/sandbox/orders-pull/')).length === 1, 'the previous set is replaced completely');
   assert(r.body.stream.seed === 5 && r.body.stream.tick === 0, 'a new stream for the new set');
   // a warm emulator never answers a wiped set from memory
@@ -213,21 +213,21 @@ const openOf = list => list.filter(r => r.is_paid !== false && !r.is_shipped && 
   assert.strictEqual(ledger().pulls, 1, 'a pull that never reached Etsy gives its slot back');
   setToken(3600e3);
 
-  // ── the daily cap: six pulls, then a plain refusal that leaves the sandbox empty and asks Etsy nothing ──
+  // ── NOLIMIT (13 Oct 2026): there is no daily cap. The old gate refused the seventh pull of a day (429, reason "cap", the sandbox left empty); now the sixth, seventh and eighth all
+  //    pull, ask Etsy and are only counted, and no answer carries a cap ──
   resetEtsy(); store.set('Charm_Sandbox/pulls', { day: todayKey(), pulls: 5, calls: 15, tokenRefreshes: 0, starts: [{ id: 'old-start-0001', at: 1, ok: true, calls: 3 }], claim: null });
-  r = await pullOp('start-six-00009'); assert(r.status === 200 && r.body.pullsToday === 6 && r.body.capLeft === 0 && r.body.callsToday === 18, 'the sixth pull of the day: ' + JSON.stringify([r.status, r.body.pullsToday, r.body.capLeft]));
+  r = await pullOp('start-six-00009'); assert(r.status === 200 && r.body.pullsToday === 6 && r.body.capLeft === null && r.body.cap === null && r.body.callsToday === 18, 'the sixth pull of the day: ' + JSON.stringify([r.status, r.body.pullsToday, r.body.capLeft]));
   resetEtsy();
   r = await pullOp('start-seven-0010');
-  assert(r.status === 429 && r.body.reason === 'cap' && r.body.empty === true && r.body.calls === 0 && r.body.capLeft === 0 && r.body.error === "Today's 6 sandbox pulls from Etsy are used up, so the sandbox stays empty until tomorrow (UTC midnight)." && /T00:00:00\.000Z$/.test(r.body.resetAt) && Date.parse(r.body.resetAt) > Date.now(), 'the cap: ' + JSON.stringify(r.body));
-  assert(empty() && etsy.calls.length === 0, 'the cap leaves the sandbox empty and asks Etsy nothing');
-  assert.strictEqual(ledger().pulls, 6, 'a refused pull is not counted');
-  // after a wipe the budget is still spent (Reset cannot be used to get round the cap)
-  wipe(); assert.strictEqual(ledger().pulls, 6); r = await pullOp('start-eight-0011'); assert.strictEqual(r.body.reason, 'cap');
+  assert(r.status === 200 && r.body.ok && r.body.reason === undefined && r.body.empty !== true && r.body.calls === 3 && r.body.count === 250 && r.body.pullsToday === 7 && r.body.callsToday === 21 && r.body.cap === null && r.body.capLeft === null && r.body.callsCap === null && r.body.resetAt === undefined, 'the seventh pull of the day is not refused: ' + JSON.stringify(r.body).slice(0, 300));
+  assert(!empty() && etsy.calls.length === 3, 'it holds its 250 and asked Etsy for them'); assert.strictEqual(ledger().pulls, 7, 'and is counted'); assert.strictEqual(ledger().calls, 21);
+  // after a wipe the count stays, and the next pull still goes through
+  resetEtsy(); wipe(); assert.strictEqual(ledger().pulls, 7); r = await pullOp('start-eight-0011'); assert(r.status === 200 && r.body.reason === undefined && r.body.pullsToday === 8 && r.body.callsToday === 24 && etsy.calls.length === 3, 'the eighth pull, after a wipe: ' + JSON.stringify(r.body).slice(0, 200));
   // a new UTC day starts the count over
   store.set('Charm_Sandbox/pulls', Object.assign({}, ledger(), { day: '2000-01-01' }));
-  r = await pullOp('start-nine-00012'); assert(r.status === 200 && r.body.pullsToday === 1 && r.body.callsToday === 3 && r.body.capLeft === 5, 'a new day: ' + JSON.stringify([r.status, r.body.pullsToday]));
+  r = await pullOp('start-nine-00012'); assert(r.status === 200 && r.body.pullsToday === 1 && r.body.callsToday === 3 && r.body.capLeft === null, 'a new day: ' + JSON.stringify([r.status, r.body.pullsToday]));
 
   // ── the whole run asked Etsy for receipts and nothing else ──
-  console.log('sandbox pull OK: 3 Etsy calls per pull, ' + wantOpen + ' of 250 open, cap 6/day');
+  console.log('sandbox pull OK: 3 Etsy calls per pull, ' + wantOpen + ' of 250 open, no daily cap (8 pulls in a day counted, none refused)');
   Module._load = realLoad;
 })().catch(e => { console.error(e); process.exit(1); });
