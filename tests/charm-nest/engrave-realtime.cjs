@@ -97,6 +97,20 @@ const INSTRUMENT = String.raw`(() => {
       for (let k = 0; k < refs.length; k++) { if (!refs[k]) continue; const Rf = await load(refs[k]); if (!Rf.box) continue; const al = best(A, [Rf]), Rc = bin(tr(Rf.c, al.t)); let nR = 0, hit = 0; for (let i = 0; i < Rc.length; i++) if (Rc[i]) { nR++; if (dil[i]) hit++; } const cv = nR ? hit / nR : 0; if (cv > out.cover) { const rb = Rf.box, ra = (rb[2] - rb[0]) / (rb[3] - rb[1]), rAsp = (al.t & 3) % 2 === 1 ? 1 / ra : ra, ab2 = A.box, aAsp = (ab2[2] - ab2[0]) / (ab2[3] - ab2[1]); out = { cover: r2(cv), which: k, ncc: r2(al.ncc), fill: out.fill, nCells: nR, aspRatio: r2(aAsp / rAsp), inkRatio: r2(Rf.frac ? A.frac / Rf.frac : 0) }; } }
       return out;
     },
+    async look2(a64, f64, g64) {   // like look, for a picture drawn by ANOTHER renderer (another line weight, a pixel or two off): the cells only the right drawing inks (F-only) and the cells only the old drawing inks (G-only); how many of each does the picture ink within 0, 1 or 2 cells? score = the best over the three tolerances of hit(F-only) - hit(G-only): 1 = the right words/font, below 0 = the old ones
+      const A = await load(a64), F = await load(f64), G = await load(g64);
+      if (!A.box) return { err: 'blank picture' };
+      const al = best(A, [F, G]), Fb = bin(tr(F.c, al.t)), Gb = bin(tr(G.c, al.t)), ab = bin(A.c);
+      const per = [];
+      for (const rad of [0, 1, 2]) {
+        const Ad = new Uint8Array(N * N);
+        for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { let v = 0; for (let dy = -rad; dy <= rad && !v; dy++) for (let dx = -rad; dx <= rad; dx++) { const yy = y + dy, xx = x + dx; if (yy >= 0 && yy < N && xx >= 0 && xx < N && ab[yy * N + xx]) { v = 1; break; } } Ad[y * N + x] = v; }
+        let nF = 0, hF = 0, nG = 0, hG = 0; for (let i = 0; i < ab.length; i++) { if (Fb[i] && !Gb[i]) { nF++; if (Ad[i]) hF++; } else if (Gb[i] && !Fb[i]) { nG++; if (Ad[i]) hG++; } }
+        const rF = nF ? hF / nF : 0, rG = nG ? hG / nG : 0; per.push({ rad, nF, nG, hitF: r2(rF), hitG: r2(rG), score: r2(rF - rG) });
+      }
+      const top = per.reduce((p, q) => q.score > p.score ? q : p, per[0]);
+      return { t: al.t, ncc: r2(al.ncc), nF: top.nF, nG: top.nG, hitF: top.hitF, hitG: top.hitG, rad: top.rad, score: top.score };
+    },
     async cover(a64, with64, no64) {   // is the engraving that the reference has on the charm (cells with text, not in the charm-only picture) drawn in A? (one cell of tolerance each way)
       const A = await load(a64), W = await load(with64), O = await load(no64);
       if (!A.box) return { err: 'blank picture' };
@@ -234,6 +248,7 @@ async function partDetail(w, made) {
   await R.openEngraveDetail(w, 'back', { face: 'back' }); await R.settle(page, 900);
   const tsz = (await sizeOf(page, SEL.thumb('back'))) || { w: 104, h: 104 };
   const refImg = {}; for (const [k, key] of [['base', refs.base], ['anna', refs.anna], ['marck', refs.marck]]) { refImg[k] = { thumb: await boxed(page, key, 'text', tsz.w, tsz.h, false), work: await refs.get(key, 'work', 400) }; }
+  const SENSE_T = 0.15;   // thumbnails (calibrated on the controls: a right thumbnail of another renderer scores +0.41 for other words and +0.23 for another font, the old picture scores -0.08 or less, an identical drawing +0.95)
   const SENSE = 0.3;   // calibrated on the controls: the work area at rest scores +0.58 against its own order (S2) and a thumbnail drawn by the app's renderer +0.95 (I1); a picture that did not change scores negative; 0.3 = clearly closer to the right words / font than to the old ones
   const chRefs = { plain: await boxed(page, refs.base, 'plain', tsz.w, tsz.h, false), front: await boxed(page, refs.base, 'front', tsz.w, tsz.h) };
   // does a picture draw this charm? (the app's own drawing of it, cell by cell, either way up) and is it not blank / not a block
@@ -262,8 +277,8 @@ async function partDetail(w, made) {
 
   // ── the instrument's own control: a thumbnail drawn by the app's renderer (injected here, it is NOT the app's thumbnail) must pass the very measures that the app's thumbnails are held to ──
   const ctlB = await boxed(page, refs.base, 'text', tsz.w, tsz.h, true);   // (the references are drawn without the hatch of the engraved art, this control with it: a different but legitimate drawing)
-  const ctlCp = await charmPic(ctlB, chRefs), ctlLk = ctlB && await rt(page, 'look', ctlB, refImg.base.thumb, refImg.anna.thumb), ctlCv = ctlB && await rt(page, 'cover', ctlB, refImg.base.thumb, chRefs.plain);
-  check('I1 instrument control: a thumbnail drawn by the app\'s own renderer passes the charm and look measures', 'world', ctlCp.ok && !!ctlLk && !ctlLk.err && ctlLk.nccF >= 0.45 && ctlLk.score >= SENSE && !!ctlCv && !ctlCv.err && ctlCv.cover >= 0.5 && ctlCv.stray <= 0.5, `${ctlCp.ev}; look ${JSON.stringify(ctlLk)}; engraving cover ${JSON.stringify(ctlCv)}`);
+  const ctlCp = await charmPic(ctlB, chRefs), ctlLk = ctlB && await rt(page, 'look2', ctlB, refImg.base.thumb, refImg.anna.thumb), ctlCv = ctlB && await rt(page, 'cover', ctlB, refImg.base.thumb, chRefs.plain);
+  check('I1 instrument control: a thumbnail drawn by the app\'s own renderer passes the charm and look measures', 'world', ctlCp.ok && !!ctlLk && !ctlLk.err && ctlLk.score >= SENSE_T && !!ctlCv && !ctlCv.err && ctlCv.cover >= 0.5 && ctlCv.stray <= 0.5, `${ctlCp.ev}; look ${JSON.stringify(ctlLk)}; engraving cover ${JSON.stringify(ctlCv)}`);
 
   const evalChange = async (label, t, o) => {
     // o: { thumbs: ['back'] | ['front','back'], work: { right: b64, wrong: b64 } | 'moves', thumbLook: { right, wrong } }
@@ -280,8 +295,8 @@ async function partDetail(w, made) {
         const late = await rt(page, 'raw', t.before[face], t.settled[face]);
         check(`${label} · ${face} thumbnail changes in the same tick, and is already the settled picture`, 'thumb', ch1.diff >= 0.001 && same.diff <= 0.003, `changed ${f2(ch1.diff * 100)}% of its pixels at the tick, then ${f2(same.diff * 100)}% more after settling (${f2(late.diff * 100)}% changed in all); ${t.held} timer(s) were waiting`);
         if (o.thumbLook) {
-          const lk = await rt(page, 'look', t.tick[face], o.thumbLook.right.thumb, o.thumbLook.wrong.thumb);
-          check(`${label} · ${face} thumbnail shows the new ${o.thumbLook.what} on the charm`, 'thumb', !!(cpMap[face] && cpMap[face].ok) && !lk.err && lk.nccF >= 0.45 && lk.score >= SENSE, `${cpMap[face] && cpMap[face].ok ? '' : 'no charm drawing in the picture; '}looks like the right one at ${f2(lk.nccF)}, the old one at ${f2(lk.nccG)}, strokes that tell them apart: ${lk.nD} cells, score ${f2(lk.score)} (aligned ${lk.ncc})${lk.err ? ' ' + lk.err : ''}`);
+          const lk = await rt(page, 'look2', t.tick[face], o.thumbLook.right.thumb, o.thumbLook.wrong.thumb);
+          check(`${label} · ${face} thumbnail shows the new ${o.thumbLook.what} on the charm`, 'thumb', !!(cpMap[face] && cpMap[face].ok) && !lk.err && lk.score >= SENSE_T, `${cpMap[face] && cpMap[face].ok ? '' : 'no charm drawing in the picture; '}the cells only the new ${o.thumbLook.what} inks: ${f2((lk.hitF || 0) * 100)}% drawn, the cells only the old one inks: ${f2((lk.hitG || 0) * 100)}% drawn (${lk.nF} / ${lk.nG} cells, tolerance ${lk.rad} cell), score ${f2(lk.score)}${lk.err ? ' ' + lk.err : ''}`);
         }
       }
     }
