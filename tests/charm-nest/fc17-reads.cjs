@@ -30,6 +30,7 @@ const TS = m.FieldValue.serverTimestamp();
   const same = [await ops.aliasGet({ ifSig: sig.al }), await ops.optionMapGet({ ifSig: sig.om }), await ops.noDesignGet({ ifSig: sig.nd })];
   assert(same.every(r => r.unchanged === true && !r.aliases && !r.maps && !r.list), "an unchanged map answers unchanged with nothing in it");
   const idle = m.stats(); assert(idle.reads <= 10 && idle.bytes < 2048, `three unchanged maps cost ${idle.reads} reads and ${idle.bytes} bytes (were ${1200 + 300 + 40})`);
+  m.put("Charm_Master_Index", "NEW-1", { sku: "NEW-1" });   // (a link names a design the library holds: REVLINK)
   await ops.aliasPut({ listingId: "4000000005", sku: "NEW-1", by: "Paul", title: "x" });
   const a2 = await ops.aliasGet({ ifSig: sig.al }); assert(!a2.unchanged && a2.aliases["4000000005"].sku === "NEW-1" && a2.sig !== sig.al, "an alias answer changes the signature"); sig.al = a2.sig;
   await ops.optionMapPut({ listingId: "5000000001", optionName: "Size", optionValue: "Huge", map: { field: "size", value: "XL" }, by: "Paul" });

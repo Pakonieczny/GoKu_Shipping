@@ -62,7 +62,11 @@ const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(R
    option, a no-design SKU) is a relationship between a listing/SKU and a design, and it must reach neither production nor
    the next replay of the same real order (Paul, 3 Oct: the sandbox kept the relationships he had given). Reads merge the
    two, the sandbox's own answer first; Reset deletes the copy. Set per request; a function instance handles one request
-   at a time. ── */
+   at a time.
+   EXCEPTION (REVLINK, Paul 12 Oct 2026: "if I make choices, those choices should be saved moving forward whether I'm doing it in sandbox or in
+   live mode"): a person's PICK OF A CHARM for a listing (aliasPut: "Use this charm", a saved pair; optionMapPut with field design: an option that
+   picks the charm) is written to the SHARED store in the sandbox too, read back, and never reaches Reset or Purge. The sandbox and production
+   read the same links. An answer the sandbox kept before that (its own copy) is still read, the later write of the two standing for a key. ── */
 let PREFIX = "";
 const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Remnants", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
 const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
@@ -252,6 +256,25 @@ async function runsOfOrders(get, orders, fresh) {
 // The caller's transaction reads the live run and every dependent sheet before it writes a seal or completion.
 // (the custom orders completed by hand that one reading looks up: at most HAND_MAX lines, one small read each; see below)
 const HAND_MAX = 200, HAND_FIELDS = ["state", "how", "completedAt", "completedBy"];
+/* Which of these orders a person sent to Review and has not resolved yet (Paul, 12 Oct 2026): Map rid -> "In Review: Sent to Review by NAME". One batch get by key on the review
+   records (Charm_Custom_Orders/{rid}_review, charm-nest-review-mark.js: the same read as its op reviewMarkOpen), asked only where the server WRITES (a transaction, the Approve gate) and only
+   for the orders of the sheets being gated; the Library's list reads never ask. A read that fails answers nothing and says so (the page still holds the sheet), so the shop is never stopped by it. */
+async function openReviews(rids,tx=null){
+  const out=new Map(),ids=[...new Set([...(rids || [])].map(r=>String(r)).filter(r=>/^\d{1,30}$/.test(r)))],mask={fieldMask:["review","receiptId","kind"]};
+  try{
+    for(let i=0;i<ids.length;i+=100){
+      const refs=ids.slice(i,i+100).map(r=>col("Charm_Custom_Orders").doc(r+"_review"));
+      const docs=tx?(typeof tx.getAll==='function'?await tx.getAll(...refs,mask):await Promise.all(refs.map(r=>tx.get(r)))):await db.getAll(...refs,mask);
+      for(const d of docs){
+        const x=d && d.exists?d.data() || {}:null;
+        if(!x || !x.review || x.review.state!=='open' || (x.kind && x.kind!=='reviewMark'))continue;
+        const rid=String(x.receiptId || String(d.id).replace(/_review$/,'')).replace(/\D/g,''),by=str(x.review.markedBy,80);
+        if(rid)out.set(rid,'In Review: Sent to Review'+(by?' by '+by:''));
+      }
+    }
+  }catch(e){console.warn('[charmNestLibrary] the orders in Review could not be read (the page still holds them):',e && e.message);}
+  return out;
+}
 async function productionReadiness(records,{tx=null,revs=null}={}) {
   const get=ref=>tx?tx.get(ref):ref.get(),runs=new Map(),lines=new Map(),wanted=new Set(records.flatMap(Readiness.orderIds)),unverified=new Set();
   for(const id of [...new Set(records.map(s=>s.runId).filter(isId))]){
@@ -353,7 +376,11 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
   }
   const decisions=Readiness.decisions([...lines.values()]);
   for(const s of evidence.values())s.engraving=Object.fromEntries(Readiness.idsOf(s).map(id=>[id,decisions[id] || {needed:true,state:'unknown',approved:false}]));
-  const orders=Readiness.orderReports([...lines.values()],[...evidence.values()]);
+  /* An order a person sent to Review holds the sheet it sits on until it is resolved there. The page holds the sheet at once (charm-nest-review-hold.js); the server holds it too where it WRITES
+     (a transaction: the laser seal, completing a set, the cut), so an older page or a second computer can never get past it. openReviews() above says which are open. */
+  let review=null;
+  if(tx && wanted.size){const open=await openReviews(wanted,tx);if(open.size)review=rid=>open.get(String(rid)) || '';}
+  const orders=Readiness.orderReports([...lines.values()],[...evidence.values()],review?{review}:undefined);
   // each sheet's own reading of its orders: an order waits only for its OTHER pieces (Readiness.forSheet), never for a piece on this very sheet, and (round 7)
   // never for a not-ready sheet of the sheet's OWN set: a set advances as one, that wait is the set's (Readiness.setGate), not the order's. An order split across sets still waits.
   for(const s of records)s.orderReadiness=Object.fromEntries(Readiness.orderIds(s).map(id=>[id,(!unverified.has(id) && Readiness.forSheet(orders[id],s.id || s.sheetId,Readiness.setOf(s))) || {ready:false,why:'Order readiness has not been verified'}]));
@@ -2977,7 +3004,15 @@ async function op_aliasGet(b = {}) {
   docs.forEach(d => { out[d.id] = d.data(); });
   // the sandbox's own answer for a listing stands over the shared one's, field by field (its per-SKU answers join the shared ones)
   // (a listing's saved pairs of two designs, pairBySku, join the same way)
-  own.forEach(d => { const mine = d.data(), was = out[d.id]; out[d.id] = was ? Object.assign({}, was, mine, was.bySku || mine.bySku ? { bySku: Object.assign({}, was.bySku, mine.bySku) } : {}, was.pairBySku || mine.pairBySku ? { pairBySku: Object.assign({}, was.pairBySku, mine.pairBySku) } : {}) : mine; });
+  // REVLINK: a person's pick is written to the shared store in the sandbox too (aliasPut), so a copy the sandbox kept BEFORE that stands only while it is the later write:
+  // the sandbox's old copy never hides a pick made since (the SKU answers sku / v / huggie, bySku and pairBySku follow the document's own update time)
+  own.forEach(d => {
+    const mine = d.data(), was = out[d.id]; if (!was) { out[d.id] = mine; return; }
+    const sharedLater = (ms(was.updatedAt) || 0) > (ms(mine.updatedAt) || 0), a = sharedLater ? mine : was, z = sharedLater ? was : mine;   // (z = the later write of the two)
+    const next = Object.assign({}, was, mine, was.bySku || mine.bySku ? { bySku: Object.assign({}, a.bySku, z.bySku) } : {}, was.pairBySku || mine.pairBySku ? { pairBySku: Object.assign({}, a.pairBySku, z.pairBySku) } : {});
+    if (sharedLater) { for (const k of ["sku", "v", "huggie"]) { if (was[k] !== undefined) next[k] = was[k]; else if (k === "v" && was.sku !== undefined) delete next.v; } }
+    out[d.id] = next;
+  });
   return Object.assign({ aliases: out, truncated }, sig ? { sig } : {});
 }
 /* "Use this charm": for the listing and the SKU the line came with (fromSku, kept under bySku), so on a listing whose
@@ -2994,15 +3029,27 @@ async function putPairAlias(b, lid, from) {
   if (!Master.isSku(L) || !Master.isSku(R) || L === R) return { error: "pair.L and pair.R are two different master SKUs" };
   for (const k of [L, R]) { const s = await db.collection(Master.INDEX).doc(k).get(); if (!s.exists || !(s.data() || {}).sku) return { error: `${k} is not in the master index` }; }
   const doc = { listingId: lid, by: str(b.by || "operator", 80), title: str(b.title, 200), updatedAt: FV.serverTimestamp(), pairBySku: { [from]: { L, R, by: str(b.by || "operator", 80), at: Date.now() } } };
-  await db.collection(PREFIX + ALIASES).doc(lid).set(doc, { merge: true }); return { ok: true };   // (a sandbox answer is the sandbox's own copy only)
+  // REVLINK: a person's pick is kept in the shared store in the sandbox too, and read back before it is called saved
+  const ref = db.collection(ALIASES).doc(lid); await ref.set(doc, { merge: true });
+  const got = (((await ref.get()).data() || {}).pairBySku || {})[from];
+  if (!got || String(got.L) !== L || String(got.R) !== R) return { error: "the pair was written but could not be read back, so it is not counted as saved: press the choice again", status: 500 };
+  return { ok: true, verified: true, kind: "pair", listingId: lid, key: from, sku: L + " + " + R };
 }
 async function op_aliasPut(b) {
   const lid = str(b.listingId, 30).replace(/\D/g, ""), sku = String(b.sku || "").trim().toUpperCase(), from = String(b.fromSku || "").trim().toUpperCase().slice(0, 120);
   if (b.pair) return putPairAlias(b, lid, from);
   if (!lid || !Master.isSku(sku)) return { error: "listingId and sku required" };
+  // REVLINK: a link names a design the library holds now (the page checks it too), never one that is not there
+  { const held = await db.collection(Master.INDEX).doc(sku).get(); if (!held.exists || !(held.data() || {}).sku) return { error: `${sku} is not in the master index`, status: 409 }; }
   const doc = { listingId: lid, by: str(b.by || "operator", 80), title: str(b.title, 200), updatedAt: FV.serverTimestamp() };
+  const kind = from ? "bySku" : b.huggie === true ? "huggie" : "sku";
   if (from) doc.bySku = { [from]: sku }; else if (b.huggie === true) doc.huggie = sku; else { doc.sku = sku; doc.v = 2; }
-  await db.collection(PREFIX + ALIASES).doc(lid).set(doc, { merge: true }); return { ok: true };   // (a sandbox answer is the sandbox's own copy only)
+  // REVLINK (Paul, 12 Oct 2026): a person's pick is kept in the SHARED store in the sandbox too (Reset and Purge never reach it, production reads it), written once and read back
+  // before it is called saved. Asked of the document just written, so the proof is the stored link itself, not the answer of the write.
+  const ref = db.collection(ALIASES).doc(lid); await ref.set(doc, { merge: true });
+  const back = (await ref.get()).data() || {}, got = kind === "bySku" ? (back.bySku || {})[from] : kind === "huggie" ? back.huggie : back.sku;
+  if (String(got || "").toUpperCase() !== sku) return { error: "the link was written but could not be read back, so it is not counted as saved: press the choice again", status: 500 };
+  return { ok: true, verified: true, kind, listingId: lid, key: from || null, sku };
 }
 /* A listing's kind, as a person says it (charm-nest-orders.js addOnOf, 10 Oct 2026: "Huggie Charm + Shipping" is an add-on listing, every order of it a custom order).
    Kept on the listing's own document in the aliases map, Charm_Sku_Aliases/{listing id}.listingKind = { kind, by, at, title, note }, beside the SKU answers
@@ -3042,7 +3089,15 @@ async function op_optionMapGet(b = {}) {
   const { docs, own = [], truncated } = await mapDocs(OPTMAP), out = {};
   docs.forEach(d => { out[d.id] = d.data().map || {}; });
   // the sandbox's own answer for an option value stands over the shared one's (the listing's other answers are kept)
-  own.forEach(d => { const mine = d.data().map || {}, was = out[d.id] || {}, next = {}; for (const n of new Set([...Object.keys(was), ...Object.keys(mine)])) next[n] = Object.assign({}, was[n], mine[n]); out[d.id] = next; });
+  // REVLINK: except a person's pick of the charm an option gives (field design), which is written to the shared store in the sandbox too: a copy the sandbox kept before stands only while it is the later pick (its `at`)
+  own.forEach(d => {
+    const mine = d.data().map || {}, was = out[d.id] || {}, next = {};
+    for (const n of new Set([...Object.keys(was), ...Object.keys(mine)])) {
+      next[n] = Object.assign({}, was[n], mine[n]);
+      for (const v of Object.keys(was[n] || {})) { const w = was[n][v], m = mine[n] && mine[n][v]; if (m && w && w.field === "design" && (+w.at || 0) > (+m.at || 0)) next[n][v] = w; }
+    }
+    out[d.id] = next;
+  });
   return Object.assign({ maps: out, truncated }, sig ? { sig } : {});
 }
 async function op_optionMapPut(b) {
@@ -3055,10 +3110,15 @@ async function op_optionMapPut(b) {
   // design: the option picks the charm (Zodiac Sign: Pisces), for one listing, a SKU of the master index
   const design = field === "design" ? String(m.value || "").trim().toUpperCase() : "";
   if (field === "design" && (lid === "*" || !Master.isSku(design))) return { error: "the charm an option picks is saved for one listing, as a master SKU" };
-  const ref = db.collection(PREFIX + OPTMAP).doc(lid); const snap = await ref.get(); const cur = snap.exists ? (snap.data().map || {}) : {};   // (the sandbox's copy starts from its own answers, never from production's)
+  // REVLINK: the charm an option picks is a person's pick of a vector file for a listing: kept in the SHARED store in the sandbox too (Reset never reaches it, production reads it) and read back; the other answers stay the sandbox's own copy
+  if (field === "design") { const held = await db.collection(Master.INDEX).doc(design).get(); if (!held.exists || !(held.data() || {}).sku) return { error: `${design} is not in the master index`, status: 409 }; }
+  const ref = db.collection((field === "design" ? "" : PREFIX) + OPTMAP).doc(lid); const snap = await ref.get(); const cur = snap.exists ? (snap.data().map || {}) : {};   // (the sandbox's copy starts from its own answers, never from production's)
   cur[name] = cur[name] || {}; cur[name][value] = { field, value: field === "ignore" ? null : field === "count" ? String(count) : design || str(m.value, 80), by: str(b.by || "operator", 80), at: Date.now() };
   await ref.set({ listingId: lid, map: cur, updatedAt: FV.serverTimestamp() }, { merge: true });
-  return { ok: true };
+  if (field !== "design") return { ok: true };
+  const got = ((((await ref.get()).data() || {}).map || {})[name] || {})[value];
+  if (!got || got.field !== "design" || String(got.value || "").toUpperCase() !== design) return { error: "the choice was written but could not be read back, so it is not counted as saved: press it again", status: 500 };
+  return { ok: true, verified: true, kind: "option", listingId: lid, key: name + "=" + value, sku: design };
 }
 
 // ── Custom Orders: a special line (custom, rework, chain only, add-on…) finished by hand ──
@@ -3076,7 +3136,7 @@ const lineKeyOk = s => /^[\w\-]{3,120}$/.test(String(s || ""));
 // sticker, is read by its key when that sticker is printed again. The lists read every field but the sticker (up to 20 KB
 // each); a record written before hasLabel was kept is taken to have one (every print hands one), and printing it again
 // reads it by its key and says so when there is none.
-const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "completedAt", "completedBy", "how", "stamps", "history", "reopenedAt", "reopenedBy", "updatedAtMs", "hasLabel"];
+const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "completedAt", "completedBy", "how", "stamps", "history", "reopenedAt", "reopenedBy", "updatedAtMs", "hasLabel", "review"];
 const customRow = (d, withLabel) => { const x = Object.assign({}, d); delete x.updatedAt; if (!withLabel) { x.hasLabel = typeof x.hasLabel === "boolean" ? x.hasLabel : x.label !== undefined ? !!x.label : true; delete x.label; } return x; };
 async function op_customGet(b) {
   if (b.key != null) { const key = String(b.key); if (!lineKeyOk(key)) return { error: "bad key" }; const s = await col(CUSTOM).doc(key).get(); return { record: s.exists ? customRow(s.data(), true) : null }; }
@@ -3327,6 +3387,38 @@ async function op_customPut(b) {
   return { ok: true, record: customRow(Object.assign({}, cur || {}, doc), false) };
 }
 const STAMPS_MAX = 2000;
+/* ── Send to Review (Paul, 12 Oct 2026): a person puts an ORDER into the Review tab by hand, and takes it out again. One document per
+   order, "{receiptId}_review", beside the custom-order records (so it travels in the Review tab's 2 s changes feed and the maps' list,
+   with no read of its own, and the sandbox keeps its own copy and a reset clears it). It is NOT a completion and carries no seal or
+   stamp: state stays "open", kind "reviewMark"; the mark is review {state "open" | "done", markedAt/By, doneAt/By, how "ok" | "pick",
+   sku}. Marking an order already marked (and not resolved) and resolving one not marked change nothing (already: true). A mark made
+   again after a resolve starts a new cycle; the earlier one is kept in review.earlier. Never writes Etsy. ── */
+async function op_reviewMarkPut(b) {
+  const rid = String(b.rid != null ? b.rid : b.receiptId == null ? "" : b.receiptId).replace(/\D/g, "").slice(0, 30); if (!rid) return { error: "rid (the order's receipt id) required" };
+  const action = b.action === "resolve" ? "resolve" : b.action === "mark" ? "mark" : ""; if (!action) return { error: "action must be mark or resolve" };
+  const key = rid + "_review", ref = col(CUSTOM).doc(key), now = Date.now(), who = str(b.by || "operator", 80);
+  const snap = await ref.get(), cur = snap.exists ? snap.data() : null, rv = cur && cur.review && typeof cur.review === "object" ? cur.review : null, open = !!rv && rv.state === "open";
+  if (action === "resolve") {
+    if (!open) return { ok: true, already: true, record: cur ? customRow(cur, false) : null };
+    const review = Object.assign({}, rv, { state: "done", doneAt: now, doneBy: who, how: b.how === "pick" ? "pick" : b.how === "ok" ? "ok" : "other" });
+    if (b.sku) review.sku = str(b.sku, 60);
+    if (b.rowKey) review.rowKey = str(b.rowKey, 120);
+    const doc = { review, updatedAtMs: now, updatedAt: FV.serverTimestamp() };
+    await ref.set(doc, { merge: true });
+    return { ok: true, record: customRow(Object.assign({}, cur, doc), false) };
+  }
+  if (open) return { ok: true, already: true, record: customRow(cur, false) };
+  const earlier = rv ? [Object.assign({}, rv)].concat(Array.isArray(rv.earlier) ? rv.earlier : []).map(e => { const o = Object.assign({}, e); delete o.earlier; return o; }).slice(0, 10) : [];
+  const doc = { key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", hasLabel: false, review: Object.assign({ state: "open", markedAt: now, markedBy: who }, earlier.length ? { earlier } : {}), updatedAtMs: now, updatedAt: FV.serverTimestamp() };
+  await ref.set(doc);
+  return { ok: true, record: customRow(doc, false) };
+}
+/* reviewMarkOpen {rids}: which of these orders are in Review now (open marks), one batch get by key, no query. For a gate that must see the cloud's own answer; the page reads its map and needs none. */
+async function op_reviewMarkOpen(b) {
+  const ids = [...new Set((Array.isArray(b.rids) ? b.rids : []).map(x => String(x == null ? "" : x).replace(/\D/g, "")).filter(Boolean))].slice(0, 500), out = [];
+  for (let i = 0; i < ids.length; i += 100) for (const s of await db.getAll(...ids.slice(i, i + 100).map(r => col(CUSTOM).doc(r + "_review")), { fieldMask: ["review", "receiptId"] })) if (s.exists && s.data().review && s.data().review.state === "open") out.push(String(s.data().receiptId || s.id.replace(/_review$/, "")));
+  return { rids: out };
+}
 // where a Complete Order or a Reopen was pressed (the order window, a Review card: the page says so), for its point on
 // the order's timeline (Paul, 29 Sep 02:08)
 const pressedIn = b => (b && b.from ? { pressedIn: str(b.from, 40) } : {});
@@ -3524,7 +3616,7 @@ const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneL
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
   cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
   listingSkus: op_listingSkus, aliasGet: op_aliasGet, aliasPut: op_aliasPut, listingKindPut: op_listingKindPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
-  customSheetGet: op_customSheetGet, customSheetPut: op_customSheetPut, customGet: op_customGet, customPut: op_customPut, customReopen: op_customReopen, customDelete: op_customReopen };
+  customSheetGet: op_customSheetGet, customSheetPut: op_customSheetPut, customGet: op_customGet, customPut: op_customPut, reviewMarkPut: op_reviewMarkPut, reviewMarkOpen: op_reviewMarkOpen, customReopen: op_customReopen, customDelete: op_customReopen };
 
 /* ── sign-in time (Paul, 28 Sep 23:53; plans/sign-in-sessions.md part L): sessionsList {since, until, limit} is the
    sorter's read of Station_Sessions, one document per sign-in, which the stations write through firebaseOrders
@@ -3726,10 +3818,21 @@ async function approveGate(steps) {
     if (x.type === "release") for (const i of (x.sheetIds || [])) sheetIds.add(str(i, 80));
     else if (x.type === "seal") (x.kind === "set" ? setIds : sheetIds).add(str(x.id, 80));
   }
-  const ask = [...sheetIds].filter(isId);
-  for (let i = 0; i < ask.length; i += 100) for (const d of await db.getAll(...ask.slice(i, i + 100).map(id => col(SHEETS).doc(id)), { fieldMask: ["setId", "draft", "solidIncluded", "archived"] })) {
+  const ask = [...sheetIds].filter(isId), asked = new Map();
+  for (let i = 0; i < ask.length; i += 100) for (const d of await db.getAll(...ask.slice(i, i + 100).map(id => col(SHEETS).doc(id)), { fieldMask: ["setId", "draft", "solidIncluded", "archived", "orders", "poolIds", "laserDoneAt", "processSeals"] })) {
     const x = d.exists ? d.data() : null;
+    if (x) asked.set(d.id, x);
     if (x && !x.archived && x.setId && !x.draft && x.solidIncluded !== false) setIds.add(String(x.setId));
+  }
+  // an order in Review holds its sheet (and so its set): nothing approves while it sits on the sheet, whatever the page says
+  {
+    const sets = [...setIds].filter(isId), more = new Set();
+    for (let i = 0; i < sets.length; i += 100) for (const d of await db.getAll(...sets.slice(i, i + 100).map(id => col(SETS).doc(id)), { fieldMask: ["sheetIds"] })) if (d.exists) for (const m of d.data().sheetIds || []) if (isId(m) && !asked.has(String(m))) more.add(String(m));
+    const rest = [...more], got = [];
+    for (let i = 0; i < rest.length; i += 100) for (const d of await db.getAll(...rest.slice(i, i + 100).map(id => col(SHEETS).doc(id)), { fieldMask: ["orders", "poolIds", "laserDoneAt", "archived", "processSeals"] })) if (d.exists) asked.set(d.id, d.data());
+    for (const [id, x] of asked) if (x && !x.archived && !(num(x.laserDoneAt) > 0) && !Readiness.completedBefore(x)) got.push({ id, orders: Readiness.orderIds({ ...x, id }) });
+    const reviewing = await openReviews(got.flatMap(g => g.orders));
+    for (const g of got) { const rid = g.orders.find(r => reviewing.has(r)); if (rid) return { error: `Order ${rid} is in Review, so the sheet it is on cannot go on until it is resolved in the Review tab`, status: 409, orderId: rid, sheetId: g.id }; }
   }
   for (const [id, { set, gate }] of await setGatesFor([...setIds], null)) if (!gate.ready) {
     return { error: `${gate.setLabel === "This set" ? "This set" : gate.setLabel} is approved together, so every sheet of it must be ready first: ${gate.reason}`, status: 409, blockers: gate.blockers, setId: id };
