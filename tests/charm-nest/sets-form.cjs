@@ -47,11 +47,11 @@ const set1 = () => ({ setId: 'set-1', seq: 1, name: 'Set-1', group: 'dispatch', 
   let st = Rules.settle([], [S.g2, S.sp]);                                                   // no set yet, a completed GF and a partial SS: no set is made
   assert.deepEqual([st.formed, st.join.length, st.wait.length], [false, 0, 2]); assert.match(st.wait[0].why, /^Waits for a completed SS sheet: a set needs at least 1 completed GF sheet and 1 completed SS sheet/);
   st = Rules.settle([], [S.gf1, S.ss1]); assert.deepEqual([st.formed, st.join.length, st.wait.length], [true, 2, 0]);   // a completed GF and SS: the set is made, with both
-  st = Rules.settle([], [S.gf1, S.ss1, S.sp]); assert.equal(st.join.length, 3, 'a partial partner comes with a valid batch (the cardinal rule)');
+  st = Rules.settle([], [S.gf1, S.ss1, S.sp]); assert.deepEqual([st.join.length, st.wait.length], [2, 1], 'a partial partner never comes with a valid batch (Paul, 13 Oct): it waits, with its own line'); assert.match(st.wait[0].why, /not full yet \(57% full\): a partial sheet never joins a set$/);
   st = Rules.settle([], [S.ss1]); assert.equal(st.join.length, 0, 'a lone completed SS makes no set');
   st = Rules.settle(members, [S.gf1]); assert.deepEqual([st.join.length, st.wait.length], [0, 1], 'Set-1 exists but lacks a completed SS: another GF does not help, it waits');
   st = Rules.settle(members, [S.gf1, S.ss1]); assert.equal(st.join.length, 2, 'the batch that completes Set-1 joins');
-  st = Rules.settle([S.g2, S.ss1], [S.gf1, S.gf5]); assert.equal(st.join.length, 2, 'a valid set takes more, partial sheets too');
+  st = Rules.settle([S.g2, S.ss1], [S.gf1, S.gf5]); assert.deepEqual([st.join.length, st.wait.length], [1, 1], 'a valid set takes more completed sheets, never a partial one (Paul, 13 Oct)');
   assert.deepEqual(Rules.settle([], []).join, []);
 
   /* 3 · the readiness gate: Set-1 is flagged, not dissolved; it is not ready, says so in one line, and a completed SS makes it right */

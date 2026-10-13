@@ -58,20 +58,20 @@ const X = '3900000001', Y = '3900000002', Z = '3900000003', W = '3900000004', P 
   const piece = (o, n) => `${o}_1_${n}`;
 
   mkSet('set-3', ['opn-a']); mk('opn-a', [piece(X, 1), piece(P, 1)], { setId: 'set-3', setSeq: 3, page: 1, sheetIndex: 1 });
-  mk('live-a', [piece(X, 2)], { draft: true, page: 2, sheetIndex: 2 });            // shares X with opn-a (in set-3)
-  mk('live-b', [piece(Q, 1)], { draft: true, page: 3, sheetIndex: 3 });            // shares nothing
-  mk('ch-1', [piece(Y, 1), piece(W, 1)], { draft: true, page: 4, sheetIndex: 4 });  // the chain: ch-1 – ch-2 share Y, ch-2 – ch-3 share Z
-  mk('ch-2', [piece(Y, 2), piece(Z, 1)], { draft: true, page: 5, sheetIndex: 5 });
-  mk('ch-3', [piece(Z, 2)], { draft: true, page: 6, sheetIndex: 6 });
+  mk('live-a', [piece(X, 2)], { draft: true, releaseFull: true, page: 2, sheetIndex: 2 });            // shares X with opn-a (in set-3)
+  mk('live-b', [piece(Q, 1)], { draft: true, releaseFull: true, page: 3, sheetIndex: 3 });            // shares nothing
+  mk('ch-1', [piece(Y, 1), piece(W, 1)], { draft: true, releaseFull: true, page: 4, sheetIndex: 4 });  // the chain: ch-1 – ch-2 share Y, ch-2 – ch-3 share Z
+  mk('ch-2', [piece(Y, 2), piece(Z, 1)], { draft: true, releaseFull: true, page: 5, sheetIndex: 5 });
+  mk('ch-3', [piece(Z, 2)], { draft: true, releaseFull: true, page: 6, sheetIndex: 6 });
   mkSet('set-2', ['cm-a'], { status: 'complete', committedAt: now - 1000 }); mk('cm-a', [piece(K, 1)], { setId: 'set-2', setSeq: 2, page: 1, sheetIndex: 1 });
-  mk('cm-d', [piece(K, 2)], { draft: true, page: 7, sheetIndex: 7 });              // shares K with a sheet in a committed set
+  mk('cm-d', [piece(K, 2)], { draft: true, releaseFull: true, page: 7, sheetIndex: 7 });              // shares K with a sheet in a committed set
   mk('rg-a', [piece(R, 1)], { metal: 'rose', draft: true, page: 1, sheetIndex: 1, roseStockId: 'stock-1', rosePlanHash: 'h-1' });
-  mk('gold-r', [piece(R, 2)], { draft: true, page: 8, sheetIndex: 8 });            // shares R with a Rose Gold sheet
+  mk('gold-r', [piece(R, 2)], { draft: true, releaseFull: true, page: 8, sheetIndex: 8 });            // shares R with a Rose Gold sheet
   mk('k10-a', [piece(T, 1)], { metal: 'gold10k', draft: true, page: 1, sheetIndex: 1 }); mk('k14-b', [piece(T, 2)], { metal: 'gold14k', draft: true, page: 1, sheetIndex: 1 });
   mkSet('set-1', ['mem-1', 'mem-2'], { status: 'labelled', runId: 'run-x' });      // a set of an older run: its sheets share M
-  mk('mem-1', [piece(M, 1)], { setId: 'set-1', setSeq: 1, runId: 'run-x', page: 1, sheetIndex: 1 }); mk('mem-2', [piece(M, 2)], { setId: 'set-1', setSeq: 1, runId: 'run-x', page: 2, sheetIndex: 2 });
+  mk('mem-1', [piece(M, 1)], { setId: 'set-1', releaseFull: true, setSeq: 1, runId: 'run-x', page: 1, sheetIndex: 1 }); mk('mem-2', [piece(M, 2)], { setId: 'set-1', releaseFull: true, setSeq: 1, runId: 'run-x', page: 2, sheetIndex: 2 });
   mk('rg-solo', [piece(N, 1)], { metal: 'rose', draft: true, page: 2, sheetIndex: 2, roseStockId: 'stock-1', noLabel: true });
-  mk('chn-a', [piece(U, 1)], { draft: true, page: 9, sheetIndex: 9 }); mk('chn-b', [piece(U, 2)], { draft: true, page: 10, sheetIndex: 10 });   // stale-page twin
+  mk('chn-a', [piece(U, 1)], { draft: true, releaseFull: true, page: 9, sheetIndex: 9 }); mk('chn-b', [piece(U, 2)], { draft: true, releaseFull: true, page: 10, sheetIndex: 10 });   // stale-page twin
   mkSet('set-6', ['sx-1'], { status: 'labelled' }); mk('sx-1', [piece(V, 1)], { setId: 'set-6', setSeq: 6, page: 11, sheetIndex: 11 }); mkSet('set-7', ['sx-2'], { status: 'labelled' }); mk('sx-2', [piece(V, 2)], { setId: 'set-7', setSeq: 7, page: 12, sheetIndex: 12 });   // the same order in two different sets, both ready
   // the lines of the run for the one set the server is asked to complete (what Readiness reads for engraving)
   const lines = {}; for (const [o, n] of [[V, 1], [V, 2]]) lines[`${o}_1`] = { orderId: o, state: 'written', quantity: 2, poolIds: [piece(o, 1), piece(o, 2)], engraveCandidate: false };
@@ -160,7 +160,7 @@ const X = '3900000001', Y = '3900000002', Z = '3900000003', W = '3900000004', P 
     LF.configure({ shared: pageSays });
     p = await LF.plan({ kind: 'sheet', id: 'chn-a', to: { newSet: true } }); assert.equal(p.ok, false); assert.equal(p.needs[0].key, 'sharedOrders'); assert.deepEqual(p.needs[0].items.map(i => i.orderId), [U], 'the server twin reads the records');
     // …and the page that sees what the records do not yet (the sheet nested a moment ago) blocks too
-    mk('fresh', [piece('3900000099', 1)], { draft: true, page: 13, sheetIndex: 13 });
+    mk('fresh', [piece('3900000099', 1)], { draft: true, releaseFull: true, page: 13, sheetIndex: 13 });
     LF.configure({ shared: { between: () => [{ orderId: '3900000099', label: 'Order 3900000099', customer: 'A. Buyer', thumb: null, total: 2, ids: [], here: 'GF Sheet 13', there: ['GF Sheet 14'], hereIds: ['fresh'], thereIds: ['gone'], pieces: [], locked: [] }], groupOf: () => null, enrich: () => {} } });
     p = await LF.plan({ kind: 'sheet', id: 'fresh', to: { newSet: true } }); assert.equal(p.needs[0].key, 'sharedOrders'); assert.deepEqual(p.needs[0].items.map(i => i.orderId), ['3900000099']); assert.equal(p.needs[0].items[0].customer, 'A. Buyer');
     LF.configure({ shared: null }); LF.hooks.shared = null;
@@ -195,7 +195,7 @@ const X = '3900000001', Y = '3900000002', Z = '3900000003', W = '3900000004', P 
     LF.configure({ live: liveHook });
 
     // ── I. nothing is lost when the write fails ──
-    mk('boom-a', [piece('3900000050', 1)], { draft: true, page: 20, sheetIndex: 20 }); mk('boom-b', [piece('3900000050', 2)], { draft: true, page: 21, sheetIndex: 21 });
+    mk('boom-a', [piece('3900000050', 1)], { draft: true, releaseFull: true, page: 20, sheetIndex: 20 }); mk('boom-b', [piece('3900000050', 2)], { draft: true, releaseFull: true, page: 21, sheetIndex: 21 });
     const snap = sheetsSnapshot(); LF.configure({ include: async () => { throw new Error('the cloud said no'); } });
     p = await LF.plan({ kind: 'sheet', id: 'boom-a', to: { set: 'set-3' } }); assert.equal(p.ok, true, JSON.stringify(p.needs));
     c = await LF.commit(p, { by: 'Paul', confirmed: ['together'] }); assert.equal(c.ok, false); assert(/cloud said no/.test(c.error)); assert.equal(sheetsSnapshot(), snap, 'a failed move changes nothing');
