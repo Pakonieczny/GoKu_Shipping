@@ -145,6 +145,7 @@ const SHOTS = process.argv[2] || process.env.SHOTS || '';
     // Save (the page's own save path stubbed to say ok: nothing is written) ends it too
     await page.evaluate(() => { window.__saveWas = Engrave.saveSetup; Engrave.saveSetup = async () => ({ ok: true }); });
     await page.click('#egQueue .engp [data-engp=save]'); await R.settle(page, 300);
+    if (await page.$('#egQueue .engp [data-engp=why]')) { await page.click('#egQueue .engp [data-engp=why]'); await R.settle(page, 300); }   // (ENGWHY: a Save that overrides the system's choice asks why first; the first quick button answers)
     check((await drafts()).length === 0, 'Save ends the staged edit');
     await page.evaluate(() => { Engrave.saveSetup = window.__saveWas; });
 

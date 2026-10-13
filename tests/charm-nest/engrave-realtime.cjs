@@ -111,6 +111,41 @@ const INSTRUMENT = String.raw`(() => {
       const top = per.reduce((p, q) => q.score > p.score ? q : p, per[0]);
       return { t: al.t, ncc: r2(al.ncc), nF: top.nF, nG: top.nG, hitF: top.hitF, hitG: top.hitG, rad: top.rad, score: top.score };
     },
+    async textLook(a64, f64, g64, p64) {   // SIZE- AND PLACE-INDEPENDENT: take only the engraving's ink (the picture's ink that the charm alone, P, does not have), cut it to its own box, and compare its SHAPE with the right drawing's engraving (F) and with the old one's (G)
+      const A = await load(a64), F = await load(f64), G = await load(g64), P = await load(p64);
+      if (!A.box || !F.box || !G.box || !P.box) return { err: 'blank picture' };
+      const GW = 72, GH = 28;
+      const textOf = (X, grow) => {   // ink of X that is not near the charm's ink (mapped into X's frame), as a list of points and its box
+        const sx = P.box[2] - P.box[0], sy = P.box[3] - P.box[1], ax = X.box[2] - X.box[0], ay = X.box[3] - X.box[1];
+        const pk = new Uint8Array(P.m.w * P.m.h); for (let y = 0; y < P.m.h; y++) for (let x = 0; x < P.m.w; x++) if (P.m.ink[y * P.m.w + x]) pk[y * P.m.w + x] = 1;
+        const near = (px0, py0) => { for (let dy = -grow; dy <= grow; dy++) for (let dx = -grow; dx <= grow; dx++) { const xx = px0 + dx, yy = py0 + dy; if (xx >= 0 && yy >= 0 && xx < P.m.w && yy < P.m.h && pk[yy * P.m.w + xx]) return true; } return false; };
+        const pts = []; let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+        for (let y = X.box[1]; y < X.box[3]; y++) for (let x = X.box[0]; x < X.box[2]; x++) if (X.m.ink[y * X.m.w + x]) {
+          const px0 = Math.round(P.box[0] + (x - X.box[0]) * sx / ax), py0 = Math.round(P.box[1] + (y - X.box[1]) * sy / ay);
+          if (!near(px0, py0)) { pts.push(x, y); if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        }
+        return { pts, box: [x0, y0, x1 + 1, y1 + 1] };
+      };
+      // the words may be turned (the preview keeps the box's angle, a fresh fit may choose another): turn the ink so that its long axis is level (principal axis), then cut it to its own box
+      const grid = T => {
+        const g = new Float32Array(GW * GH), n = T.pts.length / 2; if (n < 20) return g;
+        let mx = 0, my = 0; for (let i = 0; i < T.pts.length; i += 2) { mx += T.pts[i]; my += T.pts[i + 1]; } mx /= n; my /= n;
+        let cxx = 0, cyy = 0, cxy = 0; for (let i = 0; i < T.pts.length; i += 2) { const dx = T.pts[i] - mx, dy = T.pts[i + 1] - my; cxx += dx * dx; cyy += dy * dy; cxy += dx * dy; }
+        const th = 0.5 * Math.atan2(2 * cxy, cxx - cyy), c = Math.cos(th), s = Math.sin(th), rp = [];
+        let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (let i = 0; i < T.pts.length; i += 2) { const dx = T.pts[i] - mx, dy = T.pts[i + 1] - my, X = dx * c + dy * s, Y = -dx * s + dy * c; rp.push(X, Y); if (X < x0) x0 = X; if (X > x1) x1 = X; if (Y < y0) y0 = Y; if (Y > y1) y1 = Y; }
+        const bw = Math.max(1, x1 - x0), bh = Math.max(1, y1 - y0);
+        for (let i = 0; i < rp.length; i += 2) { const cx = Math.min(GW - 1, Math.floor((rp[i] - x0) / bw * GW)), cy = Math.min(GH - 1, Math.floor((rp[i + 1] - y0) / bh * GH)); g[cy * GW + cx] = 1; }
+        return g;
+      };
+      const flip = g => { const o = new Float32Array(g.length); for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) o[y * GW + x] = g[(GH - 1 - y) * GW + (GW - 1 - x)]; return o; };
+      const blur = g => { const o = new Float32Array(g.length); for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) { let v = 0, n = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const yy = y + dy, xx = x + dx; if (yy >= 0 && yy < GH && xx >= 0 && xx < GW) { v += g[yy * GW + xx]; n++; } } o[y * GW + x] = v / n; } return o; };
+      const ta = textOf(A, 3), tf = textOf(F, 2), tg = textOf(G, 2);
+      if (ta.pts.length < 40 || tf.pts.length < 40) return { err: 'no engraving ink found', nA: ta.pts.length / 2, nF: tf.pts.length / 2 };
+      const a = blur(grid(ta)), f = blur(grid(tf)), g = blur(grid(tg));
+      const af = flip(a), nf = Math.max(ncc(a, f), ncc(af, f)), ng = Math.max(ncc(a, g), ncc(af, g));
+      const asp = o => { const w = o.box[2] - o.box[0], h = o.box[3] - o.box[1]; return h ? w / h : 0; };
+      return { nccF: r2(nf), nccG: r2(ng), score: r2(nf - ng), textAspect: r2(asp(ta)), refAspect: r2(asp(tf)), nA: ta.pts.length / 2, nF: tf.pts.length / 2 };
+    },
     async cover(a64, with64, no64) {   // is the engraving that the reference has on the charm (cells with text, not in the charm-only picture) drawn in A? (one cell of tolerance each way)
       const A = await load(a64), W = await load(with64), O = await load(no64);
       if (!A.box) return { err: 'blank picture' };
@@ -132,6 +167,7 @@ const INSTRUMENT = String.raw`(() => {
       let cv;
       if (kind === 'text') cv = Engrave.renderBack(job, px, { grid: false, hatch: false });
       else if (kind === 'work') cv = Engrave.renderBack(job, px, { grid: true, editable: true });
+      else if (kind === 'workPlain') cv = Engrave.renderBack(Object.assign({}, job, { fit: null }), px, { grid: true, editable: true });
       else if (kind === 'plain') cv = Engrave.renderBack(Object.assign({}, job, { fit: null }), px, { grid: false, hatch: false });
       else { const ch = job.editCharm || Pool.charmOf(job.copies[0]); cv = Engrave.renderFront(kind === 'front' ? ch : Object.assign({}, ch, { members: [ch.outline] }), px, {}); }
       return cv && cv.toDataURL ? cv.toDataURL('image/png').split(',')[1] : null;
@@ -248,6 +284,8 @@ async function partDetail(w, made) {
   await R.openEngraveDetail(w, 'back', { face: 'back' }); await R.settle(page, 900);
   const tsz = (await sizeOf(page, SEL.thumb('back'))) || { w: 104, h: 104 };
   const refImg = {}; for (const [k, key] of [['base', refs.base], ['anna', refs.anna], ['marck', refs.marck]]) { refImg[k] = { thumb: await boxed(page, key, 'text', tsz.w, tsz.h, false), work: await refs.get(key, 'work', 400) }; }
+  const plainWork = await refs.get(refs.base, 'workPlain', 400);   // the charm alone, drawn the way the work area draws it (the engraving's ink is what the picture has beyond it)
+  const TEXT_OK = lk => !!lk && !lk.err && lk.nccF >= 0.75 && lk.score >= 0.2;   // calibrated on the work area at rest (+0.68, shape 0.95), on typed words and a picked font in a second implementation (+0.69 / +0.34, shape 0.96 / 0.87); a picture still showing the old words or font: -0.37 or less, shape 0.58 or less
   const SENSE_T = 0.15;   // thumbnails (calibrated on the controls: a right thumbnail of another renderer scores +0.41 for other words and +0.23 for another font, the old picture scores -0.08 or less, an identical drawing +0.95)
   const SENSE = 0.3;   // calibrated on the controls: the work area at rest scores +0.58 against its own order (S2) and a thumbnail drawn by the app's renderer +0.95 (I1); a picture that did not change scores negative; 0.3 = clearly closer to the right words / font than to the old ones
   const chRefs = { plain: await boxed(page, refs.base, 'plain', tsz.w, tsz.h, false), front: await boxed(page, refs.base, 'front', tsz.w, tsz.h) };
@@ -269,7 +307,8 @@ async function partDetail(w, made) {
   const cpB = await charmPic(sb, chRefs);
   check('S1 the detail opens on the system\'s choice: mode back, the customer\'s words, the chosen font', 'auto', start.open && start.mode === 'back' && start.words === 'Name One' && /stylish/i.test(String(start.fontLabel)), `mode ${start.mode}, words "${start.words}", font "${start.fontLabel}"`);
   check('S1b a back-only necklace shows only the Back face on the card', 'smart', start.open && start.faces.length === 1 && start.faces[0].face === 'back', `faces shown ${JSON.stringify((start.faces || []).map(f => f.face))}`);
-  check('S2 work area starts as the real charm with the engraving in the system\'s font (the instrument\'s own control)', 'world', await (async () => { if (!sw) return false; const l = await rtw(page, 'look', sw, refImg.base.work, refImg.anna.work); return l.nccF >= 0.7 && l.score >= SENSE; })(), 'the work area against the app\'s own rendering of that order: ' + JSON.stringify(sw ? await rtw(page, 'look', sw, refImg.base.work, refImg.anna.work) : null));
+  const s2 = sw ? await rtw(page, 'textLook', sw, refImg.base.work, refImg.anna.work, plainWork) : null;
+  check('S2 work area starts as the real charm with the engraving in the system\'s font (the instrument\'s own control)', 'world', TEXT_OK(s2), 'the work area\'s engraving against the app\'s own rendering of that order: ' + JSON.stringify(s2));
   check('T0 the back thumbnail at rest has the charm drawing in it, not only text', 'thumb', cpB.ok, cpB.ev + `; engpvDraw children ${start.faces[0] ? start.faces[0].drawKids : '-'}`);
 
   const hl0 = await hiliteFacts(page);
@@ -309,8 +348,8 @@ async function partDetail(w, made) {
           const mv = await rtw(page, 'move', t.before.work, t.tick.work);
           check(`${label} · work area moves the engraving in the same tick`, 'work', mv.size && ch1.diff > 0 && (Math.hypot(mv.dx, mv.dy) >= 1 || ch1.diff >= 0.002) && same.diff <= 0.003, `pressing "${o.dir}": the engraving moved ${f2(mv.dx)} px across and ${f2(mv.dy)} px down at the tick (${mv.nNew} new ink px, ${mv.nLost} gone), ${f2(same.diff * 100)}% more after settling${lateTxt}; the job's own text position (mm) ${JSON.stringify((t.before.facts.job || {}).centre)} -> ${JSON.stringify((t.tick.facts.job || {}).centre)} -> ${JSON.stringify((t.settled.facts.job || {}).centre)}`);
         } else {
-          const lk = await rtw(page, 'look', t.tick.work, o.work.right.work, o.work.wrong.work);
-          check(`${label} · work area shows the new ${o.work.what} in the same tick, before Save`, 'work', !lk.err && ch1.diff > 0 && lk.nccF >= 0.7 && lk.score >= SENSE && same.diff <= 0.003, `${f2(ch1.diff * 100)}% of the picture changed at the tick; looks like the new ${o.work.what} at ${f2(lk.nccF)} vs the old ${f2(lk.nccG)}, ${lk.nD} telling cells, score ${f2(lk.score)}; ${f2(same.diff * 100)}% more after settling${lateTxt}`);
+          const lk = await rtw(page, 'textLook', t.tick.work, o.work.right.work, o.work.wrong.work, plainWork);
+          check(`${label} · work area shows the new ${o.work.what} in the same tick, before Save`, 'work', ch1.diff > 0 && TEXT_OK(lk) && same.diff <= 0.003, `${f2(ch1.diff * 100)}% of the picture changed at the tick; the engraving's shape matches the new ${o.work.what} at ${lk.err ? lk.err : f2(lk.nccF)} vs the old ${lk.err ? '-' : f2(lk.nccG)} (score ${lk.err ? '-' : f2(lk.score)}, the words are ${lk.err ? '-' : f2(lk.textAspect)} wide per high, the new ones would be ${lk.err ? '-' : f2(lk.refAspect)}); ${f2(same.diff * 100)}% more after settling${lateTxt}`);
         }
       }
     }

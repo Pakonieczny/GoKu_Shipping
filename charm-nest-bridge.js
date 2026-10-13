@@ -3346,11 +3346,24 @@ const Pool = window.Pool = (() => {
         }
         return;
       }
+      // REVHOLD: an order in Review (or one a person just answered with a pick) keeps its piece on its sheet, so the card that would take it off to make it up again is not offered: the line is left as it was and the log says so once
+      if (keepsPlace(row)) {
+        if (!setToldFixed.has(row.key)) {
+          setToldFixed.add(row.key); const line = `a saved link makes this line ${one ? want[0] : "a set of charms (" + want.join(" + ") + ")"}, but its piece stays on its sheet because the order was sent to Review: the sheet keeps ${[...new Set(made)].join(" + ") || "its piece"}`;
+          agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · ${line}`);
+          try { TL.line(row, "interpreted", { id: `${row.key}.relink.kept.${TL.hash(want.join("+") + "|" + made.join(","))}`, once: true, text: ("Saved link: " + line).slice(0, 200), data: { sku: want[0], was: made.slice(0, 6) } }); } catch (_) {}
+        }
+        return;
+      }
       row.changePending = true; row.repoolChanged = true;
       const was = made.length ? (one ? [...new Set(made)] : made).join(" + ") : "nothing yet", pcs = one ? Math.max(1, Math.round(+sp.pieceCount || expect.length)) : expect.length;
       Review.add({ kind: "orderChanged", key: "chg:" + row.key, row, old: { text: "", spec: { designSku: was, material: sp.material, form: sp.form || "", size: sp.size || "", personalization: sp.personalization } },
         why: `Now ${one ? want[0] : (want.length === 2 ? "two" : want.length) + " charms, " + want.join(" + ")} (a saved link). Accept the new order to make it up again as ${pcs} piece${pcs === 1 ? "" : "s"}: the old ${was} comes off the open sheet it is on. Nothing cut or released is touched.` });
     } catch (e) { console.warn("[bridge] saved link not noticed:", e && e.message); }
+  }
+  /** REVHOLD: the line's pieces are on a sheet and the order is in Review (or a person just answered its Review by picking the charm): they stay where they are (never lifted, never nested again). Derived from the review record (CharmNestReviewHold), not remembered. */
+  function keepsPlace(row) {
+    try { const rid = row && row.order && row.order.receiptId, H = window.CharmNestReviewHold; if (!rid || !H || typeof H.keepsPlace !== "function" || !H.keepsPlace(rid)) return false; const on = index().charm; return (row.poolIds || []).some(id => !!id && on.has(id)); } catch (_) { return false; }
   }
   function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); delete k.frontAt; return k; }   // (a copy never carries another order's place in the queue)
   /** §6.4 · one pooled charm per copy of the line, on the material card the ORDER says. */
@@ -3773,7 +3786,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched };
+  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, keepsPlace, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -5765,8 +5778,9 @@ const Engrave = window.Engrave = (() => {
     try {
       const t = String(job.text || "").trim(), d = job.decision || {}, at = (how === "skipped" ? job.decidedAt : d.at) || Date.now();
       const dsc = discSay(job), of = dsc ? ` · ${dsc}` : "", fw = facedJob(job) ? (isFront(job) ? "Front " : "Back ") : "";   // (a line with a front names the face; every other line reads as it did)
-      const text = how === "none" ? `No ${fw ? fw.toLowerCase() + "engraving" : "engraving"}${of} — decided by ${by}` : how === "skipped" ? `${fw ? fw + "engraving" : "Engraving"} skipped${of} by ${by} — cut plain` : `${fw ? fw + "engraving" : "Engraving"} ${d.note === "edited" ? "edited" : "confirmed"}${of} by ${by}: “${t.replace(/\n/g, " / ")}”`;
-      TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null, ...(isFront(job) ? { face: "front" } : {}) } });
+      const why = how !== "skipped" && d.why ? ` (${String(d.why).slice(0, 80)})` : "";   // (ENGWHY: the person's reason for an override rides in this existing line; no extra write)
+      const text = how === "none" ? `No ${fw ? fw.toLowerCase() + "engraving" : "engraving"}${of} — decided by ${by}${why}` : how === "skipped" ? `${fw ? fw + "engraving" : "Engraving"} skipped${of} by ${by} — cut plain` : `${fw ? fw + "engraving" : "Engraving"} ${d.note === "edited" ? "edited" : "confirmed"}${of} by ${by}${why}: “${t.replace(/\n/g, " / ")}”`;
+      TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null, ...(d.why && how !== "skipped" ? { why: String(d.why).slice(0, 80) } : {}), ...(isFront(job) ? { face: "front" } : {}) } });
     } catch (_) {}
   }
   /** The words of each disc of a counted line, from its personalisation field alone (charm-nest-engrave-sides.js splitWords), or null when the note does not say plainly. */
@@ -6336,7 +6350,7 @@ const Engrave = window.Engrave = (() => {
     const keep = job.nudged && job.fit ? { centre: job.fit.centre.slice(), angle: job.fit.angle } : null;   // (a position a person set stays through new words or a new font, as fitNewWords keeps it)
     job.lineInput = null; job.lineMode = "auto"; job.wantSize = null; job.fit = null;
     Object.assign(job, { text: seed.text, lines: seed.lines.slice(), source: "person", quote: null, confidence: 1, questions: [], claudeReasoning: null, requests: { side: face, font: null, handwriting: false, image: false },
-      wordsSource: "spec.engraving", decision: { by, at: Date.now(), text: seed.text, note: "edited" }, faceFontWord: seed.fontWord || null });   // (faceFontWord: the font the person picked for this face, which ensureJobFont fits it in; null = the line's font)
+      wordsSource: "spec.engraving", decision: { by, at: Date.now(), text: seed.text, note: "edited", ...(seed.why ? { why: seed.why } : {}) }, faceFontWord: seed.fontWord || null });   // (faceFontWord: the font the person picked for this face, which ensureJobFont fits it in; null = the line's font)
     if (seed.fontWord) job.fontAsked = seed.fontWord;
     wordsEvent(job, by, was, "words"); Review.remove("eng:" + job.key);
     await setReady(job);
@@ -6353,7 +6367,7 @@ const Engrave = window.Engrave = (() => {
       now: () => Date.now(), store: setupStore, jobsOf: line => jobsOf(line), ensureJobs: line => { raiseCandidate(line); const had = jobsOf(line), out = ensureJobs(line); for (const j of had) if (items().get(j.key) !== j) dropped.push(j.key); return out; },
       slots: line => { const S = SIDES(); if (!S) return [null]; try { return S.plan(sidesCtx, line, jobsOf(line)).slots || [null]; } catch (_) { return [null]; } },
       remove: removeJob, skip: (job, by) => skip(job, by), reopen: reopenJob, seed: seedWords,
-      setNone: (job, why, by) => { const was = job.text; setNone(job, why); if (by) { job.decision = { by, at: Date.now(), none: true }; wordsEvent(job, by, was, "none"); } },
+      setNone: (job, why, by, reason) => { const was = job.text; setNone(job, why); if (by) { job.decision = { by, at: Date.now(), none: true, ...(reason ? { why: reason } : {}) }; wordsEvent(job, by, was, "none"); } },
       changed: (line, res) => { try { if (res && Array.isArray(res.removed)) for (const k of dropped) if (!res.removed.includes(k)) res.removed.push(k); } catch (_) {} try { const S = SIDES(); if (S && line._engraveLinked) S.linkParent(sidesCtx, line, jobsOf(line)); } catch (_) {} try { Orders.render(); } catch (_) {} try { render(); } catch (_) {} try { Review.render(); } catch (_) {} try { if (window.OrderWin && OrderWin.isOpen && OrderWin.isOpen()) OrderWin.nudge(); } catch (_) {} try { RunCtl.poke(); } catch (_) {} }
     };
   }
@@ -6532,9 +6546,118 @@ const Engrave = window.Engrave = (() => {
   }
   window.addEventListener("online", () => { resumeBacks(true); if (F_.emojiError) loadFonts(true).catch(() => {}); });
 
+  /* ── 7.5b · the WORK AREA follows the staged edit (ENGWORK; Paul, 12 Oct 2026, round 2: "nothing seems to happen in real-time" and "The text in the work area does not show the preview of the selected text font style") ──
+     The engraving panel (charm-nest-engrave-panel.js) holds the words, the font and the mode as a staged edit until Save, and Save re-seeds the job and fits it again, so the big drawing kept the OLD words in the OLD font until then.
+     draftFit(jobKey, staged) draws the staged words in the staged font in the work area at once, from the very pieces refit() uses: the opentype paths of the installed font file (ensureJobFont's choice: the face's own font word,
+     else the piece's font; capitals for Ace), G.reflowAt on the job's own safe-area mask at the job's own centre, angle and wanted size. The shapes are the ones that would be cut; the place is the job's, so a nudge (the panel's
+     position buttons act on the job at once) or a drag moves the draft with it (it is placed again from the job's fit whenever that changes).
+     A DRAFT is never anything else: it lives only in DRAFTS here (keyed by the job's key), never on the job, so job.fit, job.lines, job.text, job.wantSize, job.nudged, the session checkpoint (which copies jobs), the laser file, the
+     saved record, Firebase and the paid Claude look (claudeRead / reRead) never see it. Only the editable canvas of a card that carries the panel draws it (renderBack option `draft`); the paid look's picture, the sheets' back
+     previews and every other picture draw the committed fit. A real Save (seedWords + fitJob), Cancel (staged = null), Approve, Skip or any state change ends it. Local compute only, same tick; a font that is still loading
+     keeps the previous drawing and shows a small "Loading font" spinner; nothing waits. */
+  const DRAFTS = new Map();   // job key -> { staged: { text, fontWord, mode, position }, sig, fit (what to draw; null = the committed fit stands), input, font, wait, note, token }
+  const draftLines = text => String(text == null ? "" : text).split(/\r?\n/).map(s => s.replace(/\s+/g, " ").trim()).filter(Boolean);
+  const draftable = job => !!(job && !job.editingBack && job.state === "review" && job.fit && job.view && job.mask && !job.approvalPreparing && !job.stamping && !job.backSaving);
+  /** Everything of the committed placement a draft is made from: when it changes (a nudge, a drag, a size, a turn, a new fit) the draft is placed again. */
+  const draftSig = job => JSON.stringify([job.fit.centre, job.fit.angle, job.fit.size, job.fit.weight, job.wantSize, job.lineGap, job.fontKey, job.lines, job.lineInput, job.mask.cx, job.mask.cy, job.mask.w, job.mask.h]);
+  /** The installed font a staged face is engraved in, as ensureJobFont settles it after a Save has cleared the fit: the face's own font word (the drop-down), else the piece's own font. */
+  function draftFontId(job, fontWord) {
+    const own = fontWord ? O.fontOfPhrase(fontWord) : "";
+    if (own) return own;
+    try { return O.pieceFont(job.row && job.row.spec, pieceIndexOf(job), job.face).id; } catch (_) { return job.fontKey || O.DEFAULT_FONT; }
+  }
+  /** The loaded set of an installed font (Source Sans 3 is F_ itself), null while it is not loaded. */
+  const draftSet = id => (id === O.DEFAULT_FONT ? (F_.ok ? F_ : null) : (FONT_SETS.get(id) && FONT_SETS.get(id).ok ? FONT_SETS.get(id) : null));
+  let draftCssDone = false;
+  function draftCss() {
+    if (draftCssDone || document.getElementById("engwCss")) { draftCssDone = true; return; }
+    draftCssDone = true; const s = document.createElement("style"); s.id = "engwCss";
+    s.textContent = ".backHost{position:relative}.engwNote{position:absolute;left:8px;bottom:8px;display:inline-flex;align-items:center;gap:6px;max-width:calc(100% - 16px);padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.9);border:1px solid var(--line,#e4ddd0);font:11.5px var(--sans,system-ui);color:var(--ink70,#5b554c);pointer-events:none}";
+    (document.head || document.documentElement).appendChild(s);
+  }
+  /** The small status in the work area: "Loading font" with the spinner while the staged font is being fetched, or the one reason a staged word could not be drawn. */
+  function draftNote(card, rec) {
+    const host = card && card.querySelector && card.querySelector(".backHost"); if (!host) return;
+    let n = host.querySelector(".engwNote"); const label = rec ? (rec.wait === "font" ? "Loading font" : rec.note || "") : "";
+    if (!label) { if (n) n.remove(); return; }
+    draftCss();
+    if (!n) { n = document.createElement("div"); n.className = "engwNote"; n.setAttribute("role", "status"); host.appendChild(n); }
+    const html = (rec.wait === "font" ? '<span class="owSpin" aria-hidden="true"></span>' : "") + esc(label);
+    if (n.dataset.k !== html) { n.dataset.k = html; n.innerHTML = html; n.setAttribute("aria-label", label); }
+    const bc = host.querySelector("canvas");   // (in the corner of the drawing, not of the whole work area, which is taller than the picture)
+    if (bc && bc.offsetWidth) { n.style.left = (bc.offsetLeft + 8) + "px"; n.style.bottom = Math.max(8, host.clientHeight - (bc.offsetTop + bc.offsetHeight) + 8) + "px"; }
+  }
+  /** Works out what the work area draws for a draft (sets rec.fit / rec.wait / rec.note); never touches the job. */
+  function draftCompute(job, rec) {
+    const st = rec.staged, fw = faceWord(job);
+    rec.sig = draftSig(job); rec.wait = ""; rec.note = "";
+    const lines0 = draftLines(st.text), on = !st.mode || st.mode === "both" || st.mode === fw;
+    if (!on || !lines0.length) { rec.fit = { empty: true, glyphs: [], centre: job.fit.centre, angle: job.fit.angle || 0, size: job.fit.size, lines: [] }; rec.input = []; return rec; }   // (this face is not engraved in the staged mode, or has no words: nothing is cut on it)
+    const id = draftFontId(job, st.fontWord), lines = lines0.map(l => O.capsText(l, id));
+    if ((id === (job.fontKey || O.DEFAULT_FONT)) && [job.lines, job.lineInput].some(l => Array.isArray(l) && l.join("\n") === lines.join("\n"))) { rec.fit = null; rec.input = null; return rec; }   // (the words and the font the face already has: the fitted drawing stands as it is)
+    let set = draftSet(id);
+    if (!set) {
+      const known = FONT_SETS.get(id);
+      if (id !== O.DEFAULT_FONT && known && !known.ok && !known.loading && known.error && Date.now() - (known.triedAt || 0) < 60000) { set = draftSet(O.DEFAULT_FONT); rec.note = "Font not available"; }   // (as ensureJobFont does: Source Sans 3)
+      if (!set) {
+        rec.wait = "font"; const token = rec.token = (rec.token || 0) + 1;   // (the previous drawing stays; the font is fetched; the draft is made as soon as it is there)
+        Promise.resolve(id === O.DEFAULT_FONT ? loadFonts() : loadFontSet(id)).catch(() => {}).then(() => { if (DRAFTS.get(job.key) === rec && rec.token === token) { rec.sig = ""; draftRepaint(job); } });
+        return rec;
+      }
+    }
+    if (!G.glyphCoverage(set.Regular, lines.join("\n")).ok) { rec.note = "Not in this font"; return rec; }   // (the previous drawing stays)
+    const font = (job.fit.weight === "Semibold" && set.Semibold) || set.Regular, pos = st.position || {}, want = pos.size ?? job.wantSize ?? job.fit.size;
+    const f = G.reflowAt(lines, font, job.mask, fitOpts(job, true), { centre: pos.centre || job.fit.centre, angle: pos.angle ?? job.fit.angle, size: want }, "auto");   // (refit's own call: the stroke measure too, so SMALL / THIN STROKES say it before a Save)
+    if (!f.ok) { rec.note = "No room for these words"; return rec; }
+    f.atLimit = f.size < want - .005; f.weight = job.fit.weight;
+    rec.fit = f; rec.input = lines; rec.font = font; rec.fontId = id;
+    return rec;
+  }
+  /** What the editable canvas of `job` draws in place of job.fit, or null when nothing differs from the committed fit. */
+  function draftPaint(job) {
+    const rec = DRAFTS.get(job.key); if (!rec) return null;
+    if (!draftable(job)) { DRAFTS.delete(job.key); return null; }
+    if (rec.sig !== draftSig(job)) draftCompute(job, rec);
+    return rec.fit || null;
+  }
+  /** The provisional lines and font of a drag while a draft is staged (so the words that move are the staged ones). */
+  const draftSource = job => { const rec = job && job.key ? DRAFTS.get(job.key) : null; return rec && rec.fit && !rec.fit.empty && rec.input && rec.font && draftable(job) ? { lines: rec.input, font: rec.font } : null; };
+  /** Draws the card in front again (the drawing, the cap-height readout, the status). */
+  function draftRepaint(job) {
+    const c = EG.card; if (!c || !c.isConnected || EG.cardKey !== job.key) return;
+    const bc = c.querySelector(".backHost canvas"); if (bc && bc._paint) bc._paint();
+    const rec = DRAFTS.get(job.key), none = !!(rec && rec.fit && rec.fit.empty), f = rec && rec.fit && !none ? rec.fit : job.fit, cap = c.querySelector("[data-cap]");
+    if (cap && f && Number.isFinite(f.capMm)) cap.textContent = capText(f);
+    const rh = c.querySelector(".reviewIdentity") || c.querySelector(".rh");   // (the SMALL / THIN STROKES chips say what is drawn, as refresh() keeps them)
+    if (rh && f) { rh.querySelectorAll(".small").forEach(n => n.remove()); if (!none && f.small) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>`); if (!none && f.thin) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>`); }
+    draftNote(c, rec);
+  }
+  /** THE ONE CALL of the panel (onDraft): the staged edit of ONE face job, drawn in the work area at once. staged = { text, fontWord, mode, position? } (the panel's own words for that face: the textarea, the font
+   *  drop-down's word ('' = the line's font), the staged mode; position: { centre, angle, size } only when a caller wants a place other than the job's) or null (Cancel / Save / nothing staged: the committed fit is
+   *  drawn again). -> { ok, cleared?, same?, pending?, why?, note? }. Never saved, approved or sent anywhere; never changes the job; no paid look. */
+  function draftFit(jobKey, staged) {
+    const job = items().get(String(jobKey == null ? "" : jobKey));
+    if (!job) return { ok: false, why: "no job" };
+    if (!staged || typeof staged !== "object") { const had = DRAFTS.delete(job.key); if (had) draftRepaint(job); return { ok: true, cleared: true }; }
+    if (!draftable(job)) { const had = DRAFTS.delete(job.key); if (had) draftRepaint(job); return { ok: false, why: "not placed" }; }
+    const rec = DRAFTS.get(job.key) || { token: 0 };
+    rec.staged = { text: String(staged.text == null ? "" : staged.text), fontWord: String(staged.fontWord || ""), mode: staged.mode || "", position: staged.position || null };
+    draftCompute(job, rec);
+    if (!rec.fit && !rec.wait && !rec.note) { const had = DRAFTS.delete(job.key); if (had) draftRepaint(job); return { ok: true, same: true }; }
+    DRAFTS.set(job.key, rec); draftRepaint(job);
+    return { ok: true, pending: rec.wait === "font", ...(rec.note ? { note: rec.note } : {}) };
+  }
+  /** What the work area draws for a face now while it is staged, for another picture of the same face: { lines, fontId, glyphs, centre, angle, size, empty } or null when the fitted engraving stands. */
+  function draftOf(jobKey) {
+    const job = items().get(String(jobKey == null ? "" : jobKey)); if (!job) return null;
+    const f = draftPaint(job); if (!f) return null;
+    const rec = DRAFTS.get(job.key);
+    return { lines: (f.lines || []).slice(), fontId: rec && rec.fontId || null, glyphs: f.glyphs, centre: f.centre, angle: f.angle || 0, size: f.size, empty: !!f.empty };
+  }
+
   /* ── 7.6 · back files, one per piece, only after approval ── */
-  function renderBack(job, px, { grid = false, hatch = true, editable = false, include = null } = {}) {
-    const view = job.view, mask = job.mask, fit = job.fit; const cv = document.createElement("canvas"); cv._editable = editable;
+  function renderBack(job, px, { grid = false, hatch = true, editable = false, include = null, draft = false } = {}) {
+    const view = job.view, mask = job.mask, fit = job.fit; const cv = document.createElement("canvas"); cv._editable = editable; cv._draft = !!draft;
     const handles = view.members.reduce((a, s) => [Math.min(a[0], s.bbox[0]), Math.min(a[1], s.bbox[1]), Math.max(a[2], s.bbox[2]), Math.max(a[3], s.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
     /* px is the long side, framed as before on the members' bounds with 3 mm around them (the pictures written with a
        sheet keep their framing), or the editor's [width, height] box. That one frames the outline as drawn, and the
@@ -6565,12 +6688,13 @@ const Engrave = window.Engrave = (() => {
     const glyphsOf = g => { ctx.fillStyle = "#111"; for (const gl of g) { ctx.beginPath(); for (const c of gl.cmds) { if (c.type === "M") { const p = tx(c.x, c.y); ctx.moveTo(p[0], p[1]); } else if (c.type === "L") { const p = tx(c.x, c.y); ctx.lineTo(p[0], p[1]); } else if (c.type === "C") { const a = tx(c.x1, c.y1), b2 = tx(c.x2, c.y2), d2 = tx(c.x, c.y); ctx.bezierCurveTo(a[0], a[1], b2[0], b2[1], d2[0], d2[1]); } else if (c.type === "Q") { const a = tx(c.x1, c.y1), d2 = tx(c.x, c.y); ctx.quadraticCurveTo(a[0], a[1], d2[0], d2[1]); } else if (c.type === "Z") ctx.closePath(); } ctx.fill("nonzero"); } };
     cv._paint = (prov) => {
       ctx.clearRect(0, 0, cv.width, cv.height); ctx.drawImage(outline, 0, 0);
-      const gl = prov && prov.glyphs ? prov.glyphs : (job.fit ? job.fit.glyphs : []);
-      const centre = prov && prov.centre ? prov.centre : (job.fit ? job.fit.centre : null);
-      const angle = prov && prov.angle != null ? prov.angle : (job.fit ? job.fit.angle || 0 : 0);
+      const dr = cv._draft ? draftPaint(job) : null, src = dr || job.fit;   // (the work area of a card with the panel: the staged words in the staged font, in place of the committed fit, until Save / Cancel; see 7.5b)
+      const gl = prov && prov.glyphs ? prov.glyphs : (src ? src.glyphs : []);
+      const centre = prov && prov.centre ? prov.centre : (src ? src.centre : null);
+      const angle = prov && prov.angle != null ? prov.angle : (src ? src.angle || 0 : 0);
       if (gl.length) glyphsOf(gl);
-      if(cv._editable && job._spacingActive && job.fit?.layout?.rows.length>1) {
-        const layout=job.fit.layout,a=angle*Math.PI/180,ca=Math.cos(a),sa=Math.sin(a);
+      if(cv._editable && job._spacingActive && src?.layout?.rows.length>1) {
+        const layout=src.layout,a=angle*Math.PI/180,ca=Math.cos(a),sa=Math.sin(a);
         const at=(x,y)=>tx(centre[0]+x*ca-y*sa,centre[1]+x*sa+y*ca);
         ctx.save();ctx.strokeStyle="rgba(169,130,63,.65)";ctx.lineWidth=1;ctx.setLineDash([3,3]);
         for(const row of layout.rows) {const left=at(layout.local[0]-2,row.y),right=at(layout.local[2]+2,row.y);ctx.beginPath();ctx.moveTo(...left);ctx.lineTo(...right);ctx.stroke();}
@@ -7727,7 +7851,7 @@ const Engrave = window.Engrave = (() => {
       const paintFlow = () => {
         flowFrame=0;if(!drag)return;
         const centre=drag.pending || drag.c,angle=drag.pendingAngle ?? drag.angle,size=drag.pendingSize ?? drag.want;
-        const f=G.reflowAt(job.lineInput || job.lines,fontFor(job.fit.weight,job),job.mask,{...fitOpts(job,true),measure:false},{centre,angle,size},job.lineMode || "auto");
+        const ds=draftSource(job),f=G.reflowAt(ds ? ds.lines : job.lineInput || job.lines,ds ? ds.font : fontFor(job.fit.weight,job),job.mask,{...fitOpts(job,true),measure:false},{centre,angle,size},ds ? "auto" : job.lineMode || "auto");   // (a drag with words staged moves the staged words)
         if(f.ok){f.atLimit=f.size<size-.005;bc._paint({glyphs:f.glyphs,centre:f.centre,angle:f.angle,mode:drag.mode});const cap=card.querySelector('[data-cap]');if(cap)cap.textContent=capText(f);}
         else bc._paint();
       };
@@ -7805,7 +7929,7 @@ const Engrave = window.Engrave = (() => {
       const full = [side(bw + strip), px0[1]], wide = !!strip && takesStrip(renderBack(job, [64, 64], { editable: true, hatch: false, include: framed })._sizePt, px0, full, r.height, below);
       const px = wide ? full : px0;
       pm.classList.toggle("egWide", wide);
-      const bc = renderBack(job, px, { grid: true, editable: true, include: framed }); framed = bc._map.bb; bc.title = "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys nudge 0.25 mm, with shift they turn 1° · cut-outs and holes stay clear"; backHost.appendChild(bc); wire(bc); markShown(job); syncBoth();
+      const bc = renderBack(job, px, { grid: true, editable: true, include: framed, draft: panelOn }); framed = bc._map.bb; bc.title = "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys nudge 0.25 mm, with shift they turn 1° · cut-outs and holes stay clear"; backHost.appendChild(bc); wire(bc); markShown(job); syncBoth(); if (panelOn) draftNote(card, DRAFTS.get(job.key));
       bc._reframe = () => { if (raf || disposed || bc.classList.contains("drag")) return; mounted = [0, 0]; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); };
       } catch (error) {
         card._previewFailed = true;
@@ -7908,7 +8032,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
@@ -12285,6 +12409,15 @@ const Review = window.Review = (() => {
       add({kind:"heldOrder",key:"held:"+row.order.receiptId,rid:row.order.receiptId,why:`${row.order.receiptId} held — ${row.hold}`,line:row.key});
       agent({run:B.run?.runId},"warn",`${row.order.receiptId}: ${row.hold}`);
       syncOrderItems();Orders.render();RunCtl.poke();return;
+    }
+    // REVHOLD: an order in Review (or one a person just answered with a pick) keeps its place on its sheet. Accepting the new order leaves its pieces where they are, with the drawing they have
+    // (nothing swaps a drawing in place): never lifted, never nested again, and a piece cut or released was left alone above.
+    if(row.repoolChanged && Pool.keepsPlace(row)){
+      row.repoolChanged=false;
+      const kept="Kept on its sheet with its old drawing: the order was sent to Review";
+      try { toast(kept,"warn",6000); } catch(_) {}
+      agent({run:B.run?.runId},"warn",`${row.order.receiptId}: ${kept}`);
+      if(!Pool.onSheets(row)){ row.changePending=false;syncOrderItems();Orders.render();RunCtl.poke();return; }
     }
     // Lifting a hold, or accepting a change that leaves the pieces as they are, keeps the pieces already on sheets:
     // making the line up again put a second copy of each on the intake sheet under the same pool id.
