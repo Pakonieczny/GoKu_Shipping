@@ -2597,6 +2597,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     plain();
   }
   function returnPill() {
+    // (the pill is the one EngraveReturn draws for every start, the order window and the tabs too: one control, one memory, the newest journey in it)
+    const c0 = RET.ctx, ER = window.EngraveReturn;
+    if (c0 && ER && typeof ER.set === "function") {
+      ER.set({ kind: "sheet", label: c0.label, rid: c0.rid, key: c0.key, was: c0.was, back: (approved, rect) => sheetBack(c0, approved, rect), gone: () => { if (RET.ctx === c0) RET.ctx = null; } });
+      return;
+    }
     if (!RET.el) {
       RET.el = h("div", "swReturn"); RET.el.setAttribute("role", "status");
       // in the top bar beside the tabs, where it covers nothing (it was a floating pill over the Engrave bar)
@@ -2632,8 +2638,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const c = RET.ctx; if (!c) return;
     const r = RET.el.getBoundingClientRect();
     dismiss();
+    sheetBack(c, approved, r);
+  }
+  /** The window up again from where the pill is, on the charm it came from. */
+  function sheetBack(c, approved, rect) {
     if (S.mode !== "library") setMode("library");
-    open(c.sheetId, { select: c.poolId, from: "engrave", flash: approved, fromRect: r });
+    open(c.sheetId, { select: c.poolId, from: "engrave", flash: approved, fromRect: rect });
   }
 
   /* ── taking pieces off (Paul, 25 Sep 18:01): one charm, or a whole order off every sheet it is on ──
