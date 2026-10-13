@@ -258,6 +258,7 @@
     for (const sl of Object.keys(pieces)) { const q = pieces[sl]; for (const face of ['front', 'back']) if (!live.includes(face)) delete q[face]; if (!Object.keys(q).length) delete pieces[sl]; }
     if (Object.keys(pieces).length) out.pieces = pieces;
     out.by = str(by); out.at = now == null ? Date.now() : now;
+    { const W = dep('CharmNestEngraveWhy', './charm-nest-engrave-why.js'); if (W && W.fold) W.fold(out, prev, p); }   // (ENGWHY: the reason for a person's override and the system's choice it replaced ride in THIS record: no extra write)
     return out;
   }
 
@@ -304,6 +305,7 @@
     by = str(by).trim(); if (!by) { res.cancelled = true; return res; }
     const prev = line.engravingOverride || null, now = env.now ? env.now() : Date.now();
     const override = buildOverride(line, patch, by, now);
+    const whyText = (() => { const W = dep('CharmNestEngraveWhy', './charm-nest-engrave-why.js'); return W && W.say && patch && patch.reason && override.reason ? W.say(override.reason) : ''; })();   // (the words the order timeline's existing "edited by" line carries)
     // a decided face on a line that is already cut stays as it is: the check is made on the setup this change would give, before anything is stored
     const next = F.setupOf({ spec: (() => { const r = readingOf(line); return r && r !== line.spec.engraving ? Object.assign({}, line.spec, { engraving: r }) : line.spec; })() }, override);
     const before = setupFor(line), pre = consequences(line, env.jobsOf(line), next, before);
@@ -320,7 +322,7 @@
       else {
         const plainWhy = `no engraving - decided by ${by}`;
         if (!setup.faces.length) {
-          for (const j of jobs) { if (j.state === 'none' || j.state === 'skipped') continue; if (DECIDED.includes(j.state)) { await env.skip(j, by); res.plain.push(j.key); } else { env.setNone(j, plainWhy, by); res.none.push(j.key); } }
+          for (const j of jobs) { if (j.state === 'none' || j.state === 'skipped') continue; if (DECIDED.includes(j.state)) { await env.skip(j, by); res.plain.push(j.key); } else { env.setNone(j, plainWhy, by, whyText); res.none.push(j.key); } }
         } else {
           for (const j of rc.drop) { env.remove(j); res.removed.push(j.key); }
           for (const j of rc.keep) { if (j.state === 'skipped' || j.state === 'none') continue; await env.skip(j, by); res.plain.push(j.key); }
@@ -339,7 +341,7 @@
         // a face the person did not touch keeps its job when the words are the same words however the fit laid them out ("NAME" / "ONE" in capitals is "Name One");
         // a face the person edited re-seeds when the words, or the font picked for this face, differ from the job's
         if (touched ? (sameWords(j, seed) && str(j.faceFontWord) === str(seed.fontWord)) : (sameWords(j, seed) || runOf(wordsOfJob(j), fontIdOf(line, face, j.faceFontWord || seed.fontWord || null, at)) === runOf(seed.lines, fontIdOf(line, face, seed.fontWord || j.faceFontWord || null, at)))) continue;
-        await env.seed(j, Object.assign({}, seed, { by })); res.seeded.push(j.key);
+        await env.seed(j, Object.assign({}, seed, { by, ...(whyText ? { why: whyText } : {}) })); res.seeded.push(j.key);
       }
     } catch (e) {
       res.ok = false; res.message = `Your choice is saved, but the placements could not all be updated: ${e && e.message ? e.message : e}. Press Save again to finish.`;

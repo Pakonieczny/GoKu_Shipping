@@ -90,6 +90,7 @@ async function server() {
     srv.st.strictArrays = true;
     const call = async body => JSON.parse((await srv.st.handlers.charmNestLibrary.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(body), queryStringParameters: {} })).body);
     assert.equal((await call({ op: 'listingKindPut', listingId: '1777293722', kind: 'custom', by: 'Paul', title: 'Huggie Charm + Shipping', note: 'Add a huggie charm' })).ok, true);
+    srv.st.put('Charm_Master_Index', 'HUGGIE_3722', { sku: 'HUGGIE_3722' });   // (a link names a design the library holds: REVLINK)
     await call({ op: 'aliasPut', listingId: '1777293722', sku: 'HUGGIE_3722', by: 'Ann', title: 'x' });   // (a SKU answer on the same document: neither touches the other)
     const got = (await call({ op: 'aliasGet' })).aliases['1777293722'];
     assert.equal(got.listingKind.kind, 'custom'); assert.equal(got.listingKind.by, 'Paul'); assert(got.listingKind.at > 0); assert.equal(got.sku, 'HUGGIE_3722', 'the SKU answer is kept beside it');
