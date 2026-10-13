@@ -7841,7 +7841,9 @@ const Engrave = window.Engrave = (() => {
     if (EG.card && EG.card.isConnected && EG.card.dataset.state === "review" && !EG.card._previewFailed && EG.tab === "place") {
       const q2 = withFocus(CNListActivity.select("engrave-place",queuedJobs([...items().values()].filter(j => j.row.state !== "gone")).filter(matchesQ)));
       const f2 = pickFocus(q2);
-      if (f2 && f2.key === EG.cardKey) {
+      // APPRFIX-B: kept only while it is still the card of the job that is in the list AND that job still waits for approval: a card drawn in review whose job left review (words the font cannot engrave, an order changed on Etsy,
+      // a refit) or was replaced by another object under the same key stayed on screen with a live Approve that cardAction / approveOnce dropped without a word. Drawn again, it says what the placement is now.
+      if (f2 && f2.key === EG.cardKey && f2 === EG.card._job && f2.state === "review") {
         // (a card of a row with several pieces is kept only while its pieces are the same ones and the same words: otherwise it is drawn again; the switch itself follows in place)
         const g2 = rowsIn(q2, queueUniverse()).find(r2 => r2.jobs.includes(f2)), pcs = multiJobs(g2);
         if (headSig(pcs) === (EG.card._headSig || "")) { EG.card._switchSync?.(pcs); renderChrome(v, q2); return; }
@@ -8112,7 +8114,7 @@ const Engrave = window.Engrave = (() => {
      Without it (the Review list's card) the counter is counted in rows the same way and there is no switch. */
   function placementCard(job, remaining, ctx) {
     const it = Review.items().find(i => i.key === "eng:" + job.key) || { kind: "placement", key: "eng:" + job.key, row: job.row, job };
-    const card = el("div", "rvItem"); card.dataset.kind = "placement"; card.dataset.state = job.state; card.dataset.key = job.key; card.tabIndex = 0;
+    const card = el("div", "rvItem"); card.dataset.kind = "placement"; card.dataset.state = job.state; card.dataset.key = job.key; card.tabIndex = 0; card._job = job;   // (APPRFIX-B: renderView keeps this card only while it is still the card of THIS job object, in review)
     const r = job.row, sp = r.spec, f = job.fit;
     const fw = faceNoun(faceOfJob(job)), faced = isFrontJob(job) || lineHasFront(job.row);   // (the face this card is the engraving of; faced: the line has a front job, so the card says which face it is)
     const counts = (ctx && ctx.counts) || rowCountsOf({ length: remaining }), decided = counts.decided;
