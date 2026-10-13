@@ -325,6 +325,19 @@ async function realChecks() {
       const card = await w.page.evaluate(() => [...document.querySelectorAll('#owEng .engCard')].map(c => ({ piece: c.dataset.piece, faces: [...c.querySelectorAll('.engFace')].map(f => ({ face: f.dataset.face, empty: f.dataset.empty === '1', text: (f.querySelector('.engTxt') || {}).textContent || '' })) })));
       check(card.length === 1 && card[0].faces.filter(x => !x.empty).map(x => x.face).join('+') === a.faces.join('+') && card[0].faces.every(x => x.empty || run(x.text) === run(a[x.face].text)), `${name} (real order window): one card with the faces and words the system chose: ${JSON.stringify(card.map(c => c.faces.map(x => x.empty ? x.face + ':-' : x.face + ':' + x.text)))}`);
     }
+    // the Engrave tab's Approve button tells the truth: "Approve" until the face is approved; dimmed (not relabelled) while an edit is waiting to be saved or cancelled
+    {
+      await R.openEngraveDetail(w, 'back', { face: 'back' });
+      const btn = () => w.page.evaluate(() => { const c = document.querySelector('.pvSetup') && document.querySelector('.pvSetup').closest('.rvItem'), b = c && c.querySelector('[data-a="approve"]'); return b ? { label: b.textContent.trim(), disabled: b.disabled, title: b.title } : null; });
+      const open0 = await btn();
+      check(!!open0 && open0.label === 'Approve' && open0.disabled === false, 'Engrave tab: an unapproved face\'s button reads "Approve" and works: ' + JSON.stringify(open0));
+      await w.page.evaluate(() => { const ta = document.querySelector('.pvSetup .engpWords'); ta.value = ta.value + ' x'; ta.dispatchEvent(new Event('input', { bubbles: true })); });
+      const staged = await btn();
+      check(!!staged && staged.label === 'Approve' && staged.disabled === true && /Save or Cancel the edit first/.test(staged.title), 'Engrave tab: with an edit waiting the button is dimmed, still "Approve", and says why on hover: ' + JSON.stringify(staged));
+      await w.page.evaluate(() => document.querySelector('.pvSetup [data-engp=cancel]').click());
+      const back0 = await btn();
+      check(!!back0 && back0.label === 'Approve' && back0.disabled === false, 'Engrave tab: Cancel brings the button back, "Approve": ' + JSON.stringify(back0));
+    }
     // counted discs: each disc its own words
     const dm = made.discs;
     for (const slot of ['D1', 'D2', 'D3']) {

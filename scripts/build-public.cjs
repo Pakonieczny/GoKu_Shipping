@@ -179,6 +179,7 @@ const assets = [
   "charm-nest-rail-tip.js",
   "charm-nest-piece-seals.js",
   "charm-nest-cancel-ui.js",
+  "charm-nest-review-send.js",
   "charm-nest-shared-orders-modal.js",
   "charm-nest-text.js",
   "charm-nest-emoji-picker.js",

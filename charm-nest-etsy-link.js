@@ -8,9 +8,18 @@
  *  SKU of its products, one write. Nothing here decides anything: the page sends {listingId, sku, by} and says the server's answer in words.
  *
  *    CharmNestEtsyLink.mount(chip, { skus, repoApi, toast, who })   the chip is the card's button; skus = the card's SKUs (the first is the card's own);
- *                                                                    repoApi(action, ask, body) = the page's protected call; who() = the signed-in name
+ *                                                                    repoApi(action, ask, body) = the page's protected call; who() = the signed-in name;
+ *                                                                    listings(sku) = optional: the taps to offer (default: suggestions() from what the page holds)
  *    CharmNestEtsyLink.listingIdOf(text)                            "…/listing/1700763608/…?transaction_id=…" or "1700763608" -> "1700763608", else ""
  *    CharmNestEtsyLink.wording(answer, listingId, sku)              the line the panel shows for the server's answer: { text, kind: "ok" | "bad", again: boolean }
+ *    CharmNestEtsyLink.suggestions(skus, sku, src, max)             CATSKU: the listings the page ALREADY reads as this charm, to tap instead of pasting a link: [{ id, title, now }]
+ *
+ *  The taps (CATSKU, 12 Oct 2026) are read from what the page already holds, at the moment the panel opens: the order lines it loaded (window.B.orders.rows, each line's
+ *  resolved design), the saved links it loaded (window.B.maps.aliases) and the library's look-alike lister (Master.likeFor). No Firestore read, no Etsy call, nothing new is
+ *  fetched. A tap only puts the listing's number in the box (the same as pasting it): it never fills in a write, and the button and the password are exactly as before.
+ *  A listing counts when one of its lines resolved to this card's design OR to a design that reads alike once case, spaces and punctuation are set aside (the cat listing's order
+ *  read as "CAT 1- SITTING CAT" while the card Paul wants on it is "CAT 1 - SITTING CAT": two drawings, one name), or when a saved link names this design for the listing; and
+ *  only while some line of it does not already carry the exact SKU about to be written.
  *
  *  The text comes from the server's own `text`; this file adds only what the person sees around it. Everything is drawn with textContent.
  *  ═══════════════════════════════════════════════════════════════════════ */
@@ -25,6 +34,41 @@
     return m ? m[1] : "";
   };
   const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
+
+  /* ── the listings this page already reads as THIS charm (CATSKU) ── */
+  const upSku = s => String(s == null ? "" : s).trim().toUpperCase();
+  const plainTitle = t => String(t == null ? "" : t).replace(/&#0*39;/g, "'").replace(/&quot;/g, "\"").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+  const shortTitle = t => { const s = plainTitle(t); if (s.length <= 30) return s; const cut = s.slice(0, 30), at = cut.lastIndexOf(" "); return (at > 14 ? cut.slice(0, at) : cut) + "…"; };
+  /** skus: the card's SKUs; sku: the one about to be written; src: { rows: the page's order rows ({ line, spec: { designSku }, state }), aliases: listing id -> saved answer, like: sku -> the master SKUs that read alike }.
+   *  → [{ id, title, now }] most lines first, at most `max` (5); `now` is the look-alike design the listing reads as today ("" when it already reads as this card). */
+  function suggestions(skus, sku, src, max) {
+    src = src || {};
+    const mine = new Set((Array.isArray(skus) ? skus : [skus]).map(upSku).filter(Boolean)), want = upSku(sku), twin = new Set();
+    if (typeof src.like === "function") for (const s of mine) { let l = []; try { l = src.like(s) || []; } catch (_) { l = []; } for (const k of l) if (!mine.has(upSku(k))) twin.add(upSku(k)); }
+    const by = new Map(), get = id => { let e = by.get(id); if (!e) by.set(id, e = { id, title: "", n: 0, off: 0, now: "", said: false }); return e; };
+    for (const r of Array.isArray(src.rows) ? src.rows : []) {
+      const l = r && r.line; if (!l || r.state === "gone") continue;
+      const sp = (r && r.spec) || {}, id = listingIdOf(l.listingId);   // (a line that waits between two look-alike drawings has no design yet: its candidates count)
+      const ds = [sp.designSku].concat(sp.formHold && Array.isArray(sp.formHold.candidates) ? sp.formHold.candidates.map(c => c && c.sku) : []).map(upSku).filter(Boolean);
+      const d = ds.find(x => mine.has(x)) || ds.find(x => twin.has(x));
+      if (!d || !id) continue;
+      const e = get(id); e.n++; if (!e.title) e.title = plainTitle(l.title);
+      if (upSku(l.sku) !== want) e.off++;   // this line's own Etsy SKU is not yet the one to be written
+      if (!mine.has(d)) e.now = d;
+    }
+    const al = src.aliases && typeof src.aliases === "object" ? src.aliases : {};
+    for (const k of Object.keys(al)) {
+      const a = al[k], id = listingIdOf(k); if (!a || typeof a !== "object" || !id) continue;
+      const names = [a.sku].concat(a.bySku && typeof a.bySku === "object" ? Object.keys(a.bySku).map(x => a.bySku[x]) : []);
+      if (!names.some(v => typeof v === "string" && mine.has(upSku(v)))) continue;   // a person's saved link to this design
+      const e = get(id); e.said = true; if (!e.title) e.title = plainTitle(a.title);
+    }
+    return [...by.values()].filter(e => e.off > 0 || (!e.n && e.said)).sort((x, y) => y.n - x.n || (x.id < y.id ? -1 : 1)).slice(0, max > 0 ? max : 5).map(e => ({ id: e.id, title: e.title, now: e.now }));
+  }
+  /* what the page holds right now (all of it already loaded; reading it costs nothing) */
+  function pageSource() {
+    try { const B = root.B, M = root.Master; return { rows: B && B.orders && B.orders.rows, aliases: B && B.maps && B.maps.aliases, like: M && typeof M.likeFor === "function" ? s => M.likeFor(s) : null }; } catch (_) { return {}; }
+  }
 
   /* what the server answered, in the panel's words */
   function wording(r, listingId, sku) {
@@ -50,6 +94,12 @@
 .elPanel .elSay.ok{color:var(--sage)}
 .elPanel .elSay.bad{color:#8a3a26}
 .elPanel .elSay.fresh{animation:elIn .22s ease-out}
+.elPanel .elPicks{display:grid;gap:3px}
+.elPanel .elPicks[hidden]{display:none}
+.elPanel .elPicks.off{opacity:.5;pointer-events:none}
+.elPanel .elPicks .btn{display:block;width:100%;box-sizing:border-box;text-align:left;white-space:normal;overflow-wrap:anywhere;line-height:1.3;font-weight:400}
+.elPanel .elPicks .btn b{font:700 11px var(--mono)}
+.elPanel .elPicks .btn.on{border-color:var(--gold2);background:var(--card2)}
 .elPanel .elActs{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
 .elPanel .elActs .btn .spin{margin-right:6px}
 @media (prefers-reduced-motion:reduce){.elPanel,.elPanel .elSay.fresh{animation:none}}
@@ -76,29 +126,43 @@
       const input = el("input", "elIn"); input.type = "text"; input.placeholder = "Etsy listing link or number"; input.setAttribute("aria-label", "Etsy listing link or number");
       input.autocomplete = "off"; input.spellcheck = false; input.setAttribute("inputmode", "url");
       const say = el("div", "elSay"); say.setAttribute("aria-live", "polite");
+      const picks = el("div", "elPicks"); picks.setAttribute("role", "group"); picks.setAttribute("aria-label", "Listings already read as this charm"); picks.hidden = true;
       const acts = el("div", "elActs"), go = el("button", "btn gold xs", "Put SKU on Etsy"), no = el("button", "btn ghost xs", "Close");
       go.type = "button"; no.type = "button"; go.disabled = true; go.setAttribute("data-repo", "modify");
-      acts.append(go, no); panel.append(head); if (sel) panel.append(sel); panel.append(input, say, acts);
+      acts.append(go, no); panel.append(head); if (sel) panel.append(sel); panel.append(picks, input, say, acts);
       row.after(panel);
       try { if (root.CharmNestRepoLock) root.CharmNestRepoLock.mark(panel); } catch (_) { /* the padlock is only a hint */ }
       chip.setAttribute("aria-expanded", "true");
       const skuNow = () => (sel ? sel.value : skus[0]);
+      const markPick = () => { const id = listingIdOf(input.value); for (const b of picks.children) b.classList.toggle("on", b.getAttribute("data-listing") === id); };
+      const drawPicks = () => {   // the listings the page already reads as this charm (nothing is fetched); a tap puts the number in the box, as pasting would
+        picks.textContent = "";
+        let list = []; try { list = (typeof o.listings === "function" ? o.listings(skuNow()) : suggestions(skus, skuNow(), pageSource())) || []; } catch (_) { list = []; }
+        for (const s of list) {
+          const b = el("button", "btn ghost xs"); b.type = "button"; b.setAttribute("data-listing", s.id); b.append(el("b", "", s.id), s.title ? "  " + shortTitle(s.title) : "");
+          if (s.now) b.title = "now read as " + s.now;
+          b.onclick = () => { if (busy) return; input.value = s.id; idle(); try { input.focus({ preventScroll: true }); } catch (_) { /* focus is a convenience */ } };
+          picks.appendChild(b);
+        }
+        picks.hidden = !picks.children.length; markPick();
+      };
       const idle = () => {   // the plain line: what pressing the button will do
         const id = listingIdOf(input.value);
+        markPick();
         say.className = "elSay"; say.textContent = "";
         if (!input.value.trim()) { say.textContent = "Paste the listing's Etsy link or its number."; go.disabled = true; return; }
         if (!id) { say.textContent = "That is not an Etsy listing link or number."; go.disabled = true; return; }
         say.append("Every product of Etsy listing " + id + " will carry the SKU ", el("b", "", skuNow()), ". Prices, stock and options stay as they are; the listing as it is now is kept first.");
         go.disabled = false;
       };
-      input.addEventListener("input", idle); if (sel) sel.addEventListener("change", idle);
+      input.addEventListener("input", idle); if (sel) sel.addEventListener("change", () => { drawPicks(); idle(); });
       no.onclick = close;
       input.addEventListener("keydown", ev => { if (ev.key === "Enter" && !go.disabled) go.click(); else if (ev.key === "Escape") close(); });
       go.onclick = async () => {
         const id = listingIdOf(input.value), sku = skuNow();
         if (busy || !id) return;
         if (typeof o.repoApi !== "function") { say.className = "elSay bad"; say.textContent = "The charm repo lock did not load: reload the page."; return; }
-        busy = true; go.disabled = true; input.disabled = true; if (sel) sel.disabled = true; no.disabled = true;
+        busy = true; go.disabled = true; input.disabled = true; if (sel) sel.disabled = true; no.disabled = true; picks.classList.add("off");
         const label = go.textContent; go.textContent = ""; go.append(el("span", "spin"), "Putting the SKU on Etsy…");
         say.className = "elSay"; say.textContent = "Reading the listing on Etsy, keeping a copy, then changing only the SKU. This takes a few seconds.";
         let word = null;
@@ -111,15 +175,15 @@
           word = e && e.cancelled ? { text: "Nothing was sent: the repo stayed locked.", kind: "bad", again: true }
             : { text: "Etsy may not have been changed: " + String((e && e.message) || e) + ". Look at the listing before pressing again.", kind: "bad", again: false };
         }
-        busy = false; no.disabled = false; go.textContent = label;
+        busy = false; no.disabled = false; go.textContent = label; picks.classList.remove("off");
         say.className = "elSay fresh " + word.kind; say.textContent = word.text;
-        if (word.kind === "ok") { go.hidden = true; no.textContent = "Close"; return; }
+        if (word.kind === "ok") { go.hidden = true; picks.hidden = true; no.textContent = "Close"; return; }
         input.disabled = false; if (sel) sel.disabled = false; go.disabled = !word.again;
         if (word.again) go.textContent = "Try again";
       };
-      idle(); try { input.focus({ preventScroll: true }); } catch (_) { /* focus is a convenience */ }
+      drawPicks(); idle(); try { input.focus({ preventScroll: true }); } catch (_) { /* focus is a convenience */ }
     };
   }
 
-  root.CharmNestEtsyLink = { mount, listingIdOf, wording };
+  root.CharmNestEtsyLink = { mount, listingIdOf, wording, suggestions };
 })(typeof window !== "undefined" ? window : globalThis);
