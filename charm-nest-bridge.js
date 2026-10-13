@@ -9343,6 +9343,7 @@ const RunCtl = window.RunCtl = (() => {
         const v = await Orders.revalidate(r, "before labels"); if (v.changed.length && [...Engrave.items().values()].some(j => j.state === "classify")) { agent({ run: r.runId }, "warn", `${v.changed.length} order(s) changed — back to engraving`); return { goto: "engrave" }; } return; }
       case "labels": {
         r.deferredSets={};
+        await Promise.race([window.CharmNestReviewMark?.refresh?.(), new Promise(r => setTimeout(r, 4000))]).catch(() => {});   // (the Review feed rests on the Nest tab: one read so a set is not made up past an order sent to Review on another computer)
         for(const set of Sets.ofRun(r.runId).filter(s=>s.sheetIds.length&&!s.committedAt)){
           const issue=Sets.releaseIssue(set);
           if(issue){await deferSet(r,set,issue);continue;}
@@ -9352,6 +9353,7 @@ const RunCtl = window.RunCtl = (() => {
       }
       case "commit": {
         if (Gate.modern(r.runId) && !Sets.ofRun(r.runId).some(s => s.sheetIds.length)) { r.nothingToCut = true; return; }
+        await Promise.race([window.CharmNestReviewMark?.refresh?.(), new Promise(r => setTimeout(r, 4000))]).catch(() => {});   // (as at labels: the Review feed rests on the Nest tab)
         const eligible=[];
         for(const set of Sets.ofRun(r.runId).filter(s=>s.sheetIds.length&&!s.committedAt)){
           const issue=Sets.releaseIssue(set);if(issue)await deferSet(r,set,issue);else eligible.push(set);
@@ -12373,14 +12375,29 @@ const Review = window.Review = (() => {
   }
   /** The listing and the SKU each line of a card came with (a huggie set's "X (HUGGIE)"): on a listing whose variations each have a SKU, the others keep theirs; a huggie set with no SKU answers for the listing's huggie, never its necklace. */
   const answerKeysOf = (it, rows) => new Map((rows || rowsOf(it)).map(x => { const from = x.spec && x.spec.boughtSku != null ? x.spec.boughtSku : String(x.line.sku || "").trim().toUpperCase(), hug = !from && !!(x.spec && x.spec.huggieSet); return [String(x.line.listingId) + "\u0000" + from + (hug ? "\u0000huggie" : ""), { lid: String(x.line.listingId), from, hug, title: x.line.title }]; }));
+  /** REVLINK (Paul, 12 Oct 2026: a charm a person picks for a listing is remembered forever, in the sandbox too): the cloud writes a pick ONCE and READS IT BACK before it answers verified:true (aliasPut, optionMapPut);
+   *  anything else is not a saved link, and the failure is the card's ("Could not save that"), never a toast that says "remembered". */
+  const savedLink = r => { if (!r || r.verified !== true) throw new Error((r && r.error) || "the link was not read back from the cloud, so it is not counted as saved"); return r; };
+  /** REVLINK: after a pick the maps are read again and a NEW order of each listing (same listing, SKU and options, new numbers) is read with them (CharmNestReviewLink.proof): a design that is not the pick is told, once. */
+  function linkHolds(rows, sku) {
+    try {
+      const RL = window.CharmNestReviewLink, bad = RL && (rows || []).map(r => RL.proof(r, sku, Orders.ctx)).find(x => x && x.designOk === false);
+      if (bad) toast(`Saved, but a new order of this listing would still read as ${bad.designSku || "no charm"}${bad.skuSource ? " (" + bad.skuSource + ")" : ""}`, "bad", 9000);
+    } catch (_) {}
+  }
+  /** REVLINK: an order a person sent to Review (REVMARK) is answered by the pick: its mark is resolved with how "pick" (the order's sheet is released from the hold). */
+  function pickedMarks(rows, sku, who) {
+    try { const M = window.CharmNestReviewMark; if (M && M.isMarked && M.resolve) for (const rid of new Set((rows || []).map(x => String(x.order.receiptId)))) if (M.isMarked(rid)) M.resolve(rid, { by: who, how: "pick", sku }).catch(() => {}); } catch (_) {}
+  }
   /** "Use this charm" for an unmatched SKU: the saved alias, for every listing the card covers (kept for good, aliasPut), then the lines are read again. */
   async function saveCharm(it, p, sku, rows) {
     sku = String(sku || "").trim().toUpperCase(); if (!sku) return; const who = by(); if (!who) return;
     if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; }
     const lids = [...new Set((rows || rowsOf(it)).map(x => String(x.line.listingId)))];
-    for (const q of answerKeysOf(it, rows).values()) await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, sku, fromSku: q.from || undefined, huggie: q.hug || undefined, by: who, title: q.title });
+    for (const q of answerKeysOf(it, rows).values()) savedLink(await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, sku, fromSku: q.from || undefined, huggie: q.hug || undefined, by: who, title: q.title }));
     answered(rows ? { kind: it.kind, rows } : it, "decided", `Use this charm: ${sku}`, { sku, from: p.sku || null }, who);
     await Orders.loadMaps(true); toast(`${p.sku || "No SKU"} → ${sku} remembered${lids.length > 1 ? ` on ${lids.length} listings` : ""}`, "ok");
+    linkHolds(rows || rowsOf(it), sku); pickedMarks(rows || rowsOf(it), sku, who);
     for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId))) await repool(rr);
   }
   /** "Use both: X 1 + X 2" (SIBLINGS, 12 Oct 2026): the page's saved pair link (aliasPut with pair, kept per listing and per transaction SKU under Charm_Sku_Aliases/{listing}.pairBySku), so this
@@ -12389,9 +12406,10 @@ const Review = window.Review = (() => {
     const L = sib.pair.L, R = sib.pair.R; if (!B.master.entries.has(L) || !B.master.entries.has(R)) { toast(`${B.master.entries.has(L) ? R : L} is not in the master index`, "bad"); return; }
     const who = by(); if (!who) return; const pairs = [...answerKeysOf(it, sib.rows).values()], lids = [...new Set(pairs.map(q => q.lid))];
     if (pairs.some(q => !q.from || !/^\d+$/.test(q.lid))) { toast("This line has no listing number or SKU, so both charms cannot be kept for it", "bad", 7000); return; }
-    for (const q of pairs) await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, fromSku: q.from, pair: { L, R }, by: who, title: q.title });
+    for (const q of pairs) savedLink(await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, fromSku: q.from, pair: { L, R }, by: who, title: q.title }));
     answered({ kind: it.kind, rows: sib.rows }, "decided", `Use both: ${L} + ${R}`, { pair: { L, R }, from: p.sku || null }, who);
     await Orders.loadMaps(true); toast(`${p.sku || "This SKU"} → ${L} + ${R} remembered for ${lids.length > 1 ? lids.length + " listings" : "this listing"}`, "ok");
+    pickedMarks(sib.rows, L, who);
     for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId))) await repool(rr);
   }
   /** The choices of an offer: ONE "Use both" button with the two designs' thumbnails (the master's own picture tag, the SKU picker's `dsPick` button), then each numbered design as a single choice. */
@@ -12467,7 +12485,7 @@ const Review = window.Review = (() => {
       const keep = (field, value, words) => saving(c, async () => {
         if (field === "design" && !p.listingId) { toast("This line has no listing number, so a second design cannot be kept for it: use “The same on both ears”, or Custom Orders", "bad", 7000); return; }
         const who = by(); if (!who) return;
-        await api("charmNestLibrary", { op: "optionMapPut", listingId: p.listingId || "*", optionName: p.optionName, optionValue: p.optionValue, map: { field, value }, by: who });
+        { const saved = await api("charmNestLibrary", { op: "optionMapPut", listingId: p.listingId || "*", optionName: p.optionName, optionValue: p.optionValue, map: { field, value }, by: who }); if (field === "design") savedLink(saved); }   // (REVLINK: the second ear's charm is a pick, read back before it counts)
         answered(it, "decided", words, { option: p.optionName, value: p.optionValue, field, to: String(value || ""), listing: String(p.listingId || "*") }, who);
         await Orders.loadMaps(true);
         toast(words, "ok");
@@ -12557,10 +12575,11 @@ const Review = window.Review = (() => {
         const sku = String(k || "").trim().toUpperCase(); if (!sku) return;
         if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; }
         const who = by(); if (!who) return;
-        await api("charmNestLibrary", { op: "optionMapPut", listingId: p.listingId, optionName: p.optionName, optionValue: p.optionValue, map: { field: "design", value: sku }, by: who });
+        savedLink(await api("charmNestLibrary", { op: "optionMapPut", listingId: p.listingId, optionName: p.optionName, optionValue: p.optionValue, map: { field: "design", value: sku }, by: who }));
         answered(it, "decided", `Use this charm: ${sku}`, { option: p.optionName, value: p.optionValue, field: "design", sku, listing: String(p.listingId) }, who);
         await Orders.loadMaps(true);
         toast(`“${p.optionValue}” → ${sku} · remembered for listing ${p.listingId}`, "ok");
+        linkHolds(rowsOf(it), sku); pickedMarks(rowsOf(it), sku, who);
         for (const rr of Orders.rows()) if (String(rr.line.listingId) === String(p.listingId) && rr.problems.length) await repool(rr);
       })();
       c.querySelectorAll("[data-dsku]").forEach(b => { b.onclick = () => pickCharm(b.dataset.dsku); });
@@ -16848,6 +16867,8 @@ const OrderWin = window.OrderWin = (() => {
     // (read-only, for the checks: the pieces of the order on screen, each with the sheets it is on, and the one in focus)
     _scope: () => { const r = rowOf(W.key); if (!r) return null; const sc = sheetScope(r), cut = p => p && { key: p.key, name: p.name, nested: p.nested, loading: p.loading, why: p.why, sheets: p.sheets.map(h => ({ id: h.id, label: h.label })) }; return { all: sc.all.map(cut), focus: sc.focus && sc.focus.key, sel: sc.sel && sc.sel.key, piece: W.piece, block: sheetBlock(r) }; },
     // the order number of the open view, and "something was just done here": its timeline reads now and again 1.5 s later
+    // where the person is in this view (read-only; the way back from the Engraving tab, charm-nest-engrave-return.js, puts them here again): the line, the tab, the piece and side chosen, the sheet and charm of the Sheet tab
+    where: () => { const sh = SV.list && SV.list[SV.at]; return { rid: W.rid, key: W.key, view: W.view, piece: (W.pieces || []).length > 1 ? W.piece || null : null, side: (W.side && narrowSide()) ? W.side : null, face: W.face, sheetId: sh && sh.id || "", sheetAt: SV.list ? SV.at : null, focus: SV.focus || "" }; },
     rid: () => W.rid, nudge: () => { try { if (W.dlg && W.dlg.open && !W.closing && W.feed && W.feed.nudge) W.feed.nudge(); } catch (_) {} } };
 })();
 

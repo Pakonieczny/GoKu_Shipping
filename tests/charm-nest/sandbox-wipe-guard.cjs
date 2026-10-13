@@ -150,13 +150,18 @@ async function session(sb) {
   if (sb) await L({ op: 'sandboxCancel', orderId: B, by: 'paul' }); else await L({ op: 'cancelPut', orderId: B, by: 'paul', why: 'sandbox twin' });
   await L({ op: 'timelineAdd', events: [{ orderId: A, type: 'qrLabel', id: 'q1', text: 'QR label for GF Sheet 1', by: 'paul' }, { orderId: B, type: 'designSent', id: 'ds1', text: 'sent', by: 'paul' }, { orderId: C, type: 'note', id: 'n1', text: 'note', by: 'paul' }] });
   // ── the learned maps ──
-  const design = sb ? 'LION_SANDBOX_9' : 'TRICERATOPS_PROD_1';
-  await L({ op: 'aliasPut', listingId: '1718000', sku: design, fromSku: 'CUTE_TRICERATOPS_4170', title: 'CUTE TRICERATOPS W/ HEARTS', by: 'paul' });
-  await L({ op: 'aliasPut', listingId: '1718000', sku: design, title: 'CUTE TRICERATOPS W/ HEARTS', by: 'paul' });
+  // REVLINK (12 Oct 2026): a person's PICK of a charm is saved for good, in the sandbox too: the shared store (Charm_Sku_Aliases, Charm_Option_Map field design), never the sandbox's copy. The sandbox picks on ITS OWN listing here, so what
+  // production saved stays byte-identical; the picks must be in the shared store after the session, survive the wipe, and the master designs they name are the library's (BR-TST-01 / BR-TST-02)
+  const design = sb ? 'BR-TST-02' : 'BR-TST-01', pickListing = sb ? '1718002' : '1718000';
+  const picked = await L({ op: 'aliasPut', listingId: pickListing, sku: design, fromSku: 'CUTE_TRICERATOPS_4170', title: 'CUTE TRICERATOPS W/ HEARTS', by: 'paul' });
+  assert(picked.ok && picked.verified === true && picked.kind === 'bySku', 'a pick is read back before it is called saved: ' + JSON.stringify(picked));
+  await L({ op: 'aliasPut', listingId: pickListing, sku: design, title: 'CUTE TRICERATOPS W/ HEARTS', by: 'paul' });
   // a person's word for a whole listing (ADDONCUSTOM: custom / rework / regular …) lives on the SAME alias document as the SKU answer: production writes the shared one, the sandbox only its own copy (Sandbox_Charm_Sku_Aliases), which the wipe deletes
   await L({ op: 'listingKindPut', listingId: '1718000', kind: 'custom', title: sb ? 'Add a Lion Charm' : 'Add a Triceratops Charm', note: 'an add-on listing', by: 'paul' });
   await L({ op: 'listingKindPut', listingId: '1718001', kind: 'rework', by: 'paul' }); await L({ op: 'listingKindPut', listingId: '1718001', kind: 'regular', by: 'paul' }); await L({ op: 'listingKindPut', listingId: '1718001', kind: '' });
-  await L({ op: 'optionMapPut', listingId: '1718000', optionName: 'Size', optionValue: 'Small', map: { field: 'design', value: design }, by: 'paul' });
+  const optPick = await L({ op: 'optionMapPut', listingId: pickListing, optionName: 'Size', optionValue: 'Small', map: { field: 'design', value: design }, by: 'paul' });
+  assert(optPick.ok && optPick.verified === true && optPick.kind === 'option', 'the charm an option picks is read back too: ' + JSON.stringify(optPick));
+  await L({ op: 'optionMapPut', listingId: '1718000', optionName: 'Size', optionValue: 'Large', map: { field: 'form', value: 'necklace' }, by: 'paul' });   // (an answer that is not a charm stays the sandbox's own copy)
   const row = await L({ op: 'noDesignPut', sku: sb ? 'LION_NODESIGN' : 'PROD_NODESIGN_1', note: 'a SKU with no design', by: 'paul' });
   await L({ op: 'noDesignPut', pattern: sb ? '^LION_ONLY' : '^PROD_ONLY', note: 'a pattern', by: 'paul' });
   const pat = await L({ op: 'noDesignPut', pattern: sb ? '^LION_TWO' : '^PROD_TWO', note: 'a second pattern', by: 'paul' });
@@ -337,6 +342,11 @@ const sandboxDoc = (k, v) => { const o = own('firestore', k); if (!o || o.kind !
     assert(mine && mine.listingKind && mine.listingKind.kind === 'custom' && mine.listingKind.title === 'Add a Lion Charm', 'the sandbox keeps its own listing word: ' + JSON.stringify(mine));
     assert(shared && shared.listingKind && shared.listingKind.kind === 'custom' && shared.listingKind.title === 'Add a Triceratops Charm', 'production keeps the shared listing word, not the sandbox\'s: ' + JSON.stringify(shared));
     assert(gone && !('listingKind' in gone), 'a cleared listing word leaves no field: ' + JSON.stringify(gone)); }
+  { const al = store.get('Charm_Sku_Aliases/1718002'), om = store.get('Charm_Option_Map/1718002');
+    assert(al && al.bySku.CUTE_TRICERATOPS_4170 === 'BR-TST-02' && al.sku === 'BR-TST-02' && al.v === 2, 'the sandbox pick is in the shared store: ' + JSON.stringify(al));
+    assert(om && om.map.size.small.value === 'BR-TST-02', 'the charm an option picks in the sandbox is in the shared store: ' + JSON.stringify(om));
+    assert(!store.has('Sandbox_Charm_Sku_Aliases/1718002') && !store.has('Sandbox_Charm_Option_Map/1718002'), 'and never in a sandbox copy');
+    assert(store.get('Sandbox_Charm_Option_Map/1718000') && store.get('Sandbox_Charm_Option_Map/1718000').map.size.large.field === 'form', 'an answer that is not a charm stays the sandbox\'s own copy'); }
   const fullDbBefore = dbState(), fullFilesBefore = fileState();
   const sandboxDocsBefore = [...store].filter(([k, v]) => isFamily('firestore', k) && sandboxDoc(k, v)).length, sandboxFilesBefore = [...blobs.keys()].filter(k => isFamily('storage', k)).length;
   assert(sandboxDocsBefore > 60 && sandboxFilesBefore >= 4, `the sandbox holds a real session: ${sandboxDocsBefore} documents, ${sandboxFilesBefore} files`);
@@ -375,6 +385,12 @@ const sandboxDoc = (k, v) => { const o = own('firestore', k); if (!o || o.kind !
   for (const [k, v] of fullDbBefore) { const o = own('firestore', k); if (o && o.kind === 'protected') assert.strictEqual(after.get(k), v, 'the wipe left protected ' + k + ' as it was'); }
   for (const k of ['Charm_Sku_Aliases/1718000', 'Charm_Sku_Aliases/1718001']) assert.strictEqual(after.get(k), fullDbBefore.get(k), 'the wipe left production\'s alias document ' + k + ' (with its listing word) byte-identical');
   assert(after.has('Charm_Sku_Aliases/1718000') && ![...after.keys()].some(k => k.startsWith('Sandbox_Charm_Sku_Aliases/')), 'production\'s listing word is still there, the sandbox\'s own copies are gone');
+  // REVLINK: the charm the SANDBOX picked is in the shared store and the wipe left it: the link for its SKU, the listing's own answer, and the charm its option picks
+  { const al = after.get('Charm_Sku_Aliases/1718002'), om = after.get('Charm_Option_Map/1718002');
+    assert(al && JSON.parse(al).bySku.CUTE_TRICERATOPS_4170 === 'BR-TST-02' && JSON.parse(al).sku === 'BR-TST-02', 'a charm picked in the sandbox is saved for good, in the shared store, and the wipe left it: ' + al);
+    assert(om && JSON.parse(om).map.size.small.value === 'BR-TST-02' && JSON.parse(om).map.size.small.field === 'design', 'the charm an option picked in the sandbox is saved for good too: ' + om);
+    assert(after.get('Charm_Sku_Aliases/1718002') === fullDbBefore.get('Charm_Sku_Aliases/1718002') && after.get('Charm_Option_Map/1718002') === fullDbBefore.get('Charm_Option_Map/1718002'), 'and byte-identical to what it was before the wipe');
+    assert(!after.has('Sandbox_Charm_Option_Map/1718002') && !after.has('Sandbox_Charm_Sku_Aliases/1718002'), 'the sandbox never kept a copy of a pick'); }
   for (const k of ['Sandbox_Station_Activity/activity-guard-0001', 'Sandbox_Efficiency_Daily', 'Sandbox_Station_Sessions/session-guard-0001', 'Charm_Sandbox/pulls', 'Charm_Master_Index/BR-TST-01', 'Charm_Custom_Saves/4170000001', 'config/charmNestSandboxPull']) assert([...after.keys()].some(x => x.startsWith(k)), 'kept: ' + k);
   assert.strictEqual(after.get('config/charmNestSandboxPull'), prodDocs.get('config/charmNestSandboxPull'), "the wipe left Paul's pull number byte-identical");
   const after2 = fileState(), fileProblems = [];
