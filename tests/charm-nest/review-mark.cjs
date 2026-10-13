@@ -88,7 +88,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const both = await A.page.evaluate(rid => Promise.all([CharmNestReviewMark.mark(rid), CharmNestReviewMark.mark(rid)]), R2);
     assert.ok(both[0].ok && both[1].ok, 'both answer ok'); assert.equal(writes().length, 2, 'a double press on a new order is one write (one for R1, one for R2)');
     rows = await A.rows(); assert.equal(rows.find(r => r.rid === R2 && r.kind === 'Marked').slots, 2, 'a two-line order has a slot for each line');
-    assert.ok(!srv.st.list('Charm_Nest_Timeline').some(x => /seal/i.test(x.type || '')) && !srv.st.list('Order_Timeline').some(x => /^seal/.test(x.type || '')), 'no seal on the timeline');
+    // the order's timeline gets one plain line (a note), never a seal
+    const tlEvents = () => srv.st.calls.filter(c => c.name === 'charmNestLibrary' && c.body && c.body.op === 'timelineAdd').flatMap(c => Array.isArray(c.body.events) ? c.body.events : []);
+    for (let i = 0; i < 60 && !tlEvents().some(e => /Sent to Review by Name Alpha/.test(e.text || '')); i++) await sleep(100);
+    const line = tlEvents().find(e => /Sent to Review by Name Alpha/.test(e.text || ''));
+    assert.ok(line, 'a plain line on the order\'s timeline'); assert.equal(line.type, 'note'); assert.equal(String(line.orderId), R1);
+    assert.ok(!tlEvents().some(e => /^seal/.test(e.type || '')), 'no seal on the timeline');
     log('marked: one document, no seal, a row with a slot per line and Mark OK; a repeated or double press writes nothing more');
 
     /* ── 2 · the other computer holds it through the existing feed ── */
