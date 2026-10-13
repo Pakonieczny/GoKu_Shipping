@@ -553,6 +553,7 @@
     return { members, outline:members[cutMembers.indexOf(outline)], mask, cx, cy, M, R, angleDeg, upAngle: up, checks, detail, F, B, frame, cutMembers, dropped, ...(front ? { face: "front" } : {}) };
   }
 
+  const FRAME_SHARE = 0.85, FRAME_LINE_PT = 0.3;   // (engraveMask: a closed line round at least this share of the body is a frame; half the width of the band kept clear along it, pt)
   /** The eroded back mask: margin off every cut edge and cut-out, keep-out layers subtracted. */
   function engraveMask(view, opts) {
     opts = Object.assign({ marginMm: 0.8, keepOut: [] }, opts || {});
@@ -561,7 +562,28 @@
     // the FRONT keeps its words off the design's own engraved art (opts.avoid: more segments to keep clear; the closed or filled shapes the cut view dropped are always kept clear)
     if (view.face === "front") {
       const art = (view.dropped || []).filter(d => d && (d.closed || d.fill) && !/back\s*keep-?out/i.test(d.layer || "")).concat(opts.avoid || []);   // (a BACK keep-out layer keeps the back's words off a place; the front's words may go there)
-      if (art.length) m = subtract(m, polysOfSegs(art.map(k => transformSeg(transformSeg(k, view.M), view.R))));
+      if (art.length) {
+        // ENGFRONT: a closed LINE (no fill) drawn round almost the whole of the body, as the ENGRAVE layer of a plain tag copies the cut outline, is a frame and not a figure: only its own line is kept clear,
+        // never everything inside it (that took the whole front: the real 5X8.5 mini tag could never take a front word). A smaller closed shape, or any filled one, still keeps its whole inside clear.
+        const placed = art.map(k => transformSeg(transformSeg(k, view.M), view.R)), solid = [], lines = [], total = area(m);
+        for (const k of placed) {
+          if (k.closed && !k.fill && total) {
+            const pg = flatten(k, 12), inside = rasterPolys(pg, m); let both = 0; for (let i = 0; i < inside.bits.length; i++) both += inside.bits[i] & m.bits[i];
+            if (both >= FRAME_SHARE * total) { lines.push(...pg); continue; }
+          }
+          solid.push(k);
+        }
+        if (solid.length) m = subtract(m, polysOfSegs(solid));
+        if (lines.length) {
+          const out = cloneMask(m);
+          for (const pg of lines) for (let i = 0; i < pg.length; i++) {
+            const a = pg[i], b = pg[(i + 1) % pg.length], dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy); if (!(len > 1e-9)) continue;
+            const nx = -dy / len * FRAME_LINE_PT, ny = dx / len * FRAME_LINE_PT;
+            rasterPolys([[[a[0] + nx, a[1] + ny], [b[0] + nx, b[1] + ny], [b[0] - nx, b[1] - ny], [a[0] - nx, a[1] - ny]]], out, out, 0);
+          }
+          m = out;
+        }
+      }
     }
     const rPx = opts.marginMm * PT_PER_MM * m.res;
     m = erode(m, rPx);
