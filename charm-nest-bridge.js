@@ -12484,7 +12484,10 @@ const Review = window.Review = (() => {
     } catch (_) { return null; }
   }
   /** The listing and the SKU each line of a card came with (a huggie set's "X (HUGGIE)"): on a listing whose variations each have a SKU, the others keep theirs; a huggie set with no SKU answers for the listing's huggie, never its necklace. */
-  const answerKeysOf = (it, rows) => new Map((rows || rowsOf(it)).map(x => { const from = x.spec && x.spec.boughtSku != null ? x.spec.boughtSku : String(x.line.sku || "").trim().toUpperCase(), hug = !from && !!(x.spec && x.spec.huggieSet); return [String(x.line.listingId) + "\u0000" + from + (hug ? "\u0000huggie" : ""), { lid: String(x.line.listingId), from, hug, title: x.line.title }]; }));
+  const answerKeysOf = (it, rows) => { const m = new Map();   // (REVLINK: `via` = which product of the listing each line is, for a line read under the SKU Etsy's inventory gave it: charm-nest-orders.js linkedSku)
+    for (const x of (rows || rowsOf(it))) { const from = x.spec && x.spec.boughtSku != null ? x.spec.boughtSku : String(x.line.sku || "").trim().toUpperCase(), hug = !from && !!(x.spec && x.spec.huggieSet), k = String(x.line.listingId) + "\u0000" + from + (hug ? "\u0000huggie" : ""), via = from && x.spec && x.spec.viaInventory ? O.linkViaKeys(x.line) : [];
+      const q = m.get(k) || { lid: String(x.line.listingId), from, hug, title: x.line.title, via: [] }; q.via = [...new Set(q.via.concat(via))]; m.set(k, q); }
+    return m; };
   /** REVLINK (Paul, 12 Oct 2026: a charm a person picks for a listing is remembered forever, in the sandbox too): the cloud writes a pick ONCE and READS IT BACK before it answers verified:true (aliasPut, optionMapPut);
    *  anything else is not a saved link, and the failure is the card's ("Could not save that"), never a toast that says "remembered". */
   const savedLink = r => { if (!r || r.verified !== true) throw new Error((r && r.error) || "the link was not read back from the cloud, so it is not counted as saved"); return r; };
@@ -12504,7 +12507,7 @@ const Review = window.Review = (() => {
     sku = String(sku || "").trim().toUpperCase(); if (!sku) return; const who = by(); if (!who) return;
     if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; }
     const lids = [...new Set((rows || rowsOf(it)).map(x => String(x.line.listingId)))];
-    for (const q of answerKeysOf(it, rows).values()) savedLink(await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, sku, fromSku: q.from || undefined, huggie: q.hug || undefined, by: who, title: q.title }));
+    for (const q of answerKeysOf(it, rows).values()) savedLink(await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, sku, fromSku: q.from || undefined, huggie: q.hug || undefined, via: q.via && q.via.length ? q.via : undefined, by: who, title: q.title }));
     answered(rows ? { kind: it.kind, rows } : it, "decided", `Use this charm: ${sku}`, { sku, from: p.sku || null }, who);
     await Orders.loadMaps(true); toast(`${p.sku || "No SKU"} → ${sku} remembered${lids.length > 1 ? ` on ${lids.length} listings` : ""}`, "ok");
     linkHolds(rows || rowsOf(it), sku); pickedMarks(rows || rowsOf(it), sku, who);

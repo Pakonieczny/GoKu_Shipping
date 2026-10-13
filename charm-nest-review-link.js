@@ -63,8 +63,10 @@
     // a SHARED zodiac SKU whose sign came from the buyer's words (not an option) has no stable key: the next buyer may name another sign
     if (spec && spec.skuSource === "zodiac") return { ok: false, why: "the charm is read from the buyer's own words (the sign), which differ per order, so no link can be kept for the listing" };
     const from = fromOf(line, spec), huggie = !from && !!(spec && spec.huggieSet);
+    // a line read under the SKU Etsy's inventory gives its product (or a saved link): the link also names WHICH PRODUCT it was for, so a page without Etsy's table finds it (charm-nest-orders.js linkedSku)
+    const O = Orders(), product = from && spec && spec.viaInventory && O && typeof O.linkViaKeys === "function" ? O.linkViaKeys(line) : [];
     return { ok: true, via: "alias", key: `${listingId}|${from || (huggie ? "(huggie)" : "(listing)")}`,
-      body: Object.assign({ op: "aliasPut", listingId, sku, title: String(line.title || "").slice(0, 200) }, from ? { fromSku: from } : {}, huggie ? { huggie: true } : {}),
+      body: Object.assign({ op: "aliasPut", listingId, sku, title: String(line.title || "").slice(0, 200) }, from ? { fromSku: from } : {}, huggie ? { huggie: true } : {}, product.length ? { via: product } : {}),
       why: from ? `kept for this listing and the SKU “${from}”` : "kept for this listing (the line has no SKU)" };
   }
 
