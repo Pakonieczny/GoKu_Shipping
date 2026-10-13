@@ -79,7 +79,7 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     }, { orders: ORDERS, WORDS, k: { 1: key(R1, 2), 2: key(R1, 3), 3: key(R2, 1), 4: key(R2, 2) }, p: { 1: pool(R1, 2) }, R1, R2, SHEET });
     const calls = () => page.evaluate(() => ({ approve: __approve.map(a => a.key + '|' + a.by + '|' + a.button), poke: __poke, nudge: __nudge, links: __links }));
     const DEL = ['TO APPROVE', 'To approve', 'Waiting for your approval', 'WORDS ON THE BACK', 'Words on the back', 'Read from', 'sure', 'ENGRAVES', 'nothing in the listing', 'The system read', 'Undo'];
-    // (a piece's card is found by its line key, whatever else the section shows: the section never follows the piece switcher)
+    // (a piece's card is found by its line key, whatever else the section shows; with one piece picked the section holds only that piece's cards: engrave-section-follows-piece.cjs)
     const card = (lk) => page.evaluate(lk => {
       const h = document.getElementById('owEng'), c = h.querySelector(`.engCard[data-key="${lk || window.__k.r}"]`), q = s => c && c.querySelector(s);
       const seals = [...(c ? c.querySelectorAll('.egButtonSeal .seal svg[data-seal-model]') : [])].map(s => { try { const m = JSON.parse(s.getAttribute('data-seal-model')); return m.action + '|' + m.by; } catch (_) { return '?'; } });
@@ -111,7 +111,7 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     check(!c.settledText, 'the words "still to be settled" appear nowhere in the order window while the engraving is not settled');
     if (shots) { await page.screenshot({ path: path.join(shots, 'overview-approve.png') }); await page.locator('#owEng').screenshot({ path: path.join(shots, 'card-approve.png') }); }
 
-    // 2 · every engraved piece has its own card, whichever piece the window holds (the section never follows the piece switcher); nothing of one piece shows on another's card
+    // 2 · with every piece shown, every engraved piece has its own card, whichever line the window holds; nothing of one piece shows on another's card
     await page.evaluate(() => { const h = document.getElementById('owEng'); window.__log = []; new MutationObserver(() => __log.push({ key: OrderWin.key(), hidden: h.hidden, cards: [...h.querySelectorAll('.engCard')].map(e => e.dataset.key + ':' + e.dataset.state + ':' + ((e.querySelector('.engFace[data-face=back] .engTxt') || {}).title || '')), wait: !!h.querySelector('.owEngWait') })).observe(h, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] }); });
     await pick(1);   // All 3 pieces
     await page.waitForFunction(() => document.querySelectorAll('#owEng .engCard').length === 2, null, { timeout: 8000 });
