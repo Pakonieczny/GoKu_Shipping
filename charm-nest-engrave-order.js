@@ -33,6 +33,7 @@
   'use strict';
   const dep = (name, file) => { const g = root && root[name]; if (g) return g; try { return typeof require === 'function' ? require(file) : null; } catch (_) { return null; } };
   const Card = () => dep('CharmNestEngraveCard', './charm-nest-engrave-card.js');
+  const Sides = () => dep('CharmNestEngraveSides', './charm-nest-engrave-sides.js');
   const tryDo = (f, d) => { try { return f(); } catch (_) { return d; } };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const CODE = { gold: 'GF', silver: 'SS', rose: 'RG', gold10k: '10K', gold14k: '14K' };
@@ -61,7 +62,8 @@
       ps = ps.map((p, i) => ({ p, i })).sort((a, b) => slotRank(a.p.slot) - slotRank(b.p.slot) || a.i - b.i).map(x => x.p);
       for (const p of ps) {
         const state = STATE[p.state] || 'held'; if (state === 'none' && !o.withNone) continue;
-        const metal = p.metal || metalOf(p.row || r), sw = slotWord(p.slot);
+        const S = Sides(), sps = S && S.setPieceOf ? tryDo(() => S.setPieceOf(p.row || r, p.slot), null) : null;   // (a piece of a set of different designs is "Small bar", not "Disc 2": charm-nest-engrave-sides.js)
+        const metal = p.metal || metalOf(p.row || r), sw = sps ? S.pieceName(sps) : slotWord(p.slot);
         const label = (many ? [metal, sw] : [sw || metal]).filter(Boolean).join(' · ') || p.name || p.title || 'Piece';
         out.push({ pieceKey: p.pieceKey, rid: p.rid || rid, lineKey: p.lineKey, slot: p.slot || null, label, title: p.title || '', metal, faces: faceList(p), jobKeys: (p.jobs || []).map(j => j.key), state, piece: p, line: li });
       }

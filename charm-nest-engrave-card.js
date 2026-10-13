@@ -28,6 +28,7 @@
   const dep = (name, file) => { const g = root && root[name]; if (g) return g; try { return typeof require === 'function' ? require(file) : null; } catch (_) { return null; } };
   const Faces = () => dep('CharmNestEngraveFaces', './charm-nest-engrave-faces.js');
   const Setup = () => (root && root.CharmNestEngraveSetup) || null;
+  const Sides = () => dep('CharmNestEngraveSides', './charm-nest-engrave-sides.js');
   const tryDo = (f, d) => { try { return f(); } catch (_) { return d; } };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const DECIDED = ['approved', 'written', 'skipped', 'none'];
@@ -117,6 +118,15 @@
     return tryDo(() => S.merge(...recs, ...(extra || [])), []) || [];
   }
 
+  /** TRUE RELATIVE SIZE (SETBAR, Paul, 13 Oct 2026: "see both bar charms side-by-side"): the pieces of ONE line that is a set of different designs are drawn at one scale. `rel` (0..1) is a piece's long side over the longest
+   *  of the set's (the longest fills its picture box, a smaller one is that fraction of it, same shape). Geometry only (the preview's own frameFor); nothing for a piece with no geometry yet, nor for any other line. */
+  function relOfSet(list) {
+    const P = root && root.CharmNestEngravePreview, set = (list || []).filter(p => p && p.design);
+    if (!P || typeof P.frameFor !== 'function' || set.length < 2) return;
+    const dims = set.map(p => tryDo(() => { const f = (p.faces.back && p.faces.back.job) || (p.faces.front && p.faces.front.job) || null, F = P.frameFor({ job: f, row: p.row, slot: p.slot, face: 'back' }), b = F && F.box; return b && b.length === 4 && b.every(Number.isFinite) ? [b[2] - b[0], b[3] - b[1]] : null; }, null));
+    const long = dims.map(d => (d ? Math.max(d[0], d[1]) : 0)), top = Math.max(...long); if (!(top > 0)) return;
+    set.forEach((p, i) => { if (long[i] > 0) { p.rel = Math.min(1, long[i] / top); p.longPt = long[i]; p.dimsPt = dims[i]; } });
+  }
   /** The pieces of the lines given. A line with jobs: one piece for each slot (a pair's ears, a counted line's discs; a plain line is one piece), Front and Back from its jobs. A line with no
    *  job yet but a setup that asks for faces (a person's choice, the intake's reading): one piece from the setup. A line that engraves nothing gives no piece. */
   function piecesOf(rows, o) {
@@ -138,7 +148,9 @@
         // nothing to engrave: no card (an earring: only a decided legacy front); o.keepEmpty keeps the header of the piece the Engrave tab is editing while None is staged
         if (!present.length && !o.keepEmpty) return;
         if (never && !(faces.front && faces.front.job && DECIDED.includes(faces.front.job.state))) return;
-        const slotWord = slotLabel(slot), title = [name, many && metal ? metal.code : '', slotWord].filter(Boolean).join(' · ') || slotWord || 'Piece';
+        // SETBAR: a piece of a SET of different designs is its own design ("SKINNY 0191 · 16″"), never the line's joined name with "Disc 2" (charm-nest-engrave-sides.js setPieceOf; every other piece: as before)
+        const S2 = Sides(), sps = S2 && S2.setPieceOf ? tryDo(() => S2.setPieceOf(line, slot), null) : null, lenWord = sps ? S2.lengthText(sps) : '', pname = sps ? sps.name : name;
+        const slotWord = sps ? '' : slotLabel(slot), title = [pname, many && metal ? metal.code : '', lenWord, slotWord].filter(Boolean).join(' · ') || slotWord || 'Piece';
         const review = present.filter(f => f.job && f.job.state === 'review');
         let approve = null;
         if (review.length) {
@@ -149,12 +161,14 @@
           else { const g = F && F.approveAllGate ? tryDo(() => F.approveAllGate(js, { busy, shown: j => !o.seen || o.seen(j) }), { ok: false, why: '' }) : { ok: true, why: '' }; approve = { jobs: js, ok: !!g.ok, why: g.why || '' }; }
         }
         out.push({ pieceKey: F && F.pieceKeyOf ? F.pieceKeyOf(jobsOfPiece[0] ? jobsOfPiece[0].key : jobKey(line.key, slot, 'back')) : line.key + (slot ? '#' + slot : ''),
-          rid, lineKey: line.key, slot: slot || null, row: line, title, name, never, faces, jobs: jobsOfPiece, approve, seals,
+          rid, lineKey: line.key, slot: slot || null, row: line, title, name: pname, lineName: name, design: sps || null, lengthText: lenWord, never, faces, jobs: jobsOfPiece, approve, seals,
           metal: metal ? metal.code : '', metalKey: metal ? metal.key : '', metalColor: metal ? metal.color : '', many,   // (ENGPICK: the code "SS" / "GF", its key and colour; `many`: the order has more than one line, so the title says the metal)
           state: worst(present.map(f => f.state)) });
       };
+      const was = out.length;
       if (groups.length) for (const g of groups) make(g.slot || null, g.jobs);
       else if (o.stage || (setup && setup.faces && setup.faces.length && (setup.source !== 'default' || (line.engrave && line.engrave.needed)))) make(null, []);
+      relOfSet(out.slice(was));
     }
     return out;
   }
@@ -238,7 +252,7 @@
     if (P && P.render) {
       // ENGTHUMB (round 2): the picture is the CHARM seen from this side (the job's own view, else the piece's pool charm; the front with the design's engraved art), the words laid on it where the job
       // puts them (the preview's own positionOf: the work area's frame). A face with no geometry at all keeps the saved picture of its approved file, else the line's Vector design (the preview's own fallbacks).
-      try { P.render(btn, { row: lineOf(piece.row), job: f.job, slot: piece.slot, text: f.text, fontId: f.fontId, fontWord: f.fontWord, position: P.positionOf ? P.positionOf(f.job, { row: lineOf(piece.row), slot: piece.slot }) : f.position, face, image: savedPicture(f.job, face, o) }); return; } catch (_) { btn.replaceChildren(); }
+      try { P.render(btn, { row: lineOf(piece.row), job: f.job, slot: piece.slot, text: f.text, fontId: f.fontId, fontWord: f.fontWord, position: P.positionOf ? P.positionOf(f.job, { row: lineOf(piece.row), slot: piece.slot }) : f.position, face, image: savedPicture(f.job, face, o), rel: piece.rel }); return; } catch (_) { btn.replaceChildren(); }
     }
     const E = root && root.Engrave, job = f.job;
     // the placement as it is cut (the fitted words on the charm), when the job has one
@@ -261,16 +275,61 @@
   /** Paints the live previews of a card (or of every card inside `scope`) again, once the card is in the page: the preview scales long words down to the box it finds, and a card is built before it has one. */
   function repaint(scope) {
     const U = root && root.CharmNestEngravePreview; if (!U || !U.update || !scope || !scope.querySelectorAll) return;
-    for (const b of scope.querySelectorAll('.engThumb')) if (b._engpv && b.isConnected) tryDo(() => U.update(b, {}));
+    for (const b of scope.querySelectorAll('.engThumb,.engSetPic')) if (b._engpv && b.isConnected) tryDo(() => U.update(b, {}));
   }
   const ids = typeof WeakMap === 'function' ? new WeakMap() : null; let idN = 0;
   const idOf = x => { if (!x || typeof x !== 'object' || !ids) return 0; let n = ids.get(x); if (!n) ids.set(x, n = ++idN); return n; };
   function sig(piece, o) {
-    return JSON.stringify([piece.pieceKey, piece.title, piece.metalKey || '', !!piece.many, piece.state, !!piece.never, piece.approve ? [piece.approve.ok, piece.approve.why, piece.approve.jobs.length] : 0, (piece.seals || []).map(s => s.id).join(','), currentOf(piece, o),
+    return JSON.stringify([piece.pieceKey, piece.title, piece.rel || 1, piece.metalKey || '', !!piece.many, piece.state, !!piece.never, piece.approve ? [piece.approve.ok, piece.approve.why, piece.approve.jobs.length] : 0, (piece.seals || []).map(s => s.id).join(','), currentOf(piece, o),
       ['front', 'back'].map(f => { const x = piece.faces[f]; return x ? [x.state, !!x.staged, x.text, x.fontWord, x.fontId, x.position && [x.position.x, x.position.y, x.position.size, x.position.angle], idOf(x.job && x.job.fit), idOf(x.job && x.job.view), x.job && +x.job.approvedAt || 0, x.job && (x.job.backs || []).length] : 0; })]);
   }
 
+  /* ── the SET STRIP (SETBAR, Paul, 13 Oct 2026: "the user can see both bar charms side-by-side, and then be able to manipulate each one"; "the thinner bar always sits on the shorter chain") ──
+   * ONE line of the Engrave detail's work area for a line that is a SET of different designs (the large bar and the small bar): both bars drawn side by side at ONE scale (each cell is as wide as the piece is long, so the
+   * thinner bar looks thinner), each with its name and the chain it hangs on ("16″", from the set's rule, never worked out here), the one being edited ringed. A press on a bar is the very press of the piece switch above
+   * (data-a="ear", data-ear=<job key>: the card's own handler shows that piece, same face). Nothing is stored or asked; no button approves anything. When the buyer asked for another layout a calm line says a person decides. */
+  const LAYOUT_NOTE = 'The buyer asked for a different layout, so a person decides which bar hangs on which chain.';
+  /** The one calm line of a set whose layout the buyer asked for (the flag is SETBAR's rule reading, charm-nest-engrave-sides.js setPieces), else ''. */
+  const layoutNoteOf = row => { const S = Sides(), sp = S && S.setPieces ? tryDo(() => S.setPieces(lineOf(row)), null) : null; return sp && sp.layoutRequested ? LAYOUT_NOTE : ''; };
+  const mmText = pt => (Math.round(pt * 25.4 / 72 * 10) / 10).toString();
+  /** The strip's element for `row` (a line) with `key` the job shown, or null when the line is no set of two or more different designs (then nothing is drawn). `face`: the face shown (a piece's job of that face is the one a press opens). */
+  function setStrip(row, o) {
+    o = o || {}; const d = root && root.document; if (!d) return null;
+    const line = lineOf(row), S = Sides(), set = line && S && S.setPieces ? tryDo(() => S.setPieces(line), null) : null; if (!set || set.pieces.length < 2) return null;
+    const ps = tryDo(() => piecesOf([line], { nameOf: o.nameOf, isWorking: o.isWorking, keepEmpty: true }), []).filter(p => p.design && p.slot);
+    if (ps.length < 2) return null;
+    const F = Faces(), cur = o.key && F ? F.pieceKeyOf(o.key) : '', face = o.face === 'front' ? 'front' : 'back', P = root && root.CharmNestEngravePreview;
+    const total = ps.reduce((a, p) => a + (p.longPt || 1), 0) || ps.length;
+    const el = d.createElement('div'); el.className = 'engSet'; el.setAttribute('role', 'group'); el.setAttribute('aria-label', 'The bars of this set, side by side at their true relative size');
+    for (const p of ps) {
+      const on = p.pieceKey === cur, job = (p.faces[face] && p.faces[face].job) || (p.faces[face === 'front' ? 'back' : 'front'] && p.faces[face === 'front' ? 'back' : 'front'].job) || p.jobs[0] || null;
+      const nm = S.pieceName(p.design), len = S.lengthText(p.design), dim = p.dimsPt ? ` · ${mmText(p.dimsPt[0])} × ${mmText(p.dimsPt[1])} mm` : '';
+      const b = d.createElement('button'); b.type = 'button'; b.className = 'engSetPc'; b.dataset.piece = p.pieceKey; b.dataset.slot = p.slot; if (job) { b.dataset.a = 'ear'; b.dataset.ear = job.key; } else b.disabled = true;
+      b.setAttribute('aria-pressed', on ? 'true' : 'false'); if (on) b.setAttribute('aria-current', 'true');
+      b.style.flex = `${(p.longPt || 1) / total} 1 0%`;
+      b.title = `${on ? 'Shown now' : 'Show'}: ${nm} (${p.design.name})${dim}${len ? ` · hangs on the ${len} chain` : ''}`;
+      const pic = d.createElement('span'); pic.className = 'engSetPic'; pic.setAttribute('aria-hidden', 'true');
+      if (p.dimsPt) { const w = p.dimsPt[0], h = p.dimsPt[1], pad = Math.max(w, h) * 0.04; pic.style.aspectRatio = ((w + 2 * pad) / (h + 2 * pad)).toFixed(4); }
+      const lb = d.createElement('span'); lb.className = 'engSetLbl'; lb.textContent = nm;
+      b.append(pic, lb); if (len) { const ln = d.createElement('span'); ln.className = 'engSetLen'; ln.textContent = len; ln.setAttribute('aria-label', `chain ${len}`); b.append(ln); }
+      el.appendChild(b);
+      if (P && P.render && job) tryDo(() => P.render(pic, { row: line, job, slot: p.slot, text: '', face: faceOf(job), position: null }));
+    }
+    const note = layoutNoteOf(line), wrap = d.createElement('div'); wrap.className = 'engSetWrap'; wrap.append(el);
+    if (note) { const n = d.createElement('div'); n.className = 'engSetNote'; n.setAttribute('role', 'status'); n.textContent = note; wrap.append(n); }
+    css(); return wrap;
+  }
+
   /* ── the card's own rules (the Sheet tab's card keeps its own) ── */
+  const SET_CSS = '.engSetWrap{display:grid;gap:5px;min-width:0;max-width:340px}.pvMain.egWide>.engSetWrap{max-width:calc(100% - 180px)}.engSet{display:flex;align-items:flex-start;gap:14px;min-width:0;padding:3px}'
+    + '.engSetPc{appearance:none;flex:1 1 0;min-width:0;display:grid;justify-items:center;gap:2px;margin:0;padding:0;border:0;background:transparent;font:inherit;color:inherit;cursor:pointer}'
+    + '.engSetPc:focus-visible{outline:2px solid var(--slate,#68899d);outline-offset:3px;border-radius:7px}.engSetPc:disabled{cursor:default;opacity:.6}'
+    + '.engSetPc:not(:disabled):hover .engSetPic{border-color:var(--ink45)}.engSetPc[aria-pressed=true]{cursor:default}.engSetPc[aria-pressed=true] .engSetPic{outline:2px solid var(--gold,#a9823f);outline-offset:2px}.engSetPc[aria-pressed=true] .engSetLbl{color:var(--ink)}'
+    + '.engSetPic{display:block;box-sizing:border-box;width:100%;min-width:0;aspect-ratio:4/1;background:#fff;border:1px solid var(--line);border-radius:7px;overflow:hidden;transition:border-color .13s ease}'
+    + '.engSetLbl{margin-top:3px;font:600 11.5px/14px var(--sans);color:var(--ink70);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
+    + '.engSetLen{font:600 11px/13px var(--mono);color:var(--ink70);white-space:nowrap}'
+    + '.engSetNote{font:12px/1.4 var(--sans);color:var(--ink70);background:var(--goldSoft,#f6efdc);border:1px solid var(--line);border-radius:8px;padding:4px 9px}'
+    + '@media (prefers-reduced-motion:reduce){.engSetPic{transition:none}}';
   const CSS = '.engCard{container:engc/inline-size;box-sizing:border-box;width:100%;min-width:0;padding:7px;border:1px solid var(--line);border-radius:12px;background:var(--card);display:grid;gap:4px;align-content:start;overflow-wrap:anywhere}'
     + '.engHd{display:flex;align-items:center;gap:6px;min-width:0;min-height:22px}'
     + '.engDot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--ink45);opacity:.85}.engDot[data-s=words]{background:#b04a32;opacity:1}.engDot[data-s=approve]{background:#b8892f;opacity:1}.engDot[data-s=approved]{background:#5f7a5b;opacity:1}.engDot[data-s=plain]{background:var(--line);opacity:1}'
@@ -319,7 +378,7 @@
   }
   function css() {
     const d = root && root.document; if (!d || d.getElementById('engCardCss')) return;
-    openCss(); const s = d.createElement('style'); s.id = 'engCardCss'; s.textContent = CSS + BTN_CSS; (d.head || d.documentElement).appendChild(s);
+    openCss(); const s = d.createElement('style'); s.id = 'engCardCss'; s.textContent = CSS + BTN_CSS + SET_CSS; (d.head || d.documentElement).appendChild(s);
   }
 
   /** The wait of an opening, said on the card: the Engraving button turns into "Opening Engraving…" with the small spinner (it stays where it is, focus kept, and presses are ignored), and the
@@ -402,5 +461,5 @@
   }
 
   openCss();
-  return { piecesOf, facesOf, stateOf, html, fill, card, sig, mountPiece, thumbOf, repaint, sealsOf, css, WORD, openOf, openHtml, OPEN_WORD, metalOf, lineCountOf };
+  return { piecesOf, facesOf, stateOf, html, fill, card, sig, mountPiece, thumbOf, repaint, sealsOf, css, WORD, openOf, openHtml, OPEN_WORD, metalOf, lineCountOf, setStrip, layoutNoteOf, relOfSet, LAYOUT_NOTE };
 });

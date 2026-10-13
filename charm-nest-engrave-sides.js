@@ -294,6 +294,56 @@
     return r.ok ? r : null;
   }
 
+  /* ── a SET of different designs (SIBLINGS / SCHROLINK / SETBAR; Paul, 13 Oct 2026: "see both bar charms side-by-side ... manipulate each one for the back and front engraving") ──────────────
+     A necklace set of two exact designs (spec.pair.set: the large bar BAR_1548 and the small bar SKINNY_0191) is one order line with two pieces, slots D1 and D2, each its OWN design, job, words, Approve and seal.
+     The UI told them apart by "Disc 1" / "Disc 2" and the line's joined name, and drew each picture to fill its own box. These are the pure answers every surface asks, so none of them re-reads the spec its own way:
+       setDesigns(x)        ["BAR_1548", "SKINNY_0191"] | null    x: a job, a line row, a spec (a line that is not a set of two or more different designs, an earring pair, a glued or an old line: null, and then every
+                                                                   surface draws exactly what it always drew)
+       setPieces(x)         { designs, source, layoutRequested, pieces: [{ slot "D1", index 0, sku, name "BAR 1548", role "large" | "small" | null, label "Large bar" | "Small bar" | null,
+                            length '16"' | null, lengths [...] }] } | null     the line's pieces in slot order; role / label / length come from CharmNestOrders.setPiecesOf (SETBAR's rule row: which chain each bar hangs on
+                            is decided THERE, never here); a set a person saved has the design names only. layoutRequested: the buyer asked for another layout, so a person decides which bar is on which chain.
+       setPieceOf(x, slot)  the entry of one piece (x a job: its own slot)   ·   pieceName(piece)  "Small bar" else "SKINNY 0191"   ·   skuName("SKINNY_0191") "SKINNY 0191"
+       slotWord(job, short) "Left ear" | "Disc 2" | "Small bar"   ·   pieceTag(job, of) "DISC 2 of 3" | "SMALL BAR · 16″"   (the one wording every list, card and message uses for a piece)
+     Derived, never stored, no arrays inside arrays. */
+  const skuName = s => String(s == null ? '' : s).replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
+  const lineOfAny = x => (x && x.row && typeof x.row === 'object' && !x.spec ? x.row : x) || null;
+  const specOfAny = x => { const l = lineOfAny(x); return l && l.spec && typeof l.spec === 'object' ? l.spec : l && l.pair && typeof l.pair === 'object' ? l : null; };
+  function setDesigns(x) {
+    const sp = specOfAny(x), pr = sp && sp.pair, d = pr && !pr.glued && !pr.legacy && !pr.earring && pr.set && Array.isArray(pr.set.designs) ? pr.set.designs.map(v => String(v || '')) : null;
+    return d && d.length >= 2 && d.every(Boolean) && new Set(d).size === d.length ? d : null;
+  }
+  const lengthOfWord = v => (v == null || v === '' ? null : String(v));
+  function setPieces(x) {
+    const designs = setDesigns(x); if (!designs) return null;
+    const l = lineOfAny(x), sp = specOfAny(x), meta = (sp.pair && sp.pair.set) || {};
+    // (the page's one piece model of a set, when it is there: roles, labels and the chain each bar hangs on are its rule row's, not guessed here)
+    let model = null; try { const O = dep('CharmNestOrders', './charm-nest-orders.js'); model = O && typeof O.setPiecesOf === 'function' ? O.setPiecesOf(l && l.spec ? l : { spec: sp }) : null; } catch (_) { model = null; }
+    const first = Array.isArray(model) ? model.slice(0, designs.length) : [];
+    const roles = Array.isArray(meta.roles) ? meta.roles : [], lengths = (Array.isArray(meta.lengths) ? meta.lengths : []).map(String);
+    const pieces = designs.map((sku, i) => {
+      const m = first.find(q => q && q.slotKey === 'D' + (i + 1)) || null;
+      return { slot: 'D' + (i + 1), index: i, sku: String((m && m.sku) || sku), name: skuName((m && m.sku) || sku), role: (m && m.role) || roles[i] || null, label: (m && m.label) || null, length: lengthOfWord(m && m.length), lengths: ((m && m.lengths) || lengths).map(String) };
+    });
+    // the buyer asked for another layout and nobody has looked yet (SETBAR-A: a piece's `layoutOpen`, which is spec.pair.set.layout { asked, answered }); a person's answer ("the default stands") ends the note, and the chain a piece hangs on is null until then
+    const lay = meta.layout && typeof meta.layout === 'object' ? meta.layout : null;
+    const layoutRequested = first.some(q => q && q.layoutOpen === true) || !!(lay && lay.asked && !lay.answered);
+    return { designs, source: String(meta.source || ''), layoutRequested, pieces };
+  }
+  /** The slot of x when it names one (a job, a side row, a key "<line>#D2", a slot word). */
+  const slotOfAny = (x, slot) => { if (slot) return String(slot); if (x && typeof x === 'object') { if (x.slot) return String(x.slot); const k = x.key != null ? x.key : x.row && x.row.key; const m = /#(D\d{1,2})(?:~front)?$/.exec(String(k == null ? '' : k)); return m ? m[1] : ''; } return ''; };
+  function setPieceOf(x, slot) {
+    const s = setPieces(x); if (!s) return null;
+    const sl = slotOfAny(x, slot); return s.pieces.find(p => p.slot === sl) || null;
+  }
+  /** What a piece of a set is called: the rule's word ("Small bar"), else its design's name ("SKINNY 0191"). */
+  const pieceName = p => (p ? p.label || p.name : '');
+  /** The chain length as said on a label: 16" → 16″. */
+  const lengthText = p => (p && p.length ? String(p.length).replace(/"|''|”/g, '″') : '');
+  /** The words a piece goes by in a sentence: "Left ear" / "Disc 2" (earOf), `short` "Left" (labelOf); a piece of a set of different designs: "Small bar". Every message that names a piece asks this. */
+  const slotWord = (job, short) => { const sp = setPieceOf(job); return sp ? pieceName(sp) : short ? labelOf(job && job.slot) : earOf(job && job.slot); };
+  /** The tag of a piece as every list and card says it: "LEFT EAR", "DISC 2 of 3"; a piece of a set: "SMALL BAR · 16″" (the rule's name and the chain). '' for a job with no slot. */
+  const pieceTag = (job, of) => { const sp = setPieceOf(job); return sp ? [pieceName(sp).toUpperCase(), lengthText(sp)].filter(Boolean).join(' · ') : job && job.slot ? tagOf(job.slot, of) : ''; };
+
   /* ── the per-piece record (DISCCYCLE, DISCMODALS, the engraving cards): the existing job read as the disc it is. Derived, never stored, no nested arrays. ──
      pieceRecord(job, o) -> { index (1-based), of, slot, key, lineKey, groupKey, tag "DISC 2 of 3", label "Disc 2", poolIds, words, lines, font, fontAsked, state, approved,
                               approvedBy, approvedAt, sealed, wordsSource, face "back"|"front", faceLabel "Back"|"Front", faceTag "BACK"|"FRONT", pieceKey "<line>[#slot]" }
@@ -314,6 +364,8 @@
       approved: ['approved', 'written'].includes(job.state), approvedBy: job.approvedBy || (job.engraveRec && job.engraveRec.approvedBy) || '', approvedAt: +job.approvedAt || +(job.engraveRec && job.engraveRec.approvedAt) || 0, sealed: seals.length > 0, wordsSource: job.wordsSource || job.source || '' };
     // the face of the job (additive: derived, never stored). A front's tag says so only when the piece has a back besides ("DISC 2 of 3 · FRONT"); the back's tag is what it always was.
     rec.face = face; rec.faceLabel = face === 'front' ? 'Front' : 'Back'; rec.faceTag = face === 'front' ? 'FRONT' : 'BACK'; rec.pieceKey = lineKey + (slot ? '#' + slot : '');
+    // a piece of a SET of different designs (the large bar, the small bar): its own design, and the chain it hangs on when the set's rule says (additive; a line that is no set has no `design`)
+    const sp = setPieceOf(job); if (sp) rec.design = { sku: sp.sku, name: sp.name, role: sp.role, label: sp.label, length: sp.length };
     if (face === 'front' && withBack) rec.tag = [rec.tag, 'FRONT'].filter(Boolean).join(' · ');
     return rec;
   }
@@ -327,5 +379,5 @@
     const per = new Map(); for (const j of list) { const k = j.slot || (j.row && j.row.slot) || ''; per.set(k, (per.get(k) || 0) + 1); }
     return list.map(j => pieceRecord(j, { of, faces: front ? per.get(j.slot || (j.row && j.row.slot) || '') : 1 }));
   }
-  return { faceOf, isFront, jobKey, parseKey, labelOf, earOf, tagOf, copyOf, slotOfId, mirrorOfId, pieceCharm, plan, idsOfSlot, sideRow, summary, linkParent, unlinkParent, perUnitOf, splitWords, wordsForDiscs, pieceRecord, pieceRecords, STATE_ORDER, SLOT: SLOT };
+  return { faceOf, isFront, jobKey, parseKey, labelOf, earOf, tagOf, copyOf, slotOfId, mirrorOfId, pieceCharm, plan, idsOfSlot, sideRow, summary, linkParent, unlinkParent, perUnitOf, splitWords, wordsForDiscs, pieceRecord, pieceRecords, setDesigns, setPieces, setPieceOf, pieceName, lengthText, slotWord, pieceTag, skuName, STATE_ORDER, SLOT: SLOT };
 });

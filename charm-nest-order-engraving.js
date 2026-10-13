@@ -47,7 +47,8 @@
       + '.engSaid{margin:8px 0 0;padding:1px 0 1px 9px;border-left:2px solid var(--line);min-width:0;font:13px/1.45 var(--serif);color:var(--ink);overflow-wrap:anywhere;max-height:min(20vh,150px);overflow:auto}.engSaid[hidden]{display:none}'
       + '.engSaid .esName{font:700 9.5px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);margin-top:6px}.engSaid .esName:first-child{margin-top:0}'
       + '.engSaid .esRow{min-width:0}.engSaid .esFaces{font:12.5px/1.45 var(--sans);color:var(--ink70)}'
-      + '.engSaid i{font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);font-style:normal;margin-right:2px}.engSaid .esSep{margin:0 3px;color:var(--ink45)}';
+      + '.engSaid i{font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);font-style:normal;margin-right:2px}.engSaid .esSep{margin:0 3px;color:var(--ink45)}'
+      + '.engNote{margin:0 0 8px;padding:5px 10px;border:1px solid var(--line);border-radius:9px;background:var(--goldSoft,#f6efdc);font:12.5px/1.4 var(--sans);color:var(--ink70)}.engNote[hidden]{display:none}';
     (d.head || d.documentElement).appendChild(s);
   }
   const waitNode = text => { const n = doc().createElement('div'); n.className = 'owEngWait'; n.setAttribute('role', 'status'); n.setAttribute('aria-live', 'polite'); n.innerHTML = `<span class="owSpin" aria-hidden="true"></span><span>${esc(text)}</span>`; return n; };
@@ -83,7 +84,10 @@
       const parts = saidRows(line), one = mine.length === 1 ? mine[0] : null, f = one && one.faces || {};
       const faces = f.front && f.back && f.front.text && f.back.text && !f.front.plain && !f.back.plain ? [['Front', oneLine(f.front.text)], ['Back', oneLine(f.back.text)]] : null;
       if (!parts.length) continue;   // (the customer wrote and chose nothing: nothing is said, whatever the faces read)
-      out.push({ name: (mine[0].name || '') + (mine[0].many && mine[0].metal ? ' · ' + mine[0].metal : ''), rows: parts, faces });   // (ENGPICK: two pieces of one design are told apart by their metal, as their cards are: "COMET 9427 · SS")
+      // SETBAR: the pieces of a SET of different designs (the large bar, the small bar) each say the words that belong to it, under its own name and chain: "Small bar · 16″  Ginger" (the reader's assignment, a person's edit included)
+      const S = root.CharmNestEngraveSides, set = mine.length >= 2 && mine.every(p => p.design) && S && S.pieceName;
+      const bars = set ? mine.map(p => { const f = p.faces || {}, ks = ['front', 'back'].filter(k => f[k] && f[k].text && f[k].state !== 'plain'), both = ks.length > 1; return [[S.pieceName(p.design), S.lengthText(p.design)].filter(Boolean).join(' · '), ks.map(k => (both ? (k === 'front' ? 'Front ' : 'Back ') : '') + oneLine(f[k].text)).join(' · ')]; }).filter(b => b[1]) : null;
+      out.push({ name: (mine[0].lineName || mine[0].name || '') + (mine[0].many && mine[0].metal ? ' · ' + mine[0].metal : ''), rows: parts, faces, bars: bars && bars.length ? bars : null });   // (ENGPICK: two pieces of one design are told apart by their metal, as their cards are: "COMET 9427 · SS")
     }
     return out;
   }
@@ -91,7 +95,8 @@
     const many = entries.length > 1, row = ([k, v]) => `<div class="esRow" data-said="${esc(k)}"><i>${esc(k)}</i> ${esc(v)}</div>`;
     return entries.map(e => (many && e.name ? `<div class="esName">${esc(e.name)}</div>` : '')
       + e.rows.map(row).join('')
-      + (e.faces ? `<div class="esRow esFaces" data-said="faces">${e.faces.map(([f, t]) => `<i>${esc(f)}</i> ${esc(t)}`).join(' <span class="esSep" aria-hidden="true">\u00b7</span> ')}</div>` : '')).join('');
+      + (e.faces ? `<div class="esRow esFaces" data-said="faces">${e.faces.map(([f, t]) => `<i>${esc(f)}</i> ${esc(t)}`).join(' <span class="esSep" aria-hidden="true">\u00b7</span> ')}</div>` : '')
+      + (e.bars ? e.bars.map(([k, t]) => `<div class="esRow esFaces esBar" data-said="bar"><i>${esc(k)}</i> ${esc(t)}</div>`).join('') : '')).join('');
   }
 
 
@@ -350,6 +355,16 @@
       if (sig !== saidSig) { saidSig = sig; saidEl.innerHTML = entries.length ? saidHtml(entries) : ''; }
       saidEl.hidden = !entries.length;
     }
+    /** SETBAR: a set of bars whose buyer asked for another layout says so in ONE calm line above the cards (a person decides which bar hangs on which chain): charm-nest-engrave-card.js layoutNoteOf. Nothing for any other line. */
+    let noteEl = null;
+    function paintNote(r) {
+      const C = CARD(), text = r && !r.loading && r.pieces.length && C && C.layoutNoteOf ? (r.rows.map(x => tryDo(() => C.layoutNoteOf(x), '')).find(Boolean) || '') : '';
+      if (!noteEl && text && host.parentNode) { noteEl = doc().createElement('div'); noteEl.className = 'engNote'; noteEl.id = 'owEngNote'; noteEl.setAttribute('role', 'status'); noteEl.hidden = true; host.before(noteEl); }
+      if (!noteEl) return;
+      if (noteEl.nextSibling !== host && host.parentNode) host.before(noteEl);
+      if (noteEl.textContent !== text) noteEl.textContent = text;
+      noteEl.hidden = !text;
+    }
     /** ENGAPPROVE (Paul, 13 Oct 2026: "the user must never be allowed to skip pieces"): the section shows only the piece picked, so once that piece is approved ONE quiet line under its card says how many pieces of the
      *  order are still to approve and shows the next (charm-nest-engrave-guide.js decides; it is nothing while the picked piece itself has something to do, for "Show all" and for an order of one piece). It sits right under the
      *  cards, above the customer's words; a press on its button picks that piece (OrderWin.selectPiece), the section follows as for any pick. No timer, no read: it is drawn with the cards. */
@@ -443,7 +458,7 @@
       attached = true;
       const C = CARD(); if (!C) return;
       const r = read(), vis = visible();
-      paintSaid(r); paintLeft(r);
+      paintSaid(r); paintLeft(r); paintNote(r);
       // (ENGSEL: the piece picked changed: the window is repainting itself because of it, so the host is not told, and a card of a piece that is not shown now goes at once, whatever keeps the rest from being
       //  drawn this moment (the window not on screen, a seal being pressed): no stale card is ever left on show, and a section with no card left has no title, rule or room)
       if (r.only !== onlySeen) { onlySeen = r.only; quiet = true; }
@@ -495,6 +510,7 @@
       host.replaceChildren(); host.hidden = true;
       saidSig = ''; if (saidEl) { saidEl.innerHTML = ''; saidEl.hidden = true; }
       if (leftEl) { leftEl.replaceChildren(); leftEl.hidden = true; leftEl._sig = ''; }
+      if (noteEl) { noteEl.textContent = ''; noteEl.hidden = true; }
     }
     const handle = {
       el: host, mode,
@@ -510,6 +526,7 @@
         host.replaceChildren(); host.hidden = true; if (host._orderEngraving === handle) delete host._orderEngraving;
         if (saidEl) { tryDo(() => saidEl.remove()); saidEl = null; }
         if (leftEl) { tryDo(() => leftEl.remove()); leftEl = null; }
+        if (noteEl) { tryDo(() => noteEl.remove()); noteEl = null; }
       },
       _tick() {
         // (a host taken out of the page takes the cards with it; one not put in yet is waited for)
