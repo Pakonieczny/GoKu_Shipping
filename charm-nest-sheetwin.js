@@ -441,6 +441,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
           <div class="swSkel" data-r="skel" aria-hidden="true" hidden></div>
           <div class="swPane" data-pane="sheet">
             <div class="swPaneHead"><div class="swFindRow"><label class="swFind">${ICON.search}<input data-r="find" type="search" placeholder="Order # or SKU on this sheet" aria-label="Search orders on this sheet" autocomplete="off" spellcheck="false"></label><button type="button" class="swIcon" data-r="addBtn" title="Add an order to this sheet" aria-label="Add an order to this sheet" hidden>${ICON.add}</button></div><div class="swSeg" data-r="seg" role="group" aria-label="Show"></div></div>
+            <div class="swSheetMsg rvhLine" data-r="hold" hidden></div>
             <div class="swSheetMsg" data-r="work" hidden></div>
             <div class="swSheetMsg" data-r="fill" hidden></div>
             <div class="swScroll"><ol class="swOrders" data-r="orders"></ol></div>
@@ -1180,6 +1181,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     W.dlg.setAttribute("aria-label", r.folder || shortOf(r));
     const st = E.state.querySelector("span");
     if (E.stateSeal) { const h = prelim ? null : sheetSeal(r); if (E.stateSeal._h !== h) { E.stateSeal._h = h; if (h !== null) E.stateSeal.innerHTML = h; } }
+    // a sheet an order in the Review tab holds back says so, once, above its orders (charm-nest-library-review-hold.js); nothing until the record is read
+    tryDo(() => { if (E.hold && window.LibraryReviewHold) window.LibraryReviewHold.paint(E.hold, prelim ? "" : (r.id || r.sheetId)); });
     if (prelim) { E.state.className = "swState"; st.textContent = "…"; }
     else {
       const done = !!(r.laserDoneAt || (window.LibraryDone && LibraryDone.isDone && LibraryDone.isDone(r)));
@@ -2597,6 +2600,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     plain();
   }
   function returnPill() {
+    // (the pill is the one EngraveReturn draws for every start, the order window and the tabs too: one control, one memory, the newest journey in it)
+    const c0 = RET.ctx, ER = window.EngraveReturn;
+    if (c0 && ER && typeof ER.set === "function") {
+      ER.set({ kind: "sheet", label: c0.label, rid: c0.rid, key: c0.key, was: c0.was, back: (approved, rect) => sheetBack(c0, approved, rect), gone: () => { if (RET.ctx === c0) RET.ctx = null; } });
+      return;
+    }
     if (!RET.el) {
       RET.el = h("div", "swReturn"); RET.el.setAttribute("role", "status");
       // in the top bar beside the tabs, where it covers nothing (it was a floating pill over the Engrave bar)
@@ -2632,8 +2641,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const c = RET.ctx; if (!c) return;
     const r = RET.el.getBoundingClientRect();
     dismiss();
+    sheetBack(c, approved, r);
+  }
+  /** The window up again from where the pill is, on the charm it came from. */
+  function sheetBack(c, approved, rect) {
     if (S.mode !== "library") setMode("library");
-    open(c.sheetId, { select: c.poolId, from: "engrave", flash: approved, fromRect: r });
+    open(c.sheetId, { select: c.poolId, from: "engrave", flash: approved, fromRect: rect });
   }
 
   /* ── taking pieces off (Paul, 25 Sep 18:01): one charm, or a whole order off every sheet it is on ──
@@ -5183,7 +5196,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // newer sheet still filling (movableFrom keeps cut, recalled, sent, released and held-in-a-set sheets out), oldest first
     function candidates(target, skip, avoid) {
       // (avoid: sheets the Hold still has to take pieces off: nothing is taken from them, so they never end up holding one order)
-      const all = candidatesFor(target).filter(k => !skip.has(k.rid) && ![...k.srcs].some(src => avoid.has(src.sheetId)));
+      // (an order in Review is paused wherever it sits: it never fills a spot, and is never taken off its sheet to do so)
+      const inReview = rid => { try { return !!(window.CharmNestReviewHold && window.CharmNestReviewHold.inReview(rid)); } catch (_) { return false; } };
+      const all = candidatesFor(target).filter(k => !skip.has(k.rid) && !inReview(k.rid) && ![...k.srcs].some(src => avoid.has(src.sheetId)));
       return all.filter(k => k.waiting).map(k => Object.assign(k, { source: "waiting" }))
         .concat(all.filter(k => !k.waiting && [...k.srcs].every(src => newer(src, target))).map(k => Object.assign(k, { source: "newerSheet" })));
     }

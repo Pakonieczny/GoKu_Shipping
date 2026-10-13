@@ -48,12 +48,12 @@
     ready() { const m = MARK(); return !!(m && typeof m.mark === "function" && typeof m.isMarked === "function"); },
     marked(rid) { try { return !!MARK().isMarked(rid); } catch (_) { return false; } },
     mark(rid, by) { return Promise.resolve().then(() => MARK().mark(rid, { by })); },
-    // an order a person did not mark can be in Review all the same (the system put it there): the Review tab's own list says so
+    // an order a person did not mark can be in Review all the same (the system put it there): the Review tab's own list says so (a person's mark is isMarked's: the mark API owns when it is open or resolved)
     natural(rid, row) {
       try {
         const R = root.Review; if (!R || typeof R.items !== "function") return null;
         const own = new Set(rowKeys(rid)); if (row && row.key) own.add(row.key);
-        return R.items().find(it => it && !it.done && !it.decided && !/^(eng|held):/.test(String(it.key || "")) && (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).some(r => r && own.has(r.key) && r.state !== "gone")) || null;
+        return R.items().find(it => it && it.kind !== "reviewMark" && !it.done && !it.decided && !/^(eng|held):/.test(String(it.key || "")) && (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).some(r => r && own.has(r.key) && r.state !== "gone")) || null;
       } catch (_) { return null; }
     },
     inReview(rid, row) { return api.marked(rid) || !!api.natural(rid, row); },
@@ -67,7 +67,7 @@
       try { if (typeof root.setMode === "function") { root.setMode("review"); return true; } } catch (_) {}
       return false;
     },
-    onChange(fn) { try { const m = MARK(); if (m && typeof m.onChange === "function") { m.onChange(fn); return true; } } catch (_) {} return false; },
+    onChange(fn) { try { const m = MARK(); if (m && typeof m.onChange === "function") return { api: m, off: m.onChange(fn) }; } catch (_) {} return null; },
     // REVHOLD: why this order cannot be held (a piece already released, a sheet already cut or Completed), "" when it can
     cannotHold(rid) {
       try { const h = HOLD(); if (!h || typeof h.canHold !== "function") return ""; const c = h.canHold(rid); return c && c.ok === false ? String(c.why || "This order can no longer be held.") : ""; } catch (_) { return ""; }
@@ -198,8 +198,12 @@
     return { ok: true, sheet };
   }
 
-  // (the mark API's one change callback: registered the first time a button is drawn, when the script that offers it is surely loaded)
-  let subscribed = false;
-  const subscribe = () => { if (!subscribed && api.onChange(sync)) subscribed = true; };
+  // (the mark API's one change callback: registered the first time a button is drawn, when the script that offers it is surely loaded; again if the API object is ever replaced)
+  let sub = null;
+  const subscribe = () => {
+    const m = MARK(); if (!m || (sub && sub.api === m)) return;
+    try { if (sub && typeof sub.off === "function") sub.off(); } catch (_) {}
+    sub = api.onChange(sync);
+  };
   root.ReviewSend = { mount, press, sync, busy: rid => busyRids.has(String(rid)), LABEL, IN };
 })(typeof window !== "undefined" ? window : globalThis);
