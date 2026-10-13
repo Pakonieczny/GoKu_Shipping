@@ -11,7 +11,7 @@
 //   D  Cancel puts the system's placement back exactly (the same view object, the same fit, the same canvas); Save asks "Why change it?" like any override and keeps the turn; Approve works after a turn
 //   E  what the turn changes downstream: the written laser file and the saved record read the turned orientation, and the engraving sits on the SAME metal of the charm as before the turn (the sheet views' engraveOn)
 //   F  a later fit (new words) keeps the person's orientation; a turn nobody asked for never happens
-//   G  the row: measured heights at 1024 / 1280 / 1356 / 1440 / 1920 (was 32 px, now 53 px; every control 44 px or taller, 14.5 px type), fits without sideways overflow, hover / focus ring / pressed / disabled / applied styles
+//   G  the row: measured heights at 1024 / 1280 / 1356 / 1440 / 1920 (was 31.94 px, now 42.5 px = exactly 1.33 x; every control exactly 1.33 x its old size; 11 px type is 14.63 px), fits without sideways overflow, hover / focus ring / pressed / disabled / applied styles
 //   H  a turn reads, writes and sends nothing (no request, no cloud call, no paid look)
 //   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-turn.cjs        (TURN_SHOTS=<dir> saves screenshots)
 // A pass proves only what the page's own code does on the offline fake site; not a live order, not the live deploy.
@@ -20,7 +20,8 @@ const fs = require('fs'), path = require('path');
 let R; try { R = require('./_engraveRealWorld.cjs'); } catch (e) { console.log('engrave-turn: tests/charm-nest/_engraveRealWorld.cjs is not here, skipped'); process.exit(0); }
 const SHOT_DIR = process.env.TURN_SHOTS || '';
 const SLACK = 0.36;       // pt: the exact turn may slide the words up to 2 raster pixels (0.12 mm) so the strict ink check still passes at every angle (turnTo)
-const OLD_ROW_PX = 31.94;   // the row as it was on clean main (1280x720 and 1440x900, with and without the spacing control): 5 px padding + 1 px rule + 26 px buttons
+const OLD_BTN_PX = 25.94;   // the buttons as they were on clean main
+const OLD_ROW_PX = 31.94;   // the row as it was on clean main (1280x720 and 1440x900, with and without the spacing control): 5 px padding + 1 px rule + 25.94 px buttons
 
 (async () => {
   const w = await R.world({ viewport: { width: 1440, height: 900 }, shots: SHOT_DIR || undefined });
@@ -109,7 +110,7 @@ const OLD_ROW_PX = 31.94;   // the row as it was on clean main (1280x720 and 144
 
     /* ═══ G · the row: sizes, fit, styles ═══ */
     const sizes = {};
-    for (const [W, H] of [[1024, 768], [1280, 720], [1356, 768], [1440, 900], [1920, 1080]]) {
+    for (const [W, H] of [[1024, 768], [1040, 768], [1280, 720], [1356, 768], [1440, 900], [1920, 1080]]) {
       await page.setViewportSize({ width: W, height: H });
       for (const nm of ['back', 'both']) {
         await R.openEngraveDetail(w, nm, { face: 'back' });
@@ -118,16 +119,20 @@ const OLD_ROW_PX = 31.94;   // the row as it was on clean main (1280x720 and 144
           const items = [...ctl.querySelectorAll('button,select,input,.spacingControl')].filter(c => c.getBoundingClientRect().width > 0);
           const hs = items.map(c => [c.dataset.a || c.className || c.tagName, Math.round(c.getBoundingClientRect().height * 10) / 10]);
           const kids = [...ctl.children].filter(c => c.getBoundingClientRect().width > 0), rights = kids.map(c => c.getBoundingClientRect().right), host = document.querySelector('#egQueue .backHost').getBoundingClientRect();
-          const lines = { size: r.height > 80 ? 2 : 1 };   // (one line of 44 px controls is 53 px tall, two are 103)
+          const lines = { size: r.height > 62 ? 2 : 1 };   // (one line is 42.5 px tall, two are about 82)
+          const hOf = sel => { const e = ctl.querySelector(sel); return e && e.getBoundingClientRect().width > 0 ? Math.round(e.getBoundingClientRect().height * 100) / 100 : null; };
+          const cats = { centre: hOf('[data-a="centre"]'), skip: hOf('[data-a="skip"]'), turn: hOf('.egTurn'), step: hOf('[data-a="turnStep"]'), select: hOf('select[data-a="linecount"]'), spacing: hOf('.spacingControl'), slider: hOf('.spacingControl input'), icon: hOf('.spacingIcon') };
           const fonts = [...ctl.querySelectorAll('.btn,select,.lineControl,[data-cap]')].map(c => parseFloat(getComputedStyle(c).fontSize));
-          return { h: Math.round(r.height * 10) / 10, w: Math.round(r.width), over: ctl.scrollWidth > ctl.clientWidth + 1, beyond: Math.max(...rights) > r.right + 1, minControl: Math.min(...hs.map(x => x[1])), hs, rows: lines.size, minFont: Math.min(...fonts), overlapsWork: r.top < host.bottom - 1, pageOver: document.documentElement.scrollWidth > innerWidth + 1, turnBox: !!ctl.querySelector('input[data-a="turn"]') };
+          return { cats, maxFont: Math.max(...fonts), h: Math.round(r.height * 100) / 100, w: Math.round(r.width), over: ctl.scrollWidth > ctl.clientWidth + 1, beyond: Math.max(...rights) > r.right + 1, minControl: Math.min(...hs.map(x => x[1])), hs, rows: lines.size, minFont: Math.min(...fonts), overlapsWork: r.top < host.bottom - 1, pageOver: document.documentElement.scrollWidth > innerWidth + 1, turnBox: !!ctl.querySelector('input[data-a="turn"]') };
         });
         sizes[nm + W] = m;
         check(m && !m.over && !m.beyond && !m.overlapsWork && !m.pageOver, nm + ' at ' + W + 'x' + H + ': the row fits (no sideways overflow, nothing past the work area\'s edge, the work area is not covered)', JSON.stringify({ h: m && m.h, w: m && m.w, rows: m && m.rows }));
-        check(m && m.minControl >= 44 && m.minFont >= 14, nm + ' at ' + W + ': every control is at least 44 px tall and the type 14 px or more', 'smallest control ' + (m && m.minControl) + ' px, smallest type ' + (m && m.minFont) + ' px');
+        const oldH = { centre: OLD_BTN_PX, skip: OLD_BTN_PX, turn: OLD_BTN_PX, step: OLD_BTN_PX, select: 21, spacing: 26, slider: 16, icon: 18 };   // (clean main, measured: the +90 / -90 buttons it replaces were buttons)
+        const offs = m ? Object.entries(m.cats).filter(([, v]) => v != null).map(([k, v]) => [k, v, +(oldH[k] * 1.33).toFixed(2)]).filter(([, v, e]) => Math.abs(v - e) > 0.6) : [['none']];
+        check(m && offs.length === 0 && Math.abs(m.minFont - 14.63) < 0.05 && Math.abs(m.maxFont - 14.63) < 0.05, nm + ' at ' + W + ': every control is exactly 1.33 x its old size (buttons 25.94 -> 34.5, select 21 -> 27.9, spacing 26 -> 34.5, its slider 16 -> 21.3, its icon 18 -> 24; type 11 -> 14.63 px)', JSON.stringify(m && m.cats) + ' type ' + (m && m.minFont) + ' ' + (m && m.maxFont) + (offs.length ? ' OFF: ' + JSON.stringify(offs) : ''));
       }
     }
-    for (const k of ['back1280', 'back1440']) { const m = sizes[k]; check(m && m.h >= OLD_ROW_PX * 1.33 && m.rows === 1, k + ': the row\'s height is at least 1.33 x the old one on one line', 'was ' + OLD_ROW_PX + ' px, now ' + (m && m.h) + ' px = x' + (m && (m.h / OLD_ROW_PX).toFixed(2))); }
+    for (const k of ['back1280', 'back1356', 'back1440', 'back1920', 'both1280', 'both1356', 'both1440', 'both1920']) { const m = sizes[k]; check(m && m.rows === 1 && Math.abs(m.h - OLD_ROW_PX * 1.33) <= 0.6, k + ': the row is exactly 1.33 x the old height, on one line', 'was ' + OLD_ROW_PX + ' px, now ' + (m && m.h) + ' px = x' + (m && (m.h / OLD_ROW_PX).toFixed(3))); }
     console.log('  row heights (px), was ' + OLD_ROW_PX + ': ' + Object.entries(sizes).map(([k, v]) => k + '=' + (v && v.h) + (v && v.rows > 1 ? '(wraps to ' + v.rows + ' lines)' : '')).join('  '));
     await page.setViewportSize({ width: 1440, height: 900 }); await R.openEngraveDetail(w, 'both', { face: 'back' });
     await shot('after-row-1440x900-both');

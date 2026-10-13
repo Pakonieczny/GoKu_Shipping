@@ -2987,41 +2987,42 @@ button.approveReason:focus-visible{outline:2px solid var(--gold);outline-offset:
 .placeView .ctl .spacingControl output{font-size:11px}
 .placeView .ctl .spacingIcon{min-height:18px}
 .placeView .ctl .rest{flex-wrap:nowrap}
-/* ROTBAR (Paul, 13 Oct 2026: "Enlarge the height of the entire bottom row ... also enlarge each component in the row concurrently. Make them really easy to click and simple to interact with with clear feedback."):
-   the bottom row of the Engrave work area is bigger throughout: every control is 44px tall (it was 26px; the row 32px, now 53px), the type 14.5px (it was 11px), the select, the cap-height number, the line-spacing slider and
-   the new turn box with its two step buttons alike. Hover, the keyboard focus ring (:focus-visible), the pressed state, the disabled state and a brief "applied" glow say what a control is doing. It still fits at 1024 to 1920px:
-   below 900px of row the key hint goes, below 760px the "Line spacing" word goes and the pieces compress; when even that is not enough the row wraps onto a second line, never sideways, never over the work area. */
-.placeView .ctl{--egH:44px;--egF:14.5px;gap:8px;padding-top:8px;flex-wrap:wrap;row-gap:6px;align-items:center}
-.placeView .ctl .btn.sm,.placeView .ctl .btn.ghost.sm{min-height:var(--egH);height:var(--egH);box-sizing:border-box;padding:0 18px;font-size:var(--egF);border-radius:11px;display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1}
-.placeView .ctl .btn .k{font-size:11.5px;padding:2px 6px;margin-left:6px;border-radius:5px}
-.placeView .ctl .lineControl{gap:8px;font-size:var(--egF);flex:0 1 auto;min-width:0;color:var(--ink70)}
-.placeView .ctl .lineControl select{min-height:var(--egH);height:var(--egH);box-sizing:border-box;padding:0 30px 0 14px;font-size:var(--egF);font-weight:600;border-radius:11px;min-width:0;cursor:pointer;color:var(--ink)}
-.placeView .ctl .dim{font-size:var(--egF);padding:0 4px;white-space:nowrap;color:var(--ink70)}
-.placeView .ctl .spacingControl{min-height:var(--egH);height:var(--egH);box-sizing:border-box;padding:0 14px;gap:10px;font-size:var(--egF);flex:0 1 auto;flex-wrap:nowrap;min-width:0;border-radius:11px;cursor:pointer}
-.placeView .ctl .spacingControl input{width:96px;flex:0 1 96px;min-width:44px;height:var(--egH);cursor:pointer}
+/* ROTBAR (Paul, 13 Oct 2026: "Enlarge the height of the entire bottom row of buttons and options by 33%. also enlarge each component in the row concurrently. Make them really easy to click and simple to interact with with clear feedback."):
+   the bottom row of the Engrave work area is exactly 1.33 times what it was, and so is every part of it: the row 31.94px -> 42.5px, the buttons 25.94 -> 34.5px, the lines select 21 -> 27.9px, the line-spacing control 26 -> 34.5px with its slider
+   16 -> 21.3px and its icon 18 -> 24px, the type 11px -> 14.63px, the paddings and gaps 1.33 times, and the new turn box (with its two step buttons) is as tall as a button. Hover, the keyboard focus ring (:focus-visible), the pressed state, the
+   disabled state and a brief "applied" glow say what a control is doing. It still fits at 1040 to 1920px: in a narrow row the key hint, the faced piece's word and the "Line spacing" word go and the pieces compress; when even that is not enough
+   the row wraps onto a second line, never sideways, never over the work area. */
+.placeView .ctl{--egH:34.5px;--egS:27.9px;--egF:14.63px;gap:6.65px;padding-top:7px;flex-wrap:wrap;row-gap:5px;align-items:center}
+.placeView .ctl .btn.sm,.placeView .ctl .btn.ghost.sm{min-height:var(--egH);height:var(--egH);box-sizing:border-box;padding:0 12px;font-size:var(--egF);border-radius:10px;display:inline-flex;align-items:center;justify-content:center;gap:5px;line-height:1}
+.placeView .ctl .btn .k{font-size:12px;padding:1.33px 4px;margin-left:5.3px;border-radius:5px}
+.placeView .ctl .lineControl{gap:5.3px;font-size:var(--egF);flex:0 1 auto;min-width:0;color:var(--ink70)}
+.placeView .ctl .lineControl select{min-height:var(--egS);height:var(--egS);box-sizing:border-box;padding:0 5.3px;font-size:var(--egF);font-weight:600;border-radius:9px;min-width:0;cursor:pointer;color:var(--ink)}
+.placeView .ctl .dim{font-size:var(--egF);padding:0 2.7px;white-space:nowrap;color:var(--ink70)}
+.placeView .ctl .spacingControl{min-height:var(--egH);height:var(--egH);box-sizing:border-box;padding:0 9.3px;gap:6.65px;font-size:var(--egF);flex:0 1 auto;flex-wrap:nowrap;min-width:0;border-radius:10px;cursor:pointer}
+.placeView .ctl .spacingControl input{width:96px;flex:0 1 96px;min-width:45px;height:21.3px;cursor:pointer}
 .placeView .ctl .spacingControl output{font-size:var(--egF);min-width:4ch}
 .placeView .ctl .spacingIcon{min-height:24px;width:20px}
-.placeView .ctl .spacingIcon i{height:2.5px}
-.placeView .ctl .rest{gap:8px;flex-wrap:nowrap}
-/* the turn box: [ clockwise step | degrees | counter-clockwise step ], one bordered control */
-.placeView .ctl .egTurn{position:relative;display:inline-flex;align-items:stretch;height:var(--egH);border-radius:11px;background:var(--card);overflow:hidden;margin-left:2px;transition:box-shadow .15s}
-.placeView .ctl .egTurn::after{content:"";position:absolute;inset:0;border:1px solid var(--line);border-radius:11px;pointer-events:none;transition:border-color .15s}   /* (the border is drawn over the parts, so every part is the full 44px tall) */
+.placeView .ctl .spacingIcon i{height:2.66px}
+.placeView .ctl .rest{gap:6.65px;flex-wrap:nowrap}
+/* the turn box: [ clockwise step | degrees | counter-clockwise step ], one bordered control as tall as a button */
+.placeView .ctl .egTurn{position:relative;display:inline-flex;align-items:stretch;height:var(--egH);border-radius:10px;background:var(--card);overflow:hidden;margin-left:1.33px;transition:box-shadow .15s}
+.placeView .ctl .egTurn::after{content:"";position:absolute;inset:0;border:1px solid var(--line);border-radius:10px;pointer-events:none;transition:border-color .15s}   /* (the border is drawn over the parts, so every part is the full height) */
 .placeView .ctl .egTurn:hover::after{border-color:var(--gold2)}
 .placeView .ctl .egTurn:focus-within{box-shadow:0 0 0 3px rgba(169,130,63,.28)}
 .placeView .ctl .egTurn:focus-within::after{border-color:var(--gold)}
 .placeView .ctl .egTurn.applied{box-shadow:0 0 0 3px rgba(95,122,91,.30)}
 .placeView .ctl .egTurn.applied::after{border-color:var(--sage)}
-.placeView .ctl .egTurnStep{appearance:none;border:0;background:var(--card2);color:var(--ink);width:46px;min-width:46px;font:600 22px/1 var(--sans);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0;transition:background .12s,transform .08s;user-select:none;touch-action:manipulation}
+.placeView .ctl .egTurnStep{appearance:none;border:0;background:var(--card2);color:var(--ink);width:37px;min-width:37px;font:600 18.6px/1 var(--sans);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0;transition:background .12s,transform .08s;user-select:none;touch-action:manipulation}
 .placeView .ctl .egTurnStep:first-child{border-right:1px solid var(--line)}
 .placeView .ctl .egTurnStep:last-child{border-left:1px solid var(--line)}
 .placeView .ctl .egTurnStep:hover{background:var(--goldSoft)}
 .placeView .ctl .egTurnStep:active{background:var(--goldLine);transform:translateY(1px)}
 .placeView .ctl .egTurnStep:disabled{opacity:.45;cursor:not-allowed}
-.placeView .ctl .egTurnField{display:inline-flex;align-items:center;gap:1px;padding:0 10px 0 6px;font:600 var(--egF) var(--mono);color:var(--ink);cursor:text}
-.placeView .ctl .egTurnField input{width:5.2ch;min-width:0;height:100%;border:0;outline:0;background:transparent;font:600 17px var(--mono);color:var(--ink);text-align:right;padding:0;-moz-appearance:textfield}
+.placeView .ctl .egTurnField{display:inline-flex;align-items:center;gap:1px;padding:0 8px 0 4px;font:600 var(--egF) var(--mono);color:var(--ink);cursor:text}
+.placeView .ctl .egTurnField input{width:4.4ch;min-width:0;height:100%;border:0;outline:0;background:transparent;font:600 var(--egF) var(--mono);color:var(--ink);text-align:right;padding:0;-moz-appearance:textfield}
 .placeView .ctl .egTurnField input::-webkit-outer-spin-button,.placeView .ctl .egTurnField input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .placeView .ctl .egTurnField input:disabled{opacity:.45;cursor:not-allowed}
-.placeView .ctl .egTurnDeg{font:600 17px var(--mono);color:var(--ink70)}
+.placeView .ctl .egTurnDeg{font:600 var(--egF) var(--mono);color:var(--ink70)}
 /* hover, focus ring, pressed, disabled on every control of the row */
 .placeView .ctl .btn.ghost.sm:hover{background:var(--goldSoft);border-color:var(--gold2);opacity:1}
 .placeView .ctl .btn.ghost.sm:active{background:var(--goldLine);transform:translateY(1px);box-shadow:inset 0 2px 4px rgba(60,40,10,.14)}
@@ -3034,11 +3035,12 @@ button.approveReason:focus-visible{outline:2px solid var(--gold);outline-offset:
 .placeView .ctl .spacingControl:hover,.placeView .ctl .spacingControl:focus-within{border-color:var(--gold);background:var(--goldSoft)}
 .rvItem:has(.egApproveButton[aria-busy="true"]) .placeView .ctl .egTurn,.rvItem:has(.egApproveButton[aria-busy="true"]) .placeView .ctl .egTurnField input{opacity:.5;pointer-events:none}   /* (a placement being approved does not move) */
 @media (prefers-reduced-motion:reduce){.placeView .ctl .egTurn,.placeView .ctl .egTurnStep,.placeView .ctl .btn{transition:none}}
-@container egctl (max-width:1000px){.placeView .ctl .egFw{display:none}.placeView .ctl .btn .k{display:none}.placeView .ctl .btn.sm,.placeView .ctl .btn.ghost.sm{padding:0 14px}.placeView .ctl .spacingWord{display:none}.placeView .ctl .spacingControl input{width:76px;flex-basis:76px}.placeView .ctl{gap:6px}}
-@container egctl (max-width:880px){.placeView .ctl{gap:4px}.placeView .ctl .btn.sm,.placeView .ctl .btn.ghost.sm{padding:0 11px}.placeView .ctl .lineControl{gap:5px}.placeView .ctl .lineControl select{padding:0 24px 0 10px}.placeView .ctl .dim{padding:0}.placeView .ctl .spacingControl{padding:0 9px;gap:7px}.placeView .ctl .spacingControl input{width:56px;flex-basis:56px;min-width:40px}.placeView .ctl .egTurnField{padding:0 6px 0 3px}.placeView .ctl .egTurnField input{width:4.3ch}}   /* (a faced piece's two-line row, with its spacing control, still fits one line down to about 800px of row) */
-@container egctl (max-width:760px){.placeView .ctl .lineControl{gap:6px}.placeView .ctl .lineControl select{padding:0 24px 0 10px}.placeView .ctl .egTurnStep{width:44px;min-width:44px}.placeView .ctl .egFw{display:none}.placeView .ctl .btn.sm,.placeView .ctl .btn.ghost.sm{padding:0 12px}.placeView .ctl .egTurnField{padding:0 8px 0 4px}}
+@container egctl (max-width:1000px){.placeView .ctl .egFw{display:none}.placeView .ctl .btn .k{display:none}.placeView .ctl .spacingWord{display:none}}
+@container egctl (max-width:860px){.placeView .ctl{gap:5px}.placeView .ctl .btn.sm,.placeView .ctl .btn.ghost.sm{padding:0 10px}.placeView .ctl .lineControl{gap:4px}.placeView .ctl .spacingControl{padding:0 8px;gap:5px}.placeView .ctl .spacingControl input{width:72px;flex-basis:72px}}
+@container egctl (max-width:780px){.placeView .ctl .spacingControl input{width:48px;flex-basis:48px;min-width:40px}.placeView .ctl .egTurnStep{width:35px;min-width:35px}.placeView .ctl .egTurnField{padding:0 6px 0 3px}.placeView .ctl .lineControl select{width:100px}}
+@container egctl (max-width:700px){.placeView .ctl .spacingControl input{width:40px;flex-basis:40px;min-width:36px}.placeView .ctl .btn.sm,.placeView .ctl .btn.ghost.sm{padding:0 9px}.placeView .ctl .spacingControl{padding:0 6px;gap:4px}}
 /* a narrower card: the front and the back side by side, the controls under both, the conversation below (the card scrolls) */
-@container (max-width:900px){.placeView{grid-template-columns:clamp(200px,28%,280px) minmax(0,1fr);grid-template-areas:"side main" "ctl ctl" "mail mail";grid-template-rows:clamp(300px,calc(100vh - 226px),680px) auto auto}}   /* ROTBAR: 226 = 205 + the 21px the bigger bottom row added, so the row still ends where the card does */
+@container (max-width:900px){.placeView{grid-template-columns:clamp(200px,28%,280px) minmax(0,1fr);grid-template-areas:"side main" "ctl ctl" "mail mail";grid-template-rows:clamp(300px,calc(100vh - 215.5px),680px) auto auto}}   /* ROTBAR: 215.5 = 205 + the 10.5px the 1.33 times bigger bottom row added, so the row still ends where the card does */
 @container (max-width:900px){.placeView{grid-template-columns:clamp(236px,30%,280px) minmax(0,1fr)}}   /* ENGPANEL: the same column for the engraving panel in the two-column card (232px usable) */
 /* stacked on a narrow screen, the back is sized from the window (see mountBack): the rule for the full card used to keep
    its box at the minimum height, so the preview stayed thumbnail-sized there */
