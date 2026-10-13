@@ -12528,6 +12528,60 @@ const Review = window.Review = (() => {
       return Object.assign({}, lead, { rows });
     } catch (_) { return null; }
   }
+  /* ═══ REVSUGGEST (12 Oct 2026): similar charms for every order in Review ═══════════════════════════════════════════════
+     Paul: "every time an order goes into the review tab it should go through that process and the system should identify and present to the user multiple options that match the current SKU ... If there are
+     no similar matches for charm SKU then don't show any suggestive charms." The offers above (lookalike drawings, "Use both", numbered designs) stay exactly as they were; for ANY line in Review, matched or
+     not (an order sent to Review by a person is matched already), charm-nest-siblings.js similar() adds the library's charms that read like the line's SKU, best first, the charm the line is matched to now
+     marked and not a tap. Only a list for a person: a tap is that person's pick (saveCharm: the saved link of this listing and SKU, kept for good); nothing is chosen, written or read here, no Etsy, no AI. */
+  const SIMILAR_ASK = "Similar charms in the library. One tap, kept for this listing:";
+  let simIx = { entries: null, size: -1, at: 0, memo: new Map() };
+  /** The master designs a line is matched to now (a set's every design): [] for a line that waits on its SKU or has no design of its own. */
+  function matchedNow(row) {
+    const sp = row && row.spec; if (!sp || sp.noDesign || sp.ownDesign || (sp.problems || []).some(q => q.kind === "unmatchedSku" || q.kind === "blockedSku")) return [];
+    const list = O.setDesignsOf(sp) || (sp.designSku ? [sp.designSku] : []);
+    return [...new Set(list.map(k => String(k || "").trim().toUpperCase()).filter(k => k && Master.entryFor(k)))];
+  }
+  /** The similar charms of ONE line (charm-nest-siblings.js similar), kept for as long as the library held, the line's SKU, its form and what it is matched to stay the same. exclude: SKUs another offer of the row lists. */
+  function similarOf(x, exclude) {
+    const S = window.CharmNestSiblings; if (!S || !S.similar || !x || !x.line) return null;
+    const e = B.master.entries; if (simIx.entries !== e || simIx.size !== e.size || simIx.at !== B.master.loadedAt) simIx = { entries: e, size: e.size, at: B.master.loadedAt, memo: new Map() };
+    let lf = null; try { lf = O.lineForm ? O.lineForm(x.line, { optionMaps: B.maps.optionMaps }) : null; } catch (_) {}
+    const cur = matchedNow(x), key = [String(x.line.sku || ""), lf ? lf.form : "", cur.join("+"), exclude.join("+")].join("\u0001");
+    if (simIx.memo.has(key)) { const kept = simIx.memo.get(key); if (!kept || !kept.choices.some(c => !c.current && (Master.entryFor(c.sku) || {}).blocked)) return kept; }   // (a design blocked since is never offered: the list is made again)
+    let out = null;
+    try {
+      const blocked = k => { const m = Master.entryFor(k); return !!(m && m.blocked); };
+      const formOk = k => { try { return !(lf && O.formClash && O.formClash(lf, O.masterForm(k, { masterEntry: s => Master.entryFor(s), masterShared: s => Master.sharedFor(s) }))); } catch (_) { return true; } };
+      out = S.similar(x.line, { skus: e.keys(), like: k => Master.likeFor(k), entryFor: k => Master.entryFor(k), blocked, formOk, current: cur, exclude });
+    } catch (_) { out = null; }
+    simIx.memo.set(key, out); return out;
+  }
+  /** What Review offers for a line: the existing offer (siblingOffer) with the similar charms added to it, or the similar charms alone, or null when nothing is similar (no area at all).
+   *  group: the lines of the card that share the question; a similar charm covers only those of them it is also similar for. */
+  function similarOffer(row, p, group, it) {
+    const lead = siblingOffer(row, p || {}, group);
+    if (!row || !row.line || !row.spec) return lead;
+    const have = lead ? (lead.siblings || []).map(x => x.sku).concat(lead.pair ? [lead.pair.L, lead.pair.R] : []) : [];
+    const mine = similarOf(row, have);
+    if (!lead && !mine) return null;
+    const all = group && group.length ? group : [row];
+    const rowsFor = sku => all.filter(x => x === row || (() => { const o = similarOf(x, have); return !!o && o.choices.some(c => c.sku === sku && !c.current); })());
+    return Object.assign({ ask: SIMILAR_ASK, pair: null, siblings: [], rows: [row] }, lead || {}, mine ? { more: mine.choices.filter(c => !c.current), moreExtra: mine.extra, rowsFor } : {}, { cur: matchedNow(row) });
+  }
+  /** What an offer is drawn from, as the stamp of a row or card (it is drawn again when this changes: the designs, their pictures, what the line is matched to). */
+  const offerStamp = s => s ? [s.pair ? s.pair.L : "", s.pair ? s.pair.R : "", s.siblings.map(x => x.sku + "=" + (Master.thumbOf(Master.entryFor(x.sku) || {}) || "")), s.ask, (s.more || []).map(x => x.sku + (x.current ? "*" : "") + "=" + (Master.thumbOf(Master.entryFor(x.sku) || {}) || "")), s.moreExtra || 0, s.cur || []] : "";
+  /** A "Send to Review" order (kind reviewMark, charm-nest-review-mark.js): its Review row has ONE slot for each line (.rvMarkSlot[data-row], made by CharmNestReviewMark.decorateRow) and this fills them with that line's
+   *  similar charms. A line with nothing similar leaves its slot empty (display none): no suggestion area at all. A tap is the person's pick (pickCharm: the saved link, which resolves the mark as a pick). */
+  function fillMarkSlots(host, it) {
+    if (!host || !it || it.kind !== "reviewMark" || it.done || it.decided || it.settled) return;
+    for (const row of rowsOf(it)) {
+      const slot = [...host.querySelectorAll(".rvMarkSlot")].find(n => n.dataset.row === row.key); if (!slot) continue;
+      const off = row.line ? similarOffer(row, {}, [row], it) : null;
+      if (!off) { if (slot.firstChild) slot.innerHTML = ""; continue; }
+      slot.innerHTML = `<div class="sibOffer" data-sib="${esc(JSON.stringify(offerStamp(off)))}"><div class="sibAsk">${esc(off.ask)}</div><div class="sibPicks">${sibButtons(off)}</div></div>`;
+      Master.mountPictures(slot); wireSib(slot, it, { sku: row.line.sku }, off, fn => saving(host, fn, ".sibOffer button"));
+    }
+  }
   /** The listing and the SKU each line of a card came with (a huggie set's "X (HUGGIE)"): on a listing whose variations each have a SKU, the others keep theirs; a huggie set with no SKU answers for the listing's huggie, never its necklace. */
   const answerKeysOf = (it, rows) => { const m = new Map();   // (REVLINK: `via` = which product of the listing each line is, for a line read under the SKU Etsy's inventory gave it: charm-nest-orders.js linkedSku)
     for (const x of (rows || rowsOf(it))) { const from = x.spec && x.spec.boughtSku != null ? x.spec.boughtSku : String(x.line.sku || "").trim().toUpperCase(), hug = !from && !!(x.spec && x.spec.huggieSet), k = String(x.line.listingId) + "\u0000" + from + (hug ? "\u0000huggie" : ""), via = from && x.spec && x.spec.viaInventory ? O.linkViaKeys(x.line) : [];
@@ -12568,22 +12622,50 @@ const Review = window.Review = (() => {
     answered({ kind: it.kind, rows: sib.rows }, "decided", `Use both: ${L} + ${R}`, { pair: { L, R }, from: p.sku || null }, who);
     await Orders.loadMaps(true); toast(`${p.sku || "This SKU"} → ${L} + ${R} remembered for ${lids.length > 1 ? lids.length + " listings" : "this listing"}`, "ok");
     pickedMarks(sib.rows, L, who);
-    for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId))) await repool(rr);
+    for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId)) && (it.kind !== "reviewMark" || rr.state === "unmatched")) await repool(rr);   // (REVSUGGEST: an order sent to Review keeps its pieces on its sheet)
+    if (it.kind === "reviewMark") { Orders.interpretAll(); syncOrderItems(); Orders.render(); }
   }
   /** The choices of an offer: ONE "Use both" button with the two designs' thumbnails (the master's own picture tag, the SKU picker's `dsPick` button), then each numbered design as a single choice. */
   function sibButtons(sib) {
     const pic = k => (Master.pictureTag(Master.entryFor(k)) || "");
-    if (sib.lookalike) return sib.siblings.map(x => `<button type="button" class="btn ghost sm dsPick" data-dsku="${esc(x.sku)}" title="${esc(`use ${x.sku} (${x.note}) for this listing and this SKU`)}">${pic(x.sku)}${esc(x.sku)}</button>`).join("");   // (LOOKALIKE: the drawings, one tap each)
-    return `<button type="button" class="btn ghost sm dsPick" data-both="1" title="${esc(`two pieces for each ${sib.noun}, one of each design; kept for this listing, so its next order is already linked`)}">${pic(sib.pair.L)}${pic(sib.pair.R)}Use both: ${esc(sib.pair.L)} + ${esc(sib.pair.R)}</button>`
-      + sib.siblings.slice(0, 8).map(x => `<button type="button" class="btn ghost sm dsPick" data-dsku="${esc(x.sku)}" title="${esc(`use only ${x.sku} for this listing`)}">${pic(x.sku)}${esc(x.sku)}</button>`).join("")
-      + (sib.siblings.length > 8 ? `<span class="dsFor">and ${sib.siblings.length - 8} more: pick them in the master index</span>` : "");
+    // (REVSUGGEST: the charm the line is matched to now comes first, marked, and is not a tap, it already is the answer; `more` are the similar charms of charm-nest-siblings.js similar, each a tap of its own)
+    const cur = new Set(sib.cur || []), drawn = new Set();
+    const one = (sku, title, sim) => cur.has(sku) ? (drawn.has(sku) ? "" : (drawn.add(sku), `<span class="dsPick cur" data-cur="${esc(sku)}" aria-current="true" title="${esc(`matched to ${sku} now`)}">${pic(sku)}${esc(sku)}</span>`))
+      : `<button type="button" class="btn ghost sm dsPick" data-dsku="${esc(sku)}"${sim ? ' data-sim="1"' : ""} title="${esc(title)}">${pic(sku)}${esc(sku)}</button>`;
+    const now = [...cur].map(k => one(k)).join("");
+    const more = (sib.more || []).map(x => one(x.sku, `use ${x.sku} for this listing${x.why ? ` (${x.why})` : ""}`, true)).join("") + (sib.moreExtra > 0 ? `<span class="dsFor">and ${sib.moreExtra} more: pick them in the master index</span>` : "");
+    if (sib.lookalike) return now + sib.siblings.map(x => one(x.sku, `use ${x.sku} (${x.note}) for this listing and this SKU`)).join("") + more;   // (LOOKALIKE: the drawings, one tap each)
+    if (!sib.pair) return now + more;   // (nothing numbered: only the similar charms)
+    return now + `<button type="button" class="btn ghost sm dsPick" data-both="1" title="${esc(`two pieces for each ${sib.noun}, one of each design; kept for this listing, so its next order is already linked`)}">${pic(sib.pair.L)}${pic(sib.pair.R)}Use both: ${esc(sib.pair.L)} + ${esc(sib.pair.R)}</button>`
+      + sib.siblings.slice(0, 8).map(x => one(x.sku, `use only ${x.sku} for this listing`)).join("")
+      + (sib.siblings.length > 8 ? `<span class="dsFor">and ${sib.siblings.length - 8} more: pick them in the master index</span>` : "") + more;
   }
   /** What the offer is drawn from (a row or card redraws when it changes: the designs it names and their pictures, which arrive with the library). */
-  const siblingStamp = it => { if (it.kind !== "unmatchedSku" || it.done || it.decided) return ""; const row = it.row || rowsOf(it)[0], s = row ? siblingOffer(row, it.problem || {}, rowsOf(it)) : null; return s ? [s.pair ? s.pair.L : "", s.pair ? s.pair.R : "", s.siblings.map(x => x.sku + "=" + (Master.thumbOf(Master.entryFor(x.sku) || {}) || "")), s.ask] : ""; };
+  const siblingStamp = it => {
+    if (!["unmatchedSku", "blockedSku", "reviewMark"].includes(it.kind) || it.done || it.decided) return "";
+    if (it.kind === "reviewMark") return rowsOf(it).map(r => offerStamp(r.line ? similarOffer(r, {}, [r], it) : null));   // (REVSUGGEST: one offer for each line of a Send to Review order)
+    const row = it.row || rowsOf(it)[0]; return offerStamp(row ? similarOffer(row, it.problem || {}, rowsOf(it), it) : null);
+  };
   /** The two kinds of button an offer has, wired: `guard` wraps a save so the buttons hold while it saves and a failure says so. */
   function wireSib(host, it, p, sib, guard) {
-    host.querySelectorAll("[data-dsku]").forEach(b => { b.onclick = guard(() => saveCharm(it, p, b.dataset.dsku, sib && sib.rows)); });
+    host.querySelectorAll("[data-dsku]").forEach(b => { b.onclick = guard(() => pickSimilar(it, p, b.dataset.dsku, sib && (b.dataset.sim && sib.rowsFor ? sib.rowsFor(b.dataset.dsku) : sib.rows))); });
     const both = host.querySelector("[data-both]"); if (both) both.onclick = guard(() => saveBoth(it, p, sib));
+  }
+  /** A tap on a charm of an offer. An order a person sent to Review (reviewMark) is matched already: its pick is REVLINK's (charm-nest-review-link.js pick: ONE write under the key the matcher reads, an option value
+   *  when the charm comes from an option, read back by the server, the links reloaded, a new order of the listing read as proof; it resolves the mark itself). Only a line still waiting on its SKU is made up
+   *  again here: a line that is pooled or on a sheet keeps its pieces, and the saved link is offered by the existing "Order changed" row (Accept the new order), never applied. Any other row: saveCharm. */
+  async function pickSimilar(it, p, sku, rows) {
+    const RL = window.CharmNestReviewLink;
+    if (it.kind !== "reviewMark" || !RL || !RL.pick) return saveCharm(it, p, sku, rows);
+    const row = (rows && rows[0]) || rowsOf(it)[0]; sku = String(sku || "").trim().toUpperCase(); if (!row || !row.line || !sku) return;
+    const who = by(); if (!who) return;
+    if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; }
+    const r = await RL.pick(row, sku, { by: who });
+    if (!r || !r.ok) { toast((r && r.why) || "That charm could not be kept for this listing", "bad", 7000); return; }
+    toast(`${p.sku || "No SKU"} → ${sku} remembered`, "ok");
+    const lid = String(row.line.listingId);
+    for (const rr of Orders.rows()) if (String(rr.line.listingId) === lid && rr.state === "unmatched") await repool(rr);
+    Orders.interpretAll(); syncOrderItems(); Orders.render();
   }
   /** One list of the master's SKUs for every field that picks a charm, made again when the index changes. */
   let skuListFor = null;
@@ -12751,7 +12833,7 @@ const Review = window.Review = (() => {
       /* SIBLINGS (Paul, 12 Oct 2026, order 4198409468, SKU "SCHRODINGER CAT" on a necklace of two cats): when the SKU names no design but the library holds its numbered designs and the line is a necklace
          (or says two charms), ONE quiet tap offers both ("Use both: X 1 + X 2", their two thumbnails) beside each design as a single choice. Only a suggestion: a person taps, never automatic
          (a number after a name is often an alternative, not a set). The tap saves the pair for this listing and SKU for good (the saved pair link, aliasPut pair) and the line then makes two pieces of one group. */
-      const sib = it.kind === "unmatchedSku" ? siblingOffer(r, p, group) : null;
+      const sib = it.kind === "unmatchedSku" || it.kind === "blockedSku" ? similarOffer(r, p, group, it) : null;
       const sibHtml = sib ? `<div class="ask">${esc(sib.ask)}</div>
         <div class="fixes pick sibs">${sibButtons(sib)}</div>` : "";
       c.innerHTML = head(it.kind === "blockedSku" ? "SKU blocked" : "Unmatched SKU", p.sku || "no SKU", orderSub) + (it.kind === "unmatchedSku" && !it.nested ? CustomRead.panel(r, group) : "") + `<div class="why">${esc(p.reason || it.why)}</div>${sibHtml}
@@ -13075,7 +13157,7 @@ const Review = window.Review = (() => {
       +(cu&&printable(it)&&!cs?.busy?CustomPrint.buttonHtml(it,'print',printed?'sealedPrint':'ghost',printed?'Print again':'Print QR label',`print this order's 1 × 1 in QR sticker for the sorting station${printed?' again':''}`,'sm','data-seal-btn'):'')+seals
       +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:''))+placedActs;
     // SIBLINGS (Paul, 12 Oct 2026): an unknown SKU whose numbered designs sit in the library, on a necklace (or two charms): ONE quiet tap, "Use both", with the two thumbnails, and each design as a single choice, in the row itself
-    const pk=it.problem||{},sib=!cu&&!it.done&&!it.decided&&row&&it.kind==='unmatchedSku'?siblingOffer(row,pk,group):null;
+    const pk=it.problem||{},sib=!cu&&!it.done&&!it.decided&&row&&(it.kind==='unmatchedSku'||it.kind==='blockedSku')?similarOffer(row,pk,group,it):null;
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
     node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind)+(it.job&&faceWordOf(it.job)?' · '+faceWordOf(it.job):''))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${sib?`<div class="sibOffer" data-sib="${esc(JSON.stringify(siblingStamp(it)))}"><div class="sibAsk">${esc(sib.ask)}</div><div class="sibPicks">${sibButtons(sib)}</div></div>`:''}${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${it.kind==='orderChanged'&&row&&!it.decided?'<button type="button" class="btn gold sm" data-rv-accept title="make this order up again as it reads now: the old pieces come off the sheet they are on (a sheet already released or cut is never touched)">Accept the new order</button>':''}${holdSlotFor(row,it,busy)}</div>${cs?CustomSheet.stripHtml(cx):''}`;
@@ -13084,6 +13166,7 @@ const Review = window.Review = (() => {
     if(sib){Master.mountPictures(node);wireSib(node,it,pk,sib,fn=>saving(node,fn,'.sibOffer button'));}   // (the saved pair link or alias, for good; the buttons hold while it saves)
     if(window.HoldUI)HoldUI.fill(node);   // (the one orange Hold button, beside Print QR label / Complete Order / Reopen)
     if(it.kind==='reviewMark'&&window.CharmNestReviewMark)CharmNestReviewMark.decorateRow(node,it);   // (a slot for each line's suggested charms, and Mark OK)
+    if(it.kind==='reviewMark')fillMarkSlots(node,it);   // (REVSUGGEST: the similar charms of each line go in its slot, the charm it is matched to now marked; a line with nothing similar leaves its slot empty)
     // (its custom buttons as a custom card's, and a click on the card opens its order; one whose line has left the pull
     // opens the order by its number)
     if(cx||row)wireAct(node,cx||{key:'rv:'+it.key,rows:[]},cx?cs:null,row);
@@ -13315,7 +13398,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, leaveCard, problemText, syncOrderItems, focus, showCard, repool, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
