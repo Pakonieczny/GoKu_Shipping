@@ -24,7 +24,7 @@ ok(/"charm-nest-thumbs\.js"/.test(fs.readFileSync(path.join(root, 'scripts/build
 const at = s => html.indexOf(s);
 ok(at('<script src="charm-nest-thumbs.js?v=') > at('<script src="charm-nest-assets.js') && at('<script src="charm-nest-thumbs.js?v=') < at('<script src="charm-nest-bridge.js'), 'the page loads the module after the asset reader and before the bridge, with a cache token');
 ok(/CharmNestThumbs/.test(bridge) && /T\.mount\(grid/.test(bridge) && /T\.designKey\(geom\.aiPath/.test(bridge), 'the Master tab loads its pictures through the module, keyed by the design file');
-ok(/Pool\.masterPreview\(entry,sizeOf\(entry\)\)/.test(bridge), 'and the picture is still drawn by Pool.masterPreview (the card is not redrawn another way)');
+ok(/Pool\.masterPreview\(entry,sizeOf\(entry\)(?:,false,oneOf\(host\)\|\|undefined)?\)/.test(bridge), 'and the picture is still drawn by Pool.masterPreview (the card is not redrawn another way; WOLFONLY: a design a person named as ONE body passes the one-body option, oneOf(host), as the only difference)');
 ok(/keep:false/.test(bridge) && /T\.picture\(keep,make\)/.test(bridge) && /T\.designKey\(key,geom\.charmHash/.test(bridge), 'Pool.masterPreview keeps each picture itself (so the Orders list and the piece dots draw a design once too), and the Master grid only looks it up');
 ok(/mountMasterPreviewsPlain/.test(bridge), 'a page without the module keeps the plain loader');
 ok((html.match(/\$\{picTag\(c\.thumbUrl, /g) || []).length === 2 && /mountPics\(body\)/.test(html) && /mountPics\(\$\("#lsBody"\)\)/.test(html), 'the Library charm tiles and a sheet\'s charm grid use picTag and mountPics');

@@ -13,7 +13,7 @@ const W = require('./_engrave-intake-world.cjs');
 const BASE = (() => {
   const src = fs.readFileSync(path.join(root, 'charm-nest-orders.js'), 'utf8'), a = src.indexOf('    // ENGINTAKE (CONTRACT section 2)'), end = '/* a reading that fails leaves the line as it always was */ }', b = src.indexOf(end, a);
   assert.ok(a > 0 && b > a, 'the intake hook is in charm-nest-orders.js'); const m = { exports: {} };
-  new Function('module', 'exports', 'require', src.slice(0, a) + src.slice(b + end.length))(m, m.exports, require); return m.exports;
+  new Function('module', 'exports', 'require', src.slice(0, a) + src.slice(b + end.length))(m, m.exports, id => require(/^\./.test(id) ? path.join(root, id) : id)); return m.exports;   // (WOLFONLY: the module's own require('./charm-nest-pair.js') must find the SAME pair module the real one reads, or the copy reads a design the pair module names (the WOLF) another way than the real module does)
 })();
 const AUDIT = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/engrave-intake-audit.json'), 'utf8'));
 

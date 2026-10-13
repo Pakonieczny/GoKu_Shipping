@@ -59,7 +59,10 @@ for (const [rid, line] of FIVE) {
   eq([r.spec.pieceCount, p.perUnit, p.kind], [1, 1, 'single'], tag + ': ONE piece, kind single');
   eq(p.sides, [null], tag + ': no side'); eq(sides(r), '-0', tag + ': piecesOf: no side, the whole design');
   eq(asks(r), [], tag + ': nothing to ask a person');
-  ok(p.notes.some(x => /two bodies/.test(x) && /not an earring pair/.test(x)), tag + ': a plain note says what is made');
+  // (WOLFONLY, 13 Oct 2026, Paul: "Remove the Right moon charm from this repo charm. Only the wolf should remain since this is a necklace charm": the Wolf necklace is the ONE wolf body,
+  //  not both bodies glued. The note says it, in the same words as every one-body line.)
+  ok(p.notes.some(x => /made as ONE charm, the left body only/.test(x) && /no Left or Right/.test(x) && /wolf/.test(x)), tag + ': a plain note says what is made: ONE charm, the wolf');
+  eq([p.oneBody.index, p.oneBody.rule], [0, "a person's word"], tag + ': the wolf body, by a person\'s word');
   const lc = lineFor(r);
   eq([CP.isEarringPair(lc, wolf), CP.kindOf(lc, wolf), CP.isGroupLine(lc, wolf)], [false, 'single', false], tag + ': the pair module agrees (with the design charm)');
   eq(CP.piecesFor(lc, wolf).map(x => [x.side, x.bodyIndex, x.mirror, x.of]), [[null, 0, false, 1]], tag + ': one piece, no side, body 0, never mirrored');

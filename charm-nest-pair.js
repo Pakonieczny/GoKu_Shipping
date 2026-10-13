@@ -26,6 +26,7 @@
  *  Which lines are groups (Paul's ruling, 9 Oct, after ADVCOMPAT findings 1 and 2): isGroupLine(line, charm), groupSizeOf(piece), inGroup(piece), sharedKey(piece).
  *  ONE charm of a design that draws the same outline twice, on a line that is not an earring pair (Paul, 11 Oct): soloOf(line, charm) → { index, count, rule, how } | null, with
  *  oneChoice(line, charm), alikeDesign(charmOrEntry), bodiesAlike(charm), sameOutline(bodyA, bodyB), ALIKE_SKUS (section 4c).
+ *  A design a person named as ONE body (the WOLF, Paul 13 Oct): onlyBodyOf(skuOrEntryOrCharmOrLine) → { index, what, widthPt, heightPt, holes, upAngle, upSource } | null, ONE_BODY (section 4d).
  *  ═══════════════════════════════════════════════════════════════════════ */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
@@ -440,12 +441,40 @@
     if (alikeCache) alikeCache.set(charm, { bodies, out });
     return out;
   }
-  /** Is this design one whose bodies are the same outline? A charm (its geometry decides) or a master index entry (`pair.alike` when an indexer wrote it, else the four measured SKUs):
-   *  true | false, or null when it cannot be told (an entry of any other design: the file has to be read). */
+  /* ═══ 4d · a design a PERSON said is ONE body: the WOLF (Paul, 13 Oct 2026) ═══════════════════════════════════════════
+     "Remove the "Right" moon charm from this repo charm. Only the wolf should remain since this is a necklace charm." The master draws WOLF as two bodies under one label, a wolf (left) and a
+     crescent moon (right); the index holds the four SKUs of that one file (WOLF, WOLF BEADY, WOLF CHARM, WOLF_6691) as a mismatched pair. Until the pair layer (9 Oct) the library held only the moon.
+     This is a RULE IN CODE, read on load: nothing stored is changed (the .ai, the index records, every order, sheet and piece stay as they are), and it is undone by deleting the entry below.
+     What it does: on a line that is not an earring pair the design is cut from the named body only (soloOf and alikeDesign: the same path as KEY_5598), and the Library card shows that one body (no
+     "Left + Right pair", no Left / Right drop-downs, the wolf's own size). An earring line of the same SKUs would still keep both bodies (Left = the wolf, Right = the moon): nobody sells one today.
+     The size, holes and up angle are the named body's own, measured on the real drawing (tests/charm-nest/wolf-only.cjs checks them against the file when it is at hand); the stored record holds
+     the moon's hole and up angle (97 degrees) and the pair's size. */
+  const ONE_BODY = [
+    { skus: ["WOLF", "WOLF BEADY", "WOLF CHARM", "WOLF_6691"], body: 0, what: "the wolf", words: "a wolf and a moon, and a person said the wolf alone is this necklace charm",
+      widthPt: 29.5, heightPt: 29.3, holes: 0, upAngle: 90, upSource: "drawn" }
+  ];
+  const skuKey = s => String(s == null ? "" : s).replace(/\s+/g, " ").trim().toUpperCase();
+  const ONE_BODY_BY_SKU = new Map(); for (const d of ONE_BODY) for (const s of d.skus) ONE_BODY_BY_SKU.set(skuKey(s), d);
+  /** The ONE body a person named for this design, or null: { index, count, what, words, widthPt, heightPt, holes, upAngle, upSource }. x is a SKU, a master entry, a charm or an order line / spec;
+   *  the first SKU it carries decides (the design's own: spec.designSku, then the entry's, then sku, then a charm's name), so a line whose design is another one is not named by its Etsy SKU. */
+  function onlyBodyOf(x) {
+    if (x == null) return null;
+    let k = "";
+    if (typeof x === "string") k = skuKey(x);
+    else if (typeof x === "object") {
+      for (const v of [x.spec && x.spec.designSku, x.designSku, x.entry && x.entry.sku, x.sku]) { const s = skuKey(v); if (s) { k = s; break; } }
+      if (!k && x.outline && x.name) k = skuKey(x.name);   // (a charm made from a master file is named by its SKU)
+    }
+    const d = k ? ONE_BODY_BY_SKU.get(k) : null;
+    return d ? { index: d.body, count: 2, what: d.what, words: d.words, widthPt: d.widthPt, heightPt: d.heightPt, holes: d.holes, upAngle: d.upAngle, upSource: d.upSource } : null;
+  }
+  /** Is this design one whose bodies are the same outline, or one a person named as ONE body (4d)? A charm (its geometry decides, a named design counts too) or a master index entry (`pair.alike`
+   *  when an indexer wrote it, else the four measured SKUs and the named ones): true | false, or null when it cannot be told (an entry of any other design: the file has to be read). */
   function alikeDesign(x) {
     if (!x || typeof x !== "object") return null;
-    if (x.outline) { const d = bodiesAlike(x); return d ? d.alike : null; }
+    if (x.outline) { const d = bodiesAlike(x); return d ? d.alike || !!onlyBodyOf(x) : null; }
     const rec = x.entry || x;
+    if (onlyBodyOf(rec.sku ? rec : x)) return true;   // (a person's word stands over what an indexer wrote)
     if (rec.pair && typeof rec.pair === "object" && typeof rec.pair.alike === "boolean") return rec.pair.alike;
     const sku = String(rec.sku || x.sku || "").trim().toUpperCase();
     return sku && ALIKE_SKUS.has(sku) ? true : null;
@@ -464,8 +493,11 @@
    *  bodies are clearly different charms). `charm` is the design as the page reads it (geometry); with an entry or no geometry the answer is null (the file has to be read). */
   function soloOf(line, charm) {
     if (!charm || typeof charm !== "object" || !charm.outline || !isMismatched(charm) || !oneChoice(line, charm)) return null;
-    const d = bodiesAlike(charm); if (!d || !d.alike) return null;
+    // (a design a person named as ONE body, 4d, is cut from that body whatever its bodies look like; its line's own design says which, the charm's name is the fallback)
+    const lineSku = line && ((line.spec && line.spec.designSku) || line.designSku), d = bodiesAlike(charm), named = lineSku ? onlyBodyOf(String(lineSku)) : onlyBodyOf(charm);
+    if (!d || !(d.alike || (named && named.index < d.n))) return null;
     const pr = pairSpecOf(line), asked = pr && Number.isInteger(pr.useBody) && pr.useBody >= 0 && pr.useBody < d.n ? pr.useBody : null;
+    if (!d.alike && named) return { index: asked != null ? asked : named.index, count: d.n, rule: asked != null ? "a person's choice" : "a person's word", how: "named", why: named.words };
     return { index: asked != null ? asked : 0, count: d.n, rule: asked != null ? "a person's choice" : "the left body", how: d.parts[0].how };
   }
 
@@ -659,6 +691,7 @@
   function facingControl(entry, level) {
     const e = entry || {}, word = v => (v === "L" || v === "R" ? v : ""), set = e.facing === "L" || e.facing === "R" || e.facing === "X" ? e.facing : "", lv = e.sym || level || "";
     const hint = "Which way the master file draws this design. A pair is a Left and a Right earring that are mirror images, so the Right is cut turned over (letters and numbers too); say which way the drawing faces so the Left earring faces left. Not set: the drawing is taken as the Left. Applies to orders made up from now on.";
+    if (onlyBodyOf(e)) return { show: false, mismatched: false, value: "", bodies: null, options: [], hint: "" };   // (a design a person named as ONE necklace body, 4d: nothing to turn, no Left or Right to say)
     if (e.pair && e.pair.mismatched === true) {
       const per = Array.isArray(e.facings) ? e.facings : [], one = i => word(per[i]) || (i === 0 ? word(e.facing) : "");
       const opts = who => [["", who + ": not set"], ["L", who + " faces left"], ["R", who + " faces right"]];
@@ -963,7 +996,7 @@
     bodiesOf, isMismatched, sideOf, sideLabel, groupKey, piecesFor, kindOf, mustShareSheet, isGroupLine, groupSizeOf, inGroup, sharedKey,
     describe, sameBody, sidesSaid, sideForPiece, pieceFields, groupOf, siblingsOf, splitAcross, designPair, pieceCountOf, discsOf,
     facingOf, facingOfBody, facingInfo, symmetryOf, needsFacing, readsOneWay, facingControl, mirrorOf, pieceGeometry, isEarringPair, plainLine, charmOfBody,
-    sameOutline, bodiesAlike, alikeDesign, oneChoice, soloOf, ALIKE_SKUS,
+    sameOutline, bodiesAlike, alikeDesign, oneChoice, soloOf, ALIKE_SKUS, onlyBodyOf, ONE_BODY,
     PAIR_DEFAULTS, shapeSimilarity, rowsOf, masterPairs, foldRow, pairField, pairLayer, entryFields, heldPair, keepPairs,
     _flatten: flatten, _inPolys: inPolys, _distPolys: distPolys, _isCut: isCut
   };
