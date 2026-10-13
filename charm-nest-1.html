@@ -4772,8 +4772,9 @@ function topupRoom(sh, waiting = true) {
    orders first (turnOrder). */
 /** The share of the room a gap-filling sheet has left under the fill ceiling that a whole multi-piece order can fill. The room is split
     into pockets and slivers, so an order of several pieces, each needing its own pocket, fits only when it asks for a small part of it.
-    Measured on a seeded stream of Gold sheets (tests/charm-nest/gap-fill-singles-first.cjs header): of 27 multi-piece orders that tried a
-    gap fill none fitted, the smallest asking for 29% of the room; the only single-charm orders that fitted asked for 21% and 23%. */
+    Measured on made-up Gold streams (3 seeds of 30 orders, 40% multi-piece, 60 x 40 mm sheets; plans/sets-whole-orders-1013/NESTQUEUE-findings.md):
+    of 40 multi-piece orders that tried a gap fill 2 fitted, asking for 20% and 23% of the room, and 38 did not (the smallest of them 29%);
+    single-charm orders fitted at 13% to 36%. Half is a margin over the two that fitted. */
 const GAP_PACK = .5;
 /** Whether an order (its `pieces`, charms with areaPt2) should try the gaps of `sh`: always, but a multi-piece order that asks for more than
     GAP_PACK of the room a gap-filling sheet showed last time (the free area, or what is left under the fill ceiling if that is less) cannot
