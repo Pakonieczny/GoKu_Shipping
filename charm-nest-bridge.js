@@ -8245,6 +8245,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       // there (the Library's own glide, charm-nest-library.js) instead of jumping; while a flight is drawing (LibraryFx) that is its to show
       const body=card.closest('#libBody');if(body && card.parentElement!==body.querySelector(`[data-laser-area="${report.ready?'ready':'pending'}"] .laserAreaItems`)){if(!before && !body.querySelector('[data-fx-hide]')){home=body;before=window.LibraryDone?.snapshot?.(body) || null;}place(card,report.ready,body);moved.push([card,report.ready]);}
       syncApprove(card);   // the manual "Approve for laser cutting" button: one for a set, one for each sheet that is part of no set (below)
+      try{window.LibraryReviewHold?.decorate?.(card);}catch(e){console.warn('Review hold',e);}   // (a held sheet's one-line note under its rail, when its own Approve line does not say it)
     });
     for(const list of document.querySelectorAll('#libBody .laserAreaItems')){
       const value=card=>({...card._laserSet,sheets:(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean)});
@@ -8285,10 +8286,16 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   const realSet=st=>!!(st && st.setId && !st.standalone && !st.working);
   // null: nothing to offer (ready, cut or gone) · {why:''}: a press can do it · {why:'plain words'}: a person's own step comes first (quiet: the
   // rail already says it, so no line is drawn for it). A lone sheet's own test: CharmNestReadiness.approveBlock, the one the set's gate is made of.
+  // the grey line when orders sent to the Review tab hold these sheets (Paul, 12 Oct: "exactly what order is holding it back"): the words are LibraryReviewHold's; hold: the orders, blocker: the first held sheet
+  function holdCase(ids){
+    let h=null;try{h=window.LibraryReviewHold?.why?.(ids);}catch(e){console.warn('Review hold',e);}
+    return h && h.text?{why:h.text,hold:h.rids,blocker:h.sheetId}:null;
+  }
   function approveCase(recs){
     recs=recs.filter(Boolean);if(!recs.length)return null;
     const p=projected(recs[0]);
     if(p.archived || p.laserDoneAt || R.laserSheet(p).ready)return null;
+    const h=holdCase([p.id || p.sheetId]);if(h)return h;   // (an order in the Review tab holds this sheet: the line names it, charm-nest-library-review-hold.js)
     const b=R.approveBlock(p);
     if(!b)return {why:''};
     if(b.step==='engraving'){const L=R.laserSheet(p),E=L.faces || L;return {why:`Waiting on ${plural(E.waiting,L.faces?'engraving':'back engraving')}`,quiet:true};}   // (a sheet with a front counts engravings, one per face)   // (quiet: the rail's current step and its '!' say it; the button only keeps it for a screen reader)
@@ -8303,6 +8310,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     const st=card._laserSet,ids=[...new Set((st.sheetIds?.length?st.sheetIds:card._laserSheets) || [])];
     const recs=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean);
     if(ids.length>=2){
+      const held=holdCase(ids.filter(id=>records.get(id) && !records.get(id).laserDoneAt));if(held)return {...held,set:true};   // (a held sheet holds the whole set's Approve, said once here)
       const gate=R.setGate(st,recs.map(projected));
       return gate.ready?{why:'',set:true}:{why:gate.reason,set:true,blocker:gate.blockers[0]?.sheetId || ''};
     }
@@ -8319,6 +8327,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       e.stopPropagation();   // (a press here is not a press on the sheet card under it)
       if(t.matches('[data-approve-btn]'))pressApprove(box);
       else if(t.matches('[data-approve-reason]'))openWhy(box);
+      else if(t.matches('[data-approve-review]'))window.LibraryReviewHold?.open?.(t.dataset.approveReview);
       else if(t.matches('[data-approve-yes]'))confirmPlan(box,[t.dataset.approveYes]);
       else if(t.matches('[data-approve-no]'))cancelPlan(box);
       else if(t.matches('[data-approve-hide]'))hidePlan(box);
@@ -8333,10 +8342,11 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     // (the reason is a link when there is something to open: the '!' on the rail of the sheet it is about, which opens the issues panel)
     const key=approvalKey(box),busy=approving.has(key),about=c?.blocker || box._id,card=hostOf(box);
     const open=typeof window.LaserReview?.openChecklist==='function' && !!(box._kind==='set'?card.querySelector(`.flowBox[data-flow-for="sheet:${about}"] [data-issues-open]`):box.parentElement?.querySelector('.flowBox [data-issues-open]'));
-    const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',c?.quiet?1:0,open?1:0,about,box._name || ''].join('|');
+    const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',c?.quiet?1:0,open?1:0,about,box._name || '',(c?.hold || []).join(',')].join('|');
     box._case=c;
     if(box.dataset.sig===sig)return;
     box.dataset.sig=sig;box.dataset.mode=mode;
+    if(c?.hold?.length)box.dataset.hold='1';else delete box.dataset.hold;   // (the sheet's rail note stays away while this line says it)
     const btn=box.querySelector('[data-approve-btn]'),why=box.querySelector('[data-approve-why]'),reasonId=`${box.dataset.approveFor.replace(/\W+/g,'-')}-why`;
     // aria-disabled, never `disabled`: a button that turns grey while it holds the keyboard keeps it, and its reason is read with it
     btn.setAttribute('aria-disabled',mode!=='ready'?'true':'false');btn.setAttribute('aria-busy',busy?'true':'false');
@@ -8344,7 +8354,8 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     if(mode==='blocked' && !c.quiet)btn.setAttribute('aria-describedby',reasonId);else btn.removeAttribute('aria-describedby');
     btn.innerHTML=busy?'<i class="spin" aria-hidden="true"></i>Approving…':'Approve for laser cutting';
     why.id=reasonId;
-    why.innerHTML=mode!=='blocked' || c.quiet?'':open?`<button type="button" class="approveReason" data-approve-reason>${esc(c.why)}</button>`:`<span class="approveReason">${esc(c.why)}</span>`;
+    // (one order in Review holds it: the line opens that order in the Review tab; several: it opens the '!' list like every other reason)
+    why.innerHTML=mode!=='blocked' || c.quiet?'':c.hold?.length===1?`<button type="button" class="approveReason" data-approve-review="${esc(c.hold[0])}" title="${esc('Open order '+c.hold[0]+' in Review')}">${esc(c.why)}</button>`:open?`<button type="button" class="approveReason" data-approve-reason>${esc(c.why)}</button>`:`<span class="approveReason">${esc(c.why)}</span>`;
   }
   function syncBox(host,kind,id,c,name){
     const key=boxKey(kind,id);let box=[...host.children].find(x=>x.dataset?.approveFor===key);
