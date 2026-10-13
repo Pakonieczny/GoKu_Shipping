@@ -14756,11 +14756,14 @@ const OrderWin = window.OrderWin = (() => {
     const sheetEngOf = x => () => { const m = SV.info && (SV.info.mine || []).find(y => y.poolId && (x.poolIds || []).includes(y.poolId)); return (m && m.eng) || null; };
     // (an earring pair: which pool piece is the Left and which the Right, and which is the mirror image, for a card that engraves each ear on its own; none for any other line)
     const earsOf = x => { const sd = tryDo(() => pairSides(x)) || []; return sd.length ? sd.map(c => ({ poolId: String(c.poolId || c.key), side: c.side, mirror: !!c.mirror })) : undefined; };
-    // The Engraving section (CONTRACT.md B; Paul, 12 Oct 2026) shows EVERY piece of the order side by side, whichever piece the switcher has picked: it never follows the switcher. So the same ctx for every order:
+    // The Engraving section (CONTRACT.md B; Paul, 12 Oct 2026) shows the engraved pieces of the order side by side, and (Paul, 13 Oct 2026: "if I select a certain piece, then the back engraving should reflect the selected
+    // piece") FOLLOWS the piece picked on the Its pieces list: only that piece's cards and words, every engraved piece with "Show all", and no section at all for a piece with nothing to engrave (an earring, a plain piece).
     //   rows()    every line of the order, in listed order        nameOf(line)  a line's piece name        (what the cards read)
+    //   only()    the piece picked, read at every look (W.piece / W.side, the same as OrderWin.selectedPiece / selectedSide): { line, side } or null for all pieces
     //   pieces    the same lines, one entry each, for an order of several (what OrderEngraving.mount drew its list from, and still does until its cards are rewritten)
+    const only = () => { const k = (W.pieces || []).length > 1 ? W.piece || "" : "", sd = W.side && narrowSide() ? W.side : ""; return k || sd ? { line: k, side: sd } : null; };
     const ctx = { rid, key: r.key, poolId: (r.poolIds || [])[0] || "", piece: r.key, row: r, ears: earsOf(r), label: "", meta: "",
-      rows: () => linesOf(r), nameOf: pieceName,
+      rows: () => linesOf(r), only, nameOf: pieceName,
       events: () => (W.evFor === rid ? W.events : null),
       sheetEng: sheetEngOf(r),
       pieces: multi ? ps.map(p => { const x = rowOf(p.key); return x && { key: p.key, poolId: (p.pools || [])[0] || (x.poolIds || [])[0] || "", row: x, ears: earsOf(x), label: p.name, meta: meta(p), sheetEng: sheetEngOf(x) }; }).filter(Boolean) : undefined,
@@ -15071,6 +15074,7 @@ const OrderWin = window.OrderWin = (() => {
     const order = [null].concat(W.pieces.map(p => p.key)); W.pieceDir = order.indexOf(key) > order.indexOf(W.piece) ? 1 : -1;
     const dir = W.pieceDir; W.piece = key; W.side = side;   // (the Left or the Right of the pair, ONEROW: that ear of the line picked, or null for the whole item)
     markPieces();   // (the row is marked at once, whatever the repaint waits for)
+    tryDo(() => W.engCard && W.engCard.refresh(false, true));   // (the Engraving section follows the pick in the same tick, even when the repaint below has to wait for a seal)
     const r = rowOf(W.key); if (!r) return;
     const to = key && key !== r.key ? linesOf(r).find(x => x.key === key) : null;
     if (to) show(to, {}); else paint();
