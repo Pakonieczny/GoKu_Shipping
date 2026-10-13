@@ -1379,6 +1379,8 @@ const Orders = window.Orders = (() => {
   // the records of lines reopened (state "open"): not completed, but their seals are kept and shown on their buttons for
   // good (Paul, 29 Sep 00:35: "the seal must always remain and follow that order forever")
   if (!B.maps.customKept) B.maps.customKept = {};
+  // Send to Review (charm-nest-review-mark.js): an order a person put into Review, rid + "_review" -> its record. Read with the custom records (the maps' list, the Review tab's changes feed), kept apart: it is no completion
+  if (!B.maps.reviewMarks) B.maps.reviewMarks = {};
   if (!B.maps.customWrites) B.maps.customWrites = new Map();   // line key → when this page last wrote its record (CustomPrint)
   /** The pulled lines a Custom Orders record may be kept for: special ones, and those read as completed by hand. */
   function customKeys() {
@@ -1390,9 +1392,9 @@ const Orders = window.Orders = (() => {
    *  reopened elsewhere); a whole list drops the records it no longer holds but those of lines pulled, and a list cut short
    *  (truncated) only adds. Nothing read before this page wrote a record overrides that record. */
   function mergeCustom(list, keyed, keys, began) {
-    const next = Object.assign({}, B.maps.customDone), kept = Object.assign({}, B.maps.customKept), mine = k => (B.maps.customWrites.get(k) || 0) >= began;
+    const next = Object.assign({}, B.maps.customDone), kept = Object.assign({}, B.maps.customKept), marks = Object.assign({}, B.maps.reviewMarks), mine = k => (B.maps.customWrites.get(k) || 0) >= began;
     // a record reopened (state "open") is kept with its seals, not read as completed
-    const put = (k, v) => { if (v && v.state === "open") { kept[k] = v; delete next[k]; } else if (v) { next[k] = v; delete kept[k]; } else { delete next[k]; delete kept[k]; } };
+    const put = (k, v) => { if (v && v.kind === "reviewMark") { marks[k] = v; } else if (v && v.state === "open") { kept[k] = v; delete next[k]; } else if (v) { next[k] = v; delete kept[k]; } else { delete next[k]; delete kept[k]; } };
     if (list && list.records && typeof list.records === "object") {
       customListAt = Date.now();
       if (!list.truncated) for (const m of [next, kept]) for (const k of Object.keys(m)) if (!(k in list.records) && !B.orders.byKey.has(k) && !mine(k)) delete m[k];
@@ -1403,6 +1405,7 @@ const Orders = window.Orders = (() => {
     // (a new object only when it reads differently: a new one is what makes interpretAll read every line again)
     if (JSON.stringify(next) !== JSON.stringify(B.maps.customDone)) B.maps.customDone = next;
     if (JSON.stringify(kept) !== JSON.stringify(B.maps.customKept)) B.maps.customKept = kept;
+    if (JSON.stringify(marks) !== JSON.stringify(B.maps.reviewMarks)) B.maps.reviewMarks = marks;
   }
   /** The records another computer (or another tab) wrote, read by the Review tab's changes feed: each joins what the page
    *  holds when it is newer (its update time), as mergeCustom puts a record (a reopened one is kept with its seals, a
@@ -1413,15 +1416,15 @@ const Orders = window.Orders = (() => {
     const ver = r => (r && +r.updatedAtMs) || 0, out = [], held = B.maps.customWrites;
     for (const [k, v] of Object.entries(records || {})) {
       if (!v || typeof v !== "object" || (held.get(k) || 0) >= (began || 0)) continue;
-      const was = B.maps.customDone[k] || B.maps.customKept[k] || null;
+      const was = v.kind === "reviewMark" ? (B.maps.reviewMarks[k] || null) : (B.maps.customDone[k] || B.maps.customKept[k] || null);
       if (was && ver(was) >= ver(v)) continue;
       out.push({ key: k, was, rec: v });
     }
     if (!out.length) return out;
     if (pre) { try { pre(out); } catch (e) { console.warn("Review feed", e); } }
-    const next = Object.assign({}, B.maps.customDone), kept = Object.assign({}, B.maps.customKept);
-    for (const { key, rec } of out) { if (rec.state === "open") { kept[key] = rec; delete next[key]; } else { next[key] = rec; delete kept[key]; } }
-    B.maps.customDone = next; B.maps.customKept = kept;
+    const next = Object.assign({}, B.maps.customDone), kept = Object.assign({}, B.maps.customKept), marks = Object.assign({}, B.maps.reviewMarks);
+    for (const { key, rec } of out) { if (rec.kind === "reviewMark") marks[key] = rec; else if (rec.state === "open") { kept[key] = rec; delete next[key]; } else { next[key] = rec; delete kept[key]; } }
+    B.maps.customDone = next; B.maps.customKept = kept; B.maps.reviewMarks = marks;
     return out;
   }
   const mapsSame = () => mapsRead[0] === B.maps.optionMaps && mapsRead[1] === B.maps.aliases && mapsRead[2] === B.maps.noDesign;
@@ -7620,7 +7623,7 @@ const Engrave = window.Engrave = (() => {
       : `${faced ? row2("Reading", faceReadingOf(job.row)) : ""}${fontMapped ? row2("Font", fontText.replace(/^Font: /, "")) : noteFont ? row2("Font", noteFont) : ""}${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
     card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a line's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? " (an order's discs are one placement: Back and Next go through every disc)" : " (an earring line's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${ears ? earSwitchHtml(job, ears, panelOn) : faced ? (panelOn ? "" : faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`)) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().tagOf(job.slot, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
-        <div class="pvMain">${byCard ? "" : `<h4 class="pvH">${cap1(fw)} · engraving</h4>`}<div class="pvApproval">${f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the ${fw} file">Approved</button></span>` : ""}${f && !wordsJob && ears ? approveBothHtml(ears, job) : ""}</div><div class="backHost"></div></div>
+        <div class="pvMain">${byCard ? "" : `<h4 class="pvH">${cap1(fw)} · engraving</h4>`}<div class="pvApproval">${f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the ${fw} file">Approve</button></span>` : ""}${f && !wordsJob && ears ? approveBothHtml(ears, job) : ""}</div><div class="backHost"></div></div>
         <div class="ctl">${f && !wordsJob ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="quarterTurns" role="group" aria-label="Rotate text"><button class="btn ghost sm" data-a="turnLeft" title="Rotate text 90° counterclockwise" aria-label="Rotate text 90° counterclockwise">↶<span class="turnDeg"> +90°</span></button><button class="btn ghost sm" data-a="turnRight" title="Rotate text 90° clockwise" aria-label="Rotate text 90° clockwise">↷<span class="turnDeg"> −90°</span></button></span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
           <span class="rest"><button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its ${fw}">${faced ? `No ${fw} engraving` : "No engraving"} <b class="k">S</b></button></span></div>
         <div class="pvSide">
@@ -8276,6 +8279,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       // there (the Library's own glide, charm-nest-library.js) instead of jumping; while a flight is drawing (LibraryFx) that is its to show
       const body=card.closest('#libBody');if(body && card.parentElement!==body.querySelector(`[data-laser-area="${report.ready?'ready':'pending'}"] .laserAreaItems`)){if(!before && !body.querySelector('[data-fx-hide]')){home=body;before=window.LibraryDone?.snapshot?.(body) || null;}place(card,report.ready,body);moved.push([card,report.ready]);}
       syncApprove(card);   // the manual "Approve for laser cutting" button: one for a set, one for each sheet that is part of no set (below)
+      try{window.LibraryReviewHold?.decorate?.(card);}catch(e){console.warn('Review hold',e);}   // (a held sheet's one-line note under its rail, when its own Approve line does not say it)
     });
     for(const list of document.querySelectorAll('#libBody .laserAreaItems')){
       const value=card=>({...card._laserSet,sheets:(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean)});
@@ -8316,10 +8320,16 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   const realSet=st=>!!(st && st.setId && !st.standalone && !st.working);
   // null: nothing to offer (ready, cut or gone) · {why:''}: a press can do it · {why:'plain words'}: a person's own step comes first (quiet: the
   // rail already says it, so no line is drawn for it). A lone sheet's own test: CharmNestReadiness.approveBlock, the one the set's gate is made of.
+  // the grey line when orders sent to the Review tab hold these sheets (Paul, 12 Oct: "exactly what order is holding it back"): the words are LibraryReviewHold's; hold: the orders, blocker: the first held sheet
+  function holdCase(ids){
+    let h=null;try{h=window.LibraryReviewHold?.why?.(ids);}catch(e){console.warn('Review hold',e);}
+    return h && h.text?{why:h.text,hold:h.rids,blocker:h.sheetId}:null;
+  }
   function approveCase(recs){
     recs=recs.filter(Boolean);if(!recs.length)return null;
     const p=projected(recs[0]);
     if(p.archived || p.laserDoneAt || R.laserSheet(p).ready)return null;
+    const h=holdCase([p.id || p.sheetId]);if(h)return h;   // (an order in the Review tab holds this sheet: the line names it, charm-nest-library-review-hold.js)
     const b=R.approveBlock(p);
     if(!b)return {why:''};
     if(b.step==='engraving'){const L=R.laserSheet(p),E=L.faces || L;return {why:`Waiting on ${plural(E.waiting,L.faces?'engraving':'back engraving')}`,quiet:true};}   // (a sheet with a front counts engravings, one per face)   // (quiet: the rail's current step and its '!' say it; the button only keeps it for a screen reader)
@@ -8334,6 +8344,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     const st=card._laserSet,ids=[...new Set((st.sheetIds?.length?st.sheetIds:card._laserSheets) || [])];
     const recs=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean);
     if(ids.length>=2){
+      const held=holdCase(ids.filter(id=>records.get(id) && !records.get(id).laserDoneAt));if(held)return {...held,set:true};   // (a held sheet holds the whole set's Approve, said once here)
       const gate=R.setGate(st,recs.map(projected));
       return gate.ready?{why:'',set:true}:{why:gate.reason,set:true,blocker:gate.blockers[0]?.sheetId || ''};
     }
@@ -8350,6 +8361,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       e.stopPropagation();   // (a press here is not a press on the sheet card under it)
       if(t.matches('[data-approve-btn]'))pressApprove(box);
       else if(t.matches('[data-approve-reason]'))openWhy(box);
+      else if(t.matches('[data-approve-review]'))window.LibraryReviewHold?.open?.(t.dataset.approveReview);
       else if(t.matches('[data-approve-yes]'))confirmPlan(box,[t.dataset.approveYes]);
       else if(t.matches('[data-approve-no]'))cancelPlan(box);
       else if(t.matches('[data-approve-hide]'))hidePlan(box);
@@ -8364,10 +8376,11 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     // (the reason is a link when there is something to open: the '!' on the rail of the sheet it is about, which opens the issues panel)
     const key=approvalKey(box),busy=approving.has(key),about=c?.blocker || box._id,card=hostOf(box);
     const open=typeof window.LaserReview?.openChecklist==='function' && !!(box._kind==='set'?card.querySelector(`.flowBox[data-flow-for="sheet:${about}"] [data-issues-open]`):box.parentElement?.querySelector('.flowBox [data-issues-open]'));
-    const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',c?.quiet?1:0,open?1:0,about,box._name || ''].join('|');
+    const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',c?.quiet?1:0,open?1:0,about,box._name || '',(c?.hold || []).join(',')].join('|');
     box._case=c;
     if(box.dataset.sig===sig)return;
     box.dataset.sig=sig;box.dataset.mode=mode;
+    if(c?.hold?.length)box.dataset.hold='1';else delete box.dataset.hold;   // (the sheet's rail note stays away while this line says it)
     const btn=box.querySelector('[data-approve-btn]'),why=box.querySelector('[data-approve-why]'),reasonId=`${box.dataset.approveFor.replace(/\W+/g,'-')}-why`;
     // aria-disabled, never `disabled`: a button that turns grey while it holds the keyboard keeps it, and its reason is read with it
     btn.setAttribute('aria-disabled',mode!=='ready'?'true':'false');btn.setAttribute('aria-busy',busy?'true':'false');
@@ -8375,7 +8388,8 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     if(mode==='blocked' && !c.quiet)btn.setAttribute('aria-describedby',reasonId);else btn.removeAttribute('aria-describedby');
     btn.innerHTML=busy?'<i class="spin" aria-hidden="true"></i>Approving…':'Approve for laser cutting';
     why.id=reasonId;
-    why.innerHTML=mode!=='blocked' || c.quiet?'':open?`<button type="button" class="approveReason" data-approve-reason>${esc(c.why)}</button>`:`<span class="approveReason">${esc(c.why)}</span>`;
+    // (one order in Review holds it: the line opens that order in the Review tab; several: it opens the '!' list like every other reason)
+    why.innerHTML=mode!=='blocked' || c.quiet?'':c.hold?.length===1?`<button type="button" class="approveReason" data-approve-review="${esc(c.hold[0])}" title="${esc('Open order '+c.hold[0]+' in Review')}">${esc(c.why)}</button>`:open?`<button type="button" class="approveReason" data-approve-reason>${esc(c.why)}</button>`:`<span class="approveReason">${esc(c.why)}</span>`;
   }
   function syncBox(host,kind,id,c,name){
     const key=boxKey(kind,id);let box=[...host.children].find(x=>x.dataset?.approveFor===key);
@@ -12177,6 +12191,8 @@ const Review = window.Review = (() => {
       if (!keep.has(key)) keep.set(key, { kind: p.kind, key, row, problem: p, rows: [], why: problemText(p) });
       const it = keep.get(key); if (!it.rows.includes(row)) it.rows.push(row);
     } }
+    // an order a person sent to Review (Send to Review, charm-nest-review-mark.js): one item for each open mark, until it is resolved
+    try { const RM = window.CharmNestReviewMark; if (RM) { RM.sync(); for (const m of RM.itemsFor(Orders.rows())) keep.set(m.key, m); } } catch (e) { console.warn("Review mark", e); }
     // new decisions join the queue here and the queue is drawn once, below: it used to be drawn again for each one
     for (const [key, it] of keep) { asked(it); const had = items().find(x => x.key === key); if (had) Object.assign(had, { rows: it.rows, row: it.row, problem: it.problem, problems: it.problems, why: it.why }); else put(it); }
     B.review.items = items().filter(x => !x.key.startsWith("ord:") || keep.has(x.key));
@@ -12618,6 +12634,9 @@ const Review = window.Review = (() => {
     } else if (it.kind === "orderChanged") {
       c.innerHTML = head("Order changed", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Was", `<q>${esc(it.old && it.old.text || (it.old && it.old.spec && it.old.spec.personalization || []).join(" / ") || "—")}</q> · ${esc(it.old && it.old.spec ? `${it.old.spec.designSku} · ${it.old.spec.material || "?"} · ${it.old.spec.form || ""} ${it.old.spec.size || ""}` : "")}`)}${evRow("Now", `<q>${esc((sp.personalization || []).join(" / ") || "—")}</q> · ${esc(`${(O.setDesignsOf(sp) || [sp.designSku]).join(" + ")} · ${sp.material || "?"} · ${sp.form || ""} ${sp.size || ""}`)}`)}${evRow("Buyer / note", `<q>${esc(sp.buyerMessage || "—")}</q> / <q>${esc(sp.staffNote || "—")}</q>`)}</div><div class="why">${esc(it.why)}</div><div class="fixes"><button class="btn gold sm" data-a="accept">Accept the new order (re-read, re-fit)</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
       c.querySelector("[data-a=accept]").onclick = () => acceptChange(it);
+    } else if (it.kind === "reviewMark") {
+      c.innerHTML = head(KIND_WORDS.reviewMark, it.rid, it.why) + `<div class="fixes"><button class="btn gold sm" data-a="markok" title="the match is right: this order leaves Review">Mark OK</button></div>`;
+      c.querySelector("[data-a=markok]").onclick = saving(c, async () => { const r = await CharmNestReviewMark.resolve(it.rid, { how: "ok" }); if (!r.ok && r.error !== "No name") toast(`Not saved: ${r.error}`, "bad"); });
     } else if (it.kind === "heldOrder") {
       c.innerHTML = head("Held order", it.rid, it.why) + `<div class="fixes"><button class="btn ghost sm" data-a="jump">Jump to the piece</button></div>`;
       c.querySelector("[data-a=jump]").onclick = () => { remove(it.key); focus(it.line); };
@@ -12635,7 +12654,7 @@ const Review = window.Review = (() => {
   }
   /** The face a Review card is about, in a word: "Front" for a front job, "Back" for a back job of a line that also has a front, "" for every other line (their cards say nothing new). */
   const faceWordOf = j => { const F = window.CharmNestEngraveFaces; if (!F || !j) return ""; if (F.isFront(j)) return "Front"; try { return Engrave.jobsOf(j.row).some(x => F.isFront(x)) ? "Back" : ""; } catch (_) { return ""; } };
-  const KIND_WORDS = { customOrder: "Custom Orders", needsMaterial: "Options · metal", needsMapping: "Options", unmatchedSku: "Unknown SKU", blockedSku: "Blocked SKU", missingSize: "Size", oversize: "Too big", fontMissing: "Font", engraveWords: "Words", notRepresentable: "Characters", flipFailed: "Flip", placement: "Placement", orderChanged: "Changed", heldOrder: "Held" };
+  const KIND_WORDS = { customOrder: "Custom Orders", needsMaterial: "Options · metal", needsMapping: "Options", unmatchedSku: "Unknown SKU", blockedSku: "Blocked SKU", missingSize: "Size", oversize: "Too big", fontMissing: "Font", engraveWords: "Words", notRepresentable: "Characters", flipFailed: "Flip", placement: "Placement", orderChanged: "Changed", heldOrder: "Held", reviewMark: "Marked" };
   // the one line under a Custom Orders card's facts: what its first question asks
   const CUSTOM_ASK = {
     needsMaterial: "Pick the material to cut it on the laser — or, made by hand, print its QR label to complete it.",
@@ -12887,6 +12906,7 @@ const Review = window.Review = (() => {
     if(sib&&cached?.node){const was=cached.node.querySelector('.sibOffer'),now=node.querySelector('.sibOffer');if(was&&now&&was.dataset.sib===now.dataset.sib)now.replaceWith(was);}
     if(sib){Master.mountPictures(node);wireSib(node,it,pk,sib,fn=>saving(node,fn,'.sibOffer button'));}   // (the saved pair link or alias, for good; the buttons hold while it saves)
     if(window.HoldUI)HoldUI.fill(node);   // (the one orange Hold button, beside Print QR label / Complete Order / Reopen)
+    if(it.kind==='reviewMark'&&window.CharmNestReviewMark)CharmNestReviewMark.decorateRow(node,it);   // (a slot for each line's suggested charms, and Mark OK)
     // (its custom buttons as a custom card's, and a click on the card opens its order; one whose line has left the pull
     // opens the order by its number)
     if(cx||row)wireAct(node,cx||{key:'rv:'+it.key,rows:[]},cx?cs:null,row);
@@ -12960,7 +12980,7 @@ const Review = window.Review = (() => {
     }).filter(Boolean);
     const decided = new Set(); for (const it of all) if (it.kind === "customOrder") for (const r of rowsOf(it)) decided.add(r.key);
     const cl = customLists(decided);
-    const ORDER = ["customOrder", "needsMapping", "unmatchedSku", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "heldOrder"];
+    const ORDER = ["customOrder", "needsMapping", "unmatchedSku", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "heldOrder", "reviewMark"];
     // Every tab uses the latest actual change, including a completion or reopen.
     // Completed, for every filter, is one list: custom orders completed by hand (print again or reopen), orders sent to a
     // sheet (their decision, seal, sheet and history) and every decision answered, newest first; an order in both lists is
@@ -12968,7 +12988,7 @@ const Review = window.Review = (() => {
     const openCustom = new Set(all.filter(it => it.kind === "customOrder").map(it => it.key.slice(4)).concat(cl.open.concat(cl.done,cl.sent).map(it => it.key.slice(6))));
     const doneAt = it => it.settled ? it.settled.t || 0 : (it.record && Math.max(+it.record.lastPrintedAt || 0, +it.record.completedAt || 0, +it.record.printedAt || 0, +it.record.at || 0)) || 0;
     // (the records of older sends kept in the workspace, flagged or by their words, stay stored and are still not listed: sentToSheet)
-    const finished = cl.done.concat(cl.sent.filter(it => !it.foldedInto), settled.filter(d => !sentToSheet(d) && !(d.kind === "customOrder" && openCustom.has(String(d.key).slice(4)))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }))).sort((a, b) => doneAt(b) - doneAt(a));
+    const finished = cl.done.concat(cl.sent.filter(it => !it.foldedInto), settled.filter(d => !sentToSheet(d) && !(d.kind === "customOrder" && openCustom.has(String(d.key).slice(4)))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d })), (window.CharmNestReviewMark ? CharmNestReviewMark.doneSettled(Orders.rows()) : []).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }))).sort((a, b) => doneAt(b) - doneAt(a));
     const alive=new Set(all.concat(cl.open, cl.done, cl.sent).map(it=>it.key));for(const key of reviewRows.keys())if(!alive.has(key))reviewRows.delete(key);
     // the kinds present are the filter: one chip each, so a long mixed list becomes the one kind being worked through
     const byKind = new Map(); for (const it of all) byKind.set(tabOf(it), (byKind.get(tabOf(it)) || 0) + 1);
@@ -13442,7 +13462,7 @@ const Sandbox = window.Sandbox = (() => {
   function sweepStorage() { try { return BX() ? BX().sweepSync() : 0; } catch (_) { return 0; } }
   /** What this page holds in memory of the records that are gone (it is about to reload; this keeps the next second honest). */
   function clearMemory() {
-    try { B.customDesigns = {}; B.cleared = {}; B.sets = new Map(); if (B.maps) { B.maps.customDone = {}; B.maps.customKept = {}; B.maps.customSent = {}; if (B.maps.customWrites && B.maps.customWrites.clear) B.maps.customWrites.clear(); } } catch (_) {}
+    try { B.customDesigns = {}; B.cleared = {}; B.sets = new Map(); if (B.maps) { B.maps.customDone = {}; B.maps.customKept = {}; B.maps.reviewMarks = {}; B.maps.customSent = {}; if (B.maps.customWrites && B.maps.customWrites.clear) B.maps.customWrites.clear(); } } catch (_) {}
     try { if (window.Review && Review.settled) Review.settled().splice(0); } catch (_) {}
     try { if (window.Orders) Orders.render(); if (window.Review) Review.render(); } catch (_) {}
   }

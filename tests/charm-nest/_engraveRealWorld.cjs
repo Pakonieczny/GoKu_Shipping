@@ -60,6 +60,7 @@ const ORDERS = {
 ORDERS.refAnna = Object.assign({}, ORDERS.back, { rid: '4290000111', listing: '1890000111', buyer: 'Name Seven', personalization: ['Anna'] });
 ORDERS.refMarck = Object.assign({}, ORDERS.back, { rid: '4290000112', listing: '1890000112', buyer: 'Name Eight', variations: [V('Metal choice', 'Gold'), V('Font Choice', 'Pristina')] });
 const NAMES = ['back', 'front', 'both', 'tag', 'discs', 'earrings'];
+const EXPECT_JOBS = { back: 1, front: 1, both: 2, tag: 2, discs: 3, earrings: 0, refAnna: 1, refMarck: 1 };   // how many Engrave jobs each order has once it is built (build waits for them)
 const keyOf = n => `${ORDERS[n].rid}_${ORDERS[n].rid}1`;
 
 /** the master library: put every real design's index entry and file into the fake site's Firestore / Storage (before the page reads the master) */
@@ -110,7 +111,16 @@ async function build(w, names) {
   // the real fit, in the font the order names (the page's fit worker; a busy machine takes a while, so wait for it: up to 4 minutes)
   const t0 = Date.now();
   for (;;) {
-    const open = await page.evaluate(async () => { try { await Engrave.fitAll(); } catch (e) { console.warn('fitAll', e && e.message); } return [...Engrave.items().values()].filter(j => ['classify', 'reclassify', 'ready', 'fitting'].includes(j.state)).length; });
+    // (a busy machine can be slow to make a job: every order must have the jobs it should have, and none may still be at work; an order that has not got its jobs yet is classified again)
+    const open = await page.evaluate(async ({ want }) => {
+      let lacking = 0;
+      for (const [rid, n] of want) {
+        const rows = Orders.rows().filter(r => r.order.receiptId === rid), have = () => [...Engrave.items().values()].filter(j => rows.includes(j.row) || (j.row && j.row.parentRow && rows.includes(j.row.parentRow))).length;
+        if (have() < n) { for (const row of rows) if (['pooled', 'written'].includes(row.state) && row.spec && (row.spec.engraveCandidate || row.spec.engraving)) { try { await Engrave.classify(row); } catch (e) { console.warn('classify', e && e.message); } } if (have() < n) lacking++; }
+      }
+      try { await Engrave.fitAll(); } catch (e) { console.warn('fitAll', e && e.message); }
+      return lacking + [...Engrave.items().values()].filter(j => ['classify', 'reclassify', 'ready', 'fitting'].includes(j.state)).length;
+    }, { want: names.map(n => [ORDERS[n].rid, EXPECT_JOBS[n] == null ? 1 : EXPECT_JOBS[n]]) });
     if (!open || Date.now() - t0 > 240000) break;
     await new Promise(r => setTimeout(r, 400));
   }
@@ -165,7 +175,7 @@ async function shot(w, name, o = {}) {
   return file;
 }
 
-module.exports = { world, build, openOrderWindow, openEngraveDetail, shot, settle, seedMaster, ORDERS, NAMES, DESIGNS, keyOf, root };
+module.exports = { world, build, openOrderWindow, openEngraveDetail, shot, settle, seedMaster, ORDERS, NAMES, EXPECT_JOBS, DESIGNS, keyOf, root };
 
 // the demo
 if (require.main === module) (async () => {

@@ -188,7 +188,7 @@
   }
   // a sheet's readiness for another sheet's order: the physical stages only (never its own order check), a cut sheet, or one cut before
   const physicalReady=(s,r)=>+s.laserDoneAt>0 || (r.included && (completedBefore(s) || r.ready));
-  function readOrders(rows,sheets){
+  function readOrders(rows,sheets,opts){
     const copies=new Map(),phys=new Map(),groups=new Map(),orders=new Map(),removed=new Set();
     // (a copy a cleanup took off a sheet on purpose, named in that sheet's record: it is no piece of its order any more)
     for(const s of sheets || [])for(const id of s.cleanup?.removedPoolIds || [])removed.add(String(id));
@@ -205,7 +205,7 @@
         listingId=listingId || String(l.line?.listingId || l.snap?.listingId || '');
         if(l.state==='gone')continue;                                                     // cancelled: cut and set aside, never waited for
         const hold=l.hold || l.changePending?String(l.hold || 'Order changes need review'):'',key=lineKeyOf(l,id) || id,ids=copyIds(l,key);
-        const rv=reviewWhy(id);   // (an order in unresolved Review: a held piece, below)
+        const rv=opts && typeof opts.review==='function'?String(opts.review(id) || ''):reviewWhy(id);   // (an order in unresolved Review: a held piece, below; the server passes the ones it read, the page's module answers otherwise)
         // completed by hand: a line on no saved sheet (a copy that sits on one is cut there and is no hand piece: the server never looks such a line up either)
         const hand=ids.some(x=>(copies.get(x) || []).length)?null:handOf(l);
         if(!hand && (l.spec?.noDesign || l.noDesign || l.state==='noDesign'))continue;    // nothing to cut
@@ -241,9 +241,9 @@
   /** orderReports(rows, allSheets): what each order waits for, whichever sheet asks. { [orderId]: {ready:true} | {ready:false, key, why, line, sheetId?, sheetLabel?, stage?,
    *  blocks:[{key,index,label,poolId,lineKey,sheetId|null,sheetLabel|null,why,stage?}], onSheets, pieceCount, customer, listingId} }.
    *  `blocks` are the pieces that hold the order back (see above), each with the sheet it sits on; forSheet() reads them from one sheet. */
-  function orderReports(rows,sheets){
+  function orderReports(rows,sheets,opts){
     const out={};
-    for(const [id,o] of readOrders(rows,sheets)){
+    for(const [id,o] of readOrders(rows,sheets,opts)){
       const blocks=o.pieces.filter(p=>p.block).map(p=>({key:p.block.key,index:p.index,label:p.label,poolId:p.poolId,lineKey:p.lineKey,sheetId:p.sheetId,sheetLabel:p.sheetLabel,...(p.block.side?{side:p.block.side}:{}),...(p.block.missing?{missing:true}:{}),...(p.block.review?{review:true}:{}),...(p.sheetIds.length>1?{sheetIds:p.sheetIds}:{}),why:p.block.why,...(p.block.stage?{stage:p.block.stage}:{}),...(p.block.key==='otherSheetNotReady'?{setId:p.block.setId,setLabel:p.block.setLabel,...(p.sheetIds.length>1?{setIds:p.block.setIds}:{})}:{})}));
       out[id]=blocks.length?{ready:false,...head(blocks),blocks,onSheets:[...new Set(o.pieces.flatMap(p=>p.sheetIds))],pieceCount:o.pieces.length,customer:o.customer,listingId:o.listingId}:{ready:true};
     }
