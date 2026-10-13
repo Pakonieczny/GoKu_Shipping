@@ -64,7 +64,8 @@
       if (vis(sp.buyerMessage)) rows.push(['Buyer message', vis(sp.buyerMessage)]);
       if (vis(sp.staffNote)) rows.push(['Staff note', vis(sp.staffNote)]);
     }
-    return rows.map(([k, v]) => [String(k), k === 'Options' ? String(v).split(/\r?\n/).map(x => x.trim()).filter(Boolean).join(' \u00b7 ') : oneLine(v)]).filter(([, v]) => v);
+    // (Paul, 13 Oct 2026: "Do not show the Options text in this view": the Engrave tab's box and the Overview read the Options row from the same reader and keep it; this block never draws it, and a line whose only words were options says nothing)
+    return rows.filter(r => r && r[0] !== 'Options').map(([k, v]) => [String(k), oneLine(v)]).filter(([, v]) => v);
   }
   /** The block's data: one entry per line that has a card, { name, rows: [[label, text]], faces: [['Front', words], ['Back', words]] | null }; the lines the customer wrote and chose nothing for are left out. */
   function saidOf(rows, pieces) {
@@ -83,9 +84,8 @@
   function saidHtml(entries) {
     const many = entries.length > 1, row = ([k, v]) => `<div class="esRow" data-said="${esc(k)}"><i>${esc(k)}</i> ${esc(v)}</div>`;
     return entries.map(e => (many && e.name ? `<div class="esName">${esc(e.name)}</div>` : '')
-      + e.rows.filter(r => r[0] !== 'Options').map(row).join('')
-      + (e.faces ? `<div class="esRow esFaces" data-said="faces">${e.faces.map(([f, t]) => `<i>${esc(f)}</i> ${esc(t)}`).join(' <span class="esSep" aria-hidden="true">\u00b7</span> ')}</div>` : '')
-      + e.rows.filter(r => r[0] === 'Options').map(row).join('')).join('');
+      + e.rows.map(row).join('')
+      + (e.faces ? `<div class="esRow esFaces" data-said="faces">${e.faces.map(([f, t]) => `<i>${esc(f)}</i> ${esc(t)}`).join(' <span class="esSep" aria-hidden="true">\u00b7</span> ')}</div>` : '')).join('');
   }
 
 
