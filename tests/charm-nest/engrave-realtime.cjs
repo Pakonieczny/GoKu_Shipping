@@ -62,7 +62,7 @@ const INSTRUMENT = String.raw`(() => {
   const tr = (c, t) => { const o = new Float32Array(N * N), rot = t & 3, flip = t >> 2; for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { let sx = x, sy = y; if (flip) sx = N - 1 - sx; for (let k = 0; k < rot; k++) { const nx = N - 1 - sy, ny = sx; sx = nx; sy = ny; } o[y * N + x] = c[sy * N + sx]; } return o; };
   const ncc = (a, b) => { let ma = 0, mb = 0; for (let i = 0; i < a.length; i++) { ma += a[i]; mb += b[i]; } ma /= a.length; mb /= a.length; let s = 0, va = 0, vb = 0; for (let i = 0; i < a.length; i++) { const x = a[i] - ma, y = b[i] - mb; s += x * y; va += x * x; vb += y * y; } return va && vb ? s / Math.sqrt(va * vb) : 0; };
   const bin = (c, thr = .12) => Array.from(c, v => v >= thr ? 1 : 0);
-  const load = async b64 => { const m = inkOf(await decode(b64)), box = bboxOf(m); return { m, box, c: cellsOf(m, box) }; };
+  const load = async b64 => { const m = inkOf(await decode(b64)), box = bboxOf(m); let k = 0; for (const v of m.ink) k += v; return { m, box, c: cellsOf(m, box), frac: k / (m.w * m.h) }; };
   const best = (a, rs) => { let bt = 0, bs = -2; for (let t = 0; t < 8; t++) { const s = rs.reduce((p, r) => p + ncc(a.c, tr(r.c, t)), 0) / rs.length; if (s > bs) { bs = s; bt = t; } } return { t: bt, ncc: bs }; };
   const r2 = x => Math.round(x * 100) / 100;
   window.__rt = {
@@ -93,9 +93,58 @@ const INSTRUMENT = String.raw`(() => {
       const A = await load(a64); if (!A.box) return { err: 'blank picture', cover: 0, fill: 0 };
       const ab = bin(A.c), dil = new Uint8Array(N * N); for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { let v = 0; for (let dy = -1; dy <= 1 && !v; dy++) for (let dx = -1; dx <= 1; dx++) { const yy = y + dy, xx = x + dx; if (yy >= 0 && yy < N && xx >= 0 && xx < N && ab[yy * N + xx]) { v = 1; break; } } dil[y * N + x] = v; }
       let nA = 0; for (const v of ab) nA += v;
-      let out = { cover: 0, which: -1, ncc: 0, fill: r2(nA / (N * N)) };
-      for (let k = 0; k < refs.length; k++) { if (!refs[k]) continue; const Rf = await load(refs[k]); if (!Rf.box) continue; const al = best(A, [Rf]), Rc = bin(tr(Rf.c, al.t)); let nR = 0, hit = 0; for (let i = 0; i < Rc.length; i++) if (Rc[i]) { nR++; if (dil[i]) hit++; } const cv = nR ? hit / nR : 0; if (cv > out.cover) out = { cover: r2(cv), which: k, ncc: r2(al.ncc), fill: out.fill, nCells: nR }; }
+      let out = { cover: 0, which: -1, ncc: 0, fill: r2(nA / (N * N)), aspRatio: 1, inkRatio: 0 };
+      for (let k = 0; k < refs.length; k++) { if (!refs[k]) continue; const Rf = await load(refs[k]); if (!Rf.box) continue; const al = best(A, [Rf]), Rc = bin(tr(Rf.c, al.t)); let nR = 0, hit = 0; for (let i = 0; i < Rc.length; i++) if (Rc[i]) { nR++; if (dil[i]) hit++; } const cv = nR ? hit / nR : 0; if (cv > out.cover) { const rb = Rf.box, ra = (rb[2] - rb[0]) / (rb[3] - rb[1]), rAsp = (al.t & 3) % 2 === 1 ? 1 / ra : ra, ab2 = A.box, aAsp = (ab2[2] - ab2[0]) / (ab2[3] - ab2[1]); out = { cover: r2(cv), which: k, ncc: r2(al.ncc), fill: out.fill, nCells: nR, aspRatio: r2(aAsp / rAsp), inkRatio: r2(Rf.frac ? A.frac / Rf.frac : 0) }; } }
       return out;
+    },
+    async look2(a64, f64, g64) {   // like look, for a picture drawn by ANOTHER renderer (another line weight, a pixel or two off): the cells only the right drawing inks (F-only) and the cells only the old drawing inks (G-only); how many of each does the picture ink within 0, 1 or 2 cells? score = the best over the three tolerances of hit(F-only) - hit(G-only): 1 = the right words/font, below 0 = the old ones
+      const A = await load(a64), F = await load(f64), G = await load(g64);
+      if (!A.box) return { err: 'blank picture' };
+      const al = best(A, [F, G]), Fb = bin(tr(F.c, al.t)), Gb = bin(tr(G.c, al.t)), ab = bin(A.c);
+      const per = [];
+      for (const rad of [0, 1, 2]) {
+        const Ad = new Uint8Array(N * N);
+        for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { let v = 0; for (let dy = -rad; dy <= rad && !v; dy++) for (let dx = -rad; dx <= rad; dx++) { const yy = y + dy, xx = x + dx; if (yy >= 0 && yy < N && xx >= 0 && xx < N && ab[yy * N + xx]) { v = 1; break; } } Ad[y * N + x] = v; }
+        let nF = 0, hF = 0, nG = 0, hG = 0; for (let i = 0; i < ab.length; i++) { if (Fb[i] && !Gb[i]) { nF++; if (Ad[i]) hF++; } else if (Gb[i] && !Fb[i]) { nG++; if (Ad[i]) hG++; } }
+        const rF = nF ? hF / nF : 0, rG = nG ? hG / nG : 0; per.push({ rad, nF, nG, hitF: r2(rF), hitG: r2(rG), score: r2(rF - rG) });
+      }
+      const top = per.reduce((p, q) => q.score > p.score ? q : p, per[0]);
+      return { t: al.t, ncc: r2(al.ncc), nF: top.nF, nG: top.nG, hitF: top.hitF, hitG: top.hitG, rad: top.rad, score: top.score };
+    },
+    async textLook(a64, f64, g64, p64) {   // SIZE- AND PLACE-INDEPENDENT: take only the engraving's ink (the picture's ink that the charm alone, P, does not have), cut it to its own box, and compare its SHAPE with the right drawing's engraving (F) and with the old one's (G)
+      const A = await load(a64), F = await load(f64), G = await load(g64), P = await load(p64);
+      if (!A.box || !F.box || !G.box || !P.box) return { err: 'blank picture' };
+      const GW = 72, GH = 28;
+      const textOf = (X, grow) => {   // ink of X that is not near the charm's ink (mapped into X's frame), as a list of points and its box
+        const sx = P.box[2] - P.box[0], sy = P.box[3] - P.box[1], ax = X.box[2] - X.box[0], ay = X.box[3] - X.box[1];
+        const pk = new Uint8Array(P.m.w * P.m.h); for (let y = 0; y < P.m.h; y++) for (let x = 0; x < P.m.w; x++) if (P.m.ink[y * P.m.w + x]) pk[y * P.m.w + x] = 1;
+        const near = (px0, py0) => { for (let dy = -grow; dy <= grow; dy++) for (let dx = -grow; dx <= grow; dx++) { const xx = px0 + dx, yy = py0 + dy; if (xx >= 0 && yy >= 0 && xx < P.m.w && yy < P.m.h && pk[yy * P.m.w + xx]) return true; } return false; };
+        const pts = []; let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+        for (let y = X.box[1]; y < X.box[3]; y++) for (let x = X.box[0]; x < X.box[2]; x++) if (X.m.ink[y * X.m.w + x]) {
+          const px0 = Math.round(P.box[0] + (x - X.box[0]) * sx / ax), py0 = Math.round(P.box[1] + (y - X.box[1]) * sy / ay);
+          if (!near(px0, py0)) { pts.push(x, y); if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        }
+        return { pts, box: [x0, y0, x1 + 1, y1 + 1] };
+      };
+      // the words may be turned (the preview keeps the box's angle, a fresh fit may choose another): turn the ink so that its long axis is level (principal axis), then cut it to its own box
+      const grid = T => {
+        const g = new Float32Array(GW * GH), n = T.pts.length / 2; if (n < 20) return g;
+        let mx = 0, my = 0; for (let i = 0; i < T.pts.length; i += 2) { mx += T.pts[i]; my += T.pts[i + 1]; } mx /= n; my /= n;
+        let cxx = 0, cyy = 0, cxy = 0; for (let i = 0; i < T.pts.length; i += 2) { const dx = T.pts[i] - mx, dy = T.pts[i + 1] - my; cxx += dx * dx; cyy += dy * dy; cxy += dx * dy; }
+        const th = 0.5 * Math.atan2(2 * cxy, cxx - cyy), c = Math.cos(th), s = Math.sin(th), rp = [];
+        let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (let i = 0; i < T.pts.length; i += 2) { const dx = T.pts[i] - mx, dy = T.pts[i + 1] - my, X = dx * c + dy * s, Y = -dx * s + dy * c; rp.push(X, Y); if (X < x0) x0 = X; if (X > x1) x1 = X; if (Y < y0) y0 = Y; if (Y > y1) y1 = Y; }
+        const bw = Math.max(1, x1 - x0), bh = Math.max(1, y1 - y0);
+        for (let i = 0; i < rp.length; i += 2) { const cx = Math.min(GW - 1, Math.floor((rp[i] - x0) / bw * GW)), cy = Math.min(GH - 1, Math.floor((rp[i + 1] - y0) / bh * GH)); g[cy * GW + cx] = 1; }
+        return g;
+      };
+      const flip = g => { const o = new Float32Array(g.length); for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) o[y * GW + x] = g[(GH - 1 - y) * GW + (GW - 1 - x)]; return o; };
+      const blur = g => { const o = new Float32Array(g.length); for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) { let v = 0, n = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const yy = y + dy, xx = x + dx; if (yy >= 0 && yy < GH && xx >= 0 && xx < GW) { v += g[yy * GW + xx]; n++; } } o[y * GW + x] = v / n; } return o; };
+      const ta = textOf(A, 3), tf = textOf(F, 2), tg = textOf(G, 2);
+      if (ta.pts.length < 40 || tf.pts.length < 40) return { err: 'no engraving ink found', nA: ta.pts.length / 2, nF: tf.pts.length / 2 };
+      const a = blur(grid(ta)), f = blur(grid(tf)), g = blur(grid(tg));
+      const af = flip(a), nf = Math.max(ncc(a, f), ncc(af, f)), ng = Math.max(ncc(a, g), ncc(af, g));
+      const asp = o => { const w = o.box[2] - o.box[0], h = o.box[3] - o.box[1]; return h ? w / h : 0; };
+      return { nccF: r2(nf), nccG: r2(ng), score: r2(nf - ng), textAspect: r2(asp(ta)), refAspect: r2(asp(tf)), nA: ta.pts.length / 2, nF: tf.pts.length / 2 };
     },
     async cover(a64, with64, no64) {   // is the engraving that the reference has on the charm (cells with text, not in the charm-only picture) drawn in A? (one cell of tolerance each way)
       const A = await load(a64), W = await load(with64), O = await load(no64);
@@ -118,6 +167,7 @@ const INSTRUMENT = String.raw`(() => {
       let cv;
       if (kind === 'text') cv = Engrave.renderBack(job, px, { grid: false, hatch: false });
       else if (kind === 'work') cv = Engrave.renderBack(job, px, { grid: true, editable: true });
+      else if (kind === 'workPlain') cv = Engrave.renderBack(Object.assign({}, job, { fit: null }), px, { grid: true, editable: true });
       else if (kind === 'plain') cv = Engrave.renderBack(Object.assign({}, job, { fit: null }), px, { grid: false, hatch: false });
       else { const ch = job.editCharm || Pool.charmOf(job.copies[0]); cv = Engrave.renderFront(kind === 'front' ? ch : Object.assign({}, ch, { members: [ch.outline] }), px, {}); }
       return cv && cv.toDataURL ? cv.toDataURL('image/png').split(',')[1] : null;
@@ -133,7 +183,7 @@ const INSTRUMENT = String.raw`(() => {
       if (!cv) return false;
       const old = document.getElementById('__rtBox'); if (old) old.remove();
       const box = document.createElement('div'); box.id = '__rtBox'; box.style.cssText = 'position:fixed;left:8px;top:8px;z-index:99999;width:' + w + 'px;height:' + h + 'px;box-sizing:border-box;border:1px solid #d9d0c0;border-radius:0;background:#fff;overflow:hidden';
-      cv.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block'; box.appendChild(cv); document.body.appendChild(box); return true;
+      cv.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block'; box.appendChild(cv); (document.querySelector('dialog[open]') || document.body).appendChild(box); return true;   // (the order window is a modal dialog, in the top layer: the box goes inside it)
     },
     unmountRef() { const e = document.getElementById('__rtBox'); if (e) e.remove(); return true; },
     charmAspect(key) {   // the aspect (w/h of the ink box) of the charm as the app draws it, upright (front view) and as the work area draws it
@@ -163,6 +213,10 @@ async function boxed(page, key, kind, w, h, hatch) {
 }
 const sizeOf = (page, selector) => page.evaluate(sel => { const e = document.querySelector(sel); if (!e) return null; const b = e.getBoundingClientRect(); return { w: Math.round(b.width), h: Math.round(b.height) }; }, selector);
 const rtw = (page, fn, ...args) => rtAt(120, page, fn, args);
+// "this picture draws the charm": the cells of the app's own drawing of it are drawn (>= 60%, one cell of tolerance), it is not a solid block, it has at least half the ink of the app's drawing, and the ink has the charm's shape
+// (the aspect of its box within 30% of the charm's, either way up): the words alone, stretched over the charm's box, do not pass
+const ownOk = (st, o) => !!st && !!o && !o.err && st.ink >= 0.005 && o.cover >= 0.6 && o.fill <= 0.6 && o.inkRatio >= 0.5 && Math.abs(Math.log(o.aspRatio || 1)) <= 0.3;
+const ownEv = (st, o) => `${f2(((o && o.cover) || 0) * 100)}% of the cells of the app's own drawing of this charm are drawn in the picture; ink ${st ? f2(st.ink * 100) : '?'}% of the box = ${o ? f2(o.inkRatio || 0) : '?'} x the app's drawing, shape ${o ? f2(o.aspRatio || 0) : '?'} x the charm's${o && o.err ? ' (' + o.err + ')' : ''}`;
 
 /** the facts of the Engrave detail now (DOM) */
 const detailFacts = page => page.evaluate(() => {
@@ -178,6 +232,15 @@ const detailFacts = page => page.evaluate(() => {
     mode: (c.querySelector('.engp') || {}).dataset ? c.querySelector('.engp').dataset.mode : null, face: (c.querySelector('.engp') || {}).dataset ? c.querySelector('.engp').dataset.face : null,
     words: (c.querySelector('.engpWords') || {}).value, font: (c.querySelector('.engpFont') || {}).value, fontLabel: (() => { const f = c.querySelector('.engpFont'); return f && f.selectedOptions[0] ? f.selectedOptions[0].textContent.trim() : ''; })(),
     job: (() => { try { const j = Engrave.items().get(window.__rtJobKey); return j && j.fit ? { centre: (j.fit.centre || []).map(v => Math.round(v * 100) / 100), text: j.text, font: j.fontKey } : null; } catch (_) { return null; } })() };
+});
+
+
+const hiliteFacts = page => page.evaluate(() => {
+  const vis = e => { if (!e) return false; const b = e.getBoundingClientRect(), st = getComputedStyle(e); return b.width > 0 && b.height > 0 && st.visibility !== 'hidden' && st.display !== 'none' && +st.opacity > 0 && !e.closest('[hidden]'); };
+  const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (!c) return { open: false };
+  const segs = [...c.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg[data-engp=mode]')], marked = segs.filter(x => x.hasAttribute('data-sys')).map(x => x.dataset.mode);
+  const sparks = [...c.querySelectorAll('.engpSys')].filter(vis), box = c.querySelector('.engpBox'), fb = c.querySelector('.engpFontBox');
+  return { open: true, marked, sparks: sparks.length, boxMark: box ? box.getAttribute('data-sys') : null, fontMark: fb ? fb.getAttribute('data-sys') : null, fontSpark: !!(fb && [...fb.querySelectorAll('.engpSys')].some(vis)), fontLabels: [...c.querySelectorAll('.engpFont option')].filter(o => o.hasAttribute('data-sys')).map(o => o.label || o.textContent), selected: (c.querySelector('.engpFont') || {}).value };
 });
 
 /** one measured change: before / same tick / settled pictures of both thumbs and the work area */
@@ -221,13 +284,16 @@ async function partDetail(w, made) {
   await R.openEngraveDetail(w, 'back', { face: 'back' }); await R.settle(page, 900);
   const tsz = (await sizeOf(page, SEL.thumb('back'))) || { w: 104, h: 104 };
   const refImg = {}; for (const [k, key] of [['base', refs.base], ['anna', refs.anna], ['marck', refs.marck]]) { refImg[k] = { thumb: await boxed(page, key, 'text', tsz.w, tsz.h, false), work: await refs.get(key, 'work', 400) }; }
+  const plainWork = await refs.get(refs.base, 'workPlain', 400);   // the charm alone, drawn the way the work area draws it (the engraving's ink is what the picture has beyond it)
+  const TEXT_OK = lk => !!lk && !lk.err && lk.nccF >= 0.75 && lk.score >= 0.2;   // calibrated on the work area at rest (+0.68, shape 0.95), on typed words and a picked font in a second implementation (+0.69 / +0.34, shape 0.96 / 0.87); a picture still showing the old words or font: -0.37 or less, shape 0.58 or less
+  const SENSE_T = 0.15;   // thumbnails (calibrated on the controls: a right thumbnail of another renderer scores +0.41 for other words and +0.23 for another font, the old picture scores -0.08 or less, an identical drawing +0.95)
   const SENSE = 0.3;   // calibrated on the controls: the work area at rest scores +0.58 against its own order (S2) and a thumbnail drawn by the app's renderer +0.95 (I1); a picture that did not change scores negative; 0.3 = clearly closer to the right words / font than to the old ones
   const chRefs = { plain: await boxed(page, refs.base, 'plain', tsz.w, tsz.h, false), front: await boxed(page, refs.base, 'front', tsz.w, tsz.h) };
   // does a picture draw this charm? (the app's own drawing of it, cell by cell, either way up) and is it not blank / not a block
   const charmPic = async (b64, set) => {
     if (!b64) return { ok: false, ev: 'no picture' };
     const st = await rt(page, 'stats', b64), o = await rt(page, 'own', b64, [set.plain, set.front]);
-    return { ok: !!st && st.ink >= 0.005 && o.cover >= 0.6 && o.fill <= 0.6, st, o, ev: `${f2((o.cover || 0) * 100)}% of the cells of the app's own drawing of this charm are drawn in the picture${o.err ? ' (' + o.err + ')' : ''}; ink ${st ? f2(st.ink * 100) : '?'}% of the box, ink spans ${st && st.longFrac ? f2(st.longFrac * 100) : '?'}% of it` };
+    return { ok: ownOk(st, o), st, o, ev: ownEv(st, o) };
   };
 
   const jobKey0 = await R.openEngraveDetail(w, 'back', { face: 'back' }); await page.evaluate(k => { window.__rtJobKey = k; }, jobKey0);
@@ -241,18 +307,23 @@ async function partDetail(w, made) {
   const cpB = await charmPic(sb, chRefs);
   check('S1 the detail opens on the system\'s choice: mode back, the customer\'s words, the chosen font', 'auto', start.open && start.mode === 'back' && start.words === 'Name One' && /stylish/i.test(String(start.fontLabel)), `mode ${start.mode}, words "${start.words}", font "${start.fontLabel}"`);
   check('S1b a back-only necklace shows only the Back face on the card', 'smart', start.open && start.faces.length === 1 && start.faces[0].face === 'back', `faces shown ${JSON.stringify((start.faces || []).map(f => f.face))}`);
-  check('S2 work area starts as the real charm with the engraving in the system\'s font (the instrument\'s own control)', 'world', await (async () => { if (!sw) return false; const l = await rtw(page, 'look', sw, refImg.base.work, refImg.anna.work); return l.nccF >= 0.7 && l.score >= SENSE; })(), 'the work area against the app\'s own rendering of that order: ' + JSON.stringify(sw ? await rtw(page, 'look', sw, refImg.base.work, refImg.anna.work) : null));
+  const s2 = sw ? await rtw(page, 'textLook', sw, refImg.base.work, refImg.anna.work, plainWork) : null;
+  check('S2 work area starts as the real charm with the engraving in the system\'s font (the instrument\'s own control)', 'world', TEXT_OK(s2), 'the work area\'s engraving against the app\'s own rendering of that order: ' + JSON.stringify(s2));
   check('T0 the back thumbnail at rest has the charm drawing in it, not only text', 'thumb', cpB.ok, cpB.ev + `; engpvDraw children ${start.faces[0] ? start.faces[0].drawKids : '-'}`);
+
+  const hl0 = await hiliteFacts(page);
+  check('H1 the system\'s own choice is marked while nothing is changed (its mode, its words, its font; a visible sparkle each)', 'hilite', hl0.open && hl0.marked.join() === 'back' && hl0.boxMark === 'same' && hl0.sparks >= 2 && hl0.fontLabels.length >= 1, `mode marked: ${JSON.stringify(hl0.marked)}, words box: ${hl0.boxMark}, visible sparkles: ${hl0.sparks}, system font entries marked: ${JSON.stringify(hl0.fontLabels)}`);
 
   // ── the instrument's own control: a thumbnail drawn by the app's renderer (injected here, it is NOT the app's thumbnail) must pass the very measures that the app's thumbnails are held to ──
   const ctlB = await boxed(page, refs.base, 'text', tsz.w, tsz.h, true);   // (the references are drawn without the hatch of the engraved art, this control with it: a different but legitimate drawing)
-  const ctlCp = await charmPic(ctlB, chRefs), ctlLk = ctlB && await rt(page, 'look', ctlB, refImg.base.thumb, refImg.anna.thumb), ctlCv = ctlB && await rt(page, 'cover', ctlB, refImg.base.thumb, chRefs.plain);
-  check('I1 instrument control: a thumbnail drawn by the app\'s own renderer passes the charm and look measures', 'world', ctlCp.ok && !!ctlLk && !ctlLk.err && ctlLk.nccF >= 0.45 && ctlLk.score >= SENSE && !!ctlCv && !ctlCv.err && ctlCv.cover >= 0.5 && ctlCv.stray <= 0.5, `${ctlCp.ev}; look ${JSON.stringify(ctlLk)}; engraving cover ${JSON.stringify(ctlCv)}`);
+  const ctlCp = await charmPic(ctlB, chRefs), ctlLk = ctlB && await rt(page, 'look2', ctlB, refImg.base.thumb, refImg.anna.thumb), ctlCv = ctlB && await rt(page, 'cover', ctlB, refImg.base.thumb, chRefs.plain);
+  check('I1 instrument control: a thumbnail drawn by the app\'s own renderer passes the charm and look measures', 'world', ctlCp.ok && !!ctlLk && !ctlLk.err && ctlLk.score >= SENSE_T && !!ctlCv && !ctlCv.err && ctlCv.cover >= 0.5 && ctlCv.stray <= 0.5, `${ctlCp.ev}; look ${JSON.stringify(ctlLk)}; engraving cover ${JSON.stringify(ctlCv)}`);
 
   const evalChange = async (label, t, o) => {
     // o: { thumbs: ['back'] | ['front','back'], work: { right: b64, wrong: b64 } | 'moves', thumbLook: { right, wrong } }
+    const cpMap = {};
     for (const face of o.thumbs) {
-      const cp = await charmPic(t.tick[face], chRefs);
+      const cp = await charmPic(t.tick[face], chRefs); cpMap[face] = cp;
       check(`${label} · ${face} thumbnail has the charm drawing in it (same tick)`, 'thumb', cp.ok, cp.ev);
     }
     if (o.edit) {
@@ -263,8 +334,8 @@ async function partDetail(w, made) {
         const late = await rt(page, 'raw', t.before[face], t.settled[face]);
         check(`${label} · ${face} thumbnail changes in the same tick, and is already the settled picture`, 'thumb', ch1.diff >= 0.001 && same.diff <= 0.003, `changed ${f2(ch1.diff * 100)}% of its pixels at the tick, then ${f2(same.diff * 100)}% more after settling (${f2(late.diff * 100)}% changed in all); ${t.held} timer(s) were waiting`);
         if (o.thumbLook) {
-          const lk = await rt(page, 'look', t.tick[face], o.thumbLook.right.thumb, o.thumbLook.wrong.thumb);
-          check(`${label} · ${face} thumbnail shows the new ${o.thumbLook.what} on the charm`, 'thumb', !lk.err && lk.nccF >= 0.45 && lk.score >= SENSE, `looks like the right one at ${f2(lk.nccF)}, the old one at ${f2(lk.nccG)}, strokes that tell them apart: ${lk.nD} cells, score ${f2(lk.score)} (aligned ${lk.ncc})${lk.err ? ' ' + lk.err : ''}`);
+          const lk = await rt(page, 'look2', t.tick[face], o.thumbLook.right.thumb, o.thumbLook.wrong.thumb);
+          check(`${label} · ${face} thumbnail shows the new ${o.thumbLook.what} on the charm`, 'thumb', !!(cpMap[face] && cpMap[face].ok) && !lk.err && lk.score >= SENSE_T, `${cpMap[face] && cpMap[face].ok ? '' : 'no charm drawing in the picture; '}the cells only the new ${o.thumbLook.what} inks: ${f2((lk.hitF || 0) * 100)}% drawn, the cells only the old one inks: ${f2((lk.hitG || 0) * 100)}% drawn (${lk.nF} / ${lk.nG} cells, tolerance ${lk.rad} cell), score ${f2(lk.score)}${lk.err ? ' ' + lk.err : ''}`);
         }
       }
     }
@@ -277,8 +348,8 @@ async function partDetail(w, made) {
           const mv = await rtw(page, 'move', t.before.work, t.tick.work);
           check(`${label} · work area moves the engraving in the same tick`, 'work', mv.size && ch1.diff > 0 && (Math.hypot(mv.dx, mv.dy) >= 1 || ch1.diff >= 0.002) && same.diff <= 0.003, `pressing "${o.dir}": the engraving moved ${f2(mv.dx)} px across and ${f2(mv.dy)} px down at the tick (${mv.nNew} new ink px, ${mv.nLost} gone), ${f2(same.diff * 100)}% more after settling${lateTxt}; the job's own text position (mm) ${JSON.stringify((t.before.facts.job || {}).centre)} -> ${JSON.stringify((t.tick.facts.job || {}).centre)} -> ${JSON.stringify((t.settled.facts.job || {}).centre)}`);
         } else {
-          const lk = await rtw(page, 'look', t.tick.work, o.work.right.work, o.work.wrong.work);
-          check(`${label} · work area shows the new ${o.work.what} in the same tick, before Save`, 'work', !lk.err && ch1.diff > 0 && lk.nccF >= 0.7 && lk.score >= SENSE && same.diff <= 0.003, `${f2(ch1.diff * 100)}% of the picture changed at the tick; looks like the new ${o.work.what} at ${f2(lk.nccF)} vs the old ${f2(lk.nccG)}, ${lk.nD} telling cells, score ${f2(lk.score)}; ${f2(same.diff * 100)}% more after settling${lateTxt}`);
+          const lk = await rtw(page, 'textLook', t.tick.work, o.work.right.work, o.work.wrong.work, plainWork);
+          check(`${label} · work area shows the new ${o.work.what} in the same tick, before Save`, 'work', ch1.diff > 0 && TEXT_OK(lk) && same.diff <= 0.003, `${f2(ch1.diff * 100)}% of the picture changed at the tick; the engraving's shape matches the new ${o.work.what} at ${lk.err ? lk.err : f2(lk.nccF)} vs the old ${lk.err ? '-' : f2(lk.nccG)} (score ${lk.err ? '-' : f2(lk.score)}, the words are ${lk.err ? '-' : f2(lk.textAspect)} wide per high, the new ones would be ${lk.err ? '-' : f2(lk.refAspect)}); ${f2(same.diff * 100)}% more after settling${lateTxt}`);
         }
       }
     }
@@ -304,6 +375,8 @@ async function partDetail(w, made) {
   await page.evaluate(() => window.__act.type('Name One')); await R.settle(page, 500);   // (back to the system's words)
   t = await trial(w, 'font', 'Pristina');
   await evalChange('R2 picking the font Pristina', t, { thumbs: ['back'], edit: 'back', thumbLook: { what: 'font', right: refImg.marck, wrong: refImg.base }, work: { what: 'font', right: refImg.marck, wrong: refImg.base } });
+  const hl2 = await hiliteFacts(page);
+  check('H2 after another font is picked the system\'s choice stays marked (mode, font entry) and the change shows beside the closed list', 'hilite', hl2.open && hl2.marked.join() === 'back' && hl2.fontMark === 'changed' && hl2.fontSpark && hl2.fontLabels.length >= 1, `mode marked: ${JSON.stringify(hl2.marked)}, font box: ${hl2.fontMark}, sparkle beside the list: ${hl2.fontSpark}, system font entries marked: ${JSON.stringify(hl2.fontLabels)}, picked: "${hl2.selected}"`);
   await page.evaluate(() => window.__act.font('')); await R.settle(page, 500);
   const dir4 = await pickDir();
   t = await trial(w, 'nudge', dir4);
@@ -336,7 +409,7 @@ async function partDetail(w, made) {
   t = await trial(w, 'font', 'Pristina');
   await evalChange('R7 (front + back) picking the font Pristina for the back', t, { thumbs: ['front', 'back'], edit: 'back', thumbLook: { what: 'font', right: refImg.marck, wrong: refImg.base }, work: { what: 'font', right: refImg.marck, wrong: refImg.base } });
   await page.evaluate(() => window.__act.font('')); await R.settle(page, 500);
-  const dir8 = await pickDir();
+  const dir8 = dir4;   // (the same text, the same room; probing again would press Cancel and drop the staged Front + back)
   t = await trial(w, 'nudge', dir8);
   await evalChange('R8 (front + back) nudging the back', t, { thumbs: ['front', 'back'], edit: 'back', work: 'moves', dir: dir8 });
   await R.shot(w, 'LIVE-rt-detail-both-staged');
@@ -349,7 +422,7 @@ async function partDetail(w, made) {
     const th = await shotB64(page, SEL.thumb('front')), sz = (await sizeOf(page, SEL.thumb('front'))) || tsz;
     const full = await boxed(page, jf, 'front', sz.w, sz.h), outl = await boxed(page, jf, 'frontOutline', sz.w, sz.h), plainJ = await boxed(page, jf, 'plain', sz.w, sz.h);
     const ar = th && full && outl ? await rt(page, 'art', th, full, outl) : null;
-    const cp = await (async () => { if (!th) return { ok: false, ev: 'no picture' }; const st = await rt(page, 'stats', th), o = await rt(page, 'own', th, [full, plainJ]); return { ok: st.ink >= 0.005 && o.cover >= 0.6 && o.fill <= 0.6, ev: `${f2((o.cover || 0) * 100)}% of the cells of the app's own drawing of this charm are drawn in the picture; ink ${f2(st.ink * 100)}% of the box` }; })();
+    const cp = await (async () => { if (!th) return { ok: false, ev: 'no picture' }; const st = await rt(page, 'stats', th), o = await rt(page, 'own', th, [full, plainJ]); return { ok: ownOk(st, o), ev: ownEv(st, o) }; })();
     check(`A1 ${n}: the front thumbnail has the charm drawing in it`, 'thumb', cp.ok, cp.ev);
     check(`A1 ${n}: the front thumbnail shows the design's cut-outs and engraved art`, 'thumb', !!ar && !ar.err && ar.nInner >= 8 && ar.cover >= 0.5, ar ? `${ar.nInner} cells of inner lines in the app's own front view, ${f2(ar.cover * 100)}% of them drawn in the thumbnail (aligned ${ar.ncc})` : 'no picture');
     await R.shot(w, 'LIVE-rt-detail-' + n);
@@ -371,14 +444,14 @@ async function partOrder(w, made) {
       for (const f of c.faces) {
         if (f.empty === '1') continue;   // (an empty slot is O1's business: it should not be shown)
         const sel = `#owEng .engCard:nth-of-type(${c.i + 1}) .engFace[data-face="${f.face}"] .engThumb`;
-        const th = await shotB64(page, sel); if (!th) { check(`O2 order window ${n} ${c.piece} ${f.face}: the thumbnail has the charm and the engraving`, 'thumb', false, 'no thumbnail'); continue; }
+        const th = await shotB64(page, sel); if (!th) { check(`O2 order window ${n} ${(c.piece || '').split('#')[1] || ''} ${f.face}: the thumbnail has the charm drawing in it`.replace('  ', ' '), 'thumb', false, 'no thumbnail'); continue; }
         const st = await rt(page, 'stats', th);
         const jk = ((made[n].jobs.filter(j => j.face === f.face)).find(j => !j.slot || (c.piece || '').endsWith('#' + j.slot)) || made[n].jobs.find(j => j.face === f.face) || {}).key;
         let cover = null, own = null;
         if (jk) { const sz = (await sizeOf(page, sel)) || { w: 104, h: 104 }, get = kind => boxed(page, jk, kind, sz.w, sz.h, false); const wt = await get('text'), pl = await get('plain'), fr = await get('front'); cover = wt && pl ? await rt(page, 'cover', th, wt, pl) : null; own = await rt(page, 'own', th, [pl, fr]); }
-        const charm = !!st && !!own && st.ink >= 0.005 && own.cover >= 0.6 && own.fill <= 0.6;
-        check(`O2 order window ${n} ${(c.piece || '').split('#')[1] || ''} ${f.face}: the thumbnail has the charm drawing in it`.replace('  ', ' '), 'thumb', charm, own ? `${f2((own.cover || 0) * 100)}% of the cells of the app's own drawing of this charm are drawn in the picture; ink ${f2(st.ink * 100)}% of the box` : 'no reference');
-        check(`O3 order window ${n} ${(c.piece || '').split('#')[1] || ''} ${f.face}: the thumbnail shows that face's engraving on the charm`.replace('  ', ' '), 'thumb', !!cover && !cover.err && cover.nText >= 3 && cover.cover >= 0.5 && cover.stray <= 0.5, cover ? `${cover.nText} cells of engraving in the app's own drawing of it, ${f2(cover.cover * 100)}% drawn in the thumbnail, stray ink ${f2(cover.stray * 100)}% (aligned ${cover.ncc}); the card says "${f.label}"` : 'no reference');
+        const charm = ownOk(st, own);
+        check(`O2 order window ${n} ${(c.piece || '').split('#')[1] || ''} ${f.face}: the thumbnail has the charm drawing in it`.replace('  ', ' '), 'thumb', charm, own ? ownEv(st, own) : 'no reference');
+        check(`O3 order window ${n} ${(c.piece || '').split('#')[1] || ''} ${f.face}: the thumbnail shows that face's engraving ON the charm`.replace('  ', ' '), 'thumb', charm && !!cover && !cover.err && cover.nText >= 3 && cover.cover >= 0.5 && cover.stray <= 0.5, cover ? `${charm ? '' : 'no charm drawing in the picture; '}${cover.nText} cells of engraving in the app's own drawing of it, ${f2(cover.cover * 100)}% drawn in the thumbnail, stray ink ${f2(cover.stray * 100)}% (aligned ${cover.ncc}); the card says "${f.label}"` : 'no reference');
       }
       ci++;
     }
@@ -405,23 +478,33 @@ async function partReason(w, made) {
   const page = w.page;
   await R.openEngraveDetail(w, 'back', { face: 'back' }); await R.settle(page, 900);
   await page.evaluate(() => window.__act.font('Pristina')); await R.settle(page, 500);
-  const pre = await page.evaluate(() => { const row = B.orders.rows.find(r => r.order.receiptId === '4290000101'); return { ov: !!(row && row.engravingOverride), saveOn: !!document.querySelector('#egQueue [data-engp=save]:not([disabled])') }; });
-  const callsBefore = w.srv.st.calls.length;
   await page.evaluate(() => { const b = document.querySelector('#egQueue .rvItem[data-kind=placement] [data-engp=save]'); if (b) b.click(); });
   await R.settle(page, 400);
-  const p = await page.evaluate(() => {
+  const probe = () => page.evaluate(() => {
     const vis = e => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0 && !e.closest('[hidden]'); };
     const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (!c) return { found: false };
-    // the prompt: a visible group that holds a small text box and 3 or 4 quick buttons, that is not the words box nor the mode / position rows
-    const cands = [...c.querySelectorAll('[data-engp=reason], [data-reason], .engpWhy, .engpReason, [role=dialog], [role=group], form, div')].filter(vis).filter(e => !e.querySelector('.engpWords') && !e.matches('.engpMode, .engpPos, .engpRow, .engpActs'));
+    const row = B.orders.rows.find(r => r.order.receiptId === '4290000101'), ov = row && row.engravingOverride;
+    // the prompt: ENGWHY's published markup (.engpWhy with .engpChip buttons and a text input), else any visible group with 3-4 quick buttons and a small text box that is not the words box nor the mode / position rows
+    const groups = [...c.querySelectorAll('.engpWhy')].filter(vis);
+    const generic = groups.length ? [] : [...c.querySelectorAll('[data-engp=reason], [data-reason], .engpReason, [role=dialog], [role=group], form, div')].filter(vis).filter(e => !e.querySelector('.engpWords') && !e.matches('.engpMode, .engpPos, .engpRow, .engpActs'));
     let best = null;
-    for (const e of cands) { const btns = [...e.querySelectorAll('button')].filter(vis).filter(b => !/^(save|cancel)$/i.test(b.textContent.trim()) && !b.matches('[data-engp=save],[data-engp=cancel],.engpSeg,.engpPb,.engpEmoji')), inputs = [...e.querySelectorAll('input[type=text], input:not([type]), textarea')].filter(vis).filter(i => !i.matches('.engpWords')); if (btns.length >= 3 && btns.length <= 4 && inputs.length >= 1 && (!best || e.querySelectorAll('*').length < best.n)) best = { n: e.querySelectorAll('*').length, chips: btns.map(b => b.textContent.trim()), inputs: inputs.length, cls: e.className, spin: false }; }
-    const row = B.orders.rows.find(r => r.order.receiptId === '4290000101');
-    return { found: true, prompt: best, saved: !!(row && row.engravingOverride), text: c.querySelector('.engp') ? c.querySelector('.engp').innerText.replace(/\s+/g, ' ').slice(0, 200) : '' };
+    for (const e of groups.concat(generic)) {
+      const btns = [...e.querySelectorAll('button')].filter(vis).filter(b => !/^(save|cancel)$/i.test(b.textContent.trim()) && !b.matches('[data-engp=save],[data-engp=cancel],[data-engp=whySave],[data-engp=whyCancel],.engpSeg,.engpPb,.engpEmoji'));
+      const inputs = [...e.querySelectorAll('input[type=text], input:not([type]), textarea')].filter(vis).filter(i => !i.matches('.engpWords'));
+      if (btns.length >= 3 && btns.length <= 4 && inputs.length >= 1 && (!best || e.querySelectorAll('*').length < best.n)) best = { n: e.querySelectorAll('*').length, chips: btns.map(b => b.textContent.trim()), codes: btns.map(b => b.dataset.code || ''), inputs: inputs.length, cls: e.className };
+    }
+    return { found: true, prompt: best, saved: !!ov, reason: ov && ov.reason ? { code: ov.reason.code, text: ov.reason.text, by: ov.reason.by, at: !!ov.reason.at } : null, was: !!(ov && ov.was), text: c.querySelector('.engp') ? c.querySelector('.engp').innerText.replace(/\s+/g, ' ').slice(0, 200) : '' };
   });
+  const p = await probe();
   await R.shot(w, 'LIVE-rt-reason-prompt');
   check('W1 changing the font and pressing Save asks for a reason first (3-4 quick buttons and a small text box), nothing saved yet', 'why', !!(p.prompt) && !p.saved, p.prompt ? `prompt with ${p.prompt.chips.length} quick buttons ${JSON.stringify(p.prompt.chips)} and ${p.prompt.inputs} text box(es); saved before the reason: ${p.saved}` : `no prompt; the choice was ${p.saved ? 'saved at once, with no reason asked' : 'not saved either'}; panel says: "${(p.text || '').slice(0, 120)}"`);
-  void pre; void callsBefore;
+  // answering with a quick button saves the choice with the reason recorded (the in-memory fake site only: nothing real is written)
+  let q = null;
+  if (p.prompt) {
+    await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'), g = c.querySelector('.engpWhy') || c; const b = [...g.querySelectorAll('button')].find(x => { const r = x.getBoundingClientRect(); return r.width > 0 && !x.matches('[data-engp=save],[data-engp=cancel],[data-engp=whySave],[data-engp=whyCancel],.engpSeg,.engpPb,.engpEmoji') && !/^(save|cancel)$/i.test(x.textContent.trim()); }); if (b) b.click(); });
+    await R.settle(page, 900); q = await probe();
+  }
+  check('W2 a quick button saves the changed font with the reason recorded (who, when, and what the system had chosen)', 'why', !!(q && q.saved && q.reason && q.reason.code && q.reason.by && q.reason.at && q.was), q ? `override saved ${q.saved}, reason ${JSON.stringify(q.reason)}, system's choice kept (was) ${q.was}` : 'there was no prompt to answer');
 }
 
 /* ── main ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -433,7 +516,7 @@ async function partReason(w, made) {
     const names = ONLY === 'detail' || ONLY === 'faces' ? ['back', 'front', 'both', 'refAnna', 'refMarck'] : ONLY === 'said' ? ['back', 'front', 'both', 'tag'] : ONLY === 'reason' ? ['back'] : ONLY === 'order' ? ['back', 'front', 'both', 'tag', 'discs', 'earrings'] : ['back', 'front', 'both', 'tag', 'discs', 'earrings', 'refAnna', 'refMarck'];
     const made = await R.build(w, names);
     const bad = Object.entries(made).filter(([n, v]) => n !== 'earrings' && !v.jobs.length);
-    check('W0 the world: every order has real jobs with a real fit', 'world', !bad.length && Object.values(made).every(v => v.jobs.every(j => j.fitted && j.hasMask && j.hasView)), Object.entries(made).map(([n, v]) => `${n}:${v.jobs.map(j => j.face[0] + (j.slot ? j.slot : '') + '=' + (j.fitted ? j.fontKey : j.state)).join(',') || (v.never ? 'never' : 'none')}`).join(' '));
+    check('W0 the world: every order has the real jobs it should have, with a real fit', 'world', !bad.length && Object.entries(made).every(([n, v]) => v.jobs.length === (R.EXPECT_JOBS[n] == null ? 1 : R.EXPECT_JOBS[n]) && v.jobs.every(j => j.fitted && j.hasMask && j.hasView)), Object.entries(made).map(([n, v]) => `${n}:${v.jobs.map(j => j.face[0] + (j.slot ? j.slot : '') + '=' + (j.fitted ? j.fontKey : j.state)).join(',') || (v.never ? 'never' : 'none')}`).join(' '));
     await w.page.evaluate(INSTRUMENT); await w.page.evaluate(ACTS);
     if (!ONLY || ONLY === 'detail' || ONLY === 'faces') await partDetail(w, made);
     if (!ONLY || ONLY === 'order') await partOrder(w, made);

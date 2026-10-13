@@ -50,6 +50,7 @@ const A = '9100000001', B = '9100000002';
   const iss = R.issues(o1, { steps: ['orders'], perOrder: true }).filter(i => i.orderId === A);
   assert.equal(iss.length, 1); assert.equal(iss[0].key, 'held'); assert.match(iss[0].why, /^In Review/);
   const ex = R.explain(o1, { rows: [] }); assert.equal(ex.ready, false); assert.equal(ex.steps.find(t => t.key === 'orders').state !== 'done', true);
+  const exo = ex.steps.find(t => t.key === 'orders'); assert.match(exo.detail, /in Review/); assert.doesNotMatch(exo.detail, /other pieces/); assert.match(ex.nextText, /in Review/i, ex.nextText);
 
   // 2. the flow: Approve / the move to Laser cutting refuses with the order named, and does not claim the order check passed
   const flowState = rec => ({ sheets: { S1: rec }, sets: { set1: { setId: 'set1', seq: 1, sheetIds: ['S1'], status: 'labelled' } }, runs: {}, live: {} });
@@ -121,5 +122,49 @@ const A = '9100000001', B = '9100000002';
   // 8. a reader without the module (the server) reads what it always read
   delete globalThis.CharmNestReviewHold; mark(A);
   assert.equal(R.orderReports([row(A, 1, 'written')], [live])[A].ready, true); unmark(A);
+
+  // 9. the server: where it WRITES (a transaction) it reads the review records that are open and holds the sheet; its list reads never ask (fake store, real productionReadiness)
+  const fs = require('node:fs'), vm = require('node:vm');
+  const source = fs.readFileSync('netlify/functions/charmNestLibrary.js', 'utf8');
+  const clone = x => JSON.parse(JSON.stringify(x));
+  const rid1 = '9200000001';
+  const sheet1 = { id: 'sheet1', setId: 'set1', runId: 'run1', status: 'complete', metal: 'gold', poolIds: [`${rid1}_1_1`], placedCount: 1, verification: { ok: true }, outputs: { ai: { url: 'https://example.com/f.ai' }, preview: { url: 'https://example.com/f.png' } }, orders: [rid1],
+    label: { files: [{ path: 'qr.png', url: 'https://example.com/qr.png', payload: rid1, orders: [rid1] }] }, backPool: [{ ...back(`${rid1}_1_1`), sheetId: 'sheet1' }] };
+  const data = new Map([['sheets/sheet1', sheet1], ['runs/run1', { lines: { a: { orderId: rid1, state: 'written', poolIds: [`${rid1}_1_1`], engrave: { needed: false, state: 'none', approved: true } } } }]]);
+  let reviewReads = 0; const RP = rid => 'Charm_Custom_Orders/' + rid + '_review';
+  const reviewDocs = { set: (rid, d) => data.set(RP(rid), d), get: rid => data.get(RP(rid)) };
+  const snap = ref => { if (/_review$/.test(ref.path)) reviewReads++; return { id: ref.path.split('/')[1], exists: data.has(ref.path), data: () => clone(data.get(ref.path)) }; };
+  const noRuns = { isQuery: true, select: () => noRuns, get: async () => ({ docs: [] }) };
+  const colFake = n => ({ where: () => noRuns, doc: id => ({ path: n + '/' + id, get: async () => snap({ path: n + '/' + id }) }) });
+  const ctx = vm.createContext({ splitOfSet: async () => [], Readiness: R, process, console: { warn: m => { throw new Error('server warned: ' + m); }, error() {}, log() {} }, str: (v, n) => String(v == null ? '' : v).slice(0, n || 1e6), num: Number, isId: () => true, PREFIX: '', SETS: 'sets', SHEETS: 'sheets', RUNS: 'runs', RUN_LINES: 'run_lines', col: colFake, FV: { serverTimestamp: () => 100 },
+    db: { runTransaction: async fn => fn({ get: async ref => ref.isQuery ? ref.get() : snap(ref) }), getAll: async (...refs) => refs.filter(x => x.path).map(snap) } });
+  vm.runInContext(source.slice(source.indexOf('async function filingRecords'), source.indexOf('async function op_laserStatus')), ctx);
+  const tx = { get: async ref => ref.isQuery ? ref.get() : snap(ref) };
+  let rec = (await ctx.readinessRecords([clone(sheet1)]))[0]; assert.equal(rec.laser.ready, true, 'baseline on the server: ready');
+  reviewDocs.set(rid1, { key: rid1 + '_review', kind: 'reviewMark', receiptId: rid1, state: 'open', review: { state: 'open', markedBy: 'Name One' } });
+  reviewReads = 0; rec = (await ctx.readinessRecords([clone(sheet1)]))[0]; assert.equal(reviewReads, 0, 'a list read never asks for the reviews'); assert.equal(rec.laser.ready, true);
+  const recs = [clone(sheet1)]; await ctx.productionReadiness(recs, { tx });
+  assert.ok(reviewReads >= 1 && reviewReads <= 2, 'a write gate asks for the orders of the sheet only: ' + reviewReads); assert.equal(R.laserSheet(recs[0]).ready, false, 'a write gate refuses the sheet of an order in Review');
+  assert.equal(recs[0].orderReadiness[rid1].ready, false); assert.match(recs[0].orderReadiness[rid1].blocks[0].why, /^In Review: Sent to Review by Name One/); assert.equal(recs[0].orderReadiness[rid1].blocks[0].review, true);
+  reviewDocs.get(rid1).review.state = 'done';
+  const recs2 = [clone(sheet1)]; await ctx.productionReadiness(recs2, { tx }); assert.equal(R.laserSheet(recs2[0]).ready, true, 'resolved: the write gate lets it through');
+  // a read that fails does not stop the shop
+  const failing = vm.createContext({ ...ctx, console: { warn() {}, error() {}, log() {} }, col: n => n === 'Charm_Custom_Orders' ? { doc: () => { throw new Error('boom'); } } : colFake(n) });
+  vm.runInContext(source.slice(source.indexOf('async function filingRecords'), source.indexOf('async function op_laserStatus')), failing);
+  const recs3 = [clone(sheet1)]; await failing.productionReadiness(recs3, { tx }); assert.equal(R.laserSheet(recs3[0]).ready, true, 'fail open: the page still holds it');
+
+  // 10. the server's Approve gate (approveGate): an order in Review on the sheet, or on any sheet of its set, refuses the approving step; resolved lets it through
+  const fnText = name => { const i = source.indexOf('async function ' + name); const j = source.indexOf('\n}\n', i); return source.slice(i, j + 3); };
+  data.set('sets/setA', { setId: 'setA', sheetIds: ['sheet1', 'sheet2'] });
+  data.set('sheets/sheet2', { ...clone(sheet1), id: 'sheet2', orders: ['9200000002'], poolIds: ['9200000002_1_1'] });
+  data.set('sheets/sheet1', { ...clone(sheet1), setId: 'setA' });
+  const gctx = vm.createContext({ Readiness: R, console: { warn() {}, error() {}, log() {} }, str: (v, n) => String(v == null ? '' : v).slice(0, n || 1e6), num: Number, isId: () => true, SETS: 'sets', SHEETS: 'sheets', col: colFake, db: { getAll: async (...refs) => refs.filter(x => x.path).map(snap) }, setGatesFor: async () => new Map() });
+  vm.runInContext(fnText('openReviews') + fnText('approveGate'), gctx);
+  reviewDocs.get(rid1).review.state = 'open';
+  let refusal = await gctx.approveGate([{ type: 'seal', kind: 'sheet', id: 'sheet1' }]); assert.ok(refusal && refusal.status === 409 && refusal.orderId === rid1 && /in Review/.test(refusal.error), 'the sheet itself: ' + JSON.stringify(refusal));
+  refusal = await gctx.approveGate([{ type: 'seal', kind: 'set', id: 'setA' }]); assert.ok(refusal && refusal.orderId === rid1, 'the set: its member sheet holds it');
+  refusal = await gctx.approveGate([{ type: 'seal', kind: 'sheet', id: 'sheet2' }]); assert.equal(refusal, null, 'a sheet of another order is not held by it');
+  reviewDocs.get(rid1).review.state = 'done';
+  assert.equal(await gctx.approveGate([{ type: 'seal', kind: 'sheet', id: 'sheet1' }]), null, 'resolved: approved by itself');
   console.log('review-hold: ok');
 })().catch(e => { console.error(e); process.exit(1); });

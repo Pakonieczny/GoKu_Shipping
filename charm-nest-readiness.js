@@ -188,7 +188,7 @@
   }
   // a sheet's readiness for another sheet's order: the physical stages only (never its own order check), a cut sheet, or one cut before
   const physicalReady=(s,r)=>+s.laserDoneAt>0 || (r.included && (completedBefore(s) || r.ready));
-  function readOrders(rows,sheets){
+  function readOrders(rows,sheets,opts){
     const copies=new Map(),phys=new Map(),groups=new Map(),orders=new Map(),removed=new Set();
     // (a copy a cleanup took off a sheet on purpose, named in that sheet's record: it is no piece of its order any more)
     for(const s of sheets || [])for(const id of s.cleanup?.removedPoolIds || [])removed.add(String(id));
@@ -205,7 +205,7 @@
         listingId=listingId || String(l.line?.listingId || l.snap?.listingId || '');
         if(l.state==='gone')continue;                                                     // cancelled: cut and set aside, never waited for
         const hold=l.hold || l.changePending?String(l.hold || 'Order changes need review'):'',key=lineKeyOf(l,id) || id,ids=copyIds(l,key);
-        const rv=reviewWhy(id);   // (an order in unresolved Review: a held piece, below)
+        const rv=opts && typeof opts.review==='function'?String(opts.review(id) || ''):reviewWhy(id);   // (an order in unresolved Review: a held piece, below; the server passes the ones it read, the page's module answers otherwise)
         // completed by hand: a line on no saved sheet (a copy that sits on one is cut there and is no hand piece: the server never looks such a line up either)
         const hand=ids.some(x=>(copies.get(x) || []).length)?null:handOf(l);
         if(!hand && (l.spec?.noDesign || l.noDesign || l.state==='noDesign'))continue;    // nothing to cut
@@ -241,9 +241,9 @@
   /** orderReports(rows, allSheets): what each order waits for, whichever sheet asks. { [orderId]: {ready:true} | {ready:false, key, why, line, sheetId?, sheetLabel?, stage?,
    *  blocks:[{key,index,label,poolId,lineKey,sheetId|null,sheetLabel|null,why,stage?}], onSheets, pieceCount, customer, listingId} }.
    *  `blocks` are the pieces that hold the order back (see above), each with the sheet it sits on; forSheet() reads them from one sheet. */
-  function orderReports(rows,sheets){
+  function orderReports(rows,sheets,opts){
     const out={};
-    for(const [id,o] of readOrders(rows,sheets)){
+    for(const [id,o] of readOrders(rows,sheets,opts)){
       const blocks=o.pieces.filter(p=>p.block).map(p=>({key:p.block.key,index:p.index,label:p.label,poolId:p.poolId,lineKey:p.lineKey,sheetId:p.sheetId,sheetLabel:p.sheetLabel,...(p.block.side?{side:p.block.side}:{}),...(p.block.missing?{missing:true}:{}),...(p.block.review?{review:true}:{}),...(p.sheetIds.length>1?{sheetIds:p.sheetIds}:{}),why:p.block.why,...(p.block.stage?{stage:p.block.stage}:{}),...(p.block.key==='otherSheetNotReady'?{setId:p.block.setId,setLabel:p.block.setLabel,...(p.sheetIds.length>1?{setIds:p.block.setIds}:{})}:{})}));
       out[id]=blocks.length?{ready:false,...head(blocks),blocks,onSheets:[...new Set(o.pieces.flatMap(p=>p.sheetIds))],pieceCount:o.pieces.length,customer:o.customer,listingId:o.listingId}:{ready:true};
     }
@@ -546,8 +546,9 @@
       if(blockers.length)hard.orders=true;
     }
     ok.orders=st.orders && st.qr;
-    const first=items.orders.find(i=>i.part!=='qr' && i.kind==='order'),waitsDetail=checked?`${blockers.length} of ${count(ids.length,'order')} ${blockers.length===1?'waits':'wait'} for other pieces to be ready.`:'Its orders have not been checked yet.';
-    const waitsShort=!checked?'its orders have not been checked yet':!blockers.length?'its orders wait for other pieces':blockers.length===1?`${N.order(blockers[0].orderId)} waits for another piece: ${lower(first.why)}`:`${count(blockers.length,'order')} wait for other pieces, for example ${N.order(blockers[0].orderId)}: ${lower(first.why)}`;
+    const first=items.orders.find(i=>i.part!=='qr' && i.kind==='order'),inRev=checked && blockers.length>0 && blockers.every(x=>x.pieces && x.pieces.length && x.pieces.every(p=>p.review));   // (every order that holds it is in Review: the words say that, not "other pieces")
+    const waitsDetail=checked?inRev?`${blockers.length===1?'An order':count(blockers.length,'order')} on it ${blockers.length===1?'is':'are'} in Review. It stays on the sheet, and the sheet goes on once ${blockers.length===1?'it is':'they are'} resolved there.`:`${blockers.length} of ${count(ids.length,'order')} ${blockers.length===1?'waits':'wait'} for other pieces to be ready.`:'Its orders have not been checked yet.';
+    const waitsShort=!checked?'its orders have not been checked yet':!blockers.length?'its orders wait for other pieces':inRev?blockers.length===1?`${N.order(blockers[0].orderId)} is in Review`:`${count(blockers.length,'order')} are in Review, for example ${N.order(blockers[0].orderId)}`:blockers.length===1?`${N.order(blockers[0].orderId)} waits for another piece: ${lower(first.why)}`:`${count(blockers.length,'order')} wait for other pieces, for example ${N.order(blockers[0].orderId)}: ${lower(first.why)}`;
     detail.orders=ok.orders?(ids.length?`All ${count(ids.length,'order')} on this sheet have every other piece ready.`:'No orders to check.'):[qrDetail,st.orders?'':waitsDetail].filter(Boolean).join(' ');
     short.orders=st.qr?waitsShort:st.orders?qrShort:`${qrShort}, and ${waitsShort}`;
     return {id,label,r,again,ok,hard,items,detail,short};
@@ -584,7 +585,7 @@
   function orderIssue(id,r,ctx,me){
     const bs=Array.isArray(r.blocks)?r.blocks:[],h=bs.length?head(bs):null,first=h && bs.find(b=>b.key===h.key),sp=bs.find(b=>splitFrom(b,me)),ns=!sp && bs.find(b=>noSetFrom(b,me));
     return {step:'orders',key:h?h.key:'unverified',orderId:id,orderLabel:`Order ${id}`,customer:r.customer || '',listingId:r.listingId || '',thumb:typeof ctx.thumb==='function'?ctx.thumb(id) || null:null,
-      pieceCount:r.pieceCount || 0,pieces:bs.map(b=>({index:b.index,key:b.poolId,poolId:b.poolId,label:b.label,kind:b.key,...(b.side?{side:b.side}:{}),sheetId:b.sheetId || null,sheetLabel:b.sheetLabel || null,stage:b.stage || '',...(b.fr?{fr:true}:{}),why:pieceLine(b,me),...(splitFrom(b,me)?{split:true,setLabel:b.setLabel || ''}:noSetFrom(b,me)?{noSet:true}:{})})),
+      pieceCount:r.pieceCount || 0,pieces:bs.map(b=>({index:b.index,key:b.poolId,poolId:b.poolId,label:b.label,kind:b.key,...(b.review?{review:true}:{}),...(b.side?{side:b.side}:{}),sheetId:b.sheetId || null,sheetLabel:b.sheetLabel || null,stage:b.stage || '',...(b.fr?{fr:true}:{}),why:pieceLine(b,me),...(splitFrom(b,me)?{split:true,setLabel:b.setLabel || ''}:noSetFrom(b,me)?{noSet:true}:{})})),
       why:orderWhy(r,me),open:{type:'order',id,...(first?{poolId:first.poolId}:{})},...(h && h.sheetId?{otherSheetId:h.sheetId}:{}),...(sp?{split:true,...(me.setLabel && sp.setLabel && me.setLabel!==sp.setLabel?{sets:[me.setLabel,sp.setLabel]}:{})}:ns?{noSet:true}:{})};
   }
   // the sheet's own current blocker: the first of its own steps still behind, as a short label (no counts, no engraving rows)

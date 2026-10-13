@@ -25,7 +25,9 @@ const ok = (name, cond, extra) => { assert.ok(cond, name + (extra ? ' :: ' + ext
     await page.waitForSelector('#ordItems [data-key]');
     const rowsDrawn = () => page.evaluate(() => [...document.querySelectorAll('#ordItems > [data-key]')].map(n => ({ key: n.dataset.key, rid: n.dataset.rid, btns: n.querySelectorAll('.revSendBtn').length })));
 
-    // 1. no mark API on the page: no button anywhere (the page is exactly as before)
+    // 1. no mark API on the page (the real one is taken away for this check): no button anywhere (the page is exactly as before)
+    await page.evaluate(() => { window.__realMark = window.CharmNestReviewMark; delete window.CharmNestReviewMark; Orders.render(); });
+    await page.waitForTimeout(200);
     let rows = await rowsDrawn();
     ok('1 no mark API: no row has the button', rows.length >= 4 && rows.every(r => r.btns === 0), JSON.stringify(rows));
 
