@@ -9343,6 +9343,7 @@ const RunCtl = window.RunCtl = (() => {
         const v = await Orders.revalidate(r, "before labels"); if (v.changed.length && [...Engrave.items().values()].some(j => j.state === "classify")) { agent({ run: r.runId }, "warn", `${v.changed.length} order(s) changed — back to engraving`); return { goto: "engrave" }; } return; }
       case "labels": {
         r.deferredSets={};
+        await Promise.race([window.CharmNestReviewMark?.refresh?.(), new Promise(r => setTimeout(r, 4000))]).catch(() => {});   // (the Review feed rests on the Nest tab: one read so a set is not made up past an order sent to Review on another computer)
         for(const set of Sets.ofRun(r.runId).filter(s=>s.sheetIds.length&&!s.committedAt)){
           const issue=Sets.releaseIssue(set);
           if(issue){await deferSet(r,set,issue);continue;}
@@ -9352,6 +9353,7 @@ const RunCtl = window.RunCtl = (() => {
       }
       case "commit": {
         if (Gate.modern(r.runId) && !Sets.ofRun(r.runId).some(s => s.sheetIds.length)) { r.nothingToCut = true; return; }
+        await Promise.race([window.CharmNestReviewMark?.refresh?.(), new Promise(r => setTimeout(r, 4000))]).catch(() => {});   // (as at labels: the Review feed rests on the Nest tab)
         const eligible=[];
         for(const set of Sets.ofRun(r.runId).filter(s=>s.sheetIds.length&&!s.committedAt)){
           const issue=Sets.releaseIssue(set);if(issue)await deferSet(r,set,issue);else eligible.push(set);
