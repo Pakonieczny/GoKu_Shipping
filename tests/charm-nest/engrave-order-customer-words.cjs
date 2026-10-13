@@ -5,6 +5,8 @@
 // and opens the order window of: back only (words in the personalisation box), back only (words only in the buyer's message), front only, front + back labelled ("front - W / back - Name One").
 // Then, on the same page and the same real cards: a staff note, HTML in a note (text only), a live change inside the 1 s tick, and a customer who wrote and chose nothing (the block is gone, the cards stay).
 // It also measures at 1280x720: the block sits OUTSIDE the cards' grid (the grid's children are only cards), under it, and the first row of cards does not move when the block is there (the no-scroll test's rule).
+// ENGTEXT (Paul, 13 Oct 2026 04:14 UTC: "Ensure this text stays contained underneath each engraving card"): the block is exactly as wide as the card it sits under (checked here at 1280x720 for one card and for front + back; the five widths, a long message, several cards and the entity decoding are in
+// engrave-said-width.cjs), and the customer's words read decoded ("There's", not "There&#39;s"). ENGBIG (13 Oct) made the pictures twice as large: the old check "the first row of cards is on screen without scrolling" was red on main and is now "its pictures are on screen and the window's own scrolling reaches the whole block".
 // Names are made up ("Name One"). Run:  PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-order-customer-words.cjs     SHOTS=<dir> keeps MSG-*.png
 // What a pass does NOT prove: a live order (the fake site has the real drawings and fonts but not the live data), another window size than the one run, a very long message in a narrow window (wraps; not scrolled).
 'use strict';
@@ -113,11 +115,15 @@ const settle = (w, ms) => R.settle(w.page, ms || 500);
       const withIt = r(grid), cards = [...grid.querySelectorAll(':scope > .engCard')].map(r);
       said.hidden = true; const without = r(grid); said.hidden = false;
       const sb = sc.getBoundingClientRect(), box = r(said);
-      return { withIt, without, cards, box, scrollerBottom: Math.round(sb.bottom), vh: innerHeight, boxBottom: box[1] + box[3] };
+      const thumbBottom = Math.max(...[...grid.querySelectorAll('.engCard .engThumb')].map(t => Math.round(t.getBoundingClientRect().bottom)));
+      sc.scrollTop = sc.scrollHeight; const reachBottom = Math.round(said.getBoundingClientRect().bottom), reachTop = Math.round(said.getBoundingClientRect().top); sc.scrollTop = 0;
+      return { withIt, without, cards, box, scrollerBottom: Math.round(sb.bottom), vh: innerHeight, boxBottom: box[1] + box[3], thumbBottom, reachBottom, reachTop };
     });
     ok(JSON.stringify(geo.withIt) === JSON.stringify(geo.without), 'the cards\' grid does not move or change size with the block there', geo);
     ok(geo.box[1] >= geo.withIt[1] + geo.withIt[3] - 1, 'the block starts under the grid', geo.box);
-    ok(geo.cards.length >= 1 && geo.withIt[1] + geo.withIt[3] <= geo.scrollerBottom - 8, 'the first row of cards is on screen without scrolling (the no-scroll rule)', geo);
+    ok(geo.cards.length >= 1 && geo.thumbBottom <= geo.scrollerBottom - 8, 'the first row of cards starts on screen and its pictures are whole on screen without scrolling (ENGBIG: with the 160px pictures the old "whole first row" rule cannot hold; the front + back card\'s button is a few px below the fold at 1280x720)', geo);
+    ok(geo.reachBottom <= geo.scrollerBottom + 1 && geo.reachTop >= 0, 'the window\'s own scrolling reaches the whole block (its bottom is inside the scroll area when scrolled to the end)', geo);
+    ok(Math.abs(geo.box[0] - geo.cards[0][0]) <= 1 && Math.abs(geo.box[2] - geo.cards[0][2]) <= 1, 'ENGTEXT: the block is exactly as wide as the front + back card above it, its right edge is the card\'s (not the width of the section)', { box: geo.box, card: geo.cards[0] });
     console.log(`  info: front+back order: block ${geo.box[3]}px tall, its bottom ${geo.boxBottom}px, the scroll area ends at ${geo.scrollerBottom}px (window ${geo.vh}px)`);
     ok(geo.box[3] <= 80, 'the block is at most four short lines tall for a front + back order (<= 80px)', geo.box);
 
@@ -156,6 +162,21 @@ const settle = (w, ms) => R.settle(w.page, ms || 500);
     console.log('no engraving');
     p = await open('earrings');
     ok(p.gridHidden && !p.shown && p.cards === 0, 'an earring pair (never engraved) has no cards and no customer-words block', { gridHidden: p.gridHidden, shown: p.shown, cards: p.cards });
+
+    // ── 8b. ENGTEXT: the words read decoded ("There's", not "There&#39;s"): personalisation, buyer message and staff note; markup stays text; the order's own text is not changed ──
+    console.log('entities in the customer\'s words');
+    await open('back');
+    const RAW = { pers: 'There&#39;s a made-up note for Name One &amp; Date One', buyer: 'It&#x27;s &quot;Name One&quot; &lt;3', staff: 'Name One&amp;#39;s font' };
+    await w.page.evaluate(raw => { const r = Orders.rows().find(x => document.getElementById('owTitle').textContent.includes(x.order.receiptId)); r.spec.personalization = [raw.pers]; r.spec.buyerMessage = raw.buyer; r.spec.staffNote = raw.staff; }, RAW);
+    await w.page.waitForFunction(() => { const s = document.getElementById('owEngSaid'); return s && /Staff note/.test(s.textContent); }, null, { timeout: 5000 }).catch(() => {});
+    p = await w.page.evaluate(probe);
+    ok(p.personalisation[0] === 'Personalisation There\'s a made-up note for Name One & Date One', 'the personalisation reads "There\'s ... Name One & Date One"', p.personalisation);
+    ok(p.buyer[0] === 'Buyer message It\'s "Name One" <3', 'the buyer message reads decoded (&#x27; &quot; &lt;)', p.buyer);
+    ok(p.staff[0] === 'Staff note Name One\'s font', 'the staff note reads decoded (the double-escaped &amp;#39; too)', p.staff);
+    ok(!/&(?:#\d+|#x[0-9a-f]+|amp|quot|lt|gt|apos);/i.test(p.text) && !/&(?:#\d+|#x[0-9a-f]+|amp|quot|lt|gt|apos);/i.test(p.cardTexts), 'no entity is printed raw in the block or in the cards', { text: p.text, cards: p.cardTexts });
+    const kept = await w.page.evaluate(() => { const r = Orders.rows().find(x => document.getElementById('owTitle').textContent.includes(x.order.receiptId)); return [r.spec.personalization[0], r.spec.buyerMessage, r.spec.staffNote]; });
+    ok(kept[0] === RAW.pers && kept[1] === RAW.buyer && kept[2] === RAW.staff, 'what is stored is untouched: the order still holds the text as Etsy gave it (display only)', kept);
+    await R.shot(w, 'MSG-entities');
 
     // ── 9. clean ──
     ok(w.errors.length === 0, 'no page error', w.errors);

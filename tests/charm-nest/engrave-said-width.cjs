@@ -7,9 +7,12 @@
 //   long      a very long buyer message (with an address that has no spaces): the block wraps inside the card's width, never grows sideways, scrolls inside its own max-height, and every word can be read
 //   multiA    one order of three lines, first card single (the order of cards: one track, a two-track front + back card, then three discs on a second row): the words are said ONCE, under the FIRST card, its width
 //   multiB    the same lines with the front + back card FIRST: the block is that card's width (two tracks)
+//   tracks    the section forced to 340, 361, 362, 547, 548, 713, 714, 839, 840, 1059, 1060 and 1196px (every grid rule's edge: 1 to 5 tracks), one card and front + back
 // and checks: the block's right edge never passes the right edge of the card it sits under (and its left edge is the card's), its width is the card's, nothing inside it sticks out, no sideways scroll anywhere
 // (the block, the section, the window's scroll area, the page), the words are the customer's with their HTML entities decoded (&#39; &amp; &quot; &lt; and a double-escaped &amp;#39;) in the personalisation, the buyer message and the staff
 // note, markup in a note stays text, nothing in the section prints an entity raw, the sentence is not repeated under every card, and what is stored (the order's own text) is not changed.
+// NOT this block's: the engraving JOB's own words (what a card prints under its picture, and the "Front / Back" line of this block) are the job's text as the intake made it; a personalisation that carries an entity gives a job that carries it
+// too (found by ENGTEXT with a made-up "Name One&#39;s": the card, its picture and the job read it raw, and a front + back job upper-cases "&amp;" to "&AMP;"). That is the engraving intake's, not display: this test does not decode it (it would hide it).
 // Run:  PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-said-width.cjs      SHOTS=<dir> keeps SAIDW-<scenario>-<width>.png (the section as the person sees it)
 // What a pass does NOT prove: a live order (the fake site has the real drawings and fonts but not the live data), a browser other than headless Chromium, widths other than the five run.
 'use strict';
@@ -184,6 +187,9 @@ const noRawEntity = (tag, p) => ok(!/&(?:#\d+|#x[0-9a-f]+|amp|quot|lt|gt|apos);/
       ok(p.textContent.includes('END-OF-MESSAGE') && p.textContent.includes(URL), `${tag}: nothing is cut: the whole message and the whole address are in the block`);
       const reach = await w.page.evaluate(() => { const s = document.getElementById('owEngSaid'); s.scrollTop = s.scrollHeight; const last = [...s.querySelectorAll('.esRow')].pop(), a = last.getBoundingClientRect(), b = s.getBoundingClientRect(); const r = { lastBottom: a.bottom, boxBottom: b.bottom, atEnd: s.scrollTop + s.clientHeight >= s.scrollHeight - 1 }; s.scrollTop = 0; return r; });
       ok(reach.atEnd && reach.lastBottom <= reach.boxBottom + 1, `${tag}: scrolled to the end, the last words are readable inside the block`, reach);
+      const gutter = await w.page.evaluate(() => { const s = document.getElementById('owEngSaid'); return s.offsetWidth - s.clientWidth - 2; });   // (the 2px left rule is not a scrollbar)
+      console.log(`  info: ${tag}: the block's scrollbar takes ${gutter}px of its width (the page styles every scrollbar, 10px; the way to read the rest)`);
+      if (SHOTS && (W === 1280 || W === 1440)) { await w.page.evaluate(() => document.getElementById('owEngSaid').scrollIntoView({ block: 'center' })); await R.settle(w.page, 150); const el = await w.page.$('#owEngSaid'); if (el) await el.screenshot({ path: `${SHOTS}/SAIDW-long-block-${W}.png` }); }
       if (W === 1280 || W === 1440) await shot(`SAIDW-long-${W}`);
     }
 
@@ -211,15 +217,22 @@ const noRawEntity = (tag, p) => ok(!/&(?:#\d+|#x[0-9a-f]+|amp|quot|lt|gt|apos);/
       if (name === 'multiB') ok(p.said.w > 380, 'multiB @1280: under a front + back first card the block is that card\'s two tracks', p.said);
     }
 
-    // ── a window too narrow for tracks: the phone-width section is one track, the block is the whole of it and no more ──
-    console.log('a narrow window (section under 362px: one track)');
-    await open('both');
-    await words(w, [{ personalization: [RAW.pers] }]);
-    await waitSaid(w, () => /gift note/.test((document.getElementById('owEngSaid') || {}).textContent || ''));
-    for (const [W, H] of [[700, 800], [520, 800]]) {
-      const p = await measure(w, W, H); const tag = `front+back narrow @${W}`;
-      if (!p.shown) { console.log(`  info: ${tag}: the order window is not laid out at ${W}px in this build (block not shown)`); continue; }
-      contained(tag, p);
+    // ── every track count, at the container query's own edges: the section is set to a width (in a 1920px window, where the column has room), so 1 track (under 362px, a phone), 2, 3, 4 and 5 are all reached, one card and front + back ──
+    console.log('every track count (the section forced to 340 ... 1196px), one card and front + back');
+    await w.page.setViewportSize({ width: 1920, height: 1080 });
+    for (const n of ['back', 'both']) {
+      await open(n);
+      await words(w, [{ personalization: [RAW.pers], buyerMessage: '', staffNote: '' }]);
+      await waitSaid(w, () => /gift note/.test((document.getElementById('owEngSaid') || {}).textContent || ''));
+      for (const px of [340, 361, 362, 547, 548, 713, 714, 839, 840, 1059, 1060, 1196]) {
+        await w.page.evaluate(px => { document.getElementById('owEngSec').style.width = px + 'px'; }, px); await R.settle(w.page, 200);
+        const p = await w.page.evaluate(probe); const tag = `${n === 'both' ? 'front+back' : 'one'} in a ${px}px section`;
+        contained(tag, p);
+        const want = px <= 361 ? 1 : px <= 547 ? 2 : px < 840 ? 3 : px < 1060 ? 4 : 5;
+        ok(p.tracks === want, `${tag}: ${want} track(s)`, p.tracks);
+        if (n === 'both') ok(p.first && p.said && Math.abs(p.said.w - p.first.w) <= 1 && (px <= 361 ? p.first.w < px + 1 : p.first.w > (px - 10 * (want - 1)) / want * 1.9), `${tag}: the front + back card is ${px <= 361 ? 'the one track' : 'two tracks'} and the block is its width (${p.said && p.said.w.toFixed(1)})`, { card: p.first, block: p.said });
+      }
+      await w.page.evaluate(() => { document.getElementById('owEngSec').style.width = ''; });
     }
 
     // ── clean ──
