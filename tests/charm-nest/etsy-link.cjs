@@ -6,7 +6,8 @@
 // node-fetch and a made-up token. Etsy's inventory PUT replaces the WHOLE inventory, so every case below is a way of not harming a listing:
 //   · every product takes the SKU ("BEADY SWAN", with its space) and EVERYTHING else goes back as read: a listing with two options (3 metals x 3 lengths, 16" entity-escaped,
 //     a disabled product, readiness ids), blank SKUs, one product with no options, escaped option text and names, the *_on_property lists;
-//   · a listing whose products carry SEVERAL different SKUs is not flattened (mixed-skus); one that already carries the SKU is "already", no write;
+//   · a listing whose products carry SEVERAL different SKUs is REPLACED (ETSYFAM, 13 Oct 2026, Paul: "Replace each set of etsy SKU's with the provided charm repo SKU"): every product
+//     takes the SKU, the answer names what was replaced, the before-copy keeps the old SKUs; one that already carries the SKU is "already", no write;
 //   · the SKU must be EXACTLY a master SKU (not blocked, not in the sandbox) and one Etsy keeps as written (32 characters, no space at an end or two in a row);
 //     Etsy's own echo that changed the SKU is recorded as verify with the before-copy, one PUT, no undo;
 //   · the before-copy is in Storage and on the record BEFORE the PUT, never overwritten; if it cannot be written or noted, NOTHING is sent; a body that fails the self-check is not sent;
@@ -214,16 +215,45 @@ test('the self-check stops a body that differs in anything else: nothing is sent
 });
 
 /* ═══ 2 · what is on the listing today ═══ */
-test('products that carry SEVERAL different SKUs are not flattened: a person decides (mixed-skus, the SKUs named, 1 call, no PUT, no file)', async () => {
+test('products that carry SEVERAL different SKUs are REPLACED (Paul, 13 Oct): every product takes the SKU, only the sku field moves, the answer names what was replaced, the before-copy keeps the old SKUs, 2 calls', async () => {
   const W = world({ inventory: byMetal() }), r = await W.run();
-  assert.strictEqual(r.ok, false); assert.strictEqual(r.reason, 'mixed-skus'); assert.strictEqual(r.retry, false); assert.strictEqual(r.calls, 1);
-  assert.deepStrictEqual(r.details.slice().sort(), ['SWAN_14K', 'SWAN_GF', 'SWAN_SS']); assert(/SWAN_GF/.test(r.text), r.text);
-  assert.strictEqual(W.S.puts.length, 0); assert.strictEqual(fileWrites.length, 0); assert.strictEqual(W.link().state, 'failed');
-  // a SKU a person set on some products (the target on a few, the old one on the rest) is also several SKUs
+  assert.strictEqual(r.ok, true, JSON.stringify(r)); assert.strictEqual(r.state, 'linked'); assert.strictEqual(r.calls, 2); assert.strictEqual(r.products, 9); assert.strictEqual(r.verified, true);
+  assert.deepStrictEqual(r.replaced, [{ sku: 'SWAN_14K', n: 3 }, { sku: 'SWAN_GF', n: 3 }, { sku: 'SWAN_SS', n: 3 }], 'what the products carried, biggest group first (ties by name)'); assert(!('replacedMore' in r));
+  assert.strictEqual(W.S.puts.length, 1, 'exactly one PUT'); const put = W.S.puts[0].body;
+  assert(put.products.every(p => p.sku === SKU), 'every product takes the SKU');
+  // the PUT is the read with only the sku field changed: with the sku removed from both they are equal (the lists may only be widened, as they always were)
+  const noSku = b => { const c = clone(b); c.products.forEach(p => delete p.sku); delete c.sku_on_property; return c; };
+  assert.deepStrictEqual(noSku(put), noSku(expectedBody(W.S.lastGet, () => true, SKU)), 'body = read, sku aside');
+  assert.deepStrictEqual(put.sku_on_property, [513, 514], 'sku_on_property [513] widened to every property (Etsy refuses a partial list once any list names them all); no value changes');
+  assert.deepStrictEqual(stripIds(W.S.stored).products.map(p => p.sku), Array(9).fill(SKU)); assert.strictEqual(W.S.stored.products.length, 9);
+  // the old SKUs are in the safety copy, which was written before the PUT, and on the record
+  const saved = JSON.parse(blobs.get(r.beforePath).buf.toString('utf8')); assert.deepStrictEqual(saved, W.S.lastGet, 'the before-copy is the whole read');
+  assert.deepStrictEqual([...new Set(saved.products.map(p => p.sku))].sort(), ['SWAN_14K', 'SWAN_GF', 'SWAN_SS'], 'the three old SKUs are in the safety copy');
+  const l = W.link(); assert.strictEqual(l.state, 'linked'); assert.deepStrictEqual(l.replaced, r.replaced); assert(!('replacedMore' in l));
+  assert.strictEqual(Page.wording(r, LID, SKU).text, 'Done: BEADY SWAN is now on all 9 products of listing ' + LID + '. It replaced 3 x SWAN_14K, 3 x SWAN_GF and 3 x SWAN_SS; the listing as it was is kept.');
+  // a second press: no Etsy call, the same answer with the same words
+  const n0 = W.S.calls.length, again = await W.run(); assert.strictEqual(again.ok, true); assert.strictEqual(again.calls, 0); assert.strictEqual(W.S.calls.length, n0); assert.deepStrictEqual(again.replaced, r.replaced);
+  assert.strictEqual(Page.wording(again, LID, SKU).text, Page.wording(r, LID, SKU).text);
+  // a SKU a person set on some products (the target on a few, the old one on the rest): both sets are replaced; the products already carrying the target stay as they are
   const inv = beady(); inv.products.slice(0, 4).forEach(p => { p.sku = SKU; });
-  const W2 = world({ inventory: inv }); assert.strictEqual((await W2.run()).reason, 'mixed-skus'); assert.strictEqual(W2.S.puts.length, 0);
-  const mix = mkInv([{ sku: '', pv: [[513, 'Metal', 'GF']] }, { sku: 'A_ONE', pv: [[513, 'Metal', 'SS']] }, { sku: 'B_TWO', pv: [[513, 'Metal', 'RG']] }], { sku_on_property: [513] });
-  const W3 = world({ inventory: mix }); assert.deepStrictEqual((await W3.run()).details.sort(), ['A_ONE', 'B_TWO']); assert.strictEqual(W3.S.puts.length, 0);
+  const W2 = world({ inventory: inv }), r2 = await W2.run(); assert.strictEqual(r2.ok, true, JSON.stringify(r2)); assert.deepStrictEqual(r2.replaced, [{ sku: OLD, n: 5 }, { sku: SKU, n: 4 }]); assert(W2.S.stored.products.every(p => p.sku === SKU));
+  // blanks and several real SKUs together: the blank is its own group, written ""
+  const mix = mkInv([{ sku: '', pv: [[513, 'Metal', 'GF']] }, { sku: 'A_ONE', pv: [[513, 'Metal', 'SS']] }, { sku: 'B_TWO', pv: [[513, 'Metal', 'RG']] }, { sku: 'b_two', pv: [[513, 'Metal', 'XX']] }], { price_on_property: [513], sku_on_property: [513] });
+  const W3 = world({ inventory: mix }), r3 = await W3.run(); assert.strictEqual(r3.ok, true, JSON.stringify(r3)); assert.deepStrictEqual(r3.replaced, [{ sku: 'B_TWO', n: 2 }, { sku: '', n: 1 }, { sku: 'A_ONE', n: 1 }].sort((a, b) => b.n - a.n || (a.sku < b.sku ? -1 : 1)), 'case set aside: B_TWO and b_two are one group');
+  assert.strictEqual(W3.S.puts.length, 1); assert(W3.S.stored.products.every(p => p.sku === SKU));
+  assert(/\(no SKU\)/.test(Page.wording(r3, LID, SKU).text), Page.wording(r3, LID, SKU).text);
+});
+test('one SKU (or none) on every product: the answer is exactly what it always was (no `replaced`, no new words); a deleted product does not count as a second SKU', async () => {
+  const W = world(), r = await W.run(); assert.strictEqual(r.ok, true); assert(!('replaced' in r) && !('replacedMore' in r), JSON.stringify(r)); assert(!('replaced' in W.link()));
+  assert.strictEqual(Page.wording(r, LID, SKU).text, 'Done: BEADY SWAN is now on all 9 products of listing ' + LID + '.');
+  const inv = beady(); inv.products.push({ product_id: 998, sku: 'GONE_ONE', is_deleted: true, property_values: [], offerings: [{ offering_id: 1, price: 5, quantity: 1, is_enabled: true }] });
+  const D = world({ inventory: inv }), d = await D.run(); assert.strictEqual(d.ok, true); assert(!('replaced' in d), 'a deleted product is not a SKU the listing carries');
+  const blank = mkInv([{ sku: '', pv: [[513, 'Metal', 'GF']] }, { sku: '', pv: [[513, 'Metal', 'SS']] }], { price_on_property: [513] });
+  const B = world({ inventory: blank }), b = await B.run(); assert.strictEqual(b.ok, true); assert(!('replaced' in b));
+  // more than 12 different SKUs: the first 12 groups and the number of products in the rest
+  const many = mkInv(Array.from({ length: 15 }, (_, i) => ({ sku: 'MANY_' + String(i + 1).padStart(2, '0'), pv: [[513, 'Metal', 'V' + i]] })).concat([{ sku: 'MANY_01', pv: [[513, 'Metal', 'V99']] }]), { price_on_property: [513], sku_on_property: [513] });
+  const M = world({ inventory: many }), m = await M.run(); assert.strictEqual(m.ok, true, JSON.stringify(m)); assert.strictEqual(m.replaced.length, 12); assert.deepStrictEqual(m.replaced[0], { sku: 'MANY_01', n: 2 }); assert.strictEqual(m.replacedMore, 3, 'the three smaller groups');
+  assert.strictEqual(M.link().replacedMore, 3); assert(/ and 3 x other SKUs;/.test(Page.wording(m, LID, SKU).text), Page.wording(m, LID, SKU).text);
 });
 test('already on Etsy (a person set it): no write, no safety copy, no PUT', async () => {
   const W = world({ inventory: beady(SKU) }), r = await W.run();
@@ -294,9 +324,9 @@ test('CATSKU: three master names read alike ("CAT 1 - SITTING CAT", "CAT 1- SITT
     const V = world({ inventory: grid(OLDC), master, sim: { skuTransform: tr } }), v = await V.run({ listingId: LID, sku: CAT, by: 'Paul' });
     assert.strictEqual(v.reason, 'verify'); assert.strictEqual(V.S.puts.length, 1); assert(blobs.has(v.beforePath)); assert(v.details.some(x => /SKU/.test(x)), JSON.stringify(v.details));
   }
-  // the products carry two SKUs (the huggie products under their own name): not flattened
+  // the products carry two SKUs (the huggie products under their own name): both are replaced by the exact key, the old ones named and kept in the safety copy
   const mixed = grid(OLDC); mixed.products.forEach(p => { if (p.property_values[1].values[0] === 'Huggie CHARM SET') p.sku = HUG; }); mixed.sku_on_property = [513];
-  const M = world({ inventory: mixed, master }), m = await M.run({ listingId: LID, sku: CAT, by: 'Paul' }); assert.strictEqual(m.reason, 'mixed-skus'); assert.deepStrictEqual(m.details.slice().sort(), [TWIN, HUG].sort()); assert.strictEqual(M.S.puts.length, 0);
+  const M = world({ inventory: mixed, master }), m = await M.run({ listingId: LID, sku: CAT, by: 'Paul' }); assert.strictEqual(m.ok, true, JSON.stringify(m)); assert.deepStrictEqual(m.replaced, [{ sku: OLDC, n: 8 }, { sku: HUG, n: 4 }]); assert.strictEqual(M.S.puts.length, 1); assert(M.S.stored.products.every(p => p.sku === CAT));
   // every product already carries the exact key: no write
   const A = world({ inventory: grid(CAT), master }), a = await A.run({ listingId: LID, sku: CAT, by: 'Paul' }); assert.strictEqual(a.already, true); assert.strictEqual(A.S.puts.length, 0);
 });

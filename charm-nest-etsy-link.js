@@ -9,9 +9,12 @@
  *
  *    CharmNestEtsyLink.mount(chip, { skus, repoApi, toast, who })   the chip is the card's button; skus = the card's SKUs (the first is the card's own);
  *                                                                    repoApi(action, ask, body) = the page's protected call; who() = the signed-in name;
- *                                                                    listings(sku) = optional: the taps to offer (default: suggestions() from what the page holds)
+ *                                                                    listings(sku) = optional: the taps to offer (default: suggestions() from what the page holds);
+ *                                                                    skuTable(id) = optional: the SKUs now on that listing's products (the page's free listingSkus read: the stored
+ *                                                                    table, no password, at most one Etsy read when none is stored), so the line BEFORE the press can say what is replaced
  *    CharmNestEtsyLink.listingIdOf(text)                            "…/listing/1700763608/…?transaction_id=…" or "1700763608" -> "1700763608", else ""
  *    CharmNestEtsyLink.wording(answer, listingId, sku)              the line the panel shows for the server's answer: { text, kind: "ok" | "bad", again: boolean }
+ *    CharmNestEtsyLink.skuGroups(table)                             ETSYFAM: a listing's stored SKU table -> { groups: [{ sku, n }], total } when its products carry 2+ different SKUs (blank is its own), else null
  *    CharmNestEtsyLink.suggestions(skus, sku, src, max)             CATSKU: the listings the page ALREADY reads as this charm, to tap instead of pasting a link: [{ id, title, now }]
  *
  *  The taps (CATSKU, 12 Oct 2026) are read from what the page already holds, at the moment the panel opens: the order lines it loaded (window.B.orders.rows, each line's
@@ -20,6 +23,11 @@
  *  A listing counts when one of its lines resolved to this card's design OR to a design that reads alike once case, spaces and punctuation are set aside (the cat listing's order
  *  read as "CAT 1- SITTING CAT" while the card Paul wants on it is "CAT 1 - SITTING CAT": two drawings, one name), or when a saved link names this design for the listing; and
  *  only while some line of it does not already carry the exact SKU about to be written.
+ *
+ *  REPLACE (ETSYFAM, 13 Oct 2026; Paul: "Replace each set of etsy SKU's with the provided charm repo SKU"): a listing whose products carry several different SKUs
+ *  (X and X-CO, blanks, the shop's placeholders) is no longer refused: every product takes the card's SKU. When the listing's SKU table shows more than one SKU the line
+ *  before the press names them with their counts ("20 x Sports 27-Bike and 20 x Sports 27-Bike-CO") and the answer after repeats them (`replaced`); a listing with one SKU
+ *  (or none) has exactly the words it always had.
  *
  *  The text comes from the server's own `text`; this file adds only what the person sees around it. Everything is drawn with textContent.
  *  ═══════════════════════════════════════════════════════════════════════ */
@@ -70,13 +78,35 @@
     try { const B = root.B, M = root.Master; return { rows: B && B.orders && B.orders.rows, aliases: B && B.maps && B.maps.aliases, like: M && typeof M.likeFor === "function" ? s => M.likeFor(s) : null }; } catch (_) { return {}; }
   }
 
+  /* ── several SKUs on one listing (ETSYFAM): what is replaced, in words ── */
+  const MAX_GROUPS = 12;
+  const plainSku = s => String(s == null ? "" : s).replace(/&quot;/g, "\"").replace(/&#0*39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").trim();
+  /** A listing's stored SKU table ({ products: [{ sku, d }] } or { uni }) -> { groups: [{ sku, n }] biggest first, total } when its live products carry two or more different SKUs (a blank is its own), else null. */
+  function skuGroups(table) {
+    const list = table && Array.isArray(table.products) ? table.products.filter(p => p && !p.d) : [];
+    if (!list.length) return null;
+    const by = new Map();
+    for (const p of list) { const t = plainSku(p.sku), k = t.toUpperCase(), g = by.get(k); if (g) g.n++; else by.set(k, { sku: t, n: 1 }); }
+    if (by.size < 2) return null;
+    return { groups: [...by.values()].sort((a, b) => b.n - a.n || (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0)), total: list.length };
+  }
+  /** [{ sku, n }] (+ the products of groups not listed) -> "20 x Sports 27-Bike and 20 x Sports 27-Bike-CO" (a blank SKU reads "(no SKU)") */
+  function groupsText(list, more) {
+    const g = (Array.isArray(list) ? list : []).filter(x => x && typeof x === "object"), shown = g.slice(0, MAX_GROUPS);
+    const parts = shown.map(x => (+x.n || 0) + " x " + (plainSku(x.sku) || "(no SKU)"));
+    const rest = (+more || 0) + g.slice(MAX_GROUPS).reduce((n, x) => n + (+x.n || 0), 0);
+    if (rest > 0) parts.push(rest + " x other SKUs");
+    return parts.length > 1 ? parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1] : parts[0] || "";
+  }
+
   /* what the server answered, in the panel's words */
   function wording(r, listingId, sku) {
     if (!r || typeof r !== "object") return { text: "Etsy was not changed: the server sent no answer.", kind: "bad", again: true };
     if (r.ok) {
       const n = +r.products || (Array.isArray(r.productIds) ? r.productIds.length : 0), all = n ? "all " + plural(n, "product") : "every product";
       if (r.already) return { text: `Already there: ${all} of listing ${listingId} carry ${sku}. Nothing was changed.`, kind: "ok", again: false };
-      return { text: `Done: ${sku} is now on ${all} of listing ${listingId}.${r.verified === false ? " (Etsy's answer was not compared.)" : ""}`, kind: "ok", again: false };
+      const said = Array.isArray(r.replaced) && r.replaced.length ? ` It replaced ${groupsText(r.replaced, r.replacedMore)}${r.beforePath ? "; the listing as it was is kept" : ""}.` : "";   // (the products carried several different SKUs)
+      return { text: `Done: ${sku} is now on ${all} of listing ${listingId}.${said}${r.verified === false ? " (Etsy's answer was not compared.)" : ""}`, kind: "ok", again: false };
     }
     const keep = r.beforePath ? " The listing as it was is kept." : "";
     const text = (r.text ? r.text.charAt(0).toUpperCase() + r.text.slice(1) : "Etsy was not changed") + (/[.!?]$/.test(r.text || "") ? "" : ".") + keep;
@@ -94,6 +124,7 @@
 .elPanel .elSay.ok{color:var(--sage)}
 .elPanel .elSay.bad{color:#8a3a26}
 .elPanel .elSay.fresh{animation:elIn .22s ease-out}
+.elPanel .elSay .spin{margin-right:6px}
 .elPanel .elPicks{display:grid;gap:3px}
 .elPanel .elPicks[hidden]{display:none}
 .elPanel .elPicks.off{opacity:.5;pointer-events:none}
@@ -146,12 +177,27 @@
         }
         picks.hidden = !picks.children.length; markPick();
       };
+      /* what the listing's products carry now (ETSYFAM): asked once per listing and panel, from the page's free SKU table read (no password, no write);
+         "wait" while it is on its way, null when the products carry one SKU (or none) or it cannot be read: then the line is the one it always was */
+      const known = new Map();
+      const learn = id => {
+        known.set(id, "wait");
+        Promise.resolve().then(() => o.skuTable(id)).then(r => skuGroups(r && r.tables && r.tables[id]), () => null)
+          .then(g => { known.set(id, g); if (panel && !busy && listingIdOf(input.value) === id) idle(); });
+      };
       const idle = () => {   // the plain line: what pressing the button will do
         const id = listingIdOf(input.value);
         markPick();
         say.className = "elSay"; say.textContent = "";
         if (!input.value.trim()) { say.textContent = "Paste the listing's Etsy link or its number."; go.disabled = true; return; }
         if (!id) { say.textContent = "That is not an Etsy listing link or number."; go.disabled = true; return; }
+        if (typeof o.skuTable === "function" && !known.has(id)) learn(id);
+        const rep = known.get(id);
+        if (rep === "wait") { say.append(el("span", "spin"), "Reading the SKUs now on listing " + id + "…"); go.disabled = true; return; }
+        if (rep) {   // the products carry several different SKUs: every one of them is replaced, and the line says which
+          say.append("Every product of Etsy listing " + id + " will carry the SKU ", el("b", "", skuNow()), " in place of the SKUs they carry now: " + groupsText(rep.groups) + ". Prices, stock and options stay as they are; the listing as it is now, with those SKUs, is kept first.");
+          go.disabled = false; return;
+        }
         say.append("Every product of Etsy listing " + id + " will carry the SKU ", el("b", "", skuNow()), ". Prices, stock and options stay as they are; the listing as it is now is kept first.");
         go.disabled = false;
       };
@@ -185,5 +231,5 @@
     };
   }
 
-  root.CharmNestEtsyLink = { mount, listingIdOf, wording, suggestions };
+  root.CharmNestEtsyLink = { mount, listingIdOf, wording, suggestions, skuGroups };
 })(typeof window !== "undefined" ? window : globalThis);
