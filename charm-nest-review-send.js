@@ -67,7 +67,7 @@
       try { if (typeof root.setMode === "function") { root.setMode("review"); return true; } } catch (_) {}
       return false;
     },
-    onChange(fn) { try { const m = MARK(); if (m && typeof m.onChange === "function") { m.onChange(fn); return true; } } catch (_) {} return false; },
+    onChange(fn) { try { const m = MARK(); if (m && typeof m.onChange === "function") return { api: m, off: m.onChange(fn) }; } catch (_) {} return null; },
     // REVHOLD: why this order cannot be held (a piece already released, a sheet already cut or Completed), "" when it can
     cannotHold(rid) {
       try { const h = HOLD(); if (!h || typeof h.canHold !== "function") return ""; const c = h.canHold(rid); return c && c.ok === false ? String(c.why || "This order can no longer be held.") : ""; } catch (_) { return ""; }
@@ -198,8 +198,12 @@
     return { ok: true, sheet };
   }
 
-  // (the mark API's one change callback: registered the first time a button is drawn, when the script that offers it is surely loaded)
-  let subscribed = false;
-  const subscribe = () => { if (!subscribed && api.onChange(sync)) subscribed = true; };
+  // (the mark API's one change callback: registered the first time a button is drawn, when the script that offers it is surely loaded; again if the API object is ever replaced)
+  let sub = null;
+  const subscribe = () => {
+    const m = MARK(); if (!m || (sub && sub.api === m)) return;
+    try { if (sub && typeof sub.off === "function") sub.off(); } catch (_) {}
+    sub = api.onChange(sync);
+  };
   root.ReviewSend = { mount, press, sync, busy: rid => busyRids.has(String(rid)), LABEL, IN };
 })(typeof window !== "undefined" ? window : globalThis);
