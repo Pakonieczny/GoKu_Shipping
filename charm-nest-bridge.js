@@ -5718,6 +5718,8 @@ const Engrave = window.Engrave = (() => {
      line's row with its own key, pool ids and engrave record), so the two ears never share a text, a fit, an approval, a record or a seal. Every other
      line (a single charm, a matching pair) has the one job under its line key, exactly as before. Old jobs have no slot and read as they always did. */
   const SIDES = () => window.CharmNestEngraveSides || null;
+  /** A job's piece of a SET of different designs (the large bar, the small bar: charm-nest-engrave-sides.js setPieceOf), or null for every other job. */
+  const setPieceOfJob = job => { try { return SIDES() && SIDES().setPieceOf ? SIDES().setPieceOf(job) : null; } catch (_) { return null; } };
   const sidesCtx = { poolRow: id => B.pool.rows.get(id), charmOf: id => Pool.charmOf(id) || Pool.previewCharmOf(id), entryFor: sku => Master.entryFor(sku), get pair() { return window.CharmNestPair || null; }, mergeSeals: (...r) => CNEngravingSeals.merge(...r) };
   const SLOT_PROBE = [null, "L", "R"].concat(Array.from({ length: 24 }, (_, i) => "D" + (i + 1)));
   const lineOf = row => (row && row.parentRow) || row;
@@ -5874,7 +5876,7 @@ const Engrave = window.Engrave = (() => {
     row = lineOf(row); const S = SIDES(); if (!S || !row) return null;
     const jobs = jobsOf(row); if (!jobs.some(j => j.slot)) return null;
     const of = pieceCountOf(row), faced = jobs.some(isFront);
-    return jobs.map(j => ({ key: j.key, poolId: (j.copies || [])[0] || "", row: j.row, label: S.earOf(j.slot) || "", meta: (j.copies || []).length > 1 ? `${j.copies.length} pieces` : "", slot: j.slot, tag: S.tagOf(j.slot, of), ...(faced ? { face: faceOf(j), faceLabel: isFront(j) ? "Front" : "Back" } : {}) }));
+    return jobs.map(j => ({ key: j.key, poolId: (j.copies || [])[0] || "", row: j.row, label: (setPieceOfJob(j) ? S.pieceName(setPieceOfJob(j)) : S.earOf(j.slot)) || "", meta: (j.copies || []).length > 1 ? `${j.copies.length} pieces` : "", slot: j.slot, tag: SIDES().pieceTag(j, of), ...(faced ? { face: faceOf(j), faceLabel: isFront(j) ? "Front" : "Back" } : {}) }));
   }
   /** The line's pieces and jobs joined again after a restore (the sides are made from the saved jobs: nothing is read or paid for). */
   function relinkAll() {
@@ -6099,7 +6101,7 @@ const Engrave = window.Engrave = (() => {
       if (seed && !sj.needsPerson) {
         delete j.seededFrom;
         Object.assign(j, { text: seed.text, lines: seed.lines.slice(), source: seed.source, quote, confidence: seed.confidence, questions: [], claudeReasoning: null, requests: { side: face, font: seed.fontWord || null, handwriting: false, image: false }, wordsSource: "spec.engraving", faceFontWord: seed.fontWord || null, ...(seed.how === "single" ? { wordsHow: "single" } : {}) });
-        agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}${j.slot ? " · " + SIDES().earOf(j.slot) : ""} · ${face}: "${seed.text.replace(/\n/g, " / ")}" taken from ${seed.how === "person" ? "the person's setup" : "the order"} (${setup.why || setup.mode}), no paid reading`);
+        agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}${j.slot ? " · " + SIDES().slotWord(j) : ""} · ${face}: "${seed.text.replace(/\n/g, " / ")}" taken from ${seed.how === "person" ? "the person's setup" : "the order"} (${setup.why || setup.mode}), no paid reading`);
         await setReady(j);
       } else {
         // a face with no words, or a reading the intake marked for a person: the card asks (with the intake's own reason), the words it found stand as the proposal, nothing is approved and nothing is paid for
@@ -6134,7 +6136,7 @@ const Engrave = window.Engrave = (() => {
     const engravable = !neverEngraves(row);   // (always true here: an earring never gets this far, the line above puts it away; the server answers "no engraving" for engravable:false too)
     // a line cut into slots that already holds the words (read before it was known to be a pair) asks a person which ear gets which: no new paid reading
     if (jobs.length > 1 && jobs.every(j => j.seededFrom && j.text)) {
-      for (const j of jobs) { const earOf = SIDES().earOf(j.slot); delete j.seededFrom; j.lines = j.lines && j.lines.length ? j.lines : String(j.text).split(/\r?\n/).map(x => x.trim()).filter(Boolean); toWords(j, `Say which words go on the ${earOf ? earOf.toLowerCase() : "piece"}`); }
+      for (const j of jobs) { const earOf = SIDES().slotWord(j); delete j.seededFrom; j.lines = j.lines && j.lines.length ? j.lines : String(j.text).split(/\r?\n/).map(x => x.trim()).filter(Boolean); toWords(j, `Say which words go on the ${earOf ? earOf.toLowerCase() : "piece"}`); }
       return job;
     }
     // the discs of one counted line whose note says plainly which words go on which disc ("Tag 1: J, Tag 2: Q", DISCREAD): each disc takes its own words here, no paid reading;
@@ -6145,7 +6147,7 @@ const Engrave = window.Engrave = (() => {
         const w = discSplit.words[+String(j.slot).slice(1) - 1];
         j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
         Object.assign(j, { text: w, lines: [w], source: "personalization", quote: (sp.personalization || []).join(" / "), confidence: 1, questions: [], claudeReasoning: null, requests: { side: "back", font: null, handwriting: false, image: false }, wordsSource: "personalization:" + discSplit.how });
-        agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku} · ${SIDES().earOf(j.slot)}: "${w}" read from the note (${discSplit.how}), no paid reading`);
+        agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku} · ${SIDES().slotWord(j)}: "${w}" read from the note (${discSplit.how}), no paid reading`);
         await setReady(j);
       }
       return job;
@@ -6193,7 +6195,7 @@ const Engrave = window.Engrave = (() => {
       const face = faceOf(j), req = { side: face, font: null, handwriting: false, image: false };
       if (todo.length > 1) {
         Object.assign(j, { text: "", lines: [], source: "personalization", quote: pers.join(" / ") || null, confidence: 0, questions: [], claudeReasoning: null, requests: req });
-        toWords(j, `Say which words go on the ${(SIDES().earOf(j.slot) || "piece").toLowerCase()}`);
+        toWords(j, `Say which words go on the ${(SIDES().slotWord(j) || "piece").toLowerCase()}`);
       } else if (clear) {
         Object.assign(j, { text: lines.join("\n"), lines: lines.slice(), source: "personalization", quote: pers.join(" / ") || null, confidence: 1, questions: [], claudeReasoning: null, requests: req, wordsSource: "personalization:clear" });
         agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}: "${j.text.replace(/\n/g, " / ")}" taken from the personalisation, no paid reading`);
@@ -6219,7 +6221,7 @@ const Engrave = window.Engrave = (() => {
     }
     if (job.slot && Array.isArray(r.pieces) && r.pieces.length) {
       const mine = r.pieces.find(x => x && x.slot === job.slot);
-      if (!mine) { Object.assign(job, { text: r.text || "", lines: String(r.text || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean), source: r.source, quote: r.sourceQuote, confidence: r.confidence, requests: r.requests, questions: (r.questions || []).slice() }); return toWords(job, `Say which words go on the ${(SIDES().earOf(job.slot) || "piece").toLowerCase()}`); }
+      if (!mine) { Object.assign(job, { text: r.text || "", lines: String(r.text || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean), source: r.source, quote: r.sourceQuote, confidence: r.confidence, requests: r.requests, questions: (r.questions || []).slice() }); return toWords(job, `Say which words go on the ${(SIDES().slotWord(job) || "piece").toLowerCase()}`); }
       r = Object.assign({}, r, { text: String(mine.text || ""), engrave: !!String(mine.text || "").trim() });
     }
     job.text = r.text || ""; job.lines = job.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); job.source = r.source; job.quote = r.sourceQuote; job.confidence = r.confidence; job.requests = r.requests; job.questions = r.questions || []; job.claudeReasoning = r.reasoning || null; job.ignored = Array.isArray(r.ignored) ? r.ignored.slice(0, 8) : [];
@@ -6232,7 +6234,7 @@ const Engrave = window.Engrave = (() => {
     // BFFONT: a line of the reading that is only a font request ("Typewriter font") is never engraved; its font is read from the order's own words (spec.fontText) and, when the reader named none, from the request itself
     { const fr = typeof O !== "undefined" && O.fontReadText ? O.fontReadText(job.lines.join("\n"), { cueOnly: true }) : { changed: false, lines: [], requests: [] };
       if (fr.changed && fr.lines.length) { const ask = fr.requests.find(q => q.asked); job.lines = fr.lines; job.text = fr.lines.join("\n"); if (ask && !(job.requests && job.requests.font)) job.requests = Object.assign({}, job.requests, { font: ask.asked }); } }
-    agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}${job.slot ? " · " + SIDES().earOf(job.slot) : ""}: Claude reads ${r.engrave ? `"${job.text.replace(/\n/g, " / ")}" from ${r.source} (${Math.round(r.confidence * 100)}%)` : "no engraving"}${job.questions.length ? ` · ${job.questions.length} question(s)` : ""}${job.ignored.length ? ` · left out (a note to the shop): ${job.ignored.map(x => "“" + x + "”").join(", ")}` : ""}`, { reason: r.reasoning || null });
+    agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}${job.slot ? " · " + SIDES().slotWord(job) : ""}: Claude reads ${r.engrave ? `"${job.text.replace(/\n/g, " / ")}" from ${r.source} (${Math.round(r.confidence * 100)}%)` : "no engraving"}${job.questions.length ? ` · ${job.questions.length} question(s)` : ""}${job.ignored.length ? ` · left out (a note to the shop): ${job.ignored.map(x => "“" + x + "”").join(", ")}` : ""}`, { reason: r.reasoning || null });
     // Confidence describes the interpretation, not whether a preview can be drawn.
     // Nothing here approves or exports a proposed inscription.
     if (!r.engrave && !job.lines.length) {
@@ -6866,7 +6868,7 @@ const Engrave = window.Engrave = (() => {
         const front = isFront(job);   // (a FRONT engraving's event has its own id, "<poolId>~front-<at>", and says so: the same key the server's backPut writes, so each face keeps its one seal)
         TL.rec({ orderId: rid, type: "engraveApproved", id: `${poolId}${front ? "~front" : ""}-${at}`, at, by, station: "sorter", device: "charm-nest-1", lineKey: String(poolId).replace(/_\d+$/, ""), transactionId: String(row.line?.transactionId || String(poolId).split("_")[1] || ""),
           ...(sh?.sheetId ? { sheetId: sh.sheetId, sheet: SheetEvents.label(sh), setId: sh.setId && !sh.draft ? sh.setId : "" } : {}),
-          text: (front ? "Front: " : "") + (words ? `“${words}”` : "") + (job.slot ? `${words ? " · " : ""}${SIDES().earOf(job.slot)}` : ""), data: { text: text.slice(0, 400), poolId, copy, sku: String(row.spec?.designSku || "").slice(0, 60), signedIn: true, ...(front ? { face: "front" } : {}), ...(job.slot ? { slot: job.slot, ...(job.row.side ? { side: job.row.side } : {}) } : {}) } }, true, true);
+          text: (front ? "Front: " : "") + (words ? `“${words}”` : "") + (job.slot ? `${words ? " · " : ""}${SIDES().slotWord(job)}` : ""), data: { text: text.slice(0, 400), poolId, copy, sku: String(row.spec?.designSku || "").slice(0, 60), signedIn: true, ...(front ? { face: "front" } : {}), ...(job.slot ? { slot: job.slot, ...(job.row.side ? { side: job.row.side } : {}) } : {}) } }, true, true);
       }
     } catch (e) { console.warn("[Engrave] timeline", e); }
   }
@@ -7717,7 +7719,7 @@ const Engrave = window.Engrave = (() => {
     ? (canFit(job) ? `Preparing this ${facedJob(job) ? faceWord(job) + " " : ""}engraving preview…` : "Waiting for this charm’s sheet and outline. Its preview will resume when they are ready.")
     : OPENREAD.includes(job.state) && (preparingNow(job) || readsFree(job)) ? `Preparing this ${facedJob(job) ? faceWord(job) + " " : ""}engraving preview…`   // (a job that is being read, or that the press has just started: never "stopped")
     : job.state === "classify" ? (panel ? "Processing stopped before these words were read." : "Processing stopped before these words were read. Confirm the inscription below or resume the run.") : `the ${facedJob(job) ? faceWord(job) + " " : ""}words need a decision`;
-  const matchesQ = j => { const q = (EG.q || "").trim().toLowerCase(); if (!q) return true; return [j.row.order.receiptId, j.row.spec && j.row.spec.designSku, j.row.line.sku, j.text, (j.lines || []).join(" "), j.row.line.title, j.slot && SIDES() ? SIDES().earOf(j.slot) : "", lineHasFront(j.row) ? faceNoun(faceOfJob(j)) : ""].some(x => String(x || "").toLowerCase().includes(q)); };
+  const matchesQ = j => { const q = (EG.q || "").trim().toLowerCase(); if (!q) return true; return [j.row.order.receiptId, j.row.spec && j.row.spec.designSku, j.row.line.sku, j.text, (j.lines || []).join(" "), j.row.line.title, j.slot && SIDES() ? SIDES().slotWord(j) : "", lineHasFront(j.row) ? faceNoun(faceOfJob(j)) : ""].some(x => String(x || "").toLowerCase().includes(q)); };
   /** Which run's engraving this is. A tab that showed a queue and no run left nobody able to say whose queue it was. */
   function runWord() {
     // a recalled set names itself, even while a finished run is still remembered underneath
@@ -7770,11 +7772,11 @@ const Engrave = window.Engrave = (() => {
   const donePairs = new Map();
   let placementLimit=40, placementQuery=null, doneLimit=40, doneQuery=null;
   /** One ear's tag in a row, with the copies it holds when there are several ("LEFT EAR ×2": a quantity of two pairs is one row, each ear held twice). */
-  const earTagText = job => ((SIDES() && SIDES().tagOf(job.slot, pieceCountOf(job.row))) || String(job.slot || "")) + ((job.copies || []).length > 1 ? " ×" + job.copies.length : "");
+  const earTagText = job => ((SIDES() && SIDES().pieceTag(job, pieceCountOf(job.row))) || String(job.slot || "")) + ((job.copies || []).length > 1 ? " ×" + job.copies.length : "");
   const earChipHtml = job => `<span class="egPiece" data-slot="${esc(job.slot)}">${esc(earTagText(job))}</span>`;
   /* FACES in a list row (ENGUI1): a line with a front job tells each job by its piece AND its face ("LEFT EAR · FRONT", "DISC 2 of 3 · BACK", or just "FRONT" / "BACK" for a single charm). A back-only line
      uses earTagText / earChipHtml exactly as before. */
-  const faceTagText = job => [(SIDES() && job.slot ? SIDES().tagOf(job.slot, piecesIn(jobsOf(job.row))) : ""), faceNoun(faceOfJob(job)).toUpperCase()].filter(Boolean).join(" · ") + ((job.copies || []).length > 1 ? " ×" + job.copies.length : "");
+  const faceTagText = job => [(SIDES() && job.slot ? SIDES().pieceTag(job, piecesIn(jobsOf(job.row))) : ""), faceNoun(faceOfJob(job)).toUpperCase()].filter(Boolean).join(" · ") + ((job.copies || []).length > 1 ? " ×" + job.copies.length : "");
   const faceChipHtml = (job, title) => `<span class="egPiece" data-slot="${esc(job.slot || "")}" data-face="${faceNoun(faceOfJob(job))}"${title ? ` title="${esc(title)}"` : ""}>${esc(faceTagText(job))}</span>`;
   /** How the system read the line, in its one plain sentence (Faces.setupOf: spec.engraving's `why`, or "Set by <name>" when a person's choice is in force): shown beside the buyer's raw words, so a person can check it. */
   const faceReadingOf = row => { const F = UIFACES(), line = lineOf(row); if (!F || !line || !line.spec) return ""; try { const s_ = F.setupOf(line); return s_.mode === "both" || s_.mode === "front" ? (s_.why || "") : ""; } catch (_) { return ""; } };
@@ -7783,8 +7785,8 @@ const Engrave = window.Engrave = (() => {
   /** "Front + back" / "Front": the line's chip beside its SKU (nothing for a back-only line). */
   const modeChipHtml = row => { const m = faceModeOf(row); return m ? `<span class="egPiece egMode" data-face="${m === "both" ? "both" : "front"}" title="${m === "both" ? "this line is engraved on both faces: the front and the back, each with its own words and approval" : "this line is engraved on the front"}">${m === "both" ? "Front + back" : "Front"}</span>` : ""; };
   /* the words of a Decided row's Reopen buttons: for a back-only line exactly what they always said ("Reopen Left", "the disc 2"), for a line with a front the piece AND the face */
-  const pieceName = j => (SIDES() ? (SIDES().earOf(j.slot) || "") : "").toLowerCase();
-  const reopenWord = (j, faced) => (faced ? [SIDES() ? SIDES().labelOf(j.slot) : "", faceNoun(faceOfJob(j))].filter(Boolean).join(" ") : (SIDES() ? SIDES().labelOf(j.slot) : j.slot));
+  const pieceName = j => (SIDES() ? (SIDES().slotWord(j) || "") : "").toLowerCase();
+  const reopenWord = (j, faced) => (faced ? [SIDES() ? (SIDES().slotWord(j, true)) : "", faceNoun(faceOfJob(j))].filter(Boolean).join(" ") : (SIDES() ? (SIDES().slotWord(j, true)) : j.slot));
   const reopenWhat = (j, faced) => (faced ? "the " + (pieceName(j) ? pieceName(j) + "'s " : "") + faceNoun(faceOfJob(j)) : "the " + pieceName(j));
   const reopenKeeps = (grp, faced) => (faced ? "everything else keeps its approval" : "the other " + (grp.pair ? "ear keeps its approval" : "discs keep theirs"));
   const reopenParen = j => " (" + (lineHasFront(j.row) ? [pieceName(j), faceNoun(faceOfJob(j))].filter(Boolean).join(" · ") : pieceName(j)) + ")";
@@ -8204,7 +8206,7 @@ const Engrave = window.Engrave = (() => {
       if (j.state !== "review") continue;
       await approve(j, by, j === job ? button : undefined);
       if (!DECIDED.includes(j.state)) {
-        const who = (SIDES() && SIDES().earOf(j.slot)) || "";
+        const who = (SIDES() && SIDES().slotWord(j)) || "";
         toast(faced ? `${[who, cap1(faceNoun(faceOfJob(j)))].filter(Boolean).join(" ")} was not approved, so the placements after it were left as they are`
           : row.discs ? `${who || "A disc"} was not approved, so the discs after it were left as they are` : `${who || "An ear"} was not approved, so the other ear was left as it is`, "bad", 6000);
         return;
@@ -8261,7 +8263,7 @@ const Engrave = window.Engrave = (() => {
     const said = panelOn && window.CharmNestEngraveSaid ? CharmNestEngraveSaid.html(job.row) : "";
     const fromOrder = panelOn ? (window.CharmNestEngraveSaid ? "" : `${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}`)   // (the file did not load: the plain rows, never nothing)
       : `${faced ? row2("Reading", faceReadingOf(job.row)) : ""}${fontMapped ? row2("Font", fontText.replace(/^Font: /, "")) : noteFont ? row2("Font", noteFont) : ""}${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
-    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a line's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? " (an order's discs are one placement: Back and Next go through every disc)" : " (an earring line's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${ears ? earSwitchHtml(job, ears, panelOn) : faced ? (panelOn ? "" : faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`)) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().tagOf(job.slot, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
+    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a line's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? " (an order's discs are one placement: Back and Next go through every disc)" : " (an earring line's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc((setPieceOfJob(job) || {}).sku || sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${ears ? earSwitchHtml(job, ears, panelOn) : faced ? (panelOn ? "" : faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`)) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().pieceTag(job, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain">${byCard ? "" : `<h4 class="pvH">${cap1(fw)} · engraving</h4>`}<div class="pvApproval">${f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the ${fw} file">Approve</button></span>` : ""}${f && !wordsJob && ears ? approveBothHtml(ears, job) : ""}</div><div class="backHost"></div></div>
         <div class="ctl">${!f && !wordsJob && panelOn && job.reason ? `<span class="why" role="status">${esc(isFrontJob(job) ? String(job.reason).replace(/\bback area\b/, "front area") : job.reason)}</span>` : ""}${f && !wordsJob ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="egTurn" role="group" aria-label="Turn the whole charm and its engraving" title="Turn the whole charm and its engraving together, in degrees. Counter-clockwise is plus. 0 is where the system placed it."><button type="button" class="egTurnStep" data-a="turnStep" data-step="-1" title="Turn 1° clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree clockwise">↷</button><label class="egTurnField"><input type="number" data-a="turn" inputmode="numeric" min="-360" max="360" step="1" value="${turnOf(job)}" aria-label="Turn the whole charm and its engraving, in degrees"><span class="egTurnDeg" aria-hidden="true">°</span></label><button type="button" class="egTurnStep" data-a="turnStep" data-step="1" title="Turn 1° counter-clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree counter-clockwise">↶</button></span>` : ""}
@@ -8279,6 +8281,9 @@ const Engrave = window.Engrave = (() => {
         <section class="pvMail"></section></div>`;
     // ENGAPPROVE: the guide's one calm line has its place right under the header; it is empty and hidden until a press would leave this order with a piece not approved (charm-nest-engrave-guide.js)
     if (ctx) { card.querySelector(".rh")?.insertAdjacentHTML("afterend", '<div class="egGuide" hidden></div>'); try { window.CharmNestEngraveGuide?.mount(card, String(r.order.receiptId), UIFACES() ? UIFACES().pieceKeyOf(job.key) : job.key); } catch (_) {} }
+    // SETBAR (Paul, 13 Oct 2026: "see both bar charms side-by-side ... manipulate each one"): a line that is a SET of different designs shows both bars, at one scale, above the work area, with the chain each hangs on; a press on one is the
+    // press of the piece switch (data-a="ear": the wiring below handles it). Any other line draws nothing here.
+    if (ctx) { try { const C = window.CharmNestEngraveCard, strip = C && C.setStrip ? C.setStrip(job.row, { key: job.key, face: faceOfJob(job), isWorking }) : null, pm = card.querySelector(".pvMain"); if (strip && pm) { pm.insertBefore(strip, pm.firstChild); card._setStrip = strip; requestAnimationFrame(() => { try { C.repaint(strip); } catch (_) {} }); } } catch (e) { console.warn("set strip:", e); } }
     const charm = job.copies.length ? charmFor(job) : null;
 
     if (byCard) { /* the card's Front / Back thumbnails are the pictures of the piece: no reference picture */ }
@@ -15464,6 +15469,7 @@ const OrderWin = window.OrderWin = (() => {
     const vh = byId("owVector"); if (vh) { if (W.zoom) tryDo(() => W.zoom.vector.key(vectorKey(r))); tryDo(() => ListMedia.vectorInto(vh, r)); }
     // (the SKU alone, as the Copy button copies it: an earring pair says its Left and Right in its pieces and facts, not on this line: Paul, 12 Oct 2026)
     byId("owSku").textContent = "SKU: " + ((O.setDesignsOf(sp) || []).join(" + ") || sp.designSku || r.line.sku || "—");   // (a necklace of saved charms names them all)
+    paintSetLens(r);
     paintEng(r);
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller
     const said = [];
@@ -15734,7 +15740,7 @@ const OrderWin = window.OrderWin = (() => {
     });
     const st = box.querySelector(".owPcState"); if (!st) return;
     const p = sel && ps.find(x => x.key === sel), total = ps.reduce((n, x) => n + (x.sides ? x.sides.reduce((m, sd) => m + sd.qty, 0) : x.qty), 0);   // (a pair line counts its Left and its Right)
-    const ear = p && W.side && p.sides ? sideWord(W.side) : p && W.disc && p.counted ? "Disc " + String(W.disc).slice(1) : "";   // (a disc picked: "Showing COMET 9427 · Disc 2")
+    const ear = p && W.side && p.sides ? sideWord(W.side) : p && W.disc && p.counted ? (() => { const S = window.CharmNestEngraveSides, r = rowOf(p.key), sp = S && S.setPieceOf && r ? tryDo(() => S.setPieceOf(r, W.disc)) : null; return sp ? S.pieceName(sp) : "Disc " + String(W.disc).slice(1); })() : "";   // (a disc picked: "Showing COMET 9427 · Disc 2"; a bar of a set: "Showing BAR 1548 + SKINNY 0191 · Small bar")
     const mcode = p && ps.some(x => x !== p && x.name === p.name) ? CODE[p.metal] || (p.metal ? labelOf(p.metal) : "") : "";   // (ENGPICK: two pieces of ONE design differ only by metal: "Showing NEURON 37061 · SS", as the row says it; pieces with their own names are said as they were)
     const html = p ? `Showing <b>${esc(p.name + (mcode ? " · " + mcode : "") + (ear ? " · " + ear : ""))}</b><i aria-hidden="true"> · </i><button type="button" class="owPcAll" data-pc-all>Show all</button>` : `Showing all ${total} pieces`;
     if (st._h !== html) { st._h = html; st.innerHTML = html; }
@@ -15951,6 +15957,19 @@ const OrderWin = window.OrderWin = (() => {
      (charm-nest-order-rows.js). A row of one piece is drawn exactly as it always was. */
   const PC_OPEN = new Set();   // the items whose drawer is open ("<order>|<line key>"): a redraw puts every one back as it was
   const pcIcon = (name, size, fallback) => { const I = window.CharmNestIcons; const svg = I && typeof I.svg === "function" ? tryDo(() => I.svg(name, { size: size || 14 })) : ""; return svg || `<span aria-hidden="true">${fallback || ""}</span>`; };
+  /** SETBAR (Paul, 13 Oct 2026: "the two bars side by side with the chain length each sits on as a small label"): under the Vector design of a line that is a SET of bars the name and the chain length of each, in the order the
+   *  picture draws them (the first design on the left), each label as wide as its bar's share of the picture (the picture draws both at one scale). Only a set whose rule says a name or a chain (charm-nest-engrave-sides.js
+   *  setPieces); every other line leaves it hidden. The chain each bar hangs on is the rule's (SETBAR), never worked out here. */
+  function paintSetLens(r) {
+    const box = byId("owSetLens"); if (!box) return;
+    const S = window.CharmNestEngraveSides, set = S && S.setPieces ? tryDo(() => S.setPieces(r)) : null, shown = !!set && set.pieces.some(p => p.label || p.length);
+    if (!shown) { box.hidden = true; box.replaceChildren(); box.dataset.sig = ""; return; }
+    const width = p => { const e = tryDo(() => Master.entryFor(p.sku)); return (e && +e.widthPt > 0 ? +e.widthPt : 72) + 2 * 3 * PT; };
+    const html = set.pieces.map(p => `<span class="owSetLen" data-slot="${esc(p.slot)}" style="flex:${width(p).toFixed(1)} 1 0%" title="${esc(p.name + (p.length ? " · hangs on the " + S.lengthText(p) + " chain" : ""))}"><b>${esc(S.pieceName(p))}</b>${p.length ? `<i>${esc(S.lengthText(p))}</i>` : ""}</span>`).join("");
+    const sig = html + "|" + (set.layoutRequested ? 1 : 0);
+    if (box.dataset.sig !== sig) { box.dataset.sig = sig; box.innerHTML = html + (set.layoutRequested ? `<span class="owSetNote" role="status">${esc(window.CharmNestEngraveCard && CharmNestEngraveCard.LAYOUT_NOTE || "The buyer asked for a different layout, so a person decides which bar hangs on which chain.")}</span>` : ""); }
+    box.hidden = false;
+  }
   /** A piece of a counted line (an OrderPieces entry) as a scope piece, for pieceStatusOf: the sheet it is on, whether it waits, is completed by hand or not read yet. */
   const pcScopeOf = (c, line) => ({ key: line ? line.key : c.lineKey, nested: !!c.nested, hand: !!c.hand, loading: !c.nested && !c.hand && !!(c.loading || c.unsure), row: line && line.row || null, why: c.reason || "",
     sheets: c.nested ? [{ id: c.sheetId || null, page: null, label: c.sheetLabel || "", metal: c.metal || null, n: c.sheetNo, setId: c.setId || null, cut: c.state === "cut", pools: [String(c.poolId || c.key)] }] : [] });
@@ -15966,8 +15985,10 @@ const OrderWin = window.OrderWin = (() => {
     if (p.counted) {
       const r = rowOf(p.key), pcs = r && window.OrderPieces ? tryDo(() => OrderPieces.ofRow(r)) || [] : [];
       if (pcs.length > 1) {
-        const noun = ((r && countedOf(r)) || {}).noun || "piece", n = pcs.length, tag = noun === "disc" ? "D" : "P";
-        const subs = pcs.map((c, i) => ({ key: `${p.key}#${tag}${i + 1}`, c, label: OR.subLabel("counted", i, n, { noun }), x, sp: pcScopeOf(c, lineScope) }));
+        // (SETBAR: a piece of a set of bars is its own name and chain, "Small bar · 16″", never "Piece 2 of 4"; units after the first say which set: "Small bar · 16″ · set 2". Its engraving slots are D1, D2, so its lines are picked like a disc's: one press narrows the cards to that bar)
+        const S = window.CharmNestEngraveSides, set = S && S.setPieces && r ? tryDo(() => S.setPieces(r)) : null, per = set ? set.pieces.length : 0, n = pcs.length, bySet = per >= 2 && n % per === 0;
+        const noun = ((r && countedOf(r)) || {}).noun || "piece", tag = noun === "disc" || bySet ? "D" : "P";
+        const subs = pcs.map((c, i) => ({ key: `${p.key}#${tag}${(bySet ? i % per : i) + 1}`, c, label: bySet ? [S.pieceName(set.pieces[i % per]), S.lengthText(set.pieces[i % per]), n > per ? "set " + (Math.floor(i / per) + 1) : ""].filter(Boolean).join(" · ") : OR.subLabel("counted", i, n, { noun }), x, sp: pcScopeOf(c, lineScope) }));
         return { kind: "counted", x, subs, lead: null, lineScope, step: stepOf(x), placed: pcs.filter(c => c.nested).length, total: n };
       }
     }

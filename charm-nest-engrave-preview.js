@@ -39,6 +39,7 @@
  *   position    { x, y, size, angle } the way CharmNestEngravePosition.of(job) gives it, each 0..1 of the drawing box: x, y the centre of the words, size the em as a fraction of
  *               the box's height, angle in degrees counter-clockwise (as job.fit.angle). null (or none): the middle, 0.2, 0 degrees. update() merges it key by key
  *   size        the size alone (the same as position.size)
+ *   rel         (SETBAR) 0..1: the picture's share of the box, so the pieces of a set of different designs are drawn at ONE scale (the largest fills the box, a smaller one is that fraction of it, same shape). Unset: fills the box.
  *
  * The words are laid out as charm-nest-geom.js layoutLines lays the job's: every row centred, a row as tall as the font's capitals plus 0.216 em, the block centred on the
  * position by its capitals; a font with no lowercase (Ace) in capitals (Orders.capsText). Words longer than the box allows are scaled down to it (the job fits to the metal
@@ -427,7 +428,7 @@
   /* ── what it looks like ────────────────────────────────────────────────────── */
   const CSS = `.engpv{position:relative;display:flex;align-items:center;justify-content:center;box-sizing:border-box;width:100%;height:100%;overflow:hidden;container-type:size}
 .engpvFrame{position:relative;flex:none;width:100cqw;height:100cqh}
-.engpvFrame[data-ar]{width:min(100cqw,calc(100cqh * var(--ar)));height:auto;aspect-ratio:var(--ar)}
+.engpvFrame[data-ar]{width:calc(min(100cqw,calc(100cqh * var(--ar))) * var(--rel,1));height:auto;aspect-ratio:var(--ar)}
 .engpvDraw{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
 .engpvDraw canvas,.engpvDraw img,.engpvDraw svg{max-width:100%;max-height:100%;object-fit:contain}
 .engpvFrame[data-ar] .engpvDraw canvas,.engpvFrame[data-ar] .engpvDraw img{width:100%;height:100%;display:block}
@@ -487,6 +488,8 @@
     const st = el._engpv; if (!st) return;
     try {
       const o = st.opts, src = sourceOf(o), N = shell(el, st, src), id = idOf(o.fontId || fontIdOf(o.row, o.face, o.fontWord)), O = Orders();
+      // TRUE RELATIVE SIZE (SETBAR): `rel` (0..1) is this drawing's share of the box the largest piece of its set fills; the frame keeps its shape and takes that share of the width. Unset (every other picture): the box, as always.
+      { const rel = +o.rel; if (rel > 0 && rel < 0.9995) N.frame.style.setProperty('--rel', rel.toFixed(4)); else N.frame.style.removeProperty('--rel'); }
       if (el.isConnected) st.seen = true;
       st.fontId = id;
       if (src.entry && src.entry.status === 'loading') { if (!st.sub) st.sub = () => { if (el._engpv === st) paint(el); }; src.entry.subs.add(st.sub); }   // (painted again when the picture arrives)
@@ -548,7 +551,7 @@
   }
 
   /* ── the API ───────────────────────────────────────────────────────────────── */
-  const KEYS = ['row', 'drawing', 'text', 'fontId', 'fontWord', 'face', 'size', 'job', 'slot', 'image'];
+  const KEYS = ['row', 'drawing', 'text', 'fontId', 'fontWord', 'face', 'size', 'job', 'slot', 'image', 'rel'];
   function render(el, o) {
     try {
       if (!el || !el.ownerDocument || typeof el.replaceChildren !== 'function') return el || null;

@@ -289,7 +289,9 @@
       // (a face the person asks for AGAIN: its job was cut plain / set to no engraving while the setup did not ask for it. A cut-plain job of a face that was wanted all along is a decision, not reopened.)
       out.reopen = list.filter(j => next.faces.includes(faceOfJob(j)) && !(prev && prev.faces.includes(faceOfJob(j))) && (j.state === 'none' || j.state === 'skipped'));
     }
-    const nm = j => FACE_NAME[faceOfJob(j)] + (j.slot ? ' of the ' + (j.slot === 'L' ? 'left ear' : j.slot === 'R' ? 'right ear' : 'disc ' + str(j.slot).slice(1)) : '');
+    // (a piece of a SET of different designs is "the small bar", not "disc 2": charm-nest-engrave-sides.js setPieceOf)
+    const setWord = j => { const Sd = dep('CharmNestEngraveSides', './charm-nest-engrave-sides.js'), sp = Sd && Sd.setPieceOf ? Sd.setPieceOf(j) : null; return sp ? Sd.pieceName(sp).toLowerCase() : ''; };
+    const nm = j => FACE_NAME[faceOfJob(j)] + (j.slot ? ' of the ' + (setWord(j) || (j.slot === 'L' ? 'left ear' : j.slot === 'R' ? 'right ear' : 'disc ' + str(j.slot).slice(1))) : '');
     for (const j of out.plain) { const by = str(j.approvedBy || j.decidedBy || (j.decision && j.decision.by)); out.lines.push(`The ${nm(j)} is already ${j.state === 'written' ? 'approved and saved' : 'approved'}${by ? ' by ' + by : ''}: saving cuts it plain (its approval seal stays, a "cut plain" seal is added and its file is withdrawn).`); }
     for (const j of out.remove) out.lines.push(`The ${nm(j)} placement that was still to check is removed.`);
     for (const j of out.none) out.lines.push(`The ${nm(j)} is set to no engraving.`);

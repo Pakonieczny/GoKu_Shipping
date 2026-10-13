@@ -37,6 +37,8 @@
  *   html(pieces, key, o)        with a front job in the list (and o.faces !== false) it draws the PIECE switch (one button per piece; none for a single piece) and, right under it, the
  *                               Front | Back switch of the piece shown; a list with no front job draws exactly what it always drew
  *   kindOf(pieces)              also "faces": ONE piece with a front and a back
+ * A SET of different designs (the large bar and the small bar, charm-nest-engrave-sides.js setPieceOf): a piece's label, name and tag are its own ("Small bar", "SMALL BAR · 16″"; else its design's name) and it carries
+ * `set` (that entry); kindOf says "pieces". Every other list is exactly what it was.
  * Pure but for html()/bind(): no network, no clock. Loads in the page (window.CharmNestPieceSwitch) and in node. */
 (function (root, factory) {
   const api = factory(root);
@@ -74,9 +76,11 @@
       const slot = slotOf(job), busy = !!(o.isWorking && o.isWorking(job)), face = faceOfJob(job), faces = withFront ? per.get(slot) : 1;
       const copies = (job.copies || []).length, S = Sides(), rec = S && S.pieceRecord ? S.pieceRecord(job, { of, faces }) : null;
       const f = o.fontOf ? o.fontOf(job) : rec && rec.font ? rec.font : fontOfJob(job), font = fontParts(f);
-      const base = tagOf(slot, of), many = copies > 1 ? ' ×' + copies : '';
+      // a piece of a SET of different designs (the large bar, the small bar) is told by its own name and the chain it hangs on, never "Disc 2 of 2" (charm-nest-engrave-sides.js setPieceOf; every other piece: as before)
+      const sps = S && S.setPieceOf ? S.setPieceOf(job) : null, setName = sps ? S.pieceName(sps) : '', setLen = sps ? S.lengthText(sps) : '';
+      const base = sps ? [setName.toUpperCase(), setLen].filter(Boolean).join(' · ') : tagOf(slot, of), many = copies > 1 ? ' ×' + copies : '';
       const pieceKey = rec ? rec.pieceKey : (F ? F.parseKey(job.key).pieceKey : String(job.key == null ? '' : job.key));
-      return { key: job.key, job, record: rec, slot, kind: kindOfSlot(slot), n: /^D(\d+)$/.test(slot) ? +slot.slice(1) : 0, label: labelOf(slot), name: nameOf(slot),
+      return { key: job.key, job, record: rec, slot, kind: kindOfSlot(slot), n: /^D(\d+)$/.test(slot) ? +slot.slice(1) : 0, label: sps ? setName : labelOf(slot), name: sps ? setName : nameOf(slot), set: sps || null,
         tag: (face === 'front' && faces > 1 ? [base, 'FRONT'].filter(Boolean).join(' · ') : base) + many, baseTag: base + many, words: R ? R.wordsOf(job) : '', font,
         face, faceLabel: face === 'front' ? 'Front' : 'Back', pieceKey, faces,
         stage: o.stageOf ? o.stageOf(job, busy) : R ? R.stageOf(job, busy) : '', state: job.state, busy };
@@ -98,6 +102,7 @@
   const kindOf = pieces => {
     const ps = pieces || [], ks = new Set(ps.map(p => p.kind));
     if (ps.length >= 2 && new Set(ps.map(p => p.pieceKey || p.slot)).size === 1 && ps.some(p => p.face === 'front')) return 'faces';
+    if (ps.some(p => p && p.set)) return 'pieces';   // (a set of different designs is no row of discs: the bars, each its own)
     return ks.size === 1 && ks.has('disc') ? 'discs' : ks.size === 1 && ks.has('ear') ? 'ears' : 'pieces';
   };
   const chipHtml = p => `<span class="egPiece" data-slot="${esc(p.slot)}">${esc(p.tag)}</span>`;
@@ -130,7 +135,7 @@
     const by = new Map(), out = [];
     for (const p of pieces || []) {
       const k = p.pieceKey || p.slot || '';
-      if (!by.has(k)) { const g = { slot: p.slot, pieceKey: k, kind: p.kind, n: p.n, label: p.label, name: p.name, tag: p.baseTag != null ? p.baseTag : p.tag, front: null, back: null, pieces: [], words: '', stage: '', key: p.key }; by.set(k, g); out.push(g); }
+      if (!by.has(k)) { const g = { slot: p.slot, pieceKey: k, kind: p.kind, n: p.n, label: p.label, name: p.name, tag: p.baseTag != null ? p.baseTag : p.tag, front: null, back: null, pieces: [], words: '', stage: '', key: p.key, set: p.set || null }; by.set(k, g); out.push(g); }
       by.get(k)[p.face === 'front' ? 'front' : 'back'] = p;
     }
     const open = p => !['approved', 'written', 'skipped', 'none'].includes(p.state);
@@ -155,7 +160,7 @@
     if (o.faces === false || !ps.some(p => p.face === 'front')) return flatHtml(ps, key, o);
     const groups = groupPieces(ps), shown = groups.find(g => g.pieces.some(p => p.key === key)) || groups[0];
     // one button for each piece (it presses to the face still to settle, or to the face shown when the piece is the shown one), then the shown piece's Front | Back
-    const top = groups.length > 1 ? flatHtml(groups.map(g => ({ key: g === shown ? (g.pieces.some(p => p.key === key) ? key : g.key) : g.key, slot: g.slot, kind: g.kind, n: g.n, label: g.label, name: g.name, tag: g.tag, words: g.words, font: (g.back || g.front).font, stage: g.stage })), g0(shown, key), o) : '';
+    const top = groups.length > 1 ? flatHtml(groups.map(g => ({ key: g === shown ? (g.pieces.some(p => p.key === key) ? key : g.key) : g.key, slot: g.slot, kind: g.kind, n: g.n, label: g.label, name: g.name, tag: g.tag, set: g.set, words: g.words, font: (g.back || g.front).font, stage: g.stage })), g0(shown, key), o) : '';
     return top + (shown.pieces.length > 1 ? faceHtml(shown, key, o) : '');
   }
   const g0 = (shown, key) => (shown.pieces.some(p => p.key === key) ? key : shown.key);
