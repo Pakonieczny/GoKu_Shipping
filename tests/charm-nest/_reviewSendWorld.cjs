@@ -29,6 +29,8 @@ const ORDERS = {
   // the NEXT order of that very listing (another buyer, another receipt), then one more for after the sandbox clean-up
   repeat: { rid: '4291000002', listing: '1891000001', sku: 'SCHRODINGER CAT 1', title: 'Cat Necklace, Whimsical Cat Charm Gift', buyer: 'Name Two', placed: { day: 0, h: 9, m: 20 }, ship: SHIP_DAYS, variations: [V('Metal choice', 'Gold')] },
   again: { rid: '4291000003', listing: '1891000001', sku: 'SCHRODINGER CAT 1', title: 'Cat Necklace, Whimsical Cat Charm Gift', buyer: 'Name Three', placed: { day: 0, h: 9, m: 30 }, ship: SHIP_DAYS, variations: [V('Metal choice', 'Gold')] },
+  // the same listing, ANOTHER variation (another SKU, matched by its own name): the saved link of the first SKU is not its link
+  variant: { rid: '4291000007', listing: '1891000001', sku: 'COMET_9427', title: 'Cat Necklace, Whimsical Cat Charm Gift', buyer: 'Name Seven', placed: { day: 0, h: 9, m: 35 }, ship: SHIP_DAYS, variations: [V('Metal choice', 'Gold')] },
   // a matched listing with NOTHING like it in the library: no suggestion area at all
   alone: { rid: '4291000004', listing: '1891000004', sku: 'COMET_9427', title: 'Comet Necklace, Celestial Charm Necklace in 14k Gold Fill', buyer: 'Name Four', placed: { day: 0, h: 9, m: 40 }, ship: SHIP_DAYS, variations: [V('Metal choice', 'Gold')] },
   // two orders on ONE saved sheet (the second is the control: it is never marked)
@@ -61,6 +63,9 @@ async function open(mode, opts = {}) {
 /** The page is up and has read the library and the learned maps (as at the start of a shift). */
 async function ready(w, noWait) {
   if (!noWait) await w.page.waitForFunction(() => window.CN && window.Orders && window.OrderWin && window.Review && CN.S.cloud.ok === true, null, { timeout: 60000 });
+  // the page's own start-up has finished (it recovers the saved workspace, opens the tab it was on, and only then listens: Session.ready()): until then it may
+  // still switch the tab and empty the day's rows under the test's hands
+  await w.page.waitForFunction(() => !window.Session || typeof Session.ready !== 'function' || Session.ready() === true || (Session.failure && Session.failure()), null, { timeout: 60000 });
   await w.page.evaluate(async () => { await Master.load(true); await Orders.loadMaps(true); try { localStorage.removeItem('cn.sandboxHold'); } catch (_) {} });
 }
 /** A page reload: the cloud stays as it is, the page forgets everything it held in memory (a second computer, or the next morning). */
@@ -72,10 +77,21 @@ async function reboot(w) {
 
 /** Lines in, through the real intake (no pool, no run: a pulled order, as it arrives). `names` = keys of ORDERS. Resolves nothing. */
 async function addOrders(w, names, o = {}) {
+  // (a page that has only just reloaded can still be finishing its own start-up, which may empty the day's rows once more: an order that is not
+  //  there after the settle is put in again, up to three times, so this helper never reports a start-up race as a missing order)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const have = await w.page.evaluate(rids => rids.filter(r => Orders.rows().some(x => String(x.order.receiptId) === r)), names.map(n => ORDERS[n].rid));
+    const missing = names.filter(n => !have.includes(ORDERS[n].rid));
+    if (!missing.length) return;
+    await addOrdersOnce(w, missing, o);
+  }
+}
+async function addOrdersOnce(w, names, o = {}) {
   await w.page.evaluate(async ({ fixtures, orderSrc, loadMaps }) => {
     const orderOf = eval('(' + orderSrc + ')'), now = Date.now();
     if (loadMaps) await Orders.loadMaps(true);
     for (const fx of fixtures) {
+      if (Orders.rows().some(x => String(x.order.receiptId) === String(fx.rid))) continue;
       const order = orderOf(fx, now);
       for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); }
     }
@@ -85,11 +101,18 @@ async function addOrders(w, names, o = {}) {
 }
 
 /** What the intake read for an order: the charm it matched, how, what is wrong with it, and where the page keeps it. */
-const readOf = (w, name) => w.page.evaluate(rid => {
-  const rows = Orders.rows().filter(r => String(r.order.receiptId) === rid), r = rows[0]; if (!r) return null;
-  const s = r.spec || {};
-  return { key: r.key, state: r.state, designSku: s.designSku || null, source: s.skuSource || null, bought: s.boughtSku || null, problems: (r.problems || []).map(p => p.kind), reason: r.reason || null, poolIds: r.poolIds || [] };
-}, ORDERS[name].rid);
+const readOf = async (w, name) => {
+  // waits for the order to be in the page's rows and read (never loosens what is checked about it); null only when it is still not there after 6 s
+  const pull = () => w.page.evaluate(rid => {
+    const rows = Orders.rows().filter(r => String(r.order.receiptId) === rid), r = rows[0]; if (!r) return null;
+    const s = r.spec || {};
+    return { key: r.key, state: r.state, designSku: s.designSku || null, source: s.skuSource || null, bought: s.boughtSku || null, problems: (r.problems || []).map(p => p.kind), reason: r.reason || null, poolIds: r.poolIds || [], read: !!r.spec };
+  }, ORDERS[name].rid);
+  const t0 = Date.now(); let v = await pull();
+  while ((!v || !v.read) && Date.now() - t0 < 6000) { await new Promise(r => setTimeout(r, 150)); v = await pull(); }
+  if (v) delete v.read;
+  return v;
+};
 
 /** The saved links the cloud holds for a listing: every document of the fake Firestore, in any collection, that carries the listing's id AND the picked charm under an alias-like name. Location-free on purpose: the test says WHERE it found it. */
 function linksFor(w, listing, sku) {

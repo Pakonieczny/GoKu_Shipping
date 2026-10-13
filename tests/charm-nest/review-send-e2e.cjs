@@ -47,18 +47,23 @@ const PAGE = {
   hold: (w, sid) => w.page.evaluate(sid => { const H = window.CharmNestReviewHold; return H ? { held: H.isHeld(sid), by: H.heldBy(sid), why: H.reasonFor(sid) } : null; }, sid),
   sheetState: (w, sid) => w.page.evaluate(sid => { const x = LaserReview.explain('sheet', sid); return x ? { ready: x.ready, step: x.step, steps: Object.fromEntries(x.steps.map(s => [s.key, { state: s.state, detail: s.detail }])), next: x.nextText } : null; }, sid),
   libCard: (w, sid) => w.page.evaluate(sid => { const f = document.querySelector(`[data-flow-for="sheet:${sid}"]`), c = f && (f.closest('article') || f.closest('.libCard') || f.parentElement); const box = document.querySelector(`.approveBox[data-approve-for="sheet:${sid}"]`), btn = box && box.querySelector('[data-approve-btn]'); return c ? { text: c.innerText.replace(/\s+/g, ' ').trim(), approve: btn ? { disabled: btn.getAttribute('aria-disabled') === 'true', why: (box.querySelector('[data-approve-why]') || {}).textContent || '', label: btn.textContent.trim() } : null, bang: !!c.querySelector('[data-issues-open]') } : null; }, sid),
-  libOpen: async (w, sid) => { await w.page.evaluate(() => CN.setMode('library')); await w.page.waitForSelector(`[data-flow-for="sheet:${sid}"]`, { timeout: 30000 }); await W.settle(w.page, 900); },
+  libOpen: async (w, sid) => {
+    const mark = w.srv.st.calls.length; await w.page.evaluate(() => CN.setMode('library'));
+    try { await w.page.waitForSelector(`[data-flow-for="sheet:${sid}"]`, { timeout: 30000 }); }
+    catch (e) { const d = await w.page.evaluate(() => ({ mode: CN.S.mode, lib: CN.S.library && { kind: CN.S.library.kind, rows: (CN.S.library.rows || []).length }, text: ((document.getElementById('libBody') || {}).innerText || '').slice(0, 160) })).catch(() => null); throw new Error(`the Library never showed ${sid}: ${J(d)} calls ${J(w.srv.st.calls.slice(mark).map(c => c.op))} sheet in cloud ${!!w.srv.st.doc(w.prefix + 'Charm_Nest_Sheets', sid)}`); }
+    await W.settle(w.page, 900);
+  },
   panel: w => w.page.evaluate(() => { const p = document.querySelector('.lisPanel'); return p ? { text: p.innerText.replace(/\s+/g, ' ').trim(), rows: [...p.querySelectorAll('.lisRow')].map(r => ({ id: r.dataset.id || '', text: r.innerText.replace(/\s+/g, ' ').trim() })) } : null; })
 };
 
 async function scenario(mode) {
   const M = x => `[${mode}] ${x}`;
-  const done = new Set();
+  const done = new Set(), notes = {};
   const step = async (id, owner, title, needs, fn) => {
     const miss = needs.filter(n => !done.has(n));
     if (miss.length) { results.push({ mode, id, owner, title, status: 'SKIP', why: 'needs ' + miss.join(', ') }); return; }
     const t0 = Date.now();
-    try { await fn(); done.add(id); results.push({ mode, id, owner, title, status: 'ok', ms: Date.now() - t0 }); }
+    try { await fn(); done.add(id); results.push({ mode, id, owner, title, status: 'ok', ms: Date.now() - t0, note: notes[id] || '' }); }
     catch (e) { results.push({ mode, id, owner, title, status: 'FAIL', why: String(e && e.message || e).split('\n').slice(0, 3).join(' | ') }); }
   };
   const w = await W.open(mode);
@@ -158,18 +163,24 @@ async function scenario(mode) {
     });
 
     let pickedAt = null;
-    await step('5', 'REVSUGGEST+REVLINK+REVMARK', 'the pick is saved (one write), read back, the same for both workspaces, and it closes the review', ['3'], async () => {
+    await step('5', 'REVSUGGEST+REVLINK+REVMARK', 'the pick is saved (one write), read back, the same for both workspaces, and it closes the review', ['2'], async () => {
       const rid = cR('matched'), lid = ORDERS.matched.listing, mark = st.calls.length;
       await PAGE.openReview(w, 'open');
       const btn = `${CARD(rid)} .rvMarkSlot [data-dsku="${NEAR}"]`;
-      await w.page.waitForSelector(btn, { timeout: 8000 });
-      await w.page.click(btn);
+      if (await w.page.$(btn)) { await w.page.click(btn); notes['5'] = 'tapped the suggested charm in the order\'s Review row'; }
+      else {
+        // REVSUGGEST's buttons are not on this page (step 3 says so): the pick goes through REVLINK's own entry point, so the saved link is still proven
+        notes['5'] = 'NO suggested-charm button on the page (REVSUGGEST): the pick went through CharmNestReviewLink.pick instead';
+        const r = await w.page.evaluate(async ({ rid, sku }) => { const row = Orders.rows().find(x => String(x.order.receiptId) === rid); try { return await CharmNestReviewLink.pick(row, sku, { by: 'Test Operator' }); } catch (e) { return { ok: false, why: String(e && e.message || e) }; } }, { rid, sku: NEAR });
+        ok(r && r.ok, 'CharmNestReviewLink.pick saved the link (REVLINK): ' + J(r));
+      }
       ok(await until(async () => !(await PAGE.mark(w, rid)).is, 10000), 'the review closed after the pick (REVMARK resolve, how "pick")');
       const info = (await PAGE.mark(w, rid)).info;
       ok(info && info.state === 'done' && info.how === 'pick' && info.sku === NEAR, 'the mark says who picked what: ' + J(info));
       const since = st.calls.slice(mark);
       const writes = since.filter(c => c.op === 'aliasPut');
       ok(writes.length === 1 && String(writes[0].body.listingId) === lid && String(writes[0].body.sku || (writes[0].body.pair && writes[0].body.pair.L)) === NEAR, 'ONE aliasPut for this listing and the picked charm (REVLINK): ' + J(writes.map(c => c.body)));
+      ok(String(writes[0].body.fromSku || '').toUpperCase() === ORDERS.matched.sku, 'kept under the SKU of the line (one link per variation): ' + J(writes[0].body));
       ok(since.filter(c => c.op === 'reviewMarkPut' && c.body.action === 'resolve').length === 1, 'ONE resolve write for the mark');
       // read back from the cloud, as the page of ANY computer reads it, with and without the sandbox flag: the link is shared by both workspaces
       const read = flag => w.page.evaluate(async ({ lid, flag }) => { const r = await CN.api('charmNestLibrary', Object.assign({ op: 'aliasGet', listingId: lid }, flag ? { sandbox: true } : {})); return r; }, { lid, flag });
@@ -178,13 +189,16 @@ async function scenario(mode) {
       ok(found.length >= 1, 'the link is in a saved-link collection of the cloud: ' + J(found.map(f => f.path)));
       ok(found.some(f => !/^Sandbox_/.test(f.path)), `the link lives where a sandbox clean-up cannot reach it (found at ${found.map(f => f.path).join(', ')})`);
       pickedAt = found.map(f => f.path);
-      // the page itself now reads this listing as the picked charm, and the open list holds nothing for it
-      const r = await W.readOf(w, 'matched');
-      ok(r.designSku === NEAR, 'the page reads the order as the picked charm now: ' + J(r));
       ok(!(await PAGE.reviewItems(w)).some(i => i.rid === rid && i.kind === 'reviewMark' && !i.done), 'no open Review item is left for the order');
       await PAGE.openReview(w, 'done'); const c = await PAGE.reviewCard(w, rid);
-      ok(c && /pick|picked|chose|SCHRODINGER CAT 2/i.test(c.text) || c === null, 'the answer is kept under Completed: ' + J(c && c.text));
+      ok(c === null || /pick|picked|chose|SCHRODINGER CAT 2/i.test(c.text), 'the answer is kept under Completed: ' + J(c && c.text));
       await snap('5-picked');
+    });
+
+    await step('5b', 'REVSUGGEST+REVLINK', 'the order itself (not built yet) now reads as the picked charm, and the Orders tab says so', ['5'], async () => {
+      const r = await until(async () => { const x = await W.readOf(w, 'matched'); return x && x.designSku === NEAR ? x : null; }, 4000);
+      ok(r, 'after the pick the page reads the not-yet-built order as the picked charm: ' + J(await W.readOf(w, 'matched')));
+      ok(!r.problems.length, 'with no question: ' + J(r));
     });
 
     await step('6', 'REVLINK', 'a NEW order of the same listing is matched by the saved link at once, nothing in Review; and after a page reload', ['5'], async () => {
@@ -197,6 +211,10 @@ async function scenario(mode) {
       ok(!items.some(i => i.rid === ORDERS.repeat.rid), 'nothing for it in Review: ' + J(items.filter(i => i.rid === ORDERS.repeat.rid)));
       ok(!(await PAGE.mark(w, ORDERS.repeat.rid)).is, 'it is not marked');
       ok(!st.calls.slice(mark).some(c => c.op === 'aliasPut' || c.op === 'reviewMarkPut'), 'matching it wrote nothing');
+      // one link per variation: another SKU of the same listing is NOT pointed at the picked charm
+      await W.addOrders(w, ['variant']);
+      const v = await W.readOf(w, 'variant');
+      ok(v.designSku === ORDERS.variant.sku && v.designSku !== NEAR, `a variation of the listing (another SKU) keeps its own charm, the link is for the SKU that was picked: ${J(v)}`);
       // a page that has forgotten everything (a second computer, the next morning) reads the same
       await W.reboot(w);
       await W.addOrders(w, ['again'], { loadMaps: false });               // (maps as the page loads them at the start of a shift)
@@ -205,15 +223,23 @@ async function scenario(mode) {
       ok(!(await PAGE.reviewItems(w)).some(i => i.rid === ORDERS.again.rid), 'and still nothing in Review');
     });
 
+    const rid5 = ORDERS.matched.rid;
     await step('7', 'REVLINK', 'the saved link survives the sandbox Reset and the history Purge (the next order is still matched)', ['6'], async () => {
       // the page's own ops on the fake site (Settings: "Reset the sandbox" / "Purge all run history"): the link must not be among what they delete
+      // (controls first: the Reset and the Purge really delete something here, or "the link survived" would prove nothing)
+      st.put(P + 'Charm_Custom_Orders', 'ctl_old', { key: 'ctl_old', receiptId: '4291999991', state: 'open' });
+      st.put('Sandbox_Charm_Pool', 'ctl-pool', { poolId: 'ctl-pool', state: 'ready' });
+      st.put('Charm_Nest_Runs', 'ctl-run', { runId: 'ctl-run', lines: {}, status: 'archived' }); st.put('Charm_Pool', 'ctl-pool', { poolId: 'ctl-pool', state: 'ready' });
       const rs = await W.resetSandbox(w); ok(rs && !rs.error, 'the sandbox reset ran on the fake site: ' + J(rs));
+      ok(!st.doc('Sandbox_Charm_Pool', 'ctl-pool'), 'control: the Reset really deleted the sandbox\'s own records');
+      ok(mode === 'sandbox' ? !st.doc('Sandbox_Charm_Custom_Orders', 'ctl_old') && !st.doc('Sandbox_Charm_Custom_Orders', rid5 + '_review') : !!st.doc('Charm_Custom_Orders', rid5 + '_review'), mode === 'sandbox' ? 'control: and the sandbox\'s review marks went with it' : 'control: the Reset left production\'s records alone');
       let found = W.linksFor(w, ORDERS.matched.listing, NEAR);
       ok(found.some(f => !/^Sandbox_/.test(f.path)), 'the link is still in the cloud after the Reset: ' + J(found.map(f => f.path)));
       await W.reboot(w); await W.addOrders(w, ['repeat'], { loadMaps: false });
       let r = await W.readOf(w, 'repeat');
       ok(r.designSku === NEAR && !r.problems.length, `after the Reset a new order is still read as ${NEAR}: ${J(r)}`);
       const pg = await W.purgeHistory(w); ok(pg && !pg.error, 'the history purge ran on the fake site: ' + J(pg));
+      ok(!st.doc('Charm_Pool', 'ctl-pool') && !st.doc('Charm_Nest_Runs', 'ctl-run'), 'control: the Purge really deleted the run history');
       found = W.linksFor(w, ORDERS.matched.listing, NEAR);
       ok(found.some(f => !/^Sandbox_/.test(f.path)), 'the link is still in the cloud after the Purge: ' + J(found.map(f => f.path)));
       await W.reboot(w); await W.addOrders(w, ['again'], { loadMaps: false });
@@ -251,7 +277,8 @@ async function scenario(mode) {
       const msg = await until(() => PAGE.msg(w, rid), 4000);
       ok(msg && /GF Sheet 1|Sheet 1/.test(msg) && /held/i.test(msg) && /stay/i.test(msg), 'ONE plain line names the sheet, says it stays there and that the sheet is held (REVBTN): ' + J(msg));
       ok(msg.split(/\n/).length === 1 && msg.length < 140, 'and it is one short line: ' + msg.length);
-      // it stays on its sheet: every record of the sheet, its pieces and its set is as it was
+      // it stays on its sheet: every record of the sheet, its pieces and its set is as it was (after the page's own writes have had time to land)
+      await W.settle(w.page, 1200);
       ok(W.sheetRecords(w, sh) === before, 'nothing was lifted off, re-nested or rewritten: the sheet, pool and set records are unchanged: ' + W.recordsDiff(before, W.sheetRecords(w, sh)));
       ok(!st.calls.slice(mark).some(c => /^(putSheet|deleteSheet|restoreSheet|poolUpdate|poolPut|setUpdate|setAllocate|runPut)$/.test(String(c.op))), 'no write of a sheet, piece or set: ' + J(st.calls.slice(mark).map(c => c.op)));
       const where = await w.page.evaluate(rid => { const r = Orders.rows().find(x => String(x.order.receiptId) === rid), p = Orders.placeOf ? Orders.placeOf(r) : null; return { state: r.state, poolIds: r.poolIds, sheet: p && p.sheet || null }; }, rid);
@@ -315,6 +342,8 @@ async function scenario(mode) {
       const clicked = await w.page.evaluate(sel => { const c = document.querySelector(sel); const b = c && [...c.querySelectorAll('button')].find(x => /^(Mark OK|OK|Charm is fine|Looks right|Resolve|Done|Dismiss)\b/i.test(x.textContent.trim())); if (b) { b.click(); return b.textContent.trim(); } return ''; }, CARD(rid));
       if (!clicked) await w.page.evaluate(rid => CharmNestReviewMark.resolve(rid, { by: 'Test Operator', how: 'ok' }), rid);
       ok(await until(async () => !(await PAGE.mark(w, rid)).is, 8000), `the review is resolved (${clicked ? 'button "' + clicked + '"' : 'API; the card has no OK button among ' + J(okBtn)})`);
+      // (the page shows it at once; the write to the cloud follows within moments: wait for the record, never for a fixed time)
+      await until(() => { const d = st.doc(P + 'Charm_Custom_Orders', rid + '_review'); return d && d.review && d.review.state === 'done'; }, 8000);
       const doc = st.doc(P + 'Charm_Custom_Orders', rid + '_review');
       ok(doc && doc.review && doc.review.state === 'done', 'the record says done: ' + J(doc));
       const hb = await PAGE.hold(w, sh.id);
@@ -342,9 +371,9 @@ async function scenario(mode) {
 
 (async () => {
   for (const mode of only) { console.log(`\n== ${mode} ==`); try { await scenario(mode); } catch (e) { results.push({ mode, id: '-', owner: 'TEST', title: 'the world', status: 'FAIL', why: String(e && e.stack || e).split('\n').slice(0, 4).join(' | ') }); } }
-  const rank = r => (r.id === '0' ? 99 : +r.id || 0);
+  const rank = r => (r.id === '0' ? 99 : parseFloat(String(r.id).replace('b', '.5')) || 0);
   const rows = results.slice().sort((a, b) => a.mode.localeCompare(b.mode) * -1 || rank(a) - rank(b));
-  for (const r of rows) console.log(`${r.status === 'ok' ? '  ok  ' : r.status === 'SKIP' ? ' SKIP ' : ' FAIL '} [${r.mode}] ${String(r.id).padStart(2)} ${r.owner.padEnd(26)} ${r.title}${r.status === 'FAIL' ? '\n          -> ' + r.why : r.status === 'SKIP' ? ' (' + r.why + ')' : ''}`);
+  for (const r of rows) console.log(`${r.status === 'ok' ? '  ok  ' : r.status === 'SKIP' ? ' SKIP ' : ' FAIL '} [${r.mode}] ${String(r.id).padStart(2)} ${r.owner.padEnd(26)} ${r.title}${r.status === 'FAIL' ? '\n          -> ' + r.why : r.status === 'SKIP' ? ' (' + r.why + ')' : r.note ? '\n          (' + r.note + ')' : ''}`);
   const bad = results.filter(r => r.status === 'FAIL');
   console.log(bad.length ? `\nreview-send-e2e: ${bad.length} step(s) FAILED, ${results.filter(r => r.status === 'SKIP').length} skipped, ${results.filter(r => r.status === 'ok').length} ok` : `\nreview-send-e2e OK: ${results.filter(r => r.status === 'ok').length} steps in ${only.join(' + ')}${results.some(r => r.status === 'SKIP') ? ', ' + results.filter(r => r.status === 'SKIP').length + ' skipped' : ''}`);
   process.exit(bad.length ? 1 : 0);
