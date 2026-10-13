@@ -16,6 +16,11 @@
 //       from it three seconds after the order came back, if a Reset ran from another tab before the clean-up reached the
 //       browser. The page now asks the cloud before it restores: a checkpoint whose recorded sends the cloud no longer
 //       holds is not restored (all of them: dropped whole; some: only those).
+//   REVLINK (Paul, 12 Oct 2026, supersedes point 1 FOR A PERSON'S PICK OF A CHARM ONLY): "if I make choices, those choices should be saved moving forward whether I'm doing it in
+//       sandbox or in live mode". aliasPut ("Use this charm", a saved pair) and optionMapPut with field design (an option that picks the charm) are written to the SHARED store from the
+//       sandbox too, read back (verified:true), and neither Reset nor Purge touches them; the sandbox and production read the same links. An answer the sandbox kept in its OWN copy before that
+//       (seeded below directly, as an older page wrote it) is still read while it is the later write of the two, and Reset still wipes it. Every other answer (form, size, count, ignore,
+//       no-design, listing words) is the sandbox's own copy as before. Section 6 below pins it.
 //   The shared stores written BEFORE this fix cannot be told from production's (no sandbox mark on the document), so
 //   Reset deletes none of them: they are listed live read-only and were empty; the test pins that Reset leaves a shared
 //   row it cannot prove as it was.
@@ -150,12 +155,19 @@ async function seedRelations(sb) {
   const L = b => must(Object.assign({}, b, sb ? { sandbox: true } : {}));
   const by = sb ? 'paul-sandbox' : 'ann-production', design = sb ? 'LION_SANDBOX_9' : 'TRICERATOPS_PROD_1';
   // the listing's answered design: for the SKU the line came with, and for the listing itself
-  await L({ op: 'aliasPut', listingId: LISTING, sku: design, fromSku: 'CUTE_TRICERATOPS_4170', title: 'CUTE TRICERATOPS W/ HEARTS', by });
-  await L({ op: 'aliasPut', listingId: LISTING, sku: design, title: 'CUTE TRICERATOPS W/ HEARTS', by });
-  if (sb) await L({ op: 'aliasPut', listingId: LISTING2, sku: 'LION_SANDBOX_9', title: 'a listing only the sandbox answered', by });
-  // the option that picks the charm
-  await L({ op: 'optionMapPut', listingId: LISTING, optionName: 'Size', optionValue: 'Small', map: { field: 'design', value: design }, by });
-  if (sb) await L({ op: 'optionMapPut', listingId: LISTING2, optionName: 'Size', optionValue: 'Large', map: { field: 'design', value: 'LION_SANDBOX_9' }, by });
+  // (REVLINK: a pick made in the sandbox is no longer the sandbox's copy, so the sandbox's copy is seeded the way an OLDER page wrote it, straight into Sandbox_…; production's picks go through the ops as before)
+  const at = new TS(Date.now());
+  if (!sb) {
+    await L({ op: 'aliasPut', listingId: LISTING, sku: design, fromSku: 'CUTE_TRICERATOPS_4170', title: 'CUTE TRICERATOPS W/ HEARTS', by });
+    await L({ op: 'aliasPut', listingId: LISTING, sku: design, title: 'CUTE TRICERATOPS W/ HEARTS', by });
+    // the option that picks the charm
+    await L({ op: 'optionMapPut', listingId: LISTING, optionName: 'Size', optionValue: 'Small', map: { field: 'design', value: design }, by });
+  } else {
+    store.set(`Sandbox_Charm_Sku_Aliases/${LISTING}`, { listingId: LISTING, by, title: 'CUTE TRICERATOPS W/ HEARTS', updatedAt: at, sku: design, v: 2, bySku: { CUTE_TRICERATOPS_4170: design } });
+    store.set(`Sandbox_Charm_Sku_Aliases/${LISTING2}`, { listingId: LISTING2, by, title: 'a listing only the sandbox answered', updatedAt: at, sku: 'LION_SANDBOX_9', v: 2 });
+    store.set(`Sandbox_Charm_Option_Map/${LISTING}`, { listingId: LISTING, updatedAt: at, map: { size: { small: { field: 'design', value: design, by, at: Date.now() } } } });
+    store.set(`Sandbox_Charm_Option_Map/${LISTING2}`, { listingId: LISTING2, updatedAt: at, map: { size: { large: { field: 'design', value: 'LION_SANDBOX_9', by, at: Date.now() } } } });
+  }
   // "this SKU has no design"
   const row = await L({ op: 'noDesignPut', sku: sb ? 'LION_NODESIGN' : 'PROD_NODESIGN_1', note: 'a SKU with no design', by });
   const pat = await L({ op: 'noDesignPut', pattern: sb ? '^LION_ONLY' : '^PROD_ONLY', note: 'a pattern', by });
@@ -196,6 +208,8 @@ async function serverSection() {
   store.set('Charm_Sandbox/stream', { on: true, v: 2, seed: 7, speed: 50, stepMs: 600000, tick: 12, snapshotPath: 'charmnest/sandbox/orders-cur.json' });
   for (const f of ['orders-cur.json', 'master/BRITES-master.ai']) blobs.set('charmnest/sandbox/' + f, { buf: Buffer.from('x') });
   store.set(`Charm_Nest_CustomRead/${LINE}`, { reads: { h1: { kind: 'custom' } }, order: LION, updatedAt: new TS(NOW - 9000) });
+  // the designs a pick may name are the Charm repo's (a link never names a design the master index does not hold)
+  for (const k of ['TRICERATOPS_PROD_1', 'LION_SANDBOX_9', 'PICK_A_1', 'PICK_B_2', 'PICK_C_3']) store.set(`Charm_Master_Index/${k}`, { sku: k, name: k });
   // the charm library is one shared collection: a charm named in the sandbox must not rename it for production
   store.set('Charm_Nest_Library/abcdef0123456789', { hash: 'abcdef0123456789', name: 'Production name', namedBy: 'operator' });
   // rows in the shared maps from BEFORE this fix: no mark on them says who wrote them, so Reset never deletes them
@@ -269,10 +283,15 @@ async function serverSection() {
   assert.strictEqual((await prGet('customSheetGet', { keys: [CK] })).records[CK].sent.by, 'ann-production', "production's design of the order is still sent");
   const zero = await sbGet('sandboxStatus');
   assert(Object.values(zero.records).every(n => n === 0), 'sandboxStatus finds nothing left: ' + names(zero.records));
-  // a late write of an old page lands in the sandbox's copy only, and the next press clears it
-  await must({ op: 'aliasPut', listingId: LISTING, sku: 'LION_SANDBOX_9', title: 'late', by: 'old tab', sandbox: true });
-  assert(store.has(`Sandbox_Charm_Sku_Aliases/${LISTING}`) && store.get(`Charm_Sku_Aliases/${LISTING}`).sku === 'TRICERATOPS_PROD_1', "a late sandbox answer is the sandbox's copy only");
+  // a late write of an old page: a PICK (REVLINK) is saved in the shared store for good, in the sandbox too, and read back; a copy the sandbox keeps of any other answer is its own and the next press clears it
+  const late = await must({ op: 'aliasPut', listingId: LISTING, sku: 'LION_SANDBOX_9', title: 'late', by: 'old tab', sandbox: true });
+  assert(late.verified === true && store.get(`Charm_Sku_Aliases/${LISTING}`).sku === 'LION_SANDBOX_9' && !store.has(`Sandbox_Charm_Sku_Aliases/${LISTING}`), 'a late sandbox pick is saved in the shared store, read back, and the sandbox keeps no copy of it');
+  await must({ op: 'noDesignPut', sku: 'LATE_NODESIGN', note: 'late', by: 'old tab', sandbox: true });
+  assert(sandboxKeys().length === 1 && sandboxKeys()[0].startsWith('Sandbox_Charm_Sku_NoDesign/'), "any other late sandbox answer is the sandbox's copy only: " + sandboxKeys().join(', '));
   assert((await post({ op: 'sandboxReset', sandbox: true })).body.more === false && !sandboxKeys().length, 'pressed again, the reset clears it');
+  assert.deepStrictEqual((await sbGet('aliasGet')).aliases, (await prGet('aliasGet')).aliases, 'the sandbox reads exactly what production reads, the late pick included');
+  assert.strictEqual((await prGet('aliasGet')).aliases[LISTING].sku, 'LION_SANDBOX_9', 'production reads the link the sandbox saved');
+  store.set(`Charm_Sku_Aliases/${LISTING}`, Object.assign({}, store.get(`Charm_Sku_Aliases/${LISTING}`), { sku: 'TRICERATOPS_PROD_1' }));   // (put back, so the sections below start from what production had)
 
   /* ── 5 · Purge all run history clears the sandbox's maps too, and leaves production's learned answers alone ── */
   await seedRelations(true); bulkMaps(true, 400);
@@ -285,6 +304,63 @@ async function serverSection() {
   assert.deepStrictEqual(families(sandboxKeys()), [], 'after the purge the sandbox holds nothing: left ' + families(sandboxKeys()).join(', '));
   assert.deepStrictEqual([...maps()].sort(), [...mapsBefore].sort(), "production's learned answers are what they were after the purge");
   console.log(`purge: ${purges} call(s) cleared the sandbox's learned maps; production's answers untouched`);
+
+  /* ── 6 · REVLINK: a person's pick of a charm in the sandbox is saved for good, shared with production, and survives Reset and Purge ── */
+  const P6 = '1805550001', P6B = '1805550002';
+  const bothRead = async (what, fn) => { const a = await sbGet(what), b = await prGet(what); fn(a, 'sandbox'); fn(b, 'production'); assert.deepStrictEqual(a.aliases || a.maps, b.aliases || b.maps, 'the sandbox reads exactly what production reads (' + what + ')'); };
+  const w1 = await must({ op: 'aliasPut', listingId: P6, sku: 'PICK_A_1', fromSku: 'VARIATION_ONE', title: 'a listing', by: 'Name One', sandbox: true });
+  assert(w1.ok && w1.verified === true && w1.kind === 'bySku' && w1.key === 'VARIATION_ONE' && w1.sku === 'PICK_A_1', 'the pick is read back: ' + names(w1));
+  assert.deepStrictEqual(store.get(`Charm_Sku_Aliases/${P6}`).bySku, { VARIATION_ONE: 'PICK_A_1' }, 'one document in the shared store, under the SKU of the variation');
+  assert(!store.has(`Sandbox_Charm_Sku_Aliases/${P6}`), 'no sandbox copy');
+  // a second variation of the same listing keeps its own link; the first is untouched
+  await must({ op: 'aliasPut', listingId: P6, sku: 'PICK_B_2', fromSku: 'VARIATION_TWO', by: 'Name One', sandbox: true });
+  await bothRead('aliasGet', r => assert.deepStrictEqual(r.aliases[P6].bySku, { VARIATION_ONE: 'PICK_A_1', VARIATION_TWO: 'PICK_B_2' }, 'one link per variation'));
+  // a pick of the charm an option gives
+  const o1 = await must({ op: 'optionMapPut', listingId: P6B, optionName: 'Zodiac Sign', optionValue: 'Pisces', map: { field: 'design', value: 'PICK_C_3' }, by: 'Name One', sandbox: true });
+  assert(o1.verified === true && o1.kind === 'option' && o1.sku === 'PICK_C_3', 'the option pick is read back: ' + names(o1));
+  assert(!store.has(`Sandbox_Charm_Option_Map/${P6B}`) && store.get(`Charm_Option_Map/${P6B}`).map['zodiac sign'].pisces.value === 'PICK_C_3', 'in the shared store, none in the sandbox');
+  await bothRead('optionMapGet', r => assert.strictEqual(r.maps[P6B]['zodiac sign'].pisces.value, 'PICK_C_3', 'the option pick is read by both'));
+  // a pair of two designs
+  const pr = await must({ op: 'aliasPut', listingId: P6B, fromSku: 'TWO_CATS', pair: { L: 'PICK_A_1', R: 'PICK_B_2' }, by: 'Name One', sandbox: true });
+  assert(pr.verified === true && pr.kind === 'pair', 'the pair is read back: ' + names(pr));
+  // a link never names a design the library does not hold
+  const bad = await post({ op: 'aliasPut', listingId: P6, sku: 'NOT_IN_THE_LIBRARY', fromSku: 'VARIATION_THREE', by: 'Name One', sandbox: true });
+  assert(bad.status === 409 && /not in the master index/.test(bad.body.error) && !store.get(`Charm_Sku_Aliases/${P6}`).bySku.VARIATION_THREE, 'a design the library does not hold is refused and nothing is written: ' + names(bad.body));
+  const bad2 = await post({ op: 'optionMapPut', listingId: P6B, optionName: 'Zodiac Sign', optionValue: 'Aries', map: { field: 'design', value: 'NOT_IN_THE_LIBRARY' }, by: 'Name One', sandbox: true });
+  assert(bad2.status === 409 && !store.get(`Charm_Option_Map/${P6B}`).map['zodiac sign'].aries, 'the same for the charm an option picks: ' + names(bad2.body));
+  // another sandbox answer (not a charm) is still the sandbox's own copy
+  await must({ op: 'optionMapPut', listingId: P6B, optionName: 'Size', optionValue: 'Large', map: { field: 'size', value: 'L' }, by: 'Name One', sandbox: true });
+  assert(store.has(`Sandbox_Charm_Option_Map/${P6B}`) && !store.get(`Charm_Option_Map/${P6B}`).map.size, 'a size answer is the sandbox copy only, as before');
+  // THE RESET and THE PURGE: the picks stay, the sandbox's own copies go
+  const keep = () => new Map([P6, P6B].flatMap(l => [`Charm_Sku_Aliases/${l}`, `Charm_Option_Map/${l}`]).filter(k => store.has(k)).map(k => [k, canon(store.get(k))]));
+  const picks = keep();
+  assert(picks.size === 3, 'three shared documents hold the picks: ' + [...picks.keys()].join(', '));
+  const rs = await resetAll();
+  assert(rs.last.more === false, 'the reset finishes');
+  assert.deepStrictEqual(families(sandboxKeys()), [], 'the reset cleared the sandbox: left ' + families(sandboxKeys()).join(', '));
+  assert.deepStrictEqual([...keep()].sort(), [...picks].sort(), 'RESET: every pick is byte-identical in the shared store');
+  await bothRead('aliasGet', r => assert(r.aliases[P6].bySku.VARIATION_ONE === 'PICK_A_1' && r.aliases[P6B].pairBySku.TWO_CATS.R === 'PICK_B_2', 'RESET: the links are read after it'));
+  await bothRead('optionMapGet', r => assert.strictEqual(r.maps[P6B]['zodiac sign'].pisces.value, 'PICK_C_3', 'RESET: the option pick is read after it'));
+  await must({ op: 'noDesignPut', sku: 'AGAIN_NODESIGN', note: 'x', by: 'Name One', sandbox: true });
+  slow = 1500; let pr6 = await post({ op: 'purgeHistory', code: '975311', force: true, sandbox: true }); let n6 = 1;
+  while (pr6.body.more && n6 < 200) { pr6 = await post({ op: 'purgeHistory', code: '975311', force: true, sandbox: true }); n6++; }
+  slow = 0;
+  assert(pr6.status === 200 && pr6.body.ok, 'the purge finishes: ' + names(pr6.body).slice(0, 160));
+  assert.deepStrictEqual([...keep()].sort(), [...picks].sort(), 'PURGE: every pick is byte-identical in the shared store');
+  // the later write stands: an older copy the sandbox kept never hides a pick made since; a newer copy of the sandbox's stands over an older shared answer (as before)
+  store.set(`Sandbox_Charm_Sku_Aliases/${P6}`, { listingId: P6, by: 'old page', updatedAt: new TS(Date.now() - 86400000), bySku: { VARIATION_ONE: 'LION_SANDBOX_9', VARIATION_OLD: 'LION_SANDBOX_9' }, sku: 'LION_SANDBOX_9', v: 2 });
+  store.set(`Sandbox_Charm_Option_Map/${P6B}`, { listingId: P6B, updatedAt: new TS(Date.now() - 86400000), map: { 'zodiac sign': { pisces: { field: 'design', value: 'LION_SANDBOX_9', by: 'old page', at: Date.now() - 86400000 } } } });
+  const sbOld = (await sbGet('aliasGet')).aliases[P6], sbOldOpt = (await sbGet('optionMapGet')).maps[P6B];
+  assert.strictEqual(sbOld.bySku.VARIATION_ONE, 'PICK_A_1', 'an older sandbox copy never hides the pick made since (its key)');
+  assert.strictEqual(sbOld.bySku.VARIATION_OLD, 'LION_SANDBOX_9', 'a key only the old copy holds is still read');
+  assert.strictEqual(sbOld.sku, 'LION_SANDBOX_9', 'a listing-wide answer the shared document never had is still the old copy\'s');
+  assert.strictEqual(sbOldOpt['zodiac sign'].pisces.value, 'PICK_C_3', 'the same for the charm an option picks');
+  assert.strictEqual((await prGet('aliasGet')).aliases[P6].bySku.VARIATION_OLD, undefined, 'production never reads the old sandbox copy');
+  store.set(`Sandbox_Charm_Sku_Aliases/${P6}`, { listingId: P6, by: 'newer page', updatedAt: new TS(Date.now() + 5000), bySku: { VARIATION_ONE: 'LION_SANDBOX_9' } });
+  assert.strictEqual((await sbGet('aliasGet')).aliases[P6].bySku.VARIATION_ONE, 'LION_SANDBOX_9', 'a sandbox copy written after the shared answer stands, as before');
+  assert((await post({ op: 'sandboxReset', sandbox: true })).body.more === false && !sandboxKeys().length, 'and the next reset clears it');
+  assert.deepStrictEqual([...keep()].sort(), [...picks].sort(), 'the picks are still byte-identical');
+  console.log('pick: saved in the shared store from the sandbox, read back, one link per variation, a pair, an option charm; Reset and Purge left every pick; sandbox and production read the same');
 }
   await serverSection();
 }

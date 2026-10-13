@@ -212,8 +212,11 @@
     return false;
   }
 
+  /** One read of the Review live feed right now (the same one the open Review, Orders and Library tabs make every 2 s, which rests while the Nest or Engraving tab is on screen): for a gate on such a tab to ask just before it acts. Resolves true when the feed answered. */
+  async function refresh() { try { return !!(root.ReviewLive && root.ReviewLive.poll && await root.ReviewLive.poll({ quiet: true })); } catch (_) { return false; } }
+
   /** A sandbox reset cleared the records: forget them here too. */
   function reset() { const B = root.B; if (B && B.maps) B.maps.reviewMarks = {}; seen.clear(); doneCache.clear(); }
 
-  root.CharmNestReviewMark = { mark, resolve, isMarked, markedRids, openRids: markedRids, info, reasonOf, onChange, onRow, open, itemsFor, doneSettled, decorateRow, sync, reset, _key: keyOf, _sandbox: sandbox };
+  root.CharmNestReviewMark = { mark, resolve, isMarked, markedRids, openRids: markedRids, info, reasonOf, onChange, onRow, refresh, open, itemsFor, doneSettled, decorateRow, sync, reset, _key: keyOf, _sandbox: sandbox };
 })(typeof window !== "undefined" ? window : globalThis);
