@@ -256,14 +256,22 @@ async function runsOfOrders(get, orders, fresh) {
 // The caller's transaction reads the live run and every dependent sheet before it writes a seal or completion.
 // (the custom orders completed by hand that one reading looks up: at most HAND_MAX lines, one small read each; see below)
 const HAND_MAX = 200, HAND_FIELDS = ["state", "how", "completedAt", "completedBy"];
-/* The orders a person sent to Review that are not resolved yet (Paul, 12 Oct 2026): Map rid -> "In Review: Sent to Review by NAME". One small query on the review records
-   (Charm_Custom_Orders/{rid}_review, charm-nest-review-mark.js), asked only where the server WRITES (a transaction, the Approve gate); the Library's list reads never ask. A read that
-   fails answers nothing and says so (the page still holds the sheet), so the shop is never stopped by it. */
-async function openReviews(get=ref=>ref.get()){
-  const out=new Map();
+/* Which of these orders a person sent to Review and has not resolved yet (Paul, 12 Oct 2026): Map rid -> "In Review: Sent to Review by NAME". One batch get by key on the review
+   records (Charm_Custom_Orders/{rid}_review, charm-nest-review-mark.js: the same read as its op reviewMarkOpen), asked only where the server WRITES (a transaction, the Approve gate) and only
+   for the orders of the sheets being gated; the Library's list reads never ask. A read that fails answers nothing and says so (the page still holds the sheet), so the shop is never stopped by it. */
+async function openReviews(rids,tx=null){
+  const out=new Map(),ids=[...new Set([...(rids || [])].map(r=>String(r)).filter(r=>/^\d{1,30}$/.test(r)))],mask={fieldMask:["review","receiptId","kind"]};
   try{
-    const snap=await get(col("Charm_Custom_Orders").where("review.state","==","open"));
-    for(const d of snap.docs){const x=d.data() || {};if(x.kind && x.kind!=='reviewMark')continue;const rid=String(x.receiptId || String(d.id).replace(/_review$/,'')).replace(/\D/g,''),by=str(x.review && x.review.markedBy,80);if(rid)out.set(rid,'In Review: Sent to Review'+(by?' by '+by:''));}
+    for(let i=0;i<ids.length;i+=100){
+      const refs=ids.slice(i,i+100).map(r=>col("Charm_Custom_Orders").doc(r+"_review"));
+      const docs=tx?(typeof tx.getAll==='function'?await tx.getAll(...refs,mask):await Promise.all(refs.map(r=>tx.get(r)))):await db.getAll(...refs,mask);
+      for(const d of docs){
+        const x=d && d.exists?d.data() || {}:null;
+        if(!x || !x.review || x.review.state!=='open' || (x.kind && x.kind!=='reviewMark'))continue;
+        const rid=String(x.receiptId || String(d.id).replace(/_review$/,'')).replace(/\D/g,''),by=str(x.review.markedBy,80);
+        if(rid)out.set(rid,'In Review: Sent to Review'+(by?' by '+by:''));
+      }
+    }
   }catch(e){console.warn('[charmNestLibrary] the orders in Review could not be read (the page still holds them):',e && e.message);}
   return out;
 }
@@ -371,7 +379,7 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
   /* An order a person sent to Review holds the sheet it sits on until it is resolved there. The page holds the sheet at once (charm-nest-review-hold.js); the server holds it too where it WRITES
      (a transaction: the laser seal, completing a set, the cut), so an older page or a second computer can never get past it. openReviews() above says which are open. */
   let review=null;
-  if(tx){const open=await openReviews(get);if(open.size)review=rid=>open.get(String(rid)) || '';}
+  if(tx && wanted.size){const open=await openReviews(wanted,tx);if(open.size)review=rid=>open.get(String(rid)) || '';}
   const orders=Readiness.orderReports([...lines.values()],[...evidence.values()],review?{review}:undefined);
   // each sheet's own reading of its orders: an order waits only for its OTHER pieces (Readiness.forSheet), never for a piece on this very sheet, and (round 7)
   // never for a not-ready sheet of the sheet's OWN set: a set advances as one, that wait is the set's (Readiness.setGate), not the order's. An order split across sets still waits.
@@ -3810,22 +3818,21 @@ async function approveGate(steps) {
     if (x.type === "release") for (const i of (x.sheetIds || [])) sheetIds.add(str(i, 80));
     else if (x.type === "seal") (x.kind === "set" ? setIds : sheetIds).add(str(x.id, 80));
   }
-  const ask = [...sheetIds].filter(isId);
-  for (let i = 0; i < ask.length; i += 100) for (const d of await db.getAll(...ask.slice(i, i + 100).map(id => col(SHEETS).doc(id)), { fieldMask: ["setId", "draft", "solidIncluded", "archived"] })) {
+  const ask = [...sheetIds].filter(isId), asked = new Map();
+  for (let i = 0; i < ask.length; i += 100) for (const d of await db.getAll(...ask.slice(i, i + 100).map(id => col(SHEETS).doc(id)), { fieldMask: ["setId", "draft", "solidIncluded", "archived", "orders", "poolIds", "laserDoneAt", "processSeals"] })) {
     const x = d.exists ? d.data() : null;
+    if (x) asked.set(d.id, x);
     if (x && !x.archived && x.setId && !x.draft && x.solidIncluded !== false) setIds.add(String(x.setId));
   }
   // an order in Review holds its sheet (and so its set): nothing approves while it sits on the sheet, whatever the page says
-  const reviewing = await openReviews();
-  if (reviewing.size) {
-    const want = new Set(ask), sets = [...setIds].filter(isId);
-    for (let i = 0; i < sets.length; i += 100) for (const d of await db.getAll(...sets.slice(i, i + 100).map(id => col(SETS).doc(id)), { fieldMask: ["sheetIds"] })) if (d.exists) for (const m of d.data().sheetIds || []) if (isId(m)) want.add(String(m));
-    const all = [...want];
-    for (let i = 0; i < all.length; i += 100) for (const d of await db.getAll(...all.slice(i, i + 100).map(id => col(SHEETS).doc(id)), { fieldMask: ["orders", "poolIds", "laserDoneAt", "archived", "processSeals"] })) {
-      const x = d.exists ? d.data() : null; if (!x || x.archived || num(x.laserDoneAt) > 0 || Readiness.completedBefore(x)) continue;
-      const rid = Readiness.orderIds({ ...x, id: d.id }).find(r => reviewing.has(r));
-      if (rid) return { error: `Order ${rid} is in Review, so the sheet it is on cannot go on until it is resolved in the Review tab`, status: 409, orderId: rid, sheetId: d.id };
-    }
+  {
+    const sets = [...setIds].filter(isId), more = new Set();
+    for (let i = 0; i < sets.length; i += 100) for (const d of await db.getAll(...sets.slice(i, i + 100).map(id => col(SETS).doc(id)), { fieldMask: ["sheetIds"] })) if (d.exists) for (const m of d.data().sheetIds || []) if (isId(m) && !asked.has(String(m))) more.add(String(m));
+    const rest = [...more], got = [];
+    for (let i = 0; i < rest.length; i += 100) for (const d of await db.getAll(...rest.slice(i, i + 100).map(id => col(SHEETS).doc(id)), { fieldMask: ["orders", "poolIds", "laserDoneAt", "archived", "processSeals"] })) if (d.exists) asked.set(d.id, d.data());
+    for (const [id, x] of asked) if (x && !x.archived && !(num(x.laserDoneAt) > 0) && !Readiness.completedBefore(x)) got.push({ id, orders: Readiness.orderIds({ ...x, id }) });
+    const reviewing = await openReviews(got.flatMap(g => g.orders));
+    for (const g of got) { const rid = g.orders.find(r => reviewing.has(r)); if (rid) return { error: `Order ${rid} is in Review, so the sheet it is on cannot go on until it is resolved in the Review tab`, status: 409, orderId: rid, sheetId: g.id }; }
   }
   for (const [id, { set, gate }] of await setGatesFor([...setIds], null)) if (!gate.ready) {
     return { error: `${gate.setLabel === "This set" ? "This set" : gate.setLabel} is approved together, so every sheet of it must be ready first: ${gate.reason}`, status: 409, blockers: gate.blockers, setId: id };
