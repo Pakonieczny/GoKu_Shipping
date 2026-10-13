@@ -50,6 +50,7 @@ const A = '9100000001', B = '9100000002';
   const iss = R.issues(o1, { steps: ['orders'], perOrder: true }).filter(i => i.orderId === A);
   assert.equal(iss.length, 1); assert.equal(iss[0].key, 'held'); assert.match(iss[0].why, /^In Review/);
   const ex = R.explain(o1, { rows: [] }); assert.equal(ex.ready, false); assert.equal(ex.steps.find(t => t.key === 'orders').state !== 'done', true);
+  const exo = ex.steps.find(t => t.key === 'orders'); assert.match(exo.detail, /in Review/); assert.doesNotMatch(exo.detail, /other pieces/); assert.match(ex.nextText, /in Review/i, ex.nextText);
 
   // 2. the flow: Approve / the move to Laser cutting refuses with the order named, and does not claim the order check passed
   const flowState = rec => ({ sheets: { S1: rec }, sets: { set1: { setId: 'set1', seq: 1, sheetIds: ['S1'], status: 'labelled' } }, runs: {}, live: {} });
