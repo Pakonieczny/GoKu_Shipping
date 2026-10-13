@@ -6435,7 +6435,7 @@ const Engrave = window.Engrave = (() => {
     for (const j of fresh) if (OPENREAD.includes(j.state)) j._lateTries = (j._lateTries || 0) + 1;
     const task = (async () => {
       try {
-        for (let pass = 0; pass < 2 && items() === owner && jobsOf(line).some(j => OPENREAD.includes(j.state) && owner.get(j.key) === j) && facedSetup(line, jobsOf(line)); pass++) await classify(line, { free: true });   // (only a line the setup itself reads, never the paid reader; joins a reading of the line already under way; the second pass takes what that one's list did not hold)
+        for (let pass = 0; pass < 2 && items() === owner && jobsOf(line).some(j => OPENREAD.includes(j.state) && owner.get(j.key) === j) && facedSetup(line, jobsOf(line)); pass++) await classify(line);   // (only a line the setup itself reads (facedSetup, checked in this very tick: classifyOnce takes the same branch), so never the paid reader; joins a reading of the line already under way; the second pass takes what that one's list did not hold)
         for (const j of jobsOf(line)) if (items() === owner && owner.get(j.key) === j && !j.editingBack && j.state === "ready" && canFit(j) && !isWorking(j) && !j.approvalPreparing) await fitJob(j);
       } catch (e) {
         if (items() === owner) for (const j of jobsOf(line)) if (OPENREAD.includes(j.state) && owner.get(j.key) === j) toWords(j, `These words could not be read (${e && e.message ? e.message : e}) — confirm them`);

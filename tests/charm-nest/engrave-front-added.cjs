@@ -61,8 +61,8 @@ async function addFront(w, name, text) {
   if (!w) { console.log('SKIP no playwright-core'); return; }
   const page = w.page;
   try {
-    const made = await R.build(w, ['back', 'refAnna', 'refMarck']);
-    const key = made.back.key, anna = made.refAnna.key, marck = made.refMarck.key;
+    const made = await R.build(w, ['back', 'refAnna', 'refMarck', 'both']);
+    const key = made.back.key, anna = made.refAnna.key, marck = made.refMarck.key, both = made.both.key;
     counting = true;
     const j00 = made.back.jobs;
     check('A0 the back-only charm starts with one fitted back job and no front job', j00.length === 1 && j00[0].fitted && j00[0].face === 'back', JSON.stringify(j00.map(j => [j.face, j.state, j.fitted])));
@@ -147,6 +147,19 @@ async function addFront(w, name, text) {
     await R.settle(page, 800);
     const rb = await jobsOf(page, marck);
     check('R1 a front added later, then "Approve both faces": the Front is approved, then the Back, one seal each', !!rj && both && rw.canvas && rb.length === 2 && rb.every(j => ['approved', 'written'].includes(j.state) && j.seals === 1), JSON.stringify({ rw: [rw.job, rw.canvas, rw.approve], both, rb: rb.map(j => [j.face, j.state, j.seals]) }));
+
+    // ═══ S · a line read again (the order changed on Etsy: every job of it goes back to "classify", no run is open): opening it prepares it, nothing says "stopped" ═══
+    await page.evaluate(() => Engrave.restoreView({ q: '' }));
+    await page.evaluate(k => { Engrave.invalidate(B.orders.byKey.get(k), 'order changed'); }, both);
+    const s0 = await jobsOf(page, both);
+    await watch(page);
+    await R.openEngraveDetail(w, 'both', { face: 'front' });
+    const s1 = await until(async () => { const js = await jobsOf(page, both); return js.length === 2 && js.every(j => j.state === 'review' && j.fitted) ? js : null; }, 90000);
+    await R.settle(page, 500);
+    const sw = await workFacts(page), sseen = await seen(page);
+    await R.shot(w, 'FRONT-4-reread');
+    check('S1 a faced line read again and opened: both faces are read from the setup and fitted by themselves (front W, back Name One), the front is drawn', s0.every(j => j.state === 'classify') && !!s1 && s1.find(j => j.face === 'front').text === 'W' && /NAME|Name/i.test(s1.find(j => j.face === 'back').text) && sw.canvas && /~front$/.test(sw.job || ''), JSON.stringify({ s0: s0.map(j => j.state), s1: s1 && s1.map(j => [j.face, j.state, j.text]), sw: [sw.job, sw.canvas, sw.text] }));
+    check('S2 "Processing stopped" never showed there (the work area said Preparing, or drew)', !sseen.some(t => /Processing stopped/i.test(t)), JSON.stringify(sseen));
 
     check('Z1 no model call (reading, review or any other) was made by any of this: the front takes its words from the setup', modelCalls === 0, 'calls after the world was built: ' + modelCalls);
     check('Z2 no page error', w.errors.length === 0, JSON.stringify(w.errors).slice(0, 300));
