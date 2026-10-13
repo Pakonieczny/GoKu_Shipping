@@ -271,6 +271,7 @@
 .engpvDraw{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
 .engpvDraw canvas,.engpvDraw img,.engpvDraw svg{max-width:100%;max-height:100%;object-fit:contain}
 .engpvFrame[data-ar] .engpvDraw canvas,.engpvFrame[data-ar] .engpvDraw img{width:100%;height:100%;display:block}
+.engpv .engpvDraw canvas,.engpv .engpvDraw img{border:0;border-radius:0;box-shadow:none;background:transparent;margin:0;outline:0}
 .engpv[data-flip="1"] .engpvDraw{transform:scaleX(-1)}
 .engpvBox{position:absolute;inset:0;container-type:size;pointer-events:none}
 .engpvText{position:absolute;margin:0;white-space:pre;text-align:center;color:var(--ink,#1c1a17);transform-origin:50% 50%;pointer-events:none}
