@@ -43,7 +43,7 @@ const details = async page => { if (await page.evaluate(() => document.querySele
     await page.evaluate(() => { CN.setMode('orders'); Orders.render(); });
     const list = await page.evaluate(() => { const rows = [...document.querySelectorAll('.purchaseChoices')]; return rows.map(c => ({ text: c.innerText.replace(/\s+/g, ' ').trim(), dts: [...c.querySelectorAll('dt')].map(x => x.textContent), dds: [...c.querySelectorAll('dd')].map(x => x.textContent), titles: [...c.querySelectorAll('dl > div')].map(x => x.title) })); });
     const bar = list.find(r => /Gold · Engraved/.test(r.text)), shown = bar || list.find(r => /Characters|GOLD/.test(r.text));
-    ok('1a the list says "Metal: Gold · Engraved" and "Length: 16" & 18" · Font: Angelina": ' + JSON.stringify(shown), bar && JSON.stringify(bar.dts) === JSON.stringify(['Metal', 'Length']) && JSON.stringify(bar.dds) === JSON.stringify(['Gold · Engraved', '16" & 18" · Font: Angelina']));
+    ok('1a the list says "Metal: Gold · Engraved" and "Necklace Length: 16" & 18" · Font: Angelina": ' + JSON.stringify(shown), bar && JSON.stringify(bar.dts) === JSON.stringify(['Metal', 'Necklace Length']) && JSON.stringify(bar.dds) === JSON.stringify(['Gold · Engraved', '16" & 18" · Font: Angelina']));
     ok('1b the original is the hover of each choice', bar.titles[0] === 'Metal · #Characters?: GOLD·Set·ENGRAVED' && bar.titles[1] === 'Necklace Length·FONT: 16"&18"·Set·ANGELINA');
     const zl = list.find(r => /Zodiac Sign/.test(r.text));
     ok('5a an order that needs no tidying reads word for word in the list: ' + JSON.stringify(zl && zl.dts.map((d, i) => d + '=' + zl.dds[i])), zl && JSON.stringify(zl.dts) === JSON.stringify(['Zodiac Sign', 'Birth Flower', 'Font', 'Charm Type']) && JSON.stringify(zl.dds) === JSON.stringify(['Pisces', 'Morning Glory', 'Ace', 'Tag1 (front+back)']) && zl.titles.every((t, i) => i === 2 || !t));
@@ -51,10 +51,10 @@ const details = async page => { if (await page.evaluate(() => document.querySele
     /* 2 · the order window's Details list and the Metal card */
     await open(page, 'barSet');
     const cells = await details(page), by = l => cells.find(c => c.label === l);
-    ok('2a Details: Metal "Gold · Engraved" and Length "16" & 18" · Font: Angelina": ' + JSON.stringify(cells.filter(c => /Metal|Length|Chain/.test(c.label))), by('Length') && by('Length').text === '16" & 18" · Font: Angelina' && cells.filter(c => c.label === 'Metal').some(c => c.text === 'Gold · Engraved'));
-    ok('2b Details: no cell is labelled with the raw name', !cells.some(c => /middot|#Characters|Necklace Length/.test(c.label)));
+    ok('2a Details: Metal "Gold · Engraved" and Necklace Length "16" & 18" · Font: Angelina": ' + JSON.stringify(cells.filter(c => /Metal|Length|Chain/.test(c.label))), by('Necklace Length') && by('Necklace Length').text === '16" & 18" · Font: Angelina' && cells.filter(c => c.label === 'Metal').some(c => c.text === 'Gold · Engraved'));
+    ok('2b Details: no cell is labelled with the raw name', !cells.some(c => /middot|#Characters/.test(c.label)));
     ok('2c Details: the Chain cell is the length and the font without "Set": "' + (by('Chain') || {}).text + '"', by('Chain') && by('Chain').text === '16" & 18" · Angelina' && by('Chain').title === '16"&18"·Set·ANGELINA');
-    ok('2d the original is the hover of each tidied cell', cells.find(c => c.text === 'Gold · Engraved').title === 'Metal · #Characters?: GOLD·Set·ENGRAVED' && by('Length').title === 'Necklace Length·FONT: 16"&18"·Set·ANGELINA');
+    ok('2d the original is the hover of each tidied cell', cells.find(c => c.text === 'Gold · Engraved').title === 'Metal · #Characters?: GOLD·Set·ENGRAVED' && by('Necklace Length').title === 'Necklace Length·FONT: 16"&18"·Set·ANGELINA');
     ok('2e the plain cells keep their words and have no hover', by('Listing').text === '532401548' && by('Title').text === TITLE && !by('Title').title);
     await page.evaluate(() => document.querySelector('[data-owf-chip=metal]').click()); await page.waitForTimeout(450);
     const pop = await page.evaluate(() => { const p = document.querySelector('#owMeta .owfPop'); return p && !p.hidden ? [...p.querySelectorAll('.owfRow')].map(r => (r.querySelector('dt') ? r.querySelector('dt').textContent + ': ' : '') + r.querySelector('dd').textContent) : null; });
@@ -63,14 +63,14 @@ const details = async page => { if (await page.evaluate(() => document.querySele
 
     /* 3 · the Engrave tab's OPTIONS box */
     const said = await page.evaluate(() => { const r = Orders.rows().find(x => x.order.receiptId === '4202291826'); const d = document.createElement('div'); d.innerHTML = CharmNestEngraveSaid.html(r); const lbl = d.querySelector('.lbl'); return { text: d.querySelector('.owSaid').textContent, label: lbl.textContent, title: lbl.title, rows: CharmNestEngraveSaid.rowsOf(r) }; });
-    ok('3a the OPTIONS box: "Metal: Gold · Engraved" / "Length: 16" & 18" · Font: Angelina": ' + JSON.stringify(said.text), said.label === 'Options' && said.rows.length === 1 && said.rows[0][1] === 'Metal: Gold · Engraved\nLength: 16" & 18" · Font: Angelina');
+    ok('3a the OPTIONS box: "Metal: Gold · Engraved" / "Necklace Length: 16" & 18" · Font: Angelina": ' + JSON.stringify(said.text), said.label === 'Options' && said.rows.length === 1 && said.rows[0][1] === 'Metal: Gold · Engraved\nNecklace Length: 16" & 18" · Font: Angelina');
     ok('3b the original reads in the label\'s hover', said.title === 'As ordered:\nMetal · #Characters?: GOLD·Set·ENGRAVED\nNecklace Length·FONT: 16"&18"·Set·ANGELINA');
     const zs = await page.evaluate(() => { const r = Orders.rows().find(x => x.order.receiptId === '4202291829'); return CharmNestEngraveSaid.rowsOf(r); });
     ok('5b the engraving options of the other order keep their words: ' + JSON.stringify(zs), JSON.stringify(zs) === JSON.stringify([['Options', 'Font: Ace\nCharm Type: Tag1 (front+back)']]));
 
     /* 4 · the Review card's Options row */
     const card = await page.evaluate(() => { const it = Review.items().find(x => x.row && x.row.order.receiptId === '4202291828'); if (!it) return null; const c = Review.card(it); return { kind: it.kind, qs: [...c.querySelectorAll('.ev q')].map(q => [q.textContent, q.title]) }; });
-    ok('4 the Review card says the options the same way, the original in the hover: ' + JSON.stringify(card), card && JSON.stringify(card.qs) === JSON.stringify([['Metal: Gold · Engraved', 'Metal · #Characters?: GOLD·Set·ENGRAVED'], ['Length: 16" & 18" · Font: Angelina', 'Necklace Length·FONT: 16"&18"·Set·ANGELINA']]));
+    ok('4 the Review card says the options the same way, the original in the hover: ' + JSON.stringify(card), card && JSON.stringify(card.qs) === JSON.stringify([['Metal: Gold · Engraved', 'Metal · #Characters?: GOLD·Set·ENGRAVED'], ['Necklace Length: 16" & 18" · Font: Angelina', 'Necklace Length·FONT: 16"&18"·Set·ANGELINA']]));
 
     // (a Needs-mapping card is where a person decides what ONE option means: its title is the option as it is, only decoded, so what is saved is what is read)
     const head = await page.evaluate(() => { const row = Orders.rows().find(r => r.order.receiptId === '4202291828'); const c = Review.card({ kind: 'needsMapping', key: 'k-tidy', row, problem: { kind: 'needsMapping', optionName: 'Metal &middot; #Characters?', optionValue: 'GOLD·Set·ENGRAVED', listingId: '4577100359', title: 'T' }, rows: [row] }); return c.querySelector('.ttl').textContent; });
@@ -86,7 +86,7 @@ const details = async page => { if (await page.evaluate(() => document.querySele
       } finally { r.spec.engraving = was; }
       return out;
     });
-    ok('4c the Engraving card names the option as the display reader does: ' + JSON.stringify(su), su.from === 'from the Length \u00b7 Font option \u00b7 90% sure' && su.why === 'the option \u201cMetal: Gold \u00b7 Engraved\u201d asks for the back' && su.note === 'the buyer\'s note says \u201cFont: TYPEWRITE & Mom\u201d');
+    ok('4c the Engraving card names the option as the display reader does: ' + JSON.stringify(su), su.from === 'from the Necklace Length \u00b7 Font option \u00b7 90% sure' && su.why === 'the option \u201cMetal: Gold \u00b7 Engraved\u201d asks for the back' && su.note === 'the buyer\'s note says \u201cFont: TYPEWRITE & Mom\u201d');
 
     /* 5 · the other order in Details */
     await open(page, 'zodiac');

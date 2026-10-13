@@ -192,7 +192,8 @@
     if (s === s.toUpperCase() && /[A-Z]/.test(s)) s = s.replace(/\b[A-Z]{4,}\b/g, w => w.charAt(0) + w.slice(1).toLowerCase());   // (METAL CHOICE -> Metal Choice; SKU and TAG1 stay)
     const m = /^(.*\S)\s+(?:choices?|selections?|options?)$/i.exec(s);
     if (m && OPT_ATTR.test(m[1].split(" ").pop())) s = m[1];   // (Font Choice -> Font, Engraving Options -> Engraving; "Necklace Options" is not an attribute and stays)
-    if (OPT_LENGTH.test(s) && optNouns(ctx && ctx.names).size <= 1) s = "Length";   // (the jewellery type is said on its own line; kept when another option names another noun: Bracelet Length)
+    // (NECKLACE, Paul 13 Oct 2026: "Do not drop the word Necklace": a "Necklace Length" stays "Necklace Length", a "Bracelet Length" stays; only the clumsy "Lengths of Necklaces" is said as "Necklace Length")
+    { const lm = /^lengths?\s+of\s+(?:the\s+)?(necklace|chain|bracelet|anklet)s?$/i.exec(s); if (lm) s = lm[1].charAt(0).toUpperCase() + lm[1].slice(1).toLowerCase() + " Length"; }
     return s;
   }
   function tidyOption(name, value, ctx) {
