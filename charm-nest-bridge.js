@@ -2186,7 +2186,7 @@ const Orders = window.Orders = (() => {
     if (window.Motion) Motion.reconcile(list, wanted, { animate: same, leave: leaveFor(new Set()), get clip() { settle(); return host; } });
     else put(list, wanted);
     for (const [node, pair] of pairs) node.querySelector('.comparePair')?.replaceWith(pair);
-    for (const [node, r] of mounts) ListMedia.mount(node, r);
+    for (const [node, r] of mounts) { ListMedia.mount(node, r); if (window.ReviewSend) ReviewSend.mount(node, r); }   // (Send to Review: the one button under Qty · Ship by, charm-nest-review-send.js; it draws nothing until the Review mark API is there)
     ListMedia.more(list,rows.length,shown.length,()=>{OV.limit=(OV.limit || 48)+48;renderBody();});
     settle();
     drawnOn = onScreen() ? nextKey : ""; drawnLimit = OV.limit;
@@ -7946,8 +7946,9 @@ const LaserReview = window.LaserReview = (()=>{
       d.engraving[pid]=CharmNestEngraveFaces.combine(js.map(j=>({face:faceOf(j),needed:!['none','skipped'].includes(j.state),state:j.state,approved:['none','skipped','approved'].includes(j.state) || (j.state==='written' && !j.backSaving)})));
     }
     if(live?.dirty || live?.runHold || live?.saving || ['nesting','finishing'].includes(live?.status))d.dirty=true;
-    if(passDepth)(passProjected || (passProjected=new Map())).set(base,d);
-    return d;
+    const withReview=window.CharmNestReviewHold?.overlay?.(d) || d;   // an order of this sheet in Review holds it (charm-nest-review-hold.js: the cloud's record cannot know the Review)
+    if(passDepth)(passProjected || (passProjected=new Map())).set(base,withReview);
+    return withReview;
   }
   const sheet=s=>R.laserSheet(projected(s));
   const group=(st,sheets)=>{if(st.setId)sets.set(st.setId,st);return R.laserGroup(st,sheets.map(projected));};
@@ -8871,6 +8872,8 @@ const Sets = window.Sets = (() => {
     const sheetPools=new Set(sheets.flatMap(sh=>sh.charms.filter(c=>sh.placements.some(p=>p.id===c.id)).map(c=>c.poolId)));
     // A cancelled order is dropped from the set, not waited for: a piece of it that could not come off its sheet is cut with it and set aside
     if(Orders.rows().some(row=>row.state !== "gone" && (row.changePending || row.hold) && row.poolIds.some(id=>sheetPools.has(id))))throw pendingRelease("An order on this sheet changed or needs review");
+    // an order sent to Review that sits on a sheet of this set holds the whole set until it is resolved there (it stays on its sheet; the set goes on by itself afterwards)
+    for(const sh of sheets){const why=window.CharmNestReviewHold?.reasonFor?.(sh.sheetId);if(why)throw pendingRelease(why);}
     const physical=allSheets().map(sh=>({...sh,roseStockId:sh.roseStock?.id,id:sh.sheetId,poolIds:(sh.placements || []).map(p=>sh.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean),placedCount:sh.placements.length,outputs:sh.cloud || {},engraving:window.CharmNestReadiness.decisions(Orders.rows())}));
     const orderReadiness=window.CharmNestReadiness.orderReports(Orders.rows(),physical);
     const reports=physical.filter(sh=>sh.setId===set.setId).map(sh=>({...sh,orderReadiness}));
