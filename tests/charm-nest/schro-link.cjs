@@ -34,7 +34,7 @@ const TITLE = "Schrödinger's Cat Necklace, Whimsical Cat Gift, Fun Jewelry Gift
   eq((await fromQuery({ op: 'aliasGet' })).body.aliases, {}, 'production starts with no saved alias for this listing');
   Fk.writes.length = 0;
   const put = await call({ op: 'aliasPut', listingId: LID, fromSku: RAW, pair: { L: CAT1, R: CAT2 }, by: 'SCHROLINK', title: TITLE });
-  eq([put.status, put.body], [200, { ok: true }], 'the pair is saved');
+  eq([put.status, put.body], [200, { ok: true, verified: true, kind: 'pair', listingId: LID, key: RAW, sku: CAT1 + ' + ' + CAT2 }], 'the pair is saved and read back (REVLINK)');
   eq(Fk.writes.map(w => w.kind + ' ' + w.path), ['set Charm_Sku_Aliases/' + LID], 'exactly ONE record is written, the listing\'s own');
   const doc = Fk.store.get('Charm_Sku_Aliases/' + LID);
   eq(Object.keys(doc).sort(), ['by', 'listingId', 'pairBySku', 'title', 'updatedAt'], 'the record holds the answer and who gave it, nothing else');
