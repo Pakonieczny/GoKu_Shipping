@@ -8,6 +8,8 @@ globalThis.CharmNestReviewHold = H;
 
 // ── the review record (stub of charm-nest-review-mark.js) and the pieces (stub of OrderPieces) ──
 const open = new Set(), markSubs = [], pieceSubs = [], pcs = {};
+const swapSet = new Set();   // orders whose picked drawing is not on their piece yet (the bridge's Pool.swapRids answers this on the page)
+globalThis.Pool = { swapRids: () => new Set(swapSet), swapWaits: r => swapSet.has(String(r)) };
 const doneHow = new Map();   // rid -> how a resolved review was answered ('pick' | 'ok')
 globalThis.CharmNestReviewMark = { info: r => open.has(String(r)) ? { rid: String(r), state: 'open' } : doneHow.has(String(r)) ? { rid: String(r), state: 'done', how: doneHow.get(String(r)) } : null, isMarked: r => open.has(String(r)), markedRids: () => [...open], reasonOf: r => open.has(String(r)) ? 'Sent to Review by Name One' : '', onChange: f => { markSubs.push(f); return () => {}; } };
 globalThis.OrderPieces = { of: rid => pcs[rid] || [], subscribe: f => { pieceSubs.push(f); }, load: () => Promise.resolve() };
@@ -172,7 +174,7 @@ const A = '9100000001', B = '9100000002';
   { const K = H.keepsPlace; const rid = '4197740562';
     assert.equal(K(rid), false, 'not in Review: nothing is kept');
     mark(rid); assert.equal(K(rid), true, 'in Review: keeps its place');
-    unmark(rid); doneHow.set(rid, 'pick'); assert.equal(K(rid), true, 'just answered by a pick: keeps its place');
+    unmark(rid); doneHow.set(rid, 'pick'); assert.equal(K(rid), false, 'answered by a pick: the person decides the swap (the card), the sheet waits for it (section 12)');
     doneHow.set(rid, 'ok'); assert.equal(K(rid), false, 'marked OK: the saved link has nothing to do with it');
     doneHow.delete(rid); assert.equal(K(rid), false); assert.equal(K(''), false); assert.equal(K(null), false);
     const OLD = 'CELESTIAL3-COMET', NEW = 'CELESTIAL 3 - COMET', LID = '1687890868', TITLE = 'Comet Pendant Charm Necklace';
@@ -184,6 +186,7 @@ const A = '9100000001', B = '9100000002';
     DESIGNS[OLD] = () => F.charmOf('ONE-PENDANT'); DESIGNS[NEW] = () => F.charmOf('PAIR-HOOP'); DESIGNS['COMET_9427'] = () => F.charmOf('PAIR-HOOP');
     const worldOf = () => {
       const w = world([OLD, NEW, 'COMET_9427']), reviews = [], timeline = [], toasts = [], calls = [];
+      w.entries['COMET_9427'].aiPath = w.entries[NEW].aiPath;   // (one drawing, two names, as the library keeps it)
       w.c.Review = { add: it => reviews.push(it) }; w.c.B.review = { items: reviews }; w.c.Sets = { ofRun: () => [] }; w.c.Gate = { modern: () => false };
       w.c.TL = { line: (row, type, o) => { timeline.push({ type, o }); return true; }, hash: x => String(x).length.toString(36) };
       w.c.window.CharmNestReviewHold = H; return Object.assign(w, { reviews, timeline, toasts, calls });
@@ -201,13 +204,23 @@ const A = '9100000001', B = '9100000002';
       assert.equal(w.pages.gold.charms.length, 1, 'the sheet is untouched'); assert.equal(w.calls.filter(c => /pool|sheet/i.test((c.body && c.body.op) || '')).length, 0, 'nothing written'); }
     // (c) in Review but its piece is not on a sheet yet: the card is offered as before (nothing to lift)
     { const w = worldOf(), row = rowOf(); placed(w, row, false); w.Pool.pinPooled(row); assert.equal(w.reviews.length, 1, 'no piece on a sheet: nothing to keep'); }
-    // (d) just answered by a pick, piece on an open sheet: still no card
+    // (d) answered by a pick, piece on an open sheet: the card is offered (a person accepts the swap), and the hold stays until the piece carries the picked charm
     unmark(rid); doneHow.set(rid, 'pick');
-    { const w = worldOf(), row = rowOf(); placed(w, row, true); w.Pool.pinPooled(row); assert.deepEqual([row.repoolChanged || false, w.reviews.length], [false, 0], 'after a pick: no card'); }
+    { const w = worldOf(), row = rowOf(); placed(w, row, true); w.Pool.pinPooled(row); assert.deepEqual([row.repoolChanged || false, w.reviews.length], [true, 1], 'after a pick: the card is offered');
+      w.c.window.CharmNestReviewMark = globalThis.CharmNestReviewMark; w.c.B.orders.rows = [row];
+      assert.deepEqual([...w.Pool.swapRids()], [rid], 'a pick whose drawing is not on the piece: the swap is waited for'); assert.equal(w.Pool.swapWaits(rid), true); assert.equal(w.Pool.swapWaits('4100000000'), false);
+      // the picked drawing is the one on the piece (or the same under another name): nothing to wait for
+      for (const sku of [NEW, 'COMET_9427']) { const w2 = worldOf(), r2 = rowOf(); const id2 = placed(w2, r2, true); w2.c.B.pool.rows.get(id2).sku = sku; w2.c.window.CharmNestReviewMark = globalThis.CharmNestReviewMark; w2.c.B.orders.rows = [r2]; assert.equal(w2.Pool.swapRids().size, 0, `${sku} is already on the piece: the hold is released as before`); }
+      // not on a sheet (nothing to cut), Review marked OK, an open Review, a piece superseded by the swap: no swap to wait for
+      { const w3 = worldOf(), r3 = rowOf(); placed(w3, r3, false); w3.c.window.CharmNestReviewMark = globalThis.CharmNestReviewMark; w3.c.B.orders.rows = [r3]; assert.equal(w3.Pool.swapRids().size, 0, 'a piece on no sheet'); }
+      doneHow.set(rid, 'ok'); assert.equal(w.Pool.swapRids().size, 0, 'marked OK is not a pick'); doneHow.set(rid, 'pick');
+      mark(rid); assert.equal(w.Pool.swapRids().size, 0, 'an open Review is the Review hold, not a swap'); unmark(rid); doneHow.set(rid, 'pick');
+      w.c.B.pool.rows.get(row.poolIds[0]).state = 'superseded'; w.c.B.pool.rows.set(rid + '_5246703786_9', { poolId: rid + '_5246703786_9', state: 'ready', sku: NEW, copy: 1, quantity: 1 }); row.poolIds = [rid + '_5246703786_9']; w.pages.gold.charms.push({ poolId: row.poolIds[0] });
+      assert.equal(w.Pool.swapRids().size, 0, 'the piece now carries the picked charm: released'); }
     doneHow.set(rid, 'ok');
     { const w = worldOf(), row = rowOf(); placed(w, row, true); w.Pool.pinPooled(row); assert.equal(w.reviews.length, 1, 'marked OK: the card is offered as before'); }
     // (e) a card already offered, then the order goes to Review (or is picked): Accept the new order keeps the piece where it is (never lifted, never nested again)
-    for (const state of ['review', 'pick']) {
+    for (const state of ['review']) {
       const w = worldOf(), row = rowOf(), id = placed(w, row, true); doneHow.delete(rid); unmark(rid); w.Pool.pinPooled(row); assert.equal(row.repoolChanged, true, 'offered first');
       if (state === 'review') mark(rid); else doneHow.set(rid, 'pick');
       const src = keyWorld.src, a = src.indexOf('async function repoolLine(row) {'), b = src.indexOf('\n  const by = () => employeeName()', a); assert(a > 0 && b > a, 'repoolLine is where the test expects it');
@@ -222,5 +235,30 @@ const A = '9100000001', B = '9100000002';
     // (f) a piece cut or released is never touched: the old held-by-hand path still answers it
     unmark(rid); doneHow.delete(rid);
   }
+
+  // 12. SWAP: the Review was answered by picking another charm, the piece on the open sheet still has the old drawing: the sheet stays held, in plain words, until the piece carries the pick
+  { const C = '9100000003'; pcs[C] = [piece(C, 1)]; const sC = sheetOf('S1', [C]);
+    doneHow.set(C, 'pick'); assert.deepEqual(H.heldBy('S1'), [], 'a pick whose drawing is already on the piece holds nothing (released as before)'); assert.equal(H.overlay(sC), sC);
+    const heardS = []; const offS = H.onChange(x => heardS.push(x)); H._check(); mark(C); H._check();
+    unmark(C); swapSet.add(C); H._check();
+    const rowsS = H.heldBy('S1'); assert.equal(rowsS.length, 1); assert.equal(rowsS[0].rid, C); assert.equal(rowsS[0].swap, true); assert.equal(rowsS[0].reason, 'New drawing chosen, swap it on the sheet'); assert.deepEqual(rowsS[0].poolIds, [`${C}_1_1`]);
+    assert.ok(heardS.length >= 2 && heardS[heardS.length - 1].rids.includes(C), 'Review to swap is a change the Library hears: ' + JSON.stringify(heardS));
+    assert.equal(H.isHeld('S1'), true); assert.equal(H.reasonFor('S1'), `Order ${C}: new drawing chosen, swap it on the sheet`); assert.deepEqual(H.sheetsHeldBy(C).map(x => x.sheetId), ['S1']); assert.equal(H.reason(C), 'New drawing chosen, swap it on the sheet'); assert.equal(H.inReview(C), false, 'it is not in Review');
+    const oS = H.overlay(sC); assert.notEqual(oS, sC); assert.equal(R.sheet(oS).ready, false); assert.equal(R.laserSheet(oS).ready, false); assert.equal(R.sheet(oS).stages.orders, false);
+    const abS = R.approveBlock(oS); assert.ok(abS && abS.review && abS.why === `new drawing chosen, swap it on the sheet: order ${C}`, JSON.stringify(abS));
+    const issS = R.issues(oS, { steps: ['orders'], perOrder: true }).filter(i => i.orderId === C); assert.equal(issS.length, 1); assert.equal(issS[0].key, 'held'); assert.match(issS[0].why, /^New drawing chosen, swap it on the sheet/); assert.equal(issS[0].pieces[0].swap, true);
+    const exS = R.explain(oS, { rows: [] }).steps.find(t => t.key === 'orders'); assert.match(exS.detail, /new drawing chosen/i); assert.doesNotMatch(exS.detail, /in Review|other pieces/);
+    const gateS = R.setGate({ setId: 'set1', sheetIds: ['S1'] }, [oS]); assert.equal(gateS.ready, false); assert.match(gateS.reason, /new drawing chosen/);
+    const planS = LF.core.planMove({ sheets: { S1: { ...sC, laser: R.laserSheet(sC) } }, sets: { set1: { setId: 'set1', seq: 1, sheetIds: ['S1'], status: 'labelled' } }, runs: {}, live: {} }, { kind: 'sheet', id: 'S1', to: { area: 'laser' } }, { by: 'Name One', rows: [] }, undefined);
+    const heldFlow = LF.core.planMove({ sheets: { S1: H.overlayFlow({ ...sC, laser: R.laserSheet(sC) }) }, sets: { set1: { setId: 'set1', seq: 1, sheetIds: ['S1'], status: 'labelled' } }, runs: {}, live: {} }, { kind: 'sheet', id: 'S1', to: { area: 'laser' } }, { by: 'Name One', rows: [] });
+    assert.equal(heldFlow.ok, false); const needS = heldFlow.needs.find(n => n.key === 'orders'); assert.ok(needS && /new drawing to swap in/.test(needS.label), JSON.stringify(heldFlow.needs.map(n => n.label))); assert.equal(planS.needs.filter(n => n.key === 'orders').length, 0, 'baseline without the hold');
+    // the piece carries the picked charm (a person accepted the card, or swapped it by hand): the sheet goes on by itself
+    swapSet.delete(C); H._check(); assert.deepEqual(H.heldBy('S1'), []); assert.equal(H.overlay(sC), sC); assert.equal(R.sheet(H.overlay(sC)).ready, true);
+    assert.ok(heardS[heardS.length - 1].rids.includes(C), 'the release is heard'); offS(); doneHow.delete(C); delete pcs[C];
+    // a piece already cut is not held by it, whatever it carries
+    swapSet.add(C); pcs[C] = [piece(C, 1, { state: 'cut' })]; assert.deepEqual(H.heldBy('S1'), [], 'a sheet already cut cannot be held'); swapSet.delete(C); delete pcs[C];
+    // both in one sheet: the wording names each in its own words
+    mark(A); pcs[A] = [piece(A, 1)]; swapSet.add(C); pcs[C] = [piece(C, 1, { poolId: `${C}_1_1` })]; doneHow.set(C, 'pick');
+    assert.equal(H.reasonFor('S1'), `Order ${A} is in Review; Order ${C}: new drawing chosen, swap it on the sheet`); unmark(A); swapSet.delete(C); delete pcs[A]; delete pcs[C]; doneHow.delete(C); }
   console.log('review-hold: ok');
 })().catch(e => { console.error(e); process.exit(1); });

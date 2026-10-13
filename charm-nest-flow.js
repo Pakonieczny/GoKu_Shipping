@@ -180,8 +180,8 @@
     const inReview = v => !!(v && Array.isArray(v.blocks) && v.blocks.some(b => b.review));
     const blockers = Object.entries(rec.orderReadiness || {}).filter(([, v]) => v && v.ready !== true && (inReview(v) || !together(v.sheetId)));
     if (!st.orders && blockers.length) {
-      const allReview = blockers.every(([, v]) => inReview(v));
-      need('orders', n => allReview ? `${count(n, 'order')} in Review` : `${count(n, 'order')} waiting for other pieces`, allReview ? 'An order sent to Review holds this sheet. It stays on the sheet and the sheet goes on by itself once the order is resolved in the Review tab.' : st.qr && ex.orders && ex.orders.detail || 'Every piece of an order must be ready before any of it is cut.',
+      const allReview = blockers.every(([, v]) => inReview(v)), allSwap = allReview && blockers.every(([, v]) => v.blocks.filter(b => b.review).every(b => b.swap));   // (a pick answered the Review, but the piece on the sheet still has the old drawing)
+      need('orders', n => allSwap ? `${count(n, 'order')} with a new drawing to swap in` : allReview ? `${count(n, 'order')} in Review` : `${count(n, 'order')} waiting for other pieces`, allSwap ? 'A new drawing was chosen for an order on this sheet. It stays on the sheet, and the sheet goes on by itself once the new drawing is swapped on it.' : allReview ? 'An order sent to Review holds this sheet. It stays on the sheet and the sheet goes on by itself once the order is resolved in the Review tab.' : st.qr && ex.orders && ex.orders.detail || 'Every piece of an order must be ready before any of it is cut.',
         ex.orders && ex.orders.items && ex.orders.items.filter(i => i.part !== 'qr').length ? ex.orders.items.filter(i => i.part !== 'qr') : blockers.map(([oid, v]) => ({ kind: 'order', id: oid, label: `Order ${oid}`, why: v.why || 'Another piece of this order is not ready' })), Math.max(1, blockers.length));
     } else if (Object.keys(rec.orderReadiness || {}).length && !blockers.length) g.checks.orders = { ok: true };
     return g;

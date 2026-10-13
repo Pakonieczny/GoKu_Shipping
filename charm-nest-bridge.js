@@ -3346,7 +3346,7 @@ const Pool = window.Pool = (() => {
         }
         return;
       }
-      // REVHOLD: an order in Review (or one a person just answered with a pick) keeps its piece on its sheet, so the card that would take it off to make it up again is not offered: the line is left as it was and the log says so once
+      // REVHOLD: an order in Review keeps its piece on its sheet, so the card that would take it off to make it up again is not offered: the line is left as it was and the log says so once
       if (keepsPlace(row)) {
         if (!setToldFixed.has(row.key)) {
           setToldFixed.add(row.key); const line = `a saved link makes this line ${one ? want[0] : "a set of charms (" + want.join(" + ") + ")"}, but its piece stays on its sheet because the order was sent to Review: the sheet keeps ${[...new Set(made)].join(" + ") || "its piece"}`;
@@ -3361,10 +3361,32 @@ const Pool = window.Pool = (() => {
         why: `Now ${one ? want[0] : (want.length === 2 ? "two" : want.length) + " charms, " + want.join(" + ")} (a saved link). Accept the new order to make it up again as ${pcs} piece${pcs === 1 ? "" : "s"}: the old ${was} comes off the open sheet it is on. Nothing cut or released is touched.` });
     } catch (e) { console.warn("[bridge] saved link not noticed:", e && e.message); }
   }
-  /** REVHOLD: the line's pieces are on a sheet and the order is in Review (or a person just answered its Review by picking the charm): they stay where they are (never lifted, never nested again). Derived from the review record (CharmNestReviewHold), not remembered. */
+  /** REVHOLD: the line's pieces are on a sheet and the order is in Review: they stay where they are (never lifted, never nested again). Derived from the review record (CharmNestReviewHold), not remembered. */
   function keepsPlace(row) {
     try { const rid = row && row.order && row.order.receiptId, H = window.CharmNestReviewHold; if (!rid || !H || typeof H.keepsPlace !== "function" || !H.keepsPlace(rid)) return false; const on = index().charm; return (row.poolIds || []).some(id => !!id && on.has(id)); } catch (_) { return false; }
   }
+  /** REVHOLD: a person answered an order's Review by picking a charm (a saved link), but a piece of the line on a sheet still carries ANOTHER drawing than the line is read as now: the sheet must not be cut with the old one.
+   *  Derived every time from the line's reading through the saved link (one design, or a set of designs) against the sku of its live pool rows, as noticeSet reads them; nothing is remembered. A piece whose record
+   *  names no design is not guessed at. The same drawing under another name (sameDesign) is the same: the hold is released as before. */
+  function drawingDiffers(row) {
+    try {
+      const sp = row && row.spec, ids = (row && row.poolIds) || []; if (!sp || sp.noDesign || sp.ownDesign || sp.customDone || !ids.length || ["gone", "committed"].includes(row.state)) return false;
+      const set = O.setDesignsOf(sp), one = !set && sp.designSku && ["alias", "option"].includes(sp.skuSource) && !(sp.problems || []).length ? [String(sp.designSku)] : null, want = set || one; if (!want) return false;
+      const on = index().charm; if (!ids.some(id => !!id && on.has(id))) return false;
+      const live = ids.map(id => B.pool.rows.get(id)).filter(r => r && !["abandoned", "superseded"].includes(r.state)), made = live.slice().sort((a, b) => (+a.copy || 0) - (+b.copy || 0)).map(r => String(r.sku || "").toUpperCase());
+      if (!made.length || made.some(x => !x)) return false;
+      if (!set) return !made.every(x => O.sameDesign(x, want[0], k => Master.entryFor(k)));
+      const expect = []; for (let u = 0; u < Math.max(1, Math.round(+sp.quantity || 1)); u++) for (const d of want) expect.push(d.toUpperCase());
+      return !(made.length === expect.length && made.every((x, i) => x === expect[i]));
+    } catch (_) { return false; }
+  }
+  const pickedIn = rid => { const M = window.CharmNestReviewMark, i = M && typeof M.info === "function" ? M.info(rid) : null; return !!(i && i.state === "done" && i.how === "pick"); };
+  /** The orders whose Review was answered by a pick and whose piece on a sheet still carries the old drawing (see drawingDiffers). */
+  function swapRids() {
+    const out = new Set(); try { for (const row of B.orders.rows || []) { const rid = row && row.order && String(row.order.receiptId); if (rid && !out.has(rid) && pickedIn(rid) && drawingDiffers(row)) out.add(rid); } } catch (_) {}
+    return out;
+  }
+  const swapWaits = rid => { rid = String(rid || ""); try { return !!rid && pickedIn(rid) && (B.orders.rows || []).some(row => row && row.order && String(row.order.receiptId) === rid && drawingDiffers(row)); } catch (_) { return false; } };
   function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); delete k.frontAt; return k; }   // (a copy never carries another order's place in the queue)
   /** §6.4 · one pooled charm per copy of the line, on the material card the ORDER says. */
   /** A line's copies, made from its traced design, ready to record; null when the line is held, has no design or does
@@ -3786,7 +3808,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, keepsPlace, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched };
+  return { pinPooled, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -12410,7 +12432,7 @@ const Review = window.Review = (() => {
       agent({run:B.run?.runId},"warn",`${row.order.receiptId}: ${row.hold}`);
       syncOrderItems();Orders.render();RunCtl.poke();return;
     }
-    // REVHOLD: an order in Review (or one a person just answered with a pick) keeps its place on its sheet. Accepting the new order leaves its pieces where they are, with the drawing they have
+    // REVHOLD: an order in Review keeps its place on its sheet. Accepting the new order leaves its pieces where they are, with the drawing they have
     // (nothing swaps a drawing in place): never lifted, never nested again, and a piece cut or released was left alone above.
     if(row.repoolChanged && Pool.keepsPlace(row)){
       row.repoolChanged=false;
