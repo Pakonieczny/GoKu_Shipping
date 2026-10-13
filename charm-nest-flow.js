@@ -92,6 +92,10 @@
      (b) its back engraving is approved. (b) is this: null, or the one plain refusal {key:'backsNotApproved', label, detail}; charm-nest-set-edit.js engravingGap is the one rule
      (the server's setMember step reads it too). A record without a readiness report is never refused here (the plan, made from the live read, has the report). */
   const backsGap = s => { try { const E = SE(); return E && typeof E.engravingGap === 'function' ? E.engravingGap(s, { cuts }) : null; } catch (_) { return null; } };
+  /* Paul, 13 Oct 2026: "A partial GF and SS sheet should never be part of a Set of sheets." A GF or SS sheet that is not Completed (charm-nest-set-rules.js: releaseFull, or cut) joins no set by any
+     drop (an open set, a committed set, New set, a sheet dropped on, a partner that comes with it): null, or the one plain refusal {key:'sheetPartial', label, detail}. A record without a completion
+     mark is never refused here (the plan, made from the live read, has it). Taking a partial sheet OUT of a set is never refused for this (see planLeave). */
+  const partialGap = s => { try { const R = RL(); return R && typeof R.recordPartial === 'function' && R.recordPartial(s) ? { key: 'sheetPartial', label: R.partialLine(s), detail: R.partialDetail, why: R.partialWhy(s) } : null; } catch (_) { return null; } };
 
   /* ── reading the records ────────────────────────────────────────────────────────────────────────────────────────
    * state = { sheets:{id:record}, sets:{id:setRecord}, runs:{runId:{open}}, live:{sheetId:{…}} }: what op flowState
@@ -142,7 +146,7 @@
       g.auto.push({ key: 'release:' + id, label: `${label} released from its hold`, detail: `Held back${rec.laserHold.by ? ' by ' + rec.laserHold.by : ''}; every approval and seal it had is kept.` });
       g.steps.push({ type: 'release', sheetIds: [id], key: 'release:' + id });
     }
-    if (!joined(rec)) need('membership', () => `${label} is not in a set yet`, rec.draft ? 'It joins a set when it is full, or when you drop it on a set.' : 'It is not included in its set. Include it in a set first.');
+    if (!joined(rec)) need('membership', () => `${label} is not in a set yet`, rec.draft ? (partialGap(rec) ? 'It joins a set when it is full: a partial sheet never joins a set.' : 'It joins a set when it is full, or when you drop it on a set.') : 'It is not included in its set. Include it in a set first.');
     // layout: a verified layout the page is not changing, and (Rose Gold) a calculated green dash line
     if (!st.layout) {
       const lineOnly = lineHeld(rec) && rec.verification?.ok === true && L.total > 0;     // (held for its line and nothing else: roseConfirm asks for it, or says why it cannot)
@@ -402,6 +406,7 @@
     // (a recorded cut keeps a sheet in the set it was cut in; a cut sheet that is in NO set may join one: its green line is cut, Paul 12 Oct)
     if (s.roseCutAt && inSet(s)) { need('sheetCut', `${v.label} was already cut`, 'A recorded cut is permanent: a cut sheet stays in the set it was cut in.'); return finish(plan); }
     if (+s.laserDoneAt > 0) { need('sheetCompleted', `${v.label} is completed`, 'It keeps its cut record and set until it is moved back to Laser cutting.'); return finish(plan); }
+    { const g = partialGap(s); if (g) { need(g.key, g.label, g.detail); return finish(plan); } }       // a partial GF or SS sheet never joins a set (Paul, 13 Oct): one plain line, nothing is written
     if (!(s.metal === 'rose' && (env.also || []).length)) { const g = backsGap(s); if (g) { need(g.key, g.label, g.detail); return finish(plan); } }       // (b) its back engraving is approved, or the one plain line (a Rose Gold sheet dropped on a sheet is refused below, whatever its backs)
     // a committed set takes and gives sheets (Paul, 7 Oct), and any sheet of a set moves by the rules of set-edit (Paul, 10 Oct): its own plan, below
     if (T && committedSet(T)) return committedMembership(state, v, to, plan, env);
@@ -485,7 +490,9 @@
       const before = RLs.validSet(members), after = RLs.wouldStayValid(members, [v.id], []), lost = after.missing.filter(c => !before.missing.includes(c));   // (the same reading as SetEdit.verifyMoves: a set is never made worse, and never stopped from being mended)
       if (lost.length) { need('setPrinciple', `${tn} needs a completed ${lost.join(' and a completed ')} sheet, and ${name} is the only one it has`, 'A set needs at least 1 completed GF sheet and 1 completed SS sheet. Put another completed ' + lost.join(' / ') + ' sheet in first.'); return finish(plan); }
     }
-    if (items.length) {
+    // (Paul, 13 Oct) a partial GF or SS sheet is never kept in a set by the cardinal rule: a person can take it out; the sheets that share an order with it wait for it to be full and join by themselves
+    const partialOut = !!partialGap(s);
+    if (items.length && !partialOut) {
       plan.shared = items; plan.group = [name].concat(items.flatMap(i => i.there || []));
       need('sharedOrders', 'Orders shared with another sheet', SEd ? SEd.sharedWords(items, 'they stay in one set') : 'Sheets that share an order stay in one set.', items.map(i => ({ ...i, why: `on ${[i.here].concat(i.there || []).filter(Boolean).join(' and ')}` })));
       plan.notes.push(`To hold ${tn} back as a whole instead, drop the set on In progress.`);
@@ -546,6 +553,8 @@
     }
     // (b) for the sheets that come with it (Paul, 12 Oct): every 10K, 14K or Rose Gold sheet that goes in has its back engraving approved; the one plain line names the sheet
     for (const m of mates) { const g = backsGap(state.sheets[m.id]); if (g) need(g.key, g.label, g.detail); }
+    // (Paul, 13 Oct) a partner that is not full yet cannot come with it: the group waits (nothing is split), with the one plain line naming it
+    for (const m of mates) { const g = partialGap(state.sheets[m.id]); if (g) need(g.key, g.label, `${g.detail} ${name} shares an order with it, so neither of them joins ${toName} yet.`); }
     // a set is never emptied, and a move may not take a set's only completed GF or SS sheet away (Paul, 10 Oct)
     if (from && v.members.filter(m => sid(m) !== v.id).length === 0) need('lastSheet', `${name} is all that is in ${fromName}`, how && how.kind === 'committed' ? `A set keeps at least one sheet: press Undo set on ${fromName}'s card to take it apart.` : 'A set keeps at least one sheet: put another sheet in first, or leave it where it is.');
     if (from) principleNeeds(v, from, plan);
@@ -652,6 +661,7 @@
       }
       if (b.metal === 'rose' || (bl && bl.rose)) { need('roseCombine', `${B} is a Rose Gold sheet`, 'Rose Gold joins a set by its own Cut Sheet press and its own yes: drop it on the set, not the other way round.'); continue; }
       { const g = backsGap(b); if (g) { need(g.key, g.label, g.detail); continue; } }       // (b) for the sheet dropped on, as for the one moved
+      { const g = partialGap(b); if (g) { need(g.key, g.label, g.detail); continue; } }       // a partial sheet never joins a set (Paul, 13 Oct), whichever of the two it is
       if (brun && brun.open && !(bl && bl.runHere)) { need('runElsewhere', `${B}: its run is open on another screen`, 'Move it from that screen, so the two do not undo each other.'); continue; }
       if (!bl) { need('fixedSet', `${B} is closed`, 'Its run is finished, so it stays as it is.'); continue; }
       if (bl.can && bl.can.ok === false) { need('include', `${B} is not ready to join a set`, bl.can.reason || 'Nest and verify it first.'); continue; }
@@ -789,11 +799,14 @@
       const joinable = !!live && (live.runHere !== false || !!live.sent);
       // (b) Paul, 12 Oct: a 10K, 14K or Rose Gold sheet in no set joins one once its back engraving is approved: the one plain line, at every place a set can be made or joined
       let engWhy = ''; try { const rec = !own && page.rec ? page.rec(it.id) : null, g = rec ? backsGap(rec) : null; engWhy = g ? g.label : ''; } catch (_) { engWhy = ''; }
+      // (Paul, 13 Oct) a partial GF or SS sheet joins no set: every place a set can be made or joined says so in one plain line
+      let partWhy = ''; try { const rec = page.rec ? page.rec(it.id) : null, g = rec ? partialGap(rec) : null; partWhy = g ? g.why : ''; } catch (_) { partWhy = ''; }
       for (const st of all) {
         if (!st || !st.setId) continue;
         if (st.setId === own) { out.push({ set: st.setId, name: setName(st), ok: false, reason: `It is already in ${setName(st)}.` }); continue; }
         let why = done ? 'Move it back to Laser cutting first.' : +st.laserDoneAt > 0 ? `${setName(st)} is completed.` : /superseded/.test(String(st.status || '')) ? `${setName(st)} was replaced.` : '';
         if (!why && engWhy) why = engWhy;
+        if (!why && partWhy) why = partWhy;
         if (!why && leaving && exit) why = exit;
         // a set that is still being made takes a sheet only as the open run's one open set: a draft sheet of the open run, or a sheet that left its set to join it
         if (!why && !committedSet(st) && (leaving || (live && live.draft))) {
@@ -807,6 +820,7 @@
       let nreason = '';
       if (done) nreason = 'Move it back to Laser cutting first.';
       else if (engWhy) nreason = engWhy;
+      else if (partWhy) nreason = partWhy;
       else if (leaving && exit) nreason = exit;
       else if (ownSet) nreason = `It is already in ${setName(mine)}, the set the run is making.`;
       else if (!live) nreason = 'Only a sheet of the open run can start a new set.';
@@ -833,6 +847,7 @@
     if (!lb) return no(`Only sheets of the open run can be combined: ${b} is not on this page.`);
     if (!lb.draft) return no(`${b} is already in a set: drop ${a} on that set to add it.`);
     { let ga = null, gb = null; try { ga = page.rec ? backsGap(page.rec(it.id)) : null; gb = page.rec ? backsGap(page.rec(oid)) : null; } catch (_) { /* nothing known */ } if (ga || gb) return no((ga || gb).label + '.'); }
+    { let pa = null, pb = null; try { pa = page.rec ? partialGap(page.rec(it.id)) : null; pb = page.rec ? partialGap(page.rec(oid)) : null; } catch (_) { /* nothing known */ } if (pa || pb) return no((pa || pb).why + '.'); }       // (Paul, 13 Oct) a partial sheet joins no set, so it is combined with none
     if (la.rose) return no(`${a} is Rose Gold: it joins a set by its own Cut Sheet press, so drop it on the set.`);
     if (lb.rose) return no(`${b} is Rose Gold: it joins a set by its own Cut Sheet press, so drop it on the set.`);
     if (la.runHere === false) return no(`${a} is not on a page of the open run.`);

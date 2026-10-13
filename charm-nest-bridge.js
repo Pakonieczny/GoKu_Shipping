@@ -4132,7 +4132,10 @@ const Gate = window.Gate = (() => {
       const homes = [...new Set(members.map(homeOf).filter(Boolean))], home = homes.length === 1 ? homes[0] : null;
       // (the set number Rose Gold's even-numbered rule reads: the group's own set; else the set that is forming; none yet = no guess, so a set number is never taken for a sheet that then cannot join)
       const seq = home ? home.seq : collecting ? collecting.seq : 0, wants = p => basePolicy(p, seq, choices).include, inHome = p => !!home && homeOf(p) === home;
-      const wanting = members.filter(wants), need = members.filter(p => !wants(p)), stuck = need.map(p => ({ p, w: cannotJoin(p, ready) })).filter(x => x.w), stuckSet = new Set(stuck.map(x => x.p));
+      // (Paul, 13 Oct) a PARTIAL GF or SS sheet (not fully nested: charm-nest-set-rules.js isPartial) outside every open set never joins a set, not even as a partner the cardinal rule would pull:
+      // it is "stuck" until it is full. One already in an open set (made before this rule) is left exactly as it is.
+      const SRp = window.CharmNestSetRules, partialOut = SRp && SRp.isPartial ? new Set(members.filter(p => !homeOf(p) && SRp.isPartial(p))) : new Set();
+      const wanting = members.filter(wants), need = members.filter(p => !wants(p)), stuck = need.map(p => ({ p, w: partialOut.has(p) ? `it is not full yet${SRp.fillWords(p)}` : cannotJoin(p, ready) })).filter(x => x.w), stuckSet = new Set(stuck.map(x => x.p));
       const together = o => `Shares ${ordersWords(orders, tell)} with ${members.filter(m => m !== o).map(sheetNameOf).join(", ")}`;
       if (homes.length > 1) {
         // already spread over several sets (flagged as ever, never moved): the sheets outside wait until a person puts the group right; a sheet already in a set stays where it is
@@ -4142,13 +4145,23 @@ const Gate = window.Gate = (() => {
         continue;
       }
       if (!wanting.length) continue;
+      if (partialOut.size && !home) {
+        // the group is eligible for a set only when every GF and SS sheet of it is full: with no sheet of it in a set, the whole group waits outside any set together (nothing is split, nothing moves)
+        const names = [...partialOut].map(sheetNameOf), line = `Waits: ${ordersWords(orders, tell)} shared with ${names.join(" and ")}, which ${names.length > 1 ? "are" : "is"} not full yet, so they stay out of a set together`;
+        for (const p of wanting) p.cardinalHold = line;
+        out.push({ ids: g.ids, orders, state: "waiting", why: line, partial: names });
+        continue;
+      }
       // (a partner that cannot join yet, a Rose Gold sheet before its Cut Sheet press, still belongs to the group's set: nothing else may take it into another set meanwhile)
       for (const p of need) if (!stuckSet.has(p)) { p.cardinalPull = together(p); if (home && !inHome(p)) p.cardinalHome = home.setId; } else if (home && !inHome(p)) p.cardinalHome = home.setId;
       if (home) for (const p of wanting) if (!inHome(p)) p.cardinalHome = home.setId;
       if (!stuck.length) { out.push({ ids: g.ids, orders, state: "together", why: "" }); continue; }
       // some partner cannot join yet: the others go in, and every sheet of the group says which to add
       const waits = stuck.map(x => `${sheetNameOf(x.p)} (${x.w})`).join("; "), names = stuck.map(x => sheetNameOf(x.p));
-      for (const p of members) if (!stuckSet.has(p)) p.cardinalNote = `${ordersWords(orders, tell).replace(/^o/, "O")} shared with ${names.join(" and ")}: add ${names.length > 1 ? "those sheets" : "that sheet"} to ${home ? home.name || `Set ${home.seq}` : "this set"} (${stuck.map(x => x.w).join("; ")})`;
+      const homeName = home ? home.name || `Set ${home.seq}` : "this set", addNames = stuck.filter(x => !partialOut.has(x.p)).map(x => sheetNameOf(x.p)), fullNames = stuck.filter(x => partialOut.has(x.p)).map(x => sheetNameOf(x.p));
+      // (a partner that is not full yet cannot be added: it joins by itself once it is full)
+      const what = [addNames.length ? `add ${addNames.length > 1 ? "those sheets" : "that sheet"} to ${homeName}` : "", fullNames.length ? `${fullNames.join(" and ")} ${fullNames.length > 1 ? "join" : "joins"} ${homeName} once ${fullNames.length > 1 ? "they are" : "it is"} full` : ""].filter(Boolean).join("; ");
+      for (const p of members) if (!stuckSet.has(p)) p.cardinalNote = `${ordersWords(orders, tell).replace(/^o/, "O")} shared with ${names.join(" and ")}: ${what} (${stuck.map(x => x.w).join("; ")})`;
       out.push({ ids: g.ids, orders, state: "partial", why: waits, stuck: names });
     }
     return out;
@@ -4165,7 +4178,8 @@ const Gate = window.Gate = (() => {
     for (const p of members) {
       if (list.includes(p)) continue;
       const n = V.norm.get(V.idOf.get(p));
-      if ((n && n.fixed) || (included && p.metal === "rose" && !basePolicy(p, seq).include) || (!included && basePolicy(p, seq).include)) stays.push(p);   // (cut or committed, a Rose Gold sheet that joins only by its own press, a sheet in the set on its own)
+      const partial = included && !!window.CharmNestSetRules && window.CharmNestSetRules.isPartial(p) && !inSetNow(p);   // (Paul, 13 Oct: a partial GF or SS sheet never joins a set, so the sheets that share an order with it cannot go in without it)
+      if ((n && n.fixed) || partial || (included && p.metal === "rose" && !basePolicy(p, seq).include) || (!included && basePolicy(p, seq).include)) stays.push(p);   // (cut or committed, a partial sheet, a Rose Gold sheet that joins only by its own press, a sheet in the set on its own)
     }
     // one plain line: the names, no reasons and no instruction (the shared-orders window says the rest)
     const shared = new Set(stays.flatMap(shares));
@@ -9158,6 +9172,14 @@ const Sets = window.Sets = (() => {
   }
   /** The Library's Sets view: one card per set, its sheets side by side, engraving count, label thumbnails. */
   function libraryGroups(sets, sheets) {
+    // (Paul, 13 Oct) the one plain line a draft the page holds out of a set gives for why (a set waiting for its other kind, a group waiting for a partial sheet): derived at every drawing, never saved (not enumerable, so no copy of the row carries it)
+    try {
+      const live = new Map(allSheets().map(p => [p.sheetId, p]));
+      for (const sheet of sheets) {
+        const pg = sheet.draft ? live.get(sheet.id) : null, why = pg ? pg.setWait || pg.cardinalHold || "" : "";
+        if (why) Object.defineProperty(sheet, "setWait", { value: why, enumerable: false, configurable: true, writable: true }); else if (Object.prototype.hasOwnProperty.call(sheet, "setWait")) delete sheet.setWait;
+      }
+    } catch (_) { /* the plain line stands */ }
     const groups = new Map(sets.filter(s=>s.status !== "superseded").map(s=>["set:"+s.setId, Object.assign({},s,{sheets:[]})]));
     for (const sheet of sheets) {
       const meta=O.libraryGroup(sheet, {combineSolids:true}), key=meta.key;
@@ -9181,7 +9203,9 @@ const Sets = window.Sets = (() => {
       if (!g.setId || g.committedAt || /^complete|superseded/.test(String(g.status || "")) || !g.sheets.length) continue;
       let items; try { items = SO.core.between(all, g.sheets.map(r => r.id), g.setId); } catch (_) { continue; }
       const free = [...new Set(items.flatMap(it => it.thereIds).filter(i => by.get(i) && !by.get(i).fixed))];
-      if (free.length) g.cardinalWait = free.map(i => ({ label: by.get(i).label, id: i }));
+      // (Paul, 13 Oct: a partner that is not full yet cannot be added to the set; the line says it joins by itself once it is full)
+      const SRp = window.CharmNestSetRules, pageOf = id => { try { return typeof allSheets === "function" ? allSheets().find(p => p.sheetId === id) : null; } catch (_) { return null; } };
+      if (free.length) g.cardinalWait = free.map(i => ({ label: by.get(i).label, id: i, ...(SRp && SRp.isPartial && SRp.isPartial(pageOf(i)) ? { partial: true } : {}) }));
     }
   }
   let _cache = null, libraryRequest = 0;

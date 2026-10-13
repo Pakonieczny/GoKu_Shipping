@@ -22,6 +22,10 @@
    * blocked afterwards (SetRules.gate says applies:false), nor is one whose records carry no completion mark. Looked up when asked, so script order does not matter. */
   const noRules={applies:false,ok:true,missing:[],reason:'',short:'',line:'',have:{GF:0,SS:0}};
   const setRules=(st,sheets)=>{let R=(typeof self!=='undefined'?self:globalThis).CharmNestSetRules;if(!R&&typeof require==='function'){try{R=require('./charm-nest-set-rules');}catch(_){R=null;}}return R&&R.gate?R.gate(st,sheets):noRules;};
+  const ruleModule=()=>{let R=(typeof self!=='undefined'?self:globalThis).CharmNestSetRules;if(!R&&typeof require==='function'){try{R=require('./charm-nest-set-rules');}catch(_){R=null;}}return R;};
+  /* Paul, 13 Oct: the ONE plain line a sheet in no set gives for why it is not in one. A partial GF or SS sheet (not fully nested) never joins a set; a sheet the page holds out of a set says why
+   * (s.setWait: derived by the page at every drawing, never saved: a group waiting for a partial sheet, a set waiting for its other kind); any other draft keeps the line it always had. */
+  const draftWhy=s=>{const R=ruleModule();if(s.setWait)return String(s.setWait).replace(/[.\s]+$/,'');if(R&&R.recordPartial&&R.recordPartial(s))return `Not in a set yet: it is not full${R.fillWords(s)}, and a partial sheet never joins a set`;return 'Not in a set yet: it joins a set when it is full or released';};
   const url=x=>typeof x==='string'?x:x?.url;
   /* A piece a person completed by hand (Review → Complete Order, or the QR label printed from Custom Orders: EITHER button, or both, in any order and
    * any number of reprints, releases the piece: both write state 'completed' on the record; Paul, 5 Oct: "this chain only piece
@@ -478,7 +482,7 @@
     // Nesting: a layout that is verified, saved cutting files, and a place in a set
     const working=!!(s.dirty || s.saving || ['nesting','finishing','queued'].includes(s.status));
     if(s.archived)own('nesting','This sheet was removed (archived), so it cannot be cut',true);
-    else if(s.draft)own('nesting','Not in a set yet: it joins a set when it is full or released');
+    else if(s.draft)own('nesting',draftWhy(s));
     else if(s.solidIncluded===false)own('nesting','Not included in its set yet: turn Include on for this metal',true);
     else if(held(s))own('nesting',`Held back from Laser cutting${s.laserHold.by?` by ${s.laserHold.by}`:''} (it was moved back to In progress): press Approve for laser cutting, or move it to Laser cutting, to release it. Its approvals and seals are kept`,true);
     if(again){
