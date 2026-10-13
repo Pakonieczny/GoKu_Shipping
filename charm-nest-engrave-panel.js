@@ -404,7 +404,10 @@
       gateOn = !!on; hookCard(); if (!gateCard) return;
       for (const b of gateCard.querySelectorAll(GATE)) {
         if (on) { if (!b.dataset.engpWas) b.dataset.engpWas = JSON.stringify([b.disabled, b.title]); b.disabled = true; b.title = GATE_WHY; }
-        else if (b.dataset.engpWas) { const [dis, ttl] = tryDo(() => JSON.parse(b.dataset.engpWas), [b.disabled, b.title]); delete b.dataset.engpWas; b.disabled = !!dis; b.title = ttl; }
+        else if (b.dataset.engpWas) {
+          const [dis, ttl] = tryDo(() => JSON.parse(b.dataset.engpWas), [b.disabled, b.title]); delete b.dataset.engpWas;
+          if (b.title === GATE_WHY) { b.disabled = !!dis; b.title = ttl; }   // (APPRFIX-A: only if the button is still as the gate left it. The card brings "Approve both faces" up to date a frame after it is drawn (syncBoth), and a card drawn with an edit staged was gated BEFORE that: the old "Look at the front placement first" came back after Cancel and the button stayed dead)
+        }
       }
     };
     /** ENGFRONT: the face being edited has NO job to draw (the front is asked for in the mode and not saved yet, or its job is "no engraving"): the work area would go on drawing the OTHER face's engraving
