@@ -3596,7 +3596,7 @@ const Pool = window.Pool = (() => {
     // the sheets that already hold other pieces of this line (a pair's other piece, a disc necklace's other discs): a late piece goes to them (rule R2)
     const matePages = on.size ? [...holding(on)] : [];
     for (const [metal, list] of byMetal) {
-      let page=window.LiveNest ? LiveNest.intakePage(metal, run, row.order.receiptId) : pagesOf(metal).at(-1);
+      let page=window.LiveNest ? LiveNest.intakePage(metal, run, row.order.receiptId, list) : pagesOf(metal).at(-1);
       // (a sheet kept for this order's own release stays open to the rest of the order's pieces: the order goes on one sheet whole)
       const shut = p => { const k = row.releasing && p.keepRelease && p.keepRelease.rid === String(row.order.receiptId) ? p.keepRelease : null; if (k) p.keepRelease = null; try { return !!(window.LiveNest && LiveNest.closed(p)); } finally { if (k) p.keepRelease = k; } };
       // (the line's own sheet first, when it still takes pieces: the order's home sheet can be an earlier one, and a pair is never put half on each)
@@ -18755,7 +18755,7 @@ const LiveNest = window.LiveNest = (() => {
      that misses its gaps moves on to the next sheet, and the earlier sheet stays first in line: once a newer page existed
      it used to be passed over for good, short of full, so it was never released and its orders, the oldest, never cut.
      Rose Gold keeps the newest sheet, where its green line is. */
-  function intakePage(m, run, orderId) {
+  function intakePage(m, run, orderId, pieces) {
     const pages = pagesOf(m), newest = pages.at(-1);
     if (!O.FAST_MATERIALS.has(m)) return newest;
     const open = p => p.charms.length && run && p.runId === run.runId && !closed(p);
@@ -18764,7 +18764,9 @@ const LiveNest = window.LiveNest = (() => {
     if (home) return home;
     // a sheet filling its gaps takes only the orders it still owes a try; the rest of a batch starts the next sheet at once
     // (CN.topupRoom; Paul, 27 Sep: a whole batch waited on the full sheet and the next sheet was not started)
-    const room = p => !window.CN?.topupRoom || window.CN.topupRoom(p) > 0;
+    // (and a multi-piece order that cannot fit a gap-filling sheet whole goes on to the next sheet without costing the sheet a try: single-charm
+    // orders fill its small gaps, CN.topupTakes; Paul, 13 Oct 2026)
+    const room = p => (!window.CN?.topupRoom || window.CN.topupRoom(p) > 0) && (!pieces || !window.CN?.topupTakes || window.CN.topupTakes(p, pieces));
     const pick = pages.find(p => p !== newest && open(p) && room(p)) || newest;
     return pick === newest && open(newest) && !room(newest) ? addPage(m) : pick;
   }

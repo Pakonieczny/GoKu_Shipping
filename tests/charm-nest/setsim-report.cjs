@@ -41,8 +41,31 @@ function table(b, a) {
     row('angle step (degrees); wall seconds', d => `${d.step}; ${d.wallS}`),
   ].join('\n');
 }
+/** The sets side (setsim-sets.cjs --json): each file is the array of per-seed results. */
+function setsDigest(files) {
+  const rs = files.flatMap(f => JSON.parse(fs.readFileSync(f, 'utf8')));
+  const S = f => sum(rs, f), n = rs.length, rules = {};
+  for (const r of rs) for (const x of r.failRules || []) rules[x] = (rules[x] || 0) + 1;
+  const lim = {}; for (const r of rs) for (const x of r.limitRules || []) lim[x] = (lim[x] || 0) + 1;
+  return { runs: n, orders: S(r => r.orders), sheets: S(r => r.gfss), sets: S(r => r.sets), partialEver: S(r => r.partialInSetsEver), partialPeak: Math.max(0, ...rs.map(r => r.maxPartialInSets)),
+    brokenRuns: rs.filter(r => (r.failRules || []).length).length, rules: Object.keys(rules).map(k => k + ' x' + rules[k]).join(', ') || 'none', limits: Object.keys(lim).map(k => k + ' x' + lim[k]).join(', ') || 'none',
+    left: S(r => r.leftOutside), held: S(r => r.blockedSheets), heldUpdates: S(r => r.blockedSheetUpdates), waitMean: wmean(rs, r => r.completedWaitMean, r => r.gfss), waitMax: Math.max(0, ...rs.map(r => r.completedWaitMax)), forced: S(r => r.forcedSplits || 0), lifted: S(r => r.liftedOrders || 0) };
+}
+function setsTable(b, a) {
+  const row = (name, f, fmt = x => String(x)) => `| ${name} | ${b ? fmt(f(b)) : ''} | ${a ? fmt(f(a)) : ''} |`;
+  return ['| sets side (page Gate.assemble over a toy sheet fill; fake orders only) | before | after |', '|---|---|---|',
+    row('seeds run; orders in all', d => `${d.runs}; ${d.orders}`), row('GF + SS sheets made', d => d.sheets), row('sets formed', d => d.sets),
+    row('partial GF/SS sheets that were inside a set at some update (all seeds); most at one update', d => `${d.partialEver}; ${d.partialPeak}`),
+    row('seeds with a broken rule (S1 partial in a set, S2 set without GF+SS, S3, S4, S5, S6, S7)', d => `${d.brokenRuns} of ${d.runs}: ${d.rules}`),
+    row('consequences of a split by force, measured (S6* sets tied together, S7* sheets stuck at the end)', d => d.limits),
+    row('completed GF/SS sheets outside every set at the end of the stream', d => d.left), row('completed sheets held out because a sheet sharing an order was still filling / sheet-updates', d => `${d.held} / ${d.heldUpdates}`),
+    row('wait of a completed sheet before it joined a set (updates of 10 min): mean / longest', d => `${num(d.waitMean, 2)} / ${d.waitMax}`), row('forced splits (a later line, its mates\' sheet already released) / orders moved whole to the next sheet', d => `${d.forced} / ${d.lifted}`)].join('\n');
+}
 if (require.main === module) {
-  const b = load(opt('before')), a = load(opt('after')), out = table(b.length ? digest(b) : null, a.length ? digest(a) : null);
+  const b = load(opt('before')), a = load(opt('after'));
+  let out = (b.length || a.length) ? table(b.length ? digest(b) : null, a.length ? digest(a) : null) : '';
+  const sb = String(opt('sets-before') || '').split(',').filter(Boolean), sa = String(opt('sets-after') || '').split(',').filter(Boolean);
+  if (sb.length || sa.length) out += (out ? '\n\n' : '') + setsTable(sb.length ? setsDigest(sb) : null, sa.length ? setsDigest(sa) : null);
   console.log(out); if (opt('md')) fs.writeFileSync(opt('md'), out + '\n');
 }
-module.exports = { digest, table };
+module.exports = { digest, table, setsDigest, setsTable };
