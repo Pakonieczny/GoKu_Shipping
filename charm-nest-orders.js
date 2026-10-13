@@ -157,6 +157,9 @@
   // 16" is how a shop writes a necklace length. The old rule ended in \b, which cannot follow a quote mark, so every
   // length written that way fell through as an unmapped option and held the line.
   const looksLikeLength = v => /^\s*\d+(\.\d+)?\s*("|''|\u201d|\u2033|in\b|inch|cm\b|mm\b)/i.test(String(v || "")) || /^\s*\d{1,2}(\.\d)?\s*$/.test(String(v || ""));
+  /* A NECKLACE LENGTH option ("Necklace Length: 20"", "Necklace Length in inches: 14"") is the buyer's own choice of a necklace chain, and no earring has one. lineForm (HUGGIEGUARD) read it as
+     "necklace" from the start; lineSignals (EARWORDS) did not, so a necklace whose TITLE also says "Earrings" was a pair of earrings (KITEPAIR, 13 Oct 2026, order 4199929230): ONE definition, read by both. */
+  const isNecklaceLength = (name, value) => /\bnecklace\b/i.test(String(name || "")) && isChainOption(name) && looksLikeLength(value);
   /* BFWHY (Paul, 12 Oct 2026, order 4200828980, BIRTHFLOWER_NECKLACE_DISC-9, "Birth Flower: Marigold"): the line's other drop-down has values like Gold - 16" - 2 sides, Silver- 18"- 1 side,
      Rose- 17"- 2 sides. Whatever the shop calls it, an option whose VALUE is only a metal, a chain length and / or a number of sides (with "pair" / "single" beside them) is the shop's metal / length option, never a
      choice of charm. It is read like a metal option (named Metal / Colour / Finish), so it is no "unread option" that makes a second one ask. The station already reads the metal from such a
@@ -1199,7 +1202,7 @@
     if (f === "necklace") return { form: "necklace", by: "its option says necklace" };
     if (f === "huggie") return { form: "huggie", by: "its option says huggie" };
     if (f === "earrings" || f === "earring-single") return { form: hug ? "huggie" : "earring", by: "its option says earrings" };
-    if (opts.some(v => /\bnecklace\b/i.test(v.name) && isChainOption(v.name) && looksLikeLength(v.value))) return { form: "necklace", by: "it has a necklace length option" };
+    if (opts.some(v => isNecklaceLength(v.name, v.value))) return { form: "necklace", by: "it has a necklace length option" };
     if (f === "charm" && opts.some(v => /^\s*charm\s*[+&]\s*engraving\s*$/i.test(v.value))) return { form: "necklace", by: "its option is the necklace charm" };
     const sig = lineSignals(line); let ear = sig.soldAs ? (hug ? "huggie" : "earring") : "";
     if (!ear && sig.ask && o.optionMaps) { const ans = optionLookup(o.optionMaps, line.listingId, EARS_OPT, sig.ask.value); if (ans && ans.field === "form" && (ans.value === "earrings" || ans.value === "huggie")) ear = ans.value === "huggie" ? "huggie" : "earring"; }
@@ -1746,7 +1749,7 @@
   const EARS_OPT = "Earrings in this listing's words";   // (the pseudo option a person's answer to "is this a pair of earrings?" is kept under; its value is the listing title: one answer per title; form = earrings / huggie, ignore = not earrings)
   /** What a line's own words say: { says (the listing, an option or a note says "mismatched" / two designs / left and right), signals[],
    *  soldAs ("pair" | "single" | null: earrings, studs, huggies are sold as a pair; an option or title that says Single is one),
-   *  soldBy ("option" | "title" | "words" | null), side ("L" | "R" | null: a single earring that names its ear), discs }.
+   *  soldBy ("option" | "title" | "words" | null), side ("L" | "R" | null: a single earring that names its ear), discs, necklace (the buyer chose a necklace length) }.
    *  Pure; takes the sorter's line or a raw Etsy transaction (formatted_name / formatted_value, message_from_buyer). No master, no network. */
   function lineSignals(line) {
     line = line || {};
@@ -1760,6 +1763,11 @@
     }
     for (const s of [].concat(line.personalization || [], line.buyerMessage || line.message_from_buyer || [])) if (MIS_WORD.test(visible(s))) signals.push(`note “${clip(visible(s))}”`);
     const opts = vars.filter(v => !isPersonalisation(v.name)).map(v => v.value), text = [title].concat(opts).join(" ");
+    /* NECKLACE LENGTH BOUGHT (KITEPAIR, 13 Oct 2026, order 4199929230: "Kite Necklace ... Kite Shape Earrings ...", SKU KITE, "Necklace Length: 20"" was read as a pair of earrings, Left and Right, the Right mirrored): the
+       buyer chose a necklace chain, so the line is a necklace, and an ear word in the LISTING's TITLE (the title says what the listing offers, the option what this buyer bought) never makes it earrings
+       or a single earring. Everything else is read exactly as before: the words in the buyer's own options (a value, an option name), the shop's own earring SKU, and what a person is asked (nothing new is
+       asked: a line the title's ear words used to settle still asks nothing). The same fact lineForm reads (isNecklaceLength). */
+    const neckBought = vars.some(v => !isPersonalisation(v.name) && !isMetalOption(v.name) && String(v.value).trim() && isNecklaceLength(v.name, v.value));
     /* The words of an earring line (EARWORDS, 10 Oct; Paul: "ALL earrings must be mirror versions of each other", a pair is ALWAYS two pieces: no earring wording may leave a pair as one piece).
        STRONG words say it alone: earring(s) (also "ear rings", the misspelling "earings"), stud(s), huggies, huggie hoops, huggie charm set(s).
        WEAK words, a bare "hoop" or a bare "huggie" ("Poodle Huggie Charm"), say it unless the TITLE names another product ("Gold Hoop Charm Necklace Pendant", a hoop charm bracelet, anklet or key ring;
@@ -1777,13 +1785,13 @@
       if (isPersonalisation(v.name) || !String(v.value).trim() || NO_ANSWER.test(v.value) || NAME_SKIP.test(v.name) || /\bor\b|\//i.test(v.name) || OTHER_PRODUCT.test(v.name) || OTHER_PRODUCT.test(v.value)) return false;
       const nm = notEar(v.name); return NAME_STRONG.test(nm) || (WEAK.test(nm) && !otherInTitle);
     });
-    const lineSku = String(line.sku || line.__sku || ""), skuEar = !charmOnly && SKU_EAR.test(lineSku), earText = EAR.test(text), skuUnderOther = skuEar && otherInTitle && !earText && !nameEar;
+    const lineSku = String(line.sku || line.__sku || ""), skuEar = !charmOnly && SKU_EAR.test(lineSku), earWords = EAR.test(text), earText = neckBought ? EAR.test(opts.join(" ")) : earWords, skuUnderOther = skuEar && otherInTitle && !earWords && !nameEar;
     const earOutside = nameEar || (skuEar && !skuUnderOther), earAll = earText || earOutside;
     const SINGLE_TXT = /\bsingle\s+(?:stud\s+|huggie\s+|hoop\s+)?(?:earring|stud|huggie|charm)\b|\b(?:1|one)\s+(?:single\s+)?(?:earring|stud|huggie)\b(?!s)/i, SINGLE_END = /\bsingle(?:\s+(?:earring|stud|huggie|hoop|charm))?\s*$/i;
     // a TITLE that says Single: next to the earring word, or a few words before it ("Custom Single Replacement Silver Cat Huggie Earring Left Ear"), or at its end
     // ("Huggie Earring, Single", "Poodle Earring Single"). "Single Pearl Stud Earrings" is a pair of earrings with one pearl each, not a single earring: the plural word after it settles that.
     const SING_WORD = "(?:single|individual|solo)", SING_EAR = /\b(?:earring|stud|huggie|hoop)\b(?!s)(?!\s+(?:earrings|studs|huggies|hoops)\b)/i, PLURAL_OR_PAIR = /\b(?:earrings|studs|huggies|hoops|pairs?|sets?|both)\b/i;
-    const TITLE_SINGLE = t => SINGLE_TXT.test(t) || ((EAR.test(t) || earOutside) && (new RegExp("\\b" + SING_WORD + "\\b(?:\\s+[\\w'’&.-]+){0,6}?\\s+(?:earring|stud|huggie|hoop)\\b(?!s|\\s+(?:earrings|studs|huggies|hoops)\\b)", "i").test(t) || new RegExp("(?:^|[,;|(\\-–—]\\s*)" + SING_WORD + "\\s*\\)?\\s*$", "i").test(t)
+    const TITLE_SINGLE = t => (!neckBought && SINGLE_TXT.test(t)) || (((!neckBought && EAR.test(t)) || earOutside) && (new RegExp("\\b" + SING_WORD + "\\b(?:\\s+[\\w'’&.-]+){0,6}?\\s+(?:earring|stud|huggie|hoop)\\b(?!s|\\s+(?:earrings|studs|huggies|hoops)\\b)", "i").test(t) || new RegExp("(?:^|[,;|(\\-–—]\\s*)" + SING_WORD + "\\s*\\)?\\s*$", "i").test(t)
       || new RegExp("\\b(?:earring|stud|huggie|hoop)\\s*[,;:|(\\[\\-–—]*\\s*" + SING_WORD + "\\s*[)\\]]?\\s*$", "i").test(t)
       // no "single" at all, but ONE ear word and ONE ear named ("Right Earring Replacement", "Replacement Stud Earring for Left Ear", "Poodle Earring (Right)")
       || (SING_EAR.test(t) && !PLURAL_OR_PAIR.test(t) && !!singleSideOf({ title: t }))));
@@ -1796,14 +1804,14 @@
     const side = singleSideOf(line), sideBy = side ? (singleSideOf(Object.assign({}, line, { personalization: [], buyerMessage: null, message_from_buyer: null, variations: (line.variations || []).filter(v => !isPersonalisation(lvName(v))) })) === side ? "listing" : "note") : null;   // (listing: the title or an option names the ear, so it is every unit's; note: the buyer's words)
     // the wordings that are NOT guessed (see above): what a person is asked, once per listing title
     let ask = null;
-    if (!soldAs && !charmOnly) {
+    if (!soldAs && !charmOnly && !earWords) {   // (a title's ear words that a bought necklace length set aside asked nothing before, and ask nothing now)
       const t0 = notEar(title), other = (OTHER_PRODUCT.exec(title) || [])[0] || "", key = norm(title).slice(0, 190) || norm(opts.join(" ")).slice(0, 190);
       const pairPhrase = (PAIR_ASK_TITLE.exec(t0) || [])[0] || "";   // (a TITLE only: an option that says "Pair" is an unmapped option, already asked about)
       if (key && skuUnderOther) ask = { by: "sku", value: key, why: `the SKU “${clip(lineSku, 30)}” is an earring SKU, but the title names a ${other.toLowerCase()}: is this a pair of earrings (a Left and a Right)?` };
       else if (key && HUGG.test(t0) && otherInTitle && !earAll) ask = { by: "title", value: key, why: `the title says “huggie” and also “${other.toLowerCase()}”: is this a pair of earrings (a Left and a Right)?` };
       else if (key && pairPhrase && !earAll && !otherInTitle) ask = { by: "pair", value: key, why: `“${clip(pairPhrase, 40)}” says a pair but names no earring: is this a pair of earrings (a Left and a Right)?` };
     }
-    return { says: signals.length > 0, signals: [...new Set(signals)], soldAs, soldBy, side, sideBy, discs: discsIn(line), ask, other: OTHER_PRODUCT.test(title) };
+    return { says: signals.length > 0, signals: [...new Set(signals)], soldAs, soldBy, side, sideBy, discs: discsIn(line), ask, other: OTHER_PRODUCT.test(title), necklace: neckBought };
   }
   /** Which ear a SINGLE earring is for, when the line names it: an option value ("Single - Left", "Right ear") or the buyer's note ("left ear
    *  only", "for my right ear"). Both ears named, or neither: null (unspecified: flagged, never guessed). */
@@ -2187,7 +2195,7 @@
        words or form say earrings (soldAs "pair": earrings, studs, huggies, hoops, a Pair option, form earrings or huggie); a SKU the shop itself names MISMATCHED says it too,
        unless the line chose another form or names another product. Anything else is NOT a pair: one piece per unit cut from the design's file exactly as the app always read it
        (the whole drawing, both bodies together, no side, no mirror) and a plain note says so. A line sold as Single is unchanged (one ear, its side only when it names one). */
-    info.earring = soldAs === "pair" || (info.mismatched && info.source === "name" && soldAs == null && !form && !sig.other);
+    info.earring = soldAs === "pair" || (info.mismatched && info.source === "name" && soldAs == null && !form && !sig.other && !sig.necklace);
     if (info.mismatched && !info.earring && soldAs !== "single") {
       const named = info.source !== "design" && info.source !== "name";   // (two designs the line names, not one design file that draws two bodies)
       info.mismatched = false; info.source = null; info.members = null; if (named) info.twoNamed = true; else info.twoBodies = true;
