@@ -6371,6 +6371,8 @@ const Engrave = window.Engrave = (() => {
     if (sp.noDesign || sp.ownDesign || sp.formHold || (sp.special && (sp.special.notCut || sp.special.own)) || (window.CustomSheet && CustomSheet.sentOf && CustomSheet.sentOf(row))) return false;
     return !!(sp.engraveCandidate || raiseCandidate(row));
   }
+  /** ENGPRE: does the line carry a job made the usual way (its piece pooled)? A job made on a line with no pool ids (a Save of the engraving setup before the early job existed) and not touched since is not: early() takes it over (copies = the ids the piece will get, job.pre). */
+  const madeUsual = (row, js) => js.some(j => !j.pre && ((row.poolIds || []).length > 0 || !untouched(j) || (j.backs || []).length > 0 || (j.stagedBacks || []).length > 0));   // (a job anyone has decided, nudged, approved or written is never taken over)
   /** The job(s) of a line, made now when it has none: resolves with them once the words are read and the placement is being fitted (or fitted). [] for a line that carries no engraving or whose charm cannot be made. */
   function early(row) {
     row = lineOf(row); if (!row) return Promise.resolve([]);
@@ -6381,7 +6383,7 @@ const Engrave = window.Engrave = (() => {
   async function earlyOnce(row) {
     if (!earlyWanted(row)) return jobsOf(row);
     const owner = items(), had = jobsOf(row);
-    if (had.some(j => !j.pre)) return had;   // (made the usual way, once the piece was pooled: that path owns it)
+    if (madeUsual(row, had)) return had;   // (made the usual way, once the piece was pooled: that path owns it; a job a Save made on a line not pooled yet is ours: it has no ids to wait on)
     const sig = earlySig(row);
     // (unchanged since the last time: only the charm a reload let go is made again, so approving and editing work)
     const ids = row.poolIds || [], real = ids.length && Pool.charmOf(ids[0]);
@@ -6406,7 +6408,7 @@ const Engrave = window.Engrave = (() => {
     const owner = items();
     for (const r of Orders.rows()) {
       if (items() !== owner) return;
-      if (!earlyWanted(r) || jobsOf(r).some(j => !j.pre)) continue;
+      if (!earlyWanted(r) || madeUsual(r, jobsOf(r))) continue;
       if (earlyHeld(r)) continue;
       const bad = earlyFails.get(r.key); if (bad && bad.sig === earlySig(r) && Date.now() - bad.at < 300000) continue;   // (one that failed is tried again after five minutes, or when the line changes)
       await early(r);

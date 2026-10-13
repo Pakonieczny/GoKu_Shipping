@@ -11,7 +11,8 @@
 //   4  Approve records without a sheet (a seal is kept, no back file and no pool write: the file waits for the sheet);
 //   5  later released, pooled and nested: it is the SAME job object (key, words, fit, approval, seal), nothing re-read; its back file is written once, on the sheet;
 //   6  discs: one job per disc under the disc keys, the words of each from the note; words that need a person stay a proposal for a person ("Words to confirm"), and a person's words fit;
-//   7  an earring pair and a line with nothing to engrave get no job; a press that can open nothing leaves the Engrave tab exactly as it was (the empty-tab protection).
+//   7  an earring pair and a line with nothing to engrave get no job; a press that can open nothing leaves the Engrave tab exactly as it was (the empty-tab protection);
+//   8  a Save of the engraving setup on a held line BEFORE its early job exists (it makes the face jobs the usual way, with no pool ids): early() takes those jobs over, they get the ids the piece will get, a view and a fit.
 //   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules CHROMIUM=/opt/pw-browsers/chromium node tests/charm-nest/engrave-prenest-job.cjs
 // What a pass does NOT prove: the live site, a live order, a live reading of the words (the paid reader is never started here), the real Netlify functions.
 const R = require('./_engraveRealWorld.cjs'), Base = require('./_orderFactsWorld.cjs');
@@ -27,6 +28,7 @@ const HELD = {
   // (a buyer message beside the personalisation: the words are for a person to confirm, never settled by the free reading)
   noted: { rid: '4290000204', sku: 'COMET_9427', listing: '1890000204', title: 'Comet Necklace, Celestial Charm Necklace in 14k Gold Fill', buyer: 'Name Twelve', placed: { day: 0, h: 9, m: 15 }, ship: 5, variations: [V('Metal choice', 'Gold'), V('Font Choice', 'Stylish')], personalization: ['Name One'], buyerMessage: 'Please put it on the back, thank you.' },
   carry: { rid: '4290000206', sku: 'COMET_9427', listing: '1890000206', title: 'Comet Necklace, Celestial Charm Necklace in 14k Gold Fill', buyer: 'Name Fourteen', placed: { day: 0, h: 9, m: 18 }, ship: 5, variations: [V('Metal choice', 'Gold'), V('Font Choice', 'Stylish')], personalization: ['Name One'] },
+  late: { rid: '4290000207', sku: 'COMET_9427', listing: '1890000207', title: 'Comet Necklace, Celestial Charm Necklace in 14k Gold Fill', buyer: 'Name Fifteen', placed: { day: 0, h: 9, m: 20 }, ship: 5, variations: [V('Metal choice', 'Gold'), V('Font Choice', 'Stylish')], personalization: ['Name One'] },
   plain: { rid: '4290000205', sku: 'COMET_9427', listing: '1890000205', title: 'Comet Necklace, Celestial Charm Necklace in 14k Gold Fill', buyer: 'Name Thirteen', placed: { day: 0, h: 9, m: 16 }, ship: 5, variations: [V('Metal choice', 'Gold')], personalization: [] }
 };
 // every call that is not a plain read (the fake site's own names: *Get, *List, getOrderPieces, backPreview, listingPhotos ...)
@@ -119,10 +121,13 @@ const writes = from => from.filter(c => (!isRead(c) && !intakeOnly(c)) || /agent
     check(dj.every((j, i) => j.copies.length === 1 && j.copies[0] === '4290000202_42900002021_' + (i + 1)), 'each holds the pool id its disc will get (' + dj.map(j => j.copies[0]).join(' ') + ')');
     console.log('   noted before:', JSON.stringify(await jobsOf(keys.noted)));
     await page.evaluate(k => Engrave.early(B.orders.byKey.get(k)), keys.noted);
-    let nj = await jobsOf(keys.noted);
-    check(nj.length === 1 && nj[0].pre && nj[0].state === 'words' && nj[0].text === 'Name One' && !nj[0].fitted, 'words with a buyer message beside them stay for a person: "Words to confirm", the proposal already in the box, nothing fitted or approved (' + JSON.stringify(nj.map(j => [j.state, j.text])) + ')');
-    const decide = await page.evaluate(async k => { const j = Engrave.jobsOf(B.orders.byKey.get(k))[0]; await Engrave.decideWords(j, { text: 'Name Two', by: 'Test Operator' }); return { state: j.state, text: j.text, fitted: !!(j.fit && (j.fit.glyphs && j.fit.glyphs.length || j.fit.cmds)), pre: !!j.pre }; }, keys.noted);
-    check(decide.state === 'review' && decide.text === 'Name Two' && decide.fitted && decide.pre, 'a person\'s words on it settle and fit on the charm it will have (' + JSON.stringify(decide) + ')');
+    let nj = await page.evaluate(k => Engrave.jobsOf(B.orders.byKey.get(k)).map(j => ({ pre: !!j.pre, state: j.state, text: j.text, source: j.wordsSource || null, decided: !!j.decision, approved: !!j.approvedAt })), keys.noted);
+    // (the page's own draft preview of a proposal - Engrave's recovery of waiting previews - may already be setting the proposal ready and fitting it: it is still the buyer's words as a proposal, decided and approved by nobody)
+    check(nj.length === 1 && nj[0].pre && ['words', 'ready', 'fitting', 'review'].includes(nj[0].state) && nj[0].text === 'Name One' && nj[0].source === 'personalization:proposal' && !nj[0].decided && !nj[0].approved, 'words with a buyer message beside them stay a PROPOSAL for a person (read free, the proposal in the box, not decided, not approved) (' + JSON.stringify(nj.map(j => [j.state, j.text, j.source])) + ')');
+    const decide = await page.evaluate(async k => { const j = Engrave.jobsOf(B.orders.byKey.get(k))[0]; await Engrave.decideWords(j, { text: 'Name Two', by: 'Test Operator' }); return k; }, keys.noted);
+    await page.waitForFunction(k => { const j = Engrave.jobsOf(B.orders.byKey.get(k))[0]; return j && j.text === 'Name Two' && j.state === 'review' && j.fit && (j.fit.glyphs && j.fit.glyphs.length || j.fit.cmds); }, keys.noted, { timeout: 120000 }).catch(() => {});
+    const dj2 = await page.evaluate(k => { const j = Engrave.jobsOf(B.orders.byKey.get(k))[0]; return { state: j.state, text: j.text, fitted: !!(j.fit && (j.fit.glyphs && j.fit.glyphs.length || j.fit.cmds)), pre: !!j.pre, decided: !!(j.decision && j.decision.by) }; }, keys.noted);
+    check(dj2.state === 'review' && dj2.text === 'Name Two' && dj2.fitted && dj2.pre && dj2.decided, 'a person\'s words on it settle and fit on the charm it will have (' + JSON.stringify(dj2) + ')');
 
     // ── 7 · nothing for earrings or a plain line; the empty-tab protection ──
     const none = await page.evaluate(async ks => { const out = {}; for (const [n, k] of Object.entries(ks)) { const r = B.orders.byKey.get(k); out[n] = { wanted: !!Engrave.earlyWanted(r), jobs: (await Engrave.early(r)).length }; } return out; }, { earrings: keys.earrings, plain: keys.plain });
@@ -134,6 +139,34 @@ const writes = from => from.filter(c => (!isRead(c) && !intakeOnly(c)) || /agent
     const opened = await page.evaluate(({ rid, key }) => EngraveLink.open({ rid, key }), { rid: HELD.earrings.rid, key: keys.earrings });
     const v7 = await page.evaluate(() => { const v = Engrave.view(); return { tab: v.tab, list: v.list, q: v.q || '', mode: CN.S.mode, ow: OrderWin.isOpen() }; });
     check(opened === false && Date.now() - t1 < 4000 && v7.ow && v7.mode === 'orders' && v7.q === '' && v7.list === true, 'a press that can open nothing (an earring) answers at once, closes nothing and leaves the Engrave tab as it was (' + JSON.stringify(v7) + ')');
+
+    // ── 8 · a Save of the setup BEFORE the early job exists: the jobs it makes (no pool ids yet) are taken over ──
+    check((await jobsOf(keys.late)).length === 0, 'the line saved before anything prepared it has no job yet');
+    n0 = calls.length;
+    const lateSave = await page.evaluate(async k => { const row = B.orders.byKey.get(k), res = await Engrave.saveSetup(row, { mode: 'both', front: { text: 'A' }, back: { text: 'Name One' } }); return { ok: !!(res && res.ok), msg: res && res.message || '' }; }, keys.late);
+    const savedJobs = await jobsOf(keys.late);
+    console.log('   late, right after the Save:', JSON.stringify(savedJobs.map(j => [j.key, j.face, j.pre, j.state, j.copies, j.view])));
+    check(lateSave.ok && savedJobs.length === 2 && savedJobs.every(j => j.copies.length === 0 || j.pre), 'the Save made the back and the front job (' + JSON.stringify(lateSave) + ')');
+    await page.evaluate(k => Engrave.early(B.orders.byKey.get(k)), keys.late);
+    await page.waitForFunction(k => { const js = Engrave.jobsOf(B.orders.byKey.get(k)); return js.length === 2 && js.every(j => j.fit && j.view); }, keys.late, { timeout: 120000 }).catch(() => {});
+    const lj = await jobsOf(keys.late);
+    console.log('   late, after early:', JSON.stringify(lj.map(j => [j.key, j.face, j.pre, j.state, j.copies, j.view, j.fitted])));
+    check(lj.length === 2 && lj.every(j => j.pre && j.view && j.mask && j.fitted), 'early() takes the jobs the Save made over: both faces are pre, each with a real view, mask and fit', lj.map(j => [j.face, j.pre, j.state, j.view, j.mask, j.fitted]));
+    check(lj.every(j => j.copies.length === 1 && /^4290000207_42900002071_1$/.test(j.copies[0])), 'each holds the pool id the piece will get (' + lj.map(j => j.copies[0]).join(' ') + ')');
+    const sl = await state(keys.late);
+    check(sl.state === 'pulled' && sl.hold === 'held by Test' && sl.poolIds.length === 0 && !sl.inPool, 'the line is still held, pulled and in no pool');
+    check(!calls.slice(n0).some(c => /^(poolPut|poolUpdate|backPut|backInvalidate|putSheet|runPut|startAgent)$/.test(c.op || '') || /agent|chat|anthropic|claude/i.test(c.name)), 'the Save and the early job started no pool, back, sheet, run or paid call');
+
+    // (a job someone has touched is never taken over: the front job of this line, made to look like a usual-way job a person nudged on a line with no pool ids, is left exactly as it is, then put back)
+    const guard = await page.evaluate(async k => {
+      const row = B.orders.byKey.get(k), j = Engrave.jobsOf(row).find(x => x.face === 'front'), keep = { pre: j.pre, copies: j.copies, nudged: j.nudged };
+      j.pre = false; j.copies = []; j.nudged = true;
+      await Engrave.early(row);
+      const out = { pre: !!j.pre, copies: j.copies.length };
+      j.pre = keep.pre; j.copies = keep.copies; j.nudged = keep.nudged;
+      return out;
+    }, keys.late);
+    check(guard.pre === false && guard.copies === 0, 'a job a person has touched is not taken over by early() (' + JSON.stringify(guard) + ')');
 
     // ── 5 · later released, pooled and nested: the SAME job (last: pooling takes every pulled line of the world) ──
     await page.evaluate(k => Engrave.early(B.orders.byKey.get(k)), keys.carry);
