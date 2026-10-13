@@ -67,11 +67,11 @@ function install() {
   if (!w) { console.log('engrave-thumbs: no playwright-core here, not run'); return; }
   const page = w.page; const requests = [];
   try {
-    const made = await R.build(w, ['both', 'tag', 'discs', 'back']);
+    const made = await R.build(w, ['both', 'tag', 'discs', 'back', 'front']);
     await page.evaluate(install);
     // (the world's own fit passes can end before the last job is fitted on a busy machine: finish them here)
-    await page.evaluate(async keys => { for (let i = 0; i < 240; i++) { const js = [...Engrave.items().values()], every = keys.every(k => Engrave.jobsOf(B.orders.byKey.get(k)).length); if (every && js.length && !js.some(j => ['classify', 'ready', 'fitting'].includes(j.state))) break; try { await Engrave.fitAll(); } catch (_) { /* again */ } await new Promise(r => setTimeout(r, 250)); } }, ['both', 'tag', 'discs', 'back'].map(k => made[k].key));
-    for (const k of ['both', 'tag', 'discs', 'back']) made[k].jobs = await page.evaluate(key => Engrave.jobsOf(B.orders.byKey.get(key)).map(j => ({ key: j.key, state: j.state, reason: j.reason, hasView: !!j.view, fitted: !!j.fit && !!j.fit.cmds })), made[k].key);
+    await page.evaluate(async keys => { for (let i = 0; i < 240; i++) { const js = [...Engrave.items().values()], every = keys.every(k => Engrave.jobsOf(B.orders.byKey.get(k)).length); if (every && js.length && !js.some(j => ['classify', 'ready', 'fitting'].includes(j.state))) break; try { await Engrave.fitAll(); } catch (_) { /* again */ } await new Promise(r => setTimeout(r, 250)); } }, ['both', 'tag', 'discs', 'back', 'front'].map(k => made[k].key));
+    for (const k of ['both', 'tag', 'discs', 'back', 'front']) made[k].jobs = await page.evaluate(key => Engrave.jobsOf(B.orders.byKey.get(key)).map(j => ({ key: j.key, state: j.state, reason: j.reason, hasView: !!j.view, fitted: !!j.fit && !!j.fit.cmds })), made[k].key);
     ok('the real world made jobs with real views and fits: ' + JSON.stringify(['both', 'tag', 'discs', 'back'].map(k => made[k].jobs.filter(j => !(j.hasView && j.fitted)))), ['both', 'tag', 'discs', 'back'].every(k => made[k].jobs.length && made[k].jobs.every(j => j.hasView && j.fitted)));
     const settleFonts = () => page.evaluate(async () => { const P = CharmNestEngravePreview; await Promise.all(['jost-ace', 'source-sans-3', 'playwrite-us-trad'].map(id => P.ensure(id))); await new Promise(r => setTimeout(r, 50)); [...document.querySelectorAll('.engThumb')].forEach(b => { if (b._engpv) CharmNestEngravePreview.update(b, {}); }); });
     const card = (sel, i = 0) => `[...document.querySelectorAll('#owEng .engCard')][${i}]`;
@@ -194,6 +194,7 @@ function install() {
     }
     ok('typing changes the shown face\'s box at every keystroke, in the same tick (capitals for Ace), and leaves the other face alone', tick.keys.join('|') === 'Q|QQ|QQ|QQ Z|QQ ZZ' && tick.typedBack === 'QQ ZZ' && tick.frontKept === 'W');
     ok('a font pick changes the family in the same tick', /jost-ace/.test(tick.famBefore) && /playwrite-us-trad/.test(tick.famAfter));
+    if (shots) { await page.waitForTimeout(600); await R.shot(w, 'THUMB-detail-staged'); }
     ok('the charm is NOT drawn again by any of it: the same canvas elements', tick.sameCanvas);
     ok('typing and a font pick made no request (the charm is drawn from the page\'s own geometry; fonts are files of this site): ' + JSON.stringify(typedRequests), typedRequests.length === 0);
     // the other face is picked by its thumbnail: typing there lands in its own box and the first face keeps its staged words
@@ -216,21 +217,86 @@ function install() {
     ok('a mode change reaches the boxes in the same tick: the front has no words (or no box), the back keeps its own', md.clicked && (md.frontText === null || md.frontText === '') && !!md.backText);
     ok('typing, a font pick and a face pick made no request (the charm is drawn from the page\'s own geometry; fonts are files of this site): ' + JSON.stringify(typedRequests), typedRequests.length === 0);
 
-    /* ── E · no geometry at all: the order window's own Vector design ── */
-    const E = await page.evaluate(async key => {
-      const P = CharmNestEngravePreview, row = B.orders.byKey.get(key), bare = Object.assign({}, row, { poolIds: [] }), mk = () => { const h = document.createElement('div'); h.style.cssText = 'width:104px;height:104px;position:fixed;left:0;top:0'; document.body.appendChild(h); return h; };
-      const h = mk(); P.render(h, { row: bare, face: 'back', text: 'Hi' });
-      const first = { pic: h.querySelector('.engpv').dataset.pic, wait: h.querySelector('.engpvWait') && !h.querySelector('.engpvWait').hidden ? h.querySelector('.engpvWait').textContent.trim() : '' };
-      for (let i = 0; i < 100 && !(h.querySelector('.engpvDraw img') || (h.querySelector('.engpv') && h.querySelector('.engpv').dataset.pic === 'none')); i++) await new Promise(r => setTimeout(r, 100));
-      const im = h.querySelector('.engpvDraw img'); await (im && im.decode ? im.decode().catch(() => {}) : null);
-      const out = { first, pic: h.querySelector('.engpv').dataset.pic, img: !!im, nat: im ? [im.naturalWidth, im.naturalHeight] : null, flip: h.querySelector('.engpv').getAttribute('data-flip'), ar: h.querySelector('.engpvFrame').hasAttribute('data-ar'), text: h.querySelector('.engpvText').textContent, waitAfter: !h.querySelector('.engpvWait').hidden };
-      h.remove();
-      // nothing at all: no pool, no vector: still no error, the words alone
-      const h2 = mk(); P.render(h2, { row: { key: 'x', spec: {}, line: {}, poolIds: [] }, face: 'front', text: 'Hi' }); out.none = { pic: h2.querySelector('.engpv').dataset.pic, text: h2.querySelector('.engpvText').textContent }; h2.remove();
+    /* ── F · a line with NO pool item and NO job (held, never nested): the design's master drawing, the back turned over, the words inside the engravable area ── */
+    const Fx = await page.evaluate(async keys => {
+      const P = CharmNestEngravePreview, G = CharmNestGeom, out = [];
+      const mk = () => { const h = document.createElement('div'); h.style.cssText = 'width:104px;height:104px;position:fixed;left:0;top:0;background:#fff'; document.body.appendChild(h); return h; };
+      const wait = async (h, f) => { for (let i = 0; i < 200; i++) { if (f()) return true; await new Promise(r => setTimeout(r, 100)); } return false; };
+      for (const [name, key, face] of keys) {
+        const row = B.orders.byKey.get(key), job = Engrave.jobsOf(row).find(j => (j.face === 'front') === (face === 'front')), bare = Object.assign({}, row, { poolIds: [] });
+        const text = (job.lineInput || job.lines || []).join('\n'), fontId = job.fontKey || 'source-sans-3';   // (the job's own words: the real fit of the same words is the yardstick)
+        const h = mk(); P.render(h, { row: bare, face, text, fontId });
+        const pv0 = h.querySelector('.engpv'), first = { pic: pv0.dataset.pic, state: pv0.dataset.state, textHidden: h.querySelector('.engpvText').hidden };
+        await wait(h, () => { const pv = h.querySelector('.engpv'), t = h.querySelector('.engpvText'); return pv.dataset.pic === 'frame' && pv.dataset.state === 'ready' && !t.hidden; });
+        const pv = h.querySelector('.engpv'), t = h.querySelector('.engpvText'), cv = h.querySelector('.engpvDraw canvas'), rec = h._engpv && h._engpv.qrec;
+        const Fj = P.frameFor({ job, row, face }), Fb = P.frameFor({ row: bare, face }), set = Engrave.fontSetFor(fontId);
+        let inside = null, jobSize = job.fit && job.fit.size;
+        if (rec && rec.fit && set && set.Regular && job.mask) { const L = G.layoutLines(rec.fit.lines, set.Regular, rec.fit.size, 0.216, rec.fit.angle, rec.fit.centre); inside = G.verifyInk(L.cmds, job.mask).ok; }
+        out.push({ name, face, first, pic: pv.dataset.pic, state: pv.dataset.state, px: cv ? __T.pix(cv) : null, shown: t.textContent, textHidden: t.hidden, boxDiff: Fj && Fb ? Math.max(...Fj.box.map((v, i) => Math.abs(v - Fb.box[i]))) : null, fit: rec && rec.fit && { lines: rec.fit.lines, size: rec.fit.size, angle: rec.fit.angle }, inside, jobSize, status: rec && rec.status, why: rec && rec.why });
+        h.remove();
+      }
       return out;
+    }, [['back', made.back.key, 'back'], ['both', made.both.key, 'back'], ['both', made.both.key, 'front'], ['tag', made.tag.key, 'back'], ['tag', made.tag.key, 'front']]);
+    if (process.env.THUMB_LOG) console.log(JSON.stringify(Fx.map(r => ({ n: r.name + ':' + r.face, fit: r.fit, job: r.jobSize, inside: r.inside, boxDiff: r.boxDiff, shown: r.shown }))));
+    for (const r of Fx) {
+      const id = `${r.name} ${r.face}, no pool item and no job`;
+      ok(id + ': the picture is the charm drawn from its master (a canvas), the words wait for their place and are never drawn across the whole charm: ' + JSON.stringify(r.first), r.pic === 'frame' && r.px && r.px.a > 3000 && (r.first.state === 'fitting' ? r.first.textHidden : true));
+      ok(id + ': the words are in the engravable area (the page\'s own check of the ink against the job\'s own eroded mask)' + ' ' + JSON.stringify([r.status, r.why, r.fit]), r.status === 'ready' && r.inside === true && r.fit.lines.length >= 1 && r.fit.lines.length <= 6);
+      ok(id + ': a sensible size, not a speck (' + (r.fit && r.fit.size && r.jobSize ? (r.fit.size / r.jobSize).toFixed(2) : '?') + ' of the real fit)', r.fit && r.jobSize && r.fit.size >= 0.4 * r.jobSize && r.fit.size <= 1.5 * r.jobSize);
+      ok(id + ': the frame is the job\'s own frame, so the words\' place means the same on both (max difference ' + (r.boxDiff == null ? '?' : r.boxDiff.toFixed(3)) + ' pt)', r.boxDiff != null && r.boxDiff < 0.05);
+      ok(id + ': the words shown are the fit\'s own lines', r.shown.split('\n').length === r.fit.lines.length && !r.textHidden);
+      if (r.face === 'back') ok(id + ': the BACK view: no front art on it', r.px.red === 0 && r.px.blue === 0 && r.px.holes > 10);
+      else ok(id + ': the FRONT view keeps the design\'s engraved art', r.name === 'tag' || r.px.red > 100);
+    }
+    {   // the hoop is on the OTHER side on the back of the tag (the charm turned over), job-less as with a job
+      const side = (a, b) => Math.sign((a.px.holeX - 0.5) * (b.px.holeX - 0.5));
+      const f = Fx.find(r => r.name === 'tag' && r.face === 'front'), b = Fx.find(r => r.name === 'tag' && r.face === 'back');
+      ok('tag, no job: the hoop is on the opposite side on the back (the charm turned over, not the front\'s picture)', side(f, b) < 0 || Math.abs(f.px.holeX - b.px.holeX) > 0.1);
+    }
+
+    /* ── G · the design's drawing is still being read: a small labelled wait, nothing wrong drawn meanwhile, then the charm ── */
+    const Gx = await page.evaluate(async key => {
+      const P = CharmNestEngravePreview; P.forget(); const row = B.orders.byKey.get(key), bare = Object.assign({}, row, { poolIds: [] }), entry = Master.entryFor(row.spec.designSku), path = Pool.sizeEntry(entry, row.spec.size).aiPath;
+      const src = B.pool.sources.get(path), orig = Pool.masterCharm; let release; const gate = new Promise(r => { release = r; });
+      B.pool.sources.delete(path); Pool.masterCharm = async () => { await gate; return src; };
+      const h = document.createElement('div'); h.style.cssText = 'width:104px;height:104px;position:fixed;left:0;top:0;background:#fff'; document.body.appendChild(h);
+      try {
+        P.render(h, { row: bare, face: 'back', text: 'Hi', fontId: 'source-sans-3' });
+        await new Promise(r => setTimeout(r, 120));
+        const pv = h.querySelector('.engpv'), w1 = h.querySelector('.engpvWait'), t1 = h.querySelector('.engpvText');
+        const during = { pic: pv.dataset.pic, state: pv.dataset.state, wait: w1 && !w1.hidden ? w1.textContent.trim() : '', textHidden: t1.hidden, canvas: !!h.querySelector('canvas'), img: !!h.querySelector('img') };
+        release(); for (let i = 0; i < 100 && !(h.querySelector('.engpv').dataset.pic === 'frame'); i++) await new Promise(r => setTimeout(r, 100));
+        const pv2 = h.querySelector('.engpv'); const after = { pic: pv2.dataset.pic, canvas: !!h.querySelector('canvas'), wait: !h.querySelector('.engpvWait').hidden };
+        return { during, after };
+      } finally { Pool.masterCharm = orig; B.pool.sources.set(path, src); h.remove(); }
+    }, made.front.key);
+    ok('the master is being read: a small "Loading charm" wait, no words on nothing, no front picture on a Back box: ' + JSON.stringify(Gx.during), Gx.during.pic === 'none:loading' && Gx.during.wait === 'Loading charm' && Gx.during.textHidden && !Gx.during.canvas && !Gx.during.img);
+    ok('then the charm is drawn and the wait is gone: ' + JSON.stringify(Gx.after), Gx.after.pic === 'frame' && Gx.after.canvas);
+
+    /* ── E · no geometry at all: the order window's own Vector design for the FRONT, never for a Back box ── */
+    const E = await page.evaluate(async key => {
+      const P = CharmNestEngravePreview; P.forget(); const row = B.orders.byKey.get(key), bare = Object.assign({}, row, { poolIds: [] }), mk = () => { const h = document.createElement('div'); h.style.cssText = 'width:104px;height:104px;position:fixed;left:0;top:0'; document.body.appendChild(h); return h; };
+      const path = Pool.sizeEntry(Master.entryFor(row.spec.designSku), row.spec.size).aiPath, src = B.pool.sources.get(path), orig = Pool.masterCharm;
+      B.pool.sources.delete(path); Pool.masterCharm = async () => { throw new Error('no master here'); };   // (the design's file cannot be read)
+      try {
+        const h = mk(); P.render(h, { row: bare, face: 'front', text: 'Hi' });
+        const first = { pic: h.querySelector('.engpv').dataset.pic, wait: h.querySelector('.engpvWait') && !h.querySelector('.engpvWait').hidden ? h.querySelector('.engpvWait').textContent.trim() : '' };
+        for (let i = 0; i < 100 && !(h.querySelector('.engpvDraw img') || (h.querySelector('.engpv') && h.querySelector('.engpv').dataset.pic === 'none')); i++) await new Promise(r => setTimeout(r, 100));
+        const im = h.querySelector('.engpvDraw img'); await (im && im.decode ? im.decode().catch(() => {}) : null);
+        const out = { first, pic: h.querySelector('.engpv').dataset.pic, img: !!im, nat: im ? [im.naturalWidth, im.naturalHeight] : null, flip: h.querySelector('.engpv').getAttribute('data-flip'), ar: h.querySelector('.engpvFrame').hasAttribute('data-ar'), text: h.querySelector('.engpvText').textContent, waitAfter: !h.querySelector('.engpvWait').hidden };
+        h.remove();
+        // a Back box never takes the Vector design (it is the FRONT as drawn): the words alone
+        const hb = mk(); P.render(hb, { row: bare, face: 'back', text: 'Hi' });
+        for (let i = 0; i < 40 && hb.querySelector('.engpv').dataset.pic !== 'none'; i++) await new Promise(r => setTimeout(r, 100));
+        out.back = { pic: hb.querySelector('.engpv').dataset.pic, img: !!hb.querySelector('.engpvDraw img'), text: hb.querySelector('.engpvText').textContent }; hb.remove();
+        // nothing at all: no pool, no vector: still no error, the words alone
+        const h2 = mk(); P.render(h2, { row: { key: 'x', spec: {}, line: {}, poolIds: [] }, face: 'front', text: 'Hi' }); out.none = { pic: h2.querySelector('.engpv').dataset.pic, text: h2.querySelector('.engpvText').textContent }; h2.remove();
+        return out;
+      } finally { Pool.masterCharm = orig; if (src) B.pool.sources.set(path, src); P.forget(); }
     }, made.back.key);
-    ok('with no pool the line\'s Vector design is the picture (a small "Loading charm" wait first)', E.first.pic.startsWith('vec') && /Loading charm|Loading font/.test(E.first.wait) && E.img && E.nat[0] > 0 && E.pic === 'vec' && !E.waitAfter);
-    ok('the back of it is the picture turned over, the words on top, the frame takes the picture\'s shape', E.flip === '1' && E.ar && E.text === 'Hi');
+    ok('with no pool and no readable master the line\'s Vector design is the FRONT picture (a small "Loading charm" wait first): ' + JSON.stringify([E.first, E.pic, E.img, E.waitAfter]), /^(vec|none):loading/.test(E.first.pic) && /Loading charm|Loading font/.test(E.first.wait) && E.img && E.nat[0] > 0 && E.pic === 'vec' && !E.waitAfter);
+    ok('the Vector picture is not flipped on a front and the frame takes its shape, the words on top', E.flip === null && E.ar && E.text === 'Hi');
+    ok('a BACK box never takes the Vector design (the front as drawn): the words alone: ' + JSON.stringify(E.back), E.back.pic === 'none' && !E.back.img && E.back.text === 'Hi');
     ok('no geometry and no vector: the words alone, no error', E.none.pic === 'none' && E.none.text === 'Hi');
 
     ok('no page error', w.errors.length === 0);
