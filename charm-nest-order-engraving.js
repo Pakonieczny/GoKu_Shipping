@@ -324,7 +324,11 @@
     function read() {
       const C = CARD(), only = onlyOf(), vis = visible();
       // (ENGSEL: the lines of the piece picked, or of every piece; the words block below the cards is drawn from these same rows and pieces, so it follows too)
-      const rows = rowsOf().filter(r => !only || !only.line || (((r && r.parentRow) || r || {}).key === only.line));
+      const every = rowsOf();
+      // (ENGPICK: a line that carries an engraving but has no job yet (on hold, waiting, never nested; its setup is the plain default, so it draws no card) is asked for its job once per window, whichever piece is picked:
+      //  Engrave.early makes it on the charm the piece will have and pools and moves nothing, so every engraved piece of the order has its card and none can be passed by unseen)
+      const E = root.Engrave; if (E && E.early && E.earlyWanted && E.jobsOf) for (const r of every) { const ln = (r && r.parentRow) || r; if (ln && ln.key && !asked.has(ln.key) && tryDo(() => E.earlyWanted(ln), false) && !tryDo(() => E.jobsOf(ln), []).length) { asked.add(ln.key); tryDo(() => { const p = E.early(ln); if (p && p.catch) p.catch(() => {}); }); } }
+      const rows = every.filter(r => !only || !only.line || (((r && r.parentRow) || r || {}).key === only.line));
       const popt = { nameOf, isWorking, seen: j => vis || seen.has(j.key) };
       let pieces = []; if (C) { try { pieces = C.piecesOf(rows, popt); } catch (e) { pieces = []; for (const r of rows) { try { pieces.push(...C.piecesOf([r], popt)); } catch (e2) { tryDo(() => console.warn('order engraving: one line could not be read', e2)); } } } }   // (ENGCRASH: a line that cannot be read leaves the other lines' cards drawn)
       if (only && only.side) pieces = pieces.filter(p => !p.slot || p.slot === only.side);   // (one ear of a pair picked: that ear's card alone)

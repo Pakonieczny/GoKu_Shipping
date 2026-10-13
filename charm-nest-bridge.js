@@ -15353,7 +15353,8 @@ const OrderWin = window.OrderWin = (() => {
     const st = box.querySelector(".owPcState"); if (!st) return;
     const p = sel && ps.find(x => x.key === sel), total = ps.reduce((n, x) => n + (x.sides ? x.sides.reduce((m, sd) => m + sd.qty, 0) : x.qty), 0);   // (a pair line counts its Left and its Right)
     const ear = p && W.side && p.sides ? sideWord(W.side) : "";
-    const html = p ? `Showing <b>${esc(p.name + (ear ? " · " + ear : ""))}</b><i aria-hidden="true"> · </i><button type="button" class="owPcAll" data-pc-all>Show all</button>` : `Showing all ${total} pieces`;
+    const mcode = p && ps.some(x => x !== p && x.name === p.name) ? CODE[p.metal] || (p.metal ? labelOf(p.metal) : "") : "";   // (ENGPICK: two pieces of ONE design differ only by metal: "Showing NEURON 37061 · SS", as the row says it; pieces with their own names are said as they were)
+    const html = p ? `Showing <b>${esc(p.name + (mcode ? " · " + mcode : "") + (ear ? " · " + ear : ""))}</b><i aria-hidden="true"> · </i><button type="button" class="owPcAll" data-pc-all>Show all</button>` : `Showing all ${total} pieces`;
     if (st._h !== html) { st._h = html; st.innerHTML = html; }
   }
   /** The presses on the "Its pieces" list: a press on a row's own body (its name, its words, the empty room) picks the piece, or all pieces

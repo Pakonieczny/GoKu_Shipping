@@ -38,6 +38,23 @@
   const slotLabel = s => { const F = Faces(); return F && F.slotLabel ? F.slotLabel(s) : s === 'L' ? 'Left' : s === 'R' ? 'Right' : /^D\d+$/.test(s || '') ? 'Disc ' + s.slice(1) : ''; };
   const lineOf = row => (row && row.parentRow) || row || null;
   const linesText = v => (Array.isArray(v) ? v : String(v == null ? '' : v).split(/\r?\n/)).map(x => String(x).replace(/\s+/g, ' ').trim()).filter(Boolean);
+  /* ENGPICK (Paul, 13 Oct 2026: "I chose the gold and the silver, but the engraving card did not adapt"): two pieces of one order are often ONE design in two metals, so their cards read the same (the same name, the same
+   * words, the same picture). A card of an order with more than one line names its metal exactly as the order window's "Its pieces" list does: the metal's dot and "SS" / "GF" after the name. */
+  const METAL_CODE = { gold: 'GF', silver: 'SS', rose: 'RG', gold10k: '10K', gold14k: '14K' }, METAL_COLOR = { gold: '#c8a24e', silver: '#8d95a0', rose: '#c08578', gold10k: '#b08d2a', gold14k: '#d9b545' };
+  /** The metal of a line: { key, code, color } as the page's own METALS table says it (the model alone: the same table here), or null when the line has none. */
+  function metalOf(row) {
+    const L = lineOf(row), key = String((L && (L.material || (L.spec && L.spec.material))) || ''); if (!key) return null;
+    const O = root && root.CharmNestOrders, code = (O && O.CARD_TAG && O.CARD_TAG[key]) || METAL_CODE[key] || ''; if (!code) return null;
+    let color = METAL_COLOR[key] || ''; try { if (typeof METALS !== 'undefined') color = (METALS.find(m => m.key === key) || {}).color || color; } catch (_) {}
+    return { key, code, color };
+  }
+  /** How many live lines the order of this line has (the lines given count too: a model with no page). */
+  function lineCountOf(line, given) {
+    const rid = String((line && line.order && line.order.receiptId) || ''), seen = new Set();
+    for (const r of tryDo(() => (root && root.Orders && root.Orders.rows ? root.Orders.rows() : []), []) || []) if (r && r.state !== 'gone' && String((r.order && r.order.receiptId) || '') === rid) seen.add(lineOf(r).key);
+    for (const r of given || []) { const l = lineOf(r); if (l && l.state !== 'gone' && String((l.order && l.order.receiptId) || '') === rid) seen.add(l.key); }
+    return seen.size;
+  }
 
   /* ── the small pure parts ──────────────────────────────────────────────── */
   /** The state of one face from its job: words (to confirm) | busy (being read or fitted) | approve | approved | plain. A face with no job yet but asked for is busy. */
@@ -109,6 +126,7 @@
       const line = lineOf(r0); if (!line || line.state === 'gone') continue;
       const rid = String((line.order && line.order.receiptId) || ''), never = !!(F && F.neverOf && F.neverOf(line));
       const name = o.nameOf ? tryDo(() => o.nameOf(line), '') : '';
+      const many = lineCountOf(line, list) > 1, metal = metalOf(line);   // (ENGPICK: an order of several lines names each card's metal)
       const jobs = (E && E.jobsOf ? tryDo(() => E.jobsOf(line), []) : []).filter(j => j && !j.editingBack);
       const setup = tryDo(() => (S && S.setupFor ? S.setupFor(line) : F && F.setupOf ? F.setupOf(line) : null), null);
       const groups = jobs.length && F && F.groupPieces ? F.groupPieces(jobs) : [];
@@ -120,7 +138,7 @@
         // nothing to engrave: no card (an earring: only a decided legacy front); o.keepEmpty keeps the header of the piece the Engrave tab is editing while None is staged
         if (!present.length && !o.keepEmpty) return;
         if (never && !(faces.front && faces.front.job && DECIDED.includes(faces.front.job.state))) return;
-        const slotWord = slotLabel(slot), title = [name, slotWord].filter(Boolean).join(' · ') || slotWord || 'Piece';
+        const slotWord = slotLabel(slot), title = [name, many && metal ? metal.code : '', slotWord].filter(Boolean).join(' · ') || slotWord || 'Piece';
         const review = present.filter(f => f.job && f.job.state === 'review');
         let approve = null;
         if (review.length) {
@@ -132,6 +150,7 @@
         }
         out.push({ pieceKey: F && F.pieceKeyOf ? F.pieceKeyOf(jobsOfPiece[0] ? jobsOfPiece[0].key : jobKey(line.key, slot, 'back')) : line.key + (slot ? '#' + slot : ''),
           rid, lineKey: line.key, slot: slot || null, row: line, title, name, never, faces, jobs: jobsOfPiece, approve, seals,
+          metal: metal ? metal.code : '', metalKey: metal ? metal.key : '', metalColor: metal ? metal.color : '', many,   // (ENGPICK: the code "SS" / "GF", its key and colour; `many`: the order has more than one line, so the title says the metal)
           state: worst(present.map(f => f.state)) });
       };
       if (groups.length) for (const g of groups) make(g.slot || null, g.jobs);
@@ -193,8 +212,13 @@
     o = o || {}; const word = WORD[piece.state] || '';
     const shown = ['front', 'back'].filter(f => piece.faces[f]), cur = currentOf(piece, o);
     const act = o.approve === false ? '' : actHtml(piece, o);
-    return `<article class="engCard" data-piece="${esc(piece.pieceKey)}" data-state="${esc(piece.state)}" data-rid="${esc(piece.rid)}" data-key="${esc(piece.lineKey)}"${piece.slot ? ` data-slot="${esc(piece.slot)}"` : ''}>`
-      + `<header class="engHd"><i class="engDot" data-s="${esc(piece.state)}" role="img" aria-label="${esc(word)}" title="${esc(word)}"></i><b class="engName" title="${esc(piece.title)}">${esc(piece.title)}</b>${act ? `<span class="engAct">${act}</span>` : ''}</header>`
+    // (ENGPICK: a card of an order of several lines is that piece's: the dot is its METAL's, as on the "Its pieces" list, and the metal's code stays after the name when the name gives way; the state is said by the button, the seals and the words below)
+    const mt = piece.many && piece.metal && piece.metalColor ? piece : null;
+    const dot = `<i class="engDot" data-s="${esc(piece.state)}"${mt ? ` data-metal="${esc(piece.metalKey)}" style="--mc:${esc(piece.metalColor)}"` : ''} role="img" aria-label="${esc(word)}" title="${esc(word)}"></i>`;
+    const head = mt && piece.name && String(piece.title).startsWith(piece.name) ? piece.name : '', tail = head ? String(piece.title).slice(head.length) : '';
+    const nm = head && tail ? `<span class="engNm">${esc(head)}</span><span class="engTail">${esc(tail)}</span>` : esc(piece.title);
+    return `<article class="engCard" data-piece="${esc(piece.pieceKey)}" data-state="${esc(piece.state)}" data-rid="${esc(piece.rid)}" data-key="${esc(piece.lineKey)}"${mt ? ` data-metal="${esc(piece.metalKey)}"` : ''}${piece.slot ? ` data-slot="${esc(piece.slot)}"` : ''}>`
+      + `<header class="engHd">${dot}<b class="engName" title="${esc(piece.title)}">${nm}</b>${act ? `<span class="engAct">${act}</span>` : ''}</header>`
       + (shown.length ? `<div class="engFaces" data-n="${shown.length}">${shown.map(f => faceHtml(piece, f, cur)).join('')}</div>` : '')
       + (o.approve === false ? '' : openHtml(piece))
       + '<div class="engFail" role="alert" hidden></div></article>';
@@ -242,7 +266,7 @@
   const ids = typeof WeakMap === 'function' ? new WeakMap() : null; let idN = 0;
   const idOf = x => { if (!x || typeof x !== 'object' || !ids) return 0; let n = ids.get(x); if (!n) ids.set(x, n = ++idN); return n; };
   function sig(piece, o) {
-    return JSON.stringify([piece.pieceKey, piece.title, piece.state, !!piece.never, piece.approve ? [piece.approve.ok, piece.approve.why, piece.approve.jobs.length] : 0, (piece.seals || []).map(s => s.id).join(','), currentOf(piece, o),
+    return JSON.stringify([piece.pieceKey, piece.title, piece.metalKey || '', !!piece.many, piece.state, !!piece.never, piece.approve ? [piece.approve.ok, piece.approve.why, piece.approve.jobs.length] : 0, (piece.seals || []).map(s => s.id).join(','), currentOf(piece, o),
       ['front', 'back'].map(f => { const x = piece.faces[f]; return x ? [x.state, !!x.staged, x.text, x.fontWord, x.fontId, x.position && [x.position.x, x.position.y, x.position.size, x.position.angle], idOf(x.job && x.job.fit), idOf(x.job && x.job.view), x.job && +x.job.approvedAt || 0, x.job && (x.job.backs || []).length] : 0; })]);
   }
 
@@ -250,7 +274,9 @@
   const CSS = '.engCard{container:engc/inline-size;box-sizing:border-box;width:100%;min-width:0;padding:7px;border:1px solid var(--line);border-radius:12px;background:var(--card);display:grid;gap:4px;align-content:start;overflow-wrap:anywhere}'
     + '.engHd{display:flex;align-items:center;gap:6px;min-width:0;min-height:22px}'
     + '.engDot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--ink45);opacity:.85}.engDot[data-s=words]{background:#b04a32;opacity:1}.engDot[data-s=approve]{background:#b8892f;opacity:1}.engDot[data-s=approved]{background:#5f7a5b;opacity:1}.engDot[data-s=plain]{background:var(--line);opacity:1}'
+    + '.engDot[data-metal]{background:var(--mc);opacity:1}'
     + '.engName{flex:1 1 0;min-width:0;font:600 12.5px/1.3 var(--sans);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
+    + '.engName:has(>.engTail){display:flex}.engName>.engNm{min-width:0;overflow:hidden;text-overflow:ellipsis}.engName>.engTail{flex:none;white-space:pre}'
     + '.engAct{flex:none;display:flex;align-items:center;min-width:0}.engAct:empty{display:none}.engCard .egApproveWrap{position:relative;display:flex;align-items:center;margin:0;min-width:0;overflow:visible}'
     + '.engCard .egApproveWrap>.egButtonSeal{position:static;left:auto;top:auto;z-index:auto;width:auto;height:auto;margin:0;padding:0;gap:2px;max-width:none;flex:none;justify-content:flex-start}.engCard .egApproveWrap>.egApproveButton~.egButtonSeal{position:absolute;right:-4px;left:auto;top:50%;width:24px;height:24px;margin:-12px 0 0}'
     + '.engCard .engAct .btn.egApproveButton{min-width:0;height:22px;padding:0 10px;font-size:12px;line-height:1;white-space:nowrap}.engCard .engAct .btn.egApproveButton:disabled{opacity:1;cursor:default}.engCard .engAct .btn.egOff{background:var(--card2);border-color:var(--line);color:var(--ink45)}'
@@ -376,5 +402,5 @@
   }
 
   openCss();
-  return { piecesOf, facesOf, stateOf, html, fill, card, sig, mountPiece, thumbOf, repaint, sealsOf, css, WORD, openOf, openHtml, OPEN_WORD };
+  return { piecesOf, facesOf, stateOf, html, fill, card, sig, mountPiece, thumbOf, repaint, sealsOf, css, WORD, openOf, openHtml, OPEN_WORD, metalOf, lineCountOf };
 });
