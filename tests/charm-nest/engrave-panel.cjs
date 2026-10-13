@@ -254,7 +254,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     const after = await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY), ov = row.engravingOverride, f = Engrave.jobOf(row, null, 'front'), b = Engrave.jobOf(row, null, 'back'); return { ov, front: f && f.lines, back: b && b.lines, by: ov && ov.by, setupBack: CharmNestEngraveSetup.setupFor(row).back && CharmNestEngraveSetup.setupFor(row).back.text, setupFront: CharmNestEngraveSetup.setupFor(row).front && CharmNestEngraveSetup.setupFor(row).front.text }; }, KEY);
     check(after.ov && after.ov.front && after.ov.front.text === 'Name One' && after.by === 'Test Operator' && !after.ov.back, 'saved as row.engravingOverride by the signed-in login: only the front is in it: ' + JSON.stringify(after.ov));
     check(after.back && after.back.join('/') === '1. 27. 24' && after.setupBack === '1. 27. 24', 'the Back job and the Back setup are as they were: ' + JSON.stringify({ back: after.back, setupBack: after.setupBack }));
-    check(after.setupFront === 'Name One' && after.front && (after.front.length === 0 || after.front.join('/') === 'Name One'), 'the Front setup (and its job, once it has words) say Name One: ' + JSON.stringify({ setup: after.setupFront, job: after.front }));
+    check(after.setupFront === 'Name One' && after.front && (after.front.length === 0 || after.front.join('/').toLowerCase() === 'name one'), 'the Front setup (and its job, once it has words) say Name One (the fit sets a caps-only font in capitals, as for every job): ' + JSON.stringify({ setup: after.setupFront, job: after.front }));
     await page.waitForTimeout(300); st = await state();
     check(st.save && st.cancel, 'after Save nothing is staged any more');
 

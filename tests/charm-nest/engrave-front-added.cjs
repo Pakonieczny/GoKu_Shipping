@@ -62,7 +62,7 @@ async function addFront(w, name, text) {
   const page = w.page;
   try {
     const made = await R.build(w, ['back', 'refAnna', 'refMarck', 'both']);
-    const key = made.back.key, anna = made.refAnna.key, marck = made.refMarck.key, both = made.both.key;
+    const key = made.back.key, anna = made.refAnna.key, marck = made.refMarck.key, bothKey = made.both.key;
     counting = true;
     const j00 = made.back.jobs;
     check('A0 the back-only charm starts with one fitted back job and no front job', j00.length === 1 && j00[0].fitted && j00[0].face === 'back', JSON.stringify(j00.map(j => [j.face, j.state, j.fitted])));
@@ -150,11 +150,11 @@ async function addFront(w, name, text) {
 
     // ═══ S · a line read again (the order changed on Etsy: every job of it goes back to "classify", no run is open): opening it prepares it, nothing says "stopped" ═══
     await page.evaluate(() => Engrave.restoreView({ q: '' }));
-    await page.evaluate(k => { Engrave.invalidate(B.orders.byKey.get(k), 'order changed'); }, both);
-    const s0 = await jobsOf(page, both);
+    await page.evaluate(k => { Engrave.invalidate(B.orders.byKey.get(k), 'order changed'); }, bothKey);
+    const s0 = await jobsOf(page, bothKey);
     await watch(page);
     await R.openEngraveDetail(w, 'both', { face: 'front' });
-    const s1 = await until(async () => { const js = await jobsOf(page, both); return js.length === 2 && js.every(j => j.state === 'review' && j.fitted) ? js : null; }, 90000);
+    const s1 = await until(async () => { const js = await jobsOf(page, bothKey); return js.length === 2 && js.every(j => j.state === 'review' && j.fitted) ? js : null; }, 90000);
     await R.settle(page, 500);
     const sw = await workFacts(page), sseen = await seen(page);
     await R.shot(w, 'FRONT-4-reread');

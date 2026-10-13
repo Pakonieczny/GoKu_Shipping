@@ -6413,7 +6413,8 @@ const Engrave = window.Engrave = (() => {
     if (!CS || !line) return { ok: false, message: "The engraving setup is not loaded yet." };
     if (setupBusy.has(line.key)) return { ok: false, message: "The last change to this piece is still being saved." };
     setupBusy.add(line.key);
-    try { const res = await CS.apply(line, patch, setupEnv()); if (res && res.ok) prepareLate(line).catch(() => {}); return res; } finally { setupBusy.delete(line.key); }   // (a face job the Save just made is read and fitted now, beside everything else)
+    const had = new Set(jobsOf(line).map(j => j.key));
+    try { const res = await CS.apply(line, patch, setupEnv()); if (res && res.ok && jobsOf(line).some(j => !had.has(j.key))) prepareLate(line).catch(() => {}); return res; } finally { setupBusy.delete(line.key); }   // (a face job THIS Save made is read and fitted now, beside everything else; a Save that made none touches nothing more than it did)
   }
   /* A FACE ADDED AFTER INTAKE (ENGFRONT, 13 Oct 2026; Paul: "I added the front engraving on this order, but when I click the Front thumbnail the preview work area goes blank"). The Save makes the new face's job (ensureJobs) in
      state "classify", and CharmNestEngraveSetup.apply leaves a job in that state for "the run will read it" (it takes its words from the setup itself): but a line that is not in a run's pass (the run is over, the line is not
