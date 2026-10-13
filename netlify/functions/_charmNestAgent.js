@@ -180,6 +180,19 @@ THIS LINE MAKES SEVERAL PIECES, each cut and engraved on its own. The message li
 - "text" is every inscription of the line together, joined by "\n" in slot order (left before right, disc 1 first).`;
 const ENGRAVE_PIECES_SCHEMA = { ...ENGRAVE_INTENT_SCHEMA, properties: { ...ENGRAVE_INTENT_SCHEMA.properties, pieces: { type: "array", items: { type: "object", additionalProperties: false, properties: { slot: { type: "string" }, text: { type: "string" } }, required: ["slot", "text"] } } }, required: [...ENGRAVE_INTENT_SCHEMA.required, "pieces"] };
 
+/* SETBAR-C (Paul, 13 Oct 2026, order 4202291826: "16\"= 33*0'45\" N 96*45'53\" W (the asterisk is supposed to be the little degree circle-I just don't have that on my keyboard) 18\"= Ginger"). The page reads such words
+   by plain rules first (charm-nest-engrave-read.js); these rules reach the model only for words that look like that, so the request for every other line is BYTE FOR BYTE what it was (the sandbox's cache of paid
+   readings is keyed by the request: nothing already read is paid for again). Words that look like it (in the personalisation field): a bracket, an asterisk after a digit, a label "16\"=", a "please" / "thank you". */
+const ENGRAVE_NOTES_RULES = `
+
+- Words that talk to the shop are never engraved and are no part of text: an explanation in brackets ("the asterisk is supposed to be the degree circle, I don't have it on my keyboard"), "please", "thank you", an apology, a request about layout. List each such fragment exactly as typed in "ignored".
+- An asterisk typed between the digits of a coordinate ("33*0'45\\" N 96*45'53\\" W") stands for the degree sign: write ° (U+00B0) there. Change nothing else.`;
+const ENGRAVE_LABEL_RULES = `
+- The customer may give each piece its own words by a label: a necklace length ('16" = ...  18" = ...'), left / right, first / second. Never join the wordings of two labels into one text for one piece: each slot gets only the words of ITS label. "Chain length of each piece" (when given) says which slot hangs on which length; when nothing says which label belongs to which slot, give your best guess in pieces, add one short question and lower confidence.`;
+const withIgnored = schema => ({ ...schema, properties: { ...schema.properties, ignored: { type: "array", items: { type: "string" } } }, required: [...schema.required, "ignored"] });
+const NOTES_LOOK = [/[(\[{][^()\[\]{}]{3,}[)\]}]/, /\d\s*\*/, /\b\d{1,2}\s*(?:"|”|″|''|in\b|inch\w*)?\s*[=:]/i, /\b(?:please|pls|thank\s*you|thanks)\b/i];
+const wantsNotesRules = body => { const t = [].concat(body.personalization || []).map(x => String(x == null ? "" : x)).join("\n"); return NOTES_LOOK.some(rx => rx.test(t)); };   // (the personalisation field only: a "thanks" in a buyer message is on nearly every order and must not change a request)
+
 const ENGRAVE_REVIEW_INSTRUCTIONS = `You look at the rendered BACK of one jewelry charm with engraving text already placed by a measuring tool. The image shows a millimetre grid, the charm's cut outline and cut-outs (holes), and the text as it will be engraved. The tool has already PROVEN that no ink touches a cut edge or a hole and that the text is the largest size that fits; do not re-judge geometry. Judge readability and taste only: is the text legible at this size, does the placement look right on the piece, is anything awkward (a line breaking oddly, text crowding a hole, an orientation that reads wrong for a pendant). Answer legible true/false and one or two plain sentences of notes for the person who approves it.`;
 const ENGRAVE_REVIEW_SCHEMA = { type: "object", additionalProperties: false, properties: { legible: { type: "boolean" }, notes: { type: "string" }, concerns: { type: "array", items: { type: "string", enum: ["small", "crowded", "odd-break", "orientation", "placement", "other"] } } }, required: ["legible", "notes", "concerns"] };
 
@@ -243,9 +256,12 @@ function buildRequest(mode, body) {
     lines.push(`Internal staff messages, oldest first: ${JSON.stringify((body.messages || []).slice(-5).map(m => ({ who: str(m.senderName, 60), text: str(m.text, 400) })))}`);
     const slots = (Array.isArray(body.slots) ? body.slots : []).map(x => str(x, 4)).filter(x => /^(?:L|R|D\d{1,2})$/.test(x)).slice(0, 24);
     if (slots.length > 1) lines.push(`Pieces of this line (slots, in order): ${JSON.stringify(slots)}. Answer "pieces" with one entry for each.`);
+    const notes = wantsNotesRules(body);   // (SETBAR-C: only words that look like a note to the shop / a label / a coordinate get the extra rules and the "ignored" answer)
+    const chains = notes && body.pieceLengths && typeof body.pieceLengths === "object" ? Object.entries(body.pieceLengths).filter(([k, v]) => /^(?:L|R|D\d{1,2})$/.test(k) && num(v) > 0).slice(0, 24).map(([k, v]) => [k, num(v)]) : [];
+    if (slots.length > 1 && chains.length) lines.push(`Chain length of each piece, in inches: ${JSON.stringify(Object.fromEntries(chains))}.`);
     content.push({ type: "text", text: lines.join("\n") });
-    if (slots.length > 1) return { system: ENGRAVE_PIECES_INSTRUCTIONS, schema: ENGRAVE_PIECES_SCHEMA, content, effort: EFFORT };
-    return { system: ENGRAVE_INTENT_INSTRUCTIONS, schema: ENGRAVE_INTENT_SCHEMA, content, effort: EFFORT };
+    if (slots.length > 1) return { system: ENGRAVE_PIECES_INSTRUCTIONS + (notes ? ENGRAVE_NOTES_RULES + ENGRAVE_LABEL_RULES : ""), schema: notes ? withIgnored(ENGRAVE_PIECES_SCHEMA) : ENGRAVE_PIECES_SCHEMA, content, effort: EFFORT };
+    return { system: ENGRAVE_INTENT_INSTRUCTIONS + (notes ? ENGRAVE_NOTES_RULES : ""), schema: notes ? withIgnored(ENGRAVE_INTENT_SCHEMA) : ENGRAVE_INTENT_SCHEMA, content, effort: EFFORT };
   }
   if (mode === "engraveReview") {
     const img = parseDataUrl(body.image); if (!img) return { error: "back image is required" };
@@ -303,6 +319,7 @@ async function run(mode, body) {
     }
     if (mode === "engraveIntent") {
       parsed.text = str(parsed.text, 400); parsed.confidence = Math.max(0, Math.min(1, num(parsed.confidence))); parsed.questions = (parsed.questions || []).map(q => str(q, 300)).filter(Boolean);
+      if (Array.isArray(parsed.ignored)) parsed.ignored = parsed.ignored.map(q => str(q, 300)).filter(Boolean).slice(0, 8);
       if (Array.isArray(parsed.pieces)) parsed.pieces = parsed.pieces.filter(x => x && /^(?:L|R|D\d{1,2})$/.test(str(x.slot, 4))).map(x => ({ slot: str(x.slot, 4), text: str(x.text, 400) }));
     }
     if (mode === "packing") {

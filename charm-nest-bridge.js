@@ -5948,6 +5948,87 @@ const Engrave = window.Engrave = (() => {
       TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null, ...(d.why && how !== "skipped" ? { why: String(d.why).slice(0, 80) } : {}), ...(isFront(job) ? { face: "front" } : {}) } });
     } catch (_) {}
   }
+  /* ── SETBAR-C · what the buyer typed, read by plain rules BEFORE any paid reader (charm-nest-engrave-read.js; Paul, 13 Oct 2026, order 4202291826: "16\"= 33*0'45\" N 96*45'53\" W (the asterisk is supposed to be the
+   *    little degree circle...) 18\"= Ginger" is the 16-inch necklace's coordinates and the 18-inch necklace's name, not one text glued together for every piece). Pure, no network, nothing paid for. The words go to a
+   *    person to confirm ("Words to confirm", the reason line says what was read, split, left out and fixed): they are never cut unseen. What the rules cannot settle (a request that may carry the words, a bracket that
+   *    may be for the shop, a label used twice) returns false here and the line goes on exactly as before (the paid reader, a person). ── */
+  const READER = () => (typeof CharmNestEngraveRead !== "undefined" ? CharmNestEngraveRead : null);
+  const lineRowOf = row => (row && row.parentRow) || row;
+  /** The line's personalisation read by the rules (null: no reader on the page, or nothing written). */
+  function personalRead(row) {
+    const R = READER(), line = lineRowOf(row), sp = line && line.spec; if (!R || !sp || !(sp.personalization || []).length) return null;
+    try { return R.readPersonalisation(sp.personalization, { lengths: R.lengthsOfLine(line.line) }); } catch (_) { return null; }
+  }
+  /** Nobody else has spoken about the engraving (a buyer message, a staff note, an engraving-like message): the rules read the personalisation field alone only then, as the disc reading does. */
+  function spokeAlone(sp) { return !String(sp.buyerMessage || "").trim() && !String(sp.staffNote || "").trim() && !(sp.messages || []).some(m => (typeof O !== "undefined" && O && O.engravingNote ? O.engravingNote(m && m.text) : true)); }
+  /** A different layout of the set asked for by the buyer (the personalisation or the message): the clause, or "" (a set only: a line of more than one piece, or one that names two chain lengths). */
+  function layoutAsked(row, jobs) {
+    const R = READER(), line = lineRowOf(row), sp = line && line.spec; if (!R || !sp) return "";
+    let lengths = []; try { lengths = R.lengthsOfLine(line.line); } catch (_) { lengths = []; }
+    if (!(jobs.length > 1 || lengths.length > 1)) return "";
+    return R.layoutClause((sp.personalization || []).join("\n")) || R.layoutClause(sp.buyerMessage || "");
+  }
+  /** Give one job the words the rules read (or none), and put it to a person: "Words to confirm". */
+  function giveRead(row, j, words, why, how, confidence) {
+    const sp = row.spec, lines = String(words || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+    j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
+    Object.assign(j, { text: lines.join("\n"), lines, source: "personalization", quote: (sp.personalization || []).join(" / ") || null, confidence: lines.length ? confidence || 0 : 0, questions: [why], claudeReasoning: null, requests: { side: faceOf(j), font: null, handwriting: false, image: false }, wordsSource: "personalization:" + how });   // (the reading stays on the card as its note once the preview is drawn and the reason line is gone, as the faces reading's own reason does)
+    toWords(j, why);
+    if (!j.pre) needEvent(j);
+    return j;
+  }
+  /** The rules' turn at a line, before the disc reading and the paid reader. true: the line is settled (its jobs wait for a person to confirm), false: go on as before. */
+  async function readByRules(row, jobs) {
+    const R = READER(); if (!R) return false;
+    const sp = row.spec, owner = items(), say = (a, b) => `${a}${b ? " — " + b : ""}`;
+    const stop = () => items() !== owner || row.state === "gone";
+    const all = jobs; jobs = jobs.filter(j => ["classify", "reclassify"].includes(j.state) && owner.get(j.key) === j);   // (only the jobs still to be read: one a person decided or approved is never touched)
+    if (!jobs.length) return false;
+    // 1. a different layout asked for: never guessed, a person decides which words go on which bar (the per-length wordings stay beside it)
+    const layout = layoutAsked(row, jobs), rd = personalRead(row);
+    if (layout) {
+      const why = say(`The buyer asks for a different layout: “${layout.slice(0, 160)}”. A person decides which words go on which piece`, rd && rd.labelled ? "the buyer wrote " + R.wordings(rd) : "");
+      for (const j of jobs) { giveRead(row, j, "", why, "layout"); if (stop()) return true; }
+      agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}: the buyer asks for a different layout (“${layout.slice(0, 80)}”): waits for a person`);
+      return true;
+    }
+    // 2. the yes / no / ask of the line from its options (ENGRAVED / BLANK) and what was written: a BLANK line with a note that asks for engraving, an ENGRAVED line with nothing written
+    const line = lineRowOf(row), dec = R.decide({ options: ((line.line && line.line.variations) || []).map(v => ({ name: v.name || v.formatted_name || "", value: v.value || v.formatted_value || "" })), words: (sp.personalization || []).length > 0,
+      note: !!(String(sp.buyerMessage || "").trim() && R.noteAsksEngraving(sp.buyerMessage)) || !!(String(sp.staffNote || "").trim() && R.noteAsksEngraving(sp.staffNote)), anyNote: !spokeAlone(sp) });
+    if (dec.engrave === "ask") {   // (BLANK with words or a note that asks for engraving, ENGRAVED with nothing written, two options that disagree: nothing is engraved until a person decides, and the card says why)
+      const has = (sp.personalization || []).length > 0, lab = !!(rd && rd.labelled);
+      const proposal = has && !lab ? (rd && !rd.unsure ? rd.whole : sp.personalization.join("\n")) : "";
+      const why = say(dec.why.charAt(0).toUpperCase() + dec.why.slice(1), lab ? R.say(rd) : rd && !rd.unsure && rd.changed ? R.say(rd) : "");
+      for (const j of jobs) { giveRead(row, j, proposal, why, "ask"); if (stop()) return true; }
+      agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}: ${dec.why}`);
+      return true;
+    }
+    // 3. the words themselves
+    if (!rd || rd.unsure || !spokeAlone(sp)) return false;
+    if (rd.labelled) {
+      const isSet = jobs.length > 1 || rd.lengths.length > 1;
+      if (!isSet && rd.pieces.length === 1) {   // one necklace, one label: its words are the line's
+        for (const j of jobs) { giveRead(row, j, rd.pieces[0].words, say(R.say(rd), "confirm the words"), "labelled", 0.9); if (stop()) return true; }
+        return true;
+      }
+      const asg = R.assign(rd, R.slotsOf(row, all)), note = R.say(rd);
+      const usable = asg.unmatched.length === 0 && Object.keys(asg.bySlot).length > 0;   // (every wording found its piece; a piece with no wording of its own is asked, never given another's)
+      const got = Object.values(asg.bySlot).map(x => x.label).join(" and ");
+      for (const j of jobs) {
+        const mine = usable && j.slot ? asg.bySlot[j.slot] : null, where = jobs.length > 1 && j.slot ? " (" + (SIDES().earOf(j.slot) || j.slot) + ")" : "";
+        giveRead(row, j, mine ? mine.words : "", mine ? say(note, `${mine.label} piece${where}: confirm the words`) : usable ? say(`The buyer wrote words for ${got} only: say what goes on this piece${where}, or no engraving`, note) : say(`Say which words go on this piece${where}`, note), mine ? "labelled" : "labelled-open", mine ? 0.9 : 0);
+        if (stop()) return true;
+      }
+      agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}: ${R.say(rd)}${usable ? "" : " — which piece gets which is for a person"}, no paid reading`);
+      return true;
+    }
+    if (rd.changed && jobs.length === 1) {   // the words with the notes taken out and the degree signs put right
+      giveRead(row, jobs[0], rd.whole, say(R.say(rd), "confirm the words"), "cleaned", 0.9);
+      agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}: ${R.say(rd)}, no paid reading`);
+      return true;
+    }
+    return false;
+  }
   /** The words of each disc of a counted line, from its personalisation field alone (charm-nest-engrave-sides.js splitWords), or null when the note does not say plainly. */
   function discWordsOf(row, jobs) {
     const S = SIDES(); if (!S || !S.wordsForDiscs) return null;
@@ -5967,6 +6048,9 @@ const Engrave = window.Engrave = (() => {
   function raiseCandidate(row) {
     row = (row && row.parentRow) || row; const sp = row && row.spec; if (!sp) return false; if (neverEngraves(row)) return false; if (sp.engraveCandidate) return true;   // (an earring is never raised: ZODNOBACK)
     const F = FACES(); if (!F || !sp.designSku || sp.noDesign || sp.ownDesign || (sp.special && (sp.special.notCut || sp.special.own)) || (window.CustomSheet && CustomSheet.sentOf && CustomSheet.sentOf(row))) return false;
+    // SETBAR-C: the option says ENGRAVED (listing 532401548 "GOLD·Set·ENGRAVED") and the buyer wrote nothing anywhere: the buyer paid for engraving, so a person is asked what to engrave (it was cut plain, in silence)
+    { const R = READER(); if (R && row.state !== "gone" && !(typeof O !== "undefined" && O && O.FINISHED_LINE && O.FINISHED_LINE.has(row.state)) && !(row.engrave && !["classify", "reclassify"].includes(row.engrave.state))) { let d = null; try { d = R.decide({ options: ((row.line && row.line.variations) || []).map(v => ({ name: v.name || v.formatted_name || "", value: v.value || v.formatted_value || "" })), words: false, note: false }); } catch (_) { d = null; }
+      if (d && d.token === "ENGRAVED" && d.engrave === "ask") { sp.engraveCandidate = true; sp.engraveRaised = true; return true; } } }
     let st; try { st = F.setupOf(row); } catch (_) { return false; }
     if (!st.faces.length || !(st.needsPerson || st.edited)) return false;
     sp.engraveCandidate = true; sp.engraveRaised = true; return true;
@@ -6008,8 +6092,10 @@ const Engrave = window.Engrave = (() => {
         await setReady(j);
       } else {
         // a face with no words, or a reading the intake marked for a person: the card asks (with the intake's own reason), the words it found stand as the proposal, nothing is approved and nothing is paid for
-        const why = sj.needsPerson ? (sj.why || "The note does not say which words go on the front and which on the back") : `The order gives no words for the ${face}`;
-        const proposal = seed ? seed.text : setup.mode === "none" ? (sp.personalization || []).join("\n") : "", lines = proposal.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+        const why0 = sj.needsPerson ? (sj.why || "The note does not say which words go on the front and which on the back") : `The order gives no words for the ${face}`;
+        const rdNone = !seed && setup.mode === "none" ? personalRead(row) : null;   // (SETBAR-C: a BLANK line that has words proposes the words read by the rules, never the labelled wordings of two pieces glued together)
+        const proposal = seed ? seed.text : setup.mode === "none" ? (rdNone && rdNone.labelled && !rdNone.unsure ? "" : rdNone && rdNone.changed && !rdNone.unsure && !rdNone.labelled ? rdNone.whole : (sp.personalization || []).join("\n")) : "", lines = proposal.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+        const why = why0 + (rdNone && rdNone.changed && !rdNone.unsure && READER() ? " — " + READER().say(rdNone) : "");
         Object.assign(j, { text: lines.join("\n"), lines, source: "personalization", quote, confidence: 0, questions: [why], claudeReasoning: null, requests: { side: face, font: seed && seed.fontWord || null, handwriting: false, image: false }, wordsSource: "spec.engraving", faceFontWord: seed && seed.fontWord || null });
         toWords(j, why);
       }
@@ -6031,6 +6117,8 @@ const Engrave = window.Engrave = (() => {
     if (said && !said.edited && said.mode === "none" && said.sides && !said.needsPerson) { for (const j of jobs) setNone(j, said.why || "1 side: only the design's own art is engraved"); return job; }
     // a line with a front (or a person's own words for a face, or a reading marked for a person): each face job takes its words from the line's setup, no paid reading (charm-nest-engrave-faces.js)
     const faceSetup = facedSetup(row, jobs); if (faceSetup) return classifyFaces(row, jobs, faceSetup);
+    // SETBAR-C: the buyer's words read by plain rules before any paid reader: a label per piece (16"= ... 18"= ...), a note to the shop left out, an asterisk that is a degree sign, a different layout asked for, BLANK / ENGRAVED
+    if (await readByRules(row, jobs)) return job;
     // Etsy offers engraving on these designs; legacy catalog estimates are not eligibility rules.
     const engravable = !neverEngraves(row);   // (always true here: an earring never gets this far, the line above puts it away; the server answers "no engraving" for engravable:false too)
     // a line cut into slots that already holds the words (read before it was known to be a pair) asks a person which ear gets which: no new paid reading
@@ -6064,7 +6152,9 @@ const Engrave = window.Engrave = (() => {
     // rather than paid for a second time; one that failed is replaced once
     // (a line cut into slots names them in the question, so the model says which words go on which ear or disc; any other line asks exactly as before)
     const slots = jobs.length > 1 ? jobs.map(j => j.slot).filter(Boolean) : null;
-    const ask = { order: row.order.receiptId, sku: sp.designSku, title: row.line.title, form: sp.form, quantity: sp.quantity, engravable, personalization: sp.personalization, buyerMessage: sp.buyerMessage, staffNote: sp.staffNote, messages: sp.messages, ...(slots && slots.length > 1 ? { slots } : {}) };
+    // (SETBAR-C: when the page knows the chain each piece hangs on, the reader is told, so a label "16\"= ..." lands on the right slot; unknown: not sent, the request is byte for byte what it was)
+    const chains = (() => { const R = READER(); if (!R || !slots || slots.length < 2) return null; const sl = R.slotsOf(row, jobs); return sl && sl.every(x => x.length != null) ? Object.fromEntries(sl.map(x => [x.slot, x.length])) : null; })();
+    const ask = { order: row.order.receiptId, sku: sp.designSku, title: row.line.title, form: sp.form, quantity: sp.quantity, engravable, personalization: sp.personalization, buyerMessage: sp.buyerMessage, staffNote: sp.staffNote, messages: sp.messages, ...(slots && slots.length > 1 ? { slots } : {}), ...(chains ? { pieceLengths: chains } : {}) };
     // (ENGENT: the question carries the words decoded; its key is made from the words as Etsy gave them, as it always was, so a reading already asked for before the words were decoded is taken up again, never paid for twice)
     let key = 2166136261; for (const ch of JSON.stringify(Object.assign({}, ask, O.rawWords(row.order, row.line)))) key = Math.imul(key ^ ch.charCodeAt(0), 16777619); key = (key >>> 0).toString(36);
     const prior = job.claudeJob && job.claudeJob.ask === key ? job.claudeJob.id : null;
@@ -6113,6 +6203,7 @@ const Engrave = window.Engrave = (() => {
       // (BFFONT: a line that is only a font request - "Typewriter font" - is not a word to engrave; the font itself is spec.fontText)
       const fr0 = typeof O !== "undefined" && O.fontReadText ? O.fontReadText(sp.personalization.join("\n"), { cueOnly: true }) : { changed: false, lines: [] };
       job.text = fr0.changed && fr0.lines.length ? fr0.lines.join("\n") : sp.personalization.join("\n"); job.lines = fr0.changed && fr0.lines.length ? fr0.lines : sp.personalization.slice(); job.source = "personalization"; job.confidence = 0; job.questions = [`Claude was unavailable (${(r && (r.skipped || r.error)) || "no answer"}) — confirm the words`]; job.requests = { side: "back", font: null, handwriting: false, image: false };
+      { const R = READER(); if (R && job.lines.length) { const fd = R.fixDegrees(job.lines.join("\n")); if (fd.count) { job.lines = fd.text.split("\n"); job.text = fd.text; } } }   // (SETBAR-C: the buyer's asterisk in a coordinate is the degree sign here too)
       return job.lines.length ? setReady(job) : toWords(job, "Enter the requested inscription");
     }
     if (job.slot && Array.isArray(r.pieces) && r.pieces.length) {
@@ -6120,15 +6211,17 @@ const Engrave = window.Engrave = (() => {
       if (!mine) { Object.assign(job, { text: r.text || "", lines: String(r.text || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean), source: r.source, quote: r.sourceQuote, confidence: r.confidence, requests: r.requests, questions: (r.questions || []).slice() }); return toWords(job, `Say which words go on the ${(SIDES().earOf(job.slot) || "piece").toLowerCase()}`); }
       r = Object.assign({}, r, { text: String(mine.text || ""), engrave: !!String(mine.text || "").trim() });
     }
-    job.text = r.text || ""; job.lines = job.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); job.source = r.source; job.quote = r.sourceQuote; job.confidence = r.confidence; job.requests = r.requests; job.questions = r.questions || []; job.claudeReasoning = r.reasoning || null;
+    job.text = r.text || ""; job.lines = job.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); job.source = r.source; job.quote = r.sourceQuote; job.confidence = r.confidence; job.requests = r.requests; job.questions = r.questions || []; job.claudeReasoning = r.reasoning || null; job.ignored = Array.isArray(r.ignored) ? r.ignored.slice(0, 8) : [];
     const originalLines=[(sp.personalization || []).join("\n"),sp.buyerMessage,sp.staffNote,job.quote].filter(Boolean)
       .map(t=>String(t).split(/\r?\n/).map(t=>t.trim()).filter(Boolean))
       .find(lines=>lines.length && lines.join(" ").replace(/\s+/g," ")===job.text.replace(/\s+/g," ").trim());
     if(originalLines) {job.lines=originalLines;job.text=originalLines.join("\n");}
+    // SETBAR-C: the reader copies the buyer's words verbatim, asterisk and all: an asterisk standing for the degree sign inside a coordinate ("33*0'45\" N") is the degree sign (charm-nest-engrave-read.js fixDegrees; nothing else is touched)
+    { const R = READER(); if (R && job.lines.length) { const fd = R.fixDegrees(job.lines.join("\n")); if (fd.count) { job.lines = fd.text.split("\n"); job.text = fd.text; } } }
     // BFFONT: a line of the reading that is only a font request ("Typewriter font") is never engraved; its font is read from the order's own words (spec.fontText) and, when the reader named none, from the request itself
     { const fr = typeof O !== "undefined" && O.fontReadText ? O.fontReadText(job.lines.join("\n"), { cueOnly: true }) : { changed: false, lines: [], requests: [] };
       if (fr.changed && fr.lines.length) { const ask = fr.requests.find(q => q.asked); job.lines = fr.lines; job.text = fr.lines.join("\n"); if (ask && !(job.requests && job.requests.font)) job.requests = Object.assign({}, job.requests, { font: ask.asked }); } }
-    agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}${job.slot ? " · " + SIDES().earOf(job.slot) : ""}: Claude reads ${r.engrave ? `"${job.text.replace(/\n/g, " / ")}" from ${r.source} (${Math.round(r.confidence * 100)}%)` : "no engraving"}${job.questions.length ? ` · ${job.questions.length} question(s)` : ""}`, { reason: r.reasoning || null });
+    agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}${job.slot ? " · " + SIDES().earOf(job.slot) : ""}: Claude reads ${r.engrave ? `"${job.text.replace(/\n/g, " / ")}" from ${r.source} (${Math.round(r.confidence * 100)}%)` : "no engraving"}${job.questions.length ? ` · ${job.questions.length} question(s)` : ""}${job.ignored.length ? ` · left out (a note to the shop): ${job.ignored.map(x => "“" + x + "”").join(", ")}` : ""}`, { reason: r.reasoning || null });
     // Confidence describes the interpretation, not whether a preview can be drawn.
     // Nothing here approves or exports a proposed inscription.
     if (!r.engrave && !job.lines.length) {
