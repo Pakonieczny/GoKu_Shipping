@@ -15,9 +15,9 @@ const { start } = require('./bridge-server.cjs');
 const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 18, 17) / 1000);
 const order = (rid, i, sku, title, lines) => ({ receiptId: String(rid), orderNumber: String(rid), createTs: SHIP - 5 * DAY - i * 3600, updateTs: SHIP - 5 * DAY + 60, shipBy: SHIP, buyer: { name: 'Name ' + (i === 1 ? 'One' : 'Two') }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [], metals: {},
   lines: (lines || [[sku, title]]).map(([s, t], j) => ({ transactionId: String(rid) + (j + 1), listingId: String(1800000100 + i * 10 + j), sku: s, title: t, quantity: 1, expectedShipDate: SHIP, variations: [{ name: 'Metal Choice', value: 'Gold Filled' }], metalKey: '', metalLabel: '', personalization: [], buyerMessage: '' })) });
-const ORDERS = [order(4100000001, 1, 'ZZ-MARK-01', 'Test Charm Necklace'), order(4100000002, 2, '', '', [['ZZ-MARK-02', 'Test Pair Earrings'], ['ZZ-MARK-03', 'Test Disc Charm']]), order(4100000003, 3, 'ZZ-MARK-01', 'Test Charm Necklace')];
+const ORDERS = [order(4100000001, 1, 'ZZ-MARK-01', 'Test Charm Necklace'), order(4100000002, 2, '', '', [['ZZ-MARK-02', 'Test Pair Earrings'], ['ZZ-MARK-03', 'Test Disc Charm']]), order(4100000003, 3, 'ZZ-MARK-01', 'Test Charm Necklace'), order(4100000004, 4, 'ZZ-MARK-01', 'Test Charm Necklace')];
 const SKUS = ['ZZ-MARK-01', 'ZZ-MARK-02', 'ZZ-MARK-03'];
-const R1 = '4100000001', R2 = '4100000002', R3 = '4100000003', CUSTOM = 'Charm_Custom_Orders';
+const R1 = '4100000001', R2 = '4100000002', R3 = '4100000003', R4 = '4100000004', CUSTOM = 'Charm_Custom_Orders';
 
 const K = Math.min(4, Math.max(1, os.loadavg()[0] / os.cpus().length / 4));
 const log = (...a) => console.log('  ·', ...a);
@@ -133,6 +133,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const unknown = await A.page.evaluate(() => CharmNestReviewMark.mark('4999999999'));
     assert.equal(unknown.ok, false, 'an order that is not in the list is not marked');
     log('marked again after a resolve: a new cycle, the earlier kept; a failed write: back as it was, no row, nothing in the cloud');
+
+    // the feed rests while the Nest tab is on screen: a gate there asks for one read (refresh) just before it acts
+    await Bc.page.evaluate(() => CN.setMode('nest')); await sleep(300);
+    assert.equal((await A.page.evaluate(rid => CharmNestReviewMark.mark(rid), R4)).ok, true);
+    await sleep(Math.round(4500 * K));
+    assert.equal(await Bc.is(R4), false, 'B on the Nest tab has not read it (the feed rests there)');
+    assert.equal(await Bc.page.evaluate(() => CharmNestReviewMark.refresh()), true); assert.equal(await Bc.is(R4), true, 'one refresh() and B holds it');
+    log('B on the Nest tab: nothing read until refresh(), then it holds the mark (one read of the existing feed)');
 
     /* ── 5 · the sandbox ── */
     const prodBefore = JSON.stringify(srv.st.list(CUSTOM));
