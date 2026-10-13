@@ -144,6 +144,7 @@ async function seedSheet(w, o) {
     outputs: { ai: { path: id + '.ai', url: outUrl + '.ai' }, preview: { path: id + '.png', url: outUrl + '.png' } }, updatedAt: ts, createdAt: ts };
   if (o.qr !== false) sheet.label = { files: [{ path: id + '-qr.png', url: outUrl + '-qr.png', payload: rids.join(','), orders: rids }], orders: rids };
   if (!setId) delete sheet.setSeq;
+  if (o.cut) sheet.laserDoneAt = NOW - 60000;     // already cut on the laser: a sheet no hold can reach any more
   st.put(P + 'Charm_Nest_Sheets', id, sheet, false);
   for (const p of pieces) st.put(P + 'Charm_Pool', p.pid, { poolId: p.pid, orderId: p.rid, transactionId: p.tid, lineKey: p.key, sku: p.sku, material: metal, copy: 1, quantity: 1, runId: run, createdAt: NOW - 3600e3, updatedAt: NOW, state: 'written', sheetId: id, sheetName: fileBase, ...(setId ? { setId } : {}) });
   if (setId) {
