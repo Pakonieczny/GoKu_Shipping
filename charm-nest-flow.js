@@ -176,9 +176,12 @@
     // an order waits for every piece of it. A piece on this sheet, or on a sheet of the same move, is no wait of its own:
     // that sheet's own gaps are listed (or done) above, and the order passes when they are
     const together = id => !!(env.own && env.own.has(id));
-    const blockers = Object.entries(rec.orderReadiness || {}).filter(([, v]) => v && v.ready !== true && !together(v.sheetId));
+    // (an order in Review holds its own sheet too: its piece sits on this very sheet, and that is exactly the wait, so it is never filtered out as "together")
+    const inReview = v => !!(v && Array.isArray(v.blocks) && v.blocks.some(b => b.review));
+    const blockers = Object.entries(rec.orderReadiness || {}).filter(([, v]) => v && v.ready !== true && (inReview(v) || !together(v.sheetId)));
     if (!st.orders && blockers.length) {
-      need('orders', n => `${count(n, 'order')} waiting for other pieces`, st.qr && ex.orders && ex.orders.detail || 'Every piece of an order must be ready before any of it is cut.',
+      const allReview = blockers.every(([, v]) => inReview(v));
+      need('orders', n => allReview ? `${count(n, 'order')} in Review` : `${count(n, 'order')} waiting for other pieces`, allReview ? 'An order sent to Review holds this sheet. It stays on the sheet and the sheet goes on by itself once the order is resolved in the Review tab.' : st.qr && ex.orders && ex.orders.detail || 'Every piece of an order must be ready before any of it is cut.',
         ex.orders && ex.orders.items && ex.orders.items.filter(i => i.part !== 'qr').length ? ex.orders.items.filter(i => i.part !== 'qr') : blockers.map(([oid, v]) => ({ kind: 'order', id: oid, label: `Order ${oid}`, why: v.why || 'Another piece of this order is not ready' })), Math.max(1, blockers.length));
     } else if (Object.keys(rec.orderReadiness || {}).length && !blockers.length) g.checks.orders = { ok: true };
     return g;
@@ -873,10 +876,13 @@
     return Promise.reject(new Error('The Library is not connected to the cloud'));
   };
   const answer = r => { if (r && r.error) throw Object.assign(new Error(r.error), { status: r.status }); return r; };
+  /* An order sent to Review that sits on a sheet holds that sheet until it is resolved there (charm-nest-review-hold.js, derived from the review record every time; the cloud's record cannot know it).
+     The record the plan reads is told so: its Order check is not done, so Approve, the move to Laser cutting and the set's gate refuse in the plan's own words. A sheet cut before is returned as it came. */
+  const reviewed = rec => { try { const H = root.CharmNestReviewHold; return H && typeof H.overlayFlow === 'function' ? H.overlayFlow(rec) : rec; } catch (_) { return rec; } };
   async function readState(item, extraSets, move, extraSheets) {
     const r = answer(await cloud({ op: 'flowState', sheetIds: item.kind === 'sheet' ? [item.id, ...(extraSheets || [])] : [], setIds: [...(item.kind === 'set' ? [item.id] : []), ...(extraSets || [])], ...(move ? { move } : {}) }));
     const state = { sheets: {}, sets: {}, runs: r.runs || {}, live: {}, shared: Array.isArray(r.shared) ? r.shared : null, group: r.group || null };
-    for (const s of r.sheets || []) state.sheets[sid(s)] = s;
+    for (const s of r.sheets || []) state.sheets[sid(s)] = reviewed(s);
     for (const x of r.sets || []) state.sets[x.setId] = x;
     for (const d of r.setDocs || []) state.sets[d.setId] = { ...(state.sets[d.setId] || {}), ...d };
     if (hooks.live) for (const id of Object.keys(state.sheets)) { let l = null; try { l = hooks.live(id); } catch (_) { /* not live */ } if (l) state.live[id] = l; }
@@ -886,7 +892,7 @@
   async function readMates(state, ids) {
     try {
       const r = answer(await cloud({ op: 'flowState', sheetIds: ids.slice(0, 20), setIds: [] }));
-      for (const x of r.sheets || []) { state.sheets[sid(x)] = x; if (hooks.live) { let l = null; try { l = hooks.live(sid(x)); } catch (_) { /* not live */ } if (l) state.live[sid(x)] = l; } }
+      for (const x of r.sheets || []) { state.sheets[sid(x)] = reviewed(x); if (hooks.live) { let l = null; try { l = hooks.live(sid(x)); } catch (_) { /* not live */ } if (l) state.live[sid(x)] = l; } }
     } catch (_) { /* a partner that cannot be read is checked by the server when the move is made */ }
   }
   const itemOf = req => ({ kind: req.kind === 'set' ? 'set' : 'sheet', id: String(req.id || '') });

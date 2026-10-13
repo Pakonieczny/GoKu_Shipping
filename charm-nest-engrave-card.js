@@ -6,8 +6,11 @@
  *       Piece = { pieceKey, rid, lineKey, slot, row, title, never, state, faces: { front: Face|null, back: Face|null }, jobs: [job], approve: { jobs, ok, why }|null, seals: [seal] }
  *       Face  = { face, key, job|null, text, fontWord, fontId, position, state, working, foreign? }
  *       state (of a face and of the card, the worst of its faces): words | busy | approve | approved | plain.   o: { nameOf(row), isWorking(job), seen(job), events }
- *       A face the line does not engrave is null (a quiet empty slot). Back is ALWAYS null for an earring (CharmNestEngraveFaces.neverOf): an earring has no card at all unless a decided
- *       front job is already there, and then only its Front.
+ *       ENGSMART (Paul, 12 Oct 2026, round 2: "if there is no engraving, it should not show it, if there is only back engraving then show that, only front then show only that, both then both"):
+ *       a face the engraving does not need is null and is NOT drawn at all: no dashed empty slot, no "Front" over nothing. The faces are the line's setup (what the system read or a person chose), or, while a
+ *       person is changing the mode in the Engrave tab's panel, the STAGED mode (o.stage = { mode, faces: { front: { text, font }, back: {...} } }); a face that has a live placement job (not cut plain) is shown too: it is what will be approved.
+ *       A line that engraves nothing has no card (o.keepEmpty: the Engrave detail keeps the piece's header while None is staged). Back is ALWAYS null for an earring (CharmNestEngraveFaces.neverOf): an
+ *       earring has no card at all unless a decided front job is already there, and then only its Front.
  *   CharmNestEngraveCard.html(piece, o)      the card's markup (o.approve === false: no Approve / Approved block, the Engrave detail's card; o.current: the face shown, aria-current)
  *   CharmNestEngraveCard.fill(card, piece, o)  puts each face's picture into its thumbnail (CharmNestEngravePreview.render when it exists, else the app's own drawing: one place, thumbOf)
  *   CharmNestEngraveCard.sig(piece, o)       what the card shows, in a line (drawn again only when it changes)
@@ -48,23 +51,42 @@
     return 'words';   // words, blocked
   }
   const worst = states => states.filter(Boolean).reduce((a, b) => (!a || RANK[b] > RANK[a] ? b : a), '') || 'plain';
-  const wordsOfJob = j => linesText((j && j.lines && j.lines.length ? j.lines : j && j.text) || '').join('\n');
+  /** The words of a job as they were GIVEN (ENGAUTO): the fit lays them out again (job.lines is the cut's layout: "NAME" / "ONE", capitals for Ace), job.lineInput keeps what went in; a job a person decided, or laid
+   *  out by hand (lineMode "preserve"), shows its lines as they are. */
+  const wordsOfJob = j => {
+    const ls = linesText((j && j.lines && j.lines.length ? j.lines : j && j.text) || '');
+    if (j && !DECIDED.includes(j.state) && j.lineMode !== 'preserve' && Array.isArray(j.lineInput) && j.lineInput.length) {
+      const li = linesText(j.lineInput), run = v => v.join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (li.length && run(li) === run(ls)) return li.join('\n');
+    }
+    return ls.join('\n');
+  };
 
-  /** The faces of one piece. `jobs`: the piece's jobs (any face); `setup`: the line's setup (faces it asks for, with the words it has), for a face with no job yet. */
+  const facesOfMode = m => (m === 'both' ? ['front', 'back'] : m === 'front' ? ['front'] : m === 'back' ? ['back'] : []);
+  const stagedOf = (stage, face) => { const x = stage && stage.faces && stage.faces[face]; return x == null ? null : typeof x === 'string' ? { text: x, font: '' } : { text: String(x.text == null ? '' : x.text), font: String(x.font == null ? '' : x.font) }; };
+  /** The faces of one piece, ONLY the ones the engraving needs. `jobs`: the piece's jobs (any face); `setup`: the line's setup (the faces it asks for, with the words it has); `o.stage`: a mode a person has
+   *  staged and not saved (it replaces the setup: the faces that mode asks for, with the words and font typed so far). A face nobody asks for is null (and is not drawn); the one exception is a face that has a
+   *  live placement (a job that is not cut plain): it is what will be engraved or approved, so it is shown. A face a person cut plain is not an engraving: null. */
   function facesOf(lineKey, slot, jobs, setup, o) {
     o = o || {}; const never = !!o.never, P = root && root.CharmNestEngravePreview, Pos = root && root.CharmNestEngravePosition, out = { front: null, back: null };
+    const stage = o.stage && typeof o.stage === 'object' ? o.stage : null;
+    const want = stage ? facesOfMode(stage.mode) : setup && setup.faces ? setup.faces : null;   // (no setup at all: the jobs say)
     for (const face of ['front', 'back']) {
       if (face === 'back' && never) continue;                                   // (an earring never has a back slot, whatever a job says)
-      const job = (jobs || []).find(j => faceOf(j) === face) || null, asks = !!(setup && setup.faces && setup.faces.includes(face)), w = setup && setup[face];
-      if (!job && !asks) continue;
-      if (job && (job.state === 'none' || job.state === 'skipped')) { out[face] = { face, key: job.key, job, text: '', fontWord: null, fontId: null, position: null, state: 'plain', working: false, plain: true }; continue; }
-      const text = job ? wordsOfJob(job) || (w && w.lines ? w.lines.join('\n') : '') : (w && w.lines ? w.lines.join('\n') : '');
-      const fontWord = (job && job.faceFontWord) || (w && w.fontWord) || null;
-      const row = job ? job.row : o.row;
-      out[face] = { face, key: job ? job.key : jobKey(lineKey, slot, face), job, text, fontWord,
+      const job = (jobs || []).find(j => faceOf(j) === face) || null, w = setup && setup[face], st = stagedOf(stage, face);
+      const plainJob = !!job && (job.state === 'none' || job.state === 'skipped');
+      if (plainJob && !stage) continue;                                         // (cut plain by a person: that face is not engraved)
+      // (a staged mode is the person's word and decides alone; otherwise the setup's faces, and any face that has a live placement: it is what will be engraved or approved, whatever the setup says)
+      const asks = stage ? want.includes(face) : !!(want && want.includes(face)) || !!job;
+      if (!asks) continue;
+      const live = plainJob ? null : job;                                       // (a face staged on again after it was cut plain has no placement until Save)
+      const text = st ? linesText(st.text).join('\n') : live ? wordsOfJob(live) || (w && w.lines ? w.lines.join('\n') : '') : (w && w.lines ? w.lines.join('\n') : '');
+      const fontWord = st ? st.font || (live && live.faceFontWord) || (w && w.fontWord) || null : (live && live.faceFontWord) || (w && w.fontWord) || null;
+      const row = live ? live.row : o.row;
+      out[face] = { face, key: job ? job.key : jobKey(lineKey, slot, face), job: live, text, fontWord,
         fontId: P && P.fontIdOf ? tryDo(() => P.fontIdOf(lineOf(row) || row, face, fontWord), null) : null,
-        position: job && Pos && Pos.of ? tryDo(() => Pos.of(job), null) : null,
-        state: stateOf(job, o), working: !!(job && o.isWorking && tryDo(() => o.isWorking(job), false)) };
+        position: live && Pos && Pos.of ? tryDo(() => Pos.of(live), null) : null,
+        state: live ? stateOf(live, o) : stage ? 'plain' : 'busy', working: !!(live && o.isWorking && tryDo(() => o.isWorking(live), false)), staged: !live && !!stage };
     }
     return out;
   }
@@ -92,11 +114,10 @@
       const make = (slot, pjobs) => {
         const faces = facesOf(line.key, slot, pjobs, setup, Object.assign({}, o, { never, row: line }));
         const present = ['front', 'back'].map(f => faces[f]).filter(Boolean);
-        const jobsOfPiece = ['front', 'back'].map(f => faces[f] && faces[f].job).filter(Boolean);
+        const jobsOfPiece = present.map(f => f.job).filter(Boolean);
         const seals = sealsOf(jobsOfPiece);
-        const real = present.filter(f => !f.plain);
-        // nothing to engrave, nothing decided by a person: no card (an earring: only a decided legacy front)
-        if (!real.length && !seals.length) return;
+        // nothing to engrave: no card (an earring: only a decided legacy front); o.keepEmpty keeps the header of the piece the Engrave tab is editing while None is staged
+        if (!present.length && !o.keepEmpty) return;
         if (never && !(faces.front && faces.front.job && DECIDED.includes(faces.front.job.state))) return;
         const slotWord = slotLabel(slot), title = [name, slotWord].filter(Boolean).join(' · ') || slotWord || 'Piece';
         const review = present.filter(f => f.job && f.job.state === 'review');
@@ -113,24 +134,28 @@
           state: worst(present.map(f => f.state)) });
       };
       if (groups.length) for (const g of groups) make(g.slot || null, g.jobs);
-      else if (setup && setup.faces && setup.faces.length && (setup.source !== 'default' || (line.engrave && line.engrave.needed))) make(null, []);
+      else if (o.stage || (setup && setup.faces && setup.faces.length && (setup.source !== 'default' || (line.engrave && line.engrave.needed)))) make(null, []);
     }
     return out;
   }
 
   /* ── the markup ─────────────────────────────────────────────────────────── */
   const faceTitle = f => (f === 'front' ? 'Front' : 'Back');
-  function faceHtml(piece, face, o) {
-    const f = piece.faces[face], key = f ? f.key : jobKey(piece.lineKey, piece.slot, face), empty = !f || f.plain || (!f.text && f.state === 'plain');
-    const cur = o && o.current === face ? ' aria-current="true"' : '';
-    let txt = '';
-    if (!empty) {
-      if (f.state === 'busy' && !f.text) txt = '<span class="engTxt engCue"><span class="owSpin" aria-hidden="true"></span>Preparing</span>';
-      else if (f.state === 'words' && !f.text) txt = '<span class="engTxt engCue">Words to confirm</span>';
-      else if (f.text) { const one = f.text.split('\n').join(' / '); txt = `<span class="engTxt" title="${esc(f.text)}"${f.fontId && root && root.CharmNestEngravePreview && root.CharmNestEngravePreview.fontFamilyOf ? ` style="font-family:${esc(tryDo(() => root.CharmNestEngravePreview.fontFamilyOf(f.fontId), ''))}"` : ''}>${esc(one)}</span>`; }
-      else txt = '<span class="engTxt"></span>';
-    } else txt = '<span class="engTxt"></span>';
-    return `<div class="engFace" data-face="${face}" data-key="${esc(key)}" data-empty="${empty ? 1 : 0}"${cur}><button type="button" class="engThumb" data-e="open" aria-label="${faceTitle(face)} engraving: open"></button><span class="engLbl">${faceTitle(face)}</span>${txt}</div>`;
+  /** The face of the card the Engrave detail is editing: the one asked for when the card shows it; the only face when the card shows one (it is selected by itself); none when `o.current` is not given (the order window's card). */
+  function currentOf(piece, o) {
+    if (!o || o.current === undefined) return '';
+    const shown = ['front', 'back'].filter(f => piece.faces[f]);
+    return shown.includes(o.current) ? o.current : shown.length === 1 ? shown[0] : '';
+  }
+  /** One face that the engraving needs: its picture, its title and its words. There is no markup for a face that is not engraved (no empty slot). */
+  function faceHtml(piece, face, cur) {
+    const f = piece.faces[face], key = f.key;
+    let txt;
+    if (f.state === 'busy' && !f.text) txt = '<span class="engTxt engCue"><span class="owSpin" aria-hidden="true"></span>Preparing</span>';
+    else if (f.state === 'words' && !f.text) txt = '<span class="engTxt engCue">Words to confirm</span>';
+    else if (f.text) { const one = f.text.split('\n').join(' / '); txt = `<span class="engTxt" title="${esc(f.text)}"${f.fontId && root && root.CharmNestEngravePreview && root.CharmNestEngravePreview.fontFamilyOf ? ` style="font-family:${esc(tryDo(() => root.CharmNestEngravePreview.fontFamilyOf(f.fontId), ''))}"` : ''}>${esc(one)}</span>`; }
+    else txt = '<span class="engTxt"></span>';
+    return `<div class="engFace" data-face="${face}" data-key="${esc(key)}"${cur === face ? ' aria-current="true"' : ''}><button type="button" class="engThumb" data-e="open" aria-label="${faceTitle(face)} engraving: open"></button><span class="engLbl">${faceTitle(face)}</span>${txt}</div>`;
   }
   /** The Approve block, in the card's header row (a card of 207px is 170px tall, not 210): one small Approve button while a face waits for approval (disabled, with a title, until every placement is ready;
    *  an empty small seal row waits beside it, the seal is pressed on it); once the piece is approved its seals, small, in the button's place. Nothing else. */
@@ -147,19 +172,18 @@
   }
   function html(piece, o) {
     o = o || {}; const word = WORD[piece.state] || '';
-    const faces = ['front', 'back'].filter(f => f === 'front' || !piece.never);
-    const shown = piece.never ? ['front'] : faces;
+    const shown = ['front', 'back'].filter(f => piece.faces[f]), cur = currentOf(piece, o);
     const act = o.approve === false ? '' : actHtml(piece, o);
     return `<article class="engCard" data-piece="${esc(piece.pieceKey)}" data-state="${esc(piece.state)}" data-rid="${esc(piece.rid)}" data-key="${esc(piece.lineKey)}"${piece.slot ? ` data-slot="${esc(piece.slot)}"` : ''}>`
       + `<header class="engHd"><i class="engDot" data-s="${esc(piece.state)}" role="img" aria-label="${esc(word)}" title="${esc(word)}"></i><b class="engName" title="${esc(piece.title)}">${esc(piece.title)}</b>${act ? `<span class="engAct">${act}</span>` : ''}</header>`
-      + `<div class="engFaces" data-n="${shown.length}">${shown.map(f => faceHtml(piece, f, o)).join('')}</div>`
+      + (shown.length ? `<div class="engFaces" data-n="${shown.length}">${shown.map(f => faceHtml(piece, f, cur)).join('')}</div>` : '')
       + '<div class="engFail" role="alert" hidden></div></article>';
   }
 
   /* ── the picture of a face: ONE place (thumbOf). The live-font component when it is on the page, else the app's own drawing ── */
   const PX = 160;
   function thumbOf(btn, piece, face, o) {
-    const f = piece.faces[face]; btn.replaceChildren(); if (!f || f.plain) return;
+    const f = piece.faces[face]; btn.replaceChildren(); if (!f) return;
     const P = root && root.CharmNestEngravePreview;
     if (P && P.render) {
       try { P.render(btn, { row: lineOf(piece.row), text: f.text, fontId: f.fontId, fontWord: f.fontWord, position: f.position, face }); return; } catch (_) { btn.replaceChildren(); }
@@ -190,8 +214,8 @@
   const ids = typeof WeakMap === 'function' ? new WeakMap() : null; let idN = 0;
   const idOf = x => { if (!x || typeof x !== 'object' || !ids) return 0; let n = ids.get(x); if (!n) ids.set(x, n = ++idN); return n; };
   function sig(piece, o) {
-    return JSON.stringify([piece.pieceKey, piece.title, piece.state, !!piece.never, piece.approve ? [piece.approve.ok, piece.approve.why, piece.approve.jobs.length] : 0, (piece.seals || []).map(s => s.id).join(','), o && o.current || '',
-      ['front', 'back'].map(f => { const x = piece.faces[f]; return x ? [x.state, x.text, x.fontWord, x.fontId, x.position && [x.position.x, x.position.y, x.position.size, x.position.angle], idOf(x.job && x.job.fit), idOf(x.job && x.job.view), x.job && +x.job.approvedAt || 0, x.job && (x.job.backs || []).length] : 0; })]);
+    return JSON.stringify([piece.pieceKey, piece.title, piece.state, !!piece.never, piece.approve ? [piece.approve.ok, piece.approve.why, piece.approve.jobs.length] : 0, (piece.seals || []).map(s => s.id).join(','), currentOf(piece, o),
+      ['front', 'back'].map(f => { const x = piece.faces[f]; return x ? [x.state, !!x.staged, x.text, x.fontWord, x.fontId, x.position && [x.position.x, x.position.y, x.position.size, x.position.angle], idOf(x.job && x.job.fit), idOf(x.job && x.job.view), x.job && +x.job.approvedAt || 0, x.job && (x.job.backs || []).length] : 0; })]);
   }
 
   /* ── the card's own rules (the Sheet tab's card keeps its own) ── */
@@ -203,14 +227,15 @@
     + '.engCard .egApproveWrap>.egButtonSeal{position:static;left:auto;top:auto;z-index:auto;width:auto;height:auto;margin:0;padding:0;gap:2px;max-width:none;flex:none;justify-content:flex-start}.engCard .egApproveWrap>.egApproveButton~.egButtonSeal{position:absolute;right:-4px;left:auto;top:50%;width:24px;height:24px;margin:-12px 0 0}'
     + '.engCard .engAct .btn.egApproveButton{min-width:0;height:22px;padding:0 10px;font-size:12px;line-height:1;white-space:nowrap}.engCard .engAct .btn.egApproveButton:disabled{opacity:1;cursor:default}.engCard .engAct .btn.egOff{background:var(--card2);border-color:var(--line);color:var(--ink45)}'
     + '.engFaces{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;min-width:0}'
-    + '.engFace{display:flex;flex-direction:column;gap:2px;min-width:0}.engLbl{order:-1;font:600 11px/13px var(--sans);color:var(--ink)}.engFace[data-empty="1"] .engLbl{opacity:.4}'
+    + '.engFace{display:flex;flex-direction:column;gap:2px;min-width:0}.engLbl{order:-1;font:600 11px/13px var(--sans);color:var(--ink)}'
     + '.engThumb{appearance:none;display:block;position:relative;box-sizing:border-box;width:100%;max-width:104px;min-width:0;aspect-ratio:1;padding:0;margin:0;border:1px solid var(--line);border-radius:9px;background:#fff;overflow:hidden;cursor:pointer;font:inherit;color:inherit}'
     + '.engThumb canvas,.engThumb img,.engThumb svg{width:100%;height:100%;object-fit:contain;display:block}.engThumb:focus-visible{outline:2px solid var(--slate,#68899d);outline-offset:2px}.engThumb[aria-busy=true]{cursor:progress}'
-    + '.engFace[data-empty="1"] .engThumb{border-style:dashed;background:transparent}.engFace[aria-current=true] .engThumb{outline:2px solid var(--gold,#a9823f);outline-offset:0}'
+    + '.engFace[aria-current=true] .engThumb{outline:2px solid var(--gold,#a9823f);outline-offset:0}'
+    + '.engFaces[data-n="1"]{grid-template-columns:minmax(0,1fr)}.engFaces[data-n="1"] .engFace{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:auto auto 1fr;column-gap:6px;row-gap:2px;align-items:start}.engFaces[data-n="1"] .engThumb{grid-column:1;grid-row:1/4}.engFaces[data-n="1"] .engLbl{grid-column:2;grid-row:1;order:0}.engFaces[data-n="1"] .engTxt{grid-column:2;grid-row:2;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;white-space:normal;font-size:13px;line-height:16px;min-height:0}.engFaces[data-n="1"] .engTxt.engCue{display:flex;white-space:normal}'
     + '.engTxt{display:block;min-height:14px;font:12px/14px var(--serif);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.engTxt.engCue{display:flex;align-items:center;gap:5px;font-style:italic;color:var(--ink45);font-size:11px}'
     + '.engTxt .owSpin{flex:none;width:10px;height:10px}.engOpening{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.85)}'
     + '.engFail{font:11.5px/1.35 var(--sans);color:#8a3a26;background:var(--claySoft);border-radius:8px;padding:5px 8px;min-width:0}.engFail[hidden]{display:none}'
-    + '@container engc (max-width:150px){.engCard{padding:5px;gap:3px}.engHd{flex-wrap:wrap;row-gap:3px}.engName{font-size:11px}.engAct{flex:1 1 100%}.engCard .egApproveWrap{width:100%}.engCard .engAct .btn.egApproveButton{width:100%}.engFaces{gap:4px}.engLbl{font-size:10px}.engTxt{font-size:11px}}';
+    + '@container engc (max-width:150px){.engCard{padding:5px;gap:3px}.engHd{flex-wrap:wrap;row-gap:3px}.engName{font-size:11px}.engAct{flex:1 1 100%}.engCard .egApproveWrap{width:100%}.engCard .engAct .btn.egApproveButton{width:100%}.engFaces{gap:4px}.engLbl{font-size:10px}.engTxt{font-size:11px}.engFaces[data-n="1"] .engTxt{font-size:11px;line-height:13px}}';
   function css() {
     const d = root && root.document; if (!d || d.getElementById('engCardCss')) return;
     const s = d.createElement('style'); s.id = 'engCardCss'; s.textContent = CSS; (d.head || d.documentElement).appendChild(s);
@@ -233,12 +258,14 @@
     return el;
   }
 
-  /** The card in the Engrave tab's detail: the same markup, no Approve; the face shown carries aria-current; a press on a face calls onPick(face). */
+  /** The card in the Engrave tab's detail: the same markup, no Approve; the face shown carries aria-current (a card of one face selects it by itself); a press on a face calls onPick(face).
+   *  `stage` (what the panel has staged and not saved: { mode, faces: { front: { text, font }, back } } or null) decides which faces the card draws, so the faces follow the mode control at once; None
+   *  keeps the piece's header and draws no face (keepEmpty). `update({ face, stage })`; a new `stage` redraws at once. `label(face, text)` puts the words being typed under that face's picture. */
   function mountPiece(slot, ctx) {
     css(); ctx = Object.assign({}, ctx); let el = null, last = '', gone = false;
     const find = () => {
       const row = lineOf(ctx.row), F = Faces(), pk = ctx.key && F ? F.pieceKeyOf(ctx.key) : '';
-      const ps = piecesOf([row], { nameOf: ctx.nameOf, isWorking: ctx.isWorking }); return ps.find(p => p.pieceKey === pk) || ps.find(p => p.jobs.some(j => j.key === ctx.key)) || ps[0] || null;
+      const ps = piecesOf([row], { nameOf: ctx.nameOf, isWorking: ctx.isWorking, stage: ctx.stage || null, keepEmpty: true }); return ps.find(p => p.pieceKey === pk) || ps.find(p => p.jobs.some(j => j.key === ctx.key)) || ps[0] || null;
     };
     const o = () => ({ approve: false, current: ctx.face || '', onOpen: face => { if (ctx.onPick) tryDo(() => ctx.onPick(face)); return null; } });
     function draw(force) {
@@ -248,8 +275,10 @@
       const n = card(p, o()); if (el && el.isConnected) el.replaceWith(n); else slot.replaceChildren(n); el = n; repaint(n);
     }
     draw(true);
-    return { get el() { return el; }, update(patch) { if (patch) Object.assign(ctx, patch); draw(false); }, refresh() { draw(true); }, destroy() { gone = true; slot.replaceChildren(); el = null; },
-      thumb: face => (el ? el.querySelector(`.engFace[data-face="${face}"] .engThumb`) : null) };
+    return { get el() { return el; }, update(patch) { const staged = !!patch && Object.prototype.hasOwnProperty.call(patch, 'stage'); if (patch) Object.assign(ctx, patch); draw(staged); }, refresh() { draw(true); }, destroy() { gone = true; slot.replaceChildren(); el = null; },
+      thumb: face => (el ? el.querySelector(`.engFace[data-face="${face}"] .engThumb`) : null),
+      faces: () => (el ? [...el.querySelectorAll('.engFace')].map(f => f.dataset.face) : []),
+      label(face, text) { const t = el && el.querySelector(`.engFace[data-face="${face}"] .engTxt`); if (!t) return; const w = linesText(text); t.className = 'engTxt'; t.textContent = w.join(' / '); if (w.length) t.title = w.join('\n'); else t.removeAttribute('title'); } };
   }
 
   return { piecesOf, facesOf, stateOf, html, fill, card, sig, mountPiece, thumbOf, repaint, sealsOf, css, WORD };

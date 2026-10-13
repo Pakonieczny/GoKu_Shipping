@@ -106,16 +106,16 @@ const LONG = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOP';
     let c = await read(keyOf(A, 2));
     check(!(await page.evaluate(k => !!document.querySelector(`#owEng .engCard[data-key="${k}"]`), keyOf(A, 0))), 'an earring (its words job is still there) has no card: no earring is engraved');
     check(c.state === 'words' && c.dot === 'Words to confirm' && c.dots === 1 && c.name.startsWith('DUCK CHARM 38091'), 'words to confirm: ONE dot that says so, on the piece it belongs to: ' + JSON.stringify([c.dot, c.dots, c.name]));
-    check(c.back.text === 'Lily\n& Max' && c.back.shown === 'Lily / & Max' && c.front.empty && !c.front.text && none(c).length === 0, 'the words are shown on one line under the Back, the Front is a quiet empty slot, none of the old text is there: ' + JSON.stringify([c.back, c.front, none(c)]));
+    check(c.back.text === 'Lily\n& Max' && c.back.shown === 'Lily / & Max' && c.front === null && none(c).length === 0, 'the words are shown on one line under the Back, there is no Front slot at all, none of the old text is there: ' + JSON.stringify([c.back, c.front, none(c)]));
     check(!c.approve && c.buttons === 0, 'no Approve while the words are not confirmed (no button at all): ' + JSON.stringify([c.approve, c.buttons]));
     check(c.out.length === 0 && c.scrollOver <= 0, 'nothing is wider than the card at 1440: ' + JSON.stringify(c.out));
     if (shots) { await page.screenshot({ path: path.join(shots, 'overview-1440-words.png') }); await page.locator('#owEng').screenshot({ path: path.join(shots, 'card-1440-words.png') }); }
 
-    // 2 · an order of several: a card for each piece that has an engraving, in every state (none for a piece with none)
-    await close(); await open(keyOf(B, 0)); await page.waitForFunction(() => document.querySelectorAll('#owEng .engCard').length === 5, null, { timeout: 10000 }); await settled();
+    // 2 · an order of several: a card for each piece that has an engraving, in every state (none for a piece with none, nor for one cut plain)
+    await close(); await open(keyOf(B, 0)); await page.waitForFunction(() => document.querySelectorAll('#owEng .engCard').length === 4, null, { timeout: 10000 }); await settled();   // (the plain tag, cut plain, engraves nothing: ENGSMART gives it no card)
     const list = await page.evaluate(() => [...document.querySelectorAll('#owEng .engCard')].map(e => ({ key: e.dataset.key, state: e.dataset.state, name: (e.querySelector('.engName') || {}).textContent || '', buttons: e.querySelectorAll('button:not(.engThumb)').length })).sort((a, b) => a.key.localeCompare(b.key)));
-    check(list.map(x => x.key).join() === [0, 1, 2, 3, 4].map(i => keyOf(B, i)).join() && list.map(x => x.state).join() === 'approve,busy,approved,plain,busy', 'a card for each of the five pieces, each in its own state (' + list.map(x => x.state).join('/') + ')');
-    check(list[0].name.startsWith('ASTER FLOWER') && list[2].name.startsWith('MOON DISC') && list[3].name.startsWith('PLAIN TAG') && list.map(x => x.buttons).join() === '1,0,0,0,0', 'each names its piece, and only the one that waits for approval has a button: ' + JSON.stringify(list.map(x => [x.name.slice(0, 14), x.buttons])));
+    check(list.map(x => x.key).join() === [0, 1, 2, 4].map(i => keyOf(B, i)).join() && list.map(x => x.state).join() === 'approve,busy,approved,busy', 'a card for each of the four pieces that are engraved (none for the one cut plain), each in its own state (' + list.map(x => x.state).join('/') + ')');
+    check(list[0].name.startsWith('ASTER FLOWER') && list[2].name.startsWith('MOON DISC') && !list.some(x => x.name.startsWith('PLAIN TAG')) && list.map(x => x.buttons).join() === '1,0,0,0', 'each names its piece, and only the one that waits for approval has a button: ' + JSON.stringify(list.map(x => [x.name.slice(0, 14), x.buttons])));
     check(await page.evaluate(() => document.querySelectorAll('#owEng > :not(.engCard)').length === 0 && !document.querySelector('#owEng .fLabel')), 'the cards are the grid\'s direct children, with no label of their own');
     const allOut = await page.evaluate(() => { const h = document.querySelector('#owEng'), r = h.getBoundingClientRect(); return [...h.querySelectorAll('.engCard')].filter(e => { const b = e.getBoundingClientRect(); return b.right > r.right + .5 || e.scrollWidth - e.clientWidth > 0; }).length; });
     check(allOut === 0, 'none is wider than its column');
@@ -138,7 +138,8 @@ const LONG = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOP';
     check(zoomed.cur && !zoomed.tip && !zoomed.hasTitle, 'a seal on the card zooms in place and carries no tooltip: ' + JSON.stringify(zoomed));
     await page.evaluate(() => Seal.zoom.away()); await page.waitForTimeout(400);
     c = await read(keyOf(B, 3));
-    check(c.state === 'plain' && c.dot === 'No engraving' && c.front.empty && c.back.empty && !c.approve && c.buttons === 0 && c.seals.join() === 'CUT PLAIN|Sam' && c.out.length === 0, 'cut plain: both faces are quiet empty slots, the dot, the seal, no button: ' + JSON.stringify([c.dot, c.seals, c.buttons]));
+    // (ENGSMART, Paul: "if there is no engraving, it should not show it": a piece a person cut plain engraves nothing, so it has no card and no face; the Engrave tab's Decided list keeps its seal)
+    check(c === null, 'cut plain: no card and no face for the piece (nothing is engraved on it): ' + JSON.stringify(c && [c.state, c.front, c.back]));
     await close(); await open(keyOf(A, 1)); await page.waitForFunction(() => document.querySelector('#owEng .engCard'), null, { timeout: 8000 });
     check(await page.evaluate(() => document.querySelectorAll('#owEng .engCard').length === 1 && document.querySelector('#owEng .engCard .engName').textContent.startsWith('DUCK CHARM')), 'an order of three pieces with one engraving: its one card, none for the earring or the piece with no engraving');
     const none2 = await page.evaluate(() => { const h = document.createElement('div'); h.innerHTML = CNEngravingSeals.panel({ kind: 'none' }); return h.querySelector('.swEng').dataset.state + '|' + h.querySelector('.top b').textContent; });

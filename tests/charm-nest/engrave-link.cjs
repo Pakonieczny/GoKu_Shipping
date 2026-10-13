@@ -7,8 +7,9 @@
 //     "Its engraving is still to be settled" box that was a second door was removed on 5 Oct 2026, and the window never says it again);
 //   · the Sheet tab's shortcut (Fix in Engraving / View in Engraving);
 //   · the Sheet window's own (the window closes, the way back stays);
-//   · a piece whose job is not loaded yet is waited for (small labelled spinner, bounded), a missing job falls back to
-//     the Engraving tab filtered to the order with a toast, a Sandbox order is never opened from the production page.
+//   · a piece whose job is not loaded yet is waited for (small labelled spinner, bounded), a missing job moves NOTHING (ENGCRASH, 12 Oct:
+//     no window closed, the Engraving tab keeps its view and its search box) and one plain line says why, a Sandbox order is never
+//     opened from the production page (the piece on hold / on no sheet yet: tests/charm-nest/engrave-no-job-click.cjs).
 // Headless Chromium against the fake site (bridge-server.cjs); every request that is not to the loopback is aborted.
 //   node tests/charm-nest/engrave-link.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
 const path = require('path'), assert = require('assert/strict');
@@ -19,13 +20,14 @@ const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 7, 17) / 1000), SH = 'she
 const A = { rid: '4180000001', tids: ['41800000011'], skus: ['FIREBIRD_2'] };                                              // one piece
 const B = { rid: '4170837249', tids: ['41708372491', '41708372492', '41708372493'], skus: ['OWL_CHARM', 'FOX_TAG', 'MOON_DISC'] };   // three pieces
 const C = { rid: '4180000003', tids: ['41800000031'], skus: ['TINY_TAG'] };                                              // in front unless asked past
+const P = { rid: '4180000009', tids: ['41800000091'], skus: ['PLAIN_DISC'] }, L = { rid: '4180000010', tids: ['41800000101'], skus: ['LATE_TAG'] }, N = { rid: '4180000011', tids: ['41800000111'], skus: ['NEVER_TAG'] };   // (on the sheet: a job is made once a piece is on a sheet)
 const pool = (o, i) => `${o.rid}_${o.tids[i]}_1`, keyOf = (o, i) => `${o.rid}_${o.tids[i]}`;
 const line = (tid, sku) => ({ transactionId: tid, listingId: '18000' + tid.slice(-5), sku, title: sku.replace(/_/g, ' ') + ' charm', quantity: 1, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: '14k Gold Filled' }], metalKey: 'gold', metalLabel: '14k Gold Filled', personalization: [], buyerMessage: '' });
 const order = (o, buyer) => ({ receiptId: o.rid, orderNumber: o.rid, createTs: SHIP - 7 * DAY, updateTs: SHIP - 7 * DAY + 60, shipBy: SHIP, buyer: { name: buyer }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [], lines: o.tids.map((t, i) => line(t, o.skus[i])) });
 
 function seed(st) {
   const pl = [], ch = [];
-  const all = [[A, 0], [B, 0], [B, 1], [B, 2], [C, 0]];
+  const all = [[A, 0], [B, 0], [B, 1], [B, 2], [C, 0], [P, 0], [L, 0], [N, 0]];
   for (let i = 0; i < 24; i++) {
     const id = 'b' + i, x = all[i - 5] || null;
     pl.push({ id, cxPt: 14 + (i % 8) * 28, cyPt: 14 + Math.floor(i / 8) * 28, angle: 0, wPt: 20, hPt: 20 });
@@ -196,13 +198,12 @@ async function main() {
     // a row of the pull, added by a test: its order, its line, its engraving record
     const addRow = (o, rec, spec) => page.evaluate(({ o, rec, spec }) => { const l = o.lines[0], key = CharmNestOrders.lineKey(o, l); const row = { key, order: o, line: l, arrivedAt: Date.now(), spec, problems: [], state: 'pooled', reason: null, claimedBy: null, poolIds: [o.receiptId + '_' + l.transactionId + '_1'], engrave: rec, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); window.__row = row; return key; }, { o: order(o, 'Test Buyer'), rec, spec });
     // a missing job: nothing to engrave for this piece
-    const P = { rid: '4180000009', tids: ['41800000091'], skus: ['PLAIN_DISC'] }, L = { rid: '4180000010', tids: ['41800000101'], skus: ['LATE_TAG'] }, N = { rid: '4180000011', tids: ['41800000111'], skus: ['NEVER_TAG'] };
     const keyP = await addRow(P, { needed: false, state: 'none', approved: true }, null);
     const miss = await page.evaluate(k => EngraveLink.open({ rid: '4180000009', key: k }), keyP);
     const wm = await where();
-    check(miss === false && wm.mode === 'engrave' && wm.q === P.rid && wm.list === true && wm.cards.length === 0, 'a missing job: the Engraving tab filtered to the order, nothing chosen, open() says false (' + JSON.stringify({ q: wm.q, list: wm.list, cards: wm.cards }) + ')');
+    check(miss === false && wm.mode === 'orders' && wm.q === '' && wm.list === true && !wm.focus, 'a missing job: nothing moves (no tab change, no filter left on the Engraving tab), open() says false (' + JSON.stringify({ mode: wm.mode, q: wm.q, list: wm.list, cards: wm.cards }) + ')');
     const toasts = () => page.evaluate(() => [...document.querySelectorAll('#toasts .toast .m')].map(n => n.textContent));
-    check((await toasts()).some(t => /4180000009/.test(t) && /not loaded|nothing to engrave/.test(t)), 'and a toast says so: ' + (await toasts()).join(' | '));
+    check((await toasts()).some(t => /not loaded|nothing to engrave/.test(t)), 'and a toast says so: ' + (await toasts()).join(' | '));
     await reset();
 
     // a job still to come (its words not read yet): a small labelled spinner, then the piece, with the window closed
@@ -223,7 +224,7 @@ async function main() {
     const keyN = await addRow(N, { needed: true, state: 'classify', approved: false }, { engraveCandidate: true });
     const t0 = Date.now(), never = await page.evaluate(k => EngraveLink.open({ rid: '4180000011', key: k }), keyN), took = Date.now() - t0;
     const wn = await where();
-    check(never === false && took >= 5000 && took < 12000 && wn.q === N.rid && wn.list === true, `a job that never comes: waited ${took} ms (bounded), then the Engraving tab for the order`);
+    check(never === false && took >= 5000 && took < 12000 && wn.q === '' && wn.mode === 'orders', `a job that never comes: waited ${took} ms (bounded), then nothing moves (no filter, no tab change)`);
     check((await toasts()).some(t => /did not finish loading/.test(t)), 'and the toast says it did not finish loading');
     await reset();
 
@@ -238,7 +239,7 @@ async function main() {
     await reset();
     const cross = await page.evaluate(() => EngraveLink.open({ rid: '4180000003', key: '4180000001_41800000011' }));
     const wc = await where();
-    check(cross === false && wc.cards.length === 0 && wc.q === '4180000003', 'a key of one order with another order\'s number opens neither: the tab is filtered to the number asked for');
+    check(cross === false && !wc.focus && wc.q === '' && wc.mode === 'orders', 'a key of one order with another order\'s number opens neither: nothing opens and nothing is filtered');
 
     // ── 5 · and the other way round: the Sandbox page never opens a production order ──
     const sbCtx = await browser.newContext({ viewport: { width: 1500, height: 900 } });
@@ -256,7 +257,7 @@ async function main() {
       check(refused === false && kept.mode === mode0 && !kept.q && kept.toasts.some(t => /production/.test(t) && /Sandbox mode/.test(t)), 'the Sandbox page given a production order: nothing opens, nothing moves, the toast says why (' + kept.toasts.join(' | ') + ')');
       const mine = await sp.evaluate(() => EngraveLink.open({ rid: '4180000001', key: '4180000001_41800000011', sandbox: true }));
       const there = await sp.evaluate(() => ({ mode: CN.S.mode, q: Engrave.view().q }));
-      check(mine === false && there.mode === 'engrave' && there.q === '4180000001', 'a Sandbox order on the Sandbox page is taken (no job here: the Engraving tab filtered to the order)');
+      check(mine === false && there.mode === mode0 && !there.q, 'a Sandbox order on the Sandbox page is taken (no job here: nothing moves, no filter)');
     } finally { await sbCtx.close(); }
 
     check(errors.length === 0, 'no page errors: ' + errors.join(' | '));
