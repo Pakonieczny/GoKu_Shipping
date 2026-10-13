@@ -262,14 +262,14 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
     const c = vm.createContext({ WORKSPACE_SANDBOX: true, localStorage: { getItem() { return null; }, setItem() {} }, CNListActivity: Activity, CNEngravingSeals: Seals, window: dom.window, document, console: { error: (...x) => errors.push(x), warn() {}, log() {} },
       ResizeObserver: dom.window.ResizeObserver, B: { engrave: { items: jobs, fonts: { ok: true } }, pool: { rows: pool }, orders: { byKey: new Map() } },
       O: require(path.join(root, 'charm-nest-orders.js')), S: { settings: {}, mode: 'engrave' }, PT: 72 / 25.4, MM: 25.4 / 72, SOURCE_LABEL: {},
-      Pool: { charmOf: () => null, sheetOf: () => null }, P: {}, Review: { items: () => [], count: () => 0, remove() {}, add() {} }, Master: { entryFor: sku => F.entryOf(sku), fetchEntry: async () => null },
+      Pool: { charmOf: () => null, previewCharmOf: () => null, sheetOf: () => null }, P: {}, Review: { items: () => [], count: () => 0, remove() {}, add() {} }, Master: { entryFor: sku => F.entryOf(sku), fetchEntry: async () => null },
       LiveStrip: { render() {} }, RunCtl: { poke() {} }, Orders: { render() {}, rows: () => [] }, ListMedia,
       setTimeout: fn => (timers.push(fn), timers.length), clearTimeout() {}, requestAnimationFrame: fn => (frames.push(fn), frames.length), cancelAnimationFrame() {},
       el: (tag, cls, html_ = '') => { const e = document.createElement(tag); e.className = cls; e.innerHTML = html_; return e; },
       esc: v => String(v ?? '').replace(/[&<>"']/g, x => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[x])),
       toast() {}, agent() {}, getComputedStyle: () => ({ flexGrow: '0' }), employeeName: () => 'Paul', humanAct() {}, TL: { rec() {}, line() {} } });
     const pmStart = source.indexOf('function purchaseMarkup('); vm.runInContext(source.slice(pmStart, source.indexOf('\n}\n', pmStart) + 3), c);   // (only this one function: the page's ListMedia is stood in for here)
-    const BACK_CALL = 'const bc = renderBack(job, px, { grid: true, editable: true, include: framed });';
+    const BACK_CALL = 'const bc = renderBack(job, px, { grid: true, editable: true, include: framed, draft: panelOn });';
     let moduleSrc = source.slice(source.indexOf('const Engrave = window.Engrave ='), source.indexOf('/* ═══ 22 · Sets'));
     assert.ok(moduleSrc.includes(BACK_CALL), 'the editor draws its back here (the test stands a plain canvas in for the drawing machinery)');
     moduleSrc = moduleSrc.replace(BACK_CALL, 'const bc = standInBack();');
@@ -362,20 +362,17 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       assert.equal(card.querySelectorAll('.rh .reviewIdentity > .egPiece').length, 0, 'the switch replaces the single tag');
       assert.equal(card.querySelectorAll('[data-f="words"]').length, 1, 'each ear keeps its own words box and approval: one card shown at a time');
       assert.equal(card.querySelectorAll('[data-a="approve"]').length, 1);
-      const both = card.querySelector('[data-a="approveBoth"]'); assert.ok(both, 'same words: the row offers Approve both ears'); assert.equal(both.disabled, true, 'but not before both placements have been on screen');
+      assert.equal(card.querySelector('[data-a="approveBoth"]'), null, 'same words: still no press that approves both ears (ENGAPPROVE): each ear has its own Approve');
       // the Right ear
       tabs[1].click(); const card2 = document.querySelector('#egQueue .rvItem'); assert.equal(card2.dataset.key, made.duck[1].key, 'the switch shows the Right ear\'s own card');
       assert.deepEqual([...card2.querySelectorAll('.egEarTab')].map(b => b.getAttribute('aria-pressed')), ['false', 'true']); assert.equal(card2.querySelector('.rh .kind').textContent, '1 of 8 · 0 done', 'the other ear is not another step');
     });
-    await t('2e2 "Approve both ears" wakes only once both placements have been on screen: shown on the Left alone it stays asleep, and on the Right (the Left already seen) it is ready', () => {
+    await t('2e2 there is NO "Approve both ears" press, on either ear and whatever has been on screen: each ear\'s card has its own Approve and nothing else approves (ENGAPPROVE)', () => {
       reset(); frames.length = 0; showList();
       const open = k => { E.restoreView({ tab: 'place', chosen: true, list: false, focus: k }); E.render(); runFrames(); return document.querySelector('#egQueue .rvItem'); };
-      let card = open(made.duck[0].key); let b = card.querySelector('[data-a="approveBoth"]');
-      assert.equal(b.disabled, true, 'the Left is on screen, the Right has not been'); assert.match(b.title, /Right ear's placement first/);
-      card = open(made.duck[1].key); b = card.querySelector('[data-a="approveBoth"]');
-      assert.equal(b.disabled, false, 'the Left was seen, the Right is on screen now'); assert.match(b.title, /each with its own seal and back file/);
-      card = open(made.duck[0].key); assert.equal(card.querySelector('[data-a="approveBoth"]').disabled, false, 'and back on the Left it is ready too');
-      // words that differ: no such press at all
+      let card = open(made.duck[0].key); assert.equal(card.querySelector('[data-a="approveBoth"]'), null, 'the Left, the Right not yet on screen'); assert.equal(card.querySelectorAll('[data-a="approve"]').length, 1, 'the ear\'s own Approve');
+      card = open(made.duck[1].key); assert.equal(card.querySelector('[data-a="approveBoth"]'), null, 'the Right, the Left seen'); assert.equal(card.querySelectorAll('[data-a="approve"]').length, 1);
+      card = open(made.duck[0].key); assert.equal(card.querySelector('[data-a="approveBoth"]'), null, 'and back on the Left');
       made.duck[1].lines = ['Dad']; made.duck[1].text = 'Dad'; card = open(made.duck[0].key); assert.equal(card.querySelector('[data-a="approveBoth"]'), null, 'ears with different words are approved one by one');
       made.duck[1].lines = ['Mom']; made.duck[1].text = 'Mom';
       // a single never has it; a necklace with different words on its discs has no "all discs" press either, only the Disc 1 | Disc 2 | Disc 3 switch
@@ -445,7 +442,7 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       const rows = rowsOnPage(); assert.equal(rows.length, 1); assert.deepEqual([...rows[0].querySelectorAll('.egEar .w')].map(n => n.textContent), ['Mom', 'Dad']);
       E.restoreView({ tab: 'place', chosen: true, list: true, focus: null, q: '' }); made.duck[1].lines = ['Mom']; made.duck[1].text = 'Mom';
     });
-    await t('2j DISCCYCLE: a necklace is ONE row; the editor has Disc 1 | Disc 2 | Disc 3, each with its own words, font and state; Back / Next walk every disc of every order; "Approve all discs" only for the same words on every disc once each was shown; Decided lists the discs with a Reopen each', () => {
+    await t('2j DISCCYCLE: a necklace is ONE row; the editor has Disc 1 | Disc 2 | Disc 3, each with its own words, font and state; Back / Next walk every disc of every order; no "Approve all discs" even for the same words (ENGAPPROVE); Decided lists the discs with a Reopen each', () => {
       reset(); made.disc[0].font = { name: 'Typewriter', asked: 'Typewriter' }; made.disc[1].font = 'Source Sans 3'; frames.length = 0; showList();
       const nk = rowsOnPage().find(r => r.dataset.rid === ROW.disc.order.receiptId);
       assert.deepEqual([...nk.querySelectorAll('.egEar [data-font]')].map(n => n.textContent), ['Typewriter', 'Source Sans 3', ''], 'the list says each disc\'s font by name');
@@ -464,11 +461,10 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       open(made.disc[0].key); assert.equal(press('next'), made.disc[1].key, 'Next from Disc 1 is Disc 2 of the same order'); assert.equal(press('next'), made.disc[2].key); const after = press('next'); assert.notEqual(Rows.lineKeyOf(jobs.get(after)), ROW.disc.key, 'after Disc 3: the next order');
       assert.equal(press('prev'), made.disc[2].key, 'Back from there is the last disc of the order before'); assert.equal(press('prev'), made.disc[1].key); assert.equal(press('prev'), made.disc[0].key);
       const before = press('prev'); assert.notEqual(Rows.lineKeyOf(jobs.get(before)), ROW.disc.key, 'Back from Disc 1: the order before'); assert.equal(press('next'), made.disc[0].key, 'and Next comes back to Disc 1');
-      // "Approve all discs": the very same words on every disc, and every disc has been on screen
+      // the very same words on every disc: still NO "Approve all discs" (ENGAPPROVE): each disc has its own Approve
       for (const j of made.disc) { j.lines = ['Mom']; j.text = 'Mom'; } delete made.disc[0].font;
-      card = open(made.disc[0].key); let b = card.querySelector('[data-a="approveBoth"]'); assert.ok(b, 'the same words: the row offers one press'); assert.equal(b.textContent, 'Approve all discs'); assert.equal(b.disabled, true, 'but Disc 2 and Disc 3 have not been on screen'); assert.match(b.title, /Look at Disc 2's placement first/);
-      card = open(made.disc[1].key); b = card.querySelector('[data-a="approveBoth"]'); assert.equal(b.disabled, true); assert.match(b.title, /Look at Disc 3's placement first/);
-      card = open(made.disc[2].key); b = card.querySelector('[data-a="approveBoth"]'); assert.equal(b.disabled, false, 'all three were shown'); assert.match(b.title, /each with its own seal and back file/);
+      card = open(made.disc[0].key); let b = card.querySelector('[data-a="approveBoth"]'); assert.equal(b, null, 'the same words: no press that approves the discs together'); assert.equal(card.querySelectorAll('[data-a="approve"]').length, 1, 'the disc\'s own Approve');
+      card = open(made.disc[1].key); assert.equal(card.querySelector('[data-a="approveBoth"]'), null); card = open(made.disc[2].key); assert.equal(card.querySelector('[data-a="approveBoth"]'), null, 'whatever has been on screen');
       made.disc[1].lines = ['Dad']; made.disc[1].text = 'Dad'; card = open(made.disc[0].key); assert.equal(card.querySelector('[data-a="approveBoth"]'), null, 'one disc with other words: each disc is approved on its own'); made.disc[1].lines = ['Mom']; made.disc[1].text = 'Mom';
       // Decided: Disc 1 and Disc 3 approved, Disc 2 left: the order is in both tabs, each holding its discs; the Placements row of one disc reads as a single piece's
       for (const k of [0, 2]) { const j = made.disc[k]; j.state = 'approved'; j.approvedBy = 'Paul'; j.approvedAt = 1.7e12; j.backs = []; }
@@ -501,6 +497,7 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       CNListActivity: Activity, CNEngravingSeals: Object.assign({}, Seals, { press: async () => {} }), employeeName: () => 'Paul', needEmployee: async () => { names.push('asked'); return 'Paul'; }, Review: { remove(k) { removed.push(k); } }, goes(j) { moved.push(j.key); }, EG_TAB: () => '',
       agent() {}, render() {}, saveBacks: async j => { saved.push(j.key); }, toast: m => toasts.push(m), humanAct() {}, TL: { rec: ev => events.push(ev) }, SheetEvents: { label: () => 'Sheet 1' }, SIDES: () => Sides,
       items: () => jobsA, jobsOf: () => [...jobsA.values()], isFront: j => !!j && j.face === 'front', faceOf: j => (j && j.face === 'front' ? 'front' : 'back'), faceWord: j => (j && j.face === 'front' ? 'front' : 'back'), facedJob: j => !!j && j.face === 'front', fileViewOf: () => 'asSeenFromBack', pieceCountOf: () => new Set([...jobsA.values()].map(j => j.slot || '')).size,   // (the face helpers of the Engrave module the sliced code calls; no job here has a front)
+      unplacedPre: () => false, virtualJob: () => false,   // (ENGPRE's helpers of the bridge the sliced approval code calls; no row here is a piece that is not on a sheet yet)
       fitTasks: new WeakMap(), DECIDED: ['approved', 'written', 'skipped'], isWorking: () => false, lineOf: r => r.parentRow || r, neverEngraves: () => null, NEVER_OPEN: () => true, NEVER_WHY: 'never',   // (ZODNOBACK: these rows are not earrings that never engrave; the rule itself is tests/charm-nest/earring-never-engraved.cjs)
       queuedJobs: js => js.filter(j => ['review', 'words', 'blocked', 'classify', 'ready', 'fitting'].includes(j.state)), decidedJobs: () => [...jobsA.values()].filter(j => ['approved', 'written', 'skipped'].includes(j.state)), esc: s => String(s) };
     vm.createContext(ctx);
@@ -515,29 +512,33 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
   const summary = (w, list) => (list || [w.L, w.R]).map(j => ({ slot: j.slot, state: j.state, by: j.approvedBy, text: j.text, rec: { needed: j.row.engrave.needed, state: j.row.engrave.state, approved: j.row.engrave.approved, text: j.row.engrave.text, approvedBy: j.row.engrave.approvedBy }, seals: Seals.list(j).map(s => [s.how, s.by]),
     events: w.events.filter(e => e.data.poolId && j.copies.includes(e.data.poolId)).map(e => [e.type, e.id.startsWith(e.data.poolId + '-'), e.data.slot, e.data.side, e.by, e.text]) }));
 
-  await t('3a "Approve both ears" writes exactly what two separate presses write: per ear a state, a seal, a record on its own side row, a timeline event, a back save (Left first)', async () => {
-    const A = approvalWorld(); await A.api.approve(A.L, 'Paul'); await A.api.approve(A.R, 'Paul');
-    const B = approvalWorld(); await B.api.approveRow(B.L, undefined);
-    assert.deepEqual(summary(B), summary(A), 'the same records, seals and timeline events');
-    assert.deepEqual(B.saved, A.saved); assert.deepEqual(B.saved, [B.L.key, B.R.key], 'the back files are written for the Left, then the Right, each through the ordinary save');
-    assert.ok(B.L.state === 'approved' && B.R.state === 'approved'); assert.ok(summary(B)[0].events.length === 1 && summary(B)[1].events.length === 1, 'each ear has its own timeline event');
-    assert.notEqual(B.L.row.engrave, B.R.row.engrave, 'two records'); assert.equal(B.parent.engrave.approved, true, 'the line reads approved only now that both ears are');
-    assert.deepEqual(B.names, ['asked'].slice(0, 0), 'a name is known: nobody is asked');
+  // ENGAPPROVE (13 Oct 2026, Paul): "every engraved piece needs a dedicated Approve button so that the user only approves one charm at a time" - an ear and a disc are pieces: there is NO press that approves
+  // two ears or all discs, and a stale one is refused. Each piece is approved by its own Approve, which writes what it always wrote.
+  const ONE_AT_A_TIME = /Approve each piece on its own/;
+  await t('3a each ear is approved by its own press and writes the usual records; no "Approve both ears" press is offered and a stale one is refused (ENGAPPROVE)', async () => {
+    const B = approvalWorld();
+    assert.equal(B.api.approveBothHtml([B.L, B.R]), '', 'no press that approves both ears');
+    await B.api.approveRow(B.L, undefined); assert.equal(B.L.state, 'review'); assert.equal(B.R.state, 'review'); assert.match(B.toasts[0], ONE_AT_A_TIME); assert.deepEqual(B.saved, [], 'a refused press writes nothing');
+    await B.api.approve(B.L, 'Paul');
+    assert.ok(B.L.state === 'approved' && B.R.state === 'review', 'the Left only'); assert.deepEqual(B.saved, [B.L.key]); assert.equal(B.parent.engrave.approved, false, 'the line is not approved while the Right waits');
+    await B.api.approve(B.R, 'Paul');
+    assert.ok(B.L.state === 'approved' && B.R.state === 'approved'); assert.deepEqual(B.saved, [B.L.key, B.R.key], 'the back files are written for the Left, then the Right, each through the ordinary save');
+    assert.ok(summary(B)[0].events.length === 1 && summary(B)[1].events.length === 1, 'each ear has its own timeline event'); assert.notEqual(B.L.row.engrave, B.R.row.engrave, 'two records');
+    assert.equal(B.parent.engrave.approved, true, 'the line reads approved only now that both ears are'); assert.deepEqual(B.names, [], 'a name is known: nobody is asked');
   });
-  await t('3b ears whose words differ are never approved together (and the editor does not even offer the press)', async () => {
+  await t('3b ears whose words differ are each approved on their own, as they always were (and no press is offered)', async () => {
     const A = approvalWorld({ words: [['Anna'], ['Ben']] });
-    assert.equal(A.api.approveBothHtml([A.L, A.R]), '', 'no button for different words'); await A.api.approveRow(A.L); assert.equal(A.L.state, 'review'); assert.equal(A.R.state, 'review'); assert.match(A.toasts[0], /words differ/); assert.deepEqual(A.saved, []);
+    assert.equal(A.api.approveBothHtml([A.L, A.R]), '', 'no button'); await A.api.approveRow(A.L); assert.equal(A.L.state, 'review'); assert.equal(A.R.state, 'review'); assert.match(A.toasts[0], ONE_AT_A_TIME); assert.deepEqual(A.saved, []);
+    await A.api.approve(A.R, 'Paul'); assert.equal(A.R.state, 'approved'); assert.equal(A.L.state, 'review');
   });
-  await t('3c an ear that has not been put in front of the person is never approved with the other', async () => {
-    const A = approvalWorld({ shown: false }); const h = A.api.approveBothHtml([A.L, A.R]); assert.match(h, /disabled/, 'offered but greyed, with the reason'); assert.match(h, /placement first/);
-    await A.api.approveRow(A.L); assert.equal(A.L.state, 'review'); assert.equal(A.R.state, 'review'); assert.match(A.toasts[0], /Left ear's placement first/);
-    A.mark(A.L); await A.api.approveRow(A.L); assert.equal(A.R.state, 'review'); assert.match(A.toasts[1], /Right ear's placement first/); assert.deepEqual(A.saved, []);
-    A.mark(A.R); assert.doesNotMatch(A.api.approveBothHtml([A.L, A.R]), /disabled/);
+  await t('3c no press waits for the other ear to be shown: none exists; an ear is approved by its own press', async () => {
+    const A = approvalWorld({ shown: false }); assert.equal(A.api.approveBothHtml([A.L, A.R]), '', 'not even a greyed press');
+    await A.api.approveRow(A.L); assert.equal(A.L.state, 'review'); assert.equal(A.R.state, 'review'); assert.match(A.toasts[0], ONE_AT_A_TIME); assert.deepEqual(A.saved, []);
   });
-  await t('3d when the Left does not settle, the Right is left as it is; a failed placement is never forced', async () => {
-    const A = approvalWorld(); A.L.verify = { geometry: { ok: false } }; await A.api.approveRow(A.R); assert.equal(A.L.state, 'review'); assert.equal(A.R.state, 'review');
+  await t('3d a failed placement or file check is never forced: that ear stays, and the other ear is left as it is', async () => {
+    const A = approvalWorld(); A.L.verify = { geometry: { ok: false } }; await A.api.approve(A.L, 'Paul'); assert.equal(A.L.state, 'review'); assert.equal(A.R.state, 'review');
     const B = approvalWorld(); B.ctx.verifyBackFile = async (bytes, job) => (job === B.L ? { ok: false, why: 'engraving intersects a cut-out' } : { ok: true });
-    await B.api.approveRow(B.L); assert.equal(B.L.state, 'review', 'the Left did not pass its file check'); assert.equal(B.R.state, 'review', 'so the Right was not approved either'); assert.deepEqual(B.saved, []); assert.ok(B.toasts.some(m => /Not approved/.test(m)) && B.toasts.some(m => /other ear was left as it is/.test(m)));
+    await B.api.approve(B.L, 'Paul'); assert.equal(B.L.state, 'review', 'the Left did not pass its file check'); assert.equal(B.R.state, 'review', 'the Right was not touched'); assert.deepEqual(B.saved, []);
   });
   await t('3e a single piece, a necklace disc and a plain quantity-N line have no "both": the press does nothing and approving one is as it was', async () => {
     const A = approvalWorld(); const single = { key: 'S', state: 'review', lines: ['Mom'], copies: ['p1'], row: { key: 'S', order: { receiptId: F.rid(5) }, line: { transactionId: F.tx(50) }, spec: { designSku: 'ONE-PENDANT' }, state: 'written', engrave: { needed: true, state: 'review' } }, ...readyFit(), view: { cx: 0, cy: 0, cutMembers: [] } };
@@ -547,26 +548,25 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
     assert.equal(Rows.group([single], [single])[0].pair, false);
   });
 
-  await t('3f "Approve all discs" writes exactly what three separate presses write: per disc a state, a seal, a record on its own side row, a timeline event, a back save (Disc 1 first)', async () => {
-    const A = approvalWorld({ discs: 3 }); for (const j of A.list) await A.api.approve(j, 'Paul');
-    const B = approvalWorld({ discs: 3 }); await B.api.approveRow(B.list[1], undefined);
-    assert.deepEqual(summary(B, B.list), summary(A, A.list), 'the same records, seals and timeline events, whichever disc was on screen');
-    assert.deepEqual(B.saved, A.saved); assert.deepEqual(B.saved, B.list.map(j => j.key), 'the back files are written for Disc 1, then Disc 2, then Disc 3, each through the ordinary save');
-    assert.ok(B.list.every(j => j.state === 'approved')); assert.ok(summary(B, B.list).every(x => x.events.length === 1), 'each disc has its own timeline event'); assert.equal(new Set(B.list.map(j => j.row.engrave)).size, 3, 'three records');
-    assert.equal(B.parent.engrave.approved, true, 'the order reads approved only now that every disc is');
-    const C = approvalWorld({ discs: 2 }); await C.api.approveRow(C.L); assert.ok(C.list.every(j => j.state === 'approved'), 'two discs work the same way');
+  await t('3f each disc is approved by its own press and writes the usual records; no "Approve all discs" press is offered and a stale one is refused (ENGAPPROVE)', async () => {
+    const B = approvalWorld({ discs: 3 });
+    assert.equal(B.api.approveBothHtml(B.list, B.L), '', 'no press that approves all discs'); await B.api.approveRow(B.list[1], undefined);
+    assert.ok(B.list.every(j => j.state === 'review')); assert.match(B.toasts[0], ONE_AT_A_TIME); assert.deepEqual(B.saved, []);
+    for (const j of B.list) { await B.api.approve(j, 'Paul'); assert.equal(B.parent.engrave.approved, j === B.list[2], 'the order reads approved only now that every disc is'); }
+    assert.deepEqual(B.saved, B.list.map(j => j.key), 'the back files are written for Disc 1, then Disc 2, then Disc 3, each through the ordinary save');
+    assert.ok(summary(B, B.list).every(x => x.events.length === 1), 'each disc has its own timeline event'); assert.equal(new Set(B.list.map(j => j.row.engrave)).size, 3, 'three records');
+    const A = approvalWorld({ discs: 3 }); for (const j of A.list) await A.api.approve(j, 'Paul'); assert.deepEqual(summary(B, B.list), summary(A, A.list), 'the same records either way');
   });
-  await t('3g discs whose words differ, a disc not put in front of the person, or a disc that does not settle: never approved together; the discs after a failed one are left as they are', async () => {
+  await t('3g discs with other words, discs left after one is decided, a disc that does not settle: no press for several; each disc is approved alone and a failed one leaves the others as they are', async () => {
     const A = approvalWorld({ discs: 3, words: [['J'], ['Q'], ['J']] });
-    assert.equal(A.api.approveBothHtml(A.list, A.L), '', 'no button for different words'); await A.api.approveRow(A.L); assert.ok(A.list.every(j => j.state === 'review')); assert.match(A.toasts[0], /words differ between the discs/); assert.deepEqual(A.saved, []);
-    const B = approvalWorld({ discs: 3, shown: false }); const h = B.api.approveBothHtml(B.list, B.L); assert.match(h, />Approve all discs</); assert.match(h, /disabled/); assert.match(h, /placement first/);
-    await B.api.approveRow(B.L); assert.ok(B.list.every(j => j.state === 'review')); assert.match(B.toasts[0], /Look at Disc 1's placement first/);
-    B.list.slice(0, 2).forEach(B.mark); await B.api.approveRow(B.L); assert.match(B.toasts[1], /Look at Disc 3's placement first/); assert.deepEqual(B.saved, []); B.mark(B.list[2]); assert.doesNotMatch(B.api.approveBothHtml(B.list, B.L), /disabled/);
+    assert.equal(A.api.approveBothHtml(A.list, A.L), ''); await A.api.approveRow(A.L); assert.ok(A.list.every(j => j.state === 'review')); assert.match(A.toasts[0], ONE_AT_A_TIME); assert.deepEqual(A.saved, []);
+    const B = approvalWorld({ discs: 3, shown: false }); assert.equal(B.api.approveBothHtml(B.list, B.L), '', 'not even a greyed "all discs"');
     const C = approvalWorld({ discs: 3 }); C.ctx.verifyBackFile = async (bytes, job) => (job === C.list[1] ? { ok: false, why: 'engraving intersects a cut-out' } : { ok: true });
-    await C.api.approveRow(C.L); assert.deepEqual(C.list.map(j => j.state), ['approved', 'review', 'review'], 'Disc 1 settled, Disc 2 did not pass its file check, so Disc 3 was left as it is'); assert.deepEqual(C.saved, [C.list[0].key]); assert.ok(C.toasts.some(m => /discs after it were left as they are/.test(m)));
-    // two of the three still to settle (one decided): the press says so and approves those two
-    const D = approvalWorld({ discs: 3 }); D.list[0].state = 'approved'; D.mark(D.list[1]); assert.match(D.api.approveBothHtml(D.list.slice(1), D.list[1]), />Approve the 2 discs left</);
-    await D.api.approveRow(D.list[1]); assert.deepEqual(D.list.map(j => j.state), ['approved', 'approved', 'approved']);
+    for (const j of C.list) await C.api.approve(j, 'Paul');
+    assert.deepEqual(C.list.map(j => j.state), ['approved', 'review', 'approved'], 'Disc 2 did not pass its file check and stayed; the others are their own'); assert.deepEqual(C.saved, [C.list[0].key, C.list[2].key]);
+    // one decided, two to settle: the press that said "Approve the 2 discs left" is gone; the next disc is approved on its own
+    const D = approvalWorld({ discs: 3 }); D.list[0].state = 'approved'; D.mark(D.list[1]); assert.equal(D.api.approveBothHtml(D.list.slice(1), D.list[1]), '');
+    await D.api.approve(D.list[1], 'Paul'); assert.deepEqual(D.list.map(j => j.state), ['approved', 'approved', 'review']);
   });
 
   console.log(`\npair-rows-engrave: ${passed} passed, ${failed} failed`);

@@ -92,14 +92,14 @@ function makePage(src, o) {
   const c = vm.createContext({ WORKSPACE_SANDBOX: true, localStorage: { getItem() { return null; }, setItem() {} }, CNListActivity: Activity, CNEngravingSeals: SealsView, confirm: () => true, window: dom.window, document, console: { error: (...x) => errors.push(x), warn() {}, log() {} },
     ResizeObserver: dom.window.ResizeObserver, B: { engrave: { items: jobs, fonts: { ok: true } }, pool: { rows: pool }, orders: { byKey: new Map() } },
     O: require(path.join(root, 'charm-nest-orders.js')), S: { settings: {}, mode: 'engrave' }, PT: 72 / 25.4, MM: 25.4 / 72, SOURCE_LABEL: {},
-    Pool: { charmOf: () => null, sheetOf: () => null, update: async () => {} }, P: {}, Review: { items: () => [], count: () => 0, remove() {}, add() {} }, Master: { entryFor: sku => F.entryOf(sku), fetchEntry: async () => null },
+    Pool: { charmOf: () => null, previewCharmOf: () => null, sheetOf: () => null, update: async () => {} }, P: {}, Review: { items: () => [], count: () => 0, remove() {}, add() {} }, Master: { entryFor: sku => F.entryOf(sku), fetchEntry: async () => null },
     LiveStrip: { render() {} }, RunCtl: { poke() {}, stopIfRunning() {} }, api: async () => ({}), Orders: { render() {}, rows: () => [] }, ListMedia,
     setTimeout: fn => (timers.push(fn), timers.length), clearTimeout() {}, requestAnimationFrame: fn => (frames.push(fn), frames.length), cancelAnimationFrame() {},
     el: (tag, cls, html_ = '') => { const e = document.createElement(tag); e.className = cls; e.innerHTML = html_; return e; },
     esc: v => String(v ?? '').replace(/[&<>"']/g, x => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[x])),
     toast: m => toasts.push(String(m)), allSheets: () => [], refreshAllCards() {}, Session: { schedule() {} }, agent() {}, getComputedStyle: () => ({ flexGrow: '0' }), employeeName: () => 'Paul', humanAct() {}, TL: { rec() {}, line() {} }, ...bare });
   const pmStart = src.indexOf('function purchaseMarkup('); vm.runInContext(src.slice(pmStart, src.indexOf('\n}\n', pmStart) + 3), c);
-  const BACK_CALL = 'const bc = renderBack(job, px, { grid: true, editable: true, include: framed });';
+  const BACK_CALL = 'const bc = renderBack(job, px, { grid: true, editable: true, include: framed, draft: panelOn });';
   let moduleSrc = src.slice(src.indexOf('const Engrave = window.Engrave ='), src.indexOf('/* ═══ 22 · Sets'));
   assert.ok(moduleSrc.includes(BACK_CALL), 'the editor draws its back here (the test stands a plain canvas in for the drawing machinery)');
   moduleSrc = moduleSrc.replace(BACK_CALL, 'const bc = standInBack();');
@@ -291,29 +291,29 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
     assert.deepEqual([...card.querySelectorAll('.egSwitchStack > .egEarSwitch')[0].querySelectorAll('.egEarTab')].map(b => b.getAttribute('aria-pressed')), ['false', 'true']);
     assert.equal(card.querySelectorAll('[data-f="words"]').length, 1, 'one card at a time');
   });
-  await t('2f "Approve both ears" needs all four placements on screen and the same words on each face; "Approve both faces" is the shown ear\'s own two', () => {
+  await t('2f no "Approve both ears" (ENGAPPROVE: every piece has its own Approve); "Approve both faces" is the shown ear\'s own two and needs that ear\'s two placements on screen', () => {
     P.reset(); P.frames.length = 0; const open = k => P.open(k);
     let card = open(fronts.ears[0].key); const btn = c => ({ ears: c.querySelector('[data-a="approveBoth"]'), faces: c.querySelector('[data-a="approveFaces"]') });
-    assert.equal(btn(card).ears.textContent, 'Approve both ears'); assert.equal(btn(card).faces.textContent, 'Approve both faces'); assert.equal(btn(card).ears.disabled, true); assert.equal(btn(card).faces.disabled, true);
-    card = open(made.ears[0].key); assert.equal(btn(card).faces.disabled, false, 'the Left ear\'s front and back were both on screen'); assert.equal(btn(card).ears.disabled, true); assert.match(btn(card).ears.title, /Right front placement first/);
-    open(fronts.ears[1].key); card = open(made.ears[1].key); assert.equal(btn(card).ears.disabled, false, 'all four were shown'); assert.match(btn(card).ears.title, /Front before Back|Front, then the Back|Front before/i);
-    // words that differ between the ears of one face: each ear on its own (no row-level press), the piece\'s own two faces are still one press
-    fronts.ears[1].lines = ['N']; fronts.ears[1].text = 'N'; card = open(made.ears[0].key); assert.equal(btn(card).ears, null, 'the front words differ between the ears: no "both ears"'); assert.equal(btn(card).faces, null, 'and nothing is offered that a row-level press would decide');
+    assert.equal(btn(card).ears, null, 'no press that approves both ears'); assert.equal(btn(card).faces.textContent, 'Approve both faces'); assert.equal(btn(card).faces.disabled, true);
+    card = open(made.ears[0].key); assert.equal(btn(card).faces.disabled, false, 'the Left ear\'s front and back were both on screen'); assert.equal(btn(card).ears, null);
+    open(fronts.ears[1].key); card = open(made.ears[1].key); assert.equal(btn(card).ears, null, 'all four were shown: still no press for both ears'); assert.equal(btn(card).faces.disabled, false);
+    // words that differ between the ears of one face: each ear is its own piece, its own two faces are still one press
+    fronts.ears[1].lines = ['N']; fronts.ears[1].text = 'N'; card = open(made.ears[0].key); assert.equal(btn(card).ears, null); assert.ok(btn(card).faces, 'the ear\'s own two faces, whatever the other ear says');
     fronts.ears[1].lines = ['M']; fronts.ears[1].text = 'M';
     // front and back carry different words by nature
     assert.notEqual(made.ears[0].text, fronts.ears[0].text);
   });
-  await t('2g the necklace: Disc 1 | 2 | 3 counts discs (of 3), each disc has Front | Back beneath; "Approve all discs" for the same words on each face, "Approve the 2 discs left" once one is decided', () => {
+  await t('2g the necklace: Disc 1 | 2 | 3 counts discs (of 3), each disc has Front | Back beneath; never an "Approve all discs" / "the 2 discs left" (ENGAPPROVE)', () => {
     P.reset(); let card = P.open(fronts.discs[1].key);
     const sws = [...card.querySelectorAll('.rh .egSwitchStack > .egEarSwitch')]; assert.equal(sws.length, 2); assert.deepEqual([...sws[0].querySelectorAll('.egEarTab .egPiece')].map(n => n.textContent), ['DISC 1 of 3', 'DISC 2 of 3', 'DISC 3 of 3']);
     assert.deepEqual([...sws[0].querySelectorAll('.egEarTab')].map(b => b.getAttribute('aria-pressed')), ['false', 'true', 'false']); assert.doesNotMatch(sws[0].outerHTML + sws[1].outerHTML, /of 6/);
     assert.equal(card.querySelector('.rh .kind').textContent, '1 of 6 · 0 done'); assert.equal(card.querySelector('[data-a="approveBoth"]'), null, 'the front words differ from disc to disc: each disc on its own');
     for (const [i, j] of fronts.discs.entries()) { j.lines = ['A']; j.text = 'A'; made.discs[i].lines = ['Mom']; made.discs[i].text = 'Mom'; }
-    P.relink('discs'); card = P.open(fronts.discs[1].key); let b = card.querySelector('[data-a="approveBoth"]'); assert.ok(b); assert.equal(b.textContent, 'Approve all discs'); assert.equal(b.disabled, true);
+    P.relink('discs'); card = P.open(fronts.discs[1].key); let b = card.querySelector('[data-a="approveBoth"]'); assert.equal(b, null, 'the same words on every disc: still no press for all of them');
     assert.ok(card.querySelector('[data-a="approveFaces"]'), 'and the shown disc\'s own two faces');
     // disc 1 decided on both faces: two discs left
     for (const j of [fronts.discs[0], made.discs[0]]) { j.state = 'approved'; j.approvedBy = 'Paul'; j.approvedAt = 1.7e12; j.backs = []; }
-    P.relink('discs'); P.resetRecs(); card = P.open(fronts.discs[1].key); b = card.querySelector('[data-a="approveBoth"]'); assert.equal(b.textContent, 'Approve the 2 discs left'); assert.equal(card.querySelectorAll('.rh .egSwitchStack > .egEarSwitch')[0].querySelectorAll('.egEarTab').length, 2, 'the discs still to do');
+    P.relink('discs'); P.resetRecs(); card = P.open(fronts.discs[1].key); b = card.querySelector('[data-a="approveBoth"]'); assert.equal(b, null, 'and none for the 2 discs left'); assert.equal(card.querySelectorAll('.rh .egSwitchStack > .egEarSwitch')[0].querySelectorAll('.egEarTab').length, 2, 'the discs still to do');
     assert.deepEqual([...card.querySelectorAll('.rh .egSwitchStack > .egEarSwitch')[0].querySelectorAll('.egEarTab .egPiece')].map(n => n.textContent), ['DISC 2 of 3', 'DISC 3 of 3'], 'still of 3: the count is the order\'s discs');
     for (const j of [fronts.discs[0], made.discs[0]]) { j.state = 'review'; delete j.approvedBy; delete j.approvedAt; } P.reset();
   });
@@ -390,7 +390,7 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
       charmFor: () => ({ sourceId: 'source' }), sheetFor: () => ({ sheetId: 'sheet-1' }), sourceOf: () => ({ parsed: {} }), fitOpts: () => ({ lineGap: .18 }), fontIdOf: () => 'source-sans-3', verifyBackFile: async () => ({ ok: true }), EG: { cardKey: null, card: null, drafts: {} },
       CNListActivity: Activity, CNEngravingSeals: Object.assign({}, Seals, { press: async () => {} }), employeeName: () => 'Paul', needEmployee: async () => { names.push('asked'); return 'Paul'; }, Review: { remove(k) { removed.push(k); } }, goes(j) { moved.push(j.key); }, EG_TAB: () => '',
       agent() {}, render() {}, saveBacks: async j => { saved.push(j.key); }, toast: m => toasts.push(m), humanAct() {}, TL: { rec: ev => events.push(ev) }, SheetEvents: { label: () => 'Sheet 1' }, SIDES: () => Sides,
-      items: () => jobsA, jobsOf: () => [...jobsA.values()], fitTasks: new WeakMap(), DECIDED: ['approved', 'written', 'skipped'], isWorking: () => false, lineOf: r => r.parentRow || r,
+      items: () => jobsA, jobsOf: () => [...jobsA.values()], fitTasks: new WeakMap(), DECIDED: ['approved', 'written', 'skipped'], isWorking: () => false, lineOf: r => r.parentRow || r, unplacedPre: () => false, virtualJob: () => false,   // (ENGPRE's helpers of the bridge the sliced approval code calls)
       queuedJobs: js => js.filter(j => ['review', 'words', 'blocked', 'classify', 'ready', 'fitting'].includes(j.state)), decidedJobs: () => [...jobsA.values()].filter(j => ['approved', 'written', 'skipped'].includes(j.state)), esc: s => String(s) };
     vm.createContext(ctx);
     const rowsHelpers = SOURCE.slice(SOURCE.indexOf('  const ROWS = () =>'), SOURCE.indexOf('  // a draft outlives its card only while'));
@@ -413,25 +413,28 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
     assert.ok(B.list.every(j => j.state === 'approved')); assert.notEqual(B.F[0].row.engrave, B.B[0].row.engrave, 'two records'); assert.equal(B.parent.engrave.approved, true); assert.deepEqual(B.names, [], 'a name is known: nobody is asked');
     assert.match(html3(approvalWorld()), />Approve both faces</);
   });
-  await t('3b an earring pair: "Approve both ears" approves Left front, Left back, Right front, Right back; "Approve both faces" only the shown ear\'s two', async () => {
+  await t('3b an earring pair: no press approves both ears (a stale one is refused); "Approve both faces" approves only the shown ear\'s two', async () => {
     const A = approvalWorld({ kind: 'ears', front: [['M']], back: [['Mom']] }); const keys = A.list.map(j => j.key);
     assert.deepEqual(keys, ['L~front', 'L', 'R~front', 'R'].map(s => A.parent.key + '#' + s.replace('~front', '') + (s.endsWith('~front') ? '~front' : '')), 'the jobs of the row');
-    await A.api.approveRow(A.list[0]); assert.ok(A.list.every(j => j.state === 'approved')); assert.deepEqual(A.saved, keys, 'piece by piece, Front before Back');
+    await A.api.approveRow(A.list[0]); assert.ok(A.list.every(j => j.state === 'review')); assert.match(A.toasts[0], /Approve each piece on its own/); assert.deepEqual(A.saved, [], 'a refused press writes nothing');
+    for (const k of [0, 2]) await A.api.approveRow(A.list[k], undefined, 'piece'); assert.ok(A.list.every(j => j.state === 'approved')); assert.deepEqual(A.saved, keys, 'piece by piece, Front before Back');
     const B = approvalWorld({ kind: 'ears' }); await B.api.approveRow(B.list[1], undefined, 'piece');
     assert.deepEqual(B.list.map(j => j.state), ['approved', 'approved', 'review', 'review'], 'only the Left ear\'s faces'); assert.deepEqual(B.saved, [B.list[0].key, B.list[1].key]);
-    const h = html3(approvalWorld({ kind: 'ears' })); assert.match(h, />Approve both ears</); assert.match(h, />Approve both faces</);
+    const h = html3(approvalWorld({ kind: 'ears' })); assert.doesNotMatch(h, /Approve both ears/); assert.doesNotMatch(h, /data-a="approveBoth"/); assert.match(h, />Approve both faces</);
   });
-  await t('3c a necklace: all discs front and back in disc order; the label counts discs, never jobs', async () => {
+  await t('3c a necklace: no "Approve all discs" / "the N discs left" (ENGAPPROVE); each disc\'s two faces are approved by that disc\'s own press, in disc order', async () => {
     const A = approvalWorld({ kind: 'discs', front: [['A']], back: [['1']] }); const keys = A.list.map(j => j.key); assert.equal(keys.length, 6);
-    assert.match(A.api.approveBothHtml(A.list, A.list[0]), />Approve all discs</);
-    await A.api.approveRow(A.list[2]); assert.ok(A.list.every(j => j.state === 'approved')); assert.deepEqual(A.saved, keys, 'disc 1 front, disc 1 back, disc 2 front, ...');
-    const B = approvalWorld({ kind: 'discs' }); B.list.slice(0, 2).forEach(j => { j.state = 'approved'; }); const left = B.list.slice(2); assert.match(B.api.approveBothHtml(left, left[0]), />Approve the 2 discs left</);
-    const C = approvalWorld({ kind: 'discs', discs: 2 }); assert.match(C.api.approveBothHtml(C.list, C.list[0]), />Approve all discs</);
+    assert.doesNotMatch(A.api.approveBothHtml(A.list, A.list[0]), /Approve all discs|discs left|data-a="approveBoth"/);
+    await A.api.approveRow(A.list[2]); assert.ok(A.list.every(j => j.state === 'review')); assert.match(A.toasts[0], /Approve each piece on its own/); assert.deepEqual(A.saved, []);
+    for (const k of [0, 2, 4]) await A.api.approveRow(A.list[k], undefined, 'piece'); assert.ok(A.list.every(j => j.state === 'approved')); assert.deepEqual(A.saved, keys, 'disc 1 front, disc 1 back, disc 2 front, ...');
+    const B = approvalWorld({ kind: 'discs' }); B.list.slice(0, 2).forEach(j => { j.state = 'approved'; }); const left = B.list.slice(2); assert.doesNotMatch(B.api.approveBothHtml(left, left[0]), /discs left|data-a="approveBoth"/);
+    const C = approvalWorld({ kind: 'discs', discs: 2 }); assert.doesNotMatch(C.api.approveBothHtml(C.list, C.list[0]), /Approve all discs|data-a="approveBoth"/);
   });
-  await t('3d the same words are asked per face, not across faces: different words on the front and the back are fine, different words on two pieces of one face are approved one by one', async () => {
-    const A = approvalWorld({ kind: 'discs', front: [['A'], ['B'], ['A']], back: [['1']] }); assert.equal(html3(A), '', 'the front words differ between the discs: no press for the row');
-    await A.api.approveRow(A.list[0]); assert.ok(A.list.every(j => j.state === 'review')); assert.match(A.toasts[0], /front words differ between the pieces/); assert.deepEqual(A.saved, []);
-    const B = approvalWorld({ kind: 'discs', front: [['A']], back: [['1'], ['2'], ['3']] }); assert.equal(html3(B), '', 'the back words differ'); await B.api.approveRow(B.list[0]); assert.match(B.toasts[0], /back words differ between the pieces/);
+  await t('3d different words on the front and the back are fine, and different words on two pieces never matter now: each piece is approved on its own (ENGAPPROVE), no row-level press', async () => {
+    const A = approvalWorld({ kind: 'discs', front: [['A'], ['B'], ['A']], back: [['1']] }); assert.doesNotMatch(html3(A), /data-a="approveBoth"/, 'no press for the row');
+    await A.api.approveRow(A.list[0]); assert.ok(A.list.every(j => j.state === 'review')); assert.match(A.toasts[0], /Approve each piece on its own/); assert.deepEqual(A.saved, []);
+    await A.api.approveRow(A.list[0], undefined, 'piece'); assert.deepEqual(A.list.map(j => j.state), ['approved', 'approved', 'review', 'review', 'review', 'review'], 'Disc 1\'s two faces, whatever the other discs say');
+    const B = approvalWorld({ kind: 'discs', front: [['A']], back: [['1'], ['2'], ['3']] }); assert.doesNotMatch(html3(B), /data-a="approveBoth"/, 'the back words differ'); await B.api.approveRow(B.list[0]); assert.match(B.toasts[0], /Approve each piece on its own/);
     const C = approvalWorld({ kind: 'tag', front: [['W']], back: [['1. 27. 24']] }); assert.notEqual(html3(C), '', 'a tag: the two faces carry different words, as they do');
   });
   await t('3e a face that was not put in front of the person is never approved with the other; a face that does not settle stops the faces after it', async () => {
@@ -439,14 +442,14 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
     await A.api.approveRow(A.list[0]); assert.ok(A.list.every(j => j.state === 'review')); assert.match(A.toasts[0], /Look at the front placement first/);
     A.mark(A.F[0]); await A.api.approveRow(A.list[0]); assert.match(A.toasts[1], /Look at the back placement first/); assert.deepEqual(A.saved, []); A.mark(A.B[0]); assert.doesNotMatch(html3(A), /disabled/);
     const B = approvalWorld({ kind: 'ears' }); B.ctx.verifyBackFile = async (bytes, job) => (job === B.list[1] ? { ok: false, why: 'engraving intersects a cut-out' } : { ok: true });
-    await B.api.approveRow(B.list[0]); assert.deepEqual(B.list.map(j => j.state), ['approved', 'review', 'review', 'review'], 'the Left front settled, the Left back did not pass its file check, so the Right ear was left as it is'); assert.deepEqual(B.saved, [B.list[0].key]);
+    await B.api.approveRow(B.list[0], undefined, 'piece'); assert.deepEqual(B.list.map(j => j.state), ['approved', 'review', 'review', 'review'], 'the Left front settled, the Left back did not pass its file check, so the Right ear was left as it is'); assert.deepEqual(B.saved, [B.list[0].key]);
     assert.ok(B.toasts.some(m => /Left ear Back was not approved, so the placements after it were left as they are/.test(m)), JSON.stringify(B.toasts));
     const C = approvalWorld({ kind: 'tag' }); C.F[0].verify = { geometry: { ok: false } }; await C.api.approveRow(C.B[0]); assert.ok(C.list.every(j => j.state === 'review'), 'a placement that failed its check is never forced'); assert.match(C.toasts[0], /ready to check first/);
   });
   await t('3f a line with one face is approved exactly as before: no "both" press, the ordinary approval', async () => {
     const A = approvalWorld({ kind: 'tag', noFront: true }); assert.equal(A.api.approveBothHtml([A.list[0]], A.list[0]), ''); await A.api.approveRow(A.list[0]); assert.equal(A.list[0].state, 'review'); assert.match(A.toasts[0], /one ear to approve/);
     await A.api.approve(A.list[0], 'Paul'); assert.equal(A.list[0].state, 'approved'); assert.deepEqual(A.saved, [A.list[0].key]);
-    const B = approvalWorld({ kind: 'ears', noFront: true }); assert.match(html3(B), />Approve both ears</); assert.doesNotMatch(html3(B), /approveFaces|both faces/);
+    const B = approvalWorld({ kind: 'ears', noFront: true }); assert.equal(html3(B), '', 'ears with one face each: no press that approves both ears, and no faces press'); assert.doesNotMatch(html3(B), /approveFaces|both faces/);
   });
 
   // ═══ 4 · editing a saved front ═══

@@ -50,7 +50,8 @@ const READ = () => {
   const w = await R.world({ viewport: { width: 1440, height: 900 } });
   if (!w) { console.log('no playwright-core: nothing run'); return; }
   const page = w.page, rd = () => page.evaluate(`(${READ})()`), keep = process.env.OP_KEEP;
-  const press = async sel => { await page.evaluate(s => document.querySelector(s).click(), sel); await R.settle(page, 450); const r = await rd(); if (keep) console.log('   ', sel, JSON.stringify({ key: r && r.key, of: r && r.of, counter: r && r.counter, words: r && r.words })); return r; };
+  // (ENGAPPROVE: a press that would leave an order with pieces not approved is held back by one calm line with a Leave: this walk is about the stops, so it takes the Leave, unless the test asks to see the line, { hold: true })
+  const press = async (sel, o) => { await page.evaluate(s => document.querySelector(s).click(), sel); await R.settle(page, 450); if (!(o && o.hold) && await page.evaluate(() => { const b = document.querySelector('#egQueue .egGuide:not([hidden]) [data-g=leave]'); if (b) { b.click(); return true; } return false; })) await R.settle(page, 450); const r = await rd(); if (keep) console.log('   ', sel, JSON.stringify({ key: r && r.key, of: r && r.of, counter: r && r.counter, words: r && r.words })); return r; };
   const open = async key => { await page.evaluate(k => { try { OrderWin.close(); } catch (_) {} CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: k, q: '' }); Engrave.render(); }, key); await page.waitForSelector('#egQueue .rvItem[data-kind=placement]', { timeout: 20000 }).catch(() => {}); await R.settle(page, 700); return rd(); };
   const NEXT = '#egQueue .rvItem [data-a="next"]', PREV = '#egQueue .rvItem [data-a="prev"]';
   try {
@@ -98,8 +99,11 @@ const READ = () => {
     note(r && r.counter === `1 of ${orders1} · 0 done`, 'the counter is still ONE order', r && r.counter);
     r = await press(PREV);
     note(r && r.key === k1 && /^piece 1 of 2$/i.test(r.of) && r.words === 'Name One', 'Back goes back to piece 1 with its words', r && (r.key + ' ' + r.words));
-    r = await press(NEXT); r = await press(NEXT);
-    note(r && r.rid !== '4290000141', 'Next from the LAST piece goes on to the next order', r && r.rid);
+    r = await press(NEXT); r = await press(NEXT, { hold: true });
+    const held = await page.evaluate(() => { const g = document.querySelector('#egQueue .egGuide:not([hidden])'); return g ? g.innerText.replace(/\s+/g, ' ').trim() : ''; });
+    note(r && r.rid === '4290000141' && /2 pieces of this order are not approved yet/.test(held), 'Next from the LAST piece, with 2 pieces not approved, is held back by ONE line (ENGAPPROVE: nothing is skipped silently)', held || (r && r.rid));
+    r = await press('#egQueue .egGuide [data-g=leave]');
+    note(r && r.rid !== '4290000141', 'and its Leave goes on to the next order', r && r.rid);
     r = await press(PREV);
     note(r && r.key === k2 && r.rid === '4290000141', 'Back from that order\'s first piece lands on the last piece of the order before (piece 2 of 2)', r && (r.key + ' ' + r.rid));
     r = await press(PREV);

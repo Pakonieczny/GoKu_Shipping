@@ -7390,7 +7390,12 @@ const Engrave = window.Engrave = (() => {
   const markShown = job => { if (job && job.fit) shownSigs.set(job, placementSig(job)); };
   const isShown = job => !!job && !!job.fit && shownSigs.get(job) === placementSig(job);
   /** The card to show: the one asked for; else the other ear of the line just settled (it stays in the row); else the first of the queue. */
-  const pickFocus = queue => queue.find(j => j.key === EG.focus) || (EG.focusLine && queue.find(j => earLineOf(j) === EG.focusLine)) || queue[0] || null;
+  /* ENGAPPROVE (Paul, 13 Oct 2026: "the user must be never allowed to skip pieces in the multipiece order"): the card in front was decided (approved, or cut plain), so it left the queue. The detail goes on to what is left of the SAME
+     order, never to the first card of some other order: the piece's other face still to settle, else the next piece that is not approved (charm-nest-engrave-guide.js afterApprove, over the order's pieces, charm-nest-engrave-order.js).
+     It is decided here, where the next card is chosen, so no render that runs between the approval and its tail can pick another order's card first. Nothing left in the order (or no model on the page): the queue goes on as it always did.
+     Only the focus is chosen (the same EG.focus a Back / Next press sets); no write, no read, no wait. */
+  const guideNext = queue => { try { const f = EG.focus && items().get(EG.focus); if (!f || !DECIDED.includes(f.state) || f.row?.state === "gone") return null; const G = window.CharmNestEngraveGuide, to = G && G.afterApprove ? G.afterApprove(f) : null; return (to && to.key && queue.find(j => j.key === to.key)) || null; } catch (e) { console.warn("Engraving guide", e); return null; } };
+  const pickFocus = queue => queue.find(j => j.key === EG.focus) || (EG.focusLine && queue.find(j => earLineOf(j) === EG.focusLine)) || guideNext(queue) || queue[0] || null;
   /* ENGPIECES: what the Placements list shows now, in its own order (the same activity range, search box and sort the tab draws with), so Back / Next never go to a card the list hides. A card asked for BY NAME (a piece switched to,
      the stop Back / Next chose: EG.pin) is shown even when the range or the search would hide it: a piece of an order is never unreachable because of a filter. */
   const withFocus = q => { const j = EG.pin && EG.pin === EG.focus && !EG.list && EG.tab === "place" && items().get(EG.pin); return j && j.row.state !== "gone" && queuedJobs([j]).length && !q.includes(j) ? [...q, j] : q; };
@@ -7996,9 +8001,12 @@ const Engrave = window.Engrave = (() => {
   const pieceFacesOf = (ears, job) => { if (!hasFrontIn(ears) || piecesIn(ears) < 2) return null; const mine = ears.filter(j => sameSlot(j, job)); return mine.length === 2 && hasFrontIn(mine) ? mine : null; };
   function approveBothHtml(ears, job) {
     if (!ROWS()) return "";
-    if (hasFrontIn(ears) ? !sameWordsPerFace(ears) : !ROWS().sameWordsAll(ears)) return "";   // pieces with different words are approved one by one: nothing is approved that was not shown
+    // ENGAPPROVE (Paul, 13 Oct 2026: "every engraved piece needs a dedicated Approve button so that the user only approves one charm at a time"): no press approves SEVERAL pieces ("Approve all discs", "the 2 discs left", "Approve both ears" are gone);
+    // what stays is the one press of a piece with a Front and a Back: "Approve both faces" of THAT piece (a row of one piece: the row's own press, as ever; a row of several: the shown piece's, below)
+    const several = piecesIn(ears) >= 2;
+    if (!several && (hasFrontIn(ears) ? !sameWordsPerFace(ears) : !ROWS().sameWordsAll(ears))) return "";   // pieces with different words are approved one by one: nothing is approved that was not shown
     const gate = bothGate(ears), pair = pieceFacesOf(ears, job), g2 = pair && faceGate(pair);
-    return `<button class="btn ghost sm egApproveBoth" type="button" data-a="approveBoth"${gate.ok ? "" : " disabled"} title="${esc(bothTitle(gate, ears))}">${bothLabel(ears, job)}</button>`
+    return (several ? "" : `<button class="btn ghost sm egApproveBoth" type="button" data-a="approveBoth"${gate.ok ? "" : " disabled"} title="${esc(bothTitle(gate, ears))}">${bothLabel(ears, job)}</button>`)
       + (pair ? `<button class="btn ghost sm egApproveBoth egApproveFaces" type="button" data-a="approveFaces"${g2.ok ? "" : " disabled"} title="${esc(g2.ok ? "Both placements of this piece have been on screen: approves its Front, then its Back, each with its own seal and file" : g2.why)}">Approve both faces</button>` : "");
   }
   /** The ordinary approval of the Left, then, once it settled, the ordinary approval of the Right (or of each disc in turn; for a line with a front, of every face of every piece, Front before Back): two or more approvals,
@@ -8006,6 +8014,7 @@ const Engrave = window.Engrave = (() => {
   async function approveRow(job, button, scope) {
     if (!ROWS()) return;
     const row = rowsIn([job], queueUniverse())[0], faced = !!row && hasFrontIn(row.jobs), jobs = !row ? [] : scope === "piece" ? row.jobs.filter(j => sameSlot(j, job)) : row.jobs;
+    if (scope !== "piece" && piecesIn(jobs) >= 2) { toast("Approve each piece on its own: every piece needs its own Approve.", "bad"); return; }   // (ENGAPPROVE: never several pieces with one press; no button asks for it, this keeps a stale one from doing it)
     const gate = faced && UIFACES() ? UIFACES().approveAllGate(jobs, gateOpts())
       : row && ROWS().multi(row) ? (row.discs ? ROWS().approveAll(row, gateOpts()) : ROWS().approveBoth(row, gateOpts())) : { ok: false, why: allDiscs([job]) ? "This order has one disc to approve." : "This line has one ear to approve." };
     if (!gate.ok) { toast(gate.why, "bad"); return; }
@@ -8087,6 +8096,8 @@ const Engrave = window.Engrave = (() => {
           ${asks.length || wants.length ? `<section class="pvSec pvCheck">${panelOn ? "" : `<h4 class="pvH">To check with the buyer</h4>`}<ul>${asks.map(q => `<li><span>${esc(q)}</span><button type="button" class="pvAsk" data-ask="${esc(q)}" title="put this question in the message to the buyer">Ask</button></li>`).join("")}${wants.map(w => `<li class="want"><span>${esc(w)}</span></li>`).join("")}</ul></section>` : ""}
         </div>
         <section class="pvMail"></section></div>`;
+    // ENGAPPROVE: the guide's one calm line has its place right under the header; it is empty and hidden until a press would leave this order with a piece not approved (charm-nest-engrave-guide.js)
+    if (ctx) { card.querySelector(".rh")?.insertAdjacentHTML("afterend", '<div class="egGuide" hidden></div>'); try { window.CharmNestEngraveGuide?.mount(card, String(r.order.receiptId), UIFACES() ? UIFACES().pieceKeyOf(job.key) : job.key); } catch (_) {} }
     const charm = job.copies.length ? charmFor(job) : null;
 
     if (byCard) { /* the card's Front / Back thumbnails are the pictures of the piece: no reference picture */ }
@@ -8184,7 +8195,8 @@ const Engrave = window.Engrave = (() => {
     const backHost = card.querySelector(".backHost");
     let mounted = [0, 0], mountedBelow = -1, raf = 0, framed = null;
     const syncBoth = () => {
-      const b2 = card.querySelector('[data-a="approveBoth"]'); if (!b2 || !ears) return; const gate = bothGate(ears); b2.disabled = !gate.ok; b2.title = bothTitle(gate, ears);
+      if (!ears) return;
+      const b2 = card.querySelector('[data-a="approveBoth"]'); if (b2) { const gate = bothGate(ears); b2.disabled = !gate.ok; b2.title = bothTitle(gate, ears); }   // (ENGAPPROVE: a row of several pieces has no row-wide press: the piece's own "Approve both faces" below is still brought up to date)
       const b3 = card.querySelector('[data-a="approveFaces"]'), pair = b3 && pieceFacesOf(ears, job); if (b3 && pair) { const g3 = faceGate(pair); b3.disabled = !g3.ok; b3.title = g3.ok ? "Both placements of this piece have been on screen: approves its Front, then its Back, each with its own seal and file" : g3.why; }
     };
     card._syncBoth = syncBoth;

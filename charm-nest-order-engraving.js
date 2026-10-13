@@ -282,7 +282,8 @@
     const extra = [];
     for (const f of ['front', 'back']) {
       const x = piece.faces[f]; if (!x || !x.job || x.state === 'approved' || x.state === 'plain') continue;
-      const fa = foreignApproval(piece.row, x.job, events, seenAt); if (!fa) continue;
+      // (ENGAPPROVE: a disc or an ear is read through ITS OWN row: through the line's, one disc's approval was read as every disc's, and Disc 2 and Disc 3 showed Approved, with no Approve, the moment Disc 1 was)
+      const fa = foreignApproval(x.job.row && x.job.row.parentRow && x.job.row.slot ? x.job.row : piece.row, x.job, events, seenAt); if (!fa) continue;
       x.state = 'approved'; x.foreign = fa; extra.push({ how: 'engraveApproved', at: fa.at, by: fa.by, ...(f === 'front' ? { face: 'front' } : {}) });
     }
     if (!extra.length) return piece;
@@ -348,6 +349,19 @@
       const sig = JSON.stringify(entries);
       if (sig !== saidSig) { saidSig = sig; saidEl.innerHTML = entries.length ? saidHtml(entries) : ''; }
       saidEl.hidden = !entries.length;
+    }
+    /** ENGAPPROVE (Paul, 13 Oct 2026: "the user must never be allowed to skip pieces"): the section shows only the piece picked, so once that piece is approved ONE quiet line under its card says how many pieces of the
+     *  order are still to approve and shows the next (charm-nest-engrave-guide.js decides; it is nothing while the picked piece itself has something to do, for "Show all" and for an order of one piece). It sits right under the
+     *  cards, above the customer's words; a press on its button picks that piece (OrderWin.selectPiece), the section follows as for any pick. No timer, no read: it is drawn with the cards. */
+    let leftEl = null;
+    function paintLeft(r) {
+      const G = root.CharmNestEngraveGuide; if (!G || !G.pointer) return;
+      const rid = String(ctx.rid || (r && r.rows && r.rows[0] && (((r.rows[0].parentRow || r.rows[0]).order || {}).receiptId)) || '');
+      const p = r && !r.loading && rid ? tryDo(() => G.pointer(rid, { only: onlyOf(), shown: r.pieces }), null) : null;
+      if (!leftEl && p && host.parentNode) { leftEl = doc().createElement('div'); leftEl.className = 'engLeft'; leftEl.id = 'owEngLeft'; leftEl.hidden = true; host.after(leftEl); }
+      if (!leftEl) return;
+      if (leftEl.previousSibling !== host && host.parentNode) host.after(leftEl);   // (right under the cards, whatever order the words block was made in)
+      G.drawPointer(leftEl, p, k => { if (root.OrderWin && root.OrderWin.selectPiece) root.OrderWin.selectPiece(k); });
     }
     /** A press on a face: that piece and that face open in the Engrave tab (EngraveLink, the order window closes as it opens). */
     function openEngrave(face, key, btn, piece) {
@@ -429,7 +443,7 @@
       attached = true;
       const C = CARD(); if (!C) return;
       const r = read(), vis = visible();
-      paintSaid(r);
+      paintSaid(r); paintLeft(r);
       // (ENGSEL: the piece picked changed: the window is repainting itself because of it, so the host is not told, and a card of a piece that is not shown now goes at once, whatever keeps the rest from being
       //  drawn this moment (the window not on screen, a seal being pressed): no stale card is ever left on show, and a section with no card left has no title, rule or room)
       if (r.only !== onlySeen) { onlySeen = r.only; quiet = true; }
@@ -480,6 +494,7 @@
       busy.clear(); seen.clear(); fails.clear(); last = new Map(); cards.clear(); waitEl = null; loading = false; told0 = null; kindsSeen = ''; seenAt = Date.now();
       host.replaceChildren(); host.hidden = true;
       saidSig = ''; if (saidEl) { saidEl.innerHTML = ''; saidEl.hidden = true; }
+      if (leftEl) { leftEl.replaceChildren(); leftEl.hidden = true; leftEl._sig = ''; }
     }
     const handle = {
       el: host, mode,
@@ -494,6 +509,7 @@
         if (ro) { tryDo(() => ro.disconnect()); ro = null; }
         host.replaceChildren(); host.hidden = true; if (host._orderEngraving === handle) delete host._orderEngraving;
         if (saidEl) { tryDo(() => saidEl.remove()); saidEl = null; }
+        if (leftEl) { tryDo(() => leftEl.remove()); leftEl = null; }
       },
       _tick() {
         // (a host taken out of the page takes the cards with it; one not put in yet is waited for)
