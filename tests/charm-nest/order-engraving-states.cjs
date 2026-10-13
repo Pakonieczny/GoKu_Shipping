@@ -84,7 +84,7 @@ const LONG = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOP';
     const pick = piece => page.evaluate(p => OrderWin.selectPiece(p || null), piece);   // (the "Its pieces" list's own switch; null: all pieces)
     const settled = () => page.waitForFunction(() => !document.getElementById('orderWin').getAnimations({ subtree: true }).some(a => a.playState === 'running' && a.effect && a.effect.getTiming().iterations !== Infinity), null, { timeout: 15000 });
     // what a piece's card shows, and whether anything of it lies outside the card's own box (the card is found by its line key, whichever piece the window holds)
-    const DEL = ['TO APPROVE', 'To approve', 'Waiting for your approval', 'WORDS ON THE BACK', 'Words on the back', 'Read from', 'sure', '%', 'Fix in Engraving', 'View in Engraving', 'ENGRAVES', 'nothing in the listing', 'The system read', 'Undo', 'Approve engraving', 'Being prepared', 'Cut plain', 'Preview not ready', 'The words need a decision'];
+    const DEL = ['TO APPROVE', 'To approve', 'Waiting for your approval', 'WORDS ON THE BACK', 'Words on the back', 'Read from', 'sure', '%', 'ENGRAVES', 'nothing in the listing', 'The system read', 'Undo', 'Approve engraving', 'Being prepared', 'Cut plain', 'Preview not ready', 'The words need a decision'];
     const cardSel = lk => `#owEng .engCard[data-key="${lk}"]`;
     const read = lk => page.evaluate(sel => {
       const card = document.querySelector(sel); if (!card) return null;
@@ -97,7 +97,7 @@ const LONG = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOP';
       const seals = [...card.querySelectorAll('.seal svg[data-seal-model]')].map(s => { try { const m = JSON.parse(s.getAttribute('data-seal-model')); return m.action + '|' + m.by; } catch (_) { return '?'; } });
       const ab = q('.egApproveButton'), face = f => { const e = q(`.engFace[data-face=${f}]`); return e ? { empty: e.dataset.empty === '1', text: (e.querySelector('.engTxt') || {}).title || '', shown: (e.querySelector('.engTxt') || {}).textContent || '', picture: !!e.querySelector('.engThumb canvas, .engThumb img, .engThumb .engpv') } : null; };
       return { state: card.dataset.state, w: Math.round(r.width), h: Math.round(r.height), scrollOver: card.scrollWidth - card.clientWidth, out, dot: q('.engDot') && q('.engDot').getAttribute('aria-label'), dots: card.querySelectorAll('.engDot').length, name: (q('.engName') || {}).textContent || '',
-        front: face('front'), back: face('back'), buttons: card.querySelectorAll('button:not(.engThumb)').length, approve: ab ? { text: ab.textContent.trim(), disabled: ab.disabled, live: !!q('[data-e=approve]'), title: ab.title || '' } : null, seals, text: card.textContent.replace(/\s+/g, ' ').trim(), spinner: !!q('.engTxt .owSpin') };
+        front: face('front'), back: face('back'), buttons: card.querySelectorAll('button:not(.engThumb):not(.egOpen)').length, approve: ab ? { text: ab.textContent.trim(), disabled: ab.disabled, live: !!q('[data-e=approve]'), title: ab.title || '' } : null, seals, text: card.textContent.replace(/\s+/g, ' ').trim(), spinner: !!q('.engTxt .owSpin') };
     }, cardSel(lk));
     const none = c => DEL.filter(w => c.text.includes(w));
 
@@ -113,7 +113,7 @@ const LONG = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOP';
 
     // 2 · an order of several: a card for each piece that has an engraving, in every state (none for a piece with none)
     await close(); await open(keyOf(B, 0)); await page.waitForFunction(() => document.querySelectorAll('#owEng .engCard').length === 5, null, { timeout: 10000 }); await settled();
-    const list = await page.evaluate(() => [...document.querySelectorAll('#owEng .engCard')].map(e => ({ key: e.dataset.key, state: e.dataset.state, name: (e.querySelector('.engName') || {}).textContent || '', buttons: e.querySelectorAll('button:not(.engThumb)').length })).sort((a, b) => a.key.localeCompare(b.key)));
+    const list = await page.evaluate(() => [...document.querySelectorAll('#owEng .engCard')].map(e => ({ key: e.dataset.key, state: e.dataset.state, name: (e.querySelector('.engName') || {}).textContent || '', buttons: e.querySelectorAll('button:not(.engThumb):not(.egOpen)').length })).sort((a, b) => a.key.localeCompare(b.key)));
     check(list.map(x => x.key).join() === [0, 1, 2, 3, 4].map(i => keyOf(B, i)).join() && list.map(x => x.state).join() === 'approve,busy,approved,plain,busy', 'a card for each of the five pieces, each in its own state (' + list.map(x => x.state).join('/') + ')');
     check(list[0].name.startsWith('ASTER FLOWER') && list[2].name.startsWith('MOON DISC') && list[3].name.startsWith('PLAIN TAG') && list.map(x => x.buttons).join() === '1,0,0,0,0', 'each names its piece, and only the one that waits for approval has a button: ' + JSON.stringify(list.map(x => [x.name.slice(0, 14), x.buttons])));
     check(await page.evaluate(() => document.querySelectorAll('#owEng > :not(.engCard)').length === 0 && !document.querySelector('#owEng .fLabel')), 'the cards are the grid\'s direct children, with no label of their own');

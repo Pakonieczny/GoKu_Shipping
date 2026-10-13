@@ -114,7 +114,7 @@ async function main() {
       if (!e || !(e.offsetParent || e.getClientRects().length)) return { host: !!h, card: false, n };
       const b = e.querySelector('.egApproveButton');
       return { host: true, card: true, n, state: e.dataset.state, words: (e.querySelector('.engFace[data-face=back] .engTxt') || {}).title || '', preview: !!e.querySelector('.engThumb .engpv, .engThumb canvas, .engThumb img'), button: b ? { text: b.textContent.trim(), disabled: b.disabled } : null,
-        seals: e.querySelectorAll('.seal').length, buttons: e.querySelectorAll('button:not(.engThumb)').length };
+        seals: e.querySelectorAll('.seal').length, buttons: e.querySelectorAll('button:not(.engThumb):not(.egOpen)').length };
     }, lk);
     const waitOv = (lk, state, ms = 8000) => page.waitForFunction(({ lk, state }) => { const e = document.querySelector(`#owEng .engCard[data-key="${lk}"]`); return e && (e.offsetParent || e.getClientRects().length) && (!state || e.dataset.state === state); }, { lk, state }, { timeout: ms }).then(() => true, () => false);
     const TAB = '#owSheetPanel [data-engraving-panel]', WIN = '[data-r2=eng]';

@@ -78,7 +78,7 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
       CN.setMode('orders'); Orders.render();
     }, { orders: ORDERS, WORDS, k: { 1: key(R1, 2), 2: key(R1, 3), 3: key(R2, 1), 4: key(R2, 2) }, p: { 1: pool(R1, 2) }, R1, R2, SHEET });
     const calls = () => page.evaluate(() => ({ approve: __approve.map(a => a.key + '|' + a.by + '|' + a.button), poke: __poke, nudge: __nudge, links: __links }));
-    const DEL = ['TO APPROVE', 'To approve', 'Waiting for your approval', 'WORDS ON THE BACK', 'Words on the back', 'Read from', 'sure', 'Fix in Engraving', 'View in Engraving', 'ENGRAVES', 'nothing in the listing', 'The system read', 'Undo'];
+    const DEL = ['TO APPROVE', 'To approve', 'Waiting for your approval', 'WORDS ON THE BACK', 'Words on the back', 'Read from', 'sure', 'ENGRAVES', 'nothing in the listing', 'The system read', 'Undo'];
     // (a piece's card is found by its line key, whatever else the section shows: the section never follows the piece switcher)
     const card = (lk) => page.evaluate(lk => {
       const h = document.getElementById('owEng'), c = h.querySelector(`.engCard[data-key="${lk || window.__k.r}"]`), q = s => c && c.querySelector(s);
@@ -86,7 +86,7 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
       const face = f => { const e = q(`.engFace[data-face=${f}]`); return e ? { empty: e.dataset.empty === '1', text: (e.querySelector('.engTxt') || {}).title || '', label: (e.querySelector('.engLbl') || {}).textContent, picture: !!e.querySelector('.engThumb canvas, .engThumb img, .engThumb .engpv'), laid: ((e.querySelector('.engpvText') || {}).textContent || '') } : null; };
       const ab = q('.egApproveButton');
       return { hidden: h.hidden, n: h.querySelectorAll('.engCard').length, direct: [...h.children].every(x => x.classList.contains('engCard')), state: c && c.dataset.state, dot: q('.engDot') && q('.engDot').getAttribute('aria-label'), dots: c ? c.querySelectorAll('.engDot').length : 0, name: q('.engName') && q('.engName').textContent,
-        front: face('front'), back: face('back'), thumbs: c ? c.querySelectorAll('.engThumb').length : 0, approve: !!q('[data-e=approve]'), disabled: ab && ab.disabled, approveText: ab && ab.textContent.trim(), header: q('.engHd') ? [...q('.engHd').children].map(x => x.className.split(' ')[0]).join(',') : '', height: c && Math.round(c.getBoundingClientRect().height), buttons: c ? c.querySelectorAll('button:not(.engThumb)').length : 0, seals,
+        front: face('front'), back: face('back'), thumbs: c ? c.querySelectorAll('.engThumb').length : 0, approve: !!q('[data-e=approve]'), disabled: ab && ab.disabled, approveText: ab && ab.textContent.trim(), header: q('.engHd') ? [...q('.engHd').children].map(x => x.className.split(' ')[0]).join(',') : '', height: c && Math.round(c.getBoundingClientRect().height), buttons: c ? c.querySelectorAll('button:not(.engThumb):not(.egOpen)').length : 0, open: c ? [...c.querySelectorAll('.egOpen')].map(b => b.textContent.replace(/\s+/g, ' ').trim()) : [], seals,
         wait: h.querySelector('.owEngWait') && h.querySelector('.owEngWait').textContent, text: c ? c.textContent.replace(/\s+/g, ' ').trim() : '', settledText: /still to be settled/i.test(document.getElementById('orderWin').textContent) };
     }, lk);
     const none = c => DEL.filter(w => c.text.includes(w));
@@ -196,6 +196,7 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     await page.click(thumb(k.g, 'back')); await page.waitForFunction(() => __links.length === 3, null, { timeout: 4000 });
     check(JSON.stringify((await calls()).links[2]) === JSON.stringify({ rid: R1, key: k.g, poolId: pool(R1, 2), piece: k.g, face: 'back' }), 'the other piece asks for its own: ' + JSON.stringify((await calls()).links[2]));
     // (until EngraveLink exists: the Sheet tab's way, the window closes and the Engraving tab is set to that order and piece)
+    await page.waitForFunction(() => !document.querySelector('#owEng [aria-busy=true]'), null, { timeout: 5000 });   // (a card that is opening ignores a second press: the first one ends, then the Sheet tab's way)
     await page.evaluate(() => { delete window.EngraveLink; });
     await page.click(thumb(k.g, 'back'));
     await page.waitForFunction(() => !OrderWin.isOpen() && CN.S.mode === 'engrave', null, { timeout: 8000 });

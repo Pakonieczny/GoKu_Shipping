@@ -23,7 +23,7 @@ function world(jobsByLine) {
 const line = (key, extra) => Object.assign({ key, order: { receiptId: '1001' }, line: { sku: 'NAME_ONE', transactionId: '1' }, spec: { designSku: 'NAME_ONE' }, state: 'pooled', poolIds: [key + '_1'] }, extra || {});
 const job = (row, key, state, text, extra) => Object.assign({ key, row, state, text, lines: text ? text.split('\n') : [], copies: [row.key + '_1'], fit: state === 'review' ? { glyphs: [] } : null, view: state === 'review' ? { members: [] } : null, verify: { geometry: { ok: true } }, backs: [] }, extra || {});
 const setup = faces => ({ v: 1, mode: faces.length === 2 ? 'both' : faces[0] || 'none', faces, front: null, back: null, source: 'labelled', edited: false });
-const DELETED = ['TO APPROVE', 'To approve', 'Waiting for your approval', 'WORDS ON THE BACK', 'Words on the back', 'Words as read', 'Read from', 'sure', '%', 'Fix in Engraving', 'View in Engraving', 'ENGRAVES', 'Edit', 'nothing in the listing', 'The system read', 'Undo', 'Approve both', 'unclear', 'Worth a look', 'Words confirmed by', 'Set by'];
+const DELETED = ['TO APPROVE', 'To approve', 'Waiting for your approval', 'WORDS ON THE BACK', 'Words on the back', 'Words as read', 'Read from', 'sure', '%', 'ENGRAVES', 'Edit', 'nothing in the listing', 'The system read', 'Undo', 'Approve both', 'unclear', 'Worth a look', 'Words confirmed by', 'Set by'];
 const noDeleted = (htmlText, what) => { const txt = htmlText.replace(/<[^>]*>/g, ' ').replace(/(?:title|aria-label)="[^"]*"/g, ''); for (const w of DELETED) assert.ok(!txt.includes(w), `${what}: the deleted text "${w}" is on the card`); };
 const count = (s, re) => (s.match(re) || []).length;
 let n = 0; const ok = m => console.log('  ✓ ' + m);
@@ -81,7 +81,7 @@ let n = 0; const ok = m => console.log('  ✓ ' + m);
   for (const [state, want, dot] of [['review', 1, 'approve'], ['words', 0, 'words'], ['fitting', 0, 'busy'], ['approved', 0, 'approved']]) {
     const C = mk(state, state === 'words' ? '' : 'Name One'), p = C.piecesOf([row], {})[0], h = C.html(p);
     assert.equal(count(h, /data-e="approve"/g), want, `${state}: Approve ${want ? 'present' : 'absent'}`); assert.equal(p.state, dot); assert.match(h, new RegExp(`class="engDot" data-s="${dot}"`));
-    if (state === 'words') assert.ok(h.includes('Words to confirm')); if (state === 'fitting') assert.ok(h.includes('Preparing')); if (state === 'approved') assert.ok(!h.includes('>Approved<') && !/<button/.test(h.replace(/<button[^>]*engThumb[^>]*>[^<]*<\/button>/g, '')), 'approved: no button at all');
+    if (state === 'words') assert.ok(h.includes('Words to confirm')); if (state === 'fitting') assert.ok(h.includes('Preparing')); if (state === 'approved') assert.ok(!h.includes('>Approved<') && !/<button/.test(h.replace(/<button[^>]*engThumb[^>]*>[^<]*<\/button>/g, '').replace(/<button[^>]*egOpen[^>]*>.*?<\/button>/g, '')), 'approved: no button but the Engraving button (View in Engraving)'); if (state === 'approved') assert.ok(/egOpen[^>]*>View in Engraving /.test(h), 'an approved card says View in Engraving');
     noDeleted(h, state);
   }
   ok('Approve only when a face waits for approval; words to confirm / preparing / approved have none'); n++;
@@ -90,5 +90,18 @@ let n = 0; const ok = m => console.log('  ✓ ' + m);
 {
   const row = line('K6'), W = world({ K6: [job(row, 'K6', 'none', '')] });
   assert.equal(W.CharmNestEngraveCard.piecesOf([row], {}).length, 0, 'nothing to engrave: no card'); ok('a line that engraves nothing has no card'); n++;
+}
+// 7 ── the Engraving button (ENGBUTTON, Paul round 2b): the old `btn ghost sm egOpen`, one per order-window card, none in the Engrave detail's card, its wording by state, off with a reason
+{
+  const row = line('K7'), mk = (state, text) => world({ K7: [job(row, 'K7', state, text)] }).CharmNestEngraveCard, one = h => (h.match(/<button[^>]*egOpen[^>]*>.*?<\/button>/g) || []);
+  for (const [state, cls, word] of [['review', 'ghost', 'Fix in Engraving'], ['words', 'gold', 'Fix in Engraving'], ['fitting', 'ghost', 'Fix in Engraving'], ['approved', 'ghost', 'View in Engraving']]) {
+    const C = mk(state, state === 'words' ? '' : 'Name One'), p = C.piecesOf([row], {})[0], h = C.html(p), b = one(h);
+    assert.equal(b.length, 1, `${state}: exactly one Engraving button`); assert.match(b[0], new RegExp(`^<button type="button" class="btn ${cls} sm egOpen" data-e="engrave"`)); assert.ok(b[0].includes(`>${word} <span aria-hidden="true">→</span></button>`), `${state}: "${word} →"`);
+    assert.ok(!/aria-disabled/.test(b[0]), `${state}: the button is on`);
+    assert.equal(one(C.html(p, { approve: false })).length, 0, 'the Engrave detail card has no Engraving button (it is already there)');
+  }
+  const C = mk('review', 'Name One'), p = C.piecesOf([row], {})[0], gone = C.html(Object.assign({}, p, { row: Object.assign({}, p.row, { state: 'gone' }) }));
+  assert.match(one(gone)[0], /aria-disabled="true" title="This order has left the pull"/, 'an order that has left the pull: the button is off, its title says why');
+  assert.equal(C.openOf(p).face, 'back', 'it opens the face that needs a person'); ok('the Engraving button: the old classes and words, gold while the words are unclear, View once decided, none in the detail card, off with a reason'); n++;
 }
 console.log(`engrave-card: ${n} groups passed`);

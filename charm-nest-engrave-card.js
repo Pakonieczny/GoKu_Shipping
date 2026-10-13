@@ -13,6 +13,7 @@
  *   CharmNestEngraveCard.sig(piece, o)       what the card shows, in a line (drawn again only when it changes)
  *   CharmNestEngraveCard.mountPiece(slot, { row, key, face, onPick(face), approve:false, nameOf }) -> { update({ face }), refresh(), destroy(), el }   the card in the Engrave tab's detail
  *       (a press on a face calls onPick(face) and navigates nowhere)
+ *   CharmNestEngraveCard.openOf(piece) / openHtml(piece)  the Engraving button (ENGBUTTON: `btn ghost sm egOpen`, "Fix in Engraving →" / "View in Engraving →"): the face it opens, its wording, can it open now
  *   CharmNestEngraveCard.stateOf(job) / facesOf(...)  the small pure parts
  * The words on the card: the piece name, "Front", "Back", the engraved text, "Approve" / "Approved", "Words to confirm" (a face whose words are not settled), "Preparing" (with its small
  * spinner, while a face is being fitted) and the one failure line of an approval that did not go through. Everything else lives in the Engrave tab. Loads in the page and in node. */
@@ -145,6 +146,23 @@
     if (seals.length && Seal && S && (piece.state === 'approved' || piece.state === 'plain')) return `<span class="egApproveWrap">${row(seals.length, seals.map(s => Seal.html(s, SEAL_PX, 'engravingSeal')).join(''))}</span>`;
     return '';
   }
+  /* ── the Engraving button (ENGBUTTON, Paul 12 Oct 2026, round 2b: "bring back the engraving button that we had, not just a cheap clickable card") ──
+   * The very button the order window's card had before round 1 (charm-nest-engraving-seals.js panel(): `btn ghost sm egOpen`, `btn gold` while the words are unclear, "Fix in Engraving →",
+   * "View in Engraving →" once the piece is decided, "Opening Engraving…" with the small spinner while it opens). One per card, in the order window only (the Engrave tab's own card has none: it
+   * is already there). It opens the piece through the card's onOpen, i.e. EngraveLink.open({ rid, key, poolId, piece, face }). The two thumbnails stay a second, quieter way in. */
+  const OPEN_WORD = { fix: 'Fix in Engraving', view: 'View in Engraving', busy: 'Opening Engraving…' };
+  /** What the button does for this piece: the face it opens (the one that needs a person most, else the first shown), its wording, and whether it can open now (else why not). */
+  function openOf(piece) {
+    const shown = ['front', 'back'].filter(f => piece.faces && piece.faces[f]);
+    const face = shown.reduce((a, f) => (!a || (RANK[piece.faces[f].state] || 0) > (RANK[piece.faces[a].state] || 0) ? f : a), '') || 'front';
+    const L = root && root.EngraveLink, E = root && root.Engrave, line = lineOf(piece.row);
+    const why = line && line.state === 'gone' ? 'This order has left the pull' : root && root.document && !(L && L.open) && !(E && E.restoreView) ? 'Engraving is not ready' : '';   // (the model alone, with no page, has nothing to wait for)
+    return { face, done: piece.state === 'approved' || piece.state === 'plain', words: piece.state === 'words', ok: !why, why };
+  }
+  function openHtml(piece) {
+    const g = openOf(piece), word = g.done ? OPEN_WORD.view : OPEN_WORD.fix;
+    return `<div class="engOpenRow"><button type="button" class="btn ${g.words ? 'gold' : 'ghost'} sm egOpen" data-e="engrave" data-face="${g.face}"${g.ok ? '' : ` aria-disabled="true" title="${esc(g.why)}"`} aria-label="${esc(word + ': ' + piece.title)}">${word} <span aria-hidden="true">→</span></button></div>`;
+  }
   function html(piece, o) {
     o = o || {}; const word = WORD[piece.state] || '';
     const faces = ['front', 'back'].filter(f => f === 'front' || !piece.never);
@@ -153,6 +171,7 @@
     return `<article class="engCard" data-piece="${esc(piece.pieceKey)}" data-state="${esc(piece.state)}" data-rid="${esc(piece.rid)}" data-key="${esc(piece.lineKey)}"${piece.slot ? ` data-slot="${esc(piece.slot)}"` : ''}>`
       + `<header class="engHd"><i class="engDot" data-s="${esc(piece.state)}" role="img" aria-label="${esc(word)}" title="${esc(word)}"></i><b class="engName" title="${esc(piece.title)}">${esc(piece.title)}</b>${act ? `<span class="engAct">${act}</span>` : ''}</header>`
       + `<div class="engFaces" data-n="${shown.length}">${shown.map(f => faceHtml(piece, f, o)).join('')}</div>`
+      + (o.approve === false ? '' : openHtml(piece))
       + '<div class="engFail" role="alert" hidden></div></article>';
   }
 
@@ -211,25 +230,82 @@
     + '.engTxt .owSpin{flex:none;width:10px;height:10px}.engOpening{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.85)}'
     + '.engFail{font:11.5px/1.35 var(--sans);color:#8a3a26;background:var(--claySoft);border-radius:8px;padding:5px 8px;min-width:0}.engFail[hidden]{display:none}'
     + '@container engc (max-width:150px){.engCard{padding:5px;gap:3px}.engHd{flex-wrap:wrap;row-gap:3px}.engName{font-size:11px}.engAct{flex:1 1 100%}.engCard .egApproveWrap{width:100%}.engCard .engAct .btn.egApproveButton{width:100%}.engFaces{gap:4px}.engLbl{font-size:10px}.engTxt{font-size:11px}}';
+  /* The states of the Engraving button and of the thumbnails (ENGBUTTON). The button is the app's own `.btn.ghost.sm` (gold while the words are unclear). Its states are written ONCE, for the class
+     `.egOpen` wherever it stands (this card, the order window's Sheet view, the sheet window, Review: charm-nest-engraving-seals.js draws the same button), so it looks and answers the same everywhere:
+     default / hover (a warmer fill, a darker edge, the arrow steps right) / focus-visible (the app's gold ring) / pressed (one pixel down, darker fill) / disabled (aria-disabled: faded, not-allowed,
+     the reason is its title: the app's convention) / loading (aria-busy: the labelled spinner, full strength, progress cursor). The card only sets the button's size (the Approve button's 22px).
+     A thumbnail lifts a pixel on hover, presses down, and has its own focus ring; a thumbnail that cannot open is not-allowed. */
+  const NOPE = ':not([aria-disabled=true]):not([aria-busy=true]):not(:disabled)';
+  const OPEN_CSS = '.egOpen{transition:background-color .13s ease,border-color .13s ease,opacity .15s ease,transform .08s ease,filter .13s ease}.egOpen span[aria-hidden]{display:inline-block;transition:transform .13s ease}'
+    + `.egOpen${NOPE}:hover{opacity:1;background:var(--paper2);border-color:var(--ink25)}.egOpen.gold${NOPE}:hover{background:var(--gold2);border-color:var(--gold2)}.egOpen${NOPE}:hover span[aria-hidden]{transform:translateX(3px)}`
+    + '.egOpen:focus-visible{outline:2px solid var(--gold);outline-offset:1px}.egOpen.gold:focus-visible{outline-color:var(--ink)}'
+    + `.egOpen${NOPE}:active{transform:translateY(1px);background:var(--line);border-color:var(--ink45)}.egOpen.gold${NOPE}:active{background:var(--gold);border-color:var(--gold);filter:brightness(.9)}`
+    + '.egOpen[aria-disabled=true]{opacity:.45;cursor:not-allowed;transform:none}'
+    + '.egOpen[aria-busy=true]{opacity:1;cursor:progress;transform:none}'
+    + '@media (prefers-reduced-motion:reduce){.egOpen,.egOpen span[aria-hidden]{transition:none}.egOpen:hover span[aria-hidden]{transform:none}.egOpen:active{transform:none}}';
+  const BTN_CSS = '.engOpenRow{display:flex;min-width:0}'
+    + '.engCard .egOpen{flex:1 1 auto;min-width:0;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:22px;padding:0 10px;font-size:12px;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+    + '.engThumb{transition:transform .13s ease,border-color .13s ease,box-shadow .17s ease}'
+    + `.engThumb${NOPE}:hover{border-color:var(--ink45);box-shadow:0 4px 12px rgba(20,16,10,.14);transform:translateY(-1px)}.engThumb${NOPE}:active{border-color:var(--ink);box-shadow:none;transform:translateY(1px)}`
+    + '.engThumb[aria-disabled=true]{cursor:not-allowed;opacity:.7}'
+    // (the room for the button row: the card keeps its height at about 175px at 207px wide, so the three-card row still fits a 1280x720 window without scrolling: a gap less, a pixel less above and below, and the two pictures 80px)
+    + '.engCard{gap:3px;padding:6px 7px}@container engc (max-width:215px){.engFaces{grid-template-columns:repeat(2,minmax(0,80px));justify-content:space-between}.engThumb{max-width:80px}}'
+    + '@container engc (max-width:150px){.engCard .egOpen{height:auto;min-height:22px;padding:3px 6px;font-size:11px;line-height:1.15;white-space:normal;text-align:center}}'
+    + '@media (prefers-reduced-motion:reduce){.engThumb{transition:none}.engThumb:hover,.engThumb:active{transform:none}}';
+  /** The button's states, for every place that draws the button (once per page, at load; the card's own rules go in with the first card). */
+  function openCss() {
+    const d = root && root.document; if (!d || !d.head || d.getElementById('engOpenCss')) return;
+    const s = d.createElement('style'); s.id = 'engOpenCss'; s.textContent = OPEN_CSS; d.head.appendChild(s);
+  }
   function css() {
     const d = root && root.document; if (!d || d.getElementById('engCardCss')) return;
-    const s = d.createElement('style'); s.id = 'engCardCss'; s.textContent = CSS; (d.head || d.documentElement).appendChild(s);
+    openCss(); const s = d.createElement('style'); s.id = 'engCardCss'; s.textContent = CSS + BTN_CSS; (d.head || d.documentElement).appendChild(s);
   }
 
-  /** A small labelled spinner on the thumbnail while it opens (the order window closes as Engraving opens). */
-  function opening(btn, run) {
-    if (!run || typeof run.then !== 'function') return;
-    btn.setAttribute('aria-busy', 'true'); const w = root.document.createElement('span'); w.className = 'engOpening'; w.setAttribute('role', 'status'); w.innerHTML = '<span class="owSpin" aria-hidden="true"></span>'; w.title = 'Opening'; btn.append(w);
-    const back = () => { btn.removeAttribute('aria-busy'); w.remove(); };
-    run.then(back, back);
+  /** The wait of an opening, said on the card: the Engraving button turns into "Opening Engraving…" with the small spinner (it stays where it is, focus kept, and presses are ignored), and the
+   *  thumbnail that was pressed shows the same spinner. `on` false puts everything back. */
+  function waiting(el, from, on) {
+    const btn = el.querySelector('.egOpen'), th = from && from.classList && from.classList.contains('engThumb') ? from : null;
+    if (on) {
+      el.dataset.opening = '1';
+      if (btn) { btn._was = btn.innerHTML; btn.setAttribute('aria-busy', 'true'); btn.innerHTML = '<span class="spin" aria-hidden="true"></span>' + OPEN_WORD.busy; }
+      if (th) { th.setAttribute('aria-busy', 'true'); const w = root.document.createElement('span'); w.className = 'engOpening'; w.setAttribute('role', 'status'); w.setAttribute('aria-label', OPEN_WORD.busy); w.title = OPEN_WORD.busy; w.innerHTML = '<span class="owSpin" aria-hidden="true"></span>'; th.append(w); }
+    } else {
+      delete el.dataset.opening;
+      if (btn && btn.isConnected && btn._was != null) { btn.removeAttribute('aria-busy'); btn.innerHTML = btn._was; btn._was = null; }
+      for (const t of el.querySelectorAll('.engThumb[aria-busy]')) { t.removeAttribute('aria-busy'); t.querySelector('.engOpening')?.remove(); }
+    }
   }
-  /** The card as an element, drawn and filled; `onOpen(face, key, btn)` is told of a press on a face (its thumbnail, its title or the piece's name). */
+  /** The ways into Engraving from a card: the Engraving button (the card's one button) and, quieter, the two thumbnails (each a real button: Enter and Space press it). All go through
+   *  `o.onOpen(face, key, button, piece)`, which returns the promise of the opening (EngraveLink.open); while it runs the card says so (waiting) and a second press does nothing. A card that has no
+   *  Engraving button (the Engrave tab's own: o.approve === false) is only a face picker: a press calls onOpen and nothing waits. A piece that cannot be opened (openOf: not ready, order gone)
+   *  keeps its button, greyed and not pressable, with the reason as its title (the app's aria-disabled button). */
+  function wireOpen(el, piece, o) {
+    const btn = el.querySelector('.egOpen'), g = btn ? openOf(piece) : { ok: true, why: '' };
+    let busy = false;
+    const keyOf = face => (piece.faces[face] && piece.faces[face].key) || jobKey(piece.lineKey, piece.slot, face);
+    const press = (face, from) => {
+      if (busy || !g.ok) return;
+      let run = null;
+      try { run = o && o.onOpen ? o.onOpen(face, keyOf(face), from, piece) : null; } catch (e) { tryDo(() => console.warn('engraving card: open', e)); return; }
+      if (!run || typeof run.then !== 'function') return;
+      busy = true; waiting(el, from, true);
+      const back = () => { busy = false; waiting(el, from, false); };
+      run.then(back, back);
+    };
+    for (const fe of el.querySelectorAll('.engFace')) {
+      const face = fe.dataset.face, th = fe.querySelector('.engThumb'); if (!th) continue;
+      th.setAttribute('aria-label', btn ? `${faceTitle(face)} engraving of ${piece.title}: open in Engraving` : `${faceTitle(face)} engraving of ${piece.title}`);
+      if (!g.ok) { th.setAttribute('aria-disabled', 'true'); th.title = g.why; }
+      th.addEventListener('click', () => press(face, th));
+    }
+    if (btn) btn.addEventListener('click', () => press(btn.dataset.face || openOf(piece).face, btn));
+  }
+  /** The card as an element, drawn and filled; `onOpen(face, key, btn, piece)` is told of a press on the Engraving button or on a face's thumbnail. */
   function card(piece, o) {
     css(); const d = root.document, host = d.createElement('div'); host.innerHTML = html(piece, o); const el = host.firstElementChild;
     fill(el, piece, o);
-    const open = (face, btn) => { try { const run = o && o.onOpen ? o.onOpen(face, (piece.faces[face] && piece.faces[face].key) || jobKey(piece.lineKey, piece.slot, face), btn, piece) : null; opening(btn, run); } catch (e) { tryDo(() => console.warn('engraving card: open', e)); } };
-    el.querySelectorAll('.engFace').forEach(fe => { const face = fe.dataset.face, btn = fe.querySelector('.engThumb'); fe.addEventListener('click', () => open(face, btn)); });
-    el.querySelector('.engName')?.addEventListener('click', () => { const f = piece.faces.front && !piece.faces.back ? 'front' : piece.faces.back ? 'back' : 'front'; open(f, el.querySelector(`.engFace[data-face="${f}"] .engThumb`)); });
+    wireOpen(el, piece, o);
     return el;
   }
 
@@ -252,5 +328,6 @@
       thumb: face => (el ? el.querySelector(`.engFace[data-face="${face}"] .engThumb`) : null) };
   }
 
-  return { piecesOf, facesOf, stateOf, html, fill, card, sig, mountPiece, thumbOf, repaint, sealsOf, css, WORD };
+  openCss();
+  return { piecesOf, facesOf, stateOf, html, fill, card, sig, mountPiece, thumbOf, repaint, sealsOf, css, WORD, openOf, openHtml, OPEN_WORD };
 });

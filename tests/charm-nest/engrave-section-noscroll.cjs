@@ -14,7 +14,7 @@
 //   (d) the bottom edge of the first row is inside what the person sees (the scroll area, minus a small margin), nothing covers a card: all three cards, NO scrolling
 //   (e) the page has no horizontal scrollbar (nothing wider than the window, the scroll area or the section)
 //   (f) with SIX pieces the next row wraps correctly: same columns as the first row, below it, nothing overlapping
-//   (g) no text of the deleted list in the cards (TO APPROVE, Waiting for your approval, WORDS ON THE BACK, Read from the personalisation box, "NN% sure", Fix in Engraving,
+//   (g) no text of the deleted list in the cards (TO APPROVE, Waiting for your approval, WORDS ON THE BACK, Read from the personalisation box, "NN% sure",
 //       "nothing in the listing or the note says otherwise", Undo my edit, The system read)
 //   (h) a card is at most 212 px tall (CONTRACT B: the height the 1280x720 arithmetic leaves)
 //   (x) one or two pieces: the card is as wide as in the 3-piece order and at most a third of the grid (never stretched)
@@ -60,7 +60,8 @@ const T = {
 // the words that must appear in no card (Paul's list; the card text is read with innerText and textContent, plus title / aria-label / alt attributes)
 const FORBIDDEN = [
   ['TO APPROVE', /to approve/i], ['Waiting for your approval', /waiting for your approval/i], ['WORDS ON THE BACK', /words on the back/i],
-  ['Read from the personalisation box', /read from the personali[sz]ation box/i], ['NN% sure', /\d+\s*%\s*sure|\bsure\b[^.]{0,12}\d+\s*%/i], ['Fix in Engraving', /fix in engraving/i],
+  ['Read from the personalisation box', /read from the personali[sz]ation box/i], ['NN% sure', /\d+\s*%\s*sure|\bsure\b[^.]{0,12}\d+\s*%/i],
+  // ('Fix in Engraving' is no longer deleted: Paul, round 2b, asked for the Engraving button back, one per card; tests/charm-nest/engrave-open-button.cjs checks it)
   ['nothing in the listing or the note says otherwise', /nothing in the listing or the note says otherwise/i], ['Undo my edit', /undo my edit/i], ['The system read', /the system read/i],
 ];
 // which checks FAIL THE RUN, by window size (CONTRACT G). A check not listed is printed only. d = the 3-piece order's first row on screen, d2 = the same for the 2-line order,
