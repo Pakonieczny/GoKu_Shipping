@@ -1671,7 +1671,9 @@
               pool.push(...group);
             }
             if (!pool.length) break;
-            pool.sort(fifo ? byAge : (a, b) => a.idx - b.idx);
+            // (a sheet filling its gaps, job.singlesFirst: the single-charm orders take the pockets before a multi-piece order that was turned away,
+            // which goes on to the next sheet whole; Paul, 13 Oct 2026: single-charm orders fill the small remaining gaps of nearly finished sheets)
+            pool.sort(fifo ? byAge : job.singlesFirst ? (a, b) => (multi(a) - multi(b)) || a.idx - b.idx : (a, b) => a.idx - b.idx);
             for (const p of pool) if (!p.careful) p.careful = variantsFor(p, angles.map(a => (a + turn) % 360));
             const kept = pool.map(p => p.careful);
             if (shift) pool.forEach(p => { p.careful = variantsFor(p, angles.map(a => (a + turn + shift) % 360)); });

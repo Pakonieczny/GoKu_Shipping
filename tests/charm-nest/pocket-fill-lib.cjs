@@ -89,9 +89,11 @@ const BLOCK_EASE = { from: .45, to: .7, scale: .25 };
  */
 async function runStream(opts) {
   const root = opts.root || REPO, S = solverOf(root), metal = opts.metal || 'gold14k', cut = CUT_METALS.includes(metal), fast = ['gold', 'silver'].includes(metal);
-  const ctl = { pages: [], work: [], moved: [], overflow: null, ms: 0, searches: [], roomWrong: [] };
+  const ctl = { pages: [], work: [], moved: [], overflow: null, ms: 0, searches: [], roomWrong: [], homeClosed: new Set() };
   const ctx = pageRules(root, ctl);
-  const stock = opts.sheet, newPage = () => ({ metal, runId: opts.runId === undefined ? 'run-1' : opts.runId, page: ctl.pages.length + 1, charms: [], placements: [], rejects: [], status: 'ready', intakePhase: 'fill', log: [], movedFrom: [], searches: 0, ms: 0 });
+  const stock = opts.sheet;
+  ctx.usableArea = () => Math.max(0, stock.wPt - 3) * Math.max(0, stock.hPt - 3);   // (the page's usableArea(sh): the stock less the inset of 1.5 pt on each side)
+  const newPage = () => ({ metal, runId: opts.runId === undefined ? 'run-1' : opts.runId, page: ctl.pages.length + 1, charms: [], placements: [], rejects: [], status: 'ready', intakePhase: 'fill', log: [], movedFrom: [], searches: 0, ms: 0 });
   const closed = p => !!p.releaseFull;
   const pageIndex = p => ctl.pages.indexOf(p);
   ctl.overflow = sh => {
@@ -129,7 +131,7 @@ async function runStream(opts) {
     items = ctx.feedTurn(sh, items);
     const onSheet = new Set(items.map(c => c.id)), kept = (sh.placements || []).filter(p => onSheet.has(p.id));
     sh.nestInitial = kept.length ? kept.map(p => ({ ...p })) : null;
-    for (const c of items) { const p = kept.find(q => q.id === c.id); c.pinned = p ? { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle } : null; }
+    for (const c of items) { const p = kept.find(q => q.id === c.id); c.pinned = p ? { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle } : null; if (p) c.arrivalPin = true; else delete c.arrivalPin; }   // (LiveNest.prepareSheet: a saved piece is held where it is by a pin the sheet made itself, arrivalPin, not a person's)
     sh.placements = kept.map(p => ({ ...p })); sh.rejects = [];
     const job = buildJob(sh, items), t0 = Date.now();
     const result = await S.solve(job, {});
@@ -142,7 +144,7 @@ async function runStream(opts) {
     const movedIds = new Set((result.unjam && result.unjam.moved) || []);
     if (movedIds.size && job.lockedPlacements) job.lockedPlacements = job.lockedPlacements.map(p => movedIds.has(p.id) ? { ...sh.placements.find(q => q.id === p.id) } : p);
     sh.unjamMoved = (sh.unjamMoved || []).concat([...movedIds]);
-    sh.verification = { ok: S.verify(job, sh.placements, 4).ok };
+    sh.verification = { ok: S.verify(buildJob(sh, items), sh.placements, 4).ok };   // (the page's check is a job built again after the search: buildJob(sh), lifted saved pieces no longer locked)
     if (!sh.verification.ok) throw new Error('layout failed verification on page ' + sh.page);
     sh.result = result; sh.density = result.density; sh.usablePt2 = result.usablePt2; sh.freePt2 = result.freePt2; sh.placedPt2 = result.placedPt2;
     sh.releaseFull = ctx.topupSettle(sh, result, ctx.sheetFull(sh, result, items)) || !!(sh.keepRelease && sh.keepRelease.full);
@@ -164,11 +166,18 @@ async function runStream(opts) {
   const sizes = Array.isArray(opts.batch) ? opts.batch : [opts.batch || 3];
   for (let i = 0, k = 0; i < opts.orders.length; k++) {
     const batch = opts.orders.slice(i, i + sizes[k % sizes.length]); i += batch.length;
-    let page = intakePage();
-    if (!page) { page = newPage(); ctl.pages.push(page); }
-    page.appendOnly = page.placements.length > 0;
-    for (const o of batch) for (const c of o.pieces) page.charms.push({ ...c, pinned: null });
-    ctl.work.push(page);
+    // (`home`: an order goes to the open sheet that already holds a piece of it, as LiveNest.intakePage does with the order's id; the rest of the batch to the page the intake chose)
+    // (ctl.homeClosed: orders that came back when the sheet holding them was already released: they cannot stay whole, nothing to be done about those)
+    const holds = (p, o) => p.charms.some(c => String(c.order) === String(o.pieces[0].order));
+    const homeOf = o => { if (!opts.home) return null; const h = ctl.pages.find(p => !closed(p) && holds(p, o)) || null; if (!h && ctl.pages.some(p => closed(p) && holds(p, o))) ctl.homeClosed.add(String(o.pieces[0].order)); return h; }, homes = batch.map(homeOf);
+    let page = homes.every(Boolean) ? null : intakePage();
+    if (!page && !homes.every(Boolean)) { page = newPage(); ctl.pages.push(page); }
+    batch.forEach((o, j) => {
+      const to = homes[j] || page;
+      to.appendOnly = to.placements.length > 0;
+      for (const c of o.pieces) to.charms.push({ ...c, pinned: null });
+      if (!ctl.work.includes(to)) ctl.work.push(to);
+    });
     while (ctl.work.length) { const sh = ctl.work.shift(); await nest(sh); }
     if (opts.progress) opts.progress(i, opts.orders.length, ctl);
   }
