@@ -35,8 +35,9 @@ const settle = async () => { await tick(); flush(); await tick(); flush(); };
 const ORD1 = '4100000001', ORD2 = '4100000002', ORD3 = '4100000003', ORD4 = '4100000004';
 const sheet = (id, extra = {}) => ({ id, sheetIndex: 1, poolIds: [id + '1'], placedCount: 1, verification: { ok: true }, preview: 'p', outputs: { ai: 'f' }, label: { files: [] }, backPool: [], engraving: { [id + '1']: { needed: false, state: 'none', approved: true } }, updatedAt: 1, ...extra });
 const labelled = s => ({ ...s, label: { files: [{ path: 'qr', url: 'u', payload: 'o' }] }, processReady: true, updatedAt: (s.updatedAt || 0) + 1 });
-const heldBlock = (rid, piece) => ({ ready: false, key: 'held', why: 'In Review' + (piece ? ': ' + piece : ''), blocks: [{ key: 'held', index: 1, label: 'Charm', poolId: rid + '_1_1', lineKey: rid + '_1', sheetId: null, sheetLabel: null, why: 'In Review' + (piece ? ': ' + piece : '') }], onSheets: [], pieceCount: 2, customer: 'Name One', listingId: '' });
-const withHold = (s, list) => ({ ...s, orders: list.map(x => x[0]), label: { files: [{ path: 'qr', url: 'u', payload: 'o', orders: list.map(x => x[0]) }] }, orderReadiness: Object.fromEntries(list.map(([rid, piece]) => [rid, { ...heldBlock(rid, piece), onSheets: [s.id] }])), updatedAt: (s.updatedAt || 0) + 1 });
+const SWAPW = 'New drawing chosen, swap it on the sheet';
+const heldBlock = (rid, piece, swap) => { const why = swap ? SWAPW : 'In Review' + (piece ? ': ' + piece : ''); return { ready: false, key: 'held', why, blocks: [{ key: 'held', review: true, ...(swap ? { swap: true } : {}), index: 1, label: 'Charm', poolId: rid + '_1_1', lineKey: rid + '_1', sheetId: null, sheetLabel: null, why }], onSheets: [], pieceCount: 2, customer: 'Name One', listingId: '' }; };
+const withHold = (s, list) => ({ ...s, orders: list.map(x => x[0]), label: { files: [{ path: 'qr', url: 'u', payload: 'o', orders: list.map(x => x[0]) }] }, orderReadiness: Object.fromEntries(list.map(([rid, piece, swap]) => [rid, { ...heldBlock(rid, piece, swap), onSheets: [s.id] }])), updatedAt: (s.updatedAt || 0) + 1 });
 const rect = card => { card.getBoundingClientRect = () => ({ left: 10, top: 80, right: 310, bottom: 430, width: 300, height: 350 }); return card; };
 const flat = id => { const a = document.createElement('article'); a.className = 'librarySheet'; a.dataset.laserCard = 'sheet'; a._laserSheets = [id]; a.innerHTML = `<div class="libCard" data-id="${id}"><span data-sheet-status="${id}"></span></div>`; return rect(a); };
 const setCard = (setId, ids) => { const a = document.createElement('div'); a.className = 'setCard'; a.dataset.laserCard = 'set'; a._laserSet = { setId, seq: 1, sheetIds: ids }; a._laserSheets = ids; a.innerHTML = `<div class="sh"><span class="nm" data-set-title></span></div><div class="sheetsRow">${ids.map(id => `<article class="librarySheet"><div class="libCard" data-id="${id}"><span data-sheet-status="${id}"></span></div></article>`).join('')}</div>`; return rect(a); };
@@ -69,7 +70,7 @@ const bangOf = (card, id, step) => card.querySelector(`.flowBox[data-flow-for="s
     L.changed(); flush();
     assert.equal(RH.isOn(), false); assert.equal(RH.rows('H1').length, 0); assert.equal(RH.line('H1'), ''); assert.equal(RH.why(['H1', 'SB']), null); assert.equal(RH.nestHtml('H1'), '');
     assert.equal(document.querySelectorAll('.rvhNote').length, 0, 'no note without the hold API');
-    assert.doesNotMatch(whyOf(boxOf(cards.H1, 'sheet:H1')), /Held/, 'the Approve line says nothing of a hold it cannot know');
+    assert.doesNotMatch(whyOf(boxOf(cards.H1, 'sheet:H1')), /Held by/, 'without the hold API this module words nothing (the readiness still says its own line)');
 
     // 2. the hold API arrives (a script that loaded later) and names the held sheets; the Library says so at once, on the hold's own change
     held = { H1: [{ rid: ORD1, piece: 'left earring' }], SB: [{ rid: ORD2, piece: '' }, { rid: ORD3, piece: 'piece 2 of 3' }], K1: [{ rid: ORD4, piece: '' }] };
@@ -138,6 +139,31 @@ const bangOf = (card, id, step) => card.querySelector(`.flowBox[data-flow-for="s
     // 4b. the words for more orders
     assert.equal(RH.lineOf([{ rid: '1', piece: '' }, { rid: '2', piece: 'left earring' }, { rid: '3', piece: '' }]), 'Held by orders 1, 2 (left earring) and 3 in Review');
     assert.equal(RH.lineOf([{ rid: '1', piece: '' }, { rid: '2', piece: '' }, { rid: '3', piece: '' }, { rid: '4', piece: '' }, { rid: '5', piece: '' }]), 'Held by orders 1, 2 and 3 more in Review');
+
+    // 4c. the other kind of hold (REVHOLD): a person's pick answered the Review, the new drawing is chosen and must be swapped on the sheet. Same places, other ending; the Review tab is still where its card is
+    assert.equal(RH.lineOf([{ rid: ORD1, piece: '', swap: true }]), `Held by order ${ORD1}: new drawing chosen, swap it on the sheet`);
+    assert.equal(RH.lineOf([{ rid: ORD1, piece: 'left earring', swap: true }]), `Held by order ${ORD1} (left earring): new drawing chosen, swap it on the sheet`);
+    assert.equal(RH.lineOf([{ rid: ORD1, piece: '', swap: true }, { rid: ORD2, piece: '', swap: true }]), `Held by orders ${ORD1} and ${ORD2}: new drawing chosen, swap it on the sheet`);
+    assert.equal(RH.lineOf([{ rid: ORD1, piece: '', swap: true }, { rid: ORD2, piece: 'piece 2 of 3' }]), `Held by order ${ORD2} (piece 2 of 3) in Review`, 'a sheet held both ways says the in-Review order first; the swap one is said once that is resolved');
+    recs.W1 = withHold(sheet('W1'), [[ORD1, 'left earring', true]]); recs.W2 = withHold(sheet('W2'), [[ORD2, '', false], [ORD3, '', true]]);
+    L.record(recs.W1); L.record(recs.W2); world.W1 = recs.W1; world.W2 = recs.W2;
+    cards.W1 = flat('W1'); cards.W2 = flat('W2'); L.place(cards.W1, L.canCut(recs.W1), body); L.place(cards.W2, L.canCut(recs.W2), body);
+    held.W1 = [{ rid: ORD1, piece: 'left earring', swap: true }]; held.W2 = [{ rid: ORD2, piece: '', swap: false }, { rid: ORD3, piece: '', swap: true }]; L.changed(); flush(); await settle();
+    const w1 = boxOf(cards.W1, 'sheet:W1');
+    assert.equal(whyOf(w1), `Held by order ${ORD1} (left earring): new drawing chosen, swap it on the sheet`);
+    assert.equal(off(w1.querySelector('[data-approve-btn]')), true); assert.equal(w1.querySelector('[data-approve-review]').dataset.approveReview, ORD1, 'its line is still the one tap to the Review tab');
+    w1.querySelector('[data-approve-review]').click(); assert.deepEqual(reviewOpens, [ORD1]); reviewOpens.length = 0;
+    assert.equal(whyOf(boxOf(cards.W2, 'sheet:W2')), `Held by order ${ORD2} in Review`, 'mixed: the in-Review order is said');
+    assert.equal(boxOf(cards.W2, 'sheet:W2').querySelector('[data-approve-review]').dataset.approveReview, ORD2);
+    // its '!' row says "Swap drawing" (not "In Review") and a press opens the Review tab
+    const wb = bangOf(cards.W1, 'W1'); assert(wb, 'a \'!\''); wb.click(); await tick();
+    const wrows = [...document.querySelectorAll('#libIssuesPanel .lisRow')]; assert.equal(wrows.length, 1);
+    assert.equal(wrows[0].querySelector('.lisChip').textContent, 'Swap drawing: left earring'); assert.equal(wrows[0].dataset.go, 'review'); assert.doesNotMatch(wrows[0].textContent, /In Review|On hold/);
+    wrows[0].click(); await tick(); assert.deepEqual(reviewOpens, [ORD1]); reviewOpens.length = 0; assert.equal(LI.isOpen(), false); await tick(200);
+    // the safety net lists a swap order too
+    held.P1 = [{ rid: ORD4, piece: '', swap: true }]; L.changed(); flush();
+    const pb = bangOf(cards.P1, 'P1'); if (pb) { pb.click(); await tick(); const pr = [...document.querySelectorAll('#libIssuesPanel .lisRow')]; assert(pr.some(r => r.querySelector('.lisWho b').textContent === ORD4 && /Swap drawing/.test(r.textContent)), 'the list names the swap order'); LI.close(); await tick(200); }
+    delete held.P1; delete held.W1; delete held.W2;
 
     // 5. it clears at once: the hold's change callback (no poll, no read) and the notes, lines and the list follow
     const before = net.length;

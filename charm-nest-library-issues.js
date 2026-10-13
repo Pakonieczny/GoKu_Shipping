@@ -63,6 +63,8 @@
     held: { tone: 'clay', group: () => 'On hold', chip: () => 'On hold' },
     // an order a person sent to the Review tab while a piece of it sits on this sheet (REVHOLD: a 'held' issue whose words start "In Review")
     review: { tone: 'clay', group: () => 'In Review', chip: () => 'In Review' },
+    // the same stop once a person's pick has answered the Review: the new drawing is chosen and must be swapped on the sheet (REVHOLD: pieces[].swap, words "New drawing chosen, swap it on the sheet")
+    swap: { tone: 'clay', group: () => 'Swap drawing', chip: () => 'Swap drawing' },
     otherSheetNotReady: { tone: 'slate', group: s => `Waits on ${s}`, chip: (n, s) => `Waits on ${s}` },
     // an order split between two sets (the other piece is on a not-ready sheet of ANOTHER set): a real issue, said as the split it is
     split: { tone: 'slate', group: s => `Split from ${s}`, chip: (n, s) => `Split from ${s}` },
@@ -158,12 +160,16 @@
     return null;
   };
   const isReview = it => reviewWords(it) !== null;
+  const SWAP_WORDS = /^\s*new drawing chosen\b/i;
+  const isSwap = it => !!it && it.key === 'held' && ((Array.isArray(it.pieces) && it.pieces.some(p => p && p.swap === true)) || [...(Array.isArray(it.pieces) ? it.pieces : []).map(p => p && p.why), it.why].some(t => SWAP_WORDS.test(String(t || '').replace(HELD_TAIL, ''))));
+  const inReview = it => isReview(it) || isSwap(it);   // (either: a press on its row opens the Review tab, where the order's card is)
   // (the piece is the hold's own word for it; the readiness' words after "In Review" are the Review's reason, never a piece, so without the hold the chip says only "In Review")
   function reviewPiece(it, sheetId) {
     try { const RH = root.LibraryReviewHold, r = RH && sheetId ? RH.rows(sheetId).find(x => x.rid === String(it.orderId)) : null; if (r) return r.piece; } catch (e) { warn('review hold', e); }
     return '';
   }
   function reasonOf(it, sheetId) {
+    if (isSwap(it)) { const pc = reviewPiece(it, sheetId); return { id: 'swap', tone: 'clay', chip: REASON.swap.chip() + (pc ? ': ' + pc : ''), group: REASON.swap.group() }; }
     if (isReview(it)) { const pc = reviewPiece(it, sheetId); return { id: 'review', tone: 'clay', chip: 'In Review' + (pc ? ': ' + pc : ''), group: REASON.review.group() }; }
     const pieces = Array.isArray(it.pieces) ? it.pieces : [], n = Math.max(1, pieces.length || +it.pieceCount || 1);
     const labels = [...new Set(pieces.map(p => p && p.sheetLabel).filter(Boolean))];
@@ -216,7 +222,7 @@
         }
         while (dots.length < total) dots.unshift({ ring: false, metal: '', kind: '', n: 0, pool: '', line: '', state: '', none: false });
         const cust = String(it.customer || '').trim();
-        m.orders.push({ k: 'o:' + id, orderId: id, key: it.key || '', customer: cust, listingId: it.listingId ? String(it.listingId) : '', thumb: typeof it.thumb === 'string' ? it.thumb : (it.thumb && it.thumb.url) || '', reason: r, dots, pieceTotal: Math.max(+it.pieceCount || 0, dots.length), sheetMetal: m.metal, go: isReview(it) ? 'review' : type === 'piece' ? 'piece' : type === 'sheet' ? 'sheet' : 'order', target: String((it.open && it.open.id) || id), pool: pool ? String(pool) : '' });
+        m.orders.push({ k: 'o:' + id, orderId: id, key: it.key || '', customer: cust, listingId: it.listingId ? String(it.listingId) : '', thumb: typeof it.thumb === 'string' ? it.thumb : (it.thumb && it.thumb.url) || '', reason: r, dots, pieceTotal: Math.max(+it.pieceCount || 0, dots.length), sheetMetal: m.metal, go: inReview(it) ? 'review' : type === 'piece' ? 'piece' : type === 'sheet' ? 'sheet' : 'order', target: String((it.open && it.open.id) || id), pool: pool ? String(pool) : '' });
         if (HARD.has(it.key)) m.hard = true;
       } else if (it.key === 'unverified' && !it.orderId) {   // the sheet's orders could not be read yet: ONE quiet chip for the whole sheet, worded from the readiness' own label
         if (seen.has('n:unverified')) continue;
@@ -433,7 +439,7 @@ button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba
     let rs = []; try { rs = RH.rows(f.id); } catch (e) { warn('review hold', e); }
     const have = new Set(f.issues.filter(i => i && i.orderId).map(i => String(i.orderId))), add = rs.filter(r => !have.has(r.rid));
     if (!add.length) return f;
-    return Object.assign({}, f, { issues: f.issues.concat(add.map(r => ({ step: 'orders', key: 'held', orderId: r.rid, orderLabel: 'Order ' + r.rid, customer: '', pieceCount: 0, pieces: [{ index: 1, kind: 'held', why: 'In Review' + (r.piece ? ': ' + r.piece : '') }], why: 'A piece of this order is held: In Review', open: { type: 'order', id: r.rid } }))) });
+    return Object.assign({}, f, { issues: f.issues.concat(add.map(r => ({ step: 'orders', key: 'held', orderId: r.rid, orderLabel: 'Order ' + r.rid, customer: '', pieceCount: 0, pieces: [r.swap ? { index: 1, kind: 'held', review: true, swap: true, why: 'New drawing chosen, swap it on the sheet' } : { index: 1, kind: 'held', why: 'In Review' + (r.piece ? ': ' + r.piece : '') }], why: 'A piece of this order is held: ' + (r.swap ? 'New drawing chosen, swap it on the sheet' : 'In Review'), open: { type: 'order', id: r.rid } }))) });
   }
   const buttons = () => doc.querySelectorAll('[data-issues-open]');
   const idOf = b => b.dataset.issuesId || b.dataset.sheetId || '';
