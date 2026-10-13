@@ -83,7 +83,7 @@ const INSTRUMENT = String.raw`(() => {
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (dark[y * W + x]) {
       const dx = x - cx, dy = y - cy, d = Math.hypot(dx, dy);
       if (d < rIn - 2) { inner++; if (d > maxD) maxD = d; if (x < tx0) tx0 = x; if (x > tx1) tx1 = x; if (y < ty0) ty0 = y; if (y > ty1) ty1 = y; }
-      else if (d <= rIn + 5) ring++;
+      else if (d <= rIn + Math.max(5, 0.06 * rIn)) ring++;                    // the outline's own stroke (it grows with the picture: ENGBIG drew the pictures twice as big)
       else if (Math.abs(dx) <= 0.32 * rIn + 3 && dy < -0.75 * rIn && dy > -1.6 * rIn) hoop++;      // the hoop above the disc
       else { outside++; if (d > outMaxD) outMaxD = d; if (x < ox0) ox0 = x; if (x > ox1) ox1 = x; if (y < oy0) oy0 = y; if (y > oy1) oy1 = y; }
     }
