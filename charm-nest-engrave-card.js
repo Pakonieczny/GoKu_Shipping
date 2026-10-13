@@ -181,13 +181,13 @@
     const shown = ['front', 'back'].filter(f => piece.faces && piece.faces[f]);
     const face = shown.reduce((a, f) => (!a || (RANK[piece.faces[f].state] || 0) > (RANK[piece.faces[a].state] || 0) ? f : a), '') || 'front';
     const L = root && root.EngraveLink, E = root && root.Engrave, line = lineOf(piece.row);
-    let why = line && line.state === 'gone' ? 'This order has left the pull' : root && root.document && !(L && L.open) && !(E && E.restoreView) ? 'Engraving is not ready' : '';   // (the model alone, with no page, has nothing to wait for)
-    // a piece with no engraving job that none is coming for (on hold, or on no sheet yet): EngraveLink says so in its own plain line, and there is nothing to open
+    let say = false, why = line && line.state === 'gone' ? 'This order has left the pull' : root && root.document && !(L && L.open) && !(E && E.restoreView) ? 'Engraving is not ready' : '';   // (the model alone, with no page, has nothing to wait for)
+    // a piece with no engraving job that none is coming for (on hold, or on no sheet yet): there is nothing to open, and EngraveLink says so in its own plain line inside the open window when it is pressed (`say`)
     if (!why && L && L.resolve && !(piece.jobs || []).length) {
       const any = (piece.jobs || [])[0], t = { rid: piece.rid, key: piece.lineKey, poolId: (any && (any.copies || [])[0]) || (line && (line.poolIds || [])[0]) || '', piece: any ? any.key : '', face };
-      const r = tryDo(() => L.resolve(t), null); if (r && !r.job && r.why) why = r.why;
+      const r = tryDo(() => L.resolve(t), null); if (r && !r.job && r.why) { why = r.why; say = true; }
     }
-    return { face, done: piece.state === 'approved' || piece.state === 'plain', words: piece.state === 'words', ok: !why, why };
+    return { face, done: piece.state === 'approved' || piece.state === 'plain', words: piece.state === 'words', ok: !why, why, say };
   }
   function openHtml(piece) {
     const g = openOf(piece), word = g.done ? OPEN_WORD.view : OPEN_WORD.fix;
@@ -264,7 +264,7 @@
      `.egOpen` wherever it stands (this card, the order window's Sheet view, the sheet window, Review: charm-nest-engraving-seals.js draws the same button), so it looks and answers the same everywhere:
      default / hover (a warmer fill, a darker edge, the arrow steps right) / focus-visible (the app's gold ring) / pressed (one pixel down, darker fill) / disabled (aria-disabled: faded, not-allowed,
      the reason is its title: the app's convention) / loading (aria-busy: the labelled spinner, full strength, progress cursor). The card only sets the button's size (the Approve button's 22px).
-     A thumbnail lifts a pixel on hover, presses down, and has its own focus ring; a thumbnail that cannot open is not-allowed. */
+     A thumbnail darkens its edge and gains a soft shadow on hover (it does not move: a hovered card must not shift under the pointer), presses down one pixel, and has its own focus ring; a thumbnail that cannot open is not-allowed. */
   const NOPE = ':not([aria-disabled=true]):not([aria-busy=true]):not(:disabled)';
   const OPEN_CSS = '.egOpen{transition:background-color .13s ease,border-color .13s ease,opacity .15s ease,transform .08s ease,filter .13s ease}.egOpen span[aria-hidden]{display:inline-block;transition:transform .13s ease}'
     + `.egOpen${NOPE}:hover{opacity:1;background:var(--paper2);border-color:var(--ink25)}.egOpen.gold${NOPE}:hover{background:var(--gold2);border-color:var(--gold2)}.egOpen${NOPE}:hover span[aria-hidden]{transform:translateX(3px)}`
@@ -276,12 +276,12 @@
   const BTN_CSS = '.engOpenRow{display:flex;min-width:0}'
     + '.engCard .egOpen{flex:1 1 auto;min-width:0;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:22px;padding:0 10px;font-size:12px;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
     + '.engThumb{transition:transform .13s ease,border-color .13s ease,box-shadow .17s ease}'
-    + `.engThumb${NOPE}:hover{border-color:var(--ink45);box-shadow:0 4px 12px rgba(20,16,10,.14);transform:translateY(-1px)}.engThumb${NOPE}:active{border-color:var(--ink);box-shadow:none;transform:translateY(1px)}`
+    + `.engThumb${NOPE}:hover{border-color:var(--ink45);box-shadow:0 4px 12px rgba(20,16,10,.14)}.engThumb${NOPE}:active{border-color:var(--ink);box-shadow:none;transform:translateY(1px)}`
     + '.engThumb[aria-disabled=true]{cursor:not-allowed;opacity:.7}'
     // (the room for the button row: the card keeps its height at about 175px at 207px wide, so the three-card row still fits a 1280x720 window without scrolling: a gap less, a pixel less above and below, and the two pictures 80px)
     + '.engCard{gap:3px;padding:6px 7px}@container engc (max-width:215px){.engFaces{grid-template-columns:repeat(2,minmax(0,80px));justify-content:space-between}.engThumb{max-width:80px}}'
     + '@container engc (max-width:150px){.engCard .egOpen{padding:0 4px;font-size:11px}.engCard .egOpen span[aria-hidden]{display:none}.engCard .egOpen[aria-busy=true]{height:auto;min-height:22px;padding:3px 4px;line-height:1.15;white-space:normal;text-align:center}}'   // (a card of 122px, the 1024px window: "Fix in Engraving" on one line without its arrow; while it opens the words may take two lines)
-    + '@media (prefers-reduced-motion:reduce){.engThumb{transition:none}.engThumb:hover,.engThumb:active{transform:none}}';
+    + '@media (prefers-reduced-motion:reduce){.engThumb{transition:none}.engThumb:active{transform:none}}';
   /** The button's states, for every place that draws the button (once per page, at load; the card's own rules go in with the first card). */
   function openCss() {
     const d = root && root.document; if (!d || !d.head || d.getElementById('engOpenCss')) return;
@@ -316,12 +316,15 @@
     const things = () => [...(btn ? [btn] : []), ...el.querySelectorAll('.engFace .engThumb')];
     /** Is the piece openable NOW? Asked again at every press, hover and focus (a piece that was on hold may have reached its sheet since the card was drawn): the button and the pictures follow it. */
     const sync = () => {
-      const g = btn ? openOf(piece) : { ok: true, why: '' };
-      for (const t of things()) { if (g.ok) { if (t.getAttribute('aria-disabled')) { t.removeAttribute('aria-disabled'); t.removeAttribute('title'); } } else { t.setAttribute('aria-disabled', 'true'); t.title = g.why; } }
+      const g = btn ? openOf(piece) : { ok: true, why: '', say: false };
+      for (const t of things()) {
+        if (g.ok || (g.say && t !== btn)) { if (t.getAttribute('aria-disabled')) { t.removeAttribute('aria-disabled'); t.removeAttribute('title'); } }   // (the pictures of a piece with no job keep the card's own tooltip and stay pressable: the press is answered)
+        else { t.setAttribute('aria-disabled', 'true'); t.title = g.why; }
+      }
       return g;
     };
     const press = (face, from) => {
-      if (busy || !sync().ok) return;
+      if (busy) return; const g = sync(); if (!g.ok && !g.say) return;   // (a button that looks off because EngraveLink has no job to open still passes the press on: the link says why, in the open window)
       let run = null;
       try { run = o && o.onOpen ? o.onOpen(face, keyOf(face), from, piece) : null; } catch (e) { tryDo(() => console.warn('engraving card: open', e)); return; }
       if (!run || typeof run.then !== 'function') return;

@@ -6,7 +6,7 @@
 //   1  the button exists on EVERY card (back only, front only, front + back, three discs): a <button type=button>, the old words, one per card, inside the card, nothing spills out of it
 //   2  a press opens the right piece and the right face through the real EngraveLink.open({ rid, key, poolId, piece, face }): the order window closes, the Engrave tab is on THAT job; a thumbnail press
 //      opens its own face; a press on the card's name / words / empty places opens nothing
-//   3  every state differs in the computed styles: default / hover / focus-visible / active (pressed) / disabled (aria-disabled, a title that says why, nothing happens on a press) / loading (the labelled
+//   3  every state differs in the computed styles: default / hover / focus-visible / active (pressed) / disabled (aria-disabled, a title that says why; a press opens nothing, except for a piece with no job to come: EngraveLink answers that press in words) / loading (the labelled
 //      spinner, "Opening Engraving…", full strength, a progress cursor, focus kept, a second press ignored); the same for the thumbnails (hover, pressed, focus ring, cursor)
 //   4  the keyboard: Tab reaches the button and the thumbnails (in that card's order), Enter and Space press them
 //   5  the three older places (the card of the Sheet view / sheet window / Review: charm-nest-engraving-seals.js panel()) draw the SAME button: same classes, same words, same computed look (only the card's
@@ -166,12 +166,14 @@ async function main() {
     await mk({ key: made.both.key, gone: true });
     check(await page.evaluate(s => { const b = document.querySelector(s); return b.getAttribute('aria-disabled') === 'true' && /left the pull/.test(b.title); }, SB), 'disabled for an order that has left the pull: the title says so');
     // nothing to open yet: a piece with no engraving job that none is coming for (on hold, or on no sheet yet): EngraveLink.resolve says why, the button is off with that line as its title,
-    // and it comes on by itself at the next hover or press once the piece has its job (it is asked again each time, never trusted from when the card was drawn)
+    // and it comes on by itself at the next hover or press once the piece has its job (it is asked again each time, never trusted from when the card was drawn). A press on it is still passed on:
+    // EngraveLink answers it with its own plain line inside the open window (engrave-no-job-click.cjs), so a person is told why instead of meeting a dead button; the pictures keep their own tooltip and stay pressable.
     await mk({ key: made.both.key, away: true }); await page.hover(SB); await sleep(200);
     const hold = await page.evaluate(s => { const b = document.querySelector(s); return { aria: b.getAttribute('aria-disabled'), title: b.title, thumb: document.querySelector('#btStage .engThumb').getAttribute('aria-disabled') }; }, SB);
     await page.click(SB, { force: true }); await sleep(100);
     const heldCalls = await page.evaluate(() => window.__btCalls.length);
-    check(hold.aria === 'true' && /on hold and not on a sheet yet/.test(hold.title) && hold.thumb === 'true' && heldCalls === 0, `a piece with no job to come: off, the title says why ("${hold.title}"), a press opens nothing`, { hold, heldCalls });
+    check(hold.aria === 'true' && /on hold and not on a sheet yet/.test(hold.title) && hold.thumb === null && heldCalls === 1, `a piece with no job to come: the button is off, the title says why ("${hold.title}"), a press is passed to EngraveLink to answer, the pictures are not off`, { hold, heldCalls });
+    await page.evaluate(() => { window.__btCalls.length = 0; });
     await page.evaluate(() => { EngraveLink.resolve = () => ({ job: {}, tab: 'place', why: '' }); });
     await page.mouse.move(5, 5); await page.hover(SB); await sleep(200);
     const now = await page.evaluate(s => { const b = document.querySelector(s); return { aria: b.getAttribute('aria-disabled'), title: b.title }; }, SB);

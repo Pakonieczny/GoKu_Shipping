@@ -190,8 +190,10 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     const links = (await calls()).links;
     check(links.length === 1 && JSON.stringify(links[0]) === JSON.stringify({ rid: R1, key: k.r, poolId: pool(R1, 3), piece: k.r, face: 'back' }), 'it called EngraveLink.open({rid, key, poolId, piece, face}) for this piece\'s back: ' + JSON.stringify(links[0]));
     check(await page.evaluate(sel => !document.querySelector(sel), thumb(k.r, 'front')), 'there is no Front thumbnail to press on a back-only piece (ENGSMART: no empty slot)');
-    await page.click(`${cardOf(k.r)} .engName`); await page.waitForFunction(() => __links.length === 2, null, { timeout: 4000 });
-    check((await calls()).links[1].face === 'back' && (await calls()).links[1].key === k.r, 'a press on the piece\'s name opens the same piece on the one face it has: ' + JSON.stringify((await calls()).links[1]));
+    await page.click(`${cardOf(k.r)} .engName`); await page.waitForTimeout(400);
+    check((await calls()).links.length === 1, 'a press on the piece\'s name is not a control (ENGBUTTON: the Engraving button is the way in, not a clickable card): nothing opens');
+    await page.click(`${cardOf(k.r)} .egOpen`); await page.waitForFunction(() => __links.length === 2, null, { timeout: 4000 });
+    check((await calls()).links[1].face === 'back' && (await calls()).links[1].key === k.r, 'the Engraving button opens the same piece on the one face it has: ' + JSON.stringify((await calls()).links[1]));
     check(await page.evaluate(() => OrderWin.isOpen()), 'and the window was left to EngraveLink (it closes it first)');
     await pick(3); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector(`#owEng .engCard[data-key="${k}"][data-state=approved]`), k.g, { timeout: 8000 });
     await page.click(thumb(k.g, 'back')); await page.waitForFunction(() => __links.length === 3, null, { timeout: 4000 });
