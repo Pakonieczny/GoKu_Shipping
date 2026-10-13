@@ -181,7 +181,12 @@
     const shown = ['front', 'back'].filter(f => piece.faces && piece.faces[f]);
     const face = shown.reduce((a, f) => (!a || (RANK[piece.faces[f].state] || 0) > (RANK[piece.faces[a].state] || 0) ? f : a), '') || 'front';
     const L = root && root.EngraveLink, E = root && root.Engrave, line = lineOf(piece.row);
-    const why = line && line.state === 'gone' ? 'This order has left the pull' : root && root.document && !(L && L.open) && !(E && E.restoreView) ? 'Engraving is not ready' : '';   // (the model alone, with no page, has nothing to wait for)
+    let why = line && line.state === 'gone' ? 'This order has left the pull' : root && root.document && !(L && L.open) && !(E && E.restoreView) ? 'Engraving is not ready' : '';   // (the model alone, with no page, has nothing to wait for)
+    // a piece with no engraving job that none is coming for (on hold, or on no sheet yet): EngraveLink says so in its own plain line, and there is nothing to open
+    if (!why && L && L.resolve && !(piece.jobs || []).length) {
+      const any = (piece.jobs || [])[0], t = { rid: piece.rid, key: piece.lineKey, poolId: (any && (any.copies || [])[0]) || (line && (line.poolIds || [])[0]) || '', piece: any ? any.key : '', face };
+      const r = tryDo(() => L.resolve(t), null); if (r && !r.job && r.why) why = r.why;
+    }
     return { face, done: piece.state === 'approved' || piece.state === 'plain', words: piece.state === 'words', ok: !why, why };
   }
   function openHtml(piece) {
@@ -275,7 +280,7 @@
     + '.engThumb[aria-disabled=true]{cursor:not-allowed;opacity:.7}'
     // (the room for the button row: the card keeps its height at about 175px at 207px wide, so the three-card row still fits a 1280x720 window without scrolling: a gap less, a pixel less above and below, and the two pictures 80px)
     + '.engCard{gap:3px;padding:6px 7px}@container engc (max-width:215px){.engFaces{grid-template-columns:repeat(2,minmax(0,80px));justify-content:space-between}.engThumb{max-width:80px}}'
-    + '@container engc (max-width:150px){.engCard .egOpen{height:auto;min-height:22px;padding:3px 6px;font-size:11px;line-height:1.15;white-space:normal;text-align:center}}'
+    + '@container engc (max-width:150px){.engCard .egOpen{padding:0 4px;font-size:11px}.engCard .egOpen span[aria-hidden]{display:none}.engCard .egOpen[aria-busy=true]{height:auto;min-height:22px;padding:3px 4px;line-height:1.15;white-space:normal;text-align:center}}'   // (a card of 122px, the 1024px window: "Fix in Engraving" on one line without its arrow; while it opens the words may take two lines)
     + '@media (prefers-reduced-motion:reduce){.engThumb{transition:none}.engThumb:hover,.engThumb:active{transform:none}}';
   /** The button's states, for every place that draws the button (once per page, at load; the card's own rules go in with the first card). */
   function openCss() {
@@ -306,11 +311,17 @@
    *  Engraving button (the Engrave tab's own: o.approve === false) is only a face picker: a press calls onOpen and nothing waits. A piece that cannot be opened (openOf: not ready, order gone)
    *  keeps its button, greyed and not pressable, with the reason as its title (the app's aria-disabled button). */
   function wireOpen(el, piece, o) {
-    const btn = el.querySelector('.egOpen'), g = btn ? openOf(piece) : { ok: true, why: '' };
-    let busy = false;
+    const btn = el.querySelector('.egOpen'); let busy = false;
     const keyOf = face => (piece.faces[face] && piece.faces[face].key) || jobKey(piece.lineKey, piece.slot, face);
+    const things = () => [...(btn ? [btn] : []), ...el.querySelectorAll('.engFace .engThumb')];
+    /** Is the piece openable NOW? Asked again at every press, hover and focus (a piece that was on hold may have reached its sheet since the card was drawn): the button and the pictures follow it. */
+    const sync = () => {
+      const g = btn ? openOf(piece) : { ok: true, why: '' };
+      for (const t of things()) { if (g.ok) { if (t.getAttribute('aria-disabled')) { t.removeAttribute('aria-disabled'); t.removeAttribute('title'); } } else { t.setAttribute('aria-disabled', 'true'); t.title = g.why; } }
+      return g;
+    };
     const press = (face, from) => {
-      if (busy || !g.ok) return;
+      if (busy || !sync().ok) return;
       let run = null;
       try { run = o && o.onOpen ? o.onOpen(face, keyOf(face), from, piece) : null; } catch (e) { tryDo(() => console.warn('engraving card: open', e)); return; }
       if (!run || typeof run.then !== 'function') return;
@@ -321,10 +332,10 @@
     for (const fe of el.querySelectorAll('.engFace')) {
       const face = fe.dataset.face, th = fe.querySelector('.engThumb'); if (!th) continue;
       th.setAttribute('aria-label', btn ? `${faceTitle(face)} engraving of ${piece.title}: open in Engraving` : `${faceTitle(face)} engraving of ${piece.title}`);
-      if (!g.ok) { th.setAttribute('aria-disabled', 'true'); th.title = g.why; }
       th.addEventListener('click', () => press(face, th));
     }
     if (btn) btn.addEventListener('click', () => press(btn.dataset.face || openOf(piece).face, btn));
+    if (btn) { sync(); for (const t of things()) { t.addEventListener('pointerenter', sync); t.addEventListener('focus', sync); } }
   }
   /** The card as an element, drawn and filled; `onOpen(face, key, btn, piece)` is told of a press on the Engraving button or on a face's thumbnail. */
   function card(piece, o) {

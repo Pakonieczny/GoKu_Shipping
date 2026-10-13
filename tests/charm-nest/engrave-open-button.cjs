@@ -72,7 +72,7 @@ async function main() {
         check(c.inside && c.spill <= 0, `${id}: the button sits inside the card and nothing spills out of it`, { inside: c.inside, spill: c.spill });
         console.log(`  info ${id}: faces shown ${c.faces.join('+')} (which faces a card shows is ENGSMART's; the button is on every card whatever they are)`);
         check(c.thumbs.every(t => t.tag === 'BUTTON' && t.type === 'button' && t.tab === 0 && /engraving of .+: open in Engraving/.test(t.label || '')), `${id}: each thumbnail is a real focusable button with its own name (aria-label)`, c.thumbs);
-        check(c.h <= 180 && c.h >= 150 && c.w > 190 && c.w < 215, `${id}: the card is ${Math.round(c.h)}px tall at ${Math.round(c.w)}px wide (about 175)`);
+        check(c.h <= 180 && c.h >= 120 && c.w > 190 && c.w < 215, `${id}: the card is ${Math.round(c.h)}px tall at ${Math.round(c.w)}px wide (175 with two pictures, less with one)`);
       }
       check(await page.evaluate(() => [...document.querySelectorAll('#owEng > .engCard')].every(c => c.querySelectorAll('.egOpen').length === 1) && !document.querySelector('#owEng .engCard a[href], #owEng .engCard [role=link]')), `${n}: one button per card, no link or role=link stand-in`);
     }
@@ -138,15 +138,15 @@ async function main() {
     const mk = opts => page.evaluate(async o => {
       document.querySelectorAll('#btStage').forEach(n => n.remove());
       const C = CharmNestEngraveCard, row = B.orders.byKey.get(o.key), ps = C.piecesOf([row], { nameOf: () => 'SCHRODINGER CAT 2', isWorking: j => Engrave.isWorking(j) }), p0 = ps[0];
-      const saved = { L: window.EngraveLink, rv: Engrave.restoreView };
-      if (o.notReady) { window.EngraveLink = undefined; Engrave.restoreView = undefined; }
-      const piece = o.gone ? Object.assign({}, p0, { row: Object.create(row, { state: { value: 'gone' } }) }) : p0;
+      if (window.__btSaved) { window.EngraveLink = window.__btSaved.L; Engrave.restoreView = window.__btSaved.rv; window.__btSaved = null; }   // (what an earlier call took away is given back)
+      if (o.notReady) { window.__btSaved = { L: window.EngraveLink, rv: Engrave.restoreView }; window.EngraveLink = undefined; Engrave.restoreView = undefined; }   // (the page has no way to open Engraving: until the next call)
+      let piece = o.gone ? Object.assign({}, p0, { row: Object.create(row, { state: { value: 'gone' } }) }) : p0;
+      if (o.away) { piece = Object.assign({}, p0, { jobs: [] }); window.__realResolve = window.__realResolve || EngraveLink.resolve; EngraveLink.resolve = () => ({ job: null, tab: null, why: 'This piece is on hold and not on a sheet yet, so there is no engraving to open.' }); }
       window.__btCalls = []; window.__btRelease = null;
       const stage = document.createElement('div'); stage.id = 'btStage'; stage.style.cssText = 'position:fixed;left:30px;top:200px;width:207px;z-index:2147483000;background:#fffefb';
       document.body.append(stage);
       const el = C.card(piece, { onOpen: (face, key, btn) => { window.__btCalls.push([face, key, btn.className.split(' ')[0]]); return o.pending ? new Promise(r => { window.__btRelease = r; }) : null; } });
       stage.append(el); C.repaint(stage);
-      window.EngraveLink = saved.L; Engrave.restoreView = saved.rv;
       return { n: stage.querySelectorAll('.egOpen').length };
     }, opts);
     const SB = '#btStage .egOpen', ST = '#btStage .engFace[data-face=back] .engThumb';
@@ -165,6 +165,19 @@ async function main() {
     check(noCalls, 'a press on the disabled button and on its thumbnails opens nothing');
     await mk({ key: made.both.key, gone: true });
     check(await page.evaluate(s => { const b = document.querySelector(s); return b.getAttribute('aria-disabled') === 'true' && /left the pull/.test(b.title); }, SB), 'disabled for an order that has left the pull: the title says so');
+    // nothing to open yet: a piece with no engraving job that none is coming for (on hold, or on no sheet yet): EngraveLink.resolve says why, the button is off with that line as its title,
+    // and it comes on by itself at the next hover or press once the piece has its job (it is asked again each time, never trusted from when the card was drawn)
+    await mk({ key: made.both.key, away: true }); await page.hover(SB); await sleep(200);
+    const hold = await page.evaluate(s => { const b = document.querySelector(s); return { aria: b.getAttribute('aria-disabled'), title: b.title, thumb: document.querySelector('#btStage .engThumb').getAttribute('aria-disabled') }; }, SB);
+    await page.click(SB, { force: true }); await sleep(100);
+    const heldCalls = await page.evaluate(() => window.__btCalls.length);
+    check(hold.aria === 'true' && /on hold and not on a sheet yet/.test(hold.title) && hold.thumb === 'true' && heldCalls === 0, `a piece with no job to come: off, the title says why ("${hold.title}"), a press opens nothing`, { hold, heldCalls });
+    await page.evaluate(() => { EngraveLink.resolve = () => ({ job: {}, tab: 'place', why: '' }); });
+    await page.mouse.move(5, 5); await page.hover(SB); await sleep(200);
+    const now = await page.evaluate(s => { const b = document.querySelector(s); return { aria: b.getAttribute('aria-disabled'), title: b.title }; }, SB);
+    await page.click(SB); await sleep(100);
+    check(now.aria === null && now.title === '' && await page.evaluate(() => window.__btCalls.length === 1), 'and once the piece has its job the button is on again at the next hover, and a press opens it', now);
+    await page.evaluate(() => { EngraveLink.resolve = window.__realResolve; });
     // loading
     await mk({ key: made.both.key, pending: true }); await away();
     await page.focus(SB); const before = await look(page, SB);
