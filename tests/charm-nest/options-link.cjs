@@ -88,7 +88,7 @@ async function cloud() {
     r = await post({ op: 'listingSkus', listingIds: ids, sandbox: true });
     assert.equal(r.etsyCalls, 6); assert.equal(r.why, 'batch'); assert.equal(asked.length, 6);
     r = await post({ op: 'listingSkus', listingIds: ids, sandbox: true });
-    assert.equal(r.etsyCalls, 4); assert.equal(asked.length, 10); assert.equal(new Set(asked).size, 10, 'each listing exactly once'); assert.deepEqual(r.cap, { used: 10, max: 60 }); assert.deepEqual(r.sandboxCap, { used: 10, max: 30 });
+    assert.equal(r.etsyCalls, 4); assert.equal(asked.length, 10); assert.equal(new Set(asked).size, 10, 'each listing exactly once'); assert.deepEqual(r.cap, { used: 10, max: 60 }); assert.deepEqual(r.sandboxCap, { used: 10, max: 60 });
     r = await post({ op: 'listingSkus', listingIds: ids });
     assert.equal(r.etsyCalls, 0); assert.equal(asked.length, 10, 'production finds the tables the sandbox stored: a stored table is not asked of Etsy again');
     r = await get({ op: 'listingSkus', listingIds: ids.join(','), cacheOnly: '1' });

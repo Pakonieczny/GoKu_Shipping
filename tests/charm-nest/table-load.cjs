@@ -14,7 +14,7 @@
 //  OPTLINK lines: "Zodiac REVAMP", "Birth_6106") or none can be read only through the listing's table, and that table now loads in the sandbox too.
 //
 //  the fix this test pins: the sandbox asks Etsy for what its waiting lines need, inside the SAME caps (6 a request, 60 a day for the shop, one GET per
-//  listing per 7 days, the sandbox at most 30 of the 60), stores the shop's table (production finds it), the page asks six listings a request, the wanted
+//  listing per 7 days, the sandbox, since SBCAP, the whole day's 60), stores the shop's table (production finds it), the page asks six listings a request, the wanted
 //  ones first (an option question before a missing SKU before a font/count question; the oldest order first), reads each answer at once (the rows clear
 //  with nothing saved by a person), shows a labelled spinner while it asks and one plain line when it could not, and never retries in a loop.
 // No network, no Etsy, no AI.   node tests/charm-nest/table-load.cjs
@@ -97,7 +97,7 @@ async function cloud() {
   await withHandler(w, async post => {
     const ids = PAUL.slice();
     let r = await post({ op: 'listingSkus', listingIds: ids, sandbox: true });
-    assert.equal(r.etsyCalls, 3); assert.deepEqual(r.pending, []); assert.equal(r.why, null); assert.deepEqual(w.asked, ids); assert.deepEqual(r.sandboxCap, { used: 3, max: 30 }); assert.deepEqual(r.cap, { used: 3, max: 60 });
+    assert.equal(r.etsyCalls, 3); assert.deepEqual(r.pending, []); assert.equal(r.why, null); assert.deepEqual(w.asked, ids); assert.deepEqual(r.sandboxCap, { used: 3, max: 60 }); assert.deepEqual(r.cap, { used: 3, max: 60 });
     for (const id of ids) assert(r.tables[id] && r.tables[id].products.length, id + ' came back with its products');
     assert(w.store.has('Charm_Listing_Skus/1160815385') && !w.store.has('Sandbox_Charm_Listing_Skus/1160815385'), 'stored where production reads it (the shop\'s cache, not a sandbox copy)');
     assert.deepEqual(w.budget(), Object.assign({}, w.budget(), { n: 3, sb: 3 }));
@@ -109,22 +109,17 @@ async function cloud() {
   });
   ok('cloud: the sandbox asks Etsy once for a listing nothing stored, stores the shop\'s table; production and the next sandbox ask cost no Etsy call; cacheOnly still asks nothing');
 
-  // (b) 6 a request, and the sandbox may spend 30 of the day's 60; production keeps the other 30
+  // (b) 6 a request; SBCAP (13 Oct 2026): the sandbox has no share of its own, it may spend the day's whole 60 (then the day says "day"), and production finds nothing left
   w = world();
   await withHandler(w, async post => {
-    const ids = Array.from({ length: 40 }, (_, i) => String(5000000 + i));
+    const ids = Array.from({ length: 70 }, (_, i) => String(5000000 + i));
     let calls = 0, last;
-    for (let i = 0; i < 40; i += 6) { last = await post({ op: 'listingSkus', listingIds: ids.slice(i, i + 6), sandbox: true }); calls += last.etsyCalls; assert(last.etsyCalls <= 6); if (last.why === 'sandbox') break; }
-    assert.equal(calls, 30, 'the sandbox stops at 30 calls'); assert.equal(last.why, 'sandbox'); assert(last.pending.length > 0 && last.etsyCalls === 0); assert.deepEqual(last.sandboxCap, { used: 30, max: 30 });
-    assert.equal(w.asked.length, 30);
-    // production still gets its half, and the day's 60 stay one count for the shop
-    const prodIds = Array.from({ length: 40 }, (_, i) => String(6000000 + i)); let prod = 0, r;
-    for (let i = 0; i < 40; i += 6) { r = await post({ op: 'listingSkus', listingIds: prodIds.slice(i, i + 6) }); prod += r.etsyCalls; if (r.why === 'day') break; }
-    assert.equal(prod, 30, 'production gets the other 30'); assert.equal(r.why, 'day'); assert.deepEqual(r.cap, { used: 60, max: 60 }); assert.equal(w.asked.length, 60);
-    r = await post({ op: 'listingSkus', listingIds: ['7000001'], sandbox: true }); assert.equal(r.etsyCalls, 0); assert.equal(r.why, 'day', 'a spent day says "day" first');
-    assert.equal(w.budget().sb, 30, 'production\'s calls are not the sandbox\'s');
+    for (let i = 0; i < 70; i += 6) { last = await post({ op: 'listingSkus', listingIds: ids.slice(i, i + 6), sandbox: true }); calls += last.etsyCalls; assert(last.etsyCalls <= 6); if (last.why === 'day') break; }
+    assert.equal(calls, 60, 'the sandbox goes past 30 and stops only at the day\'s 60'); assert.equal(last.why, 'day'); assert(last.pending.length > 0 && last.etsyCalls === 0); assert.deepEqual(last.sandboxCap, { used: 60, max: 60 }); assert.deepEqual(last.cap, { used: 60, max: 60 });
+    assert.equal(w.asked.length, 60);
+    const r = await post({ op: 'listingSkus', listingIds: ['7000001'] }); assert.equal(r.etsyCalls, 0); assert.equal(r.why, 'day', 'production finds the day spent');
   });
-  ok('cloud: 6 Etsy calls a request; the sandbox stops at 30 of the shop\'s 60 a day (why "sandbox"), production keeps the rest, and the day says "day"');
+  ok('cloud: 6 Etsy calls a request; the sandbox has no share of its own and stops only at the shop\'s 60 a day (why "day")');
 
   // (c) the order Etsy is asked in: no table at all, then a table missing the names a line needs, then a week-old one; the page's order inside each group
   w = world(); const now = Date.UTC(2026, 9, 11, 12, 0, 0);
@@ -244,11 +239,11 @@ async function page() {
   const until = Math.min(...[...s.block.tableTry.values()].map(t => t.until)); assert(until > s.clock() && until <= s.clock() + DAY + 60000, 'asked again after midnight UTC');
   ok('page: the shop\'s 60 used: one request, one plain line (budget used up, asked again after midnight UTC), nothing retried');
 
-  // (4) the sandbox's 30 of the 60 are used
+  // (4) SBCAP (13 Oct 2026): the sandbox has no share of its own; 30 of its calls spent is no reason to stop, the day's 60 is the only stop
   s = await mk({}); s.w.store.set('Charm_Listing_Skus/_budget', { day: today(), n: 30, sb: 30, at: Date.now() });
   await s.block.askTables();
-  assert.equal(s.w.asked.length, 0); assert.match(s.block.tableNoteHtml([s.B.orders.rows[SCORPIO]]), /sandbox&#39;s share of today&#39;s Etsy look-ups \(30 of 60\) is used up/);
-  ok('page: the sandbox\'s share (30 of 60) used: says so, asks nothing');
+  assert(s.w.asked.length > 0, 'the sandbox still asks after 30 calls'); assert.doesNotMatch(s.block.tableNoteHtml([s.B.orders.rows[SCORPIO]]), /sandbox&#39;s share/);
+  ok('page: the sandbox with 30 calls spent still asks (no share of its own)');
 
   // (5) the cloud does not answer at all
   s = await mk({ netDown: true }); await s.block.askTables();
