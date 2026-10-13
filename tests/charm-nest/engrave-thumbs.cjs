@@ -87,6 +87,13 @@ function install() {
     ok('the front words are real text in the chosen font (Ace, capitals)', f.front.text === 'W' && /CNEng jost-ace/.test(f.front.family) && f.front.vis === 'visible');
     ok('the back words are real text in the chosen font', f.back.text.replace(/\s+/g, ' ') === 'NAME ONE' && /CNEng jost-ace/.test(f.back.family));
     ok('the picture is the charm itself: no flip applied to a drawing that is already turned', f.back.flip === null && f.back.pic === 'frame');
+    {   // the words are laid in the lines the CUT has (the fit's own layout: Ace puts a two-word name on two lines), not in the one line they were typed in
+      const L = await page.evaluate(key => {
+        const j = Engrave.jobsOf(B.orders.byKey.get(key)).find(x => x.face !== 'front'), t = document.querySelector('#owEng .engCard .engFace[data-face="back"] .engpvText');
+        return { fit: j && j.fit && (j.fit.lines || j.lines), shown: t ? t.textContent.split('\n') : null };
+      }, made.both.key);
+      ok('the back words are shown in the fit\'s own lines ' + JSON.stringify(L), L.fit && L.shown && L.fit.length > 1 && L.fit.length === L.shown.length && L.fit.every((s, i) => s.toUpperCase() === L.shown[i].toUpperCase()));
+    }
     if (shots) { const clip = await page.evaluate(() => { const r = document.getElementById('owEng').getBoundingClientRect(); return { x: Math.max(0, r.x - 6), y: r.y - 6, width: Math.min(r.width + 12, 760), height: r.height + 12 }; }); await R.shot(w, 'THUMB-order-both', { clip }); }
 
     await R.openOrderWindow(w, 'tag'); await settleFonts();
@@ -160,6 +167,7 @@ function install() {
     const thumbs = () => page.evaluate(() => { const g = f => { const t = document.querySelector(`.engpCard .engFace[data-face="${f}"] .engThumb`); return t ? { text: (t.querySelector('.engpvText') || {}).textContent, fam: getComputedStyle(t.querySelector('.engpvText') || document.body).fontFamily, style: (t.querySelector('.engpvText') || { getAttribute() { return ''; } }).getAttribute('style'), canvas: !!t.querySelector('.engpvDraw canvas'), state: (t.querySelector('.engpv') || {}).dataset && t.querySelector('.engpv').dataset.state } : null; }; return { front: g('front'), back: g('back') }; });
     let t0 = await thumbs();
     ok('the detail card shows the charm in both boxes', t0.front && t0.back && t0.front.canvas && t0.back.canvas);
+    ok('the detail opens on the lines the cut has (Ace: NAME over ONE), the words typed after that are shown as typed: ' + JSON.stringify(t0.back.text), t0.back.text === 'NAME\nONE');
     if (shots) { await R.shot(w, 'THUMB-detail-both'); }
     await page.waitForTimeout(800); requests.length = 0;   // (what the page itself still fetches after opening: not counted)
     const tick = await page.evaluate(async () => {

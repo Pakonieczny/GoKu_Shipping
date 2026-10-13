@@ -18,6 +18,7 @@
  *   positionOf(job, o?) -> { x, y, size, angle } | null   (ENGTHUMB, round 2) where the job's words sit on the picture this file draws of that job's face: the job's fit (job.fit, or job.writtenFit for a
  *                                 written piece that let go of its geometry) as a fraction of the picture's box; angle counter-clockwise as job.fit.angle. null: no placement yet (the words are then centred)
  *   frameFor(o) -> frame | null    the charm's geometry as this face is cut (the work area's own frame: charm-nest-geom.js backView turned over for the back, the front as it is, long charms laid flat)
+ *   fitLinesOf(o, fontId) -> lines | null   the lines the job's own fit laid the words in (Ace: NAME over ONE) when o.text and the font are the job's own (that is what is cut); null once words or font were changed
  *   fontStatus(fontId) 'idle'|'loading'|'ready'|'failed' · layoutOf(o) · CAP_PER_EM · linesOf
  *
  * o / partial
@@ -119,6 +120,14 @@
   function layoutOf(o) {
     const lines = linesOf(o && o.lines), cap = num(o && o.capPerEm, 0.7), gap = num(o && o.lineGap, GAP), totalH = lines.length ? lines.length * cap + (lines.length - 1) * gap : 0;
     return { cap, gap, pitch: cap + gap, totalH, rows: lines.map((text, i) => ({ text, y: totalH / 2 - cap - i * (cap + gap) })) };
+  }
+  const runOf = v => linesOf(v).join(' ').toLocaleLowerCase('en-US');   // the words as one run (case and line breaks aside)
+  /** The lines the job's own fit laid the words in (Ace: NAME over ONE), when the words and the font shown are the job's own: that is what the laser cuts, so that is what the picture shows. Words or a font typed since are shown as typed. */
+  function fitLinesOf(o, id) {
+    const j = o && o.job, f = j && (j.fit || j.writtenFit); if (!f) return null;
+    const mine = linesOf(f.lines && f.lines.length ? f.lines : j.lines); if (!mine.length) return null;
+    if (runOf(o.text) !== runOf(mine) || (j.fontKey && idOf(j.fontKey) !== id)) return null;
+    return mine;
   }
   const METRICS = new Map();
   /** How far the browser's own line box puts the letters below where the job's capital-centred block would: (ascent - descent - cap) / 2 em, from the font as loaded (0 when the browser cannot say). */
@@ -340,7 +349,7 @@
       // where the words go: the position (merged key by key over the middle), the size from the picture box's height
       const p = Object.assign({}, AUTO, st.pos || {}), size = num(o.size, NaN), em = Number.isFinite(size) && size > 0 && !(st.pos && Number.isFinite(+st.pos.size)) ? size : num(p.size, AUTO.size), angle = num(p.angle, 0);
       const x = num(p.x, AUTO.x), y = num(p.y, AUTO.y);
-      let lines = src.baked ? [] : linesOf(o.text); if (lines.length && O && O.fontCaps && O.fontCaps(id)) lines = lines.map(l => (O.capsText ? O.capsText(l, id) : l.toLocaleUpperCase('en-US')));
+      let lines = src.baked ? [] : (fitLinesOf(o, id) || linesOf(o.text)); if (lines.length && O && O.fontCaps && O.fontCaps(id)) lines = lines.map(l => (O.capsText ? O.capsText(l, id) : l.toLocaleUpperCase('en-US')));
       N.root.dataset.state = src.baked ? 'baked' : lines.length ? 'ready' : 'empty';
       const pos = `left:${+(x * 100).toFixed(3)}%;top:${+(y * 100).toFixed(3)}%;`;
       if (src.baked) { N.slot.hidden = true; N.text.hidden = true; N.text.textContent = ''; N.root.dataset.size = ''; return; }   // (a saved picture has its words in it already)
@@ -410,5 +419,5 @@
     return { unlink() { for (const f of offs.splice(0)) f(); }, sync: go };
   }
 
-  return { render, update, ensure, ready, fontFamilyOf, fontIdOf, warm, link, positionOf, frameFor, fontStatus: statusOf, layoutOf, CAP_PER_EM, linesOf };
+  return { render, update, ensure, ready, fontFamilyOf, fontIdOf, warm, link, positionOf, frameFor, fontStatus: statusOf, layoutOf, CAP_PER_EM, linesOf, fitLinesOf };
 });
