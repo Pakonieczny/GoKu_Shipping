@@ -2227,6 +2227,8 @@
        on a necklace is still one piece of the first design (twoNamed above), and an earring line keeps the Left and Right it always had. */
     const aliasSet = o.members && o.members.source === "alias" && Array.isArray(o.members.members) && o.members.members.length === 2 ? o.members.members.map(m => upSku(m && m.sku)) : null;
     if (aliasSet && aliasSet[0] && aliasSet[1] && aliasSet[0] !== aliasSet[1] && !info.earring && soldAs !== "single") { delete info.twoNamed; delete info.twoBodies; info.set = { designs: aliasSet, source: "alias" }; }
+    // SETBAR (section 3c2): a listing a RULE IN CODE says sells a set of exact designs (SET_RULES): the same set, read from the rule (a person's saved pair above stands first; a person's own pick of another design for the line ends the rule)
+    else if (!info.earring && soldAs !== "single") { const rs = setFactsOf(line, o.sku); if (rs) { delete info.twoNamed; delete info.twoBodies; info.set = rs; } }
     if (earForm) info.earForm = earForm;
     if (askWords && !earForm && !(ansWords && ansWords.field === "ignore")) info.asks.push({ name: EARS_OPT, value: askWords.value, guess: 0, why: askWords.why, rule: "ear:words" });
     // a line that says two different designs but names ONE waits for a person (never guessed): the second design, or "the same on both ears" (the answer under SECOND_OPT)
@@ -2261,7 +2263,8 @@
     if (info.second) info.notes.push(info.second.answered === "same" ? (info.second.by === "note" ? `the line says two different designs: ${info.second.why}` : "the line says two different designs: a person said the same design on both ears") : info.second.viaOption ? `waits for the second symbol's charm: ${info.second.why}` : "the line says two different designs but names one: it waits until a person names the second design or says it is the same on both ears");
     else if (sig.says && !info.mismatched) info.notes.push("the line says two different designs but is not an earring pair: nothing is changed");
     if (info.mismatched && info.source === "alias") info.notes.push("the Left and the Right are the two designs a person saved for this listing and SKU");
-    if (info.set) info.notes.push(`two designs a person saved for this listing and SKU, ${info.set.designs.join(" and ")}: two pieces of one order line, no Left or Right, nothing mirrored`);
+    if (info.set && info.set.source === "rule") info.notes.push(`a set of ${info.set.designs.length} designs (${info.set.rule}): ${info.set.designs.map((d, i) => `${info.set.roles[i] ? info.set.roles[i] + " " : ""}${d}`).join(" and ")}, one of each for every set bought: two pieces of one order line, no Left or Right, nothing mirrored${info.set.lengths.length === 2 ? `; the pair of necklaces is ${info.set.lengths.join(" and ")}` : ""}`);
+    else if (info.set) info.notes.push(`two designs a person saved for this listing and SKU, ${info.set.designs.join(" and ")}: two pieces of one order line, no Left or Right, nothing mirrored`);
     // (the same outline twice, two keys or two mittens, on a line that is not an earring pair: ONE charm. A single earring that names no ear is such a line too.)
     // (a design a person named as ONE body, the wolf of WOLF.ai, is the same, with its own words: the master draws a wolf and a moon, the necklace charm is the wolf)
     if ((info.twoBodies || (info.single && info.mismatched && !info.sideSaid)) && alikeKnown(o)) { const nm = namedOne(o); info.oneBody = nm ? { index: nm.index, count: 2, rule: "a person's word" } : { index: 0, count: 2, rule: "the left body" }; }
@@ -2333,6 +2336,111 @@
     const p = x && x.spec && x.spec.pair ? x.spec.pair : x && x.pair && typeof x.pair === "object" ? x.pair : x;
     const d = p && !p.earring && !p.glued && !p.legacy && p.set && Array.isArray(p.set.designs) ? p.set.designs.map(v => String(v || "")) : null;
     return d && d.length >= 2 && d.every(Boolean) && new Set(d).size === d.length ? d : null;
+  }
+  /* ═══ 3c2 · a LISTING that sells a SET of exact designs: a rule in code (SETBAR, Paul, 13 Oct 2026, order 4202291826) ═══════════════════════════════════
+     Paul: "This listing in particular is for a set of 2 bars, the bar chosen by the system was accurate but was missing the other smaller bar." Etsy listing 532401548 (SKU BAR_1548, "Bar Necklace SET of 2",
+     CustomBrites) sells TWO necklaces, one bar each, two chain lengths (Necklace Length·FONT: 16"&18"·Set·ANGELINA), Metal · #Characters?: GOLD·Set·ENGRAVED / BLANK. The library holds the large bar BAR_1548
+     (25.9 x 4.9 mm, one body, file BAR_9501.ai) and the small bar SKINNY_0191 (25.9 x 3.9 mm, SKINNY MINI BAR_6654 is its other name): each set bought is BOTH, one of each, two pieces of ONE order line.
+     It is the SAME model as the pair of designs a person saves for a necklace (SIBLINGS / SCHROLINK: spec.pair.set, read above by pairInfo; the pool, the pictures and the engraving slots D1 and D2 already read it),
+     only the source is this table instead of a saved link. NOTHING is read from words: a row names the listing id AND the Etsy SKU and says the exact master SKUs, in order (the first is the design the line
+     itself is, so piece 1 of every set is that design). No exact match = no match: another listing, another SKU, or a line a person pointed at another design is not touched, and an earring line never is.
+     A design a row names that is not in the master holds the line (unmatchedSku), it is never made as the first bar alone. A line pooled before the row existed keeps the pieces it has (pinPieces; the bridge's
+     noticeSet offers nothing for a rule): the row applies to lines read from now on and to a line a person takes off and makes up again (Hold, Release hold).
+     TO UNDO: delete the row. Everything below is derived from it.
+       listings / skus   the Etsy listing id(s) and the transaction SKU(s) the row is for (both must match)
+       designs           [{ sku, role, label, thickness }] the exact master designs, one piece each per set, piece 1 first. role "large" | "small" (the words the pieces carry); thickness "thicker" | "thinner" (measured on the
+                         master: BAR_1548 13.916 pt = 4.9 mm, SKINNY_0191 11.004 pt = 3.9 mm, both 73.4 pt = 25.9 mm long; tests/charm-nest/set-bar.cjs checks the row against the fixture). */
+  const SET_RULES = Object.freeze([
+    Object.freeze({ id: "BAR_1548-SET", listings: Object.freeze(["532401548"]), skus: Object.freeze(["BAR_1548"]),
+      words: "Etsy listing 532401548, Bar Necklace SET of 2: a large bar and a small bar, one of each for every set",
+      designs: Object.freeze([Object.freeze({ sku: "BAR_1548", role: "large", label: "Large bar", thickness: "thicker" }), Object.freeze({ sku: "SKINNY_0191", role: "small", label: "Small bar", thickness: "thinner" })]) })
+  ]);
+  const SET_BY_LISTING = new Map(); for (const r of SET_RULES) for (const l of r.listings) SET_BY_LISTING.set(String(l), r);
+  /** The SET_RULES row a line is under, or null: the listing id AND the Etsy SKU both name it. `design` (the design the line resolved to, when asked) must be the row's first one: a line a person pointed at another design is not a set.
+   *  line: an order line (listingId, sku), or a row / spec carrying one. */
+  function setRuleOf(line, design) {
+    const l = line && typeof line === "object" ? (line.line && typeof line.line === "object" ? line.line : line) : null;
+    const rule = l ? SET_BY_LISTING.get(String(l.listingId != null ? l.listingId : l.listing_id != null ? l.listing_id : "").trim()) : null;
+    if (!rule) return null;
+    const tx = upSku(l.sku != null ? l.sku : l.boughtSku);
+    if (!tx || !rule.skus.some(s => upSku(s) === tx)) return null;
+    if (design !== undefined && upSku(design) !== upSku(rule.designs[0].sku)) return null;
+    return rule;
+  }
+  const SET_LENGTH = /(\d{1,2}(?:\.\d)?)\s*(?:"|''|”|″|in\b|inch(?:es)?\b)/gi;
+  /** The two chain lengths a set's necklace-length option names, in the order written: ['16"', '18"'] for 16"&18"·Set·ANGELINA and for the typed 18"& 20"·Set·COMIC; [] when no length option names exactly two
+   *  (CUSTOM · (add note) names none: a person reads the note). The set is bought as a PAIR OF NECKLACES, one for each bar. */
+  function setLengthsOf(line) {
+    for (const v of (line && line.variations) || []) {
+      const name = lvName(v), value = lvValue(v); if (!name || !value || isPersonalisation(name) || !isChainOption(name)) continue;
+      const found = []; for (let m, re = new RegExp(SET_LENGTH.source, "gi"); (m = re.exec(value));) found.push(m[1] + "\"");
+      if (found.length === 2) return found;
+    }
+    return [];
+  }
+  /** What the buyer chose of ENGRAVED or BLANK, in any option's value (GOLD·Set·ENGRAVED, SILVER·Set·BLANK): true | false, null when no value says it or one says both. BLANK is no engraving; the engraving reader holds a BLANK with words for a person. */
+  function setEngravedOf(line) {
+    let yes = false, no = false;
+    for (const v of (line && line.variations) || []) {
+      const name = lvName(v); if (!name || isPersonalisation(name)) continue;
+      for (const part of lvValue(v).split(/\s*[·•|\/,;]\s*|\s+[-–—]\s+/)) { const t = part.trim(); if (/^engraved$/i.test(t)) yes = true; else if (/^blank$/i.test(t)) no = true; }
+    }
+    return yes === no ? null : yes;
+  }
+  /** The set a line is, from SET_RULES: { designs, source: "rule", rule, roles, lengths, engraved, layout: null } (flat arrays of strings only: it is kept in spec.pair.set), or null. */
+  function setFactsOf(line, design) {
+    const rule = setRuleOf(line, design); if (!rule) return null;
+    return { designs: rule.designs.map(d => upSku(d.sku)), source: "rule", rule: rule.id, roles: rule.designs.map(d => d.role), lengths: setLengthsOf(line), engraved: setEngravedOf(line), layout: null };
+  }
+  /** THE BAR-TO-LENGTH RULE (Paul, 13 Oct 2026: "The thinner bar always sits on the shorter chain unless the user special requests a different layout."): which of the pair's two chain lengths each piece of a set hangs on.
+   *  pieces: setPiecesOf's pieces (each says `thickness`: "thinner" | "thicker" | null), or any list of { thickness }; lengths: the pair as written (['16"', '18"']; any order: the shorter is the smaller number).
+   *  → [{ n, sku, role, thickness, length, how }] in the pieces' order: the thinner bar's length is the shorter of the pair, the thicker bar's the longer; length null (how "") for a piece whose thickness is not
+   *  known or when the pair is not exactly two different lengths. The DEFAULT only: a buyer who asks for another layout is held for a person (setLayoutAskOf) and a piece's `length` is then null, this stays its `suggestedLength`. */
+  function barLengthOf(pieces, lengths) {
+    const ls = (Array.isArray(lengths) ? lengths : []).map(String), by = ls.slice().sort((a, b) => parseFloat(a) - parseFloat(b)), two = ls.length === 2 && parseFloat(by[0]) < parseFloat(by[1]);
+    return (Array.isArray(pieces) ? pieces : []).map(p => {
+      const t = p && p.thickness, length = two && t === "thinner" ? by[0] : two && t === "thicker" ? by[1] : null;
+      return { n: p && p.n != null ? p.n : null, sku: p && p.sku || null, role: p && p.role || null, thickness: t || null, length, how: length ? (t === "thinner" ? "the thinner bar on the shorter chain" : "the thicker bar on the longer chain") : "" };
+    });
+  }
+  /* A buyer who asks for a DIFFERENT LAYOUT (SETBAR, Paul 13 Oct: "unless the user special requests a different layout"): a note that names a bar by its size ("thick bar", "the smaller one", "bar 2"), swaps / reverses, puts both bars on one chain
+     or says "layout". The line waits for a person (a needsMapping problem under the pseudo option SET_LAYOUT_OPT, one answer per order line like SECOND_OPT: "ignore" = looked at it, the default layout stands); nothing is guessed from it.
+     Only the buyer's own words are read (the personalisation box, a message, the staff note). A per-length wording ('16"= ... 18"= ...') names no bar and is no request. Over-asking costs a person one look; under-asking would cut the wrong layout. */
+  const SET_LAYOUT_OPT = "Layout of the set";
+  const BAR_SIZE_WORD = "(?:thick(?:er)?|thin(?:ner)?|skinn(?:y|ier)|wid(?:e|er)|narrow(?:er)?|large(?:r)?|big(?:ger)?|small(?:er)?|mini|long(?:er)?|short(?:er)?)";
+  const SET_LAYOUT_WORDS = [
+    new RegExp(`\\b${BAR_SIZE_WORD}\\s+(?:bars?|ones?|pieces?|charms?|plates?)\\b`, "i"),                                       // "the thick bar", "the smaller one"
+    /\bbars?\s*(?:#|no\.?\s*)?(?:1|2|one|two)\b|\b(?:first|second|1st|2nd)\s+bar\b/i,                                           // "bar 2", "the second bar"
+    /\b(?:swap(?:ped|ping)?|switch(?:ed|ing)?|flip(?:ped)?|revers(?:e|ed|ing)|opposite|vice\s*versa|the\s+other\s+way(?:\s+(?:around|round))?|other\s+way\s+(?:around|round))\b/i,
+    /\b(?:both|two)\s+(?:bars?|charms?|pieces?)\s+(?:on|together|in)\b|\b(?:same|one|single)\s+(?:chain|necklace)\b|\bon\s+(?:the\s+)?same\s+chain\b/i,   // "both on one chain"
+    /\b(?:layout|arrangement|configuration)\b/i
+  ];
+  /** What a set's buyer asked for that is a different layout: [the words, clipped] (empty = no request). texts: the buyer's own words (personalisation, message, staff note, messages). */
+  function setLayoutAskOf(texts) {
+    const out = [];
+    for (const t0 of Array.isArray(texts) ? texts : [texts]) {
+      const t = visible(decodeEntities(String(t0 == null ? "" : t0))); if (!t.trim()) continue;
+      for (const rx of SET_LAYOUT_WORDS) { const m = rx.exec(t); if (m) { const i = Math.max(0, m.index - 24); out.push(clip(t.slice(i, m.index + m[0].length + 24).replace(/\s+/g, " ").trim(), 70)); break; } }
+    }
+    return [...new Set(out)];
+  }
+  /** THE PIECE MODEL OF A SET (SETBAR): the pieces of a line that is a set of designs, in the order the pool makes them (copy 1, 2, ...), or null for every other line (a plain line, an earring pair, an old line pinned to the
+   *  pieces it has). x: a line spec, a row { spec, line } or a raw order line (a rule reads it from its listing and SKU, as the stations count it). One entry per piece, 2 x quantity of them: units are sets, so quantity N is N sets:
+   *    { n (1-based piece = pool copy), of (all pieces), unit (1-based set), slot (0 | 1: the piece's place in its set), slotKey ("D1" | "D2": the engraving job slot), sku (the exact master design),
+   *      role ("large" | "small" | null for a set a person saved), label ("Large bar" | "Small bar" | null), thickness ("thicker" | "thinner" | null), lengths (the set's pair of chain lengths as written, [] when none),
+   *      length (the chain length THIS bar hangs on by barLengthOf, or null when the pair is unknown or a different layout was asked for and no person has looked), suggestedLength (barLengthOf's, always),
+   *      layoutAsked (true: the buyer's words ask for another layout), layoutOpen (true: ...and nobody has looked yet: the line waits), engraved (true | false | null: ENGRAVED / BLANK), rule (the row's id, or null), source ("rule" | "alias") }
+   *  Derived, never stored. Each piece is its own piece of the line: its own engraving job (slot D1 / D2), its own Approve, never a Left or Right. */
+  function setPiecesOf(x) {
+    if (!x || typeof x !== "object") return null;
+    const p = pairOf(x), set = setDesignsOf(p); if (!set) return null;
+    const total = pieceCountOf(x), units = unitsOf(x), per = set.length;
+    if (!(total > 0) || total !== units * per) return null;
+    const meta = p.set || {}, rule = meta.source === "rule" ? SET_RULES.find(r => r.id === meta.rule) || null : null, lengths = Array.isArray(meta.lengths) ? meta.lengths.map(String) : [];
+    const lay = meta.layout && typeof meta.layout === "object" ? meta.layout : null, asked = !!(lay && lay.asked), open = asked && !lay.answered;
+    const base = []; for (let i = 0; i < total; i++) { const slot = i % per, d = rule && rule.designs[slot] && upSku(rule.designs[slot].sku) === upSku(set[slot]) ? rule.designs[slot] : null; base.push({ n: i + 1, sku: set[slot], role: d ? d.role : (Array.isArray(meta.roles) && meta.roles[slot]) || null, thickness: d ? d.thickness : null, d, slot }); }
+    const lens = barLengthOf(base, lengths);
+    return base.map((b, i) => ({ n: b.n, of: total, unit: Math.floor(i / per) + 1, slot: b.slot, slotKey: "D" + (b.slot + 1), sku: b.sku, role: b.role, label: b.d ? b.d.label : null, thickness: b.thickness, lengths: lengths.slice(), length: open ? null : lens[i].length, suggestedLength: lens[i].length, layoutAsked: asked, layoutOpen: open, engraved: typeof meta.engraved === "boolean" ? meta.engraved : null, rule: rule ? rule.id : null, source: meta.source || null }));
   }
   const sidesOf = x => piecesOf(x).map(p => p.side);
   /** A mismatched pair whose two bodies the pool could not tell apart is made as the ONE glued copy per unit the app always made (both ears in one
@@ -3157,6 +3265,19 @@
     spec.pieceCount = pieceCountOf(spec);
     spec.pair.kind = kindFor(spec.pair, spec.pieceCount);
     spec.pair.sides = sidesOf(spec);
+    /* SETBAR (section 3c2): a set from the table. A design the row names that the master lacks holds the line (never made as the first bar alone); a buyer who asks for a different layout of the two bars waits for a
+       person (the thinner bar on the shorter chain is the default and stays only the suggestion: spec.pair.set.layout, setPiecesOf's layoutOpen). One answer per order line, "ignore" = the default stands. */
+    if (!quiet && spec.pair.set && spec.pair.set.source === "rule") {
+      const set = spec.pair.set;
+      if (me) for (const d of set.designs.slice(1)) if (!masterSku(d, me, loose)) problems.push({ kind: "unmatchedSku", reason: `the set rule for this listing (${set.rule}) names ${d}, but it is not in any master file: the line waits (it is never made as one piece of ${set.designs[0]})`, sku: d, listingId: String(line.listingId || ""), title: line.title || "", setRule: set.rule });
+      const asked = setLayoutAskOf([].concat(spec.personalization || [], spec.buyerMessage || [], spec.staffNote || [], (spec.messages || []).map(m => m && m.text)));
+      if (asked.length) {
+        const lid = secondId || String(lineKey(order, line)), said = optionLookup(ctx.optionMaps, line.listingId, SET_LAYOUT_OPT, lid);
+        set.layout = { asked: true, answered: !!said, words: asked.slice(0, 3) };
+        const why = `layout requested: the buyer's words ask for another layout of the two bars (“${asked[0]}”): waits for a person. The default, ${(SET_RULES.find(r => r.id === set.rule) || { designs: [] }).designs.map(d => d.thickness === "thinner" ? `the thinner bar (${d.sku}) on the shorter chain` : d.thickness === "thicker" ? `the thicker bar (${d.sku}) on the longer` : "").filter(Boolean).join(" and ")}, stays only the suggestion. Press “Nothing — ignore it” when the default is right`;
+        if (!said) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: SET_LAYOUT_OPT, optionValue: lid, title: line.title || "", note: why, setLayout: { why, words: asked.slice(0, 3) } });
+      }
+    }
     // ZODSIGN: the sign the buyer chose, said once in the order's reading (the Pieces line) and kept as a fact; the sign word in the box is the buyer's choice of sign, never words to engrave (textOnly: nothing else was written)
     if (zodiac && zodiac.sign) {
       spec.zodiacSign = { sign: zodiac.sign, from: zodiac.from, word: zodiac.word, typo: !!zodiac.typo, text: zodiac.text, textOnly: !!zodiac.textOnly, family: zodiac.family, design: zodiac.pick ? zodiac.pick.sku : null, how: zodiac.pick ? zodiac.pick.how : "", held: zodiac.hold ? zodiac.hold.kind : "", note: zodiac.note };
@@ -3603,7 +3724,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, SET_RULES, SET_LAYOUT_OPT, setRuleOf, setLengthsOf, setEngravedOf, barLengthOf, setLayoutAskOf, setPiecesOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY, earringNeverBackEngraves, EAR_NEVER_WHY,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,

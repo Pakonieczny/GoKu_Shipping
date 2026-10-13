@@ -291,6 +291,9 @@
     const note = o && typeof o.engravingNote === 'function' ? o.engravingNote : () => true;
     if (String(sp.staffNote || '').trim() || String(sp.buyerMessage || '').trim() || (sp.messages || []).some(m => note(m && m.text))) return null;
     const r = splitWords(sp.personalization || [], list.length);
+    // SETBAR (13 Oct 2026): the two bars of a set a RULE names (spec.pair.set.source "rule", charm-nest-orders.js SET_RULES) are two necklaces, not discs of one: "coordinates / Ginger" in one box is NOT "bar 1 gets the coordinates, bar 2
+    // gets Ginger". Only the words that name the bar by number ("Disc 1: ..") or say the same on both are read here; a list, lines or letters are left to the reader and a person, as the line was before.
+    if (r.ok && sp.pair && sp.pair.set && sp.pair.set.source === 'rule' && r.how !== 'numbered' && r.how !== 'same') return null;
     return r.ok ? r : null;
   }
 
