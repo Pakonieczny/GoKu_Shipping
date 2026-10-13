@@ -20,7 +20,7 @@ function digest(rs) {
     byMetal: Object.fromEntries(['gold', 'silver', 'rose', 'gold14k', 'gold10k'].map(m => [m, { closed: wmean(rs, r => r.density.byMetal[m] && r.density.byMetal[m].densityClosed, r => r.density.byMetal[m] ? r.density.byMetal[m].completed : 0), n: sum(rs, r => r.density.byMetal[m] ? r.density.byMetal[m].completed : 0) }])),
     frontStd: wmean(rs, r => r.front.frontStd, r => r.sheets.gfssCompleted), cavern: wmean(rs, r => r.front.cavernMm, r => r.sheets.gfssCompleted),
     sets: sum(rs, r => r.sets.formed), invalid: sum(rs, r => r.sets.invalid), partialIn: sum(rs, r => r.sets.partialGfssInSets), everPartialIn: sum(rs, r => r.sets.everPartialGfssInSets), inSets: sum(rs, r => r.sets.sheetsInSets), waitingOutside: sum(rs, r => r.sets.completedWaitingOutside),
-    queued: sum(rs, r => r.queue.ordersQueued), meanWait: wmean(rs, r => r.queue.meanWaitTicks, r => r.orders), maxWait: Math.max(0, ...rs.map(r => r.queue.maxWaitTicks)), neverPlaced: sum(rs, r => r.queue.neverPlaced),
+    queued: sum(rs, r => r.queue.ordersQueued), passed: sum(rs, r => r.queue.passedOrders || 0), maxHops: Math.max(0, ...rs.map(r => r.queue.maxHops || 0)), meanWait: wmean(rs, r => r.queue.meanWaitTicks, r => r.orders), maxWait: Math.max(0, ...rs.map(r => r.queue.maxWaitTicks)), neverPlaced: sum(rs, r => r.queue.neverPlaced),
     step: rs.map(r => r.step).join(','), wallS: sum(rs, r => r.wallS),
   };
 }
@@ -37,7 +37,7 @@ function table(b, a) {
     row('front raggedness, completed GF + SS (mm, 0 = straight)', d => num(d.frontStd, 2)), row('widest empty gap behind the front (mm)', d => num(d.cavern, 1)),
     row('sets formed', d => d.sets), row('sets without a completed GF and a completed SS', d => d.invalid), row('partial GF/SS sheets inside a set (at the end)', d => d.partialIn), row('partial GF/SS sheets that were in a set at any update', d => d.everPartialIn),
     row('sheets inside sets / completed GF+SS waiting outside any set', d => `${d.inSets} / ${d.waitingOutside}`),
-    row('orders queued (placed after the update they arrived in)', d => d.queued), row('mean wait of all orders / longest wait (updates of 10 min)', d => `${num(d.meanWait, 2)} / ${d.maxWait}`), row('orders never placed by the end', d => d.neverPlaced),
+    row('orders passed on whole to a later sheet (distinct) / most hops of one order', d => `${d.passed} / ${d.maxHops}`), row('orders queued (placed after the update they arrived in)', d => d.queued), row('mean wait of all orders / longest wait (updates of 10 min)', d => `${num(d.meanWait, 2)} / ${d.maxWait}`), row('orders never placed by the end', d => d.neverPlaced),
     row('angle step (degrees); wall seconds', d => `${d.step}; ${d.wallS}`),
   ].join('\n');
 }

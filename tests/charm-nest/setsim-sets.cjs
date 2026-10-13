@@ -4,7 +4,7 @@
  * Paul, 13 Oct 2026: "A partial GF and SS sheet should never be part of a Set of sheets ... a set of sheets must have at least 1 GF and 1 SS sheet. Once that minimum requirement
  * is satisfied than [a set] is formed, and all other sheets must be formed into subsequent sets and also meet the same criteria."
  *
- *   node tests/charm-nest/setsim-sets.cjs [--root DIR] [--seed N] [--orders N] [--ticks N] [--json FILE] [--measure] [--legacy open|committed]
+ *   node tests/charm-nest/setsim-sets.cjs [--root DIR] [--seed N] [--orders N] [--ticks N] [--json FILE] [--measure] [--legacy open|committed] [--late 0.3]
  *
  * INVARIANTS (every update of the stream, every seed; exit 1 and print the exact case when one fails; --measure prints the numbers and always exits 0):
  *   S1  no partial GF or SS sheet is inside a set (a sheet is completed as charm-nest-set-rules.js isCompleted says: released full, or cut)
@@ -20,7 +20,7 @@
 'use strict';
 const path = require('node:path');
 const Lib = require('./setsim-lib.cjs');
-const { METALS, CODE, makeStream, partOf, setWorld, L } = Lib;
+const { METALS, CODE, makeStream, partOf, schedule, setWorld, L } = Lib;
 const argv = process.argv.slice(2), opt = (k, d) => { const i = argv.indexOf('--' + k); return i >= 0 ? argv[i + 1] : d; };
 
 const SHEET_PT2 = (L.PT(60) - 3) * (L.PT(40) - 3), FILL_CAP = .78, CLOSE_AT = .70;
@@ -61,7 +61,7 @@ async function run(o = {}) {
   const info = [], fails = [], note = (rule, msg, tick) => { if (fails.length < 60) fails.push({ rule, tick, msg }); };
   const memberOf = new Map(), setsAt = new Map();   // sheet id -> set id (S3), set id -> sheet ids
   const waitStart = new Map(), waits = [];          // completed GF/SS sheets: ticks from completion to joining a set
-  const everPartial = new Set(); let i = 0, tick = 0, maxPartialIn = 0;
+  const everPartial = new Set(), blockedSheets = new Set(); let tick = 0, maxPartialIn = 0, blockedTicks = 0;
   const check = async (final) => {
     world.sync(toy.asNest()); await world.assemble();
     const pg = world.gatePages(), sets = world.sets(), byId = new Map(pg.map(p => [p.sheetId, p])), label = p => `${CODE[p.metal]} ${p.page}`;
@@ -78,11 +78,12 @@ async function run(o = {}) {
     const groups = world.SO.core.groups(pg.map(p => world.SO.fromPage(p)).filter(Boolean)), grp = new Map(); for (const g of groups) for (const id of g.ids) grp.set(id, g);
     const blocked = p => { const g = grp.get(p.sheetId); return !!g && g.ids.some(id => { const q = byId.get(id); return q && ['gold', 'silver'].includes(q.metal) && !SR.isCompleted(q); }); };
     const free = pg.filter(p => !inSet(p) && ['gold', 'silver'].includes(p.metal) && SR.isCompleted(p) && !blocked(p) && !(grp.get(p.sheetId) && grp.get(p.sheetId).ids.some(id => inSet(byId.get(id)))));
+    for (const p of pg) if (!inSet(p) && ['gold', 'silver'].includes(p.metal) && SR.isCompleted(p) && blocked(p)) { blockedTicks++; blockedSheets.add(p.sheetId); }
     for (const p of free) if (!waitStart.has(p.sheetId)) waitStart.set(p.sheetId, tick);
     if (free.some(p => p.metal === 'gold') && free.some(p => p.metal === 'silver')) note('S4', `completed ${free.map(label).join(', ')} wait outside every set although together they hold a completed GF and a completed SS`, tick);
     for (const p of pg) if (inSet(p) && waitStart.has(p.sheetId)) { waits.push(tick - waitStart.get(p.sheetId)); waitStart.delete(p.sheetId); }
     // S6 sheets that share an order are together
-    for (const g of groups) { const ps = g.ids.map(id => byId.get(id)).filter(p => p && p.metal !== 'rose' && !['gold10k', 'gold14k'].includes(p.metal)), sets2 = new Set(ps.map(p => (inSet(p) ? p.setId : 'none'))); if (sets2.size > 1 && ps.some(inSet)) note('S6', `orders ${g.orders.slice(0, 3).join(', ')} are on ${ps.map(p => label(p) + (inSet(p) ? ' (' + p.setId + ')' : ' (no set)')).join(' and ')}`, tick); }
+    for (const g of groups) { const ps = g.ids.map(id => byId.get(id)).filter(p => p && p.metal !== 'rose' && !['gold10k', 'gold14k'].includes(p.metal) && !(['gold', 'silver'].includes(p.metal) && !SR.isCompleted(p) && !inSet(p))), sets2 = new Set(ps.map(p => (inSet(p) ? p.setId : 'none'))); if (sets2.size > 1 && ps.some(inSet)) note('S6', `orders ${g.orders.slice(0, 3).join(', ')} are on ${ps.map(p => label(p) + (inSet(p) ? ' (' + p.setId + ')' : ' (no set)')).join(' and ')}`, tick); }
     return { pg, sets };
   };
   // S5: a set made before the rule, holding a filling GF sheet (as Set-1 of Paul's picture), must stay exactly as it is
@@ -97,9 +98,10 @@ async function run(o = {}) {
     vm_run(world, `B.sets.set('set-legacy',{runId:RUN,group:'dispatch',seq:1,day:today(),setId:'set-legacy',name:'Set-1',sheetIds:${JSON.stringify(legacy.ids)},labelFiles:[],materials:['gold','silver'],orders:{},sheetNos:{}${o.legacy === 'committed' ? ",committedAt:5,status:'complete'" : ''}}); seq=2;`);
     legacy.committed = o.legacy === 'committed';
   }
-  for (let k = 0; i < stream.length && tick < (+o.ticks || 1e9); k++) {
-    const batch = stream.slice(i, i + batches[k % batches.length]); i += batch.length; tick++;
-    for (const x of batch) for (const m of METALS) { const part = partOf(x, m); if (part) toy.add(part, tick, splitP, r); }
+  for (const ev of schedule(stream, batches)) {
+    if (ev.tick > (+o.ticks || 1e9)) break;
+    tick = ev.tick;
+    for (const a of ev.arrivals) for (const m of METALS) { const part = partOf(a.order, m, a.lines); if (part) toy.add(part, tick, splitP, r); }
     await check(false);
     if (legacy) { const s = world.sets().find(x => x.setId === 'set-legacy'), same = s && JSON.stringify(s.ids.slice().sort()) === JSON.stringify(legacy.ids); if (!same) { if (legacy.committed) note('S5', 'a COMMITTED set made before the rule changed: ' + JSON.stringify(s && s.ids), tick); else if (!legacy.ejected) { legacy.ejected = tick; info.push(`an OPEN set made before the rule (${legacy.ids.length} sheets, one of them filling) changed at update ${tick}: it now holds ${JSON.stringify(s && s.ids)}`); } } }
   }
@@ -113,7 +115,7 @@ async function run(o = {}) {
   if (leftGF.length && leftSS.length) note('S7', `at the end ${leftGF.length} GF and ${leftSS.length} SS sheet(s) are completed and outside every set: ${left.map(p => CODE[p.metal] + ' ' + p.page).join(', ')}`, tick);
   const waitMean = waits.length ? waits.reduce((a, b) => a + b, 0) / waits.length : 0;
   return { root: root === path.resolve(Lib.REPO) ? 'repo' : root, seed, orders, ticks: tick, sheets: toy.all().length, gfss: toy.all().filter(s => ['gold', 'silver'].includes(s.metal)).length, sets: sets.length, partialInSetsEver: everPartial.size, maxPartialInSets: maxPartialIn,
-    info, leftOutside: left.length, completedWaitMean: +waitMean.toFixed(2), completedWaitMax: waits.length ? Math.max(...waits) : 0, hasGF, hasSS, fails, failRules: [...new Set(fails.map(f => f.rule))] };
+    info, blockedSheets: blockedSheets.size, blockedSheetUpdates: blockedTicks, leftOutside: left.length, completedWaitMean: +waitMean.toFixed(2), completedWaitMax: waits.length ? Math.max(...waits) : 0, hasGF, hasSS, fails, failRules: [...new Set(fails.map(f => f.rule))] };
 }
 const setName = (sets, p) => (sets.find(x => x.setId === p.setId) || { name: p.setId }).name;
 function vm_run(world, code) { require('node:vm').runInContext(code, world.c); }
@@ -125,10 +127,10 @@ module.exports = { run, toySheets };
 
 if (require.main === module) (async () => {
   const seeds = String(opt('seed', '1,2,3')).split(','), res = [];
-  for (const seed of seeds) res.push(await run({ root: opt('root'), seed, orders: opt('orders', 600), ticks: opt('ticks'), split: opt('split'), legacy: opt('legacy') }));
+  for (const seed of seeds) res.push(await run({ root: opt('root'), seed, orders: opt('orders', 600), ticks: opt('ticks'), mix: opt('late') ? { late: +opt('late') } : undefined, split: opt('split'), legacy: opt('legacy') }));
   let bad = 0;
   for (const r of res) {
-    console.log(`seed ${r.seed}: ${r.orders} orders, ${r.sheets} sheets (${r.gfss} GF/SS), ${r.sets} sets, partial GF/SS inside sets: ${r.partialInSetsEver} sheets ever (peak ${r.maxPartialInSets}), completed sheets left outside: ${r.leftOutside}, completed sheet waits ${r.completedWaitMean} (max ${r.completedWaitMax}) updates, broken rules: ${r.failRules.join(' ') || 'none'}`);
+    console.log(`seed ${r.seed}: ${r.orders} orders, ${r.sheets} sheets (${r.gfss} GF/SS), ${r.sets} sets, partial GF/SS inside sets: ${r.partialInSetsEver} sheets ever (peak ${r.maxPartialInSets}), completed sheets held out only because a sheet sharing an order is still filling: ${r.blockedSheets} (${r.blockedSheetUpdates} sheet-updates), completed sheets left outside at the end: ${r.leftOutside}, completed sheet waits ${r.completedWaitMean} (max ${r.completedWaitMax}) updates, broken rules: ${r.failRules.join(' ') || 'none'}`);
     for (const t of r.info) console.log('   note: ' + t);
     const first = {}; for (const f of r.fails) if (!first[f.rule]) { first[f.rule] = f; console.log(`   ${f.rule} first at update ${f.tick}: ${f.msg}`); }
     bad += r.fails.length;
