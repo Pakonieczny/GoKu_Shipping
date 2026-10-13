@@ -28,6 +28,8 @@ R.ORDERS.two = { rid: '4290000131', buyer: 'Name Eleven', placed: { day: 0, h: 1
 R.ORDERS.twoHeld = { rid: '4290000134', buyer: 'Name Twelve', placed: { day: 0, h: 11, m: 50 }, ship: 5, lines: [comet('1890000134', 'silver'), comet('1890000134', 'gold')], held: true }; R.EXPECT_JOBS.twoHeld = 0;
 // three pieces: the silver and the gold necklace of one design, and a front + back cat necklace
 R.ORDERS.three = { rid: '4290000132', buyer: 'Name Thirteen', placed: { day: 0, h: 11, m: 40 }, ship: 5, lines: [comet('1890000132', 'silver'), comet('1890000132', 'gold'), cat] }; R.EXPECT_JOBS.three = 1 + 1 + 2;
+// ONE line of three discs (a counted line has no list of pieces to pick from, only its drawer): a press on a disc narrows the cards to that disc
+R.ORDERS.discsOne = { rid: '4290000135', buyer: 'Name Fifteen', placed: { day: 0, h: 11, m: 55 }, ship: 5, lines: [{ listing: '1890000135', sku: 'COMET_9427', title: 'Initial Disc Necklace, Personalized Letter Discs', variations: [V('Metal choice', 'Gold'), V('Number of Discs', '3 Discs')], personalization: ['Tag 1: A, Tag 2: B, Tag 3: C'] }] }; R.EXPECT_JOBS.discsOne = 3;
 // one line: nothing to tell apart, the card is what it always was
 R.ORDERS.one = { rid: '4290000133', buyer: 'Name Fourteen', placed: { day: 0, h: 11, m: 45 }, ship: 5, lines: [comet('1890000133', 'gold')] }; R.EXPECT_JOBS.one = 1;
 
@@ -64,7 +66,7 @@ const openOn = async (page, key, opts) => {
   if (!w) { console.log('no playwright-core: nothing run'); return; }
   const page = w.page, shots = process.env.SHOTS;
   try {
-    const made = await R.build(w, ['two', 'three', 'one', 'twoHeld']);
+    const made = await R.build(w, ['two', 'three', 'one', 'twoHeld', 'discsOne']);
     const rows = await page.evaluate(() => { const o = {}; for (const r of Orders.rows()) (o[r.order.receiptId] ||= []).push({ key: r.key, metal: r.material, jobs: Engrave.jobsOf(r).map(j => j.key + ':' + j.state) }); return o; });
     if (process.env.PK_KEEP) console.log(JSON.stringify({ rows, made: Object.fromEntries(Object.entries(made).map(([k, v]) => [k, v.jobs.length])) }, null, 1));
     const two = rows[R.ORDERS.two.rid], three = rows[R.ORDERS.three.rid], one = rows[R.ORDERS.one.rid], held = rows[R.ORDERS.twoHeld.rid];
@@ -82,6 +84,7 @@ const openOn = async (page, key, opts) => {
     note(cardSS.dotLabel === 'To approve' && cardGF.dotLabel === 'To approve' && cardSS.state === 'approve', 'the state is still said by the dot\'s label ("To approve"), the Approve button and the card\'s state', cardSS.dotLabel + ' / ' + cardSS.state);
     note(s.rows.find(r => r.key === kSS).dot === cardSS.dot && s.rows.find(r => r.key === kGF).dot === cardGF.dot, 'the card\'s dot is the very colour of its row on the Its pieces list');
     note(cardSS.approve && cardGF.approve, 'each card has its own Approve');
+    note(/COMET 9427 · SS.*COMET 9427 · GF/.test(s.said), 'the customer\'s words under the two cards are headed by their metals too (the two headings differ)', s.said.slice(0, 120));
     if (shots) await R.shot(w, 'pk-' + (process.env.PK_TAG || 'after') + '-1-show-all');
 
     // ── pick the silver piece, then the gold piece: each card alone, in the same tick ──
@@ -159,6 +162,15 @@ const openOn = async (page, key, opts) => {
       r = await sameTick(page, kk => OrderWin.selectPiece(kk), k);
       note(r.cards.length === n && r.cards[0].line === k && r.cards[0].tail === '· ' + metal, 'three pieces: picking ' + metal + ' line ...' + k.slice(-1) + ' shows its card alone', r.cards.map(c => c.title).join(','));
     }
+
+    // ── a line of three discs on its own: a press on one disc narrows the cards to that disc ──
+    const dRow = rows[R.ORDERS.discsOne.rid][0].key;
+    s = await openOn(page, dRow);
+    note(s.cards.length === 3 && s.cards.every(c => c.line === dRow) && s.cards.every(c => c.tail === ''), 'a line of three discs alone: three disc cards, no metal word (one line: nothing to tell apart)', s.cards.map(c => c.title).join(' | '));
+    r = await sameTick(page, () => document.querySelector('#owPcSum .owPcSub[data-sub$="#D2"]').click());
+    note(r.cards.length === 1 && /#D2$/.test(r.cards[0].piece) && await page.evaluate(() => OrderWin.selectedDisc()) === 'D2', 'a press on disc 2 narrows the cards to Disc 2 alone, in the same tick', r.cards.map(c => c.title).join(','));
+    r = await sameTick(page, () => document.querySelector('#owPcSum .owPcSub[data-sub$="#D2"]').click());
+    note(r.cards.length === 3 && await page.evaluate(() => OrderWin.selectedDisc()) === null, 'the same disc pressed again shows the three disc cards');
 
     // ── one line: the card is exactly what it was (no metal word, the state dot) ──
     s = await openOn(page, one[0].key);

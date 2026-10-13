@@ -83,7 +83,7 @@
       const parts = saidRows(line), one = mine.length === 1 ? mine[0] : null, f = one && one.faces || {};
       const faces = f.front && f.back && f.front.text && f.back.text && !f.front.plain && !f.back.plain ? [['Front', oneLine(f.front.text)], ['Back', oneLine(f.back.text)]] : null;
       if (!parts.length) continue;   // (the customer wrote and chose nothing: nothing is said, whatever the faces read)
-      out.push({ name: mine[0].name || '', rows: parts, faces });
+      out.push({ name: (mine[0].name || '') + (mine[0].many && mine[0].metal ? ' · ' + mine[0].metal : ''), rows: parts, faces });   // (ENGPICK: two pieces of one design are told apart by their metal, as their cards are: "COMET 9427 · SS")
     }
     return out;
   }
