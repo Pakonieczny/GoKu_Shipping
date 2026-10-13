@@ -33,6 +33,7 @@
   const Pos = () => (root && root.CharmNestEngravePosition) || null;
   const Prev = () => (root && root.CharmNestEngravePreview) || null;
   const Eng = () => (root && root.Engrave) || null;
+  const Why = () => dep('CharmNestEngraveWhy', './charm-nest-engrave-why.js');   // (ENGWHY: the reasons, what counts as an override, the record)
   const str = x => String(x == null ? '' : x);
   const esc = s => str(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const cap1 = s => s.charAt(0).toUpperCase() + s.slice(1);
@@ -86,8 +87,9 @@
     let d = DRAFTS.get(key);
     if (d && d.sig !== vm.sig && !d.dirty && !d.posTouched && !d.busy) d = null;   // what the piece says changed under an untouched draft: start again from it
     if (!d) {
-      d = { key, sig: vm.sig, mode: vm.mode, face: null, shown: '', faces: {}, dirty: false, posTouched: false, snaps: {}, moved: {}, noRoom: {}, busy: '', error: '', confirm: '', confirmLines: null, focus: null };
+      d = { key, sig: vm.sig, mode: vm.mode, face: null, shown: '', faces: {}, dirty: false, posTouched: false, snaps: {}, moved: {}, noRoom: {}, busy: '', error: '', confirm: '', confirmLines: null, focus: null, ask: null, why: null };
       for (const f of ['front', 'back']) { const r = vm.rows.find(x => x.face === f); d.faces[f] = { text: r ? r.text : '', font: r ? r.fontWord : '' }; }
+      d.init = { front: Object.assign({}, d.faces.front), back: Object.assign({}, d.faces.back) };   // (the faces as the panel opened them: what the person has not touched is the system's own, CharmNestEngraveWhy.changes)
       DRAFTS.set(key, d);
     }
     return d;
@@ -269,6 +271,13 @@
     const lock = locked ? `<div class="engpLock" role="status">${cur.lockState === 'skipped' ? 'Cut plain' : 'Approved'}${cur.lockBy ? ' by ' + esc(cur.lockBy) : ''}</div>` : per ? `<div class="engpLock" role="status">Differs per piece</div>` : '';
     return `<div class="engpFace" data-face="${face}">${words}${font}${pos}${lock}</div>`;
   }
+  /** The reason prompt (ENGWHY, Paul point 7): shown IN PLACE of the Save / Cancel row when a Save would override the system's choice. Four quick buttons (a press saves at once), one small text box for
+   *  "something else" with its own Save, and Cancel (back to the panel, the edit still staged; Esc does the same). */
+  function askHtml(d) {
+    const W = Why(), text = str(d.ask && d.ask.text);
+    return `<div class="engpWhy" role="group" aria-label="Why change it?"><div class="engpWhyQ">Why change it?</div><div class="engpChips">${((W && W.REASONS) || []).map(r => `<button type="button" class="engpChip" data-engp="why" data-code="${esc(r.code)}">${esc(r.label)}</button>`).join('')}</div>`
+      + `<div class="engpWhyRow"><input type="text" class="engpWhyText" data-engp="whyText" maxlength="120" placeholder="Something else" aria-label="Another reason" autocomplete="off" value="${esc(text)}"><button type="button" class="btn gold xs" data-engp="whySave"${text.trim() ? '' : ' disabled'}>Save</button><button type="button" class="btn ghost xs" data-engp="whyCancel">Cancel</button></div></div>`;
+  }
   /** The panel for a view model (`vm` = CharmNestEngraveSetup.read) and its staged edit (`d`). ctx: { slot } */
   function html(vm, d, ctx) {
     ctx = ctx || {};
@@ -285,7 +294,9 @@
     const spin = d.busy ? `<span class="engpStat" role="status"><span class="owSpin" aria-hidden="true"></span>${esc(d.busy)}</span>` : '';
     const canSave = staged && !d.busy && !(cons && cons.blocked) && !d.confirm;
     const acts = `<div class="engpActs"><button type="button" class="btn gold xs" data-engp="save"${canSave ? '' : ' disabled'}>Save</button><button type="button" class="btn ghost xs" data-engp="cancel"${(staged || d.dirty) && !d.busy ? '' : ' disabled'}>Cancel</button>${spin}</div>`;
-    return `<div class="engp" data-key="${esc(d.key)}" data-mode="${esc(d.mode)}" data-face="${esc(face)}" role="group" aria-label="Engraving">${seg}${sw}${face ? faceHtml(vm, d, face, id, slot) : ''}${ask}${warn}${err}${confirm}${acts}</div>`;
+    const W = Why(), rs = !d.ask && !d.busy && W && W.reasonOf ? W.reasonOf(vm.line, vm.slot || null) : null;   // (the reason of the saved override, read-only, one quiet line)
+    const why = rs ? `<div class="engpWhyLine" title="${esc(rs.title)}">${esc(rs.line)}</div>` : '';
+    return `<div class="engp" data-key="${esc(d.key)}" data-mode="${esc(d.mode)}" data-face="${esc(face)}" role="group" aria-label="Engraving">${seg}${sw}${face ? faceHtml(vm, d, face, id, slot) : ''}${ask}${warn}${err}${confirm}${d.ask ? askHtml(d) : acts}${why}</div>`;
   }
 
   /* ── the look ──────────────────────────────────────────────────────────────── */
@@ -317,7 +328,15 @@
 .engpErr{font-size:11.5px;color:var(--clay,#b0563f)}
 .engpConfirm{display:grid;gap:4px;font-size:11.5px;color:var(--clay,#b0563f)}
 .engpActs{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px}
-.engpStat{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink70,#5b554c)}`;
+.engpStat{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink70,#5b554c)}
+.engpWhy{display:grid;gap:6px;min-width:0}
+.engpWhyQ{font:600 11.5px var(--sans,system-ui);color:var(--ink70,#5b554c)}
+.engpChips{display:flex;flex-wrap:wrap;gap:4px}
+.engpChip{padding:5px 9px;border:1px solid var(--line,#e4ddd0);border-radius:999px;background:var(--card,#fffefb);font:600 11px var(--sans,system-ui);color:inherit;white-space:nowrap;cursor:pointer}
+.engpChip:hover{background:var(--paper2,#ebe5d9)}
+.engpWhyRow{display:flex;align-items:center;gap:4px;min-width:0}
+.engpWhyText{flex:1 1 70px;min-width:0;box-sizing:border-box;padding:5px 8px;border:1px solid var(--line,#e4ddd0);border-radius:8px;background:var(--card,#fffefb);font:12px var(--sans,system-ui);color:inherit}
+.engpWhyLine{font-size:11px;line-height:1.35;color:var(--ink45,#938c80);overflow-wrap:anywhere}`;
   function ensureCss(doc) {
     try { if (!doc || doc.getElementById('engpCss')) return; const s = doc.createElement('style'); s.id = 'engpCss'; s.textContent = CSS; (doc.head || doc.documentElement).appendChild(s); } catch (_) { /* unstyled is still usable */ }
   }
@@ -436,24 +455,44 @@
       if (P && P.restore) for (const [k, snap] of Object.entries(d.snaps)) { if (!snap || !d.moved[k]) continue; const job = ['front', 'back'].map(f => faceJobOf(vm, f, slot)).find(j => j && j.key === k); if (job) tryDo(() => P.restore(job, snap)); }
       DRAFTS.delete(key); draw(); const m2 = model(); if (m2) paintAll(m2.vm, m2.d); changed('cancel', d.face);
     };
+    /* ── the reason (ENGWHY) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+     * A Save that would override what the SYSTEM chose (CharmNestEngraveSetup.diffFromAuto: the mode, a face's words or font; the position when the person moved the words with these buttons) asks
+     * "Why change it?" first, in place of the Save / Cancel row. A quick button saves at once with that reason; the text box has its own Save; Cancel (or Esc) goes back with the edit still staged.
+     * A Save equal to the system's choice asks nothing. The reason and the system's choice go in the SAME patch, so the existing single save writes them (no extra write, read or listener). */
+    const posMoved = d => !!d.posTouched && Object.keys(d.moved || {}).some(k => jobs().some(j => j && j.key === k && j.nudged));
+    const changesOf = (vm, d) => { const W = Why(); return W && W.changes ? tryDo(() => W.changes(vm, d, { jobs: jobs(), positionMoved: posMoved(d) }), null) : null; };
+    const trySave = (m, confirmed) => {
+      const { vm, d } = m, S = Setup(), patch = S.patchOf(vm, d), ch = changesOf(vm, d), W = Why();
+      const posOnly = !hasPatch(patch) && !!ch && ch.any && ch.of.includes('position');   // (only the position was moved, and it is an override: it too gets its reason)
+      if (!hasPatch(patch) && !posOnly) { DRAFTS.delete(key); draw(); changed('saved', d.face); return; }   // (only the position was moved: it is kept as it is)
+      const cons = hasPatch(patch) ? S.consequences(vm.line, vm.jobs, nextSetupOf(vm, patch), vm.setup) : null;
+      if (cons && cons.blocked) { d.error = cons.blocked; draw(); return; }
+      if (ch && ch.any && !d.why) {   // (asked once: the answer stays with the draft until the person edits again)
+        d.ask = d.ask || { text: '' }; d.confirm = ''; d.error = ''; draw();
+        const first = el.querySelector('[data-engp="why"]'); if (first) tryDo(() => first.focus({ preventScroll: true }));
+        const box = el.querySelector('.engpWhy'); if (box && box.scrollIntoView) tryDo(() => box.scrollIntoView({ block: 'nearest' }));   // (the question is taller than the row it replaces: bring all of it into view)
+        return;
+      }
+      if (cons && !confirmed && cons.plain.length) { d.confirm = 'save'; d.confirmLines = cons.lines.filter(l => /already/.test(l)); draw(); return; }
+      run(m, W && W.patchWith ? W.patchWith(patch, d.why, ch) : patch);
+    };
+    const pickWhy = (m, why) => { const d = m.d, W = Why(); d.why = { code: why.code, text: str(why.text) || (W && W.labelOf ? W.labelOf(why.code) : '') }; d.ask = null; trySave(m, false); };
+    const closeAsk = m => { m.d.ask = null; draw(); const sv = el.querySelector('[data-engp="save"]'); if (sv && !sv.disabled) tryDo(() => sv.focus({ preventScroll: true })); };
     const click = e => {
       const b = e.target && e.target.closest && e.target.closest('[data-engp]'); if (!b || !el.contains(b) || b.disabled || dead) return;
       const m = model(); if (!m) return; const { vm, d } = m, a = b.dataset.engp;
       if (d.busy) return;
       if (a === 'face') setFace(b.dataset.face);
-      else if (a === 'mode') { if (b.dataset.mode === d.mode) return; setMode(vm, d, b.dataset.mode); draw(); paintAll(vm, d); changed('mode', d.face); }
+      else if (a === 'mode') { if (b.dataset.mode === d.mode) return; d.why = null; setMode(vm, d, b.dataset.mode); draw(); paintAll(vm, d); changed('mode', d.face); }
       else if (a === 'cancel') cancel(m);
       else if (a === 'keep') { d.confirm = ''; d.confirmLines = null; draw(); }
-      else if (a === 'save' || a === 'saveYes') {
-        const S = Setup(), patch = S.patchOf(vm, d);
-        if (!hasPatch(patch)) { DRAFTS.delete(key); draw(); changed('saved', d.face); return; }   // (only the position was moved: it is kept as it is)
-        const cons = S.consequences(vm.line, vm.jobs, nextSetupOf(vm, patch), vm.setup);
-        if (cons.blocked) { d.error = cons.blocked; draw(); return; }
-        if (a === 'save' && cons.plain.length) { d.confirm = 'save'; d.confirmLines = cons.lines.filter(l => /already/.test(l)); draw(); return; }
-        run(m, patch);
-      } else if (a === 'pos') {
+      else if (a === 'save' || a === 'saveYes') trySave(m, a === 'saveYes');
+      else if (a === 'why') pickWhy(m, { code: b.dataset.code });
+      else if (a === 'whySave') { const t = str(d.ask && d.ask.text).replace(/\s+/g, ' ').trim(); if (t) pickWhy(m, { code: 'other', text: t }); }
+      else if (a === 'whyCancel') closeAsk(m);
+      else if (a === 'pos') {
         const P = Pos(), job = faceJobOf(vm, d.face, slot); if (!P || !job || !job.fit) return;
-        const step = e.shiftKey ? 2 : 0.5, act = b.dataset.act; snapBeforeMove(d, job);
+        const step = e.shiftKey ? 2 : 0.5, act = b.dataset.act; snapBeforeMove(d, job); d.why = null;
         let r = null;
         if (act === 'left') r = P.nudge(job, -step, 0); else if (act === 'right') r = P.nudge(job, step, 0);
         else if (act === 'up') r = P.nudge(job, 0, step); else if (act === 'down') r = P.nudge(job, 0, -step);
@@ -467,10 +506,11 @@
     };
     const input = e => {
       const t = e.target; if (!t || !t.dataset || !t.dataset.engp || dead) return;
+      if (t.dataset.engp === 'whyText') { const m0 = model(); if (m0 && m0.d.ask) { m0.d.ask.text = t.value; const ws = el.querySelector('[data-engp="whySave"]'); if (ws) ws.disabled = !t.value.trim(); } return; }   // (the "something else" box of the reason prompt)
       const m = model(); if (!m) return; const { vm, d } = m, f = t.dataset.face; if (!f) return;
       const x = d.faces[f] || (d.faces[f] = { text: '', font: '' });
       if (t.dataset.engp === 'words') { x.text = t.value; growBox(t); } else if (t.dataset.engp === 'font') x.font = t.value; else return;
-      d.dirty = true; d.confirm = ''; d.error = ''; d.noRoom = {};
+      d.dirty = true; d.confirm = ''; d.error = ''; d.noRoom = {}; d.why = null;
       const S = Setup(), p = S.patchOf(vm, d), sv = el.querySelector('[data-engp="save"]'), cn = el.querySelector('[data-engp="cancel"]');
       if (sv) sv.disabled = !hasPatch(p) && !d.posTouched;
       applyGate(hasPatch(p));
@@ -481,7 +521,9 @@
     };
     const key_ = e => {
       const t = e.target; if (!t || !t.dataset || !t.dataset.engp) return;
-      if (t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') e.stopPropagation();   // (the card's own keys, S for "No engraving", are for the card, not for words)
+      if (e.key === 'Escape') { const m0 = model(); if (m0 && m0.d.ask) { e.preventDefault(); e.stopPropagation(); closeAsk(m0); return; } }   // (Esc leaves the reason prompt: the edit stays staged)
+      if (t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.tagName === 'INPUT') e.stopPropagation();   // (the card's own keys, S for "No engraving", are for the card, not for words)
+      if (t.dataset.engp === 'whyText' && e.key === 'Enter') { e.preventDefault(); const ws = el.querySelector('[data-engp="whySave"]'); if (ws && !ws.disabled) ws.click(); return; }
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && t.tagName === 'TEXTAREA') { e.preventDefault(); const s = el.querySelector('[data-engp="save"]'); if (s && !s.disabled) s.click(); }
       else if (e.key === 'Escape' && t.tagName === 'TEXTAREA') { e.preventDefault(); const c = el.querySelector('[data-engp="cancel"]'); if (c && !c.disabled) c.click(); }
     };

@@ -5778,8 +5778,9 @@ const Engrave = window.Engrave = (() => {
     try {
       const t = String(job.text || "").trim(), d = job.decision || {}, at = (how === "skipped" ? job.decidedAt : d.at) || Date.now();
       const dsc = discSay(job), of = dsc ? ` · ${dsc}` : "", fw = facedJob(job) ? (isFront(job) ? "Front " : "Back ") : "";   // (a line with a front names the face; every other line reads as it did)
-      const text = how === "none" ? `No ${fw ? fw.toLowerCase() + "engraving" : "engraving"}${of} — decided by ${by}` : how === "skipped" ? `${fw ? fw + "engraving" : "Engraving"} skipped${of} by ${by} — cut plain` : `${fw ? fw + "engraving" : "Engraving"} ${d.note === "edited" ? "edited" : "confirmed"}${of} by ${by}: “${t.replace(/\n/g, " / ")}”`;
-      TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null, ...(isFront(job) ? { face: "front" } : {}) } });
+      const why = how !== "skipped" && d.why ? ` (${String(d.why).slice(0, 80)})` : "";   // (ENGWHY: the person's reason for an override rides in this existing line; no extra write)
+      const text = how === "none" ? `No ${fw ? fw.toLowerCase() + "engraving" : "engraving"}${of} — decided by ${by}${why}` : how === "skipped" ? `${fw ? fw + "engraving" : "Engraving"} skipped${of} by ${by} — cut plain` : `${fw ? fw + "engraving" : "Engraving"} ${d.note === "edited" ? "edited" : "confirmed"}${of} by ${by}${why}: “${t.replace(/\n/g, " / ")}”`;
+      TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null, ...(d.why && how !== "skipped" ? { why: String(d.why).slice(0, 80) } : {}), ...(isFront(job) ? { face: "front" } : {}) } });
     } catch (_) {}
   }
   /** The words of each disc of a counted line, from its personalisation field alone (charm-nest-engrave-sides.js splitWords), or null when the note does not say plainly. */
@@ -6349,7 +6350,7 @@ const Engrave = window.Engrave = (() => {
     const keep = job.nudged && job.fit ? { centre: job.fit.centre.slice(), angle: job.fit.angle } : null;   // (a position a person set stays through new words or a new font, as fitNewWords keeps it)
     job.lineInput = null; job.lineMode = "auto"; job.wantSize = null; job.fit = null;
     Object.assign(job, { text: seed.text, lines: seed.lines.slice(), source: "person", quote: null, confidence: 1, questions: [], claudeReasoning: null, requests: { side: face, font: null, handwriting: false, image: false },
-      wordsSource: "spec.engraving", decision: { by, at: Date.now(), text: seed.text, note: "edited" }, faceFontWord: seed.fontWord || null });   // (faceFontWord: the font the person picked for this face, which ensureJobFont fits it in; null = the line's font)
+      wordsSource: "spec.engraving", decision: { by, at: Date.now(), text: seed.text, note: "edited", ...(seed.why ? { why: seed.why } : {}) }, faceFontWord: seed.fontWord || null });   // (faceFontWord: the font the person picked for this face, which ensureJobFont fits it in; null = the line's font)
     if (seed.fontWord) job.fontAsked = seed.fontWord;
     wordsEvent(job, by, was, "words"); Review.remove("eng:" + job.key);
     await setReady(job);
@@ -6366,7 +6367,7 @@ const Engrave = window.Engrave = (() => {
       now: () => Date.now(), store: setupStore, jobsOf: line => jobsOf(line), ensureJobs: line => { raiseCandidate(line); const had = jobsOf(line), out = ensureJobs(line); for (const j of had) if (items().get(j.key) !== j) dropped.push(j.key); return out; },
       slots: line => { const S = SIDES(); if (!S) return [null]; try { return S.plan(sidesCtx, line, jobsOf(line)).slots || [null]; } catch (_) { return [null]; } },
       remove: removeJob, skip: (job, by) => skip(job, by), reopen: reopenJob, seed: seedWords,
-      setNone: (job, why, by) => { const was = job.text; setNone(job, why); if (by) { job.decision = { by, at: Date.now(), none: true }; wordsEvent(job, by, was, "none"); } },
+      setNone: (job, why, by, reason) => { const was = job.text; setNone(job, why); if (by) { job.decision = { by, at: Date.now(), none: true, ...(reason ? { why: reason } : {}) }; wordsEvent(job, by, was, "none"); } },
       changed: (line, res) => { try { if (res && Array.isArray(res.removed)) for (const k of dropped) if (!res.removed.includes(k)) res.removed.push(k); } catch (_) {} try { const S = SIDES(); if (S && line._engraveLinked) S.linkParent(sidesCtx, line, jobsOf(line)); } catch (_) {} try { Orders.render(); } catch (_) {} try { render(); } catch (_) {} try { Review.render(); } catch (_) {} try { if (window.OrderWin && OrderWin.isOpen && OrderWin.isOpen()) OrderWin.nudge(); } catch (_) {} try { RunCtl.poke(); } catch (_) {} }
     };
   }
