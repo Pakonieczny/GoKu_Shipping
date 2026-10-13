@@ -150,7 +150,7 @@
 
   /* ═══ the model: what the panel shows, from the issues (pure) ═══ */
   /* An order in the Review tab holds the sheet its piece sits on (Paul, 12 Oct 2026): the readiness lists it as a 'held' issue whose words start "In Review" and the
-     row says so ("In Review: left earring"), not "On hold". The piece comes from the hold itself when the page has it (LibraryReviewHold), else from those words. */
+     row says so ("In Review: left earring"), not "On hold". The piece comes from the hold itself (LibraryReviewHold). */
   const IN_REVIEW = /^\s*in review\b[\s:·,\-–—]*/i, HELD_TAIL = /^.*\bheld:\s*/i;
   const reviewWords = it => {
     if (!it || it.key !== 'held') return null;
@@ -158,9 +158,10 @@
     return null;
   };
   const isReview = it => reviewWords(it) !== null;
+  // (the piece is the hold's own word for it; the readiness' words after "In Review" are the Review's reason, never a piece, so without the hold the chip says only "In Review")
   function reviewPiece(it, sheetId) {
     try { const RH = root.LibraryReviewHold, r = RH && sheetId ? RH.rows(sheetId).find(x => x.rid === String(it.orderId)) : null; if (r) return r.piece; } catch (e) { warn('review hold', e); }
-    return tidy(reviewWords(it) || '').replace(/…$/, '').replace(/^[(\s]+|[)\s]+$/g, '').split(' ').slice(0, 4).join(' ').toLowerCase();
+    return '';
   }
   function reasonOf(it, sheetId) {
     if (isReview(it)) { const pc = reviewPiece(it, sheetId); return { id: 'review', tone: 'clay', chip: 'In Review' + (pc ? ': ' + pc : ''), group: REASON.review.group() }; }

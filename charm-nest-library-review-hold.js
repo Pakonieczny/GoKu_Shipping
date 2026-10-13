@@ -173,13 +173,13 @@
   function css() {
     if (doc.getElementById('rvhCss')) return;
     const s = doc.createElement('style'); s.id = 'rvhCss';
-    s.textContent = `.rvhNote,.rvhLine{min-width:0;font:500 11.5px/1.35 var(--sans,system-ui,sans-serif);color:var(--ink70,#5b554c)}
+    // (the small clay dot is the box's own background, not an inline piece: a one-tap line is a button, which cannot break across lines and would drop under a dot that stands in front of it)
+    s.textContent = `.rvhNote,.rvhLine,.rvhNest{display:block;min-width:0;padding-left:12px;font:500 11.5px/1.35 var(--sans,system-ui,sans-serif);color:var(--ink70,#5b554c);background:radial-gradient(circle at 3px .74em,var(--clay,#b0563f) 0 3px,transparent 3.6px) no-repeat}
 .rvhNote{margin:2px 0 4px;animation:rvhIn .22s ease both}
 .rvhLine{margin:10px 14px 0}.rvhLine[hidden]{display:none}
-.rvhNote::before,.rvhLine::before{content:"";display:inline-block;width:6px;height:6px;margin:0 6px 1px 0;border-radius:50%;background:var(--clay,#b0563f);opacity:.75;vertical-align:middle}
-.rvhNest{font:inherit;color:inherit}
-.rvhNest::before{content:"";display:inline-block;width:6px;height:6px;margin:0 6px 1px 0;border-radius:50%;background:var(--clay,#b0563f);opacity:.75;vertical-align:middle}
+.rvhNest{font-size:inherit;color:inherit}
 .rvhGo{all:unset;box-sizing:border-box;cursor:pointer;font:inherit;color:inherit;border-radius:4px}
+.rvhGo.whole{display:block}
 .rvhGo.whole::after{content:"\\203A";margin-left:5px;color:var(--ink45,#938c80)}
 .rvhGo:hover,.rvhGo:focus-visible{color:var(--ink,#1c1a17);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
 .rvhGo:focus-visible{outline:2px solid var(--gold,#a9823f);outline-offset:2px}
