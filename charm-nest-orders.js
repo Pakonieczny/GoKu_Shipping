@@ -139,6 +139,115 @@
     }
     return {type:type || 'Type not specified',options};
   }
+
+  /* ═══ 2d · how an option is SHOWN (OPTTIDY, Paul, 13 Oct 2026, order 4202291826) ═══════════════════════════════════
+     Paul: "You need to intelligently strip out the needless/filler text from these options and only show the relevant information from each dropdown selection." The order window's OPTIONS box read
+     "Metal &middot; #Characters?:  GOLD·Set·ENGRAVED" and "Necklace Length&middot;FONT:  16"&18"·Set·ANGELINA". Two causes. Etsy hands names HTML-escaped and "&middot;" is not one of the entities decodeEntities
+     knows (it must not learn it: that decoder also reads SKUs and option names for MATCHING, and a name saved under one spelling must keep meeting the same line). And a shop fuses several drop-downs into ONE, with "·" in
+     the name and in the value alike, with words that are no choice ("Set" on a listing that is a set, "#Characters?" a question).
+     tidyOption(name, value, ctx) reads ONE option as text for a person: { label, text, line, parts, names, paired, changed, was, raw }; "Metal: Gold · Engraved", "Length: 16" & 18" · Font: Angelina".
+       · decoded to TEXT here (the standard entities, the numeric ones and a short list of named ones, as many passes as it takes); every caller escapes it when it draws it, so "&lt;b&gt;" stays text and nothing is interpreted
+       · a fused name is split at · • / | & and " - " (and after a question mark), and its parts are paired with the value's parts (split at · • first, then /, then " - ") ONLY when the counts match; "Set" is dropped when the listing's
+         title already says it is a set (ctx.title / ctx.setShown) or when it is the one part the name has no slot for; a part in brackets is a remark and rides at the end; a number and its unit ("6-10", "Characters") are one part
+       · filler goes: question marks and colons, "#Characters?" (a question, when its answer is a word: Engraved, Blank), "Choice" / "Selection" / "Options" after Metal, Font, Engraving, Length ..., "(see listing photo)", a
+         "Select an option" part, the product noun in "Necklace Length" (when no other option names another), CAPITAL label words; known tokens read as words (GOLD, ROSE, SILVER, ENGRAVED, BLANK, the shop's font words)
+       · lengths keep their inch marks (16"&18" -> 16" & 18"); nothing else is rewritten; a name that cannot be paired is shown as Etsy wrote it (decoded), with its value tidied only by what loses nothing
+     DISPLAY ONLY: nothing here is stored, matched or sent anywhere (purchaseOptions, norm, the option maps and the paid readings keep reading the line as it is); `raw` / `was` give the original for a title / tooltip.
+     null: nothing to show (no name and no value) or only a placeholder ("Select an option"): the caller shows the option as it is (optionView does). */
+  const MORE_ENTITY = { middot: "\u00b7", bull: "\u2022", nbsp: " ", ensp: " ", emsp: " ", thinsp: " ", hellip: "\u2026", ndash: "\u2013", mdash: "\u2014", lsquo: "\u2018", rsquo: "\u2019", ldquo: "\u201c", rdquo: "\u201d", laquo: "\u00ab", raquo: "\u00bb", deg: "\u00b0", times: "\u00d7", frasl: "\u2044", prime: "\u2032", Prime: "\u2033", plusmn: "\u00b1", frac12: "\u00bd", copy: "\u00a9", reg: "\u00ae", trade: "\u2122", hearts: "\u2665" };
+  const shownText = v => {
+    let s = decodeEntities(v);
+    for (let i = 0; i < 4 && s.indexOf("&") >= 0; i++) {   // ("&amp;middot;" is "&middot;" after the first pass and "·" after the next)
+      const was = s;
+      s = decodeEntities(s.replace(/&([A-Za-z][A-Za-z0-9]{1,7});/g, (m, n) => Object.prototype.hasOwnProperty.call(MORE_ENTITY, n) ? MORE_ENTITY[n] : m));
+      if (s === was) break;
+    }
+    return s.replace(/[\u00a0\u2000-\u200b\u202f\u205f\u3000]/g, " ").replace(/\s+/g, " ").trim();
+  };
+  const OPT_MIDDOT = /\s*[\u00b7\u2022\u2219\u22c5]\s*/, OPT_SLASH = /\s*[\/\\|]\s*/, OPT_DASH = /\s+[-\u2013\u2014]\s+/;
+  const OPT_NAME_SEP = /\s*[\u00b7\u2022\u2219\u22c5\/\\|]\s*|\s+(?:&|\+|and)\s+|\s+[-\u2013\u2014]\s+|\?\s+(?=[#A-Za-z])/i;
+  const OPT_FUSE = /[\u00b7\u2022\u2219\u22c5\/\\|]/;
+  const OPT_PLACEHOLDER = /^(?:please\s+)?(?:select|choose|pick)(?:\s+(?:an?|your|the|one))?(?:\s+(?:option|choice|one))?\s*\.{0,3}$/i;
+  const OPT_UNIT = /^(?:characters?|chars?|letters?|symbols?|initials?)$/i, OPT_SET = /^sets?$/i, OPT_REMARK = /^\(.*\)$/;
+  const OPT_TOKEN = { gold: "Gold", silver: "Silver", silvr: "Silver", rosegold: "Rose gold", sterlingsilver: "Sterling silver", goldfilled: "Gold filled", rosegoldfilled: "Rose gold filled", engraved: "Engraved", blank: "Blank", nofont: "No font", custom: "Custom" };
+  const OPT_ATTR = /^(?:metal|font|fonts|engraving|length|size|colou?r|finish|chain|style|alignment|material|plating|text)$/i;
+  const OPT_LENGTH = /^(?:(necklace|chain|bracelet|anklet)s?\s+length|lengths?\s+of\s+(?:the\s+)?(necklace|chain|bracelet|anklet)s?)$/i;
+  const optCountQuestion = label => /^\s*(?:#|no\.?\s+of\b|number\s+of\b|how\s+many\b)/i.test(label);
+  /** "16"&18"" and "15"16.5"" are two lengths: " & " between them, inch marks kept. */
+  const optInch = s => s.replace(/(\d\s*(?:["\u201d\u2033]|''))\s*&\s*(?=\d)/g, "$1 & ").replace(/(\d(?:["\u201d\u2033]|''))(?=\d)/g, "$1 & ");
+  /** The shop's own spelling of a font word ("TYPEWRTE", "TypeWrit" -> "Typewriter"), "" when the word is not one the shop offers. */
+  const optFontWord = word => { const id = shopFontOf(word), g = id && FONT_WORDS.find(x => x.id === id); return g ? g.words[0] : ""; };
+  const optPart = (part, slot) => {
+    const s = optInch(part), cased = s === s.toUpperCase() || s === s.toLowerCase(), k = s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    if (slot.font) { const w = optFontWord(s); if (w) return w; }
+    if (cased && Object.prototype.hasOwnProperty.call(OPT_TOKEN, k)) return OPT_TOKEN[k];
+    if (cased && k === "rose" && slot.metal) return "Rose gold";   // ("Rose" alone is a flower on a Birth Flower option: only a metal option makes it the metal)
+    return s;
+  };
+  const optNouns = names => { const set = new Set(); for (const n of names || []) for (const p of shownText(n).replace(/[?:*]+/g, " ").split(OPT_NAME_SEP)) { const m = OPT_LENGTH.exec(p.replace(/\s+/g, " ").trim()); if (m) set.add((m[1] || m[2]).toLowerCase()); } return set; };
+  /** One label part, without its filler; "" when nothing is left of it. */
+  function optLabel(raw, ctx) {
+    let s = String(raw || "").replace(/\(\s*(?:see|select|choose|pick|please)\b[^)]*\)/gi, " ").replace(/[?:*]+/g, " ").replace(/^\s*#\s*/, "").replace(/\s+/g, " ").trim();
+    if (!s) return "";
+    if (s === s.toUpperCase() && /[A-Z]/.test(s)) s = s.replace(/\b[A-Z]{4,}\b/g, w => w.charAt(0) + w.slice(1).toLowerCase());   // (METAL CHOICE -> Metal Choice; SKU and TAG1 stay)
+    const m = /^(.*\S)\s+(?:choices?|selections?|options?)$/i.exec(s);
+    if (m && OPT_ATTR.test(m[1].split(" ").pop())) s = m[1];   // (Font Choice -> Font, Engraving Options -> Engraving; "Necklace Options" is not an attribute and stays)
+    if (OPT_LENGTH.test(s) && optNouns(ctx && ctx.names).size <= 1) s = "Length";   // (the jewellery type is said on its own line; kept when another option names another noun: Bracelet Length)
+    return s;
+  }
+  function tidyOption(name, value, ctx) {
+    ctx = ctx || {};
+    const rawName = shownText(name), rawValue = shownText(value);
+    if (!rawName && !rawValue) return null;
+    if (rawValue && OPT_PLACEHOLDER.test(rawValue)) return null;
+    if (isPersonalisation(rawName)) return null;   // (the customer's own words are decoded, never tidied)
+    const was = (rawName ? rawName + (rawValue ? ": " : "") : "") + rawValue;
+    const setShown = ctx.setShown != null ? !!ctx.setShown : /\bset\b/i.test(shownText(ctx.title));
+    const labels = rawName ? rawName.split(OPT_NAME_SEP).map(s => s.trim()).filter(Boolean) : [], fused = labels.length > 1;
+    const slotOf = (label, multi) => ({ font: !!multi || isFontOption(label), metal: isMetalOption(label) });
+    const units = vs => { const out = []; for (const s of vs) { const p = out[out.length - 1]; if (p !== undefined && OPT_UNIT.test(s) && /\d/.test(p) && !OPT_UNIT.test(p.split(" ").pop())) out[out.length - 1] = p + " " + s; else out.push(s); } return out; };
+    const parts = (text, sep) => units(text.split(sep).map(s => s.trim()).filter(s => s && !OPT_PLACEHOLDER.test(s)));
+    let segs = null, notes = [], paired = false;
+    if (fused && rawValue) for (const sep of [OPT_MIDDOT, OPT_SLASH, OPT_DASH]) {
+      const got = [], rem = [];
+      for (const s of parts(rawValue, sep)) (OPT_REMARK.test(s) ? rem : got).push(s);
+      const si = got.findIndex(s => OPT_SET.test(s));
+      if (si >= 0 && got.length > 1 && (setShown || (got.length - 1 === labels.length && got.length !== labels.length))) got.splice(si, 1);   // ("Set": the listing says it, or the name has no slot for it)
+      if (got.length !== labels.length) continue;
+      segs = []; notes = rem; paired = true;
+      labels.forEach((lr, i) => {
+        const label = optLabel(lr, ctx), text = optPart(got[i], slotOf(lr, false));
+        if (optCountQuestion(lr) && !/\d/.test(got[i])) {   // ("#Characters?" answered Engraved / Blank: the question is filler, the answer joins the metal's)
+          if (segs.length) segs[segs.length - 1].text += " \u00b7 " + text; else segs.push({ label: "", text });
+        } else segs.push({ label: label || lr, text });
+      });
+      break;
+    }
+    if (!segs) {
+      // (a name fused with · • / | that did not pair is said part by part; "Salt & Pepper" or "Metal - Engraving" is a name, said whole)
+      const label = labels.length > 1 && OPT_FUSE.test(rawName) ? labels.map(l => optLabel(l, ctx) || l).join(" \u00b7 ") : optLabel(rawName, ctx) || rawName;
+      const vs = rawValue.split(OPT_MIDDOT).length > 1 ? parts(rawValue, OPT_MIDDOT) : null;
+      if (vs && vs.length > 1 && setShown) { const si = vs.findIndex(s => OPT_SET.test(s)); if (si >= 0) vs.splice(si, 1); }
+      const slot = slotOf(fused ? "" : rawName, !!vs && vs.length > 1);
+      segs = [{ label, text: vs && vs.length ? vs.map(p => optPart(p, slot)).join(" \u00b7 ") : optPart(rawValue, slot) }];
+    }
+    if (notes.length) { const last = segs[segs.length - 1]; segs[segs.length - 1] = { label: last.label, text: last.text + " " + notes.join(" ") }; }   // (a remark in brackets rides at the end)
+    const say = g => g.label && g.text ? g.label + ": " + g.text : g.label || g.text;
+    const line = segs.map(say).join(" \u00b7 "), first = segs[0];
+    return { label: first.label, text: first.label ? [first.text].concat(segs.slice(1).map(say)).join(" \u00b7 ") : line, line, parts: segs, names: segs.map(g => g.label).filter(Boolean).join(" \u00b7 "), paired, changed: line !== was, was,
+      raw: { name: name == null ? "" : String(name), value: value == null ? "" : String(value) } };
+  }
+  /** Always an answer: the tidy reading, or the option as it is (decoded) when there is nothing to tidy. */
+  function optionView(name, value, ctx) {
+    const t = tidyOption(name, value, ctx); if (t) return t;
+    const n = shownText(name), v = shownText(value), was = (n ? n + (v ? ": " : "") : "") + v;
+    return { label: n, text: v, line: was, parts: [{ label: n, text: v }], names: n, paired: false, changed: false, was, raw: { name: name == null ? "" : String(name), value: value == null ? "" : String(value) } };
+  }
+  /** A line's options ([{ name, value }], as purchaseOptions or the line's variations give them) as views; `line` gives the title ("SET of 2"), `all` (default: the same list) the names of every option of the line. */
+  function optionViews(options, line, all) {
+    const list = Array.isArray(options) ? options : [], ctx = { title: line && line.title, names: (Array.isArray(all) ? all : list).map(o => o && o.name) };
+    return list.map(o => optionView(o && o.name, o && o.value, ctx));
+  }
   const FORM_VALUES = {
     "necklace": "necklace", "pendant necklace": "necklace", "charm necklace": "necklace", "necklace (with chain)": "necklace", "with chain": "necklace", "with necklace": "necklace", "necklace & charm": "necklace", "charm + chain": "necklace", "charm and chain": "necklace", "charm with chain": "necklace",
     "earrings": "earrings", "earring": "earrings", "pair of earrings": "earrings", "earrings (pair)": "earrings", "single earring": "earring-single",
@@ -3603,7 +3712,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, tidyOption, optionView, optionViews, shownText, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY, earringNeverBackEngraves, EAR_NEVER_WHY,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,

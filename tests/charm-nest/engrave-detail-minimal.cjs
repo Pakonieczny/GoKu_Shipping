@@ -92,7 +92,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     // ── 2 · the customer's words are always there (ENGNOTE; the quiet box ENGTRIM kept for an uncertain read is this one box now, for every read) ──
     d = await detail({ confidence: 0.45 }, {});
     check(d.said === 1 && /front - W/.test(d.orderText) && /Please put the date/.test(d.orderText), 'a 45% read: the one box of the customer\'s own words: "' + d.orderText + '"');
-    check(!/Reading|Font:|Decided by/.test(d.orderText) && d.conf === 0 && !/%/.test(d.text), 'it carries no "Reading", no "Font", no "Decided by" and no percentage');
+    check(!/Reading|Decided by/.test(d.orderText) && d.conf === 0 && !/%/.test(d.text), 'it carries no "Reading", no "Decided by" and no percentage (and no Font row of the system\'s: the Options row may say the customer\'s own "Font: Ace", OPTTIDY 13 Oct)');
     d = await detail({ source: 'buyerMessage' }, {});
     check(d.said === 1, 'a read taken from the buyer\'s message (not the personalisation box): the box as well');
     d = await detail({}, { staffNote: 'Name Two asked to change the date' });

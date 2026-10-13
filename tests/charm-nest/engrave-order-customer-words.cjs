@@ -74,7 +74,7 @@ const settle = (w, ms) => R.settle(w.page, ms || 500);
     ok(!/\d+\s*%|sure|Read from|Words on the back|Waiting for your approval/i.test(p.text), 'no percentage, no "sure", no explanatory sentence', p.text);
     ok(!p.buyer.length && !p.staff.length, 'nothing the customer did not write (no buyer message, no staff note)');
     ok(!p.options.length && !/Options|Font Choice|Stylish/i.test(p.text) && !/data-said="Options"/.test(p.html), 'no "Options" line in this view: not drawn, nothing hidden in the DOM (the customer did choose a font)', { options: p.options, text: p.text });
-    if (SAID) { const o = await w.page.evaluate(() => { const r = Orders.rows().find(x => document.getElementById('owTitle').textContent.includes(x.order.receiptId)); return CharmNestEngraveSaid.rowsOf(r).filter(x => x[0] === 'Options').map(x => x[1]); }); ok(o.length === 1 && /Font Choice: Stylish/.test(o[0]), 'the Engrave tab\'s reader still has the Options row (only this view drops it)', o); }
+    if (SAID) { const o = await w.page.evaluate(() => { const r = Orders.rows().find(x => document.getElementById('owTitle').textContent.includes(x.order.receiptId)); return CharmNestEngraveSaid.rowsOf(r).filter(x => x[0] === 'Options').map(x => x[1]); }); ok(o.length === 1 && /Font: Stylish/.test(o[0]), 'the Engrave tab\'s reader still has the Options row (only this view drops it)', o); }
     await R.shot(w, 'MSG-back-personalisation');
 
     // ── 2. back only, the words only in the buyer's message ──

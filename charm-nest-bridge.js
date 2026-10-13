@@ -35,8 +35,8 @@ function earPairRow(row) {
 /** What an earring pair line's quantity says besides the number (Paul, 10 Oct 2026: counts that say pairs and pieces truthfully): one pair is " · Left + Right"; q pairs are q Left and q Right. */
 const pairFactOf = q => (+q > 1 ? ` · ${+q} pairs, Left + Right each` : " · Left + Right");
 function purchaseMarkup(row) {
-  const detail=O.purchaseDetails(row.line,row.spec);
-  return `<div class="purchaseType"><span class="purchaseLabel">Jewellery</span><strong>${esc(detail.type)}</strong>${typeof ListMedia !== "undefined" && ListMedia.pairRow(row) ? `<span class="purchasePair">Mismatched pair: Left + Right</span>` : ""}</div><div class="purchaseChoices"><span class="purchaseLabel">Selected options</span>${detail.options.length ? `<dl>${detail.options.map(v=>`<div><dt>${esc(v.name || "Option")}</dt><dd>${esc(v.value)}</dd></div>`).join("")}</dl>` : '<span class="purchaseMissing">Selections unavailable</span>'}</div>`;
+  const detail=O.purchaseDetails(row.line,row.spec),views=O.optionViews(detail.options,row.line);   // (OPTTIDY: the options as text a person reads; the original is the hover)
+  return `<div class="purchaseType"><span class="purchaseLabel">Jewellery</span><strong>${esc(detail.type)}</strong>${typeof ListMedia !== "undefined" && ListMedia.pairRow(row) ? `<span class="purchasePair">Mismatched pair: Left + Right</span>` : ""}</div><div class="purchaseChoices"><span class="purchaseLabel">Selected options</span>${views.length ? `<dl>${views.map(v=>`<div${v.changed ? ` title="${esc(v.was)}"` : ""}><dt>${esc(v.label || "Option")}</dt><dd>${esc(v.text)}</dd></div>`).join("")}</dl>` : '<span class="purchaseMissing">Selections unavailable</span>'}</div>`;
 }
 // Zoom/pan ported from Index(20260922-153718).html, wireTiles review viewer.
 // Keep its transform order, clamp, wheel steps, drag damping and click maths.
@@ -13169,6 +13169,8 @@ const Review = window.Review = (() => {
       ? `<span class="pill neutral" title="${esc(orders.slice(0, 20).join(" · ") + (orders.length > 20 ? " …" : ""))}">${groupPieces(group)} pieces · ${orders.length} order${orders.length === 1 ? "" : "s"} · one decision</span>` : "";
     const head = (kind, ttl, sub) => `<div class="rh"><span class="kind">${esc(kind)}</span><span class="ttl">${esc(ttl)}</span><span class="sub">${esc(sub || "")}</span>${scope}</div>`;
     const evRow = (lbl, val) => `<div><span class="lbl">${esc(lbl)}</span>${val}</div>`;
+    // (OPTTIDY: the line's options as the review card says them, tidied for a person; nothing is left out, the original is the hover)
+    const optQs = line => O.optionViews((line.variations || []).map(v => ({ name: v.name != null ? v.name : v.formatted_name, value: v.value != null ? v.value : v.formatted_value })), line).map(v => `<q${v.changed ? ` title="${esc(v.was)}"` : ""}>${esc(v.line)}</q>`).join(" ");
     const orderSub = r ? `${r.order.receiptId} · ${sp && sp.designSku || r.line.sku || "no SKU"} · ${r.line.title}` : "";
     if (it.kind === "customOrder" && r) {
       // one card for the special line: what makes it special, what it still asks, and the first question's own controls
@@ -13176,13 +13178,13 @@ const Review = window.Review = (() => {
       const spc = (sp && sp.special) || { label: "Custom order", why: "" };
       const probs = (it.problems && it.problems.length ? it.problems : [p]).filter(x => x && x.kind), first = probs[0];
       const ai = CustomRead.panel(r, group);
-      c.innerHTML = head("Custom Orders", spc.label, orderSub) + ai + `<div class="ev">${ai ? "" : evRow("Why custom", esc(spc.why || "—"))}${evRow("Options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" ") || "—")}${evRow("Still needed", esc(probs.map(problemText).join(" · ") || "nothing"))}</div>${first ? `<div class="ask">${esc(CUSTOM_ASK[first.kind] || CUSTOM_ASK.other)}</div><div class="cuStep"></div>` : ""}`;
+      c.innerHTML = head("Custom Orders", spc.label, orderSub) + ai + `<div class="ev">${ai ? "" : evRow("Why custom", esc(spc.why || "—"))}${evRow("Options", optQs(r.line) || "—")}${evRow("Still needed", esc(probs.map(problemText).join(" · ") || "nothing"))}</div>${first ? `<div class="ask">${esc(CUSTOM_ASK[first.kind] || CUSTOM_ASK.other)}</div><div class="cuStep"></div>` : ""}`;
       if (first) c.querySelector(".cuStep").appendChild(card({ kind: first.kind, key: it.key + ":" + first.kind, row: r, rows: group, problem: first, why: problemText(first), nested: true }));
       CustomRead.wire(c, group);
       return c;
     }
     if (it.kind === "needsMaterial") {
-      c.innerHTML = head("Needs material", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Station read", esc(p.metalLabel || "nothing"))}${evRow("Options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" "))}${evRow("Title", esc(r.line.title))}</div><div class="why">${esc(it.why)}</div>
+      c.innerHTML = head("Needs material", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Station read", esc(p.metalLabel || "nothing"))}${evRow("Options", optQs(r.line))}${evRow("Title", esc(r.line.title))}</div><div class="why">${esc(it.why)}</div>
         <div class="fixes"><select data-f="mat"><option value="">pick a material…</option>${METALS.map(m => `<option value="${m.key}">${esc(m.label)}</option>`).join("")}</select><button class="btn gold sm" data-a="mat">Use it (writes a staff note)</button><button class="btn ghost sm" data-a="skip">Skip piece</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
       bindNeeds(c, "mat", "mat");
       c.querySelector("[data-a=mat]").onclick = async () => { const m = c.querySelector("[data-f=mat]").value; if (!m) return; const who = by(); if (!who) return; answered(it, "decided", `material ${labelOf(m)}`, { material: m }, who); row_material(it, m, who); };
@@ -13193,7 +13195,7 @@ const Review = window.Review = (() => {
       masterSkuList();
       const notes = [].concat((sp && sp.personalization) || [], (sp && sp.buyerMessage) || []).filter(Boolean).join(" · ");
       c.innerHTML = head("Two designs?", r.line.title, orderSub) +
-        `<div class="ev">${evRow("Options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" ") || "—")}${evRow("Note", esc(notes || "—"))}${evRow("Design", esc((sp && sp.designSku) || r.line.sku || "none"))}</div>` +
+        `<div class="ev">${evRow("Options", optQs(r.line) || "—")}${evRow("Note", esc(notes || "—"))}${evRow("Design", esc((sp && sp.designSku) || r.line.sku || "none"))}</div>` +
         `<div class="ask">Which design goes on the other ear?</div><div class="why">${esc(p.pairSecond.why || "")}</div>
         <div class="fixes"><input list="cnMasterSkus" data-f="second" placeholder="the second design (a master SKU)"><button class="btn gold sm" data-a="second" title="the line's own design is the Left earring, this one the Right">Use it for the other ear</button><button class="btn ghost sm" data-a="same" title="one design, a Left and a Right (the Right is the mirror image)">The same on both ears</button></div>`;
       bindNeeds(c, "second", "second");
@@ -13214,7 +13216,7 @@ const Review = window.Review = (() => {
          listing's title under the pseudo option "Earrings in this listing's words" (form = earrings / huggie, ignore = not earrings): nothing about a line already pooled changes. */
       const lids = [...new Set(group.map(x => String(x.line.listingId || "")).filter(Boolean))];
       c.innerHTML = head("Earrings?", p.title || r.line.title, orderSub) +
-        `<div class="ev">${evRow("Options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" ") || "—")}${evRow("SKU", esc(r.line.sku || "none"))}</div>` +
+        `<div class="ev">${evRow("Options", optQs(r.line) || "—")}${evRow("SKU", esc(r.line.sku || "none"))}</div>` +
         `<div class="ask">Is this a pair of earrings?</div><div class="why">${esc(p.earWords.why || "")}</div>
         <div class="fixes pick"><button class="btn gold sm" data-w="earrings" title="a Left and a Right piece for each one bought; the Right is the mirror image of the Left">A pair of earrings</button><button class="btn ghost sm" data-w="huggie" title="the charms for a pair of huggie hoops: a Left and a Right piece for each one bought">Huggie hoops</button><button class="btn ghost sm" data-w="no" title="a necklace, a charm or something else: made as before, one piece for each one bought">Not earrings</button></div>`;
       const keep = (field, value, words) => saving(c, async () => {
@@ -13233,7 +13235,7 @@ const Review = window.Review = (() => {
          disagrees with, is not guessed (Paul, 9 Oct 2026): one press says how many, and the answer is kept for this listing and this value
          like every other option answer ({ field: "count" }). "Just 1" says the option is no count of pieces. */
       const lids = [...new Set(group.map(x => String(x.line.listingId)))], g = +p.count.guess || 0;
-      c.innerHTML = head("How many pieces?", `${p.optionName}: ${p.optionValue}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
+      c.innerHTML = head("How many pieces?", `${O.shownText(p.optionName)}: ${O.shownText(p.optionValue)}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
         `<div class="ask">How many separate pieces does ONE of these make in all?</div><div class="why">${esc(p.count.why || "")}</div>
         <div class="fixes pick">${[1, 2, 3, 4, 5, 6].map(n => `<button class="btn ${n === g ? "gold" : "ghost"} sm" data-n="${n}" title="${n === 1 ? "one piece: this option is not a number of pieces" : n + " separate pieces, each cut on its own and kept together as one order line"}">${n === 1 ? "Just 1" : n}</button>`).join("")}<input type="number" min="1" max="12" step="1" data-f="n" placeholder="other"><button class="btn gold sm" data-a="n">Use it</button></div>
         ${lids.length > 1 ? `<label class="scopeOne"><input type="checkbox" data-f="one"> only for listing ${esc(p.listingId)} — otherwise all ${lids.length} are answered together</label>` : ""}`;
@@ -13261,7 +13263,7 @@ const Review = window.Review = (() => {
       // the option may pick the charm itself (Zodiac Sign: Pisces on a listing whose signs share one SKU): the master's
       // SKUs named by the value are offered, and the answer is kept for this listing and value
       const cands = guess ? [] : optionCharms(p, r), designFirst = !guess && cands.length > 0;
-      c.innerHTML = head("Needs mapping", `${p.optionName}: ${p.optionValue}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
+      c.innerHTML = head("Needs mapping", `${O.shownText(p.optionName)}: ${O.shownText(p.optionValue)}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
         `${p.note ? `<div class="why">${esc(p.note)}</div>` : p.letter ? `<div class="why">${esc(p.letter.why)}</div>` : ""}<div class="ask">What does this option decide?</div>
         <div class="fixes pick">${CHOICES.map(([v, f, lbl]) => `<button class="btn ${v === guess ? "gold" : "ghost"} sm" data-pick="${v}" data-field="${f}">${lbl}</button>`).join("")}<button class="btn ${designFirst ? "gold" : "ghost"} sm" data-a="design" title="each value of this option is its own charm (a zodiac sign, a birthstone…)">The charm itself…</button><button class="btn ghost sm" data-a="ignore" title="it changes nothing about what gets made">Nothing — ignore it</button><button class="btn ghost sm" data-a="other">Something else…</button></div>
         <div class="fixes design${designFirst ? "" : " hidden"}"><span class="dsFor">“${esc(p.optionValue)}” on listing ${esc(p.listingId)} is</span>${cands.map(x => `<button class="btn ghost sm dsPick" data-dsku="${esc(x.sku)}" title="${esc(x.why ? x.why + " · " : "")}use ${esc(x.sku)} from the master index">${Master.pictureTag(Master.entryFor(x.sku))}${esc(x.sku)}</button>`).join("")}<input list="cnMasterSkus" data-f="dsku" placeholder="${cands.length ? "or another charm…" : "pick the charm from the master index…"}"><button class="btn gold sm" data-a="dsku">Use this charm</button></div>
@@ -13336,7 +13338,7 @@ const Review = window.Review = (() => {
         show();
       };
     } else if (it.kind === "missingSize") {
-      c.innerHTML = head("Missing size", `${p.sku} · size ${p.size || "(none)"}`, orderSub) + `<div class="ev">${evRow("Sizes available", (p.available || []).join(", "))}${evRow("Options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" "))}</div><div class="fixes"><select data-f="size">${(p.available || []).map(s => `<option>${esc(s)}</option>`).join("")}</select><button class="btn gold sm" data-a="size">Use this size (staff decision)</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
+      c.innerHTML = head("Missing size", `${p.sku} · size ${p.size || "(none)"}`, orderSub) + `<div class="ev">${evRow("Sizes available", (p.available || []).join(", "))}${evRow("Options", optQs(r.line))}</div><div class="fixes"><select data-f="size">${(p.available || []).map(s => `<option>${esc(s)}</option>`).join("")}</select><button class="btn gold sm" data-a="size">Use this size (staff decision)</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
       c.querySelector("[data-a=size]").onclick = async () => { const s = c.querySelector("[data-f=size]").value; const who = by(); if (!who) return; r.sizeOverride = s; answered(it, "decided", `size ${s}`, { size: s }, who); try { await DesignLink.call("notes.set", { receiptId: r.order.receiptId, text: `${sp.staffNote ? sp.staffNote + "\n" : ""}Size ${s} chosen by ${who} (sorter)` }); } catch (_) {} await repool(r); };
     } else if (it.kind === "oversize") {
       c.innerHTML = head("Oversize", `${p.sku} · ${p.widthMm.toFixed(1)} × ${p.heightMm.toFixed(1)} mm`, orderSub) + `<div class="ev">${evRow("Plate", `${labelOf(p.material)} ${fmt.mm(stockFor(p.material).wPt)} × ${fmt.mm(stockFor(p.material).hPt)} under the ${fmt.pct(S.settings.maxFill)} ceiling`)}</div><div class="fixes"><button class="btn ghost sm" data-a="stock">Different stock (Settings)</button><button class="btn ghost sm" data-a="retry">Try again</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
@@ -15294,14 +15296,16 @@ const OrderWin = window.OrderWin = (() => {
     if (!stageText(st[1])) cell("State", st[1]);   // (only an exception is a fact: the numbered stage "2/5 nested" is printed nowhere, Paul 12 Oct 2026; the Sheet cell below still says where it is)
     if (sheetCell) cell("Sheet", sheetCell);
     cell("Ship by", tryDo(() => Orders.shipTxt(r)) || "—");
-    if (sp.form) cell("Form", sp.form); if (sp.size) cell("Size", sp.size); if (sp.chain) cell("Chain", sp.chain);
+    if (sp.form) cell("Form", sp.form); if (sp.size) cell("Size", sp.size);
+    if (sp.chain) { const ch = tryDo(() => O.optionView("Chain", sp.chain, { title: r.line.title })); cell("Chain", ch ? ch.text : sp.chain, ch && ch.changed ? { raw: O.shownText(sp.chain) } : null); }   // (OPTTIDY: a chain read from a fused option "16"&18"·Set·ANGELINA" is said as "16" & 18" · Angelina"; the original is the hover)
     // the engraving: the line's state and words, its seals (an approval made elsewhere is merged in by paintNow: W.engHist)
     const hist = W.engHist && W.engHist.key === r.key ? W.engHist.html : "";
     const seals = r.engrave ? CNEngravingSeals.list(r.engrave).length : 0, hasEng = !!(hist || (r.engrave && (r.engrave.needed || seals)));
     const engHtml = hasEng ? hist || engCellHtml(r, "waiting") : "";
     const read = hasEng ? null : tryDo(() => engReadingOf(r));   // (BFREAL: what the order itself says, while Engrave holds nothing for it)
     if (hasEng) cells.push({ label: "Engraving", html: engHtml, wide: 1, block: 1 }); else if (read) cells.push({ label: "Engraving", html: read.html, wide: 1, block: 1 });
-    if (bought.length) bought.forEach(o => cell(o.name || "Option", o.value)); else (sp.options || []).filter(o => o.mapped).forEach(o => cell(o.name, o.value));
+    const views = tryDo(() => O.optionViews(bought, r.line)) || bought.map(o => ({ label: o.name, text: o.value, changed: false }));   // (OPTTIDY: "Metal: Gold · Engraved"; the Details list keeps the original as the cell's hover)
+    if (bought.length) views.forEach(v => cell(v.label || "Option", v.text, v.changed ? { raw: v.was } : null)); else (sp.options || []).filter(o => o.mapped).forEach(o => cell(o.name, o.value));
     cell("Listing", String(r.line.listingId || "—"), r.line.listingId ? { copy: String(r.line.listingId), mono: 1 } : { mono: 1 });
     cell("Title", r.line.title || "—", { wide: 1 });
     // the glance: what matters at a glance, and for each the card it opens
@@ -15315,7 +15319,7 @@ const OrderWin = window.OrderWin = (() => {
       buyer: { name: buyer, gift: !!r.order.isGift },
       purchased: placed ? { ts: placed, label: "Purchased" } : r.arrivedAt ? { ts: +r.arrivedAt, label: "Arrived" } : null,
       ship: r.order.shipBy ? { by: +r.order.shipBy, quiet } : null,
-      metal: { label: r.material ? labelOf(r.material) : (sp.materialLabel || ""), none: !r.material && !sp.materialLabel, color: r.material ? colorOf(r.material) : "", choices: bought.filter(o => /metal|material/i.test(o.name || "")).map(o => ({ name: o.name, value: o.value })) },
+      metal: { label: r.material ? labelOf(r.material) : (sp.materialLabel || ""), none: !r.material && !sp.materialLabel, color: r.material ? colorOf(r.material) : "", choices: bought.map((o, i) => [o, views[i]]).filter(([o]) => /metal|material/i.test(o.name || "")).map(([, v]) => ({ name: v.label, value: v.text })) },
       qty: { n: qn, pieces: sides.length, pair: sides.length > 0, mismatched: sides.length > 0 && !!ListMedia.pairRow(r), counted: counted ? { total: counted.total, noun: counted.noun } : null, notes: pnotes },
       custom: sp.special ? { label: sp.special.label, note: [sp.special.read && !sp.special.decided ? `Claude ${Math.round((+sp.special.read.confidence || 0) * 100)}% sure` : "", sp.special.why || ""].filter(Boolean).join(" · ") } : sp.customDone ? { label: "Custom: " + (sp.customDone.category || "completed"), note: "" } : null,
       engraving: hasEng ? { chip: engMode === "both" ? "Front + back" : engMode === "front" ? "Front only" : "Engraving", html: engHtml, approved: !!(r.engrave && r.engrave.approved) } : read ? { chip: read.chip, html: read.html, approved: false } : null,

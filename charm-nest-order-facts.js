@@ -171,7 +171,7 @@
   const cellHtml = c => {
     const cls = 'm' + (c.wide ? ' wide' : '') + (c.block ? ' block' : '') + (c.mono ? ' mono' : '');
     if (c.html != null) return `<div class="${cls}"><i>${esc(c.label)}</i>${c.html}</div>`;
-    return `<div class="${cls}"><i>${esc(c.label)}</i><span>${esc(c.text)}</span>${c.copy ? copyBtn(c.copy, 'Copy ' + String(c.label).toLowerCase()) : ''}</div>`;
+    return `<div class="${cls}"${c.raw ? ` title="${esc(c.raw)}"` : ''}><i>${esc(c.label)}</i><span>${esc(c.text)}</span>${c.copy ? copyBtn(c.copy, 'Copy ' + String(c.label).toLowerCase()) : ''}</div>`;
   };
     function popHtml(p) {
     let h = `<div class="owfPopHd">${ic(p.icon || 'info')}<b>${esc(p.title)}</b></div>`;
