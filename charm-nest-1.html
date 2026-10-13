@@ -492,8 +492,9 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 /* ── the Engraving section of the Overview (Paul, 12 Oct 2026; CONTRACT.md B): directly under the chip strip, ruled off by a thin line, "Engraving" small at its top-left, one card per piece SIDE BY SIDE,
    at least THREE to a row. #owEng.engGrid is the grid; OrderEngraving.mount draws one cell (a direct child) per piece; the section is hidden with it, so an order with nothing to engrave shows
    no title and no line. The centre column (between the picture column and the chat) is ~386px wide in a 1024px window, ~642px at 1280, ~718px at 1356 (Paul's), ~774px at 1440, ~1198px at 1920.
-   THE GRID RULE: exactly 3 equal tracks (a card is ~122px at 1024, ~207px at 1280, ~233px at 1356, ~251px at 1440: the HARD MINIMUM card width is 118px, the centre at a 1024px window), 4 tracks from
-   an 840px section, 5 from 1060px, 2 only under 360px (a phone). The tracks are fixed in number, never auto-fit, so ONE or TWO cards stay one third of the row wide, left-aligned: never stretched. ── */
+   THE GRID RULE: 3 equal tracks (a card is ~207px at 1280, ~233px at 1356, ~251px at 1440), 4 tracks from an 840px section, 5 from 1060px; ENGBIG (13 Oct 2026) made the pictures twice as large, so a track is never
+   under 176px: 2 tracks under a 548px section (~122px cards at 1024 became 2 cards of ~188px), 1 under 362px (a phone). The tracks are fixed in number, never auto-fit, so ONE or TWO cards stay one track wide,
+   left-aligned: never stretched (a front + back card spans two tracks, see below). ── */
 .engSec{margin-top:10px;padding-top:6px;border-top:1px solid var(--line);container:eng/inline-size;min-width:0}
 /* (nothing to engrave: no rule, no title, no room. The section keeps a box of no height rather than display:none, because OrderEngraving looks at the host's parent to know whether a card hidden
    for lack of anything to show may be drawn when something comes: a parent with no box at all would never be drawn again) */
@@ -506,7 +507,27 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 #owEng.engGrid>.fLabel{display:none}   /* (the old list's own "Back engraving" label: the section's title is the one title) */
 @container eng (min-width:840px){#owEng.engGrid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @container eng (min-width:1060px){#owEng.engGrid{grid-template-columns:repeat(5,minmax(0,1fr))}}
-@container eng (max-width:359px){#owEng.engGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container eng (max-width:547px){#owEng.engGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container eng (max-width:361px){#owEng.engGrid{grid-template-columns:minmax(0,1fr)}}
+/* ── the pictures of the cards, twice as large (ENGBIG; Paul, 13 Oct 2026 03:04 UTC: "Enlarge the engraving thumbnail size in this modal to be 2x larger"). They were 80px in a card under 232px wide and 104px in a wider one
+   (charm-nest-engrave-card.js: the card's own rules, which the Engrave tab's detail card keeps); here, in the order window's grid only, they are 160px and 208px. --engPx is the picture's edge: the card's own container
+   query cannot give it, because a front + back card spans two tracks and must draw the same picture as a single card, so it is set by the section's width, at the same cards (a track is 232px or wider from a 714px
+   section with 3 tracks, 955px with 4, 1196px with 5). A track is at least 176px (a 160px picture and the card's padding), so the grid has 3 tracks from a 548px section (the centre of a ~1186px window), 2 under that, 1 under 362px.
+   One face: label, picture, words, one under the other, in the same column (160px plus 31px of air at 1280). Front + back: the card spans two tracks (one when the grid has one) and the two pictures stand side by side in it;
+   in a card too narrow for both (a phone) they stand one over the other. Nothing is clipped: the picture is never wider than its column. ── */
+#owEng.engGrid{--engPx:160px}
+@container eng (min-width:714px) and (max-width:839px){#owEng.engGrid{--engPx:208px}}
+@container eng (min-width:955px) and (max-width:1059px){#owEng.engGrid{--engPx:208px}}
+@container eng (min-width:1196px){#owEng.engGrid{--engPx:208px}}
+#owEng.engGrid>.engCard:has(.engFaces[data-n="2"]){grid-column:span 2}
+@container eng (max-width:361px){#owEng.engGrid>.engCard:has(.engFaces[data-n="2"]){grid-column:auto}}
+#owEng .engCard .engFaces{grid-template-columns:repeat(2,minmax(0,1fr));justify-content:start}
+#owEng .engCard .engFaces[data-n="1"]{grid-template-columns:minmax(0,1fr)}
+#owEng .engCard .engFaces[data-n="1"] .engFace{display:flex}
+#owEng .engCard .engFaces[data-n="1"] .engLbl{order:-1}
+#owEng .engCard .engFaces[data-n="1"] .engTxt{-webkit-line-clamp:2}
+#owEng .engCard .engThumb{max-width:var(--engPx)}
+@container engc (max-width:325px){#owEng .engCard .engFaces[data-n="2"]{grid-template-columns:minmax(0,1fr)}}
 /* (a chip's card hangs over the section: the facts sit above the cards' own positioned parts, the section being a later sibling with its own stacking context) */
 #orderWin .owInfoMain>#owMeta{z-index:3}
 .owVector{width:100%;aspect-ratio:1;background:#fff;border:1px solid var(--line);border-radius:11px;display:grid;place-items:center;overflow:hidden;position:relative;font:11px var(--sans);color:var(--ink45);text-align:center}
@@ -3517,12 +3538,12 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1-bf1-sd1-sl1-pm1-zs1-dm1-nb1-ch1-ns1-lk1-nr1-au1-rlk2-rs1"></script>
 <script src="charm-nest-engrave-said.js?v=20261012-nt1"></script>
-<script src="charm-nest-engrave-preview.js?v=20261012-pv1-r2th1-th2"></script>
+<script src="charm-nest-engrave-preview.js?v=20261012-pv1-r2th1-th2-bg1"></script>
 <script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1-dm1-ko1"></script>
 <script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po2-adv2-cg1-sn1-dr2-sl1"></script>
 <script src="charm-nest-order-rows.js?v=20261012-or1"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2-cg1"></script>
-<script src="charm-nest-engrave-card.js?v=20261012-ec1-sm1-r2th1-bt1"></script>
+<script src="charm-nest-engrave-card.js?v=20261012-ec1-sm1-r2th1-bt1-bg1"></script>
 <script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1-dm1-su1-ui2-egm1-el1-ec1-mg1-crash1-sel1-op1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2-sn1"></script>
 <script src="charm-nest-set-rules.js?v=20261010-sf2-sp1"></script>

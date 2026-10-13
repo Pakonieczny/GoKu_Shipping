@@ -11,7 +11,8 @@
 //   4  the keyboard: Tab reaches the button and the thumbnails (in that card's order), Enter and Space press them
 //   5  the three older places (the card of the Sheet view / sheet window / Review: charm-nest-engraving-seals.js panel()) draw the SAME button: same classes, same words, same computed look (only the card's
 //      compact height differs), the same hover and pressed fill
-//   6  the card is still about 175px tall at 207px wide (the noscroll test keeps the first row on screen)
+//   6  the card's size at 1280x720: ENGBIG (13 Oct) made the pictures twice as large (160px), so a card of one face is one 207px track wide and about 255px tall (label, picture, words, button) and a
+//      front + back card is two tracks wide (about 424px) and about 270px tall; it was about 175px tall at 207px wide with 80px pictures (engrave-thumb-size.cjs and the noscroll test check the sizes closely)
 // Screenshots of the states (the card with real drawings) go to round2/images/BUTTON-*.png (SHOTS=<dir> to put them elsewhere).
 //   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-open-button.cjs      (about 1-2 minutes; CHROMIUM=<chrome> when the default path is missing)
 // What a pass does NOT prove: a live order, the animation (ENGANIM's test), the way back (ENGBACK's test), any browser but headless Chromium.
@@ -72,7 +73,7 @@ async function main() {
         check(c.inside && c.spill <= 0, `${id}: the button sits inside the card and nothing spills out of it`, { inside: c.inside, spill: c.spill });
         console.log(`  info ${id}: faces shown ${c.faces.join('+')} (which faces a card shows is ENGSMART's; the button is on every card whatever they are)`);
         check(c.thumbs.every(t => t.tag === 'BUTTON' && t.type === 'button' && t.tab === 0 && /engraving of .+: open in Engraving/.test(t.label || '')), `${id}: each thumbnail is a real focusable button with its own name (aria-label)`, c.thumbs);
-        check(c.h <= 180 && c.h >= 120 && c.w > 190 && c.w < 215, `${id}: the card is ${Math.round(c.h)}px tall at ${Math.round(c.w)}px wide (175 with two pictures, less with one)`);
+        check(c.h <= 290 && c.h >= 230 && c.w > 190 && c.w < (c.faces.length === 2 ? 440 : 215), `${id}: the card is ${Math.round(c.h)}px tall at ${Math.round(c.w)}px wide (ENGBIG: 160px pictures; about 255 tall and one 207px track wide with one face, about 270 and two tracks, 424px, with two)`);
       }
       check(await page.evaluate(() => [...document.querySelectorAll('#owEng > .engCard')].every(c => c.querySelectorAll('.egOpen').length === 1) && !document.querySelector('#owEng .engCard a[href], #owEng .engCard [role=link]')), `${n}: one button per card, no link or role=link stand-in`);
     }
