@@ -83,7 +83,7 @@
       const parts = saidRows(line), one = mine.length === 1 ? mine[0] : null, f = one && one.faces || {};
       const faces = f.front && f.back && f.front.text && f.back.text && !f.front.plain && !f.back.plain ? [['Front', oneLine(f.front.text)], ['Back', oneLine(f.back.text)]] : null;
       if (!parts.length) continue;   // (the customer wrote and chose nothing: nothing is said, whatever the faces read)
-      out.push({ name: mine[0].name || '', rows: parts, faces });
+      out.push({ name: (mine[0].name || '') + (mine[0].many && mine[0].metal ? ' · ' + mine[0].metal : ''), rows: parts, faces });   // (ENGPICK: two pieces of one design are told apart by their metal, as their cards are: "COMET 9427 · SS")
     }
     return out;
   }
@@ -282,7 +282,8 @@
     const extra = [];
     for (const f of ['front', 'back']) {
       const x = piece.faces[f]; if (!x || !x.job || x.state === 'approved' || x.state === 'plain') continue;
-      const fa = foreignApproval(piece.row, x.job, events, seenAt); if (!fa) continue;
+      // (ENGAPPROVE: a disc or an ear is read through ITS OWN row: through the line's, one disc's approval was read as every disc's, and Disc 2 and Disc 3 showed Approved, with no Approve, the moment Disc 1 was)
+      const fa = foreignApproval(x.job.row && x.job.row.parentRow && x.job.row.slot ? x.job.row : piece.row, x.job, events, seenAt); if (!fa) continue;
       x.state = 'approved'; x.foreign = fa; extra.push({ how: 'engraveApproved', at: fa.at, by: fa.by, ...(f === 'front' ? { face: 'front' } : {}) });
     }
     if (!extra.length) return piece;
@@ -327,7 +328,11 @@
     function read() {
       const C = CARD(), only = onlyOf(), vis = visible();
       // (ENGSEL: the lines of the piece picked, or of every piece; the words block below the cards is drawn from these same rows and pieces, so it follows too)
-      const rows = rowsOf().filter(r => !only || !only.line || (((r && r.parentRow) || r || {}).key === only.line));
+      const every = rowsOf();
+      // (ENGPICK: a line that carries an engraving but has no job yet (on hold, waiting, never nested; its setup is the plain default, so it draws no card) is asked for its job once per window, whichever piece is picked:
+      //  Engrave.early makes it on the charm the piece will have and pools and moves nothing, so every engraved piece of the order has its card and none can be passed by unseen)
+      const E = root.Engrave; if (E && E.early && E.earlyWanted && E.jobsOf) for (const r of every) { const ln = (r && r.parentRow) || r; if (ln && ln.key && !asked.has(ln.key) && tryDo(() => E.earlyWanted(ln), false) && !tryDo(() => E.jobsOf(ln), []).length) { asked.add(ln.key); tryDo(() => { const p = E.early(ln); if (p && p.catch) p.catch(() => {}); }); } }
+      const rows = every.filter(r => !only || !only.line || (((r && r.parentRow) || r || {}).key === only.line));
       const popt = { nameOf, isWorking, seen: j => vis || seen.has(j.key) };
       let pieces = []; if (C) { try { pieces = C.piecesOf(rows, popt); } catch (e) { pieces = []; for (const r of rows) { try { pieces.push(...C.piecesOf([r], popt)); } catch (e2) { tryDo(() => console.warn('order engraving: one line could not be read', e2)); } } } }   // (ENGCRASH: a line that cannot be read leaves the other lines' cards drawn)
       if (only && only.side) pieces = pieces.filter(p => !p.slot || p.slot === only.side);   // (one ear of a pair picked: that ear's card alone)
@@ -344,6 +349,19 @@
       const sig = JSON.stringify(entries);
       if (sig !== saidSig) { saidSig = sig; saidEl.innerHTML = entries.length ? saidHtml(entries) : ''; }
       saidEl.hidden = !entries.length;
+    }
+    /** ENGAPPROVE (Paul, 13 Oct 2026: "the user must never be allowed to skip pieces"): the section shows only the piece picked, so once that piece is approved ONE quiet line under its card says how many pieces of the
+     *  order are still to approve and shows the next (charm-nest-engrave-guide.js decides; it is nothing while the picked piece itself has something to do, for "Show all" and for an order of one piece). It sits right under the
+     *  cards, above the customer's words; a press on its button picks that piece (OrderWin.selectPiece), the section follows as for any pick. No timer, no read: it is drawn with the cards. */
+    let leftEl = null;
+    function paintLeft(r) {
+      const G = root.CharmNestEngraveGuide; if (!G || !G.pointer) return;
+      const rid = String(ctx.rid || (r && r.rows && r.rows[0] && (((r.rows[0].parentRow || r.rows[0]).order || {}).receiptId)) || '');
+      const p = r && !r.loading && rid ? tryDo(() => G.pointer(rid, { only: onlyOf(), shown: r.pieces }), null) : null;
+      if (!leftEl && p && host.parentNode) { leftEl = doc().createElement('div'); leftEl.className = 'engLeft'; leftEl.id = 'owEngLeft'; leftEl.hidden = true; host.after(leftEl); }
+      if (!leftEl) return;
+      if (leftEl.previousSibling !== host && host.parentNode) host.after(leftEl);   // (right under the cards, whatever order the words block was made in)
+      G.drawPointer(leftEl, p, k => { if (root.OrderWin && root.OrderWin.selectPiece) root.OrderWin.selectPiece(k); });
     }
     /** A press on a face: that piece and that face open in the Engrave tab (EngraveLink, the order window closes as it opens). */
     function openEngrave(face, key, btn, piece) {
@@ -425,7 +443,7 @@
       attached = true;
       const C = CARD(); if (!C) return;
       const r = read(), vis = visible();
-      paintSaid(r);
+      paintSaid(r); paintLeft(r);
       // (ENGSEL: the piece picked changed: the window is repainting itself because of it, so the host is not told, and a card of a piece that is not shown now goes at once, whatever keeps the rest from being
       //  drawn this moment (the window not on screen, a seal being pressed): no stale card is ever left on show, and a section with no card left has no title, rule or room)
       if (r.only !== onlySeen) { onlySeen = r.only; quiet = true; }
@@ -476,6 +494,7 @@
       busy.clear(); seen.clear(); fails.clear(); last = new Map(); cards.clear(); waitEl = null; loading = false; told0 = null; kindsSeen = ''; seenAt = Date.now();
       host.replaceChildren(); host.hidden = true;
       saidSig = ''; if (saidEl) { saidEl.innerHTML = ''; saidEl.hidden = true; }
+      if (leftEl) { leftEl.replaceChildren(); leftEl.hidden = true; leftEl._sig = ''; }
     }
     const handle = {
       el: host, mode,
@@ -490,6 +509,7 @@
         if (ro) { tryDo(() => ro.disconnect()); ro = null; }
         host.replaceChildren(); host.hidden = true; if (host._orderEngraving === handle) delete host._orderEngraving;
         if (saidEl) { tryDo(() => saidEl.remove()); saidEl = null; }
+        if (leftEl) { tryDo(() => leftEl.remove()); leftEl = null; }
       },
       _tick() {
         // (a host taken out of the page takes the cards with it; one not put in yet is waited for)

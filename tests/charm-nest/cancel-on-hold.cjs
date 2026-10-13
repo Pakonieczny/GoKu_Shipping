@@ -12,7 +12,7 @@
 // Cancelled chip (a ring on the chip first, the count ticking up when it lands, only transform and opacity animating, the
 // note "Order N cancelled" with Undo and Show); the order is under Cancelled, the timeline keeps its earlier steps and
 // adds the cancel with who and when; Undo restores it (cancelRestore once), the card flies back into On hold and the
-// timeline keeps both; a failed save keeps the card and says so plainly; an order of two lines flies as one with one note;
+// timeline keeps both; a failed save keeps the card and says so plainly; an order of two lines is one card and flies as one with one note;
 // reduced motion has no flight and still the note; no name saved asks in the inline bar; nothing is left on screen.
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
@@ -84,7 +84,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       for (const row of B.orders.rows) if (held.includes(row.order.receiptId)) { row.hold = 'Taken off SS Sheet 1, GF Sheet 2 by Paul: Add to next sheet'; row.reason = row.hold; row.state = 'held'; row.heldAt = Date.now() - 3600e3; }
       CN.setMode('orders'); Orders.showPile('hold', ''); Orders.renderNow();
     }, { orders: o.orders || ORDERS, held: o.held || HELD });
-    await page.waitForFunction(() => document.querySelectorAll('#ordItems [data-rid]').length > 0);
+    await page.waitForFunction(() => document.querySelectorAll('#ordItems > [data-rid]').length > 0);
     page.errors = errors; page.ctx = ctx; pages.push(page);
     return page;
   }
@@ -92,7 +92,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   /** Answers the page's calls to the library its own way for a while (r.fallback() lets one through to the fake site). */
   const routeLib = async (page, fn) => { const h = r => { let b = {}; try { b = r.request().postDataJSON() || {}; } catch (_) {} return fn(r, b); }; await page.route(LIBRX, h); return () => page.unroute(LIBRX, h); };
   const shot = async (page, name) => { if (SHOTS) { await page.waitForTimeout(350); await page.screenshot({ path: path.join(SHOTS, name + '.png') }); } };
-  const cardsOf = (page, rid) => page.evaluate(r => [...document.querySelectorAll('#ordItems [data-rid]')].filter(n => n.dataset.rid === r).length, rid);
+  const cardsOf = (page, rid) => page.evaluate(r => [...document.querySelectorAll('#ordItems > [data-rid]')].filter(n => n.dataset.rid === r).length, rid);
   const chipN = (page, pile) => page.evaluate(p => { const b = document.querySelector(`#ordChips [data-pile="${p}"] b`); return b ? b.textContent : null; }, pile);
   const sampler = page => page.evaluate(() => {
     const S = window.__cx = { t0: performance.now(), s: [], props: new Set(), anims: 0, run: true };
@@ -118,28 +118,28 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   // ───────────────────────── the page, the cards ─────────────────────────
   const page = await open({});
-  const sel = rid => `#ordItems [data-rid="${rid}"]`;
+  const sel = rid => `#ordItems > [data-rid="${rid}"]`;
 
   await check('1 · the button is on the held cards of On hold, beside Release hold, and nowhere else', async () => {
     const got = await page.evaluate(({ A, B2, C }) => {
-      const info = rid => [...document.querySelectorAll(`#ordItems [data-rid="${rid}"]`)].map(n => ({ cancel: [...n.querySelectorAll('.cnCancelBtn')].map(b => b.textContent.trim()), rel: n.querySelectorAll('.relHold:not([data-gate])').length, together: !!n.querySelector('.cnHoldBtns .cnCancelBtn') && !!n.querySelector('.cnHoldBtns .relHold') }));
+      const info = rid => [...document.querySelectorAll(`#ordItems > [data-rid="${rid}"]`)].map(n => ({ cancel: [...n.querySelectorAll('.cnCancelBtn')].map(b => b.textContent.trim()), rel: n.querySelectorAll('.relHold:not([data-gate])').length, together: !!n.querySelector('.cnHoldBtns .cnCancelBtn') && !!n.querySelector('.cnHoldBtns .relHold') }));
       return { pile: Orders.view().pile, a: info(A), b: info(B2), c: info(C) };
     }, { A, B2, C });
     assert.equal(got.pile, 'hold');
     assert.equal(got.a.length, 1); assert.deepEqual(got.a[0].cancel, ['Cancel Order']); assert.equal(got.a[0].rel, 1); assert(got.a[0].together, 'the two buttons share one row');
-    assert.equal(got.b.length, 2, 'two lines, two cards'); for (const c of got.b) assert.deepEqual(c.cancel, ['Cancel Order']);
+    assert.equal(got.b.length, 1, 'two lines, ONE card (one order, one row)'); for (const c of got.b) assert.deepEqual(c.cancel, ['Cancel Order']); assert.equal(got.b[0].rel, 1, 'one Release hold for the order');
     assert.equal(got.c.length, 0, 'an order that is not on hold is not in On hold');
     await page.click('#ordChips [data-pile=""]');
-    await page.waitForFunction(() => Orders.view().pile === null && document.querySelectorAll('#ordItems [data-rid]').length >= 4);
-    const open = await page.evaluate(() => ({ cancel: document.querySelectorAll('#ordItems .cnCancelBtn').length, rel: document.querySelectorAll('#ordItems .relHold:not([data-gate])').length, cards: document.querySelectorAll('#ordItems [data-rid]').length }));
+    await page.waitForFunction(() => Orders.view().pile === null && document.querySelectorAll('#ordItems > [data-rid]').length >= 4);
+    const open = await page.evaluate(() => ({ cancel: document.querySelectorAll('#ordItems .cnCancelBtn').length, rel: document.querySelectorAll('#ordItems .relHold:not([data-gate])').length, cards: document.querySelectorAll('#ordItems > [data-rid]').length }));
     assert.equal(open.cancel, 0, 'Open Orders shows held orders with Release hold only: ' + JSON.stringify(open)); assert(open.rel >= 3);
     await page.click('#ordChips [data-pile="hold"]');
-    await page.waitForFunction(() => Orders.view().pile === 'hold' && document.querySelectorAll('#ordItems .cnCancelBtn').length === 7);
+    await page.waitForFunction(() => Orders.view().pile === 'hold' && document.querySelectorAll('#ordItems .cnCancelBtn').length === 6);   // (six held orders, ONE Cancel Order each: the two lines of B2 are one card)
   });
 
   await check('2 · same height and calm look as Release hold (plain, not orange, not red); fits 900 and 390 px', async () => {
     const look = () => page.evaluate(A => {
-      const n = document.querySelector(`#ordItems [data-rid="${A}"]`), c = n.querySelector('.cnCancelBtn'), r = n.querySelector('.relHold'), cs = getComputedStyle(c), rs = getComputedStyle(r);
+      const n = document.querySelector(`#ordItems > [data-rid="${A}"]`), c = n.querySelector('.cnCancelBtn'), r = n.querySelector('.relHold'), cs = getComputedStyle(c), rs = getComputedStyle(r);
       const cr = c.getBoundingClientRect(), rr = r.getBoundingClientRect(), nr = n.getBoundingClientRect();
       return { ch: Math.round(cr.height * 10) / 10, rh: Math.round(rr.height * 10) / 10, fs: [cs.fontSize, rs.fontSize], radius: [cs.borderRadius, rs.borderRadius], bg: [cs.backgroundColor, rs.backgroundColor], border: [cs.borderTopColor, rs.borderTopColor], color: cs.color,
         inside: cr.left >= nr.left - 1 && cr.right <= nr.right + 1 && rr.left >= nr.left - 1 && rr.right <= nr.right + 1, overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1 || n.scrollWidth > n.clientWidth + 1, lines: c.getClientRects().length, label: c.textContent.trim(), wide: Math.round(cr.width) };
@@ -174,7 +174,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(await page.locator(`${sel(F)} .cnCancelBtn`).isDisabled(), false, 'the button is back');
     assert.equal(await page.locator(`${sel(F)} .relHold`).isDisabled(), false, 'Release hold is back');
     await page.click(`${sel(F)} .cnCancelBtn`);
-    await page.waitForFunction(() => /^Not cancelled:/.test((document.querySelector('#ordItems [data-rid="4174601824"] .cnCancelMsg') || {}).textContent || ''));
+    await page.waitForFunction(() => /^Not cancelled:/.test((document.querySelector('#ordItems > [data-rid="4174601824"] .cnCancelMsg') || {}).textContent || ''));
     msg = await page.textContent(`${sel(F)} .cnCancelMsg`); assert(/still on hold/i.test(msg), 'again plain, nothing lost: ' + msg);
     const s = await stopSampler(page);
     assert.equal(tries, 2); assert.equal(calls('cancelPut', F).length, 0, 'the server never saw a cancel');
@@ -193,11 +193,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(before.cx, '0');
     await sampler(page);
     await page.click(`${sel(A)} .cnCancelBtn`);
-    const waiting = await page.evaluate(A => { const n = document.querySelector(`#ordItems [data-rid="${A}"]`), b = n.querySelector('.cnCancelBtn'); return { disabled: b.disabled, text: b.textContent.trim(), spin: !!b.querySelector('.spin'), rel: n.querySelector('.relHold').disabled, lifted: n.classList.contains('cnBusy'), name: !!document.querySelector('.cnNameBar') }; }, A);
+    const waiting = await page.evaluate(A => { const n = document.querySelector(`#ordItems > [data-rid="${A}"]`), b = n.querySelector('.cnCancelBtn'); return { disabled: b.disabled, text: b.textContent.trim(), spin: !!b.querySelector('.spin'), rel: n.querySelector('.relHold').disabled, lifted: n.classList.contains('cnBusy'), name: !!document.querySelector('.cnNameBar') }; }, A);
     assert(waiting.disabled && waiting.spin && /Cancelling/.test(waiting.text), 'a small labelled spinner: ' + JSON.stringify(waiting));
     assert(waiting.rel, 'Release hold waits too'); assert(waiting.lifted, 'the card lifts'); assert.equal(waiting.name, false, 'the name is saved: nothing is asked');
     await shot(page, 'pressed-spinner');
-    await page.waitForFunction(rid => !document.querySelector(`#ordItems [data-rid="${rid}"]`), A, { timeout: 15000 });
+    await page.waitForFunction(rid => !document.querySelector(`#ordItems > [data-rid="${rid}"]`), A, { timeout: 15000 });
     await page.waitForFunction(() => document.querySelector('.mNote'), null, { timeout: 8000 });
     await page.waitForTimeout(700);
     const s = await stopSampler(page);
@@ -274,22 +274,23 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     // and it can be cancelled again, one record, as before
     await settle(page);
     await page.click(`${sel(A)} .cnCancelBtn`);
-    await page.waitForFunction(rid => !document.querySelector(`#ordItems [data-rid="${rid}"]`), A);
+    await page.waitForFunction(rid => !document.querySelector(`#ordItems > [data-rid="${rid}"]`), A);
     assert.equal(calls('cancelPut', A).length, 2); assert(st.doc('Charm_Nest_Cancelled', A));
   });
 
-  await check('8 · an order of two lines flies as one: both cards, one cancel, one note', async () => {
+  await check('8 · an order of two lines flies as one card: one cancel, one note', async () => {
     await page.evaluate(() => { for (const n of document.querySelectorAll('.mNote')) n.remove(); });
     await settle(page);
-    assert.equal(await cardsOf(page, B2), 2);
+    assert.equal(await cardsOf(page, B2), 1, 'one order, one card (ONE ORDER, ONE ROW, 13 Oct)');
     await sampler(page);
     await page.click(`${sel(B2)} .cnCancelBtn >> nth=0`);
-    await page.waitForFunction(rid => !document.querySelector(`#ordItems [data-rid="${rid}"]`), B2, { timeout: 15000 });
+    await page.waitForFunction(rid => !document.querySelector(`#ordItems > [data-rid="${rid}"]`), B2, { timeout: 15000 });
     await page.waitForTimeout(1900);
     const s = await stopSampler(page);
     assert.equal(calls('cancelPut', B2).length, 1, 'one cancel for the order, not one a line');
-    const keys = new Set(s.s.flatMap(x => x.ghosts.map(g => g.key))); assert.equal(keys.size, 2, 'both cards flew: ' + [...keys]);
+    const flew = Math.max(0, ...s.s.map(x => x.ghosts.length)); assert.equal(flew, 1, 'the order flew as ONE card: ' + flew);
     const notes = new Set(s.s.flatMap(x => x.notes.filter(n => /Order 4174601820 cancelled/.test(n)))); assert.equal(notes.size, 1, 'one note: ' + [...notes]);
+    await page.waitForFunction(() => { const b = document.querySelector('#ordChips [data-pile="cancelled"] b'); return b && b.textContent === '2'; }, null, { timeout: 10000 }).catch(() => {});   // (the number rolls in over a moment; on a busy machine it has not finished by now)
     assert.equal(await chipN(page, 'cancelled'), '2', 'A (cancelled again) and this order'); assert.equal(st.doc('Charm_Nest_Cancelled', B2).lines.length, 2, 'the record keeps both lines');
     await shot(page, 'two-lines');
   });
@@ -298,8 +299,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const r = await open({ reduced: true, who: 'Tester', held: [D] });
     await r.evaluate(() => { window.__fly = 0; new MutationObserver(m => { if (document.querySelector('#motionLayer .mGhost, .cnBeacon')) window.__fly++; }).observe(document.body, { childList: true, subtree: true }); });
     const cx0 = +await chipN(r, 'cancelled');
-    await r.click(`#ordItems [data-rid="${D}"] .cnCancelBtn`);
-    await r.waitForFunction(rid => !document.querySelector(`#ordItems [data-rid="${rid}"]`), D);
+    await r.click(`#ordItems > [data-rid="${D}"] .cnCancelBtn`);
+    await r.waitForFunction(rid => !document.querySelector(`#ordItems > [data-rid="${rid}"]`), D);
     await r.waitForSelector('.mNote');
     const got = await r.evaluate(() => ({ fly: window.__fly, note: document.querySelector('.mNote .mNoteT').textContent, btns: [...document.querySelectorAll('.mNote .mNoteBtn')].map(b => b.textContent), cx: document.querySelector('#ordChips [data-pile="cancelled"] b').textContent, anim: document.getAnimations().filter(a => a.effect && a.effect.target && a.effect.target.closest && a.effect.target.closest('#motionLayer')).length }));
     assert.equal(got.fly, 0, 'nothing flew'); assert.equal(got.anim, 0); assert(/Order 4174601822 cancelled/.test(got.note)); assert.deepEqual(got.btns, ['Undo', 'Show']); assert.equal(got.cx, String(cx0 + 1));
@@ -309,16 +310,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   await check('10 · no name saved: the small inline bar asks, never a pop-up; put away it does nothing; named, it goes on', async () => {
     const n = await open({ who: '', held: [E] });
-    await n.click(`#ordItems [data-rid="${E}"] .cnCancelBtn`);
+    await n.click(`#ordItems > [data-rid="${E}"] .cnCancelBtn`);
     await n.waitForSelector('.cnNameBar');
     assert.equal(await n.evaluate(() => window.__prompted), 0, 'no browser pop-up'); assert.equal(calls('cancelPut', E).length, 0, 'nothing is cancelled before the name');
     await n.click('.cnNameBar .cnNbX');
     await n.waitForFunction(() => !document.querySelector('.cnNameBar'));
     await n.waitForTimeout(300); assert.equal(calls('cancelPut', E).length, 0, 'put away: nothing happened'); assert.equal(await cardsOf(n, E), 1);
-    assert.equal(await n.locator(`#ordItems [data-rid="${E}"] .cnCancelBtn`).isDisabled(), false);
-    await n.click(`#ordItems [data-rid="${E}"] .cnCancelBtn`);
+    assert.equal(await n.locator(`#ordItems > [data-rid="${E}"] .cnCancelBtn`).isDisabled(), false);
+    await n.click(`#ordItems > [data-rid="${E}"] .cnCancelBtn`);
     await n.waitForSelector('.cnNameBar input'); await n.fill('.cnNameBar input', 'Pat Smith'); await n.press('.cnNameBar input', 'Enter');
-    await n.waitForFunction(rid => !document.querySelector(`#ordItems [data-rid="${rid}"]`), E, { timeout: 15000 });
+    await n.waitForFunction(rid => !document.querySelector(`#ordItems > [data-rid="${rid}"]`), E, { timeout: 15000 });
     const put = calls('cancelPut', E); assert.equal(put.length, 1); assert.equal(put[0].body.by, 'Pat Smith', 'the record carries the name asked for');
     assert.equal(await n.evaluate(() => window.__prompted + window.__confirmed), 0);
     await n.close();
@@ -329,8 +330,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert(calls('cancelPut').every(c => !c.body.sandbox), 'no sandbox flag on a production page');
     const sb = await open({ sandbox: true, held: [F] });
     const before = st.list('Charm_Nest_Cancelled').map(x => x._id).sort();
-    await sb.click(`#ordItems [data-rid="${F}"] .cnCancelBtn`);
-    await sb.waitForFunction(rid => !document.querySelector(`#ordItems [data-rid="${rid}"]`), F, { timeout: 15000 });
+    await sb.click(`#ordItems > [data-rid="${F}"] .cnCancelBtn`);
+    await sb.waitForFunction(rid => !document.querySelector(`#ordItems > [data-rid="${rid}"]`), F, { timeout: 15000 });
     const put = calls('cancelPut', F); assert.equal(put.length, 1); assert.equal(put[0].body.sandbox, true, 'the cancel carries the sandbox flag');
     assert(st.doc('Sandbox_Charm_Nest_Cancelled', F), 'the record is in the sandbox collection'); assert.equal(st.doc('Charm_Nest_Cancelled', F), undefined, 'and not in the real one');
     assert.deepEqual(st.list('Charm_Nest_Cancelled').map(x => x._id).sort(), before, 'the real cancelled list is as it was');
@@ -340,7 +341,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   if (SHOTS) await check('12 · frames of the flight (screenshots only): the card lifts, the ring, the flight, the note and the count', async () => {
     const p = await open({ held: [G], viewport: { width: 1100, height: 700 } });
     await p.screenshot({ path: path.join(SHOTS, 'flight-0-before.png') });
-    await p.click(`#ordItems [data-rid="${G}"] .cnCancelBtn`);
+    await p.click(`#ordItems > [data-rid="${G}"] .cnCancelBtn`);
     await p.waitForSelector('#motionLayer .mGhost');
     let i = 1;
     for (const f of [0.08, 0.22, 0.45, 0.7, 0.9]) {

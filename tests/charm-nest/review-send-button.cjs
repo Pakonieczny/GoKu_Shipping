@@ -23,13 +23,13 @@ const ok = (name, cond, extra) => { assert.ok(cond, name + (extra ? ' :: ' + ext
     const single = FIXTURES.single.rid, multi = FIXTURES.multi.rid, pair = FIXTURES.pairMatching.rid;
     await seed(page, ['single', 'multi', 'pairMatching']);
     await page.waitForSelector('#ordItems [data-key]');
-    const rowsDrawn = () => page.evaluate(() => [...document.querySelectorAll('#ordItems > [data-key]')].map(n => ({ key: n.dataset.key, rid: n.dataset.rid, btns: n.querySelectorAll('.revSendBtn').length })));
+    const rowsDrawn = () => page.evaluate(() => [...document.querySelectorAll('#ordItems > [data-rid]')].map(n => ({ key: n.dataset.key || n.dataset.first, rid: n.dataset.rid, btns: n.querySelectorAll('.revSendBtn').length })));   // (ONE ORDER, ONE ROW: an order of several lines is ONE entry of the list)
 
     // 1. no mark API on the page (the real one is taken away for this check): no button anywhere (the page is exactly as before)
     await page.evaluate(() => { window.__realMark = window.CharmNestReviewMark; delete window.CharmNestReviewMark; Orders.render(); });
     await page.waitForTimeout(200);
     let rows = await rowsDrawn();
-    ok('1 no mark API: no row has the button', rows.length >= 4 && rows.every(r => r.btns === 0), JSON.stringify(rows));
+    ok('1 no mark API: no row has the button', rows.length >= 3 && rows.every(r => r.btns === 0), JSON.stringify(rows));
 
     // the stubs (what REVMARK and REVHOLD publish, same signatures)
     await page.evaluate(() => {
@@ -48,14 +48,15 @@ const ok = (name, cond, extra) => { assert.ok(cond, name + (extra ? ' :: ' + ext
     });
     await page.waitForFunction(() => document.querySelector('#ordItems .revSendBtn'));
     rows = await rowsDrawn();
-    ok('2 with the API: exactly one button on every row', rows.length >= 4 && rows.every(r => r.btns === 1), JSON.stringify(rows));
+    ok('2 with the API: exactly one button on every row (one per ORDER)', rows.length >= 3 && rows.every(r => r.btns === 1), JSON.stringify(rows));
 
     // layout: the label, under Qty · Ship by, left aligned with it, a small normal button
-    const lay = await page.evaluate(() => [...document.querySelectorAll('#ordItems > [data-key]')].map(n => {
-      const b = n.querySelector('.revSendBtn'), f = n.querySelector('.rowFacts'), br = b.getBoundingClientRect(), fr = f.getBoundingClientRect(), row = n.getBoundingClientRect();
-      return { text: b.textContent, below: br.top >= fr.bottom - 1, left: Math.abs(br.left - fr.left), h: br.height, w: br.width, inside: br.right <= row.right + 1 && br.left >= row.left - 1, type: b.type, cls: b.className };
+    const lay = await page.evaluate(() => [...document.querySelectorAll('#ordItems > [data-rid]')].map(n => {
+      const b = n.querySelector('.revSendBtn'), f = n.querySelector('.rowFacts'), br = b.getBoundingClientRect(), fr = f.getBoundingClientRect(), row = n.getBoundingClientRect(), grouped = n.classList.contains('ordGroup');
+      // (a row: under "Qty · Ship by", left aligned with it; an order of several lines: in the top of its card, after "Ship by", the order's one button)
+      return { text: b.textContent, place: grouped ? (n.querySelector('.ogHead').contains(b) && br.left >= fr.right - 1 && Math.abs((br.top + br.height / 2) - (fr.top + fr.height / 2)) < 30) : (br.top >= fr.bottom - 1 && Math.abs(br.left - fr.left) <= 1.5), h: br.height, w: br.width, inside: br.right <= row.right + 1 && br.left >= row.left - 1, type: b.type, cls: b.className };
     }));
-    ok('3 the label is "Send to Review", under "Qty · Ship by", aligned with it, small, inside the row', lay.every(l => l.text === 'Send to Review' && l.below && l.left <= 1.5 && l.h > 18 && l.h < 44 && l.w < 260 && l.inside && l.type === 'button' && /ghost/.test(l.cls)), JSON.stringify(lay[0]));
+    ok('3 the label is "Send to Review", under "Qty · Ship by" (an order of several lines: beside its Ship by at the top of its card), small, inside the row', lay.length >= 3 && lay.every(l => l.text === 'Send to Review' && l.place && l.h > 18 && l.h < 44 && l.w < 260 && l.inside && l.type === 'button' && /ghost/.test(l.cls)), JSON.stringify(lay));
 
     // 4. press: busy state, one call, signed-in name, the order window stays shut
     const sel = rid => `#ordItems > [data-rid="${rid}"] .revSendBtn`;
@@ -77,13 +78,14 @@ const ok = (name, cond, extra) => { assert.ok(cond, name + (extra ? ' :: ' + ext
     const reopen = await page.evaluate(() => ({ calls: __rv.calls.length, opens: __rv.opens.slice() }));
     ok('5 a press on "In Review" opens that order in Review; the mark call is not made again', reopen.calls === 1 && reopen.opens.length === 1 && reopen.opens[0] === single, JSON.stringify(reopen));
 
-    // 6. an order of two lines: every line's button says it
+    // 6. an order of two lines (ONE card since 13 Oct): its one button marks the order
     await page.evaluate(() => { __rv.canHold = {}; });
-    const multiRows = await page.evaluate(rid => document.querySelectorAll(`#ordItems > [data-rid="${rid}"] .revSendBtn`).length, multi);
-    await page.click(`#ordItems > [data-rid="${multi}"] .revSendBtn >> nth=0`);
+    const multiRows = await page.evaluate(rid => ({ buttons: document.querySelectorAll(`#ordItems > [data-rid="${rid}"] .revSendBtn`).length, pieces: document.querySelectorAll(`#ordItems > [data-rid="${rid}"] .ogPiece`).length }), multi);
+    const callsMulti = await page.evaluate(() => __rv.calls.length);
+    await page.click(`#ordItems > [data-rid="${multi}"] .revSendBtn`);
     await page.evaluate(() => __rv.gate());
     await page.waitForFunction(rid => [...document.querySelectorAll(`#ordItems > [data-rid="${rid}"] .revSendBtn`)].every(b => b.textContent === 'In Review'), multi);
-    ok('6 an order of several lines is marked as one order: every line of it shows "In Review"', multiRows >= 2, 'lines ' + multiRows);
+    ok('6 an order of several lines is ONE card with ONE button; it marks the order once and says "In Review"', multiRows.buttons === 1 && multiRows.pieces >= 2 && (await page.evaluate(() => __rv.calls.length)) === callsMulti + 1, JSON.stringify(multiRows));
 
     // 7. an order already on a sheet: ONE plain line naming the sheet
     await page.evaluate(rid => { __rv.canHold[rid] = { ok: true, sheets: [{ sheetId: 'sh1', name: 'SS Draft 2', setId: 'set-2026-10-12-1' }] }; __rv.held[rid] = [{ sheetId: 'sh1', name: 'SS Draft 2', setId: 'set-2026-10-12-1' }]; }, pair);
@@ -149,14 +151,14 @@ const ok = (name, cond, extra) => { assert.ok(cond, name + (extra ? ' :: ' + ext
     // 13. the cards view carries the same button, once per card
     await page.click('#ordViewSeg [data-view="cards"]');
     await page.waitForSelector('#ordItems.ordCards .revSendBtn');
-    const cards = await page.evaluate(() => [...document.querySelectorAll('#ordItems.ordCards > [data-key]')].map(n => n.querySelectorAll('.revSendBtn').length));
-    ok('13 the cards view: one button on every card', cards.length >= 4 && cards.every(n => n === 1), JSON.stringify(cards));
+    const cards = await page.evaluate(() => [...document.querySelectorAll('#ordItems.ordCards > [data-rid]')].map(n => n.querySelectorAll('.revSendBtn').length));
+    ok('13 the cards view: one button on every card (an order of several lines is one card)', cards.length >= 3 && cards.every(n => n === 1), JSON.stringify(cards));
     await page.click('#ordViewSeg [data-view="list"]');
 
     // 14. narrow screen (the sorter's own layout at 900 px: the actions are a bar under the row): nothing spills out of the row, the page does not scroll sideways
     await page.setViewportSize({ width: 900, height: 780 });
     await page.waitForTimeout(250);
-    const narrow = await page.evaluate(() => ({ spill: [...document.querySelectorAll('#ordItems > [data-key]')].filter(n => { const b = n.querySelector('.revSendBtn'), r = n.getBoundingClientRect(), br = b.getBoundingClientRect(); return br.right > r.right + 1 || br.left < r.left - 1; }).length, page: document.documentElement.scrollWidth <= innerWidth + 1 }));
+    const narrow = await page.evaluate(() => ({ spill: [...document.querySelectorAll('#ordItems > [data-rid]')].filter(n => { const b = n.querySelector('.revSendBtn'), r = n.getBoundingClientRect(), br = b.getBoundingClientRect(); return br.right > r.right + 1 || br.left < r.left - 1; }).length, page: document.documentElement.scrollWidth <= innerWidth + 1 }));
     ok('14 at 900 px the button stays inside its row and the page does not scroll sideways', narrow.spill === 0 && narrow.page, JSON.stringify(narrow));
 
     // 15. the row still opens its order when pressed anywhere but the button

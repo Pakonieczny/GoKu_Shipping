@@ -7,7 +7,7 @@
 //   node tests/charm-nest/disc-cycle-browser.cjs        (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>; SHOTS=<dir> to keep the screenshots; without a browser nothing runs)
 // What it proves: the list has ONE row per necklace that tells its discs ("Disc 1 of 2 · J", "Disc 2 of 2 · Q", each with its font); the editor header has the Disc 1 | Disc 2 (| Disc 3)
 // switch, the work area (the canvas) keeps its room, nothing overflows the card; the switch, Back and Next move disc by disc through every order; each disc has its own words, font and
-// Approve; "Approve all discs" appears only for identical words and wakes only once every disc was on screen; the counters count orders; the Decided tab lists the discs with a Reopen each.
+// Approve; there is NO "Approve all discs" press, even for identical words (ENGAPPROVE); the counters count orders; the Decided tab lists the discs with a Reopen each.
 'use strict';
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
 const root = path.join(__dirname, '../..');
@@ -137,19 +137,19 @@ const root = path.join(__dirname, '../..');
     await shot('DISCCYCLE-5-two-discs-disc1.png');
     c = await press('.egEarTab:nth-child(2)'); check(c.words === 'Q' && c.key === keyOf('4175370240', 'D2'), 'Disc 2: Q');
     await shot('DISCCYCLE-6-two-discs-disc2.png');
-    // ── 4 · "Approve all discs": identical words, and every disc has been shown ──
+    // ── 4 · identical words on every disc: still NO "Approve all discs" (ENGAPPROVE, Paul 13 Oct 2026: every piece has its own Approve and approves only that piece) ──
     await page.evaluate(() => { for (const j of [Engrave.items().get('4175370240_1#D1'), Engrave.items().get('4175370240_1#D2')]) { j.lines = ['Mia']; j.text = 'Mia'; j.lineInput = ['Mia']; const r = __fx.fit(__fx.disc, 'Mia'); j.fit = r.fit; j.view = r.view; j.mask = r.mask; j.verify = { geometry: { ok: true } }; } });
     await view({ list: false, focus: keyOf('4175370240', 'D1') }); await settle(); c = await cardInfo();
-    check(c.both && c.both.text === 'Approve all discs' && c.both.disabled === true && /Look at Disc 2's placement first/.test(c.both.title), `identical words: the press is offered but asleep until Disc 2 was shown: ${JSON.stringify(c.both)}`);
-    await shot('DISCCYCLE-7-approve-all-asleep.png');
+    check(c.both === null && c.approve, `identical words: no "Approve all discs", only the disc's own Approve: ${JSON.stringify(c.both)}`);
+    await shot('DISCCYCLE-7-disc1-own-approve.png');
     c = await press('.egEarTab:nth-child(2)');
-    check(c.both && c.both.disabled === false && /each with its own seal and back file/.test(c.both.title), `both discs were on screen: the press is ready: ${JSON.stringify(c.both)}`);
-    await shot('DISCCYCLE-8-approve-all-ready.png');
+    check(c.both === null && c.approve, `both discs were on screen: still no press that approves both, only Disc 2's own Approve: ${JSON.stringify(c.both)}`);
+    await shot('DISCCYCLE-8-disc2-own-approve.png');
     // ── 5 · approve one disc on its own: the order stays in Placements with the other disc (a single piece's card), the decided disc is under Decided ──
     await page.evaluate(() => { const j = Engrave.items().get('4175370240_1#D1'); j.state = 'approved'; j.approvedBy = 'Tester'; j.approvedAt = Date.now(); j.backs = []; j.row.engrave = { needed: true, state: 'approved', approved: true }; Engrave.render(); });
     await settle(); c = await cardInfo();
     check(c.key === keyOf('4175370240', 'D2') && c.tabs.length === 0 && c.plainTag === 'DISC 2 of 2', `one disc approved: the editor stays on the order, on Disc 2, as a single piece's card: ${c.key} ${c.plainTag}`);
-    check(c.kind === '2 of 5 · 1 done', `the counter counts orders: 1 decided row + the 4 still to settle: ${c.kind}`);
+    check(c.kind === '1 of 4 · 0 done', `the counter counts orders, and an order is done only when EVERY piece is (ENGPIECES: Disc 1 approved, Disc 2 still to settle: this order is not done): ${c.kind}`);
     await view({ tab: 'done', list: true }); await settle();
     const dec = await page.evaluate(() => [...document.querySelectorAll('#egDone .decidedRow')].map(r => ({ rid: r.dataset.rid, tag: (r.querySelector('.engravingOrder .egPiece') || {}).textContent, reopen: [...r.querySelectorAll('[data-a="reopen"]')].map(n => n.textContent), badge: document.querySelector('.egTab[data-tab="done"] b').textContent })));
     check(dec.length === 1 && dec[0].rid === '4175370240' && dec[0].tag === 'DISC 1 of 2' && JSON.stringify(dec[0].reopen) === '["Reopen"]' && dec[0].badge === '1', `Decided lists Disc 1 as a single piece's row, tagged: ${JSON.stringify(dec)}`);
@@ -165,7 +165,7 @@ const root = path.join(__dirname, '../..');
     check(c.scrollW <= c.innerW && c.tabs.every(t => within(t.r, c.card)), `900 px wide: the three discs stay inside the card (no sideways scroll): ${c.scrollW}/${c.innerW}`);
     await shot('DISCCYCLE-10-narrow.png');
     check(errors.length === 0, 'no page errors: ' + errors.join(' | '));
-    console.log(`Disc cycle OK in Chromium: ${checks} checks (list rows, 2-disc and 3-disc editor, switch, Back/Next, Approve all discs, Decided, narrow window)`);
+    console.log(`Disc cycle OK in Chromium: ${checks} checks (list rows, 2-disc and 3-disc editor, switch, Back/Next, one Approve per disc, Decided, narrow window)`);
   } finally { await browser.close(); srv.close(); }
   if (fails.length) { console.error(`\n${fails.length} failed:\n - ${fails.slice(0, 40).join('\n - ')}`); process.exit(1); }
 })().catch(e => { console.error(e); process.exit(1); });

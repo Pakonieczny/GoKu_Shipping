@@ -1788,7 +1788,9 @@ const Orders = window.Orders = (() => {
           const oldText = r.engrave && r.engrave.text; const oldSpec = r.spec;
           r.order = d.order; if (nl) r.line = nl; else { r.state = "gone"; r.reason = "piece vanished from the order"; continue; }
           r.spec = O.interpretLine(r.order, r.line, ctx()); r.problems = r.spec.problems.slice(); r.material = r.spec.material;
-          const textInputsChanged = JSON.stringify([oldSpec && oldSpec.personalization, oldSpec && oldSpec.buyerMessage, oldSpec && oldSpec.staffNote]) !== JSON.stringify([r.spec.personalization, r.spec.buyerMessage, r.spec.staffNote]);
+          // (ENGENT: a spec read before the customer's words were read decoded is compared as it reads now: Etsy's entities alone are no change of the customer's words, and never revoke an engraving)
+          const wordsKey = sp => { const c = sp && O.decodeWords ? O.decodeWords(Object.assign({}, sp)) : sp; return JSON.stringify([c && c.personalization, c && c.buyerMessage, c && c.staffNote]); };
+          const textInputsChanged = wordsKey(oldSpec) !== wordsKey(r.spec);
           const materialChanged = oldSpec && oldSpec.material !== r.spec.material, skuChanged = oldSpec && !O.sameDesign(oldSpec.designSku, r.spec.designSku, sku => Master.entryFor(sku));   // (the same drawing under another of its names is no change: a design the library keeps under two spellings)
           const shapeChanged=materialChanged || skuChanged || oldSpec && (oldSpec.size!==r.spec.size || oldSpec.quantity!==r.spec.quantity);
           // An update that changes nothing this line is made from (Etsy moves an order's update time for an address, a
@@ -2029,13 +2031,13 @@ const Orders = window.Orders = (() => {
     if (window.MutationObserver) new MutationObserver(() => { if (v.classList.contains("hidden")) drawnOn = ""; }).observe(v, { attributes: true, attributeFilter: ["class"] });
   }
   const lit = n => { n.classList.remove("mFound"); void n.offsetWidth; n.classList.add("mFound"); setTimeout(() => n.classList.remove("mFound"), 2600); };
-  const lineNode = key => [...document.querySelectorAll('#ordItems [data-mkey^="ord:"]')].find(n => n.dataset.key === key) || null;
+  const lineNode = key => [...document.querySelectorAll('#ordItems [data-mkey^="ord:"], #ordItems .ogPiece')].find(n => n.dataset.key === key) || null;
   /** "Show" in a note: the pile that holds the line now, scrolled to it and marked (filters let go when they hide it). */
   function showLine(key, pile) {
     OV.pile = pile || null;
     if (!visibleRows().some(x => x.key === key)) { OV.metal = OV.form = OV.eng = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; }
     if (!onScreen() && typeof setMode === "function") setMode("orders"); else renderNow();
-    const i = visibleRows().findIndex(x => x.key === key);
+    const i = groupsOf(visibleRows()).findIndex(g => g.rows.some(x => x.key === key));
     if (i >= (OV.limit || 48)) { OV.limit = i + 12; renderBody(); }
     const n = lineNode(key); if (n) { n.scrollIntoView({ behavior: "smooth", block: "center" }); lit(n); }
   }
@@ -2072,7 +2074,7 @@ const Orders = window.Orders = (() => {
    *  order: its other lines fly with it in silence. */
   function leaveFor(noted) {
     return (mk, node) => {
-      const rid = node.dataset.rid, key = node.dataset.key; if (!key || !mine(rid)) return null;
+      const rid = node.dataset.rid, key = node.dataset.key || node.dataset.first; if (!key || !mine(rid)) return null;
       // (Release hold lifts the hold while its film plays in the Nest tab: the film has its own flight and its own note at the end, so the line folds away here; this list's flight and note were drawn at the top left corner, over the tabs, and said "1 still on hold" while the whole order was being released)
       if (window.HoldUI && HoldUI.busy && HoldUI.busy(rid)) return null;
       const r = rowsOf().find(x => x.key === key), first = !noted.has(rid); noted.add(rid);
@@ -2101,6 +2103,74 @@ const Orders = window.Orders = (() => {
     nodes.forEach((n, i) => { if (list.children[i] !== n) list.insertBefore(n, list.children[i] || null); });
     const keep = new Set(nodes); for (const c of [...list.children]) if (!keep.has(c)) c.remove();
   }
+  /* ── ONE ORDER, ONE ROW (ENGONE, 13 Oct 2026; charm-nest-order-group.js) ──
+     An order of two lines (one Silver, one Gold) was drawn as two rows, each with its own number, time, personalisation and Send to Review. The lines of one order now stand together
+     in ONE card: the order's number, time, piece count, personalisation (when every piece says the same), Ship by and its buttons (Send to Review, Release hold, Cancel Order, the mail
+     marks) once at the top; under it each piece as the row it always was (its pictures, design, sheet, jewellery and options, state, seals, Qty). A press on a piece opens the order
+     window on that piece (it is the one picked in "Its pieces"); a press on the top opens the order. An order that shows one line is drawn exactly as before. */
+  const groupsOf = rows => {
+    const OG = window.CharmNestOrderGroup, at = new Map(rowsOf().map((r, i) => [r, i]));
+    return OG ? OG.groupRows(rows, r => at.get(r)) : rows.map(r => ({ rid: String(r.order.receiptId), rows: [r] }));
+  };
+  /** What the list says of one line (a row, or a piece of a grouped order), worked out once. */
+  function lineView(r) {
+    const sp = r.spec || {}, m = r.material || "none";
+    const st = stateWords(r), shown = stageText(st[1]) ? null : st, due = dueOf(r), where = placeOf(r), fc = faceChip(r);
+    const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
+    const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
+    const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
+    const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = window.TeamMail ? TeamMail.stamp(r) : "";
+    // the seals this piece's record keeps (Complete Order, each print; a reopened piece's too: they are for good), drawn small beside its state
+    const sealRec=window.CustomPrint&&window.Seal?CustomPrint.recordOfRow(r):null,seals=sealRec?CustomPrint.sealsOfRow(r,28):"";
+    const held=heldNow(r);
+    return { r, sp, m, st, shown, due, where, fc, attn, why, gateBtn, mail, team, sealRec, seals, held };
+  }
+  /** The pictures a node of an earlier drawing holds for a line (a row, or a piece of a grouped order), to carry over when the node is drawn again. */
+  const pairIn = (node, key) => { const p = node.classList.contains("ordGroup") ? [...node.querySelectorAll(".ogPiece")].find(n => n.dataset.key === key) : node; return p ? p.querySelector(".comparePair") : null; };
+  const wireGate = n => { const gb = n.querySelector("[data-gate]"); if (gb) gb.onclick = e => { e.stopPropagation(); gb.disabled = true; (gb.dataset.gate === "release" ? Gate.release(gb.dataset.gm) : Gate.cutAnyway(gb.dataset.gm)).catch(err => toast(err.message, "bad", 6000)); }; };
+  function groupNode(g, date, cards, env) {
+    const OG = window.CharmNestOrderGroup, rows = g.rows, first = rows[0], rid = String(first.order.receiptId), V = rows.map(lineView);
+    const held = V.filter(v => v.held), due = V[0].due, mail = V[0].mail, team = V[0].team, attn = V.some(v => v.attn);
+    const label = v => wordsOf(v.sp) ? "Personalisation" : "Item", text = v => wordsOf(v.sp) || v.r.line.title || "No title";
+    const said = OG.sameOf(V.map(v => label(v) + "|" + text(v)));   // (what every piece says alike is said once at the top, else on each piece)
+    const total = rows.reduce((n, r) => n + (O.pieceCountOf(r) || 1), 0), cancelable = held.length > 0 && OV.pile === "hold" && !!window.CancelUI;
+    const stamp = JSON.stringify(["group", cards, first.order, due, date, mail, team, cancelable, V.map(v => [v.r.key, v.r.line, v.r.spec, v.r.state, v.st, v.r.hold, v.held, v.r.wait, v.why, v.where, v.seals && CustomPrint.sealSig(v.sealRec), v.fc[1]])]);
+    const cached = orderNodes.get(first.key);
+    if (cached?.stamp === stamp) {
+      orderNodes.delete(first.key); orderNodes.set(first.key, cached);
+      for (const n of cached.node.querySelectorAll(".ogPiece")) { const r = rows.find(x => x.key === n.dataset.key); if (r) env.mounts.push([n, r, "media"]); }
+      env.mounts.push([cached.node, first, "review"]);
+      return cached.node;
+    }
+    const node = el("div", (cards ? "ocard " : "") + "ordGroup hoverItem" + (attn ? " attn" : ""));
+    const ms = [...new Set(V.map(v => v.m))]; node.dataset.m = ms.length === 1 ? ms[0] : "mixed";
+    node.setAttribute("role", "group"); node.setAttribute("aria-label", `Order ${rid}, ${OG.countWord(total)}`);
+    node.dataset.mkey = "ord:" + first.key; node.dataset.rid = rid; node.dataset.first = first.key;
+    const qtyOf = v => v.sp.quantity || v.r.line.quantity || 1;
+    const piece = v => `<div class="ogPiece${cards ? "" : " doneRow workRow orderListRow"}" role="button" tabindex="0" data-key="${esc(v.r.key)}" data-m="${esc(v.m)}" title="${esc(v.r.order.receiptId + " · " + (v.sp.designSku || v.r.line.sku || "no SKU") + " — " + v.r.line.title)}">`
+      + ListMedia.pair(v.r) + `<div class="engravingIdentity"><div class="engravingOrder"><span class="sku mono">${esc(v.sp.designSku || v.r.line.sku || "No SKU")}</span></div>${said ? "" : `<span class="purchaseLabel">${label(v)}</span><span class="rowExcerpt" title="${esc(text(v))}">${esc(text(v))}</span>`}${v.where ? `<span class="rowExcerpt dim">${esc(v.where.set)} · ${esc(v.where.sheet)}</span>` : ""}</div>`
+      + `<div class="purchaseSummary">${purchaseMarkup(v.r)}</div><div class="rowActions">${v.shown ? `<span class="ost ${v.shown[0]}">${esc(v.shown[1])}</span>` : ""}${v.fc[1] ? `<span class="ost ${v.fc[0]} engFaces" title="${v.fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${v.fc[1]}</span>` : ""}${v.seals}<span class="rowFacts">Qty ${qtyOf(v)}${earPairRow(v.r) ? pairFactOf(qtyOf(v)) : O.countedFact(v.r)}</span>${v.why ? `<span class="rowExcerpt reviewReason" title="${esc(v.why)}">${esc(v.why)}</span>` : ""}${v.gateBtn}</div></div>`;
+    node.innerHTML = `<div class="ogHead"><div class="engravingIdentity ogId"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(rid)}</b><span class="groupScope">${OG.countWord(total)}</span></div></div>`
+      + (said ? `<div class="engravingIdentity ogSaid"><span class="purchaseLabel">${label(V[0])}</span><span class="rowExcerpt" title="${esc(text(V[0]))}">${esc(text(V[0]))}</span></div>` : "")
+      + `<div class="rowActions ogActs">${team ? TeamMail.mark(first) : ""}${mail && mail !== "null" ? CustomerMail.badge(rid) : ""}<span class="rowFacts"><span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${held.length ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ""}</div></div>`
+      + `<div class="ogPieces">${V.map(piece).join("")}</div>`;
+    const number = node.querySelector(".onum"); if (number) { const time = el("span", "orderTime"); time.textContent = date.time; time.title = date.label; number.appendChild(time); }
+    // a press on a piece opens the order window on THAT piece (picked in "Its pieces"); a press on the top, the order
+    for (const n of node.querySelectorAll(".ogPiece")) {
+      const r = rows.find(x => x.key === n.dataset.key), go = () => OrderWin.open(r.key, { from: n, pick: true });
+      n.onclick = e => { const b = e.target.closest("button,[role=button]"); if (b && b !== n) return; e.stopPropagation(); go(); };
+      n.onkeydown = e => { if (e.target === n && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); e.stopPropagation(); go(); } };
+      wireGate(n);
+    }
+    node.onclick = e => { if (e.target.closest("button,[role=button],a")) return; OrderWin.open(first.key, { from: node }); };
+    { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); const back = () => { for (const v of held) Review.repool(v.r); render(); }; if (window.HoldUI && HoldUI.canRelease()) { HoldUI.release(rid, { button: rh }).then(x => { if (x && x.used === false) back(); }); return; } back(); }; }
+    if (cancelable) { try { CancelUI.mount(node, (held.find(v => v.r.hold) || held[0]).r); } catch (err) { console.warn("Cancel Order button", err); } }
+    if (cached?.node) { for (const r of rows) { const pair = pairIn(cached.node, r.key), n = [...node.querySelectorAll(".ogPiece")].find(x => x.dataset.key === r.key); if (pair && n) env.pairs.push([n, pair]); } env.rebuilt.push(node); }
+    orderNodes.delete(first.key); orderNodes.set(first.key, { stamp, node });
+    for (const n of node.querySelectorAll(".ogPiece")) env.mounts.push([n, rows.find(x => x.key === n.dataset.key), "media"]);
+    env.mounts.push([node, first, "review"]);
+    return node;
+  }
   function renderBody() {
     if(window.Seal?.defer('orders-list',renderBody) || window.CharmNestInteraction?.defer('orders-list',renderBody))return;
     const host = document.getElementById("ordBody"); if (!host) return;
@@ -2124,7 +2194,7 @@ const Orders = window.Orders = (() => {
     const cards = viewMode() === "cards";
     let list=host.querySelector('#ordItems');if(!list){host.innerHTML='<div id="ordItems"></div>';list=host.firstElementChild;}list.className=cards?'ordCards':'ordList';
     // an empty pile says so in the list itself, so the last row out is still seen going (and the words come in softly)
-    const wanted=[],mounts=[],pairs=[],rebuilt=[];let shown=[];
+    const wanted=[],mounts=[],pairs=[],rebuilt=[];let shown=[],groupTotal=0;
     if (!rowsOf().length && (window.Sandbox?.held?.() || window.Sandbox?.pulling?.())) {
       // a cleaned sandbox waits for Start: the calm line and the one button that begins the replay (turning Auto on or Pull orders do too)
       const n = blank("held", '<span class="sbWait"></span><button class="btn gold sm" type="button" data-sb-start>Start</button>', n => { const go = n.querySelector("[data-sb-start]"); go.onclick = () => { go.disabled = true; Sandbox.start().catch(err => { toast(err.message, "bad", 7000); go.disabled = false; }); }; });
@@ -2138,22 +2208,17 @@ const Orders = window.Orders = (() => {
     else if (!rows.length) wanted.push(blank("filters", 'Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button>', n => { n.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; render(); }; }));
     else {
     let lastDay=null;
-    shown=rows.slice(0,OV.limit || 48);
+    // (ONE ORDER, ONE ROW, 13 Oct 2026: the lines of one order stand together where its first line stood; a group of one is a row as it always was)
+    const groups=groupsOf(rows);groupTotal=groups.length;
+    shown=groups.slice(0,OV.limit || 48);
     // a heading counts its day's orders in the list: counted only where headings are drawn, for the days on screen
     const dayCounts=new Map();
-    if(OV.sort==='arrival'){for(const r of shown)dayCounts.set(dayOf(r).key,new Set());for(const row of rows){const ids=dayCounts.get(dayOf(row).key);if(ids)ids.add(row.order.receiptId);}}
-    for (const r of shown) {
-      const date=dayOf(r);
+    if(OV.sort==='arrival'){for(const g of shown)dayCounts.set(dayOf(g.rows[0]).key,new Set());for(const row of rows){const ids=dayCounts.get(dayOf(row).key);if(ids)ids.add(row.order.receiptId);}}
+    for (const g of shown) {
+      const r=g.rows[0],date=dayOf(r);
       if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;heading.dataset.mkey='day:'+date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} order${dayCounts.get(date.key).size === 1 ? "" : "s"} · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;wanted.push(heading);lastDay=date.key;}
-      const sp = r.spec || {}, m = r.material || "none";
-      const st = stateWords(r), shown = stageText(st[1]) ? null : st, due = dueOf(r), where = placeOf(r), fc = faceChip(r);
-      const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
-      const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
-      const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
-      const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = window.TeamMail ? TeamMail.stamp(r) : "";
-      // the seals this piece's record keeps (Complete Order, each print; a reopened piece's too: they are for good), drawn small beside its state
-      const sealRec=window.CustomPrint&&window.Seal?CustomPrint.recordOfRow(r):null,seals=sealRec?CustomPrint.sealsOfRow(r,28):"";
-      const held=heldNow(r);
+      if (g.rows.length > 1) { wanted.push(groupNode(g, date, cards, { mounts, pairs, rebuilt })); continue; }
+      const { sp, m, st, shown, due, where, fc, attn, why, gateBtn, mail, team, sealRec, seals, held } = lineView(r);
       const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,held,r.wait,why,where,due,date,mail,team,held && OV.pile === "hold" && !!window.CancelUI,seals&&CustomPrint.sealSig(sealRec),fc[1]]);
       const cached=orderNodes.get(r.key);
       if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);wanted.push(cached.node);mounts.push([cached.node,r]);continue;}
@@ -2169,16 +2234,16 @@ const Orders = window.Orders = (() => {
       node.onkeydown=e=>{if(e.target===node && (e.key==="Enter" || e.key===" ")){e.preventDefault();OrderWin.open(r.key, { from: node });}};
       // Release hold: the line goes back in line; drawn at once, so it is seen leaving On hold for Open Orders
       { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); if (window.HoldUI && HoldUI.canRelease()) { HoldUI.release(String(r.order.receiptId), { button: rh }).then(x => { if (x && x.used === false) { Review.repool(r); render(); } }); return; } Review.repool(r); render(); }; }
-      { const gb = node.querySelector("[data-gate]"); if (gb) gb.onclick = e => { e.stopPropagation(); gb.disabled = true; (gb.dataset.gate === "release" ? Gate.release(gb.dataset.gm) : Gate.cutAnyway(gb.dataset.gm)).catch(err => toast(err.message, "bad", 6000)); }; }
+      wireGate(node);
       // Cancel Order beside Release hold, on the On hold pile only (charm-nest-cancel-ui.js; the stamp above carries the pile)
       if (held && OV.pile === "hold" && window.CancelUI) { try { CancelUI.mount(node, r); } catch (err) { console.warn("Cancel Order button", err); } }
       // an order can be several lines on several cards: hovering one lifts all of them, the way the station does
       node.dataset.rid = String(r.order.receiptId);
       // (the old node's decoded pictures move over once the update has measured where the old node stood)
-      if(cached?.node){const pair=cached.node.querySelector('.comparePair');if(pair)pairs.push([node,pair]);rebuilt.push(node);}
+      if(cached?.node){const pair=pairIn(cached.node,r.key);if(pair)pairs.push([node,pair]);rebuilt.push(node);}
       wanted.push(node);orderNodes.delete(r.key);orderNodes.set(r.key,{stamp,node});mounts.push([node,r]);
     }
-    if(orderNodes.size>NODES_KEPT){const onList=new Set(shown.map(r=>r.key));for(const key of orderNodes.keys()){if(orderNodes.size<=NODES_KEPT)break;if(!onList.has(key))orderNodes.delete(key);}}
+    if(orderNodes.size>NODES_KEPT){const onList=new Set(shown.flatMap(g=>g.rows.map(r=>r.key)));for(const key of orderNodes.keys()){if(orderNodes.size<=NODES_KEPT)break;if(!onList.has(key))orderNodes.delete(key);}}
     }
     // the pile and view on screen, drawn before: what changed is seen changing (not "Show more", which only adds below)
     const same = drawnOn === nextKey && drawnLimit === OV.limit && list.childElementCount > 0;
@@ -2189,8 +2254,8 @@ const Orders = window.Orders = (() => {
     if (window.Motion) Motion.reconcile(list, wanted, { animate: same, leave: leaveFor(new Set()), get clip() { settle(); return host; } });
     else put(list, wanted);
     for (const [node, pair] of pairs) node.querySelector('.comparePair')?.replaceWith(pair);
-    for (const [node, r] of mounts) { ListMedia.mount(node, r); if (window.ReviewSend) ReviewSend.mount(node, r); }   // (Send to Review: the one button under Qty · Ship by, charm-nest-review-send.js; it draws nothing until the Review mark API is there)
-    ListMedia.more(list,rows.length,shown.length,()=>{OV.limit=(OV.limit || 48)+48;renderBody();});
+    for (const [node, r, only] of mounts) { if (only !== "review") ListMedia.mount(node, r); if (only !== "media" && window.ReviewSend) ReviewSend.mount(node, r); }   // (a grouped order's pieces mount their pictures, its one card mounts the button; Send to Review: the one button under Qty · Ship by, charm-nest-review-send.js; it draws nothing until the Review mark API is there)
+    ListMedia.more(list,groupTotal||rows.length,shown.length,()=>{OV.limit=(OV.limit || 48)+48;renderBody();});
     settle();
     drawnOn = onScreen() ? nextKey : ""; drawnLimit = OV.limit;
     // what a person changed that stays in this pile (Release hold under Open Orders, Send now) is marked where it is
@@ -2327,7 +2392,7 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
+  return { view: () => OV, walkRows: () => groupsOf(visibleRows()).flatMap(g => g.rows), showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
@@ -5987,10 +6052,13 @@ const Engrave = window.Engrave = (() => {
     // (a line cut into slots names them in the question, so the model says which words go on which ear or disc; any other line asks exactly as before)
     const slots = jobs.length > 1 ? jobs.map(j => j.slot).filter(Boolean) : null;
     const ask = { order: row.order.receiptId, sku: sp.designSku, title: row.line.title, form: sp.form, quantity: sp.quantity, engravable, personalization: sp.personalization, buyerMessage: sp.buyerMessage, staffNote: sp.staffNote, messages: sp.messages, ...(slots && slots.length > 1 ? { slots } : {}) };
-    let key = 2166136261; for (const ch of JSON.stringify(ask)) key = Math.imul(key ^ ch.charCodeAt(0), 16777619); key = (key >>> 0).toString(36);
+    // (ENGENT: the question carries the words decoded; its key is made from the words as Etsy gave them, as it always was, so a reading already asked for before the words were decoded is taken up again, never paid for twice)
+    let key = 2166136261; for (const ch of JSON.stringify(Object.assign({}, ask, O.rawWords(row.order, row.line)))) key = Math.imul(key ^ ch.charCodeAt(0), 16777619); key = (key >>> 0).toString(36);
     const prior = job.claudeJob && job.claudeJob.ask === key ? job.claudeJob.id : null;
     try { r = await agentCall("engraveIntent", ask, { label: `Claude reads the words of ${row.order.receiptId}`, background: true, existingId: prior, retryFailed: !!prior, onStarted: id => { job.claudeJob = { id, ask: key }; } }); }
     catch (e) { r = { skipped: e.message }; }
+    // ENGENT: the reader's answer is the customer's words read back; an answer to a question asked before the words were decoded may still carry Etsy's entities ("&#39;"): the words are read decoded, nothing is asked again
+    if (r && !r.skipped && !r.error) { const d = x => (typeof x === "string" && x.indexOf("&") >= 0 ? O.decodeEntities(x) : x); r = Object.assign({}, r, { text: d(r.text), sourceQuote: d(r.sourceQuote) }, Array.isArray(r.pieces) ? { pieces: r.pieces.map(p => (p && typeof p.text === "string" ? Object.assign({}, p, { text: d(p.text) }) : p)) } : {}); }
     const live = jobs.filter(j => items().get(j.key) === j && j.state === "classify");
     if (items() !== owner || row.state === "gone" || !live.length) return job;
     for (const j of live) await settleReading(j, r);
@@ -6371,6 +6439,8 @@ const Engrave = window.Engrave = (() => {
     if (sp.noDesign || sp.ownDesign || sp.formHold || (sp.special && (sp.special.notCut || sp.special.own)) || (window.CustomSheet && CustomSheet.sentOf && CustomSheet.sentOf(row))) return false;
     return !!(sp.engraveCandidate || raiseCandidate(row));
   }
+  /** ENGPRE: does the line carry a job made the usual way (its piece pooled)? A job made on a line with no pool ids (a Save of the engraving setup before the early job existed) and not touched since is not: early() takes it over (copies = the ids the piece will get, job.pre). */
+  const madeUsual = (row, js) => js.some(j => !j.pre && ((row.poolIds || []).length > 0 || !untouched(j) || (j.backs || []).length > 0 || (j.stagedBacks || []).length > 0));   // (a job anyone has decided, nudged, approved or written is never taken over)
   /** The job(s) of a line, made now when it has none: resolves with them once the words are read and the placement is being fitted (or fitted). [] for a line that carries no engraving or whose charm cannot be made. */
   function early(row) {
     row = lineOf(row); if (!row) return Promise.resolve([]);
@@ -6381,7 +6451,7 @@ const Engrave = window.Engrave = (() => {
   async function earlyOnce(row) {
     if (!earlyWanted(row)) return jobsOf(row);
     const owner = items(), had = jobsOf(row);
-    if (had.some(j => !j.pre)) return had;   // (made the usual way, once the piece was pooled: that path owns it)
+    if (madeUsual(row, had)) return had;   // (made the usual way, once the piece was pooled: that path owns it; a job a Save made on a line not pooled yet is ours: it has no ids to wait on)
     const sig = earlySig(row);
     // (unchanged since the last time: only the charm a reload let go is made again, so approving and editing work)
     const ids = row.poolIds || [], real = ids.length && Pool.charmOf(ids[0]);
@@ -6406,7 +6476,7 @@ const Engrave = window.Engrave = (() => {
     const owner = items();
     for (const r of Orders.rows()) {
       if (items() !== owner) return;
-      if (!earlyWanted(r) || jobsOf(r).some(j => !j.pre)) continue;
+      if (!earlyWanted(r) || madeUsual(r, jobsOf(r))) continue;
       if (earlyHeld(r)) continue;
       const bad = earlyFails.get(r.key); if (bad && bad.sig === earlySig(r) && Date.now() - bad.at < 300000) continue;   // (one that failed is tried again after five minutes, or when the line changes)
       await early(r);
@@ -7276,6 +7346,17 @@ const Engrave = window.Engrave = (() => {
   const multiJobs = grp => (grp && ROWS() && ROWS().multi(grp) ? grp.jobs : null);
   const allDiscs = pieces => !!(pieces && pieces.length && ROWS() && pieces.every(j => ROWS().discOf(j)));
   const PSW = () => window.CharmNestPieceSwitch || null;
+  /* ENGPIECES (13 Oct 2026, Paul: "no easy way to tell how many pieces a given order has in the detailed engraving modal ... the back and forward arrow buttons are not working ... every piece must be reached"): an ORDER owns its
+     engraved pieces, whatever the line or the metal (charm-nest-engrave-order.js: piecesOf / countOf / step / groupRows / orderCounts). An SS line and a GF line of one Etsy order are two lines, ONE order, two pieces: the detail's
+     header strip says "Piece 1 of 2" and switches between them, Back / Next walk every piece of the order before the next order, and the header counter counts orders. Nothing is stored; no read, write or listener. */
+  const EO = () => window.CharmNestEngraveOrder || null;
+  const ridOfJob = job => String(((lineOf(job && job.row) || {}).order || {}).receiptId || "");
+  const pieceKeyOfJob = job => (UIFACES() && UIFACES().pieceKeyOf ? UIFACES().pieceKeyOf(job.key) : String(job.key));
+  const orderRowsOf = rid => Orders.rows().filter(r => r && r.state !== "gone" && String((r.order || {}).receiptId) === rid);
+  /** The engraved pieces of the order a job belongs to (null when the order file is not on the page). */
+  const orderPiecesOf = job => { const E = EO(); if (!E || !job) return null; const rid = ridOfJob(job); if (!rid) return null; try { return E.piecesOf(rid, { rows: orderRowsOf(rid), isWorking, seen: isShown }); } catch (_) { return null; } };
+  /** Where each line stands in the order, to put the rows of one order together in the order's own line order (Back / Next). */
+  const lineIndexFn = () => { const ix = new Map(); Orders.rows().forEach((r, i) => ix.set(lineOf(r).key, i)); return row => (ix.has(row.lineKey) ? ix.get(row.lineKey) : 0); };
   /* FACES (plans/front-back-1011/CONTRACT.md; ENGUI1): a piece may have a FRONT job beside its back job (job.face === "front", key `<line>[#slot]~front`). The helpers below are what the Engrave tab's
      DRAWING asks (the lists, the card, the switches, the stepping, "Approve both ..."); every one of them answers "back / nothing to say" for a line with no front job, so a back-only line draws and behaves
      exactly as it always did. `faceOfJob` and the piece count never read a job's key by hand: charm-nest-engrave-faces.js is the one place that splits a key. */
@@ -7309,12 +7390,26 @@ const Engrave = window.Engrave = (() => {
   const markShown = job => { if (job && job.fit) shownSigs.set(job, placementSig(job)); };
   const isShown = job => !!job && !!job.fit && shownSigs.get(job) === placementSig(job);
   /** The card to show: the one asked for; else the other ear of the line just settled (it stays in the row); else the first of the queue. */
-  const pickFocus = queue => queue.find(j => j.key === EG.focus) || (EG.focusLine && queue.find(j => earLineOf(j) === EG.focusLine)) || queue[0] || null;
+  /* ENGAPPROVE (Paul, 13 Oct 2026: "the user must be never allowed to skip pieces in the multipiece order"): the card in front was decided (approved, or cut plain), so it left the queue. The detail goes on to what is left of the SAME
+     order, never to the first card of some other order: the piece's other face still to settle, else the next piece that is not approved (charm-nest-engrave-guide.js afterApprove, over the order's pieces, charm-nest-engrave-order.js).
+     It is decided here, where the next card is chosen, so no render that runs between the approval and its tail can pick another order's card first. Nothing left in the order (or no model on the page): the queue goes on as it always did.
+     Only the focus is chosen (the same EG.focus a Back / Next press sets); no write, no read, no wait. */
+  const guideNext = queue => { try { const f = EG.focus && items().get(EG.focus); if (!f || !DECIDED.includes(f.state) || f.row?.state === "gone") return null; const G = window.CharmNestEngraveGuide, to = G && G.afterApprove ? G.afterApprove(f) : null; return (to && to.key && queue.find(j => j.key === to.key)) || null; } catch (e) { console.warn("Engraving guide", e); return null; } };
+  const pickFocus = queue => queue.find(j => j.key === EG.focus) || (EG.focusLine && queue.find(j => earLineOf(j) === EG.focusLine)) || guideNext(queue) || queue[0] || null;
+  /* ENGPIECES: what the Placements list shows now, in its own order (the same activity range, search box and sort the tab draws with), so Back / Next never go to a card the list hides. A card asked for BY NAME (a piece switched to,
+     the stop Back / Next chose: EG.pin) is shown even when the range or the search would hide it: a piece of an order is never unreachable because of a filter. */
+  const withFocus = q => { const j = EG.pin && EG.pin === EG.focus && !EG.list && EG.tab === "place" && items().get(EG.pin); return j && j.row.state !== "gone" && queuedJobs([j]).length && !q.includes(j) ? [...q, j] : q; };
+  const shownQueue = () => CNListActivity.select("engrave-place", queuedJobs(CNListActivity.select(activityScope(), [...items().values()].filter(j => j.row.state !== "gone")).filter(matchesQ)));
   /** What is still to settle, and what is decided, counted in ROWS: the numbers on the tabs and rails say what the lists show. (pendingCount and reviewedCount count jobs and stay as they are for the run's own checks.) */
   const pendingRows = () => { const p = [...items().values()].filter(j => !j.editingBack && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone"); return rowsIn(p, p).length; };
   const reviewedRows = () => { const d = decidedJobs(); return rowsIn(d, d).length; };
   /** "N of M · K done" counted in rows: K rows decided, M = those and the rows still queued, N = the one a person is on (the next to settle). */
-  const rowCountsOf = qrows => { const d = decidedJobs(), drows = rowsIn(d, d); return ROWS() ? ROWS().counts(qrows, drows) : { decided: d.length, remaining: qrows.length, n: d.length + 1, of: d.length + qrows.length, text: `${d.length + 1} of ${d.length + qrows.length} · ${d.length} done` }; };
+  const rowCountsOf = qrows => {
+    const d = decidedJobs(), drows = rowsIn(d, d), c = ROWS() ? ROWS().counts(qrows, drows) : { decided: d.length, remaining: qrows.length, n: d.length + 1, of: d.length + qrows.length, text: `${d.length + 1} of ${d.length + qrows.length} · ${d.length} done` };
+    // ENGPIECES: the header's "N of M · K done" counts ORDERS (an order is done only when every one of its pieces is decided; two lines of one order are one count); the tabs' numbers (c.decided, the rows) stay what the lists show
+    const E = EO(); if (E && Array.isArray(qrows)) { try { c.text = E.orderCounts(qrows, drows, { queued: queueUniverse().map(ridOfJob) }).text; } catch (_) { /* the row count stands */ } }
+    return c;
+  };
   // a draft outlives its card only while its job waits in the list: one left by a job decided, removed or gone was kept,
   // and saved with every checkpoint, for as long as the tab stayed open (Paul, 24 Sep: nothing may accumulate)
   function pruneDrafts() { for (const k of Object.keys(EG.drafts || {})) { const j = items().get(k); if (!j || j.row?.state === "gone" || !queuedJobs([j]).length) delete EG.drafts[k]; } return EG.drafts; }
@@ -7340,6 +7435,25 @@ const Engrave = window.Engrave = (() => {
     if (!MO() || !card || card !== EG.card || EG.cardKey !== job.key || !card.isConnected || !card.getClientRects().length) return;
     outgoing = Object.assign({ key: job.key, card, until: Date.now() + 10000 }, spec);
   }
+  /** ENGAPPROVE's guide (charm-nest-engrave-guide.js): when a press would leave an order that still has pieces to approve it says so, with a way to the next one, and takes the press over (true); else false. Absent file: false. */
+  const leaveGuard = (job, go) => { const G = window.CharmNestEngraveGuide; try { return !!(G && G.leaving && G.leaving(ridOfJob(job), pieceKeyOfJob(job), go)); } catch (_) { return false; } };
+  /** ENGPIECES: open ONE piece of an order in the Engrave detail (the header strip, ENGAPPROVE's "next piece to approve"). `face`: "front" | "back" (default: the face still to settle, Front first). A piece still to settle opens its card (named
+   *  on purpose: the list's filters do not hide it); an approved piece opens its row in Decided; a piece with no job yet is made first (Engrave.early) and opened when it is there. Returns true when the tab moved. o.card: the card in front, which goes with the usual motion. */
+  function openPiece(rid, pieceKey, face, o) {
+    o = o || {}; const E = EO(); if (!E) return false;
+    rid = String(rid == null ? "" : rid);
+    const P = E.piecesOf(rid, { rows: orderRowsOf(rid), isWorking, seen: isShown }).find(p => p.pieceKey === pieceKey); if (!P) return false;
+    const job = E.jobOf(P, face);
+    if (!job) { const line = P.piece && P.piece.row; if (line && !o.retried) Promise.resolve(early(line)).then(() => openPiece(rid, pieceKey, face, Object.assign({}, o, { retried: true }))).catch(() => {}); return false; }
+    if (items().get(job.key) !== job || job.row.state === "gone") return false;
+    if (DECIDED.includes(job.state)) Object.assign(EG, { tab: "done", openDone: job.key, focus: null, pin: null, list: false, chosen: true });
+    else if (queuedJobs([job]).length) {
+      const here = EG.cardKey && items().get(EG.cardKey); if (here && here !== job && o.card && o.card === EG.card) goes(here, { enter: "fade", quick: true }, o.card);
+      Object.assign(EG, { tab: "place", focus: job.key, pin: job.key, openDone: null, list: false, chosen: true });
+    } else return false;
+    EG.card = null; EG.cardKey = null; render(); return true;
+  }
+
   /** Just before the tab is drawn again: a copy of the card that goes, where it stands (its scrolled panes as they were). */
   function copyOutgoing() {
     const o = outgoing; outgoing = null;
@@ -7465,7 +7579,7 @@ const Engrave = window.Engrave = (() => {
     const rest = queue.filter(j2 => j2.key !== EG.cardKey);
     rail.innerHTML = "";
     rail.querySelectorAll(".egChip").forEach(b => b.onclick = () => { EG.focus = b.dataset.key; render(); });
-    const card = EG.card; if (card) { const kind = card.querySelector(".rh .kind"); if (kind) kind.textContent = counts.text; }
+    const card = EG.card; if (card) { const kind = card.querySelector(".rh .kind"); if (kind) kind.textContent = counts.text; card._stripSync?.(); }
   }
   // Keyed rows keep decoded thumbnails, focus and scroll position while each
   // classifier/worker result arrives. Navigation away also retains the cache.
@@ -7650,7 +7764,7 @@ const Engrave = window.Engrave = (() => {
     // a background fit finishing must not tear down the card someone is judging: when nothing about what this pane holds
     // has changed, only the counts and the rail are brought up to date
     if (EG.card && EG.card.isConnected && EG.card.dataset.state === "review" && !EG.card._previewFailed && EG.tab === "place") {
-      const q2 = CNListActivity.select("engrave-place",queuedJobs([...items().values()].filter(j => j.row.state !== "gone")).filter(matchesQ));
+      const q2 = withFocus(CNListActivity.select("engrave-place",queuedJobs([...items().values()].filter(j => j.row.state !== "gone")).filter(matchesQ)));
       const f2 = pickFocus(q2);
       if (f2 && f2.key === EG.cardKey) {
         // (a card of a row with several pieces is kept only while its pieces are the same ones and the same words: otherwise it is drawn again; the switch itself follows in place)
@@ -7661,7 +7775,7 @@ const Engrave = window.Engrave = (() => {
     const jobs = CNListActivity.select(activityScope(), [...items().values()].filter(j => j.row.state !== "gone"));
     // the words to settle and the placements to approve are one queue, one card each: the card carries the words as an
     // editable field, so nothing needs a second tab
-    const words = jobs.filter(matchesQ).filter(j => j.state === "words" || j.state === "blocked"), queue = CNListActivity.select("engrave-place",queuedJobs(jobs.filter(matchesQ))), done = jobs.filter(matchesQ).filter(j => ["approved", "written", "skipped"].includes(j.state));
+    const words = jobs.filter(matchesQ).filter(j => j.state === "words" || j.state === "blocked"), queue = withFocus(CNListActivity.select("engrave-place",queuedJobs(jobs.filter(matchesQ)))), done = jobs.filter(matchesQ).filter(j => ["approved", "written", "skipped"].includes(j.state));
     // One screen, three tabs, one thing in front of you at a time: the words a person has to settle, the placements to
     // approve, and what has already been decided. The counts are the tabs, so what is left is never more than a glance.
     // Until a person picks a tab, the screen follows the work: it used to settle on Decided while the run was still
@@ -7703,7 +7817,7 @@ const Engrave = window.Engrave = (() => {
     renderWorking(v, jobs);
     // a tab pressed shows what it holds softly (a quick fade), rather than at a blink
     v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { const was = EG.tab; EG.tab = b.dataset.tab; EG.chosen = true; render(); const p = was !== EG.tab && MO() && document.querySelector("#engraveView .egPane:not([hidden])"); if (p) p.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: "ease-out" }); });
-    { const q = v.querySelector("#egQ"); q.oninput = () => { EG.q = q.value; render(); }; if (searching) { q.focus({ preventScroll: true }); q.setSelectionRange(searching.start, searching.end); } }
+    { const q = v.querySelector("#egQ"); q.oninput = () => { EG.q = q.value; EG.pin = null; render(); }; if (searching) { q.focus({ preventScroll: true }); q.setSelectionRange(searching.start, searching.end); } }
     if (tab === "place") {
       const q = v.querySelector("#egQueue");
       if (EG.list) {
@@ -7887,9 +8001,12 @@ const Engrave = window.Engrave = (() => {
   const pieceFacesOf = (ears, job) => { if (!hasFrontIn(ears) || piecesIn(ears) < 2) return null; const mine = ears.filter(j => sameSlot(j, job)); return mine.length === 2 && hasFrontIn(mine) ? mine : null; };
   function approveBothHtml(ears, job) {
     if (!ROWS()) return "";
-    if (hasFrontIn(ears) ? !sameWordsPerFace(ears) : !ROWS().sameWordsAll(ears)) return "";   // pieces with different words are approved one by one: nothing is approved that was not shown
+    // ENGAPPROVE (Paul, 13 Oct 2026: "every engraved piece needs a dedicated Approve button so that the user only approves one charm at a time"): no press approves SEVERAL pieces ("Approve all discs", "the 2 discs left", "Approve both ears" are gone);
+    // what stays is the one press of a piece with a Front and a Back: "Approve both faces" of THAT piece (a row of one piece: the row's own press, as ever; a row of several: the shown piece's, below)
+    const several = piecesIn(ears) >= 2;
+    if (!several && (hasFrontIn(ears) ? !sameWordsPerFace(ears) : !ROWS().sameWordsAll(ears))) return "";   // pieces with different words are approved one by one: nothing is approved that was not shown
     const gate = bothGate(ears), pair = pieceFacesOf(ears, job), g2 = pair && faceGate(pair);
-    return `<button class="btn ghost sm egApproveBoth" type="button" data-a="approveBoth"${gate.ok ? "" : " disabled"} title="${esc(bothTitle(gate, ears))}">${bothLabel(ears, job)}</button>`
+    return (several ? "" : `<button class="btn ghost sm egApproveBoth" type="button" data-a="approveBoth"${gate.ok ? "" : " disabled"} title="${esc(bothTitle(gate, ears))}">${bothLabel(ears, job)}</button>`)
       + (pair ? `<button class="btn ghost sm egApproveBoth egApproveFaces" type="button" data-a="approveFaces"${g2.ok ? "" : " disabled"} title="${esc(g2.ok ? "Both placements of this piece have been on screen: approves its Front, then its Back, each with its own seal and file" : g2.why)}">Approve both faces</button>` : "");
   }
   /** The ordinary approval of the Left, then, once it settled, the ordinary approval of the Right (or of each disc in turn; for a line with a front, of every face of every piece, Front before Back): two or more approvals,
@@ -7897,6 +8014,7 @@ const Engrave = window.Engrave = (() => {
   async function approveRow(job, button, scope) {
     if (!ROWS()) return;
     const row = rowsIn([job], queueUniverse())[0], faced = !!row && hasFrontIn(row.jobs), jobs = !row ? [] : scope === "piece" ? row.jobs.filter(j => sameSlot(j, job)) : row.jobs;
+    if (scope !== "piece" && piecesIn(jobs) >= 2) { toast("Approve each piece on its own: every piece needs its own Approve.", "bad"); return; }   // (ENGAPPROVE: never several pieces with one press; no button asks for it, this keeps a stale one from doing it)
     const gate = faced && UIFACES() ? UIFACES().approveAllGate(jobs, gateOpts())
       : row && ROWS().multi(row) ? (row.discs ? ROWS().approveAll(row, gateOpts()) : ROWS().approveBoth(row, gateOpts())) : { ok: false, why: allDiscs([job]) ? "This order has one disc to approve." : "This line has one ear to approve." };
     if (!gate.ok) { toast(gate.why, "bad"); return; }
@@ -7978,6 +8096,8 @@ const Engrave = window.Engrave = (() => {
           ${asks.length || wants.length ? `<section class="pvSec pvCheck">${panelOn ? "" : `<h4 class="pvH">To check with the buyer</h4>`}<ul>${asks.map(q => `<li><span>${esc(q)}</span><button type="button" class="pvAsk" data-ask="${esc(q)}" title="put this question in the message to the buyer">Ask</button></li>`).join("")}${wants.map(w => `<li class="want"><span>${esc(w)}</span></li>`).join("")}</ul></section>` : ""}
         </div>
         <section class="pvMail"></section></div>`;
+    // ENGAPPROVE: the guide's one calm line has its place right under the header; it is empty and hidden until a press would leave this order with a piece not approved (charm-nest-engrave-guide.js)
+    if (ctx) { card.querySelector(".rh")?.insertAdjacentHTML("afterend", '<div class="egGuide" hidden></div>'); try { window.CharmNestEngraveGuide?.mount(card, String(r.order.receiptId), UIFACES() ? UIFACES().pieceKeyOf(job.key) : job.key); } catch (_) {} }
     const charm = job.copies.length ? charmFor(job) : null;
 
     if (byCard) { /* the card's Front / Back thumbnails are the pictures of the piece: no reference picture */ }
@@ -7993,6 +8113,21 @@ const Engrave = window.Engrave = (() => {
     // the buyer's whole conversation beside the work: the same pane follows the placement through every rebuild of this
     // card, so what was typed stays (charm-nest-mail.js)
     cardMessages(card, job);
+    // ENGPIECES: an order of two or more pieces on two or more lines (an SS line and a GF line of one Etsy order): the header says so ("Piece 1 of 2") and switches between them, one small button per piece (its number, metal
+    // and a tick once approved). The pieces of a line (a pair's ears, a counted line's discs) are in the strip too, so that line's own switch gives way; an order of one line keeps exactly the head it had.
+    card._stripSync = () => {
+      const E = EO(), host = card.querySelector(".reviewIdentity"); if (!ctx || !E || !host) return;
+      const rid = ridOfJob(job), key = pieceKeyOfJob(job), ps = rid && orderRowsOf(rid).length >= 2 ? orderPiecesOf(job) || [] : [];
+      const on = ps.length >= 2 && new Set(ps.map(p => p.lineKey)).size >= 2 && ps.some(p => p.pieceKey === key), html = on ? E.stripHtml(ps, key, {}) : "";
+      if (card._stripHtml === html) return; card._stripHtml = html;
+      host.querySelector(".egPcStrip")?.remove();
+      if (!on) return;
+      for (const [a, t] of [["prev", "the previous piece of this order (then the order before it)"], ["next", "the next piece of this order (then the next order)"]]) { const bt = card.querySelector(`.rh [data-a="${a}"]`); if (bt) bt.title = t; }
+      host.querySelectorAll(":scope > .egEarSwitch, :scope > .egSwitchStack").forEach(n => n.remove());
+      const open = host.querySelector("[data-open-order]"); if (open) open.insertAdjacentHTML("beforebegin", html); else host.insertAdjacentHTML("beforeend", html);
+      host.querySelectorAll(".egPcTab").forEach(b => { b.onclick = () => cardAction("piece", b); });
+    };
+    card._stripSync();
     // what the system decided for this LINE (None / Front only / Back only / Front + back, each face's words and font), checked and edited right here: charm-nest-engrave-setup.js (one control for every card)
     { const su = card.querySelector("[data-engsetup]"); if (ctx && su && window.CharmNestEngravePanel) CharmNestEngravePanel.mountPiece(su, job); }   // (charm-nest-engrave-panel.js: the Front / Back thumbnails and the one panel, inline in the Engrave detail only)
     card.querySelectorAll("[data-ask]").forEach(b => b.onclick = () => window.CustomerMail?.cardAsk?.(job, b.dataset.ask));
@@ -8060,7 +8195,8 @@ const Engrave = window.Engrave = (() => {
     const backHost = card.querySelector(".backHost");
     let mounted = [0, 0], mountedBelow = -1, raf = 0, framed = null;
     const syncBoth = () => {
-      const b2 = card.querySelector('[data-a="approveBoth"]'); if (!b2 || !ears) return; const gate = bothGate(ears); b2.disabled = !gate.ok; b2.title = bothTitle(gate, ears);
+      if (!ears) return;
+      const b2 = card.querySelector('[data-a="approveBoth"]'); if (b2) { const gate = bothGate(ears); b2.disabled = !gate.ok; b2.title = bothTitle(gate, ears); }   // (ENGAPPROVE: a row of several pieces has no row-wide press: the piece's own "Approve both faces" below is still brought up to date)
       const b3 = card.querySelector('[data-a="approveFaces"]'), pair = b3 && pieceFacesOf(ears, job); if (b3 && pair) { const g3 = faceGate(pair); b3.disabled = !g3.ok; b3.title = g3.ok ? "Both placements of this piece have been on screen: approves its Front, then its Back, each with its own seal and file" : g3.why; }
     };
     card._syncBoth = syncBoth;
@@ -8194,10 +8330,10 @@ const Engrave = window.Engrave = (() => {
       const t = document.createElement("template"); t.innerHTML = html; const next = t.content.firstElementChild; if (!next) return;
       sw.replaceWith(next); card._switchHtml = next.outerHTML; next.querySelectorAll("[data-a]").forEach(b => { b.onclick = () => cardAction(b.dataset.a, b); });
     };
-    const cardAction = (a, b) => {
+    const cardAction = (a, b, noGuard) => {
       if (items().get(job.key) !== job) return;
       if (approvalBusy()) {
-        if (["close", "prev", "next", "ear"].includes(a) && !card._afterApproval) {
+        if (["close", "prev", "next", "ear", "piece"].includes(a) && !card._afterApproval) {
           // Close/Escape may arrive during export verification, before the stamp
           // starts. Keep the edit attached until its whole approval has settled.
           card._afterApproval = (async () => {
@@ -8217,9 +8353,11 @@ const Engrave = window.Engrave = (() => {
       else if (a === "approveBoth") approveRow(job, card.querySelector('[data-a="approve"]'));
       else if (a === "approveFaces") approveRow(job, card.querySelector('[data-a="approve"]'), "piece");
       else if (a === "ear") { const other = items().get(b && b.dataset.ear); if (other && other !== job) { goes(job, { enter: "fade", quick: true }, card); EG.focus = other.key; EG.card = null; EG.cardKey = null; render(); } }
+      else if (a === "piece") { const to = b && b.dataset.piece; if (to && to !== pieceKeyOfJob(job)) openPiece(ridOfJob(job), to, undefined, { card }); }   // (ENGPIECES: the header strip of an order's pieces)
       else if (a === "centre") centreText(job);
       else if (a === "turnLeft" || a === "turnRight") rotateTo(job, (job.fit?.angle || 0) + (a === "turnLeft" ? 90 : -90));
       else if (a === "close") {
+        if (!noGuard && leaveGuard(job, () => cardAction("close", b, true))) return;   // (ENGAPPROVE's guide: pieces of this order still to approve are said before the detail is left)
         if (job.editingBack) { goes(job, { fold: true }, card); if (!["approved", "written", "skipped"].includes(job.state)) items().delete(job.key); Review.remove("eng:" + job.key); }
         else goes(job, { row: true }, card);
         EG.list = true; EG.card = null; EG.cardKey = null; render();
@@ -8228,9 +8366,16 @@ const Engrave = window.Engrave = (() => {
         // Back and Next move row by row: an earring line's Left and Right are one stop (the Left | Right switch moves between them), any other job is a stop of its own.
         // The discs of a counted line are each a stop (DISCCYCLE): Next goes Disc 1, Disc 2, Disc 3, then the next order; Back goes the other way round, into the last disc of the order before
         let j3;
-        if (ROWS()) { const rows = rowsIn(q, queueUniverse()), here = rows.find(r2 => r2.jobs.includes(job)), tgt = ROWS().step(rows, job.key, a === "next" ? 1 : -1); j3 = tgt ? (tgt.job || (tgt.row === here ? job : ROWS().openLead(tgt.row, isWorking))) : null; }
+        // ENGPIECES: the stops are taken in ORDER order (every piece of an order, in its line order, before the next order) from the queue as the list shows it (the activity range and the search included), never from the page's own
+        // unfiltered list: a stop the list hides would be drawn as the first card instead, and the press would seem to do nothing
+        // (the stops are the page's own queue, in its own order, as before, but only those the list shows plus every other piece of THIS order, whatever the search or the range hides)
+        if (ROWS()) { const vis = new Set(EO() ? withFocus(shownQueue()) : []), rid0 = ridOfJob(job), sel = EO() ? queuedJobs([...items().values()].filter(j2 => j2.row.state !== "gone" && (vis.has(j2) || ridOfJob(j2) === rid0))) : q, all = rowsIn(sel, queueUniverse()), rows = EO() ? EO().groupRows(all, { lineIndex: lineIndexFn() }) : all, here = rows.find(r2 => r2.jobs.includes(job)), tgt = ROWS().step(rows, job.key, a === "next" ? 1 : -1); j3 = tgt ? (tgt.job || (tgt.row === here ? job : ROWS().openLead(tgt.row, isWorking))) : null; }
         else { const i = q.findIndex(j2 => j2.key === job.key); j3 = q[(i + (a === "next" ? 1 : q.length - 1)) % q.length]; }
-        if (j3) { if (j3.key !== job.key) goes(job, { enter: "fade", quick: true }, card); EG.focus = j3.key; EG.card = null; EG.cardKey = null; render(); }
+        if (j3) {
+          const go = () => { if (j3.key !== job.key) goes(job, { enter: "fade", quick: true }, card); EG.focus = j3.key; EG.pin = j3.key; EG.card = null; EG.cardKey = null; render(); };
+          if (!noGuard && ridOfJob(j3) !== ridOfJob(job) && leaveGuard(job, go)) return;   // (ENGAPPROVE's guide: leaving an order with pieces still to approve is said plainly, with a way to the next one)
+          go();
+        }
       } else if (a === "resplit") resplit(job); else if (a === "skip") skip(job); else if (a === "back") { humanAct("reject", { orderId: String(job.row.order.receiptId), detail: "engraving sent back to the words" }); sendBack(job); }
     };
     card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "usewords" || a === "linecount" || a === "spacing") return; if (a === "angle") { b.onchange = () => { if (approvalBusy()) return; card._flushSpacing?.(); const v = +b.value; if (Number.isFinite(v)) rotateTo(job, v); }; b.addEventListener("keydown", e => e.stopPropagation()); return; } b.onclick = () => cardAction(a, b); });
@@ -8251,7 +8396,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
@@ -12268,11 +12413,12 @@ const CustomRead = window.CustomRead = (() => {
     const det = O.specialOf(l, { sku: sp.designSku, masterEntry: sku => Master.entryFor(sku), optionMaps: B.maps.optionMaps });
     const hints = []; if (det) hints.push(`${det.label} (${det.why})`); if (!l.sku) hints.push("the piece has no SKU");
     const others = Orders.rows().filter(r => r !== row && r.order.receiptId === o.receiptId && r.state !== "gone").slice(0, 6);
+    const rw = O.rawWords(o, l);   // (ENGENT: the words as Etsy gave them, as before the spec read them decoded: this payload's hash finds the readings already kept, so no line is asked (and paid for) again)
     return {
       key: row.key, order: String(o.receiptId), listingId: String(l.listingId || ""), sku: sp.designSku || l.sku || "", title: l.title || "",
       quantity: sp.quantity || 1, jewellery: detail.type, metal: sp.materialLabel || "", options: detail.options.map(v => ({ name: v.name, value: v.value })),
-      personalization: sp.personalization || [], buyerMessage: sp.buyerMessage || "", staffNote: sp.staffNote || "",
-      team: (sp.messages || []).map(m => ({ who: m.senderName || "", text: m.text || "" })),
+      personalization: rw.personalization, buyerMessage: rw.buyerMessage, staffNote: rw.staffNote,
+      team: rw.messages.map(m => ({ who: m.senderName || "", text: m.text || "" })),
       otherLines: others.map(r => { const s = (r.spec && r.spec.designSku) || r.line.sku || ""; return { sku: s, title: r.line.title || "", known: !!(s && Master.entryFor(s)) }; }), hints
     };
   }
@@ -14803,7 +14949,7 @@ const OrderWin = window.OrderWin = (() => {
     paintTray();
   }
   /** The lines the Orders tab is showing, so Previous and Next walk what the person is actually looking at. */
-  const siblings = () => Orders.visibleRows();
+  const siblings = () => (Orders.walkRows ? Orders.walkRows() : Orders.visibleRows());   // (the lines in the order the Orders list draws them: an order's pieces together, ONE ORDER ONE ROW)
   function step(d) {
     if (!W.walk) return;
     const list = siblings(); const i = list.findIndex(r => r.key === W.key);
@@ -14968,7 +15114,7 @@ const OrderWin = window.OrderWin = (() => {
     //   rows()    every line of the order, in listed order        nameOf(line)  a line's piece name        (what the cards read)
     //   only()    the piece picked, read at every look (W.piece / W.side, the same as OrderWin.selectedPiece / selectedSide): { line, side } or null for all pieces
     //   pieces    the same lines, one entry each, for an order of several (what OrderEngraving.mount drew its list from, and still does until its cards are rewritten)
-    const only = () => { const k = (W.pieces || []).length > 1 ? W.piece || "" : "", sd = W.side && narrowSide() ? W.side : ""; return k || sd ? { line: k, side: sd } : null; };
+    const only = () => { const k = (W.pieces || []).length > 1 ? W.piece || "" : "", sd = W.side && narrowSide() ? W.side : W.disc || ""; return k || sd ? { line: k, side: sd } : null; };   // (ENGPICK: one disc of a counted line narrows the cards to its own, as one ear of a pair does: the card model's slot is "D2")
     const ctx = { rid, key: r.key, poolId: (r.poolIds || [])[0] || "", piece: r.key, row: r, ears: earsOf(r), label: "", meta: "",
       rows: () => linesOf(r), only, nameOf: pieceName,
       events: () => (W.evFor === rid ? W.events : null),
@@ -15092,10 +15238,12 @@ const OrderWin = window.OrderWin = (() => {
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller
     const said = [];
     // a line read before the placeholder cleanup (CharmNestOrders.visible) shows clean too
-    const pers = (sp.personalization || r.line.personalization || []).map(x => O.visible(x).trim()).filter(Boolean), bm = O.visible(sp.buyerMessage).trim();
+    // (ENGENT: Etsy hands the customer's words HTML-escaped; they are read decoded here and escaped again when drawn, so "Mom&#39;s" reads "Mom's" and "&lt;b&gt;" stays text)
+    const words = x => O.decodeEntities(O.visible(x)).trim();
+    const pers = (sp.personalization || r.line.personalization || []).map(words).filter(Boolean), bm = words(sp.buyerMessage);
     if (pers.length) said.push(["Personalisation", pers.join("\n")]);
     if (bm) said.push(["Buyer message", bm]);
-    const gm = O.visible(r.order.giftMessage).trim();
+    const gm = words(r.order.giftMessage);
     if (gm) said.push(["Gift message", gm]);
     // the team's messages are in the Team tab beside this, in full: not repeated here among what the customer wrote
     const notes = byId("owNotes");
@@ -15269,17 +15417,18 @@ const OrderWin = window.OrderWin = (() => {
     const multi = sibs.length > 1 && !r.loading;
     const ps = multi ? piecesOf(sibs) : [];
     W.pieces = ps;
-    if (W.piece && !ps.some(p => p.key === W.piece)) { W.piece = null; W.side = null; }
+    if (W.piece && !ps.some(p => p.key === W.piece)) { W.piece = null; W.side = null; W.disc = null; }
     if (W.side) { const ln = ps.find(p => p.key === (W.piece || W.key)) || (!multi ? tryDo(() => piecesOf([r])[0]) : null); if (!(ln && ln.sides && ln.sides.some(q => q.side === W.side))) W.side = null; }
+    if (W.disc) { const ln = ps.find(p => p.key === (W.piece || W.key)) || (!multi ? tryDo(() => piecesOf([r])[0]) : null); if (!(ln && ln.counted && ln.qty >= (+String(W.disc).slice(1) || 99))) W.disc = null; }   // (ENGPICK: a disc picked belongs to the counted line shown, and to a count it still has)
     const dir = W.pieceDir; W.pieceDir = 0;
     refreshPlacement(r); W.placeDrawn = W.placeSig;   // (where each piece IS now, before the mounts draw: they ask for it, opts.placement)
     for (const m of [W.rail, W.tl]) if (m && m.setPieces) tryDo(() => m.setPieces(ps, W.piece, dir));
   }
   /** A piece chosen (null: all of them): the Overview shows that piece's line, and every view crosses over to it. */
-  function pickPiece(key, side) {
-    key = key || null; side = side || null; if (key === W.piece && side === (W.side || null)) return;
+  function pickPiece(key, side, disc) {
+    key = key || null; side = side || null; disc = disc || null; if (key === W.piece && side === (W.side || null) && disc === (W.disc || null)) return;
     const order = [null].concat(W.pieces.map(p => p.key)); W.pieceDir = order.indexOf(key) > order.indexOf(W.piece) ? 1 : -1;
-    const dir = W.pieceDir; W.piece = key; W.side = side;   // (the Left or the Right of the pair, ONEROW: that ear of the line picked, or null for the whole item)
+    const dir = W.pieceDir; W.piece = key; W.side = side; W.disc = disc;   // (the Left or the Right of the pair, ONEROW: that ear of the line picked, or null for the whole item; ENGPICK: or one disc of a counted line)
     markPieces();   // (the row is marked at once, whatever the repaint waits for)
     tryDo(() => W.engCard && W.engCard.refresh(false, true));   // (the Engraving section follows the pick in the same tick, even when the repaint below has to wait for a seal)
     const r = rowOf(W.key); if (!r) return;
@@ -15298,19 +15447,22 @@ const OrderWin = window.OrderWin = (() => {
     key = key || null;
     if (!W.dlg || !W.dlg.open || W.closing) return false;
     // (a key is a line of the order, or one ear of a pair line, "<line>#L" / "<line>#R", the Left | Right marker on its row)
-    const m = key && /^(.+)#(L|R)$/.exec(key), side = m ? m[2] : null, line = m ? m[1] : key, multi = (W.pieces || []).length > 1;
+    // (ENGPICK: or one disc of a counted line, "<line>#D2": the Engraving section shows that disc's card alone)
+    const m = key && /^(.+)#(L|R|D\d{1,2})$/.exec(key), tag = m ? m[2] : null, disc = tag && tag[0] === "D" ? tag : null, side = tag && !disc ? tag : null, line = m ? m[1] : key, multi = (W.pieces || []).length > 1;
+    const countedHas = p => !!(p && p.counted && p.qty >= (+String(disc).slice(1) || 99));
     if (line && !(W.pieces || []).some(p => p.key === line)) {
-      const r = rowOf(W.key), one = side && !multi && r && !r.loading && r.key === line ? tryDo(() => piecesOf([r])[0]) : null;   // (a single-line order has no list of pieces to find it in)
-      if (!(one && one.sides && one.sides.some(q => q.side === side))) return false;
+      const r = rowOf(W.key), one = (side || disc) && !multi && r && !r.loading && r.key === line ? tryDo(() => piecesOf([r])[0]) : null;   // (a single-line order has no list of pieces to find it in)
+      if (!(one && ((side && one.sides && one.sides.some(q => q.side === side)) || (disc && countedHas(one))))) return false;
     }
     if (side && multi) { const p = W.pieces.find(q => q.key === line); if (!(p && p.sides && p.sides.some(q => q.side === side))) return false; }
+    if (disc && multi) { if (!countedHas(W.pieces.find(q => q.key === line))) return false; }
     const toPiece = multi ? line : null;
-    if (toPiece === W.piece && side === (W.side || null)) return true;
+    if (toPiece === W.piece && side === (W.side || null) && disc === (W.disc || null)) return true;
     const box = byId("owPcSum"), at = line || W.piece, rowFor = k => box && k ? box.querySelector(`.owPcRow[data-piece="${CSS.escape(k)}"]`) : null;
     const was = box && box.contains(document.activeElement) && document.activeElement.closest(".owPcRow") ? document.activeElement.closest(".owPcRow").dataset.piece : null;
     const sc = scrollerOf(box), top = k => { const e = rowFor(k); return e && !box.hidden ? e.getBoundingClientRect().top : null; };
     const t0 = top(at);
-    pickPiece(toPiece, side);
+    pickPiece(toPiece, side, disc);
     // (the rows above this one may now be taller or shorter: the scroller is moved by what the pressed row moved; where it cannot be, the list
     // glides from where it was to where it is now, transform only, instead of jumping from under the pointer)
     const gliding = () => box.getAnimations().some(a => a.id === "owPcFlip");
@@ -15320,7 +15472,7 @@ const OrderWin = window.OrderWin = (() => {
     if (t0 != null && t1 != null && Math.abs(t1 - t0) > 1 && !still()) { const a = box.animate([{ transform: `translateY(${t0 - t1}px)` }, { transform: "none" }], { duration: 180, easing: EASE }); a.id = "owPcFlip"; }
     requestAnimationFrame(keep);
     if (was != null) { const nm = rowFor(was) && rowFor(was).querySelector(".owPcName"); if (nm && document.activeElement !== nm && !box.contains(document.activeElement)) nm.focus({ preventScroll: true }); }
-    return W.piece === toPiece && (W.side || null) === side;
+    return W.piece === toPiece && (W.side || null) === side && (W.disc || null) === disc;
   }
   /** The nearest ancestor of `n` that scrolls (the Overview's own column; the whole view where the window is narrow). */
   function scrollerOf(n) {
@@ -15333,12 +15485,12 @@ const OrderWin = window.OrderWin = (() => {
    *  on its dot (.pics); the header says what is shown, and "Show all" is the way back. */
   function markPieces() {
     const box = byId("owPcSum"); if (!box || box.hidden) return;
-    const ps = W.pieces || [], multi = ps.length > 1, sel = multi ? W.piece : null, r0 = rowOf(W.key), shown = multi && r0 ? r0.key : null, sk = selSideKey();
+    const ps = W.pieces || [], multi = ps.length > 1, sel = multi ? W.piece : null, r0 = rowOf(W.key), shown = multi && r0 ? r0.key : null, sk = selSideKey(), dk = selDiscKey();
     box.querySelectorAll(".owPcRow[data-piece]").forEach(row => {
       const key = row.dataset.piece, on = key === sel, nm = row.querySelector(".owPcName"), dot = row.querySelector(".dot");
       row.classList.toggle("sel", on); row.classList.toggle("pics", !sel && key === shown);
       if (on) row.setAttribute("aria-current", "true"); else row.removeAttribute("aria-current");
-      if (nm) { nm.setAttribute("aria-pressed", on && !sk ? "true" : "false"); nm.title = on && !sk ? "Showing only this piece · press to show all pieces" : "Show only this piece"; }
+      if (nm) { nm.setAttribute("aria-pressed", on && !sk && !dk ? "true" : "false"); nm.title = on && !sk && !dk ? "Showing only this piece · press to show all pieces" : "Show only this piece"; }
       if (dot && !row.style.getPropertyValue("--pc")) row.style.setProperty("--pc", dot.style.getPropertyValue("--c") || "var(--gold)");
     });
     // (one ear of a pair picked: its tag on the row's Left | Right marker is pressed, and so is its line in the drawer; the row itself stays marked as the item shown)
@@ -15347,13 +15499,14 @@ const OrderWin = window.OrderWin = (() => {
       b.setAttribute("aria-pressed", on ? "true" : "false"); b.title = on ? `Showing only the ${tag} · press to show all pieces` : `Show only the ${tag}`;
     });
     box.querySelectorAll(".owPcSub[data-sub]").forEach(sub => {
-      const on = sub.dataset.sub === sk, nm = sub.querySelector(".owPcSubName");
+      const on = sub.dataset.sub === (sk || dk), nm = sub.querySelector(".owPcSubName");
       sub.classList.toggle("sel", on); if (nm) nm.setAttribute("aria-pressed", on ? "true" : "false");
     });
     const st = box.querySelector(".owPcState"); if (!st) return;
     const p = sel && ps.find(x => x.key === sel), total = ps.reduce((n, x) => n + (x.sides ? x.sides.reduce((m, sd) => m + sd.qty, 0) : x.qty), 0);   // (a pair line counts its Left and its Right)
-    const ear = p && W.side && p.sides ? sideWord(W.side) : "";
-    const html = p ? `Showing <b>${esc(p.name + (ear ? " · " + ear : ""))}</b><i aria-hidden="true"> · </i><button type="button" class="owPcAll" data-pc-all>Show all</button>` : `Showing all ${total} pieces`;
+    const ear = p && W.side && p.sides ? sideWord(W.side) : p && W.disc && p.counted ? "Disc " + String(W.disc).slice(1) : "";   // (a disc picked: "Showing COMET 9427 · Disc 2")
+    const mcode = p && ps.some(x => x !== p && x.name === p.name) ? CODE[p.metal] || (p.metal ? labelOf(p.metal) : "") : "";   // (ENGPICK: two pieces of ONE design differ only by metal: "Showing NEURON 37061 · SS", as the row says it; pieces with their own names are said as they were)
+    const html = p ? `Showing <b>${esc(p.name + (mcode ? " · " + mcode : "") + (ear ? " · " + ear : ""))}</b><i aria-hidden="true"> · </i><button type="button" class="owPcAll" data-pc-all>Show all</button>` : `Showing all ${total} pieces`;
     if (st._h !== html) { st._h = html; st.innerHTML = html; }
   }
   /** The presses on the "Its pieces" list: a press on a row's own body (its name, its words, the empty room) picks the piece, or all pieces
@@ -15373,13 +15526,14 @@ const OrderWin = window.OrderWin = (() => {
       const sub = e.target.closest && e.target.closest(".owPcSub[data-sub]");
       if (sub && box.contains(sub)) {
         if (own(e.target, sub)) return;
-        const k = sub.dataset.sub, side = /#(L|R)$/.test(k);
+        const k = sub.dataset.sub, side = /#(L|R)$/.test(k), disc = /#D\d{1,2}$/.test(k);
         if (side) selectPiece(k === selSideKey() ? null : k);
+        else if (disc) selectPiece(k === selDiscKey() ? ((W.pieces || []).length > 1 ? k.replace(/#.+$/, "") : null) : k);   // (a disc picks that disc; the disc picked again goes back to the whole item)
         else { const ln = k.replace(/#.+$/, ""); selectPiece(ln === W.piece && !W.side ? null : ln); }
         return;
       }
       const row = e.target.closest && e.target.closest(".owPcRow[data-piece]"); if (!row || !box.contains(row) || own(e.target, row)) return;
-      const key = row.dataset.piece; selectPiece(key === W.piece && !W.side ? null : key);
+      const key = row.dataset.piece; selectPiece(key === W.piece && !W.side && !W.disc ? null : key);
     });
     box.addEventListener("keydown", e => {
       const nm = e.target.closest && e.target.closest(".owPcName"); if (!nm || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -15411,6 +15565,8 @@ const OrderWin = window.OrderWin = (() => {
   }
   /** The key of the ear picked ("<line>#L"), else null. */
   const selSideKey = () => (W.side ? `${W.piece || W.key}#${W.side}` : null);
+  /** The key of the disc picked ("<line>#D2"), else null (ENGPICK). */
+  const selDiscKey = () => (W.disc ? `${W.piece || W.key}#${W.disc}` : null);
   /** The order's events as the Overview shows them: the piece chosen's alone, or all of them. */
   function shownEvents() {
     const UI = window.OrderTimelineUI, p = W.piece && W.pieces.find(x => x.key === W.piece), ns = narrowSide();
@@ -17128,7 +17284,7 @@ const OrderWin = window.OrderWin = (() => {
     if (!fresh && (other || opts.dir)) W.from = null;
     showOrder(rid, r);
     W.key = key;
-    if (other) { W.piece = null; W.side = null; } else if (W.piece && W.piece !== key) W.piece = key;
+    if (other) { W.piece = null; W.side = null; W.disc = null; } else if (W.piece && W.piece !== key) { W.piece = key; W.disc = null; }
     // (a piece dot's press, Paul 5 Oct round 15: the window opens with that piece SELECTED (its row on the Its pieces list marked, W.piece), so the Overview, the Sheet tab, the back engraving and the pictures are its own at once; an order of one line has nothing to select)
     if (opts.pick && r.key === key && !r.loading && linesOf(r).length > 1) W.piece = key;
     if (other) sheetWant = null;
@@ -17319,12 +17475,12 @@ const OrderWin = window.OrderWin = (() => {
   // (a repaint asked from outside, an image or a record arriving, waits for the view to land)
   return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: o => shut(o && o.into), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v),
     // the piece shown in the order window (Paul, 5 Oct, round 16: the "Its pieces" rows are the selector): selectPiece(key | null for all pieces) -> whether it is shown now
-    selectPiece: k => selectPiece(k), selectedPiece: () => (W.pieces || []).length > 1 ? W.piece || null : null, selectedSide: () => (W.side && narrowSide()) ? W.side : null, repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed,
+    selectPiece: k => selectPiece(k), selectedPiece: () => (W.pieces || []).length > 1 ? W.piece || null : null, selectedSide: () => (W.side && narrowSide()) ? W.side : null, selectedDisc: () => W.disc || null, repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed,
     // (read-only, for the checks: the pieces of the order on screen, each with the sheets it is on, and the one in focus)
     _scope: () => { const r = rowOf(W.key); if (!r) return null; const sc = sheetScope(r), cut = p => p && { key: p.key, name: p.name, nested: p.nested, loading: p.loading, why: p.why, sheets: p.sheets.map(h => ({ id: h.id, label: h.label })) }; return { all: sc.all.map(cut), focus: sc.focus && sc.focus.key, sel: sc.sel && sc.sel.key, piece: W.piece, block: sheetBlock(r) }; },
     // the order number of the open view, and "something was just done here": its timeline reads now and again 1.5 s later
     // where the person is in this view (read-only; the way back from the Engraving tab, charm-nest-engrave-return.js, puts them here again): the line, the tab, the piece and side chosen, the sheet and charm of the Sheet tab
-    where: () => { const sh = SV.list && SV.list[SV.at]; return { rid: W.rid, key: W.key, view: W.view, piece: (W.pieces || []).length > 1 ? W.piece || null : null, side: (W.side && narrowSide()) ? W.side : null, face: W.face, sheetId: sh && sh.id || "", sheetAt: SV.list ? SV.at : null, focus: SV.focus || "" }; },
+    where: () => { const sh = SV.list && SV.list[SV.at]; return { rid: W.rid, key: W.key, view: W.view, piece: (W.pieces || []).length > 1 ? W.piece || null : null, side: (W.side && narrowSide()) ? W.side : null, disc: W.disc || null, face: W.face, sheetId: sh && sh.id || "", sheetAt: SV.list ? SV.at : null, focus: SV.focus || "" }; },
     rid: () => W.rid, nudge: () => { try { if (W.dlg && W.dlg.open && !W.closing && W.feed && W.feed.nudge) W.feed.nudge(); } catch (_) {} } };
 })();
 
@@ -18404,6 +18560,22 @@ const Session = window.Session = (() => {
     const cks = sent.filter(e => !held.has(e.ck)).map(e => e.ck);
     return { all: cks.length > 0 && cks.length === every.length, cks };
   }
+  /** ENGENT: an engraving job saved with Etsy's entities in its words ("Name One&#39;s &amp; Date One"; in a capitals font the uppercased "&AMP;") reads decoded when the workspace comes back. Only a job nobody has decided: not
+   *  approved, written, skipped or cut plain, no approval or stamp under way, no person's move on its placement (a job someone moved is theirs to change). Its words, lines, line split and quote are read decoded; the fit drawn
+   *  from the old words is dropped and the job goes back to "ready", so Session.restore asks Engrave.fitJob (the free offline fit: no paid reading, no Etsy) to draw it again from the real characters. A person's decision and font stay. Nothing is written. */
+  function wordsRead(j) {
+    try {
+      if (!j || j.editingBack || ["approved", "written", "skipped", "none"].includes(j.state) || j.approvedAt || j.approvalIntent || j.approvalPreparing || j.stamping || j.backSaving || j.nudged) return false;
+      const has = x => typeof x === "string" && x.indexOf("&") >= 0, caps = !!(O.fontCaps && O.fontCaps(j.fontKey));
+      const dec = x => { if (!has(x)) return x; const up = { AMP: "&", QUOT: '"', APOS: "'", LT: "<", GT: ">" }; return O.decodeEntities(caps ? x.replace(/&(AMP|QUOT|APOS|LT|GT);/g, (m, n) => up[n]) : x); };
+      const was = JSON.stringify([j.text, j.lines, j.lineInput, j.quote]);
+      j.text = dec(j.text); if (Array.isArray(j.lines)) j.lines = j.lines.map(dec); if (Array.isArray(j.lineInput)) j.lineInput = j.lineInput.map(dec); j.quote = dec(j.quote);
+      const e = j.row && j.row.engrave; if (e && !e.approved && has(e.text)) e.text = dec(e.text);
+      if (JSON.stringify([j.text, j.lines, j.lineInput, j.quote]) === was || !j.fit) return false;
+      j.fit = null; j.verify = null; delete j.writtenFit; if (["review", "fitting"].includes(j.state)) j.state = "ready";
+      return true;   // (a job to fit again)
+    } catch (_) { return false; /* the job is read as it was saved */ }
+  }
   async function restore() {
     let d; try { d = await io(); } catch (e) { toast(`Workspace recovery unavailable: ${e.message}`, "bad"); return false; }
     if (!d || d.v !== 1) { sweepBest(new Set()); return false; }
@@ -18471,13 +18643,16 @@ const Session = window.Session = (() => {
         }
         prim.active = Math.min(group.active || 0, prim.pages.length - 1); CN.showPage(group.metal, prim.active);
       }
+      const refit = [];   // (ENGENT: undecided jobs saved with Etsy's entities in their words, read decoded below and fitted again from the real characters)
       B.engrave.items = new Map((d.jobs || []).filter(j => j.editingBack && j.editRow || B.orders.byKey.has(j.rowKey || j.key)).map(j => {
         j.lineGap ??= .18; j.row = j.editingBack ? j.editRow : B.orders.byKey.get(j.rowKey || j.key); if (j.state === "fitting") j.state = "ready";
+        if (wordsRead(j)) refit.push(j);   // (a decided job is never touched)
         return [j.key, j];
       }));
       Engrave.relinkAll();                                              // (a job of a pair's ear or a disc gets its own row again from its line)
       B.review.items = (d.review || []).map(it => Object.assign(it, { row: B.orders.byKey.get(it.rowKey) || B.engrave.items.get(it.jobKey)?.row, job: B.engrave.items.get(it.jobKey) }));
       Engrave.recoverApprovals?.();
+      for (const j of refit) setTimeout(() => { try { Promise.resolve(Engrave.fitJob(j)).catch(() => {}); } catch (_) {} }, 1500);   // (ENGENT: free, offline, no paid reading; the job still in the workspace only)
       CustomRead.later();                                                // the lines come back with their last reading: look again
       Engrave.restoreView?.(d.engravingView);
       // (a workspace saved while Review had a Decided segment says "sent": that segment is Completed now, so it is opened there)

@@ -122,10 +122,23 @@ const settledSection = async (page, ms = 700) => { await R.settle(page, ms); ret
     // ── the discs: the line's three disc cards, and nothing of the other pieces ──
     r = await sameTick(page, k => OrderWin.selectPiece(k), kDiscs);
     note(r.after.cards.length === 3 && r.after.cards.every(c => c.line === kDiscs), 'the three-disc necklace selected: its three disc cards and no other piece\'s', r.after.cards.map(c => c.line.slice(-5) + '/' + c.piece.slice(-3)).join(' '));
-    // (a press on one disc's own line in the drawer picks the disc necklace as a whole: discs are ONE item of Its pieces, the window has no pick of a single disc; the section shows every disc of the item)
+    // ENGPICK (13 Oct 2026, "make a single disc of a multi-disc line selectable too"): a press on one disc's own line in the drawer picks THAT disc: its card alone (the item stays picked, the rest of the window is the item's);
+    // the same disc pressed again goes back to the item's three cards; another piece or Show all drops the disc.
     await page.evaluate(() => OrderWin.selectPiece(null)); await R.settle(page, 300);
     r = await sameTick(page, () => { const d = document.querySelector('#owPcSum .owPcSub[data-sub$="#D2"]'); if (!d) throw new Error('no disc 2 line in the drawer'); d.click(); });
-    note(r.after.selected === kDiscs && r.after.cards.length === 3 && r.after.cards.every(c => c.line === kDiscs), 'a press on "disc 2" in the drawer picks the disc necklace: its three disc cards (the window picks items, not single discs)', r.after.selected + ' / ' + r.after.cards.length + ' cards');
+    note(r.after.selected === kDiscs && r.after.cards.length === 1 && r.after.cards[0].line === kDiscs && /#D2$/.test(r.after.cards[0].piece), 'a press on "disc 2" in the drawer picks that disc: its card alone, in the same tick', r.after.selected + ' / ' + r.after.cards.map(c => c.piece.slice(-3)).join(','));
+    note(await page.evaluate(() => OrderWin.selectedDisc()) === 'D2' && /Disc 2/.test(r.after.cards[0] && r.after.cards[0].name || '') && /Showing .*Disc 2/.test(await page.evaluate(() => document.querySelector('#owPcSum .owPcState').textContent)), 'the disc picked is Disc 2 (the card says Disc 2, the header says "Showing ... Disc 2")');
+    r = await sameTick(page, () => document.querySelector('#owPcSum .owPcSub[data-sub$="#D3"]').click());
+    note(r.after.cards.length === 1 && /#D3$/.test(r.after.cards[0].piece), 'a press on disc 3 moves the pick to disc 3: its card alone', r.after.cards.map(c => c.piece.slice(-3)).join(','));
+    r = await sameTick(page, () => document.querySelector('#owPcSum .owPcSub[data-sub$="#D3"]').click());
+    note(r.after.selected === kDiscs && r.after.cards.length === 3 && r.after.cards.every(c => c.line === kDiscs) && await page.evaluate(() => OrderWin.selectedDisc()) === null, 'the same disc pressed again goes back to the item: its three disc cards', r.after.cards.length + ' cards');
+    await page.evaluate(() => document.querySelector('#owPcSum .owPcSub[data-sub$="#D1"]').click()); await R.settle(page, 300);
+    r = await sameTick(page, k => OrderWin.selectPiece(k), kBack);
+    note(r.after.cards.length === 1 && r.after.cards[0].line === kBack && await page.evaluate(() => OrderWin.selectedDisc()) === null, 'another piece picked: the disc is dropped, that piece\'s card alone', r.after.cards.map(c => c.line.slice(-4)).join(','));
+    await page.evaluate(k => OrderWin.selectPiece(k + '#D2'), kDiscs); await R.settle(page, 300);
+    r = await sameTick(page, () => document.querySelector('#owPcSum [data-pc-all]').click());
+    note(r.after.selected === null && r.after.cards.length === 5 && await page.evaluate(() => OrderWin.selectedDisc()) === null, 'Show all drops the disc too: every card again', r.after.cards.length + ' cards');
+    note(await page.evaluate(k => OrderWin.selectPiece(k + '#D9'), kDiscs) === false, 'a disc the line does not have (disc 9 of 3) is refused');
     // ── the keyboard ──
     await page.evaluate(() => OrderWin.selectPiece(null)); await R.settle(page, 300);
     r = await sameTick(page, k => { const nm = document.querySelector('#owPcSum .owPcRow[data-piece="' + k + '"] .owPcName'); nm.focus(); nm.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); }, kBack);
