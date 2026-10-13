@@ -1,5 +1,5 @@
 /* SETSIM runner: a seeded synthetic order stream through the sorter's own nesting and set rules, measured (see setsim-lib.cjs for what is real and what is stand-in).
- *   node tests/charm-nest/setsim-run.cjs [--root DIR] [--label NAME] [--orders N] [--seed N] [--step DEG] [--batches 2,3,5,4] [--metals gold,silver,rose,gold14k,gold10k] [--out FILE.json] [--quiet]
+ *   node tests/charm-nest/setsim-run.cjs [--root DIR] [--label NAME] [--orders N] [--seed N] [--step DEG] [--batches 2,3,5,4] [--metals gold,silver,rose,gold14k,gold10k] [--late 0.3] [--sheet 60x40] [--out FILE.json] [--quiet]
  * `--root` is a checkout of the code to judge (default: this repository); run it once on the commit before a change and once after, with the same seed, then
  *   node tests/charm-nest/setsim-report.cjs before.json after.json
  * Every simulated 10 minutes brings 2-5 orders (the sorter's trickle); each metal's sheets are fed as the page feeds them; after each update the page's own set assembly
@@ -7,7 +7,7 @@
 'use strict';
 const fs = require('node:fs'), path = require('node:path');
 const Lib = require('./setsim-lib.cjs');
-const { METALS, CODE, makeStream, partOf, piecesOf, Sim, setWorld, fillOf, frontOf, placementOf, mean, r1, L } = Lib;
+const { METALS, CODE, makeStream, partOf, piecesOf, schedule, Sim, setWorld, fillOf, frontOf, placementOf, mean, r1, L } = Lib;
 
 const argv = process.argv.slice(2), opt = (k, d) => { const i = argv.indexOf('--' + k); return i >= 0 ? argv[i + 1] : d; };
 
@@ -15,17 +15,18 @@ async function run(o = {}) {
   const root = path.resolve(o.root || REPO_DEFAULT), orders = +o.orders || 240, seed = +o.seed || 1, step = +o.step || 24, label = o.label || path.basename(root);
   const batches = String(o.batches || '2,3,5,4').split(',').map(Number), metals = String(o.metals || METALS.join(',')).split(',').filter(m => METALS.includes(m));
   const sim = new Sim({ root, step, seed, sheet: o.sheet || '60x40', job: o.job ? JSON.parse(o.job) : undefined, extra: o.extra ? String(o.extra).split(',') : [] }), S = L.solverOf(root);
-  const stream = makeStream(S, { seed, orders, mix: o.mix }), world = setWorld(root);
+  const stream = makeStream(S, { seed, orders, mix: Object.assign({}, o.mix, o.late ? { late: +o.late } : {}) }), world = setWorld(root);
   const log = o.quiet ? () => {} : (...a) => console.log(...a);
   const byId = new Map(stream.map(x => [x.id, x]));
   const arrival = new Map(), done = new Map(), firstSeen = new Map(), t00 = Date.now(), ticks = [];
   const everPartialInSet = new Set(), everInSet = new Set();
-  let i = 0, tick = 0;
+  let tick = 0;
   const placedIds = () => new Set(sim.pages.flatMap(p => p.placements.map(q => q.id)));
-  const tickOnce = async batch => {
-    tick++; const t0 = Date.now();
-    for (const x of batch) arrival.set(x.id, tick);
-    for (const m of metals) { const parts = batch.map(x => partOf(x, m)).filter(Boolean); if (parts.length || (sim.metals[m] && sim.metals[m].work.length)) await sim.metal(m).step(parts, tick); }
+  const plan = schedule(stream, batches, +o.drain || 0);
+  const tickOnce = async ev => {
+    tick = ev.tick; const t0 = Date.now();
+    for (const x of ev.orders) arrival.set(x.id, tick);
+    for (const m of metals) { const parts = ev.arrivals.map(a => partOf(a.order, m, a.lines)).filter(Boolean); if (parts.length || (sim.metals[m] && sim.metals[m].work.length)) await sim.metal(m).step(parts, tick); }
     // where every order's pieces are now: an order is placed when each piece is on a sheet
     const placed = placedIds();
     for (const [id, at] of arrival) if (!done.has(id) && piecesOf(byId.get(id)).every(c => placed.has(c.id))) done.set(id, tick);
@@ -34,11 +35,10 @@ async function run(o = {}) {
     const inSet = pg.filter(p => !p.draft && p.setId);
     const partial = inSet.filter(p => ['gold', 'silver'].includes(p.metal) && !world.SR.isCompleted(p));
     inSet.forEach(p => everInSet.add(p.sheetId)); partial.forEach(p => everPartialInSet.add(p.sheetId));
-    ticks.push({ tick, orders: batch.length, sheets: sim.pages.filter(p => p.placements.length).length, sets: sets.length, partialInSets: partial.length, ms: Date.now() - t0 });
-    log(`t${String(tick).padStart(3)} +${batch.length} sheets ${ticks.at(-1).sheets} (done ${[...sim.pages].filter(p => p.releaseFull).length}) sets ${sets.length} partial-in-sets ${partial.length} unplaced-orders ${[...arrival.keys()].filter(id => !done.has(id)).length} ${Math.round((Date.now() - t0) / 1000)}s`);
+    ticks.push({ tick, orders: ev.orders.length, sheets: sim.pages.filter(p => p.placements.length).length, sets: sets.length, partialInSets: partial.length, ms: Date.now() - t0 });
+    log(`t${String(tick).padStart(3)} +${ev.orders.length} sheets ${ticks.at(-1).sheets} (done ${[...sim.pages].filter(p => p.releaseFull).length}) sets ${sets.length} partial-in-sets ${partial.length} unplaced-orders ${[...arrival.keys()].filter(id => !done.has(id)).length} ${Math.round((Date.now() - t0) / 1000)}s`);
   };
-  for (let k = 0; i < stream.length; k++) { const batch = stream.slice(i, i + batches[k % batches.length]); i += batch.length; await tickOnce(batch); }
-  for (let d = 0; d < (+o.drain || 0); d++) await tickOnce([]);   // (empty updates: queued orders that wait for a sheet get their turn)
+  for (const ev of plan) await tickOnce(ev);
 
   /* ── the measures ── */
   const pl = placementOf(sim, stream), pg = world.gatePages(), sets = world.sets();
@@ -68,7 +68,7 @@ async function run(o = {}) {
     front: { frontStd: r1(mean(gsClosed.filter(r => r.frontStd != null).map(r => r.frontStd)), 2), cavernMm: r1(mean(gsClosed.filter(r => r.cavernMm != null).map(r => r.cavernMm)), 1) },
     sets: { formed: sets.length, partialGfssInSets: partialIn.length, everPartialGfssInSets: everPartialInSet.size, sheetsInSets: inSetPages.length, everInSets: everInSet.size, completedWaitingOutside: pg.filter(p => p.draft && ['gold', 'silver'].includes(p.metal) && world.SR.isCompleted(p)).length,
       invalid: setRows.filter(s => { const v = world.SR.validSet(s.sheets.map(x => pg.find(p => p.sheetId === x.id)).filter(Boolean)); return !v.ok; }).length, list: setRows },
-    queue: { ordersQueued: queued.length, meanWaitTicks: r1(mean(waits), 2), maxWaitTicks: waits.length ? Math.max(...waits) : 0, neverPlaced: neverDone.length, neverPlacedList: neverDone.slice(0, 20).map(x => ({ order: x.id, pieces: piecesOf(x).length, arrivedTick: arrival.get(x.id) })), unplacedAtEnd: pl.unplaced.length },
+    queue: { passedOrders: new Set(sim.ctl.passes.flatMap(x => x.orders)).size, passes: sim.ctl.passes.length, maxHops: Math.max(0, ...[...sim.ctl.passes.flatMap(x => x.orders).reduce((m, id) => m.set(id, (m.get(id) || 0) + 1), new Map()).values()]), ordersQueued: queued.length, meanWaitTicks: r1(mean(waits), 2), maxWaitTicks: waits.length ? Math.max(...waits) : 0, neverPlaced: neverDone.length, neverPlacedList: neverDone.slice(0, 20).map(x => ({ order: x.id, pieces: piecesOf(x).length, arrivedTick: arrival.get(x.id) })), unplacedAtEnd: pl.unplaced.length },
     searches: Object.fromEntries(metals.map(m => [m, sim.metals[m] ? { n: sim.metals[m].searches.length, ms: sim.metals[m].ms } : null])),
     sheetRows,
   };
@@ -80,7 +80,7 @@ function gitHead(root) { try { return require('node:child_process').execSync('gi
 
 module.exports = { run };
 if (require.main === module) {
-  run({ root: opt('root'), label: opt('label'), orders: opt('orders'), seed: opt('seed'), step: opt('step'), sheet: opt('sheet'), batches: opt('batches'), metals: opt('metals'), drain: opt('drain'), extra: opt('extra'), job: opt('job'), quiet: argv.includes('--quiet') }).then(r => {
+  run({ root: opt('root'), label: opt('label'), orders: opt('orders'), seed: opt('seed'), step: opt('step'), sheet: opt('sheet'), late: opt('late'), batches: opt('batches'), metals: opt('metals'), drain: opt('drain'), extra: opt('extra'), job: opt('job'), quiet: argv.includes('--quiet') }).then(r => {
     const f = opt('out'); if (f) fs.writeFileSync(f, JSON.stringify(r, null, 1));
     const { sheetRows, split, sets, ...head } = r; console.log(JSON.stringify({ ...head, split: { sameMetal: split.sameMetal }, sets: { ...sets, list: undefined } }, null, 1));
   }).catch(e => { console.error(e); process.exit(1); });

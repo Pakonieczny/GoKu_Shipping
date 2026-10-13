@@ -33,11 +33,32 @@ const DEFAULT_MIX = {
   size: { small: .35, mid: .40, large: .25 },
   metals: { gold: .45, silver: .32, rose: .12, gold14k: .06, gold10k: .05 },
   otherMetal: .10,                                                     // the share of extra lines that are of another metal than the order's first line
+  late: 0,                                                             // the share of extra lines that reach the sorter 1-3 updates after the order's first line (a line held for review, read late, released from hold)
 };
 const rng = L.rng;
 const pickW = (r, table) => { let u = r() * Object.values(table).reduce((a, b) => a + b, 0); for (const [k, w] of Object.entries(table)) { u -= w; if (u < 0) return k; } return Object.keys(table).pop(); };
 
-/** A seeded stream of fake orders: [{ id, n, lines:[{ n, kind, metal, pieces:[charm] }] }]. Pool ids are `order_line_copy`, the form the app uses everywhere. */
+/** One fake order line of a kind, from a spec { idx, f } (a design of the library's silhouettes and its scale), { idx2, f2 } for a mismatched pair, { k } the number of discs / copies. Pool ids are `order_line_copy`, the form the app uses everywhere. */
+function lineOf(S, oid, n, kind, spec, metal, date) {
+  const mk = (copy, idx, f, extra) => { const id = `${oid}_${n}_${copy}`; return Object.assign(L.charm(S, id, idx, f, oid, date), { poolId: id, metal }, extra || {}); };
+  const key = `${oid}:${n}`, info = form => ({ receiptId: oid, transactionId: String(n), form }), pieces = [];
+  if (kind === 'single') pieces.push(mk(1, spec.idx, spec.f));
+  else if (kind === 'pair' || kind === 'huggie') {   // a Left and its exact mirror, the Right (the nester may turn a piece and never reflect it)
+    const base = { groupKey: key, groupSize: 2, orderInfo: info('earring') };
+    pieces.push(mk(1, spec.idx, spec.f, Object.assign({ side: 'L', mirror: false, bodyIndex: 0 }, base)), flip(mk(2, spec.idx, spec.f, Object.assign({ side: 'R', mirror: true, bodyIndex: 1 }, base))));
+  } else if (kind === 'mismatched') {
+    const base = { groupKey: key, groupSize: 2, orderInfo: info('earring') };
+    pieces.push(mk(1, spec.idx, spec.f, Object.assign({ side: 'L', mirror: false, bodyIndex: 0 }, base)), mk(2, spec.idx2, spec.f2, Object.assign({ side: 'R', mirror: true, bodyIndex: 1 }, base)));
+  } else if (kind === 'discs') for (let c = 1; c <= spec.k; c++) pieces.push(mk(c, spec.idx, spec.f, { groupKey: key, groupSize: spec.k, bodyIndex: c - 1, orderInfo: info('necklace') }));
+  else if (kind === 'qty') for (let c = 1; c <= spec.k; c++) pieces.push(mk(c, spec.idx, spec.f));
+  else if (kind === 'trio') spec.designs.forEach(([idx, f], c) => pieces.push(mk(c + 1, idx, f, { groupKey: key, groupSize: spec.designs.length, bodyIndex: c, orderInfo: info('charm') })));
+  else throw new Error('setsim: unknown line kind ' + kind);
+  return { n, kind, metal, pieces, delay: 0 };
+}
+/** An order from explicit lines: [{ kind, metal, ...spec, delay }]. */
+const orderOf = (S, oid, n, specs, date) => ({ id: String(oid), n, lines: specs.map((sp, i) => Object.assign(lineOf(S, String(oid), i + 1, sp.kind, sp, sp.metal || 'gold', date || 1000 + n), { delay: sp.delay || 0 })) });
+
+/** A seeded stream of fake orders: [{ id, n, lines:[{ n, kind, metal, pieces:[charm], delay }] }]. */
 function makeStream(S, { seed = 1, orders = 200, mix = {} } = {}) {
   const M = Object.assign({}, DEFAULT_MIX, mix), r = rng(seed * 7919 + 13), out = [];
   const designOf = size => size === 'small' ? [Math.floor(r() * 8), 1 + r() * .1] : size === 'mid' ? [8 + Math.floor(r() * 10), 1 + r() * .15] : [15 + Math.floor(r() * 9), 1.1 + r() * .2];
@@ -46,27 +67,16 @@ function makeStream(S, { seed = 1, orders = 200, mix = {} } = {}) {
     const first = pickW(r, M.metals), lines = [];
     for (let n = 1; n <= nLines; n++) {
       const kind = pickW(r, M.kinds), metal = n === 1 || r() >= M.otherMetal ? first : pickW(r, { gold: 1, silver: 1, rose: .5 });
-      const mk = (copy, idx, f, extra) => { const id = `${oid}_${n}_${copy}`; return Object.assign(L.charm(S, id, idx, f, oid, date), { poolId: id, metal }, extra || {}); };
-      const pieces = [];
-      if (kind === 'single') { const [idx, f] = designOf(pickW(r, M.size)); pieces.push(mk(1, idx, f)); }
-      else if (kind === 'pair' || kind === 'huggie') {   // a Left and its exact mirror, the Right (the nester may turn a piece and never reflect it)
-        const [idx, f] = kind === 'huggie' ? [15 + Math.floor(r() * 9), 1 + r() * .15] : designOf(r() < .6 ? 'small' : 'mid'), key = `${oid}:${n}`;
-        const base = { groupKey: key, groupSize: 2, orderInfo: { receiptId: oid, transactionId: String(n), form: 'earring' } };
-        pieces.push(mk(1, idx, f, Object.assign({ side: 'L', mirror: false, bodyIndex: 0 }, base)), flip(mk(2, idx, f, Object.assign({ side: 'R', mirror: true, bodyIndex: 1 }, base))));
-      } else if (kind === 'mismatched') {
-        const [i1, f1] = designOf(r() < .6 ? 'small' : 'mid'), [i2, f2] = designOf(r() < .6 ? 'small' : 'mid'), key = `${oid}:${n}`, base = { groupKey: key, groupSize: 2, orderInfo: { receiptId: oid, transactionId: String(n), form: 'earring' } };
-        pieces.push(mk(1, i1, f1, Object.assign({ side: 'L', mirror: false, bodyIndex: 0 }, base)), mk(2, i2, f2, Object.assign({ side: 'R', mirror: true, bodyIndex: 1 }, base)));
-      } else if (kind === 'discs') {
-        const k = 3 + Math.floor(r() * 4), idx = [8, 10, 12, 13][Math.floor(r() * 4)], f = .9 + r() * .1, key = `${oid}:${n}`;
-        for (let c = 1; c <= k; c++) pieces.push(mk(c, idx, f, { groupKey: key, groupSize: k, bodyIndex: c - 1, orderInfo: { receiptId: oid, transactionId: String(n), form: 'necklace' } }));
-      } else if (kind === 'qty') {
-        const k = 2 + Math.floor(r() * 2), [idx, f] = designOf(pickW(r, M.size));
-        for (let c = 1; c <= k; c++) pieces.push(mk(c, idx, f));
-      } else {   // trio: three different charms of one line, kept as one line (groupSize 3)
-        const key = `${oid}:${n}`;
-        for (let c = 1; c <= 3; c++) { const [idx, f] = designOf(pickW(r, { small: .5, mid: .4, large: .1 })); pieces.push(mk(c, idx, f, { groupKey: key, groupSize: 3, bodyIndex: c - 1, orderInfo: { receiptId: oid, transactionId: String(n), form: 'charm' } })); }
-      }
-      lines.push({ n, kind, metal, pieces });
+      let spec;
+      if (kind === 'single' || kind === 'qty') { const [idx, f] = designOf(pickW(r, M.size)); spec = { idx, f, k: 2 + Math.floor(r() * 2) }; }
+      else if (kind === 'pair') { const [idx, f] = designOf(r() < .6 ? 'small' : 'mid'); spec = { idx, f }; }
+      else if (kind === 'huggie') spec = { idx: 15 + Math.floor(r() * 9), f: 1 + r() * .15 };
+      else if (kind === 'mismatched') { const [idx, f] = designOf(r() < .6 ? 'small' : 'mid'), [idx2, f2] = designOf(r() < .6 ? 'small' : 'mid'); spec = { idx, f, idx2, f2 }; }
+      else if (kind === 'discs') spec = { k: 3 + Math.floor(r() * 4), idx: [8, 10, 12, 13][Math.floor(r() * 4)], f: .9 + r() * .1 };
+      else spec = { designs: [0, 1, 2].map(() => designOf(pickW(r, { small: .5, mid: .4, large: .1 }))) };
+      const line = lineOf(S, oid, n, kind, spec, metal, date);
+      line.delay = n > 1 && r() < M.late ? 1 + Math.floor(r() * 3) : 0;
+      lines.push(line);
     }
     out.push({ id: oid, n: i, lines });
   }
@@ -74,7 +84,20 @@ function makeStream(S, { seed = 1, orders = 200, mix = {} } = {}) {
 }
 const piecesOf = o => o.lines.flatMap(l => l.pieces);
 /** The order's lines of one metal as the part of it that metal's sheets get. */
-const partOf = (o, metal) => { const lines = o.lines.filter(l => l.metal === metal); return lines.length ? { id: o.id, n: o.n, metal, lines, pieces: lines.flatMap(l => l.pieces) } : null; };
+const partOf = (o, metal, lines = o.lines) => { const mine = lines.filter(l => l.metal === metal); return mine.length ? { id: o.id, n: o.n, metal, lines: mine, pieces: mine.flatMap(l => l.pieces) } : null; };
+/** The updates of a stream: each brings 2-5 orders (batches) with the lines that are not late, plus the late lines of earlier orders that are due. [{ tick, orders:[order], arrivals:[{ order, lines }] }] */
+function schedule(stream, batches = [2, 3, 5, 4], drain = 0) {
+  const out = [], due = new Map(); let i = 0, tick = 0;
+  const push = (t, order, lines) => { if (!lines.length) return; if (!due.has(t)) due.set(t, []); due.get(t).push({ order, lines }); };
+  for (let k = 0; i < stream.length; k++) {
+    const batch = stream.slice(i, i + batches[k % batches.length]); i += batch.length; tick++;
+    for (const o of batch) { push(tick, o, o.lines.filter(l => !l.delay)); for (const d of new Set(o.lines.filter(l => l.delay).map(l => l.delay))) push(tick + d, o, o.lines.filter(l => l.delay === d)); }
+    out.push({ tick, orders: batch, arrivals: due.get(tick) || [] });
+  }
+  const last = Math.max(tick, ...due.keys());
+  for (tick++; tick <= last + drain; tick++) out.push({ tick, orders: [], arrivals: due.get(tick) || [] });
+  return out;
+}
 
 /* ═══════════════════════════ the page's own rules, sliced from the files of `root` ═══════════════════════════ */
 const read = (root, f) => fs.readFileSync(path.join(root || REPO, f), 'utf8');
@@ -86,27 +109,35 @@ function pageWorld(root, ctl, extra = []) {
   const O = require(path.join(root || REPO, 'charm-nest-orders.js'));
   const sheets = Object.fromEntries(METALS.map(m => [m, { pages: [], runId: 'run-1', active: 0 }]));
   const ctx = {
-    window: { B: { run: { runId: 'run-1', status: 'running' } }, Gate: { holding: () => false }, CN: {} }, S: { settings: { maxFill: .8, clearancePt: -.5, runMode: 'auto', engine: 'solver' }, sheets },
+    window: { B: { run: { runId: 'run-1', status: 'running' } }, Gate: { holding: () => false }, CN: {} }, S: { settings: { maxFill: .8, clearancePt: -.5, insetPt: 1.5, budgetS: 180, runMode: 'auto', engine: 'solver' }, sheets },
     Set, Map, WeakMap, Math, JSON, Object, Array, String, Number, Date, console, Promise,
     CharmNestRose: require(path.join(root || REPO, 'charm-nest-rose.js')), CharmNestSolver: L.solverOf(root), O, Sets: { ofRun: () => [] },
     log() {}, agent: () => null, toast() {}, renderCard() {}, renderRail() {}, updateTopSub() {}, computeSaturation() {}, labelOf: m => m, fmt: { pct: x => Math.round(100 * x) + '%', s: x => x + ' ms' },
-    activeCharms: sh => sh.charms.filter(c => !c.excluded), carefulNest: () => true, allSheets: () => METALS.flatMap(m => sheets[m].pages), manualSheetClosed: () => false, pagesOf: m => sheets[m].pages,
+    activeCharms: sh => sh.charms.filter(c => !c.excluded), allSheets: () => METALS.flatMap(m => sheets[m].pages), manualSheetClosed: () => false, pagesOf: m => sheets[m].pages,
     addPage: metal => ctl.addPage(metal), startNest: sh => ctl.startNest(sh),
   };
   ctx.window.CN.topupRoom = sh => ctx.topupRoom(sh);
+  ctx.window.CN.topupTakes = (sh, pieces) => typeof ctx.topupTakes === 'function' ? ctx.topupTakes(sh, pieces) : true;   // (NESTQUEUE: a multi-piece order that cannot fit a gap-filling sheet whole goes on)
+  ctx.stockFor = () => ctl.stock; ctx.angleSet = () => ctl.angles();
   vm.createContext(ctx);
   // pairs and groups, keepOrdersWhole, overflowToNextSheet, then sheetFull / the gap fill (TOPUP, topupSettle, topupRoom ...), then the feed (feedTurn, nestItems, feedOn)
   vm.runInContext(sliceBetween(html, 'function groupOf(', 'function inflatedArea(', 'groupOf .. overflowToNextSheet'), ctx);
   vm.runInContext(sliceBetween(html, 'function inflatedArea(', 'function usableArea(', 'inflatedArea .. topupRoom'), ctx);
   vm.runInContext(sliceBetween(html, 'const FEED_ORDERS', '/* A stopped run starts none of its sheets', 'the feed'), ctx);
+  // the solver job exactly as the page builds it (buildJob and what it reads); the runner only replaces the angles and the budget
+  vm.runInContext(sliceBetween(html, 'const CAREFUL_ANGLES', 'function packingKey(', 'buildJob'), ctx);
   // the intake: which sheet an order's pieces go on (LiveNest.intakePage and the closed test it uses)
   vm.runInContext(sliceBetween(bridge, "// the page's own marks first; the sets of its run are looked at only when none says so", 'async function add(run) {', 'LiveNest.intakePage'), ctx);
   for (const f of extra) vm.runInContext(read(root, f), ctx);
+  // every time a sheet passes orders on to the next one, who and from where (the runner reports it: orders passed over, hops)
+  const passOn = ctx.overflowToNextSheet; ctl.passes = [];
+  ctx.overflowToNextSheet = (sh, announce) => { const ids = new Set(sh.rejects || []); const orders = [...new Set((sh.charms || []).filter(c => ids.has(c.id)).map(c => c.order))]; const next = passOn(sh, announce); if (orders.length) ctl.passes.push({ tick: ctl.tick || 0, metal: sh.metal, from: sh.page, to: next && next.page, orders }); return next; };
   // (the page's `const`s are not properties of the vm: the two the runner calls are handed out here)
   ctx.closed = vm.runInContext('closed', ctx);
   return ctx;
 }
 
+const stockOf = sheet => { const [w, h] = String(sheet || '60x40').split('x').map(Number); return { wPt: PT(w), hPt: PT(h) }; };
 const CAREFUL_ANGLES = step => Array.from({ length: Math.round(360 / step) }, (_, i) => i * step);
 
 /** One metal's sheets, fed the way the sorter feeds them: each simulated update brings the metal's part of 2-5 orders; the intake puts every order's pieces on a sheet whole
@@ -114,21 +145,16 @@ const CAREFUL_ANGLES = step => Array.from({ length: Math.round(360 / step) }, (_
 class MetalSim {
   constructor(root, metal, sim) {
     this.root = root; this.metal = metal; this.sim = sim; this.S = L.solverOf(root); this.cut = CUT.has(metal); this.fast = !this.cut;
-    const [w, h] = String(sim.opts.sheet || '60x40').split('x').map(Number); this.stock = { wPt: PT(w), hPt: PT(h) }; this.work = []; this.searches = []; this.ms = 0; this.tick = 0;
+    this.stock = stockOf(sim.opts.sheet); this.work = []; this.searches = []; this.ms = 0; this.tick = 0;
   }
   get pages() { return this.sim.ctx.S.sheets[this.metal].pages; }
   newPage() { return { metal: this.metal, runId: 'run-1', page: Math.max(0, ...this.pages.map(p => p.page)) + 1, charms: [], placements: [], rejects: [], status: 'ready', intakePhase: 'fill', log: [], movedFrom: [], searches: 0, ms: 0, born: this.tick }; }
   addPage() { const p = this.newPage(); this.pages.push(p); return p; }
   startNest(sh) { if (!this.work.includes(sh)) this.work.push(sh); }
-  buildJob(sh, items) {
-    const o = this.sim.opts, fast = this.fast, cut = this.cut;
-    return Object.assign({
-      sheet: { wPt: this.stock.wPt, hPt: this.stock.hPt, insetPt: 1.5 },
-      clearancePt: -.5, angles: CAREFUL_ANGLES(o.step), fineRes: 2, coarseRes: .5, timeBudgetMs: 180000, fullBudget: false, stallMs: 60000, maxTrials: 2000, seed: o.seed || 1,
-      lockedPlacements: sh.appendOnly ? sh.nestInitial || sh.placements : sh.nestInitial?.length ? sh.nestInitial : null,
-      careful: true, roomCheck: fast, block: true, ...(fast ? { blockEase: L.BLOCK_EASE } : {}), initialLayout: sh.nestInitial || null, maxFill: .8, nearFullContact: !cut,
-      unjam: this.metal !== 'rose', pieces: items.map(c => Object.assign({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : (+c.orderDate || 0), pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }, this.S.pairFields ? this.S.pairFields(c) : {})),
-    }, o.job || {});
+  /** The page's own buildJob, with the angles and budget of this simulation. */
+  buildJob(sh) {
+    const o = this.sim.opts, job = this.sim.ctx.buildJob(sh);
+    return Object.assign(job, { angles: CAREFUL_ANGLES(o.step), timeBudgetMs: 180000, seed: o.seed || 1 }, o.job || {});
   }
   async nest(sh) {
     const ctx = this.sim.ctx, S = this.S;
@@ -139,7 +165,7 @@ class MetalSim {
     sh.nestInitial = kept.length ? kept.map(p => ({ ...p })) : null;
     for (const c of items) { const p = kept.find(q => q.id === c.id); c.pinned = p ? { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle } : null; }
     sh.placements = kept.map(p => ({ ...p })); sh.rejects = [];
-    const job = this.buildJob(sh, items), t0 = Date.now();
+    sh.runSeed = this.sim.opts.seed || 1; const job = this.buildJob(sh), t0 = Date.now();
     const result = await S.solve(job, {});
     const ms = Date.now() - t0; sh.ms += ms; sh.searches++; this.searches.push({ page: sh.page, ms, n: items.length - kept.length, placed: result.placements.length - kept.length, rejects: result.rejects.length });
     sh.status = 'finishing'; sh.endedBy = result.endedBy; sh.placements = result.placements.map(p => ({ ...p })); sh.rejects = result.rejects.slice();
@@ -149,6 +175,7 @@ class MetalSim {
     if (movedIds.size && job.lockedPlacements) job.lockedPlacements = job.lockedPlacements.map(p => movedIds.has(p.id) ? { ...sh.placements.find(q => q.id === p.id) } : p);
     sh.verification = { ok: S.verify(job, sh.placements, 4).ok };
     if (!sh.verification.ok) throw new Error('layout failed verification on ' + this.metal + ' page ' + sh.page);
+    sh.liveInfo = { freePt2: result.freePt2, usablePt2: result.usablePt2, placedPt2: result.placedPt2, pocket: result.pocket, placed: result.placements.length, total: items.length };
     sh.result = result; sh.density = result.density; sh.usablePt2 = result.usablePt2; sh.freePt2 = result.freePt2; sh.placedPt2 = result.placedPt2;
     sh.releaseFull = ctx.topupSettle(sh, result, ctx.sheetFull(sh, result, items)) || !!(sh.keepRelease && sh.keepRelease.full);
     if (sh.releaseFull && !sh.releasedAt) sh.releasedAt = this.tick;
@@ -158,12 +185,12 @@ class MetalSim {
   }
   /** One simulated update: the metal's parts of the orders that arrived come in, and every sheet that took pieces is searched until nothing is left to place. */
   async step(parts, tick) {
-    this.tick = tick; const ctx = this.sim.ctx, run = { runId: 'run-1' }, t0 = Date.now();
+    this.tick = tick; this.sim.ctl.tick = tick; const ctx = this.sim.ctx, run = { runId: 'run-1' }, t0 = Date.now();
     if (!this.pages.length) this.pages.push(this.newPage());
-    for (const part of parts) {
-      let page = ctx.intakePage(this.metal, run, part.id);
+    for (const part of parts) for (const line of part.lines) {
+      let page = ctx.intakePage(this.metal, run, part.id, line.pieces);
       if (!page || ctx.closed(page)) page = this.addPage();      // (attachPool: a closed sheet is never joined)
-      for (const c of part.pieces) page.charms.push(Object.assign({}, c, { pinned: null }));
+      for (const c of line.pieces) page.charms.push(Object.assign({}, c, { pinned: null }));
       page.appendOnly = page.placements.length > 0; page.intakeAppend = page.appendOnly;
       this.startNest(page);
     }
@@ -177,8 +204,11 @@ class MetalSim {
 class Sim {
   constructor(opts = {}) {
     this.opts = Object.assign({ root: REPO, step: 24, seed: 1, sheet: '60x40', extra: [] }, opts);
+    // (the solver's pocket pass and making-room caps are wall-clock seconds: on a busy machine they would cut the searches short and make runs differ; generous caps keep a run what an idle machine would give)
+    this.opts.job = Object.assign({ pocketMs: 120000, unjamMs: 90000 }, this.opts.job || {});
     this.metals = {};
-    this.ctl = { addPage: m => this.metals[m].addPage(), startNest: sh => this.metals[sh.metal].startNest(sh) };
+    this.ctl = { addPage: m => this.metals[m].addPage(), startNest: sh => this.metals[sh.metal].startNest(sh), get stock() { return stockOf(self.opts.sheet); }, angles: () => CAREFUL_ANGLES(self.opts.step) };
+    const self = this;
     this.ctx = pageWorld(this.opts.root, this.ctl, this.opts.extra);
   }
   metal(m) { return this.metals[m] || (this.metals[m] = new MetalSim(this.opts.root, m, this)); }
@@ -274,4 +304,4 @@ function placementOf(sim, stream) {
   return out;
 }
 
-module.exports = { METALS, CODE, CUT, DEFAULT_MIX, makeStream, piecesOf, partOf, pageWorld, MetalSim, Sim, setWorld, fillOf, frontOf, placementOf, mean, r1, REPO, L };
+module.exports = { METALS, CODE, CUT, DEFAULT_MIX, makeStream, lineOf, orderOf, piecesOf, partOf, schedule, pageWorld, MetalSim, Sim, setWorld, fillOf, frontOf, placementOf, mean, r1, REPO, L };
