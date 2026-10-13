@@ -25,6 +25,7 @@ const Sides = require(path.join(root, 'charm-nest-engrave-sides.js'));
 const Seals = require(path.join(root, 'charm-nest-engraving-seals.js'));
 const Readiness = require(path.join(root, 'charm-nest-readiness.js'));
 const Agent = require(path.join(root, 'netlify/functions/_charmNestAgent.js'));
+const Orders = require(path.join(root, 'charm-nest-orders.js'));   // (the bridge's own `const O = CharmNestOrders`, above the sliced region: classifyOnce reads the customer's words through O.rawWords / O.decodeEntities)
 const F = require('./pairs-fixtures.cjs');
 const refuseNestedArrays = require('./_noNestedArrays.cjs');
 
@@ -184,7 +185,7 @@ const mitten = () => { const out = path_([[10, 0], [50, 0], [50, 60], [10, 60], 
     const jobs = new Map(), asked = [];
     const rows = new Map(world.pool.map(p => [p.poolId, p]));
     const win = { CharmNestEngraveSides: Sides, CharmNestPair: Pair };
-    const ctx = { window: win, items: () => jobs, B: { pool: { rows } }, Pool: { charmOf: id => { const r = rows.get(id); return r ? F.charmOf(r.sku) : null; } }, Master: { entryFor: sku => F.entryOf(sku) }, CNEngravingSeals: Seals, DECIDED: ['approved', 'written', 'skipped'],
+    const ctx = { window: win, O: Orders, items: () => jobs, B: { pool: { rows } }, Pool: { charmOf: id => { const r = rows.get(id); return r ? F.charmOf(r.sku) : null; } }, Master: { entryFor: sku => F.entryOf(sku) }, CNEngravingSeals: Seals, DECIDED: ['approved', 'written', 'skipped'],
       S: { settings: { engraveConfidence: .65 } }, render() {}, agent() {}, Date, Promise, Map, Set, WeakMap, Array, Object, String, Number, JSON, Math, Review: { add() {}, remove() {} }, RunCtl: { poke() {} }, Session: { schedule() {} }, TL: { line() {}, hash: s => String(s).length },
       lineOf: undefined, needEvent() {}, setReady(job) { job.state = 'ready'; job.row.engrave = Object.assign({}, job.row.engrave, { needed: true, state: 'ready', approved: false }); return job; }, toWords(job, why) { job.state = 'words'; job.reason = why; job.row.engrave = Object.assign({}, job.row.engrave, { needed: true, state: 'words', approved: false }); return job; },
       agentCall: async (mode, ask) => { asked.push(ask); return reading; } };

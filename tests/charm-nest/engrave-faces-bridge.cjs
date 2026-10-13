@@ -55,7 +55,7 @@ function harness(rows, o = {}) {
   const ctx = {
     window: win, items: () => jobs, B: { pool: { rows: pool }, orders: { byKey }, run: null },
     Pool: { charmOf: id => { const r = pool.get(id); return r ? F.charmOf(r.sku) : null; }, update: async (ids, patch) => { poolUpdates.push({ ids, patch }); } }, Master: { entryFor: sku => F.entryOf(sku) }, CNEngravingSeals: Seals, DECIDED: ['approved', 'written', 'skipped'],
-    O: { FINISHED_LINE: new Set(['committed', 'gone', 'cancelled']), engravingNote: null }, S: { settings: { engraveConfidence: .65 } },
+    O: { FINISHED_LINE: new Set(['committed', 'gone', 'cancelled']), engravingNote: null, rawWords: Orders.rawWords, decodeEntities: Orders.decodeEntities }, S: { settings: { engraveConfidence: .65 } },
     render() {}, agent() {}, Date, Promise, Map, Set, WeakMap, Array, Object, String, Number, JSON, Math, RegExp, Error,
     Review: { add() {}, remove() {}, render() {} }, RunCtl: { poke() {}, save: async () => {} }, Session: { schedule() {} }, Orders: { render() {}, rows: () => rows, lineRecord: r => [r.key, { key: r.key }] },
     TL: { line: (row, type, d) => { if (d && d.once && events.some(e => e.type === type && e.id === d.id)) return; events.push({ row, type, id: d && d.id, text: d && d.text, data: d && d.data }); }, hash: s => String(s).length },
