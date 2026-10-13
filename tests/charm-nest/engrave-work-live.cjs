@@ -56,6 +56,9 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
       // the job as everything that could reach a file, the checkpoint or the cloud sees it (the verify stamp's clock aside)
       window.__job = key => { const j = Engrave.items().get(key); return JSON.stringify({ state: j.state, text: j.text, lines: j.lines, lineInput: j.lineInput, lineMode: j.lineMode, wantSize: j.wantSize, nudged: j.nudged, fontKey: j.fontKey, faceFontWord: j.faceFontWord || null, fontAsked: j.fontAsked || null, claude: j.claude || null, verify: j.verify && j.verify.geometry, fit: j.fit && { centre: j.fit.centre, angle: j.fit.angle, size: j.fit.size, weight: j.fit.weight, capMm: j.fit.capMm, lines: j.fit.lines, path: __path(j.fit.glyphs) } }); };
       window.__cv = () => document.querySelector('#egQueue .backHost canvas');
+      // the page's own resize makes a job smaller (room to nudge); it schedules the slider's paid look 700 ms later, which finds the cloud flag down and does nothing. The page's own polls set that flag back to true whenever
+      // they answer, so for this moment the flag is pinned down (and put back as it was), not just set
+      window.__shrink = async (key, f) => { const j = Engrave.items().get(key), c = CN.S.cloud, was = c.ok; Object.defineProperty(c, 'ok', { configurable: true, get: () => false, set: () => {} }); try { Engrave.resize(j, j.fit.size * f); await new Promise(r => setTimeout(r, 1500)); } finally { delete c.ok; c.ok = was; } };
       // what the work area shows, read in the same tick as whatever the caller just did
       window.__drawn = key => { const d = Engrave.draftOf(key), bc = __cv(), now = bc.toDataURL(); let sameAsPath = null; if (d) { bc._paint({ glyphs: d.glyphs, centre: d.centre, angle: d.angle }); sameAsPath = bc.toDataURL() === now; bc._paint(); } return { draft: d && { fontId: d.fontId, lines: d.lines, empty: d.empty, path: __path(d.glyphs), centre: d.centre, angle: d.angle, size: d.size }, canvas: now, sameAsPath, note: (document.querySelector('.engwNote') || {}).textContent || '' }; };
       // everything that could leave the page: fetch, XHR, and the page's own cloud entry points (every paid read, Firebase call and save goes through one)
@@ -79,7 +82,7 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
     await page.evaluate(async ids => { for (const id of ids) await Engrave.loadFontSet(id); }, [idA, idB]);   // (the fonts parts B..E pick are loaded; the "still loading" case is H)
     // the automatic size of a name usually sits right on the metal's limit (ENGPOS finding 4), so a nudge has no room: the world's job is made a little smaller first (the page's own resize, with the cloud
     // flag down for that moment so the slider's paid look, which only the corner/slider/size buttons schedule, has nothing to call), as a person would before moving it
-    await page.evaluate(async key => { const j = Engrave.items().get(key); CN.S.cloud.ok = false; Engrave.resize(j, j.fit.size * 0.6); await new Promise(r => setTimeout(r, 1000)); CN.S.cloud.ok = true; }, JK);
+    await page.evaluate(key => __shrink(key, 0.6), JK);
     const base = await page.evaluate(async key => ({ job: __job(key), canvas: __cv().toDataURL(), laser: await __laser(key), drawn: __drawn(key), path: __path(Engrave.items().get(key).fit.glyphs), font: Engrave.items().get(key).fontKey, text: Engrave.items().get(key).text }), JK);
     check(base.drawn.draft === null && /^\d+:[0-9a-f]{64}$/.test(base.laser) && parseInt(base.laser) > 50, 'A1 nothing staged: the work area draws the fitted engraving (no draft); laser engraving ' + base.laser.slice(0, 16));
     check(await page.evaluate(() => !!document.querySelector('#egQueue .pvSetup .engp .engpFont') && !!document.querySelector('#egQueue .pvSetup .engp .engpWords')), 'A2 the Engrave detail has the real panel (words box, font drop-down) beside the work area');
@@ -241,7 +244,7 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
     check(fcancel.draft === null && fcancel.canvas === fb.canvas && fcancel.laser === fb.laser && fcancel.job === fb.job, 'I4 Cancel on the front: the committed front, its job and its laser file are byte-identical to before');
 
     /* ═══ L · a drag in the work area while words are staged moves the STAGED words ═══ */
-    await page.evaluate(async key => { const j = Engrave.items().get(key); CN.S.cloud.ok = false; Engrave.resize(j, j.fit.size * 0.6); await new Promise(r => setTimeout(r, 1000)); CN.S.cloud.ok = true; const ta = document.querySelector('#egQueue .pvSetup .engp .engpWords'); ta.value = 'Name Six'; ta.dispatchEvent(new Event('input', { bubbles: true })); }, FK);   // (room to move first, as in E)
+    await page.evaluate(async key => { await __shrink(key, 0.6); const ta = document.querySelector('#egQueue .pvSetup .engp .engpWords'); ta.value = 'Name Six'; ta.dispatchEvent(new Event('input', { bubbles: true })); }, FK);   // (room to move first, as in E)
     const geo = await page.evaluate(() => { const c = __cv(), r = c.getBoundingClientRect(), b = c._box; return { x: r.left + b.centrePx[0] * r.width / c.width, y: r.top + b.centrePx[1] * r.height / c.height }; });
     const beforeDrag = await page.evaluate(key => ({ centre: Engrave.items().get(key).fit.centre.slice(), draft: Engrave.draftOf(key).centre.slice(), canvas: __cv().toDataURL() }), FK);
     await page.mouse.move(geo.x, geo.y); await page.mouse.down();

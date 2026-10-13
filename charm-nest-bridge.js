@@ -6416,7 +6416,6 @@ const Engrave = window.Engrave = (() => {
     return recovered;
   }
   async function approve(job, by, button) {
-    DRAFTS.delete(job.key);   // (a staged edit never reaches an approval: the panel stops Approve while words are staged, and what is approved is the committed fit)
     if(job._approvalTask)return;
     const task=approveOnce(job,by,button);job._approvalTask=task;
     try{return await task;}finally{if(job._approvalTask===task)delete job._approvalTask;}
