@@ -22,6 +22,7 @@ const Fk = require('./_sandboxFakes.cjs');
 const { store, blobs, writes, fileWrites, db, bucket } = Fk;
 const FV = Fk.admin.firestore.FieldValue;
 const Mod = require(path.join(fnDir, '_charmNestEtsyLink.js'));
+require(path.join(__dirname, '../../charm-nest-etsy-link.js')); const Page = globalThis.CharmNestEtsyLink;   // (the page's own wording: pure functions, no DOM needed)
 const clone = x => JSON.parse(JSON.stringify(x));
 const LID = '1718000002', SKU = 'BEADY SWAN', OLD = 'Swan_3608';
 
@@ -265,6 +266,39 @@ test('a master SKU that Etsy might trim or refuse is stopped before any call: a 
   }
   assert.strictEqual(W.S.calls.length, 0); assert.strictEqual(fileWrites.length, 0);
   const ok = await W.run({ listingId: LID, sku: 'X'.repeat(32), by: 'Paul' }); assert.strictEqual(ok.ok, true, JSON.stringify(ok)); assert.strictEqual(W.S.puts[0].body.products[0].sku.length, 32);
+});
+test('CATSKU: three master names read alike ("CAT 1 - SITTING CAT", "CAT 1- SITTING CAT", "... (HUGGIE)"): only the EXACT key is written, on all 12 products (4 metals x 3 Charm Types), nothing else moves; long-dash look-alikes are refused; an Etsy that hands back the old spelling is a verify failure', async () => {
+  const CAT = 'CAT 1 - SITTING CAT', TWIN = 'CAT 1- SITTING CAT', HUG = 'CAT 1- SITTING CAT (HUGGIE)', OLDC = 'CAT 1- Sitting Cat';
+  assert(/^[\x20-\x7e]+$/.test(CAT) && CAT.length === 19 && CAT.charCodeAt(5) === 0x20 && CAT.charCodeAt(6) === 0x2d && CAT.charCodeAt(7) === 0x20, 'the key is plain ASCII: a hyphen-minus with a space on each side');
+  const master = { [CAT]: masterEntry(CAT), [TWIN]: masterEntry(TWIN), [HUG]: masterEntry(HUG) };
+  const grid = (sku) => mkInv(['Sterling Silver', 'Gold Filled', 'Rose Gold Filled', '14k Solid Gold'].flatMap((m, i) => ['Necklace CHARM', 'Huggie CHARM SET', 'CHARM + Engraving'].map((t, j) => ({ sku, pv: [[514, 'Metal Choice', m], [513, 'Charm Type', t]], price: [12, 18, 22, 48][i] + [0, 9, 4][j], qty: i === 3 && j === 2 ? 0 : 999, on: !(i === 3 && j === 2) }))), { price_on_property: [514, 513] });
+  const W = world({ inventory: grid(OLDC), master });
+  assert.strictEqual(W.inv.products.length, 12);
+  const r = await W.run({ listingId: LID, sku: CAT, by: 'Paul' }); assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.products, 12); assert.strictEqual(r.calls, 2); assert.strictEqual(r.sku, CAT);
+  assert.strictEqual(W.S.puts.length, 1); assert.deepStrictEqual(W.S.puts[0].body, expectedBody(W.S.lastGet, () => true, CAT), 'the PUT is the GET answer with every sku the exact key');
+  assert(W.S.puts[0].body.products.every(p => p.sku === CAT), 'the key is sent with its spaces and its hyphen as stored');
+  const exp = clone(W.inv); exp.products.forEach(p => { p.sku = CAT; }); assert.deepStrictEqual(stripIds(W.S.stored), stripIds(exp), 'what Etsy then stores differs from before only in the SKUs');
+  assert.deepStrictEqual(store.get('Charm_Listing_Skus/' + LID).uni, CAT); assert.strictEqual(W.link().products, 12);
+  assert(!writes.some(w => /Charm_Master_Index/.test(w.path)), 'no master entry is ever written');
+  assert.strictEqual(r.beforePath, 'charmnest/custom-saves/' + LID + '/link-CAT_1_SITTING_CAT-before.json', 'the safety copy is named by the SKU with its punctuation set aside (both look-alikes would give this name: a second copy never overwrites the first)');
+  assert.strictEqual(Page.wording(r, LID, CAT).text, 'Done: CAT 1 - SITTING CAT is now on all 12 products of listing ' + LID + '.', 'the words Paul is told to expect');
+  // the other look-alike names are real masters too, so the op takes them when asked: the card's chip always sends ITS key. Spellings that are no master (en dash, em dash, minus sign, two spaces, lower case) never leave
+  const Z = world({ master });
+  for (const [sku, reason] of [['CAT 1 \u2013 SITTING CAT', 'sku-shape'], ['CAT 1 \u2014 SITTING CAT', 'sku-shape'], ['CAT 1 \u2212 SITTING CAT', 'sku-shape'], ['CAT 1  -  SITTING CAT', 'sku-shape'], ['cat 1 - sitting cat', 'sku-shape'], ['CAT 1 - SITTING CAT ', 'sku-shape'], ['CAT 1-SITTING CAT', 'sku-not-in-master'], ['CAT 1 -SITTING CAT', 'sku-not-in-master'], ['CAT 1 - SITTING CAT (HUGGIE)', 'sku-not-in-master']]) {
+    const z = await Z.run({ listingId: LID, sku, by: 'Paul' }); assert.strictEqual(z.reason, reason, JSON.stringify(sku) + ' -> ' + JSON.stringify(z)); assert.strictEqual(z.calls, 0);
+  }
+  assert.strictEqual(Z.S.calls.length, 0, 'no Etsy call for any of them');
+  // Etsy hands back the old spelling (or any other text): the comparison is exact, so it is a verify failure with the safety copy; one PUT, no undo
+  for (const tr of [s => s.replace(' - ', '- '), s => s.replace(' - ', ' \u2013 '), s => s.replace(' - ', '-')]) {
+    const V = world({ inventory: grid(OLDC), master, sim: { skuTransform: tr } }), v = await V.run({ listingId: LID, sku: CAT, by: 'Paul' });
+    assert.strictEqual(v.reason, 'verify'); assert.strictEqual(V.S.puts.length, 1); assert(blobs.has(v.beforePath)); assert(v.details.some(x => /SKU/.test(x)), JSON.stringify(v.details));
+  }
+  // the products carry two SKUs (the huggie products under their own name): not flattened
+  const mixed = grid(OLDC); mixed.products.forEach(p => { if (p.property_values[1].values[0] === 'Huggie CHARM SET') p.sku = HUG; }); mixed.sku_on_property = [513];
+  const M = world({ inventory: mixed, master }), m = await M.run({ listingId: LID, sku: CAT, by: 'Paul' }); assert.strictEqual(m.reason, 'mixed-skus'); assert.deepStrictEqual(m.details.slice().sort(), [TWIN, HUG].sort()); assert.strictEqual(M.S.puts.length, 0);
+  // every product already carries the exact key: no write
+  const A = world({ inventory: grid(CAT), master }), a = await A.run({ listingId: LID, sku: CAT, by: 'Paul' }); assert.strictEqual(a.already, true); assert.strictEqual(A.S.puts.length, 0);
 });
 test('Etsy keeps a DIFFERENT SKU than it was sent (it trims, or drops a space): recorded as verify with the before-copy, ONE PUT, no undo, and never sent again unchanged', async () => {
   for (const tr of [s => s.replace(/ /g, ''), s => s.toLowerCase(), s => s.slice(0, 5)]) {
