@@ -5957,6 +5957,14 @@ const Engrave = window.Engrave = (() => {
    *    may be for the shop, a label used twice) returns false here and the line goes on exactly as before (the paid reader, a person). ── */
   const READER = () => (typeof CharmNestEngraveRead !== "undefined" ? CharmNestEngraveRead : null);
   const lineRowOf = row => (row && row.parentRow) || row;
+  /* SETBAR (Paul, 13 Oct 2026: "The thinner bar always sits on the shorter chain unless the user special requests a different layout"): the reader's one hook. A set's piece is the engraving job of slot D1 (the large,
+     thicker bar) or D2 (the small, thinner bar); its chain is CharmNestOrders.setPiecesOf's `length` (null while a different layout is asked for and no person has looked: nothing is then assigned, the person sees every wording). */
+  (() => {
+    const R = READER(); if (!R || R.slotInfo) return;
+    R.slotInfo = (row, slot) => {
+      try { const pcs = O.setPiecesOf(lineRowOf(row)), p = pcs && pcs.find(x => x.slotKey === slot), len = p ? parseFloat(p.length) : 0; return len > 0 ? { length: len } : null; } catch (_) { return null; }
+    };
+  })();
   /** The line's personalisation read by the rules (null: no reader on the page, or nothing written). */
   function personalRead(row) {
     const R = READER(), line = lineRowOf(row), sp = line && line.spec; if (!R || !sp || !(sp.personalization || []).length) return null;
