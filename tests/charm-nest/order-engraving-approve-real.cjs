@@ -321,7 +321,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       // View in Engraving: the Engraving panel opens on this piece's Decided row, which carries the same seal, once
       await h.openWin(K.O2); await h.waitState(OV, 'approved');
       await page.click(thumbOf(OV, 'back'));
-      await page.waitForFunction(() => CN.S.mode === 'engrave' && document.querySelector('#engraveView .doneRow.open[data-key]'), null, { timeout: 20000 }).catch(() => {});
+      await page.waitForFunction(() => CN.S.mode === 'engrave' && !document.getElementById('orderWin').open && document.querySelector('#engraveView .doneRow.open[data-key]'), null, { timeout: 20000 }).catch(() => {});
       await page.waitForTimeout(1200);
       const dec = await page.evaluate(k => { const row = document.querySelector('#engraveView .doneRow.open[data-key]'), v = Engrave.view(); const seals = row ? [...row.querySelectorAll('.seal svg[data-seal-model]')].map(s => { try { const m = JSON.parse(s.getAttribute('data-seal-model')); return `${m.action}|${m.by}|${m.at}`; } catch (_) { return '?'; } }) : []; return { key: row && row.dataset.key, seals, tab: v.tab, text: row ? row.innerText.replace(/\s+/g, ' ') : '', dialogs: document.querySelectorAll('dialog[open]').length, orderWin: document.getElementById('orderWin').open }; }, K.O2);
       check(dec.key === K.O2 && /CARLA/.test(dec.text) && dec.seals.includes(c.seals[0]) && dec.seals.filter(x => x === c.seals[0]).length === 1 && dec.dialogs === 0 && !dec.orderWin, 'a press on the Back opens the Engraving panel on this piece\'s Decided row, with the same seal, once: ' + JSON.stringify(dec));
@@ -407,7 +407,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       // a press on BELLA's Back opens BELLA's own piece (EngraveLink.open with the order and that piece), with no pop-up on the window
       const o0 = (await calls()).open.length;
       await page.click(thumbOf(OVB, 'back'));
-      await page.waitForFunction(() => CN.S.mode === 'engrave' && document.querySelector('#engraveView .rvItem[data-key]'), null, { timeout: 20000 }).catch(() => {});
+      await page.waitForFunction(() => CN.S.mode === 'engrave' && !document.getElementById('orderWin').open && document.querySelector('#engraveView .rvItem[data-key]'), null, { timeout: 20000 }).catch(() => {});
       await page.waitForTimeout(500);
       let lnd = await openLanding(), op = (await calls()).open.slice(o0);
       check(op.length === 1 && op[0].rid === R.O1 && op[0].piece === K.B && lnd.mode === 'engrave' && lnd.key === K.B && lnd.q === R.O1 && lnd.dialogs === 0 && !lnd.orderWin && A.dialogs.length === 0, 'a press on BELLA\'s Back opens the Engraving panel on BELLA\'s piece of order ' + R.O1 + ': ' + JSON.stringify([op, lnd]));
@@ -459,7 +459,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       // Fix in Engraving from the Sheet window: the window closes, the Engraving panel is on this piece
       const o0 = (await calls()).open.length;
       await page.click(WIN + ' [data-e=engrave]');
-      await page.waitForFunction(() => CN.S.mode === 'engrave' && document.querySelector('#engraveView .rvItem[data-key]'), null, { timeout: 20000 }).catch(() => {});
+      await page.waitForFunction(() => CN.S.mode === 'engrave' && !document.getElementById('orderWin').open && document.querySelector('#engraveView .rvItem[data-key]'), null, { timeout: 20000 }).catch(() => {});
       await page.waitForTimeout(500);
       const lnd = await openLanding(), op = (await calls()).open.slice(o0);
       check(op.length === 1 && op[0].rid === R.O5 && op[0].poolId === poolOf(K.O5) && lnd.key === K.O5 && lnd.q === R.O5 && lnd.dialogs === 0 && A.dialogs.length === 0, 'Fix in Engraving from the Sheet window opens the Engraving panel on this piece, the window gone, no pop-up on a pop-up: ' + JSON.stringify([op, lnd]));
@@ -501,7 +501,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       // the View in Engraving of the same card, from the window
       const o1 = (await calls()).open.length;
       await page.click(WIN + ' [data-e=engrave]');
-      await page.waitForFunction(() => CN.S.mode === 'engrave' && document.querySelector('#engraveView .doneRow.open[data-key]'), null, { timeout: 20000 }).catch(() => {});
+      await page.waitForFunction(() => CN.S.mode === 'engrave' && !document.getElementById('orderWin').open && document.querySelector('#engraveView .doneRow.open[data-key]'), null, { timeout: 20000 }).catch(() => {});
       const lnd2 = await openLanding();
       check(lnd2.key === K.O5 && lnd2.tab === 'done' && lnd2.dialogs === 0 && (await calls()).open.length === o1 + 1, 'View in Engraving from the Sheet window opens the Decided row of this piece: ' + JSON.stringify(lnd2));
       await page.evaluate(() => CN.setMode('orders'));
@@ -520,7 +520,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       await toSheet();
       const o0 = (await calls()).open.length;
       await page.click(TAB + ' [data-e=engrave]');
-      await page.waitForFunction(() => CN.S.mode === 'engrave' && document.querySelector('#engraveView .rvItem[data-key]'), null, { timeout: 20000 }).catch(() => {});
+      await page.waitForFunction(() => CN.S.mode === 'engrave' && !document.getElementById('orderWin').open && document.querySelector('#engraveView .rvItem[data-key]'), null, { timeout: 20000 }).catch(() => {});
       await page.waitForTimeout(500);
       const lnd = await openLanding(), op = (await calls()).open.slice(o0);
       check(op.length === 1 && op[0].rid === R.O9 && op[0].poolId === poolOf(K.O9) && lnd.key === K.O9 && lnd.q === R.O9 && lnd.dialogs === 0 && !lnd.orderWin && A.dialogs.length === 0, 'Fix in Engraving from the Sheet tab opens the Engraving panel on this piece, the order window gone: ' + JSON.stringify([op, lnd]));
@@ -554,7 +554,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       await toSheetDone();
       async function toSheetDone() { await page.click('.owTabsV [data-ow-view="sheet"]'); await page.waitForFunction(() => OrderWin.view() === 'sheet' && document.querySelector('#owSheetPanel .owPieces'), null, { timeout: 25000 }); await h.waitState(TAB, 'approved', 20000); }
       await page.click(TAB + ' [data-e=engrave]');
-      await page.waitForFunction(() => CN.S.mode === 'engrave' && document.querySelector('#engraveView .doneRow.open[data-key]'), null, { timeout: 20000 }).catch(() => {});
+      await page.waitForFunction(() => CN.S.mode === 'engrave' && !document.getElementById('orderWin').open && document.querySelector('#engraveView .doneRow.open[data-key]'), null, { timeout: 20000 }).catch(() => {});
       const lnd2 = await openLanding();
       check(lnd2.key === K.O9 && lnd2.tab === 'done' && lnd2.dialogs === 0, 'View in Engraving from the Sheet tab opens the Decided row of this piece: ' + JSON.stringify(lnd2));
       await page.evaluate(() => CN.setMode('orders')); net.delayMs = 0;

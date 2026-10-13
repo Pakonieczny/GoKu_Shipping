@@ -87,7 +87,7 @@ async function main() {
     });
     const reset = async () => { await page.evaluate(() => { Engrave.restoreView({ tab: 'place', focus: null, list: true, chosen: true, q: '', openDone: null }); CN.setMode('orders'); Orders.render(); }); await page.waitForTimeout(200); };
     const lands = async (o, i, tab, label) => {
-      await page.waitForFunction(() => CN.S.mode === 'engrave', null, { timeout: 15000 });
+      await page.waitForFunction(() => CN.S.mode === 'engrave' && !document.getElementById('orderWin').open, null, { timeout: 15000 });
       await page.waitForFunction(k => { const r = document.getElementById('engraveView'); return r && !r.classList.contains('hidden') && (r.querySelector('#egQueue .rvItem[data-key="' + k + '"]') || r.querySelector('.doneRow.open[data-key="' + k + '"]')); }, keyOf(o, i), { timeout: 15000 }).catch(() => {});
       const w = await where(), k = keyOf(o, i);
       check(w.mode === 'engrave' && w.shown && !w.orderWin && !w.sheetWin, `${label}: the Engraving tab is open and no window is over it`);
