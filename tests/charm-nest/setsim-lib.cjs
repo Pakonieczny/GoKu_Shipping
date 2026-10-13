@@ -290,7 +290,8 @@ const mean = a => a.length ? a.reduce((s, x) => s + x, 0) / a.length : null;
 const r1 = (x, k = 1) => x == null ? null : +(+x).toFixed(k);
 
 /** The nesting side of a finished (or running) simulation: where every order's pieces are. */
-function placementOf(sim, stream) {
+function placementOf(sim, stream, metals) {   // (`metals`: the metals the run nests; pieces of other metals are not on any sheet of the run and are not counted)
+  const mine = o => piecesOf(o).filter(c => !metals || metals.includes(c.metal));
   const where = new Map();   // order id -> Map(metal -> Set(page)), and pieces seen
   for (const p of sim.pages) for (const q of p.placements) {
     const c = p.charms.find(x => x.id === q.id); if (!c) continue;
@@ -298,13 +299,13 @@ function placementOf(sim, stream) {
     let s = m.get(p.metal); if (!s) m.set(p.metal, s = new Set()); s.add(p);
   }
   const placed = new Set(sim.pages.flatMap(p => p.placements.map(q => q.id)));
-  const out = { orders: stream.length, splitSameMetal: [], spreadMetals: 0, ordersMultiPiece: 0, unplaced: [], pairsSplit: 0 };
+  const out = { orders: stream.filter(o => piecesOf(o).some(c => !metals || metals.includes(c.metal))).length, splitSameMetal: [], spreadMetals: 0, ordersMultiPiece: 0, unplaced: [], pairsSplit: 0 };
   for (const o of stream) {
-    const n = piecesOf(o).length; if (n > 1) out.ordersMultiPiece++;
+    const n = mine(o).length; if (!n) continue; if (n > 1) out.ordersMultiPiece++;
     const m = where.get(o.id) || new Map();
     if (m.size > 1) out.spreadMetals++;
     for (const [metal, pages] of m) if (pages.size > 1) out.splitSameMetal.push({ order: o.id, metal, pieces: n, pages: [...pages].map(p => p.page), kinds: o.lines.filter(l => l.metal === metal).map(l => l.kind) });
-    const missing = piecesOf(o).filter(c => !placed.has(c.id)); if (missing.length) out.unplaced.push({ order: o.id, missing: missing.length, of: n });
+    const missing = mine(o).filter(c => !placed.has(c.id)); if (missing.length) out.unplaced.push({ order: o.id, missing: missing.length, of: n });
     for (const l of o.lines) if ((l.kind === 'pair' || l.kind === 'mismatched' || l.kind === 'huggie') && l.pieces.every(c => placed.has(c.id))) { const pg = new Set(sim.pages.filter(p => p.placements.some(q => l.pieces.some(c => c.id === q.id)))); if (pg.size > 1) out.pairsSplit++; }
   }
   return out;

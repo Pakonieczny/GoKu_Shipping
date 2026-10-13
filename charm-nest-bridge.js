@@ -3048,7 +3048,7 @@ const Master = window.Master = (() => {
     // a charm's .ai file is handed out only with the download password: the server mints the link, the browser saves the bytes
     each("dl", b => b.onclick = () => downloadCharm(b.dataset.dl, b.dataset.size || "", b));
     // the Etsy chip (charm-nest-etsy-link.js, SWANSKU 12 Oct 2026): this charm's SKU on one existing Etsy listing, behind the repo password; a card with several SKUs offers each
-    each("etsylink", (b, skus) => { if (window.CharmNestEtsyLink) CharmNestEtsyLink.mount(b, { skus, repoApi, toast, who: employeeName }); });
+    each("etsylink", (b, skus) => { if (window.CharmNestEtsyLink) CharmNestEtsyLink.mount(b, { skus, repoApi, toast, who: employeeName, skuTable: id => api("charmNestLibrary", { op: "listingSkus", listingIds: [id] }, { quiet: true }) }); });   // (skuTable: the SKUs now on that listing's products, from the stored table: no password; ETSYFAM 13 Oct)
   }
   return { entryFor, looseFor, sharedFor, likeFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, unlockUpload, addFiles, downloadCharm, looksLikeMaster, render, patch, patchMany, saveCustom, sameDesign, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();

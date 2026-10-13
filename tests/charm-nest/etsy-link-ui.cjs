@@ -11,6 +11,9 @@
 //   · a card with several SKUs offers each of them and sends the one chosen; Escape and Close fold the panel; reduced motion; no page error.
 //   · CATSKU (12 Oct 2026): opening the panel offers, as taps, the listings the page ALREADY reads as this charm (order lines, saved links and the look-alike twin; read from
 //     what the page holds: no request of any kind is made by looking), never prefilled; a tap only puts the number in the box; the press is unchanged (password, one call).
+//   · ETSYFAM (13 Oct 2026; Paul: "Replace each set of etsy SKU's with the provided charm repo SKU"): once a listing is chosen the panel reads the SKUs now on its products (the page's FREE
+//     listingSkus read: no password, no write) and, when there are several (bike: 20 + 20, monkey: 40 + 20, wolf: 40 blank + placeholders), says before the press exactly what is replaced; the answer
+//     repeats it; a listing with one SKU keeps its old words; a read that fails leaves the old words and the press unchanged. The press still sends exactly {op, listingId, sku, by, repoToken}.
 //   PW_DIR=<dir with playwright-core> CHROMIUM=<chrome> node tests/charm-nest/etsy-link-ui.cjs      (skipped without a browser)
 const fs = require('fs'), path = require('path'), assert = require('assert'), crypto = require('crypto');
 const root = path.join(__dirname, '../..');
@@ -23,6 +26,8 @@ let n = 0; const ok = (c, m) => { assert(c, m); n++; console.log('  ok  ' + m); 
 const RIGHT = 'r' + crypto.randomBytes(9).toString('hex');   // a throwaway password that exists only in this test's mock
 const SHOTS = process.env.SHOTS_DIR || '';
 const LINK = 'https://www.etsy.com/listing/1700763608/swan-charm-necklace-gold-swan-bird?transaction_id=5247484637';
+const FAM = require('./etsy-link-families-data.json');   // the REAL products (SKUs) of bike 1734130419, monkey 1745415868, wolf 4494182906 (ETSYFAM)
+const tableOf = d => ({ at: Date.now(), n: d.products.length, products: d.products.map(p => ({ id: String(p.product_id), sku: p.sku, d: 0, pv: [] })), names: {}, props: {} });   // (the shape of _charmNestListingSkus.js compact(): ids, SKUs, option pairs)
 
 (async () => {
   const srv = await start({ receipts: [], repoSeed: false });
@@ -30,11 +35,12 @@ const LINK = 'https://www.etsy.com/listing/1700763608/swan-charm-necklace-gold-s
   const at = Date.UTC(2026, 9, 8, 12);
   const entry = (sku, aiSku, extra) => st.put('Charm_Master_Index', sku, Object.assign({ sku, masterHash: 'ab'.repeat(32), widthPt: 33.3, heightPt: 25.7, areaPt2: 443, members: 3, holes: 1, upAngle: 73, aiPath: `charmnest/master/${aiSku || sku}.ai`, aiUrl: srv.blobUrl(`charmnest/master/${aiSku || sku}.ai`), thumbPath: `charmnest/master/${aiSku || sku}.png`, indexedAt: Timestamp.fromMillis(at) }, extra));
   entry('BEADY SWAN'); entry('CHAM_A', 'CHAM'); entry('CHAM_B', 'CHAM');   // (two SKUs of one charm share one file: one card)
+  entry('SPORTS 27'); entry('BEADY MONKEY HEAR NO EVIL3'); entry('WOLF_67948');   // ETSYFAM: the cards of the listings that carry several SKUs
   // CATSKU: the shop's real pair of look-alike names (two drawings: the card with the ring is 10.5 x 12.0 mm, the other 8.7 x 9.0 mm; both read "CAT1SITTINGCAT" once spaces and punctuation are set aside)
   entry('CAT 1 - SITTING CAT', 'CAT_1_-_SITTING_CAT', { widthPt: 29.746, heightPt: 33.958, holes: 0, upAngle: 90 }); entry('CAT 1- SITTING CAT', 'CAT_1-_SITTING_CAT', { widthPt: 24.692, heightPt: 25.608, holes: 0, upAngle: 90 });
-  st.put('Charm_Master_Files', 'f1', { masterHash: 'ab'.repeat(32), name: 'LIVING.ai', indexedAt: Timestamp.fromMillis(at), charms: 5, labelled: 5, skus: ['BEADY SWAN', 'CHAM_A', 'CHAM_B', 'CAT 1 - SITTING CAT', 'CAT 1- SITTING CAT'], indexedBy: 'browser' });
+  st.put('Charm_Master_Files', 'f1', { masterHash: 'ab'.repeat(32), name: 'LIVING.ai', indexedAt: Timestamp.fromMillis(at), charms: 5, labelled: 5, skus: ['BEADY SWAN', 'CHAM_A', 'CHAM_B', 'CAT 1 - SITTING CAT', 'CAT 1- SITTING CAT', 'SPORTS 27', 'BEADY MONKEY HEAR NO EVIL3', 'WOLF_67948'], indexedBy: 'browser' });
 
-  const log = [], held = new Map(); let script = null, delayMs = 0;
+  const log = [], held = new Map(); let script = null, delayMs = 0, skuDelay = 0, skuMode = 'tables'; const tables = {};
   const browser = await chromium.launch({ executablePath: exe, args: ['--no-sandbox'] });
   const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 }, timezoneId: 'UTC', locale: 'en-US' });
   await ctx.route(/fonts\.googleapis|fonts\.gstatic/, r => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
@@ -46,6 +52,13 @@ const LINK = 'https://www.etsy.com/listing/1700763608/swan-charm-necklace-gold-s
     if (b.op === 'repoUnlock') {
       if (b.password === RIGHT) { const token = 'tk-' + crypto.randomBytes(8).toString('hex'), act = b.action || 'other'; held.set(token, { action: act, exp: Date.now() + 600000 }); return json(200, { ok: true, token, expiresAt: Date.now() + 600000, once: false, action: act }); }
       return json(200, { ok: false, error: 'wrong' });
+    }
+    if (b.op === 'listingSkus') {   // the page's free SKU table read (ETSYFAM): no token; a stored table per listing, else one SKU on every product
+      if (skuDelay) await new Promise(r => setTimeout(r, skuDelay));
+      if (skuMode === 'fail') return json(500, { error: 'down' });
+      if (skuMode === 'pending') return json(200, { tables: {}, pending: b.listingIds, why: 'day', etsyCalls: 0 });
+      const out = {}; for (const id of b.listingIds || []) out[id] = tables[id] || { at: Date.now(), n: 9, uni: 'Swan_3608' };
+      return json(200, { tables: out, pending: [], why: null, etsyCalls: 0, cap: { used: 1, max: 60 } });
     }
     if (b.op === 'listingEtsySkuWrite') {
       const t = held.get(b.repoToken);
@@ -67,7 +80,7 @@ const LINK = 'https://www.etsy.com/listing/1700763608/swan-charm-necklace-gold-s
   await page.waitForFunction(() => window.CN && window.CN.S && window.Master && window.CharmNestRepoLock && window.CharmNestEtsyLink && CN.S.cloud.ok !== null, null, { timeout: 60000 });
   await page.evaluate(() => { const s = CN.S.settings; s.review = 'off'; s.naming = 'off'; s.notify = 'off'; s.sound = 'off'; s.runMode = 'manual'; });
   await page.evaluate(() => CN.setMode('master'));
-  await page.waitForFunction(() => document.querySelectorAll('#mGrid .skuTile').length >= 4, null, { timeout: 30000 });
+  await page.waitForFunction(() => document.querySelectorAll('#mGrid .skuTile').length >= 7, null, { timeout: 30000 });
   const tile = sku => page.locator(`#mGrid .skuTile[data-sku="${sku}"]`);
   const opCalls = () => log.filter(x => x.op === 'listingEtsySkuWrite');
   const dialogs = () => page.evaluate(() => document.querySelectorAll('dialog[open]').length);
@@ -75,7 +88,7 @@ const LINK = 'https://www.etsy.com/listing/1700763608/swan-charm-necklace-gold-s
 
   // ── 1 · the chip on every card, locked-looking; nothing is sent by looking ──
   const chips = await page.evaluate(() => [...document.querySelectorAll('#mGrid .skuTile')].map(t => { const c = t.querySelector('[data-etsylink]'); return { sku: t.dataset.sku, has: !!c, text: c && c.textContent, repo: c && c.dataset.repo, locked: c && c.classList.contains('repoLocked'), inRow: !!(c && c.closest('.row')), title: c && c.title }; }));
-  ok(chips.length === 4 && chips.every(c => c.has && c.text === 'Etsy' && c.repo === 'modify' && c.inRow), 'every master card has an "Etsy" chip in its row, marked as a repo "modify" control: ' + JSON.stringify(chips.map(c => c.sku)));
+  ok(chips.length === 7 && chips.every(c => c.has && c.text === 'Etsy' && c.repo === 'modify' && c.inRow), 'every master card has an "Etsy" chip in its row, marked as a repo "modify" control: ' + JSON.stringify(chips.map(c => c.sku)));
   ok(chips.every(c => c.locked), 'drawn locked until the repo is unlocked');
   ok(await page.evaluate(() => document.querySelectorAll('.elPanel').length) === 0, 'no panel is open by default');
   ok(log.every(x => x.op !== 'listingEtsySkuWrite' && x.op !== 'repoUnlock'), 'looking at the library sent nothing to the write and asked for no password');
@@ -90,6 +103,7 @@ const LINK = 'https://www.etsy.com/listing/1700763608/swan-charm-necklace-gold-s
   ok((await say.textContent()) === 'That is not an Etsy listing link or number.' && await go.isDisabled(), 'something that is no listing is said plainly, the button stays off');
   await input.fill('https://www.etsy.com/shop/SomeShop'); ok(await go.isDisabled(), 'a shop link is no listing');
   await input.fill(LINK);
+  await page.waitForFunction(() => /^Every product/.test(document.querySelector('#mGrid .elPanel .elSay').textContent), null, { timeout: 5000 });   // (the free SKU read answers: one SKU, so the old words)
   const line = await say.textContent();
   ok(line === 'Every product of Etsy listing 1700763608 will carry the SKU BEADY SWAN. Prices, stock and options stay as they are; the listing as it is now is kept first.' && !(await go.isDisabled()), 'Paul\'s own link (with its transaction id) is understood; the line says exactly what happens: ' + line);
   await input.fill('1700763608'); ok((await say.textContent()) === line, 'the bare number says the same line');
@@ -138,10 +152,10 @@ const LINK = 'https://www.etsy.com/listing/1700763608/swan-charm-necklace-gold-s
   ok((await say2.textContent()) === 'Etsy refused the change. Paul needs to re-authorise Etsy with listings_w.' && await page.evaluate(() => document.querySelector('#mGrid .elPanel .elSay').classList.contains('bad')), 'a scope refusal says what Paul must do, in the server\'s own words');
   ok((await go2.textContent()) === 'Try again' && !(await go2.isDisabled()), 'a refusal that can be tried again offers "Try again"');
   if (SHOTS) { await page.waitForTimeout(300); await tile('BEADY SWAN').screenshot({ path: path.join(SHOTS, 'etsylink-3-refused.png') }); }
-  script = { ok: false, state: 'failed', reason: 'mixed-skus', text: "the listing's products carry different SKUs (SWAN_GF, SWAN_SS): nothing was changed, a person decides which products take this SKU", retry: false, details: ['SWAN_GF', 'SWAN_SS'], calls: 1 };
+  script = { ok: false, state: 'failed', reason: 'rejected', text: 'Etsy did not accept the change', retry: false, details: ['price_on_property does not cover how price varies'], calls: 2, beforePath: 'charmnest/custom-saves/1700763608/link-BEADY_SWAN-before.json' };
   await go2.click();
-  await page.waitForFunction(() => /different SKUs/.test(document.querySelector('#mGrid .elPanel .elSay').textContent), null, { timeout: 5000 });
-  ok(await go2.isDisabled() && /SWAN_GF, SWAN_SS/.test(await say2.textContent()), 'a refusal that cannot help (several SKUs on the listing) is said with the SKUs and the button is off');
+  await page.waitForFunction(() => /did not accept/.test(document.querySelector('#mGrid .elPanel .elSay').textContent), null, { timeout: 5000 });
+  ok(await go2.isDisabled() && (await say2.textContent()) === 'Etsy did not accept the change. The listing as it was is kept.', 'a refusal that cannot help is said in the server\'s words, with the safety copy named, and the button is off: ' + await say2.textContent());
   await tile('BEADY SWAN').locator('.elPanel input').press('Escape');
   ok(await page.evaluate(() => document.querySelectorAll('.elPanel').length) === 0, 'Escape folds the panel');
 
@@ -152,6 +166,7 @@ const LINK = 'https://www.etsy.com/listing/1700763608/swan-charm-necklace-gold-s
   ok(await sel.count() === 1 && (await sel.locator('option').allTextContents()).join('|') === 'CHAM_A|CHAM_B' && await sel.inputValue() === 'CHAM_A', 'a two-SKU card offers both SKUs, the card\'s own (first) chosen');
   await tile('CHAM_A').locator('.elPanel input').fill('1700763609');
   await sel.selectOption('CHAM_B');
+  await page.waitForFunction(() => /^Every product/.test(document.querySelector('#mGrid .elPanel .elSay').textContent), null, { timeout: 5000 });
   ok(/carry the SKU CHAM_B\./.test(await tile('CHAM_A').locator('.elPanel .elSay').textContent()), 'choosing the other SKU changes the line');
   if (SHOTS) { await page.waitForTimeout(300); await tile('CHAM_A').screenshot({ path: path.join(SHOTS, 'etsylink-4-two-skus.png') }); }
   await tile('CHAM_A').locator('.elPanel .btn.gold').click();
@@ -193,14 +208,15 @@ const LINK = 'https://www.etsy.com/listing/1700763608/swan-charm-necklace-gold-s
   ok(p6.shown && p6.ids.join(',') === '1801964156,1700763610,1700763612,1700763613,1700763614', 'the panel of the ringed card offers the listings the page already reads as this charm: ' + p6.ids.join(', '));
   ok(p6.texts[0] === '1801964156 Small Cat Charm Add On Charm…' && p6.tip === 'now read as CAT 1- SITTING CAT', 'a tap is the listing number and a short title; its hint says what the listing reads as today: ' + p6.texts[0] + ' / ' + p6.tip);
   ok(p6.input === '' && p6.say === "Paste the listing's Etsy link or its number." && p6.goOff, 'nothing is prefilled: the box is empty and the button is off until a listing is chosen');
-  ok(p6.before.join(',') === 'elHead,elPicks,elIn,elSay,elActs', 'the taps sit between the heading and the box: ' + p6.before.join(','));
+  ok(p6.before.join(',') === 'elHead,elPicks,elIn,elSay,elActs,elBatch', 'the taps sit between the heading and the box (and the batch line, ETSYBATCH, comes last): ' + p6.before.join(','));
   ok(log.length === before6b, 'looking and opening the panel made no request at all (the taps come from what the page holds)');
   if (SHOTS) { await page.waitForTimeout(300); await tile(NEW_CAT).screenshot({ path: path.join(SHOTS, 'etsylink-5-taps.png') }); }
   const opsBefore = opCalls().length;
   await tile(NEW_CAT).locator('.elPicks button[data-listing="1801964156"]').click();
+  await page.waitForFunction(() => /^Every product/.test(document.querySelector('#mGrid .elPanel .elSay').textContent), null, { timeout: 5000 });
   const p7 = await page.evaluate(() => { const p = document.querySelector('#mGrid .skuTile[data-sku="CAT 1 - SITTING CAT"] .elPanel'); return { input: p.querySelector('input').value, say: p.querySelector('.elSay').textContent, goOff: p.querySelector('.btn.gold').disabled, on: [...p.querySelectorAll('.elPicks .btn.on')].map(b => b.getAttribute('data-listing')), dialogs: document.querySelectorAll('dialog[open]').length }; });
   ok(p7.input === '1801964156' && /^Every product of Etsy listing 1801964156 will carry the SKU CAT 1 - SITTING CAT\./.test(p7.say) && !p7.goOff && p7.on.join() === '1801964156', 'a tap puts the number in the box and the plain line says what the button will do: ' + p7.say.slice(0, 80));
-  ok(opCalls().length === opsBefore && p7.dialogs === 0, 'the tap sent nothing and asked for no password: the press is still the button');
+  ok(opCalls().length === opsBefore && p7.dialogs === 0, 'the tap wrote nothing and asked for no password: the press is still the button');
   script = b => ({ ok: true, state: 'linked', calls: 2, listingId: b.listingId, sku: b.sku, productIds: Array.from({ length: 12 }, (_, i) => String(i + 1)), products: 12, verified: true, beforePath: 'charmnest/custom-saves/1801964156/link-CAT_1_SITTING_CAT-before.json' });
   await tile(NEW_CAT).locator('.elPanel .btn.gold').click();
   await page.waitForFunction(() => /^Done:/.test(document.querySelector('#mGrid .skuTile[data-sku="CAT 1 - SITTING CAT"] .elSay').textContent), null, { timeout: 8000 });
@@ -216,6 +232,63 @@ const LINK = 'https://www.etsy.com/listing/1700763608/swan-charm-necklace-gold-s
   ok(p8.swan && p8.swan.ids.join() === '1700763616,1700763615', 'another charm\'s card offers its own listings (a saved link, an order line), nothing of the cat: ' + (p8.swan && p8.swan.ids.join(',')));
   ok(p8.cham && p8.cham.hidden && p8.cham.ids.length === 0, 'a card with no listing to offer shows no taps and no new words');
   for (const sku of [OLD_CAT, 'BEADY SWAN', 'CHAM_A']) await tile(sku).locator('[data-etsylink]').click();
+
+  // ── 6c · ETSYFAM: a listing whose products carry SEVERAL SKUs: the line BEFORE the press says what is replaced; the answer repeats it; one SKU keeps the old words ──
+  tables['1734130419'] = tableOf(FAM.bike); tables['1745415868'] = tableOf(FAM.monkey); tables['4494182906'] = tableOf(FAM.wolf); tables['1816178147'] = { at: Date.now(), n: 12, uni: 'DOVE 4' };
+  const readsOf = () => log.filter(x => x.op === 'listingSkus');
+  const sayOf = sku => tile(sku).locator('.elPanel .elSay'), goOf = sku => tile(sku).locator('.elPanel .btn.gold'), inOf = sku => tile(sku).locator('.elPanel input');
+  const settled = sku => page.waitForFunction(k => { const e = document.querySelector('#mGrid .skuTile[data-sku="' + k + '"] .elSay'); return e && !e.querySelector('.spin') && /^Every product/.test(e.textContent); }, sku, { timeout: 8000 });
+  const SAME = ' Prices, stock and options stay as they are; the listing as it is now, with those SKUs, is kept first.';
+  skuDelay = 700;
+  const r0 = readsOf().length;
+  await tile('SPORTS 27').locator('[data-etsylink]').click();
+  ok(readsOf().length === r0, 'opening the panel reads nothing');
+  await inOf('SPORTS 27').fill('1734130419');
+  const waiting = await page.evaluate(() => { const p = document.querySelector('#mGrid .skuTile[data-sku="SPORTS 27"] .elPanel'); return { say: p.querySelector('.elSay').textContent, spin: !!p.querySelector('.elSay .spin'), off: p.querySelector('.btn.gold').disabled }; });
+  ok(waiting.spin && waiting.off && waiting.say === 'Reading the SKUs now on listing 1734130419…', 'while the SKUs are read: a small labelled spinner and the button off (it cannot be pressed before the line says what is replaced): ' + waiting.say);
+  await settled('SPORTS 27'); skuDelay = 0;
+  const bikeLine = await sayOf('SPORTS 27').textContent();
+  ok(bikeLine === 'Every product of Etsy listing 1734130419 will carry the SKU SPORTS 27 in place of the SKUs they carry now: 20 x Sports 27-Bike and 20 x Sports 27-Bike-CO.' + SAME && !(await goOf('SPORTS 27').isDisabled()), 'BIKE, before the press: ' + bikeLine);
+  const rd = readsOf().slice(r0);
+  ok(rd.length === 1 && rd[0].keys === 'listingIds,op' && rd[0].token === false, 'one free read of the listing\'s SKU table, no token, nothing else in it: ' + rd[0].keys);
+  await inOf('SPORTS 27').fill('https://www.etsy.com/listing/1734130419/bicycle-necklace?x=1');
+  ok((await sayOf('SPORTS 27').textContent()) === bikeLine && readsOf().length === r0 + 1, 'the same listing typed again says the same line at once, without another read');
+  if (SHOTS) { await page.waitForTimeout(300); await tile('SPORTS 27').screenshot({ path: path.join(SHOTS, 'etsylink-6-bike-before.png') }); }
+  script = b => ({ ok: true, state: 'linked', calls: 2, listingId: b.listingId, sku: b.sku, productIds: Array.from({ length: 40 }, (_, i) => String(i + 1)), products: 40, verified: true, beforePath: 'charmnest/custom-saves/1734130419/link-SPORTS_27-before.json', replaced: [{ sku: 'Sports 27-Bike', n: 20 }, { sku: 'Sports 27-Bike-CO', n: 20 }] });
+  const w0 = opCalls().length;
+  await goOf('SPORTS 27').click();
+  await page.waitForFunction(() => /^Done:/.test(document.querySelector('#mGrid .skuTile[data-sku="SPORTS 27"] .elSay').textContent), null, { timeout: 8000 });
+  const bikeDone = await sayOf('SPORTS 27').textContent(), bc = opCalls().pop();
+  ok(bikeDone === 'Done: SPORTS 27 is now on all 40 products of listing 1734130419. It replaced 20 x Sports 27-Bike and 20 x Sports 27-Bike-CO; the listing as it was is kept.', 'BIKE, after the press: ' + bikeDone);
+  ok(opCalls().length === w0 + 1 && bc.listingId === '1734130419' && bc.sku === 'SPORTS 27' && bc.by === 'Tester' && bc.token && bc.keys === 'by,listingId,op,repoToken,sku', 'the press still sends exactly the listing and the card\'s plain SKU, the name and the token: ' + bc.keys);
+  if (SHOTS) { await page.waitForTimeout(300); await tile('SPORTS 27').screenshot({ path: path.join(SHOTS, 'etsylink-7-bike-after.png') }); }
+  await tile('SPORTS 27').locator('[data-etsylink]').click();
+
+  await tile('BEADY MONKEY HEAR NO EVIL3').locator('[data-etsylink]').click();
+  await inOf('BEADY MONKEY HEAR NO EVIL3').fill('1745415868'); await settled('BEADY MONKEY HEAR NO EVIL3');
+  const monkeyLine = await sayOf('BEADY MONKEY HEAR NO EVIL3').textContent();
+  ok(monkeyLine === 'Every product of Etsy listing 1745415868 will carry the SKU BEADY MONKEY HEAR NO EVIL3 in place of the SKUs they carry now: 40 x Hear No Evil Monkey and 20 x Hear No Evil Monkey-CO.' + SAME, 'MONKEY, before the press: ' + monkeyLine);
+  script = b => ({ ok: true, state: 'linked', calls: 2, listingId: b.listingId, sku: b.sku, productIds: Array.from({ length: 60 }, (_, i) => String(i + 1)), products: 60, verified: true, beforePath: 'charmnest/custom-saves/1745415868/link-BEADY_MONKEY_HEAR_NO_EVIL3-before.json', replaced: [{ sku: 'Hear No Evil Monkey', n: 40 }, { sku: 'Hear No Evil Monkey-CO', n: 20 }] });
+  await goOf('BEADY MONKEY HEAR NO EVIL3').click();
+  await page.waitForFunction(() => /^Done:/.test(document.querySelector('#mGrid .skuTile[data-sku="BEADY MONKEY HEAR NO EVIL3"] .elSay').textContent), null, { timeout: 8000 });
+  ok((await sayOf('BEADY MONKEY HEAR NO EVIL3').textContent()) === 'Done: BEADY MONKEY HEAR NO EVIL3 is now on all 60 products of listing 1745415868. It replaced 40 x Hear No Evil Monkey and 20 x Hear No Evil Monkey-CO; the listing as it was is kept.', 'MONKEY, after the press: ' + await sayOf('BEADY MONKEY HEAR NO EVIL3').textContent());
+  await tile('BEADY MONKEY HEAR NO EVIL3').locator('[data-etsylink]').click();
+
+  await tile('WOLF_67948').locator('[data-etsylink]').click();
+  await inOf('WOLF_67948').fill('4494182906'); await settled('WOLF_67948');
+  ok((await sayOf('WOLF_67948').textContent()) === 'Every product of Etsy listing 4494182906 will carry the SKU WOLF_67948 in place of the SKUs they carry now: 40 x (no SKU), 4 x CO-10kSolidCh, 4 x CO-14kSolidCh, 4 x CO-GoldCharmO, 4 x CO-RoseCharmO and 4 x CO-SilverChar.' + SAME, 'WOLF (blank and placeholder SKUs), before the press: ' + await sayOf('WOLF_67948').textContent());
+  await tile('WOLF_67948').locator('[data-etsylink]').click();
+
+  // one SKU on every product (a stored table that says so), a read that fails, a day's budget used: the old words, the button on, the press unchanged
+  await tile('BEADY SWAN').locator('[data-etsylink]').click();
+  await inOf('BEADY SWAN').fill('1816178147'); await settled('BEADY SWAN');
+  ok((await sayOf('BEADY SWAN').textContent()) === 'Every product of Etsy listing 1816178147 will carry the SKU BEADY SWAN. Prices, stock and options stay as they are; the listing as it is now is kept first.' && !(await goOf('BEADY SWAN').isDisabled()), 'ONE SKU on the listing: exactly the words it always had');
+  skuMode = 'fail'; await inOf('BEADY SWAN').fill('1700763699'); await settled('BEADY SWAN');
+  ok((await sayOf('BEADY SWAN').textContent()).startsWith('Every product of Etsy listing 1700763699 will carry the SKU BEADY SWAN. Prices') && !/in place of/.test(await sayOf('BEADY SWAN').textContent()) && !(await goOf('BEADY SWAN').isDisabled()), 'a SKU read that fails leaves the old words and the button on (the press reads the listing itself and says what it replaced)');
+  skuMode = 'pending'; await inOf('BEADY SWAN').fill('1700763698'); await settled('BEADY SWAN');
+  ok(!/in place of/.test(await sayOf('BEADY SWAN').textContent()) && !(await goOf('BEADY SWAN').isDisabled()), 'no table yet (the day\'s reads used): the old words, the button on');
+  skuMode = 'tables';
+  await tile('BEADY SWAN').locator('[data-etsylink]').click();
 
   // ── 7 · reduced motion ──
   await page.emulateMedia({ reducedMotion: 'reduce' });
