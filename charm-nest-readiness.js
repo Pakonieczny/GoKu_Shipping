@@ -8,6 +8,14 @@
    * The test is charm-nest-rose.js holdsLine, the one the Library flow asks too (GF1): readiness and a move can never read a record differently. */
   const lineMissing=s=>{let R=(typeof self!=='undefined'?self:globalThis).CharmNestRose;if(!R&&typeof require==='function'){try{R=require('./charm-nest-rose');}catch(_){R=null;}}return !!(R&&(typeof R.holdsLine==='function'?R.holdsLine(s):R.cuts(s.metal)&&s.roseStockId&&!s.rosePlanHash));};
   const held=s=>!!(s && s.laserHold && +s.laserHold.at>0);
+  /* Review stop (Paul, 12 Oct 2026: "If an order goes for review and is already on a sheet then keep that order on that sheet and just hold the sheet until the user resolves the issue
+   * within the Review tab"). An order a person sent to Review (charm-nest-review-mark.js CharmNestReviewMark, the review record of the order) and that is not resolved yet is a HELD
+   * piece in the reading below (the same 'held' block a person's hold makes: it stops the sheet wherever the piece sits, and a set with it), worded "In Review". Its pieces are never lifted off
+   * the sheet by this. The page's charm-nest-review-hold.js answers reason(rid): '' or one plain line starting "In Review"; looked up when asked, so the script order does not matter, and
+   * a reader without that module (the server, a test) reads exactly what it always read. A sheet already cut (laserDoneAt) or cut once before (completedBefore), and a piece a person
+   * already released by hand, cannot be held: nothing here touches them. */
+  const gl=()=>typeof self!=='undefined'?self:globalThis;
+  const reviewWhy=id=>{try{const H=gl().CharmNestReviewHold;return H && typeof H.reason==='function'?String(H.reason(String(id)) || ''):'';}catch(_){return '';}};
   /* Paul, 10 Oct: a Set of Sheets may exist only with at least 1 Completed GF sheet and 1 Completed SS sheet (charm-nest-set-rules.js, the one definition).
    * An uncommitted set without them is not ready, whatever its sheets have done: it waits, and says so. A set already committed, completed or replaced is never
    * blocked afterwards (SetRules.gate says applies:false), nor is one whose records carry no completion mark. Looked up when asked, so script order does not matter. */
@@ -180,7 +188,7 @@
   }
   // a sheet's readiness for another sheet's order: the physical stages only (never its own order check), a cut sheet, or one cut before
   const physicalReady=(s,r)=>+s.laserDoneAt>0 || (r.included && (completedBefore(s) || r.ready));
-  function readOrders(rows,sheets){
+  function readOrders(rows,sheets,opts){
     const copies=new Map(),phys=new Map(),groups=new Map(),orders=new Map(),removed=new Set();
     // (a copy a cleanup took off a sheet on purpose, named in that sheet's record: it is no piece of its order any more)
     for(const s of sheets || [])for(const id of s.cleanup?.removedPoolIds || [])removed.add(String(id));
@@ -197,6 +205,7 @@
         listingId=listingId || String(l.line?.listingId || l.snap?.listingId || '');
         if(l.state==='gone')continue;                                                     // cancelled: cut and set aside, never waited for
         const hold=l.hold || l.changePending?String(l.hold || 'Order changes need review'):'',key=lineKeyOf(l,id) || id,ids=copyIds(l,key);
+        const rv=opts && typeof opts.review==='function'?String(opts.review(id) || ''):reviewWhy(id);   // (an order in unresolved Review: a held piece, below; the server passes the ones it read, the page's module answers otherwise)
         // completed by hand: a line on no saved sheet (a copy that sits on one is cut there and is no hand piece: the server never looks such a line up either)
         const hand=ids.some(x=>(copies.get(x) || []).length)?null:handOf(l);
         if(!hand && (l.spec?.noDesign || l.noDesign || l.state==='noDesign'))continue;    // nothing to cut
@@ -210,6 +219,7 @@
           if(hand && !hold)continue;
           let block=null;
           if(hold)block={key:'held',why:hold};
+          else if(rv && !hand && !(on.length && on.every(x=>+x.laserDoneAt>0)))block={key:'held',review:true,why:rv};   // (a piece on a sheet already cut cannot be held)
           else if(!on.length)block=problem?{key:problem.key,why:problem.why}:made && listed.size && !listed.has(pid)?{key:'pooled',missing:true,why:`${whoOf(l,pid,`${made}`)} is missing: only ${listed.size} of this line's ${made} pieces were made, so it is on no sheet`}:{key:'pooled',why:'A piece is not on a saved sheet yet'};
           // one piece listed by two saved sheets would be cut twice: the order waits until a person takes it off one of them (the sheets are the ones already read: no read of its own)
           else if(on.length>1)block={key:'doubled',why:`${whoOf(l,pid,'this order')} is listed on both ${on.map(sheetLabel).join(' and ')}, so it would be cut twice`};
@@ -231,10 +241,10 @@
   /** orderReports(rows, allSheets): what each order waits for, whichever sheet asks. { [orderId]: {ready:true} | {ready:false, key, why, line, sheetId?, sheetLabel?, stage?,
    *  blocks:[{key,index,label,poolId,lineKey,sheetId|null,sheetLabel|null,why,stage?}], onSheets, pieceCount, customer, listingId} }.
    *  `blocks` are the pieces that hold the order back (see above), each with the sheet it sits on; forSheet() reads them from one sheet. */
-  function orderReports(rows,sheets){
+  function orderReports(rows,sheets,opts){
     const out={};
-    for(const [id,o] of readOrders(rows,sheets)){
-      const blocks=o.pieces.filter(p=>p.block).map(p=>({key:p.block.key,index:p.index,label:p.label,poolId:p.poolId,lineKey:p.lineKey,sheetId:p.sheetId,sheetLabel:p.sheetLabel,...(p.block.side?{side:p.block.side}:{}),...(p.block.missing?{missing:true}:{}),...(p.sheetIds.length>1?{sheetIds:p.sheetIds}:{}),why:p.block.why,...(p.block.stage?{stage:p.block.stage}:{}),...(p.block.key==='otherSheetNotReady'?{setId:p.block.setId,setLabel:p.block.setLabel,...(p.sheetIds.length>1?{setIds:p.block.setIds}:{})}:{})}));
+    for(const [id,o] of readOrders(rows,sheets,opts)){
+      const blocks=o.pieces.filter(p=>p.block).map(p=>({key:p.block.key,index:p.index,label:p.label,poolId:p.poolId,lineKey:p.lineKey,sheetId:p.sheetId,sheetLabel:p.sheetLabel,...(p.block.side?{side:p.block.side}:{}),...(p.block.missing?{missing:true}:{}),...(p.block.review?{review:true}:{}),...(p.sheetIds.length>1?{sheetIds:p.sheetIds}:{}),why:p.block.why,...(p.block.stage?{stage:p.block.stage}:{}),...(p.block.key==='otherSheetNotReady'?{setId:p.block.setId,setLabel:p.block.setLabel,...(p.sheetIds.length>1?{setIds:p.block.setIds}:{})}:{})}));
       out[id]=blocks.length?{ready:false,...head(blocks),blocks,onSheets:[...new Set(o.pieces.flatMap(p=>p.sheetIds))],pieceCount:o.pieces.length,customer:o.customer,listingId:o.listingId}:{ready:true};
     }
     return out;
@@ -253,6 +263,27 @@
     if(!mine.length)return {ready:true};
     if(mine.length===r.blocks.length)return r;
     return {ready:false,...head(mine),blocks:mine,onSheets:r.onSheets,pieceCount:r.pieceCount,customer:r.customer,listingId:r.listingId};
+  }
+  /** reviewReport(prev, rid, sheet, why, list): an order's report for `sheet` with its Review stop added (the page's charm-nest-review-hold.js reads a record the cloud answered, which cannot know
+   *  the Review): `prev` is the cloud's report for the order (or nothing), `list` = [{poolId,lineKey,label,side,index,sheetId,sheetLabel,sheetIds}] its pieces, `why` the line starting "In Review".
+   *  The cloud's own blocks are kept; the stop is one 'held' block per piece (review:true), which forSheet keeps wherever the piece sits. */
+  function reviewReport(prev,rid,s,why,list){
+    const sid=s.id || s.sheetId,old=prev && Array.isArray(prev.blocks)?prev.blocks.filter(b=>!b.review):[];
+    const add=(list || []).map((p,i)=>({key:'held',review:true,index:p.index || i+1,label:p.label || '',poolId:p.poolId,lineKey:p.lineKey || '',sheetId:p.sheetId || null,sheetLabel:p.sheetLabel || null,...(p.side?{side:p.side}:{}),...(Array.isArray(p.sheetIds) && p.sheetIds.length>1?{sheetIds:p.sheetIds}:{}),why}));
+    const blocks=old.concat(add);
+    if(!blocks.length)return prev || {ready:true};
+    const onSheets=[...new Set([...((prev && prev.onSheets) || []),sid,...add.flatMap(b=>b.sheetIds || [b.sheetId]).filter(Boolean)])];
+    return {ready:false,...head(blocks),blocks,onSheets,pieceCount:Math.max(+(prev && prev.pieceCount) || 0,(list || []).length),customer:(prev && prev.customer) || '',listingId:(prev && prev.listingId) || ''};
+  }
+  /** reviewHolds(sheet): the orders an unresolved Review holds on this sheet, [{id, why}], read from its orderReadiness (the 'held' blocks marked review). Nothing for a sheet already cut or cut once before. */
+  function reviewHolds(s){
+    if(!s || s.archived || +s.laserDoneAt>0 || completedBefore(s))return [];
+    const sid=s.id || s.sheetId,mine=setOf(s),out=[];
+    for(const id of orderIds(s)){
+      const r=forSheet(s.orderReadiness?.[id],sid,mine),b=r && r.ready!==true && Array.isArray(r.blocks)?r.blocks.find(x=>x.review):null;
+      if(b)out.push({id,why:b.why});
+    }
+    return out;
   }
   /** pieces(rows, allSheets): every live piece of every order and where it sits: { [orderId]: [{index,key,poolId,lineKey,label,state,sheetId|null,sheetLabel|null,sheetIds,problem|null,held}] }. */
   function pieces(rows,sheets){
@@ -273,7 +304,7 @@
     const ear=`the ${EAR_NAME[h.side]}`,more=bs.length>1?` (${bs.length-1} more piece${bs.length===2?'':'s'} of this order also wait)`:'';
     if(h.key==='otherSheetNotReady')return `${ear} is on ${h.sheetLabel || 'another sheet'} (${h.why})${more}`;
     if(h.key==='pooled')return `${ear} is not on a saved sheet yet${more}`;
-    if(h.key==='held')return `${ear} is held: ${h.why}${more}`;
+    if(h.key==='held')return h.review?`${ear}: ${h.why}${more}`:`${ear} is held: ${h.why}${more}`;
     return `${ear}: ${h.why}${more}`;
   }
   const filed=s=>+s.laserDoneAt>0 && !s.laserSetPending;
@@ -544,9 +575,9 @@
     }
     if(bs.length===1){
       const b=bs[0];
-      return b.key==='doubled'?sentence(b.why).replace(/\.$/,''):b.key==='pooled'?(b.missing?sentence(b.why).replace(/\.$/,''):'Its other piece is not on a sheet yet'):b.key==='noSku'?'Its other piece has no SKU':b.key==='held'?`A piece of this order is held: ${b.why}`:b.key==='otherSheetNotReady'?(noSetFrom(b,me)?`Its other piece is on ${b.sheetLabel || 'another sheet'}, which is in no set${b.stage==='included'?'':`, and ${MISSING[b.stage] || 'it is not ready'}`}`:`${splitFrom(b,me)?`${splitWords(b,me)}: its`:'Its'} other piece is on ${b.sheetLabel || 'another sheet'}, and ${MISSING[b.stage] || 'it is not ready'}`):`Its other piece: ${b.why}`;
+      return b.key==='doubled'?sentence(b.why).replace(/\.$/,''):b.key==='pooled'?(b.missing?sentence(b.why).replace(/\.$/,''):'Its other piece is not on a sheet yet'):b.key==='noSku'?'Its other piece has no SKU':b.key==='held'?(b.review?sentence(b.why).replace(/\.$/,''):`A piece of this order is held: ${b.why}`):b.key==='otherSheetNotReady'?(noSetFrom(b,me)?`Its other piece is on ${b.sheetLabel || 'another sheet'}, which is in no set${b.stage==='included'?'':`, and ${MISSING[b.stage] || 'it is not ready'}`}`:`${splitFrom(b,me)?`${splitWords(b,me)}: its`:'Its'} other piece is on ${b.sheetLabel || 'another sheet'}, and ${MISSING[b.stage] || 'it is not ready'}`):`Its other piece: ${b.why}`;
     }
-    const phrase=b=>PIECE_PHRASE[b.key] || (b.key==='otherSheetNotReady'?`on ${b.sheetLabel || 'another sheet'}${splitFrom(b,me)?' (another set)':noSetFrom(b,me)?' (in no set)':''}`:b.why);
+    const phrase=b=>(b.review?'in Review':PIECE_PHRASE[b.key]) || (b.key==='otherSheetNotReady'?`on ${b.sheetLabel || 'another sheet'}${splitFrom(b,me)?' (another set)':noSetFrom(b,me)?' (in no set)':''}`:b.why);
     return `${bs.length} of its other pieces wait: ${[...new Set(bs.map(phrase))].join(', ')}`;
   }
   // me: the asking sheet's own set ({setId,setLabel}), to tell an order split across sets from a wait inside the sheet's own set
@@ -653,6 +684,8 @@
     if(joinedNow(s) && r.waiting){const e=engCounts(r);return {step:'engraving',stepLabel:stepName('engraving'),why:`${r.faces?'':'back '}engravings ${e.approved} of ${e.required}`,counter:{done:e.approved,of:e.required}};}
     if(laying(s))return {step:'nesting',stepLabel:stepName('nesting'),why:'still being laid out',counter:null};
     if(!joinedNow(s))return {step:'nesting',stepLabel:stepName('nesting'),why:s.draft?'still a draft':'not included in a set yet',counter:null};
+    const rh=reviewHolds(s);   // an order of this sheet is in Review: the sheet waits for the person's answer there, and proceeds by itself when it comes
+    if(rh.length)return {step:'orders',stepLabel:stepName('orders'),why:`held in Review: ${rh.length===1?'order '+rh[0].id:count(rh.length,'order')+' ('+rh.slice(0,2).map(x=>x.id).join(', ')+(rh.length>2?', and more':'')+')'}`,counter:null,review:true};
     return null;
   }
   function setGate(set,sheets){
@@ -753,5 +786,5 @@
     if(!done && rules.applies && !rules.ok){e.nextText=sentence(rules.line);e.rules=rules;}
     return e;
   }
-  return {idsOf,orderIds,decisions,held,isHand,handOf,setRules,sheet,set,completedBefore,laserSheet,laserGroup,setGate,approveBlock,setOf,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,blockText,filed,processStamps,STEP_LOG,STEPS_FROM,stepFacts,stepStamps,stepsRecord,stepTimes,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),stepKey,sheetLabel};
+  return {idsOf,orderIds,decisions,held,isHand,handOf,setRules,sheet,set,completedBefore,laserSheet,laserGroup,setGate,approveBlock,setOf,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,blockText,reviewReport,reviewHolds,filed,processStamps,STEP_LOG,STEPS_FROM,stepFacts,stepStamps,stepsRecord,stepTimes,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),stepKey,sheetLabel};
 });

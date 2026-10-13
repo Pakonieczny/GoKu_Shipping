@@ -99,14 +99,14 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     const cardOf = lk => `.engCard[data-key="${lk}"]`;
     const thumb = (lk, face) => `${cardOf(lk)} .engFace[data-face=${face}] .engThumb`;
 
-    // 1 · the Overview of the RG middle (piece 3 of 3): ONE card, Front (a quiet empty slot) and Back (its words) side by side, one dot, one Approve
+    // 1 · the Overview of the RG middle (piece 3 of 3): ONE card with ONE face (the Back, with its words; ENGSMART: no empty Front slot), one dot, one Approve
     await open(k.r);
     await page.waitForFunction(() => document.querySelector('#owEng .engCard[data-state=approve] .engFace[data-face=back] .engThumb .engpv, #owEng .engCard[data-state=approve] .engFace[data-face=back] .engThumb canvas'), null, { timeout: 10000 });
     await settled(); await page.mouse.move(700, 880);
     let c = await card();
     check(!c.hidden && c.n >= 1 && c.direct && c.state === 'approve' && c.dot === 'To approve' && c.dots === 1, 'the Overview shows the piece\'s card, a direct child of the host, with ONE state dot: ' + JSON.stringify([c.n, c.state, c.dot, c.dots]));
     check(c.header === 'engDot,engName,engAct', 'one header row: the dot, the piece\'s name and the Approve button (the faces below it): ' + c.header);
-    check(c.thumbs === 2 && c.front.label === 'Front' && c.back.label === 'Back' && c.front.empty && !c.front.text && !c.front.picture && !c.back.empty && c.back.text === 'KMB //\nSMH' && c.back.picture, 'Front is a quiet empty slot, Back has its words and its placement picture: ' + JSON.stringify([c.front, c.back]));
+    check(c.thumbs === 1 && c.front === null && c.back.label === 'Back' && !c.back.empty && c.back.text === 'KMB //\nSMH' && c.back.picture, 'only the Back is drawn (no Front slot at all), with its words and its placement picture: ' + JSON.stringify([c.front, c.back]));
     check(c.approve && c.approveText === 'Approve' && c.buttons === 1 && none(c).length === 0, 'ONE Approve button and none of the old words: ' + JSON.stringify([c.approveText, c.buttons, none(c)]));
     check(!c.settledText, 'the words "still to be settled" appear nowhere in the order window while the engraving is not settled');
     if (shots) { await page.screenshot({ path: path.join(shots, 'overview-approve.png') }); await page.locator('#owEng').screenshot({ path: path.join(shots, 'card-approve.png') }); }
@@ -189,8 +189,9 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     await page.waitForFunction(sel => { const b = document.querySelector(sel); return b && b.getAttribute('aria-busy') !== 'true'; }, thumb(k.r, 'back'), { timeout: 4000 });
     const links = (await calls()).links;
     check(links.length === 1 && JSON.stringify(links[0]) === JSON.stringify({ rid: R1, key: k.r, poolId: pool(R1, 3), piece: k.r, face: 'back' }), 'it called EngraveLink.open({rid, key, poolId, piece, face}) for this piece\'s back: ' + JSON.stringify(links[0]));
-    await page.click(thumb(k.r, 'front')); await page.waitForFunction(() => __links.length === 2, null, { timeout: 4000 });
-    check((await calls()).links[1].face === 'front' && (await calls()).links[1].key === k.r, 'an empty Front slot opens the same piece, asking for the front: ' + JSON.stringify((await calls()).links[1]));
+    check(await page.evaluate(sel => !document.querySelector(sel), thumb(k.r, 'front')), 'there is no Front thumbnail to press on a back-only piece (ENGSMART: no empty slot)');
+    await page.click(`${cardOf(k.r)} .engName`); await page.waitForFunction(() => __links.length === 2, null, { timeout: 4000 });
+    check((await calls()).links[1].face === 'back' && (await calls()).links[1].key === k.r, 'a press on the piece\'s name opens the same piece on the one face it has: ' + JSON.stringify((await calls()).links[1]));
     check(await page.evaluate(() => OrderWin.isOpen()), 'and the window was left to EngraveLink (it closes it first)');
     await pick(3); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector(`#owEng .engCard[data-key="${k}"][data-state=approved]`), k.g, { timeout: 8000 });
     await page.click(thumb(k.g, 'back')); await page.waitForFunction(() => __links.length === 3, null, { timeout: 4000 });
