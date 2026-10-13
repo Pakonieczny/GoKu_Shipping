@@ -516,7 +516,7 @@ async function partReason(w, made) {
     const names = ONLY === 'detail' || ONLY === 'faces' ? ['back', 'front', 'both', 'refAnna', 'refMarck'] : ONLY === 'said' ? ['back', 'front', 'both', 'tag'] : ONLY === 'reason' ? ['back'] : ONLY === 'order' ? ['back', 'front', 'both', 'tag', 'discs', 'earrings'] : ['back', 'front', 'both', 'tag', 'discs', 'earrings', 'refAnna', 'refMarck'];
     const made = await R.build(w, names);
     const bad = Object.entries(made).filter(([n, v]) => n !== 'earrings' && !v.jobs.length);
-    check('W0 the world: every order has the real jobs it should have, with a real fit', 'world', !bad.length && Object.entries(made).every(([n, v]) => v.jobs.length === (R.EXPECT_JOBS[n] == null ? 1 : R.EXPECT_JOBS[n]) && v.jobs.every(j => j.fitted && j.hasMask && j.hasView)), Object.entries(made).map(([n, v]) => `${n}:${v.jobs.map(j => j.face[0] + (j.slot ? j.slot : '') + '=' + (j.fitted ? j.fontKey : j.state)).join(',') || (v.never ? 'never' : 'none')}`).join(' '));
+    check('W0 the world: every order has the real jobs it should have, with a real fit', 'world', !bad.length && Object.entries(made).every(([n, v]) => v.jobs.length === (R.EXPECT_JOBS[n] == null ? 1 : R.EXPECT_JOBS[n]) && v.jobs.every(j => j.fitted && j.hasMask && j.hasView)), Object.entries(made).map(([n, v]) => `${n}:${v.jobs.map(j => j.face[0] + (j.slot ? j.slot : '') + '=' + (j.fitted ? j.fontKey : j.state)).join(',') || (v.never ? 'never' : 'none(' + v.state + (v.why ? ': ' + v.why : '') + ')')}`).join(' '));
     await w.page.evaluate(INSTRUMENT); await w.page.evaluate(ACTS);
     if (!ONLY || ONLY === 'detail' || ONLY === 'faces') await partDetail(w, made);
     if (!ONLY || ONLY === 'order') await partOrder(w, made);

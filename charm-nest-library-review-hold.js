@@ -39,7 +39,7 @@
     const seen = new Set(), out = [];
     for (const x of list) {
       const rid = x && x.rid != null ? String(x.rid).trim() : ''; if (!rid || seen.has(rid)) continue;
-      seen.add(rid); out.push({ rid, piece: tidyPiece(x.piece), name: String(x.name || ''), reason: String(x.reason || '') });
+      seen.add(rid); out.push({ rid, swap: x.swap === true, piece: tidyPiece(x.piece), name: String(x.name || ''), reason: String(x.reason || '') });
     }
     return out;
   }
@@ -51,20 +51,27 @@
   }
 
   /* ═══ the words ═══ */
+  /* Two kinds of hold carry the same words but one ending (REVHOLD): the order is in the Review tab ("... in Review"), or a person's pick answered it and the new drawing is not on the
+     sheet yet (row.swap: "...: new drawing chosen, swap it on the sheet"). A sheet held by both says the in-Review ones first; the swap ones are said once those are resolved. */
+  const SWAP_WORDS = 'new drawing chosen, swap it on the sheet';
   const who = r => r.rid + (r.piece ? ` (${r.piece})` : '');
-  /** "Held by order 4100000001 (left earring) in Review" */
+  const kindOf = rs => { const rv = rs.filter(r => !r.swap); return rv.length ? { rows: rv, swap: false } : { rows: rs, swap: true }; };
+  // the orders named: one; two "A and B"; three "A, B and C"; more "A, B and N more" (N counts the rest)
+  const shownOf = rows => rows.length > 3 ? { rows: rows.slice(0, 2), more: rows.length - 2 } : { rows, more: 0 };
+  const joinNames = (parts, more) => more ? `${parts.join(', ')} and ${more} more` : parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
+  /** "Held by order 4100000001 (left earring) in Review" (a swap: "Held by order 4100000001: new drawing chosen, swap it on the sheet") */
   function lineOf(rs) {
     if (!rs.length) return '';
-    const shown = rs.slice(0, 3).map(who), more = rs.length - shown.length;
-    const names = rs.length === 1 ? shown[0] : more > 0 ? `${shown.slice(0, 2).join(', ')} and ${rs.length - 2} more` : shown.length === 2 ? shown.join(' and ') : `${shown.slice(0, 2).join(', ')} and ${shown[2]}`;
-    return `Held by ${rs.length === 1 ? 'order' : 'orders'} ${names} in Review`;
+    const k = kindOf(rs), sh = shownOf(k.rows);
+    return `Held by ${k.rows.length === 1 ? 'order' : 'orders'} ${joinNames(sh.rows.map(who), sh.more)}${k.swap ? ': ' + SWAP_WORDS : ' in Review'}`;
   }
   /** The one line for a sheet ('' when it is not held). */
   const line = sheetId => lineOf(rows(sheetId));
   /** For the Approve button's reason line: { text, rids, sheetId } for the sheets given (a set's), or null. sheetId = the first sheet that is held (its '!' is the shortcut). */
   function why(ids) {
     const rs = ofSheets(ids); if (!rs.length) return null;
-    return { text: lineOf(rs), rids: rs.map(r => r.rid), sheetId: rs[0].sheetId };
+    const k = kindOf(rs);   // (the orders the line names: one of them is the one tap)
+    return { text: lineOf(rs), rids: k.rows.map(r => r.rid), sheetId: k.rows[0].sheetId };
   }
 
   /* ═══ opening the order in the Review tab ═══ */
@@ -81,10 +88,10 @@
   // one order: the whole line is the press; several: each order number is
   function inner(rs) {
     if (!rs.length) return '';
-    if (rs.length === 1) { const r = rs[0]; return `<button type="button" class="rvhGo whole" data-rvh-open="${esc(r.rid)}" title="${esc('Open order ' + r.rid + ' in Review')}">${esc(lineOf(rs))}</button>`; }
-    const shown = rs.slice(0, 3), more = rs.length > 3 ? rs.length - 2 : 0, part = r => `<button type="button" class="rvhGo" data-rvh-open="${esc(r.rid)}" title="${esc('Open order ' + r.rid + ' in Review')}">${esc(r.rid)}</button>${r.piece ? esc(` (${r.piece})`) : ''}`;
-    const list = more ? `${shown.slice(0, 2).map(part).join(', ')} and ${more} more` : shown.length === 2 ? shown.map(part).join(' and ') : `${shown.slice(0, 2).map(part).join(', ')} and ${part(shown[2])}`;
-    return `Held by orders ${list} in Review`;
+    const k = kindOf(rs);
+    if (k.rows.length === 1) { const r = k.rows[0]; return `<button type="button" class="rvhGo whole" data-rvh-open="${esc(r.rid)}" title="${esc('Open order ' + r.rid + ' in Review')}">${esc(lineOf(rs))}</button>`; }
+    const sh = shownOf(k.rows), part = r => `<button type="button" class="rvhGo" data-rvh-open="${esc(r.rid)}" title="${esc('Open order ' + r.rid + ' in Review')}">${esc(r.rid)}</button>${r.piece ? esc(` (${r.piece})`) : ''}`;
+    return `Held by orders ${joinNames(sh.rows.map(part), sh.more)}${k.swap ? esc(': ' + SWAP_WORDS) : ' in Review'}`;
   }
   /** The Nest sheet card's inline note ('' when the sheet is not held). */
   function nestHtml(sheetId) {

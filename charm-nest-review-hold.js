@@ -18,9 +18,12 @@
      .canHold(rid) -> { ok:true, sheets:[{sheetId,name,setId}] } | { ok:false, why }   why: ONE plain line (the piece was released / the sheet is already cut)
      .onChange(fn) -> unsubscribe          fn({ rids, sheetIds }) after the held set changed (a mark, a resolve, a piece moved, a reload)
      .inReview(rid) -> boolean            the order is in Review and not resolved (sync); automatic movers (Hold's fill) leave such an order where it is
-     .keepsPlace(rid) -> boolean           in Review, or its Review was just answered by a pick: a saved link / an "Order changed" card never lifts its piece off a sheet (bridge Pool.keepsPlace)
+     .keepsPlace(rid) -> boolean           in Review (not yet resolved): a saved link / an "Order changed" card never lifts its piece off a sheet (bridge Pool.keepsPlace)
+     SWAP (v4): an order whose Review a person answered by PICKING a charm that is not the drawing its piece on an open sheet carries stays a hold ("Held by order N: new drawing chosen, swap it on the sheet"):
+       heldBy rows carry swap:true and reason 'New drawing chosen, swap it on the sheet'; sheetsHeldBy(rid) lists the sheet too; it clears when the piece carries the picked charm (a person accepts the
+       "Order changed" card, or swaps it by hand). Derived every time: the review record (a pick) + the bridge's Pool.swapRids() (the line's reading through the saved link against its pieces' drawing).
      .openInReview(rid) -> boolean         opens that order's card in the Review tab
-     .reason(rid) -> '' | 'In Review: ...' (readiness' source)      .overlay(record) -> record with the stop on its orderReadiness      .overlayFlow(record) -> the same, and its laser report
+     .reason(rid) -> '' | 'In Review: ...' | 'New drawing chosen, swap it on the sheet' (readiness' source)      .overlay(record) -> record with the stop on its orderReadiness      .overlayFlow(record) -> the same, and its laser report
    Pure of its page: every lookup is made when asked (root.CharmNestReviewMark, root.OrderPieces, root.CharmNestReadiness), so the script order does not matter and a page without them is
    simply not held. */
 (function (root, factory) { const api = factory(root); if (typeof module === 'object' && module.exports) module.exports = api; else root.CharmNestReviewHold = api; })(typeof self !== 'undefined' ? self : globalThis, function (root) {
@@ -37,18 +40,20 @@
   const marked = () => {
     const M = MARK(); if (!M) return [];
     const list = safe(() => (typeof M.markedRids === 'function' ? M.markedRids() : typeof M.openRids === 'function' ? M.openRids() : []), []);
-    return uniq((list || []).map(ridOf));
+    return uniq((list || []).concat(swaps()).map(ridOf));
   };
+  /* A Review a person answered by picking a charm (a saved link) is resolved, but the piece on an open sheet may still carry the OLD drawing: the pick is what must be cut, so the sheet stays held
+     until the piece carries it. The bridge answers which orders those are (Pool.swapRids: the line's reading through the saved link against the drawing of its pieces on sheets), every time. */
+  const SWAP = 'New drawing chosen, swap it on the sheet';
+  const swaps = () => safe(() => { const P = root.Pool, l = P && typeof P.swapRids === 'function' ? P.swapRids() : []; return [...(l || [])].map(ridOf).filter(Boolean); }, []);
+  const pickedDone = rid => { const M = MARK(); const i = M && typeof M.info === 'function' ? safe(() => M.info(rid), null) : null; return !!(i && i.state === 'done' && i.how === 'pick'); };
+  const isSwap = rid => { rid = ridOf(rid); return !!(rid && !isMarked(rid) && pickedDone(rid) && safe(() => { const P = root.Pool; return !!(P && typeof P.swapWaits === 'function' && P.swapWaits(rid)); }, false)); };
   const isMarked = rid => { const M = MARK(); rid = ridOf(rid); return !!(rid && M && typeof M.isMarked === 'function' && safe(() => M.isMarked(rid), false)); };
   const markWhy = rid => { const M = MARK(); const w = safe(() => (M && typeof M.reasonOf === 'function' ? String(M.reasonOf(rid) || '') : ''), ''); return w.replace(/\s+/g, ' ').trim().slice(0, 120); };
-  /** The order's pieces keep their place on their sheet: it is in Review, or a person just answered its Review by picking the charm (the saved link that pick makes must not lift the piece off its sheet to make it up again). Derived from the review record, as isMarked is. */
-  function keepsPlace(rid) {
-    rid = ridOf(rid); if (!rid) return false; if (isMarked(rid)) return true;
-    const M = MARK(); const i = M && typeof M.info === 'function' ? safe(() => M.info(rid), null) : null;
-    return !!(i && i.state === 'done' && i.how === 'pick');
-  }
+  /** The order's pieces keep their place on their sheet: it is in Review (the saved link a pick makes must not lift the piece off its sheet while the Review is open). Once a pick has answered the Review the person decides the swap (the "Order changed" card), and the sheet waits for it (isSwap). */
+  const keepsPlace = rid => isMarked(rid);
   /** The line readiness reads an order in Review by ('' when it is not): always starts "In Review". */
-  function reason(rid) { rid = ridOf(rid); if (!rid || !isMarked(rid)) return ''; const w = markWhy(rid); return w ? `In Review: ${w}` : 'In Review'; }
+  function reason(rid) { rid = ridOf(rid); if (!rid) return ''; if (!isMarked(rid)) return isSwap(rid) ? SWAP : ''; const w = markWhy(rid); return w ? `In Review: ${w}` : 'In Review'; }
 
   /* ── where the order's pieces are ── */
   const piecesOf = rid => safe(() => { const O = OP(); return O && typeof O.of === 'function' ? (O.of(rid) || []) : []; }, []);
@@ -76,8 +81,8 @@
       if (!mine.length) continue;
       const words = mine.map(p => pieceWords(p, all.length)).filter(Boolean);
       const piece = words.length === 0 ? '' : words.length === 1 ? words[0] : words.length === 2 ? `${words[0]} and ${words[1]}` : `${words.length} pieces`;
-      const r = reason(rid) || 'In Review';
-      out.push({ rid, name: String((mine[0].label || mine[0].sku || '')).replace(/\s+/g, ' ').trim().slice(0, 48), reason: r, piece, poolIds: mine.map(p => p.poolId).filter(Boolean), sheetId,
+      const r = reason(rid) || 'In Review', swap = r === SWAP;
+      out.push({ rid, ...(swap ? { swap: true } : {}), name: String((mine[0].label || mine[0].sku || '')).replace(/\s+/g, ' ').trim().slice(0, 48), reason: r, piece, poolIds: mine.map(p => p.poolId).filter(Boolean), sheetId,
         pieces: mine.map(p => ({ poolId: p.poolId, piece: pieceWords(p, all.length) })) });
     }
     return out;
@@ -85,11 +90,12 @@
   const isHeld = sheetId => heldBy(sheetId).length > 0;
   function reasonFor(sheetId) {
     const h = heldBy(sheetId); if (!h.length) return '';
-    const one = x => `Order ${x.rid}${x.piece ? ` (${x.piece})` : ''}`;
-    return h.length === 1 ? `${one(h[0])} is in Review` : `${h.length} orders are in Review: ${h.slice(0, 2).map(one).join(', ')}${h.length > 2 ? ', and more' : ''}`;
+    const one = x => `Order ${x.rid}${x.piece ? ` (${x.piece})` : ''}`, names = xs => `${xs.slice(0, 2).map(one).join(', ')}${xs.length > 2 ? ', and more' : ''}`, rv = h.filter(x => !x.swap), sw = h.filter(x => x.swap);
+    return [rv.length === 1 ? `${one(rv[0])} is in Review` : rv.length ? `${rv.length} orders are in Review: ${names(rv)}` : '',
+      sw.length === 1 ? `${one(sw[0])}: new drawing chosen, swap it on the sheet` : sw.length ? `${sw.length} orders have a new drawing chosen, swap it on the sheet: ${names(sw)}` : ''].filter(Boolean).join('; ');
   }
   function sheetsHeldBy(rid) {
-    rid = ridOf(rid); if (!rid || !isMarked(rid)) return [];
+    rid = ridOf(rid); if (!rid || !(isMarked(rid) || isSwap(rid))) return [];
     const seen = new Map();
     for (const p of livePieces(rid)) if (p.sheetId && p.state !== 'cut' && !seen.has(p.sheetId)) seen.set(p.sheetId, { sheetId: p.sheetId, name: sheetName(p), setId: p.setId || null });
     return [...seen.values()];
@@ -152,7 +158,7 @@
   /* ── changes: the held set is re-read when the review record or a piece moved; callers hear only a real change ── */
   const subs = new Set();
   let sig = null, queued = false, wired = false;
-  const held = () => { const m = new Map(); for (const rid of marked()) m.set(rid, sheetsHeldBy(rid).map(s => s.sheetId).sort().join(',')); return m; };
+  const held = () => { const m = new Map(); for (const rid of marked()) m.set(rid, sheetsHeldBy(rid).map(s => s.sheetId).sort().join(',') + (isSwap(rid) ? '|swap' : '')); return m; };   // (a Review answered by a pick turns the same hold into a swap: that is a change too)
   const signature = h => JSON.stringify([...h.entries()].sort());
   let prev = new Map();
   function check() {
@@ -160,8 +166,10 @@
     const now = held(), s = signature(now); if (s === sig) return; const was = prev; sig = s; prev = now;
     const rids = uniq([...now.keys(), ...was.keys()].filter(r => now.get(r) !== was.get(r)));
     if (!rids.length) return;   // (the first look at a page with nothing in Review: nobody is told)
-    const sheetIds = uniq(rids.flatMap(r => String(now.get(r) || '').split(',').concat(String(was.get(r) || '').split(','))));
+    const sheetIds = uniq(rids.flatMap(r => String(now.get(r) || '').split('|')[0].split(',').concat(String(was.get(r) || '').split('|')[0].split(','))));
     const released = rids.some(r => !now.has(r) && was.has(r));
+    // a pick has answered a Review: the line is read again at once, so the "Order changed" card for the swap is raised (the sheet waits for it)
+    if (rids.some(r => String(now.get(r) || '').endsWith('|swap'))) safe(() => root.Orders && root.Orders.interpretAll && root.Orders.interpretAll(), null);
     for (const fn of [...subs]) safe(() => fn({ rids, sheetIds }), null);
     // the cards follow at once; a sheet that was held and is now free lets its run carry on (sets look again), with no press
     safe(() => root.LaserReview && root.LaserReview.changed && root.LaserReview.changed(), null);

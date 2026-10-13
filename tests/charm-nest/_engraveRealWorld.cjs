@@ -116,7 +116,12 @@ async function build(w, names) {
       let lacking = 0;
       for (const [rid, n] of want) {
         const rows = Orders.rows().filter(r => r.order.receiptId === rid), have = () => [...Engrave.items().values()].filter(j => rows.includes(j.row) || (j.row && j.row.parentRow && rows.includes(j.row.parentRow))).length;
-        if (have() < n) { for (const row of rows) if (['pooled', 'written'].includes(row.state) && row.spec && (row.spec.engraveCandidate || row.spec.engraving)) { try { await Engrave.classify(row); } catch (e) { console.warn('classify', e && e.message); } } if (have() < n) lacking++; }
+        if (have() < n) {
+          // (an order that is not pooled yet, or has no setup, is read and pooled once more; at most twice: it has been seen to miss its jobs now and then on a busy machine)
+          if (rows.some(r => !['pooled', 'written'].includes(r.state) || !r.spec) && (window.__rtRetry = (window.__rtRetry || 0) + 1) <= 2) { try { Orders.interpretAll(); await Pool.addAll({ runId: 'run-real', lines: {} }); } catch (e) { console.warn('re-pool', e && e.message); } }
+          for (const row of rows) if (['pooled', 'written'].includes(row.state) && row.spec && (row.spec.engraveCandidate || row.spec.engraving)) { try { await Engrave.classify(row); } catch (e) { console.warn('classify', e && e.message); } }
+          if (have() < n) lacking++;
+        }
       }
       try { await Engrave.fitAll(); } catch (e) { console.warn('fitAll', e && e.message); }
       return lacking + [...Engrave.items().values()].filter(j => ['classify', 'reclassify', 'ready', 'fitting'].includes(j.state)).length;
@@ -129,7 +134,7 @@ async function build(w, names) {
     for (const [n, rid] of names) {
       const rows = Orders.rows().filter(r => r.order.receiptId === rid);
       const jobs = [...Engrave.items().values()].filter(j => rows.includes(j.row) || (j.row && j.row.parentRow && rows.includes(j.row.parentRow)));
-      res[n] = { rid, key: rows[0] && rows[0].key, state: rows[0] && rows[0].state, poolIds: rows[0] && rows[0].poolIds, never: !!(rows[0] && rows[0].spec && rows[0].spec.engraveNever), pieceCount: rows[0] && rows[0].spec && rows[0].spec.pieceCount,
+      res[n] = { rid, key: rows[0] && rows[0].key, state: rows[0] && rows[0].state, why: (rows[0] && (rows[0].reason || (rows[0].problems || [])[0] || (rows[0].spec && rows[0].spec.hold))) ? String(rows[0].reason || (rows[0].problems || [])[0] || '').slice(0, 120) : '', poolIds: rows[0] && rows[0].poolIds, never: !!(rows[0] && rows[0].spec && rows[0].spec.engraveNever), pieceCount: rows[0] && rows[0].spec && rows[0].spec.pieceCount,
         mode: rows[0] && rows[0].spec && rows[0].spec.engraving && rows[0].spec.engraving.mode || null,
         jobs: jobs.map(j => ({ key: j.key, face: j.face === 'front' ? 'front' : 'back', slot: j.slot || null, state: j.state, text: j.text, fontKey: j.fontKey || null, fitted: !!(j.fit && j.fit.glyphs && j.fit.glyphs.length || j.fit && j.fit.cmds), hasMask: !!j.mask, hasView: !!j.view, reason: j.reason || null })) };
     }
