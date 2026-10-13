@@ -63,20 +63,18 @@
 
   /* ── the queue: read once from the committed file; a failed read is not remembered (the next panel tries again) ── */
   let queue = null, loading = null;
+  async function readQueue() {
+    try {
+      if (typeof root.fetch !== "function") return [];
+      const res = await root.fetch(QUEUE, { cache: "no-store" });
+      if (!res.ok) return [];
+      queue = normalize(await res.json());
+      return queue;
+    } catch (_) { return []; }
+  }
   function loadQueue() {
     if (queue) return Promise.resolve(queue);
-    if (!loading) {
-      loading = (async () => {
-        try {
-          if (typeof root.fetch !== "function") return [];
-          const res = await root.fetch(QUEUE, { cache: "no-store" });
-          if (!res.ok) return [];
-          queue = normalize(await res.json());
-          return queue;
-        } catch (_) { return []; }
-        finally { loading = null; }
-      })();
-    }
+    if (!loading) { const p = loading = readQueue(); p.then(() => { if (loading === p) loading = null; }); }
     return loading;
   }
 
