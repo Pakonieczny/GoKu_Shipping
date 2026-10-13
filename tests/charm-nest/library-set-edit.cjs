@@ -28,9 +28,10 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
 
   // ── the scene ──
   // Set 1, in Laser cutting: GF Sheet 1 and SS Sheet 1 share order 4171450075 (rule A); GF Sheet 3 is completed (rule B); the Rose Gold sheet has its cut recorded
-  mkSet('set-1', ['gf-1', 'ss-1', 'gf-2', 'gf-3', 'rg-1'], { materials: ['gold', 'silver', 'rose'] });
-  mk('gf-1', 'gold', ['4171450075_1_1', '5100000001_1_1'], { setId: 'set-1', setSeq: 1, sheetIndex: 1, ...seal });
-  mk('ss-1', 'silver', ['4171450075_2_1'], { setId: 'set-1', setSeq: 1, sheetIndex: 1, ...seal });
+  mkSet('set-1', ['gf-1', 'ss-1', 'gf-2', 'gf-3', 'rg-1', 'ss-2'], { materials: ['gold', 'silver', 'rose'] });
+  mk('ss-2', 'silver', ['5100000009_1_1'], { setId: 'set-1', setSeq: 1, sheetIndex: 2, ...seal, releaseFull: true });          // (Paul, 13 Oct: sheets that take part in a move are completed sheets; a second completed SS keeps the set principle out of the way of the order rule)
+  mk('gf-1', 'gold', ['4171450075_1_1', '5100000001_1_1'], { setId: 'set-1', setSeq: 1, sheetIndex: 1, ...seal, releaseFull: true });
+  mk('ss-1', 'silver', ['4171450075_2_1'], { setId: 'set-1', setSeq: 1, sheetIndex: 1, ...seal, releaseFull: true });
   mk('gf-2', 'gold', ['5100000002_1_1'], { setId: 'set-1', setSeq: 1, sheetIndex: 2, ...seal, releaseFull: true });
   mk('gf-3', 'gold', ['5100000003_1_1'], { setId: 'set-1', setSeq: 1, sheetIndex: 3, ...seal, laserDoneAt: now - 1000, laserDoneBy: 'Ben' });
   mk('rg-1', 'rose', ['5100000004_1_1'], { setId: 'set-1', setSeq: 1, sheetIndex: 1, ...seal, roseCutAt: now - 2000, roseStockId: 'stock-1' });
@@ -46,12 +47,12 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
   mkSet('set-7', ['m7-a']); mk('m7-a', 'gold', ['5100000070_1_1'], { setId: 'set-7', setSeq: 7, ...seal });
   mkSet('set-8', ['o8-s'], { status: 'open', runId: 'run-live', committedAt: null, committed: undefined, labelFiles: [] }); mk('o8-s', 'gold', ['5100000080_1_1'], { setId: 'set-8', setSeq: 8, runId: 'run-live' });
   // draft sheets (In progress)
-  mk('d-solo', 'gold', ['5100000030_1_1']); mk('d-free', 'gold', ['5100000035_1_1']); mk('d-plan', 'gold', ['5100000036_1_1']);
-  mk('d-m1', 'gold', ['5100000031_1_1']); mk('d-m2', 'silver', ['5100000031_2_1']);                      // share order 5100000031
-  mk('d-c2', 'gold', ['5100000010_2_1']);                                                                // shares order 5100000010 with g2a (Set 2)
-  mk('d-cut', 'gold', ['5100000032_1_1'], { laserDoneAt: now - 100, laserDoneBy: 'Ben' });             // completed
+  mk('d-solo', 'gold', ['5100000030_1_1'], { releaseFull: true }); mk('d-free', 'gold', ['5100000035_1_1'], { releaseFull: true }); mk('d-plan', 'gold', ['5100000036_1_1'], { releaseFull: true });
+  mk('d-m1', 'gold', ['5100000031_1_1'], { releaseFull: true }); mk('d-m2', 'silver', ['5100000031_2_1'], { releaseFull: true });                      // share order 5100000031
+  mk('d-c2', 'gold', ['5100000010_2_1'], { releaseFull: true });                                                                // shares order 5100000010 with g2a (Set 2)
+  mk('d-cut', 'gold', ['5100000032_1_1'], { releaseFull: true, laserDoneAt: now - 100, laserDoneBy: 'Ben' });             // completed
   mk('d-rose', 'rose', ['5100000033_1_1'], { roseStockId: 'stock-2' });
-  mk('d-held', 'gold', ['5100000037_1_1'], { laserHold: { at: now - 700, by: 'Zed', note: 'wait for the glue' } });   // a person's own hold
+  mk('d-held', 'gold', ['5100000037_1_1'], { releaseFull: true, laserHold: { at: now - 700, by: 'Zed', note: 'wait for the glue' } });   // a person's own hold
   // SETGOLD (Paul, 12 Oct): a 10K, 14K or Rose Gold sheet joins a set once its back engraving is approved. Set 9 (committed, Laser cutting) and the sheets that go into it; the run holds
   // the order lines (engraveCandidate:false = nothing to engrave, approved; 'review' = a back waits for approval)
   const runLines = {}, line = (order, approved) => { runLines[order + '_1'] = { orderId: order, state: 'written', quantity: 1, poolIds: [order + '_1_1'], ...(approved ? { engraveCandidate: false } : { engrave: { needed: true, state: 'review', approved: false } }) }; return [order + '_1_1']; };
@@ -61,7 +62,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
   mk('k-14k', 'gold14k', line('5100000103', true), { roseStockId: 'stock-5', rosePlanHash: 'h-k', roseCutAt: now - 4000 });      // its green line is cut, and it is in no set
   mk('k-14k-bad', 'gold14k', line('5100000104', false), { roseStockId: 'stock-6', rosePlanHash: 'h-k2', roseCutAt: now - 4000 }); // cut, but the back is not approved
   mk('k-10k', 'gold10k', line('5100000105', true), { roseStockId: 'stock-7' });                                                  // partial, owes its line, back approved
-  mk('k-gf', 'gold', line('5100000106', false));                                                                                 // a GF sheet: no rule of backs for it
+  mk('k-gf', 'gold', line('5100000106', false), { releaseFull: true });                                                                                 // a GF sheet: no rule of backs for it
   st.put(RUN, 'run-x', { runId: 'run-x', status: 'complete', lines: runLines }); st.put(RUN, 'run-live', { runId: 'run-live', status: 'review', lines: {} });
 
   // what must never change by an edit: every seal, approval and cut record, of every sheet and set
@@ -105,7 +106,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     assert.equal(g.draft, true); assert.equal(g.setId, null); assert.equal(g.releaseFull, true, 'a full sheet taken out is still a Completed sheet (Paul, 10 Oct: the set rules read releaseFull)'); assert(held('gf-2') && /^Taken out of Set 1/.test(g.laserHold.note) && g.laserHold.by === 'Paul', 'back to In progress as a hold: the open run does not pull it into a set by itself');
     assert.equal(g.flowHistory.at(-1).type, 'setLeave'); assert.equal(g.flowHistory.at(-1).by, 'Paul');
     let s1 = set('set-1');
-    assert.deepEqual(s1.sheetIds, ['gf-1', 'ss-1', 'gf-3', 'rg-1']); assert(!s1.labelFiles.some(f => f.sheetId === 'gf-2') && s1.labelFiles.length === 4, 'the set\'s QR label list is made without it');
+    assert.deepEqual(s1.sheetIds, ['gf-1', 'ss-1', 'gf-3', 'rg-1', 'ss-2']); assert(!s1.labelFiles.some(f => f.sheetId === 'gf-2') && s1.labelFiles.length === 5, 'the set\'s QR label list is made without it');
     assert.equal(s1.status, 'complete'); assert.equal(s1.committedAt, set('set-1').committedAt); assert.equal(s1.labels, null, 'the old labels PDF no longer describes the set until the page remakes it');
     assert.deepEqual(s1.setEdit && { by: s1.setEdit.by }, { by: 'Paul' }); assert.equal(s1.flowHistory.at(-1).type, 'setEdit'); assert.deepEqual(s1.flowHistory.at(-1).out, ['gf-2']);
     assert.equal(permanent(), permanentBefore, 'no seal, approval, cut record or completion was touched'); assert.equal(JSON.stringify(s1.orders), orderLines, 'the order lines of the others are as they were');
@@ -115,7 +116,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     // ═══ D. the same sheet put back (its hold is lifted) / a person's own hold stays ═══
     r = await edit([['gf-2', 'set-1']]); assert.equal(r.status, 200, JSON.stringify(r));
     g = sheet('gf-2'); assert.equal(g.draft, false); assert.equal(g.setId, 'set-1'); assert.equal(g.sheetIndex, 4, 'it comes back with a number nobody of its metal has in the set (1 and 3 are taken)'); assert(!held('gf-2'), 'the hold this edit made is lifted');
-    assert.deepEqual(g.flowHistory.slice(-2).map(x => x.type), ['setJoin', 'release']); assert.deepEqual(set('set-1').sheetIds, ['gf-1', 'ss-1', 'gf-3', 'rg-1', 'gf-2']);
+    assert.deepEqual(g.flowHistory.slice(-2).map(x => x.type), ['setJoin', 'release']); assert.deepEqual(set('set-1').sheetIds, ['gf-1', 'ss-1', 'gf-3', 'rg-1', 'ss-2', 'gf-2']);
     assert.equal(permanent(), permanentBefore, 'putting it back changes no seal or cut record either'); assert(!set('set-1').laserDoneAt, 'Set 1 is not completed by this');
     r = await edit([['d-held', 'set-2']]); assert.equal(r.status, 200, JSON.stringify(r)); assert(held('d-held') && sheet('d-held').laserHold.by === 'Zed', 'a person\'s own hold is theirs: it stays');
 
@@ -203,7 +204,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     assert(p.auto.some(a => a.key === 'membership' && /GF Draft 1 added to Set 2/.test(a.label)), JSON.stringify(p.auto.map(a => a.label)));
     assert(!p.confirm.some(x => /approv/i.test(x.label)), 'nothing is approved for anyone');
     c = await LF.commit(p, { by: 'Paul', confirmed: p.confirm.map(x => x.key) }); assert.equal(c.ok, true, JSON.stringify(c)); assert.equal(sheet('d-plan').setId, 'set-2'); assert(hooksSeen.relabel.some(x => x.sheetIds.includes('d-plan')) && hooksSeen.files.includes('set-2'));
-    mk('d-n1', 'gold', ['5100000090_1_1']); mk('d-n2', 'silver', ['5100000090_2_1']);
+    mk('d-n1', 'gold', ['5100000090_1_1'], { releaseFull: true }); mk('d-n2', 'silver', ['5100000090_2_1'], { releaseFull: true });
     p = await LF.plan({ kind: 'sheet', id: 'd-n1', to: { set: 'set-2' } });
     assert.equal(p.ok, true, JSON.stringify(p.needs)); assert(p.confirm.some(x => x.key === 'together' && /SS Draft 1 joins Set 2/.test(x.label)), JSON.stringify(p.confirm)); assert.equal(p.steps[0].moves.length, 2);
     c = await LF.commit(p, { by: 'Paul', confirmed: p.confirm.map(x => x.key) }); assert.equal(c.ok, true, JSON.stringify(c)); assert.equal(sheet('d-n1').setId, 'set-2'); assert.equal(sheet('d-n2').setId, 'set-2');
