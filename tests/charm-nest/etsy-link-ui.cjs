@@ -9,6 +9,8 @@
 //   · the call carries exactly {op, listingId, sku, by = the signed-in name, repoToken}; while it runs the button shows its spinner and the box is off; the answer is said in words
 //     (done / already there / the server's own refusal, "needs listings_w" included); a refusal that can be tried again offers "Try again", one that cannot is off;
 //   · a card with several SKUs offers each of them and sends the one chosen; Escape and Close fold the panel; reduced motion; no page error.
+//   · CATSKU (12 Oct 2026): opening the panel offers, as taps, the listings the page ALREADY reads as this charm (order lines, saved links and the look-alike twin; read from
+//     what the page holds: no request of any kind is made by looking), never prefilled; a tap only puts the number in the box; the press is unchanged (password, one call).
 //   PW_DIR=<dir with playwright-core> CHROMIUM=<chrome> node tests/charm-nest/etsy-link-ui.cjs      (skipped without a browser)
 const fs = require('fs'), path = require('path'), assert = require('assert'), crypto = require('crypto');
 const root = path.join(__dirname, '../..');
@@ -28,7 +30,9 @@ const LINK = 'https://www.etsy.com/listing/1700763608/swan-charm-necklace-gold-s
   const at = Date.UTC(2026, 9, 8, 12);
   const entry = (sku, aiSku, extra) => st.put('Charm_Master_Index', sku, Object.assign({ sku, masterHash: 'ab'.repeat(32), widthPt: 33.3, heightPt: 25.7, areaPt2: 443, members: 3, holes: 1, upAngle: 73, aiPath: `charmnest/master/${aiSku || sku}.ai`, aiUrl: srv.blobUrl(`charmnest/master/${aiSku || sku}.ai`), thumbPath: `charmnest/master/${aiSku || sku}.png`, indexedAt: Timestamp.fromMillis(at) }, extra));
   entry('BEADY SWAN'); entry('CHAM_A', 'CHAM'); entry('CHAM_B', 'CHAM');   // (two SKUs of one charm share one file: one card)
-  st.put('Charm_Master_Files', 'f1', { masterHash: 'ab'.repeat(32), name: 'LIVING.ai', indexedAt: Timestamp.fromMillis(at), charms: 3, labelled: 3, skus: ['BEADY SWAN', 'CHAM_A', 'CHAM_B'], indexedBy: 'browser' });
+  // CATSKU: the shop's real pair of look-alike names (two drawings: the card with the ring is 10.5 x 12.0 mm, the other 8.7 x 9.0 mm; both read "CAT1SITTINGCAT" once spaces and punctuation are set aside)
+  entry('CAT 1 - SITTING CAT', 'CAT_1_-_SITTING_CAT', { widthPt: 29.746, heightPt: 33.958, holes: 0, upAngle: 90 }); entry('CAT 1- SITTING CAT', 'CAT_1-_SITTING_CAT', { widthPt: 24.692, heightPt: 25.608, holes: 0, upAngle: 90 });
+  st.put('Charm_Master_Files', 'f1', { masterHash: 'ab'.repeat(32), name: 'LIVING.ai', indexedAt: Timestamp.fromMillis(at), charms: 5, labelled: 5, skus: ['BEADY SWAN', 'CHAM_A', 'CHAM_B', 'CAT 1 - SITTING CAT', 'CAT 1- SITTING CAT'], indexedBy: 'browser' });
 
   const log = [], held = new Map(); let script = null, delayMs = 0;
   const browser = await chromium.launch({ executablePath: exe, args: ['--no-sandbox'] });
@@ -63,7 +67,7 @@ const LINK = 'https://www.etsy.com/listing/1700763608/swan-charm-necklace-gold-s
   await page.waitForFunction(() => window.CN && window.CN.S && window.Master && window.CharmNestRepoLock && window.CharmNestEtsyLink && CN.S.cloud.ok !== null, null, { timeout: 60000 });
   await page.evaluate(() => { const s = CN.S.settings; s.review = 'off'; s.naming = 'off'; s.notify = 'off'; s.sound = 'off'; s.runMode = 'manual'; });
   await page.evaluate(() => CN.setMode('master'));
-  await page.waitForFunction(() => document.querySelectorAll('#mGrid .skuTile').length >= 2, null, { timeout: 30000 });
+  await page.waitForFunction(() => document.querySelectorAll('#mGrid .skuTile').length >= 4, null, { timeout: 30000 });
   const tile = sku => page.locator(`#mGrid .skuTile[data-sku="${sku}"]`);
   const opCalls = () => log.filter(x => x.op === 'listingEtsySkuWrite');
   const dialogs = () => page.evaluate(() => document.querySelectorAll('dialog[open]').length);
@@ -71,7 +75,7 @@ const LINK = 'https://www.etsy.com/listing/1700763608/swan-charm-necklace-gold-s
 
   // ── 1 · the chip on every card, locked-looking; nothing is sent by looking ──
   const chips = await page.evaluate(() => [...document.querySelectorAll('#mGrid .skuTile')].map(t => { const c = t.querySelector('[data-etsylink]'); return { sku: t.dataset.sku, has: !!c, text: c && c.textContent, repo: c && c.dataset.repo, locked: c && c.classList.contains('repoLocked'), inRow: !!(c && c.closest('.row')), title: c && c.title }; }));
-  ok(chips.length === 2 && chips.every(c => c.has && c.text === 'Etsy' && c.repo === 'modify' && c.inRow), 'every master card has an "Etsy" chip in its row, marked as a repo "modify" control: ' + JSON.stringify(chips.map(c => c.sku)));
+  ok(chips.length === 4 && chips.every(c => c.has && c.text === 'Etsy' && c.repo === 'modify' && c.inRow), 'every master card has an "Etsy" chip in its row, marked as a repo "modify" control: ' + JSON.stringify(chips.map(c => c.sku)));
   ok(chips.every(c => c.locked), 'drawn locked until the repo is unlocked');
   ok(await page.evaluate(() => document.querySelectorAll('.elPanel').length) === 0, 'no panel is open by default');
   ok(log.every(x => x.op !== 'listingEtsySkuWrite' && x.op !== 'repoUnlock'), 'looking at the library sent nothing to the write and asked for no password');
@@ -104,12 +108,12 @@ const LINK = 'https://www.etsy.com/listing/1700763608/swan-charm-necklace-gold-s
 
   // ── 4 · the right password: one call with exactly the right body, a spinner while it runs, the answer in words ──
   script = b => ({ ok: true, state: 'linked', calls: 2, listingId: b.listingId, sku: b.sku, productIds: ['1', '2', '3', '4', '5', '6', '7', '8', '9'], products: 9, verified: true, beforePath: 'charmnest/custom-saves/1700763608/link-BEADY_SWAN-before.json' });
-  delayMs = 700;
+  delayMs = 1500;   // (long enough for a loaded machine to look at the spinner)
   await go.click();
   await page.waitForSelector('dialog.repoDlg[open]'); await typeAndGo(RIGHT);
-  await page.waitForFunction(() => document.querySelector('#mGrid .elPanel .btn .spin'), null, { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelector('#mGrid .elPanel .btn .spin') && !document.querySelector('dialog[open]'), null, { timeout: 5000 });   // (the password dialog takes a moment to close on a loaded machine)
   const run = await page.evaluate(() => { const p = document.querySelector('#mGrid .elPanel'); return { btn: p.querySelector('.btn.gold').textContent, off: p.querySelector('.btn.gold').disabled, inputOff: p.querySelector('input').disabled, say: p.querySelector('.elSay').textContent, dialogs: document.querySelectorAll('dialog[open]').length }; });
-  ok(run.btn === 'Putting the SKU on Etsy…' && run.off && run.inputOff && /Reading the listing on Etsy/.test(run.say) && run.dialogs === 0, 'while it runs: the button shows its spinner and a label, the box is off, the dialog is gone: ' + run.say);
+  ok(run.btn === 'Putting the SKU on Etsy…' && run.off && run.inputOff && /Reading the listing on Etsy/.test(run.say) && run.dialogs === 0, 'while it runs: the button shows its spinner and a label, the box is off, the dialog is gone: ' + JSON.stringify(run));
   await page.waitForFunction(() => /^Done:/.test(document.querySelector('#mGrid .elPanel .elSay').textContent), null, { timeout: 8000 });
   delayMs = 0;
   if (SHOTS) { await page.waitForTimeout(300); await tile('BEADY SWAN').screenshot({ path: path.join(SHOTS, 'etsylink-2-done.png') }); }
@@ -155,6 +159,63 @@ const LINK = 'https://www.etsy.com/listing/1700763608/swan-charm-necklace-gold-s
   const last = opCalls().pop();
   ok(last.sku === 'CHAM_B' && last.listingId === '1700763609', 'the SKU chosen is the one sent: ' + last.sku);
   ok((await tile('CHAM_A').locator('.elPanel .elSay').textContent()) === 'Already there: all 1 product of listing 1700763609 carry CHAM_B. Nothing was changed.', 'an "already there" answer says so');
+
+  // ── 6b · CATSKU: the listings the page already reads as this charm are offered as taps (nothing is fetched, nothing is prefilled) ──
+  const LISTING_TITLE = 'Small Cat Charm Add On Charm 14k Gold filled Sterling Silver 14k Rose Gold or 14k Solid Gold Cat-Lover Accessory';
+  const NEW_CAT = 'CAT 1 - SITTING CAT', OLD_CAT = 'CAT 1- SITTING CAT';
+  const ln = (listingId, sku, title) => ({ listingId, sku, title, transactionId: String(Math.floor(Math.random() * 1e9)) });
+  const rowsFixture = [
+    { state: 'pulled', line: ln(1801964156, 'CAT 1- Sitting Cat', LISTING_TITLE), spec: { designSku: OLD_CAT } },                  // the cat listing: read as the look-alike twin (two orders)
+    { state: 'pulled', line: ln('1801964156', 'CAT 1- Sitting Cat', LISTING_TITLE), spec: { designSku: OLD_CAT } },
+    { state: 'pulled', line: ln('1700763609', NEW_CAT, 'Already right'), spec: { designSku: NEW_CAT } },                          // already carries the exact SKU: nothing to put
+    { state: 'pulled', line: ln('1700763610', 'KITTY', 'Kitty Charm Necklace'), spec: { designSku: NEW_CAT } },                    // read as this charm by another route (a saved link)
+    { state: 'gone', line: ln('1700763611', 'KITTY', 'Gone order'), spec: { designSku: NEW_CAT } },                               // its order is gone: not offered
+    { state: 'pulled', line: ln('1700763612', 'CAT 1- Sitting Cat', 'Cat held between two drawings'), spec: { designSku: null, formHold: { candidates: [{ sku: OLD_CAT }, { sku: NEW_CAT }] } } },
+    { state: 'pulled', line: ln('1700763616', 'OTHER', 'Another charm'), spec: { designSku: 'BEADY SWAN' } }                         // another design: not offered here
+  ];
+  const aliasFixture = { '1700763613': { sku: NEW_CAT, v: 2, title: 'Saved link listing' }, '1700763614': { bySku: { FELINE: NEW_CAT }, title: 'Saved per-SKU link' }, '1700763615': { sku: 'BEADY SWAN', v: 2, title: 'Other design link' } };
+  const unit = await page.evaluate(([rows, aliases, NEWC, OLDC]) => {
+    const E = window.CharmNestEtsyLink, like = s => (String(s).toUpperCase().replace(/[^A-Z0-9]+/g, '') === 'CAT1SITTINGCAT' ? [NEWC, OLDC] : [s]);
+    const a = E.suggestions([NEWC], NEWC, { rows, aliases, like }), b = E.suggestions([OLDC], OLDC, { rows, aliases, like }), c = E.suggestions([NEWC], NEWC, { rows, aliases, like: null }), d = E.suggestions([NEWC], NEWC, { rows, aliases }, 2), e = E.suggestions([NEWC], NEWC, {}), f = E.suggestions([NEWC], NEWC, null);
+    return { a, b, c, d, e, f };
+  }, [rowsFixture, aliasFixture, NEW_CAT, OLD_CAT]);
+  ok(JSON.stringify(unit.a.map(x => x.id)) === JSON.stringify(['1801964156', '1700763610', '1700763612', '1700763613', '1700763614']), 'suggestions: the cat listing first (two lines), then the one-line listings by number, then the saved links; not the exact one, the gone order, or another design: ' + unit.a.map(x => x.id).join(','));
+  ok(unit.a[0].now === OLD_CAT && unit.a[1].now === '' && unit.a[2].now === '' && unit.a[0].title === LISTING_TITLE, 'the cat listing says what it reads as today (the look-alike twin), the others read as this charm already');
+  ok(!unit.b.some(x => x.id === '1801964156'), 'the look-alike\'s own card does not offer the cat listing: its lines already carry that exact SKU');
+  ok(!unit.c.some(x => x.id === '1801964156') && unit.c.some(x => x.id === '1700763610'), 'without the look-alike lister only listings read as this very design are offered');
+  ok(unit.d.length === 2 && unit.e.length === 0 && unit.f.length === 0, 'at most the cap, and nothing at all from nothing (no rows, no aliases, no source)');
+
+  const before6b = log.length;
+  // the page's own order rows and saved links are set only for the moment a panel opens (that is the only moment the taps read them) and put back at once
+  const lend = async (...open) => { await page.evaluate(([rows, al]) => { window.__was = { rows: B.orders.rows, aliases: B.maps.aliases }; B.orders.rows = rows; B.maps.aliases = Object.assign({}, B.maps.aliases || {}, al); }, [rowsFixture, aliasFixture]); try { for (const f of open) await f(); } finally { await page.evaluate(() => { B.orders.rows = window.__was.rows; B.maps.aliases = window.__was.aliases; }); } };
+  await lend(() => tile(NEW_CAT).locator('[data-etsylink]').click());
+  const p6 = await page.evaluate(() => { const p = document.querySelector('#mGrid .skuTile[data-sku="CAT 1 - SITTING CAT"] .elPanel'); const g = p.querySelector('.elPicks'); return { shown: !g.hidden, ids: [...g.querySelectorAll('button')].map(b => b.getAttribute('data-listing')), texts: [...g.querySelectorAll('button')].map(b => b.textContent.replace(/\s+/g, ' ')), tip: g.querySelector('button').title, input: p.querySelector('input').value, say: p.querySelector('.elSay').textContent, goOff: p.querySelector('.btn.gold').disabled, before: [...p.children].map(c => c.className.split(' ')[0]) }; });
+  ok(p6.shown && p6.ids.join(',') === '1801964156,1700763610,1700763612,1700763613,1700763614', 'the panel of the ringed card offers the listings the page already reads as this charm: ' + p6.ids.join(', '));
+  ok(p6.texts[0] === '1801964156 Small Cat Charm Add On Charm…' && p6.tip === 'now read as CAT 1- SITTING CAT', 'a tap is the listing number and a short title; its hint says what the listing reads as today: ' + p6.texts[0] + ' / ' + p6.tip);
+  ok(p6.input === '' && p6.say === "Paste the listing's Etsy link or its number." && p6.goOff, 'nothing is prefilled: the box is empty and the button is off until a listing is chosen');
+  ok(p6.before.join(',') === 'elHead,elPicks,elIn,elSay,elActs', 'the taps sit between the heading and the box: ' + p6.before.join(','));
+  ok(log.length === before6b, 'looking and opening the panel made no request at all (the taps come from what the page holds)');
+  if (SHOTS) { await page.waitForTimeout(300); await tile(NEW_CAT).screenshot({ path: path.join(SHOTS, 'etsylink-5-taps.png') }); }
+  const opsBefore = opCalls().length;
+  await tile(NEW_CAT).locator('.elPicks button[data-listing="1801964156"]').click();
+  const p7 = await page.evaluate(() => { const p = document.querySelector('#mGrid .skuTile[data-sku="CAT 1 - SITTING CAT"] .elPanel'); return { input: p.querySelector('input').value, say: p.querySelector('.elSay').textContent, goOff: p.querySelector('.btn.gold').disabled, on: [...p.querySelectorAll('.elPicks .btn.on')].map(b => b.getAttribute('data-listing')), dialogs: document.querySelectorAll('dialog[open]').length }; });
+  ok(p7.input === '1801964156' && /^Every product of Etsy listing 1801964156 will carry the SKU CAT 1 - SITTING CAT\./.test(p7.say) && !p7.goOff && p7.on.join() === '1801964156', 'a tap puts the number in the box and the plain line says what the button will do: ' + p7.say.slice(0, 80));
+  ok(opCalls().length === opsBefore && p7.dialogs === 0, 'the tap sent nothing and asked for no password: the press is still the button');
+  script = b => ({ ok: true, state: 'linked', calls: 2, listingId: b.listingId, sku: b.sku, productIds: Array.from({ length: 12 }, (_, i) => String(i + 1)), products: 12, verified: true, beforePath: 'charmnest/custom-saves/1801964156/link-CAT_1_SITTING_CAT-before.json' });
+  await tile(NEW_CAT).locator('.elPanel .btn.gold').click();
+  await page.waitForFunction(() => /^Done:/.test(document.querySelector('#mGrid .skuTile[data-sku="CAT 1 - SITTING CAT"] .elSay').textContent), null, { timeout: 8000 });
+  const lastCat = opCalls().pop();
+  ok(opCalls().length === opsBefore + 1 && lastCat.listingId === '1801964156' && lastCat.sku === NEW_CAT && lastCat.by === 'Tester' && lastCat.token && lastCat.keys === 'by,listingId,op,repoToken,sku', 'the press sends exactly the listing and the card\'s exact SKU (' + JSON.stringify(lastCat.sku) + '), the name and the token, nothing else: ' + lastCat.keys);
+  ok((await tile(NEW_CAT).locator('.elPanel .elSay').textContent()) === 'Done: CAT 1 - SITTING CAT is now on all 12 products of listing 1801964156.' && await page.evaluate(() => document.querySelector('#mGrid .skuTile[data-sku="CAT 1 - SITTING CAT"] .elPicks').hidden), 'done, in the words Paul expects; the taps fold away');
+  await tile(NEW_CAT).locator('.elPanel .btn.ghost.xs:not([data-listing])').click();
+  // the look-alike twin's card, another design's card, and a card with nothing to offer
+  await tile('CHAM_A').locator('[data-etsylink]').click();   // (section 6 left its panel open: the chip folds it)
+  await lend(() => tile(OLD_CAT).locator('[data-etsylink]').click(), () => tile('BEADY SWAN').locator('[data-etsylink]').click(), () => tile('CHAM_A').locator('[data-etsylink]').click());
+  const p8 = await page.evaluate(() => { const q = sku => { const g = document.querySelector('#mGrid .skuTile[data-sku="' + sku + '"] .elPicks'); return g ? { hidden: g.hidden, ids: [...g.querySelectorAll('button')].map(b => b.getAttribute('data-listing')), tips: [...g.querySelectorAll('button')].map(b => b.title) } : null; }; return { old: q('CAT 1- SITTING CAT'), swan: q('BEADY SWAN'), cham: q('CHAM_A') }; });
+  ok(p8.old && p8.old.ids.join() === '1700763609,1700763610' && p8.old.tips.join() === 'now read as CAT 1 - SITTING CAT,now read as CAT 1 - SITTING CAT', 'the look-alike twin\'s own card does not offer the cat listing (its lines already carry that exact SKU); it offers the listings read as the OTHER twin, with a hint saying so: ' + p8.old.ids.join(','));
+  ok(p8.swan && p8.swan.ids.join() === '1700763616,1700763615', 'another charm\'s card offers its own listings (a saved link, an order line), nothing of the cat: ' + (p8.swan && p8.swan.ids.join(',')));
+  ok(p8.cham && p8.cham.hidden && p8.cham.ids.length === 0, 'a card with no listing to offer shows no taps and no new words');
+  for (const sku of [OLD_CAT, 'BEADY SWAN', 'CHAM_A']) await tile(sku).locator('[data-etsylink]').click();
 
   // ── 7 · reduced motion ──
   await page.emulateMedia({ reducedMotion: 'reduce' });

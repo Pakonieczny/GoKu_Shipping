@@ -2186,7 +2186,7 @@ const Orders = window.Orders = (() => {
     if (window.Motion) Motion.reconcile(list, wanted, { animate: same, leave: leaveFor(new Set()), get clip() { settle(); return host; } });
     else put(list, wanted);
     for (const [node, pair] of pairs) node.querySelector('.comparePair')?.replaceWith(pair);
-    for (const [node, r] of mounts) ListMedia.mount(node, r);
+    for (const [node, r] of mounts) { ListMedia.mount(node, r); if (window.ReviewSend) ReviewSend.mount(node, r); }   // (Send to Review: the one button under Qty · Ship by, charm-nest-review-send.js; it draws nothing until the Review mark API is there)
     ListMedia.more(list,rows.length,shown.length,()=>{OV.limit=(OV.limit || 48)+48;renderBody();});
     settle();
     drawnOn = onScreen() ? nextKey : ""; drawnLimit = OV.limit;
@@ -7161,7 +7161,7 @@ const Engrave = window.Engrave = (() => {
   function renderPlacementRows(list, queue) {
     if(placementQuery!==EG.q+CNListActivity.key("engrave-place")){placementLimit=40;placementQuery=EG.q+CNListActivity.key("engrave-place");}
     const rows = rowsIn(queue, queueUniverse());
-    const shown = rows.slice(0,placementLimit), nodes = shown.map(grp => {
+    const shown = rows.slice(0,placementLimit), nodes = shown.map(grp => quietRow(grp, () => {
       // (faced: the line has a front job, so each job is told by its piece AND its face, in the row's one list of what is engraved; a back-only line is not faced and draws what it always drew)
       const job = grp.lead, ears = !!multiJobs(grp), faced = facedGrp(grp), told = ears || faced, mode = faced ? faceModeOf(job.row) : null, sig = grp.jobs.map(j => j.key).join(" "), line = told ? lineOf(job.row) : job.row;
       let row = placementRows.get(job);
@@ -7192,7 +7192,7 @@ const Engrave = window.Engrave = (() => {
       if(row._seals!==stamp){row.querySelector('.egPlacementSeals').innerHTML=told?grp.jobs.map(j=>{const h=CNEngravingSeals.html(j);return h?`<div class="egEarSeals" data-slot="${esc(j.slot || "")}">${jobChipHtml(j,faced)}${h}</div>`:"";}).join(""):CNEngravingSeals.html(job);row._seals=stamp;}
       if(!told)write('[data-stage]',busyAny ? (job.state === "classify" ? "Reading words…" : "Preparing preview…") : "");
       return row;
-    });
+    }));
     /* One keyed update (Motion.reconcile; Paul, 27 Sep 20:09-20:24): a placement that leaves the list is seen going, up
        into Decided when it was decided there (the sheet window's approvals), otherwise fading where it stood (read as
        needing no engraving, its order gone); the rows under it glide up into the gap, and one that arrives opens its
@@ -7200,8 +7200,38 @@ const Engrave = window.Engrave = (() => {
     const same = list._egQ === EG.q; list._egQ = EG.q;
     if (window.Motion) Motion.reconcile(list, nodes, { animate: same, clip: list, leave: mk => { const j = items().get(String(mk).slice(3)); return j && DECIDED.includes(j.state) ? { to: EG_TAB("done") } : null; } });
     else { nodes.forEach((row, i) => { if (list.children[i] !== row) list.insertBefore(row, list.children[i] || null); }); const keep = new Set(nodes); [...list.children].forEach(row => { if (!keep.has(row)) row.remove(); }); }
-    shown.forEach((grp, i) => ListMedia.mount(nodes[i], multiJobs(grp) || facedGrp(grp) ? lineOf(grp.lead.row) : grp.lead.row));
+    shown.forEach((grp, i) => { try { ListMedia.mount(nodes[i], multiJobs(grp) || facedGrp(grp) ? lineOf(grp.lead.row) : grp.lead.row); } catch (e) { console.warn("Engrave list: a row's pictures", e); } });
     ListMedia.more(list,rows.length,Math.min(placementLimit,rows.length),()=>{placementLimit+=40;render();});
+    noRows(list, rows.length);
+  }
+  /** ENGCRASH: one piece that cannot be drawn is a small quiet row (its order number and a short line), never the end of the list: the rows after it are drawn as they always are. */
+  function quietRow(grp, build) {
+    try { return build(); } catch (e) {
+      console.warn("Engrave list: a row could not be drawn", e);
+      const lead = (grp && grp.lead) || {}, row = el("div", "doneRow placementRow quietRow"), rid = String(lead.row && lead.row.order && lead.row.order.receiptId || "");
+      row.dataset.mkey = "eg:" + (lead.key || ""); row.dataset.open = lead.key || ""; row.dataset.rid = rid; row._grp = grp;
+      row.innerHTML = '<div class="engravingIdentity"><div class="engravingOrder"><b class="mono"></b></div><span class="dim">This piece could not be drawn here.</span></div>'; row.querySelector("b").textContent = rid;
+      return row;
+    }
+  }
+  /** ENGCRASH: the same for a Decided row (the list is built as one string: a row that throws is a small quiet row, the rest are drawn). */
+  function quietDone(grp, build) {
+    try { return build(); } catch (e) {
+      console.warn("Engrave list: a decided row could not be drawn", e);
+      const lead = (grp && grp.lead) || {};
+      return `<div class="doneRow decidedRow quietRow" data-rid="${esc(String(lead.row && lead.row.order && lead.row.order.receiptId || ""))}" data-key="${esc(lead.key || "")}"><div class="engravingIdentity"><div class="engravingOrder"><b class="mono">${esc(String(lead.row && lead.row.order && lead.row.order.receiptId || ""))}</b></div><span class="dim">This piece could not be drawn here.</span></div></div>`;
+    }
+  }
+  /** ENGCRASH: a list with no row never stays blank: one plain line says why (a search that matches nothing offers to clear itself), beside the list so the keyed rows are untouched. */
+  function noRows(list, n) {
+    const host = list.parentElement; if (!host) return;
+    let m = host.querySelector(":scope > .egNone");
+    if (n) { if (m) m.remove(); return; }
+    const q = String(EG.q || "").trim(); if (!m) { m = el("div", "libEmpty egNone"); m.setAttribute("role", "status"); host.appendChild(m); }
+    const jobs = [...items().values()].filter(j => j.row && j.row.state !== "gone"), nDone = jobs.filter(j => DECIDED.includes(j.state)).length;
+    m.innerHTML = q ? `<b>Nothing here matches “${esc(q)}”.</b><button class="btn ghost sm" data-eg-clear>Clear search</button>` : emptyWhy(jobs, 0, nDone);
+    const clr = m.querySelector("[data-eg-clear]"); if (clr) clr.onclick = () => { EG.q = ""; const i = document.getElementById("egQ"); if (i) i.value = ""; render(); };
+    m.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { const g = b.dataset.go; if (g === "hist") RunHistory.show(); else if (g === "words") { EG.tab = "words"; EG.chosen = true; render(); } else { setMode(g); if (g === "review") Review.render(); } });
   }
   /** Repaint the card in place: the picture, the numbers, the chips. The pane is only rebuilt when what it holds changes. */
   function refresh(job) {
@@ -7380,7 +7410,7 @@ const Engrave = window.Engrave = (() => {
       /* One row per decision (an earring line's Left and Right are one row, each ear told on its own); the row opens into everything there is to know about it, and Reopen.
          The separate "back files written" grid said the same things a second time, smaller, and is gone. */
       bk.innerHTML = decided.length
-        ? `<div class="section" style="margin-top:2px">Decided · ${decided.length}</div><div class="rvList" id="egDone">` + decided.slice(0,doneLimit).map(grp => {
+        ? `<div class="section" style="margin-top:2px">Decided · ${decided.length}</div><div class="rvList" id="egDone">` + decided.slice(0,doneLimit).map(grp => quietDone(grp, () => {
             // (faced: the line has a front job; its decided jobs are told one by one, each with its face, its seals and its own Reopen, in ONE row)
             const j2 = grp.lead, faced = facedGrp(grp), ears = !!multiJobs(grp) || faced, line = ears ? lineOf(j2.row) : j2.row;
             const open = grp.jobs.some(j => EG.openDone === j.key);
@@ -7391,8 +7421,8 @@ const Engrave = window.Engrave = (() => {
             const chip = j => jobChipHtml(j, faced);
             const detail = !open ? "" : `<div class="doneDetail egPairDetail">${grp.jobs.map(j => `<div class="egEarDetail" data-ear="${esc(j.key)}"><div class="egEarHead">${chip(j)}</div>${detailInner(j)}</div>`).join("")}${saidOfDone(line)}</div>`;
             return `<div class="doneRow decidedRow earPairRow hoverItem${open ? " open" : ""}" tabindex="0" aria-expanded="${open}" data-rid="${esc(line.order.receiptId)}" data-key="${esc(j2.key)}" data-ears="${esc(grp.jobs.map(j => j.key).join(" "))}" data-pair="1" title="View engraving details">${ListMedia.pair(line)}<div class="engravingIdentity"><span class="queueLabel">Engraving · decided</span><div class="engravingOrder"><b class="mono">${esc(line.order.receiptId)}</b><span class="sku mono">${esc(line.spec.designSku || "")}</span>${faced ? modeChipHtml(line) : ""}</div><span class="purchaseLabel">${wordsLabel(grp.jobs)}</span><div class="egEars">${grp.jobs.map(j => `<div class="egEar" data-ear="${esc(j.key)}">${chip(j)}<span class="w">${wordsOfDone(j)}</span></div>`).join("")}</div></div><div class="purchaseSummary">${purchaseMarkup(line)}</div><div class="decisionActions">${grp.jobs.map(j => `<div class="egEarStatus" data-ear="${esc(j.key)}">${chip(j)}${statusOf(j)}<button class="btn ghost sm" data-a="reopen" data-ear="${esc(j.key)}" title="Reopen ${esc(reopenWhat(j, faced))} for changes (${esc(reopenKeeps(grp, faced))})">Reopen ${esc(reopenWord(j, faced))}</button></div>`).join("")}</div>${detail}</div>`;
-          }).join("") + `</div>`
-        : `<div class="libEmpty">${window.Recall && Recall.on() ? "Nothing in this set was engraved." : "nothing decided yet"}</div>`;
+          })).join("") + `</div>`
+        : `<div class="libEmpty">${EG.q && String(EG.q).trim() ? `<b>Nothing decided matches “${esc(String(EG.q).trim())}”.</b>` : window.Recall && Recall.on() ? "Nothing in this set was engraved." : "nothing decided yet"}</div>`;
       bk.querySelectorAll(".doneRow").forEach(rw => {
         const cacheKey=rw.dataset.ears||rw.dataset.key,kept=donePairs.get(cacheKey),fresh=rw.querySelector(".comparePair");
         if(kept&&fresh&&!kept.isConnected)fresh.replaceWith(kept);
@@ -7590,7 +7620,7 @@ const Engrave = window.Engrave = (() => {
       : `${faced ? row2("Reading", faceReadingOf(job.row)) : ""}${fontMapped ? row2("Font", fontText.replace(/^Font: /, "")) : noteFont ? row2("Font", noteFont) : ""}${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
     card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a line's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? " (an order's discs are one placement: Back and Next go through every disc)" : " (an earring line's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${ears ? earSwitchHtml(job, ears, panelOn) : faced ? (panelOn ? "" : faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`)) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().tagOf(job.slot, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
-        <div class="pvMain">${byCard ? "" : `<h4 class="pvH">${cap1(fw)} · engraving</h4>`}<div class="pvApproval">${f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the ${fw} file">Approved</button></span>` : ""}${f && !wordsJob && ears ? approveBothHtml(ears, job) : ""}</div><div class="backHost"></div></div>
+        <div class="pvMain">${byCard ? "" : `<h4 class="pvH">${cap1(fw)} · engraving</h4>`}<div class="pvApproval">${f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the ${fw} file">Approve</button></span>` : ""}${f && !wordsJob && ears ? approveBothHtml(ears, job) : ""}</div><div class="backHost"></div></div>
         <div class="ctl">${f && !wordsJob ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="quarterTurns" role="group" aria-label="Rotate text"><button class="btn ghost sm" data-a="turnLeft" title="Rotate text 90° counterclockwise" aria-label="Rotate text 90° counterclockwise">↶<span class="turnDeg"> +90°</span></button><button class="btn ghost sm" data-a="turnRight" title="Rotate text 90° clockwise" aria-label="Rotate text 90° clockwise">↷<span class="turnDeg"> −90°</span></button></span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
           <span class="rest"><button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its ${fw}">${faced ? `No ${fw} engraving` : "No engraving"} <b class="k">S</b></button></span></div>
         <div class="pvSide">
@@ -7916,8 +7946,9 @@ const LaserReview = window.LaserReview = (()=>{
       d.engraving[pid]=CharmNestEngraveFaces.combine(js.map(j=>({face:faceOf(j),needed:!['none','skipped'].includes(j.state),state:j.state,approved:['none','skipped','approved'].includes(j.state) || (j.state==='written' && !j.backSaving)})));
     }
     if(live?.dirty || live?.runHold || live?.saving || ['nesting','finishing'].includes(live?.status))d.dirty=true;
-    if(passDepth)(passProjected || (passProjected=new Map())).set(base,d);
-    return d;
+    const withReview=window.CharmNestReviewHold?.overlay?.(d) || d;   // an order of this sheet in Review holds it (charm-nest-review-hold.js: the cloud's record cannot know the Review)
+    if(passDepth)(passProjected || (passProjected=new Map())).set(base,withReview);
+    return withReview;
   }
   const sheet=s=>R.laserSheet(projected(s));
   const group=(st,sheets)=>{if(st.setId)sets.set(st.setId,st);return R.laserGroup(st,sheets.map(projected));};
@@ -8841,6 +8872,8 @@ const Sets = window.Sets = (() => {
     const sheetPools=new Set(sheets.flatMap(sh=>sh.charms.filter(c=>sh.placements.some(p=>p.id===c.id)).map(c=>c.poolId)));
     // A cancelled order is dropped from the set, not waited for: a piece of it that could not come off its sheet is cut with it and set aside
     if(Orders.rows().some(row=>row.state !== "gone" && (row.changePending || row.hold) && row.poolIds.some(id=>sheetPools.has(id))))throw pendingRelease("An order on this sheet changed or needs review");
+    // an order sent to Review that sits on a sheet of this set holds the whole set until it is resolved there (it stays on its sheet; the set goes on by itself afterwards)
+    for(const sh of sheets){const why=window.CharmNestReviewHold?.reasonFor?.(sh.sheetId);if(why)throw pendingRelease(why);}
     const physical=allSheets().map(sh=>({...sh,roseStockId:sh.roseStock?.id,id:sh.sheetId,poolIds:(sh.placements || []).map(p=>sh.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean),placedCount:sh.placements.length,outputs:sh.cloud || {},engraving:window.CharmNestReadiness.decisions(Orders.rows())}));
     const orderReadiness=window.CharmNestReadiness.orderReports(Orders.rows(),physical);
     const reports=physical.filter(sh=>sh.setId===set.setId).map(sh=>({...sh,orderReadiness}));
