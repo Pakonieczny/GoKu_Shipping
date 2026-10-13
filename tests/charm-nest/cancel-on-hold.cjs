@@ -290,6 +290,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(calls('cancelPut', B2).length, 1, 'one cancel for the order, not one a line');
     const flew = Math.max(0, ...s.s.map(x => x.ghosts.length)); assert.equal(flew, 1, 'the order flew as ONE card: ' + flew);
     const notes = new Set(s.s.flatMap(x => x.notes.filter(n => /Order 4174601820 cancelled/.test(n)))); assert.equal(notes.size, 1, 'one note: ' + [...notes]);
+    await page.waitForFunction(() => { const b = document.querySelector('#ordChips [data-pile="cancelled"] b'); return b && b.textContent === '2'; }, null, { timeout: 10000 }).catch(() => {});   // (the number rolls in over a moment; on a busy machine it has not finished by now)
     assert.equal(await chipN(page, 'cancelled'), '2', 'A (cancelled again) and this order'); assert.equal(st.doc('Charm_Nest_Cancelled', B2).lines.length, 2, 'the record keeps both lines');
     await shot(page, 'two-lines');
   });
