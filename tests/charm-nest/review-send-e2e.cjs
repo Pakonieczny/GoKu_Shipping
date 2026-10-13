@@ -360,6 +360,26 @@ async function scenario(mode) {
       ok(r && !r.error, 'laserDone is accepted once the review is resolved: ' + J(r));
     });
 
+    // ── a sheet that is already cut cannot be held: the button says so in one line, the review itself is still made ──
+    await step('12', 'REVHOLD+REVBTN', 'an order whose sheet is already cut is not sent to Review: the button says the sheet cannot be held in one line, and nothing is written', [], async () => {
+      await W.reboot(w);
+      const cutSh = await W.seedSheet(w, { id: 'sh-rs2', orders: ['variant'], n: 2, cut: true });
+      const rid = cR('variant');
+      await w.page.evaluate(() => { CN.setMode('orders'); Orders.render(); }); await W.settle(w.page, 400);
+      const can = await until(async () => { const c = await w.page.evaluate(rid => CharmNestReviewHold.canHold(rid), rid); return c && c.ok === false ? c : null; }, 6000);
+      ok(can && /already cut/i.test(can.why) && !/\n/.test(can.why), 'canHold says one line: the sheet is already cut (REVHOLD): ' + J(can));
+      const cutBefore = W.cutOf(w, cutSh), recBefore = W.sheetRecords(w, cutSh), mark = st.calls.length;
+      await w.page.click(`#ordItems [data-rid="${rid}"] .revSendBtn`);
+      const msg = await until(() => PAGE.msg(w, rid), 4000);
+      ok(msg && /already cut/i.test(msg) && /cannot be held|can.t be held/i.test(msg) && msg.split(/\n/).length === 1 && msg.length < 140, 'ONE plain line says it is already cut and cannot be held (REVBTN): ' + J(msg));
+      await W.settle(w.page, 1200);
+      ok(!(await PAGE.mark(w, rid)).is && !st.doc(P + 'Charm_Custom_Orders', rid + '_review'), 'nothing was marked (the button says so instead, as Paul asked), no record');
+      ok(!st.calls.slice(mark).some(c => c.op === 'reviewMarkPut'), 'no write: ' + J(st.calls.slice(mark).map(c => c.op)));
+      const hb = await PAGE.hold(w, cutSh.id);
+      ok(hb && !hb.held && !hb.by.length, 'the cut sheet is not held: ' + J(hb));
+      ok(J(W.cutOf(w, cutSh)) === J(cutBefore) && W.sheetRecords(w, cutSh) === recBefore, 'the cut sheet and its pieces are exactly as they were: ' + W.recordsDiff(recBefore, W.sheetRecords(w, cutSh)));
+    });
+
     // ── guards ──
     await step('0', 'SAFETY', 'nothing left the fake site and the page threw no error', [], async () => {
       ok(!w.foreign.length, 'a request left the loopback: ' + J(w.foreign.slice(0, 3)));
