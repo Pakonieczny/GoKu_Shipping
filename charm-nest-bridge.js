@@ -12507,7 +12507,10 @@ const Review = window.Review = (() => {
     } catch (_) { return null; }
   }
   /** The listing and the SKU each line of a card came with (a huggie set's "X (HUGGIE)"): on a listing whose variations each have a SKU, the others keep theirs; a huggie set with no SKU answers for the listing's huggie, never its necklace. */
-  const answerKeysOf = (it, rows) => new Map((rows || rowsOf(it)).map(x => { const from = x.spec && x.spec.boughtSku != null ? x.spec.boughtSku : String(x.line.sku || "").trim().toUpperCase(), hug = !from && !!(x.spec && x.spec.huggieSet); return [String(x.line.listingId) + "\u0000" + from + (hug ? "\u0000huggie" : ""), { lid: String(x.line.listingId), from, hug, title: x.line.title }]; }));
+  const answerKeysOf = (it, rows) => { const m = new Map();   // (REVLINK: `via` = which product of the listing each line is, for a line read under the SKU Etsy's inventory gave it: charm-nest-orders.js linkedSku)
+    for (const x of (rows || rowsOf(it))) { const from = x.spec && x.spec.boughtSku != null ? x.spec.boughtSku : String(x.line.sku || "").trim().toUpperCase(), hug = !from && !!(x.spec && x.spec.huggieSet), k = String(x.line.listingId) + "\u0000" + from + (hug ? "\u0000huggie" : ""), via = from && x.spec && x.spec.viaInventory ? O.linkViaKeys(x.line) : [];
+      const q = m.get(k) || { lid: String(x.line.listingId), from, hug, title: x.line.title, via: [] }; q.via = [...new Set(q.via.concat(via))]; m.set(k, q); }
+    return m; };
   /** REVLINK (Paul, 12 Oct 2026: a charm a person picks for a listing is remembered forever, in the sandbox too): the cloud writes a pick ONCE and READS IT BACK before it answers verified:true (aliasPut, optionMapPut);
    *  anything else is not a saved link, and the failure is the card's ("Could not save that"), never a toast that says "remembered". */
   const savedLink = r => { if (!r || r.verified !== true) throw new Error((r && r.error) || "the link was not read back from the cloud, so it is not counted as saved"); return r; };
@@ -12527,7 +12530,7 @@ const Review = window.Review = (() => {
     sku = String(sku || "").trim().toUpperCase(); if (!sku) return; const who = by(); if (!who) return;
     if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; }
     const lids = [...new Set((rows || rowsOf(it)).map(x => String(x.line.listingId)))];
-    for (const q of answerKeysOf(it, rows).values()) savedLink(await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, sku, fromSku: q.from || undefined, huggie: q.hug || undefined, by: who, title: q.title }));
+    for (const q of answerKeysOf(it, rows).values()) savedLink(await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, sku, fromSku: q.from || undefined, huggie: q.hug || undefined, via: q.via && q.via.length ? q.via : undefined, by: who, title: q.title }));
     answered(rows ? { kind: it.kind, rows } : it, "decided", `Use this charm: ${sku}`, { sku, from: p.sku || null }, who);
     await Orders.loadMaps(true); toast(`${p.sku || "No SKU"} → ${sku} remembered${lids.length > 1 ? ` on ${lids.length} listings` : ""}`, "ok");
     linkHolds(rows || rowsOf(it), sku); pickedMarks(rows || rowsOf(it), sku, who);
@@ -16752,11 +16755,13 @@ const OrderWin = window.OrderWin = (() => {
     // the surface starts in the colour of what was clicked and takes its own as it grows
     const tint = bgOf(from); if (tint) { const t = el("i", "owTint"); t.style.background = tint; d.appendChild(t); const a = run(t, [{ opacity: 1 }, { opacity: 0 }], { duration: 260, easing: "cubic-bezier(.4,0,.6,1)", fill: "forwards" }); if (a) a.finished.then(() => t.remove(), () => t.remove()); }
   }
-  async function shut() {
+  /** `into` (ENGANIM): an element on the page behind the view that it goes back into instead of the one it grew out of (the
+   *  Engraving tab's detail, drawn behind this view by EngraveLink before the view goes); the very same flight. */
+  async function shut(into) {
     await window.Seal?.whenIdle?.();
     const d = W.dlg; if (!d || !d.open || W.closing) return;
     W.closing = true; stopMotion(); sheetPause();
-    const from = still() ? null : origin(), r = rectOf(from), A = [];
+    const from = still() ? null : into && into.nodeType === 1 && rectOf(into) ? into : origin(), r = rectOf(from), A = [];
     giveBack(r ? 420 : still() ? 110 : 170);
     if (r) {
       d.classList.add("owBack");
@@ -16764,6 +16769,8 @@ const OrderWin = window.OrderWin = (() => {
       // (the clip alone: an opacity on the full-screen surface as well made every frame of the close a repaint)
       d.style.willChange = "clip-path";
       A.push(d.animate([{ clipPath: "inset(0px 0px 0px 0px round 0px)" }, { clipPath: clipOf(r) }], { duration: 420, easing: GROW, fill: "forwards" }));
+      // (into a card drawn behind the view (ENGANIM): the view's last 160 ms dissolve into it, so the card is not swapped in blank-to-full on the frame the view closes)
+      if (into && from === into) A.push(d.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, delay: 260, easing: "ease-in", fill: "forwards" }));
     } else A.push(d.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: still() ? "none" : "scale(.985)" }], { duration: still() ? 110 : 170, easing: "ease", fill: "forwards" }));
     W.anims.push(...A);
     // (a hidden tab draws no frames: the close never waits on them)
@@ -16994,7 +17001,7 @@ const OrderWin = window.OrderWin = (() => {
     show((opts.row && opts.row.key && rows.find(r => r.key === opts.row.key)) || ofPool(rows, opts.poolId) || rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId, pick: o.pick }); shown();
   }
   // (a repaint asked from outside, an image or a record arriving, waits for the view to land)
-  return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v),
+  return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: o => shut(o && o.into), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v),
     // the piece shown in the order window (Paul, 5 Oct, round 16: the "Its pieces" rows are the selector): selectPiece(key | null for all pieces) -> whether it is shown now
     selectPiece: k => selectPiece(k), selectedPiece: () => (W.pieces || []).length > 1 ? W.piece || null : null, selectedSide: () => (W.side && narrowSide()) ? W.side : null, repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed,
     // (read-only, for the checks: the pieces of the order on screen, each with the sheets it is on, and the one in focus)

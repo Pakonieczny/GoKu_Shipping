@@ -881,6 +881,32 @@
   }
   /** Is this SKU the listing's own: held by several products that differ in their options? */
   const listingWide = (table, sku) => !!table && Array.isArray(table.products) && table.products.filter(p => p && !p.d && upSku(p.sku) === sku).length > 1;
+  /* ── a person's pick remembers WHICH PRODUCT of the listing it was for (REVLINK, 13 Oct 2026) ────────────────────────────────────────────────
+     A pick for a variation whose SKU Etsy's inventory table gave (viaInventory) is saved under that SKU (aliases bySku[Y]); aliasPut ALSO records which product it was: byVia["P"+product id] and
+     byVia["O"+the option ids] = Y. A NEW order of that product, read by a page that does not hold Etsy's table (nobody has asked for it, or the copy is older than the page keeps), is then read as if
+     the table had given Y: the saved link stands over the shared SKU the transaction carries, with no Etsy call and no extra read (the alias documents are already loaded). Never a guess: a product no
+     link names is not read by another product's link. A line that names no product at all (no product id, no option ids, no option but a personalisation) is a listing of ONE product: when exactly one
+     link was ever saved for the listing, no listing-wide or huggie answer stands beside it, and the line has NO SKU of its own (a SKU of its own is a variation's: it is never given another's link), that link is its link. */
+  const linkViaKeys = line => {
+    const out = [], pid = idOf(line && (line.productId != null ? line.productId : line.product_id)), opts = line ? varIds(line).map(pairKey).sort().join("|") : "";
+    if (pid) out.push("P" + pid);
+    if (opts) out.push("O" + opts);
+    return out;
+  };
+  function linkedSku(line, a) {
+    if (!line || !a || typeof a !== "object") return "";
+    const bySku = a.bySku && typeof a.bySku === "object" ? a.bySku : null, keys = linkViaKeys(line);
+    if (keys.length) {   // the product is named: only a link that names the same product is its link
+      const via = a.byVia && typeof a.byVia === "object" ? a.byVia : null; if (!via || !bySku) return "";
+      for (const k of keys) { const y = upSku(via[k]); if (y && bySkuOf(bySku, y) !== undefined) return y; }
+      return "";
+    }
+    const named = (line.variations || []).some(v => { const nm = v && (v.name || v.formatted_name); return !!nm && !isPersonalisation(nm) && String(v.value != null ? v.value : v.formatted_value || "").trim() !== ""; });
+    const only = bySku ? [...new Set(Object.keys(bySku).map(upSku))] : [], tx = upSku(line.sku);
+    if (named || only.length !== 1 || a.sku || a.huggie || (a.pairBySku && Object.keys(a.pairBySku).length)) return "";
+    if (tx) return "";   // (a SKU of its own is a variation of its own: "Use this charm" is the variation's, another SKU of the listing is asked about, never given it)
+    return only[0] || "";
+  }
   /** Does the inventory tie this SKU to this value of its option: is it never given to a product with another value of the
    *  option? (v: the transaction's variation, with the ids Etsy gave it.) */
   function tiesToOption(table, v, sku) {
@@ -2859,6 +2885,12 @@
         } else { viaInventory = { tx, sku: listing.sku, by: listing.by }; line = Object.assign({}, line, { sku: listing.sku }); }
       }
     }
+    // REVLINK (13 Oct 2026): the table gave this line nothing (it is not loaded, or names no product of the line) but a person's pick was saved for this very product (byVia): the line is read under the SKU
+    // that pick is kept under, as the table would have given it; no Etsy call (linkedSku above)
+    if (!viaInventory && !heldFamily && !(listing && listing.sku)) {
+      const a1 = ctx.aliases && ctx.aliases[String(line.listingId)], y1 = a1 ? linkedSku(line, a1) : "";
+      if (y1 && y1 !== upSku(line.sku)) { viaInventory = { tx: upSku(line.sku), sku: y1, by: "link" }; line = Object.assign({}, line, { sku: y1 }); }
+    }
     // the SKU as bought: a charm-only listing's Huggie CHARM SET is its SKU's huggie design
     const set = huggieSet(line), bought = set ? huggieSku(line.sku, me) : upSku(line.sku);
     let { sku, source: skuSource } = resolveSku(set ? Object.assign({}, line, { sku: bought }) : line, ctx.aliases, me, ctx.noDesign, loose);
@@ -2877,7 +2909,9 @@
     } catch (_) { /* the guard never stops a line from being read */ }
     // the SKU of the variation bought, when it is a design's own and the inventory ties it to an option's value, is that
     // option's answer: the option is not asked, and no charm a person once picked for it stands over the SKU
-    const sold = viaInventory && viaInventory.etsy || upSku(line.sku), named = !!(sku && me && me(sku)), tied = v => named && tiesToOption(table, v, sold);
+    const sold = viaInventory && viaInventory.etsy || upSku(line.sku), named = !!(sku && me && me(sku)),
+      // REVLINK: a line read by a person's link for its product (viaInventory.by "link") has every option the product carries decided by that link: those options are not asked, as the table would have said
+      byLink = !!(viaInventory && viaInventory.by === "link" && skuSource === "alias" && sku), tied = v => (byLink && varIds({ variations: [v] }).length > 0) || (named && tiesToOption(table, v, sold));
     // an option that picks the charm (a person's answer for this listing) wins over the SKU the variations share
     // TAGSKU: a Mini Tag choice ("Charm Type: Tag3 (front + back)"): the tag number is the shape (the master's design for it), the words in the brackets the engraving. A person's saved answer, then the
     // option's own SKU (Etsy's table ties one to the value, or an indexed master family on the transaction), decide first; only a SKU the whole listing shares leaves the shape to this rule
@@ -3538,7 +3572,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY, earringNeverBackEngraves, EAR_NEVER_WHY,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,

@@ -248,14 +248,14 @@ async function main() {
     await page.evaluate(() => { Engrave.render = function () { __renders++; }; });
     c = await card(); check(c.red === 0, 'no red box "Its engraving is still to be settled" in the window, though the engraving is not settled');
     await page.click(await sel(backThumb));
-    await page.waitForFunction(() => !OrderWin.isOpen() && CN.S.mode === 'engrave', null, { timeout: 15000 });
+    await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open && CN.S.mode === 'engrave', null, { timeout: 15000 });
     const viaCard1 = await view(), vr = JSON.parse(viaCard1);
     check(vr.tab === 'place' && vr.focus === k.r && vr.chosen === true && vr.list === false && vr.q === B.rid, 'the card\'s Back picture: the Engraving tab is on piece 3\'s own placement card, the search box on the order: ' + viaCard1);
     check(await page.evaluate(() => document.querySelectorAll('dialog[open]').length) === 0, 'the order window is closed: no pop-up on a pop-up');
     await resetEngrave(); await open(k.r); await waitCard('approve');
     check((await card()).red === 0 && (await card()).state === 'approve' && (await winState()).view === 'info', 'back in the order window (opened again): the Overview and the card as they were');
     await page.click(await sel(backThumb));
-    await page.waitForFunction(() => !OrderWin.isOpen() && CN.S.mode === 'engrave', null, { timeout: 15000 });
+    await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open && CN.S.mode === 'engrave', null, { timeout: 15000 });
     const viaCard = await view();
     check(viaCard === viaCard1, 'the card\'s Back picture lands on exactly the same place again: ' + viaCard);
     await resetEngrave();
@@ -263,7 +263,7 @@ async function main() {
     await page.evaluate(() => { Engrave.render = window.__realRender; });
     await open(k.g); await waitCard('approved');
     await page.click(await sel(backThumb));
-    await page.waitForFunction(() => !OrderWin.isOpen() && CN.S.mode === 'engrave', null, { timeout: 15000 });
+    await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open && CN.S.mode === 'engrave', null, { timeout: 15000 });
     await page.waitForFunction(k => { const r = document.querySelector('#engraveView .doneRow.open'); return r && r.dataset.key === k; }, k.g, { timeout: 15000 }).catch(() => {});
     const dec = await page.evaluate(() => ({ v: JSON.parse(JSON.stringify(Engrave.view())), open: [...document.querySelectorAll('#engraveView .doneRow.open')].map(r => r.dataset.key), rows: [...document.querySelectorAll('#engraveView .doneRow')].map(r => r.dataset.key) }));
     check(dec.v.tab === 'done' && dec.v.q === B.rid && dec.open.length === 1 && dec.open[0] === k.g && dec.rows.every(r => r.startsWith(B.rid)), 'the approved piece: its Back picture opens its Decided row, only this order\'s rows listed: ' + JSON.stringify([dec.v.tab, dec.v.q, dec.open, dec.rows.length]));
@@ -312,7 +312,7 @@ async function main() {
     await page.click('.owTabsV [data-ow-view="info"]'); await settled();
     c = await card(); check(c.state === 'approved' && c.seals.length === 1, 'back on the Overview: still one seal');
     await page.click(await sel(backThumb));
-    await page.waitForFunction(() => !OrderWin.isOpen() && CN.S.mode === 'engrave', null, { timeout: 15000 });
+    await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open && CN.S.mode === 'engrave', null, { timeout: 15000 });
     await page.waitForFunction(k => { const r = document.querySelector('#engraveView .doneRow.open'); return r && r.dataset.key === k; }, k.r, { timeout: 15000 }).catch(() => {});
     const done3 = await page.evaluate(() => ({ tab: Engrave.view().tab, open: [...document.querySelectorAll('#engraveView .doneRow.open')].map(r => r.dataset.key), seals: document.querySelectorAll('#engraveView .doneRow.open .seal').length }));
     check(done3.tab === 'done' && done3.open.length === 1 && done3.open[0] === k.r, 'the Engraving tab shows it as Decided, its row opened: ' + JSON.stringify(done3));
@@ -475,7 +475,7 @@ async function main() {
     await page.waitForFunction(() => SheetWin.isOpen && SheetWin.isOpen() && document.querySelector('[data-r2=openOrd]'), null, { timeout: 25000 });
     await page.click('[data-r2=openOrd]'); await expectPiece('Sheet window → Open order (an approved piece)', key(R6, 0));
     await page.click(await sel(backThumb));
-    await page.waitForFunction(() => !OrderWin.isOpen() && CN.S.mode === 'engrave', null, { timeout: 15000 });
+    await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open && CN.S.mode === 'engrave', null, { timeout: 15000 });
     await page.waitForFunction(k => { const r = document.querySelector('#engraveView .doneRow.open'); return r && r.dataset.key === k; }, key(R6, 0), { timeout: 15000 }).catch(() => {});
     const e3 = await page.evaluate(() => ({ dialogs: document.querySelectorAll('dialog[open]').length, sheetWin: SheetWin.isOpen(), orderWin: OrderWin.isOpen(), tab: Engrave.view().tab, open: [...document.querySelectorAll('#engraveView .doneRow.open')].map(r => r.dataset.key) }));
     check(e3.dialogs === 0 && !e3.sheetWin && !e3.orderWin && e3.tab === 'done' && e3.open.length === 1 && e3.open[0] === key(R6, 0), 'Sheet window → Open order → the card\'s Back picture: no window is left over the Engraving tab, which has that piece\'s Decided row open: ' + JSON.stringify(e3));
@@ -615,7 +615,7 @@ async function main() {
     await open(k.r);
     await page.evaluate(() => { window.__EL = window.EngraveLink; delete window.EngraveLink; });
     await page.click(await sel(backThumb));
-    await page.waitForFunction(() => !OrderWin.isOpen() && CN.S.mode === 'engrave', null, { timeout: 15000 });
+    await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open && CN.S.mode === 'engrave', null, { timeout: 15000 });
     const noLink = await view();
     check(JSON.parse(noLink).tab === 'done', 'EngraveLink missing: the card\'s Back picture still takes the person to the Engraving tab (the approved piece\'s Decided tab): ' + noLink);
     await resetEngrave(); await page.evaluate(() => { window.EngraveLink = window.__EL; });

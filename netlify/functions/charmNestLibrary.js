@@ -3009,7 +3009,7 @@ async function op_aliasGet(b = {}) {
   own.forEach(d => {
     const mine = d.data(), was = out[d.id]; if (!was) { out[d.id] = mine; return; }
     const sharedLater = (ms(was.updatedAt) || 0) > (ms(mine.updatedAt) || 0), a = sharedLater ? mine : was, z = sharedLater ? was : mine;   // (z = the later write of the two)
-    const next = Object.assign({}, was, mine, was.bySku || mine.bySku ? { bySku: Object.assign({}, a.bySku, z.bySku) } : {}, was.pairBySku || mine.pairBySku ? { pairBySku: Object.assign({}, a.pairBySku, z.pairBySku) } : {});
+    const next = Object.assign({}, was, mine, was.bySku || mine.bySku ? { bySku: Object.assign({}, a.bySku, z.bySku) } : {}, was.pairBySku || mine.pairBySku ? { pairBySku: Object.assign({}, a.pairBySku, z.pairBySku) } : {}, was.byVia || mine.byVia ? { byVia: Object.assign({}, a.byVia, z.byVia) } : {});
     if (sharedLater) { for (const k of ["sku", "v", "huggie"]) { if (was[k] !== undefined) next[k] = was[k]; else if (k === "v" && was.sku !== undefined) delete next.v; } }
     out[d.id] = next;
   });
@@ -3044,12 +3044,16 @@ async function op_aliasPut(b) {
   const doc = { listingId: lid, by: str(b.by || "operator", 80), title: str(b.title, 200), updatedAt: FV.serverTimestamp() };
   const kind = from ? "bySku" : b.huggie === true ? "huggie" : "sku";
   if (from) doc.bySku = { [from]: sku }; else if (b.huggie === true) doc.huggie = sku; else { doc.sku = sku; doc.v = 2; }
+  // REVLINK (13 Oct 2026): which PRODUCT of the listing the pick was for ("P"+product id, "O"+option ids), kept as byVia[key] = fromSku, so a new order of that product is found without Etsy's table
+  // (charm-nest-orders.js linkedSku). Only beside a SKU answer (bySku) and only for keys of that shape; a map, never an array.
+  const viaKeys = from && Array.isArray(b.via) ? [...new Set(b.via.map(k => String(k || "").trim()).filter(k => /^[PO][0-9:|]{1,200}$/.test(k)))].slice(0, 4) : [];
+  if (viaKeys.length) doc.byVia = Object.fromEntries(viaKeys.map(k => [k, from]));
   // REVLINK (Paul, 12 Oct 2026): a person's pick is kept in the SHARED store in the sandbox too (Reset and Purge never reach it, production reads it), written once and read back
   // before it is called saved. Asked of the document just written, so the proof is the stored link itself, not the answer of the write.
   const ref = db.collection(ALIASES).doc(lid); await ref.set(doc, { merge: true });
   const back = (await ref.get()).data() || {}, got = kind === "bySku" ? (back.bySku || {})[from] : kind === "huggie" ? back.huggie : back.sku;
-  if (String(got || "").toUpperCase() !== sku) return { error: "the link was written but could not be read back, so it is not counted as saved: press the choice again", status: 500 };
-  return { ok: true, verified: true, kind, listingId: lid, key: from || null, sku };
+  if (String(got || "").toUpperCase() !== sku || viaKeys.some(k => String((back.byVia || {})[k] || "").toUpperCase() !== from)) return { error: "the link was written but could not be read back, so it is not counted as saved: press the choice again", status: 500 };
+  return Object.assign({ ok: true, verified: true, kind, listingId: lid, key: from || null, sku }, viaKeys.length ? { via: viaKeys } : {});
 }
 /* A listing's kind, as a person says it (charm-nest-orders.js addOnOf, 10 Oct 2026: "Huggie Charm + Shipping" is an add-on listing, every order of it a custom order).
    Kept on the listing's own document in the aliases map, Charm_Sku_Aliases/{listing id}.listingKind = { kind, by, at, title, note }, beside the SKU answers
