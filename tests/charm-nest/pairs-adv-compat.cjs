@@ -124,12 +124,17 @@ ok('a pair (groupSize 2) or counted discs (groupSize 3) still cannot be moved to
     assert.notEqual(cs[0].pendingMetal, 'silver', 'a group of ' + size + ' moved alone'); assert.ok(log.some(x => x[0] === 'toast'), 'and it says why');
   }
 });
-ok('a saved copy of a plain quantity-2 line stays on its top-up sheet when the other copy did not fit (keepOrdersWhole)', () => {
-  const { ctx } = sorter(); const a = ch('c1', 'o1', '4175364753_5219708940_1', 4175364753, 5219708940), b = ch('c2', 'o1', '4175364753_5219708940_2', 4175364753, 5219708940), o = ch('c3', 'o2', '4175370999_5219709999_1', 4175370999, 5219709999);
+// (NESTWHOLE, Paul 13 Oct 2026: "the priority should be to maintain all of the pieces for each given order on that one sheet": the copies of a plain quantity-N line are pieces of ONE order, so
+//  when a copy did not fit, the saved copy leaves the sheet with it and the order starts the next sheet whole. Where the page cannot tell the sheet's usable area (this stand-in has none) nothing new is lifted.)
+ok('a saved copy of a plain quantity-2 line leaves its top-up sheet with the other copy that did not fit, so the order is whole on the next sheet (keepOrdersWhole)', () => {
+  const { ctx } = sorter(); ctx.usableArea = () => 4000; const a = ch('c1', 'o1', '4175364753_5219708940_1', 4175364753, 5219708940), b = ch('c2', 'o1', '4175364753_5219708940_2', 4175364753, 5219708940), o = ch('c3', 'o2', '4175370999_5219709999_1', 4175370999, 5219709999);
   const byId = new Map([a, b, o].map(x => [x.id, x]));
   const sh = { metal: 'gold', placements: [{ id: 'c1' }, { id: 'c3' }], rejects: ['c2'], appendOnly: true, nestInitial: [{ id: 'c1' }, { id: 'c3' }], topup: { base: .7, tried: [] } };
   ctx.keepOrdersWhole(sh, byId);
-  assert.deepEqual(sh.placements.map(p => p.id), ['c1', 'c3'], 'saved copy lifted off: ' + JSON.stringify(sh.placements.map(p => p.id)));
+  assert.deepEqual(sh.placements.map(p => p.id), ['c3'], 'the saved copy leaves with the copy that missed: ' + JSON.stringify(sh.placements.map(p => p.id)));
+  assert.deepEqual(sh.rejects.slice().sort(), ['c1', 'c2'], 'both copies go on together'); assert.deepEqual(sh.nestInitial.map(p => p.id), ['c3'], 'the sheet no longer holds the lifted copy as a saved placement');
+  const bare = sorter(); const sh2 = { metal: 'gold', placements: [{ id: 'c1' }, { id: 'c3' }], rejects: ['c2'], appendOnly: true, nestInitial: [{ id: 'c1' }, { id: 'c3' }], topup: { base: .7, tried: [] } };
+  bare.ctx.keepOrdersWhole(sh2, byId); assert.deepEqual(sh2.placements.map(p => p.id), ['c1', 'c3'], 'a page that cannot tell the sheet\'s usable area keeps the saved copy, as before');
 });
 
 /* ── finding 3 (fixed): two stacked bars of different ink are not a Left / Right pair ───────────────────────────────────────────────────────── */

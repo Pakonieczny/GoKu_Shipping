@@ -21,6 +21,7 @@
  *   fitLinesOf(o, fontId) -> lines | null   the lines the job's own fit laid the words in (Ace: NAME over ONE) when o.text and the font are the job's own (that is what is cut); null once words or font were changed
  *   draftOf(o, fontId) -> draft | null   the work area's own DRAFT of the job (ENGWORK Engrave.draftOf: lines, centre, angle, size) when it is the words and font shown: a staged edit is drawn in the box with the
  *                                 same lines, place and size as in the big drawing; while that draft is still being made (its font is being read) the box asks again every 150 ms, at most 20 times
+ *   forget()                      lets go of the master drawings read and the placements made for lines with no job (a test; or after the library's drawings changed)
  *   fontStatus(fontId) 'idle'|'loading'|'ready'|'failed' · layoutOf(o) · CAP_PER_EM · linesOf
  *
  * o / partial
@@ -219,6 +220,34 @@
     if (!id && row && Array.isArray(row.poolIds) && row.poolIds.length) { const m = /^D(\d+)$/.exec(str(slot)); id = row.poolIds[m ? Math.min(+m[1] - 1, row.poolIds.length - 1) : 0]; }
     try { return id ? Pl.charmOf(id) || null : null; } catch (_) { return null; }
   }
+  /** The charm of a line that has NO pool item yet (held, waiting, never nested: Paul, 13 Oct, a held disc whose Back box showed the front art): the design's own master drawing, read the way the nester reads it
+   *  (Pool.masterCharm: one source per file, shared with everything else, cached by the page). One read per file, started by the first box that needs it; every box waiting for it paints again when it is
+   *  there. An earring pair, a mismatched pair, a set of designs or a line with no design of its own is not handled here (it keeps its own paths). */
+  const MASTER = new Map();   // aiPath -> { status: 'loading'|'ready'|'none', charm, at, subs }
+  function masterOf(row) {
+    try {
+      const Pl = root && root.Pool, M = root && root.Master, sp = row && row.spec;
+      const pr = sp && sp.pair;   // (spec.pair is always an object: a necklace disc says kind 'single'; only an earring pair, a mismatched pair or a set of designs is not ONE design's charm)
+      if (!Pl || typeof Pl.masterCharm !== 'function' || !M || typeof M.entryFor !== 'function' || !sp || sp.noDesign || sp.ownDesign || !sp.designSku || (pr && (pr.earring || pr.mismatched || pr.set || pr.legacy || (Array.isArray(pr.members) && pr.members.length > 1)))) return null;
+      const entry = M.entryFor(sp.designSku); if (!entry || entry.blocked) return null;
+      const g = typeof Pl.sizeEntry === 'function' ? Pl.sizeEntry(entry, sp.size) : entry, path = g && g.aiPath ? String(g.aiPath) : ''; if (!path) return null;
+      let e = MASTER.get(path);
+      if (e && e.status === 'none' && Date.now() - e.at > 60000) { MASTER.delete(path); e = null; }   // (a read that failed is tried again a minute later)
+      if (e) return e;
+      e = { status: 'loading', charm: null, at: Date.now(), subs: new Set() }; MASTER.set(path, e);
+      const cached = (() => { try { const src = typeof B !== 'undefined' && B.pool && B.pool.sources ? B.pool.sources.get(path) : null; return src && src.charms && src.charms[0] || null; } catch (_) { return null; } })();
+      if (cached) { e.charm = cached; e.status = 'ready'; return e; }
+      Promise.resolve().then(() => Pl.masterCharm(entry, sp.size)).then(src => { const c = src && src.charms && src.charms[0]; e.charm = c || null; e.status = c ? 'ready' : 'none'; }, () => { e.status = 'none'; })
+        .then(() => { e.at = Date.now(); const subs = [...e.subs]; e.subs.clear(); for (const f of subs) { try { f(); } catch (_) { /* its own */ } } });
+      return e;
+    } catch (_) { return null; }
+  }
+  /** The charm to draw for `o`: the piece's pool charm, else the master drawing of its design (when that has been read). */
+  function charmAny(o) {
+    const c = charmFor(o); if (c) return c;
+    const row = (o && o.row) || (o && o.job && o.job.row) || null, e = row ? masterOf(row) : null;
+    return e && e.status === 'ready' ? e.charm : null;
+  }
   /** A person's own typed angle for a design (the library's entry says "operator"): the back is turned that way, as backView is told by viewOptionsFor. */
   function operatorUp(row) {
     try { const M = root && root.Master, sku = row && row.spec && row.spec.designSku, e = M && M.entryFor && sku ? M.entryFor(sku) : null; return e && e.upSource === 'operator' && fin(+e.upAngle) ? +e.upAngle : null; } catch (_) { return null; }
@@ -228,7 +257,7 @@
   function frameFor(o) {
     o = o || {}; const job = o.job, face = job ? faceOfJob(job) : o.face === 'front' ? 'front' : 'back';
     if (job && job.view) { const f = frameOfView(job.view); if (f) return f; }
-    const charm = charmFor(o); if (!charm) return null;
+    const charm = charmAny(o); if (!charm) return null;
     const w = job && job.writtenFit, up = w && fin(+w.upAngle) ? +w.upAngle : (face === 'front' ? null : operatorUp(o.row || (job && job.row)));
     return frameOfCharm(charm, face, up);
   }
@@ -279,12 +308,112 @@
   }
 
   /** What `o` draws from: a caller's own drawing function; else the charm's frame (job view, or pool charm); else a saved picture; else the line's Vector design; else nothing. */
+  /* ── words with no fit to read (no job yet, or a job that is not fitted yet): placed by the page's own code, inside the engravable area ──────────────────────────────────────────────────
+   * Paul, 13 Oct: "the engraving chosen is not placed within the allowable engravable charm area just like in the engraving detailed modal". The detail modal draws the job's fit. With no job there is no
+   * fit, and the placement search of CharmNestEngraveFit.calculate takes seconds (it runs in a worker for that reason): not for a thumbnail. What runs here is the SAME geometry the fit uses, on the
+   * same pieces, in a few milliseconds: backView (the charm turned over), engraveMask (the area inside the cut line, eroded by the engraving margin, clear of the hole and the cut-outs: the engravable
+   * area), the largest empty rectangle of that mask as the centre, refitAt (the largest size that verifies at that centre), defaultSize (the shop's size rule: what is said decides how much of that
+   * is used) and reflowAt (the line breaks, every wrap tried at that size). Nothing is saved; the job's own fit, once there, replaces it. Deferred (one task at a time, never inside a paint) and kept
+   * per charm, face, font and words. */
+  const QF = new Map(), QBASE = new WeakMap(), CANDS = new WeakMap(), QUEUE = [];
+  let qBusy = false;
+  const cfg = () => { try { return (typeof S !== 'undefined' && S && S.settings) || {}; } catch (_) { return {}; } };
+  function quickRun(rec) {
+    const E = root && root.Engrave, G = GEO(), a = rec.args;
+    const fail = why => { rec.status = 'none'; rec.why = why; };
+    if (!E || !G || typeof E.fontSetFor !== 'function' || typeof G.reflowAt !== 'function') return fail('no fit code');
+    const set = E.fontSetFor(a.id);
+    if (!set || !set.Regular) {
+      if (rec.fontTry) return fail('font');
+      rec.fontTry = true; rec.status = 'loading';
+      const O = Orders(), load = a.id === (O && O.DEFAULT_FONT) ? E.loadFonts : E.loadFontSet;
+      if (typeof load !== 'function') return fail('font');
+      Promise.resolve().then(() => load.call(E, a.id)).catch(() => {}).then(() => { quickRun(rec); quickDone(rec); });
+      return 'wait';
+    }
+    const s = cfg(), MM = 25.4 / 72, font = set.Regular, opts = { minCapMm: +s.engraveMinCapMm || 1.6, maxHeightFrac: +s.engraveMaxHeightFrac || 0.4, lineGap: 0.216, minStrokeMm: +s.engraveMinStrokeMm || 0, minGapMm: +s.engraveMinGapMm || 0, measure: false };
+    let base = a.job && a.job.view && a.job.mask ? { view: a.job.view, mask: a.job.mask } : null;
+    if (!base) {
+      const per = QBASE.get(a.charm) || QBASE.set(a.charm, {}).get(a.charm);
+      if (!per[a.face]) {
+        try {
+          const M = root && root.Master, entry = (a.row && a.row.spec && M && M.entryFor ? M.entryFor(a.row.spec.designSku) : null) || {};
+          const view = G.backView(a.charm, G.viewOptionsFor({ charmUp: a.charm.upAngle, entry, ...(a.face === 'front' ? { face: 'front' } : {}) }));
+          const mask = G.engraveMask(view, { marginMm: +s.engraveMarginMm || 0.8, keepOut: (a.face === 'front' ? a.charm.frontKeepOut : a.charm.backKeepOut) || [] });
+          per[a.face] = { view, mask };
+        } catch (e) { return fail('view: ' + str(e && e.message)); }
+      }
+      base = per[a.face];
+    }
+    const mask = base.mask;
+    try {
+      if (!G.glyphCoverage(font, a.lines.join('\n')).ok) return fail('glyphs');
+      // the places to try, once per eroded mask (the words do not change them): the largest empty rectangle of the area at a few turns, as fitText finds them (a turn is searched on the mask turned the other way)
+      let cands = CANDS.get(mask);
+      if (!cands) {
+        cands = [];
+        for (const angle of [0, 15, -15, 45, -45, 90, -90]) {
+          const mA = angle ? G.rotateMask(mask, -angle) : mask, r = G.largestRectangles(mA, 1)[0]; if (!r) continue;
+          const cA = [(r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2];
+          cands.push({ angle, centre: angle ? G.ap(G.rotateAbout(mask.cx, mask.cy, angle), cA[0], cA[1]) : cA, hPt: r.hPt, wPt: r.wPt });
+        }
+        CANDS.set(mask, cands);
+      }
+      if (!cands.length) return fail('no area');
+      rec.rect = { centre: cands[0].centre, hPt: cands[0].hPt, wPt: cands[0].wPt };
+      // the page's own order of work (fitMultiline, then calculate): every way of breaking the lines is tried in turn, a turned placement is taken only when it is clearly larger (12 %, as fitText), a new
+      // line break only when it is clearly larger (5 %), the size is the shop's rule for how much there is to say, and the lines are laid again at that size and place (reflowAt)
+      const MMPT = 25.4 / 72, bw = a.charm.widthPt || (a.charm.bbox ? a.charm.bbox[2] - a.charm.bbox[0] : 0), bh = a.charm.heightPt || (a.charm.bbox ? a.charm.bbox[3] - a.charm.bbox[1] : 0);
+      const sizeOpts = { capPerEm: G.capPerEm(font), minCapMm: opts.minCapMm, charmMinMm: Math.min(bw, bh) * MMPT, charmMaxMm: Math.max(bw, bh) * MMPT, usableAreaMm2: G.area(mask) / (mask.res * mask.res) * MMPT * MMPT, advanceOf: t => font.getAdvanceWidth(t, 1, { kerning: true }) };
+      const variants = G.flowVariants(a.lines, font, 'auto'); if (!variants.length) return fail('no text');
+      const maxH = opts.maxHeightFrac * (mask.hPt || mask.h / mask.res), want0 = G.defaultSize(variants[0], maxH, sizeOpts);
+      const bestOf = ls => { let b0 = null, bR = null; for (const c of cands) { const f = G.refitAt(ls, font, mask, opts, { centre: c.centre, angle: c.angle, maxSize: want0 }); if (!f.ok) continue; if (c.angle === 0) b0 = f; else if (!bR || f.size > bR.size) bR = f; } return bR && (!b0 || (bR.size - b0.size) / b0.size >= 0.12) ? bR : b0; };
+      let first = null;
+      for (const v of variants) { const f = bestOf(v); if (f && (!first || f.size > first.size * 1.05)) first = Object.assign({ lines: v }, f); if (f && f.size >= want0 - 0.01) break; }
+      if (!first) return fail('no room');
+      const want = G.defaultSize(first.lines, first.size, sizeOpts);
+      const fit = G.reflowAt(a.lines, font, mask, opts, { centre: first.centre, angle: first.angle, size: want }, 'auto');
+      rec.fit = fit && fit.ok ? { lines: fit.lines.slice(), centre: fit.centre, angle: fit.angle || 0, size: fit.size } : { lines: a.lines.slice(), centre: first.centre, angle: first.angle, size: first.size };
+      rec.status = 'ready';
+    } catch (e) { return fail('fit: ' + str(e && e.message)); }
+    return 'done';
+  }
+  function quickDone(rec) { const subs = [...rec.subs]; rec.subs.clear(); for (const f of subs) { try { f(); } catch (_) { /* its own */ } } }
+  function quickPump() {
+    if (qBusy) return; qBusy = true;
+    const step = () => {
+      const rec = QUEUE.shift();
+      if (!rec) { qBusy = false; return; }
+      if (rec.subs.size === 0) { QF.delete(rec.key); } else { const r = quickRun(rec); if (r !== 'wait') quickDone(rec); }   // (nobody waits for it any more: words typed since, a box gone)
+      try { (root.setTimeout || setTimeout)(step, 0); } catch (_) { step(); }
+    };
+    try { (root.setTimeout || setTimeout)(step, 0); } catch (_) { step(); }
+  }
+  /** Lets go of what was read or placed for lines with no job (the master drawings read, the placements made): the next box reads and places again. For a test, or after the library's drawings changed. */
+  function forget() { MASTER.clear(); QF.clear(); QUEUE.length = 0; }
+  /** The placement of `lines` for this face when no job fit reads it: { status: 'loading'|'ready'|'none', fit: { lines, centre, angle, size }, rect } (fit in the frame of the face's view). Asked again after `sub`. */
+  function quickFit(o, id, lines, sub) {
+    const charm = charmAny(o); if (!charm || !lines.length) return null;
+    const job = o.job || null, face = job ? faceOfJob(job) : o.face === 'front' ? 'front' : 'back', row = o.row || (job && job.row) || null;
+    const key = ident(charm) + '|' + (job && job.view ? 'j' + ident(job.view) : '') + '|' + face + '|' + id + '|' + JSON.stringify(lines);
+    let rec = QF.get(key);
+    if (!rec) {
+      rec = { key, status: 'loading', fit: null, rect: null, subs: new Set(), args: { charm, job, face, row, id, lines } }; QF.set(key, rec); QUEUE.push(rec);
+      while (QF.size > 120) { const k = QF.keys().next().value; if (k === key) break; QF.delete(k); }
+      quickPump();
+    }
+    if (rec.status === 'loading' && sub) rec.subs.add(sub);
+    return rec;
+  }
   function sourceOf(o) {
     const face = o.face === 'front' ? 'front' : o.face === 'back' ? 'back' : '';
     if (typeof o.drawing === 'function') return { kind: 'fn', key: 'f' + ident(o.drawing) + '|' + ident(o.row) + '|' + face, flip: face === 'back' };
     const F = frameFor(o);
     if (F && artOf(F)) return { kind: 'frame', key: 'g' + ident(F), frame: F, flip: false };
     if (o.image) return { kind: 'png', key: 'p' + o.image, url: String(o.image), flip: false, baked: true };
+    const mrow = o.row || (o.job && o.job.row) || null, M = mrow ? masterOf(mrow) : null;
+    if (M && M.status === 'loading') return { kind: 'none', key: 'w', flip: false, waiting: true, entry: M };   // (the design's own drawing is being read: a small labelled wait, nothing wrong drawn meanwhile)
+    if (face === 'back') return { kind: 'none', key: 'n', flip: false };   // (the order window's Vector design is the FRONT as drawn: never on a Back box)
     const V = vectorOf(o.row);
     if (V && V.status !== 'none') return { kind: 'vec', key: 'v' + V.key + '|' + V.status, entry: V, flip: face === 'back' };
     return { kind: 'none', key: 'n', flip: false };
@@ -305,6 +434,8 @@
 .engpvSlot{position:absolute;transform-origin:50% 50%;box-sizing:border-box;border:1px dashed var(--ink45,#938c80);opacity:.7;pointer-events:none}
 .engpvWait{position:absolute;right:4px;bottom:3px;display:inline-flex;align-items:center;gap:5px;max-width:calc(100% - 8px);padding:1px 6px;border-radius:999px;background:var(--card,#fffefb);font:10px var(--sans,system-ui);color:var(--ink70,#5b554c);white-space:nowrap;overflow:hidden}
 .engpvWait[hidden]{display:none}
+.engpvWait[data-late]{opacity:0;animation:engpvLate 0s linear .45s forwards}
+@keyframes engpvLate{to{opacity:1}}
 .engpvSpin{width:9px;height:9px;flex:0 0 9px;border:2px solid var(--line,#e4ddd0);border-top-color:var(--ink70,#5b554c);border-radius:50%;animation:engpvSpin .7s linear infinite}
 .engpvWait[data-fail] .engpvSpin{display:none}
 @keyframes engpvSpin{to{transform:rotate(360deg)}}
@@ -353,24 +484,38 @@
       const o = st.opts, src = sourceOf(o), N = shell(el, st, src), id = idOf(o.fontId || fontIdOf(o.row, o.face, o.fontWord)), O = Orders();
       if (el.isConnected) st.seen = true;
       st.fontId = id;
-      if (src.kind === 'vec' && src.entry.status === 'loading') { if (!st.sub) st.sub = () => { if (el._engpv === st) paint(el); }; src.entry.subs.add(st.sub); }   // (painted again when the picture arrives)
+      if (src.entry && src.entry.status === 'loading') { if (!st.sub) st.sub = () => { if (el._engpv === st) paint(el); }; src.entry.subs.add(st.sub); }   // (painted again when the picture arrives)
       if (statusOf(id) === 'idle' || (statusOf(id) === 'failed' && Date.now() - (FONTS.get(id).at || 0) >= 30000)) ensure(id);
-      const status = statusOf(id), fs = FONTS.get(id), picWait = src.kind === 'vec' && src.entry.status === 'loading';
+      const status = statusOf(id), fs = FONTS.get(id), picWait = !!(src.entry && src.entry.status === 'loading');
       N.root.dataset.face = o.face === 'front' ? 'front' : o.face === 'back' ? 'back' : ''; N.root.dataset.font = status; N.root.dataset.fontId = id; N.root.dataset.pic = src.kind + (picWait ? ':loading' : '');
       if (src.flip) N.root.setAttribute('data-flip', '1'); else N.root.removeAttribute('data-flip');
-      N.wait.hidden = status === 'ready' && !picWait; if (status === 'failed') N.wait.setAttribute('data-fail', ''); else N.wait.removeAttribute('data-fail');
+      N.wait.hidden = status === 'ready' && !picWait; N.wait.removeAttribute('data-late'); if (status === 'failed') N.wait.setAttribute('data-fail', ''); else N.wait.removeAttribute('data-fail');
       const waitWord = status === 'failed' ? 'Font not available' : status !== 'ready' ? 'Loading font' : 'Loading charm';
       N.wait.setAttribute('aria-label', waitWord);
       N.wait.querySelector('.engpvWaitT').textContent = waitWord;
       if (status === 'failed' && fs && fs.error) N.wait.title = fs.error; else N.wait.removeAttribute('title');
+      if (src.waiting) { N.root.dataset.state = 'waiting'; N.slot.hidden = true; N.text.hidden = true; N.text.textContent = ''; N.root.dataset.size = ''; return; }   // (the design's own drawing is being read: no words on nothing)
       // where the words go: the position (merged key by key over the middle), the size from the picture box's height
       const dr = src.kind === 'frame' ? draftOf(o, id) : null, dp = dr ? placeOf(dr, src.frame.box) : null;   // (a staged edit: the work area's own draft, the same lines, place and size)
+      // no fit to read (no job yet, or one not fitted yet): the words are placed inside the engravable area by the page's own geometry (quickFit), never across the whole charm
+      const capsOf = l => (O && O.fontCaps && O.fontCaps(id) ? l.map(x => (O.capsText ? O.capsText(x, id) : x.toLocaleUpperCase('en-US'))) : l);
+      const typed = src.baked ? [] : capsOf(linesOf(o.text)), hasPos = !!(st.pos && fin(+st.pos.x) && fin(+st.pos.y));
+      let qf = null;
+      if (src.kind === 'frame' && !dr && typed.length && !hasPos) { if (!st.qsub) st.qsub = () => { if (el._engpv === st) paint(el); }; qf = quickFit(o, id, typed, st.qsub); }
+      if (st.qrec && st.qrec !== qf && st.qsub) st.qrec.subs.delete(st.qsub);
+      st.qrec = qf;
+      if (qf && qf.status === 'loading') {   // (a few milliseconds; a slow one shows a small labelled wait after a short while, nothing is drawn wrong meanwhile)
+        N.root.dataset.state = 'fitting'; N.slot.hidden = true; N.text.hidden = true; N.text.textContent = ''; N.root.dataset.size = '';
+        N.wait.hidden = false; N.wait.setAttribute('data-late', ''); N.wait.setAttribute('aria-label', 'Placing words'); N.wait.querySelector('.engpvWaitT').textContent = 'Placing words'; N.wait.removeAttribute('title');
+        return;
+      }
+      const qp = qf && qf.status === 'ready' ? placeOf(qf.fit, src.frame.box) : qf && qf.rect ? (() => { const L0 = layoutOf({ lines: typed, capPerEm: capPerEm(id) }), chars = Math.max(1, ...typed.map(l => l.length)), em = Math.min(L0.totalH ? qf.rect.hPt / L0.totalH : qf.rect.hPt, qf.rect.wPt / (0.6 * chars)); return placeOf({ centre: qf.rect.centre, size: em, angle: 0 }, src.frame.box); })() : null;
       if (st.retry) { try { clearTimeout(st.retry); } catch (_) { /* gone */ } st.retry = 0; }
       if (!st.again) st.tries = 0; st.again = false;   // (a paint a person's edit made starts the count again; one this timer made goes on)
       if (src.kind === 'frame' && st.tries < 20 && draftPending(o, id, dr)) { st.tries++; st.retry = setTimeout(() => { st.retry = 0; if (el._engpv === st && el.isConnected) { st.again = true; paint(el); } }, 150); }
-      const p = Object.assign({}, AUTO, st.pos || {}, dp || {}), size = num(o.size, NaN), em = !dp && Number.isFinite(size) && size > 0 && !(st.pos && Number.isFinite(+st.pos.size)) ? size : num(p.size, AUTO.size), angle = num(p.angle, 0);
+      const p = Object.assign({}, AUTO, st.pos || {}, dp || qp || {}), size = num(o.size, NaN), em = !dp && !qp && Number.isFinite(size) && size > 0 && !(st.pos && Number.isFinite(+st.pos.size)) ? size : num(p.size, AUTO.size), angle = num(p.angle, 0);
       const x = num(p.x, AUTO.x), y = num(p.y, AUTO.y);
-      let lines = src.baked ? [] : dr ? linesOf(dr.lines) : (fitLinesOf(o, id) || linesOf(o.text)); if (lines.length && O && O.fontCaps && O.fontCaps(id)) lines = lines.map(l => (O.capsText ? O.capsText(l, id) : l.toLocaleUpperCase('en-US')));
+      let lines = src.baked ? [] : dr ? linesOf(dr.lines) : qf && qf.status === 'ready' ? linesOf(qf.fit.lines) : (fitLinesOf(o, id) || linesOf(o.text)); if (lines.length) lines = capsOf(lines);
       N.root.dataset.state = src.baked ? 'baked' : lines.length ? 'ready' : 'empty';
       const pos = `left:${+(x * 100).toFixed(3)}%;top:${+(y * 100).toFixed(3)}%;`;
       if (src.baked) { N.slot.hidden = true; N.text.hidden = true; N.text.textContent = ''; N.root.dataset.size = ''; return; }   // (a saved picture has its words in it already)
@@ -441,5 +586,5 @@
     return { unlink() { for (const f of offs.splice(0)) f(); }, sync: go };
   }
 
-  return { render, update, ensure, ready, fontFamilyOf, fontIdOf, warm, link, positionOf, frameFor, fontStatus: statusOf, layoutOf, CAP_PER_EM, linesOf, fitLinesOf, draftOf };
+  return { render, update, ensure, ready, fontFamilyOf, fontIdOf, warm, link, positionOf, frameFor, fontStatus: statusOf, layoutOf, CAP_PER_EM, linesOf, fitLinesOf, draftOf, forget };
 });
