@@ -19,7 +19,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     const pool = order + '_1_1';
     (extra.liveLines ? liveLines : lines)[order + '_1'] = { orderId: order, state: 'written', quantity: 1, poolIds: [pool], ...(extra.needsBack ? { engrave: { needed: true, state: 'review', approved: false } } : extra.unsavedBack ? { engrave: { needed: true, state: 'written', approved: true } } : { engraveCandidate: false }) };
     const { needsBack, unsavedBack, noLabel, liveLines: _l, ...rest } = extra;
-    st.put(S, id, { id, runId: 'run-x', metal: 'gold', day, status: 'complete', placedCount: 1, charmCount: 1, density: .7, stock: { wIn: 6, hIn: 4.5 }, poolIds: [pool], orders: [order], verification: { ok: true }, ...(unsavedBack ? { backPool: [{ poolId: pool, sheetId: id, approvedAt: now, approvedBy: 'Paul' }] } : {}),
+    st.put(S, id, { id, runId: 'run-x', metal: 'gold', day, status: 'complete', releaseFull: true, placedCount: 1, charmCount: 1, density: .7, stock: { wIn: 6, hIn: 4.5 }, poolIds: [pool], orders: [order], verification: { ok: true }, ...(unsavedBack ? { backPool: [{ poolId: pool, sheetId: id, approvedAt: now, approvedBy: 'Paul' }] } : {}),
       outputs: { ai: { path: id + '.ai', url: srv.sorterOrigin + '/' + id + '.ai' }, preview: { path: id + '.png', url: image } },
       ...(noLabel ? {} : { label: { files: [{ path: id + '-qr.png', url: image, payload: order, orders: [order] }], orders: [order] } }), sheetIndex: 1, updatedAt: ts, createdAt: ts, ...rest });
     return order;

@@ -35,6 +35,25 @@
  *     out: the set forms with the sheets that can be in it, says plainly which partner sheet to add (cardinalWait, derived by the page, never saved), and cannot be
  *     approved for laser cutting until that sheet is in it (gate()).
  *
+ * PARTIAL SHEETS NEVER JOIN A SET (Paul, 13 Oct 2026, SETPART):
+ *   "A partial GF and SS sheet should never be part of a Set of sheets. That sheet should have been held back because it was not fully nested."
+ *   · "Fully nested" is the app's own notion above: a GF or SS sheet is COMPLETED (releaseFull, or laser cut) or it is PARTIAL (isPartial: still filling).
+ *     A partial sheet joins no set by any route: not the minimum rule, not the cardinal rule, not automatic assembly, not a person's drop. It stays a loose draft
+ *     ("GF Draft n"), never deleted. A set forms only from completed sheets (at least 1 completed GF + 1 completed SS); the next completed sheets form the next sets.
+ *   · The cardinal rule (sheets that share an order stay in one set) is read with it as ONE GROUP: the sheets that share orders are a group; the group is eligible
+ *     for a set only when no GF or SS sheet of it is partial (groupWait). A partial sheet that shares an order with completed sheets keeps the whole group waiting
+ *     outside any set (nothing is split, nothing is dissolved) until the partial one is completed. When a sheet of the group is in a set already, the completed
+ *     sheets of the group go on joining that set, the partial one waits outside it (the set says so and its Approve stays grey until it is full and in).
+ *   · A set that already holds a partial sheet (made before this rule) is not touched, rebuilt or dissolved: it is only FLAGGED (gate().partial, never blocking).
+ *     A person can still take such a sheet out of the set (the cardinal rule does not keep a partial sheet in a set).
+ *   · The sheet window's Make QR label (Release as it stands) is the person declaring a sheet finished: it writes releaseFull, so the sheet is Completed by the
+ *     definition above from then on. That is the only way a partial sheet becomes eligible; a drop never does it.
+ *   · 10K, 14K and Rose Gold sheets are not GF/SS sheets: they keep their own two conditions (green line cut or approved, back engraving approved) and are never "partial".
+ *   isPartial(sheet)           -> true for a GF or SS sheet that is not Completed (a sheet with no completion mark at all is still filling)
+ *   recordPartial(sheet)       -> the same for a stored record or Library row: only when it carries the completion mark (releaseFull), else unknown = false
+ *   partialLine(sheet)         -> "GF Draft 3 is not full yet (65% full)"            partialDetail: "A partial sheet never joins a set."
+ *   groupWait(sheets, inSet)   -> { ok, partial:[sheet], line } the group rule: ok only when no GF/SS sheet outside a set is partial
+ *
  * Pure: no cloud, no page state. window.CharmNestSetRules in pages; module.exports in node and netlify functions
  * (charmNestLibrary.js requires this file, like charm-nest-set-edit.js).
  *
@@ -118,15 +137,35 @@
     return Object.assign(validSet(after), { after });
   }
 
+  /* ── PARTIAL SHEETS (Paul, 13 Oct 2026): see the head of this file ─────────────────────────────────────────────────────────────────────────── */
+  const hasMark = sheet => !!sheet && typeof sheet === 'object' && Object.prototype.hasOwnProperty.call(sheet, 'releaseFull');
+  /** A GF or SS sheet that is not Completed. A page's sheet with no releaseFull yet is still filling. */
+  const isPartial = sheet => !!sheet && typeof sheet === 'object' && !sheet.archived && (metalClass(sheet) === 'GF' || metalClass(sheet) === 'SS') && !isCompleted(sheet);
+  /** The same for a stored record or Library row: unknown (false) when the record carries no completion mark at all, as gate() and the plan already read it. */
+  const recordPartial = sheet => isPartial(sheet) && hasMark(sheet);
+  const fillWords = sheet => Number.isFinite(+(sheet && sheet.density)) && +sheet.density > 0 ? ` (${Math.round((+sheet.density) * 100)}% full)` : '';
+  /** The one plain line for a partial sheet: "GF Draft 3 is not full yet (65% full)". */
+  const partialLine = sheet => `${describe(sheet)} is not full yet${fillWords(sheet)}`;
+  const partialDetail = 'A partial sheet never joins a set.';
+  const partialWhy = sheet => `${partialLine(sheet)}: a partial sheet never joins a set`;
+  /** The group rule: sheets that share an order are one group; it is eligible for a set only when no GF or SS sheet of it that is outside a set (inSet(sheet) says which are in one) is partial. */
+  function groupWait(sheets, inSet) {
+    const partial = list(sheets).filter(s => isPartial(s) && !(typeof inSet === 'function' && inSet(s)));
+    const names = partial.map(describe), one = names.length === 1;
+    return { ok: !partial.length, partial, line: partial.length ? `${names.join(' and ')} ${one ? 'is' : 'are'} not full yet, so the sheets that share an order with ${one ? 'it' : 'them'} wait outside any set until ${one ? 'it is' : 'they are'} full` : '' };
+  }
+
   /** What a sheet waiting outside a set is told ("" when nothing is missing). */
   const waitWords = missing => `Waits for a completed ${missing.join(' sheet and a completed ')} sheet: a set needs at least 1 completed GF sheet and 1 completed SS sheet`;
 
   /** Which sheets that want into a set (members: those already in it) may join now. The set after the join must be valid, or nobody joins. */
   function settle(members, wanting) {
-    const have = list(members).filter(Boolean), want = list(wanting).filter(Boolean);
+    const have = list(members).filter(Boolean), asked = list(wanting).filter(Boolean);
+    // (Paul, 13 Oct: a partial GF or SS sheet never joins a set by any route: it waits, with its one line, and the others are settled without it)
+    const want = asked.filter(w => !isPartial(w)), barred = asked.filter(isPartial).map(sheet => ({ sheet, why: partialWhy(sheet) }));
     const valid = validSet(have.concat(want.filter(w => !have.some(h => idOf(h) && idOf(h) === idOf(w)))));
-    if (valid.ok || !want.length) return { formed: valid.ok || have.length > 0, join: want, wait: [], valid };
-    return { formed: have.length > 0, join: [], wait: want.map(sheet => ({ sheet, why: waitWords(valid.missing) })), valid };
+    if (valid.ok || !want.length) return { formed: valid.ok || have.length > 0, join: want, wait: barred, valid };
+    return { formed: have.length > 0, join: [], wait: want.map(sheet => ({ sheet, why: waitWords(valid.missing) })).concat(barred), valid };
   }
 
   /* ── THE CLOSING RULE (Paul, 12 Oct 2026) ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -142,7 +181,13 @@
   const closed = members => CLOSING.afterFormation && validSet(list(members).filter(Boolean)).ok;
 
   /** The one plain line a set gives for partner sheets that cannot join yet: "orders shared with RG Draft 1: add that sheet to this set". */
-  const partnerWords = labels => { const l = list(labels).map(str).filter(Boolean); return `orders shared with ${l.join(' and ')}: add ${l.length > 1 ? 'those sheets' : 'that sheet'} to this set`; };
+  const partnerWords = (labels, partials) => {
+    const l = list(labels).map(str).filter(Boolean), p = list(partials).map(str).filter(x => l.includes(x)), add = l.filter(x => !p.includes(x));
+    if (!p.length) return `orders shared with ${l.join(' and ')}: add ${l.length > 1 ? 'those sheets' : 'that sheet'} to this set`;
+    // (Paul, 13 Oct: a partner that is not full yet cannot be added; it joins by itself once it is full)
+    const once = `once ${p.length > 1 ? 'they are' : 'it is'} full`;
+    return add.length ? `orders shared with ${l.join(' and ')}: add ${add.join(' and ')} to this set; ${p.join(' and ')} ${p.length > 1 ? 'join' : 'joins'} it ${once}` : `orders shared with ${p.join(' and ')}, which ${p.length > 1 ? 'are' : 'is'} not full yet: ${p.length > 1 ? 'they join' : 'it joins'} this set ${once}`;
+  };
 
   /** What a completed sheet that waits for the NEXT set is told when the newest set has formed already. */
   const nextSetWords = (setName, missing) => `${setName || 'The set'} has formed, so this sheet waits for the next set: ${waitWords(missing).replace(/^Waits for /, 'it needs ').replace(/: a set needs.*$/, '')} with it`;
@@ -154,7 +199,7 @@
     const have = list(lastMembers).filter(Boolean), want = list(free).filter(Boolean);
     if (hasLast && !closed(have)) { const s = settle(have, want); return { where: s.join.length ? 'last' : null, join: s.join, wait: s.wait, valid: s.valid, closed: false }; }
     const s = settle([], want);   // (no open set, or the newest has formed: a following set forms when THESE sheets meet the minimum on their own)
-    const wait = hasLast && s.wait.length ? s.wait.map(w => ({ sheet: w.sheet, why: nextSetWords(lastName, s.valid.missing) })) : s.wait;
+    const wait = hasLast && s.wait.length ? s.wait.map(w => isPartial(w.sheet) ? w : { sheet: w.sheet, why: nextSetWords(lastName, s.valid.missing) }) : s.wait;
     return { where: s.join.length ? 'new' : null, join: s.join, wait, valid: s.valid, closed: !!hasLast };
   }
 
@@ -169,19 +214,21 @@
   /** The principle read for an existing set and its sheets (see the head of this file). */
   function gate(set, sheets) {
     const members = list(sheets).filter(s => s && !s.archived);
-    const none = { applies: false, ok: true, missing: [], reason: '', short: '', line: '', have: { GF: 0, SS: 0 } };
+    // (Paul, 13 Oct) a set made before partial sheets were barred may hold one: it is FLAGGED here (labels, derived each time, never saved) and never blocked or touched by this
+    const flag = members.filter(recordPartial).map(describe);
+    const none = { applies: false, ok: true, missing: [], reason: '', short: '', line: '', have: { GF: 0, SS: 0 }, partial: flag };
     if (!enforcing || !members.length || exempt(set)) return none;
     // (Paul, 12 Oct) a set formed with the sheets that could join while a partner that shares its orders cannot yet (Rose Gold before its Cut Sheet press, a sheet still being
     //  saved): the page says which sheets (set.cardinalWait: derived from the sheets each time, never saved). Orders are never spread over two sets when a set advances.
-    const partners = list(set && set.cardinalWait).map(w => str(w && (w.label || w))).filter(Boolean);
-    const partnerGate = have => { const w = partnerWords(partners); return { applies: true, ok: false, missing: [], reason: `This set has ${w}.`, short: w, line: `Waiting: ${w}, so that orders are not spread over two sets.`, have, partners }; };
+    const partners = list(set && set.cardinalWait).map(w => str(w && (w.label || w))).filter(Boolean), notFull = list(set && set.cardinalWait).filter(w => w && w.partial).map(w => str(w.label || w));
+    const partnerGate = have => { const w = partnerWords(partners, notFull); return { applies: true, ok: false, missing: [], reason: `This set has ${w}.`, short: w, line: `Waiting: ${w}, so that orders are not spread over two sets.`, have, partners, partial: flag }; };
     if (!members.some(s => Object.prototype.hasOwnProperty.call(s, 'releaseFull'))) return partners.length ? partnerGate(none.have) : none;
     const v = validSet(members);
     if (v.ok) return partners.length ? partnerGate(v.have) : Object.assign({}, none, { applies: true, have: v.have });
     const need = `a completed ${v.missing.join(' sheet and a completed ')} sheet`;
     return { applies: true, ok: false, missing: v.missing, reason: v.reason, short: `needs ${need}`,
-      line: `Waiting for ${need}: a set needs at least 1 completed GF sheet and 1 completed SS sheet before it can go to laser cutting.`, have: v.have };
+      line: `Waiting for ${need}: a set needs at least 1 completed GF sheet and 1 completed SS sheet before it can go to laser cutting.`, have: v.have, partial: flag };
   }
 
-  return { isCompleted, metalClass, validSet, wouldStayValid, whyNotCompleted, describe, settle, gate, exempt, enforce, waitWords, form, closed, partnerWords, nextSetWords, CLOSING, CODE };
+  return { isCompleted, metalClass, validSet, wouldStayValid, whyNotCompleted, describe, settle, gate, exempt, enforce, waitWords, form, closed, partnerWords, nextSetWords, isPartial, recordPartial, partialLine, partialDetail, partialWhy, fillWords, groupWait, CLOSING, CODE };
 });

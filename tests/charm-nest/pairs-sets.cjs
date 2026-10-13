@@ -122,19 +122,19 @@ const id = (r, t, n) => `${r}_${t}_${n}`;
 
     // Set 1 (committed): the mismatched pair MIS on GF Sheet 1 (left, MITTENS 1) and GF Sheet 2 (right, MITTENS 2), the matching pair PAIR across Sheets 1 and 2, and a free sheet.
     mkSet('set-1', ['pg-1', 'pg-2', 'pg-3']);
-    mk('pg-1', 'gold', [id(MIS, MIS_T, 1), id(SINGLE, '3100000051', 1)], { setId: 'set-1', setSeq: 1, sheetIndex: 1, ...seal });
-    mk('pg-2', 'gold', [id(MIS, MIS_T, 2)], { setId: 'set-1', setSeq: 1, sheetIndex: 2, ...seal });
+    mk('pg-1', 'gold', [id(MIS, MIS_T, 1), id(SINGLE, '3100000051', 1)], { releaseFull: true, setId: 'set-1', setSeq: 1, sheetIndex: 1, ...seal });
+    mk('pg-2', 'gold', [id(MIS, MIS_T, 2)], { releaseFull: true, setId: 'set-1', setSeq: 1, sheetIndex: 2, ...seal });
     // Set 3 (committed): the matching pair PAIR on two sheets
     mkSet('set-3', ['mp-1', 'mp-2']);
-    mk('mp-1', 'gold', [id(PAIR, PAIR_T, 1)], { setId: 'set-3', setSeq: 3, sheetIndex: 1, ...seal }); mk('mp-2', 'gold', [id(PAIR, PAIR_T, 2)], { setId: 'set-3', setSeq: 3, sheetIndex: 2, ...seal });
+    mk('mp-1', 'gold', [id(PAIR, PAIR_T, 1)], { releaseFull: true, setId: 'set-3', setSeq: 3, sheetIndex: 1, ...seal }); mk('mp-2', 'gold', [id(PAIR, PAIR_T, 2)], { releaseFull: true, setId: 'set-3', setSeq: 3, sheetIndex: 2, ...seal });
     mkSet('set-5', ['op-1', 'op-2']);
-    mk('op-1', 'gold', [id(OLDP, OLDP_T, 1)], { setId: 'set-5', setSeq: 5, sheetIndex: 1, ...seal }); mk('op-2', 'gold', [id(OLDP, OLDP_T, 2)], { setId: 'set-5', setSeq: 5, sheetIndex: 2, ...seal });
-    mk('pg-3', 'gold', [id(PLAIN, '3100000061', 1)], { setId: 'set-1', setSeq: 1, sheetIndex: 3, ...seal });
-    mkSet('set-2', ['x-1'], { setId: 'set-2' }); mk('x-1', 'gold', [id('6100000090', '3100000090', 1)], { setId: 'set-2', setSeq: 2, sheetIndex: 1, ...seal });
+    mk('op-1', 'gold', [id(OLDP, OLDP_T, 1)], { releaseFull: true, setId: 'set-5', setSeq: 5, sheetIndex: 1, ...seal }); mk('op-2', 'gold', [id(OLDP, OLDP_T, 2)], { releaseFull: true, setId: 'set-5', setSeq: 5, sheetIndex: 2, ...seal });
+    mk('pg-3', 'gold', [id(PLAIN, '3100000061', 1)], { releaseFull: true, setId: 'set-1', setSeq: 1, sheetIndex: 3, ...seal });
+    mkSet('set-2', ['x-1'], { setId: 'set-2' }); mk('x-1', 'gold', [id('6100000090', '3100000090', 1)], { releaseFull: true, setId: 'set-2', setSeq: 2, sheetIndex: 1, ...seal });
     // a draft sheet holding the right earring of a second mismatched pair whose left earring is in Set 1
-    mk('pg-4', 'gold', [id(MIS2, MIS2_T, 1)], { setId: 'set-1', setSeq: 1, sheetIndex: 4, ...seal });
+    mk('pg-4', 'gold', [id(MIS2, MIS2_T, 1)], { releaseFull: true, setId: 'set-1', setSeq: 1, sheetIndex: 4, ...seal });
     st.put(S, 'pg-4', { ...st.doc(S, 'pg-4') });
-    mk('dr-1', 'gold', [id(MIS2, MIS2_T, 2)]);
+    mk('dr-1', 'gold', [id(MIS2, MIS2_T, 2)], { releaseFull: true });
     st.doc(SET, 'set-1').sheetIds.push('pg-4'); st.doc(SET, 'set-1').labelFiles.push(file('pg-4', 'set-1'));
     pool(id(MIS, MIS_T, 1), 'L', 'MISMATCHED_7134'); pool(id(MIS, MIS_T, 2), 'R', 'MISMATCHED_7134', { bodyIndex: 1 });
     pool(id(PAIR, PAIR_T, 1), 'L', 'MITTENS_1'); pool(id(PAIR, PAIR_T, 2), 'R', 'MITTENS_1');     // a matching pair: a Left and a Right piece of ONE body

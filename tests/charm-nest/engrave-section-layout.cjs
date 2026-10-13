@@ -9,7 +9,7 @@
 //   3 one piece or two: the cards keep their third-of-the-row width, left-aligned (never stretched)
 //   4 an order with nothing to engrave: no title, no line, no room
 //   5 the old tall left-column card is gone (nothing of the section is in the picture column); the chip cards still hang over the section's cards
-//   6 the section does not follow the piece switcher: picking a piece leaves every card where it is
+//   6 the section follows the piece switcher: picking a piece shows its card alone, Show all brings every card back where it was
 // It does NOT prove the cards' own look (ENGCARD's) nor the strict whole-card-above-the-fold rule (ENGNOSCROLL's test): the card's bottom edge is printed, not asserted.
 const path = require('path'), assert = require('assert/strict');
 const W = require('./_orderFactsWorld.cjs');
@@ -120,15 +120,17 @@ async function main() {
       ok(`${at} · 5a the old tall left-column card is gone: nothing engraving-like in the picture column`, true);
       if (shots) await page.screenshot({ path: path.join(shots, `ENGSEC-three-${at}.png`) });
 
-      /* the section does not follow the piece switcher */
+      /* the section FOLLOWS the piece switcher (ENGSEL, Paul 13 Oct 2026: "if I select a certain piece, then the back engraving should reflect the selected piece"): one piece picked = its card alone, at the left; Show all = every card again, where they were */
       const keys = await page.evaluate(() => [...document.querySelectorAll('#owPcSum .owPcRow[data-piece]')].map(r => r.dataset.piece));
       if (keys.length >= 3) {
         const before = (await look(page)).cells.map(c => Math.round(c.l)).join();
         await page.evaluate(k => OrderWin.selectPiece(k), keys[1]); await page.waitForTimeout(500); await idle(page);
         const after = await look(page);
-        assert.equal(after.cells.length, 3, `${at}: still three cards after picking a piece`); assert.equal(after.cells.map(c => Math.round(c.l)).join(), before, `${at}: the cards stay where they were`);
-        await page.evaluate(() => OrderWin.selectPiece(null)); await page.waitForTimeout(300);
-        ok(`${at} · 6 picking one piece on the list leaves all three cards where they are`, true);
+        assert.equal(after.cells.length, 1, `${at}: one card after picking a piece`); assert(near(after.cells[0].l, after.grid.l, 1), `${at}: the one card stands at the left of the grid`);
+        await page.evaluate(() => OrderWin.selectPiece(null)); await page.waitForTimeout(500); await idle(page);
+        const back = await look(page);
+        assert.equal(back.cells.length, 3, `${at}: Show all brings all three cards back`); assert.equal(back.cells.map(c => Math.round(c.l)).join(), before, `${at}: the cards are where they were`);
+        ok(`${at} · 6 picking one piece on the list shows its card alone; Show all brings all three back where they were`, true);
       }
 
       /* a chip's card hangs over the section's cards, not under them */
