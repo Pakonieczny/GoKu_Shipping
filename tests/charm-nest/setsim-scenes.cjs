@@ -1,6 +1,6 @@
 /* SETSIM scenes: a handful of small, explicit situations from Paul's 13 Oct 2026 request, each run through the sorter's own feed / intake / keep-whole / overflow / gap-fill
  * code (the same slices setsim-run.cjs uses) around the real solver, on FAKE orders only (order ids made up here, no buyer, no Etsy, no Firestore, no paid call).
- *   node tests/charm-nest/setsim-scenes.cjs [--root DIR] [--only late,queue,pair,lines,chain] [--metal gold|silver|rose] [--sheet 60x40] [--step 60] [--measure] [--json F]
+ *   node tests/charm-nest/setsim-scenes.cjs [--root DIR] [--only late,queue,queue2,pair,lines,chain] [--metal gold|silver|rose] [--sheet 60x40] [--step 60] [--measure] [--json F]
  * A scene is red (exit 1, the exact case printed) when an order's pieces end on two sheets, a piece is lost or waits to the end, or a multi-piece order
  * that cannot fit a nearly full sheet takes room that small single-charm orders could have filled.  --measure prints the same without failing.
  * Scenes:
@@ -8,6 +8,7 @@
  *           The WHOLE order must be on one sheet at the end (the pair moves with the discs, or the discs stay: never one on each).
  *   queue   an OPEN sheet about 65% full; one update brings a 5-disc necklace (cannot fit whole) and then three tiny single-charm orders.
  *           The necklace goes whole to one sheet; the tiny singles fill the first sheet's gaps; nothing is lost and nothing waits to the end.
+ *   queue2  as queue, with three older necklaces ahead of four tiny singles in one update: the singles still take the gaps, and the necklaces spend none of the sheet's 35 tries.
  *   pair    an OPEN sheet about 68% full; an earring pair of which one piece fits the gap and two do not.  Both pieces on one sheet.
  *   lines   an order of three lines (a pair, 3 copies of one charm, a single), all one metal, arrives in one update on a half-full sheet: one sheet.
  *   chain   three orders of 4-5 pieces on three consecutive updates onto a sheet about 60% full, then singles: each order whole, none lost, waits small.
@@ -20,7 +21,7 @@ const { orderOf, partOf, piecesOf, Sim, fillOf, L } = Lib;
 
 const argv = process.argv.slice(2), opt = (k, d) => { const i = argv.indexOf('--' + k); return i >= 0 ? argv[i + 1] : d; };
 const root = path.resolve(opt('root') || Lib.REPO), step = +opt('step', 60), sheet = opt('sheet', '60x40'), measure = argv.includes('--measure');
-const only = String(opt('only', 'late,queue,pair,lines,chain')).split(',').filter(Boolean), metal = opt('metal', 'gold');
+const only = String(opt('only', 'late,queue,queue2,pair,lines,chain')).split(',').filter(Boolean), metal = opt('metal', 'gold');
 const S = L.solverOf(root);
 
 let nextId = 0;
@@ -115,6 +116,20 @@ const SCENES = {
     sc.expect(tinyOn1 >= 1, `GAPS NOT FILLED: the necklace (5 discs, cannot fit sheet 1 whole) was held back, but none of the 3 tiny single-charm orders took sheet 1's gaps (${T.map(o => where(sc, o)).join('; ')})`);
     sc.expect((sc.done.get(N.id) || 99) - sc.arrived.get(N.id) <= 2, `the necklace waited ${(sc.done.get(N.id) || 99) - sc.arrived.get(N.id)} updates`);
     return sc.report({ order: where(sc, N), tinyOnSheet1: tinyOn1, sheet1Before: +before.toFixed(3), sheet1After: +after.toFixed(3) });
+  },
+  async queue2() {
+    // three older necklaces that cannot fit the gap, then four tiny single-charm orders, all in one update, on an open sheet that is about 60% full
+    const sc = new Scene('queue2');
+    await sc.fillTo(.52, .70); precond(sc, `sheet 1 should be open and about 60% full: it is ${Math.round(100 * sc.setup.fill)}%${sc.setup.closed ? ' and released' : ''}`, sc.setup.inRange && !sc.setup.closed);
+    const before = sc.fill(1), f = bigScale(sc, 1, 5, 8, 1.3);
+    const N = [0, 1, 2].map(i => mk(oid(), 700 + i, [{ kind: 'discs', k: 5, idx: [8, 10, 12][i], f }])), T = [0, 1, 0, 1].map((idx, i) => mk(oid(), 710 + i, [{ kind: 'single', idx, f: 1 }]));
+    await sc.bring(...N, ...T); await sc.idle(3);
+    const tinyOn1 = T.filter(o => sc.where(o).pages.has(1)).length, after = sc.fill(1), tp = sc.pages[0].topup, tried = tp ? (tp.tried || []).map(String) : null;
+    sc.notes.push(`necklaces: ${N.map(o => where(sc, o)).join(' | ')}; tiny singles on sheet 1: ${tinyOn1} of 4; sheet 1 ${Math.round(100 * before)}% -> ${Math.round(100 * after)}%${tried ? '; orders that have tried sheet 1: ' + tried.length + ' (necklaces among them: ' + N.filter(o => tried.includes(o.id)).length + (tp.passed ? ', turned away: ' + tp.passed.length : '') + ')' : ''}`);
+    for (const o of [...N, ...T]) { const w = sc.where(o); sc.expect(w.unplaced === 0, `a piece of ${label(sc, o)} was never placed: ${where(sc, o)}`); sc.expect(w.pages.size <= 1, `ORDER SPLIT: ${where(sc, o)}`); }
+    sc.expect(tinyOn1 >= 2, `GAPS NOT FILLED: only ${tinyOn1} of 4 tiny single-charm orders took sheet 1's gaps while three necklaces that cannot fit were ahead of them`);
+    if (tp && !tp.closedAt) sc.expect(N.every(o => !tried.includes(o.id)), `TRIES SPENT: ${N.filter(o => tried.includes(o.id)).length} of 3 necklaces that cannot fit counted as one of the 35 tries of sheet 1`);
+    return sc.report({ tinyOnSheet1: tinyOn1, sheet1Before: +before.toFixed(3), sheet1After: +after.toFixed(3) });
   },
   async pair() {
     const sc = new Scene('pair');

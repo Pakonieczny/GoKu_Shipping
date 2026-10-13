@@ -18,32 +18,34 @@ async function run(o = {}) {
   const stream = makeStream(S, { seed, orders, mix: Object.assign({}, o.mix, o.late ? { late: +o.late } : {}) }), world = setWorld(root);
   const log = o.quiet ? () => {} : (...a) => console.log(...a);
   const byId = new Map(stream.map(x => [x.id, x]));
-  const arrival = new Map(), done = new Map(), firstSeen = new Map(), t00 = Date.now(), ticks = [];
+  const arrival = new Map(), lastArrival = new Map(), done = new Map(), firstSeen = new Map(), t00 = Date.now(), ticks = [];
   const everPartialInSet = new Set(), everInSet = new Set();
   let tick = 0;
+  const mine = o => piecesOf(o).filter(c => metals.includes(c.metal));   // (an order's pieces of the metals this run nests; an order of 10K or 14K only is not on any sheet here)
   const placedIds = () => new Set(sim.pages.flatMap(p => p.placements.map(q => q.id)));
   const plan = schedule(stream, batches, +o.drain || 0);
   const tickOnce = async ev => {
     tick = ev.tick; const t0 = Date.now();
     for (const x of ev.orders) arrival.set(x.id, tick);
+    for (const a of ev.arrivals) lastArrival.set(a.order.id, tick);   // (the update the order's LAST line came in)
     for (const m of metals) { const parts = ev.arrivals.map(a => partOf(a.order, m, a.lines)).filter(Boolean); if (parts.length || (sim.metals[m] && sim.metals[m].work.length)) await sim.metal(m).step(parts, tick); }
     // where every order's pieces are now: an order is placed when each piece is on a sheet
     const placed = placedIds();
-    for (const [id, at] of arrival) if (!done.has(id) && piecesOf(byId.get(id)).every(c => placed.has(c.id))) done.set(id, tick);
+    for (const [id, at] of arrival) if (!done.has(id) && mine(byId.get(id)).length && mine(byId.get(id)).every(c => placed.has(c.id))) done.set(id, tick);
     world.sync(sim.pages); await world.assemble();
     const sets = world.sets(), pg = world.gatePages();
     const inSet = pg.filter(p => !p.draft && p.setId);
     const partial = inSet.filter(p => ['gold', 'silver'].includes(p.metal) && !world.SR.isCompleted(p));
     inSet.forEach(p => everInSet.add(p.sheetId)); partial.forEach(p => everPartialInSet.add(p.sheetId));
     ticks.push({ tick, orders: ev.orders.length, sheets: sim.pages.filter(p => p.placements.length).length, sets: sets.length, partialInSets: partial.length, ms: Date.now() - t0 });
-    log(`t${String(tick).padStart(3)} +${ev.orders.length} sheets ${ticks.at(-1).sheets} (done ${[...sim.pages].filter(p => p.releaseFull).length}) sets ${sets.length} partial-in-sets ${partial.length} unplaced-orders ${[...arrival.keys()].filter(id => !done.has(id)).length} ${Math.round((Date.now() - t0) / 1000)}s`);
+    log(`t${String(tick).padStart(3)} +${ev.orders.length} sheets ${ticks.at(-1).sheets} (done ${[...sim.pages].filter(p => p.releaseFull).length}) sets ${sets.length} partial-in-sets ${partial.length} unplaced-orders ${[...arrival.keys()].filter(id => mine(byId.get(id)).length && !done.has(id)).length} ${Math.round((Date.now() - t0) / 1000)}s`);
   };
   for (const ev of plan) await tickOnce(ev);
 
   /* ── the measures ── */
-  const pl = placementOf(sim, stream), pg = world.gatePages(), sets = world.sets();
-  const waits = stream.filter(x => done.has(x.id)).map(x => done.get(x.id) - arrival.get(x.id));
-  const queued = stream.filter(x => done.has(x.id) && done.get(x.id) > arrival.get(x.id)), neverDone = stream.filter(x => arrival.has(x.id) && !done.has(x.id));
+  const pl = placementOf(sim, stream, metals), pg = world.gatePages(), sets = world.sets();
+  const nested = stream.filter(x => mine(x).length), waits = nested.filter(x => done.has(x.id)).map(x => done.get(x.id) - arrival.get(x.id));
+  const queued = nested.filter(x => done.has(x.id) && done.get(x.id) > arrival.get(x.id)), neverDone = nested.filter(x => arrival.has(x.id) && !done.has(x.id));
   const sheetRows = sim.pages.filter(p => p.placements.length).map(p => {
     const full = fillOf(p), closed = !!p.releaseFull, f = ['gold', 'silver', 'rose'].includes(p.metal) && p.placements.length ? frontOf(S, sim.metal(p.metal).stock, p) : null;
     return { metal: p.metal, label: `${CODE[p.metal]} ${p.page}`, page: p.page, placed: p.placements.length, orders: new Set(p.placements.map(q => (p.charms.find(c => c.id === q.id) || {}).order)).size, fill: r1(full, 3), closed, ...(f || {}) };
@@ -61,14 +63,14 @@ async function run(o = {}) {
   const partialIn = inSetPages.filter(p => ['gold', 'silver'].includes(p.metal) && !world.SR.isCompleted(p));
   const out = {
     label, root: root === path.resolve(Lib.REPO) ? 'repo' : root, commit: gitHead(root), seed, orders, step, batches: batches.join(','), metals, ticks: tick, wallS: Math.round((Date.now() - t00) / 1000),
-    pieces: stream.reduce((n, x) => n + piecesOf(x).length, 0), ordersMultiPiece: pl.ordersMultiPiece, ordersCrossMetal: pl.spreadMetals, pairsSplit: pl.pairsSplit,
+    ordersAll: stream.length, orders: stream.filter(x => mine(x).length).length, pieces: stream.reduce((n, x) => n + mine(x).length, 0), piecesAll: stream.reduce((n, x) => n + piecesOf(x).length, 0), nested: 'metals counted: ' + metals.join(','), ordersMultiPiece: pl.ordersMultiPiece, ordersCrossMetal: pl.spreadMetals, pairsSplit: pl.pairsSplit,
     split: { sameMetal: pl.splitSameMetal.length, list: pl.splitSameMetal.slice(0, 40) },
     sheets: { total: sheetRows.length, completed: sheetRows.filter(r => r.closed).length, gfss: gs.length, gfssCompleted: gsClosed.length },
     density: { gfssClosed: r1(mean(gsClosed.map(r => r.fill)), 3), gfssAll: r1(mean(gs.map(r => r.fill)), 3), byMetal },
     front: { frontStd: r1(mean(gsClosed.filter(r => r.frontStd != null).map(r => r.frontStd)), 2), cavernMm: r1(mean(gsClosed.filter(r => r.cavernMm != null).map(r => r.cavernMm)), 1) },
     sets: { formed: sets.length, partialGfssInSets: partialIn.length, everPartialGfssInSets: everPartialInSet.size, sheetsInSets: inSetPages.length, everInSets: everInSet.size, completedWaitingOutside: pg.filter(p => p.draft && ['gold', 'silver'].includes(p.metal) && world.SR.isCompleted(p)).length,
       invalid: setRows.filter(s => { const v = world.SR.validSet(s.sheets.map(x => pg.find(p => p.sheetId === x.id)).filter(Boolean)); return !v.ok; }).length, list: setRows },
-    queue: { passedOrders: new Set(sim.ctl.passes.flatMap(x => x.orders)).size, passes: sim.ctl.passes.length, maxHops: Math.max(0, ...[...sim.ctl.passes.flatMap(x => x.orders).reduce((m, id) => m.set(id, (m.get(id) || 0) + 1), new Map()).values()]), ordersQueued: queued.length, meanWaitTicks: r1(mean(waits), 2), maxWaitTicks: waits.length ? Math.max(...waits) : 0, neverPlaced: neverDone.length, neverPlacedList: neverDone.slice(0, 20).map(x => ({ order: x.id, pieces: piecesOf(x).length, arrivedTick: arrival.get(x.id) })), unplacedAtEnd: pl.unplaced.length },
+    queue: { passedOrders: new Set(sim.ctl.passes.flatMap(x => x.orders)).size, passes: sim.ctl.passes.length, maxHops: Math.max(0, ...[...sim.ctl.passes.flatMap(x => x.orders).reduce((m, id) => m.set(id, (m.get(id) || 0) + 1), new Map()).values()]), ordersQueued: queued.length, meanWaitTicks: r1(mean(waits), 2), maxWaitTicks: waits.length ? Math.max(...waits) : 0, meanWaitFromLastLine: r1(mean(nested.filter(x => done.has(x.id)).map(x => done.get(x.id) - (lastArrival.get(x.id) || arrival.get(x.id)))), 2), maxWaitFromLastLine: Math.max(0, ...nested.filter(x => done.has(x.id)).map(x => done.get(x.id) - (lastArrival.get(x.id) || arrival.get(x.id)))), queuedFromLastLine: nested.filter(x => done.has(x.id) && done.get(x.id) > (lastArrival.get(x.id) || arrival.get(x.id))).length, neverPlaced: neverDone.length, neverPlacedList: neverDone.slice(0, 20).map(x => ({ order: x.id, pieces: piecesOf(x).length, arrivedTick: arrival.get(x.id) })), unplacedAtEnd: pl.unplaced.length },
     searches: Object.fromEntries(metals.map(m => [m, sim.metals[m] ? { n: sim.metals[m].searches.length, ms: sim.metals[m].ms } : null])),
     sheetRows,
   };

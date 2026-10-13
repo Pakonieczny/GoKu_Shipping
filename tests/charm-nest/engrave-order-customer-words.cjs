@@ -1,6 +1,6 @@
 // ENGMSG (engrave-ui-1012 round 2b, Paul point 1): "Also in the detailed order modal I don't see the customers message for the back engraving."
 // The order window's Engraving section shows, directly under its cards, ONE quiet block of the customer's own words for the engraving (charm-nest-order-engraving.js, .engSaid):
-// the personalisation box, the buyer's message, the staff note, the engraving choices among their options (front / back, the font) and, only when the piece has BOTH faces, which words are on which face.
+// the personalisation box, the buyer's message, the staff note and, only when the piece has BOTH faces, which words are on which face. ENGOPT (Paul 13 Oct 2026: "Do not show the Options text in this view"): never an "Options" line here (the Engrave tab's box keeps it).
 // This test builds the REAL page over the REAL-drawing world (tests/charm-nest/_engraveRealWorld.cjs: real .ai drawings, real intake / pool / classifier / fit, offline fake site, no Etsy, no paid AI, nothing real written)
 // and opens the order window of: back only (words in the personalisation box), back only (words only in the buyer's message), front only, front + back labelled ("front - W / back - Name One").
 // Then, on the same page and the same real cards: a staff note, HTML in a note (text only), a live change inside the 1 s tick, and a customer who wrote and chose nothing (the block is gone, the cards stay).
@@ -71,8 +71,8 @@ const settle = (w, ms) => R.settle(w.page, ms || 500);
     ok(!p.faces.length, 'one face: no face marks (nothing to tell apart)', p.faces);
     ok(!/\d+\s*%|sure|Read from|Words on the back|Waiting for your approval/i.test(p.text), 'no percentage, no "sure", no explanatory sentence', p.text);
     ok(!p.buyer.length && !p.staff.length, 'nothing the customer did not write (no buyer message, no staff note)');
-    if (SAID) { ok(p.options.length === 1 && /^Options\s*Font Choice: Stylish$/.test(p.options[0]), 'the one engraving choice the customer made (the font) is on one line, the metal is not', p.options); }
-    else console.log('  skip (charm-nest-engrave-said.js not on the page yet): the options line');
+    ok(!p.options.length && !/Options|Font Choice|Stylish/i.test(p.text) && !/data-said="Options"/.test(p.html), 'no "Options" line in this view: not drawn, nothing hidden in the DOM (the customer did choose a font)', { options: p.options, text: p.text });
+    if (SAID) { const o = await w.page.evaluate(() => { const r = Orders.rows().find(x => document.getElementById('owTitle').textContent.includes(x.order.receiptId)); return CharmNestEngraveSaid.rowsOf(r).filter(x => x[0] === 'Options').map(x => x[1]); }); ok(o.length === 1 && /Font Choice: Stylish/.test(o[0]), 'the Engrave tab\'s reader still has the Options row (only this view drops it)', o); }
     await R.shot(w, 'MSG-back-personalisation');
 
     // ── 2. back only, the words only in the buyer's message ──
@@ -90,7 +90,7 @@ const settle = (w, ms) => R.settle(w.page, ms || 500);
     ok(p.shown && p.cards >= 1, 'block shown for a front-only order');
     ok(p.personalisation.length === 1 && /Name One/.test(p.personalisation[0]), 'the personalisation words are there', p.personalisation);
     ok(!p.faces.length, 'front only: no face marks');
-    if (SAID) ok(p.options.length === 1 && /Engraving Side: Front/.test(p.options[0]) && /Font Choice: Vibur/.test(p.options[0]), 'the customer chose Front and the font: said on one line', p.options);
+    ok(!p.options.length && !/Options|Engraving Side|Font Choice|Vibur/i.test(p.text), 'the customer chose Front and the font: not said here (no Options line)', { options: p.options, text: p.text });
     await R.shot(w, 'MSG-front-only');
 
     // ── 4. front + back, labelled ──
@@ -98,9 +98,9 @@ const settle = (w, ms) => R.settle(w.page, ms || 500);
     p = await open('both');
     ok(p.shown && p.cards >= 1, 'block shown for a front + back order');
     ok(p.personalisation.length === 1 && /front - W \/ back - Name One/i.test(p.personalisation[0]), 'the labelled message is there as the customer wrote it (lines joined by " / ")', p.personalisation);
-    ok(p.faces.length === 1 && /^Front W · Back NAME( \/ )?ONE$/i.test(p.faces[0]), 'which words belong to which face: "Front W · Back Name One" (as the card lays the lines)', p.faces);
+    ok(p.faces.length === 1 && /^Front W · Back NAME( \/ | )?ONE$/i.test(p.faces[0]), 'which words belong to which face: "Front W · Back Name One" (as the card lays the lines)', p.faces);
     ok((p.html.match(/<i>Front<\/i>/g) || []).length === 1 && (p.html.match(/<i>Back<\/i>/g) || []).length === 1, 'each face named once, by the face name only');
-    if (SAID) ok(p.options.length === 1 && /Engraving Side: Both/.test(p.options[0]) && /Font Choice: Ace/.test(p.options[0]), 'the engraving choices: both sides, the font', p.options);
+    ok(!p.options.length && !/Options|Engraving Side|Font Choice|Ace/i.test(p.text), 'the engraving choices (both sides, the font) are not said here (no Options line)', { options: p.options, text: p.text });
     ok(!p.nameRows.length, 'one line in the order: no piece name heading');
     const both = p;
     await R.shot(w, 'MSG-front-and-back');
@@ -119,7 +119,7 @@ const settle = (w, ms) => R.settle(w.page, ms || 500);
     ok(geo.box[1] >= geo.withIt[1] + geo.withIt[3] - 1, 'the block starts under the grid', geo.box);
     ok(geo.cards.length >= 1 && geo.withIt[1] + geo.withIt[3] <= geo.scrollerBottom - 8, 'the first row of cards is on screen without scrolling (the no-scroll rule)', geo);
     console.log(`  info: front+back order: block ${geo.box[3]}px tall, its bottom ${geo.boxBottom}px, the scroll area ends at ${geo.scrollerBottom}px (window ${geo.vh}px)`);
-    ok(geo.box[3] <= 80, 'the block is at most four short lines tall for a front + back order with options (<= 80px)', geo.box);
+    ok(geo.box[3] <= 80, 'the block is at most four short lines tall for a front + back order (<= 80px)', geo.box);
 
     // ── 6. a staff note, HTML as text, a live change ──
     console.log('staff note, text only, live change');
@@ -132,6 +132,16 @@ const settle = (w, ms) => R.settle(w.page, ms || 500);
     await w.page.waitForFunction(() => { const s = document.getElementById('owEngSaid'); return s && !/Staff note/.test(s.textContent); }, null, { timeout: 5000 }).catch(() => {});
     p = await w.page.evaluate(probe);
     ok(!p.staff.length, 'and goes again when the note goes');
+
+    // ── 6b. the customer's only words were options (a font, a side): no block at all, not an empty box; the Engrave tab's reader still has the Options row ──
+    console.log('only options');
+    await w.page.evaluate(() => { const r = Orders.rows().find(x => document.getElementById('owTitle').textContent.includes(x.order.receiptId)); r.spec.personalization = []; r.spec.buyerMessage = ''; r.spec.staffNote = ''; r.line.personalization = []; });
+    await w.page.waitForFunction(() => { const s = document.getElementById('owEngSaid'); return !s || s.hidden; }, null, { timeout: 5000 }).catch(() => {});
+    p = await w.page.evaluate(probe);
+    const optsLeft = SAID ? await w.page.evaluate(() => { const r = Orders.rows().find(x => document.getElementById('owTitle').textContent.includes(x.order.receiptId)); return CharmNestEngraveSaid.rowsOf(r).map(x => x[0]); }) : null;
+    if (SAID) ok(optsLeft.join('|') === 'Options', 'the scenario is real: the only thing the reader still has for this line is its Options row', optsLeft);
+    ok(!p.shown && p.text === '' && !p.html.includes('data-said="Options"'), 'a line whose only words were options: no block, no empty box, no label', { shown: p.shown, text: p.text, html: p.html });
+    ok(p.cards >= 1 && !p.gridHidden, 'the cards are still there');
 
     // ── 7. the customer wrote and chose nothing: nothing is shown, the cards stay ──
     console.log('nothing written');
