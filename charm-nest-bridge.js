@@ -7161,7 +7161,7 @@ const Engrave = window.Engrave = (() => {
   function renderPlacementRows(list, queue) {
     if(placementQuery!==EG.q+CNListActivity.key("engrave-place")){placementLimit=40;placementQuery=EG.q+CNListActivity.key("engrave-place");}
     const rows = rowsIn(queue, queueUniverse());
-    const shown = rows.slice(0,placementLimit), nodes = shown.map(grp => {
+    const shown = rows.slice(0,placementLimit), nodes = shown.map(grp => quietRow(grp, () => {
       // (faced: the line has a front job, so each job is told by its piece AND its face, in the row's one list of what is engraved; a back-only line is not faced and draws what it always drew)
       const job = grp.lead, ears = !!multiJobs(grp), faced = facedGrp(grp), told = ears || faced, mode = faced ? faceModeOf(job.row) : null, sig = grp.jobs.map(j => j.key).join(" "), line = told ? lineOf(job.row) : job.row;
       let row = placementRows.get(job);
@@ -7192,7 +7192,7 @@ const Engrave = window.Engrave = (() => {
       if(row._seals!==stamp){row.querySelector('.egPlacementSeals').innerHTML=told?grp.jobs.map(j=>{const h=CNEngravingSeals.html(j);return h?`<div class="egEarSeals" data-slot="${esc(j.slot || "")}">${jobChipHtml(j,faced)}${h}</div>`:"";}).join(""):CNEngravingSeals.html(job);row._seals=stamp;}
       if(!told)write('[data-stage]',busyAny ? (job.state === "classify" ? "Reading words…" : "Preparing preview…") : "");
       return row;
-    });
+    }));
     /* One keyed update (Motion.reconcile; Paul, 27 Sep 20:09-20:24): a placement that leaves the list is seen going, up
        into Decided when it was decided there (the sheet window's approvals), otherwise fading where it stood (read as
        needing no engraving, its order gone); the rows under it glide up into the gap, and one that arrives opens its
@@ -7200,8 +7200,38 @@ const Engrave = window.Engrave = (() => {
     const same = list._egQ === EG.q; list._egQ = EG.q;
     if (window.Motion) Motion.reconcile(list, nodes, { animate: same, clip: list, leave: mk => { const j = items().get(String(mk).slice(3)); return j && DECIDED.includes(j.state) ? { to: EG_TAB("done") } : null; } });
     else { nodes.forEach((row, i) => { if (list.children[i] !== row) list.insertBefore(row, list.children[i] || null); }); const keep = new Set(nodes); [...list.children].forEach(row => { if (!keep.has(row)) row.remove(); }); }
-    shown.forEach((grp, i) => ListMedia.mount(nodes[i], multiJobs(grp) || facedGrp(grp) ? lineOf(grp.lead.row) : grp.lead.row));
+    shown.forEach((grp, i) => { try { ListMedia.mount(nodes[i], multiJobs(grp) || facedGrp(grp) ? lineOf(grp.lead.row) : grp.lead.row); } catch (e) { console.warn("Engrave list: a row's pictures", e); } });
     ListMedia.more(list,rows.length,Math.min(placementLimit,rows.length),()=>{placementLimit+=40;render();});
+    noRows(list, rows.length);
+  }
+  /** ENGCRASH: one piece that cannot be drawn is a small quiet row (its order number and a short line), never the end of the list: the rows after it are drawn as they always are. */
+  function quietRow(grp, build) {
+    try { return build(); } catch (e) {
+      console.warn("Engrave list: a row could not be drawn", e);
+      const lead = (grp && grp.lead) || {}, row = el("div", "doneRow placementRow quietRow"), rid = String(lead.row && lead.row.order && lead.row.order.receiptId || "");
+      row.dataset.mkey = "eg:" + (lead.key || ""); row.dataset.open = lead.key || ""; row.dataset.rid = rid; row._grp = grp;
+      row.innerHTML = '<div class="engravingIdentity"><div class="engravingOrder"><b class="mono"></b></div><span class="dim">This piece could not be drawn here.</span></div>'; row.querySelector("b").textContent = rid;
+      return row;
+    }
+  }
+  /** ENGCRASH: the same for a Decided row (the list is built as one string: a row that throws is a small quiet row, the rest are drawn). */
+  function quietDone(grp, build) {
+    try { return build(); } catch (e) {
+      console.warn("Engrave list: a decided row could not be drawn", e);
+      const lead = (grp && grp.lead) || {};
+      return `<div class="doneRow decidedRow quietRow" data-rid="${esc(String(lead.row && lead.row.order && lead.row.order.receiptId || ""))}" data-key="${esc(lead.key || "")}"><div class="engravingIdentity"><div class="engravingOrder"><b class="mono">${esc(String(lead.row && lead.row.order && lead.row.order.receiptId || ""))}</b></div><span class="dim">This piece could not be drawn here.</span></div></div>`;
+    }
+  }
+  /** ENGCRASH: a list with no row never stays blank: one plain line says why (a search that matches nothing offers to clear itself), beside the list so the keyed rows are untouched. */
+  function noRows(list, n) {
+    const host = list.parentElement; if (!host) return;
+    let m = host.querySelector(":scope > .egNone");
+    if (n) { if (m) m.remove(); return; }
+    const q = String(EG.q || "").trim(); if (!m) { m = el("div", "libEmpty egNone"); m.setAttribute("role", "status"); host.appendChild(m); }
+    const jobs = [...items().values()].filter(j => j.row && j.row.state !== "gone"), nDone = jobs.filter(j => DECIDED.includes(j.state)).length;
+    m.innerHTML = q ? `<b>Nothing here matches “${esc(q)}”.</b><button class="btn ghost sm" data-eg-clear>Clear search</button>` : emptyWhy(jobs, 0, nDone);
+    const clr = m.querySelector("[data-eg-clear]"); if (clr) clr.onclick = () => { EG.q = ""; const i = document.getElementById("egQ"); if (i) i.value = ""; render(); };
+    m.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { const g = b.dataset.go; if (g === "hist") RunHistory.show(); else if (g === "words") { EG.tab = "words"; EG.chosen = true; render(); } else { setMode(g); if (g === "review") Review.render(); } });
   }
   /** Repaint the card in place: the picture, the numbers, the chips. The pane is only rebuilt when what it holds changes. */
   function refresh(job) {
@@ -7380,7 +7410,7 @@ const Engrave = window.Engrave = (() => {
       /* One row per decision (an earring line's Left and Right are one row, each ear told on its own); the row opens into everything there is to know about it, and Reopen.
          The separate "back files written" grid said the same things a second time, smaller, and is gone. */
       bk.innerHTML = decided.length
-        ? `<div class="section" style="margin-top:2px">Decided · ${decided.length}</div><div class="rvList" id="egDone">` + decided.slice(0,doneLimit).map(grp => {
+        ? `<div class="section" style="margin-top:2px">Decided · ${decided.length}</div><div class="rvList" id="egDone">` + decided.slice(0,doneLimit).map(grp => quietDone(grp, () => {
             // (faced: the line has a front job; its decided jobs are told one by one, each with its face, its seals and its own Reopen, in ONE row)
             const j2 = grp.lead, faced = facedGrp(grp), ears = !!multiJobs(grp) || faced, line = ears ? lineOf(j2.row) : j2.row;
             const open = grp.jobs.some(j => EG.openDone === j.key);
@@ -7391,8 +7421,8 @@ const Engrave = window.Engrave = (() => {
             const chip = j => jobChipHtml(j, faced);
             const detail = !open ? "" : `<div class="doneDetail egPairDetail">${grp.jobs.map(j => `<div class="egEarDetail" data-ear="${esc(j.key)}"><div class="egEarHead">${chip(j)}</div>${detailInner(j)}</div>`).join("")}${saidOfDone(line)}</div>`;
             return `<div class="doneRow decidedRow earPairRow hoverItem${open ? " open" : ""}" tabindex="0" aria-expanded="${open}" data-rid="${esc(line.order.receiptId)}" data-key="${esc(j2.key)}" data-ears="${esc(grp.jobs.map(j => j.key).join(" "))}" data-pair="1" title="View engraving details">${ListMedia.pair(line)}<div class="engravingIdentity"><span class="queueLabel">Engraving · decided</span><div class="engravingOrder"><b class="mono">${esc(line.order.receiptId)}</b><span class="sku mono">${esc(line.spec.designSku || "")}</span>${faced ? modeChipHtml(line) : ""}</div><span class="purchaseLabel">${wordsLabel(grp.jobs)}</span><div class="egEars">${grp.jobs.map(j => `<div class="egEar" data-ear="${esc(j.key)}">${chip(j)}<span class="w">${wordsOfDone(j)}</span></div>`).join("")}</div></div><div class="purchaseSummary">${purchaseMarkup(line)}</div><div class="decisionActions">${grp.jobs.map(j => `<div class="egEarStatus" data-ear="${esc(j.key)}">${chip(j)}${statusOf(j)}<button class="btn ghost sm" data-a="reopen" data-ear="${esc(j.key)}" title="Reopen ${esc(reopenWhat(j, faced))} for changes (${esc(reopenKeeps(grp, faced))})">Reopen ${esc(reopenWord(j, faced))}</button></div>`).join("")}</div>${detail}</div>`;
-          }).join("") + `</div>`
-        : `<div class="libEmpty">${window.Recall && Recall.on() ? "Nothing in this set was engraved." : "nothing decided yet"}</div>`;
+          })).join("") + `</div>`
+        : `<div class="libEmpty">${EG.q && String(EG.q).trim() ? `<b>Nothing decided matches “${esc(String(EG.q).trim())}”.</b>` : window.Recall && Recall.on() ? "Nothing in this set was engraved." : "nothing decided yet"}</div>`;
       bk.querySelectorAll(".doneRow").forEach(rw => {
         const cacheKey=rw.dataset.ears||rw.dataset.key,kept=donePairs.get(cacheKey),fresh=rw.querySelector(".comparePair");
         if(kept&&fresh&&!kept.isConnected)fresh.replaceWith(kept);
