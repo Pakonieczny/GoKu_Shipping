@@ -29,7 +29,9 @@ R.ORDERS.opTwo = ORD('4290000141', 'Name Two', 11, [mk('silver', 'Name One'), mk
 R.ORDERS.opTwin = ORD('4290000142', 'Name Three', 12, [mk('silver', 'Name Three'), mk('gold', 'Name Three')]);                // the same words on both (what Paul's screenshot showed: the two heads look the same)
 R.ORDERS.opThree = ORD('4290000143', 'Name Four', 13, [mk('silver', 'Name Four'), mk('gold', 'Name Five'), mk('gold', 'Name Seven')]);
 R.ORDERS.opFaced = ORD('4290000144', 'Name Five', 14, [mk('silver', 'Name Eight'), BOTH]);                                     // a back-only piece and a front + back piece
-Object.assign(R.EXPECT_JOBS, { opTwo: 2, opTwin: 2, opThree: 3, opFaced: 3 });
+const DISCS = { listing: '1890000105', sku: 'COMET_9427', title: 'Initial Disc Necklace, Personalized Letter Discs', variations: [V('Metal choice', 'Gold'), V('Number of Discs', '3 Discs')], personalization: ['Tag 1: A, Tag 2: B, Tag 3: C'], metalKey: 'gold', metalLabel: 'GF 14/20' };
+R.ORDERS.opDiscs = ORD('4290000145', 'Name Six', 15, [mk('silver', 'Name Nine'), DISCS]);                                       // a back piece and a three-disc necklace: four pieces, the discs each their own
+Object.assign(R.EXPECT_JOBS, { opTwo: 2, opTwin: 2, opThree: 3, opFaced: 3, opDiscs: 4 });
 
 const fails = [], note = (ok, what, more) => { console.log((ok ? '  PASS ' : '  FAIL ') + what + (more ? '  [' + more + ']' : '')); if (!ok) fails.push(what); };
 
@@ -52,7 +54,7 @@ const READ = () => {
   const open = async key => { await page.evaluate(k => { try { OrderWin.close(); } catch (_) {} CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: k, q: '' }); Engrave.render(); }, key); await page.waitForSelector('#egQueue .rvItem[data-kind=placement]', { timeout: 20000 }).catch(() => {}); await R.settle(page, 700); return rd(); };
   const NEXT = '#egQueue .rvItem [data-a="next"]', PREV = '#egQueue .rvItem [data-a="prev"]';
   try {
-    const made = await R.build(w, ['opTwo', 'opTwin', 'opThree', 'opFaced', 'back']);
+    const made = await R.build(w, ['opTwo', 'opTwin', 'opThree', 'opFaced', 'opDiscs', 'back']);
     const lineKeys = n => [1, 2, 3].map(i => R.ORDERS[n].rid + '_' + R.ORDERS[n].rid + i);
     note((made.opTwo.jobs || []).length === 2 && (made.opThree.jobs || []).length === 3 && (made.opFaced.jobs || []).length === 3, 'the real classifier made the jobs: two lines 2, three lines 3, a back line + a front + back line 3', ['opTwo', 'opThree', 'opFaced'].map(n => (made[n].jobs || []).length).join('/'));
 
@@ -137,6 +139,30 @@ const READ = () => {
     note(await page.evaluate(() => document.querySelectorAll('#egQueue .rvItem .engCard .engFace').length === 2), 'its Front and Back thumbnails are still its own');
     r = await press(PREV);
     note(r && r.key === f1, 'Back returns to the back piece', r && r.key);
+
+    // ── a back piece and a three-disc necklace in ONE order: four pieces, each disc its own; the line's own disc switch gives way to the strip ──
+    const [d1] = lineKeys('opDiscs'); const dJobs = (made.opDiscs.jobs || []).map(j => j.key).sort();
+    r = await open(d1);
+    note(r && /^piece 1 of 4$/i.test(r.of) && r.tabs.map(t => t.text).join('|') === '1 SS|2 GF · Disc 1|3 GF · Disc 2|4 GF · Disc 3' && !r.earSwitch, 'a back piece + a 3-disc necklace: the strip has FOUR pieces (the discs each their own) and no second Disc switch', r && (r.of + ' / ' + r.tabs.map(t => t.text).join('|')));
+    const words4 = [r.words]; const keys4 = [r.key];
+    for (let i = 0; i < 3; i++) { r = await press(NEXT); words4.push(r.words); keys4.push(r.key); }
+    note(words4.join() === 'Name Nine,A,B,C' && /^piece 4 of 4$/i.test(r.of) && new Set(keys4).size === 4, 'Next visits all four, each with its own words (Name Nine, then discs A, B, C)', words4.join() + ' / ' + r.of);
+    r = await press(NEXT);
+    note(r && r.rid !== '4290000145', 'then the next order', r && r.rid);
+    for (let i = 0; i < 4; i++) r = await press(PREV);
+    note(r && r.key === keys4[0], 'Back four times from the next order reaches the first piece again', r && r.key);
+    // ── opened from the order window's button (the Engraving tab is then filtered to this order): the strip and Back / Next work there too ──
+    await page.evaluate(() => { try { OrderWin.close(); } catch (_) {} });
+    const linked = await page.evaluate(async ({ rid, piece }) => { CN.setMode('orders'); return window.EngraveLink ? await EngraveLink.open({ rid, piece }) : null; }, { rid: '4290000141', piece: k2 }); await R.settle(page, 800); r = await rd();
+    note(linked === true && r && r.key === k2 && /^piece 2 of 2$/i.test(r.of) && r.words === 'Name Two', 'opened from the order window (EngraveLink): piece 2 of 2, with its words', r && (r.key + ' ' + r.of));
+    r = await press(NEXT);
+    note(r && r.key === k1 && r.words === 'Name One' && /^piece 1 of 2$/i.test(r.of), 'with the list filtered to this order, Next from the last piece wraps to piece 1 (nothing else to go to), the strip following', r && (r.key + ' ' + r.of));
+    // ── a narrow window: the head wraps, nothing is clipped or scrolls sideways ──
+    await open(k1); await page.setViewportSize({ width: 760, height: 900 }); await R.settle(page, 500);
+    const fit = await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem'), st = c.querySelector('.egPcStrip'), b = st.getBoundingClientRect(), cb = c.getBoundingClientRect(); return { inside: b.left >= cb.left - 1 && b.right <= cb.right + 1, h: Math.round(b.height), tabs: [...st.querySelectorAll('.egPcTab')].every(t => { const x = t.getBoundingClientRect(); return x.right <= cb.right + 1 && x.width > 10; }), scrollX: document.documentElement.scrollWidth > innerWidth + 1 }; });
+    note(fit.inside && fit.tabs && !fit.scrollX, 'at 760 px wide the strip stays inside the card and the page does not scroll sideways', JSON.stringify(fit));
+    if (process.env.SHOTS) await R.shot(w, 'engpieces-two-piece-narrow');
+    await page.setViewportSize({ width: 1440, height: 900 }); await R.settle(page, 400);
 
     // ── a search that hides a piece does not make it unreachable ──
     await open(k1);
