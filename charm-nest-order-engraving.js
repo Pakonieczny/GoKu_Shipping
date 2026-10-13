@@ -301,7 +301,7 @@
     if (host._orderEngraving) tryDo(() => host._orderEngraving.destroy());
     let ctx = Object.assign({}, ctx0), gone = false, seenAt = Date.now(), attached = false, ro = null, told0 = null;
     const cards = new Map();                 // pieceKey -> { el, sig }
-    const busy = new Set(), seen = new Set(), fails = new Map();   // pieces being approved; job keys put in front of the person; the one failure line of a card
+    const busy = new Set(), seen = new Set(), fails = new Map(), asked = new Set();   // pieces being approved; job keys put in front of the person; the one failure line of a card
     let last = new Map(), asking = false, waitEl = null, kindsSeen = '', loading = false;
     const mode = Array.isArray(ctx0 && ctx0.pieces) && ctx0.pieces.length > 1 ? 'list' : 'one';
     // (a host that hands the rows of the whole order is the same section whichever piece it is on: the piece picked is `only`, not a new section, so the cards of the pieces that stay are not drawn again)
@@ -407,10 +407,11 @@
       el._drawn = new Map(piece.jobs.map(j => [j, [j.fit, j.view]]));
       const b = el.querySelector('[data-e=approve]'); if (b) b.addEventListener('click', () => { if (!b.disabled) approve(piece, b); });
       const f = fails.get(keyOf(piece)); if (f && piece.state === 'approve') showFail(el, f); else fails.delete(keyOf(piece));
-      // (ENGCRASH: a piece with no engraving job yet, held or on no sheet: the picture stays, its press says why in one line instead of opening nothing)
+      // (ENGPRE, Paul 13 Oct: "a charm does not have to be placed on that sheet for it to be approved/updated": a piece with no engraving job yet, held, waiting, pulled or not nested, is asked for its job
+      //  now, once per line per window: Engrave.early makes it on the charm the piece will have, pools and moves nothing, and the next look at the order draws the real card; it says "Preparing" until then)
       if (!piece.jobs.length) {
-        el.dataset.noJob = '1'; const why = tryDo(() => (root.EngraveLink && root.EngraveLink.resolve ? root.EngraveLink.resolve({ rid: String(piece.rid || ''), key: piece.lineKey }).why : ''), '');
-        if (why) { el.querySelectorAll('.engFace .engThumb').forEach(b => { b.title = why; }); el.querySelectorAll('.engCue').forEach(n => n.remove()); const dot = el.querySelector('.engDot'); if (dot) { dot.title = why; dot.setAttribute('aria-label', why); } }   // (no job is coming: it is not "Preparing")
+        const E = root.Engrave, line = piece.row, k = line && line.key;
+        if (E && E.early && k && !asked.has(k)) { asked.add(k); tryDo(() => { const p = E.early(line); if (p && p.catch) p.catch(() => {}); }); }
       }
       return el;
     };
