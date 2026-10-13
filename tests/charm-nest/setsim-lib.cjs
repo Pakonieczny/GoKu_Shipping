@@ -38,7 +38,27 @@ const DEFAULT_MIX = {
 const rng = L.rng;
 const pickW = (r, table) => { let u = r() * Object.values(table).reduce((a, b) => a + b, 0); for (const [k, w] of Object.entries(table)) { u -= w; if (u < 0) return k; } return Object.keys(table).pop(); };
 
-/** A seeded stream of fake orders: [{ id, n, lines:[{ n, kind, metal, pieces:[charm] }] }]. Pool ids are `order_line_copy`, the form the app uses everywhere. */
+/** One fake order line of a kind, from a spec { idx, f } (a design of the library's silhouettes and its scale), { idx2, f2 } for a mismatched pair, { k } the number of discs / copies. Pool ids are `order_line_copy`, the form the app uses everywhere. */
+function lineOf(S, oid, n, kind, spec, metal, date) {
+  const mk = (copy, idx, f, extra) => { const id = `${oid}_${n}_${copy}`; return Object.assign(L.charm(S, id, idx, f, oid, date), { poolId: id, metal }, extra || {}); };
+  const key = `${oid}:${n}`, info = form => ({ receiptId: oid, transactionId: String(n), form }), pieces = [];
+  if (kind === 'single') pieces.push(mk(1, spec.idx, spec.f));
+  else if (kind === 'pair' || kind === 'huggie') {   // a Left and its exact mirror, the Right (the nester may turn a piece and never reflect it)
+    const base = { groupKey: key, groupSize: 2, orderInfo: info('earring') };
+    pieces.push(mk(1, spec.idx, spec.f, Object.assign({ side: 'L', mirror: false, bodyIndex: 0 }, base)), flip(mk(2, spec.idx, spec.f, Object.assign({ side: 'R', mirror: true, bodyIndex: 1 }, base))));
+  } else if (kind === 'mismatched') {
+    const base = { groupKey: key, groupSize: 2, orderInfo: info('earring') };
+    pieces.push(mk(1, spec.idx, spec.f, Object.assign({ side: 'L', mirror: false, bodyIndex: 0 }, base)), mk(2, spec.idx2, spec.f2, Object.assign({ side: 'R', mirror: true, bodyIndex: 1 }, base)));
+  } else if (kind === 'discs') for (let c = 1; c <= spec.k; c++) pieces.push(mk(c, spec.idx, spec.f, { groupKey: key, groupSize: spec.k, bodyIndex: c - 1, orderInfo: info('necklace') }));
+  else if (kind === 'qty') for (let c = 1; c <= spec.k; c++) pieces.push(mk(c, spec.idx, spec.f));
+  else if (kind === 'trio') spec.designs.forEach(([idx, f], c) => pieces.push(mk(c + 1, idx, f, { groupKey: key, groupSize: spec.designs.length, bodyIndex: c, orderInfo: info('charm') })));
+  else throw new Error('setsim: unknown line kind ' + kind);
+  return { n, kind, metal, pieces, delay: 0 };
+}
+/** An order from explicit lines: [{ kind, metal, ...spec, delay }]. */
+const orderOf = (S, oid, n, specs, date) => ({ id: String(oid), n, lines: specs.map((sp, i) => Object.assign(lineOf(S, String(oid), i + 1, sp.kind, sp, sp.metal || 'gold', date || 1000 + n), { delay: sp.delay || 0 })) });
+
+/** A seeded stream of fake orders: [{ id, n, lines:[{ n, kind, metal, pieces:[charm], delay }] }]. */
 function makeStream(S, { seed = 1, orders = 200, mix = {} } = {}) {
   const M = Object.assign({}, DEFAULT_MIX, mix), r = rng(seed * 7919 + 13), out = [];
   const designOf = size => size === 'small' ? [Math.floor(r() * 8), 1 + r() * .1] : size === 'mid' ? [8 + Math.floor(r() * 10), 1 + r() * .15] : [15 + Math.floor(r() * 9), 1.1 + r() * .2];
@@ -47,27 +67,16 @@ function makeStream(S, { seed = 1, orders = 200, mix = {} } = {}) {
     const first = pickW(r, M.metals), lines = [];
     for (let n = 1; n <= nLines; n++) {
       const kind = pickW(r, M.kinds), metal = n === 1 || r() >= M.otherMetal ? first : pickW(r, { gold: 1, silver: 1, rose: .5 });
-      const mk = (copy, idx, f, extra) => { const id = `${oid}_${n}_${copy}`; return Object.assign(L.charm(S, id, idx, f, oid, date), { poolId: id, metal }, extra || {}); };
-      const pieces = [];
-      if (kind === 'single') { const [idx, f] = designOf(pickW(r, M.size)); pieces.push(mk(1, idx, f)); }
-      else if (kind === 'pair' || kind === 'huggie') {   // a Left and its exact mirror, the Right (the nester may turn a piece and never reflect it)
-        const [idx, f] = kind === 'huggie' ? [15 + Math.floor(r() * 9), 1 + r() * .15] : designOf(r() < .6 ? 'small' : 'mid'), key = `${oid}:${n}`;
-        const base = { groupKey: key, groupSize: 2, orderInfo: { receiptId: oid, transactionId: String(n), form: 'earring' } };
-        pieces.push(mk(1, idx, f, Object.assign({ side: 'L', mirror: false, bodyIndex: 0 }, base)), flip(mk(2, idx, f, Object.assign({ side: 'R', mirror: true, bodyIndex: 1 }, base))));
-      } else if (kind === 'mismatched') {
-        const [i1, f1] = designOf(r() < .6 ? 'small' : 'mid'), [i2, f2] = designOf(r() < .6 ? 'small' : 'mid'), key = `${oid}:${n}`, base = { groupKey: key, groupSize: 2, orderInfo: { receiptId: oid, transactionId: String(n), form: 'earring' } };
-        pieces.push(mk(1, i1, f1, Object.assign({ side: 'L', mirror: false, bodyIndex: 0 }, base)), mk(2, i2, f2, Object.assign({ side: 'R', mirror: true, bodyIndex: 1 }, base)));
-      } else if (kind === 'discs') {
-        const k = 3 + Math.floor(r() * 4), idx = [8, 10, 12, 13][Math.floor(r() * 4)], f = .9 + r() * .1, key = `${oid}:${n}`;
-        for (let c = 1; c <= k; c++) pieces.push(mk(c, idx, f, { groupKey: key, groupSize: k, bodyIndex: c - 1, orderInfo: { receiptId: oid, transactionId: String(n), form: 'necklace' } }));
-      } else if (kind === 'qty') {
-        const k = 2 + Math.floor(r() * 2), [idx, f] = designOf(pickW(r, M.size));
-        for (let c = 1; c <= k; c++) pieces.push(mk(c, idx, f));
-      } else {   // trio: three different charms of one line, kept as one line (groupSize 3)
-        const key = `${oid}:${n}`;
-        for (let c = 1; c <= 3; c++) { const [idx, f] = designOf(pickW(r, { small: .5, mid: .4, large: .1 })); pieces.push(mk(c, idx, f, { groupKey: key, groupSize: 3, bodyIndex: c - 1, orderInfo: { receiptId: oid, transactionId: String(n), form: 'charm' } })); }
-      }
-      lines.push({ n, kind, metal, pieces, delay: n > 1 && r() < M.late ? 1 + Math.floor(r() * 3) : 0 });
+      let spec;
+      if (kind === 'single' || kind === 'qty') { const [idx, f] = designOf(pickW(r, M.size)); spec = { idx, f, k: 2 + Math.floor(r() * 2) }; }
+      else if (kind === 'pair') { const [idx, f] = designOf(r() < .6 ? 'small' : 'mid'); spec = { idx, f }; }
+      else if (kind === 'huggie') spec = { idx: 15 + Math.floor(r() * 9), f: 1 + r() * .15 };
+      else if (kind === 'mismatched') { const [idx, f] = designOf(r() < .6 ? 'small' : 'mid'), [idx2, f2] = designOf(r() < .6 ? 'small' : 'mid'); spec = { idx, f, idx2, f2 }; }
+      else if (kind === 'discs') spec = { k: 3 + Math.floor(r() * 4), idx: [8, 10, 12, 13][Math.floor(r() * 4)], f: .9 + r() * .1 };
+      else spec = { designs: [0, 1, 2].map(() => designOf(pickW(r, { small: .5, mid: .4, large: .1 }))) };
+      const line = lineOf(S, oid, n, kind, spec, metal, date);
+      line.delay = n > 1 && r() < M.late ? 1 + Math.floor(r() * 3) : 0;
+      lines.push(line);
     }
     out.push({ id: oid, n: i, lines });
   }
@@ -295,4 +304,4 @@ function placementOf(sim, stream) {
   return out;
 }
 
-module.exports = { METALS, CODE, CUT, DEFAULT_MIX, makeStream, piecesOf, partOf, schedule, pageWorld, MetalSim, Sim, setWorld, fillOf, frontOf, placementOf, mean, r1, REPO, L };
+module.exports = { METALS, CODE, CUT, DEFAULT_MIX, makeStream, lineOf, orderOf, piecesOf, partOf, schedule, pageWorld, MetalSim, Sim, setWorld, fillOf, frontOf, placementOf, mean, r1, REPO, L };
