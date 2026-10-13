@@ -274,7 +274,7 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
     const both2 = card.querySelector('[data-a="approveBoth"]'); assert.equal(both2.disabled, false, 'the front was on screen, the back is now'); assert.match(both2.title, /Front, then the Back/);
   });
   await t('2d the setup editor has its slot at the top of the right column and is mounted with the LINE after every drawing; without it the slot is empty and hidden (no layout shift)', () => {
-    P.setupMounts.length = 0; const card = P.open(fronts.tag[0].key); const slot = card.querySelector('.pvSide > .pvSetup[data-engsetup]'); assert.ok(slot, 'first section of the right column'); assert.equal(card.querySelector('.pvSide').firstElementChild, slot);
+    P.setupMounts.length = 0; const card = P.open(fronts.tag[0].key); const slot = card.querySelector('.pvSide > .pvSetup[data-engsetup]'); assert.ok(slot, 'first section of the right column'); assert.equal(card.querySelector('.pvSide > :not([data-said])'), slot);   /* (ENGNOTE: the customer's words box, when there are words, is drawn above the setup slot) */
     assert.ok(P.setupMounts.length >= 1); const [sl, row] = P.setupMounts[P.setupMounts.length - 1]; assert.equal(sl, slot); assert.equal(row.parentRow || row, ROW.tag, 'the line');
     const bare = facedPage({ setup: false }); const c2 = bare.open(bare.fronts.tag[0].key); const s2 = c2.querySelector('[data-engsetup]'); assert.equal(s2.hidden, true); assert.equal(s2.textContent, '');
   });
