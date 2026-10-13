@@ -1,0 +1,68 @@
+{
+  "what": "Etsy listings Paul asked to put on their repo charm SKU (one press runs them in this order; charm-nest-etsy-batch.js). Each key is the exact master SKU. A listing already done is skipped by the op without an Etsy request. No buyer data.",
+  "listings": [
+    {
+      "listingId": "1700763608",
+      "key": "BEADY SWAN",
+      "askedAt": "2026-10-12T18:22Z",
+      "note": "swan"
+    },
+    {
+      "listingId": "1801964156",
+      "key": "CAT 1 - SITTING CAT",
+      "products": 12,
+      "askedAt": "2026-10-12T23:27Z",
+      "note": "cat"
+    },
+    {
+      "listingId": "1816178147",
+      "key": "BEADY DOVE 4",
+      "products": 12,
+      "askedAt": "2026-10-13T02:17Z",
+      "note": "dove"
+    },
+    {
+      "listingId": "1801980518",
+      "key": "BEADY CUTE LION",
+      "products": 12,
+      "askedAt": "2026-10-13T02:25Z",
+      "note": "lion"
+    },
+    {
+      "listingId": "4494184284",
+      "key": "CHAMELEON_28151",
+      "products": 60,
+      "askedAt": "2026-10-12T18:30Z",
+      "note": "chameleon (after the swan, as Paul asked)",
+      "after": "1700763608"
+    },
+    {
+      "listingId": "4494182906",
+      "key": "WOLF_67948",
+      "products": 60,
+      "askedAt": "2026-10-13T02:33Z",
+      "note": "wolf"
+    },
+    {
+      "listingId": "1745415868",
+      "key": "BEADY MONKEY HEAR NO EVIL3",
+      "products": 60,
+      "askedAt": "2026-10-13T02:24Z",
+      "note": "monkey"
+    },
+    {
+      "listingId": "1734130419",
+      "key": "SPORTS 27",
+      "products": 40,
+      "askedAt": "2026-10-13T02:27Z",
+      "note": "bike"
+    },
+    {
+      "listingId": "1830130714",
+      "key": "CURB",
+      "products": 816,
+      "askedAt": "2026-10-13T02:28Z",
+      "note": "bar (816 products, last)"
+    }
+  ]
+}

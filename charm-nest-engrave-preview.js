@@ -276,20 +276,25 @@
 
   /** The picture of a frame as a canvas (kept on the frame): a faint metal tint inside the cut line, the design's art (the FRONT), then the cut line and cut-outs, as the page draws a charm everywhere
    *  (CharmNestPDF.drawCharm). The canvas is the box plus a 4 % margin, so the words' coordinates (a fraction of the box) are the canvas's inner rectangle. */
-  const PX = 224, MARGIN = 0.04;
+  /* ENGBIG (Paul, 13 Oct 2026: the order window's pictures twice as large, 160px and 208px): the canvas is drawn at the pixel density of the screen, for the largest box a thumbnail has (208px), never less than PX, so it is
+   *  never a small bitmap stretched (a retina screen shows a 208px box with 416 device pixels: the canvas is 416px on its long edge). The words are HTML text, sharp at any size. A density that changed (another screen,
+   *  the browser's zoom) draws it again at the next paint (the source key carries the size). */
+  const PX = 224, MARGIN = 0.04, BOX_MAX = 208, PX_CAP = 768;
+  const artPx = () => { let d = 1; try { d = +(root && root.devicePixelRatio) || 1; } catch (_) { d = 1; } return Math.min(PX_CAP, Math.max(PX, Math.ceil(BOX_MAX * Math.max(1, d)))); };
   function artOf(F) {
-    if (F.art_) return F.art_;
-    const doc = root && root.document, PDF = PDFLIB(); if (!doc || !PDF || typeof PDF.drawCharm !== 'function') return null;
-    const [x0, , , y1] = F.box, w = F.box[2] - F.box[0], h = F.box[3] - F.box[1], pad = Math.max(w, h) * MARGIN, W = w + 2 * pad, H = h + 2 * pad, k = PX / Math.max(W, H);
+    const px = artPx();
+    if (F.art_ && F.art_.px >= px) return F.art_;
+    const doc = root && root.document, PDF = PDFLIB(); if (!doc || !PDF || typeof PDF.drawCharm !== 'function') return F.art_ || null;
+    const [x0, , , y1] = F.box, w = F.box[2] - F.box[0], h = F.box[3] - F.box[1], pad = Math.max(w, h) * MARGIN, W = w + 2 * pad, H = h + 2 * pad, k = px / Math.max(W, H);
     const cv = doc.createElement('canvas'); cv.width = Math.max(2, Math.round(W * k)); cv.height = Math.max(2, Math.round(H * k));
-    const ctx = cv.getContext('2d'); if (!ctx) return null;
+    const ctx = cv.getContext('2d'); if (!ctx) return F.art_ || null;
     const tx = (x, y) => [(x - x0 + pad) * k, (y1 + pad - y) * k];
     try {
       ctx.beginPath(); PDF.pathToCanvas(ctx, F.outline, tx); for (const m of F.cut) if (m !== F.outline && m.closed) PDF.pathToCanvas(ctx, m, tx);
       ctx.fillStyle = '#f1ece1'; ctx.fill('evenodd');
       PDF.drawCharm(ctx, { outline: F.outline, members: F.art.concat(F.cut) }, tx, k);
     } catch (e) { warn(e); }
-    return (F.art_ = { canvas: cv, w: cv.width, h: cv.height, ar: cv.width / cv.height, ix: pad / W, iy: pad / H });
+    return (F.art_ = { canvas: cv, w: cv.width, h: cv.height, ar: cv.width / cv.height, ix: pad / W, iy: pad / H, px });
   }
 
   /** The order window's Vector design of the line (PieceMedia.vectorThumb: the page's own picture, as drawn, from the page's own cache), the last resort when there is no geometry to draw from. */
@@ -409,7 +414,7 @@
     const face = o.face === 'front' ? 'front' : o.face === 'back' ? 'back' : '';
     if (typeof o.drawing === 'function') return { kind: 'fn', key: 'f' + ident(o.drawing) + '|' + ident(o.row) + '|' + face, flip: face === 'back' };
     const F = frameFor(o);
-    if (F && artOf(F)) return { kind: 'frame', key: 'g' + ident(F), frame: F, flip: false };
+    const A = F && artOf(F); if (A) return { kind: 'frame', key: 'g' + ident(F) + '@' + (A.px || PX), frame: F, flip: false };
     if (o.image) return { kind: 'png', key: 'p' + o.image, url: String(o.image), flip: false, baked: true };
     const mrow = o.row || (o.job && o.job.row) || null, M = mrow ? masterOf(mrow) : null;
     if (M && M.status === 'loading') return { kind: 'none', key: 'w', flip: false, waiting: true, entry: M };   // (the design's own drawing is being read: a small labelled wait, nothing wrong drawn meanwhile)
