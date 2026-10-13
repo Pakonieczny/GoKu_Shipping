@@ -5186,7 +5186,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // newer sheet still filling (movableFrom keeps cut, recalled, sent, released and held-in-a-set sheets out), oldest first
     function candidates(target, skip, avoid) {
       // (avoid: sheets the Hold still has to take pieces off: nothing is taken from them, so they never end up holding one order)
-      const all = candidatesFor(target).filter(k => !skip.has(k.rid) && ![...k.srcs].some(src => avoid.has(src.sheetId)));
+      // (an order in Review is paused wherever it sits: it never fills a spot, and is never taken off its sheet to do so)
+      const inReview = rid => { try { return !!(window.CharmNestReviewHold && window.CharmNestReviewHold.inReview(rid)); } catch (_) { return false; } };
+      const all = candidatesFor(target).filter(k => !skip.has(k.rid) && !inReview(k.rid) && ![...k.srcs].some(src => avoid.has(src.sheetId)));
       return all.filter(k => k.waiting).map(k => Object.assign(k, { source: "waiting" }))
         .concat(all.filter(k => !k.waiting && [...k.srcs].every(src => newer(src, target))).map(k => Object.assign(k, { source: "newerSheet" })));
     }
