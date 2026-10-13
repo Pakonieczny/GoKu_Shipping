@@ -145,6 +145,13 @@ async function main() {
     await page.waitForTimeout(500);
     c = await ov(keyOf(B, 0));
     check((await page.evaluate(() => __approves.length)) === 1 && c.seals === 1, 'there is nothing to press again: no second approval and no second seal (approvals ' + (await page.evaluate(() => __approves.length)) + ', seals ' + c.seals + ')');
+    // (ENGONE: a press on a piece of an order card picks that piece, as the order window's "Its pieces" does: its card alone shows, and "Show all" brings the others)
+    const picked = await page.evaluate(() => !!document.querySelector('#orderWin [data-pc-all]'));
+    if (picked) {
+      check((await ov(keyOf(B, 0))).n === 1 && (await ov(keyOf(B, 1))).card === false, 'the press picked piece 1: its card alone shows');
+      await page.click('#orderWin [data-pc-all]');
+      await page.waitForFunction(() => document.querySelectorAll('#owEng .engCard').length === 3, null, { timeout: 5000 });
+    }
     // the other pieces of the order have their own card, there at once, whichever piece is picked
     c = await ov(keyOf(B, 1));
     check(c.card && c.state === 'approve' && /LOVE/.test(c.words) && !/KMB/.test(c.words) && c.seals === 0, 'piece 2: its own card, still to approve (not piece 1\'s approved one), its own words, no seal: ' + JSON.stringify(c));

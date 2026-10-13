@@ -155,6 +155,9 @@ function fixture({ MAIN, CX, D }) {
       //     the Its pieces list says "Showing all 2 pieces" instead (the chip row is gone, Paul 5 Oct round 16)
       await openKey(D, D.tid); await snap('twosheets-overview');
       assert.equal(await page.evaluate(() => !!document.querySelector('#owTitle .owPc')), false, 'no "line 1 of 2" after the number');
+      // (ENGONE: a press on a piece of an order card picks that piece, as "Its pieces" does, and says "Showing <piece> · Show all"; Show all gives the whole order)
+      await page.waitForFunction(() => { const st = document.querySelector('#owPcSum .owPcState'); return st && (/^Showing all 2 pieces/.test(st.textContent.trim()) || st.querySelector('[data-pc-all]')); }, null, { timeout: 10000 });
+      await page.evaluate(() => { const b = document.querySelector('#owPcSum [data-pc-all]'); if (b) b.click(); });
       await page.waitForFunction(() => { const st = document.querySelector('#owPcSum .owPcState'); return st && /^Showing all 2 pieces/.test(st.textContent.trim()) && !document.getElementById('owPieceSw'); }, null, { timeout: 10000 });
       await view('timeline'); await view('info');
       assert.equal(await page.evaluate(() => document.querySelectorAll('#owTlTools .tlBar').length), 1, 'one bar, however often the tab is shown');
