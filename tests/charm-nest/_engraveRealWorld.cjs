@@ -29,6 +29,39 @@ const Base = require('./_orderFactsWorld.cjs');
 const FIX = path.join(__dirname, 'fixtures');
 const DEFAULT_SHOTS = '/mnt/project-files/plans/engrave-ui-1012/round2/images';
 
+/** A ROUND DISC with a hoop and engraved art on its front, made here (no fixture drawing is a disc): a PDF-compatible .ai laid out as the masters are read (layers CUT / ENGRAVE / HATCH), a 34 pt disc (12 mm), a cyan jump ring
+ *  that overlaps its top (the page welds it into the cut line), a made-up flower in red engraving strokes with a small blue hatched centre. Nothing in it is a customer's. */
+function discAi() {
+  const f = n => (Math.round(n * 1000) / 1000).toString();
+  const circle = (cx, cy, r) => { const k = 0.5522847498 * r; return `${f(cx + r)} ${f(cy)} m ${f(cx + r)} ${f(cy + k)} ${f(cx + k)} ${f(cy + r)} ${f(cx)} ${f(cy + r)} c ${f(cx - k)} ${f(cy + r)} ${f(cx - r)} ${f(cy + k)} ${f(cx - r)} ${f(cy)} c ${f(cx - r)} ${f(cy - k)} ${f(cx - k)} ${f(cy - r)} ${f(cx)} ${f(cy - r)} c ${f(cx + k)} ${f(cy - r)} ${f(cx + r)} ${f(cy - k)} ${f(cx + r)} ${f(cy)} c h`; };
+  const ellipse = (cx, cy, rx, ry, deg) => { const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), k = 0.5522847498, P = (x, y) => [cx + x * c - y * s, cy + x * s + y * c];
+    const seg = [[[rx, ry * k], [rx * k, ry], [0, ry]], [[-rx * k, ry], [-rx, ry * k], [-rx, 0]], [[-rx, -ry * k], [-rx * k, -ry], [0, -ry]], [[rx * k, -ry], [rx, -ry * k], [rx, 0]]];
+    let o = `${P(rx, 0).map(f).join(' ')} m `; for (const g of seg) o += g.map(q => P(q[0], q[1]).map(f).join(' ')).join(' ') + ' c '; return o + 'h'; };
+  const CX = 30, CY = 28, R = 17, HY = CY + R + 1.8, HO = 3.4, HI = 1.7;
+  // the flower: 8 petals round a centre, two rings, a stem and two leaves
+  let art = ''; for (let i = 0; i < 8; i++) art += ellipse(CX + 4.3 * Math.cos(i * Math.PI / 4), CY + 3 + 4.3 * Math.sin(i * Math.PI / 4), 2.7, 4.6, i * 45 - 90) + ' S\n';
+  art += circle(CX, CY + 3, 6.2) + ' S\n' + circle(CX, CY + 3, 2.6) + ' S\n';
+  art += `${f(CX)} ${f(CY - 5)} m ${f(CX - 1.5)} ${f(CY - 9)} ${f(CX + 1.5)} ${f(CY - 12)} ${f(CX)} ${f(CY - 14)} c S\n` + ellipse(CX - 5, CY - 9, 1.6, 4.6, 55) + ' S\n' + ellipse(CX + 5, CY - 10, 1.6, 4.6, -55) + ' S\n';
+  const content = [
+    '/OC /ocEng BDC', 'q 1 0.114 0.145 RG 0.249 w', art.trim(), 'Q', 'EMC',
+    '/OC /ocHatch BDC', 'q 0 0 1 rg', circle(CX, CY + 3, 1.7) + ' f', 'Q', 'EMC',
+    '/OC /ocCut BDC', `q 0 0 0 RG 0.283 w ${circle(CX, CY, R)} S Q`, `q 0.31 0.82 0.851 RG 0.283 w ${circle(CX, HY, HO)} ${circle(CX, HY, HI)} S Q`, 'EMC'
+  ].join('\n') + '\n';
+  const objs = [
+    '<< /Type /Pages /Kids [ 4 0 R ] /Count 1 >>',
+    '<< /Type /Catalog /Pages 1 0 R /OCProperties << /OCGs [ 5 0 R 6 0 R 7 0 R ] /D << /Order [ 5 0 R 6 0 R 7 0 R ] /ON [ 5 0 R 6 0 R 7 0 R ] /BaseState /ON >> >> >>',
+    '<< /Producer (ENGLIVE test drawing) /Title (BFLOWER_DISC_TEST) >>',
+    '<< /Type /Page /Parent 1 0 R /Resources << /Properties << /ocEng 5 0 R /ocHatch 6 0 R /ocCut 7 0 R >> >> /MediaBox [ 0 0 60 60 ] /Contents 8 0 R >>',
+    '<< /Type /OCG /Name (ENGRAVE) >>', '<< /Type /OCG /Name (HATCH) >>', '<< /Type /OCG /Name (CUT) >>',
+    `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}endstream`
+  ];
+  let out = '%PDF-1.7\n'; const at = [];
+  objs.forEach((o, i) => { at.push(Buffer.byteLength(out)); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+  const x0 = Buffer.byteLength(out);
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + at.map(n => String(n).padStart(10, '0') + ' 00000 n \n').join('') + `trailer\n<< /Size ${objs.length + 1} /Root 2 0 R /Info 3 0 R >>\nstartxref\n${x0}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
 /** the real drawings: the master index entry (a real field set as the index writes it) and the .ai file it points at */
 const DESIGNS = {
   'COMET_9427': { file: 'COMET_9427.ai', from: 'comet-master-entries.json' },
@@ -36,6 +69,8 @@ const DESIGNS = {
   'SCHRODINGER CAT 2': { file: 'SCHRODINGER_CAT_2.ai', from: 'schro-master-entries.json' },
   'TENNIS BALL (HUGGIE)': { file: 'TENNIS_BALL_HUGGIE_.ai', from: 'tennis-master-entries.json' },
   // the Mini Tag listing's "Tag1" shape is the master design "5X8.5" (charm-nest-orders.js TAG_SHAPES); the real mini-tag drawing stands in for it
+  // a round disc with a hoop and engraved front art, drawn by discAi() above (no fixture is a disc): the made-up birth-flower disc of the held order
+  'BFLOWER_9901': { file: 'BFLOWER_9901.ai', make: discAi, entry: { sku: 'BFLOWER_9901', widthPt: 34, heightPt: 39.2, areaPt2: 935, members: 16, holes: 1, engravable: true, engravableBy: 'index', upAngle: 90, upSource: 'drawn', charmHash: '0afbab0c', backKeepOut: [] } },
   '5X8.5': { file: 'TINY_INITIAL_TAG_1.ai', entry: { sku: '5X8.5', widthPt: 45.02, heightPt: 16.673, areaPt2: 627.28, members: 3, holes: 1, engravable: true, engravableBy: 'index', upAngle: 90, upSource: 'drawn', charmHash: '34ad8c23', backKeepOut: [] } }
 };
 /** what a person once answered under Options for these made-up listings (Charm_Option_Map, listing id -> { option name: { value: answer } }): the engraving-side words and the earring form need no shape */
@@ -59,8 +94,17 @@ const ORDERS = {
 // REFERENCE orders for engrave-realtime.cjs (the same charm as `back`, one thing different each: what the page's own pipeline draws for that word / font is the yardstick a staged edit is measured against). Not in NAMES: build them by name.
 ORDERS.refAnna = Object.assign({}, ORDERS.back, { rid: '4290000111', listing: '1890000111', buyer: 'Name Seven', personalization: ['Anna'] });
 ORDERS.refMarck = Object.assign({}, ORDERS.back, { rid: '4290000112', listing: '1890000112', buyer: 'Name Eight', variations: [V('Metal choice', 'Gold'), V('Font Choice', 'Pristina')] });
+// PRENEST (engrave-prenest-1013): a round DISC necklace with its own front art (a flower), engraved on the BACK only, as the live Birth Flower order 4200828980 was: the listing's option says "Gold - 16" - 2 sides" (BFSIDES: the design's art is the front, the
+//   buyer's words are the back's), the back words are three short lines and the font is a typed word in the note ("Typewriter font" = Crimson Text), NOT a Font Choice option. The intake reads those words and that font for free (no paid reading), so the
+//   card of a line with no Engrave job still knows them, as the live card did.
+//   heldDisc = the live case of 13 Oct: the order is ON HOLD (row state "pulled" with a person's hold on it), was NEVER pooled or nested (no pool item, no run, no sheet) and so has no Engrave job. build() seeds it AFTER the pool
+//              and the classifier, so nothing in the world ever pools it: it stays held, in no run, with no job (until the page itself makes one, which is the point of the test).
+//   discTwin = the SAME disc, words and note on a normal order that goes through the real pool, the sheet and the fit: the page's own drawing of it (job.view / fit) is the yardstick the held card is measured against.
+const DISC_NOTE = 'Typewriter font\n\nName One\nName Two\nDate One';
+ORDERS.heldDisc = { rid: '4290000121', sku: 'BFLOWER_9901', listing: '1890000121', title: 'Birthflower Necklace Disc, Birth Month Flower Charm Necklace in 14k Gold Fill', buyer: 'Name Nine', placed: { day: 0, h: 10, m: 10 }, ship: SHIP_DAYS, variations: [V('Size', 'Gold - 16" - 2 sides')], personalization: [DISC_NOTE], held: true };
+ORDERS.discTwin = Object.assign({}, ORDERS.heldDisc, { rid: '4290000122', listing: '1890000122', buyer: 'Name Ten', held: false });
 const NAMES = ['back', 'front', 'both', 'tag', 'discs', 'earrings'];
-const EXPECT_JOBS = { back: 1, front: 1, both: 2, tag: 2, discs: 3, earrings: 0, refAnna: 1, refMarck: 1 };   // how many Engrave jobs each order has once it is built (build waits for them)
+const EXPECT_JOBS = { back: 1, front: 1, both: 2, tag: 2, discs: 3, earrings: 0, refAnna: 1, refMarck: 1, heldDisc: 0, discTwin: 1 };   // how many Engrave jobs each order has once it is built (build waits for them)
 const keyOf = n => `${ORDERS[n].rid}_${ORDERS[n].rid}1`;
 
 /** the master library: put every real design's index entry and file into the fake site's Firestore / Storage (before the page reads the master) */
@@ -71,7 +115,7 @@ function seedMaster(st, skus) {
     if (!entry) throw new Error('no index entry for ' + sku);
     const aiPath = 'charmnest/master/' + d.file;
     st.put('Charm_Master_Index', sku, Object.assign({}, entry, { sku, aiPath, thumbPath: null, blocked: null, sizes: null, conflict: null }));
-    st.blobs.set(aiPath, { buf: fs.readFileSync(path.join(FIX, d.file)), generation: 1, meta: { contentType: 'application/illustrator', metadata: { firebaseStorageDownloadTokens: 't' } } });
+    st.blobs.set(aiPath, { buf: d.make ? d.make() : fs.readFileSync(path.join(FIX, d.file)), generation: 1, meta: { contentType: 'application/illustrator', metadata: { firebaseStorageDownloadTokens: 't' } } });
   }
 }
 
@@ -96,6 +140,7 @@ async function build(w, names) {
     const orderOf = eval('(' + orderSrc + ')'), now = Date.now();
     await Orders.loadMaps(true);
     for (const fx of fixtures) {
+      if (fx.held) continue;   // (a held order is seeded after the pool and the classifier, below: nothing here may pool it)
       const order = orderOf(fx, now);
       for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); }
     }
@@ -108,7 +153,7 @@ async function build(w, names) {
     // the real classifier path: faced lines take each face's words from the line's setup (no reading), a plain back is read by the fake site's stub (offline)
     for (const row of Orders.rows()) if (['pooled', 'written'].includes(row.state) && row.spec && (row.spec.engraveCandidate || row.spec.engraving)) { try { await Engrave.classify(row); } catch (e) { console.warn('classify', e && e.message); } }
   }, { fixtures: names.map(n => ORDERS[n]), orderSrc: Base.orderOf.toString() });
-  // the real fit, in the font the order names (the page's fit worker; a busy machine takes a while, so wait for it: up to 4 minutes)
+  // the real fit, in the font the order names (the page's fit worker; a busy machine takes a while, so wait for it: up to 10 minutes)
   const t0 = Date.now();
   for (;;) {
     // (a busy machine can be slow to make a job: every order must have the jobs it should have, and none may still be at work; an order that has not got its jobs yet is classified again)
@@ -124,11 +169,25 @@ async function build(w, names) {
         }
       }
       try { await Engrave.fitAll(); } catch (e) { console.warn('fitAll', e && e.message); }
-      return lacking + [...Engrave.items().values()].filter(j => ['classify', 'reclassify', 'ready', 'fitting'].includes(j.state)).length;
+      // (a machine under heavy load can outrun the fit worker's own 2-minute limit: that is not the engraving's fault; the page's own Retry is pressed for it, at most 3 times a job)
+      let retried = 0; for (const j of Engrave.items().values()) if (j.state === 'blocked' && /took too long/.test(j.reason || '') && (j.__retry = (j.__retry || 0) + 1) <= 3) { retried++; try { Engrave.fitJob(j); } catch (e) { console.warn('retry fit', e && e.message); } }
+      return retried + lacking + [...Engrave.items().values()].filter(j => ['classify', 'reclassify', 'ready', 'fitting'].includes(j.state)).length;
     }, { want: names.map(n => [ORDERS[n].rid, EXPECT_JOBS[n] == null ? 1 : EXPECT_JOBS[n]]) });
-    if (!open || Date.now() - t0 > 240000) break;
+    if (!open || Date.now() - t0 > 600000) break;
     await new Promise(r => setTimeout(r, 400));
   }
+  // a HELD order (ORDERS.x.held): on hold, never pooled, in no run, on no sheet: a pulled line with a person's hold on it, exactly the shape of the live one (the pool and the classifier above never saw it)
+  const held = names.filter(n => ORDERS[n].held);
+  if (held.length) await page.evaluate(async ({ fixtures, orderSrc }) => {
+    const orderOf = eval('(' + orderSrc + ')'), now = Date.now();
+    for (const fx of fixtures) {
+      const order = orderOf(fx, now);
+      for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); if (B.orders.byKey.get(key)) continue; const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); }
+    }
+    Orders.interpretAll();
+    for (const fx of fixtures) for (const row of Orders.rows().filter(r => r.order.receiptId === fx.rid)) { row.state = 'pulled'; row.hold = 'held by Test'; row.reason = null; }
+    Orders.render();
+  }, { fixtures: held.map(n => ORDERS[n]), orderSrc: Base.orderOf.toString() });
   const out = await page.evaluate(names => {
     const res = {};
     for (const [n, rid] of names) {
