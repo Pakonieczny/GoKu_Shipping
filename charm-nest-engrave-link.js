@@ -14,19 +14,21 @@
  *                opened on top of a window (the order window and the Sheet window are closed here without being asked)
  *   true: the Engraving tab is on that order's own piece, its details open (the placement card for a piece still to
  *   settle; its Decided row, opened, for an approved or skipped one), the search box on the order number so nothing else
- *   is in front. false: it was not (a toast says why, and the Engraving tab is filtered to the order instead).
+ *   is in front. false: it was not: NOTHING moved (no window closed, the Engraving tab keeps its view, list and search box)
+ *   and one plain line says why (inside the open window, else a toast): a piece on hold or on no sheet yet has no job.
  *
- *   window.EngraveLink.resolve({ rid, key, poolId, piece }) -> { rid, job, tab: "place" | "done" | null }
+ *   window.EngraveLink.resolve({ rid, key, poolId, piece }) -> { rid, job, tab: "place" | "done" | null, why }   (why: the plain line for a piece with no job that none is coming for, else "")
  *     what open() would land on, without moving anything (tests, and the callers that want to know first)
  *
  * The Engrave module (charm-nest-bridge.js) owns the screen; this only names where it should be (Engrave.restoreView,
  * the very same call the Sheet tab's "View in Engrave" made) and checks that it got there. Nothing is written, nothing
- * is read from the network, no job is created or read by a model: a piece whose job is not there yet is waited for
- * (a small labelled spinner, at most WAIT_MS), then the Engraving tab is shown for the order and the toast says so.
+ * is read from the network, no job is created or read by a model: a piece whose job is still to come is waited for
+ * (a small labelled spinner, at most WAIT_MS), then the line says so and the person stays where they were.
  * Callers feature-detect: without this file they keep what they did before. */
 (function () {
   "use strict";
   if (window.EngraveLink) return;
+  const AWAY = { hold: "This piece is on hold and not on a sheet yet, so there is no engraving to open.", sheet: "This piece is not on a sheet yet, so there is no engraving to open." };
   const DONE = ["approved", "written", "skipped"];                                  // the Decided tab's
   const PLACE = ["review", "words", "blocked", "classify", "ready", "fitting"];     // the Placements tab's
   const WAIT_MS = 7000, STEP_MS = 120, SHUT_MS = 2500, LAND_MS = 4000;
@@ -39,7 +41,14 @@
   const ridOfJob = j => digits(j && j.row && j.row.order && j.row.order.receiptId);
   const jobs = () => { try { const E = window.Engrave; return E && E.items ? [...E.items().values()] : []; } catch (_) { return []; } };
   const goMode = m => { const f = typeof window.setMode === "function" ? window.setMode : window.CN && window.CN.setMode; if (typeof f === "function") f(m); else throw new Error("no way to switch tab"); };
-  const say = (msg, kind, ms) => { try { const t = typeof window.toast === "function" ? window.toast : window.CN && window.CN.toast; if (t) t(msg, kind || "", ms || 6500, "engrave-link"); } catch (_) {} };
+  const say = (msg, kind, ms) => {
+    try {
+      // (a modal window sits over the toasts: the line is said inside it, once, and goes by itself)
+      const dlg = document.querySelectorAll("dialog[open]");
+      if (dlg.length && kind !== "bad") { document.querySelectorAll(".elWait[data-note]").forEach(n => n.remove()); const n = spinner(msg, true); n.node.dataset.note = "1"; n.node.addEventListener("click", n.remove); setTimeout(n.remove, ms || 6500); return; }
+      const t = typeof window.toast === "function" ? window.toast : window.CN && window.CN.toast; if (t) t(msg, kind || "", ms || 6500, "engrave-link");
+    } catch (_) {}
+  };
   const sandboxNow = () => { try { return typeof WORKSPACE_SANDBOX !== "undefined" ? !!WORKSPACE_SANDBOX : !!(window.Sandbox && window.Sandbox.on && window.Sandbox.on()); } catch (_) { return false; } };
 
   /* the face of an engraving (charm-nest-engrave-faces.js): a job, a key or a request that does not say "front" is the back */
@@ -66,7 +75,7 @@
     if (job && want && F && F.parseKey && faceOf(job) !== want) { const pk = F.parseKey(job.key), sib = items.get(F.jobKey(pk.lineKey, pk.slot, want)); if (sib && mine(sib) && !sib.editingBack) job = sib; }
     // nothing but the order named: its one job; an order of several pieces is shown as its own list instead (no guess)
     if (!job && rid && !t.poolId && !t.piece && !t.key) { const all = jobs().filter(j => mine(j) && !j.editingBack); if (all.length === 1) job = all[0]; }
-    return { rid, job, tab: tab(job) };
+    return { rid, job, tab: tab(job), why: job ? "" : AWAY[awayWhy(t, rid)] || "" };   // (why: the one plain line for a piece with no job that none is coming for: on hold, or on no sheet yet; else "")
   }
 
   /** A job that is still to come: the order's line is in the pull and its engraving is not settled (not read, or to settle),
@@ -78,11 +87,31 @@
     const named = [t.piece, t.key].filter(Boolean).map(String);
     const mineRows = rows.filter(r => named.includes(r.key) || (t.poolId && (r.poolIds || []).includes(t.poolId)));
     const pool = mineRows.length ? mineRows : named.length || t.poolId ? [] : rows;
-    return pool.some(r => { const e = r.engrave; return !e ? !!(r.spec && r.spec.engraveCandidate) : ["classify", "reclassify"].includes(e.state) || (!!e.needed && !e.approved && e.state !== "skipped"); });
+    // (ENGCRASH: a piece that is on hold or on no sheet yet is not waited for: its job is made only once it is on a sheet, Engrave.classifyAll, so none is coming in the next seconds)
+    return pool.some(r => { if (awayOf(r)) return false; const e = r.engrave; return !e ? !!(r.spec && r.spec.engraveCandidate) : ["classify", "reclassify"].includes(e.state) || (!!e.needed && !e.approved && e.state !== "skipped"); });
+  }
+
+  /** Why a piece of the order has no engraving job and none is coming: "hold" (its order is on hold, off its sheet) or "sheet" (it is on no sheet yet: a job is made once the piece is on a sheet), else "". */
+  function awayOf(r) {
+    try {
+      // (a job is made once the piece is on a sheet, in a run released by the new policy: Gate.modern; an older run makes it when the piece is pooled, so a pooled piece is waited for there)
+      const PP = window.PiecePlacement, p = PP && PP.ofRow ? PP.ofRow(r) : null, G = window.Gate, sheetFirst = !(G && G.modern) || !!G.modern();
+      if (p && p.state && p.state !== "loading") return p.state === "hold" && !p.onSheet ? "hold" : p.state === "waiting" && !p.onSheet && sheetFirst ? "sheet" : "";
+      if (r.hold || r.state === "held") return "hold";
+      return sheetFirst && ["pulled", "waiting", "pooled"].includes(r.state) ? "sheet" : "";
+    } catch (_) { return ""; }
+  }
+  /** What the order named (by its pieces, or the order alone) is: the first "hold" among its rows, else "sheet" when every row is away, else "". */
+  function awayWhy(t, rid) {
+    let rows = [];
+    try { rows = (window.Orders && window.Orders.rows ? window.Orders.rows() : []).filter(r => r && r.state !== "gone" && digits(r.order && r.order.receiptId) === rid); } catch (_) {}
+    const named = [t.piece, t.key].filter(Boolean).map(String), mine = rows.filter(r => named.includes(r.key) || (t.poolId && (r.poolIds || []).includes(t.poolId))), use = mine.length ? mine : rows;
+    const a = use.map(awayOf); if (!a.length || a.some(x => !x)) return "";
+    return a.includes("hold") ? "hold" : "sheet";
   }
 
   /* ── the small labelled spinner of a wait (in the open window, when there is one: a modal dialog covers the page) ── */
-  function spinner(text) {
+  function spinner(text, plain) {
     if (!document.getElementById("elStyle")) {
       const s = document.createElement("style"); s.id = "elStyle";
       s.textContent = ".elWait{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:2147483000;display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border:1px solid var(--line,#e4ddd0);border-radius:999px;background:var(--card,#fffefb);color:var(--ink70,#5b554c);font:600 12px var(--sans,system-ui,sans-serif);box-shadow:var(--sh,0 9px 28px rgba(30,26,20,.12));max-width:calc(100vw - 32px)}" +
@@ -92,9 +121,9 @@
     }
     const open = document.querySelectorAll("dialog[open]"), host = open.length ? open[open.length - 1] : document.body;
     const n = document.createElement("div"); n.className = "elWait"; n.setAttribute("role", "status"); n.setAttribute("aria-live", "polite");
-    n.innerHTML = '<i aria-hidden="true"></i><span></span>'; n.lastChild.textContent = text;
+    n.innerHTML = plain ? "<span></span>" : '<i aria-hidden="true"></i><span></span>'; n.lastChild.textContent = text;
     host.appendChild(n);
-    return { remove: () => n.remove() };
+    return { remove: () => n.remove(), node: n };
   }
 
   /** The caller's window, the order window, and the Sheet window (an order view opened from the sheet window gives it
@@ -142,23 +171,21 @@
     return s === true || (s === null && w.tab === (done ? "done" : "place") && (done || w.focus === job.key));
   }
 
-  /** The Engraving tab filtered to the order (a list, nothing chosen), with the reason said. */
-  function fallback(rid, why) {
-    const E = window.Engrave, v = E.view(), mine = jobs().filter(j => live(j) && !j.editingBack && ridOfJob(j) === rid);
-    const t = mine.some(j => PLACE.includes(j.state)) || !mine.some(j => DONE.includes(j.state)) ? "place" : "done";
-    widen("engrave-" + t, mine);
-    E.restoreView(Object.assign({}, v, { tab: t, focus: null, list: true, chosen: true, q: rid, openDone: null }));
-    goMode("engrave"); E.render();
-    const of = rid ? "order " + rid : "this order";
-    say(why === "none" ? `This piece has nothing to engrave. This is the Engraving tab for ${of}.`
-      : why === "late" ? `The engraving of this piece did not finish loading. This is the Engraving tab for ${of}.`
-      : `This piece's engraving is not loaded here. This is the Engraving tab for ${of}.`, "", 7000);
+  /** A piece with no engraving job to open (ENGCRASH, Paul 12 Oct: the back card of a held order waited, then closed the order window and left the Engraving tab filtered to an order that has no job: an empty list).
+   *  Nothing moves: no window is closed, the Engraving tab keeps its view, its list and its search box. The reason is said in one plain line, inside the window that is open (a modal window covers the toasts), else as a toast. */
+  function fallback(rid, why, t) {
+    const away = why === "none" ? "" : why === "late" ? "" : awayWhy(t || {}, rid);
+    say(why === "none" ? "This piece has nothing to engrave."
+      : AWAY[away] ? AWAY[away]
+      : why === "late" ? "The engraving of this piece did not finish loading. Try again in a moment."
+      : "This piece's engraving is not loaded here.", "", 7000);
+    return false;
   }
-
   let seq = 0;
   async function open(t) {
     t = t || {};
     const my = ++seq, E = window.Engrave;
+    try { document.querySelectorAll(".elWait[data-note]").forEach(n => n.remove()); } catch (_) {}   // (a line said by an earlier press is gone before the next one)
     if (!E || !E.items || !E.restoreView || !E.render) return false;   // nothing moved: the caller's own way is all there is
     let r = resolve(t);
     if (typeof t.sandbox === "boolean" && t.sandbox !== sandboxNow()) {
@@ -166,6 +193,8 @@
       return false;
     }
     if (!r.rid && !r.job) { say("There is no order to open in Engraving.", "bad"); return false; }
+    // (ENGCRASH: no job and none coming, or a job with nothing to engrave: nothing is closed and nothing is filtered, the reason is said where the person is)
+    if (r.job ? !r.tab : !mayArrive(t, r.rid)) return fallback(r.rid, r.job ? "none" : "missing", t);
     let waited = false;
     if (!r.job && mayArrive(t, r.rid)) {
       waited = true;
@@ -177,12 +206,13 @@
         }
       } finally { sp.remove(); }
       if (my !== seq) return false;
+      if (!r.job) return fallback(r.rid, "late", t);   // (ENGCRASH: it did not come: the window stays, the Engraving tab is not touched)
     }
     await shut(t.closeFirst);
     if (my !== seq) return false;
     try {
       if (r.job && r.tab) return await land(r.job, r.rid || ridOfJob(r.job));
-      fallback(r.rid, r.job ? "none" : waited ? "late" : "missing");
+      fallback(r.rid, r.job ? "none" : waited ? "late" : "missing", t);
     } catch (e) { console.warn("engrave link:", e); throw e; }
     return false;
   }
