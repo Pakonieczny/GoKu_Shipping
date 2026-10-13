@@ -16848,6 +16848,8 @@ const OrderWin = window.OrderWin = (() => {
     // (read-only, for the checks: the pieces of the order on screen, each with the sheets it is on, and the one in focus)
     _scope: () => { const r = rowOf(W.key); if (!r) return null; const sc = sheetScope(r), cut = p => p && { key: p.key, name: p.name, nested: p.nested, loading: p.loading, why: p.why, sheets: p.sheets.map(h => ({ id: h.id, label: h.label })) }; return { all: sc.all.map(cut), focus: sc.focus && sc.focus.key, sel: sc.sel && sc.sel.key, piece: W.piece, block: sheetBlock(r) }; },
     // the order number of the open view, and "something was just done here": its timeline reads now and again 1.5 s later
+    // where the person is in this view (read-only; the way back from the Engraving tab, charm-nest-engrave-return.js, puts them here again): the line, the tab, the piece and side chosen, the sheet and charm of the Sheet tab
+    where: () => { const sh = SV.list && SV.list[SV.at]; return { rid: W.rid, key: W.key, view: W.view, piece: (W.pieces || []).length > 1 ? W.piece || null : null, side: (W.side && narrowSide()) ? W.side : null, face: W.face, sheetId: sh && sh.id || "", sheetAt: SV.list ? SV.at : null, focus: SV.focus || "" }; },
     rid: () => W.rid, nudge: () => { try { if (W.dlg && W.dlg.open && !W.closing && W.feed && W.feed.nudge) W.feed.nudge(); } catch (_) {} } };
 })();
 

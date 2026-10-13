@@ -184,6 +184,15 @@ const detailFacts = page => page.evaluate(() => {
     job: (() => { try { const j = Engrave.items().get(window.__rtJobKey); return j && j.fit ? { centre: (j.fit.centre || []).map(v => Math.round(v * 100) / 100), text: j.text, font: j.fontKey } : null; } catch (_) { return null; } })() };
 });
 
+
+const hiliteFacts = page => page.evaluate(() => {
+  const vis = e => { if (!e) return false; const b = e.getBoundingClientRect(), st = getComputedStyle(e); return b.width > 0 && b.height > 0 && st.visibility !== 'hidden' && st.display !== 'none' && +st.opacity > 0 && !e.closest('[hidden]'); };
+  const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (!c) return { open: false };
+  const segs = [...c.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg[data-engp=mode]')], marked = segs.filter(x => x.hasAttribute('data-sys')).map(x => x.dataset.mode);
+  const sparks = [...c.querySelectorAll('.engpSys')].filter(vis), box = c.querySelector('.engpBox'), fb = c.querySelector('.engpFontBox');
+  return { open: true, marked, sparks: sparks.length, boxMark: box ? box.getAttribute('data-sys') : null, fontMark: fb ? fb.getAttribute('data-sys') : null, fontSpark: !!(fb && [...fb.querySelectorAll('.engpSys')].some(vis)), fontLabels: [...c.querySelectorAll('.engpFont option')].filter(o => o.hasAttribute('data-sys')).map(o => o.label || o.textContent), selected: (c.querySelector('.engpFont') || {}).value };
+});
+
 /** one measured change: before / same tick / settled pictures of both thumbs and the work area */
 async function trial(w, act, arg) {
   const page = w.page;
@@ -248,6 +257,9 @@ async function partDetail(w, made) {
   check('S2 work area starts as the real charm with the engraving in the system\'s font (the instrument\'s own control)', 'world', await (async () => { if (!sw) return false; const l = await rtw(page, 'look', sw, refImg.base.work, refImg.anna.work); return l.nccF >= 0.7 && l.score >= SENSE; })(), 'the work area against the app\'s own rendering of that order: ' + JSON.stringify(sw ? await rtw(page, 'look', sw, refImg.base.work, refImg.anna.work) : null));
   check('T0 the back thumbnail at rest has the charm drawing in it, not only text', 'thumb', cpB.ok, cpB.ev + `; engpvDraw children ${start.faces[0] ? start.faces[0].drawKids : '-'}`);
 
+  const hl0 = await hiliteFacts(page);
+  check('H1 the system\'s own choice is marked while nothing is changed (its mode, its words, its font; a visible sparkle each)', 'hilite', hl0.open && hl0.marked.join() === 'back' && hl0.boxMark === 'same' && hl0.sparks >= 2 && hl0.fontLabels.length >= 1, `mode marked: ${JSON.stringify(hl0.marked)}, words box: ${hl0.boxMark}, visible sparkles: ${hl0.sparks}, system font entries marked: ${JSON.stringify(hl0.fontLabels)}`);
+
   // ── the instrument's own control: a thumbnail drawn by the app's renderer (injected here, it is NOT the app's thumbnail) must pass the very measures that the app's thumbnails are held to ──
   const ctlB = await boxed(page, refs.base, 'text', tsz.w, tsz.h, true);   // (the references are drawn without the hatch of the engraved art, this control with it: a different but legitimate drawing)
   const ctlCp = await charmPic(ctlB, chRefs), ctlLk = ctlB && await rt(page, 'look', ctlB, refImg.base.thumb, refImg.anna.thumb), ctlCv = ctlB && await rt(page, 'cover', ctlB, refImg.base.thumb, chRefs.plain);
@@ -309,6 +321,8 @@ async function partDetail(w, made) {
   await page.evaluate(() => window.__act.type('Name One')); await R.settle(page, 500);   // (back to the system's words)
   t = await trial(w, 'font', 'Pristina');
   await evalChange('R2 picking the font Pristina', t, { thumbs: ['back'], edit: 'back', thumbLook: { what: 'font', right: refImg.marck, wrong: refImg.base }, work: { what: 'font', right: refImg.marck, wrong: refImg.base } });
+  const hl2 = await hiliteFacts(page);
+  check('H2 after another font is picked the system\'s choice stays marked (mode, font entry) and the change shows beside the closed list', 'hilite', hl2.open && hl2.marked.join() === 'back' && hl2.fontMark === 'changed' && hl2.fontSpark && hl2.fontLabels.length >= 1, `mode marked: ${JSON.stringify(hl2.marked)}, font box: ${hl2.fontMark}, sparkle beside the list: ${hl2.fontSpark}, system font entries marked: ${JSON.stringify(hl2.fontLabels)}, picked: "${hl2.selected}"`);
   await page.evaluate(() => window.__act.font('')); await R.settle(page, 500);
   const dir4 = await pickDir();
   t = await trial(w, 'nudge', dir4);
@@ -341,7 +355,7 @@ async function partDetail(w, made) {
   t = await trial(w, 'font', 'Pristina');
   await evalChange('R7 (front + back) picking the font Pristina for the back', t, { thumbs: ['front', 'back'], edit: 'back', thumbLook: { what: 'font', right: refImg.marck, wrong: refImg.base }, work: { what: 'font', right: refImg.marck, wrong: refImg.base } });
   await page.evaluate(() => window.__act.font('')); await R.settle(page, 500);
-  const dir8 = await pickDir();
+  const dir8 = dir4;   // (the same text, the same room; probing again would press Cancel and drop the staged Front + back)
   t = await trial(w, 'nudge', dir8);
   await evalChange('R8 (front + back) nudging the back', t, { thumbs: ['front', 'back'], edit: 'back', work: 'moves', dir: dir8 });
   await R.shot(w, 'LIVE-rt-detail-both-staged');
