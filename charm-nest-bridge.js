@@ -18728,12 +18728,13 @@ const LiveNest = window.LiveNest = (() => {
      it used to be passed over for good, short of full, so it was never released and its orders, the oldest, never cut.
      Rose Gold keeps the newest sheet, where its green line is. */
   function intakePage(m, run, orderId) {
-    const pages = pagesOf(m), newest = pages.at(-1);
-    if (!O.FAST_MATERIALS.has(m)) return newest;
+    const pages = pagesOf(m), newest = pages.at(-1), fast = O.FAST_MATERIALS.has(m);
     const open = p => p.charms.length && run && p.runId === run.runId && !closed(p);
-    // an order goes onto one sheet whole: a line joins the order's lines already waiting on a sheet in line
-    const home = orderId != null && pages.find(p => open(p) && p.charms.some(c => String(c.order) === String(orderId)));
+    // an order goes onto one sheet whole: a line joins the order's lines already waiting on a sheet in line. Every metal (Paul, 13 Oct 2026: all the pieces
+    // of an order on one sheet); a Rose Gold, 10K or 14K sheet whose contour is planned or protected is not looked at, those metals keep their newest sheet
+    const home = orderId != null && pages.find(p => open(p) && (fast || !(p.rosePlan || p.roseProtected)) && p.charms.some(c => String(c.order) === String(orderId)));
     if (home) return home;
+    if (!fast) return newest;
     // a sheet filling its gaps takes only the orders it still owes a try; the rest of a batch starts the next sheet at once
     // (CN.topupRoom; Paul, 27 Sep: a whole batch waited on the full sheet and the next sheet was not started)
     const room = p => !window.CN?.topupRoom || window.CN.topupRoom(p) > 0;

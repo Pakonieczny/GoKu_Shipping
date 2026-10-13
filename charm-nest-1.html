@@ -4542,6 +4542,21 @@ function splitGroups(pages, only) {
   for (const [group, pieces] of by) { const at = [...new Set(pieces.map(x => x.sh))]; if (pieces.length > 1 && at.length > 1) out.push({ group, pieces, pages: at }); }
   return out;
 }
+/** The orders (of `only`, a Set of order keys, or all) with pieces on two or more of these sheets (pages of one metal; an order's pieces of another metal are another
+    metal's sheet by nature). Pure: reads the pages it is given, no cloud call. The order, not the line, is the unit that stays whole (Paul, 13 Oct 2026).
+    [{ order, pieces:[{c, sh}], pages:[sh] }] */
+function orderSplits(pages, only) {
+  const by = new Map();
+  for (const sh of pages || []) for (const c of sh.charms || []) {
+    if (c.excluded) continue;
+    const k = String(c.order || c.id); if (only && !only.has(k)) continue;
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push({ c, sh });
+  }
+  const out = [];
+  for (const [order, pieces] of by) { const at = [...new Set(pieces.map(x => x.sh))]; if (pieces.length > 1 && at.length > 1) out.push({ order, pieces, pages: at }); }
+  return out;
+}
 /** A split in plain words: "Left on sheet 1, Right on sheet 2" (a pair of one design: "1 piece on sheet 1, 1 piece on sheet 2"). */
 function splitWords(g, nameOf) {
   return g.pages.map(sh => { const here = g.pieces.filter(x => x.sh === sh).map(x => x.c), sides = here.map(sideWord).filter(Boolean);
@@ -4568,10 +4583,34 @@ function keepOrdersWhole(sh, byId, pocket) {
   const missed = new Set(sh.rejects.map(id => gid(byId.get(id))).filter(Boolean)), fixed = new Set((sh.roseProtected?.placements || []).map(p => p.id));
   const mates = missed.size && !sh._mergeNext ? sh.placements.filter(p => locked.has(p.id) && !lifted.includes(p) && !fixed.has(p.id) && missed.has(gid(byId.get(p.id))) && !(byId.get(p.id)?.pinned && !byId.get(p.id)?.arrivalPin)) : [];
   lifted.push(...mates);
+  // The ORDER is the unit (Paul, 13 Oct 2026: "the priority should be to maintain all of the pieces for each given order on that one sheet"): a piece of an
+  // order that did not fit takes the order's other SAVED pieces off this sheet with it (another line of the order, a copy of a plain quantity-N line),
+  // so the whole order starts the next sheet, and the small room they leave is filled by single charms (the gap fill). Only when the whole order fits one
+  // empty sheet (otherwise lifting gains nothing), when other pieces stay on this sheet (an emptied sheet cannot pass anything on), and never a protected
+  // Rose Gold piece or one a person pinned; the same exceptions as for a pair's mates.
+  const wholeMates = orderMatesOf(sh, byId, bad, orderOf, locked, fixed, lifted);
+  lifted.push(...wholeMates);
   if (!lifted.length) return;
   sh.placements = sh.placements.filter(p => !lifted.includes(p));
   sh.rejects.push(...lifted.map(p => p.id));
-  agent({ metal: sh.metal }, "nest", `Orders kept whole and oldest first: ${lifted.length} placed piece(s) of ${new Set(lifted.map(p => orderOf(p.id))).size} order(s) lifted off — the order moves to the next sheet as one${mates.length ? `; ${mates.length} saved piece(s) of ${new Set(mates.map(p => gid(byId.get(p.id)))).size} pair/line(s) whose other piece did not fit come with it, so none is left half on this sheet` : ""}`);
+  // a saved piece lifted off is no longer a saved placement of this sheet: the check that follows holds the saved layout in place (buildJob lockedPlacements) and would
+  // flag the sheet for a "moved" piece that was taken off on purpose
+  if (sh.nestInitial && lifted.some(p => sh.nestInitial.some(q => q.id === p.id))) sh.nestInitial = sh.nestInitial.filter(q => !lifted.some(p => p.id === q.id));
+  agent({ metal: sh.metal }, "nest", `Orders kept whole and oldest first: ${lifted.length} placed piece(s) of ${new Set(lifted.map(p => orderOf(p.id))).size} order(s) lifted off — the order moves to the next sheet as one${mates.length ? `; ${mates.length} saved piece(s) of ${new Set(mates.map(p => gid(byId.get(p.id)))).size} pair/line(s) whose other piece did not fit come with it, so none is left half on this sheet` : ""}${wholeMates.length ? `; ${wholeMates.length} saved piece(s) of ${new Set(wholeMates.map(p => String(orderOf(p.id)))).size} order(s) whose other piece did not fit come with it, so the order stays on one sheet` : ""}`);
+}
+/** The saved pieces keepOrdersWhole lifts with an order one of whose pieces did not fit (see there): placements of `sh` that are locked, not lifted yet, not protected, not
+    pinned by a person, of an order in `bad`, when that whole order fits one empty sheet (its area, grown by half the clearance, under ORDER_ROOM of the sheet's
+    usable area at the fill ceiling) and the sheet keeps some other piece. [] when the sheet's usable area is not known (a page without usableArea) or a Merge sheets rerun. */
+const ORDER_ROOM = 0.7;
+function orderMatesOf(sh, byId, bad, orderOf, locked, fixed, lifted) {
+  if (!bad.size || sh._mergeNext || typeof usableArea !== "function") return [];
+  const key = id => String(orderOf(id)), badKeys = new Set([...bad].map(String));
+  const cap = +(typeof S !== "undefined" && S.settings && S.settings.maxFill) || .80, room = usableArea(sh) * cap * ORDER_ROOM;
+  if (!(room > 0)) return [];
+  const area = new Map();
+  for (const c of sh.charms || []) if (!c.excluded) { const k = String(c.order || c.id); area.set(k, (area.get(k) || 0) + (typeof inflatedArea === "function" ? inflatedArea(c) : +c.areaPt2 || 0)); }
+  const mates = sh.placements.filter(p => locked.has(p.id) && !lifted.includes(p) && !fixed.has(p.id) && badKeys.has(key(p.id)) && !(byId.get(p.id)?.pinned && !byId.get(p.id)?.arrivalPin) && (area.get(key(p.id)) || 0) <= room);
+  return mates.length && sh.placements.length - lifted.length - mates.length > 0 ? mates : [];
 }
 function orderSummary(charms) {
   const by = new Map(); for (const c of charms) { const k = c.order || c.id; by.set(k, (by.get(k) || 0) + 1); }
@@ -4625,6 +4664,9 @@ function overflowToNextSheet(sh, announce = true) {
     for (const g of split.slice(0, 5)) agent({ metal: sh.metal }, "warn", `Split pair/line ${g.group} (it could not stay whole): ${splitWords(g, p => `sheet ${p.page}`)} — both sheets must go in one set`);
     if (announce) toast(`${labelOf(sh.metal)}: ${split.length === 1 ? "a pair/line is" : split.length + " pairs/lines are"} split across sheets — ${splitWords(split[0], p => `sheet ${p.page}`)}`, "bad", 7000);
   }
+  // an ORDER (any lines, not only a pair) that still has pieces on another sheet of this metal after the move: said in the log, with the reason it could not stay whole
+  { const apart = typeof orderSplits === "function" ? orderSplits(prim.pages, new Set(moving.map(c => String(c.order || c.id)))) : [];
+    for (const o of apart.slice(0, 5)) agent({ metal: sh.metal }, "warn", `Split order ${o.order} (it could not stay on one sheet): ${o.pages.map(p => `${o.pieces.filter(x => x.sh === p).length} piece(s) on sheet ${p.page}`).join(", ")} — both sheets must go in one set`); }
   if (announce) toast(`${labelOf(sh.metal)}: ${moving.length} charm(s) moved to sheet ${next.page} — nesting it now`, "ok", 4200);   // after a nest, its own toast already said "… still waiting for sheet N"
   renderRail(); updateTopSub();
   if (!after) startNest(next);
@@ -5052,8 +5094,10 @@ function feedTurn(sh, items) {
   const turn = new Set([...new Set(fresh.map(orderKey))].slice(0, sh.topup && !sh.topup.closedAt ? Math.max(1, topupRoom(sh, false)) : FEED_ORDERS));
   // a pair (a line of pieces) with a piece already placed on this sheet has its other pieces come in this turn, whatever their order's rank:
   // they join their mate's sheet and are never left waiting to be passed on alone (rule R2; a line with nothing placed is unchanged)
-  const gid = typeof groupOf === "function" ? groupOf : () => null, placedLines = new Set(items.filter(c => placed.has(c.id)).map(gid).filter(Boolean));
-  if (placedLines.size) for (const c of fresh) if (!turn.has(orderKey(c)) && placedLines.has(gid(c))) turn.add(orderKey(c));
+  // The same for any piece of an ORDER with a piece already placed on this sheet (another line of the order, a copy that came in after its mates were saved;
+  // Paul, 13 Oct 2026: all the pieces of an order on one sheet): it takes this turn with them, not the order's place in line.
+  const gid = typeof groupOf === "function" ? groupOf : () => null, placedLines = new Set(items.filter(c => placed.has(c.id)).map(gid).filter(Boolean)), placedOrders = new Set(items.filter(c => placed.has(c.id)).map(orderKey));
+  if (placedLines.size || placedOrders.size) for (const c of fresh) if (!turn.has(orderKey(c)) && (placedOrders.has(orderKey(c)) || placedLines.has(gid(c)))) turn.add(orderKey(c));
   const wait = fresh.filter(c => !turn.has(orderKey(c)));
   if (!wait.length) return items;
   sh.feedWait = wait.map(c => c.id);
@@ -7602,7 +7646,7 @@ boot();
 <script src="charm-nest-review-link.js?v=20261013-rlk2"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-nw1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4"></script>
