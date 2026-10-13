@@ -246,14 +246,20 @@ async function main() {
       const rows = () => [...w.srv.st.docs.keys()].filter(k => !docs0.has(k) && k.includes(H.rid));
       const opened = await page.evaluate(async ({ rid, key }) => { try { const ok = await EngraveLink.open({ rid, key }); return ok === true && !!document.querySelector('#egQueue .rvItem[data-kind=placement] .engp'); } catch (e) { return false; } }, { rid: H.rid, key: H.key });
       await R.settle(page, 900);
+      // the job's fit runs in the background (a small labelled wait is fine): the detail is judged once it has settled (the page's own Retry for a fit that outran its limit on a loaded machine, at most 4 times)
+      let fitted = null;
+      if (opened) for (let i = 0; i < 160; i++) { fitted = await page.evaluate(rid => { const r = Orders.rows().find(x => x.order.receiptId === rid), j = r && Engrave.jobsOf(r)[0]; if (!j) return null; if (j.state === 'blocked' && /took too long/.test(j.reason || '') && (j.__r = (j.__r || 0) + 1) <= 4) Engrave.fitJob(j); return { state: j.state, fit: !!j.fit, view: !!j.view }; }, H.rid); if (fitted && fitted.state === 'review' && fitted.fit && fitted.view) break; await R.settle(page, 1500); }
+      await R.settle(page, 900);
       const det = opened ? await page.evaluate(() => {
         const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'), cv = c && c.querySelector('.backHost canvas'), fontEl = c && c.querySelector('.engpFont');
-        return { words: c && c.querySelector('.engpWords') && c.querySelector('.engpWords').value, font: fontEl ? (fontEl.value || fontEl.textContent || '').trim() : null, canvas: !!cv && cv.width > 0, front: !!(c && c.querySelector('.engFace[data-face=front]')), approve: !!(c && c.querySelector('[data-a=approve]')), focus: Engrave.view().focus || null };
+        let ink = null; try { const x = cv && cv.getContext && cv.getContext('2d'); if (x) { const d = x.getImageData(0, 0, cv.width, cv.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 40 && (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200)) n++; ink = n; } } catch (_) { ink = null; }
+        const r = cv && cv.getBoundingClientRect();
+        return { words: c && c.querySelector('.engpWords') && c.querySelector('.engpWords').value, font: fontEl ? String(fontEl.value || '').trim() : null, canvas: !!cv && cv.width > 0 && r.width >= 150 && r.height >= 150 && (ink === null || ink > 200), ink, size: r && [Math.round(r.width), Math.round(r.height)], waitText: c ? (c.querySelector('.backHost') || c).innerText.replace(/\s+/g, ' ').slice(0, 80) : '', front: !!(c && c.querySelector('.engFace[data-face=front]')), approve: !!(c && c.querySelector('[data-a=approve]')), focus: Engrave.view().focus || null };
       }) : null;
       const stD = await state(H.rid), jb = stD.jobs[0] || {};
       check('PN9 the Engrave detail of the held order: its own job under the key the line will have when it is pooled, the three lines in the box, the work area drawn, no Front box', 'pre',
         !!det && det.focus === H.key && jb.key === H.key && jb.face === 'back' && jb.hasFit && jb.hasView && det.words === 'Name One\nName Two\nDate One' && det.canvas && !det.front,
-        det ? `focus ${det.focus}, job ${jb.key} ${jb.state} (fit ${jb.hasFit}, view ${jb.hasView}), the line's key is ${H.key}, words ${JSON.stringify(det.words)}, font box "${det.font}", work area ${det.canvas ? 'drawn' : 'missing'}, front face ${det.front ? 'DRAWN' : 'not drawn'}` : 'the detail did not open, so there is nothing to look at');
+        det ? `focus ${det.focus}, job ${jb.key} ${jb.state} (fit ${jb.hasFit}, view ${jb.hasView}), the line's key is ${H.key}, words ${JSON.stringify(det.words)}, font box "${det.font}", work area ${det.canvas ? 'drawn' : 'MISSING'} (${JSON.stringify(det.size)}, ${det.ink === null ? 'ink not readable' : det.ink + ' inked px'}${det.canvas ? '' : ', says "' + det.waitText + '"'}), job settled ${JSON.stringify(fitted)}, front face ${det.front ? 'DRAWN' : 'not drawn'}` : 'the detail did not open, so there is nothing to look at');
       // a staged edit: other words, Save, the reason prompt (ENGWHY) answered with its first quick button
       let ed = null;
       if (det && det.words) {
