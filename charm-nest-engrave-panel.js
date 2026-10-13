@@ -348,8 +348,19 @@
       const sel = `[data-engp="${want.engp}"]${want.face ? `[data-face="${want.face}"]` : ''}${want.mode ? `[data-mode="${want.mode}"]` : ''}${want.act ? `[data-act="${want.act}"]` : ''}`, t = el.querySelector(sel);
       if (t && !t.disabled && el.ownerDocument.activeElement !== t) { try { t.focus({ preventScroll: true }); if (want.start != null && t.setSelectionRange) t.setSelectionRange(want.start, want.end); } catch (_) { /* no caret to give back */ } }
     };
+    /** ENGWORK: what the big work-area drawing shows for a face while words, font or mode are staged: the staged edit of that face's job goes to Engrave.draftFit (a draft: never saved, approved or sent anywhere),
+     *  or null when nothing is staged (Cancel, after a Save, a panel just opened) so the fitted engraving is drawn again. `opts.onDraft(faceKey, staged)` replaces the default. The ONE place it is called is `paint`
+     *  below, which every input, change, mode, position, Cancel and Save already ends in. */
+    const draftOut = (vm, d, face) => {
+      try {
+        const job = faceJobOf(vm, face, slot); if (!job || !job.key) return;
+        const x = d.faces[face] || { text: '', font: '' }, staged = hasPatch(Setup().patchOf(vm, d)) ? { mode: d.mode, face, text: x.text, fontWord: x.font || '' } : null;
+        if (typeof opts.onDraft === 'function') opts.onDraft(job.key, staged); else { const E = Eng(); if (E && E.draftFit) E.draftFit(job.key, staged); }
+      } catch (_) { /* the work area keeps what it drew */ }
+    };
     /** What a face's thumbnail shows right now: the staged words and font, the face's own position. */
     const paint = (vm, d, face) => {
+      draftOut(vm, d, face);
       const P = Prev(); if (!P || !P.update) return;
       const host = opts.thumb ? tryDo(() => opts.thumb(face), null) : tryDo(() => (opts.scope || el.ownerDocument).querySelector(`.engFace[data-face="${face}"] .engThumb`), null);
       if (!host) return;
@@ -520,7 +531,7 @@
       /** The card follows the STAGED edit: the faces it draws are the ones the staged mode asks for (the same tick), the face being edited is marked, and the thumbnails get the staged words back. */
       const follow = f => { if (!card || !card.update) return; tryDo(() => card.update({ face: f, stage: stage() })); tryDo(() => panel.paintAll()); };
       panel = mount(panelHost, line, {
-        job, face, scope: slot, faceSwitch: !card, onVisible: v => { slot.hidden = !v && !card; }, thumb: f => (card && card.thumb ? card.thumb(f) : null),
+        job, face, scope: slot, faceSwitch: !card, onDraft: o.onDraft, onVisible: v => { slot.hidden = !v && !card; }, thumb: f => (card && card.thumb ? card.thumb(f) : null),
         onFace: f => {
           follow(f);   // (the card draws its thumbnails from the saved jobs: the staged words go back on them)
           // the card in front is for the face being edited: another face that has its own placement is shown by the tab itself (its card is drawn again; the staged edit stays)

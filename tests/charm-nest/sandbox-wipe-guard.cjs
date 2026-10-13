@@ -55,7 +55,7 @@ const putArchive = (sb, rid) => tick(async () => { const r = await archive.handl
 const fileDoor = (sb, op, b) => tick(async () => { const r = await output.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(Object.assign({ op }, b, sb ? { sandbox: true } : {})) }); assert.strictEqual(r.statusCode, 200, op + ' ' + r.body); return JSON.parse(r.body); });
 
 /* ── the orders the sandbox plays under their real numbers ── */
-const A = '4173162973', B = '4170408845', C = '4170000555', D = '4170000777';
+const A = '4173162973', B = '4170408845', C = '4170000555', D = '4170000777', E = '4170000999';   // (E: an order on no sheet, marked for Review: an open mark on D would hold its rose sheet's cut, REVHOLD)
 const DAY = '2026-10-09', RUN = 'run-20261009-1', RUN2 = 'run-20261009-2', SHEET = 'gold-gf-guard-1', SHEET2 = 'silver-ss-guard-2', ROSE = 'sheet-rose-guard', SESSION = 'sorter-session-guard', COMPUTER = 'computer-guard1';
 const NOW = Fk.realNow();
 const SET = `set-${DAY}-1`;
@@ -70,6 +70,10 @@ async function session(sb) {
   await L({ op: 'customPut', key: `${B}_20020`, by: 'ann', how: 'button', receiptId: B, transactionId: '20020', sku: 'CUSTOM-N-001', title: 'Custom necklace', kind: 'custom' });
   await L({ op: 'customReopen', key: `${B}_20020`, by: 'ann', how: 'reopen' });
   await L({ op: 'customDelete', key: `${B}_20020`, by: 'ann', how: 'reopen' });   // (the same door under its second name)
+  // Send to Review (REVMARK): an order marked, resolved, marked again: Charm_Custom_Orders/{rid}_review, a SERVER family, so the sandbox's copy is wiped and production's is not touched
+  await L({ op: 'reviewMarkPut', rid: E, action: 'mark', by: 'paul' });
+  await L({ op: 'reviewMarkPut', rid: E, action: 'resolve', by: 'ann', how: 'ok' });
+  await L({ op: 'reviewMarkPut', rid: E, action: 'mark', by: 'paul' });
   const at = NOW - 3 * 86400000, ck = `custom:${B}:CUSTOM-N-001`;
   await L({ op: 'customSheetPut', record: { ck, rid: B, at: at - 1000, phase: 'sent',
     files: [{ id: 'file-custom-1', name: 'Customer design.ai', kind: 'ai', size: 2400, hash: 'abcde01234567890123456789', cloud: { path: `charmnest/custom/${B}/original.pdf`, url: 'https://saved.example/original.pdf' }, metal: 'silver', qty: 1, pieces: 1, wMm: 14, hMm: 18, maxPt: 52, minPt: 40, maxAreaPt2: 2000, state: 'ready' }],
@@ -289,6 +293,7 @@ const sandboxDoc = (k, v) => { const o = own('firestore', k); if (!o || o.kind !
   const OPS = Object.keys(lib.ops);
   const READ_ONLY = new Set(['ping', 'lookupCharms', 'listCharms', 'listSheets', 'getSheet', 'listingPhotos', 'getShapeGuidance', 'laserStatus', 'laserDoneList', 'getCalibration', 'jobList', 'getJob', 'getAgent', 'poolList', 'poolGet', 'backList', 'backPreview', 'setGet', 'setList', 'runGet', 'runList', 'history', 'releaseGet', 'cancelCheck', 'timelineGet', 'listingSkus', 'aliasGet', 'noDesignGet', 'optionMapGet', 'customReadGet',
     'customSheetGet', 'customGet', 'sandboxStatus', 'roseGet', 'roseList', 'remnantList', 'partialList', 'partialPolicyGet', 'partialPlan', 'partialStocks', 'sheetHistory', 'partialSearchList', 'masterGet', 'masterGetMany', 'masterList', 'masterListFiles', 'flowState', 'sharedOrders', 'getOrderPieces', 'laserDoneList', 'sessionsList']);
+  READ_ONLY.add('reviewMarkOpen');   // REVMARK: one batch get by key of {rid}_review documents (which orders are in Review); writes nothing (tests/charm-nest/review-mark.cjs drives reviewMarkPut, this guard drives it on both sides)
   READ_ONLY.add('customSkuCheck');   // SKUGEN: reads the master by id, the listing's alias and cached table; writes nothing and asks Etsy nothing (tests/charm-nest/save-sku.cjs drives it)
   const REPO = { sandboxPullLimitSet: 'a setting (config/charmNestSandboxPull), behind the repo-token door; tests/charm-nest/sandbox-pull-limit.cjs drives it and proves the wipe leaves it', masterPutIndex: 'the Charm repo (shared by design, never wiped)', masterPatch: 'the Charm repo', masterPutFile: 'the Charm repo', masterRemoveFile: 'the Charm repo', masterRemoveSku: 'the Charm repo', startMaster: 'the Charm repo indexing job' };
   const NOT_SANDBOX = { putCharms: 'skipped in the sandbox (shared library)', renameCharm: 'skipped in the sandbox', putCalibration: 'skipped in the sandbox', cancelSweep: 'refused in the sandbox (sandboxCancel is its twin)', sandboxPut: 'retired (410)', sandboxPullOrders: 'ETSYPULL: its own test (tests/charm-nest/sandbox-pull.cjs) drives it against a fake Etsy; it writes Charm_Sandbox/current, stream, pulls and orders-pull/*', sandboxReset: 'the wipe itself', purgeHistory: 'ends in the wipe (phase 5)', restoreSheet: 'rebuilds a record from the files of a run (needs a nest report)' };
