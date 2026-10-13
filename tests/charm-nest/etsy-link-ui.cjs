@@ -193,7 +193,7 @@ const LINK = 'https://www.etsy.com/listing/1700763608/swan-charm-necklace-gold-s
   ok(p6.shown && p6.ids.join(',') === '1801964156,1700763610,1700763612,1700763613,1700763614', 'the panel of the ringed card offers the listings the page already reads as this charm: ' + p6.ids.join(', '));
   ok(p6.texts[0] === '1801964156 Small Cat Charm Add On Charm…' && p6.tip === 'now read as CAT 1- SITTING CAT', 'a tap is the listing number and a short title; its hint says what the listing reads as today: ' + p6.texts[0] + ' / ' + p6.tip);
   ok(p6.input === '' && p6.say === "Paste the listing's Etsy link or its number." && p6.goOff, 'nothing is prefilled: the box is empty and the button is off until a listing is chosen');
-  ok(p6.before.join(',') === 'elHead,elPicks,elIn,elSay,elActs', 'the taps sit between the heading and the box: ' + p6.before.join(','));
+  ok(p6.before.join(',') === 'elHead,elPicks,elIn,elSay,elActs,elBatch', 'the taps sit between the heading and the box (and the batch line, ETSYBATCH, comes last): ' + p6.before.join(','));
   ok(log.length === before6b, 'looking and opening the panel made no request at all (the taps come from what the page holds)');
   if (SHOTS) { await page.waitForTimeout(300); await tile(NEW_CAT).screenshot({ path: path.join(SHOTS, 'etsylink-5-taps.png') }); }
   const opsBefore = opCalls().length;
