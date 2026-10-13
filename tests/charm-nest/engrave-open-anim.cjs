@@ -166,6 +166,19 @@ const near = (a, b, tol) => !!a && !!b && a.every((v, i) => Math.abs(v - b[i]) <
     s = await stopSampling(300);
     ok('no window open: nothing flies, the detail is mounted (true)', res4b === true && s.own.length === 0 && (await landed(frontJob)).card === frontJob);
 
+    // ── 4b · the Sheet tab's own button (the old "Fix in Engraving ->" it kept) ──
+    await toOrders();
+    await page.evaluate(({ rid, pid }) => OrderWin.openOrder(rid, { view: 'sheet', poolId: pid }), { rid, pid: b.poolIds[0] });
+    await page.waitForFunction(() => document.getElementById('orderWin').open && document.querySelector('#owSheetPanel [data-engraving-panel] [data-e=engrave]'), null, { timeout: 30000 });
+    await R.settle(page, 800);
+    const label = await page.evaluate(() => document.querySelector('#owSheetPanel [data-engraving-panel] [data-e=engrave]').textContent.replace(/\s+/g, ' ').trim());
+    await startSampling();
+    await page.click('#owSheetPanel [data-engraving-panel] [data-e=engrave]');
+    s = await stopSampling(300); fr = s.fr;
+    end = await landed(backJob);
+    ok('the Sheet tab\'s "' + label + '" button: the same flight into the card, the window ends closed', fr.some(f => f.open && f.back) && s.timing && s.timing.dur === 420 && near(visible(s.kf[s.kf.length - 1], W, H), (fr.filter(f => f.open && f.card).pop() || {}).card, 3) && !end.open && end.mode === 'engrave', JSON.stringify([s.timing, s.kf, end]));
+    ok('and it lands on a face of that piece', b.jobs.some(j => j.key === end.card), JSON.stringify(end));
+
     // ── 5 · a caller that closes its own window keeps the old order: it closes first, then the detail is drawn ──
     await toOrders(); await openWin(true);
     const o5 = await page.evaluate(async a => {
