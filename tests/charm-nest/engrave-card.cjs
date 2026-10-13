@@ -1,7 +1,7 @@
 // ENGCARD (Paul, 12 Oct 2026: "the cards are currently full of needless text ... front and back side-by-side in a larger card ... keep it very simple and minimalist"):
 // the engraving card of ONE piece, charm-nest-engrave-card.js (CharmNestEngraveCard), offline and pure: the real faces model and the real card file run over stand-ins for Engrave's jobs, the seals and
 // the preview (no page, no network, no paid call, nothing live; names are neutral fixtures).
-//   1  a back-only necklace: ONE card, the Front is a quiet empty slot, the Back has the words, one dot, one Approve button
+//   1  a back-only necklace: ONE card with ONE face (the Back, with its words); there is no Front slot at all (ENGSMART: no dashed empty box), one dot, one Approve button
 //   2  a tag with front and back: ONE card with two thumbnails (Front, Back) side by side, the words under each, ONE Approve button
 //   3  an earring: no card; a legacy decided front job: a card with the Front only, never a Back slot (even for a legacy approved back job)
 //   4  a counted line: one card for each disc, each with its own faces
@@ -33,13 +33,12 @@ let n = 0; const ok = m => console.log('  ✓ ' + m);
   const row = line('K1'), jobs = { K1: [job(row, 'K1', 'review', 'Name One')] }, W = world(jobs), C = W.CharmNestEngraveCard;
   const ps = C.piecesOf([row], { nameOf: () => 'NAME ONE' });
   assert.equal(ps.length, 1, 'one piece'); const p = ps[0], h = C.html(p);
-  assert.equal(count(h, /class="engCard"/g), 1); assert.equal(count(h, /class="engThumb"/g), 2, 'two slots: Front and Back');
-  assert.match(h, /data-face="front"[^>]*data-empty="1"/, 'Front is a quiet empty slot'); assert.match(h, /data-face="back"[^>]*data-empty="0"/);
+  assert.equal(count(h, /class="engCard"/g), 1); assert.equal(count(h, /class="engThumb"/g), 1, 'ONE face: the Back only (no Front slot)');
+  assert.ok(!/data-face="front"/.test(h) && !/>Front</.test(h), 'no Front box and no "Front" title over nothing'); assert.match(h, /data-face="back"/); assert.ok(!/data-empty/.test(h), 'no empty-slot markup at all');
   assert.equal(count(h, /class="engDot"/g), 1, 'ONE state mark'); assert.equal(count(h, /data-e="approve"/g), 1, 'ONE Approve button');
-  assert.ok(h.includes('>Front<') && h.includes('>Back<') && h.includes('>Name One<'));
+  assert.ok(h.includes('>Back<') && h.includes('>Name One<'));
   assert.equal(p.faces.front, null); assert.equal(p.state, 'approve');
-  const empty = h.slice(h.indexOf('data-face="front"'), h.indexOf('data-face="back"')); assert.ok(!/engTxt"[^>]*>[^<]+</.test(empty), 'the empty slot has no text');
-  noDeleted(h, 'back-only'); ok('back-only necklace: one card, empty Front, Back with its words, one dot, one Approve'); n++;
+  noDeleted(h, 'back-only'); ok('back-only necklace: one card, only the Back (with its words), no Front slot, one dot, one Approve'); n++;
 }
 // 2 ── a tag with front and back
 {
@@ -90,5 +89,13 @@ let n = 0; const ok = m => console.log('  ✓ ' + m);
 {
   const row = line('K6'), W = world({ K6: [job(row, 'K6', 'none', '')] });
   assert.equal(W.CharmNestEngraveCard.piecesOf([row], {}).length, 0, 'nothing to engrave: no card'); ok('a line that engraves nothing has no card'); n++;
+}
+// 7 ── the words under a picture are the words as GIVEN, not the fit's layout (ENGAUTO: Ace capitals, one word a line)
+{
+  const row = line('K7'), W = world({}), C = W.CharmNestEngraveCard, f = (state, extra) => C.facesOf('K7', null, [job(row, 'K7', state, 'NAME\nONE', Object.assign({ lines: ['NAME', 'ONE'], lineInput: ['Name One'] }, extra || {}))], { faces: ['back'] }, { row }).back.text;
+  assert.equal(f('review'), 'Name One', 'an undecided job shows what went in');
+  assert.equal(f('approved'), 'NAME\nONE', 'a decided job shows its lines as they are'); assert.equal(f('review', { lineMode: 'preserve' }), 'NAME\nONE', 'a hand layout shows its lines');
+  assert.equal(f('review', { lineInput: ['Other words'] }), 'NAME\nONE', 'other words than the fit holds: the fit\'s lines');
+  ok('the words under a picture are the words as given'); n++;
 }
 console.log(`engrave-card: ${n} groups passed`);
