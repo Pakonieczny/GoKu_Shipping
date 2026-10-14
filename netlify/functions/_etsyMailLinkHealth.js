@@ -188,7 +188,10 @@ function evaluate(ev, now) {
   else if (q && q.stalled) add("send", "Sending", "down", `Sending is stuck: a message has waited ${waited ? ago(waited) : "10 min"} with no progress.`, "Sending stuck", 2);
   else if (waited > T.workDown) add("send", "Sending", "down", `A message has waited ${ago(waited)} for the inbox's Etsy helper to send it.`, "Not sending", 2);
   else if (waited > T.workWarn) add("send", "Sending", "warn", `A message has waited ${ago(waited)} for the inbox's Etsy helper.`, "Sending slowly", 2);
-  else if (nDead > 0) add("send", "Sending", "warn", `${nDead} ${nDead === 1 ? "message to a customer needs" : "messages to customers need"} a person: ${nDead === 1 ? "it" : "they"} did not go out. Open the conversation to retry or send by hand.`, "Messages need attention", 2);
+  else if (nDead > 0) {
+    const why = [...new Set(((q && q.dead) || []).map(d => d.plain).filter(Boolean))].slice(0, 2).join(" ");
+    add("send", "Sending", "warn", `${nDead} ${nDead === 1 ? "message to a customer needs" : "messages to customers need"} a person: ${nDead === 1 ? "it" : "they"} did not go out.${why ? " " + why : ""} Open the conversation to retry or send by hand, or put ${nDead === 1 ? "it" : "them"} away.`, "Messages need attention", 2, { dead: ((q && q.dead) || []).length || nDead });
+  }
   else add("send", "Sending", "ok", nQueued ? `${nQueued} ${nQueued === 1 ? "message" : "messages"} on the way` : "Nothing waiting to go out");
 
   // ── noticing answers: the Gmail watcher sees Etsy's email about each new message within a minute or two ──

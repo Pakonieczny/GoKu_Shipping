@@ -446,6 +446,19 @@
       gapNote = { tone: "warn", text: `Could not re-check just now (${e.message}). Try again in a minute.`, at: Date.now() };
     } finally { gapBusy = false; paintLights(); healthLater(); }
   }
+  /** MAILAWAY (Paul, 14 Oct 2026): "2 messages need a person: they did not go out" with nothing in Customers to open and nothing to press: Put away clears those dead letters WITHOUT sending them. */
+  async function putAway() {
+    if (!M.key || gapBusy || healthBusy) return;
+    gapBusy = true; gapNote = null; paintLights();
+    try {
+      const res = await call("link_putaway", {}, { timeout: 30000 });
+      applyLinkResult(res);
+      gapNote = { tone: "info", text: res.n ? `Put away ${res.n} ${res.n === 1 ? "message" : "messages"} that did not go out. Nothing was sent.` : "Nothing was left to put away.", at: Date.now() };
+    } catch (e) {
+      if (authLost(e)) return;
+      gapNote = { tone: "warn", text: `Could not put them away just now (${e.message}). Try again in a minute.`, at: Date.now() };
+    } finally { gapBusy = false; paintLights(); healthLater(); }
+  }
   async function dismissGap(sig) {
     if (!M.key || gapBusy || healthBusy || !sig) return;
     gapBusy = true; gapNote = null; paintLights();
@@ -477,6 +490,7 @@
     rows.push(row(M.link === "offline" ? "down" : "ok", "Sorter to inbox", M.link === "offline" ? "Not answering right now; what you write is kept" : "Connected" + (M.who && M.who.name ? " as " + M.who.name : "")));
     if (h) for (const c of h.checks) {
       if (c.id === "consistency" && c.data && c.data.n > 0 && (c.level === "warn" || c.level === "down")) rows.push(row(c.level, c.label, c.text + " ").replace("</span></li>", ` ${gapButtons(c.data.sig).replace("data-pill-check", "data-hcheck")}</span></li>`));
+      else if (c.id === "send" && c.data && c.data.dead > 0) rows.push(row(c.level, c.label, c.text + " ").replace("</span></li>", ` <button type="button" class="lnk" data-hputaway${gapBusy || healthBusy ? " disabled" : ""}>Put away</button></span></li>`));
       else rows.push(row(c.data && c.data.dismissed ? "wait" : c.level, c.label, c.text));   // (a dismissed notice is listed quietly: grey, not green)
     }
     else {
@@ -509,6 +523,8 @@
     if (b && healthBox && healthBox.box.contains(b)) { recheckNow(); return; }
     const x = e.target.closest("[data-gap-dismiss]");
     if (x && healthBox && healthBox.box.contains(x)) dismissGap(x.dataset.gapDismiss);
+    const pa = e.target.closest("[data-hputaway]");
+    if (pa && healthBox && healthBox.box.contains(pa)) putAway();
   });
   /** One place to write: its light and its sentence, redrawn only when they changed (a redrawn button loses focus). */
   function paintLight(el, owner, cls, st) {
@@ -668,7 +684,7 @@
     const gap = lp && lp.kind === "consistency" && lp.gap && lp.gap.n > 0 ? lp.gap : null;
     const okNote = !lp && gapNote && gapNote.tone === "ok" && Date.now() - gapNote.at < 180000;
     pillMenu.innerHTML = (gap ? `<div class="mmHead">Email link</div><div class="cmWarn ${lp.tone}"><b>${E(lp.word)}.</b> ${E(gapSentence(gap))} ${gapButtons(gap.sig)}</div>${gapNoteHtml()}${gapHint}`
-      : lp ? `<div class="mmHead">Email link</div><div class="cmWarn ${lp.tone}"><b>${E(lp.word)}.</b> ${E(lp.text)} <button type="button" class="lnk" data-pill-check${healthBusy || gapBusy ? " disabled" : ""}>${gapBusy ? '<span class="cmSpin" aria-hidden="true"></span> Checking…' : "Check now"}</button></div>${gapNoteHtml()}`
+      : lp ? `<div class="mmHead">Email link</div><div class="cmWarn ${lp.tone}"><b>${E(lp.word)}.</b> ${E(lp.text)} <button type="button" class="lnk" data-pill-check${healthBusy || gapBusy ? " disabled" : ""}>${gapBusy ? '<span class="cmSpin" aria-hidden="true"></span> Checking…' : "Check now"}</button>${lp.word === "Messages need attention" ? ` <button type="button" class="lnk" data-pill-putaway${healthBusy || gapBusy ? " disabled" : ""}>Put away</button>` : ""}</div>${gapNoteHtml()}`
       : okNote || (gapNote && Date.now() - gapNote.at < 180000) ? `<div class="mmHead">Email link</div>${gapNote.tone === "ok" ? `<div class="cmWarn ok" role="status" aria-live="polite"><b>✓</b> ${E(gapNote.text)}</div>` : gapNoteHtml()}` : "") + `<div class="mmHead">Customers</div>` + (open.length ? open.slice(0, 12).map(s => {
       const who = (s.customer && (s.customer.name || s.customer.username)) || "Customer";
       const line = s.unread > 0 ? `“${E(plain(s.lastInboundPreview || "a photo"))}”` : s.failed > 0 ? "A message did not go — open it to retry" : s.attention > 0 ? "A message may or may not have gone — open it and check Etsy" : "Waiting to be sent by hand on Etsy";
@@ -677,6 +693,7 @@
     pillMenu.querySelectorAll(".mmRow").forEach(x => x.onclick = () => { const s = M.store.get(x.dataset.id); pillMenu.remove(); pillMenu = null; if (s) openConversation(s); });
     pillMenu.querySelectorAll("[data-pill-check]").forEach(x => x.onclick = e => { e.stopPropagation(); recheckNow(); });
     pillMenu.querySelectorAll("[data-gap-dismiss]").forEach(x => x.onclick = e => { e.stopPropagation(); dismissGap(x.dataset.gapDismiss); });
+    pillMenu.querySelectorAll("[data-pill-putaway]").forEach(x => x.onclick = e => { e.stopPropagation(); putAway(); });
   }
 
   /** Show one question: in the order window when its order is in the pull, otherwise in the order window that is

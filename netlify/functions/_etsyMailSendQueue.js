@@ -1109,8 +1109,18 @@ async function summary() {
     queued: count("queued"), claimed: count("claimed"), sending: count("sending"), failed: count("failed"), needsAttention: count("needs_attention"),
     oldestQueuedAtMs: oldest || 0, helperSeenAtMs: hs && hs.exists ? Number(hs.data().seenAtMs) || 0 : 0,
     lastProgressAtMs: progress, stalled: !!(oldest && now - oldest > 10 * MIN && now - progress > 10 * MIN),
-    holder: L.holderSendId || null, leaseUntilMs: L.leaseUntilMs || 0, paceUntilMs: L.paceUntilMs || 0
+    holder: L.holderSendId || null, leaseUntilMs: L.leaseUntilMs || 0, paceUntilMs: L.paceUntilMs || 0,
+    // (MAILAWAY, Paul 14 Oct 2026: the notice "2 messages need a person" had no way out when the Customers list showed nothing to open: the dead letters and why each one is dead)
+    dead: items.filter(i => DEAD_STATES.has(i.state)).slice(0, 10).map(i => ({ sendId: i.sendId, threadId: i.threadId || null, code: i.lastErrorCode || "", plain: String(i.plain || i.lastError || "").slice(0, 160) }))
   };
+}
+
+/** Puts every dead letter (failed, needs attention) away without sending it, the notice's one-press way out. { n } = how many were put away. */
+async function dismissAllDead(by) {
+  const qs = await db.collection(Q_COLL).where("open", "==", true).limit(300).get();
+  let n = 0;
+  for (const d of qs.docs) { const it = d.data(); if (!DEAD_STATES.has(it.state)) continue; try { const r = await dismiss(it.sendId || d.id, by); if (r && !r.notFound && !r.notDead) n++; } catch (e) { /* the rest are still put away */ } }
+  return { n };
 }
 
 /** One message by id (for the sorter and tests). */
@@ -1166,7 +1176,7 @@ module.exports = {
   orderQueue, pickNext, backoffMs, gapFor, classifyFail, plainReason, deriveKey, sendIdFor, viewItems, normText, sameText, ordinal, cfgFrom,
   // io
   getConfig, setConfig, isPaused, isSandboxInput, submit, pump, resolveHolder, settleSlot, claimGate, heartbeatGate, clickGate, peekGate, isManaged,
-  cancel, humanRetry, markSent, dismiss, alreadyDelivered, onThreadMessages, stateView, summary, getItem, maintain, refreshThreadFlags,
+  cancel, humanRetry, markSent, dismiss, dismissAllDead, alreadyDelivered, onThreadMessages, stateView, summary, getItem, maintain, refreshThreadFlags,
   // tests
   _setRandom, _resetCaches, lazyPump, applied
 };

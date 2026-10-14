@@ -1600,6 +1600,15 @@ async function linkDismiss(station, body = {}) {
   return { ok: !!r.ok, changed: !!r.changed, nothing: !!r.nothing, health: pub.res, link: LinkHealth.summaryOf(pub.doc) };
 }
 
+/** MAILAWAY (Paul, 14 Oct 2026): the notice's "Put away": every dead letter of the send queue is put away without sending (a person looked at the notice and chose it), then the light is judged again. */
+async function linkPutAway(station, body = {}) {
+  const now = Date.now();
+  const r = await Q.dismissAllDead(station && station.name);
+  const pub = await LinkHealth.publish(db, now, { keepStamp: true });
+  _health = { at: now, value: pub.res }; _recheck = { at: 0, value: null };
+  return { ok: true, n: r.n, health: pub.res, link: LinkHealth.summaryOf(pub.doc) };
+}
+
 // ─── testing the line with an Etsy account of our own ───────────────────
 
 /* "Send a test" goes through every real part (this server, the inbox, the Etsy helper, Etsy, the Gmail watcher and the
@@ -1944,7 +1953,7 @@ module.exports = {
   cancel: withFlush(cancel), markCopied: withFlush(markCopied), markSent: withFlush(markSent), read: withFlush(read),
   onQueueChange: withFlush(onQueueChange),
   setStatus: withFlush(setStatus), setLang: withFlush(setLang), linkUrl: withFlush(linkUrl),
-  simulateReply: withFlush(simulateReply), translate, health, linkRecheck, linkDismiss, historyInfo, history,
+  simulateReply: withFlush(simulateReply), translate, health, linkRecheck, linkDismiss, linkPutAway, historyInfo, history,
   testInfo: withFlush(testInfo), testStart: withFlush(testStart), testCancel,
   // exposed for tests
   _internal: { foldMessages, sameText, normText, summary, cleanText, cleanId, applyPatch, friendlyFailure, parkedCopy, isDelete, SB, sbQueueView, resetRecheck: () => { _recheck = { at: 0, value: null }; } }
