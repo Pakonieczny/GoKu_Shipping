@@ -12168,7 +12168,7 @@ const CustomSheet = window.CustomSheet = (() => {
       for (const r of ["sku", "repo", "etsy"]) if (!(K.seen && K.seen[r]) || (r === "etsy" && !linked && K.rows.etsy.state !== "failed")) K.rows[r] = mine[r];   // (the engine paints a saved record's rows itself while it opens: its words stand; an Etsy step not yet done always gets its Retry)
       K.final = { done: linked ? "linked" : "saved", sku: K.sku, text: "" }; K.phase = K.final.done; K.fromRecord = true; return;
     }
-    const pref = keepPref(); K.on = pref === null ? !keepLocked(K) : pref; K.phase = K.on ? "ready" : "off";
+    K.on = false; K.phase = "off";   // (KEEPOFF, Paul 14 Oct 2026: "Make this option Off by default": the switch starts Off every time the upload opens; the person turns it On when they want it saved to the repository)
   }
   /** What the engine says while it works: a row changing, or the end ({ done: linked | saved | held | rehearsed }). */
   function keepEvent(K, ev) {
