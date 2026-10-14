@@ -6,7 +6,9 @@
 //   · it dings once when it appears and once when it gets worse ("needs attention", then "is down"), never on a refresh;
 //   · closing it keeps it closed until the state changes (worse, or a new incident);
 //   · when the line works again the red notice goes and one plain line says so;
-//   · the words are the server's (_etsyMailLinkHealth.js): "last checked 18 min ago", then what to do.
+//   · the words are the server's (_etsyMailLinkHealth.js): "last checked 18 min ago", then what to do;
+//   · (14 Oct 2026) the Etsy helper's computer being off is NOT such a trouble: the server judges it green ("wait"), so nothing here
+//     says a word about it (the trouble below is the Gmail watcher going quiet, which still is one).
 //   node tests/charm-nest/mail-link-toast.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
 "use strict";
 const http = require("http"), fs = require("fs"), path = require("path");
@@ -24,12 +26,20 @@ if (!/function toast\(/.test(toastSrc) || !toastCss) { console.error("could not 
 const MIN = 60e3, NOW = Date.now();
 const mode = { link: null };
 const okLink = (over = {}) => Object.assign({ level: "ok", short: "", problem: "", atMs: Date.now(), downSinceMs: 0, incidentId: "" }, over);
-/** The server's own words for a helper that last checked `min` minutes ago (nothing waiting). */
-const helperLink = (min, id, over = {}) => {
-  const ev = { global: {}, watcher: { enabled: true }, gmail: { lastSyncCompletedAt: NOW - MIN }, helper: { seenAtMs: NOW - min * MIN }, scrapeHealth: { consecutiveBad: 0 }, mirror: { enabled: true, lastSyncCompletedAt: NOW - 3 * MIN },
+/** The server's own words for a part of the line that last reported `min` minutes ago (here the Gmail watcher: noticing new Etsy messages). */
+const troubleLink = (min, id, over = {}) => {
+  const ev = { global: {}, watcher: { enabled: true }, gmail: { lastSyncCompletedAt: NOW - min * MIN }, helper: { seenAtMs: NOW - 20e3 }, scrapeHealth: { consecutiveBad: 0 }, mirror: { enabled: true, lastSyncCompletedAt: NOW - 3 * MIN },
     bell: { reconcileAtMs: NOW - MIN }, monitor: { atMs: NOW - MIN }, queuedDrafts: [], scrapeJobs: [], readOk: {}, queue: null };
   const r = LH.evaluate(Object.assign(ev, over), NOW);
   return okLink({ level: r.level, short: r.short, problem: r.problem, downSinceMs: Date.now() - 6 * MIN, incidentId: id });
+};
+/** The helper's computer is off for `min` minutes, with messages waiting for it (what the server judges now: green). */
+const awayLink = (min, id) => {
+  const ev = { global: {}, watcher: { enabled: true }, gmail: { lastSyncCompletedAt: NOW - MIN }, helper: { seenAtMs: NOW - min * MIN }, scrapeHealth: { consecutiveBad: 0 }, mirror: { enabled: true, lastSyncCompletedAt: NOW - 3 * MIN },
+    bell: { reconcileAtMs: NOW - MIN }, monitor: { atMs: NOW - MIN }, queuedDrafts: [NOW - min * MIN], scrapeJobs: [NOW - min * MIN, NOW - min * MIN], readOk: {},
+    queue: { queued: 2, claimed: 0, sending: 0, failed: 2, needsAttention: 0, reviving: 2, offline: true, oldestQueuedAtMs: NOW - min * MIN, stalled: true, maintAtMs: NOW - MIN, helperSeenAtMs: NOW - min * MIN } };
+  const r = LH.evaluate(ev, NOW);
+  return okLink({ level: r.level, short: r.short, problem: r.problem, downSinceMs: r.level === "ok" ? 0 : Date.now() - 6 * MIN, incidentId: r.level === "ok" ? "" : id });
 };
 
 function harness() {
@@ -94,50 +104,55 @@ function server() {
     const mark = () => page.evaluate(() => { const t = document.querySelector("#toasts .toast.bad"); if (t) t.dataset.mark = "same"; });
     const marked = () => page.evaluate(() => { const t = document.querySelector("#toasts .toast.bad"); return !!t && t.dataset.mark === "same"; });
 
-    // ── the screenshot's trouble: the Etsy helper quiet, judged every five minutes ──
-    // (helperLink puts the start of the trouble 6 minutes back, so the first judgement already counts as 5 minutes of trouble)
-    await take(helperLink(13, "inc-a"));
+    // ── the helper's computer is off (Paul's screenshot of 14 Oct): said nowhere ──
+    for (const min of [13, 31, 130, 600]) { await take(awayLink(min, "away-" + min)); }
+    check((await shown()).length === 0 && (await dings()) === 0 && (await page.evaluate(() => window.__notes.length)) === 0, "the helper away for 13 min, 31 min, 2 h, 10 h with messages waiting: no notice, no ding, no desktop notification");
+    check(awayLink(130, "x").level === "ok", "(the server's judgement for it is ok)");
+
+    // ── a real trouble: the Gmail watcher quiet, judged every five minutes ──
+    // (troubleLink puts the start of the trouble 6 minutes back, so the first judgement already counts as 5 minutes of trouble)
+    await take(troubleLink(13, "inc-a"));
     const first = await red();
-    check(first.length === 1 && first[0].key === "email-link" && /^The email link needs attention: The inbox's Etsy helper last checked 13 min ago\. Open Chrome on the computer that has the inbox's Etsy extension; messages wait and nothing is lost\.$/.test(first[0].m), "one red notice, in the server's words: " + (first[0] && first[0].m));
+    check(first.length === 1 && first[0].key === "email-link" && /^The email link needs attention: The inbox last checked for new Etsy messages 13 min ago\.$/.test(first[0].m), "one red notice, in the server's words: " + (first[0] && first[0].m));
     check(!/checked in/i.test(first[0].m), "it never says 'last checked in'");
     check((await dings()) === 1 && (await page.evaluate(() => window.__notes.length)) === 1, "one ding and one desktop notification when it appears");
     await mark();
 
-    await take(helperLink(18, "inc-a"));
+    await take(troubleLink(18, "inc-a"));
     let r = await red();
-    check(r.length === 1 && /last checked 18 min ago/.test(r[0].m) && (await marked()), "five minutes later: still ONE notice, the same one, now saying 18 min ago");
-    await take(helperLink(24, "inc-a"));
+    check(r.length === 1 && /messages 18 min ago/.test(r[0].m) && (await marked()), "five minutes later: still ONE notice, the same one, now saying 18 min ago");
+    await take(troubleLink(24, "inc-a"));
     r = await red();
-    check(r.length === 1 && /last checked 24 min ago/.test(r[0].m) && (await marked()) && /needs attention/.test(r[0].m), "and again, 24 min ago: still one, still 'needs attention' (the red words wait for the red threshold)");
+    check(r.length === 1 && /messages 24 min ago/.test(r[0].m) && (await marked()) && /needs attention/.test(r[0].m), "and again, 24 min ago: still one, still 'needs attention' (the red words wait for the red threshold)");
     check((await dings()) === 1, "no ding for a refresh");
     await sync(); await sync();
     check((await red()).length === 1 && (await dings()) === 1, "polling again and again changes nothing");
 
-    await take(helperLink(31, "inc-a"));
+    await take(troubleLink(31, "inc-a"));
     r = await red();
-    check(r.length === 1 && /^The email link is down: The inbox's Etsy helper last checked 31 min ago, so new answers are not being read\. Open Chrome/.test(r[0].m) && (await marked()), "past 30 minutes: the same notice now says 'is down'");
+    check(r.length === 1 && /^The email link is down: The inbox last checked for new Etsy messages 31 min ago\.$/.test(r[0].m) && (await marked()), "past 30 minutes: the same notice now says 'is down'");
     check((await dings()) === 2, "one more ding for getting worse");
-    await take(helperLink(36, "inc-a"));
+    await take(troubleLink(36, "inc-a"));
     r = await red();
-    check(r.length === 1 && /last checked 36 min ago/.test(r[0].m) && (await dings()) === 2, "later numbers keep it in place, no more dings");
+    check(r.length === 1 && /messages 36 min ago/.test(r[0].m) && (await dings()) === 2, "later numbers keep it in place, no more dings");
 
     // ── closing it ──
     await closeIt(); await settle();
     check((await red()).length === 0, "closed with the cross: gone");
-    await take(helperLink(41, "inc-a")); await take(helperLink(46, "inc-a"));
+    await take(troubleLink(41, "inc-a")); await take(troubleLink(46, "inc-a"));
     check((await red()).length === 0 && (await dings()) === 2, "the same incident, same level, new minutes: it stays closed");
     await page.reload({ waitUntil: "load" }); await page.waitForFunction(() => window.CustomerMail && CustomerMail.connected());
-    await take(helperLink(51, "inc-a"));
+    await take(troubleLink(51, "inc-a"));
     check((await red()).length === 0, "and after a reload (what was told is remembered)");
 
     // ── a new incident is news again ──
     await take(okLink()); await settle();
-    check((await red()).length === 0, "the helper is back: no red notice");
+    check((await red()).length === 0, "the line is back: no red notice");
     const ok1 = await shown();
     check(ok1.length === 1 && ok1[0].k === "ok" && /^The email link is working again\.$/.test(ok1[0].m), "one plain line says it works again, even though the red one was closed");
-    await take(helperLink(14, "inc-b"));
+    await take(troubleLink(14, "inc-b"));
     r = await red();
-    check(r.length === 1 && /last checked 14 min ago/.test(r[0].m) && (await dings()) === 1, "a new incident: a new red notice (and a ding)");
+    check(r.length === 1 && /messages 14 min ago/.test(r[0].m) && (await dings()) === 1, "a new incident: a new red notice (and a ding)");
 
     // ── the red notice goes when the line recovers, whatever tab shows it ──
     await take(okLink()); await settle();
@@ -145,13 +160,13 @@ function server() {
     check((await red()).length === 0 && after.length >= 1 && after.every(t => t.k !== "bad") && after.some(t => /working again/.test(t.m)), "recovery: the red notice is removed and the 'working again' line takes its place");
 
     // ── Paul's screenshot: separate incidents never stack ──
-    await take(helperLink(18, "inc-c"));
-    await take(helperLink(13, "inc-d"));   // (the monitor started a new incident id while the first notice was still showing)
+    await take(troubleLink(18, "inc-c"));
+    await take(troubleLink(13, "inc-d"));   // (the monitor started a new incident id while the first notice was still showing)
     r = await red();
-    check(r.length === 1 && /last checked 13 min ago/.test(r[0].m), "a second incident while the first notice is still showing takes its place: one notice, not two (" + r.length + ")");
-    await take(helperLink(24, "inc-d", { scrapeJobs: [NOW - 17 * MIN] }));
+    check(r.length === 1 && /messages 13 min ago/.test(r[0].m), "a second incident while the first notice is still showing takes its place: one notice, not two (" + r.length + ")");
+    await take(troubleLink(24, "inc-d", { gmail: { lastSyncCompletedAt: NOW - 24 * MIN, lastSyncError: "ETIMEDOUT", lastSyncErrorAt: NOW - MIN } }));
     r = await red();
-    check(r.length === 1 && /^The email link is down: .*last checked 24 min ago, and a message has been waiting 17 min for it\. Open Chrome/.test(r[0].m), "red at 24 minutes says why (a message has waited 17 min): " + (r[0] && r[0].m.slice(0, 120)));
+    check(r.length === 1 && /^The email link needs attention: The inbox's last check for new Etsy messages failed: the connection dropped\.$/.test(r[0].m), "a failed check says why, in plain words: " + (r[0] && r[0].m.slice(0, 120)));
     check(errors.length === 0, "no page errors (" + errors.join("; ") + ")");
     await context.close();
   } finally { await browser.close(); srv.close(); }

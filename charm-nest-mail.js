@@ -1213,11 +1213,30 @@
   const SB_TIP = "Sandbox: not sent to the customer. The states are played in the sorter only.";
   const ordinal = n => { const t = ["th", "st", "nd", "rd"], v = n % 100; return n + (t[(v - 20) % 10] || t[v] || t[0]); };
   const inWords = ms => ms < 45000 ? "under a minute" : ms < 90 * 60000 ? Math.max(1, Math.round(ms / 60000)) + " min" : Math.round(ms / 3600000) + " h";
+  /** The inbox's clock as far as this page knows it, and a running clock for a delayed message: m:ss, h:mm:ss, "2d 3:14:05". One interval for all of them; it stops itself when none is on the page. */
+  const clockNow = () => Date.now() - (M.q.off || 0);
+  function clockText(ms) {
+    let t = Math.max(0, Math.floor(ms / 1000));
+    const d = Math.floor(t / 86400); t -= d * 86400;
+    const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60, p2 = n => (n < 10 ? "0" : "") + n;
+    return d ? `${d}d ${h}:${p2(m)}:${p2(sec)}` : h ? `${h}:${p2(m)}:${p2(sec)}` : `${m}:${p2(sec)}`;
+  }
+  let clockTimer = 0, clockMiss = 0;
+  function clockTick() {
+    const els = document.querySelectorAll("[data-cm-since]");
+    if (!els.length) { if (++clockMiss >= 3) { clearInterval(clockTimer); clockTimer = 0; } return; }   // (three empty looks in a row: the page may not have put the new words in yet)
+    clockMiss = 0;
+    if (document.hidden) return;
+    const now = clockNow();
+    for (const el of els) { const t = clockText(now - Number(el.dataset.cmSince)); if (el.textContent !== t) el.textContent = t; }
+  }
   /** What the inbox's send queue says about one of our messages that is on its way: the word, and whether it is a wait (spinner). */
   function queueWord(m) {
     const v = M.q.items.get(m.itemId);
     if (!v || (v.st !== "queued" && v.st !== "claimed" && v.st !== "sending")) return null;
     if (v.st === "sending") return { word: "Sending…", spin: true, tip: "The Etsy helper is sending this message now." };
+    // (14 Oct 2026) the Etsy helper's computer is away: saved in the queue, goes by itself when it is back. Quiet: no spinner, a running clock.
+    if (v.wait === "offline") return { word: "Delayed", spin: false, since: v.at || 0, tip: "The connection to Etsy is down for now (the shop computer that sends on Etsy is off or offline). Nothing is lost: this message is saved and goes out by itself, in order, as soon as it is back." };
     if (v.st === "claimed") return v.wait === "helper" ? { word: "Waiting for the Etsy helper", spin: true, tip: "The inbox's Etsy helper (the Chrome extension) has not picked it up yet. It keeps trying." }
       : { word: "Sending next…", spin: true, tip: "It is this message's turn; there is a short pause between messages." };
     const place = v.pos ? "Queued (" + ordinal(v.pos) + ")" : "Queued";
@@ -1232,7 +1251,7 @@
     const o = P.trOpen.get(m.id);
     const tro = o === "__off" ? null : (o || P.lang || null);
     const tr = tro && text.trim() ? trCached(text, tro) : null;
-    let status = "", acts = "", tone = "";
+    let status = "", acts = "", tone = "", clockAt = 0;
     if (side === "us") {
       const st = m.status || "sent";
       // solid slate is what reached the customer; on its way is paler, what did not go is outlined
@@ -1240,11 +1259,11 @@
       let word = STATUS[st] || "", spin = false, tip = "";
       if (st === "waiting" && m.waitReason === "paused") word = "Waits: sending is paused in the inbox";
       if (st === "waiting" && m.waitReason === "retry") word = "Trying again…";
-      if (st === "queued") { const qw = queueWord(m); if (qw) { word = qw.word; spin = qw.spin; tip = qw.tip; } else if (sbOf(P.rid)) word = "Queued"; }
+      if (st === "queued") { const qw = queueWord(m); if (qw) { word = qw.word; spin = qw.spin; tip = qw.tip; clockAt = qw.since || 0; if (clockAt && !clockTimer) { clockMiss = 0; clockTimer = setInterval(clockTick, 1000); } } else if (sbOf(P.rid)) word = "Queued"; }
       if (st === "sent") word = m.manualSent ? "Sent by hand" : m.unverified ? "Sent — Etsy did not confirm" : m.delivered ? "Delivered" : "Sent";
       if (st === "attention") tone = " hold";
       if (sbOf(P.rid) && (st === "queued" || st === "sent")) tip = SB_TIP;   // the same words as the real side, with the plain reminder
-      status = `<span class="cmSt ${st === "failed" || st === "local_failed" ? "bad" : st === "sent" ? "ok" : st === "manual" || st === "attention" ? "warn" : "go"}"${tip ? ` title="${E(tip)}"` : ""}>${spin ? `<i class="cmSpin" aria-hidden="true"></i>` : ""}${E(word)}</span>`;
+      status = `<span class="cmSt ${st === "failed" || st === "local_failed" ? "bad" : st === "sent" ? "ok" : st === "manual" || st === "attention" ? "warn" : "go"}"${tip ? ` title="${E(tip)}"` : ""}>${spin ? `<i class="cmSpin" aria-hidden="true"></i>` : ""}${E(word)}${clockAt ? ` · <span class="cmClock" data-cm-since="${clockAt}">${clockText(clockNow() - clockAt)}</span>` : ""}</span>`;
       const copyBtn = `<button type="button" class="lnk" data-cm-do="copytext" data-item="${E(m.itemId || "")}">Copy the message</button>`;
       if (st === "attention") acts = `<div class="cmErr">${E(m.error || "The helper clicked Send but Etsy did not confirm it. It may have gone.")}</div><div class="cmActs"><button type="button" class="lnk" data-cm-do="sentByHand" data-item="${E(m.itemId || "")}">It was sent</button><button type="button" class="lnk" data-cm-do="retry" data-maybe="1" data-item="${E(m.itemId || "")}">Send again</button>${copyBtn}<button type="button" class="lnk soft" data-cm-do="cancel" data-item="${E(m.itemId || "")}">Discard</button></div><div class="cmFine">Open the conversation on Etsy first: only send again if the customer did not get it.</div>`;
       else if (st === "failed" || st === "local_failed") acts = `<div class="cmErr">${E(m.error || "It did not go.")}</div><div class="cmActs"><button type="button" class="lnk" data-cm-do="${st === "local_failed" ? "edit" : "retry"}" data-item="${E(m.itemId || m.local && m.local.id || "")}">${st === "local_failed" ? "Edit and send again" : "Try again"}</button>${st === "failed" ? copyBtn : ""}<button type="button" class="lnk soft" data-cm-do="${st === "local_failed" ? "discard" : "cancel"}" data-item="${E(m.itemId || m.local && m.local.id || "")}">Discard</button></div>`;

@@ -43,21 +43,38 @@ let r = judge({});
 check(r.level === "ok" && r.short === "" && r.checks.every(c => c.level === "ok"), "everything working: green, every check ok");
 r = judge({ helper: null });
 check(r.level === "warn" && /not heard from/i.test(r.short), "helper never heard from is amber, not green (" + r.short + ")");
-check(judge({ helper: { seenAtMs: T0 - 13 * MIN } }).level === "warn" && judge({ helper: { seenAtMs: T0 - 31 * MIN } }).level === "down", "helper silent 13 min: amber; 31 min: red, with nothing waiting");
-check(judge({ helper: { seenAtMs: T0 - 7 * MIN }, queuedDrafts: [T0 - 6 * MIN] }).level === "warn" && judge({ helper: { seenAtMs: T0 - 17 * MIN }, queuedDrafts: [T0 - 16 * MIN] }).level === "down", "helper quiet with a message waiting: amber at 5 min, red at 15");
-// the words: "last checked 18 min ago" (never "checked in"), one plain thing to do, and the severity words follow the thresholds
+// (14 Oct 2026, Paul) the helper's computer being off is NOT an alarm: it is a calm "wait", and each conversation shows its own clock instead
+check(judge({ helper: { seenAtMs: T0 - 13 * MIN } }).level === "ok" && judge({ helper: { seenAtMs: T0 - 31 * MIN } }).level === "ok" && judge({ helper: { seenAtMs: T0 - 40 * HOUR } }).level === "ok", "helper away 13 min, 31 min, 40 hours: green, never amber or red (the line says 'wait')")
+check(lvl(judge({ helper: { seenAtMs: T0 - 31 * MIN } }), "helper") === "wait" && lvl(judge({ helper: { seenAtMs: T0 - 3 * MIN } }), "helper") === "ok" && lvl(judge({ helper: { seenAtMs: T0 - 4.5 * MIN } }), "helper") === "ok", "...away after 5 minutes, 'ok' before")
+check(judge({ helper: { seenAtMs: T0 - 73 * HOUR } }).level === "warn" && judge({ helper: { seenAtMs: T0 - 73 * HOUR } }).short === "Helper away", "away for more than 72 hours: amber, so that it can never go unnoticed for ever")
+check(judge({ helper: { seenAtMs: T0 - 7 * MIN }, queuedDrafts: [T0 - 6 * MIN] }).level === "ok" && judge({ helper: { seenAtMs: T0 - 17 * MIN }, queuedDrafts: [T0 - 16 * MIN] }).level === "ok", "helper away with a message waiting 6 or 16 min: still green (the message waits in the queue)")
+// the words: calm, nothing to do, nothing lost; and none of the old alarm sentences anywhere
 {
   const w = min => judge({ helper: { seenAtMs: T0 - min * MIN } });
   const q = w(18), d = w(31), ok = w(2);
-  check(q.level === "warn" && q.problem === "The inbox's Etsy helper last checked 18 min ago. " + LH.HELPER_DO, "quiet 18 min: amber, 'last checked 18 min ago' then what to do: " + q.problem);
-  check(d.level === "down" && /last checked 31 min ago, so new answers are not being read\. Open Chrome on the computer that has the inbox's Etsy extension; messages wait and nothing is lost\.$/.test(d.problem), "silent 31 min: red, says answers are not being read, then what to do");
-  check(/^Last checked 2 min ago$/.test(ok.checks.find(c => c.id === "helper").text), "a healthy helper reads 'Last checked 2 min ago'");
+  const hc = r => r.checks.find(c => c.id === "helper");
+  check(q.level === "ok" && q.problem === "" && hc(q).level === "wait" && hc(q).text === "The inbox's Etsy helper is away (last checked 18 min ago). Nothing is lost: messages wait and go out by themselves, in order, when it is back.", "away 18 min: no problem sentence at all; the details say it calmly: " + hc(q).text);
+  check(/^Last checked 2 min ago$/.test(hc(ok).text), "a healthy helper reads 'Last checked 2 min ago'");
   const busy = judge({ helper: { seenAtMs: T0 - 24 * MIN }, scrapeJobs: [T0 - 17 * MIN] });
-  check(busy.level === "down" && /last checked 24 min ago, and a message has been waiting 17 min for it\. Open Chrome/.test(busy.problem), "red at 24 min only because a message has waited 17 min, and the sentence says so: " + busy.problem);
+  check(busy.level === "ok" && busy.problem === "" && lvl(busy, "read") === "wait" && /^1 new Etsy message is waiting to be read into the inbox; the helper reads it when it is back\.$/.test(busy.checks.find(c => c.id === "read").text), "away, a new Etsy message waiting 17 min to be read: green, and said calmly");
   const slow = judge({ helper: { seenAtMs: T0 - 13 * MIN }, scrapeJobs: [T0 - 6 * MIN] });
-  check(slow.level === "warn" && /last checked 13 min ago, and a message has been waiting 6 min for it/.test(slow.problem), "amber when a message has waited 6 min: " + slow.problem);
+  check(slow.level === "ok" && slow.problem === "", "away, a message waiting 6 min to be read: green");
+  const screenshot = judge({ helper: { seenAtMs: T0 - 2 * HOUR }, scrapeJobs: Array.from({ length: 12 }, () => T0 - 2 * HOUR), queuedDrafts: [T0 - 2 * HOUR, T0 - 2 * HOUR],
+    queue: { queued: 2, claimed: 0, sending: 0, failed: 2, needsAttention: 0, reviving: 2, offline: true, held: 2, oldestQueuedAtMs: T0 - 2 * HOUR, stalled: true, maintAtMs: T0 - MIN, helperSeenAtMs: T0 - 2 * HOUR } });
+  check(screenshot.level === "ok" && screenshot.problem === "" && screenshot.short === "" && screenshot.kind === "", "the situation of 14 Oct (helper 2 h away, 12 answers unread, 2 messages that 'did not go out', stalled): green, no problem sentence");
+  check(!/Helper offline|need a person|did not go out|waiting to be read into the inbox, the oldest/.test(screenshot.problem + screenshot.short) && lvl(screenshot, "send") === "wait", "...none of the three old sentences is a problem any more; the send line is a calm 'wait': " + screenshot.checks.find(c => c.id === "send").text);
   check(!/checked in/i.test(JSON.stringify([q, d, ok, busy, slow, judge({ helper: null })])), "no 'checked in' anywhere in the helper's words");
-  check(/has not been heard from yet\. Open Chrome/.test(judge({ helper: null }).problem), "never heard from: the same one thing to do");
+  check(/has not been heard from yet\. Open Chrome/.test(judge({ helper: null }).problem), "never heard from: still amber, with the one thing to do");
+  check(judge({ helper: { seenAtMs: T0 - 73 * HOUR } }).problem.length < 260 && /has been away for 3 days\. Messages are kept safe/.test(judge({ helper: { seenAtMs: T0 - 73 * HOUR } }).problem), "after 72 hours the amber sentence is short, says how long, and that the messages are safe");
+  // the queue's own upkeep stopping is NOT calm: messages wait for nobody
+  const stuck = judge({ helper: { seenAtMs: T0 - 2 * HOUR }, queue: { queued: 2, claimed: 0, sending: 0, failed: 0, needsAttention: 0, offline: true, oldestQueuedAtMs: T0 - 2 * HOUR, stalled: true, maintAtMs: T0 - 30 * MIN, helperSeenAtMs: T0 - 2 * HOUR } });
+  check(stuck.level === "down" && /the queue has not been looked at for 30 min, and 2 messages are waiting/.test(stuck.problem), "messages waiting while the queue's own upkeep has stopped: red (" + stuck.problem + ")");
+  // a real dead letter still needs a person, helper away or not; the old-kind ones about to be revived do not
+  const dead = judge({ helper: { seenAtMs: T0 - 2 * HOUR }, queue: { queued: 0, claimed: 0, sending: 0, failed: 1, needsAttention: 0, reviving: 0, offline: true, oldestQueuedAtMs: 0, stalled: false, helperSeenAtMs: T0 - 2 * HOUR } });
+  check(dead.level === "warn" && /1 message to a customer needs a person/.test(dead.problem), "a message that really failed (not just waiting) is still amber");
+  // reconnecting (the helper is heard, the queue has not yet handed it the first message) is calm too, but only while the upkeep runs
+  const rc = judge({ queue: { queued: 3, claimed: 0, sending: 0, failed: 0, needsAttention: 0, offline: true, oldestQueuedAtMs: T0 - 3 * HOUR, stalled: true, maintAtMs: T0 - MIN, helperSeenAtMs: T0 - 20e3 } });
+  check(rc.level === "ok" && lvl(rc, "send") === "wait", "the helper just came back and the queue is settling it: green, 'wait'");
   check(q.problem.length < 200, "short enough to read at a glance (" + q.problem.length + " characters)");
 }
 check(judge({ watcher: { enabled: false } }).level === "down" && judge({ watcher: null }).level === "down", "Gmail watcher off or missing: red");
@@ -117,7 +134,7 @@ check(judge({ consistency: { atMs: T0 - HOUR, checked: 100, mismatched: 0 } }).l
   check(LH.scrapeChance(NIGHT) === 0.03 && LH.scrapeChance(T0) === 0.9 && LH.scrapeChance(Date.UTC(2026, 9, 17, 7, 0, 0)) < 0.02, "the reading chance follows the extension's own hours (3 % at 3 am, 90 % at noon, less at weekends)");
   check(at3(25, 20).level === "ok" && at3(45, 20).level === "ok", "3 am, helper heard 20 s ago: a message waiting 25 or 45 min is not an alarm");
   check(at3(55, 20).level === "warn" && at3(150, 20).level === "down", "3 am, helper well: amber at 55 min, red after 2 hours");
-  check(at3(25, 20 * 60).level === "down", "3 am, the helper itself silent 20 min with a message waiting 25 min: red (judged on the helper)");
+  check(at3(25, 20 * 60).level === "ok" && lvl(at3(25, 20 * 60), "read") === "wait", "3 am, the helper itself away 20 min with a message waiting 25 min: calm (judged on the helper: its computer is off)")
   check(judge({ scrapeJobs: [T0 - 11 * MIN] }).level === "warn" && judge({ scrapeJobs: [T0 - 31 * MIN] }).level === "down", "at noon the old limits stand: amber at 10 min, red at 30");
   check(LH.readLimits(NIGHT, false).warn === 10 * MIN && LH.readLimits(NIGHT, false).down === 30 * MIN, "a helper not heard from lately gets no extra time");
 }
@@ -154,24 +171,33 @@ check(JSON.stringify(judge({})).length < 2500, "the judgement stays small");
   check(ran === 0, "the reaper reported lately: the monitor does not run the catch-up itself");
   check(doc.auth && typeof doc.auth.secretSet === "boolean" && !JSON.stringify(doc).includes("test-secret-not-real"), "the document records only whether a secret is set, never its value");
   check(bell.n === 3, "the bell's change counter is untouched (no sorter wakes for a judgement)");
-  // the helper goes quiet
+  // the helper's computer goes off: nothing to see, no incident
   clock += 14 * MIN; fresh(); seed("EtsyMail_OrderLinkMeta/helper", { seenAtMs: clock - 14 * MIN });
   out = await WD.run({ now: clock, reconcile: fakeReconcile });
   doc = store.get("EtsyMail_Config/linkHealth");
-  check(doc.level === "warn" && /Helper quiet/.test(doc.short) && doc.downSinceMs === clock && doc.incidentId === String(clock), "helper quiet 14 min: amber with the time the trouble began");
+  check(doc.level === "ok" && !doc.downSinceMs && doc.incidentId === "" && doc.checks.find(c => c.id === "helper").level === "wait", "helper away 14 min: green, no incident, the helper's line says it calmly");
+  clock += 2 * HOUR; fresh(); seed("EtsyMail_OrderLinkMeta/helper", { seenAtMs: clock - 2 * HOUR });
+  await WD.run({ now: clock, reconcile: fakeReconcile });
+  doc = store.get("EtsyMail_Config/linkHealth");
+  check(doc.level === "ok" && store.get("EtsyMail_OrderLinkMeta/bell").link.level === "ok", "helper away 2 hours: still green, and the sorters' summary says ok too");
+  // another part of the line goes quiet (the Gmail watcher): that is still an incident, timed from the first sign
+  clock += 5 * MIN; fresh(); seed("EtsyMail_Config/gmailSyncState", { lastSyncCompletedAt: at(clock - 14 * MIN) });
+  await WD.run({ now: clock, reconcile: fakeReconcile });
+  doc = store.get("EtsyMail_Config/linkHealth");
+  check(doc.level === "warn" && /Answers delayed/.test(doc.short) && doc.downSinceMs === clock && doc.incidentId === String(clock), "Gmail check 14 min old: amber with the time the trouble began");
   const began = doc.downSinceMs;
-  clock += 5 * MIN; fresh(); seed("EtsyMail_OrderLinkMeta/helper", { seenAtMs: clock - 19 * MIN });
+  clock += 5 * MIN; fresh(); seed("EtsyMail_Config/gmailSyncState", { lastSyncCompletedAt: at(clock - 19 * MIN) });
   await WD.run({ now: clock, reconcile: fakeReconcile });
   doc = store.get("EtsyMail_Config/linkHealth");
   check(doc.downSinceMs === began && doc.incidentId === String(began), "five minutes later it is the same incident (the alert counts from the first sign)");
-  clock += 15 * MIN; fresh(); seed("EtsyMail_OrderLinkMeta/helper", { seenAtMs: clock - 34 * MIN });
+  clock += 15 * MIN; fresh(); seed("EtsyMail_Config/gmailSyncState", { lastSyncCompletedAt: at(clock - 34 * MIN) });
   await WD.run({ now: clock, reconcile: fakeReconcile });
   doc = store.get("EtsyMail_Config/linkHealth");
-  check(doc.level === "down" && doc.downSinceMs === began, "helper silent 34 min: red, same incident");
+  check(doc.level === "down" && doc.downSinceMs === began, "Gmail check 34 min old: red, same incident");
   clock += 5 * MIN; fresh();
   await WD.run({ now: clock, reconcile: fakeReconcile });
   doc = store.get("EtsyMail_Config/linkHealth");
-  check(doc.level === "ok" && !doc.downSinceMs && doc.incidentId === "" && store.get("EtsyMail_OrderLinkMeta/bell").link.level === "ok", "the helper is back: green again and the incident closes");
+  check(doc.level === "ok" && !doc.downSinceMs && doc.incidentId === "" && store.get("EtsyMail_OrderLinkMeta/bell").link.level === "ok", "Gmail is back: green again and the incident closes");
 
   // the reaper stopped: the monitor runs the catch-up pass itself
   fresh({ reconcileAtMs: clock - 15 * MIN });
@@ -203,7 +229,7 @@ check(JSON.stringify(judge({})).length < 2500, "the judgement stays small");
   check(h.level === "ok", "health on a healthy line is ok (" + h.level + ")");
   clock += 60e3; seed("EtsyMail_OrderLinkMeta/helper", { seenAtMs: clock - 40 * MIN });
   h = await OL.health({ fresh: true });
-  check(h.level === "down" && h.short === "Helper offline" && h.checks.some(c => c.id === "catchup") && h.checks.some(c => c.id === "monitor"), "health: helper silent 40 min is red, and the details list the catch-up pass and the monitor");
+  check(h.level === "ok" && h.checks.find(c => c.id === "helper").level === "wait" && h.checks.some(c => c.id === "catchup") && h.checks.some(c => c.id === "monitor"), "health: helper away 40 min is green (the details say 'wait'), and list the catch-up pass and the monitor");
   seed("EtsyMail_OrderLinkMeta/helper", { seenAtMs: clock - 5e3 });
 
   // ── "no messages" is never shown for an error ──

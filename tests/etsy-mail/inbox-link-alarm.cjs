@@ -129,6 +129,28 @@ const server = http.createServer((req, res) => {
       await refresh(page);
       c = await chip(page);
       check(c.hidden && !/⚠/.test(await page.title()) && /working again/.test(await toastText(page)), "when it clears: the alarm and the mark go, one 'working again'");
+
+      // (14 Oct 2026, Paul) the Etsy helper's computer is off: the judgement is green with calm "wait" lines in its details. Said nowhere.
+      await page.evaluate(() => document.getElementById("emToast").classList.remove("show"));
+      const waitChecks = [
+        { id: "helper", label: "Etsy helper", level: "wait", text: "The inbox's Etsy helper is away (last checked 2 h ago). Nothing is lost: messages wait and go out by themselves, in order, when it is back." },
+        { id: "send", label: "Sending", level: "wait", text: "2 messages are waiting for the helper and go out by themselves, in order, when it is back." },
+        { id: "read", label: "Reading answers", level: "wait", text: "12 new Etsy messages are waiting to be read into the inbox; the helper reads them when it is back." }
+      ];
+      mode.link = okDoc({ level: "ok", checks: waitChecks });
+      await refresh(page);
+      c = await chip(page);
+      check(c.hidden && !/⚠/.test(await page.title()) && (await toastText(page)) === "" && await page.evaluate(() => !/helper|Email link/i.test(document.getElementById("emListItems").textContent)), "helper away (green, calm 'wait' lines): no chip, no mark, no toast, nothing at the top of the list");
+      // ...and when something else IS wrong, its sentence is not dragged along with the helper's calm lines
+      mode.link = okDoc({ level: "warn", short: "Answers delayed", problem: "The inbox last checked for new Etsy messages 14 min ago.", downSinceMs: Date.now() - 2 * 60000, incidentId: "i9",
+        checks: waitChecks.concat([{ id: "notice", label: "Noticing answers", level: "warn", text: "The inbox last checked for new Etsy messages 14 min ago." }]) });
+      await refresh(page);
+      c = await chip(page);
+      const listTxt = await page.evaluate(() => document.getElementById("emListItems").textContent);
+      check(c && !c.hidden && /Answers delayed/.test(c.text) && /14 min ago/.test(c.title) && !/helper|Etsy helper|waiting for the helper/i.test(c.title + listTxt), "another part in trouble: its sentence is shown alone, without the helper's 'wait' lines: " + (c && c.title));
+      mode.link = okDoc();
+      await refresh(page);
+      await page.evaluate(() => document.getElementById("emToast").classList.remove("show"));
       check(await page.evaluate(() => !/Email link:/.test(document.getElementById("emListItems").textContent)), "and the line leaves the list");
 
       mode.link = okDoc({ atMs: Date.now() - 20 * 60000 });
