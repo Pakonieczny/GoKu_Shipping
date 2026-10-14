@@ -216,7 +216,11 @@
         case "Tj": case "TJ": case "'": case "\"": {
           const str = op === "TJ" ? (args[0] && args[0].arr || []).filter(a => a && a.str != null).map(a => a.str).join("") : (args[args.length - 1] && args[args.length - 1].str) || "";
           const font = fontName && fonts[fontName];
-          const dec = font ? font.decode(str) : null;                          // { text, ok } or null when the font is unknown
+          // a TJ array that moves the pen 200/1000 em or more to the left between two strings is a word space written as a gap ([(Hello) -400 (World_1)] TJ is "Hello World_1", never "HelloWorld_1"):
+          // each stretch is decoded on its own and the words are joined with a space (kerning is a few tens of thousandths and never reaches it)
+          let words = null;
+          if (op === "TJ") { const parts = [""]; for (const a of (args[0] && args[0].arr || [])) { if (a && a.str != null) parts[parts.length - 1] += a.str; else if (typeof a === "number" && a <= -200 && parts[parts.length - 1] !== "") parts.push(""); } const keep = parts.filter(x => x !== ""); if (keep.length > 1) words = keep; }
+          const dec = font ? (words ? (() => { const ds = words.map(w => font.decode(w)); return { text: ds.map(d => d.text).join(" "), ok: ds.every(d => d.ok) }; })() : font.decode(str)) : null;   // { text, ok } or null when the font is unknown
           const glyphs = font && !font.simple ? Math.ceil(str.length / 2) : str.length;
           const wEm = font && font.widthOf ? font.widthOf(str) : glyphs * 0.55;   // advance in em, from /Widths when the font has them
           const m = mul(tm, ctm);
@@ -440,6 +444,8 @@
     try { const tu = get(fd, "ToUnicode"); if (tu && (tu.getContents || tu.contents)) toUni = parseCMap(new TextDecoder("latin1").decode(decodeStream(tu))); } catch (_) { toUni = null; }
     // one-byte encodings: latin1 base, /Differences on top
     const enc = new Array(256); for (let c = 0; c < 256; c++) enc[c] = String.fromCharCode(c);
+    // a one-byte font's codes 0x80-0x9F are Windows-1252 characters (an en dash is 0x96, a curly apostrophe 0x92), never the C1 control characters a latin-1 reading gives: a label typed "Spider – Web_1" read as "SPIDER \x96 WEB_1" and was no SKU
+    for (const [k, v] of Object.entries({ 0x80: "\u20ac", 0x82: "\u201a", 0x83: "\u0192", 0x84: "\u201e", 0x85: "\u2026", 0x86: "\u2020", 0x87: "\u2021", 0x88: "\u02c6", 0x89: "\u2030", 0x8a: "\u0160", 0x8b: "\u2039", 0x8c: "\u0152", 0x8e: "\u017d", 0x91: "\u2018", 0x92: "\u2019", 0x93: "\u201c", 0x94: "\u201d", 0x95: "\u2022", 0x96: "\u2013", 0x97: "\u2014", 0x98: "\u02dc", 0x99: "\u2122", 0x9a: "\u0161", 0x9b: "\u203a", 0x9c: "\u0153", 0x9e: "\u017e", 0x9f: "\u0178" })) enc[+k] = v;
     if (simple) {
       const e = get(fd, "Encoding");
       if (e instanceof PDFDict) {
@@ -510,7 +516,7 @@
     closeNearlyClosed(segs); closeNearlyClosed(nested);
     return {
       name, bytes, doc, page,
-      pageW: mb.width, pageH: mb.height, mediaBox: [mb.x, mb.y, mb.x + mb.width, mb.y + mb.height],
+      pageCount: doc.getPageCount(), pageW: mb.width, pageH: mb.height, mediaBox: [mb.x, mb.y, mb.x + mb.width, mb.y + mb.height],
       artBox: ab ? [ab.x, ab.y, ab.x + ab.width, ab.y + ab.height] : null,
       rotate: (() => { try { return page.getRotation().angle || 0; } catch (_) { return 0; } })(),
       content, segments: segs, nested, inner,
@@ -1217,9 +1223,12 @@
    *  A SLASH in a label ("Masks Happy/Sad", "Spider / Web_1", "Cute Triceratops w/ hearts": the shop's real Etsy SKUs have them) is read as a hyphen: the SKU is the
    *  library's document id and file name, which cannot hold a "/", and the order side already finds a master SKU spelled with other punctuation (charm-nest-orders.js
    *  looseKey: spacing and punctuation set aside, one master SKU only), so "MASKS HAPPY/SAD" on an order reaches the master "MASKS HAPPY-SAD". `slash: true` says it was read that way. */
+  const labelText = str => String(str == null ? "" : str).replace(/\ufffd/g, "").replace(/[\u2010-\u2015\u2212\ufe58\ufe63\uff0d]/g, "-").replace(/[\u2018\u2019\u02bc\u2032]/g, "'").replace(/[\u2044\u2215\uff0f]/g, "/").replace(/\s+/g, " ").trim().toUpperCase();
   function parseSkuLabel(str, pattern) {
     pattern = pattern || SKU_PATTERN_DEFAULT;
-    let s = String(str == null ? "" : str).replace(/�/g, "").replace(/\s+/g, " ").trim().toUpperCase();
+    // Typed or pasted labels carry look-alikes of the plain characters (MASTER2): an en or em dash ("Spider – Web_1"), a minus sign, a non-breaking hyphen, a curly apostrophe ("Mother’s Day"), a fraction slash. A SKU is
+    // the library's document name and the shop's Etsy SKUs use the plain ones, so they are read as the plain ones: the label is the SKU it looks like, not a charm without one.
+    let s = labelText(str);
     if (!s || NOT_SKU.test(s) || NOT_SKU_SLASH.test(s)) return null;               // a measurement or a view word is a callout, never a SKU
     const slash = s.indexOf("/") >= 0;
     if (slash) { if (s[0] === "/" || s[s.length - 1] === "/") return null; s = s.replace(/\//g, "-"); }
@@ -1232,19 +1241,54 @@
   }
   /** How far (pt) a label's box may poke into the bottom of the outline's box and still stand under that charm (labelCharms `overlapPt`). */
   const LABEL_OVERLAP_PT = 3;
+  /** A label written in several text runs on one baseline (a slash or a word in another style, a run broken where the artist changed the font) is read whole when the pieces together are a SKU and one of them
+   *  stops at a connector ("Spider /" + "Web_1" is SPIDER - WEB_1, never the SKU WEB_1 with "Spider /" left behind as drawing). Pieces that are each a SKU stay separate labels (two SKUs under one charm, or the
+   *  labels of two charms), a lone mark ("L", "R") beside a label is not half of it, a callout ("FRONT", "14 mm", "1/2") is never joined to anything, and runs further than about one letter-height apart are not one label. `texts` is changed in place:
+   *  the joined runs are replaced by one text whose `segs` lists every run it came from; `out` gets { from: [the pieces], sku }. MASTER2 (Paul, 14 Oct 2026). */
+  function joinLabelRuns(texts, pattern, out) {
+    const box = t => t && !t.undecodable && t.str != null && t.bbox && t.bbox[3] > t.bbox[1];
+    const callout = t => { const s = labelText(t.str); return !s || NOT_SKU.test(s) || NOT_SKU_SLASH.test(s); };
+    const dangling = t => { const s = labelText(t.str); return /^[-+&\/]|[-+&\/]$/.test(s); };
+    const cand = texts.filter(box);
+    const near = (a, b) => { const h = Math.max(1, a.bbox[3] - a.bbox[1]); return Math.abs(b.bbox[1] - a.bbox[1]) <= 0.25 * h && Math.abs((b.bbox[3] - b.bbox[1]) - h) <= 0.35 * h; };
+    const gapOf = (l, r) => r.bbox[0] - l.bbox[2];
+    const used = new Set();
+    for (const f of cand) {
+      if (used.has(f) || callout(f) || !dangling(f)) continue;                  // only a piece that stops at a connector (a trailing or leading / - + &) starts a join: a lone "L" or "R" beside a label is a mark, not half of it
+      const h = Math.max(1, f.bbox[3] - f.bbox[1]);
+      const side = cand.filter(x => x !== f && !used.has(x) && !callout(x) && near(f, x));
+      const right = side.filter(x => gapOf(f, x) >= -1 * h && gapOf(f, x) <= 1 * h).sort((a, b) => a.bbox[0] - b.bbox[0])[0] || null;
+      const left = side.filter(x => gapOf(x, f) >= -1 * h && gapOf(x, f) <= 1 * h).sort((a, b) => b.bbox[2] - a.bbox[2])[0] || null;
+      const tries = [[f, right], [left, f], [left, f, right]].map(c => c.filter(Boolean)).filter((c, i) => c.length > 1 && (i < 2 || (left && right)));
+      for (const chain of tries) {
+        // the runs are put together as they are written: a space inside a run stays, and where neither side carries one a space goes between them (the label is read with the spacing it was typed with, "Spider / Web_1")
+        let str = String(chain[0].str); for (let i = 1; i < chain.length; i++) { const b = String(chain[i].str); str += (/\s$/.test(str) || /^\s/.test(b) ? "" : " ") + b; }
+        str = str.replace(/\s+/g, " ").trim();
+        if (!parseSkuLabel(str, pattern) || dangling({ str })) continue;
+        const bbox = chain.reduce((a, x) => [Math.min(a[0], x.bbox[0]), Math.min(a[1], x.bbox[1]), Math.max(a[2], x.bbox[2]), Math.max(a[3], x.bbox[3])], chain[0].bbox.slice());
+        const one = Object.assign({}, chain[0], { str, bbox, segs: chain.map(x => x.seg), joinedFrom: chain.map(x => String(x.str).trim()) });
+        for (const x of chain) { used.add(x); const k = texts.indexOf(x); if (k >= 0) texts[k] = null; }
+        texts.push(one); cand.push(one); used.add(one);
+        out.push({ from: one.joinedFrom, sku: parseSkuLabel(str, pattern).sku });
+        break;
+      }
+    }
+    for (let i = texts.length - 1; i >= 0; i--) if (texts[i] == null) texts.splice(i, 1);
+  }
   function labelCharms(parsed, charms, opts) {
     opts = Object.assign({ pattern: SKU_PATTERN_DEFAULT, gapPt: 18, widen: 0.25, overlapPt: LABEL_OVERLAP_PT }, opts || {});
     const runs = parsed.segments.concat(parsed.nested).filter(s => s.kind === "text");
     // a block that positions several strings is read string by string, each with its own box; the block stays the segment
     const texts = []; for (const r of runs) { if (r.pieces && r.pieces.length > 1) for (const p of r.pieces) texts.push(Object.assign({}, p, { seg: r })); else texts.push(Object.assign({}, r, { seg: r })); }
-    const labels = new Map(), unlabelled = [], orphans = [], duplicates = [], undecodable = [], labelSegs = new Set();
+    const labels = new Map(), unlabelled = [], orphans = [], duplicates = [], undecodable = [], labelSegs = new Set(), joinedRuns = [], skipped = [];
     const live = charms.filter(c => c.mergedInto == null);
+    joinLabelRuns(texts, opts.pattern, joinedRuns);
     // The lines under a charm are its SKUs, one per line: the first line sits within gapPt of the outline's bottom edge,
     // and every further line hangs directly under the line before it (a stacked list). Only the charm directly above the
     // list owns it; a charm without a list is reported unlabelled, and one SKU under two charms is reported, not shared.
     const lines = []; for (const t of texts) {
       if (t.undecodable || t.str == null) { if (t.chars > 0) undecodable.push({ bbox: t.bbox, chars: t.chars, font: t.font || null }); continue; }
-      const lab = parseSkuLabel(t.str, opts.pattern); if (!lab || !t.bbox) continue;
+      const lab = parseSkuLabel(t.str, opts.pattern); if (!lab || !t.bbox) { if (!lab && t.bbox && String(t.str).trim()) skipped.push({ str: String(t.str).trim().slice(0, 60), bbox: t.bbox.slice() }); continue; }   // (text that is no SKU is kept by what it says and where, so a charm left without one can be explained)
       lines.push({ t, lab, cx: (t.bbox[0] + t.bbox[2]) / 2, top: t.bbox[3], bottom: t.bbox[1], h: Math.max(1, t.bbox[3] - t.bbox[1]) });
     }
     lines.sort((a, b) => b.top - a.top);                                 // top of the page first, so a list is met first line first
@@ -1252,12 +1296,14 @@
     const owner = new Map();                                             // "SKU" or "SKU__SIZE" → first charm index
     const under = (cx, c) => { const b = c.outline.bbox, w = b[2] - b[0]; return cx >= b[0] - w * opts.widen && cx <= b[2] + w * opts.widen; };
     for (const L of lines) {
-      let best = null, bestGap = Infinity;
+      let best = null, bestGap = Infinity, bestDx = Infinity;
       for (const c of live) {
         const gap = c.outline.bbox[1] - L.top;                          // outline bottom (y-up) minus label top
         if (gap < -1 || gap > opts.gapPt) continue;
         if (!under(L.cx, c)) continue;
-        if (gap < bestGap) { bestGap = gap; best = c; }
+        // the nearest outline above wins; within half a point the one whose middle the label is nearest does (a wide charm's widened strip reaches a small neighbour's label: WIDE_ONE_1 took SMALL_TWO_2)
+        const dxc = Math.abs(L.cx - (c.outline.bbox[0] + c.outline.bbox[2]) / 2);
+        if (best === null || gap < bestGap - 0.5 || (gap <= bestGap + 0.5 && dxc < bestDx)) { bestGap = Math.min(gap, bestGap); best = c; bestDx = dxc; }
       }
       if (!best) {                                                       // no outline right above: a line of a list already attached?
         let chain = null, chainGap = Infinity;
@@ -1272,7 +1318,7 @@
           best = ov; bestGap = -ovDepth;
         } else { best = chain; bestGap = chainGap; }
       }
-      labelSegs.add(L.t.seg); attached.push({ line: L, charm: best });
+      for (const sg of L.t.segs || [L.t.seg]) labelSegs.add(sg); attached.push({ line: L, charm: best });
       const key = L.lab.size ? `${L.lab.sku}__${L.lab.size}` : L.lab.sku;
       if (!owner.has(key)) owner.set(key, []);
       const prev = labels.get(best.index);
@@ -1297,6 +1343,13 @@
       }
     }
     for (const [index, l] of labels) { const c = live.find(x => x.index === index); if (c) c.extraSkus = l.extra; }
+    // text written under a charm that does have a SKU and is no part of it ("Spider /" over "WEB_1") is said: a half label must not vanish without a word
+    const ignoredText = [];
+    for (const t of skipped) {
+      const s2 = labelText(t.str); if (!s2 || NOT_SKU.test(s2) || NOT_SKU_SLASH.test(s2)) continue;
+      const cx = (t.bbox[0] + t.bbox[2]) / 2;
+      for (const c of live) { const l2 = labels.get(c.index); if (!l2) continue; const b = c.outline.bbox, w = b[2] - b[0]; if (cx >= b[0] - 0.25 * w && cx <= b[2] + 0.25 * w && t.bbox[3] <= b[1] + 3 && t.bbox[3] >= b[1] - 22) { ignoredText.push({ str: t.str, sku: l2.sku }); break; } }
+    }
     // parts of a charm that the grouping left as charms of their own (a loose hoop, the same outline drawn twice, a piece nested in a hole) join it before anything is counted as unlabelled
     const parts = opts.absorb === false ? { absorbed: [], looseRings: [] } : absorbLooseParts(charms, labels);
     // a label text is never charm material, whichever charm the grouping attached it to
@@ -1307,7 +1360,7 @@
       if (c.mergedInto == null && !labels.has(c.index)) unlabelled.push(c.index);
     }
     let skuCount = 0; for (const l of labels.values()) skuCount += 1 + l.extra.length;
-    return { labels, unlabelled, orphans, duplicates, undecodable, skuCount, absorbed: parts.absorbed, looseRings: parts.looseRings };
+    return { labels, unlabelled, orphans, duplicates, undecodable, skuCount, absorbed: parts.absorbed, looseRings: parts.looseRings, joined: joinedRuns, skipped: skipped.slice(0, 5000), ignoredText: ignoredText.slice(0, 200) };
   }
   /* ═══ 5a″ · parts of a charm that came out of the grouping as charms of their own ═════════════════════
      groupCharms makes a charm of every closed cut outline that is no detail and no attached ring. Three kinds of part still stood alone, and each was counted as "a charm with no SKU

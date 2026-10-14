@@ -1191,7 +1191,7 @@ async function op_masterGet(b) {
 }
 async function op_masterGetMany(b) {
   const skus = [...new Set((b.skus || []).map(s => String(s).trim().toUpperCase()).filter(Master.isSku))].slice(0, 300); const out = {};
-  for (let i = 0; i < skus.length; i += 30) { const snaps = await db.getAll(...skus.slice(i, i + 30).map(s => db.collection(Master.INDEX).doc(s))); for (const s of snaps) if (s.exists) out[s.id] = await withLinks(Master.slimEntry(s.data())); }
+  for (let i = 0; i < skus.length; i += 30) { const snaps = await db.getAll(...skus.slice(i, i + 30).map(s => db.collection(Master.INDEX).doc(s))); for (const s of snaps) if (s.exists) out[s.id] = b.bare ? Master.slimEntry(s.data()) : await withLinks(Master.slimEntry(s.data())); }   // (bare: the record alone, no Storage link: a run that only asks whether its SKUs landed)
   return { entries: out };
 }
 /* A custom design saved to the repository (plans/save-to-repo-1011, _charmNestCustomSave.js): customSaveGet reads the order's save record; customSaveCommit (behind the repo upload

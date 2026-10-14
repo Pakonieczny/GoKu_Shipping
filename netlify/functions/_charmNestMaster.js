@@ -64,9 +64,10 @@ const SHAPE = require("crypto").createHash("sha1").update([slimEntry, cleanPair,
  * opts: { replaces: [masterHash…] } — hashes of earlier versions of this same master file.
  */
 async function putIndex(db, FV, body) {
-  const entries = (body.entries || []).filter(e => e && isSku(String(e.sku || "").toUpperCase()));
+  // a name the library cannot hold is refused and SAID (`rejected`), never dropped without a word: the run that sent it shows it, and the read-back finds nothing for it
+  const sent = (body.entries || []), entries = sent.filter(e => e && isSku(String(e.sku || "").toUpperCase()));
   const masterHash = str(body.masterHash, 80), replaces = new Set((body.replaces || []).map(String).concat([masterHash]));
-  const out = { written: 0, blocked: [], sizeMoved: [], pairKept: [] };
+  const out = { written: 0, blocked: [], sizeMoved: [], pairKept: [], rejected: sent.filter(e => !(e && isSku(String(e.sku || "").toUpperCase()))).slice(0, 200).map(e => ({ sku: String((e && e.sku) || "").slice(0, 80), reason: "not a name the library can hold (2 to 61 characters: letters, digits, space and _ . , ' & ( ) + -)" })) };
   // group sized designs under one SKU
   const bySku = new Map();
   for (const e of entries) { const sku = String(e.sku).toUpperCase(); if (!bySku.has(sku)) bySku.set(sku, []); bySku.get(sku).push(e); }

@@ -982,6 +982,32 @@
     return out;
   }
 
+  /** Where each charm that has no SKU under it sits, in words, so a person can find it on the sheet (MASTER2, Paul 14 Oct 2026: "1 charm(s) with no SKU under them: #22" names nothing).
+   *    charms  the grouping's charms     lab  labelCharms()'s answer (labels, unlabelled)     rows  pairLayer()'s rows (or masterPairs())     opts { mm: points per mm, default 72 / 25.4 }
+   *  Returns { [charm index]: "in a row of 2 bodies with TWINS_1: two identical bodies, cut line and engraving — left for a person to decide" | "14 mm from SPIDER - WEB_1" | "no charm with a SKU on the sheet" }.
+   *  Pure: reads boxes only, changes nothing, never throws. */
+  function whereUnlabelled(charms, lab, rows, opts) {
+    const out = {}; try {
+      const ptMm = (opts && opts.mm) || 25.4 / 72, byIndex = new Map((charms || []).map(c => [c.index, c]));
+      const labelled = (charms || []).filter(c => c && c.mergedInto == null && c.sku && c.outline && c.outline.bbox);
+      for (const i of (lab && lab.unlabelled) || []) {
+        const c = byIndex.get(i); if (!c || !c.outline || !c.outline.bbox) continue;
+        const row = (rows || []).find(r => r && (r.charms || []).includes(i));
+        if (row) { out[i] = "in a row of " + row.bodies + " bodies with " + ((row.skus || [])[0] || "a labelled one") + ": " + (row.why || row.kind || "") + (row.folded ? "" : row.sure ? " — not built into it" : " — left for a person to decide"); continue; }
+        // touching bodies in one row, labelled but with no label centred under the row (two pairs side by side, whose rows chain into one): no pair can be told from them
+        const chain = (rowsOf(charms || []) || []).find(rw => rw.some(x => x.index === i));
+        if (chain && chain.some(x => x.sku)) { out[i] = "touches a row of " + chain.length + " bodies (" + chain.filter(x => x.sku).map(x => x.sku).join(", ") + ") whose labels are not centred under the row, so no pair was built"; }
+        const b = c.outline.bbox; let best = null;
+        for (const o of labelled) { if (o === c) continue; const ob = o.outline.bbox, dx = Math.max(ob[0] - b[2], b[0] - ob[2], 0), dy = Math.max(ob[1] - b[3], b[1] - ob[3], 0), d = Math.hypot(dx, dy); if (!best || d < best.d) best = { d, sku: o.sku }; }
+        if (!out[i]) out[i] = best ? Math.round(best.d * ptMm) + " mm from " + best.sku : "no charm with a SKU on the sheet";
+        // what is written under it and was not read as a SKU says why ("Spider /" ends at a slash): the strip under the charm, about as deep as a label may stand
+        const w = b[2] - b[0], under = ((lab && lab.skipped) || []).filter(t => { const cx = (t.bbox[0] + t.bbox[2]) / 2; return cx >= b[0] - 0.25 * w && cx <= b[2] + 0.25 * w && t.bbox[3] <= b[1] + 3 && t.bbox[3] >= b[1] - 20; }).slice(0, 3);
+        if (under.length) out[i] += " — written under it, not read as a SKU: " + under.map(t => "“" + t.str + "”").join(", ");
+      }
+    } catch (_) { /* the list is only words */ }
+    return out;
+  }
+
   /** The extra fields an indexer writes on a design's entry besides `pair` (PAIRMIRROR's, shared so the browser, the server and the script write the same words):
    *  sym (does the design look the same in a mirror: "symmetric" | "slight" | "directional") for every design, facings ([null, "mirror"…]) for a folded pair drawn as mirror images.
    *  Anything the module cannot say is left out; never throws. */
@@ -997,7 +1023,7 @@
     describe, sameBody, sidesSaid, sideForPiece, pieceFields, groupOf, siblingsOf, splitAcross, designPair, pieceCountOf, discsOf,
     facingOf, facingOfBody, facingInfo, symmetryOf, needsFacing, readsOneWay, facingControl, mirrorOf, pieceGeometry, isEarringPair, plainLine, charmOfBody,
     sameOutline, bodiesAlike, alikeDesign, oneChoice, soloOf, ALIKE_SKUS, onlyBodyOf, ONE_BODY,
-    PAIR_DEFAULTS, shapeSimilarity, rowsOf, masterPairs, foldRow, pairField, pairLayer, entryFields, heldPair, keepPairs,
+    PAIR_DEFAULTS, shapeSimilarity, rowsOf, masterPairs, foldRow, pairField, pairLayer, whereUnlabelled, entryFields, heldPair, keepPairs,
     _flatten: flatten, _inPolys: inPolys, _distPolys: distPolys, _isCut: isCut
   };
 });

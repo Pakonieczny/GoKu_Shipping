@@ -242,7 +242,8 @@ ok(Pair.masterPairs([cA, Object.assign({}, rowCharm(3, 22, [1, 0, 0]))], lab1)[0
     ok(!Pair.keepPairs(w.g.charms, c => c.index === 7 ? [{ sku: 'LONE_1', size: 'M', bbox: [200, -12, 220, -4] }] : [], sized).has(7) && Pair.keepPairs(w.g.charms, c => c.index === 7 ? [{ sku: 'LONE_1', size: 'S', bbox: [200, -12, 220, -4] }] : [], sized).has(7), 'a size is held back only when that size holds the pair'); }
   // the browser indexer asks before it uploads anything
   const bridge = require('fs').readFileSync(require('path').join(__dirname, '../../charm-nest-bridge.js'), 'utf8'), wi = bridge.slice(bridge.indexOf('async function writeIndex(job)'));
-  ok(wi.indexOf('keepPairs(') > 0 && wi.indexOf('keepPairs(') < wi.indexOf('P.buildSingleCharm(c, parsed)') && /!keep\.has\(c\.index\)/.test(wi) && /were NOT written/.test(wi), 'writeIndex asks keepPairs before it builds or uploads a file, and says what it left');
+  ok(wi.indexOf('keepPairs(') > 0 && wi.indexOf('keepPairs(') < wi.indexOf('P.buildSingleCharm(pm ? pm.charm : c') && /!keep\.has\(c\.index\)/.test(wi) && /were NOT written/.test(wi), 'writeIndex asks keepPairs before it builds or uploads a file, and says what it left');
+  ok(/foldPairs\(job, charms, lab\)/.test(wi) && /pairs\.fold\.has\(i\)/.test(wi) && /pairs\.fold\.get\(c0\.index\)/.test(wi), 'the Master tab builds a sure row from both bodies (the pair layer the server route and the script run) and holds back only what it could not fold');
 }
 
 // ── the indexers end to end on a synthetic master (one mismatched pair, one lone charm): the script and the server route write the same records ──

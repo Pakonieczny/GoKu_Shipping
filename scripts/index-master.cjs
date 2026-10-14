@@ -272,6 +272,9 @@ async function main(argv, log = console.log) {
   if ((g.stray || []).length) { const by = {}; for (const m of g.stray) by[m.why] = (by[m.why] || 0) + 1; log(`  ${g.stray.length} piece(s) of loose ink outside a charm's cut outline are left out of it (${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")})`); }
   if ((lab.absorbed || []).length) { const by = {}; for (const a of lab.absorbed) by[a.why] = (by[a.why] || 0) + 1; log(`  ${lab.absorbed.length} part(s) the grouping left as charms of their own joined the charm they belong to (${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")}): ${lab.absorbed.slice(0, 40).map(a => `#${a.index} -> #${a.into}${a.sku ? " " + a.sku : ""}`).join(", ")}`); }
   if ((lab.looseRings || []).length) log(`  ! ${lab.looseRings.length} loose ring(s) could not be attached to a charm (left as they are, a person looks): ${lab.looseRings.slice(0, 40).map(r => `#${r.index} near ${r.nearSku || "no SKU"}: ${r.why}`).join("; ")}`);
+  if (parsed.pageCount > 1) log(`  ! this file has ${parsed.pageCount} pages and only the FIRST is read: the charms on the others are not in this run`);
+  if ((lab.ignoredText || []).length) log(`  ${lab.ignoredText.length} text(s) written under a labelled charm are no part of its SKU and were left out: ${lab.ignoredText.slice(0, 20).map(t => `"${String(t.str).trim()}" (under ${t.sku})`).join(", ")}`);
+  if ((lab.joined || []).length) log(`  ${lab.joined.length} label(s) written in several text runs were read as one: ${lab.joined.slice(0, 20).map(j => `"${j.from.join('" + "')}" -> ${j.sku}`).join(", ")}`);
   { const sl = [...lab.labels.values()].flatMap(l => [l].concat(l.extra || [])).filter(x => x.slash); if (sl.length) log(`  ${sl.length} label(s) carry a "/", which a SKU (a library document name) cannot hold: read with a hyphen instead (the orders find them by their spelling): ${sl.slice(0, 20).map(x => `"${String(x.str).trim()}" -> ${x.sku}`).join(", ")}`); }
   if (lab.orphans.length) log(`  orphan labels (no charm within ${o.gapMm} mm above): ${lab.orphans.slice(0, 40).map(x => x.sku).join(", ")}${lab.orphans.length > 40 ? " …" : ""}`);
   if (lab.unlabelled.length) log(`  unlabelled charms (by index): ${lab.unlabelled.slice(0, 40).join(", ")}${lab.unlabelled.length > 40 ? " …" : ""}`);
@@ -315,7 +318,7 @@ async function main(argv, log = console.log) {
     items = items.filter(({ l }) => {
       const mine = [l.sku, ...(l.extra || []).map(x => x.sku)].filter(Boolean).map(x => String(x).toUpperCase());
       for (const sk of mine) { const e = held.get(sk); if (e && e.masterHash && e.masterHash !== masterHash) supersede.add(e.masterHash); }
-      if (!o.all && !only && mine.every(sk => held.has(sk))) return false;
+      if (!o.all && !only && [l].concat(l.extra || []).every(x => held.has(String(x.sku).toUpperCase()) && (!x.size || !!(held.get(String(x.sku).toUpperCase()).sizes || {})[String(x.size).toUpperCase()]))) return false;   // (held per size: "ALPHA_1 · M" is new beside a held "ALPHA_1 · S")
       return true;
     });
     heldCount = before - items.length;
@@ -329,6 +332,8 @@ async function main(argv, log = console.log) {
   if (pairs.fold.size) items = items.map(it => pairs.fold.has(it.index) ? Object.assign({}, it, { c: pairs.fold.get(it.index).charm }) : it);
   // the other body of a pair folded into its labelled one is built into that design: it is not "a charm with no SKU under it" (SPIDER - WEB_1: the spider is the web's partner)
   { const partners = new Set(); for (const r of pairs.rows) if (r.folded) for (const i of r.partners || []) partners.add(i); const was = lab.unlabelled.length; if (partners.size) lab.unlabelled = lab.unlabelled.filter(i => !partners.has(i)); if (was !== lab.unlabelled.length) log(`  ${was - lab.unlabelled.length} charm(s) counted unlabelled above are the other body of a pair built into its labelled design: ${[...partners].map(i => "#" + i).join(", ")}`); }
+  const unlabelledWhy = Pair && Pair.whereUnlabelled ? Pair.whereUnlabelled(g.charms, lab, pairs.rows) : {};   // where each charm that is still without a SKU sits, in words
+  if (lab.unlabelled.length) log(`  still without a SKU: ${lab.unlabelled.slice(0, 40).map(i => "#" + i + (unlabelledWhy[i] ? " (" + unlabelledWhy[i] + ")" : "")).join(", ")}${lab.unlabelled.length > 40 ? " …" : ""}`);
   const rank = new WeakMap(), addEntry = (e, index) => { entries.push(e); rank.set(e, index); };   // (builds finish in any order; the records are written in drawing order)
   let done = 0, skipped = 0, hashesKept = 0; const total = items.length; const queue = items.slice();
   const one = async ({ index, l, c }) => {
@@ -386,7 +391,7 @@ async function main(argv, log = console.log) {
   if (kept.length) log(`${kept.length} pair design(s) were NOT written, because this run drew them as one body and the library holds them as a pair: ${kept.slice(0, 40).map(k => k.sku).join(", ")}${kept.length > 40 ? " …" : ""}`);
   log(`${entries.length} SKU entr${entries.length === 1 ? "y" : "ies"} ready (${skipped} from the previous run) · ${blocked.length} blocked · ${((Date.now() - t0) / 1000).toFixed(0)} s`);
 
-  let conflicts = [], sizeMoved = [], keptAtServer = [], written = 0;
+  let conflicts = [], sizeMoved = [], keptAtServer = [], rejected = [], written = 0;
   if (stage) {
     written = new Set(entries.map(e => String(e.sku).toUpperCase())).size;
     fs.writeFileSync(path.join(o.outDir, "records.json"), JSON.stringify({ masterHash, masterName: name, hashSource: "local", replaces: [...new Set(o.replaces)], only: only ? [...only] : null, entries, blocked }, null, 1));
@@ -398,15 +403,18 @@ async function main(argv, log = console.log) {
     const keepPath = masterUp ? masterUp.path : ([...held.values()].find(e => e.masterHash === masterHash && e.masterPath) || {}).masterPath || null;
     for (let i = 0; i < entries.length; i += 150) {
       const r = await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutIndex", entries: entries.slice(i, i + 150), masterHash, masterPath: keepPath, masterName: name, hashSource: "local", replaces: i === 0 ? [...new Set(o.replaces.concat([...supersede]))] : [] });
-      conflicts = conflicts.concat(r.blocked || []); sizeMoved = sizeMoved.concat(r.sizeMoved || []); keptAtServer = keptAtServer.concat(r.pairKept || []);
+      conflicts = conflicts.concat(r.blocked || []); sizeMoved = sizeMoved.concat(r.sizeMoved || []); keptAtServer = keptAtServer.concat(r.pairKept || []); rejected = rejected.concat(r.rejected || []);
       log(`  index ${Math.min(i + 150, entries.length)}/${entries.length}`);
     }
     // --only rewrites a few SKUs of a master whose file record is already there: that record (its counts and lists) is left as it is
     // when it exists, and written whole (every SKU the sheet carries) when it does not
     if (!(only && fileRecs.some(f => f && f.masterHash === masterHash))) {
-      const fileSkus = only ? [...lab.labels.values()].flatMap(l => [l.sku, ...(l.extra || []).map(x => x.sku)]) : skus;
+      // the record lists every SKU of the sheet that is under this file: the ones built now and the ones held that this file made (a repair run is not a new file)
+      const heldHere = [...lab.labels.values()].flatMap(l => [l.sku, ...(l.extra || []).map(x => x.sku)]).filter(sk => { const e = held.get(String(sk).toUpperCase()); return e && e.masterHash === masterHash; });
+      const fileSkus = only ? [...lab.labels.values()].flatMap(l => [l.sku, ...(l.extra || []).map(x => x.sku)]) : [...new Set([...skus, ...heldHere])];
       await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutFile", file: { masterHash, path: masterUp ? masterUp.path : null, url: masterUp ? masterUp.url : null, name, charms: liveCharms, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(conflicts.map(b => ({ sku: b.sku, reason: b.reason }))), skus: fileSkus, replaces: o.replaces, indexedBy: "local-indexer" } });
     }
+    if (rejected.length) log(`  ! ${rejected.length} SKU(s) were refused by the library and are NOT in it: ${rejected.slice(0, 30).map(b => b.sku).join(", ")} (${rejected[0].reason})`);
     if (keptAtServer.length) log(`  ${keptAtServer.length} SKU(s) the library holds as a pair were NOT overwritten with one body (the server refused): ${keptAtServer.slice(0, 30).map(b => b.sku).join(", ")}`);
     if (conflicts.length) log(`  ${conflicts.length} SKU(s) also live in another master file — blocked until fixed: ${conflicts.slice(0, 30).map(b => b.sku).join(", ")}`);
     if (sizeMoved.length) log(`  ${sizeMoved.length} SKU(s) changed size by more than 5 % since the last index: ${sizeMoved.slice(0, 30).map(b => b.sku).join(", ")}`);
@@ -426,7 +434,7 @@ async function main(argv, log = console.log) {
   }
   log(`index written: ${written} SKU(s) on ${o.origin} — the Master tab shows them after Reload index`);
   }
-  const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: liveCharms, labelled: lab.labels.size, unlabelled: lab.unlabelled, absorbed: lab.absorbed || [], looseRings: lab.looseRings || [], ringsLeft, slashLabels: [...lab.labels.values()].flatMap(l => [l].concat(l.extra || [])).filter(x => x.slash).map(x => ({ typed: String(x.str).trim(), sku: x.sku })), orphans: lab.orphans, duplicates: lab.duplicates, twins, pairs: pairs.rows, pairsKept: kept, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, pairsKeptAtServer: keptAtServer, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
+  const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: liveCharms, labelled: lab.labels.size, unlabelled: lab.unlabelled, absorbed: lab.absorbed || [], looseRings: lab.looseRings || [], ringsLeft, slashLabels: [...lab.labels.values()].flatMap(l => [l].concat(l.extra || [])).filter(x => x.slash).map(x => ({ typed: String(x.str).trim(), sku: x.sku })), orphans: lab.orphans, duplicates: lab.duplicates, unlabelledWhy, joinedLabels: lab.joined || [], ignoredText: lab.ignoredText || [], pageCount: parsed.pageCount || 1, twins, pairs: pairs.rows, pairsKept: kept, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, pairsKeptAtServer: keptAtServer, rejected, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
   try { fs.writeFileSync(workBase + ".index-report.json", JSON.stringify(report, null, 1)); log(`report: ${workBase}.index-report.json`); } catch (_) {}
   return report;
 }

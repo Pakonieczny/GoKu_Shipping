@@ -2508,7 +2508,8 @@ const Master = window.Master = (() => {
     const o = opts && typeof opts === "object" ? opts : { force: !!opts }, quiet = { quiet: !!o.quiet };
     if (!S.cloud.ok) return;
     if (!o.force && Date.now() - B.master.loadedAt < (o.ttl > 0 ? o.ttl : 120000)) return B.master.loading || null;
-    if (B.master.loading) return B.master.loading;
+    // (fresh: a read already on its way may have begun before the write that has just finished: it is waited for, and the library is read again)
+    if (B.master.loading) return o.fresh ? B.master.loading.catch(() => {}).then(() => load(o)) : B.master.loading;
     // a background reload redraws the tab only when it brought something new: a redraw rebuilds every tile, so an angle
     // being typed, a ticked label or an open file row was lost every ten minutes to a check that found nothing
     let changed = !o.quiet;
@@ -2622,15 +2623,19 @@ const Master = window.Master = (() => {
     })();
     if (!bytes.length) throw new Error(`${file && file.name ? file.name : "the file"} is empty, or its contents were already handed to something else`);
     const masterHash = await sha256(bytes);
-    const job = { name: file.name, masterHash, state: "parsing", t0: performance.now(), log: [] }; B.master.jobs.set(masterHash, job); render();
+    { const running = B.master.jobs.get(masterHash); if (running && !["done", "error"].includes(running.state)) { toast(`“${file.name}” is already being read`, "ok"); return running; } }   // (the same file dropped twice at once started two full runs, and the second hid the first)
+    const job = { name: file.name, masterHash, state: "parsing", t0: performance.now(), log: [], rebuildAll: reindexAll }; B.master.jobs.set(masterHash, job); render();
     job.bar = window.CNProgress ? CNProgress.start(`Indexing ${file.name}`, { note: `${(bytes.length / 1048576).toFixed(1)} MB · reading` }) : null;
     const say = (kind, text) => { job.log.push(text); agent({ master: masterHash }, kind, `${file.name}: ${text}`); render(); };
     try {
       say("MASTER", "reading…");
-      const parsed = await P.parseSource(bytes, file.name);
+      let parsed; try { parsed = await P.parseSource(bytes, file.name); } catch (e) { throw new Error(`“${file.name}” could not be read as an Illustrator or PDF file (${e.message}): nothing was written`); }
       if (job.bar) job.bar.note("finding the charms");
       const g = await (P.groupCharmsAsync || P.groupCharms)(parsed, { minPt: +S.settings.minPt || 6 });
       say("MASTER", `${g.charms.length} charm outline(s), ${parsed.counts.text} text block(s)`);
+      if (parsed.pageCount > 1) say("warn", `this file has ${parsed.pageCount} pages and only the FIRST is read: the charms on the others are not in this run`);
+      if ((g.markers || []).length) { const by = {}; for (const m of g.markers) by[m.why] = (by[m.why] || 0) + 1; say("MASTER", `${g.markers.length} marker object(s) beside charms are left out of them (${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")})`); }
+      if ((g.stray || []).length) { const by = {}; for (const m of g.stray) by[m.why] = (by[m.why] || 0) + 1; say("MASTER", `${g.stray.length} piece(s) of loose ink outside a charm's cut outline are left out of it (${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")}); a body drawn with an open cut line is one of them`); }
       // the server route (a background function with about 1 GB) is opt-in by charm count; 0 keeps every master in this tab
       if (+S.settings.masterServerAbove > 0 && g.charms.length > +S.settings.masterServerAbove && S.cloud.ok) {
         say("MASTER", `over ${S.settings.masterServerAbove} charms — indexing on the server`);
@@ -2659,41 +2664,67 @@ const Master = window.Master = (() => {
       // parts the grouping left as charms of their own (a loose hoop, an outline written twice, a piece in a plate's hole) joined their charm; a hoop that could not be attached, and a label read with a hyphen for its "/", are said, never dropped
       if ((lab.absorbed || []).length) { const by = {}; for (const a of lab.absorbed) by[a.why] = (by[a.why] || 0) + 1; say("MASTER", `${lab.absorbed.length} part(s) the grouping left as charms of their own joined their charm (${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")})`); }
       if ((lab.looseRings || []).length) say("warn", `${lab.looseRings.length} loose ring(s) could not be attached to a charm: ${lab.looseRings.slice(0, 12).map(r => `#${r.index} near ${r.nearSku || "no SKU"} (${r.why})`).join("; ")}`);
+      if ((lab.ignoredText || []).length) say("warn", `${lab.ignoredText.length} text(s) written under a labelled charm are no part of its SKU and were left out: ${lab.ignoredText.slice(0, 6).map(t => `“${String(t.str).trim()}” (under ${t.sku})`).join(", ")}${lab.ignoredText.length > 6 ? " …" : ""}`);
+      if ((lab.joined || []).length) say("MASTER", `${lab.joined.length} label(s) written in several text runs were read as one: ${lab.joined.slice(0, 8).map(j => `“${j.from.join("” + “")}” → ${j.sku}`).join(", ")}${lab.joined.length > 8 ? " …" : ""}`);
       { const sl = [...lab.labels.values()].flatMap(l => [l].concat(l.extra || [])).filter(x => x.slash); if (sl.length) say("MASTER", `${sl.length} label(s) carry a "/", which a SKU cannot hold: read with a hyphen (${sl.slice(0, 8).map(x => `“${String(x.str).trim()}” → ${x.sku}`).join(", ")}${sl.length > 8 ? " …" : ""})`); }
       // Claude's grouping review merges fragments before anything is indexed
       const src = { id: "master:" + masterHash.slice(0, 8), name: file.name, bytes, parsed, group: g, charms: g.charms, metal: null, state: "ready", master: true };
       src.charms.forEach((c, i) => Object.assign(c, { id: src.id + ":" + i, sourceId: src.id, sourceName: file.name, index: c.index, name: c.sku || null, excluded: false, cloud: null }));
-      job.state = "silhouettes";
-      // only the charms that carry a SKU are indexed, so only they are traced: on the real master that is 1,038 of 3,408
-      // a ring drawn beside the body is welded into the cut line before the charm is measured or written
-      { let welded = 0, left = 0; const stuck = []; for (const c of g.charms) { if (c.mergedInto != null || !c.sku || c.alreadyHeld) continue; const r = P.integrateRings(c); welded += r.welded; left += r.left.length; if (r.left.length) stuck.push({ sku: c.sku, why: r.left[0] }); } job.ringsLeft = stuck; if (stuck.length) say("warn", `${stuck.length} charm(s) have a hoop that could not join them: ${stuck.slice(0, 12).map(x => `${x.sku} (${x.why})`).join("; ")}${stuck.length > 12 ? " …" : ""}`); if (welded || left) say("MASTER", `${welded} jump ring(s) welded into their charm's cut line${left ? ` · ${left} need a geometry check` : ""}`); }
-      await P.buildSilhouettes(parsed, g.charms.filter(c => c.mergedInto == null && c.sku && !c.alreadyHeld), +S.settings.silhouetteRes || 6, (d, t) => { if (job.bar) job.bar.label(`Tracing charms · ${file.name}`).set(d, t); job.progress = `silhouettes ${d}/${t}`; if (d % 10 === 0) render(); });
       // The SKUs are read from the sheet as text, which is quick, so the library is consulted before any work is done:
       // a charm whose SKUs are all held already is left alone. A charm with even one new SKU is rebuilt whole, so all of
       // its SKUs keep sharing one design file, and the master they came from is superseded rather than reported as a clash.
-      await load(true).catch(() => {});
+      job.state = "checking"; job.progress = "reading the charm library"; render();
+      await load({ force: true, fresh: true });                          // (a library that cannot be read stops the run: read as empty, every SKU would be rebuilt and blocked as a clash with its own master)
       const skusOf = c => [c.sku, ...(c.extraSkus || []).map(x => x.sku)].filter(Boolean).map(x => String(x).toUpperCase());
       const known = B.master.entries;
       const labelledCharms = g.charms.filter(c => c.mergedInto == null && c.sku);
       const supersede = new Set();
       let held = 0;
-      if (!reindexAll) {
-        for (const c of labelledCharms) {
-          const mine = skusOf(c);
-          if (mine.every(sk => known.has(sk))) { c.alreadyHeld = true; held++; continue; }
-          for (const sk of mine) { const e = known.get(sk); if (e && e.masterHash && e.masterHash !== masterHash) supersede.add(e.masterHash); }
-        }
+      // a SKU is held when the library has it and, for a line that names a size, has that size ("ALPHA_1 · M" is new beside a held "ALPHA_1 · S")
+      const holds = l => { const e = known.get(String(l.sku || "").toUpperCase()); return !!e && (!l.size || !!(e.sizes && e.sizes[String(l.size).toUpperCase()])); };
+      for (const c of labelledCharms) {
+        const lines = [{ sku: c.sku, size: c.skuSize }].concat((c.extraSkus || []).map(x => ({ sku: x.sku, size: x.size })));
+        if (!reindexAll && lines.every(holds)) { c.alreadyHeld = true; held++; continue; }
+        for (const l of lines) { const e = known.get(String(l.sku || "").toUpperCase()); if (e && e.masterHash && e.masterHash !== masterHash) supersede.add(e.masterHash); }   // (rebuilt whole: the master they came from is superseded, with the tick or without it)
       }
       job.held = held; job.supersede = [...supersede];
       if (held) say("MASTER", `${held} charm(s) are already in the library and are left as they are · ${labelledCharms.length - held} to index${reindexAll ? "" : " (tick “re-index SKUs already held” to rebuild them all)"}`);
-      if (held === labelledCharms.length) { await load(true); job.state = "done"; job.written = 0; say("ok", `nothing new on this sheet — all ${held} charm(s) are already in the library`); render(); return job; }
+      if (labelledCharms.length && held === labelledCharms.length) {
+        // nothing to build. What the sheet still leaves open stays on the card, a design the library holds as ONE body of a pair this sheet draws is said, and a library that lost this file's record (a run that stopped after the SKUs) gets it back
+        const pl = foldPairs(job, g.charms, lab, say);
+        try { const Pr = window.CharmNestPair; job.unlabelledWhy = Pr && Pr.whereUnlabelled ? Pr.whereUnlabelled(g.charms, lab, pl.rows) : {}; } catch (_) { job.unlabelledWhy = {}; }
+        job.lab = lab; job.written = 0;
+        if (pl.stale.length) say("warn", `${pl.stale.length} design(s) are in the library as ONE body, and this sheet draws them as a row of bodies under one label: ${pl.stale.slice(0, 12).map(x => `${x.sku} (${x.bodies} bodies)`).join(", ")}. Tick “re-index SKUs already held” and add the file again to build them from every body.`);
+        try {
+          const mine = [...new Set(labelledCharms.flatMap(skusOf).filter(sk => { const e = known.get(sk); return e && e.masterHash === masterHash; }))];
+          if (mine.length && S.cloud.ok && !B.master.files.some(f => f.masterHash === masterHash)) { await repoApi("upload", upAsk(`“${file.name}”`), { op: "masterPutFile", file: { masterHash, path: job.masterPath || null, name: file.name, charms: g.charms.filter(c => c.mergedInto == null).length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: [], skus: mine, indexedBy: "browser", pageW: parsed.pageW, pageH: parsed.pageH, replaces: [] } }); say("MASTER", "this file's record was missing from the upload history: written again"); }
+        } catch (e) { say("warn", `the file's record could not be written: ${e.message}`); }
+        await load(true); say("ok", `nothing new on this sheet — all ${held} charm(s) are already in the library`); if (lab.unlabelled.length) say("warn", `${lab.unlabelled.length} charm(s) still have no SKU under them (see the list on the card)`); job.state = "done"; render(); return job;
+      }
+      if (!labelledCharms.length) say("warn", `no SKU label was read on this sheet (${g.charms.filter(c => c.mergedInto == null).length} charm outline(s)): labels drawn as outlines are read from the strip under each charm below`);
+      // (what the library already holds is known now, so only the charms this run builds are traced: a sheet added again with everything held traces nothing)
+      job.state = "silhouettes";
+      // only the charms that carry a SKU are indexed, so only they are traced: on the real master that is 1,038 of 3,408
+      // a ring drawn beside the body is welded into the cut line before the charm is measured or written
+      { let welded = 0, left = 0; const stuck = []; for (const c of g.charms) { if (c.mergedInto != null || !c.sku || c.alreadyHeld) continue; const r = P.integrateRings(c); welded += r.welded; left += r.left.length; if (r.left.length) stuck.push({ sku: c.sku, why: r.left[0] }); } job.ringsLeft = stuck; if (stuck.length) say("warn", `${stuck.length} charm(s) have a hoop that could not join them: ${stuck.slice(0, 12).map(x => `${x.sku} (${x.why})`).join("; ")}${stuck.length > 12 ? " …" : ""}`); if (welded || left) say("MASTER", `${welded} jump ring(s) welded into their charm's cut line${left ? ` · ${left} need a geometry check` : ""}`); }
+      await P.buildSilhouettes(parsed, g.charms.filter(c => c.mergedInto == null && c.sku && !c.alreadyHeld), +S.settings.silhouetteRes || 6, (d, t) => { if (job.bar) job.bar.label(`Tracing charms · ${file.name}`).set(d, t); job.progress = `silhouettes ${d}/${t}`; if (d % 10 === 0) render(); });
       const liveCount = g.charms.filter(c => c.mergedInto == null).length;
       if (S.settings.review !== "off" && S.cloud.ok && liveCount <= 300) { try { job.state = "review"; render(); await reviewGrouping(src); } catch (e) { say("warn", `Claude grouping review skipped: ${e.message}`); } }
       else if (S.settings.review !== "off" && S.cloud.ok) say("MASTER", `grouping review skipped: ${liveCount} charms is more than one review can hold (300) — the geometry stands, the report lists what to check`);
+      // Claude's review may merge a labelled charm into another or call it no charm: its SKU follows the charm it joined (when that one has none), or is listed with no charm above it. A SKU never leaves the run without a word.
+      { const byI = new Map(g.charms.map(c => [c.index, c])), top = i => { let c = byI.get(i), k = 0; while (c && c.mergedInto != null && k++ < 20) c = byI.get(c.mergedInto); return c; };
+        for (const [idx, l] of [...lab.labels]) {
+          const c = byI.get(idx); if (!c || (c.mergedInto == null && !c.excluded)) continue;
+          const t = c.mergedInto != null ? top(idx) : null;
+          if (t && t !== c && !t.excluded && !lab.labels.has(t.index)) { lab.labels.set(t.index, l); lab.labels.delete(idx); t.sku = c.sku; t.skuSize = c.skuSize; t.extraSkus = c.extraSkus || []; t.alreadyHeld = c.alreadyHeld; lab.unlabelled = lab.unlabelled.filter(i => i !== t.index); say("MASTER", `Claude merged the charm labelled ${l.sku} into #${t.index}: the SKU goes with it`); }
+          else { lab.labels.delete(idx); for (const x of [l].concat(l.extra || [])) lab.orphans.push({ sku: x.sku, size: x.size, str: x.str, bbox: x.bbox }); say("warn", `${l.sku} was labelled under charm #${idx}, which Claude's review ${c.mergedInto != null ? "merged into a charm that already has a SKU" : "excluded as not a charm"}: the label is listed with no charm above it`); }
+        } }
       // outlined labels: the strip under each unlabelled charm goes to Claude with a strict schema; a person confirms every
       // read. Only a strip with something drawn in it is sent: a charm with nothing under it is reported, not read.
       job.state = "vision"; job.progress = "looking under the unlabelled charms"; render(); await sleep(0);
-      const unlAll = g.charms.filter(c => c.mergedInto == null && !c.sku);
+      const pairLayer = foldPairs(job, g.charms, lab, say);
+      { const f = (job.pairs || []).filter(r => r.folded); if (f.length) say("MASTER", `${f.length} pair design(s) built from both bodies: ${f.map(r => r.sku).slice(0, 12).join(", ")}${f.length > 12 ? " …" : ""}`); }
+      const unlAll = g.charms.filter(c => c.mergedInto == null && !c.sku && !pairLayer.partners.has(c.index));
       let found = await strayInkUnder(parsed, g, unlAll, (+S.settings.labelGapMm || 6.4) * PT, (d, t) => { if (job.bar) job.bar.label(`Looking under the unlabelled charms · ${file.name}`).set(d, t); job.progress = `looking under the unlabelled charms ${d}/${t}`; render(); });
       let unl = found.map(f => f.charm);
       job.vision = [];
@@ -2711,12 +2742,18 @@ const Master = window.Master = (() => {
         }
       }
       if (unl.length && !job.vision.length) say("MASTER", `Claude could not read a SKU under any of the ${unl.length} charm(s) with marks beneath them — they stay unlabelled`);
+      // each charm that is still without a SKU is named by where it sits ("14 mm from SPIDER - WEB_1", "in a row of 2 bodies with …"): a bare charm number tells nobody which charm to look for
+      try { const Pr = window.CharmNestPair; job.unlabelledWhy = Pr && Pr.whereUnlabelled ? Pr.whereUnlabelled(g.charms, lab, pairLayer.rows) : {}; } catch (_) { job.unlabelledWhy = {}; }
       job.state = "writing"; job.parsed = parsed; job.charms = g.charms; job.lab = lab; job.src = src;
       await writeIndex(job);
-      await load(true);                                                    // the index is reloaded before the job reads "done"
+      await load({ force: true, fresh: true });                          // the index is reloaded before the job reads "done" (a read already on its way began before the write: it is waited for)
       job.finishedAt = Date.now(); job.state = "done"; say("ok", `indexed ${job.written} SKU(s)${job.held ? ` · ${job.held} charm(s) were already in the library` : ""}${job.vision.length ? ` · ${job.vision.length} label(s) read by Claude await confirmation` : ""}`);
       render(); return job;
-    } catch (e) { job.finishedAt = Date.now(); job.state = "error"; job.error = e.message; say("warn", `indexing failed: ${e.message}`); render(); throw e; }
+    } catch (e) {
+      // a re-index that stops after some design files were replaced leaves files that no longer match their index records: said, with what to do
+      job.finishedAt = Date.now(); job.state = "error"; job.error = e.message + (job.rebuildAll && job.uploaded ? ` — ${job.uploaded} design file(s) were already replaced in the library while the index still describes the old drawing: tick “re-index SKUs already held” and add the file again` : "");
+      say("warn", `indexing failed: ${job.error}`); render(); throw e;
+    }
     finally { if (job.bar) { job.bar.end(); job.bar = null; } settleJob(job); }
   }
   /** A finished index keeps what its row and its report show. The parsed file, its traced charms and its bytes (the
@@ -2728,58 +2765,154 @@ const Master = window.Master = (() => {
     if (l && l.labels instanceof Map) job.lab = Object.assign({}, l, { labels: { size: l.labels.size } });   // each label held a piece of the parsed file
     if (job.charms) job.charmCount = job.charms.length;
     if (job.vision) job.vision = job.vision.map(v => ({ index: v.index, sku: v.sku, size: v.size, confidence: v.confidence, confirmed: v.confirmed }));
-    job.parsed = job.src = job.charms = null;
+    job.parsed = job.src = job.charms = job.pairLayer = null;
     const done = [...B.master.jobs.values()].filter(j => ["done", "error"].includes(j.state) && !(j.vision || []).some(v => !v.confirmed));
     for (const old of done.slice(0, Math.max(0, done.length - 20))) B.master.jobs.delete(old.masterHash);
   }
+  /** A row of bodies under ONE label that is surely a mismatched pair is ONE design (MASTER2, Paul 14 Oct 2026: SPIDER - WEB_1, the spider's body was never written and was reported as "a charm with no SKU under it").
+      This is the pair layer the server route and scripts/index-master.cjs already run (charm-nest-pair.js pairLayer), so the three routes read a sheet the same way. It folds each such row into its labelled charm,
+      takes the other body out of the unlabelled list, and keeps its answer on the job: the vision step must not offer that body to Claude as a charm that lost its label. Asked once per job.
+      It never throws: a sheet it cannot read leaves every pair as it was (writeIndex then writes no lone body of it, as before) and the run says so. */
+  function foldPairs(job, charms, lab, say) {
+    if (job.pairLayer) return job.pairLayer;
+    const tell = (kind, text) => { if (say) say(kind, text); else job.log.push(text); };
+    const none = { rows: [], fold: new Map(), refused: new Map(), partners: new Set(), stale: [] }, Pr = window.CharmNestPair;
+    if (!Pr || !Pr.pairLayer || !lab || !(lab.labels instanceof Map)) return (job.pairLayer = none);
+    try {
+      const items = charms.filter(c => c.mergedInto == null && c.sku && !c.excluded && !c.alreadyHeld).map(c => ({ index: c.index, l: lab.labels.get(c.index), c })).filter(it => it.l);
+      const out = Pr.pairLayer(P, G, { charms }, lab, items, { engraveMarginMm: +S.settings.engraveMarginMm || 0.8 }, m => tell("MASTER", String(m).trim()));
+      out.partners = new Set(); out.stale = [];
+      for (const r of out.rows) if (r.folded) for (const i of r.partners || []) out.partners.add(i);
+      // a sure row whose labelled body is already in the library was left alone by this run: when the library holds it as the pair it is, its other body is built into it (not "a charm with no SKU"); when it holds ONE body of it,
+      // the design in the library is half of the drawing and the run says so (a person ticks "re-index SKUs already held" to build it from both bodies)
+      for (const r of out.rows) {
+        if (!r.sure || r.folded || r.note !== "not built in this run") continue;
+        const owner = charms.find(c => c.index === r.owner), l = lab.labels.get(r.owner); if (!owner || !l) continue;
+        const lines = [l].concat(l.extra || []), ents = lines.map(x => ({ x, e: B.master.entries.get(String(x.sku || "").toUpperCase()) }));
+        if (ents.every(t => t.e && Pr.heldPair && Pr.heldPair(t.e, t.x.size))) for (const i of r.charms) { if (i !== r.owner) out.partners.add(i); }
+        else if (ents.some(t => t.e)) out.stale.push({ sku: l.sku, bodies: r.bodies });
+      }
+      if (out.partners.size) lab.unlabelled = lab.unlabelled.filter(i => !out.partners.has(i));   // (the other body of a pair built into its labelled design)
+      job.pairs = out.rows.map(r => ({ sku: (r.skus || [])[0] || null, kind: r.kind, folded: !!r.folded, bodies: r.bodies, note: r.note || null })); job.stale = out.stale;
+      return (job.pairLayer = out);
+    } catch (e) { tell("warn", `the pair layer could not read this sheet (${e.message}): a row of bodies under one label is left as it was`); return (job.pairLayer = none); }
+  }
   /** Per labelled charm: the per-SKU .ai + thumbnail, the geometry, the derived flags; then the index and file records. */
   async function writeIndex(job) {
-    const { parsed, charms, lab, masterHash, name } = job; const entries = [], blocked = [], skus = [];
-    // A pair design is never written back as one body. This indexer draws ONE body per label (its silhouettes come from a canvas), so a row of two bodies under one label (a mismatched pair)
-    // and a SKU the library already holds as a pair are left as they are, and the run says so (charm-nest-pair.js keepPairs; the server route and scripts/index-master.cjs build the pair from both bodies).
+    const { parsed, charms, lab, masterHash, name } = job; const entries = [], blocked = [], skus = [], refusedHere = [];
+    const acc = (prev, now) => (job.only ? (prev || []).concat(now) : now);          // (a run for the labels a person confirmed adds to what the first run found)
+    const up = x => String(x || "").toUpperCase(), nameOk = sku => P.SKU_PATTERN_DEFAULT.test(up(sku));   // (the library's own rule for a name it can hold)
+    // the library as it is NOW: Claude's review or a person's confirmation may have taken minutes, and a pair another page or run has built since must not be written over with one body
+    if (S.cloud.ok) { try { await load({ force: true, fresh: true }); } catch (e) { throw new Error(`the charm library could not be read before writing (${e.message}): nothing was written`); } }
+    // A row of bodies under one label that is surely a mismatched pair is built from both bodies (foldPairs). A pair design is never written back as ONE body: a row the layer could not fold, and a SKU the library
+    // already holds as a pair that this drawing shows fewer bodies of, are left as they are, and the run says so (charm-nest-pair.js keepPairs).
     const labelsOf = c => { const l = lab && lab.labels instanceof Map ? lab.labels.get(c.index) : null; return l ? [l].concat(l.extra || []).map(x => ({ sku: x.sku, size: x.size, bbox: x.bbox })) : []; };
-    const keep = window.CharmNestPair && window.CharmNestPair.keepPairs ? window.CharmNestPair.keepPairs(charms, labelsOf, B.master.entries) : new Map();
-    const live = charms.filter(c => c.mergedInto == null && c.sku && !c.excluded && !c.alreadyHeld && !keep.has(c.index));
+    const Pr = window.CharmNestPair, pairs = foldPairs(job, charms, lab);
+    const keep = new Map([...(Pr && Pr.keepPairs ? Pr.keepPairs(charms, labelsOf, B.master.entries) : new Map())].filter(([i]) => !pairs.fold.has(i)));
+    for (const [i, why] of pairs.refused) if (!keep.has(i)) keep.set(i, { kind: "row", skus: [], why });
+    const live = charms.filter(c => c.mergedInto == null && c.sku && !c.excluded && !c.alreadyHeld && !keep.has(c.index) && (!job.only || job.only.has(c.index)));
     job.kept = charms.filter(c => keep.has(c.index) && c.mergedInto == null && c.sku && !c.excluded && !c.alreadyHeld).map(c => ({ sku: c.sku, kind: keep.get(c.index).kind, why: keep.get(c.index).why }));
-    if (job.kept.length) { const text = `${job.kept.length} pair design(s) were NOT written, so none was turned back into one body: ${job.kept.slice(0, 12).map(k => k.sku).join(", ")}${job.kept.length > 12 ? " …" : ""}. The Master tab indexer draws one body for each label (${job.kept[0].sku}: ${job.kept[0].why}). Index this master with the server route or node scripts/index-master.cjs, which build the pair from both bodies.`; job.log.push(text); agent({ master: masterHash }, "warn", `${name}: ${text}`); }
+    if (job.kept.length) { const text = `${job.kept.length} pair design(s) were NOT written, so none was turned back into one body: ${job.kept.slice(0, 12).map(k => k.sku).join(", ")}${job.kept.length > 12 ? " …" : ""}. ${job.kept[0].sku}: ${job.kept[0].why}. Nothing was written for it, so the library keeps whatever it held; a person looks.`; job.log.push(text); agent({ master: masterHash }, "warn", `${name}: ${text}`); }
+    // The server turns every run of characters other than letters, digits and _ . - into one "_" (safePath), so "A+B_1" and "A B_1" would name ONE file and the second upload would replace the first (a SKU with another SKU's design).
+    // The first charm in drawing order keeps the plain name; a later one whose cleaned name is taken, in this run or by another SKU in the library, gets "__<charm number>" after it (the local indexer's fileKeys).
+    const safeKey = k => String(k).replace(/[^\w.\-\/]+/g, "_").replace(/\.\.+/g, ".").toLowerCase();
+    const stemOf = pth => { const m = /^charmnest\/master\/(.+)\.(?:ai|png)$/.exec(String(pth || "")); return m ? safeKey(m[1]) : null; };
+    const heldBy = new Map(); for (const [sk, e] of B.master.entries) for (const pth of [e.aiPath, e.thumbPath].concat(Object.values(e.sizes || {}).flatMap(z => [z && z.aiPath, z && z.thumbPath]))) { const st = stemOf(pth); if (st && !heldBy.has(st)) heldBy.set(st, sk); }
+    const taken = new Set(), keyOf = new Map();
+    for (const c0 of live.slice().sort((a, b) => a.index - b.index)) {
+      const p0 = [{ sku: c0.sku, size: c0.skuSize }].concat((c0.extraSkus || []).map(x => ({ sku: x.sku, size: x.size }))).find(x => nameOk(x.sku)); if (!p0) continue;
+      const base = p0.size ? `${p0.sku}__${p0.size}` : p0.sku; let key = base; const holder = heldBy.get(safeKey(key));
+      if (taken.has(safeKey(key)) || (holder && holder !== up(p0.sku))) key = `${base}__${c0.index}`;
+      taken.add(safeKey(key)); keyOf.set(c0.index, key);
+    }
     let n = 0;
-    const one = async (c) => {
-      const key = c.skuSize ? `${c.sku}__${c.skuSize}` : c.sku;
+    const one = async (c0) => {
+      // a name the library cannot hold is refused here and said, before anything is uploaded: its file would otherwise replace the file of the SKU its name is cleaned to ("HASH#1" → HASH_1.ai)
+      const lines = [{ sku: c0.sku, size: c0.skuSize }].concat((c0.extraSkus || []).map(x => ({ sku: x.sku, size: x.size })));
+      for (const x of lines) if (!nameOk(x.sku)) refusedHere.push({ sku: x.sku, reason: "not a name the library can hold (2 to 61 characters: letters, digits, space and _ . , ' & ( ) + -)" });
+      const good = lines.filter(x => nameOk(x.sku)); if (!good.length) { job.progress = `written ${++n}/${live.length}`; return; }
+      const prim = good[0], extras = good.slice(1);
+      const pm = pairs.fold.get(c0.index);                              // set only for a design built from a row of bodies: its silhouette, picture, file and readings are the whole design's
+      let c = c0;
+      if (pm) {
+        c = pm.view; c.sku = prim.sku; c.skuSize = prim.size; c.labelSource = c0.labelSource; c.labelConfidence = c0.labelConfidence;
+        await P.buildSilhouettes(parsed, [c], +S.settings.silhouetteRes || 6); c.open = pm.open;   // (the layer read the openness of each body; the view's merged outline is only what the area and the hash come from)
+        c.thumb = await P.thumbnail(pm.charm, 168);                      // both bodies side by side, a Left and a Right chip
+      }
+      const key = keyOf.get(c0.index) || (prim.size ? `${prim.sku}__${prim.size}` : prim.sku);
       let ai = null, png = null;
-      if (S.cloud.ok) { const bytes = await P.buildSingleCharm(c, parsed); [ai, png] = await Promise.all([upBytes(`charmnest/master/${key}.ai`, bytes, "application/illustrator", `Saving ${key}`, `“${name}”`), upBytes(`charmnest/master/${key}.png`, dataUrlToBytes(c.thumb), "image/png", undefined, `“${name}”`)]); }
+      if (S.cloud.ok) { const bytes = await P.buildSingleCharm(pm ? pm.charm : c, parsed, pm && pm.bodies ? { bodies: pm.bodies } : undefined); [ai, png] = await Promise.all([upBytes(`charmnest/master/${key}.ai`, bytes, "application/illustrator", `Saving ${key}`, `“${name}”`), upBytes(`charmnest/master/${key}.png`, dataUrlToBytes(c.thumb), "image/png", undefined, `“${name}”`)]); job.uploaded = (job.uploaded || 0) + 1; }
       const reasons = []; if (c.open) reasons.push("open outline");
       let engravable = true, upAngle = null, upSource = "drawn", flipOk = true;
+      if (pm) { ({ engravable, upAngle, upSource, flipOk } = pm.engrave); if (!pm.engrave.flipOk) reasons.push(pm.engrave.flipWhy); } else
       try { const up = window.CharmNestBackground ? await CharmNestBackground.run('indexGeometry',{charm:{outline:c.outline,members:c.members,bbox:c.bbox,widthPt:c.widthPt,heightPt:c.heightPt}}) : G.upAngleOf(c); upAngle = up.angle; upSource = up.source; if(!window.CharmNestBackground)G.backView(c, { res: 6, upAngle }); }
       catch (e) { flipOk = false; reasons.push(e.message); }
-      const wMm = c.widthPt * MM, hMm = c.heightPt * MM; const outOfRange = Math.max(wMm, hMm) > (+S.settings.sizeMaxMm || 60) || Math.max(wMm, hMm) < (+S.settings.sizeMinMm || 3);
+      const dimsMm = pm ? Pr.bodiesOf(pm.charm).map(b => [(b.bbox[2] - b.bbox[0]) * MM, (b.bbox[3] - b.bbox[1]) * MM]) : [[c.widthPt * MM, c.heightPt * MM]];   // (a pair is judged body by body: the two together are not one charm's size)
+      const outOfRange = dimsMm.some(([wMm, hMm]) => Math.max(wMm, hMm) > (+S.settings.sizeMaxMm || 60) || Math.max(wMm, hMm) < (+S.settings.sizeMinMm || 3));
       const sym = (() => { try { const Pr = window.CharmNestPair, b = Pr && Pr.bodiesOf ? Pr.bodiesOf(c)[0] : null; return b && Pr.symmetryOf ? Pr.symmetryOf(b).level : undefined; } catch (_) { return undefined; } })();   // does the design look the same in a mirror: the "faces" box in the Master tab is shown only when it does not
-      entries.push({ sku: c.sku, size: c.skuSize, charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: ai && ai.path, aiUrl: ai && ai.url, thumbPath: png && png.path, thumbUrl: png && png.url, open: !!c.open, labelSource: c.labelSource || "text", confidence: c.labelConfidence == null ? null : c.labelConfidence, blocked: reasons.length ? reasons.join("; ") : null, outOfRange, flipOk, backKeepOut: keepOutOf(c).length ? keepOutOf(c).map(m => ({ layer: m.layer })) : null, ...(sym ? { sym } : {}) });
-      if (reasons.length) blocked.push({ sku: c.sku, reason: reasons.join("; ") }); skus.push(c.sku);
-      for (const x of c.extraSkus || []) { entries.push(Object.assign({}, entries[entries.length - 1], { sku: x.sku, size: x.size })); skus.push(x.sku); if (reasons.length) blocked.push({ sku: x.sku, reason: reasons.join("; ") }); }   // every further line under the charm: the same design under another SKU
+      entries.push({ sku: prim.sku, size: prim.size, charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: pm ? pm.holes : P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: ai && ai.path, aiUrl: ai && ai.url, thumbPath: png && png.path, thumbUrl: png && png.url, open: !!c.open, labelSource: c.labelSource || "text", confidence: c.labelConfidence == null ? null : c.labelConfidence, blocked: reasons.length ? reasons.join("; ") : null, outOfRange, flipOk, backKeepOut: keepOutOf(c).length ? keepOutOf(c).map(m => ({ layer: m.layer })) : null, ...(pm ? Object.assign({ pair: pm.field }, Pr.entryFields ? Pr.entryFields(pm.charm, true) : {}) : sym ? { sym } : {}) });
+      if (reasons.length) blocked.push({ sku: prim.sku, reason: reasons.join("; ") }); skus.push(prim.sku);
+      for (const x of extras) { entries.push(Object.assign({}, entries[entries.length - 1], { sku: x.sku, size: x.size })); skus.push(x.sku); if (reasons.length) blocked.push({ sku: x.sku, reason: reasons.join("; ") }); }   // every further line under the charm: the same design under another SKU
       job.progress = `written ${++n}/${live.length}`; if (job.bar) job.bar.label(`Writing the charm library · ${job.name}`).set(n, live.length); if (n % 5 === 0) render();
     };
     const queue = live.slice(); await Promise.all(Array.from({ length: 4 }, async () => { while (queue.length) await one(queue.shift()); }));
     // a small ring left loose beside a charm (not merged by grouping or review) blocks that charm
     for (const o of job.src.group.orphans || []) { const b = o.bbox; if (!b || o.kind !== "path" || !o.closed) continue; if (Math.max(b[2] - b[0], b[3] - b[1]) > 13) continue; const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2; for (const c of live) { const ob = c.outline.bbox; if (cx < ob[0] - 4 * PT || cx > ob[2] + 4 * PT || cy < ob[1] - 4 * PT || cy > ob[3] + 4 * PT) continue; if (G.distToPolys(cx, cy, G.flatten(c.outline, 8)) <= 3 * PT) { const e = entries.find(x => x.sku === c.sku); if (e && !/detached ring/.test(e.blocked || "")) { e.blocked = (e.blocked ? e.blocked + "; " : "") + "detached ring not merged"; blocked.push({ sku: c.sku, reason: "detached ring not merged" }); } } } }
-    job.entries = entries; job.blocked = blocked; job.written = entries.length;
-    if (!S.cloud.ok) return;
+    job.entries = acc(job.entries, entries); job.blocked = acc(job.blocked, blocked);
+    if (!S.cloud.ok) { job.written = job.only ? job.written || 0 : 0; const text = "the charm library is not reachable: nothing was stored"; job.log.push(text); agent({ master: masterHash }, "warn", `${name}: ${text}`); return; }
     const replaces = [...new Set(B.master.files.filter(f => f.name === name && f.masterHash !== masterHash).map(f => f.masterHash).concat(job.supersede || []))];
     const r = await repoApi("upload", upAsk(`“${name}”`), { op: "masterPutIndex", entries, masterHash, masterPath: job.masterPath || null, masterName: name, hashSource: "browser", replaces }, { label: "Writing the master index" });
-    job.conflicts = r.blocked || []; job.sizeMoved = r.sizeMoved || [];
+    job.conflicts = acc(job.conflicts, r.blocked || []); job.sizeMoved = acc(job.sizeMoved, r.sizeMoved || []);
+    // the library refuses a name it cannot hold, and a batch that timed out can answer without having stored everything: the index is read back, what did not land is written again (twice at most), and what still did not is said
+    job.rejected = acc(job.rejected, refusedHere.concat((r.rejected || []).map(x => ({ sku: x.sku, reason: x.reason }))));
+    job.pairKept = acc(job.pairKept, (r.pairKept || []).map(x => ({ sku: x.sku, reason: x.reason })));
+    if (job.rejected.length) { const text = `${job.rejected.length} SKU(s) were refused by the library and are NOT in it: ${job.rejected.slice(0, 12).map(x => x.sku).join(", ")}${job.rejected.length > 12 ? " …" : ""} (${job.rejected[0].reason})`; job.log.push(text); agent({ master: masterHash }, "warn", `${name}: ${text}`); }
+    {
+      const refused = new Set(job.rejected.concat(job.pairKept).map(x => up(x.sku))), want = [...new Set(entries.map(e => up(e.sku)))].filter(sk => !refused.has(sk));   // (a SKU the library refused, or kept as the pair it holds, was not meant to land)
+      for (let pass = 1; pass <= 3 && want.length; pass++) {
+        const have = new Set();
+        for (let i = 0; i < want.length; i += 300) { const got = await api("charmNestLibrary", { op: "masterGetMany", bare: true, skus: want.slice(i, i + 300) }); for (const [k, e] of Object.entries((got && got.entries) || {})) if (e && e.masterHash === masterHash) have.add(up(k)); }   // (the record is the one just written, not an older one under the same name)
+        const missing = want.filter(sk => !have.has(sk));
+        if (!missing.length) break;
+        if (pass === 3) { job.missing = acc(job.missing, missing); const text = `${missing.length} SKU(s) did not reach the library after three tries: ${missing.slice(0, 12).join(", ")}${missing.length > 12 ? " …" : ""}. Add the file again: only these are built.`; job.log.push(text); agent({ master: masterHash }, "warn", `${name}: ${text}`); break; }
+        await repoApi("upload", upAsk(`“${name}”`), { op: "masterPutIndex", entries: entries.filter(e => missing.includes(String(e.sku).toUpperCase())), masterHash, masterPath: job.masterPath || null, masterName: name, hashSource: "browser", replaces: [] }, { label: "Writing what did not land" });
+      }
+    }
     if ((r.pairKept || []).length) { const text = `${r.pairKept.length} SKU(s) the library holds as a pair were NOT overwritten with one body (the server refused): ${r.pairKept.slice(0, 12).map(b => b.sku).join(", ")}${r.pairKept.length > 12 ? " …" : ""}`; job.log.push(text); agent({ master: masterHash }, "warn", `${name}: ${text}`); }
     if (job.conflicts.length) agent({ master: masterHash }, "warn", `${name}: ${job.conflicts.length} SKU(s) also live in another master file — blocked until fixed: ${job.conflicts.map(b => b.sku).join(", ")}`);
     if (job.sizeMoved.length) agent({ master: masterHash }, "warn", `${name}: ${job.sizeMoved.length} SKU(s) changed size by more than 5% since the last index: ${job.sizeMoved.map(b => b.sku).join(", ")}`);
-    await repoApi("upload", upAsk(`“${name}”`), { op: "masterPutFile", file: { masterHash, path: job.masterPath || null, name, charms: charms.filter(c => c.mergedInto == null).length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(job.conflicts.map(b => ({ sku: b.sku, reason: b.reason }))), skus, indexedBy: "browser", pageW: parsed.pageW, pageH: parsed.pageH, replaces, visionReads: (job.vision || []).map(v => ({ index: v.index, sku: v.sku, size: v.size, confidence: v.confidence, confirmed: v.confirmed })) } });
+    // what the run counts as written is what the library holds: not a refused name, not a pair it kept, not a SKU that never landed
+    const skip = new Set([].concat(job.rejected, job.pairKept, (job.missing || []).map(x => ({ sku: x }))).map(x => up(x.sku)));
+    job.written = (job.only ? job.written || 0 : 0) + entries.filter(e => !skip.has(up(e.sku))).length;
+    // the file's record lists every SKU of the sheet that is under this file: the ones written now, the ones an earlier run wrote (and a run for confirmed labels), and the ones held that this file made. A repair run lists the whole file, not only what it rebuilt.
+    job.writtenSkus = new Set([...(job.writtenSkus || []), ...skus.filter(sk => !skip.has(up(sk))).map(up)]);
+    const heldHere = charms.filter(c => c.alreadyHeld && c.mergedInto == null && c.sku).flatMap(c => [c.sku].concat((c.extraSkus || []).map(x => x.sku))).map(up).filter(sk => { const e = B.master.entries.get(sk); return !!e && e.masterHash === masterHash; });
+    const fileSkus = [...new Set([...job.writtenSkus, ...heldHere])];
+    await repoApi("upload", upAsk(`“${name}”`), { op: "masterPutFile", file: { masterHash, path: job.masterPath || null, name, charms: charms.filter(c => c.mergedInto == null).length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: (job.blocked || blocked).concat((job.conflicts || []).map(b => ({ sku: b.sku, reason: b.reason }))), skus: fileSkus, indexedBy: "browser", pageW: parsed.pageW, pageH: parsed.pageH, replaces, visionReads: (job.vision || []).map(v => ({ index: v.index, sku: v.sku, size: v.size, confidence: v.confidence, confirmed: v.confirmed })) } });
   }
   /** Members drawn on a "BACK KEEP-OUT" layer of the master are subtracted from the engraving mask. */
   const keepOutOf = (c, face) => c.members.filter(m => m.layer && (face === "front" ? /front\s*keep-?out/i : /back\s*keep-?out/i).test(m.layer));   // (face "front": the FRONT KEEP-OUT layer, subtracted from the front's words only)
   /** A person confirms Claude's read of an outlined label: the charm gets that SKU and is written like any labelled one. */
   async function confirmVision(job, reads) {
-    for (const v of reads) { const c = v.charm; c.sku = v.sku; c.skuSize = v.size || null; c.labelSource = "vision"; c.labelConfidence = v.confidence; c.name = v.sku; v.confirmed = true; job.lab.labels.set(c.index, { sku: v.sku, size: v.size, seg: null }); job.lab.unlabelled = job.lab.unlabelled.filter(i => i !== c.index); }
-    job.state = "writing"; render();
-    await writeIndex(job);
-    for (const v of reads) await repoApi("modify", { what: `Marking ${v.sku} as read by Claude and confirmed.`, target: v.sku, go: "Save" }, { op: "masterPatch", sku: v.sku, patch: { labelSource: "vision", confirmedBy: employeeName() || "operator" } }).catch(() => {});
-    job.state = "done"; await load(true); settleJob(job); render();
+    const before = reads.map(v => ({ v, sku: v.charm.sku, size: v.charm.skuSize, src: v.charm.labelSource, conf: v.charm.labelConfidence, name: v.charm.name })), unlabelled = job.lab.unlabelled.slice();
+    try {
+      for (const v of reads) { const c = v.charm; c.sku = v.sku; c.skuSize = v.size || null; c.labelSource = "vision"; c.labelConfidence = v.confidence; c.name = v.sku; job.lab.labels.set(c.index, { sku: v.sku, size: v.size, seg: null }); }
+      job.lab.unlabelled = job.lab.unlabelled.filter(i => !reads.some(v => v.charm.index === i));
+      // a charm with no SKU was never traced (the run traces the labelled ones): its hoop is welded and its silhouette and picture are made now, and only the confirmed charms are written
+      const cs = reads.map(v => v.charm);
+      job.state = "writing"; render();
+      for (const c of cs) { try { P.integrateRings(c); } catch (_) { /* a hoop that cannot join is reported by the writer's own check */ } }
+      await P.buildSilhouettes(job.parsed, cs, +S.settings.silhouetteRes || 6);
+      job.only = new Set(cs.map(c => c.index));
+      await writeIndex(job);
+      for (const v of reads) await repoApi("modify", { what: `Marking ${v.sku} as read by Claude and confirmed.`, target: v.sku, go: "Save" }, { op: "masterPatch", sku: v.sku, patch: { labelSource: "vision", confirmedBy: employeeName() || "operator" } }).catch(() => {});
+      for (const v of reads) v.confirmed = true;                         // (only now: a write that failed leaves the tray and its button where they were)
+      job.only = null; job.state = "done"; await load({ force: true, fresh: true }); settleJob(job); render();
+    } catch (e) {
+      job.only = null; job.state = "done";
+      for (const b of before) { const c = b.v.charm; c.sku = b.sku; c.skuSize = b.size; c.labelSource = b.src; c.labelConfidence = b.conf; c.name = b.name; job.lab.labels.delete(c.index); }
+      job.lab.unlabelled = unlabelled; render(); throw e;
+    }
   }
   /** One charm's .ai file, for a person to keep: the download password first (a download token), then the server's link, then the bytes are saved as <SKU>.ai. */
   async function downloadCharm(sku, size, btn) {
@@ -2799,7 +2932,7 @@ const Master = window.Master = (() => {
     const l = job.lab || {};
     const rep = { file: job.name, masterHash: job.masterHash, at: new Date().toISOString(),
       charms: job.charms ? job.charms.length : job.charmCount ?? null, labelled: l.labels ? l.labels.size : null, skuLines: l.skuCount || null, written: job.written || 0,
-      unlabelledCharmIndices: l.unlabelled || [], linesWithNoCharmAbove: (l.orphans || []).map(o => ({ sku: o.sku, size: o.size || null })),
+      unlabelledCharmIndices: l.unlabelled || [], unlabelledCharmsWhere: job.unlabelledWhy || {}, pairDesigns: job.pairs || [], pairDesignsNotWritten: job.kept || [], refusedByTheLibrary: job.rejected || [], neverReachedTheLibrary: job.missing || [], heldAsOneBodyOfAPair: job.stale || [], pairKeptByTheLibrary: job.pairKept || [], alreadyHeld: job.held || 0, linesWithNoCharmAbove: (l.orphans || []).map(o => ({ sku: o.sku, size: o.size || null })),
       skusUnderTwoCharms: l.duplicates || [], blocked: job.blocked || [], alsoInAnotherMaster: job.conflicts || [], readByClaude: (job.vision || []).map(v => ({ index: v.index, sku: v.sku, size: v.size, confidence: v.confidence, confirmed: v.confirmed })) };
     const url = URL.createObjectURL(new Blob([JSON.stringify(rep, null, 1)], { type: "application/json" }));
     const a = document.createElement("a"); a.href = url; a.download = `${String(job.name || "master").replace(/\.[^.]+$/, "")}-index-report.json`; a.click();
@@ -2947,7 +3080,7 @@ const Master = window.Master = (() => {
     if (!v.dataset.built) {
       v.dataset.built = "1";
       v.innerHTML = `<div class="masterHead"><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><button class="btn gold sm" id="mAdd" data-repo="upload" title="index another master .ai into the charm library (asks for your password)">＋ Add a master file</button><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:5px 10px;font-size:12px"><label style="display:flex;gap:5px;align-items:center;font-size:11px" title="Off: a SKU the library already holds is left as it is, and only new charms are built. On: every charm on the sheet is rebuilt and rewritten."><input type="checkbox" id="mAllSkus"> re-index SKUs already held</label><span class="pill neutral" id="mCount"></span></div>
-        <details class="noteBox"><summary>How a master file is read</summary>Drop a master file here, or press Add. Each charm in it has its SKU as text directly under it (within ${S.settings.labelGapMm} mm, centred under the outline). A SKU is one design whatever colour it is ordered in; the material comes from the order. Labels are never part of the charm. Unlabelled charms, orphan labels and duplicates are listed in red; a SKU present in two masters is blocked until fixed.</details>
+        <details class="noteBox"><summary>How a master file is read</summary>Drop a master file here, or press Add. Each charm in it has its SKU as text directly under it (within ${S.settings.labelGapMm} mm, centred under the outline). A SKU is one design whatever colour it is ordered in; the material comes from the order. Labels are never part of the charm. Two different bodies touching under ONE label (a left and a right) are one design, built from both. Unlabelled charms, orphan labels and duplicates are listed in red, each with where it sits; a SKU present in two masters is blocked until fixed. A SKU the library already holds is left as it is: add the same file again and only what is missing is built.</details>
         <div id="mJobs" style="display:grid;gap:10px"></div><details class="noteBox masterHist" id="mHist"><summary id="mHistSum">Upload history</summary><div id="mFiles" style="display:grid;gap:10px"></div></details><div class="section">Indexed SKUs</div><div class="skuGrid" id="mGrid"></div>`;
       { const cb = v.querySelector("#mAllSkus"); cb.checked = reindexAll; cb.onchange = () => { reindexAll = cb.checked; toast(reindexAll ? "every charm on the next sheet will be rebuilt" : "charms already in the library will be skipped", "ok"); }; }
       // the file goes where it is dropped: on this tab it is a master for the library
@@ -2971,10 +3104,15 @@ const Master = window.Master = (() => {
         // the counts are the report; the lists behind them are for a file, not for a wall of red
         const l = job.lab, left = [], MAX = 24;
         const some = (arr, f) => arr.slice(0, MAX).map(f).join(", ") + (arr.length > MAX ? ` <i>… and ${arr.length - MAX} more</i>` : "");
-        if (l.unlabelled.length) left.push(`<b>${l.unlabelled.length} charm(s) with no SKU under them</b>: ${some(l.unlabelled, i2 => "#" + i2)}`);
+        if (l.unlabelled.length) left.push(`<b>${l.unlabelled.length} charm(s) with no SKU under them</b>: ${some(l.unlabelled, i2 => "#" + i2 + (job.unlabelledWhy && job.unlabelledWhy[i2] ? ` <i>(${esc(job.unlabelledWhy[i2])})</i>` : ""))}`);
         if (l.orphans.length) left.push(`<b>${l.orphans.length} line(s) with no charm above</b>: ${some(l.orphans, o => esc(o.sku))}`);
         if ((job.ringsLeft || []).length) left.push(`<b>${job.ringsLeft.length} charm(s) whose hoop could not join them</b>: ${some(job.ringsLeft, r => `${esc(r.sku)} — ${esc(r.why)}`)}`);
         if ((l.looseRings || []).length) left.push(`<b>${l.looseRings.length} loose ring(s) not attached to a charm</b>: ${some(l.looseRings, r => `#${r.index} near ${esc(r.nearSku || "no SKU")} — ${esc(r.why)}`)}`);
+        if ((job.rejected || []).length) left.push(`<b>${job.rejected.length} SKU(s) refused by the library (not in it)</b>: ${some(job.rejected, x => esc(x.sku))} — ${esc(job.rejected[0].reason)}`);
+        if ((job.missing || []).length) left.push(`<b>${job.missing.length} SKU(s) did not reach the library</b>: ${some(job.missing, x => esc(x))} — add the file again, only these are built`);
+        if ((job.kept || []).length) left.push(`<b>${job.kept.length} pair design(s) not written</b>: ${some(job.kept, x => `${esc(x.sku)} — ${esc(x.why)}`)}`);
+        if ((job.pairKept || []).length) left.push(`<b>${job.pairKept.length} SKU(s) the library holds as a pair were not overwritten with one body</b>: ${some(job.pairKept, x => esc(x.sku))}`);
+        if ((job.stale || []).length) left.push(`<b>${(job.stale || []).length} design(s) held as ONE body of a pair</b>: ${some(job.stale || [], x => `${esc(x.sku)} (${x.bodies} bodies on this sheet)`)} — tick “re-index SKUs already held” and add the file again`);
         if (l.duplicates.length) left.push(`<b>${l.duplicates.length} SKU(s) written under two charms</b>: ${some(l.duplicates, d => `${esc(d.sku)} (#${d.charmIndex})`)}`);
         if (job.blocked && job.blocked.length) left.push(`<b>${job.blocked.length} blocked</b>: ${some(job.blocked, b => `${esc(b.sku)} — ${esc(b.reason)}`)}`);
         if (job.conflicts && job.conflicts.length) left.push(`<b>${job.conflicts.length} in another master too</b>: ${some(job.conflicts, b => esc(b.sku))}`);
@@ -2997,7 +3135,9 @@ const Master = window.Master = (() => {
       if (job.state === "done" || job.state === "error") {
         const d = el("details", "masterFileRow"), sum = document.createElement("summary");
         const when = new Date(job.finishedAt || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-        sum.innerHTML = `<b>${esc(job.name)}</b><span class="hash">${when}</span><span>${job.state === "error" ? "failed" : `${job.written || 0} SKU(s) written`}</span>${job.held ? `<span class="hash">${job.held} already held</span>` : ""}`;
+        // what the run left for a person is counted on the line itself: a result that is not whole must not hide behind a click
+        const needs = job.state === "error" ? 0 : ((job.lab && job.lab.unlabelled ? job.lab.unlabelled.length : 0) + ((job.lab && job.lab.orphans) || []).length + ((job.lab && job.lab.duplicates) || []).length + (job.rejected || []).length + (job.missing || []).length + (job.stale || []).length + (job.kept || []).length + (job.pairKept || []).length + (job.blocked || []).length + (job.conflicts || []).length + (job.ringsLeft || []).length + (((job.lab && job.lab.looseRings) || []).length) + ((job.entries || []).filter(e => e.outOfRange).length));
+        sum.innerHTML = `<b>${esc(job.name)}</b><span class="hash">${when}</span><span>${job.state === "error" ? "failed" : `${job.written || 0} SKU(s) written`}</span>${job.held ? `<span class="hash">${job.held} already held</span>` : ""}${needs ? `<span style="color:#8a3a26">${needs} to look at</span>` : ""}`;
         d.appendChild(sum); d.appendChild(card); jobs.appendChild(d);
       } else jobs.appendChild(card);
     }
