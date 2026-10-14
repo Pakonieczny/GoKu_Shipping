@@ -13,8 +13,8 @@
 //  6  an old record (no side, no notes) is worded as today everywhere
 //  7  the sheet's layer names: " Left" / " Right" for a piece with a side (the .ai and the DXF), unchanged for every other charm, inside 60 characters
 //  8  the back layer and the back list of the export say the ear; the zip's IMPORT.txt says so only when a sheet has such a piece
-//  9  the sticker: a mismatched pair line makes a LEFT and a RIGHT page of the same order (QR Printer.html's real functions), a matching pair or a
-//     single charm makes the one page it always made; the pieces behind a card for the efficiency record
+//  9  the sticker: ONE page per order since 14 Oct, a mismatched pair included (QR Printer.html's real functions; a list of ears is ignored, tests/charm-nest/qr-piece-label.cjs);
+//     the pieces behind a card for the efficiency record
 // 10  Complete Order / print records the pair as one group (customPut over the real function): one seal for the pair, "Left + Right" on its event
 // 11  laser acts: the pieces of a pair are counted per sheet (both on one sheet: 2; split: 1 and 1), never as an order completion
 // 12  the welded seal of a pair of studs (the Welding page's own rule): one event for the pair line, never one per ear
@@ -250,14 +250,15 @@ ${setsSrc}
   const one = doc(undefined), none = doc([]);
   assert.deepEqual(JSON.parse(JSON.stringify(none)), JSON.parse(JSON.stringify(one)), 'no pieces: the page it always was');
   assert.equal(one.content.length, 5, 'the old sticker is five items'); assert(!JSON.stringify(one).includes('LEFT'));
-  const pairDoc = doc([{ side: 'L', n: 1, of: 1 }, { side: 'R', n: 1, of: 1 }]), texts = pairDoc.content.map(c => c.text).filter(Boolean);
-  assert.equal(pairDoc.content.filter(c => c.pageBreak).length, 1, 'two pages'); assert(texts.includes('LEFT') && texts.includes('RIGHT') && texts.filter(t => t === '4190000009').length === 2, 'LEFT and RIGHT of the same order on a page each: ' + JSON.stringify(texts));
-  const four = doc([{ side: 'L', n: 1, of: 2 }, { side: 'R', n: 1, of: 2 }, { side: 'L', n: 2, of: 2 }, { side: 'R', n: 2, of: 2 }]); assert(four.content.map(c => c.text).includes('2/2') && four.content.filter(c => c.pageBreak).length === 3, 'two pairs: four pages, n/of');
-  assert.deepEqual(Array.from(vm.runInContext(`piecesOf({pieces:[{side:'L'},{side:'Q'},null,{side:'R'}]})`, pr).map(p => p.side)), ['L', 'R']);
-  // the bridge wires the pieces into the label object and the efficiency count
-  assert(/label = rows\.length \? withPieces\(O\.sortingLabel\(rows\[0\]\.order, rows\[0\]\.line\), rows\) : null/.test(bridge) && /label = withPieces\(O\.sortingLabel\(rows\[0\]\.order, rows\[0\]\.line\), rows\)/.test(bridge), 'printAs and completeAs build the label with its pieces');
+  // Paul, 14 Oct 2026: ONE sticker per order. A list of ears alone is ignored (no LEFT / RIGHT page, no second page); only a piece sticker printed by hand may list pages
+  const pairDoc = doc([{ side: 'L', n: 1, of: 1 }, { side: 'R', n: 1, of: 1 }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(pairDoc)), JSON.parse(JSON.stringify(one)), 'ears without a piece label: still the one page of the order'); assert(!JSON.stringify(pairDoc).includes('LEFT'));
+  assert.deepEqual(Array.from(vm.runInContext(`piecesOf({pieces:[{side:'L'},{side:'R'}]})`, pr)), [], 'an order sticker lists no ears');
+  assert.deepEqual(Array.from(vm.runInContext(`piecesOf({pieceLabel:{note:'X'},pieces:[{side:'L'},{side:'Q'},null,{side:'R'}]})`, pr).map(p => p.side)), ['L', 'R'], 'only a piece sticker may list pages');
+  // the bridge and the Sorting Station no longer hand the printer a list of ears
+  assert(!/withPieces/.test(bridge), 'the Charm Sorter builds no per-ear label'); assert(!/\.pieces = ears/.test(read('sorting.html')) && !/\.pieces = ears/.test(read('sorting-2.html')), 'the Sorting Station builds no per-ear label');
   assert.equal((bridge.match(/parts: piecesN\(/g) || []).length, 3, 'the three efficiency records count pieces');
-  ok('sticker: a mismatched pair prints LEFT and RIGHT pages of the same order; every other card prints the one page it always did');
+  ok('sticker: ONE page per order, a mismatched pair included; ears are listed only by a piece sticker');
 
   /* ── 10 · Complete Order / print over the real customPut, 12 · welding ── */
   const fsx = F.fakeFirestore(); const fns = F.functions(fsx, ['charmNestLibrary']);

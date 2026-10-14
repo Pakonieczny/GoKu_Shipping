@@ -66,6 +66,7 @@ async function partB() {
       outside.push(u); return r.abort();
     });
     await context.addInitScript(() => { try { if (!sessionStorage.getItem('__seeded')) { localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on', sandbox: 'off' })); localStorage.setItem('cn.employee', 'Test Operator'); sessionStorage.setItem('__seeded', '1'); } } catch (_) {} window.prompt = () => 'Test Operator'; });
+    await context.addInitScript(() => { new MutationObserver(() => { const b = document.querySelector('dialog.pieceDlg[open] [data-k=go]'); if (b && !b.disabled) b.click(); }).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['open'] }); });   // (Paul, 14 Oct 2026: a piece of a multi-piece order asks what its sticker is for; this test is not about that question, so the offered note is accepted: tests/charm-nest/qr-piece-label.cjs)
     const page = await context.newPage(); page.setDefaultTimeout(75000);
     page.on('pageerror', e => { errors.push(e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 4).join(' | ')); });
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });

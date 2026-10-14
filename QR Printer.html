@@ -11,6 +11,9 @@
   <!-- qrcode.js (for generating QR) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
+  <!-- the note area of a piece sticker (printed by hand at the Design Station): its fitted layout -->
+  <script src="qr-piece-label.js?v=20261014-ql1"></script>
+
   <!-- No fallback UI, no headings, no user text input -->
   <style>
     /* Body reset to remove margin/padding */
@@ -122,7 +125,7 @@ window.addEventListener("load", async () => {
 
     // 5) Build & print the PDF label (with notes); a page that asked hears "started" once the label is made and its print
     //    dialog is about to open, and "done" when the dialog has closed (a label that cannot be made is a failure)
-    await buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes, piecesOf(dataObj));
+    await buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes, piecesOf(dataObj), pieceLabelOf(dataObj));
 
   } catch (err) {
     console.error("Error in QR Printer auto-run:", err);
@@ -130,17 +133,42 @@ window.addEventListener("load", async () => {
   }
 });
 
-/* =================== Mismatched pairs: one page for each ear =================== */
-/** The ears to print for an order (dataObj.pieces: [{ side: "L"|"R", n, of }]); [] for any order that is not an earring pair. */
+/* =================== Per-piece pages (only for a sticker printed by hand for one piece) =================== */
+/** The manual piece sticker's note, { note } (what the piece is for, at most 60 characters), or null for every ordinary order sticker. */
+function pieceLabelOf(dataObj) {
+  const pl = dataObj && dataObj.pieceLabel;
+  if (!pl || typeof pl !== "object") return null;
+  return { note: String(pl.note == null ? "" : pl.note).replace(/\s+/g, " ").trim().slice(0, 60) };
+}
+/** The pages to print for a piece sticker (dataObj.pieces: [{ side: "L"|"R", n, of }]); [] for every ordinary order sticker: the Sorting Station prints ONE page
+ *  per order (Paul, 14 Oct 2026), so a list of ears is ignored unless the sticker is a piece sticker. */
 function piecesOf(dataObj) {
+  if (!pieceLabelOf(dataObj)) return [];
   const list = Array.isArray(dataObj && dataObj.pieces) ? dataObj.pieces : [];
   return list.filter(p => p && (p.side === "L" || p.side === "R")).slice(0, 40);
 }
-/** What one ear's page adds to the sticker: its side in large type in the free space right of the QR, and "n/of" under it for several pairs. */
-function pieceContent(p) {
-  const out = [{ text: p.side === "L" ? "LEFT" : "RIGHT", fontSize: 10, bold: true, absolutePosition: { x: 33, y: 15 } }];
-  if (+p.of > 1) out.push({ text: (+p.n || 1) + "/" + (+p.of), fontSize: 6, bold: true, absolutePosition: { x: 33, y: 28 } });
-  return out;
+/** The note area of a sticker: Metal / Title / Match (small, 3 lines) for an order, or the fitted note and ORDER <number> for a piece sticker. */
+function noteAreaNodes(normMetal, normTitle4, normMatch, pieceLabel, orderNum) {
+  if (pieceLabel) {
+    if (!window.QrPieceLabel) throw new Error("the piece label layout (qr-piece-label.js) did not load");
+    return QrPieceLabel.nodes(QrPieceLabel.layout(pieceLabel.note, orderNum));
+  }
+  return [{
+    text: [
+      "Metal: " + normMetal,
+      "Title: " + normTitle4,
+      "Match: " + normMatch
+    ].join("\n"),
+    fontSize: 3.33,
+    bold: false,
+    lineHeight: 1.0,
+    absolutePosition: { x:33, y:0.5 }
+  }];
+}
+/** A piece sticker for one ear says which ear inside its fitted note (the note area is the note's; LEFT / RIGHT are not drawn over it). */
+function withEar(pieceLabel, ear) {
+  if (!pieceLabel || !ear) return pieceLabel;
+  return { note: (pieceLabel.note + " " + (ear.side === "L" ? "LEFT" : "RIGHT") + (+ear.of > 1 ? " " + (+ear.n || 1) + "/" + (+ear.of) : "")).trim().slice(0, 60) };
 }
 
 /* =================== Aggregation Helpers =================== */
@@ -324,7 +352,7 @@ function getCumulativeDotCount(listings) {
 /********************************************************
  * buildAndPrintLabel(orderNum, dotCount, dispatchDate):
  ********************************************************/
-async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes, pieces) {
+async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes, pieces, pieceLabel) {
   // 1) Generate a large QR code (512×512) for high-res
   const hiddenQRContainer = document.createElement("div");
   hiddenQRContainer.style.display = "none";
@@ -352,7 +380,8 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes, piece
     dispatchDate,
     orderNum,
     notes,
-    pieces
+    pieces,
+    pieceLabel
   );
 
   // the PDF is made first: an error making it reaches the caller (and the page that asked) instead of passing in silence
@@ -389,7 +418,7 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes, piece
 /********************************************************
  * buildPDFDocWithDots(dataUrl, dotCount, dispatchDate):
  ********************************************************/
-function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes, pieces) {
+function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes, pieces, pieceLabel) {
   // Dot = 6px diameter => radius=3, spaced 12px
   const dotEllipses = [];
   if (dotCount > 0) {
@@ -412,27 +441,19 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes, p
   const normTitle4 = String(notes?.title4 ?? "").trim();
   const normMatch  = String(notes?.matrixNums ?? "").trim();
 
-  const page = () => [
+  // the QR is ALWAYS the master order's number, a piece sticker included (scanning it opens the master order)
+  const page = (ear) => [
       { absolutePosition: { x:4, y:2.75 }, canvas: dotEllipses },
       { image: dataUrl, width: 28.9, absolutePosition:{ x:2, y:6 } },              // QR −15%
       { text: dispatchDate || "N/A", fontSize: 4.7, bold: true, absolutePosition:{ x:2, y:39 } }, // Ship Date −15%
       { text: orderNum || "Unknown", fontSize: 4.7, bold: true, absolutePosition: { x:2, y:46 } }, // Order # −15%
-      {
-        text: [
-          "Metal: " + normMetal,
-          "Title: " + normTitle4,
-          "Match: " + normMatch
-        ].join("\n"),
-        fontSize: 3.33,
-        bold: false,
-        lineHeight: 1.0,
-        absolutePosition: { x:33, y:0.5 }
-      }
+      ...noteAreaNodes(normMetal, normTitle4, normMatch, withEar(pieceLabel, ear), orderNum || "Unknown")
     ];
-  // an earring pair: one page for each ear (LEFT, RIGHT), same order, same label otherwise; no pieces: the one page it always was
-  const ears = Array.isArray(pieces) ? pieces : [];
+  // one page, the one sticker of the order. Only a piece sticker (pieceLabel) may list pages of its own, one for each ear (the engine of the
+  // per-piece pages, which no Sorting Station caller feeds): the ear is then said inside the note
+  const ears = pieceLabel && Array.isArray(pieces) ? pieces : [];
   const content = ears.length
-    ? ears.flatMap((p, i) => [...page(), ...pieceContent(p), ...(i < ears.length - 1 ? [{ text: "", pageBreak: "after" }] : [])])
+    ? ears.flatMap((p, i) => [...page(p), ...(i < ears.length - 1 ? [{ text: "", pageBreak: "after" }] : [])])
     : page();
 
   return {
@@ -462,7 +483,8 @@ async function printBatch(batchArr) {
     const dispatchDate = dataObj.dispatchDate || "N/A";
     const dotCount     = getCumulativeDotCount(items);
     const notes        = buildAggregatedNotes(dataObj, items);
-    const ears         = piecesOf(dataObj);   // an earring pair: a page for each ear
+    const pieceLabel   = pieceLabelOf(dataObj);   // a piece sticker printed by hand: its note in place of Metal / Title / Match
+    const ears         = piecesOf(dataObj);       // [] for every order sticker: ONE page per order
 
     // ---- QR generation (same as single) ----
     hiddenQRContainer.innerHTML = "";
@@ -494,18 +516,7 @@ async function printBatch(batchArr) {
       { image: dataUrl, width: 28.9, absolutePosition:{ x:2, y:6 } },
       { text: dispatchDate || "N/A", fontSize: 4.7, bold: true, absolutePosition:{ x:2, y:39 } },
       { text: orderNum || "Unknown", fontSize: 4.7, bold: true, absolutePosition: { x:2, y:46 } },
-      {
-        text: [
-          "Metal: " + normMetal,
-          "Title: " + normTitle4,
-          "Match: " + normMatch
-        ].join("\n"),
-        fontSize: 3.33,
-        bold: false,
-        lineHeight: 1.0,
-        absolutePosition: { x:33, y:0.5 }
-      },
-      ...(ear ? pieceContent(ear) : []),
+      ...noteAreaNodes(normMetal, normTitle4, normMatch, withEar(pieceLabel, ear), orderNum || "Unknown"),
       ...(i < batchArr.length - 1 || e < pagesOfOrder.length - 1 ? [{ text: "", pageBreak: "after" }] : [])
     ));
   }

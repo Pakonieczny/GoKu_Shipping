@@ -10733,6 +10733,8 @@ const CustomPrint = window.CustomPrint = (() => {
   const fresh = new Map();      // card motion key → the time of a seal just pressed (it is stamped when next drawn)
   const armed = new Map();      // card key|act → { from, until }: when a cancelled order's second press goes ahead
   const stamping = new Set();   // card keys whose seal is being stamped / whose held print is running: a second press waits
+  const noting = new Set();     // card keys whose piece sticker is waiting for its note (the small dialog is open): a second press waits
+  const pieceNotes = new Map(); // card key → the note typed last for its piece sticker (offered again on a retry or a reprint)
   const UNDO_MS = 12000;
   // line keys whose record this page is writing now (a completion, a print, a reopen): the Review tab's changes feed (ReviewLive)
   // leaves them to the press that is writing them, so the person who pressed is never shown their own change as another's
@@ -10740,22 +10742,29 @@ const CustomPrint = window.CustomPrint = (() => {
   const grab = keys => { for (const k of keys) touching.set(k, (touching.get(k) || 0) + 1); };
   const drop = keys => { for (const k of keys) { const n = (touching.get(k) || 0) - 1; if (n > 0) touching.set(k, n); else touching.delete(k); } };
   let queue = Promise.resolve(), lastFrame = null, pressedBtn = null;
-  const PRINTER = "QR Printer.html", PRINTER_V = "20260928-pq-seal-pl1";
+  const PRINTER = "QR Printer.html", PRINTER_V = "20260928-pq-seal-pl1-ql1";
   // the Print QR label button pressed last (a press on a seal over it is passed on to it as a click): its seal lands there
   document.addEventListener("click", e => { const b = e.target && e.target.closest && e.target.closest("[data-cu-print]"); if (b) pressedBtn = b; }, true);
   const frames2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
-  /* An earring pair line (matching or mismatched: a Left earring and a Right one) prints a LEFT sticker and a RIGHT sticker of the same order,
-     one page each (pairs, 9 Oct: "Print QR Label per piece"); QR Printer.html prints one page for each entry of `pieces`. A card with no such line
-     (a single earring, a necklace, a charm) prints the one order sticker exactly as before: the label object is returned untouched. */
+  /* ONE sticker per order (Paul, 14 Oct 2026: "one QR code per order"). An earring pair, a mismatched pair and a multi-piece order print the one order sticker
+     exactly as before the 9 Oct per-ear pages, here and at the Sorting Station. The only exception is a sticker a person prints BY HAND for one piece of an
+     order that has more pieces (an extra chain that never goes on a sheet): the card is one piece of the order when the order has a line that is not on the
+     card. That press first asks, in one small dialog, what the sticker is for (QrPieceLabel.ask), and the label carries `pieceLabel`: QR Printer.html prints
+     the same sticker, its QR still the MASTER ORDER's number, with that note and ORDER <number> in big type, fitted to the label, where Metal / Title / Match go. */
   const designEntryOf = r => (r && r.spec && r.spec.designSku && !r.spec.ownDesign ? (Master.entryFor(r.spec.designSku) || null) : null);
-  function withPieces(label, rows) {
+  /** The card as one piece of a bigger order: { rid, name, prior } (the note offered first), or null for a card that is the whole order (the ordinary sticker). */
+  function pieceInfo(it) {
     try {
-      const L = window.CharmNestPairLabels; if (!L || !label) return label;
-      const pieces = L.stickerPieces(rows, designEntryOf);
-      return pieces ? Object.assign({}, label, { pieces }) : label;
-    } catch (_) { return label; }
+      const Q = window.QrPieceLabel; if (!Q || !it) return null;
+      const rows = linesOf(it).filter(r => it.done || !(r.poolIds || []).length); if (!rows.length) return null;
+      const rid = String(rows[0].order.receiptId), whole = (Orders.rows() || []).filter(x => x && x.state !== "gone" && x.order && String(x.order.receiptId) === rid);
+      if (!Q.isPiece(rows, whole)) return null;
+      let prior = pieceNotes.get(it.key) || "";
+      if (!prior) { const rec = it.record || keptOf(it); try { const l = rec && typeof rec.label === "string" ? JSON.parse(rec.label) : rec && rec.label; prior = l && l.pieceLabel && l.pieceLabel.note || ""; } catch (_) { prior = ""; } }
+      return { rid, name: Q.nameOf(rows), prior: Q.cleanNote(prior) };
+    } catch (_) { return null; }
   }
-  /** Pieces behind a card's lines for the efficiency record: an earring pair makes two per unit (one sticker each); any other card counts as the page always counted. */
+  /** Pieces behind a card's lines for the efficiency record: an earring pair makes two per unit (the work done, not stickers: one sticker per order); any other card counts as the page always counted. */
   const piecesN = rows => { try { const L = window.CharmNestPairLabels, n = L && L.pieceCount(rows, designEntryOf); return n || piecesOfRows(rows); } catch (_) { return piecesOfRows(rows); } };
   function redraw() {
     try { Review.render(); } catch (_) {}
@@ -10910,8 +10919,8 @@ const CustomPrint = window.CustomPrint = (() => {
     try {
       const at = Date.now();
       window.SheetEvents?.order({ type: "labelPrinted", orderId: String(rid || ""), at, by: who || "", station: "design", device: "charm-nest-1", id: `charm-nest-1-${rid}-labelPrinted-${at}`,
-        text: `Custom QR label printed at the Design Station (Review)${o.again ? ", again" : ""}${o.pieces ? `, ${o.pieces} stickers (Left and Right)` : ""}`,
-        data: Object.assign({ label: "custom", printPage: PRINTER, lines: o.lines }, o.n > 0 ? { print: o.n } : {}, o.pieces ? { pieces: o.pieces } : {}, o.again ? { again: true } : {}, o.cancelled ? { despiteCancel: true } : {}, who ? {} : { signedIn: false }) });
+        text: o.piece ? `Piece QR label printed at the Design Station (Review)${o.again ? ", again" : ""}: ${String(o.piece).slice(0, 60)} (scans to this order)` : `Custom QR label printed at the Design Station (Review)${o.again ? ", again" : ""}`,
+        data: Object.assign({ label: "custom", printPage: PRINTER, lines: o.lines }, o.n > 0 ? { print: o.n } : {}, o.piece ? { piece: String(o.piece).slice(0, 60) } : {}, o.again ? { again: true } : {}, o.cancelled ? { despiteCancel: true } : {}, who ? {} : { signedIn: false }) });
     } catch (_) {}
   }
   function printedAnyway(rid, who, act, n) {
@@ -10919,9 +10928,16 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   /** Print the card's sticker; once its print dialog has closed, mark its lines completed (with an Undo on the card). */
   function print(it) {
-    const key = it.key; if (busy.has(key) || asking.has(key) || stamping.has(key)) return;
+    const key = it.key; if (busy.has(key) || asking.has(key) || stamping.has(key) || noting.has(key)) return;
     const go = anyway(it, "print"); if (go === false) return;
-    withName(key, who => printAs(it, who, go));
+    const pc = pieceInfo(it);
+    if (!pc) { withName(key, who => printAs(it, who, go)); return; }
+    // by hand, for one piece of a bigger order: what the sticker is for is asked first (Cancel prints nothing and changes nothing)
+    noting.add(key);
+    window.QrPieceLabel.ask({ rid: pc.rid, note: pc.prior || pc.name }).then(note => {
+      noting.delete(key);
+      if (note) { pieceNotes.set(key, note); withName(key, who => printAs(it, who, go, note)); }
+    }, () => { noting.delete(key); });
   }
   /** The card's Print QR label button on screen: the one just pressed, else the first one showing for this card. */
   function btnFor(key) {
@@ -10951,12 +10967,13 @@ const CustomPrint = window.CustomPrint = (() => {
      resting there (two frames), never sooner. A second press meanwhile does nothing. A print that did not open keeps its
      seal on the card, says so calmly and offers Retry print, which prints under the same seal (no second one); the
      order is marked completed once a print dialog has opened and closed, as before. */
-  function printAs(it, who, cancelled) {
+  function printAs(it, who, cancelled, note) {
     const key = it.key; if (busy.has(key) || stamping.has(key)) return;
     const rows = linesOf(it).filter(r => it.done || !(r.poolIds || []).length), rec = it.record || keptOf(it);
     // from the order as it is now; an order that has left the pull prints the sticker its record kept
     let label = null;
-    try { label = rows.length ? withPieces(O.sortingLabel(rows[0].order, rows[0].line), rows) : null; } catch (_) { label = null; }
+    try { label = rows.length ? O.sortingLabel(rows[0].order, rows[0].line) : null; } catch (_) { label = null; }
+    if (label && note) label = Object.assign({}, label, { pieceLabel: { note: String(note).slice(0, 60) } });   // (a piece of a bigger order, printed by hand: the order's QR, this note)
     if (!label && !(rec && (rec.label || rec.hasLabel))) { toast("There is nothing to print for that card", "bad"); return; }
     const targets = rows.length ? rows.map(r => targetOf(r, rec, it))
       : [{ key: rec.key, receiptId: rec.receiptId, transactionId: rec.transactionId, sku: rec.sku, title: rec.title, category: rec.category, kind: rec.kind }];
@@ -10981,7 +10998,7 @@ const CustomPrint = window.CustomPrint = (() => {
       await gate;                                           // (a label that failed early still lets its seal land first)
       stamping.delete(key);
       if (!out.ok) { humanAct("error", { orderId: String(targets[0].receiptId || ""), detail: "QR label print did not open" }); failed(key, out.error || "the printer failed", shown); say(key, null); unlay(); toast(`The print didn't open (${out.error || "the printer failed"}). Its seal stays and nothing is lost; press Retry print to try again`, "", 8000); return; }
-      labelled(targets[0].receiptId, who, { lines: targets.length, again: !!it.done, cancelled: !!cancelled, n: st.n, pieces: label && label.pieces ? label.pieces.length : 0 });
+      labelled(targets[0].receiptId, who, { lines: targets.length, again: !!it.done, cancelled: !!cancelled, n: st.n, piece: label && label.pieceLabel ? label.pieceLabel.note : "" });
       // the efficiency record, beside the seal's own: the print dialog opened and closed (a print; the completion below is its own)
       humanAct("print", { orderId: String(targets[0].receiptId || ""), parts: piecesN(rows) || targets.length, detail: it.done ? "QR label, again" : "QR label" });
       acting.set(key, "print");
@@ -11044,7 +11061,7 @@ const CustomPrint = window.CustomPrint = (() => {
     fails.delete(key); acting.set(key, "complete"); say(key, "Completing…");
     const mine = rows.map(r => r.key); grab(mine);
     queue = queue.then(async () => {
-      let label = null; try { label = withPieces(O.sortingLabel(rows[0].order, rows[0].line), rows); } catch (_) { label = null; }
+      let label = null; try { label = O.sortingLabel(rows[0].order, rows[0].line); } catch (_) { label = null; }
       const saved = {}; let putErr = null, cut = 0;
       for (const r of rows) {
         if ((r.poolIds || []).length) { cut++; continue; }                     // the run put it on a sheet meanwhile

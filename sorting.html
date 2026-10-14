@@ -2375,8 +2375,8 @@ function buildQrDataForCell(cellIndex) {
     primaryItemIndex: cellIndex,
     notesBlock: { metal: metalColour, title4, matrixNums, matrixTitle }
   };
-  // an earring pair (matching or mismatched) prints one sticker page for each ear, LEFT then RIGHT (QR Printer.html reads `pieces`); an order with none prints the one sticker it always did
-  try { const ears = window.StationLiveOrder && StationLiveOrder.ears ? StationLiveOrder.ears(itemsForOrder) : []; if (ears.length) qrData.pieces = ears; } catch (_) {}
+  // ONE sticker per order at the Sorting Station (Paul, 14 Oct 2026): an earring pair, a mismatched pair or a multi-piece order never gets a page
+  // per ear or per piece, so no `pieces` list is handed to QR Printer.html here. A sticker for one piece is printed by hand at the Design Station.
   return qrData;
 }
 

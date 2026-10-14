@@ -1449,9 +1449,7 @@ function openIframePrinterForListing(cellIndex) {
     items: itemsForOrder,
     userTypedOrderNum: item.typedOrderNumber || "UnknownOrder" // or whatever variable holds the typed Etsy order number
   };
-  // an earring pair (matching or mismatched) prints one sticker page for each ear, LEFT then RIGHT (QR Printer.html reads `pieces`); an order with none prints the one sticker it always did
-  try { const ears = window.StationLiveOrder && StationLiveOrder.ears ? StationLiveOrder.ears(itemsForOrder) : []; if (ears.length) dataToPrint.pieces = ears; } catch (_) {}
-  
+  // ONE sticker per order at the Sorting Station (Paul, 14 Oct 2026): no `pieces` list (a page per ear or per piece) is handed to QR Printer.html
   localStorage.setItem("qrPrintAll", JSON.stringify(dataToPrint));
 
   // 5) Save that object in localStorage

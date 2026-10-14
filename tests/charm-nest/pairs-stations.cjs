@@ -126,13 +126,14 @@ function partA() {
     assert.equal(S.ears(Array.from({ length: 30 }, (_, i) => line({ transaction_id: 9000 + i }))).length, 40, 'at most 40 pages, whole pairs');
   }
   { const S = helper(null); assert.deepEqual(J(S.ears([MIS])).map(x => x.side), ['L', 'R'], 'no intake file: a line that says mismatched still prints both ears'); assert.deepEqual(J(S.ears([STUD])), [], 'no intake file: a plain stud line prints the one sticker it always did'); }
-  { // the QR Printer reads exactly this shape
-    const src = read('QR Printer.html'), m = /function piecesOf\(dataObj\) \{[\s\S]*?\n\}/.exec(src); assert.ok(m, 'QR Printer.html has piecesOf');
-    const piecesOf = new Function(m[0] + '; return piecesOf;')(), S = helper(stubOrders(ON)), ears = S.ears([STUD, STUD2]);
-    assert.equal(piecesOf({ pieces: ears }).length, 6, 'QR Printer prints one page for each ear'); assert.equal(piecesOf({}).length, 0);
-    for (const f of ['sorting.html', 'sorting-2.html']) assert.ok(/StationLiveOrder\.ears\(itemsForOrder\)/.test(read(f)), f + ' hands the ears to the QR Printer');
+  { // the QR Printer lists ears only for a piece sticker printed by hand; the Sorting Station prints ONE sticker per order (Paul, 14 Oct 2026)
+    const src = read('QR Printer.html'), m = /function pieceLabelOf\(dataObj\) \{[\s\S]*?\n\}/.exec(src), m2 = /function piecesOf\(dataObj\) \{[\s\S]*?\n\}/.exec(src); assert.ok(m && m2, 'QR Printer.html has piecesOf');
+    const piecesOf = new Function(m[0] + ';' + m2[0] + '; return piecesOf;')(), S = helper(stubOrders(ON)), ears = S.ears([STUD, STUD2]);
+    assert.equal(piecesOf({ pieces: ears }).length, 0, 'an order sticker prints no page per ear'); assert.equal(piecesOf({}).length, 0);
+    assert.equal(piecesOf({ pieceLabel: { note: 'x' }, pieces: ears }).length, 6, 'a piece sticker may list pages');
+    for (const f of ['sorting.html', 'sorting-2.html']) assert.ok(!/StationLiveOrder\.ears\(/.test(read(f)), f + ' hands no ears to the QR Printer');
   }
-  ok('A2b ears(): a Left and a Right sticker per pair, numbered across the order, none for an order with no pair; QR Printer.html reads them; both sorting pages hand them over');
+  ok('A2b ears(): a Left and a Right per pair, numbered across the order, none for an order with no pair (a helper only: the sticker is one per order, QR Printer.html lists ears only for a piece sticker)');
 
   /* A2c · when the intake lists the pieces (piecesOf), its sides are the word: a single earring that names its side is one Left piece, and says no "pair" */
   { const S = helper(stubOrders(ON)), LEFT = line({ transaction_id: 5010, title: 'Single stud earring', variations: [{ formatted_name: 'Side', formatted_value: 'Left ear' }] });

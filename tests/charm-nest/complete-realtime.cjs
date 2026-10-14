@@ -129,6 +129,7 @@ async function run(browser, action, role, activityWait) {
     // the stations' door: Paul is the Admin (the sorter's own station, no role question); the efficiency feed's posts are answered and written down with the time they arrive.
     // (registered before the page loads: the page asks the door quietly once, at load)
     const wire = cn => async ctx => {
+      await ctx.addInitScript(() => { new MutationObserver(() => { const b = document.querySelector('dialog.pieceDlg[open] [data-k=go]'); if (b && !b.disabled) b.click(); }).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['open'] }); });   // (Paul, 14 Oct 2026: a piece of a multi-piece order asks what its sticker is for; this measurement is not about that question, so the offered note is accepted)
       await ctx.route(/pdfmake@[^/]+\/build\/pdfmake/, r => r.fulfill(js(PDFMAKE))); await ctx.route(/pdfmake@[^/]+\/build\/vfs_fonts/, r => r.fulfill(js('')));
       // --nopoll: the Review feed's read of what changed is answered "nothing changed" on every page, whatever the cloud holds: only an event on the pressing computer can still tell a tab of it
       // (the load of the machine does not enter: the other tab follows, or it never does)
