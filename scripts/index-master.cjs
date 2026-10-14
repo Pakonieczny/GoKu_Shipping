@@ -266,9 +266,13 @@ async function main(argv, log = console.log) {
   const pattern = o.pattern ? new RegExp(o.pattern) : P.SKU_PATTERN_DEFAULT;
   const lab = P.labelCharms(parsed, g.charms, { pattern, gapPt: o.gapMm / MM, widen: 0.25 });
   const twins = settleTwins(lab, g.charms, pinMap(o.pin));
-  log(`${g.charms.length} charm outline(s) · ${lab.labels.size} labelled (${lab.skuCount} SKU line(s)) · ${lab.unlabelled.length} unlabelled · ${lab.orphans.length} orphan label(s) · ${lab.duplicates.length} duplicate(s)${lab.undecodable.length ? ` · ${lab.undecodable.length} text run(s) unreadable (outlined or CID font without ToUnicode)` : ""}`);
+  const liveCharms = g.charms.filter(c => c.mergedInto == null).length;      // (a part that joined its charm is no charm of its own: labelCharms, absorbLooseParts)
+  log(`${liveCharms} charm outline(s) · ${lab.labels.size} labelled (${lab.skuCount} SKU line(s)) · ${lab.unlabelled.length} unlabelled · ${lab.orphans.length} orphan label(s) · ${lab.duplicates.length} duplicate(s)${lab.undecodable.length ? ` · ${lab.undecodable.length} text run(s) unreadable (outlined or CID font without ToUnicode)` : ""}`);
   if ((g.markers || []).length) { const by = {}; for (const m of g.markers) by[m.why] = (by[m.why] || 0) + 1; log(`  ${g.markers.length} marker object(s) beside charms are left out of them (${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")})`); }
   if ((g.stray || []).length) { const by = {}; for (const m of g.stray) by[m.why] = (by[m.why] || 0) + 1; log(`  ${g.stray.length} piece(s) of loose ink outside a charm's cut outline are left out of it (${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")})`); }
+  if ((lab.absorbed || []).length) { const by = {}; for (const a of lab.absorbed) by[a.why] = (by[a.why] || 0) + 1; log(`  ${lab.absorbed.length} part(s) the grouping left as charms of their own joined the charm they belong to (${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")}): ${lab.absorbed.slice(0, 40).map(a => `#${a.index} -> #${a.into}${a.sku ? " " + a.sku : ""}`).join(", ")}`); }
+  if ((lab.looseRings || []).length) log(`  ! ${lab.looseRings.length} loose ring(s) could not be attached to a charm (left as they are, a person looks): ${lab.looseRings.slice(0, 40).map(r => `#${r.index} near ${r.nearSku || "no SKU"}: ${r.why}`).join("; ")}`);
+  { const sl = [...lab.labels.values()].flatMap(l => [l].concat(l.extra || [])).filter(x => x.slash); if (sl.length) log(`  ${sl.length} label(s) carry a "/", which a SKU (a library document name) cannot hold: read with a hyphen instead (the orders find them by their spelling): ${sl.slice(0, 20).map(x => `"${String(x.str).trim()}" -> ${x.sku}`).join(", ")}`); }
   if (lab.orphans.length) log(`  orphan labels (no charm within ${o.gapMm} mm above): ${lab.orphans.slice(0, 40).map(x => x.sku).join(", ")}${lab.orphans.length > 40 ? " …" : ""}`);
   if (lab.unlabelled.length) log(`  unlabelled charms (by index): ${lab.unlabelled.slice(0, 40).join(", ")}${lab.unlabelled.length > 40 ? " …" : ""}`);
   if (lab.duplicates.length) log(`  duplicates: ${lab.duplicates.slice(0, 40).map(d => `${d.sku}/${d.also}`).join(", ")}`);
@@ -316,13 +320,15 @@ async function main(argv, log = console.log) {
     });
     heldCount = before - items.length;
     if (heldCount) log(`${heldCount} charm(s) are already in the library and are left as they are · ${items.length} to index (--all rebuilds every one)`);
-    if (!items.length) { log("nothing new on this sheet"); return { file: name, masterHash, charms: g.charms.length, written: 0, held: before, dry: false, at: new Date().toISOString() }; }
+    if (!items.length) { log("nothing new on this sheet"); return { file: name, masterHash, charms: liveCharms, written: 0, held: before, dry: false, at: new Date().toISOString() }; }
   }
-  const entries = [], blocked = [], skus = [], kept = [];                 // kept: pair designs left as they were (see one())
+  const entries = [], blocked = [], skus = [], kept = [], ringsLeft = [];   // kept: pair designs left as they were (see one()); ringsLeft: a hoop that could not join its charm, by SKU
   const keyOf = fileKeys(items);                                          // one file name per charm, whatever the server does to the characters
   // a row of bodies under one label that is surely a mismatched pair is built as ONE design (both bodies in its file); every other charm is the object it was
   const pairs = pairLayer(P, G, Pair, g, lab, items, o, log);
   if (pairs.fold.size) items = items.map(it => pairs.fold.has(it.index) ? Object.assign({}, it, { c: pairs.fold.get(it.index).charm }) : it);
+  // the other body of a pair folded into its labelled one is built into that design: it is not "a charm with no SKU under it" (SPIDER - WEB_1: the spider is the web's partner)
+  { const partners = new Set(); for (const r of pairs.rows) if (r.folded) for (const i of r.partners || []) partners.add(i); const was = lab.unlabelled.length; if (partners.size) lab.unlabelled = lab.unlabelled.filter(i => !partners.has(i)); if (was !== lab.unlabelled.length) log(`  ${was - lab.unlabelled.length} charm(s) counted unlabelled above are the other body of a pair built into its labelled design: ${[...partners].map(i => "#" + i).join(", ")}`); }
   const rank = new WeakMap(), addEntry = (e, index) => { entries.push(e); rank.set(e, index); };   // (builds finish in any order; the records are written in drawing order)
   let done = 0, skipped = 0, hashesKept = 0; const total = items.length; const queue = items.slice();
   const one = async ({ index, l, c }) => {
@@ -334,7 +340,7 @@ async function main(argv, log = console.log) {
     }
     if (progress.done[key] && !!progress.done[key].entry.pair === !!pm) { const d = progress.done[key]; addEntry(d.entry, index); if (d.blocked) blocked.push(d.blocked); skus.push(l.sku); for (const x of l.extra || []) { addEntry(Object.assign({}, d.entry, { sku: x.sku, size: x.size }), index); skus.push(x.sku); if (d.blocked) blocked.push({ sku: x.sku, reason: d.blocked.reason }); } skipped++; return; }
     // a hoop drawn beside the body is welded into the cut line before the charm is measured or written, as the Master tab and the server route do
-    if (!pm) { const r = P.integrateRings(c); if (r.left.length) log(`  ! ${l.sku}: a hoop could not join its charm: ${r.left[0]}`); }   // (a pair's bodies were welded before they were folded)
+    if (!pm) { const r = P.integrateRings(c); if (r.left.length) { ringsLeft.push({ sku: l.sku, why: r.left[0] }); log(`  ! ${l.sku}: a hoop could not join its charm: ${r.left[0]}`); } }   // (a pair's bodies were welded before they were folded)
     const sil = G.silhouetteBits(pm ? pm.view : c, 6, {});
     const charmHash = P.fnv(P.signature(sil.bits, sil.w, sil.h) + "|" + Math.round((sil.bboxOuter[2] - sil.bboxOuter[0]) * 2) + "x" + Math.round((sil.bboxOuter[3] - sil.bboxOuter[1]) * 2) + "|" + c.members.length);
     const open = pm ? pm.open : (() => { const polys = G.flatten(c.outline, 12); return !polys.length || polys.some(p => Math.hypot(p[0][0] - p[p.length - 1][0], p[0][1] - p[p.length - 1][1]) > 1.5 && !c.outline.closed); })();
@@ -399,7 +405,7 @@ async function main(argv, log = console.log) {
     // when it exists, and written whole (every SKU the sheet carries) when it does not
     if (!(only && fileRecs.some(f => f && f.masterHash === masterHash))) {
       const fileSkus = only ? [...lab.labels.values()].flatMap(l => [l.sku, ...(l.extra || []).map(x => x.sku)]) : skus;
-      await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutFile", file: { masterHash, path: masterUp ? masterUp.path : null, url: masterUp ? masterUp.url : null, name, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(conflicts.map(b => ({ sku: b.sku, reason: b.reason }))), skus: fileSkus, replaces: o.replaces, indexedBy: "local-indexer" } });
+      await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutFile", file: { masterHash, path: masterUp ? masterUp.path : null, url: masterUp ? masterUp.url : null, name, charms: liveCharms, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(conflicts.map(b => ({ sku: b.sku, reason: b.reason }))), skus: fileSkus, replaces: o.replaces, indexedBy: "local-indexer" } });
     }
     if (keptAtServer.length) log(`  ${keptAtServer.length} SKU(s) the library holds as a pair were NOT overwritten with one body (the server refused): ${keptAtServer.slice(0, 30).map(b => b.sku).join(", ")}`);
     if (conflicts.length) log(`  ${conflicts.length} SKU(s) also live in another master file — blocked until fixed: ${conflicts.slice(0, 30).map(b => b.sku).join(", ")}`);
@@ -420,7 +426,7 @@ async function main(argv, log = console.log) {
   }
   log(`index written: ${written} SKU(s) on ${o.origin} — the Master tab shows them after Reload index`);
   }
-  const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, twins, pairs: pairs.rows, pairsKept: kept, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, pairsKeptAtServer: keptAtServer, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
+  const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: liveCharms, labelled: lab.labels.size, unlabelled: lab.unlabelled, absorbed: lab.absorbed || [], looseRings: lab.looseRings || [], ringsLeft, slashLabels: [...lab.labels.values()].flatMap(l => [l].concat(l.extra || [])).filter(x => x.slash).map(x => ({ typed: String(x.str).trim(), sku: x.sku })), orphans: lab.orphans, duplicates: lab.duplicates, twins, pairs: pairs.rows, pairsKept: kept, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, pairsKeptAtServer: keptAtServer, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
   try { fs.writeFileSync(workBase + ".index-report.json", JSON.stringify(report, null, 1)); log(`report: ${workBase}.index-report.json`); } catch (_) {}
   return report;
 }

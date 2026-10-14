@@ -2649,18 +2649,24 @@ const Master = window.Master = (() => {
           if (Date.now() - t0 > 16 * 60000) throw new Error("the server route ran past its 15-minute limit — index the file with the local indexer: node scripts/index-master.cjs"); }
         await load(true);
         job.state = "done"; say("ok", `server indexed ${job.result.labelled} SKU(s), ${job.result.unlabelled.length} unlabelled, ${job.result.orphans.length} orphan label(s), ${job.result.blocked.length} blocked${(job.result.pairs || []).filter(x => x.folded).length ? ` · ${(job.result.pairs || []).filter(x => x.folded).length} pair design(s) built from both bodies` : ""}`);
+        if ((job.result.ringsLeft || []).length) say("warn", `${job.result.ringsLeft.length} charm(s) have a hoop that could not join them: ${job.result.ringsLeft.slice(0, 12).map(x => `${x.sku} (${x.why})`).join("; ")}`);
+        if ((job.result.looseRings || []).length) say("warn", `${job.result.looseRings.length} loose ring(s) could not be attached to a charm: ${job.result.looseRings.slice(0, 12).map(r => `#${r.index} near ${r.nearSku || "no SKU"} (${r.why})`).join("; ")}`);
         if ((job.result.pairsKept || []).length) say("warn", `${job.result.pairsKept.length} pair design(s) could not be built and were left as they were: ${job.result.pairsKept.slice(0, 12).map(k => k.sku).join(", ")}`);
         render(); return job;
       }
       const lab = P.labelCharms(parsed, g.charms, { pattern: skuRegex(), gapPt: (+S.settings.labelGapMm || 6.4) * PT, widen: 0.25 });
       say("MASTER", `${lab.labels.size} labelled (${lab.skuCount} SKU line(s)) · ${lab.unlabelled.length} unlabelled · ${lab.orphans.length} orphan label(s) · ${lab.duplicates.length} duplicate(s)${lab.undecodable.length ? ` · ${lab.undecodable.length} text run(s) unreadable (outlined or CID font without ToUnicode)` : ""}`);
+      // parts the grouping left as charms of their own (a loose hoop, an outline written twice, a piece in a plate's hole) joined their charm; a hoop that could not be attached, and a label read with a hyphen for its "/", are said, never dropped
+      if ((lab.absorbed || []).length) { const by = {}; for (const a of lab.absorbed) by[a.why] = (by[a.why] || 0) + 1; say("MASTER", `${lab.absorbed.length} part(s) the grouping left as charms of their own joined their charm (${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")})`); }
+      if ((lab.looseRings || []).length) say("warn", `${lab.looseRings.length} loose ring(s) could not be attached to a charm: ${lab.looseRings.slice(0, 12).map(r => `#${r.index} near ${r.nearSku || "no SKU"} (${r.why})`).join("; ")}`);
+      { const sl = [...lab.labels.values()].flatMap(l => [l].concat(l.extra || [])).filter(x => x.slash); if (sl.length) say("MASTER", `${sl.length} label(s) carry a "/", which a SKU cannot hold: read with a hyphen (${sl.slice(0, 8).map(x => `“${String(x.str).trim()}” → ${x.sku}`).join(", ")}${sl.length > 8 ? " …" : ""})`); }
       // Claude's grouping review merges fragments before anything is indexed
       const src = { id: "master:" + masterHash.slice(0, 8), name: file.name, bytes, parsed, group: g, charms: g.charms, metal: null, state: "ready", master: true };
       src.charms.forEach((c, i) => Object.assign(c, { id: src.id + ":" + i, sourceId: src.id, sourceName: file.name, index: c.index, name: c.sku || null, excluded: false, cloud: null }));
       job.state = "silhouettes";
       // only the charms that carry a SKU are indexed, so only they are traced: on the real master that is 1,038 of 3,408
       // a ring drawn beside the body is welded into the cut line before the charm is measured or written
-      { let welded = 0, left = 0; for (const c of g.charms) { if (c.mergedInto != null || !c.sku || c.alreadyHeld) continue; const r = P.integrateRings(c); welded += r.welded; left += r.left.length; } if (welded || left) say("MASTER", `${welded} jump ring(s) welded into their charm's cut line${left ? ` · ${left} need a geometry check` : ""}`); }
+      { let welded = 0, left = 0; const stuck = []; for (const c of g.charms) { if (c.mergedInto != null || !c.sku || c.alreadyHeld) continue; const r = P.integrateRings(c); welded += r.welded; left += r.left.length; if (r.left.length) stuck.push({ sku: c.sku, why: r.left[0] }); } job.ringsLeft = stuck; if (stuck.length) say("warn", `${stuck.length} charm(s) have a hoop that could not join them: ${stuck.slice(0, 12).map(x => `${x.sku} (${x.why})`).join("; ")}${stuck.length > 12 ? " …" : ""}`); if (welded || left) say("MASTER", `${welded} jump ring(s) welded into their charm's cut line${left ? ` · ${left} need a geometry check` : ""}`); }
       await P.buildSilhouettes(parsed, g.charms.filter(c => c.mergedInto == null && c.sku && !c.alreadyHeld), +S.settings.silhouetteRes || 6, (d, t) => { if (job.bar) job.bar.label(`Tracing charms · ${file.name}`).set(d, t); job.progress = `silhouettes ${d}/${t}`; if (d % 10 === 0) render(); });
       // The SKUs are read from the sheet as text, which is quick, so the library is consulted before any work is done:
       // a charm whose SKUs are all held already is left alone. A charm with even one new SKU is rebuilt whole, so all of
@@ -2967,6 +2973,8 @@ const Master = window.Master = (() => {
         const some = (arr, f) => arr.slice(0, MAX).map(f).join(", ") + (arr.length > MAX ? ` <i>… and ${arr.length - MAX} more</i>` : "");
         if (l.unlabelled.length) left.push(`<b>${l.unlabelled.length} charm(s) with no SKU under them</b>: ${some(l.unlabelled, i2 => "#" + i2)}`);
         if (l.orphans.length) left.push(`<b>${l.orphans.length} line(s) with no charm above</b>: ${some(l.orphans, o => esc(o.sku))}`);
+        if ((job.ringsLeft || []).length) left.push(`<b>${job.ringsLeft.length} charm(s) whose hoop could not join them</b>: ${some(job.ringsLeft, r => `${esc(r.sku)} — ${esc(r.why)}`)}`);
+        if ((l.looseRings || []).length) left.push(`<b>${l.looseRings.length} loose ring(s) not attached to a charm</b>: ${some(l.looseRings, r => `#${r.index} near ${esc(r.nearSku || "no SKU")} — ${esc(r.why)}`)}`);
         if (l.duplicates.length) left.push(`<b>${l.duplicates.length} SKU(s) written under two charms</b>: ${some(l.duplicates, d => `${esc(d.sku)} (#${d.charmIndex})`)}`);
         if (job.blocked && job.blocked.length) left.push(`<b>${job.blocked.length} blocked</b>: ${some(job.blocked, b => `${esc(b.sku)} — ${esc(b.reason)}`)}`);
         if (job.conflicts && job.conflicts.length) left.push(`<b>${job.conflicts.length} in another master too</b>: ${some(job.conflicts, b => esc(b.sku))}`);

@@ -591,6 +591,15 @@
       const nearly = e => e.closed || (e.gap <= NEAR_CLOSED_MAX_PT && e.gap <= NEAR_CLOSED_FRAC * e.len);
       const open = []; s.subpaths.forEach((sub, i) => { if (!nearly(ends[i])) open.push({ i, sub, e: ends[i] }); });
       let gap = Math.max(0, ...ends.filter((e, i) => nearly(e) && !e.closed).map(e => e.gap)), subs = s.subpaths.map((sub, i) => ({ at: i, sub }));
+      // An open subpath that only RETRACES the edge of a closed subpath of the same path draws nothing the closed one does not: it is no opening. The "Tiny Bar_7427" of the 14 Oct 2026
+      // SKU file is one path of a closed bar with its two ring holes AND a straight 40 pt run along the bar's top edge; that one open run made the whole path "not closed", so the bar was
+      // no outline, had no charm, and its label was an orphan (the bar's lines even went into the charm nearest to it). The retracing run is set aside (in memory only: the writer copies the master's own operators).
+      const retraced = new Set();
+      if (open.length && open.length < s.subpaths.length) {
+        const closedSubs = s.subpaths.filter((sub, i) => nearly(ends[i])), polys = flatten({ subpaths: closedSubs }, 12);
+        for (const o of open) if (retracesEdge(o.sub, polys)) retraced.add(o.i);
+        if (retraced.size) { for (let k = open.length - 1; k >= 0; k--) if (retraced.has(open[k].i)) open.splice(k, 1); subs = subs.filter(x => !retraced.has(x.at)); }
+      }
       if (open.length) {
         if (open.length < 2) continue;                                       // one run whose ends are really apart is an opening, not a loop
         const j = joinOpenSubpaths(open); if (!j) continue;
@@ -599,9 +608,19 @@
       }
       const out = subs.map(x => x.sub);
       out.forEach((sub, i) => { if (!sub.some(o => o[0] === "h")) sub.push(["h"]); });
-      s.subpaths = out; s.nearClosed = gap; s.closed = true; n++;
+      s.subpaths = out; s.nearClosed = gap; s.closed = true; if (retraced.size) s.retraced = retraced.size; n++;
     }
     return n;
+  }
+  /** An open subpath whose every point (its vertices and the middle of each run) lies within `tol` pt of the edge polygons `polys`. */
+  function retracesEdge(sub, polys, tol) {
+    tol = tol || 0.4; if (!polys.length) return false;
+    const mine = flatten({ subpaths: [sub] }, 8); if (!mine.length) return false;
+    for (const poly of mine) for (let i = 0; i < poly.length; i++) {
+      if (distToPolys(poly[i][0], poly[i][1], polys) > tol) return false;
+      if (i + 1 < poly.length && distToPolys((poly[i][0] + poly[i + 1][0]) / 2, (poly[i][1] + poly[i + 1][1]) / 2, polys) > tol) return false;
+    }
+    return true;
   }
 
   /* ═══ 5 · grouping ═════════════════════════════════════════════════════ */
@@ -817,7 +836,8 @@
        outline is known (a ring met before its host: a solid black body is only accepted after every stroked outline). */
     const ringHostOf = (s, pts, among) => {
       const maxDim = Math.max(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]);
-      const ringLike = maxDim <= opts.ringMaxPt && s.subpaths.length <= 2 && s.subpaths.every(sp => sp.length <= 20);
+      // (one or two subpaths, or three concentric circles: a washer drawn with its hole and the same ring written again: integrateRings' ringLike takes up to three, so a ring this reader let go as a charm of its own - the cyan 6.5 pt rings of the sneaker and the ballet shoe of the 14 Oct 2026 SKU file - was never welded)
+      const ringLike = maxDim <= opts.ringMaxPt && (s.subpaths.length <= 2 || (s.subpaths.length === 3 && concentricCircles(s))) && s.subpaths.every(sp => sp.length <= 20);
       const small = ringLike && (bbArea(s.bbox) <= 0.12 * largestArea || maxDim <= 30);
       if (!small) return null;
       let bestD = Infinity, bestO = null, secondD = Infinity;
@@ -1178,7 +1198,9 @@
      a text segment whose decoded string matches the SKU pattern (after trim + upper-case; an optional size suffix
      after a middle dot or a space), whose bounding-box TOP edge is at most `gapPt` below the charm outline's bottom
      edge, and whose horizontal centre lies within the outline's horizontal extent widened by `widen` on each side.
-     Two qualifying outlines → the nearer bottom edge wins. Labels are never part of the charm: they are dropped from
+     Two qualifying outlines → the nearer bottom edge wins. A label that no outline is cleanly above (and no list holds) may poke up to
+     `overlapPt` (3 pt) into the bottom of an outline's box and still stand under it (a font's box is taller than its letters).
+     Labels are never part of the charm: they are dropped from
      every charm's members (and top-level indices) so a SKU string can never be cut or written into a per-SKU file. */
   // The shop's SKUs are free text ("T-Rex_84495", "Huggie Hoops- Umbrella", "Cheer 1 - Megaphone(CHEER)"): a label is any
   // one-line string of the characters SKUs use, 2–60 long, read in upper case. Anything stricter is a setting (skuPattern).
@@ -1189,20 +1211,29 @@
       as the SKU of the charm it stood under: 136 of the 412 labelled charms of the customs master carry only one, and each became a
       junk library entry ("11.4 MM", "OPTION B", "FRONT") whose card shows the callout's own box, bracket lines and sample text. */
   const NOT_SKU = /^(?:[\d.,]+\s*(?:mm|cm|in|inch|inches|")|(?:front|back)(?:\s*(?:\/|&|AND)?\s*(?:front|back))?|option(?:\s+[a-z])?|orig(?:inal)?\s*size)$/i;
-  /** "BR-CMP-01 · S" → { sku, size } or null. A size rides after " · " (or "•"); with a strict pattern a plain space works too. */
+  /** A callout with a slash that is not a SKU either: a fraction or a date ("1/2", "3/4 in", "10/14"), or "N/A". */
+  const NOT_SKU_SLASH = /^(?:[\d.,]+\s*\/\s*[\d.,]+\s*(?:mm|cm|in|inch|inches|")?|n\s*\/\s*a)$/i;
+  /** "BR-CMP-01 · S" → { sku, size } or null. A size rides after " · " (or "•"); with a strict pattern a plain space works too.
+   *  A SLASH in a label ("Masks Happy/Sad", "Spider / Web_1", "Cute Triceratops w/ hearts": the shop's real Etsy SKUs have them) is read as a hyphen: the SKU is the
+   *  library's document id and file name, which cannot hold a "/", and the order side already finds a master SKU spelled with other punctuation (charm-nest-orders.js
+   *  looseKey: spacing and punctuation set aside, one master SKU only), so "MASKS HAPPY/SAD" on an order reaches the master "MASKS HAPPY-SAD". `slash: true` says it was read that way. */
   function parseSkuLabel(str, pattern) {
     pattern = pattern || SKU_PATTERN_DEFAULT;
-    const s = String(str == null ? "" : str).replace(/�/g, "").replace(/\s+/g, " ").trim().toUpperCase();
-    if (!s || NOT_SKU.test(s)) return null;                                       // a measurement or a view word is a callout, never a SKU
+    let s = String(str == null ? "" : str).replace(/�/g, "").replace(/\s+/g, " ").trim().toUpperCase();
+    if (!s || NOT_SKU.test(s) || NOT_SKU_SLASH.test(s)) return null;               // a measurement or a view word is a callout, never a SKU
+    const slash = s.indexOf("/") >= 0;
+    if (slash) { if (s[0] === "/" || s[s.length - 1] === "/") return null; s = s.replace(/\//g, "-"); }
     const sep = /^(.+?)\s*[·•]\s*([A-Z0-9]{1,3})$/.exec(s);
-    if (sep && pattern.test(sep[1])) return { sku: sep[1], size: sep[2] };
-    if (pattern.test(s)) return { sku: s, size: null };
+    if (sep && pattern.test(sep[1])) return Object.assign({ sku: sep[1], size: sep[2] }, slash ? { slash: true } : {});
+    if (pattern.test(s)) return Object.assign({ sku: s, size: null }, slash ? { slash: true } : {});
     const m = /^(.+?)(?:\s*[·•]\s*|\s+)([A-Z0-9]{1,3})$/.exec(s);
-    if (m && pattern.test(m[1])) return { sku: m[1], size: m[2] };
+    if (m && pattern.test(m[1])) return Object.assign({ sku: m[1], size: m[2] }, slash ? { slash: true } : {});
     return null;
   }
+  /** How far (pt) a label's box may poke into the bottom of the outline's box and still stand under that charm (labelCharms `overlapPt`). */
+  const LABEL_OVERLAP_PT = 3;
   function labelCharms(parsed, charms, opts) {
-    opts = Object.assign({ pattern: SKU_PATTERN_DEFAULT, gapPt: 18, widen: 0.25 }, opts || {});
+    opts = Object.assign({ pattern: SKU_PATTERN_DEFAULT, gapPt: 18, widen: 0.25, overlapPt: LABEL_OVERLAP_PT }, opts || {});
     const runs = parsed.segments.concat(parsed.nested).filter(s => s.kind === "text");
     // a block that positions several strings is read string by string, each with its own box; the block stays the segment
     const texts = []; for (const r of runs) { if (r.pieces && r.pieces.length > 1) for (const p of r.pieces) texts.push(Object.assign({}, p, { seg: r })); else texts.push(Object.assign({}, r, { seg: r })); }
@@ -1231,15 +1262,22 @@
       if (!best) {                                                       // no outline right above: a line of a list already attached?
         let chain = null, chainGap = Infinity;
         for (const a of attached) { const gap = a.line.bottom - L.top; if (gap < -0.5 * L.h || gap > 1.8 * L.h) continue; if (!under(L.cx, a.charm)) continue; if (Math.abs(a.line.cx - L.cx) > Math.max(a.line.t.bbox[2] - a.line.t.bbox[0], L.t.bbox[2] - L.t.bbox[0])) continue; if (gap < chainGap) { chainGap = gap; chain = a.charm; } }
-        if (!chain) { orphans.push({ sku: L.lab.sku, size: L.lab.size, str: L.t.str, bbox: L.t.bbox }); continue; }
-        best = chain; bestGap = chainGap;
+        if (!chain) {
+          // A label whose box pokes a hair into the outline's own box still stands under that charm: a font's box is taller than its letters, and a mortarboard's tassel or a
+          // crescent's horn hangs a point or two below the box the label is measured from (GRAD CAP 1 sat 1.2 pt inside it, Crescent_50058 1.3 pt). Only when no outline is
+          // cleanly above the line and no list holds it; the label's lower edge must still be below the outline's, its middle under the outline as always, the nearest wins.
+          let ov = null, ovDepth = Infinity;
+          for (const c of live) { const gap = c.outline.bbox[1] - L.top; if (gap >= -1 || gap < -opts.overlapPt || L.bottom > c.outline.bbox[1] || !under(L.cx, c)) continue; if (-gap < ovDepth) { ovDepth = -gap; ov = c; } }
+          if (!ov) { orphans.push({ sku: L.lab.sku, size: L.lab.size, str: L.t.str, bbox: L.t.bbox }); continue; }
+          best = ov; bestGap = -ovDepth;
+        } else { best = chain; bestGap = chainGap; }
       }
       labelSegs.add(L.t.seg); attached.push({ line: L, charm: best });
       const key = L.lab.size ? `${L.lab.sku}__${L.lab.size}` : L.lab.sku;
       if (!owner.has(key)) owner.set(key, []);
       const prev = labels.get(best.index);
-      if (prev) { if (!prev.extra.some(x => x.sku === L.lab.sku && x.size === L.lab.size)) { const x = { sku: L.lab.sku, size: L.lab.size, str: L.t.str, bbox: L.t.bbox }; prev.extra.push(x); owner.get(key).push({ charm: best, ref: x, primary: false }); } continue; }
-      const l = { sku: L.lab.sku, size: L.lab.size, seg: L.t.seg, gap: bestGap, str: L.t.str, bbox: L.t.bbox, extra: [] };
+      if (prev) { if (!prev.extra.some(x => x.sku === L.lab.sku && x.size === L.lab.size)) { const x = Object.assign({ sku: L.lab.sku, size: L.lab.size, str: L.t.str, bbox: L.t.bbox }, L.lab.slash ? { slash: true } : {}); prev.extra.push(x); owner.get(key).push({ charm: best, ref: x, primary: false }); } continue; }
+      const l = Object.assign({ sku: L.lab.sku, size: L.lab.size, seg: L.t.seg, gap: bestGap, str: L.t.str, bbox: L.t.bbox, extra: [] }, L.lab.slash ? { slash: true } : {});
       labels.set(best.index, l); owner.get(key).push({ charm: best, ref: l, primary: true });
       best.label = L.t.seg; best.sku = L.lab.sku; best.skuSize = L.lab.size;
     }
@@ -1259,6 +1297,8 @@
       }
     }
     for (const [index, l] of labels) { const c = live.find(x => x.index === index); if (c) c.extraSkus = l.extra; }
+    // parts of a charm that the grouping left as charms of their own (a loose hoop, the same outline drawn twice, a piece nested in a hole) join it before anything is counted as unlabelled
+    const parts = opts.absorb === false ? { absorbed: [], looseRings: [] } : absorbLooseParts(charms, labels);
     // a label text is never charm material, whichever charm the grouping attached it to
     for (const c of charms) {
       const before = c.members.length;
@@ -1267,8 +1307,81 @@
       if (c.mergedInto == null && !labels.has(c.index)) unlabelled.push(c.index);
     }
     let skuCount = 0; for (const l of labels.values()) skuCount += 1 + l.extra.length;
-    return { labels, unlabelled, orphans, duplicates, undecodable, skuCount };
+    return { labels, unlabelled, orphans, duplicates, undecodable, skuCount, absorbed: parts.absorbed, looseRings: parts.looseRings };
   }
+  /* ═══ 5a″ · parts of a charm that came out of the grouping as charms of their own ═════════════════════
+     groupCharms makes a charm of every closed cut outline that is no detail and no attached ring. Three kinds of part still stood alone, and each was counted as "a charm with no SKU
+     under it" and left out of the design it belongs to (Paul's SKU file of 14 Oct 2026: 4 of its 10 "unlabelled charms" were such parts; its two cyan hoops are taken by ringHostOf now, see concentricCircles):
+       · a hoop (a 6.5 or 9.35 pt washer, one path or two circles) drawn beside its charm that the grouping did not take, so integrateRings (which only sees a charm's own members) never welded it;
+       · the same outline written twice at the same place (the hummingbird's outline is in the file twice): one cut line, not a second charm;
+       · a piece that sits inside the outer edge of a LABELLED charm, in the hole of its plate (the plug of the Circle_4432 / Circle_4443 rings): a part of that design.
+     A part is set against the charm it belongs to (a loose hoop also joins its members and box); it keeps its place in the charm list marked `mergedInto` (the mark every reader of the charms already honours), so nothing is deleted.
+     Only a charm that no label claimed is ever absorbed. A hoop that cannot be attached (no charm within reach of it, or two charms as near) stays as it was and is reported in `looseRings`
+     with the nearest SKU, so it is neither dropped nor guessed. Reach is integrateRings' own (HOOP_REACH_PT for a washer, HOOP_LONE_REACH_PT for a lone circle, measured from the hoop's rim). */
+  function absorbLooseParts(charms, labels) {
+    const out = { absorbed: [], looseRings: [] };
+    const alive = () => charms.filter(c => c.mergedInto == null && c.outline && c.outline.bbox && c.outline.subpaths);
+    const cache = new Map(), polysOf = c => { let p = cache.get(c.outline); if (!p) { p = flatten(c.outline, 8); cache.set(c.outline, p); } return p; };
+    const skuOf = c => { const l = c && labels.get(c.index); return l ? l.sku : null; };
+    // draw: the part's own lines go into the charm (a loose hoop: integrateRings then welds it). A part that is already drawn by its charm (the same outline written twice), or that is a piece of its
+    // own (the plug in a plate's hole: as a member it would read as a HOLE, and the hole rule would turn the design upside down, up 90 -> 270), is set aside and the charm's drawing stays as it was.
+    const join = (u, h, why, draw, more) => {
+      if (draw) { for (const m of u.members) if (!h.members.includes(m)) h.members.push(m); h.bbox = bbUnion(h.bbox, u.bbox); h.topIndices = [...new Set((h.topIndices || []).concat(u.topIndices || []))]; }
+      u.mergedInto = h.index; u.absorbedAs = why;
+      out.absorbed.push(Object.assign({ index: u.index, into: h.index, sku: skuOf(h), why, drawn: !!draw, bbox: u.outline.bbox.slice() }, more || {}));
+    };
+    const sameOutline = (a, b) => {
+      for (let k = 0; k < 4; k++) if (Math.abs(a.bbox[k] - b.bbox[k]) > 0.05) return false;
+      const A = a.subpaths, B = b.subpaths; if (!A.length || A.length !== B.length) return false;
+      for (let i = 0; i < A.length; i++) { if (A[i].length !== B[i].length) return false; for (let j = 0; j < A[i].length; j++) { const p = A[i][j], q = B[i][j]; if (p[0] !== q[0] || p.length !== q.length) return false; for (let k = 1; k < p.length; k++) if (Math.abs(p[k][0] - q[k][0]) > 0.05 || Math.abs(p[k][1] - q[k][1]) > 0.05) return false; } }
+      return true;
+    };
+    const loose = () => alive().filter(c => !labels.has(c.index)).sort((a, b) => a.index - b.index);
+    // 1 · the same outline written twice: set against the first one (charms are looked up by where their box starts: a master holds thousands)
+    { const byX = new Map(), key = c => Math.round(c.outline.bbox[0] * 10);
+      for (const c of alive()) { const k = key(c); if (!byX.has(k)) byX.set(k, []); byX.get(k).push(c); }
+      for (const u of loose()) {
+        const k = key(u), near = [].concat(byX.get(k - 1) || [], byX.get(k) || [], byX.get(k + 1) || []);
+        const h = near.filter(c => c !== u && c.index < u.index && c.mergedInto == null).sort((a, b) => (labels.has(b.index) - labels.has(a.index)) || a.index - b.index).find(c => sameOutline(u.outline, c.outline));
+        if (h) join(u, h, "same outline drawn twice", false);
+      } }
+    // 2 · a loose hoop: the nearest charm within the hoop's reach takes it, and integrateRings welds it with the charm's own hoops
+    let V = null; try { V = vec(); } catch (_) {}
+    const hosts = alive();
+    if (V) for (const u of loose()) {
+      let hoops; try { hoops = findHoops({ outline: null, members: [u.outline] }, V); } catch (_) { continue; }
+      const hoop = hoops.length === 1 ? hoops[0] : null;
+      if (!hoop || !hoop.members.includes(u.outline) || u.members.some(m => m !== u.outline && !hoop.members.includes(m))) continue;
+      const ro = hoop.outer.r, reach = hoop.aperture ? HOOP_REACH_PT : HOOP_LONE_REACH_PT;
+      const near = [];
+      for (const h of hosts) {
+        if (h === u || h.mergedInto != null || Math.max(h.outline.bbox[2] - h.outline.bbox[0], h.outline.bbox[3] - h.outline.bbox[1]) <= HOOP_OUTER_MAX_PT) continue;     // a host is a charm, not another ring or speck
+        const polys = polysOf(h), d = distToPolys(hoop.cx, hoop.cy, polys);
+        if (pointInPolys(hoop.cx, hoop.cy, polys) && d >= ro - 0.01) continue;                                                              // a circle enclosed by a charm is that charm's cut-out, not a hoop
+        near.push({ h, gap: d - ro });
+      }
+      near.sort((a, b) => a.gap - b.gap);
+      const best = near[0], second = near[1], where = { index: u.index, bbox: u.outline.bbox.slice(), nearSku: best ? skuOf(best.h) : null };
+      if (!best || best.gap > reach) { out.looseRings.push(Object.assign(where, { why: best ? `no charm within ${reach} pt of the ring (the nearest is ${best.gap.toFixed(1)} pt away)` : "no charm for it to hang on" })); continue; }
+      if (second && second.gap <= reach && second.gap - best.gap < 1) { out.looseRings.push(Object.assign(where, { why: `the ring is as near charm #${second.h.index} as charm #${best.h.index}: a person says which one it hangs on` })); continue; }
+      join(u, best.h, "loose hoop", true, { gapPt: +best.gap.toFixed(2) });
+    }
+    // 3 · a piece inside the outer edge of a labelled charm (in the hole of its plate): the smallest such charm takes it
+    const labelled = hosts.filter(h => labels.has(h.index));
+    for (const u of loose()) {
+      const pts = samples(u.outline, cache), ub = bbArea(u.outline.bbox); if (!pts.length) continue;
+      let host = null, hostArea = Infinity;
+      for (const h of labelled) {
+        if (h === u || h.mergedInto != null) continue;
+        const a = bbArea(h.outline.bbox); if (a <= ub * 1.5 || a >= hostArea || !bbInter(u.outline.bbox, h.outline.bbox)) continue;
+        const rim = polysOf(h).reduce((m, p) => (!m || bbArea(polyBox(p)) > bbArea(polyBox(m)) ? p : m), null);
+        if (rim && pts.every(q => pointInPolys(q[0], q[1], [rim]))) { host = h; hostArea = a; }
+      }
+      if (host) join(u, host, "piece inside the charm's own outline", false);
+    }
+    return out;
+  }
+  const polyBox = poly => poly.reduce((b, q) => b ? [Math.min(b[0], q[0]), Math.min(b[1], q[1]), Math.max(b[2], q[0]), Math.max(b[3], q[1])] : [q[0], q[1], q[0], q[1]], null);
   /** Top-level indices a charm's writer keeps, from its current members (a Do stays while any of its children is a member). */
   function recomputeTopIndices(c, parsed) {
     const tops = new Set();
@@ -2267,6 +2380,10 @@
     if (!m.stroke && !(m.fill && subs.length === 2 && isCutLine(m))) return false;
     return Math.abs(w - h) < 1 && w >= HOOP_LONE_MIN_PT && w <= HOOP_OUTER_MAX_PT && subs.length >= 1 && subs.length <= 3 && subs.every(sp => sp.length <= 12);
   };
+  /** A path of circles that all share one centre (a washer, or a washer with one circle written twice). false when the vector library is not there. */
+  function concentricCircles(m) {
+    try { const V = vec(); if (!V || !m || !m.subpaths || !m.subpaths.length) return false; const cs = m.subpaths.map(sp => circleOf(sp, V)); return cs.every(Boolean) && cs.every(c => Math.hypot(c.cx - cs[0].cx, c.cy - cs[0].cy) <= 0.5); } catch (_) { return false; }
+  }
   /** Every hoop a charm carries, from its concentric circles: [{ outer, aperture|null, members, items }], largest first. */
   function findHoops(c, V) {
     const items = [];
