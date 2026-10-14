@@ -2587,7 +2587,13 @@
     .em-send-status .em-sq-btn { background: #fff; border: 1px solid rgba(0,0,0,0.15); border-radius: 3px; padding: 2px 8px; cursor: pointer; font-size: 11px; color: inherit; }
     .em-send-status .em-sq-btn:hover { background: #f6f8fa; }
     .em-send-status .em-sq-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    /* The quiet note for a message that waits for the Etsy helper's computer (14 Oct 2026): small, grey, informational, no alarm colours. */
+    .em-sq-delay { display: flex; align-items: center; gap: 5px; margin: 4px 0; padding: 2px 8px; font-size: 11px; line-height: 1.4; color: #6e7781; }
+    .em-sq-delay .material-icons { font-size: 13px; opacity: .8; }
+    .em-sq-delay .em-sq-clock { font-weight: 600; font-variant-numeric: tabular-nums; color: #57606a; }
+    .em-msg-sync.quiet { font-style: normal; opacity: .7; }
     .em-badge.sq { background: #ddf4ff; color: #0969da; }
+    .em-badge.sq.slow { background: #f0f2f4; color: #6e7781; }
     .em-badge.sq.bad { background: #ffebe9; color: #a40e26; }
     .em-compose-hint {
       font-size: 10px; color: #6a737d; margin-top: 6px;
@@ -5097,6 +5103,7 @@ body.em-tabs-smart .em-smart-fwrap {
 .em-sc-purple { background: #f3e8ff; color: #6b21a8; }
 .em-sc-green  { background: #dafbe1; color: #116329; }
 .em-sc-stale  { background: #f3f4f6; color: #6e7781; font-style: italic; }
+.em-sc-quiet  { background: #f3f4f6; color: #6e7781; }
 .em-sc-folder { background: #fff; color: #57606a; box-shadow: inset 0 0 0 1px #d0d7de; }
 .em-smart-badges { flex-wrap: nowrap; overflow: hidden; min-width: 0; }
 
@@ -9592,7 +9599,11 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     const _sendWatchQuiet = new Map();             // threadId -> no new loop before this time
     // The send queue (MAILQUEUE, below): where each of the open conversation's unfinished messages stands.
     const SQ_POLL_MS = 4000;
+    const SQ_SLOW_POLL_MS = 20000;
+    const SQ_DELAY_TIP = "Delayed: the connection between the inbox and Etsy is down for now (the shop computer that sends on Etsy is off or offline). Nothing is lost: this message is saved and goes out by itself, in order, as soon as the connection is back.";
     const SQ_RECENT_MS = 5 * 60 * 1000;
+    /** Has the oldest message waiting in this conversation been in the queue for over 10 minutes? (sendQueueSinceMs is stamped by the server.) */
+    const sqDelayed = (t, now) => { const since = Number(t && t.sendQueueSinceMs) || 0; return since > 0 && (now || Date.now()) - since > 10 * 60000; };
     const SQ = { forThread: null, n: null, items: [], recent: [], offMs: 0, at: 0, timer: 0, busy: false, again: false, running: null, fails: 0, quietUntil: 0, told: new Set(), flagSig: new Map() };
 
     /** Keep what the draft slot says about a thread's latest send. */
@@ -12275,7 +12286,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         const age = now - (doc.atMs || 0);
         if (!doc.atMs || age > STALE_MS) return { tone: "warn", word: "monitor stopped", text: "Nothing has confirmed the customer-mail link for " + Math.max(12, Math.round(age / 60000)) + " minutes: the inbox's link monitor has stopped reporting. Messages may still be going, but that cannot be confirmed." };
         if (doc.level === "warn" || doc.level === "down") {
-          const bad = (doc.checks || []).filter(c => c && c.level !== "ok").map(c => c.label + ": " + c.text);
+          // (14 Oct 2026) only real problems are listed: a "wait" line (the helper's computer is away, messages waiting for it) is not one
+          const bad = (doc.checks || []).filter(c => c && (c.level === "warn" || c.level === "down")).map(c => c.label + ": " + c.text);
           return { tone: doc.level, word: doc.short || "problem", text: (doc.problem || "The customer-mail link has a problem.") + (bad.length > 1 ? " (" + bad.join("; ") + ")" : ""), doc };
         }
         return null;
@@ -13095,8 +13107,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         about: t => "the reply tried at " + tabsWhen(tsToMs(t.lastAutoDecisionAt)) },
       { id: "send_queue", src: "S", tone: "green", menu: "Sending",
         test : t => t.sendQueueState === "queued" && t.sendQueueProblem !== true && t.status !== "queued_for_auto_send" && t.sandbox !== true && t.isSandbox !== true,
-        label: () => "Sending…",
-        why  : () => "A message to this customer is in the send queue. Messages go to Etsy one at a time, in the order they were written, with a short pause between them." },
+        // a message that has waited over 10 minutes is waiting for the Etsy helper's computer, not being sent: grey and "Delayed", no alarm (14 Oct 2026)
+        toneOf: (t, now) => sqDelayed(t, now) ? "quiet" : "green",
+        label: (t, now) => sqDelayed(t, now) ? "Delayed" : "Sending…",
+        why  : (t, now) => sqDelayed(t, now) ? SQ_DELAY_TIP : "A message to this customer is in the send queue. Messages go to Etsy one at a time, in the order they were written, with a short pause between them." },
       { id: "needs_you", src: "AI", tone: "amber", fix: true, menu: "AI: needs you",
         test : (t, now) => NEEDS_YOU_RE.test(t.lastAutoDecision || "") && aiFresh(t) && isAwaiting(t, now),
         label: () => "AI: needs you",
@@ -13204,7 +13218,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           fix   : !!d.fix,
           rank,
           stale,
-          tone  : stale ? "stale" : d.tone,
+          tone  : stale ? "stale" : (d.toneOf ? d.toneOf(t, now) : d.tone),
           label : stale ? label + " (earlier message)" : label,
           why   : d.why(t, now, stale),
           about : d.about ? d.about(t, stale) : "",
@@ -17062,6 +17076,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
               <div id="emTrackingImages" class="em-tracking-images" style="display:none;"></div>
               <div id="emSendStatus" class="em-send-status" style="display:none;"></div>
               <div id="emQueueStatus" class="em-send-status" style="display:none;"></div>
+              <div id="emQueueDelay" class="em-sq-delay" role="status" style="display:none;"></div>
               <!-- The reply buttons, one line: the AI pair (AI Draft, Polish),
                    the files group (Attach, Sheets, Listing), then the Send to
                    Design switch and Send. fitComposeBar() drops the files
@@ -21280,7 +21295,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     /** Is the queue being followed right now for this conversation (so the draft slot need not be read too)? */
     function sqLive(threadId) { return SQ.running === threadId && SQ.forThread === threadId && Date.now() - SQ.at < 20000 && sqActive(threadId).length > 0; }
     /** A message waiting with a place in line (or in its pause) is normal: the "is the Etsy helper tab open?" nag is for silence. */
-    function sqWaitIsNormal(threadId) { return sqActive(threadId).some(v => v.wait !== "helper" && !v.nb); }
+    function sqWaitIsNormal(threadId) { return sqActive(threadId).some(v => v.wait === "offline" || (v.wait !== "helper" && !v.nb)); }   // (a delay for an away helper is normal too: its own quiet note says so)
     /** The queue entry for a stand-in bubble: by its id when this page sent it, else by its words close to when it was written. */
     function sqItemFor(threadId, m) {
       if (SQ.forThread !== threadId || !m) return null;
@@ -21304,6 +21319,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           ? { text: "delivered", title: "The Etsy helper sent it and Etsy accepted it" } : null;
       }
       const FIRM = "Messages go to Etsy one at a time, in the order they were written, with a short pause between them.";
+      // The Etsy helper's computer is away: the message is saved in the queue and goes by itself when it is back. Said quietly, no spinner.
+      if ((v.st === "queued" || v.st === "claimed") && v.wait === "offline") return { text: "delayed", quiet: true, title: SQ_DELAY_TIP };
       switch (v.st) {
         case "sending":
           return { text: "sending…", spin: true, title: "The Etsy helper is sending this message now." };
@@ -21364,7 +21381,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       finally {
         SQ.busy = false;
         const again = SQ.again; SQ.again = false;
-        if (state.selectedId === threadId && SQ.fails < 4 && (again || sqNeedsPolling(threadId))) SQ.timer = setTimeout(() => sqStep(threadId), SQ_POLL_MS);
+        if (state.selectedId === threadId && SQ.fails < 4 && (again || sqNeedsPolling(threadId))) SQ.timer = setTimeout(() => sqStep(threadId), sqPollMs(threadId, again));
         else { SQ.running = null; if (SQ.fails >= 4) SQ.quietUntil = Date.now() + 60000; }
       }
     }
@@ -21373,6 +21390,11 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       clearTimeout(SQ.timer); SQ.timer = 0; SQ.fails = 0; SQ.quietUntil = 0;
       SQ.running = threadId;
       sqStep(threadId);
+    }
+    /** How soon to look again: every 4 s while a message is moving, every 20 s while everything open only waits for an away helper (nothing can change but its return). */
+    function sqPollMs(threadId, again) {
+      const act = sqActive(threadId);
+      return !again && act.length && act.every(v => v.wait === "offline") ? SQ_SLOW_POLL_MS : SQ_POLL_MS;
     }
     /** Is a message of this conversation still on its way (or just sent from this page and not yet seen in the queue)? */
     function sqNeedsPolling(threadId) {
@@ -21408,8 +21430,45 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         '<span class="em-sq-btns">' + (att ? btn("sent", "It was sent") + btn("retry", "Send again") : btn("retry", "Try again")) +
         btn("copy", "Copy message") + btn("dismiss", "Discard") + '</span>';
     }
+    /** m:ss under an hour, h:mm:ss after, "2d 3:14:05" after a day: the clock on a delayed message. */
+    function sqClock(ms) {
+      let t = Math.max(0, Math.floor(ms / 1000));
+      const d = Math.floor(t / 86400); t -= d * 86400;
+      const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60, p2 = n => (n < 10 ? "0" : "") + n;
+      return d ? d + "d " + h + ":" + p2(m) + ":" + p2(sec) : h ? h + ":" + p2(m) + ":" + p2(sec) : m + ":" + p2(sec);
+    }
+    let _sqClockTimer = 0;
+    /** One interval for every running clock on the page; it stops itself when there is none, and does nothing in a hidden tab. */
+    function sqClockTick() {
+      const els = document.querySelectorAll("[data-sq-since]");
+      if (!els.length) { clearInterval(_sqClockTimer); _sqClockTimer = 0; return; }
+      if (document.hidden) return;
+      const now = sqNow();
+      for (const el of els) { const t = sqClock(now - Number(el.dataset.sqSince)); if (el.textContent !== t) el.textContent = t; }
+    }
+    function sqClockStart() { if (!_sqClockTimer) _sqClockTimer = setInterval(sqClockTick, 1000); }
+    /** The quiet note under/over a conversation: its messages that wait for an away helper, one line, with a running clock from the oldest. */
+    function sqPaintDelay(threadId) {
+      const held = threadId ? sqActive(threadId).filter(v => v.wait === "offline") : [];
+      for (const id of ["emQueueDelay", "mQueueDelay"]) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        if (!held.length) { if (el.style.display !== "none") { el.style.display = "none"; el.innerHTML = ""; el.dataset.sq = ""; } continue; }
+        const oldest = Math.min(...held.map(v => v.at || sqNow()));
+        const sig = held.map(v => v.id).join(",") + "|" + oldest;
+        if (el.dataset.sq !== sig) {
+          const n = held.length;
+          el.innerHTML = '<i class="material-icons" aria-hidden="true">schedule</i><span>' + (n === 1 ? "Delayed" : n + " messages delayed") + (n === 1 ? " · " : " · oldest ") +
+            '<span class="em-sq-clock" data-sq-since="' + oldest + '">' + sqClock(sqNow() - oldest) + '</span> · ' + (n === 1 ? "sends" : "send") + " automatically when the connection is back</span>";
+          el.title = SQ_DELAY_TIP; el.dataset.sq = sig;
+        }
+        el.style.display = "flex";
+      }
+      if (held.length) sqClockStart();
+    }
     function sqPaintBanner() {
       const threadId = state.selectedId;
+      sqPaintDelay(threadId);
       const dead = threadId ? sqDead(threadId) : [];
       for (const id of ["emQueueStatus", "mQueueStatus"]) {
         const el = document.getElementById(id);
@@ -21470,7 +21529,11 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     function sqChipHtml(t) {
       if (!t || t.sandbox === true || t.isSandbox === true) return "";
       if (t.sendQueueProblem === true) return '<span class="em-badge sq bad" title="A message to this customer did not go, or may not have gone. Open the conversation to retry it, copy it or check Etsy.">send problem</span>';
-      if (t.sendQueueState === "queued") return '<span class="em-badge sq" title="A message to this customer is in the send queue. Messages go to Etsy one at a time, in order.">sending…</span>';
+      if (t.sendQueueState === "queued") {
+        // a message that has waited over 10 minutes is waiting for the helper's computer, not being sent: said quietly
+        if (sqDelayed(t)) return '<span class="em-badge sq slow" title="' + esc(SQ_DELAY_TIP) + '">delayed</span>';
+        return '<span class="em-badge sq" title="A message to this customer is in the send queue. Messages go to Etsy one at a time, in order.">sending…</span>';
+      }
       return "";
     }
 
@@ -22863,7 +22926,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         // other message (see sendTagOf).
         const sendTag = sendTagOf(state.selectedId, m);
         const syncTag = sendTag
-          ? ' <span class="em-msg-sync' + (sendTag.warn ? ' warn' : '') + '"' + (sendTag.title ? ' title="' + esc(sendTag.title) + '"' : '') + '>· ' + (sendTag.spin ? '<i class="em-sq-spin" aria-hidden="true"></i>' : '') + esc(sendTag.text) + '</span>'
+          ? ' <span class="em-msg-sync' + (sendTag.warn ? ' warn' : '') + (sendTag.quiet ? ' quiet' : '') + '"' + (sendTag.title ? ' title="' + esc(sendTag.title) + '"' : '') + '>· ' + (sendTag.spin ? '<i class="em-sq-spin" aria-hidden="true"></i>' : '') + esc(sendTag.text) + '</span>'
           : '';
 
         // Render any message that has imageUrls as inline thumbnails —
@@ -26355,6 +26418,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         <!-- Messages list — rewritten on every poll by mRenderMessages.
              Everything ABOVE this stays stable to avoid flicker. -->
         <div class="em-send-status" id="mQueueStatus" style="display:none;"></div>
+        <div class="em-sq-delay" id="mQueueDelay" role="status" style="display:none;"></div>
         <div class="m-messages-list" id="mMessagesList"></div>
       `;
 

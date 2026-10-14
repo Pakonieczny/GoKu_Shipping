@@ -24,6 +24,9 @@ const T = {
   helperWarn: 12 * MIN, helperDown: 30 * MIN,        // the Etsy helper (Chrome extension) is heard from every ~30 s (see _etsyMailHelperSeen.js); it may idle a few minutes
   helperBusyWarn: 5 * MIN, helperBusyDown: 15 * MIN, // ...with work waiting for it
   helperAlive: 4 * MIN,                              // heard from this lately: alive, whatever the scrape poll's own random pauses
+  helperAway: 5 * MIN,                               // not heard from for this long: its computer is off or Chrome is closed. Normal: messages wait in the queue (not an alarm)
+  helperGone: 72 * HOUR,                             // ...and away this long (a long weekend is fine) a person should know: the one case where "away" is amber
+  upkeepLate: 12 * MIN,                              // the send queue's own upkeep (every 3 minutes) has not run for this long with messages waiting: stuck
   workWarn: 5 * MIN, workDown: 15 * MIN,             // a message waiting to be sent
   readWarn: 10 * MIN, readDown: 30 * MIN,            // a new Etsy message waiting to be read in
   gmailWarn: 10 * MIN, gmailDown: 30 * MIN,          // the Gmail watcher polls every minute
@@ -155,43 +158,51 @@ function evaluate(ev, now) {
   const checks = [];
   const add = (id, label, level, text, short, pri, data) => checks.push({ id, label, level, text, short: short || "", pri: pri == null ? 9 : pri, data: data || null });
 
-  const g = ev.global || {};
-  const drafts = Array.isArray(ev.queuedDrafts) ? ev.queuedDrafts : null;
   const jobs = Array.isArray(ev.scrapeJobs) ? ev.scrapeJobs : null;
-  const oldest = drafts && drafts.length ? now - Math.min(...drafts.map(t => t || now)) : 0;
-  const nq = drafts ? drafts.length : 0;
   const ns = jobs ? jobs.length : 0;
   const late = ns ? Math.max(...jobs.map(t => now - (t || now))) : 0;
 
   // ── the Etsy helper: the inbox's Chrome extension, which sends on Etsy and reads new messages ──
+  // (14 Oct 2026, Paul) Its computer is sometimes shut down, for a night or a weekend. That is not a fault of the inbox: messages to
+  // customers are kept in the send queue and go out by themselves, in order, when it is back; new Etsy messages are read in then.
+  // So an AWAY helper is a calm "wait" (never amber or red, nothing in the banners); each conversation with a message waiting shows its
+  // own small clock instead. Only when it has been away for days (helperGone) is it amber, so that it can never go unnoticed for ever.
   const hp = ev.helper || null;
-  const seenAt = Math.max(hp && hp.seenAtMs || 0, ev.queue && ev.queue.helperSeenAtMs || 0);
+  const q0 = ev.queue || null;
+  const seenAt = Math.max(hp && hp.seenAtMs || 0, q0 && q0.helperSeenAtMs || 0);
   const seen = seenAt ? now - seenAt : null;
-  const stuck = Math.max(oldest, late);
-  const waitNote = stuck > T.helperBusyWarn ? ` and a message has been waiting ${ago(stuck)} for it` : "";
+  const helperAway = ok("helper") && seen != null && seen > T.helperAway;      // not heard from: its computer is off
+  const away = helperAway || !!(ok("helper") && seen != null && q0 && q0.offline);   // ...or heard again, but the queue has not yet settled it (reconnecting)
+  const gone = helperAway && seen > T.helperGone;
   if (!ok("helper")) add("helper", "Etsy helper", "warn", "Could not look at the Etsy helper's last check-in.", "Helper unknown", 1);
   else if (seen == null) add("helper", "Etsy helper", "warn", `The inbox's Etsy helper (its Chrome extension) has not been heard from yet. ${HELPER_DO}`, "Helper not heard from", 1);
-  else if (seen > T.helperBusyWarn && stuck > T.helperBusyDown) add("helper", "Etsy helper", "down", `The inbox's Etsy helper last checked ${ago(seen)} ago,${waitNote}. ${HELPER_DO}`, "Helper offline", 1);
-  else if (seen > T.helperBusyWarn && stuck > T.helperBusyWarn) add("helper", "Etsy helper", "warn", `The inbox's Etsy helper last checked ${ago(seen)} ago,${waitNote}. ${HELPER_DO}`, "Helper slow", 1);
-  else if (seen > T.helperDown) add("helper", "Etsy helper", "down", `The inbox's Etsy helper last checked ${ago(seen)} ago, so new answers are not being read. ${HELPER_DO}`, "Helper offline", 1);
-  else if (seen > T.helperWarn) add("helper", "Etsy helper", "warn", `The inbox's Etsy helper last checked ${ago(seen)} ago. ${HELPER_DO}`, "Helper quiet", 1);
+  else if (gone) add("helper", "Etsy helper", "warn", `The inbox's Etsy helper has been away for ${ago(seen)}. Messages are kept safe and go out by themselves when it is back: open Chrome on the computer that has the inbox's Etsy extension.`, "Helper away", 1);
+  else if (helperAway) add("helper", "Etsy helper", "wait", `The inbox's Etsy helper is away (last checked ${ago(seen)} ago). Nothing is lost: messages wait and go out by themselves, in order, when it is back.`, "Helper away", 1);
   else add("helper", "Etsy helper", "ok", `Last checked ${ago(seen)} ago`);
 
   // ── sending: the inbox's switch, messages waiting for the helper, and MAILQUEUE's queue (EtsyMail_SendQueue) when it is there ──
-  const q = ev.queue || null;   // { queued, claimed, sending, failed, needsAttention, oldestQueuedAtMs, helperSeenAtMs, stalled }
+  const q = ev.queue || null;   // { queued, claimed, sending, failed, needsAttention, reviving, offline, held, oldestQueuedAtMs, helperSeenAtMs, maintAtMs, stalled }
+  const drafts = Array.isArray(ev.queuedDrafts) ? ev.queuedDrafts : null;
+  const g = ev.global || {};
+  const oldest = drafts && drafts.length ? now - Math.min(...drafts.map(t => t || now)) : 0;
+  const nq = drafts ? drafts.length : 0;
   const qOldest = q && q.oldestQueuedAtMs ? now - q.oldestQueuedAtMs : 0;
   const waited = Math.max(oldest, qOldest);
   const nQueued = Math.max(nq, q ? (q.queued || 0) + (q.claimed || 0) + (q.sending || 0) : 0);
-  const nDead = q ? (q.failed || 0) + (q.needsAttention || 0) : 0;
+  // dead letters of the old "helper offline" kind (nothing was sent) are put back in the queue by the upkeep: not a job for a person
+  const nDead = q ? Math.max(0, (q.failed || 0) + (q.needsAttention || 0) - (q.reviving || 0)) : 0;
+  const upkeepLate = !!(q && q.maintAtMs && now - q.maintAtMs > T.upkeepLate);
   if (g.sendDisabled) add("send", "Sending", "down", "Sending is switched off in the inbox" + (g.sendDisabledReason ? ` (${clean(g.sendDisabledReason, 120)})` : "") + ". Messages wait here until it is on again.", "Sending paused", 0);
   else if (!ok("drafts") || (!drafts && !q)) add("send", "Sending", "warn", "Could not look at the messages waiting to go out.", "Sending unknown", 2);
-  else if (q && q.stalled) add("send", "Sending", "down", `Sending is stuck: a message has waited ${waited ? ago(waited) : "10 min"} with no progress.`, "Sending stuck", 2);
-  else if (waited > T.workDown) add("send", "Sending", "down", `A message has waited ${ago(waited)} for the inbox's Etsy helper to send it.`, "Not sending", 2);
-  else if (waited > T.workWarn) add("send", "Sending", "warn", `A message has waited ${ago(waited)} for the inbox's Etsy helper.`, "Sending slowly", 2);
+  else if (away && nQueued > 0 && upkeepLate) add("send", "Sending", "down", `Sending is stuck: the queue has not been looked at for ${ago(now - q.maintAtMs)}, and ${nQueued} ${nQueued === 1 ? "message is" : "messages are"} waiting.`, "Sending stuck", 2);
+  else if (!away && q && q.stalled) add("send", "Sending", "down", `Sending is stuck: a message has waited ${waited ? ago(waited) : "10 min"} with no progress.`, "Sending stuck", 2);
+  else if (!away && waited > T.workDown) add("send", "Sending", "down", `A message has waited ${ago(waited)} for the inbox's Etsy helper to send it.`, "Not sending", 2);
+  else if (!away && waited > T.workWarn) add("send", "Sending", "warn", `A message has waited ${ago(waited)} for the inbox's Etsy helper.`, "Sending slowly", 2);
   else if (nDead > 0) {
     const why = [...new Set(((q && q.dead) || []).map(d => d.plain).filter(Boolean))].slice(0, 2).join(" ");
     add("send", "Sending", "warn", `${nDead} ${nDead === 1 ? "message to a customer needs" : "messages to customers need"} a person: ${nDead === 1 ? "it" : "they"} did not go out.${why ? " " + why : ""} Open the conversation to retry or send by hand, or put ${nDead === 1 ? "it" : "them"} away.`, "Messages need attention", 2, { dead: ((q && q.dead) || []).length || nDead });
   }
+  else if (away && nQueued > 0) add("send", "Sending", "wait", `${nQueued} ${nQueued === 1 ? "message is" : "messages are"} waiting for the helper and ${nQueued === 1 ? "goes" : "go"} out by themselves, in order, when it is back.`, "Messages delayed", 2);
   else add("send", "Sending", "ok", nQueued ? `${nQueued} ${nQueued === 1 ? "message" : "messages"} on the way` : "Nothing waiting to go out");
 
   // ── noticing answers: the Gmail watcher sees Etsy's email about each new message within a minute or two ──
@@ -223,6 +234,7 @@ function evaluate(ev, now) {
     signedOut ? "Signed out of Etsy" : "Etsy page not read", 4);
   }
   else if (!ok("jobs") || !jobs) add("read", "Reading answers", "warn", "Could not look at the messages waiting to be read.", "Reading unknown", 4);
+  else if (away && ns > 0) add("read", "Reading answers", "wait", `${ns}${ns >= 40 ? "+" : ""} new Etsy ${ns === 1 ? "message is" : "messages are"} waiting to be read into the inbox; the helper reads ${ns === 1 ? "it" : "them"} when it is back.`, "Answers delayed", 4);
   else if (late > lim.down) add("read", "Reading answers", "down", waitText, "Answers delayed", 4);
   else if (late > lim.warn) add("read", "Reading answers", "warn", waitText, "Answers delayed", 4);
   else add("read", "Reading answers", "ok", ns ? `${ns} being read now` : "Nothing waiting to be read");

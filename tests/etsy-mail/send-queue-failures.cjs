@@ -185,12 +185,19 @@ const say = s => process.stdout.write(s + "\n");
   for (let k = 0; k < 8; k++) { h.clock.advance(150000); await h.Q.maintain(); }
   it = h.item(r.body.sendId);
   check(["queued", "claimed"].includes(it.state), "it keeps being offered while the wait is short (" + it.state + ")");
-  h.clock.advance(31 * 60000); h.fake.poke("EtsyMail_OrderLinkMeta/helper", { seenAtMs: h.clock.now() - 20 * 60000 });
-  await h.Q.maintain();
+  // (14 Oct 2026) A computer that is shut down for a while is normal: its messages wait in the queue, they are not dead letters.
+  h.helperUp = false; h.clock.advance(31 * 60000); await h.Q.maintain();
   it = h.item(r.body.sendId);
-  check(it.state === "failed" && it.lastErrorCode === "HELPER_OFFLINE" && /not running/i.test(it.plain), "after 30 minutes with a silent helper: a visible dead letter saying the helper is not running (" + it.state + ")");
-  const sum = await h.Q.summary();
-  check(sum.failed === 1 && sum.queued === 0, "the health summary counts it");
+  check(it.state === "queued", "31 minutes with a silent helper: still waiting in the queue, not given up on (" + it.state + ")");
+  let sum = await h.Q.summary();
+  check(sum.failed === 0 && sum.queued === 1 && sum.offline === true && sum.held === 1, "the health summary calls it held for an away helper, not a failure (failed " + sum.failed + ", held " + sum.held + ")");
+  h.clock.advance(6 * 24 * 3600 * 1000); await h.Q.maintain();
+  check(h.item(r.body.sendId).state === "queued", "six days later it is still waiting");
+  h.clock.advance(25 * 3600 * 1000); await h.Q.maintain();
+  it = h.item(r.body.sendId);
+  check(it.state === "failed" && it.lastErrorCode === "QUEUED_EXPIRED" && /still wanted/i.test(it.plain), "past a week with a silent helper: a visible dead letter for a person to look at (" + it.state + ")");
+  sum = await h.Q.summary();
+  check(sum.failed === 1 && sum.queued === 0, "and the health summary counts that one");
   h.done();
 
   // ═══ 7. kill switch ═══

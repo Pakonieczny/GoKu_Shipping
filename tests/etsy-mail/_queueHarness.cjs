@@ -20,7 +20,10 @@ function boot(opts = {}) {
   const realNow = Date.now;
   let t = opts.start || Date.UTC(2026, 9, 10, 12, 0, 0);
   Date.now = () => t;
-  const clock = { now: () => t, advance: ms => { t += ms; return t; }, set: v => { t = v; } };
+  // The real extension checks in every 30 s whatever else it does (_etsyMailHelperSeen.js), so while the helper is "up" (the default) every
+  // step of the virtual clock leaves its mark; a test of an outage sets h.helperUp = false, and the helper "returns" with ext.poll() or h.helperUp = true.
+  let helperMark = () => {};
+  const clock = { now: () => t, advance: ms => { t += ms; helperMark(); return t; }, set: v => { t = v; helperMark(); } };
   const warn = [], realWarn = console.warn, realError = console.error, realLog = console.log;
   console.warn = (...a) => warn.push(a.map(String).join(" "));
   console.error = (...a) => warn.push("ERROR " + a.map(String).join(" "));
@@ -64,6 +67,8 @@ function boot(opts = {}) {
     },
     done() { Date.now = realNow; console.warn = realWarn; console.error = realError; console.log = realLog; inst.restore(); }
   };
+  h.helperUp = true;
+  helperMark = () => { if (h.helperUp) fake.poke("EtsyMail_OrderLinkMeta/helper", { seenAtMs: t, pollAtMs: t }); };
   h.Ext = makeExt(h);
   return h;
 }
@@ -81,6 +86,9 @@ function makeExt(h) {
     /** background.js pollQueuedSends: list status==queued, open up to two tabs */
     async poll(maxTabs = 2, scriptFor) {
       if (this.dead) return [];
+      // the real extension's 30-second check goes through firestoreProxy, which leaves the helper's check-in mark (_etsyMailHelperSeen.js);
+      // a dead one leaves none. The send queue holds messages for a helper that has not checked in lately.
+      await require(path.join(fnDir, "_etsyMailHelperSeen.js")).noteHelper("poll");
       const queued = h.fake.list("EtsyMail_Drafts").map(x => x.data).filter(d => d.status === "queued" && !this.inFlight.has(d.draftId));
       const out = [];
       for (const d of queued.slice(0, maxTabs)) out.push(await this.tab(d.threadId, scriptFor ? scriptFor(d) : undefined));

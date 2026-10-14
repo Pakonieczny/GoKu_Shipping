@@ -112,16 +112,18 @@ const sec = async ms => { clock += ms; };
   seed("EtsyMail_Jobs/j1", { jobType: "scrape", status: "queued", createdAt: new TS(clock - 20 * MIN) });
   let ev = await LH.gather(Fk.db, { self: false });
   let res = LH.evaluate(ev, clock);
-  check(res.level === "down" && /Helper offline/.test(res.short), "before: the helper last heard from 3 hours ago, a message waiting 20 min: red, and rightly");
+  check(res.level === "ok" && res.problem === "" && res.checks.find(c => c.id === "helper").level === "wait" && /away \(last checked 3 h ago\)/.test(res.checks.find(c => c.id === "helper").text), "before: the helper last heard from 3 hours ago, a message waiting 20 min: its computer is off, which is a calm 'wait' and no alarm (14 Oct 2026)");
   HS.reset(); await get(QUEUED);   // the extension's 30-second queue check
   ev = await LH.gather(Fk.db, { self: false });
   res = LH.evaluate(ev, clock);
   check(ev.helper.pollAtMs === clock && ev.helper.jobsAtMs === clock - 3 * HOUR, "the queue check was heard; the scrape poll still has not run for 3 hours");
   check(res.level === "ok" && res.checks.find(c => c.id === "helper").level === "ok" && res.checks.find(c => c.id === "read").level === "ok", "after: the helper is alive and the message waiting 20 min at 3 am is just waiting its turn: green");
-  clock += 31 * MIN;   // nothing is heard from the helper any more
+  clock += 31 * MIN;   // nothing is heard from the helper any more (everything else keeps reporting: the Gmail watcher, the monitor, the catch-up)
+  seed("EtsyMail_Config/gmailSyncState", { lastSyncCompletedAt: new TS(clock - MIN) });
+  seed("EtsyMail_Config/receiptsMirrorState", { enabled: true, lastSyncCompletedAt: new TS(clock - 3 * MIN) });
   ev = await LH.gather(Fk.db, { self: false }); ev.monitor = { atMs: clock - MIN }; ev.bell = Object.assign({}, ev.bell, { reconcileAtMs: clock - MIN });
   res = LH.evaluate(ev, clock);
-  check(res.level === "down" && /last checked 31 min ago/.test(res.problem), "31 minutes without a sign from any call: red again, and the words say so (" + res.problem.slice(0, 70) + ")");
+  check(res.level === "ok" && res.problem === "" && res.checks.find(c => c.id === "helper").level === "wait" && /last checked 31 min ago/.test(res.checks.find(c => c.id === "helper").text), "31 minutes without a sign from any call: the helper is 'away' again (a calm line, no alarm), and it says how long");
 
   console.warn = realWarn; Date.now = realDateNow;
   console.log(fails.length ? "FAIL " + fails.length + ": " + fails.join(" | ") : "PASS");

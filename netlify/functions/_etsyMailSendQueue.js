@@ -50,15 +50,23 @@ const DEFAULTS = Object.freeze({
   backoffCapMs: 15 * MIN,
   backoffJitter: 0.2,
   agingMs: 15 * MIN,            // an automated message that waited this long ranks as a human one
-  offlineWaitMs: 30 * MIN,      // waiting this long with a silent helper: failed, HELPER_OFFLINE
+  offlineWaitMs: 7 * DAY,       // waiting this long with a silent helper: failed, QUEUED_EXPIRED (14 Oct 2026: was 30 min; a computer that is shut down for a night or a weekend is normal, the messages wait for it)
   helperQuietMs: 10 * MIN,      // "silent helper": no check-in and no finished send for this long
+  holdAfterMs: 5 * MIN,         // the helper has not been heard from for this long: nothing is handed to it, the messages wait in the queue (0 = never hold)
+  settleMs: 45 * 1000,          // after an outage the helper must be heard twice, this far apart, before the first message goes ("really back")
+  bigQueueAbove: 2,             // more than this many waiting: the pause between sends is the wide random one below
+  bigGapMinMs: 7000,            // the pause after a send while more than bigQueueAbove messages wait: random between these two
+  bigGapMaxMs: 17000,
+  reviveOfflineMs: 72 * HOUR,   // a dead letter of the old "helper offline" kind (nothing was sent) younger than this goes back in the queue by itself (0 = never)
   dupWindowMs: 20 * 1000,       // the same words again within this (no explicit key) are the same press
   keepDoneMs: 14 * DAY
 });
 const LIMITS = {
   gapMs: [0, 5 * MIN], gapJitter: [0, 0.9], claimTtlMs: [20000, 10 * MIN], sendTtlMs: [20000, 10 * MIN], maxAttempts: [1, 10],
   backoffBaseMs: [1000, 30 * MIN], backoffFactor: [1, 10], backoffCapMs: [5000, 6 * HOUR], backoffJitter: [0, 0.9],
-  agingMs: [0, 6 * HOUR], offlineWaitMs: [MIN, 12 * HOUR], helperQuietMs: [MIN, 12 * HOUR], dupWindowMs: [0, 5 * MIN], keepDoneMs: [DAY, 90 * DAY]
+  agingMs: [0, 6 * HOUR], offlineWaitMs: [MIN, 30 * DAY], helperQuietMs: [MIN, 12 * HOUR], holdAfterMs: [0, 12 * HOUR], settleMs: [0, 10 * MIN],
+  bigQueueAbove: [0, 50], bigGapMinMs: [0, 5 * MIN], bigGapMaxMs: [0, 10 * MIN], reviveOfflineMs: [0, 30 * DAY],
+  dupWindowMs: [0, 5 * MIN], keepDoneMs: [DAY, 90 * DAY]
 };
 
 const PROMOTE_AHEAD_MS = 30 * 1000;
@@ -222,12 +230,28 @@ function gapFor(cfg, rnd) {
   cfg = cfg || DEFAULTS; rnd = rnd || _rand;
   return Math.max(0, Math.round(cfg.gapMs * (1 + (rnd() * 2 - 1) * cfg.gapJitter)));
 }
+/** The pause after a send while a long queue drains (more than cfg.bigQueueAbove waiting): a random time between bigGapMinMs and bigGapMaxMs (7 to 17 s). */
+function bigGapFor(cfg, rnd) {
+  cfg = cfg || DEFAULTS; rnd = rnd || _rand;
+  const lo = Math.min(cfg.bigGapMinMs, cfg.bigGapMaxMs), hi = Math.max(cfg.bigGapMinMs, cfg.bigGapMaxMs);
+  return Math.round(lo + rnd() * (hi - lo));
+}
+/** Has the helper been silent long enough that nothing should be handed to it? A helper never heard from is not "silent" (nothing is known). */
+function helperQuiet(lastSeenMs, now, cfg) {
+  cfg = cfg || DEFAULTS;
+  return !!cfg.holdAfterMs && lastSeenMs > 0 && now - lastSeenMs > cfg.holdAfterMs;
+}
+/** What pages call "the helper is away": silent now, or back but not yet settled (the lease says it was held and has not resumed). */
+function helperOffline(lease, seenAtMs, now, cfg) {
+  const last = Math.max(Number(seenAtMs) || 0, Number(lease && lease.lastProgressAtMs) || 0);
+  return helperQuiet(last, now, cfg) || !!(lease && lease.linkState === "holding" && cfg.holdAfterMs);
+}
 const ordinal = n => { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
 
 /** Plain words for a failure, for people (never a code on its own). */
 function plainReason(code, error) {
   switch (code) {
-    case "HELPER_OFFLINE": return "The Etsy helper (the Chrome extension) is not running or not picking messages up. Open Chrome with the extension and press Try again.";
+    case "HELPER_OFFLINE": return "The Etsy helper (the Chrome extension) was not running when this was due. Nothing was sent; it goes back in the queue by itself, or press Try again.";
     case "NO_HELPER": return "The Etsy helper did not pick it up in time; it will try again by itself.";
     case "CLAIM_ABANDONED": return "The Etsy tab closed before the message went out; it will try again by itself.";
     case "STRANDED_POST_CLICK": return "Etsy's Send button was clicked but Etsy did not confirm it, so it may already have gone. Check the conversation on Etsy before sending it again.";
@@ -237,7 +261,7 @@ function plainReason(code, error) {
     case "SEND_DISABLED": return "Sending is paused in the inbox.";
     case "MAX_ATTEMPTS": return "Etsy did not take it after several tries" + (error ? ": " + String(error).slice(0, 160) : ".");
     case "CLIENT_CIRCUIT_BREAKER": return "The Etsy helper could not deliver it after several tries.";
-    case "QUEUED_EXPIRED": return "It waited too long for the Etsy helper.";
+    case "QUEUED_EXPIRED": return "It waited many days for the Etsy helper and was not sent. Check that it is still wanted, then press Try again.";
     case "CANCELLED": return "It was cancelled.";
     default: return error ? String(error).replace(/\s+/g, " ").slice(0, 220) : "Etsy did not accept the message.";
   }
@@ -265,8 +289,10 @@ function fingerprint(text, attachments) {
 
 // ─── views ─────────────────────────────────────────────────────────────────
 
-/** The compact shape pages show. Positions are computed here, never stored. */
-function viewItems(items, lease, now, cfg, { withText = true } = {}) {
+/** The compact shape pages show. Positions are computed here, never stored.
+ *  offline: the Etsy helper is not there (see helperQuiet / lease.linkState): a message that is queued or offered to it is "delayed"
+ *  (wait "offline"), which pages show as one quiet line with a clock running from `at` (when the message was written), not as a problem. */
+function viewItems(items, lease, now, cfg, { withText = true, offline = false } = {}) {
   const order = orderQueue(items, now, cfg);
   const holder = lease && lease.holderSendId ? 1 : 0;
   const pos = new Map(order.map((it, i) => [it.sendId, holder + i + 1]));
@@ -278,10 +304,11 @@ function viewItems(items, lease, now, cfg, { withText = true } = {}) {
     };
     if (it.state === "queued") {
       v.pos = pos.get(it.sendId) || null;
-      if ((it.notBeforeMs || 0) > now) { v.nb = it.notBeforeMs; v.wait = it.lastErrorCode === "NO_HELPER" ? "helper" : "retry"; }
+      if (offline) v.wait = "offline";
+      else if ((it.notBeforeMs || 0) > now) { v.nb = it.notBeforeMs; v.wait = it.lastErrorCode === "NO_HELPER" ? "helper" : "retry"; }
       else if (lease && lease.paceUntilMs > now && !holder) v.wait = "pace";
     }
-    if (it.state === "claimed") v.wait = lease && lease.paceUntilMs > now ? "pace" : "helper";
+    if (it.state === "claimed") v.wait = offline ? "offline" : lease && lease.paceUntilMs > now ? "pace" : "helper";
     if (it.sentAtMs) v.sentAt = it.sentAtMs;
     if (it.confirmedAtMs) v.confirmedAt = it.confirmedAtMs;
     if (it.unverified) v.unverified = true;
@@ -390,6 +417,8 @@ async function submit(input) {
     // the slot says "something is on its way in this conversation" for the AI senders that look there
     tx.set(sRef, { queueWaiting: true, queueWaitingOrigin: origin, queueWaitingSendId: sendId, queueRecentFp: fp, queueRecentSendId: sendId, queueRecentAtMs: now, updatedAt: FV.serverTimestamp() }, { merge: true });
     let threadFinalizeApplied = false;
+    // when the oldest message waiting in this conversation was written (the inbox's list says "delayed" instead of "sending…" after 10 minutes)
+    const sinceOf = snap => { const d = snap && snap.exists ? snap.data() || {} : {}; return d.sendQueueState === "queued" && Number(d.sendQueueSinceMs) > 0 ? Number(d.sendQueueSinceMs) : item.createdAtMs; };
     if (fin) {
       const p = fin;
       const patch = {
@@ -404,11 +433,11 @@ async function submit(input) {
         if (td.salesCompletedAt) { delete patch.status; delete patch.aiConfidence; delete patch.aiDifficulty; }
         else if (rush && rush.acceptedAt && !rush.removedAt) delete patch.status;
       } catch (e) { /* keep the patch */ }
-      tx.set(finRef, Object.assign(patch, fin.threadId === threadId ? { sendQueueState: "queued" } : {}), { merge: true });
-      if (fin.threadId !== threadId && tSnap.exists) tx.set(tRef, { sendQueueState: "queued", updatedAt: FV.serverTimestamp() }, { merge: true });
+      tx.set(finRef, Object.assign(patch, fin.threadId === threadId ? { sendQueueState: "queued", sendQueueSinceMs: sinceOf(fSnap) } : {}), { merge: true });
+      if (fin.threadId !== threadId && tSnap.exists) tx.set(tRef, { sendQueueState: "queued", sendQueueSinceMs: sinceOf(tSnap), updatedAt: FV.serverTimestamp() }, { merge: true });
       threadFinalizeApplied = true;
     } else if (tSnap.exists) {
-      tx.set(tRef, { sendQueueState: "queued", updatedAt: FV.serverTimestamp() }, { merge: true });
+      tx.set(tRef, { sendQueueState: "queued", sendQueueSinceMs: sinceOf(tSnap), updatedAt: FV.serverTimestamp() }, { merge: true });
     }
     const learnPrev = slot ? {
       text: slot.text || "", status: slot.status || null, generatedByAI: !!slot.generatedByAI,
@@ -457,6 +486,72 @@ function slotPayload(item, prev, attemptsDone, now, parkedCopy, others) {
   return p;
 }
 
+/** When the Etsy helper was last heard from (its check-in mark, or the last message it finished), 0 = never. Reads one document. */
+async function helperLastSeen(lease) {
+  const h = await db.collection("EtsyMail_OrderLinkMeta").doc("helper").get();
+  return Math.max(h.exists ? Number(h.data().seenAtMs) || 0 : 0, Number(lease && lease.lastProgressAtMs) || 0);
+}
+
+/**
+ * Is the helper there? { ok: true } to go on, or { hold: true, why } to leave every message where it is:
+ *   "helper_offline"  not heard from for cfg.holdAfterMs (the computer is off, Chrome is closed): nothing is handed to it
+ *   "reconnecting"    heard again after such a silence, but not yet twice, cfg.settleMs apart: a helper that flaps gets no message
+ * The state lives on the lease (linkState, linkBackSeenMs) and changes only when it changes. A helper never heard from is not
+ * held (nothing is known), and neither is a check that fails to read (it behaves as it did before this gate existed).
+ */
+async function helperGate(lease, now, cfg) {
+  if (!cfg.holdAfterMs) return { ok: true };
+  let last;
+  try { last = await helperLastSeen(lease); } catch (e) { return { ok: true }; }
+  const setLease = patch => metaRef("lease").set(patch, { merge: true }).catch(e => console.warn("sendQueue link state:", e.message));
+  if (helperQuiet(last, now, cfg)) {
+    if (lease.linkState !== "holding") await setLease({ linkState: "holding", linkHeldAtMs: now, linkBackSeenMs: FV.delete() });
+    else if (lease.linkBackSeenMs) await setLease({ linkBackSeenMs: FV.delete() });       // it came back and went quiet again: the settling starts over
+    return { hold: true, why: "helper_offline" };
+  }
+  if (lease.linkState === "holding") {
+    const back = Number(lease.linkBackSeenMs) || 0;
+    if (cfg.settleMs > 0 && (!back || last - back < cfg.settleMs)) {
+      if (!back) await setLease({ linkBackSeenMs: last });
+      return { hold: true, why: "reconnecting" };
+    }
+    await setLease({ linkState: "online", linkBackSeenMs: FV.delete(), linkHeldAtMs: FV.delete(), linkResumedAtMs: now });
+    return { ok: true, resumed: true };
+  }
+  return { ok: true };
+}
+
+/**
+ * While MORE than cfg.bigQueueAbove messages wait (and for the rest of that run, until the queue is empty), the pause after each
+ * send is a random time between bigGapMinMs and bigGapMaxMs (7 to 17 s) instead of the usual one: a backlog (a night's worth after the
+ * helper's computer was off) goes out at a human pace, never in a burst. It re-rolls the pause the release set, once per release.
+ * Returns the lease as it is afterwards.
+ */
+async function widenPace(lease, depth, cfg) {
+  const big = !!lease.bigBatch || depth > cfg.bigQueueAbove;
+  if (!big) return lease;
+  const rel = Number(lease.lastReleaseAtMs) || 0;
+  const paced = ["sent", "retry", "failed"].includes(lease.lastOutcome);       // (a cancelled or unclaimed message set no pause)
+  if (lease.bigBatch && !(paced && rel > 0 && lease.paceBigFor !== rel)) return lease;
+  let out = lease;
+  try {
+    await db.runTransaction(async tx => {
+      const ls = await tx.get(metaRef("lease"));
+      const L = ls.exists ? ls.data() : {};
+      out = L;
+      if (L.holderSendId) return;
+      const patch = {};
+      if (!L.bigBatch) patch.bigBatch = true;
+      const r = Number(L.lastReleaseAtMs) || 0;
+      if (r > 0 && L.paceBigFor !== r && ["sent", "retry", "failed"].includes(L.lastOutcome)) { patch.paceUntilMs = r + bigGapFor(cfg); patch.paceBigFor = r; }
+      if (!Object.keys(patch).length) return;
+      tx.set(metaRef("lease"), patch, { merge: true });
+      out = Object.assign({}, L, patch);
+    });
+  } catch (e) { console.warn("sendQueue wide pause:", e.message); }
+  return out;
+}
+
 /**
  * Start the next message if the lease is free. Safe to call from anywhere, any number of times at once.
  * Resolves { promoted: sendId|null, why }.
@@ -478,11 +573,21 @@ async function pump(opts = {}) {
   // 2. who is next
   const q = await db.collection(Q_COLL).where("state", "==", "queued").limit(120).get();
   const items = q.docs.map(d => d.data());
-  if (!items.length) return { promoted: null, why: "empty" };
+  if (!items.length) {
+    // nothing waits: the outage (if there was one) and the long queue are over, the next message starts from a clean slate
+    if (lease.bigBatch || lease.linkState || lease.linkBackSeenMs) await metaRef("lease").set({ bigBatch: FV.delete(), paceBigFor: FV.delete(), linkState: FV.delete(), linkBackSeenMs: FV.delete(), linkHeldAtMs: FV.delete() }, { merge: true }).catch(() => {});
+    return { promoted: null, why: "empty" };
+  }
   const aged = await failForgotten(items, now, cfg);
   const live = items.filter(i => !aged.has(i.sendId));
+  // The Etsy helper (the Chrome extension on one computer) is the only thing that can send. While it is silent nothing is handed to it:
+  // the messages wait here, safe, and are looked at again on every upkeep pass (every 3 minutes). When it is heard from again it
+  // must stay heard (settleMs) before the first message goes; then they go one by one (see widenPace for the pauses).
+  const gate = live.length ? await helperGate(lease, now, cfg) : { ok: true };
+  if (gate.hold) return { promoted: null, why: gate.why, held: live.length };
   const next = pickNext(live, now, cfg);
   if (!next) return { promoted: null, why: "nothing_due" };
+  lease = await widenPace(lease, live.length, cfg);
   // the slot is shown to the extension only shortly before the pause ends (its tab-opening poll counts every look)
   if ((lease.paceUntilMs || 0) - now > PROMOTE_AHEAD_MS) return { promoted: null, why: "pacing", wakeAtMs: lease.paceUntilMs - PROMOTE_AHEAD_MS };
   // 3. the promotion: one transaction on the lease
@@ -546,7 +651,8 @@ async function afterPromote(r) {
   try { await require("./_etsyMailOrderLink").onQueueChange(Object.assign({}, it, { state: "claimed" })); } catch (e) { /* best effort */ }
 }
 
-/** A message that has waited past offlineWaitMs while the helper is silent is given up on (HELPER_OFFLINE), visibly. */
+/** A message that has waited past offlineWaitMs (7 days) while the helper is silent is given up on (QUEUED_EXPIRED), visibly: a reply that old
+ *  is for a person to look at. Anything younger waits for the helper, however long that takes. */
 async function failForgotten(items, now, cfg) {
   const gone = new Set();
   const old = items.filter(i => now - (i.createdAtMs || 0) > cfg.offlineWaitMs);
@@ -561,7 +667,7 @@ async function failForgotten(items, now, cfg) {
   if (!quiet) return gone;
   for (const it of old) {
     try {
-      const done = await finishDead(it.sendId, "failed", "HELPER_OFFLINE", plainReason("HELPER_OFFLINE"), { onlyFrom: new Set(["queued"]) });
+      const done = await finishDead(it.sendId, "failed", "QUEUED_EXPIRED", plainReason("QUEUED_EXPIRED"), { onlyFrom: new Set(["queued"]) });
       if (done) gone.add(it.sendId);
     } catch (e) { /* next pass */ }
   }
@@ -751,12 +857,14 @@ async function refreshThreadFlags(threadId) {
   if (!isThreadId(threadId)) return;
   const q = await db.collection(Q_COLL).where("threadId", "==", threadId).limit(40).get();
   const list = q.docs.map(d => d.data());
-  const active = list.some(i => OPEN_STATES.has(i.state));
+  const open = list.filter(i => OPEN_STATES.has(i.state));
+  const active = open.length > 0;
+  const since = active ? Math.min(...open.map(i => i.createdAtMs || Infinity)) : 0;
   const problem = list.some(i => DEAD_STATES.has(i.state) && i.open);
   const unconf = list.some(i => i.state === "sent" || (i.state === "needs_attention" && i.open));
   try {
     await threadRef(threadId).update({
-      sendQueueState: active ? "queued" : FV.delete(), sendQueueProblem: problem ? true : FV.delete(),
+      sendQueueState: active ? "queued" : FV.delete(), sendQueueSinceMs: active && Number.isFinite(since) ? since : FV.delete(), sendQueueProblem: problem ? true : FV.delete(),
       sendQueueUnconfirmed: unconf ? true : FV.delete(), updatedAt: FV.serverTimestamp()
     });
   } catch (e) { /* the conversation is not stored (yet): nothing to flag */ }
@@ -764,6 +872,30 @@ async function refreshThreadFlags(threadId) {
     try { await slotRef(threadId).update({ queueWaiting: FV.delete(), queueWaitingOrigin: FV.delete(), queueWaitingSendId: FV.delete() }); }
     catch (e) { /* no slot: nothing waits on it */ }
   }
+}
+
+/** Dead letters of the old "helper offline" kind (this module used to fail a message after 30 minutes of a silent helper):
+ *  nothing was ever sent for them. Younger than cfg.reviveOfflineMs they go back in the queue by themselves, unless the stored
+ *  conversation already shows the words (someone sent them by hand), which settles them instead. Returns how many were put back. */
+function isRevivable(it, now, cfg) {
+  return !!cfg.reviveOfflineMs && it.state === "failed" && it.open === true && it.lastErrorCode === "HELPER_OFFLINE"
+    && it.stage !== "post_click" && !it.clickedAtMs && !it.sentAtMs && now - (it.createdAtMs || 0) <= cfg.reviveOfflineMs;
+}
+async function reviveOfflineDead(cfg) {
+  if (!cfg.reviveOfflineMs) return 0;
+  const now = nowMs();
+  const qs = await db.collection(Q_COLL).where("state", "==", "failed").limit(60).get();
+  let n = 0;
+  for (const d of qs.docs) {
+    const it = d.data();
+    if (!isRevivable(it, now, cfg)) continue;
+    try {
+      if (await alreadyDelivered(it)) { await markSent(it.sendId, { by: "the conversation", viaConversation: true }); continue; }
+      const r = await humanRetry(it.sendId, { by: "automatic recovery" });
+      if (r && r.item) n++;
+    } catch (e) { console.warn("sendQueue revive:", e.message); }
+  }
+  return n;
 }
 
 /** A queued message given up on without ever touching the slot. */
@@ -1063,7 +1195,7 @@ async function stateView(opts = {}) {
     const ls = await metaRef("lease").get();
     const L = ls.exists ? ls.data() : {};
     if (L.holderSendId && now > (L.leaseUntilMs || 0)) await resolveHolder({ reason: "state_read" });
-    else if (!L.holderSendId) await lazyPump(10000);
+    else if (!L.holderSendId && L.linkState !== "holding") await lazyPump(10000);   // (a helper that is away is looked for by the 3-minute upkeep and by its own peeks, not by every watching page)
     const rs2 = await metaRef("rev").get();
     const rev2 = rs2.exists ? Number(rs2.data().n) || 0 : 0;
     if (rev2 === rev) return { n: rev, unchanged: true, now };
@@ -1076,7 +1208,9 @@ async function stateView(opts = {}) {
   ]);
   const L = ls.exists ? ls.data() : {};
   const items = qs.docs.map(d => d.data());
-  const view = viewItems(items, L, now, cfg, { withText: opts.withText !== false });
+  const seenAtMs = hs && hs.exists ? Number(hs.data().seenAtMs) || 0 : 0;
+  const offline = helperOffline(L, seenAtMs, now, cfg);
+  const view = viewItems(items, L, now, cfg, { withText: opts.withText !== false, offline });
   let recent = [];
   try {
     const rq = await db.collection(Q_COLL).where("updatedAtMs", ">", now - 5 * MIN).limit(60).get();
@@ -1084,7 +1218,7 @@ async function stateView(opts = {}) {
   } catch (e) { recent = []; }
   return {
     recent: opts.threadId ? recent.filter(r => r.t === opts.threadId) : recent,
-    n: rev, now, gapMs: cfg.gapMs, helperSeenAtMs: hs && hs.exists ? Number(hs.data().seenAtMs) || 0 : 0,
+    n: rev, now, gapMs: cfg.gapMs, helperSeenAtMs: seenAtMs, offline,
     lease: { holder: L.holderSendId || null, until: L.leaseUntilMs || 0, paceUntil: L.paceUntilMs || 0, progressAt: L.lastProgressAtMs || 0 },
     items: opts.threadId ? view.filter(v => v.t === opts.threadId) : view
   };
@@ -1105,9 +1239,16 @@ async function summary() {
   const queued = items.filter(i => i.state === "queued");
   const oldest = queued.reduce((m, i) => (m && m < i.createdAtMs ? m : i.createdAtMs), 0);
   const progress = Number(L.lastProgressAtMs) || 0;
+  const cfg = await getConfig();
+  const seenAtMs = hs && hs.exists ? Number(hs.data().seenAtMs) || 0 : 0;
+  const offline = helperOffline(L, seenAtMs, now, cfg);
   return {
     queued: count("queued"), claimed: count("claimed"), sending: count("sending"), failed: count("failed"), needsAttention: count("needs_attention"),
-    oldestQueuedAtMs: oldest || 0, helperSeenAtMs: hs && hs.exists ? Number(hs.data().seenAtMs) || 0 : 0,
+    oldestQueuedAtMs: oldest || 0, helperSeenAtMs: seenAtMs,
+    // the helper's computer is away and messages wait for it: expected, not a fault (the health light says it calmly); and the dead letters
+    // of the old "helper offline" kind that are about to go back in the queue by themselves (they are not a problem for a person either)
+    offline, held: offline ? queued.length + count("claimed") : 0, maintAtMs: Number(L.maintAtMs) || 0,
+    reviving: items.filter(i => isRevivable(i, now, cfg)).length,
     lastProgressAtMs: progress, stalled: !!(oldest && now - oldest > 10 * MIN && now - progress > 10 * MIN),
     holder: L.holderSendId || null, leaseUntilMs: L.leaseUntilMs || 0, paceUntilMs: L.paceUntilMs || 0,
     // (MAILAWAY, Paul 14 Oct 2026: the notice "2 messages need a person" had no way out when the Customers list showed nothing to open: the dead letters and why each one is dead)
@@ -1140,13 +1281,15 @@ async function maintain() {
   const now0 = nowMs();
   if (rv.maintN === n0 && now0 < (Number(rv.dueMs) || 0)) return { skipped: true };
   const cfg = await getConfig({ fresh: true });
-  const stats = { resolved: false, promoted: null, pruned: 0, confirmed: 0 };
+  const stats = { resolved: false, promoted: null, pruned: 0, confirmed: 0, revived: 0 };
   const r = await resolveHolder({ reason: "maintain" }).catch(e => { console.warn("sendQueue maintain resolve:", e.message); return null; });
   stats.resolved = !!r;
   const p = await pump().catch(e => { console.warn("sendQueue maintain pump:", e.message); return null; });
   stats.promoted = p && p.promoted || null;
   let houseMs = Number(rv.houseMs) || 0;
   if (nowMs() >= houseMs) {
+    // dead letters of the old "helper offline" kind: nothing was sent for them, so they go back in the queue (see reviveOfflineDead)
+    try { stats.revived = await reviveOfflineDead(cfg); } catch (e) { /* next time */ }
     // settle messages whose conversation now shows them (a scrape that did not carry the hook)
     try {
       const sent = await db.collection(Q_COLL).where("state", "==", "sent").limit(20).get();
@@ -1166,6 +1309,8 @@ async function maintain() {
   let busy = !!(p && p.why !== "empty");
   try { const ls = await metaRef("lease").get(); if (ls.exists && ls.data().holderSendId) busy = true; } catch (e) { busy = true; }
   try { await metaRef("rev").set({ maintN: n0, dueMs: nowMs() + (busy ? 60 * 1000 : 10 * MIN), houseMs }, { merge: true }); } catch (e) { /* the next pass does it again */ }
+  // the upkeep's own sign of life while anything waits (the health light: a queue whose upkeep has stopped is stuck, an away helper is not)
+  if (busy) { try { await metaRef("lease").set({ maintAtMs: nowMs() }, { merge: true }); } catch (e) { /* the next pass does it again */ } }
   return stats;
 }
 
@@ -1173,10 +1318,10 @@ module.exports = {
   // names
   Q_COLL, META, DRAFTS, DEFAULTS, LIMITS, OPEN_STATES, DEAD_STATES, DONE_STATES, RETRYABLE_CODES,
   // pure rules
-  orderQueue, pickNext, backoffMs, gapFor, classifyFail, plainReason, deriveKey, sendIdFor, viewItems, normText, sameText, ordinal, cfgFrom,
+  orderQueue, pickNext, backoffMs, gapFor, bigGapFor, helperQuiet, helperOffline, isRevivable, classifyFail, plainReason, deriveKey, sendIdFor, viewItems, normText, sameText, ordinal, cfgFrom,
   // io
   getConfig, setConfig, isPaused, isSandboxInput, submit, pump, resolveHolder, settleSlot, claimGate, heartbeatGate, clickGate, peekGate, isManaged,
-  cancel, humanRetry, markSent, dismiss, dismissAllDead, alreadyDelivered, onThreadMessages, stateView, summary, getItem, maintain, refreshThreadFlags,
+  cancel, humanRetry, markSent, dismiss, dismissAllDead, reviveOfflineDead, alreadyDelivered, onThreadMessages, stateView, summary, getItem, maintain, refreshThreadFlags,
   // tests
   _setRandom, _resetCaches, lazyPump, applied
 };
