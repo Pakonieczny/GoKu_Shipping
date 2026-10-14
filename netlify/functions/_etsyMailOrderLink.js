@@ -1250,7 +1250,7 @@ async function sync(body) {
     try {
       const qv = await Q.stateView({ n: Number.isFinite(Number(body.qn)) ? Number(body.qn) : null, hasOpen: flights > 0, withText: false });
       queue = qv.unchanged ? { n: qv.n, unchanged: true, now: qv.now } : {
-        n: qv.n, now: qv.now, gapMs: qv.gapMs, helperSeenAtMs: qv.helperSeenAtMs, lease: qv.lease,
+        n: qv.n, now: qv.now, gapMs: qv.gapMs, helperSeenAtMs: qv.helperSeenAtMs, lease: qv.lease, held: qv.held || 0,
         items: (qv.items || []).filter(v => v.ol).map(v => { const o = Object.assign({}, v); delete o.t; delete o.by; return o; }),
         recent: (qv.recent || []).filter(v => v.ol)
       };

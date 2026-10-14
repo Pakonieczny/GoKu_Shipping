@@ -6290,11 +6290,12 @@ answering. Do not guess about the order's contents.`;
     const _save = await db.runTransaction(async (tx) => {
       const cur = await tx.get(draftRef);
       const prev = cur.exists ? (cur.data() || {}) : null;
-      if (prev && (prev.status === "queued" || prev.status === "sending")) {
-        return { busy: true, status: prev.status };
-      }
-      // MAILQUEUE: a reply waiting its turn in the send queue is on its way too
-      if (prev && prev.queueWaiting === true) return { busy: true, status: "queued" };
+      // A reply on the slot (queued/sending), or one in flight that holds the send lease, must not be replaced. A reply that only WAITS
+      // in the send queue (the Etsy helper's computer is off) is not on the slot: a new draft is saved and, when sent, queues behind it.
+      const _inUse = await require("./_etsyMailSendQueue").slotInUse(tx, prev, threadId);
+      if (_inUse) return { busy: true, status: _inUse };
+      // (the slot is replaced whole below: what the queue has marked on it stays)
+      Object.assign(draftDoc, require("./_etsyMailSendQueue").queueMarksOf(prev));
       if (prev && _SENT_STATUSES.has(prev.status) && prev.text) {
         draftDoc.lastSentText   = String(prev.text);
         draftDoc.lastSentStatus = prev.status;

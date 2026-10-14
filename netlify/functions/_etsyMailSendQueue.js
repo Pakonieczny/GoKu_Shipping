@@ -504,8 +504,10 @@ async function helperGate(lease, now, cfg) {
   let last;
   try { last = await helperLastSeen(lease); } catch (e) { return { ok: true }; }
   const setLease = patch => metaRef("lease").set(patch, { merge: true }).catch(e => console.warn("sendQueue link state:", e.message));
+  // a page watching the queue only looks again when the revision moves: the helper going away, and coming back for good, move it
+  const bump = () => metaRef("rev").set({ n: FV.increment(1), atMs: now }, { merge: true }).catch(e => console.warn("sendQueue link state:", e.message));
   if (helperQuiet(last, now, cfg)) {
-    if (lease.linkState !== "holding") await setLease({ linkState: "holding", linkHeldAtMs: now, linkBackSeenMs: FV.delete() });
+    if (lease.linkState !== "holding") { await setLease({ linkState: "holding", linkHeldAtMs: now, linkBackSeenMs: FV.delete() }); await bump(); }
     else if (lease.linkBackSeenMs) await setLease({ linkBackSeenMs: FV.delete() });       // it came back and went quiet again: the settling starts over
     return { hold: true, why: "helper_offline" };
   }
@@ -516,6 +518,7 @@ async function helperGate(lease, now, cfg) {
       return { hold: true, why: "reconnecting" };
     }
     await setLease({ linkState: "online", linkBackSeenMs: FV.delete(), linkHeldAtMs: FV.delete(), linkResumedAtMs: now });
+    await bump();
     return { ok: true, resumed: true };
   }
   return { ok: true };
@@ -1042,6 +1045,33 @@ async function settleSlot(draftId, info = {}) {
   return { managed: true, outcome: o ? o.kind : null };
 }
 
+/**
+ * May a new draft (an AI reply, a link message) be written over this conversation's draft slot? Call it inside the writer's transaction,
+ * after reading the slot (`slot`, or null). Resolves false (go ahead) or the status that says the slot is in use.
+ *
+ * The slot is the transport the Etsy helper reads, so it must not be replaced while a message of THIS conversation is on it:
+ * status queued/sending, or a message that holds the send lease right now (and the ones waiting behind it in the same conversation,
+ * which the slot still marks queueWaiting). A message that merely waits in the queue for an AWAY helper is not on the slot at all
+ * (nothing was handed over), so people can go on generating and writing replies in that conversation: each new reply is queued
+ * behind the waiting one, in order. (14 Oct 2026: this used to refuse with "a reply is still queued", for as long as the helper was away.)
+ */
+async function slotInUse(tx, slot, threadId) {
+  if (!slot) return false;
+  if (slot.status === "queued" || slot.status === "sending") return slot.status;
+  if (slot.queueWaiting !== true) return false;
+  try {
+    const ls = await tx.get(metaRef("lease"));
+    const L = ls.exists ? ls.data() : {};
+    return L.holderSendId && L.holderThreadId === threadId ? "queued" : false;
+  } catch (e) { return "queued"; }          // cannot tell: the old, careful answer
+}
+/** What a draft written over the slot must keep of the queue's marks on it (the slot is replaced whole by some writers). */
+function queueMarksOf(slot) {
+  const out = {};
+  if (slot && slot.queueWaiting === true) for (const k of ["queueWaiting", "queueWaitingOrigin", "queueWaitingSendId", "queueRecentFp", "queueRecentSendId", "queueRecentAtMs"]) if (slot[k] !== undefined) out[k] = slot[k];
+  return out;
+}
+
 // ─── people's actions ──────────────────────────────────────────────────────
 
 /** Take a message back that has not been sent. */
@@ -1211,6 +1241,7 @@ async function stateView(opts = {}) {
   const seenAtMs = hs && hs.exists ? Number(hs.data().seenAtMs) || 0 : 0;
   const offline = helperOffline(L, seenAtMs, now, cfg);
   const view = viewItems(items, L, now, cfg, { withText: opts.withText !== false, offline });
+  const held = view.filter(v => v.wait === "offline").length;       // every message waiting for the away helper, in any conversation (the notice says how many)
   let recent = [];
   try {
     const rq = await db.collection(Q_COLL).where("updatedAtMs", ">", now - 5 * MIN).limit(60).get();
@@ -1218,7 +1249,7 @@ async function stateView(opts = {}) {
   } catch (e) { recent = []; }
   return {
     recent: opts.threadId ? recent.filter(r => r.t === opts.threadId) : recent,
-    n: rev, now, gapMs: cfg.gapMs, helperSeenAtMs: seenAtMs, offline,
+    n: rev, now, gapMs: cfg.gapMs, helperSeenAtMs: seenAtMs, offline, held,
     lease: { holder: L.holderSendId || null, until: L.leaseUntilMs || 0, paceUntil: L.paceUntilMs || 0, progressAt: L.lastProgressAtMs || 0 },
     items: opts.threadId ? view.filter(v => v.t === opts.threadId) : view
   };
@@ -1321,7 +1352,7 @@ module.exports = {
   orderQueue, pickNext, backoffMs, gapFor, bigGapFor, helperQuiet, helperOffline, isRevivable, classifyFail, plainReason, deriveKey, sendIdFor, viewItems, normText, sameText, ordinal, cfgFrom,
   // io
   getConfig, setConfig, isPaused, isSandboxInput, submit, pump, resolveHolder, settleSlot, claimGate, heartbeatGate, clickGate, peekGate, isManaged,
-  cancel, humanRetry, markSent, dismiss, dismissAllDead, reviveOfflineDead, alreadyDelivered, onThreadMessages, stateView, summary, getItem, maintain, refreshThreadFlags,
+  cancel, humanRetry, markSent, dismiss, dismissAllDead, reviveOfflineDead, slotInUse, queueMarksOf, alreadyDelivered, onThreadMessages, stateView, summary, getItem, maintain, refreshThreadFlags,
   // tests
   _setRandom, _resetCaches, lazyPump, applied
 };

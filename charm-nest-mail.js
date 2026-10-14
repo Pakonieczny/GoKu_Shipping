@@ -63,7 +63,7 @@
     n: -1, since: 0, needFull: true, fullAt: 0, first: true,
     store: new Map(), link: "off", lastOkAt: 0, fails: 0,
     panes: new Set(), lines: new Map(),
-    q: { n: null, items: new Map(), off: 0, gapMs: 0 }       // the inbox's send queue, as far as our messages go (position, wait, reason)
+    q: { n: null, items: new Map(), off: 0, gapMs: 0, held: 0 }       // the inbox's send queue, as far as our messages go (position, wait, reason)
   };
   try { M.pair = JSON.parse(sessionStorage.getItem(PAIR) || "null"); } catch (_) { M.pair = null; }
 
@@ -577,6 +577,8 @@
     const was = M.q.items;
     M.q.items = items;
     if (q.gapMs) M.q.gapMs = q.gapMs;
+    const heldWas = M.q.held; M.q.held = typeof q.held === "number" ? q.held : 0;
+    if (heldWas !== M.q.held) for (const [, v] of items) if (v.wait === "offline" && v.oe) changed.add(v.oe);   // the count in "Delayed" changed
     // the conversations whose message changed place or state are repainted
     for (const [k, v] of items) { const o = was.get(k); if (!o || o.st !== v.st || o.pos !== v.pos || o.wait !== v.wait || o.nb !== v.nb) { if (v.oe) changed.add(v.oe); } }
     for (const [k, o] of was) if (!items.has(k) && o.oe) changed.add(o.oe);
@@ -1236,7 +1238,7 @@
     if (!v || (v.st !== "queued" && v.st !== "claimed" && v.st !== "sending")) return null;
     if (v.st === "sending") return { word: "Sending…", spin: true, tip: "The Etsy helper is sending this message now." };
     // (14 Oct 2026) the Etsy helper's computer is away: saved in the queue, goes by itself when it is back. Quiet: no spinner, a running clock.
-    if (v.wait === "offline") return { word: "Delayed", spin: false, since: v.at || 0, tip: "The connection to Etsy is down for now (the shop computer that sends on Etsy is off or offline). Nothing is lost: this message is saved and goes out by itself, in order, as soon as it is back." };
+    if (v.wait === "offline") return { word: "Delayed", spin: false, since: v.at || 0, more: M.q.held > 0 ? `${M.q.held} ${M.q.held === 1 ? "email" : "emails"} queued` : "", tip: "The connection to Etsy is down for now (the shop computer that sends on Etsy is off or offline). Nothing is lost: this message is saved and goes out by itself, in order, as soon as it is back." };
     if (v.st === "claimed") return v.wait === "helper" ? { word: "Waiting for the Etsy helper", spin: true, tip: "The inbox's Etsy helper (the Chrome extension) has not picked it up yet. It keeps trying." }
       : { word: "Sending next…", spin: true, tip: "It is this message's turn; there is a short pause between messages." };
     const place = v.pos ? "Queued (" + ordinal(v.pos) + ")" : "Queued";
@@ -1251,7 +1253,7 @@
     const o = P.trOpen.get(m.id);
     const tro = o === "__off" ? null : (o || P.lang || null);
     const tr = tro && text.trim() ? trCached(text, tro) : null;
-    let status = "", acts = "", tone = "", clockAt = 0;
+    let status = "", acts = "", tone = "", clockAt = 0, clockMore = "";
     if (side === "us") {
       const st = m.status || "sent";
       // solid slate is what reached the customer; on its way is paler, what did not go is outlined
@@ -1259,11 +1261,11 @@
       let word = STATUS[st] || "", spin = false, tip = "";
       if (st === "waiting" && m.waitReason === "paused") word = "Waits: sending is paused in the inbox";
       if (st === "waiting" && m.waitReason === "retry") word = "Trying again…";
-      if (st === "queued") { const qw = queueWord(m); if (qw) { word = qw.word; spin = qw.spin; tip = qw.tip; clockAt = qw.since || 0; if (clockAt && !clockTimer) { clockMiss = 0; clockTimer = setInterval(clockTick, 1000); } } else if (sbOf(P.rid)) word = "Queued"; }
+      if (st === "queued") { const qw = queueWord(m); if (qw) { word = qw.word; spin = qw.spin; tip = qw.tip; clockAt = qw.since || 0; clockMore = qw.more || ""; if (clockAt && !clockTimer) { clockMiss = 0; clockTimer = setInterval(clockTick, 1000); } } else if (sbOf(P.rid)) word = "Queued"; }
       if (st === "sent") word = m.manualSent ? "Sent by hand" : m.unverified ? "Sent — Etsy did not confirm" : m.delivered ? "Delivered" : "Sent";
       if (st === "attention") tone = " hold";
       if (sbOf(P.rid) && (st === "queued" || st === "sent")) tip = SB_TIP;   // the same words as the real side, with the plain reminder
-      status = `<span class="cmSt ${st === "failed" || st === "local_failed" ? "bad" : st === "sent" ? "ok" : st === "manual" || st === "attention" ? "warn" : "go"}"${tip ? ` title="${E(tip)}"` : ""}>${spin ? `<i class="cmSpin" aria-hidden="true"></i>` : ""}${E(word)}${clockAt ? ` · <span class="cmClock" data-cm-since="${clockAt}">${clockText(clockNow() - clockAt)}</span>` : ""}</span>`;
+      status = `<span class="cmSt ${st === "failed" || st === "local_failed" ? "bad" : st === "sent" ? "ok" : st === "manual" || st === "attention" ? "warn" : "go"}"${tip ? ` title="${E(tip)}"` : ""}>${spin ? `<i class="cmSpin" aria-hidden="true"></i>` : ""}${E(word)}${clockAt ? ` · <span class="cmClock" data-cm-since="${clockAt}">${clockText(clockNow() - clockAt)}</span>${clockMore ? " · " + E(clockMore) : ""}` : ""}</span>`;
       const copyBtn = `<button type="button" class="lnk" data-cm-do="copytext" data-item="${E(m.itemId || "")}">Copy the message</button>`;
       if (st === "attention") acts = `<div class="cmErr">${E(m.error || "The helper clicked Send but Etsy did not confirm it. It may have gone.")}</div><div class="cmActs"><button type="button" class="lnk" data-cm-do="sentByHand" data-item="${E(m.itemId || "")}">It was sent</button><button type="button" class="lnk" data-cm-do="retry" data-maybe="1" data-item="${E(m.itemId || "")}">Send again</button>${copyBtn}<button type="button" class="lnk soft" data-cm-do="cancel" data-item="${E(m.itemId || "")}">Discard</button></div><div class="cmFine">Open the conversation on Etsy first: only send again if the customer did not get it.</div>`;
       else if (st === "failed" || st === "local_failed") acts = `<div class="cmErr">${E(m.error || "It did not go.")}</div><div class="cmActs"><button type="button" class="lnk" data-cm-do="${st === "local_failed" ? "edit" : "retry"}" data-item="${E(m.itemId || m.local && m.local.id || "")}">${st === "local_failed" ? "Edit and send again" : "Try again"}</button>${st === "failed" ? copyBtn : ""}<button type="button" class="lnk soft" data-cm-do="${st === "local_failed" ? "discard" : "cancel"}" data-item="${E(m.itemId || m.local && m.local.id || "")}">Discard</button></div>`;

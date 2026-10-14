@@ -9604,7 +9604,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     const SQ_RECENT_MS = 5 * 60 * 1000;
     /** Has the oldest message waiting in this conversation been in the queue for over 10 minutes? (sendQueueSinceMs is stamped by the server.) */
     const sqDelayed = (t, now) => { const since = Number(t && t.sendQueueSinceMs) || 0; return since > 0 && (now || Date.now()) - since > 10 * 60000; };
-    const SQ = { forThread: null, n: null, items: [], recent: [], offMs: 0, at: 0, timer: 0, busy: false, again: false, running: null, fails: 0, quietUntil: 0, told: new Set(), flagSig: new Map() };
+    const SQ = { held: 0, forThread: null, n: null, items: [], recent: [], offMs: 0, at: 0, timer: 0, busy: false, again: false, running: null, fails: 0, quietUntil: 0, told: new Set(), flagSig: new Map() };
 
     /** Keep what the draft slot says about a thread's latest send. */
     function noteDraftStatus(threadId, d) {
@@ -21348,6 +21348,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       if (q.unchanged) return;
       const before = SQ.forThread === threadId ? SQ.items : [];
       SQ.forThread = threadId; SQ.n = typeof q.n === "number" ? q.n : null;
+      SQ.held = typeof q.held === "number" ? q.held : 0;                // every message waiting for the away helper, in all conversations
       SQ.items = Array.isArray(q.items) ? q.items : []; SQ.recent = Array.isArray(q.recent) ? q.recent : [];
       let finished = false;
       for (const o of before) {
@@ -21455,11 +21456,12 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         if (!el) continue;
         if (!held.length) { if (el.style.display !== "none") { el.style.display = "none"; el.innerHTML = ""; el.dataset.sq = ""; } continue; }
         const oldest = Math.min(...held.map(v => v.at || sqNow()));
-        const sig = held.map(v => v.id).join(",") + "|" + oldest;
+        const total = Math.max(SQ.held || 0, held.length);              // how many emails wait in all (this conversation's own are part of it)
+        const sig = held.map(v => v.id).join(",") + "|" + oldest + "|" + total;
         if (el.dataset.sq !== sig) {
           const n = held.length;
           el.innerHTML = '<i class="material-icons" aria-hidden="true">schedule</i><span>' + (n === 1 ? "Delayed" : n + " messages delayed") + (n === 1 ? " · " : " · oldest ") +
-            '<span class="em-sq-clock" data-sq-since="' + oldest + '">' + sqClock(sqNow() - oldest) + '</span> · ' + (n === 1 ? "sends" : "send") + " automatically when the connection is back</span>";
+            '<span class="em-sq-clock" data-sq-since="' + oldest + '">' + sqClock(sqNow() - oldest) + '</span> · ' + total + (total === 1 ? " email" : " emails") + ' queued · ' + (n === 1 ? "sends" : "send") + " automatically when the connection is back</span>";
           el.title = SQ_DELAY_TIP; el.dataset.sq = sig;
         }
         el.style.display = "flex";

@@ -171,6 +171,74 @@ const seeded = seed => () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t 
   check(sent_once(h, "Old message 742") === 0, "nothing was sent for the hand-sent one");
   h.done();
 
+  // ═══ 7. people keep writing: replies are generated and sent while the helper is away; each joins the queue, in order ═══
+  say("\nWriting goes on while the helper is away");
+  h = boot({ seed: 37 });
+  const admin = require(require("path").join(__dirname, "../../netlify/functions/firebaseAdmin.js"));
+  const inUse = th => admin.firestore().runTransaction(async tx => {
+    const sn = await tx.get(admin.firestore().collection("EtsyMail_Drafts").doc("draft_" + th));
+    return h.Q.slotInUse(tx, sn.exists ? sn.data() : null, th);
+  });
+  ext = new h.Ext("A");
+  h.clock.advance(MIN);
+  h.helperUp = false; h.clock.advance(10 * MIN);
+  const t1 = h.thread(751), t2 = h.thread(752), t3 = h.thread(753);
+  const r1 = await h.send(t1, "First reply to this customer");
+  check(r1.status === 200 && h.item(r1.body.sendId).state === "queued" && h.slot(t1).queueWaiting === true, "a reply is sent while the helper is away: accepted, queued");
+  check((await inUse(t1)) === false, "its conversation's draft slot is NOT in use (nothing was handed over), so an AI draft or a link message may be written there");
+  const r2 = await h.send(t1, "Second reply, written afterwards");
+  check(r2.status === 200 && !r2.body.deduped && h.item(r2.body.sendId).state === "queued" && r2.body.sendId !== r1.body.sendId, "a second reply in the SAME conversation is accepted too (it queues behind the first)");
+  const r3 = await h.send(t2, "A reply in another conversation");
+  const r4 = await h.send(t3, "And one more");
+  check(r3.status === 200 && r4.status === 200, "replies in other conversations are accepted");
+  const auto = await h.send(t1, "An automatic reply on top of a person's", { origin: "auto", aiMeta: { generatedByAI: true, model: "m" } });
+  check(auto.status === 409 && auto.body.errorCode === "DRAFT_BUSY", "an AUTOMATIC reply is still never queued on top of a person's reply in the same conversation (409, as before)");
+  let view7 = (await h.get("queue_state", { threadId: t2, open: "1" })).body.queue;
+  check(view7.held === 4 && view7.items.length === 1, "the page is told how many emails wait in all (" + view7.held + "), whatever the conversation it asks about");
+  // the helper comes back and settles; then everything goes, one at a time, each conversation in order
+  h.helperUp = true; await ext.poll(); h.clock.advance(MIN); await h.Q.maintain();
+  h.clock.advance(MIN); await ext.poll();
+  h.clock.advance(5000); await h.Q.maintain();
+  check(["claimed", "sending"].includes(h.item(r1.body.sendId).state), "the first reply is handed over (" + h.item(r1.body.sendId).state + ")");
+  check((await inUse(t1)) === "queued", "now that it is in flight the slot IS in use: nothing may be written over it");
+  const marks = h.Q.queueMarksOf({ queueWaiting: true, queueWaitingOrigin: "manual", queueWaitingSendId: "q_x", queueRecentFp: "f", queueRecentSendId: "q_y", queueRecentAtMs: 5, text: "x" });
+  check(marks.queueWaiting === true && marks.queueWaitingOrigin === "manual" && marks.queueRecentFp === "f" && marks.text === undefined && Object.keys(h.Q.queueMarksOf({ text: "x" })).length === 0, "a writer that replaces the slot keeps the queue's marks on it (and only those)");
+  const sent7 = [];
+  for (let g = 0; g < 300 && [r1, r2, r3, r4].some(r => h.item(r.body.sendId).state !== "confirmed"); g++) {
+    await h.Q.pump(); const b = (h.sentToEtsy || []).length; await ext.poll();
+    if ((h.sentToEtsy || []).length > b) sent7.push(h.sentToEtsy[h.sentToEtsy.length - 1].text);
+    h.clock.advance(3000);
+  }
+  check(sent7.length === 4 && sent7.indexOf("First reply to this customer") < sent7.indexOf("Second reply, written afterwards"), "all four replies went out, once each, the two in one conversation in the order written");
+  check(sent7[0] === "First reply to this customer", "and the oldest message went first");
+  h.done();
+
+  // ═══ 8. a page that shows "waiting for the helper" is told the moment the helper is judged away ═══
+  say("\nThe page is told when the helper goes away");
+  h = boot({ seed: 38 });
+  ext = new h.Ext("A");
+  h.clock.advance(MIN);
+  const t8 = h.thread(761);
+  const r8 = await h.send(t8, "Sent while the helper was still there");
+  let v8 = (await h.get("queue_state", { threadId: t8, open: "1" })).body.queue;
+  check(v8.items[0].wait !== "offline" && v8.held === 0, "the helper is there: not delayed, none held");
+  h.helperUp = false;
+  h.clock.advance(3 * MIN); await h.Q.maintain();                 // not picked up: back in the queue (the helper has not been silent for 5 minutes yet)
+  h.clock.advance(3 * MIN);
+  const before8 = h.rev();
+  h.clock.advance(MIN); await h.Q.maintain();                     // silent for 7 minutes: the queue calls it away
+  check(h.lease().linkState === "holding" && h.rev() > before8, "when the queue first judges the helper away the revision moves (" + before8 + " -> " + h.rev() + "), so an open page asks again");
+  v8 = (await h.get("queue_state", { threadId: t8, open: "1", n: String(before8) })).body.queue;
+  check(!v8.unchanged && v8.items[0].wait === "offline" && v8.held === 1, "and the page's next look says delayed, 1 email held");
+  h.done();
+
+  // the writers that put an AI draft, a sales-agent draft or a link message in a conversation's slot all ask the queue first
+  const fsx = require("fs"), pth = require("path");
+  for (const f of ["etsyMailDraftReply.js", "etsyMailSalesAgent-background.js", "etsyMailListingCreator-background.js"]) {
+    const src = fsx.readFileSync(pth.join(__dirname, "../../netlify/functions", f), "utf8");
+    check(/_etsyMailSendQueue"\)\.slotInUse\(tx,/.test(src) && !/\.queueWaiting === true\) return/.test(src), f + " asks the queue whether the slot is really in use (and no longer refuses for any waiting reply)");
+  }
+
   R.finish("send-queue-outage");
 })().catch(e => { console.error(e); process.exit(1); });
 

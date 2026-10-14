@@ -40,6 +40,7 @@ const baseMessages = id => [
 const world = {};
 for (const id of Object.values(IDS)) world[id] = { messages: baseMessages(id), qn: 1, items: [], recent: [] };
 const calls = [];
+const totals = { held: 5 };          // every email waiting for the helper, in all conversations (the server counts them)
 const qitem = (id, sendId, o) => Object.assign({ id: sendId, t: id, st: "queued", at: HELD_AT, src: "inbox", by: "Paul", tp: "", att: 0, n: 0, open: true, wait: "offline", pos: 1 }, o || {});
 // the link monitor's judgement, as the server now writes it while the helper is away: green, with calm "wait" lines in the details
 let linkDoc = () => ({
@@ -70,7 +71,7 @@ function fake(method, url, body) {
     const w = world[q.threadId];
     if (!w) return { ok: true, queue: { n: 0, now: Date.now(), items: [], recent: [] } };
     if (q.n !== undefined && q.n !== "" && Number(q.n) === w.qn) return { ok: true, queue: { n: w.qn, unchanged: true, now: Date.now() } };
-    return { ok: true, queue: { n: w.qn, now: Date.now(), gapMs: 12000, helperSeenAtMs: Date.now() - 2 * 3600e3, offline: true, recent: w.recent, items: w.items } };
+    return { ok: true, queue: { n: w.qn, now: Date.now(), gapMs: 12000, helperSeenAtMs: Date.now() - 2 * 3600e3, offline: true, held: totals.held, recent: w.recent, items: w.items } };
   }
   if (name === "etsyMailDraftSend" && method === "GET" && q.op === "status") return { __status: 404, error: "Draft not found" };
   return { ok: true };
@@ -147,7 +148,7 @@ const server = http.createServer((req, res) => {
       const { ctx, page, errors } = await open(false);
       await pick(page, id, false);
       let n = await noteUntil(page, false, x => !!x, 12000);
-      check(n && /^Delayed · \d+:\d\d:\d\d · sends automatically when the connection is back$/.test(n.text), "the thread says, in one short line, that the message is delayed and sends by itself: \"" + (n && n.text) + "\"");
+      check(n && /^Delayed · \d+:\d\d:\d\d · 5 emails queued · sends automatically when the connection is back$/.test(n.text), "the thread says, in one short line, that the message is delayed, how many emails are queued in all, and that it sends by itself: \"" + (n && n.text) + "\"");
       check(n && /^2:1[45]:\d\d$/.test(n.clock), "the clock runs from when the message was written (2 h 14 min ago): " + (n && n.clock));
       const c1 = n && secs(n.clock);
       if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT + "-desktop.png" });   // (a picture of the thread for a person to look at)
@@ -197,8 +198,21 @@ const server = http.createServer((req, res) => {
       const { ctx, page, errors } = await open(false);
       await pick(page, id, false);
       const n = await noteUntil(page, false, x => !!x, 12000);
-      check(n && /^2 messages delayed · oldest \d+:\d\d:\d\d · send automatically when the connection is back$/.test(n.text) && /^2:1[45]:\d\d$/.test(n.clock), "two waiting: one line, \"2 messages delayed · oldest 2:14:xx\": \"" + (n && n.text) + "\"");
+      check(n && /^2 messages delayed · oldest \d+:\d\d:\d\d · 5 emails queued · send automatically when the connection is back$/.test(n.text) && /^2:1[45]:\d\d$/.test(n.clock), "two waiting: one line, \"2 messages delayed · oldest 2:14:xx\": \"" + (n && n.text) + "\"");
       check(errors.length === 0, "no page errors (two messages)");
+      await ctx.close();
+    }
+
+    // ── 2b. one email in all: "1 email queued" ──
+    {
+      const id = IDS.B;
+      totals.held = 1;
+      setQueue(id, [qitem(id, "q_3002", { tp: "First", at: HELD_AT, pos: 1 })]);
+      const { ctx, page } = await open(false);
+      await pick(page, id, false);
+      const n = await noteUntil(page, false, x => !!x, 12000);
+      check(n && /^Delayed · \d+:\d\d:\d\d · 1 email queued · sends automatically/.test(n.text), "one email in all: \"1 email queued\" (singular): \"" + (n && n.text) + "\"");
+      totals.held = 5;
       await ctx.close();
     }
 
@@ -222,7 +236,7 @@ const server = http.createServer((req, res) => {
       const { ctx, page, errors } = await open(true);
       await pick(page, id, true);
       let n = await noteUntil(page, true, x => !!x, 12000);
-      check(n && /^Delayed · \d+:\d\d:\d\d · sends automatically when the connection is back$/.test(n.text), "phone: the same one line: \"" + (n && n.text) + "\"");
+      check(n && /^Delayed · \d+:\d\d:\d\d · 5 emails queued · sends automatically when the connection is back$/.test(n.text), "phone: the same one line: \"" + (n && n.text) + "\"");
       const c1 = n && secs(n.clock);
       if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT + "-phone.png" });
       await page.waitForTimeout(2600);

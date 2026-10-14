@@ -1282,9 +1282,8 @@ async function markManualSuccess({ threadId, listingId, listingUrl, generated, i
     db.runTransaction(async (tx) => {
       const draftRef = db.collection(DRAFTS_COLL).doc(draftId);
       const cur = await tx.get(draftRef);
-      const curStatus = cur.exists ? (cur.data() || {}).status : null;
-      if (curStatus === "queued" || curStatus === "sending") return false;
-      if (cur.exists && (cur.data() || {}).queueWaiting === true) return false;       // MAILQUEUE: a reply waiting its turn in the send queue
+      // a reply on the slot or in flight is kept; one that only waits in the queue for an away Etsy helper is not on the slot (the new draft queues behind it)
+      if (await require("./_etsyMailSendQueue").slotInUse(tx, cur.exists ? cur.data() : null, threadId)) return false;
       tx.set(draftRef, {
       draftId,
       threadId,
