@@ -3008,7 +3008,8 @@ async function op_aliasGet(b = {}) {
   // the sandbox's old copy never hides a pick made since (the SKU answers sku / v / huggie, bySku and pairBySku follow the document's own update time)
   own.forEach(d => {
     const mine = d.data(), was = out[d.id]; if (!was) { out[d.id] = mine; return; }
-    const sharedLater = (ms(was.updatedAt) || 0) > (ms(mine.updatedAt) || 0), a = sharedLater ? mine : was, z = sharedLater ? was : mine;   // (z = the later write of the two)
+    // (HUGTWIN, 14 Oct 2026: the time of the sandbox copy's ANSWERS is `answeredAt` when listingKindPut carried it, else its update time: a listing-kind write bumps updatedAt and must not make an old answer look newer than a pick)
+    const sharedLater = (ms(was.updatedAt) || 0) > (ms(mine.answeredAt) || ms(mine.updatedAt) || 0), a = sharedLater ? mine : was, z = sharedLater ? was : mine;   // (z = the later write of the two)
     const next = Object.assign({}, was, mine, was.bySku || mine.bySku ? { bySku: Object.assign({}, a.bySku, z.bySku) } : {}, was.pairBySku || mine.pairBySku ? { pairBySku: Object.assign({}, a.pairBySku, z.pairBySku) } : {}, was.byVia || mine.byVia ? { byVia: Object.assign({}, a.byVia, z.byVia) } : {});
     if (sharedLater) { for (const k of ["sku", "v", "huggie"]) { if (was[k] !== undefined) next[k] = was[k]; else if (k === "v" && was.sku !== undefined) delete next.v; } }
     out[d.id] = next;
@@ -3066,8 +3067,12 @@ async function op_listingKindPut(b = {}) {
   const kind = b.kind == null || b.kind === "" ? null : String(b.kind);
   if (kind !== null && !LISTING_KINDS.includes(kind)) return { error: `kind must be one of ${LISTING_KINDS.join(", ")}, or empty to remove it` };
   const ref = db.collection(PREFIX + ALIASES).doc(lid);
-  if (kind === null) { if (!(await ref.get()).exists) return { ok: true, listingId: lid, kind: null }; await ref.set({ listingKind: FV.delete(), updatedAt: FV.serverTimestamp() }, { merge: true }); return { ok: true, listingId: lid, kind: null }; }
-  await ref.set({ listingId: lid, listingKind: { kind, by: str(b.by || "operator", 80), at: Date.now(), title: str(b.title, 200), note: str(b.note, 200) }, updatedAt: FV.serverTimestamp() }, { merge: true });
+  // HUGTWIN (14 Oct 2026): this write bumps updatedAt (the maps' signature reads it), which is not the time of any ANSWER the sandbox's own copy holds from before REVLINK (bySku, sku, huggie, pairBySku, byVia).
+  // aliasGet decides the later write of a key by that time, so the old answers' time is kept as answeredAt, once: a listing-kind word never makes a stale sandbox answer newer than a person's pick in the shared store.
+  const snap = PREFIX || kind === null ? await ref.get() : null, was = snap && snap.exists ? snap.data() || {} : null;   // (production sets a kind with no read, as before)
+  const keep = PREFIX && was && !was.answeredAt && was.updatedAt && ["bySku", "sku", "huggie", "pairBySku", "byVia"].some(k => was[k] !== undefined) ? { answeredAt: was.updatedAt } : {};
+  if (kind === null) { if (!snap.exists) return { ok: true, listingId: lid, kind: null }; await ref.set(Object.assign({ listingKind: FV.delete(), updatedAt: FV.serverTimestamp() }, keep), { merge: true }); return { ok: true, listingId: lid, kind: null }; }
+  await ref.set(Object.assign({ listingId: lid, listingKind: { kind, by: str(b.by || "operator", 80), at: Date.now(), title: str(b.title, 200), note: str(b.note, 200) }, updatedAt: FV.serverTimestamp() }, keep), { merge: true });
   return { ok: true, listingId: lid, kind };
 }
 async function op_noDesignGet(b = {}) {
