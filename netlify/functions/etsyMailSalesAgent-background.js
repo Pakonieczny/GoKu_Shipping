@@ -4436,9 +4436,9 @@ ${validationResult.message}
     const draftRefForWrite = db.collection(DRAFTS_COLL).doc(draftId);
     const draftSlotBusy = await db.runTransaction(async (tx) => {
       const cur = await tx.get(draftRefForWrite);
-      const curStatus = cur.exists ? (cur.data() || {}).status : null;
-      if (curStatus === "queued" || curStatus === "sending") return curStatus;
-      if (cur.exists && (cur.data() || {}).queueWaiting === true) return "queued";     // MAILQUEUE: a reply waiting its turn in the send queue
+      // a reply on the slot or in flight is kept; one that only waits in the queue for an away Etsy helper is not on the slot (the new draft queues behind it)
+      const _inUse = await require("./_etsyMailSendQueue").slotInUse(tx, cur.exists ? cur.data() : null, threadId);
+      if (_inUse) return _inUse;
       tx.set(draftRefForWrite, {
       draftId,
       threadId,

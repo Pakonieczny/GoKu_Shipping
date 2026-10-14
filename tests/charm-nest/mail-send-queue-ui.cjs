@@ -150,11 +150,11 @@ function server() {
       check(m.word === "Waiting for the Etsy helper" && m.spin && /nothing is lost/.test(m.tip), "no helper: \"Waiting for the Etsy helper\", spinner, and \"nothing is lost\"");
 
       // the helper's computer is away (14 Oct 2026): a quiet "Delayed" with a clock that runs from when the message was written; no spinner, no alarm
-      st.queue = { n: 6, items: [qitem({ st: "queued", wait: "offline", at: Date.now() - (2 * 3600e3 + 14 * 60e3 + 5e3), pos: 1 })] }; st.v++;
+      st.queue = { n: 6, held: 5, items: [qitem({ st: "queued", wait: "offline", at: Date.now() - (2 * 3600e3 + 14 * 60e3 + 5e3), pos: 1 })] }; st.v++;
       await kick(page);
       await until(page, () => /Delayed/.test((document.querySelector("dialog .cmMsg.us .cmSt") || {}).textContent || ""));
       m = await mine(page);
-      check(/^Delayed · 2:1[45]:\d\d$/.test(m.word) && !m.spin && /saved/.test(m.tip) && /nothing is lost/i.test(m.tip) && !/helper/i.test(m.word), "the computer is away: \"Delayed · 2:14:xx\", no spinner, and the tooltip says it is saved and goes by itself: " + m.word);
+      check(/^Delayed · 2:1[45]:\d\d · 5 emails queued$/.test(m.word) && !m.spin && /saved/.test(m.tip) && /nothing is lost/i.test(m.tip) && !/helper/i.test(m.word), "the computer is away: \"Delayed · 2:14:xx · 5 emails queued\", no spinner, and the tooltip says it is saved and goes by itself: " + m.word);
       const c1 = await page.evaluate(() => document.querySelector("dialog .cmMsg.us [data-cm-since]").textContent);
       await new Promise(r => setTimeout(r, 2600));
       const c2 = await page.evaluate(() => document.querySelector("dialog .cmMsg.us [data-cm-since]").textContent);
