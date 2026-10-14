@@ -242,10 +242,32 @@
       selector: o.selector || 'img[data-pic]', concurrency: o.concurrency || 4,
       keyOf: img => img.dataset.picKey || '',
       produce: img => fetchDataUrl(img.dataset.pic),
-      paint: (img, url) => { img.src = url; },
-      fail: img => { if (img.dataset.pic) img.src = img.dataset.pic; }
+      paint: (img, url) => { img.src = url; img.dataset.picDone = '1'; },
+      fail: img => { img.dataset.picTry = String((+img.dataset.picTry || 0) + 1); if (img.dataset.pic) img.src = img.dataset.pic; }   // (a failed read is tried again by rescan() when the picture is on screen again)
     });
   }
+  /** PICBACK (Paul, 14 Oct 2026: "These thumbnails do not reload when navigating away from the tab"): a picture whose read did not finish (the tab was left, the page was hidden or throttled, the read failed) stayed an
+   *  empty box for good, because its loader had let it go. This asks again for every picture that is on screen, still not drawn, and not tried more than 3 times. It is called when the page comes back, the window
+   *  is focused and a moment after any click (a tab was pressed), and does nothing when every picture is drawn (one query). */
+  function rescan(rootEl) {
+    try {
+      const doc = root.document; if (!doc || doc.visibilityState === 'hidden') return 0;
+      const host = rootEl || doc.body, imgs = [...host.querySelectorAll('img[data-pic]:not([data-pic-done])')].filter(i => i.isConnected && i.getClientRects().length && !(i.complete && i.naturalWidth > 0) && (+i.dataset.picTry || 0) < 3);
+      if (!imgs.length) return 0;
+      for (const i of imgs) { i.removeAttribute('src'); i.dataset.picRetry = '1'; }
+      mountImages(host, { selector: 'img[data-pic][data-pic-retry]' });
+      for (const i of imgs) i.removeAttribute('data-pic-retry');
+      return imgs.length;
+    } catch (_) { return 0; }
+  }
+  try {
+    const d = root.document; let tm = 0; const later = ms => { clearTimeout(tm); tm = setTimeout(() => rescan(), ms); };
+    if (d && d.addEventListener) {
+      d.addEventListener('visibilitychange', () => { if (d.visibilityState === 'visible') later(150); });
+      root.addEventListener('focus', () => later(150)); root.addEventListener('pageshow', () => later(150));
+      d.addEventListener('click', () => later(600), true);
+    }
+  } catch (_) { /* the pictures still load as they did */ }
 
   async function stats() {
     const db = await open(); if (!db) return { entries: 0, bytes: 0, mem: mem.size, disk: false };
@@ -256,5 +278,5 @@
     mem.clear(); const db = await open(); if (!db) return;
     await new Promise(res => { try { const t = tx(db, [STORE, INDEX], 'readwrite'); t.objectStore(STORE).clear(); t.objectStore(INDEX).clear(); t.oncomplete = t.onerror = t.onabort = () => res(); } catch (_) { res(); } });
   }
-  return { designKey, weeklyKey, drawingVersion, lookup, make, picture, peek, fetchDataUrl, mount, mountImages, trim, stats, clear, LIMITS, _resetVersion: () => { versionCache = null; }, _forget: () => mem.clear() };
+  return { designKey, weeklyKey, drawingVersion, lookup, make, picture, peek, fetchDataUrl, mount, mountImages, rescan, trim, stats, clear, LIMITS, _resetVersion: () => { versionCache = null; }, _forget: () => mem.clear() };
 });
