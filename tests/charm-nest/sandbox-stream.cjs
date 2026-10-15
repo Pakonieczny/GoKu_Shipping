@@ -214,7 +214,8 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   // ── isolation: nothing outside the sandbox's own records, files and emulator ──
   const changed = [...st.docs.entries()].filter(([k, v]) => before.get(k) !== JSON.stringify(v)).map(([k]) => k);
   // Claude's job queue (Charm_Nest_Agent, charmnest/agent/) is shared scratch, not an order record, and predates the stream
-  const outside = changed.filter(k => !k.startsWith('Sandbox_') && !k.startsWith('Charm_Sandbox/') && !k.startsWith('Charm_Nest_Agent/'));
+  // Etsy's public listing photos are prepared into one cache every workspace shares, with the Etsy call meter beside it (op listingPhotos { prepare }: "Public image metadata is shared across workspaces"): shared by design, no order data
+  const outside = changed.filter(k => !k.startsWith('Sandbox_') && !k.startsWith('Charm_Sandbox/') && !k.startsWith('Charm_Nest_Agent/') && !k.startsWith('Etsy_Listing_Image_Cache/') && !k.startsWith('EtsyApi_Config/'));
   assert.deepStrictEqual(outside, [], 'every record written is a sandbox record');
   for (const c of PROD) assert.strictEqual(st.list(c).length, prodBefore[c], `production collection untouched: ${c}`);
   const newBlobs = [...st.blobs.keys()].filter(k => !blobsBefore.has(k)), stray = newBlobs.filter(k => !k.startsWith('charmnest/sandbox/') && !k.startsWith('charmnest/agent/'));
@@ -243,6 +244,8 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   await page.waitForTimeout(4000);
   assert(await page.evaluate(() => Sandbox.held() && !Sandbox.stream() && !SimClock.on() && !B.orders.rows.length), 'after the reset the sandbox waits for Start');
   assert(!stream() && !st.list('Sandbox_Charm_Nest_Arrivals').length, 'and no stream and no arrival came by itself');
+  // a reset puts the saved seed back to none (Paul, 10 Oct: a run after a wipe is a new one); typing the recorded seed again in Settings is how a replay is asked for
+  await page.evaluate(sd => { CN.S.settings.sandboxSeed = sd; CN.saveSettings(); }, seed);
   await page.evaluate(() => CN.setMode('orders')); await page.click('[data-sb-start]');
   let replay = [];
   for (const t = Date.now(); Date.now() - t < 60000;) { replay = await rows(); const have = new Set(replay.map(r => r.rid)), s = stream(); if (s && s.tick >= 1 && first.every(id => have.has(id))) break; await page.waitForTimeout(400); }
