@@ -183,6 +183,11 @@ const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 1000;
 const PAGE_SIZE       = 100;
 const MAX_PAGES       = 25;  // safety cap per cron run — 30s budget allows ~10 pages typically
 const FETCH_TIMEOUT_MS = 20 * 1000;
+// The scheduled function lives 30 s and saves its watermark last. A catch-up that ran out of time saved nothing and began again from the
+// same watermark at every tick (ADVPULL, 15 Oct 2026), so no page is started after RUN_BUDGET_MS, a page waits no longer than what is
+// left until RUN_END_MS, and the customer rebuild stops there too: what was read is kept and the next run goes on from it.
+const RUN_BUDGET_MS = 18 * 1000;
+const RUN_END_MS = 25 * 1000;
 const RECENT_RECEIPTS_CAP = 10;
 const CUSTOMER_REBUILD_LIMIT_PER_RUN = 100;
 
@@ -197,14 +202,14 @@ function moneyAmt(m) {
 // Unlike sync-background's getReceiptsPage, this one does NOT recursively
 // retry on 429 — scheduled-function budget is too tight for sleeping.
 // Returns a structured outcome object so the caller can decide what to do.
-async function fetchOnePage(accessToken, params) {
+async function fetchOnePage(accessToken, params, timeoutMs) {
   const qs = new URLSearchParams(Object.fromEntries(
     Object.entries(params).filter(([_, v]) => v != null && v !== "")
   )).toString();
   const url = `https://api.etsy.com/v3/application/shops/${SHOP_ID}/receipts?${qs}`;
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs || FETCH_TIMEOUT_MS);
 
   const _meterToken = meter.bump("mirror.receiptsPage");
 
@@ -226,9 +231,11 @@ async function fetchOnePage(accessToken, params) {
     }
     return { ok: false, kind: "network", message: err.message };
   }
-  clearTimeout(timeoutId);
   _meterToken.fromHttp(res.status);
 
+  // the clock runs until the body is read too: headers that came and a body that never ends must not hold the run (and an unreadable one
+  // is a failed page, not an end of the list)
+  try {
   if (res.status === 429) {
     const retryAfter = parseInt(res.headers.get("retry-after") || "5", 10);
     const bodyText = await res.text().catch(() => "");
@@ -253,8 +260,15 @@ async function fetchOnePage(accessToken, params) {
     return { ok: false, kind: "http_error", status: res.status, message: text.slice(0, 300) };
   }
 
-  const json = await res.json();
+  let json;
+  try { json = await res.json(); }
+  catch (err) {
+    if (controller.signal.aborted) return { ok: false, kind: "timeout", message: "Etsy body timeout" };
+    return { ok: false, kind: "bad_body", message: "unreadable page: " + String(err && err.message || err).slice(0, 200) };
+  }
+  if (!json || !Array.isArray(json.results)) return { ok: false, kind: "bad_body", message: "the page has no list of receipts" };
   return { ok: true, data: json };
+  } finally { clearTimeout(timeoutId); }
 }
 
 // ─── Receipt → mirror doc transform ────────────────────────────────────────
@@ -419,7 +433,7 @@ async function rebuildCustomerFromMirror(buyerUserId) {
   };
 }
 
-async function rebuildCustomersForChangedBuyers(buyerIds) {
+async function rebuildCustomersForChangedBuyers(buyerIds, startedMs) {
   const ids = Array.from(new Set(Array.from(buyerIds || []).filter(Boolean).map(String)));
   const selected = ids.slice(0, CUSTOMER_REBUILD_LIMIT_PER_RUN);
   const skipped = Math.max(0, ids.length - selected.length);
@@ -433,6 +447,7 @@ async function rebuildCustomersForChangedBuyers(buyerIds) {
   };
 
   for (const buyerId of selected) {
+    if (startedMs && Date.now() - startedMs > RUN_END_MS) { result.skipped += 1; continue; }   // out of time: the state below is saved first
     try {
       const out = await rebuildCustomerFromMirror(buyerId);
       result.updated += 1;
@@ -634,6 +649,7 @@ exports.handler = meter.wrapHandler(async () => {
   let offset = 0;
   let outcome = "ok";
   let lastErrorMsg = null;
+  let cutByClock = false;   // the run stopped starting pages for want of time: more receipts wait for the next run
   const changedBuyerIds = new Set();
   const etsyCancels = { created: 0, noted: 0, errors: 0, off: false };
   let etsyCancelsMs = 0;   // what the cancel hook has taken of this run (CANCEL_HOOK_MS at most, all pages together)
@@ -663,7 +679,9 @@ exports.handler = meter.wrapHandler(async () => {
       min_last_modified : minLastModified
     };
 
-    const result = await fetchOnePage(accessToken, params);
+    const elapsed = Date.now() - invocationStartMs;
+    if (page > 0 && elapsed > RUN_BUDGET_MS) { cutByClock = true; break; }   // outcome stays ok, and no error is told: the pages read are kept and the next run goes on
+    const result = await fetchOnePage(accessToken, params, Math.max(3000, Math.min(FETCH_TIMEOUT_MS, RUN_END_MS - elapsed)));
     pagesFetched++;
 
     if (!result.ok) {
@@ -753,7 +771,7 @@ exports.handler = meter.wrapHandler(async () => {
   // min_last_modified is inclusive, so without the +1 we'd re-fetch
   // every newest receipt indefinitely.
   if (outcome === "ok" && changedBuyerIds.size) {
-    customerRebuild = await rebuildCustomersForChangedBuyers(changedBuyerIds);
+    customerRebuild = await rebuildCustomersForChangedBuyers(changedBuyerIds, invocationStartMs);
     if (customerRebuild.errors.length) {
       lastErrorMsg = `customer_rebuild_partial_errors=${customerRebuild.errors.length}`;
       console.warn("[mirror-cron] customer rebuild had partial errors:", customerRebuild.errors.slice(0, 5));
@@ -785,6 +803,7 @@ exports.handler = meter.wrapHandler(async () => {
     lastSyncReceiptsCount : receiptsProcessed,
     lastSyncOutcome       : outcome,
     lastSyncErrorMsg      : lastErrorMsg,
+    lastSyncCutByClock    : cutByClock,
     lastSyncElapsedMs     : elapsedMs,
     // Randomized eligibility window — next run no sooner than this.
     // See Gate 1.5 in this file for the consuming logic.
@@ -821,7 +840,7 @@ exports.handler = meter.wrapHandler(async () => {
     endedAt           : FV.serverTimestamp()
   });
 
-  console.log(`[mirror-cron] outcome=${outcome} pages=${pagesFetched} receipts=${receiptsProcessed} elapsed=${elapsedMs}ms newWatermark=${nextWatermark}`);
+  console.log(`[mirror-cron] outcome=${outcome} pages=${pagesFetched} receipts=${receiptsProcessed} elapsed=${elapsedMs}ms newWatermark=${nextWatermark}${cutByClock ? " (stopped for time: more receipts wait for the next run)" : ""}`);
 
   return {
     statusCode: 200,

@@ -37,7 +37,8 @@ const LIMIT_DOC = "config/charmNestSandboxPull";   // the setting: ONE document,
 const limitRef = () => db.collection("config").doc("charmNestSandboxPull");
 const MAX_PULLS = 6;              // sandbox starts per UTC day (Etsy's day): 6 x 3 = 18 calls at 250
 const MAX_CALLS = 20;             // and never more than this many sandbox receipt calls in a day
-const CLAIM_MS = 90000;           // a pull that did not finish releases its claim after this
+const CLAIM_MS = 30000;           // a pull that did not finish releases its claim after this: a function lives 10 s (26 s at most), and the page asks the same start again for about 35 s.
+                                  // (ADVPULL, 15 Oct 2026: it was 90 s, so a pull cut off at the limit made the page give up on a start the cloud would have taken over)
 const FETCH_MS = 8000;            // one Etsy call may take this long (WORK_MS below is what really bounds it: every page is asked at once)
 const WORK_MS = 8300;             // the Etsy part of a pull, counted from the moment the pull began (the sweep of the old files, the token and every page are inside it). The function's own limit is 10 s, and the file,
                                   // the pointer, the ledger and the stream are written after it; a pull cut off mid-way leaves a claim. (SBXPULL, 15 Oct 2026: the old clock started AFTER the clean-up and gave page one 6 s and the other pages
@@ -192,8 +193,15 @@ async function readNewest(deps, tally, now, want, plan, deadline, sweeping) {
   const due = await tokenDue(now);
   if (!due.seeded) throw new EtsyError("token", "The server's Etsy sign-in is not set up, so the sandbox is empty.");
   let token;
-  try { token = await deps.token(); tally.refreshes = due.due ? 1 : 0; }
-  catch (e) { tally.refreshes = due.due ? 1 : 0; console.warn("[sandboxPull] Etsy token not available:", (e && e.message || "").slice(0, 200)); throw new EtsyError("token", "The server's Etsy sign-in is not working, so the sandbox is empty."); }
+  // the sign-in answers inside the same clock: Etsy's token endpoint that never answers must not hold the pull until the platform cuts the function (ADVPULL, 15 Oct 2026); it gets half of what is left
+  const signIn = () => { let timer; const late = new Promise((_, no) => { timer = setTimeout(() => no(Object.assign(new Error("no answer in time"), { late: true })), Math.max(1000, (deadline - Date.now()) / 2)); });
+    return Promise.race([Promise.resolve().then(() => deps.token()), late]).finally(() => clearTimeout(timer)); };
+  try { token = await signIn(); tally.refreshes = due.due ? 1 : 0; }
+  catch (e) {
+    tally.refreshes = due.due ? 1 : 0; console.warn("[sandboxPull] Etsy token not available:", (e && e.message || "").slice(0, 200));
+    if (e && e.late) throw new EtsyError("etsy", "Etsy's sign-in did not answer in time, so the sandbox is empty. Press Start to try again.");
+    throw new EtsyError("token", "The server's Etsy sign-in is not working, so the sandbox is empty.");
+  }
   const got = await Promise.allSettled(plan.map((p, i) => page(deps.fetch, deps.meter, env, token, p, tally, deadline, { k: i + 1, n: plan.length, t0: now })));
   const bad = got.filter(r => r.status === "rejected").map(r => r.reason);
   if (bad.length) throw bad.find(e => e instanceof EtsyError && e.reason !== "etsy") || bad[0];   // a sign-in or limit answer says more than a slow page

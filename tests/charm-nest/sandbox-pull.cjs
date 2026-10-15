@@ -64,7 +64,7 @@ const etsy = { calls: [], oauth: 0, failAt: null, throwAt: null, status: null, n
 const res = (status, body, headers = {}) => ({ ok: status >= 200 && status < 300, status, headers: { get: k => headers[String(k).toLowerCase()] }, json: async () => body, text: async () => (typeof body === 'string' ? body : JSON.stringify(body)) });
 async function fakeFetch(url, init = {}) {
   const u = new URL(url);
-  if (u.pathname === '/v3/public/oauth/token') { etsy.oauth++; return res(200, { access_token: 'tok-refreshed', refresh_token: 'ref-2', expires_in: 3600 }); }
+  if (u.pathname === '/v3/public/oauth/token') { etsy.oauth++; if (etsy.oauthHang) return new Promise(() => {}); return res(200, { access_token: 'tok-refreshed', refresh_token: 'ref-2', expires_in: 3600 }); }
   const m = u.pathname.match(/^\/v3\/application\/shops\/987654\/receipts$/);
   etsy.calls.push({ path: u.pathname, q: Object.fromEntries(u.searchParams), auth: init.headers && init.headers.Authorization, key: init.headers && init.headers['x-api-key'] });
   if (!m) return res(404, 'unexpected request ' + u.pathname);
@@ -97,7 +97,7 @@ const pullOp = (startId, extra) => post(Object.assign({ op: 'sandboxPullOrders',
 const listed = async () => (await emulator.handler({ httpMethod: 'GET', queryStringParameters: { fn: 'listOpenOrders' } }).then(r => JSON.parse(r.body))).results;
 const emu = q => emulator.handler({ httpMethod: 'GET', queryStringParameters: q }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body) }));
 const setToken = (ms, name = 'tok-fresh') => store.set('config/etsyOauth', { access_token: name, refresh_token: 'ref-1', expires_at_ms: Date.now() + ms });
-const resetEtsy = () => { etsy.calls.length = 0; etsy.oauth = 0; etsy.failAt = null; etsy.throwAt = null; etsy.status = null; etsy.statusBody = null; etsy.delay = null; etsy.cutAt = null; etsy.badAt = null; };
+const resetEtsy = () => { etsy.calls.length = 0; etsy.oauth = 0; etsy.failAt = null; etsy.throwAt = null; etsy.status = null; etsy.statusBody = null; etsy.delay = null; etsy.cutAt = null; etsy.badAt = null; etsy.oauthHang = false; };
 const wipe = () => { store.delete('Charm_Sandbox/current'); store.delete('Charm_Sandbox/stream'); for (const k of [...blobs.keys()]) if (k.startsWith('charmnest/sandbox/') && !k.startsWith('charmnest/sandbox/master/')) blobs.delete(k); };   // (what Reset does to this family; the budget stays)
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const empty = () => !store.has('Charm_Sandbox/current') && !store.has('Charm_Sandbox/stream') && ![...blobs.keys()].some(k => k.startsWith('charmnest/sandbox/orders-pull/'));
@@ -172,7 +172,10 @@ const openOf = list => list.filter(r => r.is_paid !== false && !r.is_shipped && 
   // ── a pull in flight (a live claim) is not doubled, and what is there is kept; a stale claim is taken over ──
   store.set('Charm_Sandbox/pulls', Object.assign({}, ledger(), { claim: { startId: 'start-0002-bbbb', at: Date.now() } }));
   r = await pullOp('start-0002-bbbb'); assert(r.status === 409 && r.body.reason === 'busy' && r.body.empty === false && /already pulling/.test(r.body.error), 'busy: ' + JSON.stringify(r.body)); assert(store.has('Charm_Sandbox/current') && etsy.calls.length === before, 'busy keeps the set and calls nothing');
-  store.set('Charm_Sandbox/pulls', Object.assign({}, ledger(), { claim: { startId: 'start-0002-bbbb', at: Date.now() - 120000 } }));
+  store.set('Charm_Sandbox/pulls', Object.assign({}, ledger(), { claim: { startId: 'start-0002-bbbb', at: Date.now() - 20000 } }));
+  r = await pullOp('start-0002-bbbb'); assert(r.status === 409 && r.body.reason === 'busy' && etsy.calls.length === before, 'a claim 20 s old may still be a live pull (the function lives 10 s): ' + JSON.stringify(r.body).slice(0, 120));
+  // ADVPULL (15 Oct 2026): a function cut off at its 10 s limit leaves its claim; the page asks the same start again every 4 s for about 35 s, so the claim is dead after 30 s (it was 90 s: the page gave up first)
+  store.set('Charm_Sandbox/pulls', Object.assign({}, ledger(), { claim: { startId: 'start-0002-bbbb', at: Date.now() - 31000 } }));
 
   // ── a new start replaces the set completely (the old file goes, the stream starts over) ──
   const oldPath = a.path; resetEtsy();
@@ -264,7 +267,13 @@ const openOf = list => list.filter(r => r.is_paid !== false && !r.is_shipped && 
   // the old set's files are swept while Etsy answers, and the NEW file is never swept with them
   reset2(); blobs.set('charmnest/sandbox/orders-pull/old-sweep.json', Buffer.from('{}')); etsy.delay = { 0: 200, 100: 200, 200: 200 };
   r = await pullOp('start-sweep-00019'); assert(r.status === 200 && !blobs.has('charmnest/sandbox/orders-pull/old-sweep.json') && blobs.has(r.body.path) && [...blobs.keys()].filter(k => k.startsWith('charmnest/sandbox/orders-pull/')).length === 1, 'the old file is gone, the new one stays, and only that one: ' + [...blobs.keys()].filter(k => k.startsWith('charmnest/sandbox/orders-pull/')).join(','));
-  resetEtsy();
+  // ADVPULL (15 Oct 2026): Etsy's token endpoint that never answers is cut inside the pull's own clock (it used to hold the pull until the platform cut the function, leaving a claim and no word):
+  //    a plain line, no receipts page asked, the sandbox EMPTY, the claim released
+  reset2(); setToken(-60000, 'tok-stale'); delete require.cache[require.resolve(path.join(fnDir, '_etsyMailEtsy.js'))]; etsy.oauthHang = true;
+  { const t = Date.now(); r = await direct('start-hang-00020', 1500);
+    assert(r.ok === false && r.reason === 'etsy' && r.empty === true && r.calls === 0 && r.error === "Etsy's sign-in did not answer in time, so the sandbox is empty. Press Start to try again.", 'a token that never answers: ' + JSON.stringify(r).slice(0, 300));
+    assert(Date.now() - t < 2500, 'cut by the clock, not by the platform: ' + (Date.now() - t) + ' ms'); assert(empty() && ledger().claim === null && etsy.calls.length === 0, 'empty, claim released, no receipts page asked'); }
+  setToken(3600e3); resetEtsy();
 
   // ── the whole run asked Etsy for receipts and nothing else ──
   console.log('sandbox pull OK: 3 Etsy calls per pull, ' + wantOpen + ' of 250 open, no daily cap (8 pulls in a day counted, none refused)');

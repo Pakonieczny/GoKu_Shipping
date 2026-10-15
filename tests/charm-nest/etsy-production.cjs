@@ -14,6 +14,11 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
    if(name==='etsyOrderProxy'){
      upstream=response(200,{receipt_id:123,message_from_buyer:'engrave',transactions:[{transaction_id:9,quantity:1}]});
      const receipt=JSON.parse((await ctx.exports.handler(req)).body);assert.equal(receipt.receipt.receipt_id,123);assert.equal(receipt.receipt_id,123);assert.equal(receipt.transactions[0].transaction_id,9);assert.equal(receipt.receipt.message_from_buyer,'engrave');
+     // ADVPULL (15 Oct 2026): an HTML page or a cut body from Etsy's edge keeps Etsy's own status (a 429 must still pause the station, a 404 must still mean gone); a 200 whose body was cut is a failure
+     const raw=(status,retry)=>({ok:status<400,status,headers:{get:k=>k==='retry-after'?retry:null},json:async()=>{throw new SyntaxError('Unexpected token < in JSON at position 0');},text:async()=>'<html>'});
+     upstream=raw(429,'23');const edge=await ctx.exports.handler(req);assert.equal(edge.statusCode,429);assert.equal(edge.headers['Retry-After'],'23');assert.equal(JSON.parse(edge.body).error,'etsy_error');
+     upstream=raw(404);assert.equal((await ctx.exports.handler(req)).statusCode,404);upstream=raw(503);assert.equal((await ctx.exports.handler(req)).statusCode,503);
+     upstream=raw(200);assert.equal((await ctx.exports.handler(req)).statusCode,502,'a 200 whose body was cut');upstream={ok:true,status:200,headers:{get:()=>null},json:async()=>null,text:async()=>'null'};assert.equal((await ctx.exports.handler(req)).statusCode,502,'and a body that is only null');
    }
    upstream=response(401,{error:'expired'});assert.equal((await ctx.exports.handler(req)).statusCode,401);
    upstream=response(429,{error:'limited'},'17');const limited=await ctx.exports.handler(req);assert.equal(limited.statusCode,429);assert.equal(limited.headers['Retry-After'],'17');

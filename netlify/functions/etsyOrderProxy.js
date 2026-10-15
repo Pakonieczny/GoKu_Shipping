@@ -44,7 +44,10 @@ exports.handler = async function (event) {
       }
     });
 
-    const payload = await response.json();
+    // A body that is not JSON (an HTML page from Etsy's edge, a cut body) keeps Etsy's own status: a 429 must still pause the
+    // station and a 404 must still mean "gone", where this used to answer 500 for all of them; a 200 that was cut is a failure.
+    let payload = null; try { payload = await response.json(); } catch (_) {}
+    if (payload === null) return { statusCode: response.ok ? 502 : response.status, headers: {"Content-Type":"application/json","Cache-Control":"no-store",...(response.headers?.get?.("retry-after") ? {"Retry-After":response.headers.get("retry-after")} : {})}, body: JSON.stringify({ error: "etsy_error", status: response.status, body: "Etsy's answer could not be read" }) };
     // Etsy v3 returns the receipt directly; the station and sandbox share an
     // explicit receipt/transactions envelope. Preserve root fields for older callers.
     const receipt = payload?.receipt || (payload?.receipt_id ? payload : null);
