@@ -8,7 +8,7 @@
 const assert = require('assert');
 const C = require('../../vendor/clipper-6.4.2.js');
 const M0 = require('../../charm-nest-monogram.js');
-// the sections below that read the geometry of the original rules (the middle 1.5 times the sides, the sides as drawn) ask for exactly that; sections 3e and on use the defaults of today (1.3, sides widened 1.1, metrics)
+// the sections below that read the geometry of the original rules (the middle 1.5 times the sides, the sides as drawn) ask for exactly that; sections 3e and on use the defaults of today (1.25 = sides 80 % of the middle, sides widened 1.15, metrics)
 const M = Object.assign({}, M0, { build: (l, o) => M0.build(l, Object.assign({ centerRatio: 1.5, sideWiden: 1 }, o)) });
 const { CharmNestPDF: PDF } = require('../../netlify/functions/_charmNestPdf.js');
 let n = 0; const ok = (c, m) => { assert(c, m); n++; };
@@ -172,7 +172,7 @@ const ABC = [A, Pp, V];
   const r3 = M.build({ left: A, middle: Pp, right: V }, { centerRatio: 1.0 }); ok(r3.ok && heightOf(by(r3, 'middle')) >= 1.2 * 30 - 0.01, 'a centerRatio under 1.2 never lets the middle drop below 1.2 times the sides');
   const r4 = M.build({ left: A, middle: Pp, right: V }, { overlap: 0.3 }); ok(r4.ok && Math.abs((by(r4, 'left').bboxPt[2] - by(r4, 'middle').bboxPt[0]) - 6) < 0.01, 'overlap 0.3');
 }
-{ // alphabets already drawn bigger in the middle: the middle is raised to centerRatio times the sides, never shrunk (the rule of 1.5 here; today's default is 1.3, section 3e)
+{ // alphabets already drawn bigger in the middle: the middle is raised to centerRatio times the sides, never shrunk (the rule of 1.5 here; today's default is 1.25, section 3e)
   const mid = scaleL(Pp, 1.4);
   const r = M.build({ left: A, middle: mid, right: V }); sound(r, 'big middle');
   ok(Math.abs(heightOf(by(r, 'middle')) - 45) < 0.01 && by(r, 'left').scale === 1 && by(r, 'right').scale === 1, 'a middle drawn 1.4 times the sides is raised to 1.5 times (45), the sides stay as drawn');
@@ -430,10 +430,10 @@ const ABC = [A, Pp, V];
 {
   const mt = (l, b) => Object.assign({ metrics: { baselinePt: b, emPt: 53 } }, l);
   const dh = r => r.bboxPt[3] - r.bboxPt[1];
-  // today's defaults: the middle 1.3 times the sides, the sides widened 1.1 times across and not taller
+  // today's defaults (Paul chose the 80 % column): the middle 1.25 times the sides, the sides widened 1.15 times across and not taller
   const d = M0.build({ left: A, middle: Pp, right: V }); sound(d, 'defaults');
-  ok(Math.abs(heightOf(by(d, 'middle')) - 1.3 * 30) < 0.01 && d.report.centerScale === 1.3 && by(d, 'left').scale === 1 && by(d, 'left').scaleX === 1.1 && by(d, 'right').scaleX === 1.1, 'defaults: the middle 1.3 times the sides (39 of 30), the sides widened 1.1 times across and not taller');
-  ok(Math.abs((by(d, 'left').bboxPt[2] - by(d, 'left').bboxPt[0]) - 22) < 0.01 && d.report.notes.some(t => /widened 1.1 times across/.test(t)), 'the left letter is 22 wide for the 20 it was drawn, and the notes say so: ' + d.report.notes[1]);
+  ok(Math.abs(heightOf(by(d, 'middle')) - 1.25 * 30) < 0.01 && d.report.centerScale === 1.25 && by(d, 'left').scale === 1 && by(d, 'left').scaleX === 1.15 && by(d, 'right').scaleX === 1.15, 'defaults: the middle 1.25 times the sides (37.5 of 30), the sides widened 1.15 times across and not taller');
+  ok(Math.abs((by(d, 'left').bboxPt[2] - by(d, 'left').bboxPt[0]) - 23) < 0.01 && d.report.notes.some(t => /widened 1.15 times across/.test(t)), 'the left letter is 23 wide for the 20 it was drawn, and the notes say so: ' + d.report.notes[1]);
   const o = M0.build({ left: A, middle: Pp, right: V }, { centerRatio: 1.5, sideWiden: 1 }); ok(by(o, 'left').scaleX === 1 && Math.abs(heightOf(by(o, 'middle')) - 45) < 0.01 && !o.report.notes.some(t => /widened/.test(t)), 'centerRatio and sideWiden are options (1.5 and 1: the old rules)');
   ok(M0.build({ left: A, middle: Pp, right: V }, { sideWiden: 9 }).placed[0].scaleX === 1.5 && M0.build({ left: A, middle: Pp, right: V }, { sideWiden: 0.2 }).placed[0].scaleX === 1, 'sideWiden stays between 1 and 1.5');
   // without metrics both sides are centred on the same y, whatever their boxes (a tall J next to a short A)
@@ -449,7 +449,7 @@ const ABC = [A, Pp, V];
     ok(Math.abs(baseL - baseR) < 0.01, `the baselines are the same: ${baseL.toFixed(2)} and ${baseR.toFixed(2)}`);
     const topM = pm.bboxPt[3] - baseM, sideNom = ((pl.bboxPt[3] - baseL) + (pr.bboxPt[3] - baseR)) / 2;
     ok(Math.abs((baseR - baseM) - (topM - sideNom) / 2) < 0.02, `the sides are centred on the middle letter's height above the baseline (raised ${(baseR - baseM).toFixed(2)} pt, the middle stands out ${((topM - sideNom) / 2).toFixed(2)} pt above and below)`);
-    ok(Math.abs(topM / sideNom - 1.3) < 0.02, 'and the middle is 1.3 times the sides above the baseline: ' + (topM / sideNom).toFixed(3)); }
+    ok(Math.abs(topM / sideNom - 1.25) < 0.02, 'and the middle is 1.25 times the sides above the baseline: ' + (topM / sideNom).toFixed(3)); }
   ok(m.report.notes.some(t => /stand on one baseline/.test(t)), 'the notes say so');
   eq(M0.build({ left: lt, middle: md, right: rt }, { valign: 'baseline' }).placed.map(p => p.bboxPt[1] + 0).length, 3, 'valign baseline answers');
   // metrics on one letter only: not used (nothing half-done)

@@ -258,7 +258,7 @@
     const overlap = num(o.overlap, 0.18, 0, 0.9);
     return {
       overlap, maxOverlap: Math.max(overlap, num(o.maxOverlap, 0.38, 0, 0.95)),
-      centerRatio: Math.max(1.2, num(o.centerRatio, 1.3, 1.2, 5)), sideWiden: num(o.sideWiden, 1.1, 1, 1.5), valign: o.valign === 'baseline' ? 'baseline' : 'center', reach: o.reach !== false, reachMax: typeof o.reach === 'number' && Number.isFinite(o.reach) ? Math.min(0.95, Math.max(0.1, o.reach)) : REACH_HI
+      centerRatio: Math.max(1.2, num(o.centerRatio, 1.25, 1.2, 5)), sideWiden: num(o.sideWiden, 1.15, 1, 1.5), valign: o.valign === 'baseline' ? 'baseline' : 'center', reach: o.reach !== false, reachMax: typeof o.reach === 'number' && Number.isFinite(o.reach) ? Math.min(0.95, Math.max(0.1, o.reach)) : REACH_HI
     };
   }
 
@@ -281,8 +281,8 @@
     const notes = [];
 
     /* size. With the glyph metrics of all three letters (Paul's alphabet file): the sides keep the size they are drawn at (one font size: one scale for both, never each by its own box), the middle is scaled so that its height above the
-       baseline is centerRatio (1.3) times the sides'. Without: the sides keep their relative size unless they differ by more than 10 % (then the smaller one is raised to the larger), the middle is centerRatio times the taller side.
-       The sides are widened sideWiden (1.1) times across, never taller: a big middle letter wants wider neighbours. */
+       baseline is centerRatio (1.25: the sides are 80 % of it, Paul's choice) times the sides'. Without: the sides keep their relative size unless they differ by more than 10 % (then the smaller one is raised to the larger), the middle is centerRatio times the taller side.
+       The sides are widened sideWiden (1.15) times across, never taller: a big middle letter wants wider neighbours. */
     const metricsOn = left.base != null && mid.base != null && right.base != null;
     let sl = 1, sr = 1, sideH, midNom = mid.h, cs;
     if (metricsOn) {
