@@ -148,7 +148,8 @@ const hash = s => { let h = 7; for (const c of s) h = (h * 31 + c.charCodeAt(0))
     }
     if (k !== lastStep) { stepSince = Date.now(); lastStep = k; console.log(t(), 'run', r.status, r.step, r.stoppedBy || ''); if (r.status === 'stopped') stops.push({ at: t(), why: r.stoppedBy }); }
     const lines = await page.evaluate(() => Object.values(B.run.lines || {}).map(l => l.state)).catch(() => []);   // (a line a passing failure left pulled is taken up again 30 s, 1 and 2 minutes later: the run is waited for until they are pooled)
-    if ((r.status === 'complete' || (r.status === 'processed' && r.step === 'complete')) && lines.length && lines.every(x => ['pooled', 'unmatched', 'committed', 'written'].includes(x))) { if (!doneAt) doneAt = Date.now(); if (Date.now() - doneAt > 25000) break; } else doneAt = 0;
+    // (an approved back file the cloud turned away is written 30 s later: waited for too)
+    if ((r.status === 'complete' || (r.status === 'processed' && r.step === 'complete')) && lines.length && lines.every(x => ['pooled', 'unmatched', 'committed', 'written'].includes(x)) && await page.evaluate(() => [...Engrave.items().values()].every(j => !j.backPending && !['approved', 'review', 'words'].includes(j.state))).catch(() => false)) { if (!doneAt) doneAt = Date.now(); if (Date.now() - doneAt > 25000) break; } else doneAt = 0;
     if (r.status === 'review' || r.status === 'running' || r.status === 'processed') {
       const done = await page.evaluate(async () => {
         const out = [];
