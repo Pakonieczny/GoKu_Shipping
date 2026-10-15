@@ -75,8 +75,20 @@
     const old = (Array.isArray(stored) ? stored : []).filter(e => e && typeof e === "object" && typeof e.id === "string" && !have.has(e.id));
     queue = old.concat(queue).slice(-MAX_QUEUE);
   }
+  /* Two tabs of one page (two Charm Sorter windows, a station page opened twice) keep their unsent events on the SAME disk list: a save
+     writes only this page's list over it, so what the other tab queued since this page read the disk was gone after a reload while
+     offline (stations, Paul, 15 Oct 2026). A save now keeps what the disk holds that this page neither has nor delivered, and a flush
+     reads such events into this page's queue too (that tab may be gone): their ids are fixed, so a repeat is stored once. */
+  const acked = new Set();        // ids this page had acknowledged (a 200, or a refusal for good): they never come back from the disk
+  const others = device => {
+    const have = new Set(queue.map(e => e.id)), disk = lsJson(K.q + device, []);
+    return (Array.isArray(disk) ? disk : []).filter(e => e && typeof e === "object" && typeof e.id === "string" && !have.has(e.id) && !acked.has(e.id));
+  };
   function save(device) {
-    try { if (queue.length) lsSet(K.q + device, JSON.stringify(queue)); else lsDel(K.q + device); } catch (_) {}
+    try { const all = others(device).concat(queue).slice(-MAX_QUEUE); if (all.length) lsSet(K.q + device, JSON.stringify(all)); else lsDel(K.q + device); } catch (_) {}
+  }
+  function pull(device) {
+    try { const more = others(device); if (more.length) queue = more.concat(queue).slice(-MAX_QUEUE); } catch (_) {}
   }
   function nextSeq(device) {
     const n = Math.max(parseInt(lsGet(K.seq + device), 10) || 0, memSeq[device] || 0) + 1;
@@ -223,7 +235,8 @@
   function settle(events) {
     const gone = new Set(events.map(e => e.id));
     queue = queue.filter(e => !gone.has(e.id));
-    for (const id of gone) beaconed.delete(id);
+    for (const id of gone) { beaconed.delete(id); acked.add(id); }
+    if (acked.size > 2000) { let n = acked.size - 1000; for (const id of acked) { if (n-- <= 0) break; acked.delete(id); } }
     const p = pageNow(); if (p) save(p.device);
   }
   function post(sb, events, keepalive) {
@@ -238,7 +251,7 @@
   function flush(force) {
     try {
       const p = pageNow();
-      if (p) load(p.device);
+      if (p) { load(p.device); pull(p.device); }
       if (sending) return sending;
       if (!queue.length) return Promise.resolve();
       if (!force && (navigator.onLine === false || Date.now() < nextTry)) return Promise.resolve();
