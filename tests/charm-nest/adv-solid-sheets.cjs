@@ -78,7 +78,7 @@ const { start } = require('./bridge-server.cjs');
       showPage('gold14k', 0);
       document.querySelector('.sheetCard[data-m="gold14k"]').scrollIntoView({ block: 'start' });
     });
-    const card = '.sheetCard[data-m="gold14k"]', opts = async () => { if (!(await page.locator(`dialog.osDlg[open]`).count())) await page.click(`${card} .sheetOptionsBtn:visible`); };
+    const card = '.sheetCard[data-m="gold14k"]', opts = async () => { await page.waitForFunction(() => !document.querySelector('dialog.osDlg.closing')); if (!(await page.locator(`dialog.osDlg[open]`).count())) await page.click(`${card} .sheetOptionsBtn:visible`); };
 
     /* ── 1 · the merge, as it is seen ── */
     {
@@ -148,8 +148,8 @@ const { start } = require('./bridge-server.cjs');
       const picks = () => page.evaluate(() => CN.pagesOf('gold14k').map(p => Gate.solidSelected('gold14k', p)));
       const tick = async () => { await opts(); await page.click(`dialog.osDlg [data-solid="include"]:visible`); await page.waitForSelector('dialog.splitDlg[open]', { timeout: 3000 }); };
       await tick();
-      const ask = await page.evaluate(() => { const d = document.querySelector('dialog.splitDlg'); return { text: d.textContent, keys: [...d.querySelectorAll('[data-k]')].map(b => b.dataset.k + ':' + b.textContent), panel: !!document.querySelector('dialog.osDlg[open]') }; });
-      assert.match(ask.text, /14K Gold Sheet 2/); assert.match(ask.text, /4170000100/);
+      const ask = await page.evaluate(() => { const d = document.querySelector('dialog.splitDlg'); return { text: d.textContent, keys: [...d.querySelectorAll('[data-k]')].map(b => b.dataset.k + ':' + b.textContent), panel: !!document.querySelector('dialog.osDlg[open]:not(.closing)') };   /* (the panel is on its way out for 160 ms: charm-nest-options-modal.js close) */ });
+      assert.match(ask.text, /14K (?:Gold Sheet|Draft) 2/); assert.match(ask.text, /4170000100/);   // (a sheet in no set is "Draft <page>" since the sheet-name rule of 10 Oct: charm-nest-sheet-name.js)
       assert.deepEqual(ask.keys, ['cancel:Cancel', 'all:Include both sheets']);
       assert.equal(ask.panel, false, 'the Options panel closed first (never a pop-up over a pop-up)');
       await page.click('dialog.splitDlg [data-k="cancel"]');

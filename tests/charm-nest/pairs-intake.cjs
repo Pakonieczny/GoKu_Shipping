@@ -323,7 +323,7 @@ eq(CP.groupKey({ receiptId: order.receiptId, transactionId: '5200000001' }), '41
   const otherLine = mis({ transactionId: '5200000002' }, ctx({ optionMaps: { '1718': { 'two designs on this line': { '4170000001/5200000001': { field: 'ignore', value: null } } } } }));
   ok(otherLine.spec.problems.some(x => x.pairSecond), 'F7: the answer is for that line only');
   const z = row({ title: 'Zodiac REVAMP Stud Earrings', sku: 'A', quantity: 2, variations: [V('Options', 'Silver • 2 symbols')], personalization: ['balance et lion'] });
-  ok(z.spec.problems.some(x => x.pairSecond) && counts(z).pieces === 4, 'F7: "2 symbols" on a stud line names one SKU: it waits (4 pieces when answered)');
+  ok(z.spec.problems.some(x => x.pairSecond || x.note && /second symbol of a 2-symbols line/.test(x.note)) && counts(z).pieces === 4, 'F7: "2 symbols" on a stud line names one SKU: it waits (4 pieces when answered); the wait is a question per sign since the sign reader (viaOption), not one pairSecond');
   ok(!row({ title: 'Zodiac Symbol Necklace', sku: 'A', variations: [V('Options', 'Silver • 2 symbols')] }).spec.problems.some(x => x.pairSecond), 'F7: a necklace is never asked about a second ear');
   ok(!mis({ sku: 'MITTENS 1 + MITTENS 2' }).spec.problems.some(x => x.pairSecond), 'F7: two named master designs are a mismatched pair already: nothing to ask');
   eq(lineMismatchedAll(), [false, false, true, true], 'lineMismatched: a necklace SKU with a plus, "w/" in an earring SKU: not mismatched; two SKUs on an earring line and the word Mismatched are');

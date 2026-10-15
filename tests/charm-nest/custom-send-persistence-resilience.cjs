@@ -32,7 +32,8 @@ function fixture({holdStamp=false,holdRead=false,offline=false}={}){
  const TL={line:(r,type,event)=>control.events.set(event.id,{type,...event})};
  const api=async(name,body)=>{control.cloudCalls.push(JSON.parse(JSON.stringify(body)));if(body.op==='customSheetPut'){control.cloud.set(body.record.ck,JSON.parse(JSON.stringify(body.record)));if(body.record.phase==='sent' && control.lossSent){control.lossSent=false;throw new Error('Lost cloud acknowledgement');}return {record:JSON.parse(JSON.stringify(body.record))};}if(body.op==='customSheetGet'){return {records:Object.fromEntries([...control.cloud].filter(([,rec])=>!control.legacyOnly || Object.keys(rec.sent.lines).some(k=>(body.legacyLineKeys || []).includes(k))).map(([ck,rec])=>[ck,JSON.parse(JSON.stringify(rec))]))};}return {url:'https://saved.example/file.pdf'};};
  const Pool={charmOf:id=>chars.get(id),sheetOf:id=>chars.has(id)?sheet:null,onSheets:r=>r.poolIds.length && r.poolIds.every(id=>chars.has(id)),settle:r=>{r.state=r.poolIds.every(id=>B.pool.rows.get(id)?.sheetId)?'written':'pooled';r.reason=null;return true;}};
- const Review={render(){control.redraws++;},cardKey:r=>'custom:'+r.order.receiptId+':CUSTOM_6673',repool:async r=>{
+ const humanAct=()=>false;   // (the bridge's activity log: the send writes to it after a finished or a failed send)
+ const Review={render(){control.redraws++;},syncOrderItems(){},cardKey:r=>'custom:'+r.order.receiptId+':CUSTOM_6673',repool:async r=>{
  control.poolCalls.push(r.key);const prep=await CustomSheet.prepare(r,B.run);if(!prep)return;
  if(control.failPool && r===rows[1]){control.failPool=false;r.state='held';r.reason='Network timeout';return;}
  if(control.partialPool && r===rows[0]){control.partialPool=false;const pc=prep.pools[0],ch=prep.charms[0];chars.set(pc.poolId,ch);B.pool.rows.set(pc.poolId,pc);sheet.charms.push(ch);r.poolIds=[pc.poolId];r.state='held';r.reason='Pool reply lost';return;}

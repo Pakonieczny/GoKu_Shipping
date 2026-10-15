@@ -136,7 +136,7 @@ const baseJob = { sheet, angles: Array.from({ length: 36 }, (_, i) => i * 10), f
     const a = html.indexOf('function buildJob(sh)'), b = html.indexOf('function packingKey(', a);
     assert(a > 0 && b > a);
     const ctx = { Set, Map, Math, JSON, Object, Array, String, Number, window: {}, CharmNestSolver: S, S: { settings: { maxFill: .8, clearancePt: -.5, insetPt: 1.5, budgetS: 180 } },
-      stockFor: () => ({ wPt: 283.5, hPt: 141.7 }), nestItems: sh => sh.charms, carefulNest: () => false, angleSet: () => [0, 90], CAREFUL_ANGLES: [0, 2], orderRank: () => 1 };
+      stockFor: () => ({ wPt: 283.5, hPt: 141.7 }), nestItems: sh => sh.charms, carefulNest: () => false, angleSet: () => [0, 90], CAREFUL_ANGLES: [0, 2], orderRank: () => 1, gapFilling: () => false };
     vm.createContext(ctx); vm.runInContext(html.slice(a, b) + ';this.buildJob = buildJob;', ctx);
     const mate = (id, side, mirror) => ({ id, w: 4, h: 4, scale: 2, bits: new Uint8Array(16).fill(1), areaPt2: 4, order: '7001', poolId: '7001_1_' + id, side, mirror, bodyIndex: 0, groupKey: '7001:1', groupSize: 2 });
     const proxy = { metal: 'gold', charms: [mate(1, 'L', false), mate(2, 'R', true), { id: 3, w: 4, h: 4, scale: 2, bits: new Uint8Array(16).fill(1), areaPt2: 4, order: '7002' }], placements: [], rejects: [], appendOnly: false, nestInitial: null };

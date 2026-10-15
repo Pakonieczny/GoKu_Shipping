@@ -1517,7 +1517,8 @@ const Orders = window.Orders = (() => {
       if (O.questionGone && O.questionGone(row, prev)) { row.state = "pulled"; row.reason = null; delete row.poolTry; }
       // a line that read as chain only or as completed by hand, and no longer does (the library has since given its SKU a
       // design, its completion was taken back), is a line to cut again: it used to stay "no design" for good
-      else if (row.state === "noDesign" && prev && prev.noDesign && prev.noDesignWhy && prev.noDesignWhy !== "on the no-design list" && !(row.poolIds || []).length && !row.hold) { row.state = "pulled"; row.reason = null; }
+      // (ADV-SPECIALS 15 Oct 2026: only when it no longer reads as no-design; a chain-only or hand-completed line read again, as every reading does, went back to "pulled" at each one: the Orders list showed it as pulled and every intake took it up)
+      else if (row.state === "noDesign" && !row.spec.noDesign && prev && prev.noDesign && prev.noDesignWhy && prev.noDesignWhy !== "on the no-design list" && !(row.poolIds || []).length && !row.hold) { row.state = "pulled"; row.reason = null; }
       // a special line finished by hand (Custom Orders), or a chain-only line, that the run had held for a decision is
       // not cut either: it never went to the pool, so nothing is on a sheet for it
       if ((row.spec.customDone || (row.spec.special && row.spec.special.notCut)) && !row.hold && !(row.poolIds || []).length && ["held", "unmatched", "waiting", "oversize"].includes(row.state)) { row.state = "noDesign"; row.reason = null; }

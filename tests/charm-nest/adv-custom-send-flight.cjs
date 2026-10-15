@@ -143,7 +143,7 @@ async function scene(browser, profile) {
     }
     let prof = null;
     if (cdp) { prof = (await cdp.send('Profiler.stop')).profile; }
-    const end = await page.evaluate(() => { const row = B.orders.byKey.get('4175423829_41754238291'); return { state: row.state, onGold: allSheets().filter(p => p.metal === 'gold').reduce((n, p) => n + p.charms.filter(c => c.custom).length, 0), sent: !!CustomSheet.sentOf(row), strip: !!document.querySelector('#rvList .reviewListRow[data-rid="4175423829"] .cuDesigns.sent'), dlg: document.querySelector('#cuDlg').open, ghosts: document.querySelectorAll('#motionLayer .mGhost').length + document.querySelectorAll('#tourLayer > *').length, mode: CN.S.mode }; });
+    const end = await page.evaluate(() => { const row = B.orders.byKey.get('4175423829_41754238291'); return { state: row.state, onGold: allSheets().filter(p => p.metal === 'gold').reduce((n, p) => n + p.charms.filter(c => c.custom).length, 0), sent: !!CustomSheet.sentOf(row), strip: !document.querySelector('#rvList .reviewListRow[data-rid="4175423829"]'),   /* (a card sent to the sheet leaves Open and is listed under Completed since 2 Oct: custom-orders.cjs pins its strip there) */ dlg: document.querySelector('#cuDlg').open, ghosts: document.querySelectorAll('#motionLayer .mGhost').length + document.querySelectorAll('#tourLayer > *').length, mode: CN.S.mode }; });
     const fly = (r.marks.find(m => m[0] === 'start') || [])[1], landed = (r.marks.find(m => m[0] === 'end') || [])[1];
     let blamed = null;
     if (prof && fly != null) {
@@ -180,7 +180,7 @@ async function scene(browser, profile) {
   check(fly != null && landed != null && landed - fly >= 2400 && at('switch:nest').length === 1 && at('land').length === 1 && at('switch:review').length === 1 && modes.includes('nest') && modes[modes.length - 1] === 'review', `the tour takes the design to the Nest tab, lands it once and comes home (${fly}–${landed} ms; modes ${modes.join(' → ')})`);
   check(pos.size >= 20 && plus.some(p => /\+1/.test(p)), `the coin is seen moving (${pos.size} positions) and the caption says "+1" (${[...new Set(plus)].join(' ')})`);
   check(!layout.length && !paint.length, `only transform, opacity and clip-path animated in the flight (${props.join(',')})`);
-  check(end.sent && end.strip && !end.dlg && !end.ghosts && end.state === 'pooled' && end.onGold === 1 && end.mode === 'review', `sent, placed on a Gold sheet, the card says so, the window closed, no copy left, home (${JSON.stringify(end)})`);
+  check(end.sent && end.strip && !end.dlg && !end.ghosts && end.state === 'pooled' && end.onGold === 1 && end.mode === 'review', `sent, placed on a Gold sheet, the card has moved on to Completed, the window closed, no copy left, home (${JSON.stringify(end)})`);
   if (during) check(!during.long.length && during.over34 <= during.frames / 10, `the window's way back and the tour are smooth, both tab switches included (from the close until home): worst ${during.worst} ms, >34 ms ${during.over34}/${during.frames}, long ${JSON.stringify(during.long)}`, quiet);
   check(!s.errors.length, 'no page errors: ' + s.errors.join(' | '));
   if (fails.length) { console.log(`\n${fails.length} failed`); process.exit(1); }
