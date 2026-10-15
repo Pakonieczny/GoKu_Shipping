@@ -271,7 +271,9 @@
     async function assist(c, key, letters, abc, seq, o) {
       o = o || {};
       const res0 = c.result, v0 = violationsOf(res0);
-      if (!v0 || !v0.length) { c.ai = null; return; }      // (ESG-like and every word that meets the rules: never asked)
+      if (!v0 || !v0.length) {                               // (ESG-like and every word that meets the rules: never asked; one the AI made pass keeps its line when the finished monogram comes from memory)
+        const kept = (mstore().assist || {})[recKey(c, key)]; c.ai = kept && kept.status === "assembled" && !o.again ? { state: "done", status: "assembled", why: kept.why, rounds: kept.rounds, cached: true } : null; return;
+      }
       c.ai = { state: "working", round: 0, status: "" }; c.confirmed = false;
       try {
         const parts = o.parts || await trioOf(letters, abc);

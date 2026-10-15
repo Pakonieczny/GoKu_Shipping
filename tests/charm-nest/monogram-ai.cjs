@@ -278,6 +278,9 @@ require.cache[require.resolve(clientPath)] = { id: clientPath, filename: clientP
       a = await until('4200683017', r => /Assembled with AI/.test(r.meta) && !r.spin, 'APV reopened');
       check(await calls() === callsBefore2 && a.d === dBefore, 'reopening makes no call: the kept adjust is built again by the engine and gives the same picture');
       check((await page.evaluate(() => window.__lastBuild.adjust.L.dx)) === 2, 'the engine was asked for the kept adjust (dx 2)');
+      await page.evaluate(async () => { const ui = Engrave.monogramUI(), c = ui.cards.get('4200683017_42006830171'); await ui.rebuild(c); });      // (this time the finished monogram comes from the page's memory, results kept)
+      a = await until('4200683017', r => !r.spin, 'APV from memory');
+      check(await calls() === callsBefore2 && /Assembled with AI: Moved the A toward the P/.test(a.meta) && a.d === dBefore, 'a monogram the AI made pass keeps its line when it comes from the page\'s memory too (typing the letters back): still no call');
 
       // ── OSR: nothing the model says helps: 3 rounds, then "Needs a person"; Approve asks twice ──
       a = await until('4202783520', r => /Needs a person/.test(r.meta) && !r.spin, 'OSR needs a person', 40000);
