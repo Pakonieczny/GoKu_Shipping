@@ -23,7 +23,7 @@ function deferred() { let resolve; const promise = new Promise(r => { resolve = 
 function fixture({ holdPress = false, holdPool = false, writeFiles = false, realSession = false } = {}) {
   const press = deferred(), pool = deferred();
   const control = { presses: 0, checkpoints: [], backCheckpoints:[], writes: 0, builds:0, uploads:[], poolAttempts: 0, apiCalls: [], networkDown: false, failPoolOnce: false, loseBackReplyOnce:false, requireExactBackRetry:false, checkpointFailure: false, scheduled: 0, poolGate:holdPool ? pool.promise : null, idbPending:[], idbCommits:0, holdIDB:false };
-  const context = vm.createContext({ assert, console, Blob, structuredClone, Promise, performance, setImmediate,
+  const context = vm.createContext({ assert, console, Blob, structuredClone, Promise, performance, setImmediate, neverEngraves: () => null, unplacedPre: () => false,
     setTimeout: () => 1, clearTimeout() {}, Date,
     CNListActivity: activity, CNEngravingSeals: { ...seals, press: async () => { control.presses++; if (holdPress) await press.promise; } }, control });
   const db = { createObjectStore() {}, transaction() {
@@ -78,6 +78,8 @@ function fixture({ holdPress = false, holdPool = false, writeFiles = false, real
     const Gate = {state:()=>({})}, Recall = {state:()=>({})}, LiveStrip = {rows:[]};
     const RunCtl = {backgroundSettled() {},poke() {},save:async () => {},renderBanner() {}};
     const syncEditedBack = async () => {};
+    // (the approval code asks for the face, the font and the file view of a job, and its unplaced-line rule; none of them matters to what is held here)
+    const isFront = () => false, fileViewOf = () => 'asSeenFromBack', faceWord = () => 'back', fontIdOf = () => 'source-sans-3', humanAct = () => {}, pageEpoch = 'test', TL = {rec() {}, line() {}}, pieceFields = () => ({}), jobsOf = r => [...items().values()].filter(j => j.row === r), faceOf = () => 'back';
     const loadFonts = async () => {}, restoreWritten = () => {}, hasPlacement = j => !!(j.fit&&j.view);
     const pageEpoch = "";   // (the sandbox reset epoch the checkpoint carries: none here)
     const faceOf = () => "back", isFront = () => false, faceWord = () => "back", pieceFields = () => ({}), fileViewOf = () => ({}), fontIdOf = () => "", faceOfRec = () => "back";   // (every line here is a plain back: the faces module has its own tests)

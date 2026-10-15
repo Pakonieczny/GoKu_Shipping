@@ -2,7 +2,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const source=fs.readFileSync('charm-nest-bridge.js','utf8');
 (async()=>{
  const job={key:'j',lines:['Name'],row:{order:{receiptId:'1'},spec:{designSku:'S'},engrave:{}},copies:['p']},jobs=new Map([['j',job]]);let reviews=0;
- const c={EG:{},loadFonts:async()=>{},F_:{ok:true,Regular:{}},G:{glyphCoverage:()=>({ok:true})},charmFor:()=>({}),Master:{entryFor:()=>({})},fitInput:()=>({}),fitStamp:()=>'',items:()=>jobs,fitClient:()=>({run:async()=>{throw Object.assign(Error('flip does not match'),{stage:'flip'});}}),Review:{add:()=>reviews++},RunCtl:{stopIfRunning(){throw Error('must not stop the whole run');}},agent(){},render(){}};
+ const c={EG:{},ensureJobFont:async()=>{},setOf:()=>({Regular:{}}),loadFonts:async()=>{},F_:{ok:true,Regular:{}},G:{glyphCoverage:()=>({ok:true})},charmFor:()=>({}),Master:{entryFor:()=>({})},fitInput:()=>({}),fitStamp:()=>'',items:()=>jobs,fitClient:()=>({run:async()=>{throw Object.assign(Error('flip does not match'),{stage:'flip'});}}),Review:{add:()=>reviews++},RunCtl:{stopIfRunning(){throw Error('must not stop the whole run');}},agent(){},render(){}};
  vm.createContext(c);const a=source.indexOf('  async function fitJobOnce('),b=source.indexOf('  async function fitAll(',a);vm.runInContext(source.slice(a,b),c);await c.fitJobOnce(job);
  assert.equal(job.state,'blocked');assert.equal(job.row.engrave.state,'blocked');assert.equal(reviews,1);
  let critical=false,retries=0;
