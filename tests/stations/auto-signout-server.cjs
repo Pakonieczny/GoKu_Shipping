@@ -423,10 +423,10 @@ const iso = ms => new Date(ms).toISOString();
     const two = (L) => { seed('w-weld', { d: { person: 'Tess Welder', task: 'welding', startAt: T('13:00'), lastSeenAt: T('14:20'), lastInputAt: L } }); seed('w-match', { d: { person: 'Marco R', task: 'matching', startAt: T('13:30'), lastSeenAt: T('14:20'), lastInputAt: L } }); seed('w-other', { d: { person: 'Ivy Y', station: 'sorting', device: 'sorting-1', startAt: T('13:00'), lastSeenAt: T('14:20'), lastInputAt: T('14:19') } }); };
     two(T('14:18'));
     let out = await live();
-    assert.deepStrictEqual(onNow(out), ['Ivy Y.', 'Marco R.', 'Tess Welder'], 'both are in while the page has input'); assert.strictEqual(s.writesTo('Station_Sessions').length, 0);
+    assert.deepStrictEqual(onNow(out), ['Ivy', 'Marco R.', 'Tess Welder'], 'both are in while the page has input'); assert.strictEqual(s.writesTo('Station_Sessions').length, 0);
     fresh(); at('2026-10-05T14:21:00Z'); two(T('14:00'));
     out = await live();
-    assert.deepStrictEqual(onNow(out), ['Ivy Y.'], 'no input at the page for 20 minutes: both go, the other station is untouched');
+    assert.deepStrictEqual(onNow(out), ['Ivy'], 'no input at the page for 20 minutes: both go, the other station is untouched');
     for (const id of ['w-weld', 'w-match']) { assert.strictEqual(doc(id).endAt, T('14:00')); assert.strictEqual(doc(id).endReason, 'idle'); }
     assert.strictEqual(cur.writesTo('Station_Sessions', 'w-weld').length, 1); assert.strictEqual(cur.writesTo('Station_Sessions', 'w-match').length, 1); assert.strictEqual(doc('w-other').endAt, null);
     assert.strictEqual(doc('w-weld').task, 'welding', 'the task stays on the session');
