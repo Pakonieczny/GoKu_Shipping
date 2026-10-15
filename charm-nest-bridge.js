@@ -2411,7 +2411,7 @@ const PageVersion = (() => {
     return stale;
   }
   function start() { if (timer) return; setTimeout(() => check(false), 4000); timer = setInterval(() => check(false), 15 * 60000); document.addEventListener("visibilitychange", () => { if (!document.hidden) check(false); }); }
-  return { start, check, message: MSG, isStale: () => stale, _set: v => { base = v; } };
+  return { start, check, message: MSG, isStale: () => stale, _set: v => { base = v; stale = false; said = false; } };   // (tests: a known starting point)
 })();
 window.PageVersion = PageVersion; PageVersion.start();
 
@@ -2703,19 +2703,31 @@ const Master = window.Master = (() => {
       let held = 0;
       // a SKU is held when the library has it and, for a line that names a size, has that size ("ALPHA_1 · M" is new beside a held "ALPHA_1 · S")
       // ...and a design this FILE's earlier indexing wrote with an older reader is not held: the reader has improved since (a plug drawn into the Circle, a hoop welded), and the file is the proof it is the same design
-      let older = 0;
+      let older = 0; const heldList = [];
       const holds = l => {
         const e = known.get(String(l.sku || "").toUpperCase()); if (!e) return false;
         const sz = l.size ? e.sizes && e.sizes[String(l.size).toUpperCase()] : null; if (l.size && !sz) return false;
+        // a record with no design file behind it is no design held (a stub another feature wrote, a patch for a SKU that was never indexed): the sheet builds it
+        if (!((sz || e).aiPath || (!l.size && Object.values(e.sizes || {}).some(z => z && z.aiPath)))) return false;
         if (e.masterHash === masterHash && (+((sz || e).readerV) || 0) < P.READER_VERSION) { older++; return false; }
         return true;
       };
       for (const c of labelledCharms) {
         const lines = [{ sku: c.sku, size: c.skuSize }].concat((c.extraSkus || []).map(x => ({ sku: x.sku, size: x.size })));
-        if (!reindexAll && lines.every(holds)) { c.alreadyHeld = true; held++; continue; }
+        if (!reindexAll && lines.every(holds)) {
+          c.alreadyHeld = true; held++;
+          // what was left as it is, and whose it is: the master file it came from and when, and whether this sheet draws it a different size (the library's version may be another drawing, not this file's)
+          for (const l of lines) {
+            const e = known.get(String(l.sku || "").toUpperCase()), sz = l.size && e.sizes ? e.sizes[String(l.size).toUpperCase()] : null, g = sz || e, b = c.outline && c.outline.bbox;
+            const mine = b ? [b[2] - b[0], b[3] - b[1]] : null, theirs = [+g.widthPt || 0, +g.heightPt || 0];
+            const differs = !!(mine && theirs[0] && !e.pair && (Math.abs(mine[0] - theirs[0]) > 0.08 * Math.max(mine[0], theirs[0]) + 4 || Math.abs(mine[1] - theirs[1]) > 0.08 * Math.max(mine[1], theirs[1]) + 4));
+            heldList.push({ sku: l.sku, size: l.size || null, from: e.masterHash === masterHash ? "this file" : (e.masterName || String(e.masterHash || "").slice(0, 8) || "another file"), at: e.indexedAt || null, differs, sheetMm: mine && [+(mine[0] * MM).toFixed(1), +(mine[1] * MM).toFixed(1)], libraryMm: theirs[0] ? [+(theirs[0] * MM).toFixed(1), +(theirs[1] * MM).toFixed(1)] : null });
+          }
+          continue;
+        }
         for (const l of lines) { const e = known.get(String(l.sku || "").toUpperCase()); if (e && e.masterHash && e.masterHash !== masterHash) supersede.add(e.masterHash); }   // (rebuilt whole: the master they came from is superseded, with the tick or without it)
       }
-      job.held = held; job.supersede = [...supersede]; job.older = older;
+      job.held = held; job.supersede = [...supersede]; job.older = older; job.heldList = heldList;
       if (older && !reindexAll) say("MASTER", `${older} SKU line(s) of this file were indexed by an older reader and are built again with the current one`);
       if (held) say("MASTER", `${held} charm(s) are already in the library and are left as they are · ${labelledCharms.length - held} to index${reindexAll ? "" : " (tick “re-index SKUs already held” to rebuild them all)"}`);
       if (labelledCharms.length && held === labelledCharms.length) {
@@ -2726,7 +2738,7 @@ const Master = window.Master = (() => {
         if (pl.stale.length) say("warn", `${pl.stale.length} design(s) are in the library as ONE body, and this sheet draws them as a row of bodies under one label: ${pl.stale.slice(0, 12).map(x => `${x.sku} (${x.bodies} bodies)`).join(", ")}. Tick “re-index SKUs already held” and add the file again to build them from every body.`);
         try {
           const mine = [...new Set(labelledCharms.flatMap(skusOf).filter(sk => { const e = known.get(sk); return e && e.masterHash === masterHash; }))];
-          if (mine.length && S.cloud.ok && !B.master.files.some(f => f.masterHash === masterHash)) { await repoApi("upload", upAsk(`“${file.name}”`), { op: "masterPutFile", file: { masterHash, path: job.masterPath || null, name: file.name, charms: g.charms.filter(c => c.mergedInto == null).length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: [], skus: mine, indexedBy: "browser", pageW: parsed.pageW, pageH: parsed.pageH, replaces: [] } }); say("MASTER", "this file's record was missing from the upload history: written again"); }
+          if (mine.length && S.cloud.ok && !B.master.files.some(f => f.masterHash === masterHash)) { await repoApi("upload", upAsk(`“${file.name}”`), { op: "masterPutFile", file: { masterHash, path: job.masterPath || null, name: file.name, charms: g.charms.filter(c => c.mergedInto == null).length, labelled: lab.labels.size + pl.partners.size, held, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: [], skus: mine, indexedBy: "browser", pageW: parsed.pageW, pageH: parsed.pageH, replaces: [] } }); say("MASTER", "this file's record was missing from the upload history: written again"); }
         } catch (e) { say("warn", `the file's record could not be written: ${e.message}`); }
         await load(true); say("ok", `nothing new on this sheet — all ${held} charm(s) are already in the library`); if (lab.unlabelled.length) say("warn", `${lab.unlabelled.length} charm(s) still have no SKU under them (see the list on the card)`); job.state = "done"; render(); return job;
       }
@@ -2917,7 +2929,7 @@ const Master = window.Master = (() => {
     job.writtenSkus = new Set([...(job.writtenSkus || []), ...skus.filter(sk => !skip.has(up(sk))).map(up)]);
     const heldHere = charms.filter(c => c.alreadyHeld && c.mergedInto == null && c.sku).flatMap(c => [c.sku].concat((c.extraSkus || []).map(x => x.sku))).map(up).filter(sk => { const e = B.master.entries.get(sk); return !!e && e.masterHash === masterHash; });
     const fileSkus = [...new Set([...job.writtenSkus, ...heldHere])];
-    await repoApi("upload", upAsk(`“${name}”`), { op: "masterPutFile", file: { masterHash, path: job.masterPath || null, name, charms: charms.filter(c => c.mergedInto == null).length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: (job.blocked || blocked).concat((job.conflicts || []).map(b => ({ sku: b.sku, reason: b.reason }))), skus: fileSkus, indexedBy: "browser", pageW: parsed.pageW, pageH: parsed.pageH, replaces, visionReads: (job.vision || []).map(v => ({ index: v.index, sku: v.sku, size: v.size, confidence: v.confidence, confirmed: v.confirmed })) } });
+    await repoApi("upload", upAsk(`“${name}”`), { op: "masterPutFile", file: { masterHash, path: job.masterPath || null, name, charms: charms.filter(c => c.mergedInto == null).length, labelled: lab.labels.size + ((job.pairLayer && job.pairLayer.partners && job.pairLayer.partners.size) || 0), held: job.held || 0, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: (job.blocked || blocked).concat((job.conflicts || []).map(b => ({ sku: b.sku, reason: b.reason }))), skus: fileSkus, indexedBy: "browser", pageW: parsed.pageW, pageH: parsed.pageH, replaces, visionReads: (job.vision || []).map(v => ({ index: v.index, sku: v.sku, size: v.size, confidence: v.confidence, confirmed: v.confirmed })) } });
   }
   /** Members drawn on a "BACK KEEP-OUT" layer of the master are subtracted from the engraving mask. */
   const keepOutOf = (c, face) => c.members.filter(m => m.layer && (face === "front" ? /front\s*keep-?out/i : /back\s*keep-?out/i).test(m.layer));   // (face "front": the FRONT KEEP-OUT layer, subtracted from the front's words only)
@@ -3152,6 +3164,15 @@ const Master = window.Master = (() => {
           box.appendChild(save); card.appendChild(box);
         }
       }
+      // what the run left as it was, and whose it is: a SKU the library already holds is not built again, and "19 written, 14 held" must say which 14 and from which file
+      if ((job.heldList || []).length) {
+        const hl = job.heldList, diff = hl.filter(x => x.differs), when = at => { try { return new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" }); } catch (_) { return ""; } };
+        const d = el("details", "noteBox");
+        d.innerHTML = `<summary>${hl.length} SKU line(s) already in the library, left as they are${diff.length ? ` · <b style="color:#8a3a26">${diff.length} drawn a different size on this sheet</b>` : ""}</summary>`
+          + hl.map(x => `<div>${esc(x.sku)}${x.size ? " · " + esc(x.size) : ""} — from ${esc(x.from)}${x.at ? ", " + esc(when(x.at)) : ""}${x.differs && x.sheetMm && x.libraryMm ? ` — <b>this sheet draws it ${x.sheetMm.join(" × ")} mm, the library holds ${x.libraryMm.join(" × ")} mm</b>` : ""}</div>`).join("")
+          + `<div style="margin-top:6px">To replace them with this file's drawings, tick “re-index SKUs already held” and add the file again.</div>`;
+        card.appendChild(d);
+      }
       const pending = (job.vision || []).filter(x => !x.confirmed);
       if (pending.length) {
         const tray = el("div", "visionTray"); const head = el("div", "section", `Confirm ${pending.length} label(s) read by Claude from outlined text (reads under 95% are unchecked)`);
@@ -3192,7 +3213,7 @@ const Master = window.Master = (() => {
         list.map(f => {
           const at = f.indexedAt ? new Date(f.indexedAt) : null;
           const u = num(f.unlabelledCount, f.unlabelled), o = num(f.orphanCount, f.orphans), b = num(f.blockedCount, f.blocked);
-          return `<details class="masterFileRow"><summary><b>${esc(f.name || f.masterHash)}</b><span class="hash">${at ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span><span>${f.labelled || 0} of ${f.charms || 0} labelled</span>${b ? `<span style="color:#8a3a26">${b} blocked</span>` : ""}</summary>` +
+          return `<details class="masterFileRow"><summary><b>${esc(f.name || f.masterHash)}</b><span class="hash">${at ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span><span>${f.labelled || 0} of ${f.charms || 0} labelled${f.held ? ` · ${f.held} already held` : ""}</span>${b ? `<span style="color:#8a3a26">${b} blocked</span>` : ""}</summary>` +
             `<div class="fh" style="margin:6px 0 4px"><span class="hash">${esc((f.masterHash || "").slice(0, 12))}</span>${u ? `<span style="color:#8a3a26">${u} charm${u === 1 ? "" : "s"} with no SKU under ${u === 1 ? "it" : "them"}</span>` : ""}${o ? `<span style="color:#8a3a26">${o} line${o === 1 ? "" : "s"} with no charm above</span>` : ""}<span class="hash">${esc(f.indexedBy || "")}</span></div>` +
             `<button class="btn ghost xs" data-rm="${esc(f.masterHash || "")}" data-repo="delete">Remove every SKU from this file</button></details>`;
         }).join("") + `</details>`;

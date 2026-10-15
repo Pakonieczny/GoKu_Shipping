@@ -211,6 +211,17 @@ const libSkus = st => st.list('Charm_Master_Index').map(e => e._id).sort();
     ok(await page.evaluate(() => /reload the page/i.test(document.body.innerText)), 'and tells the person to reload');
     await page.unroute(/charm-nest-1\.html/, headRoute);
     await page.evaluate(() => { PageVersion._set(null); });
+    
+    // 22 · what is left as it is is listed with whose it is; a record with no design file behind it is not a design held
+    await wipe(); await br.upload(sheet, 'PAIR.ai');
+    { const d = st.doc('Charm_Master_Index', 'LONE_9002'); d.masterHash = 'ffffffffeeeeeeee'; d.masterName = 'OLD MASTER.ai'; delete d.readerV; d.widthPt = 90; d.heightPt = 90;
+      const g = st.doc('Charm_Master_Index', 'SPIDER - WEB_1'); g.aiPath = ''; }
+    await page.evaluate(() => Master.load(true));
+    r = await br.upload(sheet, 'PAIR.ai'); j = await job();
+    ok(j.state === 'done' && j.written === 1 && st.doc('Charm_Master_Index', 'SPIDER - WEB_1').aiPath && st.doc('Charm_Master_Index', 'SPIDER - WEB_1').pair.bodies === 2, 'a record with no design file is built, not held: ' + JSON.stringify({ w: j.written, ai: st.doc('Charm_Master_Index', 'SPIDER - WEB_1').aiPath }));
+    const heldCard = await page.evaluate(() => { const d = [...document.querySelectorAll('#mJobs details.noteBox')].pop(); return d ? d.textContent : ''; });
+    ok(/1 SKU line\(s\) already in the library, left as they are · 1 drawn a different size on this sheet/.test(heldCard) && /LONE_9002 — from OLD MASTER\.ai/.test(heldCard) && /this sheet draws it .* mm, the library holds 31\.7 × 31\.7 mm/.test(heldCard), 'the held SKU is listed with its file and the size difference: ' + heldCard.replace(/\n/g, ' | '));
+    ok(st.list('Charm_Master_Files').find(f => f.name === 'PAIR.ai').labelled === 3 && st.list('Charm_Master_Files').find(f => f.name === 'PAIR.ai').held === 1, 'the file record counts the pair\'s second body as labelled and says how many it left held: ' + JSON.stringify(st.list('Charm_Master_Files').map(f => [f.labelled, f.charms, f.held])));
         const bad = br.errors.filter(e => !/status of 500/.test(e));   // (the one failure this test forces is logged by the browser)
     ok(bad.length === 0, 'no page error: ' + bad.join(' | '));
   } finally { await br.close(); }
