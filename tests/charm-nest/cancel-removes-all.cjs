@@ -51,6 +51,10 @@ async function run(kind, browser) {
     await context.route(u => !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u.href), r => /fonts\.g/.test(r.request().url()) ? r.fulfill({ status: 200, contentType: 'text/css', body: '' }) : r.abort());
     // a question or a pop-up would be recorded here: taking a cancelled order off asks none
     await context.addInitScript(() => { try { if (!sessionStorage.getItem('__seeded')) { localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on', pollOrders: 'off' })); localStorage.setItem('cn.employee', 'Test Operator'); sessionStorage.setItem('__seeded', '1'); } } catch (_) {} window.prompt = () => 'Test Operator'; window.__asked = []; window.confirm = m => { window.__asked.push(String(m)); return true; }; window.alert = m => { window.__asked.push(String(m)); }; });
+    // (the set principle of 10-13 Oct, a set needs a completed GF and a completed SS sheet, is not this suite's subject: the lone sheet joins the current set, as it did when this was written)
+    await context.addInitScript(() => { const iv = setInterval(() => { const SR = window.CharmNestSetRules; if (!SR || !SR.form) return; clearInterval(iv);
+      SR.enforce(false); SR.form = (last, free, hasLast) => ({ where: hasLast ? 'last' : 'new', join: free.slice(), wait: [], valid: { ok: true, missing: [] }, closed: false });
+      SR.settle = (m, w) => ({ formed: true, join: (w || []).slice(), wait: [], valid: { ok: true, missing: [] } }); }, 0); });
     const page = await context.newPage(), errors = []; page.setDefaultTimeout(30000);
     page.on('pageerror', e => errors.push(String(e)));
     page.on('console', m => said.push(`[${m.type()}] ${m.text()}`.slice(0, 600)));
