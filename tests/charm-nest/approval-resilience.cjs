@@ -35,7 +35,7 @@ function fixture({copies=['p1'],state='approved',by='Paul',at=123456}={}){
   const window={addEventListener(){},Seal:{whenIdle:async()=>{},defer:()=>false},CharmNestInteraction:{idle:async()=>{},defer:()=>false}};
   let timer=0;
   const timers=new Map();
-  const context={Date,Promise,Map,Set,WeakMap,WeakSet,Blob,ArrayBuffer,DataView,Uint8Array,TextEncoder,performance,
+  const context={Date,Promise,Map,Set,WeakMap,WeakSet,Blob,ArrayBuffer,DataView,Uint8Array,TextEncoder,performance,O:require('../../charm-nest-orders.js'),
     window,document:{getElementById:()=>null,querySelectorAll:()=>[],activeElement:null},localStorage:{getItem:()=>null},
     setTimeout(fn,ms){const id=++timer;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id),
     B:{engrave:{fonts:{ok:true},items:jobs},pool:{rows:new Map(copies.map(id=>[id,{copy:+id.replace(/\D/g,'')||1}]))},run:{runId:'run-1'}},

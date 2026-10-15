@@ -6,6 +6,8 @@
 //   2. A batch bigger than 64 KB goes (a keepalive request over that is refused by the browser, so the outbox retried the
 //      same batch forever and nothing after it was ever sent).
 //   3. Two sorter tabs: what one tab queued is not wiped from the outbox by the other tab's save.
+//   4. A send that gets no answer at all (a half-open connection, a laptop that slept mid-send) ends after its time limit and the same batch goes again:
+//      it held the outbox for good (nothing after it was sent until the browser itself gave up on the request).
 // No network beyond loopback.
 //   NODE_PATH=… PW_DIR=… CHROMIUM=… node tests/charm-nest/adv-timeline-outbox.cjs
 const path = require('path'), assert = require('assert/strict'), fs = require('fs'), http = require('http');
@@ -15,7 +17,7 @@ const { chromium } = require(path.join(pwDir, 'playwright-core'));
 const STATION = new Set(['scan', 'sorted', 'welded', 'assembled', 'packed', 'labelPrinted', 'shipped', 'etsyCompleted', 'cancelAlert', 'note']);
 
 const got = [];   // { door, id, type } of every event a door kept
-let down = false;
+let down = false, hang = 0;   // (hang: how many of the next requests are never answered)
 const srv = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   if (u.pathname === '/t.html') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end('<!doctype html><meta charset="utf-8"><script src="/order-timeline.js"></script>'); }
@@ -23,6 +25,7 @@ const srv = http.createServer((req, res) => {
   const m = /^\/\.netlify\/functions\/(\w+)$/.exec(u.pathname);
   if (m && req.method === 'POST') {
     const c = []; req.on('data', d => c.push(d)); req.on('end', () => {
+      if (hang > 0) { hang--; return; }
       if (down) { res.writeHead(503, { 'Content-Type': 'application/json' }); return res.end('{"error":"down"}'); }
       const b = JSON.parse(Buffer.concat(c).toString('utf8') || '{}'), list = m[1] === 'firebaseOrders' ? b.timeline : b.events;
       for (const e of list || []) if (m[1] !== 'firebaseOrders' || STATION.has(e.type)) got.push({ door: m[1], id: e.id, type: e.type, orderId: e.orderId });
@@ -41,7 +44,7 @@ const OUTBOX = 'orderTimeline.outbox.v1';
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   try {
     /* ── 1 · a station page opening on the sorter's queued events ── */
-    const only = (process.env.ADV_CASES || '123').split('');
+    const only = (process.env.ADV_CASES || '1234').split('');
     if (only.includes('1')) {
       const ctx = await browser.newContext();
       await ctx.route(u => !['127.0.0.1', 'localhost'].includes(u.hostname), r => r.abort());
@@ -101,6 +104,24 @@ const OUTBOX = 'orderTimeline.outbox.v1';
       await until(() => ['a1', 'a2', 'b1'].every(id => got.some(g => g.id === id)), 8000, 'all three sent after the reload');
       await ctx.close();
       console.log('  ✓ two tabs: each keeps the other\'s queued events');
+    }
+    got.length = 0;
+
+    /* ── 4 · a send nobody answers: it ends at its time limit, and the events behind it go too ── */
+    if (only.includes('4')) {
+      const ctx = await browser.newContext();
+      await ctx.route(u => !['127.0.0.1', 'localhost'].includes(u.hostname), r => r.abort());
+      const p = await ctx.newPage();
+      await p.goto(base + '/t.html');
+      hang = 1;
+      await p.evaluate(() => { OrderTimeline.config({ mode: 'sorter', by: 'Ana', timeoutMs: 1200 }); OrderTimeline.record({ orderId: '4189000004', type: 'held', id: 'h1' }); });
+      await until(() => hang === 0, 6000, 'the first send is out and unanswered');
+      await p.evaluate(() => OrderTimeline.record({ orderId: '4189000004', type: 'released', id: 'h2' }));   // (queued behind the send that hangs)
+      await until(() => ['h1', 'h2'].every(id => got.some(g => g.id === id)), 12000, 'the batch is sent again once the unanswered one has ended');
+      assert.equal(got.filter(g => g.id === 'h1').length, 1, 'and h1 reached the server once');
+      await until(async () => (await p.evaluate(() => OrderTimeline.pending())) === 0, 6000, 'the outbox empties');
+      await ctx.close();
+      console.log('  ✓ a send that is never answered ends after its time limit; nothing waits behind it for good');
     }
     console.log('adv-timeline-outbox: all passed');
   } finally { await browser.close(); srv.close(); }

@@ -79,6 +79,10 @@ function fixture({ holdPress = false, holdPool = false, writeFiles = false, real
     const RunCtl = {backgroundSettled() {},poke() {},save:async () => {},renderBanner() {}};
     const syncEditedBack = async () => {};
     const loadFonts = async () => {}, restoreWritten = () => {}, hasPlacement = j => !!(j.fit&&j.view);
+    const pageEpoch = "";   // (the sandbox reset epoch the checkpoint carries: none here)
+    const faceOf = () => "back", isFront = () => false, faceWord = () => "back", pieceFields = () => ({}), fileViewOf = () => ({}), fontIdOf = () => "", faceOfRec = () => "back";   // (every line here is a plain back: the faces module has its own tests)
+    const jobsOf = row => [...jobs.values()].filter(j => j.row === row), TL = { rec() { return true; }, line() { return true; }, pulled() {} };   // (the lines of one order; the order timeline, which has its own tests)
+    const neverEngraves = () => null, unplacedPre = () => false;   // (an earring is never engraved, and a piece approved before it is on a sheet waits for its sheet: none of these lines is either)
   `, context);
   // Browser modules share one realm. Loading this factory in the same context
   // keeps seal objects faithful to the real IndexedDB copier's prototype check.

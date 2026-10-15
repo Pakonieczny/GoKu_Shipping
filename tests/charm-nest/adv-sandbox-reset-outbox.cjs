@@ -16,7 +16,7 @@ const RID = "4200000201", OUTBOX = "orderTimeline.outbox.v1";
 
 function page(stream) {
   const seq = [], timers = [], ls = new Map();
-  const c = { console, JSON, Math, Date, Promise, String, Number, Set, Map, Array, Object, Error, encodeURIComponent, seq, timers };
+  const c = { console, JSON, Math, Date, Promise, String, Number, Set, Map, Array, Object, Error, Blob, encodeURIComponent, seq, timers };   // (Blob: the outbox sizes a batch with it, to keep a keepalive request under the browser's 64 KB)
   c.window = c;
   c.localStorage = { getItem: k => (ls.has(k) ? ls.get(k) : null), setItem: (k, v) => ls.set(k, String(v)), removeItem: k => ls.delete(k) };
   c.sessionStorage = { getItem: () => null, setItem() {}, removeItem() {} };
@@ -31,11 +31,13 @@ function page(stream) {
     const S = { settings: { sandbox: "on", sandboxStream: ${JSON.stringify(stream)}, sandboxSpeed: 50, sandboxSeed: 0 }, cloud: { ok: true }, passcode: "" };
     const B = { employee: "Tester" }, employeeName = () => B.employee;
     const api = async (fn, body) => { seq.push("api:" + body.op); return body.op === "sandboxReset" ? { ok: true, more: false, deleted: 4, files: 0 } : {}; };
-    const toast = () => {}, agent = () => {}, confirm = () => true;
+    const toast = () => {}, agent = () => {}, confirm = () => true, openRid = () => "";   // (openRid: no order window is open)
     const Arrivals = { pause: async () => {}, resume() {}, reset() {} };
     const RunCtl = { clearRunState: () => { window.CNTimeline.rec({ orderId: "${RID}", type: "removed", id: "clear-1", text: "Taken off with the run" }); return true; } };
     const DesignLink = { ensure: async () => {}, state: () => ({ commands: [] }), call: async () => {} };
     const SimClock = { set() {}, on: () => false, now: () => Date.now() };
+    // (the wipe refuses to start without its list of what to clear, and sweeps this browser's stores: stood in for here, the sweep has its own test, sandbox-wipe-browser.cjs)
+    window.CharmNestSandboxFamilies = {}; window.CharmNestSandboxBrowser = { entries: () => [{}], sweep: async () => ({ keys: 0, parts: 0, other: 0 }), sweepSync: () => 0 };
   `, c);
   vm.runInContext(outbox, c);
   vm.runInContext(part(bridge, "const TL = window.CNTimeline = (() => {", "/* One drawing a frame."), c);

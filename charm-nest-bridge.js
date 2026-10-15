@@ -19459,7 +19459,10 @@ const Arrivals = window.Arrivals = (() => {
   let tick = 0, busy = false, paused = false, epoch = 0, fails = 0, lastTick = 0, kept = null;
   // a check that failed while the network was away is made again as soon as it is back, not a whole interval later
   window.addEventListener("online", () => { if (state.error) state.nextCheck = Math.min(state.nextCheck || Infinity, Date.now() + 3000); });
-  window.addEventListener("storage", e => { if (e.key !== storageKey() || !e.newValue) return; try { const other = JSON.parse(e.newValue); Object.assign(state.seen, other.seen); if (other.lastCheck > state.lastCheck) { state.lastCheck = other.lastCheck; state.nextCheck = other.nextCheck; state.lastAdded = other.lastAdded; } paint(); } catch (_) {} });
+  // The check is one for all the sorter tabs of this browser (one takes the lock, the others take its record). Whether that check failed is part of the record: a tab that kept an "Order check failed" from its own earlier
+  // try went on showing it for as long as another tab kept checking well, because it only ever took the other tab's times (ADV-OFFLINE, 15 Oct 2026)
+  const sharedError = (other, lastCheck) => { if (other.lastCheck >= lastCheck) state.error = other.error || null; };
+  window.addEventListener("storage", e => { if (e.key !== storageKey() || !e.newValue) return; try { const other = JSON.parse(e.newValue); Object.assign(state.seen, other.seen); sharedError(other, state.lastCheck); if (other.lastCheck > state.lastCheck) { state.lastCheck = other.lastCheck; state.nextCheck = other.nextCheck; state.lastAdded = other.lastAdded; } paint(); } catch (_) {} });
   // the sandbox order stream checks every simulated ten minutes (12 s at 50x)
   /* Every order of the stream has come (or the snapshot holds none to bring): nothing more can arrive, and the only change left
      is an order the station finished, which the emulator ships ten real minutes later. The check then looks once a minute and
@@ -19651,7 +19654,7 @@ const Arrivals = window.Arrivals = (() => {
          system still does not successfully auto-generate the QR codes when a given sheet is full"). */
       window.CN?.settleTopups?.();
       if (Date.now() >= state.nextCheck && !held()) {
-        if (navigator.locks) navigator.locks.request(storageKey(), { ifAvailable: true }, lock => { if (!lock) return; let shared; try { shared = JSON.parse(localStorage.getItem(storageKey()) || "null"); } catch (_) {} if (shared?.nextCheck > Date.now()) { Object.assign(state.seen, shared.seen); state.lastCheck = shared.lastCheck; state.nextCheck = shared.nextCheck; return; } return check(); }).catch(e => { state.error = e.message; });
+        if (navigator.locks) navigator.locks.request(storageKey(), { ifAvailable: true }, lock => { if (!lock) return; let shared; try { shared = JSON.parse(localStorage.getItem(storageKey()) || "null"); } catch (_) {} if (shared?.nextCheck > Date.now()) { Object.assign(state.seen, shared.seen); sharedError(shared, state.lastCheck); state.lastCheck = shared.lastCheck; state.nextCheck = shared.nextCheck; return; } return check(); }).catch(e => { state.error = e.message; });
         else check();
       } else processPending().catch(e => { state.error = e.message; });
     }, streaming() ? 250 : 1000);   // a stream step is 12 s at 50x: a whole second late would be most of a simulated minute

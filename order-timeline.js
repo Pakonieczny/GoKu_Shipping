@@ -72,7 +72,7 @@
     other:           { label: "Event",               group: "note" }
   };
   const STATION_TYPES = new Set(["scan", "sorted", "welded", "assembled", "packed", "labelPrinted", "shipped", "etsyCompleted", "cancelAlert", "note"]);
-  const cfg = { mode: "sorter", sandbox: false, by: "", station: "", device: "", passcode: "" };
+  const cfg = { mode: "sorter", sandbox: false, by: "", station: "", device: "", passcode: "", timeoutMs: 30000 };
   const OUTBOX = "orderTimeline.outbox.v1", listeners = new Set(), KEEP = 2000;   // at most KEEP events wait in memory (500 across a reload)
   let box = [], timer = 0, due = 0, sending = false, backoff = 1000;
   /* One outbox for the whole site: the sorter and every station page (one origin), in as many tabs as are open. A save
@@ -91,13 +91,16 @@
   const save = () => { try { box = box.filter(mine); const have = new Set(box.map(keyOf)); localStorage.setItem(OUTBOX, JSON.stringify(bound(disk().filter(e => !sent.has(keyOf(e)) && !have.has(keyOf(e))).concat(box), 500))); } catch (_) {} };
   const digits = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
   const base = () => (location.protocol === "file:" ? "https://goldenspike.app" : "") + "/.netlify/functions/";
+  const within = () => (typeof AbortSignal !== "undefined" && AbortSignal.timeout ? { signal: AbortSignal.timeout(cfg.timeoutMs || 30000) } : {});
   async function post(fn, body, sandbox = cfg.sandbox) {
     const headers = { "Content-Type": "application/json" };
     if (cfg.passcode) headers["X-Edit-Passcode"] = cfg.passcode;
     const url = base() + fn + (fn === "firebaseOrders" && sandbox ? "?sandbox=1" : "");
     // (a keepalive request may carry 64 KB at most: a bigger one is refused outright, and was retried forever. Bytes, not
     //  characters: 45,000 characters of Japanese or emoji are over 120 KB)
-    const text = JSON.stringify(body), r = await fetch(url, { method: "POST", headers, body: text, keepalive: new Blob([text]).size < 60000 });
+    // (and one that gets no answer ends after 30 s: a half-open connection, a laptop that slept mid-send, held `sending` for good, so nothing after it
+    //  was sent until the browser gave up on it; the batch is the same one next time and the server keeps an event once, by its id)
+    const text = JSON.stringify(body), r = await fetch(url, Object.assign({ method: "POST", headers, body: text, keepalive: new Blob([text]).size < 60000 }, within()));
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.error) throw new Error(j.error || "HTTP " + r.status);
     return j;
@@ -165,7 +168,7 @@
     const list = (Array.isArray(ids) ? ids : [ids]).map(digits).filter(Boolean);
     if (!list.length) return { cancelled: {} };
     if (cfg.mode === "station") {
-      const r = await fetch(base() + "firebaseOrders?cancelCheck=" + encodeURIComponent(list.join(",")) + (cfg.sandbox ? "&sandbox=1" : ""));
+      const r = await fetch(base() + "firebaseOrders?cancelCheck=" + encodeURIComponent(list.join(",")) + (cfg.sandbox ? "&sandbox=1" : ""), within());
       const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "HTTP " + r.status);
       return j;
     }
