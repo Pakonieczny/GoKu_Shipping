@@ -180,9 +180,14 @@
     }
 
     /* ── drawing ── */
-    function previewSvg(res) {
-      const b = res.bboxPt, w = b[2] - b[0], h = b[3] - b[1], pad = Math.max(w, h) * 0.07, sw = (Math.max(w, h) / 260).toFixed(3);
-      return `<svg viewBox="${(-pad).toFixed(2)} ${(-pad).toFixed(2)} ${(w + 2 * pad).toFixed(2)} ${(h + 2 * pad).toFixed(2)}" role="img" aria-label="The monogram as it will be cut" preserveAspectRatio="xMidYMid meet"><path d="${esc(E().svgPath(res))}" fill="#d9bd78" fill-rule="evenodd" stroke="#5a4520" stroke-width="${sw}" stroke-linejoin="round"/></svg>`;
+    /* The picture is the CUT piece: the finished monogram filled with the metal it will be cut in, one thin dark cut line round the outline and round every counter (the holes are open: the card shows through),
+       centred with an even margin and scaled to the box. The line is 1 CSS pixel whatever the scale (vector-effect), so it stays a hairline and crisp on a 2x screen. */
+    const TONES = { gold: ["#d9bd78", "#5a4520", "Gold"], gold10k: ["#dec58a", "#5a4520", "10K gold"], gold14k: ["#d4b46a", "#5a4520", "14K gold"], silver: ["#c8ccd2", "#4a4e55", "Silver"], rose: ["#e2b4a1", "#693e33", "Rose gold"] };
+    // the metal of the line: the one a person set on the approved design, else the order's own, else a neutral gold
+    const metalOf = c => { const ap = approvedFile(c), m = (ap && ap.file && ap.file.metal) || (c.row.spec && c.row.spec.material) || ""; return TONES[m] ? m : ""; };
+    function previewSvg(res, metal) {
+      const b = res.bboxPt, w = b[2] - b[0], h = b[3] - b[1], pad = Math.max(w, h) * 0.06, t = TONES[metal] || TONES.gold;
+      return `<svg viewBox="${(-pad).toFixed(2)} ${(-pad).toFixed(2)} ${(w + 2 * pad).toFixed(2)} ${(h + 2 * pad).toFixed(2)}" role="img" aria-label="The monogram as it will be cut, in ${esc(t[2])}" preserveAspectRatio="xMidYMid meet" shape-rendering="geometricPrecision"><path d="${esc(E().svgPath(res))}" fill="${t[0]}" fill-rule="evenodd" stroke="${t[1]}" stroke-width="1.25" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`;
     }
     const slotName = i => SLOTS[i][1];
     function buildCard(c) {
@@ -211,7 +216,8 @@
       h.dataset.state = state; el.dot.dataset.s = state;
       // the picture (while a new one is being made the old one stays, faded, so the card never jumps)
       let art = "";
-      if (c.result && (c.status === "ready" || c.status === "building")) art = previewSvg(c.result);
+      const metal = metalOf(c);
+      if (c.result && (c.status === "ready" || c.status === "building")) art = previewSvg(c.result, metal);
       else if (ap && (c.status === "setup" || c.status === "idle" || c.status === "error" || c.status === "words" && !c.draft)) art = `<div class="moHint">Monogram ${esc(ap.letters)} is on the order's designs</div>`;
       else if (c.status === "setup") art = `<div class="moHint">Choose the three alphabets below</div>`;
       else if (c.status === "words") art = `<div class="moHint">${esc(buyer.why && !c.draft ? cap(buyer.why) + ". Type the three letters." : "Type the three letters")}</div>`;
@@ -226,7 +232,7 @@
       el.says.innerHTML = (said ? `The buyer wrote <b>${esc(seen)}</b>` : "The buyer wrote nothing") + " · " + ls.map((x, i) => `${slotName(i)} <b>${esc(x || "–")}</b>`).join(" · ");
       // size and anything worth a look
       const notes = [];
-      if (c.result && c.status === "ready") { const r = c.result; notes.push(`<span class="moSize">${(+r.wMm).toFixed(1)} × ${(+r.hMm).toFixed(1)} mm</span>`); for (const w of (r.report && r.report.warnings) || []) notes.push(`<span class="moWarn">${esc(cap(w))}</span>`); }
+      if (c.result && c.status === "ready") { const r = c.result; notes.push(`<span class="moSize">Actual size ${(+r.wMm).toFixed(1)} × ${(+r.hMm).toFixed(1)} mm${metal ? " · " + TONES[metal][2] : ""}</span>`); for (const w of (r.report && r.report.warnings) || []) notes.push(`<span class="moWarn">${esc(cap(w))}</span>`); }
       if (c.hint) notes.push(`<span class="moWarn">${esc(c.hint)}</span>`);
       el.meta.innerHTML = notes.join("");
       // a message that needs a person (a missing letter, a load that failed, letters that cannot join)
