@@ -147,7 +147,8 @@ const hash = s => { let h = 7; for (const c of s) h = (h * 31 + c.charCodeAt(0))
       console.log(t(), 'STUCK at', k, JSON.stringify(await page.evaluate(() => ({ run: B.run && { status: B.run.status, step: B.run.step, errors: (B.run.errors || []).slice(-3) }, ds: (() => { try { const d = DesignLink.state(); return { up: DesignLink.up(), control: DesignLink.inControl(), counts: d && d.counts }; } catch (e) { return String(e); } })(), pending: (() => { try { return DesignLink._S.pending.size; } catch (_) { return null; } })(), log: DesignLink.log.slice(-8).map(l => [l.dir, l.type, l.err, l.ms]), events: CN.AG.events.slice(-14).map(e => String(e.text).slice(0, 160)), arrivals: Arrivals.state().error, busy: !!document.querySelector('.cnp.on') && [...document.querySelectorAll('.cnp.on .cnpRow .cnpLabel')].map(x => x.textContent) })).catch(e => String(e))));
     }
     if (k !== lastStep) { stepSince = Date.now(); lastStep = k; console.log(t(), 'run', r.status, r.step, r.stoppedBy || ''); if (r.status === 'stopped') stops.push({ at: t(), why: r.stoppedBy }); }
-    if (r.status === 'complete' || (r.status === 'processed' && r.step === 'complete')) { if (!doneAt) doneAt = Date.now(); if (Date.now() - doneAt > 25000) break; } else doneAt = 0;
+    const lines = await page.evaluate(() => Object.values(B.run.lines || {}).map(l => l.state)).catch(() => []);   // (a line a passing failure left pulled is taken up again 30 s, 1 and 2 minutes later: the run is waited for until they are pooled)
+    if ((r.status === 'complete' || (r.status === 'processed' && r.step === 'complete')) && lines.length && lines.every(x => ['pooled', 'unmatched', 'committed', 'written'].includes(x))) { if (!doneAt) doneAt = Date.now(); if (Date.now() - doneAt > 25000) break; } else doneAt = 0;
     if (r.status === 'review' || r.status === 'running' || r.status === 'processed') {
       const done = await page.evaluate(async () => {
         const out = [];
