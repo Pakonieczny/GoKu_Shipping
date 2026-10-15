@@ -48,4 +48,25 @@ let n = 0; const ok = (c, why) => { assert(c, why); n++; };
   const rein = O.interpretLine(order, line('REINDEER_4821', 'Reindeer Necklace', { variations: [], metalKey: 'gold', metalLabel: 'Gold' }), ctx(master(['REINDEER_4821'])));
   ok(!rein.special && rein.designSku === 'REINDEER_4821', 'REINDEER_4821 is a catalogue charm'); }
 
+// 7 · "Add a Custom Piece to your Jewelry!" (order 4199104309, listing 595264213, SKU ADD_CUSTOM_4213, which the master also holds as a disc with two holes): a custom listing has no master design
+{ const L = { listingId: '595264213', variations: [{ name: 'Style (See photos)', value: 'Disc' }], metalKey: 'ss', metalLabel: 'Sterling Silver' };
+  const sp = O.interpretLine(order, line('ADD_CUSTOM_4213', 'Add a Custom Piece to your Jewelry!', L), ctx(master(['ADD_CUSTOM_4213'])));
+  ok(sp.special && /^custom/.test(sp.special.kind) && sp.special.own === true && sp.ownDesign === true && sp.problems.length === 0, 'the listing is a custom listing whose piece is the buyer\'s own: ' + JSON.stringify(sp.special && { k: sp.special.kind, own: sp.special.own, w: sp.special.why }) + ' ' + sp.problems.map(p => p.kind));
+  // another listing id with the same kind of code and words (the listing id list is not the only thing that says so)
+  const other = O.interpretLine(order, line('ADD_CUSTOM_9999', 'Add a Custom Piece to your Jewelry!', Object.assign({}, L, { listingId: '111222333' })), ctx(master(['ADD_CUSTOM_9999'])));
+  ok(other.special && other.special.own === true && other.ownDesign === true, 'by its title, whatever the listing id: ' + JSON.stringify(other.special && other.special.why));
+  // the code alone, a title that says nothing: the code says CUSTOM, the master holds the name, the line was matched automatically
+  const code = O.interpretLine(order, line('ADD_CUSTOM_7777', 'Jewelry extras', Object.assign({}, L, { listingId: '111222334' })), ctx(master(['ADD_CUSTOM_7777'])));
+  ok(code.special && code.special.own === true && /^custom/.test(code.special.kind), 'by its code: ' + JSON.stringify(code.special && { k: code.special.kind, w: code.special.why }));
+  // ADD_ / CARD_ / BOX_ names without the word CUSTOM keep "a catalogue SKU is its design"
+  const box = O.interpretLine(order, line('ADD_HEART_1234', 'Heart Charm', Object.assign({}, L, { listingId: '111222335', variations: [] })), ctx(master(['ADD_HEART_1234'])));
+  ok(!box.special && box.designSku === 'ADD_HEART_1234', 'an ADD_ name that is not custom stays a catalogue charm: ' + JSON.stringify(box.special && box.special.kind));
+  // no master design of that name: the add-on code reads as before (an add-on, not turned into a custom order)
+  const bare = O.interpretLine(order, line('ADD_CUSTOM_5555', 'Jewelry extras', Object.assign({}, L, { listingId: '111222336' })), ctx(master([])));
+  ok(bare.special && bare.special.kind === 'addOn' && !bare.special.own, 'no colliding design: as it was: ' + JSON.stringify(bare.special && bare.special.kind));
+  // a person's own link on the listing stands
+  const al = { 111222337: { listingId: '111222337', bySku: { ADD_CUSTOM_8888: 'FOX_4821' }, by: 'Paul' } };
+  const linked = O.interpretLine(order, line('ADD_CUSTOM_8888', 'Jewelry extras', Object.assign({}, L, { listingId: '111222337' })), ctx(master(['ADD_CUSTOM_8888', 'FOX_4821']), al));
+  ok(linked.skuSource === 'alias' && !(linked.special && linked.special.own), 'a saved link is a person\'s word: ' + linked.skuSource); }
+
 console.log('custom SKU collision OK: ' + n + ' checks');

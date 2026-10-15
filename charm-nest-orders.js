@@ -1595,10 +1595,12 @@
        2 · the listing's id in ADDON_LISTINGS (what was found in the shop's own orders when this rule was made);
        3 · the title's first phrase, nothing but "Add a <up to three words> Charm" or "<up to three words> Charm + Shipping".
      The words "add on" in a title are still no rule (Paul, 25 Sep: many regular charm-only listings say it somewhere in a long title). */
-  const ADDON_LISTINGS = { "1777293722": "Huggie Charm + Shipping" };
+  // (REVDROP, Paul, 15 Oct 2026, order 4199104309: "Custom listing should not have any matching vector charm repo associations": "Add a Custom Piece to your Jewelry!", SKU ADD_CUSTOM_4213, was read as the master design of that name, a disc with two holes, and asked about its "Style" option)
+  const ADDON_LISTINGS = { "1777293722": "Huggie Charm + Shipping", "595264213": "Add a Custom Piece to your Jewelry!" };
   const ADDON_TITLE = [
     ["Add a … Charm", /^add\s+an?\s+(?:[a-z0-9'’&-]+\s+){0,3}charms?$/],
-    ["… Charm + Shipping", /^(?:[a-z0-9'’&-]+\s+){0,3}charms?\s*\+\s*shipping$/]
+    ["… Charm + Shipping", /^(?:[a-z0-9'’&-]+\s+){0,3}charms?\s*\+\s*shipping$/],
+    ["Add a Custom …", /^add\s+an?\s+custom\s+[a-z0-9'’&!.\s-]{1,40}$/]   // (the listing's own words: "Add a Custom Piece to your Jewelry!", "Add a Custom Charm"; a title that merely contains "custom" later on is no rule)
   ];
   const KIND_WORDS_ = { custom: "a custom order", rework: "a rework", addOnToOrder: "an add-on to an order", chainOnly: "chain only", other: "a special order" };
   /** What says this line's listing is an add-on listing: { kind, why } (kind: custom, rework…), { regular: true } when a person took the listing out, or null. */
@@ -1672,9 +1674,11 @@
         // REVDROP (Paul, 15 Oct 2026, order 4198686344, "These custom listing should not have any associated SKU ... it's strange that there is already an associated vector thumbnail"): the shop's own code for a
         // rework or custom listing (RE_5460, CUSTOM_6673) is a name, not a design. A master design that happens to carry the same name, found by the SKU as Etsy wrote it (opts.auto: never a person's link
         // or answer, which stands), is not this order's design: the line is the buyer's own (own: true, as an add-on listing's is) and is never drawn or cut as that design.
-        const collide = known && opts.auto === true && (kind === "rework" || kind === "custom");
+        // (an add-on code that says CUSTOM, ADD_CUSTOM_4213, is the same: the shop's word for a listing whose piece the buyer designs)
+        const customCode = kind === "addOn" && /(?:^|[\s_\-.])CUSTOM(?:[\s_\-.]|\d|$)/.test(s);
+        const collide = known && opts.auto === true && (kind === "rework" || kind === "custom" || customCode);
         if (onlyLoose && known && !collide) continue;
-        return Object.assign(make(kind === "custom" ? customKind(s, title, vars) : kind, `SKU ${s}`, "sku"), collide ? { own: true, collides: sku || s } : {});
+        return Object.assign(make(kind === "custom" || (customCode && collide) ? customKind(s, title, vars) : kind, `SKU ${s}`, "sku"), collide ? { own: true, collides: sku || s } : {});
       }
     }
     // 3 · the listing title, only for a line with no design of its own
