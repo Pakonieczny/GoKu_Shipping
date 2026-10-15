@@ -252,9 +252,10 @@
 
   /* ── the warning sound: three short tones (WebAudio; unlocked on the first click or key, as browsers ask) ── */
   let actx = null;
-  function audio() {
+  function audio(force) {
     try {
-      if (!actx) { const C = window.AudioContext || window.webkitAudioContext; if (!C) return null; actx = new C(); }
+      // (a context made before the person has touched the page can never start: the browser says "The AudioContext was not allowed to start". Made at the first click or key, or when a sound is asked for after one.)
+      if (!actx) { const C = window.AudioContext || window.webkitAudioContext; if (!C) return null; if (!force && navigator.userActivation && !navigator.userActivation.hasBeenActive) return null; actx = new C(); }
       if (actx.state === "suspended") actx.resume().catch(() => {});
       return actx;
     } catch (_) { return null; }
@@ -424,7 +425,7 @@
         try { if (document.head) css(); } catch (_) {}   // the stylesheet is in before any alert: its first frame does not restyle the page
         window.addEventListener("keydown", onKey, true);
         document.addEventListener("focusin", onFocusIn, true);
-        const unlock = () => { audio(); window.removeEventListener("pointerdown", unlock, true); window.removeEventListener("keydown", unlock, true); };
+        const unlock = () => { audio(true); window.removeEventListener("pointerdown", unlock, true); window.removeEventListener("keydown", unlock, true); };
         window.addEventListener("pointerdown", unlock, true); window.addEventListener("keydown", unlock, true);
       }
     } catch (e) { warn("init failed", e); }

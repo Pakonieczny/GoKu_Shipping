@@ -2,6 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
+  <link rel="icon" href="data:,">
   <title>Etsy Order & OAuth Integration</title>
 
   <!-- Materialize CSS -->
@@ -1190,7 +1191,7 @@
 
   <!-- Order timeline: every scan here is recorded (who, when) and a cancelled order raises the full-screen alert -->
   <script src="order-timeline.js?v=20261007-fc4"></script>
-  <script src="station-timeline.js?v=20261006-int1"></script>
+  <script src="station-timeline.js?v=20261006-int1-asm1"></script>
   <script>
     /* Who welds: the person signed in with this station's 6-digit PIN login (Brites_Orders/"Employee Numbers"), by the
        name the login stored. Never the typed "Employee Name" field (a guess) and never an earlier person: the timeline
@@ -1641,6 +1642,16 @@ function metalToBadge(label){
     let chatUnsub = null;        // holds the active Firestore unsubscribe fn
     let firstBatch = true;       // suppress chime on initial load
 
+    /* A Firestore listener or write this computer is refused (the security rules) or that dropped: said once in the console, never an "Uncaught (in promise)"; the saved messages the server sends with the order stay on screen. */
+    const fsTold = {};
+    function fsQuiet(what, err, key){
+      const code = (err && err.code) || "";
+      const k = (key || what) + ":" + code;
+      if (fsTold[k]) return; fsTold[k] = 1;
+      console.warn(what + " is not available (" + (code || (err && err.message) || "error") + ").");
+    }
+    function britesListenerFailed(orderId, err){ chatUnsub = null; fsQuiet("Live chat for order " + orderId, err, "chat"); }
+
     /* ─── realtime Brites chat listener (now supports images) ─────────── */
     function startBritesListener(orderId){
       if(chatUnsub) chatUnsub();
@@ -1693,7 +1704,7 @@ function metalToBadge(label){
           box.innerHTML = html.replace(/&quot;/g, '"');
           box.scrollTop = box.scrollHeight;
           applyChatSpacing();
-        });
+        }, err => britesListenerFailed(orderId, err));
     }
     /* basic XSS guard */
     function escapeHtml(str=""){
@@ -2037,15 +2048,45 @@ function metalToBadge(label){
     }
   }
 
+    /* ASMERR (Paul, 15 Oct 2026, the console of all four Assembly desks: etsyOrderProxy 403 and 400 on every scan, "Missing or insufficient permissions", a 404, "AudioContext was not allowed").
+       A desk with no Etsy token in this browser (cleared storage, a new profile: "No tokens at all" is never an automatic login) sent the header as the word "null" (403 from Etsy) in the order's
+       details and as nothing (400) in its transactions, and the answer, an error, was read as if it were the order. The order's receipt is now read ONCE for both (they were two identical
+       calls), only when this desk is connected to Etsy, through apiFetch (a token about to expire is refreshed first), and an error is said once, calmly, with what Etsy answered. */
+    const etsyReceiptCache = new Map();   // order number -> { at, promise }
+    let etsyNoticeAt = 0;
+    function etsyConnected(){ try { return !!(localStorage.getItem(TOKEN_KEYS.access) || localStorage.getItem(TOKEN_KEYS.refresh)); } catch (_) { return false; } }
+    function etsyNotice(msg){ const now = Date.now(); if (now - etsyNoticeAt < 120000) return; etsyNoticeAt = now; try { M.toast({ html: msg, displayLength: 9000 }); } catch (_) {} }
+    function etsyReceipt(orderNumber){
+      const key = String(orderNumber || "");
+      const hit = etsyReceiptCache.get(key);
+      if (hit && Date.now() - hit.at < (hit.failed ? 5000 : 20000)) return hit.promise;   // (an answer is kept 20 s, a refusal 5 s: one scan asks once, a second try a moment later asks again)
+      const promise = (async () => {
+        if (!etsyConnected()) { console.warn("Etsy is not connected on this computer: press Connect Etsy."); etsyNotice("Etsy is not connected on this computer. Press Connect Etsy, then scan the order again."); return null; }
+        let resp;
+        try { resp = await apiFetch("/etsyOrderProxy?orderId=" + encodeURIComponent(key)); }
+        catch (e) { console.warn("Etsy order lookup stopped:", (e && e.message) || e); return null; }   // (apiFetch throws once Etsy has refused the token twice and the sign-in was started)
+        let body = null; try { body = await resp.json(); } catch (_) {}
+        if (!resp.ok) {
+          const why = body && (body.error_description || body.error || body.message) || "";
+          console.warn("Etsy did not give order " + key + " (" + resp.status + (why ? ": " + String(why).slice(0, 160) : "") + ")");
+          if (resp.status === 401 || resp.status === 403) etsyNotice("Etsy would not give this order (" + resp.status + "). This computer's Etsy connection may be out of date: press Connect Etsy.");
+          return null;
+        }
+        return body;
+      })();
+      etsyReceiptCache.set(key, { at: Date.now(), promise });
+      promise.then(v => { const e = etsyReceiptCache.get(key); if (!v && e && e.promise === promise) { e.failed = true; e.at = Date.now(); } }, () => etsyReceiptCache.delete(key));
+      return promise;
+    }
+
     /* =======================*/
     async function maybeLoadEtsyTransactions(receiptId){
       try{
         if(!receiptId) return [];
 
-        // Always use apiFetch so we inherit token refresh/retry behavior
-        const res = await apiFetch(`/etsyOrderProxy?orderId=${encodeURIComponent(receiptId)}&include=transactions`);
-        if(!res?.ok) return [];
-        const out = await res.json();
+        // One shared read of the order's receipt (etsyReceipt): its details and its transactions are the same Etsy answer
+        const out = await etsyReceipt(receiptId);
+        if(!out) return [];
 
         // ---- normalize "transactions" array out of various shapes ----
         let items = [];
@@ -3677,13 +3718,11 @@ function metalToBadge(label){
 
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:", orderNumber);
-      var token = localStorage.getItem("access_token");
-      return fetch("/.netlify/functions/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
-        headers: { "access-token": token }
-      })
-      .then(function(r){ return r.json(); })
+      return etsyReceipt(orderNumber)
       .then(function(data){
-        console.log("Etsy Order Data:", data);
+        var failed = !data;
+        if (failed) data = {};   // no Etsy connection or Etsy refused it (said once by etsyReceipt): the fields are cleared, never filled from an error, and the caller is told null
+        else console.log("Etsy Order Data:", data);
         // Gift fields now sourced from Etsy receipt
         window.receiptIsGift = Boolean(data.is_gift);
 
@@ -3784,7 +3823,7 @@ function metalToBadge(label){
           shipEl2.value = "";
           shipEl2.style.color = "";
         }
-        return data;
+        return failed ? null : data;
       })
       .catch(function(err){
         console.error("Error fetching Etsy order details:", err);
@@ -3973,11 +4012,12 @@ function metalToBadge(label){
               /* one-shot: wipe the field so it can’t be reused */
               db.collection("Brites_Orders")
                 .doc("weld-scan-1")
-                .set({ "Order Number": firebase.firestore.FieldValue.delete() }, { merge:true });
+                .set({ "Order Number": firebase.firestore.FieldValue.delete() }, { merge:true })
+                .catch(err => fsQuiet("Clearing the phone-scan relay", err));
 
             }
           }
-        });
+        }, err => { scanRelayOn = false; fsQuiet("The phone-scan relay", err); try { M.toast({ html: "Phone scanning is not connected on this computer. Reload the page; if it stays, the shop's Firestore rules refuse this desk.", displayLength: 9000 }); } catch (_) {} });
     }
 
     /* Loads ONE phone-scanned order exactly as a typed one (the fields as the Paste button leaves them, then Enter). It resolves
