@@ -167,8 +167,8 @@ async function check(name, fn) {
     assert(cancelDoc("4310000100"));
   });
   await check("sweep: one order that will not write answers 200 with the progress, the resume point and that order, kept in the backlog", async () => {
-    // the backlog is full (200 ids): the failed order is added as the newest and the oldest drops, as the backlog always did
-    await OrderCancel.keepBacklog(db, Array.from({ length: 200 }, (_, i) => String(4330000000 + i)));
+    // the backlog is full (BACKLOG_MAX, 2000 ids since 29 Sep; the test said 200): the failed order is added as the newest and the oldest drops, as the backlog always did
+    await OrderCancel.keepBacklog(db, Array.from({ length: 2000 }, (_, i) => String(4330000000 + i)));
     const ok1 = "4320000000", bad = "4320000001", ok2 = "4320000002";
     for (const id of [ok1, bad, ok2]) store.set("EtsyMail_Receipts/" + id, { receipt_id: id, status: "Canceled", is_shipped: false, updated_timestamp: T0, raw: { receipt_id: id, status: "Canceled" } });
     const poisoned = r => r && r.path === "Charm_Nest_Cancelled/" + bad;
@@ -186,10 +186,11 @@ async function check(name, fn) {
     assert(r.body.failures[0].why.length <= 200, "a short reason");
     assert(cancelDoc(ok1) && cancelDoc(ok2), "the others were recorded"); assert(!cancelDoc(bad));
     const bl = store.get("Charm_Nest_Cancelled_Backlog/pending").ids;
-    assert.equal(bl.length, 200, "bounded as the backlog is"); assert.equal(bl[199], bad, "kept for the mirror's retry");
+    assert.equal(bl.length, 2000, "bounded as the backlog is"); assert.equal(bl[1999], bad, "kept for the mirror's retry");
     assert.equal(r.body.backlogged, 1);
     // the mirror's next run retries it (no Etsy call of its own) and it is recorded
-    await OrderCancel.retryBacklog(db, fakeAdmin.firestore.FieldValue);
+    // (a run retries the oldest RETRY_MAX = 200 ids, so a backlog of 2000 drains in ten runs; the ids that are not in the mirror just leave it)
+    for (let i = 0; i < 12 && !cancelDoc(bad); i++) await OrderCancel.retryBacklog(db, fakeAdmin.firestore.FieldValue);
     assert(cancelDoc(bad) && cancelDoc(bad).by === "Etsy", "retried from the backlog");
   });
   console.warn = realWarn; console.log = realLog; Date.now = realNow;

@@ -3569,6 +3569,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       for (const p of B.pool.rows.values()) if (p && p.orderId && !GONE.includes(p.state)) out.add(String(p.orderId));
       return out;
     }
+    /** A set of the run is being committed (Sets.commit, operation "commit:<run>"): the station is told which orders are done from the
+     *  sheets and labels it checked at its start. A page holding the order's pieces is not changed under it (ADV-CANCEL, Paul 15 Oct
+     *  2026): the job waits for the commit as for any change at work, and then finds the set sent (the notice) or still open (they come off). */
+    const commitOn = ids => !!window.CharmNestOperations && allSheets().some(sh => sh.runId && sh.charms.some(c => ids.has(c.poolId)) && window.CharmNestOperations.running("commit:" + sh.runId));
     /** Why a page holding the order's pieces is left as it is; null when it is still filling and they come off. */
     function leftWhy(sh, ids) {
       // only a sheet the laser has cut (or whose set went to the station) keeps a cancelled order's pieces: they are cut with
@@ -3656,7 +3660,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         // what is at work finishes first (a change by hand in the sheet window, new orders going on, a page nesting or
         // saving); then the record is read once more, and nothing waits between that answer and the pieces coming off
         for (;;) {
-          const idle = !W.flow && !(B.run && B.run.arrivalBusy) && !plan.wait.length;
+          const idle = !W.flow && !(B.run && B.run.arrivalBusy) && !plan.wait.length && !commitOn(plan.ids);
           if (idle) {
             // (its piece records are read here too: a read after the check below let a nest start on a page meanwhile)
             const [r, pl] = await Promise.all([api("charmNestLibrary", { op: "cancelCheck", orderIds: [rid] }, { quiet: true }),
@@ -3667,10 +3671,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
               st = read(); delete st.jobs[rid]; delete st.pend[rid]; save(); forget(rid); return "restored";
             }
             plan = planOf(rid);
-            if (!W.flow && !(B.run && B.run.arrivalBusy) && !plan.wait.length) break;
+            if (!W.flow && !(B.run && B.run.arrivalBusy) && !plan.wait.length && !commitOn(plan.ids)) break;
           }
           if (Date.now() - t0 > 90000) return "later";
-          say(plan.wait.length ? `waiting for ${whereOf(plan.wait[0])} to finish ${plan.wait[0].stage || plan.wait[0].status || "saving"}` : "waiting for the change in progress");
+          say(plan.wait.length ? `waiting for ${whereOf(plan.wait[0])} to finish ${plan.wait[0].stage || plan.wait[0].status || "saving"}` : commitOn(plan.ids) ? "waiting for the set being committed" : "waiting for the change in progress");
           await pause(500); plan = planOf(rid);
         }
         const etsy = rec.source === "etsy" || rec.by === "Etsy", by = etsy ? "Etsy" : String(rec.by || "someone");
@@ -3712,6 +3716,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         // pieces never placed (pooled, waiting) are let go the same way
         const loose = plan.loose;
         let looseMore = [];
+        // (the pieces are written down in the journal before their records are written: a write lost with the connection is sent again below, at the check of the saved records)
+        j.ids = [...new Set(j.ids.concat(taken.flatMap(t => t.poolIds), loose))].slice(0, 300); upd(x => { x.ids = j.ids; });
         if (loose.length) { const lres = await Pool.update(loose, Object.assign({ state: "abandoned", sheetId: null, setId: null }, patch)); looseMore = serverExtra(lres, new Set(loose.concat(taken.flatMap(t => t.poolIds))), rid); for (const id of loose) B.pool.rows.delete(id); }
         const offIds = new Set(taken.flatMap(t => t.poolIds).concat(loose, looseMore));
         j.ids = [...new Set(j.ids.concat([...offIds]))].slice(0, 300); upd(x => { x.ids = j.ids; });
@@ -3765,7 +3771,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         say("checking the saved sheets");
         const all = new Set(j.ids.concat([...plan.ids])), bad = [];
         for (const sh of pages) if (sh.sheetId && !(await verifySaved([{ sh, name: whereOf(sh), off: all }], all, null, stepOf(""), noop))) bad.push(sh);
-        const poolOk = !j.ids.length || await verifySaved([], new Set(j.ids), p => GONE.includes(p.state), stepOf(""), noop);
+        let poolOk = !j.ids.length || await verifySaved([], new Set(j.ids), p => GONE.includes(p.state), stepOf(""), noop);
+        // A piece record that does not say "taken off" is written again, under the same removal time (nothing is stamped twice): the connection
+        // dropped for the first write (the page had the pieces off its sheet already) and the check used to look again for good (ADV-CANCEL, Paul 15 Oct 2026).
+        if (!poolOk) {
+          try { await Pool.update(j.ids, Object.assign({ state: "abandoned", sheetId: null, setId: null }, patch)); poolOk = await verifySaved([], new Set(j.ids), p => GONE.includes(p.state), stepOf(""), noop); }
+          catch (e) { console.warn("cancelled order: piece records not written again", e.message); }
+        }
         if (saving || bad.length || !poolOk) {
           // a page whose saved record still lists the order is nested again at the next try
           for (const sh of bad) if (!busy(sh) && !(window.LiveNest && LiveNest.closed(sh))) { sh.dirty = true; sh.status = "ready"; }

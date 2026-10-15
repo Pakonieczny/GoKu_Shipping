@@ -10,7 +10,7 @@ const fs = require('fs'), path = require('path'), assert = require('assert');
 const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
-const { start } = require('./bridge-server.cjs');
+const { start, Timestamp } = require('./bridge-server.cjs');
 
 const F = '4400000001', H = '4400000002';
 const SHEETS = 'Charm_Nest_Sheets', POOL = 'Charm_Pool', CANCELLED = 'Charm_Nest_Cancelled';
@@ -22,7 +22,7 @@ const SHEETS = 'Charm_Nest_Sheets', POOL = 'Charm_Pool', CANCELLED = 'Charm_Nest
   const pf = c => `${F}_5000000001_${c}`;
   st.put(SHEETS, 'gold-old-3', { id: 'gold-old-3', metal: 'gold', fileBase: 'GF_2026-09-20_Sheet-3', charms: [1, 2].map(c => ({ id: 'g' + c, poolId: pf(c), order: F })), placements: [1, 2].map(c => ({ id: 'g' + c, cxPt: 40 * c, cyPt: 40, angle: 0 })), poolIds: [pf(1), pf(2)] }, false);
   for (const c of [1, 2]) st.put(POOL, pf(c), { poolId: pf(c), orderId: F, sheetId: 'gold-old-3', sheetName: 'GF_2026-09-20_Sheet-3', state: 'placed', material: 'gold' });
-  const cancel = (rid, by, extra) => st.put(CANCELLED, rid, Object.assign({ orderId: rid, by, why: '', at: Date.now(), sheets: [], lines: [] }, extra), false);
+  const cancel = (rid, by, extra) => st.put(CANCELLED, rid, Object.assign({ orderId: rid, by, why: '', at: Date.now(), sheets: [], lines: [], createdAt: Timestamp.now() }, extra), false);   // (createdAt: every writer sets it, and the sorter reads the records written since its last read by it, cancelList after)
 
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 } });

@@ -8144,7 +8144,7 @@ const Bridge = (() => {
         decorateReceipt(rc); orderCache[rid] = rc.transactions; cachePut(rid, rc.transactions, receiptStamp(rc), rc);
         if (r) { Object.assign(r, rc); decorateReceipt(r); paintRow(rid); }
         notesCache.delete(rid); msgCache.delete(rid);
-        const gone = !!rc.is_shipped || !!rc.was_shipped || !!rc.is_canceled || !!rc.was_canceled || rc.is_paid === false || rc.was_paid === false || !!(rc.status && /cancel|refund/i.test(String(rc.status)));
+        const gone = !!rc.is_shipped || !!rc.was_shipped || !!rc.is_canceled || !!rc.was_canceled || rc.is_paid === false || rc.was_paid === false || !!(rc.status && /cancel|fully\s*refund/i.test(String(rc.status)));   // (ADV-CANCEL, Paul 15 Oct 2026: "Partially Refunded" is not a cancel, as in _orderCancel.isCancelled; a refunded part of a live order dropped it from the run and took its pieces off the sheets)
         return { order: await orderForBridge(r || rc), gone, status: String(rc.status || ""), isShipped: !!rc.is_shipped, etsyCalls: etsyMeter.total - calls0 };
       }
       if (!r._hydrated) { const txs = await hydrateOrder(rid); applyHydration(rid, txs); }
