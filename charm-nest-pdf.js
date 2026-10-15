@@ -721,7 +721,7 @@
         };
       }
       return {
-        ok: true, ot, upem, kind: cff ? "CFF" : tag4(raw, 0) === "OTTO" ? "OpenType" : "TrueType",
+        ok: true, ot, upem, cff: !!cff, kind: cff ? "CFF" : tag4(raw, 0) === "OTTO" ? "OpenType" : "TrueType",
         // the glyph for a code, or { why }: and only when the PDF's own width for that code agrees with the glyph's advance (a different letter has a different width)
         glyphFor(code) {
           const gid = gidOf(code); if (!gid) return { why: `no glyph for character code ${code}` };
@@ -731,7 +731,7 @@
             const mine = glyph.advanceWidth / upem * 1000, theirs = w * 1000;
             if (Math.abs(mine - theirs) > Math.max(2.5, 0.02 * theirs)) return { why: `glyph ${gid} is ${Math.round(mine)} wide and the PDF says ${Math.round(theirs)} for code ${code}` };
           }
-          return { glyph, gid };
+          return { glyph, gid, w };
         }
       };
     } catch (e) { return { ok: false, why: String(e && e.message || e).slice(0, 120) }; }
@@ -753,6 +753,23 @@
     }
     done();
     return subs;
+  }
+  /** The lowest y a subpath's lines and cubic curves reach (the curve's own extremum, not its control points). */
+  function subLowestY(sub) {
+    let low = Infinity, cur = null;
+    for (const o of sub) {
+      if (o[0] === "m" || o[0] === "l") { cur = o[1]; if (cur[1] < low) low = cur[1]; }
+      else if (o[0] === "c" && cur) {
+        const y0 = cur[1], y1 = o[1][1], y2 = o[2][1], y3 = o[3][1]; low = Math.min(low, y3);
+        // dy/dt = 3[(y1-y0)(1-t)^2 + 2(y2-y1)(1-t)t + (y3-y2)t^2] = 0
+        const a = (y1 - y0) - 2 * (y2 - y1) + (y3 - y2), b = 2 * ((y2 - y1) - (y1 - y0)), c = y1 - y0, ts = [];
+        if (Math.abs(a) < 1e-12) { if (Math.abs(b) > 1e-12) ts.push(-c / b); }
+        else { const d = b * b - 4 * a * c; if (d >= 0) { const q = Math.sqrt(d); ts.push((-b + q) / (2 * a), (-b - q) / (2 * a)); } }
+        for (const t of ts) if (t > 0 && t < 1) { const u = 1 - t; low = Math.min(low, u * u * u * y0 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * y3); }
+        cur = o[3];
+      }
+    }
+    return low;
   }
   const signedArea = poly => { let a = 0; for (let i = 0; i < poly.length; i++) { const p = poly[i], q = poly[(i + 1) % poly.length]; a += p[0] * q[1] - q[0] * p[1]; } return a / 2; };
   /** The outer edges and counters of a glyph: each contour is an outer edge when it turns the way the glyph's largest one does, a counter when it turns the other way (a nonzero-winding font, which is every TrueType and CFF font). */
@@ -793,10 +810,19 @@
       cd.pieceInk = [b[0], b[1] + 0.22 * cd.eff, b[2], b[3]];          // (the reader's box for a piece reaches 0.22 em under the baseline)
       if (!prog.ok) { cd.fail = prog.why; continue; }
       const r = prog.glyphFor(cd.g.code); if (!r.glyph) { cd.fail = r.why; continue; }
-      let subs; try { subs = glyphSubpaths(r.glyph, mul([cd.g.fs * cd.g.th / prog.upem, 0, 0, cd.g.fs / prog.upem, 0, cd.g.rise], cd.g.m)); } catch (e) { cd.fail = "its outline could not be read"; continue; }
+      const G = mul([cd.g.fs * cd.g.th / prog.upem, 0, 0, cd.g.fs / prog.upem, 0, cd.g.rise], cd.g.m);   // glyph units → page
+      let subs; try { subs = glyphSubpaths(r.glyph, G); } catch (e) { cd.fail = "its outline could not be read"; continue; }
       const items = glyphContours(subs);
       if (!items.length) { cd.fail = "the glyph has no outline"; continue; }
       cd.items = items; cd.ink = items.reduce((a, it) => bbUnion(a, it.bbox), null);
+      // the letter's typographic metrics, for the per-SKU file (MONOGRAMFILE follow-up, Paul 15 Oct 2026: the left and right letters came out at different heights). Only for text set upright.
+      // baselinePt = the baseline's y minus the lowest y of the letter's ink (all its contours), y up, in points: > 0 when the ink reaches below the baseline, 0 when it sits on it, < 0 when it floats above it.
+      // emPt = the font size as drawn (the page's own scale after the text matrix); advancePt = the glyph's advance as drawn (null for a bare CFF whose /Widths are missing); font = BaseFont without its subset tag.
+      if (Math.abs(G[1]) < 1e-6 && Math.abs(G[2]) < 1e-6 && G[0] > 0 && G[3] > 0) {
+        let low = Infinity; for (const it of items) low = Math.min(low, subLowestY(it.sub));       // (the exact lowest point of the curves, not of a polyline)
+        const adv = r.w != null && r.w > 0 ? r.w : (!prog.cff && r.glyph.advanceWidth != null ? r.glyph.advanceWidth / prog.upem : null), r4 = v => Math.round(v * 1e4) / 1e4;
+        cd.metrics = { baselinePt: r4(G[5] - low), emPt: r4(G[3] * prog.upem), advancePt: adv == null ? null : r4(adv * G[0] * prog.upem), font: cd.g.font.baseFont || null };
+      }
       if (cd.ink[3] - cd.ink[1] < LIVE_INK_MIN_PT) { cd.items = null; cd.small = true; }
     }
     // 3 · labels and vector outlines on the page
@@ -840,6 +866,7 @@
           ordAt: cd.u.seg.start + (cd.u.o.bbox[0] / Math.max(1, pageW)) * 0.5, glyphHole: it.hole, glyphChar: char, glyphKey: key
         };
         if (!it.hole) seg.textLabel = cd.label.bbox.slice();
+        if (cd.metrics) seg.glyphMetrics = cd.metrics;
         made.push(seg);
       }
       cd.u.o.outlined = true; glyphs++;
@@ -898,6 +925,7 @@
     const nested = [];
     segs.forEach(s => { if (s.kind === "xobj" && s.children) s.children.forEach(k => { k.parent = s.index; nested.push(k); }); });
     closeNearlyClosed(segs); closeNearlyClosed(nested);
+    let glyph = null; try { const sj = doc.getSubject(); if (sj && sj.charCodeAt(0) === 123 && sj.indexOf('"glyph"') > 0) { const o = JSON.parse(sj); if (o && o.glyph && typeof o.glyph === "object") glyph = o.glyph; } } catch (_) { /* an ordinary file has no such Subject */ }
     const counts = { paths: segs.filter(s => s.kind === "path").length + nested.filter(s => s.kind === "path").length, top: segs.length, xobjects: segs.filter(s => s.kind === "xobj").length, text: segs.filter(s => s.kind === "text").length };
     // live text that is the design (a glyph per text object with its SKU label under it) is drawn as outlines here, once, and only then (section 3c); a page without such text is returned exactly as it always was
     let textDesign = null; try { textDesign = liftTextDesigns(segs, nested, mb.width, mb.height); } catch (e) { textDesign = { converted: 0, contours: 0, kept: [{ font: "the page", why: String(e && e.message || e).slice(0, 120), n: 0 }], captions: [] }; }
@@ -908,7 +936,8 @@
       rotate: (() => { try { return page.getRotation().angle || 0; } catch (_) { return 0; } })(),
       content, segments: segs, nested, inner,
       counts,
-      ...(textDesign ? { textDesign } : {})
+      ...(textDesign ? { textDesign } : {}),
+      ...(glyph ? { glyph } : {})                                    // (a per-SKU file of a letter drawn from live text says where its baseline is; the page's copy of a parse has no doc, so it is here too)
     };
   }
 
@@ -2515,13 +2544,16 @@
     const c = Object.assign({}, charm, { sourceId: "one", centerPt: charm.centerPt || [(charm.bbox[0] + charm.bbox[2]) / 2, (charm.bbox[1] + charm.bbox[3]) / 2], strokePt: charm.strokePt || Math.max(0.5, charm.outline.lwPt || 0.5) });
     const bodies = opts && Array.isArray(opts.bodies) && opts.bodies.length > 1 ? opts.bodies : null;
     const base = String(charm.name || charm.slug || "charm");
+    const glyphMetrics = [charm.outline].concat(charm.members || []).map(m => m && m.glyphMetrics).find(Boolean) || null;
     return buildSheet({
       sheet: { wPt: w, hPt: h, strokeRGB: [1, 1, 1], strokePt: 0.01 },
       placements: bodies
         ? bodies.map((b, i) => ({ charm: Object.assign({}, b, { sourceId: "one", centerPt: c.centerPt, strokePt: b.strokePt || c.strokePt, name: base, side: bodies.length === 2 ? (i === 0 ? "L" : "R") : null }), angle: 0, cxPt: w / 2, cyPt: h / 2 }))
         : [{ charm: c, angle: 0, cxPt: w / 2, cyPt: h / 2 }],
       sources: new Map([["one", parsed]]),
-      title: charm.name || charm.slug || "charm"
+      title: charm.name || charm.slug || "charm",
+      // a letter drawn from live text carries where its baseline is (section 3c): the Subject of its file, {"glyph":{baselinePt,emPt,advancePt,font}}; every other charm writes no Subject, as before
+      ...(glyphMetrics ? { meta: { glyph: { baselinePt: glyphMetrics.baselinePt, emPt: glyphMetrics.emPt, advancePt: glyphMetrics.advancePt, font: glyphMetrics.font } } } : {})
     });
   }
 

@@ -74,7 +74,13 @@ const contourFacts = (font, ch) => {
   const area = p => { let a = 0; for (let i = 0; i < p.length; i++) { const q = p[(i + 1) % p.length]; a += p[i][0] * q[1] - q[0] * p[i][1]; } return a / 2; };
   const ar = subs.map(area).filter(a => Math.abs(a) > 1e-3); let big = 0; ar.forEach((a, i) => { if (Math.abs(a) > Math.abs(ar[big])) big = i; });
   const holes = ar.filter(a => Math.sign(a) !== Math.sign(ar[big])).length;
-  return { holes, islands: ar.length - holes - 1, contours: ar.length, adv: g.advanceWidth / font.unitsPerEm };
+  // the lowest ink, exactly (a quadratic curve's own extremum; opentype.js's getBoundingBox is not exact), font units, y up, the baseline is 0
+  let low = Infinity, lx = 0, ly = 0;
+  for (const c of g.path.commands) {
+    if (c.type === 'M' || c.type === 'L') { low = Math.min(low, c.y); lx = c.x; ly = c.y; }
+    else if (c.type === 'Q') { const d = ly - 2 * c.y1 + c.y, t = d ? (ly - c.y1) / d : -1; let m = Math.min(ly, c.y); if (t > 0 && t < 1) { const u = 1 - t; m = Math.min(m, u * u * ly + 2 * u * t * c.y1 + t * t * c.y); } low = Math.min(low, m); lx = c.x; ly = c.y; }
+    else if (c.type === 'C') { low = Math.min(low, c.y); lx = c.x; ly = c.y; } }
+  return { holes, islands: ar.length - holes - 1, contours: ar.length, adv: g.advanceWidth / font.unitsPerEm, low };
 };
 
 (async () => {
@@ -131,7 +137,7 @@ const contourFacts = (font, ch) => {
   ok(new Set(SKUS.map(s => hashOf(A, s))).size === 78, 'the 78 letters have 78 different hashes');
 
   /* ── 3 · what each per-SKU file holds ── */
-  let bad = [], maxBytes = 0;
+  let bad = [], maxBytes = 0; const baseR = {}, baseY = {};
   for (const sku of SKUS) {
     const c = A.bySku.get(sku); P.integrateRings(c);
     const one = await P.buildSingleCharm(c, A.parsed); maxBytes = Math.max(maxBytes, one.length);
@@ -140,10 +146,17 @@ const contourFacts = (font, ch) => {
     const big = live.reduce((a, b) => ((b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]) > (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]) ? b : a));
     const all = live.flatMap(x => x.members), cuts = all.filter(m => m !== big.outline && P.isCutLine(m)).length;
     const onePiece = c.members.length === 1 + P.cutLinesOf(c).length;
+    // the baseline travels with the letter: the Subject of its file is {"glyph":{baselinePt,emPt,advancePt,font}} (baselinePt = baseline y minus the lowest ink y, y up)
+    { const [r, tt, nm] = ROWS[Math.floor(SKUS.indexOf(sku) / 26)], L = sku.slice(-1), f = contourFacts(fonts[r], L), g = p2.glyph, subj = p2.doc.getSubject();
+      if (!g || JSON.stringify(Object.keys(g)) !== '["baselinePt","emPt","advancePt","font"]' || subj !== JSON.stringify({ glyph: g }) || g.font !== nm || Math.abs(g.emPt - 52.9943) > 1e-3 || Math.abs(g.advancePt - f.adv * 52.9943) > 0.06 || Math.abs(g.baselinePt - (-f.low * g.emPt / fonts[r].unitsPerEm)) > 0.01) bad.push(`${sku}: glyph metrics ${subj}`);
+      else { (baseR[r] = baseR[r] || []).push(g.baselinePt); (baseY[r] = baseY[r] || []).push(c.bbox[1] + g.baselinePt); } }
     const want = sku === 'MONOGRAM_RIGHT_T' ? 2 : 1;                      // (the T's flourish is a piece of 12 pt of its own: two charms in the file, which the app folds into the biggest as it reads a master copy)
     if (live.length !== want || all.length !== c.members.length || cuts !== P.cutLinesOf(c).length || p2.counts.text || p2.textDesign || !onePiece) bad.push(`${sku}: ${live.length} charm(s), ${all.length}/${c.members.length} members, ${cuts}/${P.cutLinesOf(c).length} cut lines, text ${p2.counts.text}`);
   }
   ok(!bad.length, 'every per-SKU file reads back as its letter, with its counters, and no text:\n' + bad.join('\n'));
+  { const rng = a => `${Math.min(...a).toFixed(3)} .. ${Math.max(...a).toFixed(3)}`;
+    for (const [r] of ROWS) ok(baseR[r] && baseR[r].length === 26 && Math.max(...baseY[r]) - Math.min(...baseY[r]) < 0.05, `${r}: baselinePt in every one of 26 files, and the baseline (the letter's bottom in the master + baselinePt) is one line for the alphabet: ${rng(baseY[r])}`);
+    console.log('baselinePt ranges (pt):', ROWS.map(([r]) => r + ' ' + rng(baseR[r])).join(' | '), '| baseline y:', ROWS.map(([r]) => r + ' ' + (baseY[r][0]).toFixed(3)).join(' | ')); }
   ok(maxBytes < 30000, `a per-SKU file carries no font (largest ${maxBytes} bytes)`);
 
   /* ── 3b · the monogram engine takes these letters (charm-nest-monogram.js, written by another hand: only what a monogram needs of them is asked) ── */
@@ -208,6 +221,7 @@ const contourFacts = (font, ch) => {
   // a master with real paths: a vector charm and its label beside the letters, and a closed outline around the first A (the A is sample text on it)
   { const rd = await readAll(await variant.edit(bytes, t => t + '\n0 g 0 G 0.5 w\n700 40 m 740 40 l 740 80 l 700 80 l h S\nBT /T1_0 1 Tf 3.3 0 0 3.3 714 35 Tm (VEC_A)Tj ET\n'));
     ok(rd.live.length === 79 && rd.lab.labels.size === 79 && rd.bySku.has('VEC_A') && rd.parsed.textDesign.converted === 78, 'a master with a real path: its charm is read as before, and the 78 letters are drawn beside it');
+    { const v = await P.parseSource(new Uint8Array(await P.buildSingleCharm(rd.bySku.get('VEC_A'), rd.parsed)), 'v.ai'); ok(!v.glyph && !v.doc.getSubject(), 'an ordinary charm writes no glyph Subject'); }
     const on = await readAll(await variant.edit(bytes, t => t + '\n0 g 0 G 0.5 w\n25 444.6 m 48 444.6 l 48 484 l 25 484 l h S\n'));
     ok(on.parsed.textDesign.converted === 77 && !on.parsed.segments.some(s => s.textGlyph && s.bbox[0] < 48 && s.bbox[2] > 25 && s.bbox[1] > 440 && s.bbox[3] < 490) && on.bySku.get('MONOGRAM_LEFT_A').outline.kind === 'path' && !on.bySku.get('MONOGRAM_LEFT_A').outline.textGlyph,
       'a letter standing ON a vector outline is sample text: it stays text, and the label under the outline belongs to the outline'); }
@@ -260,6 +274,8 @@ const contourFacts = (font, ch) => {
       const inLib = await br.page.evaluate(() => [...B.master.entries.keys()].sort());
       ok(inLib.join('|') === SKUS.slice().sort().join('|'), 'Master tab: the library shows the 78 SKUs');
       for (const s of SKUS) { const e = br.index(s); ok(e && e.aiPath && br.blob(e.aiPath) && e.holes === viaScript[s].holes && e.widthPt > 8 && e.heightPt > 25, `Master tab: ${s} has its file, its holes (${e && e.holes}) and a size`); }
+      { let withGlyph = 0; for (const s of SKUS) { const p2 = await P.parseSource(new Uint8Array(br.blob(br.index(s).aiPath).buf), s + '.ai'); if (p2.glyph && p2.doc.getSubject() === JSON.stringify({ glyph: p2.glyph }) && p2.glyph.emPt > 52 && p2.glyph.font) withGlyph++; }
+        ok(withGlyph === 78, `Master tab: all 78 stored design files carry the glyph baseline (${withGlyph})`); }
       ok(SKUS.every(s => { const e = br.index(s); return Math.abs(e.widthPt - viaScript[s].w) < 0.6 && Math.abs(e.heightPt - viaScript[s].h) < 0.6; }), 'Master tab: the sizes agree with the script to the pixel of its silhouette');
       const again = await br.upload(bytes, 'SKUs_MONOGRAM_2024-1015.ai');
       ok(again.state === 'done' && again.written === 0 && again.held === 78, `Master tab, same file again: 78 held, nothing written (${again.written}/${again.held})`);
