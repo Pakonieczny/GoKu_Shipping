@@ -1668,8 +1668,13 @@
     // 2 · the SKU the shop gave the listing
     for (const s of [...new Set([raw, sku].filter(Boolean))]) {
       for (const [kind, re, onlyLoose] of SKU_RULES) {
-        if (!re.test(s) || (onlyLoose && known)) continue;
-        return make(kind === "custom" ? customKind(s, title, vars) : kind, `SKU ${s}`, "sku");
+        if (!re.test(s)) continue;
+        // REVDROP (Paul, 15 Oct 2026, order 4198686344, "These custom listing should not have any associated SKU ... it's strange that there is already an associated vector thumbnail"): the shop's own code for a
+        // rework or custom listing (RE_5460, CUSTOM_6673) is a name, not a design. A master design that happens to carry the same name, found by the SKU as Etsy wrote it (opts.auto: never a person's link
+        // or answer, which stands), is not this order's design: the line is the buyer's own (own: true, as an add-on listing's is) and is never drawn or cut as that design.
+        const collide = known && opts.auto === true && (kind === "rework" || kind === "custom");
+        if (onlyLoose && known && !collide) continue;
+        return Object.assign(make(kind === "custom" ? customKind(s, title, vars) : kind, `SKU ${s}`, "sku"), collide ? { own: true, collides: sku || s } : {});
       }
     }
     // 3 · the listing title, only for a line with no design of its own
@@ -3207,7 +3212,7 @@
     // finished by hand (its QR label printed from Custom Orders) is done; either reads as the no-design list does
     const lk = lineKey(order, line);
     const alias = ctx.aliases && ctx.aliases[String(line.listingId)];
-    const special = specialOf(line, { sku, masterEntry: ctx.masterEntry, optionMaps: ctx.optionMaps, read: ctx.customRead && ctx.customRead[lk], decided: ctx.customDecided && ctx.customDecided[lk], listingKind: alias && alias.listingKind });
+    const special = specialOf(line, { sku, masterEntry: ctx.masterEntry, optionMaps: ctx.optionMaps, read: ctx.customRead && ctx.customRead[lk], decided: ctx.customDecided && ctx.customDecided[lk], listingKind: alias && alias.listingKind, auto: FORM_AUTO.has(skuSource) });
     const done = (ctx.customDone && ctx.customDone[lk]) || null;
     const noDesign = listed || !!(special && special.notCut) || !!done;
     // an add-on listing's line (specialOf: own): its design is the order's own, never the master design its SKU happens to match. It is not "no design" (nothing cuts it and

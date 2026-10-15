@@ -11742,6 +11742,34 @@ const CustomSheet = window.CustomSheet = (() => {
     } catch (err) { F.state = "error"; F.error = String((err && err.message) || err).replace(F.name + ": ", ""); geo.delete(F.id); }
     changed();
   }
+  /* ── REVDROP (Paul, 15 Oct 2026, order 4198686344: "If a user drags and drops a vector file into any listing inside the Review tab ... prompt the user with a small modal which explains that by adding a new
+     vector file to a given listing, that new vector file will override that listing's selected vector file. The vector file override is to be one time only and NOT into perpetuity, unless the user manually
+     selects the toggle"). The question is asked before the first design lands on an order (a drop on its card, a drop on its window, the window's Add button); the files wait in memory meanwhile. Cancel (or Esc)
+     adds nothing. Nothing is ever saved for the listing by this: only the window's "Save to the charm repository and link this listing" switch (off every time it opens) does that. ── */
+  let asking = null;
+  function askOverride(it) {
+    if (asking) return Promise.resolve(false);                       // (a second drop while the question is open is the same question: the page behind it is inert)
+    const row = linesOf(it)[0], sp = row && row.spec, sku = sp && sp.designSku && !sp.ownDesign && !sp.noDesign ? txt(sp.designSku) : "";
+    const d = el("dialog", "cuAsk"); d.id = "cuAsk"; d.setAttribute("aria-labelledby", "cuAskT"); d.setAttribute("aria-describedby", "cuAskB");
+    const b = el("div", "dlgBody"); b.id = "cuAskB";
+    const p1 = el("p", "cuAskP"), strong = t => { const x = document.createElement("b"); x.textContent = t; return x; }, T = t => document.createTextNode(t);
+    if (sku) p1.append(T("This listing already has a vector design selected: "), strong(sku), T(". The file you add replaces it for "), strong("this order only"), T("."));
+    else p1.append(T("The file you add is used for "), strong("this order only"), T("."));
+    const p2 = el("p", "cuAskP sub"); p2.textContent = "Later orders of this listing are not changed. Nothing is kept for them unless you switch on \u201cSave to the charm repository and link this listing\u201d in the designs window.";
+    b.append(p1, p2);
+    const head = el("div", "dlgHead"), h = el("h3"); h.id = "cuAskT"; h.textContent = "Add a vector file to this order?"; head.append(h);
+    const foot = el("div", "dlgFoot"), no = el("button", "btn ghost sm"), yes = el("button", "btn gold sm");
+    no.type = yes.type = "button"; no.textContent = "Cancel"; yes.textContent = "Add vector file"; no.setAttribute("data-ask-no", ""); yes.setAttribute("data-ask-yes", "");
+    foot.append(no, yes); const box = el("div", "dlg"); box.append(head, b, foot); d.append(box); document.body.appendChild(d);
+    return asking = new Promise(res => {
+      let done = false;
+      const fin = v => { if (done) return; done = true; asking = null; try { d.close(); } catch (_) { /* gone */ } d.remove(); res(v); };
+      no.onclick = () => fin(false); yes.onclick = () => fin(true);
+      d.addEventListener("cancel", ev => { ev.preventDefault(); fin(false); });   // Esc
+      d.addEventListener("close", () => fin(false));
+      try { d.showModal(); yes.focus(); } catch (_) { fin(false); }
+    });
+  }
   /** Files dropped on a card (or added in its window): read one after another, the window open at once to show them.
    *  opts.at: where they were dropped (they are seen flying from there into their rows); opts.from: the card. */
   function add(it, files, opts = {}) {
@@ -11753,6 +11781,8 @@ const CustomSheet = window.CustomSheet = (() => {
     if (c.sent) { toast("That order's designs are already on the sheets", "bad", 5000); return; }
     if (!c.open) { toast("Every piece of that order is already on a sheet or completed", "bad", 5000); return; }
     if (c.cut && !c.files.length) { toast("That order is not laser cut, so it takes no designs", "bad", 5000); return; }
+    // REVDROP (Paul, 15 Oct 2026): a vector file dropped on an order's card, or added in its window, asks first (the first design of an order): it replaces the listing's selected vector for THIS order only
+    if (opts.gate && !(all()[c.ck] && all()[c.ck].files.length)) { askOverride(it).then(yes => { if (yes) add(it, ok, Object.assign({}, opts, { gate: false })); }); return; }
     const row = linesOf(it)[0];
     const e = all()[c.ck] || (all()[c.ck] = { ck: c.ck, rid: String(row.order.receiptId), at: Date.now(), files: [], sent: null });
     const metal = e.files.length ? e.files[e.files.length - 1].metal || defaultMetal(it) : defaultMetal(it), qty = defaultQty(it);
@@ -12197,8 +12227,8 @@ const CustomSheet = window.CustomSheet = (() => {
     const s = spot(ev.target), to = s.take || (drag.grace ? drag.hot : null), at = { x: ev.clientX, y: ev.clientY };
     endDrag();
     ev.preventDefault(); ev.stopPropagation();
-    if (to === D.dlg) { if (D.it) add(D.it, ev.dataTransfer.files, { at }); }
-    else if (to && to._cuIt) add(to._cuIt, ev.dataTransfer.files, { at, from: to });
+    if (to === D.dlg) { if (D.it) add(D.it, ev.dataTransfer.files, { at, gate: true }); }
+    else if (to && to._cuIt) add(to._cuIt, ev.dataTransfer.files, { at, from: to, gate: true });
     else toast(s.card ? whyNot(s.card) : "Drop the designs on their custom order's card", "bad", 4000);
   }, true);
   for (const t of ["pointermove", "pointerdown"]) document.addEventListener(t, () => { if (drag.on) endDrag(); }, { capture: true, passive: true });
@@ -12220,7 +12250,7 @@ const CustomSheet = window.CustomSheet = (() => {
     d.querySelectorAll("[data-x],[data-later]").forEach(b => b.onclick = () => shut());
     d.addEventListener("cancel", ev => { ev.preventDefault(); shut(); });      // Esc: back into its card, as Close does
     d.addEventListener("close", () => { settle(d); try { keepClosed(); } catch (_) { /* the strip is optional */ } D.ck = null; D.it = null; D.askName = false; endDrag(); });
-    const inp = d.querySelector("#cuFileIn"); inp.onchange = () => { const f = [...inp.files]; inp.value = ""; if (D.it) add(D.it, f); };
+    const inp = d.querySelector("#cuFileIn"); inp.onchange = () => { const f = [...inp.files]; inp.value = ""; if (D.it) add(D.it, f, { gate: true }); };
     d.querySelector("#cuAdd").onclick = () => inp.click();
     d.querySelector("[data-send]").onclick = () => {
       if (!D.it || busy.get(D.ck)) return;
@@ -12727,12 +12757,13 @@ const CustomSheet = window.CustomSheet = (() => {
     if (sw) {
       const sB = blocks.sw.querySelector(".cuSwitch"), pv = blocks.sw.querySelector("#cuKeepP"), now = blocks.sw.querySelector("[data-k-now]"), pill = blocks.sw.querySelector(".cuKeepPill");
       sB.hidden = sent; sB.setAttribute("aria-checked", K.on ? "true" : "false"); sB.disabled = !!(busy.get(D.ck) || (e && e.sendIntent));
-      const o = K.open || {}, sig = [K.sku, o.aliasWorks, o.reuse].join("|");
+      const o = K.open || {}, sig = [K.sku, o.aliasWorks, o.reuse, K.on ? 1 : 0].join("|");
       if (pv._sig !== sig) {
         pv._sig = sig; pv.replaceChildren(); const sk = el("span", "cuSku"); sk.textContent = K.sku; const T = s => document.createTextNode(s);
-        if (o.reuse) { if (typeof o.reuse === "string" && o.reuse.length > 11) sk.textContent = txt(o.reuse); pv.append(T("Already in the repository as "), sk, T(" · this listing will be linked to it")); }
+        // (REVDROP: while the switch is off nothing is linked, so the line says what switching it on does, not what "will" happen)
+        if (o.reuse) { if (typeof o.reuse === "string" && o.reuse.length > 11) sk.textContent = txt(o.reuse); pv.append(T("Already in the repository as "), sk, T(K.on ? " · this listing will be linked to it" : " · switch on to link this listing to it")); }
         else if (!K.sku) pv.append(T("A new SKU is chosen when you press"));
-        else pv.append(T("New SKU "), sk, T(o.aliasWorks === false ? " · Etsy gets the new SKU too, or the next order will still ask" : " · later orders of this listing will use this design"));
+        else pv.append(T("New SKU "), sk, T(o.aliasWorks === false ? (K.on ? " · Etsy gets the new SKU too, or the next order will still ask" : " · switch on to save it; Etsy gets the new SKU too, or the next order will still ask") : (K.on ? " · later orders of this listing will use this design" : " · switch on to make later orders of this listing use this design")));
       }
       pill.hidden = !sandbox; now.hidden = !sent; now.disabled = !!K.pw.busy;
       blocks.sw.querySelector(".cuKeepTx").style.cursor = sent ? "default" : "";

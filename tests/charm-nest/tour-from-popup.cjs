@@ -93,7 +93,7 @@ const STATE = () => {
     // a design dropped on the order's card, put on Gold in the designs window
     const design = async (rid, name) => {
       await page.waitForSelector(card(rid));
-      await page.evaluate(({ sel, text, name }) => { const dt = new DataTransfer(); dt.items.add(new File([text], name)); const n = document.querySelector(sel); n.scrollIntoView({ block: 'center' }); for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: 700, clientY: 400 })); }, { sel: card(rid), text: DXF(18), name });
+      await page.evaluate(({ sel, text, name }) => { const dt = new DataTransfer(); dt.items.add(new File([text], name)); const n = document.querySelector(sel); n.scrollIntoView({ block: 'center' }); for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: 700, clientY: 400 })); { const a = document.querySelector('#cuAsk [data-ask-yes]'); if (a) a.click(); } }, { sel: card(rid), text: DXF(18), name });
       await page.waitForFunction(() => document.querySelectorAll('#cuDlg[open] .cuFile .cuThumb img').length === 1, null, { timeout: 30000 });
       await page.click('#cuDlg .cuFile .cuM[data-m="gold"]');
       await page.waitForTimeout(500);

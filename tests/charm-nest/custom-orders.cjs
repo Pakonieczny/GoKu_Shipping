@@ -396,13 +396,29 @@ async function browserChecks() {
 
     // a custom order's own designs: .ai / .dxf dropped on its card, a metal picked for each in one window, Send to Sheet
     const neck = '#rvList .reviewListRow[data-rid="4175423829"]', nKey = '4175423829_41754238291';
-    const drop = (sel, files) => page.evaluate(({ sel, files }) => {
+    const dropRaw = (sel, files) => page.evaluate(({ sel, files }) => {
       const dt = new DataTransfer();
       for (const f of files) dt.items.add(new File([f.b64 ? Uint8Array.from(atob(f.b64), c => c.charCodeAt(0)) : f.text], f.name));
       const n = document.querySelector(sel);
       for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt }));
     }, { sel, files });
-    await drop(neck, [{ name: 'heart-name.dxf', text: DESIGN_DXF }, { name: 'notes.txt', text: 'not a design' }]);
+    const ask = () => page.evaluate(() => { const d = document.getElementById('cuAsk'); return d ? { open: d.open, text: d.textContent, yes: !!d.querySelector('[data-ask-yes]'), no: !!d.querySelector('[data-ask-no]') } : null; });
+    const answer = which => page.evaluate(w => { const b = document.querySelector('#cuAsk [data-ask-' + w + ']'); if (b) b.click(); return !!b; }, which);
+    const drop = async (sel, files) => { await dropRaw(sel, files); await answer('yes'); };
+    // REVDROP (Paul, 15 Oct 2026): the FIRST design dropped on an order asks first (this order only, never for later orders unless the switch is on); Cancel adds nothing
+    await dropRaw(neck, [{ name: 'heart-name.dxf', text: DESIGN_DXF }, { name: 'notes.txt', text: 'not a design' }]);
+    { const a = await ask(); assert(a && a.open && a.yes && a.no, 'a drop on a card with no designs yet asks first: ' + JSON.stringify(a));
+      assert(/Add a vector file to this order\?/.test(a.text) && /this order only/.test(a.text) && /Later orders of this listing are not changed/.test(a.text) && /Save to the charm repository and link this listing/.test(a.text), 'it says this order only, and what makes it last: ' + a.text);
+      assert.equal(await page.evaluate(() => document.querySelectorAll('#cuDlg[open]').length), 0, 'nothing was added while it asks'); }
+    await dropRaw(neck, [{ name: 'second-try.dxf', text: DESIGN_DXF }]);   // (a second drop while the question is open is not a second question)
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#cuAsk').length), 1, 'one question at a time');
+    await answer('no'); await page.waitForTimeout(400);
+    assert.deepEqual(await page.evaluate(() => [!!document.getElementById('cuAsk'), !!document.querySelector('#cuDlg[open]'), document.querySelectorAll('#cuDlg .cuFile').length]), [false, false, 0], 'Cancel adds nothing and opens nothing');
+    await dropRaw(neck, [{ name: 'heart-name.dxf', text: DESIGN_DXF }, { name: 'notes.txt', text: 'not a design' }]);
+    await page.keyboard.press('Escape'); await page.waitForTimeout(400);
+    assert.deepEqual(await page.evaluate(() => [!!document.getElementById('cuAsk'), !!document.querySelector('#cuDlg[open]')]), [false, false], 'Esc is Cancel');
+    await dropRaw(neck, [{ name: 'heart-name.dxf', text: DESIGN_DXF }, { name: 'notes.txt', text: 'not a design' }]);
+    assert.equal(await answer('yes'), true);
     await page.waitForFunction(() => document.querySelector('#cuDlg[open] .cuFile .cuThumb img'), null, { timeout: 30000 });
     const d1 = await page.evaluate(() => ({ rows: [...document.querySelectorAll('#cuDlg .cuFile')].map(n => ({ name: n.querySelector('.cuMeta b').textContent, meta: n.querySelector('.cuMeta .dim').textContent, on: [...n.querySelectorAll('.cuM.on')].map(b => b.textContent) })), title: document.getElementById('cuDlgT').textContent, send: document.querySelector('#cuDlg [data-send]').disabled, dialogs: document.querySelectorAll('dialog[open]').length, sheetsBefore: allSheets().reduce((n, p) => n + p.charms.length, 0) }));
     assert.equal(d1.title, 'Designs for order 4175423829'); assert.equal(d1.dialogs, 1, 'one window');

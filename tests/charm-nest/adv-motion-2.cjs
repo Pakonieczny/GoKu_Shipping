@@ -120,7 +120,7 @@ async function scenes(root, label, browser) {
       await page.click('#reviewView .egTab[data-k="customOrder"]');
       const card = '#rvList .reviewListRow[data-rid="4175423829"]';
       await page.waitForSelector(card);
-      const drop = (sel, files) => page.evaluate(({ sel, files }) => { const dt = new DataTransfer(); for (const f of files) dt.items.add(new File([f.text], f.name)); const n = document.querySelector(sel); for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: 700, clientY: 400 })); }, { sel, files });
+      const drop = (sel, files) => page.evaluate(({ sel, files }) => { const dt = new DataTransfer(); for (const f of files) dt.items.add(new File([f.text], f.name)); const n = document.querySelector(sel); for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: 700, clientY: 400 })); { const a = document.querySelector('#cuAsk [data-ask-yes]'); if (a) a.click(); } }, { sel, files });
       await drop(card, [{ name: 'heart-a.dxf', text: DXF(18) }, { name: 'heart-b.dxf', text: DXF(14) }]);
       await page.waitForFunction(() => document.querySelectorAll('#cuDlg[open] .cuFile .cuThumb img').length === 2 && !document.querySelector('#cuDlg .cuAll').hidden, null, { timeout: 30000 });
       await page.waitForTimeout(1500);

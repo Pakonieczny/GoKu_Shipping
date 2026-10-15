@@ -87,7 +87,7 @@ function instrument() {
     // designs dropped on a card, each on its metal
     const drop = async (rid, metals) => {
       const card = `#rvList .reviewListRow[data-rid="${rid}"]`; await page.waitForSelector(card);
-      await page.evaluate(({ sel, files }) => { const dt = new DataTransfer(); for (const f of files) dt.items.add(new File([f.text], f.name)); const n = document.querySelector(sel); for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: 700, clientY: 400 })); },
+      await page.evaluate(({ sel, files }) => { const dt = new DataTransfer(); for (const f of files) dt.items.add(new File([f.text], f.name)); const n = document.querySelector(sel); for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: 700, clientY: 400 })); { const a = document.querySelector('#cuAsk [data-ask-yes]'); if (a) a.click(); } },
         { sel: card, files: metals.map((m, i) => ({ name: `design-${i + 1}.dxf`, text: DXF(18 + i * 4) })) });
       await page.waitForFunction(n => document.querySelectorAll('#cuDlg[open] .cuFile .cuThumb img').length === n, metals.length, { timeout: 30000 });
       for (const [i, m] of metals.entries()) await page.click(`#cuDlg .cuFile:nth-child(${i + 1}) .cuM[data-m="${m}"]`);

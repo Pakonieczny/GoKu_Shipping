@@ -113,7 +113,7 @@ async function main() {
     await page.evaluate(({ rid, text }) => {
       const dt = new DataTransfer(); dt.items.add(new File([text], 'heart-name.dxf'));
       const n = document.querySelector(`#rvList > .reviewListRow[data-rid="${rid}"]`);
-      for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: 600, clientY: 300 }));
+      for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: 600, clientY: 300 })); { const a = document.querySelector('#cuAsk [data-ask-yes]'); if (a) a.click(); }
     }, { rid: cards[1], text: DESIGN_DXF });
     await page.waitForFunction(() => __perf.chip.length > 0, null, { timeout: 15000 });
     await page.waitForFunction(() => !document.querySelector('#cuDlg .cuChip'), null, { timeout: 15000 });

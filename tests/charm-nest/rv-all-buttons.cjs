@@ -169,7 +169,7 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     await page.evaluate(({ sel, text }) => {
       const dt = new DataTransfer(); dt.items.add(new File([text], 'rose.dxf'));
       const n = document.querySelector(sel);
-      for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt }));
+      for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt })); { const a = document.querySelector('#cuAsk [data-ask-yes]'); if (a) a.click(); }
     }, { sel: card('4178100001'), text: DESIGN_DXF });
     await page.waitForFunction(() => document.querySelector('#cuDlg[open] .cuFile .cuThumb img'), null, { timeout: 30000 });
     const dlg = await page.evaluate(() => ({ t: document.getElementById('cuDlgT').textContent, on: [...document.querySelectorAll('#cuDlg .cuFile .cuM.on')].map(b => b.dataset.m), open: document.querySelectorAll('dialog[open]').length }));

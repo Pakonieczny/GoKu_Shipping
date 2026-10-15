@@ -49,11 +49,13 @@ const read = (title, over) => spec(Object.assign({}, HUGGIE, { title, sku: 'NEWS
     if (JSON.stringify(now) !== JSON.stringify(f.before)) changed.push([f.rid + ' ' + f.sku, f.before, now]);
   }
   assert.equal(FIX.lines.length, 411);
-  assert.deepEqual(changed.map(c => c[0]), ['4176744752 Huggie_3722', '4174476673 Custom_6673'], 'only the two add-on lines of the snapshot change');
+  // (REVDROP, 15 Oct 2026: the two Modification Rework lines, SKU Re_5460, are the shop's own rework code too: the master happens to hold a design of that name, which is not their design (custom-sku-collision.cjs))
+  assert.deepEqual(changed.map(c => c[0]), ['4176744752 Huggie_3722', '4176576272 Re_5460', '4176537942 Re_5460', '4174476673 Custom_6673'], 'only the two add-on lines and the two rework lines of the snapshot change');
   assert.deepEqual(changed[0][2], { special: 'customHuggies/listing', noDesign: false, readable: false, problems: '', pieces: 2, engrave: false });
-  assert.deepEqual([changed[1][1].special, changed[1][2].special], ['customCharm/sku', 'customCharm/listing'], 'a line that was custom stays custom (its kind), now by its listing, and no longer cut as the master design its SKU matches (CUSTOM_6673 is a bunny)');
+  for (const i of [1, 2]) { assert.equal(changed[i][1].special, 'special/price', 'the rework line was a special order by its Price option, and drawn as the master design Re_5460'); assert.equal(changed[i][2].special, 'rework/sku', 'now a rework by its SKU code'); assert.equal(changed[i][2].problems, '', 'its own design: no metal, SKU or option question'); }
+  assert.deepEqual([changed[3][1].special, changed[3][2].special], ['customCharm/sku', 'customCharm/listing'], 'a line that was custom stays custom (its kind), now by its listing, and no longer cut as the master design its SKU matches (CUSTOM_6673 is a bunny)');
   // lines that were custom by their codes still read as before (golden above), and the five custom kinds
-  for (const f of FIX.lines.filter(x => x.before.special && !/^(?:customHuggies|customCharm)\/listing/.test(x.before.special) && x.rid !== '4174476673')) assert.equal(spec(f).special ? spec(f).special.kind + '/' + spec(f).special.signals.join(',') : null, f.before.special, f.rid + ' unchanged');
+  for (const f of FIX.lines.filter(x => x.before.special && !/^(?:customHuggies|customCharm)\/listing/.test(x.before.special) && x.rid !== '4174476673' && !/^re_5460$/i.test(x.sku))) assert.equal(spec(f).special ? spec(f).special.kind + '/' + spec(f).special.signals.join(',') : null, f.before.special, f.rid + ' unchanged');
 
   // the wording: the title's FIRST phrase and nothing else; "add on" anywhere in a long title is no rule (Paul, 25 Sep)
   const kind = t => { const s = read(t); return s.special ? s.special.kind + '/' + s.special.signals[0] + (s.special.own ? '/own' : '') : null; };
@@ -81,7 +83,7 @@ const read = (title, over) => spec(Object.assign({}, HUGGIE, { title, sku: 'NEWS
   known.delete('ADDTEST_55');
   // a chain-only choice by the buyer still reads first, a completed line is still completed by hand
   const done = spec(HUGGIE, ctx({ customDone: { '4176744752_5219514968': { state: 'completed', how: 'button' } } })); assert.equal(done.noDesign, true); assert.match(done.noDesignWhy, /completed by hand/);
-  console.log('  ✓ the rule, the wording, the golden replay of the snapshot (2 of 411 lines change), a person\'s word for a listing');
+  console.log('  ✓ the rule, the wording, the golden replay of the snapshot (4 of 411 lines change: the two add-on lines and the two Re_5460 rework lines), a person\'s word for a listing');
 }
 
 async function server() {
@@ -160,7 +162,7 @@ async function browser() {
     assert.deepEqual([pics.vector, pics.vectorImg, pics.drawn], ['No vector available', false, 0], 'the ladybug is never drawn for it: ' + JSON.stringify(pics)); assert(pics.w > 0 && pics.px[2] > pics.px[0] + 20, 'the Etsy listing photo, the blue one: ' + JSON.stringify(pics.px)); assert.deepEqual(pics.cap, ['Vector design', 'Etsy listing']);
     // its designs: dropped on the card, Send to Sheet is the next step; nothing is written until a person presses it
     const { DESIGN_AI } = await designFile();
-    await page.evaluate(({ sel, b64 }) => { const dt = new DataTransfer(); dt.items.add(new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], 'grizzly.ai')); const n = document.querySelector(sel); for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt })); }, { sel: cardSel, b64: DESIGN_AI });
+    await page.evaluate(({ sel, b64 }) => { const dt = new DataTransfer(); dt.items.add(new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], 'grizzly.ai')); const n = document.querySelector(sel); for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt })); { const a = document.querySelector('#cuAsk [data-ask-yes]'); if (a) a.click(); } }, { sel: cardSel, b64: DESIGN_AI });
     await page.waitForFunction(() => document.querySelector('#cuDlg[open] .cuFile .cuThumb img'), null, { timeout: 30000 });
     await page.click('#cuDlg [data-x]');
     const sendNow = await page.evaluate(sel => { const s = document.querySelector(sel + ' [data-cu-send]'); return { aria: s.getAttribute('aria-disabled'), cls: s.className, strip: document.querySelector(sel + ' .cuDesigns')?.textContent }; }, cardSel);
@@ -210,5 +212,5 @@ async function designFile() {
     for (const f of ['charm-nest-orders.js', 'charm-nest-bridge.js']) assert(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-ac1(?:-[a-z0-9]+)*"').test(h), f + ' carries the -ac1 cache token'); }
   await server();
   const ran = await browser();
-  console.log((ran ? 'Add-on listings OK:' : 'Add-on listings (node part only, no browser):') + ' the Huggie Charm + Shipping line of 4176744752 is a custom order (no question, no master drawing, Send to Sheet after a design), 2 of the 411 snapshot lines change, nothing live written');
+  console.log((ran ? 'Add-on listings OK:' : 'Add-on listings (node part only, no browser):') + ' the Huggie Charm + Shipping line of 4176744752 is a custom order (no question, no master drawing, Send to Sheet after a design), 4 of the 411 snapshot lines change, nothing live written');
 })().catch(e => { console.error(e); process.exit(1); });

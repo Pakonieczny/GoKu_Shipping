@@ -101,7 +101,7 @@ async function scene(browser, profile) {
     await page.click('#reviewView .egTab[data-k="customOrder"]');
     const card = '#rvList .reviewListRow[data-rid="4175423829"]';
     await page.waitForSelector(card);
-    await page.evaluate(({ sel, text }) => { const dt = new DataTransfer(); dt.items.add(new File([text], 'heart-a.dxf')); const n = document.querySelector(sel); for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: 700, clientY: 400 })); }, { sel: card, text: DXF(18) });
+    await page.evaluate(({ sel, text }) => { const dt = new DataTransfer(); dt.items.add(new File([text], 'heart-a.dxf')); const n = document.querySelector(sel); for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: 700, clientY: 400 })); { const a = document.querySelector('#cuAsk [data-ask-yes]'); if (a) a.click(); } }, { sel: card, text: DXF(18) });
     await page.waitForFunction(() => document.querySelectorAll('#cuDlg[open] .cuFile .cuThumb img').length === 1, null, { timeout: 30000 });
     await page.click('#cuDlg .cuFile .cuM[data-m="gold"]');
     // (as a person takes a moment over the window: the workspace's own save paces itself ten seconds apart, and one due

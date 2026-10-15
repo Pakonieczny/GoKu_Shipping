@@ -177,7 +177,7 @@ async function main() {
       await settle(page);
       s = await strip(page);
       ok(s.shown && s.sw && !s.on && s.phase === 'off', 'a design read, the repository locked: the switch shows, OFF by default (' + s.phase + ')');
-      ok(s.label === 'Save to the charm repository and link this listing' && s.preview === 'New SKU ACORN_LEAF_4821 · later orders of this listing will use this design', 'the exact words: ' + s.label + ' / ' + s.preview);
+      ok(s.label === 'Save to the charm repository and link this listing' && s.preview === 'New SKU ACORN_LEAF_4821 · switch on to make later orders of this listing use this design', 'the exact words, the switch being off (REVDROP: nothing is linked yet, so the line says what switching it on does): ' + s.label + ' / ' + s.preview);
       ok(!s.pw && !s.steps && !s.line && !s.now, 'off: only the switch row (no password row, no steps, no line)');
       const hdr = await page.evaluate(() => ({ sub: document.getElementById('cuDlgSub').textContent, all: document.getElementById('cuDlg').textContent }));
       ok(/ACORN'S LEAF/.test(hdr.sub) && !/&#/.test(hdr.all), 'the header shows ACORN\'S LEAF for ACORN&#39;S LEAF, no raw &# anywhere in the window: ' + hdr.sub);
