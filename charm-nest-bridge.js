@@ -10301,7 +10301,7 @@ const RunCtl = window.RunCtl = (() => {
     if (B.run && ["running", "review", "paused", "processed", "stopped"].includes(B.run.status)) { toast("A run is already open — resume, finish, or abandon it before starting another", "bad"); return B.run; }
     if (B.run) await save(B.run);
     if ((B.run || Recall.on()) && clearRunState()===false) return B.run;
-    const r = newRun(opts.mode); Gate.state().solidIncluded = {}; B.run = r;
+    const r = newRun(opts.mode); Gate.state().solidIncluded = {}; B.run = r; claimRun(r.runId);
     agent({ run: r.runId }, "DS", `Run ${r.runId} started (${r.mode} mode)`);
     await save(r); renderBanner();
     loop().catch(e => { stop(e.message, "Fix the cause and press Resume."); });
@@ -10325,7 +10325,7 @@ const RunCtl = window.RunCtl = (() => {
       for (let attempt = 0; ; attempt++) {
         try { outcome = await doStep(r, step); break; }
         catch (e) {
-          const passing = /answer in time|timed out|network|Failed to fetch|HTTP 5\d\d|link is down|no reply|closed/i.test(e.message || "");
+          const passing = /answer in time|timed out|network|Failed to fetch|HTTP 5\d\d|link is down|no reply|closed|Reconnect (to|before)/i.test(e.message || "");
           if (!passing || attempt >= 2 || r.status !== "running") throw e;
           agent({ run: r.runId }, "warn", `${step}: ${e.message} — trying again (${attempt + 1} of 2)`);
           await new Promise(res => setTimeout(res, 4000 * (attempt + 1)));
@@ -10438,9 +10438,13 @@ const RunCtl = window.RunCtl = (() => {
       /* A sheet's trouble belongs on that sheet's card. The banner used to carry the whole message — "GF 14/20 · sheet 3:
          bad row — Fix the cause (see the card's log), then Resume" — across every tab, above every list, for the rest of
          the session. Now the banner names the sheet and offers the way to it; the reason is written where the sheet is. */
-      if (err && (err.critical || err.stage === "persistence")) {
+      /* A search or a check that could not start or finish because the network was away (the sheet's worker file not fetched) is no
+         problem with the sheet: the run stops as it does for a sheet that could not be saved, and Auto arranges the sheet again
+         when the network is back. It used to hold the sheet for a person, with the run going on around it (Paul, 15 Oct 2026). */
+      const away = !!err && !err.critical && err.stage !== "persistence" && /is the network down|Failed to fetch|NetworkError|Load failed|answer in time|HTTP 5\d\d|link is down/i.test(err.message || "");
+      if (err && (err.critical || err.stage === "persistence" || away)) {
         sh.problem = err.message; CN.renderCard(sh);
-        stop(`${sheetName(sh)} could not be saved`, "Reconnect and Resume; existing work is retained.", { metal: sh.metal, page: sh.page }, /answer in time|timed out|network|Failed to fetch|HTTP 5\d\d|link is down|no reply|closed|offline/i.test(err.message || "") ? "transient" : null);
+        stop(`${sheetName(sh)} could not be ${away ? "finished" : "saved"}`, "Reconnect and Resume; existing work is retained.", { metal: sh.metal, page: sh.page }, away || /answer in time|timed out|network|Failed to fetch|HTTP 5\d\d|link is down|no reply|closed|offline/i.test(err.message || "") ? "transient" : null);
         return;
       }
       if (err) holdSheet(r,sh,err.message);
@@ -10573,6 +10577,9 @@ const RunCtl = window.RunCtl = (() => {
       finally { settling = null; }
       if (r !== B.run || r.status !== "stopped") { renderBanner(); return; }
     }
+    // another tab of this browser carries this run on: two tabs would nest the same sheets and write the same records
+    if (!await holdsRun(r.runId)) { toast("Another Charm Sorter tab is carrying on with this run — close that tab to take it over here", "bad", 8000); return; }
+    if (r !== B.run || !["stopped", "paused", "processed"].includes(r.status)) return;
     const pendingStop=reviewStop(r);
     if(pendingStop)preservePendingSheets(r);
     await Gate.upgrade(r);
@@ -10624,6 +10631,7 @@ const RunCtl = window.RunCtl = (() => {
     if (rec.lineArchive) { const la = rec.lineArchive; rec.lineArchive = { parts: +la.parts || 0, at: la.at || null, base: { lines: +la.lines || 0, committed: +la.committed || 0, held: +la.held || 0, sheets: +la.sheets || 0 } }; }
     if (rec.status === "processed") { rec.step = "engrave"; rec.processingComplete = false; }
     const pendingStop=reviewStop(rec);
+    if (!await holdsRun(runId)) { toast("Another Charm Sorter tab is carrying on with this run — close that tab to take it over here", "bad", 8000); return; }
     B.run = rec; rec.status = "running"; rec.stoppedBy = null; rec.fix = null;
     agent({ run: runId }, "DS", `Resuming ${runId} at step ${rec.step}`);
     if (O.stepIndex(rec.step) <= O.stepIndex("pool")) { rec.step = "pull"; }
@@ -10805,7 +10813,8 @@ const RunCtl = window.RunCtl = (() => {
      the network and the cloud answer: 1, 2, 5 and 10 minutes after the stop, then every 10 minutes, and at once when the
      network comes back. The operator's Stop, a decision waiting for a person, a sign-in and a spent Etsy budget (the
      heartbeat lifts that one) are left alone. */
-  const PASSING = /answer in time|timed out|network|Failed to fetch|HTTP 5\d\d|link is down|no reply|closed/i, AUTO_WAIT = [60000, 120000, 300000, 600000];
+  // ("Reconnect to the cloud before numbering a new set": the page's check of the cloud had failed when a set had to be numbered; it passes by itself like the others, 15 Oct 2026)
+  const PASSING = /answer in time|timed out|network|Failed to fetch|HTTP 5\d\d|link is down|no reply|closed|Reconnect (to|before)/i, AUTO_WAIT = [60000, 120000, 300000, 600000];
   const auto = { runId: null, step: null, n: 0, next: 0, busy: false, t: 0 };   // the retries of one run at one step: a step done starts them afresh
   function kindOf(why) {
     why = why || "";
@@ -10820,17 +10829,29 @@ const RunCtl = window.RunCtl = (() => {
     const k = stopKindOf(r), m = window.DesignLink?.etsy?.().meter;
     return k === "transient" || k === "restored" || k === "watchdog" && Date.now() >= ((m && m.braked && m.brakeUntil) || 0);
   }
-  // two sorter tabs brought back from the same workspace would both carry on with the one run: the first to take its lock does
+  // two sorter tabs brought back from the same workspace would both carry on with the one run: the first to take its lock does.
+  // Every tab that starts or carries a run on holds that lock for as long as it is open (start, resume, resumeRun, a boot that restored
+  // it), so a second tab opened later cannot take the run from it (Paul, 15 Oct 2026: "unexpected user behaviour")
   const claimed = new Set();
   function claimRun(runId) {
     const locks = globalThis.navigator?.locks; if (claimed.has(runId) || !locks?.request) return Promise.resolve(true);
     return new Promise(res => locks.request("charm-sorter-run:" + runId, { ifAvailable: true }, lock => { if (!lock) { res(false); return; } claimed.add(runId); res(true); return new Promise(() => {}); }).catch(() => res(true)));
+  }
+  /** Whether this tab may carry the run on. A tab that was just reloaded waits a few seconds (waitMs) for the page it replaced to let go. */
+  async function holdsRun(runId, waitMs = 0) {
+    for (const t0 = Date.now(); ;) { if (await claimRun(runId)) return true; if (Date.now() - t0 >= waitMs) return false; await new Promise(r => setTimeout(r, 250)); }
+  }
+  /** A tab that was brought back with a run another tab carries on is told so, and loads itself again when that tab is gone. */
+  function takeOverWhenFree(runId) {
+    const locks = globalThis.navigator?.locks; if (!locks?.request) return;
+    locks.request("charm-sorter-run:" + runId, () => { location.reload(); return new Promise(() => {}); }).catch(() => {});
   }
   /** Called by the heartbeat, the boot after a reload (now: true) and the network coming back. */
   async function autoResume(now) {
     const r = B.run; if (auto.busy || !autoResumable(r)) return false;
     if (auto.runId !== r.runId || auto.step !== r.step) { Object.assign(auto, { runId: r.runId, step: r.step, n: 0, next: ((r.errors || []).at(-1)?.t || Date.now()) + AUTO_WAIT[0] }); renderBanner(); }
     clearTimeout(auto.t);
+    if (auto.next > Date.now() + AUTO_WAIT[AUTO_WAIT.length - 1]) auto.next = Date.now() + AUTO_WAIT[0];   // (the clock set back after the stop: the next try is never further off than the longest wait)
     if (!now && Date.now() < auto.next) { auto.t = setTimeout(() => autoResume(), Math.max(1000, auto.next - Date.now())); return false; }
     auto.busy = true; auto.n++; auto.next = Date.now() + AUTO_WAIT[Math.min(auto.n, AUTO_WAIT.length - 1)]; renderBanner();
     try {
@@ -11009,7 +11030,7 @@ const RunCtl = window.RunCtl = (() => {
     const open = rev ? `\n\n${rev} review item${rev === 1 ? " still waits" : "s still wait"} for a decision.` : "";
     if (confirm(`Give up run ${r.runId.slice(-8)}?${lost}${open}\n\nThe sheets and files already saved are kept.`)) clearRunState(()=>releaseRun(r),{drop:'released'});
   }
-  return { bannerPieces, stepDetail, optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, operatorStop, stopIfRunning, poke, backgroundSettled, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner: bannerNow, renderModeBtn, clearRunState, run, autoResume, stopKind: stopKindOf };
+  return { bannerPieces, stepDetail, optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, operatorStop, stopIfRunning, poke, backgroundSettled, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner: bannerNow, renderModeBtn, clearRunState, run, autoResume, holdsRun, takeOverWhenFree, stopKind: stopKindOf };
 })();
 
 /* ═══ 23c · Custom Orders' QR sticker — the sorting station's own label, printed the sorting station's way ═══════════
@@ -19509,7 +19530,8 @@ const Arrivals = window.Arrivals = (() => {
   state = Object.assign({ seen: {}, lastCheck: 0, nextCheck: 0, lastAdded: 0, error: null }, state || {});
   let tick = 0, busy = false, paused = false, epoch = 0, fails = 0, lastTick = 0, kept = null;
   // a check that failed while the network was away is made again as soon as it is back, not a whole interval later
-  window.addEventListener("online", () => { if (state.error) state.nextCheck = Math.min(state.nextCheck || Infinity, Date.now() + 3000); });
+  // (kept in the browser as well: the tick takes the check's time from there, under the lock two open sorters share, and read the old, later one)
+  window.addEventListener("online", () => { if (state.error) { state.nextCheck = Math.min(state.nextCheck || Infinity, Date.now() + 3000); save(); } });
   // The check is one for all the sorter tabs of this browser (one takes the lock, the others take its record). Whether that check failed is part of the record: a tab that kept an "Order check failed" from its own earlier
   // try went on showing it for as long as another tab kept checking well, because it only ever took the other tab's times (ADV-OFFLINE, 15 Oct 2026)
   const sharedError = (other, lastCheck) => { if (other.lastCheck >= lastCheck) state.error = other.error || null; };
@@ -19691,11 +19713,13 @@ const Arrivals = window.Arrivals = (() => {
     finally { busy = false; if (gen === epoch) { const passing = /answer in time|timed out|network|Failed to fetch|HTTP 5\d\d|link is down|no reply|closed|offline/i.test(state.error || ""); fails = passing ? fails + 1 : 0; state.nextCheck = eager() ? Date.now() : (streaming() ? began : Date.now()) + (passing ? Math.min(interval(), 15000 * 2 ** Math.min(fails - 1, 8)) : interval()); save(); } paint(); }   // a stream step is timed from its check's start, so the sweep does not stretch it
   }
   function start() {
-    clearInterval(tick); state.nextCheck = eager() ? Date.now() : Math.max(Date.now(), (state.lastCheck || Date.now()) + interval());
+    clearInterval(tick); state.nextCheck = eager() ? Date.now() : Math.min(Date.now() + interval(), Math.max(Date.now(), (state.lastCheck || Date.now()) + interval()));   // (a last check dated ahead of the clock, which was set back, is one interval away at most)
     paint();
     tick = setInterval(() => {
       // just woken (the machine slept: this tick came over a minute late), the network is given 10 s before the check
       const t = Date.now(); if (lastTick && t - lastTick > 60000 && state.nextCheck < t + 10000) state.nextCheck = t + 10000; lastTick = t;
+      // the computer's clock set back (a wrong time corrected, a resumed virtual machine) left the next check hours ahead of it, and no order was looked for until the clock caught up (Paul, 15 Oct 2026: "resilient against ... interruptions"): a check is never more than one interval away
+      if (state.nextCheck > t + interval() + 60000) { state.nextCheck = t + interval(); save(); }
       paint();
       if (busy || paused || S.settings.pollOrders === "off" || window.Sandbox?.held?.()) return;   // (a cleaned sandbox waits for Start: no check, no step, no run)
       /* A gap fill ends once every order of the stream is in (CN.settleTopups), asked at every tick with no check out. It
@@ -20145,6 +20169,15 @@ async function bootBridge() {
   let recovered = false, recoveryFailed = false;
   try { recovered = await Session.restore(); }
   catch (error) { recoveryFailed = true; console.error("Workspace recovery failed; checkpoint retained", error); }
+  /* The saved workspace holds a run that another tab of this browser is carrying on (a second tab opened on the same computer): this tab
+     shows it and changes nothing. It used to carry the run on beside the first, two tabs nesting the same sheets and writing the same
+     records, the last write winning. It loads itself again when the other tab is closed, and then takes the run over from the workspace
+     that tab kept (Paul, 15 Oct 2026: "unexpected user behaviour"). */
+  if (recovered && !recoveryFailed && B.run && ["running", "review", "paused", "processed", "stopped"].includes(B.run.status) && !(await RunCtl.holdsRun(B.run.runId, 3000))) {
+    recoveryFailed = true; Session.freeze(); RunCtl.takeOverWhenFree(B.run.runId);
+    toast("Another Charm Sorter tab is carrying on with this run, so this tab only shows it and changes nothing. Close the other tab, and this one takes the run over.", "bad", 15000);
+    agent({ run: B.run.runId }, "warn", "Another tab of this browser holds this run: this tab does not carry it on");
+  }
   // a cleanup made in the cloud on a sheet this saved workspace still shows as it was goes on it first (Cleanups), before
   // anything below saves, labels or nests it; a slow cloud is waited for a few seconds, then it follows by itself
   if (recovered) await Cleanups.check({ wait: 8000 }).catch(() => {});
