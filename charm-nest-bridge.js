@@ -4614,7 +4614,7 @@ const Gate = window.Gate = (() => {
     const ids = V.sheets.filter(n => n.setId === set.setId).map(n => n.id);
     return V.SO.core.between(V.sheets, ids, set.setId).filter(it => it.thereIds.some(i => !V.norm.get(i).fixed));
   }
-  let assemblyQueue = Promise.resolve();
+  let assemblyQueue = Promise.resolve(), completionClock = 0;
   function assemble(run, context) {
     const ops = window.CharmNestOperations;
     if (ops && !context) return ops.run({key:'membership:'+run?.runId, label:'Updating set membership', resources:['production:'+run?.runId], latest:true, priority:10}, token=>assemble(run,token));
@@ -4629,31 +4629,43 @@ const Gate = window.Gate = (() => {
     const pages = allSheets().filter(p => p.runId === run.runId && p.outputs && p.persistedDone && !committedSheets.has(p.sheetId));
     const SR = window.CharmNestSetRules;
     let open = openSetsOf(run.runId);
-    cardinalApply(run, pages, open, choices);   // (sheets that share a multi-piece order come in together; a partner that cannot join yet is named, never waited for)
     /* Paul, 10 Oct: "In order for a Set of Sheets to be allowed to exist there must be at minimum 1 Completed GF Sheet and 1 Completed SS Sheet."
        Paul, 12 Oct: "as soon as the minimum criteria is met, and none of the other stipulations are conflicting, the set should be formed and as a result all following sheets
        should go into a following new set." (charm-nest-set-rules.js form/closed, the one definition; the server and the Library read the same.) The free sheets (full, in no set,
        and the partners the cardinal rule pulls with them) form a set the moment they hold a completed GF and a completed SS sheet; the newest open set takes them only while it
        has not formed (a set that has formed is closed to automatic joining), otherwise they form the NEXT set. 10K, 14K and Rose Gold join by their own rules (Include, Cut Sheet,
        an even-numbered set) and never start a set. A sheet that cannot go in waits outside any set with the reason on its card (p.setWait: derived, never saved, like the cardinal
-       marks); a partial sheet never makes a set on its own. Back engraving is no part of any of this: it only decides when a set may go to the laser. */
-    for (const p of allSheets()) if (p.runId === run.runId) delete p.setWait;
+       marks); a partial sheet never makes a set on its own. Back engraving is no part of any of this: it only decides when a set may go to the laser.
+       Paul, 15 Oct: "a set of sheets requires at least one GF and one SS sheet at the minimum and when this threshold is met then that becomes an individual Set of sheets ... how is it that
+       this one set has 4 GF and 2 SS sheets. This should be literally impossible". Sheets that were completed together (a stream's end, a reload, a slow cloud, GF sheets that waited for
+       the first SS) used to ALL join the one set the batch made. Now ONE set forms per round, from the fewest units (sheets that share an order are one unit) that make it valid
+       (charm-nest-set-rules.js form/formAll), is tended and saved, and the round runs again for what is left: the next set is numbered after this one holds its sheets (Sets.ensure, follow). */
+    // the moment a sheet was first seen completed orders the sets (releasedAt, one tick per look so that two looks never tie); a sheet that is filling again loses it
+    if (SR) { const seen = pages.filter(p => !p.releasedAt && SR.isCompleted(p)); if (seen.length) { completionClock = Math.max(Date.now(), completionClock + 1); for (const p of seen) p.releasedAt = completionClock; } for (const p of pages) if (p.releasedAt && !SR.isCompleted(p)) delete p.releasedAt; }
     const inOpen = p => !!p.setId && !p.draft && open.some(s => s.setId === p.setId), adder = p => p.metal === "rose" || solid(p.metal);
     // a person's drop of a sheet on one of the run's open sets (the Library, charm-nest-sheetwin.js joinSet sets p.handSet for this assembly only): that set takes it, formed or not
     const handOf = p => (p.handSet && !p.cardinalHome && !adder(p) && open.some(s => s.setId === p.handSet && !s.committedAt)) ? p.handSet : null;
+    for (let round = 0; ; round++) {
+    cardinalApply(run, pages, open, choices);   // (sheets that share a multi-piece order come in together; a partner that cannot join yet is named, never waited for)
+    for (const p of allSheets()) if (p.runId === run.runId) delete p.setWait;
     const last = open[open.length - 1] || null, lastClosed = !!last && !!SR && SR.closed(membersOfSet(last));
-    let target = null, addTarget = null;       // target: the set the free sheets join now · addTarget: the set 10K, 14K and Rose Gold may join now
+    let target = null, addTarget = null, formed = 0, apart = new Set(), joinNow = null;       // target: the set the free sheets join now · addTarget: the set 10K, 14K and Rose Gold may join now · formed: sheets it takes · apart: partners that wait for another set
     if (SR) {
       const free = pages.filter(p => !inOpen(p) && !p.cardinalHome && !handOf(p) && !adder(p) && release(p, last && !lastClosed ? last.seq : 0).include);
-      const f = SR.form(last ? membersOfSet(last) : [], free, !!last, last && last.name);
+      const V = cardinalView(run), links = V ? V.SO.core.groups(V.sheets).map(g => g.ids.map(id => V.page.get(id)).filter(Boolean)) : [];   // (the sheets that share an order: one unit, never split between sets)
+      const f = SR.form(last ? membersOfSet(last) : [], free, !!last, last && last.name, links);
       for (const w of f.wait) w.sheet.setWait = w.why;
       if (f.where === "last") target = last;
       else if (f.where === "new") target = await Sets.ensure(run.runId, "dispatch", last ? { follow: last } : {});
       if (f.where === "new" && !target) return;      // (the cloud deferred the number: nothing joins now)
+      formed = (f.join || []).length; joinNow = new Set(f.join || []);
       if (target) open = openSetsOf(run.runId);
       addTarget = target || (last && lastClosed ? last : null);
       const adders = pages.filter(p => !inOpen(p) && !p.cardinalHome && adder(p) && release(p, (addTarget || last) ? (addTarget || last).seq : 0).include);
       if (!addTarget && adders.length) for (const w of SR.settle(last ? membersOfSet(last) : [], adders).wait) w.sheet.setWait = w.why;
+      // a Rose Gold, 10K or 14K sheet the cardinal rule pulls goes with its partners' set: while a free partner waits for a later set, it waits too
+      const joining = new Set(f.join || []);
+      for (const a of adders) if ((links.find(g => g.includes(a)) || []).some(q => q !== a && !adder(q) && free.includes(q) && !joining.has(q))) apart.add(a);
     } else {
       // (a page without the set rules: every sheet that wants in joins the run's open set, as it did before)
       const regular = pages.filter(p => !inOpen(p) && p.metal !== "rose" && release(p, 2).include), roses = pages.filter(p => !inOpen(p) && p.metal === "rose" && release(p, 2).include);
@@ -4664,13 +4676,15 @@ const Gate = window.Gate = (() => {
     if (!open.length) { run.heldSheets = pages.length; return; }
     cardinalApply(run, pages, open, choices);   // (again with the sets' own numbers: Rose Gold's even-numbered rule reads them)
     // a sheet of the run joins this set when it is the set's own (the cardinal rule: a mate is in it already), or when it is a free sheet the set takes now
-    const admits = (sh, set) => sh.cardinalHome ? sh.cardinalHome === set.setId : handOf(sh) ? handOf(sh) === set.setId : adder(sh) ? !!addTarget && addTarget.setId === set.setId : !!target && target.setId === set.setId;
+    const admits = (sh, set) => sh.cardinalHome ? sh.cardinalHome === set.setId : handOf(sh) ? handOf(sh) === set.setId : adder(sh) ? !apart.has(sh) && !!addTarget && addTarget.setId === set.setId : !!target && target.setId === set.setId && (!joinNow || joinNow.has(sh));      // (only the sheets this round's set takes: the rest wait for the next round's)
     for (const set of open) {
       if (set.committedAt) continue;
       const wasThere = membersOfSet(set).length, kept = set.sheetIds.length, forming = target && target.setId === set.setId;
       await tendSet(run, set, pages, choices, release, admits);
       // (a set that formed earlier and nothing changed in is not saved again at every look)
       if (forming || membersOfSet(set).length !== wasThere || set.sheetIds.length !== kept || set.touched) { delete set.touched; await Sets.save(set); }
+    }
+    if (!SR || !formed || ![...joinNow].some(p => p.setId && !p.draft) || round > pages.length) break;      // (a set was made or completed: the sheets left over may make the next one)
     }
     for (const p of pages) delete p.handSet;      // (a drop is read by one assembly)
     run.heldSheets = pages.filter(p => p.draft).length;
@@ -10096,11 +10110,28 @@ const Sets = window.Sets = (() => {
   /** (Paul, 12 Oct) A set formed with the sheets that could join. The sheets outside it that share a multi-piece order with a sheet of it, and could still join it (not cut, not in a set
    *  sent to the station), are named on the set as `cardinalWait` ("orders shared with RG Draft 1: add that sheet to this set"): its Approve for laser cutting stays grey with that one line
    *  until they are in it (charm-nest-set-rules.js gate, read by CharmNestReadiness). Derived from the sheets at every drawing, never saved. */
+  /** The one line a set gives for how its sheets are tied (Paul, 15 Oct 2026: "how is it that this one set has 4 GF and 2 SS sheets"): "orders 123, 456 link GF Sheet 1, SS Sheet 1 and GF Sheet 2",
+   *  and, for an open set that holds more than the minimum, the sheets it is valid without because no order ties them to the others. "" when nothing links two of its sheets and nothing is spare. */
+  function linkLine(g, all, by) {
+    const SO = window.SharedOrders, SRp = window.CharmNestSetRules, mine = new Set(g.sheets.map(r => r.id)), inSet = all.filter(x => mine.has(x.id));
+    const groups = SO.core.groups(inSet), nm = ids => ids.map(i => (by.get(i) || {}).label || i), and = l => l.length < 2 ? l.join("") : `${l.slice(0, -1).join(", ")} and ${l[l.length - 1]}`;
+    const ow = os => os.length === 1 ? `order ${os[0]}` : `orders ${os.slice(0, 3).join(", ")}${os.length > 3 ? " and more" : ""}`;
+    const parts = groups.slice(0, 3).map(x => `${ow(x.orders)} ${x.orders.length === 1 ? "links" : "link"} ${and(nm(x.ids))}`);
+    if (groups.length > 3) parts.push(`${groups.length - 3} more group${groups.length - 3 === 1 ? "" : "s"} of sheets`);
+    let spare = [];
+    if (SRp && SRp.surplus && !g.committedAt && !/^complete|superseded/.test(String(g.status || ""))) spare = SRp.surplus(g.sheets, groups.map(x => x.ids));
+    const lines = [];
+    if (parts.length) lines.push(`${parts.join("; ")}: sheets that share an order stay in one set`);
+    if (spare.length) lines.push(`${and(nm(spare.map(r => r.id)))} ${spare.length === 1 ? "shares" : "share"} no order with the other sheets, and the set is valid without ${spare.length === 1 ? "it" : "them"}`);
+    return lines.join(". ");
+  }
   function partnersOf(list) {
     const SO = typeof window !== "undefined" ? window.SharedOrders : null; if (!SO || typeof SO.sheets !== "function" || !SO.core) return;
     let all; try { all = SO.sheets(); } catch (_) { return; }
     const by = new Map(all.map(x => [x.id, x]));
     for (const g of list) {
+      // (Paul, 15 Oct) a set built from sheets that share orders says which orders link which sheets, and which sheets no order ties to the rest: derived at every drawing, never saved
+      if (g.setId && g.sheets.length > 1 && g.status !== "superseded") { let line = ""; try { line = linkLine(g, all, by); } catch (_) { /* no line */ } if (line) g.cardinalLinks = line; else delete g.cardinalLinks; }
       if (!g.setId || g.committedAt || /^complete|superseded/.test(String(g.status || "")) || !g.sheets.length) continue;
       let items; try { items = SO.core.between(all, g.sheets.map(r => r.id), g.setId); } catch (_) { continue; }
       const free = [...new Set(items.flatMap(it => it.thereIds).filter(i => by.get(i) && !by.get(i).fixed))];
@@ -10116,6 +10147,7 @@ const Sets = window.Sets = (() => {
     const card = el("div", "setCard"); card.dataset.laserCard="set";card._laserSet=st;card._laserSheets=all.map(r=>r.id);card._sheets=all;
     card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Sheets" : "Sheets"}</span></div>` : `<div class="sh"><span class="nm" data-set-title>${esc(O.setLabel(st.seq))}${st.day?" · "+esc(st.day):""}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
           <div class="sheetsRow">${shown.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span data-sheet-count="${esc(r.id)}"><b>${r.placedCount}</b>/${r.charmCount}</span><span data-sheet-density="${esc(r.id)}"><b>${Math.round((r.density || 0) * 100)}%</b></span><span data-sheet-orders="${esc(r.id)}">${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r),'Sheet',r)}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
+          ${st.cardinalLinks ? `<div class="noteBox" data-set-links>${esc(st.cardinalLinks.charAt(0).toUpperCase() + st.cardinalLinks.slice(1))}.</div>` : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
           `;
     card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));

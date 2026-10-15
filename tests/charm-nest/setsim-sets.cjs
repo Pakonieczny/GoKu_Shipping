@@ -24,10 +24,11 @@ const { METALS, CODE, makeStream, partOf, schedule, setWorld, L } = Lib;
 const argv = process.argv.slice(2), opt = (k, d) => { const i = argv.indexOf('--' + k); return i >= 0 ? argv[i + 1] : d; };
 
 const SHEET_PT2 = (L.PT(60) - 3) * (L.PT(40) - 3), FILL_CAP = .78, CLOSE_AT = .70;
-const areaOf = c => c.areaPt2 * 1.12;   // (a charm's silhouette grown by its clearance)
+const areaScaled = c => c.areaPt2 * 1.12;   // (a charm's silhouette grown by its clearance)
 
 /** The toy: sheets of one metal filled whole-order by whole-order. */
-function toySheets() {
+function toySheets(scale = 1) {
+  const areaOf = c => areaScaled(c) * scale;   // (SETRULE: `scale` shrinks every charm so a toy sheet holds as many orders as a production sheet does, about 45)
   const sheets = Object.fromEntries(METALS.map(m => [m, []]));
   const open = (m, need) => sheets[m].find(s => !s.releaseFull && s.usedPt2 + need <= SHEET_PT2 * FILL_CAP);
   return {

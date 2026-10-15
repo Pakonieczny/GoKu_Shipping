@@ -35,6 +35,25 @@
  *     out: the set forms with the sheets that can be in it, says plainly which partner sheet to add (cardinalWait, derived by the page, never saved), and cannot be
  *     approved for laser cutting until that sheet is in it (gate()).
  *
+ * ONE SET AT A TIME, EACH AS SMALL AS THE MINIMUM ALLOWS (Paul, 15 Oct 2026, SETRULE):
+ *   "a set of sheets requires at least one GF and one SS sheet at the minimum and when this threshold is met then that becomes an individual Set of sheets ... how is it that this one
+ *    set has 4 GF and 2 SS sheets. This should be literally impossible"
+ *   Several completed sheets can be free at the same moment (a stream's end marks every sheet released at once, a page that reloads, a slow cloud, GF sheets that waited for the
+ *   first completed SS sheet). They do NOT all go into one set. formAll() forms the sets one after the other, in a fixed order (the time a sheet was seen completed, releasedAt, then its
+ *   sheet number, then GF before SS, then its id):
+ *     · the UNITS are the sheets that share a multi-piece order (the cardinal rule, shareGroups): a unit is indivisible, it goes into one set whole;
+ *     · a new set takes the earliest unit, then only as many further units, earliest first and each one that supplies the class the set still lacks, as it needs to hold 1 completed GF
+ *       and 1 completed SS sheet (a unit that turns out not to be needed, because a later one holds both by itself, waits for its own set). The moment it holds both it is formed and
+ *       closed, and the next set starts from the units that are left;
+ *     · units left over that cannot make a valid set wait outside every set with their plain line ("Set 1 has formed, so this sheet waits for the next set: it needs a completed SS sheet with it");
+ *     · a set that exists but is short of a class (an empty or half-made one) is completed first, with the fewest units that complete it, before any new set starts;
+ *     · a set that already exists is never touched. 10K, 14K and Rose Gold sheets never start or complete a set, a partial sheet never joins one.
+ *   Sheets that share an order stay one unit however many sheets that is: a day whose cross-metal orders (GF with SS, or either with Rose Gold, 14K, 10K) link every sheet is ONE unit and so one
+ *   set. That is the cardinal rule outranking the closing rule, never a formation fault.
+ *   formAll(lastMembers, free, hasLast, lastName, shareGroups) -> { last:[sheet], sets:[[sheet]], wait:[{sheet, why}], valid, closed }  `last`: the sheets that complete the newest open set;
+ *                                                  `sets`: the new sets, in order; shareGroups: [[sheet or id]] or [{ids}] (SharedOrders groups)
+ *   form(...) is the first step of it: { where, join, wait, later:[[sheet]], valid, closed }, `later` the sets that follow once this one is made (the page asks again after each).
+ *
  * PARTIAL SHEETS NEVER JOIN A SET (Paul, 13 Oct 2026, SETPART):
  *   "A partial GF and SS sheet should never be part of a Set of sheets. That sheet should have been held back because it was not fully nested."
  *   · "Fully nested" is the app's own notion above: a GF or SS sheet is COMPLETED (releaseFull, or laser cut) or it is PARTIAL (isPartial: still filling).
@@ -74,9 +93,11 @@
  *                                                  retroactively) and when the records carry no completion mark at all (releaseFull) to read.
  *   exempt(set)                                 -> true for those committed / completed / replaced sets
  *   closed(members)                             -> true when a set holding `members` has formed and takes no sheet on its own any more (THE closing rule)
- *   form(lastMembers, free, hasLast, lastName)  -> { where:'last'|'new'|null, join:[sheet], wait:[{sheet, why}], valid, closed }  where the free (completed, not in a set) sheets go NOW:
- *                                                  into the newest open set while it has not formed, into a NEW set when there is none or it is closed, nowhere while
- *                                                  they cannot make a valid set (they wait, each with the reason)
+ *   form(lastMembers, free, hasLast, lastName, shareGroups) -> { where:'last'|'new'|null, join:[sheet], wait:[{sheet, why}], later:[[sheet]], valid, closed }  where the free (completed, not in a set)
+ *                                                  sheets go NOW: into the newest open set while it has not formed, into a NEW set when there is none or it is closed, nowhere while
+ *                                                  they cannot make a valid set (they wait, each with the reason). SETRULE: join is the fewest units that make ONE valid set; `later` are the sets after it
+ *   formAll(...)                                -> { last, sets, wait, valid, closed }  every set the free sheets make, one after the other (see ONE SET AT A TIME above)
+ *   surplus(setSheets, shareGroups)             -> [sheet]  the sheets of a set that no order ties to its others and that it is still valid without (the Library says so on the set)
  *   partnerWords(labels)                        -> "orders shared with RG Draft 1: add that sheet to this set"
  *   enforce(false)                              -> for an offline suite about something else whose fixture sets predate the principle: gate() then reads applies:false
  */
@@ -192,15 +213,69 @@
   /** What a completed sheet that waits for the NEXT set is told when the newest set has formed already. */
   const nextSetWords = (setName, missing) => `${setName || 'The set'} has formed, so this sheet waits for the next set: ${waitWords(missing).replace(/^Waits for /, 'it needs ').replace(/: a set needs.*$/, '')} with it`;
 
-  /** Where the free sheets (completed, in no set, wanting in) go NOW. `lastMembers`: the sheets of the run's newest open set (hasLast: there is one). A set forms from the
-      completed sheets present at that moment; the newest open set takes them only while it has not formed; once it has (closed) they form the NEXT set. A batch that cannot
-      make a valid set waits, each sheet with its reason. */
-  function form(lastMembers, free, hasLast, lastName) {
-    const have = list(lastMembers).filter(Boolean), want = list(free).filter(Boolean);
-    if (hasLast && !closed(have)) { const s = settle(have, want); return { where: s.join.length ? 'last' : null, join: s.join, wait: s.wait, valid: s.valid, closed: false }; }
-    const s = settle([], want);   // (no open set, or the newest has formed: a following set forms when THESE sheets meet the minimum on their own)
-    const wait = hasLast && s.wait.length ? s.wait.map(w => isPartial(w.sheet) ? w : { sheet: w.sheet, why: nextSetWords(lastName, s.valid.missing) }) : s.wait;
-    return { where: s.join.length ? 'new' : null, join: s.join, wait, valid: s.valid, closed: !!hasLast };
+  /* ── ONE SET AT A TIME (Paul, 15 Oct 2026, SETRULE): see the head of this file ─────────────────────────────────────────────────────────────── */
+  /** The order sheets form sets in: when it was seen completed (releasedAt; unknown = before any known time), its sheet number, GF before SS, its id. Total and the same every time. */
+  const orderKey = s => [+s.releasedAt > 0 ? +s.releasedAt : 0, +s.page || +s.sheetIndex || 0, metalClass(s) === 'GF' ? 0 : metalClass(s) === 'SS' ? 1 : 2, idOf(s)];
+  const byOrder = (a, b) => { const x = orderKey(a), y = orderKey(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]; return x[3] < y[3] ? -1 : x[3] > y[3] ? 1 : 0; };
+  /** The free sheets as units: the sheets that share a multi-piece order (shareGroups: lists of sheets or ids, or { ids }) are ONE unit, the rest are alone. Earliest unit first. */
+  function unitsOf(sheets, shareGroups) {
+    const parent = sheets.map((_, i) => i), find = i => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+    const at = new Map(); sheets.forEach((s, i) => { at.set(s, i); const id = idOf(s); if (id && !at.has('#' + id)) at.set('#' + id, i); });
+    for (const g of list(shareGroups)) {
+      const ix = list(g && !Array.isArray(g) && g.ids ? g.ids : g).map(m => (m && typeof m === 'object' ? at.get(m) : at.get('#' + str(m)))).filter(i => i != null);
+      for (let k = 1; k < ix.length; k++) { const a = find(ix[0]), b = find(ix[k]); if (a !== b) parent[Math.max(a, b)] = Math.min(a, b); }
+    }
+    const by = new Map(); sheets.forEach((s, i) => { const r = find(i); if (!by.has(r)) by.set(r, []); by.get(r).push(s); });
+    return [...by.values()].map(l => ({ sheets: l.sort(byOrder) })).sort((u, v) => byOrder(u.sheets[0], v.sheets[0]));
+  }
+  const supplies = (u, missing) => u.sheets.some(s => isCompleted(s) && missing.includes(metalClass(s)));
+  /** The fewest units (earliest first, each one that supplies a class the set still lacks) that make `base` plus them hold a completed GF and a completed SS sheet; null when the units cannot.
+      With no base sheet the earliest unit that holds a completed GF or SS sheet starts the set (a sheet of any other metal never starts one). */
+  function fewest(base, units) {
+    const chosen = []; let cur = list(base).filter(Boolean);
+    if (!cur.length) { const first = units.find(u => supplies(u, ['GF', 'SS'])); if (!first) return null; chosen.push(first); cur = cur.concat(first.sheets); }
+    for (;;) {
+      const v = validSet(cur); if (v.ok) break;
+      const next = units.find(u => !chosen.includes(u) && supplies(u, v.missing)); if (!next) return null;
+      chosen.push(next); cur = cur.concat(next.sheets);
+    }
+    // a unit that turned out not to be needed (a later unit holds a completed GF and a completed SS sheet by itself) does not come along: the earliest such unit waits for its own set
+    for (const u of chosen.slice()) { if (chosen.length > 1 && validSet(list(base).filter(Boolean).concat(chosen.filter(c => c !== u).flatMap(c => c.sheets))).ok) chosen.splice(chosen.indexOf(u), 1); }
+    return chosen;
+  }
+  /** Every set the free sheets make, one after the other (see ONE SET AT A TIME at the head of this file). `last`: the sheets that complete the newest open set while it has not formed. */
+  function formAll(lastMembers, free, hasLast, lastName, shareGroups) {
+    const have = list(lastMembers).filter(Boolean), asked = list(free).filter(Boolean);
+    // (Paul, 13 Oct: a partial GF or SS sheet never joins a set by any route: it waits, with its one line, and the others are settled without it)
+    const barred = asked.filter(isPartial).map(sheet => ({ sheet, why: partialWhy(sheet) })), want = asked.filter(w => !isPartial(w));
+    let pool = unitsOf(want, shareGroups), open = !!hasLast && !closed(have);
+    const out = { last: [], sets: [], wait: [], valid: null, closed: !!hasLast && !open };
+    const take = chosen => { pool = pool.filter(u => !chosen.includes(u)); return chosen.flatMap(u => u.sheets); };
+    if (open) { const c = fewest(have, pool); if (c) { out.last = take(c); open = false; } }
+    while (!open && pool.length) { const c = fewest([], pool); if (!c) break; out.sets.push(take(c)); }
+    const first = out.last.length ? have.concat(out.last) : out.sets[0] || null;
+    const rest = pool.flatMap(u => u.sheets), left = validSet((open ? have : []).concat(rest));
+    out.valid = first ? validSet(first) : validSet(have.concat(want));
+    // what is left cannot make a valid set (yet): it waits. Once a set has formed (or the newest one has), a sheet that waits is waiting for the NEXT set
+    const next = open ? null : out.sets.length ? nextSetWords(null, left.missing) : hasLast || out.last.length ? nextSetWords(lastName, left.missing) : null;
+    out.wait = rest.map(sheet => ({ sheet, why: next || waitWords(left.missing) })).concat(barred);
+    return out;
+  }
+  /** The sheets a set holds that no order ties to its other sheets and that it could do without (SETRULE): it stays valid, a completed GF and a completed SS sheet, without them.
+      The latest units leave first, so what is left is the smallest set the earliest sheets make. 10K, 14K and Rose Gold sheets are a person's choice and never count. [] for a minimal set. */
+  function surplus(setSheets, shareGroups) {
+    const units = unitsOf(list(setSheets).filter(Boolean), shareGroups); let keep = units.slice(); const out = [];
+    for (const u of units.slice().reverse()) {
+      if (!supplies(u, ['GF', 'SS'])) continue;
+      const rest = keep.filter(k => k !== u);
+      if (validSet(rest.flatMap(k => k.sheets)).ok) { keep = rest; out.push(...u.sheets); }
+    }
+    return out.sort(byOrder);
+  }
+  /** The first step of formAll, in the shape the page's assembly reads: where the free sheets go NOW, the fewest units that make ONE valid set (`later`: the sets that follow it). */
+  function form(lastMembers, free, hasLast, lastName, shareGroups) {
+    const f = formAll(lastMembers, free, hasLast, lastName, shareGroups), where = f.last.length ? 'last' : f.sets.length ? 'new' : null;
+    return { where, join: f.last.length ? f.last : f.sets[0] || [], wait: f.wait, later: f.last.length ? f.sets : f.sets.slice(1), valid: f.valid, closed: where === 'last' ? false : f.closed };
   }
 
   /** A set committed to the Design Station, completed or replaced was made under the older rules: the principle never blocks it afterwards. */
@@ -230,5 +305,5 @@
       line: `Waiting for ${need}: a set needs at least 1 completed GF sheet and 1 completed SS sheet before it can go to laser cutting.`, have: v.have, partial: flag };
   }
 
-  return { isCompleted, metalClass, validSet, wouldStayValid, whyNotCompleted, describe, settle, gate, exempt, enforce, waitWords, form, closed, partnerWords, nextSetWords, isPartial, recordPartial, partialLine, partialDetail, partialWhy, fillWords, groupWait, CLOSING, CODE };
+  return { isCompleted, metalClass, validSet, wouldStayValid, whyNotCompleted, describe, settle, gate, exempt, enforce, waitWords, form, formAll, unitsOf, surplus, closed, partnerWords, nextSetWords, isPartial, recordPartial, partialLine, partialDetail, partialWhy, fillWords, groupWait, CLOSING, CODE };
 });
