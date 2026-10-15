@@ -1483,13 +1483,34 @@ const Orders = window.Orders = (() => {
         data: { sku: s.designSku || null, material: s.material || null, form: s.form || null, size: s.size || null, chain: s.chain || null, quantity: s.quantity || 1, special: s.special ? s.special.kind : null, noDesign: !!s.noDesign, questions: qs } });
     } catch (_) {}
   }
+  /* One line the reader cannot read must not stop the others (ADV-ORDERREAD, Paul, 15 Oct 2026: "ensure everything is running and stable and resilient"). interpretAll runs over EVERY line on each pull, each arrival and each
+     pooling, so a line that made the reader throw (an answer Etsy shaped in a way nobody has seen, a fault in the reading code) kept every new order out and every run from starting, and Resume threw at the same line.
+     Such a line is read again without its SKU, options and words (what the reader can always read), and then waits for a person with ONE plain line, like a line the form guard holds: no design on the row, nothing pooled,
+     the others go on. A line the reader reads is read exactly as before. */
+  function readLine(row) {
+    try { return O.interpretLine(row.order, row.line, ctx()); }
+    catch (e) {
+      const l = (row.line && typeof row.line === "object" ? row.line : {}), o = row.order || {}, say = String((e && e.message) || e).slice(0, 140), sku = String(l.sku == null ? "" : l.sku).trim().toUpperCase().slice(0, 80);
+      const bare = { transactionId: String(l.transactionId == null ? "" : l.transactionId), listingId: String(l.listingId == null ? "" : l.listingId), productId: "", sku, title: "", quantity: Number(l.quantity) || 1, metalKey: String(l.metalKey == null ? "" : l.metalKey), metalLabel: String(l.metalLabel == null ? "" : l.metalLabel), personalization: [], buyerMessage: "", variations: [] };
+      const plain = Object.assign({}, o, { buyerMessage: "", staffNote: "", messages: [] });
+      let sp; try { sp = O.interpretLine(plain, bare, ctx()); } catch (_) { try { sp = O.interpretLine(plain, Object.assign({}, bare, { sku: "" }), ctx()); } catch (__) { throw e; } }   // (a reader that fails on a line with nothing on it is a fault bigger than one line: as before)
+      const reason = `this line could not be read (${say}): it waits for a person, the other lines go on`;
+      try { agent({ bridge: true }, "warn", `${o.receiptId} · ${sku || "no SKU"}: ${reason}`); } catch (_) {}
+      if (sp.noDesign || sp.ownDesign) return sp;   // (a line completed by hand, chain only, on the no-design list or an add-on's is cut from nothing here: nothing waits on it)
+      sp.problems = [{ kind: "unmatchedSku", reason, sku, listingId: bare.listingId, title: String(l.title == null ? "" : l.title).slice(0, 160), formHold: true, readFailed: true, lineForm: "unknown", designForm: "unknown", siblings: [] }].concat(sp.problems.filter(p => p.kind === "needsMaterial"));
+      sp.formHold = { sku, design: "", lineForm: "unknown", designForm: "unknown", reason, siblings: [], readFailed: true }; sp.siblings = [];
+      sp.designSku = null; sp.skuSource = null; sp.sources = Object.assign({}, sp.sources, { sku: null });
+      return sp;
+    }
+  }
   function interpretAll() {
-    seenIx = O.seenSkus ? O.seenSkus(rowsOf().map(r => r.line)) : {};
+    try { seenIx = O.seenSkus ? O.seenSkus(rowsOf().map(r => r.line)) : {}; } catch (_) { seenIx = {}; }   // (what the other lines say about a SKU is a help, never a reason to stop)
     for (const row of rowsOf()) {
       // a line cut and committed is done: a later change to the maps or the library could only raise a decision on it
       if (row.state === "gone" || (row.state === "committed" && row.spec)) continue;
-      const inputs = inputsOf(row), was = readAs.get(row), prev = row.spec;
-      if (!was || was.spec !== row.spec || inputs.some((v, i) => !Object.is(v, was.inputs[i]))) { row.spec = O.interpretLine(row.order, row.line, ctx()); readAs.set(row, { spec: row.spec, inputs }); readEvent(row); }
+      let inputs; try { inputs = inputsOf(row); } catch (_) { inputs = [row.order, row.line]; }   // (what a line is read from; a line that cannot even say that is read once, and again when its order or line is replaced)
+      const was = readAs.get(row), prev = row.spec;
+      if (!was || was.spec !== row.spec || inputs.some((v, i) => !Object.is(v, was.inputs[i]))) { row.spec = readLine(row); readAs.set(row, { spec: row.spec, inputs }); readEvent(row); }
       window.Pool?.pinPooled?.(row);   // (a line pooled before the pair and count rule keeps its pieces: Orders and the readers below count what was made)
       row.problems = row.spec.problems.slice(); if (row.spec.noDesign) row.state = row.state === "pulled" ? "noDesign" : row.state;
       // a line held for a question it no longer raises (its option was read again, the library gained its design: DISCREAD) is a line to make up again; its pieces, if any, are never touched
@@ -1659,10 +1680,15 @@ const Orders = window.Orders = (() => {
     const r = await DesignLink.call("orders.snapshot", { hydrate: true, refresh: true }, { timeoutMs: 20 * 60 * 1000, onProgress: p => { if (pullBar) { if (p.done != null && p.total) pullBar.set(p.done, p.total, p.text || ""); else if (p.text) pullBar.note(p.text); } if (p.text) agentLiveLine("Pulling orders", p.text, p.done, p.total); } });
     DesignLink.meter(r, "the pull");
     B.orders.snapshot = { total: r.total, hydrated: r.hydrated, etsy: r.etsy, at: Date.now() }; B.orders.recalled = null;
-    if (r.hydrated < r.total) throw new Error(`only ${r.hydrated} of ${r.total} orders could be read from Etsy — ${r.etsy && !r.etsy.signedIn ? "the station is not signed in: press Connect Etsy" : "check the Design Station and pull again"}`);
-    const wanted = receiptIds && new Set(receiptIds.map(String));
-    const picked = wanted ? r.orders.filter(o => wanted.has(String(o.receiptId)) && !(window.Cancelled && Cancelled.has(o.receiptId))) : applyPullRule(r.orders);
-    B.orders.filtered = r.orders.length - picked.length;
+    // An order Etsy will not return in full (no items, a refused read) waits for the next check, where it is read again, exactly as in Arrivals.check: the others come in now (ADV-ORDERREAD, Paul, 15 Oct 2026).
+    // One such order used to stop every run start and every Resume for as long as it stayed unreadable. A run being restored still needs ITS OWN orders whole: one of them unread stops it, as before.
+    const wanted = receiptIds && new Set(receiptIds.map(String)), unread = (r.orders || []).filter(o => !o.hydrated), ownUnread = wanted ? unread.filter(o => wanted.has(String(o.receiptId))) : [];
+    if (r.hydrated < r.total && (!r.hydrated || unread.length < r.total - r.hydrated || ownUnread.length)) throw new Error(`only ${r.hydrated} of ${r.total} orders could be read from Etsy — ${r.etsy && !r.etsy.signedIn ? "the station is not signed in: press Connect Etsy" : "check the Design Station and pull again"}`);
+    if (unread.length) agent({ bridge: true }, "warn", `${unread.length} of ${r.total} order(s) could not be read from Etsy (${unread.slice(0, 6).map(o => o.receiptId).join(", ")}${unread.length > 6 ? "…" : ""}) — left out of this pull; the next check (or pulling again) reads them again; the other ${r.hydrated} came in now`);
+    // (and an order listed twice in one answer is one order: its lines became two rows with one key, and its pieces were made twice)
+    const seenOrder = new Set(), readable = (r.orders || []).filter(o => o.hydrated && !seenOrder.has(String(o.receiptId)) && seenOrder.add(String(o.receiptId)));
+    const picked = wanted ? readable.filter(o => wanted.has(String(o.receiptId)) && !(window.Cancelled && Cancelled.has(o.receiptId))) : applyPullRule(readable);
+    B.orders.filtered = readable.length - picked.length;
     await Arrivals.record(picked);
     for (const o of picked) TL.pulled(o, "pull", run && run.runId);
     B.orders.rows = picked.flatMap(o => o.lines.map(l => ({ arrivedAt: Arrivals.at(o.receiptId), key: O.lineKey(o, l), order: o, line: l, spec: null, problems: [], state: "pulled", reason: null, claimedBy: null, poolIds: [], engrave: null, metal: null })));
@@ -1787,7 +1813,7 @@ const Orders = window.Orders = (() => {
           const nl = d.order.lines.find(l => l.transactionId === r.line.transactionId);
           const oldText = r.engrave && r.engrave.text; const oldSpec = r.spec;
           r.order = d.order; if (nl) r.line = nl; else { r.state = "gone"; r.reason = "piece vanished from the order"; continue; }
-          r.spec = O.interpretLine(r.order, r.line, ctx()); r.problems = r.spec.problems.slice(); r.material = r.spec.material;
+          r.spec = readLine(r); r.problems = r.spec.problems.slice(); r.material = r.spec.material;
           // (ENGENT: a spec read before the customer's words were read decoded is compared as it reads now: Etsy's entities alone are no change of the customer's words, and never revoke an engraving)
           const wordsKey = sp => { const c = sp && O.decodeWords ? O.decodeWords(Object.assign({}, sp)) : sp; return JSON.stringify([c && c.personalization, c && c.buyerMessage, c && c.staffNote]); };
           const textInputsChanged = wordsKey(oldSpec) !== wordsKey(r.spec);

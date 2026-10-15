@@ -38,10 +38,10 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
  const bridge=fs.readFileSync('charm-nest-bridge.js','utf8');const start=bridge.indexOf('  async function revalidate(run, why)'),end=bridge.indexOf('  const STATE_PILL',start);
  const row={key:'1:a',order:{receiptId:'1',updateTs:1},line:{transactionId:'a',quantity:1},spec:{quantity:1,designSku:'A',material:'gold',problems:[]},problems:[],state:'written',poolIds:['p'],engrave:{needed:false,approved:true}};
  let mode='list-fail',invalidated=0,review=0;
- const c={rowsOf:()=>[row],DesignLink:{etsyBudgetOk:()=>true,meter(){},call:async type=>{if(type==='orders.check'){if(mode==='list-fail')throw Error('disconnected');return{orders:{'1':{open:true,touched:true}}};}if(mode==='detail-fail')throw Error('detail unavailable');if(mode==='malformed')return{};if(mode==='gone')return{gone:true,reason:'cancelled'};return{order:{receiptId:'1',updateTs:2,lines:[{transactionId:'a',quantity:2}]}};}},O:{interpretLine:(_,line)=>({quantity:line.quantity,designSku:'A',material:'gold',problems:[]})},ctx:()=>({}),Review:{add:()=>review++,syncOrderItems(){}},Engrave:{invalidate:()=>invalidated++},agent(){},agentLiveLine(){},render(){}};
+ const c={rowsOf:()=>[row],DesignLink:{etsyBudgetOk:()=>true,meter(){},call:async type=>{if(type==='orders.check'){if(mode==='list-fail')throw Error('disconnected');return{orders:{'1':{open:true,touched:true}}};}if(mode==='detail-fail')throw Error('detail unavailable');if(mode==='malformed')return{};if(mode==='gone')return{gone:true,reason:'cancelled'};return{order:{receiptId:'1',updateTs:2,lines:[{transactionId:'a',quantity:2}]}};}},O:{interpretLine:(_,line)=>({quantity:line.quantity,designSku:'A',material:'gold',problems:[]}),sameDesign:(a,b)=>a===b},ctx:()=>({}),readLine:r=>c.O.interpretLine(r.order,r.line,c.ctx()),Review:{add:()=>review++,syncOrderItems(){}},Engrave:{invalidate:()=>invalidated++},agent(){},agentLiveLine(){},render(){}};
  // a sheet still filling and one already released, each holding a piece of the order that will be cancelled
  const filling={metal:'gold',status:'complete',charms:[{id:'c1',poolId:'p'},{id:'c2',poolId:'x'}],placements:[{id:'c1'},{id:'c2'}]};
- const released={metal:'silver',status:'complete',releaseFull:true,charms:[{id:'c3',poolId:'q'}],placements:[{id:'c3'}]};
+ const released={metal:'silver',status:'complete',releaseFull:true,laserDoneAt:1,charms:[{id:'c3',poolId:'q'}],placements:[{id:'c3'}]};   // (cut: a sheet only released for cutting gives its cancelled order's pieces up too, Paul, 29 Sep; only a cut one, or one whose set went to the station, keeps them)
  const dirty=[],updates=[];
  Object.assign(c,{allSheets:()=>[filling,released],LiveNest:{closed:sh=>!!sh.releaseFull},sheetDirty:sh=>dirty.push(sh),renderCard:()=>{},sheetName:sh=>sh.metal,
    Pool:{update:async(ids,patch)=>updates.push([ids,patch])},B:{pool:{rows:new Map([['p',{}],['q',{}],['x',{}]])}}});c.window={LiveNest:c.LiveNest};
@@ -57,7 +57,8 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
  // they are (Paul, 24 Sep: a sheet is never arranged again) and the sheet is written again without it
  assert.deepEqual(filling.charms.map(x=>x.id),['c2']);assert.deepEqual(filling.placements.map(x=>x.id),['c2']);assert.deepEqual(dirty,[]);
  assert(filling.appendOnly&&filling.dirty&&filling.status==='ready','the rest stay where they are and the sheet is written again');
- assert.equal(JSON.stringify(updates),JSON.stringify([[['p'],{state:'abandoned',sheetId:null,setId:null}]]));assert(!c.B.pool.rows.has('p'));
+ assert.equal(JSON.stringify(updates.map(([ids,patch])=>[ids,{state:patch.state,sheetId:patch.sheetId,setId:patch.setId}])),JSON.stringify([[['p'],{state:'abandoned',sheetId:null,setId:null}]]));assert(!c.B.pool.rows.has('p'));   // (and it says by whom, why and when: removedBy / removedReason / removedAt)
+ assert.equal(updates[0][1].removedBy,'System');assert(/no longer open on Etsy \(cancelled\)/.test(updates[0][1].removedReason)&&updates[0][1].removedAt>0);
  // a piece on a released sheet stays: it is cut with the sheet and set aside, and the order no longer holds the sheet back
  assert.deepEqual(released.charms.map(x=>x.id),['c3']);assert.equal(JSON.stringify(row.poolIds),'["q"]');assert(c.B.pool.rows.has('q'));
  reads.length=0;await c.revalidate(null,'test');assert.equal(dirty.length,0,'a second check takes nothing more off');assert.deepEqual(filling.placements.map(x=>x.id),['c2']);

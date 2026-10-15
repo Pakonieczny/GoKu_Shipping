@@ -45,6 +45,8 @@ async function part1() {
   store.set('Charm_Sku_Aliases/7001', { listingId: '7001', sku: 'BR-ALS-02', by: 'Ana', title: 'Star necklace' });
   const probe = await post({ op: 'aliasGet' }); assert(probe.aliases && probe.aliases['7001'], 'the fake holds the legacy alias under the collection aliasGet reads: ' + JSON.stringify(probe).slice(0, 200));
   const lib0 = { 'BR-ALS-02': {}, 'BR-NEW-03': {} }, ctx = aliases => ({ optionMaps: {}, aliases, noDesign: {}, masterEntry: s => lib0[s] || null });
+  // ("Use this charm" names a design the master index holds, aliasPut refuses any other: the fake master holds the two designs this part picks)
+  for (const k of ['BR-ALS-02', 'BR-NEW-03']) store.set('Charm_Master_Index/' + k, { sku: k });
   const order = { receiptId: '4100000001', updateTs: 1, staffNote: '', buyerMessage: '' };
   const line = sku => ({ transactionId: '41000000011', listingId: '7001', sku, title: 'Star necklace', quantity: 1, metalKey: 'gold', metalLabel: 'Gold', personalization: [], variations: [] });
   let sp = O.interpretLine(order, line('BR-GONE-09'), ctx(probe.aliases));
@@ -83,6 +85,7 @@ async function part3() {
   const O = require(path.join(root, 'charm-nest-orders.js'));
   const post = body => lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(body) }).then(r => JSON.parse(r.body || '{}'));
   const lib0 = { 'BR-ALS-02': {}, 'BUNNY_42980': {}, 'BUNNY_42980 (HUGGIE)': {} }, ctx = aliases => ({ optionMaps: {}, aliases, noDesign: {}, masterEntry: s => lib0[s] || null });
+  for (const k of ['BR-ALS-02', 'BUNNY_42980', 'BUNNY_42980 (HUGGIE)']) store.set('Charm_Master_Index/' + k, { sku: k });   // (aliasPut refuses a design the master index does not hold)
   const order = { receiptId: '4300000001', updateTs: 1, staffNote: '', buyerMessage: '' };
   const line = (sku, type, lid) => ({ transactionId: '43000000011', listingId: lid || '7101', sku, title: 'Bunny charm', quantity: 1, metalKey: 'gold', metalLabel: 'Gold',
     personalization: [], variations: [{ name: 'Metal', value: 'Gold Filled' }, { name: 'Charm Type', value: type }] });
@@ -128,6 +131,7 @@ async function part2() {
   let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('  – no playwright-core: the browser checks were not run'); return; }
   const { start } = require('./bridge-server.cjs');
   const srv = await start({ receipts: [] });
+  srv.st.put('Charm_Master_Index', 'BUNNY_42980 (HUGGIE)', { sku: 'BUNNY_42980 (HUGGIE)' });   // (aliasPut refuses a design the master index does not hold)
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });

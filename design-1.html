@@ -3330,7 +3330,7 @@ function cacheIsFresh(rid, stamp) {
 /* ── 11b · fetching ──────────────────────────────────────────────────────── */
 
 async function fetchOpenOrdersSequential(onPage) {
-  const all = [];
+  const all = [], seenAt = new Map();
   let offset = 0;
   while (true) {
     const resp = await apiFetch(`/listOpenOrders?offset=${offset}`);
@@ -3341,7 +3341,9 @@ async function fetchOpenOrdersSequential(onPage) {
     }
     const payload  = await resp.json();
     const receipts = payload.results || [];
-    all.push(...receipts);
+    /* Etsy lists newest first by offset: an order that arrives while the pages are being walked pushes every later one down a place, so the last order of one page is the first of the next
+       (ADV-ORDERREAD, Paul, 15 Oct 2026: "complete Etsy production order pulls"). A receipt is listed once; seen twice, the later copy is the fresher. Without this the sorter pulled its lines twice. */
+    for (const r of receipts) { const id = r && r.receipt_id != null ? String(r.receipt_id) : "", at = id ? seenAt.get(id) : undefined; if (at != null) all[at] = r; else { if (id) seenAt.set(id, all.length); all.push(r); } }
     onPage?.(all.length);
     if (receipts.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
