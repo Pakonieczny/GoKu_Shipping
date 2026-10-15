@@ -281,7 +281,13 @@
   // pasted (U+FFFC, which browsers draw as a boxed "OBJ"), the replacement mark (U+FFFD), zero-width spaces and control codes
   const visible = s => String(s == null ? "" : s).replace(/[\uFFFC\uFFFD\u200B\u2060\uFEFF\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
   const isPersonalisation = name => /personali[sz]ation|engraving text|custom text/i.test(String(name || ""));
-  const isSizeOption = name => /(^|\s)size\s*$/i.test(String(name || ""));
+  /* A size in millimetres, written anywhere in a drop-down value ("12mm + engraving", "Large (14mm)", "1.2 cm"): "12MM" (centimetres as millimetres), or null when there is none or the value names two sizes. */
+  const mmTokenOf = v => {
+    const out = new Set(); for (const m of String(v == null ? "" : v).matchAll(/(^|[^\d.])(\d{1,3}(?:\.\d{1,2})?)\s*(mm|millimet(?:er|re)s?|cm)\b/gi)) { const n = +m[2] * (m[3].toLowerCase() === "cm" ? 10 : 1); if (n > 0) out.add(String(+n.toFixed(1)) + "MM"); }
+    return out.size === 1 ? [...out][0] : null;
+  };
+  // the option that holds the size: a name that ends in "size" (as always), or, when its value is a size in millimetres, a name that speaks of the size / diameter / charm / pendant / disc ("Size of Necklace Charm", "Charm Size (NO Huggie option)", "Necklace Charm")
+  const isSizeOption = (name, value) => /(^|\s)size\s*$/i.test(String(name || "")) || (value != null && !!mmTokenOf(value) && /\b(size|diameter|charm|pendant|disc|dimension)s?\b/i.test(String(name || "")) && !/chain|necklace length|length|extender/i.test(String(name || "")));
   const isChainOption = name => /chain|necklace length|length|extender/i.test(String(name || ""));
   // 16" is how a shop writes a necklace length. The old rule ended in \b, which cannot follow a quote mark, so every
   // length written that way fell through as an unmapped option and held the line.
@@ -312,6 +318,41 @@
   const isMetalVariation = (name, value) => isMetalOption(name) || metalSpecValue(value);
   const bareValue = v => norm(String(v || "").replace(/[^\w\s.+&-]+/g, " ")).split(/[\s+&]+/).filter(w => w && !FORM_FILLER.has(w)).join(" ");
   const looksLikeSize = v => /^(xs|s|m|l|xl|xxl|\d{1,2}(\.\d)?\s*(mm|cm)?( us)?)$/i.test(bareValue(v));
+  /* ═══ SIZEFIT (Paul, 15 Oct 2026): "All 'Charm Only Disc' listings have an option for the size of the Necklace Charm (10mm, 12mm, 14mm, each also + engraving). The system needs a new check that checks the size of the
+     charm chosen by the user and automatically adapts the charm size from the repo to match the buyer chosen size/diameter. This must be robust and a standard check when analyzing / triaging order listings."
+     THE CHECK, for every line with a size in millimetres (spec.size "12MM"; "12mm + engraving" reads as 12MM, the engraving is another matter) whose design is in the library:
+       · the library holds that very size (entry.sizes["12MM"]): drawn as it is, nothing changes (null);
+       · else the design nearest in size (the entry itself, or the nearest of its sizes) is measured: a ROUND DISC (its narrow side is its diameter, its area is a circle's, a jump ring may lengthen the other side)
+         is drawn at the buyer's diameter: action "scale", scale = wanted / drawn diameter, the drawing it is scaled from in `base`; a diameter already within 2.5 % (at least 0.3 mm) of the wanted one is "same";
+       · a design that is not a round disc is never resized on a guess: "unchecked" (the line goes on as before; a design that holds sizes but not this one still asks for the size);
+       · a size more than 2.5 times or less than 0.4 times the drawn one is not an adaptation but a mistake of the listing or the drawing: "ask" (the line waits for a person with the numbers).
+     Pure and shared: the sorter page (Pool.sizeEntry draws the scaled design: charm-nest-pdf.js scaleSource), the station and the server read this very function, so the card, the pool and the laser file can never disagree. */
+  const MM_PT = 25.4 / 72;
+  const sizeMmOf = tok => { const m = /^(\d{1,3}(?:\.\d{1,2})?)\s*(MM|CM)$/i.exec(String(tok == null ? "" : tok).trim()); return m ? (m[2].toUpperCase() === "CM" ? +m[1] * 10 : +m[1]) : null; };
+  const r1 = x => Math.round(x * 10) / 10;
+  /* A design's index record keeps the size of its OUTER box: the drawing's box and a margin of 1 pt + half the stroke on every side (charm-nest-pdf.js buildSilhouettes: bboxOuter), about 2.6 pt in all on each axis. The disc's own diameter is what the
+     buyer's millimetres are measured against, so the margin is taken off first. */
+  const SIZE_PAD_PT = 2.6;
+  function discOf(g) {
+    const w = +(g && g.widthPt) - SIZE_PAD_PT, h = +(g && g.heightPt) - SIZE_PAD_PT, a = +(g && g.areaPt2); if (!(w > 3 && h > 3)) return null;
+    const lo = Math.min(w, h), hi = Math.max(w, h), aspect = hi / lo, circ = a > 0 ? a / (Math.PI * lo * lo / 4) : null;
+    return { diaMm: lo * MM_PT, aspect, circ, round: aspect <= 1.32 && (circ == null ? aspect <= 1.06 : circ >= 0.93 && circ <= 1.16) };
+  }
+  function sizeFit(entry, size) {
+    const want = sizeMmOf(size); if (!entry || want == null || want < 3 || want > 80) return null;
+    const sizes = entry.sizes && Object.keys(entry.sizes).length ? entry.sizes : null;
+    if (sizes && sizes[size]) return null;
+    const cands = sizes ? Object.keys(sizes).map(k => ({ key: k, g: sizes[k] })).filter(x => x.g && x.g.aiPath) : [{ key: null, g: entry }];
+    let best = null;
+    for (const c of cands) { const d = discOf(c.g); if (!d) continue; const gap = Math.abs(d.diaMm - want); if (!best || gap < best.gap) best = { key: c.key, d, gap }; }
+    if (!best) return { action: "unchecked", wantMm: want, why: "the design has no measurable size" };
+    const have = r1(best.d.diaMm);
+    if (!best.d.round) return { action: "unchecked", wantMm: want, haveMm: have, why: "the design is not a round disc, so its size is not changed" };
+    if (best.gap <= Math.max(0.3, want * 0.025)) return { action: "same", wantMm: want, haveMm: have, base: best.key };
+    const k = want / best.d.diaMm;
+    if (k > 2.5 || k < 0.4) return { action: "ask", wantMm: want, haveMm: have, base: best.key, why: `${want} mm asked, the design is ${have} mm: more than ${k > 1 ? "2.5 times bigger" : "2.5 times smaller"}` };
+    return { action: "scale", wantMm: want, haveMm: have, base: best.key, scale: k, size: String(size) };
+  }
   // a made-to-order listing prices each order with an option of its own ("Price: 28"): it says what was paid, never what
   // is made, so it is read as nothing to map (it held every custom line under Options as well as under Material)
   const isPriceOption = name => /^\s*(price|amount|total|cost|payment|deposit|balance)\s*$/i.test(String(name || ""));
@@ -2172,7 +2213,7 @@
     for (const v of line.variations || []) {
       const name = lvName(v), value = lvValue(v).trim(); if (!name || !value) continue;
       if (isPersonalisation(name)) { boxVals.push(value); continue; }
-      if (isMetalVariation(name, value) || isSizeOption(name) || isChainOption(name) || isPriceOption(name)) continue;
+      if (isMetalVariation(name, value) || isSizeOption(name, value) || isChainOption(name) || isPriceOption(name)) continue;
       for (const r of signsInText(value, false)) add(r.sign, { from: "option", word: r.word, typo: false, text: value, name, variation: v });
     }
     const box = uniqStr([].concat(line.personalization || [], boxVals).map(t => visible(t).trim()).filter(Boolean));
@@ -3184,7 +3225,7 @@
     if (!viaPick && !huggieSet(line)) {
       for (const v of line.variations || []) {
         const nm = lvName(v), val = lvValue(v).trim();
-        if (!nm || !val || isMetalVariation(nm, val) || isPersonalisation(nm) || isSizeOption(nm) || isChainOption(nm) || isFormOption(nm) || isEarFormOption(nm) || isFontOption(nm) || isPriceOption(nm) || tied(v) || optionLookup(ctx.optionMaps, line.listingId, nm, val)) continue;
+        if (!nm || !val || isMetalVariation(nm, val) || isPersonalisation(nm) || isSizeOption(nm, val) || isChainOption(nm) || isFormOption(nm) || isEarFormOption(nm) || isFontOption(nm) || isPriceOption(nm) || tied(v) || optionLookup(ctx.optionMaps, line.listingId, nm, val)) continue;
         const r = letterRead(nm, val, sku, me, ctx.optionMaps && ctx.optionMaps[String(line.listingId)]); if (r) letters.set(v, Object.assign(r, { name: nm, value: val }));
       }
       if (letters.size > 1) letters.clear();                                    // (two letter options may be two charms: a person says, as before)
@@ -3307,7 +3348,7 @@
       if (!mapped) {                                                            // deterministic name rules, no free-text reading
         const asForm = formByWords(value);
         if (HUGGIE_SET.test(value)) mapped = { field: "form", value: "huggie", source: "rule:huggie-set" };
-        else if (isSizeOption(name) && looksLikeSize(value)) mapped = { field: "size", value: SIZE_VALUES[bareValue(value)] || bareValue(value).toUpperCase().replace(/\s+/g, ""), source: "rule:size" };
+        else if (isSizeOption(name, value) && (looksLikeSize(value) || mmTokenOf(value))) mapped = { field: "size", value: mmTokenOf(value) || SIZE_VALUES[bareValue(value)] || bareValue(value).toUpperCase().replace(/\s+/g, ""), source: "rule:size" };
         else if (isChainOption(name) && looksLikeLength(value)) mapped = { field: "chain", value, source: "rule:length" };
         else if (isChainOption(name) && asForm) mapped = { field: "form", value: asForm, source: "rule:form" };
         else if (isFormOption(name) && looksLikeLength(value)) mapped = { field: "chain", value, source: "rule:length" };
@@ -3375,7 +3416,12 @@
         if (!optionOpen) problems.push(Object.assign({ kind: "unmatchedSku", reason: set && skuSource === "transaction" ? "Huggie CHARM SET: its huggie design is not in any master file" : "not in any master file", sku, listingId: String(line.listingId || ""), title: line.title || "" }, sib.length ? { siblings: sib } : {}));
       }
       else if (entry.blocked) problems.push({ kind: "blockedSku", reason: entry.blocked, sku });
-      else if (entry.sizes && Object.keys(entry.sizes).length) { if (!spec.size || !entry.sizes[spec.size]) problems.push({ kind: "missingSize", sku, size: spec.size, available: Object.keys(entry.sizes) }); }
+      else {
+        // SIZEFIT: the size the buyer chose is read against the design (a standard check of every line): drawn as is, scaled to the diameter chosen, left alone (not a disc), or asked
+        const fit = sizeFit(entry, spec.size); if (fit) spec.sizeFit = fit;
+        if (fit && fit.action === "ask") problems.push({ kind: "missingSize", sku, size: spec.size, available: entry.sizes ? Object.keys(entry.sizes) : [], why: fit.why });
+        else if (entry.sizes && Object.keys(entry.sizes).length && (!spec.size || !entry.sizes[spec.size]) && !(fit && (fit.action === "scale" || fit.action === "same"))) problems.push({ kind: "missingSize", sku, size: spec.size, available: Object.keys(entry.sizes) });
+      }
     }
     // pairs (Paul, 9 Oct): what the line says about being a pair, and the one count of its pieces (pieceCountOf: every caller reads it)
     // a 2-symbols line whose second symbol (from the buyer's words) has no charm yet: that value of the option is asked once, like any option value
@@ -3843,7 +3889,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, tidyOption, optionView, optionViews, shownText, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, SET_RULES, SET_LAYOUT_OPT, setRuleOf, setLengthsOf, setEngravedOf, barLengthOf, setLayoutAskOf, setPiecesOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { sizeFit, sizeMmOf, SIZE_PAD_PT, questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, tidyOption, optionView, optionViews, shownText, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, SET_RULES, SET_LAYOUT_OPT, setRuleOf, setLengthsOf, setEngravedOf, barLengthOf, setLayoutAskOf, setPiecesOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY, earringNeverBackEngraves, EAR_NEVER_WHY,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,

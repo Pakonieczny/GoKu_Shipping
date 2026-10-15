@@ -1413,7 +1413,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const custom = !!s.custom || /^cust:/.test(String(s.id || "")) || customPath(s.path) || customPath(s.url);
     if (s.pool && s.sku && !custom) {
       const entry = Master.entryFor(s.sku) || await Master.fetchEntry(s.sku); if (!entry) throw new Error(`${s.sku} is no longer in the master library`);
-      const size = Object.entries(entry.sizes || {}).find(([, v]) => v && v.aiPath === s.path)?.[0] || null;
+      const size = (Pool.sizeKeyOf ? Pool.sizeKeyOf(entry, s.path) : Object.entries(entry.sizes || {}).find(([, v]) => v && v.aiPath === s.path)?.[0]) || null;   // (a design scaled to the size chosen names it in its path: SIZEFIT)
       const src = await Pool.masterCharm(entry, size); return { pool: true, base: src.charms[0], src };
     }
     const key = s.path || s.url; if (!key) throw new Error("the file was never saved");

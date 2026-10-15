@@ -3375,7 +3375,41 @@ const Master = window.Master = (() => {
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
 const Pool = window.Pool = (() => {
   const PoolPieces = window.CharmNestPoolPieces;   // the shape of a piece record (side, bodyIndex, groupKey, groupSize) and how an old record is read: charm-nest-pool-pieces.js
-  const sizeEntry = (entry, size) => (entry.sizes && Object.keys(entry.sizes).length ? (size && entry.sizes[size]) || null : entry);
+  /* SIZEFIT (Paul, 15 Oct 2026: "automatically adapts the charm size from the repo to match the buyer chosen size/diameter"): the design for a size the library does not hold is the nearest design of that
+     round disc drawn at the diameter chosen (charm-nest-orders.js sizeFit decides; charm-nest-pdf.js scaleSource draws it). It is a design of its own as far as the page is concerned: its file key
+     says what it is, `<the file>#fit-12MM@0.71429` (the size asked and the factor), so a source made from it, a pool row and a sheet record all name it, and a record read again later is drawn the same. */
+  const FIT_PATH = /#fit-([A-Z0-9.]+)@(\d+(?:\.\d+)?)$/;
+  const fitCache = new WeakMap();
+  function scaledGeom(entry, size, fit) {
+    const base = entry.sizes && Object.keys(entry.sizes).length ? entry.sizes[fit.base] : entry;
+    if (!base || !base.aiPath || !(fit.scale > 0)) return null;
+    const sig = [base.aiPath, base.charmHash || "", base.widthPt, base.heightPt, fit.scale.toFixed(5)].join("|");
+    let m = fitCache.get(entry); if (!m) fitCache.set(entry, m = new Map());
+    const hit = m.get(size); if (hit && hit.sig === sig) return hit.geom;
+    const k = fit.scale, M = O.SIZE_PAD_PT || 0, dim = v => (v - M) * k + M, geom = Object.assign({}, base, {   // (the index's size is the outer box: the drawing's own size scales, its margin does not)
+      aiPath: `${base.aiPath}#fit-${String(size).toUpperCase()}@${k.toFixed(5)}`, base, scaled: true, scale: k, fromMm: fit.haveMm, wantMm: fit.wantMm,
+      charmHash: base.charmHash ? `${base.charmHash}~${String(size).toUpperCase()}` : base.charmHash, widthPt: dim(base.widthPt), heightPt: dim(base.heightPt), areaPt2: base.areaPt2 > 0 ? base.areaPt2 * k * k : base.areaPt2, thumbPath: null, thumbUrl: null });
+    m.set(size, { sig, geom }); return geom;
+  }
+  /** The design of an entry for a size: the size it holds, else (a round disc, a size in mm) the nearest one drawn at the size chosen, else (a design that holds sizes but not this one) nothing. */
+  const sizeEntry = (entry, size) => {
+    const sized = !!(entry.sizes && Object.keys(entry.sizes).length);
+    if (sized && size && entry.sizes[size]) return entry.sizes[size];
+    let fit = null; try { fit = size ? O.sizeFit(entry, size) : null; } catch (_) { fit = null; }
+    if (fit && fit.action === "scale") { const g = scaledGeom(entry, size, fit); if (g) return g; }
+    if (fit && fit.action === "same" && sized) return entry.sizes[fit.base] || null;
+    return sized ? null : entry;
+  };
+  /** The size key a design file belongs to: the library's own size of that file, or the size a scaled drawing was made for. */
+  const sizeKeyOf = (entry, path) => { const m = FIT_PATH.exec(String(path || "")); return m ? m[1] : Object.entries(entry.sizes || {}).find(([, v]) => v && v.aiPath === path)?.[0] || null; };
+  /** Why a line of this size cannot be made up from this design, or null: a size more than 2.5 times the drawn disc (or under 0.4 of it) is a mistake of the listing or the drawing, a design that holds sizes but not this one has none to draw. */
+  const sizeHold = (entry, size, sku) => {
+    const sized = !!(entry.sizes && Object.keys(entry.sizes).length);
+    let fit = null; try { fit = size ? O.sizeFit(entry, size) : null; } catch (_) { fit = null; }
+    if (fit && fit.action === "ask") return { reason: fit.why, problem: { kind: "missingSize", sku, size, available: sized ? Object.keys(entry.sizes) : [], why: fit.why } };
+    if (sized && !sizeEntry(entry, size)) return { reason: `no design for size ${size || "(none)"}`, problem: { kind: "missingSize", sku, size, available: Object.keys(entry.sizes) } };
+    return null;
+  };
   /** Fetch the per-SKU .ai once per session, parse it, trace it; every copy shares the geometry. */
   const masterLoads=new Map();
   async function masterCharm(entry, size) {
@@ -3397,7 +3431,7 @@ const Pool = window.Pool = (() => {
     if (label) agent({ pool: true }, "warn", `${entry.sku}: its design file still has the SKU label “${String(label.str).trim()}” under the charm, so the label goes onto every sheet with it and the sheet's .dxf fails — index its master again in the Library with “re-index SKUs already held” ticked`);
     await P.buildSilhouettes(parsed, [charm], +S.settings.silhouetteRes || 6);
     const srcId = "pool:" + key.replace(/[^\w]+/g, "_");
-    const src = { id: srcId, pool: true, name: `${entry.sku}${size ? " · " + size : ""} (master)`, sku: entry.sku, bytes, hash: entry.charmHash || charm.hash, parsed, group: g, charms: [charm], metal: null, state: "ready", t0: performance.now(), cloud: { path: geom.aiPath, url }, persisting: null, usedAt: Date.now() };
+    const src = { id: srcId, pool: true, name: `${entry.sku}${size ? " · " + size : ""} (master)`, sku: entry.sku, bytes, hash: geom.scaled ? charm.hash : entry.charmHash || charm.hash, parsed, group: g, charms: [charm], metal: null, state: "ready", t0: performance.now(), cloud: { path: geom.aiPath, url }, persisting: null, usedAt: Date.now() };
     Object.assign(charm, { id: srcId + ":0", sourceId: srcId, sourceName: src.name, index: 0, name: entry.sku, sku: entry.sku, namedBy: "master", excluded: false, cloud: { ai: url, aiPath: geom.aiPath, png: geom.thumbUrl || null, pngPath: geom.thumbPath || null }, upAngle: entry.upAngle, engravable: true, backKeepOut: Master.keepOutOf(charm), frontKeepOut: Master.keepOutOf(charm, "front") });
     // a design that draws two DIFFERENT bodies under one label (a mismatched pair, charm-nest-pair.js) also gets one charm per body
     // which way the drawing faces, when a person set it on the master record (charm-nest-pair.js facingOf reads these two): decides which piece of a pair is the mirror image
@@ -3461,12 +3495,26 @@ const Pool = window.Pool = (() => {
     const h = rec ? String(rec.charmHash || rec.hash || "") : ""; if (!h || h === String(src.charms[0].hash || "")) return null;
     const bodies = await soloBodies(src); return bodies && bodies.find(c => String(c.hash) === h) || null;
   }
+  /** The factor that makes the drawing in these bytes exactly `wantMm` across: the index's sizes carry a margin and a jump ring, so the file itself is measured (its outline's narrow side is the disc's diameter). `guess` (the factor the
+   *  index gave) is only used when the file cannot be measured. Refuses a drawing that is not a round disc or is more than 2.5 times off, so a wrong index never cuts a wrong disc. */
+  async function fitFactor(bytes, sku, wantMm, guess) {
+    if (!(wantMm > 0)) throw new Error(`${sku}: the size asked is not a diameter`);
+    const parsed = await P.parseSource(bytes, `${sku}.ai`), g = await (P.groupCharmsAsync || P.groupCharms)(parsed, { minPt: +S.settings.minPt || 6 });
+    const big = g.charms.reduce((a, b) => (!a || (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]) > (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]) ? b : a), null);
+    const ob = big && (big.outline && big.outline.bbox || big.bbox); if (!ob) return guess;
+    const w = ob[2] - ob[0], h = ob[3] - ob[1], lo = Math.min(w, h), hi = Math.max(w, h);
+    if (!(lo > 0) || hi / lo > 1.4) throw new Error(`${sku}: its drawing is not a round disc, so it is not resized to ${wantMm} mm`);
+    const k = wantMm / (lo * 25.4 / 72);
+    if (k > 2.5 || k < 0.4) throw new Error(`${sku}: ${wantMm} mm asked, its drawing is ${(lo * 25.4 / 72).toFixed(1)} mm`);
+    return k;
+  }
   async function readMasterCharm(entry,size) {
-    const geom=sizeEntry(entry,size);
+    const geom=sizeEntry(entry,size), fitP=FIT_PATH.exec(String(geom.aiPath||"")), real=geom.base||geom, filePath=fitP?String(geom.aiPath).slice(0,fitP.index):geom.aiPath;   // (a scaled design is read from the file it is scaled from)
     // (a stored download link dies when the file under it is written again, and a record that shares the file keeps the old one: the file is asked for again through a fresh link before the design is given up)
-    const fresh = async () => (await api("charmNestOutput", { op: "url", path: geom.aiPath })).url;
-    let url = geom.aiUrl, bytes;
-    if (url) { try { bytes = await CharmNestAssets.bytes(url); } catch (e) { url = await fresh(); bytes = await CharmNestAssets.bytes(url); geom.aiUrl = url; } } else { url = await fresh(); bytes = await CharmNestAssets.bytes(url); }
+    const fresh = async () => (await api("charmNestOutput", { op: "url", path: filePath })).url;
+    let url = real.aiUrl, bytes;
+    if (url) { try { bytes = await CharmNestAssets.bytes(url); } catch (e) { url = await fresh(); bytes = await CharmNestAssets.bytes(url); real.aiUrl = url; } } else { url = await fresh(); bytes = await CharmNestAssets.bytes(url); }
+    if (fitP) bytes = await P.scaleSource(bytes, await fitFactor(bytes, entry.sku, O.sizeMmOf(fitP[1]), +fitP[2]));   // (SIZEFIT: the same drawing at the diameter the buyer chose; the reader below sees an ordinary file of that size)
     const parsed = await P.parseSource(bytes, `${entry.sku}.ai`);
     const g = await (P.groupCharmsAsync || P.groupCharms)(parsed, { minPt: +S.settings.minPt || 6 });
     if (!g.charms.length) throw new Error(`${entry.sku}: no outline in the master copy`);
@@ -3750,7 +3798,7 @@ const Pool = window.Pool = (() => {
     let entry = Master.entryFor(sp.designSku) || await Master.fetchEntry(sp.designSku);
     if (!entry) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push(Object.assign({ kind: "unmatchedSku", reason: "not in any master file", sku: sp.designSku, listingId: String(row.line.listingId || ""), title: row.line.title }, sp.siblings && sp.siblings.length ? { siblings: sp.siblings } : {})); agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: not in any master file`); return null; }
     if (entry.blocked) { row.state = "held"; row.reason = `SKU blocked: ${entry.blocked}`; row.problems.push({ kind: "blockedSku", reason: entry.blocked, sku: sp.designSku }); return null; }
-    if (entry.sizes && Object.keys(entry.sizes).length && !(sp.size && entry.sizes[sp.size])) { row.state = "held"; row.reason = `no design for size ${sp.size || "(none)"}`; row.problems.push({ kind: "missingSize", sku: sp.designSku, size: sp.size, available: Object.keys(entry.sizes) }); return null; }
+    { const sh = sizeHold(entry, sp.size, sp.designSku); if (sh) { row.state = "held"; row.reason = sh.reason; row.problems.push(sh.problem); return null; } }
     const src = await masterCharm(entry, sp.size);
     const base = src.charms[0];
     /* A mismatched pair named by TWO master designs (Paul, 10 Oct 2026: a SKU or title that names a Tennis Ball and a Tennis Racket, Left and Right options, a 2-symbols line's two signs;
@@ -3762,7 +3810,7 @@ const Pool = window.Pool = (() => {
       const hold = (why, problem) => { row.state = "held"; row.reason = why; if (problem) row.problems.push(problem); agent({ pool: true }, "warn", `${row.order.receiptId} · ${two.R}: ${why}`); return null; };
       if (!entry2) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push({ kind: "unmatchedSku", reason: "not in any master file", sku: two.R, listingId: String(row.line.listingId || ""), title: row.line.title }); agent({ pool: true }, "warn", `${row.order.receiptId} · ${two.R}: not in any master file`); return null; }
       if (entry2.blocked) return hold(`SKU blocked: ${entry2.blocked}`, { kind: "blockedSku", reason: entry2.blocked, sku: two.R });
-      if (entry2.sizes && Object.keys(entry2.sizes).length && !(sp.size && entry2.sizes[sp.size])) return hold(`no design for size ${sp.size || "(none)"}`, { kind: "missingSize", sku: two.R, size: sp.size, available: Object.keys(entry2.sizes) });
+      { const sh = sizeHold(entry2, sp.size, two.R); if (sh) return hold(sh.reason, sh.problem); }
       const src2 = await masterCharm(entry2, sp.size);
       if (src.bodies || src2.bodies) return hold(`${src.bodies ? two.L : two.R} draws two bodies: it cannot be one ear of a pair of two designs`);
       ear2 = { entry: entry2, src: src2, sku: two.R };
@@ -3778,7 +3826,7 @@ const Pool = window.Pool = (() => {
         const e2 = Master.entryFor(k) || await Master.fetchEntry(k), hold = (why, problem) => { row.state = "held"; row.reason = why; if (problem) row.problems.push(problem); agent({ pool: true }, "warn", `${row.order.receiptId} · ${k}: ${why}`); return null; };
         if (!e2) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push({ kind: "unmatchedSku", reason: "not in any master file", sku: k, listingId: String(row.line.listingId || ""), title: row.line.title }); agent({ pool: true }, "warn", `${row.order.receiptId} · ${k}: not in any master file`); return null; }
         if (e2.blocked) return hold(`SKU blocked: ${e2.blocked}`, { kind: "blockedSku", reason: e2.blocked, sku: k });
-        if (e2.sizes && Object.keys(e2.sizes).length && !(sp.size && e2.sizes[sp.size])) return hold(`no design for size ${sp.size || "(none)"}`, { kind: "missingSize", sku: k, size: sp.size, available: Object.keys(e2.sizes) });
+        { const sh = sizeHold(e2, sp.size, k); if (sh) return hold(sh.reason, sh.problem); }
         const s2 = await masterCharm(e2, sp.size);
         if (s2.bodies) return hold(`${k} draws two bodies: it cannot be one piece of a set of two designs`);
         setDs.push({ entry: e2, src: s2, sku: k });
@@ -4096,8 +4144,7 @@ const Pool = window.Pool = (() => {
   async function previewOnce(row) {
     const sp = row.spec, entry = Master.entryFor(sp.designSku), none = () => { previewIdsOf.set(row.key, []); return []; };
     // (a line pooling would not cut from its own design makes no charm: custom, add-on, no design, the form guard, an unknown or blocked SKU, a size its design lacks)
-    if (!entry || entry.blocked || sp.noDesign || sp.ownDesign || sp.formHold || (window.CustomSheet && CustomSheet.sentOf && CustomSheet.sentOf(row)) || !sizeEntry(entry, sp.size)?.aiPath
-      || (entry.sizes && Object.keys(entry.sizes).length && !(sp.size && entry.sizes[sp.size]))) return none();
+    if (!entry || entry.blocked || sp.noDesign || sp.ownDesign || sp.formHold || (window.CustomSheet && CustomSheet.sentOf && CustomSheet.sentOf(row)) || !sizeEntry(entry, sp.size)?.aiPath) return none();
     const src = await masterCharm(entry, sp.size), base = src.charms[0], mine = !base.poolId;
     if (mine) base.poolId = "__preview";   // (makePool then clones every copy; a real pooling that starts meanwhile clones the first copy too, and the drawing is let go clean below)
     const keep = { state: row.state, reason: row.reason, problems: row.problems, poolTry: row.poolTry, poolError: row.poolError };
@@ -4184,7 +4231,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pinPooled, wholeHashes, designLoaded, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig };
+  return { pinPooled, wholeHashes, designLoaded, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, sizeKeyOf, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -13266,7 +13313,7 @@ const Review = window.Review = (() => {
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
-  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.letter ? `option "${p.optionName}: ${p.optionValue}" \u2014 ${p.letter.why}` : p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.setLayout ? `${p.setLayout.why}` : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? (p.formHold ? p.reason : `SKU ${p.sku || "?"}: ${p.reason}`) : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
+  function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? (p.letter ? `option "${p.optionName}: ${p.optionValue}" \u2014 ${p.letter.why}` : p.pairSecond ? `${p.pairSecond.why}` : p.font ? p.font.why : p.setLayout ? `${p.setLayout.why}` : p.earWords ? `${p.earWords.why}` : p.note && !p.count ? `option "${p.optionName}: ${p.optionValue}" not mapped (${p.note})${p.why ? " — " + p.why : ""}` : p.count ? `option "${p.optionName}: ${p.optionValue}" may name how many pieces — a person says (${p.count.why})` : `option "${p.optionName}: ${p.optionValue}" not mapped${p.why ? " — " + p.why : ""}`) : p.kind === "unmatchedSku" ? (p.formHold ? p.reason : `SKU ${p.sku || "?"}: ${p.reason}`) : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? (p.why ? `size ${p.size}: ${p.why}` : `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})`) : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
    *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
@@ -17512,7 +17559,7 @@ const OrderWin = window.OrderWin = (() => {
       (vis.length ? `<section><div class="owSheetFindRow"><span class="fLabel">Sheet</span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="owSheetOrderFind" type="search" inputmode="numeric" placeholder="Order # on sheet" aria-label="Search order numbers on this sheet" aria-controls="owSheetMatches" autocomplete="off" spellcheck="false"></label></div><div class="owShTabs">${vis.map(i => `<button type="button" data-at="${i}" class="${i === SV.at ? "on" : ""}" style="--c:${esc(colorOf(list[i].metal))}"><i></i>${esc(tabNames[i] || sheetName(list[i]))}</button>`).join("")}</div>${facts ? `<div class="sub" style="margin-top:8px">${esc(facts)}</div>` : ""}</section>` : "") +
       `<div class="owSheetMatches" id="owSheetMatches" role="list" aria-live="polite" hidden></div>` +
       `<section><div class="owOrdHd"><span class="fLabel">Order</span>${bk ? `<button type="button" class="btn ghost xs" data-ow-back title="Back to order ${esc(bk.rid)}, as it was"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>Back to order ${esc(bk.rid)}</button>` : ""}</div><div class="big">${esc(rid)}</div><div class="sub">${esc([o.buyer && o.buyer.name, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · "))}</div></section>` +
-      `<section class="owCharm"><div class="pic" data-pic data-zp></div><div><b>${esc(sku || "—")}</b>${x0 && x0.c ? `<span>${esc((x0.c.widthPt * 25.4 / 72).toFixed(1))} × ${esc((x0.c.heightPt * 25.4 / 72).toFixed(1))} mm</span>` : ""}<span>${esc(lr.material ? labelOf(lr.material) : rec ? labelOf(rec.metal) : "")}${sp.size ? " · size " + esc(sp.size) : ""}</span></div></section>` +
+      `<section class="owCharm"><div class="pic" data-pic data-zp></div><div><b>${esc(sku || "—")}</b>${x0 && x0.c ? `<span>${esc((x0.c.widthPt * 25.4 / 72).toFixed(1))} × ${esc((x0.c.heightPt * 25.4 / 72).toFixed(1))} mm</span>` : ""}<span>${esc(lr.material ? labelOf(lr.material) : rec ? labelOf(rec.metal) : "")}${sp.size ? " · size " + esc(sp.size) : ""}${sp.sizeFit && sp.sizeFit.action === "scale" ? ` · scaled from ${esc(sp.sizeFit.haveMm)} mm` : ""}</span></div></section>` +
       `<section class="swSection" data-engraving-panel>${engHtml}</section>` +
       `<section><span class="fLabel">This order · ${pieces.length} piece${pieces.length === 1 ? "" : "s"}</span><ul class="owPieces">${pieces.map((it, i) => `<li data-i="${i}" class="${it.here && (!SV.focus || it.poolId === SV.focus || !x0 || x0 === it.piece) && it.piece === x0 ? "on" : !it.here && !it.nested && !it.loading ? "off" : ""}"><span class="n">${i + 1}</span><span class="sku">${esc(it.sku || "")}${it.qty > 1 ? ` <small>copy ${it.copy} of ${it.qty}</small>` : ""}</span>${where(it)}</li>`).join("")}</ul></section>` +
       (rec ? `<div class="acts"><button type="button" class="btn ghost sm" data-full${cut ? "" : ""}>Open full sheet ›</button><button type="button" class="btn ghost sm" data-off${cut || lined ? " disabled" : ""}${lined ? ` title="Inside the saved Rose Gold green line: its pieces stay on the sheet until it is cut, then are set aside"` : ""}>Take off the sheet…</button>${cut ? `<span class="why">Cut — it can no longer be taken off</span>` : lined ? `<span class="why">Inside the saved green line</span>` : ""}</div>` : "");

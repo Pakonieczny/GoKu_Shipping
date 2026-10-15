@@ -488,6 +488,28 @@
     return head.indexOf("%PDF-") >= 0;
   }
 
+  /** The same design file drawn k times its size (SIZEFIT, 15 Oct 2026: a round disc the library holds at 14 mm is cut at the 12 mm the buyer chose). The first page is wrapped in `q k 0 0 k 0 0 cm … Q` and its
+   *  page boxes are scaled with it, so the reader sees an ordinary file of that size (outline, holes, strokes: every length scales, a cut line's width too, as any transform of the app's does). Nothing else is
+   *  touched: the file is not simplified, no point is moved. Rejects for bytes that are not a PDF, a file with no page, or a factor outside 0.05 to 20. */
+  async function scaleSource(bytes, k) {
+    const { PDFDocument, PDFName, PDFArray } = L();
+    k = +k; if (!(k > 0.05 && k < 20)) throw new Error("the size factor is out of range");
+    if (!bytes || !isPdfBytes(bytes)) throw new Error("not a PDF-compatible .ai or .pdf file.");
+    const doc = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+    if (!doc.getPageCount()) throw new Error("no pages.");
+    const page = doc.getPage(0), node = page.node, f = n => String(Math.round(n * 1e6) / 1e6);
+    const pre = doc.context.register(doc.context.stream(`q ${f(k)} 0 0 ${f(k)} 0 0 cm\n`)), post = doc.context.register(doc.context.stream("\nQ\n"));
+    const raw = node.get(PDFName.of("Contents")), cur = raw ? doc.context.lookup(raw) : null;
+    node.set(PDFName.of("Contents"), doc.context.obj([pre].concat(cur instanceof PDFArray ? cur.asArray() : raw ? [raw] : [], [post])));
+    const mb = page.getMediaBox();
+    node.set(PDFName.of("MediaBox"), doc.context.obj([mb.x * k, mb.y * k, (mb.x + mb.width) * k, (mb.y + mb.height) * k]));
+    for (const name of ["CropBox", "BleedBox", "TrimBox", "ArtBox"]) {
+      const b = numsOf(node.lookup(PDFName.of(name)));
+      if (b && b.length === 4 && b.every(Number.isFinite)) node.set(PDFName.of(name), doc.context.obj(b.map(v => v * k)));
+    }
+    return await doc.save({ useObjectStreams: false });
+  }
+
   /* ═══ 4 · parseSource ══════════════════════════════════════════════════ */
   async function parseSource(bytes, name) {
     const { PDFDocument, PDFName } = L();
@@ -2586,7 +2608,7 @@
     }
     return out;
   }
-  root.CharmNestPDF = { closeNearlyClosed, markerReason, isDimensionLine, integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
+  root.CharmNestPDF = { scaleSource, closeNearlyClosed, markerReason, isDimensionLine, integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
     takeSampleText, sampleTextOf, parseSkuLabel, READER_VERSION, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
   // the hoop finder, for the tests and the audit (kept off the long list above so a merge there never touches it)
   root.CharmNestPDF.findHoops = findHoops; root.CharmNestPDF.circleOf = circleOf;
