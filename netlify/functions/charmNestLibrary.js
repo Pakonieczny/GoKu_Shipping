@@ -1386,7 +1386,6 @@ const legacyLive = cur => !!cur && !cur.side && !(+cur.groupSize > 0) && !["aban
 async function op_poolPut(b) {
   const rows = (Array.isArray(b.pools) ? b.pools : [b.pool]).filter(p => p && isPoolId(p.poolId)).slice(0, 400);
   if (!rows.length) return { error: "no pool rows" };
-  const out = { written: 0, contended: [], placed: [] };
   /* Two runs contending for one line: a row claimed by a LIVE run (fresh within 24 h, not finished) belongs to that run.
      A run that was stopped or given up is not live, whatever its rows say: yesterday's stopped run kept 152 lines
      out of today's on the strength of rows it never finished, so the run itself is asked, once per run. */
@@ -1396,18 +1395,23 @@ async function op_poolPut(b) {
      four hundred rows of a run that took every open order ran past the edge's patience, and its HTML "Inactivity
      Timeout" page came back as the reason the orders were held (25 Sep). A row sent twice is written once, merged. */
   const byId = new Map(); for (const p of rows) byId.set(p.poolId, Object.assign(byId.get(p.poolId) || {}, p));
-  const list = [...byId.values()], found = [];
+  const list = [...byId.values()];
   // the four fields of a piece of a mismatched pair are all there and valid, or none are stored (a plain piece never has them)
   // (groupKey alone is what the pool id says, as Placement.cleanPiece writes it; the other three come with it or not at all)
   for (const p of list) { const keep = pieceFieldsOf(p), gk = Object.prototype.hasOwnProperty.call(p, "groupKey") ? Placement.groupOfPool(p.poolId) : ""; for (const k of PoolPieces.FIELDS) delete p[k]; Object.assign(p, keep); if (gk && !keep.groupKey) p.groupKey = gk; }
-  for (let i = 0; i < list.length; i += 100) found.push(...await db.getAll(...list.slice(i, i + 100).map(p => col(POOL).doc(p.poolId)), { fieldMask: POOL_PUT_FIELDS }));
+  /* The rows are read and written in ONE transaction (ADVSERVER, 15 Oct 2026, Paul: "unexpected user behaviour", two benches at once): two runs that pool the same new lines at the same moment
+     both read "no row yet" and both wrote, so each run owned every line and the pieces went onto two sheets. A row created or changed between this read and
+     the commit makes Firestore run this again, and the second run then finds the first one's rows and is told `contended`. */
+  return db.runTransaction(async tx => {
+  const out = { written: 0, contended: [], placed: [] }, found = [];
+  for (let i = 0; i < list.length; i += 100) found.push(...await txGetAll(tx, list.slice(i, i + 100).map(p => col(POOL).doc(p.poolId)), POOL_PUT_FIELDS));
   /* A line already on a saved sheet is never placed again (Paul, 29 Sep: an order's design went on its sheet twice): a
      row whose record puts it on a sheet (not taken off since: abandoned or superseded), and whose sheet's saved record
      still lists it, is not written over by a fresh placement (no sheet id). It is answered as placed, with where it is. */
   const onSheet = new Map(), want = new Map();
   list.forEach((p, i) => { const cur = found[i] && found[i].exists ? found[i].data() : null; if (cur && cur.sheetId && !p.sheetId && !["abandoned", "superseded"].includes(cur.state)) want.set(p.poolId, cur); });
   const sheetIds = [...new Set([...want.values()].map(c => String(c.sheetId)).filter(isId))], sheetsRead = new Map();
-  for (let i = 0; i < sheetIds.length; i += 100) for (const s of await db.getAll(...sheetIds.slice(i, i + 100).map(id => col(SHEETS).doc(id)), { fieldMask: ["poolIds", "archived", "fileBase"] })) if (s.exists) sheetsRead.set(s.id, s.data());
+  for (let i = 0; i < sheetIds.length; i += 100) for (const s of await txGetAll(tx, sheetIds.slice(i, i + 100).map(id => col(SHEETS).doc(id)), ["poolIds", "archived", "fileBase"])) if (s.exists) sheetsRead.set(s.id, s.data());
   for (const [id, cur] of want) { const sh = sheetsRead.get(String(cur.sheetId)); if (sh && !sh.archived && (sh.poolIds || []).includes(id)) onSheet.set(id, { poolId: id, sheetId: cur.sheetId, sheetName: cur.sheetName || sh.fileBase || null, state: cur.state || null, setId: cur.setId || null }); }
   /* A line an older run made as ONE glued piece (a mismatched design, before its two bodies were told apart) that is still on a saved sheet or
      committed is not half-migrated: its new left and right rows are not written, and the page is told (`legacy`) to make the line as it was. */
@@ -1424,7 +1428,6 @@ async function op_poolPut(b) {
     if (had && wants && had < wants && !legacyLines.has(Placement.groupOfPool(p.poolId))) { shortLines.add(lineOfId(p.poolId)); short.push({ poolId: p.poolId, had, wants }); }
   });
   if (short.length) out.short = short;
-  let batch = db.batch(), n = 0;
   for (const [i, p] of list.entries()) {
     if (shortLines.has(lineOfId(p.poolId))) continue;
     const ex = found[i], cur = ex && ex.exists ? ex.data() : null;
@@ -1436,11 +1439,10 @@ async function op_poolPut(b) {
     // a row taken off on purpose (held, cancelled) that is made up again is live again: its take-off marks stay (the order's history
     // reads them), so the row says when it was made live, and no reader takes the old marks for a take-off still in force
     if (cur && p.state && !Placement.TAKE_OFF_STATES.has(p.state) && Placement.takenOff(cur)) doc[Placement.REPOOLED] = FV.serverTimestamp();
-    batch.set(col(POOL).doc(p.poolId), doc, { merge: true }); out.written++;
-    if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; }
+    tx.set(col(POOL).doc(p.poolId), doc, { merge: true }); out.written++;
   }
-  if (n) await batch.commit();
   return Object.assign({ ok: true }, out);
+  });
 }
 /* A take-off is ONE commit: the pieces' rows say they are off ("abandoned", no sheet, and the take-off's own mark) and the sheet
    records that listed them stop listing them (their piece list, the orders they still name, their backs and counts, and dirty: true,
@@ -4123,7 +4125,8 @@ exports.handler = async (event) => {
   // token every upload / delete / modify of the repository needs. This is the HTTP door only: code that calls OPS in-process is not asked.
   const RepoAuth = require("./_charmNestRepoAuth");
   if (RepoAuth.owns(body.op)) return RepoAuth.handle(db, event, body);
-  const fn = OPS[body.op];
+  // (an op is an OWN name of OPS, a string: "constructor", "toString" or "__proto__" belong to the object, and used to answer 200 with the body or a 500)
+  const fn = typeof body.op === "string" && Object.prototype.hasOwnProperty.call(OPS, body.op) ? OPS[body.op] : null;
   if (!fn) return json(400, { error: "unknown op", ops: Object.keys(OPS) });
   { const need = RepoAuth.requirement("charmNestLibrary", body.op, body); if (need) { const no = await RepoAuth.authorize(db, need, body, event); if (no) return json(no.status, no.body); } }
   // ZODGO (13 Oct 2026): an op that writes a listing's Etsy inventory (listingEtsySkuWrite) is refused for a listing whose ZODIAC SIGN drop-down was sent or may have landed: one Firestore read after the password door, nothing sent; see _charmNestEtsyZodiac.js "THE FENCE"
