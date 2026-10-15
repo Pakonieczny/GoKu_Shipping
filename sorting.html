@@ -1209,6 +1209,7 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
     pendingFetchControllers = [];     // fresh list for this run
 
     globalRunId++;                    // ← bump run ID so old tasks quit
+    const myRun = globalRunId;        // (Enter twice while a batch loads: the older run is replaced and must not record the batch a second time)
 
     // Reset arrays & state
     croppedImagesArray = [];
@@ -1241,7 +1242,9 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
     let batchRec = null;
     try { batchRec = window.SortTL && window.SortTL.batchStart(orderNumbers, scanSrc); } catch (_) {}
     await loadBatchEtsyOrders(orderNumbers);
-    try { window.SortTL && window.SortTL.batchLoaded(batchRec); } catch (_) {}
+    // (a newer Enter replaced this batch before it had loaded: that batch is the one on screen and records its own orders, so a double Enter
+    //  is one scan per order in the efficiency record and not two; stations, Paul, 15 Oct 2026)
+    if (myRun === globalRunId) try { window.SortTL && window.SortTL.batchLoaded(batchRec); } catch (_) {}
     updateOrderItemCounter(); // total after load completes
     updatePrintRowButtonLabel();
   }
