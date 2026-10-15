@@ -21345,7 +21345,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       if (!q) return;
       if (typeof q.now === "number") SQ.offMs = Date.now() - q.now;
       SQ.at = Date.now();
-      if (q.unchanged) return;
+      if (q.unchanged) { try { sqPaintBanner(); } catch (_) {} return; }   // (the thread's boxes may have been rebuilt since the last change: painting is cheap and does nothing when nothing differs)
       const before = SQ.forThread === threadId ? SQ.items : [];
       SQ.forThread = threadId; SQ.n = typeof q.n === "number" ? q.n : null;
       SQ.held = typeof q.held === "number" ? q.held : 0;                // every message waiting for the away helper, in all conversations
@@ -26423,6 +26423,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         <div class="em-sq-delay" id="mQueueDelay" role="status" style="display:none;"></div>
         <div class="m-messages-list" id="mMessagesList"></div>
       `;
+      try { sqPaintBanner(); } catch (_) {}   // the boxes above are new and empty: draw what the send queue already knows (a delayed message's note, a bar for one that did not go)
 
       // Wire customer card head — toggles open + lazy-loads on first open
       const custHead = document.getElementById("mCustomerCardHead");

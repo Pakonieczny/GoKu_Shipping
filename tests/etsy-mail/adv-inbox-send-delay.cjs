@@ -118,7 +118,16 @@ const server = http.createServer((req, res) => {
     return { ctx, page, errors };
   };
   const pick = async (page, id, mobile) => {
-    if (mobile) { await page.waitForSelector(`.m-thread-row[data-id="${id}"]`, { timeout: 15000 }); await page.click(`.m-thread-row[data-id="${id}"]`); await page.waitForSelector("#mComposerTextarea", { timeout: 10000 }); return; }
+    if (mobile) {
+      // (a tap that lands while the list is being redrawn is lost - most of all near midnight, when the list gains a "Yesterday" group - so tap until the conversation is really open)
+      await page.waitForSelector(`.m-thread-row[data-id="${id}"]`, { timeout: 15000 });
+      for (let k = 0; k < 5; k++) {
+        await page.click(`.m-thread-row[data-id="${id}"]`).catch(() => {});
+        if (await page.waitForSelector("#mMessagesList", { timeout: 3000 }).then(() => true, () => false)) break;
+      }
+      await page.waitForSelector("#mComposerTextarea", { timeout: 10000 });
+      return;
+    }
     await page.waitForSelector(`[data-id="${id}"]`, { timeout: 15000 });
     await page.click(`[data-id="${id}"]`);
     await page.waitForSelector("#emDraftText", { timeout: 10000 });
