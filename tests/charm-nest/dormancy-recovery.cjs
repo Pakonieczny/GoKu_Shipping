@@ -46,7 +46,7 @@ async function vmChecks() {
     assert.equal(reviews.length, 0, 'nothing goes back to Review'); assert.equal(timers.length, 1, 'and it is tried again later'); assert.equal(settled, 0, 'the run is not woken for nothing');
     c.writeBacks = async j => { j.backs.push({ poolId: 'p' }); j.state = 'written'; };
     await c.saveBacks(job); assert.equal(job.state, 'written'); assert.equal(job.backPending, undefined, 'written once the cloud is back');
-    job.state = 'approved'; job.backs = []; c.writeBacks = async () => { throw new Error('the written back file did not re-verify (mirror)'); };
+    job.state = 'approved'; job.backs = []; c.writeBacks = async () => { throw Object.assign(new Error('the written back file did not re-verify (mirror)'), { engravingInvalid: true }); };   // (the file's own check says so with the flag; any other error is the cloud's or the network's)
     await c.saveBacks(job); assert.equal(job.state, 'review', 'a file that fails its own checks still goes to review'); assert.equal(reviews.length, 1);
   });
   await check('8 · a failed new-orders check is made again soon, keeps its snapshot, waits out a wake', async () => {
