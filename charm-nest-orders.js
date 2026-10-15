@@ -1659,6 +1659,45 @@
      The words "add on" in a title are still no rule (Paul, 25 Sep: many regular charm-only listings say it somewhere in a long title). */
   // (REVDROP, Paul, 15 Oct 2026, order 4199104309: "Custom listing should not have any matching vector charm repo associations": "Add a Custom Piece to your Jewelry!", SKU ADD_CUSTOM_4213, was read as the master design of that name, a disc with two holes, and asked about its "Style" option)
   const ADDON_LISTINGS = { "1777293722": "Huggie Charm + Shipping", "595264213": "Add a Custom Piece to your Jewelry!" };
+  /* MONOGRAM listings (Paul, 15 Oct 2026, orders 4200683017 "APV" and 4202783520 "OSR": "These 2 listings are for custom monograms ... The buyer will always provide 3 individual letters"): the charm is made by combining the buyer's
+     three letters from the Left, Middle and Right alphabets of the charm repository (charm-nest-monogram.js, the Engrave tab's Monograms). The listing's own code (MONOGRAM_5351) is a name, never a design: the line is the buyer's
+     own, as an add-on listing's is (own: true), asks nothing about a SKU, a metal or an option, and has no engraving. `special.monogram` says it is one. */
+  const MONOGRAM_LISTINGS = { "997905351": "Monogram Necklace Personalized Jewelry Initials Pendant", "606439317": "Monogram Necklace Dainty Monogram Necklace" };
+  /* Any other listing that says MONOGRAM (the word) in its title and whose buyer gave exactly three letters, in the personalisation box or in an option for initials / letters / text, is read the same way (MONOGRAMUI,
+     Paul, 15 Oct 2026: "The buyer will always provide 3 individual letters"). Never a guess: the title says monogram AND the words are exactly three letters (charm-nest-monogram.js lettersOf, which reads "A.P.V",
+     "Initials: ASK" and refuses "Jane Doe"); a monogram bracelet with a name, two letters or four stays what it was. A capitalised three-letter word ("Amy", "Mom") is a name, not initials. */
+  const MONO_TITLE = /(?:^|[^a-z])monograms?(?![a-z])/i;
+  const MONO_OPTION = /initial|letter|monogram|personali[sz]ation|engraving text|custom text|\btext\b|\bname\b/i;
+  /* The reading of three letters out of what a buyer wrote ("A.P.V", "Initials: ASK", never "Jane Doe"): the same as CharmNestMonogram.lettersOf (charm-nest-monogram.js, which the Monograms tab uses), kept here in a few lines
+     so this module, which the server's functions bundle, does not pull the geometry engine in with it; tests/charm-nest/custom-monogram.cjs reads 60 strings both ways and they must agree. */
+  const MONO_LABEL = new Set(("initials initial monogram monograms monogrammed letters letter please thanks thank personalization personalisation personalized personalised custom customized engrave engraved engraving charm charms necklace name names text order these this with using hello kindly request write make want need like").split(" "));
+  const MONO_STOP = new Set("my is to of in on at by it me we us so as or if an no for the and are you our her his she him has was not but can its nor per pls plz".split(" "));
+  function monoLettersIn(text) {
+    if (text == null) return null;
+    let s; try { s = String(text); } catch (_) { return null; }
+    s = s.normalize("NFKD").replace(/\p{M}+/gu, "").replace(/[ØøŁłĐđÐðĦħı]/g, c => ({ "Ø": "O", "ø": "o", "Ł": "L", "ł": "l", "Đ": "D", "đ": "d", "Ð": "D", "ð": "d", "Ħ": "H", "ħ": "h", "ı": "i" }[c]));
+    const runs = s.match(/[A-Za-z]+/g) || [], count = rs => rs.reduce((n, r) => n + r.length, 0), pick = rs => rs.join("").toUpperCase().split("");
+    if (!runs.length) return null;
+    if (count(runs) === 3) return pick(runs);
+    const noLabel = runs.filter(r => !MONO_LABEL.has(r.toLowerCase()));
+    if (noLabel.length < runs.length && count(noLabel) === 3) return pick(noLabel);
+    const core = noLabel.filter(r => !MONO_STOP.has(r.toLowerCase()));
+    if (core.length < runs.length && count(core) === 3) return pick(core);
+    return null;
+  }
+  /** The words a monogram line holds for its letters: the personalisation box, and the values of options that ask for initials or text. */
+  function monogramWords(line) {
+    line = line || {}; const out = [];
+    for (const t of [].concat(line.personalization || [])) out.push(t);
+    for (const v of line.variations || []) if (MONO_OPTION.test(lvName(v))) out.push(lvValue(v));
+    return uniqStr(out.map(t => visible(decodeEntities(t)).replace(/\s+/g, " ").trim()).filter(Boolean));
+  }
+  /** The three letters those words give ('APV'), or "" when they are not exactly one reading of three letters. */
+  function monogramLetters(line) {
+    const found = new Set();
+    for (const t of monogramWords(line)) { if (/^\p{Lu}\p{Ll}{2}$/u.test(t)) continue; const r = monoLettersIn(t); if (r) found.add(r.join("")); }
+    return found.size === 1 ? [...found][0] : "";
+  }
   const ADDON_TITLE = [
     ["Add a … Charm", /^add\s+an?\s+(?:[a-z0-9'’&-]+\s+){0,3}charms?$/],
     ["… Charm + Shipping", /^(?:[a-z0-9'’&-]+\s+){0,3}charms?\s*\+\s*shipping$/],
@@ -1666,7 +1705,7 @@
   ];
   const KIND_WORDS_ = { custom: "a custom order", rework: "a rework", addOnToOrder: "an add-on to an order", chainOnly: "chain only", other: "a special order" };
   /** What says this line's listing is an add-on listing: { kind, why } (kind: custom, rework…), { regular: true } when a person took the listing out, or null. */
-  function addOnOf(line, listingKind) {
+  function addOnOf(line, listingKind, o) {
     line = line || {};
     const lid = String(line.listingId || "").replace(/\D/g, ""), lk = listingKind && typeof listingKind === "object" ? listingKind : null;
     if (lk && lk.kind) {
@@ -1674,9 +1713,12 @@
       // (the person's own words for the listing, when they left some ("pre-made piece, not laser cut"), stand in the reason: the one line that says why)
       if (KIND_WORDS_[lk.kind]) { const note = String(lk.note || "").replace(/\s+/g, " ").trim().slice(0, 90); return { kind: lk.kind, why: `listing ${lid}: ${lk.by || "a person"} said every order of it is ${KIND_WORDS_[lk.kind]}${note ? ` (${note})` : ""}` }; }
     }
+    if (lid && MONOGRAM_LISTINGS[lid]) return { kind: "custom", monogram: true, words: monogramWords(line), why: `listing ${lid} is a custom monogram listing: the buyer's three letters are made into one charm (Engrave › Monograms)` };
     if (lid && ADDON_LISTINGS[lid]) return { kind: "custom", why: `listing ${lid} “${ADDON_LISTINGS[lid]}” is an add-on listing: a charm made to the buyer's own request, not a master design` };
     const title = String(line.title || "").replace(/&#0*39;/g, "'").replace(/&amp;/g, "&").trim(), lead = title.toLowerCase().split(/\s*[,|•·:;–—(\[]\s*|\s+-\s+|\s+\/\s+/)[0].trim();
     for (const [name, re] of ADDON_TITLE) if (re.test(lead)) return { kind: "custom", why: `listing “${title.length > 48 ? title.slice(0, 47) + "…" : title}” is an add-on listing (“${name}”): a charm made to the buyer's own request, not a master design` };
+    if (!(o && o.known) && MONO_TITLE.test(title)) { const letters = monogramLetters(line);   // (a line whose SKU is a design of the master is a catalogue charm with an engraving: a person's "monogram" there is its back words, never a monogram to build)
+      if (letters) return { kind: "custom", monogram: true, letters, words: monogramWords(line), why: `listing “${title.length > 48 ? title.slice(0, 47) + "…" : title}” says monogram and the buyer gave three letters (${letters.split("").join(" ")}): made into one charm (Engrave › Monograms)` }; }
     return null;
   }
   /* Claude's reading of a line (Charm Sorter › Custom Orders, charmNestLibrary customRead) and a person's decision name
@@ -1716,10 +1758,10 @@
     }
     // 1b · the listing is an add-on listing (addOnOf): the charm is the buyer's own request, whatever master design its SKU happens to match.
     // A person's word for the listing and the listing's own wording stand over Claude's reading and over the SKU codes; `own` tells interpretLine the design is not a master's
-    const addOn = addOnOf(line, opts.listingKind);
+    const addOn = addOnOf(line, opts.listingKind, { known });
     if (addOn && !addOn.regular) {
       const k = addOn.kind === "custom" ? customKind(sku || raw, title, vars) : READ_KINDS[addOn.kind] || null;
-      if (k) return Object.assign(make(k, addOn.why, "listing"), READ_LABEL[addOn.kind] ? { label: READ_LABEL[addOn.kind] } : {}, { own: true });
+      if (k) return Object.assign(make(k, addOn.why, "listing"), READ_LABEL[addOn.kind] ? { label: READ_LABEL[addOn.kind] } : {}, addOn.monogram ? { label: "Custom monogram", monogram: true, words: (addOn.words || []).join(" ") } : {}, { own: true });
     }
     // 2 · Claude's reading of everything the shop holds about the line. Chain only is never cut, so an unsure reading of
     // it waits for a person as a special order instead.
@@ -1756,7 +1798,7 @@
     return null;
   }
 
-  specialOf.addOn = { of: addOnOf, listings: ADDON_LISTINGS, titles: ADDON_TITLE, wait: "custom listing: no master design, waits for the order's own designs (Send to Sheet) or Complete Order" };   // (for the tests and for a reader: what says a listing is an add-on listing)
+  specialOf.addOn = { of: addOnOf, listings: ADDON_LISTINGS, monograms: MONOGRAM_LISTINGS, monogramLetters, monogramWords, monoLettersIn, titles: ADDON_TITLE, wait: "custom listing: no master design, waits for the order's own designs (Send to Sheet) or Complete Order" };   // (for the tests and for a reader: what says a listing is an add-on listing)
   /* The Team's workflow stamps ("DESIGNED :)", "QA1", "QA2", "PE", "am") are on nearly every order: they say where the
      order is in the shop, never what to engrave. Counted as engraving evidence, they sent every line to the engraving
      reader and every charm of a sheet showed a back engraving (Paul, 25 Sep: "Backs 69" on a sheet of 69 charms). A Team
