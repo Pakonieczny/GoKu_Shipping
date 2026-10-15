@@ -69,8 +69,13 @@ async function fakeFetch(url, init = {}) {
   etsy.calls.push({ path: u.pathname, q: Object.fromEntries(u.searchParams), auth: init.headers && init.headers.Authorization, key: init.headers && init.headers['x-api-key'] });
   if (!m) return res(404, 'unexpected request ' + u.pathname);
   const offset = +u.searchParams.get('offset'), limit = +u.searchParams.get('limit');
+  etsy.calls[etsy.calls.length - 1].at = Date.now();
+  const abortable = ms => new Promise((ok, no) => { const t = setTimeout(ok, ms), sig = init.signal; if (sig) sig.addEventListener('abort', () => { clearTimeout(t); no(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })); }); });
+  if (etsy.delay && etsy.delay[offset]) await abortable(etsy.delay[offset]);   // (a slow answer: the page's own clock cuts it, as node-fetch's signal does)
   if (etsy.throwAt === offset) throw new Error('socket hang up');
   if (etsy.failAt === offset) return res(etsy.status || 503, etsy.statusBody || 'Service Unavailable');
+  if (etsy.cutAt === offset) return Object.assign(res(200, {}), { json: () => abortable(60000).then(() => ({})) });   // (the headers came, the body never finishes)
+  if (etsy.badAt === offset) return Object.assign(res(200, {}), { json: async () => { throw new SyntaxError('Unexpected token < in JSON'); } });   // (an HTML page where the list should be)
   return res(200, { count: SHOP.length, results: SHOP.slice().sort((a, b) => b.created_timestamp - a.created_timestamp).slice(offset, offset + limit) });
 }
 const meterCalls = [];
@@ -92,7 +97,7 @@ const pullOp = (startId, extra) => post(Object.assign({ op: 'sandboxPullOrders',
 const listed = async () => (await emulator.handler({ httpMethod: 'GET', queryStringParameters: { fn: 'listOpenOrders' } }).then(r => JSON.parse(r.body))).results;
 const emu = q => emulator.handler({ httpMethod: 'GET', queryStringParameters: q }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body) }));
 const setToken = (ms, name = 'tok-fresh') => store.set('config/etsyOauth', { access_token: name, refresh_token: 'ref-1', expires_at_ms: Date.now() + ms });
-const resetEtsy = () => { etsy.calls.length = 0; etsy.oauth = 0; etsy.failAt = null; etsy.throwAt = null; etsy.status = null; etsy.statusBody = null; };
+const resetEtsy = () => { etsy.calls.length = 0; etsy.oauth = 0; etsy.failAt = null; etsy.throwAt = null; etsy.status = null; etsy.statusBody = null; etsy.delay = null; etsy.cutAt = null; etsy.badAt = null; };
 const wipe = () => { store.delete('Charm_Sandbox/current'); store.delete('Charm_Sandbox/stream'); for (const k of [...blobs.keys()]) if (k.startsWith('charmnest/sandbox/') && !k.startsWith('charmnest/sandbox/master/')) blobs.delete(k); };   // (what Reset does to this family; the budget stays)
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const empty = () => !store.has('Charm_Sandbox/current') && !store.has('Charm_Sandbox/stream') && ![...blobs.keys()].some(k => k.startsWith('charmnest/sandbox/orders-pull/'));
@@ -184,22 +189,22 @@ const openOf = list => list.filter(r => r.is_paid !== false && !r.is_shipped && 
 
   // ── failures leave the sandbox EMPTY, count what they spent, and never fall back ──
   const seedSet = async () => { const k = await pullOp('start-seed-' + Math.random().toString(36).slice(2, 8)); assert.strictEqual(k.status, 200); resetEtsy(); return k.body; };
-  // Etsy down on the first page: one call
+  // Etsy down on the first page: every page is asked at once (SBXPULL), so the three calls are made and counted
   store.set('Charm_Sandbox/pulls', Object.assign({}, ledger(), { pulls: 2, calls: 6 }));
   await seedSet(); const L0 = ledger().pulls, C0 = ledger().calls; store.set('Charm_Sandbox/pulls', Object.assign({}, ledger(), { pulls: 2, calls: 6 }));
   etsy.failAt = 0; etsy.status = 503;
   r = await pullOp('start-down-0003');
-  assert(r.status === 502 && r.body.ok === false && r.body.reason === 'etsy' && r.body.empty === true && r.body.calls === 1 && /Etsy did not answer \(HTTP 503\)/.test(r.body.error) && !/\n/.test(r.body.error), 'Etsy down: ' + JSON.stringify(r.body));
-  assert(empty(), 'the sandbox is EMPTY after a failed pull'); assert.strictEqual(etsy.calls.length, 1, 'page one failed: the other two pages were not asked');
-  assert.strictEqual(ledger().calls, 7, 'the one call counted'); assert.strictEqual(ledger().pulls, 3, 'the attempt counted'); assert.strictEqual(ledger().claim, null, 'the claim is released');
+  assert(r.status === 502 && r.body.ok === false && r.body.reason === 'etsy' && r.body.empty === true && r.body.calls === 3 && /Etsy did not answer \(HTTP 503\)/.test(r.body.error) && !/\n/.test(r.body.error), 'Etsy down: ' + JSON.stringify(r.body));
+  assert(empty(), 'the sandbox is EMPTY after a failed pull'); assert.strictEqual(etsy.calls.length, 3, 'page one failed: the three pages were asked together');
+  assert.strictEqual(ledger().calls, 9, 'the three calls counted'); assert.strictEqual(ledger().pulls, 3, 'the attempt counted'); assert.strictEqual(ledger().claim, null, 'the claim is released');
   // a retry of the same start is allowed (it did not succeed) and counted
-  resetEtsy(); r = await pullOp('start-down-0003'); assert(r.status === 200 && r.body.calls === 3 && r.body.pullsToday === 4 && r.body.callsToday === 10, 'the retry of a failed start pulls: ' + JSON.stringify([r.status, r.body.calls, r.body.pullsToday, r.body.callsToday]));
+  resetEtsy(); r = await pullOp('start-down-0003'); assert(r.status === 200 && r.body.calls === 3 && r.body.pullsToday === 4 && r.body.callsToday === 12, 'the retry of a failed start pulls: ' + JSON.stringify([r.status, r.body.calls, r.body.pullsToday, r.body.callsToday]));
   // a later page fails: the pages asked are counted, nothing is kept
   resetEtsy(); etsy.failAt = 100; etsy.status = 500;
   r = await pullOp('start-page-0004'); assert(r.status === 502 && r.body.reason === 'etsy' && r.body.calls === 3 && r.body.empty && empty(), 'page 2 failing: ' + JSON.stringify(r.body));
-  assert.strictEqual(ledger().pulls, 5); assert.strictEqual(ledger().calls, 13);
+  assert.strictEqual(ledger().pulls, 5); assert.strictEqual(ledger().calls, 15);
   // the network drops
-  resetEtsy(); etsy.throwAt = 0; r = await pullOp('start-net-00005'); assert(r.status === 502 && r.body.reason === 'etsy' && r.body.calls === 1 && /network error/.test(r.body.error) && empty(), 'a dropped connection: ' + JSON.stringify(r.body));
+  resetEtsy(); etsy.throwAt = 0; r = await pullOp('start-net-00005'); assert(r.status === 502 && r.body.reason === 'etsy' && r.body.calls === 3 && /network error/.test(r.body.error) && empty(), 'a dropped connection: ' + JSON.stringify(r.body));
   // Etsy's daily limit
   store.set('Charm_Sandbox/pulls', Object.assign({}, ledger(), { pulls: 1, calls: 3 }));
   resetEtsy(); etsy.failAt = 0; etsy.status = 429; etsy.statusBody = 'You have exceeded your daily rate limit'; r = await pullOp('start-lim-00006'); assert(r.status === 502 && r.body.reason === 'limit' && /daily limit/.test(r.body.error) && empty(), 'the daily limit: ' + JSON.stringify(r.body));
@@ -226,6 +231,40 @@ const openOf = list => list.filter(r => r.is_paid !== false && !r.is_shipped && 
   // a new UTC day starts the count over
   store.set('Charm_Sandbox/pulls', Object.assign({}, ledger(), { day: '2000-01-01' }));
   r = await pullOp('start-nine-00012'); assert(r.status === 200 && r.body.pullsToday === 1 && r.body.callsToday === 3 && r.body.capLeft === null, 'a new day: ' + JSON.stringify([r.status, r.body.pullsToday]));
+
+  // ── SBXPULL (15 Oct 2026: "I can't pull the 400 orders using the sandbox for Etsy": "Etsy did not answer (timed out)" and "Etsy sent a list the server could not read"). Etsy's pages are slow some days; the old pull asked
+  //    page one alone (6 s), then the rest in the little time left, so four 100-order pages needed Etsy to answer twice in turn inside 8.2 s. Now every page is asked at once, inside ONE clock from the start of the pull ──
+  const SP = require(path.join(fnDir, '_charmNestSandboxPull.js')), direct = (id, workMs) => SP.pull({ startId: id, by: 'tester' }, { stream: async () => ({ stream: null }) }, { workMs });
+  const reset2 = () => { resetEtsy(); store.set('Charm_Sandbox/pulls', { day: todayKey(), pulls: 0, calls: 0, tokenRefreshes: 0, starts: [], claim: null }); };
+  reset2(); etsy.delay = { 0: 500, 100: 500, 200: 500 };   // three pages of 500 ms each: one round when asked together (1500 ms when asked one after the other, then two together = 1000 ms at the very least)
+  { const t = Date.now(); r = await pullOp('start-par-000013'); const took = Date.now() - t, at = etsy.calls.map(c => c.at);
+    assert(r.status === 200 && r.body.ok && r.body.calls === 3 && r.body.count === 250, 'a slow-but-working Etsy still pulls: ' + JSON.stringify(r.body).slice(0, 160));
+    assert(Math.max(...at) - Math.min(...at) < 150, 'every page is asked before any answer is waited for: the asks are ' + (Math.max(...at) - Math.min(...at)) + ' ms apart');
+    assert(took < 950, 'the three 500 ms pages cost one round, not two: ' + took + ' ms'); assert(typeof r.body.ms === 'number' && r.body.ms >= 450 && r.body.ms < 950, 'the answer says how long the pull took: ' + r.body.ms);
+    const rec = ledger().starts[0]; assert(rec.id === 'start-par-000013' && rec.ok === true && rec.ms >= 450 && rec.pages.length === 3 && rec.pages.every(x => x.s === 200 && x.ms >= 450 && [0, 100, 200].includes(x.o)), 'the ledger keeps each page\'s seconds and status (numbers only): ' + JSON.stringify(rec)); }
+  // a page that does not answer inside the pull's clock: the line names the page and the seconds, the sandbox is EMPTY, every call counted
+  reset2(); etsy.delay = { 100: 5000 };
+  r = await direct('start-slow-00014', 1500);
+  assert(r.ok === false && r.reason === 'etsy' && r.empty === true && r.calls === 3 && /^Etsy did not answer \(timed out after 1\.[3-9] s on page 2 of 3\), so the sandbox is empty\. Press Start to try again\.$/.test(r.error), 'a slow page 2: ' + JSON.stringify(r).slice(0, 300));
+  assert(empty() && ledger().claim === null, 'empty, claim released'); { const rec = ledger().starts[0]; assert(rec.ok === false && rec.pages.length === 3 && rec.pages.find(x => x.o === 100).s === 0 && rec.pages.filter(x => x.s === 200).length === 2, 'the slow page is the one marked in the ledger: ' + JSON.stringify(rec.pages)); }
+  // the headers came and the body did not finish: that is a slow answer (the 15 Oct screen said "a list the server could not read")
+  reset2(); etsy.cutAt = 200;
+  r = await direct('start-cut-000015', 1500);
+  assert(r.ok === false && r.reason === 'etsy' && /^Etsy did not finish sending its list \(timed out after 1\.[3-9] s on page 3 of 3\), so the sandbox is empty\./.test(r.error) && empty(), 'a body cut by the clock: ' + JSON.stringify(r).slice(0, 300));
+  // a list that really is not a list (an HTML page, no results) keeps the plain "could not read" line, now with the page
+  reset2(); etsy.badAt = 100;
+  r = await direct('start-bad-000016', 1500);
+  assert(r.ok === false && r.reason === 'etsy' && r.error === 'Etsy sent a list the server could not read on page 2 of 3, so the sandbox is empty. Press Start to try again.' && empty(), 'an unreadable list: ' + JSON.stringify(r).slice(0, 300));
+  // a refused sign-in outranks a slow page: it says more
+  reset2(); etsy.delay = { 0: 5000 }; etsy.failAt = 100; etsy.status = 401;
+  r = await direct('start-tok-000017', 1500); assert(r.ok === false && r.reason === 'token' && /refused the server's sign-in \(HTTP 401\)/.test(r.error) && empty(), 'the sign-in answer is the one shown: ' + JSON.stringify(r).slice(0, 300));
+  // the pull's clock runs from the START of the pull: a clean-up that takes time comes out of Etsy's window, never on top of it
+  reset2(); etsy.delay = { 0: 900 };
+  { const t = Date.now(); r = await direct('start-clock-00018', 1200); assert(r.ok === true, 'a page inside the clock is kept: ' + JSON.stringify(r).slice(0, 200)); assert(Date.now() - t < 2500, 'and the pull ends when the pages are in'); }
+  // the old set's files are swept while Etsy answers, and the NEW file is never swept with them
+  reset2(); blobs.set('charmnest/sandbox/orders-pull/old-sweep.json', Buffer.from('{}')); etsy.delay = { 0: 200, 100: 200, 200: 200 };
+  r = await pullOp('start-sweep-00019'); assert(r.status === 200 && !blobs.has('charmnest/sandbox/orders-pull/old-sweep.json') && blobs.has(r.body.path) && [...blobs.keys()].filter(k => k.startsWith('charmnest/sandbox/orders-pull/')).length === 1, 'the old file is gone, the new one stays, and only that one: ' + [...blobs.keys()].filter(k => k.startsWith('charmnest/sandbox/orders-pull/')).join(','));
+  resetEtsy();
 
   // ── the whole run asked Etsy for receipts and nothing else ──
   console.log('sandbox pull OK: 3 Etsy calls per pull, ' + wantOpen + ' of 250 open, no daily cap (8 pulls in a day counted, none refused)');

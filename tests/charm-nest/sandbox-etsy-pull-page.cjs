@@ -212,15 +212,15 @@ const PROD_COLLECTIONS = ['Charm_Custom_Orders', 'Charm_Pool', 'Charm_Nest_Sheet
   // back to an empty sandbox for the failures below
   await page.evaluate(() => { window.__old = true; window.__reset = Sandbox.reset({}); });
   await until(() => !window.__old && window.Sandbox && Sandbox.held(), 90000, 'waiting again for the failures'); await booted();
-  // 4b · Etsy down: one call, the op's own line, the count it reports
+  // 4b · Etsy down: the three pages are asked at once (SBXPULL), the op's own line, the count it reports
   st.put('Charm_Sandbox', 'pulls', { day: today, pulls: 2, calls: 6, tokenRefreshes: 0, starts: [], claim: null });
   etsy.status = 503; const e4 = etsy.calls.length, p4 = pulls().length;
   await page.evaluate(() => { CN.setMode('orders'); Orders.render(); }); await page.click('[data-sb-start]');
   await until(() => Sandbox.held() && /did not answer/.test(Sandbox.heldText()), 60000, 'the Etsy-down message');
   const down = await page.evaluate(() => Sandbox.heldText());
-  assert.strictEqual(down, 'Sandbox is empty. Etsy did not answer (HTTP 503), so the sandbox is empty. Press Start to try again. (1 Etsy call used)', 'Etsy down: the op\'s line once, with the calls it used: ' + down);
+  assert.strictEqual(down, 'Sandbox is empty. Etsy did not answer (HTTP 503), so the sandbox is empty. Press Start to try again. (3 Etsy calls used)', 'Etsy down: the op\'s line once, with the calls it used: ' + down);
   await sleep(4000);
-  assert(pulls().length === p4 + 1 && etsy.calls.length === e4 + 1, 'one request and one Etsy call, never retried: ' + (pulls().length - p4) + ' requests, ' + (etsy.calls.length - e4) + ' calls');
+  assert(pulls().length === p4 + 1 && etsy.calls.length === e4 + 3, 'one request and its three Etsy calls (one per page, asked together), never retried: ' + (pulls().length - p4) + ' requests, ' + (etsy.calls.length - e4) + ' calls');
   assert(!current() && !stream() && (await rows()).length === 0, 'empty');
   // 4c · the next Start (a person's press) asks again, and works
   etsy.status = 200; const e5 = etsy.calls.length;

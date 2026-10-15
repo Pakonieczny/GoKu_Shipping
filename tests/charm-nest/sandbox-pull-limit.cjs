@@ -154,7 +154,7 @@ const limitOf = async () => (await post({ op: 'sandboxStatus', sandbox: true }))
   store.delete(CFG); etsy.calls.length = 0; r = await pullOp('start-limit-none1'); assert(r.status === 200 && r.body.count === 250 && r.body.calls === 3, 'no setting = 250'); assert.deepStrictEqual(offsets(), [[0, 100], [100, 100], [200, 50]]);
   // a shop with fewer orders than asked brings what it has
   { const keep = SHOP.splice(60); store.set(CFG, { v: 1, limit: 200 }); etsy.calls.length = 0; r = await pullOp('start-limit-short1'); SHOP.push(...keep);
-    assert(r.status === 200 && r.body.count === 60 && r.body.want === 200 && r.body.calls === 1, 'a small shop: ' + JSON.stringify(r.body).slice(0, 160)); assert.deepStrictEqual(offsets(), [[0, 100]], 'a short first page ends the pull'); }
+    assert(r.status === 200 && r.body.count === 60 && r.body.want === 200 && r.body.calls === 2, 'a small shop: ' + JSON.stringify(r.body).slice(0, 160)); assert.deepStrictEqual(offsets(), [[0, 100], [100, 100]], 'every page is asked at once (SBXPULL): the second one comes back empty'); }
 
   /* ── NOLIMIT (13 Oct 2026): no daily cap. The old gate refused a 500 pull at 16 of 20 calls and any pull at 6 of 6; neither is a reason to stop now, and the day's ledger only counts ── */
   store.set(CFG, { v: 1, limit: 500 });

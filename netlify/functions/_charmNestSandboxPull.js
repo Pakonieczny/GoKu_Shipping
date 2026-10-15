@@ -11,7 +11,7 @@
  *    2. discards the previous order set (Charm_Sandbox/current, the old file under charmnest/sandbox/orders-pull/, and the
  *       stream that was playing it) BEFORE asking Etsy, so any failure leaves the sandbox empty, never the old orders,
  *    3. reads the newest receipts (250 unless the setting says otherwise), with their transactions, from Etsy: one call per
- *       100 (250 is 3 calls: pages of 100, 100 and 50), with the
+ *       100 (250 is 3 calls: pages of 100, 100 and 50), ALL AT ONCE inside one clock that runs from the start of the pull (WORK_MS), with the
  *       OAuth token and request headers the inbox and the receipts mirror already use (_etsyMailEtsy.js),
  *    4. stores them as one JSON file and the pointer document Charm_Sandbox/current, which etsySandbox.js serves and
  *       the stream (charmNestLibrary sandboxStream) plays,
@@ -38,8 +38,10 @@ const limitRef = () => db.collection("config").doc("charmNestSandboxPull");
 const MAX_PULLS = 6;              // sandbox starts per UTC day (Etsy's day): 6 x 3 = 18 calls at 250
 const MAX_CALLS = 20;             // and never more than this many sandbox receipt calls in a day
 const CLAIM_MS = 90000;           // a pull that did not finish releases its claim after this
-const FETCH_MS = 6000;            // one Etsy call may take this long
-const WORK_MS = 8200;             // and the whole pull this long: the function's own limit is 10 s, and a pull cut off mid-way leaves a claim
+const FETCH_MS = 8000;            // one Etsy call may take this long (WORK_MS below is what really bounds it: every page is asked at once)
+const WORK_MS = 8300;             // the Etsy part of a pull, counted from the moment the pull began (the sweep of the old files, the token and every page are inside it). The function's own limit is 10 s, and the file,
+                                  // the pointer, the ledger and the stream are written after it; a pull cut off mid-way leaves a claim. (SBXPULL, 15 Oct 2026: the old clock started AFTER the clean-up and gave page one 6 s and the other pages
+                                  // what was left, so a 400-order pull of four 100-order pages needed Etsy to answer twice in turn inside 8.2 s, and a slow day made it fail every time.)
 const OAUTH_DOC = "config/etsyOauth";   // where production keeps the Etsy token (_etsyMailEtsy.js)
 const TOKEN_BUFFER_MS = 2 * 60 * 1000;  // the same margin _etsyMailEtsy.js refreshes at
 
@@ -109,18 +111,23 @@ async function setLimit(b) {
 const fail = (reason, error, status, extra) => Object.assign({ ok: false, error, reason, empty: reason !== "busy" && reason !== "bad", status }, extra || {});
 
 /** Remove the previous order set: the pointer first (readers see an empty sandbox at once), then the stream, then the files. */
-async function discard() {
+async function discard(defer) {
   const was = await currentRef().get(), old = was.exists ? String((was.data() || {}).path || "") : "";
-  await currentRef().delete();
-  const bucket = admin.storage().bucket();
-  // the file the old pointer named (an old snapshot lives elsewhere under charmnest/sandbox/; never the master files)
-  await Promise.all([streamRef().delete(), /^charmnest\/sandbox\//.test(old) && !/^charmnest\/sandbox\/master\//.test(old) && !old.includes("..") ? bucket.file(old).delete({ ignoreNotFound: true }) : null]);
-  let pageToken;
-  do {
-    const [list, next] = await bucket.getFiles({ prefix: DIR, autoPaginate: false, maxResults: 200, pageToken });
-    await Promise.all(list.map(f => f.delete({ ignoreNotFound: true })));
-    pageToken = next && next.pageToken;
-  } while (pageToken);
+  await currentRef().delete();   // (readers see an empty sandbox from here on)
+  const rest = async () => {
+    const bucket = admin.storage().bucket();
+    // the file the old pointer named (an old snapshot lives elsewhere under charmnest/sandbox/; never the master files)
+    await Promise.all([streamRef().delete(), /^charmnest\/sandbox\//.test(old) && !/^charmnest\/sandbox\/master\//.test(old) && !old.includes("..") ? bucket.file(old).delete({ ignoreNotFound: true }) : null]);
+    let pageToken;
+    do {
+      const [list, next] = await bucket.getFiles({ prefix: DIR, autoPaginate: false, maxResults: 200, pageToken });
+      await Promise.all(list.map(f => f.delete({ ignoreNotFound: true })));
+      pageToken = next && next.pageToken;
+    } while (pageToken);
+  };
+  if (!defer) return rest();
+  const sweeping = rest(); sweeping.catch(() => {});   // (with `defer` the pointer is gone and the rest is swept while Etsy answers; a failure of it is raised where readNewest waits for it)
+  return { sweeping };
 }
 
 /** One more look at the ledger when the pull is over: the claim is released, the calls it made are counted. */
@@ -131,7 +138,7 @@ async function settle(startId, tally, ok, now) {
     led.calls += tally.pages; led.tokenRefreshes += tally.refreshes;
     if (!tally.pages && !tally.refreshes && led.pulls > 0) led.pulls -= 1;   // it never reached Etsy: the slot is given back
     if (led.claim && led.claim.startId === startId) led.claim = null;
-    led.starts = [{ id: startId, at: now, ok: !!ok, calls: tally.pages }].concat(led.starts.filter(x => x.id !== startId)).slice(0, 40);
+    led.starts = [{ id: startId, at: now, ok: !!ok, calls: tally.pages, ms: Date.now() - now, pages: (tally.timing || []).slice(0, 8) }].concat(led.starts.filter(x => x.id !== startId)).slice(0, 40);
     tx.set(ledgerRef(), Object.assign({}, led, { updatedAt: FV.serverTimestamp() }));
     return led;
   });
@@ -147,16 +154,20 @@ async function tokenDue(now) {
   return { seeded: !!t.refresh_token, due: !(t.access_token && exp - now > TOKEN_BUFFER_MS) };
 }
 class EtsyError extends Error { constructor(reason, message, status) { super(message); this.reason = reason; this.etsyStatus = status || 0; } }
-async function page(fetchFn, meter, env, token, [offset, limit], tally, deadline) {
+/** One Etsy page. `where` = { k, n, t0 }: which page of how many, and when the pull began (the seconds in a timed-out line count from there). The answer's own timing goes to `tally.timing`
+    ({ o: offset, ms, s: HTTP status, or 0 for no answer }: numbers only, no order data), so a slow day shows in the ledger which page was slow. */
+async function page(fetchFn, meter, env, token, [offset, limit], tally, deadline, where) {
   const qs = new URLSearchParams({ limit: String(limit), offset: String(offset), sort_on: "created", sort_order: "desc" });   // any status: no filters
   const url = `https://api.etsy.com/v3/application/shops/${env.shop}/receipts?${qs}`;
-  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), Math.max(1000, Math.min(FETCH_MS, deadline - Date.now()))), mark = meter.bump("sandbox.receiptsPage");
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), Math.max(1000, Math.min(FETCH_MS, deadline - Date.now()))), mark = meter.bump("sandbox.receiptsPage"), began = Date.now();
+  const at = where && where.n > 1 ? ` on page ${where.k} of ${where.n}` : "", secs = () => ((Date.now() - (where && where.t0 || began)) / 1000).toFixed(1);
+  const note = status => { (tally.timing = tally.timing || []).push({ o: offset, ms: Date.now() - began, s: status }); };
   tally.pages += 1;
   try {
     let res;
     try { res = await fetchFn(url, { headers: { Authorization: `Bearer ${token}`, "x-api-key": `${env.id}:${env.secret}`, Accept: "application/json" }, signal: ctl.signal }); }
-    catch (e) { mark.failNet(); throw new EtsyError("etsy", `Etsy did not answer (${e && e.name === "AbortError" ? "timed out" : "network error"}), so the sandbox is empty. Press Start to try again.`); }
-    mark.fromHttp(res.status);
+    catch (e) { mark.failNet(); note(0); throw new EtsyError("etsy", `Etsy did not answer (${e && e.name === "AbortError" ? `timed out after ${secs()} s${at}` : "network error"}), so the sandbox is empty. Press Start to try again.`); }
+    mark.fromHttp(res.status); note(res.status);
     if (!res.ok) {
       const text = await res.text().catch(() => ""), retry = parseInt((res.headers && res.headers.get && res.headers.get("retry-after")) || "0", 10) || 0;
       if (res.status === 401 || res.status === 403) throw new EtsyError("token", `Etsy refused the server's sign-in (HTTP ${res.status}), so the sandbox is empty.`, res.status);
@@ -167,13 +178,15 @@ async function page(fetchFn, meter, env, token, [offset, limit], tally, deadline
       throw new EtsyError("etsy", `Etsy did not answer (HTTP ${res.status}), so the sandbox is empty. Press Start to try again.`, res.status);
     }
     let data; try { data = await res.json(); } catch (_) { data = null; }
-    if (!data || !Array.isArray(data.results)) throw new EtsyError("etsy", "Etsy sent a list the server could not read, so the sandbox is empty. Press Start to try again.");
+    // the headers came, the body did not finish: when it was the clock that cut it, that is a slow answer, not a list that cannot be read
+    if (!data && ctl.signal.aborted) throw new EtsyError("etsy", `Etsy did not finish sending its list (timed out after ${secs()} s${at}), so the sandbox is empty. Press Start to try again.`);
+    if (!data || !Array.isArray(data.results)) throw new EtsyError("etsy", `Etsy sent a list the server could not read${at}, so the sandbox is empty. Press Start to try again.`);
     return data.results;
   } finally { clearTimeout(timer); }
 }
-/** The newest `want` receipts (`plan`: their Etsy pages): page one first (a failure there costs one call), then the others together. */
-async function readNewest(deps, tally, now, want, plan) {
-  const deadline = Date.now() + WORK_MS;
+/** The newest `want` receipts (`plan`: their Etsy pages): every page is asked AT ONCE, so the pull needs Etsy to answer once inside `deadline`, not once per round (SBXPULL, 15 Oct 2026). No daily cap
+    exists any more (NOLIMIT), so a failing first page no longer has to be the only call made. `sweeping` (the old files being removed) finishes while Etsy answers. */
+async function readNewest(deps, tally, now, want, plan, deadline, sweeping) {
   const env = etsyEnv();
   if (!env.shop || !env.id || !env.secret) throw new EtsyError("token", "The server has no Etsy settings, so the sandbox is empty.");
   const due = await tokenDue(now);
@@ -181,17 +194,13 @@ async function readNewest(deps, tally, now, want, plan) {
   let token;
   try { token = await deps.token(); tally.refreshes = due.due ? 1 : 0; }
   catch (e) { tally.refreshes = due.due ? 1 : 0; console.warn("[sandboxPull] Etsy token not available:", (e && e.message || "").slice(0, 200)); throw new EtsyError("token", "The server's Etsy sign-in is not working, so the sandbox is empty."); }
-  const first = await page(deps.fetch, deps.meter, env, token, plan[0], tally, deadline);
-  let rest = [];
-  if (plan.length > 1 && first.length >= plan[0][1]) {
-    const more = await Promise.allSettled(plan.slice(1).map(p => page(deps.fetch, deps.meter, env, token, p, tally, deadline)));
-    const bad = more.find(r => r.status === "rejected");
-    if (bad) throw bad.reason;
-    rest = more.flatMap(r => r.value);
-  }
+  const got = await Promise.allSettled(plan.map((p, i) => page(deps.fetch, deps.meter, env, token, p, tally, deadline, { k: i + 1, n: plan.length, t0: now })));
+  const bad = got.filter(r => r.status === "rejected").map(r => r.reason);
+  if (bad.length) throw bad.find(e => e instanceof EtsyError && e.reason !== "etsy") || bad[0];   // a sign-in or limit answer says more than a slow page
+  await sweeping;   // (the old set is gone before the new one is written: the file below must not be swept away with it)
   // newest first; a receipt that came into the first page while the others were read could show twice: once
   const seen = new Set(), list = [];
-  for (const r of first.concat(rest)) { const id = r && String(r.receipt_id); if (!id || !/^\d+$/.test(id) || seen.has(id)) continue; seen.add(id); list.push(r); }
+  for (const r of got.flatMap(x => x.value)) { const id = r && String(r.receipt_id); if (!id || !/^\d+$/.test(id) || seen.has(id)) continue; seen.add(id); list.push(r); }
   list.sort((a, b) => createdMs(b) - createdMs(a) || Number(b.receipt_id) - Number(a.receipt_id));
   return list.slice(0, want);
 }
@@ -216,7 +225,7 @@ async function startStream(ctx, b) {
   } catch (e) { console.warn("[sandboxPull] stream not started:", e && e.message); return { stream: null, streamError: String((e && e.message) || e).slice(0, 200) }; }
 }
 
-/** ctx: { stream(b) → the library's sandboxStream, by } · deps: { fetch, token, meter } (tests replace them). */
+/** ctx: { stream(b) → the library's sandboxStream, by } · deps: { fetch, token, meter, workMs } (tests replace them; workMs shortens the clock so a slow Etsy can be tested in a second). */
 async function pull(b, ctx, deps) {
   b = b || {};
   const startId = safeId(b.startId);
@@ -245,12 +254,12 @@ async function pull(b, ctx, deps) {
   // from here the old orders go, whatever happens next
   const tally = { pages: 0, refreshes: 0 };
   try {
-    await discard();
+    const { sweeping } = await discard(true);
     if (gate.kind === "cap") {
       return fail("cap", gate.byPulls ? `Today's ${MAX_PULLS} sandbox pulls from Etsy are used up, so the sandbox stays empty until tomorrow (UTC midnight).`
         : `Today's ${MAX_CALLS} Etsy calls for the sandbox are used up (a pull of ${want} orders needs ${plan.length}), so the sandbox stays empty until tomorrow (UTC midnight).`, 429, Object.assign({ calls: 0, tokenRefreshes: 0, resetAt: new Date(nextDay(now)).toISOString() }, base));
     }
-    const list = await readNewest(deps, tally, now, want, plan);
+    const list = await readNewest(deps, tally, now, want, plan, now + (deps.workMs > 0 ? deps.workMs : WORK_MS), sweeping);
     if (!list.length) throw new EtsyError("etsy", "Etsy sent no orders, so the sandbox is empty. Press Start to try again.");
     const closedBy = { shipped: 0, canceled: 0, unpaid: 0 };
     let open = 0;
@@ -264,7 +273,7 @@ async function pull(b, ctx, deps) {
     try { await currentRef().set(Object.assign({}, doc, { updatedAt: FV.serverTimestamp() })); }
     catch (e) { await file.delete({ ignoreNotFound: true }).catch(() => {}); throw e; }
     const [led, , started] = await Promise.all([settle(startId, tally, true, now), Promise.resolve().then(() => deps.meter.flushNow()).catch(() => {}), startStream(ctx, b)]);
-    return Object.assign(setAnswer(doc, led, { calls: tally.pages, tokenRefreshes: tally.refreshes }), started);
+    return Object.assign(setAnswer(doc, led, { calls: tally.pages, tokenRefreshes: tally.refreshes, ms: Date.now() - now }), started);
   } catch (e) {
     let led = null;
     try { led = await settle(startId, tally, false, now); } catch (se) { console.warn("[sandboxPull] budget not settled:", se && se.message); }
@@ -275,7 +284,7 @@ async function pull(b, ctx, deps) {
     const view = budget(led || gate.led);
     const statuses = { cap: 429, etsy: 502, limit: 502, token: 503 };
     return fail(known ? e.reason : "etsy", known ? e.message : "The pull did not finish, so the sandbox is empty. Press Start to try again.", statuses[known ? e.reason : "etsy"] || 502,
-      Object.assign({ calls: tally.pages, tokenRefreshes: tally.refreshes }, view));
+      Object.assign({ calls: tally.pages, tokenRefreshes: tally.refreshes, ms: Date.now() - now }, view));
   }
 }
 
