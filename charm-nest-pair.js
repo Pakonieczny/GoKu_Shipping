@@ -985,6 +985,32 @@
     return out;
   }
 
+  /** The charms of a sheet whose design the library already HOLDS but holds wrong, so the held test must not leave them (nobody has to tick "re-index SKUs already held" for these):
+   *    · a design the library holds as ONE body while the sheet draws it as a surely mismatched pair, a row of bodies under one label: the library has half of the drawing (ACORN_4721, 15 Oct 2026: "1 design(s) held as
+   *      ONE body of a pair"; its other body stayed "a charm with no SKU under it");
+   *    · a design whose sheet sets a letter inside it (`c.inlayLetters`, charm-nest-pdf.js labelCharms), while the library's copy was written by a reader older than `lettersV`, which left the letter out
+   *      (HEARTKEY_NECKLACE_A…Z: the keys came out without their letters).
+   *  Once rebuilt the entry says `pair` / carries the newer `readerV`, so the same sheet is held on the next run. A design the library does not hold at all is no concern of this (it is simply built).
+   *    charms  the grouping's charms     labelsOf(charm) → [{ sku, size?, bbox? }]     known  Map(SKU → the library's entry) or null     lettersV  P.LETTERS_READER_VERSION
+   *  Returns Map(charm index → { kind: "pair" | "letter", skus }). Never throws. */
+  function staleHeld(charms, labelsOf, known, lettersV) {
+    const out = new Map(); if (!known || !known.size) return out;
+    try {
+      const entryOf = l => { const e = known.get(String(l.sku || "").toUpperCase()); return e ? (l.size && e.sizes && e.sizes[String(l.size).toUpperCase()]) || e : null; };
+      for (const r of masterPairs(charms, labelsOf)) {
+        if (!r.sure) continue;
+        const lines = labelsOf((charms || []).find(c => c.index === r.owner)) || [];
+        if (lines.some(l => { const e = known.get(String(l.sku || "").toUpperCase()); return e && !heldPair(e, l.size); })) out.set(r.owner, { kind: "pair", skus: lines.map(l => l.sku) });
+      }
+      for (const c of charms || []) {
+        if (c.mergedInto != null || out.has(c.index) || !c.inlayLetters || !c.inlayLetters.length) continue;
+        const lines = labelsOf(c) || [];
+        if (lines.some(l => { const t = entryOf(l); return t && (+t.readerV || 0) < (+lettersV || 0); })) out.set(c.index, { kind: "letter", skus: lines.map(l => l.sku) });
+      }
+    } catch (_) { /* a sheet that cannot be read this way is held as it always was */ }
+    return out;
+  }
+
   /** Where each charm that has no SKU under it sits, in words, so a person can find it on the sheet (MASTER2, Paul 14 Oct 2026: "1 charm(s) with no SKU under them: #22" names nothing).
    *    charms  the grouping's charms     lab  labelCharms()'s answer (labels, unlabelled)     rows  pairLayer()'s rows (or masterPairs())     opts { mm: points per mm, default 72 / 25.4 }
    *  Returns { [charm index]: "in a row of 2 bodies with TWINS_1: two identical bodies, cut line and engraving — left for a person to decide" | "14 mm from SPIDER - WEB_1" | "no charm with a SKU on the sheet" }.
@@ -1026,7 +1052,7 @@
     describe, sameBody, sidesSaid, sideForPiece, pieceFields, groupOf, siblingsOf, splitAcross, designPair, pieceCountOf, discsOf,
     facingOf, facingOfBody, facingInfo, symmetryOf, needsFacing, readsOneWay, facingControl, mirrorOf, pieceGeometry, isEarringPair, plainLine, charmOfBody,
     sameOutline, bodiesAlike, alikeDesign, oneChoice, soloOf, ALIKE_SKUS, onlyBodyOf, ONE_BODY,
-    PAIR_DEFAULTS, shapeSimilarity, rowsOf, masterPairs, foldRow, pairField, pairLayer, whereUnlabelled, entryFields, heldPair, keepPairs,
+    PAIR_DEFAULTS, shapeSimilarity, rowsOf, masterPairs, foldRow, pairField, pairLayer, whereUnlabelled, entryFields, heldPair, keepPairs, staleHeld,
     _flatten: flatten, _inPolys: inPolys, _distPolys: distPolys, _isCut: isCut
   };
 });

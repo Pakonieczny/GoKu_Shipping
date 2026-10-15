@@ -1,6 +1,6 @@
 // What a person sees when a master file is dropped in the Master tab and something goes wrong, and what the next drop of the same file does (MASTER2, Paul 14 Oct 2026).
 // Headless Chromium over the in-memory stand-in of the site (tests/charm-nest/bridge-server.cjs); nothing leaves this machine.
-//   · a library that holds a pair design as ONE body is said, and "re-index SKUs already held" builds it from both bodies;
+//   · a library that holds a pair design as ONE body has it built again from both bodies on the next drop, with no tick (ACORN_4721, 15 Oct 2026: it was only said, and its other body stayed "a charm with no SKU"); "re-index SKUs already held" still builds it too;
 //   · a drop where everything is held keeps the leftovers on the card and writes back an upload-history record the library lost;
 //   · the first write fails: the job says failed, nothing is half-built, and dropping the file again builds all of it;
 //   · the library answers a write without having stored one SKU: the index is read back and that SKU is written again;
@@ -24,11 +24,13 @@ const libSkus = st => st.list('Charm_Master_Index').map(e => e._id).sort();
     let r = await br.upload(sheet, 'PAIR.ai'); ok(r.state === 'done' && libSkus(st).join() === 'LONE_9002,SPIDER - WEB_1' && st.doc('Charm_Master_Index', 'SPIDER - WEB_1').pair.bodies === 2, 'the first drop builds the pair and the lone charm');
     delete st.doc('Charm_Master_Index', 'SPIDER - WEB_1').pair; await page.evaluate(() => Master.load(true));
     r = await br.upload(sheet, 'PAIR.ai'); let j = await job();
-    ok(j.state === 'done' && j.written === 0 && j.stale.join() === 'SPIDER - WEB_1', 'a design held as one body of a pair is said: ' + JSON.stringify(j.stale));
-    ok(r.unlabelled.length === 1, 'and its other body stays listed, it is not claimed by a design that does not hold it');
-    ok(await page.evaluate(() => { const d = document.querySelector('#mJobs details'); return /to look at/.test(d.querySelector('summary').innerText); }), 'the line of the finished run says that something is left to look at');
+    ok(j.state === 'done' && j.written === 1 && st.doc('Charm_Master_Index', 'SPIDER - WEB_1').pair.bodies === 2 && j.stale.length === 0 && j.unlabelled.length === 0, 'a design held as one body of a pair is built again from both bodies, without the tick: ' + JSON.stringify({ w: j.written, stale: j.stale, un: j.unlabelled }));
+    ok(j.log.some(l => /built again, because it holds them wrong: SPIDER - WEB_1 \(held as one body of a pair\)/.test(l)), 'and the run says why it did not leave it: ' + JSON.stringify(j.log.filter(l => /again/.test(l))));
+    ok(libSkus(st).join() === 'LONE_9002,SPIDER - WEB_1', 'the lone charm that was held stays as it is');
+    r = await br.upload(sheet, 'PAIR.ai'); j = await job();
+    ok(j.state === 'done' && j.written === 0 && j.stale.length === 0 && j.unlabelled.length === 0, 'the same sheet again writes nothing: the pair is held now');
     r = await br.upload(sheet, 'PAIR.ai', { reindexAll: true }); j = await job();
-    ok(j.state === 'done' && st.doc('Charm_Master_Index', 'SPIDER - WEB_1').pair.bodies === 2 && j.stale.length === 0 && j.unlabelled.length === 0, '"re-index SKUs already held" builds it from both bodies');
+    ok(j.state === 'done' && st.doc('Charm_Master_Index', 'SPIDER - WEB_1').pair.bodies === 2 && j.stale.length === 0 && j.unlabelled.length === 0, '"re-index SKUs already held" still builds it from both bodies');
     // 2 · everything held, the upload-history record lost
     st.docs.delete('Charm_Master_Files/' + [...st.docs.keys()].find(k => k.startsWith('Charm_Master_Files/')).split('/')[1]); await page.evaluate(() => Master.load(true));
     ok(st.list('Charm_Master_Files').length === 0, 'the record is gone');

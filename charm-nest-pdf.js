@@ -796,9 +796,10 @@
     for (const u of units) {
       const run = GLYPH_RUNS.get(u.o); if (!run || run.length !== 1 || u.o.chars !== 1 || !u.o.bbox) continue;
       const g = run[0]; if (g.tr === 3 || g.tr >= 4 || g.code === 32) continue;
-      const eff = scaleOf(g.m) * Math.abs(g.fs); if (!(eff >= LIVE_TEXT_MIN_PT)) continue;
+      const eff = scaleOf(g.m) * Math.abs(g.fs); if (!(eff >= LIVE_PRE_MIN_PT)) continue;
       if (!inkDark(g.fill) || !g.font) continue;
-      cands.push({ u, g, eff });
+      // (12-20 pt is too small to be a design of its own: such a glyph only ever goes to the inlay pool of step 5b, never to the steps that make a letter a charm)
+      cands.push({ u, g, eff, inlayOnly: !(eff >= LIVE_TEXT_MIN_PT) });
     }
     if (!cands.length) return null;
     // 2 · outlines (each font read once)
@@ -826,7 +827,7 @@
       if (cd.ink[3] - cd.ink[1] < LIVE_INK_MIN_PT) { cd.items = null; cd.small = true; }
     }
     // 3 · labels and vector outlines on the page
-    const isLabel = new Set(cands.map(c => c.u.o));
+    const isLabel = new Set(cands.filter(c => !c.inlayOnly).map(c => c.u.o));
     const labels = [];
     for (const u of units) {
       const o = u.o; if (isLabel.has(o) || o.undecodable || o.str == null || !o.bbox) continue;
@@ -838,7 +839,7 @@
     // 4 · pair each glyph with the label beneath it (nearest first; a label belongs to one glyph)
     const pairs = [];
     for (const cd of cands) {
-      if (cd.small) continue;
+      if (cd.small || cd.inlayOnly) continue;
       const ink = cd.items ? cd.ink : cd.pieceInk, iw = ink[2] - ink[0], ih = ink[3] - ink[1], cx = (ink[0] + ink[2]) / 2;
       if (cd.items && vectors.some(v => bbArea(v.bbox) <= 30 * bbArea(ink) && overlapFrac(ink, v.bbox) >= 0.5)) { cd.onVector = true; continue; }
       for (const lb of labels) {
@@ -873,7 +874,17 @@
     }
     // a text object whose every piece was drawn is out of the page's text; a block with letters and labels together keeps its labels
     for (const s of texts) { if (s.pieces && s.pieces.length > 1) { if (s.pieces.every(p => p.outlined)) s.outlined = true; } }
-    if (!glyphs && !kept.size) return null;
+    /* 5b · letters set INSIDE a piece (HEARTKEY_NECKLACE_A…Z, Paul 15 Oct 2026: a bold letter in the heart of each key, live text on the LABELS layer). Rule 5 keeps such a glyph as text, because on every other master a glyph
+       on a closed cut outline is sample text for the piece (the initial on a disc), and a glyph under 20 pt is no design of its own (these are 16.4 pt). The outline of every dark single glyph of 12 pt or more that no label
+       claimed is kept here as DATA, no segment is made, and nothing changes for a master that does not use it: labelCharms hands it to the charm whose SKU ends in that very character AND that holds the glyph inside its
+       outline, and only then does integrateRings weld it into the cut line (section 6c). */
+    const inlays = [];
+    for (const cd of cands) {
+      if (!cd.items || cd.label) continue;
+      const ch = cd.u.o.str != null ? String(cd.u.o.str).trim() : ""; if (!/^[A-Za-z0-9]$/.test(ch)) continue;
+      inlays.push({ char: ch, ink: cd.ink.slice(), items: cd.items.map(it => ({ sub: it.sub, bbox: it.bbox.slice(), hole: !!it.hole })) });
+    }
+    if (!glyphs && !kept.size && !inlays.length) return null;
     for (const seg of made) { seg.index = segs.length; segs.push(seg); }
     // 6 · captions: a word over a row of the drawn glyphs names the row ("LEFT", "MIDDLE", "RIGHT"); it is no SKU and no charm
     const captions = [];
@@ -886,7 +897,7 @@
       if (lb.cx < x0 || lb.cx > x1 || ownedByVector(lb, 0)) continue;
       lb.u.o.caption = true; captions.push({ str: String(lb.u.o.str).trim(), bbox: lb.bbox.slice() });
     } } catch (_) { /* a caption that cannot be told is left as the text it is */ }
-    return { converted: glyphs, contours: made.length, kept: [...kept.values()].sort((a, b) => b.n - a.n), captions };
+    return { converted: glyphs, contours: made.length, kept: [...kept.values()].sort((a, b) => b.n - a.n), captions, inlays };
   }
 
   /** What a run says about the live text of a master (the same words in the Master tab, the server job and the local script): [{ kind: "info" | "warn", text }]. */
@@ -1196,7 +1207,24 @@
     const achromatic = c => c && (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) <= 0.15;
     // A solid dark shape with no stroke (an anchor, a star) is cut along its fill edge: it is an outline too.
     // Largest-first containment below turns a dark fill that sits inside a stroked outline back into a detail.
-    const isOutline = s => s.kind === "path" && s.closed && (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt &&
+    /* A body thinner than minPt that carries its hoop at one end is still the charm's body (Rune_Huggie_Charm-10, 15 Oct 2026: a straight bar 5.7 pt wide with its ring on top). Left under minPt it was no outline,
+       so the 9 pt ring became the charm's outline, the bar a member hanging 21 pt below it, and the SKU label under the bar was "no charm above". The rule is narrow on purpose: a closed CUT line, at least half of minPt
+       wide and three times minPt long, with a ring-sized closed cut line (one or two subpaths, wider than the body) touching it at one end. Any other thin path stays what it was. */
+    let hoopBoxes = null;
+    const hoopsOnPage = () => hoopBoxes || (hoopBoxes = preDrawable.filter(r => r.kind === "path" && r.closed && r.bbox && isCutLine(r) && r.subpaths && r.subpaths.length <= 2 && r.subpaths.every(sp => sp.length <= 20) &&
+      Math.min(r.bbox[2] - r.bbox[0], r.bbox[3] - r.bbox[1]) >= opts.minPt && Math.max(r.bbox[2] - r.bbox[0], r.bbox[3] - r.bbox[1]) <= opts.ringMaxPt).map(r => r.bbox));
+    const thinBodyWithHoop = s => {
+      const b = s.bbox, w = b[2] - b[0], h = b[3] - b[1], lo = Math.min(w, h), hi = Math.max(w, h);
+      if (!(lo >= opts.minPt / 2 && lo < opts.minPt && hi >= 3 * opts.minPt) || !isCutLine(s)) return false;
+      const tall = h >= w;
+      return hoopsOnPage().some(r => {
+        const rw = r[2] - r[0], rh = r[3] - r[1]; if (rw <= lo && rh <= lo) return false;
+        if (r[2] < b[0] - 1 || r[0] > b[2] + 1 || r[3] < b[1] - 1 || r[1] > b[3] + 1) return false;
+        const mid = tall ? (r[1] + r[3]) / 2 : (r[0] + r[2]) / 2, lo0 = tall ? b[1] : b[0], hi0 = tall ? b[3] : b[2], span = tall ? rh : rw;
+        return mid >= hi0 - span || mid <= lo0 + span;
+      });
+    };
+    const isOutline = s => s.kind === "path" && s.closed && ((s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt || thinBodyWithHoop(s)) &&
       (isCutLine(s) || (pathRole(s) !== "artwork" && !s.stroke && s.fill && lum(s.fillRGB) <= opts.darkMax));
     let frame = frames.length ? frames.reduce((a, b) => bbArea(b.bbox) > bbArea(a.bbox) ? b : a) : null;
     const polysCache = new Map();
@@ -1630,8 +1658,10 @@
   // The shop's SKUs are free text ("T-Rex_84495", "Huggie Hoops- Umbrella", "Cheer 1 - Megaphone(CHEER)"): a label is any
   // one-line string of the characters SKUs use, 2–60 long, read in upper case. Anything stricter is a setting (skuPattern).
   /** The version of what this reader makes of a master (MASTER3, Paul 15 Oct 2026). Every index entry carries the one that wrote it (`readerV`); a master added again rebuilds the designs of ITS OWN earlier indexing that an older
-   *  reader wrote, so a fix to the reader (a plug drawn into the Circle, a hoop welded, a bar's retraced edge) reaches designs that were already held. Raise it whenever the reader's drawing of a design changes. 2: pieces in a plate's window are drawn in. */
-  const READER_VERSION = 2;
+   *  reader wrote, so a fix to the reader (a plug drawn into the Circle, a hoop welded, a bar's retraced edge) reaches designs that were already held. Raise it whenever the reader's drawing of a design changes. 2: pieces in a plate's window are drawn in. 3: a letter set inside a design is welded into its cut line, and a thin body with its hoop is the charm's outline. */
+  const READER_VERSION = 3;
+  /** The reader that first welded a letter set inside a design (HEARTKEY_NECKLACE_A…Z) into its cut line: a held design written by an older one, whose sheet carries such a letter, is built again (the indexers' `held` test). */
+  const LETTERS_READER_VERSION = 3;
   const SKU_PATTERN_DEFAULT = /^[A-Z0-9][A-Z0-9 _.,'&()+\-]{1,60}$/;
   const SKU_PATTERN_LEGACY = "^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$";
   /** A string an artist writes beside a charm that is not its SKU: a measurement ("11.4 mm", "1 in", "14MM") or a view / option
@@ -1663,6 +1693,10 @@
   }
   /** How far (pt) a label's box may poke into the bottom of the outline's box and still stand under that charm (labelCharms `overlapPt`). */
   const LABEL_OVERLAP_PT = 3;
+  /** How far (pt) above a charm's top a name may stand and still be the title of that charm (labelCharms `titles`: about 10 mm; the zodiac names stand 4 mm above theirs). */
+  const TITLE_GAP_PT = 30;
+  /** The one character a SKU ends in after a separator ("HeartKey_Necklace_B" is "B"), upper case; "" when it ends in a longer word or has no separator. */
+  const skuLetter = s => { const m = /(?:^|[^A-Za-z0-9])([A-Za-z0-9])$/.exec(String(s || "").trim()); return m ? m[1].toUpperCase() : ""; };
   /** A label written in several text runs on one baseline (a slash or a word in another style, a run broken where the artist changed the font) is read whole when the pieces together are a SKU and one of them
    *  stops at a connector ("Spider /" + "Web_1" is SPIDER - WEB_1, never the SKU WEB_1 with "Spider /" left behind as drawing). Pieces that are each a SKU stay separate labels (two SKUs under one charm, or the
    *  labels of two charms), a lone mark ("L", "R") beside a label is not half of it, a callout ("FRONT", "14 mm", "1/2") is never joined to anything, and runs further than about one letter-height apart are not one label. `texts` is changed in place:
@@ -1770,6 +1804,34 @@
       }
     }
     for (const [index, l] of labels) { const c = live.find(x => x.index === index); if (c) c.extraSkus = l.extra; }
+    /* A name written ABOVE a charm that already has its own SKU under it is a title, not "a SKU with no charm above it" (the 12 zodiac signs of the 15 Oct 2026 master: "ARIES" in cyan over the charm
+       whose label, under it, is Zodiac_Huggie-0: all 12 were listed in red as orphans). It must stand over the middle of that charm, close above its top (TITLE_GAP_PT), with the charm's own label under it.
+       A line that fits no charm that way stays an orphan, and a title is never silent: `titles` names each one and the charm it stands over. */
+    const titles = [];
+    for (let i = orphans.length - 1; i >= 0; i--) {
+      const o = orphans[i]; if (!o.bbox) continue;
+      const cx = (o.bbox[0] + o.bbox[2]) / 2; let host = null, hostGap = Infinity;
+      for (const c of live) {
+        const l2 = labels.get(c.index); if (!l2 || !l2.bbox) continue;
+        const b = c.outline.bbox, top = Math.max(b[3], c.bbox ? c.bbox[3] : b[3]), w = b[2] - b[0], gap = o.bbox[1] - top;
+        if (gap < -1 || gap > TITLE_GAP_PT || cx < b[0] - 0.25 * w || cx > b[2] + 0.25 * w || l2.bbox[3] > b[1] + 3) continue;   // (its own label is under it)
+        if (gap < hostGap) { hostGap = gap; host = l2; }
+      }
+      if (host) { titles.unshift({ str: String(o.str).trim(), sku: o.sku, over: host.sku, bbox: o.bbox.slice() }); orphans.splice(i, 1); }
+    }
+    /* Letters set inside a design (liftTextDesigns `inlays`): a single glyph lying inside a charm's outline whose SKU ends in that very character after a separator ("HeartKey_Necklace_B" and the B in its
+       key) is that design's own letter. It goes on the charm as `inlayLetters`, and integrateRings welds it into the cut line. A letter that is not the last word of a SKU stays what it always was: sample
+       text on a piece (the initial on a disc). `inlays` names each one that was picked, so the run can say so. */
+    const inlays = [], inlayPool = parsed && parsed.textDesign && parsed.textDesign.inlays, inlayTaken = new Set();   // (the pool stays as it was: a second labelCharms on the same page picks the same letters)
+    if (inlayPool && inlayPool.length) for (const c of live) {
+      const l = labels.get(c.index); if (!l || !c.outline || !c.outline.bbox) continue;
+      const want = new Set([l].concat(l.extra || []).map(x => skuLetter(x.sku)).filter(Boolean)); if (!want.size) continue;
+      const b = c.outline.bbox, cxm = (b[0] + b[2]) / 2, cym = (b[1] + b[3]) / 2;
+      const hits = inlayPool.filter(g => g && g.ink && want.has(String(g.char).toUpperCase()) && overlapFrac(g.ink, b) >= 0.9 && !inlayTaken.has(g))
+        .sort((x, y) => Math.hypot((x.ink[0] + x.ink[2]) / 2 - cxm, (x.ink[1] + x.ink[3]) / 2 - cym) - Math.hypot((y.ink[0] + y.ink[2]) / 2 - cxm, (y.ink[1] + y.ink[3]) / 2 - cym));
+      if (!hits.length) continue;
+      inlayTaken.add(hits[0]); c.inlayLetters = [{ char: hits[0].char, items: hits[0].items }]; inlays.push({ sku: l.sku, char: hits[0].char, index: c.index });
+    }
     // text written under a charm that does have a SKU and is no part of it ("Spider /" over "WEB_1") is said: a half label must not vanish without a word
     const ignoredText = [];
     for (const t of skipped) {
@@ -1787,7 +1849,7 @@
       if (c.mergedInto == null && !labels.has(c.index)) unlabelled.push(c.index);
     }
     let skuCount = 0; for (const l of labels.values()) skuCount += 1 + l.extra.length;
-    return { labels, unlabelled, orphans, duplicates, undecodable, skuCount, absorbed: parts.absorbed, looseRings: parts.looseRings, joined: joinedRuns, skipped: skipped.slice(0, 5000), ignoredText: ignoredText.slice(0, 200), captions };
+    return { labels, unlabelled, orphans, duplicates, undecodable, skuCount, absorbed: parts.absorbed, looseRings: parts.looseRings, joined: joinedRuns, skipped: skipped.slice(0, 5000), ignoredText: ignoredText.slice(0, 200), captions, titles, inlays };
   }
   /* ═══ 5a″ · parts of a charm that came out of the grouping as charms of their own ═════════════════════
      groupCharms makes a charm of every closed cut outline that is no detail and no attached ring. Three kinds of part still stood alone, and each was counted as "a charm with no SKU
@@ -2903,13 +2965,44 @@
     return hoops;
   }
   const polyArea = ps => Math.abs(ps.reduce((v, p, i) => v + p[0] * ps[(i + 1) % ps.length][1] - p[1] * ps[(i + 1) % ps.length][0], 0)) / 2;
+  /** Letters set inside a design (liftTextDesigns `inlays`, given to the charm by labelCharms as `inlayLetters`) are welded into its cut line. HEARTKEY_NECKLACE_A…Z (Paul, 15 Oct 2026): "each letter must be combined
+   *  with the actual key so that it gets cut out correctly", "outlines, not solid black". The letter's outline is united with the charm's material (the outline with its windows, even-odd): where the letter overlaps a window the
+   *  cut line goes round the letter, a counter the letter closes off (the eyes of a B) stays a hole of its own, and a letter lying on the metal adds nothing. The result is the charm's ONE outline, hairline stroke and no fill,
+   *  the windows still its own subpaths as the master drew them. Runs once per charm (`inlayWelded`). A failure goes on `res.left`; a letter that stands clear of the material (it would drop out when cut) on `res.islands`. */
+  function weldInlays(c, V, res) {
+    const letters = c.inlayLetters;
+    if (!letters || !letters.length || c.inlayWelded || !c.outline || !c.outline.subpaths) return;
+    const original = c.outline, pts = sp => V.flatten(sp).points;
+    let paths = original.subpaths.map(pts);
+    const lumps = ps => V.boolean(ps, [], "union", "evenodd").filter(p => !p.hole).length;
+    const before = lumps(paths);
+    for (const L of letters) {
+      const items = L.items || [], outers = items.filter(i => !i.hole).map(i => pts(i.sub)), holes = items.filter(i => i.hole).map(i => pts(i.sub));
+      if (!outers.length) { res.left.push(`the letter ${L.char} has no outline`); return; }
+      const region = V.boolean(outers, holes, "difference", "nonzero", "nonzero");       // the letter's material: its outer edge less its counters
+      if (!region.length) { res.left.push(`the letter ${L.char} has no material`); return; }
+      const united = V.boolean(paths, region.map(p => p.points), "union", "evenodd", "evenodd");
+      if (!united.length) { res.left.push(`the letter ${L.char} could not be united with the cut line`); return; }
+      paths = united.filter(p => !p.hole || polyArea(p.points) >= .1).map(p => p.points);   // (a sliver the laser cannot cut is no hole: see integrateRings)
+    }
+    if (lumps(paths) > before) res.islands.push({ sku: c.sku || null, char: letters[0].char });
+    const base = { kind: "path", manufacturingRole: "cut", synthetic: true, paintOp: "S", stroke: true, fill: false, strokeRGB: [0, 0, 0], fillRGB: [0, 0, 0], lwPt: original.stroke ? (original.lwPt || CUT_HAIRLINE_PT) : CUT_HAIRLINE_PT, closed: true, depth: original.depth || 0, layer: original.layer || null, start: -1, end: -1 };
+    const outline = { ...original, ...base, subpaths: paths.map(p => V.subpath(p)), bbox: bboxOf(paths.flat()), welded: (original.welded || 0) + 1 };
+    const replaced = new Set([original, ...(original.parts || [])].filter(Boolean));
+    const parents = new Set([...replaced].map(p => p.parent).filter(i => i != null));
+    c.dropIndices = new Set([...(c.dropIndices || []), ...[...replaced].map(p => p.parent ?? p.index).filter(i => i != null)]);
+    for (const m of c.members) if (!replaced.has(m) && parents.has(m.parent)) { if (m.kind !== "path") throw new Error("Outline text and expand non-vector artwork before welding this letter."); m.synthetic = true; }
+    c.members = c.members.filter(m => !replaced.has(m)); c.members.push(outline); c.outline = outline;
+    c.bbox = c.members.reduce((a, m) => bbUnion(a, m.bbox), null); c.inlayWelded = true; res.letters += letters.length;
+  }
   /** Boolean union handles every body/hoop contact, including separate lobes of a compound outline. A hoop keeps the
    * centre the artist gave it: where it overlaps the body it is united with it; where it only touches or stands clear a
    * neck is added from the hoop wall to the nearest point of the body edge. The aperture is subtracted after the union. */
   function integrateRings(c) {
-    const res={welded:0,left:[],bridged:[],skipped:[]};if(!c?.outline?.subpaths)return res;
+    const res={welded:0,left:[],bridged:[],skipped:[],letters:0,islands:[]};if(!c?.outline?.subpaths)return res;
     const V=vec();
     if(!V)throw new Error("Vector geometry library is unavailable. Refresh the page.");
+    if(c.inlayLetters&&c.inlayLetters.length){try{weldInlays(c,V,res);}catch(e){res.left.push("a letter could not be welded into the cut line: "+e.message);}}
     for(const hoop of findHoops(c,V)) {
       if(hoop.members.some(m=>!c.members.includes(m)))continue;
       const original=c.outline, polys=original.subpaths.map(sp=>V.flatten(sp).points);
@@ -3014,7 +3107,7 @@
     return out;
   }
   root.CharmNestPDF = { scaleSource, closeNearlyClosed, markerReason, isDimensionLine, integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
-    takeSampleText, sampleTextOf, parseSkuLabel, READER_VERSION, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
+    takeSampleText, sampleTextOf, parseSkuLabel, READER_VERSION, LETTERS_READER_VERSION, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
   // the hoop finder, for the tests and the audit (kept off the long list above so a merge there never touches it)
   root.CharmNestPDF.findHoops = findHoops; root.CharmNestPDF.circleOf = circleOf;
   // live text drawn as outlines (section 3c; kept off the long list for the same reason)
