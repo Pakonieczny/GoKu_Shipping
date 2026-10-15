@@ -10,7 +10,8 @@
 //   6  the Review card's Build monogram opens the right card; no alphabet in the library: the quiet setup with the picker (and a chosen alphabet is used); a missing right alphabet is said
 //   7  keys (Tab order, Enter approves, Esc), a re-render never takes a caret away, switching tabs keeps the cards, phone width (390), reduced motion, a second tab, a reload keeps the approved design
 //   Screenshots (1440 and 390 px) go to $SHOTS (default /tmp/mono-shots/ui-*.png).
-//   node tests/charm-nest/monogram-ui.cjs [playwright-core dir]      MONO_REAL=1 also runs Paul's own file (/tmp/mono-file/monogram.ai) through the local indexer into the fake library
+//   8  Paul's own file (fixtures/SKUs_MONOGRAM_2024-1015.ai, 78 letters of three embedded fonts) indexed by the local script into the fake library: the three families found, 8 words built from his real letters (one piece, joins, counters), one approved and read back as ONE piece
+//   node tests/charm-nest/monogram-ui.cjs [playwright-core dir]      MONO_REAL=0 leaves Paul's own file out, MONO_FONTS=<dir with LEFT.ttf MIDDLE.ttf RIGHT.ttf> makes the stand-in alphabets from his fonts
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '../..');
 const Base = require('./_orderFactsWorld.cjs');
@@ -92,7 +93,7 @@ Object.entries(ODD).forEach(([k, o], i) => { FX[k] = { rid: o.rid, sku: 'MONOGRA
     }
   };
 
-  if (process.env.MONO_ONLY_REAL === '1') await w.close();   // (only Paul's own file: MONO_REAL=1 MONO_ONLY_REAL=1)
+  if (process.env.MONO_ONLY_REAL === '1') await w.close();   // (MONO_ONLY_REAL=1: only Paul's own file)
   else try {
     // ═══ the library: three alphabets named like Paul's file ═══
     const set = await A.make(); A.seed(st, set);
@@ -393,9 +394,10 @@ Object.entries(ODD).forEach(([k, o], i) => { FX[k] = { rid: o.rid, sku: 'MONOGRA
     check(w.errors.length === 0, 'no page error: ' + JSON.stringify(w.errors.slice(0, 3)));
   } catch (e) { fails.push('crash: ' + (e && e.stack || e)); console.error(e); try { await shot('ui-crash'); } catch (_) {} }
   finally { await w.close(); }
-  // ═══ Paul's own file (MONO_REAL=1): through the local indexer into a fresh fake library, then the cards on his real letters ═══
-  if (process.env.MONO_REAL === '1') {
-    const file = process.env.MONO_FILE || '/tmp/mono-file/monogram.ai';
+  // ═══ Paul's own file (tests/charm-nest/fixtures/SKUs_MONOGRAM_2024-1015.ai, MONOGRAMFILE): through the local indexer into a fresh fake library, then the cards on his real letters (MONO_REAL=0 skips it, MONO_FILE names another file) ═══
+  const REAL = process.env.MONO_FILE || path.join(__dirname, 'fixtures', 'SKUs_MONOGRAM_2024-1015.ai');
+  if (process.env.MONO_REAL !== '0' && fs.existsSync(REAL)) {
+    const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cn-mono-ui-')), file = path.join(tmp, path.basename(REAL)); fs.copyFileSync(REAL, file);
     const w2 = await Base.world({ viewport: { width: 1440, height: 900 } });
     try {
       const { main } = require('../../scripts/index-master.cjs'), { REPO_TEST } = require('./bridge-server.cjs');
@@ -411,16 +413,16 @@ Object.entries(ODD).forEach(([k, o], i) => { FX[k] = { rid: o.rid, sku: 'MONOGRA
         for (const fx of fixtures) { const order = orderOf(fx, now); for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); } }
         Orders.interpretAll(); CN.setMode('engrave'); Engrave.restoreView({ tab: 'mono', chosen: true }); Engrave.render();
       }, { fixtures: ['apv', 'osr'].map(n => FX[n]), orderSrc: Base.orderOf.toString() });
-      const words = ['APV', 'OSR', 'JQX', 'MZT', 'LDH', 'WIW', 'AAA', 'EKB'], got = [];
+      const words = ['APV', 'OSR', 'AQV', 'ATB', 'ZMT', 'HFT', 'JQX', 'TTT', 'WIW', 'LDH'], got = [];   // (the hard ones too: a Mid Q and a Mid T, a Right T apart from its flourish)
       const sel = `.moCard[data-rid="4200683017"]`;
       await p2.waitForSelector(sel + ' svg path', { timeout: 120000 });
       for (const wd of words) {
         await p2.evaluate(({ sel, wd }) => { const t = document.querySelector(sel + ' [data-mo-l="0"]'); t.focus(); const dt = new DataTransfer(); dt.setData('text', wd); t.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); }, { sel, wd });
         await p2.waitForFunction(({ sel, wd }) => { const h = document.querySelector(sel); return h && h.querySelector('.moSpin').hidden && [...h.querySelectorAll('input')].map(i => i.value).join('') === wd && h.dataset.state === 'ready'; }, { sel, wd }, { timeout: 90000 }).catch(() => {});
-        const r = await p2.evaluate(() => { const c = Engrave.monogramUI().cards.get('4200683017_42006830171'); return c.result ? { ok: c.result.ok, letters: c.resultLetters, rings: c.result.rings.length, outer: c.result.rings.filter(x => !x.hole).length, report: c.result.report, wMm: c.result.wMm, hMm: c.result.hMm } : null; });
+        const r = await p2.evaluate(() => { const c = Engrave.monogramUI().cards.get('4200683017_42006830171'); if (!c.result) return null; const hOf = p => p.bboxPt[3] - p.bboxPt[1], pl = c.result.placed; return { ok: c.result.ok, letters: c.resultLetters, rings: c.result.rings.length, outer: c.result.rings.filter(x => !x.hole).length, report: c.result.report, wMm: c.result.wMm, hMm: c.result.hMm, centre: hOf(pl[1]) / Math.max(hOf(pl[0]), hOf(pl[2])) }; });
         await p2.locator(sel + ' .moPic').screenshot({ path: path.join(SHOTS, 'real-file-' + wd + '.png') }).catch(() => {});
         got.push([wd, r]);
-        check(!!r && r.letters === wd && r.outer === 1 && r.report.connected && r.report.holesKept >= 0.5, `${wd} on Paul's letters: one piece, ${r && r.rings - 1} holes (kept ${r && r.report.holesKept}), ${r && r.wMm.toFixed(1)} × ${r && r.hMm.toFixed(1)} mm, joins ${JSON.stringify(r && r.report.joinMm)}`);
+        check(!!r && r.letters === wd && r.outer === 1 && r.report.connected && r.report.holesKept >= 0.5 && r.centre >= 1.2, `${wd} on Paul's letters: one piece, centre x${r && r.centre.toFixed(2)}, ${r && r.rings - 1} holes (kept ${r && r.report.holesKept}), ${r && r.wMm.toFixed(1)} × ${r && r.hMm.toFixed(1)} mm, joins ${JSON.stringify(r && r.report.joinMm)}`);
       }
       // the last one approved: its design file is read back by the app as ONE piece of the size the card says
       await p2.click(sel + ' [data-mo="approve"]');
