@@ -11,6 +11,8 @@ const cancelled = new Set(happened.filter(e => e.kind === 'cancel').map(e => Str
 const changed = happened.filter(e => e.kind === 'change').map(e => String(e.rid));
 const byOrder = new Map(d.orders.map(o => [o.rid, o]));
 const completed = new Set(S['Design_Completed Orders'].map(x => x._id));
+// RUN_MODE=manual (day.cjs): the run is off, so lines stay pulled and nothing is held, engraved or laid out; only the intake is judged
+const manual = d.ticks.length > 0 && d.ticks.every(t => !t.snap.run);
 
 // 1 · intake: every order that was open at a check reached the sorter once
 const cancelAt = new Map(happened.filter(e => e.kind === 'cancel').map(e => [String(e.rid), e.at]));
@@ -34,9 +36,9 @@ let wrongMetal = [];
 for (const r of rows) { const l = expectLine.get(r.key); if (!l) continue; const want = METAL[l.metal] || null; if (want && r.material !== want) wrongMetal.push(`${r.key} ${l.metal}→${r.material}`); }
 wrongMetal.length ? bad(`metal: ${wrongMetal.length} line(s) read as the wrong metal: ${wrongMetal.slice(0, 8).join('; ')}`) : ok('metal: every line read as its ordered metal');
 const unknownSku = rows.filter(r => /NOPE/.test(r.sku || expectLine.get(r.key)?.sku || ''));
-unknownSku.every(r => ['unmatched', 'held'].includes(r.state)) ? ok(`unknown SKU: ${unknownSku.length} line(s) held (${unknownSku.map(r => r.state).join(',')})`) : bad(`unknown SKU lines not held: ${unknownSku.map(r => r.key + ':' + r.state).join(', ')}`);
+manual ? info(`unknown SKU: ${unknownSku.length} line(s) (the run is off: none is held yet)`) : unknownSku.every(r => ['unmatched', 'held'].includes(r.state)) ? ok(`unknown SKU: ${unknownSku.length} line(s) held (${unknownSku.map(r => r.state).join(',')})`) : bad(`unknown SKU lines not held: ${unknownSku.map(r => r.key + ':' + r.state).join(', ')}`);
 const noMetal = rows.filter(r => expectLine.get(r.key)?.metal === '??');
-noMetal.every(r => r.state === 'held' || r.state === 'unmatched') ? ok(`unclear metal ("Solid Gold"): ${noMetal.length} line(s) held for a decision`) : bad(`unclear metal lines: ${noMetal.map(r => r.key + ':' + r.state + ':' + r.reason).join(', ')}`);
+manual ? info(`unclear metal ("Solid Gold"): ${noMetal.length} line(s) (the run is off)`) : noMetal.every(r => r.state === 'held' || r.state === 'unmatched') ? ok(`unclear metal ("Solid Gold"): ${noMetal.length} line(s) held for a decision`) : bad(`unclear metal lines: ${noMetal.map(r => r.key + ':' + r.state + ':' + r.reason).join(', ')}`);
 
 // 3 · what was released and committed
 const setById = new Map(sets.map(s => [s.setId, s]));
@@ -84,7 +86,7 @@ for (const rid of completed) for (const l of byOrder.get(rid)?.lines || []) if (
 }
 const personalRows = rows.filter(r => expectLine.get(r.key)?.personal && !['gone', 'unmatched', 'held'].includes(r.state));
 const noEng = personalRows.filter(r => !r.engrave || !r.engrave.needed);
-noEng.length ? bad(`engraving: ${noEng.length} personalized line(s) with no engraving job: ${noEng.slice(0, 8).map(r => r.key + ':' + r.state + ':' + JSON.stringify(r.engrave)).join('; ')}`) : ok(`engraving: all ${personalRows.length} personalized lines have an engraving job`);
+manual ? info(`engraving: ${personalRows.length - noEng.length} of ${personalRows.length} personalized lines have a job (the run is off: jobs are made for the lines a person opens)`) : noEng.length ? bad(`engraving: ${noEng.length} personalized line(s) with no engraving job: ${noEng.slice(0, 8).map(r => r.key + ':' + r.state + ':' + JSON.stringify(r.engrave)).join('; ')}`) : ok(`engraving: all ${personalRows.length} personalized lines have an engraving job`);
 const engStates = {}; for (const r of personalRows) { const k = r.engrave ? r.engrave.state : 'none'; engStates[k] = (engStates[k] || 0) + 1; } info(`engraving states of personalized lines: ${JSON.stringify(engStates)}`);
 for (const rid of changed) { const r = rows.find(x => x.rid === rid && x.engrave && x.engrave.needed); info(`changed order ${rid}: engraving now ${JSON.stringify(r && r.engrave)} state ${r && r.state}`); }
 // 5 · cancellations
@@ -121,11 +123,63 @@ const errs = (d.errors || []).filter(e => !/favicon/.test(e)).filter(e => {
   return true;
 }).filter(e => !(goneLines > 0 && /^console: Failed to load resource: the server responded with a status of 404/.test(e) && goneLines--));
 if (readGone.size) info(`cancelled order(s) read once and found gone (HTTP 404): ${[...readGone].join(', ')}`);
-errs.length ? bad(`${errs.length} page error(s): ${[...new Set(errs)].slice(0, 6).join(' | ')}`) : ok('no page errors');
+const realErrs = errs.filter(e => !/firebaseOrders\?messagesFor=/.test(e)).filter(e => !/^console: Failed to load resource: the server responded with a status of 400/.test(e));
+if (realErrs.length !== errs.length) info(`${errs.length - realErrs.length} HTTP 400 on firebaseOrders?messagesFor (the stand-in does not serve the order messages thread) ignored`);
+realErrs.length ? bad(`${realErrs.length} page error(s): ${[...new Set(realErrs)].slice(0, 6).join(' | ')}`) : ok('no page errors');
+// The stand-in site does not answer the order messages read (firebaseOrders?messagesFor=...): a gap of the fake, not of the page.
+const messagesGap = (d.errors || []).filter(e => /firebaseOrders\?messagesFor=/.test(e) || /status of 400/.test(e)).length;
 const warns = d.sorter.events.filter(e => /^(warn|bad|error)/.test(e));
 info(`${warns.length} warning(s) in the activity log${warns.length ? ': ' + [...new Set(warns.map(w => w.replace(/\d{6,}/g, '#')))].slice(0, 12).join(' || ') : ''}`);
 const slow = d.ticks.slice().sort((a, b) => b.ms - a.ms).slice(0, 3).map(t => `t${t.tick} ${Math.round(t.ms / 1000)}s`);
 info(`slowest ticks (real time): ${slow.join(', ')}`);
+
+// 8 · production size: time per check, the page's memory and browser storage, and a page crash (day.cjs with BACKLOG / CRASH_HOUR)
+{
+  const cfg = d.config || {}, tk = d.ticks.filter(t => t.mem);
+  const simH = d.ticks.length ? (lastAt - d.t0) / 3600000 : 0;
+  info(`coverage: ${simH.toFixed(1)} simulated hours, ${d.ticks.length} checks, ended by ${d.endedBy || 'the day'} after ${d.wallS || '?'} s${cfg.TICK_MIN ? ` (a check every ${cfg.TICK_MIN} min)` : ''}${cfg.BACKLOG ? `; ${cfg.BACKLOG} orders pulled at the first check, ${cfg.ORDERS} arrivals` : ''}`);
+  if (d.endedBy === 'deadline') bad(`the day was cut at the wall-clock limit after ${simH.toFixed(1)} of ${cfg.HOURS} simulated hours`);
+  if (tk.length) {
+    const med = a => { const x = a.filter(v => v != null && isFinite(v)).sort((p, q) => p - q); return x.length ? x[Math.floor(x.length / 2)] : null; };
+    info('per check · tick hour pieces rows | check ms | busy s | heap MB | DOM nodes | sorter ls chars | station ls chars | usage MB (sorter/station)\n    ' + tk.map(t => `t${t.tick} ${String(t.hour).padStart(2, '0')}h pcs=${t.mem.pieces} rows=${t.mem.rows} | ${t.check ? Math.round(t.check.checkMs) : '-'} | ${t.check && t.check.busyS != null ? t.check.busyS : '-'} | ${t.mem.heapMB} | ${t.mem.nodes} | ${t.mem.sorter && t.mem.sorter.lsChars} | ${t.mem.station && t.mem.station.lsChars} | ${t.mem.sorter && t.mem.sorter.usageMB}/${t.mem.station && t.mem.station.usageMB}`).join('\n    '));
+    // time per check after the first pull: the last third must not be slower than twice the first third
+    const later = tk.filter(t => t.tick >= 1 && t.check && t.check.checked), third = Math.floor(later.length / 3);
+    if (third >= 2) {
+      const a = med(later.slice(0, third).map(t => t.check.checkMs)), b = med(later.slice(-third).map(t => t.check.checkMs));
+      const a2 = med(later.slice(0, third).map(t => t.check.busyS)), b2 = med(later.slice(-third).map(t => t.check.busyS));
+      (b > 2 * a + 2000) ? bad(`time per check grows with the pool: median ${Math.round(a)} ms early, ${Math.round(b)} ms late`) : ok(`time per check stays bounded: median ${Math.round(a)} ms early vs ${Math.round(b)} ms late (${later.length} checks; the pool grew ${later[0].mem.rows}→${later.at(-1).mem.rows} lines)`);
+      (b2 > 2 * a2 + 1) ? bad(`the page's busy time per check grows: ${a2} s early, ${b2} s late`) : ok(`page busy time per check stays bounded: ${a2} s early vs ${b2} s late`);
+    } else info('time per check: too few checks after the first pull to compare early and late');
+    // Firestore refuses a document over 1 MiB; the stand-in does not, so the biggest document of the day is looked at here
+    const dk = {}; for (const t of tk) for (const [c, v] of Object.entries(t.docs || {})) if (!dk[c] || v.maxKB > dk[c].maxKB) dk[c] = Object.assign({ tick: t.tick }, v);
+    if (Object.keys(dk).length) { info('largest stored document of the day: ' + Object.entries(dk).map(([c, v]) => `${c} ${v.maxKB} KB (${v.n} docs, t${v.tick})`).join(' · ')); const big = Object.entries(dk).filter(([, v]) => v.maxKB > 900); big.length ? bad(`a stored document nears Firestore's 1 MiB limit: ${big.map(([c, v]) => c + ' ' + v.maxKB + ' KB').join(', ')}`) : ok('no stored document nears Firestore\'s 1 MiB limit (largest ' + Math.max(...Object.values(dk).map(v => v.maxKB)) + ' KB)'); }
+    const first = tk.find(t => t.tick === 0) || tk.find(t => t.tick === 1);
+    if (first && first.check) info(`first pull: ${Math.round(first.check.checkMs)} ms of wall time${first.check.simMin != null ? `, ${first.check.simMin} simulated minutes, ${first.check.reads} Etsy reads` : ''} for ${first.mem.rows} lines${first.check.checkError ? '; the check failed on the way: ' + first.check.checkError : ''}`);
+    const slowest = tk.filter(t => t.check && t.tick >= 1).sort((p, q) => q.check.checkMs - p.check.checkMs)[0];
+    if (slowest) info(`slowest check: t${slowest.tick} ${Math.round(slowest.check.checkMs)} ms`);
+    // memory: after a garbage collection the heap must follow the pool, not the number of checks
+    const h = tk.filter(t => t.tick >= 2 && t.mem.heapMB), hLast = h.at(-1), hBase = h[0];
+    if (h.length >= 4) { const g = hLast.mem.heapMB / hBase.mem.heapMB, rg = hLast.mem.rows / Math.max(1, hBase.mem.rows); (g > 2.5 * Math.max(1, rg)) ? bad(`page memory grows: ${hBase.mem.heapMB} MB at t${hBase.tick} → ${hLast.mem.heapMB} MB at t${hLast.tick} while the lines grew ${rg.toFixed(2)}x`) : ok(`page memory bounded after garbage collection: ${hBase.mem.heapMB} MB at t${hBase.tick} → ${hLast.mem.heapMB} MB at t${hLast.tick} (lines ${hBase.mem.rows}→${hLast.mem.rows}); DOM nodes ${hBase.mem.nodes}→${hLast.mem.nodes}`); }
+    // browser storage: localStorage against its 5 MiB quota, and growth across checks where no order arrived
+    for (const [name, get] of [['sorter', t => t.mem.sorter && t.mem.sorter.lsChars], ['station', t => t.mem.station && t.mem.station.lsChars]]) {
+      const v = tk.map(get).filter(x => x != null); if (!v.length) continue; const mx = Math.max(...v);
+      mx > 0.8 * 5242880 ? bad(`${name} localStorage reached ${mx} chars of its 5.2M quota`) : ok(`${name} localStorage peak ${mx} chars (${(100 * mx / 5242880).toFixed(1)}% of the quota), last ${v.at(-1)}`);
+      const quiet = tk.filter(t => !(t.arrived || []).length && get(t) != null && !(t.acted || []).length);
+      let up = 0; for (let i = 1; i < quiet.length; i++) if (quiet[i].tick === quiet[i - 1].tick + 1 && get(quiet[i]) > get(quiet[i - 1]) * 1.02) up++;
+      up >= 3 ? bad(`${name} localStorage keeps growing by more than 2% at ${up} checks where no order arrived`) : ok(`${name} localStorage does not grow while no order arrives (${quiet.length} such checks)`);
+    }
+    const idb = tk.filter(t => t.mem.idbSorter);
+    if (idb.length) { const f = idb[0], l = idb.at(-1); const sum = o => Object.entries(o || {}).map(([db, st]) => `${db}: ` + Object.entries(st).map(([n, v]) => `${n} ${v.n}rec/${v.kb}KB`).join(', ')).join(' ; '); info(`IndexedDB (sorter) at t${f.tick}: ${sum(f.mem.idbSorter)}\n    at t${l.tick}: ${sum(l.mem.idbSorter)}`); info(`IndexedDB (station) at t${idb[0].tick}: ${sum(idb[0].mem.idbStation)}\n    at t${l.tick}: ${sum(l.mem.idbStation)}`); const kb = o => Object.values(o || {}).reduce((n, st) => n + Object.values(st).reduce((m, v) => m + (v.kb || 0), 0), 0); info(`IndexedDB (sorter) holds ${kb(f.mem.idbSorter)} KB at t${f.tick} (${f.mem.rows} lines) and ${kb(l.mem.idbSorter)} KB at t${l.tick} (${l.mem.rows} lines): ${(kb(l.mem.idbSorter) / Math.max(1, l.mem.rows)).toFixed(1)} KB a line`); }
+    if (d.baseline) info(`before the first pull: heap ${d.baseline.heapMB} MB, sorter localStorage ${d.baseline.sorter && d.baseline.sorter.lsChars} chars, station ${d.baseline.station && d.baseline.station.lsChars}`);
+  }
+  if (d.crash) {
+    const c = d.crash, lost = c.lost || {}, n = Object.values(lost).reduce((m, v) => m + v.length, 0);
+    info(`page crash: before ${c.before.rows} lines / ${c.before.done} committed orders / ${c.before.pieces} saved piece placements / ${c.before.backs} back files; the reopened page: ${JSON.stringify(c.back)}`);
+    c.lost ? (n ? bad(`after the page crash and reopen, lost: ${Object.entries(lost).filter(([, v]) => v.length).map(([k, v]) => k + ' ' + v.length + ' (' + v.slice(0, 3).join(', ') + ')').join('; ')}`) : ok(`a page crash and reopen lost nothing (lines, committed orders, placed pieces, back files, sets, approvals)`)) : bad('the page crash was not checked afterwards');
+    if (c.after) info(`after the crash and settling: ${c.after.rows} lines, ${c.after.done} committed orders`);
+  } else if (cfg.CRASH_HOUR >= 0) bad('the day ended before the hour of the planned page crash');
+}
+
 console.log('PASS\n  ' + out.ok.join('\n  '));
 console.log('FAIL\n  ' + (out.bad.join('\n  ') || '(none)'));
 console.log('INFO\n  ' + out.info.join('\n  '));

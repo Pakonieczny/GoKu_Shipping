@@ -30,6 +30,9 @@ async function open(opts = {}) {
   }, { station: stationOrigin, sorter: sorterOrigin, clockOffset: opts.clockOffset || 0 });
   // a simulated clock shared by both pages (and, through simClock.shift, by the fake server's Date.now)
   if (opts.clock) await ctx.clock.install({ time: opts.clock });
+  // (a fast-stepped clock cannot honour Etsy's own pacing, 60 reads a minute and 150 in ten, in seconds of real time: opts.etsyLimitsOff lifts those two numbers and the 250 ms between two reads in the station's copy)
+  if (opts.etsyLimitsOff) await ctx.route(/\/design-1\.html/, async r => { const resp = await r.fetch(); const body = (await resp.text()).replace('burstPerMinute: 60, per10Min: 150', 'burstPerMinute: 1e6, per10Min: 1e6').replace('const runEtsyTask = makeSpacingQueue(250, etsyHeadroom)', 'const runEtsyTask = makeSpacingQueue(0, etsyHeadroom)'); await r.fulfill({ response: resp, body }); });
+  if (opts.beforePage) await opts.beforePage(ctx);
   const page = await ctx.newPage();
   const errors = [], consoleLog = [];
   page.on('pageerror', e => errors.push('sorter pageerror: ' + e.message));

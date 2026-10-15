@@ -1049,8 +1049,10 @@ const DesignLink = window.DesignLink = (() => {
     if (!S_.nonce) S_.nonce = uid() + uid();
     const id = ++S_.id;
     return new Promise((resolve, reject) => {
-      const t = setTimeout(() => { S_.pending.delete(id); if (!quiet) { logLine("reply", type, { error: "timeout" }, timeoutMs, true); S_.errors++; } reject(new Error(`${type}: the Design Station did not answer in time`)); }, timeoutMs);
-      S_.pending.set(id, { resolve, reject, t, onProgress, type, sent: performance.now(), quiet });
+      // the limit counts from the station's last sign of work, not from the call: a cold pull of 400 orders is 14-21 minutes under the station's own Etsy pacing (60 reads a minute, 150 in ten), against this call's 20, and every read reports progress (ADV-DAY400)
+      const expire = () => { S_.pending.delete(id); if (!quiet) { logLine("reply", type, { error: "timeout" }, timeoutMs, true); S_.errors++; } reject(new Error(`${type}: the Design Station did not answer in time`)); };
+      const t = setTimeout(expire, timeoutMs);
+      S_.pending.set(id, { resolve, reject, t, expire, timeoutMs, onProgress, type, sent: performance.now(), quiet });
       if (!quiet) { logLine("cmd", type, args); S_.count++; }
       S_.frame.contentWindow.postMessage({ source: "brites-sorter", nonce: S_.nonce, id, type, args }, origin());
     });
@@ -1063,7 +1065,7 @@ const DesignLink = window.DesignLink = (() => {
     if (d.nonce !== S_.nonce) { S_.dropped++; renderConsole(); return; }
     if (d.id === 0) { onEvent(d); return; }
     const p = S_.pending.get(d.id); if (!p) return;
-    if (d.type === "progress") { p.onProgress && p.onProgress(d); if (d.text) agentLive(`DS · ${p.type}`, d.text, d.done, d.total); return; }
+    if (d.type === "progress") { clearTimeout(p.t); p.t = setTimeout(p.expire, p.timeoutMs); p.onProgress && p.onProgress(d); if (d.text) agentLive(`DS · ${p.type}`, d.text, d.done, d.total); return; }
     if (d.type === "ack") { p.acked = performance.now(); return; }
     clearTimeout(p.t); S_.pending.delete(d.id); if (!p.quiet) S_.replies++;
     if (!p.quiet) logLine("reply", p.type, d.type === "done" ? d.result : { error: d.error }, performance.now() - p.sent, d.type !== "done");
