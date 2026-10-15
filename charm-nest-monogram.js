@@ -40,7 +40,7 @@
      (strokes of different letters that do not touch keep this much apart: the sliver gaps that read as gibberish) and COUNTERS_MIN (the part of the inner openings that stays open). */
   const NORMS = {
     SIDE_HEIGHT_RATIO: 0.80, SIDE_HEIGHT_TOL: 0.04, SIDE_WIDTH_MIN: 0.60, SIDE_WIDTH_MAX: 0.95, MID_WIDTH_MIN: 0.84, MID_WIDTH_MAX: 1.11, MID_BODY_W_OVER_EM_MEDIAN: 0.2434, MID_BODY_W_OVER_INKH_MEDIAN: 0.348, STRETCH_CAP: 0.25, BODY_TRIM: 0.05,
-    ASPECT_TARGET: 0.92, ASPECT_MIN: 0.82, ASPECT_MAX: 1.00, OVERLAP_SIDE_MAX: 0.25, OVERLAP_MID_MAX: 0.35, SIDE_VISIBLE_MIN_MM: 3.5, SIDE_HEIGHT_MIN: 0.72, GAP_MIN_MM: 0.35, COUNTERS_MIN: 0.9, BOX_OVERLAP_MAX: 0.42, BOX_OVERLAP_MIN: 0.06
+    ASPECT_TARGET: 0.92, ASPECT_MIN: 0.82, ASPECT_MAX: 1.00, OVERLAP_SIDE_MAX: 0.25, OVERLAP_MID_MAX: 0.35, SIDE_VISIBLE_MIN_MM: 3.5, SIDE_HEIGHT_MIN: 0.72, GAP_MIN_MM: 0.35, COUNTERS_MIN: 0.9, BOX_OVERLAP_MAX: 0.7, BOX_OVERLAP_MIN: 0.06
   };
   /* The inner openings that count when it is asked whether a neighbour's stroke has closed them: those of 0.5 mm2 and more (a quarter of the counters of the real Left / Mid / Right alphabets are smaller: the eyes of a flourish,
      0.5 mm across, which a laser cannot keep open anyway and nobody reads as part of the letter). A smaller one that survives is still a hole of the piece. */
@@ -374,7 +374,11 @@
     /* where a side letter stands vertically beside the middle one (at 0). With metrics: both on ONE baseline, raised so that the sides' height above it is centred on the middle letter's (the middle stands beyond both,
        equally above and below, as in a circle monogram); valign 'baseline': on the middle letter's own baseline. Without metrics: each side's box centred on the middle's box (the same centre for both). */
     const sideNom = metricsOn ? ((PL.h - PL.base) + (PR.h - PR.base)) / 2 : 0, midBase = metricsOn ? PM.base : 0, midTop = metricsOn ? PM.h - PM.base : 0;
-    const baselineY = metricsOn ? (o.valign === 'baseline' ? midBase : midBase + (midTop - sideNom) / 2) : 0;
+    let baselineY = metricsOn ? (o.valign === 'baseline' ? midBase : midBase + (midTop - sideNom) / 2) : 0;
+    if (metricsOn && N && o.valign !== 'baseline') {      // (the sides never stand out beyond the centre letter's ink above or below: the baseline gives way, both sides together, so they stay level)
+      const lo = Math.max(PL.base, PR.base), hi = PM.h - Math.max(PL.h - PL.base, PR.h - PR.base);
+      if (lo <= hi) baselineY = Math.min(hi, Math.max(lo, baselineY));
+    }
     const dyOf = P => metricsOn ? Math.round(baselineY - P.base) : (o.valign === 'baseline' ? 0 : Math.round((PM.h - P.h) / 2));
     const xOf = (P, side, ov) => side === 'left' ? Math.round(ov * P.w) - P.w : PM.w - Math.round(ov * P.w);
 
@@ -563,6 +567,7 @@
     function reachBoth(keep, jMax) {
       let bestPair = null, kOk = null;
       for (const j of [0, 1, -1, 2, -2, 3, -3].filter(v => Math.abs(v) <= Math.min(REACH_DYN, jMax == null ? 9 : jMax))) {
+        if (N && j !== 0) { const dyS = Math.max(1, Math.round(REACH_DY * PM.h)), tol = 1.0 / MM * SC; if (![PL, PR].every(P => dyOf(P) + j * dyS >= -tol && dyOf(P) + j * dyS + P.h <= PM.h + tol)) continue; }      // (a nudge never lifts a side letter out beyond the centre letter's ink)
         if (j === 0 && keep && !kOk) { kOk = [0, 2].map(k => { const q = pairQ(keep[k], keep[k].dx, keep[k].dy, NECK_OK_MM, false, true, true); return q && q.good ? { x: keep[k].dx, y: keep[k].dy, ov: null, j: 0, q, keep: true } : null; }); }
         const l = j === 0 && kOk && kOk[0] || reachOf(PL, 'left', j), r = j === 0 && kOk && kOk[1] || reachOf(PR, 'right', j);
         if (!l || !r) continue;
