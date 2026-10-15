@@ -3151,35 +3151,6 @@ const Master = window.Master = (() => {
     }
     return [...out.values()].sort((a, b) => b.lines - a.lines || a.sku.localeCompare(b.sku));
   }
-  /* This used to open as a wall: a headline, a paragraph, sixty SKU chips and three buttons, on a tab a person opened to
-     do something else, with no way to shut it. It is one line now, it closes, and it stays closed. */
-  function paintMissing(v) {
-    let box = v.querySelector("#mMissing");
-    if (!box) { box = el("div", "missBox"); box.id = "mMissing"; const head = v.querySelector(".noteBox"); if (head) head.insertAdjacentElement("afterend", box); else v.prepend(box); }
-    const miss = missingSkus();
-    if (!miss.length || B.missShut) { box.className = "missBox hidden"; box.innerHTML = ""; return; }
-    const lines = miss.reduce((n, m) => n + m.lines, 0);
-    const orders = new Set(); miss.forEach(m => m.orders.forEach(o => orders.add(o)));
-    box.className = "missBox" + (B.missOpen ? " open" : "");
-    box.innerHTML = '<div class="t"><b>' + miss.length + ' SKU' + (miss.length === 1 ? "" : "s") + ' the orders want have no master file</b>' +
-      '<span>' + lines + ' piece' + (lines === 1 ? "" : "s") + ' \u00b7 ' + orders.size + ' order' + (orders.size === 1 ? "" : "s") + '</span>' +
-      '<button class="btn ghost xs" data-a="see">' + (B.missOpen ? "Hide" : "See them") + '</button>' +
-      '<button class="x" data-a="shut" title="close this \u2014 it stays closed">\u00d7</button></div>' +
-      (B.missOpen ? '<div class="skus">' + miss.slice(0, 60).map(m => '<span class="s" title="' + esc(m.title) + '">' + esc(m.sku) + (m.lines > 1 ? '<i>\u00d7' + m.lines + '</i>' : "") + '</span>').join("") +
-      (miss.length > 60 ? '<span class="s more">\u2026 and ' + (miss.length - 60) + ' more</span>' : "") + '</div>' +
-      '<div class="acts"><button class="btn ghost xs" data-a="copy">Copy the list</button><button class="btn ghost xs" data-a="save">Save as a file</button><button class="btn gold xs" data-a="add" data-repo="upload">Add a master file</button></div>' : "");
-    box.querySelector("[data-a=shut]").onclick = () => { B.missShut = true; paintMissing(v); };
-    box.querySelector("[data-a=see]").onclick = () => { B.missOpen = !B.missOpen; paintMissing(v); };
-    if (!B.missOpen) return;
-    box.querySelector("[data-a=copy]").onclick = async () => { try { await navigator.clipboard.writeText(miss.map(m => m.sku).join("\n")); toast(miss.length + " SKU(s) copied", "ok"); } catch (_) { toast("Could not reach the clipboard", "bad"); } };
-    box.querySelector("[data-a=save]").onclick = () => {
-      const rows = [["sku", "pieces", "orders", "title"]].concat(miss.map(m => [m.sku, m.lines, [...m.orders].join(" "), m.title]));
-      const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(",")).join("\n");
-      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-      a.download = "charm-library-missing-" + today() + ".csv"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-    };
-    box.querySelector("[data-a=add]").onclick = () => { const f = v.querySelector("#mFile"); if (f) f.click(); };
-  }
   // every draw ends with the padlocks put right on the controls it made (closed until unlocked, open while a token is held)
   function render() { try { return paint(); } finally { const v = document.getElementById("masterView"), L = RLOCK(); if (L && v && !v.classList.contains("hidden")) L.mark(v); } }
   function paint() {
@@ -3199,10 +3170,7 @@ const Master = window.Master = (() => {
       v.querySelector("#mAdd").onclick = () => v.querySelector("#mFile").click();
       load().then(render).catch(() => {});
     }
-    // What the orders on the cards are asking for that this library cannot answer. One real run wanted 133 SKUs the
-    // library had never heard of, because only one master file had ever been indexed — and the only way to learn that
-    // was to read 180 review cards. It is one fact, so it is said once, here, where the master files are added.
-    paintMissing(v);
+    // (Paul, 15 Oct 2026: "remove this UI, it is not helpful": the banner "N SKUs the orders want have no master file" is not drawn any more; the missing SKUs are still named on each Review card and found by the Library search)
     const jobs = v.querySelector("#mJobs"); jobs.innerHTML = "";
     for (const job of B.master.jobs.values()) {
       const card = el("div", "masterFile");
@@ -20296,7 +20264,7 @@ async function bootBridge() {
     if (!live && !unwritten) return;
     e.preventDefault(); e.returnValue = "";
   });
-  SetPicker.mount();
+  // (Paul, 15 Oct 2026: "Remove this Sets menu": the top bar's Sets ▾ is not drawn any more; the Library's Sets tab and Search all sets (Library > Earlier sets, the run bar) are where sets are found)
   RunCtl.renderModeBtn(); RunCtl.renderBanner(); LiveStrip.render(); Sandbox.render(); Sandbox.afterReload(); if (Sandbox.on()) agent({ bridge: true }, "warn", "SANDBOX mode: emulated Etsy from the stored snapshot, every record and file goes to sandbox copies");
   document.getElementById("btnRunMode").onclick = () => { const auto = S.settings.runMode !== "auto"; if (auto && !confirm("Auto mode: the sorter connects to the Design Station, pulls the latest orders by the date rule, nests, fits engraving, saves labels and marks the orders complete — continuing past items that need review or approval. Only ready work is released. Turn Auto on?")) return; RunCtl.setMode(auto ? "auto" : "manual"); };
   Orders.loadMaps().catch(() => {}); Master.load().catch(() => {});

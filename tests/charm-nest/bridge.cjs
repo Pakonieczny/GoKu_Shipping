@@ -361,28 +361,10 @@ const receipts = [
       });
       if (jumped) { console.log('ladder jump', JSON.stringify(jumped)); assert.strictEqual(jumped.got, jumped.want, 'the ladder row goes to its own screen'); }
       await page.evaluate(() => CN.setMode('engrave'));
-      // the Master tab says, once, what the orders want that the library has never heard of (§6)
-      const miss = await page.evaluate(() => {
-        CN.setMode('master'); Master.render();
-        const b = document.getElementById('mMissing');
-        if (!b || b.classList.contains('hidden')) return { shown: false };
-        const shut = { head: b.querySelector('.t b').textContent, skus: [...b.querySelectorAll('.s')].length, acts: [...b.querySelectorAll('[data-a]')].map(x => x.dataset.a) };
-        b.querySelector('[data-a=see]').click();                              // it opens only when asked
-        const b2 = document.getElementById('mMissing');
-        const open = { skus: [...b2.querySelectorAll('.s')].map(x => x.textContent), acts: [...b2.querySelectorAll('[data-a]')].map(x => x.dataset.a) };
-        b2.querySelector('[data-a=shut]').click();                            // and it closes, and stays closed
-        const gone = document.getElementById('mMissing').classList.contains('hidden');
-        B.missShut = false; B.missOpen = false; Master.render();
-        return { shown: true, shut, open, gone };
-      });
-      console.log('missing skus', JSON.stringify(miss));
-      assert(miss.shown, 'an unmatched SKU is named on the Master tab, not only in Review');
-      assert(/1 SKU the orders want/.test(miss.shut.head), 'counted once per SKU: ' + miss.shut.head);
-      assert.strictEqual(miss.shut.skus, 0, 'it opens as one line, not a wall of chips');
-      assert.deepStrictEqual(miss.shut.acts, ['see', 'shut'], 'and that line can be opened or closed: ' + miss.shut.acts.join(','));
-      assert(miss.open.skus.some(x => /BR-NOPE-99/.test(x)), 'opened, it names them: ' + miss.open.skus.join(','));
-      assert.deepStrictEqual(miss.open.acts, ['see', 'shut', 'copy', 'save', 'add'], 'with a way to take the list to the master files');
-      assert(miss.gone, 'the close button closes it');
+      // Paul, 15 Oct 2026: the Master tab does not draw a banner about SKUs the orders want that the library lacks ("not helpful")
+      const miss = await page.evaluate(() => { CN.setMode('master'); Master.render(); return { banner: !!document.getElementById('mMissing'), box: !!document.querySelector('.missBox') }; });
+      console.log('missing banner', JSON.stringify(miss));
+      assert(!miss.banner && !miss.box, 'the Master tab draws no "SKUs have no master file" banner');
       // and the tab always offers the thing it exists for, whether or not anything is missing
       assert(await page.evaluate(() => !!document.getElementById('mAdd')), 'the Master tab has a visible way to add a master file');
       /* Every run that ever ran, and the way back into one. Until this existed the only run reachable was the one in
