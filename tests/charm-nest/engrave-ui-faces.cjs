@@ -10,7 +10,8 @@
 //   3  approval: "Approve both faces / ears / all discs" runs the ORDINARY approval of each face (Front first), only when every placement is ready and was shown; a failed face stops the rest
 //   4  openBack(poolId, sheetId, "front"): a saved front is opened the way a saved back is, on its own record, and an edit of it never touches the piece's back
 //   5  INERT for back-only lines: what a pendant, an earring pair and a necklace of discs draw (list row, editor, Decided row) is byte for byte what the page drew before faces (SHA-1 of the markup,
-//      captured from the unchanged page), and the changed files carry a new cache token
+//      captured from the unchanged page), and the changed files carry a new cache token. EGROW (15 Oct 2026) redrew the rows of SEVERAL pieces (a pair's ears, discs, faces: each piece's line now carries
+//      its own state and Reopen): those ten row / Decided hashes are no longer pinned here (REDRAWN, below; tests/charm-nest/engrave-row-fit.cjs pins how they lie); a single piece's rows and every card still are
 //   node tests/charm-nest/engrave-ui-faces.cjs
 'use strict';
 const path = require('path'), fs = require('fs'), vm = require('vm'), assert = require('assert/strict'), crypto = require('crypto');
@@ -159,6 +160,10 @@ function facedPage(o) {
 /* the markup the page drew for the BACK-ONLY lines before faces existed: SHA-1 (12 hex) of the normalised markup of each surface, captured from the unchanged page (origin/main at 59c294c) with
    `node tests/charm-nest/engrave-ui-faces.cjs --capture <path to a charm-nest-bridge.js>` (the card without the empty hidden slot the setup editor mounts into; see SETUP_SLOT) */
 const SETUP_SLOT = /<section class="pvSec pvSetup"[^>]*>.*?<\/section>/;
+/* EGROW (Paul, 15 Oct 2026, "be clever in how you display and arrange this information ... a more minimalist approach"): a row of SEVERAL pieces (the ears of a pair, the discs of a necklace, the faces of a line) is now one line for each piece
+   (a chip, its words, then ITS OWN state, or its state, seal and Reopen in Decided), no longer a block of words with a second block of states. Those rows' markup is no longer the one captured below, so their hashes are not compared
+   (REDRAWN); a single piece's rows ('pend') and every editor card stay byte for byte, and 5b still demands that a page with the faces module and no front job draws every row exactly as a page without it. */
+const REDRAWN = new Set(['row:tag', 'done:tag', 'row:ears', 'done:ears', 'row:discs', 'done:discs', 'row:pair', 'done:pair', 'row:neck', 'done:neck']);
 const GOLDEN = {
   'row:tag': 'd3bca07bc601',
   'card:tag': '1c1863edbe69',
@@ -491,14 +496,15 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
   // ═══ 5 · INERT for back-only lines ═══
   await t('5a a back-only pendant, earring pair and necklace draw byte for byte what the page drew before faces: the row, the editor card (apart from the setup editor\'s empty slot) and the Decided row', () => {
     const got = {}; for (const k of BACK_ONLY) Object.assign(got, surfaces(P, k));
-    for (const k of Object.keys(GOLDEN)) if (BACK_ONLY.some(b => k.endsWith(':' + b))) assert.equal(got[k], GOLDEN[k], k);
+    for (const k of Object.keys(GOLDEN)) if (BACK_ONLY.some(b => k.endsWith(':' + b)) && !REDRAWN.has(k)) assert.equal(got[k], GOLDEN[k], k);
+    for (const k of REDRAWN) assert.ok(got[k] !== undefined || !BACK_ONLY.some(b => k.endsWith(':' + b)), k + ': still drawn');
     assert.equal(Object.keys(got).length, 9);
   });
   await t('5b the same lines on a page that has the faces module but no front job (the job engine not on the page yet): the tag, the earrings and the necklace draw as plain back lines, no chip, no switch of faces', () => {
     const Q = makePage(SOURCE, { faces: true, setup: false, noReading: true });
     Q.reset = () => { Q.setup(Q.made.tag, 'review', ['Mom']); Q.setup(Q.made.ears, 'review', ['Mom']); Q.setup(Q.made.discs, 'review', [['A'], ['B'], ['C']]); Q.setup(Q.made.pend, 'review', ['Mom']); Q.setup(Q.made.pair, 'review', ['Mom']); Q.setup(Q.made.neck, 'review', [['A'], ['B'], ['C']]); Q.resetRecs(); };
     const plain = makePage(SOURCE, { noReading: true }); plain.reset = Q.reset.bind({}); plain.reset = () => { plain.setup(plain.made.tag, 'review', ['Mom']); plain.setup(plain.made.ears, 'review', ['Mom']); plain.setup(plain.made.discs, 'review', [['A'], ['B'], ['C']]); plain.setup(plain.made.pend, 'review', ['Mom']); plain.setup(plain.made.pair, 'review', ['Mom']); plain.setup(plain.made.neck, 'review', [['A'], ['B'], ['C']]); plain.resetRecs(); };
-    for (const k of ['tag', 'ears', 'discs']) { const a = surfaces(Q, k), b = surfaces(plain, k); assert.deepEqual(a, b, k + ': with the faces module and no front job, the same as without it'); for (const s_ of Object.keys(a)) assert.equal(a[s_], GOLDEN[s_], s_ + ': what the page drew before faces'); }
+    for (const k of ['tag', 'ears', 'discs']) { const a = surfaces(Q, k), b = surfaces(plain, k); assert.deepEqual(a, b, k + ': with the faces module and no front job, the same as without it'); for (const s_ of Object.keys(a)) if (!REDRAWN.has(s_)) assert.equal(a[s_], GOLDEN[s_], s_ + ': what the page drew before faces'); }
     Q.reset(); Q.showList(); assert.equal(Q.document.querySelectorAll('.egMode').length, 0); assert.equal(Q.document.querySelectorAll('[data-face]').length, 0);
     const card = Q.open(Q.made.tag[0].key); assert.equal(card.querySelectorAll('.egEarSwitch').length, 0); assert.equal(card.querySelector('.pvMain .pvH').textContent, 'Back · engraving'); assert.equal(card.querySelector('.wordsHead .lbl').textContent, 'Words on the back');
     assert.equal(card.querySelector('.rh .reviewIdentity > .egPiece'), null, 'a single charm has no tag at all, as before');

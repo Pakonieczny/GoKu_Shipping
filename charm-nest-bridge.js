@@ -8115,6 +8115,19 @@ const Engrave = window.Engrave = (() => {
   const facesWord = jobs => { const fs = new Set((jobs || []).map(j => faceOfJob(j))); return fs.size > 1 ? "front and back" : fs.has("front") ? "front" : "back"; };
   /** What a list names the words of: "Words on the back" for a back-only line (as ever), "Words on the front", or "Words on the front and back". */
   const wordsLabel = jobs => { const fs = new Set((jobs || []).map(j => faceOfJob(j))); return fs.size > 1 ? "Words on the front and back" : fs.has("front") ? "Words on the front" : "Words on the back"; };
+  /** EGROW (Paul, 15 Oct 2026): a word, or the one line of what was bought, that a row cuts short with … says all of itself in its title; only then (a tooltip that repeats a whole word is noise). The rows measure themselves,
+   *  so it runs after a drawing and again whenever the list changes width (the rail, the window). */
+  const optionsText = n => [...n.querySelectorAll(".purchaseType strong, .purchasePair, .purchaseChoices dl > div, .purchaseMissing")].map(d => d.matches("div") ? `${(d.querySelector("dt") || {}).textContent || "Option"}: ${(d.querySelector("dd") || {}).textContent || ""}` : d.textContent).join(" · ");
+  function ellipsisTitles(host) {
+    if (!host || !host.querySelectorAll) return;
+    for (const n of host.querySelectorAll(".placementRow .w, .decidedRow .w, .placementRow .purchaseSummary, .decidedRow .purchaseSummary")) {
+      const cut = n.clientWidth > 0 && n.scrollWidth > n.clientWidth + 1;
+      if (cut) { const full = n.classList.contains("purchaseSummary") ? optionsText(n) : n.textContent; if (n.getAttribute("title") !== full) { n.setAttribute("title", full); n.dataset.cut = "1"; } }
+      else if (n.dataset.cut) { n.removeAttribute("title"); n.removeAttribute("data-cut"); }
+    }
+  }
+  const titleWatch = typeof ResizeObserver !== "undefined" ? new ResizeObserver(es => { for (const e of es) ellipsisTitles(e.target); }) : null;
+  const watchTitles = host => { if (!host) return; if (titleWatch && !host._egTitles) { host._egTitles = true; titleWatch.observe(host); } ellipsisTitles(host); };
   /** The row of the Engrave lists for one job, or for the Left and the Right job of one earring line (grp.pair): the pair is drawn by the same ListMedia.pair as everywhere
    *  (the line's row: both vectors side by side, the Etsy photo), its words and state are told ear by ear, and a click opens the editor on the first ear still to settle. */
   function renderPlacementRows(list, queue) {
@@ -8128,7 +8141,7 @@ const Engrave = window.Engrave = (() => {
       if (!row) {
         row = el("div", "doneRow placementRow hoverItem" + (told ? " earPairRow" : ""));
         row.setAttribute("role","button"); row.tabIndex=0; row.dataset.open=job.key; row.dataset.mkey="eg:"+job.key; row._sig = sig; row._faced = faced; row._mode = mode;
-        const wordsHtml = told ? '<div class="egEars' + (grp.discs ? ' egDiscs' : '') + '">' + grp.jobs.map(j => `<div class="egEar" data-ear="${esc(j.key)}">${jobChipHtml(j, faced)}<span class="w"></span>${grp.discs ? '<span class="egBr"></span><span class="dim" data-font></span>' : ""}<span class="dim" data-stage></span></div>`).join("") + '</div>' : '<span class="w"></span><span class="dim" data-stage></span>';
+        const wordsHtml = told ? '<div class="egEars' + (grp.discs ? ' egDiscs' : '') + '">' + grp.jobs.map(j => `<div class="egEar" data-ear="${esc(j.key)}">${jobChipHtml(j, faced)}<span class="w"></span><span class="egEnd">${grp.discs ? '<span class="dim" data-font></span>' : ""}<span class="dim" data-stage></span></span></div>`).join("") + '</div>' : '<span class="w"></span><span class="dim" data-stage></span>';
         row.innerHTML=ListMedia.pair(line)+'<div class="engravingIdentity"><span class="queueLabel">Engraving</span><div class="engravingOrder"><b class="mono" data-order></b><span class="sku mono"></span>'+(faced ? modeChipHtml(job.row) : "")+'<span class="mailSlot" hidden></span><span class="teamSlot" hidden></span></div><span class="purchaseLabel">'+wordsLabel(grp.jobs)+'</span>'+wordsHtml+'</div><div class="purchaseSummary" data-purchase></div><div class="egPlacementSeals"></div>';
         // (the card it opens grows out of this row: where it stands is kept for the next drawing, see cardShown)
         const open=()=>{const g=row._grp,target=g&&(ROWS()?ROWS().openLead(g,isWorking):g.lead);if(!target||isWorking(target))return;const lg=MO()&&listCopy(row);if(lg)growsFrom={key:target.key,rect:row.getBoundingClientRect(),until:Date.now()+3000};EG.focus=target.key;EG.list=false;render();if(lg)lg.animate([{opacity:1},{opacity:0}],{duration:300,easing:"ease-out",fill:"forwards"}).finished.catch(()=>{}).then(()=>lg.remove());};
@@ -8141,8 +8154,9 @@ const Engrave = window.Engrave = (() => {
       row.setAttribute("aria-label",`${busyAny ? "Preparing" : "Open"} engraving for order ${receipt} · ${sku}${ears ? (grp.pair ? " · Left and Right ears" : grp.discs ? ` · ${piecesIn(grp.jobs)} discs` : "") : ""}${faced ? " · " + facesWord(grp.jobs) : ""}`);
       const write=(selector,value,from=row)=>{const node=from.querySelector(selector);if(node.textContent!==value)node.textContent=value;};
       write('[data-order]',receipt);write('.sku',sku);
-      if(told)for(const j of grp.jobs){const e=[...row.querySelectorAll('.egEar')].find(n=>n.dataset.ear===j.key);if(!e)continue;write('.egPiece',faced?faceTagText(j):earTagText(j),e);write('.w',(j.lines || []).join(' / ') || "—",e);if(grp.discs){const f=pieceFont(j);write('[data-font]',PSW()?PSW().fontText(f):"",e);e.querySelector('[data-font]').title=PSW()?PSW().fontNote(f):"";}write('[data-stage]',ROWS().stageOf(j,isWorking(j)),e);}
+      if(told)for(const j of grp.jobs){const e=[...row.querySelectorAll('.egEar')].find(n=>n.dataset.ear===j.key);if(!e)continue;write('.egPiece',faced?faceTagText(j):earTagText(j),e);write('.w',(j.lines || []).join(' / ') || "—",e);if(grp.discs){const f=pieceFont(j);write('[data-font]',PSW()?PSW().fontText(f):"",e);e.querySelector('[data-font]').title=PSW()?PSW().fontNote(f):"";}write('[data-stage]',ROWS().stageOf(j,isWorking(j)),e);const st=e.querySelector('[data-stage]'),sk=isWorking(j)?'busy':String(j.state || "");if(st.dataset.s!==sk)st.dataset.s=sk;}
       else{write('.w',(job.lines || []).join(' / '));}
+      if(told&&grp.discs){const fonts=new Set(grp.jobs.map(j=>PSW()?PSW().fontText(pieceFont(j)):"")),mix=fonts.size>1?'mixed':'same',host=row.querySelector('.egEars');if(host&&host.dataset.fonts!==mix)host.dataset.fonts=mix;}   // (EGROW: the discs' fonts are told on a disc's own line only where they differ: the one muted line of options says the font the buyer asked for)
       if(window.CustomerMail?.slot)CustomerMail.slot(row.querySelector('.mailSlot'),receipt);
       window.TeamMail?.slot(row.querySelector('.teamSlot'),line);
       const purchase=purchaseMarkup(line);
@@ -8162,6 +8176,7 @@ const Engrave = window.Engrave = (() => {
     shown.forEach((grp, i) => { try { ListMedia.mount(nodes[i], multiJobs(grp) || facedGrp(grp) ? lineOf(grp.lead.row) : grp.lead.row); } catch (e) { console.warn("Engrave list: a row's pictures", e); } });
     ListMedia.more(list,rows.length,Math.min(placementLimit,rows.length),()=>{placementLimit+=40;render();});
     noRows(list, rows.length);
+    watchTitles(list);
   }
   /** ENGCRASH: one piece that cannot be drawn is a small quiet row (its order number and a short line), never the end of the list: the rows after it are drawn as they always are. */
   function quietRow(grp, build) {
@@ -8381,7 +8396,7 @@ const Engrave = window.Engrave = (() => {
             }
             const chip = j => jobChipHtml(j, faced);
             const detail = !open ? "" : `<div class="doneDetail egPairDetail">${grp.jobs.map(j => `<div class="egEarDetail" data-ear="${esc(j.key)}"><div class="egEarHead">${chip(j)}</div>${detailInner(j)}</div>`).join("")}${saidOfDone(line)}</div>`;
-            return `<div class="doneRow decidedRow earPairRow hoverItem${open ? " open" : ""}" tabindex="0" aria-expanded="${open}" data-rid="${esc(line.order.receiptId)}" data-key="${esc(j2.key)}" data-ears="${esc(grp.jobs.map(j => j.key).join(" "))}" data-pair="1" title="View engraving details">${ListMedia.pair(line)}<div class="engravingIdentity"><span class="queueLabel">Engraving · decided</span><div class="engravingOrder"><b class="mono">${esc(line.order.receiptId)}</b><span class="sku mono">${esc(line.spec.designSku || "")}</span>${faced ? modeChipHtml(line) : ""}</div><span class="purchaseLabel">${wordsLabel(grp.jobs)}</span><div class="egEars">${grp.jobs.map(j => `<div class="egEar" data-ear="${esc(j.key)}">${chip(j)}<span class="w">${wordsOfDone(j)}</span></div>`).join("")}</div></div><div class="purchaseSummary">${purchaseMarkup(line)}</div><div class="decisionActions">${grp.jobs.map(j => `<div class="egEarStatus" data-ear="${esc(j.key)}">${chip(j)}${statusOf(j)}<button class="btn ghost sm" data-a="reopen" data-ear="${esc(j.key)}" title="Reopen ${esc(reopenWhat(j, faced))} for changes (${esc(reopenKeeps(grp, faced))})">Reopen ${esc(reopenWord(j, faced))}</button></div>`).join("")}</div>${detail}</div>`;
+            return `<div class="doneRow decidedRow earPairRow hoverItem${open ? " open" : ""}" tabindex="0" aria-expanded="${open}" data-rid="${esc(line.order.receiptId)}" data-key="${esc(j2.key)}" data-ears="${esc(grp.jobs.map(j => j.key).join(" "))}" data-pair="1" title="View engraving details">${ListMedia.pair(line)}<div class="engravingIdentity"><span class="queueLabel">Engraving · decided</span><div class="engravingOrder"><b class="mono">${esc(line.order.receiptId)}</b><span class="sku mono">${esc(line.spec.designSku || "")}</span>${faced ? modeChipHtml(line) : ""}</div><span class="purchaseLabel">${wordsLabel(grp.jobs)}</span><div class="egEars">${grp.jobs.map(j => `<div class="egEar" data-ear="${esc(j.key)}">${chip(j)}<span class="w">${wordsOfDone(j)}</span><span class="egEnd">${statusOf(j)}<button class="btn ghost sm" data-a="reopen" data-ear="${esc(j.key)}" title="Reopen ${esc(reopenWhat(j, faced))} for changes (${esc(reopenKeeps(grp, faced))})">Reopen ${esc(reopenWord(j, faced))}</button></span></div>`).join("")}</div></div><div class="purchaseSummary">${purchaseMarkup(line)}</div>${detail}</div>`;
           })).join("") + `</div>`
         : `<div class="libEmpty">${EG.q && String(EG.q).trim() ? `<b>Nothing decided matches “${esc(String(EG.q).trim())}”.</b>` : window.Recall && Recall.on() ? "Nothing in this set was engraved." : "nothing decided yet"}</div>`;
       bk.querySelectorAll(".doneRow").forEach(rw => {
@@ -8395,6 +8410,7 @@ const Engrave = window.Engrave = (() => {
       });
       if(donePairs.size>400)for(const [k,p] of donePairs){if(donePairs.size<=400)break;if(!p.isConnected)donePairs.delete(k);}
       bk.closest(".egPane.scroll").scrollTop=oldDoneScroll;
+      watchTitles(bk);
       const doneHost=bk.querySelector("#egDone");if(doneHost)ListMedia.more(doneHost,decided.length,Math.min(doneLimit,decided.length),()=>{doneLimit+=40;render();});
       { const rw = bk.querySelector(".doneRow.open");
         if (rw && rw.dataset.pair === "1") { for (const d of rw.querySelectorAll(".egEarDetail")) { const j2 = items().get(d.dataset.ear), host = d.querySelector(".frontHost"); if (j2 && host) void mountPlacementThumbnail(host,j2); } }

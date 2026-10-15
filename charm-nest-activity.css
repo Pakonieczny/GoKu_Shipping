@@ -26,9 +26,7 @@
 .decisionStatus:has(.engravingSeals){gap:2px;overflow:visible}
 .egPlacementSeals:empty{display:none}
 .egPlacementSeals{justify-self:end;overflow:visible}
-.doneRow.placementRow:has(.engravingSeals){grid-template-columns:184px minmax(160px,.85fr) minmax(220px,1.4fr) auto}
-@media(max-width:1100px){.doneRow.placementRow:has(.engravingSeals){grid-template-columns:184px minmax(160px,1fr) minmax(220px,1.2fr)}.egPlacementSeals{grid-column:2/-1;justify-self:start}}
-@media(max-width:900px){.doneRow.placementRow:has(.engravingSeals){grid-template-columns:76px minmax(0,1fr)}}
+/* (where a Placements row puts its seals is the EGROW block at the end of this file) */
 
 /* The back engraving card, one card for every place an order is shown (the order window's Overview and Sheet tab, the sheet window): charm-nest-engraving-seals.js, CNEngravingSeals.panel.
    The card is its own size container (container "eng"): everything inside wraps and stacks by the card's own width, 200 to 700 px, never by the window's,
@@ -102,12 +100,7 @@
 .egPiece[data-slot=""][data-face=back]{background:var(--paper2);color:var(--ink45);box-shadow:inset 0 0 0 1px var(--line)}
 .egPiece.egMode{background:transparent;color:#7a5a1e;box-shadow:inset 0 0 0 1px currentColor;margin-left:2px}
 .egSwitchStack{display:inline-flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0;max-width:100%}
-/* the ENGRAVE lists: one row per earring line, its Left and its Right told on the row; the editor's Left | Right switch (charm-nest-engrave-rows.js) */
-.egEars{display:grid;gap:5px;min-width:0}
-.egEar{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;min-width:0}
-.egEar .w{min-width:0}
-.egPlacementSeals .egEarSeals{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
-.egEarStatus{display:grid;gap:6px;justify-items:start}
+/* the ENGRAVE lists: one row per earring line, its Left and its Right told on the row; the editor's Left | Right switch (charm-nest-engrave-rows.js). The rows themselves: the EGROW block at the end of this file */
 .egEarSwitch{display:inline-flex;gap:3px;padding:2px;border:1px solid var(--line);border-radius:999px;background:var(--paper2);max-width:100%;min-width:0}
 .egEarTab{display:inline-flex;align-items:center;gap:6px;min-width:0;border:0;border-radius:999px;background:transparent;color:inherit;font:inherit;padding:1px 9px 1px 1px;cursor:pointer}
 .egEarTab[aria-pressed=true]{background:var(--card);box-shadow:0 0 0 1px var(--ink45)}
@@ -137,14 +130,102 @@
 .egCycle .egEarTab{flex-wrap:wrap;justify-content:flex-start;gap:1px 6px;padding:3px 9px 3px 3px;text-align:left}
 .egCycle .egEarTab .egEarStage{white-space:normal}
 .egCycle .nav{display:inline-flex;gap:4px}
-/* a switch of discs (three or more pieces): its buttons keep their words and wrap on a narrow window instead of being clipped; a list row tells each disc on two lines: its tag and words, then its font and where it stands */
+/* a switch of discs (three or more pieces): its buttons keep their words and wrap on a narrow window instead of being clipped */
 .egEarSwitch.egMany{flex-wrap:wrap;border-radius:14px}
 .egEarSwitch.egMany .egEarTab{flex:0 0 auto;max-width:100%}
-.egEars.egDiscs .egEar .egBr{flex:0 0 100%;height:0}
-.egEars.egDiscs .egEar .w{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.egEars.egDiscs .egEar .dim{font-size:11px;white-space:nowrap}
-.egEars.egDiscs .egEar [data-font]:empty{display:none}
 .doneDetail.egPairDetail{grid-template-columns:1fr;gap:14px}
 .egEarDetail{display:grid;grid-template-columns:minmax(200px,1.1fr) minmax(140px,.7fr) minmax(220px,1.2fr);gap:14px 18px;align-items:start}
 .egEarDetail .egEarHead{grid-column:1/-1}
 @media (max-width:900px){.egEarDetail{grid-template-columns:1fr 1fr}.egEarDetail dl.meta{grid-column:1/-1}}
+
+/* ═══ EGROW (Paul, 15 Oct 2026, a screenshot of two Engrave rows of the set of 2 bars, listing 532401548): "This UI is broken. Please upgrade the position and placement to always fit within the bounds of each card.
+   Also be clever in how you display and arrange this information. It already looks too crowded and squished. Take a more minimalist approach." ═══════════════════════════════════════════════════════════
+   THE CAUSE: the Placements list is a grid that is as tall as its pane (a flex item that stretches, overflow:auto), and its rows are auto tracks. A row that says min-height:138px has no content-based minimum any more, so when
+   the rows together were taller than the pane the free space was shared out between them and every row was held at its 138px (about 220px with two rows): the lines of a set of two bars, of discs or of both faces ran out of
+   the bottom of the card and over the next. Now the tracks are max-content (a row is as tall as what it holds, whatever the pane is), the rows have no fixed height at all, and the arrangement below is calm:
+   pictures | order, the words one line per piece (a small chip, the words, its own state on that same line), ONE muted line of what was bought | seals / actions; under 600px the row is two bands (pictures and order on top,
+   the pieces and the rest under). The Placements and Decided rows only (.placementRow, .decidedRow: no other list is touched); this block supersedes their earlier rules in charm-nest-1.html. */
+.egPlacementList,#egDone{grid-auto-rows:max-content;align-content:start}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow){--thumb-size:88px;display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto 1fr;grid-template-areas:"media id" "media sum";column-gap:22px;row-gap:0;align-items:start;min-height:0;height:auto;max-height:none;padding:16px 18px;border-left-width:3px;width:100%;min-width:0;box-sizing:border-box;overflow:visible}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow):has(>.egPlacementSeals:not(:empty)){grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"media id seals" "media sum seals"}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow):has(>.decisionActions){grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"media id actions" "media sum actions"}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow).quietRow{grid-template-columns:minmax(0,1fr);grid-template-areas:"id"}
+/* the pictures: the same two, quieter (the reload mark is on the picture itself, there on hover or focus only, and takes no room) */
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .comparePair{grid-area:media;align-self:start;grid-template-columns:repeat(2,var(--thumb-size));gap:8px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .comparePair figure{position:relative;gap:4px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .comparePair .placementThumb{width:var(--thumb-size);height:var(--thumb-size)}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .comparePair figcaption{position:static;min-height:0;font:400 9px/1.3 var(--sans);color:var(--ink45);letter-spacing:.02em}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .thumbReset{position:absolute;top:3px;right:3px;width:22px;height:22px;padding:0;display:grid;place-items:center;border-radius:50%;background:rgba(255,255,255,.92);box-shadow:0 0 0 1px var(--line2);opacity:0;pointer-events:none;transition:opacity .15s}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .thumbReset[hidden]{display:none}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) figure:hover .thumbReset,:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) figure:focus-within .thumbReset,:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .thumbReset:focus-visible{opacity:1;pointer-events:auto}
+@media(hover:none){:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .thumbReset{opacity:.85;pointer-events:auto}}
+/* the identity: the order and its SKU, one quiet caption, then one line for each piece */
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .engravingIdentity{grid-area:id;display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;row-gap:3px;align-content:start;align-self:start;min-width:0;overflow:visible}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .engravingIdentity>*{grid-column:1/-1;min-width:0}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .queueLabel{display:none}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .engravingOrder{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 10px;margin:0;min-width:0}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .engravingOrder .onum,:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .engravingOrder b{font:600 13px/1.4 var(--mono);color:var(--ink)}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .engravingOrder .sku{font:400 11.5px/1.4 var(--mono);color:var(--ink45);white-space:nowrap;overflow-wrap:normal}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .engravingIdentity>.purchaseLabel{margin-top:9px;font:400 9.5px/1.3 var(--sans);letter-spacing:.09em;text-transform:uppercase;color:var(--ink45)}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .engravingIdentity>.w{grid-column:1;margin-top:2px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .engravingIdentity>[data-stage]{grid-column:2;margin-top:2px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .w{font:600 14px/1.4 var(--serif);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal;min-width:0;max-width:100%}
+/* a piece's own state, on its own line: a small dot and a few words (the dot is the state's colour) */
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) [data-stage]{display:inline-flex;align-items:center;gap:6px;font:400 11px/1.3 var(--sans);color:var(--ink45);white-space:nowrap}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) [data-stage]:empty{display:none}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) [data-stage]::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--ink25,#b9b3a6)}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) [data-stage][data-s=review]::before{background:var(--gold2)}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) [data-stage][data-s=words]::before,:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) [data-stage][data-s=blocked]::before{background:var(--clay)}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) [data-stage][data-s=approved]::before,:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) [data-stage][data-s=written]::before{background:var(--sage)}
+/* the pieces of a line (a pair's two ears, the discs, the two bars, the faces): chip | words | state, the columns shared by every piece so the words line up */
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEars{display:grid;grid-template-columns:max-content minmax(0,1fr) max-content;column-gap:12px;row-gap:7px;align-items:center;margin-top:3px;min-width:0;max-width:760px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar{grid-column:1/-1;display:grid;grid-template-columns:subgrid;align-items:center;min-height:24px;min-width:0}
+@supports not (grid-template-columns:subgrid){:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar{grid-template-columns:auto minmax(0,1fr) auto;column-gap:12px}}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar .egPiece{padding:2px 9px;font:500 9.5px/1.3 var(--mono);letter-spacing:.07em}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar .w{min-width:0}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEnd{display:inline-flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0;white-space:nowrap}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEnd .dim{font:400 11px/1.3 var(--sans);color:var(--ink45);white-space:nowrap}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEars[data-fonts=same] [data-font],:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) [data-font]:empty{display:none}
+/* what was bought: ONE muted line (Necklace · Gold · 16" & 18" · Angelina), cut with … when it is long: its whole text is the line's title; the labelled list is the order's own Details */
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .purchaseSummary{grid-area:sum;display:block;margin:6px 0 0;padding:0;border:0;min-width:0;min-height:0;align-self:start;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font:400 12px/1.5 var(--sans);color:var(--ink45)}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .purchaseSummary :is(.purchaseType,.purchaseChoices,dl,dl>div){display:contents}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .purchaseSummary .purchaseLabel,:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .purchaseSummary dt{display:none}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .purchaseSummary :is(strong,dd,.purchasePair,.purchaseMissing){display:inline;margin:0;font:inherit;color:inherit}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .purchaseSummary :is(dd,.purchasePair,.purchaseMissing)::before{content:"·";margin:0 .5em}
+/* the seals of a Placements row sit in a column of their own (under the pieces on a narrow row), a little smaller than elsewhere, never past the card */
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egPlacementSeals{grid-area:seals;align-self:center;justify-self:end;display:flex;flex-direction:column;align-items:flex-end;gap:6px;min-width:0;overflow:visible}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egPlacementSeals:empty{display:none}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egPlacementSeals .egEarSeals{display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .sealRow{margin:0;padding:0;--seal-fit:38px!important}
+/* the Decided row: the decision (its state, its seal, Reopen) on the right of the row, or on each piece's own line when the row has several */
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .decisionActions{grid-area:actions;align-self:center;display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px 12px;min-width:0;min-height:0;margin:0;padding:0;border:0}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .decisionStatus{display:inline-flex;align-items:center;gap:8px;min-width:0}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .decisionStatus .by{font:400 11px/1.3 var(--sans);color:var(--ink45);white-space:normal}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .ost{white-space:nowrap}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .decisionActions .btn,:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEnd .btn{min-height:30px;padding:5px 12px;font-size:12px;white-space:nowrap;width:auto}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow)>.doneDetail{grid-area:auto;grid-column:1/-1;grid-row:3;margin-top:12px}
+/* narrow (the list under 600px wide: a phone, or a window with its rail open): two bands, never squeezed: the pictures and the order on top, the pieces, what was bought and the seals under */
+@container (max-width:600px){
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow){--thumb-size:62px;grid-template-columns:auto minmax(0,1fr);grid-template-rows:none;grid-template-areas:"media order" "cap cap" "jobs jobs" "sum sum" "seals seals" "actions actions";column-gap:14px;padding:12px 14px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow):has(>.egPlacementSeals:not(:empty)),:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow):has(>.decisionActions){grid-template-columns:auto minmax(0,1fr);grid-template-areas:"media order" "cap cap" "jobs jobs" "sum sum" "seals seals" "actions actions"}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow).quietRow{grid-template-columns:minmax(0,1fr);grid-template-areas:"id"}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .engravingIdentity{display:contents}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .engravingOrder{grid-area:order;align-self:center}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .engravingIdentity>.purchaseLabel{grid-area:cap;margin-top:12px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .engravingIdentity>.w{grid-area:jobs;margin-top:2px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .engravingIdentity>[data-stage]{grid-area:cap;justify-self:end;margin-top:12px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEars{grid-area:jobs;grid-template-columns:minmax(0,1fr) auto;row-gap:12px;margin-top:6px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar{row-gap:3px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar .egPiece{grid-column:1;grid-row:1;justify-self:start}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar .egEnd{grid-column:2;grid-row:1}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar:has(.btn) .egEnd{display:contents}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar:has(.btn) .decisionStatus{grid-column:2;grid-row:1;justify-self:end}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar:has(.btn) .w{grid-column:1;grid-row:2}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar:has(.btn) .btn{grid-column:2;grid-row:2;justify-self:end}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar .w{grid-column:1/-1;grid-row:2}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .purchaseSummary{margin-top:10px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egPlacementSeals{grid-area:seals;align-self:start;justify-self:start;flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 12px;margin-top:10px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egPlacementSeals .egEarSeals{justify-content:flex-start}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .decisionActions{grid-area:actions;align-self:start;justify-content:flex-start;margin-top:10px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow)>.doneDetail{grid-row:7;margin-top:12px}
+}
