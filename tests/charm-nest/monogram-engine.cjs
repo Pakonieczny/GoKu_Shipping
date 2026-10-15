@@ -519,6 +519,31 @@ const ABC = [A, Pp, V];
   ok(!crowded.ok || crowded.report.review === false || crowded.report.limits.every(l => l.key && l.text), 'every flagged limit has a name and a plain text');
 }
 
+// ── 3h · the adjustment contract and the metrics of a built monogram (MONOESG, Paul, 15 Oct 2026) ──
+{
+  const R = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  const nz = (letter, rings) => ({ letter, fill: 'nonzero', rings });
+  const left = nz('C', [R(0, 0, 4, 30), R(0, 26, 12, 30), R(0, 0, 8, 4)]), right = nz('D', [R(8, 0, 12, 30), R(0, 26, 12, 30), R(4, 0, 12, 4)]), mid = { letter: 'M', rings: [R(0, 0, 24, 40)] };
+  ok(M0.ADJUST_LIMITS && M0.ADJUST_LIMITS.scale[0] === 0.85 && M0.ADJUST_LIMITS.scale[1] === 1.15 && M0.ADJUST_LIMITS.sx[0] === 0.8 && M0.ADJUST_LIMITS.sx[1] === 1.25 && M0.ADJUST_LIMITS.dxMm[1] === 2 && M0.ADJUST_LIMITS.dyMm[1] === 1.5, 'the adjust bounds are exported: scale 0.85..1.15, sx 0.8..1.25, dx +-2 mm, dy +-1.5 mm');
+  ok(M0.ESG_PROFILE && M0.ESG_PROFILE.aspect === 0.88 && M0.ESG_PROFILE.wMm === 13 && M0.LIMITS && M0.LIMITS.OVERLAP === 0.25 && M0.LIMITS.BALANCE_UPPER === 0.6, 'ESG_PROFILE and LIMITS are exported');
+  const base = M0.build({ left, middle: mid, right }); sound(base, 'base');
+  eq(base.report.adjust, { L: { scale: 1, sx: 1, dx: 0, dy: 0 }, M: { scale: 1, sx: 1, dx: 0, dy: 0 }, R: { scale: 1, sx: 1, dx: 0, dy: 0 } }, 'no adjust: report.adjust is all ones and zeros');
+  // absurd values are clamped inside the engine and echoed as applied
+  const ab = M0.build({ left, middle: mid, right }, { adjust: { L: { scale: 9, sx: 9, dx: 50, dy: -50 }, M: { scale: 0.1 }, R: { sx: 'x', dx: NaN, dy: 1 } } });
+  ok(ab.ok && ab.report.adjust.L.scale === 1.15 && ab.report.adjust.L.dx === 2 && ab.report.adjust.L.dy === -1.5 && ab.report.adjust.M.scale === 0.85 && ab.report.adjust.R.sx === 1 && ab.report.adjust.R.dx === 0 && ab.report.adjust.R.dy === 1 && ab.report.adjust.L.sx <= 1.25 && ab.report.adjust.L.sx >= 0.8, 'absurd adjust values are clamped to the bounds and echoed: ' + JSON.stringify(ab.report.adjust));
+  const big = M0.build({ left, middle: mid, right }, { adjust: { R: { scale: 1.1 } } });
+  ok(big.ok && Math.abs(by(big, 'right').scale / by(base, 'right').scale - 1.1) < 0.01, 'scale makes a letter bigger by that factor: ' + by(big, 'right').scale + ' / ' + by(base, 'right').scale);
+  const wideR = M0.build({ left, middle: mid, right }, { adjust: { R: { sx: 1.1 } } }); ok(wideR.ok && by(wideR, 'right').scaleX > by(base, 'right').scaleX, 'sx stretches a letter across only');
+  const mv = M0.build({ left, middle: mid, right }, { adjust: { L: { dy: 1.0 } } });
+  ok(mv.ok && Math.abs((by(mv, 'left').bboxPt[1] - by(mv, 'middle').bboxPt[1]) - (by(base, 'left').bboxPt[1] - by(base, 'middle').bboxPt[1]) - 1.0 / MM) < 0.2, 'dy moves the placed letter by that many mm (up)');
+  const apart = M0.build({ left, middle: mid, right }, { adjust: { L: { dx: -2.0 }, R: { dx: 2.0 } } }); ok(apart.ok || /no longer touch|touch/.test(apart.why), 'a shift that pulls a letter away is refused plainly or still holds: ' + (apart.ok ? 'holds' : apart.why));
+  // the metrics every caller reads
+  const m = base.report.metrics;
+  ok(m && m.piece && typeof m.piece.aspect === 'number' && m.body.L && m.body.M && m.body.R && typeof m.ratios.sideHeightL === 'number' && typeof m.align.dyLMm === 'number' && typeof m.overlap.L === 'number' && m.visibleWidthMm && typeof m.crowdMm.total === 'number' && m.countersOpen && Array.isArray(m.contacts) && m.balance.LM && Array.isArray(m.violations) && typeof m.ok === 'boolean' && typeof m.distance === 'number', 'report.metrics carries sizes, ratios, alignment, overlap, visible width, crowding, counters, contacts, balance, violations, distance');
+  ok(m.violations.every(v => v.rule && v.text && v.key) && m.ok === (m.violations.length === 0), 'a violation names its rule and says it in plain words: ' + JSON.stringify(m.violations.slice(0, 2)));
+  ok(m.contacts.every(c => ['LM', 'MR'].includes(c.pair) && ['upper', 'lower', 'mid'].includes(c.zone) && Number.isFinite(c.xPt) && Number.isFinite(c.yPt) && c.yPt >= -0.01 && c.yPt <= base.bboxPt[3] + 0.01), 'each contact has pair, zone and a place inside the piece (points, y up)');
+}
+
 // ── 3d · real combinations: three 26-letter alphabets (the vendored fonts; Paul's own fonts too when MONO_FONTS names them), the middle one a different font ───────────────────────────────────────────────
 const sampleAlphabets = async () => {
   const AL = require('./_monogramAlphabets.cjs'), set = await AL.make(), cache = {};
