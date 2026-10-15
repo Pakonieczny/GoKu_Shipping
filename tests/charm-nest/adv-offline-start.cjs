@@ -14,7 +14,7 @@ function world(failWith) {
   const c = { console, Promise, Object, Error, Date, failWith, log: { loops: 0, stops: [], saves: 0 } };
   vm.createContext(c);
   vm.runInContext(`
-    const B = { run: null }, Recall = { on: () => false }, Gate = { state: () => ({}) };
+    const B = { run: null }, Recall = { on: () => false }, Gate = { state: () => ({}) }, claimRun = () => true, holdsRun = async () => true;   // (the second-tab run lock, ADV-AUTORUN: this tab holds it)
     const toast = () => {}, agent = () => {}, renderBanner = () => {}, clearRunState = () => true, newRun = mode => ({ runId: "run-1", status: "running", step: "pull", mode, errors: [] });
     const loop = () => { log.loops++; return Promise.resolve(); };
     const stop = (why, fix) => { log.stops.push(why); B.run.status = "stopped"; B.run.stoppedBy = why; };

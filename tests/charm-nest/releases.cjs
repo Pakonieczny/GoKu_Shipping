@@ -40,6 +40,7 @@ const pages=[], writes=[]; let seq=1, allocations=0;
 const allSheets=()=>pages, labelOf=m=>m, today=()=> '2026-09-19', refreshAllCards=()=>{};
 const api=async(n,b)=>{writes.push(b);return {}};
 const Orders={rows:()=>B.orders.rows}, Engrave={items:()=>B.engrave.items,writeBacks:async()=>{},relinkAll(){}};
+const claimRun=()=>true, holdsRun=async()=>true;   // (the second-tab run lock, ADV-AUTORUN: this tab holds it)
 const Pool={update:async(ids,p)=>writes.push({ids,p})};
 const RunCtl={onSheetDone(){}};
 const CN={sheetFileBase:sh=>'Set-'+sh.seq+'-'+sh.metal+'-'+sh.sheetIndex,persistSheet:async(sh)=>{writes.push(sh.fileBase);const s=[...B.sets.values()][0];s.sheetIds.push(sh.sheetId);s.materials.push(sh.metal)}};
@@ -88,6 +89,7 @@ vm.runInContext(part('Gate','/* ═══ 21'),c);
  const api=async()=>({run:rec}),agent=()=>{},toast=()=>{},renderBanner=()=>{},save=async()=>{},loop=async()=>{};
  const Orders={rows:()=>[row],interpretAll(){},pull:async(run,opts)=>{assert.equal(run,null);assert.deepEqual(opts.receiptIds,['o']);}};
  const restoreRunSheets=async()=>restores++,Pool={addAll:async()=>{}},allSheets=()=>[],reviewStop=()=>false,preservePendingSheets=()=>{};
+ const claimRun=()=>true,holdsRun=async()=>true,saveSoft=async()=>true;   // (the second-tab run lock, ADV-AUTORUN: this tab holds it; ADV-OFFLINE: the soft save)
  `+code.slice(code.indexOf('  async function resumeRun(runId)'),code.indexOf('  async function restoreRunSheets(rec)')),resume);
  await vm.runInContext(`(async()=>{await resumeRun('r1');assert.equal(rec.step,'engrave');assert.equal(restores,1);assert.equal(row.poolIds[0],'p1');assert.equal(row.state,'pooled');})()`,resume);
  await vm.runInContext(`(async()=>{

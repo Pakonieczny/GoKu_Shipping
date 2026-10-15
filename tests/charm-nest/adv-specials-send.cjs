@@ -68,7 +68,7 @@ async function designFixture() {
     const card = rid => `#rvList .reviewListRow[data-rid="${rid}"]`;
     const dropDesign = (sel, name) => page.evaluate(({ sel, name, b64 }) => {
       const dt = new DataTransfer(); dt.items.add(new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], name));
-      const n = document.querySelector(sel); for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt }));
+      const n = document.querySelector(sel); for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt })); { const a = document.querySelector('#cuAsk [data-ask-yes]'); if (a) a.click(); }
     }, { sel, name, b64: DESIGN_AI });
     const addDesign = async (rid, name) => {
       await dropDesign(card(rid), name);
