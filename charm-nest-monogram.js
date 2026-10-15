@@ -426,24 +426,37 @@
 
     // reach: the placement of one side nearest the asked overlap whose join holds (see NECK_OK_MM); else the best that stays valid; else the least bad that touches
     let searched = 0;
-    function reachSide(P, side) {
+    function reachSide(P, side, jFix) {   // jFix: both sides move up or down by the same step, so they stay level with each other
       const dyStep = Math.max(1, Math.round(REACH_DY * PM.h)), cands = [];
       for (let k = 0; REACH_LO + k * STEP <= o.reachMax + 1e-9; k++) {
         const ov = Math.round((REACH_LO + k * STEP) * 1e6) / 1e6;
-        for (let j = -REACH_DYN; j <= REACH_DYN; j++) cands.push({ ov, j, cost: (ov >= o.overlap ? ov - o.overlap : 1.5 * (o.overlap - ov)) / STEP + 2.5 * Math.abs(j) });
+        cands.push({ ov, cost: (ov >= o.overlap ? ov - o.overlap : 1.5 * (o.overlap - ov)) / STEP });
       }
-      cands.sort((a, b) => a.cost - b.cost || b.ov - a.ov || a.j - b.j);
+      cands.sort((a, b) => a.cost - b.cost || b.ov - a.ov);
       let valid = null, any = null;
       for (const c of cands) {
-        const x = xOf(P, side, c.ov), y = dyOf(P) + c.j * dyStep, q = pairQ(P, x, y, NECK_OK_MM); searched++;
+        const x = xOf(P, side, c.ov), y = dyOf(P) + jFix * dyStep, q = pairQ(P, x, y, NECK_OK_MM); searched++;
         if (!q) continue;
-        const hit = { x, y, ov: c.ov, j: c.j, q };
+        const hit = { x, y, ov: c.ov, j: jFix, q };
         if (q.good) return hit;
         if (q.valid && (!valid || q.neck > valid.q.neck + 1e-9 || (q.neck > valid.q.neck - 1e-9 && q.i > valid.q.i))) valid = hit;
         const pen = q.loose * 10 + Math.max(0, HOLES_MIN - q.kept) + Math.max(0, q.pct - OVERLAP_MAX_PCT) / 100;
         if (!any || pen < any.pen - 1e-12 || (pen < any.pen + 1e-12 && q.neck > any.q.neck)) any = Object.assign({ pen }, hit);
       }
       return valid || any;
+    }
+    // both sides at once, with one shared vertical step j (nearest 0 first): the first j where both joins hold, else the j whose weaker join is the widest
+    function reachBoth(keep) {
+      let bestPair = null;
+      for (const j of [0, 1, -1, 2, -2, 3, -3].filter(v => Math.abs(v) <= REACH_DYN)) {
+        const side = (k, P, nm) => (j === 0 && keep && joinsOf(keep)[k / 2] >= NECK_OK_MM - 1e-9) ? { x: keep[k].dx, y: keep[k].dy, ov: null, j: 0, q: { good: true, valid: true, neck: joinsOf(keep)[k / 2], kept: 1, loose: 0 }, keep: true } : reachSide(P, nm, j);
+        const l = side(0, PL, 'left'), r = side(2, PR, 'right');
+        if (!l || !r) continue;
+        const ok = h => h.q.good, score = [Math.min(l.q.valid ? l.q.neck : -1, r.q.valid ? r.q.neck : -1)];
+        if (ok(l) && ok(r)) return { hl: l, hr: r };
+        if (!bestPair || score[0] > bestPair.score + 1e-9) bestPair = { hl: l, hr: r, score: score[0] };
+      }
+      return bestPair;
     }
 
     // connect: from the start overlap upward until the three letters are one piece
@@ -467,9 +480,9 @@
     // a join that only grazes (or no join at all): each side is searched over a wider reach
     let reached = false, reachedSides = false;
     if (o.reach && (!best || Math.min(...best.joins) < NECK_OK_MM - 1e-9)) {
-      const keep = best ? best.att.pl : null, ask = (k, P, side) => (keep && joinsOf(keep)[k / 2] >= NECK_OK_MM - 1e-9) ? { x: keep[k].dx, y: keep[k].dy, keep: true } : reachSide(P, side);
-      const hl = ask(0, PL, 'left'), hr = ask(2, PR, 'right');
-      if (hl && hr) {
+      const both = reachBoth(best ? best.att.pl : null);
+      if (both) {
+        const hl = both.hl, hr = both.hr;
         reachedSides = true;
         const pl = placeAt([hl.x, hl.y], [hr.x, hr.y]); let att = attemptPl(pl, null), bars = 0; tries++;
         if (!att.connected) { const m = mend(pl, att); if (m) { att = m.att; bars = m.bars; } }
