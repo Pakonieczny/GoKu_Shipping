@@ -150,7 +150,10 @@
       for (const s of seeds) {
         const polys = pl(s), pts = sampleOf(s, polys);
         const sameBox = b => { const iw = Math.min(s.bbox[2], b.outlineBbox[2]) - Math.max(s.bbox[0], b.outlineBbox[0]), ih = Math.min(s.bbox[3], b.outlineBbox[3]) - Math.max(s.bbox[1], b.outlineBbox[1]); return iw > 0 && ih > 0 && iw * ih >= 0.85 * (bbArea(s.bbox) + bbArea(b.outlineBbox) - iw * ih); };   // the same path drawn twice (a stroked outline and its twin)
-        const holder = all.find(b => sameBox(b) || (bbNear(s.bbox, b.bbox, 0) && pts.length && pts.filter(p => inPolys(p[0], p[1], b.polys)).length / pts.length >= 0.6));
+        // a cut path lying inside the OUTER edge of a body is a piece of that body, in the window of its plate (the loose disc of the Circle_4432 ring, with its own squared hole): the even-odd test
+        // alone called it "not held" (it stands in a hole) and the design became a pair of two bodies
+        const outerOf = b => b._outer || (b._outer = b.polys.reduce((m, p) => (!m || bbArea(bbOfPolys([p])) > bbArea(bbOfPolys([m])) ? p : m), null));
+        const holder = all.find(b => sameBox(b) || (bbNear(s.bbox, b.bbox, 0) && pts.length && pts.filter(p => inPolys(p[0], p[1], b.polys) || (outerOf(b) && inPolys(p[0], p[1], [outerOf(b)]))).length / pts.length >= 0.6));
         if (holder) continue;                                  // a cut-out or inner ring of a body
         const maxDim = Math.max(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]);
         const ringLike = maxDim <= RING_MAX_PT && (s.subpaths || []).length <= 2 && (s.subpaths || []).every(sp => sp.length <= 20);

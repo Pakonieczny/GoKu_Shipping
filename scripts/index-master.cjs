@@ -318,7 +318,8 @@ async function main(argv, log = console.log) {
     items = items.filter(({ l }) => {
       const mine = [l.sku, ...(l.extra || []).map(x => x.sku)].filter(Boolean).map(x => String(x).toUpperCase());
       for (const sk of mine) { const e = held.get(sk); if (e && e.masterHash && e.masterHash !== masterHash) supersede.add(e.masterHash); }
-      if (!o.all && !only && [l].concat(l.extra || []).every(x => held.has(String(x.sku).toUpperCase()) && (!x.size || !!(held.get(String(x.sku).toUpperCase()).sizes || {})[String(x.size).toUpperCase()]))) return false;   // (held per size: "ALPHA_1 · M" is new beside a held "ALPHA_1 · S")
+      // held: the library has it (and the size), and it was not written by an older reader from this same file
+      if (!o.all && !only && [l].concat(l.extra || []).every(x => { const e = held.get(String(x.sku).toUpperCase()); if (!e) return false; const sz = x.size ? (e.sizes || {})[String(x.size).toUpperCase()] : null; if (x.size && !sz) return false; return !(e.masterHash === masterHash && (+((sz || e).readerV) || 0) < P.READER_VERSION); })) return false;   // (held per size: "ALPHA_1 · M" is new beside a held "ALPHA_1 · S")
       return true;
     });
     heldCount = before - items.length;
@@ -369,7 +370,7 @@ async function main(argv, log = console.log) {
     }
     const reasons = []; if (open) reasons.push("open outline"); if (!flipOk) reasons.push(flipWhy);
     let hashKept = false;
-    const entry = { sku: l.sku, size: l.size, charmHash, widthPt: sil.bboxOuter[2] - sil.bboxOuter[0], heightPt: sil.bboxOuter[3] - sil.bboxOuter[1], areaPt2: sil.areaPt2, members: c.members.length, holes: pm ? pm.holes : P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: aiUp.path, aiUrl: aiUp.url, thumbPath: thumb && thumb.path, thumbUrl: thumb && thumb.url, open, labelSource: "text", confidence: 1, blocked: reasons.length ? reasons.join("; ") : null };
+    const entry = { sku: l.sku, size: l.size, readerV: P.READER_VERSION, charmHash, widthPt: sil.bboxOuter[2] - sil.bboxOuter[0], heightPt: sil.bboxOuter[3] - sil.bboxOuter[1], areaPt2: sil.areaPt2, members: c.members.length, holes: pm ? pm.holes : P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: aiUp.path, aiUrl: aiUp.url, thumbPath: thumb && thumb.path, thumbUrl: thumb && thumb.url, open, labelSource: "text", confidence: 1, blocked: reasons.length ? reasons.join("; ") : null };
     if (pm) entry.pair = pm.field;                                       // { v: 1, bodies, mismatched }: only a folded pair carries it (a record without it leaves a stored one alone)
     if (Pair && Pair.entryFields) Object.assign(entry, Pair.entryFields(c, !!pm));   // facings (a folded pair drawn with the right body as the mirror image of the left: the order window reads it without the drawing; a person's words stand over it) and sym (does the design look the same in a mirror: the Master tab asks a person which way a directional one faces), the words the server indexer writes too
     if (net && only && !o.newHash) {                                   // the held record's hash stands while the drawing's geometry is the same

@@ -2681,13 +2681,21 @@ const Master = window.Master = (() => {
       const supersede = new Set();
       let held = 0;
       // a SKU is held when the library has it and, for a line that names a size, has that size ("ALPHA_1 · M" is new beside a held "ALPHA_1 · S")
-      const holds = l => { const e = known.get(String(l.sku || "").toUpperCase()); return !!e && (!l.size || !!(e.sizes && e.sizes[String(l.size).toUpperCase()])); };
+      // ...and a design this FILE's earlier indexing wrote with an older reader is not held: the reader has improved since (a plug drawn into the Circle, a hoop welded), and the file is the proof it is the same design
+      let older = 0;
+      const holds = l => {
+        const e = known.get(String(l.sku || "").toUpperCase()); if (!e) return false;
+        const sz = l.size ? e.sizes && e.sizes[String(l.size).toUpperCase()] : null; if (l.size && !sz) return false;
+        if (e.masterHash === masterHash && (+((sz || e).readerV) || 0) < P.READER_VERSION) { older++; return false; }
+        return true;
+      };
       for (const c of labelledCharms) {
         const lines = [{ sku: c.sku, size: c.skuSize }].concat((c.extraSkus || []).map(x => ({ sku: x.sku, size: x.size })));
         if (!reindexAll && lines.every(holds)) { c.alreadyHeld = true; held++; continue; }
         for (const l of lines) { const e = known.get(String(l.sku || "").toUpperCase()); if (e && e.masterHash && e.masterHash !== masterHash) supersede.add(e.masterHash); }   // (rebuilt whole: the master they came from is superseded, with the tick or without it)
       }
-      job.held = held; job.supersede = [...supersede];
+      job.held = held; job.supersede = [...supersede]; job.older = older;
+      if (older && !reindexAll) say("MASTER", `${older} SKU line(s) of this file were indexed by an older reader and are built again with the current one`);
       if (held) say("MASTER", `${held} charm(s) are already in the library and are left as they are · ${labelledCharms.length - held} to index${reindexAll ? "" : " (tick “re-index SKUs already held” to rebuild them all)"}`);
       if (labelledCharms.length && held === labelledCharms.length) {
         // nothing to build. What the sheet still leaves open stays on the card, a design the library holds as ONE body of a pair this sheet draws is said, and a library that lost this file's record (a run that stopped after the SKUs) gets it back
@@ -2850,7 +2858,7 @@ const Master = window.Master = (() => {
       const dimsMm = pm ? Pr.bodiesOf(pm.charm).map(b => [(b.bbox[2] - b.bbox[0]) * MM, (b.bbox[3] - b.bbox[1]) * MM]) : [[c.widthPt * MM, c.heightPt * MM]];   // (a pair is judged body by body: the two together are not one charm's size)
       const outOfRange = dimsMm.some(([wMm, hMm]) => Math.max(wMm, hMm) > (+S.settings.sizeMaxMm || 60) || Math.max(wMm, hMm) < (+S.settings.sizeMinMm || 3));
       const sym = (() => { try { const Pr = window.CharmNestPair, b = Pr && Pr.bodiesOf ? Pr.bodiesOf(c)[0] : null; return b && Pr.symmetryOf ? Pr.symmetryOf(b).level : undefined; } catch (_) { return undefined; } })();   // does the design look the same in a mirror: the "faces" box in the Master tab is shown only when it does not
-      entries.push({ sku: prim.sku, size: prim.size, charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: pm ? pm.holes : P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: ai && ai.path, aiUrl: ai && ai.url, thumbPath: png && png.path, thumbUrl: png && png.url, open: !!c.open, labelSource: c.labelSource || "text", confidence: c.labelConfidence == null ? null : c.labelConfidence, blocked: reasons.length ? reasons.join("; ") : null, outOfRange, flipOk, backKeepOut: keepOutOf(c).length ? keepOutOf(c).map(m => ({ layer: m.layer })) : null, ...(pm ? Object.assign({ pair: pm.field }, Pr.entryFields ? Pr.entryFields(pm.charm, true) : {}) : sym ? { sym } : {}) });
+      entries.push({ sku: prim.sku, size: prim.size, readerV: P.READER_VERSION, charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: pm ? pm.holes : P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: ai && ai.path, aiUrl: ai && ai.url, thumbPath: png && png.path, thumbUrl: png && png.url, open: !!c.open, labelSource: c.labelSource || "text", confidence: c.labelConfidence == null ? null : c.labelConfidence, blocked: reasons.length ? reasons.join("; ") : null, outOfRange, flipOk, backKeepOut: keepOutOf(c).length ? keepOutOf(c).map(m => ({ layer: m.layer })) : null, ...(pm ? Object.assign({ pair: pm.field }, Pr.entryFields ? Pr.entryFields(pm.charm, true) : {}) : sym ? { sym } : {}) });
       if (reasons.length) blocked.push({ sku: prim.sku, reason: reasons.join("; ") }); skus.push(prim.sku);
       for (const x of extras) { entries.push(Object.assign({}, entries[entries.length - 1], { sku: x.sku, size: x.size })); skus.push(x.sku); if (reasons.length) blocked.push({ sku: x.sku, reason: reasons.join("; ") }); }   // every further line under the charm: the same design under another SKU
       job.progress = `written ${++n}/${live.length}`; if (job.bar) job.bar.label(`Writing the charm library · ${job.name}`).set(n, live.length); if (n % 5 === 0) render();

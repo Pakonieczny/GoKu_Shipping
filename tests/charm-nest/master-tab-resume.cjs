@@ -176,6 +176,28 @@ const libSkus = st => st.list('Charm_Master_Index').map(e => e._id).sort();
     const stacked = await scene({ page: [420, 300], bodies: [{ shape: 'house', x: 60, y: 150, w: 45, h: 45, ink: A }], labels: [{ text: 'Spider /', cx: 82.5, top: 149 }, { text: 'Web_1', cx: 82.5, top: 141 }] });
     r = await br.upload(stacked, 'STACKED.ai'); j = await job();
     ok(libSkus(st).join() === 'WEB_1' && j.log.some(l => /left out: “Spider \/” \(under WEB_1\)/.test(l)), 'a half label that could not be joined is said, not dropped in silence: ' + j.log.join(' | '));
+    
+    // 19 · the loose disc in a ring's window is drawn into the design, which stays one body, hoop-up (CIRCLE_4432's plug, Paul 15 Oct)
+    await wipe();
+    const kk = 0.5523, circ = (cx, cy, r) => `${cx + r} ${cy} m ${cx + r} ${cy + kk * r} ${cx + kk * r} ${cy + r} ${cx} ${cy + r} c ${cx - kk * r} ${cy + r} ${cx - r} ${cy + kk * r} ${cx - r} ${cy} c ${cx - r} ${cy - kk * r} ${cx - kk * r} ${cy - r} ${cx} ${cy - r} c ${cx + kk * r} ${cy - r} ${cx + r} ${cy - kk * r} ${cx + r} ${cy} c h`;
+    const ring = [`q 0.05 0.05 0.05 RG 0.5 w ${circ(100, 170, 22)} ${circ(100, 170, 17)} S Q`, `q 0.05 0.05 0.05 RG 0.5 w ${circ(96, 170, 8)} 93 167 6 6 re S Q`];
+    const ringSheet = await scene({ page: [420, 300], bodies: [{ shape: 'house', x: 300, y: 150, w: 45, h: 45, ink: C }], extraOps: ring, labels: [{ text: 'CIRCLE_T_1', cx: 100, top: 141 }, { text: 'CONTROL_1', cx: 322.5, top: 146 }] });
+    r = await br.upload(ringSheet, 'RING.ai'); j = await job();
+    const ce = st.doc('Charm_Master_Index', 'CIRCLE_T_1');
+    ok(j.state === 'done' && ce && ce.members === 2 && !ce.pair && Math.round(ce.upAngle) === 90, 'the disc in the ring\'s window is drawn into the design, which is one body, hoop-up: ' + JSON.stringify(ce && { m: ce.members, up: ce.upAngle, pair: ce.pair }) + ' ' + j.log.join(' | '));
+    ok(j.unlabelled.length === 0, 'and it is not a charm left without a SKU');
+    { const { CharmNestPDF: PDF } = require('../../netlify/functions/_charmNestPdf.js'); const pr = await PDF.parseSource(new Uint8Array(st.blobs.get(ce.aiPath).buf), 'x.ai'); ok(PDF.groupCharms(pr, { minPt: 6 }).charms.length === 2, 'the design file holds the plate and its disc'); }
+
+    // 20 · designs this file's earlier indexing wrote with an older reader are built again; another master's are left alone
+    await wipe(); await br.upload(sheet, 'PAIR.ai');
+    for (const e of st.list('Charm_Master_Index')) { const d = st.doc('Charm_Master_Index', e._id); delete d.readerV; }
+    await page.evaluate(() => Master.load(true));
+    r = await br.upload(sheet, 'PAIR.ai'); j = await job();
+    ok(j.state === 'done' && j.written === 2 && j.log.some(l => /older reader and are built again/.test(l)) && st.list('Charm_Master_Index').every(e => e.readerV >= 2), 'both SKUs an older reader wrote are rebuilt by the next drop of their file: ' + JSON.stringify({ w: j.written, v: st.list('Charm_Master_Index').map(e => e.readerV) }));
+    r = await br.upload(sheet, 'PAIR.ai'); j = await job(); ok(j.written === 0 && j.held === 2, 'and the drop after that builds nothing');
+    for (const e of st.list('Charm_Master_Index')) { const d = st.doc('Charm_Master_Index', e._id); delete d.readerV; d.masterHash = 'ffffffffeeeeeeee'; d.masterName = 'OTHER.ai'; }
+    await page.evaluate(() => Master.load(true));
+    r = await br.upload(sheet, 'PAIR.ai'); j = await job(); ok(j.written === 0 && j.held === 2, 'a design another master file wrote with an older reader is left as it is: ' + JSON.stringify({ w: j.written, h: j.held }));
         const bad = br.errors.filter(e => !/status of 500/.test(e));   // (the one failure this test forces is logged by the browser)
     ok(bad.length === 0, 'no page error: ' + bad.join(' | '));
   } finally { await br.close(); }

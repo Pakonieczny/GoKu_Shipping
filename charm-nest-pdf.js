@@ -1210,6 +1210,9 @@
      every charm's members (and top-level indices) so a SKU string can never be cut or written into a per-SKU file. */
   // The shop's SKUs are free text ("T-Rex_84495", "Huggie Hoops- Umbrella", "Cheer 1 - Megaphone(CHEER)"): a label is any
   // one-line string of the characters SKUs use, 2–60 long, read in upper case. Anything stricter is a setting (skuPattern).
+  /** The version of what this reader makes of a master (MASTER3, Paul 15 Oct 2026). Every index entry carries the one that wrote it (`readerV`); a master added again rebuilds the designs of ITS OWN earlier indexing that an older
+   *  reader wrote, so a fix to the reader (a plug drawn into the Circle, a hoop welded, a bar's retraced edge) reaches designs that were already held. Raise it whenever the reader's drawing of a design changes. 2: pieces in a plate's window are drawn in. */
+  const READER_VERSION = 2;
   const SKU_PATTERN_DEFAULT = /^[A-Z0-9][A-Z0-9 _.,'&()+\-]{1,60}$/;
   const SKU_PATTERN_LEGACY = "^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$";
   /** A string an artist writes beside a charm that is not its SKU: a measurement ("11.4 mm", "1 in", "14MM") or a view / option
@@ -1367,7 +1370,7 @@
      under it" and left out of the design it belongs to (Paul's SKU file of 14 Oct 2026: 4 of its 10 "unlabelled charms" were such parts; its two cyan hoops are taken by ringHostOf now, see concentricCircles):
        · a hoop (a 6.5 or 9.35 pt washer, one path or two circles) drawn beside its charm that the grouping did not take, so integrateRings (which only sees a charm's own members) never welded it;
        · the same outline written twice at the same place (the hummingbird's outline is in the file twice): one cut line, not a second charm;
-       · a piece that sits inside the outer edge of a LABELLED charm, in the hole of its plate (the plug of the Circle_4432 / Circle_4443 rings): a part of that design.
+       · a piece that sits inside the outer edge of a LABELLED charm, in the hole of its plate (the plug of the Circle_4432 / Circle_4443 rings): a part of that design, drawn into it (a cut line in a window of the plate is no hanging hole: charm-nest-geom.js holeUpAngle).
      A part is set against the charm it belongs to (a loose hoop also joins its members and box); it keeps its place in the charm list marked `mergedInto` (the mark every reader of the charms already honours), so nothing is deleted.
      Only a charm that no label claimed is ever absorbed. A hoop that cannot be attached (no charm within reach of it, or two charms as near) stays as it was and is reported in `looseRings`
      with the nearest SKU, so it is neither dropped nor guessed. Reach is integrateRings' own (HOOP_REACH_PT for a washer, HOOP_LONE_REACH_PT for a lone circle, measured from the hoop's rim). */
@@ -1377,7 +1380,7 @@
     const cache = new Map(), polysOf = c => { let p = cache.get(c.outline); if (!p) { p = flatten(c.outline, 8); cache.set(c.outline, p); } return p; };
     const skuOf = c => { const l = c && labels.get(c.index); return l ? l.sku : null; };
     // draw: the part's own lines go into the charm (a loose hoop: integrateRings then welds it). A part that is already drawn by its charm (the same outline written twice), or that is a piece of its
-    // own (the plug in a plate's hole: as a member it would read as a HOLE, and the hole rule would turn the design upside down, up 90 -> 270), is set aside and the charm's drawing stays as it was.
+    // own (a piece in a plate's hole, the plug of a ring, is drawn into the charm: Paul, 15 Oct 2026, "the circle is missing the inside smaller circle") is joined or set aside as `draw` says.
     const join = (u, h, why, draw, more) => {
       if (draw) { for (const m of u.members) if (!h.members.includes(m)) h.members.push(m); h.bbox = bbUnion(h.bbox, u.bbox); h.topIndices = [...new Set((h.topIndices || []).concat(u.topIndices || []))]; }
       u.mergedInto = h.index; u.absorbedAs = why;
@@ -1430,7 +1433,7 @@
         const rim = polysOf(h).reduce((m, p) => (!m || bbArea(polyBox(p)) > bbArea(polyBox(m)) ? p : m), null);
         if (rim && pts.every(q => pointInPolys(q[0], q[1], [rim]))) { host = h; hostArea = a; }
       }
-      if (host) join(u, host, "piece inside the charm's own outline", false);
+      if (host) join(u, host, "piece inside the charm's own outline", true);          // drawn into the design: the plug of the Circle_4432 ring is cut with it (the hanging-hole rule ignores a cut line in a window of the plate)
     }
     return out;
   }
@@ -2584,7 +2587,7 @@
     return out;
   }
   root.CharmNestPDF = { closeNearlyClosed, markerReason, isDimensionLine, integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
-    takeSampleText, sampleTextOf, parseSkuLabel, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
+    takeSampleText, sampleTextOf, parseSkuLabel, READER_VERSION, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
   // the hoop finder, for the tests and the audit (kept off the long list above so a merge there never touches it)
   root.CharmNestPDF.findHoops = findHoops; root.CharmNestPDF.circleOf = circleOf;
   // the loose-ink-outside-the-piece rule (section 5a″; kept off the long list for the same reason)

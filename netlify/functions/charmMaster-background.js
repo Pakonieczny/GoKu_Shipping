@@ -114,7 +114,7 @@ exports.handler = async (event) => {
       const reasons = [];
       if (open) reasons.push("open outline");
       if (!flipOk) reasons.push(flipWhy);
-      entries.push({ sku: l.sku, size: l.size, charmHash, widthPt: sil.bboxOuter[2] - sil.bboxOuter[0], heightPt: sil.bboxOuter[3] - sil.bboxOuter[1], areaPt2: sil.areaPt2, members: c.members.length, holes: pm ? pm.holes : CharmNestPDF.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: aiUp.path, aiUrl: aiUp.url, thumbPath: thumb && thumb.path, thumbUrl: thumb && thumb.url, open, labelSource: "text", blocked: reasons.length ? reasons.join("; ") : null });
+      entries.push({ sku: l.sku, size: l.size, readerV: CharmNestPDF.READER_VERSION, charmHash, widthPt: sil.bboxOuter[2] - sil.bboxOuter[0], heightPt: sil.bboxOuter[3] - sil.bboxOuter[1], areaPt2: sil.areaPt2, members: c.members.length, holes: pm ? pm.holes : CharmNestPDF.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: aiUp.path, aiUrl: aiUp.url, thumbPath: thumb && thumb.path, thumbUrl: thumb && thumb.url, open, labelSource: "text", blocked: reasons.length ? reasons.join("; ") : null });
       if (pm) entries[entries.length - 1].pair = pm.field;               // { v: 1, bodies, mismatched }: only a folded pair carries it (a record without it leaves a stored one alone)
       Object.assign(entries[entries.length - 1], Pair.entryFields(c, !!pm));   // sym for every design, facings for a pair drawn as mirror images (the same words index-master writes)
       if (reasons.length) blocked.push({ sku: l.sku, reason: reasons.join("; ") });

@@ -389,7 +389,10 @@
     opts = opts || {}; const cut = opts.isCut || isCutLine;
     const outlinePolys = flatten(charm.outline, 12);
     const c = polyCentroid(outlinePolys[0]);
-    const holes = charm.members.filter(m => m !== charm.outline && cut(m));
+    // a hanging hole is cut in the outline's MATERIAL. A cut line that lies in a window of the plate (the loose disc of a ring, with its own squared hole: CIRCLE_4432's plug) is no hole of the
+    // outline, whatever its size: counted as one it turned the whole design upside down (up 90 -> 270)
+    const inMaterial = m => { try { const p = interiorPoint(flatten(m, 12)); let n = 0; for (const poly of outlinePolys) if (pointInPolys(p[0], p[1], [poly])) n++; return n % 2 === 1; } catch (_) { return true; } };
+    const holes = charm.members.filter(m => m !== charm.outline && cut(m) && inMaterial(m));
     if (!holes.length) return { angle: 90, hole: null, source: "drawn", centroid: [c.x, c.y] };
     let best = null;
     for (const h of holes) {
