@@ -2481,12 +2481,23 @@ const Master = window.Master = (() => {
   const upAsk = name => ({ what: `Adding ${name} to the charm repo.`, target: String(name).replace(/[“”]/g, ""), go: "Add", overwrite: reindexAll || undefined });
   /** Ask for the upload password once, up front (before any heavy work); false when the person cancels. */
   const unlockUpload = async name => { const L = RLOCK(); if (!L) { toast("The charm repo lock did not load: reload the page", "bad", 7000); return false; } return !!(await L.ensure("upload", upAsk(name))); };
-  /** The picked or dropped files: unlocked once for all of them, then indexed as before. */
+  /* ADV-MASTER (Paul, 15 Oct 2026: "unexpected user behaviour"): master files are indexed ONE AT A TIME, in the order they were dropped, in one drop or in several. Dropped together, two files both looked at the library before either had written to it,
+     so a SKU both carry was built twice and written as a clash with the file indexed a moment earlier ("SKU present in two master files: A.ai and B.ai": blocked, and the first file's design replaced). In line, the second finds it held, says whose it
+     is and leaves it. The "re-index SKUs already held" tick is the one the person had when the file was dropped. */
+  let indexing = Promise.resolve(), waiting = 0; const inLine = new Set();   // (inLine: the files being read or waiting, by name, size and date: the same file dropped twice is one run)
+  /** The picked or dropped files: unlocked once for all of them, then indexed one after the other. */
   async function addFiles(files) {
     files = [...files || []]; if (!files.length) return;
     if (await PageVersion.check(true)) { toast(PageVersion.message + " Nothing was read or written.", "bad", 15000); return; }   // (an out-of-date page reads a master with the old reader and writes the old designs)
     if (!(await unlockUpload(files.length === 1 ? `“${files[0].name}”` : `${files.length} files`))) return;
-    for (const f of files) indexFile(f).catch(err => toast(err.message, "bad", 7000));
+    const all = reindexAll;
+    for (const f of files) {
+      const k = [f && f.name, f && f.size, f && f.lastModified].join("|");
+      if (inLine.has(k)) { toast(`“${f && f.name ? f.name : "the file"}” is already being read`, "ok"); continue; }
+      inLine.add(k);
+      if (waiting++) toast(`“${f && f.name ? f.name : "the file"}” waits: the master file before it is read first`, "ok");
+      indexing = indexing.then(() => indexFile(f, { all })).catch(err => toast(err.message, "bad", 7000)).then(() => { waiting--; inLine.delete(k); });
+    }
   }
   /** A Storage upload under charmnest/master/ with the upload token in its calls (a token that ran out on the way is asked for again). */
   const upBytes = (path, bytes, type, label, name) => guard("upload", upAsk(name || path.split("/").pop()), tok => uploadBytes(path, bytes, type, label, { repoToken: tok }));
@@ -2655,7 +2666,8 @@ const Master = window.Master = (() => {
     }
     return n >= 3 && n >= live.length * 0.2 ? n : 0;
   }
-  async function indexFile(file) {
+  async function indexFile(file, opts) {
+    const all = opts && typeof opts.all === "boolean" ? opts.all : reindexAll;   // (the tick as it was when the file was dropped)
     // locked: the upload password first (addFiles has usually asked already, so this finds the token), before any reading or tracing
     if (!(await unlockUpload(`“${file && file.name ? file.name : "the file"}”`))) throw Object.assign(new Error("Not added: the charm repo password was not given"), { cancelled: true });
     // whatever the caller had to hand — a File from the picker or a drop, bytes already read, or a plain buffer
@@ -2672,7 +2684,7 @@ const Master = window.Master = (() => {
     if (!bytes.length) throw new Error(`${file && file.name ? file.name : "the file"} is empty, or its contents were already handed to something else`);
     const masterHash = await sha256(bytes);
     { const running = B.master.jobs.get(masterHash); if (running && !["done", "error"].includes(running.state)) { toast(`“${file.name}” is already being read`, "ok"); return running; } }   // (the same file dropped twice at once started two full runs, and the second hid the first)
-    const job = { name: file.name, masterHash, state: "parsing", t0: performance.now(), log: [], rebuildAll: reindexAll }; B.master.jobs.set(masterHash, job); render();
+    const job = { name: file.name, masterHash, state: "parsing", t0: performance.now(), log: [], rebuildAll: all }; B.master.jobs.set(masterHash, job); render();
     job.bar = window.CNProgress ? CNProgress.start(`Indexing ${file.name}`, { note: `${(bytes.length / 1048576).toFixed(1)} MB · reading` }) : null;
     const say = (kind, text) => { job.log.push(text); agent({ master: masterHash }, kind, `${file.name}: ${text}`); render(); };
     try {
@@ -2741,7 +2753,7 @@ const Master = window.Master = (() => {
       };
       for (const c of labelledCharms) {
         const lines = [{ sku: c.sku, size: c.skuSize }].concat((c.extraSkus || []).map(x => ({ sku: x.sku, size: x.size })));
-        if (!reindexAll && lines.every(holds)) {
+        if (!all && lines.every(holds)) {
           c.alreadyHeld = true; held++;
           // what was left as it is, and whose it is: the master file it came from and when, and whether this sheet draws it a different size (the library's version may be another drawing, not this file's)
           for (const l of lines) {
@@ -2755,8 +2767,8 @@ const Master = window.Master = (() => {
         for (const l of lines) { const e = known.get(String(l.sku || "").toUpperCase()); if (e && e.masterHash && e.masterHash !== masterHash) supersede.add(e.masterHash); }   // (rebuilt whole: the master they came from is superseded, with the tick or without it)
       }
       job.held = held; job.supersede = [...supersede]; job.older = older; job.heldList = heldList;
-      if (older && !reindexAll) say("MASTER", `${older} SKU line(s) of this file were indexed by an older reader and are built again with the current one`);
-      if (held) say("MASTER", `${held} charm(s) are already in the library and are left as they are · ${labelledCharms.length - held} to index${reindexAll ? "" : " (tick “re-index SKUs already held” to rebuild them all)"}`);
+      if (older && !all) say("MASTER", `${older} SKU line(s) of this file were indexed by an older reader and are built again with the current one`);
+      if (held) say("MASTER", `${held} charm(s) are already in the library and are left as they are · ${labelledCharms.length - held} to index${all ? "" : " (tick “re-index SKUs already held” to rebuild them all)"}`);
       if (labelledCharms.length && held === labelledCharms.length) {
         // nothing to build. What the sheet still leaves open stays on the card, a design the library holds as ONE body of a pair this sheet draws is said, and a library that lost this file's record (a run that stopped after the SKUs) gets it back
         const pl = foldPairs(job, g.charms, lab, say);
@@ -10106,7 +10118,14 @@ const Sets = window.Sets = (() => {
       } });
       LaserReview.changed();
       if (LD) LD.decorate(body);
-    } catch (e) { if (request === libraryRequest && S.library.kind === "sets") body.innerHTML = `<div class="libEmpty">Could not load sets: ${esc(e.message)}</div>`; }
+    } catch (e) {
+      if (request !== libraryRequest || S.library.kind !== "sets") return;
+      // ADV-MASTER (Paul, 15 Oct 2026: "lost internet connections"): sets already on screen stay when their refresh fails, with the time of the list, why it was not refreshed and a Retry, as the Sheets list always did (libraryStale);
+      // only a Library with nothing to show says it could not load, and offers Try again
+      if (body.querySelector(".setCard") && typeof libraryStale === "function") { libraryStale(e.message); return; }
+      body.innerHTML = `<div class="libEmpty">Could not load sets: ${esc(e.message)}<br><button class="btn ghost sm" type="button" style="margin-top:10px">Try again</button></div>`;
+      body.querySelector("button").onclick = () => { try { window.CN.loadLibrary().catch(() => {}); } catch (_) { /* a reload of the tab does the same */ } };
+    }
   }
   return { releaseIssue, ensure, ofRun, keyOf, labelsReady, onSheetSaved, finalize, commit, undo, evaluate, save, renderLibrary, libraryCard, renderLabelPng, sheetsOf, setOfSheet, byRun };
 })();
