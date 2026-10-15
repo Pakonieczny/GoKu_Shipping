@@ -39,7 +39,7 @@ const B={run:{runId:'run-test',releasePolicy:2,solidIncluded:{}},sets:new Map(),
 const pages=[], writes=[]; let seq=1, allocations=0;
 const allSheets=()=>pages, labelOf=m=>m, today=()=> '2026-09-19', refreshAllCards=()=>{};
 const api=async(n,b)=>{writes.push(b);return {}};
-const Orders={rows:()=>B.orders.rows}, Engrave={items:()=>B.engrave.items,writeBacks:async()=>{}};
+const Orders={rows:()=>B.orders.rows}, Engrave={items:()=>B.engrave.items,writeBacks:async()=>{},relinkAll(){}};
 const Pool={update:async(ids,p)=>writes.push({ids,p})};
 const RunCtl={onSheetDone(){}};
 const CN={sheetFileBase:sh=>'Set-'+sh.seq+'-'+sh.metal+'-'+sh.sheetIndex,persistSheet:async(sh)=>{writes.push(sh.fileBase);const s=[...B.sets.values()][0];s.sheetIds.push(sh.sheetId);s.materials.push(sh.metal)}};
@@ -49,15 +49,15 @@ const page=(metal,full=false)=>({metal,runId:B.run.runId,sheetId:metal+'-id',dra
 vm.runInContext(part('Gate','/* ═══ 21'),c);
 (async()=>{
  // Exercise the actual cloud reconstruction path, including a run with no set yet.
- const recovery=vm.createContext({assert,console});
+ const recovery=vm.createContext({assert,console,CharmNestPoolPieces:require('../../charm-nest-pool-pieces.js')});
  vm.runInContext(`
  const rows=[{key:'o/a',state:'written',poolIds:['p1'],order:{receiptId:'o'},line:{}}];
  const page={charms:[],placements:[],metal:'gold'};page.pages=[page];
  const S={sheets:{gold:page}},B={pool:{rows:new Map()}};
  const record={id:'draft1',metal:'gold',draft:true,releaseFull:false,day:'2026-09-19',fileBase:'working',status:'complete',verification:{ok:true},poolIds:['p1'],placements:[{id:'c1',cxPt:1,cyPt:2}],charms:[{id:'c1',poolId:'p1',name:'one'}]};
  const api=async(n,b)=> b.op==='listSheets'?{sheets:[{id:record.id}]}:b.op==='getSheet'?{sheet:record}:b.op==='poolGet'?{pools:{p1:{poolId:'p1',state:'ready',sheetId:'draft1',setId:null,sku:'A',orderId:'o'}}}:{};
- const Orders={rows:()=>rows},Sets={byRun:()=>new Map(),keyOf:()=>''};
- const Master={entryFor:()=>({})},Pool={masterCharm:async()=>({id:'source',charms:[{sourceId:'source'}]}),cloneCharm:(c,id)=>({...c,id}),charmOf:id=>page.charms.find(c=>c.poolId===id)};
+ const Orders={rows:()=>rows},Sets={byRun:()=>new Map(),keyOf:()=>''},Gate={leftSetOf:()=>false};   // (Gate.leftSetOf: a sheet a person took out of a committed set; none here)
+ const Master={entryFor:()=>({})},Pool={masterCharm:async()=>({id:'source',charms:[{sourceId:'source'}]}),ensureBase:async src=>src,cloneCharm:(c,id)=>({...c,id}),charmOf:id=>page.charms.find(c=>c.poolId===id)};
  const jobs=new Map(),Engrave={items:()=>jobs};
  const computeSaturation=()=>{},renderCard=()=>{},agent=()=>{};
  const sheetDirty=p=>{p.dirty=true;p.releaseFull=false;p.placements=[];p.status='ready';};
@@ -159,7 +159,7 @@ vm.runInContext(part('Gate','/* ═══ 21'),c);
  const stampWho=()=>({by:employeeName(),device:'charm-nest-1'});
  const validateRelease=()=>{},evaluate=()=>({committable:['1'],held:{},gone:[]});
  const DesignLink={ensure:async()=>{},call:async(cmd,a)=>{order.push(cmd);return cmd==='ui.select'?{selected:a.receiptIds,refused:[]}:cmd==='complete.preview'?{jobs:[]}:{completed:a.receiptIds,refused:[]};}};
- const RunCtl={save:async()=>{order.push('run saved');}},save=async s=>{order.push('set saved '+s.status);};
+ const RunCtl={save:async()=>{order.push('run saved');}},save=async s=>{order.push('set saved '+s.status);s.savedCommit=s.committedAt;};   // (the real save() records which commit it saved)
  `+code.slice(code.indexOf('  async function commit(set, run, context)'),code.indexOf('  async function undo(set)')),commit);
  await vm.runInContext(`(async()=>{
  await commit({setId:'s1',runId:'r',name:'Set 1',orders:{'1':{}},labels:{files:[{path:'l.png',url:'u',sheet:'S1'}]}},{runId:'r'});

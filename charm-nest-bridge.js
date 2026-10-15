@@ -9928,39 +9928,75 @@ const Sets = window.Sets = (() => {
   async function commit(set, run, context) {
     const ops=window.CharmNestOperations;
     if(ops && !context){await Gate.flush(run);return ops.run({key:'commit:'+run.runId,label:'Committing set',resources:['production:'+run.runId]},async token=>{if(run.membershipNext || run.membershipDirty)return {membershipChanged:true};Gate.refreshMembership();try{return await commit(set,run,token);}finally{requestAnimationFrame(()=>Gate.refreshMembership());}});}
+    // (Paul, 15 Oct 2026: "resilient against lost internet connections, interruptions") The station already marked this set's orders design-complete, but the
+    // set's record did not save (the connection dropped just after the station answered): only the record is finished here, the station is not asked again.
+    if (set.committedAt && unrecorded.has(set)) { await RunCtl.save(run); return record(set, evaluate(set), set.refused || [], set.committed || []); }
     validateRelease(set);
     const ev = evaluate(set);
     const committable = ev.committable.filter(rid => set.orders[rid]);
     for (const [rid, h] of Object.entries(ev.held)) Review.add({ kind: "heldOrder", key: "held:" + rid, rid, why: `${rid} held — ${h.why || "unresolved piece"}`, line: h.line });
-    if (!committable.length) { agent({ run: run.runId }, "warn", `${set.name}: no committable order — ${Object.keys(ev.held).length} held, ${ev.gone.length} gone`); set.status = "complete-with-holds"; set.completedAt = Date.now(); set.completionDay = today(); set.committed = []; set.refused = Object.entries(ev.held).map(([id, h]) => ({ id, reason: h.why })); await save(set); return { completed: [], refused: set.refused }; }
+    // Orders the station marked design-complete in an earlier try whose answer never came back (the connection dropped, the page was reloaded): it lists only
+    // open orders, so they have no line here, or the station refuses them as already done. Its memory of this run's commits says which; they are recorded below, not committed twice.
+    const took = new Set();
+    for (const rid of await taken(Object.keys(set.orders).filter(rid => !committable.includes(rid) && !ev.held[rid] && !ev.gone.includes(rid)), run)) took.add(rid);
+    if (!committable.length && !took.size) { agent({ run: run.runId }, "warn", `${set.name}: no committable order — ${Object.keys(ev.held).length} held, ${ev.gone.length} gone`); set.status = "complete-with-holds"; set.completedAt = Date.now(); set.completionDay = today(); set.committed = []; set.refused = Object.entries(ev.held).map(([id, h]) => ({ id, reason: h.why })); await save(set); return { completed: [], refused: set.refused }; }
     if (!set.labels || !(set.labels.files || []).length) throw new Error("no saved labels for the set");
-    await DesignLink.ensure();
-    const sel = await DesignLink.call("ui.select", { receiptIds: committable }, { timeoutMs: 120000 });
-    const refused = (sel.refused || []).slice();
+    let sel = { selected: [], refused: [] }, refused = [];
+    if (committable.length) {
+      await DesignLink.ensure();
+      sel = await DesignLink.call("ui.select", { receiptIds: committable }, { timeoutMs: 120000 });
+      refused = (sel.refused || []).slice();
+      for (const id of await taken(refused.map(x => x.id), run)) took.add(id);
+      refused = refused.filter(x => !took.has(String(x.id)));
+    }
     const ids = sel.selected.filter(id => committable.includes(id));
-    if (!ids.length) { set.status = "complete-with-holds"; set.committed = []; set.refused = refused; await save(set); agent({ run: run.runId }, "warn", `${set.name}: the station refused every selection — ${refused.map(r => r.id + " (" + r.reason + ")").join(", ")}`); return { completed: [], refused }; }
-    const preview = await DesignLink.call("complete.preview", { receiptIds: ids }, { timeoutMs: 120000 });
-    agent({ run: run.runId }, "DS", `Station preview: ${preview.jobs.length} label job(s) for ${ids.length} order(s)${preview.notes && preview.notes.skipped && preview.notes.skipped.length ? ` · ${preview.notes.skipped.length} with no recognised metal` : ""}`);
-    const labels = { setId: set.setId, folder: `${set.folder}/labels`, files: set.labels.files.map(f => ({ path: f.path, url: f.url, sheet: f.sheet })), pdf: set.labels.pdf ? set.labels.pdf.url : null };
-    validateRelease(set); // Recheck after the station selection/preview awaits.
-    // The server checks the set against the run's saved lines before it records the set as complete. Save them first,
-    // so it sees what was checked here: a set refused after the station commit leaves its orders done at the station
-    // and the set open, and the run stopped at every later check.
-    await RunCtl.save(run);
-    const r = await DesignLink.call("complete.commit", { receiptIds: ids, labels, runId: run.runId, setId: set.setId, sheetIds: set.sheetIds, backCount: set.backCount || 0, completedBy: `Charm Sorter (${employeeName() || "operator"})` }, { timeoutMs: 180000 });
-    set.committed = r.completed; set.refused = refused.concat(r.refused || []); set.committedAt = Date.now(); set.completedAt = set.committedAt; set.completionDay = today(); set.status = set.refused.length || Object.keys(ev.held).length ? "complete-with-holds" : "complete";
-    for (const row of Orders.rows()) if (r.completed.includes(row.order.receiptId) && (row.state === "written" || row.state === "labelled" || row.state === "noDesign")) row.state = "committed";
-    await Pool.update([...B.pool.rows.keys()].filter(id => r.completed.includes(B.pool.rows.get(id).orderId)), { state: "committed", committedAt: Date.now() }, stampWho());   // (the set committed: who)
-    await save(set);
+    if (!ids.length && !took.size) { set.status = "complete-with-holds"; set.committed = []; set.refused = refused; await save(set); agent({ run: run.runId }, "warn", `${set.name}: the station refused every selection — ${refused.map(r => r.id + " (" + r.reason + ")").join(", ")}`); return { completed: [], refused }; }
+    let r = { completed: [], refused: [] };
+    if (ids.length) {
+      const preview = await DesignLink.call("complete.preview", { receiptIds: ids }, { timeoutMs: 120000 });
+      agent({ run: run.runId }, "DS", `Station preview: ${preview.jobs.length} label job(s) for ${ids.length} order(s)${preview.notes && preview.notes.skipped && preview.notes.skipped.length ? ` · ${preview.notes.skipped.length} with no recognised metal` : ""}`);
+      const labels = { setId: set.setId, folder: `${set.folder}/labels`, files: set.labels.files.map(f => ({ path: f.path, url: f.url, sheet: f.sheet })), pdf: set.labels.pdf ? set.labels.pdf.url : null };
+      validateRelease(set); // Recheck after the station selection/preview awaits.
+      // The server checks the set against the run's saved lines before it records the set as complete. Save them first,
+      // so it sees what was checked here: a set refused after the station commit leaves its orders done at the station
+      // and the set open, and the run stopped at every later check.
+      await RunCtl.save(run);
+      r = await DesignLink.call("complete.commit", { receiptIds: ids, labels, runId: run.runId, setId: set.setId, sheetIds: set.sheetIds, backCount: set.backCount || 0, completedBy: `Charm Sorter (${employeeName() || "operator"})` }, { timeoutMs: 180000 });
+    } else await RunCtl.save(run);   // (only orders the station already took: the server still checks the set against the run's lines)
+    return record(set, ev, refused.concat(r.refused || []), [...took].concat(r.completed || []));
+  }
+  /** Which of these orders the station's memory of this run's commits says it already marked design-complete (the answer to that try was lost). The station answers
+   *  from memory and commits nothing (`probe`); a station that does not know the flag refuses everything but a remembered commit (no preview, no labels), so this can never commit an order. */
+  async function taken(rids, run) {
+    rids = [...new Set(rids.map(String))]; if (!rids.length) return [];
+    try { await DesignLink.ensure(); const q = await DesignLink.call("complete.commit", { receiptIds: rids, runId: run.runId, probe: true }, { timeoutMs: 20000, quiet: true }); return ((q && (q.taken || (q.idempotent ? q.completed : []))) || []).map(String).filter(id => rids.includes(id)); } catch (_) { return []; }
+  }
+  /** The set's own record, after the station committed: its list, its status, the pool rows and the order lines. Each write can be repeated, so a try that
+   *  stopped halfway (the connection dropped) is finished by the next one (`unrecorded`): the day and time of the first try stay, the set is saved once it can be. */
+  const unrecorded = new WeakSet();
+  async function record(set, ev, refused, completed) {
+    unrecorded.add(set);
+    set.committed = completed; set.refused = refused; set.committedAt = set.committedAt || Date.now(); set.completedAt = set.committedAt; set.completionDay = set.completionDay || today(); set.status = set.refused.length || Object.keys(ev.held).length ? "complete-with-holds" : "complete";
+    for (const row of Orders.rows()) if (completed.includes(row.order.receiptId) && (row.state === "written" || row.state === "labelled" || row.state === "noDesign")) row.state = "committed";
+    // (the set's own copies of those orders too: after a reload the page holds no pool row for an order the station had already finished)
+    const own = completed.flatMap(rid => Object.values((set.orders[rid] || {}).lines || {}).flatMap(l => (l.copies || []).map(c => c.poolId))).filter(Boolean);
+    await Pool.update([...new Set([...B.pool.rows.keys()].filter(id => completed.includes(B.pool.rows.get(id).orderId)).concat(own))], { state: "committed", committedAt: Date.now() }, stampWho());   // (the set committed: who)
+    if (set.savedCommit !== set.committedAt) {   // (a record saved meanwhile, by the next set's numbering, is not saved again: the server re-checks a set it is given)
+      await save(set);
+      // save() does nothing while the cloud is marked offline: the set stays unrecorded, the step says why and tries again (the run's own retry, or Resume)
+      if (set.savedCommit !== set.committedAt) throw new Error(`${set.name}: the network is down, so its record is not saved yet · it is saved when the connection is back`);
+    }
+    unrecorded.delete(set);
     for (const id of set.sheetIds || []) window.Session?.dropBest?.(id);
-    try { humanAct.set(false, r.completed, set.name); } catch (_) {}      // (the efficiency record: the person at the Sorter did this; the framed page records nothing)
-    agent({ run: run.runId }, "DS", `${set.name} committed: ${r.completed.length} order(s) marked design-complete and sent DESIGNED :) internally · ${set.refused.length} refused · ${Object.keys(ev.held).length} held`);
-    return { completed: r.completed, refused: set.refused, held: ev.held };
+    try { humanAct.set(false, completed, set.name); } catch (_) {}      // (the efficiency record: the person at the Sorter did this; the framed page records nothing)
+    agent({ run: set.runId }, "DS", `${set.name} committed: ${completed.length} order(s) marked design-complete and sent DESIGNED :) internally · ${set.refused.length} refused · ${Object.keys(ev.held).length} held`);
+    return { completed, refused: set.refused, held: ev.held };
   }
   async function undo(set) {
     // a set that committed nothing (every order held or refused) has nothing to reopen at the station
     const reopened = (set.committed || []).map(String);
-    if (reopened.length) { await DesignLink.ensure(); await DesignLink.call("complete.undo", { receiptIds: reopened }, { timeoutMs: 180000 }); }
+    // (an undo that stopped after the station reopened the orders, before the set's record saved, is finished by pressing it again: "nothing to undo" there means the orders are open already)
+    if (reopened.length) { await DesignLink.ensure(); await DesignLink.call("complete.undo", { receiptIds: reopened }, { timeoutMs: 180000 }).catch(e => { if (!/nothing to undo/.test(e.message)) throw e; }); }
     set.status = "awaiting review"; set.committed = []; set.committedAt = null; set.completedAt = null; set.completionDay = null; await save(set);
     try { humanAct.set(true, reopened, set.name); } catch (_) {}
     window.SheetEvents?.undone(set, reopened);   // a note on each reopened order (idle time)
@@ -10127,7 +10163,7 @@ const Sets = window.Sets = (() => {
       body.querySelector("button").onclick = () => { try { window.CN.loadLibrary().catch(() => {}); } catch (_) { /* a reload of the tab does the same */ } };
     }
   }
-  return { releaseIssue, ensure, ofRun, keyOf, labelsReady, onSheetSaved, finalize, commit, undo, evaluate, save, renderLibrary, libraryCard, renderLabelPng, sheetsOf, setOfSheet, byRun };
+  return { releaseIssue, ensure, ofRun, keyOf, labelsReady, onSheetSaved, finalize, commit, unrecorded: set => unrecorded.has(set), undo, evaluate, save, renderLibrary, libraryCard, renderLabelPng, sheetsOf, setOfSheet, byRun };
 })();
 
 /* ═══ 23 · RunCtl — the two halves, the record, resume, stop, Auto/Manual ═══ */
@@ -10332,8 +10368,8 @@ const RunCtl = window.RunCtl = (() => {
         if (Gate.modern(r.runId) && !Sets.ofRun(r.runId).some(s => s.sheetIds.length)) { r.nothingToCut = true; return; }
         await Promise.race([window.CharmNestReviewMark?.refresh?.(), new Promise(r => setTimeout(r, 4000))]).catch(() => {});   // (as at labels: the Review feed rests on the Nest tab)
         const eligible=[];
-        for(const set of Sets.ofRun(r.runId).filter(s=>s.sheetIds.length&&!s.committedAt)){
-          const issue=Sets.releaseIssue(set);if(issue)await deferSet(r,set,issue);else eligible.push(set);
+        for(const set of Sets.ofRun(r.runId).filter(s=>s.sheetIds.length&&(!s.committedAt||Sets.unrecorded(s)))){
+          const issue=Sets.unrecorded(set)?null:Sets.releaseIssue(set);if(issue)await deferSet(r,set,issue);else eligible.push(set);   // (a set the station committed whose record did not save is only recorded: nothing about it can be deferred now)
         }
         if(!eligible.length){r.awaitCommit=false;return;}
         if (S.settings.autoCommit === "off" && !r.commitRequested) { r.awaitCommit = true; agent({ run: r.runId }, "DS", "Processing finished. Ready sets are saved; Commit set remains available."); return; }

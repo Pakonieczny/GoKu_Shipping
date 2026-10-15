@@ -8236,6 +8236,8 @@ const Bridge = (() => {
     async "complete.commit"(a) {
       const ids = (a.receiptIds || []).map(String);
       if (!ids.length) throw new Error("no orders to commit");
+      // (the sorter asks which of these orders an earlier commit of its run already marked, after the answer to that commit was lost: nothing is committed)
+      if (a.probe) return { taken: ids.filter(id => { const p = a.runId ? priorCommit(String(a.runId), [id]) : null; return !!p && (p.completed || []).includes(id); }), completed: [], refused: [] };
       if (a.runId) { const prior = priorCommit(String(a.runId), ids); if (prior) { ticker(`commit for run ${a.runId} already done — same result returned`); return Object.assign({}, prior, { idempotent: true }); } }
       if (!S.previewed || ids.some(id => !S.previewed.has(id))) throw new Error("commit without a preview of the same orders");
       if (!a.labels || !Array.isArray(a.labels.files) || !a.labels.files.length) throw new Error("no saved labels");
