@@ -2305,6 +2305,7 @@ const Orders = window.Orders = (() => {
     }
     return {orders:receipts.size,charms};
   }
+  let pullClick = null;   // the pull the Pull orders button started, while it runs
   function buildHead(v) {
     // One compact row: totals, filters/search, then the display controls.
     v.innerHTML = `<div class="ordHead">
@@ -2317,7 +2318,15 @@ const Orders = window.Orders = (() => {
     const q = v.querySelector("#ordQ");
     q.oninput = () => { OV.q = q.value; renderBody(); };                 // never rebuilt now, so the caret needs no restoring
     v.querySelector("#ordSort").onchange = e => { OV.sort = e.target.value; OV.desc = false; renderBody(); };
-    v.querySelector("#ordPull").onclick = async () => { if (v.querySelector("#ordPull").disabled) return; try { await pull(null); } catch (e) { toast(e.message, "bad", 7000); agent({ bridge: true }, "warn", e.message); } };
+    // (ADV-MONKEY, Paul 15 Oct 2026, "unexpected user behaviour": the pull reads the whole shop and takes tens of seconds; a second press meanwhile asked the station
+    // for the same orders again, a third again, each one replacing the list under the others. One pull at a time: a press while it runs does nothing, and the button says it is busy)
+    { const go = v.querySelector("#ordPull");
+      go.onclick = () => {
+        if (go.disabled || pullClick) return;
+        go.setAttribute("aria-busy", "true");
+        pullClick = pull(null).catch(e => { toast(e.message, "bad", 7000); agent({ bridge: true }, "warn", e.message); }).finally(() => { pullClick = null; go.removeAttribute("aria-busy"); });
+      };
+    }
     CNListActivity.mount(v.querySelector("#ordBar"), "orders", () => { OV.sort="activity"; renderHead(v); renderBody(); });
     Sandbox.mountPanel(v);
     watch(v);
@@ -19163,7 +19172,13 @@ const Session = window.Session = (() => {
         for (const ck of gone.cks) delete d.customDesigns[ck];
       }
       for (const src of (d.sources || []).concat(Object.values(d.poolSources || {}))) {
-        if (src.bytes?.length) src.parsed = await P.parseSource(src.bytes, src.name);
+        // (ADV-MONKEY, Paul 15 Oct 2026, "unexpected user behaviour": a wrong file dropped on the rail sits there as a red error row and is kept in the checkpoint
+        // with its bytes; reading it again threw, so the WHOLE workspace stayed unrestored at every reload and the page ran without its arrivals, upkeep and saving.
+        // A file that was an error is not read again; one that cannot be read now becomes an error row, and the rest comes back)
+        if (src.bytes?.length && src.state !== "error") {
+          try { src.parsed = await P.parseSource(src.bytes, src.name); }
+          catch (e) { src.state = "error"; src.error = `${src.name} could not be read again after the reload: ${e.message || e}`; }
+        }
         src.persisting = null; src.t0 = performance.now();
       }
       await Pool.repairRecoveredGeometry(d);
