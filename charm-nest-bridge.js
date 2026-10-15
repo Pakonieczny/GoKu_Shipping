@@ -5756,6 +5756,7 @@ const Engrave = window.Engrave = (() => {
   const F_ = B.engrave.fonts;
   // Source Sans 3 (Adobe, SIL Open Font License): a humanist sans drawn in the same tradition as Myriad Pro, shipped with the app
   const FONT_FILES = { Regular: "vendor/fonts/SourceSans3-Regular.otf", Semibold: "vendor/fonts/SourceSans3-Semibold.otf" };
+  const FONT_MISSING_WHY = "Source Sans 3 font files are missing";   // (what a line is blocked with while the font files cannot be had: loadFonts reads it again when they are)
   async function fontResource(path,type="arrayBuffer",cache="force-cache") {
     const controller=new AbortController();let timer;
     try{return await Promise.race([
@@ -5785,8 +5786,12 @@ const Engrave = window.Engrave = (() => {
         if (late) { delete F_.emojiError; workerClient = null; agent({ engrave: true }, "ENGRAVE", "Emoji font loaded"); for (const job of items().values()) if (job.state === "words" && job.missing && G.glyphCoverage(F_.Regular, job.lines.join("\n")).ok) setReady(job); return; }
       } catch (e) { F_.emojiError = e.message; if (!late) agent({engrave:true}, "warn", "Emoji font could not load: " + e.message); }
       if (late) return;
+      // (Paul, 15 Oct 2026, final test: "resilient against lost internet connections") lines read while the font files could not be had are blocked "font files missing", for a person to retry one by one: once the files come they are read again here
       F_.ok = !!F_.Regular; if (!F_.ok) agent({ engrave: true }, "warn", `Source Sans 3 is not available (${F_.error}) — engraving cannot be set exactly; the .otf files belong in vendor/fonts/`);
-      else agent({ engrave: true }, "ENGRAVE", `Engraving fonts loaded: ${F_.Regular.names.fullName ? Object.values(F_.Regular.names.fullName)[0] : "Regular"}${F_.Semibold ? " + Semibold" : " (Semibold missing — Regular used at every size)"}`);
+      else {
+        agent({ engrave: true }, "ENGRAVE", `Engraving fonts loaded: ${F_.Regular.names.fullName ? Object.values(F_.Regular.names.fullName)[0] : "Regular"}${F_.Semibold ? " + Semibold" : " (Semibold missing — Regular used at every size)"}`);
+        try { for (const job of items().values()) if (job.state === "blocked" && job.reason === FONT_MISSING_WHY) setReady(job).catch(() => {}); } catch (_) { /* (the workspace is not up yet: nothing is blocked) */ }
+      }
       const h = document.getElementById("stFontsHelp"); if (h) h.innerHTML = F_.ok ? `Loaded: ${esc(Object.values(F_.Regular.names.fullName || {})[0] || "Source Sans 3 Regular")}${F_.Semibold ? ", " + esc(Object.values(F_.Semibold.names.fullName || {})[0] || "Semibold") : " · Semibold missing"}` : `<span style="color:#8a3a26">Not found: ${esc(F_.error)}</span> — SourceSans3-Regular.otf and SourceSans3-Semibold.otf belong in vendor/fonts/`;
     })().finally(() => { F_.loading = null; });
     return F_.loading;
@@ -6512,7 +6517,7 @@ const Engrave = window.Engrave = (() => {
     // A font arriving belongs to the proposal that asked for it. Closing an edit,
     // restoring another set, or deciding this job meanwhile must not undo approval.
     if (items() !== owner || owner.get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== state || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
-    if (!F_.ok) { job.state = "blocked"; job.reason = "Source Sans 3 font files are missing"; job.row.engrave = { ...job.row.engrave, needed: true, state: "blocked", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "fontMissing", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: F_.error }); return job; }
+    if (!F_.ok) { job.state = "blocked"; job.reason = FONT_MISSING_WHY; job.row.engrave = { ...job.row.engrave, needed: true, state: "blocked", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "fontMissing", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: F_.error }); return job; }
     await ensureJobFont(job);   // (the font this piece engraves in; a font that will not load is Source Sans 3)
     if (items() !== owner || owner.get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== state || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
     const cov = G.glyphCoverage(setOf(job).Regular, job.lines.join("\n"));
@@ -7265,7 +7270,7 @@ const Engrave = window.Engrave = (() => {
     }
     if (waiting) retryBacksLater();
   }
-  window.addEventListener("online", () => { resumeBacks(true); if (F_.emojiError) loadFonts(true).catch(() => {}); });
+  window.addEventListener("online", () => { resumeBacks(true); if (!F_.ok || F_.emojiError) loadFonts(true).catch(() => {}); });
 
   /* ── 7.5b · the WORK AREA follows the staged edit (ENGWORK; Paul, 12 Oct 2026, round 2: "nothing seems to happen in real-time" and "The text in the work area does not show the preview of the selected text font style") ──
      The engraving panel (charm-nest-engrave-panel.js) holds the words, the font and the mode as a staged edit until Save, and Save re-seeds the job and fits it again, so the big drawing kept the OLD words in the OLD font until then.

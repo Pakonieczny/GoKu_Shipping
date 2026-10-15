@@ -5,18 +5,21 @@
   function withEmoji(base, emoji, data, Path) {
     const map=data.sequences, cap=(base.tables.os2.sCapHeight || base.ascender*.7)/base.unitsPerEm;
     const lookup = text => map[text] || map[text.replace(/\uFE0E/g,'\uFE0F')];
+    // Words are set composed ("e" + U+0301 is "é"): a loose accent is drawn after its letter, not over it (no mark positioning here).
+    const nfc = text => { text=String(text == null ? '' : text); try { return text.normalize('NFC'); } catch (_) { return text; } };
     const tokenize = text => {
       const runs=[]; let plain=''; const flush=()=>{if(plain){runs.push({text:plain});plain='';}};
-      for(const cluster of graphemes(text)) {
+      for(const cluster of graphemes(nfc(text))) {
         const shape=lookup(cluster);
         // Emoji sequences take precedence even when the text font supports their first codepoint.
         if(shape && (/\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20E3/u.test(cluster))) {flush();runs.push({text:cluster,shape});}
         else plain+=cluster;
       } flush();return runs;
     };
-    const coverage = text => {const missing=[];for(const cluster of graphemes(text)){
-      if (/^[\r\n\t]+$/.test(cluster) || lookup(cluster)) continue;
-      if ([...cluster].some(ch=>!base.charToGlyphIndex(ch))) missing.push(cluster);
+    // A tab has no glyph (the font's .notdef box would be cut in its place) and an accent that does not compose with its letter cannot sit on it: a person decides.
+    const coverage = text => {const missing=[];for(const cluster of graphemes(nfc(text))){
+      if (/^[\r\n]+$/.test(cluster) || lookup(cluster)) continue;
+      if (/[\t\u0300-\u036f]/.test(cluster) || [...cluster].some(ch=>!base.charToGlyphIndex(ch))) missing.push(cluster);
     }return {ok:!missing.length,missing:[...new Set(missing)]};};
     const measure = (run,size,x,y,draw) => {
       if(!run.shape) {if(draw)draw.extend(base.getPath(run.text,x,y,size,{kerning:true}).commands);return base.getAdvanceWidth(run.text,size,{kerning:true});}
