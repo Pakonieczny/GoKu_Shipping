@@ -84,7 +84,8 @@
         const G = d.Geom, rings = G.flatten(charm.outline, 16).filter(r => r.length > 2);
         for (const m of d.P.cutLinesOf(charm)) for (const r of G.flatten(m, 16)) if (r.length > 2) rings.push(r);
         if (!rings.length) throw new Error(`${sku} has no outline`);
-        return { letter, rings, sku, fill: "auto" };      // ("auto": a font's contours may overlap, the overlap is ink: CharmNestMonogram fillOf)
+        const gm = src.parsed && src.parsed.glyph;      // (the glyph's baseline and font size, written by the master reader for a letter drawn from live text: the engine puts the three letters on one baseline)
+        return { letter, rings, sku, fill: "auto", metrics: gm && Number.isFinite(gm.baselinePt) ? { baselinePt: gm.baselinePt, emPt: gm.emPt } : null };      // ("auto": a font's contours may overlap, the overlap is ink: CharmNestMonogram fillOf)
       })(), LOAD_MS, `Letter ${letter} of ${fam.name}`).catch(e => { glyphs.delete(key); if (!e.kind) e.kind = "load"; throw e; }));
       return glyphs.get(key);
     }
