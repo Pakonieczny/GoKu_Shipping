@@ -2493,9 +2493,9 @@ const Master = window.Master = (() => {
       // (a design the pool already holds is drawn from that copy at once, no download: nothing to keep, and its picture stays as it was)
       // (data-one: a design a person named as ONE body, charm-nest-pair.js section 4d: its card draws that body alone, under a key of its own, so a picture kept before is never shown for it)
       keyOf:host=>{const entry=entryFor(host.dataset.previewSku),geom=entry&&Pool.sizeEntry(entry,sizeOf(entry));return geom&&geom.aiPath&&!B.pool.sources.has(geom.aiPath)?T.designKey(geom.aiPath+(oneOf(host)?"#one"+oneOf(host).one:""),geom.charmHash||entry.charmHash,entry.indexedAt):"";},
-      produce:host=>{const entry=entryFor(host.dataset.previewSku);return entry?Pool.masterPreview(entry,sizeOf(entry),false,oneOf(host)||undefined):null;},
+      produce:host=>{const entry=entryFor(host.dataset.previewSku);return entry?Pool.masterPreview(entry,sizeOf(entry),false,oneOf(host)||undefined).catch(e=>{host.dataset.previewError=String(e&&e.message||e);throw e;}):null;},
       paint:(host,thumb)=>{const img=document.createElement("img");img.alt="";img.src=thumb;host.replaceChildren(img);},
-      fail:host=>{if(host.isConnected&&entryFor(host.dataset.previewSku))host.textContent="Preview unavailable";}
+      fail:host=>{if(host.isConnected&&entryFor(host.dataset.previewSku)){host.textContent="Preview unavailable";host.title=host.dataset.previewError||"";}}
     });
   }
   let previewObserver=null, previewQueue=[], previewRunning=0;
@@ -2858,12 +2858,14 @@ const Master = window.Master = (() => {
     // The first charm in drawing order keeps the plain name; a later one whose cleaned name is taken, in this run or by another SKU in the library, gets "__<charm number>" after it (the local indexer's fileKeys).
     const safeKey = k => String(k).replace(/[^\w.\-\/]+/g, "_").replace(/\.\.+/g, ".").toLowerCase();
     const stemOf = pth => { const m = /^charmnest\/master\/(.+)\.(?:ai|png)$/.exec(String(pth || "")); return m ? safeKey(m[1]) : null; };
-    const heldBy = new Map(); for (const [sk, e] of B.master.entries) for (const pth of [e.aiPath, e.thumbPath].concat(Object.values(e.sizes || {}).flatMap(z => [z && z.aiPath, z && z.thumbPath]))) { const st = stemOf(pth); if (st && !heldBy.has(st)) heldBy.set(st, sk); }
+    // ...and a file that OTHER SKUs of the library point at is never written over: an old master drew one charm with three SKU lines and they all share one file, so re-indexing one of them from a corrected sheet
+    // replaced the file under the other two (their stored download links died and their tile read "Preview unavailable"). The rebuilt SKU takes a file of its own; the others keep the file they had.
+    const heldBy = new Map(); for (const [sk, e] of B.master.entries) for (const pth of [e.aiPath, e.thumbPath].concat(Object.values(e.sizes || {}).flatMap(z => [z && z.aiPath, z && z.thumbPath]))) { const st = stemOf(pth); if (!st) continue; if (!heldBy.has(st)) heldBy.set(st, new Set()); heldBy.get(st).add(String(sk).toUpperCase()); }
     const taken = new Set(), keyOf = new Map();
     for (const c0 of live.slice().sort((a, b) => a.index - b.index)) {
       const p0 = [{ sku: c0.sku, size: c0.skuSize }].concat((c0.extraSkus || []).map(x => ({ sku: x.sku, size: x.size }))).find(x => nameOk(x.sku)); if (!p0) continue;
-      const base = p0.size ? `${p0.sku}__${p0.size}` : p0.sku; let key = base; const holder = heldBy.get(safeKey(key));
-      if (taken.has(safeKey(key)) || (holder && holder !== up(p0.sku))) key = `${base}__${c0.index}`;
+      const base = p0.size ? `${p0.sku}__${p0.size}` : p0.sku; let key = base; const holders = heldBy.get(safeKey(key)), mine = new Set([{ sku: c0.sku }].concat(c0.extraSkus || []).map(x => up(x.sku)));
+      if (taken.has(safeKey(key)) || (holders && [...holders].some(h => !mine.has(h)))) key = `${base}__${c0.index}`;
       taken.add(safeKey(key)); keyOf.set(c0.index, key);
     }
     let n = 0;
@@ -3411,8 +3413,10 @@ const Pool = window.Pool = (() => {
   }
   async function readMasterCharm(entry,size) {
     const geom=sizeEntry(entry,size);
-    const url = geom.aiUrl || (await api("charmNestOutput", { op: "url", path: geom.aiPath })).url;
-    const bytes = await CharmNestAssets.bytes(url);
+    // (a stored download link dies when the file under it is written again, and a record that shares the file keeps the old one: the file is asked for again through a fresh link before the design is given up)
+    const fresh = async () => (await api("charmNestOutput", { op: "url", path: geom.aiPath })).url;
+    let url = geom.aiUrl, bytes;
+    if (url) { try { bytes = await CharmNestAssets.bytes(url); } catch (e) { url = await fresh(); bytes = await CharmNestAssets.bytes(url); geom.aiUrl = url; } } else { url = await fresh(); bytes = await CharmNestAssets.bytes(url); }
     const parsed = await P.parseSource(bytes, `${entry.sku}.ai`);
     const g = await (P.groupCharmsAsync || P.groupCharms)(parsed, { minPt: +S.settings.minPt || 6 });
     if (!g.charms.length) throw new Error(`${entry.sku}: no outline in the master copy`);

@@ -217,11 +217,15 @@ function settleTwins(lab, charms, pins) {
  *  letters, digits, _ . - into one "_" (safePath), so two different SKUs can name one file ("BOWLING_PIN+BALL" and "BOWLING PIN + BALL"
  *  both become BOWLING_PIN_BALL.ai) and the second upload replaced the first. The first charm in drawing order keeps the plain
  *  name; a later charm whose name collides gets "__<charm index>" after it. Returns Map(charm index → key). */
-function fileKeys(items) {
+function fileKeys(items, held) {
   const safe = k => String(k).replace(/[^\w.\-\/]+/g, "_").replace(/\.\.+/g, ".").toLowerCase(), taken = new Set(), out = new Map();
+  // a file that SKUs of the library not on this charm point at is never written over (their stored links would die): the library's entries, when it was read
+  const refs = new Map(); const stem = p => { const m = /^charmnest\/master\/(.+)\.(?:ai|png)$/.exec(String(p || "")); return m ? safe(m[1]) : null; };
+  if (held) for (const [sk, e] of held) for (const p of [e.aiPath, e.thumbPath].concat(Object.values(e.sizes || {}).flatMap(z => [z && z.aiPath, z && z.thumbPath]))) { const s = stem(p); if (!s) continue; if (!refs.has(s)) refs.set(s, new Set()); refs.get(s).add(String(sk).toUpperCase()); }
   for (const { index, l } of items.slice().sort((a, b) => a.index - b.index)) {
     const base = l.size ? `${l.sku}__${l.size}` : l.sku; let key = base;
-    if (taken.has(safe(key))) key = `${base}__${index}`;
+    const mine = new Set([l.sku].concat((l.extra || []).map(x => x.sku)).map(x => String(x).toUpperCase())), others = refs.get(safe(key));
+    if (taken.has(safe(key)) || (others && [...others].some(h => !mine.has(h)))) key = `${base}__${index}`;
     taken.add(safe(key)); out.set(index, key);
   }
   return out;
@@ -327,7 +331,7 @@ async function main(argv, log = console.log) {
     if (!items.length) { log("nothing new on this sheet"); return { file: name, masterHash, charms: liveCharms, written: 0, held: before, dry: false, at: new Date().toISOString() }; }
   }
   const entries = [], blocked = [], skus = [], kept = [], ringsLeft = [];   // kept: pair designs left as they were (see one()); ringsLeft: a hoop that could not join its charm, by SKU
-  const keyOf = fileKeys(items);                                          // one file name per charm, whatever the server does to the characters
+  const keyOf = fileKeys(items, held);                                          // one file name per charm, whatever the server does to the characters
   // a row of bodies under one label that is surely a mismatched pair is built as ONE design (both bodies in its file); every other charm is the object it was
   const pairs = pairLayer(P, G, Pair, g, lab, items, o, log);
   if (pairs.fold.size) items = items.map(it => pairs.fold.has(it.index) ? Object.assign({}, it, { c: pairs.fold.get(it.index).charm }) : it);

@@ -222,6 +222,23 @@ const libSkus = st => st.list('Charm_Master_Index').map(e => e._id).sort();
     const heldCard = await page.evaluate(() => { const d = [...document.querySelectorAll('#mJobs details.noteBox')].pop(); return d ? d.textContent : ''; });
     ok(/1 SKU line\(s\) already in the library, left as they are · 1 drawn a different size on this sheet/.test(heldCard) && /LONE_9002 — from OLD MASTER\.ai/.test(heldCard) && /this sheet draws it .* mm, the library holds 31\.7 × 31\.7 mm/.test(heldCard), 'the held SKU is listed with its file and the size difference: ' + heldCard.replace(/\n/g, ' | '));
     ok(st.list('Charm_Master_Files').find(f => f.name === 'PAIR.ai').labelled === 3 && st.list('Charm_Master_Files').find(f => f.name === 'PAIR.ai').held === 1, 'the file record counts the pair\'s second body as labelled and says how many it left held: ' + JSON.stringify(st.list('Charm_Master_Files').map(f => [f.labelled, f.charms, f.held])));
+    
+    // 23 · a design file that other SKUs of the library share is never written over (an old master drew one charm with three SKU lines; the corrected sheet carries one of them)
+    await wipe(); await br.upload(sheet, 'PAIR.ai');
+    { const lone = st.doc('Charm_Master_Index', 'LONE_9002'); lone.masterHash = 'ffffffffeeeeeeee'; lone.masterName = 'OLD.ai'; delete lone.readerV;
+      for (const sib of ['DACHSHUND', 'DOGS']) st.put('Charm_Master_Index', sib, Object.assign({}, lone, { sku: sib }), false); }
+    const sharedPath = st.doc('Charm_Master_Index', 'LONE_9002').aiPath, sharedBytes = Buffer.from(st.blobs.get(sharedPath).buf), dachsUrl = st.doc('Charm_Master_Index', 'DACHSHUND').aiUrl;
+    await page.evaluate(() => Master.load(true));
+    r = await br.upload(sheet, 'PAIR.ai', { reindexAll: true }); j = await job();
+    const newPath = st.doc('Charm_Master_Index', 'LONE_9002').aiPath;
+    ok(j.state === 'done' && newPath && newPath !== sharedPath && Buffer.compare(Buffer.from(st.blobs.get(sharedPath).buf), sharedBytes) === 0, 'the rebuilt SKU takes a file of its own and the file the others share is as it was: ' + JSON.stringify({ sharedPath, newPath }));
+    ok(st.doc('Charm_Master_Index', 'DACHSHUND').aiPath === sharedPath && st.doc('Charm_Master_Index', 'DACHSHUND').aiUrl === dachsUrl && st.doc('Charm_Master_Index', 'DOGS').aiPath === sharedPath, 'and the SKUs that share it still point at it');
+    r = await br.upload(sheet, 'PAIR.ai', { reindexAll: true }); ok(st.doc('Charm_Master_Index', 'LONE_9002').aiPath === newPath, 'a second re-index keeps the same file of its own');
+
+    // 24 · a stored download link that no longer works: the design is read through a fresh one
+    await page.evaluate(() => { const e = Master.entryFor('DACHSHUND'); e.aiUrl = 'https://firebasestorage.googleapis.com/v0/b/x/o/charmnest%2Fmaster%2Fgone.ai?alt=media&token=dead'; });
+    const prev = await page.evaluate(async () => { try { const t = await Pool.masterPreview(Master.entryFor('DACHSHUND'), null, false); return typeof t === 'string' && t.startsWith('data:image') ? 'ok' : 'odd:' + typeof t; } catch (e) { return 'fail: ' + e.message; } });
+    ok(prev === 'ok', 'a design whose stored link is dead is drawn through a fresh link: ' + prev);
         const bad = br.errors.filter(e => !/status of 500/.test(e));   // (the one failure this test forces is logged by the browser)
     ok(bad.length === 0, 'no page error: ' + bad.join(' | '));
   } finally { await br.close(); }
