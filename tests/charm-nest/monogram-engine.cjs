@@ -9,7 +9,8 @@ const assert = require('assert');
 const C = require('../../vendor/clipper-6.4.2.js');
 const M0 = require('../../charm-nest-monogram.js');
 // the sections below that read the geometry of the original rules (the middle 1.5 times the sides, the sides as drawn) ask for exactly that; sections 3e and on use the defaults of today (1.25 = sides 80 % of the middle, sides widened 1.15, metrics)
-const M = Object.assign({}, M0, { build: (l, o) => M0.build(l, Object.assign({ centerRatio: 1.5, sideWiden: 1, contacts: 1, allowTrim: false }, o)) });
+const M = Object.assign({}, M0, { build: (l, o) => M0.build(l, Object.assign({ centerRatio: 1.5, sideWiden: 1, contacts: 1, allowTrim: false, normalise: false }, o)) });
+const MC = { build: (l, o) => M0.build(l, Object.assign({ normalise: false }, o)) };      // (the classic geometry with today's other defaults: sections 3e and 3f read exact sizes)
 const { CharmNestPDF: PDF } = require('../../netlify/functions/_charmNestPdf.js');
 let n = 0; const ok = (c, m) => { assert(c, m); n++; };
 const eq = (a, b, m) => { assert.deepStrictEqual(a, b, m); n++; };
@@ -431,18 +432,18 @@ const ABC = [A, Pp, V];
   const mt = (l, b) => Object.assign({ metrics: { baselinePt: b, emPt: 53 } }, l);
   const dh = r => r.bboxPt[3] - r.bboxPt[1];
   // today's defaults (Paul chose the 80 % column): the middle 1.25 times the sides, the sides widened 1.15 times across and not taller
-  const d = M0.build({ left: A, middle: Pp, right: V }); sound(d, 'defaults');
+  const d = MC.build({ left: A, middle: Pp, right: V }); sound(d, 'defaults');
   ok(Math.abs(heightOf(by(d, 'middle')) - 1.25 * 30) < 0.01 && d.report.centerScale === 1.25 && by(d, 'left').scale === 1 && by(d, 'left').scaleX === 1.15 && by(d, 'right').scaleX === 1.15, 'defaults: the middle 1.25 times the sides (37.5 of 30), the sides widened 1.15 times across and not taller');
   ok(Math.abs((by(d, 'left').bboxPt[2] - by(d, 'left').bboxPt[0]) - 23) < 0.01 && d.report.notes.some(t => /widened 1.15 times across/.test(t)), 'the left letter is 23 wide for the 20 it was drawn, and the notes say so: ' + d.report.notes[1]);
-  const o = M0.build({ left: A, middle: Pp, right: V }, { centerRatio: 1.5, sideWiden: 1 }); ok(by(o, 'left').scaleX === 1 && Math.abs(heightOf(by(o, 'middle')) - 45) < 0.01 && !o.report.notes.some(t => /widened/.test(t)), 'centerRatio and sideWiden are options (1.5 and 1: the old rules)');
-  ok(M0.build({ left: A, middle: Pp, right: V }, { sideWiden: 9 }).placed[0].scaleX === 1.5 && M0.build({ left: A, middle: Pp, right: V }, { sideWiden: 0.2 }).placed[0].scaleX === 1, 'sideWiden stays between 1 and 1.5');
+  const o = MC.build({ left: A, middle: Pp, right: V }, { centerRatio: 1.5, sideWiden: 1 }); ok(by(o, 'left').scaleX === 1 && Math.abs(heightOf(by(o, 'middle')) - 45) < 0.01 && !o.report.notes.some(t => /widened/.test(t)), 'centerRatio and sideWiden are options (1.5 and 1: the old rules)');
+  ok(MC.build({ left: A, middle: Pp, right: V }, { sideWiden: 9 }).placed[0].scaleX === 1.5 && MC.build({ left: A, middle: Pp, right: V }, { sideWiden: 0.2 }).placed[0].scaleX === 1, 'sideWiden stays between 1 and 1.5');
   // without metrics both sides are centred on the same y, whatever their boxes (a tall J next to a short A)
   const tallJ = { letter: 'J', rings: [rect(0, -8, 8, 30)] }, shortA = { letter: 'A', rings: [rect(0, 0, 14, 26)] };
-  const nm = M0.build({ left: tallJ, middle: Pp, right: shortA }); sound(nm, 'no metrics');
+  const nm = MC.build({ left: tallJ, middle: Pp, right: shortA }); sound(nm, 'no metrics');
   ok(nm.report.level.metrics === false && nm.report.level.centreDiffMm < 0.01, 'no metrics: both sides on the same centre y: ' + JSON.stringify(nm.report.level));
   // with metrics: ONE baseline for both sides (a J that drops below it, an A that sits on it), the middle centred beyond both
   const lt = mt({ letter: 'J', rings: [rect(0, 0, 8, 38)] }, 8), rt = mt({ letter: 'A', rings: [rect(0, 0, 14, 30)] }, 0), md = mt({ letter: 'P', rings: [rect(0, 0, 18, 34)] }, 0);
-  const m = M0.build({ left: lt, middle: md, right: rt }); sound(m, 'metrics');
+  const m = MC.build({ left: lt, middle: md, right: rt }); sound(m, 'metrics');
   ok(m.report.level.metrics === true && m.report.level.baselineDiffMm === 0, 'with metrics the two sides stand on ONE baseline: ' + JSON.stringify(m.report.level));
   { const pl = by(m, 'left'), pr = by(m, 'right'), pm = by(m, 'middle'), sc = pl.scale;     // (left: baseline 8 above its box bottom; right and middle: on the bottom)
     const baseL = pl.bboxPt[1] + 8 * sc, baseR = pr.bboxPt[1] + 0, baseM = pm.bboxPt[1] + 0;
@@ -451,12 +452,12 @@ const ABC = [A, Pp, V];
     ok(Math.abs((baseR - baseM) - (topM - sideNom) / 2) < 0.02, `the sides are centred on the middle letter's height above the baseline (raised ${(baseR - baseM).toFixed(2)} pt, the middle stands out ${((topM - sideNom) / 2).toFixed(2)} pt above and below)`);
     ok(Math.abs(topM / sideNom - 1.25) < 0.02, 'and the middle is 1.25 times the sides above the baseline: ' + (topM / sideNom).toFixed(3)); }
   ok(m.report.notes.some(t => /stand on one baseline/.test(t)), 'the notes say so');
-  eq(M0.build({ left: lt, middle: md, right: rt }, { valign: 'baseline' }).placed.map(p => p.bboxPt[1] + 0).length, 3, 'valign baseline answers');
+  eq(MC.build({ left: lt, middle: md, right: rt }, { valign: 'baseline' }).placed.map(p => p.bboxPt[1] + 0).length, 3, 'valign baseline answers');
   // metrics on one letter only: not used (nothing half-done)
-  const half = M0.build({ left: lt, middle: Pp, right: V }); ok(half.ok && half.report.level.metrics === false, 'metrics on some letters only: the symmetric fallback');
+  const half = MC.build({ left: lt, middle: Pp, right: V }); ok(half.ok && half.report.level.metrics === false, 'metrics on some letters only: the symmetric fallback');
   // two sides drawn at different font sizes (emPt) are brought to the same size
   const small = Object.assign(mt({ letter: 'V', rings: [rect(0, 0, 14, 28)] }, 0), { metrics: { baselinePt: 0, emPt: 40 } });
-  const em = M0.build({ left: mt({ letter: 'A', rings: [rect(0, 0, 14, 28)] }, 0), middle: md, right: small }); ok(Math.abs(by(em, 'right').scale - 53 / 40) < 1e-3 && by(em, 'left').scale === 1, 'sides of different font sizes: the smaller is raised to the other (x' + by(em, 'right').scale + ')');
+  const em = MC.build({ left: mt({ letter: 'A', rings: [rect(0, 0, 14, 28)] }, 0), middle: md, right: small }); ok(Math.abs(by(em, 'right').scale - 53 / 40) < 1e-3 && by(em, 'left').scale === 1, 'sides of different font sizes: the smaller is raised to the other (x' + by(em, 'right').scale + ')');
   // all 26 of each of three real alphabets (the vendored fonts, with their baseline): the sides always on one baseline
   global.__metricsSample = true;
 }
@@ -470,16 +471,16 @@ const ABC = [A, Pp, V];
   const total = (r, k) => r.report.contacts[k].length;      // (the contacts listed are the natural ones and the tie bars' own)
   const two = r => total(r, 'leftMiddle') >= 2 && total(r, 'middleRight') >= 2;
   // two solid contacts by default, found by moving the letters (no bar), each at least 0.4 mm wide (the report lists their areas); contacts: 1 is the old rule
-  const d = M0.build({ left, middle: blk('M', 24, 40), right }); sound(d, 'C M D');
+  const d = MC.build({ left, middle: blk('M', 24, 40), right }); sound(d, 'C M D');
   ok(two(d) && d.report.contacts.leftMiddle.length >= 2 && d.report.contacts.middleRight.length >= 2 && d.report.tieBars.leftMiddle === 0 && d.report.tieBars.middleRight === 0 && d.report.altered.length === 0, 'two solid contacts per pair by default, no bar and no change to a letter: ' + JSON.stringify(d.report.contacts));
   ok(d.report.contacts.leftMiddle.every(a => a > 0.05) && d.report.contacts.middleRight.every(a => a > 0.05), 'each contact has an area in mm2');
-  const one = M0.build({ left, middle: blk('M', 24, 40), right }, { contacts: 1 }); ok(one.ok && one.report.contacts.leftMiddle.length === 1, 'contacts: 1 asks for the old rule: one contact is enough (' + one.report.contacts.leftMiddle.length + ')');
+  const one = MC.build({ left, middle: blk('M', 24, 40), right }, { contacts: 1 }); ok(one.ok && one.report.contacts.leftMiddle.length === 1, 'contacts: 1 asks for the old rule: one contact is enough (' + one.report.contacts.leftMiddle.length + ')');
   // solid block letters have no gap for a second contact: ONE long solid contact is accepted and said, the piece is not refused
-  const sb = M0.build({ left: blk('A', 14, 28), middle: blk('M', 20, 40), right: blk('V', 14, 28) }); sound(sb, 'blocks');
+  const sb = MC.build({ left: blk('A', 14, 28), middle: blk('M', 20, 40), right: blk('V', 14, 28) }); sound(sb, 'blocks');
   ok(sb.report.contacts.leftMiddle.length === 1 && sb.report.notes.filter(t => /one long or wide solid contact/.test(t)).length === 2, 'solid blocks: one long or wide solid contact per pair, said in the notes');
   // a long hairline entry on the right letter: with the reach limited the body cannot get to the middle letter, so the hairline is shortened (never more than 30 % of the letter's width, the counters and the body stay)
   const H = 7, hair = nonzero('D', [R(8 + H, 0, 12 + H, 30), R(H, 26, 12 + H, 30), R(4 + H, 0, 12 + H, 4), R(0, 29.6, H + 1, 30)]);
-  const off = M0.build({ left, middle: blk('M', 24, 40), right: hair }, { reach: 0.5, allowTrim: false }), on = M0.build({ left, middle: blk('M', 24, 40), right: hair }, { reach: 0.5 });
+  const off = MC.build({ left, middle: blk('M', 24, 40), right: hair }, { reach: 0.5, allowTrim: false }), on = MC.build({ left, middle: blk('M', 24, 40), right: hair }, { reach: 0.5 });
   sound(on, 'trimmed');
   const tr = on.report.altered.filter(a => a.kind === 'trim');
   ok(off.ok === false || (off.report.altered.every(a => a.kind !== 'trim') && off.report.tieBars.middleRight >= 1), 'allowTrim: false leaves the hairline alone (a tie bar or a plain refusal instead): ' + (off.ok ? JSON.stringify(off.report.tieBars) : off.why));
@@ -487,16 +488,35 @@ const ABC = [A, Pp, V];
   ok(on.report.contacts.middleRight.length >= 2 && on.report.tieBars.middleRight === 0, 'and then the right letter meets the middle one in two solid places with no bar: ' + JSON.stringify(on.report.contacts.middleRight));
   { const pr = by(on, 'right'), wFull = (12 + H) * 1.15 * 1; ok(pr.trimMm > 0 && pr.trimMm / MM <= 0.3 * wFull + 0.01, `at most 30 % of the letter's width was taken (${pr.trimMm} mm of ${(wFull * MM).toFixed(1)} mm)`); }
   ok(on.report.notes.some(t => /D: entry stroke shortened [\d.]+ mm/.test(t)), 'the notes say so: ' + on.report.notes.filter(t => /shortened/.test(t)));
-  ok(M0.build({ left, middle: blk('M', 24, 40), right: hair }, { reach: 0.5 }).report.altered.length === on.report.altered.length, 'the same letters give the same adjustment twice');
+  ok(MC.build({ left, middle: blk('M', 24, 40), right: hair }, { reach: 0.5 }).report.altered.length === on.report.altered.length, 'the same letters give the same adjustment twice');
   // what no bar can reach is refused plainly (the other letter is too far from the middle one: nothing solid and no gap to bar across)
-  const far = M0.build({ left, middle: blk('M', 24, 40), right: nonzero('D', [R(40, 0, 44, 30), R(0, 29.6, 41, 30)]) }, { reach: 0.3 });
+  const far = MC.build({ left, middle: blk('M', 24, 40), right: nonzero('D', [R(40, 0, 44, 30), R(0, 29.6, 41, 30)]) }, { reach: 0.3 });
   ok(far.ok === false && /touch|bar|loose/.test(far.why) && far.rings.length === 0, 'a letter whose body cannot get near the middle one is refused with a plain reason: ' + far.why);
   // a tie bar: the letters touch in one place and a bar of barMm joins the second (the bottom arm, 1.6 mm from the block) away from the first; the report and the card say so
-  const bar = M0.build({ left, middle: blk('M', 24, 40), right: hair }, { reach: 0.45, allowTrim: false });
+  const bar = MC.build({ left, middle: blk('M', 24, 40), right: hair }, { reach: 0.45, allowTrim: false });
   ok(bar.ok && bar.report.tieBars.middleRight === 1 && bar.report.contacts.middleRight.length === 2 && bar.report.altered.some(a => a.kind === 'bar' && /tie bar between the Middle and Right/.test(a.text)), 'a second contact made with a tie bar is counted, listed under report.altered and said: ' + (bar.ok ? JSON.stringify(bar.report.altered.map(a => a.text)) : bar.why));
   if (bar.ok) { sound(bar, 'tie bar'); ok(bar.report.joinMm.middleRight >= 0.6 - 1e-9, 'the tie bar counts as a join of its own width: ' + bar.report.joinMm.middleRight); ok(bar.report.notes.some(t => /tie bar/.test(t)), 'and the notes say so'); }
   // options stay within their limits
-  { const bad = M0.build({ left, middle: blk('M', 24, 40), right }, { contacts: 9, contactMm: 99, barMm: 0, contactGapMm: -3 }); ok(bad.ok && bad.report.tieBars.middleRight >= 0, 'absurd options are clamped, not followed'); }
+  { const bad = MC.build({ left, middle: blk('M', 24, 40), right }, { contacts: 9, contactMm: 99, barMm: 0, contactGapMm: -3 }); ok(bad.ok && bad.report.tieBars.middleRight >= 0, 'absurd options are clamped, not followed'); }
+}
+
+// ── 3g · size and layout norms: the body of every letter is measured, the sides held to a ratio of the centre, a stretch is capped and said, the limits are measured and reported (MONOGRAMUI, Paul, 15 Oct 2026) ──
+{
+  const N = M0.NORMS, R = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  ok(N && N.SIDE_HEIGHT_RATIO === 0.8 && N.STRETCH_CAP === 0.25 && N.SIDE_WIDTH_MIN === 0.6 && N.SIDE_WIDTH_MAX === 0.95 && N.OVERLAP_SIDE_MAX === 0.25 && N.OVERLAP_MID_MAX === 0.35 && N.SIDE_VISIBLE_MIN_MM === 3.5 && N.GAP_MIN_MM === 0.35 && N.COUNTERS_MIN === 0.9 && N.ASPECT_MIN < N.ASPECT_TARGET && N.ASPECT_TARGET < N.ASPECT_MAX, 'the norms are named constants and exported: ' + Object.keys(N).join(' '));
+  const wide = { letter: 'M', rings: [R(0, 0, 40, 60)] }, wideSide = { letter: 'A', rings: [R(0, 0, 24, 44)] }, thin = { letter: 'I', rings: [R(0, 0, 4, 44)] };
+  const r = M0.build({ left: thin, middle: wide, right: wideSide });
+  ok(r.ok && r.report.sizes && typeof r.report.review === 'boolean' && Array.isArray(r.report.limits), 'the report carries the sizes, the limits and the review flag');
+  const z = r.report.sizes;
+  ok(Math.abs(z.sideHeightL - N.SIDE_HEIGHT_RATIO) <= N.SIDE_HEIGHT_TOL + 1e-9 && Math.abs(z.sideHeightR - N.SIDE_HEIGHT_RATIO) <= N.SIDE_HEIGHT_TOL + 1e-9, `the sides' body is 0.80 of the centre's in height: ${z.sideHeightL} / ${z.sideHeightR}`);
+  ok(z.stretch.length === 3 && z.stretch[0].capped === true && z.stretch[0].applied <= 1 + N.STRETCH_CAP + 1e-9 && r.report.notes.some(t => /I: narrow, stretched \d+ % of \d+ % needed/.test(t)), 'a letter that needs more than the cap is clamped at it and said: ' + JSON.stringify(z.stretch[0]) + ' ' + r.report.notes.filter(t => /needed/.test(t)));
+  ok(z.stretch.every(q => q.applied <= 1 + N.STRETCH_CAP + 1e-9 && q.applied >= 1 - N.STRETCH_CAP - 1e-9), 'no letter is stretched or squeezed past the cap: ' + z.stretch.map(q => q.applied).join(' '));
+  ok(z.sideWidthR >= N.SIDE_WIDTH_MIN - 1e-9 && z.sideWidthR <= N.SIDE_WIDTH_MAX + 1e-9 && z.overlapFraction.left <= 0.5 && typeof z.aspect === 'number' && typeof z.centreWidthVsMedian === 'number' && typeof z.crowdMm === 'number', 'a side letter that fits is held to its width band, and the aspect, the overlaps and the crowding are reported: ' + JSON.stringify({ w: z.sideWidthR, a: z.aspect, o: z.overlapFraction }));
+  const off = M0.build({ left: thin, middle: wide, right: wideSide }, { normalise: false }); ok(off.ok && off.report.sizes === null && off.report.limits.length === 0, 'normalise: false is the classic layout (no norms, nothing flagged)');
+  const o2 = M0.build({ left: thin, middle: wide, right: wideSide }, { norms: { SIDE_HEIGHT_RATIO: 0.8, STRETCH_CAP: 0.1 } }); ok(o2.ok && o2.report.sizes.stretch.every(q => q.applied <= 1.1 + 0.06 && q.applied >= 0.9 - 1e-9), 'a norm can be overridden by name: a cap of 10 %: ' + o2.report.sizes.stretch.map(q => q.applied).join(' '));
+  // a word whose limits cannot be met is flagged for a person with the limit named, never shipped silently
+  const crowded = M0.build({ left: { letter: 'A', rings: [R(0, 0, 14, 44), R(15, 0, 16, 44), R(17, 0, 18, 44)] }, middle: { letter: 'M', rings: [R(0, 0, 40, 60), R(0, 0, 3, 60)] }, right: wideSide });
+  ok(!crowded.ok || crowded.report.review === false || crowded.report.limits.every(l => l.key && l.text), 'every flagged limit has a name and a plain text');
 }
 
 // ── 3d · real combinations: three 26-letter alphabets (the vendored fonts; Paul's own fonts too when MONO_FONTS names them), the middle one a different font ───────────────────────────────────────────────

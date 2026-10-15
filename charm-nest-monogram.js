@@ -29,6 +29,19 @@
   /* Two solid contacts per pair (MONOGRAMUI, Paul, 15 Oct 2026). Natural first (the reach search, with each side's contacts counted), then a letter's own hairline that reaches over its neighbour is shortened (opts.allowTrim,
      at most TRIM_MAX_PCT of the letter's width and TRIM_INK_PCT of its ink, never a counter, never a new loose part, in steps of TRIM_STEP_MM, the smallest that gives two contacts), then a tie bar of opts.barMm across the nearest gap. */
   const TRIM_MAX_PCT = 30, TRIM_INK_PCT = 10, TRIM_STEP_MM = 0.5;
+  /* Size and layout norms (MONOGRAMUI, Paul, 15 Oct 2026: "some side letters are drastically smaller than the centre letter ... the system must examine every letter being added and enforce a set ratio of size and width";
+     "squished together it just looks like a bunch of gibberish"). Every number is a default of the options of build() (opts.norms overrides one by name) and is exported as CharmNestMonogram.NORMS.
+     A letter is measured by its BODY: the central 90 % of its ink area along each axis (BODY_TRIM cuts 5 % off each end: a flourish, a hairline, a Q's tail does not count). Data of Paul's alphabets (78 letters, the
+     body at the file's font size, in pt): LEFT height 25.8/28.6/29.8 width 7.5/9.8/13.4, MID height 29.4/33.3/34.1 width 9.3/12.9/14.9, RIGHT height 23.8/27.3/30.0 width 6.9/9.1/12.4 (min/median/max): the heights are
+     nearly constant (one font size), the widths run 1 to 2. So: the sides' body height is SIDE_HEIGHT_RATIO of the centre's, the sides' body width is held to SIDE_WIDTH_MIN..MAX of the centre's body width and the
+     centre's to MID_WIDTH_MIN..MAX of the median centre (MID_BODY_W_OVER_EM_MEDIAN of the font size: 12.9 pt of 53), by a horizontal-only stretch of at most STRETCH_CAP (a letter that needs more is clamped and said). The finished
+     piece is laid out for ASPECT_TARGET (width / height, a round piece), never outside ASPECT_MIN..MAX where the letters can stretch to it. The legibility limits are measured on every word and reported: OVERLAP_SIDE_MAX / OVERLAP_MID_MAX
+     (the part of a letter's ink that lies inside the other letters' ink), SIDE_VISIBLE_MIN_MM (the part of a side letter that stands out beside the centre letter), SIDE_HEIGHT_MIN (its ink height against the centre's), GAP_MIN_MM
+     (strokes of different letters that do not touch keep this much apart: the sliver gaps that read as gibberish) and COUNTERS_MIN (the part of the inner openings that stays open). */
+  const NORMS = {
+    SIDE_HEIGHT_RATIO: 0.80, SIDE_HEIGHT_TOL: 0.04, SIDE_WIDTH_MIN: 0.60, SIDE_WIDTH_MAX: 0.95, MID_WIDTH_MIN: 0.84, MID_WIDTH_MAX: 1.11, MID_BODY_W_OVER_EM_MEDIAN: 0.2434, MID_BODY_W_OVER_INKH_MEDIAN: 0.348, STRETCH_CAP: 0.25, BODY_TRIM: 0.05,
+    ASPECT_TARGET: 0.92, ASPECT_MIN: 0.82, ASPECT_MAX: 1.00, OVERLAP_SIDE_MAX: 0.25, OVERLAP_MID_MAX: 0.35, SIDE_VISIBLE_MIN_MM: 3.5, SIDE_HEIGHT_MIN: 0.72, GAP_MIN_MM: 0.35, COUNTERS_MIN: 0.9, BOX_OVERLAP_MAX: 0.42, BOX_OVERLAP_MIN: 0.06
+  };
   /* The inner openings that count when it is asked whether a neighbour's stroke has closed them: those of 0.5 mm2 and more (a quarter of the counters of the real Left / Mid / Right alphabets are smaller: the eyes of a flourish,
      0.5 mm across, which a laser cannot keep open anyway and nobody reads as part of the letter). A smaller one that survives is still a hole of the piece. */
   const COUNTER_MIN_PT2 = 0.5 / (MM * MM);
@@ -201,6 +214,7 @@
       regionNZ: rings => run(C.ClipType.ctUnion, rings, null, C.PolyFillType.pftNonZero, C.PolyFillType.pftNonZero, false),
       union: regions => run(C.ClipType.ctUnion, regions, null, C.PolyFillType.pftNonZero, C.PolyFillType.pftNonZero, true),
       meet: (a, b) => run(C.ClipType.ctIntersection, a, b, C.PolyFillType.pftNonZero, C.PolyFillType.pftNonZero, false),
+      diff: (a, b) => run(C.ClipType.ctDifference, a, b, C.PolyFillType.pftNonZero, C.PolyFillType.pftNonZero, false),
       meetEO: (a, b) => run(C.ClipType.ctIntersection, a, b, C.PolyFillType.pftNonZero, C.PolyFillType.pftEvenOdd, false),
       merge: counters => run(C.ClipType.ctUnion, counters, null, C.PolyFillType.pftNonZero, C.PolyFillType.pftNonZero, false),
       // the paths pulled inward by rPt (what is left when every edge moves in): empty when no disc of that radius fits
@@ -225,6 +239,22 @@
       if (Math.max(si, sj) < 0.995 && Math.min(si, sj) > 0.002) return nz;                    // two rings that partly cross: overlapping contours
     }
     return eo;
+  }
+  /* The BODY of a letter: the span, along one axis, between the two places that cut BODY_TRIM (5 %) of the ink area off each end (so a flourish, a tail or a hairline does not count). 0.001 pt in, 0.001 pt out; scanlines over the outlines. */
+  function centralSpan(region, axis, trim) {
+    const b = bboxOf(region), lo = axis ? b[1] : b[0], hi = axis ? b[3] : b[2], n = 480, st = (hi - lo) / n; if (!(st > 0)) return 0;
+    const len = new Array(n).fill(0);
+    for (let i = 0; i < n; i++) {
+      const c = lo + (i + 0.5) * st, hits = [];
+      for (const r of region) for (let k = 0, m = r.length; k < m; k++) {
+        const p = r[k], q = r[(k + 1) % m], a = axis ? p.Y : p.X, bq = axis ? q.Y : q.X;
+        if ((a <= c) !== (bq <= c)) { const t = (c - a) / (bq - a); hits.push(axis ? p.X + t * (q.X - p.X) : p.Y + t * (q.Y - p.Y)); }
+      }
+      hits.sort((x, y) => x - y); let l = 0; for (let k = 0; k + 1 < hits.length; k += 2) l += hits[k + 1] - hits[k]; len[i] = l;
+    }
+    const tot = len.reduce((x, y) => x + y, 0); if (!(tot > 0)) return 0;
+    const at = target => { let acc = 0; for (let i = 0; i < n; i++) { if (acc + len[i] >= target) return lo + (i + (len[i] > 0 ? (target - acc) / len[i] : 0)) * st; acc += len[i]; } return hi; };
+    return at(tot * (1 - trim)) - at(tot * trim);
   }
   /** One letter as the user drew it → its filled region (see fillOf), normalised so its own bbox starts at 0,0 (integer 0.001 pt). */
   function prepLetter(E, spec, slot) {
@@ -262,7 +292,7 @@
     const overlap = num(o.overlap, 0.18, 0, 0.9);
     return {
       overlap, maxOverlap: Math.max(overlap, num(o.maxOverlap, 0.38, 0, 0.95)),
-      centerRatio: Math.max(1.2, num(o.centerRatio, 1.25, 1.2, 5)), sideWiden: num(o.sideWiden, 1.15, 1, 1.5), contacts: Math.round(num(o.contacts, 2, 1, 3)), contactMm: num(o.contactMm, 0.3, 0.1, 2), contactGapMm: num(o.contactGapMm, 1.5, 0.3, 6), barMm: num(o.barMm, 0.6, Math.max(0.2, num(o.contactMm, 0.3, 0.1, 2)), 2), allowTrim: o.allowTrim !== false,
+      centerRatio: Math.max(1.2, num(o.centerRatio, 1.25, 1.2, 5)), sideWiden: num(o.sideWiden, 1.15, 1, 1.5), contacts: Math.round(num(o.contacts, 2, 1, 3)), contactMm: num(o.contactMm, 0.3, 0.1, 2), contactGapMm: num(o.contactGapMm, 1.5, 0.3, 6), barMm: num(o.barMm, 0.6, Math.max(0.2, num(o.contactMm, 0.3, 0.1, 2)), 2), allowTrim: o.allowTrim !== false, normalise: o.normalise !== false, norms: Object.assign({}, NORMS, o.norms && typeof o.norms === 'object' ? o.norms : {}),
       valign: o.valign === 'baseline' ? 'baseline' : 'center', reach: o.reach !== false, reachMax: typeof o.reach === 'number' && Number.isFinite(o.reach) ? Math.min(0.95, Math.max(0.1, o.reach)) : REACH_HI
     };
   }
@@ -300,17 +330,46 @@
       sideH = Math.max(left.h * sl, right.h * sr);
     }
     cs = Math.max(1, o.centerRatio * sideH / midNom);
-    const wide = o.sideWiden;
-    const placed0 = [[left, sl, sl * wide], [mid, cs, cs], [right, sr, sr * wide]].map(([p, s, sx]) => {
-      const region = scaled(p.region, sx, s), counters = region.filter(r => E.area(r) <= -COUNTER_MIN_PT2 * SC * SC).map(r => r.slice().reverse());
+    const wide = o.sideWiden, N = o.normalise ? o.norms : null;
+    // the body of every letter (see NORMS): the central 90 % of its ink along each axis
+    for (const p of L) { p.bw = Math.max(0.2 * p.w, centralSpan(p.region, 0, NORMS.BODY_TRIM)); p.bh = Math.max(0.2 * p.h, centralSpan(p.region, 1, NORMS.BODY_TRIM)); }
+    // the plan: each letter's uniform scale (s), horizontal factor (f) and what was asked of it (to say it)
+    const plan = [[left, sl, wide], [mid, cs, 1], [right, sr, wide]].map(([p, s, f]) => ({ p, s, f, need: f, capped: false }));
+    let layout = null;
+    if (N) {
+      const [pl, pm, pr] = plan, cap = N.STRETCH_CAP, clampF = (v) => Math.min(1 + cap, Math.max(1 - cap, v));
+      // heights: the sides' BODY is SIDE_HEIGHT_RATIO of the centre's (1 / centerRatio), the ink of a side never taller than 95 % of the centre's, never shrunk more than 15 % from its drawn size
+      const midBH = mid.bh * cs, ratio = 1 / o.centerRatio;
+      for (const q of [pl, pr]) { let v = ratio * midBH / q.p.bh; v = Math.min(v, 0.95 * mid.h * cs / q.p.h); q.s = Math.min(1.25, Math.max(0.85 * q.s, v)); }
+      // the centre's width: into MID_WIDTH_MIN..MAX of the median centre
+      const med = (mid.em ? N.MID_BODY_W_OVER_EM_MEDIAN * mid.em * SC : N.MID_BODY_W_OVER_INKH_MEDIAN * mid.h) * cs, mBW = mid.bw * cs;
+      pm.need = Math.min(Math.max(mBW, N.MID_WIDTH_MIN * med), N.MID_WIDTH_MAX * med) / mBW; pm.f = clampF(pm.need);
+      // the sides' width: into SIDE_WIDTH_MIN..MAX of the centre's body width (widened `wide` when that is inside)
+      const mBW2 = mBW * pm.f;
+      for (const q of [pl, pr]) { const bw = q.p.bw * q.s; q.need = Math.min(Math.max(wide, N.SIDE_WIDTH_MIN * mBW2 / bw, (N.SIDE_VISIBLE_MIN_MM + 0.4) / MM * SC / bw), N.SIDE_WIDTH_MAX * mBW2 / bw); q.f = clampF(q.need); if (q.need > q.f + 0.005) { const boost = Math.min(q.need / q.f, (ratio + N.SIDE_HEIGHT_TOL) / ratio, 1.05); q.s *= boost; q.f = clampF(q.need / boost) ; } }
+      // the whole: laid out for ASPECT_TARGET; when even the largest overlap leaves it outside the band the three are stretched together (within the caps)
+      const Hp = mid.h * cs, wOf = q => q.p.w * q.s * q.f, ovOf = () => 1 - (N.ASPECT_TARGET * Hp - wOf(pm)) / (wOf(pl) + wOf(pr));
+      let ov = ovOf(), fa = 1;
+      const widthAt = o2 => wOf(pm) + (1 - o2) * (wOf(pl) + wOf(pr));
+      if (ov > N.BOX_OVERLAP_MAX) { const want = Math.min(N.ASPECT_MAX * Hp, Math.max(N.ASPECT_MIN * Hp, widthAt(N.BOX_OVERLAP_MAX))), lo = Math.max(...plan.map(q => (1 - cap) / q.f)); fa = Math.max(lo, want / widthAt(N.BOX_OVERLAP_MAX)); }
+      else if (ov < N.BOX_OVERLAP_MIN) { const want = Math.min(N.ASPECT_MAX * Hp, widthAt(N.BOX_OVERLAP_MIN)), hi = Math.min(...plan.map(q => (1 + cap) / q.f)); fa = Math.min(hi, want / widthAt(N.BOX_OVERLAP_MIN)); }
+      if (fa !== 1) { for (const q of plan) q.f *= fa; ov = ovOf(); }
+      layout = { overlap: Math.min(N.BOX_OVERLAP_MAX, Math.max(N.BOX_OVERLAP_MIN, ov)), aspectAsked: N.ASPECT_TARGET, commonStretch: fa };
+      sl = pl.s; sr = pr.s;
+      if (!finite(options && options.overlap)) { o.overlap = layout.overlap; o.maxOverlap = Math.max(o.maxOverlap, layout.overlap + 0.2); }
+      if (!(options && typeof options.reach === 'number')) o.reachMax = Math.min(o.reachMax, N.BOX_OVERLAP_MAX);
+    }
+    const placed0 = plan.map(({ p, s, f }) => {
+      const sx = s * f, region = scaled(p.region, sx, s), counters = region.filter(r => E.area(r) <= -COUNTER_MIN_PT2 * SC * SC).map(r => r.slice().reverse());
       const bodies = region.filter(r => E.area(r) >= SLIVER_PT2 * SC * SC);   // (the separate parts a letter is made of: a stroke apart from the rest, a dot; a speck is not one)
       return { p, s, sx, region, sreg: simp(region), sbodies: simp(bodies), w: Math.round(p.w * sx), h: Math.round(p.h * s), base: p.base == null ? null : Math.round(p.base * s), ar: E.netArea(region), counters, cbox: counters.map(c => bboxOf([c])), cAr: E.netArea(counters), bodies };
     });
     let [PL, PM, PR] = placed0;   // (a side letter that is trimmed is swapped for its trimmed self in placed0 and here)
     if (PM.h < 1.2 * Math.max(PL.h, PR.h) - 2 && !metricsOn) notes.push('the middle letter is less than 1.2 times the side letters');
     if (cs !== 1) notes.push(`middle letter scaled ${round3(cs)} times to stand out`);
-    if (wide !== 1) notes.push(`the side letters were widened ${round3(wide)} times across (not taller) to fit the bigger middle letter`);
-    if (sl !== 1 || sr !== 1) notes.push(`the ${sl !== 1 ? 'left' : 'right'} letter was raised ${round3(Math.max(sl, sr))} times to match the other side`);
+    if (!N && wide !== 1) notes.push(`the side letters were widened ${round3(wide)} times across (not taller) to fit the bigger middle letter`);
+    if (N) for (const q of plan) { const nm = q === plan[1] ? 'centre' : q === plan[0] ? 'left' : 'right'; if (Math.abs(q.f - 1) > 0.005 && (q === plan[1] || Math.abs(q.f - wide) > 0.005)) notes.push(`the ${nm} letter ${q.p.letter || ''} was stretched ${q.f > 1 ? '' : 'in '}${Math.round(Math.abs(q.f - 1) * 100)} % across`) }
+    if (!N && (sl !== 1 || sr !== 1)) notes.push(`the ${sl !== 1 ? 'left' : 'right'} letter was raised ${round3(Math.max(sl, sr))} times to match the other side`);
     const area0 = p => E.area(p);
     /* where a side letter stands vertically beside the middle one (at 0). With metrics: both on ONE baseline, raised so that the sides' height above it is centred on the middle letter's (the middle stands beyond both,
        equally above and below, as in a circle monogram); valign 'baseline': on the middle letter's own baseline. Without metrics: each side's box centred on the middle's box (the same centre for both). */
@@ -333,22 +392,39 @@
       return { ov, pl, rings, outers, connected: outers === 1 };
     }
     const attempt = ov => attemptPl(place(ov), ov);
+    /* crowding: the length (mm) of one letter's outline that lies within GAP_MIN_MM of another letter's ink without touching it (away from where they cross): strokes that run side by side a hair apart are what reads as gibberish */
+    const GAPSC = o.norms.GAP_MIN_MM / MM, CROWD_TOTAL_MM = 3, CROWD_PAIR_MM = 1.5;
+    const outlineLen = (rings, zone) => {
+      if (!zone.length || !rings.length) return 0;
+      const c = new C.Clipper(0), pt = new C.PolyTree(); c.AddPaths(rings.map(r => r.concat([r[0]])), C.PolyType.ptSubject, false); c.AddPaths(zone, C.PolyType.ptClip, true);
+      if (!c.Execute(C.ClipType.ctIntersection, pt, C.PolyFillType.pftNonZero, C.PolyFillType.pftNonZero)) return 0;
+      let l = 0; for (const q of C.Clipper.OpenPathsFromPolyTree(pt)) for (let i = 1; i < q.length; i++) l += Math.hypot(q[i].X - q[i - 1].X, q[i].Y - q[i - 1].Y); return l / SC * MM;
+    };
+    const crowdOf = (A, B, inter) => { const touch = E.grow(inter, GAPSC), near = (X, Y) => E.diff(E.diff(E.grow(Y, GAPSC), Y), touch); return Math.max(outlineLen(A, near(A, B)), outlineLen(B, near(B, A))); };
     function guards(att) {
       const [a, b, c] = att.pl;
-      const reg = x => x.rg, pct = (p, q) => { const i = E.netArea(E.meet(reg(p), reg(q))), s = Math.min(p.ar, q.ar); return { i, pct: s > 0 ? Math.max(0, i / s * 100) : 0 }; };
-      const lm = pct(a, b), mr = pct(b, c);
+      const reg = x => x.rg, pct = (p, q, own) => { const i = E.netArea(E.meet(reg(p), reg(q))), s = own ? own.ar : Math.min(p.ar, q.ar); return { i, pct: s > 0 ? Math.max(0, i / s * 100) : 0 }; };
+      const lm = pct(a, b, o.normalise ? a : null), mr = pct(b, c, o.normalise ? c : null);
       // counters: the inner openings of the three letters, placed. Only a counter that reaches another letter's box can have been covered.
-      const boxes = att.pl.map(x => bboxOf(x.rg)), all = [], near = [];
-      att.pl.forEach((x, i) => { for (const r of x.rg) if (area0(r) <= -COUNTER_MIN_PT2 * SC * SC) {
-        const cr = r.slice().reverse(), bb = bboxOf([r]); all.push(cr);
-        if (boxes.some((q, j) => j !== i && bb[0] < q[2] && bb[2] > q[0] && bb[1] < q[3] && bb[3] > q[1])) near.push(cr); } });
+      const boxes = att.pl.map(x => bboxOf(x.rg)), all = [], near = [], per = [];
+      att.pl.forEach((x, i) => { const ai = [], ni = []; for (const r of x.rg) if (area0(r) <= -COUNTER_MIN_PT2 * SC * SC) {
+        const cr = r.slice().reverse(), bb = bboxOf([r]); all.push(cr); ai.push(cr);
+        if (boxes.some((q, j) => j !== i && bb[0] < q[2] && bb[2] > q[0] && bb[1] < q[3] && bb[3] > q[1])) { near.push(cr); ni.push(cr); } }
+        if (ai.length && ni.length) { const tt = E.netArea(E.merge(ai)); if (tt > 0) per.push(Math.min(1, Math.max(0, 1 - E.netArea(E.meetEO(E.merge(ni), att.rings)) / tt))); } });
       let kept = 1;
-      if (all.length) {
+      if (o.normalise) kept = per.length ? Math.min(...per) : 1;
+      else if (all.length) {
         const tot = E.netArea(E.merge(all));
         if (tot > 0 && near.length) kept = Math.min(1, Math.max(0, 1 - E.netArea(E.meetEO(E.merge(near), att.rings)) / tot));
       }
-      const over = Math.max(0, Math.max(lm.pct, mr.pct) - OVERLAP_MAX_PCT);
-      return { holesKept: kept, lm, mr, ok: kept >= HOLES_MIN && over === 0, penalty: Math.max(0, HOLES_MIN - kept) + over / 100 };
+      let over = Math.max(0, Math.max(lm.pct, mr.pct) - OVERLAP_MAX_PCT), midPct = 0, crowd = { lm: 0, mr: 0 };
+      if (o.normalise) {
+        over = Math.max(0, Math.max(lm.pct, mr.pct) - o.norms.OVERLAP_SIDE_MAX * 100);
+        midPct = (lm.i + mr.i) / Math.max(1, b.ar) * 100; over = Math.max(over, midPct - o.norms.OVERLAP_MID_MAX * 100);
+        const il = E.meet(a.rg, b.rg), ir = E.meet(c.rg, b.rg); crowd = { lm: crowdOf(a.rg, b.rg, il), mr: crowdOf(c.rg, b.rg, ir), lr: crowdOf(a.rg, c.rg, E.meet(a.rg, c.rg)) };
+      }
+      const crowded = crowd.lm + crowd.mr + (crowd.lr || 0) > CROWD_TOTAL_MM;
+      return { holesKept: kept, lm, mr, midPct, crowd, ok: kept >= HOLES_MIN && over === 0 && !crowded, penalty: Math.max(0, HOLES_MIN - kept) + over / 100 + (crowded ? (crowd.lm + crowd.mr + (crowd.lr || 0)) / CROWD_TOTAL_MM * 0.05 : 0) };
     }
 
     /* the join of one side letter P (placed with its box at x, y beside the middle) and the middle: how much they overlap, how wide the overlap is (the widest disc inside it, up to capMm), how much of their
@@ -372,7 +448,7 @@
       if (x >= PM.w || x + P.w <= 0 || y >= PM.h || y + P.h <= 0) return null;
       const Preg = full ? P.region : P.sreg, Mreg = full ? PM.region : PM.sreg, rg = shift(Preg, x, y), inter = E.meet(rg, Mreg), i = E.netArea(inter);
       if (!(i > 0)) return null;
-      const pct = Math.max(0, i / Math.min(P.ar, PM.ar) * 100);
+      const pct = Math.max(0, i / (o.normalise ? P.ar : Math.min(P.ar, PM.ar)) * 100);
       const widest = paths => widestOf(paths, capMm);
       let w = widest(inter), loose = 0;
       if (P.bodies.length > 1) {   // a letter of several separate parts: each must be held by the middle letter, and the join is as wide as its weakest part's
@@ -390,12 +466,23 @@
       const pc = [], mc = [];
       P.counters.forEach((c, k) => { const b = P.cbox[k]; if (inBox([b[0] + x, b[1] + y, b[2] + x, b[3] + y], mBox)) pc.push(c.map(q => ({ X: q.X + x, Y: q.Y + y }))); });
       PM.counters.forEach((c, k) => { if (inBox(PM.cbox[k], pBox)) mc.push(c); });
-      const tot = P.cAr + PM.cAr; let cov = 0;
-      if (tot > 0) { if (pc.length) cov += E.netArea(E.meet(pc, Mreg)); if (mc.length) cov += E.netArea(E.meet(mc, rg)); }
-      const kept = tot > 0 ? Math.min(1, Math.max(0, 1 - cov / tot)) : 1;
-      const valid = !loose && pct <= OVERLAP_MAX_PCT && kept >= HOLES_MIN;
+      let kept = 1;
+      if (o.normalise) {      // (every letter keeps COUNTERS_MIN of its own inner openings, not the three together)
+        if (P.cAr > 0 && pc.length) kept = Math.min(kept, 1 - E.netArea(E.meet(pc, Mreg)) / P.cAr);
+        if (PM.cAr > 0 && mc.length) kept = Math.min(kept, 1 - E.netArea(E.meet(mc, rg)) / PM.cAr);
+        kept = Math.min(1, Math.max(0, kept));
+      } else {
+        const tot = P.cAr + PM.cAr; let cov = 0;
+        if (tot > 0) { if (pc.length) cov += E.netArea(E.meet(pc, Mreg)); if (mc.length) cov += E.netArea(E.meet(mc, rg)); }
+        kept = tot > 0 ? Math.min(1, Math.max(0, 1 - cov / tot)) : 1;
+      }
+      const isLeft = x + P.w / 2 < PM.w / 2, visMm = ((isLeft ? -x : x + P.w - PM.w)) / SC * MM, visNeed = Math.min(o.norms.SIDE_VISIBLE_MIN_MM, 0.7 * P.w / SC * MM);
+      const valid = !loose && pct <= (o.normalise ? o.norms.OVERLAP_SIDE_MAX * 100 : OVERLAP_MAX_PCT) && kept >= HOLES_MIN;
       const nc = !valid ? 0 : (wantNc && need > 1 ? (w >= Math.min(NECK_OK_MM, o.contactMm) - (full ? 0 : 0.1) - 1e-9 ? clustersOf(inter, !full).length : 0) : need);   // (separate solid contacts; not asked for: counted as enough)
-      return { i, pct, neck: w, kept, loose, valid, nc, good: valid && w >= NECK_OK_MM - (full ? 0 : 0.1) - 1e-9 && nc >= need };
+      let good = valid && w >= NECK_OK_MM - (full ? 0 : 0.1) - 1e-9 && nc >= need, crowd = 0;
+      if (good && o.normalise) { crowd = crowdOf(rg, Mreg, inter); if (crowd > CROWD_PAIR_MM * (full ? 1 : 1.2)) good = false; }
+      const crowdFail = valid && !good && crowd > 0;
+      return { i, pct, neck: w, kept, loose, valid, nc, good, crowd, crowdFail };
     }
     // the widths of the two joins of a finished placement (a side that does not reach the middle is 0)
     const joinsOf = (pl, tied) => [0, 2].map(k => { const q = pairQ(pl[k], pl[k].dx, pl[k].dy, 1.0, tied); return q ? q.neck : 0; });
@@ -450,32 +537,33 @@
 
     // reach: the placement of one side nearest the asked overlap whose join holds (see NECK_OK_MM) and whose contacts are as many as asked; else the best that stays valid; else the least bad that touches
     let searched = 0;
-    const rank = q => Math.min(q.nc, need) * 10 + Math.min(q.neck, NECK_OK_MM);
+    const rank = q => Math.min(q.nc, need) * 10 + Math.min(q.neck, NECK_OK_MM) - 0.15 * (q.crowd || 0);
     function reachSide(P, side, jFix) {   // jFix: both sides move up or down by the same step, so they stay level with each other
       const dyStep = Math.max(1, Math.round(REACH_DY * PM.h)), cands = [];
       for (let k = 0; REACH_LO + k * REACH_STEP <= o.reachMax + 1e-9; k++) {
         const ov = Math.round((REACH_LO + k * REACH_STEP) * 1e6) / 1e6;
-        cands.push({ ov, cost: (ov >= o.overlap ? ov - o.overlap : 1.5 * (o.overlap - ov)) / STEP });
+        cands.push({ ov, cost: (ov >= o.overlap ? ov - o.overlap : (o.normalise ? 1 : 1.5) * (o.overlap - ov)) / STEP });
       }
       cands.sort((a, b) => a.cost - b.cost || b.ov - a.ov);
-      let valid = null, any = null;
+      let valid = null, any = null, soft = null;
       for (const c of cands) {
         const x = xOf(P, side, c.ov), y = dyOf(P) + jFix * dyStep, q = pairQ(P, x, y, NECK_OK_MM, false, true); searched++;
         if (!q) continue;
         const hit = { x, y, ov: c.ov, j: jFix, q };
         if (q.good) { const qf = pairQ(P, x, y, NECK_OK_MM, false, true, true); if (qf && qf.good) return Object.assign({}, hit, { q: qf }); q.good = false; }      // (good on the coarse outlines, not on the full ones: only a candidate)
+        if (q.crowdFail && q.nc >= need && q.neck >= NECK_OK_MM - 0.1 - 1e-9 && (!soft || q.crowd < soft.q.crowd)) soft = hit;      // (touches as asked but strokes run too close: the least crowded of these)
         if (q.valid && (!valid || rank(q) > rank(valid.q) + 1e-9 || (rank(q) > rank(valid.q) - 1e-9 && q.i > valid.q.i))) valid = hit;
         const pen = q.loose * 10 + Math.max(0, HOLES_MIN - q.kept) + Math.max(0, q.pct - OVERLAP_MAX_PCT) / 100;
         if (!any || pen < any.pen - 1e-12 || (pen < any.pen + 1e-12 && q.neck > any.q.neck)) any = Object.assign({ pen }, hit);
       }
-      return valid || any;
+      return soft || valid || any;
     }
     // both sides at once, with one shared vertical step j (nearest 0 first): the first j where both joins hold, else the j whose weaker side is best
     const hitCache = new Map(), reachOf = (P, nm, j) => { const key = nm + '|' + (P.cutPt || 0) + '|' + j; if (!hitCache.has(key)) hitCache.set(key, reachSide(P, nm, j)); return hitCache.get(key); };
     function reachBoth(keep, jMax) {
       let bestPair = null, kOk = null;
       for (const j of [0, 1, -1, 2, -2, 3, -3].filter(v => Math.abs(v) <= Math.min(REACH_DYN, jMax == null ? 9 : jMax))) {
-        if (j === 0 && keep && !kOk) { const jn = joinsOf(keep), nc = ncOf(keep); kOk = [0, 2].map(k => jn[k / 2] >= NECK_OK_MM - 1e-9 && nc[k / 2] >= need ? { x: keep[k].dx, y: keep[k].dy, ov: null, j: 0, q: { good: true, valid: true, neck: jn[k / 2], kept: 1, loose: 0, nc: nc[k / 2] }, keep: true } : null); }
+        if (j === 0 && keep && !kOk) { kOk = [0, 2].map(k => { const q = pairQ(keep[k], keep[k].dx, keep[k].dy, NECK_OK_MM, false, true, true); return q && q.good ? { x: keep[k].dx, y: keep[k].dy, ov: null, j: 0, q, keep: true } : null; }); }
         const l = j === 0 && kOk && kOk[0] || reachOf(PL, 'left', j), r = j === 0 && kOk && kOk[1] || reachOf(PR, 'right', j);
         if (!l || !r) continue;
         if (l.q.good && r.q.good) return { hl: l, hr: r };
@@ -656,15 +744,39 @@
     });
 
     // the finished piece: outer ring CCW first, then the holes CW, largest first; everything shifted so the piece starts at 0,0
-    const b = bboxOf(att.rings), W = b[2] - b[0], H = b[3] - b[1];
-    const toPt = r => { const pts = r.map(q => [(q.X - b[0]) / SC, (q.Y - b[1]) / SC]); return pts; };
+    const b = bboxOf(att.rings), H = b[3] - b[1];
+    // the finished piece is stretched across as a whole when its width / height is off the ASPECT_TARGET (within what each letter has left of its STRETCH_CAP): positions and contacts keep their places, only the width changes
+    let fx = 1; const aspect0 = (b[2] - b[0]) / H;
+    if (N && (aspect0 < N.ASPECT_MIN + 0.04 || aspect0 > N.ASPECT_MAX - 0.04)) {
+      const medW = (mid.em ? N.MID_BODY_W_OVER_EM_MEDIAN * mid.em * SC : N.MID_BODY_W_OVER_INKH_MEDIAN * mid.h) * cs, mW = mid.bw * cs * plan[1].f;
+      const capHi = Math.min(...plan.map(q => (1 + N.STRETCH_CAP) / q.f)), capLo = Math.max(...plan.map(q => (1 - N.STRETCH_CAP) / q.f));      // (the cap is never passed)
+      const bandHi = N.MID_WIDTH_MAX * medW / mW, bandLo = N.MID_WIDTH_MIN * medW / mW;
+      fx = Math.min(capHi, Math.max(capLo, Math.min(bandHi, Math.max(bandLo, N.ASPECT_TARGET / aspect0))));
+      if (Math.abs(fx - 1) < 0.005) fx = 1;
+    }
+    const W = (b[2] - b[0]) * fx;
+    const toPt = r => { const pts = r.map(q => [(q.X - b[0]) / SC * fx, (q.Y - b[1]) / SC]); return pts; };
+    // sizes and limits of this word (NORMS): what was measured, what was stretched, which limit is not met (the word is then for a person to look at)
+    let sizes = null; const limits = [];
+    if (N) {
+      const mBH = mid.bh * cs, mBW = mid.bw * cs * plan[1].f, med = (mid.em ? N.MID_BODY_W_OVER_EM_MEDIAN * mid.em * SC : N.MID_BODY_W_OVER_INKH_MEDIAN * mid.h) * cs, r2 = v => Math.round(v * 100) / 100;
+      const fxF = (plan[0].f * fx), stretch = plan.map((q, i) => ({ slot: SLOTS[i], letter: q.p.letter, asked: r2(q.need), applied: r2(q.f * fx), capped: Math.abs(q.need - q.f) > 0.005 }));
+      sizes = { sideHeightL: r2(left.bh * plan[0].s / mBH), sideHeightR: r2(right.bh * plan[2].s / mBH), sideWidthL: r2(left.bw * plan[0].s * plan[0].f / mBW), sideWidthR: r2(right.bw * plan[2].s * plan[2].f / mBW), centreWidthVsMedian: r2(mBW * fx / med), stretch, aspect: r2((b[2] - b[0]) * fx / H), aspectBeforeStretch: r2(aspect0), overlapFraction: { left: r2(g.lm.pct / 100), middle: r2(g.midPct / 100), right: r2(g.mr.pct / 100) }, crowdMm: r2((g.crowd.lm || 0) + (g.crowd.mr || 0) + (g.crowd.lr || 0)), constants: o.norms };
+      const lim = (key, bad, text, value) => { if (bad) { limits.push({ key, value, text }); warnings.push(text); } };
+      lim('aspect', sizes.aspect < N.ASPECT_MIN - 1e-9 || sizes.aspect > N.ASPECT_MAX + 1e-9, `overall width / height ${sizes.aspect} is outside ${N.ASPECT_MIN} to ${N.ASPECT_MAX}`, sizes.aspect);
+      lim('overlapSide', Math.max(sizes.overlapFraction.left, sizes.overlapFraction.right) > N.OVERLAP_SIDE_MAX + 1e-9, `a side letter lies ${Math.round(Math.max(sizes.overlapFraction.left, sizes.overlapFraction.right) * 100)} % inside its neighbour (limit ${Math.round(N.OVERLAP_SIDE_MAX * 100)} %)`, Math.max(sizes.overlapFraction.left, sizes.overlapFraction.right));
+      lim('overlapCentre', sizes.overlapFraction.middle > N.OVERLAP_MID_MAX + 1e-9, `the centre letter lies ${Math.round(sizes.overlapFraction.middle * 100)} % inside the side letters (limit ${Math.round(N.OVERLAP_MID_MAX * 100)} %)`, sizes.overlapFraction.middle);
+      lim('crowding', sizes.crowdMm > 3 + 1e-9, `${sizes.crowdMm} mm of strokes of different letters lie closer than ${N.GAP_MIN_MM} mm without touching (limit 3 mm)`, sizes.crowdMm);
+      lim('counters', g.holesKept < N.COUNTERS_MIN - 1e-9, `a letter keeps only ${Math.round(g.holesKept * 100)} % of its inner openings (limit ${Math.round(N.COUNTERS_MIN * 100)} %)`, g.holesKept);
+      for (const q of stretch) if (q.capped) notes.push(`${q.letter}: ${q.asked > q.applied ? 'narrow, stretched' : 'wide, squeezed'} ${Math.round(Math.abs(q.applied - 1) * 100)} % of ${Math.round(Math.abs(q.asked - 1) * 100)} % needed`);
+    }
     const outer = att.rings.find(r => area0(r) > 0);
     const holes = att.rings.filter(r => area0(r) < 0).sort((p, q) => area0(p) - area0(q) || bboxOf([p])[1] - bboxOf([q])[1] || bboxOf([p])[0] - bboxOf([q])[0]);
     const rings = [{ pts: toPt(outer), hole: false }].concat(holes.map(h => ({ pts: toPt(h), hole: true })));
-    const placed = att.pl.map(P => ({ letter: P.p.letter, slot: P.p.slot, scale: round3(P.s), scaleX: round3(P.sx), trimMm: P.cutPt ? Math.round(P.cutPt * MM * 10) / 10 : 0, bboxPt: [P.dx, P.dy, P.dx + P.w, P.dy + P.h].map((v, i) => round3((v - b[i % 2]) / SC)) }));
+    const placed = att.pl.map(P => ({ letter: P.p.letter, slot: P.p.slot, scale: round3(P.s), scaleX: round3(P.sx * fx), trimMm: P.cutPt ? Math.round(P.cutPt * MM * 10) / 10 : 0, bboxPt: [P.dx, P.dy, P.dx + P.w, P.dy + P.h].map((v, i) => round3((v - b[i % 2]) / SC * (i % 2 ? 1 : fx))) }));
     return {
       ok: true, why: '', rings, bboxPt: [0, 0, round3(W / SC), round3(H / SC)], wMm: Math.round(W / SC * MM * 1e4) / 1e4, hMm: Math.round(H / SC * MM * 1e4) / 1e4, placed,
-      report: { connected: true, overlapPct: { leftMiddle: Math.round(g.lm.pct * 10) / 10, middleRight: Math.round(g.mr.pct * 10) / 10 }, holesKept: round3(g.holesKept), centerScale: round3(cs), overlap: att.ov == null ? round3((ovs[0] + ovs[1]) / 2) : att.ov, reach: reached, searched, warnings, parts, bridges: bars, contacts, tieBars: { leftMiddle: tieBars[0], middleRight: tieBars[1] }, altered, level, joinMm: { leftMiddle: joins[0], middleRight: joins[1] }, moveMm: { left: Math.round(moved[0] / SC * MM * 100) / 100, right: Math.round(moved[2] / SC * MM * 100) / 100 }, joinMm2: { leftMiddle: Math.round(g.lm.i / SC / SC * MM * MM * 100) / 100, middleRight: Math.round(g.mr.i / SC / SC * MM * MM * 100) / 100 }, tries, notes }
+      report: { connected: true, sizes, limits, review: limits.length > 0, overlapPct: { leftMiddle: Math.round(g.lm.pct * 10) / 10, middleRight: Math.round(g.mr.pct * 10) / 10 }, holesKept: round3(g.holesKept), centerScale: round3(cs), overlap: att.ov == null ? round3((ovs[0] + ovs[1]) / 2) : att.ov, reach: reached, searched, warnings, parts, bridges: bars, contacts, tieBars: { leftMiddle: tieBars[0], middleRight: tieBars[1] }, altered, level, joinMm: { leftMiddle: joins[0], middleRight: joins[1] }, moveMm: { left: Math.round(moved[0] / SC * MM * 100) / 100, right: Math.round(moved[2] / SC * MM * 100) / 100 }, joinMm2: { leftMiddle: Math.round(g.lm.i / SC / SC * MM * MM * 100) / 100, middleRight: Math.round(g.mr.i / SC / SC * MM * MM * 100) / 100 }, tries, notes }
     };
   }
   /* ═══ 4 · the preview and the file ═══════════════════════════════════════════════════════════════════════════════ */
@@ -690,7 +802,7 @@
     return await doc.save({ useObjectStreams: false });
   }
 
-  const api = { lettersOf, familiesOf, slotsOf, build, toPdf, svgPath };
+  const api = { lettersOf, familiesOf, slotsOf, build, toPdf, svgPath, NORMS };
   root.CharmNestMonogram = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
