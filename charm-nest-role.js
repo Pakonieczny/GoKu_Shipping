@@ -22,7 +22,7 @@
  *    CNRole.switchTo(role) the quiet "Laser · switch to Design": the session under the old role ends ("switched"), the one under
  *                          the new starts; asks nothing
  *    CNRole.ask({ hint })  shows the question again (hint: nobody asked for it, so it takes no focus)
- *    CNRole.nameSet(name)  charm-nest-1.html calls it whenever a name is set (B.employee); "" = signed out
+ *    CNRole.nameSet(name, { adopt })  charm-nest-1.html calls it whenever a name is set (B.employee); "" = signed out; adopt: the name came from another tab of this computer (charm-nest-account.js): nothing is asked here
  *    CNRole.clear()        sign-out (midnight, idle, closing, a cleared name): the role goes with the name, so the next sign-in asks
  *    CNRole.setAdminLookup(fn)   fn(name) → Promise<true | false | null> (null = could not be told); the one place that asks the server
  *  What is remembered: the role a person chose, in localStorage `cn.role` = { v:1, name, admin:false, role } (it counts only for the name that is
@@ -88,11 +88,11 @@
 
   /* ── the page: who is signed in, and what that means for the stations ── */
   /** the person is signed in for the stations' sake (a session runs, events are recorded): the Admin, or a role is chosen */
-  function commit(resume) {
+  function commit(resume, join) {
     try {
       const name = nameNow(); if (!name || !ready()) return;
       const SS = window.StationSession;
-      if (SS && typeof SS.signedIn === "function") SS.signedIn({ name, id: null, resume: !!resume });        // (a role that changed ends the one session and starts the other; resume: a reload goes on with its session)
+      if (SS && typeof SS.signedIn === "function") SS.signedIn({ name, id: null, resume: !!resume, join: !!join });        // (a role that changed ends the one session and starts the other; resume: a reload goes on with its session; join: the person was signed in in another tab of this computer, which starts the session)
       try { if (window.CNAct && typeof CNAct.release === "function") CNAct.release(); } catch (_) {}   // (what was pressed meanwhile is recorded under it)
     } catch (e) { warn("commit:", e); }
   }
@@ -125,7 +125,7 @@
   }
 
   /** the Admin answer for the name that was just set; then either the sign-in is complete (Admin) or the question opens */
-  function check(name, quiet) {
+  function check(name, quiet, join) {
     const my = ++seq;
     checking = name;
     // (a fast answer shows nothing: the bar the name was typed in goes, and the question or nothing follows; a slow one shows a small labelled spinner)
@@ -136,7 +136,7 @@
       checking = "";
       if (ans === true) {
         unknownFor = ""; adm = name; drop();                   // (the Admin: no role, nothing kept in storage)
-        reset(); bar({ state: "off" }); commit(!!quiet); changed();
+        reset(); bar({ state: "off" }); commit(!!quiet, join); changed();
       } else {
         const had = read();
         if (ans === false) { unknownFor = ""; write({ v: 1, name, admin: false, role: had && known(had.role) ? had.role : "" }); }    // (told: not the Admin: kept)
@@ -175,18 +175,19 @@
   }
 
   /** a name was set anywhere (an approval, a label, the sheet window, the small name field, the Design Station's sign-in) */
-  function nameSet(name) {
+  function nameSet(name, o) {
     try {
       name = String(name || "").trim();
+      const adopt = !!(o && o.adopt);                                                          // (the name came from another tab of this computer, where the person signs in: no question is asked here, and the session is that tab's)
       const SS = window.StationSession;
       if (!name) { clear(); return; }
       if (!window.CNEmployee || typeof CNEmployee.roleBar !== "function") { if (SS) SS.signedIn({ name, id: null }); return; }   // (without the bar there is nobody to ask: as before)
       if (adm && adm !== name) { adm = ""; changed(); }                                      // (another person took the page over: whoever listens, e.g. CharmNestMasterAdmin, hears that the Admin is gone)
       const r = read();
-      if (admin() || (r && known(r.role))) { commit(); changed(); return; }                       // already known for this name: nothing is asked
+      if (admin() || (r && known(r.role))) { commit(false, adopt); changed(); return; }          // already known for this name: nothing is asked
       if (checking === name) return;
-      if (r && r.name === name) { ask({ hint: false }); return; }                                // known not to be the Admin, no role yet
-      drop(); check(name, false);                                                                 // a new person: the Admin answer first
+      if (r && r.name === name) { if (adopt) changed(); else ask({ hint: false }); return; }     // known not to be the Admin, no role yet
+      drop(); check(name, adopt, adopt);                                                          // a new person: the Admin answer first
     } catch (e) { warn("nameSet:", e); }
   }
   /** the person is working with a name kept from before (a reload, the first load of this version): the Admin answer is had quietly, nothing is shown

@@ -326,7 +326,9 @@ async function partB(browser) {
   await context.close(); try { await srv.close && srv.close(); } catch (_) {}
 }
 
-// ═════════════════════════════ C · the hint is there when the Sorter opens ═════════════════════════════
+// ═════════════════════════════ C · nobody is signed in when the Sorter opens: the identity chip says so ═════════════════════════════
+// (ACCOUNT, Paul, 15 Oct 2026: "it is not obvious who is currently signed in": the calm "Sign in with your name" name bar that used to appear by itself 1.8 s after the
+// page opened is replaced by the chip in the top bar, which pulses once; nothing pops up by itself. The press-triggered hint (parts A and B) is unchanged.)
 async function partC(browser) {
   const srv = await start({ receipts: [] }), rec = { events: [], sessions: [] };
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -336,11 +338,14 @@ async function partC(browser) {
   const page = await context.newPage(); page.setDefaultTimeout(30000); watchDialogs(page, 'C');
   page.on('pageerror', e => { errors.push('C: ' + e.message); });
   await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
-  await page.waitForSelector('.cnNameBar[data-kind="hint"]', { timeout: 15000 }).catch(() => {});
-  const hint = await page.evaluate(() => { const b = document.querySelector('.cnNameBar[data-kind="hint"]'); return b ? { chip: (b.querySelector('.cnNbCont:not([hidden])') || {}).textContent || '', focused: b.contains(document.activeElement) } : null; });
-  check(hint && hint.chip === 'Continue as Paul K.' && !hint.focused, 'C: nobody signed in at open: the calm hint is already there (no first press needed), takes no focus, and offers Continue as: ' + JSON.stringify(hint));
-  await page.click('.cnNameBar .cnNbCont'); await page.waitForFunction(() => CNEmployee.name() === 'Paul K.', null, { timeout: 8000 }).catch(() => {});
-  check(await page.evaluate(() => CNEmployee.name()) === 'Paul K.' && !(await page.evaluate(() => document.querySelector('.cnNameBar[data-kind="hint"]'))), 'C: one tap signs the person in and the hint goes away');
+  await page.waitForFunction(() => { const c = document.getElementById('cnAcctChip'); return c && c.classList.contains('cnAcPulse'); }, null, { timeout: 15000 }).catch(() => {});
+  const chip = await page.evaluate(() => { const c = document.getElementById('cnAcctChip'); return c ? { text: c.textContent.trim(), pulse: c.classList.contains('cnAcPulse'), focused: c.contains(document.activeElement), bar: !!document.querySelector('.cnNameBar'), panel: !!document.getElementById('cnAcctPanel') } : null; });
+  check(chip && chip.text === 'Sign in' && chip.pulse && !chip.focused && !chip.bar && !chip.panel, 'C: nobody signed in at open: the chip in the top bar says "Sign in" and pulses once; no name bar and no panel appears by itself, and nothing takes the focus: ' + JSON.stringify(chip));
+  await page.click('#cnAcctChip'); await page.waitForSelector('#cnAcctPanel .cnAcTile');
+  const tile = await page.evaluate(() => { const t = document.querySelector('#cnAcctPanel .cnAcTile .cnAcTn'); return t ? t.textContent.trim() : ''; });
+  check(tile === 'Paul K.', 'C: the last name used on this computer is the first tile of the panel (it was "Continue as"): ' + tile);
+  await page.click('#cnAcctPanel .cnAcTile'); await page.waitForFunction(() => CNEmployee.name() === 'Paul K.', null, { timeout: 8000 }).catch(() => {});
+  check(await page.evaluate(() => CNEmployee.name()) === 'Paul K.' && !(await page.evaluate(() => document.querySelector('.cnNameBar[data-kind="hint"]'))), 'C: one tap signs the person in and no hint is left');
   // a name set meanwhile by another tab takes the hint away and is this tab's name
   const page2 = await context.newPage(); await page2.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
   await context.close(); try { await srv.close && srv.close(); } catch (_) {}

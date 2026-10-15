@@ -103,11 +103,12 @@
   const LABEL = { sorting: "Sorting", welding: "Welding", assembly: "Assembly", shipping: "Shipping", design: "Design",
     laser: "Laser", sorter: "Sorter", qr: "QR Printer", inbox: "Inbox" };
   const K = { computer: "station_computer_id", name: "station_computer_name", day: "station_signin_day",
-    days: "station_signin_days", unsent: "station_session_unsent", input: "station_person_input" };
+    days: "station_signin_days", unsent: "station_session_unsent", input: "station_person_input", ended: "station_session_ended" };
   const ROLES = new Set(["laser", "design"]);
   const cfg = { station: "", device: "", person: null, role: null, signOut: null, labelHost: null, labelCss: "", sandbox: false,
-    multi: false, people: null, creditTask: "matching" };
+    multi: false, people: null, creditTask: "matching", joinTabs: false };
   let ready = false, cur = null, seen = "", quiet = "", tickT = 0, midT = 0, memId = "", labelBox = null;
+  const joinSince = new Map();                         // joinTabs pages: a person who arrived from another tab of this computer, by when this tab first saw them (monotonic ms)
   const many = new Map(), manyQuiet = new Set();        // multi pages: running sessions by person and task; people the page has not dropped yet
   const unseen = new Map();                            // multi pages: people listed with no session and no record yet, by when this page first saw them (monotonic ms)
   const monoNow = () => { try { if (typeof performance !== "undefined" && performance && typeof performance.now === "function") return performance.now(); } catch (_) {} return Date.now(); };
@@ -572,8 +573,23 @@
     lapse(r, d.reason, d.at);
     return true;
   }
-  function begin(p, resume) {
+  function begin(p, resume, join) {
     const today = nyDay(), now = Date.now(), r = loadRec();
+    if (cfg.joinTabs) {
+      /* TWO TABS, ONE SESSION (ACCOUNT, 15 Oct 2026; init({ joinTabs: true }), the Sorter app). A person who signed in, or was switched to, in ANOTHER tab of
+         this computer reaches this tab as a storage event, a moment before that tab has written the session's record (and a browser's local storage
+         reaches another tab a few milliseconds late). So this tab does not start a session of its own at once: it waits for the other tab's record (up
+         to about a second and a half), goes on with it, and starts one only when none appears. And a session the other tab started a moment ago for
+         the same person at the same station is gone on with, not ended and started again. */
+      const live = !!(r && !r.ended && r.name === p.name && r.day === today && stationOf(r) === stationNow()), k = personKey(p.name);
+      if (join && !live) {
+        const t0 = joinSince.get(k), m = monoNow();
+        if (t0 === undefined) { joinSince.set(k, m); setTimeout(tick, 1600); return; }
+        if (m - t0 < 1500) return;
+      }
+      joinSince.delete(k);
+      if (live && !resume && now - (Number(r.startAt) || 0) < 4000) resume = true;
+    }
     if (r && !r.ended) {
       const same = stationOf(r) === stationNow();             // (a session of the other role is not gone on with: it ends, "switched")
       if (resume && same && r.name === p.name && r.day === today) {
@@ -641,8 +657,13 @@
     else { const k = loadRec(); if (!(k && k.id !== s.id && !k.ended)) saveRec(s); }       // (a second tab of this computer that already started the next session keeps it as the page's record: this one's end must not wipe it, or both tabs would start one each; ST2)
     if (s === cur) cur = null;
     if (!(reason === "switched" && samePerson === true)) admins.delete(adminKey(s.name));     // the next sign-in asks again (a role switch of the SAME person is not a new sign-in: the answer stays; another person taking the page over is asked fresh)
+    // two tabs of one computer share one session: the tab that ends it first sends the end, and the other (it learns of the sign-out or the switch a moment later)
+    // does not send it a second time (ACCOUNT, 15 Oct 2026; the ids of the last 20 ended sessions are kept in this browser, nothing else)
+    if (s.key === undefined) { if (endedHere(s.id)) return; markEnded(s.id); }
     sendEnd(body(s, "end", reason, at));
   }
+  function endedHere(id) { const l = lsJson(K.ended, []); return Array.isArray(l) && l.indexOf(id) >= 0; }
+  function markEnded(id) { const l = lsJson(K.ended, []), a = Array.isArray(l) ? l : []; if (a.indexOf(id) < 0) { a.push(id); lsSet(K.ended, JSON.stringify(a.slice(-20))); } }
   function end(reason) { if (cur) finish(cur, REASONS.has(reason) ? reason : "signOut"); }
 
   /** the day turned: end the session and let the page sign out (its work stays on screen) */
@@ -668,7 +689,7 @@
            rule is due as well, so it ends the same way, at the last input with the reason, not as a hand sign-out at the moment it noticed (that would
            count the whole quiet time as hours at this page; ST3, 6 Oct 2026) */
         if (cur) { const d = !cur.ended && knownAdmin(cur) !== true ? dueRule(cur, inputOf(cur), Date.now()) : null; if (d) lapse(cur, d.reason, d.at); else finish(cur, "signOut"); }
-        seen = ""; quiet = ""; return;
+        seen = ""; quiet = ""; joinSince.clear(); return;
       }
       if (p.name === quiet) return;
       if (p.pending) {          // named but not signed in yet (the Sorter's "Laser or Design?" is not answered): no session, but the day is kept like any sign-in, so the day turning clears the name
@@ -680,18 +701,18 @@
       }
       if (cur && cur.name === p.name && stationOf(cur) !== stationNow()) {     // the role changed: the one session ends, the other starts
         seen = p.name; markDay(p.name, today);
-        finish(cur, "switched", undefined, true); begin(p, true);          // (resume: another tab that switched first has already started the new one, this tab goes on with it; ST2)
+        finish(cur, "switched", undefined, true); begin(p, true, true);          // (resume: another tab that switched first has already started the new one, this tab goes on with it; ST2)
         return;
       }
       if (p.name !== seen) {                     // someone signed in here (or in another tab of this computer)
         seen = p.name; markDay(p.name, today);
         if (cur && cur.name !== p.name) finish(cur, "switched");
-        if (!cur) begin(p, true);
+        if (!cur) begin(p, true, true);
         return;
       }
       const d = dayOf(p.name);
       if (d && d !== today) { midnight(); return; }
-      if (!cur) begin(p, true);
+      if (!cur) begin(p, true, true);
     } catch (e) { warn("reconcile:", e); }
   }
   function tick() {
@@ -925,6 +946,7 @@
       cfg.sandbox = o.sandbox != null ? !!o.sandbox : /[?&]sandbox=1\b/.test(location.search);
       cfg.multi = o.multi === true; cfg.people = cfg.multi && typeof o.people === "function" ? o.people : null;
       cfg.creditTask = cleanTask(o.creditTask) || "matching";
+      cfg.joinTabs = o.joinTabs === true && !cfg.multi;          // (the Sorter app: two tabs of one computer share one session, see begin)
       computerId();
       ready = true;
       touch();                                       // the page was opened: an input
@@ -960,7 +982,7 @@
       markDay(name, today); seen = name; quiet = "";
       if (cur && cur.name === name && cur.day === today && stationOf(cur) === stationNow()) return;
       if (cur) finish(cur, "switched", undefined, adminKey(cur.name) === adminKey(name));
-      begin({ name, id: safeId(who && who.id) }, !!(who && who.resume));      // (resume: a page loaded with its person already there goes on with the session it kept, as init does)
+      begin({ name, id: safeId(who && who.id) }, !!(who && who.resume), !!(who && who.join));      // (resume: a page loaded with its person already there goes on with the session it kept, as init does; join: a person another tab of this computer signed in, joinTabs pages only)
     } catch (e) { warn("signedIn:", e); }
   }
   function signedOut(reason, who) {
@@ -969,7 +991,7 @@
       if (cfg.multi) return mSignedOut(reason, who);
       const p = person();
       end(REASONS.has(reason) ? reason : "signOut");
-      seen = ""; quiet = p ? p.name : "";
+      seen = ""; quiet = p ? p.name : ""; joinSince.clear();
     } catch (e) { warn("signedOut:", e); }
   }
 

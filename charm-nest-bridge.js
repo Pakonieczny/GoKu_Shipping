@@ -478,6 +478,9 @@ const NameBar = (() => {
       css();
       const hint = o.kind === "hint", why = o.why || (hint ? "Add it and the work you just did is counted under it." : "Kept with your work on this computer today.");
       if (hint && !bar && Date.now() < quietUntil) return Promise.resolve("");
+      // ACCOUNT (Paul, 15 Oct 2026): the Account panel is the sign-in face. While it is open it already asks "Who's working?" (a hint adds nothing);
+      // a press that needs a name takes the field, and the panel steps aside
+      try { const A = window.CNAccount; if (A && typeof A.isOpen === "function") { if (hint && A.isOpen()) return Promise.resolve(""); if (!hint) A.yieldTo(); } } catch (_) {}
       if (rbar) roleOff();        // (one bar in this spot: the name field takes the place of the role step; the question comes back at the next press)
       if (bar && !bar.isConnected) { bar = null; finish = null; pr = null; }
       if (bar) {
@@ -532,6 +535,9 @@ const NameBar = (() => {
   function roleBar(o) {
     o = o || {};
     try {
+      // ACCOUNT (Paul, 15 Oct 2026): with the Account panel open the panel asks "Laser or Design?" itself, so this bar does not also appear;
+      // with the panel closed this bar stays the way the question is asked
+      try { const A = window.CNAccount; if (A && typeof A.takeRole === "function" && A.takeRole(o)) { roleOff(); return true; } } catch (_) {}
       if (o.state === "off") { roleOff(); return true; }
       if (o.state !== "ask" && o.state !== "checking") return false;
       css();
@@ -573,9 +579,11 @@ const NameBar = (() => {
       if (r) sw.textContent = `${R.label(r)} · switch to ${R.label(R.other(r))}`;
     } catch (_) {}
   }
-  return { open, close: () => close(""), settled, resume: g => { resumeFn = typeof g === "function" ? g : null; }, isOpen: () => !!(bar && bar.isConnected), role: roleBar, roleOpen: () => !!(rbar && rbar.isConnected) };
+  /** The Account panel is open over this bar: the bar waits out of sight (the press that asked is still waiting, and goes on when a name is set), and comes back when the panel is put away. */
+  const park = on => { try { for (const b of [bar, rbar]) if (b) b.style.display = on ? "none" : ""; } catch (_) {} };
+  return { open, close: () => close(""), settled, park, resume: g => { resumeFn = typeof g === "function" ? g : null; }, isOpen: () => !!(bar && bar.isConnected), role: roleBar, roleOpen: () => !!(rbar && rbar.isConnected) };
 })();
-window.CNEmployee = { name: employeeName, ask: askEmployee, need: needEmployee, last: lastName, normalize: normName, edit: NameBar.open, roleBar: NameBar.role };   // (the Library's Completed marks record who, charm-nest-library.js; ask/need never pop up: the inline name bar, then the press goes on)
+window.CNEmployee = { name: employeeName, ask: askEmployee, need: needEmployee, last: lastName, normalize: normName, edit: NameBar.open, roleBar: NameBar.role, park: NameBar.park };   // (the Library's Completed marks record who, charm-nest-library.js; ask/need never pop up: the inline name bar, then the press goes on)
 /* What a person did here, for the Employee efficiency console (station-activity.js, loaded before this file; the person is
    the name above, as charm-nest-1.html hands it to StationSession). Called only where a person pressed something that
    finished or undid work (print, complete, undo, engraving approved, sent to a sheet, laser/cut marked) and when a held-back
@@ -883,8 +891,11 @@ try {
    is up), not first at the first approval. Purely local: no request, no timer that polls. A name set meanwhile (the Design Station's sign-in,
    another tab) takes the hint away by itself (NameBar.settled). */
 try {
-  window.addEventListener("storage", e => { try { if (e.key === "cn.employee" && e.newValue && !employeeName()) B.employee = e.newValue; } catch (_) {} });
-  const offer = () => { try { if (!employeeName() && !NameBar.isOpen() && !NameBar.roleOpen()) NameBar.open({ kind: "hint", why: "Sign in with your name: your work is counted under it." }); } catch (_) {} };
+  // ACCOUNT (Paul, 15 Oct 2026): a sign-out or a switch in another tab of this computer is this tab's too (charm-nest-account.js follow: it ends nothing twice
+  // and writes nothing back); without it, as before, a tab with no name adopts the one set elsewhere
+  window.addEventListener("storage", e => { try { if (e.key !== "cn.employee") return; if (window.CNAccount && typeof CNAccount.follow === "function") CNAccount.follow(e.newValue); else if (e.newValue && !employeeName()) B.employee = e.newValue; } catch (_) {} });
+  // nobody is signed in when the page opens: the identity chip in the top bar pulses once (no pop-up opens by itself); only without the chip is the calm hint shown
+  const offer = () => { try { if (employeeName() || NameBar.isOpen() || NameBar.roleOpen()) return; if (window.CNAccount && typeof CNAccount.pulse === "function" && CNAccount.pulse()) return; NameBar.open({ kind: "hint", why: "Sign in with your name: your work is counted under it." }); } catch (_) {} };
   const arm = () => setTimeout(offer, 1800);
   if (document.readyState === "complete") arm(); else window.addEventListener("load", arm, { once: true });
 } catch (_) {}

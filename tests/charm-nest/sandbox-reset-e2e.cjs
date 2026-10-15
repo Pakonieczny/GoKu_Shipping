@@ -10,7 +10,7 @@
 // numbers. The real station runs in its frame and holds events it has not sent. Then, in the page:
 //   · before: every tab shows the old records (a control: the test would otherwise pass on an empty page),
 //   · Reset is pressed (the real button of Settings; the page's own confirm), and the reloaded page is checked tab by tab:
-//     Orders, Review (Open and Completed), Library (Sets, Sheets), Nest (the rail and the sheets), Engraving, Sign-ins and
+//     Orders, Review (Open and Completed), Library (Sets, Sheets), Nest (the rail and the sheets), Engraving and
 //     Employee efficiency show nothing of before; the Orders tab says the sandbox waits and offers Start,
 //   · the sandbox stays quiet until started: no stream, no check of the orders, no Auto run, nothing written, in Manual and
 //     with Auto on; saving Settings is not Start; a second tab of the browser is quiet too,
@@ -89,7 +89,7 @@ const OLD = 'OLDREC';
     await F({ completedIds: [A] });
     await F({ newMessage: 'hello team', orderNumber: A, employeeName: 'Paul' });
     await F({ orderNumber: B, staffNote: 'engrave the back' });
-    // (a person of each side: the Sign-ins window reads the shop's real sign-ins, the Employee efficiency console the sandbox's own)
+    // (a person of each side: the shop's real sign-ins are production's Station_Sessions, the Employee efficiency console reads the sandbox's own)
     const who = sb ? { person: 'Sandy', station: 'welding', computer: 'computer-bbb222', label: 'Bench 2' } : { person: 'Paul', station: 'sorting', computer: 'computer-aaa111', label: 'Bench 1' };
     await F({ session: { id: 'session-aaaa-0001', event: 'start', station: who.station, computerId: who.computer, person: who.person, computerLabel: who.label } });
     await F({ activity: [{ id: 'activity-evt-0001', station: who.station, action: 'scan', person: who.person, orderId: A, parts: 2, at: NOW - 60000, computer: who.computer, session: 'session-aaaa-0001' }, { id: 'activity-evt-0002', station: who.station, action: 'complete', person: who.person, orderId: A, parts: 2, orders: 1, at: NOW - 30000, computer: who.computer }] });
@@ -195,9 +195,10 @@ const OLD = 'OLDREC';
     nest: await p.evaluate(() => { CN.setMode('nest'); return [document.getElementById('sheets').innerText, document.getElementById('railScroll').innerText, document.getElementById('railRecentBody').innerText].join('\n'); }),
     engrave: await view(p, 'engrave', 'engraveView')
   });
-  const signins = async p => { await p.evaluate(() => SignIns.open()); await p.waitForFunction(() => { const d = document.querySelector('dialog[open]'); return d && !/Reading/i.test(d.innerText) && d.innerText.length > 20; }, null, { timeout: 15000 }); const t = await p.evaluate(() => [...document.querySelectorAll('dialog[open]')].map(d => d.innerText).join('\n')); await p.evaluate(() => SignIns.close()); return t; };
+  // (the shop's real sign-ins, read from the fake server's Station_Sessions: the Sorter's Sign-ins window that showed them was removed on 15 Oct 2026, Paul: "remove the 'Sign-ins' menu and option from the UI")
+  const signins = async () => st.list('Station_Sessions').map(d => `${d.person} · ${d.station} · ${d.endAt == null ? 'signed in' : 'ended'}`).join('\n');
   const efficiency = async p => { await p.evaluate(() => CN.setMode('efficiency')); await p.waitForFunction(() => { const h = document.getElementById('efficiencyView'); return h && !h.querySelector('[data-lock]') && !/Reading employee activity/.test(h.innerText) && h.innerText.length > 40; }, null, { timeout: 20000 }).catch(() => {}); const t = await p.evaluate(() => document.getElementById('efficiencyView').innerText); return t; };
-  const before = await tabs(page); before.signins = await signins(page); before.efficiency = await efficiency(page);
+  const before = await tabs(page); before.signins = await signins(); before.efficiency = await efficiency(page);
   for (const [k, v] of Object.entries(before)) peek('BEFORE ' + k, v);
   const effAt = Date.now();
   if (PEEK) for (const c of ['Station_Sessions', 'Sandbox_Station_Sessions', 'Station_Activity', 'Sandbox_Station_Activity']) console.log('  before:', c, JSON.stringify(st.list(c).map(d => [d._id, d.person, d.station])));
@@ -206,7 +207,7 @@ const OLD = 'OLDREC';
   // (the old state on the cards is now the seals the old records left, QR LABEL PRINTED and ORDER COMPLETE: the numbered stage "2/5 nested" is printed nowhere any more, Paul 12 Oct 2026; the pool, sheet and set records are still looked for on the Library and Nest tabs below)
   assert(/QR LABEL/i.test(before.orders) && !/\b\d\/5\b|\bnested\b/i.test(before.orders), 'before: the Orders tab shows the old records (their seals), and never the numbered stage: ' + before.orders.slice(0, 400));
   assert(/QR label printed/i.test(before.reviewDone) || before.reviewDone.includes(A), 'before: Review > Completed lists the old record');
-  assert(/Paul/.test(before.signins) && !/Sandy/.test(before.signins), "before: Sign-ins lists the shop's real sign-in, not the sandbox's: " + before.signins.slice(0, 300));
+  assert(/Paul/.test(before.signins) && !/Sandy/.test(before.signins), "before: the shop's sessions hold its real sign-in, not the sandbox's: " + before.signins.slice(0, 300));
   assert(/Sandy/.test(before.efficiency) && /Paul/.test(before.efficiency), "before: Employee efficiency lists the sandbox's own people (a sign-in, and the seals Paul's QR label left): " + before.efficiency.slice(0, 300));
   const preReset = { sandbox: sandboxDocs().length };
   assert(preReset.sandbox > seeded, 'before: the replay added its own records on top: ' + JSON.stringify(preReset));
@@ -253,7 +254,7 @@ const OLD = 'OLDREC';
   const after = await tabs(page);
   await page.waitForFunction(() => !/Loading sets/.test(document.getElementById('libView').innerText), null, { timeout: 15000 }).catch(() => {});
   after.library = await view(page, 'library', 'libView');
-  after.signins = await signins(page);
+  after.signins = await signins();
   while (Date.now() - effAt < 6500) await pause(200);   // (the reader keeps an answer 5 s)
   after.efficiency = await efficiency(page);
   for (const [k, v] of Object.entries(after)) peek('AFTER ' + k, v);
@@ -263,7 +264,7 @@ const OLD = 'OLDREC';
   assert(/Sandbox is empty\. Press Start \(or turn Auto on\) to replay the \d+ \w{3} orders\./.test(after.orders) && /\nStart\b/.test(after.orders), 'the Orders tab says the sandbox is empty and offers Start: ' + after.orders.slice(-200));
   assert(!/Nothing pulled yet/.test(after.orders), 'and not the old "Nothing pulled yet"');
   assert.strictEqual(await page.evaluate(() => [Review.settled().length, Object.keys(B.customDesigns).length, B.orders.rows.length, CN.allSheets().filter(p => p.charms.length).length, Engrave.items().size, Recall.on() ? 1 : 0].join()), '0,0,0,0,0,0', 'the page holds none of the old records in memory');
-  assert(/Paul/.test(after.signins), "Sign-ins still lists the shop's real sign-in (a sandbox reset never touches production's): " + after.signins.slice(0, 300));
+  assert(/Paul/.test(after.signins), "the shop's sessions still hold its real sign-in (a sandbox reset never touches production's): " + after.signins.slice(0, 300));
   assert(/Tester/.test(after.efficiency), 'Employee efficiency lists the person working now (signed in after the reset): ' + after.efficiency.slice(0, 300));
 
   /* ── Settings: the build, the last reset, what the sandbox holds now (inside the dialog; no pop-up on a pop-up) ── */
