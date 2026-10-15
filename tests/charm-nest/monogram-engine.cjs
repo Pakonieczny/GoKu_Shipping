@@ -193,21 +193,21 @@ const ABC = [A, Pp, V];
   const r = M.build({ left: V, middle: diamond, right: V }); sound(r, 'V D V');
   ok(r.report.tries > 1 && r.report.overlap > 0.18 && r.report.overlap <= 0.38, `the overlap was raised from 0.18 to ${r.report.overlap} (tries ${r.report.tries})`);
   ok(r.report.notes.some(t => /raised/.test(t)), 'and the note says so');
-  const noRaise = M.build({ left: V, middle: diamond, right: V }, { maxOverlap: 0.18 }); ok(noRaise.ok === false && noRaise.why === 'the letters do not touch' && noRaise.report.tries === 1, 'with the ladder switched off the same letters do not touch');
+  const noRaise = M.build({ left: V, middle: diamond, right: V }, { maxOverlap: 0.18, reach: false }); ok(noRaise.ok === false && noRaise.why === 'the letters do not touch' && noRaise.report.tries === 1, 'with the ladder switched off the same letters do not touch');
 }
 { // letters that can never touch
   const diamond = { letter: 'D', rings: [[[0, 22.5], [15, 45], [30, 22.5], [15, 0]], [[9, 22.5], [15, 31], [21, 22.5], [15, 14]]] };
   const flag = { letter: 'F', rings: [[[0, 0], [3, 0], [3, 28], [20, 28], [20, 30], [0, 30]]] };
-  const r = M.build({ left: flag, middle: diamond, right: V });
+  const r = M.build({ left: flag, middle: diamond, right: V }, { reach: false });
   ok(r.ok === false && r.why === 'the letters do not touch' && r.rings.length === 0 && r.bboxPt === null && r.report.connected === false, 'a flag whose only edge ink sits where the middle is empty never touches: ' + r.why);
   ok(r.report.tries === 6, 'it tried 0.18 to 0.38 in steps of 0.04: ' + r.report.tries);
   ok(!/\n/.test(r.why) && r.why.length < 90, 'one plain line');
   ok(M.svgPath(r) === '', 'no path for a refused piece');
   // a letter with a loose part (a stem with a dot beside it, far from the neighbour) is said so, not "do not touch"
   const dotted = { letter: 'I', rings: [rect(0, 0, 6, 30), rect(12, 10, 16, 14)] };
-  const r2 = M.build({ left: A, middle: Pp, right: dotted });
+  const r2 = M.build({ left: A, middle: Pp, right: dotted }, { reach: false });
   ok(r2.ok === false && /separate parts/.test(r2.why) && r2.rings.length === 0, 'a letter made of two parts that stay loose: ' + r2.why);
-  const r3 = M.build({ left: { letter: 'I', rings: [rect(14, 0, 20, 30), rect(0, 10, 4, 14)] }, middle: Pp, right: V });
+  const r3 = M.build({ left: { letter: 'I', rings: [rect(14, 0, 20, 30), rect(0, 10, 4, 14)] }, middle: Pp, right: V }, { reach: false });
   ok(r3.ok === false && /separate parts/.test(r3.why), 'the same on the left: ' + r3.why);
   // a part that does reach a neighbour is fine
   const flagged = { letter: 'I', rings: [rect(0, 0, 6, 30), rect(0, 31, 16, 35)] };
@@ -305,6 +305,129 @@ const ABC = [A, Pp, V];
   const cold = process.hrtime.bigint(); M.build({ left: script('A', 12, 16, 4), middle: script('B', 15, 23, 5), right: script('C', 12, 16, 6) }); const coldMs = Number(process.hrtime.bigint() - cold) / 1e6; ok(coldMs < 250, `another set, still fast: ${coldMs.toFixed(1)} ms`);
 }
 
+// ── 3b · slotsOf: which alphabet is the Left, the Middle and the Right one (MONOGRAMUI, Paul's file: Monogram_Left_A … Monogram_Mid_A … Monogram_Right_Z) ──────────────────────────────────────────────────────────────
+{
+  const names = (fams, saved) => { const r = M.slotsOf(fams, saved); return [r.left, r.middle, r.right].map(f => (f ? f.name : '-')).join(' / '); };
+  const sk = (stem, sep = '_') => ALPHA.map(L => `${stem}${sep}${L}`);
+  const PAUL = ['Left', 'Mid', 'Right'].flatMap(k => sk('Monogram_' + k)).map(x => x.toUpperCase());     // the library upper-cases a SKU
+  eq(PAUL.length, 78, '78 SKUs as Paul\'s file names them');
+  const fams = M.familiesOf(PAUL);
+  eq(fams.map(f => f.base).sort(), ['MONOGRAM_LEFT_{L}', 'MONOGRAM_MID_{L}', 'MONOGRAM_RIGHT_{L}'], 'familiesOf finds exactly the three families from the upper-cased list');
+  eq(fams.map(f => f.name).sort(), ['Monogram Left', 'Monogram Mid', 'Monogram Right'], 'and names them Monogram Left / Mid / Right');
+  eq(fams.map(f => f.label).sort(), ['MONOGRAM LEFT', 'MONOGRAM MID', 'MONOGRAM RIGHT'], 'the upper-case label stays as it was');
+  ok(fams.every(f => f.count === 26 && f.missing.length === 0 && f.letters.A === f.base.replace('{L}', 'A') && f.letters.Z === f.base.replace('{L}', 'Z')), 'each holds all 26 letters, A to Z, under their own SKU');
+  const s = M.slotsOf(fams);
+  ok(s.ok === true && s.left.base === 'MONOGRAM_LEFT_{L}' && s.middle.base === 'MONOGRAM_MID_{L}' && s.right.base === 'MONOGRAM_RIGHT_{L}' && s.why === '', 'slotsOf: Left, Middle (MID) and Right found by their names');
+  eq(s.by, { left: 'name', middle: 'name', right: 'name' }, 'by their names, nothing chosen');
+  eq(s.sets.map(x => x.name), ['Monogram'], 'one set, called Monogram');
+  eq(M.slotsOf([...fams].reverse()).left.base, 'MONOGRAM_LEFT_{L}', 'whatever the order of the families');
+  // the other spellings of the middle
+  for (const mid of ['MIDDLE', 'CENTER', 'CENTRE', 'CENTRAL', 'MID']) { const r = M.slotsOf(M.familiesOf([...sk('SCRIPT_LEFT'), ...sk('SCRIPT_' + mid), ...sk('SCRIPT_RIGHT')])); ok(r.ok && r.middle.base === `SCRIPT_${mid}_{L}`, `${mid} is the middle`); }
+  eq(names(M.familiesOf([...sk('monogram left', ' '), ...sk('Monogram-Mid', '-'), ...sk('MONOGRAM RIGHT')])), 'Monogram Left / Monogram Mid / Monogram Right', 'spaces, dashes and mixed case');
+  // never guesses: a bare letter is no place, two place words are no place, a word two families share leaves the slot empty
+  eq(M.slotsOf(M.familiesOf([...sk('LETTER_L'), ...sk('LETTER_M'), ...sk('LETTER_R')])).ok, false, 'LETTER_L, LETTER_M, LETTER_R say no place');
+  eq(M.slotsOf(M.familiesOf([...sk('LEFT_RIGHT'), ...sk('FANCY_MID'), ...sk('FANCY_RIGHT')])).left, null, 'a name with two places ("LEFT RIGHT") is no Left');
+  const two = M.slotsOf(M.familiesOf([...sk('MONO_LEFT'), ...sk('MONO_MID')]));
+  ok(two.ok === false && two.right === null && /no Right alphabet found/.test(two.why) && /Monogram_Left_A/.test(two.why), 'two of three: the third is named as missing: ' + two.why);
+  eq(M.slotsOf([]).why, 'no 26-letter alphabet in the library', 'none at all'); eq(M.slotsOf(null).ok, false, 'null'); eq(M.slotsOf([null, 5, {}, 'x']).ok, false, 'junk');
+  // two complete sets: the biggest first, then the one called Monogram, then by name; all of them offered
+  const both = M.familiesOf([...sk('CIRCLE_LEFT'), ...sk('CIRCLE_MID'), ...sk('CIRCLE_RIGHT'), ...PAUL]), sb = M.slotsOf(both);
+  eq(sb.sets.map(x => x.name), ['Monogram', 'Circle'], 'two complete sets are both offered, Monogram first'); eq(sb.left.base, 'MONOGRAM_LEFT_{L}', 'and the first is used');
+  const thin = M.slotsOf(M.familiesOf([...sk('CIRCLE_LEFT').slice(0, 21), ...sk('CIRCLE_MID'), ...sk('CIRCLE_RIGHT'), ...PAUL]));
+  eq(thin.left.base, 'MONOGRAM_LEFT_{L}', 'of two sets the one whose smallest alphabet is bigger comes first');
+  // a person's choice stands for the slot it names, the rest stay by name
+  const saved = M.slotsOf(both, { middle: 'CIRCLE_MID_{L}' }); eq([saved.left.base, saved.middle.base, saved.right.base, saved.by.middle, saved.by.left], ['MONOGRAM_LEFT_{L}', 'CIRCLE_MID_{L}', 'MONOGRAM_RIGHT_{L}', 'saved', 'name'], 'a saved middle is used, the other two by name');
+  eq(M.slotsOf(fams, { left: 'NOT_THERE_{L}' }).left.base, 'MONOGRAM_LEFT_{L}', 'a saved choice that is no longer in the library is ignored');
+  const hand = M.slotsOf(M.familiesOf([...sk('FANCY_ONE'), ...sk('FANCY_TWO'), ...sk('FANCY_THREE')]), { left: 'FANCY_ONE_{L}', middle: 'FANCY_TWO_{L}', right: 'FANCY_THREE_{L}' });
+  ok(hand.ok && hand.by.left === 'saved' && hand.by.right === 'saved', 'three alphabets with no place in their names work once a person chose them');
+  eq(M.slotsOf(M.familiesOf([...sk('FANCY_ONE'), ...sk('FANCY_TWO'), ...sk('FANCY_THREE')])).ok, false, 'and not before');
+}
+
+// ── 3c · joins that hold (MONOGRAMUI): "touching" is not enough, a join is as wide as the widest disc inside the overlap of two letters; thin script strokes need a wider reach ───────────────────
+{
+  const diamond = { letter: 'D', rings: [[[0, 22.5], [15, 45], [30, 22.5], [15, 0]], [[9, 22.5], [15, 31], [21, 22.5], [15, 14]]] };
+  const legacy = M.build({ left: V, middle: diamond, right: V }, { reach: false });
+  ok(legacy.ok && legacy.report.joinMm.leftMiddle < 0.3 && legacy.report.reach === false && legacy.report.warnings.length === 2 && /thin/.test(legacy.report.notes.join(' ')), 'without the reach the V D V ladder joins at the first touch: a hairline, and it says so: ' + JSON.stringify(legacy.report.joinMm));
+  const r = M.build({ left: V, middle: diamond, right: V }); sound(r, 'V D V reach');
+  ok(r.report.reach === true && r.report.joinMm.leftMiddle >= 0.3 && r.report.joinMm.middleRight >= 0.3 && r.report.warnings.length === 0 && r.report.overlap > legacy.report.overlap, `with it the overlap goes up until the join holds: ${r.report.overlap} (was ${legacy.report.overlap}), joins ${JSON.stringify(r.report.joinMm)}`);
+  ok(r.report.notes.some(t => /raised .* so the letters join firmly/.test(t)) && r.report.searched > 0, 'and the note says so: ' + r.report.notes.join(' | '));
+  eq(JSON.stringify(M.build({ left: V, middle: diamond, right: V })), JSON.stringify(r), 'the same again');
+  // a join that already holds is left exactly as it was (the first touch of block letters is wide)
+  const apv = M.build({ left: A, middle: Pp, right: V }), apvOld = M.build({ left: A, middle: Pp, right: V }, { reach: false });
+  eq(JSON.stringify(apv.rings), JSON.stringify(apvOld.rings), 'a join that holds is not moved: A P V is the same piece with and without the reach'); ok(apv.report.reach === false && apv.report.searched === 0 && apv.report.joinMm.leftMiddle >= 0.3, 'it never searched: ' + JSON.stringify(apv.report.joinMm));
+  // a flag whose edge ink sits where the middle is empty used to be refused; with the reach its bar goes into the middle letter and the piece is one
+  const flag = { letter: 'F', rings: [[[0, 0], [3, 0], [3, 28], [20, 28], [20, 30], [0, 30]]] };
+  const f = M.build({ left: flag, middle: diamond, right: V }); sound(f, 'flag'); ok(f.report.reach === true && f.report.joinMm.leftMiddle > 0, 'the flag joins by moving into the middle letter: ' + f.report.notes.join(' | '));
+  // a letter made of two parts: each part must be held by the middle letter
+  const dotted = { letter: 'I', rings: [rect(0, 0, 6, 30), rect(14, 10, 20, 14)] };            // a stem and, beyond the stem, a mark (on the left letter: the mark is at its far left when mirrored)
+  const left2 = { letter: 'J', rings: [rect(14, 0, 20, 30), rect(0, 10, 6, 14)] };               // stem at the right edge, a mark 8 pt from it: held only when the letter goes well into the middle one
+  const two = M.build({ left: left2, middle: Pp, right: V }); sound(two, 'two parts');
+  ok(two.report.reach === true && two.report.joinMm.leftMiddle >= 0.3, 'both parts of a letter are held: the left letter goes far enough in for its second part to cross the middle one: ' + two.report.notes.join(' | '));
+  const lost = M.build({ left: A, middle: Pp, right: { letter: 'I', rings: [rect(0, 0, 6, 30), rect(40, 10, 46, 14)] } });
+  ok(lost.ok === false && /separate parts/.test(lost.why), 'a part that no overlap can reach is said so, never a silent loose piece: ' + lost.why); void dotted;
+  // a thin letter (I) next to wide ones, and a wide one next to thin
+  const thinI = { letter: 'I', rings: [rect(0, 0, 4, 30)] }, wide = { letter: 'W', rings: [[[0, 0], [8, 0], [20, 14], [32, 0], [40, 0], [26, 30], [22, 30], [20, 24], [18, 30], [14, 30]]] };
+  for (const [name, lt] of [['I M I', { left: thinI, middle: Mm, right: thinI }], ['W I W', { left: wide, middle: thinI, right: wide }], ['I W I', { left: thinI, middle: wide, right: thinI }], ['W M W', { left: wide, middle: Mm, right: wide }]]) {
+    const b = M.build(lt); sound(b, name); ok(b.report.joinMm.leftMiddle >= 0.3 && b.report.joinMm.middleRight >= 0.3, `${name}: both joins hold (${JSON.stringify(b.report.joinMm)}), x${b.report.centerScale}`);
+  }
+  // thin script-like strokes (rings 1.2 pt wide = 0.4 mm): connected, joins counted, nothing thrown
+  const ring = (rx, ry, w) => ({ letter: 'O', rings: [ell(0, 0, rx, ry, 120), ell(0, 0, rx - w, ry - w, 120)] });
+  const sc = M.build({ left: ring(8, 14, 1.2), middle: ring(11, 20, 1.2), right: ring(8, 14, 1.2) }); sound(sc, 'thin rings');
+  ok(sc.report.joinMm.leftMiddle > 0 && sc.report.joinMm.middleRight > 0 && sc.report.holesKept >= 0.9, 'three thin rings: one piece, joins ' + JSON.stringify(sc.report.joinMm) + ', holesKept ' + sc.report.holesKept);
+  // the centre size rule on proportions like a real alphabet: a middle only 11 % taller than the sides is raised to 1.5 times; one already 1.25 times is kept
+  const tall = (k) => ({ letter: 'T', rings: [[[0, 0], [8, 0], [8, 30 * k], [0, 30 * k]]] });
+  const k11 = M.build({ left: block('L', 14, 30), middle: { letter: 'M', rings: [rect(0, 0, 16, 33.3)] }, right: block('R', 14, 30) }); ok(k11.ok && Math.abs(k11.report.centerScale - 1.5 * 30 / 33.3) < 0.01 && Math.abs(heightOf(by(k11, 'middle')) - 45) < 0.05, 'a middle 1.11 times the sides: raised to 1.5 times (45 pt): x' + k11.report.centerScale);
+  const k125 = M.build({ left: block('L', 14, 30), middle: { letter: 'M', rings: [rect(0, 0, 16, 37.5)] }, right: block('R', 14, 30) }); ok(k125.ok && k125.report.centerScale === 1, 'a middle 1.25 times the sides is kept as drawn'); void tall;
+  // the reach is bounded: a hard pair does not take long
+  const t0 = Date.now(); M.build({ left: flag, middle: diamond, right: lost.ok ? V : flag }); ok(Date.now() - t0 < 4000, 'a search over the whole reach takes ' + (Date.now() - t0) + ' ms');
+}
+
+// ── 3c' · how a letter's rings make its shape: counters by default, direction for a font's overlapping contours (the real Mid Q of Paul's file: three rings that cross each other) ──────────────────────
+{
+  const rot = (pts, deg, cx, cy) => pts.map(([x, y]) => { const a = deg * Math.PI / 180, dx = x - cx, dy = y - cy; return [cx + dx * Math.cos(a) - dy * Math.sin(a), cy + dx * Math.sin(a) + dy * Math.cos(a)]; });
+  const cw = pts => pts.slice().reverse();
+  const loop = ell(20, 28, 15, 21, 90), counter = cw(ell(20, 28, 7, 12, 60)), tail = rot(ell(30, 12, 11, 3, 60), 40, 30, 12);
+  const q = (extra = {}) => Object.assign({ letter: 'Q', rings: [loop, tail, counter] }, extra);
+  const piece = (l, ex) => M.build({ left: A, middle: l, right: V }, ex);
+  const dflt = piece(q()), nz = piece(q({ fill: 'nonzero' })), auto = piece(q({ fill: 'auto' }));
+  sound(dflt, 'Q default'); sound(nz, 'Q nonzero'); sound(auto, 'Q auto');
+  eq(holesOf(auto).length, holesOf(dflt).length - 1, "auto: one hole fewer than the default: the lens where the tail crosses the loop is ink, not a hole"); eq(holesOf(nz).length, holesOf(auto).length, 'nonzero: the same');
+  const ink = r => r.rings.reduce((a, x) => a + shoelace(x.pts), 0);
+  ok(ink(auto) > ink(dflt) + 20, 'the default reads the part where the tail crosses the loop as a hole (it bites out the letter and cuts the tail loose): ' + ink(dflt).toFixed(0) + ' pt2 of ink against ' + ink(auto).toFixed(0));
+  eq(JSON.stringify(piece(q({ fill: 'auto' })).rings), JSON.stringify(auto.rings), 'the same again');
+  // a letter drawn as nested rings that all run the same way (an even-odd compound path): auto and the default keep its counter, nonzero would fill it
+  const ccw = ell(10, 15, 10, 15, 60), inner = ell(10, 15, 5, 10, 60);
+  const eo = l => piece(Object.assign({ letter: 'O', rings: [ccw, inner] }, l));
+  eq(holesOf(eo({ fill: 'auto' })).length, 2, 'auto keeps the counter of a ring drawn inside another the same way (A and O: 2 holes)'); eq(holesOf(eo({})).length, 2, 'and so does the default');
+  eq(holesOf(eo({ fill: 'nonzero' })).length, 1, 'nonzero reads direction only: the same-direction inner ring is ink');
+  // a counter of the other direction is a counter in every mode
+  const prop = l => piece(Object.assign({ letter: 'O', rings: [ccw, cw(inner)] }, l));
+  ok([prop({}), prop({ fill: 'auto' }), prop({ fill: 'nonzero' })].every(r => holesOf(r).length === 2), 'a counter wound the other way is a counter whatever the mode');
+  eq(JSON.stringify(piece({ letter: 'O', rings: [ccw, cw(inner)] }).rings), JSON.stringify(piece({ letter: 'O', rings: [ccw, cw(inner)], fill: 'auto' }).rings), 'and the piece is the same');
+  // nothing in the letters that already worked changes
+  eq(JSON.stringify(M.build({ left: A, middle: Pp, right: V }, undefined).rings), JSON.stringify(M.build({ left: Object.assign({ fill: 'auto' }, A), middle: Object.assign({ fill: 'auto' }, Pp), right: Object.assign({ fill: 'auto' }, V) }).rings), 'with fill auto the letters of the other tests are the same pieces');
+}
+
+// ── 3d · real combinations: three 26-letter alphabets (the vendored fonts; Paul's own fonts too when MONO_FONTS names them), the middle one a different font ───────────────────────────────────────────────
+const sampleAlphabets = async () => {
+  const AL = require('./_monogramAlphabets.cjs'), set = await AL.make(), cache = {};
+  const spec = (slot, L) => cache[slot + L] || (cache[slot + L] = { letter: L, rings: set.letters[slot][L].rings.map(r => r.pts) });
+  return { set, spec };
+};
+const checkSample = (sp, words, what) => {
+  let bad = [], thin = 0, minCenter = 9, worstHoles = 1, ms = 0;
+  for (const w of words) {
+    const t = Date.now(), r = M.build({ left: sp.spec('left', w[0]), middle: sp.spec('middle', w[1]), right: sp.spec('right', w[2]) }); ms = Math.max(ms, Date.now() - t);
+    if (!r.ok) { bad.push(w + ' ' + r.why); continue; }
+    const hl = heightOf(by(r, 'left')), hm = heightOf(by(r, 'middle')), hr = heightOf(by(r, 'right'));
+    if (r.rings.filter(x => !x.hole).length !== 1) bad.push(w + ' not one piece');
+    if (r.report.holesKept < 0.9) bad.push(w + ' counters ' + r.report.holesKept);
+    if (hm < 1.2 * Math.max(hl, hr) - 0.01) bad.push(w + ' centre ' + (hm / Math.max(hl, hr)).toFixed(2));
+    if (Math.min(r.report.joinMm.leftMiddle, r.report.joinMm.middleRight) < 0.3) thin++;
+    minCenter = Math.min(minCenter, hm / Math.max(hl, hr)); worstHoles = Math.min(worstHoles, r.report.holesKept);
+  }
+  return { bad, thin, minCenter, worstHoles, ms, n: words.length, what };
+};
 // ── 4 · svgPath and the PDF file ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 (async () => {
   const r = M.build({ left: A, middle: Pp, right: V }); sound(r, 'APV for the file');
@@ -347,5 +470,20 @@ const ABC = [A, Pp, V];
   const sr = M.build({ left: script('J', 11, 15, 1), middle: script('R', 14, 22, 2), right: script('S', 11, 15, 3) }), sg = PDF.groupCharms(await PDF.parseSource(await M.toPdf(sr, { title: 'script' }), 'script.ai'), { minPt: 6 });
   ok(sr.ok && sg.charms.length === 1 && PDF.cutLinesOf(sg.charms[0]).length === holesOf(sr).length, 'script monogram: one charm, ' + holesOf(sr).length + ' holes');
 
+  // 3d · real combinations: all 26 letters in the middle with fixed sides, all 26 on each side, every triple (AAA … ZZZ), and APV / OSR
+  {
+    const sp = await sampleAlphabets(), W = [];
+    for (const m of ALPHA) W.push('A' + m + 'V'); for (const l of ALPHA) W.push(l + 'PV'); for (const r of ALPHA) W.push('AP' + r); for (const L of ALPHA) W.push(L + L + L); W.push('APV', 'OSR', 'MOW', 'IWI', 'WIW');
+    const res = checkSample(sp, [...new Set(W)], 'vendored fonts');
+    const line = `${res.n} real combinations (vendored fonts: 26 middles, 26 lefts, 26 rights, 26 triples, APV, OSR): each ONE piece, counters kept (worst ${res.worstHoles}), the centre at least 1.2 times the sides (least x${res.minCenter.toFixed(2)}), slowest ${res.ms} ms; ${res.thin} with a thin join; problems: ${res.bad.join(' | ') || 'none'}`;
+    console.log('  ' + line); ok(res.bad.filter(b => !process.env.MONO_FONTS || !/counters/.test(b)).length === 0, line);   // (Paul's own fonts: a counter a neighbour's stroke crosses is reported, not refused)
+    if (process.env.MONO_FONTS) {
+      const real = []; let seed2 = 7; const rnd2 = () => { seed2 = (seed2 * 1664525 + 1013904223) >>> 0; return seed2 / 4294967296; };
+      for (let i = 0; i < +(process.env.MONO_SAMPLE || 300); i++) real.push(ALPHA[Math.floor(rnd2() * 26)] + ALPHA[Math.floor(rnd2() * 26)] + ALPHA[Math.floor(rnd2() * 26)]);
+      const rr = checkSample(sp, [...new Set([...W, ...real])], 'MONO_FONTS');
+      console.log(`  MONO_FONTS: ${rr.n} combinations of Paul's fonts: ${rr.bad.length} refused or wrong, ${rr.thin} thin joins, worst counters ${rr.worstHoles}, least centre x${rr.minCenter.toFixed(2)}, slowest ${rr.ms} ms` + (rr.bad.length ? ': ' + rr.bad.slice(0, 20).join(' | ') : ''));
+      ok(rr.bad.filter(b => !/counters/.test(b)).length === 0, 'Paul\'s fonts: every combination is one piece with the centre bigger');
+    }
+  }
   console.log(`monogram engine OK: ${n} checks`);
 })().catch(e => { console.error(e); process.exit(1); });
