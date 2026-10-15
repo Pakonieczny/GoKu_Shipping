@@ -28,7 +28,7 @@
   const BRIDGE_MAX_MM = 3, BRIDGE_W_MM = 0.4;
   /* Two solid contacts per pair (MONOGRAMUI, Paul, 15 Oct 2026). Natural first (the reach search, with each side's contacts counted), then a letter's own hairline that reaches over its neighbour is shortened (opts.allowTrim,
      at most TRIM_MAX_PCT of the letter's width and TRIM_INK_PCT of its ink, never a counter, never a new loose part, in steps of TRIM_STEP_MM, the smallest that gives two contacts), then a tie bar of opts.barMm across the nearest gap. */
-  const TRIM_MAX_PCT = 30, TRIM_INK_PCT = 10, TRIM_STEP_MM = 0.5;
+  const TRIM_MAX_PCT = 30, TRIM_INK_PCT = 10, TRIM_STEP_MM = 0.5, TRIM_TIP_MM = 0.3;
   /* Size and layout norms (MONOGRAMUI, Paul, 15 Oct 2026: "some side letters are drastically smaller than the centre letter ... the system must examine every letter being added and enforce a set ratio of size and width";
      "squished together it just looks like a bunch of gibberish"). Every number is a default of the options of build() (opts.norms overrides one by name) and is exported as CharmNestMonogram.NORMS.
      A letter is measured by its BODY: the central 90 % of its ink area along each axis (BODY_TRIM cuts 5 % off each end: a flourish, a hairline, a Q's tail does not count). Data of Paul's alphabets (78 letters, the
@@ -630,13 +630,21 @@
       const x0 = side === 'right' ? ib[0] + cut : -BIG, x1 = side === 'right' ? BIG : ib[2] - cut;
       let reg = E.meet(P.region, [[{ X: x0, Y: -BIG }, { X: x1, Y: -BIG }, { X: x1, Y: BIG }, { X: x0, Y: BIG }]]);
       reg = E.clean(reg).filter(r => !(area0(r) > 0 && area0(r) < SLIVER_PT2 * SC * SC));
-      if (side === 'right') reg = shift(reg, -cut, 0);
+      // capped clean: a stroke the cut line crosses ends in a round cap at least TRIM_TIP_MM across, never a knife edge
+      { const xc = side === 'right' ? x0 : x1, e = 0.03 * SC, strip = E.meet(reg, [[{ X: side === 'right' ? xc : xc - e, Y: -BIG }, { X: side === 'right' ? xc + e : xc, Y: -BIG }, { X: side === 'right' ? xc + e : xc, Y: BIG }, { X: side === 'right' ? xc : xc - e, Y: BIG }]]), caps = [];
+        for (const comp of strip.filter(r => area0(r) > 0)) {
+          const cb = bboxOf([comp]), ext = cb[3] - cb[1]; if (ext >= TRIM_TIP_MM / MM * SC) continue;
+          const R = Math.max(TRIM_TIP_MM / 2 / MM * SC, ext / 2 + 0.02 / MM * SC), cy = (cb[1] + cb[3]) / 2;
+          caps.push(Array.from({ length: 24 }, (_, i) => ({ X: Math.round(xc + R * Math.cos(i / 24 * 2 * Math.PI)), Y: Math.round(cy + R * Math.sin(i / 24 * 2 * Math.PI)) })));
+        }
+        if (caps.length) reg = E.clean(E.union([].concat(reg, caps))); }
+      const pb = bboxOf(reg.filter(r => area0(r) > 0)); reg = shift(reg, -pb[0], 0);
       const ar = E.netArea(reg);
       if (!(ar > 0) || 1 - ar / P.ar > TRIM_INK_PCT / 100) return null;
       const counters = reg.filter(r => area0(r) <= -COUNTER_MIN_PT2 * SC * SC).map(r => r.slice().reverse());
       const bodies = reg.filter(r => area0(r) >= SLIVER_PT2 * SC * SC);
       if (counters.length !== P.counters.length || Math.abs(E.netArea(counters) - P.cAr) > 0.005 * Math.max(P.cAr, 1) || bodies.length > P.bodies.length) return null;
-      return Object.assign({}, P, { region: reg, w: P.w - cut, ar, counters, cbox: counters.map(c => bboxOf([c])), cAr: E.netArea(counters), bodies, sreg: simp(reg), sbodies: simp(bodies), cutPt: cut / SC });
+      return Object.assign({}, P, { region: reg, w: pb[2] - pb[0], ar, counters, cbox: counters.map(c => bboxOf([c])), cAr: E.netArea(counters), bodies, sreg: simp(reg), sbodies: simp(bodies), cutPt: (P.w - (pb[2] - pb[0])) / SC });
     }
     let altered = [];
     if (best && o.reach && o.allowTrim && need > 1 && ncm(best) < need) {
