@@ -7947,6 +7947,16 @@ const Engrave = window.Engrave = (() => {
      once, so someone pressing A again and again never waits for any of it (copies still in the air hurry to make way). */
   const MO = () => window.Motion && !Motion.reduced() ? Motion : null;
   const EG_TAB = id => `#engraveView .ordBar .egTab[data-tab="${id}"]`;
+  /* MONOGRAM (charm-nest-monogram-ui.js): made when first asked for, from the page's own parts; without the script the tab is simply never offered */
+  let monoUI = null;
+  const MONO_OFF = { count: () => 0, mount() {}, refresh() {}, rows: () => [] };
+  const MonoUI = () => monoUI || (monoUI = (window.CharmNestMonogramUI && window.CharmNestMonogram && window.CharmNestMonogramUI.make({
+    doc: document, Engine: window.CharmNestMonogram, rows: () => Orders.rows(), skus: () => [...B.master.entries.keys()], Master, Pool, Geom: G, P, CustomSheet: window.CustomSheet,
+    itemOf: row => window.Review && Review.customItemFor ? Review.customItemFor(row.key, row) : null, settings: () => S.settings, saveSettings, toast, CNProgress: window.CNProgress, query: () => EG.q,
+    changed: () => { try { render(); } catch (_) { /* the pane keeps what it drew */ } }
+  })) || MONO_OFF);
+  /** The Review card's Build monogram: this line's card in the Engrave tab's Monograms. */
+  function openMonogram(lineKey) { EG.tab = "mono"; EG.chosen = true; EG.monoFocus = lineKey || null; if (typeof setMode === "function") setMode("engrave"); render(); }
   const ENTER = { slide: { ms: 640, delay: 90 }, fade: { ms: 420, delay: 40 }, grow: { ms: 620, delay: 0 } };
   let outgoing = null, unlaunched = null, entering = null, growsFrom = null;
   const inAir = new Set();
@@ -8089,11 +8099,11 @@ const Engrave = window.Engrave = (() => {
     activityTools(v);
     renderWorking(v, jobs);
     const qrows = rowsIn(queue, queueUniverse()), counts = rowCountsOf(qrows);
-    const n = { place: qrows.length, done: counts.decided };
+    const n = { place: qrows.length, done: counts.decided, mono: MonoUI().count() };
     v.querySelectorAll(".egTab[data-tab]").forEach(b => {
       const k = n[b.dataset.tab]; let t = b.querySelector("b");
       if (!k) { if (t) t.remove(); return; }
-      if (!t) { t = el("b", b.dataset.tab === "words" ? "warn" : b.dataset.tab === "place" ? "info" : "ok"); b.appendChild(t); }
+      if (!t) { t = el("b", b.dataset.tab === "words" ? "warn" : b.dataset.tab === "place" || b.dataset.tab === "mono" ? "info" : "ok"); b.appendChild(t); }
       t.textContent = String(k);
     });
     const rail = v.querySelector("#egNext"); if (!rail) return;
@@ -8319,9 +8329,13 @@ const Engrave = window.Engrave = (() => {
     // Until a person picks a tab, the screen follows the work: it used to settle on Decided while the run was still
     // classifying and then stay there as placements arrived behind it, so someone watching this tab saw an empty pane
     // and no sign that anything was waiting. Once a tab is picked by hand it stays picked, empty or not.
-    if (!EG.tab || !EG.chosen || EG.tab === "words") EG.tab = queue.length ? "place" : "done";
+    const monoN = MonoUI().count();   // (MONOGRAM: the monogram lines waiting, a tab of their own beside Placements and Decided)
+    if (!EG.tab || !EG.chosen || EG.tab === "words") EG.tab = queue.length ? "place" : monoN ? "mono" : "done";
+    if (EG.tab === "mono" && !monoN && !EG.monoFocus) EG.tab = queue.length ? "place" : "done";
     if (EG.list == null && jobs.some(isWorking)) EG.list = true;
     const tab = EG.tab;
+    // the Monograms pane is built once and kept while a person types in it: a rebuild would take the caret from a letter box
+    if (tab === "mono" && v.dataset.egTab === "mono" && v.querySelector("#egMono .moPane")) { try { MonoUI().refresh({ focus: EG.monoFocus }); } catch (err) { console.warn("Monograms", err); } EG.monoFocus = null; renderChrome(v, queue); return; }
     const focus = pickFocus(queue);
     // the queue and the decided list in ROWS (the Left and the Right job of an earring line are one row): the badges, the empty message and the card's counter count these
     const qrows = rowsIn(queue, queueUniverse()), doneRows = rowsIn(done, jobs.filter(j => DECIDED.includes(j.state))), counts = rowCountsOf(qrows);
@@ -8344,13 +8358,15 @@ const Engrave = window.Engrave = (() => {
     const out = copyOutgoing();                      // the card in front that is going, copied where it stands (launch, below)
     disposeCards();
     v.innerHTML = `<div class="ordBar egBar">
-        <span class="controlGroup">${tabBtn("place", "Placements", qrows.length, "info")}${tabBtn("done", "Decided", doneRows.length, "ok")}
+        <span class="controlGroup">${tabBtn("place", "Placements", qrows.length, "info")}${tabBtn("done", "Decided", doneRows.length, "ok")}${monoN || tab === "mono" ? tabBtn("mono", "Monograms", monoN, "info") : ""}
         <span data-eg-working hidden></span>
         </span><span class="controlGroup egSearchGroup"><input class="ordSearch" id="egQ" placeholder="order, SKU, words…" value="${esc(EG.q || "")}" title="search the placements, the words and what has been decided by order number, SKU or the engraved words"></span>
         </div>
       <div class="egPane grow"${tab === "place" ? "" : " hidden"}><div class="rvList" id="egQueue"></div>
         <div class="egNext" id="egNext"></div></div>
-      <div class="egPane grow scroll"${tab === "done" ? "" : " hidden"}><div id="egBacks"></div></div>`;
+      <div class="egPane grow scroll"${tab === "done" ? "" : " hidden"}><div id="egBacks"></div></div>
+      <div class="egPane grow scroll" id="egMono"${tab === "mono" ? "" : " hidden"}></div>`;
+    if (tab === "mono") { try { MonoUI().mount(v.querySelector("#egMono"), { focus: EG.monoFocus }); } catch (err) { console.warn("Monograms", err); } EG.monoFocus = null; }
     activityTools(v);
     renderWorking(v, jobs);
     // a tab pressed shows what it holds softly (a quick fade), rather than at a blink
@@ -8983,7 +8999,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { openMonogram, monogramUI: () => MonoUI(), openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
@@ -11936,14 +11952,15 @@ const CustomSheet = window.CustomSheet = (() => {
     const metal = e.files.length ? e.files[e.files.length - 1].metal || defaultMetal(it) : defaultMetal(it), qty = defaultQty(it);
     const fresh = ok.map(f => ({ id: uid(), name: f.name, kind: /\.dxf$/i.test(f.name) ? "dxf" : "ai", size: f.size || 0, bytes: null, hash: null, cloud: null, metal, qty, pieces: 0, wMm: 0, hMm: 0, thumb: null, state: "reading", error: null }));
     fresh.forEach((F, i) => pending.set(F.id, ok[i]));
-    if (!e.files.length) stripNew.add(c.ck);           // the card's strip of designs opens its room when it first shows
-    for (const F of fresh) arriving.add(F.id);
+    if (!e.files.length && !opts.quiet) stripNew.add(c.ck);           // the card's strip of designs opens its room when it first shows
+    if (!opts.quiet) for (const F of fresh) arriving.add(F.id);
     e.files.push(...fresh); e.at = Date.now();
     TL.line(row, "designDropped", { id: `${c.ck}.${fresh[0].id}`, text: (fresh.length === 1 ? `Design added: ${fresh[0].name}` : `${fresh.length} designs added: ${fresh.map(F => F.name).join(", ")}`).slice(0, 200), data: { files: fresh.map(F => ({ name: F.name, kind: F.kind, size: F.size })).slice(0, 12), card: c.ck } });
-    const flown = open(it, { from: opts.from || cardNode(c.ck), fly: { at: opts.at || null, ids: fresh.map(F => F.id) } }); changed();
+    // (opts.quiet, MONOGRAMUI, Paul, 15 Oct 2026: a design made by the page itself, the approved monogram, goes onto the card without the designs window opening over the tab it was approved in)
+    const flown = opts.quiet ? null : open(it, { from: opts.from || cardNode(c.ck), fly: { at: opts.at || null, ids: fresh.map(F => F.id) } }); changed();
     // each is read once it has landed in its row: tracing a design and drawing its picture are long tasks (50-130 ms)
     // that made the flight jump on its way. Bounded, so one whose flight was cut short (the window closed) is read too.
-    const landed = Promise.race([Promise.resolve(flown).catch(() => {}), new Promise(r => setTimeout(r, 2600 + 140 * fresh.length))]);
+    const landed = opts.quiet ? Promise.resolve() : Promise.race([Promise.resolve(flown).catch(() => {}), new Promise(r => setTimeout(r, 2600 + 140 * fresh.length))]);
     let chain = landed; for (const F of fresh) chain = chain.then(() => ingest(F)).then(() => pairQty(e, F));
   }
   /** The one design dropped on an earring-pair card starts at as many copies as the pair needs (one body twice = a Left and its mirror; both ears drawn in one file once). */
@@ -12259,6 +12276,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const ready = !c.why, none = !c.files.length;
     const tip = ready ? "Put every design on the next open sheet of its metal" : c.why;
     return `<button type="button" class="btn ${ready && primary ? "gold" : "ghost"} sm" data-cu-send${ready ? "" : ' aria-disabled="true"'} title="${esc(tip)}">${c.e?.sendIntent ? "Retry send" : "Send to Sheet"}</button>` +
+      (none && linesOf(it)[0]?.spec?.special?.monogram ? `<button type="button" class="btn gold sm" data-cu-mono title="Make the monogram from the buyer's three letters (Engrave › Monograms)">Build monogram</button>` : "") +
       (none && hint ? `<button type="button" class="cuHint" data-cu-designs title="Drop the order's .ai or .dxf design files on this card, or click to choose them">${DROP_IC}<span>Drop .ai / .dxf designs here</span></button>` : "");
   }
   const hasFiles = ev => !!ev.dataTransfer && [...(ev.dataTransfer.types || [])].includes("Files");
@@ -12268,6 +12286,7 @@ const CustomSheet = window.CustomSheet = (() => {
     node._cuIt = it; node._cuCk = c.ck; cardNodes.set(c.ck, node);
     node.querySelectorAll("[data-cu-designs]").forEach(b => b.onclick = ev => { ev.stopPropagation(); open(it, { browse: !c.files.length, from: node }); });
     node.querySelectorAll("[data-cu-keep-retry]").forEach(b => b.onclick = ev => { ev.stopPropagation(); keepRetryFromCard(c.ck, it, node, b.dataset.cuKeepRetry); });
+    node.querySelectorAll("[data-cu-mono]").forEach(b => b.onclick = ev => { ev.stopPropagation(); if (window.Engrave && Engrave.openMonogram) Engrave.openMonogram(linesOf(it)[0].key); });
     const sb = node.querySelector("[data-cu-send]"); if (sb) sb.onclick = ev => { ev.stopPropagation(); if (sb.getAttribute("aria-disabled") === "true") { lit(node.querySelector(".cuHint"), "cuNudge"); return; } send(it); };
     // what just came onto the card: its strip of designs opens its room the first time, a new picture settles in
     const strip = node.querySelector(".cuDesigns");
@@ -13102,7 +13121,7 @@ const CustomSheet = window.CustomSheet = (() => {
     }, delay || 0);
     return true;
   }
-  return { add, send, prepare, sentOf, decisionOf, sending, recover, load, hydrate, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K) } : null; } };
+  return { add, remove, send, prepare, sentOf, decisionOf, sending, recover, load, hydrate, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K) } : null; } };
 })();
 
 /* ═══ 23b · Custom Orders — is this line a custom order? ════════════════════
