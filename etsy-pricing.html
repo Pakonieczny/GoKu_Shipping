@@ -1025,6 +1025,11 @@ function clearActivity(){ $('#activity').classList.remove('show'); }
 function readApprovals(){try{const current=localStorage.getItem(APPROVAL_KEY);if(current)return JSON.parse(current);const legacy=localStorage.getItem(LEGACY_APPROVAL_KEY);const parsed=legacy?JSON.parse(legacy):{};if(legacy)localStorage.setItem(APPROVAL_KEY,JSON.stringify(parsed));return parsed}catch{return{}}}
 function writeApprovals(){localStorage.setItem(APPROVAL_KEY,JSON.stringify(S.approvals))}
 function imageUrl(l){const i=(l.images||[])[0]||{};return i.url_570xN||i.url_fullxfull||i.url_340x270||i.url_170x135||''}
+/* This page runs under Cross-Origin-Embedder-Policy: require-corp (netlify.toml), which refuses an Etsy CDN picture that comes
+   without Cross-Origin-Resource-Policy, and the CDN does not send it reliably (ERR_BLOCKED_BY_RESPONSE.NotSameOriginAfterDefaultedToSameOriginByCoep).
+   A picture that fails to load is retried once through imageProxy (same-origin, sends the header). Direct first, proxy second:
+   the list is long and each proxied picture is a function call. 'error' does not bubble, hence the capture phase. */
+document.addEventListener('error',function(e){const el=e.target;if(!el||el.tagName!=='IMG'||el.dataset.viaProxy)return;const src=el.getAttribute('src')||'';if(!/^https?:\/\/[^\/]*etsystatic\.com\//i.test(src))return;el.dataset.viaProxy='1';el.src='/.netlify/functions/imageProxy?url='+encodeURIComponent(src)},true);
 function sectionTitle(l){return S.sectionMap.get(String(l.shop_section_id||''))||'Unsectioned'}
 function normText(v){return String(v||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').replace(/\s+/g,' ').trim()}
 function moneyObject(v){if(!v||v.amount==null)return null;const d=Number(v.divisor||100),a=Number(v.amount);return Number.isFinite(a)&&d? a/d:null}

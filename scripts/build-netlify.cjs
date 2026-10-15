@@ -22,6 +22,11 @@ for (const name of classified) {
     throw new Error('Invalid or missing function entrypoint: ' + name);
   }
 }
+// A page that hands an Etsy picture to the browser without imageProxy shows no picture under the site-wide COEP
+// (see scripts/check-etsy-images.cjs). Failing here keeps the previous deploy live instead of shipping that.
+const etsyPictures = require('./check-etsy-images.cjs');
+const etsyPictureProblems = etsyPictures.check(root);
+if (etsyPictureProblems.length) throw new Error(etsyPictures.explain(etsyPictureProblems));
 // Both directories contain reproducible build output only. Do not remove the
 // rest of .netlify: it can contain site linkage and other build configuration.
 fs.rmSync(path.join(root, '.netlify/functions'), { recursive: true, force: true });

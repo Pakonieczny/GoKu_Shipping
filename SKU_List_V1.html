@@ -1642,15 +1642,19 @@ function buildCard(r, terms){
   img.loading = "lazy";
   img.decoding = "async";
   const upgraded = upgradeImageUrl(r.image);
-  if (upgraded !== r.image){
-    // One retry at the stored size if the derived full-size URL does not exist.
-    img.addEventListener("error", () => {
-      if (img.dataset.fellBack) return;
-      img.dataset.fellBack = "1";
-      img.src = r.image || "";
-    }, { once: true });
-  }
-  img.src = upgraded || "";
+  /* Tried in order, moving on at each load error: the derived full-size address; the stored one (the derived one may not
+     exist); then the stored one through imageProxy. This page runs under Cross-Origin-Embedder-Policy: require-corp
+     (netlify.toml), which refuses an Etsy CDN picture that comes without Cross-Origin-Resource-Policy, and the CDN does
+     not send it reliably (ERR_BLOCKED_BY_RESPONSE.NotSameOriginAfterDefaultedToSameOriginByCoep). imageProxy is
+     same-origin and sends it. It is the LAST try, not the first: this list is long and each proxied picture is a
+     function call. */
+  const tries = [upgraded, r.image, r.image ? "/.netlify/functions/imageProxy?url=" + encodeURIComponent(r.image) : ""]
+    .filter((u, i, all) => u && all.indexOf(u) === i);
+  let tryAt = 0;
+  img.addEventListener("error", () => {
+    if (tryAt + 1 < tries.length) img.src = tries[++tryAt];
+  });
+  img.src = tries[0] || "";
   wrap.appendChild(img);
   attachZoom(wrap, img);
   card.appendChild(wrap);

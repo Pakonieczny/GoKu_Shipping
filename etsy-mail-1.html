@@ -6923,6 +6923,14 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     // Same-origin Netlify functions. Override if hosted elsewhere.
     const NETLIFY_BASE = "";
     const FN = (name) => `${NETLIFY_BASE}/.netlify/functions/${name}`;
+    /* This page runs under Cross-Origin-Embedder-Policy: require-corp (netlify.toml): an <img> or background-image from Etsy's
+       image CDN is refused unless the CDN sends Cross-Origin-Resource-Policy, which it does not do reliably
+       (ERR_BLOCKED_BY_RESPONSE.NotSameOriginAfterDefaultedToSameOriginByCoep). imageProxy sends it. Only etsystatic.com
+       addresses are rewritten; a mirrored, data: or any other address passes through unchanged. */
+    window.etsyCdnSrc = function (u) {
+      u = String(u || "");
+      return /^https?:\/\/[^\/]*etsystatic\.com\//i.test(u) ? FN("imageProxy") + "?url=" + encodeURIComponent(u) : u;
+    };
     // v6 — Backend secret. The Firestore proxy requires X-EtsyMail-Secret on
     // EVERY call, so it is attached invisibly here instead of being typed by
     // operators. Paste your ETSYMAIL_EXTENSION_SECRET between the quotes to
@@ -20077,7 +20085,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           }
         } else if (a.type === "listing") {
           if (a.thumbnail && a.thumbnail.url_170x135) {
-            thumbHtml = '<img class="em-chip-thumb" src="' + esc(a.thumbnail.url_170x135) + '" alt="" referrerpolicy="no-referrer">';
+            thumbHtml = '<img class="em-chip-thumb" src="' + esc(window.etsyCdnSrc(a.thumbnail.url_170x135)) + '" alt="" referrerpolicy="no-referrer">';
           } else {
             thumbHtml = '<span class="em-chip-icon"><i class="material-icons">local_offer</i></span>';
           }
@@ -22816,7 +22824,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       const origPrice = esc(card.originalPriceText || "");
       const shipping  = esc(card.shippingText || "");
       const listingUrl = esc(card.listingUrl || "");
-      const thumbUrl   = esc(card.thumbnailUrl || "");
+      const thumbUrl   = esc(window.etsyCdnSrc(card.thumbnailUrl || ""));
 
       // Price block: show current price; strikethrough original if present
       let priceHtml = "";
@@ -22963,7 +22971,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             const mirrorUrl = storagePath
               ? FN("etsyMailImage") + "?path=" + encodeURIComponent(storagePath)
               : null;
-            const displayThumb = mirrorUrl || thumbUrl;
+            const displayThumb = mirrorUrl || window.etsyCdnSrc(thumbUrl);
             const displayFull  = mirrorUrl || fullUrl;
             // Medium thumbnail, max 280px. If the thumbnail fails to load,
             // swap the <img> for a small clickable "📷 View image" placeholder
@@ -26622,12 +26630,12 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             const thumbUrl = thumbs[idx] || fullUrl;
             const storagePath = Array.isArray(m.storageImagePaths) ? m.storageImagePaths[idx] : null;
             const mirrorUrl = storagePath ? FN("etsyMailImage") + "?path=" + encodeURIComponent(storagePath) : null;
-            const displayThumb = mirrorUrl || thumbUrl;
+            const displayThumb = mirrorUrl || window.etsyCdnSrc(thumbUrl);
             // v5.12 — Carry the full-resolution URL as a data attribute
             // so a delegated tap handler can open the image modal. We
             // prefer the storage-mirrored full URL (sidesteps Etsy's
             // hotlink protection) and fall back to the raw CDN URL.
-            const fullDisplayUrl = mirrorUrl || fullUrl;
+            const fullDisplayUrl = mirrorUrl || window.etsyCdnSrc(fullUrl);
             return `<div class="m-msg-img" data-fullurl="${mEsc(fullDisplayUrl)}" style="background-image:url('${mEsc(displayThumb)}')"></div>`;
           }).join("");
         }
