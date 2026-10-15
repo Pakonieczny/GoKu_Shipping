@@ -7,7 +7,9 @@
 'use strict';
 const assert = require('assert');
 const C = require('../../vendor/clipper-6.4.2.js');
-const M = require('../../charm-nest-monogram.js');
+const M0 = require('../../charm-nest-monogram.js');
+// the sections below that read the geometry of the original rules (the middle 1.5 times the sides, the sides as drawn) ask for exactly that; sections 3e and on use the defaults of today (1.3, sides widened 1.1, metrics)
+const M = Object.assign({}, M0, { build: (l, o) => M0.build(l, Object.assign({ centerRatio: 1.5, sideWiden: 1 }, o)) });
 const { CharmNestPDF: PDF } = require('../../netlify/functions/_charmNestPdf.js');
 let n = 0; const ok = (c, m) => { assert(c, m); n++; };
 const eq = (a, b, m) => { assert.deepStrictEqual(a, b, m); n++; };
@@ -170,12 +172,11 @@ const ABC = [A, Pp, V];
   const r3 = M.build({ left: A, middle: Pp, right: V }, { centerRatio: 1.0 }); ok(r3.ok && heightOf(by(r3, 'middle')) >= 1.2 * 30 - 0.01, 'a centerRatio under 1.2 never lets the middle drop below 1.2 times the sides');
   const r4 = M.build({ left: A, middle: Pp, right: V }, { overlap: 0.3 }); ok(r4.ok && Math.abs((by(r4, 'left').bboxPt[2] - by(r4, 'middle').bboxPt[0]) - 6) < 0.01, 'overlap 0.3');
 }
-{ // alphabets already drawn bigger in the middle: every glyph stays as drawn
+{ // alphabets already drawn bigger in the middle: the middle is raised to centerRatio times the sides, never shrunk (the rule of 1.5 here; today's default is 1.3, section 3e)
   const mid = scaleL(Pp, 1.4);
   const r = M.build({ left: A, middle: mid, right: V }); sound(r, 'big middle');
-  ok(r.report.centerScale === 1 && by(r, 'middle').scale === 1 && by(r, 'left').scale === 1 && by(r, 'right').scale === 1, 'a middle drawn 1.4 times the sides is kept as drawn');
-  ok(Math.abs(heightOf(by(r, 'middle')) - 42) < 0.01, 'its height is the drawn 42');
-  const edge = M.build({ left: A, middle: scaleL(Pp, 1.25), right: V }); ok(edge.ok && edge.report.centerScale === 1, 'exactly 1.25 times is already big enough');
+  ok(Math.abs(heightOf(by(r, 'middle')) - 45) < 0.01 && by(r, 'left').scale === 1 && by(r, 'right').scale === 1, 'a middle drawn 1.4 times the sides is raised to 1.5 times (45), the sides stay as drawn');
+  const edge = M.build({ left: A, middle: scaleL(Pp, 1.5), right: V }); ok(edge.ok && edge.report.centerScale === 1, 'exactly 1.5 times is kept as drawn');
   const under = M.build({ left: A, middle: scaleL(Pp, 1.24), right: V }); ok(under.ok && under.report.centerScale > 1 && Math.abs(heightOf(by(under, 'middle')) - 45) < 0.01, '1.24 times is raised to 1.5 times the sides');
   const huge = M.build({ left: A, middle: scaleL(Pp, 3), right: V }); ok(huge.ok && huge.report.centerScale === 1 && heightOf(by(huge, 'middle')) === 90, 'a middle drawn 3 times is never shrunk');
 }
@@ -377,7 +378,7 @@ const ABC = [A, Pp, V];
   // the centre size rule on proportions like a real alphabet: a middle only 11 % taller than the sides is raised to 1.5 times; one already 1.25 times is kept
   const tall = (k) => ({ letter: 'T', rings: [[[0, 0], [8, 0], [8, 30 * k], [0, 30 * k]]] });
   const k11 = M.build({ left: block('L', 14, 30), middle: { letter: 'M', rings: [rect(0, 0, 16, 33.3)] }, right: block('R', 14, 30) }); ok(k11.ok && Math.abs(k11.report.centerScale - 1.5 * 30 / 33.3) < 0.01 && Math.abs(heightOf(by(k11, 'middle')) - 45) < 0.05, 'a middle 1.11 times the sides: raised to 1.5 times (45 pt): x' + k11.report.centerScale);
-  const k125 = M.build({ left: block('L', 14, 30), middle: { letter: 'M', rings: [rect(0, 0, 16, 37.5)] }, right: block('R', 14, 30) }); ok(k125.ok && k125.report.centerScale === 1, 'a middle 1.25 times the sides is kept as drawn'); void tall;
+  const k125 = M.build({ left: block('L', 14, 30), middle: { letter: 'M', rings: [rect(0, 0, 16, 45)] }, right: block('R', 14, 30) }); ok(k125.ok && k125.report.centerScale === 1, 'a middle already 1.5 times the sides is kept as drawn'); void tall;
   // the reach is bounded: a hard pair does not take long
   const t0 = Date.now(); M.build({ left: flag, middle: diamond, right: lost.ok ? V : flag }); ok(Date.now() - t0 < 4000, 'a search over the whole reach takes ' + (Date.now() - t0) + ' ms');
 }
@@ -423,6 +424,41 @@ const ABC = [A, Pp, V];
   eq(JSON.stringify(piece({ letter: 'O', rings: [ccw, cw(inner)] }).rings), JSON.stringify(piece({ letter: 'O', rings: [ccw, cw(inner)], fill: 'auto' }).rings), 'and the piece is the same');
   // nothing in the letters that already worked changes
   eq(JSON.stringify(M.build({ left: A, middle: Pp, right: V }, undefined).rings), JSON.stringify(M.build({ left: Object.assign({ fill: 'auto' }, A), middle: Object.assign({ fill: 'auto' }, Pp), right: Object.assign({ fill: 'auto' }, V) }).rings), 'with fill auto the letters of the other tests are the same pieces');
+}
+
+// ── 3e · level sides and the size of the sides (MONOGRAMUI, Paul, 15 Oct 2026: "the left and right letters are too small ... almost disappear", "a little bit too narrow", "lopsided when the left or right letter is higher or lower than the other side") ──────
+{
+  const mt = (l, b) => Object.assign({ metrics: { baselinePt: b, emPt: 53 } }, l);
+  const dh = r => r.bboxPt[3] - r.bboxPt[1];
+  // today's defaults: the middle 1.3 times the sides, the sides widened 1.1 times across and not taller
+  const d = M0.build({ left: A, middle: Pp, right: V }); sound(d, 'defaults');
+  ok(Math.abs(heightOf(by(d, 'middle')) - 1.3 * 30) < 0.01 && d.report.centerScale === 1.3 && by(d, 'left').scale === 1 && by(d, 'left').scaleX === 1.1 && by(d, 'right').scaleX === 1.1, 'defaults: the middle 1.3 times the sides (39 of 30), the sides widened 1.1 times across and not taller');
+  ok(Math.abs((by(d, 'left').bboxPt[2] - by(d, 'left').bboxPt[0]) - 22) < 0.01 && d.report.notes.some(t => /widened 1.1 times across/.test(t)), 'the left letter is 22 wide for the 20 it was drawn, and the notes say so: ' + d.report.notes[1]);
+  const o = M0.build({ left: A, middle: Pp, right: V }, { centerRatio: 1.5, sideWiden: 1 }); ok(by(o, 'left').scaleX === 1 && Math.abs(heightOf(by(o, 'middle')) - 45) < 0.01 && !o.report.notes.some(t => /widened/.test(t)), 'centerRatio and sideWiden are options (1.5 and 1: the old rules)');
+  ok(M0.build({ left: A, middle: Pp, right: V }, { sideWiden: 9 }).placed[0].scaleX === 1.5 && M0.build({ left: A, middle: Pp, right: V }, { sideWiden: 0.2 }).placed[0].scaleX === 1, 'sideWiden stays between 1 and 1.5');
+  // without metrics both sides are centred on the same y, whatever their boxes (a tall J next to a short A)
+  const tallJ = { letter: 'J', rings: [rect(0, -8, 8, 30)] }, shortA = { letter: 'A', rings: [rect(0, 0, 14, 26)] };
+  const nm = M0.build({ left: tallJ, middle: Pp, right: shortA }); sound(nm, 'no metrics');
+  ok(nm.report.level.metrics === false && nm.report.level.centreDiffMm < 0.01, 'no metrics: both sides on the same centre y: ' + JSON.stringify(nm.report.level));
+  // with metrics: ONE baseline for both sides (a J that drops below it, an A that sits on it), the middle centred beyond both
+  const lt = mt({ letter: 'J', rings: [rect(0, 0, 8, 38)] }, 8), rt = mt({ letter: 'A', rings: [rect(0, 0, 14, 30)] }, 0), md = mt({ letter: 'P', rings: [rect(0, 0, 18, 34)] }, 0);
+  const m = M0.build({ left: lt, middle: md, right: rt }); sound(m, 'metrics');
+  ok(m.report.level.metrics === true && m.report.level.baselineDiffMm === 0, 'with metrics the two sides stand on ONE baseline: ' + JSON.stringify(m.report.level));
+  { const pl = by(m, 'left'), pr = by(m, 'right'), pm = by(m, 'middle'), sc = pl.scale;     // (left: baseline 8 above its box bottom; right and middle: on the bottom)
+    const baseL = pl.bboxPt[1] + 8 * sc, baseR = pr.bboxPt[1] + 0, baseM = pm.bboxPt[1] + 0;
+    ok(Math.abs(baseL - baseR) < 0.01, `the baselines are the same: ${baseL.toFixed(2)} and ${baseR.toFixed(2)}`);
+    const topM = pm.bboxPt[3] - baseM, sideNom = ((pl.bboxPt[3] - baseL) + (pr.bboxPt[3] - baseR)) / 2;
+    ok(Math.abs((baseR - baseM) - (topM - sideNom) / 2) < 0.02, `the sides are centred on the middle letter's height above the baseline (raised ${(baseR - baseM).toFixed(2)} pt, the middle stands out ${((topM - sideNom) / 2).toFixed(2)} pt above and below)`);
+    ok(Math.abs(topM / sideNom - 1.3) < 0.02, 'and the middle is 1.3 times the sides above the baseline: ' + (topM / sideNom).toFixed(3)); }
+  ok(m.report.notes.some(t => /stand on one baseline/.test(t)), 'the notes say so');
+  eq(M0.build({ left: lt, middle: md, right: rt }, { valign: 'baseline' }).placed.map(p => p.bboxPt[1] + 0).length, 3, 'valign baseline answers');
+  // metrics on one letter only: not used (nothing half-done)
+  const half = M0.build({ left: lt, middle: Pp, right: V }); ok(half.ok && half.report.level.metrics === false, 'metrics on some letters only: the symmetric fallback');
+  // two sides drawn at different font sizes (emPt) are brought to the same size
+  const small = Object.assign(mt({ letter: 'V', rings: [rect(0, 0, 14, 28)] }, 0), { metrics: { baselinePt: 0, emPt: 40 } });
+  const em = M0.build({ left: mt({ letter: 'A', rings: [rect(0, 0, 14, 28)] }, 0), middle: md, right: small }); ok(Math.abs(by(em, 'right').scale - 53 / 40) < 1e-3 && by(em, 'left').scale === 1, 'sides of different font sizes: the smaller is raised to the other (x' + by(em, 'right').scale + ')');
+  // all 26 of each of three real alphabets (the vendored fonts, with their baseline): the sides always on one baseline
+  global.__metricsSample = true;
 }
 
 // ── 3d · real combinations: three 26-letter alphabets (the vendored fonts; Paul's own fonts too when MONO_FONTS names them), the middle one a different font ───────────────────────────────────────────────
@@ -492,6 +528,11 @@ const checkSample = (sp, words, what) => {
     const sp = await sampleAlphabets(), W = [];
     for (const m of ALPHA) W.push('A' + m + 'V'); for (const l of ALPHA) W.push(l + 'PV'); for (const r of ALPHA) W.push('AP' + r); for (const L of ALPHA) W.push(L + L + L); W.push('APV', 'OSR', 'MOW', 'IWI', 'WIW');
     const res = checkSample(sp, [...new Set(W)], 'vendored fonts');
+    { // the same words with the glyph metrics: the two sides on one baseline in every one, and level by their centres within a millimetre or two (a Q that drops below the line, a J, a Y are drawn so)
+      let worstB = 0, worstC = 0, worstW = ''; const withM = (slot, L) => Object.assign({ metrics: sp.set.letters[slot][L].metrics }, sp.spec(slot, L));
+      for (const w of [...new Set(W)]) { const r = M0.build({ left: withM('left', w[0]), middle: withM('middle', w[1]), right: withM('right', w[2]) }); if (!r.ok) { worstW = w + ' ' + r.why; continue; } worstB = Math.max(worstB, r.report.level.baselineDiffMm); if (r.report.level.centreDiffMm > worstC) worstC = r.report.level.centreDiffMm; }
+      console.log(`  level sides on ${new Set(W).size} words (vendored fonts with their baselines): baseline difference ${worstB} mm at most, centre difference ${worstC} mm at most`);
+      ok(worstB === 0 && !worstW, 'the two sides stand on one baseline in every sampled word' + (worstW ? ': ' + worstW : '')); }
     const line = `${res.n} real combinations (vendored fonts: 26 middles, 26 lefts, 26 rights, 26 triples, APV, OSR): each ONE piece, counters kept (worst ${res.worstHoles}), the centre at least 1.2 times the sides (least x${res.minCenter.toFixed(2)}), slowest ${res.ms} ms; ${res.thin} with a thin join; problems: ${res.bad.join(' | ') || 'none'}`;
     console.log('  ' + line); ok(res.bad.filter(b => !process.env.MONO_FONTS || !/counters/.test(b)).length === 0, line);   // (Paul's own fonts: a counter a neighbour's stroke crosses is reported, not refused)
     if (process.env.MONO_FONTS) {

@@ -178,7 +178,7 @@
   const finite = v => typeof v === 'number' && Number.isFinite(v);
   const bboxOf = paths => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const p of paths) for (const q of p) { if (q.X < x0) x0 = q.X; if (q.X > x1) x1 = q.X; if (q.Y < y0) y0 = q.Y; if (q.Y > y1) y1 = q.Y; } return [x0, y0, x1, y1]; };
   const shift = (paths, dx, dy) => paths.map(p => p.map(q => ({ X: q.X + dx, Y: q.Y + dy })));
-  const scaled = (paths, s) => s === 1 ? paths : paths.map(p => p.map(q => ({ X: Math.round(q.X * s), Y: Math.round(q.Y * s) })));
+  const scaled = (paths, sx, sy) => { sy = sy == null ? sx : sy; return sx === 1 && sy === 1 ? paths : paths.map(p => p.map(q => ({ X: Math.round(q.X * sx), Y: Math.round(q.Y * sy) }))); };
   function round3(v) { return Math.round(v * 1000) / 1000; }
 
   function engine(C) {
@@ -247,7 +247,9 @@
     const b = bboxOf(region); region = shift(region, -b[0], -b[1]);
     const w = b[2] - b[0], h = b[3] - b[1], a = E.netArea(region);
     if (w < 0.05 * SC || h < 0.05 * SC || a < 0.01 * SC * SC) return { why: `${name()} has no outline` };
-    return { region, w, h, area: a, name: name() };
+    // the typographic metrics of a glyph from the master file (MONOGRAMFILE: baselinePt = the baseline's height above the bottom of the outline, may be negative; emPt = the font size): where its baseline is in its own box
+    const mt = spec.metrics && typeof spec.metrics === 'object' ? spec.metrics : null, bl = mt && finite(mt.baselinePt) && Math.abs(mt.baselinePt) < 1e4 ? mt.baselinePt : null;
+    return { region, w, h, area: a, name: name(), base: bl == null ? null : Math.round(bl * SC), em: mt && finite(mt.emPt) && mt.emPt > 0 ? mt.emPt : null };
   }
 
   function normOpts(o) {
@@ -256,7 +258,7 @@
     const overlap = num(o.overlap, 0.18, 0, 0.9);
     return {
       overlap, maxOverlap: Math.max(overlap, num(o.maxOverlap, 0.38, 0, 0.95)),
-      centerRatio: Math.max(1.2, num(o.centerRatio, 1.5, 1.2, 5)), valign: o.valign === 'baseline' ? 'baseline' : 'center', reach: o.reach !== false, reachMax: typeof o.reach === 'number' && Number.isFinite(o.reach) ? Math.min(0.95, Math.max(0.1, o.reach)) : REACH_HI
+      centerRatio: Math.max(1.2, num(o.centerRatio, 1.3, 1.2, 5)), sideWiden: num(o.sideWiden, 1.1, 1, 1.5), valign: o.valign === 'baseline' ? 'baseline' : 'center', reach: o.reach !== false, reachMax: typeof o.reach === 'number' && Number.isFinite(o.reach) ? Math.min(0.95, Math.max(0.1, o.reach)) : REACH_HI
     };
   }
 
@@ -278,22 +280,36 @@
     const [left, mid, right] = L;
     const notes = [];
 
-    // size: sides keep their relative size unless they differ by more than 10 % (then the smaller one is raised to the larger); the middle is the biggest
-    let sl = 1, sr = 1;
-    if (left.h > right.h * 1.1) sr = left.h / right.h; else if (right.h > left.h * 1.1) sl = right.h / left.h;
-    const sideH = Math.max(left.h * sl, right.h * sr);
-    const cs = mid.h >= 1.25 * sideH ? 1 : Math.max(1, o.centerRatio * sideH / mid.h);
-    const placed0 = [[left, sl], [mid, cs], [right, sr]].map(([p, s]) => {
-      const region = scaled(p.region, s), counters = region.filter(r => E.area(r) <= -COUNTER_MIN_PT2 * SC * SC).map(r => r.slice().reverse());
+    /* size. With the glyph metrics of all three letters (Paul's alphabet file): the sides keep the size they are drawn at (one font size: one scale for both, never each by its own box), the middle is scaled so that its height above the
+       baseline is centerRatio (1.3) times the sides'. Without: the sides keep their relative size unless they differ by more than 10 % (then the smaller one is raised to the larger), the middle is centerRatio times the taller side.
+       The sides are widened sideWiden (1.1) times across, never taller: a big middle letter wants wider neighbours. */
+    const metricsOn = left.base != null && mid.base != null && right.base != null;
+    let sl = 1, sr = 1, sideH, midNom = mid.h, cs;
+    if (metricsOn) {
+      if (left.em && right.em && Math.abs(left.em - right.em) > 1e-6) { if (left.em > right.em) sr = left.em / right.em; else sl = right.em / left.em; }
+      sideH = ((left.h - left.base) * sl + (right.h - right.base) * sr) / 2; midNom = mid.h - mid.base;
+    } else {
+      if (left.h > right.h * 1.1) sr = left.h / right.h; else if (right.h > left.h * 1.1) sl = right.h / left.h;
+      sideH = Math.max(left.h * sl, right.h * sr);
+    }
+    cs = Math.max(1, o.centerRatio * sideH / midNom);
+    const wide = o.sideWiden;
+    const placed0 = [[left, sl, sl * wide], [mid, cs, cs], [right, sr, sr * wide]].map(([p, s, sx]) => {
+      const region = scaled(p.region, sx, s), counters = region.filter(r => E.area(r) <= -COUNTER_MIN_PT2 * SC * SC).map(r => r.slice().reverse());
       const bodies = region.filter(r => E.area(r) >= SLIVER_PT2 * SC * SC);   // (the separate parts a letter is made of: a stroke apart from the rest, a dot; a speck is not one)
-      return { p, s, region, w: Math.round(p.w * s), h: Math.round(p.h * s), ar: E.netArea(region), counters, cbox: counters.map(c => bboxOf([c])), cAr: E.netArea(counters), bodies };
+      return { p, s, sx, region, w: Math.round(p.w * sx), h: Math.round(p.h * s), base: p.base == null ? null : Math.round(p.base * s), ar: E.netArea(region), counters, cbox: counters.map(c => bboxOf([c])), cAr: E.netArea(counters), bodies };
     });
     const [PL, PM, PR] = placed0;
-    if (PM.h < 1.2 * Math.max(PL.h, PR.h) - 2) notes.push('the middle letter is less than 1.2 times the side letters');
+    if (PM.h < 1.2 * Math.max(PL.h, PR.h) - 2 && !metricsOn) notes.push('the middle letter is less than 1.2 times the side letters');
     if (cs !== 1) notes.push(`middle letter scaled ${round3(cs)} times to stand out`);
+    if (wide !== 1) notes.push(`the side letters were widened ${round3(wide)} times across (not taller) to fit the bigger middle letter`);
     if (sl !== 1 || sr !== 1) notes.push(`the ${sl !== 1 ? 'left' : 'right'} letter was raised ${round3(Math.max(sl, sr))} times to match the other side`);
     const area0 = p => E.area(p);
-    const dyOf = P => (o.valign === 'baseline' ? 0 : Math.round((PM.h - P.h) / 2));
+    /* where a side letter stands vertically beside the middle one (at 0). With metrics: both on ONE baseline, raised so that the sides' height above it is centred on the middle letter's (the middle stands beyond both,
+       equally above and below, as in a circle monogram); valign 'baseline': on the middle letter's own baseline. Without metrics: each side's box centred on the middle's box (the same centre for both). */
+    const sideNom = metricsOn ? ((PL.h - PL.base) + (PR.h - PR.base)) / 2 : 0, midBase = metricsOn ? PM.base : 0, midTop = metricsOn ? PM.h - PM.base : 0;
+    const baselineY = metricsOn ? (o.valign === 'baseline' ? midBase : midBase + (midTop - sideNom) / 2) : 0;
+    const dyOf = P => metricsOn ? Math.round(baselineY - P.base) : (o.valign === 'baseline' ? 0 : Math.round((PM.h - P.h) / 2));
     const xOf = (P, side, ov) => side === 'left' ? Math.round(ov * PL.w) - PL.w : PM.w - Math.round(ov * PR.w);
 
     // a placement: where each side letter stands (x, y of its own box) beside the middle at 0,0
@@ -311,7 +327,7 @@
     const attempt = ov => attemptPl(place(ov), ov);
     function guards(att) {
       const [a, b, c] = att.pl;
-      const reg = x => x.rg, pct = (p, q) => { const i = E.netArea(E.meet(reg(p), reg(q))), s = Math.min(p.p.area * p.s * p.s, q.p.area * q.s * q.s); return { i, pct: s > 0 ? Math.max(0, i / s * 100) : 0 }; };
+      const reg = x => x.rg, pct = (p, q) => { const i = E.netArea(E.meet(reg(p), reg(q))), s = Math.min(p.ar, q.ar); return { i, pct: s > 0 ? Math.max(0, i / s * 100) : 0 }; };
       const lm = pct(a, b), mr = pct(b, c);
       // counters: the inner openings of the three letters, placed. Only a counter that reaches another letter's box can have been covered.
       const boxes = att.pl.map(x => bboxOf(x.rg)), all = [], near = [];
@@ -475,6 +491,10 @@
       return failure(joined ? 'a letter is made of separate parts that stay loose, it cannot be one charm' : 'the letters do not touch', { tries, searched });
     }
     const { att, g, joins } = best, warnings = [], bars = best.bars || 0;
+    // are the two sides level? (the same baseline with metrics, the same centre without; both measured on the finished placement)
+    const [pL, , pR] = att.pl, mmOf = v => Math.round(Math.abs(v) / SC * MM * 100) / 100;
+    const level = { metrics: metricsOn, baselineDiffMm: metricsOn ? mmOf((pL.dy + pL.base) - (pR.dy + pR.base)) : null, centreDiffMm: mmOf((pL.dy + pL.h / 2) - (pR.dy + pR.h / 2)) };
+    if (metricsOn) notes.push(`the three letters stand on one baseline, the side letters centred on the middle letter (sides ${Math.round(sideNom / midTop * 100)} % of its height above the baseline)`);
     // a letter drawn in several separate parts (a flourish apart from its letter) is said so: each part is held by the middle letter, or tied on
     const parts = { left: PL.bodies.length, middle: PM.bodies.length, right: PR.bodies.length };
     for (const [slot, k] of [['left', PL], ['middle', PM], ['right', PR]]) if (k.bodies.length > 1) notes.push(`the ${slot} letter is drawn in ${k.bodies.length} separate parts` + (bars ? ': a part that no overlap reaches was tied to the rest with a ' + BRIDGE_W_MM + ' mm bar' : ', each held by a neighbour'));
@@ -502,10 +522,10 @@
     const outer = att.rings.find(r => area0(r) > 0);
     const holes = att.rings.filter(r => area0(r) < 0).sort((p, q) => area0(p) - area0(q) || bboxOf([p])[1] - bboxOf([q])[1] || bboxOf([p])[0] - bboxOf([q])[0]);
     const rings = [{ pts: toPt(outer), hole: false }].concat(holes.map(h => ({ pts: toPt(h), hole: true })));
-    const placed = att.pl.map(P => ({ letter: P.p.letter, slot: P.p.slot, scale: round3(P.s), bboxPt: [P.dx, P.dy, P.dx + P.w, P.dy + P.h].map((v, i) => round3((v - b[i % 2]) / SC)) }));
+    const placed = att.pl.map(P => ({ letter: P.p.letter, slot: P.p.slot, scale: round3(P.s), scaleX: round3(P.sx), bboxPt: [P.dx, P.dy, P.dx + P.w, P.dy + P.h].map((v, i) => round3((v - b[i % 2]) / SC)) }));
     return {
       ok: true, why: '', rings, bboxPt: [0, 0, round3(W / SC), round3(H / SC)], wMm: Math.round(W / SC * MM * 1e4) / 1e4, hMm: Math.round(H / SC * MM * 1e4) / 1e4, placed,
-      report: { connected: true, overlapPct: { leftMiddle: Math.round(g.lm.pct * 10) / 10, middleRight: Math.round(g.mr.pct * 10) / 10 }, holesKept: round3(g.holesKept), centerScale: round3(cs), overlap: att.ov == null ? round3((ovs[0] + ovs[1]) / 2) : att.ov, reach: reached, searched, warnings, parts, bridges: bars, joinMm: { leftMiddle: joins[0], middleRight: joins[1] }, moveMm: { left: Math.round(moved[0] / SC * MM * 100) / 100, right: Math.round(moved[2] / SC * MM * 100) / 100 }, joinMm2: { leftMiddle: Math.round(g.lm.i / SC / SC * MM * MM * 100) / 100, middleRight: Math.round(g.mr.i / SC / SC * MM * MM * 100) / 100 }, tries, notes }
+      report: { connected: true, overlapPct: { leftMiddle: Math.round(g.lm.pct * 10) / 10, middleRight: Math.round(g.mr.pct * 10) / 10 }, holesKept: round3(g.holesKept), centerScale: round3(cs), overlap: att.ov == null ? round3((ovs[0] + ovs[1]) / 2) : att.ov, reach: reached, searched, warnings, parts, bridges: bars, level, joinMm: { leftMiddle: joins[0], middleRight: joins[1] }, moveMm: { left: Math.round(moved[0] / SC * MM * 100) / 100, right: Math.round(moved[2] / SC * MM * 100) / 100 }, joinMm2: { leftMiddle: Math.round(g.lm.i / SC / SC * MM * MM * 100) / 100, middleRight: Math.round(g.mr.i / SC / SC * MM * MM * 100) / 100 }, tries, notes }
     };
   }
   /* ═══ 4 · the preview and the file ═══════════════════════════════════════════════════════════════════════════════ */

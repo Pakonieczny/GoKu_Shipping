@@ -43,7 +43,8 @@ async function letterFile(font, ch, em, sku) {
   const w = x1 - x0, h = y1 - y0;
   const bytes = await M.toPdf({ ok: true, rings: moved, bboxPt: [0, 0, w, h] }, { title: sku });
   const holes = moved.filter(r => r.hole).length, area = moved.reduce((a, r) => a + shoelace(r.pts) * (r.hole ? -1 : 1) * (r.hole ? 1 : 1), 0);
-  return { bytes, entry: { widthPt: +w.toFixed(3), heightPt: +h.toFixed(3), areaPt2: Math.round(Math.abs(moved.reduce((a, r) => a + Math.abs(shoelace(r.pts)) * (r.hole ? -1 : 1), 0))), members: moved.length, holes, engravable: false, engravableBy: 'index', upAngle: 90, upSource: 'drawn', charmHash: (Math.abs(Math.round(area * 1000)) % 0xffffff).toString(16).padStart(6, '0'), backKeepOut: [] }, rings: moved, w, h };
+  const metrics = { baselinePt: +(-y0).toFixed(3), emPt: em };   // (the baseline is y = 0 of the font: its height above the bottom of the outline is -y0; the same shape as the glyph metrics MONOGRAMFILE writes into Paul's per-SKU files)
+  return { bytes, metrics, entry: { widthPt: +w.toFixed(3), heightPt: +h.toFixed(3), areaPt2: Math.round(Math.abs(moved.reduce((a, r) => a + Math.abs(shoelace(r.pts)) * (r.hole ? -1 : 1), 0))), members: moved.length, holes, engravable: false, engravableBy: 'index', upAngle: 90, upSource: 'drawn', charmHash: (Math.abs(Math.round(area * 1000)) % 0xffffff).toString(16).padStart(6, '0'), backKeepOut: [] }, rings: moved, w, h };
 }
 
 /** A letter made of rings the way a converted FONT leaves it: the loop and a tail, two outer rings that cross each other (same direction), plus one counter: the overlap is solid ink, a counter is a ring of the other direction
@@ -69,7 +70,7 @@ async function make(opts = {}) {
       const raw = `Monogram_${WORD[slot]}_${L}`, sku = raw.toUpperCase();
       if ((opts.skip || []).includes(sku)) continue;
       const f = await letterFile(font, L, em, sku), aiPath = `charmnest/master/${raw}.ai`;
-      files.set(aiPath, f.bytes); entries.push(Object.assign({ sku, aiPath }, f.entry)); letters[slot][L] = { sku, rings: f.rings, w: f.w, h: f.h };
+      files.set(aiPath, f.bytes); entries.push(Object.assign({ sku, aiPath }, f.entry)); letters[slot][L] = { sku, rings: f.rings, w: f.w, h: f.h, metrics: f.metrics };
     }
   }
   return { files, entries, letters, em };
