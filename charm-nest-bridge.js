@@ -10297,13 +10297,18 @@ const RunCtl = window.RunCtl = (() => {
     finally { renderBanner(); if (window.RunHistory) RunHistory.refreshIfOpen(); }
   }
   function newRun(mode) { const day = today(); return { runId: `run-${day}-${uid()}`, day, setId: null, releasePolicy: 2, solidIncluded: Object.assign({}, Gate.state().solidIncluded || {}), step: "pull", status: "running", mode: mode || S.settings.runMode || "manual", startedAt: Date.now(), updatedAt: Date.now(), lines: {}, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [] }; }
+  /** The run's record, before its steps go on. A 5xx or a dropped connection at that very moment (ADV-OFFLINE, Paul, 15 Oct 2026: "lost internet connections") left a run "running" at Pull that
+      never ran: the save threw before the loop was started, the banner said "Pulling orders" for good and nothing stopped it or resumed it. The record goes online with the next save at the latest
+      (every step saves it; the banner says "Not saved online" meanwhile), so a passing failure here lets the run go on; any other failure is thrown to the caller as before. */
+  const saveSoft = async r => { try { await save(r); } catch (e) { if (!(e && e.transient)) throw e; } };
   async function start(opts = {}) {
     if (B.run && ["running", "review", "paused", "processed", "stopped"].includes(B.run.status)) { toast("A run is already open — resume, finish, or abandon it before starting another", "bad"); return B.run; }
     if (B.run) await save(B.run);
     if ((B.run || Recall.on()) && clearRunState()===false) return B.run;
     const r = newRun(opts.mode); Gate.state().solidIncluded = {}; B.run = r; claimRun(r.runId);
     agent({ run: r.runId }, "DS", `Run ${r.runId} started (${r.mode} mode)`);
-    await save(r); renderBanner();
+    try { await saveSoft(r); } catch (e) { stop(e.message, "Fix the cause and press Resume."); throw e; }   // (a run that cannot start says so and waits for Resume, it is not left running)
+    renderBanner();
     loop().catch(e => { stop(e.message, "Fix the cause and press Resume."); });
     return r;
   }
@@ -10349,7 +10354,7 @@ const RunCtl = window.RunCtl = (() => {
       save(r).catch(() => {});
     }
   }
-  async function next() { const r = B.run; if (!r || r.status !== "paused") return; r.status = "running"; await save(r); loop().catch(e => stop(e.message, "Fix the cause and press Resume.")); }
+  async function next() { const r = B.run; if (!r || r.status !== "paused") return; r.status = "running"; await saveSoft(r); loop().catch(e => stop(e.message, "Fix the cause and press Resume.")); }
   async function doStep(r, step) {
     if (["labels","commit"].includes(step)) await Gate.flush(r);
     switch (step) {
@@ -10588,7 +10593,7 @@ const RunCtl = window.RunCtl = (() => {
     if (allSheets().some(pg => pg.runId === r.runId && !(pendingStop && pg.runHold) && (pg.problem || pg.dirty || ["ready", "idle", "queued"].includes(pg.status)) && pg.charms.length)) {
       r.step = "nest"; for (const pg of allSheets()) if (pg.runId === r.runId && pg.problem && !(pendingStop && pg.runHold)) sheetDirty(pg);
     }
-    r.status = "running"; r.stoppedBy = null; r.fix = null; delete r.stopKind; window.CN?.resumeQueueChanged?.(); await save(r);
+    r.status = "running"; r.stoppedBy = null; r.fix = null; delete r.stopKind; window.CN?.resumeQueueChanged?.(); await saveSoft(r);
     if (["nest"].includes(r.step)) { for (const pg of allSheets()) if (pg.runId === r.runId && !pg.runHold && ["complete", "partial"].includes(pg.status) && pg.verification && !pg.verification.ok) sheetDirty(pg); }
     if (!r.workspaceRestored && (r.step === "pool" || r.step === "pull" || r.step === "claim")) r.step = "pull";
     loop().catch(e => stop(e.message, "Fix the cause and press Resume."));
@@ -10651,7 +10656,7 @@ const RunCtl = window.RunCtl = (() => {
       await Pool.addAll(rec);                                              // idempotent: existing pool rows are the same ids; only unplaced lines get charms
       rec.step = allSheets().some(p => p.runId === runId && p.dirty) || ["nest", "checkpoint"].includes(savedStep) ? "nest" : savedStep;
     }
-    await save(rec); renderBanner();
+    await saveSoft(rec); renderBanner();
     loop().catch(e => stop(e.message, "Fix the cause and press Resume."));
   }
   async function restoreRunSheets(rec) {
