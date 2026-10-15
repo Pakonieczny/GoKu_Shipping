@@ -296,6 +296,8 @@ async function browserChecks() {
     // printed again: the same sticker, counted
     await page.click('#rvList .reviewListRow[data-rid="4176744752"] [data-cu-print]');
     await page.waitForFunction(() => (window.__printed || 0) >= 3 && !document.querySelector('.cuStat, .btn.working'), null, { timeout: 30000 });
+    // (the page counts the print before the cloud record of it lands: read the record once it has, not at the instant the sticker is counted)
+    for (let i = 0; i < 100 && srv.st.doc('Charm_Custom_Orders', '4176744752_41767447521').prints !== 2; i++) await page.waitForTimeout(100);
     assert.equal(srv.st.doc('Charm_Custom_Orders', '4176744752_41767447521').prints, 2);
     // a second seal, pressed where it shows, beside the first
     await page.waitForFunction(() => document.querySelectorAll('#rvList .reviewListRow[data-rid="4176744752"] .seal.seal-print').length === 2 && !document.querySelector('.seal.pending') && !document.querySelector('#motionLayer .sealTool'), null, { timeout: 8000 });
