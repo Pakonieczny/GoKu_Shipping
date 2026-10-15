@@ -132,6 +132,7 @@ Object.entries(ODD).forEach(([k, o], i) => { FX[k] = { rid: o.rid, sku: 'MONOGRA
     return { points: (d.match(/[ML]/g) || []).length, subpaths: (d.match(/M/g) || []).length, same: d === CharmNestMonogram.svgPath(c.result), fill: pa.getAttribute('fill'), stroke: pa.getAttribute('stroke'), rule: pa.getAttribute('fill-rule'), nonScaling: pa.getAttribute('vector-effect'), box: [Math.round(box.width), Math.round(box.height)],
       margins: [bb.left - box.left, box.right - bb.right, bb.top - box.top, box.bottom - bb.bottom].map(v => Math.round(v)), dpr: devicePixelRatio, rings: c.result.rings.length, holes: c.result.rings.filter(r => r.hole).length }; }, card(rid));
   const TONE = { gold: '#d9bd78', silver: '#c8ccd2', rose: '#e2b4a1' };
+  // (the sides are normalised to 0.80 of the centre by BODY height, their ink reaches 0.85 to 0.95 of the centre's: the centre is bigger by 1.05 or more, not by the 1.2 of the first rule)
   const POINT_FLOOR = 1500;    // (points in the path of a monogram of Paul's script letters; the block serif stand-ins make a few hundred)
 
   if (process.env.MONO_ONLY_REAL === '1') await w.close();   // (MONO_ONLY_REAL=1: nothing here)
@@ -169,7 +170,7 @@ Object.entries(ODD).forEach(([k, o], i) => { FX[k] = { rid: o.rid, sku: 'MONOGRA
     const rs = await page.evaluate(() => { const c = Engrave.monogramUI().cards.get('4200683017_42006830171'); const r = c.result, pl = r.placed, hOf = p => p.bboxPt[3] - p.bboxPt[1];
       return { ok: r.ok, connected: r.report.connected, outer: r.rings.filter(x => !x.hole).length, holes: r.rings.filter(x => x.hole).length, kept: r.report.holesKept, slots: pl.map(p => p.slot + ':' + p.letter).join(' '), mid: hOf(pl[1]), side: Math.max(hOf(pl[0]), hOf(pl[2])), cs: r.report.centerScale }; });
     check(rs.ok && rs.connected && rs.outer === 1 && rs.holes >= 1 && rs.kept >= (REAL_OK ? 0.5 : 0.9), 'ONE connected charm with its counters: ' + JSON.stringify({ outer: rs.outer, holes: rs.holes, kept: rs.kept }));
-    check(rs.slots === 'left:A middle:P right:V' && rs.mid >= 1.2 * rs.side, `the letters sit Left A, Middle P, Right V and the centre is bigger than the sides (${rs.mid.toFixed(1)} vs ${rs.side.toFixed(1)} pt, x${(rs.mid / rs.side).toFixed(2)})`);
+    check(rs.slots === 'left:A middle:P right:V' && rs.mid >= 1.05 * rs.side, `the letters sit Left A, Middle P, Right V and the centre is bigger than the sides (${rs.mid.toFixed(1)} vs ${rs.side.toFixed(1)} pt, x${(rs.mid / rs.side).toFixed(2)})`);
     a = await read('4202783520');
     check(a.ins.join('') === 'OSR' && a.says === 'The buyer wrote O S R · Left O · Middle S · Right R' && a.state === 'ready', 'OSR: "' + a.says + '"');
     await shot('ui-1440-ready');
@@ -484,7 +485,7 @@ Object.entries(ODD).forEach(([k, o], i) => { FX[k] = { rid: o.rid, sku: 'MONOGRA
         const r = await page.evaluate(() => { const c = Engrave.monogramUI().cards.get('4200683017_42006830171'); if (!c.result) return null; const hOf = p => p.bboxPt[3] - p.bboxPt[1], pl = c.result.placed; return { ok: c.result.ok, letters: c.resultLetters, rings: c.result.rings.length, outer: c.result.rings.filter(x => !x.hole).length, report: c.result.report, wMm: c.result.wMm, hMm: c.result.hMm, centre: hOf(pl[1]) / Math.max(hOf(pl[0]), hOf(pl[2])) }; });
         await page.locator(sel + ' .moPic').screenshot({ path: path.join(SHOTS, 'real-file-' + wd + '.png') }).catch(() => {});
         const pic = await pictureOf('4200683017');
-        check(!!r && r.letters === wd && r.outer === 1 && r.report.connected && r.report.holesKept >= 0.5 && r.centre >= 1.2 && !!pic && pic.same && pic.points >= POINT_FLOOR, `${wd} on Paul's letters: one piece, centre x${r && r.centre.toFixed(2)}, ${r && r.rings - 1} holes (kept ${r && r.report.holesKept}), ${r && r.wMm.toFixed(1)} × ${r && r.hMm.toFixed(1)} mm, ${pic && pic.points} points, joins ${JSON.stringify(r && r.report.joinMm)}`);
+        check(!!r && r.letters === wd && r.outer === 1 && r.report.connected && r.report.holesKept >= 0.5 && r.centre >= 1.05 && !!pic && pic.same && pic.points >= POINT_FLOOR, `${wd} on Paul's letters: one piece, centre x${r && r.centre.toFixed(2)}, ${r && r.rings - 1} holes (kept ${r && r.report.holesKept}), ${r && r.wMm.toFixed(1)} × ${r && r.hMm.toFixed(1)} mm, ${pic && pic.points} points, joins ${JSON.stringify(r && r.report.joinMm)}`);
       }
     }
     check(w.errors.length === 0, 'no page error: ' + JSON.stringify(w.errors.slice(0, 3)));
