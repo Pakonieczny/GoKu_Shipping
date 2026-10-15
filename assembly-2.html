@@ -3181,8 +3181,14 @@ function metalToBadge(label){
             try {
               var images = await fetchListingImages(item.listing_id);
               if(images && images.length > 0){
+                var picBig = images[0].url_fullxfull || images[0].url_570xN || images[0].url || "";
+                var picSmall = images[0].url_570xN || "";
                 cell.innerHTML =
-                  '<img src="' + images[0].url_fullxfull + '" alt="Listing Image ' + i + '" data-scale="1" data-offsetX="0" data-offsetY="0">';
+                  '<img src="' + etsyPictureSrc(picBig) + '" alt="Listing Image ' + i + '" data-scale="1" data-offsetX="0" data-offsetY="0">';
+                /* the full-size picture can be too big for the proxy's 6 MB reply: fall back, once, to the 570 px one */
+                if (picSmall && picSmall !== picBig && cell.firstChild) {
+                  cell.firstChild.addEventListener("error", function(){ this.src = etsyPictureSrc(picSmall); }, { once: true });
+                }
               } else {
                 cell.innerHTML = "No images found";
               }
@@ -3433,6 +3439,15 @@ function metalToBadge(label){
       document.getElementById("orderDetails").value = deQuote(details);
       // Auto-fill qty + unit value for the currently selected item
       prefillCustomsFromEtsy();
+    }
+
+    /* This page runs under Cross-Origin-Embedder-Policy: require-corp (netlify.toml), which blocks any cross-origin
+       picture whose server sends no Cross-Origin-Resource-Policy header, and Etsy's image CDN does not send one reliably
+       (ERR_BLOCKED_BY_RESPONSE.NotSameOriginAfterDefaultedToSameOriginByCoep: "some listings show no picture").
+       So the picture comes through our own imageProxy, which is same-origin and says Cross-Origin-Resource-Policy itself,
+       as the sorter and the Design Station do. */
+    function etsyPictureSrc(url){
+      return url ? "/.netlify/functions/imageProxy?url=" + encodeURIComponent(url) : "";
     }
 
     async function fetchListingImages(listingId){
