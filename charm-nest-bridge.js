@@ -2715,6 +2715,8 @@ const Master = window.Master = (() => {
       if (job.bar) job.bar.note("finding the charms");
       const g = await (P.groupCharmsAsync || P.groupCharms)(parsed, { minPt: +S.settings.minPt || 6 });
       say("MASTER", `${g.charms.length} charm outline(s), ${parsed.counts.text} text block(s)`);
+      // live text that is the design (Paul's alphabet file: a font, one letter per text object, a SKU label under each) is read as outlines; a font that cannot be drawn is said, never dropped (MONOGRAMFILE, 15 Oct 2026)
+      for (const n of (P.liveTextNotes ? P.liveTextNotes(parsed) : [])) say(n.kind === "warn" ? "warn" : "MASTER", n.text);
       if (parsed.pageCount > 1) say("warn", `this file has ${parsed.pageCount} pages and only the FIRST is read: the charms on the others are not in this run`);
       if ((g.markers || []).length) { const by = {}; for (const m of g.markers) by[m.why] = (by[m.why] || 0) + 1; say("MASTER", `${g.markers.length} marker object(s) beside charms are left out of them (${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")})`); }
       if ((g.stray || []).length) { const by = {}; for (const m of g.stray) by[m.why] = (by[m.why] || 0) + 1; say("MASTER", `${g.stray.length} piece(s) of loose ink outside a charm's cut outline are left out of it (${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")}); a body drawn with an open cut line is one of them`); }
@@ -2735,6 +2737,7 @@ const Master = window.Master = (() => {
           if (Date.now() - lastChange > 6 * 60000) throw new Error(`the server stopped reporting at "${d.stage}" ${silent} min ago — the file is too large for the server route (about 1 GB of memory, 15 min). Index it with the local indexer: node scripts/index-master.cjs "<file>" --origin ${location.origin}`);
           if (Date.now() - t0 > 16 * 60000) throw new Error("the server route ran past its 15-minute limit — index the file with the local indexer: node scripts/index-master.cjs"); }
         await load(true);
+        for (const t of (job.result.liveText || [])) say("MASTER", t);
         job.state = "done"; say("ok", `server indexed ${job.result.labelled} SKU(s), ${job.result.unlabelled.length} unlabelled, ${job.result.orphans.length} orphan label(s), ${job.result.blocked.length} blocked${(job.result.pairs || []).filter(x => x.folded).length ? ` · ${(job.result.pairs || []).filter(x => x.folded).length} pair design(s) built from both bodies` : ""}`);
         if ((job.result.ringsLeft || []).length) say("warn", `${job.result.ringsLeft.length} charm(s) have a hoop that could not join them: ${job.result.ringsLeft.slice(0, 12).map(x => `${x.sku} (${x.why})`).join("; ")}`);
         if ((job.result.looseRings || []).length) say("warn", `${job.result.looseRings.length} loose ring(s) could not be attached to a charm: ${job.result.looseRings.slice(0, 12).map(r => `#${r.index} near ${r.nearSku || "no SKU"} (${r.why})`).join("; ")}`);

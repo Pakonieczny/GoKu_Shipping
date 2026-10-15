@@ -138,6 +138,7 @@
     const spaces = spacesIn || {};
     let path = null, pathStart = -1, pendingClip = false, clipBox = null;
     let inText = false, textStart = -1, tm = null, tlm = null, fontSize = 1, textPts = [], textChars = 0;
+    let fsS = 1; const tst = { tc: 0, tw: 0, tz: 1, ts: 0, tr: 0 };   // (the text state a drawn glyph needs: signed size, character and word spacing, horizontal scale, rise, render mode; section 3c)
     let textPieces = [], piece = null;
     // Graphics-state operators written INSIDE a segment's own byte range (Illustrator opens a layer with a text run that
     // carries `/CS0 cs 0 0 1 scn` for every object after it). The writer blanks that range for every charm that does not
@@ -150,8 +151,13 @@
       const { op, args } = ins[i];
       if ((inText || path) && STATE_OPS.has(op)) held.push(ins[i].start, ins[i].end);
       switch (op) {
-        case "q": stack.push({ ctm: ctm.slice(), fill, stroke, lw, fillSpace, strokeSpace, clipBox }); break;
-        case "Q": { const s = stack.pop(); if (s) { ctm = s.ctm; fill = s.fill; stroke = s.stroke; lw = s.lw; fillSpace = s.fillSpace; strokeSpace = s.strokeSpace; clipBox = s.clipBox; } break; }
+        case "q": stack.push({ ctm: ctm.slice(), fill, stroke, lw, fillSpace, strokeSpace, clipBox, txt: Object.assign({}, tst) }); break;
+        case "Q": { const s = stack.pop(); if (s) { ctm = s.ctm; fill = s.fill; stroke = s.stroke; lw = s.lw; fillSpace = s.fillSpace; strokeSpace = s.strokeSpace; clipBox = s.clipBox; if (s.txt) Object.assign(tst, s.txt); } break; }
+        case "Tc": tst.tc = +args[0] || 0; break;
+        case "Tw": tst.tw = +args[0] || 0; break;
+        case "Tz": tst.tz = (+args[0] || 100) / 100; break;
+        case "Ts": tst.ts = +args[0] || 0; break;
+        case "Tr": tst.tr = +args[0] || 0; break;
         case "cm": if (args.length >= 6) ctm = mul(args.slice(0, 6).map(Number), ctm); break;
         case "w": lw = +args[0] || 0; break;
         case "g": fill = [+args[0], +args[0], +args[0]]; break;
@@ -209,7 +215,7 @@
         }
         // ── text ──
         case "BT": inText = true; held = []; textStart = ins[i].start; tm = [1, 0, 0, 1, 0, 0]; tlm = tm; textPts = []; textChars = 0; textRaw = ""; textStrs = []; textPieces = []; piece = null; break;
-        case "Tf": fontSize = Math.abs(+args[1]) || 1; fontName = args[0] && args[0].name || null; break;
+        case "Tf": fontSize = Math.abs(+args[1]) || 1; fsS = +args[1] || 1; fontName = args[0] && args[0].name || null; break;
         case "Tm": if (args.length >= 6) { tm = args.slice(0, 6).map(Number); tlm = tm; } piece = null; break;
         case "Td": case "TD": tlm = mul([1, 0, 0, 1, +args[0], +args[1]], tlm); tm = tlm; piece = null; break;
         case "T*": tlm = mul([1, 0, 0, 1, 0, -fontSize * 1.2], tlm); tm = tlm; piece = null; break;
@@ -231,6 +237,8 @@
           if (op === "'" || op === "\"") piece = null;
           if (!piece) { piece = { pts: [], chars: 0, raw: "", strs: [], font: fontName }; textPieces.push(piece); }
           piece.pts.push(p0, p1, pDesc); piece.chars += glyphs; piece.raw += str; piece.strs.push(dec ? dec : { text: null, ok: false });
+          // a big glyph of an embedded font is kept with the matrix it was drawn under, so section 3c can draw it as an outline when it turns out to be the design
+          if (font && (op === "Tj" || op === "TJ") && scaleOf(m) * fontSize >= LIVE_PRE_MIN_PT) { const gl = shownGlyphs(font, op, args, tm, ctm, fsS, tst, fill); if (gl.length) GLYPH_RUNS.set(piece, (GLYPH_RUNS.get(piece) || []).concat(gl)); }
           if (op === "'" || op === "\"") { tlm = mul([1, 0, 0, 1, 0, -fontSize * 1.2], tlm); tm = tlm; piece = null; }
           tm = mul([1, 0, 0, 1, wEm * fontSize, 0], tm); break;
         }
@@ -239,7 +247,10 @@
             const bbox = bboxOf(textPts);
             const decoded = textStrs.every(t => t && t.ok) ? textStrs.map(t => t.text).join("") : null;
             const pieces = textPieces.length > 1 ? textPieces.map(p => { const d = p.strs.every(t => t && t.ok) ? p.strs.map(t => t.text).join("") : null; return { bbox: bboxOf(p.pts), chars: p.chars, str: d, raw: p.raw, font: p.font, undecodable: d == null && p.chars > 0 }; }) : null;
-            push(depth === 0 ? segs : inner, { kind: "text", start: textStart, end: ins[i].end, bbox, chars: textChars, fillRGB: fill.slice(), depth, str: decoded, raw: textRaw, font: fontName, undecodable: decoded == null && textChars > 0, pieces, held: held.length ? held : undefined });
+            const tseg = { kind: "text", start: textStart, end: ins[i].end, bbox, chars: textChars, fillRGB: fill.slice(), depth, str: decoded, raw: textRaw, font: fontName, undecodable: decoded == null && textChars > 0, pieces, held: held.length ? held : undefined };
+            if (pieces) pieces.forEach((pc, k) => { const r = GLYPH_RUNS.get(textPieces[k]); if (r) GLYPH_RUNS.set(pc, r); });
+            else if (textPieces.length === 1 && GLYPH_RUNS.has(textPieces[0])) GLYPH_RUNS.set(tseg, GLYPH_RUNS.get(textPieces[0]));
+            push(depth === 0 ? segs : inner, tseg);
           }
           held = [];
           inText = false; break;
@@ -446,26 +457,29 @@
     const enc = new Array(256); for (let c = 0; c < 256; c++) enc[c] = String.fromCharCode(c);
     // a one-byte font's codes 0x80-0x9F are Windows-1252 characters (an en dash is 0x96, a curly apostrophe 0x92), never the C1 control characters a latin-1 reading gives: a label typed "Spider – Web_1" read as "SPIDER \x96 WEB_1" and was no SKU
     for (const [k, v] of Object.entries({ 0x80: "\u20ac", 0x82: "\u201a", 0x83: "\u0192", 0x84: "\u201e", 0x85: "\u2026", 0x86: "\u2020", 0x87: "\u2021", 0x88: "\u02c6", 0x89: "\u2030", 0x8a: "\u0160", 0x8b: "\u2039", 0x8c: "\u0152", 0x8e: "\u017d", 0x91: "\u2018", 0x92: "\u2019", 0x93: "\u201c", 0x94: "\u201d", 0x95: "\u2022", 0x96: "\u2013", 0x97: "\u2014", 0x98: "\u02dc", 0x99: "\u2122", 0x9a: "\u0161", 0x9b: "\u203a", 0x9c: "\u0153", 0x9e: "\u017e", 0x9f: "\u0178" })) enc[+k] = v;
+    const diffNames = {};                                              // (code → the glyph name /Differences gives it: section 3c picks an outline by it when a font has no cmap to use)
     if (simple) {
       const e = get(fd, "Encoding");
       if (e instanceof PDFDict) {
         const diff = get(e, "Differences"); const arr = diff && diff.asArray ? diff.asArray() : null;
-        if (arr) { let code = 0; for (const it of arr) { const v = doc.context.lookup(it); if (v && v.asNumber) code = v.asNumber(); else if (v && v.encodedName) { const ch = glyphNameToChar(v.encodedName.slice(1)); if (ch != null) enc[code] = ch; else if (code < 32 || code > 126) enc[code] = null; code++; } } }
+        if (arr) { let code = 0; for (const it of arr) { const v = doc.context.lookup(it); if (v && v.asNumber) code = v.asNumber(); else if (v && v.encodedName) { diffNames[code] = v.encodedName.slice(1); const ch = glyphNameToChar(v.encodedName.slice(1)); if (ch != null) enc[code] = ch; else if (code < 32 || code > 126) enc[code] = null; code++; } } }
       }
     }
     // widths, in em: simple fonts from /FirstChar + /Widths; composite from the descendant's /W and /DW
-    let widthOf = null;
+    let widthOf = null, widthCode = null;
     try {
       if (simple) {
         const first = get(fd, "FirstChar"), W = get(fd, "Widths");
         const warr = W && W.asArray ? W.asArray().map(x => { const v = doc.context.lookup(x); return v && v.asNumber ? v.asNumber() : 0; }) : null;
         const f0 = first && first.asNumber ? first.asNumber() : 0;
+        if (warr && warr.length) widthCode = c => { const v = warr[c - f0]; return v ? v / 1000 : null; };
         if (warr && warr.length) widthOf = s => { let w = 0; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i) - f0; w += (c >= 0 && c < warr.length && warr[c] ? warr[c] : 500) / 1000; } return w; };
       } else {
         const desc = get(fd, "DescendantFonts"); const d0 = desc && desc.asArray ? doc.context.lookup(desc.asArray()[0]) : null;
         const dw = (get(d0, "DW") || {}).asNumber ? get(d0, "DW").asNumber() : 1000;
         const Wa = get(d0, "W"); const w = new Map();
         if (Wa && Wa.asArray) { const a = Wa.asArray().map(x => doc.context.lookup(x)); for (let i = 0; i < a.length;) { const c = a[i] && a[i].asNumber ? a[i].asNumber() : 0; const nx = a[i + 1]; if (nx && nx.asArray) { nx.asArray().forEach((x, j) => { const v = doc.context.lookup(x); w.set(c + j, v && v.asNumber ? v.asNumber() : dw); }); i += 2; } else { const c2 = nx && nx.asNumber ? nx.asNumber() : c; const v = a[i + 2] && a[i + 2].asNumber ? a[i + 2].asNumber() : dw; for (let k = c; k <= c2 && k - c < 65536; k++) w.set(k, v); i += 3; } } }
+        widthCode = cid => (w.has(cid) ? w.get(cid) : dw) / 1000;
         widthOf = s => { let t = 0; for (let i = 0; i + 1 < s.length; i += 2) { const cid = (s.charCodeAt(i) << 8) | s.charCodeAt(i + 1); t += (w.has(cid) ? w.get(cid) : dw) / 1000; } return t; };
       }
     } catch (_) { widthOf = null; }
@@ -480,8 +494,27 @@
       }
       return { text: out.join(""), ok };
     }
-    return { simple, subtype, decode, widthOf, hasToUnicode: !!toUni };
+    // what section 3c (live text drawn as outlines) needs of this font; the font program is read only when a piece of text is a candidate
+    const baseFont = (nameOf(get(fd, "BaseFont")) || "").replace(/^[A-Z]{6}\+/, "");
+    const descFont = simple ? fd : (() => { try { const dd = get(fd, "DescendantFonts"); return dd && dd.asArray ? doc.context.lookup(dd.asArray()[0]) : null; } catch (_) { return null; } })();
+    const descr = get(descFont, "FontDescriptor");
+    const fileKey = descr instanceof PDFDict ? ["FontFile2", "FontFile3", "FontFile"].find(k => descr.get(PDFName.of(k))) || null : null;
+    const flagsSymbolic = (() => { const f = get(descr, "Flags"); return !!(f && f.asNumber && (f.asNumber() & 4)); })();
+    const namesFor = code => {
+      const out = []; if (diffNames[code]) out.push(diffNames[code]);
+      const ch = enc[code];
+      if (ch && ch.length === 1) {
+        if (/[A-Za-z]/.test(ch)) out.push(ch); else if (/[0-9]/.test(ch)) out.push(GLYPH_DIGITS[+ch]);
+        for (const [n, c] of Object.entries(GLYPH_NAMES)) if (c === ch) out.push(n);
+        out.push("uni" + ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0"));
+      }
+      return out;
+    };
+    let prog = null;
+    const program = () => prog || (prog = loadFontProgram({ simple, subtype, fd, descFont, descr, fileKey, flagsSymbolic, hasEncoding: !!get(fd, "Encoding"), enc, namesFor, widthOfCode: widthCode, get, nameOf }));
+    return { simple, subtype, decode, widthOf, widthOfCode: widthCode, hasToUnicode: !!toUni, baseFont, embedded: !!fileKey && subtype !== "Type3", program };
   }
+  const GLYPH_DIGITS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
 
   function isPdfBytes(bytes) {
     const head = new TextDecoder("latin1").decode(bytes.subarray(0, 1400));
@@ -510,6 +543,335 @@
     return await doc.save({ useObjectStreams: false });
   }
 
+  /* ═══ 3c · live text that IS the design (MONOGRAMFILE, Paul 15 Oct 2026) ═════════════════════════════════════════
+     Paul's alphabet file "SKUs_MONOGRAM_2024-1015.ai" has no vector path in it: 78 letters of three embedded fonts (MASTER CIRCLE
+     LEFT / MIDDLE / RIGHT) set as live text, one text object per letter, and a SKU label in small Myriad under each ("Monogram_Left_A"
+     ...). "You need to update the system so it can correctly interpret this file in its current form." Until now a text object was a
+     label or a note and never a drawing, so that file read as 0 charms and 3 orphans.
+     RULE (what becomes outlines, and nothing else): a text piece is DESIGN when ALL of these hold:
+       1 · it shows exactly ONE glyph (a word, a number or a note is never design: engraving text and sample names stay live text),
+       2 · that glyph is set at LIVE_TEXT_MIN_PT (20 pt) or larger, its ink is at least LIVE_INK_MIN_PT tall, and it is painted in an
+           achromatic dark ink (a coloured note, a white or a grey one is not the design),
+       3 · its font is EMBEDDED and its program can be read (TrueType, OpenType/CFF, bare CFF "Type1C", CID or not), and the glyph chosen
+           for the char code is the one the PDF's own /Widths say (a wrong-letter outline is worse than live text),
+       4 · a SKU label (parseSkuLabel) stands directly BENEATH it, small beside it, and that label is not already under a closed
+           vector cut outline (then it belongs to that charm, and the letter is sample text on it),
+       5 · the glyph does not sit ON a closed vector outline of the page (sample text on a piece).
+     Each qualifying glyph becomes one closed path per contour (the outer edge, and every counter as a separate closed path), drawn as the
+     shop's black hairline cut line, exactly like the other designs; its label is linked to it (`textLabel`) because a label under a narrow
+     letter is not centred under it. The live text object stays in the file but is marked `outlined`: it is not charm material and not a
+     label. A master with vector paths whose live text fails any test is read exactly as before. A font that cannot be read leaves the text
+     as it is and is said (`textDesign.kept`): "live text could not be drawn as outlines: font X". Not touched: READER_VERSION (no earlier
+     entry can have been written from a letter, since no earlier read produced one). */
+  const LIVE_TEXT_MIN_PT = 20, LIVE_INK_MIN_PT = 8, LIVE_PRE_MIN_PT = 12, LIVE_LABEL_GAP_PT = 24;
+  /** The font reader: the page loads vendor/opentype-1.3.4.min.js (window.opentype; the compute worker imports it too); node requires it. null = not available. */
+  const fontParser = () => {
+    if (root.opentype) return root.opentype;
+    if (typeof module === "object" && module && typeof require === "function") { try { return require("./vendor/opentype-1.3.4.min.js"); } catch (_) { return null; } }
+    return null;
+  };
+  /** The glyph runs interpret() saw for a text piece / object (kept off the segments: they are not data, and a parse is sent between threads). */
+  const GLYPH_RUNS = new WeakMap();
+  const u16 = (b, o) => (b[o] << 8) | b[o + 1], u32 = (b, o) => ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
+  const tag4 = (b, o) => String.fromCharCode(b[o], b[o + 1], b[o + 2], b[o + 3]);
+  /** The glyphs a text-showing operator draws, one entry each: { code, m (text space → page, at the glyph's origin), fs, th, rise, fill }. Only for a font that is embedded and a size that could be design. */
+  function shownGlyphs(font, op, args, tm, ctm, fsS, st, fill) {
+    const out = [];
+    let gm = tm;
+    const items = op === "TJ" ? (args[0] && args[0].arr || []) : [args[args.length - 1]];
+    const step = font.simple ? 1 : 2;
+    for (const it of items) {
+      if (typeof it === "number") { gm = mul([1, 0, 0, 1, -it / 1000 * fsS * st.tz, 0], gm); continue; }
+      if (!it || it.str == null) continue;
+      const s = it.str;
+      for (let i = 0; i + step - 1 < s.length; i += step) {
+        const code = step === 1 ? s.charCodeAt(i) : ((s.charCodeAt(i) << 8) | s.charCodeAt(i + 1));
+        out.push({ code, m: mul(gm, ctm), fs: fsS, th: st.tz, rise: st.ts, fill: fill.slice(), tr: st.tr, font });
+        const w = font.widthOfCode ? font.widthOfCode(code) : null;
+        gm = mul([1, 0, 0, 1, ((w == null ? 0.5 : w) * fsS + st.tc + (step === 1 && code === 32 ? st.tw : 0)) * st.tz, 0], gm);
+      }
+    }
+    return out;
+  }
+
+  /* ── font programs ── */
+  /** The Top DICT facts of a bare CFF font that opentype.js (which reads only OpenType files) needs: its glyph count, its charset (glyph → SID or CID), whether it is CID-keyed. */
+  function cffInfo(b) {
+    const hdr = b[2]; let o = hdr;
+    const index = (at) => { const n = u16(b, at); if (!n) return { n: 0, end: at + 2, items: [] }; const os = b[at + 2]; const off = i => { let v = 0; for (let k = 0; k < os; k++) v = v * 256 + b[at + 3 + i * os + k]; return v; }; const base = at + 3 + (n + 1) * os - 1; const items = []; for (let i = 0; i < n; i++) items.push([base + off(i), base + off(i + 1)]); return { n, end: base + off(n), items }; };
+    const names = index(o), top = index(names.end);
+    if (!top.n) throw new Error("no Top DICT");
+    const dict = {}; { let p = top.items[0][0]; const e = top.items[0][1], ops = [];
+      while (p < e) { const b0 = b[p]; if (b0 <= 21) { let op = b0; p++; if (b0 === 12) op = 1200 + b[p++]; dict[op] = ops.slice(); ops.length = 0; } else if (b0 === 28) { ops.push((b[p + 1] << 8 | b[p + 2]) << 16 >> 16); p += 3; } else if (b0 === 29) { ops.push((b[p + 1] << 24) | (b[p + 2] << 16) | (b[p + 3] << 8) | b[p + 4]); p += 5; } else if (b0 === 30) { p++; for (;;) { const v = b[p++]; if ((v & 15) === 15 || (v >> 4) === 15 || p >= e) break; } ops.push(0); } else if (b0 >= 32 && b0 <= 246) { ops.push(b0 - 139); p++; } else if (b0 >= 247 && b0 <= 250) { ops.push((b0 - 247) * 256 + b[p + 1] + 108); p += 2; } else if (b0 >= 251 && b0 <= 254) { ops.push(-(b0 - 251) * 256 - b[p + 1] - 108); p += 2; } else p++; } }
+    const csOff = dict[17] && dict[17][0]; if (!csOff) throw new Error("no CharStrings");
+    const nGlyphs = u16(b, csOff);
+    const charset = new Uint16Array(nGlyphs); const cOff = dict[15] && dict[15][0];
+    if (cOff > 2) { let p = cOff; const fmt = b[p++]; let g = 1; if (fmt === 0) { while (g < nGlyphs) { charset[g++] = u16(b, p); p += 2; } } else { while (g < nGlyphs) { let first = u16(b, p); p += 2; const left = fmt === 1 ? b[p++] : (p += 2, u16(b, p - 2)); for (let k = 0; k <= left && g < nGlyphs; k++) charset[g++] = first + k; } } }
+    else for (let g = 1; g < nGlyphs; g++) charset[g] = g;      // predefined charsets: ISOAdobe (SID = glyph index); Expert sets are not read
+    return { nGlyphs, charset, isCID: dict[1230] !== undefined };
+  }
+  /** A bare CFF font program (what a PDF calls FontFile3 /Type1C) inside the smallest OpenType file opentype.js will read. */
+  function wrapCff(cff, nGlyphs) {
+    const be = (n, w) => { const a = []; for (let i = w - 1; i >= 0; i--) a.push(Math.floor(n / Math.pow(256, i)) & 255); return a; };
+    const head = [].concat(be(0x00010000, 4), be(0x00010000, 4), be(0, 4), be(0x5F0F3CF5, 4), be(0, 2), be(1000, 2), be(0, 8), be(0, 8), be(0, 2), be(0, 2), be(1000, 2), be(1000, 2), be(0, 2), be(8, 2), be(2, 2), be(0, 2), be(0, 2));   // head: unitsPerEm 1000
+    const hhea = [].concat(be(0x00010000, 4), be(800, 2), be(-200, 2), be(0, 2), be(1000, 2), be(0, 2), be(0, 2), be(1000, 2), be(1, 2), be(0, 2), be(0, 2), be(0, 8), be(0, 2), be(1, 2));   // numberOfHMetrics 1
+    const maxp = [].concat(be(0x00005000, 4), be(nGlyphs, 2));
+    const hmtx = [].concat(be(500, 2), be(0, 2), new Array(Math.max(0, nGlyphs - 1) * 2).fill(0));
+    const cmap = [].concat(be(0, 2), be(1, 2), be(3, 2), be(1, 2), be(12, 4), be(4, 2), be(24, 2), be(0, 2), be(2, 2), be(2, 2), be(0, 2), be(0, 2), be(0xFFFF, 2), be(0, 2), be(0xFFFF, 2), be(1, 2), be(0, 2));
+    const tables = [["CFF ", cff], ["cmap", Uint8Array.from(cmap)], ["head", Uint8Array.from(head)], ["hhea", Uint8Array.from(hhea)], ["hmtx", Uint8Array.from(hmtx)], ["maxp", Uint8Array.from(maxp)]];
+    return buildSfnt("OTTO", tables);
+  }
+  function buildSfnt(sig, tables) {
+    tables = tables.slice().sort((a, b) => (a[0] < b[0] ? -1 : 1));
+    const n = tables.length; let off = 12 + 16 * n; const dir = [];
+    for (const [t, d] of tables) { dir.push([t, off, d.length]); off += (d.length + 3) & ~3; }
+    const out = new Uint8Array(off); const dv = new DataView(out.buffer);
+    for (let i = 0; i < 4; i++) out[i] = sig.charCodeAt(i);
+    dv.setUint16(4, n); let sr = 1, es = 0; while (sr * 2 <= n) { sr *= 2; es++; } dv.setUint16(6, sr * 16); dv.setUint16(8, es); dv.setUint16(10, n * 16 - sr * 16);
+    tables.forEach(([t, d], i) => { const o = 12 + 16 * i; for (let k = 0; k < 4; k++) out[o + k] = t.charCodeAt(k); dv.setUint32(o + 8, dir[i][1]); dv.setUint32(o + 12, d.length); out.set(d, dir[i][1]); });
+    return out;
+  }
+  /** The tables of an sfnt file: tag → { off, len }, or null when it is no sfnt. */
+  function sfntTables(b) {
+    if (b.length < 12) return null; const sig = tag4(b, 0);
+    if (!(u32(b, 0) === 0x00010000 || sig === "true" || sig === "OTTO")) return null;
+    const n = u16(b, 4), t = {}; if (12 + 16 * n > b.length) return null;
+    for (let i = 0; i < n; i++) { const o = 12 + 16 * i; t[tag4(b, o)] = { off: u32(b, o + 8), len: u32(b, o + 12) }; }
+    return t;
+  }
+  /** Every cmap subtable of a TrueType/OpenType font as { pid, eid, get(code) } (formats 0, 4, 6 and 12): the PDF says which one a char code uses, and opentype.js reads only one of them (and none at all when the font has just a Macintosh one). */
+  function readCmaps(b, tables) {
+    const out = []; const c = tables && tables.cmap; if (!c) return out;
+    try {
+      const n = u16(b, c.off + 2);
+      for (let i = 0; i < n; i++) {
+        const pid = u16(b, c.off + 4 + 8 * i), eid = u16(b, c.off + 6 + 8 * i), at = c.off + u32(b, c.off + 8 + 8 * i), fmt = u16(b, at);
+        let get = null;
+        if (fmt === 0) get = code => (code >= 0 && code < 256 ? b[at + 6 + code] : 0);
+        else if (fmt === 6) { const first = u16(b, at + 6), cnt = u16(b, at + 8); get = code => (code >= first && code < first + cnt ? u16(b, at + 10 + 2 * (code - first)) : 0); }
+        else if (fmt === 4) {
+          const sc = u16(b, at + 6) / 2, endO = at + 14, startO = endO + 2 * sc + 2, deltaO = startO + 2 * sc, rangeO = deltaO + 2 * sc;
+          get = code => { for (let s = 0; s < sc; s++) { if (code > u16(b, endO + 2 * s)) continue; const st = u16(b, startO + 2 * s); if (code < st) return 0; const ro = u16(b, rangeO + 2 * s), dl = u16(b, deltaO + 2 * s); if (!ro) return (code + dl) & 0xFFFF; const g = u16(b, rangeO + 2 * s + ro + 2 * (code - st)); return g ? (g + dl) & 0xFFFF : 0; } return 0; };
+        } else if (fmt === 12) {
+          const ng = u32(b, at + 12);
+          get = code => { for (let g = 0; g < ng; g++) { const o = at + 16 + 12 * g, s = u32(b, o), e = u32(b, o + 4); if (code >= s && code <= e) return u32(b, o + 8) + (code - s); if (code < s) return 0; } return 0; };
+        }
+        if (get) out.push({ pid, eid, fmt, get });
+      }
+    } catch (_) { /* a cmap that cannot be read is no cmap */ }
+    return out;
+  }
+  /** Parse a font program stream into { ot (an opentype.js font), cmaps, cff } or throw. */
+  function openFontProgram(raw) {
+    const OT = fontParser(); if (!OT) throw new Error("the font reader is not loaded");
+    const toBuf = u8 => u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+    let bytes = raw, cff = null;
+    if (bytes.length > 4 && bytes[0] === 1 && bytes[1] === 0 && bytes[2] >= 4 && bytes[2] < 16) { cff = cffInfo(bytes); bytes = wrapCff(bytes, cff.nGlyphs); }       // a bare CFF
+    else if (bytes[0] === 0x25 && bytes[1] === 0x21) throw new Error("a Type 1 (PostScript) font program");
+    const tables = sfntTables(bytes); if (!tables) throw new Error("not a TrueType, OpenType or CFF font program");
+    const cmaps = cff ? [] : readCmaps(bytes, tables);
+    let ot; try { ot = OT.parse(toBuf(bytes)); }
+    catch (e) {
+      // opentype.js refuses a font whose only cmap is a Macintosh (1,0) one, a font with no cmap and a subset with no name table: the PDF picks glyphs by its own rules, so the cmap it would read is replaced by an empty Unicode one and a name table is supplied
+      const list = []; for (const t of Object.keys(tables)) if (t !== "cmap") list.push([t, bytes.subarray(tables[t].off, tables[t].off + tables[t].len)]);
+      if (!tables.name) list.push(["name", Uint8Array.from([0, 0, 0, 0, 0, 6])]);
+      list.push(["cmap", Uint8Array.from([0, 0, 0, 1, 0, 3, 0, 1, 0, 0, 0, 12, 0, 4, 0, 24, 0, 0, 0, 2, 0, 2, 0, 0, 0, 0, 255, 255, 0, 0, 255, 255, 0, 1, 0, 0])]);
+      ot = OT.parse(toBuf(buildSfnt(tag4(bytes, 0), list)));
+    }
+    return { ot, cmaps, cff };
+  }
+  /** The glyph (opentype.js) a char code draws, by the PDF's own rules, or null. `x` is the font facts makeFontDecoder gathered. */
+  function loadFontProgram(x) {
+    try {
+      if (x.subtype === "Type3") return { ok: false, why: "a Type 3 font" };
+      if (!x.fileKey) return { ok: false, why: "the font is not embedded" };
+      const stream = x.get(x.descr, x.fileKey);
+      let raw; try { raw = stream ? decodeStream(stream) : null; } catch (_) { raw = null; }
+      if (!raw || raw.length < 16) return { ok: false, why: "the font file is empty or unreadable" };
+      const { ot, cmaps, cff } = openFontProgram(raw);
+      const upem = ot.unitsPerEm || 1000;
+      let byName = null;                                         // glyph name → index: a CFF font carries its names on the glyphs, a TrueType one in its post table
+      const nameGid = name => {
+        if (!byName) { byName = new Map(); try { for (let i = 0; i < ot.numGlyphs; i++) { let n = null; try { n = ot.glyphNames && ot.glyphNames.glyphIndexToName ? ot.glyphNames.glyphIndexToName(i) : null; } catch (_) { n = null; } if (!n) { const g = ot.glyphs.get(i); n = g && g.name; } if (n && !byName.has(n)) byName.set(n, i); } } catch (_) { /* the names that could be read are all there are */ } }
+        return byName.get(name) || 0;
+      };
+      const cmap = (p, e) => cmaps.find(c => c.pid === p && c.eid === e);
+      const uniCmaps = cmaps.filter(c => (c.pid === 3 && (c.eid === 1 || c.eid === 10)) || c.pid === 0);
+      let gidOf;                                                    // code → glyph index (0 = none)
+      if (!x.simple) {
+        // composite font: the code is a CID; a TrueType descendant maps it with /CIDToGIDMap, a CFF one by its charset (or CID = glyph index in a plain OpenType file)
+        const sub = x.nameOf(x.get(x.descFont, "Subtype")) || ""; const m = x.get(x.descFont, "CIDToGIDMap");
+        let map = null; if (m && m.dict) { try { map = decodeStream(m); } catch (_) { map = null; } }
+        const enc = x.nameOf(x.get(x.fd, "Encoding")); if (enc && !/^Identity-[HV]$/.test(enc)) return { ok: false, why: `the character map ${enc}` };
+        if (sub === "CIDFontType2") gidOf = cid => (map ? (2 * cid + 1 < map.length ? (map[2 * cid] << 8) | map[2 * cid + 1] : 0) : cid);
+        else if (cff && cff.isCID) { const inv = new Map(); for (let g = 0; g < cff.nGlyphs; g++) inv.set(cff.charset[g], g); gidOf = cid => inv.get(cid) || 0; }
+        else gidOf = cid => cid;
+      } else if (cff || !cmaps.length) {
+        // CFF (names) or a TrueType file with no cmap to use: the glyph name the PDF's encoding gives the code
+        gidOf = code => { for (const n of x.namesFor(code)) { const g = nameGid(n); if (g) return g; } return 0; };
+      } else {
+        gidOf = code => {
+          const ch = x.enc[code], cp = ch && ch.length ? ch.codePointAt(0) : null;
+          const tries = x.flagsSymbolic && !x.hasEncoding
+            ? [() => { const c = cmap(3, 0); return c ? (c.get(code) || c.get(0xF000 + code) || c.get(0xF100 + code) || c.get(0xF200 + code)) : 0; }, () => { const c = cmap(1, 0); return c ? c.get(code) : 0; }, () => { for (const c of uniCmaps) { const g = cp != null ? c.get(cp) : 0; if (g) return g; } return 0; }]
+            : [() => { for (const c of uniCmaps) { const g = cp != null ? c.get(cp) : 0; if (g) return g; } return 0; }, () => { const c = cmap(1, 0); return c ? c.get(code) : 0; }, () => { const c = cmap(3, 0); return c ? (c.get(0xF000 + code) || c.get(code)) : 0; }];
+          for (const t of tries) { const g = t(); if (g) return g; }
+          for (const n of x.namesFor(code)) { const g = nameGid(n); if (g) return g; }
+          return 0;
+        };
+      }
+      return {
+        ok: true, ot, upem, kind: cff ? "CFF" : tag4(raw, 0) === "OTTO" ? "OpenType" : "TrueType",
+        // the glyph for a code, or { why }: and only when the PDF's own width for that code agrees with the glyph's advance (a different letter has a different width)
+        glyphFor(code) {
+          const gid = gidOf(code); if (!gid) return { why: `no glyph for character code ${code}` };
+          const glyph = ot.glyphs.get(gid); if (!glyph) return { why: `glyph ${gid} is missing` };
+          const w = x.widthOfCode ? x.widthOfCode(code) : null;
+          if (!cff && w != null && w > 0 && glyph.advanceWidth != null) {       // (a bare CFF's widths live in its charstrings, which the wrapper does not carry: its glyphs are chosen by name or CID, which is exact)
+            const mine = glyph.advanceWidth / upem * 1000, theirs = w * 1000;
+            if (Math.abs(mine - theirs) > Math.max(2.5, 0.02 * theirs)) return { why: `glyph ${gid} is ${Math.round(mine)} wide and the PDF says ${Math.round(theirs)} for code ${code}` };
+          }
+          return { glyph, gid };
+        }
+      };
+    } catch (e) { return { ok: false, why: String(e && e.message || e).slice(0, 120) }; }
+  }
+
+  /* ── outlines ── */
+  /** A glyph's contours as path subpaths in page space (quadratic curves raised to cubic), with G = glyph units → page. */
+  function glyphSubpaths(glyph, G) {
+    const P = (x, y) => ap(G, x, y), subs = [];
+    let cur = null, lx = 0, ly = 0, sx = 0, sy = 0;
+    const done = () => { if (cur && cur.length > 2) { if (cur[cur.length - 1][0] !== "h") cur.push(["h"]); subs.push(cur); } cur = null; };
+    for (const c of glyph.path.commands) {
+      if (c.type === "M") { done(); cur = [["m", P(c.x, c.y)]]; lx = sx = c.x; ly = sy = c.y; }
+      else if (!cur) continue;
+      else if (c.type === "L") { cur.push(["l", P(c.x, c.y)]); lx = c.x; ly = c.y; }
+      else if (c.type === "Q") { cur.push(["c", P(lx + 2 / 3 * (c.x1 - lx), ly + 2 / 3 * (c.y1 - ly)), P(c.x + 2 / 3 * (c.x1 - c.x), c.y + 2 / 3 * (c.y1 - c.y)), P(c.x, c.y)]); lx = c.x; ly = c.y; }
+      else if (c.type === "C") { cur.push(["c", P(c.x1, c.y1), P(c.x2, c.y2), P(c.x, c.y)]); lx = c.x; ly = c.y; }
+      else if (c.type === "Z") { cur.push(["h"]); lx = sx; ly = sy; done(); }
+    }
+    done();
+    return subs;
+  }
+  const signedArea = poly => { let a = 0; for (let i = 0; i < poly.length; i++) { const p = poly[i], q = poly[(i + 1) % poly.length]; a += p[0] * q[1] - q[0] * p[1]; } return a / 2; };
+  /** The outer edges and counters of a glyph: each contour is an outer edge when it turns the way the glyph's largest one does, a counter when it turns the other way (a nonzero-winding font, which is every TrueType and CFF font). */
+  function glyphContours(subs) {
+    const polys = subs.map(s => flatten({ subpaths: [s] }, 8)[0] || []);
+    const areas = polys.map(signedArea); let big = 0; areas.forEach((a, i) => { if (Math.abs(a) > Math.abs(areas[big] || 0)) big = i; });
+    const outerSign = Math.sign(areas[big] || 1);
+    const items = [];
+    subs.forEach((s, i) => { if (polys[i].length < 3 || Math.abs(areas[i]) < 0.02) return; items.push({ sub: s, poly: polys[i], area: Math.abs(areas[i]), hole: Math.sign(areas[i]) !== outerSign, bbox: bboxOf(polys[i]) }); });
+    return items;
+  }
+
+  /* ── the lift ── */
+  const inkDark = c => !!c && (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) <= 0.15 && lum(c) <= 0.6;
+  /** Draw the design text of a parsed page as outlines (see section 3c). Mutates `segs` (new path segments are appended, the text is marked `outlined`) and returns { converted, glyphs, kept, captions } or null when nothing qualified. */
+  function liftTextDesigns(segs, nested, pageW, pageH) {
+    const all = segs.concat(nested);
+    const texts = all.filter(s => s.kind === "text");
+    if (!texts.length) return null;
+    const units = [];
+    for (const s of texts) { if (s.pieces && s.pieces.length > 1) for (const p of s.pieces) units.push({ seg: s, o: p }); else units.push({ seg: s, o: s }); }
+    // 1 · candidates by the cheap tests: one glyph, big, dark ink, an embedded font
+    const cands = [];
+    for (const u of units) {
+      const run = GLYPH_RUNS.get(u.o); if (!run || run.length !== 1 || u.o.chars !== 1 || !u.o.bbox) continue;
+      const g = run[0]; if (g.tr === 3 || g.tr >= 4 || g.code === 32) continue;
+      const eff = scaleOf(g.m) * Math.abs(g.fs); if (!(eff >= LIVE_TEXT_MIN_PT)) continue;
+      if (!inkDark(g.fill) || !g.font) continue;
+      cands.push({ u, g, eff });
+    }
+    if (!cands.length) return null;
+    // 2 · outlines (each font read once)
+    const kept = new Map();                                            // font name → { why, n }: text that passed the tests and could not be drawn
+    const note = (cd, why) => { const f = cd.g.font.baseFont || "unnamed font"; const k = f + "|" + why; const e = kept.get(k) || { font: f, why, n: 0 }; e.n++; kept.set(k, e); };
+    for (const cd of cands) {
+      const prog = cd.g.font.program ? cd.g.font.program() : { ok: false, why: "the font cannot be read" };
+      const b = cd.u.o.bbox;
+      cd.pieceInk = [b[0], b[1] + 0.22 * cd.eff, b[2], b[3]];          // (the reader's box for a piece reaches 0.22 em under the baseline)
+      if (!prog.ok) { cd.fail = prog.why; continue; }
+      const r = prog.glyphFor(cd.g.code); if (!r.glyph) { cd.fail = r.why; continue; }
+      let subs; try { subs = glyphSubpaths(r.glyph, mul([cd.g.fs * cd.g.th / prog.upem, 0, 0, cd.g.fs / prog.upem, 0, cd.g.rise], cd.g.m)); } catch (e) { cd.fail = "its outline could not be read"; continue; }
+      const items = glyphContours(subs);
+      if (!items.length) { cd.fail = "the glyph has no outline"; continue; }
+      cd.items = items; cd.ink = items.reduce((a, it) => bbUnion(a, it.bbox), null);
+      if (cd.ink[3] - cd.ink[1] < LIVE_INK_MIN_PT) { cd.items = null; cd.small = true; }
+    }
+    // 3 · labels and vector outlines on the page
+    const isLabel = new Set(cands.map(c => c.u.o));
+    const labels = [];
+    for (const u of units) {
+      const o = u.o; if (isLabel.has(o) || o.undecodable || o.str == null || !o.bbox) continue;
+      const lab = parseSkuLabel(o.str); if (!lab) continue;
+      labels.push({ u, bbox: o.bbox, cx: (o.bbox[0] + o.bbox[2]) / 2, h: o.bbox[3] - o.bbox[1], w: o.bbox[2] - o.bbox[0], sku: lab.sku });
+    }
+    const vectors = all.filter(s => s.kind === "path" && !s.synthetic && s.closed && s.bbox && (s.bbox[2] - s.bbox[0]) >= 6 && (s.bbox[3] - s.bbox[1]) >= 6 && bbArea(s.bbox) < 0.5 * pageW * pageH && isCutLine(s));
+    const ownedByVector = (lb, gap) => vectors.some(v => { const vg = v.bbox[1] - lb.bbox[3]; const w = v.bbox[2] - v.bbox[0]; return vg >= -1 && vg <= 18 && vg < gap + 0.5 && lb.cx >= v.bbox[0] - 0.25 * w && lb.cx <= v.bbox[2] + 0.25 * w; });
+    // 4 · pair each glyph with the label beneath it (nearest first; a label belongs to one glyph)
+    const pairs = [];
+    for (const cd of cands) {
+      if (cd.small) continue;
+      const ink = cd.items ? cd.ink : cd.pieceInk, iw = ink[2] - ink[0], ih = ink[3] - ink[1], cx = (ink[0] + ink[2]) / 2;
+      if (cd.items && vectors.some(v => bbArea(v.bbox) <= 30 * bbArea(ink) && overlapFrac(ink, v.bbox) >= 0.5)) { cd.onVector = true; continue; }
+      for (const lb of labels) {
+        const gap = ink[1] - lb.bbox[3];
+        if (gap < -LABEL_OVERLAP_PT || gap > LIVE_LABEL_GAP_PT) continue;
+        if (lb.h > 0.5 * ih) continue;
+        const dx = Math.abs(cx - lb.cx); if (dx > Math.max(iw, lb.w) / 2 + 1) continue;
+        if (ownedByVector(lb, gap)) continue;
+        pairs.push({ cd, lb, cost: dx + 0.25 * Math.max(0, gap) });
+      }
+    }
+    pairs.sort((a, b) => a.cost - b.cost);
+    const takenLab = new Set(), takenCand = new Set();
+    for (const p of pairs) { if (takenLab.has(p.lb) || takenCand.has(p.cd)) continue; takenLab.add(p.lb); takenCand.add(p.cd); p.cd.label = p.lb; }
+    // 5 · draw the paired glyphs; say the ones a font could not give
+    const made = []; let glyphs = 0, keySeq = 0;
+    for (const cd of cands) {
+      if (!cd.label) continue;
+      if (!cd.items) { if (cd.fail) note(cd, cd.fail); continue; }
+      const char = cd.u.o.str != null ? String(cd.u.o.str) : "", key = ++keySeq;
+      for (const it of cd.items) {
+        const seg = {
+          kind: "path", synthetic: true, textGlyph: true, manufacturingRole: "cut", paintOp: "S", stroke: true, fill: false, strokeRGB: [0, 0, 0], fillRGB: [0, 0, 0],
+          lwPt: CUT_HAIRLINE_PT, closed: true, subpaths: [it.sub], bbox: it.bbox.slice(), depth: 0, layer: cd.u.seg.layer || null, start: -1, end: -1,
+          ordAt: cd.u.seg.start + (cd.u.o.bbox[0] / Math.max(1, pageW)) * 0.5, glyphHole: it.hole, glyphChar: char, glyphKey: key
+        };
+        if (!it.hole) seg.textLabel = cd.label.bbox.slice();
+        made.push(seg);
+      }
+      cd.u.o.outlined = true; glyphs++;
+    }
+    // a text object whose every piece was drawn is out of the page's text; a block with letters and labels together keeps its labels
+    for (const s of texts) { if (s.pieces && s.pieces.length > 1) { if (s.pieces.every(p => p.outlined)) s.outlined = true; } }
+    if (!glyphs && !kept.size) return null;
+    for (const seg of made) { seg.index = segs.length; segs.push(seg); }
+    // 6 · captions: a word over a row of the drawn glyphs names the row ("LEFT", "MIDDLE", "RIGHT"); it is no SKU and no charm
+    const captions = [];
+    const drawn = cands.filter(c => c.label && c.items);
+    if (drawn.length >= 3) try { for (const lb of labels) {
+      if (takenLab.has(lb) || lb.u.o.outlined) continue;
+      const row = drawn.filter(c => { const gap = lb.bbox[1] - c.ink[3]; return gap >= -2 && gap <= 40; });
+      if (row.length < 3 || lb.h > 0.5 * (row[0].ink[3] - row[0].ink[1])) continue;
+      const x0 = Math.min(...row.map(c => c.ink[0])), x1 = Math.max(...row.map(c => c.ink[2]));
+      if (lb.cx < x0 || lb.cx > x1 || ownedByVector(lb, 0)) continue;
+      lb.u.o.caption = true; captions.push({ str: String(lb.u.o.str).trim(), bbox: lb.bbox.slice() });
+    } } catch (_) { /* a caption that cannot be told is left as the text it is */ }
+    return { converted: glyphs, contours: made.length, kept: [...kept.values()].sort((a, b) => b.n - a.n), captions };
+  }
+
+  /** What a run says about the live text of a master (the same words in the Master tab, the server job and the local script): [{ kind: "info" | "warn", text }]. */
+  function liveTextNotes(parsed) {
+    const td = parsed && parsed.textDesign, out = [];
+    if (!td) return out;
+    if (td.converted) out.push({ kind: "info", text: `${td.converted} letter(s) drawn as live text (a font, one glyph per text object, a SKU label under each) were read as outlines: ${td.contours} cut line(s), every counter a hole of its own letter` });
+    for (const k of td.kept || []) out.push({ kind: "warn", text: `live text could not be drawn as outlines: font ${k.font}${k.why ? " (" + k.why + ")" : ""}${k.n ? `, ${k.n} piece(s) stay text` : ""}` });
+    if ((td.captions || []).length) out.push({ kind: "info", text: `${td.captions.length} word(s) written over the rows of letters name the row and are no SKU: ${td.captions.slice(0, 8).map(c => "“" + c.str + "”").join(", ")}` });
+    return out;
+  }
+
   /* ═══ 4 · parseSource ══════════════════════════════════════════════════ */
   async function parseSource(bytes, name) {
     const { PDFDocument, PDFName } = L();
@@ -536,13 +898,17 @@
     const nested = [];
     segs.forEach(s => { if (s.kind === "xobj" && s.children) s.children.forEach(k => { k.parent = s.index; nested.push(k); }); });
     closeNearlyClosed(segs); closeNearlyClosed(nested);
+    const counts = { paths: segs.filter(s => s.kind === "path").length + nested.filter(s => s.kind === "path").length, top: segs.length, xobjects: segs.filter(s => s.kind === "xobj").length, text: segs.filter(s => s.kind === "text").length };
+    // live text that is the design (a glyph per text object with its SKU label under it) is drawn as outlines here, once, and only then (section 3c); a page without such text is returned exactly as it always was
+    let textDesign = null; try { textDesign = liftTextDesigns(segs, nested, mb.width, mb.height); } catch (e) { textDesign = { converted: 0, contours: 0, kept: [{ font: "the page", why: String(e && e.message || e).slice(0, 120), n: 0 }], captions: [] }; }
     return {
       name, bytes, doc, page,
       pageCount: doc.getPageCount(), pageW: mb.width, pageH: mb.height, mediaBox: [mb.x, mb.y, mb.x + mb.width, mb.y + mb.height],
       artBox: ab ? [ab.x, ab.y, ab.x + ab.width, ab.y + ab.height] : null,
       rotate: (() => { try { return page.getRotation().angle || 0; } catch (_) { return 0; } })(),
       content, segments: segs, nested, inner,
-      counts: { paths: segs.filter(s => s.kind === "path").length + nested.filter(s => s.kind === "path").length, top: segs.length, xobjects: segs.filter(s => s.kind === "xobj").length, text: segs.filter(s => s.kind === "text").length }
+      counts,
+      ...(textDesign ? { textDesign } : {})
     };
   }
 
@@ -766,7 +1132,7 @@
     // Illustrator writes a group's objects contiguously, so the content-stream order is the artist's grouping.
     // Every drawable gets a stream position; a form's children take their Do's position (kept in child order).
     const ordOf = new Map();
-    for (const s of parsed.segments) if (s.bbox) ordOf.set(s, s.start);
+    for (const s of parsed.segments) if (s.bbox) ordOf.set(s, s.ordAt != null ? s.ordAt : s.start);   // (a letter drawn from live text has no bytes: it stands where its text object stood)
     for (const s of parsed.segments) if (s.kind === "xobj" && s.children && s.children.length) { const n = s.children.length; s.children.forEach((k, i) => ordOf.set(k, s.start + (i + 1) / (n + 1))); }
     const ord = s => (ordOf.has(s) ? ordOf.get(s) : (s.start || 0));
     const pageArea = parsed.pageW * parsed.pageH;
@@ -775,7 +1141,7 @@
     // rectangle that encloses two or more outline candidates (a sheet box drawn into a
     // larger artboard). The design document's "never draw the sheet outline into a
     // silhouette probe" trap — the first live sheet hit it.
-    const preDrawable = all.filter(s => s.bbox && s.kind !== "clip" && s.kind !== "noop" && !(s.kind === "xobj" && s.children && s.children.length));
+    const preDrawable = all.filter(s => s.bbox && s.kind !== "clip" && s.kind !== "noop" && !s.outlined && !(s.kind === "xobj" && s.children && s.children.length));   // (a text object drawn as outlines is the outlines now: section 3c)
     const achromatic0 = c => c && (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) <= 0.15;
     // An outline drawn as several open strokes whose ends meet (a bar from a U-shape plus a line) is one closed outline.
     // Chain single-subpath achromatic open strokes by coincident endpoints; a fully closed chain becomes a synthetic
@@ -903,6 +1269,7 @@
         for (const o of outlines) { if (isFillCand(o) || !bbInter(s.bbox, o.bbox)) continue; const f = insideFrac(pts, polysOf(o)); if (f > bestR) { bestR = f; bestO = o; } }   // by real containment only: on a dense sheet boxes overlap, shapes do not
         if (bestO && bestR >= 0.3) host = bestO;
       }
+      if (!host && s.glyphKey != null) host = outlines.find(o => o.glyphKey === s.glyphKey) || null;   // one letter drawn from live text is one charm: a piece of it that stands apart (a flourish, the tail of a Q) belongs to the letter's body (section 3c)
       if (!host) host = ringHostOf(s, pts, outlines);
       if (host) merged.set(s, host); else outlines.push(s);
     }
@@ -935,6 +1302,7 @@
       if (byOutline.has(s)) { byOutline.get(s).members.push(s); continue; }
       if (partOf.has(s)) { const ch = partOf.get(s); const c = byOutline.get(ch) || (merged.has(ch) ? byOutline.get(merged.get(ch)) : null); if (c) { c.members.push(s); c.bbox = bbUnion(c.bbox, s.bbox); continue; } }
       if (merged.has(s)) { const c = byOutline.get(merged.get(s)); c.members.push(s); c.bbox = bbUnion(c.bbox, s.bbox); continue; }
+      if (s.glyphKey != null) { const gc = charms.find(c => c.outline.glyphKey === s.glyphKey); if (gc) { gc.members.push(s); gc.bbox = bbUnion(gc.bbox, s.bbox); continue; } }   // (a piece of a letter too small to be a charm of its own: section 3c)
       const pts = samples(s, polysCache);
       // 2a · the artist's grouping first: a detail belongs to the charm it was drawn with (the outline before or after
       //      it in the stream) whenever it sits inside or against that outline. Only when neither stream neighbour
@@ -1304,8 +1672,8 @@
     opts = Object.assign({ pattern: SKU_PATTERN_DEFAULT, gapPt: 18, widen: 0.25, overlapPt: LABEL_OVERLAP_PT }, opts || {});
     const runs = parsed.segments.concat(parsed.nested).filter(s => s.kind === "text");
     // a block that positions several strings is read string by string, each with its own box; the block stays the segment
-    const texts = []; for (const r of runs) { if (r.pieces && r.pieces.length > 1) for (const p of r.pieces) texts.push(Object.assign({}, p, { seg: r })); else texts.push(Object.assign({}, r, { seg: r })); }
-    const labels = new Map(), unlabelled = [], orphans = [], duplicates = [], undecodable = [], labelSegs = new Set(), joinedRuns = [], skipped = [];
+    const texts = []; for (const r of runs) { if (r.pieces && r.pieces.length > 1) { for (const p of r.pieces) if (!p.outlined) texts.push(Object.assign({}, p, { seg: r })); } else if (!r.outlined) texts.push(Object.assign({}, r, { seg: r })); }   // (a letter drawn as outlines from live text is a drawing, not a label: section 3c)
+    const labels = new Map(), unlabelled = [], orphans = [], duplicates = [], undecodable = [], labelSegs = new Set(), joinedRuns = [], skipped = [], captions = [];
     const live = charms.filter(c => c.mergedInto == null);
     joinLabelRuns(texts, opts.pattern, joinedRuns);
     // The lines under a charm are its SKUs, one per line: the first line sits within gapPt of the outline's bottom edge,
@@ -1313,6 +1681,7 @@
     // list owns it; a charm without a list is reported unlabelled, and one SKU under two charms is reported, not shared.
     const lines = []; for (const t of texts) {
       if (t.undecodable || t.str == null) { if (t.chars > 0) undecodable.push({ bbox: t.bbox, chars: t.chars, font: t.font || null }); continue; }
+      if (t.caption) { captions.push({ str: String(t.str).trim(), bbox: t.bbox && t.bbox.slice() }); continue; }   // (the word over a row of drawn letters: "LEFT", "MIDDLE", "RIGHT" names the row and is no SKU)
       const lab = parseSkuLabel(t.str, opts.pattern); if (!lab || !t.bbox) { if (!lab && t.bbox && String(t.str).trim()) skipped.push({ str: String(t.str).trim().slice(0, 60), bbox: t.bbox.slice() }); continue; }   // (text that is no SKU is kept by what it says and where, so a charm left without one can be explained)
       lines.push({ t, lab, cx: (t.bbox[0] + t.bbox[2]) / 2, top: t.bbox[3], bottom: t.bbox[1], h: Math.max(1, t.bbox[3] - t.bbox[1]) });
     }
@@ -1320,9 +1689,13 @@
     const attached = [];                                                 // { line, charm }
     const owner = new Map();                                             // "SKU" or "SKU__SIZE" → first charm index
     const under = (cx, c) => { const b = c.outline.bbox, w = b[2] - b[0]; return cx >= b[0] - w * opts.widen && cx <= b[2] + w * opts.widen; };
+    // a letter drawn from live text is joined to its label when it is read (section 3c): the label of a narrow letter is not centred under it, and the letter's SKU is the one printed for it
+    const sameBox = (a, b) => !!a && !!b && a.length === 4 && b.length === 4 && a.every((v, i) => Math.abs(v - b[i]) < 0.01);
+    const drawnLetters = live.filter(c => c.outline && c.outline.textLabel);      // (none in a master with paths: the search below costs nothing there)
     for (const L of lines) {
-      let best = null, bestGap = Infinity, bestDx = Infinity;
-      for (const c of live) {
+      const linked = drawnLetters.length ? drawnLetters.find(c => sameBox(c.outline.textLabel, L.t.bbox)) || null : null;
+      let best = linked, bestGap = linked ? linked.outline.bbox[1] - L.top : Infinity, bestDx = Infinity;
+      for (const c of (linked ? [] : live)) {
         const gap = c.outline.bbox[1] - L.top;                          // outline bottom (y-up) minus label top
         if (gap < -1 || gap > opts.gapPt) continue;
         if (!under(L.cx, c)) continue;
@@ -1385,7 +1758,7 @@
       if (c.mergedInto == null && !labels.has(c.index)) unlabelled.push(c.index);
     }
     let skuCount = 0; for (const l of labels.values()) skuCount += 1 + l.extra.length;
-    return { labels, unlabelled, orphans, duplicates, undecodable, skuCount, absorbed: parts.absorbed, looseRings: parts.looseRings, joined: joinedRuns, skipped: skipped.slice(0, 5000), ignoredText: ignoredText.slice(0, 200) };
+    return { labels, unlabelled, orphans, duplicates, undecodable, skuCount, absorbed: parts.absorbed, looseRings: parts.looseRings, joined: joinedRuns, skipped: skipped.slice(0, 5000), ignoredText: ignoredText.slice(0, 200), captions };
   }
   /* ═══ 5a″ · parts of a charm that came out of the grouping as charms of their own ═════════════════════
      groupCharms makes a charm of every closed cut outline that is no detail and no attached ring. Three kinds of part still stood alone, and each was counted as "a charm with no SKU
@@ -1884,7 +2257,7 @@
         ctx.beginPath(); pathToCanvas(ctx, seg, tx);
         if (seg.fill) { ctx.fillStyle = solid ? "#000" : css(seg.fillRGB); ctx.fill(seg.paintOp.endsWith("*") ? "evenodd" : "nonzero"); }
         if (seg.stroke) { ctx.strokeStyle = solid ? "#000" : (isPaperWhite(seg.strokeRGB) ? "#2a2724" : css(seg.strokeRGB)); ctx.lineWidth = Math.max(solid ? 1.5 : 0.6, (seg.lwPt || 0.5) * s); ctx.stroke(); }
-      } else if (seg.bbox) {
+      } else if (seg.bbox && !seg.outlined) {                       // (live text drawn as outlines is those outlines: no grey box over the whole row)
         const a = tx(seg.bbox[0], seg.bbox[3]), b2 = tx(seg.bbox[2], seg.bbox[1]);
         ctx.fillStyle = solid ? "#000" : seg.kind === "text" ? "rgba(80,80,80,.55)" : "rgba(120,120,160,.25)";
         ctx.fillRect(a[0], a[1], Math.max(1, b2[0] - a[0]), Math.max(1, b2[1] - a[1]));
@@ -2612,6 +2985,8 @@
     takeSampleText, sampleTextOf, parseSkuLabel, READER_VERSION, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
   // the hoop finder, for the tests and the audit (kept off the long list above so a merge there never touches it)
   root.CharmNestPDF.findHoops = findHoops; root.CharmNestPDF.circleOf = circleOf;
+  // live text drawn as outlines (section 3c; kept off the long list for the same reason)
+  root.CharmNestPDF.liftTextDesigns = liftTextDesigns; root.CharmNestPDF.liveTextNotes = liveTextNotes; root.CharmNestPDF.LIVE_TEXT_MIN_PT = LIVE_TEXT_MIN_PT;
   // the loose-ink-outside-the-piece rule (section 5a″; kept off the long list for the same reason)
   root.CharmNestPDF.takeStrayInk = takeStrayInk; root.CharmNestPDF.strayInkOf = strayInkOf;
   // the black-fill rule (kept off the long list for the same reason)
