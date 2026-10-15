@@ -52,8 +52,9 @@ const WRITES = /^(putSheet|runPut|runArchive|setUpdate|setAllocate|poolPut|poolU
 
     /* 3 · the first tab is closed */
     await page.close({ runBeforeUnload: false });
-    const took = await tab2.waitForFunction(() => B.run && ['running', 'processed', 'complete'].includes(B.run.status) && !/restored/.test(B.run.stoppedBy || ''), null, { timeout: +process.env.TAKEOVER_S * 1000 || 60000, polling: 500 }).then(() => true, () => false);
-    log('second tab after the first closed:', await tab2.evaluate(() => B.run ? `${B.run.status}/${B.run.step}${B.run.stoppedBy ? ':' + B.run.stoppedBy : ''}` : 'no run'));
+    const took = await tab2.waitForFunction(() => typeof B !== 'undefined' && B.run && ['running', 'processed', 'complete'].includes(B.run.status) && !/restored/.test(B.run.stoppedBy || ''), null, { timeout: +process.env.TAKEOVER_S * 1000 || 60000, polling: 500 }).then(() => true, () => false);
+    await tab2.waitForFunction(() => typeof B !== 'undefined', null, { timeout: 30000 }).catch(() => {});   // (the second tab loads itself again when the first lets go of the run: wait for the page it becomes)
+    log('second tab after the first closed:', await tab2.evaluate(() => typeof B === 'undefined' ? 'reloading' : B.run ? `${B.run.status}/${B.run.step}${B.run.stoppedBy ? ':' + B.run.stoppedBy : ''}` : 'no run'));
     if (process.env.STRICT3) assert(took, '3 · the second tab takes the run over when the first tab is gone');
     console.log(at(), `OK · run ${runId}`);
   } finally { await H.close(); }
