@@ -40,15 +40,26 @@
   const marked = () => {
     const M = MARK(); if (!M) return [];
     const list = safe(() => (typeof M.markedRids === 'function' ? M.markedRids() : typeof M.openRids === 'function' ? M.openRids() : []), []);
-    return uniq((list || []).concat(swaps()).map(ridOf));
+    return cancelledOut(uniq((list || []).concat(swaps()).map(ridOf)));
   };
+  /* An order Etsy cancelled while it sat in Review (every line of it gone from the pull) holds nothing: the Review tab draws no card for it, so nobody could ever resolve it, and the server never
+     waits for a gone line (Readiness.orderReports). Its open mark stays in the cloud; if the cancel is undone its lines are live again and the hold and the card come back. An order the page holds
+     no line of at all (the pull is not read yet) stays held, as after a reload. (Paul, 15 Oct 2026: "resilient against ... unexpected user behaviour".) */
+  function cancelledOut(rids) {
+    if (!rids.length) return rids;
+    const rows = safe(() => root.Orders && typeof root.Orders.rows === 'function' ? root.Orders.rows() : null, null);
+    if (!Array.isArray(rows) || !rows.length) return rids;
+    const want = new Set(rids), seen = new Set(), live = new Set();
+    for (const r of rows) { const id = r && r.order ? ridOf(r.order.receiptId) : ''; if (!want.has(id)) continue; seen.add(id); if (r.state !== 'gone') live.add(id); }
+    return rids.filter(id => !seen.has(id) || live.has(id));
+  }
   /* A Review a person answered by picking a charm (a saved link) is resolved, but the piece on an open sheet may still carry the OLD drawing: the pick is what must be cut, so the sheet stays held
      until the piece carries it. The bridge answers which orders those are (Pool.swapRids: the line's reading through the saved link against the drawing of its pieces on sheets), every time. */
   const SWAP = 'New drawing chosen, swap it on the sheet';
   const swaps = () => safe(() => { const P = root.Pool, l = P && typeof P.swapRids === 'function' ? P.swapRids() : []; return [...(l || [])].map(ridOf).filter(Boolean); }, []);
   const pickedDone = rid => { const M = MARK(); const i = M && typeof M.info === 'function' ? safe(() => M.info(rid), null) : null; return !!(i && i.state === 'done' && i.how === 'pick'); };
   const isSwap = rid => { rid = ridOf(rid); return !!(rid && !isMarked(rid) && pickedDone(rid) && safe(() => { const P = root.Pool; return !!(P && typeof P.swapWaits === 'function' && P.swapWaits(rid)); }, false)); };
-  const isMarked = rid => { const M = MARK(); rid = ridOf(rid); return !!(rid && M && typeof M.isMarked === 'function' && safe(() => M.isMarked(rid), false)); };
+  const isMarked = rid => { const M = MARK(); rid = ridOf(rid); return !!(rid && M && typeof M.isMarked === 'function' && safe(() => M.isMarked(rid), false) && cancelledOut([rid]).length); };
   const markWhy = rid => { const M = MARK(); const w = safe(() => (M && typeof M.reasonOf === 'function' ? String(M.reasonOf(rid) || '') : ''), ''); return w.replace(/\s+/g, ' ').trim().slice(0, 120); };
   /** The order's pieces keep their place on their sheet: it is in Review (the saved link a pick makes must not lift the piece off its sheet while the Review is open). Once a pick has answered the Review the person decides the swap (the "Order changed" card), and the sheet waits for it (isSwap). */
   const keepsPlace = rid => isMarked(rid);

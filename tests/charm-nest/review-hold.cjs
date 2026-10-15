@@ -260,5 +260,19 @@ const A = '9100000001', B = '9100000002';
     // both in one sheet: the wording names each in its own words
     mark(A); pcs[A] = [piece(A, 1)]; swapSet.add(C); pcs[C] = [piece(C, 1, { poolId: `${C}_1_1` })]; doneHow.set(C, 'pick');
     assert.equal(H.reasonFor('S1'), `Order ${A} is in Review; Order ${C}: new drawing chosen, swap it on the sheet`); unmark(A); swapSet.delete(C); delete pcs[A]; delete pcs[C]; doneHow.delete(C); }
+  // 13. ADV-REVIEW (15 Oct 2026): an order cancelled while it sat in Review (every line gone) holds nothing: the Review tab draws no card for it, so nobody could resolve it; undone, it holds again
+  { const D = '9100000004'; pcs[D] = [piece(D, 1)]; const sD = sheetOf('S1', [D]); mark(D);
+    assert.equal(H.isHeld('S1'), true, 'in Review: held (no line of it is in the page yet: the pull is not read, as after a reload)');
+    const line = (rid, state) => ({ key: rid + '_1', state, order: { receiptId: rid } });
+    globalThis.Orders = { rows: () => [line(D, 'written'), line(A, 'gone')] };
+    assert.equal(H.isHeld('S1'), true, 'a live line of it: held'); assert.equal(H.inReview(D), true);
+    globalThis.Orders = { rows: () => [line(D, 'gone'), line(A, 'written')] };
+    assert.deepEqual(H.heldBy('S1'), [], 'every line gone (cancelled): nothing is held'); assert.equal(H.isHeld('S1'), false); assert.equal(H.reasonFor('S1'), '');
+    assert.deepEqual(H.sheetsHeldBy(D), []); assert.equal(H.reason(D), ''); assert.equal(H.inReview(D), false); assert.equal(H.keepsPlace(D), false); assert.equal(H.overlay(sD), sD, 'the record comes back as it is'); assert.equal(R.sheet(H.overlay(sD)).ready, true);
+    globalThis.Orders = { rows: () => [line(D, 'gone'), line(D, 'written')] };
+    assert.equal(H.isHeld('S1'), true, 'one line gone, one live: still held by the live one');
+    globalThis.Orders = { rows: () => [line(D, 'gone')] }; assert.equal(H.isHeld('S1'), false);
+    globalThis.Orders = { rows: () => [line(D, 'pulled')] }; assert.equal(H.isHeld('S1'), true, 'the cancel is undone (its lines are live again): held again, with its card');
+    delete globalThis.Orders; unmark(D); delete pcs[D]; }
   console.log('review-hold: ok');
 })().catch(e => { console.error(e); process.exit(1); });
