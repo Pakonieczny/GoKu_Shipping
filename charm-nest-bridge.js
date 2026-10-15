@@ -3811,6 +3811,8 @@ const Pool = window.Pool = (() => {
     // oversize: the charm cannot fit the plate under the ceiling (each body of a pair must fit; a mirror image is as big as the drawing)
     const st = stockFor(sp.material); const usable = (st.wPt - 2 * (+S.settings.insetPt || 0)) * (st.hPt - 2 * (+S.settings.insetPt || 0)) * (+S.settings.maxFill || 0.80);
     for (const b of plan ? (ear2 ? [base, ear2.src.charms[0]] : [...new Set(plan.map(p => +p.bodyIndex))].map(i => wholeBody(src, i))) : setDs ? setDs.map(d => d.src.charms[0]) : [cutBase]) {
+      // a design whose outline reads as nothing (no area or no size: collapsed, invalid) cannot be seated: first in line of its metal it stopped the whole sheet ("The oldest order cannot fit on an empty sheet"), so the line waits for a person instead
+      if (!(b.areaPt2 > 0) || !(b.widthPt > 0) || !(b.heightPt > 0)) { row.state = "held"; row.reason = "SKU blocked: its design has no outline to cut"; row.problems.push({ kind: "blockedSku", reason: "its design has no outline to cut", sku: sp.designSku }); return null; }
       if (b.areaPt2 > usable || Math.min(b.widthPt, b.heightPt) > Math.max(st.wPt, st.hPt) - 2 * (+S.settings.insetPt || 0)) { row.state = "oversize"; row.reason = `charm ${(b.widthPt * MM).toFixed(1)} × ${(b.heightPt * MM).toFixed(1)} mm does not fit the ${labelOf(sp.material)} plate under the ceiling`; row.problems.push({ kind: "oversize", sku: sp.designSku, widthMm: b.widthPt * MM, heightMm: b.heightPt * MM, material: sp.material }); return null; }
     }
     // a Right piece is drawn the other way round (its mirror image); a line whose mirrored charm cannot be made is held, never drawn the wrong way
@@ -19578,6 +19580,9 @@ const Arrivals = window.Arrivals = (() => {
     if (!r || ["complete", "abandoned"].includes(r.status)) { state.pending = false; save(); await RunCtl.start({ mode: "auto" }); return; }
     // Never alter the data while a run is producing labels or committing, nor revive an operator-stopped run.
     if (!((r.status === "review" && r.step === "engrave") || r.status === "processed" || checkpoint && r.status === "running" && r.step === "checkpoint") || r.arrivalBusy) return;
+    // A sheet nesting by hand (Re-nest, a Review decision that arranged one again) is no reason to stop the run: the new orders stay pending and go on at the next tick, when it is done
+    // (they used to be refused with "A sheet is still being written", which stopped the run and, being no network fault, was not resumed by itself)
+    if (allSheets().some(p => p.runId === r.runId && ["nesting", "finishing", "queued"].includes(p.status))) return;
     state.pending = false; save(); r.arrivalBusy = true; RunCtl.renderBanner();   // the banner and ladder say the orders are going on now
     try {
       // The gold dot is a courtesy, never a lock (Orders.claim), and the station waves its cursor over the rows before it
@@ -19589,6 +19594,7 @@ const Arrivals = window.Arrivals = (() => {
       Engrave.background(r); RunCtl.save(r).catch(() => {});
     } catch (e) {
       state.pending = true; save();
+      if (/^A sheet is still being written/.test(e.message)) return;   // (a nest began while the orders were being read: they wait, still pending)
       // Stop pressed while the orders went on keeps its own plain reason: the orders not placed yet wait, and this intake
       // runs again after Resume. It used to be stopped a second time, as "New orders could not be added: stopped by the
       // operator", with a red toast and an alert.

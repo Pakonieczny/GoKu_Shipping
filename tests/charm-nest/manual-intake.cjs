@@ -97,7 +97,7 @@ assert.equal(O.intakePlan({count:40,density:.5,optimized:true,area:99,capacity:1
   overflowToNextSheet:sh=>{counts.overflow++;sh.charms=sh.charms.filter(c=>!sh.rejects.includes(c.id));},pumpNestQueue(){},flushManualIntake(){},RunCtl:{onSheetDone:()=>counts.done++},
   keepOrdersWhole(){},sheetFull:()=>true
  };
- fx.window.RunCtl=fx.RunCtl;fx.setTimeout=setTimeout;
+ fx.window.RunCtl=fx.RunCtl;fx.setTimeout=setTimeout;fx.clearTimeout=clearTimeout;   // (the geometry check's wait: finishNest sets it and clears it)
  vm.createContext(fx);
  vm.runInContext(FEED,fx);
  vm.runInContext(html.slice(html.indexOf('/* Gap fill (Paul, 24 Sep)'),html.indexOf('function usableArea(')),fx);

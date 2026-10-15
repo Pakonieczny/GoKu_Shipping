@@ -52,9 +52,9 @@ function context() {
     const allSheets=()=>METALS.flatMap(m=>S.sheets[m.key].pages);
     const view={sort:'arrival'}, gate={}, recall={runId:null};
     let saved=0,parsed=0,polled=0;
-    const Orders={view:()=>view,rows:()=>B.orders.rows,render(){},interpretAll(){},claim:async()=>{},applyPullRule:x=>x,loadMaps:async()=>{}};
+    const Orders={view:()=>view,rows:()=>B.orders.rows,render(){},interpretAll(){},claim:async()=>{},applyPullRule:x=>x,loadMaps:async()=>{},revalidate:async()=>({changed:[]})};
     const Gate={state:()=>gate,modern:()=>false,nestable:()=>true,assemble:async()=>{}}; const Recall={state:()=>recall,on:()=>!!recall.runId};
-    const Engrave={render(){},classifyAll:async()=>{},fitAll:async()=>{},background:()=>Promise.resolve()}; const Review={render(){}};
+    const Engrave={render(){},classifyAll:async()=>{},fitAll:async()=>{},background:()=>Promise.resolve(),relinkAll(){}}; const Review={render(){}}; const CustomRead={later(){}}, TL={pulled(){}};   // (the workspace restore calls these two; the stubs had not followed it)
     const RunCtl={renderBanner(){},save:async()=>saved++,poke(){},stop(){},start:async()=>{},clearRunState(){recall.runId=null;B.orders={rows:[],byKey:new Map()};}};
     const CN={showPage(){}}; const LiveStrip={rows:[]};
     const P={parseSource:async()=>{parsed++;return {rebuilt:true};}};
@@ -165,6 +165,24 @@ function context() {
     assert.equal(Arrivals.state().seen.ancient,undefined,'first-arrival times older than 45 days are dropped');assert.equal(Arrivals.state().recorded.ancient,undefined);
     assert(Arrivals.state().seen['300']&&Arrivals.state().seen.recent,'current ones are kept');
     await Session.flush(true);
+  })()`, c);
+  // An order that arrives while a sheet is nesting by hand is not refused: the run is not stopped (a refusal was no network fault, so it was not resumed by itself
+  // either), the order stays pending, and the intake goes on when the sheet is done. Any other failure of the intake still stops the run.
+  await vm.runInContext(`(async()=>{
+    const stops=[],adds=[];RunCtl.stop=(...a)=>stops.push(a);LiveNest.add=async()=>{adds.push(1);};
+    B.run={runId:'run-live',status:'processed',step:'engrave',orders:[],arrivalBusy:false};
+    S.settings.runMode='auto';Arrivals.state().pending=true;
+    const sheet=S.sheets.gold;Object.assign(sheet,{runId:'run-live',status:'nesting'});
+    await Arrivals.processPending();
+    assert.equal(adds.length,0,'no intake while a sheet is being written');assert.equal(stops.length,0,'and the run is not stopped for it');assert.equal(Arrivals.state().pending,true,'the orders stay pending');
+    sheet.status='complete';await Arrivals.processPending();
+    assert.equal(adds.length,1,'the sheet is done: the orders go on');assert.equal(stops.length,0);assert.equal(Arrivals.state().pending,false);
+    Arrivals.state().pending=true;LiveNest.add=async()=>{throw new Error('A sheet is still being written');};
+    await Arrivals.processPending();
+    assert.equal(stops.length,0,'refused by a nest that began meanwhile: still no stop');assert.equal(Arrivals.state().pending,true);assert.equal(B.run.arrivalBusy,false);
+    LiveNest.add=async()=>{throw new Error('Reconnect to finish saving the re-optimized set');};
+    await Arrivals.processPending();assert.equal(stops.length,1,'any other failure still stops the run');assert.match(stops[0][0],/New orders could not be added/);
+    S.settings.runMode='manual';Arrivals.state().pending=false;
   })()`, c);
   c.ordersLogic = require('../../charm-nest-orders.js');
   vm.runInContext(part('LiveNest', '/* ═══ 25').replace('const LiveNest = window.LiveNest =','const RealLiveNest = window.LiveNest ='),c);

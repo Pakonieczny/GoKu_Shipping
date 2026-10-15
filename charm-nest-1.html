@@ -5462,6 +5462,8 @@ function updateSearchMetrics(sh, idx, metrics) {
   sh.trials=sh.pool.trials.reduce((n,x)=>n+(x||0),0);
   sh.searchMetrics=rows.reduce((out,row)=>{for(const key of Object.keys(out))out[key]+=row?.[key]||0;return out;},{layouts:0,searches:0,positions:0,gpuPositions:0,groups:0,branches:0,pruned:0});
 }
+/** The geometry check's answer when its worker could not give one: the sheet is flagged with the reason, and nothing is claimed about its layout. */
+const geomFlag = why => ({ ok: false, error: String(why || "the check could not run"), overlapPx: 0, outsidePx: 0, removedPx: 0, protectedMoved: 0, res: +S.settings.verifyRes || 6, overlappingPairs: [], minGapPt: null, minEdgePt: null });
 function onWorkerMessage(sh, m, idx) {
   const base = String(m.jobId || "").split(":")[0];
   if (base !== sh.jobId) return;
@@ -5480,7 +5482,9 @@ function onWorkerMessage(sh, m, idx) {
   }
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
   const pool = sh.pool || { n: 1, done: 0, results: [], trials: [0], winner: null };
-  if (pool.finished) { if (m.type === "verified") sh._geomVerify && sh._geomVerify(m.result); return; }   // the sheet is done — late messages from stopped searches are dropped
+  // the sheet is done — late messages from stopped searches are dropped. Its geometry check is the one answer still awaited: a worker that errors or cannot start
+  // (the network gone, its script not served) flags the sheet at once, instead of leaving it "finishing" for good with every later nest queued behind it
+  if (pool.finished) { if (m.type === "verified") sh._geomVerify && sh._geomVerify(m.result); else if (m.type === "error") sh._geomVerify && sh._geomVerify(geomFlag(m.message)); return; }
   if (pool.completed?.[idx] && m.type !== "verified") return;
   const leader = pool.winner != null ? pool.winner : (sh.bestWorker != null ? sh.bestWorker : 0);   // whose search narrates progress
   if (m.type === "placed" && idx !== leader) return;
@@ -5732,7 +5736,13 @@ async function finishNest(sh, { result, error }) {
     sh.placements.forEach((p, i) => { p.layerName = specBase.placements[i].layerName; p.name = byId.get(p.id)?.name; });
     // 2 · verify — geometry (worker) and render (pdf.js), independently of the solver. The geometry check runs in the
     // sheet's worker while this page writes the proof and renders the file, instead of after them.
-    const geomDone = new Promise(res => { sh._geomVerify = res; ensureWorker(sh).postMessage({ type: "verify", jobId: sh.jobId, job: buildJob(sh), placements: sh.placements, res: +S.settings.verifyRes || 6 }); });
+    // (a check that gives no answer in 5 minutes flags the sheet the same way, and its worker is let go)
+    const geomDone = new Promise(res => {
+      const waitS = +S.settings.verifyWaitS || 300;
+      const wait = setTimeout(() => { if (sh._geomVerify !== settle) return; for (const w of sh.workers || []) w.terminate(); sh.workers = []; sh.worker = null; settle(geomFlag("no answer in " + waitS + " s")); }, waitS * 1000);
+      const settle = r => { clearTimeout(wait); if (sh._geomVerify === settle) sh._geomVerify = null; res(r); };
+      sh._geomVerify = settle; ensureWorker(sh).postMessage({ type: "verify", jobId: sh.jobId, job: buildJob(sh), placements: sh.placements, res: +S.settings.verifyRes || 6 });
+    });
     sh.progress = [2, 5]; sh.stage = "Writing labelled proof…"; renderProgress(sh);
     const labelledBytes = await CharmNestPDF.buildSheet(Object.assign({}, specBase, { labelled: true, placements: specBase.placements.map(p => Object.assign({}, p)) }));
     sh.stage = "Verifying · re-rendering each charm alone…"; sh.progress = [3, 5]; renderProgress(sh);
@@ -5749,7 +5759,7 @@ async function finishNest(sh, { result, error }) {
       const renderMsg = render && !render.ok ? " · render: " + (render.error || (render.overlapPx + " px overlap, " + render.outsidePx + " px outside")) : "";
       agent({ metal: sh.metal }, sh.verification.ok ? "verify" : "warn", sh.verification.ok
         ? "Verified twice: geometry at " + geom.res + " px/pt and the written file re-rendered layer by layer — no overlap beyond the allowed " + allow + ", nothing outside the sheet"
-        : "Verification flagged: " + (geom.overlapPx ? geom.overlapPx + " px overlap (" + pairs + ")" : "") + renderMsg);
+        : "Verification flagged: " + (geom.error ? "geometry check did not run: " + geom.error : geom.overlapPx ? geom.overlapPx + " px overlap (" + pairs + ")" : "") + renderMsg);
     }
     // 3 · report
     const report = buildReport(sh, result, items);
@@ -7217,7 +7227,7 @@ function openReport(sh) {
       <dt>Seed · angles · clearance</dt><dd>${sh.solveParams.seed} · ${sh.solveParams.angles.length} angles (${+(360 / sh.solveParams.angles.length).toFixed(2)}° step) · clearance ${fmt.mm(sh.solveParams.clearancePt)} · inset ${fmt.mm(sh.solveParams.insetPt)}</dd>
       <dt>Free area</dt><dd>${fmt.area(s.freeFact)} of ${fmt.area(s.usable)} usable · largest open pocket ${s.pocket ? `${fmt.mm(s.pocket.wPt)} × ${fmt.mm(s.pocket.hPt)}` : "—"}</dd></dl>`;
     if (v) {
-      html += `<div class="callout ${v.ok ? "ok" : "bad"}"><b>Verification ${v.ok ? "passed" : "FLAGGED"}</b> — geometry re-rasterised at ${v.geom.res} px/pt: ${v.geom.overlapPx} overlapping px, ${v.geom.outsidePx} px outside the sheet, tightest charm-to-charm gap ${v.minGapPt == null ? "—" : fmt.mm(v.minGapPt)}, tightest charm-to-edge ${v.minEdgePt == null ? "—" : fmt.mm(v.minEdgePt)}.${v.geom.overlappingPairs.length ? ` Overlapping: ${v.geom.overlappingPairs.map(p => p.map(id => byId.get(id)?.name || id).join(" ↔ ")).join("; ")}.` : ""}<br>Output file re-rendered layer by layer (pdf.js): ${v.render ? (v.render.error ? `could not run — ${esc(v.render.error)}` : `${v.render.layers} layers · ${v.render.overlapPx} overlapping px · ${v.render.outsidePx} px outside${v.render.emptyLayers && v.render.emptyLayers.length ? ` · empty layers: ${esc(v.render.emptyLayers.join(", "))}` : ""}${v.render.overlappingPairs.length ? ` · ${esc(v.render.overlappingPairs.join("; "))}` : ""}`) : "not run"}.</div>`;
+      html += `<div class="callout ${v.ok ? "ok" : "bad"}"><b>Verification ${v.ok ? "passed" : "FLAGGED"}</b> — geometry re-rasterised at ${v.geom.res} px/pt: ${v.geom.overlapPx} overlapping px, ${v.geom.outsidePx} px outside the sheet, tightest charm-to-charm gap ${v.minGapPt == null ? "—" : fmt.mm(v.minGapPt)}, tightest charm-to-edge ${v.minEdgePt == null ? "—" : fmt.mm(v.minEdgePt)}.${v.geom.error ? ` The geometry check did not run: ${esc(v.geom.error)}.` : ""}${v.geom.overlappingPairs.length ? ` Overlapping: ${v.geom.overlappingPairs.map(p => p.map(id => byId.get(id)?.name || id).join(" ↔ ")).join("; ")}.` : ""}<br>Output file re-rendered layer by layer (pdf.js): ${v.render ? (v.render.error ? `could not run — ${esc(v.render.error)}` : `${v.render.layers} layers · ${v.render.overlapPx} overlapping px · ${v.render.outsidePx} px outside${v.render.emptyLayers && v.render.emptyLayers.length ? ` · empty layers: ${esc(v.render.emptyLayers.join(", "))}` : ""}${v.render.overlappingPairs.length ? ` · ${esc(v.render.overlappingPairs.join("; "))}` : ""}`) : "not run"}.</div>`;
     }
     if (sh.rejects.length) html += `<div class="callout" style="margin-top:8px"><b>${sh.rejects.length} did not fit:</b> ${sh.rejects.map(id => esc(byId.get(id)?.name || id) + ` (${fmt.mm(byId.get(id)?.widthPt || 0)} × ${fmt.mm(byId.get(id)?.heightPt || 0)})`).join(", ")}. Use “Move the rest to the next sheet”, tighten the clearance, or pin the largest pieces first.</div>`;
   }
@@ -7808,7 +7818,7 @@ boot();
 <script src="charm-nest-review-link.js?v=20261013-rlk2"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4"></script>

@@ -127,6 +127,20 @@ const J = x => JSON.parse(JSON.stringify(x));      // the vm's arrays and object
   }
   pass('a single charm, discs, and any line the pair module calls plain: the pool rows and charms are exactly what they were');
 
+  // ADV-NEST (15 Oct 2026): a design whose outline reads as nothing (no area, no width or height, or not a number) is never pooled. First in line of its metal as the oldest
+  // order it cannot be seated, and the solver then rejects every younger order behind it: the whole sheet stopped on "The oldest order cannot fit on an empty sheet". The line is held
+  // as a blocked SKU (the Review card a person fixes the master from), and nothing is recorded or put on a sheet.
+  for (const [name, box] of [['no width', b => [b[0], b[1], b[0], b[3]]], ['no height', b => [b[0], b[1], b[2], b[1]]], ['not a number', b => [NaN, NaN, NaN, NaN]]]) {
+    const w = world(['ONE-PENDANT']); w.use('ONE-PENDANT');
+    w.c.P.groupCharmsAsync = async () => { const ch = structuredClone(F.charmOf('ONE-PENDANT')); ch.bbox = box(ch.bbox); return { charms: [ch], orphans: [] }; };
+    const row = lineRow('4190000111', '5000000111', 'ONE-PENDANT', 2, { form: 'pendant' });
+    await w.Pool.poolAdd(row, null);
+    assert.strictEqual(row.state, 'held', name + ': held, not pooled'); assert.match(row.reason, /no outline to cut/, name);
+    assert(row.problems.some(p => p.kind === 'blockedSku' && p.sku === 'ONE-PENDANT'), name + ': a blocked-SKU question for the Review tab');
+    assert(!w.calls.some(x => x.body.op === 'poolPut'), name + ': nothing recorded'); assert.strictEqual(w.pages.gold.charms.length, 0, name + ': nothing on a sheet');
+  }
+  pass('a design with no outline to cut is held as a blocked SKU, never pooled');
+
   // counted-option necklaces (3 discs, 5 letters: the intake's pieceCount above the quantity) ARE a group of that many pieces: every row carries the group and its size, no ear;
   // the same piece count as a plain quantity (above, 'DISC-14' x 3) is not (Paul 9 Oct, after ADVCOMPAT 1: a plain quantity-N line is not a group)
   for (const [qty, count] of [[1, 3], [2, 6], [1, 5]]) {
