@@ -233,7 +233,7 @@
       el.says.innerHTML = (said ? `The buyer wrote <b>${esc(seen)}</b>` : "The buyer wrote nothing") + " · " + ls.map((x, i) => `${slotName(i)} <b>${esc(x || "–")}</b>`).join(" · ");
       // size and anything worth a look
       const notes = [];
-      if (c.result && c.status === "ready") { const r = c.result; notes.push(`<span class="moSize">Actual size ${(+r.wMm).toFixed(1)} × ${(+r.hMm).toFixed(1)} mm${metal ? " · " + TONES[metal][2] : ""}</span>`); for (const w of (r.report && r.report.warnings) || []) notes.push(`<span class="moWarn">${esc(cap(w))}</span>`); }
+      if (c.result && c.status === "ready") { const r = c.result; notes.push(`<span class="moSize">Actual size ${(+r.wMm).toFixed(1)} × ${(+r.hMm).toFixed(1)} mm${metal ? " · " + TONES[metal][2] : ""}</span>`); const adj = ((r.report && r.report.altered) || []).map(a => a.text).filter(Boolean); if (adj.length) notes.push(`<span class="moAdj">Adjusted: ${esc(adj.join(" · "))}</span>`); for (const w of (r.report && r.report.warnings) || []) notes.push(`<span class="moWarn">${esc(cap(w))}</span>`); }
       if (c.hint) notes.push(`<span class="moWarn">${esc(c.hint)}</span>`);
       el.meta.innerHTML = notes.join("");
       // a message that needs a person (a missing letter, a load that failed, letters that cannot join)
