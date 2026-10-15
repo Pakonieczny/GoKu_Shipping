@@ -198,6 +198,19 @@ const libSkus = st => st.list('Charm_Master_Index').map(e => e._id).sort();
     for (const e of st.list('Charm_Master_Index')) { const d = st.doc('Charm_Master_Index', e._id); delete d.readerV; d.masterHash = 'ffffffffeeeeeeee'; d.masterName = 'OTHER.ai'; }
     await page.evaluate(() => Master.load(true));
     r = await br.upload(sheet, 'PAIR.ai'); j = await job(); ok(j.written === 0 && j.held === 2, 'a design another master file wrote with an older reader is left as it is: ' + JSON.stringify({ w: j.written, h: j.held }));
+    
+    // 21 · a page that is out of date reads and writes nothing (it would use the old reader), and says why
+    await wipe();
+    await page.evaluate(() => { PageVersion._set('"v1"'); });
+    const headRoute = async route => { if (route.request().method() === 'HEAD') return route.fulfill({ status: 200, headers: { etag: '"v2"' }, body: '' }); return route.fallback(); };
+    await page.route(/charm-nest-1\.html/, headRoute);
+    const jobsBefore = await page.evaluate(() => B.master.jobs.size), putsOf2 = () => st.calls.filter(c => c.body && /^master(PutIndex|PutFile)$/.test(c.body.op || '')).length, putsBefore2 = putsOf2();
+    { const file = require('path').join(require('os').tmpdir(), 'stale-' + Date.now() + '.ai'); require('fs').writeFileSync(file, sheet); await page.setInputFiles('#mFile', file); }
+    await page.waitForFunction(() => PageVersion.isStale(), null, { timeout: 15000 });
+    ok((await page.evaluate(() => B.master.jobs.size)) === jobsBefore && putsOf2() === putsBefore2 && libSkus(st).length === 0, 'an out-of-date page reads and writes nothing');
+    ok(await page.evaluate(() => /reload the page/i.test(document.body.innerText)), 'and tells the person to reload');
+    await page.unroute(/charm-nest-1\.html/, headRoute);
+    await page.evaluate(() => { PageVersion._set(null); });
         const bad = br.errors.filter(e => !/status of 500/.test(e));   // (the one failure this test forces is logged by the browser)
     ok(bad.length === 0, 'no page error: ' + bad.join(' | '));
   } finally { await br.close(); }

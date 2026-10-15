@@ -2395,6 +2395,26 @@ const Orders = window.Orders = (() => {
   return { view: () => OV, walkRows: () => groupsOf(visibleRows()).flatMap(g => g.rows), showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
 })();
 
+/* ═══ 18b · the page is the version that was deployed (MASTER4, Paul 15 Oct 2026) ══════════════════════════════
+   A page left open keeps the code it loaded: a master added from it was read by the OLD reader and wrote the old designs (the Circle's disc missing, the day after it was fixed). The page asks the server for its own
+   address (HEAD, no cache) a few seconds after it loads and keeps the answer's ETag; a later answer that differs means the app was deployed since. It says so, once, when the tab is looked at again and every 15 minutes,
+   and a master file is not read or written from a page that is out of date (Master.addFiles). A server that sends no ETag or Last-Modified, or a request that fails, never blocks anything. */
+const PageVersion = (() => {
+  let base = null, stale = false, said = false, timer = null;
+  const tag = async () => { try { const r = await fetch(location.href.split("#")[0], { method: "HEAD", cache: "no-store" }); return r && r.ok ? (r.headers.get("etag") || r.headers.get("last-modified") || null) : null; } catch (_) { return null; } };
+  const MSG = "The app was updated while this page was open: reload the page (Ctrl+Shift+R, or Cmd+Shift+R), then continue.";
+  async function check(force) {
+    if (stale) return true;
+    const now = await tag(); if (!now) return false;
+    if (base == null) { base = now; return false; }
+    if (now !== base) { stale = true; if (!said || force) { said = true; try { toast(MSG, "bad", 20000, "page-stale"); } catch (_) {} } }
+    return stale;
+  }
+  function start() { if (timer) return; setTimeout(() => check(false), 4000); timer = setInterval(() => check(false), 15 * 60000); document.addEventListener("visibilitychange", () => { if (!document.hidden) check(false); }); }
+  return { start, check, message: MSG, isStale: () => stale, _set: v => { base = v; } };
+})();
+window.PageVersion = PageVersion; PageVersion.start();
+
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
 const Master = window.Master = (() => {
   const entryFor = sku => B.master.entries.get(String(sku || "").toUpperCase()) || null;
@@ -2437,6 +2457,7 @@ const Master = window.Master = (() => {
   /** The picked or dropped files: unlocked once for all of them, then indexed as before. */
   async function addFiles(files) {
     files = [...files || []]; if (!files.length) return;
+    if (await PageVersion.check(true)) { toast(PageVersion.message + " Nothing was read or written.", "bad", 15000); return; }   // (an out-of-date page reads a master with the old reader and writes the old designs)
     if (!(await unlockUpload(files.length === 1 ? `“${files[0].name}”` : `${files.length} files`))) return;
     for (const f of files) indexFile(f).catch(err => toast(err.message, "bad", 7000));
   }
