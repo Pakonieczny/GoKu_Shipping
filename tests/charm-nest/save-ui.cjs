@@ -664,14 +664,14 @@ async function main() {
       await closeWin(page);
       // the design is already in the repository (reuse), and the Etsy reading that will not match
       await page.evaluate(() => { __kw.open = { reuse: 'ACORN_LEAF_0007', sku: 'ACORN_LEAF_0007' }; });
-      await dropDesign(page, '4196630603'); await ready(page, 'ready'); await settle(page);
+      await dropDesign(page, '4196630603'); await ready(page, 'off'); await settle(page);
       s = await strip(page);
-      ok(s.label === 'Save to the charm repository and link this listing' && s.preview === 'Already in the repository as ACORN_LEAF_0007 · this listing will be linked to it', 'the design already in the repository: ' + s.preview);
+      ok(s.label === 'Save to the charm repository and link this listing' && s.preview === 'Already in the repository as ACORN_LEAF_0007 · switch on to link this listing to it', 'the design already in the repository: ' + s.preview);
       await closeWin(page);
       await page.evaluate(() => { __kw.open = { aliasWorks: false }; });
-      await dropDesign(page, '4196630604'); await ready(page, 'ready'); await settle(page);
+      await dropDesign(page, '4196630604'); await ready(page, 'off'); await settle(page);
       s = await strip(page);
-      ok(s.preview === 'New SKU ACORN_LEAF_4821 · Etsy gets the new SKU too, or the next order will still ask', 'the alias will not carry it: ' + s.preview);
+      ok(s.preview === 'New SKU ACORN_LEAF_4821 · switch on to save it; Etsy gets the new SKU too, or the next order will still ask', 'the alias will not carry it: ' + s.preview);
       await closeWin(page);
       // the engine takes time to answer: "Checking this listing…" with a small spinner
       await page.evaluate(() => { __kw.open = {}; __kw.openGap = 1500; });
