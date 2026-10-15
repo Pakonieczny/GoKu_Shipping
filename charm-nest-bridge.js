@@ -2493,6 +2493,22 @@ const Master = window.Master = (() => {
     const own = e.get(String(sku || "").toUpperCase()), f = own ? O.designFile(own) : "";
     return f ? sharedIx.map.get(f) || [] : [];
   }
+  /* DELETE FROM THE CHARM REPO (Paul, 15 Oct 2026: "remove all of these broken keys ... add the ability to delete individual charms ... password protected"). One charm is one tile, and a tile may carry several SKUs
+     that share its design: they go together. The server removes the index entries only (charmNestLibrary masterRemoveSkus, behind the single-use delete token, so the password is asked every time and the confirmation
+     is in that same dialog); the design files stay in storage, and a master indexed again makes the charm whole. MASTER_DELETE_MAX is the server's own limit. */
+  const MASTER_DELETE_MAX = 200;
+  async function removeCharms(skus, btn) {
+    skus = [...new Set((skus || []).map(x => String(x || "").trim()).filter(Boolean))]; if (!skus.length) return;
+    const n = skus.length, named = n <= 6 ? skus.join(", ") : `${skus.slice(0, 6).join(", ")} and ${n - 6} more`;
+    if (btn) btn.disabled = true;
+    let r;
+    try { r = await repoApi("delete", { title: "Delete from the charm repo", message: `Delete ${n === 1 ? named : `${n} SKUs (${named})`} from the charm repo? ${n === 1 ? "It is" : "They are"} removed from the library for good: orders for ${n === 1 ? "it" : "them"} wait until a master file that carries ${n === 1 ? "it" : "them"} is indexed again. The design files stay in storage.`, target: `${n} SKU${n === 1 ? "" : "s"}: ${skus.slice(0, 3).join(", ")}`.slice(0, 80), go: "Delete" }, { op: "masterRemoveSkus", skus }); }
+    catch (e) { if (btn) btn.disabled = false; if (!(e && e.cancelled)) toast("Nothing was deleted: " + ((e && e.message) || e), "bad", 7000); return; }
+    const gone = (r && r.removed) || [], missing = (r && r.missing) || [];
+    for (const x of gone.concat(missing)) B.master.entries.delete(String(x).toUpperCase());     // (the grid stops showing them at once; the reload below is the truth)
+    await load(true).catch(() => {}); render();
+    toast(`Deleted ${gone.length} SKU${gone.length === 1 ? "" : "s"} from the charm repo${missing.length ? ` · ${missing.length} ${missing.length === 1 ? "was" : "were"} not in it already` : ""}`, "ok", 6000);
+  }
   let showAll = false;                                              // the grid draws 600 tiles until asked for the rest
   let reindexAll = false;                                           // by default a SKU the library already holds is left alone
   /* The Charm Repo is locked for everything that adds, removes, changes or hands out a charm file (Paul, 11 Oct 2026): ONE password
@@ -3164,7 +3180,7 @@ const Master = window.Master = (() => {
     const v = document.getElementById("masterView"); if (!v || v.classList.contains("hidden")) return;
     if (!v.dataset.built) {
       v.dataset.built = "1";
-      v.innerHTML = `<div class="masterHead"><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><button class="btn gold sm" id="mAdd" data-repo="upload" title="index another master .ai into the charm library (asks for your password)">＋ Add a master file</button><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:5px 10px;font-size:12px"><label style="display:flex;gap:5px;align-items:center;font-size:11px" title="Off: a SKU the library already holds is left as it is, and only new charms are built. On: every charm on the sheet is rebuilt and rewritten."><input type="checkbox" id="mAllSkus"> re-index SKUs already held</label><span class="pill neutral" id="mCount"></span></div>
+      v.innerHTML = `<div class="masterHead"><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><button class="btn gold sm" id="mAdd" data-repo="upload" title="index another master .ai into the charm library (asks for your password)">＋ Add a master file</button><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:5px 10px;font-size:12px"><label style="display:flex;gap:5px;align-items:center;font-size:11px" title="Off: a SKU the library already holds is left as it is, and only new charms are built. On: every charm on the sheet is rebuilt and rewritten."><input type="checkbox" id="mAllSkus"> re-index SKUs already held</label><span class="pill neutral" id="mCount"></span><span id="mBulk"></span></div>
         <details class="noteBox"><summary>How a master file is read</summary>Drop a master file here, or press Add. Each charm in it has its SKU as text directly under it (within ${S.settings.labelGapMm} mm, centred under the outline). A SKU is one design whatever colour it is ordered in; the material comes from the order. Labels are never part of the charm. Two different bodies touching under ONE label (a left and a right) are one design, built from both. Unlabelled charms, orphan labels and duplicates are listed in red, each with where it sits; a SKU present in two masters is blocked until fixed. A name written above a charm that has its own SKU under it is a title, not a SKU. A letter set inside a design whose SKU ends in that letter is welded into the design's cut line as an outline. A SKU the library already holds is left as it is, unless it holds it wrong (one body of a pair this sheet draws as two, or a design without its letter): that is built again. Add the same file again and only what is missing is built.</details>
         <div id="mJobs" style="display:grid;gap:10px"></div><details class="noteBox masterHist" id="mHist"><summary id="mHistSum">Upload history</summary><div id="mFiles" style="display:grid;gap:10px"></div></details><div class="section">Indexed SKUs</div><div class="skuGrid" id="mGrid"></div>`;
       { const cb = v.querySelector("#mAllSkus"); cb.checked = reindexAll; cb.onchange = () => { reindexAll = cb.checked; toast(reindexAll ? "every charm on the next sheet will be rebuilt" : "charms already in the library will be skipped", "ok"); }; }
@@ -3267,6 +3283,7 @@ const Master = window.Master = (() => {
       catch (e) { b.disabled = false; if (!(e && e.cancelled)) toast("The SKUs were not removed: " + e.message, "bad", 7000); return; }
       await load(true).catch(() => {}); render(); });
     const q = (v.querySelector("#mSearch").value || "").trim().toUpperCase();
+    { const b0 = v.querySelector("#mBulk"); if (b0) b0.innerHTML = ""; }   // (the "Delete these N" button belongs to the grid drawn below: a search that finds nothing, or a library still loading, leaves none of the last one)
     // One charm is one tile, whatever it is sold as. The same design carries several SKUs (the jewellery it goes into),
     // and they share one file in the library; the tile lists every one of them and the search matches any of them.
     const fileOf = e => e.aiPath || (Object.values(e.sizes || {}).find(s => s && s.aiPath) || {}).aiPath || "";
@@ -3335,9 +3352,17 @@ const Master = window.Master = (() => {
         (e.aiUrl ? `<button type="button" class="btn ghost xs" data-dl="${esc(e.sku)}" data-repo="download" title="download this charm's .ai file (asks for your password)">.ai</button>`
                  : sizes.filter(([, s]) => s && s.aiUrl).map(([k]) => `<button type="button" class="btn ghost xs" data-dl="${esc(e.sku)}" data-size="${esc(k)}" data-repo="download" title="download this charm's .ai file (asks for your password)">${esc(k)}.ai</button>`).join("")) +
         (!WORKSPACE_SANDBOX && window.CharmNestEtsyLink ? `<button type="button" class="btn ghost xs" data-etsylink="${keys}" data-repo="modify" title="put this charm's SKU on an Etsy listing (asks for your password)">Etsy</button>` : "") +
+        `<button type="button" class="btn ghost xs" data-del="${keys}" data-repo="delete" title="delete this charm${d.skus.length > 1 ? ` and its ${d.skus.length} SKUs` : ""} from the charm repo (asks for your password every time)">Delete</button>` +
         `</div></div>`;
     }).join("") + (rows.length > shown.length ? `<div class="libEmpty">${rows.length - shown.length} more — press &ldquo;Show all&rdquo;, or narrow the search</div>` : "");
     mountMasterPreviews(grid);
+    // Delete: one charm (every SKU it carries) or, while a search narrows the grid, every charm shown. Always the password, a single-use token each time; the confirmation is in that same dialog.
+    grid.querySelectorAll("[data-del]").forEach(b => b.onclick = () => removeCharms(b.dataset.del.split("|"), b));
+    { const bulk = v.querySelector("#mBulk"), skusShown = rows.flatMap(d => d.skus);
+      bulk.innerHTML = q && rows.length >= 1 && skusShown.length <= MASTER_DELETE_MAX ? `<button type="button" class="btn danger sm" id="mDelShown" data-repo="delete" style="margin-left:6px" title="delete every charm shown, with all its SKUs (asks for your password every time)">Delete ${rows.length === 1 ? "this charm" : `these ${rows.length} charms`}</button>`
+        : q && skusShown.length > MASTER_DELETE_MAX ? `<span class="meta" style="margin-left:8px">narrow the search to ${MASTER_DELETE_MAX} SKUs or fewer to delete them together</span>` : "";
+      const d2 = bulk.querySelector("#mDelShown"); if (d2) d2.onclick = () => removeCharms(skusShown, d2);
+      if (window.CharmNestRepoLock) CharmNestRepoLock.mark(bulk); }
     // a charm's settings belong to the charm, so they are written to every SKU that shares it
     const each = (attr, fn) => grid.querySelectorAll(`[data-${attr}]`).forEach(el => fn(el, el.dataset[attr].split("|")));
     // a failed save says so (it used to fail in silence, the typed angle standing in the box as if kept)

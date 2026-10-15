@@ -602,7 +602,7 @@ New tabs: **Orders**, **Design Station**, **Master**, **Review** (11), **Sets** 
 
 - **Orders** — 5.1. A **Run set** button starts the autonomous run (10).
 - **Design Station** — the frame and the bridge console (4.7).
-- **Master** — one panel per metal: master file, hash, indexed count, SKU grid with thumbnails and sizes, leftovers in red, per-SKU `engravable` toggle, **Re-index**.
+- **Master** — one panel per metal: master file, hash, indexed count, SKU grid with thumbnails and sizes, leftovers in red, per-SKU `engravable` toggle, **Re-index**. Each tile has a locked **Delete**, and while a search narrows the grid (200 SKUs or fewer) a **Delete these N charms** button: both ask for the repo password every time (a single-use delete token, the confirmation in the same dialog) and call `charmNestLibrary masterRemoveSkus`, which removes the index entries of every SKU the charm carries (the design files stay in storage). Written for the 26 old HEARTKEY keys left from an earlier master (15 Oct 2026).
 - **Engraving** — the tray (lines awaiting a decision on the words: the customer's text, Claude's reading and questions), the review queue (every fitted placement, one at a time, 7.4), and the back pool per sheet with each piece's approver.
 - **Live strip** — the last five bridge or engraving events with timestamps, on every tab.
 

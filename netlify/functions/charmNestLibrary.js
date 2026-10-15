@@ -31,7 +31,7 @@
  *    putCalibration · getCalibration
  *    startJob · getJob · stopJob
  *    + bridge (design doc §13): masterPutIndex · masterGet · masterGetMany · masterList · masterPatch · masterPutFile ·
- *      masterListFiles · masterRemoveFile · startMaster · poolPut · poolUpdate · poolList · poolGet · backPut · backList ·
+ *      masterListFiles · masterRemoveFile · masterRemoveSkus · startMaster · poolPut · poolUpdate · poolList · poolGet · backPut · backList ·
  *      setAllocate · setUpdate · setGet · setList · runPut · runArchive · runGet · runList · bridgeLog · listingSkus · aliasGet · aliasPut · listingKindPut ·
  *      noDesignGet · noDesignPut · noDesignDelete · optionMapGet · optionMapPut · customSheetGet · customSheetPut · customGet · customPut · customReopen
  *      (customDelete: an older page's name for customReopen; nothing deletes a record)
@@ -1269,6 +1269,21 @@ async function op_masterListFiles(b = {}) {
   const rows = snap.docs.map(d => { const r = d.data(); r.indexedAt = ms(r.indexedAt); return r; }), budget = answerBudget();
   let n = 0; while (n < rows.length && budget.fits(rows[n])) n++;
   return Object.assign({ files: rows.slice(0, n), index, truncated: n < rows.length }, filesSig ? { filesSig } : {});
+}
+/** Remove SEVERAL SKUs from the index in one call: the Master tab's Delete on a charm (one design carries several SKUs, all removed with it) and "delete these N" for a search (the 26 old HEARTKEY keys left
+    from an earlier master, 15 Oct 2026). It sits behind the SAME single-use delete token as masterRemoveSku (_charmNestRepoAuth.js LIBRARY: delete-sku), so it is the password, every time. Only the index
+    entries go; the design files stay in Storage (as masterRemoveSku leaves them), so a master indexed again makes the charm whole. Nothing is half done: a name that is no SKU, an empty list or more than
+    MASTER_REMOVE_MAX names refuses the whole call. Answers { ok, removed: [SKU], missing: [SKU] }: a SKU that was not indexed is said, never counted as removed. */
+const MASTER_REMOVE_MAX = 200;
+async function op_masterRemoveSkus(b) {
+  const list = [...new Set((Array.isArray(b.skus) ? b.skus : []).map(x => String(x || "").trim().toUpperCase()).filter(Boolean))];
+  if (!list.length) return { error: "no SKU named" };
+  if (list.length > MASTER_REMOVE_MAX) return { error: `at most ${MASTER_REMOVE_MAX} SKUs can be removed at once: ${list.length} were named` };
+  const bad = list.filter(x => !Master.isSku(x)); if (bad.length) return { error: "bad sku: " + bad.slice(0, 5).join(", ") };
+  const refs = list.map(x => db.collection(Master.INDEX).doc(x)), snaps = await db.getAll(...refs), removed = [], missing = [];
+  snaps.forEach((sn, i) => (sn.exists ? removed : missing).push(list[i]));
+  for (let i = 0; i < removed.length; i += 400) { const batch = db.batch(); removed.slice(i, i + 400).forEach(x => batch.delete(db.collection(Master.INDEX).doc(x))); await batch.commit(); }
+  return { ok: true, removed, missing };
 }
 /** Remove one SKU from the index (a stray record, a SKU that should never have been read). */
 async function op_masterRemoveSku(b) {
@@ -3622,7 +3637,7 @@ function cancelCopy(r) {
   return x;
 }
 const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
-  masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
+  masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, masterRemoveSkus: op_masterRemoveSkus, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxPullOrders: op_sandboxPullOrders, sandboxPullLimitSet: op_sandboxPullLimitSet, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
   cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,

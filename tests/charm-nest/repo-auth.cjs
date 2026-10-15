@@ -78,7 +78,7 @@ const put = (token, o) => lib(Object.assign({ op: 'masterPutIndex', masterHash: 
   const before = writes.length, blobsBefore = blobs.size;
   const PROTECTED = [
     ['masterPutIndex', { masterHash: 'aaaa1111', entries: [entry] }], ['masterPutFile', { file: { masterHash: 'aaaa1111', name: 'A.ai' } }], ['startMaster', { path: 'charmnest/master/files/x.pdf', name: 'x.pdf' }],
-    ['masterPatch', { sku: 'RA-TEST-01', patch: { engravable: false } }], ['masterRemoveFile', { masterHash: 'aaaa1111' }], ['masterRemoveSku', { sku: 'RA-TEST-01' }], ['masterDownload', { sku: 'RA-TEST-01' }]];
+    ['masterPatch', { sku: 'RA-TEST-01', patch: { engravable: false } }], ['masterRemoveFile', { masterHash: 'aaaa1111' }], ['masterRemoveSku', { sku: 'RA-TEST-01' }], ['masterRemoveSkus', { skus: ['RA-TEST-01'] }], ['masterDownload', { sku: 'RA-TEST-01' }]];
   for (const [op, b] of PROTECTED) {
     r = await lib(Object.assign({ op }, b)); ok(r.status === 401 && r.body.error === 'repo-locked' && r.body.why === 'missing', op + ' without a token: ' + r.status + ' ' + JSON.stringify(r.body));
     r = await lib(Object.assign({ op, sandbox: true }, b)); ok(r.status === 401, op + ' in the sandbox flag is protected too');
@@ -109,6 +109,7 @@ const put = (token, o) => lib(Object.assign({ op: 'masterPutIndex', masterHash: 
   r = await lib({ op: 'masterPatch', repoToken: dlTok, sku: 'RA-TEST-02', patch: { upAngle: 10 } }); ok(r.status === 401 && r.body.why === 'scope', 'a download token does not patch');
   r = await lib({ op: 'masterRemoveSku', repoToken: otherTok, sku: 'RA-TEST-02' }); ok(r.status === 401 && r.body.why === 'scope' && r.body.once === true, 'an other token never deletes');
   r = await lib({ op: 'masterRemoveSku', repoToken: upTok, sku: 'RA-TEST-02' }); ok(r.status === 401, 'an upload token never deletes');
+  r = await lib({ op: 'masterRemoveSkus', repoToken: upTok, skus: ['RA-TEST-02'] }); ok(r.status === 401 && r.body.why === 'scope', 'an upload token never deletes several SKUs either');
   r = await out({ op: 'put', repoToken: upTok, path: 'charmnest/master/ra-test-01.ai', contentType: 'application/illustrator', base64: Buffer.from('%PDF-test').toString('base64') });
   ok(r.status === 200 && r.body.ok && blobs.has('charmnest/master/ra-test-01.ai'), 'charmNestOutput put under master/ with an upload token');
   r = await out({ op: 'sign', repoToken: upTok, path: 'charmnest/master/files/ra.pdf', contentType: 'application/pdf' }); ok(r.status === 200 && r.body.uploadUrl, 'sign under master/ with an upload token');
