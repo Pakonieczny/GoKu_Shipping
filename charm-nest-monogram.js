@@ -20,9 +20,12 @@
   const STEP = 0.04, MIN_OVERLAP = 0.02, HOLES_MIN = 0.9, OVERLAP_MAX_PCT = 35;
   /* A join that holds (MONOGRAMUI, Paul, 15 Oct 2026, on the real Left / Mid / Right alphabets: thin script strokes): "the letters touch" is not enough, two hairlines that only graze are one piece for the file and
      break in the hand. A join is the overlap of two letters; its width is the widest disc that fits inside it (a disc 0.3 mm across: two crossing strokes of 0.3 mm). Under NECK_FLOOR_MM it is called a hairline.
-     When the first overlap that connects gives a weaker join than NECK_OK_MM, each side is searched again over a wider overlap (up to REACH_HI of the side letter's width) and a small move up or down (REACH_DY of the
+     When the first overlap that connects gives a weaker join than NECK_OK_MM, each side is searched again over a wider overlap (up to REACH_HI = 80 % of the side letter's width; opts.reach: a number sets it) and a small move up or down (REACH_DY of the
      middle's height per step, REACH_DYN steps each way), nearest to the asked overlap first, for the first placement whose join holds and whose letters keep their shape (35 % overlap, 90 % of the inner openings). */
   const NECK_OK_MM = 0.3, NECK_FLOOR_MM = 0.15, REACH_LO = 0.06, REACH_HI = 0.8, REACH_DY = 0.05, REACH_DYN = 3;
+  /* A part of a letter that no overlap can hold (a Q's tail, a flourish drawn apart from its letter) is tied on rather than left loose or dropped: a bar BRIDGE_W_MM wide across the shortest gap to the rest of the piece, when
+     that gap is no longer than BRIDGE_MAX_MM; a longer one is no letter's own part and the monogram is refused, plainly. The notes and the warnings say so. */
+  const BRIDGE_MAX_MM = 3, BRIDGE_W_MM = 0.4;
   /* The inner openings that count when it is asked whether a neighbour's stroke has closed them: those of 0.5 mm2 and more (a quarter of the counters of the real Left / Mid / Right alphabets are smaller: the eyes of a flourish,
      0.5 mm across, which a laser cannot keep open anyway and nobody reads as part of the letter). A smaller one that survives is still a hole of the piece. */
   const COUNTER_MIN_PT2 = 0.5 / (MM * MM);
@@ -253,7 +256,7 @@
     const overlap = num(o.overlap, 0.18, 0, 0.9);
     return {
       overlap, maxOverlap: Math.max(overlap, num(o.maxOverlap, 0.38, 0, 0.95)),
-      centerRatio: Math.max(1.2, num(o.centerRatio, 1.5, 1.2, 5)), valign: o.valign === 'baseline' ? 'baseline' : 'center', reach: o.reach !== false
+      centerRatio: Math.max(1.2, num(o.centerRatio, 1.5, 1.2, 5)), valign: o.valign === 'baseline' ? 'baseline' : 'center', reach: o.reach !== false, reachMax: typeof o.reach === 'number' && Number.isFinite(o.reach) ? Math.min(0.95, Math.max(0.1, o.reach)) : REACH_HI
     };
   }
 
@@ -326,16 +329,21 @@
 
     /* the join of one side letter P (placed with its box at x, y beside the middle) and the middle: how much they overlap, how wide the overlap is (the widest disc inside it, up to capMm), how much of their
        overlap is of the smaller letter, and how much of the two letters' inner openings the other one leaves open. null when they do not overlap at all. */
-    function pairQ(P, x, y, capMm) {
+    const widestOf = (paths, capMm) => { let w = 0; for (let r = 0.05; r * 2 <= capMm + 1e-9; r += 0.05) { if (E.netArea(E.erode(paths, r / MM)) > 0) w = Math.round(r * 2 * 100) / 100; else break; } return w; };
+    function pairQ(P, x, y, capMm, tied) {
       if (x >= PM.w || x + P.w <= 0 || y >= PM.h || y + P.h <= 0) return null;
       const rg = shift(P.region, x, y), inter = E.meet(rg, PM.region), i = E.netArea(inter);
       if (!(i > 0)) return null;
       const pct = Math.max(0, i / Math.min(P.ar, PM.ar) * 100);
-      const widest = paths => { let w = 0; for (let r = 0.05; r * 2 <= capMm + 1e-9; r += 0.05) { if (E.netArea(E.erode(paths, r / MM)) > 0) w = Math.round(r * 2 * 100) / 100; else break; } return w; };
+      const widest = paths => widestOf(paths, capMm);
       let w = widest(inter), loose = 0;
       if (P.bodies.length > 1) {   // a letter of several separate parts: each must be held by the middle letter, and the join is as wide as its weakest part's
         w = Infinity;
-        for (const b of P.bodies) { const ib = E.meet(shift([b], x, y), PM.region); if (E.netArea(ib) > 0) w = Math.min(w, widest(ib)); else loose++; }
+        for (const b of P.bodies) {
+          const ib = E.meet(shift([b], x, y), PM.region), wb = E.netArea(ib) > 0 ? widest(ib) : -1;
+          if (tied && wb < NECK_FLOOR_MM) continue;                       // (tied: a part tied on with a bar is held by its letter, not by the middle one)
+          if (wb < 0) loose++; else w = Math.min(w, wb);
+        }
         if (loose || w === Infinity) w = 0;
       }
       // inner openings: a counter reaching the other letter's box, taken by the other letter's body
@@ -351,13 +359,60 @@
       return { i, pct, neck: w, kept, loose, valid, good: valid && w >= NECK_OK_MM - 1e-9 };
     }
     // the widths of the two joins of a finished placement (a side that does not reach the middle is 0)
-    const joinsOf = pl => [0, 2].map(k => { const q = pairQ(pl[k], pl[k].dx, pl[k].dy, 1.0); return q ? q.neck : 0; });
+    const joinsOf = (pl, tied) => [0, 2].map(k => { const q = pairQ(pl[k], pl[k].dx, pl[k].dy, 1.0, tied); return q ? q.neck : 0; });
+
+    /* Parts a letter is drawn in that no overlap holds are tied on (see BRIDGE_MAX_MM): a part that stays loose, and a part that only grazes the middle letter. */
+    // the shortest gap between two outlines: every vertex of one against every edge of the other, both ways
+    const toSeg = (p, a, b) => { const dx = b.X - a.X, dy = b.Y - a.Y, l2 = dx * dx + dy * dy, t = l2 ? Math.max(0, Math.min(1, ((p.X - a.X) * dx + (p.Y - a.Y) * dy) / l2)) : 0, X = a.X + t * dx, Y = a.Y + t * dy; return { d: Math.hypot(p.X - X, p.Y - Y), X, Y }; };
+    const near = (a, b) => { let best = null;
+      for (const [u, v, flip] of [[a, b, false], [b, a, true]]) { const su = Math.max(1, Math.floor(u.length / 500));
+        for (let i = 0; i < u.length; i += su) for (let j = 0; j < v.length; j++) { const h = toSeg(u[i], v[j], v[(j + 1) % v.length]); if (!best || h.d < best.d) best = { d: h.d, p: flip ? { X: h.X, Y: h.Y } : u[i], q: flip ? u[i] : { X: h.X, Y: h.Y } }; } }
+      return best; };
+    const BAR_W = BRIDGE_W_MM / MM * SC, BAR_MAX = BRIDGE_MAX_MM / MM * SC;
+    const barOf = n => {   // a bar across the gap, reaching half its width into both parts
+      const dx = n.q.X - n.p.X, dy = n.q.Y - n.p.Y, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len, e = BAR_W / 2;
+      const ax = n.p.X - ux * e, ay = n.p.Y - uy * e, bx = n.q.X + ux * e, by = n.q.Y + uy * e, nx = -uy * BAR_W / 2, ny = ux * BAR_W / 2;
+      const bar = [{ X: Math.round(ax + nx), Y: Math.round(ay + ny) }, { X: Math.round(bx + nx), Y: Math.round(by + ny) }, { X: Math.round(bx - nx), Y: Math.round(by - ny) }, { X: Math.round(ax - nx), Y: Math.round(ay - ny) }];
+      return area0(bar) > 0 ? bar : bar.reverse(); };
+    const withBars = (pl, k, bars) => { const pl2 = pl.slice(); pl2[k] = Object.assign({}, pl[k], { rg: pl[k].rg.concat(bars) }); return pl2; };
+    // pieces that stay loose: each is tied to the nearest piece of the finished shape; null when one is too far
+    function mend(pl, att) {
+      const comps = att.rings.filter(r => area0(r) > 0).sort((a, b) => area0(b) - area0(a));
+      if (comps.length < 2 || comps.length > 8) return null;
+      const bars = [], tied = [comps[0]];
+      for (const c of comps.slice(1)) {
+        let best = null; for (const t of tied) { const n = near(c, t); if (n && (!best || n.d < best.d)) best = n; }
+        if (!best || best.d > BAR_MAX) return null;
+        bars.push(barOf(best)); tied.push(c);
+      }
+      const att2 = attemptPl(withBars(pl, 1, bars), null);
+      return att2.connected ? { att: att2, bars: bars.length } : null;
+    }
+    // parts of a side letter that touch the middle letter only by a graze (narrower than NECK_FLOOR_MM): each is tied to a part of its own letter that is held, when that is near enough; null when there is nothing to tie
+    function tieWeak(pl) {
+      let out = pl, n = 0;
+      for (const k of [0, 2]) {
+        const P = pl[k]; if (P.bodies.length < 2) continue;
+        const necks = P.bodies.map(b => { const ib = E.meet(shift([b], P.dx, P.dy), PM.region); return E.netArea(ib) > 0 ? widestOf(ib, 1.0) : 0; });
+        const strong = P.bodies.filter((_, i) => necks[i] >= NECK_FLOOR_MM - 1e-9);
+        if (!strong.length || strong.length === P.bodies.length) continue;
+        const bars = [];
+        for (let i = 0; i < P.bodies.length; i++) {
+          if (necks[i] >= NECK_FLOOR_MM - 1e-9) continue;
+          let best = null; for (const t of strong) { const nr = near(shift([P.bodies[i]], P.dx, P.dy)[0], shift([t], P.dx, P.dy)[0]); if (nr && (!best || nr.d < best.d)) best = nr; }
+          if (!best || best.d > BAR_MAX) return null;
+          bars.push(barOf(best));
+        }
+        out = withBars(out, k, bars); n += bars.length;
+      }
+      return n ? { pl: out, bars: n } : null;
+    }
 
     // reach: the placement of one side nearest the asked overlap whose join holds (see NECK_OK_MM); else the best that stays valid; else the least bad that touches
     let searched = 0;
     function reachSide(P, side) {
       const dyStep = Math.max(1, Math.round(REACH_DY * PM.h)), cands = [];
-      for (let k = 0; REACH_LO + k * STEP <= REACH_HI + 1e-9; k++) {
+      for (let k = 0; REACH_LO + k * STEP <= o.reachMax + 1e-9; k++) {
         const ov = Math.round((REACH_LO + k * STEP) * 1e6) / 1e6;
         for (let j = -REACH_DYN; j <= REACH_DYN; j++) cands.push({ ov, j, cost: (ov >= o.overlap ? ov - o.overlap : 1.5 * (o.overlap - ov)) / STEP + 2.5 * Math.abs(j) });
       }
@@ -400,13 +455,18 @@
       const hl = ask(0, PL, 'left'), hr = ask(2, PR, 'right');
       if (hl && hr) {
         reachedSides = true;
-        const pl = placeAt([hl.x, hl.y], [hr.x, hr.y]), att = attemptPl(pl, null); tries++;
+        const pl = placeAt([hl.x, hl.y], [hr.x, hr.y]); let att = attemptPl(pl, null), bars = 0; tries++;
+        if (!att.connected) { const m = mend(pl, att); if (m) { att = m.att; bars = m.bars; } }
         if (att.connected) {
-          const g = guards(att), joins = joinsOf(pl), cand = { att, g, joins };
+          const g = guards(att), joins = joinsOf(pl, bars > 0), cand = { att, g, joins, bars };
           const mj = b => Math.min(Math.min(...b.joins), NECK_OK_MM);
-          if (!best || (g.ok && !best.g.ok) || (g.ok === best.g.ok && (mj(cand) > mj(best) + 1e-9 || (!g.ok && g.penalty < best.g.penalty - 1e-12 && mj(cand) >= mj(best) - 1e-9)))) { best = cand; reached = true; }
+          if (!best || (g.ok && !best.g.ok) || (g.ok === best.g.ok && (bars < (best.bars || 0) || mj(cand) > mj(best) + 1e-9 || (!g.ok && g.penalty < best.g.penalty - 1e-12 && mj(cand) >= mj(best) - 1e-9)))) { best = cand; reached = true; }
         }
       }
+    }
+    if (best && o.reach && !best.bars && [PL, PR].some(P => P.bodies.length > 1)) {      // (a part that only grazes the middle letter is tied to its own letter)
+      const t = tieWeak(best.att.pl);
+      if (t) { const att2 = attemptPl(t.pl, best.att.ov); tries++; if (att2.connected) { const g2 = guards(att2); if (g2.ok || !best.g.ok) best = { att: att2, g: g2, joins: joinsOf(t.pl, true), bars: t.bars, reachedBefore: reached }; } }
     }
     if (!best) {
       // the letters do not touch, or a letter is made of separate parts that stay loose even though the main bodies join?
@@ -414,11 +474,15 @@
       const joined = E.union(bodies).filter(r => area0(r) > 0).length === 1 || (reachedSides && [PL, PM, PR].some(P => P.bodies.length > 1));
       return failure(joined ? 'a letter is made of separate parts that stay loose, it cannot be one charm' : 'the letters do not touch', { tries, searched });
     }
-    const { att, g, joins } = best, warnings = [];
+    const { att, g, joins } = best, warnings = [], bars = best.bars || 0;
+    // a letter drawn in several separate parts (a flourish apart from its letter) is said so: each part is held by the middle letter, or tied on
+    const parts = { left: PL.bodies.length, middle: PM.bodies.length, right: PR.bodies.length };
+    for (const [slot, k] of [['left', PL], ['middle', PM], ['right', PR]]) if (k.bodies.length > 1) notes.push(`the ${slot} letter is drawn in ${k.bodies.length} separate parts` + (bars ? ': a part that no overlap reaches was tied to the rest with a ' + BRIDGE_W_MM + ' mm bar' : ', each held by a neighbour'));
+    if (bars) warnings.push(`a loose part of a letter was tied on with a ${BRIDGE_W_MM} mm bar, look at the picture`);
     const moved = att.pl.map((P, i) => i === 1 ? 0 : P.dy - dyOf(P));
     const ovs = [0, 2].map(k => { const P = att.pl[k]; return Math.round((k === 0 ? (P.dx + P.w) : (PM.w - P.dx)) / P.w * 100) / 100; });
     if (reached) {
-      if (Math.abs(ovs[0] - ovs[1]) < 0.005 && !moved[0] && !moved[2]) notes.push(`overlap ${ovs[0] > o.overlap ? 'raised' : 'lowered'} from ${Math.round(o.overlap * 100)} % to ${Math.round(ovs[0] * 100)} % so the letters join firmly`);
+      if (Math.abs(ovs[0] - ovs[1]) < 0.005 && !moved[0] && !moved[2]) { if (Math.abs(ovs[0] - o.overlap) >= 0.005) notes.push(`overlap ${ovs[0] > o.overlap ? 'raised' : 'lowered'} from ${Math.round(o.overlap * 100)} % to ${Math.round(ovs[0] * 100)} % so the letters join firmly`); }
       else notes.push(`the side letters were set ${Math.round(ovs[0] * 100)} % (left) and ${Math.round(ovs[1] * 100)} % (right) of their width into the middle one` + (moved[0] || moved[2] ? ' and moved up or down a little' : '') + ' so their strokes cross firmly');
     } else {
       if (att.ov > o.overlap + 1e-9) notes.push(`overlap raised from ${Math.round(o.overlap * 100)} % to ${Math.round(att.ov * 100)} % so the letters join`);
@@ -441,7 +505,7 @@
     const placed = att.pl.map(P => ({ letter: P.p.letter, slot: P.p.slot, scale: round3(P.s), bboxPt: [P.dx, P.dy, P.dx + P.w, P.dy + P.h].map((v, i) => round3((v - b[i % 2]) / SC)) }));
     return {
       ok: true, why: '', rings, bboxPt: [0, 0, round3(W / SC), round3(H / SC)], wMm: Math.round(W / SC * MM * 1e4) / 1e4, hMm: Math.round(H / SC * MM * 1e4) / 1e4, placed,
-      report: { connected: true, overlapPct: { leftMiddle: Math.round(g.lm.pct * 10) / 10, middleRight: Math.round(g.mr.pct * 10) / 10 }, holesKept: round3(g.holesKept), centerScale: round3(cs), overlap: att.ov == null ? round3((ovs[0] + ovs[1]) / 2) : att.ov, reach: reached, searched, warnings, joinMm: { leftMiddle: joins[0], middleRight: joins[1] }, moveMm: { left: Math.round(moved[0] / SC * MM * 100) / 100, right: Math.round(moved[2] / SC * MM * 100) / 100 }, joinMm2: { leftMiddle: Math.round(g.lm.i / SC / SC * MM * MM * 100) / 100, middleRight: Math.round(g.mr.i / SC / SC * MM * MM * 100) / 100 }, tries, notes }
+      report: { connected: true, overlapPct: { leftMiddle: Math.round(g.lm.pct * 10) / 10, middleRight: Math.round(g.mr.pct * 10) / 10 }, holesKept: round3(g.holesKept), centerScale: round3(cs), overlap: att.ov == null ? round3((ovs[0] + ovs[1]) / 2) : att.ov, reach: reached, searched, warnings, parts, bridges: bars, joinMm: { leftMiddle: joins[0], middleRight: joins[1] }, moveMm: { left: Math.round(moved[0] / SC * MM * 100) / 100, right: Math.round(moved[2] / SC * MM * 100) / 100 }, joinMm2: { leftMiddle: Math.round(g.lm.i / SC / SC * MM * MM * 100) / 100, middleRight: Math.round(g.mr.i / SC / SC * MM * MM * 100) / 100 }, tries, notes }
     };
   }
   /* ═══ 4 · the preview and the file ═══════════════════════════════════════════════════════════════════════════════ */

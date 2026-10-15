@@ -382,6 +382,23 @@ const ABC = [A, Pp, V];
   const t0 = Date.now(); M.build({ left: flag, middle: diamond, right: lost.ok ? V : flag }); ok(Date.now() - t0 < 4000, 'a search over the whole reach takes ' + (Date.now() - t0) + ' ms');
 }
 
+// ── 3c'' · a part of a letter that no overlap holds (a Q's tail, a flourish apart from its letter): tied on with a short bar, never left loose, never dropped silently ──────────────────────────
+{
+  const mark = (x0, x1) => ({ letter: 'I', rings: [rect(0, 0, 6, 30), rect(x0, 10, x1, 14)] });   // a stem and a mark apart from it (on the right letter the stem is the side that meets the middle)
+  const held = M.build({ left: A, middle: Pp, right: mark(12, 16) }); sound(held, 'a mark the overlap reaches');
+  ok(held.report.parts.right === 2 && held.report.notes.some(t => /right letter is drawn in 2 separate parts/.test(t)) && held.report.joinMm.middleRight >= 0.3, 'a letter of two parts is said so in the notes (never silent), and its join is the join of its held part: ' + held.report.notes.join(' | '));
+  ok(held.report.bridges === 1 && held.report.warnings.some(t => /tied on/.test(t)), 'the mark the middle letter only grazes (0 mm) is tied to its own letter with a bar, and it says so: ' + JSON.stringify(held.report.warnings));
+  const solid = M.build({ left: A, middle: Pp, right: { letter: 'I', rings: [rect(0, 0, 6, 30), rect(8, 8, 16, 22)] } }); sound(solid, 'a part the overlap holds');
+  ok(solid.report.parts.right === 2 && solid.report.bridges === 0 && /each held by a neighbour/.test(solid.report.notes.join(' ')), 'a second part the middle letter holds well is left as drawn, each held by a neighbour: ' + solid.report.notes.join(' | '));
+  const tied = M.build({ left: A, middle: Pp, right: mark(12, 16) }, { reach: 0.5 }); sound(tied, 'a mark the overlap cannot reach');
+  ok(tied.report.bridges === 1 && tied.report.warnings.some(t => /tied on with a 0\.4 mm bar/.test(t)) && tied.report.notes.some(t => /tied to the rest with a 0\.4 mm bar/.test(t)), 'with the reach limited to 50 % the mark is tied on with a 0.4 mm bar, and the notes and warnings say so: ' + tied.report.notes.join(' | '));
+  eq(tied.rings.filter(x => !x.hole).length, 1, 'the piece is ONE'); ok(tied.report.joinMm.middleRight >= 0.3, 'and the join of the letter itself holds (' + tied.report.joinMm.middleRight + ' mm): the tied part is not counted as a hairline');
+  const far = M.build({ left: A, middle: Pp, right: mark(40, 46) }, { reach: 0.5 });
+  ok(far.ok === false && /separate parts/.test(far.why) && far.rings.length === 0, 'a part 14 mm away is no part of the letter: refused, plainly: ' + far.why);
+  const off = M.build({ left: A, middle: Pp, right: mark(12, 16) }, { reach: 0.5 }); eq(JSON.stringify(off.rings), JSON.stringify(tied.rings), 'the same again');
+  eq(M.build({ left: A, middle: Pp, right: mark(12, 16) }, { reach: false }).ok, false, 'with the reach switched off (the old ladder) the same letters are refused');
+}
+
 // ── 3c' · how a letter's rings make its shape: counters by default, direction for a font's overlapping contours (the real Mid Q of Paul's file: three rings that cross each other) ──────────────────────
 {
   const rot = (pts, deg, cx, cy) => pts.map(([x, y]) => { const a = deg * Math.PI / 180, dx = x - cx, dy = y - cy; return [cx + dx * Math.cos(a) - dy * Math.sin(a), cy + dx * Math.sin(a) + dy * Math.cos(a)]; });
