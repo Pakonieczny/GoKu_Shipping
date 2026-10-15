@@ -3394,12 +3394,12 @@ const Pool = window.Pool = (() => {
   function scaledGeom(entry, size, fit) {
     const base = entry.sizes && Object.keys(entry.sizes).length ? entry.sizes[fit.base] : entry;
     if (!base || !base.aiPath || !(fit.scale > 0)) return null;
-    const sig = [base.aiPath, base.charmHash || "", base.widthPt, base.heightPt, fit.scale.toFixed(5)].join("|");
+    const sig = [base.aiPath, base.charmHash || "", base.widthPt, base.heightPt, fit.scale.toFixed(5), base.facing || "", base.areaPt2 || 0].join("|");   // (the design's facing is set in place by Master.patch: a copy made before must not keep the old word)
     let m = fitCache.get(entry); if (!m) fitCache.set(entry, m = new Map());
     const hit = m.get(size); if (hit && hit.sig === sig) return hit.geom;
-    const k = fit.scale, M = O.SIZE_PAD_PT || 0, dim = v => (v - M) * k + M, geom = Object.assign({}, base, {   // (the index's size is the outer box: the drawing's own size scales, its margin does not)
-      aiPath: `${base.aiPath}#fit-${String(size).toUpperCase()}@${k.toFixed(5)}`, base, scaled: true, scale: k, fromMm: fit.haveMm, wantMm: fit.wantMm,
-      charmHash: base.charmHash ? `${base.charmHash}~${String(size).toUpperCase()}` : base.charmHash, widthPt: dim(base.widthPt), heightPt: dim(base.heightPt), areaPt2: base.areaPt2 > 0 ? base.areaPt2 * k * k : base.areaPt2, thumbPath: null, thumbUrl: null });
+    const k = fit.scale, M = O.SIZE_PAD_PT || 0, dim = v => (v - M) * k + M, tok = String(+fit.wantMm.toFixed(2)) + "MM", geom = Object.assign({}, base, {   // (tok: the size by its number, whatever words a saved answer typed: "10 mm", "1 cm")   // (the index's size is the outer box: the drawing's own size scales, its margin does not)
+      aiPath: `${base.aiPath}#fit-${tok}@${k.toFixed(5)}`, base, scaled: true, scale: k, fromMm: fit.haveMm, wantMm: fit.wantMm,
+      charmHash: base.charmHash ? `${base.charmHash}~${tok}` : base.charmHash, widthPt: dim(base.widthPt), heightPt: dim(base.heightPt), areaPt2: base.areaPt2 > 0 ? base.areaPt2 * k * k : base.areaPt2, thumbPath: null, thumbUrl: null });
     m.set(size, { sig, geom }); return geom;
   }
   /** The design of an entry for a size: the size it holds, else (a round disc, a size in mm) the nearest one drawn at the size chosen, else (a design that holds sizes but not this one) nothing. */
@@ -3417,7 +3417,7 @@ const Pool = window.Pool = (() => {
   const sizeHold = (entry, size, sku) => {
     const sized = !!(entry.sizes && Object.keys(entry.sizes).length);
     let fit = null; try { fit = size ? O.sizeFit(entry, size) : null; } catch (_) { fit = null; }
-    if (fit && fit.action === "ask") return { reason: fit.why, problem: { kind: "missingSize", sku, size, available: sized ? Object.keys(entry.sizes) : [], why: fit.why } };
+    if (fit && fit.action === "ask") return { reason: fit.why, problem: { kind: "missingSize", sku, size, available: sized ? Object.keys(entry.sizes) : [fit.offer], why: fit.why } };   // (a design with no sizes of its own offers the one it is drawn at: the Review card's list was empty, nobody could release the line)
     if (sized && !sizeEntry(entry, size)) return { reason: `no design for size ${size || "(none)"}`, problem: { kind: "missingSize", sku, size, available: Object.keys(entry.sizes) } };
     return null;
   };
@@ -3519,13 +3519,19 @@ const Pool = window.Pool = (() => {
     if (k > 2.5 || k < 0.4) throw new Error(`${sku}: ${wantMm} mm asked, its drawing is ${(lo * 25.4 / 72).toFixed(1)} mm`);
     return k;
   }
+  /** The bytes of a design file as the design a path names draws it: `<file>#fit-12MM@0.857` is the file at the diameter the size says (the factor measured on the file itself), any other path the bytes as they are.
+   *  A saved sheet keeps the library's file under such a path (its link is the file's), so whatever reads it back for a sheet restores the disc at the size it was cut. */
+  async function fitBytes(bytes, path, sku) {
+    const m = FIT_PATH.exec(String(path || "")); if (!m) return bytes;
+    return P.scaleSource(bytes, await fitFactor(bytes, sku, O.sizeMmOf(m[1]), +m[2]));
+  }
   async function readMasterCharm(entry,size) {
     const geom=sizeEntry(entry,size), fitP=FIT_PATH.exec(String(geom.aiPath||"")), real=geom.base||geom, filePath=fitP?String(geom.aiPath).slice(0,fitP.index):geom.aiPath;   // (a scaled design is read from the file it is scaled from)
     // (a stored download link dies when the file under it is written again, and a record that shares the file keeps the old one: the file is asked for again through a fresh link before the design is given up)
     const fresh = async () => (await api("charmNestOutput", { op: "url", path: filePath })).url;
     let url = real.aiUrl, bytes;
     if (url) { try { bytes = await CharmNestAssets.bytes(url); } catch (e) { url = await fresh(); bytes = await CharmNestAssets.bytes(url); real.aiUrl = url; } } else { url = await fresh(); bytes = await CharmNestAssets.bytes(url); }
-    if (fitP) bytes = await P.scaleSource(bytes, await fitFactor(bytes, entry.sku, O.sizeMmOf(fitP[1]), +fitP[2]));   // (SIZEFIT: the same drawing at the diameter the buyer chose; the reader below sees an ordinary file of that size)
+    if (fitP) bytes = await fitBytes(bytes, geom.aiPath, entry.sku);   // (SIZEFIT: the same drawing at the diameter the buyer chose; the reader below sees an ordinary file of that size)
     const parsed = await P.parseSource(bytes, `${entry.sku}.ai`);
     const g = await (P.groupCharmsAsync || P.groupCharms)(parsed, { minPt: +S.settings.minPt || 6 });
     if (!g.charms.length) throw new Error(`${entry.sku}: no outline in the master copy`);
@@ -4242,7 +4248,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pinPooled, wholeHashes, designLoaded, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, sizeKeyOf, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig };
+  return { pinPooled, wholeHashes, designLoaded, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */

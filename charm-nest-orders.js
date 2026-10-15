@@ -282,12 +282,22 @@
   const visible = s => String(s == null ? "" : s).replace(/[\uFFFC\uFFFD\u200B\u2060\uFEFF\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
   const isPersonalisation = name => /personali[sz]ation|engraving text|custom text/i.test(String(name || ""));
   /* A size in millimetres, written anywhere in a drop-down value ("12mm + engraving", "Large (14mm)", "1.2 cm"): "12MM" (centimetres as millimetres), or null when there is none or the value names two sizes. */
-  const mmTokenOf = v => {
-    const out = new Set(); for (const m of String(v == null ? "" : v).matchAll(/(^|[^\d.])(\d{1,3}(?:\.\d{1,2})?)\s*(mm|millimet(?:er|re)s?|cm)\b/gi)) { const n = +m[2] * (m[3].toLowerCase() === "cm" ? 10 : 1); if (n > 0) out.add(String(+n.toFixed(1)) + "MM"); }
+  /* SIZEFIT review (15 Oct 2026): a decimal comma is a decimal ("1,2 cm" was read as 2 cm = 20 mm, "10,5mm" as 5 mm); full-width digits and "12mm_engraved" are read; a range or a list ("10-12mm", "10 or 12mm") is two sizes,
+     never its last number; a bare number under an option whose NAME carries the unit ("Disc size (mm)": 12) is in that unit, but only for a name that speaks of the size itself (not a font, a chain, a hole). */
+  const nameUnit = name => { const s = String(name || ""); if (!/\b(?:size|diameter|dimension)s?\b/i.test(s) || /font|letter|text|engrav|chain|length|height|width|thick|gauge|hole|bail|loop/i.test(s)) return ""; const m = /\b(mm|cm|millimet(?:er|re)s?)\b/i.exec(s); return m ? (/^c/i.test(m[1]) ? "cm" : "mm") : ""; };
+  const mmTokenOf = (v, name) => {
+    let s = String(v == null ? "" : v).normalize("NFKC").replace(/_/g, " ").replace(/(\d),(\d{1,2})(?=\s*(?:mm|cm|millimet))/gi, "$1.$2");
+    const unit = nameUnit(name); if (unit && /^\s*\d{1,3}(?:\.\d{1,2})?\s*$/.test(s)) s = s.trim() + unit;
+    const out = new Set();
+    for (const m of s.matchAll(/(^|[^\d.])(\d{1,3}(?:\.\d{1,2})?)\s*(mm|millimet(?:er|re)s?|cm)\b/gi)) {
+      const pre = /(?:^|[^\w.])(\d{1,2}(?:\.\d{1,2})?)\s*(?:mm|cm)?\s*(?:[-–—~\/,;&|]|\b(?:to|or|and)\b)\s*$/i.exec(s.slice(0, m.index + m[1].length));
+      if (pre && +pre[1] >= 3) return null;   // ("Option 2 - 12mm": the 2 is a number of the option, not a size)
+      const n = +m[2] * (m[3].toLowerCase() === "cm" ? 10 : 1); if (n > 0) out.add(String(+n.toFixed(1)) + "MM");
+    }
     return out.size === 1 ? [...out][0] : null;
   };
   // the option that holds the size: a name that ends in "size" (as always), or, when its value is a size in millimetres, a name that speaks of the size / diameter / charm / pendant / disc ("Size of Necklace Charm", "Charm Size (NO Huggie option)", "Necklace Charm")
-  const isSizeOption = (name, value) => /(^|\s)size\s*$/i.test(String(name || "")) || (value != null && !!mmTokenOf(value) && /\b(size|diameter|charm|pendant|disc|dimension)s?\b/i.test(String(name || "")) && !/chain|necklace length|length|extender/i.test(String(name || "")));
+  const isSizeOption = (name, value) => /(^|\s)size\s*$/i.test(String(name || "")) || (value != null && !!mmTokenOf(value, name) && /\b(size|diameter|charm|pendant|disc|dimension)s?\b/i.test(String(name || "")) && !/chain|necklace length|length|extender/i.test(String(name || "")));
   const isChainOption = name => /chain|necklace length|length|extender/i.test(String(name || ""));
   // 16" is how a shop writes a necklace length. The old rule ended in \b, which cannot follow a quote mark, so every
   // length written that way fell through as an unmapped option and held the line.
@@ -330,18 +340,29 @@
   const MM_PT = 25.4 / 72;
   const sizeMmOf = tok => { const m = /^(\d{1,3}(?:\.\d{1,2})?)\s*(MM|CM)$/i.exec(String(tok == null ? "" : tok).trim()); return m ? (m[2].toUpperCase() === "CM" ? +m[1] * 10 : +m[1]) : null; };
   const r1 = x => Math.round(x * 10) / 10;
+  // the size a design is drawn at, as a size token a person can pick ("12MM"; 12.14 mm is the 12 mm disc with its ring): what an impossible size offers, so the hold can be released
+  const sizeTok = x => String(Math.abs(x - Math.round(x)) <= 0.25 ? Math.round(x) : r1(x)) + "MM";
+  /* A size that is the hoop's ("HOOP SIZE: 8.5mm", the shop's option on every huggie listing), a ring's or a bracelet's is read as the size as it always was (a design may hold sizes of its own) but is never the diameter to draw the
+     charm at. The word that ends the option's name is the thing it sizes ("Huggie Charm Size": the charm; "Charm Bracelet Size": the bracelet); a plain "Size" is the hoop's on a huggie listing, the charm's elsewhere.
+     NOFIT keeps, per design, the sizes read from such an option (written when a line is read, consulted by sizeFit, so the pool, the pictures and the sheets all agree). */
+  const NOFIT = new WeakMap();
+  const CHARM_THING = /\b(?:charms?|pendants?|discs?|disks?|medallions?|tags?|coins?)\b/gi, OTHER_THING = /\b(?:hoops?|hugg(?:ie|ies|y)|rings?|bracelets?|anklets?|bangles?|cuffs?|chains?|bands?|earrings?)\b/gi;
+  const noFit = (entry, size) => { let o = NOFIT.get(entry); if (!o) NOFIT.set(entry, o = new Set()); o.add(String(size)); };
+  const lastAt = (re, s) => { re.lastIndex = 0; let at = -1, m; while ((m = re.exec(s))) at = m.index; return at; };
+  const sizeIsCharm = (name, lf) => { const s = String(name || "").replace(/\([^)]*\)/g, " "), c = lastAt(CHARM_THING, s), o = lastAt(OTHER_THING, s); return c < 0 && o < 0 ? !(lf && lf.form === "huggie") : c > o; };
   /* A design's index record keeps the size of its OUTER box: the drawing's box and a margin of 1 pt + half the stroke on every side (charm-nest-pdf.js buildSilhouettes: bboxOuter), about 2.6 pt in all on each axis. The disc's own diameter is what the
      buyer's millimetres are measured against, so the margin is taken off first. */
   const SIZE_PAD_PT = 2.6;
   function discOf(g) {
     const w = +(g && g.widthPt) - SIZE_PAD_PT, h = +(g && g.heightPt) - SIZE_PAD_PT, a = +(g && g.areaPt2); if (!(w > 3 && h > 3)) return null;
     const lo = Math.min(w, h), hi = Math.max(w, h), aspect = hi / lo, circ = a > 0 ? a / (Math.PI * lo * lo / 4) : null;
-    return { diaMm: lo * MM_PT, aspect, circ, round: aspect <= 1.32 && (circ == null ? aspect <= 1.06 : circ >= 0.93 && circ <= 1.16) };
+    return { diaMm: lo * MM_PT, aspect, circ, round: aspect <= 1.32 && circ != null && circ >= 0.93 && circ <= 1.16 };   // (no area: a box of 1 : 1 is a square, a heart, a star as well as a disc, so it is not known to be round)
   }
   function sizeFit(entry, size) {
     const want = sizeMmOf(size); if (!entry || want == null || want < 3 || want > 80) return null;
     const sizes = entry.sizes && Object.keys(entry.sizes).length ? entry.sizes : null;
     if (sizes && sizes[size]) return null;
+    const other = NOFIT.get(entry); if (other && other.has(String(size))) return { action: "unchecked", wantMm: want, why: "that size is the hoop's, ring's or bracelet's, not the charm's, so the charm is not resized to it" };
     const cands = sizes ? Object.keys(sizes).map(k => ({ key: k, g: sizes[k] })).filter(x => x.g && x.g.aiPath) : [{ key: null, g: entry }];
     let best = null;
     for (const c of cands) { const d = discOf(c.g); if (!d) continue; const gap = Math.abs(d.diaMm - want); if (!best || gap < best.gap) best = { key: c.key, d, gap }; }
@@ -350,7 +371,7 @@
     if (!best.d.round) return { action: "unchecked", wantMm: want, haveMm: have, why: "the design is not a round disc, so its size is not changed" };
     if (best.gap <= Math.max(0.3, want * 0.025)) return { action: "same", wantMm: want, haveMm: have, base: best.key };
     const k = want / best.d.diaMm;
-    if (k > 2.5 || k < 0.4) return { action: "ask", wantMm: want, haveMm: have, base: best.key, why: `${want} mm asked, the design is ${have} mm: more than ${k > 1 ? "2.5 times bigger" : "2.5 times smaller"}` };
+    if (k > 2.5 || k < 0.4) return { action: "ask", wantMm: want, haveMm: have, base: best.key, offer: sizeTok(best.d.diaMm), why: `${want} mm asked, the design is ${have} mm: more than ${k > 1 ? "2.5 times bigger" : "2.5 times smaller"}` };
     return { action: "scale", wantMm: want, haveMm: have, base: best.key, scale: k, size: String(size) };
   }
   // a made-to-order listing prices each order with an option of its own ("Price: 28"): it says what was paid, never what
@@ -3348,7 +3369,7 @@
       if (!mapped) {                                                            // deterministic name rules, no free-text reading
         const asForm = formByWords(value);
         if (HUGGIE_SET.test(value)) mapped = { field: "form", value: "huggie", source: "rule:huggie-set" };
-        else if (isSizeOption(name, value) && (looksLikeSize(value) || mmTokenOf(value))) mapped = { field: "size", value: mmTokenOf(value) || SIZE_VALUES[bareValue(value)] || bareValue(value).toUpperCase().replace(/\s+/g, ""), source: "rule:size" };
+        else if (isSizeOption(name, value) && (looksLikeSize(value) || mmTokenOf(value, name))) mapped = { field: "size", value: mmTokenOf(value, name) || SIZE_VALUES[bareValue(value)] || bareValue(value).toUpperCase().replace(/\s+/g, ""), source: "rule:size" };
         else if (isChainOption(name) && looksLikeLength(value)) mapped = { field: "chain", value, source: "rule:length" };
         else if (isChainOption(name) && asForm) mapped = { field: "form", value: asForm, source: "rule:form" };
         else if (isFormOption(name) && looksLikeLength(value)) mapped = { field: "chain", value, source: "rule:length" };
@@ -3385,9 +3406,11 @@
         if (fr && fr.chain && !spec.chain) spec.chain = fr.chain;
         continue;
       }
+      // SIZEFIT review: an old "changes nothing" answer for a size in millimetres (given before the size was part of the check) still lets the size be read, or every listing answered once would cut the repo's size whatever the buyer chose
+      if (mapped.field === "ignore" && !spec.size && isSizeOption(name, value) && mmTokenOf(value, name)) { spec.size = mmTokenOf(value, name); spec.sizeFrom = name; continue; }
       if (mapped.field === "ignore" || mapped.field === "design" || mapped.field === "count") continue;
       if (mapped.field === "form" && !spec.form) spec.form = mapped.value;
-      else if (mapped.field === "size" && !spec.size) spec.size = mapped.value;
+      else if (mapped.field === "size" && !spec.size) { spec.size = mapped.value; spec.sizeFrom = name; }
       else if (mapped.field === "chain" && !spec.chain) spec.chain = mapped.value;
     }
     // FLAGWHY: the transaction's SKU is a master design that is demonstrably THIS option's own (skuIndexFamily, or the page's own orders: seenVerdict; never when the page's
@@ -3418,8 +3441,9 @@
       else if (entry.blocked) problems.push({ kind: "blockedSku", reason: entry.blocked, sku });
       else {
         // SIZEFIT: the size the buyer chose is read against the design (a standard check of every line): drawn as is, scaled to the diameter chosen, left alone (not a disc), or asked
+        if (spec.size && !sizeIsCharm(spec.sizeFrom, lf)) noFit(entry, spec.size);   // (an option that gives the size of something else: the check is off for this design at this size, here and in every page that draws it)
         const fit = sizeFit(entry, spec.size); if (fit) spec.sizeFit = fit;
-        if (fit && fit.action === "ask") problems.push({ kind: "missingSize", sku, size: spec.size, available: entry.sizes ? Object.keys(entry.sizes) : [], why: fit.why });
+        if (fit && fit.action === "ask") problems.push({ kind: "missingSize", sku, size: spec.size, available: entry.sizes && Object.keys(entry.sizes).length ? Object.keys(entry.sizes) : [fit.offer], why: fit.why });
         else if (entry.sizes && Object.keys(entry.sizes).length && (!spec.size || !entry.sizes[spec.size]) && !(fit && (fit.action === "scale" || fit.action === "same"))) problems.push({ kind: "missingSize", sku, size: spec.size, available: Object.keys(entry.sizes) });
       }
     }
@@ -3427,6 +3451,8 @@
     // a 2-symbols line whose second symbol (from the buyer's words) has no charm yet: that value of the option is asked once, like any option value
     if (!quiet && !members) for (const a of report.asks || []) if (!problems.some(p => p.kind === "needsMapping" && p.optionName === a.name && p.optionValue === a.value)) problems.push(Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: a.name, optionValue: a.value, title: line.title || "", note: a.why }, a.lack ? { why: a.lack } : {}));
     spec.pair = pairInfo(line, { spec, sku, entry: me && sku ? me(sku) : null, members, optionMaps: ctx.optionMaps, count: cr, lineId: secondId, report });
+    // (the other designs of the line, the Right ear's own and the designs of a set, are the same line: a size that is the hoop's resizes none of them)
+    if (spec.size && me && !quiet && !sizeIsCharm(spec.sizeFrom, lf)) { try { for (const d of [].concat((spec.pair.members || []).map(m => m && m.sku), spec.pair.set && spec.pair.set.designs || [])) { const e = d && me(d); if (e) noFit(e, spec.size); } } catch (_) { /* a design that cannot be read stays as it was */ } }
     spec.pieceCount = pieceCountOf(spec);
     spec.pair.kind = kindFor(spec.pair, spec.pieceCount);
     spec.pair.sides = sidesOf(spec);
