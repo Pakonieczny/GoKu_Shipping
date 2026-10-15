@@ -14389,6 +14389,13 @@ const Sandbox = window.Sandbox = (() => {
   let pullTask = null, pulled = null, setCheck = null;
   const nextFlag = () => { try { return sessionStorage.getItem(PULL_NEXT) || ""; } catch (_) { return ""; } };
   const setNext = v => { try { if (v) sessionStorage.setItem(PULL_NEXT, v); else sessionStorage.removeItem(PULL_NEXT); } catch (_) {} };
+  /* ADV-SANDBOX (15 Oct 2026): the pull deletes the old set in its first moment and writes the new one seconds later, and every tab of this browser shares the
+     wait-for-Start mark. A second tab that was waiting too saw the mark go, checked, found "no pulled orders" and put the whole sandbox back to waiting (dirty)
+     while the first tab's pull was still out: the finished set sat in the cloud and Start had to clear it and pull again. The tab whose Start has a pull out
+     writes the time here (a tab that dies leaves it, so it counts for 45 s); a tab that finds no set while it is fresh waits for its next check. */
+  const PULLING = "cn.sandboxPulling", PULL_FRESH_MS = 45000;
+  const pullMark = on => { try { if (on) localStorage.setItem(PULLING, String(Date.now())); else localStorage.removeItem(PULLING); } catch (_) {} };
+  const pullOutElsewhere = () => { try { const t = +localStorage.getItem(PULLING) || 0; return !pullTask && t > 0 && Date.now() - t < PULL_FRESH_MS; } catch (_) { return false; } };
   /** The pull is out, or this page is opening to start by itself: Settings, the pill and the Orders tab say so. */
   const pulling = () => pullTask ? "pull" : held() && nextFlag() === "start" ? "start" : "";
   const calls = n => `${n} Etsy call${n === 1 ? "" : "s"}`;
@@ -14406,6 +14413,7 @@ const Sandbox = window.Sandbox = (() => {
   function release() {
     if (!held()) return false;
     if (holdInfo().dirty) { clearThenStart().catch(e => toast(e.message, "bad", 9000)); return false; }
+    pullMark(true);   // (before the wait mark goes, so no other tab sees a started sandbox without its pull)
     try { localStorage.removeItem(HOLD); } catch (_) {}
     setNext("");
     agent({ bridge: true }, "DS", `Sandbox started: pulling the ${want()} newest Etsy orders`);
@@ -14421,12 +14429,16 @@ const Sandbox = window.Sandbox = (() => {
       on, or begun: still one pull). Every answer that says why it failed is final. */
   async function askPull(startId) {
     const body = { op: "sandboxPullOrders", sandbox: true, startId, seed: +S.settings.sandboxSeed || 0, speed: speed(), stream: streaming() };
-    for (let n = 0; ; n++) {
+    /* No answer (the internet went away, the edge cut the request) is asked again as the very same request for up to a minute, not once (ADV-SANDBOX, 15 Oct 2026): a
+       request that got through is answered with the stored set (nothing is pulled twice, no Etsy call), one that did not is the pull itself. A short outage no longer
+       leaves the page saying "empty" over a finished set in the cloud. After a minute, or after any answer that says why, it stops as before. */
+    const t0 = Date.now(); let busy = 0, down = 0;
+    for (;;) {
       try { return await api("charmNestLibrary", body, { quiet: true, timeoutMs: 120000 }); }
       catch (e) {
         const d = (e && e.data) || {};
-        if (d.reason === "busy" && n < 8) { await pause(4000); continue; }
-        if (!d.reason && e.transient && n < 1) { await pause(3000); continue; }
+        if (d.reason === "busy" && busy++ < 8) { await pause(4000); continue; }
+        if (!d.reason && e.transient && Date.now() - t0 < 60000) { await pause(++down === 1 ? 3000 : 5000); continue; }
         throw Object.assign(new Error(String(d.error || e.message || "no answer").slice(0, 300)), { reason: d.reason || "", data: d });
       }
     }
@@ -14453,7 +14465,7 @@ const Sandbox = window.Sandbox = (() => {
       hold({ failed: e.message, reason: e.reason || "", calls: d.calls || 0 });
       agent({ bridge: true }, "warn", `Sandbox: the ${want()} newest orders could not be pulled — ${e.message}`);
       throw e;
-    } finally { if (bar) bar.end(); pullTask = null; render(); try { if (window.Orders && Orders.render) Orders.render(); } catch (_) {} }
+    } finally { pullMark(false); if (bar) bar.end(); pullTask = null; render(); try { if (window.Orders && Orders.render) Orders.render(); } catch (_) {} }
   }
   /** The previous sandbox is cleared (the complete clean-up, which reloads the page and leaves it waiting), and the page
       that opens then starts by itself (PULL_NEXT). If the clean-up stops, the sandbox stays waiting and says why. */
@@ -14527,6 +14539,7 @@ const Sandbox = window.Sandbox = (() => {
   function checkSet() {
     return setCheck ||= api("charmNestLibrary", { op: "sandboxStatus", light: true }, { quiet: true }).then(st => {
       if (st && st.ok && !st.error) status = st;
+      if (st && st.ok && !st.snapshot && pullOutElsewhere()) { setCheck = null; return null; }   // (another tab's Start has its pull out: no set yet is not "empty"; asked again at the next check)
       if (st && st.ok && !st.snapshot) { hold({ dirty: true }); toast(`The sandbox holds no pulled orders. Press Start on the Orders tab: it clears what is left and pulls the ${want()} newest Etsy orders.`, "", 9000); return false; }
       return true;
     }).catch(() => true);
@@ -14538,7 +14551,7 @@ const Sandbox = window.Sandbox = (() => {
     if (strict && held() && !release()) return Promise.reject(new Error(`The sandbox order stream could not start: the sandbox still holds an earlier run's orders, so it is clearing them first and then pulls the ${want()} newest`));   // a pull or a run asked for orders: that is Start
     const go = () => {
       if (!streaming() || held()) return Promise.resolve(null);   // (the rest wait for Start: a paused sandbox starts no stream by itself)
-      const task = stream ? Promise.resolve(stream) : (readyTask ||= checkSet().then(ok => { if (!ok) throw new Error("the sandbox holds no pulled orders: press Start"); return firstLook(); }).then(() => streamApi("ensure")).then(r => { if (!sameRun(r.stream)) { staleStop(GONE); throw new Error("this sandbox is another run now"); } return adopt(r.stream); }).finally(() => { readyTask = null; }));
+      const task = stream ? Promise.resolve(stream) : (readyTask ||= checkSet().then(ok => { if (ok === null) throw new Error("another tab's Start is still pulling the orders: this check waits for it"); if (!ok) throw new Error("the sandbox holds no pulled orders: press Start"); return firstLook(); }).then(() => streamApi("ensure")).then(r => { if (!sameRun(r.stream)) { staleStop(GONE); throw new Error("this sandbox is another run now"); } return adopt(r.stream); }).finally(() => { readyTask = null; }));
       return task.then(s => { if (!s) throw new Error("it is off"); return s; });
     };
     return (pullTask ? pullTask.then(go) : go()).catch(e => { if (strict) throw new Error(`The sandbox order stream could not start: ${e.message}`); agent({ bridge: true }, "warn", `Sandbox order stream: ${e.message}`); return null; });

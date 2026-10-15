@@ -37,6 +37,13 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   const srv = await start({ receipts: [] });
   const { st, sorterOrigin, stationOrigin } = srv;
   const emulator = st.handlers.etsySandbox;
+  // Start pulls the newest Etsy orders now (Paul, 10 Oct 2026), also for the replay after a reset: a FAKE Etsy under the real pull op serves this test's own receipts, newest first (no network)
+  process.env.SHOP_ID = '987654'; process.env.CLIENT_ID = 'test-key'; process.env.CLIENT_SECRET = 'test-secret';
+  const Pull = require(path.join(root, 'netlify/functions/_charmNestSandboxPull.js')), realPull = Pull.pull;
+  const newestFirst = snapshot.slice().sort((a, b) => b.created_timestamp - a.created_timestamp);
+  Pull.pull = (b, ctx) => realPull(b, ctx, { fetch: async url => { const u = new URL(url), off = +u.searchParams.get('offset'), lim = +u.searchParams.get('limit'); return { ok: true, status: 200, headers: { get: () => null }, text: async () => '', json: async () => ({ count: snapshot.length, results: JSON.parse(JSON.stringify(newestFirst.slice(off, off + lim))) }) }; }, token: async () => 'test-token', meter: { bump: () => ({ fromHttp() {}, failNet() {} }), flushNow: async () => {} } });
+  const fdb = st.admin.firestore(); if (!fdb.doc) fdb.doc = p => { const [c, ...rest] = p.split('/'); return fdb.collection(c).doc(rest.join('/')); };
+  st.put('config', 'etsyOauth', { access_token: 'a', refresh_token: 'r', expires_at_ms: Date.now() + 3600e3 });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 } });
   const fbStub = "const nope = () => { throw new Error('firebase stub'); }; export const initializeApp = nope, getApp = nope, getStorage = nope, ref = nope, uploadBytesResumable = nope, getDownloadURL = nope, getAuth = nope, signInAnonymously = nope;";

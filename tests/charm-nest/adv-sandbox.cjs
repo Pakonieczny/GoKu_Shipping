@@ -184,7 +184,7 @@ store.set(`Order_Timeline/${RID}~placed~p1`, { orderId: RID, type: "placed", at:
   await check("order-timeline.js: across a sandbox toggle each event goes to the store it was recorded in", async () => {
     const posts = [], ls = new Map();
     const win = { location: { protocol: "https:" }, addEventListener() {}, localStorage: { getItem: k => (ls.has(k) ? ls.get(k) : null), setItem: (k, v) => ls.set(k, String(v)) } };
-    const ctx = vm.createContext({ window: win, localStorage: win.localStorage, location: win.location, document: { addEventListener() {}, visibilityState: "visible" }, console, JSON, Math, Date, Promise, String, Number, Set, Array, Object, Error,
+    const ctx = vm.createContext({ window: win, localStorage: win.localStorage, location: win.location, document: { addEventListener() {}, visibilityState: "visible" }, console, JSON, Math, Date, Promise, String, Number, Set, Array, Object, Error, Blob,   // (Blob: order-timeline.js sizes a request with it before it sends)
       setTimeout: () => 0, clearTimeout() {}, encodeURIComponent,
       fetch: async (url, o) => { posts.push({ url, body: o && o.body ? JSON.parse(o.body) : null }); return { ok: true, status: 200, json: async () => ({ ok: true }) }; } });
     vm.runInContext(fs.readFileSync(path.join(root, "order-timeline.js"), "utf8"), ctx);

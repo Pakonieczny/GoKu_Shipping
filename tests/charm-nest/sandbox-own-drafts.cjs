@@ -33,7 +33,8 @@ const { start } = require('./bridge-server.cjs');
   await page.waitForTimeout(800);
   assert(posts.length >= 1 && posts.every(u => /sandbox=1/.test(u)), 'the sandbox tab posts its message to the sandbox record only: ' + posts.join(' '));
   await page.unroute(/firebaseOrders/);
-  const prodPosts = []; await page.route(/firebaseOrders/, r => { if (r.request().method() === 'POST') prodPosts.push(r.request().url()); return r.continue(); });
+  // (the read-only "is this name an Admin?" lookup, { stationAdmin }, is not a message: production asks it once per sign-in)
+  const prodPosts = []; await page.route(/firebaseOrders/, r => { if (r.request().method() === 'POST' && !/"stationAdmin"/.test(r.request().postData() || '')) prodPosts.push(r.request().url()); return r.continue(); });
   await mode(false);
   await page.waitForTimeout(2500);   // the outbox flushes 1.5 s after load
   const pr = await page.evaluate(() => ({ sandbox: WORKSPACE_SANDBOX, draft: TeamMail.draftOf('4170000001'), pending: TeamMail.pending('4170000001').length, keys: Object.keys(localStorage).filter(k => /^cn\.(team|mail)\./.test(k)).sort() }));
