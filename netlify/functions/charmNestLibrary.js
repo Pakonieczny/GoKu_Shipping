@@ -1131,9 +1131,9 @@ function agentCacheKey(mode, payload) {
 /** A cached reading told for this order: the order it was first read for is named as this one (its reasoning may say it). */
 const forOrder = (result, from, to) => (result && from && to && from !== to && /^\d{5,20}$/.test(from) ? JSON.parse(JSON.stringify(result).split(from).join(to)) : result);
 async function op_startAgent(b) {
-  const mode = ["grouping", "layout", "name", "place", "packing", "labelRead", "engraveIntent", "engraveReview", "customRead"].includes(b.mode) ? b.mode : null;
+  const mode = ["grouping", "layout", "name", "place", "packing", "labelRead", "engraveIntent", "engraveReview", "customRead", "monoAssist"].includes(b.mode) ? b.mode : null;
   if (!mode || !b.payload) return { error: "mode and payload required" };
-  const fnName = /^engrave/.test(mode) ? "charmEngrave-background" : "charmNestAgent-background";
+  const fnName = /^engrave/.test(mode) ? "charmEngrave-background" : mode === "monoAssist" ? "charmNestMonogramAssist-background" : "charmNestAgent-background";   // (monoAssist: the AI assembler of a monogram, charmNestMonogramAssist-background)
   const order = String(b.payload.order || "").replace(/\D/g, "").slice(0, 20);
   const cacheKey = PREFIX && mode === "engraveIntent" ? agentCacheKey(mode, b.payload) : null;
   if (cacheKey) { const hit = await db.collection(AGENT_CACHE).doc(cacheKey).get(); if (hit.exists && hit.data().result) return { ok: true, id: `agentc-${cacheKey}${order ? "-" + order : ""}`, cached: true }; }

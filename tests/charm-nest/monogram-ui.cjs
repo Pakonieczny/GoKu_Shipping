@@ -81,7 +81,12 @@ Object.entries(ODD).forEach(([k, o], i) => { FX[k] = { rid: o.rid, sku: 'MONOGRA
   const instrument = () => page.evaluate(() => {
     window.__builds = []; window.__fetched = [];
     if (!window.__wrapped) {
-      window.__wrapped = true; const eb = CharmNestMonogram.build; CharmNestMonogram.build = function (l, o) { window.__builds.push(l.left.letter + l.middle.letter + l.right.letter); return eb.apply(this, arguments); };
+      window.__wrapped = true; const eb = CharmNestMonogram.build; CharmNestMonogram.build = function (l, o) {
+        window.__builds.push(l.left.letter + l.middle.letter + l.right.letter); const r = eb.apply(this, arguments);
+        // (MONOAI: this test is about the card, not the engine's rules: every word is staged as meeting them, so no card is flagged "Needs a person" (a second press on Approve) and nothing asks the AI; that flow is tests/charm-nest/monogram-ai.cjs)
+        if (r && r.ok && r.report && r.report.metrics && Array.isArray(r.report.metrics.violations)) r.report.metrics = Object.assign({}, r.report.metrics, { violations: [], ok: true });
+        return r;
+      };
       const mc = Pool.masterCharm; Pool.masterCharm = function (e, s) { window.__fetched.push(e.sku); return mc.apply(this, arguments); };
     }
   });

@@ -12,6 +12,12 @@
  *  three letters are fetched and joined; only the newest edit ever shows). Approve writes the charm as a design file (.ai, "Monogram APV.ai") and puts it on the order's custom designs (CustomSheet.add), where the
  *  metal, the number of pieces and Send to Sheet are what they are for every custom order. Changing the letters after approving replaces that design (never a second one).
  *  Loads in the page; the bridge makes it: CharmNestMonogramUI.make({ ...the page's own parts }).
+ *
+ *  MONOAI (Paul, 15 Oct 2026: "we do not sell many of these monograms and they need intelligent assembly: the AI should have freedom to resize ... just like a human would"). A word that still breaks a rule of the
+ *  engine (report.metrics.violations) after Engine.autoFit is shown to a vision model beside the ESG reference (charmNestMonogramAssist-background through CN.agentCall "monoAssist"): it answers only the numbers of the engine's
+ *  adjust contract { L, M, R: { scale, sx, dx, dy } } and one sentence; the page applies them ONLY through Engine.build (which clamps them), re-measures, and keeps a round only if the number of broken rules drops, or stays equal
+ *  while the distance to ESG drops. At most 3 rounds per word, once per order (the final adjust, the sentence and the rounds are kept in settings.mono.assist, so reopening never pays again), at most 3 calls per order per day
+ *  (also counted on the server); a word that still fails says "Needs a person: <limit>" and Approve then asks for a second press. ESG-like words never call it. A failure of the model or the network leaves the automatic result.
  *  ═══════════════════════════════════════════════════════════════════════ */
 (function (root, factory) {
   const api = factory(root);
@@ -25,16 +31,72 @@
   const LOAD_MS = 30000;               // (a letter file that has not come in this long is given up: a message and a Try again, never a spinner that stays)
   const CACHE_MAX = 40;                // (monograms made this session, by letters: typing a letter back is instant)
   const GONE = ["gone", "committed", "skipped", "noDesign"];
+  const TONES = { gold: ["#d9bd78", "#5a4520", "Gold"], gold10k: ["#dec58a", "#5a4520", "10K gold"], gold14k: ["#d4b46a", "#5a4520", "14K gold"], silver: ["#c8ccd2", "#4a4e55", "Silver"], rose: ["#e2b4a1", "#693e33", "Rose gold"] };
   const timeout = (p, ms, what) => new Promise((res, rej) => { const t = setTimeout(() => rej(new Error(what + " took too long")), ms); p.then(v => { clearTimeout(t); res(v); }, e => { clearTimeout(t); rej(e); }); });
   const later = () => new Promise(r => setTimeout(r, 0));
   const spaced = s => String(s || "").split("").join(" ");
   const cap = s => { s = String(s || ""); return s.charAt(0).toUpperCase() + s.slice(1); };
 
+
+  /* ═══ MONOAI: what the engine says of a result, and the loop that lets the model nudge it (pure: the engine, the model and the picture are handed in, so the offline test runs it with fakes) ═══ */
+  const AI_ROUNDS = 3, AI_DAY_MAX = 3, AI_KEEP = 60, AI_PX = 560;
+  const metricsOf = res => (res && res.report && res.report.metrics && typeof res.report.metrics === "object" ? res.report.metrics : null);
+  /** The rules a result breaks, in words ([] = every hard rule met); null when the engine does not report them (an older engine: the AI is never asked). */
+  const violationsOf = res => { const m = metricsOf(res); return m && Array.isArray(m.violations) ? m.violations.map(v => String(typeof v === "string" ? v : (v && (v.text || v.rule)) || "a rule is broken")) : null; };
+  const distanceOf = res => { const m = metricsOf(res), v = m && (m.distance != null ? m.distance : m.esgDistance); return Number.isFinite(+v) && v !== null && v !== "" ? +v : 0; };
+  const IDENT = { scale: 1, sx: 1, dx: 0, dy: 0 };
+  const adjustOf = res => { const a = res && res.report && res.report.adjust || {}, one = x => Object.assign({}, IDENT, x && typeof x === "object" ? x : {}); return { L: one(a.L), M: one(a.M), R: one(a.R) }; };
+  /** Is the candidate better than the best so far: fewer broken rules, or the same number and a smaller distance to ESG. */
+  const betterThan = (a, b) => a.v < b.v || (a.v === b.v && a.dist < b.dist - 1e-6);
+  /** The loop. o: { E (engine), parts ({left,middle,right}), base (the result to improve), opts (extra build options), rounds, ask(req) -> the model's answer, cancelled(), onRound(n) }.
+   *  A round asks, builds with the answer's adjust through Engine.build (clamped there), measures, keeps it only if better; it stops when no rule is broken or after `rounds` (3 at most) answers.
+   *  -> { status: assembled | needs | failed | limited | cancelled | passed | unsupported, res (the best result), adjust, why (of the last kept round), rounds, calls, accepted, remaining (the rules still broken), reason } */
+  async function assistLoop(o) {
+    const E = o.E, max = Math.max(1, Math.min(AI_ROUNDS, Math.floor(o.rounds || AI_ROUNDS))), v0 = violationsOf(o.base);
+    const out = { status: "unsupported", res: o.base, adjust: adjustOf(o.base), why: "", rounds: 0, calls: 0, accepted: 0, remaining: v0 || [], reason: "" };
+    if (!v0) { out.reason = "the engine does not report the rules"; return out; }
+    if (!v0.length) { out.status = "passed"; return out; }
+    let best = { res: o.base, adjust: out.adjust, v: v0.length, vt: v0, dist: distanceOf(o.base) }, stop = "";
+    const history = [];
+    for (let round = 1; round <= max; round++) {
+      if (o.cancelled && o.cancelled()) { stop = "cancelled"; break; }
+      if (o.onRound) o.onRound(round);
+      let ans; try { ans = await o.ask({ round, adjust: best.adjust, metrics: metricsOf(best.res), violations: best.vt, history: history.slice(-2), res: best.res }); } catch (e) { ans = { error: String((e && e.message) || e) }; }
+      out.calls++;
+      if (o.cancelled && o.cancelled()) { stop = "cancelled"; break; }
+      if (!ans || ans.skipped || ans.error || ans.declined || !ans.adjust || typeof ans.adjust !== "object") { stop = ans && ans.limited ? "limited" : ans && ans.skipped ? "skipped" : "failed"; out.reason = String((ans && (ans.skipped || ans.error)) || "no usable answer").slice(0, 160); break; }
+      out.rounds = round;
+      let cand = null; try { cand = E.build(o.parts, Object.assign({}, o.opts || {}, { adjust: ans.adjust })); } catch (_) { cand = null; }
+      const cv = cand && cand.ok ? violationsOf(cand) : null, mine = cv ? { v: cv.length, dist: distanceOf(cand) } : null;
+      if (mine && betterThan(mine, best)) {
+        best = { res: cand, adjust: adjustOf(cand), v: mine.v, vt: cv, dist: mine.dist }; out.accepted++; out.why = String(ans.why || "").replace(/\s+/g, " ").trim().slice(0, 240);
+        if (!mine.v) break;
+      } else history.push({ adjust: cand && cand.report && cand.report.adjust ? adjustOf(cand) : ans.adjust, why: String(ans.why || "").slice(0, 200), violations: mine ? mine.v : best.v + 1 });
+    }
+    out.res = best.res; out.adjust = best.adjust; out.remaining = best.vt;
+    out.status = stop || (best.v ? "needs" : "assembled");
+    if (!out.why && out.accepted) out.why = "Adjusted the letters.";
+    return out;
+  }
+  /** The candidate as the model sees it: the cut piece in the card's gold on white, one thin cut line, the contacts painted (upper blue, lower magenta) from report.metrics.contacts [{ zone, xPt, yPt, wMm }] (points, y up,
+   *  the frame of res.bboxPt). Fixed size (AI_PX on the long side): the same recipe draws the ESG reference constant (scripts/make-monogram-ref.cjs). -> { svg, w, h } */
+  function assistSvg(E, res, o) {
+    o = o || {}; const b = res.bboxPt, w = b[2] - b[0], h = b[3] - b[1], pad = Math.max(w, h) * 0.06, k = (o.px || AI_PX) / (Math.max(w, h) + 2 * pad), t = TONES.gold;
+    const W = Math.round((w + 2 * pad) * k), H = Math.round((h + 2 * pad) * k), MMPT = 72 / 25.4, m = metricsOf(res), dots = [];
+    if (o.patches !== false && m && Array.isArray(m.contacts)) for (const c of m.contacts) {
+      if (!c || !Number.isFinite(+c.xPt) || !Number.isFinite(+c.yPt)) continue;
+      const col = c.zone === "upper" ? "#1769ff" : c.zone === "lower" ? "#e0189b" : "#8a8f98", r = Math.max(0.35, Math.min(1.2, (+c.wMm || 0.6) / 2 + 0.1)) * MMPT;
+      dots.push(`<circle cx="${(+c.xPt - b[0]).toFixed(2)}" cy="${(b[3] - +c.yPt).toFixed(2)}" r="${r.toFixed(2)}" fill="${col}" fill-opacity="0.55" stroke="${col}" stroke-width="${(1.5 / k).toFixed(3)}"/>`);
+    }
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="${(-pad).toFixed(2)} ${(-pad).toFixed(2)} ${(w + 2 * pad).toFixed(2)} ${(h + 2 * pad).toFixed(2)}"><rect x="${(-pad).toFixed(2)}" y="${(-pad).toFixed(2)}" width="${(w + 2 * pad).toFixed(2)}" height="${(h + 2 * pad).toFixed(2)}" fill="#fff"/><path d="${esc(E.svgPath(res))}" fill="${t[0]}" fill-rule="evenodd" stroke="${t[1]}" stroke-width="${(2.5 / k).toFixed(3)}" stroke-linejoin="round"/>${dots.join("")}</svg>`;
+    return { svg, w: W, h: H };
+  }
+
   function make(d) {
     const cards = new Map();           // lineKey -> { key, row, draft (the letters a person typed), status, result, err, seq, timer, host, el }
     const glyphs = new Map();          // sku|file|time -> Promise<{ letter, rings, sku }>
     const results = new Map();         // alphabets|letters -> a finished build (the oldest is dropped first)
-    let famCache = null, famSig = "", pane = null, abcSig = "";
+    let famCache = null, famSig = "", pane = null, abcSig = "", aiServerOff = false;   // (aiServerOff: the server said the assist is switched off or has no key: no more jobs this session)
     const abcKey = abc => abc.sig + "|" + abc.fams.map(f => f.base + "#" + f.count).join(",");
     const E = () => d.Engine || root.CharmNestMonogram;
     const doc = d.doc || root.document;
@@ -93,7 +155,7 @@
     /* ── one card's state ── */
     function cardOf(row) {
       let c = cards.get(row.key);
-      if (!c) { c = { key: row.key, row, draft: null, approved: "", status: "idle", result: null, resultLetters: "", err: null, seq: 0, timer: 0, host: null, el: null, approving: false, hint: "", wantApprove: false }; cards.set(row.key, c); }
+      if (!c) { c = { key: row.key, row, draft: null, approved: "", status: "idle", result: null, resultLetters: "", err: null, seq: 0, timer: 0, host: null, el: null, approving: false, hint: "", wantApprove: false, ai: null, fit: false, confirmed: false }; cards.set(row.key, c); }
       c.row = row; return c;
     }
     const lettersOk = ls => ls.length === 3 && ls.every(x => /^[A-Z]$/.test(x));
@@ -119,7 +181,7 @@
     const sigOf = (abc, ls) => SLOTS.map(([slot], i) => { const fam = abc[slot], sku = fam && fam.letters && fam.letters[ls[i]], e = sku && d.Master.entryFor(sku); return (sku || "?") + "@" + (e ? (e.aiPath || "") + "/" + (e.indexedAt || e.updatedAt || "") : ""); }).join("|");
     function remember(key, res) { results.delete(key); results.set(key, res); while (results.size > CACHE_MAX) results.delete(results.keys().next().value); }
     function schedule(c, wait) {
-      clearTimeout(c.timer); c.seq++;                       // (anything still on its way for an older edit is stale from now on)
+      clearTimeout(c.timer); c.seq++; c.confirmed = false; c.ai = null; c.fit = false;      // (anything still on its way for an older edit is stale from now on)
       c.timer = setTimeout(() => rebuild(c), wait == null ? WAIT_MS : wait);
       c.status = "building"; c.err = null; paint(c);
     }
@@ -132,7 +194,7 @@
       const abc = alphabets();
       if (!abc.ok) { c.status = "setup"; c.result = null; c.err = null; paint(c); return; }
       const key = sigOf(abc, letters), cached = results.get(key);
-      if (cached) { c.status = "ready"; c.result = cached; c.resultLetters = letters.join(""); c.resultKey = key; c.err = null; remember(key, cached); paint(c); settled(c); return; }
+      if (cached) { c.status = "ready"; c.result = cached; c.resultLetters = letters.join(""); c.resultKey = key; c.err = null; c.confirmed = false; remember(key, cached); assist(c, key, letters, abc, seq); paint(c); settled(c); return; }
       c.status = "building"; c.err = null; paint(c);
       const bar = d.CNProgress ? d.CNProgress.start(`Building monogram ${letters.join("")}`) : null;
       try {
@@ -142,28 +204,129 @@
         if (seq !== c.seq) return;                       // (a newer edit took over: this answer is never shown)
         await later();                                   // (the spinner is on the screen before the joining starts)
         if (seq !== c.seq) return;
-        const res = E().build({ left: parts[0], middle: parts[1], right: parts[2] });
+        const trio = { left: parts[0], middle: parts[1], right: parts[2] };
+        let res = E().build(trio);
         if (seq !== c.seq) return;
+        // a word that breaks a rule is fitted by the engine's own search first (Engine.autoFit: deterministic, a few seconds at most); the AI comes after, only if it still fails
+        const broken = res && res.ok ? violationsOf(res) : null;
+        if (broken && broken.length && typeof E().autoFit === "function") {
+          c.fit = true; paint(c); await paintFirst(); if (seq !== c.seq) return;
+          try { const f = E().autoFit(trio); const fv = f && f.ok ? violationsOf(f) : null; if (fv && betterThan({ v: fv.length, dist: distanceOf(f) }, { v: broken.length, dist: distanceOf(res) })) res = f; } catch (_) { /* the plain build stays */ }
+          if (seq !== c.seq) return;
+        }
         if (bar && bar.set) bar.set(4, 4);
         if (!res || !res.ok) { c.status = "error"; c.result = null; c.err = { kind: "join", text: joinWhy(res && res.why) }; }
-        else { c.status = "ready"; c.result = res; c.resultLetters = letters.join(""); c.resultKey = key; c.err = null; remember(key, res); }
+        else { c.status = "ready"; c.result = res; c.resultLetters = letters.join(""); c.resultKey = key; c.err = null; c.confirmed = false; remember(key, res); assist(c, key, letters, abc, seq, { parts: trio }); }
       } catch (e) {
         if (seq !== c.seq) return;
         c.status = "error"; c.result = null;
         c.err = e && e.kind === "missing" ? { kind: "missing", text: String(e.message).slice(0, 160), help: e.help || "" } : { kind: "load", text: loadWhy(e) };
       } finally {
         if (bar) bar.end();
-        if (seq === c.seq) { paint(c); settled(c); }
+        if (seq === c.seq) { c.fit = false; paint(c); settled(c); }
       }
     }
     const joinWhy = why => /touch/.test(why || "") ? "These letters do not touch each other. Try other letters, or the letters in another order." : /separate parts/.test(why || "") ? "One of these letters is made of separate parts that stay loose, so it cannot be one charm." : String(why || "The letters could not be joined").slice(0, 160);
     const loadWhy = e => /took too long/.test(String(e && e.message)) ? `${String(e.message).slice(0, 90)}. Check the connection and try again.` : "A letter could not be loaded from the library. Check the connection and try again.";
-    function settled(c) { if (c.wantApprove && c.status === "ready") { c.wantApprove = false; approve(c); } else if (c.status !== "building") c.wantApprove = false; }
+
+    /* ── MONOAI: the AI assembler of a word that still breaks a rule ── */
+    const aiBusy = c => !!(c.ai && c.ai.state === "working");
+    const flaggedOf = c => (c.status === "ready" && c.result ? violationsOf(c.result) : null) || [];       // (the rules the card's monogram still breaks: [] when none, or when the engine does not say)
+    const limitText = left => String(left[0] || "").replace(/\.$/, "") + (left.length > 1 ? ` (+${left.length - 1} more)` : "");
+    const paintFirst = () => new Promise(r => { const raf = root.requestAnimationFrame; if (typeof raf === "function") raf.call(root, () => setTimeout(r, 0)); else setTimeout(r, 0); });
+    const callAi = () => !!(d.assist || d.agentCall || (root.CN && root.CN.agentCall));
+    const aiOn = () => { const m = (d.settings() || {}).mono; return !(m && m.ai === "off") && d.ai !== false; };
+    const today = () => new Date(d.now ? d.now() : Date.now()).toISOString().slice(0, 10);
+    const mstore = () => { const set = d.settings(); if (!set.mono || typeof set.mono !== "object") set.mono = {}; return set.mono; };
+    const keepSettings = () => { try { d.saveSettings(); } catch (_) { /* kept for this session */ } };
+    const recKey = (c, key) => c.row.key + "|" + key;
+    const dayCount = c => { const r = (mstore().assistDay || {})[c.row.key]; return r && r.day === today() ? r.n | 0 : 0; };
+    function bumpDay(c, n) { const m = mstore(), day = today(), next = {}; for (const [k, v] of Object.entries(m.assistDay || {})) if (v && v.day === day) next[k] = v; next[c.row.key] = { day, n }; m.assistDay = next; keepSettings(); }
+    /** What the loop ended with, kept (adjust, the sentence, rounds, status) so reopening the order applies it through the engine and never asks again. */
+    function keepRec(c, key, rec) {
+      const m = mstore(), all = Object.assign({}, m.assist); all[recKey(c, key)] = rec;
+      const old = Object.keys(all).sort((a, b) => (all[a].at || 0) - (all[b].at || 0)); while (old.length > AI_KEEP) delete all[old.shift()];
+      m.assist = all; keepSettings();
+    }
+    async function trioOf(letters, abc) { const p = await Promise.all(SLOTS.map(([slot], i) => glyph(slot, letters[i], abc))); return { left: p[0], middle: p[1], right: p[2] }; }
+    /** The candidate as a 2x PNG data URL (the cut piece on white, contacts painted). */
+    async function pictureOf(res) {
+      if (d.pictureOf) return d.pictureOf(res);
+      const a = assistSvg(E(), res), img = new root.Image(); img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(a.svg);
+      await img.decode();
+      const cv = doc.createElement("canvas"); cv.width = a.w; cv.height = a.h; const g = cv.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, a.w, a.h); g.drawImage(img, 0, 0, a.w, a.h);
+      return cv.toDataURL("image/png");
+    }
+    async function askModel(c, letters, req) {
+      const image = await pictureOf(req.res);
+      const payload = { orderKey: c.row.key, letters, round: req.round, adjust: req.adjust, metrics: req.metrics, violations: req.violations, history: req.history, image };
+      bumpDay(c, dayCount(c) + 1);                       // (counted as it is asked: a call that fails on the way may still have been paid for)
+      const label = `Assembling monogram ${letters.join("")} · round ${req.round}`;
+      const ans = d.assist ? await d.assist(payload, { label, background: true }) : await (d.agentCall || root.CN.agentCall)("monoAssist", payload, { label, background: true });
+      if (ans && ans.limited) bumpDay(c, AI_DAY_MAX);
+      return ans;
+    }
+    /** After a card's monogram is made (and fitted by the engine): a word that still breaks a rule is assembled with the AI, at most 3 rounds, once per order (what was kept is applied again, never asked again);
+     *  o.again (Improve again) asks once more from the card's current result, within the day's 3 calls. Never throws; the card keeps its picture while it waits. */
+    async function assist(c, key, letters, abc, seq, o) {
+      o = o || {};
+      const res0 = c.result, v0 = violationsOf(res0);
+      if (!v0 || !v0.length) { c.ai = null; return; }      // (ESG-like and every word that meets the rules: never asked)
+      c.ai = { state: "working", round: 0, status: "" }; c.confirmed = false;
+      try {
+        const parts = o.parts || await trioOf(letters, abc);
+        if (seq !== c.seq) return;
+        const rec = !o.again && (mstore().assist || {})[recKey(c, key)];
+        if (rec) {
+          const r = rec.adjust ? E().build(parts, { adjust: rec.adjust }) : null, rv = r && r.ok ? violationsOf(r) : null;
+          if (rv && betterThan({ v: rv.length, dist: distanceOf(r) }, { v: v0.length, dist: distanceOf(res0) })) { c.result = r; remember(key, r); }
+          c.ai = { state: "done", status: rec.status, why: rec.why, rounds: rec.rounds, cached: true }; return;
+        }
+        if (!aiOn() || aiServerOff || !callAi()) { c.ai = { state: "done", status: "off" }; return; }
+        const room = Math.min(AI_ROUNDS, AI_DAY_MAX - dayCount(c));
+        if (room < 1) { c.ai = { state: "done", status: "limited" }; return; }
+        const out = await assistLoop({ E: E(), parts, base: res0, rounds: room, cancelled: () => seq !== c.seq, ask: req => askModel(c, letters, req), onRound: n => { if (c.ai) { c.ai.round = n; paint(c); } } });
+        if (seq !== c.seq) return;
+        if (out.accepted && out.res) { c.result = out.res; c.confirmed = false; remember(key, out.res); }
+        const kept = out.status === "assembled" || out.status === "needs" || (out.status === "failed" && out.accepted);
+        if (kept) keepRec(c, key, { adjust: out.adjust, why: out.why, rounds: out.rounds, status: out.remaining.length ? "needs" : "assembled", limit: limitText(out.remaining), at: Date.now() });
+        if (out.status === "skipped") aiServerOff = true;
+        c.ai = { state: "done", status: kept ? (out.remaining.length ? "needs" : "assembled") : out.status === "skipped" ? "off" : out.status, why: out.why, rounds: out.rounds, reason: out.reason };
+      } catch (e) {
+        if (seq === c.seq) c.ai = { state: "done", status: "failed", reason: String((e && e.message) || e).slice(0, 120) };
+      } finally {
+        if (seq === c.seq) { if (c.ai && c.ai.state === "working") c.ai.state = "done"; paint(c); settled(c); }
+      }
+    }
+    /** "Improve again" on a flagged card: the kept answer is forgotten and the AI is asked again from what the card shows (still bounded by the day's 3 calls per order). */
+    function improve(c) {
+      if (aiBusy(c) || c.status !== "ready" || !c.result || !c.resultKey) return;
+      const m = mstore(), all = Object.assign({}, m.assist); delete all[recKey(c, c.resultKey)]; m.assist = all; keepSettings();
+      assist(c, c.resultKey, c.resultLetters.split(""), alphabets(), c.seq, { again: true }); paint(c);
+    }
+    function setAi(v) { const m = mstore(); m.ai = v === "off" ? "off" : "on"; keepSettings(); paintAlphabets(); for (const c of cards.values()) if (c.host) paint(c); }
+    /** The card's one calm line about the assembly. */
+    function aiNotes(c) {
+      const a = c.ai, left = flaggedOf(c), out = [];
+      if (aiBusy(c)) return out;
+      if (a && a.status === "assembled" && !left.length) out.push(`<span class="moAdj">Assembled with AI: ${esc(a.why || "adjusted the letters.")}</span>`);
+      if (left.length) {
+        out.push(`<span class="moWarn" data-mo-need>Needs a person: ${esc(limitText(left))}</span>`);
+        if (a && a.status === "failed") out.push(`<span class="moAdj">The AI could not help this time (${esc(a.reason || "no answer")}), so the automatic layout is kept.</span>`);
+        else if (a && a.status === "limited") out.push(`<span class="moAdj">The AI has had its 3 tries for this order today.</span>`);
+        if (c.confirmed) out.push(`<span class="moAdj">Press again to approve it anyway.</span>`);
+      }
+      return out;
+    }
+    function settled(c) { if (c.wantApprove && c.status === "ready" && !aiBusy(c)) { c.wantApprove = false; approve(c); } else if (c.status !== "building" && !aiBusy(c)) c.wantApprove = false; }
 
     async function approve(c) {
       if (c.approving || !c.result) return;
-      if (c.status === "building") { c.wantApprove = true; return; }
+      if (c.status === "building" || aiBusy(c)) { c.wantApprove = true; return; }
       if (c.status !== "ready") return;
+      // a monogram that still breaks a rule after the engine's search and the AI is approved only when the person confirms it (a second press), the limit named
+      const left = flaggedOf(c);
+      if (left.length && !c.confirmed) { c.confirmed = true; paint(c); return; }
       const it = itemOf(c, true); if (!it) { d.toast("This order has no custom card to put the monogram on", "bad", 5000); return; }
       const letters = c.resultLetters, old = approvedFile(c, true);
       if (old && old.sent) return;
@@ -183,7 +346,6 @@
     /* ── drawing ── */
     /* The picture is the CUT piece: the finished monogram filled with the metal it will be cut in, one thin dark cut line round the outline and round every counter (the holes are open: the card shows through),
        centred with an even margin and scaled to the box. The line is 1 CSS pixel whatever the scale (vector-effect), so it stays a hairline and crisp on a 2x screen. */
-    const TONES = { gold: ["#d9bd78", "#5a4520", "Gold"], gold10k: ["#dec58a", "#5a4520", "10K gold"], gold14k: ["#d4b46a", "#5a4520", "14K gold"], silver: ["#c8ccd2", "#4a4e55", "Silver"], rose: ["#e2b4a1", "#693e33", "Rose gold"] };
     // the metal of the line: the one a person set on the approved design, else the order's own, else a neutral gold
     const metalOf = c => { const ap = approvedFile(c), m = (ap && ap.file && ap.file.metal) || (c.row.spec && c.row.spec.material) || ""; return TONES[m] ? m : ""; };
     function previewSvg(res, metal) {
@@ -201,16 +363,16 @@
         + SLOTS.map(([slot, label], i) => (i ? `<button type="button" class="moSw" data-mo-swap="${i - 1}" aria-label="Swap the ${slotName(i - 1)} and ${label} letters" title="Swap ${slotName(i - 1)} and ${label}"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 5.5h10M10.5 3l2.5 2.5-2.5 2.5M13 10.5H3M5.5 8 3 10.5 5.5 13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>` : "")
           + `<label class="moLt" data-slot="${slot}"><span>${label}</span><input data-mo-l="${i}" maxlength="2" inputmode="text" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="${label} letter"></label>`).join("")
         + `</div><p class="moSays"></p><p class="moMeta" aria-live="polite"></p><div class="moMsg" hidden></div>`
-        + `<div class="moAct"><button type="button" class="btn gold" data-mo="approve" disabled>Approve</button><button type="button" class="btn ghost" data-mo="open" hidden>Set metal · Send to Sheet</button></div></div></div>`;
+        + `<div class="moAct"><button type="button" class="btn gold" data-mo="approve" disabled>Approve</button><button type="button" class="btn ghost" data-mo="open" hidden>Set metal · Send to Sheet</button><button type="button" class="btn ghost sm" data-mo="again" hidden title="Ask the AI to adjust the letters once more">Improve again</button></div></div></div>`;
       c.host = host;
-      c.el = { dot: host.querySelector(".moDot"), st: host.querySelector(".moSt"), open: host.querySelector('[data-mo="open"]'), approve: host.querySelector('[data-mo="approve"]'),
+      c.el = { dot: host.querySelector(".moDot"), st: host.querySelector(".moSt"), open: host.querySelector('[data-mo="open"]'), approve: host.querySelector('[data-mo="approve"]'), again: host.querySelector('[data-mo="again"]'),
         pic: host.querySelector(".moPic"), art: host.querySelector(".moArt"), spin: host.querySelector(".moSpin"), spinTxt: host.querySelector(".moSpin span"), ins: [...host.querySelectorAll("[data-mo-l]")], says: host.querySelector(".moSays"), meta: host.querySelector(".moMeta"), msg: host.querySelector(".moMsg") };
       wire(c);
       return host;
     }
     function paint(c) {
       const h = c.host, el = c.el; if (!h || !el || !h.isConnected) return;
-      const ls = readLetters(c), ap = approvedFile(c), sent = !!(ap && ap.sent), buyer = buyerLetters(c), busy = c.status === "building" || c.approving;
+      const ls = readLetters(c), ap = approvedFile(c), sent = !!(ap && ap.sent), buyer = buyerLetters(c), busy = c.status === "building" || c.approving || c.fit || aiBusy(c);
       // (the letters in the boxes are not the approved ones, or the alphabets they were made from have changed since)
       const dirty = !!(ap && !sent && (ls.join("") !== ap.letters || (c.status === "ready" && c.approvedKey && c.resultKey && c.resultKey !== c.approvedKey)));
       const state = sent ? "sent" : ap && !dirty && c.status !== "error" ? "approved" : c.status === "ready" ? "ready" : busy ? "busy" : c.status === "error" || c.status === "setup" ? "alert" : "words";
@@ -225,7 +387,7 @@
       else if (c.status === "error") art = `<div class="moHint">No picture yet</div>`;
       if (el.art._shown !== art) { el.art.innerHTML = art; el.art._shown = art; }
       el.pic.classList.toggle("busy", busy); el.pic.setAttribute("aria-busy", busy ? "true" : "false");
-      el.spin.hidden = !busy; el.spinTxt.textContent = c.approving ? "Saving…" : "Building…";
+      el.spin.hidden = !busy; el.spinTxt.textContent = c.approving ? "Saving…" : aiBusy(c) ? (c.ai.round ? `Assembling with AI · round ${c.ai.round} of ${AI_ROUNDS}…` : "Checking…") : c.fit ? "Fitting…" : "Building…";
       // the three boxes (never touched while a person is typing in one)
       el.ins.forEach((inp, i) => { if (doc.activeElement !== inp && inp.value !== (ls[i] || "")) inp.value = ls[i] || ""; inp.disabled = sent; inp.setAttribute("aria-invalid", c.status === "words" && !ls[i] ? "true" : "false"); });
       // "The buyer wrote A P V · Left A · Middle P · Right V"
@@ -234,6 +396,7 @@
       // size and anything worth a look
       const notes = [];
       if (c.result && c.status === "ready") { const r = c.result; notes.push(`<span class="moSize">Actual size ${(+r.wMm).toFixed(1)} × ${(+r.hMm).toFixed(1)} mm${metal ? " · " + TONES[metal][2] : ""}</span>`); const adj = ((r.report && r.report.altered) || []).map(a => a.text).filter(Boolean); if (adj.length) notes.push(`<span class="moAdj">Adjusted: ${esc(adj.join(" · "))}</span>`); for (const w of (r.report && r.report.warnings) || []) notes.push(`<span class="moWarn">${esc(cap(w))}</span>`); }
+      if (c.result && c.status === "ready") for (const n of aiNotes(c)) notes.push(n);
       if (c.hint) notes.push(`<span class="moWarn">${esc(c.hint)}</span>`);
       el.meta.innerHTML = notes.join("");
       // a message that needs a person (a missing letter, a load that failed, letters that cannot join)
@@ -242,11 +405,12 @@
       el.msg.innerHTML = err ? `<span role="alert">${esc(err.text)}</span>${err.help ? `<small>${esc(err.help)}</small>` : ""}${err.kind === "load" ? `<button type="button" class="btn ghost sm" data-mo="retry">Try again</button>` : ""}` : "";
       // the one button
       const can = c.status === "ready" && !busy && !!c.result;
-      el.st.textContent = sent ? "On the sheets" : ap && !dirty ? "Approved" : c.status === "ready" ? "Ready to approve" : c.status === "building" ? "Making…" : c.status === "error" || c.status === "setup" ? "Needs a look" : "Waiting for letters";
+      el.st.textContent = sent ? "On the sheets" : ap && !dirty ? "Approved" : c.status === "ready" ? (aiBusy(c) ? "Assembling…" : flaggedOf(c).length ? "Needs a person" : "Ready to approve") : c.status === "building" ? "Making…" : c.status === "error" || c.status === "setup" ? "Needs a look" : "Waiting for letters";
       el.open.hidden = !(ap && !dirty && !sent);
       el.approve.hidden = !!(sent || (ap && !dirty));
-      el.approve.disabled = !can; el.approve.textContent = dirty ? "Replace approved" : "Approve";
-      el.approve.title = can ? "Put this monogram on the order's designs" : busy ? "Making the monogram…" : "Type the three letters first";
+      el.approve.disabled = !can; el.approve.textContent = c.confirmed ? "Approve anyway" : dirty ? "Replace approved" : "Approve";
+      el.approve.title = can ? (c.confirmed ? "It still breaks a rule: put it on the order's designs anyway" : "Put this monogram on the order's designs") : busy ? "Making the monogram…" : "Type the three letters first";
+      el.again.hidden = !(can && flaggedOf(c).length && aiOn() && !aiServerOff && callAi() && !sent);
     }
 
     function wire(c) {
@@ -282,10 +446,11 @@
         const b = ev.target.closest && ev.target.closest("[data-mo]"); if (!b) return;
         if (b.dataset.mo === "approve") approveBy(c);
         else if (b.dataset.mo === "retry") schedule(c, 0);
+        else if (b.dataset.mo === "again") improve(c);
         else if (b.dataset.mo === "open") { const it = itemOf(c, true); if (it) d.CustomSheet.open(it, {}); }
       });
     }
-    function approveBy(c) { if (c.status === "building") c.wantApprove = true; else approve(c); }
+    function approveBy(c) { if (c.status === "building" || aiBusy(c)) c.wantApprove = true; else approve(c); }
     // Esc in a letter box: the edit is taken back (the letters the card last showed), a second Esc leaves the box
     function revert(c) {
       const shown = c.resultLetters ? c.resultLetters.split("") : null, ls = readLetters(c);
@@ -300,13 +465,14 @@
       const sel = ([slot, label]) => `<label class="moAbc"><span>${label}</span><select data-mo-abc="${slot}" aria-label="${label} alphabet"><option value="">${abc.by[slot] === "name" && abc[slot] ? "Automatic · " + esc(abc[slot].name) : "Automatic"}</option>${abc.fams.map(f => opt(slot, f)).join("")}</select></label>`;
       const note = !abc.fams.length ? `<p class="moHint">No 26-letter alphabet is in the charm library yet. Add the monogram file in Master: one design per letter, named Monogram_Left_A … Monogram_Left_Z, Monogram_Mid_A … and Monogram_Right_A …</p>`
         : !abc.ok ? `<p class="moHint">${esc(cap(abc.why))}</p>` : "";
-      return `<details class="moAbcs"${abc.ok ? "" : " open"}><summary><span>Alphabets</span><em>${abc.ok ? esc(names.join(" · ")) : "to choose"}</em></summary><div class="moAbcRow">${SLOTS.map(sel).join("")}</div>${note}</details>`;
+      return `<details class="moAbcs"${abc.ok ? "" : " open"}><summary><span>Alphabets</span><em>${abc.ok ? esc(names.join(" · ")) : "to choose"}</em></summary><div class="moAbcRow">${SLOTS.map(sel).join("")}<div class="moAbc"><span>AI assist</span><button type="button" class="btn ghost sm" data-mo-ai aria-pressed="${aiOn() ? "true" : "false"}" title="Let the AI nudge letters of a monogram that still breaks a rule (up to 3 tries per order)">${aiOn() ? "On" : "Off"}</button></div></div>${note}</details>`;
     }
     function paintAlphabets() {
       if (!pane) return; const box = pane.querySelector(".moAbcWrap"); if (!box) return;
       const abc = alphabets(), was = box.querySelector("details"), open = !!(was && was.open) || !abc.ok; box.innerHTML = alphabetsHtml(abc); abcSig = abcKey(abc);
       const dt = box.querySelector("details"); if (dt && open) dt.open = true;
       box.querySelectorAll("[data-mo-abc]").forEach(s => s.onchange = () => setAlphabet(s.dataset.moAbc, s.value));
+      box.querySelectorAll("[data-mo-ai]").forEach(b => b.onclick = () => setAi(aiOn() ? "off" : "on"));
     }
     const ordered = rows => rows.slice().sort((a, b) => String(a.order.receiptId).localeCompare(String(b.order.receiptId)) || String(a.key).localeCompare(String(b.key)));
     /** Brings the pane up to the orders: a card for every monogram line, none for a line that has gone; the cards that are there are drawn again, never rebuilt (a letter box keeps its caret). */
@@ -357,7 +523,7 @@
       return { destroy() { pane = null; for (const c of cards.values()) { c.host = null; c.el = null; } } };
     }
     const waiting = () => rowsNow().filter(r => { const c = cards.get(r.key), ap = c ? approvedFile(c) : null; return !(ap && ap.sent); });
-    return { count: () => waiting().length, rows: rowsNow, mount, refresh, focus, families, alphabets, lettersOf: readLetters, cards, rebuild, approve, approvedFile, glyph, setAlphabet, results };
+    return { count: () => waiting().length, rows: rowsNow, mount, refresh, focus, families, alphabets, lettersOf: readLetters, cards, rebuild, approve, approvedFile, glyph, setAlphabet, results, improve };
   }
-  return { make, FILE_RE };
+  return { make, FILE_RE, assistLoop, assistSvg, violationsOf, distanceOf, adjustOf, betterThan, AI_ROUNDS, AI_DAY_MAX };
 });
