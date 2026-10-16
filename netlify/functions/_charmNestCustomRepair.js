@@ -35,7 +35,7 @@ const GRACE_MS = DAY, SHORT_MS = 3600000;            // the default age of an or
 const THROTTLE_MS = 5 * MIN, PASS_LEASE_MS = 2 * MIN;
 const RECORDS_PER_PASS = 40, FILE_PAGES = 5, FILE_PAGE = 500;
 const INTENT_DONE_MS = 7 * DAY, INTENT_WANTED_MS = 30 * DAY;
-const COOLDOWN_MS = 2 * MIN, SCOPE_COOLDOWN_MS = 15 * MIN;
+const COOLDOWN_MS = 2 * MIN, SCOPE_COOLDOWN_MS = 15 * MIN, ETSY_BUDGET_MS = 3000, PASS_BUDGET_MS = 7000;
 const up = s => String(s == null ? "" : s).trim().toUpperCase();
 const nowOf = deps => (typeof deps.now === "function" ? deps.now : Date.now)();
 const warn = (what, e) => { try { console.warn("[customRepair] " + what + ":", String((e && (e.message || e.code)) || e).slice(0, 160)); } catch (_) {} };
@@ -161,19 +161,20 @@ async function records(deps, o) {
     docs = snap.docs; out.wrapped = docs.length < limit;
     out.cursor = out.wrapped ? 0 : num(dataOf(docs[docs.length - 1]).at);
   }
-  for (const s of docs) {
+  const one = async s => {
     const d = dataOf(s);
-    if (!d || d.phase !== "repo" || d.rehearsal === true) continue;
+    if (!d || d.phase !== "repo" || d.rehearsal === true) return;
     out.checked++;
     try {
       const [es, as] = await db.getAll(db.collection(INDEX).doc(up(d.sku)), db.collection(ALIASES).doc(str(d.listingId, 30) || "0")), entry = dataOf(es), files = await filesOf(deps, entry);
       const p0 = plan(d, entry, dataOf(as), files, nowOf(deps));
-      if (!p0.state && !p0.alias && !p0.etsy && !d.repair) continue;   // whole: nothing to read again, nothing to write
+      if (!p0.state && !p0.alias && !p0.etsy && !d.repair) return;   // whole: nothing to read again, nothing to write
       const r = await fixRecord(deps, s.id, files);
       if (r && r.did && r.did.length) out.fixed.push({ id: s.id, did: r.did });
       if (r && r.state) out.flagged.push({ id: s.id, state: r.state });
     } catch (e) { warn("record " + s.id, e); out.error = String((e && e.message) || e).slice(0, 120); }
-  }
+  };
+  for (let i = 0; i < docs.length; i += 8) await Promise.all(docs.slice(i, i + 8).map(one));   // (a function has seconds, not minutes: eight at a time)
   return out;
 }
 
@@ -220,7 +221,9 @@ async function etsySteps(deps, o) {
   const out = { ran: [] };
   if (typeof deps.etsySku !== "function") return out;
   const max = Math.min(5, Math.max(1, Math.floor(+o.maxEtsy) || 3));
+  const t0 = Date.now();
   for (const r of await pendingEtsy(deps, max)) {
+    if (out.ran.length && Date.now() - t0 > ETSY_BUDGET_MS) break;   // (a function has 10 seconds by default; the rest waits for the next pass)
     try {
       const a = await deps.etsySku({ rid: r.rid, listingId: r.listingId });
       out.ran.push({ id: r.id, state: a && a.state, reason: a && a.reason });
@@ -249,15 +252,18 @@ async function repair(deps, body) {
     if (gate.skip) return { ok: true, skipped: gate.skip, lastRunAt: num(gate.s.lastRunAt) || null };
     st = gate.s;
   }
-  const step = async (name, fn) => { try { report[name] = await fn(); } catch (e) { warn(name, e); report[name] = { error: String((e && e.message) || e).slice(0, 120) }; } };
+  const t0 = Date.now(), step = async (name, fn) => {
+    if (Date.now() - t0 > PASS_BUDGET_MS) { report[name] = { skipped: "time" }; return; }   // (what does not fit waits for the next pass: the cursor and the age rules make every step resumable)
+    try { report[name] = await fn(); } catch (e) { warn(name, e); report[name] = { error: String((e && e.message) || e).slice(0, 120) }; }
+  };
   try {
-    if (!targeted) await step("orphans", () => orphans(deps, { olderThanMs: timed ? +body.olderThanMs : GRACE_MS }));
+    if (!targeted && body.etsy === true) await step("etsy", () => etsySteps(deps, body));   // (first: it is what the shop is waiting for)
     await step("records", () => records(deps, { rid: body.rid, listingId: body.listingId, limit: body.limit, cursor: st.cursor }));
+    if (!targeted) await step("orphans", () => orphans(deps, { olderThanMs: timed ? +body.olderThanMs : GRACE_MS }));
     if (!targeted) await step("intents", () => intents(deps, {}));
-    if (!targeted && body.etsy === true) await step("etsy", () => etsySteps(deps, body));
   } finally {
     if (!targeted) {
-      const cur = report.records && !report.records.error ? report.records.cursor : st.cursor || 0;
+      const cur = report.records && !report.records.error && !report.records.skipped ? report.records.cursor : st.cursor || 0;
       try { await sref.set({ cursor: cur || 0, lastRunAt: now, runningUntil: 0, last: { orphans: report.orphans && report.orphans.deleted || 0, checked: report.records && report.records.checked || 0 } }, { merge: true }); }
       catch (e) { warn("state not written", e); }
     }
