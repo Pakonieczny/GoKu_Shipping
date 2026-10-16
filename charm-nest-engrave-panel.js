@@ -265,10 +265,10 @@
     const font = `<select class="engpFont" data-engp="font" data-face="${face}" aria-label="${cap1(face)} font"${locked || d.busy ? ' disabled' : ''}>${fontOptions(vm, x.font)}</select>`;
     const job = faceJobOf(vm, face, slot), P = Pos();
     const can = !job || locked ? false : P && P.canMove ? tryDo(() => P.canMove(job), false) : !!(job.fit && job.state === 'review');
-    const off = locked || (job && !can && job.state && job.state !== 'review') ? 'Approved: nothing moves' : !can ? NOFIT : '';
+    const off = locked || (job && !can && job.state && job.state !== 'review' && job.state !== 'approved' && job.state !== 'written') ? 'Approved: nothing moves' : !can ? NOFIT : '';   // (NODECIDED: an approved piece's position buttons work: the first press reopens it for Approve)
     const stuck = (job && d.noRoom && d.noRoom[job.key]) || {};
     const pos = P ? `<div class="engpPos"><span class="engpLbl">Position</span><span class="engpRow" role="group" aria-label="${cap1(face)} position">${POS_BUTTONS.map(([k, t]) => posButton(k, t, d.busy ? NOFIT : off || (stuck[k] ? NOROOM : ''))).join('')}</span></div>` : '';
-    const lock = locked ? `<div class="engpLock" role="status">${cur.lockState === 'skipped' ? 'Cut plain' : 'Approved'}${cur.lockBy ? ' by ' + esc(cur.lockBy) : ''}</div>` : per ? `<div class="engpLock" role="status">Differs per piece</div>` : '';
+    const lock = cur && cur.decided ? `<div class="engpLock" role="status">${cur.lockState === 'skipped' ? 'Cut plain' : cur.lockState === 'written' ? 'Saved to sheet' : 'Approved'}${cur.lockBy ? ' by ' + esc(cur.lockBy) : ''}</div>` : per ? `<div class="engpLock" role="status">Differs per piece</div>` : '';
     return `<div class="engpFace" data-face="${face}">${words}${font}${pos}${lock}</div>`;
   }
   /** The reason prompt (ENGWHY, Paul point 7): shown IN PLACE of the Save / Cancel row when a Save would override the system's choice. Four quick buttons (a press saves at once), one small text box for

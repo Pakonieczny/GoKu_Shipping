@@ -33,9 +33,9 @@
   const wrap180 = d => { d = ((d % 360) + 360) % 360; return d > 180 ? d - 360 : d; };
   const why = (text, extra) => Object.assign({ ok: false, clamped: false, moved: { dx: 0, dy: 0 }, why: text }, extra || {});
 
-  /** The placement is in front of a person to change: not decided, not still being worked out. */
+  /** The placement is in front of a person to change: under review, or approved / saved (its first change reopens it for Approve); not still being worked out. */
   function canMove(job) {
-    return !!(job && job.state === 'review' && !job.stamping && !job.backSaving && !job.approvalPreparing && job.fit && Array.isArray(job.fit.centre) && job.mask && job.mask.bits);
+    return !!(job && (job.state === 'review' || job.state === 'approved' || job.state === 'written') && !job.stamping && !job.backSaving && !job.approvalPreparing && job.fit && Array.isArray(job.fit.centre) && job.mask && job.mask.bits);   // (NODECIDED: an approved piece can be moved: the bridge's own nudge / resize reopen it for Approve on that first change)
   }
 
   /** The drawing box of a job's view (the cut outline's bounding box, in the charm's own coordinates), as a picture of the charm shows it. A back picture is the drawing turned over, so its box is mirrored

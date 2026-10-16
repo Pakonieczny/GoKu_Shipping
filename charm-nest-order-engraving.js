@@ -614,7 +614,7 @@
     const E = root.Engrave; if (!E || !E.restoreView) throw new Error('Engraving is not ready');
     try { if (root.OrderWin && root.OrderWin.close) await root.OrderWin.close(); } catch (_) {}
     const job = r.job, done = DONE.concat(['skipped']).includes(job && job.state) || (r.eng && r.eng.kind === 'approved');
-    E.restoreView(Object.assign({}, E.view(), { tab: done ? 'done' : 'place', focus: done ? null : (job && job.key) || t.key, list: false, chosen: true, q: done ? t.rid : '' }));
+    E.restoreView(Object.assign({}, E.view(), { tab: 'place', focus: (job && job.key) || t.key, list: false, chosen: true, q: done ? t.rid : '' }));   // (NODECIDED: a decided piece opens in the same detail card)
     if (root.CN && root.CN.setMode) root.CN.setMode('engrave');
     E.render();
   }

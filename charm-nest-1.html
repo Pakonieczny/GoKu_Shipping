@@ -2157,9 +2157,8 @@ details.masterHist>summary{white-space:nowrap}
 .doneRow{display:grid;grid-template-columns:auto auto auto minmax(0,1fr) auto minmax(0,auto) auto;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:6px 10px;font-size:12.5px;cursor:pointer}
 .doneRow .mini{width:36px;height:24px;object-fit:contain;background:#fff;border:1px solid var(--line2);border-radius:5px;display:block}
 .egPlacementList{flex:1 1 100%;width:100%;min-width:0;align-content:start;overflow:auto}
-.doneRow.placementRow,.doneRow.decidedRow{width:100%;min-height:108px;box-sizing:border-box;grid-template-columns:88px auto auto minmax(0,1fr);gap:14px;padding:9px 12px}
+.doneRow.placementRow{width:100%;min-height:108px;box-sizing:border-box;grid-template-columns:88px auto auto minmax(0,1fr);gap:14px;padding:9px 12px}
 .doneRow.placementRow{grid-template-columns:88px minmax(170px,.85fr) minmax(280px,1.4fr)}
-.doneRow.decidedRow{grid-template-columns:88px minmax(160px,.8fr) minmax(250px,1.4fr) auto}
 .engravingIdentity{min-width:0;display:grid;gap:5px;align-content:center}
 .engravingOrder{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 12px;margin-bottom:7px}
 .doneRow .engravingOrder .sku{white-space:normal;overflow-wrap:anywhere}
@@ -2176,32 +2175,20 @@ details.masterHist>summary{white-space:nowrap}
 .engravingIdentity [data-stage]:empty{display:none}
 .rvMarkSlot:empty{display:none}   /* (Send to Review: a line's slot for its suggested charms is nothing until something is put in it) */
 .doneRow .engravingIdentity .w{white-space:normal;overflow-wrap:anywhere}
-@media(max-width:1100px){.doneRow.decidedRow{grid-template-columns:76px minmax(160px,1fr) minmax(260px,1.2fr)}.decidedRow .decisionActions{grid-column:2/-1;border-left:0;border-top:1px solid var(--line2);padding:8px 0 0;min-height:0;justify-content:space-between}.purchaseSummary{gap:12px;padding-left:14px}}
-@media(max-width:900px){.doneRow.placementRow,.doneRow.decidedRow{grid-template-columns:76px minmax(0,1fr)}.doneRow .placementThumb{width:76px;height:76px;grid-row:1/3}.purchaseSummary{grid-column:2;border-left:0;border-top:1px solid var(--line2);padding:10px 0 0;margin-top:5px}.doneRow .decisionActions{grid-column:2}}
-@media(max-width:480px){.purchaseSummary{grid-column:1/-1;grid-template-columns:minmax(95px,.8fr) minmax(130px,1.2fr)}.doneRow .placementThumb{grid-row:1}.doneRow .decisionActions{grid-column:1/-1}.engravingOrder{gap:4px}}
+@media(max-width:1100px){.purchaseSummary{gap:12px;padding-left:14px}}
+@media(max-width:900px){.doneRow.placementRow{grid-template-columns:76px minmax(0,1fr)}.doneRow .placementThumb{width:76px;height:76px;grid-row:1/3}.purchaseSummary{grid-column:2;border-left:0;border-top:1px solid var(--line2);padding:10px 0 0;margin-top:5px}}
+@media(max-width:480px){.purchaseSummary{grid-column:1/-1;grid-template-columns:minmax(95px,.8fr) minmax(130px,1.2fr)}.doneRow .placementThumb{grid-row:1}.engravingOrder{gap:4px}}
 .placementRow [data-stage]{font-size:11px;white-space:nowrap}
+/* NODECIDED (Paul, 16 Oct 2026): a decided piece lives in the one list, calm, with its state word and its seals on its row; opened, it is the same detail card, its Approve a quiet "Approved" until something is changed */
+.placementRow [data-stage][data-s="approved"],.placementRow [data-stage][data-s="written"],.placementRow [data-stage][data-s="skipped"]{display:inline-flex;align-self:flex-start;font:700 10.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;border-radius:6px;padding:3px 8px;background:var(--sageSoft,var(--paper2));color:#3f5b3a;white-space:nowrap}
+.placementRow [data-stage][data-s="skipped"]{background:var(--goldSoft);color:#7a5a1d}
+.btn.egApproveButton.egApproved,.btn.egApproveButton.egApproved:disabled{background:var(--sageSoft,var(--paper2));border-color:transparent;color:#3f5b3a;cursor:default;opacity:1}
+.pvApproval .egWrittenNote{font-size:11px;line-height:1.35;color:var(--ink45);text-align:right}
 .placementRow[aria-busy="true"]{cursor:progress}
-.decisionActions{display:flex;align-items:center;gap:18px;padding-left:18px;border-left:1px solid var(--line);min-height:60px}
-.decisionStatus{display:grid;gap:7px;justify-items:start}
-.decisionActions .btn{min-height:40px;padding:9px 16px;font-size:13px;white-space:nowrap}
-.decisionActions .ost{font-size:10.5px;padding:5px 9px}
 .placementThumb{width:88px;height:88px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#fff;border:1px solid var(--line2);border-radius:7px;font:10px var(--sans);color:var(--ink45);text-align:center}
 .placementThumb canvas,.placementThumb img{display:block;width:100%;height:100%;object-fit:contain}
-@media(max-width:900px){.decisionActions{gap:10px;padding-left:12px}.decisionActions .by{max-width:130px}}
 .doneRow .sku{white-space:nowrap}
 .doneRow.open{border-color:var(--ink25);cursor:default}
-.doneDetail{grid-column:1/-1;display:grid;grid-template-columns:minmax(200px,1.1fr) minmax(140px,.7fr) minmax(220px,1.2fr);gap:14px 18px;align-items:start;padding:10px 0 4px;border-top:1px solid var(--line);margin-top:4px;cursor:default}
-.doneDetail .dd{display:grid;gap:4px}
-.doneDetail .dd img,.doneDetail .frontHost canvas,.doneDetail .frontHost img{width:100%;max-height:260px;object-fit:contain;background:#fff;border:1px solid var(--line2);border-radius:8px;display:block}
-.doneDetail .noPic{aspect-ratio:1.4;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;font-size:11.5px;color:var(--ink45);background:var(--card2);border:1px dashed var(--line);border-radius:8px}
-.doneDetail .cap{font:10.5px var(--mono);color:var(--ink45);text-transform:uppercase;letter-spacing:.08em}
-.doneDetail dl.meta{margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 12px;font-size:12.5px}
-.doneDetail dl.meta dt{font:10.5px var(--mono);color:var(--ink45);text-transform:uppercase;letter-spacing:.08em;padding-top:2px}
-.doneDetail dl.meta dd{margin:0;min-width:0;overflow-wrap:anywhere}
-.doneDetail dd.serif{font:600 15px var(--serif)}
-.doneDetail .ctl{grid-column:1/-1;display:flex;gap:10px;align-items:center}
-.doneDetail .ctl .hint{font-size:11.5px;color:var(--ink45)}
-@media (max-width:900px){.doneDetail{grid-template-columns:1fr 1fr}.doneDetail dl.meta{grid-column:1/-1}}
 .doneRow .sku{font-size:11.5px;color:var(--ink45)}
 .doneRow .w{font:600 13px var(--serif);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .doneRow .by{font:11px var(--mono);color:var(--ink45);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -2277,7 +2264,6 @@ details.masterHist>summary{white-space:nowrap}
 .placeView .pvSaid .owSaid{font-size:12.5px;line-height:1.4;min-height:0;padding:6px 9px;max-height:min(20vh,150px);overflow:auto}   /* ENGNOTE: what the customer wrote, the order window's box made compact: a part is a line (its label in front of it); a very long message scrolls inside the box, it never pushes the panel away */
 .placeView .pvSaid .owSaid .lbl{display:inline;margin:0 2px 0 0}
 .placeView .pvSaid .owSaid .lbl:not(:first-child)::before{content:"";display:block;height:4px}
-.doneDetail .pvSaid{grid-column:1/-1}
 .pvCheck ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
 .pvCheck li{display:flex;align-items:flex-start;gap:10px;font:12.5px/1.45 var(--sans);color:var(--ink70);background:var(--paper2);border-radius:8px;padding:7px 9px}
 .pvCheck li span{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
@@ -2369,7 +2355,6 @@ details.masterHist>summary{white-space:nowrap}
 .placeView.egMonoView{grid-template-columns:minmax(0,1fr) clamp(290px,31%,440px);grid-template-areas:"main mail"}
 .egMonoView>.pvMain{gap:14px}
 .egMonoView .egMonoHost{min-width:0}
-.doneDetail.egMonoDetail{display:block;padding:12px 4px 4px}
 .egMonoDetail .egMonoHost+*{margin-top:16px}
 @container (max-width:900px){.placeView.egMonoView{grid-template-columns:minmax(0,1fr);grid-template-areas:"main" "mail";grid-template-rows:auto auto}}
 @media (max-width:920px){.placeView.egMonoView{display:flex;flex-direction:column}}

@@ -81,7 +81,6 @@
     if (m === "engrave" && E && E.view) {
       // (the words drafts of the Engraving tab are not in the snapshot: coming back never replaces what has been typed meanwhile)
       engrave = Object.assign({}, tryDo(() => E.view(), {})); delete engrave.drafts;
-      const open = document.querySelector("#engraveView .doneRow.open"); engrave.openDone = open ? open.dataset.key : null;
     }
     return { mode: m, scrolls: scrollsOf(mainRoot()), win: [window.scrollX, window.scrollY], engrave };
   }
