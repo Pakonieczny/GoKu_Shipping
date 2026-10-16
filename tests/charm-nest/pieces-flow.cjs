@@ -367,7 +367,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       const js0 = await jobsOf('cg2'), k1 = (js0[0] || {}).key, k2 = (js0[1] || {}).key;
       let r = k1 ? await openDetail(k1) : null;
       const tabs = await page.evaluate(() => ({ tabs: [...document.querySelectorAll('.egTab')].map(b => b.textContent.replace(/\s+/g, ' ').trim()), reopen: [...document.querySelectorAll('[data-a=reopen], .reopen, button')].filter(b => /reopen/i.test(b.textContent)).length, decidedRows: document.querySelectorAll('[data-tab=done]').length }));
-      if (process.env.NODECIDED === '1') note(!tabs.tabs.some(x => /^decided\b/i.test(x)) && tabs.decidedRows === 0, 'the Engrave tab has no Decided tab', JSON.stringify(tabs.tabs));   // (the NODECIDED change removes the tab; NODECIDED=1 turns this one check on; the NODECIDED change makes it unconditional)
+      note(!tabs.tabs.some(x => /^decided\b/i.test(x)) && tabs.decidedRows === 0, 'the Engrave tab has no Decided tab', JSON.stringify(tabs.tabs));
       note(tabs.reopen === 0, 'no Reopen button anywhere in the Engrave tab', String(tabs.reopen));
       const before = await jobsOf('cg2'), b1 = before.find(j => j.key === k1), b2 = before.find(j => j.key === k2);
       note(!!b1 && !!b2 && b1.state === 'approved' && b2.state === 'approved' && b1.seals >= 1, 'both pieces of the x2 line are approved (from F4) with a seal each', JSON.stringify(before.map(j => [tailOf(j.key), j.state, j.seals])));
