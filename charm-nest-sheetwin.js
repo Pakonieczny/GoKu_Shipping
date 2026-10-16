@@ -2586,9 +2586,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (b) b.innerHTML = `<span class="spin"></span>Opening Engraving…`;
     const plain = () => close().then(() => {
       const v = Engrave.view();
-      if (job && ["approved", "written", "skipped"].includes(job.state)) Engrave.restoreView(Object.assign({}, v, { tab: "done", focus: null, list: false, chosen: true, q: x.rid || "" }));
+      if (job && ["approved", "written", "skipped"].includes(job.state)) Engrave.restoreView(Object.assign({}, v, { tab: "place", focus: job.key, list: false, chosen: true, q: x.rid || "" }));   // (NODECIDED: a decided piece opens in the same detail card)
       else if (job) Engrave.restoreView(Object.assign({}, v, { tab: "place", focus: job.key, list: false, chosen: true, q: "" }));
-      else Engrave.restoreView(Object.assign({}, v, { tab: "done", focus: null, list: false, chosen: true, q: x.rid || "" }));
+      else Engrave.restoreView(Object.assign({}, v, { tab: "place", focus: null, list: true, chosen: true, q: x.rid || "" }));
       setMode("engrave"); Engrave.render();
       returnPill();
     });

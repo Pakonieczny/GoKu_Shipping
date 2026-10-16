@@ -233,7 +233,7 @@
       if (!perPiece && !locked && distinct.length && w && w.lines && w.lines.length) { const fid = fontIdOf(line, face, w.fontWord, slot); if (runOf(lines, fid) === runOf(w.lines, fid)) lines = w.lines.slice(); }
       const by = locked ? str(locked.approvedBy || locked.decidedBy || (locked.decision && locked.decision.by)) : '';
       const ft = faceFont(line, w && w.fontWord);
-      return { face, label: cap1(face), key: mine.length === 1 ? mine[0].key : (slot || !mine.length ? F.keyOf(line, face, slot) : ''), lines, text: lines.join('\n'), fontWord: (w && w.fontWord) || '', font: ft, perPiece, locked: !!locked, lockState: locked ? locked.state : '', lockBy: by, state: mine.length ? mine.map(j => j.state)[0] : '', jobs: mine };
+      return { face, label: cap1(face), key: mine.length === 1 ? mine[0].key : (slot || !mine.length ? F.keyOf(line, face, slot) : ''), lines, text: lines.join('\n'), fontWord: (w && w.fontWord) || '', font: ft, perPiece, locked: false, decided: !!locked, lockState: locked ? locked.state : '', lockBy: by, state: mine.length ? mine.map(j => j.state)[0] : '', jobs: mine };
     });
     const e = readingOf(line) || {}, pct = Math.round((+setup.confidence || 0) * 100);
     const src = setup.edited ? 'person' : setup.source, srcText = (SRC[src] || (() => ''))(setup.option || e.option);
@@ -243,7 +243,7 @@
       reading: setup.edited ? F.describe(base) : '', from: setup.edited ? '' : srcText ? `from ${srcText}${pct > 0 && setup.source !== 'default' ? ` · ${pct}% sure` : ''}` : (setup.source === 'default' ? 'nothing in the listing or the note says otherwise' : ''),
       raw: rawOf(line), needsPerson: setup.needsPerson, textSource: setup.textSource,
       prompt: setup.needsPerson ? (setup.mode === 'both' ? 'Say which words go on the front and which on the back' : `Say which words go on the ${setup.faces[0] || 'charm'}`) : '',
-      cut: CUT.includes(line.state), sig: JSON.stringify([slot, setup.mode, rows.map(r => [r.text, r.fontWord, r.locked, r.perPiece]), setup.edited, setup.pieceEdited, setup.needsPerson, CUT.includes(line.state)]) };
+      cut: CUT.includes(line.state), sig: JSON.stringify([slot, setup.mode, rows.map(r => [r.text, r.fontWord, r.decided, r.lockState, r.perPiece]), setup.edited, setup.pieceEdited, setup.needsPerson, CUT.includes(line.state)]) };
   }
 
   /* ── the override ───────────────────────────────────────────────────────────── */
@@ -350,14 +350,19 @@
       // a job still being classified takes its words from the setup itself
       const only = patch && patch.slot && SLOT_RX.test(String(patch.slot)) ? String(patch.slot) : null;
       for (const j of env.jobsOf(line)) {
-        const face = faceOfJob(j); if (!setup.faces.includes(face) || DECIDED.includes(j.state) || OPEN_STATES.includes(j.state)) continue;
+        const face = faceOfJob(j); if (!setup.faces.includes(face) || OPEN_STATES.includes(j.state)) continue;
+        // (NODECIDED: an approved, saved or cut-plain piece takes the words and font a person changed on ITS face, and goes back to needing its Approve: env.reopenForEdit, the transition a Reopen always made; a 'none' job never)
+        const wasDecided = j.state === 'approved' || j.state === 'written' || j.state === 'skipped';
+        if (DECIDED.includes(j.state) && !wasDecided) continue;
         const at = slotOfJob(j);
         if (only && at !== only) continue;   // (a piece's own edit re-seeds that piece's jobs only: disc 2 never reaches disc 1)
         const seed = F.seedFor(setup, face, at); if (!seed) continue;
         const touched = !!(patch && patch[face] !== undefined);
+        if (wasDecided && !touched) continue;
         // a face the person did not touch keeps its job when the words are the same words however the fit laid them out ("NAME" / "ONE" in capitals is "Name One");
         // a face the person edited re-seeds when the words, or the font picked for this face, differ from the job's
         if (touched ? (sameWords(j, seed) && str(j.faceFontWord) === str(seed.fontWord)) : (sameWords(j, seed) || runOf(wordsOfJob(j), fontIdOf(line, face, j.faceFontWord || seed.fontWord || null, at)) === runOf(seed.lines, fontIdOf(line, face, seed.fontWord || j.faceFontWord || null, at)))) continue;
+        if (wasDecided && !(env.reopenForEdit && env.reopenForEdit(j))) { res.kept = (res.kept || []).concat(j.key); continue; }   // (busy, or a recalled set not rebuilt yet: it stays as it is, said by the card)
         await env.seed(j, Object.assign({}, seed, { by, ...(whyText ? { why: whyText } : {}) })); res.seeded.push(j.key);
       }
     } catch (e) {
@@ -471,7 +476,7 @@
       const cur = vm.rows.find(r => r.face === f), x = d.faces[f] || { text: '', font: '' }, locked = !!(cur && cur.locked), per = !!(cur && cur.perPiece);
       const words = per ? `<div class="egSuWhy">The words differ from piece to piece: change them on each piece's own card.</div>`
         : `<textarea id="${id}${f}" data-su="words" data-face="${f}" rows="${Math.max(1, Math.min(4, linesOf(x.text).length || 1))}" placeholder="Words for the ${f}" aria-label="Words for the ${f}"${locked || d.busy ? ' disabled' : ''}>${esc(x.text)}</textarea>`;
-      return `<div class="egSuFe" data-face="${f}"><label class="fl" for="${id}${f}">${cap1(f)}</label>${words}${fontSelect(vm, f, x.font, locked || !!d.busy)}${locked ? `<span class="lock">${esc(cur.lockState === 'skipped' ? 'cut plain' : 'approved')}${cur.lockBy ? ' by ' + esc(cur.lockBy) : ''}: open it in Engraving to change it</span>` : ''}</div>`;
+      return `<div class="egSuFe" data-face="${f}"><label class="fl" for="${id}${f}">${cap1(f)}</label>${words}${fontSelect(vm, f, x.font, locked || !!d.busy)}${cur && cur.decided ? `<span class="lock">${esc(cur.lockState === 'skipped' ? 'cut plain' : 'approved')}${cur.lockBy ? ' by ' + esc(cur.lockBy) : ''}: a change asks for a new approval</span>` : ''}</div>`;
     }).join('');
     const prompt = vm.needsPerson && d.mode === vm.mode ? `<div class="egSuAsk" role="status">${esc(vm.prompt)}</div>${vm.raw ? `<div class="egSuRaw" aria-label="The buyer's own words">${esc(vm.raw)}</div>` : ''}` : '';
     const patch = patchOf(vm, d), dirty = hasPatch(patch), cons = dirty ? consequences(vm.line, vm.jobs, nextSetupOf(vm, patch), vm.setup) : null;

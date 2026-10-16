@@ -18,7 +18,7 @@
  *   and one plain line says why (inside the open window, else a toast). A piece on hold, waiting, pulled or on no sheet yet is NOT a reason:
  *   its job is made at once (Engrave.early, ENGPRE) and the detail opens on it, whether or not the piece is nested.
  *
- *   window.EngraveLink.resolve({ rid, key, poolId, piece }) -> { rid, job, tab: "place" | "done" | null }
+ *   window.EngraveLink.resolve({ rid, key, poolId, piece }) -> { rid, job, tab: "place" | null }   (NODECIDED: there is no Decided tab; every piece opens in the detail card)
  *     what open() would land on, without moving anything (tests, and the callers that want to know first)
  *
  * The Engrave module (charm-nest-bridge.js) owns the screen; this only names where it should be (Engrave.restoreView,
@@ -29,14 +29,14 @@
 (function () {
   "use strict";
   if (window.EngraveLink) return;
-  const DONE = ["approved", "written", "skipped"];                                  // the Decided tab's
+  const DONE = ["approved", "written", "skipped"];                                  // the decided pieces (NODECIDED: they open in the same detail card as the others)
   const PLACE = ["review", "words", "blocked", "classify", "ready", "fitting"];     // the Placements tab's
   const WAIT_MS = 7000, STEP_MS = 120, SHUT_MS = 2500, LAND_MS = 4000, WAIT_SPIN_MS = 350;
   const digits = v => String(v == null ? "" : v).replace(/\D/g, "");
   const lead = v => { const m = /^(\d{4,20})(?:[_:\-]|$)/.exec(String(v == null ? "" : v)); return m ? m[1] : ""; };
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const bounded = (p, ms) => Promise.race([Promise.resolve(p).catch(() => {}), sleep(ms)]);
-  const tab = job => (job && DONE.includes(job.state) ? "done" : job && PLACE.includes(job.state) ? "place" : null);
+  const tab = job => (job && (DONE.includes(job.state) || PLACE.includes(job.state)) ? "place" : null);   // (NODECIDED: one list, one tab)
   const live = j => !!(j && j.row && j.row.state !== "gone");
   const ridOfJob = j => digits(j && j.row && j.row.order && j.row.order.receiptId);
   const jobs = () => { try { const E = window.Engrave; return E && E.items ? [...E.items().values()] : []; } catch (_) { return []; } };
@@ -135,32 +135,27 @@
   }
 
   /** Is the piece in front? null: the tab is not drawn yet (a seal is being pressed, the page is settling). */
-  function shown(job, done) {
+  function shown(job) {
     const root = document.getElementById("engraveView"); if (!root || root.classList.contains("hidden")) return null;
-    if (done) { const row = root.querySelector(".doneRow.open"); return !!row && row.dataset.key === job.key; }
     const card = root.querySelector("#egQueue .rvItem"); return !!card && card.dataset.key === job.key;
   }
 
   /** The piece's own card (or decided row) as the Engraving tab shows it now, or null. */
-  const cardOf = (job, done) => {
+  const cardOf = job => {
     const root = document.getElementById("engraveView"); if (!root) return null;
-    const n = done ? root.querySelector(".doneRow.open") : root.querySelector("#egQueue .rvItem");
+    const n = root.querySelector("#egQueue .rvItem");
     return n && n.dataset.key === job.key ? n : null;
   };
 
   async function land(job, rid) {
-    const E = window.Engrave, done = tab(job) === "done", v = E.view();
-    widen(done ? "engrave-done" : "engrave-place", [job]);
-    E.restoreView(Object.assign({}, v, done
-      ? { tab: "done", focus: null, list: false, chosen: true, q: rid, openDone: job.key }
-      : { tab: "place", focus: job.key, list: false, chosen: true, q: rid, openDone: null }));
+    const E = window.Engrave, v = E.view();
+    widen("engrave-place", [job]);
+    E.restoreView(Object.assign({}, v, { tab: "place", focus: job.key, list: false, chosen: true, q: rid }));
     goMode("engrave"); E.render();
-    const end = Date.now() + LAND_MS; let s = shown(job, done);
-    while (s === null && Date.now() < end) { await sleep(60); s = shown(job, done); }
-    // (a decided piece's row is brought into view when the list is longer than the screen)
-    if (s === true && done) { try { const row = document.querySelector("#engraveView .doneRow.open"); if (row) row.scrollIntoView({ block: "nearest" }); } catch (_) {} }
+    const end = Date.now() + LAND_MS; let s = shown(job);
+    while (s === null && Date.now() < end) { await sleep(60); s = shown(job); }
     const w = E.view();
-    return s === true || (s === null && w.tab === (done ? "done" : "place") && (done || w.focus === job.key));
+    return s === true || (s === null && w.tab === "place" && w.focus === job.key);
   }
 
   /** One frame for the pressed control to paint its own busy state before the page does its drawing (a hidden tab draws no frames: never waited on). */
@@ -177,7 +172,7 @@
     let sp = null; const late = setTimeout(() => { sp = spinner("Opening Engraving…"); }, WAIT_SPIN_MS);
     try {
       const ok = await land(job, rid);
-      return { ok, el: ok ? cardOf(job, tab(job) === "done") : null };
+      return { ok, el: ok ? cardOf(job) : null };
     } finally { clearTimeout(late); if (sp) sp.remove(); }
   }
 

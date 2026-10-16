@@ -33,9 +33,9 @@
   const wrap180 = d => { d = ((d % 360) + 360) % 360; return d > 180 ? d - 360 : d; };
   const why = (text, extra) => Object.assign({ ok: false, clamped: false, moved: { dx: 0, dy: 0 }, why: text }, extra || {});
 
-  /** The placement is in front of a person to change: not decided, not still being worked out. */
+  /** The placement is in front of a person to change: under review, or approved / saved (its first change reopens it for Approve); not still being worked out. */
   function canMove(job) {
-    return !!(job && job.state === 'review' && !job.stamping && !job.backSaving && !job.approvalPreparing && job.fit && Array.isArray(job.fit.centre) && job.mask && job.mask.bits);
+    return !!(job && (job.state === 'review' || job.state === 'approved' || job.state === 'written') && !job.stamping && !job.backSaving && !job.approvalPreparing && job.fit && Array.isArray(job.fit.centre) && job.mask && job.mask.bits);   // (NODECIDED: an approved piece can be moved: the bridge's own nudge / resize reopen it for Approve on that first change)
   }
 
   /** The drawing box of a job's view (the cut outline's bounding box, in the charm's own coordinates), as a picture of the charm shows it. A back picture is the drawing turned over, so its box is mirrored
@@ -133,7 +133,7 @@
   /** Put the words back where the snapshot had them. false when the job is not the one the snapshot was taken of any more (it was fitted again: other words, another font, the charm changed) or is
    *  decided: nothing is touched then. */
   function restore(job, snap) {
-    if (!job || !snap || snap.v !== 1 || !canMove(job)) return false;
+    if (!job || !snap || snap.v !== 1 || !canMove(job) || job.state !== 'review') return false;   // (NODECIDED: a Cancel that arrives after the piece was approved elsewhere changes nothing and never reopens it)
     // (the mask of a piece the person TURNED since the snapshot is another object than the snapshot's, but of the same lineage (mask.lin, set by Engrave.turnTo): the same piece, not one fitted again)
     if (job.key !== snap.key || (job.mask !== snap.mask && !(snap.view && snap.mask && snap.mask.lin && job.mask && job.mask.lin === snap.mask.lin)) || job.text !== snap.text) return false;
     if (same(job, snap)) { job.nudged = snap.nudged; return true; }
