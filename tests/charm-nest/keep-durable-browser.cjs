@@ -189,7 +189,7 @@ async function main() {
       ok(await runs(page) === 1, 'S1: the engine ran once');
       await openWin(page, '4196630801'); await ready(page, 'linked'); await settle(page);
       const s = await strip(page);
-      ok(s.phase === 'linked' && !s.sw, 'S1: reopened, the window shows the finished save (not a switch back at OFF): ' + s.phase);
+      ok(s.phase === 'linked' && (!s.sw || s.on), 'S1: reopened, the window shows the finished save (the switch is not back at OFF; KU shows it ON): ' + s.phase + ' ' + (s.sw ? (s.on ? 'switch ON' : 'switch OFF') : 'no switch'));
       await closeWin(page);
       await dropDesign(page, '4196630802'); await ready(page, 'off'); await settle(page);
       ok((await strip(page)).phase === 'off', 'S1: another order\'s window opens with the switch OFF (REVDROP)');
