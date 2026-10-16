@@ -278,7 +278,7 @@ async function engine() {
   eq(w.rows(), { sku: 'done|ACORNS_LEAF_4821', repo: 'done|Saved to the repository', etsy: 'done|Linked on Etsy' }, 'the rows read as the contract says');
   const fin = w.events.filter(e => e.done).pop(); eq([fin.done, fin.sku, fin.text, fin.detail], ['linked', 'ACORNS_LEAF_4821', 'Linked · ACORNS_LEAF_4821', 'Saved to the repository and set on Etsy listing …4821'], 'the final line');
   eq(w.calls, ['customSaveGet', 'customSkuCheck', 'customEtsySkuWrite'], 'calls: one read, one SKU check, ONE Etsy write op');
-  eq(w.bodies[2], { op: 'customEtsySkuWrite', rid: RID }, 'the Etsy op is sent the order number alone');
+  eq(w.bodies[2], { op: 'customEtsySkuWrite', rid: RID, listingId: LISTING }, 'the Etsy op is sent the order number and its listing alone (the server reads the rest from the record)');
   eq(w.bodies[1].candidates.slice(0, 2), ['ACORNS_LEAF_4821', 'ACORNS_LEAF_94821'], 'the SKU check is sent the candidates');
   const spec = w.saves[0]; eq([w.saves.length, spec.sku, spec.reuse, spec.rehearsal, w.uploads, w.builds, w.dialogs], [1, 'ACORNS_LEAF_4821', false, false, ['ai', 'png'], 1, 0], 'built once, two uploads, one save, no dialog');
   // what saveCustom is handed
@@ -294,7 +294,8 @@ async function engine() {
   await why({ entries: [['HEART_1111', { sku: 'HEART_1111' }]], ctx: { line: { sku: 'HEART_1111', variations: [], listingId: LISTING } } }, 'This listing is already linked to HEART_1111.');
   await why({ entries: [['HEART_1111', { sku: 'HEART_1111' }]], ctx: { line: { sku: 'Heart 1111', variations: [], listingId: LISTING } } }, 'This listing is already linked to HEART_1111.');
   await why({ entries: [['HEART_1111', { sku: 'HEART_1111' }]], aliases: { [LISTING]: { bySku: { "ACORN'S LEAF": 'HEART_1111' } } } }, 'This listing is already linked to HEART_1111.');
-  await why({ cloud: false }, 'Saving needs a connection.');
+  // (KEEPSAVE: offline the save is still offered; asked for, it waits for the connection: see keep-durable.cjs)
+  { const o = await world({ cloud: false }).k.open(); eq([o.offered, o.offline, o.sku], [true, true, 'ACORNS_LEAF_4821'], 'offline: the save is still offered (it waits for the connection)'); }
   await why({ ctx: { listingId: '', line: { sku: 'X', variations: [] } } }, 'This order has no Etsy listing to link.');
   await why({ ctx: { F: { name: 'a.ai', bytes: new Uint8Array(9), hash: 'ab', pieces: 1, state: 'reading' } } }, 'Saving works once the design has been read.');
   // a SKU that matches a reserved custom rule is NOT a master design: still offered (even if a master held it)

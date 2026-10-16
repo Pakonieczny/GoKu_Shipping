@@ -37,9 +37,10 @@ function fakeKeep() {
   const W = window.__kw = { calls: [], made: [], steps: null, retrySteps: null, open: {}, settledAsked: [], openGap: 0, early: false, needToken: true, log: [] };
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const FAKE = {
+    durable(deps) { return W.real.durable(deps); },   // (KEEPSAVE: the REAL keeper runs the fake engine)
     make(ctx) {
       const L = [], sku = () => W.sku || 'ACORN_LEAF_4821';
-      const emit = ev => { W.log.push(ev); for (const f of L) try { f(ev); } catch (_) {} };
+      const emit = ev => { W.log.push(ev); if (ev.done) W.out = { done: ev.done, held: ev.reason === 'locked' ? 'locked' : '', reason: ev.reason || '', retry: ev.retry !== false, text: ev.text || '', sku: ev.sku || sku() }; for (const f of L) try { f(ev); } catch (_) {} };
       let running = null;
       const play = async steps => { for (const s of steps) { if (s === 'throw') throw new Error('the reply was cut off'); if (typeof s === 'number') await sleep(s); else emit(s); } };
       const heldRun = () => { emit({ row: 'sku', state: 'done', text: sku() }); emit({ row: 'repo', state: 'locked', text: 'Not saved: needs the repository password' }); emit({ row: 'etsy', state: 'idle', text: 'Waits for the repository' }); emit({ done: 'held', sku: sku() }); };
@@ -56,6 +57,7 @@ function fakeKeep() {
           return Object.assign({ offered: true, why: '', sku: sku(), group: 'all', aliasWorks: true, saved: null, locked: !(ctx.lock && ctx.lock.unlocked('upload')), rehearsal: !!ctx.sandbox, reuse: null }, W.open);
         },
         run() { return running = go(W.steps, 'run'); },
+        outcome() { return W.out || null; },
         retry(which) { return running = go(W.retrySteps || W.steps, 'retry', which); },
         async unlock(pw) {
           W.calls.push('unlock');
@@ -211,17 +213,18 @@ async function main() {
       ok(await page.evaluate(() => !CharmNestRepoLock.unlocked('upload')), 'still locked');
       // the spinner while the server checks, with its label
       await page.evaluate(() => { const real = CN.api; window.__slow = true; const a = window.api; });
-      // the right password: unlocked, the row folds, the focus goes back to Send to Sheet; nothing is saved yet
+      // the right password (KEEPSAVE): the save was asked for already, so the moment the lock opens it runs BY ITSELF (no Send to Sheet, no Save press); the row folds away
+      await page.evaluate(steps => { __kw.steps = steps; }, steps.linked);
       await page.fill('#cuKeepPw', REPO_TEST.password);
       await page.keyboard.press('Enter');
       await page.waitForFunction(() => CharmNestRepoLock.unlocked('upload'), null, { timeout: 8000 });
       await page.waitForFunction(() => document.querySelector('#cuKeep .cuKeepPw').hidden, null, { timeout: 4000 });
+      await page.waitForFunction(() => document.getElementById('cuKeep').dataset.phase === 'linked', null, { timeout: 20000 }).catch(async e => { console.log('DBG', JSON.stringify(await page.evaluate(() => ({ calls: __kw.calls, intents: localStorage.getItem('cn.keepIntents.v1'), phase: document.getElementById('cuKeep').dataset.phase, online: CN.S.cloud.ok }))).slice(0, 1500)); throw e; });
       s = await strip(page);
-      ok(s.on && !s.pw && s.phase === 'ready' && s.dialogs === 1, 'the right password: unlocked, the password row folds away, the switch stays on (ready)');
-      ok(await page.evaluate(() => document.activeElement && document.activeElement.hasAttribute('data-send')), 'the focus goes back to Send to Sheet');
-      ok(await page.evaluate(() => !__kw.calls.some(c => /^(run|retry)/.test(c))), 'unlocking alone saved nothing');
+      ok(!s.pw && s.dialogs === 1, 'the right password: unlocked, the password row folds away, still one pop-up only');
+      ok(await page.evaluate(() => __kw.calls.filter(c => c === 'run').length === 1 && !__kw.calls.some(c => /^retry/.test(c))), 'the moment the lock opened the save ran by itself, exactly once (nobody pressed Send to Sheet or Save)');
       await shot(page, '2-offered');
-      ok(await page.evaluate(() => localStorage.getItem('cn.keep')) === 'on', 'the choice is remembered in localStorage cn.keep');
+      ok(await page.evaluate(() => !!localStorage.getItem('cn.keepIntents.v1') && Object.values(JSON.parse(localStorage.getItem('cn.keepIntents.v1')).intents).some(r => r.state === 'done' && r.rid === '4196630529')), 'the save is recorded in browser storage (cn.keepIntents.v1) and ended done');
       ok(!(await page.evaluate(() => JSON.stringify([...document.querySelectorAll('#cuDlg *')].map(e => e.value || '')).includes('test-'))), 'no password is left anywhere in the window');
       await w.close();
     }

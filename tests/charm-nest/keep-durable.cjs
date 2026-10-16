@@ -31,7 +31,7 @@ function world(opt = {}) {
     }
     w.now = end; await flush(12);
   };
-  w.pump = async (ms = 0) => { await w.advance(ms); };
+  w.pump = async (ms = 0) => { await flush(12); await w.advance(ms); };
   // the browser's storage (shared by every "tab" of the world)
   w.store = { get: k => { if (w.storeFails) throw new Error('storage blocked'); return w.ls.has(k) ? w.ls.get(k) : null; }, set: (k, v) => { if (w.storeFails) throw new Error('quota'); w.ls.set(k, v); } };
   // the repository lock (the password gate): found = a token is held

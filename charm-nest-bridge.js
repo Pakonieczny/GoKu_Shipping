@@ -1596,6 +1596,17 @@ const Orders = window.Orders = (() => {
     if (tableTimer || tableBusy || !S.cloud.ok) return;
     tableTimer = setTimeout(() => { tableTimer = 0; askTables().catch(e => console.warn("SKU tables", e)); }, 800);
   }
+  /** One listing's SKU table, asked for now (the design-save keeper needs it for the Etsy step's group; a line that never waited on its SKU would never have asked). Not more than once a minute per listing. */
+  const tableAsked = new Map();
+  async function askTable(id) {
+    id = String(id || ""); if (!id || !S.cloud.ok) return null;
+    if (B.maps.listingSkus[id]) return B.maps.listingSkus[id];
+    const t = tableTry.get(id), last = tableAsked.get(id) || 0; if ((t && Date.now() < t.until) || Date.now() - last < 60000) return null;
+    tableAsked.set(id, Date.now());
+    const r = await api("charmNestLibrary", { op: "listingSkus", listingIds: [id] }, { quiet: true }).catch(() => null);
+    if (r && r.tables) await takeTables(r.tables);
+    return B.maps.listingSkus[id] || null;
+  }
   /** What a waiting line asks of its listing's table, most wanted first: a line that asks about an option (one look at the table can clear it)
    *  before one that only lacks its SKU, a font / count question (the table cannot answer those) last; then the oldest order. */
   function tableRank(r) {
@@ -2441,7 +2452,7 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, walkRows: () => groupsOf(visibleRows()).flatMap(g => g.rows), showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
+  return { view: () => OV, walkRows: () => groupsOf(visibleRows()).flatMap(g => g.rows), showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, askTable, _kept: () => readSaid.size };
 })();
 
 /* ═══ 18b · the page is the version that was deployed (MASTER4, Paul 15 Oct 2026) ══════════════════════════════
@@ -3077,13 +3088,14 @@ const Master = window.Master = (() => {
      with reason "locked" and the person unlocks in the window's own strip.
      spec = { rid, listingId, sku, oldSku, productId, optionPairs, group:{mode,productIds}, title, by, F:{name,kind,hash,bytes}, charm, parsed,
               reuse: false | "EXISTING_SKU", rehearsal: bool, built: null | {ai,png}, uploaded: {ai,png}  (what an earlier try already made, so a retry builds and uploads nothing twice) }
-     hooks = { needPassword(): Promise<{token,action,expiresAt}|null>, say(text), built({ai,png}), uploaded(which, {path,url,bytes}) }
-     -> { ok:true, sku, created, entry, alias, rehearsed? }  or  { ok:false, reason, text, ... }  reason: locked | offline | geometry | sku-taken | already-saved | not-uploaded | bad-file | reserved | sandbox | unavailable | error
+     hooks = { needPassword(): Promise<{token,action,expiresAt}|null>, say(text), built({ai,png}), uploaded(which, {path,url,bytes}), alive(): false once the switch is turned off (KEEPSAVE: looked at before each upload and before the commit) }
+     -> { ok:true, sku, created, entry, alias, rehearsed? }  or  { ok:false, reason, text, ... }  reason: locked | offline | geometry | sku-taken | already-saved | listing-linked | not-uploaded | bad-file | reserved | sandbox | unavailable | cancelled | error
      A rehearsal (the sandbox) builds the file to prove it can be made and uploads and writes nothing. */
   async function saveCustom(spec, hooks) {
     hooks = hooks || {}; spec = spec || {};
     const say = t => { try { if (hooks.say) hooks.say(t); } catch (_) { /* a label only */ } };
     const fail = (reason, text, extra) => Object.assign({ ok: false, reason, text }, extra || {});
+    const alive = () => { try { return !hooks.alive || hooks.alive() !== false; } catch (_) { return true; } };
     const sku = String(spec.reuse || spec.sku || "").trim().toUpperCase(), c = spec.charm, F = spec.F || {};
     if (!/^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(sku)) return fail("bad-sku", "that SKU cannot be used");
     if (!c || !spec.parsed) return fail("error", "the design is no longer read: open the order again");
@@ -3119,21 +3131,25 @@ const Master = window.Master = (() => {
       const up = Object.assign({}, spec.uploaded || {});
       const once = async (which, path, bytes, type) => {
         if (up[which]) return;
+        if (!alive()) throw Object.assign(new Error("switched off"), { keepCancelled: true });
         say(`Saving ${sku}.${which === "ai" ? "ai" : "png"}…`);
         for (let again = false; ; again = true) {
-          try { up[which] = await uploadBytes(path, bytes, type, `Saving ${sku}`, { repoToken: tok.token }); try { if (hooks.uploaded) hooks.uploaded(which, up[which]); } catch (_) { /* as above */ } return; }
+          try { up[which] = await uploadBytes(path, bytes, type, `Saving ${sku}`, { repoToken: tok.token, charmHash: c.hash }); try { if (hooks.uploaded) hooks.uploaded(which, up[which]); } catch (_) { /* as above */ } return; }
           catch (e) { if (!again && L.isRepoLocked(e)) { L.forget(tok.action || "upload"); tok = await need(); if (!tok) throw Object.assign(new Error("locked"), { keepLocked: true }); continue; } throw e; }
         }
       };
       if (!spec.reuse) {
         try { await once("ai", `charmnest/master/custom/${sku}.ai`, built.ai, "application/illustrator"); await once("png", `charmnest/master/custom/${sku}.png`, built.png, "image/png"); }
-        catch (e) { if (e && e.keepLocked) return fail("locked", "needs the repository password"); throw e; }
+        catch (e) { if (e && e.keepLocked) return fail("locked", "needs the repository password"); if (e && e.keepCancelled) return fail("cancelled", "switched off"); throw e; }
       }
+      if (!alive()) return fail("cancelled", "switched off");   // (the switch went off before anything was written to the repository: nothing is)
+      // what the server checks the uploaded files against (the geometry equals the file: the built .ai's own hash, its size, the picture's hash)
+      const proof = spec.reuse || !built ? {} : { aiSha256: await sha256(built.ai), aiBytes: built.ai.length, pngSha256: await sha256(built.png) };
       // 5 · the records, in one go on the server
       say(spec.reuse ? `Linking ${sku}…` : `Writing ${sku} to the repository…`);
       const body = () => ({ op: "customSaveCommit", repoToken: tok.token, rid: String(spec.rid), listingId: String(spec.listingId), sku, oldSku: String(spec.oldSku || ""), productId: String(spec.productId || ""), optionPairs: spec.optionPairs || [], group: spec.group || { mode: "unknown", productIds: [] }, title: String(spec.title || ""), by: String(spec.by || ""),
         design: { name: F.name, kind: F.kind === "dxf" ? "dxf" : "ai", hash: F.hash, bytes: F.bytes ? F.bytes.length : 0 }, reuse: !!spec.reuse,
-        entry: spec.reuse ? { charmHash: c.hash } : { charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource }, file: { masterHash: F.hash, name: F.name } });
+        entry: spec.reuse ? { charmHash: c.hash } : { charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource }, file: Object.assign({ masterHash: F.hash, name: F.name }, proof) });
       let r;
       for (let again = false; ; again = true) {
         try { r = await api("charmNestLibrary", body(), { label: `Saving ${sku}`, quiet: true }); break; }
@@ -3141,13 +3157,14 @@ const Master = window.Master = (() => {
       }
       if (!r || r.ok !== true) {
         const why = r && r.error || "error";
-        const words = { "sku-taken": "that SKU was just taken", "already-saved": `this order is already saved as ${(r && r.sku) || "another SKU"}`, "not-uploaded": "the file did not reach the repository", "bad-file": "the saved file looks wrong", reserved: "that SKU is reserved", sandbox: "this is the sandbox", "reuse-missing": "the design to reuse is no longer in the repository", "reuse-blocked": "the design to reuse is blocked", "reuse-mismatch": "the design to reuse is not the same drawing" };
+        const words = { "sku-taken": "that SKU was just taken", "already-saved": `this order is already saved as ${(r && r.sku) || "another SKU"}`, "not-uploaded": "the file did not reach the repository", "bad-file": "the saved file looks wrong", reserved: "that SKU is reserved", "listing-linked": `this listing is already linked to ${(r && r.sku) || "another design"}`, sandbox: "this is the sandbox", "reuse-missing": "the design to reuse is no longer in the repository", "reuse-blocked": "the design to reuse is blocked", "reuse-mismatch": "the design to reuse is not the same drawing" };
         return fail(why in words ? why : "error", words[why] || (r && r.error) || "the repository did not answer", { sku: r && r.sku });
       }
       // 6 · the entry joins the page's library at once; the signature moved, so the next scheduled check reads the index (no forced load)
       if (r.entry && r.entry.sku) B.master.entries.set(r.entry.sku, r.entry);
       return { ok: true, sku: r.sku || sku, created: r.created !== false, entry: r.entry || null, alias: r.alias || "", rehearsed: false };
     } catch (e) {
+      if (e && e.status === 409 && e.data && e.data.error === "sku-taken") return fail("sku-taken", "that SKU was just taken", { sku: e.data.sku });   // (the door refused an upload over another design's files: nothing was written; the next candidate)
       const net = !!e && (e.transient === true || /cloud offline|timed out|no answer/i.test(String(e.message || "")));   // (a passing network trouble; anything else is an error to be read)
       return fail(net ? "offline" : "error", net ? "you could not reach the cloud" : String((e && e.message) || e).slice(0, 160), { transient: !!(e && e.transient) });
     }
@@ -12146,6 +12163,7 @@ const CustomSheet = window.CustomSheet = (() => {
   }
   function remove(ck, id) {
     const e = all()[ck]; if (!e || e.sent || e.sendIntent || busy.has(ck)) return;
+    keepFileRemoved(e.rid, e.files.find(F => F.id === id));   // (KEEPSAVE: a save of this file that is not in the repository yet is switched off with it)
     e.files = e.files.filter(F => F.id !== id); geo.delete(id); pending.delete(id); arriving.delete(id); popThumb.delete(id);
     if (!e.files.length) delete all()[ck];
     changed();
@@ -12746,6 +12764,170 @@ const CustomSheet = window.CustomSheet = (() => {
     if (/^(linked|already-linked|master)$/.test(w)) { const s = txt((o && (o.sku || o.linked)) || ""); return s ? `This listing is already linked to ${s}.` : "This listing is already linked to a charm."; }
     return "Saving is not offered for this order.";
   }
+  /* ── KEEPSAVE (Paul, 16 Oct 2026: "super robust and completely self contained ... resilient to pauses, interruptions, clicking away ... all eventualities") ──
+     The switch records a save INTENT (browser storage, keyed by order + listing + the file's hash, written before any step) and charm-nest-keep.js's keeper runs the
+     engine by itself until it ends: it waits for the password, the connection, the design or the listing's SKU list, and goes on the moment each is there (page load,
+     online, tab visible, the lock opening or closing in this or another tab, the window closing, data arriving, a slow beat). Nothing here waits for a press. The window
+     only SHOWS the intent (K.intent); the engine's rows still arrive as events. The design's own copy is kept in this browser (IndexedDB) so a reload, the card being
+     tidied away or the order being sent cannot lose it; removing the file from the order is what cancels a save that is not in the repository yet. ── */
+  const KEEP_WAIT_TABLE = 8000;              // the listing's SKU list is asked for and waited for this long, then the save goes on without it (the repository step does not need it; the Etsy step reads the live inventory when the group is unknown)
+  const KEEP_LOST_AFTER = 10 * 60 * 1000;    // a design found neither on the card nor in this browser for this long is reported, not waited for for ever
+  const keepFiles = new Map();               // file hash → the design read back from this browser's own copy
+  const KeepBytes = (() => {
+    const DB = "cn.keep.v1", ST = "bytes";
+    const open = () => new Promise((res, rej) => { try { const q = indexedDB.open(DB, 1); q.onupgradeneeded = () => q.result.createObjectStore(ST); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); } catch (e) { rej(e); } });
+    const tx = async (mode, fn) => { const db = await open(); return new Promise((res, rej) => { let out; const t = db.transaction(ST, mode); out = fn(t.objectStore(ST)); t.oncomplete = () => { db.close(); res(out && out.result); }; t.onerror = t.onabort = () => { db.close(); rej(t.error); }; }); };
+    return { put: (hash, rec) => tx("readwrite", s => s.put(rec, hash)).then(() => true, () => false), get: hash => tx("readonly", s => s.get(hash)).then(r => r || null, () => null), del: hash => tx("readwrite", s => s.delete(hash)).then(() => true, () => false) };
+  })();
+  let keeper = null;
+  function keeperOf() {
+    if (keeper) return keeper;
+    const lib = KeepLib(); if (!lib || typeof lib.durable !== "function") return null;
+    try {
+      keeper = lib.durable({
+        store: { get: k => { try { return localStorage.getItem(k); } catch (_) { return null; } }, set: (k, v) => localStorage.setItem(k, v) },
+        online: () => S.cloud.ok === true && navigator.onLine !== false, lock: RLock(), locks: navigator.locks && typeof navigator.locks.request === "function" ? { request: (name, fn) => navigator.locks.request(name, fn) } : null,
+        resolve: keepResolve, make: ctx => (KeepLib() || lib).make(ctx),   // (the page's engine is looked up each time: a test swaps it)
+        remote: { put: rec => (rec.etsyOnly ? null : api("charmNestLibrary", { op: "customSaveIntent", sandbox: !!rec.sandbox, rid: rec.rid, listingId: rec.listingId, hash: rec.hash, name: rec.name, by: rec.by, state: rec.state === "off" ? "cancelled" : rec.state === "done" ? "done" : "wanted" }, { quiet: true })) },
+        etsy: rec => api("charmNestLibrary", { op: "customEtsySkuWrite", rid: String(rec.rid), listingId: String(rec.listingId), ...(rec.sandbox ? { sandbox: true } : {}) }, { quiet: true, timeoutMs: 60000 })
+      });
+      keeper.on(keepIntentEvent);
+    } catch (err) { console.warn("Save keeper", err); keeper = null; }
+    return keeper;
+  }
+  /** On a page load: saves in the repository whose Etsy step is not done (the browser that made them is gone or was closed) are finished by this page; the cloud is the memory. */
+  async function keepPending() {
+    try {
+      const kp = keeperOf(); if (!kp || WORKSPACE_SANDBOX || S.cloud.ok !== true) return 0;
+      const r = await api("charmNestLibrary", { op: "customSavePending" }, { quiet: true });
+      return r && Array.isArray(r.pending) ? kp.adoptPending(r.pending, false) : 0;
+    } catch (_) { return 0; }
+  }
+  /** The cloud's repair pass (orphan uploads, records, pending Etsy steps): best effort, never awaited by anything the person sees; once per load, on online, every ~10 minutes while the page is open. */
+  let repairAt = 0;
+  async function keepRepair(reason) {
+    try {
+      if (WORKSPACE_SANDBOX || S.cloud.ok !== true || Date.now() - repairAt < 4 * 60 * 1000) return;
+      repairAt = Date.now(); await api("charmNestLibrary", { op: "customSaveRepair", etsy: true }, { quiet: true });
+    } catch (_) { /* the next pass */ }
+  }
+  setInterval(() => { try { keepRepair("beat"); } catch (_) { /* quiet */ } }, 10 * 60 * 1000);
+  const keepKick = reason => { try { const kp = keeperOf(); if (kp) { kp.resume(reason || "kick"); keepPaintLater(); if (reason === "load" || reason === "online") setTimeout(() => keepRepair(reason), 3000); } } catch (err) { console.warn("Save keeper", err); } };
+  /** This workspace's intents only (a sandbox page never runs a real save, and a real page never runs a rehearsal). */
+  const mine = rec => !!rec && !!rec.sandbox === !!WORKSPACE_SANDBOX;
+  /** The intent of one card (the newest that is not switched off), or null. */
+  function intentOfCk(ck) {
+    const kp = keeper; if (!kp || !ck) return null;
+    let best = null; for (const r of kp.list()) if (mine(r) && r.ck === ck && r.state !== "off" && (!best || (r.upd || 0) > (best.upd || 0))) best = r;
+    return best;
+  }
+  /** The design of an intent as the page holds it NOW: on its card, else this browser's own copy. Never a half-read file. */
+  async function keepResolve(rec) {
+    if (!mine(rec)) return { state: "skip" };
+    let F = null, entry = null;
+    for (const x of Object.values(all())) { if (x && String(x.rid) === String(rec.rid)) { const f = (x.files || []).find(f => f.hash && f.hash === rec.hash); if (f) { F = f; entry = x; break; } } }
+    if (F && F.state === "error") return { state: "lost", why: "the design could not be read: drop the file again" };
+    if (F && F.state !== "ready") return { state: "wait", wait: "data", why: "the design is being read" };
+    if (!F) {
+      F = keepFiles.get(rec.hash) || null;
+      if (!F) {
+        const b = await KeepBytes.get(rec.hash);
+        if (b && b.bytes && b.bytes.length) {
+          const G = { id: "keep-" + String(rec.hash).slice(0, 12), name: b.name || rec.name, kind: b.kind === "dxf" ? "dxf" : "ai", size: b.bytes.length, bytes: b.bytes, hash: rec.hash, cloud: null, pieces: 0, state: "reading" };
+          const { charms } = await read(G); G.pieces = charms.length; G.state = "ready"; keepFiles.set(rec.hash, G); F = G;
+        }
+      }
+      if (!F) return Date.now() - (rec.at || 0) > KEEP_LOST_AFTER ? { state: "lost", why: "the design is no longer on this browser: drop the file again" } : { state: "wait", wait: "data", why: "looking for the design" };
+    }
+    const { parsed, charms } = await read(F);
+    if (!F.hash && F.bytes) F.hash = await sha256(F.bytes);
+    const lid = String(rec.listingId), have = B.maps && B.maps.listingSkus && B.maps.listingSkus[lid];
+    if (!have && S.cloud.ok === true && Date.now() - (rec.at || 0) < KEEP_WAIT_TABLE) {   // the listing's SKU list is asked for (once a minute) and waited for a little
+      try { Orders.askTable(lid); } catch (_) { /* the plan goes without it after the wait */ }
+      return { state: "wait", wait: "data", why: "the listing's SKU list is loading" };
+    }
+    const line = rec.line || {}, spc = {};
+    const ctx = {
+      rid: String(rec.rid), listingId: lid, title: txt(rec.title || ""), line: { sku: txt(line.sku || ""), productId: line.productId != null ? line.productId : null, variations: Array.isArray(line.variations) ? line.variations : [], listingId: lid },
+      listingKind: ((B.maps && B.maps.aliases && B.maps.aliases[lid]) || {}).listingKind || undefined, F, charm: charms[0], parsed, sandbox: !!rec.sandbox, designs: 1,
+      S, O, Sku: window.CharmNestSku || null, Master, aliases: (B.maps && B.maps.aliases) || {}, tableFor: id => ((B.maps && B.maps.listingSkus) || {})[String(id)] || null,
+      api, lock: RLock(), now: () => Date.now()
+    };
+    Object.defineProperty(ctx, "by", { enumerable: true, get: () => rec.by || employeeName() });
+    return { state: "ready", ctx };
+  }
+  /** The switch turned ON: the intent is recorded, then the keeper takes it. */
+  function keepStartIntent(K) {
+    const kp = keeperOf(), c = K && K.ctx; if (!kp || !c || !c.F || !c.F.hash) return false;
+    const F = c.F, ready = F.bytes && F.bytes.length ? KeepBytes.put(F.hash, { name: F.name, kind: F.kind, bytes: F.bytes, at: Date.now() }) : Promise.resolve(false);
+    const r = kp.begin({ sandbox: !!c.sandbox, rid: c.rid, listingId: c.listingId, hash: F.hash, name: F.name, kind: F.kind, by: employeeName() || "", ck: K.ck, title: c.title,
+      line: { sku: c.line.sku, productId: c.line.productId, variations: c.line.variations }, ready });
+    if (!r.key) return false;
+    K.intentKey = r.key; K.on = true; K.live = true; K.final = null; K.toasted = false; K.rows = freshRows(); K.seen = {};
+    K.phase = keepLocked(K) ? "waiting" : "running"; K.intent = r.rec || null; K.view = kp.describe(K.intent);
+    return true;
+  }
+  /** The keeper says something: an engine row (shown in the window if it is open) or an intent changing (the window, the card line, a toast). */
+  const keepToasted = new Set();
+  function keepOfKey(key) { for (const K of keeps.values()) if (K.intentKey === key) return K; return null; }
+  function keepIntentEvent(ev) {
+    try {
+      if (!ev) return;
+      if (ev.type === "engine") { const K = keepOfKey(ev.key); if (K) keepEvent(K, ev.ev); return; }
+      if (ev.type !== "state" || !ev.rec) return;
+      const rec = ev.rec; if (!mine(rec)) return;
+      const K = keeps.get(rec.ck);
+      if (K && (K.intentKey === rec.key || !K.intentKey) && K.sig && K.sig.split("|")[2] === rec.hash) { K.intentKey = rec.key; keepApplyIntent(K, rec, ev.view); }
+      keepIntentToast(rec, ev.view); keepForgetBytes(rec); keepPaintLater();
+    } catch (err) { console.warn("Save keeper", err); }
+  }
+  /** What the window's strip shows follows the intent (the engine's rows fill in as they come). */
+  function keepApplyIntent(K, rec, view) {
+    const kp = keeperOf(); view = view || (kp && kp.describe(rec)) || { phase: "saving", line: "" };
+    const was = K.phase; K.intent = rec; K.view = view; K.intentKey = rec.key; K.sku = txt(rec.sku || K.sku || "");
+    if (rec.state === "off") { if (K.phase !== "opening" && K.phase !== "quiet") { K.phase = "off"; K.on = false; K.live = false; K.final = null; K.rows = freshRows(); K.pwOpen = false; } return; }
+    K.on = true;
+    if (rec.state === "wanted" || rec.state === "running") { K.phase = "running"; K.live = true; K.final = null; return; }
+    if (rec.state === "waiting") { K.phase = "waiting"; K.live = true; K.final = null; return; }
+    K.live = false;
+    const witnessed = !!(K.seen && (K.seen.repo || K.seen.etsy));
+    if (rec.state === "done") {
+      K.phase = rec.outcome === "rehearsed" ? "rehearsed" : "linked"; K.final = { done: K.phase, sku: K.sku, text: rec.outcome === "already" ? view.line : "" }; K.fromRecord = !witnessed;
+      if (!witnessed) K.rows = { sku: { state: "done", text: K.sku }, repo: { state: "done", text: rec.outcome === "already" ? "Already in the repository" : "Saved to the repository" }, etsy: { state: "done", text: "Linked on Etsy" } };
+      if ((was === "running" || was === "waiting") && witnessed && !K.foldP) K.foldP = new Promise(r => { K.foldDone = r; });
+      return;
+    }
+    if (rec.state === "attention") {                // the one thing that needs a person; the failing row says it, with its Try again
+      const bad = rec.repo ? "etsy" : (["repo", "sku", "etsy"].find(n => K.rows[n] && K.rows[n].state === "failed") || "repo");
+      if (!K.rows[bad] || K.rows[bad].state !== "failed") K.rows[bad] = { state: "failed", text: rec.why || "something went wrong", retry: true };
+      K.phase = rec.repo ? "saved" : "held"; K.final = { done: K.phase, sku: K.sku, text: rec.why || "" };
+    }
+  }
+  /** A finished save is told once, in this tab, when its window is not on screen (a reload does not tell it again). */
+  function keepIntentToast(rec, view) {
+    const tag = rec.key + "|" + rec.state + "|" + (rec.wait || "");
+    if (keepToasted.has(tag) || (rec.state !== "done" && rec.state !== "attention")) return; keepToasted.add(tag);
+    if (rec.state === "done" && !rec.etsyOnly && (rec.upd || 0) < Date.now() - 20000) return;   // (a record read from storage after a reload is shown, not announced)
+    if (D.dlg && D.dlg.open && D.ck === rec.ck) return;
+    if (rec.state === "done") { if (rec.outcome === "rehearsed") toast("Rehearsal complete. Nothing was saved.", "ok", 4000); else toast(rec.outcome === "already" ? `Order ${rec.rid}: ${view.line}` : `Order ${rec.rid}: ${rec.sku} saved to the repository and linked on Etsy`, "ok", 6000); }
+    else toast(`Order ${rec.rid}: ${rec.repo ? rec.sku + " saved to the repository. " : "Not saved to the repository. "}Needs attention: ${rec.why || "something went wrong"}. Open the order to try again.`, "bad", 9000);
+  }
+  /** The design's own copy is kept only while a save may still need it. */
+  function keepForgetBytes(rec) {
+    if (!rec || (rec.state !== "done" && rec.state !== "off") || !rec.hash || rec.etsyOnly) return;
+    const kp = keeper; if (kp && kp.list().some(r => r.hash === rec.hash && r.key !== rec.key && r.state !== "done" && r.state !== "off")) return;
+    keepFiles.delete(rec.hash); KeepBytes.del(rec.hash);
+  }
+  /** The file taken off its order: a save that is not in the repository yet is switched off (what is saved already stays; it is never un-saved). */
+  function keepFileRemoved(rid, F) {
+    try { const kp = keeper; if (!kp || !F || !F.hash) return; for (const r of kp.list()) if (mine(r) && r.rid === String(rid) && r.hash === F.hash && (r.state === "wanted" || r.state === "running" || r.state === "waiting")) kp.cancel(r.key, "the file was removed from the order"); } catch (err) { console.warn("Save keeper", err); }
+  }
+  // every wake-up: the page coming back, the network, the other tab's lock (the lock itself tells the keeper), a slow beat while anything waits (the keeper arms it)
+  addEventListener("online", () => keepKick("online"));
+  addEventListener("focus", () => keepKick("focus"));
+  addEventListener("pageshow", () => keepKick("pageshow"));
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) keepKick("visible"); });
+  addEventListener("storage", e => { try { if (keeper && e.key === "cn.keepIntents.v1") { keeper.external(); keepPaintLater(); } } catch (_) { /* a later wake-up finds it */ } });
   const ROW_NAMES = { sheet: "Sheet placement", repo: "Repository save", sku: "SKU created", etsy: "Etsy linked" };
   const ROW_ORDER = ["sheet", "repo", "sku", "etsy"];
   const freshRows = () => ({ sku: { state: "idle", text: "" }, repo: { state: "idle", text: "" }, etsy: { state: "idle", text: "" } });
@@ -12794,8 +12976,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const ck = D.ck; if (!ck || !e || !it || !e.files.length || e.files.some(F => F.state === "reading")) return null;
     const row = linesOf(it)[0]; if (!row) return null;
     if (!KeepLib()) return null;                                           // no engine: the window is exactly as it was
-    if (e.files.length !== 1 || e.files[0].state !== "ready" || e.files[0].pieces !== 1) return { phase: "quiet", why: WHY.one, stub: true, rows: freshRows(), pw: {} };
-    if (!S.cloud.ok) return { phase: "quiet", why: WHY.offline, stub: true, rows: freshRows(), pw: {} };
+    if (e.files.length !== 1 || e.files[0].state !== "ready" || e.files[0].pieces !== 1) { const mineI = keeperOf() && intentOfCk(ck); return { phase: "quiet", why: mineI ? keeper.describe(mineI).line || WHY.one : WHY.one, stub: true, rows: freshRows(), pw: {} }; }   // (a save already running for this order keeps showing its state)
     const F = e.files[0], sig = [ck, F.id, F.hash || "", row.line.sku || "", row.line.listingId || "", row.line.productId || ""].join("|");
     let K = keeps.get(ck);
     if (K && K.sig !== sig && !K.live && K.phase !== "running") { keeps.delete(ck); K = null; }
@@ -12837,30 +13018,29 @@ const CustomSheet = window.CustomSheet = (() => {
     if (K.ctx && K.ctx.sandbox || K.open && K.open.rehearsal) return false;
     const lk = RLock(); return lk && typeof lk.unlocked === "function" ? !lk.unlocked("upload") : !!K.locked0;
   }
-  /** `open()` answered: not offered (one quiet line), saved before (the record says how far it got), or ready (the switch). */
+  /** `open()` answered: not offered (one quiet line), a save of this design under way or finished (its intent, else the cloud's record: the window shows its state), or ready (the switch, OFF). */
   function keepOpened(K, o) {
     K.open = o; K.sku = txt(o.sku || ""); K.locked0 = !!o.locked;
     if (!o.offered) { K.phase = "quiet"; K.why = keepWhy(o); return; }
+    // (KEEPSAVE) a save of this very design for this order and listing that is running, waiting, finished or needs attention keeps showing its state when the window opens again
+    const kp = keeperOf(), rid = K.ctx && K.ctx.rid, lid = K.ctx && K.ctx.listingId, hash = K.ctx && K.ctx.F && K.ctx.F.hash;
+    const mineI = kp && kp.list().find(r => mine(r) && r.rid === String(rid) && r.listingId === String(lid).replace(/\D/g, "") && r.hash === hash && r.state !== "off");
+    if (mineI) { K.seen = K.seen || {}; keepApplyIntent(K, mineI); K.sig && (K.intentKey = mineI.key); return; }
     const sv = o.saved;
     if (sv && sv.sku) {
       K.sku = txt(sv.sku); const es = sv.etsy || {}, linked = es.state === "linked";
       // (what the record says of Etsy: linked; refused or not confirmed, with its words; not tried yet; or a write that was cut off, which Retry reads before it writes)
       const etsyWhy = txt(es.text || "") || (es.state === "failed" || es.state === "unverified" ? txt(es.reason || "") : "") || (es.state === "writing" ? "the last change was not confirmed" : "not set on Etsy yet");
-      const mine = { sku: { state: "done", text: K.sku }, repo: { state: "done", text: sv.reused ? `Already in the repository as ${K.sku}` : "Saved to the repository" }, etsy: linked ? { state: "done", text: "Linked on Etsy" } : { state: "failed", text: etsyWhy, retry: true } };
-      for (const r of ["sku", "repo", "etsy"]) if (!(K.seen && K.seen[r]) || (r === "etsy" && !linked && K.rows.etsy.state !== "failed")) K.rows[r] = mine[r];   // (the engine paints a saved record's rows itself while it opens: its words stand; an Etsy step not yet done always gets its Retry)
+      const mineR = { sku: { state: "done", text: K.sku }, repo: { state: "done", text: sv.reused ? `Already in the repository as ${K.sku}` : "Saved to the repository" }, etsy: linked ? { state: "done", text: "Linked on Etsy" } : { state: "failed", text: etsyWhy, retry: true } };
+      for (const r of ["sku", "repo", "etsy"]) if (!(K.seen && K.seen[r]) || (r === "etsy" && !linked && K.rows.etsy.state !== "failed")) K.rows[r] = mineR[r];   // (the engine paints a saved record's rows itself while it opens: its words stand; an Etsy step not yet done always gets its Retry)
       K.final = { done: linked ? "linked" : "saved", sku: K.sku, text: "" }; K.phase = K.final.done; K.fromRecord = true; return;
     }
-    K.on = false; K.phase = "off";   // (KEEPOFF, Paul 14 Oct 2026: "Make this option Off by default": the switch starts Off every time the upload opens; the person turns it On when they want it saved to the repository)
+    K.on = false; K.phase = "off";   // (KEEPOFF, Paul 14 Oct 2026: "Make this option Off by default": the switch starts Off every time the upload opens; REVDROP 15 Oct: only this switch saves anything for the listing)
   }
-  /** What the engine says while it works: a row changing, or the end ({ done: linked | saved | held | rehearsed }). */
+  /** What the engine says while it works: a row changing. The ending of a run is the intent's state (keepApplyIntent), which also covers a run that was cut short and taken up again. */
   function keepEvent(K, ev) {
     if (!ev || typeof ev !== "object" || keeps.get(K.ck) !== K) return;
-    if (ev.done) {
-      if (ev.sku) K.sku = txt(ev.sku);
-      K.final = { done: String(ev.done), sku: K.sku, text: txt(ev.text || "") }; K.phase = K.final.done; K.live = false; K.fromRecord = false;
-      if (K.phase === "linked" || K.phase === "rehearsed") K.foldP = new Promise(r => { K.foldDone = r; });
-      paintKeep(); keepAfter(K); return;
-    }
+    if (ev.done) { if (ev.sku) K.sku = txt(ev.sku); paintKeep(); return; }
     const r = ev.row; if (!K.rows[r]) return;
     (K.seen = K.seen || {})[r] = true;
     K.rows[r] = { state: String(ev.state || "idle"), text: txt(ev.text || ""), retry: ev.retry };
@@ -12868,91 +13048,44 @@ const CustomSheet = window.CustomSheet = (() => {
     paintKeep();
   }
   function keepPaintLater() { clearTimeout(keepTimer); keepTimer = setTimeout(() => { if (D.dlg && D.dlg.open) paint(); else redraw(); }, 0); }
-  /** The save ended: with the window gone, the card keeps its quiet line and a toast says how it went (a window still open shows it itself). */
-  function keepAfter(K) {
-    try { if (!(D.dlg && D.dlg.open && D.ck === K.ck)) keepToast(K); Session.schedule(); redraw(); } catch (_) { /* the strip never breaks anything */ }
-  }
   const reasonOf = o => txt((o && o.text) || "").replace(/^(Etsy not updated|Not saved):\s*/i, "").replace(/\.$/, "");
-  function keepToast(K) {
-    if (!K || K.toasted || !K.final) return; const f = K.final.done, rid = K.ctx ? K.ctx.rid : "";
-    if (f === "linked") { K.toasted = true; toast(`Order ${rid}: ${K.sku} saved to the repository and linked on Etsy`, "ok", 6000); }
-    else if (f === "saved") { K.toasted = true; toast(`${K.sku} saved to the repository. Etsy not updated: ${reasonOf(rowOf(K, "etsy"))}. Open the order to retry.`, "bad", 9000); }
-    else if (f === "held") { K.toasted = true; const bad = ["repo", "sku", "etsy"].map(n => rowOf(K, n)).find(r => r.state === "failed" || r.state === "locked"); toast(`Order ${rid}: not saved to the repository${bad ? ": " + reasonOf(bad) : ""}. Open the order to save it.`, "bad", 9000); }
-    else if (f === "rehearsed") { K.toasted = true; toast("Rehearsal complete. Nothing was saved.", "ok", 4000); }
-  }
-  const keepStamp = ck => { const K = keeps.get(ck); return K ? [K.phase, K.sku, K.final ? K.final.done : "", K.rows.sku.state, K.rows.repo.state, K.rows.etsy.state].join(":") : ""; };
-  /** The card's quiet line (the window is closed): how the save stands, with Retry; while it works, a small spinner and its words. */
+  const keepStamp = ck => { const K = keeps.get(ck), r = intentOfCk(ck); return (K ? [K.phase, K.sku, K.final ? K.final.done : "", K.rows.sku.state, K.rows.repo.state, K.rows.etsy.state].join(":") : "") + (r ? "|" + [r.state, r.wait, r.sku, r.fails, r.repo ? 1 : 0].join(":") : ""); };
+  /** The card's ONE calm line about the save (the window is closed): saving, waiting (why), saved and linked, or the one thing that needs attention; nothing when nothing was asked. */
   function keepNoteHtml(ck) {
-    const K = keeps.get(ck); if (!K || K.stub) return "";
-    if (K.phase === "running") return `<span class="cuKeepNote" role="status"><span class="spin" aria-hidden="true"></span> Saving to the repository…</span>`;
-    if (!K.final) return "";
-    const f = K.final.done, sku = esc(txt(K.sku));
-    if (f === "linked") return `<span class="cuKeepNote ok" role="status">Linked · ${sku}</span>`;
-    if (f === "saved") return `<span class="cuKeepNote warn" role="status">Saved to the repository · Etsy not updated</span><button type="button" class="linkBtn" data-cu-keep-retry="etsy">Retry</button>`;
-    if (f === "held") return `<span class="cuKeepNote" role="status">Not saved to the repository</span><button type="button" class="linkBtn" data-cu-keep-retry="repo">${keepLocked(K) ? "Save now" : "Retry"}</button>`;
+    const r = intentOfCk(ck); if (!r) return "";
+    const v = keeper.describe(r), line = esc(txt(v.line || "")), K = keeps.get(ck);
+    if (v.phase === "saving") return `<span class="cuKeepNote" role="status" data-keep-state="saving"><span class="spin" aria-hidden="true"></span> ${line}</span>`;
+    if (v.phase === "password") return `<span class="cuKeepNote warn" role="status" data-keep-state="password">${line}</span><button type="button" class="linkBtn" data-cu-keep-retry="repo">Enter password</button>`;
+    if (v.phase === "connection" || v.phase === "data" || v.phase === "retry") return `<span class="cuKeepNote" role="status" data-keep-state="${esc(v.phase)}"><span class="spin" aria-hidden="true"></span> ${line}</span>`;
+    if (v.phase === "linked" || v.phase === "rehearsed") return `<span class="cuKeepNote ok" role="status" data-keep-state="linked">${line}</span>`;
+    if (v.phase === "attention") return `<span class="cuKeepNote warn" role="status" data-keep-state="attention">${line}</span><button type="button" class="linkBtn" data-cu-keep-retry="again">Try again</button>`;
     return "";
   }
-  /** The card's Retry: runs from the failed step; a save that needs the password opens the window, where the strip asks for it. */
+  /** The card's button: a save that needs the password opens the window (the password is typed in its strip); any other goes again from where it stopped. */
   function keepRetryFromCard(ck, it, node, which) {
-    const K = keeps.get(ck); if (!K) { open(it, { from: node }); return; }
-    if (which === "repo" && keepLocked(K) && !(K.ctx && K.ctx.sandbox)) { open(it, { from: node }); return; }
-    keepRetry(K, which);
+    const r = intentOfCk(ck), K = keeps.get(ck);
+    if (which === "repo" && r && r.wait === "password" && !(r.sandbox)) { open(it, { from: node }); return; }
+    if (r && keeper) { keeper.retry(r.key); return; }
+    open(it, { from: node });
   }
-  /** The press of Send to Sheet: the strip's switch becomes the steps card at once (the work starts after the stamp, keepStart). Only for a strip showing its switch ON. */
-  function keepArm(ck, how) {
-    try {
-      const K = keeps.get(ck);
-      if (how.recover || !K || !K.k || !(D.dlg && D.dlg.open && D.ck === ck)) return null;
-      if (K.started) return K;   // (Retry send, after the Sheet failed: the save is under way or finished already; this press only waits for it)
-      if (K.phase !== "ready") return null;
-      K.phase = "running"; K.armed = true; K.started = false; K.final = null; K.toasted = false; K.rows = freshRows(); K.live = true; K.pwOpen = false;
-      paintKeep(); return K;
-    } catch (err) { console.warn("Save strip", err); return null; }
-  }
-  /** Nothing started (the send stopped before its stamp): the steps fold back into the switch. */
-  function keepDisarm(K) {
-    try { if (!K || !K.armed || K.started || keeps.get(K.ck) !== K) return; K.armed = false; K.live = false; K.phase = "ready"; K.rows = freshRows(); paintKeep(); } catch (_) { /* as it was */ }
-  }
-  /** One run of the engine, not awaited by the send. If it stops without an ending (it threw, a reply was cut off, a time-out), the strip does not hang: see keepEnded. */
-  function keepRun(K, fn) {
-    try {
-      K.runP = Promise.resolve().then(fn).then(() => null, err => { console.warn("Save strip", err); return err || new Error("stopped"); }).then(err => keepEnded(K, err));
-    } catch (err) { console.warn("Save strip", err); }
-  }
-  /** The engine stopped and no ending came: the step that was working is marked failed with Retry (a retry reads before it writes, so nothing is done twice); nothing already saved is touched. */
-  function keepEnded(K, err) {
-    if (!K || keeps.get(K.ck) !== K || K.phase !== "running" || K.final) return;
-    const R = K.rows, name = ["etsy", "repo", "sku"].find(n => R[n].state === "work") || ["sku", "repo", "etsy"].find(n => R[n].state !== "done" && R[n].state !== "rehearsed" && R[n].state !== "skipped") || "etsy";
-    const text = name === "etsy" ? "Etsy did not answer in time. Retry checks the listing first and never writes twice." : name === "repo" ? "The save did not finish. Retry tries again; nothing is lost." : "A SKU could not be chosen. Retry tries again.";
-    keepEvent(K, { row: name, state: "failed", text, retry: true });
-    keepEvent(K, { done: R.repo.state === "done" ? "saved" : "held", sku: K.sku, text });
-  }
-  /** After the Seal stamp: the engine runs, not awaited; the Sheet goes on beside it. A failure in the strip never reaches the send. */
-  function keepStart(K) {
-    if (!K || !K.armed || K.started) return null;
-    K.started = true;
-    keepRun(K, () => K.k.run());
-    return K;
-  }
-  /** A run again from the failed step (the rows before it are saved and stay so). */
+  /** Send to Sheet and the save are independent now (the switch has already recorded the save); the send only waits a moment for a save that is working at that instant. */
+  function keepArm(ck, how) { try { const K = keeps.get(ck); return how.recover || !K || !K.intentKey ? null : K; } catch (err) { console.warn("Save strip", err); return null; } }
+  const keepStart = () => null, keepDisarm = () => {};
+  /** A save that is not in the repository and failed for a reason that is not "wait": Try again goes from the step that stopped (nothing done is done twice). */
   function keepRetry(K, which) {
-    try {
-      if (!K || !K.k || K.phase === "running" || keeps.get(K.ck) !== K) return;
-      K.phase = "running"; K.live = true; K.armed = true; K.started = true; K.final = null; K.toasted = false; K.pwOpen = false;
-      paintKeep(); if (!(D.dlg && D.dlg.open)) redraw();   // (from the card, the window gone: the card shows it working)
-      keepRun(K, () => K.k.retry(which === "etsy" ? "etsy" : "repo"));
-    } catch (err) { console.warn("Save strip", err); }
+    try { const kp = keeperOf(); if (!kp || !K || !K.intentKey) return; K.toasted = false; K.pwOpen = false; kp.retry(K.intentKey); paintKeep(); if (!(D.dlg && D.dlg.open)) redraw(); } catch (err) { console.warn("Save strip", err); }
   }
-  /** Before the window closes: it waits for the save, up to 20 s (a time-out, not a pause), then a calm moment on a good ending; a failure never holds it (the toast says it). */
+  /** Before the window closes after a send: a save that is working RIGHT NOW is waited for a little (up to 20 s), then a calm moment on a good ending. One that waits for the password or the connection is not waited for (the card says so, and it goes on by itself), and a failure never holds the window. */
   async function keepHold(K) {
-    if (!K || !K.started) return;
+    if (!K || !K.intentKey) return;
     try {
-      await Promise.race([Promise.resolve(K.k && K.k.settled ? K.k.settled(KEEP_WAIT) : K.runP), new Promise(r => setTimeout(r, KEEP_WAIT + 400))]);
+      const kp = keeperOf(), t0 = Date.now(), working = () => { const r = kp.get(K.intentKey); return !!r && (r.state === "wanted" || r.state === "running"); };
+      while (working() && Date.now() - t0 < KEEP_WAIT) await new Promise(r => setTimeout(r, 100));
       const f = K.final && K.final.done;
       if (f === "linked" || f === "rehearsed") {
         if (K.foldP) await Promise.race([K.foldP, new Promise(r => setTimeout(r, 1500))]);
         const d = D.dlg; if (d && d.open && D.ck === K.ck) await dwell(d, KEEP_DWELL);
-      } else if (f) keepToast(K);
+      }
     } catch (err) { console.warn("Save strip", err); }
   }
   /** A calm moment: any press, key, or the window closing, ends it at once. */
@@ -12967,28 +13100,29 @@ const CustomSheet = window.CustomSheet = (() => {
 
   /* ── what the strip does when pressed ── */
   const keepHost = () => D.dlg && D.dlg.querySelector("#cuKeep");
+  const keepLive = K => !!(K && K.intent && (K.intent.state === "wanted" || K.intent.state === "running" || K.intent.state === "waiting"));
+  /** The switch. ON records the save and starts it at once (no second press, no Send to Sheet needed); OFF stops one that is not in the repository yet (one that is, is finished: it is never left half linked). */
   function keepToggle(K, on) {
-    if (!K || (K.phase !== "off" && K.phase !== "ready")) return;
-    K.on = !!on; K.phase = K.on ? "ready" : "off"; keepPrefSet(K.on); K.pw.msg = ""; K.pw.bad = false; if (!K.on) K.pwOpen = false;
-    paintKeep(); if (K.on && keepLocked(K)) keepFocusPw();
+    if (!K || K.stub) return;
+    if (on) {
+      if (keepLive(K) || K.phase === "linked" || K.phase === "rehearsed" || !(K.phase === "off" || K.phase === "held")) return;
+      K.pw.msg = ""; K.pw.bad = false;
+      if (!keepStartIntent(K)) return;
+    } else {
+      if (!keepLive(K)) return;
+      const r = keeperOf().cancel(K.intentKey, "switched off"); if (!r || !r.ok) return;   // (r.committed: already in the repository; the switch stays on)
+      K.pwOpen = false; K.on = false;
+    }
+    paintKeep(); if (on && keepLocked(K)) keepFocusPw();
   }
   function keepFocusPw() { setTimeout(() => { try { const i = keepHost().querySelector("#cuKeepPw"); if (i && !i.closest("[hidden]")) i.focus({ preventScroll: true }); } catch (_) { /* gone */ } }, 0); }
-  /** After the Sheet is sent the switch is of no use: "Save now" does it (the password first, in the strip, when locked). */
+  /** After the Sheet is sent the switch is hidden: "Save now" does the same as the switch (the password is typed in the strip when locked). */
   function keepNow() {
-    const K = keeps.get(D.ck), e = all()[D.ck]; if (!K || !K.k || !e || !(K.phase === "off" || K.phase === "ready")) return;
-    if (!employeeName()) { const d = D.dlg, who = d.querySelector("#cuWho input"); D.askName = true; paint(); who.focus(); lit(who, "cuNudge"); return; }
-    if (keepLocked(K)) { K.pwOpen = true; K.pendingNow = true; paintKeep(); keepFocusPw(); return; }
-    keepGoNow(K);
+    const K = keeps.get(D.ck); if (!K || !K.ctx || !(K.phase === "off" || K.phase === "held")) return;
+    keepToggle(K, true);
   }
-  function keepGoNow(K) {
-    K.pendingNow = false; K.pwOpen = false; K.on = true; K.phase = "running"; K.live = true; K.armed = true; K.started = true; K.final = null; K.toasted = false; K.rows = freshRows();
-    paintKeep(); keepRun(K, () => K.k.run());
-  }
-  /** "Save later" on a locked row: the steps fold back into the switch; nothing is saved, nothing is lost. */
-  function keepLater(K) {
-    if (!K) return; K.phase = "off"; K.on = false; K.live = false; K.armed = false; K.started = false; K.final = null; K.rows = freshRows(); K.pwOpen = false; K.pendingNow = false; K.pw.msg = ""; K.pw.bad = false;
-    paintKeep();
-  }
+  /** "Save later" on a locked row: the save is switched off; nothing is saved, nothing is lost. */
+  function keepLater(K) { if (K && keepLive(K)) keepToggle(K, false); }
   /** The password, typed in the strip: sent once, the field cleared at once; a wrong one shakes the field. Nothing is saved by unlocking alone before a press. */
   async function keepUnlock() {
     const K = keeps.get(D.ck), host = keepHost(); if (!K || !host || K.pw.busy) return;
@@ -13004,9 +13138,8 @@ const CustomSheet = window.CustomSheet = (() => {
     if (keeps.get(K.ck) !== K) return;
     if (r && r.ok) {
       K.pw.msg = ""; K.pw.bad = false; K.pw.until = 0; K.locked0 = false; K.pwOpen = false;
-      const again = K.phase === "held", now = K.pendingNow;
       paintKeep();
-      if (again) keepRetry(K, "repo"); else if (now) keepGoNow(K);
+      keepKick("unlock");   // (the lock opening also wakes the keeper by itself: a save that waited for the password goes on at once)
       setTimeout(() => { try { const s = D.dlg.querySelector("[data-send]"), n = D.dlg.querySelector("[data-k-now]"); const t = s && !s.disabled ? s : n && !n.hidden ? n : null; if (t) t.focus({ preventScroll: true }); } catch (_) { /* gone */ } }, 0);
       return;
     }
@@ -13018,7 +13151,7 @@ const CustomSheet = window.CustomSheet = (() => {
   }
   function wireKeep(d) {
     const host = d.querySelector("#cuKeep"); if (!host) return;
-    const flip = () => { const K = keeps.get(D.ck), e = all()[D.ck]; if (!K || !e || e.sent || busy.get(D.ck) || e.sendIntent) return; keepToggle(K, !K.on); };
+    const flip = () => { const K = keeps.get(D.ck), e = all()[D.ck]; if (!K || !e || e.sent) return; keepToggle(K, !keepLive(K)); };
     host.querySelector(".cuSwitch").onclick = flip; host.querySelector(".cuKeepTx").onclick = () => { const e = all()[D.ck]; if (e && !e.sent) flip(); };
     host.querySelector("[data-k-now]").onclick = () => keepNow();
     host.querySelector("[data-k-unlock]").onclick = () => keepUnlock();
@@ -13033,7 +13166,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const host = keepHost(); if (!host) return;
     const i = host.querySelector("#cuKeepPw"); if (i) i.value = "";
     const K = keeps.get(D.ck); if (K) { K.pw.busy = false; K.pwOpen = false; K.pendingNow = false; K.pw.msg = ""; K.pw.bad = false; }
-    host._ck = null;
+    host._ck = null; keepKick("closed");
   }
 
   /* ── the strip's picture ── */
@@ -13085,18 +13218,19 @@ const CustomSheet = window.CustomSheet = (() => {
     const sent = !!(e && e.sent), ph = K.phase, sandbox = !!(K.ctx ? K.ctx.sandbox : WORKSPACE_SANDBOX), locked = keepLocked(K);
     host.dataset.phase = ph; host.dataset.sandbox = sandbox ? "1" : "0";
     // which blocks show
-    const sw = ph === "off" || ph === "ready", good = ph === "linked" || ph === "rehearsed";
+    // (KEEPSAVE: the switch stays in sight while a save is under way, so it can be turned off; it is hidden for a save already in the repository)
+    const live = keepLive(K), sw = ph === "off" || ph === "ready" || (live && !(K.intent && K.intent.repo)) || (ph === "held" && !(K.intent && K.intent.repo)), good = ph === "linked" || ph === "rehearsed";
     // a good ending folds the four rows into one line once the Sheet is placed too (it still working, or failed, keeps its row in sight)
     const fold = good && (K.fromRecord || sheetRow(e).state === "done");
     const want = {
       sw, steps: ph === "running" || ph === "saved" || ph === "held" || (good && !fold),
-      line: ph === "opening" || ph === "quiet" || fold || ph === "saved",
-      pw: !sandbox && locked && ((sw && ((K.on && !sent) || K.pwOpen)) || (ph === "held" && K.rows.repo.state === "locked"))
+      line: ph === "opening" || ph === "quiet" || fold || ph === "saved" || ph === "waiting",
+      pw: !sandbox && locked && ((sw && ((K.on && !sent) || K.pwOpen)) || (ph === "held" && K.rows.repo.state === "locked") || (live && K.intent && K.intent.wait === "password"))
     };
     // the switch row
     if (sw) {
       const sB = blocks.sw.querySelector(".cuSwitch"), pv = blocks.sw.querySelector("#cuKeepP"), now = blocks.sw.querySelector("[data-k-now]"), pill = blocks.sw.querySelector(".cuKeepPill");
-      sB.hidden = sent; sB.setAttribute("aria-checked", K.on ? "true" : "false"); sB.disabled = !!(busy.get(D.ck) || (e && e.sendIntent));
+      sB.hidden = sent; sB.setAttribute("aria-checked", K.on ? "true" : "false"); sB.disabled = false;
       const o = K.open || {}, sig = [K.sku, o.aliasWorks, o.reuse, K.on ? 1 : 0].join("|");
       if (pv._sig !== sig) {
         pv._sig = sig; pv.replaceChildren(); const sk = el("span", "cuSku"); sk.textContent = K.sku; const T = s => document.createTextNode(s);
@@ -13128,6 +13262,7 @@ const CustomSheet = window.CustomSheet = (() => {
       else if (ph === "quiet") { main = K.why || ""; cls = "quiet"; }
       else if (ph === "linked") { main = `Linked · ${K.sku}`; subT = `Saved to the repository and set on Etsy listing …${tail4(K.ctx && K.ctx.listingId)}`; mark = "done"; }
       else if (ph === "rehearsed") { main = "Rehearsal complete. Nothing was saved."; mark = "rehearsed"; }
+      else if (ph === "waiting") { main = (K.view && K.view.line) || "Waiting…"; cls = "quiet"; mark = "work"; }
       else if (ph === "saved") { main = "Saved to the repository · Etsy not updated"; subT = K.open && K.open.aliasWorks === false ? "Until Etsy has the new SKU, the next order of this listing will still ask." : ""; cls = "warn"; }
       const sig = [ph, main, subT, cls].join("|");
       if (blocks.line._sig !== sig) {
@@ -13294,7 +13429,7 @@ const CustomSheet = window.CustomSheet = (() => {
     }, delay || 0);
     return true;
   }
-  return { add, remove, send, prepare, sentOf, decisionOf, sending, recover, load, hydrate, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K) } : null; } };
+  return { add, remove, send, prepare, sentOf, decisionOf, sending, recover, load, hydrate, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
 })();
 
 /* ═══ 23b · Custom Orders — is this line a custom order? ════════════════════
@@ -20508,7 +20643,7 @@ async function bootBridge() {
   // an automatic run over it. Navigation and the saved Library remain usable.
   if (!recoveryFailed) {
     Session.listen(); Arrivals.start(); ListMedia.start(); Upkeep.start(); window.AutoCancel?.start();
-    CustomSheet.load().catch(e => console.warn("Custom design recovery", e));
+    CustomSheet.load().catch(e => console.warn("Custom design recovery", e)).then(() => { CustomSheet.keepKick("load"); setTimeout(() => CustomSheet.keepPending(), 4000); });   // (KEEPSAVE: the saves the person switched on before this load go on from where they stopped)
     // an approval whose back files a reload cut short is written now, not when the run next passes Engraving
     if (recovered) Engrave.resumeBacks();
     if (recovered) setTimeout(() => { Engrave.earlyAll().catch(() => {}); }, 4000);   // (ENGPRE: lines that carry an engraving but are not nested yet get their job, beside everything else)

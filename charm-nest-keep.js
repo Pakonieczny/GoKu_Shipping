@@ -63,8 +63,8 @@
   };
   /* what the cloud's reasons say in plain words when it sent none (the Etsy step sends its own `text`) */
   const ETSY_WHY = { scope: "Etsy refused the change. Paul needs to re-authorise Etsy with listings_w", busy: "Etsy is busy, try again in a minute", "etsy-down": "Etsy did not answer", offline: "could not reach Etsy",
-    "listing-state": "the listing is not active on Etsy", "listing-gone": "Etsy no longer has this listing", changed: "the SKU on Etsy changed since the order was read", "product-missing": "the product bought is no longer on the listing",
-    "sku-in-use": "that SKU is already on another product of the listing", verify: "Etsy did not keep the new SKU", "backup-failed": "the safety copy could not be saved" };
+    running: "Etsy is being updated by another run", interrupted: "the last change to Etsy was cut short", "not-connected": "Etsy is not connected: Paul needs to connect it", "listing-state": "the listing is not active on Etsy", "listing-gone": "Etsy no longer has this listing", changed: "the SKU on Etsy changed since the order was read", "product-missing": "the product bought is no longer on the listing",
+    "sku-in-use": "that SKU is already on another product of the listing", rejected: "Etsy rejected the change", "bad-save": "the saved record could not be used", "no-save": "there is no saved record for this order", "not-saved": "the design is not saved yet", verify: "Etsy did not keep the new SKU", "backup-failed": "the safety copy could not be saved" };
 
   const digits = s => String(s == null ? "" : s).replace(/\D/g, "");
   const idOf = x => (x == null ? "" : String(x));
@@ -124,14 +124,18 @@
         let sp = null; try { sp = O.specialOf({ listingId, sku: line.sku, title: ctx.title || "", variations: line.variations || [] }, { listingKind: lk }); } catch (_) { sp = null; }
         if (sp && sp.own) return no(T.own);
       }
-      if (!(ctx.S && ctx.S.cloud && ctx.S.cloud.ok === true)) return no(T.offline, "connection");
-      // a record of this order's save (a reload): the strip shows where it stands, whatever the line says now
-      let rec = null;
-      try { const r = await call({ op: "customSaveGet", rid: String(ctx.rid) }); rec = r && r.save ? r.save : null; } catch (e) { if (isNet(e)) return no(T.offline, "connection"); rec = null; }
+      // a record of this order's save (a reload): the strip shows where it stands, whatever the line says now.
+      // Offline the switch is still offered (KEEPSAVE: a save asked for while the connection is down waits for it): the record is read when the connection is back
+      let rec = null, offline = !(ctx.S && ctx.S.cloud && ctx.S.cloud.ok === true);
+      if (!offline) { try { const r = await call({ op: "customSaveGet", rid: String(ctx.rid), listingId }); rec = r && r.save ? r.save : null; } catch (e) { if (isNet(e)) offline = true; rec = null; } }
+      info.offline = offline;
       const aliases = toMap(ctx.aliases), entryFor = s => (Master.entryFor ? Master.entryFor(s) : null), looseFor = s => (Master.looseFor ? Master.looseFor(s) : "");
       const plan = makePlan();
       st.plan = plan;
       if (plan) { info.group = (plan.group && plan.group.mode) || "unknown"; info.aliasWorks = plan.aliasWorks !== false; }
+      if (rec && rec.sku && rec.repair) {   // the listing's answer was cut or the files vanished (the cloud's repair says so): the SAME save runs again under the same SKU; the commit re-creates / re-attaches
+        st.sku = String(rec.sku).toUpperCase(); st.skuDone = true; st.repoDone = false; st.etsyDone = false; info.sku = st.sku; info.offered = true; st.info = info; return info;
+      }
       if (rec && rec.sku) {
         info.saved = { sku: rec.sku, phase: rec.phase || "repo", etsy: rec.etsy || { state: "pending" } };
         info.sku = rec.sku; info.offered = true; st.saved = rec; st.sku = rec.sku; st.skuDone = true;
@@ -177,7 +181,9 @@
       if (st.reuse) { st.sku = st.reuse; st.skuDone = true; row("sku", "done", st.sku); return { ok: true }; }
       // locked: nothing can be saved yet, so nothing is asked of the cloud; the SKU shown is the page's own choice
       if (!sandbox && !lockHeld()) { row("sku", "idle", T.chosen(st.sku)); return { ok: false, held: "locked" }; }
-      const candidates = ((st.plan && st.plan.candidates) || []).filter(s => !st.exclude.has(s));
+      // (the cloud always finds a free SKU for any list it is given, extending it itself: when ours is used up, the ones already refused are sent again rather than ending with "No free SKU")
+      let candidates = ((st.plan && st.plan.candidates) || []).filter(s => !st.exclude.has(s));
+      if (!candidates.length && st.exclude.size) candidates = [...st.exclude];
       if (!candidates.length) { row("sku", "failed", T.noSku, { reason: "none", retry: false }); return { ok: false, held: "sku" }; }
       row("sku", "work", T.choosing);
       let r; try { r = await call({ op: "customSkuCheck", listingId, candidates }); } catch (e) { failure("sku", e, w => "Could not choose a SKU: " + w); return { ok: false, held: "sku" }; }
@@ -187,7 +193,7 @@
     }
     const specFor = () => {
       const g = (st.plan && st.plan.group) || {};
-      return { rid: String(ctx.rid), listingId, sku: st.sku, oldSku: upSku(line.sku), productId: idOf(g.boughtId || line.productId), group: { mode: g.mode || "unknown", productIds: g.productIds || [] },
+      return { rid: String(ctx.rid), listingId, sku: st.sku, oldSku: upSku(line.sku).replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 120), productId: idOf(g.boughtId || line.productId), group: { mode: g.mode || "unknown", productIds: g.productIds || [] },
         optionPairs: (line.variations || []).map(v => [idOf(v && (v.propertyId != null ? v.propertyId : v.property_id)), idOf(v && (v.valueId != null ? v.valueId : v.value_id))]).filter(p => p[0] && p[1] && p[1] !== "0"),
         title: decode(ctx.title || ""), by: ctx.by || "", F, charm: ctx.charm, parsed: ctx.parsed, reuse: st.reuse || false, rehearsal: sandbox, built: st.built, uploaded: st.uploaded };
     };
@@ -214,15 +220,20 @@
       }
       const reason = (r && r.reason) || "error";
       if (reason === "cancelled") { row("repo", "idle", T.waits); return { ok: false, held: "cancelled" }; }
+      if (reason === "listing-linked") {   // the listing's answer is ANOTHER design's (a race lost, or a person's link): first link wins, final and calm, no Etsy step
+        st.linkedTo = String((r && r.sku) || "").toUpperCase(); row("repo", "skipped", T.linked(st.linkedTo || "a charm")); row("etsy", "skipped", "");
+        return { ok: false, held: "already" };
+      }
       if (reason === "not-uploaded" || reason === "bad-file") st.uploaded = {};   // (the cloud does not hold what we uploaded: the next try uploads again, it never trusts a memory of it)
       if (reason === "locked") { row("repo", "locked", T.needPw, { reason: "locked" }); return { ok: false, held: "locked" }; }
-      if (reason === "sku-taken") {   // someone made that SKU a moment ago: the next free candidate is asked for, once
+      if (reason === "sku-taken") {   // someone made that SKU a moment ago: first, is THIS order saved already (another tab got there)? else the next free candidate is asked for
+        try { const g = await call({ op: "customSaveGet", rid: String(ctx.rid), listingId }); if (g && g.save && g.save.sku) { st.saved = g.save; st.sku = g.save.sku; st.skuDone = true; st.repoDone = true; paintSaved(g.save); return { ok: true }; } } catch (_) { /* the next candidate */ }
         st.exclude.add(st.sku); st.skuDone = false; st.uploaded = {}; st.built = null;
         row("repo", "failed", T.notSaved((r && r.text) || "that SKU was just taken"), { reason, retry: true });
         return { ok: false, held: "taken" };
       }
       if (reason === "already-saved") {   // another tab saved this order: its record is the truth
-        try { const g = await call({ op: "customSaveGet", rid: String(ctx.rid) }); if (g && g.save && g.save.sku) { st.saved = g.save; st.sku = g.save.sku; st.skuDone = true; st.repoDone = true; paintSaved(g.save); return { ok: true }; } } catch (_) { /* below */ }
+        try { const g = await call({ op: "customSaveGet", rid: String(ctx.rid), listingId }); if (g && g.save && g.save.sku) { st.saved = g.save; st.sku = g.save.sku; st.skuDone = true; st.repoDone = true; paintSaved(g.save); return { ok: true }; } } catch (_) { /* below */ }
       }
       row("repo", "failed", T.notSaved((r && r.text) || "something went wrong"), { reason, retry: reason !== "reserved" });
       return { ok: false, held: reason };
@@ -231,7 +242,7 @@
       if (sandbox) { row("etsy", "rehearsed", T.rehearsedEtsy(tail4())); return { ok: true }; }
       if (st.etsyDone) { row("etsy", "done", T.etsyDone); return { ok: true }; }
       row("etsy", "work", T.etsyWork);
-      let r; try { r = await call({ op: "customEtsySkuWrite", rid: String(ctx.rid) }, { timeoutMs: 60000 }); }
+      let r; try { r = await call({ op: "customEtsySkuWrite", rid: String(ctx.rid), listingId }, { timeoutMs: 60000 }); }
       catch (e) { failure("etsy", e, T.etsyNo); return { ok: false, held: "etsy" }; }
       if (r && r.ok === true && (r.state === "linked" || r.linked === true)) { st.etsyDone = true; row("etsy", "done", T.etsyDone); return { ok: true }; }
       const why = (r && (r.text || ETSY_WHY[r.reason])) || (r && r.error) || "Etsy did not confirm the change";
@@ -244,6 +255,7 @@
       // (what the keeper needs to decide wait / try again / needs attention is in outcome(), not in the resolved value, which keeps its shape { ok, done })
       const why = st.last || {}, out = (done, o) => { st.outcome = Object.assign({ done, held: stopped || "", reason: why.reason || "", retry: why.retry !== false, text: why.text || "", needs: why.needs || "", sku: st.sku, repo: st.repoDone, etsy: st.etsyDone }, o || {}); };
       if (sandbox) { out("rehearsed"); finish("rehearsed", st.sku, T.rehearsedAll); return { ok: true, done: "rehearsed" }; }
+      if (stopped === "already") { out("already", { sku: st.linkedTo || st.sku }); finish("already", st.linkedTo || st.sku, T.linked(st.linkedTo || "a charm")); return { ok: true, done: "already" }; }
       if (!st.repoDone) {
         const a = st.rows.sku, b = st.rows.repo;
         if (stopped === "cancelled") { out("held", { reason: "cancelled" }); finish("held", st.sku, T.cancelled, { reason: "cancelled" }); return { ok: false, done: "held" }; }
@@ -258,7 +270,7 @@
       return { ok: false, done: "saved" };
     }
     async function go() {
-      const info = st.info && st.info.offered ? st.info : await open();
+      const info = st.info && st.info.offered && !st.info.offline ? st.info : await open();   // (a look taken offline is taken again: the order's record may exist)
       if (!info.offered) return { ok: false, done: null, why: info.why, later: info.later || "", linked: info.linked || "" };
       st.done = null; st.last = null; st.outcome = null;
       let stop = "";
@@ -271,6 +283,7 @@
         const b = await repoStep(); if (b.ok) { stop = ""; break; }
         stop = b.held; if (b.held !== "taken") break;
       }
+      if (stop === "already") return conclude("already");
       if (stop === "" ) {
         // the repository is saved (or rehearsed): Etsy is last, and only now
         if (!sandbox && !st.repoDone) stop = "repo";
@@ -348,8 +361,10 @@
     retry: "Could not finish just now. Trying again by itself.", off: "", rehearsed: "Rehearsal complete. Nothing was saved."
   };
   /* the reasons for which trying again can never help; everything else is tried again, with a pause */
-  const STOP_REPO = new Set(["geometry", "bad-sku", "reserved", "reuse-missing", "reuse-blocked", "reuse-mismatch", "sandbox", "none", "unavailable-lock"]);
-  const STOP_ETSY = new Set(["scope", "listing-gone", "listing-state", "product-missing", "sku-in-use", "changed", "no-record", "sandbox"]);
+  const STOP_REPO = new Set(["geometry", "bad-sku", "bad-file", "reserved", "reuse-missing", "reuse-blocked", "reuse-mismatch", "sandbox", "none"]);
+  /* Etsy: the server marks the ones that trying again cannot mend (retry:false); these never become a loop. scope and listing-state wait for a person or the listing: one attention line, tried again once per page load */
+  const STOP_ETSY = new Set(["listing-gone", "product-missing", "changed", "sku-in-use", "verify", "rejected", "bad-save", "no-save", "not-saved", "rehearsal", "sandbox"]);
+  const LATER_ETSY = new Set(["scope", "listing-state", "not-connected"]);
   const MAX_FAILS = 8, BEAT = 30000, WATCHDOG = 90000, KEEP_DONE_MS = 14 * 86400000;
   const backoffMs = n => Math.min(300000, 2000 * Math.pow(2, Math.max(0, n - 1)));
 
@@ -406,13 +421,13 @@
       // one design per save: the file the switch was turned on for is the one that is saved; another file of the same order and listing waits for it to end
       const other = Object.values(all).find(r => r && r.key !== key && r.sandbox === sandbox && r.rid === rid && r.listingId === listing && live(r));
       if (other) return { key: other.key, created: false, conflict: true, rec: Object.assign({}, other) };
-      if (ex && (live(ex) || ex.state === "done")) { if (spec.engine && live(ex) && !engines.has(key)) engines.set(key, spec.engine); setT(() => tick(key, "begin"), 0); return { key, created: false, rec: Object.assign({}, ex) }; }
+      const first = () => { Promise.resolve(spec.ready).catch(() => {}).then(() => setT(() => tick(key, "begin"), 0)); };   // (spec.ready: the design's own copy is stored first, so a reload finds it)
+      if (ex && (live(ex) || ex.state === "done")) { if (live(ex)) first(); return { key, created: false, rec: Object.assign({}, ex) }; }
       const rec = { v: 1, key, sandbox, rid, listingId: listing, hash, name: String(spec.name || ""), kind: spec.kind === "dxf" ? "dxf" : "ai", by: String(spec.by || ""), ck: String(spec.ck || ""), title: String(spec.title || ""),
         line: spec.line || null, at: now(), upd: now(), state: "wanted", wait: "", why: "", sku: String((ex && ex.sku) || ""), repo: !!(ex && ex.repo), etsy: false, fails: 0, nextAt: 0, auto: "", outcome: "", tab };
       const next = Object.assign({}, all); next[key] = rec; writeAll(next);      // ← recorded BEFORE any step: nothing below has run yet
-      if (spec.engine) engines.set(key, spec.engine); else engines.delete(key);
-      announce(rec); remote(rec);
-      setT(() => tick(key, "begin"), 0);
+      engines.delete(key);
+      announce(rec); remote(rec); first();
       return { key, created: true, rec: Object.assign({}, rec) };
     }
     function remote(rec) { try { if (deps.remote && typeof deps.remote.put === "function") Promise.resolve(deps.remote.put(Object.assign({}, rec))).catch(() => {}); } catch (_) { /* best effort: the browser's record is the truth */ } }
@@ -477,9 +492,12 @@
       let rec = read(key); if (!live(rec)) return;
       if (rec.nextAt && rec.nextAt > now()) return;
       if (!online()) { park(key, "connection"); return; }
+      if (rec.etsyOnly) return etsyOnlyTick(key, rec);
       let r; try { r = await deps.resolve(rec); } catch (e) { r = { state: "wait", wait: "data", why: String((e && e.message) || e) }; }
       rec = read(key); if (!live(rec)) return;
       if (!r || r.state === "wait") { park(key, "data", r && r.why); return; }
+      if (r.state === "skip") return;                      // not this workspace's (a sandbox page does not run a real save, nor the other way round)
+      if (r.state === "lost") { patch(key, { state: "attention", wait: "", why: r.why || "the design is no longer on this browser: drop the file again", nextAt: 0 }); return; }
       if (r.state === "gone") {
         if (rec.repo) { patch(key, { state: "attention", wait: "", why: "the design is no longer on this order: open the order to finish linking it on Etsy" }); return; }
         const n = patch(key, { state: "off", wait: "", why: r.why || "the design is no longer on this order" }); remote(n); return;
@@ -499,10 +517,32 @@
       if (timedOut) { patch(key, { state: "waiting", wait: "retry", why: "the cloud is slow", nextAt: now() + 15000 }); return; }
       settle(key, res || {}, (typeof eng.outcome === "function" && eng.outcome()) || {});
     }
+    /* a save that reached the repository (maybe on another computer) whose Etsy step is not done: any page that loads may do that step; the cloud is the memory, this page the actor */
+    function adoptPending(list, sandbox) {
+      let k = 0;
+      for (const p of Array.isArray(list) ? list : []) {
+        const rid = String(p && p.rid || ""), listing = digits(p && p.listingId); if (!rid || !listing) continue;
+        const key = [sandbox ? "sbx" : "live", rid, listing, "etsy"].join("|"), all = readAll(), mine = Object.values(all).find(r => r && r.rid === rid && r.listingId === listing && r.sandbox === !!sandbox && r.key !== key && (live(r) || r.state === "done"));
+        if (mine || (all[key] && (live(all[key]) || all[key].state === "done" || all[key].state === "attention"))) continue;
+        const rec = { v: 1, key, sandbox: !!sandbox, rid, listingId: listing, hash: "etsy", name: "", kind: "ai", by: "", ck: "", title: "", line: null, at: now(), upd: now(), state: "wanted", wait: "", why: "", sku: String(p.sku || ""), repo: true, etsy: false, fails: 0, nextAt: 0, auto: "", outcome: "", tab, etsyOnly: true };
+        const next = Object.assign({}, all); next[key] = rec; writeAll(next); announce(rec); setT(() => tick(key, "pending"), 0); k++;
+      }
+      return k;
+    }
+    async function etsyOnlyTick(key, rec) {
+      if (typeof deps.etsy !== "function") { patch(key, { state: "off", why: "no Etsy step here" }); return; }
+      patch(key, { state: "running", wait: "", why: "" });
+      let r; try { r = await deps.etsy(rec); } catch (e) { fail(key, (e && e.transient) ? "you could not reach the cloud" : String((e && e.message) || e)); return; }
+      if (r && r.ok === true && (r.state === "linked" || r.linked === true)) { patch(key, { state: "done", wait: "", why: "", etsy: true, outcome: "linked", nextAt: 0, fails: 0 }); return; }
+      const reason = (r && (r.reason || r.state || r.error)) || "error", text = (r && (r.text || ETSY_WHY[reason])) || (r && r.error) || "Etsy did not confirm the change", retry = !r || r.retry !== false;
+      if (reason === "offline") { fail(key, text); return; }
+      settle(key, { done: "saved" }, { done: "saved", reason, retry, text, sku: rec.sku });
+    }
     function settle(key, res, out) {
       const rec = read(key); if (!rec) return;
       const sku = out.sku || rec.sku || "", done = out.done || res.done;
       if (done === "linked" || done === "rehearsed") { const n = patch(key, { state: "done", wait: "", why: "", sku, repo: true, etsy: done === "linked", outcome: done, fails: 0, nextAt: 0 }); remote(n); return; }
+      if (done === "already") { const n = patch(key, { state: "done", wait: "", why: "", sku: out.sku || sku, outcome: "already", nextAt: 0 }); remote(n); return; }
       if (res.done === null || res.done === undefined) {        // the engine did not offer the save
         if (res.linked) { const n = patch(key, { state: "done", wait: "", why: "", sku: res.linked, outcome: "already", nextAt: 0 }); remote(n); return; }
         if (res.later === "connection") { park(key, "connection"); return; }
@@ -513,7 +553,9 @@
       if (done === "saved") {                                   // in the repository; Etsy has not taken the SKU
         patch(key, { sku, repo: true });
         if (out.reason === "offline") { park(key, "connection", "", { sku, repo: true }); return; }
-        if (STOP_ETSY.has(out.reason) || out.retry === false) { fail(key, out.text || "Etsy did not take the SKU", "etsy"); return; }
+        if (out.reason === "running") { patch(key, { state: "waiting", wait: "retry", why: "Etsy is being updated by another run", nextAt: now() + 45000 }); return; }   // (another run holds the lease: wait, it is not a failure)
+        if (LATER_ETSY.has(out.reason)) { fail(key, out.text || "Etsy did not take the SKU", "etsy"); return; }
+        if (STOP_ETSY.has(out.reason) || out.retry === false) { fail(key, out.text || "Etsy did not take the SKU", "etsy-final"); return; }
         fail(key, out.text || "Etsy did not answer"); return;
       }
       // held: the repository is not saved
@@ -540,7 +582,7 @@
     if (deps.lock && typeof deps.lock.onChange === "function") { try { stopLock = deps.lock.onChange(() => resume("lock")); } catch (_) { stopLock = null; } }
 
     return {
-      begin, cancel, retry, resume, arm, describe, tab,
+      begin, cancel, retry, resume, arm, describe, tab, adoptPending,
       get: key => read(key), list: () => Object.values(readAll()).map(r => Object.assign({}, r)),
       forOrder: rid => Object.values(readAll()).filter(r => r && r.rid === String(rid)).map(r => Object.assign({}, r)),
       wanted: wantedNow, engineOf: key => engines.get(key) || null,
