@@ -109,8 +109,14 @@ const NUDGE = `(() => { for (const a of ['right', 'left', 'up', 'down']) { const
     const at0 = (await jobOf(K.back, 'back')).at;
     const opsMark = ops.length;
     const fl0 = await flags(K.back); await page.waitForFunction(() => ['right', 'left', 'up', 'down'].some(a => { const b = document.querySelector('#egQueue .rvItem .engpPb[data-act="' + a + '"]'); return b && !b.disabled && !/no room/i.test(b.title || ''); }), null, { timeout: 20000 }).catch(() => {});
-    const pressed = await page.evaluate(NUDGE);
-    const flipped = await until(async () => { const x = await stateOf(K.back); return x && x.state === 'review' ? x : null; }, 15000);
+    // (a press with no room is no change and never reopens: the first direction that has room does)
+    let pressed = null, flipped = null;
+    for (const a of ['right', 'left', 'up', 'down']) {
+      const hit = await page.evaluate(a => { const b = document.querySelector('#egQueue .rvItem .engpPb[data-act="' + a + '"]'); if (b && !b.disabled) { b.click(); return true; } return false; }, a);
+      if (!hit) continue; pressed = a;
+      flipped = await until(async () => { const x = await stateOf(K.back); return x && x.state === 'review' ? x : null; }, 3000);
+      if (flipped) break;
+    }
     await settle(800);
     c = await cardFacts();
     note(!!flipped && flipped.seals === 1, '5a the first change (a nudge) puts the piece back to "needs Approve" at once; its first seal stays', JSON.stringify({ pressed, flipped, before: fl0, after: await flags(K.back) }));

@@ -177,7 +177,7 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
       await page.click(thumb(k.r, 'back'));
       await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open && CN.S.mode === 'engrave', null, { timeout: 15000 });
       const rv = await page.evaluate(() => Engrave.view());
-      check(rv.tab === 'done' && rv.chosen === true && rv.list === false, 'with the real EngraveLink: the window closed and the Engraving tab is on the approved piece: ' + JSON.stringify({ tab: rv.tab, q: rv.q, chosen: rv.chosen, list: rv.list }));
+      check(rv.tab === 'place' && rv.chosen === true && rv.list === false && !!rv.focus, 'with the real EngraveLink: the window closed and the Engraving tab is on the approved piece (NODECIDED: the same detail card, no Decided tab): ' + JSON.stringify({ tab: rv.tab, q: rv.q, chosen: rv.chosen, list: rv.list }));
       await page.waitForTimeout(600); await page.evaluate(() => CN.setMode('orders')); await open(k.r);
       await page.waitForFunction(k => document.querySelector(`#owEng .engCard[data-key="${k}"][data-state=approved] .egButtonSeal .seal`), k.r, { timeout: 10000 });
     }
@@ -204,7 +204,7 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     await page.click(thumb(k.g, 'back'));
     await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open && CN.S.mode === 'engrave', null, { timeout: 8000 });
     const v1 = await page.evaluate(() => Engrave.view());
-    check(v1.tab === 'done' && v1.q === R1 && v1.chosen === true && v1.list === false && !v1.focus, 'without EngraveLink: the window closes and the Engraving tab opens on the approved piece\'s order: ' + JSON.stringify({ tab: v1.tab, q: v1.q, chosen: v1.chosen, list: v1.list }));
+    check(v1.tab === 'place' && v1.q === R1 && v1.chosen === true && v1.list === false && !!v1.focus, 'without EngraveLink: the window closes and the Engraving tab opens on the approved piece\'s detail card (NODECIDED: no Decided tab): ' + JSON.stringify({ tab: v1.tab, q: v1.q, chosen: v1.chosen, list: v1.list }));
     await page.evaluate(() => CN.setMode('orders'));
 
     // 6 · live: an approval made in the Engraving tab / Sheet tab / sheet window (Engrave's own job), and one another computer made
