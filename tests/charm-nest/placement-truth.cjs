@@ -242,7 +242,7 @@ async function main() {
       // (a cancelled order is not in the pull: it opens from its records by its number, and has no list of pieces)
       const cancelled = o === CANC, key = cancelled ? o.rid : kOf(o, 'hug');
       if (cancelled) await page.evaluate(rid => OrderWin.openOrder(rid, {}), o.rid); else await page.evaluate(k => OrderWin.open(k), key);
-      try { await page.waitForFunction(([k, n, cx]) => OrderWin.key() === k && document.querySelectorAll('#owPcSum > .owPcRow').length === n && OrderWin._feed() && OrderWin._feed().answer && (!cx || /Cancelled/.test(document.getElementById('owNow').textContent)), [key, cancelled ? 0 : n, cancelled], { timeout: 25000 }); }
+      try { await page.waitForFunction(([k, n, cx]) => OrderWin.key() === k && document.querySelectorAll('#owPcSum > .owPcRow').length === n && OrderWin._feed() && OrderWin._feed().answer && (!cx || /Cancelled/.test(document.getElementById('owNowCard').dataset.now || '')), [key, cancelled ? 0 : n, cancelled], { timeout: 25000 }); }
       catch (e) { const got = await page.evaluate(() => ({ key: OrderWin.key(), rows: document.querySelectorAll('#owPcSum > .owPcRow').length, feed: !!(OrderWin._feed() && OrderWin._feed().answer), hidden: document.getElementById('owPcSum').hidden })); throw new Error(`the window of ${o.rid} did not settle: ${JSON.stringify(got)}`); }
       await page.mouse.move(3, 3); await page.waitForTimeout(1800); await idle();
     };
@@ -266,7 +266,7 @@ async function main() {
       }
       const rail = [...document.querySelectorAll('#owRail .tlStop')].map(s => ({ k: s.dataset.stage, cls: s.className.replace('tlStop', '').trim(), cnt: t(s.querySelector('.tlCnt')) }));
       const tab = document.querySelector('.owTabsV [data-ow-view="sheet"]');
-      return { head: t(card.querySelector('.k')), line: t(card.querySelector('.t')), pill: t(document.getElementById('owNow')), cardControls, rows, ears, rail, tab: { off: tab.classList.contains('off'), count: t(document.getElementById('owShCount')) } };
+      return { head: t(card.querySelector('.k')), line: t(card.querySelector('.t')), pill: document.getElementById('owNowCard').dataset.now || '', cardControls, rows, ears, rail, tab: { off: tab.classList.contains('off'), count: t(document.getElementById('owShCount')) } };
     });
     const timelineSnap = () => page.evaluate(() => {
       const t = n => n ? n.textContent.replace(/\s+/g, ' ').trim() : null;

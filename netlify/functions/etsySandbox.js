@@ -2,7 +2,7 @@
  *  ═══════════════════════════════════════════════════════════════════════
  *  An emulated Etsy for the Charm Sorter ⇄ Design Station sandbox. It answers
  *  the same four calls the Design Station makes of the real Etsy functions,
- *  in the same response shapes, from a snapshot of the shop's open orders
+ *  in the same response shapes, from a snapshot of the shop's newest orders (the ones that play: paid, not cancelled)
  *  that was read from Etsy once and stored in this project's own Storage:
  *
  *    ?fn=listOpenOrders&offset=N   → { results: [receipts…] }  one page of 100, like listOpenOrders
@@ -11,9 +11,14 @@
  *    ?fn=refreshEtsyToken          → 409: the sandbox has and issues no Etsy tokens
  *    ?fn=status                    → { ok, count, at, path, stream }  what the snapshot holds
  *
- *  The orders are the 250 NEWEST Etsy receipts the sorter's sandbox pulled when it started (charmNestLibrary op
- *  sandboxPullOrders, _charmNestSandboxPull.js): only a pointer written by a pull (source "etsy-pull") is served; the old
+ *  The orders are the NEWEST Etsy receipts the sorter's sandbox pulled when it started (250 unless Paul's number says otherwise, up to 1000;
+ *  charmNestLibrary op sandboxPullOrders, _charmNestSandboxPull.js): only a pointer written by a pull (source "etsy-pull") is served; the old
  *  Sep 17 snapshot, or any pointer without that source, is no set and lists nothing.
+ *  WHICH ONES PLAY (SBX1000, Paul, 16 Oct 2026: "consider shipped orders as open"): every receipt that is paid and not cancelled, shipped ones
+ *  too; cancelled and unpaid ones are stored but never served as orders. A shipped receipt is SERVED as a normal open order (asOpen in
+ *  _charmNestSandboxOrders.js: not shipped, status "Paid", no shipments or tracking; receipt number, buyer, lines and dates kept), because the page
+ *  closes a receipt that reads shipped. It is made here, when the stored set is loaded (readSnapshot), the one place every list, read-alone and
+ *  stream goes through: the STORED pull stays exactly as Etsy returned it.
  *  All reads are offline from Etsy, including listing photographs. Images reuse
  *  the saved listing catalog or durable image cache; a missing photo stays missing.
  *  The order snapshot is Charm_Sandbox/current plus its Storage JSON file.
@@ -27,6 +32,7 @@
 "use strict";
 const admin = require("./firebaseAdmin");
 const { CORS, gate } = require("./_charmNestAuth");
+const SandboxOrders = require("./_charmNestSandboxOrders");
 const db = admin.firestore();
 const SANDBOX = "Charm_Sandbox";
 const PAGE = 100;
@@ -56,12 +62,15 @@ async function readSnapshot() {
   const [buf] = await admin.storage().bucket().file(meta.path).download();
   let receipts = [];
   try { const parsed = JSON.parse(buf.toString("utf8")); receipts = Array.isArray(parsed) ? parsed : (parsed.receipts || []); } catch (e) { throw new Error("sandbox orders are not valid JSON: " + e.message); }
+  receipts = served(receipts);   // (a shipped receipt is served as an open order; the file in Storage is not changed)
   cache = { path: meta.path, at: Date.now(), receipts, meta };
   return { meta, receipts };
 }
+/** The stored set as the sandbox serves it: a shipped receipt becomes a normal open order (SandboxOrders.asOpen); any other receipt is the very same object. */
+const served = receipts => receipts.map(SandboxOrders.asOpen);
 const stripTx = r => { const o = Object.assign({}, r); delete o.transactions; return o; };
 
-/* ── the order stream: each simulated ten-minute step brings 2 to 5 of the snapshot's own open orders, oldest first, each
+/* ── the order stream: each simulated ten-minute step brings 2 to 5 of the snapshot's own orders that play, oldest first, each
    under its real Etsy receipt and transaction numbers (Paul, 25 Sep: the actual Etsy orders, never made-up numbers),
    stamped with its simulated arrival time and keeping its lead time to its ship date. Each order comes once: when every
    open order of the snapshot has come there is nothing more to bring (charmNestLibrary stops the stream's clock there; a
@@ -75,7 +84,7 @@ async function loadStream() {   // read on every list sweep, not cached: at 50x 
 }
 const hash = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0; };
 const rand = a => () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-const isOpen = r => r.is_paid !== false && r.was_paid !== false && !r.is_shipped && !r.was_shipped && !r.is_canceled && !r.was_canceled && !/cancel/i.test(r.status || "");
+const isOpen = SandboxOrders.plays;   // paid and not cancelled (the set is served already: a shipped receipt in it reads open)
 const LEAD_S = 14 * 86400;   // a snapshot order with no ship date: it is due two weeks after it arrives
 // a stream of the snapshot's own orders; one started before (copies under made-up numbers) lists nothing, and the sorter's
 // next check starts one of these in its place (charmNestLibrary sandboxStream)
@@ -129,7 +138,7 @@ function plan(s, ctx, k) {
 const build = (ctx, p) => arrival(ctx.pool[p.src], p.t, ctx.at);
 /** Step k's orders, built. */
 const batch = (s, ctx, k) => plan(s, ctx, k).map(p => build(ctx, p));
-exports.batch = (s, receipts, k, meta) => batch(s, streamPool(receipts, meta), k);   // for the tests: one step, from scratch
+exports.batch = (s, receipts, k, meta) => batch(s, streamPool(served(receipts), meta), k);   // for the tests: one step, from scratch, from the stored set as it is served
 
 /* ── what an instance keeps of the stream is the orders not yet shipped, so it stays small however long the stream
    plays. An order the station finished (Sandbox_Design_Completed Orders) ships SHIP_MS after it was finished: until then
@@ -269,7 +278,7 @@ async function serve(event) {
     if (fn === "listOpenOrders") {
       const offset = Math.max(0, Number(q.offset) || 0);
       // Etsy lists receipts with their transactions; the page shape matches listOpenOrders (results only)
-      const open=receipts.filter(r=>r.is_paid!==false && r.was_paid!==false && !r.is_shipped && !r.was_shipped && !r.is_canceled && !r.was_canceled && !/cancel/i.test(r.status || ""));
+      const open = receipts.filter(isOpen);   // (the same rule as the stream's pool: paid and not cancelled)
       return json(200, { results: open.slice(offset, offset + PAGE), count: open.length, sandbox: true });
     }
     if (fn === "etsyOrderProxy") {

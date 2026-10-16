@@ -153,7 +153,7 @@ async function main() {
     const openWin = async (o, piece) => {
       const cancelled = o === CANC, key = kOf(o, piece || 'c');
       if (cancelled) await page.evaluate(rid => OrderWin.openOrder(rid, {}), o.rid); else await page.evaluate(k => OrderWin.open(k), key);
-      await page.waitForFunction(([k, cx]) => OrderWin.key() === k && OrderWin._feed() && OrderWin._feed().answer && (!cx || /Cancelled/.test(document.getElementById('owNow').textContent)) && !document.getElementById('owNowCard').hidden, [cancelled ? o.rid : key, cancelled], { timeout: 25000 });
+      await page.waitForFunction(([k, cx]) => OrderWin.key() === k && OrderWin._feed() && OrderWin._feed().answer && (!cx || /Cancelled/.test(document.getElementById('owNowCard').dataset.now || '')) && !document.getElementById('owNowCard').hidden, [cancelled ? o.rid : key, cancelled], { timeout: 25000 });
       await page.mouse.move(3, 3); await page.waitForTimeout(1500); await idle();
     };
     const sized = async w => { await page.setViewportSize({ width: w, height: 1000 }); await page.mouse.move(3, 3); await page.waitForTimeout(700); await idle(); };

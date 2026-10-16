@@ -15,7 +15,7 @@ const { buildMaster } = require('./fixture-master.cjs');
 
 const STEP = 600000, day = Math.floor(Date.now() / 1000);
 // 120 open orders, taken three hours apart (the oldest first), in six patterns of lines each with a lead time of its own
-// (2…7 days to ship), and one shipped and one cancelled order that must never be streamed
+// (2…7 days to ship), one order Etsy had already shipped (it plays, as an open order, and is the oldest: SBX1000, Paul 16 Oct 2026, "consider shipped orders as open") and one cancelled order that must never be streamed
 const GF = '14k Gold Filled', SS = 'Sterling Silver';
 const tx = (rid, i, sku, metal, created, ship, extra = {}) => Object.assign({ transaction_id: Number(`${rid}${i}`), listing_id: 1718000 + i, receipt_id: rid, sku, title: `${sku} charm`, quantity: 1, create_timestamp: created, created_timestamp: created, paid_timestamp: created, expected_ship_date: ship, shipped_timestamp: null, variations: [{ formatted_name: 'Metal', formatted_value: metal }], is_personalized: false }, extra);
 const receipt = (rid, hoursAgo, leadDays, lines, extra = {}) => { const created = day - hoursAgo * 3600, ship = created + leadDays * 86400; return Object.assign({ receipt_id: rid, order_number: rid, name: 'Buyer ' + rid, country_iso: 'US', city: 'Austin', message_from_buyer: '', create_timestamp: created, created_timestamp: created, update_timestamp: created + 60, updated_timestamp: created + 60, status: 'Paid', is_paid: true, is_shipped: false, transactions: lines.map(([sku, metal], i) => tx(rid, i + 1, sku, metal, created, ship)) }, extra); };
@@ -25,7 +25,7 @@ const snapshot = Array.from({ length: 120 }, (_, i) => receipt(3521000101 + i, 4
   receipt(3521000907, 420, 8, [['BR-TST-02', GF]], { is_shipped: true, status: 'Completed' }),
   receipt(3521000908, 420, 9, [['BR-TST-04', SS]], { is_canceled: true, status: 'Canceled' })
 ]);
-const openIds = snapshot.filter(r => !r.is_shipped && !r.is_canceled).map(r => String(r.receipt_id));
+const openIds = snapshot.filter(r => !r.is_canceled).sort((a, b) => a.create_timestamp - b.create_timestamp || a.receipt_id - b.receipt_id).map(r => String(r.receipt_id));   // (what plays, oldest first: the shipped one comes first)
 const leadOf = r => Math.round((r.transactions[0].expected_ship_date - r.create_timestamp) / 86400);
 const PROD = ['Design_Completed Orders', 'Design_RealTime_Selected_Orders', 'Design_Order_Archive', 'Brites_Orders', 'Brites_Messages', 'Charm_Pool', 'Charm_Pool_Back', 'Charm_Nest_Sets', 'Charm_Nest_Counters', 'Charm_Nest_Runs', 'Charm_Nest_Sheets', 'Charm_Nest_Release', 'Charm_Nest_Arrivals', 'Design_Bridge'];
 const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$/;
@@ -85,6 +85,7 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   const listed = (await etsy({ fn: 'listOpenOrders' })).body.results, step1 = emulator.batch(op.body.stream, snapshot, 1, st.doc('Charm_Sandbox', 'current'));
   assert.deepStrictEqual(listed.map(x => x.receipt_id), step1.map(x => x.receipt_id).reverse(), 'the emulator lists the arrived orders, newest first as Etsy does');
   assert(listed.every(x => x.transactions.length && x.is_paid && !x.is_shipped), 'with their transactions, open and paid');
+  { const sh = listed.find(x => String(x.receipt_id) === '3521000907'); assert(sh && sh.is_shipped === false && sh.status === 'Paid' && !(sh.shipments || []).length && sh.sandbox_shipped_on_etsy === true, 'the receipt Etsy had shipped is the first to arrive, as an open order'); assert(snapshot.find(x => x.receipt_id === 3521000907).is_shipped === true, 'the stored snapshot still holds it shipped'); }
   const alone = await etsy({ fn: 'etsyOrderProxy', orderId: String(listed[0].receipt_id) });
   assert(alone.status === 200 && alone.body.transactions.length === listed[0].transactions.length && !alone.body.receipt.transactions, 'a streamed order also reads on its own');
   assert.deepStrictEqual(step1.map(x => String(x.receipt_id)), openIds.slice(0, step1.length), 'the first step brings the oldest open orders, under their own numbers');
@@ -145,14 +146,14 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   }
   assert.strictEqual(byRid.size, new Set(got.map(r => r.rid)).size); assert.strictEqual(new Set(got.map(r => r.tx)).size, got.length, 'every line number is unique');
   const came = Array.from({ length: s1.tick }, (_, i) => expectStep(s1, i + 1)).flat().map(r => String(r.receipt_id));
-  assert.deepStrictEqual(came, openIds.slice(0, came.length), 'the oldest open orders first, each once');
+  assert.deepStrictEqual(came, openIds.slice(0, came.length), 'the oldest orders first, each once');
   assert([...byRid.keys()].every(rid => Array.from({ length: s1.tick }, (_, i) => expectStep(s1, i + 1)).flat().some(r => String(r.receipt_id) === rid)), 'nothing but streamed orders reached the sorter');
-  // randomness, deterministic in the seed: over many seeds every count from 2 to 5 turns up; every seed brings each open
-  // order once, oldest first, and never a shipped or cancelled one
+  // randomness, deterministic in the seed: over many seeds every count from 2 to 5 turns up; every seed brings each order
+  // that plays once, oldest first (the shipped one too), and never a cancelled one
   const counts = new Set();
   for (let seed = 1; seed <= 40; seed++) for (let k = 1; k <= 6; k++) counts.add(expectStep(Object.assign({}, s1, { seed }), k).length);
   assert.deepStrictEqual([...counts].sort(), [2, 3, 4, 5], 'the counts per step vary over the whole range');
-  for (const seed of [s1.seed, 1, 2]) { const all = []; for (let k = 1, b; (b = expectStep(Object.assign({}, s1, { seed }), k)).length; k++) all.push(...b.map(r => String(r.receipt_id))); assert.deepStrictEqual(all, openIds, `seed ${seed} brings every open order once, oldest first, and no shipped or cancelled one`); }
+  for (const seed of [s1.seed, 1, 2]) { const all = []; for (let k = 1, b; (b = expectStep(Object.assign({}, s1, { seed }), k)).length; k++) all.push(...b.map(r => String(r.receipt_id))); assert.deepStrictEqual(all, openIds, `seed ${seed} brings every order that plays once, oldest first, and no cancelled one`); }
   assert.strictEqual(JSON.stringify(expectStep(s1, 2)), JSON.stringify(expectStep(Object.assign({}, s1), 2)), 'the same seed and step give the same orders');
   assert.notStrictEqual(JSON.stringify(expectStep(s1, 2).map(r => r.create_timestamp)), JSON.stringify(expectStep(Object.assign({}, s1, { seed: s1.seed + 1 }), 2).map(r => r.create_timestamp)), 'another seed gives other arrival times');
   // the illusion: production's toasts and counter, with the speed and simulated time; the sorter's day is the simulated one

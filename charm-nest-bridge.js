@@ -14660,21 +14660,21 @@ const Sandbox = window.Sandbox = (() => {
   const held = () => { try { return on() && localStorage.getItem(HOLD) != null; } catch (_) { return false; } };
   const lsJSON = k => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (_) { return null; } };
   /** The waiting sandbox's record: `dirty` (it may still hold an earlier run's orders: a start clears them first),
-      `failed` (the pull of the 250 newest orders did not work: the plain line the cloud gave, and the Etsy calls it used). */
+      `failed` (the pull of the newest orders did not work: the plain line the cloud gave, and the Etsy calls it used). */
   const holdInfo = () => lsJSON(HOLD) || {};
   function hold(info) { try { localStorage.setItem(HOLD, JSON.stringify(Object.assign({ at: Date.now() }, info || {}))); } catch (_) {} try { render(); if (window.Orders && Orders.render) Orders.render(); } catch (_) {} }
-  /* ── the sandbox's orders are the 250 newest Etsy orders, pulled once each time a sandbox run starts (Paul, 10 Oct:
+  /* ── the sandbox's orders are the newest Etsy orders (250 until Paul's number says otherwise, up to 1000), pulled once each time a sandbox run starts (Paul, 10 Oct:
      "when in the Sandbox mode always pull the 250 newest orders from etsy. Never retain previous or old orders from prior
      Sandbox runs/testing"). A run starts when the sandbox is switched on from the real orders, and when Start (or Auto,
      or Pull orders) is pressed after a clean-up. The previous sandbox is cleared first (Sandbox.wipe, the one complete
-     clean-up), then the cloud's sandboxPullOrders op asks Etsy for them (about 3 calls, a daily cap of its own) and starts
+     clean-up), then the cloud's sandboxPullOrders op asks Etsy for them (one call per 100: 3 for 250, 10 for 1000) and starts
      the stream on them. A page reload with the sandbox on does none of this: the stored set plays on. If the pull does
      not work the sandbox stays empty with the cloud's one-line reason (it never plays the old orders), and only the
      next Start asks again: nothing here retries by itself, and one start is one startId, so a repeat of that very
      request (a slow answer) is answered with the stored set and costs Etsy nothing. ── */
   const PULL_NEXT = "cn.sandboxPullNext";   // (sessionStorage, this tab) the page that opens next starts the sandbox by itself: switched on, or cleared first
   /* HOW MANY (Paul, 11 Oct 2026: "adjust the # of newest listings the Sandbox test pulls from Etsy"): a number in Settings, 250 until he
-     changes it. It lives in the cloud (config/charmNestSandboxPull, one document that no wipe touches), the cloud holds it to 10..500 and
+     changes it. It lives in the cloud (config/charmNestSandboxPull, one document that no wipe touches), the cloud holds it to 10..1000 (SBX1000, 16 Oct 2026) and
      uses it for every pull, and this page only SHOWS it: it arrives with the status read Settings and the sandbox already make (no poll,
      no listener of its own) and a pull's answer renews it. Saving a new number is a protected write (the charm repo password dialog). */
   const PULL_DEFAULT = 250;
@@ -14702,7 +14702,7 @@ const Sandbox = window.Sandbox = (() => {
     if (h.dirty) return `Sandbox is empty: it held orders from an earlier run, which are cleared first. Press Start to pull the ${want()} newest Etsy orders and play them.${auto ? " Auto is on, so the run then starts by itself." : ""}`;
     return `Sandbox is empty. Press Start${auto ? "" : " (or turn Auto on)"} to pull the ${want()} newest Etsy orders and play them.${auto ? " Auto is on, so the run then starts by itself." : ""}`;
   }
-  /** Start was pressed, Auto turned on, or orders were pulled: the sandbox plays, and the one pull of the 250 newest orders
+  /** Start was pressed, Auto turned on, or orders were pulled: the sandbox plays, and the one pull of the newest orders
       begins (a start asks for it exactly once; the stream and every check wait for it). false: nothing started (it was not
       waiting, or it holds an earlier run's orders, which are cleared first: the page reloads and starts by itself). */
   function release() {
@@ -14738,9 +14738,10 @@ const Sandbox = window.Sandbox = (() => {
       }
     }
   }
-  /** The cloud's answer, kept for the Settings line: when, how many, how many open, the Etsy calls it used. */
+  /** The cloud's answer, kept for the Settings line: when, how many, how many play, the Etsy calls it used. In the sandbox a SHIPPED order counts as open (SBX1000, Paul 16 Oct 2026:
+      "consider shipped orders as open"): `open` is the number that play (paid, not cancelled), `shipped` how many of them Etsy had shipped, `closedBy` the cancelled and unpaid ones left out. */
   function remember(r) {
-    pulled = { count: r.count, open: r.open, closed: r.closed, pulledAt: r.pulledAt, calls: r.already ? null : r.calls, tokenRefreshes: r.tokenRefreshes, label: r.label, startId: r.startId, already: !!r.already, callsToday: r.callsToday, pullsToday: r.pullsToday, cap: r.cap, capLeft: r.capLeft, callsCap: r.callsCap };
+    pulled = { count: r.count, open: r.open, closed: r.closed, closedBy: r.closedBy || {}, shipped: r.shipped || 0, pulledAt: r.pulledAt, calls: r.already ? null : r.calls, tokenRefreshes: r.tokenRefreshes, label: r.label, startId: r.startId, already: !!r.already, callsToday: r.callsToday, pullsToday: r.pullsToday, cap: r.cap, capLeft: r.capLeft, callsCap: r.callsCap };
     return pulled;
   }
   async function pullNewest() {
@@ -14751,8 +14752,9 @@ const Sandbox = window.Sandbox = (() => {
       if (!r || r.ok === false) throw new Error((r && r.error) || "Etsy gave no orders, so the sandbox is empty.");
       remember(r); setCheck = Promise.resolve(true); if (+r.want > 0 && (!pullCfg || +pullCfg.limit !== +r.want)) pullCfg = Object.assign({}, pullCfg || {}, { limit: +r.want, isDefault: +r.want === PULL_DEFAULT });
       adopt(r.stream && r.stream.on ? r.stream : null);
-      agent({ bridge: true }, "ok", `Sandbox: ${r.count} newest Etsy orders pulled (${r.open} open), ${calls(r.calls || 0)}${r.callsToday != null ? `, ${r.callsToday} today` : ""}`);
-      toast(`${r.open} of ${r.count} newest Etsy orders are open and play · ${calls(r.calls || 0)}${r.callsToday != null ? ` (${r.callsToday} today)` : ""}`, "ok", 9000);
+      const left = leftOut(r), shipped = +r.shipped || 0;
+      agent({ bridge: true }, "ok", `Sandbox: ${r.count} newest Etsy orders pulled, ${r.open} play${shipped ? ` (${shipped} already shipped on Etsy count as open)` : ""}${left ? `, ${left} cancelled or unpaid left out` : ""}, ${calls(r.calls || 0)}${r.callsToday != null ? `, ${r.callsToday} today` : ""}`);
+      toast(`${r.open} of ${r.count} newest Etsy orders play${shipped ? ` (shipped ones count as open)` : ""}${left ? ` · ${left} cancelled or unpaid left out` : ""} · ${calls(r.calls || 0)}${r.callsToday != null ? ` (${r.callsToday} today)` : ""}`, "ok", 9000);
       return r;
     } catch (e) {
       // the sandbox stays empty and waits (the cloud holds no orders after a failed pull, and none are played from before)
@@ -14771,7 +14773,7 @@ const Sandbox = window.Sandbox = (() => {
     if (!r || !r.ok) { setNext(""); const text = (r && r.text) || "the old sandbox orders could not be cleared"; hold({ dirty: true, failed: text }); throw new Error(text); }
     return r;
   })().finally(() => { clearing = null; });
-  /** The Start button: the sandbox clears an earlier run's orders first if it holds any, then pulls the 250 newest Etsy
+  /** The Start button: the sandbox clears an earlier run's orders first if it holds any, then pulls the newest Etsy
       orders and plays them (the stream, at step 0 with the seed in Settings; or, with the whole set at once, a pull of
       the orders); Auto then starts its run as it does on a fresh load. */
   const start = () => held() ? (starting ||= startOnce().finally(() => { starting = null; })) : Promise.resolve(false);   // (a second press, or the page's own start, while one is out is the same start)
@@ -14875,12 +14877,15 @@ const Sandbox = window.Sandbox = (() => {
   const simText = t => new Date(t).toLocaleString("en-US", { weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   /** What the pill and the arrivals counter say: the mode, and while the stream plays its speed and simulated time. */
   function label() { return !on() ? "" : held() ? (pulling() ? "Sandbox · starting" : "Sandbox · paused") : pullTask ? "Sandbox · pulling orders" : streaming() && SimClock.on() ? `Sandbox ${speed()}x · sim ${simText(SimClock.now())}${done() ? " · all orders in" : ""}` : "Sandbox"; }
-  /** Where the orders come from, as the Settings line says it: the pulled set, when, how many were open, the Etsy calls it cost. */
+  /** Where the orders come from, as the Settings line says it: the pulled set, when, how many were left out (cancelled or unpaid: shipped ones play as open, so "N open" is gone), the Etsy calls it cost. */
   const pulledNow = () => pulled || (status && status.snapshot && status.snapshot.source === "etsy-pull" ? status.snapshot : null);
+  /** The orders of a pull that do not play: cancelled and unpaid ones (a set stored before shipped ones played also counts its shipped ones in closedBy; they are not left out now). */
+  const leftOut = p => { const c = (p && p.closedBy) || {}; return (+c.canceled || 0) + (+c.unpaid || 0); };
+  const pulledWhen = at => (Date.now() - at < 90000 ? "just now" : when(at));
   function sourceText() {
     const p = pulledNow(); if (!p) return "";
-    const n = p.count != null ? p.count : want(), at = p.pulledAt || p.at;
-    return `${n} newest Etsy orders, pulled ${at ? when(at) : "just now"}${p.open != null && p.open < n ? ` (${p.open} open)` : ""}${p.calls ? ` with ${calls(p.calls)}` : ""}`;
+    const n = p.count != null ? p.count : want(), at = p.pulledAt || p.at, out = leftOut(p);
+    return `${n} newest Etsy orders, pulled ${at ? pulledWhen(at) : "just now"}${out ? ` (${out} cancelled or unpaid left out)` : ""}${p.calls ? ` with ${calls(p.calls)}` : ""}`;
   }
   function streamText() { return held() ? "Order stream: paused until Start" : stream && streaming() ? `Order stream: ${sourceText() ? sourceText() + " · " : ""}seed ${stream.seed} · step ${stream.tick} · ${stream.total ? `${stream.brought || 0} of ${stream.total}` : stream.brought || 0} orders in · simulated ${new Date(SimClock.now()).toLocaleString()} · ${speed()}x` : on() && !streaming() ? `Orders: ${sourceText() || `the ${want()} newest Etsy orders`}, all at once` : ""; }
   /** Settings' line beside the buttons says it again when the pull, the stream or the stored set changes (it is read when the dialog opens). */
@@ -14892,7 +14897,7 @@ const Sandbox = window.Sandbox = (() => {
   }
   /** "Rehearse a run in the sandbox": a start from the real orders. The sandbox is switched on and the sorter reloads with the
       sandbox waiting (nothing plays, nothing is checked); that page clears the previous sandbox (the complete clean-up),
-      reloads once more, and then pulls the 250 newest Etsy orders by itself (afterReload, the stream plays them). Nothing
+      reloads once more, and then pulls the newest Etsy orders by itself (afterReload, the stream plays them). Nothing
       real is touched: the real side's records and browser state are never matched by the clean-up. */
   async function enable() {
     if (on()) return;
@@ -14903,7 +14908,7 @@ const Sandbox = window.Sandbox = (() => {
     setTimeout(() => location.reload(), 700);
   }
   /** After a reload in the sandbox. A sandbox that is waiting (switched on just now, or cleaned) starts by itself when the page
-      opened for that (PULL_NEXT: the clean-up, if the sandbox held an earlier run, and then the one pull of the 250 newest
+      opened for that (PULL_NEXT: the clean-up, if the sandbox held an earlier run, and then the one pull of the newest
       orders), else it waits for Start. A sandbox that is not waiting plays what is stored: no pull, no clean-up. */
   function afterReload() {
     // what the clean-up before this reload did, said on the clean page (a toast under the Settings dialog was not seen);
@@ -15149,7 +15154,7 @@ const Sandbox = window.Sandbox = (() => {
     try { if (held() && document.querySelector) { const n = document.querySelector('[data-mkey="ordEmpty:held"] .sbWait'); if (n && n.textContent !== heldText()) n.textContent = heldText(); } } catch (_) {}
   }
   /* ── Settings → "Newest Etsy orders the sandbox pulls" (Paul, 11 Oct 2026). One number box and a Save: what a number means is worked out
-     here from the limits the cloud sent (pullFacts: held to 10..500, one Etsy call per 100 orders, how many pulls the sandbox's daily
+     here from the limits the cloud sent (pullFacts: held to 10..1000, one Etsy call per 100 orders, how many pulls the sandbox's daily
      Etsy calls allow), and the cloud holds it to the same limits again. Saving is a PROTECTED write: the charm repo password dialog
      (charm-nest-repo-lock.js, "modify"), then the cloud op sandboxPullLimitSet with the token it gave. The number is a setting, not a
      sandbox record: Reset and Purge leave it alone, and a change only takes effect at the next pull. ── */
@@ -15157,7 +15162,7 @@ const Sandbox = window.Sandbox = (() => {
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   /** What `n` means: the number held to the limits (held: it had to be), its Etsy calls per pull and the pulls a day those calls allow. */
   function pullFacts(n) {
-    const c = pullCfg || {}, min = +c.min || 10, max = +c.max || 500, per = +c.perPage || 100, cap = +c.callsCap || 0, most = +c.pullsCap || 0;
+    const c = pullCfg || {}, min = +c.min || 10, max = +c.max || 1000, per = +c.perPage || 100, cap = +c.callsCap || 0, most = +c.pullsCap || 0;   // (the server's own limits, once it has answered; 1000 before)
     const r = Math.round(+n), v = Math.min(max, Math.max(min, r)), calls = Math.ceil(v / per);
     return { value: v, held: v !== r, min, max, calls, cap, pulls: cap && most ? Math.max(1, Math.min(most, Math.floor(cap / calls))) : 0 };   // (NOLIMIT: no cap, no pulls-a-day figure)
   }
@@ -15945,9 +15950,9 @@ const OrderWin = window.OrderWin = (() => {
      only places lines that are pulled, held without a hold, unmatched, oversize or waiting, so it stays off every sheet
      until someone releases it from On hold.) */
   const when = t => new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
-  /** The header: the order's number (lit when it was searched for), who bought it, how many pieces and when it ships.
-   *  (It said "Order 1 of 3", then "line 1 of 3": the first of the order's 3 lines was on screen, never 1 of 3 orders.
-   *  Paul found it confusing: the line under it says "3 pieces", and the Its pieces list marks the piece shown.) */
+  /** The header: the order's number (lit when it was searched for) and, when the window walks a list, where it stands in it ("3 of 12", Previous, Next).
+   *  (It said "Order 1 of 3", then "line 1 of 3": the first of the order's 3 lines was on screen, never 1 of 3 orders. Paul found it confusing, and later (HDRHEAD) took the line of buyer, pieces
+   *  and ship-by date under the number away: the Its pieces list marks the piece shown, and the chip strip says who bought it and when it ships.) */
   function paintHead(r, sibs, li) {
     const rid = String(r.order.receiptId), t = byId("owTitle");
     const lit = W.hl ? " found" : "", cur = t.dataset.rid === rid && t.dataset.lit === lit && t.dataset.n === sibs.length + ":" + li;
@@ -15955,12 +15960,8 @@ const OrderWin = window.OrderWin = (() => {
       t.innerHTML = `Order <span class="num${lit}">${esc(rid)}</span>`;
       t.dataset.rid = rid; t.dataset.lit = lit; t.dataset.n = sibs.length + ":" + li;
     }
-    const qty = sibs.reduce((n, x) => n + (pairSides(x).length || (countedOf(x) || {}).total || +((x.spec && x.spec.quantity) || x.line.quantity) || 1), 0);   // (a mismatched pair is two pieces for every unit: its Left and its Right; a counted line, "2 Disc", is its 2 pieces: the count the pipeline uses)
-    let ship = ""; try { const s = Orders.shipTxt(r); ship = s && s !== "—" ? "ship by " + s : ""; } catch (_) {}
-    // (an order still being read: what is known of it, and a skeleton where the rest is coming)
-    const sub = byId("owSub"), buyer = r.order.buyer && r.order.buyer.name;
-    if (r.loading) sub.innerHTML = (buyer ? esc(buyer) + " · " : "") + '<span class="owSk" aria-hidden="true"></span>';
-    else sub.textContent = [buyer, qty ? qty + (qty === 1 ? " piece" : " pieces") : "", ship].filter(Boolean).join(" · ");
+    // (HDRHEAD, Paul, 16 Oct 2026: "Remove this UI from the detailed Order modal": the line under the number, "buyer · N pieces · ship by date", is gone. The buyer, the ship-by date and the piece count are told where they always were:
+    //  the Overview's chip strip (#owMeta: Buyer, Ship by) and the "Its pieces" list. The dialog is named by its title, aria-labelledby="owTitle", "Order <number>".)
     // Previous and Next walk the Orders list the person is looking at, and only then
     const list = W.walk ? siblings() : [];
     // a line that has just left the list it was walked in (its hold released under On hold, a fix that filtered it out)
@@ -16118,8 +16119,7 @@ const OrderWin = window.OrderWin = (() => {
     tryDo(() => window.CNLive && CNLive.order(r.order.receiptId, sibs));      // the live stations board: this is the order in hand (nothing when it was only cleared)
     paintHead(r, sibs, li);
     paintPieces(r, sibs);
-    const mp = byId("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || (r.loading ? "…" : "no material"));
-    mp.className = "pill " + (r.material || r.loading ? "neutral" : "bad");
+    // (HDRHEAD: the metal chip, "SS", is gone from the header: the chip strip below says the metal, in the Details list too)
     const ph = byId("owPhoto"); const url = tryDo(() => Orders.imageFor(r)) || (r.loading ? r.peek : null);
     // (the same photo is not drawn again on a repaint: a zoom in progress, and the sharper picture it swapped in, stay as they are)
     if (!(url && ph.dataset.srcUrl === String(url) && ph.querySelector("img")))
@@ -16172,7 +16172,7 @@ const OrderWin = window.OrderWin = (() => {
     let b = byId("owSendSheet"); if (b && b._busy) return;
     const it = inPull(r.key) && window.CustomSheet ? tryDo(() => Review.customItemFor(r.key) || Review.actFor(r.key)) : null, c = it ? tryDo(() => CustomSheet.cardOf(it)) : null;
     if (!(c && c.files.length && !c.sent && c.open && !c.why && !c.busy)) { if (b) b.hidden = true; return; }
-    if (!b) { const now = byId("owNow"); if (!now) return; b = el("button", "btn gold xs", "Send to Sheet"); b.type = "button"; b.id = "owSendSheet"; b.title = "Put every design on the next open sheet of its metal"; now.before(b); }
+    if (!b) { const at = byId("owPos"); if (!at) return; b = el("button", "btn gold xs", "Send to Sheet"); b.type = "button"; b.id = "owSendSheet"; b.title = "Put every design on the next open sheet of its metal"; at.before(b); }
     b.hidden = false; b._it = it; b.disabled = false; if (b.textContent !== "Send to Sheet") b.textContent = "Send to Sheet";
     b.onclick = async () => {
       if (b._busy || !(employeeName() || askEmployee())) return;
@@ -16186,7 +16186,7 @@ const OrderWin = window.OrderWin = (() => {
         b._busy = false;
         if (!W.dlg._tourHeld) { b.disabled = false; b.textContent = "Send to Sheet"; const r2 = W.dlg.open && rowOf(W.key); if (r2) paintSend(r2); }
         const said = [...document.querySelectorAll("#toasts .toast.bad")].filter(x => !was.has(x)).pop();
-        if (said && W.key === sentKey && W.dlg.open && !W.closing && !W.dlg._tourHeld && b.isConnected && window.Motion) tryDo(() => { const n = Motion.note(b.hidden ? byId("owNow") || b : b, { text: said.dataset.msg, tone: "bad", ms: 7000 }); if (n) W.dlg.appendChild(n); });
+        if (said && W.key === sentKey && W.dlg.open && !W.closing && !W.dlg._tourHeld && b.isConnected && window.Motion) tryDo(() => { const n = Motion.note(b.hidden ? W.dlg.querySelector(".owRight") || b : b, { text: said.dataset.msg, tone: "bad", ms: 7000 }); if (n) W.dlg.appendChild(n); });
       }
     };
   }
@@ -16908,7 +16908,7 @@ const OrderWin = window.OrderWin = (() => {
       // a write left no event (a sheet rewritten, a piece taken off by a stale second tab, a sheet deleted): it moved, so the pieces are read again
       const revWas = W.placementRev; W.placementRev = (j && j.placementRev) || revWas;
       if ((before !== null && before !== sheetSig(W.events)) || (revWas && W.placementRev !== revWas)) tryDo(() => window.OrderPieces && OrderPieces.load(rid, { force: true }));
-      hold("now", () => { const r = rowOf(W.key); if (r && String(r.order.receiptId) === rid) paintNow(r); }, [byId("owNowCard"), byId("owNow")]);
+      hold("now", () => { const r = rowOf(W.key); if (r && String(r.order.receiptId) === rid) paintNow(r); }, [byId("owNowCard")]);
     };
     if (f) { W.feed = f; f.subscribe(k => { if (k === "data") take(f.answer); else if (k === "error" && W.feed === f) console.warn("order view: timeline", f.error); }); f.refresh(); return; }
     Promise.resolve().then(() => T.get(rid)).then(take).catch(e => { if (W.evFor === rid) { W.events = null; console.warn("order view: timeline", e && e.message); } });
@@ -17013,16 +17013,16 @@ const OrderWin = window.OrderWin = (() => {
       const html=engCellHtml(r,'Approval history',job,historical);
       if(!W.engHist||W.engHist.key!==r.key||W.engHist.html!==html){W.engHist={key:r.key,html};paintFacts(r);}
     }
-    const n = nowOf(r), pill = byId("owNow");
+    const n = nowOf(r);   // (HDRHEAD, Paul, 16 Oct 2026: the state chip in the header, "ENGRAVING APPROVED", is gone: the head card below says where the order is, in the same words)
     W.dlg.classList.toggle("owCancelled", !!n.cancelled);
     // (the Sheet view's "no sheet" line follows the cancel record once it is read)
     const noSh = byId("owPlateWrap") && byId("owPlateWrap").querySelector(".owPlateNone[data-none]"); if (noSh) { const h = noSheetHtml(r); if (noSh._h !== h) { noSh._h = h; noSh.innerHTML = h; } }
-    pill.hidden = !n.pill; pill.textContent = n.pill || ""; pill.className = "owNow" + (n.tone ? " " + n.tone : "");
     const count = byId("owTlCount"); if (count) count.textContent = W.events && W.evFor === String(r.order.receiptId) && W.events.length ? String(W.events.length) : "";
     const live = byId("owLive"); if (live) paintLive(live, W.events && W.events.length ? W.events[W.events.length - 1] : null);
     paintPieceSum();
     paintSheetTab(r); sheetSettle(r);
     const card = byId("owNowCard"); if (!card) return;
+    card.dataset.now = n.pill || "";   // (the state word the header chip said, ENGRAVING APPROVED, Cancelled, Order completed: no longer drawn there (HDRHEAD); kept here as data for what reads where the order is: the tests, the oracle)
     if (r.loading) { card.hidden = true; return; }
     const e = n.ev;
     const who = e && (e.station || e.by) ? `<span class="who"><i>${(window.OrderTimelineUI && OrderTimelineUI.iconOf && tryDo(() => OrderTimelineUI.iconOf(e))) || ""}</i>${e.station ? `<b>${esc((window.OrderTimelineUI && OrderTimelineUI.placeOf && tryDo(() => OrderTimelineUI.placeOf(e))) || e.station)}</b>` : ""}${esc((window.OrderTimelineUI && OrderTimelineUI.personOf && tryDo(() => OrderTimelineUI.personOf(e))) || e.by || "")}${e.at ? " · " + esc(shopTime(e.at)) : ""}</span>` : "";
@@ -17031,8 +17031,11 @@ const OrderWin = window.OrderWin = (() => {
     // plain words instead.
     const UI = window.OrderTimelineUI, shown = shownEvents(), st = UI && UI.nowStamps && shown && shown.length ? tryDo(() => UI.nowStamps(shown, { ev: e, cancelled: n.cancelled ? e : null, hand: n.hand || null, live: tryDo(() => liveAsks(r)) })) : null;
     const bl = (st && st.blocker) || null;
+    // (HDRHEAD, Paul, 16 Oct 2026, the NEEDS A DECISION banner: "remove this seal from the title, it's a duplicate": the seal beside a question or a hold is the order's latest milestone, which the Engraving card's seals,
+    //  the header's rail and the Timeline already show; the banner says what holds the order up, in words, and draws no seal. The other states of the card keep theirs.)
+    const sealHtml = bl ? "" : st ? st.seal : "";
     // (a piece's row under this card draws no seal this card draws: it is told which one, and repaints if that changes)
-    const sealNow = sealKeyOf(st && st.seal);
+    const sealNow = sealKeyOf(sealHtml);
     if (!W.nowSeal || W.nowSeal.key !== sealNow) { W.nowSeal = { key: sealNow }; paintPieceSum(); }
     const recent = st ? st.recent : "";
     // the blocker is the card's own line then, so it is never said twice
@@ -17042,9 +17045,9 @@ const OrderWin = window.OrderWin = (() => {
     // Sheet shortcuts ... extend the title text all the way to the right"). Open timeline and Sheet are the Timeline and Sheet tabs; a piece's own
     // sheet is its row's status chip (and the Sheet view's tabs); the seal still opens the Timeline on its step. What is left of the old button row
     // (a split pair's sentence, who did it when no seal says so, a cancelled order's steps) is ONE quiet line under the title.
-    const sub = [splitLine(r), st && st.seal ? "" : who, head.row].filter(Boolean).join("");
-    card.hidden = false; card.className = "owNowCard" + (n.tone === "bad" ? " bad" : "") + (st && st.seal ? " sealed" : "") + (sub ? " hasSub" : "");
-    const html = `${st ? st.seal : ""}<div class="tx"><div class="k">${esc(head.k)}</div><div class="t" title="${esc(head.t)}">${esc(head.t)}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+    const sub = [splitLine(r), st && st.seal ? "" : who, head.row].filter(Boolean).join("");   // (the seal is not drawn on a banner that asks for a decision, but the line "who · time" is not added there either: the card reads as before, less the seal)
+    card.hidden = false; card.className = "owNowCard" + (n.tone === "bad" ? " bad" : "") + (sealHtml ? " sealed" : "") + (sub ? " hasSub" : "");
+    const html = `${sealHtml}<div class="tx"><div class="k">${esc(head.k)}</div><div class="t" title="${esc(head.t)}">${esc(head.t)}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
     if (card._html === html) return; card._html = html; card.innerHTML = html;
     // (the full words of a cut-short line: the title's is its attribute, the steps of a cancelled order and the split pair's sentence are theirs)
     card.querySelectorAll(".sub .tlCxList, .sub .owSplit").forEach(x => { x.title = [...x.querySelectorAll(":scope > span")].map(c => [...c.childNodes].map(k => k.textContent.trim()).filter(Boolean).join(" ")).join("\n") || x.textContent.trim(); });

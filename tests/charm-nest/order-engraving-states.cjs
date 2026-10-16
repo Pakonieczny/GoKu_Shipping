@@ -88,15 +88,16 @@ const LONG = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOP';
     const cardSel = lk => `#owEng .engCard[data-key="${lk}"]`;
     const read = lk => page.evaluate(sel => {
       const card = document.querySelector(sel); if (!card) return null;
+      const hide = (card, f) => { const rows = [...card.querySelectorAll('.egButtonSeal')], was = rows.map(x => x.style.display); rows.forEach(x => { x.style.display = 'none'; }); const v = f(); rows.forEach((x, i) => { x.style.display = was[i]; }); return v; };   // (HDRSEAL, 16 Oct 2026: the card's seals are pressed across its corner and poke out of it by design (charm-nest-1.html, HDRSEAL): "wider than the card" is measured without them; order-window-header.cjs measures them)
       const r = card.getBoundingClientRect(), q = s => card.querySelector(s), out = [];
       for (const n of card.querySelectorAll('*')) {
-        if (n.closest('.seal, .sealTool, .sealRing') || !n.getClientRects().length) continue;
+        if (n.closest('.seal, .sealTool, .sealRing, .egButtonSeal') || !n.getClientRects().length) continue;
         const b = n.getBoundingClientRect(); if (!b.width || !b.height) continue;
         if (b.right > r.right + 0.5 || b.left < r.left - 0.5) out.push(`${n.tagName.toLowerCase()}.${String(n.className).split(' ')[0]} ${Math.round(b.left - r.left)}..${Math.round(b.right - r.left)} of ${Math.round(r.width)}`);
       }
       const seals = [...card.querySelectorAll('.seal svg[data-seal-model]')].map(s => { try { const m = JSON.parse(s.getAttribute('data-seal-model')); return m.action + '|' + m.by; } catch (_) { return '?'; } });
       const ab = q('.egApproveButton'), face = f => { const e = q(`.engFace[data-face=${f}]`); return e ? { empty: e.dataset.empty === '1', text: (e.querySelector('.engTxt') || {}).title || '', shown: (e.querySelector('.engTxt') || {}).textContent || '', picture: !!e.querySelector('.engThumb canvas, .engThumb img, .engThumb .engpv') } : null; };
-      return { state: card.dataset.state, w: Math.round(r.width), h: Math.round(r.height), scrollOver: card.scrollWidth - card.clientWidth, out, dot: q('.engDot') && q('.engDot').getAttribute('aria-label'), dots: card.querySelectorAll('.engDot').length, name: (q('.engName') || {}).textContent || '',
+      return { state: card.dataset.state, w: Math.round(r.width), h: Math.round(r.height), scrollOver: hide(card, () => card.scrollWidth - card.clientWidth), out, dot: q('.engDot') && q('.engDot').getAttribute('aria-label'), dots: card.querySelectorAll('.engDot').length, name: (q('.engName') || {}).textContent || '',
         front: face('front'), back: face('back'), buttons: card.querySelectorAll('button:not(.engThumb):not(.egOpen)').length, approve: ab ? { text: ab.textContent.trim(), disabled: ab.disabled, live: !!q('[data-e=approve]'), title: ab.title || '' } : null, seals, text: card.textContent.replace(/\s+/g, ' ').trim(), spinner: !!q('.engTxt .owSpin') };
     }, cardSel(lk));
     const none = c => DEL.filter(w => c.text.includes(w));
@@ -117,7 +118,7 @@ const LONG = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOP';
     check(list.map(x => x.key).join() === [0, 1, 2, 4].map(i => keyOf(B, i)).join() && list.map(x => x.state).join() === 'approve,busy,approved,busy', 'a card for each of the four pieces that are engraved (none for the one cut plain), each in its own state (' + list.map(x => x.state).join('/') + ')');
     check(list[0].name.startsWith('ASTER FLOWER') && list[2].name.startsWith('MOON DISC') && !list.some(x => x.name.startsWith('PLAIN TAG')) && list.map(x => x.buttons).join() === '1,0,0,0', 'each names its piece, and only the one that waits for approval has a button: ' + JSON.stringify(list.map(x => [x.name.slice(0, 14), x.buttons])));
     check(await page.evaluate(() => document.querySelectorAll('#owEng > :not(.engCard)').length === 0 && !document.querySelector('#owEng .fLabel')), 'the cards are the grid\'s direct children, with no label of their own');
-    const allOut = await page.evaluate(() => { const h = document.querySelector('#owEng'), r = h.getBoundingClientRect(); return [...h.querySelectorAll('.engCard')].filter(e => { const b = e.getBoundingClientRect(); return b.right > r.right + .5 || e.scrollWidth - e.clientWidth > 0; }).length; });
+    const allOut = await page.evaluate(() => { const h = document.querySelector('#owEng'), r = h.getBoundingClientRect(); const hide = (card, f) => { const rows = [...card.querySelectorAll('.egButtonSeal')], was = rows.map(x => x.style.display); rows.forEach(x => { x.style.display = 'none'; }); const v = f(); rows.forEach((x, i) => { x.style.display = was[i]; }); return v; }; return [...h.querySelectorAll('.engCard')].filter(e => { const b = e.getBoundingClientRect(); return b.right > r.right + .5 || hide(e, () => e.scrollWidth - e.clientWidth) > 0; }).length; });
     check(allOut === 0, 'none is wider than its column');
     if (shots) { await page.screenshot({ path: path.join(shots, 'overview-1440-all-pieces.png') }); await page.locator('#owEng').screenshot({ path: path.join(shots, 'card-1440-all-pieces.png') }); }
     c = await read(keyOf(B, 0));
@@ -129,7 +130,7 @@ const LONG = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOP';
     await page.waitForFunction(k => document.querySelector(`#owEng .engCard[data-key="${k}"] .egButtonSeal .seal`), keyOf(B, 2), { timeout: 5000 }); await page.mouse.move(700, 880);
     c = await read(keyOf(B, 2));
     check(c.state === 'approved' && c.dot === 'Approved' && c.back.text === 'I\ndissent' && !c.approve && c.buttons === 0 && c.seals.join() === 'BACK ENGRAVING|Giovanna' && c.back.picture, 'approved: the green dot, the words, the seal where the button would be, no button: ' + JSON.stringify([c.dot, c.approve, c.seals]));
-    check(c.out.length === 0, 'with the seal inside the card: ' + JSON.stringify(c.out));
+    check(c.out.length === 0, 'with the seal row out of the count, nothing of the card pokes out (the seal itself is pressed across its corner: HDRSEAL): ' + JSON.stringify(c.out));
     if (shots) await page.locator(cardSel(keyOf(B, 2))).screenshot({ path: path.join(shots, 'card-1440-approved.png') });
     // a seal zooms where it stands (a click), with no tooltip and no caption of its own
     await page.evaluate(sel => document.querySelector(sel + ' .egButtonSeal .seal').scrollIntoView({ block: 'center' }), cardSel(keyOf(B, 2))); await page.waitForTimeout(500);
@@ -219,8 +220,9 @@ const LONG = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOP';
         if (slid) console.log(`  - ${vw} px window: the window's header is wider than the screen (the window had slid ${Math.round(slid)} px sideways); not the card's: put back before reading it`);
         const geo = await page.evaluate(k => {
           const h = document.getElementById('owEng'), card = h.querySelector(`.engCard[data-key="${k}"]`), r = card.getBoundingClientRect(), cr = h.getBoundingClientRect(), out = [];
-          for (const n of card.querySelectorAll('*')) { if (n.closest('.seal') || !n.getClientRects().length) continue; const b = n.getBoundingClientRect(); if (b.width && (b.right > r.right + .5 || b.left < r.left - .5)) out.push(n.tagName.toLowerCase() + '.' + String(n.className).split(' ')[0]); }
-          return { card: [Math.round(r.left), Math.round(r.right)], col: [Math.round(cr.left), Math.round(cr.right)], out, inCol: r.left >= cr.left - 1 && r.right <= cr.right + 1, over: card.scrollWidth - card.clientWidth, h: Math.round(r.height) };
+          for (const n of card.querySelectorAll('*')) { if (n.closest('.seal, .egButtonSeal') || !n.getClientRects().length) continue; const b = n.getBoundingClientRect(); if (b.width && (b.right > r.right + .5 || b.left < r.left - .5)) out.push(n.tagName.toLowerCase() + '.' + String(n.className).split(' ')[0]); }
+          const rows = [...card.querySelectorAll('.egButtonSeal')], was = rows.map(x => x.style.display); rows.forEach(x => { x.style.display = 'none'; }); const over = card.scrollWidth - card.clientWidth; rows.forEach((x, i) => { x.style.display = was[i]; });   // (the seals poke out of the card by design: HDRSEAL)
+          return { card: [Math.round(r.left), Math.round(r.right)], col: [Math.round(cr.left), Math.round(cr.right)], out, inCol: r.left >= cr.left - 1 && r.right <= cr.right + 1, over, h: Math.round(r.height) };
         }, key);
         check(geo.out.length === 0 && geo.over <= 0 && geo.inCol, `${vw} px window, ${shot}: the card (${geo.card.join('..')}) is inside its grid (${geo.col.join('..')}), nothing in it pokes out ${JSON.stringify(geo.out)}`);
         if (shots) { await page.screenshot({ path: path.join(shots, `overview-${vw}-${shot}.png`) }); await page.locator('#owEng').screenshot({ path: path.join(shots, `card-${vw}-${shot}.png`) }); }
