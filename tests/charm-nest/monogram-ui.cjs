@@ -168,7 +168,7 @@ Object.entries(ODD).forEach(([k, o], i) => { FX[k] = { rid: o.rid, sku: 'MONOGRA
     check(await page.evaluate(() => document.querySelectorAll('#egMono .moCard').length) === 3, 'one card per monogram line (3), none for the bracelet, the four letters or the regular charm');
     let a = await read('4200683017');
     check(a.state === 'ready' && a.d.length > 500 && a.ins.join('') === 'APV' && a.says === 'The buyer wrote A P V · Left A · Middle P · Right V', 'APV: the preview is drawn and the card says it plainly: "' + a.says + '"');
-    check(/^Actual size \d+\.\d × \d+\.\d mm · Gold$/.test(a.meta), 'and its actual size and metal: ' + a.meta);
+    check(/^Actual size \d+\.\d × \d+\.\d mm · Gold(Adjusted: .+)?$/.test(a.meta), 'and its actual size and metal: ' + a.meta);
     const f1 = await fetched();
     check(['MONOGRAM_LEFT_A', 'MONOGRAM_MID_P', 'MONOGRAM_RIGHT_V'].every(s => f1.includes(s)) && !f1.includes('MONOGRAM_LEFT_P') && !f1.includes('MONOGRAM_MID_A') && !f1.includes('MONOGRAM_RIGHT_A'), 'letter 1 came from the Left alphabet, letter 2 from the Middle, letter 3 from the Right: ' + [...new Set(f1)].filter(s => /A$|P$|V$/.test(s)).sort().join(' '));
     check(await page.evaluate(() => { const d = document.querySelector('#egMono details.moAbcs'); return !!d && !d.open && /Monogram Left · Monogram Mid · Monogram Right/.test(d.textContent); }), 'the three alphabets were found by their names, nothing to pick: "Alphabets · Monogram Left · Monogram Mid · Monogram Right" (closed)');

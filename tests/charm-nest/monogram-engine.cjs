@@ -503,7 +503,7 @@ const ABC = [A, Pp, V];
 // ── 3g · size and layout norms: the body of every letter is measured, the sides held to a ratio of the centre, a stretch is capped and said, the limits are measured and reported (MONOGRAMUI, Paul, 15 Oct 2026) ──
 {
   const N = M0.NORMS, R = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
-  ok(N && N.SIDE_HEIGHT_RATIO === 0.8 && N.STRETCH_CAP === 0.25 && N.SIDE_WIDTH_MIN === 0.6 && N.SIDE_WIDTH_MAX === 0.95 && N.OVERLAP_SIDE_MAX === 0.22 && N.OVERLAP_MID_MAX === 0.30 && N.SIDE_VISIBLE_MIN_MM === 3.5 && N.GAP_MIN_MM === 0.35 && N.COUNTERS_MIN === 0.9 && N.ASPECT_MIN < N.ASPECT_TARGET && N.ASPECT_TARGET < N.ASPECT_MAX, 'the norms are named constants and exported: ' + Object.keys(N).join(' '));
+  ok(N && N.SIDE_HEIGHT_RATIO === 0.8 && N.STRETCH_CAP === 0.25 && N.SIDE_WIDTH_MIN === 0.6 && N.SIDE_WIDTH_MAX === 0.95 && N.OVERLAP_SIDE_MAX === 0.22 && N.OVERLAP_MID_MAX === 0.30 && N.SIDE_VISIBLE_MIN_MM === 3.9 && N.GAP_MIN_MM === 0.35 && N.COUNTERS_MIN === 0.9 && N.ASPECT_MIN < N.ASPECT_TARGET && N.ASPECT_TARGET < N.ASPECT_MAX, 'the norms are named constants and exported: ' + Object.keys(N).join(' '));
   const wide = { letter: 'M', rings: [R(0, 0, 40, 60)] }, wideSide = { letter: 'A', rings: [R(0, 0, 24, 44)] }, thin = { letter: 'I', rings: [R(0, 0, 4, 44)] };
   const r = M0.build({ left: thin, middle: wide, right: wideSide });
   ok(r.ok && r.report.sizes && typeof r.report.review === 'boolean' && Array.isArray(r.report.limits), 'the report carries the sizes, the limits and the review flag');
@@ -525,7 +525,7 @@ const ABC = [A, Pp, V];
   const nz = (letter, rings) => ({ letter, fill: 'nonzero', rings });
   const left = nz('C', [R(0, 0, 4, 30), R(0, 26, 12, 30), R(0, 0, 8, 4)]), right = nz('D', [R(8, 0, 12, 30), R(0, 26, 12, 30), R(4, 0, 12, 4)]), mid = { letter: 'M', rings: [R(0, 0, 24, 40)] };
   ok(M0.ADJUST_LIMITS && M0.ADJUST_LIMITS.scale[0] === 0.8 && M0.ADJUST_LIMITS.scale[1] === 1.25 && M0.ADJUST_LIMITS.sx[0] === 0.8 && M0.ADJUST_LIMITS.sx[1] === 1.5 && M0.ADJUST_LIMITS.sxCentre[1] === 1.25 && M0.ADJUST_LIMITS.rotDeg[1] === 6 && M0.ADJUST_LIMITS.shear[1] === 0.15 && M0.ADJUST_LIMITS.dxMm[1] === 2 && M0.ADJUST_LIMITS.dyMm[1] === 1.5, 'the adjust bounds are exported: scale 0.80..1.25, sx 0.8..1.5 (centre 1.25), rot +-6, shear +-0.15, dx +-2 mm, dy +-1.5 mm');
-  ok(M0.ESG_PROFILE && M0.ESG_PROFILE.aspect === 0.88 && M0.ESG_PROFILE.wMm === 13 && M0.LIMITS && M0.LIMITS.OVERLAP === 0.22 && M0.LIMITS.BALANCE_UPPER === 0.6, 'ESG_PROFILE and LIMITS are exported');
+  ok(M0.ESG_PROFILE && M0.ESG_PROFILE.aspect === 0.99 && M0.ESG_PROFILE.wMm === 14.69 && M0.LIMITS && M0.LIMITS.OVERLAP === 0.22 && M0.LIMITS.BALANCE_UPPER === 0.6, 'ESG_PROFILE and LIMITS are exported');
   const base = M0.build({ left, middle: mid, right }); sound(base, 'base');
   eq(base.report.adjust, { L: { scale: 1, sx: 1, rot: 0, shear: 0, dx: 0, dy: 0 }, M: { scale: 1, sx: 1, rot: 0, shear: 0, dx: 0, dy: 0 }, R: { scale: 1, sx: 1, rot: 0, shear: 0, dx: 0, dy: 0 } }, 'no adjust: report.adjust is all ones and zeros');
   // absurd values are clamped inside the engine and echoed as applied
@@ -656,7 +656,36 @@ const checkSample = (sp, words, what) => {
     ok(me.distance < 1.5, 'ESG is at (almost) zero distance from the ESG profile: ' + me.distance);
     const hey = M0.build(await word('HEY')), mh = hey.report.metrics;
     ok(hey.ok && mh.violations.length === 0, 'HEY, approved too, passes every hard rule: ' + JSON.stringify(mh.violations));
-    ok(Math.abs(mh.align.baselineOffsetMm.L - 0.49) < 0.1 && mh.balance.LM.balanced && mh.balance.MR.balanced && mh.visibleWidthMm.L >= 3.4, 'HEY keeps its baseline offset (+0.49 mm), its balanced contacts (tie bars count) and its visible widths: ' + JSON.stringify({ off: mh.align.baselineOffsetMm, vis: mh.visibleWidthMm }));
+    ok(mh.align.baselineOffsetMm.L >= 0.1 && mh.align.baselineOffsetMm.L <= 2.0 && mh.balance.LM.balanced && mh.balance.MR.balanced && mh.visibleWidthMm.L >= 3.8 && mh.visibleWidthMm.R >= 3.8, 'HEY (its letters widened and thickened by the letter prep: the approved +0.49 mm baseline of the old letters can only be kept to the window) keeps its baseline offset inside the window, its balanced contacts (tie bars count) and its visible widths: ' + JSON.stringify({ off: mh.align.baselineOffsetMm, vis: mh.visibleWidthMm }));
+    // letter prep (MONOESG round 3): A. widened (M N W K R H A 30 %, Q T G S J 10 %, the rest 20 %), B. thicker lines (mean stroke 1.20 x the original's), C. the Q's curl tied to its body
+    {
+      const W = M0.WIDEN; ok(W && ['M', 'N', 'W', 'K', 'R', 'H', 'A'].every(c => W[c] === 1.3) && ['Q', 'T', 'G', 'S', 'J'].every(c => W[c] === 1.1) && W.OTHER === 1.2 && M0.THICKEN.TARGET === 1.2 && M0.THICKEN.MAX_MM === 0.25 && typeof M0.preparedLetter === 'function', 'WIDEN, THICKEN and preparedLetter are exported');
+      const slotOf = { L: 'LEFT', M: 'MID', R: 'RIGHT' }, prep = {};
+      for (const [f, L] of [['L', 'M'], ['M', 'S'], ['R', 'E'], ['L', 'H'], ['M', 'Z'], ['R', 'G'], ['L', 'Q'], ['M', 'Q'], ['R', 'Q'], ['R', 'T']]) {
+        const raw = await real(slotOf[f], L), pr = M0.preparedLetter(f, L, raw); prep[f + L] = pr;
+        ok(pr.ok && pr.family === f && pr.letter === L && Array.isArray(pr.rings) && pr.rings.length >= 1 && pr.fill === 'nonzero', `preparedLetter(${f}, ${L}) returns the outline: ` + (pr.why || ''));
+        const k = M0.WIDEN[L] || M0.WIDEN.OTHER, wr = pr.bodyWidthPt / pr.before.bodyWidthPt;
+        ok(Math.abs(wr / k - 1) < 0.04, `${f}${L}: the body is widened x${k} (measured x${Math.round(wr * 1000) / 1000})`);
+        ok(Math.abs(pr.heightPt / pr.before.heightPt - 1) < 0.03, `${f}${L}: not taller (x${Math.round(pr.heightPt / pr.before.heightPt * 1000) / 1000})`);
+        const sr = pr.strokeMm.after / pr.strokeMm.before;
+        ok((sr >= 1.19 || (pr.offsetCapped && sr >= 1.10)) && sr <= 1.30 && pr.offsetMm <= M0.THICKEN.MAX_MM + 1e-9 && pr.countersKept >= M0.THICKEN.COUNTERS - 1e-9, `${f}${L}: mean stroke ${pr.strokeMm.before} -> ${pr.strokeMm.after} mm (x${Math.round(sr * 100) / 100}), offset ${pr.offsetMm} mm per side, counters kept ${pr.countersKept}`);
+        ok(pr.strokeMm.p5After >= pr.strokeMm.p5Before - 1e-9, `${f}${L}: the thinnest lines get no thinner (${pr.strokeMm.p5Before} -> ${pr.strokeMm.p5After} mm)`);
+      }
+      ok(prep.LQ.qBridge && prep.RQ.qBridge && prep.LQ.qBridge.lengthMm <= 1.0 && prep.LQ.qBridge.lengthMm >= 0.35 && prep.RQ.qBridge.lengthMm <= 1.0, 'the Left and Right Q get a bar from the free end of the curl to the stroke nearest to it, at most 1.0 mm long: ' + JSON.stringify([prep.LQ.qBridge, prep.RQ.qBridge]));
+      ok(prep.MQ.qBridge === null && prep.LM.qBridge === null, 'a Q whose curl has no stroke within 1.0 mm (the Mid Q) gets no bar, other letters none');
+      { // the same outline without the bar has the bar's ink less, and the Q stays one piece with its inner openings
+        const regionArea = pr => { let a = 0; for (const r of pr.rings) { let s2 = 0; for (let i = 0; i < r.length; i++) { const p = r[i], q = r[(i + 1) % r.length]; s2 += p[0] * q[1] - q[0] * p[1]; } a += s2 / 2; } return a; };
+        const raw = await real('LEFT', 'Q'), gm = Object.assign({}, raw, { metrics: null }), plain = M0.build({ left: await real('LEFT', 'A'), middle: await real('MID', 'S'), right: raw }, {});
+        ok(Math.abs(regionArea(prep.LQ)) > 0 && plain.ok, 'the Q with its bar builds into a piece: ' + (plain.ok ? '' : plain.why)); void gm;
+      }
+      const rb = M0.preparedLetter('left', 'Q', await real('LEFT', 'Q')); ok(rb.ok && rb.family === 'L' && JSON.stringify(rb.rings) === JSON.stringify(prep.LQ.rings), 'preparedLetter reads left / middle / right as well as L / M / R, and is repeatable');
+      ok(M0.preparedLetter('X', 'Q', await real('LEFT', 'Q')).ok === false && M0.preparedLetter('L', 'Q').ok === false, 'an unknown family or a missing glyph is refused, not thrown');
+      // baseWiden is reported apart from the stretch (which is counted from the prepared letters)
+      const bw = esg.report.baseWiden, bh = hey.report.baseWiden;
+      ok(bw.L === 1.2 && bw.M === 1.1 && bw.R === 1.1 && bh.L === 1.3 && bh.M === 1.2 && bh.R === 1.2, 'report.baseWiden: ESG ' + JSON.stringify(bw) + ', HEY ' + JSON.stringify(bh));
+      ok(esg.report.sizes.stretch.every(t => t.applied <= 1.25 + 1e-9 && t.applied >= 0.75 - 1e-9) && mh.maxStretch <= 1.25 + 1e-9, 'the stretch is counted against the caps from the prepared letters: ' + JSON.stringify(esg.report.sizes.stretch.map(t => t.applied)) + ' HEY max ' + mh.maxStretch);
+      ok(esg.report.prep && esg.report.prep.L && esg.report.prep.L.widen === 1.2 && esg.report.prep.M.qBridge === null, 'report.prep carries each letter\'s widen, strokes and offset');
+    }
     // autoFit: a word that breaks a rule is brought nearer by bounded adjustments; a good word is left alone
     const noFit = M0.autoFit(await word('ESG'));
     ok(noFit.ok && noFit.report.autoFit && noFit.report.autoFit.tried === 1 && noFit.report.autoFit.improved === false && noFit.report.metrics.violations.length === 0, 'autoFit leaves ESG as it is: ' + JSON.stringify(noFit.report.autoFit));

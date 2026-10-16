@@ -10,6 +10,7 @@
  *    build({left,middle,right}, opts) → { ok, why, rings, bboxPt, wMm, hMm, placed, report }
  *        a letter is { letter, rings, fill? }: fill 'auto' reads a font's overlapping contours as ink, the default reads a ring inside another as a counter (fillOf);
  *        opts { overlap, maxOverlap, centerRatio, valign, reach }; report { connected, joinMm: { leftMiddle, middleRight }, holesKept, centerScale, overlap, warnings[], notes[], … }
+ *    preparedLetter(family, letter, glyph) → the letter as the engine prepares it (widened, thicker lines, Q's curl tied): { rings, metrics, strokeMm, widen, offsetMm, qBridge, … } (see the letter prep)
  *    toPdf(result, { title })   → Promise<Uint8Array>   one page, one charm, holes as separate stroked paths
  *    svgPath(result)            → SVG path data (even-odd, y flipped for the screen)
  *
@@ -42,15 +43,15 @@
      opts.adjust = { L: a, M: a, R: a }, a = { scale, sx, rot, shear, dx, dy }, every field optional (1, 1, 0, 0, 0, 0). scale: uniform size multiplier of the letter (0.80 to 1.25); sx: extra horizontal-only stretch (a side letter up to 1.50,
      the centre letter 0.8 to 1.25: strokes thicken when a letter is stretched, which is fine and helps the cut; hairlines stay at least 0.2 mm); rot: degrees, -6 to 6, about the letter's body centre (a side letter can lean toward or
      away from the centre); shear: horizontal shear, -0.15 to 0.15 (the slant can follow the centre letter's); dx, dy: the placed letter moved by this many mm (x right, y up) from where the engine put it. Clamped HERE to ADJUST_LIMITS, never trusted
-     from outside; report.adjust echoes what was applied, report.metrics.maxStretch the largest stretch used. */
+     from outside; report.adjust echoes what was applied, report.metrics.maxStretch the largest stretch used (counted from the letters as prepared: the letter prep's own widening is report.baseWiden, not a stretch). */
   const ADJUST_LIMITS = { scale: [0.80, 1.25], sx: [0.8, 1.5], sxCentre: [0.8, 1.25], rotDeg: [-6, 6], shear: [-0.15, 0.15], dxMm: [-2.0, 2.0], dyMm: [-1.5, 1.5] };
   /* The hard rules every finished monogram must meet (a word that breaks one is flagged for a person; report.metrics.violations names them). */
   const LIMITS = {
-    BASELINE_OFFSET_MM: [0.1, 2.0], ALIGN_LR_MM: 0.15, ALIGN_BODY_MM: 0.5, SIDE_HEIGHT: [0.74, 0.84], SIDE_WIDTH: [0.62, 0.95], CENTRE_WIDTH: [0.80, 1.15], VISIBLE_MM: 3.4, ASPECT: [0.82, 1.00], OVERLAP: 0.22, CROWD_MM: 3.0, COUNTERS: 0.9, OVERLAP_CENTRE: 0.30, BAR_MAX_MM: 1.04, VISIBLE_OUTLINE: 0.74,
+    BASELINE_OFFSET_MM: [0.1, 2.0], ALIGN_LR_MM: 0.15, ALIGN_BODY_MM: 0.5, SIDE_HEIGHT: [0.74, 0.84], SIDE_WIDTH: [0.62, 0.95], CENTRE_WIDTH: [0.80, 1.15], VISIBLE_MM: 3.8, ASPECT: [0.90, 1.25], OVERLAP: 0.22, CROWD_MM: 3.2, COUNTERS: 0.9, OVERLAP_CENTRE: 0.30, BAR_MAX_MM: 1.04, VISIBLE_OUTLINE: 0.74,
     BALANCE_UPPER: 0.6, BALANCE_LOWER: 0.4, BALANCE_APART: 0.45, CONTACT_MIN_MM: 0.2
   };
-  /* ESG (Paul's reference monogram, 15 Oct 2026: "absolutely perfect ... I want these exact ratios, sizes, the way things are connected and the way they are visible to be maintained"), measured on the engine: the layout aims at these. */
-  const ESG_PROFILE = { baselineOffsetMm: 1.6, wMm: 13.0, hMm: 14.8, aspect: 0.88, sideHeight: [0.80, 0.77], sideWidth: [0.80, 0.77], centreWidthVsMedian: 1.00, overlap: [0.11, 0.19, 0.17], visibleMm: [3.9, 3.7], crowdMm: 2.9 };
+  /* ESG (Paul's reference monogram, 15 Oct 2026; the numbers re-measured 16 Oct 2026 with the widened and thickened letters of the letter prep, 13.0 x 14.8 mm before it: "absolutely perfect ... I want these exact ratios, sizes, the way things are connected and the way they are visible to be maintained"), measured on the engine: the layout aims at these. */
+  const ESG_PROFILE = { baselineOffsetMm: 1.67, wMm: 14.69, hMm: 14.86, aspect: 0.99, sideHeight: [0.79, 0.78], sideWidth: [0.86, 0.80], centreWidthVsMedian: 0.90, overlap: [0.12, 0.21, 0.18], visibleMm: [4.5, 4.15], crowdMm: 2.99 };
   function cleanAdjust(a) {
     const out = {}, c = (x, lim, d) => (finite(x) ? Math.min(lim[1], Math.max(lim[0], x)) : d);
     for (const [k, alias] of [['L', 'left'], ['M', 'middle'], ['R', 'right']]) {
@@ -60,8 +61,8 @@
     return out;
   }
   const NORMS = {
-    SIDE_HEIGHT_RATIO: 0.80, SIDE_HEIGHT_TOL: 0.04, SIDE_WIDTH_MIN: 0.60, SIDE_WIDTH_MAX: 0.95, MID_WIDTH_MIN: 0.84, MID_WIDTH_MAX: 1.11, MID_BODY_W_OVER_EM_MEDIAN: 0.2434, MID_BODY_W_OVER_INKH_MEDIAN: 0.348, STRETCH_CAP: 0.25, BODY_TRIM: 0.05,
-    ASPECT_TARGET: 0.92, ASPECT_MIN: 0.82, ASPECT_MAX: 1.00, OVERLAP_SIDE_MAX: 0.22, OVERLAP_MID_MAX: 0.30, SIDE_VISIBLE_MIN_MM: 3.5, SIDE_HEIGHT_MIN: 0.72, GAP_MIN_MM: 0.35, COUNTERS_MIN: 0.9, BOX_OVERLAP_MAX: 0.7, BOX_OVERLAP_MIN: 0.06
+    SIDE_HEIGHT_RATIO: 0.80, SIDE_HEIGHT_TOL: 0.04, SIDE_WIDTH_MIN: 0.60, SIDE_WIDTH_MAX: 0.95, MID_WIDTH_MIN: 0.84, MID_WIDTH_MAX: 1.11, MID_BODY_W_OVER_EM_MEDIAN: 0.2918, MID_BODY_W_OVER_INKH_MEDIAN: 0.416, STRETCH_CAP: 0.25, BODY_TRIM: 0.05,
+    ASPECT_TARGET: 0.96, ASPECT_MIN: 0.90, ASPECT_MAX: 1.25, OVERLAP_SIDE_MAX: 0.22, OVERLAP_MID_MAX: 0.30, SIDE_VISIBLE_MIN_MM: 3.9, SIDE_HEIGHT_MIN: 0.72, GAP_MIN_MM: 0.35, COUNTERS_MIN: 0.9, BOX_OVERLAP_MAX: 0.7, BOX_OVERLAP_MIN: 0.06
   };
   /* The inner openings that count when it is asked whether a neighbour's stroke has closed them: those of 0.5 mm2 and more (a quarter of the counters of the real Left / Mid / Right alphabets are smaller: the eyes of a flourish,
      0.5 mm across, which a laser cannot keep open anyway and nobody reads as part of the letter). A smaller one that survives is still a hole of the piece. */
@@ -240,6 +241,7 @@
       merge: counters => run(C.ClipType.ctUnion, counters, null, C.PolyFillType.pftNonZero, C.PolyFillType.pftNonZero, false),
       // the paths pulled inward by rPt (what is left when every edge moves in): empty when no disc of that radius fits
       grow: (paths, rPt) => { const co = new C.ClipperOffset(2, 0.02 * SC), out = new C.Paths(); co.AddPaths(paths, C.JoinType.jtRound, C.EndType.etClosedPolygon); co.Execute(out, rPt * SC); return out; },
+      bar: (p, q, rPt) => { const co = new C.ClipperOffset(2, 0.005 * SC), out = new C.Paths(); co.AddPath([{ X: Math.round(p.X), Y: Math.round(p.Y) }, { X: Math.round(q.X), Y: Math.round(q.Y) }], C.JoinType.jtRound, C.EndType.etOpenRound); co.Execute(out, rPt * SC); return out; },
       erode: (paths, rPt) => { const co = new C.ClipperOffset(2, 0.02 * SC), out = new C.Paths(); co.AddPaths(paths, C.JoinType.jtMiter, C.EndType.etClosedPolygon); co.Execute(out, -rPt * SC); return out; }
     };
   }
@@ -278,8 +280,57 @@
     return [at(tot * trim), at(tot * (1 - trim))];
   }
   function centralSpan(region, axis, trim) { const r = centralRange(region, axis, trim); return r ? r[1] - r[0] : 0; }
+  /* LETTER PREP (MONOESG round 3, Paul, 16 Oct 2026), for the real alphabets (a letter that carries glyph metrics):
+     A. every letter is widened across by WIDEN before anything else (M N W K R H A 30 %, Q T G S J 10 %, the others 20 %): "those seven are much too narrow";
+     B. its cut-out lines are made thicker: the glyph is offset outward (round joins) until its MEAN stroke width (twice its ink area over its outline length, which for a stroke is its width) is THICKEN.TARGET (1.20) times that of
+        the original unwidened letter, the widening having thickened the upright strokes already; the offset is at most THICKEN.MAX_MM per side and is made smaller when it would close the inner openings (they keep THICKEN.COUNTERS);
+     C. the Q gets a small bar from the free end of its curl to the stroke nearest to it (Q_BRIDGE).
+     The norms, ratios, adjust and stretch caps all see the letter as prepared; a stretch is counted from there (report.baseWiden is the widening of this step). */
+  const WIDEN = { M: 1.30, N: 1.30, W: 1.30, K: 1.30, R: 1.30, H: 1.30, A: 1.30, Q: 1.10, T: 1.10, G: 1.10, S: 1.10, J: 1.10, OTHER: 1.20 };
+  const THICKEN = { TARGET: 1.20, MAX_MM: 0.25, COUNTERS: 0.90 };
+  const Q_BRIDGE = { WIDTH_MM: 0.4, LENGTH_MAX_MM: 1.0, LENGTH_MIN_MM: 0.35, TIP_ANGLE: 110, REGION: [0.7, 0.35] };      // (the free end must lie in the left 70 % and the upper 65 % of the letter)
+  const widenOf = L => { const k = String(L == null ? '' : L).trim().toUpperCase(); return /^[A-Z]$/.test(k) ? (WIDEN[k] || WIDEN.OTHER) : 1; };
+  const PREP_CACHE = new Map();
+  const ringLen = r => { let l = 0; for (let i = 0, n = r.length; i < n; i++) { const q = r[(i + 1) % n]; l += Math.hypot(q.X - r[i].X, q.Y - r[i].Y); } return l; };
+  const meanStroke = (E, region) => { const P = region.reduce((a, r) => a + ringLen(r), 0); return P > 0 ? 2 * E.netArea(region) / P : 0; };      // (SC units; a stroke of width w and length l: area w*l, outline 2*l)
+  const countersArea = (E, region) => -region.filter(r => E.area(r) <= -COUNTER_MIN_PT2 * SC * SC).reduce((a, r) => a + E.area(r), 0);
+  // the p5 stroke width: the width below which 5 % of the ink lies (the thinnest the strokes really are, not one stray corner), by openings of growing radius
+  const thinWidth = (E, region) => {
+    const A = E.netArea(region); if (!(A > 0)) return 0;
+    for (let r = 0.03; r <= 0.6; r += 0.02) { const open = E.grow(E.grow(region, -r / MM), r / MM); if (1 - E.netArea(open) / A >= 0.05) return 2 * r; }
+    return 1.2;
+  };
+  // the free end of a Q's curl (the flat cut where a stroke stops), bridged to the stroke nearest to it: a stadium bar of Q_BRIDGE.WIDTH_MM from just inside the end to just inside the body; ends nearer than LENGTH_MIN_MM x ... are the tail's own tip (a bar as wide as the gap would be a blob)
+  function qBridge(E, region, C) {
+    const bb = bboxOf(region.filter(r => E.area(r) > 0)), W = bb[2] - bb[0], H = bb[3] - bb[1], farArc = 1.2 / MM * SC, maxD = Q_BRIDGE.LENGTH_MAX_MM / MM * SC, minD = Q_BRIDGE.LENGTH_MIN_MM / MM * SC, capArc = 1.5 / MM * SC, inside = 0.15 / MM * SC;
+    const toSeg2 = (pt, a, b) => { const dx = b.X - a.X, dy = b.Y - a.Y, l2 = dx * dx + dy * dy, t = l2 ? Math.max(0, Math.min(1, ((pt.X - a.X) * dx + (pt.Y - a.Y) * dy) / l2)) : 0, X = a.X + t * dx, Y = a.Y + t * dy; return { d: Math.hypot(pt.X - X, pt.Y - Y), X, Y }; };
+    let best = null;
+    region.forEach((r, ri) => {
+      const L = r.length, cum = [0]; for (let i = 1; i <= L; i++) cum.push(cum[i - 1] + Math.hypot(r[i % L].X - r[i - 1].X, r[i % L].Y - r[i - 1].Y)); const per = cum[L], outer = E.area(r) > 0;
+      const tips = [];
+      for (let i = 0; i < L; i++) {
+        const a = r[(i + L - 3) % L], b = r[i], c = r[(i + 3) % L], v1 = [a.X - b.X, a.Y - b.Y], v2 = [c.X - b.X, c.Y - b.Y], l1 = Math.hypot(...v1), l2 = Math.hypot(...v2); if (l1 < 200 || l2 < 200) continue;
+        const ang = Math.acos(Math.max(-1, Math.min(1, (v1[0] * v2[0] + v1[1] * v2[1]) / (l1 * l2)))) * 180 / Math.PI, cross = v1[0] * v2[1] - v1[1] * v2[0];
+        if (ang < Q_BRIDGE.TIP_ANGLE && (outer ? cross > 0 : cross < 0)) tips.push(i);
+      }
+      for (const i of tips) {
+        const b = r[i]; if ((b.X - bb[0]) > Q_BRIDGE.REGION[0] * W || (b.Y - bb[1]) < Q_BRIDGE.REGION[1] * H) continue;
+        // the end of the stroke: the middle of its cut (this corner and the nearest other corner within capArc along the outline)
+        let mate = null; for (const k of tips) { if (k === i) continue; let da = Math.abs(cum[k] - cum[i]); da = Math.min(da, per - da); if (da <= capArc && (!mate || da < mate.da)) mate = { k, da }; }
+        const t = mate ? { X: (b.X + r[mate.k].X) / 2, Y: (b.Y + r[mate.k].Y) / 2 } : b;
+        let nb = null;
+        region.forEach((r2, rj) => { const L2 = r2.length; for (let j = 0; j < L2; j++) { if (rj === ri) { let da = Math.abs(cum[j] - cum[i]); da = Math.min(da, per - da); if (da < farArc) continue; } const h = toSeg2(t, r2[j], r2[(j + 1) % L2]); if (!nb || h.d < nb.d) nb = h; } });
+        if (!nb || nb.d > maxD || nb.d < minD) continue;
+        if (!best || nb.d < best.nb.d) best = { t, nb };
+      }
+    });
+    if (!best) return null;
+    const dx = best.nb.X - best.t.X, dy = best.nb.Y - best.t.Y, dl = Math.hypot(dx, dy) || 1, ux = dx / dl, uy = dy / dl;
+    const bar = E.bar({ X: best.t.X - ux * inside, Y: best.t.Y - uy * inside }, { X: best.nb.X + ux * inside, Y: best.nb.Y + uy * inside }, Q_BRIDGE.WIDTH_MM / 2 / MM);
+    return { region: E.regionNZ(region.concat(bar)), lengthMm: Math.round(best.nb.d / SC * MM * 100) / 100, at: [Math.round((best.t.X - bb[0]) / SC * 100) / 100, Math.round((best.t.Y - bb[1]) / SC * 100) / 100] };
+  }
   /** One letter as the user drew it → its filled region (see fillOf), normalised so its own bbox starts at 0,0 (integer 0.001 pt). */
-  function prepLetter(E, spec, slot) {
+  function prepLetter(E, spec, slot, prep, C) {
     const name = () => `the ${slot} letter` + (spec && spec.letter ? ` (${String(spec.letter).slice(0, 3)})` : '');
     if (!spec || typeof spec !== 'object' || !Array.isArray(spec.rings)) return { why: `${name()} is missing` };
     const raw = [];
@@ -300,12 +351,59 @@
     if (!ints.length) return { why: `${name()} has no outline` };
     let region = fillOf(E, ints, spec.fill);
     if (!region.length) return { why: `${name()} has no outline` };
+    let prepInfo = null, baseAdd = 0;
+    if (prep) {
+      let key = (spec.letter == null ? '' : String(spec.letter)) + '|' + spec.fill + '|' + ints.length; { let h = 2166136261; for (const r of ints) for (const q of r) { h = Math.imul(h ^ q.X, 16777619); h = Math.imul(h ^ q.Y, 16777619); } key += '|' + (h >>> 0); }
+      let hit = PREP_CACHE.get(key);
+      if (!hit) {
+        const r0 = region, b0 = bboxOf(r0.filter(r => E.area(r) > 0)), k = widenOf(spec.letter), widened = k === 1 ? r0 : scaled(r0, k, 1);
+        const w0 = meanStroke(E, r0), w1 = meanStroke(E, widened), want = THICKEN.TARGET * w0;
+        let d = Math.max(0, (want - w1) / 2), cap = THICKEN.MAX_MM / MM * SC, capped = false, reg = widened;
+        if (d > cap) { d = cap; capped = true; }
+        const c0 = countersArea(E, widened); let kept = 1;
+        if (d > 0) {
+          let ok = false;
+          for (let t = 0; t < 7 && !ok; t++) { const cand = E.grow(widened, d / SC), c1 = countersArea(E, cand), kk = c0 > 0 ? c1 / c0 : 1; if (kk >= THICKEN.COUNTERS - 1e-9) { reg = cand; kept = kk; ok = true; } else { d *= 0.7; capped = true; } }
+          if (!ok) d = 0;
+        }
+        const w2 = meanStroke(E, reg);
+        let q = null; if (String(spec.letter).toUpperCase() === 'Q') q = C ? qBridge(E, reg, C) : null;
+        const fin = q ? q.region : reg, b1 = bboxOf(fin.filter(r => E.area(r) > 0));
+        hit = { region: fin, baseAdd: b0[1] - b1[1], info: { widen: k, strokeBeforeMm: Math.round(w0 / SC * MM * 1000) / 1000, strokeWidenedMm: Math.round(w1 / SC * MM * 1000) / 1000, strokeAfterMm: Math.round(w2 / SC * MM * 1000) / 1000, offsetMm: Math.round(d / SC * MM * 1000) / 1000, offsetCapped: capped, countersKept: Math.round(kept * 1000) / 1000, qBridge: q ? { lengthMm: q.lengthMm, at: q.at } : null } };
+        if (PREP_CACHE.size > 600) PREP_CACHE.clear(); PREP_CACHE.set(key, hit);
+      }
+      region = hit.region; baseAdd = hit.baseAdd; prepInfo = hit.info;
+    }
     const b = bboxOf(region); region = shift(region, -b[0], -b[1]);
     const w = b[2] - b[0], h = b[3] - b[1], a = E.netArea(region);
     if (w < 0.05 * SC || h < 0.05 * SC || a < 0.01 * SC * SC) return { why: `${name()} has no outline` };
     // the typographic metrics of a glyph from the master file (MONOGRAMFILE: baselinePt = the baseline's height above the bottom of the outline, may be negative; emPt = the font size): where its baseline is in its own box
     const mt = spec.metrics && typeof spec.metrics === 'object' ? spec.metrics : null, bl = mt && finite(mt.baselinePt) && Math.abs(mt.baselinePt) < 1e4 ? mt.baselinePt : null;
-    return { region, w, h, area: a, name: name(), base: bl == null ? null : Math.round(bl * SC), em: mt && finite(mt.emPt) && mt.emPt > 0 ? mt.emPt : null };
+    return { prep: prepInfo, region, w, h, area: a, name: name(), base: bl == null ? null : Math.round(bl * SC + baseAdd), em: mt && finite(mt.emPt) && mt.emPt > 0 ? mt.emPt : null };
+  }
+
+  /** The letter as the engine prepares it (A. widened, B. thickened, C. Q bridged): preparedLetter('L' | 'M' | 'R' (or left / middle / right), 'Q', spec) with the raw glyph spec { rings, fill, metrics } the page holds for that SKU
+      (the engine holds no glyphs of its own). → { ok, family, letter, rings (arrays of [x, y] in pt, y up, the outline's box starting at 0, 0; fill 'nonzero': read them by direction), fill, metrics { baselinePt, emPt }, widthPt, heightPt,
+      bodyWidthPt, bodyHeightPt (the central 90 % of the ink), strokeMm { before, after, widened, p5Before, p5After } (mean = 2 x ink area / outline length; p5 = the width below which 5 % of the ink lies), widen, offsetMm, offsetCapped, countersKept, qBridge } */
+  function preparedLetter(family, letter, spec) {
+    if (family && typeof family === 'object' && !Array.isArray(family)) { spec = family; family = spec.family || spec.slot || spec.slotName; letter = spec.letter; }
+    else if (letter && typeof letter === 'object' && spec === undefined) { spec = letter; letter = spec.letter; }
+    const f = String(family == null ? '' : family).trim().toUpperCase(), slot = f === 'L' || f.startsWith('LEFT') ? 'left' : f === 'M' || f.startsWith('MID') ? 'middle' : f === 'R' || f.startsWith('RIGHT') ? 'right' : null;
+    if (!slot) return { ok: false, why: 'the family is L, M or R' };
+    const C = clipper(); if (!C) return { ok: false, why: 'the geometry library is not loaded' };
+    if (!spec || typeof spec !== 'object') return { ok: false, why: 'the raw glyph is needed: preparedLetter(family, letter, { rings, fill, metrics })' };
+    const E = engine(C), raw = Object.assign({}, spec, { letter: letter == null ? spec.letter : letter, metrics: spec.metrics && typeof spec.metrics === 'object' ? spec.metrics : {} });
+    const p = prepLetter(E, raw, slot, true, C); if (p.why) return { ok: false, why: p.why };
+    const before = prepLetter(E, raw, slot, false, C), info = p.prep || {};
+    const bl = finite(raw.metrics.baselinePt) ? raw.metrics.baselinePt : null, r3 = v => Math.round(v * 1000) / 1000;
+    return {
+      ok: true, family: slot === 'left' ? 'L' : slot === 'middle' ? 'M' : 'R', letter: String(raw.letter == null ? '' : raw.letter).toUpperCase(), fill: 'nonzero',
+      rings: p.region.map(r => r.map(q => [q.X / SC, q.Y / SC])), metrics: { baselinePt: p.base == null ? null : p.base / SC, emPt: p.em },
+      widthPt: r3(p.w / SC), heightPt: r3(p.h / SC), bodyWidthPt: r3(centralSpan(p.region, 0, NORMS.BODY_TRIM) / SC), bodyHeightPt: r3(centralSpan(p.region, 1, NORMS.BODY_TRIM) / SC),
+      before: { widthPt: r3(before.w / SC), heightPt: r3(before.h / SC), bodyWidthPt: r3(centralSpan(before.region, 0, NORMS.BODY_TRIM) / SC), bodyHeightPt: r3(centralSpan(before.region, 1, NORMS.BODY_TRIM) / SC) },
+      strokeMm: { before: info.strokeBeforeMm, widened: info.strokeWidenedMm, after: info.strokeAfterMm, p5Before: r3(thinWidth(E, before.region)), p5After: r3(thinWidth(E, p.region)) },
+      widen: info.widen, offsetMm: info.offsetMm, offsetCapped: info.offsetCapped, countersKept: info.countersKept, qBridge: info.qBridge
+    };
   }
 
   function normOpts(o) {
@@ -314,7 +412,7 @@
     const overlap = num(o.overlap, 0.18, 0, 0.9);
     return {
       overlap, maxOverlap: Math.max(overlap, num(o.maxOverlap, 0.38, 0, 0.95)),
-      centerRatio: Math.max(1.2, num(o.centerRatio, 1.25, 1.2, 5)), sideWiden: num(o.sideWiden, 1.15, 1, 1.5), contacts: Math.round(num(o.contacts, 2, 1, 3)), contactMm: num(o.contactMm, 0.3, 0.1, 2), contactGapMm: num(o.contactGapMm, 1.5, 0.3, 6), barMm: num(o.barMm, 0.6, Math.max(0.2, num(o.contactMm, 0.3, 0.1, 2)), 2), allowTrim: o.allowTrim !== false, adjust: cleanAdjust(o.adjust), normalise: o.normalise !== false, norms: Object.assign({}, NORMS, o.norms && typeof o.norms === 'object' ? o.norms : {}),
+      centerRatio: Math.max(1.2, num(o.centerRatio, 1.25, 1.2, 5)), sideWiden: num(o.sideWiden, 1.15, 1, 1.5), contacts: Math.round(num(o.contacts, 2, 1, 3)), contactMm: num(o.contactMm, 0.3, 0.1, 2), contactGapMm: num(o.contactGapMm, 1.5, 0.3, 6), barMm: num(o.barMm, 0.6, Math.max(0.2, num(o.contactMm, 0.3, 0.1, 2)), 2), allowTrim: o.allowTrim !== false, adjust: cleanAdjust(o.adjust), normalise: o.normalise !== false, prepare: o.prepare !== false && o.normalise !== false, norms: Object.assign({}, NORMS, o.norms && typeof o.norms === 'object' ? o.norms : {}),
       valign: o.valign === 'baseline' ? 'baseline' : 'center', reach: o.reach !== false, reachMax: typeof o.reach === 'number' && Number.isFinite(o.reach) ? Math.min(0.95, Math.max(0.1, o.reach)) : REACH_HI
     };
   }
@@ -335,7 +433,7 @@
     const SIMP = 0.02 / MM * SC, simp = paths => paths.map(q => C.Clipper.CleanPolygon(q.map(v => ({ X: v.X, Y: v.Y })), SIMP)).filter(q => q && q.length >= 3);
     if (!letters || typeof letters !== 'object') return failure('the three letters are missing');
     const L = [];
-    for (const slot of SLOTS) { const p = prepLetter(E, letters[slot], slot); if (p.why) return failure(p.why); p.slot = slot; p.letter = letters[slot].letter == null ? '' : String(letters[slot].letter); L.push(p); }
+    for (const slot of SLOTS) { const p = prepLetter(E, letters[slot], slot, o.prepare && letters[slot] && letters[slot].metrics && typeof letters[slot].metrics === 'object', C); if (p.why) return failure(p.why); p.slot = slot; p.letter = letters[slot].letter == null ? '' : String(letters[slot].letter); L.push(p); }
     const [left, mid, right] = L;
     const notes = [];
 
@@ -436,10 +534,10 @@
     }
     const attempt = ov => attemptPl(place(ov), ov);
     /* crowding: the length (mm) of one letter's outline that lies within GAP_MIN_MM of another letter's ink without touching it (away from where they cross): strokes that run side by side a hair apart are what reads as gibberish */
-    const GAPSC = o.norms.GAP_MIN_MM / MM, CROWD_TOTAL_MM = 3, CROWD_PAIR_MM = 1.5;
+    const GAPSC = o.norms.GAP_MIN_MM / MM, CROWD_TOTAL_MM = 3.2, CROWD_PAIR_MM = 1.5;
     const outlineLen = (rings, zone) => {
       if (!zone.length || !rings.length) return 0;
-      const c = new C.Clipper(0), pt = new C.PolyTree(); c.AddPaths(rings.map(r => r.concat([r[0]])), C.PolyType.ptSubject, false); c.AddPaths(zone, C.PolyType.ptClip, true);
+      const c = new C.Clipper(0), pt = new C.PolyTree(); c.AddPaths(rings.map(r => { const q = []; for (const v of r) { const w = q[q.length - 1]; if (!w || w.X !== v.X || w.Y !== v.Y) q.push(v); } if (q.length > 1 && q[0].X === q[q.length - 1].X && q[0].Y === q[q.length - 1].Y) q.pop(); return q.concat([q[0]]); }), C.PolyType.ptSubject, false); c.AddPaths(zone, C.PolyType.ptClip, true);
       if (!c.Execute(C.ClipType.ctIntersection, pt, C.PolyFillType.pftNonZero, C.PolyFillType.pftNonZero)) return 0;
       let l = 0; for (const q of C.Clipper.OpenPathsFromPolyTree(pt)) for (let i = 1; i < q.length; i++) l += Math.hypot(q[i].X - q[i - 1].X, q[i].Y - q[i - 1].Y); return l / SC * MM;
     };
@@ -940,7 +1038,7 @@
     const placed = att.pl.map(P => ({ letter: P.p.letter, slot: P.p.slot, scale: round3(P.s), scaleX: round3(P.sx * fx), rot: P.rot || 0, shear: P.shear || 0, trimMm: P.cutPt ? Math.round(P.cutPt * MM * 10) / 10 : 0, bboxPt: [P.dx, P.dy, P.dx + P.w, P.dy + P.h].map((v, i) => round3((v - b[i % 2]) / SC * (i % 2 ? 1 : fx))) }));
     const result = {
       ok: true, why: '', rings, bboxPt: [0, 0, round3(W / SC), round3(H / SC)], wMm: Math.round(W / SC * MM * 1e4) / 1e4, hMm: Math.round(H / SC * MM * 1e4) / 1e4, placed,
-      report: { connected: true, metrics, adjust: { L: adjustApplied[0], M: adjustApplied[1], R: adjustApplied[2] }, sizes, limits, review: limits.length > 0, overlapPct: { leftMiddle: Math.round(g.lm.pct * 10) / 10, middleRight: Math.round(g.mr.pct * 10) / 10 }, holesKept: round3(g.holesKept), centerScale: round3(cs), overlap: att.ov == null ? round3((ovs[0] + ovs[1]) / 2) : att.ov, reach: reached, searched, warnings, parts, bridges: bars, contacts, tieBars: { leftMiddle: tieBars[0], middleRight: tieBars[1] }, altered, level, joinMm: { leftMiddle: joins[0], middleRight: joins[1] }, moveMm: { left: Math.round(moved[0] / SC * MM * 100) / 100, right: Math.round(moved[2] / SC * MM * 100) / 100 }, joinMm2: { leftMiddle: Math.round(g.lm.i / SC / SC * MM * MM * 100) / 100, middleRight: Math.round(g.mr.i / SC / SC * MM * MM * 100) / 100 }, tries, notes }
+      report: { connected: true, metrics, adjust: { L: adjustApplied[0], M: adjustApplied[1], R: adjustApplied[2] }, baseWiden: { L: left.prep ? left.prep.widen : 1, M: mid.prep ? mid.prep.widen : 1, R: right.prep ? right.prep.widen : 1 }, prep: { L: left.prep || null, M: mid.prep || null, R: right.prep || null }, sizes, limits, review: limits.length > 0, overlapPct: { leftMiddle: Math.round(g.lm.pct * 10) / 10, middleRight: Math.round(g.mr.pct * 10) / 10 }, holesKept: round3(g.holesKept), centerScale: round3(cs), overlap: att.ov == null ? round3((ovs[0] + ovs[1]) / 2) : att.ov, reach: reached, searched, warnings, parts, bridges: bars, contacts, tieBars: { leftMiddle: tieBars[0], middleRight: tieBars[1] }, altered, level, joinMm: { leftMiddle: joins[0], middleRight: joins[1] }, moveMm: { left: Math.round(moved[0] / SC * MM * 100) / 100, right: Math.round(moved[2] / SC * MM * 100) / 100 }, joinMm2: { leftMiddle: Math.round(g.lm.i / SC / SC * MM * MM * 100) / 100, middleRight: Math.round(g.mr.i / SC / SC * MM * MM * 100) / 100 }, tries, notes }
     };
     /* The quick look (autoFit): the placed letters of this build, moved by dx / dy in mm (per letter, on top of where they stand), measured on the coarse outlines with the same rules: a few dozen looks a second, where a build takes
        seconds. It does not redo the trim, the bars or the reach search; it says which move is worth a real build. Not part of the result's data (not enumerable). */
@@ -1098,7 +1196,7 @@
     return await doc.save({ useObjectStreams: false });
   }
 
-  const api = { lettersOf, familiesOf, slotsOf, build, autoFit, toPdf, svgPath, NORMS, LIMITS, ADJUST_LIMITS, ESG_PROFILE };
+  const api = { lettersOf, familiesOf, slotsOf, build, autoFit, toPdf, svgPath, preparedLetter, NORMS, LIMITS, ADJUST_LIMITS, ESG_PROFILE, WIDEN, THICKEN, Q_BRIDGE };
   root.CharmNestMonogram = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
