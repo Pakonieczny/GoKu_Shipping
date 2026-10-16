@@ -259,6 +259,18 @@ function invariants(label) {
     invariants('K4 b');
   }
 
+  /* ═══ a file that goes between the look and the read is "not there", not a 500 ═══ */
+  {
+    await upload('VANISH_0990', 190);
+    const real = Fk.bucket.file;
+    Fk.bucket.file = p => { const f = real(p); if (p === 'charmnest/master/custom/VANISH_0990.ai') { const ex = f.exists; f.exists = async () => { const out = await ex.call(f); blobs.delete(p); return out; }; } return f; };   // (it is there when asked, gone when read)
+    r = await post(commitBody({ rid: '4200009900', listing: '1800000990', old: 'V', sku: 'VANISH_0990', d: 190 }));
+    Fk.bucket.file = real;
+    eq([r.status, r.body.ok, r.body.error, r.body.which, r.body.why], [200, false, 'not-uploaded', 'ai', 'missing'], 'a file removed between exists() and the read: not-uploaded (the page uploads again), never a 500');
+    r = await save({ rid: '4200009900', listing: '1800000990', old: 'V', sku: 'VANISH_0990', d: 190 });
+    eq([r.ok, r.created], [true, true], '... and after the upload it is saved');
+  }
+
   /* ═══ K5 · the sweep: leftovers of uploads whose commit never came go after a day; nothing else does ═══ */
   {
     const DAY = 24 * 3600e3;

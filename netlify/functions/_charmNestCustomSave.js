@@ -145,24 +145,33 @@ function sameDrawing(d, v) {
 const sha256 = buf => require("crypto").createHash("sha256").update(buf).digest("hex");
 async function checkFiles(bucket, v) {
   const { aiPath, thumbPath } = pathsOf(v.sku), ai = bucket.file(aiPath), png = bucket.file(thumbPath), dec = v.declared || {};
-  const [aiThere] = await ai.exists(); if (!aiThere) return refuse("not-uploaded", { which: "ai", why: "missing" });
-  const [pngThere] = await png.exists(); if (!pngThere) return refuse("not-uploaded", { which: "thumb", why: "missing" });
-  const [meta] = await ai.getMetadata(), size = Number(meta && meta.size);
-  if (!(size > MIN_AI_BYTES)) return refuse("bad-file", { which: "ai", why: "too-small" });
-  // another save that chose the same SKU a moment ago uploads to the very same path: bytes that are not the ones this page built are NOT this design's file (KEEP K4)
-  const other = () => refuse("sku-taken", { sku: v.sku, by: "upload", why: "changed" });
-  if (dec.aiBytes && size !== dec.aiBytes) return other();
-  let head;
-  if (dec.aiSha256 && size <= MAX_HASHED) {
-    const [all] = await ai.download(); head = Buffer.from(all).slice(0, 8);
-    if (sha256(Buffer.from(all)) !== dec.aiSha256) return other();
-  } else { const [h] = await ai.download({ start: 0, end: 7 }); head = h; }
-  if (!head || Buffer.from(head).slice(0, 4).toString("latin1") !== "%PDF") return refuse("bad-file", { which: "ai", why: "not-pdf" });
-  if (dec.pngSha256) {
-    const [pm] = await png.getMetadata();
-    if (Number(pm && pm.size) <= MAX_HASHED) { const [pb] = await png.download(); if (sha256(Buffer.from(pb)) !== dec.pngSha256) return other(); }
+  let which = "ai";
+  try {
+    const [aiThere] = await ai.exists(); if (!aiThere) return refuse("not-uploaded", { which: "ai", why: "missing" });
+    which = "thumb"; const [pngThere] = await png.exists(); if (!pngThere) return refuse("not-uploaded", { which: "thumb", why: "missing" });
+    which = "ai";
+    const [meta] = await ai.getMetadata(), size = Number(meta && meta.size);
+    if (!(size > MIN_AI_BYTES)) return refuse("bad-file", { which: "ai", why: "too-small" });
+    // another save that chose the same SKU a moment ago uploads to the very same path: bytes that are not the ones this page built are NOT this design's file (KEEP K4)
+    const other = () => refuse("sku-taken", { sku: v.sku, by: "upload", why: "changed" });
+    if (dec.aiBytes && size !== dec.aiBytes) return other();
+    let head;
+    if (dec.aiSha256 && size <= MAX_HASHED) {
+      const [all] = await ai.download(); head = Buffer.from(all).slice(0, 8);
+      if (sha256(Buffer.from(all)) !== dec.aiSha256) return other();
+    } else { const [h] = await ai.download({ start: 0, end: 7 }); head = h; }
+    if (!head || Buffer.from(head).slice(0, 4).toString("latin1") !== "%PDF") return refuse("bad-file", { which: "ai", why: "not-pdf" });
+    if (dec.pngSha256) {
+      which = "thumb";
+      const [pm] = await png.getMetadata();
+      if (Number(pm && pm.size) <= MAX_HASHED) { const [pb] = await png.download(); if (sha256(Buffer.from(pb)) !== dec.pngSha256) return other(); }
+    }
+    return null;
+  } catch (e) {
+    // a file that went between the look and the read (a zero-age repair, a Library delete, the day-old sweep) is a file that is not there: the page uploads it again, once
+    if (e && (e.code === 404 || e.code === "404" || e.code === "ENOENT" || /no blob|not found|no such object/i.test(String(e.message || "")))) return refuse("not-uploaded", { which, why: "missing" });
+    throw e;
   }
-  return null;
 }
 
 /* ── the sweep (KEEP B8, K5): files under charmnest/master/custom/ whose SKU has no index entry and that are a day old are the leftovers of an upload whose commit never came ── */
