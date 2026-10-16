@@ -51,7 +51,7 @@
     BALANCE_UPPER: 0.6, BALANCE_LOWER: 0.4, BALANCE_APART: 0.45, CONTACT_MIN_MM: 0.2
   };
   /* ESG (Paul's reference monogram, 15 Oct 2026; the numbers re-measured 16 Oct 2026 with the widened and thickened letters of the letter prep (round 4), 13.0 x 14.8 mm with the raw letters: "absolutely perfect ... I want these exact ratios, sizes, the way things are connected and the way they are visible to be maintained"), measured on the engine: the layout aims at these. */
-  const ESG_PROFILE = { baselineOffsetMm: 1.1, bodyOffsetMm: [0.15, 0.15], wMm: 20.19, hMm: 14.93, aspect: 1.35, sideHeight: [0.83, 0.81], sideWidth: [0.89, 0.82], centreWidthVsMedian: 0.88, overlap: [0.02, 0.03, 0.01], visibleMm: [5.63, 5.25], crowdMm: 2.64 };
+  const ESG_PROFILE = { baselineOffsetMm: 1.1, bodyOffsetMm: [0.15, 0.15], wMm: 20.23, hMm: 14.96, aspect: 1.35, sideHeight: [0.83, 0.84], sideWidth: [0.89, 0.92], centreWidthVsMedian: 0.88, overlap: [0.02, 0.03, 0.02], visibleMm: [5.64, 5.30], crowdMm: 2.59 };
   function cleanAdjust(a) {
     const out = {}, c = (x, lim, d) => (finite(x) ? Math.min(lim[1], Math.max(lim[0], x)) : d);
     for (const [k, alias] of [['L', 'left'], ['M', 'middle'], ['R', 'right']]) {
