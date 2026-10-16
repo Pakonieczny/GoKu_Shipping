@@ -22,7 +22,7 @@
      break in the hand. A join is the overlap of two letters; its width is the widest disc that fits inside it (a disc 0.3 mm across: two crossing strokes of 0.3 mm). Under NECK_FLOOR_MM it is called a hairline.
      When the first overlap that connects gives a weaker join than NECK_OK_MM, each side is searched again over a wider overlap (up to REACH_HI = 80 % of the side letter's width; opts.reach: a number sets it) and a small move up or down (REACH_DY of the
      middle's height per step, REACH_DYN steps each way), nearest to the asked overlap first, for the first placement whose join holds and whose letters keep their shape (35 % overlap, 90 % of the inner openings). */
-  const NECK_OK_MM = 0.3, NECK_FLOOR_MM = 0.15, REACH_LO = 0.06, REACH_HI = 0.8, REACH_DY = 0.05, REACH_DYN = 3, REACH_STEP = 0.02;
+  const NECK_OK_MM = 0.3, NECK_FLOOR_MM = 0.15, REACH_LO = 0.06, REACH_HI = 0.8, REACH_DY = 0.05, REACH_DYN = 3, REACH_DY_MM = 0.15, REACH_STEP = 0.02;
   /* A part of a letter that no overlap can hold (a Q's tail, a flourish drawn apart from its letter) is tied on rather than left loose or dropped: a bar BRIDGE_W_MM wide across the shortest gap to the rest of the piece, when
      that gap is no longer than BRIDGE_MAX_MM; a longer one is no letter's own part and the monogram is refused, plainly. The notes and the warnings say so. */
   const BRIDGE_MAX_MM = 3, BRIDGE_W_MM = 0.4;
@@ -44,11 +44,11 @@
   const ADJUST_LIMITS = { scale: [0.85, 1.15], sx: [0.8, 1.25], dxMm: [-2.0, 2.0], dyMm: [-1.5, 1.5] };
   /* The hard rules every finished monogram must meet (a word that breaks one is flagged for a person; report.metrics.violations names them). */
   const LIMITS = {
-    ALIGN_CENTRE_MM: 1.0, ALIGN_LR_MM: 0.15, ALIGN_BODY_MM: 0.5, SIDE_HEIGHT: [0.74, 0.84], SIDE_WIDTH: [0.62, 0.95], CENTRE_WIDTH: [0.80, 1.15], VISIBLE_MM: 3.7, ASPECT: [0.82, 1.00], OVERLAP: 0.25, CROWD_MM: 3.0, COUNTERS: 0.9,
+    BASELINE_OFFSET_MM: [0.1, 2.0], ALIGN_LR_MM: 0.15, ALIGN_BODY_MM: 0.5, SIDE_HEIGHT: [0.74, 0.84], SIDE_WIDTH: [0.62, 0.95], CENTRE_WIDTH: [0.80, 1.15], VISIBLE_MM: 3.4, ASPECT: [0.82, 1.00], OVERLAP: 0.25, CROWD_MM: 3.0, COUNTERS: 0.9,
     BALANCE_UPPER: 0.6, BALANCE_LOWER: 0.4, BALANCE_APART: 0.45, CONTACT_MIN_MM: 0.2
   };
   /* ESG (Paul's reference monogram, 15 Oct 2026: "absolutely perfect ... I want these exact ratios, sizes, the way things are connected and the way they are visible to be maintained"), measured on the engine: the layout aims at these. */
-  const ESG_PROFILE = { wMm: 13.0, hMm: 14.8, aspect: 0.88, sideHeight: [0.80, 0.77], sideWidth: [0.80, 0.77], centreWidthVsMedian: 1.00, overlap: [0.11, 0.19, 0.17], visibleMm: [3.9, 3.7], crowdMm: 2.9 };
+  const ESG_PROFILE = { baselineOffsetMm: 1.6, wMm: 13.0, hMm: 14.8, aspect: 0.88, sideHeight: [0.80, 0.77], sideWidth: [0.80, 0.77], centreWidthVsMedian: 1.00, overlap: [0.11, 0.19, 0.17], visibleMm: [3.9, 3.7], crowdMm: 2.9 };
   function cleanAdjust(a) {
     const out = {}, c = (x, lim, d) => (finite(x) ? Math.min(lim[1], Math.max(lim[0], x)) : d);
     for (const [k, alias] of [['L', 'left'], ['M', 'middle'], ['R', 'right']]) {
@@ -352,7 +352,7 @@
     cs = Math.max(1, o.centerRatio * sideH / midNom);
     const wide = o.sideWiden, N = o.normalise ? o.norms : null;
     // the body of every letter (see NORMS): the central 90 % of its ink along each axis
-    for (const p of L) { p.bw = Math.max(0.2 * p.w, centralSpan(p.region, 0, NORMS.BODY_TRIM)); p.bh = Math.max(0.2 * p.h, centralSpan(p.region, 1, NORMS.BODY_TRIM)); }
+    if (N) for (const p of L) { p.bw = Math.max(0.2 * p.w, centralSpan(p.region, 0, NORMS.BODY_TRIM)); p.bh = Math.max(0.2 * p.h, centralSpan(p.region, 1, NORMS.BODY_TRIM)); }
     // the plan: each letter's uniform scale (s), horizontal factor (f) and what was asked of it (to say it)
     const plan = [[left, sl, wide], [mid, cs, 1], [right, sr, wide]].map(([p, s, f]) => ({ p, s, f, need: f, capped: false }));
     const adjustApplied = ['L', 'M', 'R'].map(k => Object.assign({}, o.adjust[k]));
@@ -386,7 +386,8 @@
     const placed0 = plan.map(({ p, s, f }) => {
       const sx = s * f, region = scaled(p.region, sx, s), counters = region.filter(r => E.area(r) <= -COUNTER_MIN_PT2 * SC * SC).map(r => r.slice().reverse());
       const bodies = region.filter(r => E.area(r) >= SLIVER_PT2 * SC * SC);   // (the separate parts a letter is made of: a stroke apart from the rest, a dot; a speck is not one)
-      return { p, s, sx, region, sreg: simp(region), sbodies: simp(bodies), w: Math.round(p.w * sx), h: Math.round(p.h * s), base: p.base == null ? null : Math.round(p.base * s), ar: E.netArea(region), counters, cbox: counters.map(c => bboxOf([c])), cAr: E.netArea(counters), bodies };
+      const sreg0 = simp(region), br = N ? (centralRange(sreg0, 1, NORMS.BODY_TRIM) || [0, Math.round(p.h * s)]) : [0, Math.round(p.h * s)];
+      return { p, s, sx, region, sreg: sreg0, blo: br[0], bhi: br[1], sbodies: simp(bodies), w: Math.round(p.w * sx), h: Math.round(p.h * s), base: p.base == null ? null : Math.round(p.base * s), ar: E.netArea(region), counters, cbox: counters.map(c => bboxOf([c])), cAr: E.netArea(counters), bodies };
     });
     let [PL, PM, PR] = placed0;   // (a side letter that is trimmed is swapped for its trimmed self in placed0 and here)
     if (PM.h < 1.2 * Math.max(PL.h, PR.h) - 2 && !metricsOn) notes.push('the middle letter is less than 1.2 times the side letters');
@@ -403,6 +404,9 @@
       const lo = Math.max(PL.base, PR.base), hi = PM.h - Math.max(PL.h - PL.base, PR.h - PR.base);
       if (lo <= hi) baselineY = Math.min(hi, Math.max(lo, baselineY));
     }
+    // MONOESG rule 1 (by the font baseline: the sides stand on a baseline raised BASELINE_OFFSET_MM above the centre letter's, as in ESG and HEY): the window the offset may lie in
+    const OFF_LO = LIMITS.BASELINE_OFFSET_MM[0] / MM * SC, OFF_HI = LIMITS.BASELINE_OFFSET_MM[1] / MM * SC;
+    if (metricsOn && N && o.valign !== 'baseline') baselineY = midBase + Math.min(OFF_HI, Math.max(OFF_LO, baselineY - midBase));
     const dyOf = P => metricsOn ? Math.round(baselineY - P.base) : (o.valign === 'baseline' ? 0 : Math.round((PM.h - P.h) / 2));
     const xOf = (P, side, ov) => side === 'left' ? Math.round(ov * P.w) - P.w : PM.w - Math.round(ov * P.w);
 
@@ -410,7 +414,7 @@
     // a placement: where each side letter stands (x, y of its own box) beside the middle at 0,0
     function placeAt(L, R) {
       const at = [L, [0, 0], R];
-      return placed0.map((P, i) => Object.assign({}, P, { dx: at[i][0], dy: at[i][1], rg: shift(P.region, at[i][0], at[i][1]) }));
+      return placed0.map((P, i) => Object.assign({}, P, { dx: at[i][0], dy: at[i][1], rg: shift(P.region, at[i][0], at[i][1]), srg: shift(P.sreg, at[i][0], at[i][1]) }));
     }
     const place = ov => placeAt([xOf(PL, 'left', ov), dyOf(PL)], [xOf(PR, 'right', ov), dyOf(PR)]);
     function attemptPl(pl, ov) {
@@ -429,6 +433,14 @@
       let l = 0; for (const q of C.Clipper.OpenPathsFromPolyTree(pt)) for (let i = 1; i < q.length; i++) l += Math.hypot(q[i].X - q[i - 1].X, q[i].Y - q[i - 1].Y); return l / SC * MM;
     };
     const crowdOf = (A, B, inter) => { const touch = E.grow(inter, GAPSC), near = (X, Y) => E.diff(E.diff(E.grow(Y, GAPSC), Y), touch); return Math.max(outlineLen(A, near(A, B)), outlineLen(B, near(B, A))); };
+    // the same measure for two placed letters (full outlines), with each letter's ring of "within the gap" worked out once (a letter carrying a tie bar is measured as it is)
+    const zoneCache = new WeakMap(), zoneOfReg = reg => { let z = zoneCache.get(reg); if (!z) { z = E.diff(E.grow(reg, GAPSC), reg); zoneCache.set(reg, z); } return z; }, zoneOf = P => zoneOfReg(P.region);
+    function crowdEntries(a, b) {
+      const ba = bboxOf(a.rg), bb = bboxOf(b.rg); if (ba[0] > bb[2] + 2 * GAPSC || bb[0] > ba[2] + 2 * GAPSC || ba[1] > bb[3] + 2 * GAPSC || bb[1] > ba[3] + 2 * GAPSC) return 0;
+      const touch = E.grow(E.meet(a.rg, b.rg), GAPSC), plain = P => P.rg.length === P.region.length;
+      const near = Y => E.diff(plain(Y) ? shift(zoneOf(Y), Y.dx, Y.dy) : E.diff(E.grow(Y.rg, GAPSC), Y.rg), touch);
+      return Math.max(outlineLen(a.rg, near(b)), outlineLen(b.rg, near(a)));
+    }
     function guards(att) {
       const [a, b, c] = att.pl;
       const reg = x => x.rg, pct = (p, q, own) => { const i = E.netArea(E.meet(reg(p), reg(q))), s = own ? own.ar : Math.min(p.ar, q.ar); return { i, pct: s > 0 ? Math.max(0, i / s * 100) : 0 }; };
@@ -449,7 +461,7 @@
       if (o.normalise) {
         over = Math.max(0, Math.max(lm.pct, mr.pct) - o.norms.OVERLAP_SIDE_MAX * 100);
         midPct = (lm.i + mr.i) / Math.max(1, b.ar) * 100; over = Math.max(over, midPct - o.norms.OVERLAP_MID_MAX * 100);
-        const il = E.meet(a.rg, b.rg), ir = E.meet(c.rg, b.rg); crowd = { lm: crowdOf(a.rg, b.rg, il), mr: crowdOf(c.rg, b.rg, ir), lr: crowdOf(a.rg, c.rg, E.meet(a.rg, c.rg)) };
+        crowd = { lm: crowdEntries(a, b), mr: crowdEntries(c, b), lr: crowdEntries(a, c) };
       }
       const crowded = crowd.lm + crowd.mr + (crowd.lr || 0) > CROWD_TOTAL_MM;
       return { holesKept: kept, lm, mr, midPct, crowd, ok: kept >= HOLES_MIN && over === 0 && !crowded, penalty: Math.max(0, HOLES_MIN - kept) + over / 100 + (crowded ? (crowd.lm + crowd.mr + (crowd.lr || 0)) / CROWD_TOTAL_MM * 0.05 : 0) };
@@ -470,16 +482,32 @@
       return grown.map(g => ({ ring: g, cores: cores.filter(c => C.Clipper.PointInPolygon(c[0], g) !== 0) })).filter(c => c.cores.length);
     }
     const contactsAt = (pl, k) => clustersOf(E.meet(pl[k].rg, pl[1].rg));
-    const ncOf = pl => need > 1 ? [contactsAt(pl, 0).length, contactsAt(pl, 2).length] : [1, 1];
+    /* MONOESG rule 4: the contacts of a pair are BALANCED: at least two, one in the upper 40 % and one in the lower 40 % of the vertical span the two letters' bodies share, the two at least 0.45 of the span apart. A pair that holds
+       but is not balanced counts as one contact short, so the reach search, the trim and the tie bars all work for it. */
+    const balOn = !!N && need > 1;
+    const spanOfPl = (pl, k) => [Math.max(pl[k].dy + pl[k].blo, pl[1].dy + pl[1].blo), Math.min(pl[k].dy + pl[k].bhi, pl[1].dy + pl[1].bhi)];
+    const uOf = (y, span) => (span[1] > span[0] ? (y - span[0]) / (span[1] - span[0]) : 0.5);
+    const balancedU = us => us.length >= 2 && Math.max(...us) >= LIMITS.BALANCE_UPPER - 1e-9 && Math.min(...us) <= LIMITS.BALANCE_LOWER + 1e-9 && Math.max(...us) - Math.min(...us) >= LIMITS.BALANCE_APART - 1e-9;
+    const clusterY = c => { const bb = bboxOf(c.cores); return (bb[1] + bb[3]) / 2; };
+    const effNc = (cl, span) => (balOn && !balancedU(cl.map(c => uOf(clusterY(c), span))) ? Math.min(cl.length, need - 1) : cl.length);
+    const zoneFor = us => {      // where the next tie bar must lie (as u of the span), given the contacts there are
+      const lo = LIMITS.BALANCE_LOWER, hi = LIMITS.BALANCE_UPPER, ap = LIMITS.BALANCE_APART, hasLow = us.some(u => u <= lo), hasHigh = us.some(u => u >= hi);
+      if (!us.length) return [-Infinity, lo];
+      if (hasLow && !hasHigh) return [Math.max(hi, Math.min(...us) + ap), Infinity];
+      return [-Infinity, Math.min(lo, Math.max(...us) - ap)];
+    };
+    const ncOf = pl => (need > 1 ? [0, 2].map(k => effNc(contactsAt(pl, k), spanOfPl(pl, k))) : [1, 1]);
     const widestOf = (paths, capMm) => { let w = 0; for (let r = 0.05; r * 2 <= capMm + 1e-9; r += 0.05) { if (E.netArea(E.erode(paths, r / MM)) > 0) w = Math.round(r * 2 * 100) / 100; else break; } return w; };
     function pairQ(P, x, y, capMm, tied, wantNc, full) {      // (full: on the full outlines, not the coarse copies the search runs on)
       if (x >= PM.w || x + P.w <= 0 || y >= PM.h || y + P.h <= 0) return null;
       const Preg = full ? P.region : P.sreg, Mreg = full ? PM.region : PM.sreg, rg = shift(Preg, x, y), inter = E.meet(rg, Mreg), i = E.netArea(inter);
       if (!(i > 0)) return null;
       const pct = Math.max(0, i / (o.normalise ? P.ar : Math.min(P.ar, PM.ar)) * 100);
+      if (o.normalise && pct > o.norms.OVERLAP_SIDE_MAX * 100) return { i, pct, neck: 0, kept: 1, loose: 0, valid: false, nc: 0, good: false, crowd: 0, crowdFail: false };      // (too much of the letter inside the other: nothing else is worth measuring)
       const widest = paths => widestOf(paths, capMm);
-      let w = widest(inter), loose = 0;
-      if (P.bodies.length > 1) {   // a letter of several separate parts: each must be held by the middle letter, and the join is as wide as its weakest part's
+      let w = 0, loose = 0, wDone = false;
+      if (P.bodies.length > 1) {
+        wDone = true;   // a letter of several separate parts: each must be held by the middle letter, and the join is as wide as its weakest part's
         w = Infinity;
         for (const b of (full ? P.bodies : P.sbodies)) {
           const ib = E.meet(shift([b], x, y), Mreg), wb = E.netArea(ib) > 0 ? widest(ib) : -1;
@@ -506,9 +534,11 @@
       }
       const isLeft = x + P.w / 2 < PM.w / 2, visMm = ((isLeft ? -x : x + P.w - PM.w)) / SC * MM, visNeed = Math.min(o.norms.SIDE_VISIBLE_MIN_MM, 0.7 * P.w / SC * MM);
       const valid = !loose && pct <= (o.normalise ? o.norms.OVERLAP_SIDE_MAX * 100 : OVERLAP_MAX_PCT) && kept >= HOLES_MIN;
-      const nc = !valid ? 0 : (wantNc && need > 1 ? (w >= Math.min(NECK_OK_MM, o.contactMm) - (full ? 0 : 0.1) - 1e-9 ? clustersOf(inter, !full).length : 0) : need);   // (separate solid contacts; not asked for: counted as enough)
+      if (!wDone) w = valid || !o.normalise ? widest(inter) : 0;
+      const cl = valid && wantNc && need > 1 && w >= Math.min(NECK_OK_MM, o.contactMm) - (full ? 0 : 0.1) - 1e-9 ? clustersOf(inter, !full) : null;
+      const nc = !valid ? 0 : (wantNc && need > 1 ? (cl ? effNc(cl, [Math.max(y + P.blo, PM.blo), Math.min(y + P.bhi, PM.bhi)]) : 0) : need);   // (separate solid contacts, balanced top and bottom; not asked for: counted as enough)
       let good = valid && w >= NECK_OK_MM - (full ? 0 : 0.1) - 1e-9 && nc >= need, crowd = 0;
-      if (good && o.normalise) { crowd = crowdOf(rg, Mreg, inter); if (crowd > CROWD_PAIR_MM * (full ? 1 : 1.2)) good = false; }
+      if (good && o.normalise) { const touch = E.grow(inter, GAPSC); crowd = Math.max(outlineLen(rg, E.diff(zoneOfReg(Mreg), touch)), outlineLen(Mreg, E.diff(shift(zoneOfReg(Preg), x, y), touch))); if (crowd > CROWD_PAIR_MM * (full ? 1 : 1.2)) good = false; }
       const crowdFail = valid && !good && crowd > 0;
       return { i, pct, neck: w, kept, loose, valid, nc, good, crowd, crowdFail };
     }
@@ -591,7 +621,7 @@
     function reachBoth(keep, jMax) {
       let bestPair = null, kOk = null;
       for (const j of [0, 1, -1, 2, -2, 3, -3].filter(v => Math.abs(v) <= Math.min(REACH_DYN, jMax == null ? 9 : jMax))) {
-        if (N && j !== 0) { const dyS = Math.max(1, Math.round(REACH_DY * PM.h)), tol = 1.0 / MM * SC; if (![PL, PR].every(P => dyOf(P) + j * dyS >= -tol && dyOf(P) + j * dyS + P.h <= PM.h + tol)) continue; }      // (a nudge never lifts a side letter out beyond the centre letter's ink)
+        if (N && j !== 0) { const dyS = Math.max(1, Math.round(REACH_DY * PM.h)); if (metricsOn ? ![PL, PR].every(P => { const off = dyOf(P) + j * dyS + P.base - PM.base; return off >= OFF_LO - 1 && off <= OFF_HI + 1 && dyOf(P) + j * dyS + P.h <= PM.h + 1.0 / MM * SC && dyOf(P) + j * dyS >= -1.0 / MM * SC; }) : Math.abs(j) > 1) continue; }      // (a nudge never takes the sides' baseline out of its window, nor a side out beyond the centre letter)      // (a nudge never lifts a side letter out beyond the centre letter's ink)
         if (j === 0 && keep && !kOk) { kOk = [0, 2].map(k => { const q = pairQ(keep[k], keep[k].dx, keep[k].dy, NECK_OK_MM, false, true, true); return q && q.good ? { x: keep[k].dx, y: keep[k].dy, ov: null, j: 0, q, keep: true } : null; }); }
         const l = j === 0 && kOk && kOk[0] || reachOf(PL, 'left', j), r = j === 0 && kOk && kOk[1] || reachOf(PR, 'right', j);
         if (!l || !r) continue;
@@ -667,13 +697,17 @@
           caps.push(Array.from({ length: 24 }, (_, i) => ({ X: Math.round(xc + R * Math.cos(i / 24 * 2 * Math.PI)), Y: Math.round(cy + R * Math.sin(i / 24 * 2 * Math.PI)) })));
         }
         if (caps.length) reg = E.clean(E.union([].concat(reg, caps))); }
-      const pb = bboxOf(reg.filter(r => area0(r) > 0)); reg = shift(reg, -pb[0], 0);
+      let pb = bboxOf(reg.filter(r => area0(r) > 0)); reg = shift(reg, -pb[0], 0);
+      // the letter's body height is held after the trim too (cutting a hairline arch changes where 90 % of the ink lies): the trimmed letter is scaled back to the body height the plan gave it
+      let kk = 1;
+      if (N && o.trimRescale) { const br = centralRange(simp(reg), 1, NORMS.BODY_TRIM); if (br && br[1] - br[0] > 0) { kk = Math.min(1.15, Math.max(0.9, (P.bhi - P.blo) / (br[1] - br[0]))); if (Math.abs(kk - 1) < 0.01) kk = 1; } }
+      if (kk !== 1) { reg = scaled(reg, kk, kk); pb = [pb[0], pb[1], pb[0] + Math.round((pb[2] - pb[0]) * kk), pb[3]]; }
       const ar = E.netArea(reg);
       if (!(ar > 0) || 1 - ar / P.ar > TRIM_INK_PCT / 100) return null;
       const counters = reg.filter(r => area0(r) <= -COUNTER_MIN_PT2 * SC * SC).map(r => r.slice().reverse());
       const bodies = reg.filter(r => area0(r) >= SLIVER_PT2 * SC * SC);
       if (counters.length !== P.counters.length || Math.abs(E.netArea(counters) - P.cAr) > 0.005 * Math.max(P.cAr, 1) || bodies.length > P.bodies.length) return null;
-      return Object.assign({}, P, { region: reg, w: pb[2] - pb[0], ar, counters, cbox: counters.map(c => bboxOf([c])), cAr: E.netArea(counters), bodies, sreg: simp(reg), sbodies: simp(bodies), cutPt: (P.w - (pb[2] - pb[0])) / SC });
+      return Object.assign({}, P, { region: reg, s: P.s * kk, sx: P.sx * kk, h: Math.round(P.h * kk), base: P.base == null ? null : Math.round(P.base * kk), blo: Math.round(P.blo * kk), bhi: Math.round(P.bhi * kk), w: pb[2] - pb[0], ar, counters, cbox: counters.map(c => bboxOf([c])), cAr: E.netArea(counters), bodies, sreg: simp(reg), sbodies: simp(bodies), cutPt: (P.w - (pb[2] - pb[0])) / SC });
     }
     let altered = [];
     if (best && o.reach && o.allowTrim && need > 1 && ncm(best) < need) {
@@ -694,7 +728,7 @@
       }
     }
     /* tie bars: what is still short of two solid contacts gets a bar of opts.barMm across the nearest gap between a solid part of the side letter and a solid part of the middle one, away from the contacts it has */
-    function tieCandidates(pl, k, cl, taken) {
+    function tieCandidates(pl, k, cl, taken, zone, span) {
       const exist = [].concat(...cl.map(c => c.cores)), gapSC = (o.contactGapMm + 0.1) / MM * SC, spacing = 0.8 / MM * SC, out = [];
       const nearEx = pt => { let d = Infinity; for (const r of exist) for (let i = 0; i < r.length; i++) { const h = toSeg(pt, r[i], r[(i + 1) % r.length]); if (h.d < d) d = h.d; } return d; };
       for (const rr of [o.contactMm / 2, 0.15]) {      // (a bar is fixed in the thickest ink first, then in strokes 0.3 mm wide, never in a thinner one: the contact it makes must be solid too)
@@ -707,6 +741,7 @@
           if (inside || !bq || bd > BAR_MAX || bd <= 0) continue;
           if (exist.length && nearEx(bq) < gapSC) continue;
           if (taken.some(t => Math.hypot(t.X - bq.X, t.Y - bq.Y) < gapSC)) continue;
+          if (zone) { const u = uOf(bq.Y, span); if (u < zone[0] - 1e-9 || u > zone[1] + 1e-9) continue; }
           found.push({ d: bd, p: pt, q: bq });
         }
         found.sort((a, b) => a.d - b.d);
@@ -721,30 +756,32 @@
       const inter = E.meet(pl[k].rg, pl[1].rg);
       return cl.some(c => widestOf(E.meet(inter, [c.ring]), 2 * o.contactMm + 0.1) >= 2 * o.contactMm - 1e-9);
     }
-    function addContacts(pl0, g0, nc0) {
-      let pl = pl0; const added = [0, 0], areas = [[], []], ys = [[], []], long = [false, false]; let fail = null;
+    function addContacts(pl0, g0) {
+      let pl = pl0; const added = [0, 0], areas = [[], []], ys = [[], []], long = [false, false], bal = [true, true]; let fail = null;
       for (const k of [0, 2]) {
-        const cl = contactsAt(pl0, k), taken = [];
-        for (let it = 0; it < need && cl.length + added[k / 2] < need; it++) {
+        const cl = contactsAt(pl0, k), span = spanOfPl(pl0, k), taken = [], us = cl.map(c => uOf(clusterY(c), span));
+        for (let it = 0; it < 3; it++) {
+          if (balOn ? balancedU(us) : us.length >= need) break;
+          const zone = balOn ? zoneFor(us) : null;
           let done = null, fallback = null;
-          for (const c of tieCandidates(pl, k, cl, taken).slice(0, 8)) {
+          for (const c of tieCandidates(pl, k, cl, taken, zone, span).slice(0, 8)) {
             const bar = barOf(c, o.barMm / MM * SC), pl2 = withBars(pl, k, [bar]), g2 = guards(attemptPl(pl2, null));
             if (g2.holesKept >= Math.min(HOLES_MIN, g0.holesKept) - 1e-9) { done = { pl2, c, bar }; break; }
             if (!fallback || g2.holesKept > fallback.h) fallback = { pl2, c, bar, h: g2.holesKept };
           }
           if (!done && fallback) done = fallback;
-          if (!done && solidOne(pl0, k, cl)) { long[k / 2] = true; break; }   // (solid letters: one contact that is long (two contacts' length) or wide (twice the asked width) holds as two, there is no gap to bar across)
-          if (!done) { fail = k; break; }
-          pl = done.pl2; taken.push(done.c.q); added[k / 2]++; areas[k / 2].push(Math.round(E.netArea(E.meet([done.bar], pl[1].rg)) / SC / SC * MM * MM * 100) / 100); { const bb = bboxOf(E.meet([done.bar], pl[1].rg)); ys[k / 2].push({ x: (bb[0] + bb[2]) / 2, y: (bb[1] + bb[3]) / 2 }); }
+          if (!done && !balOn && solidOne(pl0, k, cl)) { long[k / 2] = true; break; }   // (the classic rule, solid letters: one contact that is long or wide holds as two, there is no gap to bar across)
+          if (!done) { fail = k; bal[k / 2] = false; break; }
+          pl = done.pl2; taken.push(done.c.q); added[k / 2]++; us.push(uOf((done.c.p.Y + done.c.q.Y) / 2, span)); areas[k / 2].push(Math.round(E.netArea(E.meet([done.bar], pl[1].rg)) / SC / SC * MM * MM * 100) / 100); ys[k / 2].push({ x: (done.c.p.X + done.c.q.X) / 2, y: (done.c.p.Y + done.c.q.Y) / 2 });
         }
-        if (fail != null) break;
+        if (balOn && !balancedU(us)) bal[k / 2] = false;
       }
-      return { pl, added, fail, long, areas, ys };
+      return { pl, added, fail, long, areas, ys, bal };
     }
     // opts.adjust dx, dy: the placed letters are moved from where the engine put them; everything below is measured on the moved letters
     { const sh = ['L', 'M', 'R'].map(k => ({ dx: Math.round(o.adjust[k].dx / MM * SC), dy: Math.round(o.adjust[k].dy / MM * SC) }));
       if (sh.some(v => v.dx || v.dy)) {
-        const pl2 = best.att.pl.map((P, i) => Object.assign({}, P, { dx: P.dx + sh[i].dx, dy: P.dy + sh[i].dy, rg: shift(P.rg, sh[i].dx, sh[i].dy) }));
+        const pl2 = best.att.pl.map((P, i) => Object.assign({}, P, { dx: P.dx + sh[i].dx, dy: P.dy + sh[i].dy, rg: shift(P.rg, sh[i].dx, sh[i].dy), srg: shift(P.srg, sh[i].dx, sh[i].dy) }));
         let att2 = attemptPl(pl2, best.att.ov), bars2 = best.bars || 0; tries++;
         if (!att2.connected) { const m = mend(pl2, att2); if (m) { att2 = m.att; bars2 += m.bars; } }
         if (!att2.connected) return failure('the adjustment moves a letter away from its neighbour: the letters no longer touch', { tries, searched, adjust: adjustApplied });
@@ -756,9 +793,9 @@
     let tieBars = [0, 0], longContact = [false, false];
     if (need > 1 && ncm(best) < need) {
       const dc = addContacts(best.att.pl, best.g);
-      if (dc.fail != null) return failure(`the ${dc.fail === 0 ? 'Left and Middle' : 'Middle and Right'} letters can touch in only one place and no tie bar fits between them`, { tries, searched });
+      if (dc.fail != null && !balOn) return failure(`the ${dc.fail === 0 ? 'Left and Middle' : 'Middle and Right'} letters can touch in only one place and no tie bar fits between them`, { tries, searched });
       const att2 = attemptPl(dc.pl, best.att.ov); tries++;
-      best = Object.assign({}, best, { att: att2, g: guards(att2), nc: [dc.long[0] ? need : contacts.leftMiddle.length + dc.added[0], dc.long[1] ? need : contacts.middleRight.length + dc.added[1]] }); tieBars = dc.added; longContact = dc.long; contacts.leftMiddle.push(...dc.areas[0]); contacts.middleRight.push(...dc.areas[1]); contactInfo.leftMiddle.push(...dc.ys[0].map(c => ({ x: c.x, y: c.y, w: o.barMm, kind: 'bar' }))); contactInfo.middleRight.push(...dc.ys[1].map(c => ({ x: c.x, y: c.y, w: o.barMm, kind: 'bar' })));
+      best = Object.assign({}, best, { att: att2, g: guards(att2), nc: [dc.long[0] || dc.bal[0] ? need : need - 1, dc.long[1] || dc.bal[1] ? need : need - 1] }); tieBars = dc.added; longContact = dc.long; contacts.leftMiddle.push(...dc.areas[0]); contacts.middleRight.push(...dc.areas[1]); contactInfo.leftMiddle.push(...dc.ys[0].map(c => ({ x: c.x, y: c.y, w: o.barMm, kind: 'bar' }))); contactInfo.middleRight.push(...dc.ys[1].map(c => ({ x: c.x, y: c.y, w: o.barMm, kind: 'bar' })));
     }
     const { att, g } = best, warnings = [], bars = best.bars || 0;
     const joins = best.joins.map((w, k) => Math.max(w, tieBars[k] ? o.barMm : 0));      // (a tie bar is a join of its own width)
@@ -806,23 +843,24 @@
     /* report.metrics: every number the hard rules are checked with, measured on the three letters as placed (their own ink, no tie bar), in mm in the finished piece (x right, y up from its bottom left). The sheet and the
        callers read these, nothing is recomputed outside. contacts: where each solid contact lies (u: 0 at the bottom, 1 at the top of the vertical span both letters' bodies share), balanced = at least two, one in the
        upper 40 % and one in the lower 40 %, at least 0.45 of the span apart. violations: the keys of the hard rules (LIMITS) that this word breaks. */
-    const metrics = (() => {
+    const metrics = !N ? null : (() => {
       const toP = reg => reg.map(r => r.map(q => ({ X: Math.round((q.X - b[0]) * fx), Y: q.Y - b[1] }))), mmv = v => v / SC * MM, r2 = v => Math.round(v * 100) / 100, r3 = v => Math.round(v * 1000) / 1000;
-      const lets = att.pl.map(P => simp(toP(shift(P.region, P.dx, P.dy)))), NAMES = ['L', 'M', 'R'], T = o.norms, RULE_OF = { vertical: 'level', sideHeight: 'size', sideWidth: 'size', centreWidth: 'size', visibleWidth: 'size', aspect: 'size', overlap: 'legible', crowding: 'legible', counters: 'counters', contacts: 'contacts' };
+      const fullLets = att.pl.map(P => toP(shift(P.region, P.dx, P.dy))), fullFinal = toP(att.rings), lets = fullLets.map(simp), NAMES = ['L', 'M', 'R'], T = o.norms, RULE_OF = { vertical: 'level', sideHeight: 'size', sideWidth: 'size', centreWidth: 'size', visibleWidth: 'size', aspect: 'size', overlap: 'legible', crowding: 'legible', counters: 'counters', contacts: 'contacts' };
       const bx = lets.map(r => centralRange(r, 0, T.BODY_TRIM) || [0, 0]), by = lets.map(r => centralRange(r, 1, T.BODY_TRIM) || [0, 0]);
       const body = {}; NAMES.forEach((n, i) => { body[n] = { wMm: r2(mmv(bx[i][1] - bx[i][0])), hMm: r2(mmv(by[i][1] - by[i][0])), cxMm: r2(mmv((bx[i][0] + bx[i][1]) / 2)), cyMm: r2(mmv((by[i][0] + by[i][1]) / 2)), yLoMm: r2(mmv(by[i][0])), yHiMm: r2(mmv(by[i][1])) }; });
       const medMm = mmv((mid.em ? T.MID_BODY_W_OVER_EM_MEDIAN * mid.em * SC : T.MID_BODY_W_OVER_INKH_MEDIAN * mid.h) * cs);
       const ratios = { sideHeightL: r2(body.L.hMm / body.M.hMm), sideHeightR: r2(body.R.hMm / body.M.hMm), sideWidthL: r2(body.L.wMm / body.M.wMm), sideWidthR: r2(body.R.wMm / body.M.wMm), centreWidthVsMedian: r2(body.M.wMm / medMm) };
       const base = [pL, pR].map(P => (P.base == null ? null : P.dy + P.base));
-      const align = { dyLMm: r2(body.L.cyMm - body.M.cyMm), dyRMm: r2(body.R.cyMm - body.M.cyMm), lrDiffMm: base[0] != null && base[1] != null ? r2(mmv(Math.abs(base[0] - base[1]))) : r2(Math.abs(body.L.cyMm - body.R.cyMm)),
+      const offs = [pL, pR].map(P => (P.base == null || PM.base == null ? null : mmv(P.dy + P.base - (att.pl[1].dy + PM.base))));
+      const align = { dyLMm: r2(body.L.cyMm - body.M.cyMm), dyRMm: r2(body.R.cyMm - body.M.cyMm), baselineOffsetMm: { L: offs[0] == null ? null : r2(offs[0]), R: offs[1] == null ? null : r2(offs[1]) }, lrDiffMm: base[0] != null && base[1] != null ? r2(mmv(Math.abs(base[0] - base[1]))) : r2(Math.abs(body.L.cyMm - body.R.cyMm)),
         aboveMm: { L: r2(body.L.yHiMm - body.M.yHiMm), R: r2(body.R.yHiMm - body.M.yHiMm) }, belowMm: { L: r2(body.M.yLoMm - body.L.yLoMm), R: r2(body.M.yLoMm - body.R.yLoMm) } };
-      const area = r => E.netArea(r), others = i => E.union([].concat(...lets.filter((_, j) => j !== i)));
+      const area = r => E.netArea(r), others = i => E.union([].concat(...fullLets.filter((_, j) => j !== i)));
       const overlap = {}, visible = {}, countersOpen = {}, finalRings = simp(toP(att.rings));
       NAMES.forEach((n, i) => {
-        const oth = others(i), ink = area(lets[i]); overlap[n] = ink > 0 ? r2(area(E.meet(lets[i], oth)) / ink) : 0;
-        if (i !== 1) { const rest = E.diff(lets[i], oth).filter(q => E.area(q) !== 0); visible[n] = r2(mmv(centralSpan(rest, 0, T.BODY_TRIM))); }
-        const cs2 = lets[i].filter(q => E.area(q) <= -COUNTER_MIN_PT2 * SC * SC).map(q => q.slice().reverse());
-        if (cs2.length) { const tot = area(cs2); countersOpen[n] = tot > 0 ? r2(Math.max(0, Math.min(1, 1 - area(E.meetEO(cs2, finalRings)) / tot))) : 1; } else countersOpen[n] = null;
+        const oth = others(i), ink = area(fullLets[i]); overlap[n] = ink > 0 ? r2(area(E.meet(fullLets[i], oth)) / ink) : 0;
+        if (i !== 1) { const rest = E.diff(fullLets[i], oth).filter(q => E.area(q) !== 0); visible[n] = r2(mmv(centralSpan(rest, 0, T.BODY_TRIM))); }
+        const cs2 = fullLets[i].filter(q => E.area(q) <= -COUNTER_MIN_PT2 * SC * SC).map(q => q.slice().reverse());      // (the inner openings on the full outlines)
+        if (cs2.length) { const tot = area(cs2); countersOpen[n] = tot > 0 ? r2(Math.max(0, Math.min(1, 1 - area(E.meetEO(cs2, fullFinal)) / tot))) : 1; } else countersOpen[n] = null;
       });
       const pairs = { LM: [0, 1], MR: [1, 2], LR: [0, 2] }, crowd = {}; let crowdTotal = 0;
       for (const [k, [i, j]] of Object.entries(pairs)) { crowd[k] = r2(crowdOf(lets[i], lets[j], E.meet(lets[i], lets[j]))); crowdTotal += crowd[k]; }
@@ -836,7 +874,7 @@
       }
       const piece = { wMm: r2(mmv(W)), hMm: r2(mmv(H)) }; piece.aspect = r2(piece.wMm / piece.hMm);
       const v = [], bad = (k, c, text) => { if (c) v.push({ rule: RULE_OF[k], key: k, text }); };
-      bad('vertical', Math.abs(align.dyLMm) > LIMITS.ALIGN_CENTRE_MM + 1e-9 || Math.abs(align.dyRMm) > LIMITS.ALIGN_CENTRE_MM + 1e-9 || align.lrDiffMm > LIMITS.ALIGN_LR_MM + 1e-9 || [align.aboveMm.L, align.aboveMm.R, align.belowMm.L, align.belowMm.R].some(x => x > LIMITS.ALIGN_BODY_MM + 1e-9), `a side letter stands ${Math.max(Math.abs(align.dyLMm), Math.abs(align.dyRMm))} mm off the centre letter's body centre, or ${Math.max(align.aboveMm.L, align.aboveMm.R, align.belowMm.L, align.belowMm.R)} mm beyond its body, or the two sides are ${align.lrDiffMm} mm apart`);
+      bad('vertical', [align.baselineOffsetMm.L, align.baselineOffsetMm.R].some(x => x != null && (x < LIMITS.BASELINE_OFFSET_MM[0] - 1e-9 || x > LIMITS.BASELINE_OFFSET_MM[1] + 1e-9)) || align.lrDiffMm > LIMITS.ALIGN_LR_MM + 1e-9 || [align.aboveMm.L, align.aboveMm.R, align.belowMm.L, align.belowMm.R].some(x => x > LIMITS.ALIGN_BODY_MM + 1e-9), `a side letter's baseline stands ${align.baselineOffsetMm.L} / ${align.baselineOffsetMm.R} mm above the centre letter's (window ${LIMITS.BASELINE_OFFSET_MM[0]} to ${LIMITS.BASELINE_OFFSET_MM[1]}), or ${Math.max(align.aboveMm.L, align.aboveMm.R, align.belowMm.L, align.belowMm.R)} mm beyond its body, or the two sides are ${align.lrDiffMm} mm apart`);
       bad('sideHeight', [ratios.sideHeightL, ratios.sideHeightR].some(x => x < LIMITS.SIDE_HEIGHT[0] - 1e-9 || x > LIMITS.SIDE_HEIGHT[1] + 1e-9), `a side letter is ${ratios.sideHeightL} / ${ratios.sideHeightR} of the centre in height (limit ${LIMITS.SIDE_HEIGHT[0]} to ${LIMITS.SIDE_HEIGHT[1]})`);
       bad('sideWidth', [ratios.sideWidthL, ratios.sideWidthR].some(x => x < LIMITS.SIDE_WIDTH[0] - 1e-9 || x > LIMITS.SIDE_WIDTH[1] + 1e-9), `a side letter is ${ratios.sideWidthL} / ${ratios.sideWidthR} of the centre in width (limit ${LIMITS.SIDE_WIDTH[0]} to ${LIMITS.SIDE_WIDTH[1]})`);
       bad('centreWidth', ratios.centreWidthVsMedian < LIMITS.CENTRE_WIDTH[0] - 1e-9 || ratios.centreWidthVsMedian > LIMITS.CENTRE_WIDTH[1] + 1e-9, `the centre letter is ${ratios.centreWidthVsMedian} of the median centre in width (limit ${LIMITS.CENTRE_WIDTH[0]} to ${LIMITS.CENTRE_WIDTH[1]})`);
@@ -875,6 +913,52 @@
       report: { connected: true, metrics, adjust: { L: adjustApplied[0], M: adjustApplied[1], R: adjustApplied[2] }, sizes, limits, review: limits.length > 0, overlapPct: { leftMiddle: Math.round(g.lm.pct * 10) / 10, middleRight: Math.round(g.mr.pct * 10) / 10 }, holesKept: round3(g.holesKept), centerScale: round3(cs), overlap: att.ov == null ? round3((ovs[0] + ovs[1]) / 2) : att.ov, reach: reached, searched, warnings, parts, bridges: bars, contacts, tieBars: { leftMiddle: tieBars[0], middleRight: tieBars[1] }, altered, level, joinMm: { leftMiddle: joins[0], middleRight: joins[1] }, moveMm: { left: Math.round(moved[0] / SC * MM * 100) / 100, right: Math.round(moved[2] / SC * MM * 100) / 100 }, joinMm2: { leftMiddle: Math.round(g.lm.i / SC / SC * MM * MM * 100) / 100, middleRight: Math.round(g.mr.i / SC / SC * MM * MM * 100) / 100 }, tries, notes }
     };
   }
+  /* ═══ autoFit: the engine as a human assembler would use it ═══════════════════════════════════════════════════════════
+     MONOESG (Paul, 15 Oct 2026): "if a letter is too thin make it wider, if too small a bit bigger, a little nudge to connect better". autoFit(letters, opts) builds the monogram, reads report.metrics.violations and tries bounded
+     opts.adjust changes that answer the broken rules (a thin side letter wider, a small one bigger, the letters moved apart or together, the sides up or down), rebuilding after each, and keeps a change only when it is strictly better:
+     fewer hard-rule violations, or as many and nearer to ESG_PROFILE. Deterministic (no randomness), bounded by opts.autoFitMs (4000) of wall time; the result is that of build() plus report.autoFit = { tried, ms, improved }. */
+  function proposalsFor(m, adj) {
+    const L = LIMITS, out = [], clampA = a => cleanAdjust(a), copy = a => JSON.parse(JSON.stringify(a));
+    const keys = new Set(m.violations.map(v => v.key));
+    const sizes = copy(adj); let sizesChanged = false;
+    const mul = (a, k, f, v) => { a[k][f] *= v; sizesChanged = true; };
+    if (keys.has('visibleWidth')) for (const k of ['L', 'R']) if (m.visibleWidthMm[k] < L.VISIBLE_MM) mul(sizes, k, 'sx', Math.min(1.12, (L.VISIBLE_MM + 0.15) / Math.max(0.5, m.visibleWidthMm[k])));
+    if (keys.has('sideWidth')) [['L', m.ratios.sideWidthL], ['R', m.ratios.sideWidthR]].forEach(([k, r]) => { if (r < L.SIDE_WIDTH[0]) mul(sizes, k, 'sx', Math.min(1.15, (L.SIDE_WIDTH[0] + 0.04) / r)); else if (r > L.SIDE_WIDTH[1]) mul(sizes, k, 'sx', Math.max(0.88, (L.SIDE_WIDTH[1] - 0.04) / r)); });
+    if (keys.has('sideHeight')) [['L', m.ratios.sideHeightL], ['R', m.ratios.sideHeightR]].forEach(([k, r]) => { if (r < L.SIDE_HEIGHT[0]) mul(sizes, k, 'scale', Math.min(1.1, 0.79 / r)); else if (r > L.SIDE_HEIGHT[1]) mul(sizes, k, 'scale', Math.max(0.9, 0.80 / r)); });
+    if (keys.has('centreWidth')) { const c = m.ratios.centreWidthVsMedian; if (c < L.CENTRE_WIDTH[0]) mul(sizes, 'M', 'sx', Math.min(1.15, (L.CENTRE_WIDTH[0] + 0.05) / c)); else if (c > L.CENTRE_WIDTH[1]) mul(sizes, 'M', 'sx', Math.max(0.88, (L.CENTRE_WIDTH[1] - 0.05) / c)); }
+    if (keys.has('aspect')) { const a = m.piece.aspect, f = a < L.ASPECT[0] ? Math.min(1.12, 0.88 / a) : Math.max(0.9, 0.94 / a); for (const k of ['L', 'M', 'R']) mul(sizes, k, 'sx', f); }
+    if (sizesChanged) out.push(clampA(sizes));
+    const apart = copy(adj), together = copy(adj), vert = copy(adj), up = copy(adj), down = copy(adj);
+    if (keys.has('overlap') || keys.has('crowding') || keys.has('counters')) { apart.L.dx -= 0.4; apart.R.dx += 0.4; out.push(clampA(apart)); }
+    if (keys.has('contacts')) {
+      together.L.dx += 0.3; together.R.dx -= 0.3; out.push(clampA(together));
+      for (const k of ['L', 'R']) { up[k].dy += 0.4; down[k].dy -= 0.4; }
+      out.push(clampA(up), clampA(down));
+    }
+    if (keys.has('vertical')) { const o = m.align.baselineOffsetMm; for (const k of ['L', 'R']) { const v = o[k]; if (v != null) vert[k].dy += v > L.BASELINE_OFFSET_MM[1] ? -(v - L.BASELINE_OFFSET_MM[1] + 0.1) : v < L.BASELINE_OFFSET_MM[0] ? (L.BASELINE_OFFSET_MM[0] - v + 0.1) : 0; } out.push(clampA(vert)); }
+    return out;
+  }
+  function autoFit(letters, options) {
+    const t0 = Date.now(), o = options && typeof options === 'object' ? options : {}, budget = finite(o.autoFitMs) ? Math.max(500, o.autoFitMs) : 4000;
+    let adj = cleanAdjust(o.adjust);
+    const run = a => build(letters, Object.assign({}, o, { adjust: a }));
+    const score = r => (!r || !r.ok ? 1e9 : r.report.metrics.violations.length * 1000 + r.report.metrics.distance);
+    let best = run(adj), base = best, tried = 1, lastMs = Date.now() - t0;
+    if (best.ok) {
+      for (let round = 0; round < 8 && score(best) >= 1000 && Date.now() - t0 + lastMs * 1.1 < budget; round++) {
+        let improved = false;
+        for (const a2 of proposalsFor(best.report.metrics, adj)) {
+          if (Date.now() - t0 + lastMs * 1.1 >= budget) break;
+          const t1 = Date.now(), r = run(a2); tried++; lastMs = Date.now() - t1;
+          if (score(r) < score(best) - 1e-9) { best = r; adj = a2; improved = true; break; }
+        }
+        if (!improved) break;
+      }
+    }
+    if (best.ok) best.report.autoFit = { tried, ms: Date.now() - t0, improved: best !== base };
+    return best;
+  }
+
   /* ═══ 4 · the preview and the file ═══════════════════════════════════════════════════════════════════════════════ */
   const num = v => { const s = (Math.round(v * 1000) / 1000).toFixed(3).replace(/\.?0+$/, ''); return s === '-0' ? '0' : s; };
   function svgPath(result) {
@@ -898,7 +982,7 @@
     return await doc.save({ useObjectStreams: false });
   }
 
-  const api = { lettersOf, familiesOf, slotsOf, build, toPdf, svgPath, NORMS, LIMITS, ADJUST_LIMITS, ESG_PROFILE };
+  const api = { lettersOf, familiesOf, slotsOf, build, autoFit, toPdf, svgPath, NORMS, LIMITS, ADJUST_LIMITS, ESG_PROFILE };
   root.CharmNestMonogram = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

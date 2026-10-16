@@ -613,7 +613,7 @@ const checkSample = (sp, words, what) => {
     const res = checkSample(sp, [...new Set(W)], 'vendored fonts');
     { // the same words with the glyph metrics: the two sides on one baseline in every one, and level by their centres within a millimetre or two (a Q that drops below the line, a J, a Y are drawn so)
       let worstB = 0, worstC = 0, worstW = ''; const withM = (slot, L) => Object.assign({ metrics: sp.set.letters[slot][L].metrics }, sp.spec(slot, L));
-      for (const w of [...new Set(W)]) { const r = M0.build({ left: withM('left', w[0]), middle: withM('middle', w[1]), right: withM('right', w[2]) }); if (!r.ok) { worstW = w + ' ' + r.why; continue; } worstB = Math.max(worstB, r.report.level.baselineDiffMm); if (!(r.report.contacts.leftMiddle.length >= 2 && r.report.contacts.middleRight.length >= 2) && !r.report.notes.some(t => /one long or wide solid contact/.test(t))) worstW = w + ' fewer than two contacts'; if (r.report.level.centreDiffMm > worstC) worstC = r.report.level.centreDiffMm; }
+      for (const w of [...new Set(W)]) { const r = M0.build({ left: withM('left', w[0]), middle: withM('middle', w[1]), right: withM('right', w[2]) }); if (!r.ok) { worstW = w + ' ' + r.why; continue; } worstB = Math.max(worstB, r.report.level.baselineDiffMm); if (!(r.report.contacts.leftMiddle.length >= 2 && r.report.contacts.middleRight.length >= 2) && !r.report.notes.some(t => /one long or wide solid contact/.test(t)) && !r.report.metrics.violations.some(v => v.key === 'contacts')) worstW = w + ' fewer than two contacts and not flagged'; if (r.report.level.centreDiffMm > worstC) worstC = r.report.level.centreDiffMm; }
       console.log(`  level sides on ${new Set(W).size} words (vendored fonts with their baselines): baseline difference ${worstB} mm at most, centre difference ${worstC} mm at most`);
       ok(worstB === 0 && !worstW, 'the two sides stand on one baseline in every sampled word' + (worstW ? ': ' + worstW : '')); }
     const line = `${res.n} real combinations (vendored fonts: 26 middles, 26 lefts, 26 rights, 26 triples, APV, OSR): each ONE piece, counters kept (worst ${res.worstHoles}), the centre at least 1.2 times the sides (least x${res.minCenter.toFixed(2)}), slowest ${res.ms} ms; ${res.thin} with a thin join; problems: ${res.bad.join(' | ') || 'none'}`;
@@ -625,6 +625,43 @@ const checkSample = (sp, words, what) => {
       console.log(`  MONO_FONTS: ${rr.n} combinations of Paul's fonts: ${rr.bad.length} refused or wrong, ${rr.thin} thin joins, worst counters ${rr.worstHoles}, least centre x${rr.minCenter.toFixed(2)}, slowest ${rr.ms} ms` + (rr.bad.length ? ': ' + rr.bad.slice(0, 20).join(' | ') : ''));
       ok(rr.bad.filter(b => !/counters/.test(b)).length === 0, 'Paul\'s fonts: every combination is one piece with the centre bigger');
     }
+  }
+  // ── calibration: ESG and HEY on Paul's real letters (MONOESG, 15 Oct 2026: both are "how a monogram should look"; every hard rule must pass for them first) ──
+  {
+    const fs = require('fs'), path = require('path'), { CharmNestPDF: P, Geom } = require('../../netlify/functions/_charmNestPdf.js');
+    const bytes = new Uint8Array(fs.readFileSync(path.join(__dirname, 'fixtures', 'SKUs_MONOGRAM_2024-1015.ai')));
+    const parsed = await P.parseSource(bytes, 'monogram.ai'), g = P.groupCharms(parsed, { minPt: 6 });
+    const lab = P.labelCharms(parsed, g.charms, { pattern: P.SKU_PATTERN_DEFAULT, gapPt: 18.14, widen: 0.25 });
+    const bySku = new Map([...lab.labels].map(([i, l]) => [l.sku, g.charms.find(c => c.index === i)])), cache = {};
+    const real = async (slot, L) => {
+      const sku = `MONOGRAM_${slot}_${L}`; if (cache[sku]) return cache[sku];
+      const c = bySku.get(sku); P.integrateRings(c);
+      const p2 = await P.parseSource(new Uint8Array(await P.buildSingleCharm(c, parsed)), sku + '.ai'), live = P.groupCharms(p2, { minPt: 6 }).charms.filter(x => x.mergedInto == null);
+      const area = x => (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]), big = live.reduce((a, b) => (area(b) > area(a) ? b : a));
+      for (const x of live) if (x !== big) for (const m of x.members) if (!big.members.includes(m)) big.members.push(m);
+      const rings = Geom.flatten(big.outline, 16).filter(r => r.length > 2); for (const m of P.cutLinesOf(big)) for (const r of Geom.flatten(m, 16)) if (r.length > 2) rings.push(r);
+      const gm = p2.glyph; return (cache[sku] = { letter: L, rings, sku, fill: 'auto', metrics: gm && Number.isFinite(gm.baselinePt) ? { baselinePt: gm.baselinePt, emPt: gm.emPt } : null });
+    };
+    const word = async w => ({ left: await real('LEFT', w[0]), middle: await real('MID', w[1]), right: await real('RIGHT', w[2]) });
+    const esg = M0.build(await word('ESG')), E0 = M0.ESG_PROFILE, me = esg.report.metrics;
+    ok(esg.ok && me.violations.length === 0, 'ESG, the reference, passes every hard rule: ' + JSON.stringify(me.violations));
+    ok(Math.abs(me.piece.wMm - E0.wMm) < 0.2 && Math.abs(me.piece.hMm - E0.hMm) < 0.2 && Math.abs(me.piece.aspect - E0.aspect) < 0.02, `ESG keeps its size ${me.piece.wMm} x ${me.piece.hMm} mm (reference ${E0.wMm} x ${E0.hMm})`);
+    ok(Math.abs(me.ratios.sideHeightL - E0.sideHeight[0]) < 0.03 && Math.abs(me.ratios.sideHeightR - E0.sideHeight[1]) < 0.03 && Math.abs(me.ratios.sideWidthL - E0.sideWidth[0]) < 0.03 && Math.abs(me.ratios.sideWidthR - E0.sideWidth[1]) < 0.04 && Math.abs(me.ratios.centreWidthVsMedian - E0.centreWidthVsMedian) < 0.05, 'ESG keeps its ratios: ' + JSON.stringify(me.ratios));
+    ok(Math.abs(me.overlap.L - E0.overlap[0]) < 0.03 && Math.abs(me.overlap.M - E0.overlap[1]) < 0.03 && Math.abs(me.overlap.R - E0.overlap[2]) < 0.03 && Math.abs(me.visibleWidthMm.L - E0.visibleMm[0]) < 0.3 && Math.abs(me.visibleWidthMm.R - E0.visibleMm[1]) < 0.3, 'ESG keeps its overlaps and its visible widths: ' + JSON.stringify({ o: me.overlap, v: me.visibleWidthMm }));
+    ok(Math.abs(me.align.baselineOffsetMm.L - E0.baselineOffsetMm) < 0.1 && Math.abs(me.align.baselineOffsetMm.R - E0.baselineOffsetMm) < 0.1 && me.balance.LM.balanced && me.balance.MR.balanced && me.contacts.some(c => c.zone === 'upper') && me.contacts.some(c => c.zone === 'lower'), 'ESG: the sides stand on a baseline +1.6 mm, and each pair is held by a contact near the top and one near the bottom');
+    ok(me.distance < 1.5, 'ESG is at (almost) zero distance from the ESG profile: ' + me.distance);
+    const hey = M0.build(await word('HEY')), mh = hey.report.metrics;
+    ok(hey.ok && mh.violations.length === 0, 'HEY, approved too, passes every hard rule: ' + JSON.stringify(mh.violations));
+    ok(Math.abs(mh.align.baselineOffsetMm.L - 0.49) < 0.1 && mh.balance.LM.balanced && mh.balance.MR.balanced && mh.visibleWidthMm.L >= 3.4, 'HEY keeps its baseline offset (+0.49 mm), its balanced contacts (tie bars count) and its visible widths: ' + JSON.stringify({ off: mh.align.baselineOffsetMm, vis: mh.visibleWidthMm }));
+    // autoFit: a word that breaks a rule is brought nearer by bounded adjustments; a good word is left alone
+    const noFit = M0.autoFit(await word('ESG'));
+    ok(noFit.ok && noFit.report.autoFit && noFit.report.autoFit.tried === 1 && noFit.report.autoFit.improved === false && noFit.report.metrics.violations.length === 0, 'autoFit leaves ESG as it is: ' + JSON.stringify(noFit.report.autoFit));
+    for (const w of ['KQI', 'MKT']) {
+      const plain = M0.build(await word(w)), fit = M0.autoFit(await word(w));
+      const sc = r => r.report.metrics.violations.length * 1000 + r.report.metrics.distance;
+      ok(fit.ok && sc(fit) <= sc(plain) + 1e-9 && fit.report.autoFit && fit.report.autoFit.ms < 9000 && Object.values(fit.report.adjust).every(a => a.scale >= 0.85 && a.scale <= 1.15 && a.sx >= 0.8 && a.sx <= 1.25 && Math.abs(a.dx) <= 2 && Math.abs(a.dy) <= 1.5), `autoFit never makes ${w} worse and stays inside the bounds: ${plain.report.metrics.violations.length} -> ${fit.report.metrics.violations.length} violations, ${JSON.stringify(fit.report.autoFit)}`);
+    }
+    const twice = M0.autoFit(await word('KQI')), once = M0.autoFit(await word('KQI')); ok(JSON.stringify(twice.report.adjust) === JSON.stringify(once.report.adjust), 'autoFit is deterministic');
   }
   console.log(`monogram engine OK: ${n} checks`);
 })().catch(e => { console.error(e); process.exit(1); });
