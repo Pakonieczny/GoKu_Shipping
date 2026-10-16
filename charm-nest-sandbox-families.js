@@ -133,6 +133,7 @@
     { key: "Charm_Custom_Saves", label: "custom designs saved to the Charm repo (one record per order)", store: "firestore", why: "the Charm repo: production only (the sandbox is refused and never writes it); no buyer data" },
     { key: "Charm_Custom_Repair", label: "the repair of saved custom designs (its cursor and last pass)", store: "firestore", why: "KEEP: production only (the repair is refused in the sandbox and never writes); no buyer data" },
     { key: "Charm_Custom_EtsyLeases", label: "one Etsy write per listing at a time (a 60 second lease)", store: "firestore", why: "KEEP: production only (the Etsy step is refused in the sandbox); no buyer data" },
+    { key: "CharmRepo_Tokens", label: "the Charm repo's upload-password tokens", store: "firestore", why: "KEEP: a session token of the repo password (only its hash, with an expiry): security data, never sandbox content, and expiring on its own" },
     { key: "Charm_Nest_Rev", label: "production revision counters", store: "firestore", why: "production" },
     { key: "EtsyMail_Config", label: "Etsy call counters", store: "firestore", why: "the Etsy call budget: a counter every Etsy caller bumps, no sandbox content" },
     { key: "EtsyMail_OrderLinkMeta", label: "customer-mail change counter", store: "firestore", why: "a change counter every engagement bumps, real or sandbox: no sandbox content" }
