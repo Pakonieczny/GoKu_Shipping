@@ -11929,6 +11929,7 @@ const CustomSheet = window.CustomSheet = (() => {
   const all = () => B.customDesigns || (B.customDesigns = {});
   const geo = new Map();          // file id → Promise<{ parsed, g, charms }>: traced once a session, from its bytes
   const pending = new Map();      // file id → the File dropped, until it is read
+  const ingesting = new Set();    // file ids being read right now (a design restored from a workspace as 'reading' with none of these is a read the page closed on: see staleReading)
   const busy = new Map();         // card key → what is happening (a spinner on the card, and in the window)
   const tasks = new Map();        // a single send/recovery per card; never copied into a workspace
   let loading = null, loadedOwner = null, loadedSig = "", loadedAt = 0;
@@ -12022,6 +12023,7 @@ const CustomSheet = window.CustomSheet = (() => {
   /** What the Review card draws from: its designs and where they stand. */
   function cardOf(it) {
     let ck = ckOf(it); const row = linesOf(it)[0], e = all()[ck] || sentOf(row) || null; if(e)ck=e.ck;
+    if (e && staleReading(e)) ver++;
     if (!row || it.done) return null;
     const cut = !!(row.spec && row.spec.special && row.spec.special.notCut);
     const sent = !!decisionOf(row), locked = !!(e?.sendIntent || busy.has(ck));
@@ -12083,6 +12085,7 @@ const CustomSheet = window.CustomSheet = (() => {
     return cv.toDataURL("image/png");
   }
   async function ingest(F) {
+    ingesting.add(F.id);
     try {
       const file = pending.get(F.id); pending.delete(F.id);
       if (!file) throw new Error("the file was not read");
@@ -12096,7 +12099,14 @@ const CustomSheet = window.CustomSheet = (() => {
         maxPt: Math.max(...charms.map(c => Math.max(c.widthPt || 0, c.heightPt || 0))), minPt: Math.max(...charms.map(c => Math.min(c.widthPt || 0, c.heightPt || 0))), maxAreaPt2: Math.max(...charms.map(c => c.areaPt2 || 0)), state: "ready", error: null });
       popThumb.add(F.id);
     } catch (err) { F.state = "error"; F.error = String((err && err.message) || err).replace(F.name + ": ", ""); geo.delete(F.id); }
+    finally { ingesting.delete(F.id); }
     changed();
+  }
+  /** A design restored from the workspace still 'reading' (the page was closed or reloaded while its file was being read): nothing will ever read it, so it ends in a plain word, not a spinner for ever (KEEPSAVE P3/P7). */
+  function staleReading(e) {
+    let n = 0;
+    for (const F of (e && e.files) || []) if (F.state === "reading" && !pending.has(F.id) && !ingesting.has(F.id) && !geo.has(F.id)) { F.state = "error"; F.error = "its file was not read before the page closed — drop it again"; n++; }
+    return n;
   }
   /* ── REVDROP (Paul, 15 Oct 2026, order 4198686344: "If a user drags and drops a vector file into any listing inside the Review tab ... prompt the user with a small modal which explains that by adding a new
      vector file to a given listing, that new vector file will override that listing's selected vector file. The vector file override is to be one time only and NOT into perpetuity, unless the user manually
@@ -13206,7 +13216,8 @@ const CustomSheet = window.CustomSheet = (() => {
     if (r === "sku" && ev.state === "done" && ev.text) K.sku = txt(ev.text);
     paintKeep();
   }
-  function keepPaintLater() { clearTimeout(keepTimer); keepTimer = setTimeout(() => { if (D.dlg && D.dlg.open) paint(); else redraw(); }, 0); }
+  // (the card behind an open window is drawn too: redraw() paints the window as well. A card left showing "Saving…" after the save ended was this: only the window was repainted)
+  function keepPaintLater() { clearTimeout(keepTimer); keepTimer = setTimeout(() => { redraw(); }, 0); }
   const reasonOf = o => txt((o && o.text) || "").replace(/^(Etsy not updated|Not saved):\s*/i, "").replace(/\.$/, "");
   const keepStamp = ck => {
     const K = keeps.get(ck), r = intentOfCk(ck), v = r ? KeepUI.cardView(ck) : null;
