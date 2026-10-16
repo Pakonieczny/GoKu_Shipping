@@ -2057,9 +2057,16 @@ async function putBacks(tx, sheetId, list, expected) {
 }
 /* One ear of a mismatched pair (or one disc of a necklace) says so on its approval's seal, as the page's own event does (Engrave.timelineApproved:
    whichever writes the event first lands on the same key, so the two must read alike). A back of a line that is not cut into slots says nothing more. */
-const earWords = slot => (slot === "L" ? "Left ear" : slot === "R" ? "Right ear" : /^D\d{1,2}$/.test(slot || "") ? "Disc " + slot.slice(1) : "");
-const earCaption = (x, joined) => { const w = earWords(str(x && x.slot, 4)); return w ? (joined ? " · " : "") + w : ""; };
-const pieceData = x => { const slot = str(x && x.slot, 4); return earWords(slot) ? { slot, ...(x.side === "L" || x.side === "R" ? { side: x.side } : {}) } : {}; };
+/* PIECES (Paul, 16 Oct 2026): a line bought several times is cut into pieces too, slots "C1".."CN" (a copy of a charm) and "L.2" / "R.2" / "D1.2" (a later unit of an ear pair or a disc necklace). The words are charm-nest-engrave-sides.js earOf's:
+   the page's own event for the same approval is worded by it, and whichever writes first lands on the same key. (tests/charm-nest/pieces-downstream.cjs reads the two against each other.) */
+const SLOT_WORDS = /^(?:(L|R)|D(\d{1,2}))(?:\.(\d{1,3}))?$|^C(\d{1,3})$/;
+const earWords = slot => {
+  const m = SLOT_WORDS.exec(String(slot || "")); if (!m) return "";
+  const unit = m[3] && +m[3] > 1 ? (m[1] ? " · pair " : " · set ") + +m[3] : "";
+  return m[1] ? (m[1] === "L" ? "Left ear" : "Right ear") + unit : m[2] ? "Disc " + +m[2] + unit : m[4] ? "Piece " + +m[4] : "";
+};
+const earCaption = (x, joined) => { const w = earWords(str(x && x.slot, 8)); return w ? (joined ? " · " : "") + w : ""; };
+const pieceData = x => { const slot = str(x && x.slot, 8); return earWords(slot) ? { slot, ...(x.side === "L" || x.side === "R" ? { side: x.side } : {}) } : {}; };
 async function op_backPut(b) {
   const rows = (Array.isArray(b.backs) ? b.backs : [b.back]).filter(x => x && isPoolId(x.poolId)).slice(0, 400); if (!rows.length) return { error: "no back rows" };
   for (const x of rows) if (x.face !== "front") delete x.face;   // (a back carries no `face`: the record is byte for byte what it was; only "front" is a face)

@@ -5914,7 +5914,7 @@ const Engrave = window.Engrave = (() => {
     return set.loading;
   }
   /** The slot's index among a line's pieces ("D2" is the second disc: 1), null for a single charm or an ear. */
-  const pieceIndexOf = job => { const m = /^D(\d+)$/.exec(String(job && job.slot || "")); return m ? +m[1] - 1 : null; };
+  const pieceIndexOf = job => { const m = /^D(\d+)(?:\.\d+)?$/.exec(String(job && job.slot || "")); return m ? +m[1] - 1 : null; };   // (PIECES: D2.2, disc 2 of the second set, is disc 2 for the font per disc; a copy "C2" has no index: the line's font)
   /** Settles the font of a piece before its words are fitted: the font its line asks for (listing exception, the buyer's drop-down, a font per disc), loaded; a font that will not load
    *  falls back to Source Sans 3. A job that already has a fit, a saved back or a person's edit keeps the font it has. */
   async function ensureJobFont(job) {
@@ -6300,6 +6300,20 @@ const Engrave = window.Engrave = (() => {
     const rank = j => (j.slot ? 1 + S.slotRank(j.slot) : 0) * 2 + (isFront(j) ? 0 : 1);
     for (const [k, jobs] of lines) { const row = B.orders.byKey.get(k); if (!row) continue; for (const j of jobs) { j.row = S.sideRow(sidesCtx, row, j.slot || null, j); noteSlot(row, j.slot); } S.linkParent(sidesCtx, row, jobs.slice().sort((a, b) => rank(a) - rank(b))); n++; }
     return n;
+  }
+  /* PIECES (Paul, 16 Oct 2026): the order timeline's Engraved step is done when EVERY piece of a line has its approval, not when the first arrived. These tell it which pieces to wait for.
+     engravePoolsOf: the pool ids of the pieces of a line that still have a back to approve (a piece cut plain is not waited for), null unless the line has more than one such piece (a line with one piece reads as it always did).
+     engravePiecesOf: the same pieces for the step's explainer, [{ label: "Piece 2", text, done }] in piece order, null under the same rule. Both read the jobs, nothing is fetched. */
+  function engravePoolsOf(row) {
+    row = lineOf(row); if (!row) return null;
+    const ids = [];
+    for (const j of jobsOf(row, { face: "back" })) { if (!j.slot || j.archived || ["none", "skipped"].includes(j.state)) continue; for (const id of j.copies || []) if (!ids.includes(id)) ids.push(id); }
+    return ids.length > 1 ? ids : null;
+  }
+  function engravePiecesOf(row) {
+    row = lineOf(row); if (!row || !engravePoolsOf(row)) return null;
+    const S = SIDES();
+    return jobsOf(row, { face: "back" }).filter(j => j.slot && !j.archived && !["none", "skipped"].includes(j.state)).map(j => ({ label: (S && S.slotWord(j)) || "", text: String(j.text || "").trim().replace(/\s*\n\s*/g, " / "), done: ["approved", "written"].includes(j.state) }));
   }
   const pendingCount = () => [...items().values()].filter(j => !j.editingBack && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone" && !unplacedPre(j)).length;   // (ENGPRE: the run's Engrave step waits for the engraving of pieces in the run; a line not nested yet is the Engrave tab's own list, counted by pendingRows)
   /** How many placements have already been settled in this run — the numerator of "3 of 9" on the card. */
@@ -9286,7 +9300,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { openMonogram, monogramUI: () => MonoUI(), monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { openMonogram, monogramUI: () => MonoUI(), monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
    list of pieces, the Pieces counts and a monogram line's pieces (the same slots and piece keys: "<line>" for one piece, "<line>#C<u>" for several) read THIS. Added beside the Engrave object, not inside its return. */
@@ -16471,7 +16485,8 @@ const OrderWin = window.OrderWin = (() => {
       if (window.OrderPieces) for (const p of tryDo(() => OrderPieces.ofRow(x)) || []) if (p.sheetId) sheets.add(p.sheetId);   // (the sheets' own records: a pool row that lost its sheet does not hide the piece's steps)
       const lineObj = Object.assign({}, x.line, { form: sp.form || null, designSku: sp.designSku || null, material: m, size: sp.size || null,
           engrave: x.engrave ? { state: x.engrave.state || "", needed: x.engrave.needed } : null, engraveCandidate: sp.engraveCandidate, noDesign: sp.noDesign },
-          (() => { const ef = engraveFacesOf(x); return ef ? { engraveFaces: ef.faces } : {}; })());
+          (() => { const ef = engraveFacesOf(x); return ef ? { engraveFaces: ef.faces } : {}; })(),
+          (() => { const ep = tryDo(() => Engrave.engravePoolsOf(x)); return ep ? { engravePools: ep } : {}; })());   // (PIECES: the pool ids the Engraved step waits for, a line of several pieces only)
       // (a mismatched pair line: its Left and Right are pieces of their own, `sides`: the line stays ONE piece for the pick, the timeline's lanes and the Review card; its rows are drawn per side)
       const sd = pairSides(x), tid = String(x.line.transactionId || "");
       const sides = sd.length ? ["L", "R"].map(side => { const mine = sd.filter(c => c.side === side); return { key: x.key + "#" + side, lineKey: x.key, side, tid, qty: mine.length, mirror: mine.some(c => c.mirror), pools: mine.map(c => String(c.poolId || c.key)), sheets: [...new Set(mine.map(c => c.sheetId).filter(Boolean))], line: lineObj, name: pieceName(x) + " · " + sideWord(side), metal: m, form: sp.form || "" }; }) : null;
@@ -16493,7 +16508,10 @@ const OrderWin = window.OrderWin = (() => {
     if (W.disc) { const ln = ps.find(p => p.key === (W.piece || W.key)) || (!multi ? tryDo(() => piecesOf([r])[0]) : null); if (!(ln && ln.counted && ln.qty >= (parseInt(String(W.disc).slice(1), 10) || 99))) W.disc = null; }   // (ENGPICK: a disc picked belongs to the counted line shown, and to a count it still has)
     const dir = W.pieceDir; W.pieceDir = 0;
     refreshPlacement(r); W.placeDrawn = W.placeSig;   // (where each piece IS now, before the mounts draw: they ask for it, opts.placement)
-    for (const m of [W.rail, W.tl]) if (m && m.setPieces) tryDo(() => m.setPieces(ps, W.piece, dir));
+    // PIECES (Paul, 16 Oct 2026): ONE line bought several times (order 4195059483: "2 pieces", one line x2) is not a list of pieces to pick from, but its rail must still wait for EVERY piece's engraving: the timeline is handed that one line
+    // (only when the line has more than one piece with a back to approve; any other single-line order tells it nothing, as before)
+    const tlPs = ps.length || multi || r.loading || sibs.length !== 1 ? ps : (tryDo(() => piecesOf(sibs)) || []).filter(p => p && p.line && p.line.engravePools);
+    for (const m of [W.rail, W.tl]) if (m && m.setPieces) tryDo(() => m.setPieces(tlPs, W.piece, dir));
   }
   /** A piece chosen (null: all of them): the Overview shows that piece's line, and every view crosses over to it. */
   function pickPiece(key, side, disc) {
@@ -17290,7 +17308,8 @@ const OrderWin = window.OrderWin = (() => {
       const pb = (x.problems || [])[0], hand = !x.hold && !!handOfRow(x);   // (completed by hand: it needs no sheet, so no step waits on it and none asks for a design)
       return { sku: sp.designSku || (x.line && x.line.sku) || "", form: sp.form || "", title: (x.line && x.line.title) || "", state: x.state, reason: x.reason || "", wait: x.wait || null, hold: !!x.hold, hand,
         problem: pb ? String(x.reason || pb.reason || pb.kind || "") : "", engrave: x.engrave || null, engraveCandidate: sp.engraveCandidate, special: sp.special ? sp.special.label || "" : "", onSheet,
-        ...(() => { const ef = engraveFacesOf(x); return ef ? { engraveFaces: ef.faces, engraveDone: ef.done } : {}; })() };
+        ...(() => { const ef = engraveFacesOf(x); return ef ? { engraveFaces: ef.faces, engraveDone: ef.done } : {}; })(),
+        ...(() => { const ep = tryDo(() => Engrave.engravePiecesOf(x)); return ep ? { engravePieces: ep } : {}; })() };   // (PIECES: each piece still to approve is named by the step's explainer)
     });
     const dec = pages.size && R && R.decisions ? tryDo(() => R.decisions(Orders.rows())) : null;
     const physical=dec?allSheets().map(pg=>({...pg,roseStockId:pg.roseStock?.id,id:pg.sheetId,poolIds:(pg.placements || []).map(p=>pg.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean),placedCount:pg.placements.length,outputs:pg.cloud || {},engraving:dec})):[];

@@ -94,7 +94,7 @@
   const orders=()=>root?.CharmNestOrders || (typeof module==='object' && typeof require==='function'?(()=>{try{return require('./charm-nest-orders.js');}catch(_){return null;}})():null);
   function fontMeta(e){
     const O=orders(),sp=e.job?.row?.spec;if(!O || !O.fontLine || !O.pieceFont || !sp?.font)return '';
-    const m=/^D(\d+)$/.exec(String(e.job?.slot || '')),ix=m?+m[1]-1:null;
+    const m=/^D(\d+)(?:\.\d+)?$/.exec(String(e.job?.slot || '')),ix=m?+m[1]-1:null;   // (a later set of discs, D2.2, is disc 2 for the font per disc)
     try{return O.pieceFont(sp,ix).mapped?O.fontLine(sp,ix):'';}catch(_){return '';}
   }
   /** Can this card approve the back, and when not, the one plain reason why. */

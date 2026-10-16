@@ -255,6 +255,19 @@
   const frontEv = e => !!e && !!e.data && e.data.face === "front";
   /** The faces a line engraves when it engraves more than the back (["front"] or ["front","back"]), as the host tells it (line.engraveFaces), else null: a back-only line reads exactly as it always did. */
   const facesOf = line => (line && Array.isArray(line.engraveFaces) && line.engraveFaces.includes("front") ? line.engraveFaces.slice() : null);
+  /* PIECES (Paul, 16 Oct 2026: "ALL multipiece orders must always show each individual piece with respect to all Engravings"): a line bought twice (or an ear pair twice, a necklace of discs twice) is several PIECES, each with its
+     own words, Approve and seal. The host tells the timeline which pool ids still have a back to approve (line.engravePools, only for a line with more than one piece job); the Engraved step is done when EVERY one of them has an
+     approval, not when the first arrived (the same rule as the faces above). A piece of the order that is a sub-piece (a slot of its line: `slot` or `side`) waits for its own pool ids only. A line that gives none reads as it always did. */
+  const poolsOf = p => {
+    const all = p && p.line && Array.isArray(p.line.engravePools) ? p.line.engravePools.map(String) : null; if (!all || all.length < 2) return null;
+    const own = p.slot || p.side ? all.filter(id => (p.pools || []).map(String).includes(id)) : all;
+    return own.length > 1 ? own : null;
+  };
+  /** The pool ids an engraving event names (data.poolId / data.poolIds); [] for an event that names none (an old derived "Back engraving approved": it stands for every piece it was recorded for). */
+  const eventPools = e => { const d = (e && e.data) || {}; return [].concat(d.poolId || [], Array.isArray(d.poolIds) ? d.poolIds : []).map(String).filter(Boolean); };
+  /** The slot an engraving event names when it is a slot of a line cut by unit ("C2", "L.2", "D1.2"); "" for every other event (a slotless one, an ear L or R, a disc D<n>: those group by line as they always did). */
+  const NEW_SLOT = /^(?:C\d{1,3}|(?:L|R|D\d{1,2})\.\d{1,3})$/;
+  const unitSlotOf = e => { const v = e && e.data && e.data.slot; return typeof v === "string" && NEW_SLOT.test(v) ? v : ""; };
   const sealed = e => !!e && (isPlainDecision(e) || MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type) || !!opStepOf(e));
   /** The seals to draw, oldest first: one per rail step per piece. A step recorded again for the same line (a second
    *  sorting scan, a rose sheet's cut after its laser mark) keeps the first seal and hangs the rest on it as `same`, so
@@ -263,12 +276,14 @@
   function sealsOf(events) {
     const out = [], first = new Map();
     let ship = null;
+    // (PIECES: a line cut by unit has an Engraved seal for EACH piece; a line whose events name no such slot groups by line, exactly as before)
+    const cut = new Set(); for (const e of events || []) if (e && e.type === "engraveApproved" && unitSlotOf(e)) cut.add(e.lineKey || e.transactionId || "");
     for (const e of events || []) {
       if (!sealed(e)) continue;
       e.same = null;
       if (!MILESTONE_SEAL.has(e.type)) { out.push(e); continue; }
       const st = own(STOP_OF, e.type) ? STAGES[STOP_OF[e.type]].k : e.type;
-      const g = st + "|" + (e.lineKey || e.transactionId || "") + (st === "engraved" && frontEv(e) ? "|front" : "");   // (the front's seal is its own: a piece engraved on both faces has two)
+      const g = st + "|" + (e.lineKey || e.transactionId || "") + (st === "engraved" && frontEv(e) ? "|front" : "") + (st === "engraved" && cut.has(e.lineKey || e.transactionId || "") && e.data && e.data.slot ? "|" + e.data.slot : "");   // (the front's seal is its own: a piece engraved on both faces has two)
       const kept = first.get(g) || (e.type === "etsyCompleted" && ship) || null;
       if (kept) { (kept.same = kept.same || []).push(e); continue; }
       first.set(g, e); out.push(e);
@@ -772,7 +787,7 @@
    *  step being worked towards (-1 when all are done, or it was completed by hand), stop: where a cancelled order
    *  stopped, hand: the Complete Order press that completed it by hand (handOf; the steps after `step` are skipped). */
   const PLACE_STATES = new Set(["sheet", "waiting", "hold", "hand", "cancelled", "loading"]);
-  function derive(events, cancelRec, where, rail, place, faces) {
+  function derive(events, cancelRec, where, rail, place, faces, pools) {
     events = events || [];
     rail = Array.isArray(rail) && rail.length ? rail : STAGES;
     let W = where && typeof where === "object" ? where : Object.assign(whereOf(events, cancelRec), typeof where === "string" && where ? { label: where, text: where } : {});
@@ -791,6 +806,16 @@
     if (iEng >= 0) {
       const have = new Set(events.filter(e => e && e.type === "engraveApproved").map(e => (frontEv(e) ? "front" : "back"))), miss = faces.filter(f => !have.has(f)), at = STAGES.indexOf(rail[iEng]);
       if (miss.length && full <= at) { stages[iEng].partial = miss; if (full === at) full = at - 1; }
+    }
+    /* PIECES: the same for a line of several pieces, each with its own approval (`pools`: the host's line.engravePools, the pool ids that still have a back). The step is done when every piece has one for every face it engraves.
+       An event that names no pool id (an old derived "Back engraving approved") stands for all of its line's pieces: nothing already approved is ever asked again. `stages[i].pieces` = { of, done } for the rail's count. */
+    const iPc = Array.isArray(pools) && pools.length > 1 ? rail.findIndex(x => x.k === "engraved") : -1;
+    if (iPc >= 0) {
+      const fs = Array.isArray(faces) && faces.length > 1 ? faces : ["back"], got = new Map(fs.map(f => [f, new Set()])), whole = new Set();
+      for (const e of events) if (e && e.type === "engraveApproved") { const f = frontEv(e) ? "front" : "back"; if (!got.has(f)) continue; const ids = eventPools(e); if (ids.length) ids.forEach(id => got.get(f).add(id)); else whole.add(f); }
+      const ok = id => fs.every(f => whole.has(f) || got.get(f).has(id)), left = pools.filter(id => !ok(id)), at = STAGES.indexOf(rail[iPc]);
+      stages[iPc].pieces = { of: pools.length, done: pools.length - left.length };
+      if (left.length && full <= at) { stages[iPc].partial = (stages[iPc].partial || []).concat(left); if (full === at) full = at - 1; }
     }
     let cancelled = null;
     if (cancelRec && typeof cancelRec === "object") cancelled = { at: +cancelRec.at || (lastCancel && lastCancel.at) || 0, by: str(cancelRec.by, 80), why: str(cancelRec.why, 400), source: cancelRec.source || (cancelRec.by === "Etsy" ? "etsy" : "sorter") };
@@ -839,11 +864,12 @@
     if (!e || !p) return false;
     // (a SIDE piece, Paul 9 Oct 2026: the Left or the Right of a mismatched pair, `side` "L" | "R" with its line's key in `lineKey`: it is the line's piece for every event of the whole line
     //  (the line's key, its transaction, an event with no piece), and its own only for an event that names one of ITS pool ids, or ITS sheet when no pool id is named)
-    const lk = p.side ? p.lineKey || p.key : p.key;
+    // (PIECES: a piece of a line cut by unit has a `slot` ("C2", "L.2") as an ear has a `side`: either way it is a part of its line, its own for the events that name its pool ids)
+    const sub = p.side || p.slot, lk = sub ? p.lineKey || p.key : p.key;
     const d = e.data || {}, ids = [].concat(d.poolId || [], Array.isArray(d.poolIds) ? d.poolIds : []).map(String);
-    if (e.lineKey) return e.lineKey === lk && (!p.side || !ids.length || ids.some(id => (p.pools || []).includes(id)));
-    if (e.transactionId) return (!p.tid || e.transactionId === String(p.tid)) && (!p.side || !ids.length || ids.some(id => (p.pools || []).includes(id)));
-    if (ids.length) return p.side ? ids.some(id => (p.pools || []).includes(id)) : ids.some(id => (p.pools || []).includes(id) || id.startsWith(p.key + "_"));
+    if (e.lineKey) return e.lineKey === lk && (!sub || !ids.length || ids.some(id => (p.pools || []).includes(id)));
+    if (e.transactionId) return (!p.tid || e.transactionId === String(p.tid)) && (!sub || !ids.length || ids.some(id => (p.pools || []).includes(id)));
+    if (ids.length) return sub ? ids.some(id => (p.pools || []).includes(id)) : ids.some(id => (p.pools || []).includes(id) || id.startsWith(p.key + "_"));
     if (e.sheetId && (pieces || []).some(q => (q.sheets || []).length || (q.sides || []).some(z => (z.sheets || []).length))) return (p.sheets || []).includes(e.sheetId);
     return true;
   }
@@ -854,12 +880,13 @@
     const evs = (events || []).map(x => (x && x.lane ? x : norm(x))).filter(Boolean).sort(byAt), ps = pieces || [];
     // (placeOf(key), or a piece's own .place: where the piece IS now, the PiecePlacement; see derive)
     const placed = p => { try { return typeof placeOf === "function" ? placeOf(p.key) || null : p.place || null; } catch (_) { return null; } };
-    const each = ps.map(p => { const list = evs.filter(e => ofPiece(e, p, ps)); return { p, D: derive(list, cancelRec, null, null, placed(p), facesOf(p.line)), steps: keepDone(stagesFor(p.line), list), events: list }; });
+    const each = ps.map(p => { const list = evs.filter(e => ofPiece(e, p, ps)); return { p, D: derive(list, cancelRec, null, null, placed(p), facesOf(p.line), poolsOf(p)), steps: keepDone(stagesFor(p.line), list), events: list }; });
     const rail = STAGES.map((s, i) => ({ s, i, n: 0, of: 0 }));
     for (const x of each) for (const s of x.steps) {
       const i = STAGES.indexOf(s); if (i < 0) continue;
       const q = Math.max(1, Math.round(+x.p.qty || 1)); rail[i].of += q;
       if (stepDone(x.D, i) || x.D.hand) rail[i].n += q;
+      else if (x.D.stages[i] && x.D.stages[i].pieces) rail[i].n += Math.min(q, x.D.stages[i].pieces.done);   // (PIECES: the pieces of a line already approved: "Engraved 1 of 2")
     }
     // (a piece completed by hand waits on no step: the order is where its slowest other piece is)
     return { each, rail: rail.filter(r => r.of), step: each.length ? Math.min(...each.map(x => (x.D.hand ? STAGES.length - 1 : x.D.step))) : -1 };
@@ -910,7 +937,7 @@
     const i = typeof step === "number" ? step : STAGES.findIndex(s => s.k === (step && typeof step === "object" ? step.k : step));
     const s = STAGES[i]; if (!s) return null;
     const evs = (data.events || []).map(e => e && e.lane && e.key ? e : norm(e)).filter(Boolean).sort(byAt);
-    let D = data.D || derive(evs, data.cancelled || null, data.where || null, null, data.place || null, data.faces || null);
+    let D = data.D || derive(evs, data.cancelled || null, data.where || null, null, data.place || null, data.faces || null, data.pools || null);
     // (derive's own rail is the steps themselves; the rail a view draws is railed's { s, i })
     if (!Array.isArray(D.rail) || !D.rail.length || !D.rail[0].s) D = railed(D, keepDone(data.stages, evs));
     const R = D.rail, pos = R.findIndex(r => r.i === i);
@@ -996,6 +1023,9 @@
     // a back-only line says "the back engraving", as it always did. A sheet's other orders have nothing to do with it.
     const engRows = () => {
       for (const l of live) if (l.engrave && l.engrave.needed && !l.engrave.approved) {
+        // (PIECES: a line of several pieces names each piece still to approve with its own words: "Approve the back engraving “Anna” of CORGI · Piece 2 in Review")
+        const open = Array.isArray(l.engravePieces) ? l.engravePieces.filter(q => q && !q.done) : null;
+        if (open && open.length) { for (const q of open) add("person", `Approve the back engraving${q.text ? ` “${String(q.text).slice(0, 60)}”` : ""} of ${name(l)}${q.label ? " · " + q.label : ""} in Review`); continue; }
         const fs = facesOf(l), todo = fs ? fs.filter(f => !(l.engraveDone && l.engraveDone[f])) : null;
         add("person", `Approve the ${todo && todo.length ? todo.join(" and ") : "back"} engraving${l.engrave.text ? ` “${String(l.engrave.text).slice(0, 60)}”` : ""} of ${name(l)} in Review`);
       }
@@ -1569,7 +1599,7 @@
       stamping: null, deferredPaint: null, loaded: false, loading: null, error: "", dead: false, lastLoad: 0, seq: 0, nowX: 0, pendingFocus: null, hlDone: false };
     // where the piece IS now (opts.placement(key|null) -> the page's PiecePlacement; null asks for the order's: one piece's, or the roll-up of all); see derive
     const plaOf = k => { try { return typeof opts.placement === "function" ? opts.placement(k == null ? null : k) || null : null; } catch (err) { warn("placement", err); return null; } };
-    const pieceSig = x => JSON.stringify(x.map(p => [p.key, p.qty, p.pools, p.sheets])) + "#" + plaSig(x);
+    const pieceSig = x => JSON.stringify(x.map(p => [p.key, p.qty, p.pools, p.sheets].concat(p.line && p.line.engravePools ? [p.line.engravePools] : []))) + "#" + plaSig(x);   // (PIECES: the pieces the Engraved step waits for are part of what a redraw compares)
     const plaSig = ps => [plaOf(null)].concat((ps || []).map(p => plaOf(p.key))).map(q => (q && q.sig) || "").join("|");
     const timers = new Set();
     const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); if (!S.dead) fn(); }, ms); timers.add(t); return t; };
@@ -1769,8 +1799,8 @@
     }
     function deriveNow() {
       const p = pieceNow();
-      if (p) return railed(derive(S.events, S.cancelled, null, null, plaOf(p.key), facesOf(p.line)), withDone(stagesFor(p.line), S.events));
-      const D = derive(S.events, S.cancelled, whereNow(), null, plaOf(null), S.pieces.length === 1 ? facesOf(S.pieces[0].line) : null);
+      if (p) return railed(derive(S.events, S.cancelled, null, null, plaOf(p.key), facesOf(p.line), poolsOf(p)), withDone(stagesFor(p.line), S.events));
+      const D = derive(S.events, S.cancelled, whereNow(), null, plaOf(null), S.pieces.length === 1 ? facesOf(S.pieces[0].line) : null, S.pieces.length === 1 ? poolsOf(S.pieces[0]) : null);
       if (S.pieces.length < 2) return railed(D, railNow(S.events));
       const sum = summary(S.every, S.pieces, S.cancelled, plaOf), far = D.step;
       if (D.hand && !sum.each.every(x => x.D.hand)) D.hand = null;   // (completed by hand: every piece of it)
