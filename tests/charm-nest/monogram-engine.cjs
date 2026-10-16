@@ -525,7 +525,7 @@ const ABC = [A, Pp, V];
   const nz = (letter, rings) => ({ letter, fill: 'nonzero', rings });
   const left = nz('C', [R(0, 0, 4, 30), R(0, 26, 12, 30), R(0, 0, 8, 4)]), right = nz('D', [R(8, 0, 12, 30), R(0, 26, 12, 30), R(4, 0, 12, 4)]), mid = { letter: 'M', rings: [R(0, 0, 24, 40)] };
   ok(M0.ADJUST_LIMITS && M0.ADJUST_LIMITS.scale[0] === 0.8 && M0.ADJUST_LIMITS.scale[1] === 1.25 && M0.ADJUST_LIMITS.sx[0] === 0.8 && M0.ADJUST_LIMITS.sx[1] === 1.5 && M0.ADJUST_LIMITS.sxCentre[1] === 1.25 && M0.ADJUST_LIMITS.rotDeg[1] === 6 && M0.ADJUST_LIMITS.shear[1] === 0.15 && M0.ADJUST_LIMITS.dxMm[1] === 2 && M0.ADJUST_LIMITS.dyMm[1] === 1.5, 'the adjust bounds are exported: scale 0.80..1.25, sx 0.8..1.5 (centre 1.25), rot +-6, shear +-0.15, dx +-2 mm, dy +-1.5 mm');
-  ok(M0.ESG_PROFILE && M0.ESG_PROFILE.aspect === 0.99 && M0.ESG_PROFILE.wMm === 14.69 && M0.LIMITS && M0.LIMITS.OVERLAP === 0.22 && M0.LIMITS.BALANCE_UPPER === 0.6, 'ESG_PROFILE and LIMITS are exported');
+  ok(M0.ESG_PROFILE && M0.ESG_PROFILE.aspect === 0.98 && M0.ESG_PROFILE.wMm === 14.54 && M0.LIMITS && M0.LIMITS.OVERLAP === 0.22 && M0.LIMITS.BALANCE_UPPER === 0.6, 'ESG_PROFILE and LIMITS are exported');
   const base = M0.build({ left, middle: mid, right }); sound(base, 'base');
   eq(base.report.adjust, { L: { scale: 1, sx: 1, rot: 0, shear: 0, dx: 0, dy: 0 }, M: { scale: 1, sx: 1, rot: 0, shear: 0, dx: 0, dy: 0 }, R: { scale: 1, sx: 1, rot: 0, shear: 0, dx: 0, dy: 0 } }, 'no adjust: report.adjust is all ones and zeros');
   // absurd values are clamped inside the engine and echoed as applied
@@ -652,11 +652,11 @@ const checkSample = (sp, words, what) => {
     ok(Math.abs(me.piece.wMm - E0.wMm) < 0.2 && Math.abs(me.piece.hMm - E0.hMm) < 0.2 && Math.abs(me.piece.aspect - E0.aspect) < 0.02, `ESG keeps its size ${me.piece.wMm} x ${me.piece.hMm} mm (reference ${E0.wMm} x ${E0.hMm})`);
     ok(Math.abs(me.ratios.sideHeightL - E0.sideHeight[0]) < 0.03 && Math.abs(me.ratios.sideHeightR - E0.sideHeight[1]) < 0.03 && Math.abs(me.ratios.sideWidthL - E0.sideWidth[0]) < 0.03 && Math.abs(me.ratios.sideWidthR - E0.sideWidth[1]) < 0.04 && Math.abs(me.ratios.centreWidthVsMedian - E0.centreWidthVsMedian) < 0.05, 'ESG keeps its ratios: ' + JSON.stringify(me.ratios));
     ok(Math.abs(me.overlap.L - E0.overlap[0]) < 0.03 && Math.abs(me.overlap.M - E0.overlap[1]) < 0.03 && Math.abs(me.overlap.R - E0.overlap[2]) < 0.03 && Math.abs(me.visibleWidthMm.L - E0.visibleMm[0]) < 0.3 && Math.abs(me.visibleWidthMm.R - E0.visibleMm[1]) < 0.3, 'ESG keeps its overlaps and its visible widths: ' + JSON.stringify({ o: me.overlap, v: me.visibleWidthMm }));
-    ok(Math.abs(me.align.baselineOffsetMm.L - E0.baselineOffsetMm) < 0.1 && Math.abs(me.align.baselineOffsetMm.R - E0.baselineOffsetMm) < 0.1 && me.balance.LM.balanced && me.balance.MR.balanced && me.contacts.some(c => c.zone === 'upper') && me.contacts.some(c => c.zone === 'lower'), 'ESG: the sides stand on a baseline +1.6 mm, and each pair is held by a contact near the top and one near the bottom');
+    ok(Math.abs(me.align.baselineOffsetMm.L - E0.baselineOffsetMm) < 0.1 && Math.abs(me.align.baselineOffsetMm.R - E0.baselineOffsetMm) < 0.1 && Math.abs(me.align.bodyOffsetMm.L - E0.bodyOffsetMm[0]) < 0.1 && Math.abs(me.align.bodyOffsetMm.R - E0.bodyOffsetMm[1]) < 0.1 && Math.abs(me.align.bodyOffsetMm.L) <= M0.LIMITS.BODY_OFFSET_MM && Math.abs(me.align.bodyOffsetMm.R) <= M0.LIMITS.BODY_OFFSET_MM && me.balance.LM.balanced && me.balance.MR.balanced && me.contacts.some(c => c.zone === 'upper') && me.contacts.some(c => c.zone === 'lower'), 'ESG: the sides stand on one baseline +1.5 mm, their body centres +0.1 / +0.6 mm above the centre letter\'s (limit 0.70), and each pair is held by a contact near the top and one near the bottom: ' + JSON.stringify(me.align));
     ok(me.distance < 1.5, 'ESG is at (almost) zero distance from the ESG profile: ' + me.distance);
     const hey = M0.build(await word('HEY')), mh = hey.report.metrics;
     ok(hey.ok && mh.violations.length === 0, 'HEY, approved too, passes every hard rule: ' + JSON.stringify(mh.violations));
-    ok(mh.align.baselineOffsetMm.L >= 0.1 && mh.align.baselineOffsetMm.L <= 2.0 && mh.balance.LM.balanced && mh.balance.MR.balanced && mh.visibleWidthMm.L >= 3.8 && mh.visibleWidthMm.R >= 3.8, 'HEY (its letters widened and thickened by the letter prep: the approved +0.49 mm baseline of the old letters can only be kept to the window) keeps its baseline offset inside the window, its balanced contacts (tie bars count) and its visible widths: ' + JSON.stringify({ off: mh.align.baselineOffsetMm, vis: mh.visibleWidthMm }));
+    ok(Math.abs(mh.align.bodyOffsetMm.L) <= M0.LIMITS.BODY_OFFSET_MM && Math.abs(mh.align.bodyOffsetMm.R) <= M0.LIMITS.BODY_OFFSET_MM && mh.align.lrDiffMm <= 0.15 && mh.balance.LM.balanced && mh.balance.MR.balanced && mh.visibleWidthMm.L >= 3.8 && mh.visibleWidthMm.R >= 3.8, 'HEY (its letters widened and thickened by the letter prep) keeps its body centres inside the limit, its sides level, its balanced contacts (tie bars count) and its visible widths: ' + JSON.stringify({ off: mh.align.baselineOffsetMm, vis: mh.visibleWidthMm }));
     // letter prep (MONOESG round 3): A. widened (M N W K R H A 30 %, Q T G S J 10 %, the rest 20 %), B. thicker lines (mean stroke 1.20 x the original's), C. the Q's curl tied to its body
     {
       const W = M0.WIDEN; ok(W && ['M', 'N', 'W', 'K', 'R', 'H', 'A'].every(c => W[c] === 1.3) && ['Q', 'T', 'G', 'S', 'J'].every(c => W[c] === 1.1) && W.OTHER === 1.2 && M0.THICKEN.TARGET === 1.2 && M0.THICKEN.MAX_MM === 0.25 && typeof M0.preparedLetter === 'function', 'WIDEN, THICKEN and preparedLetter are exported');
@@ -671,8 +671,8 @@ const checkSample = (sp, words, what) => {
         ok((sr >= 1.19 || (pr.offsetCapped && sr >= 1.10)) && sr <= 1.30 && pr.offsetMm <= M0.THICKEN.MAX_MM + 1e-9 && pr.countersKept >= M0.THICKEN.COUNTERS - 1e-9, `${f}${L}: mean stroke ${pr.strokeMm.before} -> ${pr.strokeMm.after} mm (x${Math.round(sr * 100) / 100}), offset ${pr.offsetMm} mm per side, counters kept ${pr.countersKept}`);
         ok(pr.strokeMm.p5After >= pr.strokeMm.p5Before - 1e-9, `${f}${L}: the thinnest lines get no thinner (${pr.strokeMm.p5Before} -> ${pr.strokeMm.p5After} mm)`);
       }
-      ok(prep.LQ.qBridge && prep.RQ.qBridge && prep.LQ.qBridge.lengthMm <= 1.0 && prep.LQ.qBridge.lengthMm >= 0.35 && prep.RQ.qBridge.lengthMm <= 1.0, 'the Left and Right Q get a bar from the free end of the curl to the stroke nearest to it, at most 1.0 mm long: ' + JSON.stringify([prep.LQ.qBridge, prep.RQ.qBridge]));
-      ok(prep.MQ.qBridge === null && prep.LM.qBridge === null, 'a Q whose curl has no stroke within 1.0 mm (the Mid Q) gets no bar, other letters none');
+      ok(prep.LQ.qBridge && prep.RQ.qBridge && prep.LQ.qBridge.lengthMm <= 1.0 && prep.LQ.qBridge.lengthMm >= 0.35 && prep.RQ.qBridge.lengthMm <= 1.0 && prep.LQ.qBridge.widthMm >= 0.4, 'the Left and Right Q get a bar (0.4 mm wide) from the free end of the curl to the stroke nearest to it, at most 1.0 mm long: ' + JSON.stringify([prep.LQ.qBridge, prep.RQ.qBridge]));
+      ok(prep.MQ.qBridge && prep.MQ.qBridge.lengthMm > 1.0 && prep.MQ.qBridge.lengthMm <= M0.Q_BRIDGE.EXTEND_MAX_MM && prep.MQ.qBridge.widthMm >= 0.4 && prep.LM.qBridge === null, 'the Mid Q, whose curl ends about 2 mm from the body, is joined too (up to 2.5 mm), other letters get no bar: ' + JSON.stringify(prep.MQ.qBridge));
       { // the same outline without the bar has the bar's ink less, and the Q stays one piece with its inner openings
         const regionArea = pr => { let a = 0; for (const r of pr.rings) { let s2 = 0; for (let i = 0; i < r.length; i++) { const p = r[i], q = r[(i + 1) % r.length]; s2 += p[0] * q[1] - q[0] * p[1]; } a += s2 / 2; } return a; };
         const raw = await real('LEFT', 'Q'), gm = Object.assign({}, raw, { metrics: null }), plain = M0.build({ left: await real('LEFT', 'A'), middle: await real('MID', 'S'), right: raw }, {});
@@ -685,6 +685,34 @@ const checkSample = (sp, words, what) => {
       ok(bw.L === 1.2 && bw.M === 1.1 && bw.R === 1.1 && bh.L === 1.3 && bh.M === 1.2 && bh.R === 1.2, 'report.baseWiden: ESG ' + JSON.stringify(bw) + ', HEY ' + JSON.stringify(bh));
       ok(esg.report.sizes.stretch.every(t => t.applied <= 1.25 + 1e-9 && t.applied >= 0.75 - 1e-9) && mh.maxStretch <= 1.25 + 1e-9, 'the stretch is counted against the caps from the prepared letters: ' + JSON.stringify(esg.report.sizes.stretch.map(t => t.applied)) + ' HEY max ' + mh.maxStretch);
       ok(esg.report.prep && esg.report.prep.L && esg.report.prep.L.widen === 1.2 && esg.report.prep.M.qBridge === null, 'report.prep carries each letter\'s widen, strokes and offset');
+    }
+    // alignment by the BODY CENTRE (MONOESG round 3 step 2): the centre of the band holding the central 70 % of the ink, thin protrusions at the ends weighed down; side letters within +-0.70 mm of the centre letter's, level with each other
+    {
+      const MMPT = 25.4 / 72, B = M0.BODY, famOf = { LEFT: 'L', MID: 'M', RIGHT: 'R' };
+      ok(M0.LIMITS.BODY_OFFSET_MM === 0.70 && M0.LIMITS.ALIGN_LR_MM === 0.15 && B && B.TRIM === 0.15 && typeof M0.bodyCentre === 'function', 'the body centre measure and its limits are exported (central 70 %, +-0.70 mm, sides level within 0.15 mm)');
+      // a synthetic spike of 4 x 0.35 mm on top of, or below, each of Y J Q G K X Z T, in all three alphabets, raw and prepared: the measure moves less than 0.3 mm
+      let worst = 0, worstAt = '', plain = 0;
+      for (const slot of ['LEFT', 'MID', 'RIGHT']) for (const L of 'YJQGKXZT') {
+        const raw = await real(slot, L), pr = M0.preparedLetter(famOf[slot], L, raw);
+        for (const [rings, fill] of [[raw.rings, 'auto'], [pr.rings, 'nonzero']]) {
+          let ymax = -1e9, ymin = 1e9, xt = 0, xb = 0; for (const r of rings) for (const q of r) { if (q[1] > ymax) { ymax = q[1]; xt = q[0]; } if (q[1] < ymin) { ymin = q[1]; xb = q[0]; } }
+          const w = 0.35 / MMPT, len = 4 / MMPT, ins = 0.8 / MMPT, base = M0.bodyCentre(rings, fill);
+          for (const top of [true, false]) {
+            const x = top ? xt : xb, sp = [[x - w / 2, top ? ymax - ins : ymin - len], [x + w / 2, top ? ymax - ins : ymin - len], [x + w / 2, top ? ymax + len : ymin + ins], [x - w / 2, top ? ymax + len : ymin + ins]];
+            const d = Math.abs(M0.bodyCentre(rings.concat([sp]), 'nonzero').cyMm - base.cyMm), d70 = Math.abs(M0.bodyCentre(rings.concat([sp]), 'nonzero').rawCyPt - base.rawCyPt) * MMPT;
+            if (d > worst) { worst = d; worstAt = `${slot} ${L} ${top ? 'top' : 'bottom'}`; } if (d70 > plain) plain = d70;
+          }
+        }
+      }
+      ok(worst < 0.3, `a 4 x 0.35 mm spike on Y J Q G K X Z T moves the body centre by at most ${Math.round(worst * 100) / 100} mm (${worstAt}); the plain central 70 % band moves ${Math.round(plain * 100) / 100} mm`);
+      // the rule: ESG and HEY pass; a side letter too high or low fails; the old placement (baseline window) of PNI and THE fails
+      const old = async w => M0.build(await word(w), { valign: 'center' }).report.metrics;
+      const mp = await old('PNI'), mt = await old('THE');
+      ok(mp.violations.some(v => v.key === 'vertical') && mt.violations.some(v => v.key === 'vertical'), `PNI (${JSON.stringify(mp.align.bodyOffsetMm)}) and THE (${JSON.stringify(mt.align.bodyOffsetMm)}) placed by the old baseline window are flagged by the body rule`);
+      const rca = M0.build(await word('RCA')), rcaHi = M0.build(await word('RCA'), { adjust: { L: { dy: 1.5 }, R: { dy: 1.5 } } });
+      ok(rca.report.metrics.violations.every(v => v.key !== 'vertical') && rcaHi.report.metrics.violations.some(v => v.key === 'vertical') && rcaHi.report.metrics.align.bodyOffsetMm.R > 0.7, `RCA placed by its body centres is level (${JSON.stringify(rca.report.metrics.align.bodyOffsetMm)}); with both sides raised 1.5 mm the rule fails (${JSON.stringify(rcaHi.report.metrics.align.bodyOffsetMm)})`);
+      const pni = M0.build(await word('PNI')).report.metrics, the = M0.build(await word('THE')).report.metrics;
+      ok(Math.abs(pni.align.bodyOffsetMm.L) < Math.abs(mp.align.bodyOffsetMm.R) && Math.abs(the.align.bodyOffsetMm.R) <= Math.abs(mt.align.bodyOffsetMm.R) + 0.05, `the default placement splits the difference of the two side letters' bodies: PNI ${JSON.stringify(pni.align.bodyOffsetMm)}, THE ${JSON.stringify(the.align.bodyOffsetMm)}`);
     }
     // autoFit: a word that breaks a rule is brought nearer by bounded adjustments; a good word is left alone
     const noFit = M0.autoFit(await word('ESG'));
