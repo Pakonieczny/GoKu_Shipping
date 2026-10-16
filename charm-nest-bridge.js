@@ -7121,6 +7121,8 @@ const Engrave = window.Engrave = (() => {
     return true;
   }
   /** An approved / saved piece with its placement still in hand: the card draws it in the review layout (the Approve is a calm "Approved" tick) and every control works; the first change calls reopenForEdit. */
+  /** What an approved piece's card shows of the page's own work on it (its back file being saved, a stamp pressed, a file waiting for the cloud): the card is drawn again when it changes (its position buttons follow it). */
+  const busySig = j => [j.stamping, j.backSaving, j.approvalPreparing, j._approvalTask, j._backTask, j.backPending].map(x => (x ? 1 : 0)).join("");
   const approvedView = job => !!job && ["approved", "written"].includes(job.state) && !!job.fit && !!job.view && !!job.mask && !recalledJob(job);
   /** The placement can be changed now: under review, or approved (the first change reopens it). */
   const placeEditable = job => !!job && (job.state === "review" || approvedView(job));
@@ -8425,7 +8427,7 @@ const Engrave = window.Engrave = (() => {
       const f2 = pickFocus(q2, d2);
       // APPRFIX-B: kept only while it is still the card of the job that is in the list AND that job still waits for approval: a card drawn in review whose job left review (words the font cannot engrave, an order changed on Etsy,
       // a refit) or was replaced by another object under the same key stayed on screen with a live Approve that cardAction / approveOnce dropped without a word. Drawn again, it says what the placement is now.
-      if (f2 && f2.key === EG.cardKey && f2 === EG.card._job && f2.state === EG.card.dataset.state) {   // (NODECIDED: an approved piece in front is kept as long as it stays approved; the first change flips it to review and the card is drawn again)
+      if (f2 && f2.key === EG.cardKey && f2 === EG.card._job && f2.state === EG.card.dataset.state && (f2.state === "review" || busySig(f2) === EG.card._busySig)) {   // (NODECIDED: an approved piece in front is kept as long as it stays approved; the first change flips it to review and the card is drawn again)
         // (a card of a row with several pieces is kept only while its pieces are the same ones and the same words: otherwise it is drawn again; the switch itself follows in place)
         const g2 = listRows(q2.concat(d2)).find(r2 => r2.jobs.includes(f2)), pcs = multiJobs(g2);
         if (headSig(pcs) === (EG.card._headSig || "")) { EG.card._switchSync?.(pcs); renderChrome(v, q2); return; }
@@ -8712,7 +8714,7 @@ const Engrave = window.Engrave = (() => {
     const fw = faceNoun(faceOfJob(job)), faced = isFrontJob(job) || lineHasFront(job.row);   // (the face this card is the engraving of; faced: the line has a front job, so the card says which face it is)
     const counts = (ctx && ctx.counts) || rowCountsOf({ length: remaining }), decided = counts.decided;
     const ears = ctx && Array.isArray(ctx.ears) && ctx.ears.length >= 2 && ctx.ears.includes(job) ? ctx.ears : null;
-    card._headSig = headSig(ears);
+    card._headSig = headSig(ears); card._busySig = busySig(job);
     // One card, one order, one screen: the back is the work and the right column is everything you need to judge it.
     // ENGTRIM (Paul, 12 Oct: "way too many needless text and titles ... keep it very simple"): in the Engrave tab the options panel (words, font, position, mode) and the card's Front / Back thumbnails already carry
     // the piece, so this detail does not draw a second words box, a "Front · reference" picture, a face switch in the head, the "From the order" list, a "NN% sure" pill or the block titles. The Review tab's placement card
