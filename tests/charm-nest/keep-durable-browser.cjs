@@ -164,10 +164,10 @@ async function main() {
     const intents = page => page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('cn.keepIntents.v1') || '{"intents":{}}').intents));
     const runs = page => page.evaluate(() => __kw.calls.filter(c => c === 'run').length);
     const unlockOutside = page => page.evaluate(async pw => { const r = await CharmNestRepoLock.submitInline('upload', pw, { target: 'test' }); return r.ok; }, REPO_TEST.password);
-    const reloadPage = async (page, orders) => {
+    const reloadPage = async (page, orders, noTab) => {
       await page.reload({ waitUntil: 'load' });
       await page.waitForFunction(() => window.CN && window.Orders && window.Review && window.CustomSheet && CN.S.cloud.ok === true, null, { timeout: 60000 });
-      await seed(page, orders); await startRun(page); await tabCustom(page);
+      await seed(page, orders); await startRun(page); if (!noTab) await tabCustom(page);
     };
 
     /* ── S1 · the switch ON starts the save at once (unlocked); the window closed, the card says it; a reopened window shows it; a new order's switch is OFF ── */
@@ -293,9 +293,9 @@ async function main() {
       ok(sku && idx.includes(sku), 'R: the design is in the (in-memory) master index under ' + sku);
       ok(await page.evaluate(() => window.__etsy.length === 1 && window.__etsy[0] === 'listingId,op,rid'), 'R: the Etsy step was asked once, with the order and its listing only');
       const files = srv.st.list ? idx.length : 0;
-      await reloadPage(page, ORD);
-      await page.waitForFunction(() => Object.keys(CustomSheet.entries()).length > 0, null, { timeout: 20000 });
-      await page.waitForTimeout(2500);
+      // (the next order of this listing being associated with the saved design is the server's and the orders code's side: keep-association.cjs; here only that nothing is saved twice)
+      await reloadPage(page, ORD, true);
+      await page.waitForTimeout(3000);
       ok((await srv.st.list('Charm_Master_Index')).length === idx.length, 'R: after a reload nothing more is written to the repository (' + idx.length + ' SKUs)');
       ok((await intents(page))[0].state === 'done', 'R: the finished save is still recorded as done after the reload');
       await w.close();
