@@ -2634,6 +2634,29 @@ function showRowPrintCompletedModal() {
   }
 }
 
+/** What QR Printer.html reads from an order's items (its receipt, title, keywords for the dots, and any matrix title). The rest of an Etsy
+ *  transaction (listing description, tags, prices...) is not handed over: nine whole orders were enough to fill the browser's storage. */
+const QR_ITEM_KEYS = ["receipt_id", "receiptId", "title", "keywords", "matrixTitle", "matrixImageTitle", "matchedMatrixTitle", "matrix", "matrix_title", "matrix_name"];
+function slimQrItem(item) {
+  const out = {};
+  for (const k of QR_ITEM_KEYS) if (item && item[k] != null) out[k] = item[k];
+  return out;
+}
+
+/** Hand a Print Row batch to QR Printer.html, a frame of this page (same tab, same origin).
+ *  It has always gone to localStorage, but this page keeps the Matrix photos there and a full store refuses a NEW key (a single sticker
+ *  only replaces "qrPrintAll", which needs no new room, so it kept printing while Print Row failed). Then the batch goes to sessionStorage,
+ *  which QR Printer.html reads as well. When neither takes it this throws before anything is printed or marked sorted. */
+function stashQrBatch(batch) {
+  const json = JSON.stringify(batch);
+  for (const s of [localStorage, sessionStorage]) { try { s.removeItem("qrPrintBatch"); } catch (_) {} }   // a batch left by an earlier print is never printed again
+  try { localStorage.setItem("qrPrintBatch", json); return; }
+  catch (e) { console.warn("Print Row: localStorage refused the batch (" + json.length + " characters), using sessionStorage:", e); }
+  try { sessionStorage.setItem("qrPrintBatch", json); return; }
+  catch (e) { console.error("Print Row: sessionStorage refused the batch too:", e); }
+  throw new Error("browser storage is full, nothing was printed");
+}
+
 /** Kick off printing for the next visible row of up to 9 Etsy Order Items. */
 async function handlePrintRowClick() {
   try {
@@ -2691,10 +2714,10 @@ async function handlePrintRowClick() {
     const batch = [], inBatch = [];
     for (const cellIndex of printIndices) {
       const obj = buildQrDataForCell(cellIndex);
-      if (obj) { batch.push(obj); inBatch.push(cellIndex); }
+      if (obj) { batch.push(Object.assign({}, obj, { items: obj.items.map(slimQrItem) })); inBatch.push(cellIndex); }
     }
     if (batch.length) {
-      localStorage.setItem("qrPrintBatch", JSON.stringify(batch));
+      stashQrBatch(batch);
       const ifr = document.createElement("iframe");
       ifr.style.position = "absolute";
       ifr.style.width = "1px";
@@ -2716,7 +2739,9 @@ async function handlePrintRowClick() {
 
   } catch (err) {
     console.error("Print Row failed:", err);
-    if (window.M?.toast) M.toast({ html: "Print Row error (see console)." });
+    // say what failed (the toast used to hide it): the browser's own words, escaped, short
+    const why = String((err && err.message) || err || "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c])).slice(0, 140);
+    if (window.M?.toast) M.toast({ html: "Print Row error" + (why ? ": " + why : "") + " (see console)." });
   }
 }
 

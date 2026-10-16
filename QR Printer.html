@@ -72,16 +72,21 @@ window.addEventListener("load", async () => {
     // 1) Load from localStorage
 
     // ==== BATCH MODE: if qrPrintBatch exists, print a multi-page PDF then exit ====
-    const batchStr = localStorage.getItem("qrPrintBatch");
+    const batchStr = takeBatchString();
     if (batchStr) {
       try {
         const batchArr = JSON.parse(batchStr);
         if (Array.isArray(batchArr) && batchArr.length) {
           await printBatch(batchArr);
-          localStorage.removeItem("qrPrintBatch");
           return; // don't run single-item path
         }
       } catch (e) { console.warn("Bad qrPrintBatch:", e); }
+    }
+    // Opened for a Print Row (#batch) with no usable batch: stop. Falling on to "qrPrintAll" would print the LAST SINGLE sticker's data again, the wrong label.
+    if (/^#batch(?:&|$)/.test(location.hash)) {
+      console.error("QR Printer opened for a Print Row but no label batch was handed over. Nothing printed.");
+      notifyParent({ phase: "done", ok: false, error: "no label batch was handed to the printer" });
+      return;
     }
 
     const dataStr = localStorage.getItem("qrPrintAll");
@@ -132,6 +137,20 @@ window.addEventListener("load", async () => {
     notifyParent({ phase: "done", ok: false, error: String((err && err.message) || err) });
   }
 });
+
+/** The Print Row batch (JSON text) or null. sorting.html leaves it in localStorage, or in sessionStorage when localStorage was too full to take a new key
+ *  (same tab, same origin, so this frame sees both). Both are emptied here, so a batch is printed once and a later single sticker never finds it. */
+function takeBatchString() {
+  let found = null;
+  for (const store of ["localStorage", "sessionStorage"]) {
+    try {
+      const s = window[store].getItem("qrPrintBatch");
+      window[store].removeItem("qrPrintBatch");
+      if (s && !found) found = s;
+    } catch (_) { /* a store this browser will not open */ }
+  }
+  return found;
+}
 
 /* =================== Per-piece pages (only for a sticker printed by hand for one piece) =================== */
 /** The manual piece sticker's note, { note } (what the piece is for, at most 60 characters), or null for every ordinary order sticker. */
