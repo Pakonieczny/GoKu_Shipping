@@ -21,6 +21,8 @@
  *                                job: { pieceKey: the line's key, kind: 'monogram', label ("Monogram", metal first when the order has more lines), faces: [], jobKeys: [], state, piece: { kind: 'monogram', row, faces: {front:null, back:null}, jobs: [] } }.
  *                                Its state is the page's answer for the line (useMonogram(fn) once, or o.monoState(row) per call): null (not a monogram line: nothing is added) | 'to-approve' | 'held' | 'approved'. Its Approve is
  *                                that piece's approval in the order's sequence: countOf, nextUnapproved, step, the strip, the guide and Back / Next treat it like any other piece. Without a function nothing changes.
+ *                                PIECES (Paul, 16 Oct 2026): a monogram line of quantity N >= 2 is N pieces, pieceKey "<lineKey>#C<u>", slot "C<u>", label "Monogram <u>" (metal first when the order has more lines), each with its own state:
+ *                                useMonogram(stateFn, piecesFn) where piecesFn(row) -> [{ pieceKey, slot, n, of, state }] (null / one entry: the line is one piece, as ever).
  *   jobOf(P, face)               the Engrave job of that face of the piece; without `face`: the face still to settle (Front before Back), else the first job (null for a monogram piece)
  *   groupRows(rows, o)           the Engrave tab's queue rows (charm-nest-engrave-rows.js) put in ORDER order: orders by first appearance, each order's rows together in the order's line order. Back / Next walk this
  *                                sequence, so every piece of an order is reached before the next order. o: { ridOf(row), lineIndex(row) }
@@ -49,7 +51,8 @@
   const slotWord = s => (s === 'L' ? 'Left' : s === 'R' ? 'Right' : /^D\d+$/.test(s || '') ? 'Disc ' + s.slice(1) : '');
   const faceList = piece => ['front', 'back'].filter(f => piece.faces && piece.faces[f]);
   let monoFn = null;   // the page's answer for a monogram line (null | 'to-approve' | 'held' | 'approved'), set once by the bridge: a module with no page adds no monogram piece
-  const useMonogram = fn => { monoFn = typeof fn === 'function' ? fn : null; };
+  let monoPiecesFn = null;   // (PIECES) the page's pieces of a monogram line of quantity >= 2: row -> [{ pieceKey, slot, n, of, state }] | null
+  const useMonogram = (fn, piecesFn) => { monoFn = typeof fn === 'function' ? fn : null; monoPiecesFn = monoFn && typeof piecesFn === 'function' ? piecesFn : null; };
   const MONO_STATE = { 'to-approve': 1, held: 1, approved: 1 };
 
   /** The live lines of an order, in the order they came. */
@@ -63,14 +66,21 @@
     o = o || {}; rid = String(rid == null ? '' : rid);
     const C = Card(); if (!C || !C.piecesOf) return [];
     const rows = rowsOf(rid, o), many = new Set(rows.map(r => (lineOf(r) || {}).key)).size > 1, out = [];
-    const popt = Object.assign({}, o); delete popt.rows; delete popt.withNone; delete popt.monoState;
-    const monoState = o.monoState === undefined ? monoFn : o.monoState;
+    const popt = Object.assign({}, o); delete popt.rows; delete popt.withNone; delete popt.monoState; delete popt.monoPieces;
+    const monoState = o.monoState === undefined ? monoFn : o.monoState, monoPieces = o.monoPieces === undefined ? monoPiecesFn : o.monoPieces;
     rows.forEach((r, li) => {
       const ms = monoState ? tryDo(() => monoState(r), null) : null;
       if (ms && MONO_STATE[ms]) {   // (a monogram line: one piece, no faces, no job)
-        const L = lineOf(r), metal = metalOf(L), label = (many ? [metal, 'Monogram'] : ['Monogram']).filter(Boolean).join(' · ');
-        out.push({ pieceKey: L.key, rid, lineKey: L.key, slot: null, label, title: 'Monogram', metal, faces: [], jobKeys: [], state: ms, kind: 'monogram', line: li,
-          piece: { kind: 'monogram', pieceKey: L.key, rid, lineKey: L.key, slot: null, row: L, title: 'Monogram', faces: { front: null, back: null }, jobs: [], state: ms } });
+        const L = lineOf(r), metal = metalOf(L), mp = monoPieces ? tryDo(() => monoPieces(r), null) : null;
+        // (PIECES: a monogram line of quantity N is N pieces, "<lineKey>#C<u>", each its own state and its own Approve; a line of one piece is one, as ever. The page says each piece's state (monoPieces); without it every piece has the line's)
+        const q = Math.max(1, Math.min(400, Math.round(+(L.spec && L.spec.quantity) || +(L.line && L.line.quantity) || 1)));
+        const list = mp && mp.length >= 2 ? mp : q >= 2 ? Array.from({ length: q }, (_, i) => ({ pieceKey: L.key + '#C' + (i + 1), slot: 'C' + (i + 1), n: i + 1, of: q, state: ms })) : [{ pieceKey: L.key, slot: null, n: 1, of: 1, state: ms }];
+        for (const mpc of list) {
+          const state = MONO_STATE[mpc.state] ? mpc.state : ms, label = (many ? [metal, mpc.of > 1 ? 'Monogram ' + mpc.n : 'Monogram'] : [mpc.of > 1 ? 'Monogram ' + mpc.n : 'Monogram']).filter(Boolean).join(' · ');
+          const title = mpc.of > 1 ? 'Monogram \u00b7 Piece ' + mpc.n + ' of ' + mpc.of : 'Monogram';
+          out.push({ pieceKey: mpc.pieceKey, rid, lineKey: L.key, slot: mpc.slot || null, label, title, metal, faces: [], jobKeys: [], state, kind: 'monogram', line: li,
+            piece: { kind: 'monogram', pieceKey: mpc.pieceKey, rid, lineKey: L.key, slot: mpc.slot || null, row: L, title, faces: { front: null, back: null }, jobs: [], state } });
+        }
         return;
       }
       let ps = []; try { ps = C.piecesOf([r], popt) || []; } catch (_) { ps = []; }

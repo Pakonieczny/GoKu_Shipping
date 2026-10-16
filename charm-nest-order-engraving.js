@@ -17,6 +17,8 @@
  *       mono  (MONOUI, Paul 16 Oct 2026: the monogram "in place of the currently existing back/front engraving") { is(line) -> bool, mount(el, line, opts) -> widget | null }: the page's monogram widget
  *             (charm-nest-monogram-ui.js, mode "compact"). A line it says is a monogram has NO Front/Back card: its card is `.engMono` (a header and the widget), in the line's place among the others, and it follows
  *             the piece picked (`only`) like any card. Without `mono` (every other host, every test of the plain cards) nothing here changes.
+ *             PIECES (Paul, 16 Oct 2026): `mono.pieces(line) -> [{ key, slot, n, of }]` says the pieces of a monogram line of quantity N: one `.engMono` card for each ("Monogram · Piece 1 of 2", data-key = the piece key, data-slot "C1"), each with the widget of
+ *             ITS piece (mount gets opts.slot). A line of one piece is one card titled "Monogram", as before. `only` { line, side: "C2" } narrows to that piece.
  *     The host's DIRECT CHILDREN are the cards (`.engCard`, one for each piece that has something to engrave) and, for a monogram line, its `.engMono` card; the host is hidden when there is none. Nothing else is drawn in it.
  *   OrderEngraving.engOf(ctx) -> { row, job, eng, poolId, loading }   what the earlier single card would show, as data (no drawing)
  *   OrderEngraving.cycleOf / discLines / faceCell / foldSlots / bothFor / approveFaces / backOf / unmount   as before (the bridge and the sheet window call them)
@@ -314,7 +316,7 @@
     if (host._orderEngraving) tryDo(() => host._orderEngraving.destroy());
     let ctx = Object.assign({}, ctx0), gone = false, seenAt = Date.now(), attached = false, ro = null, told0 = null;
     const cards = new Map();                 // pieceKey -> { el, sig }
-    const monos = new Map();                 // MONOUI: line key -> { el, body, line, handle, dot } (one monogram card for each monogram line of the order, kept while it is not the piece picked, so the picture is there at once when it is)
+    const monos = new Map();                 // MONOUI: piece key -> { el, body, line, piece, handle, dot } (one monogram card for each monogram PIECE of the order, kept while it is not the piece picked, so the picture is there at once when it is; PIECES: a line of quantity N has N)
     let monoSeen = '';
     const busy = new Set(), seen = new Set(), fails = new Map(), asked = new Set();   // pieces being approved; job keys put in front of the person; the one failure line of a card
     let last = new Map(), asking = false, waitEl = null, kindsSeen = '', loading = false;
@@ -336,6 +338,8 @@
     /** MONOUI: is this line a monogram (drawn by the page's monogram widget, no Front/Back card)? Only a host that hands `mono` has any. */
     const isMono = row => { const M = ctx.mono, ln = lineOfRow(row); return !!(M && typeof M.is === 'function' && typeof M.mount === 'function' && ln && ln.state !== 'gone' && tryDo(() => M.is(ln), false)); };
     const uniqLines = rows => { const seenK = new Set(), out = []; for (const r of rows) { const ln = lineOfRow(r); if (ln && ln.key && !seenK.has(ln.key)) { seenK.add(ln.key); out.push(ln); } } return out; };
+    /** PIECES: the pieces of the monogram lines, one entry each: { key (the piece's key: the line's for a line of one piece, "<line>#C2" for piece 2 of several), line, slot, n, of }. The host says which pieces a line has (mono.pieces); without it a line is one piece. */
+    const monoPieces = lines => { const out = []; for (const ln of lines) { let ps = null; if (typeof ctx.mono.pieces === 'function') ps = tryDo(() => ctx.mono.pieces(ln), null); if (!Array.isArray(ps) || !ps.length) ps = [{ key: ln.key, slot: null, n: 1, of: 1 }]; for (const p of ps) out.push({ key: p.key || ln.key, line: ln, slot: p.slot || null, n: p.n || 1, of: p.of || ps.length }); } return out; };
     /** The piece the window is narrowed to ({ line, side } or null for all), read now. */
     const onlyOf = () => { const o = typeof ctx.only === 'function' ? tryDo(() => ctx.only(), null) : ctx.only; return o && typeof o === 'object' && (o.line || o.side) ? { line: o.line ? String(o.line) : '', side: o.side ? String(o.side) : '' } : null; };
     /** What the cards show now, as data. */
@@ -351,7 +355,8 @@
       let pieces = []; if (C) { try { pieces = C.piecesOf(rows, popt); } catch (e) { pieces = []; for (const r of rows) { try { pieces.push(...C.piecesOf([r], popt)); } catch (e2) { tryDo(() => console.warn('order engraving: one line could not be read', e2)); } } } }   // (ENGCRASH: a line that cannot be read leaves the other lines' cards drawn)
       if (only && only.side) pieces = pieces.filter(p => !p.slot || p.slot === only.side);   // (one ear of a pair picked: that ear's card alone)
       // (MONOUI: a monogram line has no Front/Back card, its card is the widget's; `monoAll` are the monogram lines of the order, `monoShown` the ones of the piece picked)
-      const monoAll = uniqLines(every.filter(isMono)), monoShown = uniqLines(rows.filter(isMono));
+      const monoAllLines = uniqLines(every.filter(isMono)), monoShownLines = uniqLines(rows.filter(isMono));
+      const monoAll = monoAllLines.length ? monoPieces(monoAllLines) : [], monoShown = monoShownLines.length ? monoPieces(monoShownLines).filter(p => !only || !only.side || !/^C\d/.test(only.side) || p.slot === only.side) : [];   // (a copy picked in the window: that piece's card alone)
       if (monoAll.length) pieces = pieces.filter(p => !isMono(p.row));
       const ev = events(); for (const p of pieces) withForeign(p, ev, seenAt);
       return { rows, pieces, monoAll, monoShown, loading: rows.some(r => r && r.loading), only: only ? only.line + '|' + only.side : '' };
@@ -472,31 +477,40 @@
       m.el.dataset.state = state;
       if (dot) { if (MONO_DOT[state]) dot.dataset.s = MONO_DOT[state]; else delete dot.dataset.s; dot.setAttribute('aria-label', word); dot.title = word; }
     }
-    function monoEntry(line) {
-      let m = monos.get(line.key);
-      if (m) { m.line = line; return m; }
+    function monoEntry(pc) {
+      const line = pc.line;
+      let m = monos.get(pc.key);
+      if (m) { m.line = line; m.piece = pc; tryDo(() => monoTitle(m)); return m; }
       const d = doc(), el = d.createElement('section');
       tryDo(() => { const C = CARD(); if (C && C.css) C.css(); });   // (the header's dot and name are the engraving card's own styles, which a window with no engraving card has not had put in the page yet)
-      el.className = 'engMono'; el.dataset.testid = 'ow-mono'; el.dataset.key = line.key; el.dataset.rid = String(ctx.rid || (line.order && line.order.receiptId) || ''); el.dataset.state = 'reading';
+      el.className = 'engMono'; el.dataset.testid = 'ow-mono'; el.dataset.key = pc.key; el.dataset.line = line.key; el.dataset.slot = pc.slot || ''; el.dataset.piece = String(pc.n); el.dataset.rid = String(ctx.rid || (line.order && line.order.receiptId) || ''); el.dataset.state = 'reading';
       el.setAttribute('aria-label', 'Monogram');
       el.innerHTML = '<header class="engHd" data-testid="ow-mono-head"><i class="engDot" data-testid="ow-mono-dot" role="img"></i><b class="engName">Monogram</b></header><div class="engMonoBody" data-testid="ow-mono-body"></div>';
-      m = { el, body: el.querySelector('.engMonoBody'), line, row: line, handle: null };
-      monos.set(line.key, m);
+      m = { el, body: el.querySelector('.engMonoBody'), line, row: line, piece: pc, handle: null };
+      monos.set(pc.key, m);
+      monoTitle(m);
       monoDot(m, null);
       let w = null;
-      try { w = ctx.mono.mount(m.body, line, { mode: 'compact', rid: String(ctx.rid || (line.order && line.order.receiptId) || ''), lineKey: line.key, onChange: st => { if (!gone) monoDot(m, st); }, onApproved: () => { if (!gone) told(); } }); } catch (e) { tryDo(() => console.warn('order engraving: the monogram could not be drawn', e)); }
+      try { w = ctx.mono.mount(m.body, line, { mode: 'compact', rid: String(ctx.rid || (line.order && line.order.receiptId) || ''), lineKey: line.key, slot: pc.slot || undefined, onChange: st => { if (!gone) monoDot(m, st); }, onApproved: () => { if (!gone) told(); } }); } catch (e) { tryDo(() => console.warn('order engraving: the monogram could not be drawn', e)); }
       if (w) { m.handle = w; monoDot(m, tryDo(() => w.state && w.state(), null)); }
       else { const f = d.createElement('div'); f.className = 'engFail'; f.setAttribute('role', 'alert'); f.textContent = 'The monogram could not be drawn here.'; m.body.append(f); }
       return m;
     }
+    /** PIECES: a monogram of a line of several says which piece it is, as an engraved copy's card does: "Monogram · Piece 1 of 2". A line of one piece: "Monogram", as ever. */
+    function monoTitle(m) {
+      const pc = m.piece || {}, t = pc.of > 1 ? 'Monogram \u00b7 Piece ' + pc.n + ' of ' + pc.of : 'Monogram', n = m.el.querySelector('.engName');
+      if (n && n.textContent !== t) n.textContent = t;
+      const lab = t === 'Monogram' ? 'Monogram' : t.replace('\u00b7 ', ', ');
+      if (m.el.getAttribute('aria-label') !== lab) m.el.setAttribute('aria-label', lab);
+    }
     const monoGone = m => { tryDo(() => m.handle && m.handle.destroy && m.handle.destroy()); tryDo(() => m.el.remove()); };
     /** Every shown monogram card repaints from the page's shared state (cheap: it never rebuilds the monogram and never takes a caret away). */
-    const monoTouch = r => { for (const l of r.monoShown) { const m = monos.get(l.key); if (m && m.handle) { tryDo(() => { if (m.handle.update && m.row !== l) m.handle.update({ row: l }); m.row = l; if (m.handle.refresh) m.handle.refresh(); }); } } };
+    const monoTouch = r => { for (const pc of r.monoShown) { const l = pc.line, m = monos.get(pc.key); if (m && m.handle) { tryDo(() => { m.piece = pc; monoTitle(m); if (m.handle.update && m.row !== l) m.handle.update({ row: l }); m.row = l; if (m.handle.refresh) m.handle.refresh(); }); } } };
     /** The cards in the order the lines are: each monogram line's card, and the cards of each other line, in the line's place. */
     function arrange(r, els, monoEls) {
       const by = new Map(); r.pieces.forEach((p, i) => { (by.get(p.lineKey) || by.set(p.lineKey, []).get(p.lineKey)).push(els[i]); });
       const out = [], done = new Set();
-      for (const row of r.rows) { const ln = lineOfRow(row); if (!ln || done.has(ln.key)) continue; done.add(ln.key); if (monoEls.has(ln.key)) out.push(monoEls.get(ln.key)); else if (by.has(ln.key)) out.push(...by.get(ln.key)); }
+      for (const row of r.rows) { const ln = lineOfRow(row); if (!ln || done.has(ln.key)) continue; done.add(ln.key); if (monoEls.has(ln.key)) out.push(...monoEls.get(ln.key)); else if (by.has(ln.key)) out.push(...by.get(ln.key)); }
       for (const [k, list] of by) if (!done.has(k)) out.push(...list);
       return out;
     }
@@ -513,7 +527,7 @@
       if (r.only !== onlySeen) { onlySeen = r.only; quiet = true; }
       const shown = new Set(r.pieces.map(keyOf));
       for (const [k, c] of [...cards]) if (!shown.has(k)) { tryDo(() => c.el.remove()); cards.delete(k); }
-      for (const [k, m] of [...monos]) if (!r.monoAll.some(l => l.key === k)) { monoGone(m); monos.delete(k); }   // (a monogram line that left the order takes its card with it)
+      for (const [k, m] of [...monos]) if (!r.monoAll.some(l => l.key === k)) { monoGone(m); monos.delete(k); }   // (a monogram line that left the order, or a piece the line no longer has, takes its card with it)
       if (!r.pieces.length && !r.monoShown.length && !r.loading && (!host.hidden || host.firstChild)) { waitEl = null; host.replaceChildren(); host.hidden = true; }
       // (this card's own approval is on its way: its card is left as it is until the approval stands, i.e. the stamp has landed)
       const stamping = r.pieces.some(p => p.jobs.some(j => j.stamping));
@@ -548,7 +562,7 @@
       }
       // (MONOUI: the monogram lines' cards stand in their lines' places among the others; a card that is not shown is taken out of the page and kept)
       let all = els;
-      if (r.monoShown.length) { const me = new Map(r.monoShown.map(l => [l.key, monoEntry(l).el])); all = arrange(r, els, me); monoSeen = monoSig; } else monoSeen = '';
+      if (r.monoShown.length) { const me = new Map(); for (const pc of r.monoShown) { (me.get(pc.line.key) || me.set(pc.line.key, []).get(pc.line.key)).push(monoEntry(pc).el); } all = arrange(r, els, me); monoSeen = monoSig; } else monoSeen = '';
       const same = all.length === host.children.length && all.every((e, i) => host.children[i] === e);
       if (!same) host.replaceChildren(...all);
       cards.clear(); for (const [k, v] of next) cards.set(k, v);

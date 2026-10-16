@@ -9,6 +9,12 @@
  *  swap two neighbours, rotate); the buyer's own words; ONE size line (the piece's mm, the metal, and the size the buyer chose, charm-nest-monogram-fit.js); ONE assembly line ("Assembled with AI: …" / "Needs a person: …" with a quiet
  *  Improve again); a plain message when the letters cannot be read or a letter is missing; Approve / "Approved · Monogram APV" with Change / "On the sheet". States: reading, letters, building, ready, check, approved, sent, error.
  *  The contract, with the hooks (data-mw-*) and the events (monogram:change, monogram:approved), is /tmp/mu/CONTRACT.md. The CSS is the `.mw*` block of charm-nest-1.html.
+ *  PIECES (Paul, 16 Oct 2026, order 4195059483: "ALL multipiece orders must always show each individual piece with respect to all Engravings and Monograms"): a monogram line of quantity N is N PIECES. Piece u of N is the pieceKey "<lineKey>#C<u>"
+ *  (slot C<u>, the grammar of charm-nest-engrave-sides.js; a line of one piece keeps its line's key and no slot, exactly as it was). Everything above is per PIECE: mountLine(host, { ..., slot: "C2" }) (or lineKey "<line>#C2", or piece: 2), thumb /
+ *  thumbHtml(row, { slot }), status(row, slot), describe(row, slot), the card states, the Approve and the design file. A piece starts with the three letters the buyer wrote (the same on each; or its own part when the words plainly hold N monograms:
+ *  "ABC / XYZ"), is edited on its own and approved on its own; approving writes THAT piece's design, quantity 1, "Monogram APV - piece 2.ai" tagged { mono: { line, slot } } on the card (CustomSheet.add opts qty / mono / metal), kept in piece order
+ *  (Send to Sheet cuts the n-th design as copy n of the line). Never two designs for one piece; changing a piece after its approval replaces only its design; identical letters on two pieces are still two designs. A design made before pieces
+ *  ("Monogram APV.ai", quantity k) covers the first k pieces nobody else has (both approved, nothing asked again) and is split in place into one design per piece when one of them is changed. svc.pieces(row) / piecesNow() / pieceKey(row, ask).
  *  ═══════════════════════════════════════════════════════════════════════
  *  Paul: "Monograms are currently manually assembled by combining 3 individual letters from 3 separate alphabets ... Each alphabet of letters is made to fit the Left / Middle / Right side of the monogram ... the centre letter
  *  bigger ... The buyer will always provide 3 individual letters ... Each letter must be recognized by the system and fetched from the corresponding alphabet ... combine the 3 letters ... a perfect singular charm piece ...
@@ -37,6 +43,8 @@
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const SLOTS = [["left", "Left"], ["middle", "Middle"], ["right", "Right"]];
   const FILE_RE = /^Monogram ([A-Z]{3})\.ai$/;
+  const PIECE_RE = /^Monogram ([A-Z]{3})(?: - piece (\d{1,3}))?\.ai$/;     // (PIECES: "Monogram APV.ai" is a line of one piece, or a design made before the pieces were told apart; "Monogram APV - piece 2.ai" is piece 2 of a line of several)
+  const MAX_PIECES = 400;
   const WAIT_MS = 320;                 // (a letter typed: the monogram is remade this long after the last key)
   const LOAD_MS = 30000;               // (a letter file that has not come in this long is given up: a message and a Try again, never a spinner that stays)
   const CACHE_MAX = 40;                // (monograms made this session, by letters: typing a letter back is instant)
@@ -103,7 +111,8 @@
   }
 
   function make(d) {
-    const cards = new Map();           // lineKey -> { key, row, draft (the letters a person typed), status, result, err, seq, timer, views (the mounted widgets) }
+    const cards = new Map();           // pieceKey -> { key (= the line's key for a line of one piece, "<lineKey>#C2" for piece 2 of a line of several), lineKey, slot, n, of, row, draft (the letters a person typed), status, result, err, seq, timer, views (the mounted widgets) }
+    const inflight = new Map();        // line key|alphabet key -> the AI assembly being asked for (a second piece with the same letters waits for it: one paid answer, never two)
     const glyphs = new Map();          // sku|file|time -> Promise<{ letter, rings, sku }>
     const results = new Map();         // alphabets|letters -> a finished build (the oldest is dropped first)
     let famCache = null, famSig = "", aiServerOff = false;   // (aiServerOff: the server said the assist is switched off or has no key: no more jobs this session)
@@ -117,6 +126,43 @@
       if (w) return w;
       const m = String(sp.buyerMessage || "").trim(); return m.length <= 40 && E() && E().lettersOf && E().lettersOf(m).ok ? m : "";
     };
+
+    /* ── PIECES (Paul, 16 Oct 2026, order 4195059483: "ALL multipiece orders must always show each individual piece with respect to all Engravings and Monograms") ──
+       A monogram line of quantity N is N pieces: piece u of N is pieceKey "<lineKey>#C<u>" (slot C<u>; the grammar of charm-nest-engrave-sides.js), its pool id "<lineKey>_<u>". A line of one piece is exactly what it always was
+       (pieceKey = the line's key, slot null). Every piece has its own card here: its own letters, its own build, its own Approve and its own design file (quantity 1). */
+    const unitsOf = row => Math.max(1, Math.min(MAX_PIECES, Math.round(+(row && row.spec && row.spec.quantity) || +(row && row.line && row.line.quantity) || 1)));
+    const slotKey = (lineKey, slot) => (slot ? lineKey + "#" + slot : lineKey);
+    const slotNo = slot => { const m = /^C(\d{1,3})$/.exec(String(slot || "")); return m ? +m[1] : 1; };
+    /** The pieces of a line, in order: [{ key, slot, n, of, lineKey, poolId }]. */
+    function piecesOfLine(row) {
+      const of = unitsOf(row);
+      return Array.from({ length: of }, (_, i) => { const slot = of > 1 ? "C" + (i + 1) : null; return { key: slotKey(row.key, slot), slot, n: i + 1, of, lineKey: row.key, poolId: row.key + "_" + (i + 1) }; });
+    }
+    /** The slot a piece is asked for (a slot, a piece key, a piece number, a { slot } option) as this line knows it: null for a line of one piece. */
+    function slotFor(row, ask) {
+      const of = unitsOf(row); if (of < 2) return null;
+      let v = ask && typeof ask === "object" ? (ask.slot != null ? ask.slot : ask.pieceKey != null ? ask.pieceKey : ask.piece) : ask;
+      if (v == null || v === "") return "C1";
+      if (typeof v === "number") return v >= 1 && v <= of ? "C" + v : "C1";
+      v = String(v); const i = v.indexOf("#"); if (i >= 0) v = v.slice(i + 1);
+      const n = /^C\d{1,3}$/.test(v) ? slotNo(v) : /^\d{1,3}$/.test(v) ? +v : 0;
+      return n >= 1 && n <= of ? "C" + n : "C1";
+    }
+    const pieceTag = (n, of) => (of > 1 ? `Piece ${n} of ${of}` : "");
+    const ok3 = w => { const r = E() && E().lettersOf ? E().lettersOf(w) : null; return !!(r && r.ok); };
+    /** What the buyer wrote for each of the N pieces. Deterministic, no paid call: when the words plainly hold N parts (numbered "1: ABC, 2: XYZ", N lines, N entries, "ABC / XYZ", "ABC & XYZ", "ABC and XYZ", "ABC XYZ") and every part reads as three letters, piece i gets
+     *  part i; otherwise EVERY piece gets the whole words (the same monogram on each, each editable and approved on its own). A line of one piece: its words, as ever. */
+    function wordsFor(row, n) {
+      const of = unitsOf(row), all = wordsOf(row);
+      if (of < 2 || !all) return all;
+      const S = d.Sides || root.CharmNestEngraveSides;
+      let parts = null;
+      if (S && typeof S.splitWords === "function") { try { const r = S.splitWords([all], of); if (r && r.ok && r.words.length === of && r.words.every(ok3)) parts = r.words; } catch (_) { parts = null; } }
+      if (!parts && !ok3(all)) {
+        for (const re of [/\n+/, /\s*[,;|\/&]\s*|\s+and\s+/i, /\s+/]) { const p = String(all).split(re).map(x => x.trim()).filter(Boolean); if (p.length === of && p.every(ok3)) { parts = p; break; } }
+      }
+      return parts ? parts[Math.max(1, Math.min(of, n || 1)) - 1] : all;
+    }
 
     /* ── the alphabets: the families the library holds, and which three are Left, Middle, Right (by name, or what a person chose once) ── */
     function families() {
@@ -166,14 +212,15 @@
     }
 
     /* ── one card's state ── */
-    function cardOf(row) {
-      let c = cards.get(row.key);
-      if (!c) { c = { key: row.key, row, draft: null, approved: "", status: "idle", result: null, resultLetters: "", err: null, seq: 0, timer: 0, host: null, el: null, approving: false, hint: "", wantApprove: false, ai: null, fit: false, confirmed: false, views: new Set(), unlocked: false, prog: null, quiet: false, queued: false, aiKey: "", abcSig: "", sig: "", tsig: "" }; cards.set(row.key, c); }
-      c.row = row; return c;
+    function cardOf(row, ask) {
+      const slot = slotFor(row, ask), key = slotKey(row.key, slot);
+      let c = cards.get(key);
+      if (!c) { c = { key, lineKey: row.key, slot, n: slot ? slotNo(slot) : 1, of: unitsOf(row), row, draft: null, approved: "", status: "idle", result: null, resultLetters: "", err: null, seq: 0, timer: 0, host: null, el: null, approving: false, hint: "", wantApprove: false, ai: null, fit: false, confirmed: false, views: new Set(), unlocked: false, prog: null, quiet: false, queued: false, aiKey: "", abcSig: "", sig: "", tsig: "" }; cards.set(key, c); }
+      c.row = row; c.of = unitsOf(row); return c;
     }
     const lettersOk = ls => ls.length === 3 && ls.every(x => /^[A-Z]$/.test(x));
     function buyerLetters(c) {
-      const w = wordsOf(c.row), r = E() && E().lettersOf ? E().lettersOf(w) : { ok: false, letters: null, why: "" };
+      const w = wordsFor(c.row, c.n), r = E() && E().lettersOf ? E().lettersOf(w) : { ok: false, letters: null, why: "" };
       if (r.ok) return { ls: r.letters.slice(), why: "" };
       const some = (w.match(/[A-Za-z]/g) || []).map(x => x.toUpperCase());      // ("A.P": two of three, the person adds the third; a name or four letters: nothing is guessed)
       return { ls: some.length && some.length < 3 ? [...some, "", ""].slice(0, 3) : ["", "", ""], why: r.why || "" };
@@ -181,11 +228,41 @@
     const readLetters = c => c.draft ? c.draft.slice() : buyerLetters(c).ls;
     // the order's custom card (Review builds its list to say: asked a few times a second while a person types, so for half a second it is the one found a moment ago)
     const itemOf = (c, fresh) => { const t = Date.now(); if (!fresh && c.item && t - c.itemAt < 500) return c.item; const it = d.itemOf(c.row); if (it) { c.item = it; c.itemAt = t; } return it; };
+    /** PIECES: the design file of ONE piece of a line of several, or null. A sent card says exactly which file each copy of the line went as (sent.lines[lineKey], copy n = the n-th run of charms); an unsent one by the file's own tag
+     *  ({ mono: { line, slot } }, or "Monogram APV - piece 2.ai" when the tag is lost); a design made before the pieces were told apart ("Monogram APV.ai", quantity k, no piece in its name) covers the k pieces nobody else has, in order, so a line
+     *  approved as ONE design of quantity 2 reads as pieces 1 and 2 both approved, with nothing asked again. { file, letters, sent, ck, legacy (made before the pieces) } */
+    const soleLine = (c, card) => !rowsNow().some(r => { if (r.key === c.lineKey) return false; const o = itemOf(cardOf(r)), k = o && d.CustomSheet.cardOf(o); return !!k && k.ck === card.ck; });
+    function coverage(c, e, card) {
+      const files = (e.files || []).filter(F => PIECE_RE.test(F.name || "")), map = new Map(), sole = soleLine(c, card);
+      for (const F of files) {
+        const pn = PIECE_RE.exec(F.name)[2];
+        if (F.mono && F.mono.line === c.lineKey) { const n = slotNo(F.mono.slot); if (n >= 1 && n <= c.of && !map.has(n)) map.set(n, { file: F, legacy: false }); }
+        else if (!F.mono && pn && sole && +pn >= 1 && +pn <= c.of && !map.has(+pn)) map.set(+pn, { file: F, legacy: false });
+      }
+      if (sole) {
+        const free = []; for (let n = 1; n <= c.of; n++) if (!map.has(n)) free.push(n);
+        let i = 0; for (const F of files) { if (F.mono || PIECE_RE.exec(F.name)[2]) continue; for (let k = 0, q = Math.max(1, F.qty | 0); k < q && i < free.length; k++) map.set(free[i++], { file: F, legacy: true }); }
+      }
+      return map;
+    }
+    function pieceFile(c, e, card) {
+      if (!e) return null;
+      const lines = (e.sent || e.sendIntent || {}).lines, pcs = lines && lines[c.lineKey];
+      if (Array.isArray(pcs)) {
+        const copy = pcs.filter(pc => pc && pc.i === 0)[c.n - 1], F = copy && (e.files || []).find(x => x.id === copy.f);
+        if (F && PIECE_RE.test(F.name || "")) return { file: F, letters: PIECE_RE.exec(F.name)[1], sent: !!e.sent, ck: e.ck, legacy: !F.mono && !PIECE_RE.exec(F.name)[2] };
+        if (e.sent) return null;
+      }
+      const hit = coverage(c, e, card).get(c.n);
+      return hit ? { file: hit.file, letters: PIECE_RE.exec(hit.file.name)[1], sent: !!e.sent, ck: e.ck, legacy: hit.legacy } : null;
+    }
     function approvedFile(c, fresh) {
       const it = itemOf(c, fresh), card = it && d.CustomSheet.cardOf(it), e = card && d.CustomSheet.entries()[card.ck];
-      const files = e ? (e.files || []).filter(F => FILE_RE.test(F.name || "")) : [];
+      if (c.of > 1) return pieceFile(c, e, card);
+      // (a line of ONE piece: its own "Monogram APV.ai"; and, when the quantity was lowered to 1, the design its piece 1 had: "Monogram APV - piece 1.ai" tagged with this line)
+      const files = e ? (e.files || []).filter(F => FILE_RE.test(F.name || "") || (F.mono && F.mono.line === c.lineKey && slotNo(F.mono.slot) === 1 && PIECE_RE.test(F.name || ""))) : [];
       if (!files.length) return null;
-      const lettersOf = F => FILE_RE.exec(F.name)[1], mine = readLetters(c).join("");
+      const lettersOf = F => PIECE_RE.exec(F.name)[1], mine = readLetters(c).join("");
       let f = (c.approved && files.find(F => lettersOf(F) === c.approved)) || files.find(F => lettersOf(F) === mine);
       if (!f && !rowsNow().some(r => { if (r === c.row) return false; const o = itemOf(cardOf(r)), k = o && d.CustomSheet.cardOf(o); return !!k && k.ck === card.ck; })) f = files[files.length - 1];   // (the card's only monogram line owns the file)
       return f ? { file: f, letters: lettersOf(f), sent: !!(e && e.sent), ck: e.ck } : null;
@@ -309,6 +386,14 @@
     /** After a card's monogram is made (and fitted by the engine): a word that still breaks a rule is assembled with the AI, at most 3 rounds, once per order (what was kept is applied again, never asked again);
      *  o.again (Improve again) asks once more from the card's current result, within the day's 3 calls. Never throws; the card keeps its picture while it waits. */
     async function assist(c, key, letters, abc, seq, o) {
+      // (PIECES: two pieces of one line with the same letters are one question to the model: the second waits for the first and applies its kept answer, never asking, never paying, twice)
+      const rk = recKey(c, key), other = inflight.get(rk);
+      if (other && !(o && o.again)) { c.aiKey = key; c.ai = { state: "working", round: 0, status: "" }; paint(c); try { await other; } catch (_) { /* the first one's trouble */ } if (seq !== c.seq) return; }
+      const run = assistRun(c, key, letters, abc, seq, o);
+      if (!other) { inflight.set(rk, run); run.then(() => { if (inflight.get(rk) === run) inflight.delete(rk); }, () => { if (inflight.get(rk) === run) inflight.delete(rk); }); }
+      return run;
+    }
+    async function assistRun(c, key, letters, abc, seq, o) {
       o = o || {}; c.aiKey = key;
       const res0 = c.result, v0 = violationsOf(res0);
       if (!v0 || !v0.length) {                               // (ESG-like and every word that meets the rules: never asked; one the AI made pass keeps its line when the finished monogram comes from memory)
@@ -349,6 +434,29 @@
     function setAi(v) { const m = mstore(); m.ai = v === "off" ? "off" : "on"; keepSettings(); for (const c of cards.values()) if (c.views.size) paint(c); }
     function settled(c) { if (c.wantApprove && c.status === "ready" && !aiBusy(c)) { c.wantApprove = false; approve(c); } else if (c.status !== "building" && !aiBusy(c)) c.wantApprove = false; }
 
+    const fileNameFor = (c, letters) => (c.of > 1 ? `Monogram ${letters} - piece ${c.n}.ai` : `Monogram ${letters}.ai`);
+    /** The files of one line keep the order of its pieces (Send to Sheet cuts the n-th design as the n-th copy of the line): sorted among their own places in the card's list. */
+    function orderFiles(e, lineKey) {
+      const at = [], mine = [];
+      (e.files || []).forEach((F, i) => { if (F.mono && F.mono.line === lineKey) { at.push(i); mine.push(F); } });
+      mine.sort((a, b) => slotNo(a.mono.slot) - slotNo(b.mono.slot));
+      at.forEach((i, k) => { e.files[i] = mine[k]; });
+    }
+    /** A design made before the pieces were told apart covers k pieces ("Monogram APV.ai" x 2). Before one of them is changed it is split, in place, into one design for each piece it covered (the very same file, copied: nothing
+     *  already approved is made again or asked again); the piece being changed gets its new design next, and has no old one to remove. Returns the piece's own old design left to remove (null: none). */
+    function detach(c, old) {
+      const it = itemOf(c, true), card = it && d.CustomSheet.cardOf(it), e = card && d.CustomSheet.entries()[card.ck]; if (!e) return old;
+      const F = old.file, cov = coverage(c, e, card), mine = [...cov.entries()].filter(([, v]) => v.file === F).map(([n]) => n).sort((a, b) => a - b);
+      if (mine.length < 2) return old;
+      if (F.state !== "ready") { F.qty = Math.max(1, (F.qty | 0) - 1); return null; }       // (a file still being read cannot be copied: it covers one piece less)
+      const others = mine.filter(n => n !== c.n), at = e.files.indexOf(F), made = [];
+      for (const n of others.slice(1)) made.push(Object.assign({}, F, { id: "mono-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8), name: `Monogram ${old.letters} - piece ${n}.ai`, qty: 1, mono: { line: c.lineKey, slot: "C" + n } }));
+      e.files.splice(at + 1, 0, ...made);
+      F.mono = { line: c.lineKey, slot: "C" + others[0] }; F.qty = 1; F.name = `Monogram ${old.letters} - piece ${others[0]}.ai`;       // (the original file stays the first of the other pieces')
+      orderFiles(e, c.lineKey);
+      return null;
+    }
+
     async function approve(c) {
       if (c.approving || !c.result) return;
       if (c.status === "building" || aiBusy(c)) { c.wantApprove = true; return; }
@@ -357,20 +465,30 @@
       const left = flaggedOf(c);
       if (left.length && !c.confirmed) { c.confirmed = true; paint(c); return; }
       const it = itemOf(c, true); if (!it) { d.toast("This order has no custom card to put the monogram on", "bad", 5000); return; }
-      const letters = c.resultLetters, old = approvedFile(c, true);
+      const letters = c.resultLetters; let old = approvedFile(c, true);
       if (old && old.sent) return;
       if (old && old.letters === letters) { paint(c); return; }
+      const replaced = !!old;
       c.approving = true; c.err = null; paint(c);
       let done = null;
       try {
         const bytes = await E().toPdf(c.result, { title: "Monogram " + letters });
-        const file = new File([bytes], `Monogram ${letters}.ai`, { type: "application/illustrator" });
-        d.CustomSheet.add(it, [file], { quiet: true }); c.itemAt = 0;            // (first, so the metal a person set carries over to the new design)
+        const name = fileNameFor(c, letters), file = new File([bytes], name, { type: "application/illustrator" });
+        if (c.of > 1) {
+          // PIECES: THIS piece's design, quantity 1, tagged with its piece (the order of the files is the order of the pieces: Send to Sheet gives copy n to the n-th design); the design it replaces is ITS OWN, no other piece's
+          if (old && old.legacy) old = detach(c, old);
+          d.CustomSheet.add(it, [file], { quiet: true, qty: 1, mono: { line: c.lineKey, slot: c.slot }, metal: old && old.file.metal || undefined }); c.itemAt = 0;
+          const kd = d.CustomSheet.cardOf && d.CustomSheet.cardOf(it), en = kd && d.CustomSheet.entries()[kd.ck];
+          if (!en || !en.files.some(F => F.name === name && F.mono && F.mono.line === c.lineKey && F.mono.slot === c.slot)) throw new Error("the order's designs would not take it");
+          orderFiles(en, c.lineKey);
+        } else { d.CustomSheet.add(it, [file], { quiet: true }); c.itemAt = 0; }            // (first, so the metal a person set carries over to the new design)
         if (old) d.CustomSheet.remove(old.ck, old.file.id);                     // (and the one it replaces goes: a monogram is one design, never two)
+        { const kd2 = d.CustomSheet.cardOf && d.CustomSheet.cardOf(it), en2 = kd2 && d.CustomSheet.entries()[kd2.ck];      // (a design of a piece the line no longer has (its quantity was lowered) would be cut as an extra copy: it goes)
+          if (en2) for (const F of [...(en2.files || [])]) if (F.mono && F.mono.line === c.lineKey && slotNo(F.mono.slot) > c.of) d.CustomSheet.remove(kd2.ck, F.id); }
         c.approved = letters; c.approvedKey = c.resultKey; c.unlocked = false;
         const kard = d.CustomSheet.cardOf && d.CustomSheet.cardOf(it);
-        done = { rid: String((c.row.order || {}).receiptId || ""), lineKey: c.key, letters, name: `Monogram ${letters}.ai`, replaced: !!old, ck: (kard && kard.ck) || (old && old.ck) || "" };
-        d.toast(`Monogram ${letters} is on order ${c.row.order.receiptId}'s designs · set its metal, then Send to Sheet`, "ok", 6000);
+        done = { rid: String((c.row.order || {}).receiptId || ""), lineKey: c.lineKey, pieceKey: c.key, slot: c.slot, n: c.n, of: c.of, letters, name, replaced, ck: (kard && kard.ck) || (old && old.ck) || "" };
+        d.toast(`Monogram ${letters}${c.of > 1 ? ` (${pieceTag(c.n, c.of).toLowerCase()})` : ""} is on order ${c.row.order.receiptId}'s designs · set its metal, then Send to Sheet`, "ok", 6000);
       } catch (e) { c.err = { kind: "save", text: "Not approved: " + String((e && e.message) || e).slice(0, 140) }; d.toast(c.err.text, "bad", 6000); }   // (the monogram stays on the card, Approve is still there to try again)
       finally {
         c.approving = false; paint(c);
@@ -413,7 +531,10 @@
     const widgets = new Set(), thumbEls = new Set(), listeners = new Set();
     const lineOf = row => (row && row.parentRow) || row || null;
     const isMono = row => { const r = lineOf(row); return !!(r && r.spec && r.spec.special && r.spec.special.monogram && !GONE.includes(r.state)); };
-    const rowByKey = key => (d.rows() || []).find(r => r && r.key === key) || null;
+    const lineKeyOf = key => String(key == null ? "" : key).replace(/#C\d{1,3}$/, "");       // (a piece key "<lineKey>#C2" names its line too)
+    const rowByKey = key => { const k = lineKeyOf(key); return (d.rows() || []).find(r => r && r.key === k) || null; };
+    /** Which piece of its line a call asks for: a slot ("C2"), a piece key, a piece number, or the piece key given as the line key. */
+    const askOf = o => (o && typeof o === "object" ? (o.slot != null ? o.slot : o.pieceKey != null ? o.pieceKey : /#C\d/.test(String(o.lineKey || "")) ? o.lineKey : o.piece) : o);
     const rowOf = o => {
       const r = lineOf(o.row); if (r) return r;
       if (o.lineKey) return rowByKey(o.lineKey);
@@ -425,7 +546,7 @@
 
     /** Everything a person (or a test) can know about one line, in one object (the contract's state()). Pure reading: it paints nothing and asks nothing. */
     function describe(c) {
-      const ls = readLetters(c), ap = approvedFile(c), sent = !!(ap && ap.sent), buyer = buyerLetters(c), said = wordsOf(c.row);
+      const ls = readLetters(c), ap = approvedFile(c), sent = !!(ap && ap.sent), buyer = buyerLetters(c), said = wordsFor(c.row, c.n);
       const dirty = !!(ap && !sent && (ls.join("") !== ap.letters || (c.status === "ready" && c.approvedKey && c.resultKey && c.resultKey !== c.approvedKey)));
       const settled = !!(ap && !dirty && !sent);
       const busy = c.approving ? "saving" : aiBusy(c) ? "ai" : c.fit ? "fitting" : c.status === "building" ? "building" : "";
@@ -451,6 +572,7 @@
       const warnings = ok ? (((r.report && r.report.warnings) || []).map(w => cap(String(w))).filter(Boolean)) : [];
       return {
         state, busy, round: busy === "ai" && c.ai ? c.ai.round | 0 : 0, letters: ls, lettersOk: lettersOk(ls),
+        piece: { key: c.key, lineKey: c.lineKey, slot: c.slot, n: c.n, of: c.of, tag: pieceTag(c.n, c.of), poolId: c.lineKey + "_" + c.n },
         buyer: { words: said, letters: buyer.ls.every(Boolean) ? buyer.ls.slice() : null, why: buyer.why || "" },
         canApproveBase: ok && !busy && !sent && !settled, approved: ap ? { letters: ap.letters, name: ap.file.name, sent } : null, dirty, locked: sent || (settled && !c.unlocked), unlocked: !!c.unlocked,
         metal, sizeMm, fit: f ? { maxWidthMm: f.maxWidthMm, scale: rf && rf.scale != null ? rf.scale : 1, applied: !!(rf && rf.applied) } : null,
@@ -458,10 +580,10 @@
         again: ok && !busy && left.length > 0 && !sent && aiOn() && !aiServerOff && callAi()
       };
     }
-    const statusOf = (c, st) => ({ state: st.state, label: st.state === "building" && st.busy === "ai" ? "Assembling…" : LABEL[st.state] || "", letters: st.lettersOk ? st.letters.join("") : "", approved: !!st.approved, dirty: !!st.dirty, sent: st.state === "sent", rid: String((c.row.order || {}).receiptId || ""), lineKey: c.key });
+    const statusOf = (c, st) => ({ state: st.state, label: st.state === "building" && st.busy === "ai" ? "Assembling…" : LABEL[st.state] || "", letters: st.lettersOk ? st.letters.join("") : "", approved: !!st.approved, dirty: !!st.dirty, sent: st.state === "sent", rid: String((c.row.order || {}).receiptId || ""), lineKey: c.lineKey, pieceKey: c.key, slot: c.slot, n: c.n, of: c.of });
     const gateWhy = v => { try { return v.o.gate ? String(v.o.gate() || "") : ""; } catch (_) { return ""; } };
     function stateFor(c, v, st) {
-      const gate = gateWhy(v), out = Object.assign({}, st, { canApprove: st.canApproveBase && !gate, approveWhy: gate || (st.canApproveBase ? "" : st.state === "approved" || st.state === "sent" ? "Already approved" : st.busy ? "Making the monogram…" : "Type the three letters first"), rid: String((c.row.order || {}).receiptId || ""), lineKey: c.key });
+      const gate = gateWhy(v), out = Object.assign({}, st, { canApprove: st.canApproveBase && !gate, approveWhy: gate || (st.canApproveBase ? "" : st.state === "approved" || st.state === "sent" ? "Already approved" : st.busy ? "Making the monogram…" : "Type the three letters first"), rid: String((c.row.order || {}).receiptId || ""), lineKey: c.lineKey, pieceKey: c.key, slot: c.slot, n: c.n, of: c.of });
       delete out.canApproveBase; return out;
     }
 
@@ -524,6 +646,8 @@
       const el = v.el, R = v.r; if (!el || !R) return;
       const gate = gateWhy(v), can = st.canApproveBase && !gate, settled = !!(st.approved && !st.dirty && !st.approved.sent), sent = !!(st.approved && st.approved.sent);
       el.dataset.state = st.state; el.dataset.busy = st.busy; el.dataset.rid = String((c.row.order || {}).receiptId || ""); el.dataset.key = c.key;
+      el.dataset.line = c.lineKey; el.dataset.slot = c.slot || ""; el.dataset.piece = String(c.n); el.dataset.of = String(c.of);
+      { const lab = c.of > 1 ? `Monogram, ${pieceTag(c.n, c.of).toLowerCase()}` : "Monogram"; if (el.getAttribute("aria-label") !== lab) el.setAttribute("aria-label", lab); }
       // the picture: the geometry that will be cut, in the line's metal (a new one being made: the old stays, faded, so nothing jumps)
       let art = "";
       if (c.result && (c.status === "ready" || c.status === "building")) art = pictureHtml(c.result, st.metal);
@@ -638,8 +762,8 @@
       wireView(v); host.append(el);
     }
     /** Points a widget at a line (and builds what it shows): a line never made is made now; one made quietly for a thumbnail gets its AI check now that a person looks at it. */
-    function attach(v, row) {
-      const c = cardOf(row); if (v.c && v.c !== c) v.c.views.delete(v);
+    function attach(v, row, ask) {
+      const c = cardOf(row, ask); if (v.c && v.c !== c) v.c.views.delete(v);
       v.c = c; c.views.add(v); c.quiet = false;
       if (!v.el) buildEl(v);
       begin(c);
@@ -650,6 +774,7 @@
     function mountLine(host, o) {
       o = o || {}; if (!host) return null;
       const row = rowOf(o); if (!row || !isMono(row)) return null;
+      const ask0 = askOf(o);
       if (host._mw && host._mw.destroy) host._mw.destroy();
       const v = { host, o: Object.assign({}, o), c: null, el: null, r: null, dead: false, mode: o.mode === "compact" ? "compact" : "detail", sheetLink: false };
       const setOpts = () => { v.mode = v.o.mode === "compact" ? "compact" : "detail"; v.sheetLink = v.o.sheetLink == null ? v.mode === "detail" : !!v.o.sheetLink; };
@@ -658,7 +783,7 @@
         state: () => stateFor(v.c, v, describe(v.c)),
         refresh() {
           if (v.dead) return;
-          const row2 = rowByKey(v.c.key) || v.c.row; cardOf(row2);
+          const row2 = rowByKey(v.c.lineKey) || v.c.row; cardOf(row2, v.c.slot);
           const k = abcKey(alphabets());
           if (v.c.abcSig && v.c.abcSig !== k && v.c.status !== "idle" && v.c.status !== "building") schedule(v.c, 0); else paint(v.c);      // (the library gained or lost an alphabet: the monogram follows)
         },
@@ -666,9 +791,9 @@
           if (v.dead) return; ctx = ctx || {};
           const was = v.mode, key = v.c.key; Object.assign(v.o, ctx); setOpts();
           if (("lineKey" in ctx || "rid" in ctx) && !("row" in ctx)) v.o.row = null;
-          const row2 = ctx.row || ctx.lineKey || ctx.rid != null ? rowOf(v.o) : null;
+          const row2 = ctx.row || ctx.lineKey || ctx.rid != null ? rowOf(v.o) : null, ask2 = "slot" in ctx || "pieceKey" in ctx || "piece" in ctx || /#C\d/.test(String(ctx.lineKey || "")) ? askOf(ctx) : (row2 && row2.key === v.c.lineKey ? v.c.slot : undefined);
           if (v.mode !== was) { v.el = null; v.r = null; }
-          if (row2 && isMono(row2) && (row2.key !== key || !v.el)) attach(v, row2); else if (!v.el) attach(v, v.c.row); else paint(v.c);
+          if (row2 && isMono(row2) && (slotKey(row2.key, slotFor(row2, ask2)) !== key || !v.el)) attach(v, row2, ask2); else if (!v.el) attach(v, v.c.row, v.c.slot); else paint(v.c);
         },
         destroy() {
           if (v.dead) return; v.dead = true; if (v.c) v.c.views.delete(v); widgets.delete(api);
@@ -679,8 +804,8 @@
         setLetters(ls) { const a = Array.from({ length: 3 }, (_, i) => String((ls || [])[i] || "").replace(/[^A-Za-z]/g, "").slice(0, 1).toUpperCase()); v.c.hint = ""; editTo(v.c, a); }
       };
       // (el, mode and lineKey are not enumerable: a page that hands the widget to a test or a logger never serialises the DOM)
-      Object.defineProperties(api, { el: { get: () => v.el }, mode: { get: () => v.mode }, lineKey: { get: () => v.c && v.c.key } });
-      attach(v, row); v.host._mw = api; widgets.add(api);
+      Object.defineProperties(api, { el: { get: () => v.el }, mode: { get: () => v.mode }, lineKey: { get: () => v.c && v.c.lineKey }, pieceKey: { get: () => v.c && v.c.key }, slot: { get: () => v.c && v.c.slot } });
+      attach(v, row, ask0); v.host._mw = api; widgets.add(api);
       return api;
     }
 
@@ -716,36 +841,38 @@
         if (el.dataset.mwThumb === c.key) paintThumb(el, c, st);
       }
     }
-    function registerThumb(el, row) {
+    function registerThumb(el, row, ask) {
       const r = lineOf(row); if (!r || !isMono(r)) return null;
-      const c = cardOf(r); el.dataset.mwThumb = c.key; el._mwAt = Date.now(); thumbEls.add(el); ensureQuiet(c);
+      const c = cardOf(r, ask); el.dataset.mwThumb = c.key; el._mwAt = Date.now(); thumbEls.add(el); ensureQuiet(c);
       paintThumb(el, c, describe(c), true); return c;
     }
     const pxVar = px => ` style="--mw-px:${Math.max(24, Math.min(400, Math.round(+px || 104)))}px"`;
     function thumbHtml(row, o) {
       o = o || {}; const r = lineOf(row); if (!r || !isMono(r)) return "";
-      const c = cardOf(r), st = describe(c); ensureQuiet(c);
+      const c = cardOf(r, askOf(o)), st = describe(c); ensureQuiet(c);
       return `<span class="mwThumb" data-mw-thumb="${esc(c.key)}" data-state="${esc(st.state)}"${pxVar(o.px)}>${thumbInner(c, st)}</span>`;
     }
     function fillThumbs(scope) {
       if (!scope || !scope.querySelectorAll) return;
       const list = [...scope.querySelectorAll("[data-mw-thumb]")]; if (scope.matches && scope.matches("[data-mw-thumb]")) list.unshift(scope);
       for (const el of list) {
-        const key = el.dataset.mwThumb, row = rowByKey(key) || (cards.get(key) && cards.get(key).row); if (row) registerThumb(el, row);
+        const key = el.dataset.mwThumb, row = rowByKey(key) || (cards.get(key) && cards.get(key).row); if (row) registerThumb(el, row, key);
       }
     }
     function thumb(row, o) {
       o = o || {}; const r = lineOf(row); if (!r || !isMono(r)) return null;
       const el = doc.createElement("span"); el.className = "mwThumb"; if (o.px) el.style.setProperty("--mw-px", Math.max(24, Math.min(400, Math.round(+o.px))) + "px");
-      el._mwReady = typeof o.onReady === "function" ? o.onReady : null; registerThumb(el, r);
+      el._mwReady = typeof o.onReady === "function" ? o.onReady : null; registerThumb(el, r, askOf(o));
       if (o.into && o.into.replaceChildren) o.into.replaceChildren(el);
       return el;
     }
-    const status = row => { const r = lineOf(row); if (!r || !isMono(r)) return null; const c = cardOf(r); return statusOf(c, describe(c)); };
+    const status = (row, ask) => { const r = lineOf(row); if (!r || !isMono(r)) return null; const c = cardOf(r, ask); return statusOf(c, describe(c)); };
     const onChange = fn => { if (typeof fn !== "function") return () => {}; listeners.add(fn); return () => listeners.delete(fn); };
-    const waiting = () => rowsNow().filter(r => { const c = cards.get(r.key), ap = c ? approvedFile(c) : null; return !(ap && ap.sent); });
-    const svc = { count: () => waiting().length, rows: rowsNow, families, alphabets, lettersOf: readLetters, cards, rebuild, approve, approvedFile, glyph, setAlphabet, results, improve,
-      mountLine, thumb, thumbHtml, fillThumbs, status, onChange, isMonogram: isMono, widgets: () => [...widgets], describe: row => { const r = lineOf(row); return r && isMono(r) ? describe(cardOf(r)) : null; }, setAi };
+    /** Every piece of every open monogram line: [{ key, slot, n, of, lineKey, poolId, row }], line by line, piece by piece. */
+    const piecesNow = () => rowsNow().reduce((all, r) => all.concat(piecesOfLine(r).map(p => Object.assign(p, { row: r }))), []);
+    const waiting = () => piecesNow().filter(p => { const c = cards.get(p.key), ap = c ? approvedFile(c) : null; return !(ap && ap.sent); });
+    const svc = { count: () => waiting().length, rows: rowsNow, pieces: row => { const r = lineOf(row); return r && isMono(r) ? piecesOfLine(r).map(p => Object.assign(p, { row: r })) : []; }, piecesNow, pieceKey: (row, ask) => { const r = lineOf(row); return r ? slotKey(r.key, slotFor(r, ask)) : ""; }, families, alphabets, lettersOf: readLetters, cards, rebuild, approve, approvedFile, glyph, setAlphabet, results, improve,
+      mountLine, thumb, thumbHtml, fillThumbs, status, onChange, isMonogram: isMono, widgets: () => [...widgets], describe: (row, ask) => { const r = lineOf(row); return r && isMono(r) ? describe(cardOf(r, ask)) : null; }, setAi };
     current = svc; made.push(svc);
     return svc;
   }
