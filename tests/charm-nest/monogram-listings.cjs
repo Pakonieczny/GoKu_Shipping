@@ -3,7 +3,7 @@
 // In the real sorter (charm-nest-1.html, headless Chromium, the fake loopback site: no Etsy, nothing live), over the three alphabets in the library, an order of each listing goes through the real intake:
 //   · it is filed as a custom monogram (special.monogram) by the LISTING NUMBER alone (the titles here never say "monogram"), asks nothing (no SKU, metal or option question), is its own design, has no engraving;
 //   · its own SKU is ignored: some of those SKUs ARE designs of the library, and no design of them is ever fetched, matched or asked about;
-//   · with no action by anybody the Engrave tab's Monograms holds a card for each, the buyer's three letters on it, built from the Left, Middle and Right alphabets;
+//   · with no action by anybody the monogram widget (charm-nest-monogram-ui.js mountLine) shows each, the buyer's three letters in it, built from the Left, Middle and Right alphabets;
 //   · nothing else is pulled in: a listing next to one of them, a regular charm, are not monograms.
 //   PW_DIR=<dir with playwright-core> node tests/charm-nest/monogram-listings.cjs
 'use strict';
@@ -43,13 +43,14 @@ FX.plain = { rid: '4201000091', sku: 'HEART_CHARM', listing: '888000004', title:
 
     // ═══ 2 · routed to the monogram flow, nothing pressed ═══
     await page.evaluate(() => { window.__fetched = []; const mc = Pool.masterCharm; Pool.masterCharm = function (e, s) { window.__fetched.push(e.sku); return mc.apply(this, arguments); }; });
-    await page.evaluate(() => { CN.setMode('engrave'); Engrave.restoreView({ tab: 'mono', chosen: true }); Engrave.render(); });
-    await page.waitForFunction(() => document.querySelectorAll('#egMono .moCard .moArt svg path').length >= 7, null, { timeout: 90000 });
-    const tab = await page.evaluate(() => { const b = document.querySelector('#engraveView .egTab[data-tab="mono"]'); return b ? { text: b.textContent.replace(/\s+/g, ' ').trim(), count: b.querySelector('b') && b.querySelector('b').textContent } : null; });
-    check(tab && /^Monograms/.test(tab.text) && tab.count === '7', 'the Engrave tab has a Monograms tab counting 7: ' + JSON.stringify(tab));
-    const cards = await page.evaluate(() => [...document.querySelectorAll('#egMono .moCard')].map(h => ({ rid: h.dataset.rid, says: h.querySelector('.moSays').textContent, ins: [...h.querySelectorAll('input')].map(i => i.value).join(''), drawn: !!h.querySelector('.moArt svg path') })));
-    check(cards.length === 7 && FX && LISTINGS.every((_, i) => cards.some(c => c.rid === FX['m' + i].rid)), 'one card per listing (7), none for the listing next door or the regular charm: ' + cards.map(c => c.rid.slice(-2)).join(' '));
-    LISTINGS.forEach(([listing], i) => { const c = cards.find(x => x.rid === FX['m' + i].rid) || {}; check(c.drawn && c.ins === WORDS[i] && new RegExp('^The buyer wrote ' + WORDS[i].split('').join(' ') + ' · Left ' + WORDS[i][0] + ' · Middle ' + WORDS[i][1] + ' · Right ' + WORDS[i][2]).test(c.says || ''), `listing ${listing}: its card is drawn with the buyer's letters: "${c.says}"`); });
+    // (the monogram lines mounted as the Engrave detail mounts them: charm-nest-monogram-ui.js mountLine, one widget per line that the order reading calls a monogram)
+    const nMono = await page.evaluate(() => { Engrave.monogramUI(); const rootEl = document.createElement('div'); rootEl.id = 'mwRoot'; rootEl.style.cssText = 'position:fixed;inset:0;z-index:2147483000;overflow:auto;background:#faf7f2;padding:16px;display:flex;flex-wrap:wrap;gap:14px;align-content:flex-start'; document.body.append(rootEl);
+      const rows = Orders.rows().filter(r => CharmNestMonogramUI.isMonogram(r)); for (const r of rows) { const cs = document.createElement('div'); cs.className = 'mwCase'; cs.dataset.rid = r.order.receiptId; cs.style.cssText = 'box-sizing:border-box;width:760px;max-width:100%;border:1px solid var(--line);border-radius:12px;background:var(--card);padding:16px'; const host = document.createElement('div'); cs.append(host); rootEl.append(cs); CharmNestMonogramUI.mountLine(host, { row: r, mode: 'detail' }); } return [rows.length, Engrave.monogramUI().count()]; });
+    await page.waitForFunction(() => document.querySelectorAll('.mwCase .mw [data-mw-pic] svg path').length >= 7, null, { timeout: 90000 });
+    check(nMono[0] === 7 && nMono[1] === 7, 'seven monogram lines, and the service counts 7 waiting: ' + JSON.stringify(nMono));
+    const cards = await page.evaluate(() => [...document.querySelectorAll('.mwCase')].map(c => { const h = c.querySelector('.mw'); return { rid: c.dataset.rid, says: h.querySelector('[data-mw-says]').textContent, ins: [...h.querySelectorAll('[data-mw-letter]')].map(i => i.value).join(''), drawn: !!h.querySelector('[data-mw-pic] svg path') }; }));
+    check(cards.length === 7 && FX && LISTINGS.every((_, i) => cards.some(c => c.rid === FX['m' + i].rid)), 'one widget per listing (7), none for the listing next door or the regular charm: ' + cards.map(c => c.rid.slice(-2)).join(' '));
+    LISTINGS.forEach(([listing], i) => { const c = cards.find(x => x.rid === FX['m' + i].rid) || {}; check(c.drawn && c.ins === WORDS[i] && new RegExp('^The buyer wrote ' + WORDS[i].split('').join(' ') + '$').test(c.says || ''), `listing ${listing}: its card is drawn with the buyer's letters: "${c.says}"`); });
     const fetched = await page.evaluate(() => [...new Set(window.__fetched)]);
     check(!fetched.some(s => /^OWNSKU_/.test(s)), 'no design of the listings\' own SKUs was ever fetched: ' + fetched.filter(s => !/^MONOGRAM_/.test(s)).join(' '));
     check(WORDS.every(wd => fetched.includes('MONOGRAM_LEFT_' + wd[0]) && fetched.includes('MONOGRAM_MID_' + wd[1]) && fetched.includes('MONOGRAM_RIGHT_' + wd[2])), 'each word came from the Left, Middle and Right alphabets');

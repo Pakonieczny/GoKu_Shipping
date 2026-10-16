@@ -3173,44 +3173,63 @@ body.cuDragging #rvList>.reviewListRow:not(.cuDropOk){opacity:.42;filter:saturat
    fixed height from the top, so a row added or removed grows or shortens it downwards instead of moving it all. */
 dialog.cuDlg{width:min(900px,96vw);margin-block:max(5vh,20px) auto;transition:box-shadow .2s ease}
 dialog.cuAsk{width:min(440px,94vw)}.cuAskP{margin:0 0 10px;line-height:1.45}.cuAskP:last-child{margin:0}.cuAskP.sub{color:var(--mute,#6b645b);font-size:13px}.cuAskP b{font-weight:700}
-/* MONOGRAM (charm-nest-monogram-ui.js): the Engrave tab's Monograms pane: one card per monogram order line, three big letter boxes, one picture, one Approve (MONOGRAMUI, Paul, 15 Oct 2026: "minimalist options and UI that is fully functional") */
-.moPane{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;padding:4px 2px 26px;max-width:860px;margin:0 auto;width:100%;min-width:0}
-.moAbcs{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:0 14px;font:600 12px var(--sans);color:var(--ink70)}
-.moAbcs summary{cursor:pointer;display:flex;align-items:baseline;gap:10px;padding:9px 0;list-style:none;min-width:0}.moAbcs summary::-webkit-details-marker{display:none}
-.moAbcs summary::before{content:"";flex:none;width:6px;height:6px;border-right:1.5px solid var(--ink45);border-bottom:1.5px solid var(--ink45);transform:rotate(-45deg) translateY(-1px);transition:transform .15s ease}.moAbcs[open] summary::before{transform:rotate(45deg) translateY(-2px)}
-.moAbcs summary em{font:500 12px var(--sans);font-style:normal;color:var(--ink45);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.moAbcs summary:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:6px}
-.moAbcRow{display:flex;flex-wrap:wrap;gap:12px;padding:2px 0 12px}.moAbc{display:grid;gap:4px;font:600 10.5px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--ink45)}
-.moAbc select{font:600 13px var(--sans);letter-spacing:0;text-transform:none;padding:6px 8px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);max-width:250px}
-.moAbcs .moHint{margin:0 0 12px;padding:0;text-align:left}
-.moList{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;min-width:0}
-.moCard{box-sizing:border-box;border:1px solid var(--line);border-radius:14px;background:var(--card);display:grid;grid-template-columns:minmax(0,1fr);gap:14px;padding:12px 16px 16px;min-width:0;transition:box-shadow .3s ease,border-color .3s ease}
-.moCard.moFocus{border-color:var(--gold2);box-shadow:0 0 0 3px var(--goldSoft)}
-.moHd{display:flex;align-items:center;gap:9px;min-width:0}.moDot{flex:none;width:9px;height:9px;border-radius:50%;background:var(--ink25)}
-.moDot[data-s=ready]{background:var(--gold2)}.moDot[data-s=approved],.moDot[data-s=sent]{background:var(--sage)}.moDot[data-s=busy]{background:var(--slate)}.moDot[data-s=alert]{background:var(--clay)}
-.moName{flex:1 1 0;min-width:0;font:600 13.5px/1.3 var(--sans);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.moSt{flex:none;font:600 12px var(--sans);color:var(--ink45);white-space:nowrap}.moCard[data-state=approved] .moSt,.moCard[data-state=sent] .moSt{color:var(--sage)}.moCard[data-state=alert] .moSt{color:var(--clay)}
-.moAct{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:2px}.moAct [hidden]{display:none}.moAct .btn{padding:9px 20px}
-.moBody{display:grid;grid-template-columns:minmax(220px,320px) minmax(0,1fr);gap:26px;align-items:center}
-.moPic{position:relative;aspect-ratio:1/1;width:100%;background:var(--card2);border:1px solid var(--line2);border-radius:14px;display:grid;place-items:center;overflow:hidden}
-.moArt{position:absolute;inset:0;display:grid;place-items:center;padding:2%}.moArt svg{width:100%;height:100%;display:block;transition:opacity .2s ease}.moPic.busy .moArt svg{opacity:.28}
-.moSpin{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:9px;font:600 12.5px var(--sans);color:var(--ink70)}.moSpin[hidden]{display:none}
-.moSpin i{flex:none;width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite}
-.moSide{display:grid;gap:12px;min-width:0;align-content:center}
-.moLts{display:flex;align-items:flex-end;gap:6px}
-.moLt{display:grid;gap:6px;justify-items:center;font:600 10.5px var(--mono);color:var(--ink45);text-transform:uppercase;letter-spacing:.1em}
-.moLt input{box-sizing:border-box;width:64px;height:64px;text-align:center;font:600 30px var(--serif);text-transform:uppercase;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--ink);padding:0;caret-color:var(--gold)}
-.moLt[data-slot=middle] input{width:80px;height:80px;font-size:38px;border-color:var(--goldLine)}
-.moLt input:focus{outline:2px solid var(--ink);outline-offset:1px}.moLt input:disabled{opacity:.5}.moLt input[aria-invalid=true]{border-style:dashed;border-color:var(--goldLine);background:var(--card2)}
-.moSw{flex:none;width:28px;height:28px;margin-bottom:17px;border:1px solid transparent;border-radius:50%;background:transparent;color:var(--ink45);display:grid;place-items:center;padding:0}
-.moSw:hover{background:var(--paper2);color:var(--ink)}.moSw:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
-.moSays{margin:0;font:13px/1.5 var(--sans);color:var(--ink70)}.moSays b{color:var(--ink);font-weight:700}
-.moMeta{margin:0;display:flex;flex-wrap:wrap;gap:4px 12px;font:12px/1.5 var(--sans);color:var(--ink45);min-height:18px}.moMeta:empty{min-height:0}.moWarn{color:var(--clay)}.moAdj{flex-basis:100%}
-.moMsg{display:grid;gap:6px;justify-items:start;padding:10px 12px;border-left:3px solid var(--clay);background:var(--claySoft);border-radius:0 9px 9px 0;font:13px/1.45 var(--sans);color:var(--ink)}.moMsg[hidden]{display:none}.moMsg small{font-size:12px;color:var(--ink70)}
-.moHint{padding:14px;text-align:center;color:var(--ink70);font:13px/1.45 var(--sans)}.moHint.bad{color:var(--clay)}
-.moPane .egEmpty{display:grid;gap:4px;padding:30px 10px;text-align:center;color:var(--ink70)}
-@media(max-width:700px){.moBody{grid-template-columns:minmax(0,1fr);gap:16px}.moPic{max-width:340px;margin:0 auto}.moSide{justify-items:center;text-align:center}.moMeta,.moAct{justify-content:center}.moCard{padding:12px 12px 16px}.moLt input{width:58px;height:58px}.moLt[data-slot=middle] input{width:72px;height:72px}.moAct .btn{padding-inline:10px}}
-@media(prefers-reduced-motion:reduce){.moArt svg,.moCard,.moAbcs summary::before{transition:none}.moSpin i{animation:none;border-top-color:var(--line);background:var(--goldSoft)}}
+/* MONOGRAM WIDGET (charm-nest-monogram-ui.js mountLine; MUW, Paul, 16 Oct 2026): one monogram order line, in the Engrave detail ("detail") and the Order details window ("compact"). Sized by its host (container query), so 400 px needs no media query. */
+.mw{container:mw/inline-size;box-sizing:border-box;min-width:0;width:100%;font-family:var(--sans)}.mw [hidden]{display:none!important}
+.mwBody{--mwb:54px;--mwl:17px;display:grid;grid-template-columns:minmax(0,1fr);gap:14px;min-width:0;justify-items:center}
+.mwPic{position:relative;box-sizing:border-box;width:100%;max-width:320px;aspect-ratio:4/3;background:#fff;border:1px solid var(--line);border-radius:12px;display:grid;place-items:center;overflow:hidden}
+.mwArt{position:absolute;inset:0;display:grid;place-items:center;padding:6%}.mwArt svg{width:100%;height:100%;display:block;transition:opacity .2s ease}.mwPic.busy .mwArt svg{opacity:.25}
+.mwHint{padding:12px;text-align:center;color:var(--ink45);font:13px/1.45 var(--sans)}
+.mwBusy{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;padding:0 12px;text-align:center;font:600 12px/1.3 var(--sans);color:var(--ink70);background:rgba(255,255,255,.55);text-shadow:0 0 6px #fff,0 0 2px #fff}
+.mwBusy i{flex:none;width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite}
+.mwBar{display:block;position:relative;width:58%;max-width:150px;height:3px;border-radius:2px;background:var(--line2);overflow:hidden}.mwBar b{display:block;height:100%;width:0;background:var(--gold);border-radius:2px;transition:width .25s ease}
+.mwBar.ind b{position:absolute;top:0;width:36%;animation:mwSlide 1.1s ease-in-out infinite}@keyframes mwSlide{0%{left:-40%}100%{left:104%}}
+.mwSide{display:grid;gap:10px;min-width:0;align-content:center;justify-items:center;text-align:center;width:100%}
+.mwLtrs{display:flex;align-items:flex-end;gap:6px;max-width:100%}
+.mwLt{display:grid;gap:5px;justify-items:center;font:600 10px/12px var(--mono);color:var(--ink45);text-transform:uppercase;letter-spacing:.1em}
+.mwLt input{box-sizing:border-box;width:var(--mwb);height:var(--mwb);text-align:center;font:600 26px var(--serif);text-transform:uppercase;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);padding:0;caret-color:var(--gold)}
+.mwLt[data-slot=middle] input{width:calc(var(--mwb) + 10px);height:calc(var(--mwb) + 10px);font-size:32px;border-color:var(--goldLine)}
+.mwLt input:focus{outline:2px solid var(--ink);outline-offset:1px}.mwLt input:disabled{opacity:.7;background:var(--card2)}.mwLt input[aria-invalid=true]{border-style:dashed;border-color:var(--goldLine);background:var(--card2)}
+.mwSw{flex:none;width:26px;height:26px;margin-bottom:calc(var(--mwl) + var(--mwb) / 2 - 13px);border:1px solid transparent;border-radius:50%;background:transparent;color:var(--ink45);display:grid;place-items:center;padding:0;cursor:pointer}
+.mwSw:hover:not(:disabled){background:var(--paper2);color:var(--ink)}.mwSw:focus-visible{outline:2px solid var(--ink);outline-offset:1px}.mwSw:disabled{opacity:.35;cursor:default}.mwRot{margin-left:4px}
+.mwSays,.mwLine{margin:0;font:12.5px/1.45 var(--sans);color:var(--ink70)}.mwSays{font-size:12px;color:var(--ink45)}.mwSays b{color:var(--ink70);font-weight:700;letter-spacing:.04em}
+.mwLine.warn,.mwNote.warn{color:var(--clay)}.mwNote{color:var(--ink45)}
+.mwLink{appearance:none;border:0;background:none;padding:0;margin:0;font:600 12px var(--sans);color:var(--slate);cursor:pointer;text-decoration:underline;text-underline-offset:2px}.mwLink:hover{color:var(--ink)}.mwLink:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:3px}
+.mwMsg{display:grid;gap:6px;justify-items:start;box-sizing:border-box;width:100%;padding:9px 12px;border-left:3px solid var(--clay);background:var(--claySoft);border-radius:0 9px 9px 0;font:13px/1.45 var(--sans);color:var(--ink);text-align:left}
+.mwMsg[data-kind=letters]{border-left-color:var(--gold2);background:var(--goldSoft)}.mwMsg small{font-size:12px;color:var(--ink70)}
+.mwAbcs{display:flex;flex-wrap:wrap;gap:8px}.mwAbcs label{display:grid;gap:3px;font:600 10px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--ink45)}.mwAbcs select{font:600 12.5px var(--sans);letter-spacing:0;text-transform:none;padding:5px 7px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);max-width:190px}
+.mwAct{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;min-height:34px}.mwAct .btn{padding:8px 22px}
+.mwOk{display:inline-flex;align-items:center;gap:6px;font:600 13px var(--sans);color:var(--sage)}
+@container mw (max-width:360px){.mwBody{--mwb:48px}.mwLtrs{gap:4px}}
+@container mw (min-width:520px){
+.mw[data-mode=detail] .mwBody{grid-template-columns:minmax(200px,300px) minmax(0,1fr);gap:26px;align-items:center;justify-items:stretch}
+.mw[data-mode=detail] .mwPic{max-width:none}.mw[data-mode=detail] .mwSide{justify-items:start;text-align:left}.mw[data-mode=detail] .mwAct{justify-content:flex-start}
+.mw[data-mode=detail] .mwBody{--mwb:58px}}
+/* compact: the Order details window (one tight block: the picture 84 px, small letter boxes) */
+.mw[data-mode=compact] .mwBody{--mwb:36px;--mwl:0px;grid-template-columns:auto minmax(0,1fr);gap:6px 12px;align-items:center;justify-items:start}
+.mw[data-mode=compact] .mwPic{width:84px;max-width:none;border-radius:9px}.mw[data-mode=compact] .mwSide{display:contents}
+.mw[data-mode=compact] .mwLtrs{grid-column:2;grid-row:1}.mw[data-mode=compact] .mwPic{grid-column:1;grid-row:1}
+.mw[data-mode=compact] .mwSays,.mw[data-mode=compact] .mwLine,.mw[data-mode=compact] .mwMsg,.mw[data-mode=compact] .mwAct{grid-column:1/-1;text-align:left}
+.mw[data-mode=compact] .mwLt span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.mw[data-mode=compact] .mwLt{gap:0}
+.mw[data-mode=compact] .mwLt input{font-size:18px;border-radius:8px}.mw[data-mode=compact] .mwLt[data-slot=middle] input{width:44px;height:44px;font-size:22px}
+.mw[data-mode=compact] .mwSw{width:22px;height:22px;margin-bottom:7px}.mw[data-mode=compact] .mwSw svg{width:12px;height:12px}.mw[data-mode=compact] .mwRot{margin-bottom:7px}
+.mw[data-mode=compact] .mwBusy span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.mw[data-mode=compact] .mwBusy{gap:6px}.mw[data-mode=compact] .mwBusy i{width:14px;height:14px}
+.mw[data-mode=compact] .mwHint{padding:4px;font-size:10.5px;line-height:1.25}.mw[data-mode=compact] .mwArt{padding:5%}
+.mw[data-mode=compact] .mwAct{justify-content:flex-start;min-height:29px}.mw[data-mode=compact] .mwAct .btn{padding:5px 16px}.mw[data-mode=compact] .mwMsg{font-size:12.5px;padding:7px 10px}
+@container mw (max-width:300px){.mw[data-mode=compact] .mwBody{grid-template-columns:minmax(0,1fr);justify-items:center}.mw[data-mode=compact] .mwLtrs,.mw[data-mode=compact] .mwPic{grid-column:1;grid-row:auto}.mw[data-mode=compact] .mwPic{width:96px}}
+/* compact keeps one height (the Order window never jumps): three single-line slots reserved even when empty (≤176 px wide-ish layout, ≤270 px stacked); a plain message replaces them and may be taller */
+.mw[data-mode=compact] .mwSays,.mw[data-mode=compact] .mwLine{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:100%;box-sizing:border-box;height:18px;line-height:18px}
+.mw[data-mode=compact] .mwSays[hidden],.mw[data-mode=compact] .mwLine[hidden]:not(.mwNote){display:block!important;visibility:hidden}
+.mw[data-mode=compact] .mwNote{display:none!important}
+.mw[data-mode=compact] .mwAsm{display:flex;align-items:baseline;gap:8px}.mw[data-mode=compact] .mwAsm>span{min-width:0;overflow:hidden;text-overflow:ellipsis}.mw[data-mode=compact] .mwAsm .mwLink{flex:none}
+.mw[data-mode=compact][data-msg] .mwSays,.mw[data-mode=compact][data-msg] .mwLine{display:none!important}
+.mw[data-mode=compact] .mwLtrs{align-self:center}
+.mw[data-mode=compact] .mwPic,.mw[data-mode=compact] .mwLtrs{order:1}.mw[data-mode=compact] [data-mw-size]{order:2}.mw[data-mode=compact] .mwAsm,.mw[data-mode=compact] .mwMsg{order:3}.mw[data-mode=compact] .mwAct{order:4}.mw[data-mode=compact] .mwSays{order:5}
+/* the list thumbnail of a monogram line (Engrave piece card) */
+.mwThumb{position:relative;display:grid;place-items:center;box-sizing:border-box;width:100%;max-width:var(--mw-px,104px);aspect-ratio:1;padding:9%;background:#fff;border:1px solid var(--line);border-radius:9px;overflow:hidden;color:var(--ink45)}
+.mwThumb svg{display:block;width:100%;height:100%}.engThumb>.mwThumb,.engSetPic>.mwThumb{max-width:none;height:100%;border:0;border-radius:0}
+.mwThumbTx{font:600 calc(var(--mw-px,104px) * .13)/1 var(--serif);letter-spacing:.14em;text-align:center;padding-left:.14em}.mwThumb[data-state=error] .mwThumbTx,.mwThumb[data-state=letters] .mwThumbTx{color:var(--clay)}
+.mwThumbSpin{position:absolute;right:7%;bottom:7%;width:9px;height:9px;border:1.5px solid var(--line);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite}
+@media(prefers-reduced-motion:reduce){.mwArt svg,.mwBar b{transition:none}.mwBusy i,.mwThumbSpin{animation:none;border-top-color:var(--line);background:var(--goldSoft)}.mwBar.ind b{animation:none;left:32%}}
 dialog.cuDlg.dragOver{box-shadow:0 0 0 3px rgba(142,107,184,.75),0 24px 80px rgba(0,0,0,.32)}
 .cuDlg .dlgHead{align-items:flex-start}.cuDlgTitle{min-width:0;display:grid;gap:3px}
 .cuDlgTitle .sub{font:12px var(--sans);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -3622,7 +3641,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-monogram.js?v=20261015-mono1-monoui1-mx4"></script>
 <script src="charm-nest-monogram-fit.js?v=20261016-mx4"></script>
 <script src="charm-nest-monogram-edits.js?v=20261016-ed2"></script>
-<script src="charm-nest-monogram-ui.js?v=20261015-mono1-monoui1-mprev1-moai1"></script>
+<script src="charm-nest-monogram-ui.js?v=20261016-muw1"></script>
 <script src="charm-nest-pair.js?v=20261009-pr1-mi3-mi4-mi5-mi6-mi7-pm8-pm9-cg1-nk1-lm1-ko1-wo1-m2-m3-mc1"></script>
 <script src="charm-nest-pair-thumb.js?v=20261009-pt3-mi2-rlp1-rlp3-lm1"></script>
 <script src="charm-nest-pool-pieces.js?v=20261009-pp1-adv2-cg1"></script>
