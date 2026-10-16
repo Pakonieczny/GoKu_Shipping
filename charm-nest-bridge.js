@@ -12449,7 +12449,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const ready = !c.why, none = !c.files.length;
     const tip = ready ? "Put every design on the next open sheet of its metal" : c.why;
     return `<button type="button" class="btn ${ready && primary ? "gold" : "ghost"} sm" data-cu-send${ready ? "" : ' aria-disabled="true"'} title="${esc(tip)}">${c.e?.sendIntent ? "Retry send" : "Send to Sheet"}</button>` +
-      (none && linesOf(it)[0]?.spec?.special?.monogram ? `<button type="button" class="btn gold sm" data-cu-mono title="Make the monogram from the buyer's three letters (Engrave › Monograms)">Build monogram</button>` : "") +
+      (none && linesOf(it)[0]?.spec?.special?.monogram ? `<button type="button" class="btn gold sm" data-cu-mono title="Make the monogram from the buyer's three letters (Engrave tab)">Build monogram</button>` : "") +
       (none && hint ? `<button type="button" class="cuHint" data-cu-designs title="Drop the order's .ai or .dxf design files on this card, or click to choose them">${DROP_IC}<span>Drop .ai / .dxf designs here</span></button>` : "");
   }
   const hasFiles = ev => !!ev.dataTransfer && [...(ev.dataTransfer.types || [])].includes("Files");
@@ -16030,6 +16030,14 @@ const OrderWin = window.OrderWin = (() => {
    *  the one of the line shown and swaps with the piece (nothing of the piece before stays); an order of several names the piece on its
    *  card, and with "All pieces" shown every piece that has a back engraving has its own compact card (Paul, 5 Oct, round 17). It follows
    *  Engrave's jobs and the order's timeline feed (an approval made anywhere shows within a second or two) and asks for no read of its own. */
+  /** The page's monogram widget for the Order window: { is(line), mount(el, line, opts) } over charm-nest-monogram-ui.js (the service is made by the Engrave module on first ask: Engrave.monogramUI()), or null while the
+   *  widget, the engine or the service is not on the page. A line is a monogram when the service says so (else when the orders module read it as one). */
+  function monogramHost() {
+    const MU = window.CharmNestMonogramUI, svc = MU && typeof MU.mountLine === "function" && window.Engrave && Engrave.monogramUI ? Engrave.monogramUI() : null;
+    if (!svc || typeof svc.count !== "function" || !window.CharmNestMonogram) return null;
+    const is = line => !!(line && (typeof svc.isMonogram === "function" ? svc.isMonogram(line) : line.spec && line.spec.special && line.spec.special.monogram));
+    return { is, mount: (el, line, o) => MU.mountLine(el, Object.assign({ row: line, lineKey: line.key }, o || {})) };
+  }
   function paintEng(r) {
     const host = byId("owEng"), OE = window.OrderEngraving; if (!host || !OE || !r) return;
     const rid = String(r.order.receiptId), ps = W.pieces || [], multi = ps.length > 1;
@@ -16044,7 +16052,10 @@ const OrderWin = window.OrderWin = (() => {
     //   only()    the piece picked, read at every look (W.piece / W.side, the same as OrderWin.selectedPiece / selectedSide): { line, side } or null for all pieces
     //   pieces    the same lines, one entry each, for an order of several (what OrderEngraving.mount drew its list from, and still does until its cards are rewritten)
     const only = () => { const k = (W.pieces || []).length > 1 ? W.piece || "" : "", sd = W.side && narrowSide() ? W.side : W.disc || ""; return k || sd ? { line: k, side: sd } : null; };   // (ENGPICK: one disc of a counted line narrows the cards to its own, as one ear of a pair does: the card model's slot is "D2")
-    const ctx = { rid, key: r.key, poolId: (r.poolIds || [])[0] || "", piece: r.key, row: r, ears: earsOf(r), label: "", meta: "",
+    // MONOUI (Paul, 16 Oct 2026: the monogram "in place of the currently existing back/front engraving"): a monogram line has no Front/Back card, its card is the page's monogram widget (charm-nest-monogram-ui.js, "compact"):
+    // the buyer's three letters, the finished charm, its size, the assembly line and one Approve; the section keeps its place and title, and follows the piece picked like any card. Without the widget the line shows nothing, as before.
+    const monoOf = linesOf(r).some(x => x && x.spec && x.spec.special && x.spec.special.monogram) ? tryDo(() => monogramHost()) : null;   // (an order with no monogram line never touches the widget or its service)
+    const ctx = { rid, key: r.key, poolId: (r.poolIds || [])[0] || "", piece: r.key, row: r, ears: earsOf(r), label: "", meta: "", mono: monoOf || undefined,
       rows: () => linesOf(r), only, nameOf: pieceName,
       events: () => (W.evFor === rid ? W.events : null),
       sheetEng: sheetEngOf(r),

@@ -14,7 +14,10 @@
  *       nameOf  the name of a line, as the card says it (default: its design's name)
  *       events  the order's timeline events (an array, or a function giving them): an approval another computer makes shows here from them, within the timeline feed's own 2.5 s read
  *       changed called when something other than this card's own press changed the engraving, and after this card's own approval: the host repaints what depends on it
- *     The host's DIRECT CHILDREN are the cards (`.engCard`, one for each piece that has something to engrave); the host is hidden when there is none. Nothing else is drawn in it.
+ *       mono  (MONOUI, Paul 16 Oct 2026: the monogram "in place of the currently existing back/front engraving") { is(line) -> bool, mount(el, line, opts) -> widget | null }: the page's monogram widget
+ *             (charm-nest-monogram-ui.js, mode "compact"). A line it says is a monogram has NO Front/Back card: its card is `.engMono` (a header and the widget), in the line's place among the others, and it follows
+ *             the piece picked (`only`) like any card. Without `mono` (every other host, every test of the plain cards) nothing here changes.
+ *     The host's DIRECT CHILDREN are the cards (`.engCard`, one for each piece that has something to engrave) and, for a monogram line, its `.engMono` card; the host is hidden when there is none. Nothing else is drawn in it.
  *   OrderEngraving.engOf(ctx) -> { row, job, eng, poolId, loading }   what the earlier single card would show, as data (no drawing)
  *   OrderEngraving.cycleOf / discLines / faceCell / foldSlots / bothFor / approveFaces / backOf / unmount   as before (the bridge and the sheet window call them)
  *
@@ -25,6 +28,7 @@
   'use strict';
   const doc = () => root.document;
   const tryDo = (f, d) => { try { return f(); } catch (e) { try { console.warn('order engraving:', e); } catch (_) {} return d; } };
+  const lineOfRow = row => (row && row.parentRow) || row || null;
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const DONE = ['approved', 'written'];
   const cors = u => (root.CharmNestAssets && root.CharmNestAssets.url ? tryDo(() => root.CharmNestAssets.url(u), u) : u);
@@ -310,6 +314,8 @@
     if (host._orderEngraving) tryDo(() => host._orderEngraving.destroy());
     let ctx = Object.assign({}, ctx0), gone = false, seenAt = Date.now(), attached = false, ro = null, told0 = null;
     const cards = new Map();                 // pieceKey -> { el, sig }
+    const monos = new Map();                 // MONOUI: line key -> { el, body, line, handle, dot } (one monogram card for each monogram line of the order, kept while it is not the piece picked, so the picture is there at once when it is)
+    let monoSeen = '';
     const busy = new Set(), seen = new Set(), fails = new Map(), asked = new Set();   // pieces being approved; job keys put in front of the person; the one failure line of a card
     let last = new Map(), asking = false, waitEl = null, kindsSeen = '', loading = false;
     const mode = Array.isArray(ctx0 && ctx0.pieces) && ctx0.pieces.length > 1 ? 'list' : 'one';
@@ -327,6 +333,9 @@
     const nameOf = row => { const n = typeof ctx.nameOf === 'function' ? tryDo(() => ctx.nameOf(row), '') : ''; return n || (ctx.label && !ctx.pieces && !ctx.rows ? ctx.label : '') || defaultName(row); };
     const events = () => (typeof ctx.events === 'function' ? tryDo(() => ctx.events(), null) : ctx.events);
     const isWorking = j => !!(root.Engrave && root.Engrave.isWorking && tryDo(() => root.Engrave.isWorking(j), false));
+    /** MONOUI: is this line a monogram (drawn by the page's monogram widget, no Front/Back card)? Only a host that hands `mono` has any. */
+    const isMono = row => { const M = ctx.mono, ln = lineOfRow(row); return !!(M && typeof M.is === 'function' && typeof M.mount === 'function' && ln && ln.state !== 'gone' && tryDo(() => M.is(ln), false)); };
+    const uniqLines = rows => { const seenK = new Set(), out = []; for (const r of rows) { const ln = lineOfRow(r); if (ln && ln.key && !seenK.has(ln.key)) { seenK.add(ln.key); out.push(ln); } } return out; };
     /** The piece the window is narrowed to ({ line, side } or null for all), read now. */
     const onlyOf = () => { const o = typeof ctx.only === 'function' ? tryDo(() => ctx.only(), null) : ctx.only; return o && typeof o === 'object' && (o.line || o.side) ? { line: o.line ? String(o.line) : '', side: o.side ? String(o.side) : '' } : null; };
     /** What the cards show now, as data. */
@@ -341,8 +350,11 @@
       const popt = { nameOf, isWorking, seen: j => vis || seen.has(j.key) };
       let pieces = []; if (C) { try { pieces = C.piecesOf(rows, popt); } catch (e) { pieces = []; for (const r of rows) { try { pieces.push(...C.piecesOf([r], popt)); } catch (e2) { tryDo(() => console.warn('order engraving: one line could not be read', e2)); } } } }   // (ENGCRASH: a line that cannot be read leaves the other lines' cards drawn)
       if (only && only.side) pieces = pieces.filter(p => !p.slot || p.slot === only.side);   // (one ear of a pair picked: that ear's card alone)
+      // (MONOUI: a monogram line has no Front/Back card, its card is the widget's; `monoAll` are the monogram lines of the order, `monoShown` the ones of the piece picked)
+      const monoAll = uniqLines(every.filter(isMono)), monoShown = uniqLines(rows.filter(isMono));
+      if (monoAll.length) pieces = pieces.filter(p => !isMono(p.row));
       const ev = events(); for (const p of pieces) withForeign(p, ev, seenAt);
-      return { rows, pieces, loading: rows.some(r => r && r.loading), only: only ? only.line + '|' + only.side : '' };
+      return { rows, pieces, monoAll, monoShown, loading: rows.some(r => r && r.loading), only: only ? only.line + '|' + only.side : '' };
     }
     const keyOf = p => p.pieceKey + '|' + p.rid + '|' + p.lineKey;
     /** The customer's words block: the host's next sibling inside the section (never a child of the host: the host's children are the cards). Drawn again only when what it says changes. */
@@ -451,6 +463,43 @@
       }
       return el;
     };
+    /* ── MONOUI: a monogram line's card ── one `.engMono` for each monogram line: the header the other cards have (a dot that says where it is, "Monogram") and the page's monogram widget in "compact" density (charm-nest-monogram-ui.js
+     *  mountLine; its state lives in the page's one monogram service, so the Engrave tab and this window show the same letters and repaint together). The card is kept while another piece is picked and put back as it was. */
+    const MONO_DOT = { letters: 'words', error: 'words', ready: 'approve', check: 'approve', approved: 'approved', sent: 'approved' };
+    const MONO_WORD = { reading: 'Reading the letters', letters: 'Letters to confirm', building: 'Making the monogram', ready: 'Ready to approve', check: 'Needs a person', approved: 'Approved', sent: 'On the sheets', error: 'Needs a look' };
+    function monoDot(m, st) {
+      const state = (st && st.state) || 'reading', dot = m.el.querySelector('[data-testid="ow-mono-dot"]'), word = MONO_WORD[state] || '';
+      m.el.dataset.state = state;
+      if (dot) { if (MONO_DOT[state]) dot.dataset.s = MONO_DOT[state]; else delete dot.dataset.s; dot.setAttribute('aria-label', word); dot.title = word; }
+    }
+    function monoEntry(line) {
+      let m = monos.get(line.key);
+      if (m) { m.line = line; return m; }
+      const d = doc(), el = d.createElement('section');
+      tryDo(() => { const C = CARD(); if (C && C.css) C.css(); });   // (the header's dot and name are the engraving card's own styles, which a window with no engraving card has not had put in the page yet)
+      el.className = 'engMono'; el.dataset.testid = 'ow-mono'; el.dataset.key = line.key; el.dataset.rid = String(ctx.rid || (line.order && line.order.receiptId) || ''); el.dataset.state = 'reading';
+      el.setAttribute('aria-label', 'Monogram');
+      el.innerHTML = '<header class="engHd" data-testid="ow-mono-head"><i class="engDot" data-testid="ow-mono-dot" role="img"></i><b class="engName">Monogram</b></header><div class="engMonoBody" data-testid="ow-mono-body"></div>';
+      m = { el, body: el.querySelector('.engMonoBody'), line, row: line, handle: null };
+      monos.set(line.key, m);
+      monoDot(m, null);
+      let w = null;
+      try { w = ctx.mono.mount(m.body, line, { mode: 'compact', rid: String(ctx.rid || (line.order && line.order.receiptId) || ''), lineKey: line.key, onChange: st => { if (!gone) monoDot(m, st); }, onApproved: () => { if (!gone) told(); } }); } catch (e) { tryDo(() => console.warn('order engraving: the monogram could not be drawn', e)); }
+      if (w) { m.handle = w; monoDot(m, tryDo(() => w.state && w.state(), null)); }
+      else { const f = d.createElement('div'); f.className = 'engFail'; f.setAttribute('role', 'alert'); f.textContent = 'The monogram could not be drawn here.'; m.body.append(f); }
+      return m;
+    }
+    const monoGone = m => { tryDo(() => m.handle && m.handle.destroy && m.handle.destroy()); tryDo(() => m.el.remove()); };
+    /** Every shown monogram card repaints from the page's shared state (cheap: it never rebuilds the monogram and never takes a caret away). */
+    const monoTouch = r => { for (const l of r.monoShown) { const m = monos.get(l.key); if (m && m.handle) { tryDo(() => { if (m.handle.update && m.row !== l) m.handle.update({ row: l }); m.row = l; if (m.handle.refresh) m.handle.refresh(); }); } } };
+    /** The cards in the order the lines are: each monogram line's card, and the cards of each other line, in the line's place. */
+    function arrange(r, els, monoEls) {
+      const by = new Map(); r.pieces.forEach((p, i) => { (by.get(p.lineKey) || by.set(p.lineKey, []).get(p.lineKey)).push(els[i]); });
+      const out = [], done = new Set();
+      for (const row of r.rows) { const ln = lineOfRow(row); if (!ln || done.has(ln.key)) continue; done.add(ln.key); if (monoEls.has(ln.key)) out.push(monoEls.get(ln.key)); else if (by.has(ln.key)) out.push(...by.get(ln.key)); }
+      for (const [k, list] of by) if (!done.has(k)) out.push(...list);
+      return out;
+    }
     /** Look again; draw only the cards whose content has changed (or all at once when asked). `quiet`: the host is not told. */
     let onlySeen = '';
     function refresh(force, quiet) {
@@ -464,7 +513,8 @@
       if (r.only !== onlySeen) { onlySeen = r.only; quiet = true; }
       const shown = new Set(r.pieces.map(keyOf));
       for (const [k, c] of [...cards]) if (!shown.has(k)) { tryDo(() => c.el.remove()); cards.delete(k); }
-      if (!r.pieces.length && !r.loading && (!host.hidden || host.firstChild)) { waitEl = null; host.replaceChildren(); host.hidden = true; }
+      for (const [k, m] of [...monos]) if (!r.monoAll.some(l => l.key === k)) { monoGone(m); monos.delete(k); }   // (a monogram line that left the order takes its card with it)
+      if (!r.pieces.length && !r.monoShown.length && !r.loading && (!host.hidden || host.firstChild)) { waitEl = null; host.replaceChildren(); host.hidden = true; }
       // (this card's own approval is on its way: its card is left as it is until the approval stands, i.e. the stamp has landed)
       const stamping = r.pieces.some(p => p.jobs.some(j => j.stamping));
       for (const p of r.pieces) last.set(keyOf(p), p);
@@ -474,14 +524,15 @@
       const kinds = r.pieces.map(p => keyOf(p) + ':' + p.state).join(',');
       const loadedNow = !!r.loading !== loading;   // (the order stopped being read, or started: what is on screen is drawn again, e.g. the wait goes when the order turns out not to be there)
       loading = !!r.loading;
-      const changed = force || loadedNow || keys.join('\n') !== [...cards.keys()].join('\n') || r.pieces.some(p => (cards.get(keyOf(p)) || {}).sig !== sigs.get(keyOf(p)));
-      if (!changed && !(r.loading && !r.pieces.length && !waitEl)) { if (vis) for (const p of r.pieces) for (const j of p.jobs) seen.add(j.key); return; }
+      const monoSig = r.monoShown.map(l => l.key).join('|'), monoMoved = monoSig !== monoSeen || r.monoShown.some(l => !monos.has(l.key));
+      const changed = force || loadedNow || monoMoved || keys.join('\n') !== [...cards.keys()].join('\n') || r.pieces.some(p => (cards.get(keyOf(p)) || {}).sig !== sigs.get(keyOf(p)));
+      if (!changed && !(r.loading && !r.pieces.length && !r.monoShown.length && !waitEl)) { if (vis) { for (const p of r.pieces) for (const j of p.jobs) seen.add(j.key); monoTouch(r); } return; }
       // (something is here to show but cannot be drawn yet: the window is not on screen, or a seal is being pressed: it says so)
-      const wait = () => { if (!host.firstChild && (r.pieces.length || r.loading)) { host.hidden = false; waitEl = waitNode('Reading…'); host.replaceChildren(waitEl); } };
+      const wait = () => { if (!host.firstChild && (r.pieces.length || r.monoShown.length || r.loading)) { host.hidden = false; waitEl = waitNode('Reading…'); host.replaceChildren(waitEl); } };
       if (!vis) return wait();
       if (stamping) return wait();   // (drawn once the seal has landed)
       if (root.Seal && root.Seal.defer && root.Seal.defer('order-engraving:' + id0, () => refresh(true, quiet))) return wait();
-      if (!r.pieces.length) {
+      if (!r.pieces.length && !r.monoShown.length) {
         if (r.loading) { host.hidden = false; if (!waitEl || !waitEl.isConnected) { waitEl = waitNode('Reading…'); host.replaceChildren(waitEl); } cards.clear(); return; }
         cards.clear(); waitEl = null; host.replaceChildren(); host.hidden = true;
         if (told0 !== '' && !quiet) told();
@@ -495,9 +546,13 @@
         if (old && old.el.isConnected && (busy.has(k) || (!force && old.sig === sigs.get(k)))) { next.set(k, old); els.push(old.el); continue; }
         const el = mkCard(p); built = true; next.set(k, { el, sig: sigs.get(k) }); els.push(el);
       }
-      const same = els.length === host.children.length && els.every((e, i) => host.children[i] === e);
-      if (!same) host.replaceChildren(...els);
+      // (MONOUI: the monogram lines' cards stand in their lines' places among the others; a card that is not shown is taken out of the page and kept)
+      let all = els;
+      if (r.monoShown.length) { const me = new Map(r.monoShown.map(l => [l.key, monoEntry(l).el])); all = arrange(r, els, me); monoSeen = monoSig; } else monoSeen = '';
+      const same = all.length === host.children.length && all.every((e, i) => host.children[i] === e);
+      if (!same) host.replaceChildren(...all);
       cards.clear(); for (const [k, v] of next) cards.set(k, v);
+      if (r.monoShown.length) monoTouch(r);
       for (const p of r.pieces) for (const j of p.jobs) seen.add(j.key);
       if (built || !same) { tryDo(() => root.Seal && root.Seal.fitGroups && root.Seal.fitGroups(host)); tryDo(() => C.repaint && C.repaint(host)); }   // (the live previews are scaled to the box they find: the cards are in the page now)
       // (kindsSeen is set BEFORE the host is told: told() draws the order window again, which calls update() -> refresh() while this call is still on the stack)
@@ -507,6 +562,7 @@
     const id0 = ++nextId;
     function reset() {
       busy.clear(); seen.clear(); fails.clear(); last = new Map(); cards.clear(); waitEl = null; loading = false; told0 = null; kindsSeen = ''; seenAt = Date.now();
+      for (const m of monos.values()) monoGone(m); monos.clear(); monoSeen = '';
       host.replaceChildren(); host.hidden = true;
       saidSig = ''; if (saidEl) { saidEl.innerHTML = ''; saidEl.hidden = true; }
       if (leftEl) { leftEl.replaceChildren(); leftEl.hidden = true; leftEl._sig = ''; }
@@ -523,6 +579,7 @@
       destroy() {
         if (gone) return; gone = true; live.delete(handle); disarm();
         if (ro) { tryDo(() => ro.disconnect()); ro = null; }
+        for (const m of monos.values()) monoGone(m); monos.clear();
         host.replaceChildren(); host.hidden = true; if (host._orderEngraving === handle) delete host._orderEngraving;
         if (saidEl) { tryDo(() => saidEl.remove()); saidEl = null; }
         if (leftEl) { tryDo(() => leftEl.remove()); leftEl = null; }
