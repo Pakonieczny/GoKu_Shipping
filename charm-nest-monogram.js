@@ -575,6 +575,10 @@
       // ROUND 4 (silhouette): the side's INK height is LIMITS.SIDE_INK_TARGET (0.90) of the centre's (ESG .88, HEY .93), never below the floor 0.86 nor with a body taller than 0.90 of the centre's body; the old rule (the body 0.80 of the
       // centre's) left the sides of words whose letters have little ink beyond the body small and floating
       for (const q of [pl, pr]) { const inkT = LIMITS.SIDE_INK_TARGET * mid.h * cs / q.p.h, inkLo = (LIMITS.SIDE_INK[0] + 0.01) * mid.h * cs / q.p.h, bodyHi = 0.90 * midBH / q.p.bh; q.s = Math.min(1.35, Math.max(0.85 * q.s, inkLo, Math.min(inkT, bodyHi))); }
+      // the two sides' BODIES equal in height within 5 % where the ink window (0.86 to 0.94 of the centre's) allows it, their ink heights within 5 % of each other: the bodies are what the eye lines up
+      { const lo = q => 0.86 * mid.h * cs / q.p.h, hi = q => 0.94 * mid.h * cs / q.p.h, bL = pl.s * pl.p.bh, bR = pr.s * pr.p.bh;
+        if (Math.abs(bL - bR) / Math.max(bL, bR) > 0.04 && lo(pl) <= hi(pl) && lo(pr) <= hi(pr)) { const B = Math.sqrt(bL * bR); for (const q of [pl, pr]) q.s = Math.min(Math.max(B / q.p.bh, lo(q)), hi(q)); }
+        const iL = pl.s * pl.p.h, iR = pr.s * pr.p.h; if (Math.abs(iL - iR) / Math.max(iL, iR) > 0.045) { const I = Math.sqrt(iL * iR); pl.s = (iL > iR ? I * 1.02 : I * 0.98) / pl.p.h; pr.s = (iR > iL ? I * 1.02 : I * 0.98) / pr.p.h; } }
       // the centre's width: into MID_WIDTH_MIN..MAX of the median centre
       const med = (mid.em ? N.MID_BODY_W_OVER_EM_MEDIAN * mid.em * SC : N.MID_BODY_W_OVER_INKH_MEDIAN * mid.h) * cs, mBW = mid.bw * cs;
       pm.need = Math.min(Math.max(mBW, N.MID_WIDTH_MIN * med), N.MID_WIDTH_MAX * med) / mBW; pm.f = clampF(pm.need);
@@ -1118,6 +1122,8 @@
       bad('overlap', Math.max(overlap.L, overlap.R) > LIMITS.OVERLAP + 1e-9 || overlap.M > LIMITS.OVERLAP_CENTRE + 1e-9, `a letter lies ${Math.round(Math.max(overlap.L, overlap.M, overlap.R) * 100)} % inside the others (limit ${Math.round(LIMITS.OVERLAP * 100)} % for a side letter, ${Math.round(LIMITS.OVERLAP_CENTRE * 100)} % for the centre)`);
       const warn = [], wn = (k, c, text) => { if (c) warn.push({ key: k, text }); };
       wn('spacing', maxBar > LIMITS.BAR_MAX_MM + 1e-9, `a tie bar bridges ${maxBar} mm (more than ${LIMITS.BAR_MAX_MM} mm): the side letter stands far from the centre letter`);
+      const bodyDiff = Math.abs(ratios.sideHeightL - ratios.sideHeightR) / Math.max(ratios.sideHeightL, ratios.sideHeightR, 0.01);
+      wn('bodyMatch', bodyDiff > 0.05 + 1e-9, `the two side letters' bodies differ ${Math.round(bodyDiff * 100)} % in height (more than 5 %)`);
       wn('bodyHeight', [ratios.sideHeightL, ratios.sideHeightR].some(x => x < LIMITS.SIDE_HEIGHT[0] - 1e-9 || x > LIMITS.SIDE_HEIGHT[1] + 1e-9), `a side letter's body is ${ratios.sideHeightL} / ${ratios.sideHeightR} of the centre's in height (band ${LIMITS.SIDE_HEIGHT[0]} to ${LIMITS.SIDE_HEIGHT[1]})`);
       wn('bottomClearance', align.bottomClearanceMm.L > LIMITS.BOTTOM_CLEAR_MM + 1e-9 || align.bottomClearanceMm.R > LIMITS.BOTTOM_CLEAR_MM + 1e-9, `a side letter's ink starts ${Math.max(align.bottomClearanceMm.L, align.bottomClearanceMm.R)} mm above the centre letter's lowest ink (more than ${LIMITS.BOTTOM_CLEAR_MM} mm)`);
       wn('widthMatch', Math.abs(ratios.sideWidthL - ratios.sideWidthR) / Math.max(ratios.sideWidthL, ratios.sideWidthR) > LIMITS.WIDTH_LR + 1e-9, `the two side letters differ more than ${Math.round(LIMITS.WIDTH_LR * 100)} % in body width`);
@@ -1136,7 +1142,7 @@
         + (lo(visible.L, LIMITS.VISIBLE_MM) + lo(visible.R, LIMITS.VISIBLE_MM)) / 0.5 + win(piece.aspect, LIMITS.ASPECT) / 0.05 + 3 * (hi(Math.max(overlap.L, overlap.R), LIMITS.OVERLAP) + hi(overlap.M, LIMITS.OVERLAP_CENTRE)) / 0.1
         + (lo(outlineVisible.L, LIMITS.VISIBLE_OUTLINE) + lo(outlineVisible.R, LIMITS.VISIBLE_OUTLINE)) / 0.1 + hi(crowdTotal, LIMITS.CROWD_MM) / 3 + 3 * NAMES.reduce((a, n) => a + (countersOpen[n] == null ? 0 : lo(countersOpen[n], LIMITS.COUNTERS)), 0) / 0.1 + hi(maxBar, LIMITS.BAR_MAX_MM) / 0.5 + (balanced.LM ? 0 : 1) + (balanced.MR ? 0 : 1);
       // the autoFit tie-breakers after the violations: how unlike the two sides are (ink height, body width, body centre) and how far from the centre letter's centre
-      const symmetry = align.lrInkDiff / 0.05 + Math.abs(ratios.sideWidthL - ratios.sideWidthR) / Math.max(ratios.sideWidthL, ratios.sideWidthR, 0.01) / 0.15 + align.lrBodyMm / 0.4, centring = (Math.abs(bo.L) + Math.abs(bo.R) + Math.abs(so.L) + Math.abs(so.R)) / 4;
+      const symmetry = bodyDiff / 0.05 + align.lrInkDiff / 0.05 + Math.abs(ratios.sideWidthL - ratios.sideWidthR) / Math.max(ratios.sideWidthL, ratios.sideWidthR, 0.01) / 0.15 + align.lrBodyMm / 0.4, centring = (Math.abs(bo.L) + Math.abs(bo.R) + Math.abs(so.L) + Math.abs(so.R)) / 4;
       return { violations: v, warnings: warn, distance, severity: r2(Math.min(severity, 40)), symmetry: r2(symmetry), centring: r2(centring) };
     };
     /* report.metrics: every number the hard rules are checked with, measured on the three letters as placed (their own ink, no tie bar), in mm in the finished piece (x right, y up from its bottom left). The sheet and the
