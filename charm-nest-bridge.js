@@ -7988,7 +7988,7 @@ const Engrave = window.Engrave = (() => {
     return rows;
   }
   /** What a piece's line in a row says it is: "Saved to sheet" for a written one, else the stage word of charm-nest-engrave-rows.js ("Approved", "No engraving", "Placement to check", ...). */
-  const stageText = (j, busy) => (j.state === "written" ? "Saved to sheet" : j.backPending && j.state === "approved" ? "Approved · file waits for the cloud" : ROWS() ? ROWS().stageOf(j, busy) : "");
+  const stageText = (j, busy) => (j.state === "written" ? "Saved to sheet" : j.backPending && j.state === "approved" ? `Approved · ${faceNoun(faceOfJob(j))} file waits for the cloud` : ROWS() ? ROWS().stageOf(j, busy) : "");
   /** What is still to settle, and what is decided, counted in ROWS: the numbers on the tabs and rails say what the lists show. (pendingCount and reviewedCount count jobs and stay as they are for the run's own checks.) */
   const pendingRows = () => { const p = tabItems().filter(j => !j.editingBack && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone"); return rowsIn(p, p).length; };
   const reviewedRows = () => { const d = decidedAll(); return rowsIn(d, d).length; };
@@ -9122,7 +9122,7 @@ const Engrave = window.Engrave = (() => {
   /* NODECIDED: the view a person left (checkpoint, saved view, link) is put back. There is one list now: an older view that says tab "done" lands on it, with the piece it had open (openDone) in the detail card. */
   function restoreEngraveView(v) {
     const w = Object.assign({}, v || {});
-    if (w.tab === "done" || w.tab === "mono" || w.tab === "words") { if (w.tab === "done") { if (w.openDone) { w.focus = w.openDone; w.list = false; } else if (!w.focus && w.list == null) w.list = true; } w.tab = "place"; }
+    if (w.tab === "done" || w.tab === "mono" || w.tab === "words") { if (w.tab === "done") { if (w.openDone) { w.focus = w.openDone; w.list = false; } else if (!w.focus) w.list = true; } w.tab = "place"; }
     delete w.openDone;
     if (w.focus) w.opened = w.focus;
     return Object.assign(EG, w, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) });

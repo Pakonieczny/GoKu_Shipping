@@ -133,7 +133,7 @@
   /** Put the words back where the snapshot had them. false when the job is not the one the snapshot was taken of any more (it was fitted again: other words, another font, the charm changed) or is
    *  decided: nothing is touched then. */
   function restore(job, snap) {
-    if (!job || !snap || snap.v !== 1 || !canMove(job)) return false;
+    if (!job || !snap || snap.v !== 1 || !canMove(job) || job.state !== 'review') return false;   // (NODECIDED: a Cancel that arrives after the piece was approved elsewhere changes nothing and never reopens it)
     // (the mask of a piece the person TURNED since the snapshot is another object than the snapshot's, but of the same lineage (mask.lin, set by Engrave.turnTo): the same piece, not one fitted again)
     if (job.key !== snap.key || (job.mask !== snap.mask && !(snap.view && snap.mask && snap.mask.lin && job.mask && job.mask.lin === snap.mask.lin)) || job.text !== snap.text) return false;
     if (same(job, snap)) { job.nudged = snap.nudged; return true; }

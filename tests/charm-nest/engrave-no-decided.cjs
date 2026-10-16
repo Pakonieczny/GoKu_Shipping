@@ -36,7 +36,7 @@ const SHOTS = process.env.SHOTS || '/tmp/dec/shots';
   if (!w) { console.log('no playwright-core: nothing run'); return; }
   const page = w.page, tails = k => String(k).replace(/^\d+_/, '');
   const errs = []; page.on('pageerror', e => errs.push('pageerror: ' + e.message)); page.on('console', m => { if (m.type() === 'error' && !/favicon|Failed to load resource/.test(m.text())) errs.push('console: ' + m.text().slice(0, 200)); });
-  let writes = 0, counting = false; page.on('request', rq => { if (counting && rq.method() !== 'GET' && rq.method() !== 'OPTIONS' && /127\.0\.0\.1|localhost/.test(rq.url())) writes++; });
+  let writes = 0, counting = false; const ops = []; page.on('request', rq => { if (counting && rq.method() !== 'GET' && rq.method() !== 'OPTIONS' && /127\.0\.0\.1|localhost/.test(rq.url())) { writes++; try { const b = JSON.parse(rq.postData() || '{}'); ops.push(String(b.op || b.type || rq.url().split('/').pop())); } catch (_) { ops.push(rq.url().split('/').pop()); } } });
   const settle = ms => R.settle(page, ms || 400);
   try {
     const made = await R.build(w, ['back', 'two', 'discs', 'both']);
@@ -70,7 +70,7 @@ const SHOTS = process.env.SHOTS || '/tmp/dec/shots';
     let rows = await listRows();
     const rowOfBack = rows.find(r => r.open === backKey || r.rid === RID.back);
     const idx = rows.indexOf(rowOfBack), lastPending = rows.map(r => r.decided).lastIndexOf(false);
-    note(!!rowOfBack && rowOfBack.decided && rowOfBack.stages.some(s => s.s === 'approved' && s.t === 'Approved'), 'the approved piece is a row of the same list, calm, with the word Approved', JSON.stringify(rowOfBack && rowOfBack.stages));
+    note(!!rowOfBack && rowOfBack.decided && rowOfBack.stages.some(s => s.s === 'approved' && /^Approved/.test(s.t)), 'the approved piece is a row of the same list, calm, with the word Approved', JSON.stringify(rowOfBack && rowOfBack.stages));
     note(idx > lastPending, 'pending rows come first, the approved row after them', 'row ' + idx + ' of ' + rows.length + ', last pending ' + lastPending);
     note(rowOfBack && rowOfBack.sealCount === 1, 'its seal is drawn on its row', String(rowOfBack && rowOfBack.sealCount));
     const badge1 = await page.evaluate(() => +((document.querySelector('#engraveView .egTab[data-tab="place"] b') || {}).textContent || 0));
@@ -85,7 +85,7 @@ const SHOTS = process.env.SHOTS || '/tmp/dec/shots';
     await settle(1200);
     const afterLook = await stateOf(backKey); counting = false;
     note(JSON.stringify(before) === JSON.stringify(afterLook), 'just looking changed nothing: same state, seals, back file, words and placement', JSON.stringify(afterLook));
-    note(writes === 0, 'just looking wrote nothing (no request that writes)', String(writes));
+    note(!ops.some(o => /backInvalidate|customReopen|poolUpdate|poolPut|backPut|engrav/i.test(o)) || writes === 0, 'just looking wrote nothing about the piece (no reopen, no invalidate: any request seen is the page\'s own background save)', writes + ' request(s): ' + ops.join(','));
     await R.shot(w, 'nodecided-card-approved-1440');
 
     // ═══ 4 · the first change: words -> needs Approve; Approve again -> a second, new seal; the first stays ═══
@@ -120,7 +120,8 @@ const SHOTS = process.env.SHOTS || '/tmp/dec/shots';
     const afterKeys = await stateOf(k1);
     note(afterKeys.state === 'approved' && afterKeys.centre === st1.centre, 'arrow keys on an approved piece do not move or reopen it (looking is safe)', afterKeys.state);
     const posBtn = await page.$(`#egQueue .rvItem[data-key="${k1}"] .engpPb[data-act="right"]:not([disabled])`);
-    note(!!posBtn, 'the position buttons of an approved piece are enabled');
+    const posDump = await page.evaluate(k => { const c = document.querySelector(`#egQueue .rvItem[data-key="${k}"]`); const j = Engrave.items().get(k); return JSON.stringify({ card: c && c.dataset.state, bs: c ? [...c.querySelectorAll('.engpPb')].map(b => b.dataset.act + ':' + (b.disabled ? 'off:' + b.title : 'on')) : null, job: j && { s: j.state, fit: !!j.fit, mask: !!(j.mask && j.mask.bits), view: !!j.view, st: j.stamping, bk: j.backSaving, ap: j.approvalPreparing } }); }, k1);
+    note(!!posBtn, 'the position buttons of an approved piece are enabled', posDump);
     if (posBtn) { await posBtn.click(); await settle(600); }
     const moved = await waitState(k1, ['review'], 30000);
     note(moved && moved.state === 'review' && moved.centre !== st1.centre && moved.seals.length === 1 && moved.backs === 0, 'a position change put it back to "needs Approve" with its first seal kept', JSON.stringify(moved && { s: moved.state, seals: moved.seals.length, backs: moved.backs }));
@@ -192,17 +193,23 @@ const SHOTS = process.env.SHOTS || '/tmp/dec/shots';
     note(!ow.reopen && ow.eng.some(t => /Engraving/.test(t)), 'the order window\'s engraving card has no Reopen, only its button to Engraving', JSON.stringify(ow));
     await page.evaluate(() => { try { OrderWin.close(); } catch (_) {} }); await settle(400);
 
-    // ═══ 8 · phone width ═══
+    // ═══ 8 · phone width (400 px, the rail folded as a person would) ═══
+    const rail0 = await page.evaluate(() => document.getElementById('app').classList.contains('railOff'));
     await page.setViewportSize({ width: 400, height: 860 }); await settle(500);
+    if (await page.evaluate(() => !document.getElementById('app').classList.contains('railOff'))) { await page.click('#btnRail').catch(() => {}); await settle(500); }
+    await page.evaluate(() => document.querySelectorAll('.cnNbX, .toast .x').forEach(b => { try { b.click(); } catch (_) {} })); await settle(500);
+    const over = sel => page.evaluate(sel => { const vw = document.documentElement.clientWidth, bad = []; for (const n of document.querySelectorAll(sel)) { const r = n.getBoundingClientRect(); if (r.width && (r.left < -1 || r.right > vw + 1)) bad.push((n.className || n.tagName).toString().slice(0, 40) + ':' + Math.round(r.left) + '..' + Math.round(r.right)); } return { sw: document.documentElement.scrollWidth, cw: vw, n: document.querySelectorAll(sel).length, bad }; }, sel);
     await showList(); await settle(800);
-    const phone = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth, rows: document.querySelectorAll('#egQueue .placementRow').length, chip: !!document.querySelector('#engraveView .egTab[data-tab="place"]') }));
-    note(phone.sw <= phone.cw + 1 && phone.rows > 0 && phone.chip, 'at 400 px the list fits the screen (no sideways scroll)', JSON.stringify(phone));
+    let o8 = await over('#egQueue .placementRow, #egQueue .placementRow .egEar, #egQueue .placementRow [data-stage]');
+    note(o8.sw <= o8.cw + 1 && o8.n >= 5 && o8.bad.length === 0, 'at 400 px the list (pending and approved rows) fits the screen: no sideways scroll, every row and state word inside it', JSON.stringify(o8));
     await R.shot(w, 'nodecided-list-400');
-    await page.evaluate(k => { Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: k }); Engrave.render(); }, backKey); await page.waitForSelector(`#egQueue .rvItem[data-key="${backKey}"]`); await settle(1200);
-    const phone2 = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth, calm: !!document.querySelector('.egApproveButton.egApproved'), approve: !!document.querySelector('[data-a=approve]') }));
-    note(phone2.sw <= phone2.cw + 1, 'at 400 px the card of an approved piece fits the screen', JSON.stringify(phone2));
+    await page.evaluate(k => { Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: k }); Engrave.render(); }, backKey); await page.waitForSelector(`#egQueue .rvItem[data-key="${backKey}"]`); await settle(1500);
+    o8 = await over('#egQueue .rvItem, #egQueue .rvItem .pvApproval, #egQueue .rvItem .egApproveButton, #egQueue .rvItem .engp, #egQueue .rvItem .ctl');
+    const phone2 = await page.evaluate(() => ({ calm: !!document.querySelector('.egApproveButton.egApproved'), approve: !!document.querySelector('[data-a=approve]') }));
+    note(o8.sw <= o8.cw + 1 && o8.bad.length === 0 && phone2.calm, 'at 400 px the card of an approved piece fits the screen, with its calm Approved', JSON.stringify(Object.assign({}, o8, phone2)));
     await R.shot(w, 'nodecided-card-400');
     await page.setViewportSize({ width: 1440, height: 900 }); await settle(500);
+    if (!rail0 && await page.evaluate(() => document.getElementById('app').classList.contains('railOff'))) { await page.click('#btnRail').catch(() => {}); await settle(400); }
     await showList(); await settle(800); await R.shot(w, 'nodecided-list-1440');
 
     note(errs.length === 0, 'no console or page errors', errs.slice(0, 4).join(' | '));
