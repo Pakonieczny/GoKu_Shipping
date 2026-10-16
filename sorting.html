@@ -718,6 +718,10 @@ async function apiFetch(path, init = {}){
 let croppedImagesArray = [];
 let userImagesArray = [];
 window.userImagesArray = userImagesArray;
+// The Matrix tiles used to be copied to localStorage ("userImagesArray": the JPEG data URL of every tile) and nothing ever read the copy back:
+// it only filled the browser's storage (Print Row failed on a full store, 16 Oct 2026). They stay in memory, as they always were used.
+// What an earlier version left behind is removed here, once per page load. This key only: the sign-in, the timeline outbox and the rest are not touched.
+try { localStorage.removeItem("userImagesArray"); } catch (_) {}
 let cellMatches = {};
 let partialMatches = {};
 let matchPrintFlowInProgress = false;
@@ -2984,7 +2988,7 @@ async function startMatrixAnalysis() {
    • On 4th consecutive “no charm”: remove those 4 and stop.
    • Otherwise (even 1–3 “no charm”): keep all.
    • If you process all 140 without a 4-streak, keep all.
-   • Persists names only, so downstream send&match sees every tile.
+   • Kept in memory (userImagesArray) so downstream send&match sees every tile; never copied to localStorage.
 ────────────────────────────────────────────────────────────── */
 async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") {
   if (!imgObjs || imgObjs.length === 0) return;
@@ -3069,17 +3073,8 @@ async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") 
   // 3) If you ran out under the cap (no 4-streak), do nothing—keep all
   // 4) If you hit exactly 140 with no 4-streak, do nothing—keep all
 
-  // 5) Persist only the names (no skipForCharm)
-  try {
-    const slim = userImagesArray.map(({ name }) => ({ name }));
-    localStorage.setItem("userImagesArray", JSON.stringify(slim));
-  } catch (err) {
-    console.warn("localStorage quota exceeded:", err.message);
-  }
-
-  // 6) After analysis completes: refresh alias + persist full pool + re-gate
+  // 5) After analysis completes: refresh alias + re-gate (the tiles stay in memory; no copy in localStorage, see the note at the declaration)
   window.userImagesArray = userImagesArray;
-  try { localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray)); } catch(_){}
   updateSendMatchAvailability();
 
   enableSendMatch();
@@ -3702,8 +3697,7 @@ async function analyzeUserImagesViaOpenAI() {
   /* 🔥 PERMANENTLY delete all “no‑charm” photos from memory */
   userImagesArray = userImagesArray.filter(u => !u.skipForCharm);
 
-  /* --- persist & finish --- */
-  localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
+  /* --- finish --- */
   closeProgressModal();
   M.toast({ html: "User Image Analysis Completed" });
   enableSendMatch();
