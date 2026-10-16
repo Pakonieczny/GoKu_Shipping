@@ -396,6 +396,7 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
       CNListActivity: Activity, CNEngravingSeals: Object.assign({}, Seals, { press: async () => {} }), employeeName: () => 'Paul', needEmployee: async () => { names.push('asked'); return 'Paul'; }, Review: { remove(k) { removed.push(k); } }, goes(j) { moved.push(j.key); }, EG_TAB: () => '',
       agent() {}, render() {}, saveBacks: async j => { saved.push(j.key); }, toast: m => toasts.push(m), humanAct() {}, TL: { rec: ev => events.push(ev) }, SheetEvents: { label: () => 'Sheet 1' }, SIDES: () => Sides,
       items: () => jobsA, jobsOf: () => [...jobsA.values()], fitTasks: new WeakMap(), DECIDED: ['approved', 'written', 'skipped'], isWorking: () => false, lineOf: r => r.parentRow || r, unplacedPre: () => false, virtualJob: () => false,   // (ENGPRE's helpers of the bridge the sliced approval code calls)
+      tabItems: () => [...jobsA.values()], decidedAll: () => [...jobsA.values()].filter(j => ['approved', 'written', 'skipped'].includes(j.state)),   // (MONOUI: the Engrave tab's own lists are the jobs and the monogram lines; here there are no monogram lines)
       queuedJobs: js => js.filter(j => ['review', 'words', 'blocked', 'classify', 'ready', 'fitting'].includes(j.state)), decidedJobs: () => [...jobsA.values()].filter(j => ['approved', 'written', 'skipped'].includes(j.state)), esc: s => String(s) };
     vm.createContext(ctx);
     const rowsHelpers = SOURCE.slice(SOURCE.indexOf('  const ROWS = () =>'), SOURCE.indexOf('  // a draft outlives its card only while'));

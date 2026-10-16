@@ -7862,7 +7862,7 @@ const Engrave = window.Engrave = (() => {
      presentation and navigation only: the jobs, their words, fits, approvals, seals and back files underneath are exactly what they were. ── */
   const ROWS = () => window.CharmNestEngraveRows || null;
   const rowsIn = (selected, universe) => ROWS() ? ROWS().group(selected, universe, { discs: true }) : (selected || []).map(j => ({ key: j.key, lineKey: j.key, jobs: [j], lead: j, pair: false }));
-  const queueUniverse = () => queuedJobs([...items().values()].filter(j => j.row.state !== "gone"));
+  const queueUniverse = () => queuedJobs(tabItems().filter(j => j.row.state !== "gone"));   // (MONOUI: the monogram lines are rows of the tab beside the engraved pieces)
   const earSlot = job => (ROWS() ? ROWS().earOf(job) : null);
   /* DISCCYCLE (10 Oct 2026): the discs of one counted line ("2 Disc", "3 Disc") are ONE row too, cycled disc by disc exactly as the ears of a pair are (group(.., { discs: true })).
      multiJobs(row) = the pieces of a row that holds two or more of one line (a pair's two ears, a counted line's discs), else null; earLineOf(job) = the line a piece belongs to (an ear or a disc). */
@@ -7917,18 +7917,18 @@ const Engrave = window.Engrave = (() => {
      order, never to the first card of some other order: the piece's other face still to settle, else the next piece that is not approved (charm-nest-engrave-guide.js afterApprove, over the order's pieces, charm-nest-engrave-order.js).
      It is decided here, where the next card is chosen, so no render that runs between the approval and its tail can pick another order's card first. Nothing left in the order (or no model on the page): the queue goes on as it always did.
      Only the focus is chosen (the same EG.focus a Back / Next press sets); no write, no read, no wait. */
-  const guideNext = queue => { try { const f = EG.focus && items().get(EG.focus); if (!f || !DECIDED.includes(f.state) || f.row?.state === "gone") return null; const G = window.CharmNestEngraveGuide, to = G && G.afterApprove ? G.afterApprove(f) : null; return (to && to.key && queue.find(j => j.key === to.key)) || null; } catch (e) { console.warn("Engraving guide", e); return null; } };
+  const guideNext = queue => { try { const f = EG.focus && tabItem(EG.focus); if (!f || !DECIDED.includes(f.state) || f.row?.state === "gone") return null; const G = window.CharmNestEngraveGuide, to = G && G.afterApprove ? G.afterApprove(f) : null; return (to && to.key && queue.find(j => j.key === to.key)) || null; } catch (e) { console.warn("Engraving guide", e); return null; } };
   const pickFocus = queue => queue.find(j => j.key === EG.focus) || (EG.focusLine && queue.find(j => earLineOf(j) === EG.focusLine)) || guideNext(queue) || queue[0] || null;
   /* ENGPIECES: what the Placements list shows now, in its own order (the same activity range, search box and sort the tab draws with), so Back / Next never go to a card the list hides. A card asked for BY NAME (a piece switched to,
      the stop Back / Next chose: EG.pin) is shown even when the range or the search would hide it: a piece of an order is never unreachable because of a filter. */
-  const withFocus = q => { const j = EG.pin && EG.pin === EG.focus && !EG.list && EG.tab === "place" && items().get(EG.pin); return j && j.row.state !== "gone" && queuedJobs([j]).length && !q.includes(j) ? [...q, j] : q; };
-  const shownQueue = () => CNListActivity.select("engrave-place", queuedJobs(CNListActivity.select(activityScope(), [...items().values()].filter(j => j.row.state !== "gone")).filter(matchesQ)));
+  const withFocus = q => { const j = EG.pin && EG.pin === EG.focus && !EG.list && EG.tab === "place" && tabItem(EG.pin); return j && j.row.state !== "gone" && queuedJobs([j]).length && !q.includes(j) ? [...q, j] : q; };
+  const shownQueue = () => CNListActivity.select("engrave-place", queuedJobs(CNListActivity.select(activityScope(), tabItems().filter(j => j.row.state !== "gone")).filter(matchesQ)));
   /** What is still to settle, and what is decided, counted in ROWS: the numbers on the tabs and rails say what the lists show. (pendingCount and reviewedCount count jobs and stay as they are for the run's own checks.) */
-  const pendingRows = () => { const p = [...items().values()].filter(j => !j.editingBack && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone"); return rowsIn(p, p).length; };
-  const reviewedRows = () => { const d = decidedJobs(); return rowsIn(d, d).length; };
+  const pendingRows = () => { const p = tabItems().filter(j => !j.editingBack && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone"); return rowsIn(p, p).length; };
+  const reviewedRows = () => { const d = decidedAll(); return rowsIn(d, d).length; };
   /** "N of M · K done" counted in rows: K rows decided, M = those and the rows still queued, N = the one a person is on (the next to settle). */
   const rowCountsOf = qrows => {
-    const d = decidedJobs(), drows = rowsIn(d, d), c = ROWS() ? ROWS().counts(qrows, drows) : { decided: d.length, remaining: qrows.length, n: d.length + 1, of: d.length + qrows.length, text: `${d.length + 1} of ${d.length + qrows.length} · ${d.length} done` };
+    const d = decidedAll(), drows = rowsIn(d, d), c = ROWS() ? ROWS().counts(qrows, drows) : { decided: d.length, remaining: qrows.length, n: d.length + 1, of: d.length + qrows.length, text: `${d.length + 1} of ${d.length + qrows.length} · ${d.length} done` };
     // ENGPIECES: the header's "N of M · K done" counts ORDERS (an order is done only when every one of its pieces is decided; two lines of one order are one count); the tabs' numbers (c.decided, the rows) stay what the lists show
     const E = EO(); if (E && Array.isArray(qrows)) { try { c.text = E.orderCounts(qrows, drows, { queued: queueUniverse().map(ridOfJob) }).text; } catch (_) { /* the row count stands */ } }
     return c;
@@ -7940,6 +7940,7 @@ const Engrave = window.Engrave = (() => {
     const v = document.getElementById("engraveView");
     v?.querySelectorAll(".rvItem").forEach(c => { c._dispose?.(); clearTimeout(c._wordsTimer); c._ro?.disconnect(); });
     EG.card = null; EG.cardKey = null;
+    if (monoDoneW) { try { monoDoneW.destroy(); } catch (_) { /* gone with its row */ } monoDoneW = null; }   // (MONOUI: the widget in an open row of Decided)
   }
   /* ── motion (Paul, 27 Sep 20:09-20:24: nothing a click moves may just vanish or pop up; slow enough to follow). The card
      in front is seen going where its job went: Approve and No engraving send a copy of it up into Decided, which counts
@@ -7949,16 +7950,68 @@ const Engrave = window.Engrave = (() => {
      once, so someone pressing A again and again never waits for any of it (copies still in the air hurry to make way). */
   const MO = () => window.Motion && !Motion.reduced() ? Motion : null;
   const EG_TAB = id => `#engraveView .ordBar .egTab[data-tab="${id}"]`;
-  /* MONOGRAM (charm-nest-monogram-ui.js): made when first asked for, from the page's own parts; without the script the tab is simply never offered */
+  /* MONOGRAM (charm-nest-monogram-ui.js; MONOUI, Paul, 16 Oct 2026: "the monogram options, previews, functionality ... as part of the Engraving Tab ... in place of the currently existing back/front engraving"): a monogram order line is a PIECE of its order
+     like an engraved bar is. It is listed in Placements while it waits for its Approve and in Decided once approved, as a row with the finished charm and its three letters where an engraved piece has its Front and Back, and its
+     detail card holds the monogram widget (CharmNestMonogramUI.mountLine, mode "detail") where an engraved piece's card holds the panel. There is no tab of its own. It is NEVER an Engrave job: nothing is stored, checkpointed
+     or waited on for it; it is a small stand-in object (monoItemsNow) the lists and Back / Next carry, whose state is the widget service's (approved or not), so the order's other pieces, the approve guide and the counters see it. */
   let monoUI = null;
-  const MONO_OFF = { count: () => 0, mount() {}, refresh() {}, rows: () => [] };
-  const MonoUI = () => monoUI || (monoUI = (window.CharmNestMonogramUI && window.CharmNestMonogram && window.CharmNestMonogramUI.make({
-    doc: document, Engine: window.CharmNestMonogram, rows: () => Orders.rows(), skus: () => [...B.master.entries.keys()], Master, Pool, Geom: G, P, CustomSheet: window.CustomSheet,
-    itemOf: row => window.Review && Review.customItemFor ? Review.customItemFor(row.key, row) : null, settings: () => S.settings, saveSettings, toast, CNProgress: window.CNProgress, query: () => EG.q,
-    changed: () => { try { render(); } catch (_) { /* the pane keeps what it drew */ } }
-  })) || MONO_OFF);
-  /** The Review card's Build monogram: this line's card in the Engrave tab's Monograms. */
-  function openMonogram(lineKey) { EG.tab = "mono"; EG.chosen = true; EG.monoFocus = lineKey || null; if (typeof setMode === "function") setMode("engrave"); render(); }
+  const MONO_OFF = { count: () => 0, mount() {}, refresh() {}, rows: () => [], status: () => null, onChange: () => () => {} };
+  const MonoUI = () => {
+    if (monoUI) return monoUI;
+    monoUI = (window.CharmNestMonogramUI && window.CharmNestMonogram && window.CharmNestMonogramUI.make({
+      doc: document, Engine: window.CharmNestMonogram, rows: () => Orders.rows(), skus: () => [...B.master.entries.keys()], Master, Pool, Geom: G, P, CustomSheet: window.CustomSheet,
+      itemOf: row => window.Review && Review.customItemFor ? Review.customItemFor(row.key, row) : null, settings: () => S.settings, saveSettings, toast, CNProgress: window.CNProgress, query: () => EG.q,
+      changed: () => monoMoved()   // (an approval: drawn again a moment later, so the card that was approved is seen going up to Decided first: monoApproved)
+    })) || MONO_OFF;
+    try { if (monoUI.onChange) monoUI.onChange(() => monoMoved()); } catch (_) { /* no news of the monograms: the lists are drawn again with the page's own renders */ }
+    return monoUI;
+  };
+  try { if (window.CharmNestMonogramUI && window.CharmNestMonogramUI.setFactory) window.CharmNestMonogramUI.setFactory(() => MonoUI()); } catch (_) { /* a thumbnail without a service shows its letters only */ }
+  const monoOn = () => { try { return !(window.Recall && Recall.on && Recall.on()); } catch (_) { return true; } };   // (a recalled set shows its own engraving only: its monogram lines are not this run's to approve)
+  let monoDoneW = null;        // the widget of the row that is open in Decided (one at a time)
+  const monoMap = new Map();   // line key -> the stand-in object of that line (kept: the rows and the card are keyed by it)
+  /** The monogram lines as the Engrave lists carry them: [{ key: the line's key, mono: true, row, state: "review" (to approve) | "approved", st: the service's status, lines: [the letters] }]. Never an Engrave job (see above). */
+  function monoItemsNow() {
+    if (!monoOn()) return [];
+    let rows = []; try { rows = MonoUI().rows() || []; } catch (_) { rows = []; }
+    const out = [], live = new Set();
+    for (const row of rows) {
+      if (!row || row.state === "gone") continue;
+      let st = null; try { st = MonoUI().status ? MonoUI().status(row) : null; } catch (_) { st = null; }
+      st = st || { state: "reading", label: "", letters: "", approved: false, sent: false };
+      let m = monoMap.get(row.key); if (!m) { m = { key: row.key, mono: true, slot: null, copies: [] }; monoMap.set(row.key, m); }
+      m.row = row; m.st = st; m.state = st.approved ? "approved" : "review"; m.text = st.letters || ""; m.lines = st.letters ? [st.letters.split("").join(" ")] : [];
+      live.add(row.key); out.push(m);
+    }
+    for (const k of [...monoMap.keys()]) if (!live.has(k)) monoMap.delete(k);
+    return out;
+  }
+  /** The Engrave tab's own lists: the engraving jobs and the monogram lines (every other reader of Engrave's jobs reads items() alone, as before). */
+  const tabItems = () => { const a = [...items().values()], m = monoItemsNow(); return m.length ? a.concat(m) : a; };
+  const tabItem = key => items().get(key) || (key != null && monoItemsNow().find(m => m.key === key)) || null;
+  const decidedAll = () => { const m = monoItemsNow().filter(x => x.state === "approved"); return m.length ? decidedJobs().concat(m) : decidedJobs(); };
+  /** What the order model asks of a line: null (not a monogram line) | "to-approve" | "held" (its letters cannot be read yet, or it is being made) | "approved". */
+  const monoStateOf = row => {
+    const r = row && (row.parentRow || row); if (!r || !r.spec || !r.spec.special || !r.spec.special.monogram || r.state === "gone" || !monoOn()) return null;
+    const m = monoItemsNow().find(x => x.key === r.key); if (!m) return null;
+    return m.st.approved ? "approved" : ["reading", "letters", "building", "error"].includes(m.st.state) ? "held" : "to-approve";
+  };
+  try { if (window.CharmNestEngraveOrder && window.CharmNestEngraveOrder.useMonogram) window.CharmNestEngraveOrder.useMonogram(monoStateOf); } catch (_) { /* the order model counts engraved pieces only */ }
+  let monoTimer = 0;
+  /** The service says a monogram changed (made, edited, approved): the Engrave tab's counts, rows and card are brought up to date at the next frame; a card is never rebuilt for it (renderView keeps it). */
+  function monoMoved() {
+    if (monoTimer) return;
+    monoTimer = setTimeout(() => { monoTimer = 0; const v = document.getElementById("engraveView"); if (v && !v.classList.contains("hidden")) { try { render(); } catch (_) { /* kept */ } } else { try { LiveStrip.render(); } catch (_) { /* kept */ } } }, 60);
+  }
+  /** Open one monogram line in the Engrave tab (the Review card's "Build monogram", the order window, the guide): its detail card in Placements while it waits, its row opened in Decided once approved. */
+  function openMonogram(lineKey) {
+    const m = monoItemsNow().find(x => x.key === lineKey); EG.chosen = true; EG.list = false;
+    if (m && m.state === "approved") Object.assign(EG, { tab: "done", openDone: m.key, focus: null, pin: null });
+    else Object.assign(EG, { tab: "place", focus: lineKey || null, pin: lineKey || null, openDone: null });
+    EG.card = null; EG.cardKey = null;
+    if (typeof setMode === "function") setMode("engrave");
+    render();
+  }
   const ENTER = { slide: { ms: 640, delay: 90 }, fade: { ms: 420, delay: 40 }, grow: { ms: 620, delay: 0 } };
   let outgoing = null, unlaunched = null, entering = null, growsFrom = null;
   const inAir = new Set();
@@ -7976,6 +8029,15 @@ const Engrave = window.Engrave = (() => {
     o = o || {}; const E = EO(); if (!E) return false;
     rid = String(rid == null ? "" : rid);
     const P = E.piecesOf(rid, { rows: orderRowsOf(rid), isWorking, seen: isShown }).find(p => p.pieceKey === pieceKey); if (!P) return false;
+    if (P.kind === "monogram") {   // (MONOUI: a monogram piece is not an Engrave job: its card in Placements while it waits, its row opened in Decided once approved)
+      const m = monoItemsNow().find(x => x.key === P.lineKey); if (!m) return false;
+      if (m.state === "approved") Object.assign(EG, { tab: "done", openDone: m.key, focus: null, pin: null, list: false, chosen: true });
+      else {
+        const here = EG.cardKey && tabItem(EG.cardKey); if (here && here !== m && o.card && o.card === EG.card) goes(here, { enter: "fade", quick: true }, o.card);
+        Object.assign(EG, { tab: "place", focus: m.key, pin: m.key, openDone: null, list: false, chosen: true });
+      }
+      EG.card = null; EG.cardKey = null; render(); return true;
+    }
     const job = E.jobOf(P, face);
     if (!job) { const line = P.piece && P.piece.row; if (line && !o.retried) Promise.resolve(early(line)).then(() => openPiece(rid, pieceKey, face, Object.assign({}, o, { retried: true }))).catch(() => {}); return false; }
     if (items().get(job.key) !== job || job.row.state === "gone") return false;
@@ -8054,7 +8116,7 @@ const Engrave = window.Engrave = (() => {
   function showDecided(key) {
     const v = document.getElementById("engraveView"); if (v && v.classList.contains("hidden") && typeof setMode === "function") setMode("engrave");
     EG.tab = "done"; EG.chosen = true; EG.openDone = key;
-    const i = rowsIn(decidedOrder(), decidedJobs()).findIndex(r => r.jobs.some(j => j.key === key)); if (i >= doneLimit) doneLimit = i + 1;
+    const i = rowsIn(decidedOrder(), decidedAll()).findIndex(r => r.jobs.some(j => j.key === key)); if (i >= doneLimit) doneLimit = i + 1;
     render();
     const rw = doneRowOf(key); if (rw) { rw.scrollIntoView({ block: "nearest", behavior: "smooth" }); mark(rw); }
   }
@@ -8071,7 +8133,7 @@ const Engrave = window.Engrave = (() => {
     ? (canFit(job) ? `Preparing this ${facedJob(job) ? faceWord(job) + " " : ""}engraving preview…` : "Waiting for this charm’s sheet and outline. Its preview will resume when they are ready.")
     : OPENREAD.includes(job.state) && (preparingNow(job) || readsFree(job)) ? `Preparing this ${facedJob(job) ? faceWord(job) + " " : ""}engraving preview…`   // (a job that is being read, or that the press has just started: never "stopped")
     : job.state === "classify" ? (panel ? "Processing stopped before these words were read." : "Processing stopped before these words were read. Confirm the inscription below or resume the run.") : `the ${facedJob(job) ? faceWord(job) + " " : ""}words need a decision`;
-  const matchesQ = j => { const q = (EG.q || "").trim().toLowerCase(); if (!q) return true; return [j.row.order.receiptId, j.row.spec && j.row.spec.designSku, j.row.line.sku, j.text, (j.lines || []).join(" "), j.row.line.title, j.slot && SIDES() ? SIDES().slotWord(j) : "", lineHasFront(j.row) ? faceNoun(faceOfJob(j)) : ""].some(x => String(x || "").toLowerCase().includes(q)); };
+  const matchesQ = j => { const q = (EG.q || "").trim().toLowerCase(); if (!q) return true; return [j.row.order.receiptId, j.row.spec && j.row.spec.designSku, j.row.line.sku, j.text, (j.lines || []).join(" "), j.row.line.title, j.slot && SIDES() ? SIDES().slotWord(j) : "", lineHasFront(j.row) ? faceNoun(faceOfJob(j)) : "", j.mono ? "monogram" : ""].some(x => String(x || "").toLowerCase().includes(q)); };
   /** Which run's engraving this is. A tab that showed a queue and no run left nobody able to say whose queue it was. */
   function runWord() {
     // a recalled set names itself, even while a finished run is still remembered underneath
@@ -8101,18 +8163,18 @@ const Engrave = window.Engrave = (() => {
     activityTools(v);
     renderWorking(v, jobs);
     const qrows = rowsIn(queue, queueUniverse()), counts = rowCountsOf(qrows);
-    const n = { place: qrows.length, done: counts.decided, mono: MonoUI().count() };
+    const n = { place: qrows.length, done: counts.decided };
     v.querySelectorAll(".egTab[data-tab]").forEach(b => {
       const k = n[b.dataset.tab]; let t = b.querySelector("b");
       if (!k) { if (t) t.remove(); return; }
-      if (!t) { t = el("b", b.dataset.tab === "words" ? "warn" : b.dataset.tab === "place" || b.dataset.tab === "mono" ? "info" : "ok"); b.appendChild(t); }
+      if (!t) { t = el("b", b.dataset.tab === "words" ? "warn" : b.dataset.tab === "place" ? "info" : "ok"); b.appendChild(t); }
       t.textContent = String(k);
     });
     const rail = v.querySelector("#egNext"); if (!rail) return;
     const rest = queue.filter(j2 => j2.key !== EG.cardKey);
     rail.innerHTML = "";
     rail.querySelectorAll(".egChip").forEach(b => b.onclick = () => { EG.focus = b.dataset.key; render(); });
-    const card = EG.card; if (card) { const kind = card.querySelector(".rh .kind"); if (kind) kind.textContent = counts.text; card._stripSync?.(); }
+    const card = EG.card; if (card) { const kind = card.querySelector(".rh .kind"); if (kind) kind.textContent = counts.text; card._stripSync?.(); card._sync?.(); }   // (_sync: a monogram card follows its letters)
   }
   // Keyed rows keep decoded thumbnails, focus and scroll position while each
   // classifier/worker result arrives. Navigation away also retains the cache.
@@ -8164,8 +8226,10 @@ const Engrave = window.Engrave = (() => {
    *  (the line's row: both vectors side by side, the Etsy photo), its words and state are told ear by ear, and a click opens the editor on the first ear still to settle. */
   function renderPlacementRows(list, queue) {
     if(placementQuery!==EG.q+CNListActivity.key("engrave-place")){placementLimit=40;placementQuery=EG.q+CNListActivity.key("engrave-place");}
-    const rows = rowsIn(queue, queueUniverse());
+    let rows = rowsIn(queue, queueUniverse());
+    if (rows.some(r => r.lead && r.lead.mono) && EO()) rows = EO().groupRows(rows, { lineIndex: lineIndexFn() });   // (MONOUI: an order with a monogram piece keeps all its rows together, in its line order, as Back / Next walk them)
     const shown = rows.slice(0,placementLimit), nodes = shown.map(grp => quietRow(grp, () => {
+      if (grp.lead && grp.lead.mono) return monoPlacementRow(grp);
       // (faced: the line has a front job, so each job is told by its piece AND its face, in the row's one list of what is engraved; a back-only line is not faced and draws what it always drew)
       const job = grp.lead, ears = !!multiJobs(grp), faced = facedGrp(grp), told = ears || faced, mode = faced ? faceModeOf(job.row) : null, sig = grp.jobs.map(j => j.key).join(" "), line = told ? lineOf(job.row) : job.row;
       let row = placementRows.get(job);
@@ -8203,9 +8267,9 @@ const Engrave = window.Engrave = (() => {
        needing no engraving, its order gone); the rows under it glide up into the gap, and one that arrives opens its
        room. A new search is another list, drawn as it is. */
     const same = list._egQ === EG.q; list._egQ = EG.q;
-    if (window.Motion) Motion.reconcile(list, nodes, { animate: same, clip: list, leave: mk => { const j = items().get(String(mk).slice(3)); return j && DECIDED.includes(j.state) ? { to: EG_TAB("done") } : null; } });
+    if (window.Motion) Motion.reconcile(list, nodes, { animate: same, clip: list, leave: mk => { const j = tabItem(String(mk).slice(3)); return j && DECIDED.includes(j.state) ? { to: EG_TAB("done") } : null; } });
     else { nodes.forEach((row, i) => { if (list.children[i] !== row) list.insertBefore(row, list.children[i] || null); }); const keep = new Set(nodes); [...list.children].forEach(row => { if (!keep.has(row)) row.remove(); }); }
-    shown.forEach((grp, i) => { try { ListMedia.mount(nodes[i], multiJobs(grp) || facedGrp(grp) ? lineOf(grp.lead.row) : grp.lead.row); } catch (e) { console.warn("Engrave list: a row's pictures", e); } });
+    shown.forEach((grp, i) => { if (grp.lead && grp.lead.mono) { monoFill(nodes[i]); return; } try { ListMedia.mount(nodes[i], multiJobs(grp) || facedGrp(grp) ? lineOf(grp.lead.row) : grp.lead.row); } catch (e) { console.warn("Engrave list: a row's pictures", e); } });
     ListMedia.more(list,rows.length,Math.min(placementLimit,rows.length),()=>{placementLimit+=40;render();});
     noRows(list, rows.length);
     watchTitles(list);
@@ -8298,7 +8362,7 @@ const Engrave = window.Engrave = (() => {
   }
   const activityScope = () => EG.tab === "done" ? "engrave-done" : "engrave-place";
   function activityTools(v) { CNListActivity.mount(v.querySelector(".ordBar"), activityScope(), () => { EG.focus=null; render(); }); }
-  const decidedOrder = () => CNListActivity.select("engrave-done", decidedJobs().filter(matchesQ));
+  const decidedOrder = () => CNListActivity.select("engrave-done", decidedAll().filter(matchesQ));
   function renderView() {
     if([...items().values()].some(j=>j.stamping || j.approvalPreparing))return;
     LiveStrip.render();
@@ -8312,7 +8376,7 @@ const Engrave = window.Engrave = (() => {
     // a background fit finishing must not tear down the card someone is judging: when nothing about what this pane holds
     // has changed, only the counts and the rail are brought up to date
     if (EG.card && EG.card.isConnected && EG.card.dataset.state === "review" && !EG.card._previewFailed && EG.tab === "place") {
-      const q2 = withFocus(CNListActivity.select("engrave-place",queuedJobs([...items().values()].filter(j => j.row.state !== "gone")).filter(matchesQ)));
+      const q2 = withFocus(CNListActivity.select("engrave-place",queuedJobs(tabItems().filter(j => j.row.state !== "gone")).filter(matchesQ)));
       const f2 = pickFocus(q2);
       // APPRFIX-B: kept only while it is still the card of the job that is in the list AND that job still waits for approval: a card drawn in review whose job left review (words the font cannot engrave, an order changed on Etsy,
       // a refit) or was replaced by another object under the same key stayed on screen with a live Approve that cardAction / approveOnce dropped without a word. Drawn again, it says what the placement is now.
@@ -8322,7 +8386,7 @@ const Engrave = window.Engrave = (() => {
         if (headSig(pcs) === (EG.card._headSig || "")) { EG.card._switchSync?.(pcs); renderChrome(v, q2); return; }
       }
     }
-    const jobs = CNListActivity.select(activityScope(), [...items().values()].filter(j => j.row.state !== "gone"));
+    const jobs = CNListActivity.select(activityScope(), tabItems().filter(j => j.row.state !== "gone"));   // (MONOUI: the monogram lines are rows of the lists beside the engraved pieces)
     // the words to settle and the placements to approve are one queue, one card each: the card carries the words as an
     // editable field, so nothing needs a second tab
     const words = jobs.filter(matchesQ).filter(j => j.state === "words" || j.state === "blocked"), queue = withFocus(CNListActivity.select("engrave-place",queuedJobs(jobs.filter(matchesQ)))), done = jobs.filter(matchesQ).filter(j => ["approved", "written", "skipped"].includes(j.state));
@@ -8331,18 +8395,20 @@ const Engrave = window.Engrave = (() => {
     // Until a person picks a tab, the screen follows the work: it used to settle on Decided while the run was still
     // classifying and then stay there as placements arrived behind it, so someone watching this tab saw an empty pane
     // and no sign that anything was waiting. Once a tab is picked by hand it stays picked, empty or not.
-    const monoN = MonoUI().count();   // (MONOGRAM: the monogram lines waiting, a tab of their own beside Placements and Decided)
-    if (!EG.tab || !EG.chosen || EG.tab === "words") EG.tab = queue.length ? "place" : monoN ? "mono" : "done";
-    if (EG.tab === "mono" && !monoN && !EG.monoFocus) EG.tab = queue.length ? "place" : "done";
+    if (EG.tab === "mono") EG.tab = "place";   // (MONOUI: there is no Monograms tab: a monogram line is a piece in Placements and Decided; an older saved view lands in Placements)
+    if (!EG.tab || !EG.chosen || EG.tab === "words") EG.tab = queue.length ? "place" : "done";
     if (EG.list == null && jobs.some(isWorking)) EG.list = true;
     const tab = EG.tab;
-    // the Monograms pane is built once and kept while a person types in it: a rebuild would take the caret from a letter box
-    if (tab === "mono" && v.dataset.egTab === "mono" && v.querySelector("#egMono .moPane")) { try { MonoUI().refresh({ focus: EG.monoFocus }); } catch (err) { console.warn("Monograms", err); } EG.monoFocus = null; renderChrome(v, queue); return; }
+    // MONOUI: the monogram card is kept while its piece is the one in front and still to approve: the widget paints itself, and a rebuild would take the caret from a letter box
+    if (tab === "place" && !EG.list && v.dataset.egTab === "place" && EG.card && EG.card.isConnected && EG.card.dataset.mono) {
+      const f3 = pickFocus(queue);
+      if (f3 && f3.mono && f3.key === EG.cardKey && f3 === EG.card._job) { EG.card._sync?.(); renderChrome(v, queue); return; }
+    }
     const focus = pickFocus(queue);
     // the queue and the decided list in ROWS (the Left and the Right job of an earring line are one row): the badges, the empty message and the card's counter count these
     const qrows = rowsIn(queue, queueUniverse()), doneRows = rowsIn(done, jobs.filter(j => DECIDED.includes(j.state))), counts = rowCountsOf(qrows);
     if(doneQuery!==EG.q+CNListActivity.key(activityScope())){doneLimit=40;doneQuery=EG.q+CNListActivity.key(activityScope());}
-    const doneStamp=tab === "done" ? JSON.stringify([EG.q,CNListActivity.key(activityScope()),EG.openDone,doneLimit,done.map(j=>[j.key,j.state,j.lines,j.approvedAt,j.approvedBy,j.backs,j.backPending,O.purchaseDetails(j.row.line,j.row.spec)])]) : null;
+    const doneStamp=tab === "done" ? JSON.stringify([EG.q,CNListActivity.key(activityScope()),EG.openDone,doneLimit,done.map(j=>j.mono ? [j.key,j.state,!!(j.st && j.st.sent),O.purchaseDetails(j.row.line,j.row.spec)] : [j.key,j.state,j.lines,j.approvedAt,j.approvedBy,j.backs,j.backPending,O.purchaseDetails(j.row.line,j.row.spec)])]) : null;
     if(tab === "done" && v.dataset.egTab === "done" && v._doneStamp === doneStamp && v.querySelector('#egBacks')) {renderChrome(v,queue);return;}
     v._doneStamp=doneStamp;
     const liveList = v.querySelector('.egPlacementList');
@@ -8360,15 +8426,13 @@ const Engrave = window.Engrave = (() => {
     const out = copyOutgoing();                      // the card in front that is going, copied where it stands (launch, below)
     disposeCards();
     v.innerHTML = `<div class="ordBar egBar">
-        <span class="controlGroup">${tabBtn("place", "Placements", qrows.length, "info")}${tabBtn("done", "Decided", doneRows.length, "ok")}${monoN || tab === "mono" ? tabBtn("mono", "Monograms", monoN, "info") : ""}
+        <span class="controlGroup">${tabBtn("place", "Placements", qrows.length, "info")}${tabBtn("done", "Decided", doneRows.length, "ok")}
         <span data-eg-working hidden></span>
         </span><span class="controlGroup egSearchGroup"><input class="ordSearch" id="egQ" placeholder="order, SKU, words…" value="${esc(EG.q || "")}" title="search the placements, the words and what has been decided by order number, SKU or the engraved words"></span>
         </div>
       <div class="egPane grow"${tab === "place" ? "" : " hidden"}><div class="rvList" id="egQueue"></div>
         <div class="egNext" id="egNext"></div></div>
-      <div class="egPane grow scroll"${tab === "done" ? "" : " hidden"}><div id="egBacks"></div></div>
-      <div class="egPane grow scroll" id="egMono"${tab === "mono" ? "" : " hidden"}></div>`;
-    if (tab === "mono") { try { MonoUI().mount(v.querySelector("#egMono"), { focus: EG.monoFocus }); } catch (err) { console.warn("Monograms", err); } EG.monoFocus = null; }
+      <div class="egPane grow scroll"${tab === "done" ? "" : " hidden"}><div id="egBacks"></div></div>`;
     activityTools(v);
     renderWorking(v, jobs);
     // a tab pressed shows what it holds softly (a quick fade), rather than at a blink
@@ -8384,7 +8448,7 @@ const Engrave = window.Engrave = (() => {
       else if (focus) {
         const grp = qrows.find(r2 => r2.jobs.includes(focus));
         EG.focusLine = earLineOf(focus);
-        const c = placementCard(focus, qrows.length, { counts, ears: multiJobs(grp) }); c.classList.add("full"); q.appendChild(c); EG.card = c; EG.cardKey = focus.key; cardShown(c);
+        const c = focus.mono ? monogramCard(focus, qrows.length, { counts }) : placementCard(focus, qrows.length, { counts, ears: multiJobs(grp) }); c.classList.add("full"); q.appendChild(c); EG.card = c; EG.cardKey = focus.key; cardShown(c);
         const ta = typing && typing.key === focus.key && c.querySelector('[data-f="words"]');
         if (ta) { const n = ta.value.length; ta.focus({ preventScroll: true }); ta.setSelectionRange(Math.min(typing.start, n), Math.min(typing.end, n)); }
       }
@@ -8397,7 +8461,8 @@ const Engrave = window.Engrave = (() => {
     }
     if (tab === "done") {
       const bk = v.querySelector("#egBacks");
-      const decided = rowsIn(decidedOrder(), decidedJobs());   // (ROWS: the Left and the Right job of one earring line are one row; any other job is a row of its own)
+      let decided = rowsIn(decidedOrder(), decidedAll());   // (ROWS: the Left and the Right job of one earring line are one row; any other job is a row of its own)
+      if (decided.some(r => r.lead && r.lead.mono) && EO()) decided = EO().groupRows(decided, { lineIndex: lineIndexFn() });   // (MONOUI: as the Placements list)
       const stateWord = j2 => j2.state === "written" ? "Saved to sheet" : j2.state === "skipped" ? "No engraving" : j2.backPending ? `Approved · ${faceNoun(faceOfJob(j2))} file waits for the cloud` : "Approved";
       const stateWhy = j2 => { const fw = faceNoun(faceOfJob(j2)); return j2.state === "written" ? `the ${fw} file is saved with the sheet` : j2.state === "skipped" ? `cut plain, nothing on the ${fw}` : j2.backPending ? `approved — the ${fw} file is written when the cloud answers again (` + esc(j2.backPending) + ")" : `approved — the ${fw} file is written when the sheet is`; };
       const fmtT = t => t ? new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
@@ -8425,6 +8490,7 @@ const Engrave = window.Engrave = (() => {
          The separate "back files written" grid said the same things a second time, smaller, and is gone. */
       bk.innerHTML = decided.length
         ? `<div class="section" style="margin-top:2px">Decided · ${decided.length}</div><div class="rvList" id="egDone">` + decided.slice(0,doneLimit).map(grp => quietDone(grp, () => {
+            if (grp.lead && grp.lead.mono) return monoDoneRow(grp.lead, EG.openDone === grp.lead.key, saidOfDone(grp.lead.row));
             // (faced: the line has a front job; its decided jobs are told one by one, each with its face, its seals and its own Reopen, in ONE row)
             const j2 = grp.lead, faced = facedGrp(grp), ears = !!multiJobs(grp) || faced, line = ears ? lineOf(j2.row) : j2.row;
             const open = grp.jobs.some(j => EG.openDone === j.key);
@@ -8438,14 +8504,19 @@ const Engrave = window.Engrave = (() => {
           })).join("") + `</div>`
         : `<div class="libEmpty">${EG.q && String(EG.q).trim() ? `<b>Nothing decided matches “${esc(String(EG.q).trim())}”.</b>` : window.Recall && Recall.on() ? "Nothing in this set was engraved." : "nothing decided yet"}</div>`;
       bk.querySelectorAll(".doneRow").forEach(rw => {
-        const cacheKey=rw.dataset.ears||rw.dataset.key,kept=donePairs.get(cacheKey),fresh=rw.querySelector(".comparePair");
+        const isMono = rw.dataset.kind === "monogram", cacheKey=rw.dataset.ears||rw.dataset.key,kept=isMono?null:donePairs.get(cacheKey),fresh=isMono?null:rw.querySelector(".comparePair");
         if(kept&&fresh&&!kept.isConnected)fresh.replaceWith(kept);
-        const pair=rw.querySelector(".comparePair");if(pair){donePairs.delete(cacheKey);donePairs.set(cacheKey,pair);}
+        const pair=isMono?null:rw.querySelector(".comparePair");if(pair){donePairs.delete(cacheKey);donePairs.set(cacheKey,pair);}
         const toggle=()=>{EG.openDone=(rw.dataset.ears||rw.dataset.key).split(" ").includes(EG.openDone)?null:rw.dataset.key;render();};
         rw.addEventListener("click",e=>{if(!e.target.closest("button, a, [role=button], .doneDetail"))toggle();});
         rw.addEventListener("keydown",e=>{if(e.target===rw && (e.key==="Enter" || e.key===" ")){e.preventDefault();toggle();}});
+        if(isMono)return;   // (MONOUI: a monogram row's picture is the service's own thumbnail, filled below)
         const j0=items().get(rw.dataset.key);ListMedia.mount(rw,j0?.row && rw.dataset.pair==="1" ? lineOf(j0.row) : j0?.row);
       });
+      // MONOUI: the monograms of Decided: their thumbnails, and the widget in the row that is open (Change)
+      monoFill(bk);
+      bk.querySelectorAll("[data-a=monoChange]").forEach(b => b.onclick = e => { e.stopPropagation(); EG.openDone = b.closest(".doneRow").dataset.key; render(); });
+      { const mr = bk.querySelector('.doneRow.open[data-kind="monogram"]'), mh = mr && mr.querySelector(".egMonoHost"), mm = mr && tabItem(mr.dataset.key); if (mh && mm && mm.mono) { monoDoneW = monoMount(mh, mm, null); } }
       if(donePairs.size>400)for(const [k,p] of donePairs){if(donePairs.size<=400)break;if(!p.isConnected)donePairs.delete(k);}
       bk.closest(".egPane.scroll").scrollTop=oldDoneScroll;
       watchTitles(bk);
@@ -8477,6 +8548,106 @@ const Engrave = window.Engrave = (() => {
       });
     }
     if (out) launch(out);
+  }
+  /* ═══ MONOUI: a monogram piece in the Engrave lists and its detail card ═══
+     The row of Placements / Decided shows the finished charm (the service's own thumbnail: the cut piece in the line's metal, its three letters until it is made) where an engraved piece shows its Front and Back; the detail card holds the
+     widget (mode "detail") where an engraved piece's card holds the panel and the work area. Everything else about the card is the engraved piece's own: the counter, Back / Next, the strip of the order's pieces, Open order, the guide's
+     one line, the buyer's words, the messages. The Approve is the widget's own; when it is done the card goes up to Decided like an approved placement and the detail goes on to what is left of the same order (guideNext). */
+  const MU = () => window.CharmNestMonogramUI || null;
+  const monoThumb = (row, px) => { try { return MU() && MU().thumbHtml ? MU().thumbHtml(row, { px }) : ""; } catch (_) { return ""; } };
+  const monoFill = scope => { try { if (scope && MU() && MU().fillThumbs) MU().fillThumbs(scope); } catch (_) { /* the letters stay */ } };
+  const letterWord = m => (m.st && m.st.letters ? m.st.letters.split("").join(" ") : "");
+  /** The widget in a host (the card's, or an open row of Decided). `card`: the Placements card it is in (null in Decided): its approval makes the card go up to Decided. */
+  function monoMount(host, m, card) {
+    const U = MU(); if (!U || !U.mountLine) { host.innerHTML = `<div class="libEmpty">The monogram editor did not load. Reload the page.</div>`; return null; }
+    let w = null; try { w = U.mountLine(host, { rid: String(lineOf(m.row).order.receiptId), lineKey: m.key, row: m.row, mode: "detail", sheetLink: true, onApproved: () => monoApproved(m, card) }); } catch (e) { console.warn("Monogram widget", e); }
+    if (!w) host.innerHTML = `<div class="libEmpty">This line's letters could not be opened as a monogram.</div>`;
+    return w;
+  }
+  /** The widget approved the design: the card in front goes up to Decided and the detail goes on to what is left of the order (guideNext, at the render); in Decided the list is drawn again. */
+  function monoApproved(m, card) {
+    if (card && card.isConnected && EG.card === card && EG.cardKey === m.key) { goes(m, { to: EG_TAB("done") }, card); EG.focus = m.key; EG.pin = null; EG.list = false; }
+    const v = document.getElementById("engraveView"); if (v) v._doneStamp = null;
+    render();
+  }
+  /** The row of the Placements list for a monogram piece. Kept by its stand-in object, drawn again in place (the thumbnail, the stage word and the options line follow the service). */
+  function monoPlacementRow(grp) {
+    const m = grp.lead, line = lineOf(m.row), receipt = String(line.order.receiptId);
+    let row = placementRows.get(m);
+    if (!row) {
+      row = el("div", "doneRow placementRow hoverItem egMonoRow"); row.setAttribute("role", "button"); row.tabIndex = 0;
+      row.dataset.kind = "monogram"; row.dataset.testid = "eg-mono-row"; row.dataset.open = m.key; row.dataset.mkey = "eg:" + m.key;
+      row.innerHTML = `<div class="egMonoMedia" data-testid="eg-mono-thumb">${monoThumb(m.row, 120)}</div><div class="engravingIdentity"><span class="queueLabel">Monogram</span><div class="engravingOrder"><b class="mono" data-order></b><span class="sku mono"></span><span class="mailSlot" hidden></span><span class="teamSlot" hidden></span></div><span class="purchaseLabel">The letters</span><span class="w egMonoLetters" data-mono-letters></span><span class="dim" data-stage></span></div><div class="purchaseSummary" data-purchase></div>`;
+      const open = () => { const lg = MO() && listCopy(row); if (lg) growsFrom = { key: m.key, rect: row.getBoundingClientRect(), until: Date.now() + 3000 }; EG.focus = m.key; EG.list = false; render(); if (lg) lg.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, easing: "ease-out", fill: "forwards" }).finished.catch(() => {}).then(() => lg.remove()); };
+      row.onclick = e => { if (!e.target.closest("a,button")) open(); };
+      row.onkeydown = e => { if (e.target === row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); open(); } };
+      placementRows.set(m, row);
+    }
+    row._grp = grp;
+    const set = (sel, v) => { const n = row.querySelector(sel); if (n && n.textContent !== v) n.textContent = v; };
+    const letters = letterWord(m), busy = ["reading", "building"].includes(m.st.state);
+    row.dataset.rid = receipt; row.dataset.state = m.st.state; row.setAttribute("aria-busy", String(busy)); row.setAttribute("aria-label", `Open the monogram of order ${receipt}${letters ? " · " + letters : ""}`);
+    set("[data-order]", receipt); set(".sku", String((line.line && line.line.sku) || "")); set("[data-mono-letters]", letters || "Letters to confirm");
+    const st = row.querySelector("[data-stage]"); if (st) { if (st.textContent !== (m.st.label || "")) st.textContent = m.st.label || ""; const sk = busy ? "busy" : m.st.state; if (st.dataset.s !== sk) st.dataset.s = sk; }
+    if (window.CustomerMail?.slot) CustomerMail.slot(row.querySelector(".mailSlot"), receipt);
+    window.TeamMail?.slot(row.querySelector(".teamSlot"), line);
+    const purchase = purchaseMarkup(line); if (row._purchase !== purchase) { row.querySelector("[data-purchase]").innerHTML = purchase; row._purchase = purchase; }
+    return row;
+  }
+  /** The row of the Decided list for an approved monogram (a string, as the other rows are); open: the widget under it. */
+  function monoDoneRow(m, open, said) {
+    const line = lineOf(m.row), rid = String(line.order.receiptId), st = m.st, letters = letterWord(m);
+    return `<div class="doneRow decidedRow hoverItem egMonoRow${open ? " open" : ""}" tabindex="0" aria-expanded="${open}" data-kind="monogram" data-testid="eg-mono-done-row" data-rid="${esc(rid)}" data-key="${esc(m.key)}" title="View the monogram"><div class="egMonoMedia" data-testid="eg-mono-thumb">${monoThumb(m.row, 120)}</div><div class="engravingIdentity"><span class="queueLabel">Monogram · decided</span><div class="engravingOrder"><b class="mono">${esc(rid)}</b><span class="sku mono">${esc((line.line && line.line.sku) || "")}</span></div><span class="purchaseLabel">The letters</span><span class="w egMonoLetters">${esc(letters || "—")}</span></div><div class="purchaseSummary">${purchaseMarkup(line)}</div><div class="decisionActions"><div class="decisionStatus"><span class="ost ok" title="${st.sent ? "the monogram is on a sheet already" : "the monogram is on the order's designs: set its metal and send it to a sheet"}">${st.sent ? "On the sheets" : "Approved"}</span></div>${open ? "" : `<button class="btn ghost sm" data-a="monoChange" title="${st.sent ? "Open the monogram" : "Open the monogram: change its letters or its metal"}">${st.sent ? "Open" : "Change"}</button>`}</div>${open ? `<div class="doneDetail egMonoDetail"><div class="egMonoHost" data-testid="eg-mono-host"></div>${said || ""}</div>` : ""}</div>`;
+  }
+  /** Back / Next from a monogram card: the same stops as from an engraved piece's card (every piece of the order, in its line order, before the next order). */
+  function monoStep(m, dir) {
+    if (!ROWS()) return null;
+    const vis = new Set(EO() ? withFocus(shownQueue()) : []), rid0 = ridOfJob(m), sel = queuedJobs(tabItems().filter(j2 => j2.row.state !== "gone" && (vis.has(j2) || ridOfJob(j2) === rid0))), all = rowsIn(sel, queueUniverse()), rows = EO() ? EO().groupRows(all, { lineIndex: lineIndexFn() }) : all;
+    const here = rows.find(r2 => r2.jobs.includes(m)), tgt = ROWS().step(rows, m.key, dir);
+    return tgt ? (tgt.job || (tgt.row === here ? m : ROWS().openLead(tgt.row, isWorking))) : null;
+  }
+  /** The detail card of a monogram piece: the engraved piece's own head (counter, Back / Next, order number, the strip of the order's pieces, Open order, close), the guide's line, then the widget and the buyer's messages. */
+  function monogramCard(m, remaining, ctx) {
+    const r = m.row, line = lineOf(r), sp = line.spec || {}, rid = String(line.order.receiptId), counts = (ctx && ctx.counts) || rowCountsOf({ length: remaining });
+    const card = el("div", "rvItem egMonoCard"); card.dataset.kind = "placement"; card.dataset.mono = "1"; card.dataset.testid = "eg-mono-card"; card.dataset.state = m.state; card.dataset.key = m.key; card.dataset.rid = rid; card.tabIndex = 0; card._job = m; card._headSig = "";
+    const said = window.CharmNestEngraveSaid ? CharmNestEngraveSaid.html(r) : "";
+    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this piece's place in the queue · how many orders are decided">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(rid)}</span><span class="sub" data-mono-sub></span>${window.OrderWin && /^\d+$/.test(rid) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
+      <div class="egGuide" hidden></div>
+      <div class="placeView egMonoView"><div class="pvMain">${said}<div class="egMonoHost" data-testid="eg-mono-host"></div></div><section class="pvMail"></section></div>`;
+    try { window.CharmNestEngraveGuide?.mount(card, rid, m.key); } catch (_) { /* no guide line */ }
+    const sub = () => { const t = ["Monogram", letterWord(m), sp.size].filter(Boolean).join(" · "), n = card.querySelector("[data-mono-sub]"); if (n && n.textContent !== t) n.textContent = t; };
+    sub();
+    cardMessages(card, m);
+    const w = monoMount(card.querySelector(".egMonoHost"), m, card);
+    card._sync = () => { if (card.dataset.state !== m.state) card.dataset.state = m.state; sub(); card._stripSync(); };
+    card._dispose = () => { if (w) { try { w.destroy(); } catch (_) { /* gone with the card */ } } };
+    card._stripSync = () => {
+      const E = EO(), host = card.querySelector(".reviewIdentity"); if (!E || !host) return;
+      const ps = orderRowsOf(rid).length >= 2 ? orderPiecesOf(m) || [] : [], on = ps.length >= 2 && new Set(ps.map(p => p.lineKey)).size >= 2 && ps.some(p => p.pieceKey === m.key), html = on ? E.stripHtml(ps, m.key, {}) : "";
+      if (card._stripHtml === html) return; card._stripHtml = html;
+      host.querySelector(".egPcStrip")?.remove(); if (!on) return;
+      for (const [a, t] of [["prev", "the previous piece of this order (then the order before it)"], ["next", "the next piece of this order (then the next order)"]]) { const bt = card.querySelector(`.rh [data-a="${a}"]`); if (bt) bt.title = t; }
+      const open = host.querySelector("[data-open-order]"); if (open) open.insertAdjacentHTML("beforebegin", html); else host.insertAdjacentHTML("beforeend", html);
+      host.querySelectorAll(".egPcTab").forEach(b => { b.onclick = () => monoAction("piece", b); });
+    };
+    card._stripSync();
+    const monoAction = (a, b, noGuard) => {
+      if (EG.card !== card || tabItem(m.key) !== m) return;
+      if (a === "piece") { const to = b && b.dataset.piece; if (to && to !== m.key) openPiece(rid, to, undefined, { card }); }
+      else if (a === "close") {
+        if (!noGuard && leaveGuard(m, () => monoAction("close", b, true))) return;   // (the guide: pieces of this order still to approve are said before the detail is left)
+        goes(m, { row: true }, card); EG.list = true; EG.card = null; EG.cardKey = null; render();
+      } else if (a === "prev" || a === "next") {
+        const j3 = monoStep(m, a === "next" ? 1 : -1);
+        if (j3) { const go = () => { if (j3.key !== m.key) goes(m, { enter: "fade", quick: true }, card); EG.focus = j3.key; EG.pin = j3.key; EG.card = null; EG.cardKey = null; render(); }; if (!noGuard && ridOfJob(j3) !== rid && leaveGuard(m, go)) return; go(); }
+      }
+    };
+    card.querySelectorAll("[data-a]").forEach(b => { b.onclick = () => monoAction(b.dataset.a, b); });
+    const oo = card.querySelector("[data-open-order]"); if (oo) oo.onclick = e => { e.stopPropagation(); if (typeof window.openOrderFrom === "function") openOrderFrom(oo, rid, { row: r.key ? { key: r.key } : null }); else OrderWin.openOrder(rid, { from: oo }); };
+    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT" || e.repeat || e.target.closest?.(".pvMail")) return; if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); monoAction("close"); } });
+    const wasHere = document.activeElement && document.activeElement.closest && document.activeElement.closest("#egQueue");
+    if (wasHere || !document.activeElement || document.activeElement === document.body) setTimeout(() => { if (card.isConnected && !document.activeElement?.matches?.("input, textarea, select, [contenteditable]")) card.focus(); }, 30);
+    return card;
   }
   /* The card's messages: Team and Customer, two tabs like the order window's, with the one last chosen in front. Both
      panes are kept per line (TeamCard, CustomerMail.cardPane): drawing the card again only puts them back. */
@@ -8921,14 +9092,14 @@ const Engrave = window.Engrave = (() => {
         else goes(job, { row: true }, card);
         EG.list = true; EG.card = null; EG.cardKey = null; render();
       } else if (a === "prev" || a === "next") {
-        const q = queuedJobs([...items().values()].filter(matchesQ).filter(j2 => j2.row.state !== "gone"));
+        const q = queuedJobs(tabItems().filter(matchesQ).filter(j2 => j2.row.state !== "gone"));
         // Back and Next move row by row: an earring line's Left and Right are one stop (the Left | Right switch moves between them), any other job is a stop of its own.
         // The discs of a counted line are each a stop (DISCCYCLE): Next goes Disc 1, Disc 2, Disc 3, then the next order; Back goes the other way round, into the last disc of the order before
         let j3;
         // ENGPIECES: the stops are taken in ORDER order (every piece of an order, in its line order, before the next order) from the queue as the list shows it (the activity range and the search included), never from the page's own
         // unfiltered list: a stop the list hides would be drawn as the first card instead, and the press would seem to do nothing
         // (the stops are the page's own queue, in its own order, as before, but only those the list shows plus every other piece of THIS order, whatever the search or the range hides)
-        if (ROWS()) { const vis = new Set(EO() ? withFocus(shownQueue()) : []), rid0 = ridOfJob(job), sel = EO() ? queuedJobs([...items().values()].filter(j2 => j2.row.state !== "gone" && (vis.has(j2) || ridOfJob(j2) === rid0))) : q, all = rowsIn(sel, queueUniverse()), rows = EO() ? EO().groupRows(all, { lineIndex: lineIndexFn() }) : all, here = rows.find(r2 => r2.jobs.includes(job)), tgt = ROWS().step(rows, job.key, a === "next" ? 1 : -1); j3 = tgt ? (tgt.job || (tgt.row === here ? job : ROWS().openLead(tgt.row, isWorking))) : null; }
+        if (ROWS()) { const vis = new Set(EO() ? withFocus(shownQueue()) : []), rid0 = ridOfJob(job), sel = EO() ? queuedJobs(tabItems().filter(j2 => j2.row.state !== "gone" && (vis.has(j2) || ridOfJob(j2) === rid0))) : q, all = rowsIn(sel, queueUniverse()), rows = EO() ? EO().groupRows(all, { lineIndex: lineIndexFn() }) : all, here = rows.find(r2 => r2.jobs.includes(job)), tgt = ROWS().step(rows, job.key, a === "next" ? 1 : -1); j3 = tgt ? (tgt.job || (tgt.row === here ? job : ROWS().openLead(tgt.row, isWorking))) : null; }
         else { const i = q.findIndex(j2 => j2.key === job.key); j3 = q[(i + (a === "next" ? 1 : q.length - 1)) % q.length]; }
         if (j3) {
           const go = () => { if (j3.key !== job.key) goes(job, { enter: "fade", quick: true }, card); EG.focus = j3.key; EG.pin = j3.key; EG.card = null; EG.cardKey = null; render(); };
@@ -9001,7 +9172,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { openMonogram, monogramUI: () => MonoUI(), openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { openMonogram, monogramUI: () => MonoUI(), monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 
 /* ═══ 22 · Sets — production evidence and release ═══ */

@@ -12,7 +12,7 @@
  * This file only DECIDES and DRAWS that one line. Nothing is stored, nothing is read from the network, no timer or listener of its own (a click on its own two buttons is all). The approval itself, its seal and its
  * records are Engrave.approve's and are not touched here. Every call fails open: if the model is not on the page, or throws, the press goes through as it always did.
  *
- *   afterApprove(job)                 -> { rid, pieceKey, face, key } | null    where the detail goes after `job` was approved: the same piece's other face still to settle, else the next piece of the order
+ *   afterApprove(job)                 -> { rid, pieceKey, face, key } | null    where the detail goes after `job` (or an approved monogram line, { key: the line's key, row }) was approved: the same piece's other face still to settle, else the next piece of the order
  *                                        that is not approved (CharmNestEngraveOrder.nextUnapproved); null when the order has nothing left (the queue goes on as it always did)
  *   leaving(rid, pieceKey, go)        -> true when it took over the press (the line is drawn, `go` is NOT called); false when the press may go ahead (the caller then does its normal move)
  *                                        `go` is what "Leave" does: the caller's normal move
@@ -55,7 +55,7 @@
     }
     const nx = tryDo(() => O.nextUnapproved(rid, pk), null); if (!nx) return null;
     const j = tryDo(() => O.jobOf(nx), null);
-    return { rid, pieceKey: nx.pieceKey, face: j ? faceOf(j) : undefined, key: j ? j.key : '' };
+    return { rid, pieceKey: nx.pieceKey, face: j ? faceOf(j) : undefined, key: j ? j.key : (nx.kind === 'monogram' ? nx.lineKey : '') };   // (MONOUI: a monogram piece has no job: its key is its line's)
   }
 
   /* ── the line in the Engrave detail ── */

@@ -1669,7 +1669,7 @@
   // (REVDROP, Paul, 15 Oct 2026, order 4199104309: "Custom listing should not have any matching vector charm repo associations": "Add a Custom Piece to your Jewelry!", SKU ADD_CUSTOM_4213, was read as the master design of that name, a disc with two holes, and asked about its "Style" option)
   const ADDON_LISTINGS = { "1777293722": "Huggie Charm + Shipping", "595264213": "Add a Custom Piece to your Jewelry!" };
   /* MONOGRAM listings (Paul, 15 Oct 2026, orders 4200683017 "APV" and 4202783520 "OSR": "These 2 listings are for custom monograms ... The buyer will always provide 3 individual letters"): the charm is made by combining the buyer's
-     three letters from the Left, Middle and Right alphabets of the charm repository (charm-nest-monogram.js, the Engrave tab's Monograms). The listing's own code (MONOGRAM_5351) is a name, never a design: the line is the buyer's
+     three letters from the Left, Middle and Right alphabets of the charm repository (charm-nest-monogram.js, the monogram piece of the Engrave tab). The listing's own code (MONOGRAM_5351) is a name, never a design: the line is the buyer's
      own, as an add-on listing's is (own: true), asks nothing about a SKU, a metal or an option, and has no engraving. `special.monogram` says it is one. */
   /* Five more (Paul, 16 Oct 2026: "all of the below Etsy listings must be profiled to use the monogram alphabets in our system": 1844317367, 1009221671, 1844317391, 1008031671, 603425508). Their titles were not
      to hand when they were added, so the note says so; the table only asks whether a listing is in it. */
@@ -1726,12 +1726,12 @@
       // (the person's own words for the listing, when they left some ("pre-made piece, not laser cut"), stand in the reason: the one line that says why)
       if (KIND_WORDS_[lk.kind]) { const note = String(lk.note || "").replace(/\s+/g, " ").trim().slice(0, 90); return { kind: lk.kind, why: `listing ${lid}: ${lk.by || "a person"} said every order of it is ${KIND_WORDS_[lk.kind]}${note ? ` (${note})` : ""}` }; }
     }
-    if (lid && MONOGRAM_LISTINGS[lid]) return { kind: "custom", monogram: true, words: monogramWords(line), why: `listing ${lid} is a custom monogram listing: the buyer's three letters are made into one charm (Engrave › Monograms)` };
+    if (lid && MONOGRAM_LISTINGS[lid]) return { kind: "custom", monogram: true, words: monogramWords(line), why: `listing ${lid} is a custom monogram listing: the buyer's three letters are made into one charm (Engrave tab)` };
     if (lid && ADDON_LISTINGS[lid]) return { kind: "custom", why: `listing ${lid} “${ADDON_LISTINGS[lid]}” is an add-on listing: a charm made to the buyer's own request, not a master design` };
     const title = String(line.title || "").replace(/&#0*39;/g, "'").replace(/&amp;/g, "&").trim(), lead = title.toLowerCase().split(/\s*[,|•·:;–—(\[]\s*|\s+-\s+|\s+\/\s+/)[0].trim();
     for (const [name, re] of ADDON_TITLE) if (re.test(lead)) return { kind: "custom", why: `listing “${title.length > 48 ? title.slice(0, 47) + "…" : title}” is an add-on listing (“${name}”): a charm made to the buyer's own request, not a master design` };
     if (!(o && o.known) && MONO_TITLE.test(title)) { const letters = monogramLetters(line);   // (a line whose SKU is a design of the master is a catalogue charm with an engraving: a person's "monogram" there is its back words, never a monogram to build)
-      if (letters) return { kind: "custom", monogram: true, letters, words: monogramWords(line), why: `listing “${title.length > 48 ? title.slice(0, 47) + "…" : title}” says monogram and the buyer gave three letters (${letters.split("").join(" ")}): made into one charm (Engrave › Monograms)` }; }
+      if (letters) return { kind: "custom", monogram: true, letters, words: monogramWords(line), why: `listing “${title.length > 48 ? title.slice(0, 47) + "…" : title}” says monogram and the buyer gave three letters (${letters.split("").join(" ")}): made into one charm (Engrave tab)` }; }
     return null;
   }
   /* Claude's reading of a line (Charm Sorter › Custom Orders, charmNestLibrary customRead) and a person's decision name

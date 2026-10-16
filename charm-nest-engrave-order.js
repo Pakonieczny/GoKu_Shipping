@@ -17,7 +17,11 @@
  *   indexOf(rid, pieceKey, o)    0-based place in piecesOf, or -1
  *   nextUnapproved(rid, pieceKey, o)  the first piece AFTER pieceKey (wrapping, never pieceKey itself) that is not approved; null when every other piece is approved (or there is no other piece)
  *   step(rid, pieceKey, dir, o)  the neighbouring piece (dir 1 | -1), NO wrap: null past either end (a press that would leave the order)
- *   jobOf(P, face)               the Engrave job of that face of the piece; without `face`: the face still to settle (Front before Back), else the first job
+ *   MONOGRAM (MONOUI, Paul, 16 Oct 2026: "the monogram ... as part of the Engraving Tab ... in place of the currently existing back/front engraving"): a custom MONOGRAM line is a piece of its order too, with no Front and no Back and no Engrave
+ *                                job: { pieceKey: the line's key, kind: 'monogram', label ("Monogram", metal first when the order has more lines), faces: [], jobKeys: [], state, piece: { kind: 'monogram', row, faces: {front:null, back:null}, jobs: [] } }.
+ *                                Its state is the page's answer for the line (useMonogram(fn) once, or o.monoState(row) per call): null (not a monogram line: nothing is added) | 'to-approve' | 'held' | 'approved'. Its Approve is
+ *                                that piece's approval in the order's sequence: countOf, nextUnapproved, step, the strip, the guide and Back / Next treat it like any other piece. Without a function nothing changes.
+ *   jobOf(P, face)               the Engrave job of that face of the piece; without `face`: the face still to settle (Front before Back), else the first job (null for a monogram piece)
  *   groupRows(rows, o)           the Engrave tab's queue rows (charm-nest-engrave-rows.js) put in ORDER order: orders by first appearance, each order's rows together in the order's line order. Back / Next walk this
  *                                sequence, so every piece of an order is reached before the next order. o: { ridOf(row), lineIndex(row) }
  *   orderCounts(queueRows, decidedRows, o)   { decided, remaining, n, of, text }   "N of M · K done" counted in ORDERS: an order is done only when none of its pieces is still queued (o.queued: every rid with a piece
@@ -44,6 +48,9 @@
   const slotRank = s => (s == null || s === '' ? 0 : s === 'L' ? 1 : s === 'R' ? 2 : /^D(\d+)$/.test(s) ? 10 + +RegExp.$1 : 99);
   const slotWord = s => (s === 'L' ? 'Left' : s === 'R' ? 'Right' : /^D\d+$/.test(s || '') ? 'Disc ' + s.slice(1) : '');
   const faceList = piece => ['front', 'back'].filter(f => piece.faces && piece.faces[f]);
+  let monoFn = null;   // the page's answer for a monogram line (null | 'to-approve' | 'held' | 'approved'), set once by the bridge: a module with no page adds no monogram piece
+  const useMonogram = fn => { monoFn = typeof fn === 'function' ? fn : null; };
+  const MONO_STATE = { 'to-approve': 1, held: 1, approved: 1 };
 
   /** The live lines of an order, in the order they came. */
   function rowsOf(rid, o) {
@@ -56,8 +63,16 @@
     o = o || {}; rid = String(rid == null ? '' : rid);
     const C = Card(); if (!C || !C.piecesOf) return [];
     const rows = rowsOf(rid, o), many = new Set(rows.map(r => (lineOf(r) || {}).key)).size > 1, out = [];
-    const popt = Object.assign({}, o); delete popt.rows; delete popt.withNone;
+    const popt = Object.assign({}, o); delete popt.rows; delete popt.withNone; delete popt.monoState;
+    const monoState = o.monoState === undefined ? monoFn : o.monoState;
     rows.forEach((r, li) => {
+      const ms = monoState ? tryDo(() => monoState(r), null) : null;
+      if (ms && MONO_STATE[ms]) {   // (a monogram line: one piece, no faces, no job)
+        const L = lineOf(r), metal = metalOf(L), label = (many ? [metal, 'Monogram'] : ['Monogram']).filter(Boolean).join(' · ');
+        out.push({ pieceKey: L.key, rid, lineKey: L.key, slot: null, label, title: 'Monogram', metal, faces: [], jobKeys: [], state: ms, kind: 'monogram', line: li,
+          piece: { kind: 'monogram', pieceKey: L.key, rid, lineKey: L.key, slot: null, row: L, title: 'Monogram', faces: { front: null, back: null }, jobs: [], state: ms } });
+        return;
+      }
       let ps = []; try { ps = C.piecesOf([r], popt) || []; } catch (_) { ps = []; }
       ps = ps.map((p, i) => ({ p, i })).sort((a, b) => slotRank(a.p.slot) - slotRank(b.p.slot) || a.i - b.i).map(x => x.p);
       for (const p of ps) {
@@ -120,11 +135,11 @@
     return `<span class="egPcStrip" role="group" aria-label="The ${ps.length} pieces of this order, one by one" data-n="${ps.length}">`
       + `<span class="egPcOf">${at < 0 ? `${ps.length} pieces` : `Piece ${at + 1} of ${ps.length}`}</span>`
       + ps.map((p, i) => {
-        const on = i === at, t = o.titleOf ? o.titleOf(p, on) : `${on ? 'Shown now' : 'Show'}: piece ${i + 1} of ${ps.length}, ${p.label} (${word[p.state] || p.state})`;
+        const on = i === at, t = o.titleOf ? o.titleOf(p, on) : `${on ? 'Shown now' : 'Show'}: piece ${i + 1} of ${ps.length}, ${p.label} (${p.kind === 'monogram' && p.state === 'held' ? 'the monogram is being made, or its letters need confirming' : word[p.state] || p.state})`;
         return `<button type="button" class="egPcTab" data-a="piece" data-piece="${esc(p.pieceKey)}" data-state="${esc(p.state)}" aria-pressed="${on}"${on ? ' aria-current="true"' : ''} title="${esc(t)}">`
           + `<b class="egPcNo">${i + 1}</b><i class="egPcDot" data-metal="${esc(p.metal)}" aria-hidden="true"></i><span class="egPcLbl">${esc(p.label)}</span>${p.state === 'approved' ? '<b class="egPcTick" aria-label="approved">✓</b>' : ''}</button>`;
       }).join('') + '</span>';
   }
 
-  return { piecesOf, countOf, indexOf, nextUnapproved, step, jobOf, groupRows, orderCounts, stripHtml, metalOf, rowsOf };
+  return { piecesOf, countOf, indexOf, nextUnapproved, step, jobOf, groupRows, orderCounts, stripHtml, metalOf, rowsOf, useMonogram };
 });
