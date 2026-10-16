@@ -1713,7 +1713,7 @@ async function readOrderPieces(rd, ids, sheetIds) {
    charmNestOutput and records it here; reset clears the sandbox's own records so a run can start clean. ── */
 const SANDBOX = "Charm_Sandbox";
 /* The Sep 17 style snapshot (the sorter uploaded a copy of the open orders and recorded it here) is retired as a source (Paul,
-   10 Oct 2026): the sandbox always pulls the newest Etsy orders (250 unless the setting below says otherwise; sandboxPullOrders, _charmNestSandboxPull.js), a pull
+   10 Oct 2026): the sandbox always pulls the newest Etsy orders (250 unless the setting below says otherwise, up to 1000; sandboxPullOrders, _charmNestSandboxPull.js), a pull
    replaces the previous set completely, and only a pointer written by a pull (source "etsy-pull") is ever served or played. */
 const SandboxPull = require("./_charmNestSandboxPull");
 const pulled = d => (d && d.source === SandboxPull.SOURCE ? d : null);   // a pointer that is not a pull (an old snapshot) is no set
@@ -1727,7 +1727,7 @@ async function op_sandboxPullOrders(b) {
 }
 /** Paul's number (Settings, 11 Oct 2026): how many of the newest Etsy orders each sandbox pull brings. A SETTING, not sandbox data: it lives in
     config/charmNestSandboxPull, which no wipe touches (charm-nest-sandbox-families.js protected()). The HTTP door asks for the Charm repo
-    password's token first (_charmNestRepoAuth.js LIBRARY: need "modify"); the server then holds the number to 10..500. Reading it is free: sandboxStatus. */
+    password's token first (_charmNestRepoAuth.js LIBRARY: need "modify"); the server then holds the number to 10..1000. Reading it is free: sandboxStatus. */
 async function op_sandboxPullLimitSet(b) { return SandboxPull.setLimit(b); }
 const Families = require("../../charm-nest-sandbox-families.js");   // the ONE list of what a sandbox run leaves behind: the status below, the wipe after it and tests/charm-nest/sandbox-wipe-guard.cjs all read it
 /** The id that ends a prefix range: "olsb_" → "olsb`" (the character after the last one), as the wipe has always asked it. */
@@ -1894,9 +1894,10 @@ function streamCount(s, k) {
 }
 /** How many of the snapshot's orders have come by step k: at most its count. */
 function streamBrought(s, k) { const total = +s.total || Infinity; let n = 0; for (let j = 1; j <= k && n < total; j++) n += streamCount(s, j); return Math.min(n, total); }
-/** How many of a snapshot's orders the stream brings: its open ones, as etsySandbox.js picks them. Read from the file once
-    per snapshot and instance, when a stream starts; the count recorded with the snapshot if the file cannot be read. */
-const streamOpen = r => !!r && r.is_paid !== false && r.was_paid !== false && !r.is_shipped && !r.was_shipped && !r.is_canceled && !r.was_canceled && !/cancel/i.test(r.status || "");
+/** How many of a snapshot's orders the stream brings: the ones that play (paid, not cancelled; shipped ones too, SBX1000), as etsySandbox.js picks them
+    (one rule: _charmNestSandboxOrders.js). Read from the file once per snapshot and instance, when a stream starts; the count recorded with the snapshot
+    if the file cannot be read. */
+const streamOpen = require("./_charmNestSandboxOrders").plays;
 const snapshotOpen = new Map();
 async function streamTotal(path, recorded) {
   if (!snapshotOpen.has(path)) {
@@ -1923,7 +1924,7 @@ async function op_sandboxStream(b) {
     // step asked of a playing stream of the old kind starts the new kind in its place, at step 0
     if (action === "tick" && !(s && was.on) && !(was && was.on && !mine)) return { ok: true, stream: null, advanced: false };
     // a new stream starts at this ten minutes of the real clock; a seed given in Settings replays a recorded one
-    if (!s) { const simStart = Math.floor(now / STREAM_STEP_MS) * STREAM_STEP_MS; s = { on: true, v: STREAM_V, seed: Math.floor(num(b.seed)) > 0 ? Math.floor(num(b.seed)) % 2147483647 || 1 : 1 + Math.floor(Math.random() * 2147483646), speed, stepMs: STREAM_STEP_MS, min: 2, max: 5, simStart, simNow: simStart, tick: 0, snapshotPath: path, total: set.open != null ? Math.max(0, Math.floor(num(set.open))) : await streamTotal(path, Math.max(0, Math.floor(num(set.count)))), startedAt: now, tickAt: now }; }
+    if (!s) { const simStart = Math.floor(now / STREAM_STEP_MS) * STREAM_STEP_MS; s = { on: true, v: STREAM_V, seed: Math.floor(num(b.seed)) > 0 ? Math.floor(num(b.seed)) % 2147483647 || 1 : 1 + Math.floor(Math.random() * 2147483646), speed, stepMs: STREAM_STEP_MS, min: 2, max: 5, simStart, simNow: simStart, tick: 0, snapshotPath: path, total: set.open != null && set.shipped != null ? Math.max(0, Math.floor(num(set.open))) : await streamTotal(path, Math.max(0, Math.floor(num(set.count)))), startedAt: now, tickAt: now }; }
     let advanced = false;
     // every order of the snapshot has come by this step: the clock stays here
     const done = !!s.total && streamBrought(s, s.tick) >= s.total;

@@ -7,7 +7,8 @@
 //     production uses) and no other Etsy request at all; the answer says so (calls 3, callsToday; no cap: cap / capLeft / callsCap are null);
 //   · the 250 are stored as one file + the pointer Charm_Sandbox/current (with the start id as the retry marker); the
 //     previous set (an old snapshot, an old pull, its stream) is gone first; sheets and the like are not touched;
-//   · the stream plays only the open ones, oldest first; shipped / cancelled / unpaid receipts are kept but never listed;
+//   · the stream plays the receipts that are paid and not cancelled, oldest first, SHIPPED ONES TOO (SBX1000, Paul 16 Oct 2026: "consider shipped orders as open"): a shipped receipt is listed as a normal open
+//     order (not shipped, status Paid, no shipments), while the stored file stays as Etsy returned it; cancelled / unpaid receipts are kept but never listed, and counted;
 //   · the same start id again returns the same set with 0 new calls; a busy claim, a used start id, a bad id answer plainly;
 //   · there is NO daily cap (NOLIMIT, Paul 13 Oct 2026): the 6th, 7th and 8th pull of a day all go through and are only counted; a failed pull (Etsy down, a page
 //     failing, a limit, a missing token) leaves it EMPTY, counts exactly the calls it made, and never falls back;
@@ -54,10 +55,10 @@ const admin = { firestore: Object.assign(() => db, { FieldValue, Timestamp: Obje
 const DAY = 86400, T0 = Math.floor(Date.now() / 1000) - 400 * 3600;
 const SHOP = Array.from({ length: 320 }, (_, i) => {
   const rid = 3600000000 + i, created = T0 + i * 3600, ship = created + 7 * DAY;
-  const extra = i % 10 === 0 ? { is_shipped: true, status: 'Completed' } : i % 37 === 0 ? { status: 'Canceled' } : i % 53 === 0 ? { is_paid: false, status: 'Payment Processing' } : {};
+  const extra = i % 10 === 0 ? { is_shipped: true, was_shipped: true, status: 'Completed', shipments: [{ receipt_shipping_id: 9100 + i, carrier_name: 'USPS', tracking_code: '94001' + rid, shipment_notification_timestamp: created + 3 * DAY }] } : i % 37 === 0 ? { status: 'Canceled' } : i % 53 === 0 ? { is_paid: false, status: 'Payment Processing' } : {};
   return Object.assign({ receipt_id: rid, order_number: rid, name: 'Buyer ' + rid, status: 'Paid', is_paid: true, is_shipped: false, created_timestamp: created, create_timestamp: created, expected_ship_date: ship,
     transactions: [{ transaction_id: rid * 10 + 1, receipt_id: rid, listing_id: 1718000 + (i % 9), sku: `BR-TST-0${1 + (i % 6)}`, title: 'Initial charm', quantity: 1, created_timestamp: created, expected_ship_date: ship,
-      variations: [{ property_id: 513, value_id: 1, formatted_name: 'Metal', formatted_value: i % 2 ? 'Sterling Silver' : '14k Gold Filled' }, { property_id: 54, value_id: 2, formatted_name: 'Personalization', formatted_value: 'ANNA' }] }] }, extra);
+      variations: [{ property_id: 513, value_id: 1, formatted_name: 'Metal', formatted_value: i % 2 ? 'Sterling Silver' : '14k Gold Filled' }, { property_id: 54, value_id: 2, formatted_name: 'Personalization', formatted_value: 'ANNA' }], shipped_timestamp: i % 10 === 0 ? created + 3 * DAY : null }] }, extra);
 });
 const NEWEST = SHOP.slice().sort((a, b) => b.created_timestamp - a.created_timestamp).slice(0, 250);
 const etsy = { calls: [], oauth: 0, failAt: null, throwAt: null, status: null, now: () => Date.now() };
@@ -90,7 +91,7 @@ Module._load = function (req, ...rest) {
   return realLoad.call(this, req, ...rest);
 };
 global.fetch = async () => { throw new Error('no network in this test'); };
-const lib = require(path.join(fnDir, 'charmNestLibrary.js')), emulator = require(path.join(fnDir, 'etsySandbox.js'));
+const lib = require(path.join(fnDir, 'charmNestLibrary.js')), emulator = require(path.join(fnDir, 'etsySandbox.js')), SP0 = require(path.join(fnDir, '_charmNestSandboxPull.js'));
 const repoStamp = require('./_repoToken.cjs');   // (the Settings buttons' ops carry the standing unlock the door issues on the same in-memory Firestore)
 const post = async b => lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(await repoStamp('charmNestLibrary', b)) }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body) }));
 const pullOp = (startId, extra) => post(Object.assign({ op: 'sandboxPullOrders', sandbox: true, startId, by: 'tester' }, extra || {}));
@@ -102,7 +103,7 @@ const wipe = () => { store.delete('Charm_Sandbox/current'); store.delete('Charm_
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const empty = () => !store.has('Charm_Sandbox/current') && !store.has('Charm_Sandbox/stream') && ![...blobs.keys()].some(k => k.startsWith('charmnest/sandbox/orders-pull/'));
 const ledger = () => store.get('Charm_Sandbox/pulls');
-const openOf = list => list.filter(r => r.is_paid !== false && !r.is_shipped && !/cancel/i.test(r.status));
+const openOf = list => list.filter(r => r.is_paid !== false && !/cancel/i.test(r.status));   // (what plays: paid, not cancelled; shipped ones too)
 
 (async () => {
   setToken(3600e3);
@@ -134,8 +135,8 @@ const openOf = list => list.filter(r => r.is_paid !== false && !r.is_shipped && 
   assert.strictEqual(etsy.calls.length, 3, 'three Etsy calls and nothing else'); assert.strictEqual(etsy.oauth, 0, 'a fresh token is not refreshed');
   assert.deepStrictEqual(meterCalls.splice(0), ['sandbox.receiptsPage', 'sandbox.receiptsPage', 'sandbox.receiptsPage'], 'the inbox meter sees the 3 calls');
   assert(a.ok && !a.already && a.calls === 3 && a.tokenRefreshes === 0 && a.count === 250 && a.source === 'etsy-pull' && a.label === '250 newest Etsy orders' && a.startId === 'start-0001-aaaa', JSON.stringify(a).slice(0, 400));
-  const wantOpen = openOf(NEWEST).length;
-  assert(wantOpen < 250 && wantOpen > 150 && a.open === wantOpen && a.closed === 250 - wantOpen && a.closedBy.shipped + a.closedBy.canceled + a.closedBy.unpaid === a.closed && a.closedBy.shipped > 0 && a.closedBy.canceled > 0 && a.closedBy.unpaid > 0, 'open / closed counts: ' + JSON.stringify([a.open, a.closed, a.closedBy]));
+  const wantOpen = openOf(NEWEST).length, wantShipped = NEWEST.filter(r => r.is_shipped).length;
+  assert(wantOpen < 250 && wantOpen > 150 && a.open === wantOpen && a.closed === 250 - wantOpen && a.closedBy.canceled + a.closedBy.unpaid === a.closed && a.closedBy.shipped === undefined && a.closedBy.canceled > 0 && a.closedBy.unpaid > 0 && wantShipped > 0 && a.shipped === wantShipped, 'play / left-out counts (shipped ones play and are counted apart): ' + JSON.stringify([a.open, a.closed, a.closedBy, a.shipped]));
   assert(a.callsToday === 3 && a.pullsToday === 1 && a.cap === null && a.capLeft === null && a.callsCap === null, 'the budget in the answer (counted, not capped): ' + JSON.stringify([a.callsToday, a.pullsToday, a.cap, a.capLeft]));
   assert(a.pulledAt > 0 && a.newestAt === NEWEST[0].created_timestamp * 1000 && a.oldestAt === NEWEST[249].created_timestamp * 1000 && a.stream && a.stream.seed === 777 && a.stream.total === wantOpen && a.stream.tick === 0, 'newest and oldest, and the stream started for the set: ' + JSON.stringify(a.stream));
   // the previous set is gone, the new one stands, the rest is untouched
@@ -151,15 +152,18 @@ const openOf = list => list.filter(r => r.is_paid !== false && !r.is_shipped && 
   st = await post({ op: 'sandboxStatus', sandbox: true }); assert(st.body.snapshot.source === 'etsy-pull' && st.body.snapshot.open === wantOpen && st.body.budget.capLeft === null && st.body.budget.cap === null && st.body.budget.callsCap === null && st.body.budget.pullsToday === 1 && st.body.budget.callsToday === 3, 'status shows the pull and the budget');
   assert(!JSON.stringify(a).includes('tok-fresh') && !JSON.stringify(a).includes('test-secret'), 'no token or secret in an answer');
 
-  // ── the stream plays the open ones, oldest first; the closed ones are kept but never listed ──
+  // ── the stream plays what is paid and not cancelled, oldest first, the shipped ones too (as normal open orders); cancelled and unpaid ones are kept but never listed ──
   assert.strictEqual((await listed()).length, 0, 'a new stream lists nothing yet');
   const openIds = openOf(NEWEST).sort((x, y) => x.created_timestamp - y.created_timestamp).map(x => String(x.receipt_id)), seen = [];
   for (let i = 0; i < 4; i++) { const t = await post({ op: 'sandboxStream', action: 'tick', sandbox: true, expect: store.get('Charm_Sandbox/stream').simNow }); assert(t.body.advanced, 'a step'); }
   const lst = await listed(); seen.push(...lst.map(x => String(x.receipt_id)).reverse());
-  assert(seen.length >= 8 && seen.length <= 20 && seen.every((id, i) => id === openIds[i]), 'the first orders in are the OLDEST open ones, in order: ' + seen.slice(0, 5));
+  assert(seen.length >= 8 && seen.length <= 20 && seen.every((id, i) => id === openIds[i]), 'the first orders in are the OLDEST ones that play, in order: ' + seen.slice(0, 5));
   assert(lst.every(x => x.transactions.length === 1 && x.transactions[0].variations.length === 2), 'each streamed order has its transactions');
-  const closedId = String(NEWEST.find(x => x.is_shipped).receipt_id);
-  assert(!seen.includes(closedId), 'a shipped order is never listed');
+  assert(lst.every(x => x.is_shipped === false && x.status === 'Paid' && !(x.shipments || []).length && x.transactions.every(t => !t.shipped_timestamp)), 'every listed order reads open: not shipped, Paid, no shipments, no shipped time');
+  const shippedSeen = lst.filter(x => NEWEST.find(n => String(n.receipt_id) === String(x.receipt_id)).is_shipped);
+  assert(shippedSeen.length >= 1 && shippedSeen.every(x => x.sandbox_shipped_on_etsy === true), 'a receipt Etsy had shipped is among the first arrivals, served as an open order: ' + shippedSeen.length);
+  const closedId = String(NEWEST.find(x => /cancel/i.test(x.status)).receipt_id), unpaidId = String(NEWEST.find(x => x.is_paid === false).receipt_id);
+  assert(!seen.includes(closedId) && !seen.includes(unpaidId), 'a cancelled or unpaid order is never listed');
   const one = await emu({ fn: 'etsyOrderProxy', orderId: closedId }); assert.strictEqual(one.status, 404, 'with the stream playing, an order that has not come is not found (the stream decides)');
 
   // ── the same start again: the same set, no new call ──
@@ -242,8 +246,8 @@ const openOf = list => list.filter(r => r.is_paid !== false && !r.is_shipped && 
   reset2(); etsy.delay = { 0: 500, 100: 500, 200: 500 };   // three pages of 500 ms each: one round when asked together (1500 ms when asked one after the other, then two together = 1000 ms at the very least)
   { const t = Date.now(); r = await pullOp('start-par-000013'); const took = Date.now() - t, at = etsy.calls.map(c => c.at);
     assert(r.status === 200 && r.body.ok && r.body.calls === 3 && r.body.count === 250, 'a slow-but-working Etsy still pulls: ' + JSON.stringify(r.body).slice(0, 160));
-    assert(Math.max(...at) - Math.min(...at) < 150, 'every page is asked before any answer is waited for: the asks are ' + (Math.max(...at) - Math.min(...at)) + ' ms apart');
-    assert(took < 950, 'the three 500 ms pages cost one round, not two: ' + took + ' ms'); assert(typeof r.body.ms === 'number' && r.body.ms >= 450 && r.body.ms < 950, 'the answer says how long the pull took: ' + r.body.ms);
+    assert(Math.max(...at) - Math.min(...at) < 2 * SP0.STAGGER_MS + 250 && Math.max(...at) - Math.min(...at) >= 2 * SP0.STAGGER_MS - 10, 'every page is asked (110 ms apart, SBX1000) before any answer is waited for: the asks are ' + (Math.max(...at) - Math.min(...at)) + ' ms apart');
+    assert(took < 1000, 'the three 500 ms pages cost one round (plus their 220 ms of staggering), not two: ' + took + ' ms'); assert(typeof r.body.ms === 'number' && r.body.ms >= 450 && r.body.ms < 1000, 'the answer says how long the pull took: ' + r.body.ms);
     const rec = ledger().starts[0]; assert(rec.id === 'start-par-000013' && rec.ok === true && rec.ms >= 450 && rec.pages.length === 3 && rec.pages.every(x => x.s === 200 && x.ms >= 450 && [0, 100, 200].includes(x.o)), 'the ledger keeps each page\'s seconds and status (numbers only): ' + JSON.stringify(rec)); }
   // a page that does not answer inside the pull's clock: the line names the page and the seconds, the sandbox is EMPTY, every call counted
   reset2(); etsy.delay = { 100: 5000 };
@@ -276,6 +280,6 @@ const openOf = list => list.filter(r => r.is_paid !== false && !r.is_shipped && 
   setToken(3600e3); resetEtsy();
 
   // ── the whole run asked Etsy for receipts and nothing else ──
-  console.log('sandbox pull OK: 3 Etsy calls per pull, ' + wantOpen + ' of 250 open, no daily cap (8 pulls in a day counted, none refused)');
+  console.log('sandbox pull OK: 3 Etsy calls per pull, ' + wantOpen + ' of 250 play (' + wantShipped + ' shipped ones as open), no daily cap (8 pulls in a day counted, none refused)');
   Module._load = realLoad;
 })().catch(e => { console.error(e); process.exit(1); });
