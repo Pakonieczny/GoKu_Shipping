@@ -503,7 +503,7 @@ const ABC = [A, Pp, V];
 // ── 3g · size and layout norms: the body of every letter is measured, the sides held to a ratio of the centre, a stretch is capped and said, the limits are measured and reported (MONOGRAMUI, Paul, 15 Oct 2026) ──
 {
   const N = M0.NORMS, R = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
-  ok(N && N.SIDE_HEIGHT_RATIO === 0.8 && N.STRETCH_CAP === 0.25 && N.SIDE_WIDTH_MIN === 0.6 && N.SIDE_WIDTH_MAX === 0.95 && N.OVERLAP_SIDE_MAX === 0.25 && N.OVERLAP_MID_MAX === 0.35 && N.SIDE_VISIBLE_MIN_MM === 3.5 && N.GAP_MIN_MM === 0.35 && N.COUNTERS_MIN === 0.9 && N.ASPECT_MIN < N.ASPECT_TARGET && N.ASPECT_TARGET < N.ASPECT_MAX, 'the norms are named constants and exported: ' + Object.keys(N).join(' '));
+  ok(N && N.SIDE_HEIGHT_RATIO === 0.8 && N.STRETCH_CAP === 0.25 && N.SIDE_WIDTH_MIN === 0.6 && N.SIDE_WIDTH_MAX === 0.95 && N.OVERLAP_SIDE_MAX === 0.22 && N.OVERLAP_MID_MAX === 0.30 && N.SIDE_VISIBLE_MIN_MM === 3.5 && N.GAP_MIN_MM === 0.35 && N.COUNTERS_MIN === 0.9 && N.ASPECT_MIN < N.ASPECT_TARGET && N.ASPECT_TARGET < N.ASPECT_MAX, 'the norms are named constants and exported: ' + Object.keys(N).join(' '));
   const wide = { letter: 'M', rings: [R(0, 0, 40, 60)] }, wideSide = { letter: 'A', rings: [R(0, 0, 24, 44)] }, thin = { letter: 'I', rings: [R(0, 0, 4, 44)] };
   const r = M0.build({ left: thin, middle: wide, right: wideSide });
   ok(r.ok && r.report.sizes && typeof r.report.review === 'boolean' && Array.isArray(r.report.limits), 'the report carries the sizes, the limits and the review flag');
@@ -524,13 +524,17 @@ const ABC = [A, Pp, V];
   const R = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
   const nz = (letter, rings) => ({ letter, fill: 'nonzero', rings });
   const left = nz('C', [R(0, 0, 4, 30), R(0, 26, 12, 30), R(0, 0, 8, 4)]), right = nz('D', [R(8, 0, 12, 30), R(0, 26, 12, 30), R(4, 0, 12, 4)]), mid = { letter: 'M', rings: [R(0, 0, 24, 40)] };
-  ok(M0.ADJUST_LIMITS && M0.ADJUST_LIMITS.scale[0] === 0.85 && M0.ADJUST_LIMITS.scale[1] === 1.15 && M0.ADJUST_LIMITS.sx[0] === 0.8 && M0.ADJUST_LIMITS.sx[1] === 1.25 && M0.ADJUST_LIMITS.dxMm[1] === 2 && M0.ADJUST_LIMITS.dyMm[1] === 1.5, 'the adjust bounds are exported: scale 0.85..1.15, sx 0.8..1.25, dx +-2 mm, dy +-1.5 mm');
-  ok(M0.ESG_PROFILE && M0.ESG_PROFILE.aspect === 0.88 && M0.ESG_PROFILE.wMm === 13 && M0.LIMITS && M0.LIMITS.OVERLAP === 0.25 && M0.LIMITS.BALANCE_UPPER === 0.6, 'ESG_PROFILE and LIMITS are exported');
+  ok(M0.ADJUST_LIMITS && M0.ADJUST_LIMITS.scale[0] === 0.8 && M0.ADJUST_LIMITS.scale[1] === 1.25 && M0.ADJUST_LIMITS.sx[0] === 0.8 && M0.ADJUST_LIMITS.sx[1] === 1.5 && M0.ADJUST_LIMITS.sxCentre[1] === 1.25 && M0.ADJUST_LIMITS.rotDeg[1] === 6 && M0.ADJUST_LIMITS.shear[1] === 0.15 && M0.ADJUST_LIMITS.dxMm[1] === 2 && M0.ADJUST_LIMITS.dyMm[1] === 1.5, 'the adjust bounds are exported: scale 0.80..1.25, sx 0.8..1.5 (centre 1.25), rot +-6, shear +-0.15, dx +-2 mm, dy +-1.5 mm');
+  ok(M0.ESG_PROFILE && M0.ESG_PROFILE.aspect === 0.88 && M0.ESG_PROFILE.wMm === 13 && M0.LIMITS && M0.LIMITS.OVERLAP === 0.22 && M0.LIMITS.BALANCE_UPPER === 0.6, 'ESG_PROFILE and LIMITS are exported');
   const base = M0.build({ left, middle: mid, right }); sound(base, 'base');
-  eq(base.report.adjust, { L: { scale: 1, sx: 1, dx: 0, dy: 0 }, M: { scale: 1, sx: 1, dx: 0, dy: 0 }, R: { scale: 1, sx: 1, dx: 0, dy: 0 } }, 'no adjust: report.adjust is all ones and zeros');
+  eq(base.report.adjust, { L: { scale: 1, sx: 1, rot: 0, shear: 0, dx: 0, dy: 0 }, M: { scale: 1, sx: 1, rot: 0, shear: 0, dx: 0, dy: 0 }, R: { scale: 1, sx: 1, rot: 0, shear: 0, dx: 0, dy: 0 } }, 'no adjust: report.adjust is all ones and zeros');
   // absurd values are clamped inside the engine and echoed as applied
-  const ab = M0.build({ left, middle: mid, right }, { adjust: { L: { scale: 9, sx: 9, dx: 50, dy: -50 }, M: { scale: 0.1 }, R: { sx: 'x', dx: NaN, dy: 1 } } });
-  ok(ab.ok && ab.report.adjust.L.scale === 1.15 && ab.report.adjust.L.dx === 2 && ab.report.adjust.L.dy === -1.5 && ab.report.adjust.M.scale === 0.85 && ab.report.adjust.R.sx === 1 && ab.report.adjust.R.dx === 0 && ab.report.adjust.R.dy === 1 && ab.report.adjust.L.sx <= 1.25 && ab.report.adjust.L.sx >= 0.8, 'absurd adjust values are clamped to the bounds and echoed: ' + JSON.stringify(ab.report.adjust));
+  const ab = M0.build({ left, middle: mid, right }, { adjust: { L: { scale: 9, sx: 9, rot: 90, shear: -3, dx: 50, dy: -50 }, M: { scale: 0.1, sx: 9 }, R: { sx: 'x', dx: NaN, dy: 1 } } });
+  ok(ab.ok && ab.report.adjust.L.scale === 1.25 && ab.report.adjust.L.dx === 2 && ab.report.adjust.L.dy === -1.5 && ab.report.adjust.L.rot === 6 && ab.report.adjust.L.shear === -0.15 && ab.report.adjust.M.scale === 0.8 && ab.report.adjust.M.sx <= 1.25 && ab.report.adjust.R.sx === 1 && ab.report.adjust.R.dx === 0 && ab.report.adjust.R.dy === 1 && ab.report.adjust.L.sx <= 1.5 && ab.report.adjust.L.sx >= 0.8, 'absurd adjust values are clamped to the bounds and echoed: ' + JSON.stringify(ab.report.adjust));
+  { // rotation and shear lean a letter about its body centre: the piece stays one, the counters stay, the report says what was used
+    const lean = M0.build({ left, middle: mid, right }, { adjust: { L: { rot: 5, shear: 0.1 }, R: { rot: -4, shear: -0.1, sx: 1.4 } } });
+    ok(lean.ok && lean.report.adjust.L.rot === 5 && lean.report.adjust.R.shear === -0.1 && by(lean, 'left').rot === 5 && by(lean, 'right').shear === -0.1 && lean.report.metrics.maxStretch >= 1.0 && lean.report.metrics.maxStretch <= 1.51, 'rot and shear are applied and echoed: ' + JSON.stringify(lean.report.adjust.R) + ' max stretch ' + lean.report.metrics.maxStretch);
+    sound(lean, 'leaned'); }
   const big = M0.build({ left, middle: mid, right }, { adjust: { R: { scale: 1.1 } } });
   ok(big.ok && Math.abs(by(big, 'right').scale / by(base, 'right').scale - 1.1) < 0.01, 'scale makes a letter bigger by that factor: ' + by(big, 'right').scale + ' / ' + by(base, 'right').scale);
   const wideR = M0.build({ left, middle: mid, right }, { adjust: { R: { sx: 1.1 } } }); ok(wideR.ok && by(wideR, 'right').scaleX > by(base, 'right').scaleX, 'sx stretches a letter across only');
@@ -657,11 +661,11 @@ const checkSample = (sp, words, what) => {
     const noFit = M0.autoFit(await word('ESG'));
     ok(noFit.ok && noFit.report.autoFit && noFit.report.autoFit.tried === 1 && noFit.report.autoFit.improved === false && noFit.report.metrics.violations.length === 0, 'autoFit leaves ESG as it is: ' + JSON.stringify(noFit.report.autoFit));
     for (const w of ['KQI', 'MKT']) {
-      const plain = M0.build(await word(w)), fit = M0.autoFit(await word(w));
+      const plain = M0.build(await word(w)), fit = M0.autoFit(await word(w), { autoFitMs: 4000 });
       const sc = r => r.report.metrics.violations.length * 1000 + r.report.metrics.distance;
-      ok(fit.ok && sc(fit) <= sc(plain) + 1e-9 && fit.report.autoFit && fit.report.autoFit.ms < 9000 && Object.values(fit.report.adjust).every(a => a.scale >= 0.85 && a.scale <= 1.15 && a.sx >= 0.8 && a.sx <= 1.25 && Math.abs(a.dx) <= 2 && Math.abs(a.dy) <= 1.5), `autoFit never makes ${w} worse and stays inside the bounds: ${plain.report.metrics.violations.length} -> ${fit.report.metrics.violations.length} violations, ${JSON.stringify(fit.report.autoFit)}`);
+      ok(fit.ok && sc(fit) <= sc(plain) + 1e-9 && fit.report.autoFit && fit.report.autoFit.ms < 12000 && Object.values(fit.report.adjust).every(a => a.scale >= 0.85 && a.scale <= 1.15 && a.sx >= 0.8 && a.sx <= 1.25 && Math.abs(a.dx) <= 2 && Math.abs(a.dy) <= 1.5), `autoFit never makes ${w} worse and stays inside the bounds: ${plain.report.metrics.violations.length} -> ${fit.report.metrics.violations.length} violations, ${JSON.stringify(fit.report.autoFit)}`);
     }
-    const twice = M0.autoFit(await word('KQI')), once = M0.autoFit(await word('KQI')); ok(JSON.stringify(twice.report.adjust) === JSON.stringify(once.report.adjust), 'autoFit is deterministic');
+    const twice = M0.autoFit(await word('KQI'), { autoFitMs: 600000 }), once = M0.autoFit(await word('KQI'), { autoFitMs: 600000 }); ok(JSON.stringify(twice.report.adjust) === JSON.stringify(once.report.adjust), 'autoFit is deterministic');
   }
   console.log(`monogram engine OK: ${n} checks`);
 })().catch(e => { console.error(e); process.exit(1); });

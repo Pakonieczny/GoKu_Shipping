@@ -18,8 +18,9 @@ const EFFORT = /^(low|medium|high)$/.test(process.env.CHARM_NEST_MONOGRAM_EFFORT
 const COLL = "Charm_Nest_MonoAssist";
 const DAILY_MAX = 3, MAX_ROUND = 3, MAX_IMAGE_B64 = 2200000, MAX_METRICS_CHARS = 6000;
 /** The adjust contract's hard bounds (the engine clamps to the same ones: scale about the letter's body centre, sx extra horizontal-only stretch, dx / dy in mm, x right, y up). */
-const BOUNDS = { scale: [0.85, 1.15], sx: [0.8, 1.25], dx: [-2, 2], dy: [-1.5, 1.5] };
-const IDENTITY = { scale: 1, sx: 1, dx: 0, dy: 0 };
+const BOUNDS = { scale: [0.8, 1.25], sx: [0.8, 1.5], rot: [-6, 6], shear: [-0.15, 0.15], dx: [-2, 2], dy: [-1.5, 1.5] };
+const SX_CENTRE = [0.8, 1.25];      // (the centre letter's stretch is narrower than a side letter's)
+const IDENTITY = { scale: 1, sx: 1, rot: 0, shear: 0, dx: 0, dy: 0 };
 const SLOTS = ["L", "M", "R"];
 
 const INSTRUCTIONS = `You assemble monogram charms for a small jewellery shop that laser-cuts them in gold filled, sterling silver and rose gold. A buyer's three letters (a Left letter, a bigger Middle letter and a Right letter, each from its own script alphabet) are laid out and joined into ONE flat charm piece by software. You do what a careful person does at the bench when the software's layout is not right: you look at the picture and make small adjustments to the size, width and position of a letter until the monogram reads like the model.
@@ -34,15 +35,17 @@ What a good monogram is (the rules, in plain words):
 5. One piece, level, the counters open.
 Anything that cannot meet all of them is left to a person; say so in the sentence instead of ruining a letter.
 
-Your answer: ONLY the JSON { "adjust": { "L": {scale, sx, dx, dy}, "M": {...}, "R": {...} }, "why": "one sentence" }. The adjust you return REPLACES the current one: give the complete new numbers for all three letters (the current number where you change nothing), never a difference.
-- scale: size multiplier of the whole letter about its centre (1 = as laid out); allowed 0.85 to 1.15.
-- sx: extra stretch across only (a thin or narrow letter wider: more than 1; a wide one narrower: less than 1); allowed 0.8 to 1.25.
+Your answer: ONLY the JSON { "adjust": { "L": {scale, sx, rot, shear, dx, dy}, "M": {...}, "R": {...} }, "why": "one sentence" }. The adjust you return REPLACES the current one: give the complete new numbers for all three letters (the current number where you change nothing), never a difference.
+- scale: size multiplier of the whole letter about its centre (1 = as laid out); allowed 0.80 to 1.25.
+- sx: extra stretch across only (a thin or narrow letter wider: more than 1; a wide one narrower: less than 1); allowed 0.8 to 1.5 for a Left or Right letter, 0.8 to 1.25 for the Middle letter.
+- rot: rotation in degrees about the letter's centre (a side letter can lean toward or away from the Middle one); allowed -6 to 6.
+- shear: horizontal shear (the slant of the letter can follow the Middle letter's); allowed -0.15 to 0.15.
 - dx, dy: move of the letter in millimetres, x to the right, y UP, relative to where the software put it; allowed -2.0 to 2.0 for dx and -1.5 to 1.5 for dy.
 Whatever you give is clamped to these bounds by the software, so there is no use going past them.
 How to work: change only what the broken rules point at, one or two things per round, in small steps (a few percent of scale or sx, a few tenths of a millimetre of move): a refused earlier try tells you the step was wrong or too big, so do something different. Keep the two side letters level with each other. A letter must NEVER be altered to the point where it stops reading as that letter: never squeeze or stretch a letter so far that its shape changes, never push it so far that it is buried in or detached from its neighbour. If a rule cannot be met without doing that, return the current adjust unchanged and say in "why" which rule cannot be met and why.
 "why" is one plain sentence (at most 25 words) saying what you changed and for which rule, e.g. "Widened the right G and moved it down 0.4 mm so a lower contact joins it to the S."`;
 
-const ADJ_SCHEMA = { type: "object", additionalProperties: false, properties: { scale: { type: "number" }, sx: { type: "number" }, dx: { type: "number" }, dy: { type: "number" } }, required: ["scale", "sx", "dx", "dy"] };
+const ADJ_SCHEMA = { type: "object", additionalProperties: false, properties: { scale: { type: "number" }, sx: { type: "number" }, rot: { type: "number" }, shear: { type: "number" }, dx: { type: "number" }, dy: { type: "number" } }, required: ["scale", "sx", "rot", "shear", "dx", "dy"] };
 const SCHEMA = {
   type: "object", additionalProperties: false,
   properties: { adjust: { type: "object", additionalProperties: false, properties: { L: ADJ_SCHEMA, M: ADJ_SCHEMA, R: ADJ_SCHEMA }, required: ["L", "M", "R"] }, why: { type: "string" } },
@@ -53,18 +56,18 @@ const cleanKey = k => String(k || "").replace(/[^\w\-]/g, "").slice(0, 80);
 const clamp = (v, [lo, hi]) => Math.min(hi, Math.max(lo, v));
 const r3 = v => Math.round(v * 1000) / 1000;
 /** One letter's adjust, whatever came in: missing or non-numeric fields keep `base`'s (else the identity), every field clamped to the bounds. */
-function clampOne(a, base) {
+function clampOne(a, base, slot) {
   const out = {}; let clamped = false; base = base || IDENTITY;
   for (const k of Object.keys(BOUNDS)) {
     const raw = a && typeof a === "object" && a[k] != null && a[k] !== "" && Number.isFinite(Number(a[k])) ? Number(a[k]) : base[k];
-    const cl = clamp(raw, BOUNDS[k]); if (cl !== raw) clamped = true; out[k] = r3(cl);
+    const cl = clamp(raw, k === "sx" && slot === "M" ? SX_CENTRE : BOUNDS[k]); if (cl !== raw) clamped = true; out[k] = r3(cl);
   }
   return { a: out, clamped };
 }
 /** { L, M, R } clamped; `base` is the current adjust (what a missing letter or field keeps). */
 function clampAdjust(adj, base) {
   const out = {}; let clamped = false;
-  for (const s of SLOTS) { const r = clampOne(adj && adj[s], base && base[s]); out[s] = r.a; if (r.clamped) clamped = true; }
+  for (const s of SLOTS) { const r = clampOne(adj && adj[s], base && base[s], s); out[s] = r.a; if (r.clamped) clamped = true; }
   return { adjust: out, clamped };
 }
 /** JSON-safe, bounded copy of the engine's report.metrics: numbers, booleans and short strings, a few levels deep. */

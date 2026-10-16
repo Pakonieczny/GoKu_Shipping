@@ -61,7 +61,7 @@ require.cache[require.resolve(clientPath)] = { id: clientPath, filename: clientP
   r = await A.run(body(), { db, FV, anthropic: fa, now: Date.UTC(2026, 9, 15, 12) });
   const q = fa.calls[0];
   check(r.adjust && r.adjust.L.dx === 0.4 && r.adjust.R.sx === 1.15 && /Widened the right letter/.test(r.why) && !r.error && r.usage.input_tokens === 1200 && r.usage.cache_read_input_tokens === 900, 'one round: the numbers and the one sentence come back with the usage: ' + JSON.stringify(r.adjust.L));
-  check(Array.isArray(q.system) && q.system[0].cache_control && q.system[0].cache_control.type === 'ephemeral' && /ESG/.test(q.system[0].text) && /TWO solid contacts/.test(q.system[0].text) && /never to the point|NEVER be altered/.test(q.system[0].text) && /0\.85 to 1\.15/.test(q.system[0].text) && /-1\.5 to 1\.5/.test(q.system[0].text), 'the system prompt is cached (cache_control) and states the rules, the adjust fields, the bounds and the never-ruin-a-letter rule');
+  check(Array.isArray(q.system) && q.system[0].cache_control && q.system[0].cache_control.type === 'ephemeral' && /ESG/.test(q.system[0].text) && /TWO solid contacts/.test(q.system[0].text) && /never to the point|NEVER be altered/.test(q.system[0].text) && /0\.80 to 1\.25/.test(q.system[0].text) && /-6 to 6/.test(q.system[0].text) && /-0\.15 to 0\.15/.test(q.system[0].text) && /-1\.5 to 1\.5/.test(q.system[0].text), 'the system prompt is cached (cache_control) and states the rules, the adjust fields, the bounds and the never-ruin-a-letter rule');
   const imgs = q.messages[0].content.filter(b => b.type === 'image'), refMod = require(path.join(fnDir, '_charmNestMonogramRef.js'));
   check(imgs.length === 2 && imgs.every(b => b.source.media_type === 'image/png') && 'data:image/png;base64,' + imgs[0].source.data === refMod.ESG_PNG_DATA_URL && 'data:image/png;base64,' + imgs[1].source.data === PNG, 'the request carries two PNGs: the ESG reference first, the candidate second');
   const txt = q.messages[0].content.filter(b => b.type === 'text').map(b => b.text).join('\n');
@@ -76,7 +76,7 @@ require.cache[require.resolve(clientPath)] = { id: clientPath, filename: clientP
   ({ db, FV } = fakeDb());
   fa = fakeAnthropic(async () => reply({ adjust: { L: { scale: 9, sx: 0, dx: 50, dy: -9 }, M: { scale: -3, sx: 99, dx: -50, dy: 40 }, R: { scale: 'big', sx: null, dx: Infinity } }, why: '  Went   wild. ' }));
   r = await A.run(body({ adjust: { L: { scale: 1.1, sx: 1, dx: 0, dy: 0 }, M: IDENT, R: { scale: 1, sx: 1.2, dx: 0.5, dy: 0.5 } } }), { db, FV, anthropic: fa });
-  check(r.adjust.L.scale === 1.15 && r.adjust.L.sx === 0.8 && r.adjust.L.dx === 2 && r.adjust.L.dy === -1.5 && r.adjust.M.scale === 0.85 && r.adjust.M.sx === 1.25 && r.adjust.M.dx === -2 && r.adjust.M.dy === 1.5 && r.clamped === true, 'scale 9, dx 50, sx 0 ... are clamped to 0.85..1.15, 0.8..1.25, +-2 mm, +-1.5 mm: ' + JSON.stringify(r.adjust.L));
+  check(r.adjust.L.scale === 1.25 && r.adjust.L.sx === 0.8 && r.adjust.L.dx === 2 && r.adjust.L.dy === -1.5 && r.adjust.M.scale === 0.8 && r.adjust.M.sx === 1.25 && r.adjust.M.dx === -2 && r.adjust.M.dy === 1.5 && r.clamped === true, 'scale 9, dx 50, sx 0 ... are clamped to 0.8..1.25, 0.8..1.5 (centre 1.25), +-2 mm, +-1.5 mm: ' + JSON.stringify(r.adjust.L));
   check(r.adjust.R.scale === 1 && r.adjust.R.sx === 1.2 && r.adjust.R.dx === 0.5 && r.adjust.R.dy === 0.5 && r.why === 'Went wild.', 'a field that is not a number keeps the current value (R scale "big" -> 1, sx null -> 1.2, dx Infinity -> 0.5), the sentence is tidied');
   fa = fakeAnthropic(async () => reply({ adjust: { L: { scale: 1.1 } }, why: '' }));
   r = await A.run(body({ round: 2, adjust: { L: { scale: 1, sx: 1.1, dx: 0.3, dy: 0 }, M: IDENT, R: IDENT } }), { db, FV, anthropic: fa });
@@ -131,7 +131,7 @@ require.cache[require.resolve(clientPath)] = { id: clientPath, filename: clientP
       check(h.statusCode === 400 && called === 0, 'a kick that does not say monoAssist is a bad payload');
       h = await bg.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify({ id: 'agent-m1', mode: 'monoAssist' }) });
       const job = bdb.docs.get('Charm_Nest_Agent/agent-m1');
-      check(h.statusCode === 200 && job.status === 'done' && job.result.adjust.L.scale === 1.15 && job.result.adjust.L.dx === 2 && job.result.why === 'Moved the left letter toward the middle one.' && called === 1 && deleted.includes('charmnest/agent/agent-m1.json'), 'the job goes pending -> done with the clamped numbers; its parked payload is deleted (getAgent reads the record)');
+      check(h.statusCode === 200 && job.status === 'done' && job.result.adjust.L.scale === 1.25 && job.result.adjust.L.dx === 2 && job.result.why === 'Moved the left letter toward the middle one.' && called === 1 && deleted.includes('charmnest/agent/agent-m1.json'), 'the job goes pending -> done with the clamped numbers; its parked payload is deleted (getAgent reads the record)');
       h = await bg.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify({ id: 'agent-m1', mode: 'monoAssist' }) });
       check(h.body === 'already handled' && called === 1, 'a second kick of a finished job does nothing');
       h = await bg.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify({ id: 'nope', mode: 'monoAssist' }) });
@@ -265,7 +265,7 @@ require.cache[require.resolve(clientPath)] = { id: clientPath, filename: clientP
       const accepted = A.cleanRequest(c1.payload);
       check(!accepted.error && accepted.req.letters.join('') === 'APV', 'the server accepts exactly the payload the page sent: ' + (accepted.error || 'ok'));
       const s1 = await settings(), rec = Object.values(s1.assist || {})[0];
-      check(Object.keys(s1.assist || {}).length === 1 && rec.status === 'assembled' && rec.adjust.L.dx === 2 && rec.adjust.L.scale <= 1.15 && /Moved the A/.test(rec.why) && rec.rounds === 1, 'the final adjust (clamped by the engine: dx 2, scale <= 1.15), the sentence and the rounds are kept in the page\'s settings: ' + JSON.stringify(rec));
+      check(Object.keys(s1.assist || {}).length === 1 && rec.status === 'assembled' && rec.adjust.L.dx === 2 && rec.adjust.L.scale <= 1.25 && /Moved the A/.test(rec.why) && rec.rounds === 1, 'the final adjust (clamped by the engine: dx 2, scale <= 1.25), the sentence and the rounds are kept in the page\'s settings: ' + JSON.stringify(rec));
       check((s1.assistDay['4200683017_42006830171'] || {}).n === 1, 'the day\'s calls for the order are counted on the page too');
       await clickApprove('4200683017'); await until('4200683017', r => r.state === 'approved', 'APV approved');
       check((await files()).join('|') === 'Monogram APV.ai', 'Approve is one press for a word that now passes: Monogram APV.ai is on the order\'s designs');
