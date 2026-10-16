@@ -6,6 +6,7 @@
     "bootstrapOwner.js",
     "britesAuth.js",
     "charmBatchSweepCron.js",
+    "charmNestKeepRepairCron.js",
     "charmEngrave-background.js",
     "charmMaster-background.js",
     "charmNestAgent-background.js",

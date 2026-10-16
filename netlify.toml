@@ -213,6 +213,15 @@
 [functions."stationSessionsSweepCron"]
   schedule = "*/5 * * * *"
 
+# ─── Charm repository: repair of saved custom designs (Paul, 16 Oct 2026) ───
+# Every 10 minutes, with no page open: orphan files, saves whose records disagree,
+# a stuck Etsy note, intent litter, and the Etsy steps that are not done yet
+# (charmNestLibrary customSaveRepair { etsy: true }; free, throttled, leased,
+# idempotent, nothing in the sandbox). Declared here as well as in the function
+# file, like every other cron above.
+[functions."charmNestKeepRepairCron"]
+  schedule = "*/10 * * * *"
+
 # Every page is cross-origin isolated, so a cross-origin picture only loads if its server sends
 # Cross-Origin-Resource-Policy, and Etsy's image CDN (i.etsystatic.com) does not send it reliably: a listing's picture
 # goes missing with ERR_BLOCKED_BY_RESPONSE.NotSameOriginAfterDefaultedToSameOriginByCoep. Show Etsy pictures through
