@@ -149,7 +149,7 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     assert(srv.st.list('Order_Timeline').some(e => e.orderId === RID && e.type === 'needsDecision'), 'the order\'s question was recorded (the Now card used to keep saying it)');
     const read = () => page.evaluate(() => {
       const txt = s => { const x = document.querySelector(s); return x ? x.textContent.replace(/\s+/g, ' ').trim() : ''; };
-      return { pill: txt('#owNow'), stops: [...document.querySelectorAll('#owRail .tlStop')].map(b => [b.dataset.stage, b.className.replace(/^tlStop\s*/, ''), b.getAttribute('aria-label') || '']),
+      return { pill: (document.querySelector('#owNowCard').dataset.now || ''), stops: [...document.querySelectorAll('#owRail .tlStop')].map(b => [b.dataset.stage, b.className.replace(/^tlStop\s*/, ''), b.getAttribute('aria-label') || '']),
         nowLine: txt('#owTimeline .tlNowLine span'), ghosts: document.querySelectorAll('#owTimeline .tlSt.ghost').length, next: (txt('#owTimeline').match(/next for this order|all that .{1,40} needs/i) || [''])[0],
         k: txt('#owNowCard .k'), t: txt('#owNowCard .t'), card: txt('#owNowCard'), seals: [...document.querySelectorAll('#owTimeline .tlSt[data-key]')].map(b => b.dataset.key.split('~')[0]).filter(t => t === 'sealCompleted' || t === 'reopened') };
     });
@@ -195,7 +195,7 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     await page.evaluate(k => OrderWin.open(k), K);
     await page.waitForSelector('#owPcSum [data-cu-complete]', { state: 'visible' }); await calm();
     await page.evaluate(() => OrderWin.setView('timeline'));
-    await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key^="reopened~"]').length === 2 && document.getElementById('owNow').textContent !== 'Order completed', null, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key^="reopened~"]').length === 2 && document.getElementById('owNowCard').dataset.now !== 'Order completed', null, { timeout: 15000 });
     await page.waitForTimeout(500);
     s = await read();
     assert.deepEqual(s.seals, ['sealCompleted', 'reopened', 'sealCompleted', 'reopened'], 'every seal stays: ' + s.seals);
@@ -209,7 +209,7 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     await page.click('#owPcSum [data-cu-complete]');
     await page.waitForFunction(k => B.maps.customDone[k], K); await idle(); await calm();
     await page.evaluate(() => OrderWin.setView('timeline'));
-    await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key^="sealCompleted~"]').length === 3 && document.getElementById('owNow').textContent === 'Order completed', null, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key^="sealCompleted~"]').length === 3 && document.getElementById('owNowCard').dataset.now === 'Order completed', null, { timeout: 15000 });
     await page.waitForTimeout(500);
     s = await read();
     completed(s, 'completed again');

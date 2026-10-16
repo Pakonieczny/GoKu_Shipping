@@ -15,7 +15,7 @@ const at = Date.UTC(2026, 9, 2, 2, 59), key = '4175152234_1';
 const makeRow = (k = key) => ({ key:k, state:'pooled', order:{receiptId:k.split('_')[0]}, line:{transactionId:k.split('_')[1]}, spec:{}, poolIds:[k + '_1'] });
 const sentRecord = () => ({ id:'original-send', state:'decided', how:'sheet', at, by:'Paul', decidedAt:at, receiptId:'4175152234', category:'Custom designs', stamps:[{how:'sheet', id:'original-send', at, by:'Paul'}] });
 function fixture() {
-  const dom = new JSDOM('<dialog id="orderWin" open><header><span id="owNow"></span></header><main><div id="owFix"></div><div class="owPcSum" id="owPcSum" hidden></div></main></dialog><div id="toasts"></div>', {runScripts:'outside-only', pretendToBeVisual:true, url:'https://sorter.test'});
+  const dom = new JSDOM('<dialog id="orderWin" open><header><span id="owPos"></span></header><main><div id="owFix"></div><div class="owPcSum" id="owPcSum" hidden></div></main></dialog><div id="toasts"></div>', {runScripts:'outside-only', pretendToBeVisual:true, url:'https://sorter.test'});
   const w = dom.window, d = w.document;
   w.matchMedia = () => ({matches:true});
   w.Element.prototype.getAnimations = () => [];

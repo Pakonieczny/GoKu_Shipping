@@ -10,8 +10,8 @@ const root = path.join(__dirname, '../..');
 const R = {   // browser-side readers (they run in the page)
   ow: rid => {
     const T = e => e ? e.textContent.replace(/\s+/g, ' ').trim() : '', q = s => document.querySelector(s), qa = s => [...document.querySelectorAll(s)], out = [];
-    if (!q('#owNow')) return [{ s: 'ow', gone: true }];
-    out.push({ s: 'ow.header', kind: 'order', text: T(q('#owNow')), required: false });   // (the header names the last step reached ("Restored", "Hold released"); where the pieces are is said by the chips, the rows and the rail, which are asserted, and a header that says the wrong place is still wrong)
+    if (!q('#owNowCard')) return [{ s: 'ow', gone: true }];
+    out.push({ s: 'ow.header', kind: 'order', text: (q('#owNowCard').dataset.now || '').trim(), required: false });   // (the header chip is gone (HDRHEAD); its word is the head card's data-now; it names the last step reached ("Restored", "Hold released"); where the pieces are is said by the chips, the rows and the rail, which are asserted, and a header that says the wrong place is still wrong)
     const seal = q('#owNowCard .tlNowSeal'); if (seal) out.push({ s: 'ow.holdcard', kind: 'order', text: (seal.getAttribute('aria-label') || '').split(' · ')[0] });
     // (the head card draws no sheet chips since 12 Oct 2026: where the pieces are is said by the rows, the rail and the Sheet tab, which are read below and in owSheet)
     for (const r of qa('#owPcSum .owPcRow[data-piece]')) { const n = +String(r.dataset.piece).split(/[:_]/)[1] - 5000000000; out.push({ s: 'ow.row', n, text: T(r.querySelector('.st')), required: 'sheet,held,cancelled,done,waiting' }); out.push({ s: 'ow.dots', n, dots: r.querySelectorAll('.steps i.on').length });

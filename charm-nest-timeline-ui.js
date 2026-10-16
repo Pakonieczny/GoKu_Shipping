@@ -83,7 +83,9 @@
      (Paul, 5 Oct 2026, with the detail pane gone: "expand the chart and enlarge the seals and all other components of the chart to fit the empty
      space below": the chart's own seals are no longer one fixed 26 px but the size its room allows, up to FIT_CAP, the shared 84 px: see "the
      chart fits its room" below.) ── */
-  const TL_RAIL_SEAL = 20;
+  /* The header rail's stamp (HDRHEAD, Paul, 16 Oct 2026: "Expand and enlarge the timeline and milestones UI ... too small and not visible enough"): 40 px, twice the 20 px it was, in a rail 72 px high (the Order window sets
+     --owRailH: 80 px from 1700 px wide, where the stamp is 48); TL_RAIL_LABEL is the room the rail keeps under the stamp for its name (5 px gap, a 12 px name) and for the ring of the step in hand. */
+  const TL_RAIL_SEAL = 40, TL_RAIL_LABEL = 32;
   const zoomApi = () => (root.Seal && root.Seal.zoom) || null;
   const zoomOn = (el, kb) => { const z = zoomApi(); return !!(z && el && z.show(el, { keyboard: !!kb, managed: true })); };
   const zoomOff = (el, now) => { const z = zoomApi(); if (z && el) z.hide(!!now, el); };
@@ -638,7 +640,7 @@
     const base = baseSealSize(rail), width = m ? m.stops : wrap.clientWidth || rail.clientWidth, compactHost = rail.closest(".tlUI.compact"), hostH = m ? m.host : compactHost ? compactHost.clientHeight : 0;
     let fit = width > 0 ? Math.min(base, Math.max(24, width / n - 8)) : base;
     // A compact header is already sized by its host. Its seals fit that space without making a taller toolbar.
-    if (compactHost && hostH) fit = Math.min(fit, Math.max(TL_RAIL_SEAL - 2, hostH - (44 - TL_RAIL_SEAL)));
+    if (compactHost && hostH) fit = Math.min(fit, Math.max(TL_RAIL_SEAL - 2, hostH - TL_RAIL_LABEL));
     rail.style.setProperty("--seal-fit", Math.round(fit * 100) / 100 + "px");
   }
   function iconG(ic, x, y, s, ink, sw) {

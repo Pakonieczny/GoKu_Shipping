@@ -823,11 +823,16 @@
     /** The widest `el` may grow to: a seal of the order timeline or the order window 72 px, any other 96 (data-seal-cap on it or a parent says otherwise). */
     function zoomCap(el) {
       const own = el && el.closest ? el.closest("[data-seal-cap]") : null, n = own ? +own.getAttribute("data-seal-cap") : 0;
-      return n > 0 ? n : el && el.closest && el.closest(ZOOM_TIGHT) ? ZOOM_CAP_TIGHT : ZOOM_CAP;
+      return n > 0 ? n : cssNum(el, "--seal-cap") || (el && el.closest && el.closest(ZOOM_TIGHT) ? ZOOM_CAP_TIGHT : ZOOM_CAP);
+    }
+    /** A number a page's own CSS gives a seal (an inherited custom property: `--seal-grow`, `--seal-cap`), so the zoom of a seal is set beside its size, in the style sheet (HDRSEAL, Paul, 16 Oct 2026: the seals and the
+     *  timeline's stamps are twice as large and their zoom grows with them); 0 when it gives none. */
+    function cssNum(el, name) {
+      try { const n = parseFloat(getComputedStyle(el).getPropertyValue(name)); return n > 0 ? n : 0; } catch (_) { return 0; }
     }
     /** The growth a seal (or a row it sits in) asks for with data-seal-grow (more than 1, at most 3); 0 when it asks for none: the curve decides. */
     function zoomGrow(el) {
-      const own = el && el.closest ? el.closest("[data-seal-grow]") : null, n = own ? parseFloat(own.getAttribute("data-seal-grow")) : 0;
+      const own = el && el.closest ? el.closest("[data-seal-grow]") : null, n = own ? parseFloat(own.getAttribute("data-seal-grow")) : cssNum(el, "--seal-grow");
       return n > 1 && n <= 3 ? n : 0;
     }
     /* Small round markers that are not seals (the Library's step rail circles, Paul 5 Oct: "a slight expanding zoom for each of the timeline

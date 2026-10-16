@@ -714,7 +714,7 @@ const receipts = [
         const d = document.getElementById('orderWin');
         const meta = [...d.querySelectorAll('#owMeta .m i')].map(i => i.textContent);
         return { open: d.open, title: document.getElementById('owTitle').textContent, sku: document.getElementById('owSku').textContent,
-          metal: document.getElementById('owMetal').textContent, meta, fix: !!d.querySelector('#owFix .rvItem'),
+          metal: meta.includes('Metal') ? 'Metal' : '', meta, fix: !!d.querySelector('#owFix .rvItem'),
           note: !!document.getElementById('owNote'), thread: !!document.getElementById('owThread'),
           composer: !!document.getElementById('owInput'), attach: !!document.getElementById('owAttach'),
           skip: !!document.getElementById('owSkip') || !!document.getElementById('owSkipBox'), photo: !!d.querySelector('#owPhoto'),

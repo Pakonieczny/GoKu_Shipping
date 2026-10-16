@@ -131,7 +131,7 @@ function check(R) {
     const m = R[k];
     need(m.title && m.title.text.includes(rid), `${k}: the header says order ${rid} mid-flight (${m.title && m.title.text})`);
     need(m.title && m.title.inClip >= .9 && m.title.opacity >= .9, `${k}: the order number is inside the flying view and opaque (in clip ${m.title && m.title.inClip}, opacity ${m.title && m.title.opacity})`);
-    if (sub) need(m.sub && m.sub.text.includes(sub) && /ship by/.test(m.sub.text) && m.sub.inClip >= .9 && m.sub.opacity >= .9, `${k}: the buyer and ship-by show under it (${JSON.stringify(m.sub)})`);
+    need(!m.sub, `${k}: the header has no buyer · pieces · ship-by line under the number (HDRHEAD, Paul 16 Oct 2026; the buyer and the ship-by date are in the chip strip) (${JSON.stringify(m.sub)})`);
     need(m.rail && m.rail.inClip > .5 && m.rail.opacity >= .9, `${k}: the rail's frame flies with it (${JSON.stringify(m.rail)})`);
     need(m.tabs && m.tabs.inClip > .5 && m.tabs.opacity >= .9, `${k}: the tabs fly with it (${JSON.stringify(m.tabs)})`);
     need(m.tint < .5, `${k}: the source's tint has let the view show through by mid-flight (${m.tint})`);

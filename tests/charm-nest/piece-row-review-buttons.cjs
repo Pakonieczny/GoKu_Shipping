@@ -226,7 +226,7 @@ async function main() {
     const ops1 = tlOps(P.rid).filter(e => e.type === 'sealCompleted'); assert.equal(ops1.length, 1, 'one Complete point on the order\'s timeline: ' + JSON.stringify(ops1.map(e => [e.type, e.by, e.data])));
     assert.equal(ops1[0].data.pressedIn, 'Order window'); assert.equal(ops1[0].by, 'Test Operator');
     // the header's rail and the piece row read it too: the piece is completed by hand (its words are in the Review row's place)
-    assert.equal(await page.evaluate(() => /Order completed|COMPLETED/i.test(document.getElementById('owNow').textContent) || !!document.querySelector('#owRail .tlStop.d')), true);
+    assert.equal(await page.evaluate(() => /Order completed|COMPLETED/i.test(document.getElementById('owNowCard').dataset.now || '') || !!document.querySelector('#owRail .tlStop.d')), true);
     await layout('completed');
 
     // ── 4 · Print QR label from the row (the print path), then Print again: seals added, never duplicated ──

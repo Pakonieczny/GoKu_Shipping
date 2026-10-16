@@ -256,7 +256,7 @@ async function openPiece(page, mode, o, l) {
     await page.waitForFunction(n => document.querySelectorAll('#owPcSum .owPcRow[data-piece]').length >= n, live.length, { timeout: 8000 }).catch(() => {});
     await page.evaluate(k => OrderWin.selectPiece(k), l.key);
   }
-  await settle(page, () => ({ n: document.getElementById('owTlCount')?.textContent || '', now: document.getElementById('owNow')?.textContent || '' }), null, { max: 5000, quiet: 250, ready: v => /\d/.test(v && v.n) });
+  await settle(page, () => ({ n: document.getElementById('owTlCount')?.textContent || '', now: document.getElementById('owNowCard')?.dataset.now || '' }), null, { max: 5000, quiet: 250, ready: v => /\d/.test(v && v.n) });
 }
 const OV = () => ({
   piece: [...document.querySelectorAll('#owPcSum .owPcRow.sel')].map(b => b.dataset.piece || '*').concat(document.querySelector('#owPcSum .owPcState') && !document.querySelector('#owPcSum .owPcRow.sel') ? ['*'] : []),
@@ -266,7 +266,7 @@ const OV = () => ({
   cardControls: document.querySelectorAll('#owNowCard button, #owNowCard a[href], #owNowCard input, #owNowCard select, #owNowCard textarea, #owNowCard [role=button], #owNowCard .shs, #owNowCard .owShChip, #owNowCard [data-go], #owNowCard [data-pc]').length,
   sheetBtn: (b => b ? { disabled: !!b.disabled || b.getAttribute('aria-disabled') === 'true', title: b.title || '' } : null)(document.querySelector('.owTabsV [data-ow-view="sheet"]')),
   sum: [...document.querySelectorAll('#owPcSum .owPcRow')].map(b => ({ key: b.dataset.piece, st: (b.querySelector('.st')?.textContent || '').trim() })),
-  now: (document.getElementById('owNow')?.textContent || '').trim(),
+  now: (document.getElementById('owNowCard')?.dataset.now || '').trim(),
   metaSheet: (() => { const m = [...document.querySelectorAll('#owMeta .m')].find(x => (x.querySelector('i')?.textContent || '').trim().toLowerCase() === 'sheet'); return m ? (m.querySelector('span')?.textContent || '').trim() : null; })(),
 });
 const SHEETTAB = () => ({
