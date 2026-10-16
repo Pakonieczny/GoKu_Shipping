@@ -107,6 +107,7 @@ async function main() {
     });
     const page = await ctx.newPage(), errors = [];
     page.setDefaultTimeout(20000);
+    page.on('console', m => { if (m.type() === 'warning' && /Save (strip|keeper)/.test(m.text())) console.log('  .. page warning:', m.text().slice(0, 300)); });
     page.on('pageerror', e => { errors.push(String(e.message)); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 3).join(' | ')); });
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.CN && window.Orders && window.Review && window.CustomSheet && CN.S.cloud.ok === true, null, { timeout: 60000 });
@@ -159,7 +160,7 @@ async function main() {
     const line = h.querySelector('.cuKeepLine'), sw = h.querySelector('.cuSwitch'), pw = h.querySelector('.cuKeepPw');
     return { shown: vis(h), phase: h.dataset.phase, sandbox: h.dataset.sandbox, sw: vis(h.querySelector('.cuKeepSw')) && vis(sw), on: sw.getAttribute('aria-checked') === 'true', swDisabled: sw.disabled, label: h.querySelector('#cuKeepL').textContent, preview: h.querySelector('#cuKeepP').textContent,
       pill: vis(h.querySelector('.cuKeepPill')) ? h.querySelector('.cuKeepPill').textContent : '', now: vis(h.querySelector('[data-k-now]')), pw: vis(pw), pwMsg: pw.querySelector('.cuKeepMsg').textContent, unlockDisabled: pw.querySelector('[data-k-unlock]').disabled,
-      steps: vis(h.querySelector('.cuKeepSteps')), rows, line: vis(line) ? { main: line.querySelector('b').textContent, sub: line.querySelector('.sub').textContent, cls: line.className } : null, dialogs: document.querySelectorAll('dialog[open]').length, busy: h.getAttribute('aria-busy') };
+      steps: vis(h.querySelector('.cuKeepSteps')), rows, line: vis(line) ? { main: line.querySelector('b').textContent, sub: line.querySelector('.sub').textContent, cls: line.className, btns: [...line.querySelectorAll('button')].map(b => b.textContent) } : null, dialogs: document.querySelectorAll('dialog[open]').length, busy: h.getAttribute('aria-busy') };
   });
   const settle = page => page.evaluate(() => Promise.race([Promise.all(document.getAnimations().filter(a => { try { return a.effect.getComputedTiming().iterations !== Infinity; } catch (_) { return true; } }).map(a => a.finished.catch(() => null))), new Promise(r => setTimeout(r, 3000))]).then(() => new Promise(r => setTimeout(r, 60))));
   const ready = (page, phase, ms = 8000) => page.waitForFunction(p => { const h = document.getElementById('cuKeep'); return h && h.dataset.phase === p; }, phase, { timeout: ms });
@@ -656,18 +657,19 @@ async function main() {
       await page.evaluate(() => { __kw.open = { saved: { sku: 'ACORN_LEAF_4821', etsy: { state: 'linked' } } }; });
       await dropDesign(page, '4196630601'); await ready(page, 'linked'); await settle(page);
       let s = await strip(page);
-      ok(s.shown && !s.sw && !s.steps && s.line && s.line.main === 'Linked · ACORN_LEAF_4821' && /Saved to the repository and set on Etsy listing …4821/.test(s.line.sub) && !(await page.evaluate(() => document.querySelector('#cuKeep .cuKeepLine').classList.contains('cuRing'))), 'saved and linked before: one calm line "' + (s.line && s.line.main) + '" and where it is set, without a ring');
+      ok(s.shown && s.sw && s.on && !s.steps && s.line && s.line.main === 'Saved to the repository as ACORN_LEAF_4821; future orders of this listing will use it' && /Linked on Etsy listing …4821/.test(s.line.sub) && !(await page.evaluate(() => document.querySelector('#cuKeep .cuKeepLine').classList.contains('cuRing'))), 'saved and linked before (KEEPUI: the switch shows ON, ONE calm line says where it is saved and that later orders use it, without a ring): "' + (s.line && s.line.main) + '"');
       await shot(page, '5-linked'); await closeWin(page);
       // saved, Etsy not updated: the steps with Retry on Etsy only
       await page.evaluate(() => { __kw.open = { saved: { sku: 'ACORN_LEAF_4821', etsy: { state: 'failed', text: 'Etsy refused the change' } }, aliasWorks: false }; });
       await dropDesign(page, '4196630602'); await ready(page, 'saved'); await settle(page);
       s = await strip(page);
-      ok(s.steps && s.rows[1].s === 'done' && s.rows[2].s === 'done' && s.rows[3].s === 'failed' && s.rows[3].t === 'Etsy not updated: Etsy refused the change' && s.rows[3].b.join() === 'Retry' && s.rows[1].b.length === 0 && s.rows[2].b.length === 0, 'saved, Etsy not updated: the steps show, Retry only on the Etsy row: ' + JSON.stringify(s.rows.map(r => r.s + ':' + r.t)));
-      ok(s.line && /^Saved to the repository · Etsy not updated$/.test(s.line.main) && /Until Etsy has the new SKU, the next order of this listing will still ask\./.test(s.line.sub), 'the line says it, and why Etsy matters');
+      // (KEEPUI: ONE calm line says the one thing that needs a person, with its one button; the rows do not say it again)
+      ok(!s.steps && s.line && s.line.main === 'Needs attention: Etsy refused the change' && s.line.btns && s.line.btns.join() === 'Try again', 'saved, Etsy not updated: ONE line "Needs attention: Etsy refused the change" with ONE button, Try again: ' + JSON.stringify(s.line));
+      ok(s.line && /^Saved to the repository as ACORN_LEAF_4821, but Etsy was not updated\. Until Etsy has the new SKU, the next order of this listing will still ask\.$/.test(s.line.sub), 'the line says what was saved, and why Etsy matters: ' + (s.line && s.line.sub));
       await shot(page, '12-saved');
       // (KEEPSAVE: a save in the cloud's record that this browser holds no intent for: Retry adopts its Etsy step, which asks the cloud for the Etsy step alone; nothing is built or saved again)
       await page.evaluate(() => { const real = window.api; window.__etsyAsked = []; window.api = async function (fn, body, o) { if (body && body.op === 'customEtsySkuWrite') { window.__etsyAsked.push(body.rid + '/' + body.listingId); return { ok: true, state: 'linked' }; } return real.apply(this, arguments); }; });
-      await page.click('#cuKeep [data-k-retry="etsy"]');
+      await page.click('#cuKeep .cuKeepLine [data-k-retry="again"]');
       await page.waitForFunction(() => document.getElementById('cuKeep').dataset.phase === 'linked', null, { timeout: 15000 });
       ok(await page.evaluate(() => window.__etsyAsked.length === 1 && !__kw.calls.includes('run') && !__kw.calls.some(c => /^retry/.test(c))), 'Retry in the window asked for the Etsy step only (order and listing), once');
       await closeWin(page);
