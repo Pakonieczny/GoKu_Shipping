@@ -304,7 +304,8 @@ Object.entries(ODD).forEach(([k, o], i) => { FX[k] = { rid: o.rid, sku: 'MONOGRA
       await typeIn('4200683017', 1, 'Q'); a = await ready('4200683017', 30000);
       const q = await page.evaluate(async () => { const ui = Engrave.monogramUI(), c = ui.cards.get('4200683017_42006830171'), abc = ui.alphabets(), g = await ui.glyph('middle', 'Q', abc), L = await ui.glyph('left', 'A', abc), R = await ui.glyph('right', 'V', abc);
         const one = CharmNestMonogram.build({ left: L, middle: Object.assign({}, g, { fill: 'nonzero' }), right: R }), even = CharmNestMonogram.build({ left: L, middle: Object.assign({}, g, { fill: 'evenodd' }), right: R });
-        return { fill: g.fill, rings: g.rings.length, same: CharmNestMonogram.svgPath(one) === CharmNestMonogram.svgPath(c.result), differs: CharmNestMonogram.svgPath(even) !== CharmNestMonogram.svgPath(c.result), outer: c.result.rings.filter(x => !x.hole).length }; });
+        const rawOne = CharmNestMonogram.build({ left: L, middle: Object.assign({}, g, { fill: 'nonzero', edited: false }), right: R }), rawEven = CharmNestMonogram.build({ left: L, middle: Object.assign({}, g, { fill: 'evenodd', edited: false }), right: R });
+        return { fill: g.fill, rings: g.rings.length, same: CharmNestMonogram.svgPath(one) === CharmNestMonogram.svgPath(c.result), differs: CharmNestMonogram.svgPath(rawEven) !== CharmNestMonogram.svgPath(rawOne), outer: c.result.rings.filter(x => !x.hole).length }; });      // (the Mid Q is one of the edited letters now: the glyph itself, edited: false, is what crosses)
       check(a.state === 'ready' && q.rings >= 2 && q.fill === 'auto' && q.same && q.differs && q.outer === 1, 'Paul\'s Mid Q (rings that cross each other) is read as ink where they cross: the card shows the piece the non-zero reading makes, not the even-odd one with holes at the crossings: ' + JSON.stringify(q));
       await typeIn('4200683017', 1, 'P'); await ready('4200683017');
     }

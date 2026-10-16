@@ -47,11 +47,11 @@
   const ADJUST_LIMITS = { scale: [0.75, 1.30], sx: [0.70, 1.60], rotDeg: [-6, 6], shear: [-0.15, 0.15], dxMm: [-2.0, 2.0], dyMm: [-2.5, 2.5], centre: { scale: [0.80, 1.25], sx: [0.8, 1.25], dyMm: [-1.5, 1.5] } };      // (a side letter: more freedom, the centre letter keeps the tighter limits)
   /* The hard rules every finished monogram must meet (a word that breaks one is flagged for a person; report.metrics.violations names them). */
   const LIMITS = {
-    BODY_OFFSET_MM: 0.60, BODY_TARGET_MM: 0.15, LR_BODY_MM: 0.40, SIL_OFFSET_MM: 0.80, COMBINED_MM: 0.65, SIDE_INK: [0.85, 0.98], SIDE_INK_TARGET: 0.90, CLEARANCE_MM: 2.25, BOTTOM_CLEAR_MM: 1.6, INK_LR: 0.05, WIDTH_LR: 0.15, BASELINE_OFFSET_MM: [0.1, 2.0], ALIGN_LR_MM: 0.15, ALIGN_BODY_MM: 0.5, SIDE_HEIGHT: [0.74, 0.92], SIDE_WIDTH: [0.55, 1.05], CENTRE_WIDTH: [0.80, 1.15], VISIBLE_MM: 4.4, ASPECT: [0.95, 1.80], OVERLAP: 0.22, CROWD_MM: 3.6, COUNTERS: 0.9, OVERLAP_CENTRE: 0.30, BAR_MAX_MM: 1.04, BAR_REACH_MM: 2.0, VISIBLE_OUTLINE: 0.74,
+    BODY_OFFSET_MM: 0.60, BODY_TARGET_MM: 0.15, LR_BODY_MM: 0.40, SIL_OFFSET_MM: 0.80, COMBINED_MM: 0.65, SIDE_INK: [0.85, 0.98], SIDE_INK_TARGET: 0.90, CLEARANCE_MM: 2.25, BOTTOM_CLEAR_MM: 1.6, INK_LR: 0.05, WIDTH_LR: 0.15, BASELINE_OFFSET_MM: [0.1, 2.0], ALIGN_LR_MM: 0.15, ALIGN_BODY_MM: 0.5, SIDE_HEIGHT: [0.74, 0.92], SIDE_WIDTH: [0.55, 1.05], CENTRE_WIDTH: [0.80, 1.15], VISIBLE_MM: 4.4, ASPECT: [0.95, 1.80], OVERLAP: 0.12, CROWD_MM: 3.6, COUNTERS: 0.9, OVERLAP_CENTRE: 0.12, BAR_MAX_MM: 1.04, BAR_REACH_MM: 1.5, VISIBLE_OUTLINE: 0.74,
     BALANCE_UPPER: 0.6, BALANCE_LOWER: 0.4, BALANCE_APART: 0.45, CONTACT_MIN_MM: 0.2
   };
   /* ESG (Paul's reference monogram, 15 Oct 2026; the numbers re-measured 16 Oct 2026 with the widened and thickened letters of the letter prep (round 4), 13.0 x 14.8 mm with the raw letters: "absolutely perfect ... I want these exact ratios, sizes, the way things are connected and the way they are visible to be maintained"), measured on the engine: the layout aims at these. */
-  const ESG_PROFILE = { baselineOffsetMm: 1.1, bodyOffsetMm: [0.15, 0.15], wMm: 18.73, hMm: 14.93, aspect: 1.25, sideHeight: [0.83, 0.81], sideWidth: [0.89, 0.82], centreWidthVsMedian: 0.88, overlap: [0.11, 0.10, 0.01], visibleMm: [5.29, 5.24], crowdMm: 3.23 };
+  const ESG_PROFILE = { baselineOffsetMm: 1.1, bodyOffsetMm: [0.15, 0.15], wMm: 20.19, hMm: 14.93, aspect: 1.35, sideHeight: [0.83, 0.81], sideWidth: [0.89, 0.82], centreWidthVsMedian: 0.88, overlap: [0.02, 0.03, 0.01], visibleMm: [5.63, 5.25], crowdMm: 2.64 };
   function cleanAdjust(a) {
     const out = {}, c = (x, lim, d) => (finite(x) ? Math.min(lim[1], Math.max(lim[0], x)) : d);
     for (const [k, alias] of [['L', 'left'], ['M', 'middle'], ['R', 'right']]) {
@@ -63,7 +63,7 @@
   }
   const NORMS = {
     SIDE_HEIGHT_RATIO: 0.80, SIDE_HEIGHT_TOL: 0.04, SIDE_WIDTH_MIN: 0.55, SIDE_WIDTH_MAX: 1.0, MID_WIDTH_MIN: 0.84, MID_WIDTH_MAX: 1.11, MID_BODY_W_OVER_EM_MEDIAN: 0.3423, MID_BODY_W_OVER_INKH_MEDIAN: 0.4858, STRETCH_CAP: 0.25, SIDE_NARROW_CAP: 0.30, BODY_TRIM: 0.05,
-    ASPECT_TARGET: 1.15, ASPECT_MIN: 0.95, ASPECT_MAX: 1.80, OVERLAP_SIDE_MAX: 0.22, OVERLAP_MID_MAX: 0.30, SIDE_VISIBLE_MIN_MM: 4.5, SIDE_HEIGHT_MIN: 0.72, GAP_MIN_MM: 0.35, COUNTERS_MIN: 0.9, BOX_OVERLAP_MAX: 0.7, BOX_OVERLAP_MIN: 0.06
+    ASPECT_TARGET: 1.15, ASPECT_MIN: 0.95, ASPECT_MAX: 1.80, OVERLAP_SIDE_MAX: 0.12, OVERLAP_MID_MAX: 0.12, SIDE_VISIBLE_MIN_MM: 4.5, SIDE_HEIGHT_MIN: 0.72, GAP_MIN_MM: 0.35, COUNTERS_MIN: 0.9, BOX_OVERLAP_MAX: 0.35, BOX_OVERLAP_MIN: 0.06
   };
   /* The inner openings that count when it is asked whether a neighbour's stroke has closed them: those of 0.5 mm2 and more (a quarter of the counters of the real Left / Mid / Right alphabets are smaller: the eyes of a flourish,
      0.5 mm across, which a laser cannot keep open anyway and nobody reads as part of the letter). A smaller one that survives is still a hole of the piece. */
@@ -397,9 +397,9 @@
     return h;
   }
   /* Edited letters (MX2, Paul, 16 Oct 2026: "a free hand to adjust certain letters so that they fit better when welded"): Engine.setLetterEdits({ L: { A: { rings } }, M: { ... }, R: { ... } }) holds replacement RAW outlines
-     (the glyph rings' own frame: pt, y up, the glyph's own position), a letter without an entry keeps its glyph. They are used ONLY when asked: opts.edited = true (build, autoFit) or spec.edited = true (preparedLetter); default OFF.
+     (the glyph rings' own frame: pt, y up, the glyph's own position), a letter without an entry keeps its glyph. They are used unless opts.edited is false (build, autoFit) or spec.edited is false (preparedLetter): default ON since the best-fit stage.
      The edited rings go through the same widen / thicken / Q steps as every raw glyph; the font baseline stays on the same stroke (baselinePt moves with the outline's lowest point). Without a call, the table is
-     charm-nest-monogram-edits.json next to this file (node) or root.CharmNestMonogramEdits (page); the shipped file is empty. */
+     charm-nest-monogram-edits.js next to this file (node) or root.CharmNestMonogramEdits (page): ED-X's KEEP set. */
   let LETTER_EDITS = null;
   const slotKeyOf = slot => (slot === 'left' ? 'L' : slot === 'middle' ? 'M' : slot === 'right' ? 'R' : null);
   const lowestOf = rings => { let y = Infinity; for (const r of rings) if (Array.isArray(r) && r.length >= 3) for (const p of r) { const v = Array.isArray(p) ? p[1] : p && p.y; if (finite(v) && v < y) y = v; } return y; };
@@ -411,8 +411,8 @@
     LETTER_EDITS = t; return n;
   }
   function editedSpec(spec, slot, on) {
-    if (!on || !spec || typeof spec !== 'object' || spec.rings === undefined) return spec;
-    let tab = LETTER_EDITS; if (!tab) { try { tab = root.CharmNestMonogramEdits || (typeof require === 'function' ? require('./charm-nest-monogram-edits.json') : null); } catch (_) { tab = null; } if (tab) { setLetterEdits(tab); tab = LETTER_EDITS; } }
+    if (!on || spec === undefined || !spec || typeof spec !== 'object' || spec.rings === undefined || spec.edited === false) return spec;
+    let tab = LETTER_EDITS; if (!tab) { try { tab = root.CharmNestMonogramEdits || (typeof require === 'function' ? require('./charm-nest-monogram-edits.js') : null); } catch (_) { tab = null; } if (tab) { setLetterEdits(tab); tab = LETTER_EDITS; } }
     const e = tab && tab[slotKeyOf(slot)] && tab[slotKeyOf(slot)][String(spec.letter == null ? '' : spec.letter).trim().toUpperCase()];
     if (!e) return spec;
     const mt = spec.metrics && typeof spec.metrics === 'object' ? spec.metrics : null, y0 = lowestOf(spec.rings || []), y1 = lowestOf(e.rings);
@@ -420,7 +420,7 @@
   }
   /** One letter as the user drew it → its filled region (see fillOf), normalised so its own bbox starts at 0,0 (integer 0.001 pt). */
   function prepLetter(E, spec, slot, prep, C, edited) {
-    const spec0 = spec; spec = editedSpec(spec, slot, edited);
+    const spec0 = spec; spec = editedSpec(spec, slot, edited && prep);      // (the edited outlines replace the real alphabets' glyphs only: a letter without glyph metrics is not one of them)
     const name = () => `the ${slot} letter` + (spec && spec.letter ? ` (${String(spec.letter).slice(0, 3)})` : '');
     if (!spec || typeof spec !== 'object' || !Array.isArray(spec.rings)) return { why: `${name()} is missing` };
     const raw = [];
@@ -485,8 +485,8 @@
     const C = clipper(); if (!C) return { ok: false, why: 'the geometry library is not loaded' };
     if (!spec || typeof spec !== 'object') return { ok: false, why: 'the raw glyph is needed: preparedLetter(family, letter, { rings, fill, metrics })' };
     const E = engine(C), raw = Object.assign({}, spec, { letter: letter == null ? spec.letter : letter, metrics: spec.metrics && typeof spec.metrics === 'object' ? spec.metrics : {} });
-    const p = prepLetter(E, raw, slot, true, C, spec.edited === true); if (p.why) return { ok: false, why: p.why };
-    const before = prepLetter(E, raw, slot, false, C, spec.edited === true), info = p.prep || {};
+    const p = prepLetter(E, raw, slot, true, C, spec.edited !== false); if (p.why) return { ok: false, why: p.why };
+    const before = prepLetter(E, raw, slot, false, C, false), info = p.prep || {};
     const bl = finite(raw.metrics.baselinePt) ? raw.metrics.baselinePt : null, r3 = v => Math.round(v * 1000) / 1000;
     return {
       ok: true, edited: p.edited === true, family: slot === 'left' ? 'L' : slot === 'middle' ? 'M' : 'R', letter: String(raw.letter == null ? '' : raw.letter).toUpperCase(), fill: 'nonzero',
@@ -516,7 +516,7 @@
     return {
       overlap, maxOverlap: Math.max(overlap, num(o.maxOverlap, 0.38, 0, 0.95)),
       centerRatio: Math.max(1.2, num(o.centerRatio, 1.25, 1.2, 5)), sideWiden: num(o.sideWiden, 1.15, 1, 1.5), contacts: Math.round(num(o.contacts, 2, 1, 3)), contactMm: num(o.contactMm, 0.3, 0.1, 2), contactGapMm: num(o.contactGapMm, 1.5, 0.3, 6), barMm: num(o.barMm, 0.6, Math.max(0.2, num(o.contactMm, 0.3, 0.1, 2)), 2), allowTrim: o.allowTrim !== false, adjust: cleanAdjust(o.adjust), normalise: o.normalise !== false, prepare: o.prepare !== false && o.normalise !== false, norms: Object.assign({}, NORMS, o.norms && typeof o.norms === 'object' ? o.norms : {}),
-      edited: o.edited === true, valign: o.valign === 'baseline' ? 'baseline' : o.valign === 'center' ? 'center' : 'body', reach: o.reach !== false, reachMax: typeof o.reach === 'number' && Number.isFinite(o.reach) ? Math.min(0.95, Math.max(0.1, o.reach)) : REACH_HI
+      edited: o.edited !== false, valign: o.valign === 'baseline' ? 'baseline' : o.valign === 'center' ? 'center' : 'body', reach: o.reach !== false, reachMax: typeof o.reach === 'number' && Number.isFinite(o.reach) ? Math.min(0.95, Math.max(0.1, o.reach)) : REACH_HI
     };
   }
 
@@ -568,6 +568,8 @@
     const adjSizes = cap => plan.forEach((q, i) => { const a = o.adjust['LMR'[i]]; q.s *= a.scale; const cap2 = a.sx !== 1 && i !== 1 ? 0.5 : cap, f2 = a.sx === 1 ? q.f : Math.min(1 + cap2, Math.max(1 - cap2, q.f * a.sx)); adjustApplied[i].sx = Math.round(f2 / q.f * 1e4) / 1e4; q.f = f2; q.need *= a.sx; });
     let layout = null;
     if (!N) adjSizes(NORMS.STRETCH_CAP);
+    // the box overlap the layout may ask for: the real alphabets (glyph metrics) keep their letters apart (round 6, legibility), letters without metrics keep the old 0.7
+    const BOXMAX = !N ? 0.7 : metricsOn ? N.BOX_OVERLAP_MAX : Math.max(N.BOX_OVERLAP_MAX, 0.7);
     if (N) {
       const [pl, pm, pr] = plan, cap = N.STRETCH_CAP, clampF = (v) => Math.min(1 + cap, Math.max(1 - cap, v)), clampS = (v) => Math.min(1 + cap, Math.max(1 - N.SIDE_NARROW_CAP, v));
       // heights: the sides' BODY is SIDE_HEIGHT_RATIO of the centre's (1 / centerRatio), the ink of a side never taller than 95 % of the centre's, never shrunk more than 15 % from its drawn size
@@ -590,13 +592,13 @@
       const Hp = mid.h * cs, wOf = q => q.p.w * q.s * q.f, ovOf = () => 1 - (N.ASPECT_TARGET * Hp - wOf(pm)) / (wOf(pl) + wOf(pr));
       let ov = ovOf(), fa = 1;
       const widthAt = o2 => wOf(pm) + (1 - o2) * (wOf(pl) + wOf(pr));
-      if (ov > N.BOX_OVERLAP_MAX) { const want = Math.min(N.ASPECT_MAX * Hp, Math.max(N.ASPECT_MIN * Hp, widthAt(N.BOX_OVERLAP_MAX))), lo = Math.max(...plan.map((q, i) => (1 - (i === 1 ? cap : N.SIDE_NARROW_CAP)) / q.f)); fa = Math.max(lo, want / widthAt(N.BOX_OVERLAP_MAX)); }
+      if (ov > BOXMAX) { const want = Math.min(N.ASPECT_MAX * Hp, Math.max(N.ASPECT_MIN * Hp, widthAt(BOXMAX))), lo = Math.max(...plan.map((q, i) => (1 - (i === 1 ? cap : N.SIDE_NARROW_CAP)) / q.f)); fa = Math.max(lo, want / widthAt(BOXMAX)); }
       else if (ov < N.BOX_OVERLAP_MIN) { const want = Math.min(N.ASPECT_MAX * Hp, widthAt(N.BOX_OVERLAP_MIN)), hi = Math.min(...plan.map(q => (1 + cap) / q.f)); fa = Math.min(hi, want / widthAt(N.BOX_OVERLAP_MIN)); }
       if (fa !== 1) { for (const q of plan) q.f *= fa; ov = ovOf(); }
-      layout = { overlap: Math.min(N.BOX_OVERLAP_MAX, Math.max(N.BOX_OVERLAP_MIN, ov)), aspectAsked: N.ASPECT_TARGET, commonStretch: fa };
+      layout = { overlap: Math.min(BOXMAX, Math.max(N.BOX_OVERLAP_MIN, ov)), aspectAsked: N.ASPECT_TARGET, commonStretch: fa };
       sl = pl.s; sr = pr.s;
       if (!finite(options && options.overlap)) { o.overlap = layout.overlap; o.maxOverlap = Math.max(o.maxOverlap, layout.overlap + 0.2); }
-      if (!(options && typeof options.reach === 'number')) o.reachMax = Math.min(o.reachMax, N.BOX_OVERLAP_MAX);
+      if (!(options && typeof options.reach === 'number')) o.reachMax = Math.min(o.reachMax, BOXMAX);
     }
     // a letter's rotation and shear (opts.adjust): about its body centre, the box and the baseline are worked out again from the moved ink
     const xform = (region, a, base) => {
@@ -1030,15 +1032,25 @@
        in steps of 0.4 mm up to 2 mm, until a bar can make the missing contact (the overlap rule may then break: a letter held at one end is the worse fault) */
     let preDc = null;
     if (need > 1 && balOn && ncm(best) < need && N) {
+      const barMax = LIMITS.BAR_MAX_MM / MM * SC, longest = dc => Math.max(0, ...dc.ys.map(a => Math.max(0, ...a.map(y => y.len || 0))));
       let dc0 = addContacts(best.att.pl, best.g);
-      if (!dc0.bal[0] || !dc0.bal[1]) {
+      // a pair that is not balanced, or one held by a bar longer than a bar should be, has its side letter brought nearer the centre letter in steps of 0.4 mm (up to 2 mm): until a bar can make the missing contact, or until the bar is
+      // short; the overlap stays inside its limit for a shorter bar (a letter held at one end is the worse fault, so for a missing contact it may not)
+      const bad0 = dc => !dc.bal[0] || !dc.bal[1];
+      if (bad0(dc0) || longest(dc0) > barMax) {
+        let bestTry = null;
         for (const st of [0.4, 0.8, 1.2, 1.6, 2.0]) {
-          const d = Math.round(st / MM * SC), pl2 = best.att.pl.map((P, i) => (i === 1 || (i === 0 ? dc0.bal[0] : dc0.bal[1]) ? P : Object.assign({}, P, { dx: P.dx + (i === 0 ? d : -d), rg: shift(P.rg, i === 0 ? d : -d, 0), srg: shift(P.srg, i === 0 ? d : -d, 0) })));
+          const d = Math.round(st / MM * SC), moveL = bad0(dc0) ? !dc0.bal[0] : dc0.ys[0].some(y => (y.len || 0) > barMax), moveR = bad0(dc0) ? !dc0.bal[1] : dc0.ys[1].some(y => (y.len || 0) > barMax);
+          const pl2 = best.att.pl.map((P, i) => (i === 1 || !(i === 0 ? moveL : moveR) ? P : Object.assign({}, P, { dx: P.dx + (i === 0 ? d : -d), rg: shift(P.rg, i === 0 ? d : -d, 0), srg: shift(P.srg, i === 0 ? d : -d, 0) })));
           const a2 = attemptPl(pl2, best.att.ov); tries++; if (!a2.connected) continue;
           const g2 = guards(a2); if (g2.holesKept < Math.min(HOLES_MIN, best.g.holesKept) - 1e-9) continue;
+          if (!bad0(dc0) && (g2.lm.pct / 100 > LIMITS.OVERLAP + 1e-9 || g2.mr.pct / 100 > LIMITS.OVERLAP + 1e-9)) continue;
           const dc2 = addContacts(a2.pl, g2);
-          if (dc2.bal[0] && dc2.bal[1]) { best = Object.assign({}, best, { att: a2, g: g2 }); dc0 = dc2; notes.push(`a side letter was brought ${st} mm nearer the centre letter so that a tie bar can hold it at the top and the bottom`); break; }
+          if (bad0(dc2)) continue;
+          const l2 = longest(dc2); if (!bestTry || l2 < bestTry.l - 1e-9) bestTry = { a2, g2, dc2, st, l: l2 };
+          if (l2 <= barMax) break;
         }
+        if (bestTry && (bad0(dc0) || bestTry.l < longest(dc0) - 1e-9)) { best = Object.assign({}, best, { att: bestTry.a2, g: bestTry.g2 }); dc0 = bestTry.dc2; notes.push(`a side letter was brought ${bestTry.st} mm nearer the centre letter so that ${bad0(dc0) ? '' : 'a shorter '}tie bar holds it at the top and the bottom`); }
       }
       preDc = dc0;
     }
@@ -1183,7 +1195,8 @@
       const rr = rulesOf({ piece, ratios, align, overlap, outlineVisible, crowdTotal, countersOpen, balanced, maxBar: Math.max(0, ...cont.LM.concat(cont.MR).map(c => c.lenMm || 0)), visible });
       const v = rr.violations, esgDistance = rr.distance, severity = rr.severity, warn = rr.warnings;
       const maxStretch = Math.round(Math.max(...plan.map(q => Math.max(q.f * fx, 1 / (q.f * fx)))) * 100) / 100;
-      return { piece, body, ratios, align, overlap, outlineVisible, maxStretch, visibleWidthMm: visible, crowdMm: Object.assign({ total: r2(crowdTotal) }, crowd), countersOpen, contacts: cont.LM.concat(cont.MR), balance: { LM: { span: span.LM, balanced: balanced.LM }, MR: { span: span.MR, balanced: balanced.MR } }, violations: v, warnings: warn, ok: v.length === 0, severity, symmetry: rr.symmetry, centring: rr.centring, distance: esgDistance, esgDistance };
+      const mo = { piece, body, ratios, align, overlap, outlineVisible, maxStretch, visibleWidthMm: visible, crowdMm: Object.assign({ total: r2(crowdTotal) }, crowd), countersOpen, contacts: cont.LM.concat(cont.MR), balance: { LM: { span: span.LM, balanced: balanced.LM }, MR: { span: span.MR, balanced: balanced.MR } }, violations: v, warnings: warn, ok: v.length === 0, severity, symmetry: rr.symmetry, centring: rr.centring, distance: esgDistance, esgDistance };
+      Object.defineProperty(mo, 'letterRegions', { enumerable: false, value: fullLets }); return mo;
     })();
     // sizes and limits of this word (NORMS): what was measured, what was stretched, which limit is not met (the word is then for a person to look at)
     let sizes = null; const limits = [];
@@ -1207,6 +1220,7 @@
       ok: true, why: '', rings, bboxPt: [0, 0, round3(W / SC), round3(H / SC)], wMm: Math.round(W / SC * MM * 1e4) / 1e4, hMm: Math.round(H / SC * MM * 1e4) / 1e4, placed,
       report: { connected: true, metrics, adjust: { L: adjustApplied[0], M: adjustApplied[1], R: adjustApplied[2] }, baseWiden: { L: left.prep ? left.prep.widen : 1, M: mid.prep ? mid.prep.widen : 1, R: right.prep ? right.prep.widen : 1 }, prep: { L: left.prep || null, M: mid.prep || null, R: right.prep || null }, sizes, limits, review: limits.length > 0, overlapPct: { leftMiddle: Math.round(g.lm.pct * 10) / 10, middleRight: Math.round(g.mr.pct * 10) / 10 }, holesKept: round3(g.holesKept), centerScale: round3(cs), overlap: att.ov == null ? round3((ovs[0] + ovs[1]) / 2) : att.ov, reach: reached, searched, warnings, parts, bridges: bars, contacts, tieBars: { leftMiddle: tieBars[0], middleRight: tieBars[1] }, altered, level, joinMm: { leftMiddle: joins[0], middleRight: joins[1] }, moveMm: { left: Math.round(moved[0] / SC * MM * 100) / 100, right: Math.round(moved[2] / SC * MM * 100) / 100 }, joinMm2: { leftMiddle: Math.round(g.lm.i / SC / SC * MM * MM * 100) / 100, middleRight: Math.round(g.mr.i / SC / SC * MM * MM * 100) / 100 }, tries, notes }
     };
+    if (N) Object.defineProperty(result, 'letters', { enumerable: false, value: metrics ? metrics.letterRegions : null });      // (the three placed letters' full outlines in 0.001 pt, in the finished piece's frame: for the legibility check of a caller)
     /* The quick look (autoFit): the placed letters of this build, moved by dx / dy in mm (per letter, on top of where they stand), measured on the coarse outlines with the same rules: a few dozen looks a second, where a build takes
        seconds. It does not redo the trim, the bars or the reach search; it says which move is worth a real build. Not part of the result's data (not enumerable). */
     if (N) Object.defineProperty(result, 'fit', { enumerable: false, value: (() => {

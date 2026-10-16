@@ -503,7 +503,7 @@ const ABC = [A, Pp, V];
 // ── 3g · size and layout norms: the body of every letter is measured, the sides held to a ratio of the centre, a stretch is capped and said, the limits are measured and reported (MONOGRAMUI, Paul, 15 Oct 2026) ──
 {
   const N = M0.NORMS, R = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
-  ok(N && N.SIDE_HEIGHT_RATIO === 0.8 && N.STRETCH_CAP === 0.25 && N.SIDE_WIDTH_MIN === 0.55 && N.SIDE_WIDTH_MAX === 1 && N.OVERLAP_SIDE_MAX === 0.22 && N.OVERLAP_MID_MAX === 0.30 && N.SIDE_VISIBLE_MIN_MM === 4.5 && N.GAP_MIN_MM === 0.35 && N.COUNTERS_MIN === 0.9 && N.ASPECT_MIN < N.ASPECT_TARGET && N.ASPECT_TARGET < N.ASPECT_MAX, 'the norms are named constants and exported: ' + Object.keys(N).join(' '));
+  ok(N && N.SIDE_HEIGHT_RATIO === 0.8 && N.STRETCH_CAP === 0.25 && N.SIDE_WIDTH_MIN === 0.55 && N.SIDE_WIDTH_MAX === 1 && N.OVERLAP_SIDE_MAX === 0.12 && N.OVERLAP_MID_MAX === 0.12 && N.SIDE_VISIBLE_MIN_MM === 4.5 && N.GAP_MIN_MM === 0.35 && N.COUNTERS_MIN === 0.9 && N.ASPECT_MIN < N.ASPECT_TARGET && N.ASPECT_TARGET < N.ASPECT_MAX, 'the norms are named constants and exported: ' + Object.keys(N).join(' '));
   const wide = { letter: 'M', rings: [R(0, 0, 40, 60)] }, wideSide = { letter: 'A', rings: [R(0, 0, 24, 44)] }, thin = { letter: 'I', rings: [R(0, 0, 4, 44)] };
   const r = M0.build({ left: thin, middle: wide, right: wideSide });
   ok(r.ok && r.report.sizes && typeof r.report.review === 'boolean' && Array.isArray(r.report.limits), 'the report carries the sizes, the limits and the review flag');
@@ -525,7 +525,7 @@ const ABC = [A, Pp, V];
   const nz = (letter, rings) => ({ letter, fill: 'nonzero', rings });
   const left = nz('C', [R(0, 0, 4, 30), R(0, 26, 12, 30), R(0, 0, 8, 4)]), right = nz('D', [R(8, 0, 12, 30), R(0, 26, 12, 30), R(4, 0, 12, 4)]), mid = { letter: 'M', rings: [R(0, 0, 24, 40)] };
   ok(M0.ADJUST_LIMITS && M0.ADJUST_LIMITS.scale[0] === 0.75 && M0.ADJUST_LIMITS.scale[1] === 1.3 && M0.ADJUST_LIMITS.sx[0] === 0.7 && M0.ADJUST_LIMITS.sx[1] === 1.6 && M0.ADJUST_LIMITS.centre.sx[1] === 1.25 && M0.ADJUST_LIMITS.centre.scale[0] === 0.8 && M0.ADJUST_LIMITS.rotDeg[1] === 6 && M0.ADJUST_LIMITS.shear[1] === 0.15 && M0.ADJUST_LIMITS.dxMm[1] === 2 && M0.ADJUST_LIMITS.dyMm[1] === 2.5 && M0.ADJUST_LIMITS.centre.dyMm[1] === 1.5, 'the adjust bounds are exported: a side letter scale 0.75..1.30, sx 0.70..1.60, dy +-2.5 mm; the centre letter scale 0.80..1.25, sx 0.8..1.25, dy +-1.5 mm; rot +-6, shear +-0.15, dx +-2 mm');
-  ok(M0.ESG_PROFILE && M0.ESG_PROFILE.aspect === 1.25 && M0.ESG_PROFILE.wMm === 18.73 && M0.LIMITS && M0.LIMITS.OVERLAP === 0.22 && M0.LIMITS.BALANCE_UPPER === 0.6, 'ESG_PROFILE and LIMITS are exported');
+  ok(M0.ESG_PROFILE && M0.ESG_PROFILE.aspect === 1.35 && M0.ESG_PROFILE.wMm === 20.19 && M0.LIMITS && M0.LIMITS.OVERLAP === 0.12 && M0.LIMITS.BALANCE_UPPER === 0.6, 'ESG_PROFILE and LIMITS are exported');
   const base = M0.build({ left, middle: mid, right }); sound(base, 'base');
   eq(base.report.adjust, { L: { scale: 1, sx: 1, rot: 0, shear: 0, dx: 0, dy: 0 }, M: { scale: 1, sx: 1, rot: 0, shear: 0, dx: 0, dy: 0 }, R: { scale: 1, sx: 1, rot: 0, shear: 0, dx: 0, dy: 0 } }, 'no adjust: report.adjust is all ones and zeros');
   // absurd values are clamped inside the engine and echoed as applied
@@ -662,7 +662,7 @@ const checkSample = (sp, words, what) => {
       const W = M0.WIDEN, T = M0.THICKEN; ok(W && ['M', 'N', 'W', 'K', 'A'].every(c => W[c] === 1.729) && ['V', 'L', 'X'].every(c => W[c] === 1.596) && ['H', 'R'].every(c => W[c] === 1.495) && ['Q', 'T', 'G', 'S', 'J'].every(c => W[c] === 1.265) && W.OTHER === 1.38 && T.TARGET.G1 === 1.596 && T.TARGET.G2 === 1.44 && T.MAX_MM === 0.25 && T.COUNTERS === 0.70 && typeof M0.preparedLetter === 'function', 'WIDEN (cumulative from the raw glyph), THICKEN (relative to the original letter) and preparedLetter are exported');
       const slotOf = { L: 'LEFT', M: 'MID', R: 'RIGHT' }, prep = {};
       for (const [f, L] of [['L', 'M'], ['M', 'S'], ['R', 'E'], ['L', 'H'], ['M', 'Z'], ['R', 'G'], ['L', 'Q'], ['M', 'Q'], ['R', 'Q'], ['R', 'T']]) {
-        const raw = await real(slotOf[f], L), pr = M0.preparedLetter(f, L, raw); prep[f + L] = pr;
+        const raw = await real(slotOf[f], L), pr = M0.preparedLetter(f, L, Object.assign({}, raw, { edited: false })); prep[f + L] = pr;
         ok(pr.ok && pr.family === f && pr.letter === L && Array.isArray(pr.rings) && pr.rings.length >= 1 && pr.fill === 'nonzero', `preparedLetter(${f}, ${L}) returns the outline: ` + (pr.why || ''));
         const k = M0.WIDEN[L] || M0.WIDEN.OTHER, wr = pr.bodyWidthPt / pr.before.bodyWidthPt;
         ok(Math.abs(wr / k - 1) < 0.08, `${f}${L}: the body is widened x${k} (measured x${Math.round(wr * 1000) / 1000})`);
@@ -679,7 +679,12 @@ const checkSample = (sp, words, what) => {
         const raw = await real('LEFT', 'Q'), gm = Object.assign({}, raw, { metrics: null }), plain = M0.build({ left: await real('LEFT', 'A'), middle: await real('MID', 'S'), right: raw }, {});
         ok(Math.abs(regionArea(prep.LQ)) > 0 && plain.ok, 'the Q with its bar builds into a piece: ' + (plain.ok ? '' : plain.why)); void gm;
       }
-      const rb = M0.preparedLetter('left', 'Q', await real('LEFT', 'Q')); ok(rb.ok && rb.family === 'L' && JSON.stringify(rb.rings) === JSON.stringify(prep.LQ.rings), 'preparedLetter reads left / middle / right as well as L / M / R, and is repeatable');
+      // the edited letters (ED-X's KEEP set) are the default: a letter of the set differs from its glyph, a letter outside it (the calibration letters) does not; edited:false gives the glyph back
+      { const cal = [['L', 'E'], ['M', 'S'], ['R', 'G'], ['L', 'H'], ['M', 'E'], ['R', 'Y']], inSet = [['L', 'B'], ['M', 'A'], ['R', 'X'], ['L', 'W']];
+        for (const [f, L] of cal) { const raw = await real(slotOf[f], L), a = M0.preparedLetter(f, L, raw), b = M0.preparedLetter(f, L, Object.assign({}, raw, { edited: false })); ok(a.ok && a.edited === false && JSON.stringify(a.rings) === JSON.stringify(b.rings), `the calibration letter ${f}:${L} is not edited`); }
+        for (const [f, L] of inSet) { const raw = await real(slotOf[f], L), a = M0.preparedLetter(f, L, raw), b = M0.preparedLetter(f, L, Object.assign({}, raw, { edited: false })); ok(a.ok && a.edited === true && b.edited === false && JSON.stringify(a.rings) !== JSON.stringify(b.rings), `${f}:${L} is edited by default and gives its glyph with edited: false`); }
+        const e1 = M0.build(await word('ESG')), e2 = M0.build(await word('ESG'), { edited: false }); ok(e1.ok && e2.ok && JSON.stringify(e1.rings) === JSON.stringify(e2.rings), 'ESG is the same with and without the edits (its letters are calibration letters)'); }
+      const rb = M0.preparedLetter('left', 'Q', Object.assign({}, await real('LEFT', 'Q'), { edited: false })); ok(rb.ok && rb.family === 'L' && JSON.stringify(rb.rings) === JSON.stringify(prep.LQ.rings), 'preparedLetter reads left / middle / right as well as L / M / R, and is repeatable');
       ok(M0.preparedLetter('X', 'Q', await real('LEFT', 'Q')).ok === false && M0.preparedLetter('L', 'Q').ok === false, 'an unknown family or a missing glyph is refused, not thrown');
       // baseWiden is reported apart from the stretch (which is counted from the prepared letters)
       const bw = esg.report.baseWiden, bh = hey.report.baseWiden;
@@ -694,7 +699,7 @@ const checkSample = (sp, words, what) => {
       // a synthetic spike of 4 x 0.35 mm on top of, or below, each of Y J Q G K X Z T, in all three alphabets, raw and prepared: the measure moves less than 0.3 mm
       let worst = 0, worstAt = '', plain = 0;
       for (const slot of ['LEFT', 'MID', 'RIGHT']) for (const L of 'YJQGKXZT') {
-        const raw = await real(slot, L), pr = M0.preparedLetter(famOf[slot], L, raw);
+        const raw = await real(slot, L), pr = M0.preparedLetter(famOf[slot], L, Object.assign({}, raw, { edited: false }));
         for (const [rings, fill] of [[raw.rings, 'auto'], [pr.rings, 'nonzero']]) {
           let ymax = -1e9, ymin = 1e9, xt = 0, xb = 0; for (const r of rings) for (const q of r) { if (q[1] > ymax) { ymax = q[1]; xt = q[0]; } if (q[1] < ymin) { ymin = q[1]; xb = q[0]; } }
           const w = 0.35 / MMPT, len = 4 / MMPT, ins = 0.8 / MMPT, base = M0.bodyCentre(rings, fill);

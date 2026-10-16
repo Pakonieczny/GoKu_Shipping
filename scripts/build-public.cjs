@@ -132,6 +132,7 @@ const assets = [
   "charm-nest-geom.js",
   "charm-nest-monogram.js",
   "charm-nest-monogram-fit.js",
+  "charm-nest-monogram-edits.js",
   "charm-nest-monogram-ui.js",
   "charm-nest-pair.js",
   "charm-nest-pair-labels.js",
