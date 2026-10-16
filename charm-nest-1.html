@@ -3347,10 +3347,11 @@ dialog.cuDlg.dragOver{box-shadow:0 0 0 3px rgba(142,107,184,.75),0 24px 80px rgb
 .cuKeep[hidden],.cuKeep [hidden]{display:none!important}
 .cuKeepIn{display:grid;gap:10px}
 .cuKeepSw{display:flex;align-items:center;gap:12px;min-width:0}
-.cuSwitch{position:relative;flex:0 0 auto;width:40px;height:24px;margin:0;padding:0;border:1px solid var(--line);border-radius:999px;background:var(--paper2);cursor:pointer;transition:background-color .16s ease,border-color .16s ease}
-.cuSwitch::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(30,24,16,.3);transition:transform .16s cubic-bezier(.3,.1,.2,1)}
-.cuSwitch[aria-checked="true"]{background:var(--velvet);border-color:var(--velvet)}.cuSwitch[aria-checked="true"]::after{transform:translateX(16px)}
-.cuSwitch:focus-visible{outline:2px solid #8e6bb8;outline-offset:2px}.cuSwitch:disabled{opacity:.45;cursor:default}
+.cuSwitch{position:relative;flex:0 0 auto;width:40px;height:24px;margin:0;padding:0;border:0;border-radius:999px;background:none;cursor:pointer}
+.cuSwitch::before{content:"";position:absolute;inset:0;border:1px solid var(--line);border-radius:999px;background:var(--paper2);transition:background-color .16s ease,border-color .16s ease}
+.cuSwitch::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(30,24,16,.3);transition:transform .16s cubic-bezier(.3,.1,.2,1)}
+.cuSwitch[aria-checked="true"]::before{background:var(--velvet);border-color:var(--velvet)}.cuSwitch[aria-checked="true"]::after{transform:translateX(16px)}
+.cuSwitch:focus-visible{outline:2px solid #8e6bb8;outline-offset:2px}.cuSwitch:disabled{opacity:.45;cursor:default}.cuSwitch[aria-disabled="true"]{cursor:default}
 .cuKeepTx{min-width:0;flex:1 1 auto;display:grid;gap:2px;cursor:pointer}
 .cuKeepTx b{font:600 13px var(--sans);color:var(--ink)}
 .cuKeepTx span{font:11.5px/1.4 var(--sans);color:var(--ink70);overflow-wrap:anywhere}
@@ -3380,26 +3381,35 @@ dialog.cuDlg.dragOver{box-shadow:0 0 0 3px rgba(142,107,184,.75),0 24px 80px rgb
 .cuKm .dash{width:9px;height:1.6px;border-radius:2px;background:var(--ink25)}
 .cuKm .lock{width:10px;height:11px;background:#8a6420;-webkit-mask:var(--repoShut) center/contain no-repeat;mask:var(--repoShut) center/contain no-repeat}
 .cuKt{font:600 12.5px var(--sans);color:var(--ink);white-space:nowrap}
-.cuKr[data-s="idle"] .cuKt,.cuKr[data-s="skipped"] .cuKt{color:var(--ink45)}
+.cuKr[data-s="idle"] .cuKt,.cuKr[data-s="skipped"] .cuKt{color:#6f685d}
 .cuKd{display:flex;align-items:center;gap:7px;min-width:0;font:12px/1.4 var(--sans);color:var(--ink70);overflow-wrap:anywhere}
-.cuKr[data-s="idle"] .cuKd,.cuKr[data-s="skipped"] .cuKd{color:var(--ink45)}
+.cuKr[data-s="idle"] .cuKd,.cuKr[data-s="skipped"] .cuKd{color:#6f685d}
 .cuKr[data-s="failed"] .cuKd{color:#a4432c}.cuKr[data-s="locked"] .cuKd{color:#8a6420}
-.cuKr[data-s="idle"] .cuKd .cuSku{font-weight:500;color:var(--ink45)}
+.cuKr[data-s="idle"] .cuKd .cuSku{font-weight:500;color:#6f685d}
 .cuKa{display:flex;gap:10px;align-items:center;justify-self:end;padding-left:8px}
 .cuKeep .linkBtn{border:0;background:none;padding:2px 0;font:600 12px var(--sans);color:#6a4a93;text-decoration:underline;text-underline-offset:2px;cursor:pointer;white-space:nowrap}
 .cuKeep .linkBtn:focus-visible{outline:2px solid #8e6bb8;outline-offset:2px;border-radius:3px}
-.cuKeepLine{display:flex;align-items:center;gap:11px;width:fit-content;max-width:100%;box-sizing:border-box;padding:9px 14px 9px 12px;border:1px solid rgba(95,122,91,.35);border-radius:12px;background:var(--sageSoft)}
+.cuKeepLine{display:flex;align-items:flex-start;gap:11px;width:fit-content;max-width:100%;box-sizing:border-box;margin-left:52px;padding:9px 14px 9px 12px;border:1px solid rgba(95,122,91,.35);border-radius:12px;background:var(--sageSoft)}
+.cuKeepLine .cuKm{margin-top:1px;flex:0 0 auto}
 .cuKeepLine .cuKlTx{display:grid;gap:2px;min-width:0}
-.cuKeepLine b{font:600 13px var(--sans);color:var(--ink);overflow-wrap:anywhere}
+.cuKeepLine b{font:600 13px/1.4 var(--sans);color:var(--ink);overflow-wrap:anywhere}
 .cuKeepLine span.sub{font:11.5px/1.4 var(--sans);color:var(--ink70);overflow-wrap:anywhere}
-.cuKeepLine.warn{border-color:var(--goldLine);background:var(--goldSoft)}
+.cuKeepLine .cuKlAct{display:flex;align-items:center;align-self:center;gap:10px;margin-left:6px}
+.cuKeepLine .cuKlAct:empty{display:none}
+.cuKeepLine.warn,.cuKeepLine.wait{border-color:var(--goldLine);background:var(--goldSoft)}
+.cuKeepLine.work{border-color:var(--line);background:var(--card)}
 .cuKeepLine.quiet{border-color:transparent;background:none;padding:0}
 .cuKeepLine.quiet b{font:500 12px var(--sans);color:var(--ink70)}
 .cuKeepLine.cuRing{animation:cuKeepRing .9s ease-out}
+.cuKm .pause{display:block;width:10px;height:11px;box-sizing:border-box;border-left:3px solid #8a6420;border-right:3px solid #8a6420}
+.cuKeepSr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
 @keyframes cuKeepRing{0%{box-shadow:0 0 0 0 rgba(95,122,91,.5);border-color:var(--sage)}45%{box-shadow:0 0 0 6px rgba(95,122,91,.18)}100%{box-shadow:0 0 0 13px rgba(95,122,91,0)}}
-.cuKeepNote{font:600 11.5px var(--sans);color:var(--ink45)}.cuKeepNote.ok{color:#3c5a39}.cuKeepNote.warn{color:#8a6420}
-.cuDesigns .cuKeepNote{white-space:nowrap}
-@media(max-width:760px){.cuKeep .btn{min-height:44px;display:inline-flex;align-items:center;justify-content:center}.cuSwitch{width:48px;height:28px}.cuSwitch::after{width:22px;height:22px}.cuSwitch[aria-checked="true"]::after{transform:translateX(20px)}.cuKeepSw{flex-wrap:wrap}.cuKeepPw{padding-left:0;display:grid;grid-template-columns:12px minmax(0,1fr) auto;gap:8px 10px}.cuKeepPw .cuKeepMsg{grid-column:1/-1}.cuKeepPw input{min-height:44px;width:100%}.cuKr{grid-template-columns:18px minmax(0,1fr) auto;row-gap:1px}.cuKr .cuKd{grid-column:2/-1}.cuKr .cuKa{grid-column:2/-1;justify-self:start;padding:0}.cuKeep .linkBtn{min-height:44px;display:inline-flex;align-items:center}}
+.cuKeepNote{display:inline-flex;align-items:center;gap:7px;min-width:0;font:600 11.5px/1.4 var(--sans);color:var(--ink70)}.cuKeepNote.ok{color:#3c5a39}.cuKeepNote.warn{color:#7a5a1d}
+.cuKeepNote .cuKnTx{min-width:0;overflow-wrap:anywhere}
+.cuKeepNote .cuKm{width:14px;height:14px;flex:0 0 auto}.cuKeepNote .cuKm svg,.cuKeepNote .cuKm .bang{width:14px;height:14px}.cuKeepNote .cuKm .bang{font-size:9px}.cuKeepNote .cuKm .spin{width:10px;height:10px}
+.cuKeepNote .linkBtn{margin-left:4px!important;font:600 12px var(--sans)}
+.cuDesigns .cuKeepNote{flex-wrap:wrap}
+@media(max-width:760px){.cuKeep .btn{min-height:44px;display:inline-flex;align-items:center;justify-content:center}.cuSwitch{width:52px;height:44px}.cuSwitch::before{inset:8px 2px}.cuSwitch::after{top:11px;left:5px;width:22px;height:22px}.cuSwitch[aria-checked="true"]::after{transform:translateX(20px)}.cuKeepSw{flex-wrap:wrap}.cuKeepTx{min-height:44px;align-content:center}.cuKeepPw{padding-left:0;display:grid;grid-template-columns:12px minmax(0,1fr) auto;gap:8px 10px}.cuKeepPw .cuKeepMsg{grid-column:1/-1}.cuKeepPw input{min-height:44px;width:100%}.cuKr{grid-template-columns:18px minmax(0,1fr) auto;row-gap:1px}.cuKr .cuKd{grid-column:2/-1}.cuKr .cuKa{grid-column:2/-1;justify-self:start;padding:0}.cuKeep .linkBtn{min-height:44px;min-width:44px;display:inline-flex;align-items:center}.cuKeepLine{margin-left:0;width:auto;flex-wrap:wrap}.cuKeepLine .cuKlTx{flex:1 1 180px}.cuKeepLine .cuKlAct{margin-left:29px;align-self:flex-start}.cuDesigns .cuKeepNote{flex:1 1 100%}.cuDesigns .cuKeepNote .linkBtn{min-height:40px;min-width:40px;display:inline-flex;align-items:center}}
 /* a file flying in (on the window's own layer), and the window going back into its card (on the page's) */
 .cuChip{position:absolute;left:0;top:0;display:inline-flex;align-items:center;gap:7px;max-width:240px;padding:5px 11px 5px 5px;border-radius:9px;background:var(--card);border:1px solid rgba(125,86,168,.45);box-shadow:0 14px 30px rgba(45,30,70,.24);font:600 12px/1.2 var(--sans);color:var(--ink);white-space:nowrap;transform-origin:50% 50%;will-change:transform,opacity}
 .cuChip span{overflow:hidden;text-overflow:ellipsis}
@@ -3407,7 +3417,7 @@ dialog.cuDlg.dragOver{box-shadow:0 0 0 3px rgba(142,107,184,.75),0 24px 80px rgb
 .cuDlgGhost{position:fixed;overflow:hidden;border-radius:15px;background:var(--card);color:var(--ink);box-shadow:0 24px 80px rgba(0,0,0,.32);will-change:transform,opacity}
 .cuShade{position:fixed;inset:0;background:rgba(20,18,15,.52)}
 @media(max-width:760px){.cuFile{grid-template-columns:64px minmax(0,1fr) 30px;gap:10px 12px}.cuThumb{width:64px;height:64px}.cuFile .cuMetals,.cuFile .cuQty{grid-column:2/-1;justify-content:flex-start}.cuFile .cuQty{justify-self:start}.cuFile .cuRm{grid-column:3;grid-row:1}.cuAll{flex-wrap:wrap;gap:8px}.cuAll .cuMetals{justify-content:flex-start}.cuDlg .dlgFoot{flex-wrap:wrap}}
-@media(prefers-reduced-motion:reduce){.cuDropVeil,.cuDropVeil>*,.cuTip,.cuFile>*,.cuFile::before,#rvList>.reviewListRow,dialog.cuDlg{transition:none}.cuVeilIc svg,.cuDlg.dragOver .cuAddIc,.cuHint.cuNudge,.cuWho input.cuNudge,.cuFile.cuNudge,.cuThumb.cuLanded,.cuDesigns,.cuDzT.new,.cuEmpty,.cuSum .warn.cuNudge,.cuKeepLine.cuRing,.cuKeepPw input.cuShake{animation:none!important}.cuSwitch,.cuSwitch::after,.cuKr:not(:last-child) .cuKm::after{transition:none}}
+@media(prefers-reduced-motion:reduce){.cuDropVeil,.cuDropVeil>*,.cuTip,.cuFile>*,.cuFile::before,#rvList>.reviewListRow,dialog.cuDlg{transition:none}.cuVeilIc svg,.cuDlg.dragOver .cuAddIc,.cuHint.cuNudge,.cuWho input.cuNudge,.cuFile.cuNudge,.cuThumb.cuLanded,.cuDesigns,.cuDzT.new,.cuEmpty,.cuSum .warn.cuNudge,.cuKeepLine.cuRing,.cuKeepPw input.cuShake{animation:none!important}.cuSwitch,.cuSwitch::before,.cuSwitch::after,.cuKr:not(:last-child) .cuKm::after{transition:none}}
 /* ── Motion (Paul, 27 Sep 20:09-20:24): what a click moves is seen going where it goes, slowly enough to follow ── */
 #motionLayer,.motionLayer{position:fixed;inset:0;z-index:140;pointer-events:none;overflow:hidden}
 .mGhost{position:fixed;pointer-events:none;will-change:transform,opacity}
@@ -7939,7 +7949,7 @@ boot();
 <script src="charm-nest-review-link.js?v=20261013-rlk2"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-ksv1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-ksv1-ku1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
