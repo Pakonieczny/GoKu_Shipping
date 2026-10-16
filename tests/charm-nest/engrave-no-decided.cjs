@@ -122,9 +122,16 @@ const SHOTS = process.env.SHOTS || '/tmp/dec/shots';
     const posBtn = await page.$(`#egQueue .rvItem[data-key="${k1}"] .engpPb[data-act="right"]:not([disabled])`);
     const posDump = await page.evaluate(k => { const c = document.querySelector(`#egQueue .rvItem[data-key="${k}"]`); const j = Engrave.items().get(k); return JSON.stringify({ card: c && c.dataset.state, bs: c ? [...c.querySelectorAll('.engpPb')].map(b => b.dataset.act + ':' + (b.disabled ? 'off:' + b.title : 'on')) : null, job: j && { s: j.state, fit: !!j.fit, mask: !!(j.mask && j.mask.bits), view: !!j.view, st: j.stamping, bk: j.backSaving, ap: j.approvalPreparing } }); }, k1);
     note(!!posBtn, 'the position buttons of an approved piece are enabled', posDump);
-    if (posBtn) { await posBtn.click(); await settle(600); }
-    const moved = await waitState(k1, ['review'], 30000);
-    note(moved && moved.state === 'review' && moved.centre !== st1.centre && moved.seals.length === 1 && moved.backs === 0, 'a position change put it back to "needs Approve" with its first seal kept', JSON.stringify(moved && { s: moved.state, seals: moved.seals.length, backs: moved.backs }));
+    if (posBtn) {   // (a move with no room is no change at all: it never reopens; the first direction that has room does)
+      for (const act of ['right', 'left', 'up', 'down', 'smaller', 'larger']) {
+        const b = await page.$(`#egQueue .rvItem[data-key="${k1}"] .engpPb[data-act="${act}"]:not([disabled])`); if (!b) continue;
+        await b.click(); await settle(500);
+        if ((await stateOf(k1)).state === 'review') break;
+        const still = await stateOf(k1); if (still.state === 'approved' && still.seals.length !== 1) break;
+      }
+    }
+    const moved = await waitState(k1, ['review'], 20000);
+    note(moved && moved.state === 'review' && moved.seals.length === 1 && moved.backs === 0, 'a position change put it back to "needs Approve" with its first seal kept', JSON.stringify(moved && { s: moved.state, seals: moved.seals.length, backs: moved.backs }));
     // Close on the untouched approved piece (the other line of the order): nothing happens to it
     await page.evaluate(k => { Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: k }); Engrave.render(); }, backKey);
     await page.waitForSelector(`#egQueue .rvItem[data-key="${backKey}"]`); await settle(700);
