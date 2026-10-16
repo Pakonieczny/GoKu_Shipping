@@ -207,8 +207,8 @@ const read = (line, c) => O.interpretLine(ORDER, line, c || ctx());
     { const S = require(path.join(root, 'charm-nest-engrave-sides.js')), SC = { pair: Pair, entryFor: () => null, poolRow: () => null, charmOf: () => null };
       for (const qty of [1, 2]) { const row = rowOf(qty); row.poolIds = Array.from({ length: 2 * qty }, (_, i) => `${row.key}_${i + 1}`);
         const plan = S.plan(SC, row, []), pcs = O.setPiecesOf(row);
-        eq([plan.split, plan.slots], [true, ['D1', 'D2']], `×${qty}: two engraving slots: the large bar and the small bar`);
-        eq(row.poolIds.map(id => plan.of.get(id)), pcs.map(p => p.slotKey), 'copy n is the slot setPiecesOf names'); eq(pcs.map(p => p.sku).slice(0, 2), [BAR, SKINNY], 'D1 is the large bar, D2 the small bar'); } }
+        eq([plan.split, plan.slots], [true, qty === 1 ? ['D1', 'D2'] : ['D1', 'D2', 'D1.2', 'D2.2']], `×${qty}: an engraving slot for the large bar and the small bar of each set (PIECES: the second set is D1.2, D2.2)`);
+        eq(row.poolIds.map(id => plan.of.get(id).replace(/\.\d+$/, '')), pcs.map(p => p.slotKey), 'copy n is the slot setPiecesOf names (a later set adds its number)'); eq(pcs.map(p => p.sku).slice(0, 2), [BAR, SKINNY], 'D1 is the large bar, D2 the small bar'); } }
     // a line pooled BEFORE the rule (one piece of BAR_1548: order 4202291826's way): it keeps that piece, nothing is offered, nothing is made up again, nothing is written
     const pooledBefore = (w, row) => { const id = '4999999999_5300000001_1'; row.poolIds = [id]; w.c.B.pool.rows.set(id, { poolId: id, state: 'ready', sku: BAR, copy: 1, quantity: 1, charmHash: 'x' }); return id; };
     for (const [what, tweak] of [['not on a sheet', () => {}], ['on a draft sheet of a modern set', (w, id) => { w.pages.gold.charms.push({ poolId: id }); w.pages.gold.draft = true; w.pages.gold.setId = 's1'; w.c.Gate.modern = () => true; }], ['on a sheet that was released', (w, id) => { w.pages.gold.charms.push({ poolId: id }); w.pages.gold.fileBase = 'SS Draft 9'; w.pages.gold.releaseFull = true; }], ['on a cut sheet', (w, id) => { w.pages.gold.charms.push({ poolId: id }); w.pages.gold.roseCutAt = 1; }]]) {

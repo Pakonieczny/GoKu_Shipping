@@ -15,6 +15,7 @@
  *   read(row, { jobs, slot })       pure view model of the control (setup, per-face rows, why, source, edited, raw words, locks); `slot` ('L' | 'R' | 'D2' ...): ONE piece's view (its own words, its own jobs, vm.jobKeys)
  *   setupFor(row, slot?, noOverride?)  the line's effective setup (CharmNestEngraveFaces.setupOf over the reading, TAGSKU's tag option when the intake has not read the line yet, and the override); with a slot: that piece's words
  *                                   (engravingOverride.pieces[slot][face], else the line's). Legacy setupFor(row, true) still means noOverride.
+ *   (PIECES) patch.all: with the line's words (no slot), the words of every piece for that face are dropped: "the same on every piece", one quiet control for the views
  *   buildOverride(line, patch, by, now)   pure: the row.engravingOverride of CONTRACT 3 (merges the previous one; a face the mode does not engrave is dropped). patch.slot: the words go to pieces[slot][face] (one piece),
  *                                   the mode and the line-level words stay the line's; an empty text on a piece face removes that piece's entry (it inherits the line's again)
  *   sig(row)                        what the control would show, as a short string (a host that caches its card draws it again when this changes)
@@ -105,7 +106,7 @@
    * instructions and choices made by the customer." autoChoice is that choice, ignoring what any person saved (row.engravingOverride) or decided at a card (job.decision):
    * the intake's reading (spec.engraving: the sides policy, the front / back words, the option, the title, the notes, the font reader), the Mini Tag option, the earring rule, and, for a
    * back the intake leaves to the reader, the reader's own words (a job nobody edited), else the buyer's own one inscription. */
-  const slotIx = slot => { const m = /^D(\d{1,2})$/.exec(str(slot)); return m ? +m[1] - 1 : null; };
+  const slotIx = slot => { const m = /^D(\d{1,2})(?:\.\d{1,3})?$/.exec(str(slot)); return m ? +m[1] - 1 : null; };   // (disc n of any unit: the font words of a disc repeat for every unit)
   /** The installed font id a face is engraved in: the shop's word for it (fontWord), else the line's font for that face (the same rule as CharmNestEngravePreview.fontIdOf). Pure. */
   function fontIdOf(row, face, fontWord, slot) {
     const O = Orders(), line = lineOf(row); let id = '';
@@ -211,7 +212,7 @@
   };
   const SRC = { option: o => { const v = o && o.name ? optView(o.name, o.value) : null; return o && o.name ? `the ${(v && (v.names || v.label)) || o.name} option` : 'the option'; }, title: () => 'the listing title', note: () => "the buyer's note", person: () => 'a person', default: () => '' };
   /** What the control shows for a line. null when the line has nothing to say (no spec, left the pull, done by hand, mode none with no edit). */
-  const SLOT_RX = /^(L|R|D\d{1,2})$/;
+  const SLOT_RX = /^(?:C\d{1,3}|(?:L|R|D\d{1,2})(?:\.\d{1,3})?)$/;   // (a slot: L, R, D<n>; a later unit of a line of quantity >= 2 "<slot>.<unit>"; copy n "C<n>": charm-nest-engrave-sides.js)
   const slotOfJob = j => (j && (j.slot || (Faces() && Faces().parseKey(j.key).slot))) || null;
   function read(row, o) {
     const F = Faces(), line = lineOf(row); if (!F || !line || !line.spec) return null;
@@ -266,6 +267,8 @@
       const q = pieces[slot] || (pieces[slot] = {});
       for (const face of ['front', 'back']) if (p[face] !== undefined) { const n = F.normFace(p[face]); if (n) q[face] = n; else delete q[face]; }   // (no words = this piece goes back to the line's)
     }
+    // (PIECES: patch.all, one quiet "same on every piece": the line's words for a face replace the words each piece was given for that face)
+    if (!slot && p.all) for (const face of ['front', 'back']) if (p[face] !== undefined) for (const sl of Object.keys(pieces)) delete pieces[sl][face];
     for (const sl of Object.keys(pieces)) { const q = pieces[sl]; for (const face of ['front', 'back']) if (!live.includes(face)) delete q[face]; if (!Object.keys(q).length) delete pieces[sl]; }
     if (Object.keys(pieces).length) out.pieces = pieces;
     out.by = str(by); out.at = now == null ? Date.now() : now;
@@ -291,7 +294,8 @@
     }
     // (a piece of a SET of different designs is "the small bar", not "disc 2": charm-nest-engrave-sides.js setPieceOf)
     const setWord = j => { const Sd = dep('CharmNestEngraveSides', './charm-nest-engrave-sides.js'), sp = Sd && Sd.setPieceOf ? Sd.setPieceOf(j) : null; return sp ? Sd.pieceName(sp).toLowerCase() : ''; };
-    const nm = j => FACE_NAME[faceOfJob(j)] + (j.slot ? ' of the ' + (setWord(j) || (j.slot === 'L' ? 'left ear' : j.slot === 'R' ? 'right ear' : 'disc ' + str(j.slot).slice(1))) : '');
+    const slotWordOf = sl => { const Fc = Faces(); return Fc && Fc.slotLabel ? Fc.slotLabel(sl).toLowerCase() : str(sl); };   // (a piece of a line of several units: "piece 2", "left · pair 2")
+    const nm = j => FACE_NAME[faceOfJob(j)] + (j.slot ? ' of the ' + (setWord(j) || (j.slot === 'L' ? 'left ear' : j.slot === 'R' ? 'right ear' : /^D\d+$/.test(str(j.slot)) ? 'disc ' + str(j.slot).slice(1) : slotWordOf(j.slot))) : '');
     for (const j of out.plain) { const by = str(j.approvedBy || j.decidedBy || (j.decision && j.decision.by)); out.lines.push(`The ${nm(j)} is already ${j.state === 'written' ? 'approved and saved' : 'approved'}${by ? ' by ' + by : ''}: saving cuts it plain (its approval seal stays, a "cut plain" seal is added and its file is withdrawn).`); }
     for (const j of out.remove) out.lines.push(`The ${nm(j)} placement that was still to check is removed.`);
     for (const j of out.none) out.lines.push(`The ${nm(j)} is set to no engraving.`);

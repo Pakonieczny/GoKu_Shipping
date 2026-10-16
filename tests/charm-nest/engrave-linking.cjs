@@ -109,18 +109,18 @@ const PERSON_BACK = (text, extra) => Object.assign({ mode: 'back', back: { text 
     const only = mk(BASE.one, undefined, { engravingOverride: PERSON_BACK('Name One') }), h2 = harness([only]); h2.ctx.ensureJobs(only);
     const q = Faces.facesOfPiece(only.key, h2.ctx.jobsOf(only), Faces.setupOf(only)); deq(q.faces.map(f => [f.face, f.expected, !!f.job]), [['front', false, false], ['back', true, true]]); assert.equal(q.faces[0].key, only.key + '~front');
   });
-  await t('1b ears, discs and copies: every (piece, face) has its own key; a quantity-N line is one job holding its copies; every copy\'s saved record has its own key', async () => {
+  await t('1b ears, discs and copies: every (piece, face) has its own key; a quantity-N line is one job for EACH copy (PIECES); every copy\'s saved record has its own key', async () => {
     const pair = mk(BASE.pair, BOTH), hp = harness([pair]), pj = hp.ctx.ensureJobs(pair);
     assert.equal(new Set(pj.map(j => K(j))).size, 4, 'L/R x front/back'); deq(pj.map(j => K(j)), [pair.key + '#L~front', pair.key + '#L', pair.key + '#R~front', pair.key + '#R']);
     assert.notEqual(Faces.facesOfPiece(pair.poolIds[0], pj).pieceKey, Faces.facesOfPiece(pair.poolIds[1], pj).pieceKey);
-    // a necklace of two units with three discs each: disc n of both necklaces is ONE job (the words are the buyer's, one personalisation for the line); its copies are the two pool ids
+    // a necklace of two units with three discs each: disc n of each necklace is its OWN job (PIECES: D1..D3, then D1.2..D3.2); the words are the buyer's, one personalisation for the line, on every piece
     const two = mk(BASE.discs2, { v: 1, mode: 'back', source: 'note', back: { text: 'Name One' }, textSource: 'labelled', confidence: .9 }); two.spec.pieceCount = 6; two.spec.pair = { kind: 'multi' };
-    const hd = harness([two]), dj = hd.ctx.ensureJobs(two); deq(dj.map(j => j.key.slice(two.key.length)), ['#D1', '#D2', '#D3']); deq(dj.map(j => j.copies.map(c => +c.split('_').pop())), [[1, 4], [2, 5], [3, 6]]);
-    for (const [i, want] of [[0, '#D1'], [1, '#D2'], [2, '#D3'], [3, '#D1'], [4, '#D2'], [5, '#D3']]) assert.equal(Faces.facesOfPiece(two.poolIds[i], dj).pieceKey, two.key + want, 'copy ' + (i + 1));
+    const hd = harness([two]), dj = hd.ctx.ensureJobs(two); deq(dj.map(j => j.key.slice(two.key.length)), ['#D1', '#D2', '#D3', '#D1.2', '#D2.2', '#D3.2']); deq(dj.map(j => j.copies.map(c => +c.split('_').pop())), [[1], [2], [3], [4], [5], [6]]);
+    for (const [i, want] of [[0, '#D1'], [1, '#D2'], [2, '#D3'], [3, '#D1.2'], [4, '#D2.2'], [5, '#D3.2']]) assert.equal(Faces.facesOfPiece(two.poolIds[i], dj).pieceKey, two.key + want, 'copy ' + (i + 1));
     const recKeys = two.poolIds.flatMap(id => ['front', 'back'].map(f => Faces.recKey(id, f))); assert.equal(new Set(recKeys).size, 12, 'each copy x face has its own saved-record key');
-    // a plain quantity-2 line: one job, both copies
-    const q2 = mk(BASE.q2, { v: 1, mode: 'back', source: 'note', back: { text: 'Name One' }, textSource: 'labelled', confidence: .9 }), hq = harness([q2]), qj = hq.ctx.ensureJobs(q2); assert.equal(qj.length, 1); deq(qj[0].copies, q2.poolIds);
-    for (const id of q2.poolIds) assert.equal(Faces.facesOfPiece(id, qj).faces.find(f => f.face === 'back').job, qj[0]);
+    // a plain quantity-2 line: one job for each copy (PIECES: C1, C2)
+    const q2 = mk(BASE.q2, { v: 1, mode: 'back', source: 'note', back: { text: 'Name One' }, textSource: 'labelled', confidence: .9 }), hq = harness([q2]), qj = hq.ctx.ensureJobs(q2); assert.equal(qj.length, 2); deq(qj.map(j => j.copies), q2.poolIds.map(id => [id])); deq(qj.map(j => j.slot), ['C1', 'C2']);
+    q2.poolIds.forEach((id, i) => assert.equal(Faces.facesOfPiece(id, qj).faces.find(f => f.face === 'back').job, qj[i]));
     // two lines of one SKU in one order: different keys, different jobs
     const a = mk(BASE.twinA, BOTH), b = mk(BASE.twinB, BOTH), ht = harness([a, b]); ht.ctx.ensureJobs(a); ht.ctx.ensureJobs(b);
     assert.notEqual(a.key, b.key); assert.equal(a.spec.designSku, b.spec.designSku); assert.equal(new Set([...ht.jobs.keys()]).size, 4); assert.notEqual(Faces.facesOfPiece(a.poolIds[0], [...ht.jobs.values()]).faces[1].job, Faces.facesOfPiece(b.poolIds[0], [...ht.jobs.values()]).faces[1].job);
@@ -184,12 +184,12 @@ const PERSON_BACK = (text, extra) => Object.assign({ mode: 'back', back: { text 
   });
 
   /* 4 ── lines never share */
-  await t('4 two identical lines of one order never share an override, a draft key or a job; one quantity-2 line is ONE job for both copies (one personalisation), each copy with its own record key', async () => {
+  await t('4 two identical lines of one order never share an override, a draft key or a job; one quantity-2 line is one job for EACH copy (the one personalisation on both, PIECES), each copy with its own record key', async () => {
     const a = mk(BASE.twinA, undefined, { engravingOverride: PERSON_BACK('Name One') }), b = mk(BASE.twinB, undefined, { engravingOverride: PERSON_BACK('Name Two') }), h = harness([a, b]); await h.ctx.classify(a); await h.ctx.classify(b);
     assert.equal(h.jobs.get(a.key).text, 'Name One'); assert.equal(h.jobs.get(b.key).text, 'Name Two');
     const log = []; await Setup.apply(a, { back: { text: 'Name Three' } }, env(h, log)); deq(log, [a.key]); assert.equal(h.jobs.get(b.key).text, 'Name Two'); assert.equal(b.engravingOverride.back.text, 'Name Two'); assert.notEqual(a.engravingOverride, b.engravingOverride);
     const va = Setup.read(a, { jobs: h.ctx.jobsOf(a) }), vb = Setup.read(b, { jobs: h.ctx.jobsOf(b) }); assert.notEqual(va.key, vb.key); assert.notEqual(va.jobKeys.back, vb.jobKeys.back); assert.equal(va.jobKeys.back, a.key); assert.equal(vb.jobKeys.front, b.key + '~front');
-    const q = mk(BASE.q2, undefined, { engravingOverride: PERSON_BACK('Name One') }), hq = harness([q]); await hq.ctx.classify(q); assert.equal(hq.ctx.jobsOf(q).length, 1); deq(hq.ctx.jobsOf(q)[0].copies, q.poolIds);
+    const q = mk(BASE.q2, undefined, { engravingOverride: PERSON_BACK('Name One') }), hq = harness([q]); await hq.ctx.classify(q); assert.equal(hq.ctx.jobsOf(q).length, 2); deq(hq.ctx.jobsOf(q).map(j => j.copies), q.poolIds.map(id => [id])); deq(hq.ctx.jobsOf(q).map(j => j.text), ['Name One', 'Name One']);
     assert.notEqual(Faces.recKey(q.poolIds[0], 'back'), Faces.recKey(q.poolIds[1], 'back'));
   });
 

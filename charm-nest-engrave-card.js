@@ -167,7 +167,11 @@
       };
       const was = out.length;
       if (groups.length) for (const g of groups) make(g.slot || null, g.jobs);
-      else if (o.stage || (setup && setup.faces && setup.faces.length && (setup.source !== 'default' || (line.engrave && line.engrave.needed)))) make(null, []);
+      else if (o.stage || (setup && setup.faces && setup.faces.length && (setup.source !== 'default' || (line.engrave && line.engrave.needed)))) {
+        // (PIECES: a line of several pieces with no job yet is one card for each piece, as it will be once its jobs are made; a line of one piece: the one card it always had)
+        const S2 = Sides(), plist = S2 && S2.pieceList ? tryDo(() => S2.pieceList({}, line), []) : [], pslots = [...new Set((plist || []).map(p => p.slot))];
+        if (pslots.length > 1 && pslots.every(Boolean)) for (const sl of pslots) make(sl, []); else make(null, []);
+      }
       relOfSet(out.slice(was));
     }
     return out;

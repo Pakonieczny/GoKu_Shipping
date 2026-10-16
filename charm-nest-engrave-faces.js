@@ -29,7 +29,9 @@
   'use strict';
   const FRONT = 'front', BACK = 'back', FACES = [FRONT, BACK], MODES = ['none', 'front', 'back', 'both'];
   const SUFFIX = '~front';
-  const KEY = /^(.*?)(?:#(L|R|D\d{1,2}))?(~front)?$/;
+  // (PIECES: a slot is L, R, D<n> (unit 1), <slot>.<unit> (a later unit of a line of quantity >= 2) or C<n> (copy n of such a line): charm-nest-engrave-sides.js slotInfo)
+  const SLOT_SRC = 'C\\d{1,3}|(?:L|R|D\\d{1,2})(?:\\.\\d{1,3})?';
+  const KEY = new RegExp('^(.*?)(?:#(' + SLOT_SRC + '))?(~front)?$');
   const STATE_ORDER = ['reclassify', 'classify', 'words', 'blocked', 'ready', 'fitting', 'review', 'approved', 'written'];
   const DECIDED = ['approved', 'written', 'skipped', 'none'];
   const str = x => String(x == null ? '' : x);
@@ -58,7 +60,7 @@
     const lineKey = m ? m[1] : k, slot = m && m[2] ? m[2] : null, face = m && m[3] ? FRONT : BACK;
     return { key: k, lineKey, rowKey: lineKey, slot, face, pieceKey: lineKey + (slot ? '#' + slot : '') };
   }
-  const SLOT_RX = /^(L|R|D\d{1,2})$/, POOL_RX = /^(\d{4,20})_([^_]*)_(\d{1,3})$/;
+  const SLOT_RX = new RegExp('^(?:' + SLOT_SRC + ')$'), POOL_RX = /^(\d{4,20})_([^_]*)_(\d{1,3})$/;
   /** What a job, a line row, a side row, a piece record or a key string names: { lineKey, slot, face } (face = what x itself says; a bare line row says back). */
   function identOf(x) {
     if (x == null) return { lineKey: '', slot: null, face: BACK };
@@ -183,7 +185,9 @@
   }
 
   /* ── the plan: which (piece, face) jobs a line has ───────────────────────── */
-  const slotOrder = s => (s === 'L' ? 0 : s === 'R' ? 1 : /^D\d+$/.test(s || '') ? 1 + (+s.slice(1)) : s ? 99 : -1);
+  const SLOT_PARTS = /^(?:C(\d{1,3})|(L|R|D(\d{1,2}))(?:\.(\d{1,3}))?)$/;
+  /** unit-major place of a slot: Left 0, Right 1, Disc n 1+n, then the same again 100 on for each later unit; a copy slot is its unit; no slot first, an unknown one last (the same ranks as Sides.slotRank). */
+  const slotOrder = s => { const m = SLOT_PARTS.exec(str(s)); if (!m) return s ? 9999 : -1; if (m[1]) return (+m[1] - 1) * 100; return ((m[4] ? +m[4] : 1) - 1) * 100 + (m[3] ? 1 + (+m[3]) : m[2] === 'L' ? 0 : 1); };
   const faceOrder = f => (f === FRONT ? 0 : 1);
   const byPlan = (a, b) => slotOrder(a.slot) - slotOrder(b.slot) || faceOrder(a.face) - faceOrder(b.face);
   /** The jobs a line should have: every slot, every face its setup asks for (slot major, Front before Back). */
@@ -204,7 +208,13 @@
 
   /* ── pieces and their faces ──────────────────────────────────────────────── */
   const slotOfJob = j => (j && (j.slot || parseKey(j.key).slot)) || null;
-  const slotLabel = s => (s === 'L' ? 'Left' : s === 'R' ? 'Right' : /^D\d+$/.test(s || '') ? 'Disc ' + s.slice(1) : '');
+  /** The short name of a slot ("Left", "Disc 2", "Piece 2"; a later unit says so: "Left · pair 2", "Disc 2 · set 2"): the same words as Sides.labelOf without a shape. */
+  const slotLabel = s => {
+    const m = SLOT_PARTS.exec(str(s)); if (!m) return '';
+    if (m[1]) return 'Piece ' + (+m[1]);
+    const unit = m[4] ? +m[4] : 1, base = m[3] ? 'Disc ' + (+m[3]) : m[2] === 'L' ? 'Left' : 'Right';
+    return unit > 1 ? base + ' · ' + (m[3] ? 'set ' : 'pair ') + unit : base;
+  };
   /** How many pieces a list of jobs covers (distinct slots; a line with no slot is one piece): the number "Disc 2 of 3" and "Approve all discs" count, never jobs.length. */
   function pieceCount(jobs) { return new Set((jobs || []).filter(Boolean).map(slotOfJob)).size; }
   /** The jobs of ONE piece by face. */

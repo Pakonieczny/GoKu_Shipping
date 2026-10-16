@@ -118,7 +118,7 @@
     if (r && typeof r === 'object' && CODES.includes(str(r.code))) {
       out.reason = { code: str(r.code), text: clip(r.text) || labelOf(str(r.code)), by: str(out.by), at: out.at };
       if (str(r.of)) out.reason.of = clip(r.of, 60);
-      if (p.slot && /^(L|R|D\d{1,2})$/.test(str(p.slot))) out.reason.slot = str(p.slot);
+      if (p.slot && /^(?:C\d{1,3}|(?:L|R|D\d{1,2})(?:\.\d{1,3})?)$/.test(str(p.slot))) out.reason.slot = str(p.slot);
       const w = flatWas(p.was); if (w) out.was = w;
       return out;
     }

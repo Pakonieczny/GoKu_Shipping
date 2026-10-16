@@ -60,10 +60,10 @@ const mitten = () => { const out = path_([[10, 0], [50, 0], [50, 60], [10, 60], 
   console.log('PAIRENGRAVE');
 
   // ═══ 1 · the slot of a piece ═══
-  await t('1a a matching pair of earrings has a Left and a Right (amendment 2); two pairs of one design alternate L R L R', () => {
+  await t('1a a matching pair of earrings has a Left and a Right (amendment 2); two pairs of one design are four pieces: L R, then L.2 R.2 (PIECES)', () => {
     assert.deepEqual(slots(CTX, PAIR), ['L', 'R']);
-    assert.deepEqual(slots(CTX, PAIR2), ['L', 'R', 'L', 'R']);
-    assert.deepEqual(Sides.idsOfSlot(CTX, PAIR2, 'R'), [PAIR2.poolIds[1], PAIR2.poolIds[3]]);
+    assert.deepEqual(slots(CTX, PAIR2), ['L', 'R', 'L.2', 'R.2']);
+    assert.deepEqual(Sides.idsOfSlot(CTX, PAIR2, 'R'), [PAIR2.poolIds[1]]); assert.deepEqual(Sides.idsOfSlot(CTX, PAIR2, 'R.2'), [PAIR2.poolIds[3]]);
     const p = Sides.plan(CTX, PAIR, []); assert.equal(p.split, true); assert.deepEqual(p.slots, ['L', 'R']);
   });
   await t('1b a mismatched pair: the stored side wins; with no stored side the design says so (left body = copy 1)', () => {
@@ -95,7 +95,7 @@ const mitten = () => { const out = path_([[10, 0], [50, 0], [50, 60], [10, 60], 
   await t('2a a side row is the line\'s row with its own key, pool ids and engrave record', () => {
     const parent = Object.assign({}, PAIR2), jl = mk(parent, 'L', 'review'), jr = mk(parent, 'R', 'words');
     assert.equal(jl.row.key, parent.key + '#L'); assert.equal(jr.row.side, 'R'); assert.equal(jl.row.parentRow, parent);
-    assert.deepEqual(jl.row.poolIds, [parent.poolIds[0], parent.poolIds[2]]); assert.deepEqual(jr.row.poolIds, [parent.poolIds[1], parent.poolIds[3]]);
+    assert.deepEqual(jl.row.poolIds, [parent.poolIds[0]]); assert.deepEqual(jr.row.poolIds, [parent.poolIds[1]]);   // (PIECES: the second pair is L.2 / R.2, each its own piece)
     assert.equal(jl.row.order, parent.order, 'everything else is the line\'s own'); parent.state = 'gone'; assert.equal(jr.row.state, 'gone', 'a cancelled line reads as gone for every ear');
     parent.state = 'written';
     jl.row.engrave = { needed: true, state: 'approved', approved: true, approvedBy: 'Paul', approvedAt: 5 };

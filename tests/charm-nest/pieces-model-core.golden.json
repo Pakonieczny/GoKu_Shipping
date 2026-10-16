@@ -1,0 +1,1396 @@
+{
+ "world:10": {
+  "split": true,
+  "slots": [
+   "L",
+   "R"
+  ],
+  "byPoolId": [
+   "L",
+   "R"
+  ],
+  "keys": [
+   "4190000001_5000000010#L",
+   "4190000001_5000000010#R"
+  ],
+  "parsed": [
+   {
+    "rowKey": "4190000001_5000000010",
+    "slot": "L"
+   },
+   {
+    "rowKey": "4190000001_5000000010",
+    "slot": "R"
+   }
+  ],
+  "labels": [
+   [
+    "Left",
+    "Left ear",
+    "LEFT EAR"
+   ],
+   [
+    "Right",
+    "Right ear",
+    "RIGHT EAR"
+   ]
+  ],
+  "side": [
+   [
+    "4190000001_5000000010#L",
+    "L",
+    "L",
+    [
+     "4190000001_5000000010_1"
+    ]
+   ],
+   [
+    "4190000001_5000000010#R",
+    "R",
+    "R",
+    [
+     "4190000001_5000000010_2"
+    ]
+   ]
+  ],
+  "summary": {
+   "needed": true,
+   "state": "review",
+   "approved": false,
+   "text": "Left: TL · Right: TR",
+   "seals": [],
+   "pieces": {
+    "4190000001_5000000010_1": {
+     "needed": true,
+     "state": "approved",
+     "approved": true
+    },
+    "4190000001_5000000010_2": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    }
+   }
+  },
+  "records": [
+   {
+    "index": 1,
+    "of": 2,
+    "slot": "L",
+    "key": "4190000001_5000000010#L",
+    "lineKey": "4190000001_5000000010",
+    "groupKey": "",
+    "tag": "LEFT EAR",
+    "label": "Left",
+    "poolIds": [
+     "4190000001_5000000010_1"
+    ],
+    "words": "TL",
+    "lines": [
+     "TL"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "approved",
+    "approved": true,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000001_5000000010#L"
+   },
+   {
+    "index": 2,
+    "of": 2,
+    "slot": "R",
+    "key": "4190000001_5000000010#R",
+    "lineKey": "4190000001_5000000010",
+    "groupKey": "",
+    "tag": "RIGHT EAR",
+    "label": "Right",
+    "poolIds": [
+     "4190000001_5000000010_2"
+    ],
+    "words": "TR",
+    "lines": [
+     "TR"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "review",
+    "approved": false,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000001_5000000010#R"
+   }
+  ]
+ },
+ "world:20": {
+  "split": true,
+  "slots": [
+   "L",
+   "R"
+  ],
+  "byPoolId": [
+   "L",
+   "R"
+  ],
+  "keys": [
+   "4190000002_5000000020#L",
+   "4190000002_5000000020#R"
+  ],
+  "parsed": [
+   {
+    "rowKey": "4190000002_5000000020",
+    "slot": "L"
+   },
+   {
+    "rowKey": "4190000002_5000000020",
+    "slot": "R"
+   }
+  ],
+  "labels": [
+   [
+    "Left",
+    "Left ear",
+    "LEFT EAR"
+   ],
+   [
+    "Right",
+    "Right ear",
+    "RIGHT EAR"
+   ]
+  ],
+  "side": [
+   [
+    "4190000002_5000000020#L",
+    "L",
+    "L",
+    [
+     "4190000002_5000000020_1"
+    ]
+   ],
+   [
+    "4190000002_5000000020#R",
+    "R",
+    "R",
+    [
+     "4190000002_5000000020_2"
+    ]
+   ]
+  ],
+  "summary": {
+   "needed": true,
+   "state": "review",
+   "approved": false,
+   "text": "Left: TL · Right: TR",
+   "seals": [],
+   "pieces": {
+    "4190000002_5000000020_1": {
+     "needed": true,
+     "state": "approved",
+     "approved": true
+    },
+    "4190000002_5000000020_2": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    }
+   }
+  },
+  "records": [
+   {
+    "index": 1,
+    "of": 2,
+    "slot": "L",
+    "key": "4190000002_5000000020#L",
+    "lineKey": "4190000002_5000000020",
+    "groupKey": "",
+    "tag": "LEFT EAR",
+    "label": "Left",
+    "poolIds": [
+     "4190000002_5000000020_1"
+    ],
+    "words": "TL",
+    "lines": [
+     "TL"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "approved",
+    "approved": true,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000002_5000000020#L"
+   },
+   {
+    "index": 2,
+    "of": 2,
+    "slot": "R",
+    "key": "4190000002_5000000020#R",
+    "lineKey": "4190000002_5000000020",
+    "groupKey": "",
+    "tag": "RIGHT EAR",
+    "label": "Right",
+    "poolIds": [
+     "4190000002_5000000020_2"
+    ],
+    "words": "TR",
+    "lines": [
+     "TR"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "review",
+    "approved": false,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000002_5000000020#R"
+   }
+  ]
+ },
+ "world:30": {
+  "split": true,
+  "slots": [
+   "D1",
+   "D2",
+   "D3"
+  ],
+  "byPoolId": [
+   "D1",
+   "D2",
+   "D3"
+  ],
+  "keys": [
+   "4190000003_5000000030#D1",
+   "4190000003_5000000030#D2",
+   "4190000003_5000000030#D3"
+  ],
+  "parsed": [
+   {
+    "rowKey": "4190000003_5000000030",
+    "slot": "D1"
+   },
+   {
+    "rowKey": "4190000003_5000000030",
+    "slot": "D2"
+   },
+   {
+    "rowKey": "4190000003_5000000030",
+    "slot": "D3"
+   }
+  ],
+  "labels": [
+   [
+    "Disc 1",
+    "Disc 1",
+    "DISC 1 of 3"
+   ],
+   [
+    "Disc 2",
+    "Disc 2",
+    "DISC 2 of 3"
+   ],
+   [
+    "Disc 3",
+    "Disc 3",
+    "DISC 3 of 3"
+   ]
+  ],
+  "side": [
+   [
+    "4190000003_5000000030#D1",
+    null,
+    "D1",
+    [
+     "4190000003_5000000030_1"
+    ]
+   ],
+   [
+    "4190000003_5000000030#D2",
+    null,
+    "D2",
+    [
+     "4190000003_5000000030_2"
+    ]
+   ],
+   [
+    "4190000003_5000000030#D3",
+    null,
+    "D3",
+    [
+     "4190000003_5000000030_3"
+    ]
+   ]
+  ],
+  "summary": {
+   "needed": true,
+   "state": "review",
+   "approved": false,
+   "text": "Disc 1: TD1 · Disc 2: TD2 · Disc 3: TD3",
+   "seals": [],
+   "pieces": {
+    "4190000003_5000000030_1": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    },
+    "4190000003_5000000030_2": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    },
+    "4190000003_5000000030_3": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    }
+   }
+  },
+  "records": [
+   {
+    "index": 1,
+    "of": 3,
+    "slot": "D1",
+    "key": "4190000003_5000000030#D1",
+    "lineKey": "4190000003_5000000030",
+    "groupKey": "",
+    "tag": "DISC 1 of 3",
+    "label": "Disc 1",
+    "poolIds": [
+     "4190000003_5000000030_1"
+    ],
+    "words": "TD1",
+    "lines": [
+     "TD1"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "review",
+    "approved": false,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000003_5000000030#D1"
+   },
+   {
+    "index": 2,
+    "of": 3,
+    "slot": "D2",
+    "key": "4190000003_5000000030#D2",
+    "lineKey": "4190000003_5000000030",
+    "groupKey": "",
+    "tag": "DISC 2 of 3",
+    "label": "Disc 2",
+    "poolIds": [
+     "4190000003_5000000030_2"
+    ],
+    "words": "TD2",
+    "lines": [
+     "TD2"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "review",
+    "approved": false,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000003_5000000030#D2"
+   },
+   {
+    "index": 3,
+    "of": 3,
+    "slot": "D3",
+    "key": "4190000003_5000000030#D3",
+    "lineKey": "4190000003_5000000030",
+    "groupKey": "",
+    "tag": "DISC 3 of 3",
+    "label": "Disc 3",
+    "poolIds": [
+     "4190000003_5000000030_3"
+    ],
+    "words": "TD3",
+    "lines": [
+     "TD3"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "review",
+    "approved": false,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000003_5000000030#D3"
+   }
+  ]
+ },
+ "world:40": {
+  "split": false,
+  "slots": [
+   null
+  ],
+  "byPoolId": [
+   null
+  ],
+  "keys": [
+   "4190000004_5000000040"
+  ],
+  "parsed": [
+   {
+    "rowKey": "4190000004_5000000040",
+    "slot": null
+   }
+  ],
+  "labels": [
+   [
+    "",
+    "",
+    ""
+   ]
+  ],
+  "side": [
+   [
+    "4190000004_5000000040",
+    null,
+    null,
+    [
+     "4190000004_5000000040_1"
+    ]
+   ]
+  ],
+  "summary": {
+   "needed": true,
+   "state": "review",
+   "approved": false,
+   "text": "T",
+   "seals": [],
+   "pieces": {
+    "4190000004_5000000040_1": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    }
+   }
+  },
+  "records": [
+   {
+    "index": 1,
+    "of": 1,
+    "slot": null,
+    "key": "4190000004_5000000040",
+    "lineKey": "4190000004_5000000040",
+    "groupKey": "",
+    "tag": "",
+    "label": "",
+    "poolIds": [
+     "4190000004_5000000040_1"
+    ],
+    "words": "T",
+    "lines": [
+     "T"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "review",
+    "approved": false,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000004_5000000040"
+   }
+  ]
+ },
+ "world:60": {
+  "split": false,
+  "slots": [
+   null
+  ],
+  "byPoolId": [
+   null
+  ],
+  "keys": [
+   "4190000006_5000000060"
+  ],
+  "parsed": [
+   {
+    "rowKey": "4190000006_5000000060",
+    "slot": null
+   }
+  ],
+  "labels": [
+   [
+    "",
+    "",
+    ""
+   ]
+  ],
+  "side": [
+   [
+    "4190000006_5000000060",
+    null,
+    null,
+    [
+     "4190000006_5000000060_1"
+    ]
+   ]
+  ],
+  "summary": {
+   "needed": true,
+   "state": "review",
+   "approved": false,
+   "text": "T",
+   "seals": [],
+   "pieces": {
+    "4190000006_5000000060_1": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    }
+   }
+  },
+  "records": [
+   {
+    "index": 1,
+    "of": 1,
+    "slot": null,
+    "key": "4190000006_5000000060",
+    "lineKey": "4190000006_5000000060",
+    "groupKey": "",
+    "tag": "",
+    "label": "",
+    "poolIds": [
+     "4190000006_5000000060_1"
+    ],
+    "words": "T",
+    "lines": [
+     "T"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "review",
+    "approved": false,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000006_5000000060"
+   }
+  ]
+ },
+ "world:70": {
+  "split": false,
+  "slots": [
+   null
+  ],
+  "byPoolId": [
+   null,
+   null,
+   null,
+   null
+  ],
+  "keys": [
+   "4190000007_5000000070"
+  ],
+  "parsed": [
+   {
+    "rowKey": "4190000007_5000000070",
+    "slot": null
+   }
+  ],
+  "labels": [
+   [
+    "",
+    "",
+    ""
+   ]
+  ],
+  "side": [
+   [
+    "4190000007_5000000070",
+    null,
+    null,
+    [
+     "4190000007_5000000070_1",
+     "4190000007_5000000070_2",
+     "4190000007_5000000070_3",
+     "4190000007_5000000070_4"
+    ]
+   ]
+  ],
+  "summary": {
+   "needed": true,
+   "state": "review",
+   "approved": false,
+   "text": "T",
+   "seals": [],
+   "pieces": {
+    "4190000007_5000000070_1": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    },
+    "4190000007_5000000070_2": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    },
+    "4190000007_5000000070_3": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    },
+    "4190000007_5000000070_4": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    }
+   }
+  },
+  "records": [
+   {
+    "index": 1,
+    "of": 1,
+    "slot": null,
+    "key": "4190000007_5000000070",
+    "lineKey": "4190000007_5000000070",
+    "groupKey": "",
+    "tag": "",
+    "label": "",
+    "poolIds": [
+     "4190000007_5000000070_1",
+     "4190000007_5000000070_2",
+     "4190000007_5000000070_3",
+     "4190000007_5000000070_4"
+    ],
+    "words": "T",
+    "lines": [
+     "T"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "review",
+    "approved": false,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000007_5000000070"
+   }
+  ]
+ },
+ "legacy:10": {
+  "split": false,
+  "slots": [
+   null
+  ],
+  "byPoolId": [
+   null,
+   null
+  ],
+  "keys": [
+   "4190000001_5000000010"
+  ],
+  "parsed": [
+   {
+    "rowKey": "4190000001_5000000010",
+    "slot": null
+   }
+  ],
+  "labels": [
+   [
+    "",
+    "",
+    ""
+   ]
+  ],
+  "side": [
+   [
+    "4190000001_5000000010",
+    null,
+    null,
+    [
+     "4190000001_5000000010_1",
+     "4190000001_5000000010_2"
+    ]
+   ]
+  ],
+  "summary": {
+   "needed": true,
+   "state": "review",
+   "approved": false,
+   "text": "T",
+   "seals": [],
+   "pieces": {
+    "4190000001_5000000010_1": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    },
+    "4190000001_5000000010_2": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    }
+   }
+  },
+  "records": [
+   {
+    "index": 1,
+    "of": 1,
+    "slot": null,
+    "key": "4190000001_5000000010",
+    "lineKey": "4190000001_5000000010",
+    "groupKey": "",
+    "tag": "",
+    "label": "",
+    "poolIds": [
+     "4190000001_5000000010_1",
+     "4190000001_5000000010_2"
+    ],
+    "words": "T",
+    "lines": [
+     "T"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "review",
+    "approved": false,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000001_5000000010"
+   }
+  ]
+ },
+ "legacy:20": {
+  "split": true,
+  "slots": [
+   "L",
+   "R"
+  ],
+  "byPoolId": [
+   "L",
+   "R"
+  ],
+  "keys": [
+   "4190000002_5000000020#L",
+   "4190000002_5000000020#R"
+  ],
+  "parsed": [
+   {
+    "rowKey": "4190000002_5000000020",
+    "slot": "L"
+   },
+   {
+    "rowKey": "4190000002_5000000020",
+    "slot": "R"
+   }
+  ],
+  "labels": [
+   [
+    "Left",
+    "Left ear",
+    "LEFT EAR"
+   ],
+   [
+    "Right",
+    "Right ear",
+    "RIGHT EAR"
+   ]
+  ],
+  "side": [
+   [
+    "4190000002_5000000020#L",
+    "L",
+    "L",
+    [
+     "4190000002_5000000020_1"
+    ]
+   ],
+   [
+    "4190000002_5000000020#R",
+    "R",
+    "R",
+    [
+     "4190000002_5000000020_2"
+    ]
+   ]
+  ],
+  "summary": {
+   "needed": true,
+   "state": "review",
+   "approved": false,
+   "text": "Left: TL · Right: TR",
+   "seals": [],
+   "pieces": {
+    "4190000002_5000000020_1": {
+     "needed": true,
+     "state": "approved",
+     "approved": true
+    },
+    "4190000002_5000000020_2": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    }
+   }
+  },
+  "records": [
+   {
+    "index": 1,
+    "of": 2,
+    "slot": "L",
+    "key": "4190000002_5000000020#L",
+    "lineKey": "4190000002_5000000020",
+    "groupKey": "",
+    "tag": "LEFT EAR",
+    "label": "Left",
+    "poolIds": [
+     "4190000002_5000000020_1"
+    ],
+    "words": "TL",
+    "lines": [
+     "TL"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "approved",
+    "approved": true,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000002_5000000020#L"
+   },
+   {
+    "index": 2,
+    "of": 2,
+    "slot": "R",
+    "key": "4190000002_5000000020#R",
+    "lineKey": "4190000002_5000000020",
+    "groupKey": "",
+    "tag": "RIGHT EAR",
+    "label": "Right",
+    "poolIds": [
+     "4190000002_5000000020_2"
+    ],
+    "words": "TR",
+    "lines": [
+     "TR"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "review",
+    "approved": false,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000002_5000000020#R"
+   }
+  ]
+ },
+ "legacy:30": {
+  "split": true,
+  "slots": [
+   "D1",
+   "D2",
+   "D3"
+  ],
+  "byPoolId": [
+   "D1",
+   "D2",
+   "D3"
+  ],
+  "keys": [
+   "4190000003_5000000030#D1",
+   "4190000003_5000000030#D2",
+   "4190000003_5000000030#D3"
+  ],
+  "parsed": [
+   {
+    "rowKey": "4190000003_5000000030",
+    "slot": "D1"
+   },
+   {
+    "rowKey": "4190000003_5000000030",
+    "slot": "D2"
+   },
+   {
+    "rowKey": "4190000003_5000000030",
+    "slot": "D3"
+   }
+  ],
+  "labels": [
+   [
+    "Disc 1",
+    "Disc 1",
+    "DISC 1 of 3"
+   ],
+   [
+    "Disc 2",
+    "Disc 2",
+    "DISC 2 of 3"
+   ],
+   [
+    "Disc 3",
+    "Disc 3",
+    "DISC 3 of 3"
+   ]
+  ],
+  "side": [
+   [
+    "4190000003_5000000030#D1",
+    null,
+    "D1",
+    [
+     "4190000003_5000000030_1"
+    ]
+   ],
+   [
+    "4190000003_5000000030#D2",
+    null,
+    "D2",
+    [
+     "4190000003_5000000030_2"
+    ]
+   ],
+   [
+    "4190000003_5000000030#D3",
+    null,
+    "D3",
+    [
+     "4190000003_5000000030_3"
+    ]
+   ]
+  ],
+  "summary": {
+   "needed": true,
+   "state": "review",
+   "approved": false,
+   "text": "Disc 1: TD1 · Disc 2: TD2 · Disc 3: TD3",
+   "seals": [],
+   "pieces": {
+    "4190000003_5000000030_1": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    },
+    "4190000003_5000000030_2": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    },
+    "4190000003_5000000030_3": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    }
+   }
+  },
+  "records": [
+   {
+    "index": 1,
+    "of": 3,
+    "slot": "D1",
+    "key": "4190000003_5000000030#D1",
+    "lineKey": "4190000003_5000000030",
+    "groupKey": "",
+    "tag": "DISC 1 of 3",
+    "label": "Disc 1",
+    "poolIds": [
+     "4190000003_5000000030_1"
+    ],
+    "words": "TD1",
+    "lines": [
+     "TD1"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "review",
+    "approved": false,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000003_5000000030#D1"
+   },
+   {
+    "index": 2,
+    "of": 3,
+    "slot": "D2",
+    "key": "4190000003_5000000030#D2",
+    "lineKey": "4190000003_5000000030",
+    "groupKey": "",
+    "tag": "DISC 2 of 3",
+    "label": "Disc 2",
+    "poolIds": [
+     "4190000003_5000000030_2"
+    ],
+    "words": "TD2",
+    "lines": [
+     "TD2"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "review",
+    "approved": false,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000003_5000000030#D2"
+   },
+   {
+    "index": 3,
+    "of": 3,
+    "slot": "D3",
+    "key": "4190000003_5000000030#D3",
+    "lineKey": "4190000003_5000000030",
+    "groupKey": "",
+    "tag": "DISC 3 of 3",
+    "label": "Disc 3",
+    "poolIds": [
+     "4190000003_5000000030_3"
+    ],
+    "words": "TD3",
+    "lines": [
+     "TD3"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "review",
+    "approved": false,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000003_5000000030#D3"
+   }
+  ]
+ },
+ "legacy:40": {
+  "split": false,
+  "slots": [
+   null
+  ],
+  "byPoolId": [
+   null
+  ],
+  "keys": [
+   "4190000004_5000000040"
+  ],
+  "parsed": [
+   {
+    "rowKey": "4190000004_5000000040",
+    "slot": null
+   }
+  ],
+  "labels": [
+   [
+    "",
+    "",
+    ""
+   ]
+  ],
+  "side": [
+   [
+    "4190000004_5000000040",
+    null,
+    null,
+    [
+     "4190000004_5000000040_1"
+    ]
+   ]
+  ],
+  "summary": {
+   "needed": true,
+   "state": "review",
+   "approved": false,
+   "text": "T",
+   "seals": [],
+   "pieces": {
+    "4190000004_5000000040_1": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    }
+   }
+  },
+  "records": [
+   {
+    "index": 1,
+    "of": 1,
+    "slot": null,
+    "key": "4190000004_5000000040",
+    "lineKey": "4190000004_5000000040",
+    "groupKey": "",
+    "tag": "",
+    "label": "",
+    "poolIds": [
+     "4190000004_5000000040_1"
+    ],
+    "words": "T",
+    "lines": [
+     "T"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "review",
+    "approved": false,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000004_5000000040"
+   }
+  ]
+ },
+ "legacy:60": {
+  "split": false,
+  "slots": [
+   null
+  ],
+  "byPoolId": [
+   null
+  ],
+  "keys": [
+   "4190000006_5000000060"
+  ],
+  "parsed": [
+   {
+    "rowKey": "4190000006_5000000060",
+    "slot": null
+   }
+  ],
+  "labels": [
+   [
+    "",
+    "",
+    ""
+   ]
+  ],
+  "side": [
+   [
+    "4190000006_5000000060",
+    null,
+    null,
+    [
+     "4190000006_5000000060_1"
+    ]
+   ]
+  ],
+  "summary": {
+   "needed": true,
+   "state": "review",
+   "approved": false,
+   "text": "T",
+   "seals": [],
+   "pieces": {
+    "4190000006_5000000060_1": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    }
+   }
+  },
+  "records": [
+   {
+    "index": 1,
+    "of": 1,
+    "slot": null,
+    "key": "4190000006_5000000060",
+    "lineKey": "4190000006_5000000060",
+    "groupKey": "",
+    "tag": "",
+    "label": "",
+    "poolIds": [
+     "4190000006_5000000060_1"
+    ],
+    "words": "T",
+    "lines": [
+     "T"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "review",
+    "approved": false,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000006_5000000060"
+   }
+  ]
+ },
+ "legacy:70": {
+  "split": false,
+  "slots": [
+   null
+  ],
+  "byPoolId": [
+   null,
+   null,
+   null,
+   null
+  ],
+  "keys": [
+   "4190000007_5000000070"
+  ],
+  "parsed": [
+   {
+    "rowKey": "4190000007_5000000070",
+    "slot": null
+   }
+  ],
+  "labels": [
+   [
+    "",
+    "",
+    ""
+   ]
+  ],
+  "side": [
+   [
+    "4190000007_5000000070",
+    null,
+    null,
+    [
+     "4190000007_5000000070_1",
+     "4190000007_5000000070_2",
+     "4190000007_5000000070_3",
+     "4190000007_5000000070_4"
+    ]
+   ]
+  ],
+  "summary": {
+   "needed": true,
+   "state": "review",
+   "approved": false,
+   "text": "T",
+   "seals": [],
+   "pieces": {
+    "4190000007_5000000070_1": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    },
+    "4190000007_5000000070_2": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    },
+    "4190000007_5000000070_3": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    },
+    "4190000007_5000000070_4": {
+     "needed": true,
+     "state": "review",
+     "approved": false
+    }
+   }
+  },
+  "records": [
+   {
+    "index": 1,
+    "of": 1,
+    "slot": null,
+    "key": "4190000007_5000000070",
+    "lineKey": "4190000007_5000000070",
+    "groupKey": "",
+    "tag": "",
+    "label": "",
+    "poolIds": [
+     "4190000007_5000000070_1",
+     "4190000007_5000000070_2",
+     "4190000007_5000000070_3",
+     "4190000007_5000000070_4"
+    ],
+    "words": "T",
+    "lines": [
+     "T"
+    ],
+    "font": null,
+    "fontAsked": "",
+    "state": "review",
+    "approved": false,
+    "approvedBy": "P",
+    "approvedAt": 5,
+    "sealed": false,
+    "wordsSource": "",
+    "face": "back",
+    "faceLabel": "Back",
+    "faceTag": "BACK",
+    "pieceKey": "4190000007_5000000070"
+   }
+  ]
+ }
+}

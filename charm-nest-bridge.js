@@ -6062,9 +6062,14 @@ const Engrave = window.Engrave = (() => {
   const SIDES = () => window.CharmNestEngraveSides || null;
   /** A job's piece of a SET of different designs (the large bar, the small bar: charm-nest-engrave-sides.js setPieceOf), or null for every other job. */
   const setPieceOfJob = job => { try { return SIDES() && SIDES().setPieceOf ? SIDES().setPieceOf(job) : null; } catch (_) { return null; } };
-  const sidesCtx = { poolRow: id => B.pool.rows.get(id), charmOf: id => Pool.charmOf(id) || Pool.previewCharmOf(id), entryFor: sku => Master.entryFor(sku), get pair() { return window.CharmNestPair || null; }, mergeSeals: (...r) => CNEngravingSeals.merge(...r) };
+  const sidesCtx = { poolRow: id => B.pool.rows.get(id), charmOf: id => Pool.charmOf(id) || Pool.previewCharmOf(id), entryFor: sku => Master.entryFor(sku), get pair() { return window.CharmNestPair || null; }, mergeSeals: (...r) => CNEngravingSeals.merge(...r), previewIds: row => Pool.previewIds(row) };
+  window.CharmNestEngraveSidesCtx = sidesCtx;   // (PIECES: the pool's view of a piece, for Engrave.pieceListOf / slotOfPool below the Engrave object)
   const SLOT_PROBE = [null, "L", "R"].concat(Array.from({ length: 24 }, (_, i) => "D" + (i + 1)));
   const lineOf = row => (row && row.parentRow) || row;
+  /* PIECES (Paul, 16 Oct 2026): a line of quantity >= 2 is cut into its units too, so its slots are more than the fixed list above: "C1".."CN" (copy n of a single charm or bar), "L.2" / "R.2" / "D1.2" (a later unit of an ear
+     pair or a disc necklace). The slots a line has ever had a job under are remembered on the line itself (not enumerable, restored by relinkAll), and jobsOf probes the fixed list plus them: no scan of the items. */
+  const slotsOfRow = row => { const r = lineOf(row); return r && r._jobSlots instanceof Set ? r._jobSlots : null; };
+  const noteSlot = (row, slot) => { const r = lineOf(row); if (!r || !slot || SLOT_PROBE.includes(slot)) return; if (!(r._jobSlots instanceof Set)) Object.defineProperty(r, "_jobSlots", { value: new Set(), enumerable: false, configurable: true, writable: true }); r._jobSlots.add(slot); };
   /* FRONT + BACK (plans/front-back-1011/CONTRACT.md): a piece may be engraved on both faces. A FRONT job is one more job of the line (`job.face === "front"`, key `<line>[#slot]~front`) with
      its own side row, record, words, fit, approval, seals and file; every job without a `face` is the BACK, exactly as it always was. */
   const FACES = () => window.CharmNestEngraveFaces || null;
@@ -6082,7 +6087,10 @@ const Engrave = window.Engrave = (() => {
   /** Every job of one line, all faces: the line's own, or one for each of its slots (a few map reads, no scan). Slot by slot, Front before Back. `o.face`: one face's jobs only. */
   function jobsOf(row, o) {
     row = lineOf(row); if (!row) return []; const out = [], F = FACES();
-    for (const s of SLOT_PROBE) { if (F) { const f = items().get(slotKey(row, s, "front")); if (f) out.push(f); } const j = items().get(slotKey(row, s)); if (j) out.push(j); }
+    const extra = slotsOfRow(row), probe = extra && extra.size ? SLOT_PROBE.concat([...extra]) : SLOT_PROBE;
+    for (const s of probe) { if (F) { const f = items().get(slotKey(row, s, "front")); if (f) out.push(f); } const j = items().get(slotKey(row, s)); if (j) out.push(j); }
+    if (extra && extra.size && !(o && o.all) && out.some(j => j.archived)) out.splice(0, out.length, ...out.filter(j => !j.archived));   // (PIECES: a piece the line no longer has is out of every list; `all` keeps it: its approvals and seals are still on it)
+    if (extra && extra.size && SIDES()) { const rk = j => (j.slot ? SIDES().slotRank(j.slot) : -1); out.sort((a, b) => rk(a) - rk(b) || (isFront(a) ? 0 : 1) - (isFront(b) ? 0 : 1)); }   // (a line of several units: unit by unit, Left, Right, Disc 1..n; the sort is stable for the rest)
     return o && o.face ? out.filter(j => faceOf(j) === o.face) : out;
   }
   /** One face's jobs of a line (the back's by default). */
@@ -6102,12 +6110,12 @@ const Engrave = window.Engrave = (() => {
       if (whole) return whole;
       const S = SIDES(); if (!S) return null;
       const jobs = jobsOf(row); if (!jobs.length) return null;
-      if (which) { const slot = SLOT_PROBE.includes(which) ? which : S.slotOfId(sidesCtx, row, which); return items().get(slotKey(row, slot)) || null; }
+      if (which) { const slot = SLOT_PROBE.includes(which) || S.isSlot(which) ? which : S.slotOfId(sidesCtx, row, which); return items().get(slotKey(row, slot)) || null; }
       return jobs.find(j => !DECIDED.includes(j.state) && j.state !== "none") || jobs[0];
     }
     const S = SIDES(), jobs = jobsOf(row); if (!jobs.length) return null;
     let cands = jobs;
-    if (which) { const slot = SLOT_PROBE.includes(which) ? which : (S ? S.slotOfId(sidesCtx, row, which) : null); cands = jobs.filter(j => (j.slot || null) === (slot || null)); }
+    if (which) { const slot = SLOT_PROBE.includes(which) || (S && S.isSlot(which)) ? which : (S ? S.slotOfId(sidesCtx, row, which) : null); cands = jobs.filter(j => (j.slot || null) === (slot || null)); }
     if (face) return cands.find(j => faceOf(j) === face) || null;
     return cands.find(j => !DECIDED.includes(j.state) && j.state !== "none") || cands.find(j => faceOf(j) === "back") || cands[0] || null;
   };
@@ -6126,6 +6134,7 @@ const Engrave = window.Engrave = (() => {
         if (own && typeof own === "object" && !j.engraveRec) j.engraveRec = Object.assign({}, own);
       }
     }
+    noteSlot(row, slot);
     const wasCopies = j.copies || [];
     j.copies = j.row.poolIds.filter(id=>!(j.copyOverrides || []).includes(id));
     // ENGPRE: a line not pooled yet (held, waiting, pulled, not nested) has no pool ids; its job carries the ones the piece WILL get (Pool.preview), so the job made now is the job the piece keeps
@@ -6146,16 +6155,76 @@ const Engrave = window.Engrave = (() => {
   }
   /** A job nobody has touched: not decided, no person's words, no move. A face the setup no longer asks for goes only when it is this. */
   const untouched = j => ["classify", "reclassify", "words", "ready", "blocked", "fitting", "review"].includes(j.state) && !j.decision && !j.nudged && !j.fontLocked && !j.approvedAt && !j.approvalIntent;
+  /* ── PIECES (Paul, 16 Oct 2026, order 4195059483 "CORGI 34728 · SS · ×2": every piece of a multi-piece line has its own words, fit, Approve and seals) ─────────────────────────────────────────────────────────
+     A line of quantity >= 2 is cut into one job per piece (charm-nest-engrave-sides.js: "C1".."CN", and "L.2" / "R.2" / "D1.2" for the later units of an ear pair or a disc necklace). A record made before this (one job for the
+     whole line, or an "L" job holding the ears of two pairs) is MIGRATED here, never asked again: every piece gets a copy of the decision (state, words, fit, approval, seals, the file of ITS OWN pool id) and says where it came from. */
+  const PIECE_OWN = new Set(["key", "row", "slot", "rowKey", "groupKey", "copies", "copyOverrides", "linked", "face", "engraveRec", "backs", "migratedFrom", "copiedFrom", "archived", "seededFrom", "pre", "t"]);
+  const WORDS_OF = ["text", "lines", "lineInput", "lineMode", "source", "quote", "confidence", "requests", "questions", "claudeJob", "claudeReasoning", "wordsSource", "faceFontWord", "fontKey", "fontAsked", "font", "fontName", "lineGap"];
+  /** The job of (slot, face) takes what `src` carried. grow: only its words (a piece the line gained: it is a new physical piece, it needs its own approval); else the whole decision. */
+  function seedPiece(row, slot, face, src, grow) {
+    const j = ensureOne(row, slot, face, true), c = Session.copy(src);
+    if (grow) {
+      for (const k of WORDS_OF) if (c[k] !== undefined) j[k] = c[k];
+      j.copiedFrom = src.key; return j;
+    }
+    for (const k of Object.keys(c)) if (!PIECE_OWN.has(k)) j[k] = c[k];
+    const mine = j.copies || [];
+    j.backs = (src.backs || []).filter(b => b && mine.includes(b.poolId)).map(b => Session.copy(b));   // (the file written for THIS piece's pool id)
+    const rec = src.slot || src.linked || src.engraveRec ? src.engraveRec : (!row._engraveLinked && row.engrave && typeof row.engrave === "object" ? row.engrave : null);   // (a whole-line job keeps its record on the line)
+    if (rec) j.engraveRec = Session.copy(rec);
+    j.migratedFrom = src.key;
+    if (j.state === "words") Review.add({ kind: "engraveWords", key: "eng:" + j.key, row, job: j, why: j.reason });
+    return j;
+  }
+  /** Hands the decision of a job that held the whole line (no slot), or the pieces of several units (an ear job holding both pairs), to each piece. → true when a job was made. */
+  function migrateToPieces(row, S, have, pl) {
+    const live = new Set([...pl.of.values()].filter(Boolean)); let moved = false;
+    // 1. the job of the whole line (back and front): each piece gets a copy, the whole-line job goes (its Review card with it)
+    for (const old of have.filter(j => !j.slot && items().get(j.key) === j)) {
+      const face = faceOf(old);
+      for (const slot of pl.slots) if (slot && live.has(slot)) seedPiece(row, slot, face, old, false);
+      items().delete(old.key); Review.remove("eng:" + old.key); moved = true;
+    }
+    // 2. a later unit of an ear pair or a disc necklace whose first unit already has its job: a piece the first job HELD (its pool id was in its copies) takes that decision; a piece the line gained starts with the words only
+    for (const slot of pl.slots) {
+      const info = slot && S.slotInfo(slot); if (!info || info.unit < 2 || info.kind === "copy" || !live.has(slot)) continue;
+      const mineIds = S.idsOfSlot(sidesCtx, row, slot);
+      for (const face of ["back", "front"]) {
+        if (items().get(slotKey(row, slot, face))) continue;
+        const src = items().get(slotKey(row, info.base, face)); if (!src) continue;
+        if ((src.copies || []).some(id => mineIds.includes(id))) { seedPiece(row, slot, face, src, false); src.backs = (src.backs || []).filter(b => !(b && mineIds.includes(b.poolId))); moved = true; }
+        else if (src.text) { seedPiece(row, slot, face, src, true); moved = true; }
+      }
+    }
+    return moved;
+  }
+  /** A line that lost pieces (its quantity went down): the jobs of the pieces it no longer has are put away without losing a thing (an approval, a seal, a file stays on the job) or, when nobody decided them, removed;
+   *  a piece that comes back is taken out of the archive. Only for a line cut by unit, and only while the line has pieces at all. */
+  function settlePieces(row, S, pl) {
+    if (!pl || !pl.byUnit || !(row.poolIds || []).length) return;
+    const live = new Set([...pl.of.values()].filter(Boolean));
+    for (const j of jobsOf(row, { all: true })) {
+      if (!j.slot) continue;
+      if (live.has(j.slot)) { if (j.archived) delete j.archived; continue; }
+      if (DECIDED.includes(j.state) || j.state === "none") { if (!j.archived) j.archived = Date.now(); }
+      else if (items().get(j.key) === j) { items().delete(j.key); Review.remove("eng:" + j.key); }
+    }
+  }
   /** All the jobs of a line (made when missing): [the one job] for a line that is not cut into slots. */
   function ensureJobs(row) {
     row = lineOf(row); const S = SIDES();
-    const have = jobsOf(row), backs = have.filter(j => !isFront(j)), pl = S ? S.plan(sidesCtx, planRowOf(row), backs) : { split: false, slots: [null] };
+    let have = jobsOf(row), backs = have.filter(j => !isFront(j));
+    const pl = S ? S.plan(sidesCtx, planRowOf(row), backs) : { split: false, slots: [null] };
+    // PIECES: a line of quantity >= 2 is cut into its pieces; the decision an old whole-line job (or a job that held several units) already carried goes to every piece first
+    if (pl.byUnit && pl.split && migrateToPieces(row, S, have, pl)) { have = jobsOf(row); backs = have.filter(j => !isFront(j)); }
     const want = faceWant(row, pl, have);
     if (want) return ensureFaced(row, S, have, backs, pl, want);
     if (!pl.split) { const one = ensureOne(row, null); if (row._engraveLinked) S.linkParent(sidesCtx, row, jobsOf(row)); return [one]; }   // (a line whose front was taken out is summarised by the jobs it has left)
     // an undecided job made under the plain line key before the line was known to be a pair: its words (already paid for) go to the slots, it goes
     const old = have.find(j => !j.slot);
-    const jobs = pl.slots.map(s => ensureOne(row, s));
+    const jobs0 = pl.slots.map(s => ensureOne(row, s));
+    settlePieces(row, S, pl);
+    const jobs = pl.byUnit ? jobs0.filter(j => items().get(j.key) === j && !j.archived) : jobs0;
     if (old && !DECIDED.includes(old.state)) {
       for (const j of jobs) if (!j.text && old.text) Object.assign(j, { text: old.text, lines: (old.lines || []).slice(), source: old.source, quote: old.quote, confidence: old.confidence, requests: old.requests, questions: (old.questions || []).slice(), seededFrom: old.key });
       items().delete(old.key); Review.remove("eng:" + old.key);
@@ -6173,6 +6242,7 @@ const Engrave = window.Engrave = (() => {
       for (const j of jobsOf(row).filter(x => !isFront(x) && x !== old)) if (!j.text && old.text) Object.assign(j, { text: old.text, lines: (old.lines || []).slice(), source: old.source, quote: old.quote, confidence: old.confidence, requests: old.requests, questions: (old.questions || []).slice(), seededFrom: old.key });
     }
     for (const j of have) if (!wanted.has(j.key) && items().get(j.key) === j && untouched(j)) { items().delete(j.key); Review.remove("eng:" + j.key); }
+    settlePieces(row, S, pl);
     const jobs = jobsOf(row);
     S.linkParent(sidesCtx, row, jobs);
     return jobs;
@@ -6211,22 +6281,22 @@ const Engrave = window.Engrave = (() => {
     return f;
   }
   /** A line leaves the pull (dropped, cancelled and cleared): every job of it goes with it. Seals live on in the order's timeline and the saved backs. */
-  function dropLine(row) { row = lineOf(row); const gone = jobsOf(row); for (const j of gone) { items().delete(j.key); Review.remove("eng:" + j.key); } return gone.length; }
+  function dropLine(row) { row = lineOf(row); const gone = jobsOf(row, { all: true }); for (const j of gone) { items().delete(j.key); Review.remove("eng:" + j.key); } return gone.length; }
   /** The pieces of a line as the order window's "All pieces" list wants them: one entry for each job when the line is cut into slots, else null. A line with a front: one entry for each
    *  (piece, face), saying its `face`, with the number of pieces as `of`. */
   function piecesOf(row) {
     row = lineOf(row); const S = SIDES(); if (!S || !row) return null;
     const jobs = jobsOf(row); if (!jobs.some(j => j.slot)) return null;
-    const of = pieceCountOf(row), faced = jobs.some(isFront);
-    return jobs.map(j => ({ key: j.key, poolId: (j.copies || [])[0] || "", row: j.row, label: (setPieceOfJob(j) ? S.pieceName(setPieceOfJob(j)) : S.earOf(j.slot)) || "", meta: (j.copies || []).length > 1 ? `${j.copies.length} pieces` : "", slot: j.slot, tag: SIDES().pieceTag(j, of), ...(faced ? { face: faceOf(j), faceLabel: isFront(j) ? "Front" : "Back" } : {}) }));
+    const of = pieceCountOf(row), faced = jobs.some(isFront), shp = S.shape(jobs.map(j => j.slot));   // (PIECES: shp says a line of several units, so a piece of the first unit says "pair 1" / "set 1" too)
+    return jobs.map(j => ({ key: j.key, poolId: (j.copies || [])[0] || "", row: j.row, label: (setPieceOfJob(j) ? S.slotWord(j, false, shp) : S.earOf(j.slot, shp)) || "", meta: (j.copies || []).length > 1 ? `${j.copies.length} pieces` : "", slot: j.slot, tag: SIDES().pieceTag(j, of, shp), ...(faced ? { face: faceOf(j), faceLabel: isFront(j) ? "Front" : "Back" } : {}) }));
   }
   /** The line's pieces and jobs joined again after a restore (the sides are made from the saved jobs: nothing is read or paid for). */
   function relinkAll() {
     const S = SIDES(); if (!S) return 0; let n = 0;
     const lines = new Map();
     for (const j of items().values()) if ((j.slot || isFront(j) || j.linked) && j.rowKey) { if (!lines.has(j.rowKey)) lines.set(j.rowKey, []); lines.get(j.rowKey).push(j); }
-    const rank = j => SLOT_PROBE.indexOf(j.slot || null) * 2 + (isFront(j) ? 0 : 1);
-    for (const [k, jobs] of lines) { const row = B.orders.byKey.get(k); if (!row) continue; for (const j of jobs) j.row = S.sideRow(sidesCtx, row, j.slot || null, j); S.linkParent(sidesCtx, row, jobs.slice().sort((a, b) => rank(a) - rank(b))); n++; }
+    const rank = j => (j.slot ? 1 + S.slotRank(j.slot) : 0) * 2 + (isFront(j) ? 0 : 1);
+    for (const [k, jobs] of lines) { const row = B.orders.byKey.get(k); if (!row) continue; for (const j of jobs) { j.row = S.sideRow(sidesCtx, row, j.slot || null, j); noteSlot(row, j.slot); } S.linkParent(sidesCtx, row, jobs.slice().sort((a, b) => rank(a) - rank(b))); n++; }
     return n;
   }
   const pendingCount = () => [...items().values()].filter(j => !j.editingBack && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone" && !unplacedPre(j)).length;   // (ENGPRE: the run's Engrave step waits for the engraving of pieces in the run; a line not nested yet is the Engrave tab's own list, counted by pendingRows)
@@ -6273,8 +6343,14 @@ const Engrave = window.Engrave = (() => {
   const facedJob = job => !!job && (isFront(job) || jobsOf(job.row).some(isFront));
   function discSay(job) {
     try {
-      if (!job || !/^D\d{1,2}$/.test(String(job.slot || ""))) return "";
-      const S = SIDES(), r = S && S.pieceRecord ? S.pieceRecord(job) : null;
+      const S = SIDES(), info = job && job.slot && S ? S.slotInfo(job.slot) : null; if (!info) return "";
+      // (PIECES: a piece of a line of several units says which: "Piece 2 of 3", "Left ear · pair 2", "Disc 2 · set 2"; a line of quantity 1 reads exactly as it did: discs only)
+      if (info.kind === "copy" || info.unit > 1 || (S.shape(jobsOf(job.row).map(x => x.slot)).multi)) {
+        const shp = S.shape(jobsOf(job.row).map(x => x.slot)), r = S.pieceRecord ? S.pieceRecord(job, { of: shp.total, shape: shp }) : null;
+        return info.kind === "copy" ? `Piece ${info.n} of ${shp.total}` : r ? r.label : S.labelOf(job.slot, shp);
+      }
+      if (info.kind !== "disc") return "";
+      const r = S.pieceRecord ? S.pieceRecord(job) : null;
       return r && r.of > 1 ? `Disc ${r.index} of ${r.of}` : `Disc ${String(job.slot).slice(1)}`;
     } catch (_) { return ""; }
   }
@@ -6306,7 +6382,7 @@ const Engrave = window.Engrave = (() => {
   (() => {
     const R = READER(); if (!R || R.slotInfo) return;
     R.slotInfo = (row, slot) => {
-      try { const pcs = O.setPiecesOf(lineRowOf(row)), p = pcs && pcs.find(x => x.slotKey === slot), len = p ? parseFloat(p.length) : 0; return len > 0 ? { length: len } : null; } catch (_) { return null; }
+      try { const pcs = O.setPiecesOf(lineRowOf(row)), p = pcs && pcs.find(x => x.slotKey === String(slot).replace(/\.\d+$/, "")), len = p ? parseFloat(p.length) : 0; return len > 0 ? { length: len } : null; } catch (_) { return null; }
     };
   })();
   /** The line's personalisation read by the rules (null: no reader on the page, or nothing written). */
@@ -6361,7 +6437,7 @@ const Engrave = window.Engrave = (() => {
     // 3. the words themselves
     if (!rd || rd.unsure || !spokeAlone(sp)) return false;
     if (rd.labelled) {
-      const isSet = jobs.length > 1 || rd.lengths.length > 1;
+      const isSet = (jobs.length > 1 && !copiesOnly(jobs)) || rd.lengths.length > 1;   // (PIECES: two copies of one charm are not a set of two pieces: one label, its words on each copy)
       if (!isSet && rd.pieces.length === 1) {   // one necklace, one label: its words are the line's
         for (const j of jobs) { giveRead(row, j, rd.pieces[0].words, say(R.say(rd), "confirm the words"), "labelled", 0.9); if (stop()) return true; }
         return true;
@@ -6383,6 +6459,29 @@ const Engrave = window.Engrave = (() => {
       return true;
     }
     return false;
+  }
+  const jobFace = j => (j && (j.face === "front" || /~front$/.test(String(j.key))) ? "front" : "back");   // (the face of a job, in a line: the page's Faces module is the one reader, this is the same rule for the code below)
+  /** Are all these jobs copies of one thing (slots "C1".."CN")? Then they are not a set of different pieces. */
+  const copiesOnly = jobs => { const S = SIDES(); return !!S && jobs.length > 0 && jobs.every(j => j.slot && S.isCopy(j.slot)); };
+  /** PIECES: the words of each piece of a line cut by unit (quantity >= 2), from the personalisation field alone, when the note says plainly which words go on which piece (charm-nest-engrave-sides.js wordsForPieces), else null:
+   *  then every piece gets the one reading of the line. Never for a line of quantity 1 (the disc reading below handles those). */
+  function pieceWordsOf(row, jobs) {
+    const S = SIDES(); if (!S || !S.wordsForPieces) return null;
+    const mine = jobs.filter(j => jobFace(j) !== "front" && j.slot); if (mine.length < 2 || !mine.some(j => S.isCopy(j.slot) || S.unitOf(j.slot) > 1)) return null;
+    return S.wordsForPieces(row.spec || {}, mine.map(j => j.slot), { engravingNote: typeof O !== "undefined" && O ? O.engravingNote : null });
+  }
+  /** Each piece of a line cut by unit takes ITS words from the note (pieceWordsOf). A note that numbers the pieces, has one entry for each or says "the same on all" is ready for its fit; a plain list ("Mom & Dad") is a proposal for a person to confirm. */
+  async function giveUnitWords(row, jobs, split) {
+    const sp = row.spec, owner = items(), S = SIDES();
+    for (const j of jobs) {
+      if (!["classify", "reclassify"].includes(j.state) || items().get(j.key) !== j || !j.slot || jobFace(j) === "front") continue;
+      const lines = String(split.words[j.slot] || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean); if (!lines.length) continue;
+      j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
+      Object.assign(j, { text: lines.join("\n"), lines, source: "personalization", quote: (sp.personalization || []).join(" / "), confidence: split.sure ? 1 : 0, questions: [], claudeReasoning: null, requests: { side: jobFace(j), font: null, handwriting: false, image: false }, wordsSource: "personalization:" + split.how, wordsHow: "pieces" });
+      agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku} · ${S.slotWord(j)}: "${lines.join(" / ")}" read from the note (${split.how}), no paid reading`);
+      if (split.sure) await setReady(j); else toWords(j, `The note may give each piece its own words: confirm the words of ${S.slotWord(j) || "this piece"}`);
+      if (items() !== owner || row.state === "gone") return;
+    }
   }
   /** The words of each disc of a counted line, from its personalisation field alone (charm-nest-engrave-sides.js splitWords), or null when the note does not say plainly. */
   function discWordsOf(row, jobs) {
@@ -6483,6 +6582,12 @@ const Engrave = window.Engrave = (() => {
     }
     // the discs of one counted line whose note says plainly which words go on which disc ("Tag 1: J, Tag 2: Q", DISCREAD): each disc takes its own words here, no paid reading;
     // anything the note leaves open (or another voice on the order: a buyer message, a staff note) goes to the reader below as before
+    // PIECES: a line of quantity >= 2 whose note says plainly which words go on which piece (numbered, one entry each, "the same on all", a short list): each piece takes its own. A piece the line gained after its sibling was read
+    // starts with the sibling's words for a person to confirm. Anything else is read once (below) and EVERY piece gets the whole reading.
+    const unitSplit = pieceWordsOf(row, jobs);
+    if (unitSplit) { await giveUnitWords(row, jobs, unitSplit); return job; }
+    { const open = jobs.filter(j => ["classify", "reclassify"].includes(j.state)), copied = open.filter(j => j.copiedFrom && j.text);
+      if (copied.length && copied.length === open.length) { for (const j of copied) { delete j.seededFrom; toWords(j, "This piece was added to the line: confirm the words (copied from the piece before it)"); } return job; } }
     const discSplit = discWordsOf(row, jobs);
     if (discSplit) {
       for (const j of jobs) {
@@ -6506,7 +6611,7 @@ const Engrave = window.Engrave = (() => {
     // the Claude job already asked about these very words is taken up again (its poll cut off by the network, a reload)
     // rather than paid for a second time; one that failed is replaced once
     // (a line cut into slots names them in the question, so the model says which words go on which ear or disc; any other line asks exactly as before)
-    const slots = jobs.length > 1 ? jobs.map(j => j.slot).filter(Boolean) : null;
+    const slots = jobs.length > 1 ? [...new Set(jobs.map(j => j.slot).filter(Boolean).filter(sl => !SIDES().isCopy(sl)).map(sl => SIDES().baseSlot(sl)))] : null;   // (PIECES: the reader is asked once, about the ears / discs of ONE unit; a copy of a charm is no slot to it)
     // (SETBAR-C: when the page knows the chain each piece hangs on, the reader is told, so a label "16\"= ..." lands on the right slot; unknown: not sent, the request is byte for byte what it was)
     const chains = (() => { const R = READER(); if (!R || !slots || slots.length < 2) return null; const sl = R.slotsOf(row, jobs); return sl && sl.every(x => x.length != null) ? Object.fromEntries(sl.map(x => [x.slot, x.length])) : null; })();
     const ask = { order: row.order.receiptId, sku: sp.designSku, title: row.line.title, form: sp.form, quantity: sp.quantity, engravable, personalization: sp.personalization, buyerMessage: sp.buyerMessage, staffNote: sp.staffNote, messages: sp.messages, ...(slots && slots.length > 1 ? { slots } : {}), ...(chains ? { pieceLengths: chains } : {}) };
@@ -6532,10 +6637,12 @@ const Engrave = window.Engrave = (() => {
     const lines = (fr.changed ? fr.lines : text.split(/\r?\n/)).map(x => String(x).trim()).filter(Boolean);
     const alone = !String(sp.buyerMessage || "").trim() && !String(sp.staffNote || "").trim() && !(sp.messages || []).length;
     const clear = alone && lines.length >= 1 && lines.length <= 4 && lines.every(x => x.length <= 40);
+    const unitSplit = pieceWordsOf(row, todo);   // (PIECES: the note says which words go on which piece of a line cut by unit)
+    if (unitSplit) { await giveUnitWords(row, todo, unitSplit); return todo[0] || jobs[0]; }
     for (const j of todo) {
       j.lineInput = null; j.lineMode = "auto"; j.wantSize = null; j.decision = null;
       const face = faceOf(j), req = { side: face, font: null, handwriting: false, image: false };
-      if (todo.length > 1) {
+      if (todo.length > 1 && !copiesOnly(todo)) {
         Object.assign(j, { text: "", lines: [], source: "personalization", quote: pers.join(" / ") || null, confidence: 0, questions: [], claudeReasoning: null, requests: req });
         toWords(j, `Say which words go on the ${(SIDES().slotWord(j) || "piece").toLowerCase()}`);
       } else if (clear) {
@@ -6561,8 +6668,8 @@ const Engrave = window.Engrave = (() => {
       { const R = READER(); if (R && job.lines.length) { const fd = R.fixDegrees(job.lines.join("\n")); if (fd.count) { job.lines = fd.text.split("\n"); job.text = fd.text; } } }   // (SETBAR-C: the buyer's asterisk in a coordinate is the degree sign here too)
       return job.lines.length ? setReady(job) : toWords(job, "Enter the requested inscription");
     }
-    if (job.slot && Array.isArray(r.pieces) && r.pieces.length) {
-      const mine = r.pieces.find(x => x && x.slot === job.slot);
+    if (job.slot && !(SIDES() && SIDES().isCopy(job.slot)) && Array.isArray(r.pieces) && r.pieces.length) {
+      const mine = r.pieces.find(x => x && x.slot === (SIDES() ? SIDES().baseSlot(job.slot) : job.slot));   // (a later unit's piece reads the words of the same ear or disc of the first unit)
       if (!mine) { Object.assign(job, { text: r.text || "", lines: String(r.text || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean), source: r.source, quote: r.sourceQuote, confidence: r.confidence, requests: r.requests, questions: (r.questions || []).slice() }); return toWords(job, `Say which words go on the ${(SIDES().slotWord(job) || "piece").toLowerCase()}`); }
       r = Object.assign({}, r, { text: String(mine.text || ""), engrave: !!String(mine.text || "").trim() });
     }
@@ -6639,7 +6746,7 @@ const Engrave = window.Engrave = (() => {
     const owner = items(), was = F.setupOf(row), prevOv = row.engravingOverride || null, at = Date.now(), clean = {};
     for (const k of ["mode", "front", "back"]) if (patch && patch[k] !== undefined) clean[k] = patch[k];
     // a patch for ONE piece (patch.slot, ENGLINK): its words go to engravingOverride.pieces[slot][face], never to the line's, and only that piece's jobs read them again
-    const only = patch && /^(L|R|D\d{1,2})$/.test(String(patch.slot)) ? String(patch.slot) : null;
+    const only = patch && SIDES() && SIDES().isSlot(patch.slot) ? String(patch.slot) : null;
     if (only) {
       const pcs = Object.assign({}, prevOv && prevOv.pieces), q = Object.assign({}, pcs[only]);
       for (const f of ["front", "back"]) if (clean[f] !== undefined) { const n = F.normFace(clean[f]); if (n) q[f] = n; else delete q[f]; delete clean[f]; }
@@ -7987,7 +8094,8 @@ const Engrave = window.Engrave = (() => {
     return out;
   }
   /** The Engrave tab's own lists: the engraving jobs and the monogram lines (every other reader of Engrave's jobs reads items() alone, as before). */
-  const tabItems = () => { const a = [...items().values()], m = monoItemsNow(); return m.length ? a.concat(m) : a; };
+  const tabItems = () => { const a = [...items().values()].filter(j => !j.archived), m = monoItemsNow();   // (PIECES: a piece the line no longer has is kept with its approvals but is in no list)
+    return m.length ? a.concat(m) : a; };
   const tabItem = key => items().get(key) || (key != null && monoItemsNow().find(m => m.key === key)) || null;
   const decidedAll = () => { const m = monoItemsNow().filter(x => x.state === "approved"); return m.length ? decidedJobs().concat(m) : decidedJobs(); };
   /** What the order model asks of a line: null (not a monogram line) | "to-approve" | "held" (its letters cannot be read yet, or it is being made) | "approved". */
@@ -9174,6 +9282,11 @@ const Engrave = window.Engrave = (() => {
   }
   return { openMonogram, monogramUI: () => MonoUI(), monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
+/* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
+   list of pieces, the Pieces counts and a monogram line's pieces (the same slots and piece keys: "<line>" for one piece, "<line>#C<u>" for several) read THIS. Added beside the Engrave object, not inside its return. */
+Engrave.pieceListOf = row => { const S = window.CharmNestEngraveSides, line = row && (row.parentRow || row); try { return S && line ? S.pieceList(window.CharmNestEngraveSidesCtx, line) : []; } catch (_) { return []; } };
+Engrave.slotOfPool = (row, poolId) => { const S = window.CharmNestEngraveSides, line = row && (row.parentRow || row); try { return S && line ? S.slotOfId(window.CharmNestEngraveSidesCtx, line, poolId) || null : null; } catch (_) { return null; } };
+
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
 const LaserReview = window.LaserReview = (()=>{

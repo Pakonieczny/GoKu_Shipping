@@ -75,7 +75,7 @@ const realLine = (rid, metalKey, personalization) => {
     const w = go(vars);
     eq([w.spec.problems.length, w.spec.pieceCount, w.plan.slots], [0, count, Array.from({ length: count }, (_, i) => 'D' + (i + 1))], `${label}: ${count} pieces, slots D1..D${count}, nothing asked`); }
   const q2 = go([['Necklace Options', 'GOLD - 2 Disc']], 2);
-  eq([q2.spec.pieceCount, q2.plan.slots, q2.row.poolIds.map(id => q2.plan.of.get(id))], [4, ['D1', 'D2'], ['D1', 'D2', 'D1', 'D2']], 'two necklaces of 2 discs: four pieces, disc 1 and disc 2 of each (two jobs of two copies)');
+  eq([q2.spec.pieceCount, q2.plan.slots, q2.row.poolIds.map(id => q2.plan.of.get(id))], [4, ['D1', 'D2', 'D1.2', 'D2.2'], ['D1', 'D2', 'D1.2', 'D2.2']], 'two necklaces of 2 discs: four pieces, disc 1 and disc 2 of each necklace, each its own job (PIECES: D1.2 is disc 1 of the second necklace)');
   const one = go([['Necklace Options', 'GOLD - 1 Disc']]);
   eq([one.spec.problems.length, one.spec.pieceCount, one.plan.split, one.spec.options[0].mapped.field], [0, 1, false, 'count'], '"GOLD - 1 Disc" is one piece and asks nothing (it used to be held "not mapped"), no slot');
   const one2 = go([['Number of Discs', '1']]); eq([one2.spec.problems.length, one2.spec.pieceCount], [0, 1], '"Number of Discs: 1" is one piece too');
