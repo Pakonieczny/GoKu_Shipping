@@ -243,6 +243,38 @@ test('D5 the throttle: a full pass at most every five minutes unless forced; a p
   store.set('Charm_Custom_Repair/state', { runningUntil: clk + 60000, lastRunAt: 0 }); r = await Repair.repair(d, {}); eq(r.skipped, 'running'); clk += 3 * 60000; r = await Repair.repair(d, {}); ok(!r.skipped, 'a dead pass\'s lease ran out');
 });
 
+/* ═══ F · the next run of the same save heals what the repair could only flag (needs KB's convergent commit: skipped, visibly, on a tree that has not got it yet) ═══ */
+const CONVERGENT = typeof Save.pending === 'function' && typeof Save.intent === 'function';
+const cbody = (rid, listing, sku, old, d) => ({ rid, listingId: listing, sku, oldSku: old, productId: '', optionPairs: [], group: { mode: 'all', productIds: [] }, title: 't', by: 'Paul', design: { name: 'D' + d + '.ai', kind: 'ai', hash: ('a' + d).padEnd(40, '0'), bytes: 1 }, reuse: false,
+  entry: { charmHash: 'drawing-' + d, widthPt: 31, heightPt: 38, areaPt2: 700, members: 4, holes: 1, engravable: true, upAngle: 90, upSource: 'long' }, file: { masterHash: ('a' + d).padEnd(40, '0'), name: 'D' + d + '.ai', aiSha256: sha(AIOF(d)), aiBytes: AIOF(d).length, pngSha256: sha(PNGOF(d)) } });
+const ftest = (name, fn) => test(name, async () => { if (!CONVERGENT) { process.stdout.write('  skip ' + name.slice(0, 100) + ' (this tree\'s commit is not convergent: needs KB)\n'); return; } await fn(); });
+ftest('F1 entry removed by the Library, answer cut: the next run of the save (file dropped again) re-creates the entry and the answer, the flag goes', async () => {
+  reset(); const b = cbody('4200000201', '1800000201', 'HEAL_0001', 'HEAL OLD', 1); putFiles('HEAL_0001', 1);
+  let c = await Save.commit(deps(), b); eq([c.ok, c.created], [true, true]);
+  await lib.ops.masterRemoveSku({ sku: 'HEAL_0001' }); await repair({});
+  eq([alias('1800000201').bySku, rec('4200000201').repair.state], [{}, 'entry-gone'], 'cut and flagged');
+  const w = Save.commit(deps(), b); c = await w;   // the page uploaded the same files again (they are still there) and runs the save again
+  eq([c.ok, c.sku], [true, 'HEAL_0001'], JSON.stringify(c)); ok(store.has('Charm_Master_Index/HEAL_0001'), 'the entry is back'); eq(alias('1800000201').bySku['HEAL OLD'], 'HEAL_0001', 'the answer is back');
+  await repair({}); eq(rec('4200000201').repair, undefined, 'healed: no flag'); const s0 = snap(); await repair({}); eq(snap(), s0, 'idempotent');
+});
+ftest('F2 files vanished: flagged; the next run asks for the upload (not-uploaded), takes it, the flag goes', async () => {
+  reset(); const b = cbody('4200000202', '1800000202', 'HEAL_0002', 'HEAL OLD2', 2); putFiles('HEAL_0002', 2);
+  let c = await Save.commit(deps(), b); eq(c.ok, true); blobs.delete(files('HEAL_0002').png); await repair({}); eq(rec('4200000202').repair.state, 'files-missing');
+  c = await Save.commit(deps(), b); eq([c.ok, c.error, c.which], [false, 'not-uploaded', 'thumb'], 'the run asks for the picture again: ' + JSON.stringify(c));
+  putFiles('HEAL_0002', 2); c = await Save.commit(deps(), b); eq(c.ok, true, JSON.stringify(c)); await repair({}); eq(rec('4200000202').repair, undefined);
+});
+ftest('F3 a commit cut after k writes, then a repair pass, then the next run: one whole save, never a duplicate or a lost part', async () => {
+  for (let k = 0; k <= 7; k++) {
+    reset(); const b = cbody('4200000203', '1800000203', 'HEAL_0003', 'HEAL OLD3', 3); putFiles('HEAL_0003', 3, clk - 2 * H); TX.hook.crash = { after: k, torn: true };
+    try { await Save.commit(deps(), b); } catch (_) { /* cut */ } TX.hook.crash = null;
+    await repair({});
+    const c = await Save.commit(deps(), b); eq(c.ok, true, 'k=' + k + ': ' + JSON.stringify(c));
+    const entries = [...store.keys()].filter(x => x.startsWith('Charm_Master_Index/')); eq(entries, ['Charm_Master_Index/' + c.sku], 'k=' + k + ': one entry');
+    eq(alias('1800000203').bySku['HEAL OLD3'], c.sku, 'k=' + k + ': the answer'); eq(rec('4200000203').sku, c.sku, 'k=' + k + ': the record'); ok(blobs.has(files(c.sku).ai) && blobs.has(files(c.sku).png), 'k=' + k + ': the files');
+    await repair({}); eq(rec('4200000203').repair, undefined, 'k=' + k + ': whole');
+  }
+});
+
 /* ═══ E · wiring ═══ */
 test('E1 the library op: registered, free by default, sandbox leaves no trace, a failing step never fails the call', async () => {
   reset(); ok(typeof lib.ops.customSaveRepair === 'function', 'customSaveRepair is an op');
