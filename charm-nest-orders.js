@@ -1490,7 +1490,9 @@
      A listing named here is read as its pinned design WHATEVER SKU the transaction, Etsy's inventory table or the master carries, and over a person's saved link for it: always. It is returned as a person's own
      answer (source "alias"), so no automatic guard (a look-alike, a form, a zodiac read) ever takes it back. A design the library does not hold is not swapped for another: the line waits as an unknown SKU, as any
      other. To take a listing out of this table, delete its line: the saved answers of Charm_Sku_Aliases then rule again. */
-  const PINNED_LISTING_DESIGNS = { "1816178147": "BEADY DOVE 4" };
+  /* Paul, 16 Oct 2026, order 4192064411, listing 1819190283 "Squirrel Charm Necklace Woodland Animal Charm Add On Charm ...", Etsy SKU "SQUIRREL3 W/ NUT" (in no master file, so the line waited as an unknown SKU): the listing is the charm
+     the repo holds as BEADY SQUIRREL3 (the squirrel with its acorn and its ring), pinned the same way. */
+  const PINNED_LISTING_DESIGNS = { "1816178147": "BEADY DOVE 4", "1819190283": "BEADY SQUIRREL3" };
   const pinnedDesign = listingId => { const id = String(listingId == null ? "" : listingId).replace(/\D/g, ""); return id && Object.prototype.hasOwnProperty.call(PINNED_LISTING_DESIGNS, id) ? PINNED_LISTING_DESIGNS[id] : ""; };
   function resolveSku(line, aliases, masterEntry, noDesign, masterLoose) {
     const pinned = pinnedDesign(line.listingId); if (pinned) return { sku: pinned, source: "alias", pinned: true };

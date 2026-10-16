@@ -22,7 +22,7 @@ const unmatched = sp => (sp.problems || []).some(p => p.kind === 'unmatchedSku')
   ok(sp.designSku === 'BEADY DOVE 4' && sp.skuSource === 'alias', 'order 4200443660 (listing 1816178147, Etsy SKU "DOVE 4"): read as BEADY DOVE 4, as a saved answer: ' + JSON.stringify({ d: sp.designSku, s: sp.skuSource }));
   ok(!unmatched(sp) && !sp.special, 'no unknown-SKU question, and it is an ordinary charm line (not a special kind)');
   ok(O.pinnedDesign('1816178147') === 'BEADY DOVE 4' && O.pinnedDesign(1816178147) === 'BEADY DOVE 4' && O.pinnedDesign(' 1816178147 ') === 'BEADY DOVE 4', 'the table answers for the listing number however it is written');
-  ok(JSON.stringify(O.PINNED_LISTING_DESIGNS) === JSON.stringify({ '1816178147': 'BEADY DOVE 4' }), 'the table holds this one listing and nothing else');
+  ok(JSON.stringify(O.PINNED_LISTING_DESIGNS) === JSON.stringify({ '1816178147': 'BEADY DOVE 4', '1819190283': 'BEADY SQUIRREL3' }), 'the table holds these two listings and nothing else');
 }
 // whatever the transaction carries
 for (const sku of ['DOVE 4 WITH BRANCH', 'DOVE 4 — DISC', 'BEADY DOVE 4', 'NOT_A_DESIGN_1', 'dove 4', '']) {
@@ -43,6 +43,20 @@ for (const sku of ['DOVE 4 WITH BRANCH', 'DOVE 4 — DISC', 'BEADY DOVE 4', 'NOT
   ok(sp.designSku !== 'DOVE 4' && (unmatched(sp) || sp.designSku === 'BEADY DOVE 4' || sp.designSku == null), 'BEADY DOVE 4 not in the library: never quietly read as "DOVE 4": ' + JSON.stringify({ d: sp.designSku, p: (sp.problems || []).map(p => p.kind) }));
   ok(unmatched(sp) || sp.designSku == null, 'it waits like any unknown SKU: ' + JSON.stringify((sp.problems || []).map(p => p.kind)));
   LIB.add('BEADY DOVE 4');
+}
+// the squirrel add-on charm (order 4192064411, listing 1819190283, Etsy SKU "SQUIRREL3 W/ NUT"): BEADY SQUIRREL3
+{
+  LIB.add('BEADY SQUIRREL3');
+  const sq = (o = {}) => line(Object.assign({ transactionId: '7002', listingId: '1819190283', sku: 'SQUIRREL3 W/ NUT', title: 'Squirrel Charm Necklace Woodland Animal Charm Add On Charm Forest Animal Jewelry Birthday Gift for Nature Lover Woodland Creature Gift', metalKey: 'silver', metalLabel: 'SS' }, o));
+  for (const sku of ['SQUIRREL3 W/ NUT', 'squirrel3 w/ nut', '']) {
+    const sp = O.interpretLine(order('4192064411'), sq({ sku }), ctx());
+    ok(sp.designSku === 'BEADY SQUIRREL3' && sp.skuSource === 'alias' && !unmatched(sp), `order 4192064411, Etsy SKU ${JSON.stringify(sku)}: read as BEADY SQUIRREL3, no unknown-SKU question: ` + JSON.stringify({ d: sp.designSku, s: sp.skuSource }));
+  }
+  const other = O.interpretLine(order('4192064411'), sq({ listingId: '1819190284' }), ctx());
+  ok(other.designSku !== 'BEADY SQUIRREL3', 'another listing with that SKU is not pinned');
+  LIB.delete('BEADY SQUIRREL3');
+  const missing = O.interpretLine(order('4192064411'), sq(), ctx());
+  ok(unmatched(missing) || missing.designSku == null || missing.designSku === 'BEADY SQUIRREL3', 'a design the library does not hold is never swapped for another');
 }
 // every other listing is read as before
 {
