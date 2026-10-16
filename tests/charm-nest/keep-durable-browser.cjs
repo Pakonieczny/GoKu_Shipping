@@ -285,7 +285,7 @@ async function main() {
       await page.evaluate(() => { __kw.useReal = true; window.__etsy = []; const real = window.api; window.api = async function (fn, body, o) { if (body && body.op === 'customEtsySkuWrite') window.__etsy.push(Object.keys(body).filter(k => k !== 'sandbox').join()); return real.apply(this, arguments); }; });
       await dropDesign(page, '4196630851'); await ready(page, 'off'); await settle(page);
       await page.click('#cuKeepSwitch');
-      await page.waitForFunction(() => ['linked', 'saved', 'held'].includes(document.getElementById('cuKeep').dataset.phase), null, { timeout: 90000 });
+      await page.waitForFunction(() => ['linked', 'saved', 'held'].includes(document.getElementById('cuKeep').dataset.phase), null, { timeout: 90000 }).catch(async e => { console.log('DBG', JSON.stringify(await page.evaluate(() => ({ phase: document.getElementById('cuKeep').dataset.phase, intents: CustomSheet.keepIntents().map(r => ({ state: r.state, wait: r.wait, why: r.why, fails: r.fails, sku: r.sku, repo: r.repo })), online: CN.S.cloud.ok, unlocked: CharmNestRepoLock.unlocked('upload'), rows: CustomSheet.keepOf(Object.keys(CustomSheet.entries())[0]) && CustomSheet.keepOf(Object.keys(CustomSheet.entries())[0]).rows }))).slice(0, 1800)); throw e; });
       const end = await page.evaluate(() => document.getElementById('cuKeep').dataset.phase);
       ok(end === 'linked', 'R: the real engine, switch ON and nothing else: the strip ends "' + end + '"');
       const idx = srv.st.list('Charm_Master_Index').map(e => e._id);

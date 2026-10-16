@@ -12875,7 +12875,7 @@ const CustomSheet = window.CustomSheet = (() => {
     return true;
   }
   /** The keeper says something: an engine row (shown in the window if it is open) or an intent changing (the window, the card line, a toast). */
-  const keepToasted = new Set();
+  const keepToasted = new Set(), keepMapsFor = new Set();
   function keepOfKey(key) { for (const K of keeps.values()) if (K.intentKey === key) return K; return null; }
   function keepIntentEvent(ev) {
     try {
@@ -12885,6 +12885,8 @@ const CustomSheet = window.CustomSheet = (() => {
       const rec = ev.rec; if (!mine(rec)) return;
       const K = keeps.get(rec.ck) || [...keeps.values()].find(k => ownsK(k, rec));
       if (K && ownsK(K, rec) && (K.intentKey === rec.key || !K.intentKey || rec.etsyOnly)) { K.intentKey = rec.key; keepApplyIntent(K, rec, ev.view); }
+      // the design is in the repository: the page reads the listings' answers again, so the other open orders of this listing are associated with it now, not at the next pull (P5)
+      if (rec.repo && !rec.sandbox && rec.outcome !== "rehearsed" && !keepMapsFor.has(rec.key)) { keepMapsFor.add(rec.key); setTimeout(() => { try { Orders.loadMaps(true).catch(() => {}); } catch (_) { /* the next pull reads them */ } }, 400); }
       keepIntentToast(rec, ev.view); keepForgetBytes(rec); keepPaintLater();
     } catch (err) { console.warn("Save keeper", err); }
   }

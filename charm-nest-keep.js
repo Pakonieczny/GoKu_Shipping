@@ -20,6 +20,10 @@
  *    await k.unlock(password) -> { ok, reason?:"wrong|locked|unavailable", retryAfterSec? }   (the inline password row; the password is used once and never kept)
  *    k.settled(ms)     -> Promise: true when the run has ended, false when `ms` passed first (the window waits for it, up to 20 s, then closes as before)
  *    k.snapshot()      -> { rows, done, sku, info }  what a repaint of the strip needs
+ *    k.outcome()       -> { done, held, reason, retry, text, needs, sku, repo, etsy } how the last run ended, for the keeper (run() itself still resolves { ok, done })
+ *    ctx.alive()       false once the switch is off: checked before each step and by saveCustom (hooks.alive) before each upload and the commit; never once the design is in the repository
+ *    ctx.persist(kind, v) / ctx.resume = { built, uploaded }   what a restarted page needs to go on without building or uploading again (the keeper stores and returns it)
+ *    open() -> { offered, why, later:"data"|"connection"|"", offline, linked }: "later" is a not-yet (the keeper waits), "" is a never; offline the save is still offered
  *
  *  It writes nothing until run() or retry() is called: not on open, not on a reload, not on its own. WHO calls run() is the keeper below (KEEPSAVE, 16 Oct
  *  2026): the person's switch ON records a save INTENT and the keeper runs this engine, again and again, until the save ends. In the sandbox
