@@ -109,9 +109,9 @@ const docsIn = c => [...store.keys()].filter(k => k.startsWith(c + '/') && !k.sl
   /* ═══ the emulated Etsy while the stream plays ═══ */
   const STEP = 600000, DAY = 86400, snapAt = Date.now() - 3600e3, T0 = Date.now();
   const receipt = (rid, leadDays, hoursAgo, extra) => { const created = Math.floor(snapAt / 1000) - hoursAgo * 3600, ship = created + leadDays * DAY; return Object.assign({ receipt_id: rid, order_number: rid, create_timestamp: created, created_timestamp: created, update_timestamp: created, status: 'Paid', is_paid: true, is_shipped: false, transactions: [{ transaction_id: rid * 10 + 1, receipt_id: rid, listing_id: 1718001, sku: 'BR-TST-0' + (rid % 10), title: 'charm', quantity: 1, create_timestamp: created, expected_ship_date: ship }] }, extra || {}); };
-  // forty open orders, taken one an hour (the oldest first here), due 1 to 40 days after they were taken, and a shipped one
-  // the stream never brings
-  const snapshot = Array.from({ length: 40 }, (_, i) => receipt(3521000101 + i, i + 1, 80 - i)).concat([receipt(3521000999, 2, 90, { is_shipped: true, status: 'Completed' })]);
+  // forty open orders, taken one an hour (the oldest first here), due 1 to 40 days after they were taken, one that Etsy had already shipped (the oldest: it plays as an
+  // open order, SBX1000: "consider shipped orders as open"), and a cancelled one the stream never brings
+  const snapshot = Array.from({ length: 40 }, (_, i) => receipt(3521000101 + i, i + 1, 80 - i)).concat([receipt(3521000999, 2, 90, { is_shipped: true, was_shipped: true, status: 'Completed', shipments: [{ carrier_name: 'usps', tracking_code: '9400' }] }), receipt(3521000998, 2, 95, { is_canceled: true, status: 'Canceled' })]);
   blobs.set('charmnest/sandbox/orders-cur.json', { buf: Buffer.from(JSON.stringify({ at: snapAt, count: snapshot.length, receipts: snapshot })), contentType: 'application/json' });
   const meta = { path: 'charmnest/sandbox/orders-cur.json', count: snapshot.length, at: snapAt, takenBy: 'test', source: 'etsy-pull' };
   store.set('Charm_Sandbox/current', meta);
@@ -133,10 +133,12 @@ const docsIn = c => [...store.keys()].filter(k => k.startsWith(c + '/') && !k.sl
     return out;
   }
 
-  // the stream brings every open order once, oldest first, under its own receipt and transaction numbers
-  const openIds = snapshot.filter(r => !r.is_shipped).map(r => String(r.receipt_id));
+  // the stream brings every order that plays (paid, not cancelled: the shipped one too) once, oldest first, under its own receipt and transaction numbers
+  const openIds = snapshot.filter(r => !r.is_canceled).sort((a, b) => a.create_timestamp - b.create_timestamp || a.receipt_id - b.receipt_id).map(r => String(r.receipt_id));
+  assert.strictEqual(openIds.length, 41); assert.strictEqual(openIds[0], '3521000999', 'the shipped one is the oldest');
   const brought = Array.from({ length: 30 }, (_, k) => etsy.batch(streamAt(k + 1), snapshot, k + 1, meta)).flat();
-  assert.deepStrictEqual(ids(brought), openIds, 'every open snapshot order comes once, oldest first, under its own number');
+  assert.deepStrictEqual(ids(brought), openIds, 'every snapshot order that plays comes once, oldest first, under its own number (the cancelled one never)');
+  { const sh = brought[0]; assert(sh.is_shipped === false && sh.was_shipped === false && sh.status === 'Paid' && sh.shipments.length === 0 && sh.sandbox_shipped_on_etsy === true && snapshot.find(x => x.receipt_id === 3521000999).is_shipped === true, 'the shipped receipt arrives as an open order, and the stored one is untouched'); }
   const own = r => snapshot.find(o => o.receipt_id === r.receipt_id).transactions.map(x => x.transaction_id);
   assert(brought.every(r => JSON.stringify(r.transactions.map(x => x.transaction_id)) === JSON.stringify(own(r))), 'with its own transaction numbers');
   // three weeks of simulated time played: the list is the orders not shipped, not every order since the first step
@@ -197,7 +199,7 @@ const docsIn = c => [...store.keys()].filter(k => k.startsWith(c + '/') && !k.sl
     const op = b => lib0.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(Object.assign({ op: 'sandboxStream', sandbox: true }, b)) }).then(r => JSON.parse(r.body));
     const saved = store.get('Charm_Sandbox/stream'); store.delete('Charm_Sandbox/stream');
     let r = await op({ action: 'ensure', seed: 31 });
-    assert(r.stream.v === 2 && r.stream.total === openIds.length && r.stream.tick === 0 && r.stream.brought === 0 && !r.stream.done, 'a new stream knows how many open orders the snapshot holds (its shipped one never comes): ' + JSON.stringify(r.stream));
+    assert(r.stream.v === 2 && r.stream.total === openIds.length && r.stream.tick === 0 && r.stream.brought === 0 && !r.stream.done, 'a new stream knows how many orders the snapshot plays (the shipped one too, the cancelled one never): ' + JSON.stringify(r.stream));
     let n = 0; while (!r.stream.done && n++ < 100) r = await op({ action: 'tick', expect: r.stream.simNow });
     const last = r.stream;
     assert(last.done && last.brought === openIds.length && last.tick < 30, 'the steps bring them all, 2 to 5 at a time: ' + JSON.stringify(last));
