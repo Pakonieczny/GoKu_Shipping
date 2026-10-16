@@ -57,6 +57,9 @@
   const allSheets = () => { try { return CNx().allSheets ? CNx().allSheets() : []; } catch (_) { return []; } };
   const pagesOf = m => { try { return CNx().pagesOf ? CNx().pagesOf(m) : allSheets().filter(p => p.metal === m); } catch (_) { return []; } };
   const rowsOfOrder = rid => (G.Orders && G.Orders.rows ? G.Orders.rows() : []).filter(r => r && r.order && str(r.order.receiptId) === str(rid) && r.state !== 'gone');
+  /** Whether the page says this line is on hold: the line's own flag, or where its pieces are now (Orders.heldNow: the cloud's hold, or a line the page marked "held" while a problem waits, a blocked SKU).
+   *  The Release hold button is offered on exactly that, so the engine reads the same: it used to read only the flag and answered "This order is not on hold." to a button the page had just drawn. */
+  const isHeld = r => { if (!r) return false; if (r.hold) return true; try { return !!(G.Orders && G.Orders.heldNow && G.Orders.heldNow(r)); } catch (_) { return false; } };
   const metalOf = r => { try { return (G.CustomSheet && G.CustomSheet.metalOf && G.CustomSheet.metalOf(r)) || (r.spec && r.spec.material) || r.material || null; } catch (_) { return (r.spec && r.spec.material) || r.material || null; } };
   const theRun = () => (G.B && G.B.run) || null;
   const stepAt = s => (G.CharmNestOrders && G.CharmNestOrders.stepIndex ? G.CharmNestOrders.stepIndex(s) : -1);
@@ -161,13 +164,13 @@
   /* ── the plan: read only ── */
   function planOf(rid) {
     rid = str(rid);
-    const rows = rowsOfOrder(rid), held = rows.filter(r => r.hold), resumed = rows.some(r => r.releasing);
+    const rows = rowsOfOrder(rid), held = rows.filter(isHeld), resumed = rows.some(r => r.releasing);
     const base = { rid, label: `Order ${rid}`, held: held.length > 0, canRelease: false, blockedWhy: null, front: true, running: RUNNING.has(rid), resumed, needsNewSheet: false, pieces: [], targets: [], target: null, stays: [], effects: [] };
     if (!rows.length) { base.blockedWhy = `Order ${rid} is not in this sorter.`; return base; }
     if (G.Cancelled && G.Cancelled.has && G.Cancelled.has(rid)) { base.blockedWhy = `Order ${rid} was cancelled.`; return base; }
     if (!held.length && !resumed) { base.blockedWhy = 'This order is not on hold.'; return base; }
     base.canRelease = true;
-    const mine = rows.filter(r => r.hold || r.releasing), byMetal = new Map();
+    const mine = rows.filter(r => isHeld(r) || r.releasing), byMetal = new Map();
     const pairs = [];
     for (const r of mine) {
       const m = metalOf(r), qty = Math.max(1, +(r.spec && r.spec.quantity) || +(r.line && r.line.quantity) || 1);
@@ -321,13 +324,13 @@
     if (OH.status && (OH.status(rid) || {}).running) return fail(`Order ${rid} is being put on hold right now, so it cannot be released yet. It is still on hold: press Release hold again when that has finished.`, 'start');
     if (!rows0.length) return fail(`Order ${rid} is not in this sorter.`, 'start');
     if (G.Cancelled && G.Cancelled.has && G.Cancelled.has(rid)) return fail(`Order ${rid} was cancelled.`, 'start');
-    if (!rows0.some(r => r.hold || r.releasing)) return fail('This order is not on hold.', 'start');
+    if (!rows0.some(r => isHeld(r) || r.releasing)) return fail('This order is not on hold.', 'start');
     const who = str(opts.name || (rows0.find(r => r.releasing) || { releasing: {} }).releasing.by || nameNow()).trim();
     if (!who) return fail('A name is needed for the record.', 'start');
 
     /* 1 · the place at the front of the queue, saved before anything else changes (a reload from here on finishes it) */
     const frontAt = resumed ? +rows0.find(r => r.releasing).releasing.at || Date.now() : Date.now();
-    for (const r of rows0) if (r.hold || r.releasing) { r.frontAt = frontAt; r.releasing = { at: frontAt, by: who, stage: (r.releasing && r.releasing.stage) || 'queued' }; }
+    for (const r of rows0) if (isHeld(r) || r.releasing) { r.frontAt = frontAt; r.releasing = { at: frontAt, by: who, stage: (r.releasing && r.releasing.stage) || 'queued' }; }
     await persist();
     emit({ type: 'queued', rid, front: true, frontAt });
     const open = runOpen(), mine = rowsOfOrder(rid).filter(r => r.releasing);
@@ -349,7 +352,7 @@
 
     /* 3 · the hold is lifted through the existing path: the pieces are made up and put on the sheet the intake would use */
     try {
-      for (const r of rowsOfOrder(rid).filter(r => r.hold)) { r.heldAt = null; await G.Review.repool(r); }
+      for (const r of rowsOfOrder(rid).filter(r => r.hold || (!resumed && r.releasing && isHeld(r)))) { r.heldAt = null; await G.Review.repool(r); }   // (a line the page shows as held with no flag of its own, a blocked SKU or a hold only the cloud knows, is made up again like the rest: Review says what is still wrong)
       if (resumed && open) for (const r of rowsOfOrder(rid).filter(r => r.releasing && !r.hold && ['pulled', 'held'].includes(r.state) && !(r.problems || []).length && !(G.Pool && G.Pool.onSheets && G.Pool.onSheets(r)))) await G.Pool.poolAdd(r, theRun());
     } catch (e) { refresh(); return fail(`The hold could not be lifted: ${str(e && e.message || e)}`, 'hold', { released: rowsOfOrder(rid).every(r => !r.hold) }); }
     for (const r of rowsOfOrder(rid)) if (r.releasing) r.releasing.stage = 'attached';
