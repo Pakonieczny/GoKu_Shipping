@@ -29,6 +29,7 @@
   const Faces = () => dep('CharmNestEngraveFaces', './charm-nest-engrave-faces.js');
   const Setup = () => (root && root.CharmNestEngraveSetup) || null;
   const Sides = () => dep('CharmNestEngraveSides', './charm-nest-engrave-sides.js');
+  const Rows = () => dep('CharmNestEngraveRows', './charm-nest-engrave-rows.js');
   const tryDo = (f, d) => { try { return f(); } catch (_) { return d; } };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const DECIDED = ['approved', 'written', 'skipped', 'none'];
@@ -37,6 +38,8 @@
   const faceOf = x => { const F = Faces(); return F && F.faceOf ? F.faceOf(x) : x && (x.face === 'front' || /~front$/.test(String(x.key || ''))) ? 'front' : 'back'; };
   const jobKey = (lineKey, slot, face) => { const F = Faces(); return F && F.jobKey ? F.jobKey(lineKey, slot, face) : String(lineKey) + (slot ? '#' + slot : '') + (face === 'front' ? '~front' : ''); };
   const slotLabel = s => { const F = Faces(); return F && F.slotLabel ? F.slotLabel(s) : s === 'L' ? 'Left' : s === 'R' ? 'Right' : /^D\d+$/.test(s || '') ? 'Disc ' + s.slice(1) : ''; };
+  /** PIECES (Paul, 16 Oct 2026: "a card for each piece, titled Piece 1 of 2"): the card of one copy of a line of quantity N is told by its number and the line's count, the small tag the discs have ("Disc 2 of 3"); every other slot keeps its label. */
+  const slotTitle = (s, copies) => { const i = tryDo(() => { const R = Rows(); return R && R.infoOf ? R.infoOf(s) : null; }, null); return i && i.kind === 'copy' ? 'Piece ' + i.n + (copies > 1 ? ' of ' + copies : '') : slotLabel(s); };
   const lineOf = row => (row && row.parentRow) || row || null;
   const linesText = v => (Array.isArray(v) ? v : String(v == null ? '' : v).split(/\r?\n/)).map(x => String(x).replace(/\s+/g, ' ').trim()).filter(Boolean);
   /* ENGPICK (Paul, 13 Oct 2026: "I chose the gold and the silver, but the engraving card did not adapt"): two pieces of one order are often ONE design in two metals, so their cards read the same (the same name, the same
@@ -140,6 +143,7 @@
       const jobs = (E && E.jobsOf ? tryDo(() => E.jobsOf(line), []) : []).filter(j => j && !j.editingBack);
       const setup = tryDo(() => (S && S.setupFor ? S.setupFor(line) : F && F.setupOf ? F.setupOf(line) : null), null);
       const groups = jobs.length && F && F.groupPieces ? F.groupPieces(jobs) : [];
+      const copyTotal = groups.filter(g => { const i = tryDo(() => { const R = Rows(); return R && R.infoOf ? R.infoOf(g.slot) : null; }, null); return i && i.kind === 'copy'; }).length;   // (PIECES: the copies of this line, for "Piece 1 of 2")
       const make = (slot, pjobs) => {
         const faces = facesOf(line.key, slot, pjobs, setup, Object.assign({}, o, { never, row: line }));
         const present = ['front', 'back'].map(f => faces[f]).filter(Boolean);
@@ -150,7 +154,7 @@
         if (never && !(faces.front && faces.front.job && DECIDED.includes(faces.front.job.state))) return;
         // SETBAR: a piece of a SET of different designs is its own design ("SKINNY 0191 · 16″"), never the line's joined name with "Disc 2" (charm-nest-engrave-sides.js setPieceOf; every other piece: as before)
         const S2 = Sides(), sps = S2 && S2.setPieceOf ? tryDo(() => S2.setPieceOf(line, slot), null) : null, lenWord = sps ? S2.lengthText(sps) : '', pname = sps ? sps.name : name;
-        const slotWord = sps ? '' : slotLabel(slot), title = [pname, many && metal ? metal.code : '', lenWord, slotWord].filter(Boolean).join(' · ') || slotWord || 'Piece';
+        const slotWord = sps ? '' : slotTitle(slot, copyTotal), title = [pname, many && metal ? metal.code : '', lenWord, slotWord].filter(Boolean).join(' · ') || slotWord || 'Piece';
         const review = present.filter(f => f.job && f.job.state === 'review');
         let approve = null;
         if (review.length) {

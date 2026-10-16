@@ -35,7 +35,7 @@
   const say = (msg, kind, ms) => { try { if (typeof root.toast === 'function') root.toast(msg, kind || '', ms || 3600); } catch (_) {} };
   /* ── the FACE of an engraving (charm-nest-engrave-faces.js; a job that does not say "front" is the back, so a back-only line is drawn and does exactly what it always did) ── */
   const FACES = () => root.CharmNestEngraveFaces || null;
-  const parseKey = key => { const F = FACES(); if (F && F.parseKey) return F.parseKey(key); const m = /^(.*?)(?:#(L|R|D\d{1,2}))?(~front)?$/.exec(String(key == null ? '' : key)); return { key: String(key == null ? '' : key), lineKey: m ? m[1] : '', rowKey: m ? m[1] : '', slot: m && m[2] || null, face: m && m[3] ? 'front' : 'back' }; };
+  const parseKey = key => { const F = FACES(); if (F && F.parseKey) return F.parseKey(key); const m = /^(.*?)(?:#(C\d{1,3}|(?:L|R|D\d{1,2})(?:\.\d{1,3})?))?(~front)?$/.exec(String(key == null ? '' : key)); return { key: String(key == null ? '' : key), lineKey: m ? m[1] : '', rowKey: m ? m[1] : '', slot: m && m[2] || null, face: m && m[3] ? 'front' : 'back' }; };
   const faceOf = x => { const F = FACES(); return F && F.faceOf ? F.faceOf(x) : x && (x.face === 'front' || /~front$/.test(String(x.key || ''))) ? 'front' : 'back'; };
   /** The words of the card for one face: what it says of "the back" it says of "the front" for a front job, and nothing else is touched. */
   const aboutFace = (text, face) => (face === 'front' ? String(text).replace(/\bback\b/g, 'front').replace(/\bBack\b/g, 'Front') : text);
@@ -128,7 +128,8 @@
    *  as the Engrave tab's own switch component tells them (charm-nest-piece-switch.js: each disc's words, font by name and state), and the disc shown. null for every other line (a single, a pair,
    *  a plain quantity-N line: one job, or the Left and the Right), so those cards are drawn exactly as they always were. The disc shown: `key` when it is one of them, else the first disc still
    *  to settle, else Disc 1. */
-  const DISC = /^D\d{1,2}$/, OPEN_STATES = ['reclassify', 'classify', 'words', 'blocked', 'ready', 'fitting', 'review'];
+  /* PIECES (Paul, 16 Oct 2026): the copies of a line of quantity N (C1..Cn) cycle exactly as the discs of a counted line do: `DISC` tests a slot of either (the rows module reads the name). */
+  const DISC = { test: slot => { const R = root.CharmNestEngraveRows; return !!(R && R.countedOf && R.countedOf(slot)); } }, OPEN_STATES = ['reclassify', 'classify', 'words', 'blocked', 'ready', 'fitting', 'review'];
   const fontOfJob = job => {
     const S = root.CharmNestEngraveSides, rec = S && S.pieceRecord ? tryDo(() => S.pieceRecord(job), null) : null;   // DISCREAD's record of the disc: its font, else the line's
     const f = (rec && rec.font) || (job && (job.font || (job.piece && job.piece.font) || (job.row && job.row.spec && job.row.spec.font))), asked = String((f && typeof f === 'object' && f.asked) || (job && job.requests && job.requests.font) || '');
@@ -136,6 +137,7 @@
     return { name: name || asked, asked };
   };
   /** The piece the card is for, when the host names one (an ear's side row, or a key with a slot): null for the line as a whole. */
+  const sideOfSlot = slot => { const R = root.CharmNestEngraveRows, i = R && R.infoOf ? tryDo(() => R.infoOf(slot), null) : null; return i && i.kind === 'ear' ? i.side : null; };
   const slotWanted = (row, key) => parseKey(key).slot || (row && row.slot) || null;
   function cycleOf(row, key) {
     const E = root.Engrave, PS = root.CharmNestPieceSwitch; if (!E || !E.jobsOf || !PS || !row) return null;
@@ -349,7 +351,7 @@
       const rows = every.filter(r => !only || !only.line || (((r && r.parentRow) || r || {}).key === only.line));
       const popt = { nameOf, isWorking, seen: j => vis || seen.has(j.key) };
       let pieces = []; if (C) { try { pieces = C.piecesOf(rows, popt); } catch (e) { pieces = []; for (const r of rows) { try { pieces.push(...C.piecesOf([r], popt)); } catch (e2) { tryDo(() => console.warn('order engraving: one line could not be read', e2)); } } } }   // (ENGCRASH: a line that cannot be read leaves the other lines' cards drawn)
-      if (only && only.side) pieces = pieces.filter(p => !p.slot || p.slot === only.side);   // (one ear of a pair picked: that ear's card alone)
+      if (only && only.side) pieces = pieces.filter(p => !p.slot || p.slot === only.side || (/^[LR]$/.test(only.side) && sideOfSlot(p.slot) === only.side));   // (one ear of a pair picked: that ear's card alone, in every pair of the line; one copy or disc: that piece's)
       // (MONOUI: a monogram line has no Front/Back card, its card is the widget's; `monoAll` are the monogram lines of the order, `monoShown` the ones of the piece picked)
       const monoAll = uniqLines(every.filter(isMono)), monoShown = uniqLines(rows.filter(isMono));
       if (monoAll.length) pieces = pieces.filter(p => !isMono(p.row));

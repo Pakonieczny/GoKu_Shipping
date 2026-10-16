@@ -774,7 +774,9 @@ const piecesOfRows = rows => { try { return (rows || []).reduce((n, r) => n + O.
 /** A COUNTED line ("2 Disc", "3 discs": n pieces of one necklace): { total, qty, noun } from CharmNestOrders.countedPieces, null for every other line (a pair, a single, a plain quantity-N line: they say what they said). */
 const countedOf = row => { try { return O.countedPieces(row); } catch (_) { return null; } };
 /** The pieces one line counts for in a list's note: a counted line is its n pieces, every other line the one it always was (DISCREAD 3). */
-const lineTotal = row => { const c = countedOf(row); return c ? c.total : 1; };
+/** PIECES (Paul, 16 Oct 2026): how many pieces a PLAIN line bought several times is made of (a charm, a bar, a monogram of quantity N: N pieces, one engraving each, slots C1..Cn), else 0: a pair of ears, a counted line (discs) and a line of one piece are told by their own counts. */
+const copyCountOf = row => { try { if (!row || !row.line || (row.spec && row.spec.noDesign) || countedOf(row) || earPairRow(row)) return 0; const n = Math.round(+O.pieceCountOf(row)); return n >= 2 && n <= 99 ? n : 0; } catch (_) { return 0; } };
+const lineTotal = row => { const c = countedOf(row); return c ? c.total : copyCountOf(row) || 1; };   // (the pieces a line counts for in a list's note: a line of quantity 2 is its 2 pieces, as the Order window's header says)
 const groupPieces = rows => { try { return (rows || []).reduce((n, r) => n + (earPairRow(r) ? Math.max(1, Math.round(+O.pieceCountOf(r)) || 1) : lineTotal(r)), 0); } catch (_) { return (rows || []).length; } };
 /* Who the server's Nested stamps name (placed, setCommitted: poolUpdate), Paul, 28 Sep (station tracking E). The sorter
    has no person login of its own (its passcode is shared): the person on duty is the name its sign-in keeps (cn.employee,
@@ -7975,6 +7977,8 @@ const Engrave = window.Engrave = (() => {
      multiJobs(row) = the pieces of a row that holds two or more of one line (a pair's two ears, a counted line's discs), else null; earLineOf(job) = the line a piece belongs to (an ear or a disc). */
   const multiJobs = grp => (grp && ROWS() && ROWS().multi(grp) ? grp.jobs : null);
   const allDiscs = pieces => !!(pieces && pieces.length && ROWS() && pieces.every(j => ROWS().discOf(j)));
+  /** PIECES (Paul, 16 Oct 2026): the pieces of a counted row are "pieces" when they are the copies of a line bought several times (C1..Cn), "discs" when they are the discs of a necklace. */
+  const countedNoun = pieces => (pieces && pieces.length && ROWS() && pieces.every(j => { const c = ROWS().countedOf(ROWS().pieceOf(j)); return c && c.kind === "copy"; }) ? "piece" : "disc");
   const PSW = () => window.CharmNestPieceSwitch || null;
   /* ENGPIECES (13 Oct 2026, Paul: "no easy way to tell how many pieces a given order has in the detailed engraving modal ... the back and forward arrow buttons are not working ... every piece must be reached"): an ORDER owns its
      engraved pieces, whatever the line or the metal (charm-nest-engrave-order.js: piecesOf / countOf / step / groupRows / orderCounts). An SS line and a GF line of one Etsy order are two lines, ONE order, two pieces: the detail's
@@ -8310,7 +8314,7 @@ const Engrave = window.Engrave = (() => {
   const pieceName = j => (SIDES() ? (SIDES().slotWord(j) || "") : "").toLowerCase();
   const reopenWord = (j, faced) => (faced ? [SIDES() ? (SIDES().slotWord(j, true)) : "", faceNoun(faceOfJob(j))].filter(Boolean).join(" ") : (SIDES() ? (SIDES().slotWord(j, true)) : j.slot));
   const reopenWhat = (j, faced) => (faced ? "the " + (pieceName(j) ? pieceName(j) + "'s " : "") + faceNoun(faceOfJob(j)) : "the " + pieceName(j));
-  const reopenKeeps = (grp, faced) => (faced ? "everything else keeps its approval" : "the other " + (grp.pair ? "ear keeps its approval" : "discs keep theirs"));
+  const reopenKeeps = (grp, faced) => (faced ? "everything else keeps its approval" : "the other " + (grp.pair ? "ear keeps its approval" : countedNoun(grp.jobs) + "s keep theirs"));
   const reopenParen = j => " (" + (lineHasFront(j.row) ? [pieceName(j), faceNoun(faceOfJob(j))].filter(Boolean).join(" · ") : pieceName(j)) + ")";
   const facedGrp = grp => !!(grp && (grp.faces || grp.jobs.some(isFrontJob) || lineHasFront(grp.lead.row)));
   /** "front and back" | "front" | "back": the faces a set of jobs is engraved on. */
@@ -8355,7 +8359,7 @@ const Engrave = window.Engrave = (() => {
       row._grp = grp;
       const busyAny=grp.jobs.some(isWorking), busyAll=grp.jobs.every(isWorking), receipt=String(line.order.receiptId), sku=line.spec.designSku || "";
       row.dataset.rid=receipt; if(told)row.dataset.jobs=sig; row.dataset.open=(ROWS()?ROWS().openLead(grp,isWorking):job).key; row.setAttribute("aria-busy",String(busyAny)); row.setAttribute("aria-disabled",String(busyAll));
-      row.setAttribute("aria-label",`${busyAny ? "Preparing" : "Open"} engraving for order ${receipt} · ${sku}${ears ? (grp.pair ? " · Left and Right ears" : grp.discs ? ` · ${piecesIn(grp.jobs)} discs` : "") : ""}${faced ? " · " + facesWord(grp.jobs) : ""}`);
+      row.setAttribute("aria-label",`${busyAny ? "Preparing" : "Open"} engraving for order ${receipt} · ${sku}${ears ? (grp.pair ? " · Left and Right ears" : grp.discs ? ` · ${piecesIn(grp.jobs)} ${countedNoun(grp.jobs)}s` : "") : ""}${faced ? " · " + facesWord(grp.jobs) : ""}`);
       const write=(selector,value,from=row)=>{const node=from.querySelector(selector);if(node.textContent!==value)node.textContent=value;};
       write('[data-order]',receipt);write('.sku',sku);
       if(told)for(const j of grp.jobs){const e=[...row.querySelectorAll('.egEar')].find(n=>n.dataset.ear===j.key);if(!e)continue;write('.egPiece',faced?faceTagText(j):earTagText(j),e);write('.w',(j.lines || []).join(' / ') || "—",e);if(grp.discs){const f=pieceFont(j);write('[data-font]',PSW()?PSW().fontText(f):"",e);e.querySelector('[data-font]').title=PSW()?PSW().fontNote(f):"";}write('[data-stage]',ROWS().stageOf(j,isWorking(j)),e);const st=e.querySelector('[data-stage]'),sk=isWorking(j)?'busy':String(j.state || "");if(st.dataset.s!==sk)st.dataset.s=sk;}
@@ -8916,7 +8920,7 @@ const Engrave = window.Engrave = (() => {
     const said = panelOn && window.CharmNestEngraveSaid ? CharmNestEngraveSaid.html(job.row) : "";
     const fromOrder = panelOn ? (window.CharmNestEngraveSaid ? "" : `${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}`)   // (the file did not load: the plain rows, never nothing)
       : `${faced ? row2("Reading", faceReadingOf(job.row)) : ""}${fontMapped ? row2("Font", fontText.replace(/^Font: /, "")) : noteFont ? row2("Font", noteFont) : ""}${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
-    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a line's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? " (an order's discs are one placement: Back and Next go through every disc)" : " (an earring line's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc((setPieceOfJob(job) || {}).sku || sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${ears ? earSwitchHtml(job, ears, panelOn) : faced ? (panelOn ? "" : faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`)) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().pieceTag(job, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
+    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a line's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? ` (an order's ${countedNoun(ears)}s are one placement: Back and Next go through every ${countedNoun(ears)})` : " (an earring line's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc((setPieceOfJob(job) || {}).sku || sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${ears ? earSwitchHtml(job, ears, panelOn) : faced ? (panelOn ? "" : faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`)) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().pieceTag(job, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain">${byCard ? "" : `<h4 class="pvH">${cap1(fw)} · engraving</h4>`}<div class="pvApproval">${f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the ${fw} file">Approve</button></span>` : ""}${f && !wordsJob && ears ? approveBothHtml(ears, job) : ""}</div><div class="backHost"></div></div>
         <div class="ctl">${!f && !wordsJob && panelOn && job.reason ? `<span class="why" role="status">${esc(isFrontJob(job) ? String(job.reason).replace(/\bback area\b/, "front area") : job.reason)}</span>` : ""}${f && !wordsJob ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="egTurn" role="group" aria-label="Turn the whole charm and its engraving" title="Turn the whole charm and its engraving together, in degrees. Counter-clockwise is plus. 0 is where the system placed it."><button type="button" class="egTurnStep" data-a="turnStep" data-step="-1" title="Turn 1° clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree clockwise">↷</button><label class="egTurnField"><input type="number" data-a="turn" inputmode="numeric" min="-360" max="360" step="1" value="${turnOf(job)}" aria-label="Turn the whole charm and its engraving, in degrees"><span class="egTurnDeg" aria-hidden="true">°</span></label><button type="button" class="egTurnStep" data-a="turnStep" data-step="1" title="Turn 1° counter-clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree counter-clockwise">↶</button></span>` : ""}
@@ -16449,6 +16453,15 @@ const OrderWin = window.OrderWin = (() => {
     return l.some(p => p.side === "L") && l.some(p => p.side === "R") ? l : [];
   }
   const sideWord = sd => sd === "L" ? "Left" : sd === "R" ? "Right" : "";
+  /** PIECES (Paul, 16 Oct 2026, order 4195059483: "Customer ordered two of the same Charm, but the engraving only shows one ... ALL multipiece orders must always show each individual piece"): how many pieces a PLAIN line of quantity N
+   *  is made of when each is its own piece (a charm, a bar or a monogram bought twice: slots C1..Cn, charm-nest-engrave-sides.js), else 0. A pair of ears, discs and any counted line are told by their own sides and counts. */
+  const copiesOf = x => { try { return pairSides(x).length ? 0 : copyCountOf(x); } catch (_) { return 0; } };
+  /** The slot ("D2", "D1.2", "C2") of the i-th piece (0-based) of a counted line or of a line of copies, the name the engraving jobs and the piece keys use: a set of discs or bars that is bought twice has D1.2 for the second set. */
+  function slotAtPiece(p, i, per) {
+    if (p.copies) return "C" + (i + 1);
+    const w = i % per + 1, u = Math.floor(i / per) + 1;
+    return "D" + w + (u > 1 ? "." + u : "");
+  }
   /** Each line of the order as a piece: its key, transaction, count, pool pieces and the sheets they are on. */
   function piecesOf(sibs) {
     return sibs.map(x => {
@@ -16466,10 +16479,10 @@ const OrderWin = window.OrderWin = (() => {
       const sd = pairSides(x), tid = String(x.line.transactionId || "");
       const sides = sd.length ? ["L", "R"].map(side => { const mine = sd.filter(c => c.side === side); return { key: x.key + "#" + side, lineKey: x.key, side, tid, qty: mine.length, mirror: mine.some(c => c.mirror), pools: mine.map(c => String(c.poolId || c.key)), sheets: [...new Set(mine.map(c => c.sheetId).filter(Boolean))], line: lineObj, name: pieceName(x) + " · " + sideWord(side), metal: m, form: sp.form || "" }; }) : null;
       // (qty: the pieces the line makes, THE count the intake gives (CharmNestOrders.pieceCountOf: three discs are 3, an old line keeps the pieces it was pooled with); a pair's sides carry their own, so this is for the lines without sides)
-      const pcs = sides ? 0 : (() => { try { return Math.max(1, Math.round(+O.pieceCountOf(x)) || 1); } catch (_) { return 0; } })();
+      const pcs = sides ? 0 : (() => { try { return Math.max(1, Math.round(+O.pieceCountOf(x)) || 1); } catch (_) { return 0; } })(), cps = sides ? 0 : copiesOf(x);
       return Object.assign({ key: x.key, tid, qty: pcs || Math.max(1, Math.round(+(sp.quantity || x.line.quantity) || 1)), pools, sheets: [...sheets],
         // (its Engrave state and whether it could carry a back engraving: stagesFor leaves Engraved out for a plain piece)
-        line: lineObj, name: pieceName(x), metal: m, form: sp.form || "" }, sides ? { sides } : {}, !sides && countedOf(x) ? { counted: true } : {});
+        line: lineObj, name: pieceName(x), metal: m, form: sp.form || "" }, sides ? { sides } : {}, !sides && countedOf(x) ? { counted: true } : {}, cps ? { counted: true, copies: true, qty: cps, copyPieces: Array.from({ length: cps }, (_, i) => ({ key: x.key + "#C" + (i + 1), lineKey: x.key, slot: "C" + (i + 1), tid, qty: 1, pools: pools[i] ? [pools[i]] : [], sheets: [], line: lineObj, name: pieceName(x) + " · Piece " + (i + 1) + " of " + cps, metal: m, form: sp.form || "" })) } : {});   // (PIECES: a line of copies is a counted line whose pieces are its copies: "2 pieces" and a row for each, like the discs)
     });
   }
   /** The pieces of an order of several, told to the timeline's two mounts (the header's rail, the Timeline). Which one is shown is picked on
@@ -16479,8 +16492,8 @@ const OrderWin = window.OrderWin = (() => {
     const ps = multi ? piecesOf(sibs) : [];
     W.pieces = ps;
     if (W.piece && !ps.some(p => p.key === W.piece)) { W.piece = null; W.side = null; W.disc = null; }
-    if (W.side) { const ln = ps.find(p => p.key === (W.piece || W.key)) || (!multi ? tryDo(() => piecesOf([r])[0]) : null); if (!(ln && ln.sides && ln.sides.some(q => q.side === W.side))) W.side = null; }
-    if (W.disc) { const ln = ps.find(p => p.key === (W.piece || W.key)) || (!multi ? tryDo(() => piecesOf([r])[0]) : null); if (!(ln && ln.counted && ln.qty >= (+String(W.disc).slice(1) || 99))) W.disc = null; }   // (ENGPICK: a disc picked belongs to the counted line shown, and to a count it still has)
+    if (W.side) { const ln = ps.find(p => p.key === (W.piece || W.key)) || (!multi ? tryDo(() => piecesOf([r])[0]) : null); if (!(ln && ln.sides && ln.sides.some(q => q.side === String(W.side).slice(0, 1)))) W.side = null; }
+    if (W.disc) { const ln = ps.find(p => p.key === (W.piece || W.key)) || (!multi ? tryDo(() => piecesOf([r])[0]) : null); if (!(ln && ln.counted && ln.qty >= (parseInt(String(W.disc).slice(1), 10) || 99))) W.disc = null; }   // (ENGPICK: a disc picked belongs to the counted line shown, and to a count it still has)
     const dir = W.pieceDir; W.pieceDir = 0;
     refreshPlacement(r); W.placeDrawn = W.placeSig;   // (where each piece IS now, before the mounts draw: they ask for it, opts.placement)
     for (const m of [W.rail, W.tl]) if (m && m.setPieces) tryDo(() => m.setPieces(ps, W.piece, dir));
@@ -16509,13 +16522,13 @@ const OrderWin = window.OrderWin = (() => {
     if (!W.dlg || !W.dlg.open || W.closing) return false;
     // (a key is a line of the order, or one ear of a pair line, "<line>#L" / "<line>#R", the Left | Right marker on its row)
     // (ENGPICK: or one disc of a counted line, "<line>#D2": the Engraving section shows that disc's card alone)
-    const m = key && /^(.+)#(L|R|D\d{1,2})$/.exec(key), tag = m ? m[2] : null, disc = tag && tag[0] === "D" ? tag : null, side = tag && !disc ? tag : null, line = m ? m[1] : key, multi = (W.pieces || []).length > 1;
-    const countedHas = p => !!(p && p.counted && p.qty >= (+String(disc).slice(1) || 99));
+    const m = key && /^(.+?)#(C\d{1,3}|(?:L|R|D\d{1,2})(?:\.\d{1,3})?)$/.exec(key), tag = m ? m[2] : null, disc = tag && (tag[0] === "D" || tag[0] === "C") ? tag : null, side = tag && !disc ? tag : null, line = m ? m[1] : key, multi = (W.pieces || []).length > 1;   // (PIECES: "<line>#C2" is the second copy of a line bought twice, "<line>#L.2" the left ear of the second pair)
+    const countedHas = p => !!(p && p.counted && p.qty >= (parseInt(String(disc).slice(1), 10) || 99)), sideHas = (q, sd) => !!q && q.side === String(sd).slice(0, 1);
     if (line && !(W.pieces || []).some(p => p.key === line)) {
       const r = rowOf(W.key), one = (side || disc) && !multi && r && !r.loading && r.key === line ? tryDo(() => piecesOf([r])[0]) : null;   // (a single-line order has no list of pieces to find it in)
-      if (!(one && ((side && one.sides && one.sides.some(q => q.side === side)) || (disc && countedHas(one))))) return false;
+      if (!(one && ((side && one.sides && one.sides.some(q => sideHas(q, side))) || (disc && countedHas(one))))) return false;
     }
-    if (side && multi) { const p = W.pieces.find(q => q.key === line); if (!(p && p.sides && p.sides.some(q => q.side === side))) return false; }
+    if (side && multi) { const p = W.pieces.find(q => q.key === line); if (!(p && p.sides && p.sides.some(q => sideHas(q, side)))) return false; }
     if (disc && multi) { if (!countedHas(W.pieces.find(q => q.key === line))) return false; }
     const toPiece = multi ? line : null;
     if (toPiece === W.piece && side === (W.side || null) && disc === (W.disc || null)) return true;
@@ -16565,7 +16578,7 @@ const OrderWin = window.OrderWin = (() => {
     });
     const st = box.querySelector(".owPcState"); if (!st) return;
     const p = sel && ps.find(x => x.key === sel), total = ps.reduce((n, x) => n + (x.sides ? x.sides.reduce((m, sd) => m + sd.qty, 0) : x.qty), 0);   // (a pair line counts its Left and its Right)
-    const ear = p && W.side && p.sides ? sideWord(W.side) : p && W.disc && p.counted ? (() => { const S = window.CharmNestEngraveSides, r = rowOf(p.key), sp = S && S.setPieceOf && r ? tryDo(() => S.setPieceOf(r, W.disc)) : null; return sp ? S.pieceName(sp) : "Disc " + String(W.disc).slice(1); })() : "";   // (a disc picked: "Showing COMET 9427 · Disc 2"; a bar of a set: "Showing BAR 1548 + SKINNY 0191 · Small bar")
+    const ear = p && W.side && p.sides ? sideWord(String(W.side).slice(0, 1)) : p && W.disc && p.counted ? (() => { const S = window.CharmNestEngraveSides, r = rowOf(p.key), sp = S && S.setPieceOf && r ? tryDo(() => S.setPieceOf(r, W.disc)) : null; return sp ? S.pieceName(sp) : (String(W.disc)[0] === "C" ? "Piece " : "Disc ") + String(W.disc).slice(1); })() : "";   // (a disc picked: "Showing COMET 9427 · Disc 2"; a bar of a set: "Showing BAR 1548 + SKINNY 0191 · Small bar")
     const mcode = p && ps.some(x => x !== p && x.name === p.name) ? CODE[p.metal] || (p.metal ? labelOf(p.metal) : "") : "";   // (ENGPICK: two pieces of ONE design differ only by metal: "Showing NEURON 37061 · SS", as the row says it; pieces with their own names are said as they were)
     const html = p ? `Showing <b>${esc(p.name + (mcode ? " · " + mcode : "") + (ear ? " · " + ear : ""))}</b><i aria-hidden="true"> · </i><button type="button" class="owPcAll" data-pc-all>Show all</button>` : `Showing all ${total} pieces`;
     if (st._h !== html) { st._h = html; st.innerHTML = html; }
@@ -16587,7 +16600,7 @@ const OrderWin = window.OrderWin = (() => {
       const sub = e.target.closest && e.target.closest(".owPcSub[data-sub]");
       if (sub && box.contains(sub)) {
         if (own(e.target, sub)) return;
-        const k = sub.dataset.sub, side = /#(L|R)$/.test(k), disc = /#D\d{1,2}$/.test(k);
+        const k = sub.dataset.sub, side = /#(L|R)(\.\d{1,3})?$/.test(k), disc = /#(D\d{1,2}(\.\d{1,3})?|C\d{1,3})$/.test(k);
         if (side) selectPiece(k === selSideKey() ? null : k);
         else if (disc) selectPiece(k === selDiscKey() ? ((W.pieces || []).length > 1 ? k.replace(/#.+$/, "") : null) : k);   // (a disc picks that disc; the disc picked again goes back to the whole item)
         else { const ln = k.replace(/#.+$/, ""); selectPiece(ln === W.piece && !W.side ? null : ln); }
@@ -16621,7 +16634,7 @@ const OrderWin = window.OrderWin = (() => {
     if (!W.side) return null;
     const key = W.piece || W.key, r = rowOf(W.key);
     const line = (W.pieces || []).find(x => x.key === key) || (r && !r.loading && r.key === key ? tryDo(() => piecesOf([r])[0]) : null);
-    const sd = line && line.sides && line.sides.find(q => q.side === W.side);
+    const sd = line && line.sides && line.sides.find(q => q.side === String(W.side).slice(0, 1));
     return sd ? { line, side: sd } : null;
   }
   /** The key of the ear picked ("<line>#L"), else null. */
@@ -16805,15 +16818,26 @@ const OrderWin = window.OrderWin = (() => {
     if (p.sides && ctx.sideEach && p.sides.every(sp => ctx.sideEach.get(sp.key))) {
       const subs = p.sides.map(sp => ({ key: sp.key, side: sp.side, qty: sp.qty, mirror: !!sp.mirror, x: ctx.sideEach.get(sp.key), sp: lineScope && lineScope.sides && lineScope.sides.find(q => q.key === sp.key) || null }));
       const lead = subs[Math.max(0, OR.slowest(subs.map(q => ({ step: q.x.D.step, hand: !!q.x.D.hand }))))];
+      // PIECES: two pairs bought are FOUR pieces, listed one by one in the drawer, pair by pair (Left · pair 1, Right · pair 1, Left · pair 2 ...): the key of the Left of pair 2 is "<line>#L.2" (the slot the model uses); each says the sheet its own piece is on
+      const units = Math.max(...subs.map(q => q.qty || 1));
+      if (units > 1) {
+        const pcs = (r => (r && window.OrderPieces ? tryDo(() => OrderPieces.ofRow(r)) || [] : []))(rowOf(p.key)), mineOf = (q, u) => pcs.filter(c => c.side === q.side)[u - 1] || null;
+        const flat = []; for (let u = 1; u <= units; u++) for (const q of subs) flat.push(Object.assign({}, q, { key: q.key + (u > 1 ? "." + u : ""), unit: u, qty: 1, sp: (mineOf(q, u) && pcScopeOf(mineOf(q, u), lineScope)) || q.sp }));
+        return { kind: "pair", x, subs: flat, lead, lineScope, step: stepOf(lead.x), units };
+      }
       return { kind: "pair", x, subs, lead, lineScope, step: stepOf(lead.x) };
     }
     if (p.counted) {
-      const r = rowOf(p.key), pcs = r && window.OrderPieces ? tryDo(() => OrderPieces.ofRow(r)) || [] : [];
+      const r = rowOf(p.key);
+      let pcs = r && window.OrderPieces ? tryDo(() => OrderPieces.ofRow(r)) || [] : [];
+      // (PIECES: the copies of a line bought twice are listed whether or not their pieces are made yet: one entry for each, the pool piece it is when it has one)
+      if (p.copies && pcs.length !== p.qty) pcs = Array.from({ length: p.qty }, (_, i) => pcs[i] || { key: `${p.key}_${i + 1}`, poolId: (p.pools || [])[i] || `${p.key}_${i + 1}`, lineKey: p.key });
       if (pcs.length > 1) {
         // (SETBAR: a piece of a set of bars is its own name and chain, "Small bar · 16″", never "Piece 2 of 4"; units after the first say which set: "Small bar · 16″ · set 2". Its engraving slots are D1, D2, so its lines are picked like a disc's: one press narrows the cards to that bar)
         const S = window.CharmNestEngraveSides, set = S && S.setPieces && r ? tryDo(() => S.setPieces(r)) : null, per = set ? set.pieces.length : 0, n = pcs.length, bySet = per >= 2 && n % per === 0;
-        const noun = ((r && countedOf(r)) || {}).noun || "piece", tag = noun === "disc" || bySet ? "D" : "P";
-        const subs = pcs.map((c, i) => ({ key: `${p.key}#${tag}${(bySet ? i % per : i) + 1}`, c, label: bySet ? [S.pieceName(set.pieces[i % per]), S.lengthText(set.pieces[i % per]), n > per ? "set " + (Math.floor(i / per) + 1) : ""].filter(Boolean).join(" · ") : OR.subLabel("counted", i, n, { noun }), x, sp: pcScopeOf(c, lineScope) }));
+        const noun = ((r && countedOf(r)) || {}).noun || "piece", tag = p.copies ? "C" : noun === "disc" || bySet ? "D" : "P", cnt = (r && countedOf(r)) || {}, unitN = cnt.qty > 1 && cnt.total % cnt.qty === 0 ? cnt.total / cnt.qty : n;   // (unitN: the pieces of ONE set when the line is bought more than once: "Disc 2 of 3 · set 2")
+        const subs = pcs.map((c, i) => ({ key: tag === "C" || tag === "D" ? `${p.key}#${slotAtPiece(p, i, bySet ? per : unitN)}` : `${p.key}#${tag}${(bySet ? i % per : i) + 1}`, c,
+          label: bySet ? [S.pieceName(set.pieces[i % per]), S.lengthText(set.pieces[i % per]), n > per ? "set " + (Math.floor(i / per) + 1) : ""].filter(Boolean).join(" · ") : unitN < n && !p.copies ? `${OR.subLabel("counted", i % unitN, unitN, { noun })} · set ${Math.floor(i / unitN) + 1}` : OR.subLabel("counted", i, n, { noun }), x, sp: pcScopeOf(c, lineScope) }));
         return { kind: "counted", x, subs, lead: null, lineScope, step: stepOf(x), placed: pcs.filter(c => c.nested).length, total: n };
       }
     }
@@ -16821,7 +16845,7 @@ const OrderWin = window.OrderWin = (() => {
   }
   /** The Left | Right marker of a pair's row: charm-nest-piece-switch.js drawn compact (one small tag for each ear). Nothing is pressed in the markup: markPieces says which ear is picked. */
   function pcMarkerHtml(it) {
-    const PS = window.CharmNestPieceSwitch; if (!PS || !PS.list) return "";
+    const PS = window.CharmNestPieceSwitch; if (!PS || !PS.list || it.units > 1) return "";   // (several pairs: the drawer lists every ear, a Left | Right marker would name two of the four)
     const pcs = tryDo(() => PS.list(it.subs.map(q => ({ key: q.key, slot: q.side })), { of: it.subs.length }));
     if (!pcs || !pcs.length) return "";
     const nm = it.x.p.name;
@@ -16833,7 +16857,7 @@ const OrderWin = window.OrderWin = (() => {
       const side = sideWord(sub.side);
       return `<div class="owPcSub owPcSideSub" data-sub="${esc(sub.key)}" data-side="${esc(sub.side)}" role="group" aria-label="${esc(nm + " · " + side)}">` +
         `<span class="owSidePic" data-pc-thumb="${esc(sub.side)}" data-pc-thumb-line="${esc(it.x.p.key)}"${sub.mirror ? ' data-pc-mirror="1"' : ""} aria-hidden="true"></span>` +
-        `<button type="button" class="owPcSubName" aria-pressed="false" title="Show only the ${esc(side.toLowerCase())}"><span class="owPcSide" data-side="${esc(sub.side)}">${esc(window.CharmNestOrderRows.subLabel("pair", 0, 2, { side: sub.side, qty: sub.qty }))}</span></button>` +
+        `<button type="button" class="owPcSubName" aria-pressed="false" title="Show only the ${esc(side.toLowerCase())}"><span class="owPcSide" data-side="${esc(sub.side)}">${esc((sub.unit ? sideWord(sub.side) + " · pair " + sub.unit : window.CharmNestOrderRows.subLabel("pair", 0, 2, { side: sub.side, qty: sub.qty })))}</span></button>` +
         pieceStatusHtml(sub.x, sub.sp, { inButton: false }) + pieceDotsHtml(sub.x, rid, { name: nm + " · " + side }) + `</div>`;
     }
     return `<div class="owPcSub owPcPieceSub" data-sub="${esc(sub.key)}" role="group" aria-label="${esc(nm + " · " + sub.label)}"><span class="owPcSubName owPcSubTag">${esc(sub.label)}</span>` +
@@ -16854,7 +16878,7 @@ const OrderWin = window.OrderWin = (() => {
     const ctls = sum ? new Map(sum.each.map(x => [x.p.key, tryDo(() => pieceCtl(x.p.key))])) : null;
     // (the Hold of a piece that has no buttons of its own: a place for it, empty when the order cannot be held, or HoldUI is not there)
     const holds = sum ? new Map(sum.each.map(x => [x.p.key, ctls.get(x.p.key) ? "" : holdSlotOfKey(x.p.key)])) : null;
-    if (!sum || (!all && !ctls.get(list[0].key) && !holds.get(list[0].key) && !(sideEach && list[0].sides))) { box.hidden = true; box._h = ""; box.innerHTML = ""; return; }
+    if (!sum || (!all && !ctls.get(list[0].key) && !holds.get(list[0].key) && !(sideEach && list[0].sides) && !list[0].copies)) { box.hidden = true; box._h = ""; box.innerHTML = ""; return; }
     const scope = r0 && !r0.loading ? tryDo(() => scopePieces(r0)) : null;   // (the sheets each piece's copies are on: its status names one)
     const OR = window.CharmNestOrderRows;
     const items = sum.each.map(x => pcItemOf(x, { scope, sideEach })), orderStep = items.length ? Math.min(...items.map(it => it.step)) : -1;
@@ -16992,7 +17016,7 @@ const OrderWin = window.OrderWin = (() => {
   function wirePcSheet(box) {
     box.querySelectorAll("button[data-pc-sheet]").forEach(b => b.addEventListener("click", e => {
       e.stopPropagation();
-      const key = String(b.dataset.pcSheet).replace(/#(L|R|D\d+|P\d+)$/, ""), sid = b.dataset.sheet, pool = b.dataset.pool;   // (a side's chip opens its own sheet; the piece picked is the line)
+      const key = String(b.dataset.pcSheet).replace(/#(L|R|D\d+|P\d+|C\d+)(\.\d+)?$/, ""), sid = b.dataset.sheet, pool = b.dataset.pool;   // (a side's chip opens its own sheet; the piece picked is the line)
       if (!W.dlg || !W.dlg.open || !rowOf(W.key)) return;
       if (W.piece && W.piece !== key) (typeof selectPiece === "function" ? selectPiece : pickPiece)(key);
       openSheetOf(key, sid, pool);
@@ -17706,7 +17730,7 @@ const OrderWin = window.OrderWin = (() => {
     const all = scopePieces(r), shown = all.find(p => p.key === r.key) || all[0] || null;
     let sel = W.piece ? all.find(p => p.key === W.piece) || null : null;
     // (an ear of a pair picked on its row: the Sheet view, the chips and the pill answer for that ear alone)
-    if (W.side) { const ln = sel || all.find(p => p.key === r.key), sd = ln && ln.sides && ln.sides.find(q => q.side === W.side); if (sd) sel = sd; }
+    if (W.side) { const ln = sel || all.find(p => p.key === r.key), sd = ln && ln.sides && ln.sides.find(q => q.side === String(W.side).slice(0, 1)); if (sd) sel = sd; }
     return { all, shown, sel, focus: sel || shown, mine: sel ? [sel] : all, multi: all.length > 1 };
   }
   /* ── where each piece IS now: ONE answer for every surface of this window (PiecePlacement, charm-nest-piece-placement.js) ──

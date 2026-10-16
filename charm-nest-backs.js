@@ -124,7 +124,11 @@
     ctx.fill('nonzero'); ctx.restore(); return true;
   }
   /** Which piece of its order a back is, in words: "Left ear", "Right ear", "Disc 2"; nothing for a back of a line that is not cut into slots (an old back has no slot). */
-  const pieceWords = b => { const k = (b && (b.slot || b.side)) || ''; return k === 'L' ? 'Left ear' : k === 'R' ? 'Right ear' : /^D\d+$/.test(k) ? 'Disc ' + k.slice(1) : ''; };
+  const pieceWords = b => {
+    const k = (b && (b.slot || b.side)) || '', m = /^(?:(L|R)|D(\d+)|(C)(\d+))(?:\.(\d+))?$/.exec(k); if (!m) return '';
+    const unit = m[5] && +m[5] > 1 ? (m[1] ? ' · pair ' : ' · set ') + m[5] : '';   // (PIECES: the second pair of ears is L.2, the second set of discs D1.2; a copy is C2)
+    return m[1] ? (m[1] === 'L' ? 'Left ear' : 'Right ear') + unit : m[2] ? 'Disc ' + m[2] + unit : 'Piece ' + m[4];
+  };
   function markup(backs, stock = {}) {
     if (!backs?.length) return '';
     // A shelf with any front picture names each picture's face (a back-only shelf is drawn exactly as it always was).

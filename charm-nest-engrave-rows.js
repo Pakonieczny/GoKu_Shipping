@@ -51,9 +51,27 @@
   if (typeof module === 'object' && module.exports) module.exports = api; else root.CharmNestEngraveRows = api;
 })(typeof self !== 'undefined' ? self : this, function (root) {
   'use strict';
-  const KEY = /^(.*)#(L|R|D\d{1,2})$/;
+  const KEY = /^(.*?)#(C\d{1,3}|(?:L|R|D\d{1,2})(?:\.\d{1,3})?)$/;
   const dep = (name, file) => { const g = root && root[name]; if (g) return g; try { return typeof require === 'function' ? require(file) : null; } catch (_) { return null; } };
   const Faces = () => dep('CharmNestEngraveFaces', './charm-nest-engrave-faces.js');
+  const Sides = () => dep('CharmNestEngraveSides', './charm-nest-engrave-sides.js');
+  /* PIECES (Paul, 16 Oct 2026, order 4195059483: "Customer ordered two of the same Charm, but the engraving only shows one ... ALL multipiece orders must always show each individual piece"): a line of quantity N is N pieces
+   * with a job each (CONTRACT-PIECES.md): a single charm / bar is C1..Cn; an ear pair of quantity 2 is L R L.2 R.2 (pair 1, pair 2); discs D1..Dn, then D1.2 .. for the second set. A row of this tab is one UNIT of a line (the
+   * copies C1..Cn of a line are one unit: a row of "discs" in all but name), so every list below, the order of Back / Next and "Approve all" treat them alike. `infoOf(slot)` is the one reader of a slot's name
+   * (the model's own CharmNestEngraveSides.slotInfo when the page has it). */
+  const SLOT_RX = /^(?:(C)(\d{1,3})|(L|R|D(\d{1,2}))(?:\.(\d{1,3}))?)$/;
+  /** { slot, kind: 'ear' | 'disc' | 'copy', side: 'L' | 'R' | null, n (the disc or copy number, 0 for an ear), unit (1.. : the pair or the set; a copy is its own number) } for a slot, else null. */
+  function infoOf(slot) {
+    const k = String(slot == null ? '' : slot); if (!k) return null;
+    const S = Sides(); if (S && typeof S.slotInfo === 'function') { try { const i = S.slotInfo(k); if (i && i.kind) return i; } catch (_) { /* below */ } }
+    const m = SLOT_RX.exec(k); if (!m) return null;
+    if (m[1]) return { slot: k, kind: 'copy', side: null, n: +m[2], unit: +m[2] };
+    return m[3] === 'L' || m[3] === 'R' ? { slot: k, kind: 'ear', side: m[3], n: 0, unit: +m[5] || 1 } : { slot: k, kind: 'disc', side: null, n: +m[4], unit: +m[5] || 1 };
+  }
+  /** { kind: 'disc' | 'copy', n, unit } for a slot of a counted line (D2, C1, D1.2), else null (an ear, no slot). */
+  const countedOf = slot => { const i = infoOf(slot); return i && (i.kind === 'disc' || i.kind === 'copy') ? i : null; };
+  /** The unit of a slot that a row holds: the pair or the set it belongs to (1 for every copy: the copies of a line are one row). */
+  const unitKey = slot => { const i = infoOf(slot); return i && i.kind !== 'copy' && i.unit > 1 ? i.unit : 1; };
   const faceOf = job => { const F = Faces(); return F ? F.faceOf(job) : 'back'; };
   /** { lineKey, slot } of a job key; a front key ("...~front") is its back's key with the suffix taken off. */
   function parse(key) {
@@ -62,47 +80,52 @@
     const m = KEY.exec(k); return m ? { lineKey: m[1], slot: m[2] } : { lineKey: k, slot: null };
   }
   const slotOf = job => { if (!job) return null; if (job.slot) return String(job.slot); return parse(job.key).slot; };
-  const earOf = job => { const s = slotOf(job); return s === 'L' || s === 'R' ? s : null; };
-  const discOf = job => { const m = /^D(\d{1,2})$/.exec(slotOf(job) || ''); return m ? +m[1] : 0; };
-  const pieceOf = job => { const s = slotOf(job); return s === 'L' || s === 'R' || /^D\d{1,2}$/.test(s || '') ? s : null; };
-  const lineKeyOf = job => { if (!job) return ''; if (job.rowKey) return String(job.rowKey); return parse(job.key).lineKey; };
-  const mkRow = (lineKey, jobs) => ({ key: jobs[0].key, lineKey, jobs, lead: jobs[0], pair: jobs.length === 2 });
+  // (a monogram stand-in, `job.mono`, is a piece of its own with no job to cycle or to approve together: its row is its own, whatever its slot, MONOUI / PIECES)
+  const earOf = job => { const i = job && job.mono ? null : infoOf(slotOf(job)); return i && i.kind === 'ear' ? i.side : null; };
+  const discOf = job => { const i = job && job.mono ? null : countedOf(slotOf(job)); return i ? i.n : 0; };   // (the number of the piece in a counted row: disc 2 and copy 2 are both 2)
+  const pieceOf = job => { const s = slotOf(job); return job && job.mono ? null : infoOf(s) ? s : null; };
 
-  const mkDiscRow = (lineKey, jobs) => ({ key: jobs[0].key, lineKey, jobs, lead: jobs[0], pair: false, discs: jobs.length >= 2 });
+  const lineKeyOf = job => { if (!job) return ''; if (job.rowKey) return String(job.rowKey); return parse(job.key).lineKey; };
+  /** The row key of a job's group: its line, and its pair or set when the line has several (PIECES). */
+  const groupKeyOf = job => { const k = lineKeyOf(job), u = unitKey(slotOf(job)); return u > 1 ? k + '|' + u : k; };
+  const unitOfJob = job => unitKey(slotOf(job));
+  const mkRow = (lineKey, jobs) => Object.assign({ key: jobs[0].key, lineKey, jobs, lead: jobs[0], pair: jobs.length === 2 && jobs.every(j => !!earOf(j)) }, unitOfJob(jobs[0]) > 1 ? { unit: unitOfJob(jobs[0]) } : {});
+  const isCopyJob = j => { const i = countedOf(slotOf(j)); return !!i && i.kind === 'copy'; };
+  const mkDiscRow = (lineKey, jobs) => Object.assign({ key: jobs[0].key, lineKey, jobs, lead: jobs[0], pair: false, discs: jobs.length >= 2 }, jobs.length >= 2 && jobs.every(isCopyJob) ? { copies: true } : {}, unitOfJob(jobs[0]) > 1 ? { unit: unitOfJob(jobs[0]) } : {});
 
   /** Rows, in the order of `selected`: the Left and the Right job of one line are one row, at the place of whichever came first.
    *  With o.discs the discs of one counted line are one row as well (D1, D2, .. in disc order). */
   function groupPlain(selected, universe, o) {
     const uni = Array.isArray(universe) ? universe : selected || [], ears = new Map(), discs = new Map(), withDiscs = !!(o && o.discs);
     for (const j of uni) {
-      const s = earOf(j), k = lineKeyOf(j);
+      const s = earOf(j), k = groupKeyOf(j);
       if (s) { if (!ears.has(k)) ears.set(k, {}); if (!ears.get(k)[s]) ears.get(k)[s] = j; continue; }
       const n = withDiscs ? discOf(j) : 0; if (!n) continue;
       if (!discs.has(k)) discs.set(k, {}); if (!discs.get(k)[n]) discs.get(k)[n] = j;
     }
     const out = [], done = new Set();
     for (const j of selected || []) {
-      const s = earOf(j), k = lineKeyOf(j), n = !s && withDiscs ? discOf(j) : 0;
+      const s = earOf(j), k = groupKeyOf(j), n = !s && withDiscs ? discOf(j) : 0;
       if (n) {
         if (done.has(k)) continue; done.add(k);
         const d = Object.assign({}, discs.get(k) || {}); if (!d[n]) d[n] = j;
-        out.push(mkDiscRow(k, Object.keys(d).map(Number).sort((a, b) => a - b).map(x => d[x])));
+        out.push(mkDiscRow(lineKeyOf(j), Object.keys(d).map(Number).sort((a, b) => a - b).map(x => d[x])));
         continue;
       }
-      if (!s) { out.push(mkRow(k, [j])); continue; }
+      if (!s) { out.push(mkRow(lineKeyOf(j), [j])); continue; }
       if (done.has(k)) continue; done.add(k);
       const e = Object.assign({}, ears.get(k) || {}); if (!e[s]) e[s] = j;
-      out.push(mkRow(k, ['L', 'R'].filter(x => e[x]).map(x => e[x])));
+      out.push(mkRow(lineKeyOf(j), ['L', 'R'].filter(x => e[x]).map(x => e[x])));
     }
     return out;
   }
   /** The rows of a line that has a front job (see FACES above): one per piece, but the ears of a pair and the discs of a counted line (o.discs) are one row each. */
   function facedRows(F, k, jobs, o) {
-    const groups = F.groupPieces(jobs), isEar = g => g.slot === 'L' || g.slot === 'R', isDisc = g => /^D\d{1,2}$/.test(g.slot || ''), withDiscs = !!(o && o.discs);
-    const mk = (gs, extra) => { const js = [].concat(...gs.map(g => g.jobs)); return Object.assign({ key: js[0].key, lineKey: k, jobs: js, lead: js[0], pair: false }, extra, js.some(j => faceOf(j) === 'front') ? { faces: true } : {}); };
+    const groups = F.groupPieces(jobs), isEar = g => !!(infoOf(g.slot) && infoOf(g.slot).kind === 'ear'), isDisc = g => !!countedOf(g.slot), withDiscs = !!(o && o.discs), unitOf = g => unitKey(g.slot);
+    const mk = (gs, extra) => { const js = [].concat(...gs.map(g => g.jobs)); return Object.assign({ key: js[0].key, lineKey: k, jobs: js, lead: js[0], pair: false }, unitOf(gs[0]) > 1 ? { unit: unitOf(gs[0]) } : {}, extra, js.some(j => faceOf(j) === 'front') ? { faces: true } : {}); };
     const out = [], ears = groups.filter(isEar), discs = withDiscs ? groups.filter(isDisc) : [];
-    if (ears.length) out.push(mk(ears, { pair: ears.length >= 2 }));
-    if (discs.length) out.push(mk(discs, { discs: discs.length >= 2 }));
+    for (const u of [...new Set(ears.map(unitOf))].sort((a, b) => a - b)) { const gs = ears.filter(g => unitOf(g) === u); out.push(mk(gs, { pair: gs.length >= 2 })); }
+    for (const u of [...new Set(discs.map(unitOf))].sort((a, b) => a - b)) { const gs = discs.filter(g => unitOf(g) === u); out.push(mk(gs, Object.assign({ discs: gs.length >= 2 }, gs.length >= 2 && gs.every(g => g.jobs.every(isCopyJob)) ? { copies: true } : {}))); }
     for (const g of groups) if (!isEar(g) && !(withDiscs && isDisc(g))) out.push(mk([g]));
     return out;
   }
@@ -183,14 +206,14 @@
     o = o || {};
     if (row && row.faces) return facesGate(row, o);
     if (!row || !row.discs) return { ok: false, why: 'This order has one disc to approve.' };
-    const name = j => 'Disc ' + discOf(j);
-    if (!row.jobs.every(j => j.state === 'review' && j.fit && j.verify && j.verify.geometry && j.verify.geometry.ok)) return { ok: false, why: 'Every disc must have a placement to check first.' };
-    if (row.jobs.some(j => settling(j) || (o.busy && o.busy(j)))) return { ok: false, why: 'A disc is still being prepared or approved.' };
-    if (!sameWordsAll(row.jobs)) return { ok: false, why: 'The words differ between the discs: approve each disc on its own.' };
+    const copies = !!row.copies || row.jobs.every(isCopyJob), noun = copies ? 'piece' : 'disc', name = j => (copies ? 'Piece ' : 'Disc ') + discOf(j);   // (the copies of a line of quantity N say "piece", the discs of a necklace "disc")
+    if (!row.jobs.every(j => j.state === 'review' && j.fit && j.verify && j.verify.geometry && j.verify.geometry.ok)) return { ok: false, why: `Every ${noun} must have a placement to check first.` };
+    if (row.jobs.some(j => settling(j) || (o.busy && o.busy(j)))) return { ok: false, why: `${copies ? 'A piece' : 'A disc'} is still being prepared or approved.` };
+    if (!sameWordsAll(row.jobs)) return { ok: false, why: `The words differ between the ${noun}s: approve each ${noun} on its own.` };
     for (const j of row.jobs) if (o.shown && !o.shown(j)) return { ok: false, why: `Look at ${name(j)}'s placement first (it is not on screen yet).` };
     return { ok: true, why: '' };
   }
   /** The one press of a row, whatever it holds: a row with a front job, a pair of ears or the discs of a counted line. */
   const approveRow = (row, o) => (row && row.faces ? facesGate(row, o || {}) : row && row.pair ? approveBoth(row, o) : row && row.discs ? approveAll(row, o) : { ok: false, why: 'This line has one placement to approve.' });
-  return { faceOf, approveRow, earOf, discOf, pieceOf, lineKeyOf, group, rowOf, multi, kindOf, step, neighbour, openLead, counts, wordsOf, sameWords, sameWordsAll, stageOf, approveBoth, approveAll };
+  return { faceOf, approveRow, earOf, discOf, pieceOf, lineKeyOf, infoOf, countedOf, unitKey, group, rowOf, multi, kindOf, step, neighbour, openLead, counts, wordsOf, sameWords, sameWordsAll, stageOf, approveBoth, approveAll };
 });

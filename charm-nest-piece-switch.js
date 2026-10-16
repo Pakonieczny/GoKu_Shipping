@@ -51,11 +51,15 @@
   const Faces = () => dep('CharmNestEngraveFaces', './charm-nest-engrave-faces.js');
   const faceOfJob = job => { const F = Faces(); return F ? F.faceOf(job) : 'back'; };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const slotOf = job => { if (!job) return ''; if (job.slot) return String(job.slot); const m = /#(L|R|D\d{1,2})(?:~front)?$/.exec(String(job.key == null ? '' : job.key)); return m ? m[1] : ''; };
-  const kindOfSlot = slot => (slot === 'L' || slot === 'R' ? 'ear' : /^D\d{1,2}$/.test(slot) ? 'disc' : 'piece');
-  const labelOf = slot => (slot === 'L' ? 'Left' : slot === 'R' ? 'Right' : /^D\d+$/.test(slot) ? 'Disc ' + slot.slice(1) : '');
-  const nameOf = slot => (slot === 'L' ? 'Left ear' : slot === 'R' ? 'Right ear' : labelOf(slot));
-  const tagOf = (slot, of) => (slot === 'L' ? 'LEFT EAR' : slot === 'R' ? 'RIGHT EAR' : /^D\d+$/.test(slot) ? 'DISC ' + slot.slice(1) + (of > 1 ? ' of ' + of : '') : '');
+  const slotOf = job => { if (!job) return ''; if (job.slot) return String(job.slot); const m = /#(C\d{1,3}|(?:L|R|D\d{1,2})(?:\.\d{1,3})?)(?:~front)?$/.exec(String(job.key == null ? '' : job.key)); return m ? m[1] : ''; };
+  /* PIECES (Paul, 16 Oct 2026): the copies of a line of quantity N are slots C1..Cn ("Piece 1 of 2", like "Disc 2 of 3"); a second pair of ears is L.2 R.2 ("Left ear · pair 2"), a second set of discs D1.2 ("Disc 1 of 3 · set 2").
+   * `multi`: the line has more than one pair or set, so even the first is told by its number ("PAIR 1"). The slot's name is read by the rows module (the model's slotInfo when the page has it). */
+  const infoOf = slot => { const R = Rows(); return R && R.infoOf ? R.infoOf(slot) : null; };
+  const kindOfSlot = slot => { const i = infoOf(slot); return i ? (i.kind === 'ear' ? 'ear' : i.kind === 'disc' ? 'disc' : 'copy') : 'piece'; };
+  const unitWord = (i, multi, word) => (i && (i.unit > 1 || (multi && i.kind !== 'copy')) ? ' · ' + word + ' ' + i.unit : '');
+  const labelOf = (slot, multi) => { const i = infoOf(slot); return !i ? '' : i.kind === 'ear' ? (i.side === 'L' ? 'Left' : 'Right') + unitWord(i, multi, 'pair') : i.kind === 'disc' ? 'Disc ' + i.n + unitWord(i, multi, 'set') : 'Piece ' + i.n; };
+  const nameOf = (slot, multi) => { const i = infoOf(slot); return i && i.kind === 'ear' ? (i.side === 'L' ? 'Left ear' : 'Right ear') + unitWord(i, multi, 'pair') : labelOf(slot, multi); };
+  const tagOf = (slot, of, multi) => { const i = infoOf(slot); return !i ? '' : i.kind === 'ear' ? (i.side === 'L' ? 'LEFT EAR' : 'RIGHT EAR') + unitWord(i, multi, 'PAIR') : i.kind === 'disc' ? 'DISC ' + i.n + (of > 1 ? ' of ' + of : '') + unitWord(i, multi, 'SET') : 'PIECE ' + i.n + (of > 1 ? ' of ' + of : ''); };
 
   /** What a piece is engraved in, by name. A piece's own record first (a job or a record: `font`, a name or { name, asked }), then the one the line asked for (row.spec.font), else the app's font. */
   function fontOfJob(job) {
@@ -72,15 +76,19 @@
     o = o || {}; const R = Rows(), F = Faces(), arr = (jobs || []).filter(Boolean), withFront = !!F && arr.some(j => F.faceOf(j) === 'front');
     const of = o.of > 0 ? o.of : withFront ? F.pieceCount(arr) : arr.length;
     const per = new Map(); if (withFront) for (const j of arr) { const k = slotOf(j); per.set(k, (per.get(k) || 0) + 1); }
+    // (PIECES: a line with more than one pair or set tells each by its number; the discs "of n" are the discs of ITS set, not all the discs of the line)
+    const infos = arr.map(j => infoOf(slotOf(j))), multi = infos.some(i => i && i.kind !== 'copy' && i.unit > 1);
+    const discsOf = u => new Set(arr.filter((j, ix) => infos[ix] && infos[ix].kind === 'disc' && infos[ix].unit === u).map(j => slotOf(j))).size;
     return arr.map(job => {
       const slot = slotOf(job), busy = !!(o.isWorking && o.isWorking(job)), face = faceOfJob(job), faces = withFront ? per.get(slot) : 1;
       const copies = (job.copies || []).length, S = Sides(), rec = S && S.pieceRecord ? S.pieceRecord(job, { of, faces }) : null;
       const f = o.fontOf ? o.fontOf(job) : rec && rec.font ? rec.font : fontOfJob(job), font = fontParts(f);
       // a piece of a SET of different designs (the large bar, the small bar) is told by its own name and the chain it hangs on, never "Disc 2 of 2" (charm-nest-engrave-sides.js setPieceOf; every other piece: as before)
       const sps = S && S.setPieceOf ? S.setPieceOf(job) : null, setName = sps ? S.pieceName(sps) : '', setLen = sps ? S.lengthText(sps) : '';
-      const base = sps ? [setName.toUpperCase(), setLen].filter(Boolean).join(' · ') : tagOf(slot, of), many = copies > 1 ? ' ×' + copies : '';
+      const si = infoOf(slot), ofHere = si && si.kind === 'disc' && multi ? discsOf(si.unit) : of;
+      const base = sps ? [setName.toUpperCase(), setLen].filter(Boolean).join(' · ') + (multi && si && si.unit > 1 ? ' · SET ' + si.unit : '') : tagOf(slot, ofHere, multi), many = copies > 1 ? ' ×' + copies : '';
       const pieceKey = rec ? rec.pieceKey : (F ? F.parseKey(job.key).pieceKey : String(job.key == null ? '' : job.key));
-      return { key: job.key, job, record: rec, slot, kind: kindOfSlot(slot), n: /^D(\d+)$/.test(slot) ? +slot.slice(1) : 0, label: sps ? setName : labelOf(slot), name: sps ? setName : nameOf(slot), set: sps || null,
+      return { key: job.key, job, record: rec, slot, kind: kindOfSlot(slot), n: si && si.kind !== 'ear' ? si.n : 0, unit: si ? si.unit : 1, label: sps ? setName : labelOf(slot, multi), name: sps ? setName : nameOf(slot, multi), set: sps || null,
         tag: (face === 'front' && faces > 1 ? [base, 'FRONT'].filter(Boolean).join(' · ') : base) + many, baseTag: base + many, words: R ? R.wordsOf(job) : '', font,
         face, faceLabel: face === 'front' ? 'Front' : 'Back', pieceKey, faces,
         stage: o.stageOf ? o.stageOf(job, busy) : R ? R.stageOf(job, busy) : '', state: job.state, busy };
@@ -103,7 +111,7 @@
     const ps = pieces || [], ks = new Set(ps.map(p => p.kind));
     if (ps.length >= 2 && new Set(ps.map(p => p.pieceKey || p.slot)).size === 1 && ps.some(p => p.face === 'front')) return 'faces';
     if (ps.some(p => p && p.set)) return 'pieces';   // (a set of different designs is no row of discs: the bars, each its own)
-    return ks.size === 1 && ks.has('disc') ? 'discs' : ks.size === 1 && ks.has('ear') ? 'ears' : 'pieces';
+    return ks.size === 1 && (ks.has('disc') || ks.has('copy')) ? 'discs' : ks.size === 1 && ks.has('ear') && !ps.some(p => p.unit > 1) ? 'ears' : 'pieces';
   };
   const chipHtml = p => `<span class="egPiece" data-slot="${esc(p.slot)}">${esc(p.tag)}</span>`;
   /** Every piece carries the very same words. With front jobs in the list the rule is per face (a front and a back carry different words by nature): the pieces of each face must agree. */
@@ -117,7 +125,7 @@
    *  For two ears this is, character for character, the Left | Right switch of the Engrave editor. */
   function flatHtml(pieces, key, o) {
     o = o || {}; const ps = pieces || [], kind = kindOf(ps);
-    const aria = kind === 'ears' ? 'The left and the right ear of this line' : kind === 'discs' ? 'The discs of this order, one by one' : 'The pieces of this line, one by one';
+    const aria = kind === 'ears' ? 'The left and the right ear of this line' : kind === 'discs' ? (ps.length && ps.every(p => p.kind === 'copy') ? 'The pieces of this line, one by one' : 'The discs of this order, one by one') : 'The pieces of this line, one by one';
     return `<span class="egEarSwitch${kind === 'ears' ? '' : ' egMany'}" role="group" aria-label="${aria}">${ps.map(p => {
       const on = p.key === key, ft = o.fonts ? fontText(p.font) : '', fn = o.fonts ? fontNote(p.font) : '';
       const what = kind === 'ears' ? 'the ' + p.name.toLowerCase() : p.name.toLowerCase();

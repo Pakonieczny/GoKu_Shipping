@@ -38,6 +38,8 @@
   const dep = (name, file) => { const g = root && root[name]; if (g) return g; try { return typeof require === 'function' ? require(file) : null; } catch (_) { return null; } };
   const Card = () => dep('CharmNestEngraveCard', './charm-nest-engrave-card.js');
   const Sides = () => dep('CharmNestEngraveSides', './charm-nest-engrave-sides.js');
+  const Rows = () => dep('CharmNestEngraveRows', './charm-nest-engrave-rows.js');
+  const Switch = () => dep('CharmNestPieceSwitch', './charm-nest-piece-switch.js');
   const tryDo = (f, d) => { try { return f(); } catch (_) { return d; } };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const CODE = { gold: 'GF', silver: 'SS', rose: 'RG', gold10k: '10K', gold14k: '14K' };
@@ -45,8 +47,10 @@
   const lineOf = row => (row && row.parentRow) || row || null;
   const ridOfRow = row => { const l = lineOf(row); return String((l && l.order && l.order.receiptId) || ''); };
   const metalOf = row => { const l = lineOf(row) || {}, m = String(l.material || (l.spec && (l.spec.material || l.spec.metal)) || ''); return CODE[m] || (m ? m.toUpperCase().slice(0, 4) : ''); };
-  const slotRank = s => (s == null || s === '' ? 0 : s === 'L' ? 1 : s === 'R' ? 2 : /^D(\d+)$/.test(s) ? 10 + +RegExp.$1 : 99);
-  const slotWord = s => (s === 'L' ? 'Left' : s === 'R' ? 'Right' : /^D\d+$/.test(s || '') ? 'Disc ' + s.slice(1) : '');
+  /* PIECES (Paul, 16 Oct 2026): a line of quantity N is C1..Cn ("Piece 1" .. "Piece n"), a second pair of ears L.2 R.2, a second set of discs D1.2 ..: in order of unit, then L, R, Disc 1.. (the slot's name is read by the rows module) */
+  const infoOf = s => { const R = Rows(); return R && R.infoOf ? tryDo(() => R.infoOf(s), null) : null; };
+  const slotRank = s => { if (s == null || s === '') return 0; const i = infoOf(s); return !i ? 99999 : i.kind === 'copy' ? i.n : (i.unit - 1) * 100 + (i.kind === 'ear' ? (i.side === 'L' ? 1 : 2) : 10 + i.n); };
+  const slotWord = (s, multi) => { const W = Switch(); return s && W && W.labelOf ? tryDo(() => W.labelOf(s, multi), '') : ''; };
   const faceList = piece => ['front', 'back'].filter(f => piece.faces && piece.faces[f]);
   let monoFn = null;   // the page's answer for a monogram line (null | 'to-approve' | 'held' | 'approved'), set once by the bridge: a module with no page adds no monogram piece
   const useMonogram = fn => { monoFn = typeof fn === 'function' ? fn : null; };
@@ -75,10 +79,11 @@
       }
       let ps = []; try { ps = C.piecesOf([r], popt) || []; } catch (_) { ps = []; }
       ps = ps.map((p, i) => ({ p, i })).sort((a, b) => slotRank(a.p.slot) - slotRank(b.p.slot) || a.i - b.i).map(x => x.p);
+      const units = ps.some(p => { const i = infoOf(p.slot); return i && i.kind !== 'copy' && i.unit > 1; });   // (a line with more than one pair or set: each is told by its number)
       for (const p of ps) {
         const state = STATE[p.state] || 'held'; if (state === 'none' && !o.withNone) continue;
         const S = Sides(), sps = S && S.setPieceOf ? tryDo(() => S.setPieceOf(p.row || r, p.slot), null) : null;   // (a piece of a set of different designs is "Small bar", not "Disc 2": charm-nest-engrave-sides.js)
-        const metal = p.metal || metalOf(p.row || r), sw = sps ? S.pieceName(sps) : slotWord(p.slot);
+        const metal = p.metal || metalOf(p.row || r), sw = sps ? S.pieceName(sps) + (units && infoOf(p.slot) && infoOf(p.slot).unit > 1 ? ' · set ' + infoOf(p.slot).unit : '') : slotWord(p.slot, units);
         const label = (many ? [metal, sw] : [sw || metal]).filter(Boolean).join(' · ') || p.name || p.title || 'Piece';
         out.push({ pieceKey: p.pieceKey, rid: p.rid || rid, lineKey: p.lineKey, slot: p.slot || null, label, title: p.title || '', metal, faces: faceList(p), jobKeys: (p.jobs || []).map(j => j.key), state, piece: p, line: li });
       }

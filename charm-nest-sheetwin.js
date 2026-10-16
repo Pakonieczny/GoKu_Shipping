@@ -1820,9 +1820,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** The words before a piece's size: "Left piece · " for an ear, "Copy 2 of 3 · " for a copy, nothing for a single. */
   /** The disc a charm is, of the counted order it belongs to ("Disc 2 of 3"), from the engraving job that holds it (one job per disc); null for any other piece. */
+  /** PIECES (Paul, 16 Oct 2026): a slot of a counted line: a disc (D2) or a copy of a line bought several times (C2); the rows module reads the name. */
+  const countedSlot = slot => { const R = window.CharmNestEngraveRows; return R && R.countedOf ? !!R.countedOf(slot) : /^D\d{1,2}$/.test(String(slot || "")); };
   function discOfPiece(x) {
     const OE = window.OrderEngraving; if (!x || !x.poolId || !OE || !OE.cycleOf) return null;
-    const job = jobOfPiece(x); if (!job || !/^D\d{1,2}$/.test(String(job.slot || ""))) return null;
+    const job = jobOfPiece(x); if (!job || !countedSlot(job.slot)) return null;
     const c = tryDo(() => OE.cycleOf(rowOf(x), job.key)); const at = c && c.pieces.find(p => p.key === job.key);
     // (the discs, not the jobs: a disc engraved on both faces has two jobs and is ONE disc)
     const F = FACES(), of = F && F.pieceCount && c && c.pieces.some(p => faceOfJob(p.job) === "front") ? F.pieceCount(c.pieces.map(p => p.job)) : c && c.pieces.length;
@@ -2340,7 +2342,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function facesCycle(x, e) {
     const E = window.Engrave, PS = window.CharmNestPieceSwitch, F = FACES(); if (!PS || !PS.list) return null;
     const all = E && E.jobsOf ? (tryDo(() => E.jobsOf(rowOf(x)), []) || []).filter(j => j && !j.editingBack) : [];
-    const discs = all.length > 1 && all.every(j => /^D\d{1,2}$/.test(String(j.slot || ""))) && all.some(j => (j.copies || []).includes(x.poolId));
+    const discs = all.length > 1 && all.every(j => countedSlot(j.slot)) && all.some(j => (j.copies || []).includes(x.poolId));
     const own = jobsOfPiece(x).list, jobs = discs ? all : own, key = (e.job && e.job.key) || recKeyOf(x.poolId, e.face || "back");
     if (discs || (own.length === x.eng.units.length && own.length > 1)) {
       const pieces = PS.list(jobs, { of: F && F.pieceCount ? F.pieceCount(jobs) : jobs.length, isWorking: j => !!(E && E.isWorking && tryDo(() => E.isWorking(j), false)) });

@@ -153,7 +153,10 @@
   /** " · Left" for a back (an engraving) of a piece with a side, else "": appended to the back's line in files people read. */
   const backWord = b => { const w = wordOf(b); return w ? " · " + w : ""; };
   /** " · Disc 2" for a back (an engraving) of one disc of a counted line (its slot is D1..Dn), else "": the manifest names the disc, not only its copy number. An ear, a single and a plain quantity-N line say "". */
-  const discWord = b => { const m = /^D(\d{1,2})$/.exec(String((b && (b.slot || (b.piece && b.piece.slot))) || "")); return m ? " · Disc " + +m[1] : ""; };
+  const discWord = b => {
+    const m = /^(?:D(\d{1,2})|(C)(\d{1,3}))(?:\.(\d{1,3}))?$/.exec(String((b && (b.slot || (b.piece && b.piece.slot))) || "")); if (!m) return "";
+    return m[2] ? " · Piece " + +m[3] : " · Disc " + +m[1] + (m[4] && +m[4] > 1 ? " · set " + +m[4] : "");   // (PIECES: the sticker of a copy says "Piece 2", of the second set of discs "Disc 1 · set 2")
+  };
 
   /** Is this master entry (or charm) a mismatched pair design? */
   function mismatchedDesign(entry) {
