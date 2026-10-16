@@ -99,7 +99,7 @@ async function main() {
     net.fail = false;
     // …and Try again reads it again: here, the order found (C)
     const retry = await page.$('#owNotes [data-ow-retry]');
-    if (retry) { await retry.click(); await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe|no line/.test(document.getElementById('owSub').textContent + document.getElementById('owNotes').textContent), null, { timeout: 15000 }); }
+    if (retry) { await retry.click(); await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe|no line/.test(document.getElementById('owMeta').textContent + document.getElementById('owNotes').textContent), null, { timeout: 15000 }); }
     check(!!retry, 'failed read: a Try again button');
     await page.keyboard.press('Escape'); await closed();
     // an order that does not exist (the cloud answering): the plain message stays
@@ -113,7 +113,7 @@ async function main() {
     //     has no Skip switch at all (it is gone from every order window), and the line stays gone
     await page.evaluate(rid => { OrderWin.openOrder(rid, {}); }, G.rid);
     await page.waitForFunction(rid => document.getElementById('owLoading').hidden && document.getElementById('owTitle').textContent === 'Order ' + rid && !/Reading the order/.test(document.getElementById('owNotes').textContent), G.rid, { timeout: 15000 });
-    s = await page.evaluate(key => { const skip = !!document.getElementById('owSkip') || !!document.getElementById('owSkipBox'); return { skip, sub: document.getElementById('owSub').textContent, said: document.getElementById('owNotes').textContent, state: Orders.rows().find(r => r.key === key).state }; }, `${G.rid}_${G.tid}`);
+    s = await page.evaluate(key => { const skip = !!document.getElementById('owSkip') || !!document.getElementById('owSkipBox'); return { skip, sub: document.getElementById('owMeta').textContent, said: document.getElementById('owNotes').textContent, state: Orders.rows().find(r => r.key === key).state }; }, `${G.rid}_${G.tid}`);
     check(/Gone Buyer/.test(s.sub) && !/never pulled/.test(s.said), `gone line: the pull's line is shown, not "never pulled" (${JSON.stringify(s)})`);
     check(!s.skip && s.state === 'gone', `gone line: no Skip switch, and it stays gone (${JSON.stringify(s)})`);
     await page.keyboard.press('Escape'); await closed();
@@ -138,7 +138,7 @@ async function main() {
     await page.evaluate(rid => { OrderWin.openOrder(rid, {}); }, C.rid);
     await page.waitForFunction(() => !document.getElementById('owLoading').hidden);
     check(!(await page.$('#owNote')), 'no notes box while the order is looked up');
-    await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe/.test(document.getElementById('owSub').textContent), null, { timeout: 15000 });
+    await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe/.test(document.getElementById('owMeta').textContent), null, { timeout: 15000 });
     await page.waitForTimeout(1200);
     check(!(await page.$('#owNote')) && !(await page.evaluate(() => /Order notes|next person who opens/i.test(document.getElementById('orderWin').textContent))), 'no notes box once the order is read');
     await page.keyboard.press('Escape'); await closed();

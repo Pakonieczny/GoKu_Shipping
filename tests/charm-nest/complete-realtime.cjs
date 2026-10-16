@@ -35,7 +35,7 @@ const NUM = `const n = e => parseInt(txt(e), 10)`;
 const PROBES = {
   'ow.row':      { label: 'Order window · the piece\'s row (Completed, seal)', base: `return txt(q('#owPcSum .owPcRow[data-piece="' + K + '"]'))`, done: `const r = q('#owPcSum .owPcRow[data-piece="' + K + '"]'); return !!r && /Completed/.test(txt(r)) && !!r.querySelector('.seal')` },
   'ow.rail':     { label: 'Order window · header rail', base: `return txt(q('#owRail .tlNowT'))`, done: `const t = txt(q('#owRail .tlNowT')); return !!t && t !== b && !/^(Finding|Reading|Loading)/i.test(t)` },
-  'ow.header':   { label: 'Order window · header line', base: `return txt(q('#owNow'))`, done: `const t = txt(q('#owNow')); return !!t && t !== b` },
+  'ow.header':   { label: 'Order window · where it is now (the head card\'s state)', base: `return ((q('#owNowCard') || {}).dataset || {}).now || ''`, done: `const t = ((q('#owNowCard') || {}).dataset || {}).now || ''; return !!t && t !== b` },
   'owSheet.row': { label: 'Order window · Sheet tab', base: `return txt(q('#owSheetPanel .owPieces'))`, done: `const t = txt(q('#owSheetPanel .owPieces')); return !!t && t !== b && /complet|done|hand/i.test(t)` },
   'rv.count':    { label: 'Review · Open / Completed counts', base: `return [...document.querySelectorAll('#reviewView .rvSeg [data-cseg] b')].map(e => parseInt(e.textContent, 10))`, done: `const c = [...document.querySelectorAll('#reviewView .rvSeg [data-cseg] b')].map(e => parseInt(e.textContent, 10)); return c[0] === b[0] - 1 && c[1] === b[1] + 1` },
   'rv.card':     { label: 'Review · the card leaves Open', base: `return !!q('#rvList .reviewListRow[data-rid="' + R + '"]')`, done: `return b === true && !q('#rvList .reviewListRow[data-rid="' + R + '"]')` },

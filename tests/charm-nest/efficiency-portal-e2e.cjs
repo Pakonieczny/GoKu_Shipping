@@ -361,7 +361,7 @@ function backend(env) {
       rows = await orderRows(page); const target = rows[1].rid;
       await page.locator(`${P} .efpOrdersHost:not(.efpWOrders) .efoRow[data-rid="${target}"] .efoOpen`).click();
       await page.waitForSelector('#orderWin[open]', { timeout: 15000 });
-      assert(new RegExp(target).test(await page.locator('#owTitle').innerText().catch(() => '') + await page.locator('#owSub').innerText().catch(() => '') + await page.locator('#orderWin').innerText()), 'the order window is for order ' + target);
+      assert(new RegExp(target).test(await page.locator('#owTitle').innerText().catch(() => '') + await page.locator('#orderWin').innerText()), 'the order window is for order ' + target);
       await shot(page, 'c5-order-window-1440');
       await page.keyboard.press('Escape'); await waitFor(page, () => !document.querySelector('#orderWin[open]'), null, 10000);
       assert.equal(await hash(page), '#efficiency/person/Ana%20M.', 'closing the order leaves the person page where it was');

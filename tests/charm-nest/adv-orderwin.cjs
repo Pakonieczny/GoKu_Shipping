@@ -108,7 +108,7 @@ async function main() {
     const asked = mail.filter(m => m.op === 'ask').map(m => String(m.receiptId));
     assert.deepEqual(asked, [C.rid], 'a message written while it loads goes to this order\'s buyer: ' + asked.join(','));
     hold();
-    await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe/.test(document.getElementById('owSub').textContent), null, { timeout: 15000 });
+    await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe/.test(document.getElementById('owMeta').textContent), null, { timeout: 15000 });
     await noBox('an order read from the records');
     assert.equal(noteWrites.length, 0, 'nothing written to the order\'s notes while it was read: ' + noteWrites.join(' | '));
     await page.click('#owClose');
