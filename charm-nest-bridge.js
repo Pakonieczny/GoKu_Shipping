@@ -7375,7 +7375,7 @@ const Engrave = window.Engrave = (() => {
       if (!e.engravingInvalid) {
         job.backPending = e.message; agent({ engrave: true }, "warn", `${job.row.order.receiptId}: the approved back file waits for the cloud (${e.message})`); retryBacksLater(); render(); }
       else { job.state = "review"; job.row.engrave.state = "review"; job.row.engrave.approved = false; job.reason = "back file failed: " + e.message; refreshBacks(); agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${job.reason}`); if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); } }
-    finally { job.backSaving = false; Session.schedule(); }
+    finally { job.backSaving = false; Session.schedule(); if (EG.cardKey === job.key) { try { render(); } catch (_) { /* drawn with the next render */ } } }   // (NODECIDED: the card of an approved piece in front follows the end of its back file's saving: its position buttons)
     // the run looks again only when the save changed something (a save with nothing to write would start it over and over)
     if(!job.editingBack && (job.state !== was || (job.backs || []).length !== had)) RunCtl.backgroundSettled();
   }
