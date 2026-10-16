@@ -9,7 +9,7 @@
  *    slotsOf(families, saved)   → { left, middle, right, ok, sets, why }               which alphabet is the Left, the Middle and the Right (by the words in their names, or the saved choice)
  *    build({left,middle,right}, opts) → { ok, why, rings, bboxPt, wMm, hMm, placed, report }
  *        a letter is { letter, rings, fill? }: fill 'auto' reads a font's overlapping contours as ink, the default reads a ring inside another as a counter (fillOf);
- *        opts { overlap, maxOverlap, centerRatio, valign, reach }; report { connected, joinMm: { leftMiddle, middleRight }, holesKept, centerScale, overlap, warnings[], notes[], … }
+ *        opts { overlap, maxOverlap, centerRatio, valign, reach, fit: { maxWidthMm, maxHeightMm } (the finished piece scaled into that envelope: charm-nest-monogram-fit.js, report.fit) }; report { connected, joinMm: { leftMiddle, middleRight }, holesKept, centerScale, overlap, warnings[], notes[], … }
  *    preparedLetter(family, letter, glyph) → the letter as the engine prepares it (widened, thicker lines, Q's curl tied): { rings, metrics, strokeMm, widen, offsetMm, qBridge, … } (see the letter prep)
  *    toPdf(result, { title })   → Promise<Uint8Array>   one page, one charm, holes as separate stroked paths
  *    svgPath(result)            → SVG path data (even-odd, y flipped for the screen)
@@ -493,8 +493,14 @@
   }
 
   function build(letters, options) {
-    try { return buildInner(letters, options); }
+    let res;
+    try { res = buildInner(letters, options); }
     catch (e) { return failure('the letters could not be combined (' + String(e && e.message || e).slice(0, 120) + ')'); }
+    if (options && options.fit && res.ok) {      // opts.fit = { maxWidthMm, maxHeightMm }: the finished piece scaled into the envelope (charm-nest-monogram-fit.js, the piece-size policy; MONOX E4)
+      try { const F = root.CharmNestMonogramFit || (typeof require === 'function' ? require('./charm-nest-monogram-fit.js') : null); if (F) F.applyFit(res, options.fit); else res.report.warnings.push('opts.fit was not applied: charm-nest-monogram-fit.js is not loaded'); }
+      catch (e) { res.report.warnings.push('opts.fit was not applied (' + String(e && e.message || e).slice(0, 80) + ')'); }
+    }
+    return res;
   }
 
   function buildInner(letters, options) {
