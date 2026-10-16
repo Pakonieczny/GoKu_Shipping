@@ -3,13 +3,14 @@
 // FAKE Etsy (every request recorded) and the REAL charmNestLibrary, _charmNestSandboxPull and _charmNestRepoAuth code. No network, no live record.
 // It proves:
 //   · nothing set = 250 exactly as before: the status says so (limit 250, not set), a pull is 3 Etsy calls (offsets 0/100/200, limits 100/100/50);
-//   · the limits: 10 to 500, a number outside is held to the nearest with one plain line, a non-number is refused and writes nothing; a value
+//   · the limits: 10 to 1000 (SBX1000, Paul, 16 Oct 2026: "up-to 1000 of the most recent orders"; it was 10 to 500), a number outside is held to the nearest with
+//     one plain line (1000 is accepted, 1001 is held to 1000, a stored 500 stays 500), a non-number is refused and writes nothing; a value
 //     hand-written outside the limits (or not a number) is held / ignored at read time, so the limits hold whatever is stored;
 //   · the write is PROTECTED: no token, a forged token, a token for another kind of action, a single-use delete token, a GET: all refused with
 //     "repo-locked" and nothing written; a token the password dialog would have given ("modify", also "upload" and "other") is accepted;
 //   · the number is a setting, not sandbox data: the wipe (sandboxReset, run to its end) and the registry leave it alone, and nothing pulls by itself
 //     after the wipe (the sandbox stays empty until a pull is asked for, and no Etsy call is made);
-//   · a pull uses the number: 120 = 2 calls (100 + 20), 30 = 1 call, 500 = 5 calls; the answer says what was asked for (want), the ledger counts the
+//   · a pull uses the number: 120 = 2 calls (100 + 20), 30 = 1 call, 500 = 5 calls, 1000 = 10 calls (offsets 0, 100 … 900, started 110 ms apart); the answer says what was asked for (want), the ledger counts the
 //     calls made, and since NOLIMIT (Paul, 13 Oct 2026: "I don't want any of these limits") there is NO daily cap on pulls or Etsy calls: the status and the
 //     answers carry no cap (null), and a pull of 500 orders repeated 10 times in a day is never refused (the old gate stopped at 20 calls / 6 pulls, so after 4).
 //   node tests/charm-nest/sandbox-pull-limit.cjs
@@ -21,9 +22,9 @@ const Fk = require('./_sandboxFakes.cjs'); Fk.install();
 const { store, blobs, writes, db } = Fk;
 const Families = require('../../charm-nest-sandbox-families.js');
 
-/* ── a fake Etsy: 520 receipts, newest = highest number; every request recorded ── */
-const DAY = 86400, T0 = Math.floor(Date.now() / 1000) - 600 * 3600;
-const SHOP = Array.from({ length: 520 }, (_, i) => {
+/* ── a fake Etsy: 1100 receipts, newest = highest number; every request recorded ── */
+const DAY = 86400, T0 = Math.floor(Date.now() / 1000) - 1200 * 3600;
+const SHOP = Array.from({ length: 1100 }, (_, i) => {
   const rid = 3700000000 + i, created = T0 + i * 3600;
   return { receipt_id: rid, order_number: rid, name: 'Buyer ' + rid, status: 'Paid', is_paid: true, is_shipped: i % 11 === 0, created_timestamp: created, create_timestamp: created, expected_ship_date: created + 7 * DAY,
     transactions: [{ transaction_id: rid * 10 + 1, receipt_id: rid, listing_id: 1718000 + (i % 9), sku: `BR-TST-0${1 + (i % 6)}`, title: 'Initial charm', quantity: 1, created_timestamp: created, expected_ship_date: created + 7 * DAY, variations: [] }] };
@@ -34,7 +35,7 @@ const res = (status, body) => ({ ok: status >= 200 && status < 300, status, head
 async function fakeFetch(url) {
   const u = new URL(url);
   if (u.pathname === '/v3/public/oauth/token') return res(200, { access_token: 'tok-refreshed', refresh_token: 'ref-2', expires_in: 3600 });
-  etsy.calls.push({ path: u.pathname, offset: +u.searchParams.get('offset'), limit: +u.searchParams.get('limit') });
+  etsy.calls.push({ path: u.pathname, offset: +u.searchParams.get('offset'), limit: +u.searchParams.get('limit'), at: Date.now() });
   if (!/^\/v3\/application\/shops\/987654\/receipts$/.test(u.pathname)) return res(404, 'unexpected request ' + u.pathname);
   const offset = +u.searchParams.get('offset'), limit = +u.searchParams.get('limit');
   return res(200, { count: SHOP.length, results: NEWEST(SHOP.length).slice(offset, offset + limit) });
@@ -69,7 +70,7 @@ const limitOf = async () => (await post({ op: 'sandboxStatus', sandbox: true }))
 
   /* ═══ 1 · nothing set: 250, exactly as today ═══ */
   let lim = await limitOf();
-  assert(lim && lim.limit === 250 && lim.isDefault === true && lim.isSet === false && lim.def === 250 && lim.min === 10 && lim.max === 500 && lim.perPage === 100 && lim.callsPerPull === 3 && lim.pullsPerDay === null && lim.callsCap === null && lim.pullsCap === null, 'no document = 250: ' + JSON.stringify(lim));
+  assert(lim && lim.limit === 250 && lim.isDefault === true && lim.isSet === false && lim.def === 250 && lim.min === 10 && lim.max === 1000 && lim.perPage === 100 && lim.callsPerPull === 3 && lim.pullsPerDay === null && lim.callsCap === null && lim.pullsCap === null, 'no document = 250: ' + JSON.stringify(lim));
   assert(!store.has(CFG), 'reading the number writes nothing');
   let r = await pullOp('start-default-01');
   assert(r.status === 200 && r.body.count === 250 && r.body.want === 250 && r.body.calls === 3, 'the default pull brings 250 with 3 calls: ' + JSON.stringify(r.body).slice(0, 200));
@@ -78,14 +79,15 @@ const limitOf = async () => (await post({ op: 'sandboxStatus', sandbox: true }))
   assert.strictEqual(ledger().calls, 3);
 
   /* ═══ 2 · the limits (pure, then through the server) ═══ */
-  for (const [x, v, held] of [[10, 10, false], [11, 11, false], [250, 250, false], [500, 500, false], [5, 10, true], [-40, 10, true], [0, 10, true], [501, 500, true], [99999, 500, true], ['300', 300, false], [' 40 ', 40, false], [12.6, 13, false], [9.4, 10, true]])
+  for (const [x, v, held] of [[10, 10, false], [11, 11, false], [250, 250, false], [500, 500, false], [501, 501, false], [1000, 1000, false], [1001, 1000, true], [5, 10, true], [-40, 10, true], [0, 10, true], [99999, 1000, true], ['300', 300, false], ['1000', 1000, false], ['1001', 1000, true], [' 40 ', 40, false], [12.6, 13, false], [9.4, 10, true], [1000.4, 1000, false], [1000.6, 1000, true]])
     assert.deepStrictEqual(Pull.clampWant(x), { value: v, clamped: held }, 'clampWant(' + JSON.stringify(x) + ')');
   for (const x of ['abc', '', '  ', null, undefined, NaN, Infinity, true, {}, []]) assert.strictEqual(Pull.clampWant(x), null, 'not a number: ' + JSON.stringify(x));
-  assert.deepStrictEqual([Pull.MIN_WANT, Pull.MAX_WANT, Pull.WANT], [10, 500, 250]);
-  // the Etsy cost of each end: 10 = 1 call, 100 = 1, 101 = 2, 250 = 3, 500 = 5; the daily 20 calls / 6 pulls still allow 4 of the biggest
-  assert.deepStrictEqual([10, 100, 101, 250, 300, 301, 500].map(Pull.pagesFor), [1, 1, 2, 3, 3, 4, 5]);
+  assert.deepStrictEqual([Pull.MIN_WANT, Pull.MAX_WANT, Pull.WANT], [10, 1000, 250]);
+  // the Etsy cost of each end: 10 = 1 call, 100 = 1, 101 = 2, 250 = 3, 500 = 5, 1000 = 10 (no daily cap since NOLIMIT)
+  assert.deepStrictEqual([10, 100, 101, 250, 300, 301, 500, 501, 1000].map(Pull.pagesFor), [1, 1, 2, 3, 3, 4, 5, 6, 10]);
   assert.deepStrictEqual(Pull.planFor(250), [[0, 100], [100, 100], [200, 50]]); assert.deepStrictEqual(Pull.planFor(120), [[0, 100], [100, 20]]); assert.deepStrictEqual(Pull.planFor(30), [[0, 30]]);
   assert.strictEqual(Pull.planFor(500).length, 5); assert(Pull.planFor(500).every(([o, l], i) => o === i * 100 && l === 100));
+  assert.strictEqual(Pull.planFor(1000).length, 10); assert(Pull.planFor(1000).every(([o, l], i) => o === i * 100 && l === 100), '1000 = ten pages of 100'); assert.deepStrictEqual(Pull.planFor(950).slice(-2), [[800, 100], [900, 50]]);
 
   /* ═══ 3 · the write is protected ═══ */
   const before = JSON.stringify([...store.entries()].filter(([k]) => !k.startsWith('CharmRepo_Tokens/')).sort());
@@ -120,14 +122,19 @@ const limitOf = async () => (await post({ op: 'sandboxStatus', sandbox: true }))
   assert.strictEqual(store.get(CFG).limit, 160);
 
   // the server holds the number to the limits and says so in one plain line
-  r = await setOp(5000); assert(r.status === 200 && r.body.limit === 500 && r.body.clamped === true && r.body.note === 'Held to 500: the most one pull may bring (5 Etsy calls).' && r.body.callsPerPull === 5 && r.body.pullsPerDay === null, 'over: ' + JSON.stringify(r.body));
-  assert.strictEqual(store.get(CFG).limit, 500);
+  r = await setOp(5000); assert(r.status === 200 && r.body.limit === 1000 && r.body.clamped === true && r.body.note === 'Held to 1000: the most one pull may bring (10 Etsy calls).' && r.body.callsPerPull === 10 && r.body.max === 1000 && r.body.pullsPerDay === null, 'over: ' + JSON.stringify(r.body));
+  assert.strictEqual(store.get(CFG).limit, 1000);
+  // SBX1000: 1000 is taken as it is, 1001 is held to 1000 with the same line, and the old top, 500, is still a plain valid number
+  r = await setOp(1000); assert(r.status === 200 && r.body.limit === 1000 && r.body.clamped === false && r.body.note === '' && r.body.callsPerPull === 10, '1000 is accepted: ' + JSON.stringify(r.body)); assert.strictEqual(store.get(CFG).limit, 1000);
+  r = await setOp(1001); assert(r.status === 200 && r.body.limit === 1000 && r.body.clamped === true && r.body.note === 'Held to 1000: the most one pull may bring (10 Etsy calls).', '1001 is held to 1000: ' + JSON.stringify(r.body)); assert.strictEqual(store.get(CFG).limit, 1000);
+  r = await setOp(500); assert(r.status === 200 && r.body.limit === 500 && r.body.clamped === false && r.body.callsPerPull === 5, 'a stored 500 stays valid: ' + JSON.stringify(r.body)); assert.strictEqual((await limitOf()).limit, 500);
   r = await setOp(3); assert(r.status === 200 && r.body.limit === 10 && r.body.clamped === true && r.body.note === 'Held to 10: the fewest one pull may bring.' && r.body.callsPerPull === 1, 'under: ' + JSON.stringify(r.body));
   assert.strictEqual(store.get(CFG).limit, 10);
   r = await setOp('77'); assert(r.status === 200 && r.body.limit === 77 && r.body.clamped === false, 'a numeric string is taken');
-  for (const bad of ['abc', '', null, undefined, {}, true]) { const out = await setOp(bad); assert(out.status === 400 && out.body.reason === 'bad' && /whole number from 10 to 500/.test(out.body.error), 'a non-number is refused: ' + JSON.stringify(bad) + ' ' + JSON.stringify(out.body)); assert.strictEqual(store.get(CFG).limit, 77, 'and nothing changed'); }
+  for (const bad of ['abc', '', null, undefined, {}, true]) { const out = await setOp(bad); assert(out.status === 400 && out.body.reason === 'bad' && /whole number from 10 to 1000/.test(out.body.error), 'a non-number is refused: ' + JSON.stringify(bad) + ' ' + JSON.stringify(out.body)); assert.strictEqual(store.get(CFG).limit, 77, 'and nothing changed'); }
   // a value written by hand outside the limits, or not a number, still cannot break them
-  store.set(CFG, { v: 1, limit: 100000 }); lim = await limitOf(); assert(lim.limit === 500 && lim.isSet === true, 'hand-written 100000 is read as 500');
+  store.set(CFG, { v: 1, limit: 100000 }); lim = await limitOf(); assert(lim.limit === 1000 && lim.isSet === true, 'hand-written 100000 is read as 1000');
+  store.set(CFG, { v: 1, limit: 500 }); assert.strictEqual((await limitOf()).limit, 500, 'a document written when the top was 500 still reads 500');
   store.set(CFG, { v: 1, limit: -3 }); assert.strictEqual((await limitOf()).limit, 10);
   store.set(CFG, { v: 1, limit: 'many' }); lim = await limitOf(); assert(lim.limit === 250 && lim.isSet === false, 'a stored non-number is no setting: 250');
   store.set(CFG, { v: 1, limit: 90, by: 'Paul', at: 1760000000000 });
@@ -140,7 +147,7 @@ const limitOf = async () => (await post({ op: 'sandboxStatus', sandbox: true }))
   };
   r = await run(120, 'start-limit-120a'); assert(r.status === 200 && r.body.count === 120 && r.body.want === 120 && r.body.calls === 2, '120 = two calls: ' + JSON.stringify(r.body).slice(0, 160));
   assert.deepStrictEqual(offsets(), [[0, 100], [100, 20]]); assert.deepStrictEqual(JSON.parse(blobs.get(r.body.path).buf.toString('utf8')).receipts.map(x => x.receipt_id), NEWEST(120).map(x => x.receipt_id), 'the 120 newest, newest first');
-  assert(store.get('Charm_Sandbox/current').count === 120 && store.get('Charm_Sandbox/current').want === 120 && r.body.open < 120 && r.body.stream && r.body.stream.total === r.body.open, 'the stream plays the open ones of those 120');
+  assert(store.get('Charm_Sandbox/current').count === 120 && store.get('Charm_Sandbox/current').want === 120 && r.body.open === 120 && r.body.closed === 0 && r.body.shipped > 0 && r.body.stream && r.body.stream.total === 120, 'the stream plays all 120 (the shipped ones too: they count as open in the sandbox)');
   r = await run(30, 'start-limit-30aa'); assert(r.status === 200 && r.body.count === 30 && r.body.calls === 1, '30 = one call'); assert.deepStrictEqual(offsets(), [[0, 30]]);
   assert.strictEqual(JSON.parse(blobs.get(r.body.path).buf.toString('utf8')).receipts.length, 30);
   // same start again: the stored set, no call, whatever the number says now
@@ -150,6 +157,18 @@ const limitOf = async () => (await post({ op: 'sandboxStatus', sandbox: true }))
   r = await run(500, 'start-limit-500a'); assert(r.status === 200 && r.body.count === 500 && r.body.want === 500 && r.body.calls === 5 && r.body.callsToday === 5 && r.body.pullsToday === 1, '500 = five calls: ' + JSON.stringify(r.body).slice(0, 200));
   assert.deepStrictEqual(offsets().sort((a, b) => a[0] - b[0]), [[0, 100], [100, 100], [200, 100], [300, 100], [400, 100]]); assert.strictEqual(ledger().calls, 5);
   assert.deepStrictEqual(JSON.parse(blobs.get(r.body.path).buf.toString('utf8')).receipts.map(x => x.receipt_id), NEWEST(500).map(x => x.receipt_id), 'the 500 newest');
+  // SBX1000: 1000 = ten calls of 100 (offsets 0 … 900), STARTED 110 ms apart (Etsy allows about 10 requests a second per app), the 1000 newest, stored as one file
+  store.set('Charm_Sandbox/pulls', { day: todayKey(), pulls: 0, calls: 0, tokenRefreshes: 0, starts: [], claim: null });
+  r = await run(1000, 'start-limit-1000a'); assert(r.status === 200 && r.body.count === 1000 && r.body.want === 1000 && r.body.calls === 10 && r.body.callsToday === 10 && r.body.pullsToday === 1, '1000 = ten calls: ' + JSON.stringify(r.body).slice(0, 200));
+  { const asked = etsy.calls.slice().sort((a, b) => a.offset - b.offset);
+    assert.deepStrictEqual(asked.map(c => [c.offset, c.limit]), Array.from({ length: 10 }, (_, i) => [i * 100, 100]), 'ten pages of 100, offsets 0 to 900');
+    assert(asked.every((c, i) => c.at - asked[0].at >= i * Pull.STAGGER_MS - 10), 'page k starts k x ' + Pull.STAGGER_MS + ' ms after the first (timers may run late under load, never early): ' + asked.map(c => c.at - asked[0].at).join(','));
+    assert(asked[9].at - asked[0].at < 2500, 'and the last one is out inside 2.5 s: ' + (asked[9].at - asked[0].at) + ' ms'); assert.strictEqual(Pull.STAGGER_MS, 110, 'about 100-120 ms apart'); }
+  assert.deepStrictEqual(JSON.parse(blobs.get(r.body.path).buf.toString('utf8')).receipts.map(x => x.receipt_id), NEWEST(1000).map(x => x.receipt_id), 'the 1000 newest, newest first');
+  assert(r.body.stream && r.body.stream.total === r.body.open && r.body.open === 1000 - r.body.closed && r.body.closed === 0 && r.body.shipped > 0, 'every one of the 1000 plays (the shipped ones too): ' + JSON.stringify([r.body.open, r.body.closed, r.body.shipped]));
+  assert.strictEqual(ledger().calls, 10);
+  // a hand-written 1001 is read as 1000: the pull still brings 1000 in ten calls
+  store.set(CFG, { v: 1, limit: 1001 }); etsy.calls.length = 0; r = await pullOp('start-limit-1001a'); assert(r.status === 200 && r.body.count === 1000 && r.body.want === 1000 && r.body.calls === 10 && etsy.calls.length === 10, '1001 is held to 1000: ' + JSON.stringify(r.body).slice(0, 160));
   // a missing document is 250 exactly as before
   store.delete(CFG); etsy.calls.length = 0; r = await pullOp('start-limit-none1'); assert(r.status === 200 && r.body.count === 250 && r.body.calls === 3, 'no setting = 250'); assert.deepStrictEqual(offsets(), [[0, 100], [100, 100], [200, 50]]);
   // a shop with fewer orders than asked brings what it has
@@ -202,5 +221,5 @@ const limitOf = async () => (await post({ op: 'sandboxStatus', sandbox: true }))
   assert(!/repoToken|password|tok-fresh/.test(JSON.stringify(store.get(CFG))), 'no token or secret in the setting');
   assert(!leaked.includes('test-secret'), 'no Etsy secret stored');
   console.warn = realWarn; Module._load = realLoad;
-  console.log(`sandbox pull limit OK: default 250 (3 calls), held to ${Pull.MIN_WANT}-${Pull.MAX_WANT} (up to ${Pull.pagesFor(Pull.MAX_WANT)} calls), write needs the repo token, survives the wipe, ${pulls.length + 4} pulls checked`);
+  console.log(`sandbox pull limit OK: default 250 (3 calls), held to ${Pull.MIN_WANT}-${Pull.MAX_WANT} (up to ${Pull.pagesFor(Pull.MAX_WANT)} calls, started ${Pull.STAGGER_MS} ms apart), write needs the repo token, survives the wipe, ${pulls.length + 4} pulls checked`);
 })().catch(e => { console.warn = realWarn; console.error(e); process.exit(1); });
