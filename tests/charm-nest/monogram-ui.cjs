@@ -125,6 +125,15 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
         }
         return r;
       };
+      // (the page builds a word that breaks a rule through the engine's own search first, Engine.autoFit, and asks the AI only if that still fails: the verdict is staged there too, the same for every word; the engine's letters change, this test must not depend on them)
+      const ef = CharmNestMonogram.autoFit; if (ef) CharmNestMonogram.autoFit = function (l, o) {
+        const r = ef.apply(this, arguments);
+        if (r && r.ok && r.report && r.report.metrics && Array.isArray(r.report.metrics.violations)) {
+          const tag = l.left.letter + l.middle.letter + l.right.letter;
+          r.report.metrics = Object.assign({}, r.report.metrics, window.__violate && window.__violate.includes(tag) ? { violations: [{ rule: 'contacts', key: 'contacts', text: 'the left and middle letters are not held by one contact near the top and one near the bottom' }], distance: 3, ok: false } : { violations: [], ok: true });
+        }
+        return r;
+      };
       const ps = CNProgress.start; CNProgress.start = function (label) { window.__bars.push(String(label)); return ps.apply(this, arguments); };
       const mc = Pool.masterCharm; Pool.masterCharm = function (e, s) { window.__fetched.push(e.sku); return mc.apply(this, arguments); };
     }
@@ -190,7 +199,7 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
     check(await page.evaluate(() => CharmNestMonogramUI.widgets().length) === 12 && await page.evaluate(() => CharmNestMonogramUI.widgets().every(w => w.el && w.el.classList.contains('mw'))), 'three monogram lines mounted four times each (Engrave detail, Order window compact, each at phone width): 12 live widgets');
     check(await page.evaluate(() => CharmNestMonogramUI.isMonogram(Orders.rows().find(r => r.order.receiptId === '4200683017')) && !CharmNestMonogramUI.isMonogram(Orders.rows().find(r => r.order.receiptId === '4200900004')) && CharmNestMonogramUI.mountLine(document.createElement('div'), { rid: '4200900004' }) === null), 'a regular charm is no monogram line: isMonogram false, mountLine gives null (the caller keeps its own card)');
     let a = await read('4200683017');
-    check(a.state === 'ready' && a.d.length > 500 && a.ins.join('') === 'APV' && a.says === 'The buyer wrote A P V' && !a.saysHidden, 'APV: the preview is drawn from the cut geometry and the widget says plainly what the buyer wrote: "' + a.says + '"');
+    check(a.state === 'ready' && a.d.length > 500 && a.ins.join('') === 'APV' && a.saysHidden && a.says === '', 'APV: the preview is drawn from the cut geometry; the letters are the buyer\'s own, so the widget does not repeat the words the order\'s strip already shows');
     check(/^\d+\.\d × \d+\.\d mm · Gold$/.test(a.size) && a.asm === '' && a.msg === '' && !a.ok.text.length === false, 'one size line, in the line\'s metal, nothing else to say: "' + a.size + '"');
     const four = await Promise.all(Object.keys(CASES).map(k => read('4200683017', k)));
     check(four.every(x => x.state === 'ready' && x.ins.join('') === 'APV' && x.d === a.d && x.size === a.size) && four[1].saysHidden && four[1].mode === 'compact' && four[0].mode === 'detail', 'all four mounts show ONE state (same picture, letters, size); the compact one keeps the buyer\'s line to itself until it matters');
@@ -203,7 +212,7 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
     check(rs.ok && rs.connected && rs.outer === 1 && rs.holes >= 1 && rs.kept >= (REAL_OK ? 0.5 : 0.9), 'ONE connected charm with its counters: ' + JSON.stringify({ outer: rs.outer, holes: rs.holes, kept: rs.kept }));
     check(rs.slots === 'left:A middle:P right:V' && rs.mid >= 1.05 * rs.side, `the letters sit Left A, Middle P, Right V and the centre is bigger than the sides (${rs.mid.toFixed(1)} vs ${rs.side.toFixed(1)} pt, x${(rs.mid / rs.side).toFixed(2)})`);
     a = await read('4202783520');
-    check(a.ins.join('') === 'OSR' && a.says === 'The buyer wrote O S R' && a.state === 'ready' && /Silver$/.test(a.size), 'OSR: "' + a.says + '", ' + a.size);
+    check(a.ins.join('') === 'OSR' && a.saysHidden && a.state === 'ready' && /Silver$/.test(a.size), 'OSR: "' + a.says + '", ' + a.size);
     await shot('mw-1440-ready'); await caseShots('ready', T3); HH.ready = [await heightOf('4200683017'), await heightOf('4200683017', 'cphone')];
     // the picture is the CUT piece of Paul's real script letters: the real glyph outlines (thousands of points, block letters never reach it), filled with the order's metal, a thin cut line round the outline and every counter, centred with an even margin
     if (REAL_OK) {
@@ -224,7 +233,7 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
         for (let i = 0; i < warns.length; i++) await pasteWord(TRIO[i][1], warns[i][0]);
         for (let i = 0; i < warns.length; i++) await until(TRIO[i][1], r => !r.spin && r.state === 'ready' && r.ins.join('') === warns[i][0], 'the warning word', 40000);
         const wr = await Promise.all(warns.map((x, i) => read(TRIO[i][1])));
-        check(wr.every((r, i) => r.state === 'ready' && r.note.includes(warns[i][1].charAt(0).toUpperCase() + warns[i][1].slice(1))), 'a word whose join has a warning shows it, once, beside the size: ' + wr.map((r, i) => warns[i][0] + ' "' + r.note.slice(0, 120) + '"').join(' | '));
+        check(wr.every((r, i) => r.state === 'ready' && (r.note.includes(warns[i][1].charAt(0).toUpperCase() + warns[i][1].slice(1)) || (/overlap|joined|close together|inner openings|too wide|too high|hidden|balance|differ/.test(r.note) && !/\d/.test(r.note)))), 'a word whose join has a warning shows it (as the engine wrote it, or in plain words when the engine states a rule with numbers), once, beside the size: ' + wr.map((r, i) => warns[i][0] + ' "' + r.note.slice(0, 120) + '"').join(' | '));
         await caseShots('warning', T3.slice(0, warns.length), ['detail', 'compact']); HH.warning = [await heightOf(TRIO[0][1]), await heightOf(TRIO[0][1], 'cphone')];
         for (let i = 0; i < warns.length; i++) await pasteWord(TRIO[i][1], TRIO[i][0]);
         for (let i = 0; i < warns.length; i++) await until(TRIO[i][1], r => !r.spin && r.state === 'ready' && r.ins.join('') === TRIO[i][0], 'the buyer\'s letters again', 40000);
@@ -294,7 +303,7 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
     const nbq = (await builds()).length;
     await typeIn('4200683017', 1, 'Y');
     a = await until('4200683017', r => r.state === 'error', 'the missing-letter message');
-    check(a.kind === 'missing' && /Middle alphabet has no “Y”/.test(a.msg) && /MONOGRAM_MID_Y/.test(a.msg) && /Monogram Mid lacks Y/.test(a.msg), 'a missing letter is a plain message naming it: "' + a.msg + '"');
+    check(a.kind === 'missing' && /Middle alphabet has no “Y”/.test(a.msg) && /Monogram Mid has no Y yet/.test(a.msg) && !/MONOGRAM_MID_Y/.test(a.msg), 'a missing letter is a plain message naming it: "' + a.msg + '"');
     check(!a.spin && a.aria === 'false' && a.approve.disabled && !(await builds()).slice(nbq).some(x => x[1] === 'Y') && (await read('4200683017', 'compact')).kind === 'missing', 'no spinner, Approve waits, nothing built with the missing letter (the compact widget says it too): ' + JSON.stringify([a.spin, a.aria, a.approve, (await builds()).slice(nbq)]));
     await shot('mw-1440-missing'); await caseShots('missing', ['4200683017']);
     st.docs.set('Charm_Master_Index/MONOGRAM_MID_Y', midY); await reloadMaster();          // (the letter is back: only the message of the missing one was wanted)
@@ -493,7 +502,7 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
     dropFam('RIGHT'); await reloadMaster(); await refreshAll();
     a = await until(SET, r => r.state === 'error' && r.kind === 'setup', 'the setup state');
     const ab = await page.evaluate(sel => { const m = document.querySelector(sel + ' [data-mw-msg]'); return { text: m.textContent.replace(/\s+/g, ' '), selects: m.querySelectorAll('select').length, opts: [...m.querySelectorAll('select')[2].options].map(o => o.textContent) }; }, W(SET));
-    check(/No Right alphabet found/.test(ab.text) && ab.selects === 3 && ab.opts.length === 3 && a.approve.disabled && !a.spin, 'with no Right alphabet in the library the widget says so, with the three pickers: ' + ab.text.slice(0, 150));
+    check(/Choose the Right alphabet\./.test(ab.text) && !/name them like/.test(ab.text) && ab.selects === 3 && ab.opts.length === 3 && a.approve.disabled && !a.spin, 'with no Right alphabet in the library the widget says so, with the three pickers: ' + ab.text.slice(0, 150));
     await shot('mw-1440-setup-partial'); await caseShots('setup', [SET], ['detail', 'compact']);
     dropFam('LEFT'); dropFam('MID'); await reloadMaster(); await refreshAll();
     a = await until(SET, r => r.state === 'error' && /not in the charm library yet/.test(r.msg), 'the setup state with no alphabet');
@@ -514,7 +523,7 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
     await page.waitForFunction(n => window.__fetched.slice(n).includes('FANCY_THREE_V'), nf, { timeout: 30000 }).catch(() => {}); a = await ready(SET, 30000);
     const f2 = (await fetched()).slice(nf);
     check(!a.spin && ['FANCY_ONE_A', 'FANCY_TWO_P', 'FANCY_THREE_V'].every(s => f2.includes(s)), 'the chosen alphabets are used for the letters: ' + [...new Set(f2)].join(' '));
-    check(await page.evaluate(() => JSON.stringify(S.settings.mono) === JSON.stringify({ left: 'FANCY_ONE_{L}', middle: 'FANCY_TWO_{L}', right: 'FANCY_THREE_{L}' })), 'and the choice is kept in the settings');
+    check(await page.evaluate(() => { const m = S.settings.mono || {}; return m.left === 'FANCY_ONE_{L}' && m.middle === 'FANCY_TWO_{L}' && m.right === 'FANCY_THREE_{L}'; }), 'and the choice is kept in the settings (beside the AI section\'s day counters, which the same settings object holds)');
     // everything back: Monogram Left / Mid / Right again, chosen "Automatic"
     for (const [k, v] of keep) st.docs.set(k, v);
     for (const slot of ['left', 'middle', 'right']) await page.evaluate(slot => Engrave.monogramUI().setAlphabet(slot, ''), slot);

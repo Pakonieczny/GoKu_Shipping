@@ -2365,7 +2365,7 @@ details.masterHist>summary{white-space:nowrap}
 .egMonoRow .egMonoMedia{grid-area:media;align-self:start;display:block;width:calc(var(--thumb-size,88px) * 2 + 8px);max-width:100%;min-width:0}   /* (the width of the engraved row's two pictures: rows line up; a wide charm fills it) */
 #engraveView .egMonoRow .egMonoMedia .mwThumb{max-width:none;width:100%;height:var(--thumb-size,88px);aspect-ratio:auto;padding:7% 6%}
 .egMonoRow .egMonoLetters{font:600 17px/1.3 var(--serif);letter-spacing:.3em;white-space:nowrap}
-.egMonoRow [data-stage][data-s="busy"]{color:var(--ink45)}
+.egMonoRow [data-stage][data-s="busy"]{color:var(--ink45)}.egMonoRow[data-state="ready"] [data-stage]{display:none!important}   /* (REV: "Ready to approve" is what every row of Placements is: said only when a row is something else) */
 .placeView.egMonoView{grid-template-columns:minmax(0,1fr) clamp(290px,31%,440px);grid-template-areas:"main mail"}
 .egMonoView>.pvMain{gap:14px}
 .egMonoView .egMonoHost{min-width:0}
@@ -3202,7 +3202,7 @@ dialog.cuAsk{width:min(440px,94vw)}.cuAskP{margin:0 0 10px;line-height:1.45}.cuA
 .mwBody{--mwb:54px;--mwl:17px;display:grid;grid-template-columns:minmax(0,1fr);gap:14px;min-width:0;justify-items:center}
 .mwPic{position:relative;box-sizing:border-box;width:100%;max-width:320px;aspect-ratio:4/3;background:#fff;border:1px solid var(--line);border-radius:12px;display:grid;place-items:center;overflow:hidden}
 .mwArt{position:absolute;inset:0;display:grid;place-items:center;padding:6%}.mwArt svg{width:100%;height:100%;display:block;transition:opacity .2s ease}.mwPic.busy .mwArt svg{opacity:.25}
-.mwHint{padding:12px;text-align:center;color:var(--ink45);font:13px/1.45 var(--sans)}
+.mwHint{padding:12px;text-align:center;color:var(--ink70);font:13px/1.45 var(--sans)}
 .mwBusy{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;padding:0 12px;text-align:center;font:600 12px/1.3 var(--sans);color:var(--ink70);background:rgba(255,255,255,.55);text-shadow:0 0 6px #fff,0 0 2px #fff}
 .mwBusy i{flex:none;width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite}
 .mwBar{display:block;position:relative;width:58%;max-width:150px;height:3px;border-radius:2px;background:var(--line2);overflow:hidden}.mwBar b{display:block;height:100%;width:0;background:var(--gold);border-radius:2px;transition:width .25s ease}
@@ -3212,15 +3212,16 @@ dialog.cuAsk{width:min(440px,94vw)}.cuAskP{margin:0 0 10px;line-height:1.45}.cuA
 .mwLt{display:grid;gap:5px;justify-items:center;font:600 10px/12px var(--mono);color:var(--ink45);text-transform:uppercase;letter-spacing:.1em}
 .mwLt input{box-sizing:border-box;width:var(--mwb);height:var(--mwb);text-align:center;font:600 26px var(--serif);text-transform:uppercase;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);padding:0;caret-color:var(--gold)}
 .mwLt[data-slot=middle] input{width:calc(var(--mwb) + 10px);height:calc(var(--mwb) + 10px);font-size:32px;border-color:var(--goldLine)}
-.mwLt input:focus{outline:2px solid var(--ink);outline-offset:1px}.mwLt input:disabled{opacity:.7;background:var(--card2)}.mwLt input[aria-invalid=true]{border-style:dashed;border-color:var(--goldLine);background:var(--card2)}
-.mwSw{flex:none;width:26px;height:26px;margin-bottom:calc(var(--mwl) + var(--mwb) / 2 - 13px);border:1px solid transparent;border-radius:50%;background:transparent;color:var(--ink45);display:grid;place-items:center;padding:0;cursor:pointer}
+.mwLt input:hover:not(:disabled):not(:focus){border-color:var(--gold2)}.mwLt input::selection{background:var(--goldSoft);color:var(--ink)}.mwLt input:focus{outline:2px solid var(--ink);outline-offset:1px}.mwLt input:disabled{opacity:.7;background:var(--card2)}.mwLt input[aria-invalid=true]{border-style:dashed;border-color:var(--goldLine);background:var(--card2)}
+.mwSw{flex:none;width:26px;height:26px;margin-bottom:calc(var(--mwl) + var(--mwb) / 2 - 13px);border:1px solid transparent;border-radius:50%;background:transparent;color:var(--ink70);display:grid;place-items:center;padding:0;cursor:pointer}
 .mwSw:hover:not(:disabled){background:var(--paper2);color:var(--ink)}.mwSw:focus-visible{outline:2px solid var(--ink);outline-offset:1px}.mwSw:disabled{opacity:.35;cursor:default}.mwRot{margin-left:4px}
-.mwSays,.mwLine{margin:0;font:12.5px/1.45 var(--sans);color:var(--ink70)}.mwSays{font-size:12px;color:var(--ink45)}.mwSays b{color:var(--ink70);font-weight:700;letter-spacing:.04em}
-.mwLine.warn,.mwNote.warn{color:var(--clay)}.mwNote{color:var(--ink45)}
+.mwSays,.mwLine{margin:0;font:12.5px/1.45 var(--sans);color:var(--ink70)}.mwSays{font-size:12px}.mwSays b{color:var(--ink);font-weight:700;letter-spacing:.04em}
+.mwLine.warn,.mwNote.warn{color:var(--clay)}.mwNote{color:var(--ink70)}
+.mwSr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .mwLink{appearance:none;border:0;background:none;padding:0;margin:0;font:600 12px var(--sans);color:var(--slate);cursor:pointer;text-decoration:underline;text-underline-offset:2px}.mwLink:hover{color:var(--ink)}.mwLink:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:3px}
 .mwMsg{display:grid;gap:6px;justify-items:start;box-sizing:border-box;width:100%;padding:9px 12px;border-left:3px solid var(--clay);background:var(--claySoft);border-radius:0 9px 9px 0;font:13px/1.45 var(--sans);color:var(--ink);text-align:left}
 .mwMsg[data-kind=letters]{border-left-color:var(--gold2);background:var(--goldSoft)}.mwMsg small{font-size:12px;color:var(--ink70)}
-.mwAbcs{display:flex;flex-wrap:wrap;gap:8px}.mwAbcs label{display:grid;gap:3px;font:600 10px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--ink45)}.mwAbcs select{font:600 12.5px var(--sans);letter-spacing:0;text-transform:none;padding:5px 7px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);max-width:190px}
+.mwAbcs{display:flex;flex-wrap:wrap;gap:8px}.mwAbcs label{flex:1 1 200px;min-width:0;display:grid;gap:3px;font:600 10px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--ink45)}.mwAbcs select{font:600 12.5px var(--sans);letter-spacing:0;text-transform:none;padding:5px 7px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);width:100%;max-width:none;box-sizing:border-box}
 .mwAct{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;min-height:34px}.mwAct .btn{padding:8px 22px}
 .mwOk{display:inline-flex;align-items:center;gap:6px;font:600 13px var(--sans);color:var(--sage)}
 @container mw (max-width:360px){.mwBody{--mwb:48px}.mwLtrs{gap:4px}}
@@ -3228,6 +3229,8 @@ dialog.cuAsk{width:min(440px,94vw)}.cuAskP{margin:0 0 10px;line-height:1.45}.cuA
 .mw[data-mode=detail] .mwBody{grid-template-columns:minmax(200px,300px) minmax(0,1fr);gap:26px;align-items:center;justify-items:stretch}
 .mw[data-mode=detail] .mwPic{max-width:none}.mw[data-mode=detail] .mwSide{justify-items:start;text-align:left}.mw[data-mode=detail] .mwAct{justify-content:flex-start}
 .mw[data-mode=detail] .mwBody{--mwb:58px}}
+/* (REV) the Engrave detail has the room: the picture a person checks the joins on is 360 px wide from a 660 px host, not 300 */
+@container mw (min-width:660px){.mw[data-mode=detail] .mwBody{grid-template-columns:minmax(240px,360px) minmax(0,1fr)}}
 /* compact: the Order details window (one tight block: the picture 84 px, small letter boxes) */
 .mw[data-mode=compact] .mwBody{--mwb:36px;--mwl:0px;grid-template-columns:auto minmax(0,1fr);gap:6px 12px;align-items:center;justify-items:start}
 .mw[data-mode=compact] .mwPic{width:84px;max-width:none;border-radius:9px}.mw[data-mode=compact] .mwSide{display:contents}
@@ -3242,12 +3245,18 @@ dialog.cuAsk{width:min(440px,94vw)}.cuAskP{margin:0 0 10px;line-height:1.45}.cuA
 @container mw (max-width:300px){.mw[data-mode=compact] .mwBody{grid-template-columns:minmax(0,1fr);justify-items:center}.mw[data-mode=compact] .mwLtrs,.mw[data-mode=compact] .mwPic{grid-column:1;grid-row:auto}.mw[data-mode=compact] .mwPic{width:96px}}
 /* compact keeps one height (the Order window never jumps): three single-line slots reserved even when empty (≤176 px wide-ish layout, ≤270 px stacked); a plain message replaces them and may be taller */
 .mw[data-mode=compact] .mwSays,.mw[data-mode=compact] .mwLine{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:100%;box-sizing:border-box;height:18px;line-height:18px}
-.mw[data-mode=compact] .mwSays[hidden],.mw[data-mode=compact] .mwLine[hidden]:not(.mwNote){display:block!important;visibility:hidden}
+.mw[data-mode=compact]:not([data-msg]) .mwSays[hidden],.mw[data-mode=compact]:not([data-msg]) .mwLine[hidden]:not(.mwNote){display:block!important;visibility:hidden}   /* (REV: not while a message stands in their place: they were still kept as 36 px of blank above it) */
 .mw[data-mode=compact] .mwNote{display:none!important}
 .mw[data-mode=compact] .mwAsm{display:flex;align-items:baseline;gap:8px}.mw[data-mode=compact] .mwAsm>span{min-width:0;overflow:hidden;text-overflow:ellipsis}.mw[data-mode=compact] .mwAsm .mwLink{flex:none}
 .mw[data-mode=compact][data-msg] .mwSays,.mw[data-mode=compact][data-msg] .mwLine{display:none!important}
 .mw[data-mode=compact] .mwLtrs{align-self:center}
 .mw[data-mode=compact] .mwPic,.mw[data-mode=compact] .mwLtrs{order:1}.mw[data-mode=compact] [data-mw-size]{order:2}.mw[data-mode=compact] .mwAsm,.mw[data-mode=compact] .mwMsg{order:3}.mw[data-mode=compact] .mwAct{order:4}.mw[data-mode=compact] .mwSays{order:5}
+/* phone (REV): every press is 40 px or more. The swap / rotate glyphs keep their look and get a 40 px target that borrows the air around them (the row stays as wide as before); the compact letter boxes grow 36 -> 40; Approve, Change and Try again are 40 px tall; a link is a 40 px target */
+@media(max-width:760px){
+.mw .mwSw{width:40px;height:40px;margin-left:-7px;margin-right:-7px;margin-bottom:calc(var(--mwl) + var(--mwb) / 2 - 20px)}.mw .mwRot{margin-left:-3px}
+.mw .btn{min-height:40px}.mw[data-mode=detail] .mwLink{padding:13px 8px;margin:-13px -8px}
+.mw[data-mode=compact] .mwBody{--mwb:40px}.mw[data-mode=compact] .mwLt[data-slot=middle] input{width:46px;height:46px}
+.mw[data-mode=compact] .mwSw,.mw[data-mode=compact] .mwRot{width:40px;height:40px;margin-bottom:0}.mw[data-mode=compact] .mwAct{min-height:40px}}
 /* the list thumbnail of a monogram line (Engrave piece card) */
 .mwThumb{position:relative;display:grid;place-items:center;box-sizing:border-box;width:100%;max-width:var(--mw-px,104px);aspect-ratio:1;padding:9%;background:#fff;border:1px solid var(--line);border-radius:9px;overflow:hidden;color:var(--ink45)}
 .mwThumb svg{display:block;width:100%;height:100%}.engThumb>.mwThumb,.engSetPic>.mwThumb{max-width:none;height:100%;border:0;border-radius:0}
@@ -3665,7 +3674,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-monogram.js?v=20261015-mono1-monoui1-mx4"></script>
 <script src="charm-nest-monogram-fit.js?v=20261016-mx4"></script>
 <script src="charm-nest-monogram-edits.js?v=20261016-ed2"></script>
-<script src="charm-nest-monogram-ui.js?v=20261016-muw1"></script>
+<script src="charm-nest-monogram-ui.js?v=20261016-muw1-pol2"></script>
 <script src="charm-nest-pair.js?v=20261009-pr1-mi3-mi4-mi5-mi6-mi7-pm8-pm9-cg1-nk1-lm1-ko1-wo1-m2-m3-mc1"></script>
 <script src="charm-nest-pair-thumb.js?v=20261009-pt3-mi2-rlp1-rlp3-lm1"></script>
 <script src="charm-nest-pool-pieces.js?v=20261009-pp1-adv2-cg1"></script>

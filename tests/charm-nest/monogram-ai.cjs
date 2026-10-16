@@ -291,7 +291,7 @@ require.cache[require.resolve(clientPath)] = { id: clientPath, filename: clientP
       a = await until('4202783520', r => /Needs a person/.test(r.meta) && !r.spin, 'OSR needs a person', 40000);
       const osrCalls = await page.evaluate(() => window.__calls.filter(c => c.payload.letters.join('') === 'OSR'));
       check(osrCalls.length === 3 && osrCalls.map(c => c.payload.round).join() === '1,2,3', 'never more than 3 rounds for a word: exactly 3 calls, rounds 1, 2, 3 (' + osrCalls.length + ')');
-      check(/Needs a person: the left and middle letters are not held by one contact near the top and one near the bottom/.test(a.meta) && !/Assembled with AI/.test(a.meta) && a.state === 'check', 'the card says "Needs a person:" and names the limit: ' + a.meta);
+      check(/Needs a person: the left and middle letters are not joined at both the top and the bottom/.test(a.meta) && !/Assembled with AI/.test(a.meta) && a.state === 'check', 'the card says "Needs a person:" and names the limit: ' + a.meta);
       check(osrCalls[2].payload.history.length === 2 && osrCalls[1].payload.history.length === 1, 'the refused tries went to the model in the following rounds');
       check(a.approve.text === 'Approve' && !a.approve.disabled && a.again, 'a flagged card still has Approve, and a quiet "Improve again"');
       await clickApprove('4202783520'); a = await until('4202783520', r => r.approve.text === 'Approve anyway', 'confirm');

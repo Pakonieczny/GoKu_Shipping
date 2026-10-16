@@ -1681,7 +1681,7 @@
      "Initials: ASK" and refuses "Jane Doe"); a monogram bracelet with a name, two letters or four stays what it was. A capitalised three-letter word ("Amy", "Mom") is a name, not initials. */
   const MONO_TITLE = /(?:^|[^a-z])monograms?(?![a-z])/i;
   const MONO_OPTION = /initial|letter|monogram|personali[sz]ation|engraving text|custom text|\btext\b|\bname\b/i;
-  /* The reading of three letters out of what a buyer wrote ("A.P.V", "Initials: ASK", never "Jane Doe"): the same as CharmNestMonogram.lettersOf (charm-nest-monogram.js, which the Monograms tab uses), kept here in a few lines
+  /* The reading of three letters out of what a buyer wrote ("A.P.V", "Initials: ASK", never "Jane Doe"): the same as CharmNestMonogram.lettersOf (charm-nest-monogram.js, which the monogram widget uses), kept here in a few lines
      so this module, which the server's functions bundle, does not pull the geometry engine in with it; tests/charm-nest/custom-monogram.cjs reads 60 strings both ways and they must agree. */
   const MONO_LABEL = new Set(("initials initial monogram monograms monogrammed letters letter please thanks thank personalization personalisation personalized personalised custom customized engrave engraved engraving charm charms necklace name names text order these this with using hello kindly request write make want need like").split(" "));
   const MONO_STOP = new Set("my is to of in on at by it me we us so as or if an no for the and are you our her his she him has was not but can its nor per pls plz".split(" "));

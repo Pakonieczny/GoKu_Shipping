@@ -129,6 +129,11 @@
       const r = E() && E().slotsOf ? E().slotsOf(fams, saved) : { ok: false, left: null, middle: null, right: null, sets: [], by: {}, why: "the monogram engine did not load" };
       return Object.assign({ fams }, r, { sig: ["left", "middle", "right"].map(k => r[k] ? r[k].base + "#" + r[k].count : "-").join("|") });
     }
+    /** "Choose the Right alphabet." / "Choose the Left and Middle alphabets." / "Choose the three alphabets." (the slots no family names yet) */
+    function chooseText(abc) {
+      const need = [["left", "Left"], ["middle", "Middle"], ["right", "Right"]].filter(x => !abc[x[0]]).map(x => x[1]);
+      return need.length === 3 || !need.length ? "Choose the three alphabets." : `Choose the ${need.join(" and ")} alphabet${need.length > 1 ? "s" : ""}.`;
+    }
     function setAlphabet(slot, base) {
       const set = d.settings(), next = Object.assign({}, set.mono || {}); if (base) next[slot] = base; else delete next[slot];
       set.mono = next; try { d.saveSettings(); } catch (_) { /* kept for this session */ }
@@ -139,7 +144,7 @@
     const skuFor = (fam, letter) => fam.base.replace(/\{[LN]\}/, letter);
     function missing(slot, letter, abc) {
       const fam = abc[slot], err = new Error(`The ${slot === "middle" ? "Middle" : slot === "left" ? "Left" : "Right"} alphabet has no “${letter}”`);
-      err.kind = "missing"; err.help = fam ? `${fam.name} lacks ${fam.missing.join(" ")} · add ${skuFor(fam, letter)} to the charm library` : "";
+      err.kind = "missing"; err.help = fam ? `${fam.name} has no ${letter} yet. Add it to the library, or type another letter.` : "";
       return err;
     }
     async function glyph(slot, letter, abc) {
@@ -250,6 +255,24 @@
     const aiBusy = c => !!(c.ai && c.ai.state === "working");
     const flaggedOf = c => (c.status === "ready" && c.result ? violationsOf(c.result) : null) || [];       // (the rules the card's monogram still breaks: [] when none, or when the engine does not say)
     const limitText = left => String(left[0] || "").replace(/\.$/, "") + (left.length > 1 ? ` (+${left.length - 1} more)` : "");
+    /** The engine states a broken rule with its numbers and limits (and hands the AI exactly that); a person is told it in plain words. Display only: state().assembly.limit keeps the engine's text. */
+    const plainRule = t => {
+      t = String(t || "").trim().replace(/\.$/, "");
+      const pair = /(left and middle|middle and right) letters/.exec(t);
+      if (/not held by one contact/.test(t)) return `the ${pair ? pair[1] : "neighbouring"} letters are not joined at both the top and the bottom`;
+      if (/centre letter lies/.test(t)) return "the middle letter overlaps its neighbours too much";
+      if (/letter lies .* inside/.test(t)) return "the letters overlap too much";
+      if (/closer than .* without touching/.test(t)) return "some strokes run very close together without touching";
+      if (/inner openings/.test(t)) return "a letter's inner openings are too closed";
+      if (/as wide as it is high|overall width \/ height/.test(t)) return "the monogram is too wide or too narrow for its height";
+      if (/differ .* in ink height/.test(t)) return "the two side letters differ too much in height";
+      if (/stands .* above the centre|in ink height/.test(t)) return "a side letter sits too high or too low next to the middle one";
+      if (/in width/.test(t)) return "the letter widths are out of balance";
+      if (/outline lies outside|of its width beside the centre/.test(t)) return "a side letter is mostly hidden behind the middle one";
+      return null;
+    };
+    const plainLimit = t => { const m = /^(.*?)( \(\+\d+ more\))?$/.exec(String(t || "")); return (plainRule(m[1]) || m[1]) + (m[2] || ""); };
+    const plainNote = t => { const p = plainRule(t); return p ? cap(p) + "." : String(t || ""); };
     const paintFirst = () => new Promise(r => { const raf = root.requestAnimationFrame; if (typeof raf === "function") raf.call(root, () => setTimeout(r, 0)); else setTimeout(r, 0); });
     const callAi = () => !!(d.assist || d.agentCall || (root.CN && root.CN.agentCall));
     const aiOn = () => { const m = (d.settings() || {}).mono; return !(m && m.ai === "off") && d.ai !== false; };
@@ -413,7 +436,7 @@
       // a real failure (a missing letter, a file that did not load, letters that cannot join, no alphabets, an approval that did not save)
       let error = null;
       if (c.status === "error" && c.err) error = c.err;
-      else if (c.status === "setup") { const abc = alphabets(); error = { kind: "setup", text: !abc.fams.length ? "The monogram alphabets are not in the charm library yet." : cap(abc.why || "Choose the three alphabets") + ".", help: !abc.fams.length ? "Add one design per letter in Master: Monogram_Left_A to Z, Monogram_Mid_A to Z and Monogram_Right_A to Z." : "" }; }
+      else if (c.status === "setup") { const abc = alphabets(); error = { kind: "setup", text: !abc.fams.length ? "The monogram alphabets are not in the charm library yet." : chooseText(abc), help: !abc.fams.length ? "Add one design per letter in Master: Monogram_Left_A to Z, Monogram_Mid_A to Z and Monogram_Right_A to Z." : "Pick them once; the choice is kept." }; }
       else if (c.status === "ready" && c.err && c.err.kind === "save") error = c.err;
       let message = settled || sent ? null : error;
       if (!message && state === "letters" && !c.draft) {
@@ -472,12 +495,12 @@
         + `<div class="mwSide"><div class="mwLtrs" role="group" aria-label="The three letters">`
         + SLOTS.map(([slot, label], i) => (i ? `<button type="button" class="mwSw" data-mw-swap="${i - 1}" aria-label="Swap the ${slotName(i - 1)} and ${label} letters" title="Swap ${slotName(i - 1)} and ${label}">${ICON_SWAP}</button>` : "")
           + `<label class="mwLt" data-slot="${slot}"><input data-mw-letter="${i}" maxlength="2" inputmode="text" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="${label} letter"><span>${label}</span></label>`).join("")
-        + `<button type="button" class="mwSw mwRot" data-mw-rotate aria-label="Rotate the letters" title="Rotate the letters">${ICON_ROT}</button></div>`
+        + `<button type="button" class="mwSw mwRot" data-mw-rotate aria-label="Move the first letter to the end" title="Move the first letter to the end">${ICON_ROT}</button></div>`
         + `<p class="mwSays" data-mw-says></p><p class="mwLine" data-mw-size></p>`
         + `<p class="mwLine mwAsm" data-mw-assembly hidden><span></span> <button type="button" class="mwLink" data-mw-again hidden title="Ask the AI to adjust the letters once more">Improve again</button></p>`
         + `<p class="mwLine mwNote" data-mw-note hidden></p><div class="mwMsg" data-mw-msg hidden></div>`
-        + `<div class="mwAct"><button type="button" class="btn sage${small}" data-mw-approve disabled>Approve</button><span class="mwOk" data-mw-approved hidden>${ICON_OK}<span></span></span>`
-        + `<button type="button" class="btn ghost${small}" data-mw-change hidden>Change</button><button type="button" class="mwLink" data-mw-sheet hidden>Metal · Send to Sheet <span aria-hidden="true">→</span></button></div></div></div>`;
+        + `<span class="mwSr" role="status" aria-live="polite" data-mw-live></span><div class="mwAct"><button type="button" class="btn sage${small}" data-mw-approve disabled>Approve</button><span class="mwOk" data-mw-approved hidden>${ICON_OK}<span></span></span>`
+        + `<button type="button" class="btn ghost${small}" data-mw-change hidden>Change</button><button type="button" class="mwLink" data-mw-sheet hidden title="Choose the metal and send it to a sheet">Send to Sheet <span aria-hidden="true">→</span></button></div></div></div>`;
     }
     function msgHtml(m) {
       if (!m) return "";
@@ -508,7 +531,7 @@
       if (R.art._shown !== art) { R.art.innerHTML = art; R.art._shown = art; }
       const busy = !!st.busy || st.state === "reading";
       R.pic.classList.toggle("busy", busy); R.pic.setAttribute("aria-busy", busy ? "true" : "false"); R.spin.hidden = !busy; R.spin.dataset.busy = st.busy;
-      const tx = st.busy === "saving" ? "Saving…" : st.busy === "ai" ? (st.round ? `Assembling with AI · round ${st.round} of ${AI_ROUNDS}…` : "Checking…") : st.busy === "fitting" ? "Fitting…" : st.state === "reading" ? "Reading the letters…" : "Making the monogram…";
+      const tx = st.busy === "saving" ? "Saving…" : st.busy === "ai" ? (st.round ? `Assembling with AI · round ${st.round} of ${AI_ROUNDS}…` : "Checking the monogram…") : st.busy === "fitting" ? "Fitting to the size…" : st.state === "reading" ? "Reading the letters…" : "Making the monogram…";
       if (R.spinTx.textContent !== tx) R.spinTx.textContent = tx;
       const pct = st.busy === "building" && st.prog ? Math.round(100 * st.prog.done / st.prog.total) : st.busy === "ai" && st.round ? Math.round(100 * (st.round - 0.5) / AI_ROUNDS) : null;
       R.bar.classList.toggle("ind", pct == null); if (pct != null) { R.bar.firstChild.style.width = pct + "%"; R.bar.setAttribute("aria-valuenow", String(pct)); } else { R.bar.firstChild.style.width = ""; R.bar.removeAttribute("aria-valuenow"); }
@@ -519,24 +542,24 @@
       const seen = st.buyer.letters ? spaced(st.buyer.letters.join("")) : st.buyer.words;
       const says = seen ? `The buyer wrote <b>${esc(seen)}</b>` : "The buyer wrote nothing";
       if (R.says._shown !== says) { R.says.innerHTML = says; R.says._shown = says; }
-      R.says.hidden = st.message && st.message.kind === "letters" ? true : v.mode === "compact" && st.state !== "letters" && !(st.buyer.letters && st.buyer.letters.join("") !== st.letters.join(""));      // (an unreadable order's message says what the buyer wrote already)
+      R.says.hidden = st.message && st.message.kind === "letters" ? true : st.state !== "letters" && !(st.buyer.letters && st.buyer.letters.join("") !== st.letters.join(""));      // (an unreadable order's message says what the buyer wrote already; the order's own words stand in the strip above the widget, so the line is only for letters that differ from them)
       // ONE size line
       const seg = []; if (st.sizeMm) { seg.push(`${mm1(st.sizeMm[0])} × ${mm1(st.sizeMm[1])} mm`); if (st.metal) seg.push(TONES[st.metal][2]); }
       if (st.fit && st.sizeMm) seg.push(st.fit.applied ? `scaled to the buyer’s ${mmTxt(st.fit.maxWidthMm)} mm` : `within the buyer’s ${mmTxt(st.fit.maxWidthMm)} mm`);
       const sz = seg.join(" · "); if (R.size.textContent !== sz) R.size.textContent = sz; R.size.hidden = !sz;
       // ONE calm line about the assembly, and one quiet note (a letter refused, the first thing the engine warns about, how to replace an approved monogram)
-      const as = st.assembly, line = !as.status ? "" : as.status === "assembled" ? `Assembled with AI: ${as.why}` : `Needs a person: ${as.limit}${as.detail ? " " + as.detail : ""}`;
+      const as = st.assembly, line = !as.status ? "" : as.status === "assembled" ? `Assembled with AI: ${as.why}` : `Needs a person: ${plainLimit(as.limit)}${as.detail ? ". " + as.detail : ""}`;
       const unl = st.unlocked && !st.dirty && st.approved && !st.approved.sent ? "Change a letter to replace the approved monogram." : "";
-      const note = st.hint || unl || st.notes[0] || "", noteWarn = !!st.hint || (!!st.notes[0] && note === st.notes[0]);
+      const n0 = st.notes[0] ? plainNote(st.notes[0]) : "", note = st.hint || unl || (line ? "" : n0) || "", noteWarn = !!st.hint || (!!n0 && note === n0);
       if (v.mode === "compact") {      // compact: the Order window must not jump, so the assembly line, the hint and the warning share ONE single-line slot (the full text is its title) and says / size / slot keep their height when empty
-        const pick = st.hint ? { tx: st.hint, warn: true, status: "" } : line ? { tx: line, warn: as.status !== "assembled", status: as.status } : unl ? { tx: unl, warn: false, status: "" } : st.notes[0] ? { tx: st.notes[0], warn: true, status: "" } : null;
+        const pick = st.hint ? { tx: st.hint, warn: true, status: "" } : line ? { tx: line, warn: as.status !== "assembled", status: as.status } : unl ? { tx: unl, warn: false, status: "" } : n0 ? { tx: n0, warn: true, status: "" } : null;
         R.asm.hidden = !pick; R.asm.dataset.status = pick ? pick.status : ""; R.asm.classList.toggle("warn", !!pick && pick.warn);
-        const tx = pick ? pick.tx : ""; if (R.asmTx.textContent !== tx) R.asmTx.textContent = tx; R.asm.title = pick ? (pick.tx + (st.notes.length > 1 && !pick.status ? "\n" + st.notes.slice(1).join("\n") : "")) : "";
+        const tx = pick ? pick.tx : ""; if (R.asmTx.textContent !== tx) R.asmTx.textContent = tx; R.asm.title = pick ? (pick.tx + (st.notes.length > 1 && !pick.status ? "\n" + st.notes.slice(1).map(plainNote).join("\n") : "")) : "";
         R.again.hidden = !(st.again && !!line && !!pick && pick.status !== ""); R.note.hidden = true;
         R.size.title = sz; R.says.title = R.says.textContent;
       } else {
         R.asm.hidden = !line; R.asm.dataset.status = as.status || ""; if (R.asmTx.textContent !== line) R.asmTx.textContent = line; R.asm.classList.toggle("warn", as.status !== "" && as.status !== "assembled"); R.again.hidden = !(st.again && !!line);
-        R.note.hidden = !note; if (R.note.textContent !== note) R.note.textContent = note; R.note.classList.toggle("warn", noteWarn); R.note.title = st.notes.length > 1 ? st.notes.join("\n") : "";
+        R.note.hidden = !note; if (R.note.textContent !== note) R.note.textContent = note; R.note.classList.toggle("warn", noteWarn); R.note.title = st.notes.length > 1 ? st.notes.map(plainNote).join("\n") : "";
       }
       // a message that needs a person
       const msg = st.message, mh = msg ? msg.kind + "|" + msg.text + "|" + (msg.help || "") : "";
@@ -544,8 +567,9 @@
       if (R.msg._shown !== mh) { R.msg.innerHTML = msgHtml(msg); R.msg._shown = mh; }
       // the actions: Approve, or Approved with a way to change it
       R.approve.hidden = settled || sent; R.approve.disabled = !can; R.approve.textContent = st.confirmed ? "Approve anyway" : st.dirty ? "Replace approved" : "Approve";
-      R.approve.title = can ? (st.confirmed ? "It still breaks a rule: put it on the order’s designs anyway" : "Put this monogram on the order’s designs") : (gate || (busy ? "Making the monogram…" : st.state === "letters" || st.state === "error" ? "Type the three letters first" : ""));
+      R.approve.title = can ? (st.confirmed ? "It still has the problem named here: put it on the order’s designs anyway" : "Put this monogram on the order’s designs") : (gate || (busy ? "Making the monogram…" : st.state === "letters" || st.state === "error" ? "Type the three letters first" : ""));
       R.ok.hidden = !(settled || sent); const okTx = (sent ? "On the sheet" : "Approved") + (st.approved ? " · Monogram " + st.approved.letters : ""); if (R.okTx.textContent !== okTx) R.okTx.textContent = okTx;
+      { const lv = sent ? "On the sheet." : settled ? "Approved." : busy || st.message ? "" : st.state === "ready" ? "The monogram is ready." : st.state === "check" ? "The monogram is ready, but it needs a person to look at it." : ""; if (R.live.textContent !== lv) R.live.textContent = lv; }   // (for a screen reader: what the picture and the buttons show)
       R.change.hidden = !(settled && st.locked);
       R.sheet.hidden = !(settled && v.sheetLink);
     }
@@ -610,7 +634,7 @@
       el.innerHTML = viewHtml(v.mode); v.el = el;
       const q = s => el.querySelector(s);
       v.r = { pic: q("[data-mw-pic]"), art: q(".mwArt"), spin: q("[data-mw-spin]"), spinTx: q("[data-mw-spin] span"), bar: q("[data-mw-bar]"), ins: [...el.querySelectorAll("[data-mw-letter]")], sw: [...el.querySelectorAll(".mwSw")], says: q("[data-mw-says]"), size: q("[data-mw-size]"),
-        asm: q("[data-mw-assembly]"), asmTx: q("[data-mw-assembly] > span"), again: q("[data-mw-again]"), note: q("[data-mw-note]"), msg: q("[data-mw-msg]"), approve: q("[data-mw-approve]"), ok: q("[data-mw-approved]"), okTx: q("[data-mw-approved] > span"), change: q("[data-mw-change]"), sheet: q("[data-mw-sheet]") };
+        asm: q("[data-mw-assembly]"), asmTx: q("[data-mw-assembly] > span"), again: q("[data-mw-again]"), note: q("[data-mw-note]"), msg: q("[data-mw-msg]"), approve: q("[data-mw-approve]"), ok: q("[data-mw-approved]"), okTx: q("[data-mw-approved] > span"), change: q("[data-mw-change]"), sheet: q("[data-mw-sheet]"), live: q("[data-mw-live]") };
       wireView(v); host.append(el);
     }
     /** Points a widget at a line (and builds what it shows): a line never made is made now; one made quietly for a thumbnail gets its AI check now that a person looks at it. */

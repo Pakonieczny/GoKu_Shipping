@@ -7955,12 +7955,12 @@ const Engrave = window.Engrave = (() => {
      detail card holds the monogram widget (CharmNestMonogramUI.mountLine, mode "detail") where an engraved piece's card holds the panel. There is no tab of its own. It is NEVER an Engrave job: nothing is stored, checkpointed
      or waited on for it; it is a small stand-in object (monoItemsNow) the lists and Back / Next carry, whose state is the widget service's (approved or not), so the order's other pieces, the approve guide and the counters see it. */
   let monoUI = null;
-  const MONO_OFF = { count: () => 0, mount() {}, refresh() {}, rows: () => [], status: () => null, onChange: () => () => {} };
+  const MONO_OFF = { count: () => 0, rows: () => [], status: () => null, onChange: () => () => {} };
   const MonoUI = () => {
     if (monoUI) return monoUI;
     monoUI = (window.CharmNestMonogramUI && window.CharmNestMonogram && window.CharmNestMonogramUI.make({
       doc: document, Engine: window.CharmNestMonogram, rows: () => Orders.rows(), skus: () => [...B.master.entries.keys()], Master, Pool, Geom: G, P, CustomSheet: window.CustomSheet,
-      itemOf: row => window.Review && Review.customItemFor ? Review.customItemFor(row.key, row) : null, settings: () => S.settings, saveSettings, toast, CNProgress: window.CNProgress, query: () => EG.q,
+      itemOf: row => window.Review && Review.customItemFor ? Review.customItemFor(row.key, row) : null, settings: () => S.settings, saveSettings, toast, CNProgress: window.CNProgress,
       changed: () => monoMoved()   // (an approval: drawn again a moment later, so the card that was approved is seen going up to Decided first: monoApproved)
     })) || MONO_OFF;
     try { if (monoUI.onChange) monoUI.onChange(() => monoMoved()); } catch (_) { /* no news of the monograms: the lists are drawn again with the page's own renders */ }
