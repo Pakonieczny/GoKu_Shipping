@@ -282,7 +282,7 @@ async function main() {
     if (want('R')) {
       const w = await mk({ locked: false }); const { page, srv } = w; const ORD = [FRESH(4196630851)];
       await seed(page, ORD); await startRun(page); await tabCustom(page);
-      await page.evaluate(() => { __kw.useReal = true; window.__etsy = []; const real = window.api; window.api = async function (fn, body, o) { if (body && body.op === 'customEtsySkuWrite') window.__etsy.push(Object.keys(body).filter(k => k !== 'sandbox').join()); return real.apply(this, arguments); }; });
+      await page.evaluate(() => { __kw.useReal = true; window.__etsy = []; const real = window.api; window.api = async function (fn, body, o) { if (body && body.op === 'customEtsySkuWrite') { window.__etsy.push(Object.keys(body).filter(k => k !== 'sandbox').sort().join()); return { ok: true, state: 'linked' }; } return real.apply(this, arguments); }; });   // (Etsy is a stand-in answer: nothing leaves this machine)
       await dropDesign(page, '4196630851'); await ready(page, 'off'); await settle(page);
       await page.click('#cuKeepSwitch');
       await page.waitForFunction(() => ['linked', 'saved', 'held'].includes(document.getElementById('cuKeep').dataset.phase), null, { timeout: 90000 }).catch(async e => { console.log('DBG', JSON.stringify(await page.evaluate(() => ({ phase: document.getElementById('cuKeep').dataset.phase, intents: CustomSheet.keepIntents().map(r => ({ state: r.state, wait: r.wait, why: r.why, fails: r.fails, sku: r.sku, repo: r.repo })), online: CN.S.cloud.ok, unlocked: CharmNestRepoLock.unlocked('upload'), rows: CustomSheet.keepOf(Object.keys(CustomSheet.entries())[0]) && CustomSheet.keepOf(Object.keys(CustomSheet.entries())[0]).rows }))).slice(0, 1800)); throw e; });
@@ -291,7 +291,7 @@ async function main() {
       const idx = srv.st.list('Charm_Master_Index').map(e => e._id);
       const sku = (await intents(page))[0].sku;
       ok(sku && idx.includes(sku), 'R: the design is in the (in-memory) master index under ' + sku);
-      ok(await page.evaluate(() => window.__etsy.length === 1 && /^op,rid/.test(window.__etsy[0])), 'R: the Etsy step was asked once');
+      ok(await page.evaluate(() => window.__etsy.length === 1 && window.__etsy[0] === 'listingId,op,rid'), 'R: the Etsy step was asked once, with the order and its listing only');
       const files = srv.st.list ? idx.length : 0;
       await reloadPage(page, ORD);
       await page.waitForFunction(() => Object.keys(CustomSheet.entries()).length > 0, null, { timeout: 20000 });

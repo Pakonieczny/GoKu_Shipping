@@ -118,7 +118,7 @@ async function main() {
       const cardControls = card.querySelectorAll('button, a[href], input, select, textarea, [role=button], .shs, .owShChip, .owShItem, [data-go], [data-pc]').length;
       for (const r of document.querySelectorAll('#owPcSum .owPcRow')) rows[r.dataset.piece] = { text: t(r), seals: models(r), btns: [...r.querySelectorAll('.pcAct button')].map(b => b.textContent.trim()).filter(x => x && x !== 'Hold'), titled: r.querySelectorAll('.seal [title], .sealRow[title], .seal[title]').length };
       const now = card.querySelector('.tlNowSeal');
-      return { pill: t(document.getElementById('owNow')), head: t(card.querySelector('.k')), line: t(card.querySelector('.t')), card: models(now), nCard: card.querySelectorAll('.tlNowSeal').length, cardText: t(card), cardControls, rows,
+      return { pill: document.getElementById('owNowCard').dataset.now || '', head: t(card.querySelector('.k')), line: t(card.querySelector('.t')), card: models(now), nCard: card.querySelectorAll('.tlNowSeal').length, cardText: t(card), cardControls, rows,
         titledAnywhere: [...document.querySelectorAll('#orderWin .seal, #orderWin .sealRow, #orderWin .tlNowSeal, #orderWin .tlSeal')].filter(n => n.hasAttribute('title') || n.querySelector('title')).length };
     });
     const dup = list => list.length !== new Set(list).size;

@@ -4,7 +4,7 @@
 //   - the team composer (paperclip, box, send, hint) stays inside its 380px column; the send button is not cut off
 //   - the Timeline's tab row holds no chip (no filters, no legend: the detail pane is gone), its own Now + rail strip is not drawn under the header's rail and nothing is drawn under the chart
 //   - a day column's head ("10:05 AM – 1:12 PM · 3") never runs into the next day
-//   - the header rail's step names are 8.5px, and a cancelled order's big stamp is not drawn over them
+//   - the header rail's step names read at 10 px or more (they were 8.5px before HDRHEAD: 12 px at most, by the window's width: clamp(8.5px, .8vw, 12px)), and a cancelled order's big stamp is not drawn over them
 //   - "Where it is now" shows the station's icon in its badge disc; a line of a 2-line order reads "line 1 of 2"
 //   - the field grid does not wrap a date; "Not on a sheet yet" sits in the middle of the plate area
 // Loopback only (the fake site, bridge-server.cjs); OrderTimeline.get answers from a fixture.
@@ -127,7 +127,7 @@ function fixture({ MAIN, CX, D }) {
       assert(send.r <= chat.r - 4 && cline.r <= chat.r, `the send button stays inside its column: send ${send.l}-${send.r}, column ends ${chat.r}`);
       assert(comp.sw <= comp.cw + 1, `the composer does not run wider than its column: ${comp.sw} > ${comp.cw}`);
       const rail = await page.evaluate(() => ({ fs: getComputedStyle(document.querySelector('#owRail .tlStop>span')).fontSize, clipped: [...document.querySelectorAll('#owRail .tlStop>span')].filter(s => s.scrollWidth > s.clientWidth + 1).map(s => s.textContent) }));
-      assert.equal(rail.fs, '8.5px', 'the header rail reads at 8.5px'); assert.deepEqual(rail.clipped, [], 'no step name is cut at 1280');
+      assert(parseFloat(rail.fs) >= 10 && parseFloat(rail.fs) <= 12, 'the header rail reads at ' + rail.fs + ' at 1280 (HDRHEAD: larger than the 8.5px it was)'); assert.deepEqual(rail.clipped, [], 'no step name is cut at 1280');
       await page.waitForFunction(() => !!document.querySelector('#owNowCard .tlNowSeal, #owNowCard .who i svg'), null, { timeout: 5000 });
       assert(await page.evaluate(() => !(document.querySelector('#owNowCard .tlNowSeal') && document.querySelector('#owNowCard .who'))), 'with a seal, no who · time line beside it (the seal says it)');
       // the facts are a glance line now (Paul, 12 Oct): the purchase time reads on one line in its chip, and in the Details list once that is open
@@ -186,5 +186,5 @@ function fixture({ MAIN, CX, D }) {
     }
   } finally { await browser.close(); srv.close(); }
   if (shots.length) console.log('  shots: ' + shots.join(', '));
-  console.log('  ✓ composer inside its column, no chip in the tab row and no pane under the chart, day heads inside their columns, rail names at 8.5px, cancelled without a stamp over them, badge icon, no "line 1 of 2" (the piece switch instead), one-line dates, centred empty plate');
+  console.log('  ✓ composer inside its column, no chip in the tab row and no pane under the chart, day heads inside their columns, rail names at 10 px or more, cancelled without a stamp over them, badge icon, no "line 1 of 2" (the piece switch instead), one-line dates, centred empty plate');
 })().then(() => console.log('Order view design OK')).catch(e => { console.error(e); process.exit(1); });

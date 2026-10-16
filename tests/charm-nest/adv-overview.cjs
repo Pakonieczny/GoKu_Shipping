@@ -110,7 +110,7 @@ async function main() {
     const team = await page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, thread: document.getElementById('owThread').textContent.replace(/\s+/g, ' ').trim(), shown: !document.getElementById('owPaneTeam').hidden }));
     check(team.shown && !/A-TEAM-MESSAGE/.test(team.thread), `while order ${C.rid} is read, the Team tab shows its thread, not the last order's: "${team.thread.slice(0, 90)}" under "${team.title}"`);
     hold();
-    await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe/.test(document.getElementById('owSub').textContent), null, { timeout: 15000 });
+    await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe/.test(document.getElementById('owMeta').textContent), null, { timeout: 15000 });
     check(!/A-TEAM-MESSAGE/.test(await page.evaluate(() => document.getElementById('owThread').textContent)), 'and once it is read');
     await page.unroute(/\/\.netlify\/functions\/charmNestLibrary/);
     await page.click('#owClose'); await closed();

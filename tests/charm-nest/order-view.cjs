@@ -61,13 +61,13 @@ async function main() {
     await settled();
     const v1 = await page.evaluate(() => { const d = document.getElementById('orderWin'), r = d.getBoundingClientRect();
       return { full: [Math.round(r.width), Math.round(r.height)], cls: d.className, title: document.getElementById('owTitle').textContent, tab: document.querySelector('.owTabsV [aria-selected=true]').dataset.owView,
-        info: !document.querySelector('.owVInfo').hidden, prev: !document.getElementById('owPrev').hidden, pos: document.getElementById('owPos').textContent, sub: document.getElementById('owSub').textContent,
+        info: !document.querySelector('.owVInfo').hidden, prev: !document.getElementById('owPrev').hidden, pos: document.getElementById('owPos').textContent, sub: document.getElementById('owMeta').textContent, head: document.querySelector('#orderWin .owHead').innerText,
         meta: [...document.querySelectorAll('#owMeta .m i')].map(i => i.textContent), note: !!document.getElementById('owNote') || !!document.querySelector('label[for=owNote]'), tabs: [...document.querySelectorAll('#orderWin [data-ow-tab]')].map(b => [...b.children].map(c => c.textContent.trim()).filter(Boolean).join(' ')),
         dialogs: document.querySelectorAll('dialog[open]').length }; });
     assert.deepEqual(v1.full, [1440, 900], 'it fills the screen'); assert.match(v1.cls, /owFull/);
     assert.equal(v1.title, `Order ${A.rid}`); assert.equal(v1.tab, 'info'); assert(v1.info, 'Overview in front');
     assert(v1.prev && /^\d+ of \d+$/.test(v1.pos), 'Previous and Next walk the Orders list: ' + v1.pos);
-    assert.match(v1.sub, /Hannah Whitford · 1 piece · ship by Oct/);
+    assert.match(v1.sub, /Hannah Whitford/); assert.match(v1.sub, /Oct \d+/); assert.doesNotMatch(v1.head, /Hannah|piece|ship by/, 'the header is the number and the controls (HDRHEAD: no buyer · pieces · ship by line)');
     assert(v1.meta.includes('Order') && v1.meta.includes('Buyer')); assert.equal(v1.note, false, 'no Order notes box in the view (5 Oct 2026)');
     assert.deepEqual(v1.tabs, ['Team internal', 'Customer on Etsy']); assert.equal(v1.dialogs, 1, 'one window');
     if (shots) await page.screenshot({ path: path.join(shots, 'order-view-overview.png') });
@@ -126,7 +126,7 @@ async function main() {
     assert(early.grew, 'it grows out of the card it was opened from');
     await page.evaluate(() => document.getElementById('liftedCard').remove());
     assert(early.open, 'it opens at once'); assert.match(early.loading || '', /Looking up order 4175000123/); assert.equal(early.title, `Order ${C.rid}`);
-    await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe/.test(document.getElementById('owSub').textContent), null, { timeout: 15000 });
+    await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe/.test(document.getElementById('owMeta').textContent), null, { timeout: 15000 });
     const v5 = await page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, lit: !!document.querySelector('#owTitle .num.found'), prev: document.getElementById('owPrev').hidden,
       meta: [...document.querySelectorAll('#owMeta .m')].map(m => m.querySelector('i').textContent + ': ' + m.querySelector('span').textContent), said: document.getElementById('owNotes').textContent }));
     assert.equal(v5.title, `Order ${C.rid}`); assert(v5.lit, 'the searched number is highlighted'); assert(v5.prev, 'no Previous/Next: not walking the Orders list');

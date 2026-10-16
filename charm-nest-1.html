@@ -540,6 +540,34 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 @container eng (max-width:361px){#owEngSec>#owEngSaid{--engN:1}}
 #owEngSec:has(>#owEng>.engCard:first-of-type .engFaces[data-n="2"])>#owEngSaid{--engSpan:2}
 @container eng (max-width:361px){#owEngSec:has(>#owEng>.engCard:first-of-type .engFaces[data-n="2"])>#owEngSaid{--engSpan:1}}
+/* ── HDRSEAL (Paul, 16 Oct 2026, the seals on an Engraving card: "Enlarge these seals by 2x and allow them to be stamped partially on-top of the engraving card and partially beyond the perimeter/outline of the engraving card. This is how
+   real Seals actually work, they connect and seal to separate pieces of paper, we are reproducing the same digital effect here."). The seals of an approved card (charm-nest-engrave-card.js draws them in the header, in .engAct > .egApproveWrap >
+   .egButtonSeal, 24 px each, and Seal.fit sets --seal-fit on the row) are now 48 px and are pressed across the card's outer top-right corner: each straddles the top border (about 30 px above the card, 18 px on it, and 8 px past its right edge for the newest),
+   like a seal across two sheets of paper. Several overlap a little, in the order they were pressed: the oldest to the left, the newest at the corner and on top (the DOM order is the paint order); with more of them the step between them closes up
+   (--hsK is the step as a share of the seal: three quarters for two) so the row never grows past ~110 px. The row is out of the flow (absolute, its box the card, which is a containing block: container-type), so nothing it draws moves the card's content; the header keeps the room the part
+   of the row that lies ON the card takes (padding-right, by the count the row says in data-seal-count), so a seal never covers the name or the Approve / Fix buttons. Nothing clips it: the card does not, the grid clips only sideways (overflow-x:clip) and gets the room as
+   its own padding-right (taken back with a negative margin, so the tracks keep their widths), the window's centre column has 22 px of padding on its right; a grid row that holds a sealed card is 34 px apart, so the seal of a card in the second row hangs in the gap, not on the buttons of
+   the card above. In a card under 200 px (the 2-up grid of a narrow window) the seals are 40 px. Their zoom (Seal.zoom: charm-nest-motion.js reads --seal-grow and --seal-cap) grows with them: 1.55 x of 48 = 74 px, twice the 37 px a 24 px seal grew to. The first-approve press
+   lands where the seal stays. This is the only place these rules live; the Engrave tab's detail card (CharmNestEngraveCard.mountPiece, approve:false) draws no seal row, and the Sheet tab's card has its own (.swEng, charm-nest-activity.css). ── */
+#owEng.engGrid{padding-right:20px;margin-right:-20px}
+#owEng.engGrid:has(.egButtonSeal>.seal){row-gap:34px}
+#owEng .engCard{position:relative}
+#owEng.engGrid>.engCard:has(.egButtonSeal>.seal){z-index:2}
+#owEng .engCard .engHd{--hsD:48px;--hsK:.75;--hsM:0;--hsIn:16px;--hsUp:6px}
+#owEng .engCard .engHd:has(.egButtonSeal[data-seal-count="2"]){--hsM:1}
+#owEng .engCard .engHd:has(.egButtonSeal[data-seal-count="3"]){--hsM:2;--hsK:.58}
+#owEng .engCard .engHd:has(.egButtonSeal[data-seal-count="4"]){--hsM:3;--hsK:.44}
+#owEng .engCard .engHd:has(.egButtonSeal[data-seal-count="5"]){--hsM:4;--hsK:.35}
+#owEng .engCard .engHd:has(.egButtonSeal[data-seal-count="6"]){--hsM:5;--hsK:.25}
+#owEng .engCard .engHd:has(.egButtonSeal[data-seal-count="7"]){--hsM:6;--hsK:.21}
+#owEng .engCard .engHd:has(.egButtonSeal[data-seal-count="8"]){--hsM:7;--hsK:.18}
+@container engc (max-width:199px){#owEng .engCard .engHd{--hsD:40px;--hsIn:12px;--hsUp:5px}}
+#owEng .engCard .engHd:has(.egButtonSeal>.seal){padding-right:calc(var(--hsD) / 2 + var(--hsIn) - 1px + var(--hsM) * var(--hsK) * var(--hsD))}
+#owEng .engCard .egApproveWrap{position:static}
+#owEng .engCard .egApproveWrap>.egButtonSeal{position:absolute;z-index:3;top:calc(var(--hsD) / -2 - var(--hsUp));right:calc(var(--hsD) / -2 + var(--hsIn));left:auto;bottom:auto;display:flex;flex-direction:row;justify-content:flex-end;align-items:center;
+  flex:none;width:auto;height:var(--hsD);margin:0;padding:0;gap:0;max-width:none;--seal-fit:var(--hsD)!important;--seal-grow:1.55;--seal-cap:80}
+#owEng .engCard .egButtonSeal>.seal{flex:0 0 var(--hsD);width:var(--hsD);height:var(--hsD);margin:0}
+#owEng .engCard .egButtonSeal>.seal+.seal{margin-left:calc(var(--hsD) * (var(--hsK) - 1))}
 /* ── MONOUI (Paul, 16 Oct 2026: the monogram "in place of the currently existing back/front engraving"): a MONOGRAM line's card, `.engMono` (charm-nest-order-engraving.js), a direct child of #owEng like the engraving cards, in its
    line's place among them: the cards' own frame and header (a dot that says where it is, "Monogram"), and under it the page's monogram widget in its compact density (charm-nest-monogram-ui.js: the buyer's three letters,
    the finished charm, its size, the assembly line, one Approve). It is as wide as a front + back card (two tracks; the one track of a phone), so it stands beside a plain piece's card in a mixed order. THE WINDOW MUST NOT JUMP while it is built:
@@ -671,7 +699,6 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .owSk{display:block;height:9px;width:72%;margin:5px 0;border-radius:5px;background:var(--line)}
 .owSk.short{width:44%}
 .owPhoto .owSkPic{width:100%;height:100%;margin:0;border-radius:0;background:var(--line2)}
-#orderWin.owFull .owSub .owSk{display:inline-block;vertical-align:middle;width:150px;height:8px;margin:0}
 /* the team's conversation is laid out as the customer's is (head, thread, box, one status pill), in the warm colours */
 .owChatHead{display:flex;align-items:center;gap:9px;padding:9px 12px;border-bottom:1px solid var(--line);flex:0 0 auto}
 .owMark{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--paper2);color:var(--ink70);flex:0 0 auto}
@@ -785,23 +812,28 @@ dialog.phv.layer.phvIn{background:transparent}
 @keyframes owBdOut{to{opacity:0}}
 #orderWin.owFull .owTint{position:absolute;inset:0;z-index:50;pointer-events:none}
 #orderWin.owFull .owBox{display:grid;grid-template-rows:auto auto auto minmax(0,1fr);height:100%;max-height:none;min-height:0}
-#orderWin.owFull .owHead{height:52px;gap:18px;padding:0 10px 0 18px;position:relative;align-items:center}
+/* ── HDRHEAD (Paul, 16 Oct 2026, the Order window's header: "Remove this UI" for the line under the number (buyer · pieces · ship by) and the two chips (the state and the metal); "Expand and enlarge the timeline and milestones UI so that it fills the empty
+   spaces left behind from the removal of the text. The timeline is currently too small and not visible enough. Proportionately also increase the size of the zoom"). The header is the number, the milestone rail and the walk controls (N of M, Previous, Next, Close), in one
+   row. The rail takes everything between the number and the controls and is about twice as large as it was: its stamps 40 px (were 20: the rail is 72 px high, and charm-nest-timeline-ui.js cuts the stamp to the rail's height less the room of its label),
+   its names 11.5 px at 1440 (were 8.5), a 3 px track, 28 px of air on each side. --owRailH is the rail's height; the header is 8 px more. Under 900 px the rail is not drawn, as before: the number and the controls are the whole row. ── */
+#orderWin.owFull{--owRailH:72px}
+@media (min-width:1700px){#orderWin.owFull{--owRailH:80px}}
+#orderWin.owFull .owHead{height:calc(var(--owRailH) + 8px);gap:28px;padding:0 12px 0 20px;position:relative;align-items:center}
 #orderWin.owFull .owId{min-width:0;flex:0 1 auto;display:flex;flex-direction:column;line-height:1.15}
 #orderWin.owFull .owId h3{font:19px var(--serif);font-weight:500;white-space:nowrap;position:relative;z-index:0}
 #owTitle .num{position:relative;font-variant-numeric:tabular-nums;padding:0 2px;border-radius:4px}
 #owTitle .num.found::before{content:"";position:absolute;inset:-1px -3px;border-radius:5px;background:var(--goldSoft);z-index:-1;transform-origin:left;animation:owSweep 2.9s cubic-bezier(.2,.8,.2,1) both}
 @keyframes owSweep{0%{transform:scaleX(0)}17%{transform:scaleX(1)}80%{transform:scaleX(1);opacity:1}100%{transform:scaleX(1);opacity:0}}
-#orderWin.owFull .owSub{font:10.5px var(--mono);color:var(--ink45);white-space:nowrap;letter-spacing:.03em;margin-top:3px;overflow:hidden;text-overflow:ellipsis}
 /* the number is the view's own search: a field in its place, the orders found in a list under the header */
 #orderWin.owFull #owTitle .num{cursor:text}
-#orderWin.owFull .owId.finding h3,#orderWin.owFull .owId.finding .owSub{display:none}
+#orderWin.owFull .owId.finding h3{display:none}
 .owFind{display:flex;align-items:center;gap:8px;height:34px;border:1px solid var(--goldLine,var(--line));border-radius:9px;background:var(--card);padding:0 8px 0 10px;box-shadow:0 0 0 3px rgba(202,168,97,.16);min-width:300px}
 .owFind[hidden]{display:none}
 .owFind .lbl{font:15px var(--serif);color:var(--ink70)}
 .owFind input{border:0;outline:0;background:transparent;font:600 15px var(--mono);letter-spacing:.02em;color:var(--ink);width:210px;min-width:0;padding:0}
 .owFind input::-webkit-search-cancel-button{display:none}
 .owFind kbd{font:9.5px var(--mono);color:var(--ink45);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
-.owFindList{position:absolute;left:14px;top:48px;z-index:60;width:min(460px,calc(100vw - 28px));background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 44px rgba(20,16,10,.16);padding:6px;display:grid;gap:2px}
+.owFindList{position:absolute;left:14px;top:calc(100% - 6px);z-index:60;width:min(460px,calc(100vw - 28px));background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 44px rgba(20,16,10,.16);padding:6px;display:grid;gap:2px}
 .owFindList[hidden]{display:none}
 .owFindList [role=option]{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;border:0;background:transparent;border-radius:8px;padding:8px 10px;text-align:left;cursor:pointer;font:12.5px var(--sans);color:var(--ink70)}
 .owFindList [role=option] b{font:600 13px var(--mono);color:var(--ink)}
@@ -813,10 +845,14 @@ dialog.phv.layer.phvIn{background:transparent}
 .owFindList [role=option][aria-selected=true]{background:var(--paper2)}
 .owFindList [role=option].cur b::after{content:" · open";font:400 11px var(--sans);color:var(--ink45)}
 .owFindFoot{font:10.5px var(--sans);color:var(--ink45);padding:6px 10px 2px;border-top:1px solid var(--line2);margin-top:4px}
-#orderWin.owFull .owRail{flex:1 1 auto;min-width:0;max-width:860px;height:44px;margin:0 auto;overflow:hidden;cursor:pointer}
-/* the header's rail reads at the spec's 8.5px; a cancelled order says so with the ✕, the clay line, pill and struck
-   number (spec §8), not with the big stamp, which would cover the step names in a 52px bar */
-#orderWin.owFull .owRail .tlStop>span{font-size:8.5px}
+#orderWin.owFull .owRail{flex:1 1 auto;min-width:0;max-width:none;height:var(--owRailH);margin:0;overflow:hidden;cursor:pointer;--seal-grow:1.65}   /* (--seal-grow: the zoom of a stamp, 1.65 of 40 px = 66 px, twice the 33 px the 20 px stamp grew to: charm-nest-motion.js, zoomGrow) */
+/* a cancelled order says so with the ✕, the clay line, the struck number (spec §8) and its head card, not with the big stamp, which would cover the step names in the bar */
+#orderWin.owFull .owRail .tlStop{gap:5px}
+#orderWin.owFull .owRail .tlStop>span{font-size:clamp(8.5px,.8vw,12px);letter-spacing:.07em}
+#orderWin.owFull .owRail .tlTrack,#orderWin.owFull .owRail .tlFill{height:3px;border-radius:3px;top:calc(var(--seal-fit,40px) / 2 - 1px)}
+#orderWin.owFull .owRail .tlTrack{background:repeating-linear-gradient(90deg,var(--ink25) 0 6px,transparent 6px 12px)}
+#orderWin.owFull .owRail .tlStop.c .tlSeal::after{inset:-4px;border-width:2px}   /* (the ring of the step in hand: 6 px from the stamp, the room the 72 px rail leaves above it) */
+#orderWin.owFull .owRail .tlStop.c .tlSeal[data-seal-zoom]::after{inset:calc(-4px / var(--zk, 1));border-width:calc(2px / var(--zk, 1))}
 #orderWin.owFull .owRail .tlCxStamp{display:none}
 #orderWin.owFull .owId h3 .owPc{font:10.5px var(--mono);letter-spacing:.03em;color:var(--ink45);margin-left:4px;vertical-align:2px}
 #orderWin.owFull .owRight{margin-left:auto;display:flex;align-items:center;gap:6px;flex:none}
@@ -828,11 +864,6 @@ dialog.phv.layer.phvIn{background:transparent}
 .owIconBtn:active{transform:scale(.94)}
 .owIconBtn:disabled{opacity:.35;cursor:default;background:transparent}
 .owIconBtn[hidden]{display:none}
-.owNow{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 10px;background:var(--goldSoft);color:#7a5a1d;font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
-.owNow::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--gold)}
-.owNow[hidden]{display:none}
-.owNow.done{background:var(--sageSoft);color:#3f5b3c}.owNow.done::before{background:var(--sage)}
-.owNow.bad{background:var(--claySoft);color:#8a3a26}.owNow.bad::before{background:var(--clay)}
 /* a cancelled order: a clay line under the header, and its number struck through */
 #orderWin.owFull.owCancelled .owHead{box-shadow:inset 0 -2px 0 var(--clay)}
 #orderWin.owFull.owCancelled #owTitle .num{text-decoration:line-through;text-decoration-color:rgba(176,86,63,.55);text-decoration-thickness:1.5px}
@@ -1142,6 +1173,7 @@ dialog.phv.layer.phvIn{background:transparent}
   #orderWin.owFull .owBox{grid-template-columns:minmax(0,1fr)}   /* the views take the screen's width; the header's own width no longer stretches them past it */
   #orderWin.owFull .owId{flex:none}   /* (and the title keeps its room, as it had when the header was as wide as it wanted) */
   #orderWin.owFull .owRail{display:none}
+  #orderWin.owFull .owHead{height:52px;gap:12px}   /* (HDRHEAD: no rail to hold the header 80 px high: the number and the controls, as before, and with no chips they fit a 390 px screen: the header scrolled sideways there, 660 px wide) */
   #orderWin.owFull .owVInfo,#orderWin.owFull .owVSheet{grid-template-columns:minmax(0,1fr);overflow:auto}
   /* one column: each part takes the height of its own content and the view scrolls. The two rows used to share the view's height
      (the chat kept its 420 px, the pictures and details got what was left), so on a phone the Etsy and Vector pictures ran on
@@ -3668,8 +3700,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1-ml1-m2-m3-szf1-mfile1-mc1"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2"></script>
-<script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1"></script>
+<script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2-hdr1"></script>
+<script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1-hdr1"></script>
 <script src="charm-nest-geom.js?v=20261009-flat-col-fb1-fb2-fr1-rb1-m3"></script>
 <script src="charm-nest-monogram.js?v=20261015-mono1-monoui1-mx4"></script>
 <script src="charm-nest-monogram-fit.js?v=20261016-mx4"></script>
@@ -3712,7 +3744,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-order-rows.js?v=20261012-or1"></script>
 <script src="charm-nest-order-group.js?v=20261013-on1"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2-cg1"></script>
-<script src="charm-nest-engrave-card.js?v=20261012-ec1-sm1-r2th1-bt1-bg1-pn1-pk1-sb1"></script>
+<script src="charm-nest-engrave-card.js?v=20261012-ec1-sm1-r2th1-bt1-bg1-pn1-pk1-sb1-hdr1"></script>
 <script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1-dm1-su1-ui2-egm1-el1-ec1-mg1-crash1-sel1-op1-pn1-tx1-pk1-ap2-sb1-ow1"></script>
 <script src="charm-nest-engrave-guide.js?v=20261013-ap2-meg1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2-sn1"></script>
@@ -7907,7 +7939,7 @@ boot();
 <script src="charm-nest-review-link.js?v=20261013-rlk2"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-ksv1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-ksv1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
@@ -8026,11 +8058,9 @@ try {
 <dialog id="orderWin" class="owin owFull" aria-labelledby="owTitle" data-no-grow>
   <div class="owBox">
     <div class="owHead">
-      <div class="owId"><h3 id="owTitle">Order</h3><div class="owSub" id="owSub"></div></div>
+      <div class="owId"><h3 id="owTitle">Order</h3></div>
       <div class="owRail" id="owRail" aria-label="Where the order is"></div>
       <div class="owRight">
-        <span class="owNow" id="owNow" hidden></span>
-        <span class="pill neutral" id="owMetal">—</span>
         <span class="mono owPos" id="owPos"></span>
         <button type="button" class="owIconBtn" id="owPrev" title="The piece before this one" aria-label="Previous piece"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
         <button type="button" class="owIconBtn" id="owNext" title="The next piece" aria-label="Next piece"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>

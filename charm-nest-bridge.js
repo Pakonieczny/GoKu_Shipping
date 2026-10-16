@@ -16144,9 +16144,9 @@ const OrderWin = window.OrderWin = (() => {
      only places lines that are pulled, held without a hold, unmatched, oversize or waiting, so it stays off every sheet
      until someone releases it from On hold.) */
   const when = t => new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
-  /** The header: the order's number (lit when it was searched for), who bought it, how many pieces and when it ships.
-   *  (It said "Order 1 of 3", then "line 1 of 3": the first of the order's 3 lines was on screen, never 1 of 3 orders.
-   *  Paul found it confusing: the line under it says "3 pieces", and the Its pieces list marks the piece shown.) */
+  /** The header: the order's number (lit when it was searched for) and, when the window walks a list, where it stands in it ("3 of 12", Previous, Next).
+   *  (It said "Order 1 of 3", then "line 1 of 3": the first of the order's 3 lines was on screen, never 1 of 3 orders. Paul found it confusing, and later (HDRHEAD) took the line of buyer, pieces
+   *  and ship-by date under the number away: the Its pieces list marks the piece shown, and the chip strip says who bought it and when it ships.) */
   function paintHead(r, sibs, li) {
     const rid = String(r.order.receiptId), t = byId("owTitle");
     const lit = W.hl ? " found" : "", cur = t.dataset.rid === rid && t.dataset.lit === lit && t.dataset.n === sibs.length + ":" + li;
@@ -16154,12 +16154,8 @@ const OrderWin = window.OrderWin = (() => {
       t.innerHTML = `Order <span class="num${lit}">${esc(rid)}</span>`;
       t.dataset.rid = rid; t.dataset.lit = lit; t.dataset.n = sibs.length + ":" + li;
     }
-    const qty = sibs.reduce((n, x) => n + (pairSides(x).length || (countedOf(x) || {}).total || +((x.spec && x.spec.quantity) || x.line.quantity) || 1), 0);   // (a mismatched pair is two pieces for every unit: its Left and its Right; a counted line, "2 Disc", is its 2 pieces: the count the pipeline uses)
-    let ship = ""; try { const s = Orders.shipTxt(r); ship = s && s !== "—" ? "ship by " + s : ""; } catch (_) {}
-    // (an order still being read: what is known of it, and a skeleton where the rest is coming)
-    const sub = byId("owSub"), buyer = r.order.buyer && r.order.buyer.name;
-    if (r.loading) sub.innerHTML = (buyer ? esc(buyer) + " · " : "") + '<span class="owSk" aria-hidden="true"></span>';
-    else sub.textContent = [buyer, qty ? qty + (qty === 1 ? " piece" : " pieces") : "", ship].filter(Boolean).join(" · ");
+    // (HDRHEAD, Paul, 16 Oct 2026: "Remove this UI from the detailed Order modal": the line under the number, "buyer · N pieces · ship by date", is gone. The buyer, the ship-by date and the piece count are told where they always were:
+    //  the Overview's chip strip (#owMeta: Buyer, Ship by) and the "Its pieces" list. The dialog is named by its title, aria-labelledby="owTitle", "Order <number>".)
     // Previous and Next walk the Orders list the person is looking at, and only then
     const list = W.walk ? siblings() : [];
     // a line that has just left the list it was walked in (its hold released under On hold, a fix that filtered it out)
@@ -16317,8 +16313,7 @@ const OrderWin = window.OrderWin = (() => {
     tryDo(() => window.CNLive && CNLive.order(r.order.receiptId, sibs));      // the live stations board: this is the order in hand (nothing when it was only cleared)
     paintHead(r, sibs, li);
     paintPieces(r, sibs);
-    const mp = byId("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || (r.loading ? "…" : "no material"));
-    mp.className = "pill " + (r.material || r.loading ? "neutral" : "bad");
+    // (HDRHEAD: the metal chip, "SS", is gone from the header: the chip strip below says the metal, in the Details list too)
     const ph = byId("owPhoto"); const url = tryDo(() => Orders.imageFor(r)) || (r.loading ? r.peek : null);
     // (the same photo is not drawn again on a repaint: a zoom in progress, and the sharper picture it swapped in, stay as they are)
     if (!(url && ph.dataset.srcUrl === String(url) && ph.querySelector("img")))
@@ -16371,7 +16366,7 @@ const OrderWin = window.OrderWin = (() => {
     let b = byId("owSendSheet"); if (b && b._busy) return;
     const it = inPull(r.key) && window.CustomSheet ? tryDo(() => Review.customItemFor(r.key) || Review.actFor(r.key)) : null, c = it ? tryDo(() => CustomSheet.cardOf(it)) : null;
     if (!(c && c.files.length && !c.sent && c.open && !c.why && !c.busy)) { if (b) b.hidden = true; return; }
-    if (!b) { const now = byId("owNow"); if (!now) return; b = el("button", "btn gold xs", "Send to Sheet"); b.type = "button"; b.id = "owSendSheet"; b.title = "Put every design on the next open sheet of its metal"; now.before(b); }
+    if (!b) { const at = byId("owPos"); if (!at) return; b = el("button", "btn gold xs", "Send to Sheet"); b.type = "button"; b.id = "owSendSheet"; b.title = "Put every design on the next open sheet of its metal"; at.before(b); }
     b.hidden = false; b._it = it; b.disabled = false; if (b.textContent !== "Send to Sheet") b.textContent = "Send to Sheet";
     b.onclick = async () => {
       if (b._busy || !(employeeName() || askEmployee())) return;
@@ -16385,7 +16380,7 @@ const OrderWin = window.OrderWin = (() => {
         b._busy = false;
         if (!W.dlg._tourHeld) { b.disabled = false; b.textContent = "Send to Sheet"; const r2 = W.dlg.open && rowOf(W.key); if (r2) paintSend(r2); }
         const said = [...document.querySelectorAll("#toasts .toast.bad")].filter(x => !was.has(x)).pop();
-        if (said && W.key === sentKey && W.dlg.open && !W.closing && !W.dlg._tourHeld && b.isConnected && window.Motion) tryDo(() => { const n = Motion.note(b.hidden ? byId("owNow") || b : b, { text: said.dataset.msg, tone: "bad", ms: 7000 }); if (n) W.dlg.appendChild(n); });
+        if (said && W.key === sentKey && W.dlg.open && !W.closing && !W.dlg._tourHeld && b.isConnected && window.Motion) tryDo(() => { const n = Motion.note(b.hidden ? W.dlg.querySelector(".owRight") || b : b, { text: said.dataset.msg, tone: "bad", ms: 7000 }); if (n) W.dlg.appendChild(n); });
       }
     };
   }
@@ -17107,7 +17102,7 @@ const OrderWin = window.OrderWin = (() => {
       // a write left no event (a sheet rewritten, a piece taken off by a stale second tab, a sheet deleted): it moved, so the pieces are read again
       const revWas = W.placementRev; W.placementRev = (j && j.placementRev) || revWas;
       if ((before !== null && before !== sheetSig(W.events)) || (revWas && W.placementRev !== revWas)) tryDo(() => window.OrderPieces && OrderPieces.load(rid, { force: true }));
-      hold("now", () => { const r = rowOf(W.key); if (r && String(r.order.receiptId) === rid) paintNow(r); }, [byId("owNowCard"), byId("owNow")]);
+      hold("now", () => { const r = rowOf(W.key); if (r && String(r.order.receiptId) === rid) paintNow(r); }, [byId("owNowCard")]);
     };
     if (f) { W.feed = f; f.subscribe(k => { if (k === "data") take(f.answer); else if (k === "error" && W.feed === f) console.warn("order view: timeline", f.error); }); f.refresh(); return; }
     Promise.resolve().then(() => T.get(rid)).then(take).catch(e => { if (W.evFor === rid) { W.events = null; console.warn("order view: timeline", e && e.message); } });
@@ -17212,16 +17207,16 @@ const OrderWin = window.OrderWin = (() => {
       const html=engCellHtml(r,'Approval history',job,historical);
       if(!W.engHist||W.engHist.key!==r.key||W.engHist.html!==html){W.engHist={key:r.key,html};paintFacts(r);}
     }
-    const n = nowOf(r), pill = byId("owNow");
+    const n = nowOf(r);   // (HDRHEAD, Paul, 16 Oct 2026: the state chip in the header, "ENGRAVING APPROVED", is gone: the head card below says where the order is, in the same words)
     W.dlg.classList.toggle("owCancelled", !!n.cancelled);
     // (the Sheet view's "no sheet" line follows the cancel record once it is read)
     const noSh = byId("owPlateWrap") && byId("owPlateWrap").querySelector(".owPlateNone[data-none]"); if (noSh) { const h = noSheetHtml(r); if (noSh._h !== h) { noSh._h = h; noSh.innerHTML = h; } }
-    pill.hidden = !n.pill; pill.textContent = n.pill || ""; pill.className = "owNow" + (n.tone ? " " + n.tone : "");
     const count = byId("owTlCount"); if (count) count.textContent = W.events && W.evFor === String(r.order.receiptId) && W.events.length ? String(W.events.length) : "";
     const live = byId("owLive"); if (live) paintLive(live, W.events && W.events.length ? W.events[W.events.length - 1] : null);
     paintPieceSum();
     paintSheetTab(r); sheetSettle(r);
     const card = byId("owNowCard"); if (!card) return;
+    card.dataset.now = n.pill || "";   // (the state word the header chip said, ENGRAVING APPROVED, Cancelled, Order completed: no longer drawn there (HDRHEAD); kept here as data for what reads where the order is: the tests, the oracle)
     if (r.loading) { card.hidden = true; return; }
     const e = n.ev;
     const who = e && (e.station || e.by) ? `<span class="who"><i>${(window.OrderTimelineUI && OrderTimelineUI.iconOf && tryDo(() => OrderTimelineUI.iconOf(e))) || ""}</i>${e.station ? `<b>${esc((window.OrderTimelineUI && OrderTimelineUI.placeOf && tryDo(() => OrderTimelineUI.placeOf(e))) || e.station)}</b>` : ""}${esc((window.OrderTimelineUI && OrderTimelineUI.personOf && tryDo(() => OrderTimelineUI.personOf(e))) || e.by || "")}${e.at ? " · " + esc(shopTime(e.at)) : ""}</span>` : "";
@@ -17230,8 +17225,11 @@ const OrderWin = window.OrderWin = (() => {
     // plain words instead.
     const UI = window.OrderTimelineUI, shown = shownEvents(), st = UI && UI.nowStamps && shown && shown.length ? tryDo(() => UI.nowStamps(shown, { ev: e, cancelled: n.cancelled ? e : null, hand: n.hand || null, live: tryDo(() => liveAsks(r)) })) : null;
     const bl = (st && st.blocker) || null;
+    // (HDRHEAD, Paul, 16 Oct 2026, the NEEDS A DECISION banner: "remove this seal from the title, it's a duplicate": the seal beside a question or a hold is the order's latest milestone, which the Engraving card's seals,
+    //  the header's rail and the Timeline already show; the banner says what holds the order up, in words, and draws no seal. The other states of the card keep theirs.)
+    const sealHtml = bl ? "" : st ? st.seal : "";
     // (a piece's row under this card draws no seal this card draws: it is told which one, and repaints if that changes)
-    const sealNow = sealKeyOf(st && st.seal);
+    const sealNow = sealKeyOf(sealHtml);
     if (!W.nowSeal || W.nowSeal.key !== sealNow) { W.nowSeal = { key: sealNow }; paintPieceSum(); }
     const recent = st ? st.recent : "";
     // the blocker is the card's own line then, so it is never said twice
@@ -17241,9 +17239,9 @@ const OrderWin = window.OrderWin = (() => {
     // Sheet shortcuts ... extend the title text all the way to the right"). Open timeline and Sheet are the Timeline and Sheet tabs; a piece's own
     // sheet is its row's status chip (and the Sheet view's tabs); the seal still opens the Timeline on its step. What is left of the old button row
     // (a split pair's sentence, who did it when no seal says so, a cancelled order's steps) is ONE quiet line under the title.
-    const sub = [splitLine(r), st && st.seal ? "" : who, head.row].filter(Boolean).join("");
-    card.hidden = false; card.className = "owNowCard" + (n.tone === "bad" ? " bad" : "") + (st && st.seal ? " sealed" : "") + (sub ? " hasSub" : "");
-    const html = `${st ? st.seal : ""}<div class="tx"><div class="k">${esc(head.k)}</div><div class="t" title="${esc(head.t)}">${esc(head.t)}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+    const sub = [splitLine(r), st && st.seal ? "" : who, head.row].filter(Boolean).join("");   // (the seal is not drawn on a banner that asks for a decision, but the line "who · time" is not added there either: the card reads as before, less the seal)
+    card.hidden = false; card.className = "owNowCard" + (n.tone === "bad" ? " bad" : "") + (sealHtml ? " sealed" : "") + (sub ? " hasSub" : "");
+    const html = `${sealHtml}<div class="tx"><div class="k">${esc(head.k)}</div><div class="t" title="${esc(head.t)}">${esc(head.t)}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
     if (card._html === html) return; card._html = html; card.innerHTML = html;
     // (the full words of a cut-short line: the title's is its attribute, the steps of a cancelled order and the split pair's sentence are theirs)
     card.querySelectorAll(".sub .tlCxList, .sub .owSplit").forEach(x => { x.title = [...x.querySelectorAll(":scope > span")].map(c => [...c.childNodes].map(k => k.textContent.trim()).filter(Boolean).join(" ")).join("\n") || x.textContent.trim(); });
