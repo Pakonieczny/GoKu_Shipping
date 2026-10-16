@@ -306,6 +306,41 @@ test('E7 a failed token refresh is about the connection, never "Etsy did not acc
   eq(Mod.effective({ state: 'writing', runningUntil: 9000 }, 5000).state, 'writing'); eq(Mod.effective({ state: 'linked' }, 5000).state, 'linked'); eq(Mod.effective(undefined, 5000).state, 'pending');
 });
 
+test('E7 through the REAL etsyFetch: an expired token whose refresh fails (400 / 429 / 500 / no connection) is "scope" / busy / down / offline and costs no Etsy call; then the refresh works and ONE write lands', async () => {
+  let current = null, mode = '400'; const requests = [];
+  const res = (status, body) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => undefined }, json: async () => body, text: async () => (typeof body === 'string' ? body : JSON.stringify(body)) });
+  const fakeFetch = async (url, opt) => {
+    const u = new URL(url); opt = opt || {}; requests.push(u.host + u.pathname);
+    if (u.host === 'api.etsy.com' && u.pathname === '/v3/public/oauth/token') {
+      if (mode === 'net') throw new TypeError('fetch failed');
+      if (mode === '200') return res(200, { access_token: 'fresh-token', refresh_token: 'fresh-refresh', expires_in: 3600 });
+      return res(+mode, mode === '400' ? { error: 'invalid_grant' } : 'trouble');
+    }
+    if (!current || u.host !== 'api.etsy.com' || !u.pathname.startsWith('/v3/application/')) return res(500, 'unexpected');
+    const p = u.pathname.slice('/v3/application'.length), q = u.searchParams.has('legacy') ? { legacy: u.searchParams.get('legacy') === 'true' } : undefined;
+    try { return res(200, (opt.method === 'PUT') ? await current.api.put(p, q, JSON.parse(opt.body)) : await current.api.get(p, q)); } catch (e) { return res(e.status || 500, e.data || String(e.message)); }
+  };
+  const realLoad = Module._load, installed = Module._load;
+  Module._load = function (req, ...rest) {
+    if (req === 'node-fetch') return fakeFetch;
+    if (/[\/]_etsyApiMeter(\.js)?$/.test(req)) return { bump: () => ({ failNet() {}, fromHttp() {}, ok() {} }), bumpSimple() {}, flushNow: async () => {} };
+    return installed.call(this, req, ...rest);
+  };
+  try {
+    const W = world({ mirror: false }); current = W.E;
+    store.set('config/etsyOauth', { access_token: 'old', refresh_token: 'refresh', expires_at_ms: 1 });   // expired: every call refreshes first
+    for (const [m, reason] of [['400', 'scope'], ['429', 'busy'], ['500', 'etsy-down'], ['net', 'offline']]) {
+      mode = m; requests.length = 0;
+      const r = await Mod.ops.customEtsySkuWrite({ rid: 'R1' });
+      eq([r.ok, r.reason, r.retry], [false, reason, true], 'refresh ' + m + ' -> ' + reason + ': ' + JSON.stringify(r)); ok(requests.every(x => x === 'api.etsy.com/v3/public/oauth/token'), 'no Etsy API call without a token'); eq(W.landed(), 0);
+      etsyDocOK(W, 'R1', 'refresh ' + m); ok(['failed', 'unverified'].includes(W.etsyDoc('R1').state));
+    }
+    mode = '200'; const r = await Mod.ops.customEtsySkuWrite({ rid: 'R1' }); eq([r.ok, r.state], [true, 'linked'], JSON.stringify(r)); eq([W.landed(), W.stored()], [1, [NEW]]);
+    const again = await Mod.ops.customEtsySkuWrite({ rid: 'R1' }); eq([again.ok, again.calls, W.landed()], [true, 0, 1]);
+    eq(store.get('config/etsyOauth').refresh_token, 'fresh-refresh', 'the refreshed token was kept');
+  } finally { Module._load = realLoad; }
+});
+
 /* ═══ E8 · the server drives the pending steps itself ═══ */
 test('E8 customSaveRepair etsy:true runs the pending steps (oldest first, bounded, cool-down, finals skipped, a scope refusal stops the pass); repeated passes write nothing more', async () => {
   const W = world({ rids: ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'], docs: {
