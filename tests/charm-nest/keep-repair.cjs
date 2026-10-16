@@ -32,6 +32,7 @@ const Repair = require(path.join(fnDir, '_charmNestCustomRepair.js')), Save = re
 const post = async b => { const r = await lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(b), queryStringParameters: {} }); return { status: r.statusCode, body: JSON.parse(r.body || '{}') }; };
 const deps = (o) => Object.assign({ db, FV, bucket: Fk.bucket, now: () => clk, tokenUrl: async p => 'https://storage.example/' + p + '?token=t' }, o || {});
 const H = 3600000, DAY = 24 * H;
+const CONVERGENT = typeof Save.pending === 'function' && typeof Save.intent === 'function';   // (KB's convergent commit is in this tree)
 
 /* ── the pieces of a saved design ── */
 const AIOF = d => Buffer.from('%PDF-1.4\n%drawing ' + d + '\n' + ('0 0 m 10 10 l S\n'.repeat(30)));
@@ -225,7 +226,7 @@ test('D3 a save racing repair passes, in every order: the new save is never cut,
     const perm = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]][order];
     const res = await Promise.all(perm.map(i => jobs[i]())); const c = res[perm.indexOf(0)];
     if (c.ok) { whole('zero-age order ' + perm); await repair({}); const r = rec('4200000100'); ok(!r.repair || r.repair.state === 'files-missing', 'at worst the files are flagged: ' + JSON.stringify(r.repair)); }
-    else { ok(c.error === 'not-uploaded' || /^transient: .*(no blob|404)/.test(c.error), 'zero-age order ' + perm + ': the only refusals are "upload again" or a transient 404: ' + JSON.stringify(c)); ok(!store.has('Charm_Master_Index/RACE_0100') && !rec('4200000100') && !alias('1800000100'), 'and nothing half-written'); }
+    else { ok(c.error === 'not-uploaded' || (!CONVERGENT && /^transient: .*(no blob|404)/.test(c.error)), 'zero-age order ' + perm + ': the only refusal is "upload again" (a thrown 404 only on a tree without KB\'s catch): ' + JSON.stringify(c)); ok(!store.has('Charm_Master_Index/RACE_0100') && !rec('4200000100') && !alias('1800000100'), 'and nothing half-written'); }
   }
 });
 test('D4 two repairs at once (two tabs): one pass runs, the other is told so; targeted repairs of one broken record cut once', async () => {
@@ -244,7 +245,6 @@ test('D5 the throttle: a full pass at most every five minutes unless forced; a p
 });
 
 /* ═══ F · the next run of the same save heals what the repair could only flag (needs KB's convergent commit: skipped, visibly, on a tree that has not got it yet) ═══ */
-const CONVERGENT = typeof Save.pending === 'function' && typeof Save.intent === 'function';
 const cbody = (rid, listing, sku, old, d) => ({ rid, listingId: listing, sku, oldSku: old, productId: '', optionPairs: [], group: { mode: 'all', productIds: [] }, title: 't', by: 'Paul', design: { name: 'D' + d + '.ai', kind: 'ai', hash: ('a' + d).padEnd(40, '0'), bytes: 1 }, reuse: false,
   entry: { charmHash: 'drawing-' + d, widthPt: 31, heightPt: 38, areaPt2: 700, members: 4, holes: 1, engravable: true, upAngle: 90, upSource: 'long' }, file: { masterHash: ('a' + d).padEnd(40, '0'), name: 'D' + d + '.ai', aiSha256: sha(AIOF(d)), aiBytes: AIOF(d).length, pngSha256: sha(PNGOF(d)) } });
 const ftest = (name, fn) => test(name, async () => { if (!CONVERGENT) { process.stdout.write('  skip ' + name.slice(0, 100) + ' (this tree\'s commit is not convergent: needs KB)\n'); return; } await fn(); });
