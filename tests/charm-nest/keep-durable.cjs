@@ -19,7 +19,7 @@ const transient = () => Object.assign(new Error('timed out'), { transient: true 
 /** The whole page and cloud, in memory. opt: sandbox, online, locked, ready (the design is read), faults: { point: [kind...] } */
 function world(opt = {}) {
   const w = { now: 1.8e12, timers: [], online: opt.online !== false, ready: opt.ready !== false, tableReady: true, srv: { entries: new Map(), records: new Map(), files: new Map(), applied: 0, etsyApplied: 0, uploads: [], calls: [], builds: 0, etsyCalls: 0 },
-    faults: opt.faults || {}, ls: new Map(), storeFails: false, lockHeld: opt.locked === false || opt.locked === undefined ? true : false, lockListeners: new Set(), keepers: [], dialogs: 0 };
+    faults: opt.faults || {}, ls: new Map(), builtStore: new Map(), storeFails: false, lockHeld: opt.locked === false || opt.locked === undefined ? true : false, lockListeners: new Set(), keepers: [], dialogs: 0 };
   const srv = w.srv;
   w.setTimeout = (fn, ms) => { const t = { fn, at: w.now + Math.max(0, +ms || 0), off: false }; w.timers.push(t); return t; };
   w.clearTimeout = t => { if (t) t.off = true; };
@@ -56,7 +56,7 @@ function world(opt = {}) {
     if (!w.online) throw transient();
     srv.calls.push(b.op);
     if (b.op === 'customSaveGet') { await take('get'); return { ok: true, save: srv.records.get(String(b.rid)) || null }; }
-    if (b.op === 'customSkuCheck') { await take('check'); const free = b.candidates.find(c => !srv.entries.has(c)); return free ? { ok: true, free, taken: [] } : { ok: false, error: 'none' }; }
+    if (b.op === 'customSkuCheck') { await take('check'); srv.checks = (srv.checks || []).concat([b.candidates.length]); const free = b.candidates.find(c => !srv.entries.has(c)); return free ? { ok: true, free, taken: [] } : { ok: false, error: 'none' }; }
     if (b.op === 'customEtsySkuWrite') {
       srv.etsyCalls++; const f = await take('etsy'); const rec = srv.records.get(String(b.rid));
       if (!rec) return { ok: false, error: 'no-save', reason: 'no-save', retry: false, text: 'no save for this order' };
@@ -88,6 +88,8 @@ function world(opt = {}) {
         }
         if (!alive()) return fail('cancelled', 'switched off');
         const f = await take('commit');
+        if (f === 'taken') return fail('sku-taken', 'that SKU was just taken');
+        if (f && f.fail) return fail(f.fail, f.text || f.fail, f.extra || {});
         const rid = String(spec.rid), have = srv.records.get(rid);
         let sku = spec.sku, created = true;
         if (have) { sku = have.sku; created = false; }
@@ -117,7 +119,8 @@ function world(opt = {}) {
   };
   w.mk = (tab) => {
     const k = Keep.durable({ store: w.store, now: () => w.now, setTimeout: w.setTimeout, clearTimeout: w.clearTimeout, tab: tab || 'tab' + (w.keepers.length + 1), online: () => w.online, lock: w.lock, locks: opt.noLocks ? null : w.locks,
-      resolve: w.resolve, make: ctx => Keep.make(ctx) });
+      saveBuilt: async (rec, b) => { w.builtStore.set(rec.hash, b); }, loadBuilt: async rec => w.builtStore.get(rec.hash) || null, dropBuilt: async rec => { w.builtStore.delete(rec.hash); },
+      resolve: w.resolve, make: ctx => Keep.make(ctx), etsy: rec => api('charmNestLibrary', { op: 'customEtsySkuWrite', rid: rec.rid, listingId: rec.listingId }) });
     k.log = []; k.on(ev => { if (ev.type === 'state') k.log.push(ev.view.phase); }); w.keepers.push(k); return k;
   };
   w.keeper = w.mk('tab1');
@@ -166,6 +169,15 @@ function world(opt = {}) {
       ok(w.rec().state === 'done' && w.rec().outcome === 'linked', label + ': after a reload the save continues from the record and ends linked (' + w.rec().state + ')');
       eq([w.srv.applied, w.srv.etsyApplied, w.srv.entries.size], [1, 1, 1], label + ': after the reload still exactly one commit, one Etsy change, one entry');
     }
+  }
+
+  // ─── 2b · a reload does not build or upload again ───
+  {
+    const w = world({ faults: { 'upload-png': ['hang'] } }); w.keeper.begin(w.spec()); await w.pump(0);
+    eq([w.srv.builds, w.srv.uploads], [1, ['ACORNS_LEAF_4821.ai']], 'killed before the second upload: one build, the first file uploaded');
+    ok(w.rec().up && w.rec().up.ai === true && !w.rec().up.png && w.builtStore.size === 1, 'the record keeps the upload mark and the built file is kept in the browser');
+    w.reload(); await w.pump(0); await w.keeper.idle();
+    eq([w.rec().state, w.srv.builds, w.srv.uploads.length, w.srv.applied, w.srv.etsyApplied, w.builtStore.size], ['done', 1, 2, 1, 1, 0], 'after the reload: NOT built again, the first file NOT uploaded again, the second uploaded, one commit, one Etsy change, the kept copy dropped');
   }
 
   // ─── 3 · waiting: the password, the connection, data not ready ───
@@ -322,6 +334,57 @@ function world(opt = {}) {
     let gone = false; const w = world({ gone: () => gone, faults: { etsy: ['transient'] } }); w.keeper.begin(w.spec()); await w.pump(0); await w.keeper.idle();
     gone = true; await w.pump(300000); await w.keeper.idle();
     ok(w.rec().repo === true && ['attention', 'done'].includes(w.rec().state), 'the file went after the repository save: the save stands (it is never un-saved)');
+  }
+
+  // ─── 7b · the cloud's newer answers and the page-load helpers ───
+  {
+    // the listing's answer is ANOTHER design's: final and calm, no Etsy step, no retry
+    const w = world({ faults: { commit: [{ fail: 'listing-linked', text: 'this listing is already linked to OTHER_0001', extra: { sku: 'OTHER_0001' } }] } }); w.keeper.begin(w.spec()); await w.pump(0); await w.keeper.idle();
+    eq([w.rec().state, w.rec().outcome, w.rec().sku, w.srv.etsyCalls, w.srv.applied], ['done', 'already', 'OTHER_0001', 0, 0], 'listing-linked: done, calm, no Etsy step, nothing written, no retry');
+    eq(w.keeper.describe(w.rec()).line, 'Already linked to OTHER_0001', 'and the line says so');
+  }
+  {
+    // Etsy is being updated by another run (a lease): a pause of about 45 s, not a failure
+    const w = world({ faults: { etsy: [{ etsy: { error: 'running', reason: 'running', retry: true, text: '' } }] } }); w.keeper.begin(w.spec()); await w.pump(0); await w.keeper.idle();
+    eq([w.rec().state, w.rec().wait, w.rec().fails, w.rec().nextAt - w.now > 40000], ['waiting', 'retry', 0, true], 'Etsy "running": waits about 45 s, no failure counted');
+    await w.pump(60000); await w.keeper.idle(); eq([w.rec().state, w.rec().outcome, w.srv.etsyApplied], ['done', 'linked', 1], 'and then links');
+  }
+  {
+    // a save in the repository whose Etsy step is not done (made by another computer): this page does the step, no design needed
+    const w = world(); w.srv.records.set('4196630999', { rid: '4196630999', sku: 'LEAF_9999', phase: 'repo', etsy: { state: 'pending' } });
+    ok(w.keeper.adoptPending([{ rid: '4196630999', listingId: LISTING, sku: 'LEAF_9999' }], false) === 1, 'a pending Etsy step is adopted');
+    ok(w.keeper.adoptPending([{ rid: '4196630999', listingId: LISTING, sku: 'LEAF_9999' }], false) === 0, 'and only once');
+    await w.pump(0); await w.keeper.idle();
+    eq([w.rec().state, w.rec().etsyOnly, w.srv.etsyApplied, w.srv.builds, w.srv.uploads.length], ['done', true, 1, 0, 0], 'the Etsy step ran from the record alone: nothing built, nothing uploaded');
+  }
+  {
+    // a design that belongs to another workspace (sandbox page / live page) is left alone; one not found anywhere is reported, not waited for for ever
+    const w = world(); const orig = w.resolve; let mode = 'skip'; const k = Keep.durable({ store: w.store, now: () => w.now, setTimeout: w.setTimeout, clearTimeout: w.clearTimeout, online: () => true, lock: w.lock, resolve: async () => ({ state: mode }), make: ctx => Keep.make(ctx) });
+    k.begin(w.spec()); await w.pump(0); await k.idle(); ok(k.list()[0].state === 'wanted', 'skip: another workspace\'s intent is left as it is');
+    mode = 'lost'; k.resume('x'); await w.pump(0); await k.idle(); ok(k.list()[0].state === 'attention' && /drop the file again/.test(k.describe(k.list()[0]).line), 'lost: one attention line that says what to do');
+  }
+  {
+    // the cloud says the record needs repair: the SAME save runs again under the same SKU; the engine does not read it as linked
+    const w = world(); w.srv.records.set(RID, { rid: RID, sku: 'LEAF_5555', phase: 'repo', etsy: { state: 'pending' }, repair: { state: 'files-missing' } });
+    const x = await w.resolve({ rid: RID, listingId: LISTING, hash: HASH }); const e = Keep.make(x.ctx); const info = await e.open();
+    eq([info.offered, info.saved, info.sku], [true, null, 'LEAF_5555'], 'a record flagged for repair is a normal run again under its SKU, not "already saved"');
+  }
+  {
+    // SKU candidates used up: the engine still asks the cloud with the refused ones (it always finds a free SKU), never ends "No free SKU"
+    const w = world({ faults: { commit: ['taken', 'taken', 'taken', 'taken', 'taken', 'taken', 'taken'] } }); w.keeper.begin(w.spec());
+    for (let i = 0; i < 20 && w.rec().state !== 'done' && w.rec().state !== 'attention'; i++) await w.pump(i === 0 ? 0 : 330000);
+    ok(w.rec().state === 'done' && (w.srv.checks || []).every(c => c >= 1), 'a run of taken SKUs: the cloud is always asked with at least one candidate, and the save ends (' + w.rec().state + ', checks ' + (w.srv.checks || []).join() + ')');
+  }
+
+  {
+    // two tabs waiting for the password: a write in one wakes the other (the storage event), which must not write back for ever
+    const w = world(); w.lockHeld = false; const a = w.keeper, b = w.mk('tab2'); let writes = 0; const set = w.store.set;
+    w.store.set = (k, v) => { writes++; set(k, v); setImmediate(() => { for (const x of [a, b]) x.external(); }); };
+    a.begin(w.spec()); await w.pump(0); for (let i = 0; i < 6; i++) await w.pump(60000);
+    ok(writes > 0 && writes < 12, 'two waiting tabs do not wake each other in a loop (' + writes + ' writes in six minutes)');
+    eq(w.state(a), 'waiting:password', 'and both still wait for the password');
+    w.unlock(); await w.pump(0); await a.idle(); await b.idle(); await w.pump(0);
+    eq([w.rec().state, w.srv.applied, w.srv.etsyApplied], ['done', 1, 1], 'unlocked: one commit and one Etsy change though two tabs were waiting');
   }
 
   // ─── 8 · the sandbox rehearses, never writes the real repository ───

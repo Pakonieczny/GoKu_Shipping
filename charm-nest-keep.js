@@ -99,6 +99,12 @@
       const ev = Object.assign({ done: kind, sku: sku || st.sku || "", text }, extra || {});
       st.done = ev; emit(ev); return ev;
     }
+    /* what a restarted page needs to go on without building or uploading again: the keeper stores it (ctx.persist) and hands it back (ctx.resume) */
+    const persist = (kind, v) => { try { if (typeof ctx.persist === "function") ctx.persist(kind, v); } catch (_) { /* a memory only */ } };
+    if (ctx.resume && ctx.resume.built && ctx.resume.built.ai && ctx.resume.built.png && ctx.resume.built.sku) {
+      st.built = { ai: ctx.resume.built.ai, png: ctx.resume.built.png }; st.builtSku = String(ctx.resume.built.sku).toUpperCase();
+      if (ctx.resume.uploaded && String(ctx.resume.uploaded.sku || "").toUpperCase() === st.builtSku) for (const w of ["ai", "png"]) if (ctx.resume.uploaded[w]) st.uploaded[w] = true;
+    }
     const lockHeld = () => !!(ctx.lock && typeof ctx.lock.find === "function" && ctx.lock.find("upload"));
     const tail4 = () => listingId.slice(-4);
     const call = (body, opts) => ctx.api("charmNestLibrary", sandbox ? Object.assign({ sandbox: true }, body) : body, Object.assign({ quiet: true }, opts || {}));
@@ -195,7 +201,7 @@
       const g = (st.plan && st.plan.group) || {};
       return { rid: String(ctx.rid), listingId, sku: st.sku, oldSku: upSku(line.sku).replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 120), productId: idOf(g.boughtId || line.productId), group: { mode: g.mode || "unknown", productIds: g.productIds || [] },
         optionPairs: (line.variations || []).map(v => [idOf(v && (v.propertyId != null ? v.propertyId : v.property_id)), idOf(v && (v.valueId != null ? v.valueId : v.value_id))]).filter(p => p[0] && p[1] && p[1] !== "0"),
-        title: decode(ctx.title || ""), by: ctx.by || "", F, charm: ctx.charm, parsed: ctx.parsed, reuse: st.reuse || false, rehearsal: sandbox, built: st.built, uploaded: st.uploaded };
+        title: decode(ctx.title || ""), by: ctx.by || "", F, charm: ctx.charm, parsed: ctx.parsed, reuse: st.reuse || false, rehearsal: sandbox, built: st.built && st.builtSku === st.sku ? st.built : null, uploaded: st.built && st.builtSku === st.sku ? st.uploaded : {} };   // (a file built for another SKU carries that SKU's name inside: never reused)
     };
     /* is the save still wanted? (the switch). One already in the repository is finished whatever the switch says: it is never left half linked. */
     const wanted = () => st.repoDone || typeof ctx.alive !== "function" || ctx.alive() !== false;
@@ -203,8 +209,8 @@
       alive: () => wanted(),   // (saveCustom looks before each upload and before the commit: a switch turned off stops it there, with nothing written)
       needPassword: async () => { row("repo", "locked", T.needPw, { reason: "locked" }); return null; },   // (no dialog: the person types the password into the strip and presses Retry)
       say: text => { if (st.rows.repo.state === "work") row("repo", "work", text); },
-      built: b => { st.built = b; },
-      uploaded: (which, info) => { st.uploaded[which] = info || true; }
+      built: b => { st.built = b; st.builtSku = st.sku; persist("built", { ai: b.ai, png: b.png, sku: st.sku }); },
+      uploaded: (which, info) => { st.uploaded[which] = info || true; persist("uploaded", { which, sku: st.sku }); }
     };
     async function repoStep() {
       if (st.repoDone && !sandbox) { row("repo", "done", st.reuse || (st.saved && st.saved.reused) ? T.already(st.sku) : T.saved); return { ok: true }; }
@@ -214,7 +220,7 @@
       try { r = await ctx.Master.saveCustom(specFor(), hooks); } catch (e) { r = { ok: false, reason: isNet(e) ? "offline" : "error", text: isNet(e) ? T.offlineWhy : String((e && e.message) || e).slice(0, 140) }; }
       if (r && r.ok) {
         if (sandbox) { row("repo", "rehearsed", st.reuse ? T.rehearsedHeld(st.sku) : T.rehearsedSave(st.sku)); return { ok: true }; }
-        st.repoDone = true; st.committed = r; st.built = null; st.sku = r.sku || st.sku;
+        st.repoDone = true; st.committed = r; st.built = null; st.sku = r.sku || st.sku; persist("clear");
         row("repo", "done", st.reuse || r.created === false ? T.already(st.sku) : T.saved);
         return { ok: true };
       }
@@ -224,11 +230,11 @@
         st.linkedTo = String((r && r.sku) || "").toUpperCase(); row("repo", "skipped", T.linked(st.linkedTo || "a charm")); row("etsy", "skipped", "");
         return { ok: false, held: "already" };
       }
-      if (reason === "not-uploaded" || reason === "bad-file") st.uploaded = {};   // (the cloud does not hold what we uploaded: the next try uploads again, it never trusts a memory of it)
+      if (reason === "not-uploaded" || reason === "bad-file") { st.uploaded = {}; persist("uploaded-clear"); }   // (the cloud does not hold what we uploaded: the next try uploads again, it never trusts a memory of it)
       if (reason === "locked") { row("repo", "locked", T.needPw, { reason: "locked" }); return { ok: false, held: "locked" }; }
       if (reason === "sku-taken") {   // someone made that SKU a moment ago: first, is THIS order saved already (another tab got there)? else the next free candidate is asked for
         try { const g = await call({ op: "customSaveGet", rid: String(ctx.rid), listingId }); if (g && g.save && g.save.sku) { st.saved = g.save; st.sku = g.save.sku; st.skuDone = true; st.repoDone = true; paintSaved(g.save); return { ok: true }; } } catch (_) { /* the next candidate */ }
-        st.exclude.add(st.sku); st.skuDone = false; st.uploaded = {}; st.built = null;
+        st.exclude.add(st.sku); st.skuDone = false; st.uploaded = {}; st.built = null; persist("clear");
         row("repo", "failed", T.notSaved((r && r.text) || "that SKU was just taken"), { reason, retry: true });
         return { ok: false, held: "taken" };
       }
@@ -390,7 +396,10 @@
     const read = key => { const r = readAll()[key]; return r ? Object.assign({}, r) : null; };
     function patch(key, fn) {
       const all = Object.assign({}, readAll()), cur = all[key]; if (!cur) return null;
-      const next = Object.assign({}, cur, typeof fn === "function" ? fn(cur) : fn, { upd: now() });
+      const part = typeof fn === "function" ? fn(cur) : fn;
+      // (nothing changed: nothing is written, so two tabs that both wait never wake each other in a loop through the storage event)
+      if (Object.keys(part).every(k => JSON.stringify(cur[k]) === JSON.stringify(part[k]))) return Object.assign({}, cur);
+      const next = Object.assign({}, cur, part, { upd: now() });
       all[key] = next; writeAll(all); announce(next); return Object.assign({}, next);
     }
     const keyOf = o => [o.sandbox ? "sbx" : "live", String(o.rid), digits(o.listingId), String(o.hash || "")].join("|");
@@ -505,7 +514,10 @@
       if (!rec.sandbox && !lockHeld()) { park(key, "password"); return; }
       let eng = engines.get(key);
       if (!eng) {
-        const ctx = Object.assign({}, r.ctx, { alive: () => wantedNow(key), lock: r.ctx && r.ctx.lock ? r.ctx.lock : deps.lock, sandbox: !!rec.sandbox });
+        // what an earlier run of this save already made (the built file, the uploads): a restarted page goes on from it, it does not build or upload again
+        let built = null; try { built = deps.loadBuilt ? await deps.loadBuilt(rec) : null; } catch (_) { built = null; }
+        const ctx = Object.assign({}, r.ctx, { alive: () => wantedNow(key), lock: r.ctx && r.ctx.lock ? r.ctx.lock : deps.lock, sandbox: !!rec.sandbox, persist: (kind, v) => persistFor(key, kind, v),
+          resume: built ? { built, uploaded: read(key).up || null } : null });
         eng = (deps.make || make)(ctx); engines.set(key, eng);
       }
       if (!wired.has(eng)) { wired.add(eng); try { eng.on(ev => emit({ type: "engine", key, ev })); } catch (_) { /* no events */ } }
@@ -518,12 +530,12 @@
       settle(key, res || {}, (typeof eng.outcome === "function" && eng.outcome()) || {});
     }
     /* a save that reached the repository (maybe on another computer) whose Etsy step is not done: any page that loads may do that step; the cloud is the memory, this page the actor */
-    function adoptPending(list, sandbox) {
+    function adoptPending(list, sandbox, force) {
       let k = 0;
       for (const p of Array.isArray(list) ? list : []) {
         const rid = String(p && p.rid || ""), listing = digits(p && p.listingId); if (!rid || !listing) continue;
         const key = [sandbox ? "sbx" : "live", rid, listing, "etsy"].join("|"), all = readAll(), mine = Object.values(all).find(r => r && r.rid === rid && r.listingId === listing && r.sandbox === !!sandbox && r.key !== key && (live(r) || r.state === "done"));
-        if (mine || (all[key] && (live(all[key]) || all[key].state === "done" || all[key].state === "attention"))) continue;
+        if (mine || (all[key] && (live(all[key]) || all[key].state === "done" || (all[key].state === "attention" && !force)))) continue;
         const rec = { v: 1, key, sandbox: !!sandbox, rid, listingId: listing, hash: "etsy", name: "", kind: "ai", by: "", ck: "", title: "", line: null, at: now(), upd: now(), state: "wanted", wait: "", why: "", sku: String(p.sku || ""), repo: true, etsy: false, fails: 0, nextAt: 0, auto: "", outcome: "", tab, etsyOnly: true };
         const next = Object.assign({}, all); next[key] = rec; writeAll(next); announce(rec); setT(() => tick(key, "pending"), 0); k++;
       }
@@ -537,6 +549,15 @@
       const reason = (r && (r.reason || r.state || r.error)) || "error", text = (r && (r.text || ETSY_WHY[reason])) || (r && r.error) || "Etsy did not confirm the change", retry = !r || r.retry !== false;
       if (reason === "offline") { fail(key, text); return; }
       settle(key, { done: "saved" }, { done: "saved", reason, retry, text, sku: rec.sku });
+    }
+    /* the engine tells what it made and what it uploaded; the record keeps the marks, deps.saveBuilt keeps the bytes (a restarted page asks deps.loadBuilt) */
+    function persistFor(key, kind, v) {
+      try {
+        if (kind === "built") { const rec = read(key); if (rec && deps.saveBuilt) Promise.resolve(deps.saveBuilt(rec, v)).catch(() => {}); patch(key, { up: { sku: v.sku } }); }
+        else if (kind === "uploaded") patch(key, cur => ({ up: Object.assign({}, cur.up && cur.up.sku === v.sku ? cur.up : { sku: v.sku }, { [v.which]: true }) }));
+        else if (kind === "uploaded-clear") patch(key, cur => ({ up: { sku: (cur.up && cur.up.sku) || "" } }));
+        else if (kind === "clear") { const rec = read(key); if (rec && deps.dropBuilt) Promise.resolve(deps.dropBuilt(rec)).catch(() => {}); patch(key, { up: null }); }
+      } catch (_) { /* a memory only: the next run builds and uploads again, the cloud checks */ }
     }
     function settle(key, res, out) {
       const rec = read(key); if (!rec) return;

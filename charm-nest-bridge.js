@@ -12787,6 +12787,9 @@ const CustomSheet = window.CustomSheet = (() => {
       keeper = lib.durable({
         store: { get: k => { try { return localStorage.getItem(k); } catch (_) { return null; } }, set: (k, v) => localStorage.setItem(k, v) },
         online: () => S.cloud.ok === true && navigator.onLine !== false, lock: RLock(), locks: navigator.locks && typeof navigator.locks.request === "function" ? { request: (name, fn) => navigator.locks.request(name, fn) } : null,
+        saveBuilt: (rec, b) => KeepBytes.put("built|" + rec.hash, { ai: b.ai, png: b.png, sku: b.sku, at: Date.now() }),
+        loadBuilt: rec => KeepBytes.get("built|" + rec.hash).then(x => (x && x.ai && x.png && x.sku ? { ai: x.ai, png: x.png, sku: x.sku } : null)),
+        dropBuilt: rec => KeepBytes.del("built|" + rec.hash),
         resolve: keepResolve, make: ctx => (KeepLib() || lib).make(ctx),   // (the page's engine is looked up each time: a test swaps it)
         remote: { put: rec => (rec.etsyOnly ? null : api("charmNestLibrary", { op: "customSaveIntent", sandbox: !!rec.sandbox, rid: rec.rid, listingId: rec.listingId, hash: rec.hash, name: rec.name, by: rec.by, state: rec.state === "off" ? "cancelled" : rec.state === "done" ? "done" : "wanted" }, { quiet: true })) },
         etsy: rec => api("charmNestLibrary", { op: "customEtsySkuWrite", rid: String(rec.rid), listingId: String(rec.listingId), ...(rec.sandbox ? { sandbox: true } : {}) }, { quiet: true, timeoutMs: 60000 })
@@ -12815,12 +12818,15 @@ const CustomSheet = window.CustomSheet = (() => {
   const keepKick = reason => { try { const kp = keeperOf(); if (kp) { kp.resume(reason || "kick"); keepPaintLater(); if (reason === "load" || reason === "online") setTimeout(() => keepRepair(reason), 3000); } } catch (err) { console.warn("Save keeper", err); } };
   /** This workspace's intents only (a sandbox page never runs a real save, and a real page never runs a rehearsal). */
   const mine = rec => !!rec && !!rec.sandbox === !!WORKSPACE_SANDBOX;
-  /** The intent of one card (the newest that is not switched off), or null. */
+  /** The intent of one card (the newest that is not switched off), or null. (An Etsy step adopted from the cloud has no card: it is the order's.) */
   function intentOfCk(ck) {
     const kp = keeper; if (!kp || !ck) return null;
-    let best = null; for (const r of kp.list()) if (mine(r) && r.ck === ck && r.state !== "off" && (!best || (r.upd || 0) > (best.upd || 0))) best = r;
+    const rid = all()[ck] && String(all()[ck].rid);
+    let best = null; for (const r of kp.list()) if (mine(r) && (r.ck === ck || (r.etsyOnly && rid && r.rid === rid)) && r.state !== "off" && (!best || (r.upd || 0) > (best.upd || 0))) best = r;
     return best;
   }
+  /** Does this strip's design belong to that intent? (the very file for this order and listing, or the Etsy step of this order's save) */
+  const ownsK = (K, rec) => !!(K && rec && K.ctx && rec.rid === String(K.ctx.rid) && rec.listingId === String(K.ctx.listingId).replace(/\D/g, "") && (rec.etsyOnly || rec.hash === (K.ctx.F && K.ctx.F.hash)));
   /** The design of an intent as the page holds it NOW: on its card, else this browser's own copy. Never a half-read file. */
   async function keepResolve(rec) {
     if (!mine(rec)) return { state: "skip" };
@@ -12863,6 +12869,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const r = kp.begin({ sandbox: !!c.sandbox, rid: c.rid, listingId: c.listingId, hash: F.hash, name: F.name, kind: F.kind, by: employeeName() || "", ck: K.ck, title: c.title,
       line: { sku: c.line.sku, productId: c.line.productId, variations: c.line.variations }, ready });
     if (!r.key) return false;
+    if (r.conflict) { try { toast("Another design of this order is already being saved. That one is saved; the first design of an order stays.", "bad", 6000); } catch (_) { /* a word only */ } return false; }
     K.intentKey = r.key; K.on = true; K.live = true; K.final = null; K.toasted = false; K.rows = freshRows(); K.seen = {};
     K.phase = keepLocked(K) ? "waiting" : "running"; K.intent = r.rec || null; K.view = kp.describe(K.intent);
     return true;
@@ -12876,8 +12883,8 @@ const CustomSheet = window.CustomSheet = (() => {
       if (ev.type === "engine") { const K = keepOfKey(ev.key); if (K) keepEvent(K, ev.ev); return; }
       if (ev.type !== "state" || !ev.rec) return;
       const rec = ev.rec; if (!mine(rec)) return;
-      const K = keeps.get(rec.ck);
-      if (K && (K.intentKey === rec.key || !K.intentKey) && K.sig && K.sig.split("|")[2] === rec.hash) { K.intentKey = rec.key; keepApplyIntent(K, rec, ev.view); }
+      const K = keeps.get(rec.ck) || [...keeps.values()].find(k => ownsK(k, rec));
+      if (K && ownsK(K, rec) && (K.intentKey === rec.key || !K.intentKey || rec.etsyOnly)) { K.intentKey = rec.key; keepApplyIntent(K, rec, ev.view); }
       keepIntentToast(rec, ev.view); keepForgetBytes(rec); keepPaintLater();
     } catch (err) { console.warn("Save keeper", err); }
   }
@@ -12898,6 +12905,7 @@ const CustomSheet = window.CustomSheet = (() => {
       return;
     }
     if (rec.state === "attention") {                // the one thing that needs a person; the failing row says it, with its Try again
+      if (rec.repo) { if (K.rows.sku.state !== "done") K.rows.sku = { state: "done", text: K.sku }; if (K.rows.repo.state !== "done") K.rows.repo = { state: "done", text: "Saved to the repository" }; }   // (after a reload the rows before the failing one are what the record says)
       const bad = rec.repo ? "etsy" : (["repo", "sku", "etsy"].find(n => K.rows[n] && K.rows[n].state === "failed") || "repo");
       if (!K.rows[bad] || K.rows[bad].state !== "failed") K.rows[bad] = { state: "failed", text: rec.why || "something went wrong", retry: true };
       K.phase = rec.repo ? "saved" : "held"; K.final = { done: K.phase, sku: K.sku, text: rec.why || "" };
@@ -12916,7 +12924,7 @@ const CustomSheet = window.CustomSheet = (() => {
   function keepForgetBytes(rec) {
     if (!rec || (rec.state !== "done" && rec.state !== "off") || !rec.hash || rec.etsyOnly) return;
     const kp = keeper; if (kp && kp.list().some(r => r.hash === rec.hash && r.key !== rec.key && r.state !== "done" && r.state !== "off")) return;
-    keepFiles.delete(rec.hash); KeepBytes.del(rec.hash);
+    keepFiles.delete(rec.hash); KeepBytes.del(rec.hash); KeepBytes.del("built|" + rec.hash);
   }
   /** The file taken off its order: a save that is not in the repository yet is switched off (what is saved already stays; it is never un-saved). */
   function keepFileRemoved(rid, F) {
@@ -12976,7 +12984,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const ck = D.ck; if (!ck || !e || !it || !e.files.length || e.files.some(F => F.state === "reading")) return null;
     const row = linesOf(it)[0]; if (!row) return null;
     if (!KeepLib()) return null;                                           // no engine: the window is exactly as it was
-    if (e.files.length !== 1 || e.files[0].state !== "ready" || e.files[0].pieces !== 1) { const mineI = keeperOf() && intentOfCk(ck); return { phase: "quiet", why: mineI ? keeper.describe(mineI).line || WHY.one : WHY.one, stub: true, rows: freshRows(), pw: {} }; }   // (a save already running for this order keeps showing its state)
+    if (e.files.length !== 1 || e.files[0].state !== "ready" || e.files[0].pieces !== 1) { const mineI = keeperOf() && intentOfCk(ck); return { phase: "quiet", why: mineI ? (keeper.describe(mineI).line || WHY.one) + (mineI.name ? " · design saved: " + txt(mineI.name) : "") : WHY.one, stub: true, rows: freshRows(), pw: {} }; }   // (a save already running for this order keeps showing its state)
     const F = e.files[0], sig = [ck, F.id, F.hash || "", row.line.sku || "", row.line.listingId || "", row.line.productId || ""].join("|");
     let K = keeps.get(ck);
     if (K && K.sig !== sig && !K.live && K.phase !== "running") { keeps.delete(ck); K = null; }
@@ -13021,11 +13029,12 @@ const CustomSheet = window.CustomSheet = (() => {
   /** `open()` answered: not offered (one quiet line), a save of this design under way or finished (its intent, else the cloud's record: the window shows its state), or ready (the switch, OFF). */
   function keepOpened(K, o) {
     K.open = o; K.sku = txt(o.sku || ""); K.locked0 = !!o.locked;
-    if (!o.offered) { K.phase = "quiet"; K.why = keepWhy(o); return; }
     // (KEEPSAVE) a save of this very design for this order and listing that is running, waiting, finished or needs attention keeps showing its state when the window opens again
-    const kp = keeperOf(), rid = K.ctx && K.ctx.rid, lid = K.ctx && K.ctx.listingId, hash = K.ctx && K.ctx.F && K.ctx.F.hash;
-    const mineI = kp && kp.list().find(r => mine(r) && r.rid === String(rid) && r.listingId === String(lid).replace(/\D/g, "") && r.hash === hash && r.state !== "off");
-    if (mineI) { K.seen = K.seen || {}; keepApplyIntent(K, mineI); K.sig && (K.intentKey = mineI.key); return; }
+    // (before the engine's own "not offered": once a save is linked, the line reads as linked already, and that must not hide the save's own ending)
+    const kp = keeperOf();
+    const mineI = kp && kp.list().find(r => mine(r) && ownsK(K, r) && r.state !== "off");
+    if (mineI) { K.seen = K.seen || {}; keepApplyIntent(K, mineI); K.intentKey = mineI.key; return; }
+    if (!o.offered) { K.phase = "quiet"; K.why = keepWhy(o); return; }
     const sv = o.saved;
     if (sv && sv.sku) {
       K.sku = txt(sv.sku); const es = sv.etsy || {}, linked = es.state === "linked";
@@ -13073,7 +13082,12 @@ const CustomSheet = window.CustomSheet = (() => {
   const keepStart = () => null, keepDisarm = () => {};
   /** A save that is not in the repository and failed for a reason that is not "wait": Try again goes from the step that stopped (nothing done is done twice). */
   function keepRetry(K, which) {
-    try { const kp = keeperOf(); if (!kp || !K || !K.intentKey) return; K.toasted = false; K.pwOpen = false; kp.retry(K.intentKey); paintKeep(); if (!(D.dlg && D.dlg.open)) redraw(); } catch (err) { console.warn("Save strip", err); }
+    try {
+      const kp = keeperOf(); if (!kp || !K) return; K.toasted = false; K.pwOpen = false;
+      if (K.intentKey) kp.retry(K.intentKey);
+      else if (K.ctx && K.sku) kp.adoptPending([{ rid: K.ctx.rid, listingId: K.ctx.listingId, sku: K.sku }], !!K.ctx.sandbox, true);   // (saved on another computer, or before this page loaded: this page does the Etsy step)
+      paintKeep(); if (!(D.dlg && D.dlg.open)) redraw();
+    } catch (err) { console.warn("Save strip", err); }
   }
   /** Before the window closes after a send: a save that is working RIGHT NOW is waited for a little (up to 20 s), then a calm moment on a good ending. One that waits for the password or the connection is not waited for (the card says so, and it goes on by itself), and a failure never holds the window. */
   async function keepHold(K) {
