@@ -3570,17 +3570,19 @@ const Pool = window.Pool = (() => {
     const one1=!front&&opts&&Number.isInteger(opts.one)&&opts.one>=0;
     const draw=charm=>front&&P.frontPreview?P.frontPreview(oneBody(charm,opts),220,opts):P.thumbnail(one1?oneBody(charm,opts):charm,168);   // (opts.highlight "L" | "R": a mismatched pair with the other body washed out; opts.body 0 | 1: that ear alone; opts.mirror / opts.side: one piece of an earring pair turned over / with its chip; a plain call is the design once, as drawn)
     const cached=B.pool.sources.get(path);if(cached&&!one1)return front&&P.frontPreview?draw(cached.charms[0]):cached.charms[0].thumb;
+    const stamp=String(entry.indexedAt||"");   // (MASTER7, Paul 15 Oct 2026: a re-index rewrote the 26 keys with their letters and the tiles already drawn kept the old pictures until the page was reloaded: this cache knew the path only)
     const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+(opts&&opts.mirror!=null?"m"+opts.mirror:"")+(opts&&opts.side||"")+(opts&&opts.pair?"pair"+(opts.facing||""):"")+(opts&&opts.one!=null?"#one"+opts.one:"")+":":"")+path+(one1?"#one"+opts.one:"");
-    if(masterPreviewCache.has(key))return masterPreviewCache.get(key);
-    if(cached){const task=Promise.resolve(draw(cached.charms[0]));masterPreviewCache.set(key,task);while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);try{return await task;}catch(e){masterPreviewCache.delete(key);throw e;}}   // (a design the pool already holds: drawn from that copy at once, no download)
+    const mk=key+"@"+stamp;
+    if(masterPreviewCache.has(mk))return masterPreviewCache.get(mk);
+    if(cached){const task=Promise.resolve(draw(cached.charms[0]));masterPreviewCache.set(mk,task);while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);try{return await task;}catch(e){masterPreviewCache.delete(mk);throw e;}}   // (a design the pool already holds: drawn from that copy at once, no download)
     // a finished picture is kept on this computer (charm-nest-thumbs.js) under the design file, its indexing time and the drawing code, so the
     // Master tab, the Orders list and the piece dots draw each design once, not once per refresh; the key carries every option of `key`
     const T=window.CharmNestThumbs,geom=sizeEntry(entry,size),keep=T&&T.designKey?T.designKey(key,geom.charmHash||entry.charmHash,entry.indexedAt):"";
     const make=()=>readMasterCharm(entry,size).then(({charm})=>draw(charm));
     const task=keep?T.picture(keep,make):make();
-    masterPreviewCache.set(key,task);
+    masterPreviewCache.set(mk,task);
     while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);
-    try{return await task;}catch(e){masterPreviewCache.delete(key);throw e;}
+    try{return await task;}catch(e){masterPreviewCache.delete(mk);throw e;}
   }
   /** The same picture as masterPreview(…, true) drawn at `px` for the picture viewer. Looking registers nothing (no pool
    *  source, no cache of a large picture): the master is read, drawn and let go, or its pooled copy is drawn. */
