@@ -9,6 +9,8 @@
 //           --judge=<file>           default: /tmp/mx/make-sheet-frozen.cjs if it exists, else /tmp/mx/make-sheet-now.cjs
 //           --compare-sheet=<summary.json | sheet out dir>   print every word whose status differs from a real sheet run of the same engine
 //           --no-log                 do not add the run to /tmp/mx/leaderboard.json
+//           CPU etiquette: a run takes one of the /tmp/cnslots/slot1..4 locks (same as /tmp/cn-run.sh; waits while all four are taken; not needed when started through cn-run.sh; --no-slot skips it), runs niced (10)
+//           with 1 worker when the 1-minute load is above 8 (else 2; --shards=1|2 overrides), and is killed after --timeout=1800 s
 //   diff    node fastbench.cjs diff <runA> <runB>     per-word changes (status, reasons, side body offset, ESG distance, ms) between two runs
 //   board   node fastbench.cjs board [A|B]            the leaderboard, best first
 //   <run> = a run file (/tmp/mx/runs/*.json), a label (latest run of that label on bench A; label:B for bench B), or "base" (= label E2-base ... the first run of that label)
@@ -47,7 +49,8 @@ async function lettersCached(J, repo) {
 /* ── worker: builds the words the parent sends ── */
 async function workerMain() {
   const cfg = JSON.parse(process.env.FB_CFG);
-  try { os.setPriority(0, cfg.nice); } catch (_) { /* optional */ }
+  try { if (os.getPriority(0) < cfg.nice) os.setPriority(0, cfg.nice); } catch (_) { /* optional */ }
+  process.on('disconnect', () => process.exit(0));   // the parent died or timed out: stop
   const J = loadJudge(cfg.judge, cfg.engine, cfg.scratch, cfg.repo), letters = await lettersCached(J, cfg.repoGuess);
   const rc = new Map(), regionCache = s => { if (!rc.has(s.sku)) rc.set(s.sku, J.regionOfLetter(s)); return rc.get(s.sku); };
   process.on('message', async m => {
@@ -102,8 +105,28 @@ function resolveRun(spec) {
   const r = runs[runs.length - 1]; try { return JSON.parse(fs.readFileSync(r.runFile, 'utf8')); } catch (_) { return r; }
 }
 
+
+/* ── shared CPU slots (the box has 4 cores for ~20 agents): hold one of /tmp/cnslots/slot1..4 (flock, the same files /tmp/cn-run.sh uses) while the run is going, niced; wait when all four are taken ── */
+function underCnRun() { try { let pid = process.ppid; for (let i = 0; i < 4 && pid > 1; i++) { if (/cn-run\.sh/.test(fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8'))) return true; pid = +/^PPid:\s*(\d+)/m.exec(fs.readFileSync(`/proc/${pid}/status`, 'utf8'))[1]; } } catch (_) { /* no /proc */ } return false; }
+function acquireSlot() {
+  if (process.env.FB_SLOT_HELD || flag('no-slot') || underCnRun()) return;   // (already inside a slot: our own re-exec, or started through cn-run.sh)
+  const dir = process.env.CN_SLOT_DIR || '/tmp/cnslots', limit = +arg('timeout', 1800); try { fs.mkdirSync(dir, { recursive: true }); } catch (_) { /* exists */ }
+  const wait = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms), t0 = Date.now(); let said = false;
+  for (;;) {
+    for (let i = 1; i <= 4; i++) {
+      const r = cp.spawnSync('flock', ['-n', '-E', '99', `${dir}/slot${i}`, 'timeout', String(limit), 'nice', '-n', '10', process.execPath, __filename].concat(process.argv.slice(2)), { stdio: 'inherit', env: Object.assign({}, process.env, { FB_SLOT_HELD: String(i) }) });
+      if (r.error) { console.error('fastbench: no flock/timeout/nice here (' + r.error.code + '): running without a slot'); return; }
+      if (r.status === 99 && !r.signal) continue;   // this slot is taken
+      process.exit(r.status == null ? 1 : r.status);
+    }
+    if (!said) { console.error('fastbench: all 4 CPU slots are busy (shared with /tmp/cn-run.sh), waiting for one...'); said = true; }
+    wait(2000);
+  }
+}
+
 /* ── run ── */
 async function runMain() {
+  acquireSlot();
   const t0 = Date.now(), cwd = process.cwd(), engine = path.resolve(arg('engine', path.join(cwd, 'charm-nest-monogram.js')));
   const judge = path.resolve(arg('judge', defaultJudge())), adhoc = arg('words', null);
   const benchName = adhoc ? 'adhoc' : arg('bench', 'A'), benchFile = BENCH[benchName] || path.resolve(benchName);
@@ -111,12 +134,12 @@ async function runMain() {
   const benchKey = BENCH[benchName] ? benchName : adhoc ? 'adhoc' : path.basename(benchFile);
   const wt = /wt-([A-Za-z0-9]+)/.exec(engine), label = arg('label', wt ? wt[1] : path.basename(path.dirname(engine)));
   const guess = path.dirname(engine), repoGuess = fs.existsSync(path.join(guess, 'netlify/functions/_charmNestPdf.js')) ? guess : '/home/user/GoKu_Shipping';
-  const shards = Math.max(1, Math.min(2, +arg('shards', 2))), scratch = path.resolve(arg('out', path.join(MX, 'runs', 'scratch-' + label)));   // (the judge wants an output dir; it only creates it)
+  const load = os.loadavg()[0], shards = Math.max(1, Math.min(2, +arg('shards', load > 8 ? 1 : 2))), scratch = path.resolve(arg('out', path.join(MX, 'runs', 'scratch-' + label)));   // (the judge wants an output dir; it only creates it)
   fs.mkdirSync(scratch, { recursive: true });
   const info = engineInfo(engine), autofit = !flag('no-autofit');
   // work list: the ESG model first, HEY (second approved word) as calibration when it is not in the list, then the words
-  const queue = ['ESG'].concat(words.includes('HEY') ? [] : ['HEY']).concat(words), got = new Map(), cfg = { judge, engine, scratch, repo: repoGuess === guess ? undefined : repoGuess, repoGuess, nice: +arg('nice', 5) };
-  console.log(`fastbench ${label}: engine ${info.commit} (${info.sha}) judge ${path.basename(judge)} bench ${benchKey} (${words.length} words) ${autofit ? 'autoFit' : 'build'} ${shards} shard(s)`);
+  const queue = ['ESG'].concat(words.includes('HEY') ? [] : ['HEY']).concat(words), got = new Map(), cfg = { judge, engine, scratch, repo: repoGuess === guess ? undefined : repoGuess, repoGuess, nice: +arg('nice', 10) };
+  console.log(`fastbench ${label}: engine ${info.commit} (${info.sha}) judge ${path.basename(judge)} bench ${benchKey} (${words.length} words) ${autofit ? 'autoFit' : 'build'} ${shards} shard(s) (load ${load.toFixed(1)}, slot ${process.env.FB_SLOT_HELD || 'none'})`);
   await new Promise((resolve, reject) => {
     let next = 0, live = 0, done = 0;
     const kids = [];
