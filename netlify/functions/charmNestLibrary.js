@@ -1198,6 +1198,8 @@ async function op_masterGetMany(b) {
    token, refused in the sandbox) writes the SKU's index entry (create-only), its file record, the listing's alias and the save record in one transaction. No Etsy call here. */
 const CustomSave = require("./_charmNestCustomSave");
 async function op_customSaveGet(b) { return CustomSave.get({ db }, b); }
+async function op_customSavePending(b) { return CustomSave.pending({ db }, b); }   // KEEP B6: the saved designs whose Etsy step is not done (read only)
+async function op_customSaveIntent(b) { return CustomSave.intent({ db, FV }, b); }   // KEEP B7: the server's copy of "this order wants this file saved" (writes only Charm_Custom_Intents)
 async function op_customSaveCommit(b) { return CustomSave.commit({ db, FV, tokenUrl, bucket: admin.storage().bucket() }, b); }
 /** What changes whenever the index does: how many entries it holds, and when one was last indexed (masterPutIndex: every write of an
     entry stamps indexedAt) and last edited (masterPatch: pair, facing, angle, engravable ... all stamp updatedAt; a removal changes the
@@ -1645,7 +1647,7 @@ const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces
   "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "remnantList", "remnantMark", "remnantBackfill", "partialList", "partialPolicyGet", "partialPolicySet", "partialPlan", "partialUse", "partialStocks", "sheetHistory", "partialSearchList", "sheetMake", "sheetDelete", "partialBackfill", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
   "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "listingKindPut", "noDesignPut", "noDesignDelete", "optionMapPut",
   "sandboxCancel", "sandboxPut", "sandboxPullOrders", "sandboxPullLimitSet", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
-["customSaveGet", "customSaveCommit"].forEach(op => NO_GEN_BUMP.add(op));   // (the save writes a master entry, an alias and its own record: nothing a placement answer is made from)
+["customSaveGet", "customSaveCommit", "customSavePending", "customSaveIntent"].forEach(op => NO_GEN_BUMP.add(op));   // (the save writes a master entry, an alias and its own record: nothing a placement answer is made from)
 async function placementGen() {
   if (PREFIX) return null;
   try { const s = await db.collection(REV_COLL).doc("placement").get(); return s.exists ? Number((s.data() || {}).n) || 0 : 0; }
@@ -4122,7 +4124,9 @@ OPS.flowApply = op_flowApply;
 OPS.sharedOrders = op_sharedOrders;
 OPS.getOrderPieces = op_getOrderPieces;   // where each piece of an order is (OrderPieces); read only
 OPS.customSaveGet = op_customSaveGet;   // a custom design saved to the repository: the order's save record; read only
+OPS.customSavePending = op_customSavePending; OPS.customSaveIntent = op_customSaveIntent;   // KEEP: no repository token (they write nothing in the repository)
 OPS.customSaveCommit = op_customSaveCommit;   // ... and its write (repo upload token; refused in the sandbox)
+OPS.customSaveRepair = b => require("./_charmNestCustomRepair").repair({ db, FV, bucket: admin.storage().bucket(), etsySku: require("./_charmNestEtsySku").ops.customEtsySkuWrite }, b); NO_GEN_BUMP.add("customSaveRepair");   // KEEP R1-R9: the repair of saved designs (orphan files, records vs entries vs aliases vs files, a stuck Etsy note, intent litter, optional Etsy steps); free below, an upload token to remove files younger than an hour
 OPS.customSkuCheck = b => require("./_charmNestSkuCheck").check(db, b); NO_GEN_BUMP.add("customSkuCheck");   // SKUGEN: which proposed SKU for a saved custom design nobody holds; reads only, so it does not raise the placement counter
 OPS.customEtsySkuWrite = require("./_charmNestEtsySku").ops.customEtsySkuWrite; NO_GEN_BUMP.add("customEtsySkuWrite");   // ETSYSKU: {rid} the last step of saving a custom design (CONTRACT section 5): the SKU on Etsy. Never in the sandbox, no token (the saved record decides). It writes Etsy and its own records, nothing a placement answer is made from, so it does not raise the placement counter
 OPS.listingEtsySkuWrite = require("./_charmNestEtsyLink").ops.listingEtsySkuWrite; NO_GEN_BUMP.add("listingEtsySkuWrite");   // SWANSKU: {listingId, sku, by} the master charm's own SKU on an existing Etsy listing (Paul, 12 Oct 2026). A repo "modify" op (the password gate, _charmNestRepoAuth.js LIBRARY), never in the sandbox; reads the live inventory first, before-copy, one PUT. Writes Etsy and its own record, nothing a placement answer is made from

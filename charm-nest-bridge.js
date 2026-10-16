@@ -3120,6 +3120,8 @@ const Master = window.Master = (() => {
         try { if (hooks.built) hooks.built(built); } catch (_) { /* the engine keeps them for a retry; not needed to go on */ }
       }
       if (spec.rehearsal) return { ok: true, rehearsed: true, sku, created: !spec.reuse, bytes: built ? built.ai.length : 0 };
+      // KEEP B9: the hash of the bytes this call uploads, so the commit can tell its file from another save's (two saves that chose one SKU upload to one path)
+      const sha256 = async b => [...new Uint8Array(await crypto.subtle.digest("SHA-256", b))].map(x => x.toString(16).padStart(2, "0")).join("");
       if (!S.cloud.ok) return fail("offline", "you are offline");
       if (!L) return fail("unavailable", "the charm repo lock did not load: reload the page");
       // 3 · the token: the one held, else the hook's answer (a person types it into the strip); never a dialog here
@@ -3134,7 +3136,7 @@ const Master = window.Master = (() => {
         if (!alive()) throw Object.assign(new Error("switched off"), { keepCancelled: true });
         say(`Saving ${sku}.${which === "ai" ? "ai" : "png"}…`);
         for (let again = false; ; again = true) {
-          try { up[which] = await uploadBytes(path, bytes, type, `Saving ${sku}`, { repoToken: tok.token, charmHash: c.hash }); try { if (hooks.uploaded) hooks.uploaded(which, up[which]); } catch (_) { /* as above */ } return; }
+          try { up[which] = await uploadBytes(path, bytes, type, `Saving ${sku}`, { repoToken: tok.token, charmHash: String(c.hash || "") }); try { if (hooks.uploaded) hooks.uploaded(which, up[which]); } catch (_) { /* as above */ } return; }
           catch (e) { if (!again && L.isRepoLocked(e)) { L.forget(tok.action || "upload"); tok = await need(); if (!tok) throw Object.assign(new Error("locked"), { keepLocked: true }); continue; } throw e; }
         }
       };
@@ -3164,7 +3166,7 @@ const Master = window.Master = (() => {
       if (r.entry && r.entry.sku) B.master.entries.set(r.entry.sku, r.entry);
       return { ok: true, sku: r.sku || sku, created: r.created !== false, entry: r.entry || null, alias: r.alias || "", rehearsed: false };
     } catch (e) {
-      if (e && e.status === 409 && e.data && e.data.error === "sku-taken") return fail("sku-taken", "that SKU was just taken", { sku: e.data.sku });   // (the door refused an upload over another design's files: nothing was written; the next candidate)
+      if (e && e.status === 409 && e.data && e.data.error === "sku-taken") return fail("sku-taken", "that SKU was just taken", { sku: e.data.sku });   // (KEEP: the file door refuses an upload over the files of another design's entry: the commit's own word, nothing was written)
       const net = !!e && (e.transient === true || /cloud offline|timed out|no answer/i.test(String(e.message || "")));   // (a passing network trouble; anything else is an error to be read)
       return fail(net ? "offline" : "error", net ? "you could not reach the cloud" : String((e && e.message) || e).slice(0, 160), { transient: !!(e && e.transient) });
     }

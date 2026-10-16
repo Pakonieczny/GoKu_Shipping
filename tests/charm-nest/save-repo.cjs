@@ -37,8 +37,10 @@ async function server() {
   const changed = (a, b) => [...new Set([...a.keys(), ...b.keys()])].filter(k => !k.startsWith('CharmRepo_Tokens/') && a.get(k) !== b.get(k)).sort();   // (the test's own password tokens are not the repository)
   const RID = '4196630529', LISTING = '1799994821', OLD = "ACORN'S LEAF", SKU = 'ACORNS_LEAF_4821', HASH = crypto.createHash('sha256').update('test-charm-file').digest('hex');
   const ENTRY = { charmHash: 'a1b2c3d4e5f60718', widthPt: 31.2, heightPt: 38.5, areaPt2: 790.4, members: 4, holes: 1, engravable: true, upAngle: 90, upSource: 'long' };
-  const body = over => Object.assign({ op: 'customSaveCommit', rid: RID, listingId: LISTING, sku: SKU, oldSku: OLD, productId: '9100000001', optionPairs: [['513', '1234']], group: { mode: 'some', productIds: ['9100000001', '9100000002'] }, title: "Acorn's Leaf Charm", by: 'Paul',
-    design: { name: 'Test_Charm.ai', kind: 'ai', hash: HASH, bytes: 3400 }, reuse: false, entry: ENTRY, file: { masterHash: HASH, name: 'Test_Charm.ai' } }, over || {});
+  // (KEEP: a SKU is a DESIGN now: the commit finds the drawing by its charm hash, so each SKU of this test is its own drawing unless a case says otherwise)
+  const entryOf = sku => (sku === SKU ? ENTRY : Object.assign({}, ENTRY, { charmHash: 'drawing-of-' + sku }));
+  const body = over => { const b = Object.assign({ op: 'customSaveCommit', rid: RID, listingId: LISTING, sku: SKU, oldSku: OLD, productId: '9100000001', optionPairs: [['513', '1234']], group: { mode: 'some', productIds: ['9100000001', '9100000002'] }, title: "Acorn's Leaf Charm", by: 'Paul',
+    design: { name: 'Test_Charm.ai', kind: 'ai', hash: HASH, bytes: 3400 }, reuse: false, entry: null, file: { masterHash: HASH, name: 'Test_Charm.ai' } }, over || {}); if (!b.entry) b.entry = entryOf(b.sku); return b; };
 
   // the repository as it is: three designs (one blocked), a real master file's record, other listings' aliases (one with a person's word, one with a saved answer)
   const REAL = 'f'.repeat(64);
@@ -99,7 +101,7 @@ async function server() {
   ok(!('sku' in al) && !('v' in al), 'a SKU-carrying order sets bySku only');
   eq([sv.rid, sv.listingId, sv.sku, sv.oldSku, sv.productId, sv.phase, sv.reused, sv.rehearsal, sv.etsy, sv.group, sv.masterHash, sv.aiPath, sv.by, sv.alias], [RID, LISTING, SKU, OLD, '9100000001', 'repo', false, false, { state: 'pending' }, { mode: 'some', productIds: ['9100000001', '9100000002'] }, HASH, idx.aiPath, 'Paul', 'bySku'], 'the save record');
   eq(sv.optionPairs, [{ propertyId: '513', valueId: '1234' }], 'option pairs are kept as a list of maps (Firestore refuses an array inside an array)');
-  eq(Object.keys(sv).sort(), ['alias', 'aiPath', 'at', 'by', 'design', 'etsy', 'group', 'listingId', 'masterHash', 'oldSku', 'optionPairs', 'phase', 'productId', 'rehearsal', 'reused', 'rid', 'sku', 'thumbPath', 'title'].sort(), 'no buyer data in the save record: its keys are all of it');
+  eq(Object.keys(sv).sort(), ['alias', 'aiPath', 'at', 'by', 'charmHash', 'design', 'etsy', 'group', 'listingId', 'masterHash', 'oldSku', 'optionPairs', 'phase', 'productId', 'rehearsal', 'reused', 'rid', 'sku', 'thumbPath', 'title'].sort(), 'no buyer data in the save record: its keys are all of it');
   ok(al.listingKind === undefined, 'a fresh alias has no listing word of ours');
   ok(fileWrites.length === fw0, 'the commit itself wrote no file (the browser uploads them)');
   // reads back like any other entry
@@ -120,17 +122,26 @@ async function server() {
   ok(r.body.entry && r.body.entry.sku === SKU, 'with its entry');
   eq(writes.length, wlen, 'and nothing was written');
   r = await post(body({ repoToken: TOK, sku: 'OTHER_4821' }));
-  eq([r.status, r.body.ok, r.body.error, r.body.sku], [200, false, 'already-saved', SKU], 'another SKU for a saved order: already-saved, it names the saved SKU');
-  r = await post(body({ repoToken: TOK, rid: '4196630999' }));
-  eq([r.status, r.body.ok, r.body.error, r.body.by], [200, false, 'sku-taken', 'master'], 'another order, the same SKU: sku-taken');
+  eq([r.status, r.body.ok, r.body.error, r.body.sku, r.body.sameFile], [200, false, 'already-saved', SKU, false], 'another SKU AND another drawing for a saved order: already-saved, it names the saved SKU (the first design of an order stays)');
+  r = await post(body({ repoToken: TOK, sku: 'OTHER_4821', entry: ENTRY }));
+  eq([r.status, r.body.ok, r.body.created, r.body.how, r.body.sku], [200, true, false, 'again', SKU], 'another SKU for the SAME drawing of a saved order: the saved record again (KEEP B2), the saved SKU');
+  r = await post(body({ repoToken: TOK, rid: '4196630999', entry: Object.assign({}, ENTRY, { charmHash: 'another-drawing' }) }));
+  eq([r.status, r.body.ok, r.body.error, r.body.by], [200, false, 'sku-taken', 'master'], 'another order, the same SKU, another drawing: sku-taken');
   eq(canon(store.get('Charm_Master_Index/' + SKU)), settled.get('Charm_Master_Index/' + SKU), 'the index entry is byte-identical');
   eq(changed(settled, snap()), [], 'the whole database is as it was');
   eq(writes.length, wlen, 'no write was even attempted');
   for (const k of jar) eq(canon(store.get(k)), start.get(k), 'master and alias document untouched: ' + k);
+  { // KEEP B2: another ORDER of the same listing, the same drawing (a second tab, a stale library): the listing is already linked, only that order's record is written
+    const w0 = writes.length;
+    r = await post(body({ repoToken: TOK, rid: '4196630999' }));
+    eq([r.status, r.body.ok, r.body.created, r.body.how, r.body.sku], [200, true, false, 'listing-same', SKU], 'another order of the listing with the same drawing: already linked, no second entry');
+    eq(writes.slice(w0).map(w => w.kind + ' ' + w.path), ['create Charm_Custom_Saves/4196630999'], 'only the order\'s record was written');
+    store.delete('Charm_Custom_Saves/4196630999'); settled.delete('Charm_Custom_Saves/4196630999');
+  }
   // two at once for the same SKU: exactly one wins
   await up('RACE_1000', TOK);
-  const race = await Promise.all([post(body({ repoToken: TOK, rid: '4196630101', sku: 'RACE_1000', listingId: '1799991000', oldSku: 'X RACE', file: { masterHash: crypto.createHash('sha256').update('r1').digest('hex'), name: 'Race.ai' } })),
-    post(body({ repoToken: TOK, rid: '4196630102', sku: 'RACE_1000', listingId: '1799991001', oldSku: 'X RACE 2', file: { masterHash: crypto.createHash('sha256').update('r2').digest('hex'), name: 'Race.ai' } }))]);
+  const race = await Promise.all([post(body({ repoToken: TOK, rid: '4196630101', sku: 'RACE_1000', listingId: '1799991000', oldSku: 'X RACE', entry: Object.assign({}, ENTRY, { charmHash: 'race-one' }), file: { masterHash: crypto.createHash('sha256').update('r1').digest('hex'), name: 'Race.ai' } })),
+    post(body({ repoToken: TOK, rid: '4196630102', sku: 'RACE_1000', listingId: '1799991001', oldSku: 'X RACE 2', entry: Object.assign({}, ENTRY, { charmHash: 'race-two' }), file: { masterHash: crypto.createHash('sha256').update('r2').digest('hex'), name: 'Race.ai' } }))]);
   eq(race.map(x => x.body.ok).sort(), [false, true], 'two commits for one SKU at the same moment: one saved, one refused');
   eq(race.filter(x => !x.body.ok)[0].body.error, 'sku-taken', 'the other is sku-taken');
   const loser = race[0].body.ok ? '4196630102' : '4196630101';
@@ -171,11 +182,16 @@ async function server() {
   ok(sp.designSku === 'LEAF_6673' && sp.skuSource === 'transaction' && !sp.special, 'once Etsy carries LEAF_6673 the next order is the master design');
 
   // the alias merge keeps a person's other answers and the listing word; what stood under the same key is kept in keep.was
-  store.set('Charm_Sku_Aliases/1799997777', { listingId: '1799997777', bySku: { 'OLD SEVEN': 'HEART_1111', 'OTHER ONE': 'HEART_1111' }, listingKind: { kind: 'regular', by: 'Paul', at: 1 }, pairBySku: { P: { L: 'A', R: 'B' } }, title: 'Seven' });
+  // (KEEP K2: a person's live link is never replaced; an answer whose design is gone is dangling and is replaced, kept in keep.was)
+  store.set('Charm_Sku_Aliases/1799997777', { listingId: '1799997777', bySku: { 'OLD SEVEN': 'GONE_0000', 'OTHER ONE': 'HEART_1111' }, listingKind: { kind: 'regular', by: 'Paul', at: 1 }, pairBySku: { P: { L: 'A', R: 'B' } }, title: 'Seven' });
   await up('SEVEN_7777', TOK);
   r = await post(body({ repoToken: TOK, rid: '4196630404', listingId: '1799997777', sku: 'SEVEN_7777', oldSku: 'OLD SEVEN', file: { masterHash: crypto.createHash('sha256').update('f7').digest('hex'), name: 'Seven.ai' } }));
   const a7 = store.get('Charm_Sku_Aliases/1799997777');
-  eq([r.body.ok, a7.bySku, a7.listingKind.kind, a7.pairBySku.P.L, a7.keep.was], [true, { 'OLD SEVEN': 'SEVEN_7777', 'OTHER ONE': 'HEART_1111' }, 'regular', 'A', 'HEART_1111'], 'the alias merge keeps the other answers, the listing word and the pair; the answer it replaced is in keep.was');
+  eq([r.body.ok, a7.bySku, a7.listingKind.kind, a7.pairBySku.P.L, a7.keep.was], [true, { 'OLD SEVEN': 'SEVEN_7777', 'OTHER ONE': 'HEART_1111' }, 'regular', 'A', 'GONE_0000'], 'the alias merge keeps the other answers, the listing word and the pair; the dangling answer it replaced is in keep.was');
+  await up('SEVEN_7778', TOK); const before7 = canon(store.get('Charm_Sku_Aliases/1799997777')), w7 = writes.length;
+  r = await post(body({ repoToken: TOK, rid: '4196630405', listingId: '1799997777', sku: 'SEVEN_7778', oldSku: 'OTHER ONE', file: { masterHash: crypto.createHash('sha256').update('f78').digest('hex'), name: 'Seven2.ai' } }));
+  eq([r.status, r.body.ok, r.body.error, r.body.sku], [200, false, 'listing-linked', 'HEART_1111'], 'a live link of the listing for this SKU (a person\'s) stays: listing-linked, the first link wins, nothing is written');
+  eq([canon(store.get('Charm_Sku_Aliases/1799997777')), writes.length, store.has('Charm_Master_Index/SEVEN_7778'), store.has('Charm_Custom_Saves/4196630405')], [before7, w7, false, false], '... not the alias, no entry, no record');
 
   // (g) reuse: an identical design already in the repository (exact charm hash): only the alias and the save record are written
   const b4 = snap(), w4 = writes.length;
@@ -208,7 +224,7 @@ async function server() {
   eq([writes.length, fileWrites.length], [w6, f6], 'with an empty write log');
   for (const sku of ['CUSTOM_LEAF', 'RE_5460', 'LEAF-12', 'X-CO', 'FOX (HUGGIE)']) { r = await post(body({ repoToken: TOK, rid: '4196630702', sku })); ok(r.status === 400 || r.body.error === 'reserved', 'a reserved or unusable SKU is refused: ' + sku + ' ' + JSON.stringify(r.body).slice(0, 80)); }
   r = await post(body({ repoToken: TOK, rid: '4196630702', sku: 'CUSTOM_LEAF' })); eq([r.body.ok, r.body.error], [false, 'reserved'], 'CUSTOM_LEAF is reserved (HTTP 200)');
-  for (const bad of [{ rid: 'x' }, { listingId: '12' }, { sku: 'has space' }, { sku: 'a/b' }, { sku: 'A'.repeat(40) }, { sku: '' }, { oldSku: '__x__' }, { entry: { charmHash: 'h', widthPt: 0, heightPt: 5, areaPt2: 1, members: 1, holes: 0 } }, { file: { masterHash: 'nothex', name: 'a.ai' }, design: { name: 'a.ai', hash: 'nothex' } }]) {
+  for (const bad of [{ rid: 'x' }, { listingId: '12' }, { sku: 'has space' }, { sku: 'a/b' }, { sku: 'A'.repeat(40) }, { sku: '' }, { entry: { charmHash: 'h', widthPt: 0, heightPt: 5, areaPt2: 1, members: 1, holes: 0 } }, { file: { masterHash: 'nothex', name: 'a.ai' }, design: { name: 'a.ai', hash: 'nothex' } }]) {
     r = await post(body(Object.assign({ repoToken: TOK, rid: '4196630703' }, bad))); eq([r.status, r.body.error], [400, 'bad-request'], 'a malformed call is a 400: ' + JSON.stringify(bad).slice(0, 60));
   }
   eq([writes.length, fileWrites.length], [w6, f6], 'and none of them wrote');
@@ -445,7 +461,7 @@ async function page() {
       await P.buildSilhouettes(parsed, g.charms, 6);
       const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', r.bytes))].map(b => b.toString(16).padStart(2, '0')).join('');
       window.__design = { parsed, charm: g.charms.filter(c => !c.open)[0], F: { name: 'Test_Charm.dxf', kind: 'dxf', hash, bytes: r.bytes } };
-      window.__spec = over => Object.assign({ rid: '4196630529', listingId: '1799994821', sku: 'ACORNS_LEAF_4821', oldSku: "ACORN'S LEAF", productId: '9100000001', optionPairs: [['513', '1234']], group: { mode: 'all', productIds: ['9100000001'] }, title: "Acorn's Leaf Charm", by: 'Paul', F: window.__design.F, charm: window.__design.charm, parsed: window.__design.parsed, reuse: false, rehearsal: false }, over || {});
+      window.__spec = over => Object.assign({ rid: '4196630529', listingId: '1799994821', sku: 'ACORNS_LEAF_4821', oldSku: "ACORN'S LEAF", productId: '9100000001', optionPairs: [['513', '1234']], group: { mode: 'all', productIds: ['9100000001'] }, title: "Acorn's Leaf Charm", by: 'Paul', F: window.__design.F, charm: window.__design.charm, parsed: window.__design.parsed, reuse: false, rehearsal: false }, over || {}); window.__spec2 = window.__spec; window.__spec = over => { const sp = window.__spec2(over); if (sp.sku !== 'ACORNS_LEAF_4821' && !(over && over.charm)) sp.charm = Object.assign({}, sp.charm, { hash: 'drawing-of-' + sp.sku }); return sp; };   // (KEEP: a SKU is a DESIGN now; each other SKU of this page test is its own drawing)
       window.__hooks = { built: [], uploaded: [], asked: 0, say: [] };
       window.__h = () => ({ needPassword: async () => { window.__hooks.asked++; return window.__give ? window.__give() : null; }, say: t => window.__hooks.say.push(t), built: b => window.__hooks.built.push(b), uploaded: (k, i) => window.__hooks.uploaded.push([k, i.path]) });
     }, DXF);
@@ -484,8 +500,11 @@ async function page() {
     eq(srv.st.calls.slice(c4).map(c => c.name + ':' + c.op), ['charmNestLibrary:customSaveCommit'], 'and it made the one commit call, no upload, no sign');
     // 5 · the same SKU for another order is refused, and what is there is not touched
     const before5 = JSON.stringify(docs('Charm_Master_Index/ACORNS_LEAF_4821'));
-    r = await pg.evaluate(() => Master.saveCustom(window.__spec({ rid: '4196630999', listingId: '1799990999' }), window.__h()));
-    ok(r.ok === false && r.reason === 'sku-taken', 'another order, the same SKU: sku-taken: ' + JSON.stringify(r).slice(0, 120));
+    r = await pg.evaluate(() => { const s = window.__spec({ rid: '4196630999', listingId: '1799990999' }); s.charm = Object.assign({}, s.charm, { hash: 'another-drawing-0001' }); return Master.saveCustom(s, window.__h()); });
+    ok(r.ok === false && r.reason === 'sku-taken', 'another order, the same SKU, ANOTHER drawing: sku-taken (the door refuses the upload over the entry\'s files): ' + JSON.stringify(r).slice(0, 120));
+    r = await pg.evaluate(() => Master.saveCustom(window.__spec({ rid: '4196630998', listingId: '1799990999' }), window.__h()));
+    ok(r.ok === true && r.created === false && r.sku === 'ACORNS_LEAF_4821', 'another order, the same SKU, the SAME drawing: already in the repository, no second entry: ' + JSON.stringify(r).slice(0, 120));
+    srv.st.docs.delete('Charm_Custom_Saves/4196630998'); srv.st.docs.delete('Charm_Sku_Aliases/1799990999');
     eq(JSON.stringify(docs('Charm_Master_Index/ACORNS_LEAF_4821')), before5, 'the entry is as it was'); ok(!srv.st.docs.has('Charm_Custom_Saves/4196630999'), 'and no save record was made for it');
     // 6 · locked: no token held, nobody gives one: no call, no dialog
     await pg.evaluate(() => { CharmNestRepoLock.forget(); window.__give = null; window.__hooks.asked = 0; });

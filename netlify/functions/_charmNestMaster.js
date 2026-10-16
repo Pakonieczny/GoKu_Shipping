@@ -77,13 +77,30 @@ async function putIndex(db, FV, body) {
   for (let i = 0; i < skus.length; i += 200) {
     const part = skus.slice(i, i + 200);
     // (only what the rules below look at of an entry already there: its master, its size, its operator overrides)
-    const snaps = await db.getAll(...part.map(s => db.collection(INDEX).doc(s)), { fieldMask: ["masterHash", "masterName", "widthPt", "heightPt", "engravableBy", "upSource", "sizes", "pair", "pairBy", "facingBy"] });
+    const snaps = await db.getAll(...part.map(s => db.collection(INDEX).doc(s)), { fieldMask: ["masterHash", "masterName", "widthPt", "heightPt", "engravableBy", "upSource", "sizes", "pair", "pairBy", "facingBy", "hashSource", "charmHash"] });
     snaps.forEach((sn, j) => { if (sn.exists) existing.set(part[j], sn.data()); });
   }
-  let batch = db.batch(), pending = 0;
-  const flush = async () => { if (pending) { await batch.commit(); batch = db.batch(); pending = 0; } };
+  // KEEP R4: a design SAVED FROM AN ORDER (hashSource "custom-save", written create-only by the Review card's save) is the page's own and is never overwritten by a master file it did not come from: the master's
+  // charm of the same name is reported (blocked) and left out, whatever the master's drawing is. The SKUs that were absent when the entries were read are read once more just before the write, so a save that
+  // landed in between is kept too (the window was the whole batch; it is now one read and one commit).
+  const savedDesign = (e, hash) => !!e && e.hashSource === "custom-save" && !!e.masterHash && e.masterHash !== hash && !replaces.has(e.masterHash);
+  const keepSaved = (sku, e) => out.blocked.push({ sku, reason: "this name is a design saved from an order: it is kept as it is (rename the charm in the master file to index it)", with: e.masterHash, saved: true });
+  let queue = [];
+  const flush = async () => {
+    if (!queue.length) return;
+    const fresh = queue.filter(q => !q.ex);
+    if (fresh.length) {
+      const again = await db.getAll(...fresh.map(q => q.ref), { fieldMask: ["masterHash", "hashSource", "charmHash"] });
+      again.forEach((sn, i) => { if (sn.exists && savedDesign(sn.data(), masterHash)) { fresh[i].skip = true; keepSaved(fresh[i].sku, sn.data()); out.written--; } });
+    }
+    const batch = db.batch(); let n = 0;
+    for (const q of queue) if (!q.skip) { batch.set(q.ref, q.doc, { merge: true }); n++; }
+    queue = [];
+    if (n) await batch.commit();
+  };
   for (const [sku, list] of bySku) {
     const ref = db.collection(INDEX).doc(sku); const ex = existing.get(sku) || null;
+    if (savedDesign(ex, masterHash)) { keepSaved(sku, ex); continue; }
     // A design the library holds as a PAIR is never written back as one body. An entry that says nothing of `pair` (an indexer that read only the labelled body of a row of two) would put one body's
     // file and size over a record that still says two bodies; it is left as it was and the answer names it (`pairKept`). `pair: null` (a person's word, or a deliberate re-index) still takes it away.
     if (ex && (cleanPair(ex.pair) || Object.values(ex.sizes || {}).some(z => z && cleanPair(z.pair))) && !list.some(e => cleanPair(e.pair) !== undefined)) { out.pairKept.push({ sku, reason: "the library holds " + sku + " as a pair and this entry draws one body: left as it was (set pair to null first to make it one charm)" }); continue; }
@@ -127,8 +144,8 @@ async function putIndex(db, FV, body) {
     } else doc.sizeMoved = FV.delete();
     doc.blocked = blocked || FV.delete();
     if (!ex) doc.firstIndexedAt = FV.serverTimestamp();
-    batch.set(ref, doc, { merge: true }); out.written++;
-    if (++pending >= 400) await flush();
+    queue.push({ ref, doc, sku, ex }); out.written++;
+    if (queue.length >= 400) await flush();
   }
   await flush();
   return out;
