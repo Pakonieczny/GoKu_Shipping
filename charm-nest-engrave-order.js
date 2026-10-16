@@ -38,8 +38,6 @@
   const dep = (name, file) => { const g = root && root[name]; if (g) return g; try { return typeof require === 'function' ? require(file) : null; } catch (_) { return null; } };
   const Card = () => dep('CharmNestEngraveCard', './charm-nest-engrave-card.js');
   const Sides = () => dep('CharmNestEngraveSides', './charm-nest-engrave-sides.js');
-  const Rows = () => dep('CharmNestEngraveRows', './charm-nest-engrave-rows.js');
-  const Switch = () => dep('CharmNestPieceSwitch', './charm-nest-piece-switch.js');
   const tryDo = (f, d) => { try { return f(); } catch (_) { return d; } };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const CODE = { gold: 'GF', silver: 'SS', rose: 'RG', gold10k: '10K', gold14k: '14K' };
@@ -48,9 +46,9 @@
   const ridOfRow = row => { const l = lineOf(row); return String((l && l.order && l.order.receiptId) || ''); };
   const metalOf = row => { const l = lineOf(row) || {}, m = String(l.material || (l.spec && (l.spec.material || l.spec.metal)) || ''); return CODE[m] || (m ? m.toUpperCase().slice(0, 4) : ''); };
   /* PIECES (Paul, 16 Oct 2026): a line of quantity N is C1..Cn ("Piece 1" .. "Piece n"), a second pair of ears L.2 R.2, a second set of discs D1.2 ..: in order of unit, then L, R, Disc 1.. (the slot's name is read by the rows module) */
-  const infoOf = s => { const R = Rows(); return R && R.infoOf ? tryDo(() => R.infoOf(s), null) : null; };
+  const infoOf = s => { const S = Sides(); return S && S.slotInfo ? tryDo(() => S.slotInfo(s), null) : null; };
   const slotRank = s => { if (s == null || s === '') return 0; const i = infoOf(s); return !i ? 99999 : i.kind === 'copy' ? i.n : (i.unit - 1) * 100 + (i.kind === 'ear' ? (i.side === 'L' ? 1 : 2) : 10 + i.n); };
-  const slotWord = (s, multi) => { const W = Switch(); return s && W && W.labelOf ? tryDo(() => W.labelOf(s, multi), '') : ''; };
+  const slotWord = (s, multi) => { const S = Sides(); return s && S && S.labelOf ? tryDo(() => S.labelOf(s, { multi: !!multi }), '') : ''; };
   const faceList = piece => ['front', 'back'].filter(f => piece.faces && piece.faces[f]);
   let monoFn = null;   // the page's answer for a monogram line (null | 'to-approve' | 'held' | 'approved'), set once by the bridge: a module with no page adds no monogram piece
   const useMonogram = fn => { monoFn = typeof fn === 'function' ? fn : null; };
