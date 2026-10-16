@@ -1662,7 +1662,11 @@
   /* MONOGRAM listings (Paul, 15 Oct 2026, orders 4200683017 "APV" and 4202783520 "OSR": "These 2 listings are for custom monograms ... The buyer will always provide 3 individual letters"): the charm is made by combining the buyer's
      three letters from the Left, Middle and Right alphabets of the charm repository (charm-nest-monogram.js, the Engrave tab's Monograms). The listing's own code (MONOGRAM_5351) is a name, never a design: the line is the buyer's
      own, as an add-on listing's is (own: true), asks nothing about a SKU, a metal or an option, and has no engraving. `special.monogram` says it is one. */
-  const MONOGRAM_LISTINGS = { "997905351": "Monogram Necklace Personalized Jewelry Initials Pendant", "606439317": "Monogram Necklace Dainty Monogram Necklace" };
+  /* Five more (Paul, 16 Oct 2026: "all of the below Etsy listings must be profiled to use the monogram alphabets in our system": 1844317367, 1009221671, 1844317391, 1008031671, 603425508). Their titles were not
+     to hand when they were added, so the note says so; the table only asks whether a listing is in it. */
+  const NO_TITLE = "Monogram listing (title not recorded when it was added, 16 Oct 2026)";
+  const MONOGRAM_LISTINGS = { "997905351": "Monogram Necklace Personalized Jewelry Initials Pendant", "606439317": "Monogram Necklace Dainty Monogram Necklace",
+    "1844317367": NO_TITLE, "1009221671": NO_TITLE, "1844317391": NO_TITLE, "1008031671": NO_TITLE, "603425508": NO_TITLE };
   /* Any other listing that says MONOGRAM (the word) in its title and whose buyer gave exactly three letters, in the personalisation box or in an option for initials / letters / text, is read the same way (MONOGRAMUI,
      Paul, 15 Oct 2026: "The buyer will always provide 3 individual letters"). Never a guess: the title says monogram AND the words are exactly three letters (charm-nest-monogram.js lettersOf, which reads "A.P.V",
      "Initials: ASK" and refuses "Jane Doe"); a monogram bracelet with a name, two letters or four stays what it was. A capitalised three-letter word ("Amy", "Mom") is a name, not initials. */

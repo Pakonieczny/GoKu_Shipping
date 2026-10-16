@@ -1,3 +1,4 @@
+// (16 Oct 2026: five more listings named by Paul, 1844317367 1009221671 1844317391 1008031671 603425508: the table holds seven)
 // MONOGRAM order recognition (MONOGRAMUI, Paul, 15 Oct 2026): "These 2 listings are for custom monograms ... The buyer will always provide 3 individual letters" (orders 4200683017 "APV", listing 997905351,
 // and 4202783520 "OSR", listing 606439317). A monogram line is the buyer's own design (special.monogram, own design, no SKU / metal / option question, no engraving); the two listings are named in the code
 // (MONOGRAM_LISTINGS), and any other listing that says MONOGRAM (the word) in its title with exactly three letters in the personalisation box or in an option for initials is read the same way.
@@ -30,7 +31,18 @@ const isMono = sp => !!(sp.special && sp.special.monogram);
   const c = read(line({ transactionId: '3', listingId: '997905351', sku: 'MONOGRAM_5351', personalization: ['Jane Doe'] }));
   ok(isMono(c) && c.special.words === 'Jane Doe', 'a listing of the table is a monogram even when the words are not three letters, and even when the master holds a design of its SKU');
   KNOWN.clear();
-  ok(O.specialOf.addOn.monograms['997905351'] && O.specialOf.addOn.monograms['606439317'] && Object.keys(O.specialOf.addOn.monograms).length === 2, 'the listing table holds the two listings');
+  const SEVEN = ['997905351', '606439317', '1844317367', '1009221671', '1844317391', '1008031671', '603425508'];
+  ok(SEVEN.every(id => O.specialOf.addOn.monograms[id]) && Object.keys(O.specialOf.addOn.monograms).length === 7, 'the listing table holds the seven listings Paul named (15 and 16 Oct 2026)');
+  // the five added on 16 Oct 2026: each is a custom monogram whatever its title says, with the buyer's letters, no question asked, its own design, no engraving
+  for (const [i, id] of ['1844317367', '1009221671', '1844317391', '1008031671', '603425508'].entries()) {
+    const m = read(line({ transactionId: 'n' + i, listingId: id, sku: 'ANY_' + id.slice(-4), title: 'Dainty Personalized Pendant', personalization: ['A P V'] }));
+    ok(isMono(m) && m.special.label === 'Custom monogram' && m.special.words === 'A P V' && m.special.own === true && new RegExp('listing ' + id + ' is a custom monogram listing').test(m.special.why), `listing ${id}: a custom monogram (APV): ` + JSON.stringify(m.special));
+    ok(m.problems.length === 0 && m.ownDesign === true && m.noDesign === false && m.engraveCandidate === false, `listing ${id}: asks nothing, is its own design, no engraving`);
+    KNOWN.add('ANY_' + id.slice(-4)); const k = read(line({ transactionId: 'k' + i, listingId: id, sku: 'ANY_' + id.slice(-4), personalization: ['Jane Doe'] })); KNOWN.clear();
+    ok(isMono(k), `listing ${id}: a monogram even when the master holds a design of its SKU and the words are not three letters`);
+    ok(!isMono(read(line({ transactionId: 'r' + i, listingId: id, sku: 'ANY_' + id.slice(-4) }), ctx({ aliases: { [id]: { listingKind: { kind: 'regular', by: 'Paul' } } } }))), `listing ${id}: a person's word "regular" still stands over the table`);
+  }
+  ok(!isMono(read(line({ transactionId: 'x1', listingId: '1844317368', sku: 'ANY_7368', title: 'Dainty Personalized Pendant', personalization: ['A P V'] }))), 'a listing next to one of them (1844317368) is NOT a monogram: only the named ids are');
   // a person's word for the listing stands over the table
   const reg = read(line({ transactionId: '4', listingId: '997905351', sku: 'MONOGRAM_5351', title: 'Monogram Necklace Personalized Jewelry Initials Pendant' }), ctx({ aliases: { 997905351: { listingKind: { kind: 'regular', by: 'Paul' } } } }));
   ok(!isMono(reg), 'a person took the listing out of the special kinds: it is read as a regular listing again');
