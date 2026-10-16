@@ -302,6 +302,7 @@ const sandboxDoc = (k, v) => { const o = own('firestore', k); if (!o || o.kind !
   NOT_SANDBOX.customEtsySkuWrite = 'ETSYSKU: sets the SKU on Etsy and notes it on its own Charm_Custom_Saves record; the sandbox is refused (checked on the next lines); tests/charm-nest/save-etsy.cjs drives it';
   { const w0 = writes.length, f0 = fileWrites.length, no = await live({ op: 'customEtsySkuWrite', sandbox: true, rid: 'R1' });   // ETSYSKU: a writing op, refused in the sandbox with an empty write log
     assert(no.status === 200 && no.body.ok === false && no.body.reason === 'sandbox' && writes.length === w0 && fileWrites.length === f0, 'customEtsySkuWrite refuses sandbox:true and writes nothing: ' + JSON.stringify(no.body)); }
+  if (!('masterRemoveSkus' in REPO)) REPO.masterRemoveSkus = 'the Charm repo (several SKUs removed at once, behind the repo delete-sku token; shared by design, never wiped; was unclassified on main, which stopped this guard before the checks below)';
   NOT_SANDBOX.customSaveRepair = 'KEEP R1: the repair of saved custom designs (orphan files, records vs entries vs aliases vs files, intents, optional Etsy steps); the sandbox is refused (checked on the next line); tests/charm-nest/keep-repair.cjs drives it';
   { const w0 = writes.length, f0 = fileWrites.length, no = await live({ op: 'customSaveRepair', sandbox: true });
     assert(no.status === 200 && no.body.ok === true && no.body.sandbox === true && writes.length === w0 && fileWrites.length === f0, 'customSaveRepair does nothing in the sandbox: ' + JSON.stringify(no.body)); }
