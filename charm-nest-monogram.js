@@ -395,8 +395,31 @@
     if (!h) { const R = bodyRows(region), c = R && bodyOfRows(R); h = c || { cy: 0, lo: 0, hi: 0, removed: 0, n: 0 }; BODY_CACHE.set(region, h); }
     return h;
   }
+  /* Edited letters (MX2, Paul, 16 Oct 2026: "a free hand to adjust certain letters so that they fit better when welded"): Engine.setLetterEdits({ L: { A: { rings } }, M: { ... }, R: { ... } }) holds replacement RAW outlines
+     (the glyph rings' own frame: pt, y up, the glyph's own position), a letter without an entry keeps its glyph. They are used ONLY when asked: opts.edited = true (build, autoFit) or spec.edited = true (preparedLetter); default OFF.
+     The edited rings go through the same widen / thicken / Q steps as every raw glyph; the font baseline stays on the same stroke (baselinePt moves with the outline's lowest point). Without a call, the table is
+     charm-nest-monogram-edits.json next to this file (node) or root.CharmNestMonogramEdits (page); the shipped file is empty. */
+  let LETTER_EDITS = null;
+  const slotKeyOf = slot => (slot === 'left' ? 'L' : slot === 'middle' ? 'M' : slot === 'right' ? 'R' : null);
+  const lowestOf = rings => { let y = Infinity; for (const r of rings) if (Array.isArray(r) && r.length >= 3) for (const p of r) { const v = Array.isArray(p) ? p[1] : p && p.y; if (finite(v) && v < y) y = v; } return y; };
+  function setLetterEdits(edits) {
+    if (edits == null) { LETTER_EDITS = null; return 0; }
+    if (typeof edits !== 'object') throw new Error('setLetterEdits({ L: { A: { rings } }, M: {}, R: {} })');
+    const t = { L: {}, M: {}, R: {} }; let n = 0;
+    for (const k of ['L', 'M', 'R']) { const src = edits[k] || edits[{ L: 'left', M: 'middle', R: 'right' }[k]] || {}; for (const l of Object.keys(src)) { const e = src[l]; if (e && Array.isArray(e.rings) && e.rings.some(r => Array.isArray(r) && r.length >= 3)) { t[k][String(l).trim().toUpperCase()] = { rings: e.rings, notes: e.notes || '' }; n++; } } }
+    LETTER_EDITS = t; return n;
+  }
+  function editedSpec(spec, slot, on) {
+    if (!on || !spec || typeof spec !== 'object' || spec.rings === undefined) return spec;
+    let tab = LETTER_EDITS; if (!tab) { try { tab = root.CharmNestMonogramEdits || (typeof require === 'function' ? require('./charm-nest-monogram-edits.json') : null); } catch (_) { tab = null; } if (tab) { setLetterEdits(tab); tab = LETTER_EDITS; } }
+    const e = tab && tab[slotKeyOf(slot)] && tab[slotKeyOf(slot)][String(spec.letter == null ? '' : spec.letter).trim().toUpperCase()];
+    if (!e) return spec;
+    const mt = spec.metrics && typeof spec.metrics === 'object' ? spec.metrics : null, y0 = lowestOf(spec.rings || []), y1 = lowestOf(e.rings);
+    return Object.assign({}, spec, { rings: e.rings, edited: true, metrics: mt && finite(mt.baselinePt) && finite(y0) && finite(y1) ? Object.assign({}, mt, { baselinePt: mt.baselinePt + y0 - y1 }) : mt });
+  }
   /** One letter as the user drew it → its filled region (see fillOf), normalised so its own bbox starts at 0,0 (integer 0.001 pt). */
-  function prepLetter(E, spec, slot, prep, C) {
+  function prepLetter(E, spec, slot, prep, C, edited) {
+    const spec0 = spec; spec = editedSpec(spec, slot, edited);
     const name = () => `the ${slot} letter` + (spec && spec.letter ? ` (${String(spec.letter).slice(0, 3)})` : '');
     if (!spec || typeof spec !== 'object' || !Array.isArray(spec.rings)) return { why: `${name()} is missing` };
     const raw = [];
@@ -447,7 +470,7 @@
     if (w < 0.05 * SC || h < 0.05 * SC || a < 0.01 * SC * SC) return { why: `${name()} has no outline` };
     // the typographic metrics of a glyph from the master file (MONOGRAMFILE: baselinePt = the baseline's height above the bottom of the outline, may be negative; emPt = the font size): where its baseline is in its own box
     const mt = spec.metrics && typeof spec.metrics === 'object' ? spec.metrics : null, bl = mt && finite(mt.baselinePt) && Math.abs(mt.baselinePt) < 1e4 ? mt.baselinePt : null;
-    return { prep: prepInfo, region, w, h, area: a, name: name(), base: bl == null ? null : Math.round(bl * SC + baseAdd), em: mt && finite(mt.emPt) && mt.emPt > 0 ? mt.emPt : null };
+    return { prep: prepInfo, edited: spec !== spec0, region, w, h, area: a, name: name(), base: bl == null ? null : Math.round(bl * SC + baseAdd), em: mt && finite(mt.emPt) && mt.emPt > 0 ? mt.emPt : null };
   }
 
   /** The letter as the engine prepares it (A. widened, B. thickened, C. Q bridged): preparedLetter('L' | 'M' | 'R' (or left / middle / right), 'Q', spec) with the raw glyph spec { rings, fill, metrics } the page holds for that SKU
@@ -461,11 +484,11 @@
     const C = clipper(); if (!C) return { ok: false, why: 'the geometry library is not loaded' };
     if (!spec || typeof spec !== 'object') return { ok: false, why: 'the raw glyph is needed: preparedLetter(family, letter, { rings, fill, metrics })' };
     const E = engine(C), raw = Object.assign({}, spec, { letter: letter == null ? spec.letter : letter, metrics: spec.metrics && typeof spec.metrics === 'object' ? spec.metrics : {} });
-    const p = prepLetter(E, raw, slot, true, C); if (p.why) return { ok: false, why: p.why };
-    const before = prepLetter(E, raw, slot, false, C), info = p.prep || {};
+    const p = prepLetter(E, raw, slot, true, C, spec.edited === true); if (p.why) return { ok: false, why: p.why };
+    const before = prepLetter(E, raw, slot, false, C, spec.edited === true), info = p.prep || {};
     const bl = finite(raw.metrics.baselinePt) ? raw.metrics.baselinePt : null, r3 = v => Math.round(v * 1000) / 1000;
     return {
-      ok: true, family: slot === 'left' ? 'L' : slot === 'middle' ? 'M' : 'R', letter: String(raw.letter == null ? '' : raw.letter).toUpperCase(), fill: 'nonzero',
+      ok: true, edited: p.edited === true, family: slot === 'left' ? 'L' : slot === 'middle' ? 'M' : 'R', letter: String(raw.letter == null ? '' : raw.letter).toUpperCase(), fill: 'nonzero',
       rings: p.region.map(r => r.map(q => [q.X / SC, q.Y / SC])), metrics: { baselinePt: p.base == null ? null : p.base / SC, emPt: p.em },
       widthPt: r3(p.w / SC), heightPt: r3(p.h / SC), bodyWidthPt: r3(centralSpan(p.region, 0, NORMS.BODY_TRIM) / SC), bodyHeightPt: r3(centralSpan(p.region, 1, NORMS.BODY_TRIM) / SC),
       before: { widthPt: r3(before.w / SC), heightPt: r3(before.h / SC), bodyWidthPt: r3(centralSpan(before.region, 0, NORMS.BODY_TRIM) / SC), bodyHeightPt: r3(centralSpan(before.region, 1, NORMS.BODY_TRIM) / SC) },
@@ -492,7 +515,7 @@
     return {
       overlap, maxOverlap: Math.max(overlap, num(o.maxOverlap, 0.38, 0, 0.95)),
       centerRatio: Math.max(1.2, num(o.centerRatio, 1.25, 1.2, 5)), sideWiden: num(o.sideWiden, 1.15, 1, 1.5), contacts: Math.round(num(o.contacts, 2, 1, 3)), contactMm: num(o.contactMm, 0.3, 0.1, 2), contactGapMm: num(o.contactGapMm, 1.5, 0.3, 6), barMm: num(o.barMm, 0.6, Math.max(0.2, num(o.contactMm, 0.3, 0.1, 2)), 2), allowTrim: o.allowTrim !== false, adjust: cleanAdjust(o.adjust), normalise: o.normalise !== false, prepare: o.prepare !== false && o.normalise !== false, norms: Object.assign({}, NORMS, o.norms && typeof o.norms === 'object' ? o.norms : {}),
-      valign: o.valign === 'baseline' ? 'baseline' : o.valign === 'center' ? 'center' : 'body', reach: o.reach !== false, reachMax: typeof o.reach === 'number' && Number.isFinite(o.reach) ? Math.min(0.95, Math.max(0.1, o.reach)) : REACH_HI
+      edited: o.edited === true, valign: o.valign === 'baseline' ? 'baseline' : o.valign === 'center' ? 'center' : 'body', reach: o.reach !== false, reachMax: typeof o.reach === 'number' && Number.isFinite(o.reach) ? Math.min(0.95, Math.max(0.1, o.reach)) : REACH_HI
     };
   }
 
@@ -518,7 +541,7 @@
     const SIMP = 0.02 / MM * SC, simp = paths => paths.map(q => C.Clipper.CleanPolygon(q.map(v => ({ X: v.X, Y: v.Y })), SIMP)).filter(q => q && q.length >= 3);
     if (!letters || typeof letters !== 'object') return failure('the three letters are missing');
     const L = [];
-    for (const slot of SLOTS) { const p = prepLetter(E, letters[slot], slot, o.prepare && letters[slot] && letters[slot].metrics && typeof letters[slot].metrics === 'object', C); if (p.why) return failure(p.why); p.slot = slot; p.letter = letters[slot].letter == null ? '' : String(letters[slot].letter); L.push(p); }
+    for (const slot of SLOTS) { const p = prepLetter(E, letters[slot], slot, o.prepare && letters[slot] && letters[slot].metrics && typeof letters[slot].metrics === 'object', C, o.edited); if (p.why) return failure(p.why); p.slot = slot; p.letter = letters[slot].letter == null ? '' : String(letters[slot].letter); L.push(p); }
     const [left, mid, right] = L;
     const notes = [];
 
@@ -1293,7 +1316,7 @@
     return await doc.save({ useObjectStreams: false });
   }
 
-  const api = { lettersOf, familiesOf, slotsOf, build, autoFit, toPdf, svgPath, preparedLetter, bodyCentre: bodyCentreOf, NORMS, LIMITS, ADJUST_LIMITS, ESG_PROFILE, WIDEN, THICKEN, Q_BRIDGE, BODY };
+  const api = { lettersOf, familiesOf, slotsOf, build, autoFit, toPdf, svgPath, preparedLetter, setLetterEdits, bodyCentre: bodyCentreOf, NORMS, LIMITS, ADJUST_LIMITS, ESG_PROFILE, WIDEN, THICKEN, Q_BRIDGE, BODY };
   root.CharmNestMonogram = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
