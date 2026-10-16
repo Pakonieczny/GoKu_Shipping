@@ -287,9 +287,15 @@ function make(deps) {
       if (d.rehearsal === true) return { refusal: "rehearsal" };
       if (d.phase !== "repo") return { refusal: "not-saved" };
       const oldSku = d.oldSku == null ? "" : d.oldSku;
-      if (!LISTING_RE.test(String(d.listingId == null ? "" : d.listingId)) || !SKU_RE.test(String(d.sku == null ? "" : d.sku)) || typeof oldSku !== "string" || oldSku.length > 80 || skuNorm(oldSku) === String(d.sku)) return { refusal: "bad-save" };
+      if (!LISTING_RE.test(String(d.listingId == null ? "" : d.listingId)) || !SKU_RE.test(String(d.sku == null ? "" : d.sku)) || typeof oldSku !== "string" || oldSku.length > 120) return { refusal: "bad-save" };
       const prev = d.etsy && typeof d.etsy === "object" ? d.etsy : { state: "pending" };
       if (prev.state === "linked") return { linked: { d, prev } };
+      // KEEP B5: the line already carried the design's own SKU (the shop's SKUs have the very shape the plan makes: HEART_9491): Etsy has nothing to change, the listing IS linked, no call is made
+      if (skuNorm(oldSku) === String(d.sku)) {
+        const done = { state: "linked", at: t, calls: 0, noop: true, verified: false, productIds: [], sku: String(d.sku) };
+        tx.update(ref, { etsy: clean(done) });
+        return { linked: { d, prev: done } };
+      }
       if (+prev.runningUntil > t) return { refusal: "running" };
       tx.update(ref, { etsy: clean(Object.assign({}, prev, { runningUntil: t + LEASE_MS })) });
       return { d, prev, lease: t + LEASE_MS };
@@ -304,12 +310,23 @@ function make(deps) {
     } catch (_) { return null; }
   }
 
+  /* the order's record: {rid}, or {rid}-{listingId} when the order holds more than one listing's save (an optional listingId says which; a caller may also pass that id as the rid) */
+  async function recordRef(rid, listingId) {
+    const base = db.collection(SAVES).doc(rid);
+    if (!LISTING_RE.test(listingId)) return base;
+    const list = db.collection(SAVES).doc(rid + "-" + listingId), [a, c] = await db.getAll(base, list);
+    if (a.exists && String((a.data() || {}).listingId || listingId) !== listingId) return list;
+    if (!a.exists && c.exists) return list;
+    return base;
+  }
+
   async function customEtsySkuWrite(body) {
     body = body && typeof body === "object" ? body : {};
     if (isSandbox(body)) return answer("sandbox");
     const rid = String(body.rid == null ? "" : body.rid).trim();
     if (!RID_RE.test(rid)) return answer("bad-request");
-    const ref = db.collection(SAVES).doc(rid);
+    let ref;
+    try { ref = await recordRef(rid, String(body.listingId == null ? "" : body.listingId).trim()); } catch (e) { console.error("[etsySku] record", rid, e && e.message); return answer("internal", { details: [e && e.message] }); }
     let got;
     try { got = await claim(ref); } catch (e) { console.error("[etsySku] claim", rid, e && e.message); return answer("internal", { details: [e && e.message] }); }
     if (got.refusal) return answer(got.refusal);
@@ -319,7 +336,7 @@ function make(deps) {
     return out;
   }
 
-  const linkedAnswer = (d, etsyDoc, calls) => ({ ok: true, state: "linked", calls, productIds: (Array.isArray(etsyDoc.productIds) ? etsyDoc.productIds : []).map(String), sku: String(d.sku), verified: etsyDoc.verified !== false });
+  const linkedAnswer = (d, etsyDoc, calls) => Object.assign({ ok: true, state: "linked", calls, productIds: (Array.isArray(etsyDoc.productIds) ? etsyDoc.productIds : []).map(String), sku: String(d.sku), verified: etsyDoc.verified !== false }, etsyDoc.noop === true ? { noop: true } : {});
 
   async function run(ref, rid, d, prev, lease) {
     const listingId = String(d.listingId), sku = String(d.sku), oldSku = skuNorm(d.oldSku);

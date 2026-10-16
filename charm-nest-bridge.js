@@ -3108,6 +3108,9 @@ const Master = window.Master = (() => {
         try { if (hooks.built) hooks.built(built); } catch (_) { /* the engine keeps them for a retry; not needed to go on */ }
       }
       if (spec.rehearsal) return { ok: true, rehearsed: true, sku, created: !spec.reuse, bytes: built ? built.ai.length : 0 };
+      // KEEP B9: the hash of the bytes this call uploads, so the commit can tell its file from another save's (two saves that chose one SKU upload to one path)
+      const sha256 = async b => [...new Uint8Array(await crypto.subtle.digest("SHA-256", b))].map(x => x.toString(16).padStart(2, "0")).join("");
+      const hashes = built ? { ai: await sha256(built.ai), png: await sha256(built.png) } : null;
       if (!S.cloud.ok) return fail("offline", "you are offline");
       if (!L) return fail("unavailable", "the charm repo lock did not load: reload the page");
       // 3 · the token: the one held, else the hook's answer (a person types it into the strip); never a dialog here
@@ -3121,7 +3124,7 @@ const Master = window.Master = (() => {
         if (up[which]) return;
         say(`Saving ${sku}.${which === "ai" ? "ai" : "png"}…`);
         for (let again = false; ; again = true) {
-          try { up[which] = await uploadBytes(path, bytes, type, `Saving ${sku}`, { repoToken: tok.token }); try { if (hooks.uploaded) hooks.uploaded(which, up[which]); } catch (_) { /* as above */ } return; }
+          try { up[which] = await uploadBytes(path, bytes, type, `Saving ${sku}`, { repoToken: tok.token, charmHash: String(c.hash || "") }); try { if (hooks.uploaded) hooks.uploaded(which, up[which]); } catch (_) { /* as above */ } return; }
           catch (e) { if (!again && L.isRepoLocked(e)) { L.forget(tok.action || "upload"); tok = await need(); if (!tok) throw Object.assign(new Error("locked"), { keepLocked: true }); continue; } throw e; }
         }
       };
@@ -3133,7 +3136,7 @@ const Master = window.Master = (() => {
       say(spec.reuse ? `Linking ${sku}…` : `Writing ${sku} to the repository…`);
       const body = () => ({ op: "customSaveCommit", repoToken: tok.token, rid: String(spec.rid), listingId: String(spec.listingId), sku, oldSku: String(spec.oldSku || ""), productId: String(spec.productId || ""), optionPairs: spec.optionPairs || [], group: spec.group || { mode: "unknown", productIds: [] }, title: String(spec.title || ""), by: String(spec.by || ""),
         design: { name: F.name, kind: F.kind === "dxf" ? "dxf" : "ai", hash: F.hash, bytes: F.bytes ? F.bytes.length : 0 }, reuse: !!spec.reuse,
-        entry: spec.reuse ? { charmHash: c.hash } : { charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource }, file: { masterHash: F.hash, name: F.name } });
+        entry: spec.reuse ? { charmHash: c.hash } : { charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource }, file: Object.assign({ masterHash: F.hash, name: F.name }, hashes ? { aiSha256: hashes.ai, aiBytes: built.ai.length, pngSha256: hashes.png } : {}) });
       let r;
       for (let again = false; ; again = true) {
         try { r = await api("charmNestLibrary", body(), { label: `Saving ${sku}`, quiet: true }); break; }
@@ -3148,6 +3151,7 @@ const Master = window.Master = (() => {
       if (r.entry && r.entry.sku) B.master.entries.set(r.entry.sku, r.entry);
       return { ok: true, sku: r.sku || sku, created: r.created !== false, entry: r.entry || null, alias: r.alias || "", rehearsed: false };
     } catch (e) {
+      if (e && e.status === 409 && e.data && e.data.error === "sku-taken") return fail("sku-taken", "that SKU was just taken", { sku: e.data.sku });   // (KEEP: the file door refuses an upload over the files of another design's entry: the commit's own word, nothing was written)
       const net = !!e && (e.transient === true || /cloud offline|timed out|no answer/i.test(String(e.message || "")));   // (a passing network trouble; anything else is an error to be read)
       return fail(net ? "offline" : "error", net ? "you could not reach the cloud" : String((e && e.message) || e).slice(0, 160), { transient: !!(e && e.transient) });
     }
