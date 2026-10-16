@@ -22,7 +22,7 @@ const Q = '#egQueue .rvItem[data-kind=placement]';
 /** what the Engrave detail's work area shows right now */
 const workFacts = page => page.evaluate(Q => {
   const vis = e => { if (!e) return false; const b = e.getBoundingClientRect(), st = getComputedStyle(e); return b.width > 0 && b.height > 0 && st.visibility !== 'hidden' && st.display !== 'none' && !e.closest('[hidden]'); };
-  const c = document.querySelector(Q); if (!c) return { open: false, tab: (document.querySelector('#engraveView .egTab.on') || {}).textContent || '', done: !!document.querySelector('#engraveView .doneRow.open'), openKey: (document.querySelector('#engraveView .doneRow.open') || { dataset: {} }).dataset.key || '' };
+  const c = document.querySelector(Q); if (!c) return { open: false, tab: (document.querySelector('#engraveView .egTab.on') || {}).textContent || '', list: !!document.querySelector('#egQueue .egPlacementList'), old: document.querySelectorAll('#egDone, .doneRow.open, .decidedRow').length };
   const host = c.querySelector('.backHost'), cv = host && host.querySelector('canvas'), faces = [...c.querySelectorAll('.engCard .engFace')].filter(vis).map(f => ({ face: f.dataset.face, current: f.hasAttribute('aria-current') }));
   return { open: true, job: c.dataset.key, state: c.dataset.state, canvas: !!(cv && vis(cv)), text: host ? host.textContent.replace(/\s+/g, ' ').trim().slice(0, 160) : '', spin: !!(host && host.querySelector('.spin')),
     approve: !!(c.querySelector('[data-a="approve"]') && vis(c.querySelector('[data-a="approve"]'))), faces: faces.map(f => f.face).join('+'), current: (faces.find(f => f.current) || {}).face || null, words: (c.querySelector('.engpWords') || {}).value || '', mode: (c.querySelector('.engp') || { dataset: {} }).dataset.mode || null,
@@ -111,14 +111,14 @@ async function addFront(w, name, text) {
     check('P9 Approve on the front approves ONLY the front: one seal on the front, the back untouched (still to approve, no seal)', !!frontDone && afterF.find(j => j.face === 'front').seals === 1 && afterF.find(j => j.face === 'back').state === 'review' && afterF.find(j => j.face === 'back').seals === 0, JSON.stringify(afterF.map(j => [j.face, j.state, j.seals, j.by])));
     const w1 = await workFacts(page);
     check('P10 after the front is approved the work area is on the other face (the back, drawn), not blank', w1.open && !/~front$/.test(w1.job || '') && w1.canvas, JSON.stringify(w1));
-    // the approved front is pressed: it opens in the Decided list (where the app keeps a decided face), never a snap back with nothing shown
+    // the approved front is pressed: it opens as its own card (there is no Decided list: an approved face is the same detailed card as any face, with a calm "Approved" where the Approve was), never a snap back with nothing shown
     await press(page, 'front'); await R.settle(page, 900);
     const d1 = await workFacts(page);
     await R.shot(w, 'FRONT-3-approved-pressed');
-    check('P11 pressing the approved Front thumbnail opens that decision in Decided (its row open)', !d1.open && /Decided/.test(d1.tab) && /~front$/.test(d1.openKey), JSON.stringify(d1));
-    await page.evaluate(() => { const b = document.querySelector('#engraveView .egTab[data-tab="place"]'); if (b) b.click(); }); await R.settle(page, 700);
+    check('P11 pressing the approved Front thumbnail opens that face\'s card (the Front job, drawn, state approved, no Approve to press, no Decided list)', d1.open && /~front$/.test(d1.job || '') && d1.state === 'approved' && d1.canvas && !d1.approve && /Placements/.test(await page.evaluate(() => (document.querySelector('#engraveView .egTab.on') || {}).textContent || '')) && await page.evaluate(() => document.querySelectorAll('#egDone, .doneRow.open, .decidedRow, [data-a=reopen]').length === 0), JSON.stringify(d1));
+    await press(page, 'back'); await R.settle(page, 700);
     const w2 = await workFacts(page);
-    check('P12 back on Placements the back still waits to be approved, drawn', w2.open && w2.state === 'review' && w2.canvas, JSON.stringify(w2));
+    check('P12 the Back thumbnail shows the back again: it still waits to be approved, drawn', w2.open && !/~front$/.test(w2.job || '') && w2.state === 'review' && w2.canvas && w2.approve, JSON.stringify(w2));
     await page.evaluate(Q => document.querySelector(Q + ' [data-a="approve"]').click(), Q);
     await until(async () => { const b = (await jobsOf(page, key)).find(j => j.face === 'back'); return b && ['approved', 'written'].includes(b.state) ? b : null; }, 60000);
     await R.settle(page, 800);

@@ -13,8 +13,8 @@ let charm = null;
 for(const file of ['charm-nest-activity.js','charm-nest-engraving-seals.js']){ const script=new vm.Script(fs.readFileSync(file,'utf8')); const env=vm.createContext({window:dom.window});script.runInContext(env);}
 const c = vm.createContext({WORKSPACE_SANDBOX:true,localStorage:{getItem(){return null;},setItem(){}},CNListActivity:dom.window.CNListActivity,CNEngravingSeals:dom.window.CNEngravingSeals,window:dom.window, document, console:{error:(...x)=>errors.push(x)}, ResizeObserver:dom.window.ResizeObserver, B:{engrave:{items:jobs,fonts:{ok:true}}},
   O:require('../../charm-nest-orders.js'), S:{settings:{},mode:'engrave'}, PT:72/25.4, MM:25.4/72, SOURCE_LABEL:{},
-  Pool:{charmOf:()=>charm,sheetOf:()=>null}, P:{drawCharm(){throw Error('invalid saved path');}}, Review:{items:()=>[],count:()=>0,remove(){}}, Master:{entryFor:()=>null,fetchEntry:async()=>null},
-  LiveStrip:{render(){}}, RunCtl:{poke(){}}, Orders:{render(){}},
+  Pool:{charmOf:()=>charm,previewCharmOf:()=>charm,sheetOf:()=>null}, P:{drawCharm(){throw Error('invalid saved path');}}, Review:{items:()=>[],count:()=>0,remove(){}}, Master:{entryFor:()=>null,fetchEntry:async()=>null},
+  LiveStrip:{render(){}}, RunCtl:{poke(){}}, Orders:{render(){},rows:()=>[]},
   setTimeout:fn=>(timers.push(fn),timers.length),clearTimeout(){},
   requestAnimationFrame:fn=>(frames.push(fn),frames.length),cancelAnimationFrame(){},
   el:(tag,cls,html='')=>{const e=document.createElement(tag);e.className=cls;e.innerHTML=html;return e;},
@@ -53,17 +53,21 @@ assert(document.querySelector('.backHost').textContent.includes('could not be dr
 assert(document.querySelector('[data-a="approve"]').disabled,'a failed canvas cannot be approved with the button');
 assert.equal(job.state,'review','draw failure does not revoke existing work');
 job.state='written';job.fit=null;job.backs=[];
-E.restoreView({tab:'done',chosen:true});E.render();
-document.querySelector('.doneRow').click();
-assert(document.querySelector('.doneDetail'),'legacy decided records expand without detail metadata');
+// NODECIDED: a saved piece is a row of the ONE list; its row opens the same card (a legacy record with no placement and no detail metadata must render, and looking changes nothing)
+E.restoreView({list:true,chosen:true});E.render();
+const wrow=document.querySelector('.placementRow[data-open="test"]');assert(wrow,'a saved piece is a row of the one list');
+wrow.click();
+const wcard=document.querySelector('.rvItem');assert(wcard&&wcard.dataset.key==='test'&&wcard.dataset.state==='written','legacy saved records open the same card without detail metadata');
+assert.equal(job.state,'written','opening a saved piece changes nothing');
+E.restoreView({list:true,chosen:true});E.render();
 console.log('Engrave view OK: legacy metadata, missing outlines, local error/retry, observer cleanup, deferred preparation');
-assert(document.querySelector('.decidedRow .placementThumb'),'Decided shares the Placements thumbnail size');
+assert(document.querySelector('.placementRow .placementThumb'),'a saved row shares the Placements thumbnail size');
 assert.match(document.querySelector('.purchaseSummary').textContent,/Charm only · Necklace/);
-assert.match(document.querySelector('.purchaseSummary').textContent,/Metal \/ ColourGold Filled/);
+assert.match(document.querySelector('.purchaseSummary').textContent,/Metal · ColourGold Filled/);
 row.line.variations[0].value='Sterling Silver';E.render();
-assert.match(document.querySelector('.purchaseSummary').textContent,/Sterling Silver/,'changed order options invalidate the decided-row cache');
-assert(document.querySelector('.decisionActions .decisionStatus'));
-assert.equal(document.querySelectorAll('.decidedRow [data-a="reopen"]').length,1,'one clear action even with details expanded');
+assert.match(document.querySelector('.purchaseSummary').textContent,/Sterling Silver/,'changed order options refresh the saved row');
+assert.equal(document.querySelector('.placementRow [data-s="written"]').textContent,'Saved to sheet');
+assert.equal(document.querySelectorAll('.placementRow [data-a="reopen"], .decidedRow, .doneDetail, #egDone, .egTab[data-tab="done"]').length,0,'no Reopen, no Decided row, no Decided tab');
 (async()=>{
   job.state='review';job.view=null;
   const waiting={key:'waiting',row:{...row,engrave:{}},copies:['missing'],lines:['Pending'],state:'ready'};

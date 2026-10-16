@@ -273,7 +273,7 @@ async function pageChecks(chromium) {
     check(ov.mode === 'front' && ov.text === 'Name Two' && ov.font && ov.font === ov.pristina, 'after Save the panel opens on the person\'s choice (front, Name Two, Pristina): ' + JSON.stringify({ mode: ov.mode, text: ov.text, font: ov.font }));
     check(ov.card && ov.card.length === 1 && ov.card[0] === 'front:Name Two', 'and the card shows only the Front with the person\'s words: ' + JSON.stringify(ov.card));
 
-    // a decided face is locked with ONE short line and disabled inputs (the order here is NOT approved in Paul's image: its grey button is the dimmed Approve)
+    // an approved face is NOT locked any more (NODECIDED): its words and font are open, ONE short line says who approved it, Save waits for a change (the order here is NOT approved in Paul's image: its grey button is the dimmed Approve)
     const lock = await page.evaluate(() => {
       const row = B.orders.rows.find(r => r.line.personalization && r.line.personalization[0] === '21' && r.line.sku === 'HOCKEY 1- STICKS'), P = CharmNestEngravePanel, job = Engrave.jobOf(row, null, 'back'), was = { state: job.state, by: job.approvedBy };
       Object.assign(job, { state: 'approved', approvedBy: 'Name One' });
@@ -281,7 +281,7 @@ async function pageChecks(chromium) {
       const out = { words: slot.querySelector('.engpWords').disabled, font: slot.querySelector('.engpFont').disabled, pos: [...slot.querySelectorAll('.engpPb')].every(b => b.disabled), save: slot.querySelector('[data-engp=save]').disabled, locks: [...slot.querySelectorAll('.engpLock')].map(x => x.textContent), emoji: !!slot.querySelector('[data-emoji]') };
       Object.assign(job, { state: was.state, approvedBy: was.by }); slot.remove(); P.DRAFTS.clear(); return out;
     });
-    check(lock.words && lock.font && lock.pos && lock.save && lock.locks.join('|') === 'Approved by Name One' && !lock.emoji, 'an approved face: words, font, position and Save are off, the Emoji button is gone, ONE line says "Approved by Name One": ' + JSON.stringify(lock));
+    check(!lock.words && !lock.font && lock.save && lock.locks.join('|') === 'Approved by Name One' && lock.emoji, 'an approved face: words and font are open and the Emoji button is there, Save waits for a change, ONE line says "Approved by Name One": ' + JSON.stringify(lock));
     check(errors.length === 0, 'no page error: ' + errors.slice(0, 2).join(' | '));
   } finally { await browser.close(); await srv.close(); }
 }

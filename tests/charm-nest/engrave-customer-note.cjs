@@ -7,7 +7,7 @@
 //   2  the blocks ENGTRIM removed are still absent: "From the order", Reading / Font / Decided by, the "NN% sure" pill, the block titles, the second words box, the reference picture, the head's face switch
 //   3  an order where the customer wrote and chose nothing: no box at all (no title either); a part left empty is not drawn (only the options; only the personalisation)
 //   4  the words are shown as text (no markup of the customer's is interpreted)
-//   5  a decided row's opened detail shows the same box (and none for an order with nothing)
+//   5  the card of an APPROVED piece (its row opens the same detailed card: there is no Decided row or detail any more) shows the same box (and none for an order with nothing); its row carries the words and the seal
 //   6  the Review tab's card keeps its old "From the order" list and gets no second box
 //   (the order window's own "What the customer wrote" is ENGMSG's, not tested here)
 //   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-customer-note.cjs
@@ -138,25 +138,24 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     d = await detail({ spec: { staffNote: 'Name Two wrote <b>bold</b> & <img src=x>' } });
     check(d.said === 1 && d.injected === 0 && d.saidText.includes('<b>bold</b> & <img src=x>'), 'the customer\'s words are text, never markup: ' + d.saidText.slice(-60));
 
-    // ── 5 · a decided row's opened detail ──
-    const decided = patch => page.evaluate(async ({ KEY, patch }) => {
-      const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back'), was = { state: j.state, by: j.approvedBy, at: j.approvedAt, decision: j.decision }, wasSpec = {}, wasLine = {};
-      for (const k of Object.keys(patch.spec || {})) { wasSpec[k] = row.spec[k]; row.spec[k] = patch.spec[k]; }
-      for (const k of Object.keys(patch.line || {})) { wasLine[k] = row.line[k]; row.line[k] = patch.line[k]; }
+    // ── 5 · an approved piece: its row opens the SAME detailed card, which shows the same box; the row in the one list says the words and carries the seal ──
+    const APPROVED = { state: 'approved', approvedBy: 'Name One', approvedAt: Date.now() - 60e3, decision: { by: 'Name One', at: Date.now() - 60e3, text: 'Name One' } };
+    const apprRow = () => page.evaluate(async KEY => {
+      const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back'), was = { state: j.state, by: j.approvedBy, at: j.approvedAt, decision: j.decision };
       Object.assign(j, { state: 'approved', approvedBy: 'Name One', approvedAt: Date.now() - 60e3, decision: { by: 'Name One', at: Date.now() - 60e3, text: j.text } });
-      setMode('engrave'); Engrave.restoreView({ tab: 'done', list: false, chosen: true, openDone: j.key }); Engrave.render();
-      const r = document.querySelector('#egDone .doneRow.open'), det = r && r.querySelector('.doneDetail'), box = det && det.querySelector('[data-said]');
-      const out = { open: !!det, said: det ? det.querySelectorAll('[data-said]').length : -1, text: box ? box.innerText.replace(/\s+/g, ' ').trim() : '', dts: det ? [...det.querySelectorAll('dt')].map(x => x.textContent.trim()) : [], rowWords: r && r.querySelector('.w') ? r.querySelector('.w').textContent.trim() : '', seals: r ? r.querySelectorAll('.sealRow, .engravingSeals').length : 0,
-        wide: box ? Math.round(box.getBoundingClientRect().width) : 0, detW: det ? Math.round(det.getBoundingClientRect().width) : 0 };
-      for (const k of Object.keys(wasSpec)) row.spec[k] = wasSpec[k]; for (const k of Object.keys(wasLine)) row.line[k] = wasLine[k];
-      Object.assign(j, was); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: j.key }); Engrave.render();
+      setMode('engrave'); Engrave.restoreView({ list: true, chosen: true, focus: null, q: '' }); Engrave.render();
+      const r = document.querySelector(`#egQueue .egPlacementList .placementRow[data-open="${j.key}"]`);
+      const out = { row: !!r, words: r && r.querySelector('.w') ? r.querySelector('.w').textContent.trim() : '', seals: r ? r.querySelectorAll('.egPlacementSeals .seal').length : 0, stage: r && r.querySelector('[data-s]') ? r.querySelector('[data-s]').textContent.trim() : '', old: document.querySelectorAll('#egDone, #egBacks, .decidedRow, .doneDetail').length };
+      Object.assign(j, { state: was.state, approvedBy: was.by, approvedAt: was.at, decision: was.decision }); Engrave.render();
       return out;
-    }, { KEY, patch });
-    let dd = await decided({});
-    check(dd.open && dd.said === 1 && /what the customer wrote/i.test(dd.text) && dd.text.includes(WORDS.buyer) && dd.text.includes(WORDS.staff) && /Font: Ace/.test(dd.text), 'a decided row\'s opened detail shows the box with the customer\'s words and options: "' + dd.text.slice(0, 120) + '"');
-    check(dd.wide >= dd.detW - 4 && dd.rowWords === 'Name One' && dd.seals >= 1 && dd.dts.includes('Size') && !dd.dts.includes('Words') && !dd.dts.includes('Decided'), 'it spans the detail, and the decided row is otherwise as ENGTRIM left it: ' + JSON.stringify({ box: dd.wide, detail: dd.detW, dts: dd.dts }));
-    dd = await decided({ spec: NONE.spec, line: NONE.line });
-    check(dd.open && dd.said === 0, 'a decided piece whose customer wrote and chose nothing: no box');
+    }, KEY);
+    let dd = await detail({ patch: APPROVED });
+    check(dd.has && dd.said === 1 && dd.saidInSide === 1 && /what the customer wrote/i.test(dd.saidText) && dd.saidText.includes(WORDS.buyer) && dd.saidText.includes(WORDS.staff) && /Font: Ace/.test(dd.saidText), 'an approved piece\'s card shows the box with the customer\'s words and options: "' + dd.saidText.slice(0, 120) + '"');
+    check(dd.panel === 1 && dd.approve === 0 && /Approved/.test(dd.text) && !/Decided by|Reading/.test(dd.text), 'it is the same detailed card (the options panel is there), with the calm "Approved" where the Approve was, and still no "Reading" / "Decided by" rows: ' + JSON.stringify({ panel: dd.panel, approve: dd.approve }));
+    const ar = await apprRow();
+    check(ar.row && ar.words === 'Name One' && ar.seals >= 1 && /Approved/.test(ar.stage) && ar.old === 0, 'and its row in the one list says the words and carries the seal (no Decided row anywhere): ' + JSON.stringify(ar));
+    dd = await detail({ patch: APPROVED, spec: NONE.spec, line: NONE.line });
+    check(dd.has && dd.said === 0, 'an approved piece whose customer wrote and chose nothing: no box');
 
     // ── 6 · the Review tab's card is not the Engrave detail ──
     const rv = await page.evaluate(KEY => { const j = Engrave.jobOf(B.orders.byKey.get(KEY), null, 'back'), c = Engrave.placementCard(j, 1); return { order: c.querySelectorAll('.pvOrder').length, said: c.querySelectorAll('[data-said]').length, panel: c.querySelectorAll('.engp').length, text: c.innerText.replace(/\s+/g, ' ') }; }, KEY);

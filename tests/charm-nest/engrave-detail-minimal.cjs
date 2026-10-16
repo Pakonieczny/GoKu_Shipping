@@ -5,10 +5,11 @@
 //   1  a settled read (97%, personalisation box, no staff note), the detail at 1280x720: ABSENT: the "Words on the ..." box and its "Use these words", the "Front/Back . reference" picture (when the card's thumbnails are on
 //      the page), the "From the order" list, the "NN% sure" pill, every block title, the head's Front | Back switch; PRESENT: the panel (one words box, font, Save, Cancel, ONE Emoji button), Approve, "No engraving", the big picture, Open order
 //   2  the customer's own words are ALWAYS in the detail (ENGNOTE, Paul round 2 point 6: "I didn't ask for you to remove that"): ONE box titled "What the customer wrote" (charm-nest-engrave-said.js), settled read or not, a
-//      staff note or not; it holds no "Reading", no "Font", no "Decided by". Its own checks (every part, nothing when the customer wrote nothing, the decided row, the Review tab) are in engrave-customer-note.cjs
+//      staff note or not; it holds no "Reading", no "Font", no "Decided by". Its own checks (every part, nothing when the customer wrote nothing, the approved piece's card, the Review tab) are in engrave-customer-note.cjs
 //   3  words still to decide (state words): ONE small "Engrave these words" button (the panel cannot confirm a read as it stands), the reason said once in the empty picture, one "No engraving" button
 //   4  the Review tab's placement card (no panel there) is untouched: its words box and its pill are still drawn
-//   5  a decided row's opened detail does not repeat the words or who decided (the row and its seals say it), and keeps the size, the file and the pieces
+//   5  an APPROVED piece (no Decided row or detail any more: its row opens this very card) draws the same minimal card: the words once, in the panel, no second route to them, no "Reading" / "Decided by" / percentage, a calm
+//      "Approved" where Approve was; its row in the one list says the words and carries the seals
 //   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-detail-minimal.cjs
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '../..');
@@ -114,18 +115,23 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     const rv = await page.evaluate(KEY => { const j = Engrave.jobOf(B.orders.byKey.get(KEY), null, 'back'), c = Engrave.placementCard(j, 1); return { words: c.querySelectorAll('.pvWords').length, box: c.querySelectorAll('textarea[data-f=words]').length, use: [...c.querySelectorAll('[data-a=usewords]')].map(b => b.textContent.trim()), conf: c.querySelectorAll('.rh .conf').length, panel: c.querySelectorAll('.engp').length, order: c.querySelectorAll('.pvOrder').length }; }, KEY);
     check(rv.words === 1 && rv.box === 1 && rv.use.join() === 'Use these words' && rv.conf === 1 && rv.panel === 0 && rv.order === 1, 'the Review tab\'s placement card (no panel there) still has its words box, "Use these words", its pill and "From the order": ' + JSON.stringify(rv));
 
-    // ── 5 · a decided row's opened detail ──
+    // ── 5 · an approved piece: its row opens this same minimal card; the row says the words and carries the seals ──
     const dd = await page.evaluate(async KEY => {
       const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back'), was = { state: j.state, by: j.approvedBy, at: j.approvedAt, decision: j.decision };
       Object.assign(j, { state: 'approved', approvedBy: 'Name One', approvedAt: Date.now() - 60e3, decision: { by: 'Name One', at: Date.now() - 60e3, text: j.text } });
-      setMode('engrave'); Engrave.restoreView({ tab: 'done', list: false, chosen: true, openDone: j.key }); Engrave.render();
-      const r = document.querySelector('#egDone .doneRow.open'), det = r && r.querySelector('.doneDetail');
-      const out = { open: !!det, dts: det ? [...det.querySelectorAll('dt')].map(x => x.textContent.trim()) : [], rowWords: r && r.querySelector('.w') ? r.querySelector('.w').textContent.trim() : '', seals: r ? r.querySelectorAll('.sealRow, .engravingSeals').length : 0 };
-      Object.assign(j, was); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: j.key }); Engrave.render();
-      return out;
+      setMode('engrave'); Engrave.restoreView({ list: true, chosen: true, focus: null, q: '' }); Engrave.render();
+      const r = document.querySelector(`#egQueue .egPlacementList .placementRow[data-open="${j.key}"]`);
+      const rowOut = { row: !!r, words: r && r.querySelector('.w') ? r.querySelector('.w').textContent.trim() : '', seals: r ? r.querySelectorAll('.egPlacementSeals .seal').length : 0, stage: r && r.querySelector('[data-s]') ? r.querySelector('[data-s]').textContent.trim() : '', old: document.querySelectorAll('#egDone, #egBacks, .decidedRow, .doneDetail, [data-a=reopen]').length };
+      Engrave.restoreView({ list: false, chosen: true, focus: j.key }); Engrave.render();
+      const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'), q = s => c ? c.querySelectorAll(s).length : -1;
+      const card = { has: !!c && c.dataset.key === j.key && c.dataset.state === 'approved', text: c ? c.innerText.replace(/\s+/g, ' ') : '', panel: q('.engp'), panelWords: q('.engp .engpWords'), textareas: q('textarea:not(.owCompLine textarea):not(.cmLine textarea)'), words: q('.pvWords'), oldBox: q('textarea[data-f=words]'), use: q('[data-a=usewords]'), conf: q('.rh .conf'), tick: q('.pvApproval .egApproved[data-a=approved][disabled]'), approve: q('[data-a=approve]'), skip: q('[data-a=skip]'), titles: [...(c ? c.querySelectorAll('h4.pvH') : [])].map(h => h.textContent.trim()), seals: q('.pvApproval .seal') };
+      Object.assign(j, was); Engrave.render();
+      return { rowOut, card };
     }, KEY);
-    check(dd.open && dd.rowWords === '1. 27. 24' && dd.seals >= 1, 'the decided row says the words and carries the seals: ' + JSON.stringify({ rowWords: dd.rowWords, seals: dd.seals }));
-    check(!dd.dts.includes('Words') && !dd.dts.includes('Decided') && dd.dts.includes('Size'), 'its opened detail does not say the words or the decision again, and keeps the size: ' + dd.dts.join(', '));
+    check(dd.rowOut.row && dd.rowOut.words === '1. 27. 24' && dd.rowOut.seals >= 1 && /Approved/.test(dd.rowOut.stage) && dd.rowOut.old === 0, 'the approved piece\'s row in the one list says the words and carries the seals (no Decided row anywhere): ' + JSON.stringify(dd.rowOut));
+    check(dd.card.has && dd.card.panel === 1 && dd.card.panelWords === 1 && dd.card.textareas === 1 && dd.card.words === 0 && dd.card.oldBox === 0 && dd.card.use === 0, 'its card is the same minimal card: the options panel with the ONE words box, no second words display, no "Use these words": ' + JSON.stringify({ panel: dd.card.panel, words: dd.card.panelWords, textareas: dd.card.textareas, old: dd.card.words + dd.card.oldBox, use: dd.card.use }));
+    check(!/Reading|Decided by|Personalization\b|Buyer's note/.test(dd.card.text) && dd.card.conf === 0 && !/%/.test(dd.card.text) && dd.card.titles.join('|') === 'What the customer wrote', 'it says no "Reading", no "Decided by", no percentage, and its only block title is the customer\'s words: ' + dd.card.titles.join('|'));
+    check(dd.card.tick === 1 && dd.card.approve === 0 && dd.card.seals >= 1, 'a calm disabled "Approved" tick where Approve was, and its seal(s) on the card: ' + JSON.stringify({ tick: dd.card.tick, approve: dd.card.approve, seals: dd.card.seals }));
 
     // the page was never asked anything it must not be
     const net = await page.evaluate(() => __calls.slice());

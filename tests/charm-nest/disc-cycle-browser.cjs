@@ -7,7 +7,7 @@
 //   node tests/charm-nest/disc-cycle-browser.cjs        (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>; SHOTS=<dir> to keep the screenshots; without a browser nothing runs)
 // What it proves: the list has ONE row per necklace that tells its discs ("Disc 1 of 2 · J", "Disc 2 of 2 · Q", each with its font); the editor header has the Disc 1 | Disc 2 (| Disc 3)
 // switch, the work area (the canvas) keeps its room, nothing overflows the card; the switch, Back and Next move disc by disc through every order; each disc has its own words, font and
-// Approve; there is NO "Approve all discs" press, even for identical words (ENGAPPROVE); the counters count orders; the Decided tab lists the discs with a Reopen each.
+// Approve; there is NO "Approve all discs" press, even for identical words (ENGAPPROVE); the counters count orders; an approved disc stays on its row and in the switch (NODECIDED, 16 Oct 2026: no Decided tab, no Reopen), opens its own card, and a change puts only that disc back to "needs Approve".
 'use strict';
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
 const root = path.join(__dirname, '../..');
@@ -145,27 +145,37 @@ const root = path.join(__dirname, '../..');
     c = await press('.egEarTab:nth-child(2)');
     check(c.both === null && c.approve, `both discs were on screen: still no press that approves both, only Disc 2's own Approve: ${JSON.stringify(c.both)}`);
     await shot('DISCCYCLE-8-disc2-own-approve.png');
-    // ── 5 · approve one disc on its own: the order stays in Placements with the other disc (a single piece's card), the decided disc is under Decided ──
+    // ── 5 · approve one disc on its own: the order stays ONE row with the other disc (Disc 1 told Approved), the editor stays on the order, and the approved disc opens its own card ──
     await page.evaluate(() => { const j = Engrave.items().get('4175370240_1#D1'); j.state = 'approved'; j.approvedBy = 'Tester'; j.approvedAt = Date.now(); j.backs = []; j.row.engrave = { needed: true, state: 'approved', approved: true }; Engrave.render(); });
     await settle(); c = await cardInfo();
-    check(c.key === keyOf('4175370240', 'D2') && c.tabs.length === 0 && c.plainTag === 'DISC 2 of 2', `one disc approved: the editor stays on the order, on Disc 2, as a single piece's card: ${c.key} ${c.plainTag}`);
+    check(c.key === keyOf('4175370240', 'D2') && c.tabs.length === 2 && c.tabs.map(t => t.chip).join('|') === 'DISC 1 of 2|DISC 2 of 2' && c.tabs.map(t => t.on).join() === 'false,true' && c.plainTag === null, `one disc approved: the editor stays on the order, on Disc 2, and the switch keeps both discs: ${c.key} ${JSON.stringify(c.tabs.map(t => [t.chip, t.stage, t.on]))}`);
+    check(c.tabs.map(t => t.stage).join('|') === 'Approved|Placement to check', `Disc 1 says Approved on its tab, Disc 2 is still to settle: ${c.tabs.map(t => t.stage).join('|')}`);
     check(c.kind === '1 of 4 · 0 done', `the counter counts orders, and an order is done only when EVERY piece is (ENGPIECES: Disc 1 approved, Disc 2 still to settle: this order is not done): ${c.kind}`);
-    await view({ tab: 'done', list: true }); await settle();
-    const dec = await page.evaluate(() => [...document.querySelectorAll('#egDone .decidedRow')].map(r => ({ rid: r.dataset.rid, tag: (r.querySelector('.engravingOrder .egPiece') || {}).textContent, reopen: [...r.querySelectorAll('[data-a="reopen"]')].map(n => n.textContent), badge: document.querySelector('.egTab[data-tab="done"] b').textContent })));
-    check(dec.length === 1 && dec[0].rid === '4175370240' && dec[0].tag === 'DISC 1 of 2' && JSON.stringify(dec[0].reopen) === '["Reopen"]' && dec[0].badge === '1', `Decided lists Disc 1 as a single piece's row, tagged: ${JSON.stringify(dec)}`);
-    // both discs decided: ONE decided row with a Reopen each
-    await page.evaluate(() => { const j = Engrave.items().get('4175370240_1#D2'); j.state = 'approved'; j.approvedBy = 'Tester'; j.approvedAt = Date.now(); j.backs = []; j.row.engrave = { needed: true, state: 'approved', approved: true }; Engrave.render(); });
-    await settle();
-    const dec2 = await page.evaluate(() => [...document.querySelectorAll('#egDone .decidedRow')].map(r => ({ rid: r.dataset.rid, chips: [...r.querySelectorAll('.egEar .egPiece')].map(n => n.textContent), reopen: [...r.querySelectorAll('[data-a="reopen"]')].map(n => n.textContent), words: [...r.querySelectorAll('.egEar .w')].map(n => n.textContent) })));
-    check(dec2.length === 1 && JSON.stringify(dec2[0].chips) === '["DISC 1 of 2","DISC 2 of 2"]' && JSON.stringify(dec2[0].reopen) === '["Reopen Disc 1","Reopen Disc 2"]' && JSON.stringify(dec2[0].words) === '["Mia","Mia"]', `both decided: one Decided row, a Reopen each: ${JSON.stringify(dec2)}`);
-    await shot('DISCCYCLE-9-decided.png');
+    await view({ list: true }); await settle();
+    const dec = await page.evaluate(() => [...document.querySelectorAll('.egPlacementList .placementRow')].filter(r => r.dataset.rid === '4175370240').map(r => ({ decided: r.classList.contains('isDecided'), ears: [...r.querySelectorAll('.egEar')].map(e => e.querySelector('.egPiece').textContent + ':' + e.querySelector('[data-s]').dataset.s + ':' + e.querySelector('[data-s]').textContent), reopen: r.querySelectorAll('[data-a="reopen"]').length, tabs: [...document.querySelectorAll('#engraveView .egTab[data-tab]')].map(b => b.dataset.tab + ':' + ((b.querySelector('b') || {}).textContent || '')) })));
+    check(dec.length === 1 && !dec[0].decided && dec[0].reopen === 0 && JSON.stringify(dec[0].ears) === JSON.stringify(['DISC 1 of 2:approved:Approved', 'DISC 2 of 2:review:Placement to check']) && dec[0].tabs.join() === 'place:4', `the order is still ONE row: Disc 1 told Approved, Disc 2 still to settle, no Reopen, the one chip still counts the order (4): ${JSON.stringify(dec)}`);
+    // the approved disc opens its OWN card (the same card as any disc) with a calm tick where Approve was; just looking changes nothing
+    await page.click(`.placementRow[data-rid="4175370240"] .egEar:nth-child(1)`); await settle(); c = await cardInfo();
+    const d1 = await page.evaluate(() => { const k = document.querySelector('#egQueue .rvItem'); return { key: k.dataset.key, state: k.dataset.state, tick: !!k.querySelector('.egApproved[data-a="approved"][disabled]'), approve: !!k.querySelector('[data-a="approve"]'), job: Engrave.items().get('4175370240_1#D1').state }; });
+    check(c.key === keyOf('4175370240', 'D1') && d1.state === 'approved' && d1.tick && !d1.approve && d1.job === 'approved', `a click on the approved disc's line opens Disc 1's own card, approved, a calm tick and no Approve; looking changes nothing: ${JSON.stringify(d1)}`);
+    // the first change of the approved disc puts ONLY that disc back to "needs Approve"
+    await page.evaluate(() => document.querySelector('#egQueue .rvItem .engpPb[data-act="right"]').click());
+    await page.waitForFunction(() => Engrave.items().get('4175370240_1#D1').state === 'review', null, { timeout: 15000 }); await settle();
+    const st = await page.evaluate(() => ({ d1: Engrave.items().get('4175370240_1#D1').state, d2: Engrave.items().get('4175370240_1#D2').state, approve: !!document.querySelector('#egQueue .rvItem [data-a="approve"]') }));
+    check(st.d1 === 'review' && st.d2 === 'review' && st.approve, `a nudge of the approved Disc 1 puts it back to "needs Approve" (Approve is back on its card): ${JSON.stringify(st)}`);
+    // both discs approved: still ONE row, a line for each disc, the row calm
+    await page.evaluate(() => { for (const k of ['4175370240_1#D1', '4175370240_1#D2']) { const j = Engrave.items().get(k); j.state = 'approved'; j.approvedBy = 'Tester'; j.approvedAt = Date.now(); j.backs = []; j.row.engrave = { needed: true, state: 'approved', approved: true }; } });
+    await view({ list: true }); await settle();
+    const dec2 = await page.evaluate(() => [...document.querySelectorAll('.egPlacementList .placementRow')].filter(r => r.dataset.rid === '4175370240').map(r => ({ decided: r.classList.contains('isDecided'), chips: [...r.querySelectorAll('.egEar .egPiece')].map(n => n.textContent), states: [...r.querySelectorAll('.egEar [data-s]')].map(n => n.textContent), reopen: r.querySelectorAll('[data-a="reopen"]').length, words: [...r.querySelectorAll('.egEar .w')].map(n => n.textContent), badge: document.querySelector('.egTab[data-tab="place"] b').textContent, done: document.querySelectorAll('.egTab[data-tab="done"], #egDone, .decidedRow').length })));
+    check(dec2.length === 1 && dec2[0].decided && JSON.stringify(dec2[0].chips) === '["DISC 1 of 2","DISC 2 of 2"]' && JSON.stringify(dec2[0].states) === '["Approved","Approved"]' && dec2[0].reopen === 0 && JSON.stringify(dec2[0].words) === '["Mia","Mia"]' && dec2[0].badge === '3' && dec2[0].done === 0, `both approved: one calm row, a line for each disc, no Reopen, no Decided anywhere, the chip counts the 3 orders left: ${JSON.stringify(dec2)}`);
+    await shot('DISCCYCLE-9-approved.png');
     // ── 6 · a narrow window: the switch wraps instead of overflowing ──
     await page.setViewportSize({ width: 900, height: 700 });
     await view({ tab: 'place', list: false, focus: keyOf('4172791262', 'D2') }); await settle(); c = await cardInfo();
     check(c.scrollW <= c.innerW && c.tabs.every(t => within(t.r, c.card)), `900 px wide: the three discs stay inside the card (no sideways scroll): ${c.scrollW}/${c.innerW}`);
     await shot('DISCCYCLE-10-narrow.png');
     check(errors.length === 0, 'no page errors: ' + errors.join(' | '));
-    console.log(`Disc cycle OK in Chromium: ${checks} checks (list rows, 2-disc and 3-disc editor, switch, Back/Next, one Approve per disc, Decided, narrow window)`);
+    console.log(`Disc cycle OK in Chromium: ${checks} checks (list rows, 2-disc and 3-disc editor, switch, Back/Next, one Approve per disc, approved discs in the same row, narrow window)`);
   } finally { await browser.close(); srv.close(); }
   if (fails.length) { console.error(`\n${fails.length} failed:\n - ${fails.slice(0, 40).join('\n - ')}`); process.exit(1); }
 })().catch(e => { console.error(e); process.exit(1); });

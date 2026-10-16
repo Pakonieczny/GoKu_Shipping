@@ -4,9 +4,10 @@
 //   2  the tab: no Monograms tab; Placements holds the monogram lines beside the engraved ones; a monogram row shows the finished charm (the service's thumbnail) and its three letters, never Front / Back
 //   3  the detail card of a monogram line holds the widget (mode "detail"), the engraved piece's own head (counter, Back / Next, strip of the order's pieces, Open order, close), the buyer's words and messages
 //   4  a MIXED order (a monogram line and an engraved bar): the strip says "Piece 1 of 2", Back / Next walk both kinds, Approve on the monogram is that piece's approval and the detail goes on to the bar (never another order),
-//      the bar approved first goes on to the monogram, leaving an order with a piece not approved is said by the guide's one line, Decided holds both with the monogram row opening the widget (Change)
+//      the bar approved first goes on to the monogram, leaving an order with a piece not approved is said by the guide's one line; once approved both stay as rows of the ONE list (NODECIDED: no Decided tab) and the
+//      monogram row opens the same card with the widget, approved, with its own Change
 //   5  an order WITHOUT a monogram draws and behaves exactly as before (panel, Front / Back faces, Approve)
-//   6  the old doors: Engrave.openMonogram(lineKey) lands on the line's card (its row in Decided once approved); a saved view with tab "mono" lands in Placements; counts (tab badge, Engrave.pendingRows)
+//   6  the old doors: Engrave.openMonogram(lineKey) lands on the line's card (approved or not: no Decided row any more); a saved view with tab "mono" lands in Placements; counts (tab badge, Engrave.pendingRows)
 //   7  phone width (400): the list and the detail do not overflow sideways; no console errors
 // Offline only: the REAL page over the repo's fake site (the _engraveRealWorld.cjs world) with three 26-letter alphabets (Paul's own file, indexed, unless MONO_REAL=0); no Etsy, no paid AI, nothing live. A pass proves the page's own code
 // does this on the offline fake, not a live order. Screenshots (1440 and 400 px) go to $SHOTS (default /tmp/mu/MU2).
@@ -114,7 +115,7 @@ const check = (ok, msg) => { nCheck++; if (!ok) fails.push(msg); console.log((ok
 
     // ═══ 2 · the tab: no Monograms tab, the monogram lines beside the engraved ones ═══
     await openList(); await settle(2500);
-    check(!(await page.evaluate(() => !!document.querySelector('#engraveView .egTab[data-tab="mono"], #egMono'))) && (await tabs()).map(t => t.split(':')[0]).join() === 'place,done', 'there is no Monograms tab: the tabs are Placements and Decided: ' + (await tabs()).join(' '));
+    check(!(await page.evaluate(() => !!document.querySelector('#engraveView .egTab[data-tab="mono"], #egMono'))) && (await tabs()).map(t => t.split(':')[0]).join() === 'place', 'there is no Monograms tab and no Decided tab: the one chip is Placements: ' + (await tabs()).join(' '));
     let rs = await rows();
     check(rs.length === 7 && rs.filter(r => r.kind === 'monogram').length === 4 && rs.filter(r => r.kind === 'engraved').length === 3, 'Placements lists the 4 monogram lines beside the 3 engraved ones (7 rows): ' + rs.map(r => r.kind[0] + r.rid.slice(-3)).join(' '));
     check((await tabs())[0] === 'place:7', 'the Placements badge counts them: ' + (await tabs())[0]);
@@ -223,18 +224,19 @@ const check = (ok, msg) => { nCheck++; if (!ok) fails.push(msg); console.log((ok
     await settle(1500);
     const od = await page.evaluate(r => CharmNestEngraveOrder.countOf(r), rid('mixed'));
     check(od.n === 2 && od.approved === 2 && od.left === 0, 'the bar approved too: the order is done, both pieces approved: ' + JSON.stringify(od));
-    // Decided: both rows, the monogram row with its picture and letters, opening into the widget (Change)
-    await page.click('#engraveView .egTab[data-tab="done"]'); await settle(1200);
-    const dr = await page.evaluate(() => [...document.querySelectorAll('#egDone .doneRow')].map(r => ({ kind: r.dataset.kind || 'engraved', rid: r.dataset.rid, thumb: !!r.querySelector('[data-mw-thumb]'), text: r.innerText.replace(/\s+/g, ' ').trim() })));
-    check(dr.filter(r => r.rid === rid('mixed')).length === 2 && dr.some(r => r.rid === rid('mixed') && r.kind === 'monogram' && r.thumb && /A P V|J Q X/.test(r.text) && /approved/i.test(r.text)), 'Decided holds both rows of the mixed order, the monogram one with its charm, its letters and "Approved": ' + dr.map(r => r.kind[0] + r.rid.slice(-3)).join(' '));
-    await shot('decided-1440');
-    await page.click(`#egDone .doneRow[data-kind=monogram][data-rid="${rid('mixed')}"] [data-a=monoChange]`);
-    await page.waitForSelector('#egDone .doneRow.open .mw', { timeout: 15000 });
-    const dd = await page.evaluate(() => { const m = document.querySelector('#egDone .doneRow.open .mw'); return { mode: m.dataset.mode, state: m.dataset.state, change: !!m.querySelector('[data-mw-change]'), approved: !!m.querySelector('[data-mw-approved]') }; });
-    check(dd.mode === 'detail' && dd.state === 'approved' && dd.change, 'the Change of its Decided row opens the widget under it, approved, with its Change: ' + JSON.stringify(dd));
-    await shot('decided-open-1440');
-    noSideways(await atPhone('decided-open-400'), 'Decided with a monogram row open');
-    check(await page.evaluate(() => { const c = document.querySelector('#egDone .doneRow.open .mw [data-mw-letter]'); Engrave.render(); Engrave.render(); return !!document.querySelector('#egDone .doneRow.open .mw'); }), 'a re-render of the tab keeps the open Decided monogram');
+    // NODECIDED: both pieces of the finished order stay in the ONE list, the monogram row with its picture and letters and "Approved"; the row opens the same card with the widget (its own Change)
+    await openList(); await settle(1200);
+    const dr = await page.evaluate(() => [...document.querySelectorAll('#egQueue .egPlacementList .doneRow')].map(r => ({ kind: r.dataset.kind || 'engraved', rid: r.dataset.rid, decided: r.classList.contains('isDecided'), thumb: !!r.querySelector('[data-mw-thumb]'), text: r.innerText.replace(/\s+/g, ' ').trim() })));
+    check(dr.filter(r => r.rid === rid('mixed')).length === 2 && dr.filter(r => r.rid === rid('mixed')).every(r => r.decided) && dr.some(r => r.rid === rid('mixed') && r.kind === 'monogram' && r.thumb && /A P V|J Q X/.test(r.text) && /approved/i.test(r.text)), 'the one list holds both rows of the finished mixed order (calm, nothing left to decide), the monogram one with its charm, its letters and "Approved": ' + dr.map(r => r.kind[0] + r.rid.slice(-3) + (r.decided ? 'D' : 'P')).join(' '));
+    check(await page.evaluate(() => !document.querySelector('#egDone, #egBacks, .decidedRow, .doneDetail, [data-a=reopen], [data-a=monoChange], .egTab[data-tab="done"]')), 'and there is no Decided tab, row, detail, Reopen or Change under a row anywhere');
+    await shot('approved-in-list-1440');
+    await page.click(`#egQueue .egPlacementList .doneRow[data-kind=monogram][data-rid="${rid('mixed')}"]`);
+    await page.waitForSelector('#egQueue .rvItem[data-mono] .mw', { timeout: 15000 }); await settle(900);
+    const dd = await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-mono]'), m = c && c.querySelector('.mw'); return { card: c && c.dataset.state, mode: m && m.dataset.mode, state: m && m.dataset.state, change: !!(m && m.querySelector('[data-mw-change]')), approve: !!(c && c.querySelector('[data-mw-approve]:not([disabled])')) }; });
+    check(dd.mode === 'detail' && dd.state === 'approved' && dd.change, 'the approved monogram\'s row opens the same card with the widget under it, approved, with its own Change: ' + JSON.stringify(dd));
+    await shot('approved-card-1440');
+    noSideways(await atPhone('approved-card-400'), 'an approved monogram\'s card');
+    check(await page.evaluate(() => { Engrave.render(); Engrave.render(); const c = document.querySelector('#egQueue .rvItem[data-mono]'); return !!(c && c.querySelector('.mw')); }), 'a re-render of the tab keeps the open approved monogram card');
 
     // the other way round: the bar first, then the monogram (mixedB)
     await openList(); await settle(1500);
@@ -274,13 +276,13 @@ const check = (ok, msg) => { nCheck++; if (!ok) fails.push(msg); console.log((ok
     check(openRes.tab === 'place' && openRes.list === false && (await card()).key === monoKey('mono2'), 'Engrave.openMonogram(lineKey) lands on that line\'s card in Placements: ' + JSON.stringify(openRes));
     await page.evaluate(() => { Engrave.restoreView({ tab: 'mono', chosen: true }); Engrave.render(); }); await settle(800);
     check((await page.evaluate(() => Engrave.view().tab)) === 'place' && !(await page.evaluate(() => !!document.querySelector('#egMono, .egTab[data-tab="mono"]'))), 'a saved view with the old "mono" tab lands in Placements');
-    // approve mono2 so there is an approved one, then open it: Decided
+    // approve mono2 so there is an approved one, then open it: its own card
     await page.evaluate(k => { Engrave.openMonogram(k); }, monoKey('mono2')); await page.waitForSelector('#egQueue .rvItem[data-mono] .mw', { timeout: 20000 });
     await untilWidget(rid('mono2'), s => s.state === 'ready', 'OSR ready');
     await page.click('#egQueue .rvItem[data-mono] [data-mw-approve]'); await page.waitForFunction(k => Engrave.monogramUI().status(Orders.rows().find(r => r.key === k)).approved, monoKey('mono2'), { timeout: 60000 }); await settle(1500);
-    const dec = await page.evaluate(k => { Engrave.openMonogram(k); return { tab: Engrave.view().tab }; }, monoKey('mono2')); await settle(1200);
-    check(dec.tab === 'done' && await page.evaluate(k => !!document.querySelector(`#egDone .doneRow.open[data-key="${k}"] .mw`), monoKey('mono2')), 'openMonogram of an approved line opens its row in Decided, the widget under it');
-    check(await page.evaluate(() => Engrave.reviewedRows()) >= 3, 'Engrave.reviewedRows() counts the decided monograms: ' + (await page.evaluate(() => Engrave.reviewedRows())));
+    const dec = await page.evaluate(k => { Engrave.openMonogram(k); return { tab: Engrave.view().tab, list: Engrave.view().list, focus: Engrave.view().focus }; }, monoKey('mono2')); await settle(1200);
+    check(dec.tab === 'place' && dec.list === false && dec.focus === monoKey('mono2') && await page.evaluate(k => { const c = document.querySelector('#egQueue .rvItem[data-mono]'); return !!(c && c.dataset.key === k && c.querySelector('.mw') && c.dataset.state === 'approved'); }, monoKey('mono2')), 'openMonogram of an approved line opens its own card, the widget in it, approved (no Decided row): ' + JSON.stringify(dec));
+    check(await page.evaluate(() => Engrave.reviewedRows()) >= 3, 'Engrave.reviewedRows() still counts the monograms with nothing left to decide: ' + (await page.evaluate(() => Engrave.reviewedRows())));
 
     // (7 · phone width: checked above, beside each picture)
     console.log('   page errors:', JSON.stringify(w.errors), '· AI / network writes:', writes);

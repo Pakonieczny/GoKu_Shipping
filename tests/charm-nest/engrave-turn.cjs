@@ -347,9 +347,19 @@ const OLD_ROW_PX = 31.94;   // the row as it was on clean main (1280x720 and 144
     const bt = done.built;
     check(!!bt && near(bt.angleDeg, turnedView.angleDeg, 1e-6) && near(bt.up, turnedView.up, 1e-6), 'the file writer is handed the TURNED orientation (page angle ' + (bt && bt.angleDeg.toFixed(3)) + ' = the work area\'s ' + turnedView.angleDeg.toFixed(3) + '; upAngle ' + (bt && bt.up.toFixed(3)) + ', the system\'s ' + (turnedView.up + 65).toFixed(3) + ' minus the 65 turn)', JSON.stringify(bt));
     check(!!bt && near(bt.angle, turnedView.angle, 1e-3) && near(bt.first[0] + bt.cx, turnedView.first[0], 0.01) && near(bt.first[1] + bt.cy, turnedView.first[1], 0.01), 'and the engraving as the work area showed it: its angle and its first letter point (relative to the charm\'s centre) are the ones on screen');
-    // an approved piece is never changed: its row has no controls, a turn call is refused
-    const refused = await page.evaluate(k => Engrave.turnTo(Engrave.items().get(k), 10), TK);
-    check(refused && refused.ok === false, 'a decided (approved) piece is never turned: the call is refused', JSON.stringify(refused));
+    // NODECIDED (Paul, 16 Oct 2026): an approved piece is not locked: it turns like any other, the FIRST turn puts it back to "needs Approve" (its seal stays), Approve again adds a second seal
+    const seals0 = await page.evaluate(k => CNEngravingSeals.list(Engrave.items().get(k)).length, TK);
+    const turned = await page.evaluate(async k => { const j = Engrave.items().get(k), was = { state: j.state, up: j.view.upAngle }; const r = await Engrave.turnTo(j, 10); return { ok: !!(r && r.ok), was: was.state, state: j.state, up: j.view.upAngle, was_up: was.up, seals: CNEngravingSeals.list(j).length, reason: j.reason || null }; }, TK);
+    check(turned.was === 'approved' && turned.ok && turned.state === 'review' && turned.seals === seals0 && turned.up !== turned.was_up, 'an approved piece can be turned: the call is accepted, the piece is back to needs-Approve and its seal is kept', JSON.stringify(turned));
+    await R.openEngraveDetail(w, 'both', { face: 'back' });
+    const back2 = await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return { state: c && c.dataset.state, approve: !!(c && c.querySelector('[data-a="approve"]:not([disabled])')), tick: !!(c && c.querySelector('.egApproved[data-a="approved"]')) }; });
+    check(back2.state === 'review' && back2.approve && !back2.tick, 'and its card asks for the Approve again (the tick is gone)', JSON.stringify(back2));
+    const appr2 = await page.$('#egQueue [data-a="approve"]');
+    await appr2.click();
+    await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && j.state === 'approved'; }, TK, { timeout: 40000 }).catch(() => {});
+    await page.waitForTimeout(2500);
+    const again = await page.evaluate(k => { const j = Engrave.items().get(k); return { state: j.state, seals: CNEngravingSeals.list(j).length }; }, TK);
+    check(again.state === 'approved' && again.seals === seals0 + 1, 'Approve again: approved with a SECOND brand new seal, the first one stays', JSON.stringify(again));
 
     // the feedback styles
     const fb = async () => {

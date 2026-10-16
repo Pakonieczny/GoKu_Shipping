@@ -235,7 +235,7 @@ const receipts = [
       const jk = JSON.stringify(jobs); if (jk !== lastJobs) { lastJobs = jk; console.log('  engrave jobs', jk); console.log('  agent', JSON.stringify(await page.evaluate(() => CN.AG.events.filter(e => /engrav|ENGRAVE|Claude|font|Myriad/i.test(e.text || '')).slice(-8).map(e => e.text)))); }
       if (jobs.some(j => j.state === 'blocked')) throw new Error('engraving blocked: ' + jk);
       if (jobs.some(j => j.state === 'ready') && Date.now() - t0 > 90000) throw new Error('engraving never fitted: ' + JSON.stringify(await page.evaluate(() => [...Engrave.items().values()].map(j => { const c = Pool.charmOf(j.copies[0]); const sh = Pool.sheetOf(j.copies[0]); return { copies: j.copies, charm: c && c.id, sheet: sh && { fileBase: sh.fileBase, status: sh.status, ids: sh.placements.map(p => p.id), charmIds: sh.charms.map(c => c.id + ':' + c.poolId) } }; }))));
-      // the engraving screen: three tabs carrying the counts, one pane open, and the queue reachable from the rail (§7)
+      // the engraving screen: one chip carrying the count, one pane open, and the queue reachable from the rail (§7)
       const eg = await page.evaluate(async () => {
         CN.setMode('engrave'); Engrave.render();
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));   // the preview is drawn to the box it was given
@@ -253,7 +253,7 @@ const receipts = [
           inner: { w: window.innerWidth, h: window.innerHeight } };
       });
       console.log('engraving screen', JSON.stringify(eg));
-      assert.strictEqual(eg.tabs.length, 2, 'two tabs: Placements and Decided');
+      assert.deepStrictEqual(eg.tabs.map(t => t.id), ['place'], 'one chip, Placements (NODECIDED: there is no Decided tab)');
       assert(eg.zeroBadges === 0, 'an empty queue is not dressed as work: ' + eg.zeroBadges + ' zero badge(s)');
       assert.strictEqual(eg.tabs.filter(t => t.on).length, 1, 'exactly one tab is open');
       assert.strictEqual(eg.openPanes, 1, 'and exactly one pane is shown');
@@ -1168,7 +1168,7 @@ const receipts = [
   assert(recalled.canvasDrawn, 'the saved picture is what the card shows');
   assert(recalled.orders.rows >= 1 && recalled.orders.fromRecord && /charms/.test(recalled.orders.totals), "the run's orders are on the Orders tab with charm totals: " + JSON.stringify(recalled.orders));
   assert.deepStrictEqual(recalled.did, [], 'nothing was pulled, started, resumed or rebuilt: ' + JSON.stringify(recalled.did));
-  // the recalled set's engraving is on the Engraving tab too: the back that was written, its words, who approved it, and Reopen
+  // the recalled set's engraving is on the Engraving tab too: the back that was written, its words and who approved it, as a row of the one list (no Decided tab, no Reopen)
   // Set 2 is open now (gold, no engraving); its chip says so, and nothing of Set 1 is on the cards
   const set2 = await page.evaluate(() => ({ _: (CN.setMode('engrave'), CN.setMode('nest')), rec: JSON.stringify(window.B.orders.recalled), orders: Orders.rows().map(r => r.order.receiptId), chip: (document.getElementById('egRun') || {}).textContent, recalled: CN.allSheets().filter(p => p.recalled).map(p => p.fileBase) }));
   assert(/Set 2/.test(set2.chip) && set2.recalled.every(f => /Set-2/.test(f)), 'the tabs follow the set that was opened: ' + JSON.stringify(set2));
@@ -1182,18 +1182,18 @@ const receipts = [
   assert(back1.length && back1.every(f => /Set-1/.test(f)), 'Set 1 is back on the cards: ' + JSON.stringify(back1));
   const eng = await page.evaluate(async () => {
     CN.setMode('engrave'); Engrave.render(); await new Promise(r => setTimeout(r, 300));
-    const tb = document.querySelector('.egTab[data-tab=done]'); if (tb) tb.click(); await new Promise(r => setTimeout(r, 200));
-    const rows = [...document.querySelectorAll('#egDone .doneRow')].map(n => n.textContent.replace(/\s+/g, ' ').trim());
-    const reopen = !!document.querySelector('#egDone [data-a=reopen]');
+    Engrave.restoreView({ list: true, chosen: true, focus: null, q: '' }); Engrave.render(); await new Promise(r => setTimeout(r, 200));
+    const rows = [...document.querySelectorAll('#egQueue .egPlacementList .placementRow')].map(n => n.textContent.replace(/\s+/g, ' ').trim());
+    const reopen = !!document.querySelector('[data-a=reopen]'), oldView = document.querySelectorAll('#egDone, #egBacks, .decidedRow, .egTab[data-tab=done]').length;
     const q = document.getElementById('egQ'); q.value = 'no-such-words'; q.dispatchEvent(new Event('input')); await new Promise(r => setTimeout(r, 200));
-    const narrowed = document.querySelectorAll('#egDone .doneRow').length;
+    const narrowed = document.querySelectorAll('#egQueue .egPlacementList .placementRow').length;
     const q2 = document.getElementById('egQ'); q2.value = ''; q2.dispatchEvent(new Event('input'));
-    return { jobs: Engrave.items().size, rows, reopen, narrowed, chip: (document.getElementById('egRun') || {}).textContent };
+    return { jobs: Engrave.items().size, rows, reopen, oldView, narrowed, chip: (document.getElementById('egRun') || {}).textContent };
   });
   console.log('recalled engraving', JSON.stringify(eng));
-  assert(eng.jobs >= 1 && eng.rows.some(r => /ANNA/.test(r) && /written/.test(r)), 'the written back is a decided job with its words: ' + JSON.stringify(eng.rows));
-  assert(eng.reopen, 'and can be reopened');
-  assert.strictEqual(eng.narrowed, 0, 'the search narrows the decided list');
+  assert(eng.jobs >= 1 && eng.rows.some(r => /ANNA/.test(r) && /Saved to sheet/.test(r)), 'the written back is a row of the one list, "Saved to sheet", with its words: ' + JSON.stringify(eng.rows));
+  assert(!eng.reopen && eng.oldView === 0, 'and there is no Reopen and no Decided view: it is opened as a card and changed there');
+  assert.strictEqual(eng.narrowed, 0, 'the search narrows the list');
   assert(/Set 1/.test(eng.chip), 'and the tab says whose engraving it is: ' + eng.chip);
 
   const tabs = await page.evaluate(() => ({ top: [...document.querySelectorAll('#modeSeg > button')].map(b => b.dataset.mode), more: [...document.querySelectorAll('#moreMenu button[data-mode]')].map(b => b.dataset.mode), charms: !!document.querySelector('[data-mode=charms]') }));

@@ -1,6 +1,6 @@
 // ENGNOTE (engrave-ui-1012 round 2, point 6) on ENGLIVE's REAL-DRAWING world (_engraveRealWorld.cjs): real charm drawings (COMET_9427, SCHRODINGER CAT 2), real intake / pool / classifier / fit, a real installed font.
 // The customer's words box ("What the customer wrote") is in the Engrave tab detail beside the real work area: it holds the real order's personalisation and engraving options, the buyer's message and the staff note
-// when there are some; it sits ABOVE the card and the panel (never over them), the work area still draws the real charm, and a decided row's detail shows it too. One world per file (engrave-customer-note.cjs has the
+// when there are some; it sits ABOVE the card and the panel (never over them), the work area still draws the real charm, and the card of an APPROVED piece (no Decided view any more: its row opens the same card) shows it too. One world per file (engrave-customer-note.cjs has the
 // per-state and the empty-order checks on the lighter fake site).
 //   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-customer-note-real.cjs [shotsDir]
 const R = require('./_engraveRealWorld.cjs');
@@ -44,17 +44,17 @@ const R = require('./_engraveRealWorld.cjs');
     check(d.canvas && d.canvas.w > 150, 'the real charm is drawn in the work area');
     await R.shot(w, 'NOTE-detail-back');
 
-    // a decided row's opened detail
+    // the card of an approved piece (its row opens the same detailed card as any piece: there is no Decided row or detail any more)
     const dd = await w.page.evaluate(async key => {
       const row = B.orders.byKey.get(key), j = Engrave.jobOf(row, null, 'back'), was = { state: j.state, by: j.approvedBy, at: j.approvedAt, decision: j.decision };
       Object.assign(j, { state: 'approved', approvedBy: 'Name One', approvedAt: Date.now() - 60e3, decision: { by: 'Name One', at: Date.now() - 60e3, text: j.text } });
-      setMode('engrave'); Engrave.restoreView({ tab: 'done', list: false, chosen: true, openDone: j.key }); Engrave.render();
-      const r = document.querySelector('#egDone .doneRow.open'), det = r && r.querySelector('.doneDetail'), b = det && det.querySelector('[data-said]');
-      const out = { open: !!det, said: det ? det.querySelectorAll('[data-said]').length : -1, text: b ? b.innerText.replace(/\s+/g, ' ') : '' };
-      Object.assign(j, was); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: j.key }); Engrave.render();
+      setMode('engrave'); Engrave.restoreView({ list: false, chosen: true, focus: j.key }); Engrave.render();
+      const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'), b = c && c.querySelector('[data-said]');
+      const out = { open: !!c && c.dataset.key === j.key && c.dataset.state === 'approved', said: c ? c.querySelectorAll('[data-said]').length : -1, text: b ? b.innerText.replace(/\s+/g, ' ').trim() : '', canvas: !!(c && c.querySelector('.backHost canvas')), old: document.querySelectorAll('#egDone, #egBacks, .doneDetail, .decidedRow').length, state: j.state };
+      Object.assign(j, was); Engrave.restoreView({ list: false, chosen: true, focus: j.key }); Engrave.render();
       return out;
     }, w.made.back.key);
-    check(dd.open && dd.said === 1 && /Name Two checked the spelling/.test(dd.text), 'a decided row\'s opened detail shows the box too');
+    check(dd.open && dd.said === 1 && /Name Two checked the spelling/.test(dd.text) && dd.canvas && dd.old === 0, 'the approved piece\'s card shows the box too, once, above the real charm (no Decided row or detail anywhere): ' + JSON.stringify(dd));
 
     check(w.errors.length === 0, 'no page errors: ' + w.errors.join(' | ').slice(0, 300));
   } finally { await w.close(); }

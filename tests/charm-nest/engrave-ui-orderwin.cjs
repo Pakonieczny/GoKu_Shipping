@@ -227,7 +227,7 @@ ok('EngraveLink.resolve: two jobs hold one pool piece; the face named wins', () 
   assert.equal(rs({ poolId: 'p1', key: charm.key }), charmB, 'a line key names the back, as it always did');
   assert.equal(rs({ key: charm.key, face: 'front' }), charmF, 'no pool piece: the front is the back\'s sibling');
   charmB.state = 'approved'; assert.equal(rs({ poolId: 'p1' }), charmF, 'nothing named: the one still to settle'); assert.equal(L.resolve({ rid: '4195966039', poolId: 'p1' }).tab, 'place');
-  charmB.state = 'review'; charmF.state = 'approved'; assert.equal(L.resolve({ rid: '4195966039', poolId: 'p1', face: 'front' }).tab, 'done', 'a decided face opens on Decided');
+  charmB.state = 'review'; charmF.state = 'approved'; const rfr = L.resolve({ rid: '4195966039', poolId: 'p1', face: 'front' }); assert.equal(rfr.job, charmF, 'an approved face is found by its name: the front, not the back'); assert.equal(rfr.tab, 'place', 'and it opens on the one tab (NODECIDED: there is no Decided tab, the approved face opens its own card)');
   reset();
   assert.equal(L.resolve({ rid: '4195966041', poolId: 'd2', key: neck.key + '#D2' }).job, dj.D2b, 'a disc\'s own pool piece: its back, as ever');
   assert.equal(L.resolve({ rid: '4195966041', poolId: 'd2', face: 'front' }).job, dj.D2f);

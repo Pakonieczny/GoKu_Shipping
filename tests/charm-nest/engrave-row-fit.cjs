@@ -1,6 +1,6 @@
 // EGROW (Paul, 15 Oct 2026, a screenshot of two Engrave rows of the set-of-2-bars listing 532401548): "This UI is broken. Please upgrade the position and placement to always fit within the bounds of each
 //   card. Also be clever in how you display and arrange this information. It already looks too crowded and squished. Take a more minimalist approach."
-// The second bar's line of a set hung out of the bottom of its card. This test pins the answer: in BOTH lists of the Engrave tab (Placements, Decided), at 1440, 900 and 390 px wide, for a plain necklace (1 job),
+// The second bar's line of a set hung out of the bottom of its card. This test pins the answer: in the Engrave tab's one list, with every piece still to approve and again with every piece approved (NODECIDED, 16 Oct 2026: no Decided list; an approved piece is a row of the same list), at 1440, 900 and 390 px wide, for a plain necklace (1 job),
 // a set of 2 bars (listing 532401548, Angelina, 16" and 18"), an earring pair (Left + Right), 3 discs, 6 discs, a front + back line, a 120-character word and an unbroken 60-character word:
 //   1  every element in a row lies inside the row's box (getBoundingClientRect of each descendant against the row), nothing is cut off or hangs out of it
 //   2  no row overlaps the next, and no row, its list or the page scrolls sideways
@@ -66,7 +66,7 @@ const WIDTHS = [1440, 1100, 900, 390];   // (390: the rail is folded, as a perso
 
 const fails = [], note = (ok, what, more) => { console.log((ok ? '  PASS ' : '  FAIL ') + what + (more ? '  [' + more + ']' : '')); if (!ok) fails.push(what); };
 
-/** In the page: what every row of a list measures. rowSel: the rows ('#egQueue .placementRow' / '#egBacks .decidedRow'). */
+/** In the page: what every row of a list measures. rowSel: the rows ('#egQueue .placementRow'). */
 const MEASURE = rowSel => {
   const rows = [...document.querySelectorAll(rowSel)].filter(r => r.offsetParent !== null);
   const vis = e => { const cs = getComputedStyle(e); if (cs.display === 'none' || cs.visibility === 'hidden') return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
@@ -82,7 +82,7 @@ const MEASURE = rowSel => {
       if (r.bottom > lastBottom && !e.closest('.seal')) { lastBottom = r.bottom; lastEl = name(e); }   // (a stamp is turned a little: its box is wider than its place, which is not what sets the row's height)
       if (r.left < rr.left - .6 || r.right > rr.right + .6 || r.top < rr.top - .6 || r.bottom > rr.bottom + .6) outside.push(name(e) + ' ' + [r.left - rr.left, r.top - rr.top, r.right - rr.right, r.bottom - rr.bottom].map(n => Math.round(n)).join('/'));
     }
-    const STATE = '[data-stage], .decisionStatus .ost';
+    const STATE = '[data-stage]';
     const ears = [...row.querySelectorAll('.egEar')].filter(vis).map(ear => {
       const er = ear.getBoundingClientRect(), chip = ear.querySelector('.egPiece'), w = ear.querySelector('.w'), st = ear.querySelector(STATE);
       const cr = chip && chip.getBoundingClientRect(), wr = w && w.getBoundingClientRect(), sr = st && vis(st) ? st.getBoundingClientRect() : null;
@@ -102,7 +102,7 @@ const MEASURE = rowSel => {
 };
 
 const gotoList = async (page, tab, q) => {
-  await page.evaluate(({ tab, q }) => { CN.setMode('engrave'); Engrave.restoreView({ tab, list: true, chosen: true, focus: null, pin: null, openDone: null, q: q || '' }); Engrave.render(); }, { tab, q });
+  await page.evaluate(({ q }) => { CN.setMode('engrave'); Engrave.restoreView({ list: true, chosen: true, focus: null, pin: null, q: q || '' }); Engrave.render(); }, { q });   // (the one list: `tab` only says which state the pieces are in)
   await R.settle(page, 900);
 };
 
@@ -120,7 +120,7 @@ const WANT = {
 };
 const chipsOf = r => r.ears.map(e => e.chip.replace(/\s+/g, ' ').trim());
 
-/** Every pin on one measured list. tab: 'place' | 'done'. */
+/** Every pin on one measured list. tab: 'place' (pieces to approve) | 'done' (every piece approved: the same rows, calm). */
 function pin(m, tab, width, label) {
   const L = `${tab} @${width}${label ? ' ' + label : ''}`;
   note(m.rows.length >= 1, `${L}: the rows are on the page`, m.rows.length + ' rows');
@@ -138,7 +138,7 @@ function pin(m, tab, width, label) {
       const gaps = r.ears.slice(1).map((e, i) => Math.round(e.top - r.ears[i].bottom));
       note(gaps.every(g => g >= 4 && Math.abs(g - gaps[0]) <= 1), `${id}: the pieces are stacked with even spacing`, JSON.stringify(gaps));
       note(r.ears.every(e => e.wH <= e.wLine * 1.2 + 1), `${id}: each piece's words are one line`, JSON.stringify(r.ears.map(e => [Math.round(e.wH), e.wLine])));
-      if (tab === 'done') note(JSON.stringify(r.reopen.length) === JSON.stringify(w.jobs), `${id}: a Reopen for each piece, on that piece's line`, JSON.stringify(r.reopen));
+      if (tab === 'done') note(r.reopen.length === 0 && r.ears.every(e => e.stageS === 'approved' && e.stage === 'Approved'), `${id}: each piece says Approved on its own line, and there is no Reopen`, JSON.stringify(r.ears.map(e => [e.stageS, e.stage])) + ' reopen ' + r.reopen.length);
     }
     if (w.long) {
       const one = r.single;
@@ -180,15 +180,17 @@ function pin(m, tab, width, label) {
       jobs('4290000209').forEach(j => { j.lines = [unbroken]; });
     }, { long: LONG120, unbroken: UNBROKEN60 });
 
-    for (const [tab, sel] of [['place', '#egQueue .placementRow'], ['done', '#egBacks .decidedRow']]) {
+    for (const [tab, sel] of [['place', '#egQueue .egPlacementList .placementRow'], ['done', '#egQueue .egPlacementList .placementRow']]) {
       if (tab === 'done') await page.evaluate(() => { for (const j of Engrave.items().values()) { j.state = 'approved'; j.approvedAt = Date.now(); j.approvedBy = 'Test'; } });
       for (const width of WIDTHS) {
-        console.log(`\n── ${tab === 'place' ? 'Placements' : 'Decided'} list at ${width}px`);
+        console.log(`\n── the list at ${width}px, ${tab === 'place' ? 'every piece to approve' : 'every piece approved'}`);
         await page.setViewportSize({ width, height: 1000 });
         await foldRail(width <= 480);
         await gotoList(page, tab);
         const m = await page.evaluate(`(${MEASURE})(${JSON.stringify(sel)})`);
         note(m.rows.length === 9, `${tab} @${width}: all nine orders are rows`, m.rows.length);
+        note(await page.evaluate(() => document.querySelectorAll('#egDone, #egBacks, .decidedRow, .doneDetail, .egTab[data-tab="done"]').length === 0), `${tab} @${width}: no Decided list, row or tab`);
+        if (tab === 'done') note(m.rows.every(r => r.seals > 0), `${tab} @${width}: every row carries its seals`, JSON.stringify(m.rows.map(r => r.seals)));
         if (tab === 'place') note(m.listTaller, `${tab} @${width}: the pane is shorter than its rows (the case that used to cut every row down to a fixed height)`, `${m.listH} < ${m.listSH}`);
         pin(m, tab, width);
         await shotRows(tab, width, sel);
@@ -225,18 +227,21 @@ function pin(m, tab, width, label) {
       await shotRows('place', width, '#egQueue .placementRow', '-seals');
     }
 
-    // a Decided row that is open: its details stay in its card too
-    console.log('\n── a Decided row opened into its details');
+    // an approved piece opened: its row opens the same card, which stays inside its bounds (no sideways scroll, nothing hangs out of it)
+    console.log('\n── an approved piece opened into its card');
     await page.evaluate(() => { for (const j of Engrave.items().values()) { j.state = 'approved'; j.approvedAt = Date.now(); j.approvedBy = 'Test'; } });
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 1000 });
       await foldRail(width <= 480);
-      await page.evaluate(() => { const j = [...Engrave.items().values()].find(x => x.row.order.receiptId === '4290000201'); CN.setMode('engrave'); Engrave.restoreView({ tab: 'done', list: true, chosen: true, focus: null, pin: null, openDone: j.key, q: 'BAR_1548' }); Engrave.render(); });
+      await page.evaluate(() => { const j = [...Engrave.items().values()].find(x => x.row.order.receiptId === '4290000201'); CN.setMode('engrave'); Engrave.restoreView({ list: false, chosen: true, focus: j.key, pin: null, q: 'BAR_1548' }); Engrave.render(); });
       await R.settle(page, 1200);
-      const m = await page.evaluate(`(${MEASURE})("#egBacks .decidedRow")`);
-      const open = await page.evaluate(() => !!document.querySelector('#egBacks .decidedRow.open .doneDetail'));
-      note(open, `open Decided row @${width}: it opened into its details`);
-      pin(m, 'done', width, '(opened)');
+      const o = await page.evaluate(() => {
+        const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (!c) return null; const cr = c.getBoundingClientRect(), outside = [];
+        for (const e of c.querySelectorAll('*')) { const r = e.getBoundingClientRect(); if (!r.width || !r.height || e.closest('[hidden]') || getComputedStyle(e).visibility === 'hidden' || e.closest('.seal')) continue; if (r.left < cr.left - .6 || r.right > cr.right + .6) outside.push((e.className && e.className.baseVal === undefined ? '.' + String(e.className).trim().split(/\s+/).join('.') : e.tagName) + ' ' + Math.round(r.left - cr.left) + '/' + Math.round(r.right - cr.right)); }
+        return { state: c.dataset.state, tick: !!c.querySelector('.egApproved[data-a=approved][disabled]'), reopen: c.querySelectorAll('[data-a=reopen]').length, cardSW: c.scrollWidth - c.clientWidth, pageSW: document.documentElement.scrollWidth - innerWidth, outside: outside.slice(0, 4) };
+      });
+      note(!!o && o.state === 'approved' && o.tick && o.reopen === 0, `approved card @${width}: it opened as the same card, approved (a calm tick), no Reopen`, JSON.stringify(o));
+      note(!!o && o.cardSW <= 0 && o.pageSW <= 0 && o.outside.length === 0, `approved card @${width}: nothing hangs out of the card, nothing scrolls sideways`, JSON.stringify(o));
       if (shots) await R.shot(w, `egrow-open-${width}`);
     }
     note(w.errors.length === 0, 'no page error', JSON.stringify(w.errors.slice(0, 2)));

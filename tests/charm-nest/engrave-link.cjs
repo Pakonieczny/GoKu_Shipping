@@ -82,18 +82,19 @@ async function main() {
     // what the search box holds, and every order number on a card or row there
     const where = () => page.evaluate(() => {
       const v = Engrave.view(), root = document.getElementById('engraveView'), q = root && root.querySelector('#egQ');
-      const cards = [...root.querySelectorAll('#egQueue .rvItem')].map(n => n.dataset.key), rows = [...root.querySelectorAll('.doneRow')].map(n => n.dataset.key), open = [...root.querySelectorAll('.doneRow.open')].map(n => n.dataset.key);
-      return { mode: CN.S.mode, shown: !root.classList.contains('hidden'), tab: v.tab, focus: v.focus, list: v.list, q: v.q, box: q ? q.value : null, cards, rows, open, orderWin: OrderWin.isOpen(), sheetWin: SheetWin.isOpen(), pill: !!document.querySelector('.swReturn:not([hidden])') };
+      const cards = [...root.querySelectorAll('#egQueue .rvItem')].map(n => n.dataset.key), cardState = (root.querySelector('#egQueue .rvItem') || { dataset: {} }).dataset.state || '', old = root.querySelectorAll('#egDone, #egBacks, .doneRow.open, .decidedRow').length;
+      return { mode: CN.S.mode, shown: !root.classList.contains('hidden'), tab: v.tab, focus: v.focus, list: v.list, q: v.q, box: q ? q.value : null, cards, cardState, old, orderWin: OrderWin.isOpen(), sheetWin: SheetWin.isOpen(), pill: !!document.querySelector('.swReturn:not([hidden])') };
     });
     const reset = async () => { await page.evaluate(() => { Engrave.restoreView({ tab: 'place', focus: null, list: true, chosen: true, q: '', openDone: null }); CN.setMode('orders'); Orders.render(); }); await page.waitForTimeout(200); };
     const lands = async (o, i, tab, label) => {
       await page.waitForFunction(() => CN.S.mode === 'engrave' && !document.getElementById('orderWin').open, null, { timeout: 15000 });
-      await page.waitForFunction(k => { const r = document.getElementById('engraveView'); return r && !r.classList.contains('hidden') && (r.querySelector('#egQueue .rvItem[data-key="' + k + '"]') || r.querySelector('.doneRow.open[data-key="' + k + '"]')); }, keyOf(o, i), { timeout: 15000 }).catch(() => {});
+      await page.waitForFunction(k => { const r = document.getElementById('engraveView'); return r && !r.classList.contains('hidden') && (r.querySelector('#egQueue .rvItem[data-key="' + k + '"]') ); }, keyOf(o, i), { timeout: 15000 }).catch(() => {});
       const w = await where(), k = keyOf(o, i);
       check(w.mode === 'engrave' && w.shown && !w.orderWin && !w.sheetWin, `${label}: the Engraving tab is open and no window is over it`);
-      check(w.tab === tab && w.q === o.rid && w.box === o.rid, `${label}: the ${tab === 'place' ? 'Placements' : 'Decided'} tab, the search box on order ${o.rid} (${w.tab} / ${w.q} / ${w.box})`);
-      if (tab === 'place') check(w.list === false && w.focus === k && w.cards.length === 1 && w.cards[0] === k, `${label}: the placement card of piece ${i + 1} alone is in front (${w.cards.join(',')}; focus ${w.focus})`);
-      else check(w.open.length === 1 && w.open[0] === k && w.rows.every(r => r.startsWith(o.rid)), `${label}: Decided shows only this order's rows, piece ${i + 1} opened (${w.open.join(',')} of ${w.rows.join(',')})`);
+      // (an approved piece lands exactly as a piece to approve does: on its own card, the same detailed card. There is no Decided tab or row to land on)
+      check(w.tab === 'place' && w.q === o.rid && w.box === o.rid, `${label}: the Placements tab (the only one), the search box on order ${o.rid} (${w.tab} / ${w.q} / ${w.box})`);
+      check(w.list === false && w.focus === k && w.cards.length === 1 && w.cards[0] === k && w.old === 0, `${label}: the card of piece ${i + 1} alone is in front, no Decided row (${w.cards.join(',')}; focus ${w.focus}; old ${w.old})`);
+      if (tab === 'done') check(w.cardState === 'approved', `${label}: and it is the approved piece's card (data-state ${w.cardState})`);
       return w;
     };
 
@@ -167,7 +168,7 @@ async function main() {
     const res = await page.evaluate(({ rid, pools, keys }) => { const r = t => { const x = EngraveLink.resolve(t); return { key: x.job && x.job.key, tab: x.tab }; };
       return { byPool: r({ rid, poolId: pools[1] }), byKey: r({ key: keys[2] }), byPiece: r({ rid, key: keys[0], piece: keys[1] }), orderOnly: r({ rid }), nothing: r({ rid, key: rid + '_999' }) }; },
       { rid: B.rid, pools: [0, 1, 2].map(i => pool(B, i)), keys: [0, 1, 2].map(i => keyOf(B, i)) });
-    check(res.byPool.key === keyOf(B, 1) && res.byPool.tab === 'place' && res.byKey.key === keyOf(B, 2) && res.byKey.tab === 'done' && res.byPiece.key === keyOf(B, 1), 'resolve: a copy, a line key and a chosen piece each name that piece (approved: Decided)');
+    check(res.byPool.key === keyOf(B, 1) && res.byPool.tab === 'place' && res.byKey.key === keyOf(B, 2) && res.byKey.tab === 'place' && res.byPiece.key === keyOf(B, 1), 'resolve: a copy, a line key and a chosen piece each name that piece (an approved one too: the tab is always Placements)');
     check(res.orderOnly.key === null && res.nothing.key === null, 'resolve: an order of three pieces named alone, or a piece with no job, names nothing (no guess)');
 
     // two copies of one piece share one job: the second copy's own pool id finds it

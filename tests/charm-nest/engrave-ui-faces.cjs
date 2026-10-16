@@ -1,17 +1,17 @@
 // ENGUI1 (front-back-1011): the ENGRAVE tab tells a line's FACES. A line that engraves the front AND the back is ONE row (every face of every piece told on it, a "Front + back" chip), its editor has the
 // very same Front | Back switch as Left | Right and the discs (charm-nest-piece-switch.js, under the piece switch when the line has several pieces), Back / Next walk piece by piece, "Approve both faces" /
 // "Approve both ears" / "Approve all discs" approve every face (Front before Back) only when every placement is ready and was shown, the piece chip counts PIECES not jobs ("DISC 2 of 3", never "of 6"),
-// the Decided tab tells both faces' seals with a Reopen for each face, and a saved FRONT is opened for editing the way a saved back is (openBack with a face).
+// the ONE list tells both faces' seals on the line's row (NODECIDED, 16 Oct 2026: no Decided tab and no Reopen: an approved face is changed on its own card, which flips only that face back to "needs Approve"), and a saved FRONT is opened for editing the way a saved back is (openBack with a face).
 //
 // What it proves, offline (jsdom against the real Engrave module with contract-shaped fixtures; no network, no paid call, nothing live, nothing written anywhere but memory):
 //   1  the real pieces the page leans on (rows, piece switch, faces): a faced line is one row, Front before Back, piece by piece; the switch draws Front | Back under Left | Right / Disc 1 | 2 | 3
 //   2  the real Engrave module drawn in a fake page, with order 4195966039 (front W / back 1. 27. 24, Ace), an earring pair with a front and a back on each ear, a 3-disc necklace with both faces,
-//      and three back-only lines beside them: lists, tab badges, the editor and its switches, the counter, Back / Next, the setup editor's slot, Decided and its seals, skipping a face
+//      and three back-only lines beside them: lists, tab badges, the editor and its switches, the counter, Back / Next, the setup editor's slot, the approved faces and their seals in the same list, skipping a face
 //   3  approval: "Approve both faces / ears / all discs" runs the ORDINARY approval of each face (Front first), only when every placement is ready and was shown; a failed face stops the rest
 //   4  openBack(poolId, sheetId, "front"): a saved front is opened the way a saved back is, on its own record, and an edit of it never touches the piece's back
-//   5  INERT for back-only lines: what a pendant, an earring pair and a necklace of discs draw (list row, editor, Decided row) is byte for byte what the page drew before faces (SHA-1 of the markup,
+//   5  INERT for back-only lines: what a pendant, an earring pair and a necklace of discs draw (list row, editor) is byte for byte what the page drew before faces (SHA-1 of the markup,
 //      captured from the unchanged page), and the changed files carry a new cache token. EGROW (15 Oct 2026) redrew the rows of SEVERAL pieces (a pair's ears, discs, faces: each piece's line now carries
-//      its own state and Reopen): those ten row / Decided hashes are no longer pinned here (REDRAWN, below; tests/charm-nest/engrave-row-fit.cjs pins how they lie); a single piece's rows and every card still are
+//      its own state and Reopen): those five row hashes are no longer pinned here (the Decided hashes went with the Decided row, NODECIDED) (REDRAWN, below; tests/charm-nest/engrave-row-fit.cjs pins how they lie); a single piece's rows and every card still are
 //   node tests/charm-nest/engrave-ui-faces.cjs
 'use strict';
 const path = require('path'), fs = require('fs'), vm = require('vm'), assert = require('assert/strict'), crypto = require('crypto');
@@ -95,7 +95,7 @@ function makePage(src, o) {
     O: require(path.join(root, 'charm-nest-orders.js')), S: { settings: {}, mode: 'engrave' }, PT: 72 / 25.4, MM: 25.4 / 72, SOURCE_LABEL: {},
     Pool: { charmOf: () => null, previewCharmOf: () => null, sheetOf: () => null, update: async () => {} }, P: {}, Review: { items: () => [], count: () => 0, remove() {}, add() {} }, Master: { entryFor: sku => F.entryOf(sku), fetchEntry: async () => null },
     LiveStrip: { render() {} }, RunCtl: { poke() {}, stopIfRunning() {} }, api: async () => ({}), Orders: { render() {}, rows: () => [] }, ListMedia,
-    setTimeout: fn => (timers.push(fn), timers.length), clearTimeout() {}, requestAnimationFrame: fn => (frames.push(fn), frames.length), cancelAnimationFrame() {},
+    setTimeout: fn => (timers.push(fn), timers.length), clearTimeout() {}, setInterval: () => 0, clearInterval() {}, requestAnimationFrame: fn => (frames.push(fn), frames.length), cancelAnimationFrame() {},
     el: (tag, cls, html_ = '') => { const e = document.createElement(tag); e.className = cls; e.innerHTML = html_; return e; },
     esc: v => String(v ?? '').replace(/[&<>"']/g, x => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[x])),
     toast: m => toasts.push(String(m)), allSheets: () => [], refreshAllCards() {}, Session: { schedule() {} }, agent() {}, getComputedStyle: () => ({ flexGrow: '0' }), employeeName: () => 'Paul', humanAct() {}, TL: { rec() {}, line() {} }, ...bare });
@@ -158,44 +158,34 @@ function facedPage(o) {
 
 
 /* the markup the page drew for the BACK-ONLY lines before faces existed: SHA-1 (12 hex) of the normalised markup of each surface, captured from the unchanged page (origin/main at 59c294c) with
-   `node tests/charm-nest/engrave-ui-faces.cjs --capture <path to a charm-nest-bridge.js>` (the card without the empty hidden slot the setup editor mounts into; see SETUP_SLOT) */
+   `node tests/charm-nest/engrave-ui-faces.cjs --capture <path to a charm-nest-bridge.js>` (the card without the empty hidden slot the setup editor mounts into; see SETUP_SLOT).
+   Re-captured on 16 Oct 2026 from origin/main 3a4e42f0 (the page BEFORE NODECIDED): the older hashes had gone stale (purchaseMarkup's option titles, the work area's controls), so these pins now say "a piece still to approve draws its row and its card exactly as it did before the Decided view was removed". */
 const SETUP_SLOT = /<section class="pvSec pvSetup"[^>]*>.*?<\/section>/;
 /* EGROW (Paul, 15 Oct 2026, "be clever in how you display and arrange this information ... a more minimalist approach"): a row of SEVERAL pieces (the ears of a pair, the discs of a necklace, the faces of a line) is now one line for each piece
-   (a chip, its words, then ITS OWN state, or its state, seal and Reopen in Decided), no longer a block of words with a second block of states. Those rows' markup is no longer the one captured below, so their hashes are not compared
+   (a chip, its words, then ITS OWN state), no longer a block of words with a second block of states. Those rows' markup is no longer the one captured below, so their hashes are not compared
    (REDRAWN); a single piece's rows ('pend') and every editor card stay byte for byte, and 5b still demands that a page with the faces module and no front job draws every row exactly as a page without it. */
-const REDRAWN = new Set(['row:tag', 'done:tag', 'row:ears', 'done:ears', 'row:discs', 'done:discs', 'row:pair', 'done:pair', 'row:neck', 'done:neck']);
+const REDRAWN = new Set(['row:tag', 'row:ears', 'row:discs', 'row:pair', 'row:neck']);
 const GOLDEN = {
   'row:tag': 'd3bca07bc601',
-  'card:tag': '1c1863edbe69',
-  'done:tag': '68ba43c384e1',
+  'card:tag': '8efcf97cebd6',
   'row:ears': '135eef145959',
-  'card:ears': 'fb2bc5b1ed7a',
-  'done:ears': '3ca5d7fda858',
+  'card:ears': '9a2cc0744183',
   'row:discs': 'f3db36e29c63',
-  'card:discs': 'd141b0b18a35',
-  'done:discs': 'a275636a6759',
-  'row:pend': '53ab7d295ac2',
-  'card:pend': '0f9af5eae89e',
-  'done:pend': '18f8b18c6d27',
+  'card:discs': 'aefafb09c0bc',
+  'row:pend': 'e8d992610875',
+  'card:pend': 'de8132f54a3b',
   'row:pair': 'd3f2f66d7381',
-  'card:pair': '25a4e06306e2',
-  'done:pair': '6b3c6691421c',
+  'card:pair': '37d6a1b1dc28',
   'row:neck': '5afec64f788f',
-  'card:neck': '0fbca4d582ed',
-  'done:neck': 'ef3e62bc02e7'
+  'card:neck': '35f69ee15666',
 };
 
-/** Every surface a line draws with its back job only: its row in Placements, its editor card, its row in Decided. */
+/** Every surface a line draws with its back job only: its row in the list and its editor card (the Decided row is gone: NODECIDED). */
 function surfaces(P, k) {
   const out = {}, line = P.ROW[k], rid = line.order.receiptId, E = P.E;
-  const approvedAll = js => { for (const j of js) { j.state = 'approved'; j.approvedBy = 'Paul'; j.approvedAt = 1.7e12; j.backs = []; } };
   const jobs = P.made[k];
   P.reset(); P.showList(); const row = P.rowsOnPage().find(r => r.dataset.rid === rid); out['row:' + k] = row ? sha1(norm(row.outerHTML)) : 'missing';
   const card = P.open(jobs[0].key); out['card:' + k] = card ? sha1(norm(card.outerHTML.replace(SETUP_SLOT, ''))) : 'missing';
-  P.reset(); approvedAll(jobs);
-  P.relink(k); for (const j of jobs) j.row.engrave = Object.assign({}, j.row.engrave, { state: 'approved', approved: true });
-  E.restoreView({ tab: 'done', chosen: true, list: true, focus: null, openDone: null }); E.render();
-  const dn = [...P.document.querySelectorAll('#egDone .decidedRow')].find(r => r.dataset.rid === rid); out['done:' + k] = dn ? sha1(norm(dn.outerHTML)) : 'missing';
   P.reset(); return out;
 }
 const BACK_ONLY = ['pend', 'pair', 'neck'];
@@ -316,10 +306,14 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
     for (const [i, j] of fronts.discs.entries()) { j.lines = ['A']; j.text = 'A'; made.discs[i].lines = ['Mom']; made.discs[i].text = 'Mom'; }
     P.relink('discs'); card = P.open(fronts.discs[1].key); let b = card.querySelector('[data-a="approveBoth"]'); assert.equal(b, null, 'the same words on every disc: still no press for all of them');
     assert.ok(card.querySelector('[data-a="approveFaces"]'), 'and the shown disc\'s own two faces');
-    // disc 1 decided on both faces: two discs left
+    // disc 1 approved on both faces (NODECIDED: an approved piece stays in the switch and in the list; its tab says Approved and opens its own card): the switch still counts the order's three discs
     for (const j of [fronts.discs[0], made.discs[0]]) { j.state = 'approved'; j.approvedBy = 'Paul'; j.approvedAt = 1.7e12; j.backs = []; }
-    P.relink('discs'); P.resetRecs(); card = P.open(fronts.discs[1].key); b = card.querySelector('[data-a="approveBoth"]'); assert.equal(b, null, 'and none for the 2 discs left'); assert.equal(card.querySelectorAll('.rh .egSwitchStack > .egEarSwitch')[0].querySelectorAll('.egEarTab').length, 2, 'the discs still to do');
-    assert.deepEqual([...card.querySelectorAll('.rh .egSwitchStack > .egEarSwitch')[0].querySelectorAll('.egEarTab .egPiece')].map(n => n.textContent), ['DISC 2 of 3', 'DISC 3 of 3'], 'still of 3: the count is the order\'s discs');
+    P.relink('discs'); P.resetRecs(); card = P.open(fronts.discs[1].key); b = card.querySelector('[data-a="approveBoth"]'); assert.equal(b, null, 'and none for the discs left');
+    const sw1 = card.querySelectorAll('.rh .egSwitchStack > .egEarSwitch')[0];
+    assert.deepEqual([...sw1.querySelectorAll('.egEarTab .egPiece')].map(n => n.textContent), ['DISC 1 of 3', 'DISC 2 of 3', 'DISC 3 of 3'], 'every disc stays in the switch, approved or not: the count is the order\'s discs');
+    assert.deepEqual([...sw1.querySelectorAll('.egEarTab')].map(b => b.getAttribute('aria-pressed')), ['false', 'true', 'false']);
+    assert.deepEqual([...sw1.querySelectorAll('.egEarTab .egEarStage')].map(n => n.textContent), ['Approved', 'Placement to check', 'Placement to check'], 'the approved disc says Approved on its tab; the others are still to settle');
+    assert.equal(card.dataset.key, fronts.discs[1].key, 'the card is still the disc being worked on');
     for (const j of [fronts.discs[0], made.discs[0]]) { j.state = 'review'; delete j.approvedBy; delete j.approvedAt; } P.reset();
   });
   await t('2h Back / Next go from piece to piece in the editor: Disc 1, 2, 3 of the necklace, then the next line; a tag\'s or an ear\'s other face is not a step', () => {
@@ -334,21 +328,28 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
   await t('2i skipping a face: "No front engraving" cuts only the front plain (a seal by the person), the back of the piece stays to do; the row tells it', async () => {
     P.reset(); const card = P.open(fronts.tag[0].key); const b = card.querySelector('.ctl [data-a="skip"]'); b.click(); await new Promise(r => setImmediate(r)); await new Promise(r => setImmediate(r));
     assert.equal(fronts.tag[0].state, 'skipped'); assert.equal(made.tag[0].state, 'review', 'the back is untouched'); assert.ok(Seals.list(fronts.tag[0]).some(x => x.how === 'engravePlain' && x.face === 'front'), 'a plain seal, on the front');
-    P.showList(); const row = P.rowsOnPage().find(r => r.dataset.rid === RID_TAG); assert.ok(row, 'the line is still to do (its back)'); assert.deepEqual([...row.querySelectorAll('.egEar .egPiece')].map(n => n.textContent), ['BACK']); assert.equal(row.querySelector('.egMode').textContent, 'Front + back');
-    E.restoreView({ tab: 'done', chosen: true, list: true, focus: null }); E.render(); const dn = [...document.querySelectorAll('#egDone .decidedRow')].find(r => r.dataset.rid === RID_TAG); assert.ok(dn, 'and the front is in Decided');
-    assert.equal(dn.querySelector('.ost.warn').textContent, 'No engraving'); assert.match(dn.querySelector('.ost.warn').title, /nothing on the front/); assert.equal(dn.querySelector('.seal').dataset.face, 'front');
+    P.relink('tag'); P.showList(); const row = P.rowsOnPage().find(r => r.dataset.rid === RID_TAG); assert.ok(row, 'the line is ONE row of the list (its back is still to do, its front is cut plain)'); assert.equal(P.rowsOnPage().filter(r => r.dataset.rid === RID_TAG).length, 1);
+    assert.deepEqual([...row.querySelectorAll('.egEar .egPiece')].map(n => n.textContent), ['FRONT', 'BACK'], 'both faces are told on the row, each on its own line'); assert.equal(row.querySelector('.egMode').textContent, 'Front + back');
+    assert.equal(row.classList.contains('isDecided'), false, 'the back is still to decide: the row is not a calm one');
+    const [fe, be] = [...row.querySelectorAll('.egEar')]; assert.equal(fe.querySelector('[data-s]').dataset.s, 'skipped'); assert.equal(fe.querySelector('[data-s]').textContent, 'No engraving'); assert.equal(fe.querySelector('.egPiece').dataset.face, 'front', 'on the front\'s own line'); assert.notEqual(be.querySelector('[data-s]') && be.querySelector('[data-s]').dataset.s, 'skipped');
+    assert.equal(row.querySelector('.egPlacementSeals .seal').dataset.face, 'front', 'the front\'s plain seal is on the row'); assert.equal(document.querySelectorAll('#egDone, #egBacks, .decidedRow, [data-a="reopen"], .egTab[data-tab="done"]').length, 0, 'no Decided tab, row or Reopen');
     P.reset(); P.jobs.get(fronts.tag[0].key).state = 'review';
   });
-  await t('2j Decided: both faces decided is ONE row with the chip, each face\'s seal and a Reopen for each face; reopening one sends only that face back', async () => {
+  await t('2j both faces approved is ONE row with the chip and each face\'s seal, no Reopen anywhere; changing one face puts only that face back to "needs Approve" (its seal stays, a note says why), the other face keeps its approval', async () => {
     P.reset(); const fj = fronts.tag[0], bj = made.tag[0];
-    for (const j of [fj, bj]) { j.state = 'approved'; j.approvedBy = 'Paul'; j.approvedAt = 1.7e12; j.backs = []; Seals.add(j, 'engraveApproved', 'Paul', 1.7e12); }
-    P.relink('tag'); E.restoreView({ tab: 'done', chosen: true, list: true, focus: null, openDone: null }); E.render();
-    const rows = [...document.querySelectorAll('#egDone .decidedRow')].filter(r => r.dataset.rid === RID_TAG); assert.equal(rows.length, 1, 'one row for the tag'); const dn = rows[0];
-    assert.equal(dn.querySelector('.egMode').textContent, 'Front + back'); assert.equal(dn.dataset.ears, [fj.key, bj.key].join(' '));
-    assert.deepEqual([...dn.querySelectorAll('.seal')].map(s => s.dataset.face), ['front', 'back'], 'both faces\' seals');
-    assert.deepEqual([...dn.querySelectorAll('[data-a="reopen"]')].map(x => x.textContent), ['Reopen front', 'Reopen back']); assert.match(dn.querySelector('[data-a="reopen"]').title, /everything else keeps its approval/);
-    dn.querySelectorAll('[data-a="reopen"]')[0].click(); await new Promise(r => setImmediate(r));
-    assert.equal(fj.state, 'words', 'the front goes back to its words'); assert.equal(bj.state, 'approved', 'the back keeps its approval'); assert.match(fj.reason || '', /reopened by Paul/);
+    for (const j of [fj, bj]) { j.state = 'approved'; j.approvedBy = 'Paul'; j.approvedAt = 1.7e12; j.backs = []; j.mask = {}; Seals.add(j, 'engraveApproved', 'Paul', 1.7e12); }
+    P.relink('tag'); for (const j of [fj, bj]) j.row.engrave = Object.assign({}, j.row.engrave, { state: 'approved', approved: true }); P.showList();
+    const rows = P.rowsOnPage().filter(r => r.dataset.rid === RID_TAG); assert.equal(rows.length, 1, 'one row for the tag'); const dn = rows[0];
+    assert.equal(dn.querySelector('.egMode').textContent, 'Front + back'); assert.equal(dn.dataset.jobs, [fj.key, bj.key].join(' ')); assert.ok(dn.classList.contains('isDecided'), 'nothing left to decide: the calm row');
+    assert.deepEqual([...dn.querySelectorAll('.egEar [data-s]')].map(n => n.dataset.s + ':' + n.textContent), ['approved:Approved', 'approved:Approved'], 'each face is told Approved on its own line');
+    assert.deepEqual([...dn.querySelectorAll('.egPlacementSeals .seal')].map(s => s.dataset.face), ['front', 'back'], 'both faces\' seals');
+    assert.equal(document.querySelectorAll('[data-a="reopen"]').length, 0, 'there is no Reopen'); assert.equal(document.querySelectorAll('#egDone, #egBacks, .decidedRow, .egTab[data-tab="done"]').length, 0);
+    // the front is changed on its card: only the front goes back (its seal stays), the back keeps its approval
+    const card = P.open(fj.key); assert.equal(card.dataset.key, fj.key); assert.equal(card.dataset.state, 'approved', 'the approved front opens in the same card'); assert.ok(card.querySelector('.egApproved[data-a="approved"][disabled]'), 'a calm Approved tick where Approve was'); assert.equal(card.querySelector('[data-a="approve"]'), null);
+    assert.equal(fj.state, 'approved', 'just looking changes nothing'); assert.equal(Seals.list(fj).length, 1);
+    assert.equal(E.reopenForEdit(fj), true); await new Promise(r => setImmediate(r));
+    assert.equal(fj.state, 'review', 'the front is back to needs Approve (its placement kept)'); assert.equal(fj.row.engrave.approved, false); assert.equal(bj.state, 'approved', 'the back keeps its approval'); assert.equal(Seals.list(fj).length, 1, 'the front\'s first seal stays'); assert.equal(Seals.list(bj).length, 1);
+    P.showList(); const again = P.rowsOnPage().find(r => r.dataset.rid === RID_TAG); assert.equal(again.classList.contains('isDecided'), false, 'the row has something to decide again'); assert.deepEqual([...again.querySelectorAll('.egEar')].map(e => e.querySelector('.egPiece').dataset.face + ':' + e.querySelector('[data-s]').dataset.s), ['front:review', 'back:approved'], 'the front is to approve again, the back is still told Approved');
     P.reset(); fj.state = 'review'; bj.state = 'review';
   });
   await t('2k a search finds a line by "front" or "back" and by either face\'s words, and still shows every face on its row', () => {
@@ -495,11 +496,11 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
   });
 
   // ═══ 5 · INERT for back-only lines ═══
-  await t('5a a back-only pendant, earring pair and necklace draw byte for byte what the page drew before faces: the row, the editor card (apart from the setup editor\'s empty slot) and the Decided row', () => {
+  await t('5a a back-only pendant, earring pair and necklace draw byte for byte what the page drew before faces: the row, the editor card (apart from the setup editor\'s empty slot) (the Decided row is gone: NODECIDED)', () => {
     const got = {}; for (const k of BACK_ONLY) Object.assign(got, surfaces(P, k));
     for (const k of Object.keys(GOLDEN)) if (BACK_ONLY.some(b => k.endsWith(':' + b)) && !REDRAWN.has(k)) assert.equal(got[k], GOLDEN[k], k);
     for (const k of REDRAWN) assert.ok(got[k] !== undefined || !BACK_ONLY.some(b => k.endsWith(':' + b)), k + ': still drawn');
-    assert.equal(Object.keys(got).length, 9);
+    assert.equal(Object.keys(got).length, 6);
   });
   await t('5b the same lines on a page that has the faces module but no front job (the job engine not on the page yet): the tag, the earrings and the necklace draw as plain back lines, no chip, no switch of faces', () => {
     const Q = makePage(SOURCE, { faces: true, setup: false, noReading: true });

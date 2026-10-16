@@ -42,9 +42,10 @@ const fonts = Object.fromEntries(['Regular', 'Semibold'].map(w => [w, T.withEmoj
 const source = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
 const grab = (a, b) => { const i = source.indexOf(a), j = source.indexOf(b, i); assert(i > 0 && j > i, 'bridge section not found: ' + a); return source.slice(i, j); };
 const toasts = [], schedules = { n: 0 };
-const ctx = { G, S: { settings: {} }, PT, MM, Math, fontFor: w => fonts[w] || fonts.Regular, toast: (m, kind) => toasts.push({ m, kind }), refresh() {}, reRead() {}, Session: { schedule() { schedules.n++; } } };
+const reopened = [];   // (NODECIDED: the first change of an approved / saved piece is made by reopenForEdit; here a stand-in that records the call and puts the job back to review, as the page's does)
+const ctx = { G, S: { settings: {} }, PT, MM, Math, fontFor: w => fonts[w] || fonts.Regular, toast: (m, kind) => toasts.push({ m, kind }), refresh() {}, reRead() {}, Session: { schedule() { schedules.n++; } }, reopenForEdit: job => { reopened.push(job.key); job.state = 'review'; return true; } };
 vm.createContext(ctx);
-vm.runInContext(grab('  const fitOpts =', '  const items =') + grab('  function refit(job, place)', '  /** New words on a placement') + grab('  function nudge(job, dxMm, dyMm)', '  /** The middle of the area') + grab('  function resize(job, size)', '  function setLineSpacing(')
+vm.runInContext(grab('  const startEdit =', '\n') + grab('  const fitOpts =', '  const items =') + grab('  function refit(job, place)', '  /** New words on a placement') + grab('  function nudge(job, dxMm, dyMm)', '  /** The middle of the area') + grab('  function resize(job, size)', '  function setLineSpacing(')
   + '\nthis.Engrave = { nudge, resize };', ctx);
 global.Engrave = ctx.Engrave; global.CharmNestGeom = G; global.Session = ctx.Session;
 const before = { sha: sha(Buffer.from(fs.readFileSync(path.join(root, 'charm-nest-engrave-position.js')))) };
@@ -214,22 +215,36 @@ const onCharm = (view, v) => { const a = -view.angleDeg * Math.PI / 180, c = Mat
   /* ═══ F · locked, not ready, fitted again ═══ */
   {
     const job = jobOf(left, { face: 'back', slot: 'L' }), fit0 = job.fit;
-    for (const state of ['approved', 'written', 'skipped', 'none', 'words', 'fitting']) {
+    for (const state of ['skipped', 'none', 'words', 'fitting']) {
       job.state = state;
       const r = Pos.nudge(job, 1, 0), c = Pos.centre(job), s = Pos.size(job, 1.05);
       ok(!r.ok && !c.ok && !s.ok && job.fit === fit0 && job.nudged === false && Pos.canMove(job) === false, `F1 ${state}: refuses, nothing touched`);
       eq(r.why, 'locked', `F2 ${state}: says locked`);
     }
+    // NODECIDED (Paul, 16 Oct 2026): an approved or saved piece is NOT locked any more: its placement can be changed, and the first change puts it back to "needs Approve" (the page's reopenForEdit, here a stand-in that records the call)
+    for (const state of ['approved', 'written']) {
+      const j = jobOf(left, { face: 'back', slot: 'L' }), f0 = j.fit, n0 = reopened.length;
+      j.state = state; ok(Pos.canMove(j) === true, `F1 ${state}: the placement can be moved`);
+      const r = Pos.nudge(j, 1, 0);
+      ok(r.ok && reopened.length === n0 + 1 && j.state === 'review' && j.fit !== f0 && j.nudged === true, `F1b ${state}: the first nudge reopens it (back to review, ONE reopen) and moves it`);
+      const r2 = Pos.nudge(j, 1, 0); ok(r2.ok && reopened.length === n0 + 1, `F1c ${state}: the second change does not reopen again`);
+      const j2 = jobOf(left, { face: 'back', slot: 'L' }); j2.state = state; const n1 = reopened.length;
+      ok(Pos.centre(j2).ok && reopened.length === n1 + 1 && j2.state === 'review', `F1d ${state}: centring it reopens it too`);
+      const j3 = jobOf(left, { face: 'back', slot: 'L' }); j3.state = state; const n2 = reopened.length;
+      ok(Pos.size(j3, 1.05).ok && reopened.length === n2 + 1 && j3.state === 'review', `F1e ${state}: resizing it reopens it too`);
+    }
+    // ... but nothing of it without a placement in hand: an approved piece with no mask / fit is still refused
+    { const j = jobOf(left, { face: 'back', slot: 'L' }); j.state = 'approved'; j.mask = null; const n0 = reopened.length; ok(!Pos.nudge(j, 1, 0).ok && reopened.length === n0 && Pos.canMove(j) === false, 'F1f an approved piece with no placement in hand is refused and not reopened'); }
     job.state = 'review';
     const noFit = { state: 'review', fit: null }; ok(Pos.nudge(noFit, 1, 0).why === 'no placement yet' && Pos.snapshot(noFit) === null, 'F3 no placement yet: refuses, no snapshot');
     ok(Pos.nudge(job, NaN, 1).ok === false && Pos.nudge(job, 'a', 1).ok === false && Pos.size(job, 0).ok === false && Pos.size(job, -1).ok === false, 'F4 not a number: refused');
     const snap = Pos.snapshot(job);
     const refitted = jobOf(left, { face: 'back', slot: 'L' }); job.mask = refitted.mask; job.fit = refitted.fit;     // fitted again meanwhile (new words / font / charm): a new mask
     ok(Pos.restore(job, snap) === false && job.fit === refitted.fit, 'F5 a snapshot of a job that was fitted again is not put back over the new fit');
-    job.mask = snap.mask; job.state = 'approved'; ok(Pos.restore(job, snap) === false, 'F6 nor over a decided job');
+    job.mask = snap.mask; job.state = 'approved'; job.fit = Object.assign({}, snap.fit, { centre: [snap.fit.centre[0] + 3, snap.fit.centre[1]] }); { const n0 = reopened.length; ok(Pos.restore(job, snap) === false && job.state === 'approved' && reopened.length === n0, 'F6 nor over a job approved meanwhile (a stale Cancel never changes or reopens an approved piece)'); }
     ok(Pos.restore(null, snap) === false && Pos.restore(job, null) === false && Pos.restore(job, { v: 2 }) === false, 'F7 nor from nothing');
   }
 
   ok(sha(fs.readFileSync(path.join(root, 'charm-nest-engrave-position.js'))) === before.sha, 'G the module file was not changed while the test ran');
-  console.log('PASS ' + n + ' checks: ENGPOS position: untouched is byte-identical (nudge 0, snapshot/restore, Cancel, checkpoint copy); the laser file moves by the mm asked (back and front); clamped at the safe area without shrinking; centre/size; back vs front and Left vs mirrored Right on the metal; of(job); locked jobs refuse');
+  console.log('PASS ' + n + ' checks: ENGPOS position: untouched is byte-identical (nudge 0, snapshot/restore, Cancel, checkpoint copy); the laser file moves by the mm asked (back and front); clamped at the safe area without shrinking; centre/size; back vs front and Left vs mirrored Right on the metal; of(job); jobs not ready refuse; an approved piece is moved and reopened by its first change');
 })().catch(e => { console.error(e); process.exit(1); });

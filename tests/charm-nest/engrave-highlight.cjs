@@ -8,7 +8,7 @@
 //   5  a saved override with a recorded reason (engravingOverride.reason): the selection is the person's, the marks are on the system's choice and their titles show the reason, read-only
 //   6  the source of truth is CharmNestEngraveSetup.autoChoice when the page has it (a stub here); a face the system does not engrave has no words / font mark
 //   7  no new words: the marks hold no text, the panel's text is what it was, option texts are unchanged; the mode control is still ONE row at 232px and the marks take no room (widths equal with and without them)
-//   8  an approved (locked) face keeps its marks; an earring draws no panel at all; no paid call, no page error
+//   8  an approved face (open for a change since NODECIDED) keeps its marks; an earring draws no panel at all; no paid call, no page error
 //   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-highlight.cjs      (SHOTS=<dir> also writes screenshots)
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '../..');
@@ -228,14 +228,14 @@ async function realWorld(check, shots) {
     check(m.words.sys === 'same' && m.font.sys === 'same' && !m.font.ghost && m.font.selTitle === TITLE, '6 typing the system\'s words and picking its font: both tints, no ghost');
     await page.evaluate(() => { if (window.__autoWas) CharmNestEngraveSetup.autoChoice = window.__autoWas; else delete CharmNestEngraveSetup.autoChoice; });
 
-    // 8 · an approved (locked) face keeps its marks
+    // 8 · an approved face keeps its marks (and is not locked: its words box is open)
     const locked = await page.evaluate(KEY => {
       const row = B.orders.byKey.get(KEY), s = document.getElementById('__slot'), j = Engrave.jobOf(row, null, 'back'), was = { state: j.state, by: j.approvedBy }; Object.assign(j, { state: 'approved', approvedBy: 'Name One' });
       CharmNestEngravePanel.DRAFTS.clear(); __h.destroy(); s.textContent = ''; window.__h = CharmNestEngravePanel.mount(s, row, { job: j, face: 'back' });
       const out = { disabled: s.querySelector('.engpWords').disabled, mode: !!s.querySelector('.engpMode .engpSeg[data-sys] > .engpSys'), words: !!s.querySelector('.engpBox > .engpSys'), font: !!s.querySelector('.engpOption, .engpFont option[data-sys]') };
       Object.assign(j, { state: was.state, approvedBy: was.by }); __h.destroy(); s.textContent = ''; CharmNestEngravePanel.DRAFTS.clear(); return out;
     }, KEY);
-    check(locked.disabled && locked.mode && locked.words && locked.font, '8 an approved face is locked and still shows what the system chose: ' + JSON.stringify(locked));
+    check(!locked.disabled && locked.mode && locked.words && locked.font, '8 an approved face is open for a change and still shows what the system chose: ' + JSON.stringify(locked));
     const ear = await page.evaluate(KEY => {
       const row = B.orders.byKey.get(KEY), earRow = Object.assign({}, row, { key: 'ear_1', spec: Object.assign({}, row.spec, { engraveNever: { rule: 'earring', form: 'earring', why: 'never' } }) });
       const slot = document.createElement('div'); document.body.appendChild(slot); CharmNestEngravePanel.mount(slot, earRow, { jobs: () => [] });

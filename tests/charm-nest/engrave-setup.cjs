@@ -11,7 +11,7 @@
 //      nothing is touched while the front jobs cannot be made; mode none ends undecided jobs; a face asked for again is opened again; the name put away changes nothing
 //   6  waits and failures: a small labelled spinner while saving, one plain line on failure with the edit kept; a card drawn again gets the staged edit back
 //   7  an unlabelled "both" line shows the buyer's raw words, two empty boxes and the prompt; nothing is assumed
-//   8  locks: a decided face's words are locked; pieces with different words are told "differs per piece"
+//   8  an approved face is NOT locked (NODECIDED, 16 Oct 2026): its words and font are editable, the line says "a change asks for a new approval", and saving new words reopens it (env.reopenForEdit) instead of leaving it as it was; pieces with different words are told "differs per piece"
 //   node tests/charm-nest/engrave-setup.cjs
 'use strict';
 const path = require('path'), assert = require('assert/strict');
@@ -146,6 +146,7 @@ const job = (face, state, lines, extra = {}) => Object.assign({ key: F.jobKey(LK
       remove: j => { log.push(['remove', j.key]); jobs.splice(jobs.indexOf(j), 1); }, skip: async (j, by) => { log.push(['skip', j.key, by]); j.state = 'skipped'; },
       setNone: (j) => { log.push(['none', j.key]); j.state = 'none'; }, reopen: j => { log.push(['reopen', j.key]); j.state = 'words'; },
       seed: async (j, seed) => { log.push(['seed', j.key, seed.lines.join('/')]); j.lines = seed.lines.slice(); j.text = seed.text; }, changed: () => log.push(['changed']) };
+    if (o.reopenForEdit !== false) env.reopenForEdit = j => { log.push(['reopenForEdit', j.key, j.state]); if (o.reopenFails) return false; j.state = 'review'; return true; };   // (the page's: an approved / saved / cut-plain piece goes back to needs-Approve, its seals kept)
     return env;
   };
   { reset();
@@ -158,7 +159,7 @@ const job = (face, state, lines, extra = {}) => Object.assign({ key: F.jobKey(LK
   { reset();
     // the back is DECIDED (approved): it is never deleted, it becomes cut plain
     const line = mkLine(); const jobs = [job('front', 'review', ['W']), job('back', 'approved', ['1. 27. 24'], { approvedBy: 'Cy' })];
-    const vm = S.read(line, { jobs }); ok('the back is locked', vm.rows[1].locked && vm.rows[1].lockBy === 'Cy');
+    const vm = S.read(line, { jobs }); ok('the approved back is NOT locked: its words stay editable, the approval is told', !vm.rows[1].locked && vm.rows[1].decided === true && vm.rows[1].lockBy === 'Cy' && vm.rows[1].lockState === 'approved');
     const cons = S.consequences(line, jobs, F.setupOf({ spec: line.spec }, { mode: 'front' }), vm.setup);
     eq('says what will happen', [cons.plain.length, cons.remove.length], [1, 0]); ok('plain words', /already approved by Cy: saving cuts it plain/.test(cons.lines[0]));
     const env = fakeEnv(jobs), res = await S.apply(line, { mode: 'front' }, env);
@@ -168,7 +169,7 @@ const job = (face, state, lines, extra = {}) => Object.assign({ key: F.jobKey(LK
     const slot = fresh(); line.engravingOverride = undefined; delete line.engravingOverride; const saved = [];
     S.mount(slot, line, { jobs: () => [job('front', 'review', ['W']), job('back', 'approved', ['1. 27. 24'], { approvedBy: 'Cy' })], save: async p => { saved.push(p); return { ok: true }; } });
     slot.querySelector('[data-su=edit]').click();
-    ok('the decided back\'s words are locked', slot.querySelector('textarea[data-face=back]').disabled && /approved by Cy: open it in Engraving to change it/.test(text(slot)));
+    ok('the approved back\'s words are editable and the line says a change asks for a new approval', !slot.querySelector('textarea[data-face=back]').disabled && /approved by Cy: a change asks for a new approval/.test(text(slot)) && !/open it in Engraving to change it/.test(text(slot)));
     slot.querySelector('[data-mode=front]').click(); slot.querySelector('[data-su=save]').click();
     eq('first press only asks', saved.length, 0); ok('the question is a plain line in the card', /already approved by Cy/.test(text(slot)) && !doc.querySelector('dialog'));
     ok('keep it as it is puts it away', (slot.querySelector('[data-su=keep]').click(), !slot.querySelector('[data-su=saveYes]')));
@@ -222,6 +223,17 @@ const job = (face, state, lines, extra = {}) => Object.assign({ key: F.jobKey(LK
     const env = fakeEnv(jobs), res = await S.apply(line, { back: { text: 'new' } }, env);
     eq('seeded', res.seeded, [F.jobKey(LK, null, 'back')]); eq('job words', jobs[0].lines, ['new']);
     const j2 = [job('back', 'classify', [])], r2 = await S.apply(mkLine(), { mode: 'back', back: { text: 'x' } }, fakeEnv(j2)); eq('classify is left alone', r2.seeded, []);
+  }
+
+  { reset();
+    // NODECIDED: new words for an APPROVED face reopen that face (the page's reopenForEdit: back to needs-Approve, its seals stay) and then seed the person's words; the face nobody touched keeps its approval; when the page cannot reopen it (busy, a recalled set not rebuilt) it stays as it is and is told apart
+    const line = mkLine({ spec: { engraving: reading({ source: 'default', mode: 'back', front: null }) } });
+    const jobs = [job('back', 'approved', ['old'], { approvedBy: 'Cy' })], env = fakeEnv(jobs), res = await S.apply(line, { back: { text: 'new' } }, env);
+    eq('seeded', res.seeded, [F.jobKey(LK, null, 'back')]); eq('the approved face took the words', jobs[0].lines, ['new']); eq('it was reopened first (once), then seeded', env.log.filter(x => ['reopenForEdit', 'seed'].includes(x[0])).map(x => x[0]), ['reopenForEdit', 'seed']); eq('and is back to needs-Approve', jobs[0].state, 'review');
+    const same = [job('back', 'approved', ['old'], { approvedBy: 'Cy' })], env2 = fakeEnv(same); await S.apply(line, { back: { text: 'old' } }, env2); eq('the same words: nothing reopened, nothing seeded', env2.log.filter(x => ['reopenForEdit', 'seed'].includes(x[0])), []); eq('and still approved', same[0].state, 'approved');
+    const untouched = [job('back', 'approved', ['old'], { approvedBy: 'Cy' }), job('front', 'review', ['W'])], env3 = fakeEnv(untouched); await S.apply(mkLine(), { front: { text: 'Z' } }, env3); eq('words for the front leave the approved back as it was', [untouched[0].state, env3.log.some(x => x[0] === 'reopenForEdit' && /back/.test(x[1]))], ['approved', false]);
+    const stuck = [job('back', 'approved', ['old'], { approvedBy: 'Cy' })], env4 = fakeEnv(stuck, { reopenFails: true }), r4 = await S.apply(line, { back: { text: 'new' } }, env4); eq('a piece the page cannot reopen stays as it is', [stuck[0].state, stuck[0].lines, r4.kept], ['approved', ['old'], [F.jobKey(LK, null, 'back')]]);
+    const written = [job('back', 'written', ['old'], { approvedBy: 'Cy' })], env5 = fakeEnv(written); await S.apply(line, { back: { text: 'new' } }, env5); eq('a piece saved to its sheet is reopened the same way', [written[0].state, written[0].lines], ['review', ['new']]);
   }
 
   /* 6 ── waits, failures, a card drawn again */

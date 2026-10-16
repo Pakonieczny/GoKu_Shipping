@@ -9,7 +9,7 @@
 //   2 the piece switcher swaps card, pictures and each piece's zoom     card; a zoom while an approval's seal is being pressed
 //   3 the card's "Adjust / View in Engrave" lands on the piece        7 other doors: openOrderFrom / Issues rows / Sheet window / search
 //   4 Approve on the card: name, one seal, permanent,              8 390 and 900 px wide: no overlap, no sideways scroll
-//     timeline, Sheet tab, the Engraving tab's Decided             9 twenty piece switches while a seal is pressing
+//     timeline, Sheet tab, the Engraving tab's card               9 twenty piece switches while a seal is pressing
 //   5 approved in the Engraving tab / the Sheet tab: the card      10 Sandbox and production never mix; a module missing: the window works
 //     follows within about 2 s
 // Headless Chromium on the fake site (bridge-server.cjs), offline. The approval itself (fit, back file, cloud) is a stand-in with the
@@ -179,7 +179,7 @@ async function main() {
     const picsReady = () => page.waitForFunction(() => document.querySelector('#owPhoto img')?.complete && document.querySelector('#owVector img, #owVector canvas'), null, { timeout: 20000 });
     const approvals = () => page.evaluate(() => __approve.map(a => a.key + '|' + a.by + '|' + a.button));
     const sealCount = k => page.evaluate(k => CNEngravingSeals.list(Engrave.items().get(k)).length, k);
-    const view = () => page.evaluate(() => { const v = Engrave.view(); return JSON.stringify({ tab: v.tab, focus: v.focus, list: v.list, chosen: v.chosen, q: v.q, openDone: v.openDone || null }); });
+    const view = () => page.evaluate(() => { const v = Engrave.view(); return JSON.stringify({ tab: v.tab, focus: v.focus, list: v.list, chosen: v.chosen, q: v.q }); });
     const resetEngrave = async () => { await page.evaluate(() => { Engrave.restoreView({ tab: 'place', focus: null, list: true, chosen: true, q: '', openDone: null }); CN.setMode('orders'); Orders.render(); }); await page.waitForTimeout(300); };
     const k = { c: key(B, 0), g: key(B, 1), r: key(B, 2) };
     const EXPECT = key => key === k.c ? '' : (WORDS[key] || '');
@@ -259,14 +259,14 @@ async function main() {
     const viaCard = await view();
     check(viaCard === viaCard1, 'the card\'s Back picture lands on exactly the same place again: ' + viaCard);
     await resetEngrave();
-    // the Decided tab of the approved piece (piece 2): real drawing of its row, opened
+    // the approved piece (piece 2): its Back picture opens its own card in the Engrave tab (no Decided tab or row any more)
     await page.evaluate(() => { Engrave.render = window.__realRender; });
     await open(k.g); await waitCard('approved');
     await page.click(await sel(backThumb));
     await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open && CN.S.mode === 'engrave', null, { timeout: 15000 });
-    await page.waitForFunction(k => { const r = document.querySelector('#engraveView .doneRow.open'); return r && r.dataset.key === k; }, k.g, { timeout: 15000 }).catch(() => {});
-    const dec = await page.evaluate(() => ({ v: JSON.parse(JSON.stringify(Engrave.view())), open: [...document.querySelectorAll('#engraveView .doneRow.open')].map(r => r.dataset.key), rows: [...document.querySelectorAll('#engraveView .doneRow')].map(r => r.dataset.key) }));
-    check(dec.v.tab === 'done' && dec.v.q === B.rid && dec.open.length === 1 && dec.open[0] === k.g && dec.rows.every(r => r.startsWith(B.rid)), 'the approved piece: its Back picture opens its Decided row, only this order\'s rows listed: ' + JSON.stringify([dec.v.tab, dec.v.q, dec.open, dec.rows.length]));
+    await page.waitForFunction(k => { const r = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return r && r.dataset.key === k && r.dataset.state === 'approved'; }, k.g, { timeout: 15000 }).catch(() => {});
+    const dec = await page.evaluate(() => ({ v: JSON.parse(JSON.stringify(Engrave.view())), open: [...document.querySelectorAll('#egQueue .rvItem[data-kind=placement]')].map(r => r.dataset.key + ':' + r.dataset.state), old: document.querySelectorAll('#egDone, .doneRow.open, .decidedRow').length }));
+    check(dec.v.tab === 'place' && dec.v.list === false && dec.v.q === B.rid && dec.open.length === 1 && dec.open[0] === k.g + ':approved' && dec.old === 0, 'the approved piece: its Back picture opens its own approved card, alone, in the search on this order (no Decided row): ' + JSON.stringify([dec.v.tab, dec.v.q, dec.open, dec.old]));
     await resetEngrave();
 
     // ══ 4 · Approve on the card ══
@@ -313,9 +313,9 @@ async function main() {
     c = await card(); check(c.state === 'approved' && c.seals.length === 1, 'back on the Overview: still one seal');
     await page.click(await sel(backThumb));
     await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open && CN.S.mode === 'engrave', null, { timeout: 15000 });
-    await page.waitForFunction(k => { const r = document.querySelector('#engraveView .doneRow.open'); return r && r.dataset.key === k; }, k.r, { timeout: 15000 }).catch(() => {});
-    const done3 = await page.evaluate(() => ({ tab: Engrave.view().tab, open: [...document.querySelectorAll('#engraveView .doneRow.open')].map(r => r.dataset.key), seals: document.querySelectorAll('#engraveView .doneRow.open .seal').length }));
-    check(done3.tab === 'done' && done3.open.length === 1 && done3.open[0] === k.r, 'the Engraving tab shows it as Decided, its row opened: ' + JSON.stringify(done3));
+    await page.waitForFunction(k => { const r = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return r && r.dataset.key === k; }, k.r, { timeout: 15000 }).catch(() => {});
+    const done3 = await page.evaluate(() => ({ tab: Engrave.view().tab, open: [...document.querySelectorAll('#egQueue .rvItem[data-kind=placement]')].map(r => r.dataset.key + ':' + r.dataset.state), seals: document.querySelectorAll('#egQueue .rvItem .pvApproval .seal').length }));
+    check(done3.tab === 'place' && done3.open.length === 1 && done3.open[0] === k.r + ':approved' && done3.seals === 1, 'the Engraving tab shows it on its own approved card, with its one seal: ' + JSON.stringify(done3));
     await resetEngrave();
 
     // ══ 5 · approved in the Engraving tab or the Sheet tab while the window is open ══
@@ -470,15 +470,15 @@ async function main() {
     const back = await page.waitForFunction(() => { const e = document.querySelector('[data-r2=eng] .swEng'); return e && e.dataset.state === 'approved' && e.querySelectorAll('.egButtonSeal .seal').length === 1; }, null, { timeout: 6000 }).then(() => true, () => false);
     check(back, 'approved in the order window: the Sheet window that handed over reads approved with one seal when it is back');
     await page.evaluate(() => { try { SheetWin.close && SheetWin.close(); } catch (_) {} const d = document.querySelector('dialog.sheetWin[open]'); if (d) d.close(); }); await page.waitForTimeout(300);
-    // Sheet window → Open order → the card's View in Engrave: both windows go, the Engraving tab is on that piece's Decided row
+    // Sheet window → Open order → the card's View in Engrave: both windows go, the Engraving tab is on that piece's own approved card
     await page.evaluate(({ sh, ps }) => { SheetWin.open(sh, { select: ps }); }, { sh: GF, ps: pool(R6, 0) });
     await page.waitForFunction(() => SheetWin.isOpen && SheetWin.isOpen() && document.querySelector('[data-r2=openOrd]'), null, { timeout: 25000 });
     await page.click('[data-r2=openOrd]'); await expectPiece('Sheet window → Open order (an approved piece)', key(R6, 0));
     await page.click(await sel(backThumb));
     await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open && CN.S.mode === 'engrave', null, { timeout: 15000 });
-    await page.waitForFunction(k => { const r = document.querySelector('#engraveView .doneRow.open'); return r && r.dataset.key === k; }, key(R6, 0), { timeout: 15000 }).catch(() => {});
-    const e3 = await page.evaluate(() => ({ dialogs: document.querySelectorAll('dialog[open]').length, sheetWin: SheetWin.isOpen(), orderWin: OrderWin.isOpen(), tab: Engrave.view().tab, open: [...document.querySelectorAll('#engraveView .doneRow.open')].map(r => r.dataset.key) }));
-    check(e3.dialogs === 0 && !e3.sheetWin && !e3.orderWin && e3.tab === 'done' && e3.open.length === 1 && e3.open[0] === key(R6, 0), 'Sheet window → Open order → the card\'s Back picture: no window is left over the Engraving tab, which has that piece\'s Decided row open: ' + JSON.stringify(e3));
+    await page.waitForFunction(k => { const r = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return r && r.dataset.key === k; }, key(R6, 0), { timeout: 15000 }).catch(() => {});
+    const e3 = await page.evaluate(() => ({ dialogs: document.querySelectorAll('dialog[open]').length, sheetWin: SheetWin.isOpen(), orderWin: OrderWin.isOpen(), tab: Engrave.view().tab, open: [...document.querySelectorAll('#egQueue .rvItem[data-kind=placement]')].map(r => r.dataset.key + ':' + r.dataset.state) }));
+    check(e3.dialogs === 0 && !e3.sheetWin && !e3.orderWin && e3.tab === 'place' && e3.open.length === 1 && e3.open[0] === key(R6, 0) + ':approved', 'Sheet window → Open order → the card\'s Back picture: no window is left over the Engraving tab, which has that piece\'s own approved card open: ' + JSON.stringify(e3));
     await resetEngrave();
 
     // ══ 8 · narrow widths ══
@@ -617,7 +617,7 @@ async function main() {
     await page.click(await sel(backThumb));
     await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open && CN.S.mode === 'engrave', null, { timeout: 15000 });
     const noLink = await view();
-    check(JSON.parse(noLink).tab === 'done', 'EngraveLink missing: the card\'s Back picture still takes the person to the Engraving tab (the approved piece\'s Decided tab): ' + noLink);
+    check(JSON.parse(noLink).tab === 'place' && JSON.parse(noLink).list === false && JSON.parse(noLink).focus === k.r, 'EngraveLink missing: the card\'s Back picture still takes the person to the Engraving tab, on the approved piece\'s own card: ' + noLink);
     await resetEngrave(); await page.evaluate(() => { window.EngraveLink = window.__EL; });
     await open(k.r); await waitCard('approved'); await picsReady();
     // the zoom module missing: the window works (Esc closes it: there is nothing to put back whole; every call of the module is guarded)

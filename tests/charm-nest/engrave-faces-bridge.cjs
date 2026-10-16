@@ -60,7 +60,7 @@ function harness(rows, o = {}) {
     Review: { add() {}, remove() {}, render() {} }, RunCtl: { poke() {}, save: async () => {} }, Session: { schedule() {} }, Orders: { render() {}, rows: () => rows, lineRecord: r => [r.key, { key: r.key }] },
     TL: { line: (row, type, d) => { if (d && d.once && events.some(e => e.type === type && e.id === d.id)) return; events.push({ row, type, id: d && d.id, text: d && d.text, data: d && d.data }); }, hash: s => String(s).length },
     sheets: o.sheets || [], allSheets: () => (o.sheets || []), refreshBacks() {}, backQueue: Promise.resolve(), toast() {}, api: async (fn, body) => { apiCalls.push(body); return {}; }, goes() {}, EG_TAB: x => x, showDecided() {}, CNListActivity: { touch() {} }, humanAct: (kind, d) => acts.push(Object.assign({ kind }, d)), syncEditedBack: async () => {},
-    faceWord: j => (j && j.face === 'front' ? 'front' : 'back'),
+    faceWord: j => (j && j.face === 'front' ? 'front' : 'back'), unplacedPre: () => false, virtualJob: () => false, EG: {},   // (ENGPRE's helpers of the bridge that revokeBacks / skip call; no row here is a piece that is not on a sheet yet)
     employeeName: () => 'Paul', needEmployee: async () => 'Paul', charmFor: () => null,
     setReady(job) { job.state = 'ready'; job.row.engrave = Object.assign({}, job.row.engrave, { needed: true, state: 'ready', text: job.text, approved: false }); return job; },
     toWords(job, why) { job.state = 'words'; job.reason = why; job.row.engrave = Object.assign({}, job.row.engrave, { needed: true, state: 'words', text: job.text, approved: false, reason: why }); return job; },
@@ -299,7 +299,7 @@ const shape = j => { const o = {}; for (const k of Object.keys(j).sort()) if (k 
     for (const j of [fr, bk]) { j.row.order = row.order; }
     fr.state = 'review'; bk.state = 'approved';
     assert.equal(run([fr, bk], { rid, poolId: pid }).job, fr, 'the face still to settle'); assert.equal(run([fr, bk], { rid, poolId: pid, face: 'back' }).job, bk); assert.equal(run([fr, bk], { rid, poolId: pid, face: 'front' }).job, fr);
-    assert.equal(run([fr, bk], { rid, poolId: pid, face: 'back' }).tab, 'done'); assert.equal(run([fr, bk], { rid, poolId: pid, face: 'front' }).tab, 'place');
+    assert.equal(run([fr, bk], { rid, poolId: pid, face: 'back' }).tab, 'place', 'an approved face opens on the one tab too: there is no Decided tab (NODECIDED)'); assert.equal(run([fr, bk], { rid, poolId: pid, face: 'front' }).tab, 'place');
     fr.state = 'approved'; assert.equal(run([fr, bk], { rid, poolId: pid }).job, bk, 'both decided: the back'); assert.equal(run([fr, bk], { rid, key: row.key + '~front' }).job, fr); assert.equal(run([fr, bk], { rid, key: row.key, face: 'front' }).job, fr); assert.equal(run([fr, bk], { rid, key: row.key }).job, bk);
     assert.equal(run([bk], { rid, poolId: pid, face: 'front' }).job, bk, 'no front job (not made yet, or taken out): the piece\'s one job opens, the same piece');
     const one = mk(BASE.two, undefined), h2 = harness([one]), j2 = h2.ctx.ensureJobs(one)[0]; j2.row.order = one.order; j2.state = 'review'; assert.equal(run([j2], { rid: one.order.receiptId, poolId: one.poolIds[0] }).job, j2); assert.equal(run([j2], { rid: one.order.receiptId, key: one.key }).job, j2);

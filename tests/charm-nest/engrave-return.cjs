@@ -7,7 +7,7 @@
 //   3  an order of two pieces, the second chosen on its pieces list -> back: the second is still chosen
 //   4  from the Library (no window): back to the Library, scroll as it was
 //   5  the origin follows the journey: a second order opened from the Engrave detail replaces the first; leaving the tab clears it; a direct open has none
-//   6  Back / Next in the Engrave queue, a Placements/Decided switch and a redraw keep the origin; an approval says so and goes back by itself; staged edits stop that and are never touched
+//   6  Back / Next in the Engrave queue, a list / card switch (an old saved Decided view is the list) and a redraw keep the origin; an approval says so and goes back by itself; staged edits stop that and are never touched
 //   7  the transition back: the order window grows out of the pill (clip-path animation), the pill folds away
 //   node tests/charm-nest/engrave-return.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>); screenshots: round2/images/BACK-*.png (SHOTS=<dir> to change)
 const path = require('path'), assert = require('assert/strict');
@@ -35,7 +35,7 @@ async function main() {
       return { vis, text: vis ? el.innerText.replace(/\s+/g, ' ').trim() : '', top: r ? Math.round(r.top) : null, right: r ? Math.round(r.right) : null, inBar: !!el && !!el.closest('#modeNav'), clipped: !!el && [...el.querySelectorAll('.go,.st')].some(n => n.scrollWidth > n.clientWidth + 1), cur: window.EngraveReturn.current() && { kind: EngraveReturn.current().kind, rid: EngraveReturn.current().rid, label: EngraveReturn.current().label } };
     });
     const where = () => page.evaluate(() => ({ mode: CN.S.mode, ow: OrderWin.isOpen(), rid: OrderWin.isOpen() ? OrderWin.rid() : null, key: OrderWin.isOpen() ? OrderWin.key() : null, view: OrderWin.isOpen() ? OrderWin.view() : null, piece: OrderWin.isOpen() ? OrderWin.selectedPiece() : null, ev: Engrave.view() }));
-    const landed = () => wait(() => CN.S.mode === 'engrave' && !OrderWin.isOpen() && !SheetWin.isOpen() && !!document.querySelector('.swReturn:not([hidden])') && document.querySelector('#egQueue .rvItem, #egDone .doneRow.open'));
+    const landed = () => wait(() => CN.S.mode === 'engrave' && !OrderWin.isOpen() && !SheetWin.isOpen() && !!document.querySelector('.swReturn:not([hidden])') && document.querySelector('#egQueue .rvItem'));
     const reset = async () => { await page.evaluate(() => { EngraveReturn.clear(); try { OrderWin.close(); } catch (_) {} Engrave.restoreView({ tab: 'place', focus: null, list: true, chosen: true, q: '', openDone: null }); CN.setMode('orders'); Orders.render(); }); await sleep(500); };
     // a tall spacer in a scroller, so there is something to keep: returns the element's selector
     const scrollIn = (sel, spacer, top) => page.evaluate(({ sel, spacer, top }) => { const e = document.querySelector(sel); if (!e) return null; if (spacer) { const d = document.createElement('div'); d.dataset.spacer = '1'; d.style.cssText = 'height:3000px;flex:none'; e.appendChild(d); } e.scrollTop = top; return e.scrollTop; }, { sel, spacer, top });
@@ -163,9 +163,12 @@ async function main() {
     check(p.vis && p.cur.rid === B.rid && p.cur.kind === 'order', '6: Next keeps the SAME origin (' + p.text + ')');
     await page.click('#egQueue [data-a=prev]'); await sleep(900);
     p = await pill(); check(p.vis && p.cur.rid === B.rid, '6: Back keeps it too');
-    await page.evaluate(() => { Engrave.restoreView({ tab: 'done', list: false, chosen: true }); Engrave.render(); }); await sleep(500);
-    await page.evaluate(() => { Engrave.restoreView({ tab: 'place', list: true, chosen: true }); Engrave.render(); }); await sleep(500);
-    p = await pill(); check(p.vis && p.cur.rid === B.rid, '6: Placements / Decided / list switches keep the origin');
+    await page.evaluate(() => { Engrave.restoreView({ list: true, chosen: true }); Engrave.render(); }); await sleep(500);
+    await page.evaluate(k => { Engrave.restoreView({ list: false, chosen: true, focus: k }); Engrave.render(); }, q1); await sleep(500);
+    await page.evaluate(() => { Engrave.restoreView({ tab: 'done', chosen: true }); Engrave.render(); }); await sleep(500);   // (an old saved "Decided" view: it is the one list now)
+    const compat = await page.evaluate(() => ({ tab: Engrave.view().tab, list: Engrave.view().list, gone: document.querySelectorAll('#egDone, #egBacks, .egTab[data-tab="done"]').length }));
+    check(compat.tab === 'place' && compat.list === true && compat.gone === 0, '6: an old saved Decided view lands on the one list: ' + JSON.stringify(compat));
+    p = await pill(); check(p.vis && p.cur.rid === B.rid, '6: list / card switches (and an old saved Decided view) keep the origin');
     await reset();
     // the order A, the back of its piece
     await page.evaluate(k => OrderWin.open(k), A.key); await page.waitForSelector(thumb(A.key, 'back'), { timeout: 15000 }); await sleep(600);

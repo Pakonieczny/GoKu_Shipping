@@ -81,7 +81,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     }, KEY);
     check(ear.html === '' && ear.hidden && ear.modes === 0, 'an earring (spec.engraveNever) draws no panel at all, so it has no Back choice: ' + JSON.stringify(ear));
 
-    // ── a face nobody could place (an unlabelled "both") asks in one line; an approved face is locked, with its position row off ──
+    // ── a face nobody could place (an unlabelled "both") asks in one line; an approved face is NOT locked (NODECIDED): its words and font are open, one line says who approved it, Save waits for a change ──
     const odd = await page.evaluate(KEY => {
       const row = B.orders.byKey.get(KEY), out = {}, slot = document.createElement('div'); document.body.appendChild(slot);
       const ask = Object.assign({}, row, { key: 'ask_1', spec: Object.assign({}, row.spec, { engraving: { v: 1, mode: 'both', source: 'note', textSource: 'unlabelled', needsPerson: true, confidence: 0.5, raw: 'Name One Name Two', front: null, back: null } }) });
@@ -90,11 +90,11 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       slot.textContent = ''; CharmNestEngravePanel.DRAFTS.clear();
       const j = Engrave.jobOf(row, null, 'back'), was = { state: j.state, by: j.approvedBy }; Object.assign(j, { state: 'approved', approvedBy: 'Name One' });
       CharmNestEngravePanel.mount(slot, row, { job: j, face: 'back' });
-      out.locked = { words: slot.querySelector('.engpWords').disabled, font: slot.querySelector('.engpFont').disabled, lock: (slot.querySelector('.engpLock') || {}).textContent || '', pos: [...slot.querySelectorAll('.engpPb')].every(b => b.disabled) || !slot.querySelector('.engpPb') };
+      out.locked = { words: slot.querySelector('.engpWords').disabled, font: slot.querySelector('.engpFont').disabled, lock: (slot.querySelector('.engpLock') || {}).textContent || '', save: slot.querySelector('[data-engp=save]').disabled, words0: slot.querySelector('.engpWords').value };
       Object.assign(j, { state: was.state, approvedBy: was.by }); slot.remove(); CharmNestEngravePanel.DRAFTS.clear(); return out;
     }, KEY);
     check(odd.ask.prompt && odd.ask.raw === 'Name One Name Two', 'words nobody could place: the panel asks in one line and shows the buyer\'s own words: ' + JSON.stringify(odd.ask));
-    check(odd.locked.words && odd.locked.font && odd.locked.lock === 'Approved by Name One' && odd.locked.pos, 'an approved face is locked (words, font, position off) and says by whom: ' + JSON.stringify(odd.locked));
+    check(!odd.locked.words && !odd.locked.font && odd.locked.lock === 'Approved by Name One' && odd.locked.save, 'an approved face is not locked: its words and font are open, ONE line says by whom, and Save waits for a change: ' + JSON.stringify(odd.locked));
 
     // ── the Engrave detail itself: the Emoji button is there, and a staged edit stops Approve from approving the OLD words ──
     await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: null }); Engrave.render(); });

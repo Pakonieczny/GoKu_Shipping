@@ -125,7 +125,7 @@ const MONO_TITLE = 'Monogram Necklace Personalized Jewelry Initials Pendant';
   const openDetail = async n => {      // the Engrave detail of a monogram line, by its row (what a person does)
     await openList(); await settle(900);
     const row = await page.$(`#egQueue .doneRow[data-kind=monogram][data-rid="${rid(n)}"]`);
-    if (row) await row.click(); else await page.evaluate(k => Engrave.openMonogram(k), keyOf(n));      // (a monogram not approved is a row of Placements; an approved one opens from Decided)
+    if (row) await row.click(); else await page.evaluate(k => Engrave.openMonogram(k), keyOf(n));      // (a monogram line is a row of the one list, approved or not, and opens the same card)
     await page.waitForSelector(mwSel(rid(n), 'detail'), { timeout: 30000 }); await settle(500);
   };
   const openWin = async n => {         // the Order details window of the order
