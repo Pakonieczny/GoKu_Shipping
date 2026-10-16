@@ -53,6 +53,8 @@ const MASTER_PATH = /^charmnest\/(?:sandbox\/)?master\//, MASTER_FILE_PATH = /^c
 function requirement(fn, op, body) {
   if (fn === "charmNestLibrary") {
     if (Object.prototype.hasOwnProperty.call(LIBRARY, op)) return { op, need: LIBRARY[op] };
+    // KEEP R1: the repair of saved designs runs by itself with its own grace (a day) and needs no password; asking it to remove files that young is a person's act (the upload unlock)
+    if (op === "customSaveRepair" && body && body.olderThanMs != null && body.olderThanMs !== "" && Number.isFinite(Number(body.olderThanMs)) && Number(body.olderThanMs) < 3600000) return { op, need: "upload" };
     return Object.prototype.hasOwnProperty.call(SETTINGS_OPS, op) ? { op, need: SETTINGS_OPS[op] } : null;
   }
   if (fn === "charmNestOutput") {

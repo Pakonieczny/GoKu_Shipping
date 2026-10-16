@@ -393,8 +393,8 @@ test('refused without a saved record at the repository step; sandbox and rehears
     ['a rehearsal', { doc: { rehearsal: true } }, { rid: 'R1' }, 'rehearsal'], ['sandbox true', {}, { rid: 'R1', sandbox: true }, 'sandbox'], ['sandbox 1', {}, { rid: 'R1', sandbox: 1 }, 'sandbox'], ['sandbox "1"', {}, { rid: 'R1', sandbox: '1' }, 'sandbox'],
     ['sandbox "true"', {}, { rid: 'R1', sandbox: 'true' }, 'sandbox'], ['no rid', {}, {}, 'bad-request'], ['a rid with a slash', {}, { rid: 'a/b' }, 'bad-request'], ['a huge rid', {}, { rid: 'x'.repeat(200) }, 'bad-request'],
     ['a lower-case sku', { doc: { sku: 'acorn_leaf' } }, { rid: 'R1' }, 'bad-save'], ['a sku with a space', { doc: { sku: 'ACORN LEAF' } }, { rid: 'R1' }, 'bad-save'], ['a sku over 32', { doc: { sku: 'A'.repeat(33) } }, { rid: 'R1' }, 'bad-save'],
-    ['no sku', { doc: { sku: '' } }, { rid: 'R1' }, 'bad-save'], ['a listing id that is not digits', { doc: { listingId: '12/34' } }, { rid: 'R1' }, 'bad-save'], ['old = new', { doc: { oldSku: NEW } }, { rid: 'R1' }, 'bad-save']
-  ];
+    ['no sku', { doc: { sku: '' } }, { rid: 'R1' }, 'bad-save'], ['a listing id that is not digits', { doc: { listingId: '12/34' } }, { rid: 'R1' }, 'bad-save']
+  ];   // (KEEP B5: old = new is no refusal any more: the listing IS linked, see below)
   for (const [what, w, body, reason] of cases) {
     const W = world(w);
     if (w.doc && 'phase' in w.doc && w.doc.phase === undefined) delete store.get('Charm_Custom_Saves/R1').phase;
@@ -402,6 +402,13 @@ test('refused without a saved record at the repository step; sandbox and rehears
     const r = await W.run(body);
     assert.strictEqual(r.ok, false, what); assert.strictEqual(r.reason, reason, what + ': ' + JSON.stringify(r)); assert.strictEqual(r.calls, 0, what); assert.strictEqual(W.S.calls.length, 0, what + ': no Etsy call'); noWrites();
     assert(!('error' in r), 'an expected refusal has no `error` key (the Library would answer HTTP 400)');
+  }
+  { // KEEP B5: the line already carried the design's own SKU (the shop's SKUs have the shape the plan makes): nothing to change on Etsy, the listing IS linked, no call, recorded, idempotent
+    const W = world({ doc: { oldSku: NEW } }); writes.length = 0;
+    let r = await W.run({ rid: 'R1' });
+    assert.strictEqual(r.ok, true); assert.strictEqual(r.state, 'linked'); assert.strictEqual(r.noop, true); assert.strictEqual(r.calls, 0); assert.strictEqual(W.S.calls.length, 0, 'no Etsy call');
+    assert.strictEqual(store.get('Charm_Custom_Saves/R1').etsy.state, 'linked'); assert.strictEqual(store.get('Charm_Custom_Saves/R1').etsy.noop, true);
+    r = await W.run({ rid: 'R1' }); assert.strictEqual(r.ok, true); assert.strictEqual(r.noop, true); assert.strictEqual(W.S.calls.length, 0, 'again: still no call');
   }
   const tx = world(); tx.mod = Mod.make({ db: { collection: () => ({ doc: () => ({}) }), runTransaction: async () => { throw new Error('firestore is down'); } }, FV, bucket, etsy: tx.E.api, meter: { bumpSimple() {} }, now: Date.now });
   const r = await tx.mod.customEtsySkuWrite({ rid: 'R1' }); assert.strictEqual(r.reason, 'internal'); assert.strictEqual(tx.S.calls.length, 0);

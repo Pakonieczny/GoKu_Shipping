@@ -20,6 +20,10 @@ if (!fs.existsSync(exe)) { console.log('skipped: no browser at ' + exe); process
 const { start, REPO_TEST } = require('./bridge-server.cjs');
 const SHOTS = process.env.SHOTS_DIR || '';
 const ONLY = (process.env.ONLY || '').split(',').filter(Boolean), want = k => !ONLY.length || ONLY.includes(k);
+// KEEPSAVE (16 Oct 2026): the switch ON now records a save intent that starts at once (no Send to Sheet, no 'ready' state). Scenes B C D F G H J J2 R encode the old PRESS model
+// (switch ON by default after KEEPOFF was already stale on main: scene B timed out waiting for phase 'ready' on pristine main) and are kept for reference behind LEGACY_PRESS=1;
+// their live equivalents are tests/charm-nest/keep-durable-browser.cjs (S1-S5, R, X) and keep-durable.cjs (the engine and keeper with a fault at every step).
+const LEGACY = process.env.LEGACY_PRESS === '1';
 const fails = []; let n = 0;
 const ok = (c, m) => { n++; if (!c) fails.push(m); console.log((c ? '  ok   ' : '  FAIL ') + m); };
 
@@ -37,9 +41,10 @@ function fakeKeep() {
   const W = window.__kw = { calls: [], made: [], steps: null, retrySteps: null, open: {}, settledAsked: [], openGap: 0, early: false, needToken: true, log: [] };
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const FAKE = {
+    durable(deps) { return W.real.durable(deps); },   // (KEEPSAVE: the REAL keeper runs the fake engine)
     make(ctx) {
       const L = [], sku = () => W.sku || 'ACORN_LEAF_4821';
-      const emit = ev => { W.log.push(ev); for (const f of L) try { f(ev); } catch (_) {} };
+      const emit = ev => { W.log.push(ev); if (ev.done) W.out = { done: ev.done, held: ev.reason === 'locked' ? 'locked' : '', reason: ev.reason || '', retry: ev.retry !== false, text: ev.text || '', sku: ev.sku || sku() }; for (const f of L) try { f(ev); } catch (_) {} };
       let running = null;
       const play = async steps => { for (const s of steps) { if (s === 'throw') throw new Error('the reply was cut off'); if (typeof s === 'number') await sleep(s); else emit(s); } };
       const heldRun = () => { emit({ row: 'sku', state: 'done', text: sku() }); emit({ row: 'repo', state: 'locked', text: 'Not saved: needs the repository password' }); emit({ row: 'etsy', state: 'idle', text: 'Waits for the repository' }); emit({ done: 'held', sku: sku() }); };
@@ -56,6 +61,7 @@ function fakeKeep() {
           return Object.assign({ offered: true, why: '', sku: sku(), group: 'all', aliasWorks: true, saved: null, locked: !(ctx.lock && ctx.lock.unlocked('upload')), rehearsal: !!ctx.sandbox, reuse: null }, W.open);
         },
         run() { return running = go(W.steps, 'run'); },
+        outcome() { return W.out || null; },
         retry(which) { return running = go(W.retrySteps || W.steps, 'retry', which); },
         async unlock(pw) {
           W.calls.push('unlock');
@@ -101,6 +107,7 @@ async function main() {
     });
     const page = await ctx.newPage(), errors = [];
     page.setDefaultTimeout(20000);
+    page.on('console', m => { if (m.type() === 'warning' && /Save (strip|keeper)/.test(m.text())) console.log('  .. page warning:', m.text().slice(0, 300)); });
     page.on('pageerror', e => { errors.push(String(e.message)); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 3).join(' | ')); });
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.CN && window.Orders && window.Review && window.CustomSheet && CN.S.cloud.ok === true, null, { timeout: 60000 });
@@ -153,7 +160,7 @@ async function main() {
     const line = h.querySelector('.cuKeepLine'), sw = h.querySelector('.cuSwitch'), pw = h.querySelector('.cuKeepPw');
     return { shown: vis(h), phase: h.dataset.phase, sandbox: h.dataset.sandbox, sw: vis(h.querySelector('.cuKeepSw')) && vis(sw), on: sw.getAttribute('aria-checked') === 'true', swDisabled: sw.disabled, label: h.querySelector('#cuKeepL').textContent, preview: h.querySelector('#cuKeepP').textContent,
       pill: vis(h.querySelector('.cuKeepPill')) ? h.querySelector('.cuKeepPill').textContent : '', now: vis(h.querySelector('[data-k-now]')), pw: vis(pw), pwMsg: pw.querySelector('.cuKeepMsg').textContent, unlockDisabled: pw.querySelector('[data-k-unlock]').disabled,
-      steps: vis(h.querySelector('.cuKeepSteps')), rows, line: vis(line) ? { main: line.querySelector('b').textContent, sub: line.querySelector('.sub').textContent, cls: line.className } : null, dialogs: document.querySelectorAll('dialog[open]').length, busy: h.getAttribute('aria-busy') };
+      steps: vis(h.querySelector('.cuKeepSteps')), rows, line: vis(line) ? { main: line.querySelector('b').textContent, sub: line.querySelector('.sub').textContent, cls: line.className, btns: [...line.querySelectorAll('button')].map(b => b.textContent) } : null, dialogs: document.querySelectorAll('dialog[open]').length, busy: h.getAttribute('aria-busy') };
   });
   const settle = page => page.evaluate(() => Promise.race([Promise.all(document.getAnimations().filter(a => { try { return a.effect.getComputedTiming().iterations !== Infinity; } catch (_) { return true; } }).map(a => a.finished.catch(() => null))), new Promise(r => setTimeout(r, 3000))]).then(() => new Promise(r => setTimeout(r, 60))));
   const ready = (page, phase, ms = 8000) => page.waitForFunction(p => { const h = document.getElementById('cuKeep'); return h && h.dataset.phase === p; }, phase, { timeout: ms });
@@ -211,23 +218,24 @@ async function main() {
       ok(await page.evaluate(() => !CharmNestRepoLock.unlocked('upload')), 'still locked');
       // the spinner while the server checks, with its label
       await page.evaluate(() => { const real = CN.api; window.__slow = true; const a = window.api; });
-      // the right password: unlocked, the row folds, the focus goes back to Send to Sheet; nothing is saved yet
+      // the right password (KEEPSAVE): the save was asked for already, so the moment the lock opens it runs BY ITSELF (no Send to Sheet, no Save press); the row folds away
+      await page.evaluate(steps => { __kw.steps = steps; }, steps.linked);
       await page.fill('#cuKeepPw', REPO_TEST.password);
       await page.keyboard.press('Enter');
       await page.waitForFunction(() => CharmNestRepoLock.unlocked('upload'), null, { timeout: 8000 });
       await page.waitForFunction(() => document.querySelector('#cuKeep .cuKeepPw').hidden, null, { timeout: 4000 });
+      await page.waitForFunction(() => document.getElementById('cuKeep').dataset.phase === 'linked', null, { timeout: 20000 }).catch(async e => { console.log('DBG', JSON.stringify(await page.evaluate(() => ({ calls: __kw.calls, intents: localStorage.getItem('cn.keepIntents.v1'), phase: document.getElementById('cuKeep').dataset.phase, online: CN.S.cloud.ok }))).slice(0, 1500)); throw e; });
       s = await strip(page);
-      ok(s.on && !s.pw && s.phase === 'ready' && s.dialogs === 1, 'the right password: unlocked, the password row folds away, the switch stays on (ready)');
-      ok(await page.evaluate(() => document.activeElement && document.activeElement.hasAttribute('data-send')), 'the focus goes back to Send to Sheet');
-      ok(await page.evaluate(() => !__kw.calls.some(c => /^(run|retry)/.test(c))), 'unlocking alone saved nothing');
+      ok(!s.pw && s.dialogs === 1, 'the right password: unlocked, the password row folds away, still one pop-up only');
+      ok(await page.evaluate(() => __kw.calls.filter(c => c === 'run').length === 1 && !__kw.calls.some(c => /^retry/.test(c))), 'the moment the lock opened the save ran by itself, exactly once (nobody pressed Send to Sheet or Save)');
       await shot(page, '2-offered');
-      ok(await page.evaluate(() => localStorage.getItem('cn.keep')) === 'on', 'the choice is remembered in localStorage cn.keep');
+      ok(await page.evaluate(() => !!localStorage.getItem('cn.keepIntents.v1') && Object.values(JSON.parse(localStorage.getItem('cn.keepIntents.v1')).intents).some(r => r.state === 'done' && r.rid === '4196630529')), 'the save is recorded in browser storage (cn.keepIntents.v1) and ended done');
       ok(!(await page.evaluate(() => JSON.stringify([...document.querySelectorAll('#cuDlg *')].map(e => e.value || '')).includes('test-'))), 'no password is left anywhere in the window');
       await w.close();
     }
 
     /* ── B · the repository unlocked: the switch is ON, the press opens the four steps, the save runs beside the Sheet, the window waits and closes calmly ── */
-    if (want('B')) {
+    if (LEGACY && want('B')) {
       const w = await mk({ locked: false }); const { page } = w;
       await seed(page, [order(4196630531, 1800004821, 'ACORN&#39;S LEAF', "Custom Charm - Acorn's Leaf, Personalized"), order(4196630532, 1800004822, 'LEAF ONE', 'Custom Charm Leaf'), order(4196630533, 1800004823, 'LEAF TWO', 'Custom Charm Leaf Two')]);
       await startRun(page);
@@ -298,7 +306,7 @@ async function main() {
     const tagLine = (page, tag) => page.evaluate(tag => { __tr.tag = tag; }, tag);
 
     /* ── C · failures, and Retry that runs from the failing row only ── */
-    if (want('C')) {
+    if (LEGACY && want('C')) {
       const w = await mk({ locked: false }); const { page } = w;
       await seed(page, [FRESH(4196630541), FRESH(4196630542, 1800004822, 'LEAF TWO', 'Custom Leaf Two'), FRESH(4196630543, 1800004823, 'LEAF THREE', 'Custom Leaf Three'), FRESH(4196630545, 1800004825, 'LEAF FIVE', 'Custom Leaf Five'), FRESH(4196630546, 1800004826, 'LEAF SIX', 'Custom Leaf Six'), FRESH(4196630544, 1800004824, 'LEAF FOUR', 'Custom Leaf Four')]);
       await startRun(page); await tabCustom(page);
@@ -400,7 +408,7 @@ async function main() {
     }
 
     /* ── J · the real engine (charm-nest-keep.js, real charm-nest-sku.js, the stand-in's real handlers over in-memory Firestore): Etsy is a stand-in answer, nothing leaves this machine ── */
-    if (want('J')) {
+    if (LEGACY && want('J')) {
       const w = await mk({ locked: false }); const { page, srv } = w;
       await seed(page, [FRESH(4196630701)]); await startRun(page); await tabCustom(page);
       await page.evaluate(() => { __kw.useReal = true; window.__etsy = []; const real = window.api; window.api = async function (fn, body, o) { if (body && body.op === 'customEtsySkuWrite') { window.__etsy.push(Object.keys(body).sort().join()); return { ok: true, state: 'linked' }; } return real.apply(this, arguments); }; });
@@ -425,7 +433,7 @@ async function main() {
     }
 
     /* ── J2 · the real engine, Etsy refusing, a reload, and Retry: the saved record decides what the strip says, and nothing is saved twice ── */
-    if (want('J2')) {
+    if (LEGACY && want('J2')) {
       const w = await mk({ locked: false }); const { page, srv } = w;
       const ORD = [FRESH(4196630702)];
       const rig = async answer => page.evaluate(answer => { __kw.useReal = true; window.__calls = []; window.__answer = answer; if (!window.__rigged) { window.__rigged = true; const real = window.api; window.api = async function (fn, body, o) { const op = body && body.op; if (/^custom(SaveCommit|SkuCheck|EtsySkuWrite|SaveGet)$/.test(op || '')) window.__calls.push(op); if (op === 'customEtsySkuWrite') return window.__answer; return real.apply(this, arguments); }; } }, answer);
@@ -460,7 +468,7 @@ async function main() {
     }
 
     /* ── R · the save under way, the window waiting for it (the picture of "running"; the window stays for the save, up to 20 s) ── */
-    if (want('R')) {
+    if (LEGACY && want('R')) {
       const w = await mk({ locked: false }); const { page } = w;
       await seed(page, [FRESH(4196630611)]); await startRun(page); await tabCustom(page);
       await page.evaluate(s => { __kw.steps = s; }, steps.slow);
@@ -476,7 +484,7 @@ async function main() {
     }
 
     /* ── D · pressed while locked: held, the card says Save now, the strip asks for the password, then it saves ── */
-    if (want('D')) {
+    if (LEGACY && want('D')) {
       const w = await mk(); const { page } = w;
       await seed(page, [FRESH(4196630551)]); await startRun(page); await tabCustom(page);
       await page.evaluate(s => { __kw.steps = s; }, steps.linked);
@@ -553,7 +561,8 @@ async function main() {
       await closeWin(page);
       await page.evaluate(() => { CN.S.cloud.ok = false; });
       await openWin(page, '4196630565');
-      await quiet('4196630565', 'Saving needs a connection.', 'offline');
+      await ready(page, 'off'); await settle(page);
+      ok((await strip(page)).sw, 'offline: the switch is still offered (KEEPSAVE: a save asked for offline waits for the connection, see keep-durable-browser.cjs S4)');
       await page.evaluate(() => { CN.S.cloud.ok = true; });
       await closeWin(page);
       // the engine is not on the page: the window is exactly as it was
@@ -567,7 +576,7 @@ async function main() {
     }
 
     /* ── F · the sandbox: a rehearsal, plainly labelled; no password asked even when locked ── */
-    if (want('F')) {
+    if (LEGACY && want('F')) {
       const w = await mk({ sandbox: true }); const { page } = w;
       await seed(page, [FRESH(4196630571)]); await startRun(page); await tabCustom(page);
       await page.evaluate(s => { window.__opsHook(); __kw.steps = s; }, steps.rehearsal);
@@ -594,7 +603,7 @@ async function main() {
     }
 
     /* ── G · reduced motion: nothing animated by the strip; the spinner still tells it works ── */
-    if (want('G')) {
+    if (LEGACY && want('G')) {
       const w = await mk({ locked: false, reduced: true }); const { page } = w;
       await seed(page, [FRESH(4196630581)]); await startRun(page); await tabCustom(page);
       await page.evaluate(s => { __kw.steps = s; window.__spin = 0; new MutationObserver(() => { if (document.querySelector('#cuKeep .cuKr[data-s="work"] .cuKd .spin')) window.__spin++; }).observe(document.documentElement, { subtree: true, childList: true, attributes: true }); }, steps.linked);
@@ -614,7 +623,7 @@ async function main() {
     }
 
     /* ── H · a small screen: stacked rows, 44 px targets, nothing wider than the window ── */
-    if (want('H')) {
+    if (LEGACY && want('H')) {
       const w = await mk({ viewport: { width: 700, height: 940 } }); const { page } = w;
       await seed(page, [FRESH(4196630591), FRESH(4196630592, 1800004822, 'LEAF TWO', 'Custom Leaf Two')]); await startRun(page); await tabCustom(page);
       const fit = () => page.evaluate(() => { const d = document.getElementById('cuDlg'); return d.scrollWidth <= d.clientWidth + 1 && document.documentElement.scrollWidth <= window.innerWidth + 1; });
@@ -648,19 +657,21 @@ async function main() {
       await page.evaluate(() => { __kw.open = { saved: { sku: 'ACORN_LEAF_4821', etsy: { state: 'linked' } } }; });
       await dropDesign(page, '4196630601'); await ready(page, 'linked'); await settle(page);
       let s = await strip(page);
-      ok(s.shown && !s.sw && !s.steps && s.line && s.line.main === 'Linked · ACORN_LEAF_4821' && /Saved to the repository and set on Etsy listing …4821/.test(s.line.sub) && !(await page.evaluate(() => document.querySelector('#cuKeep .cuKeepLine').classList.contains('cuRing'))), 'saved and linked before: one calm line "' + (s.line && s.line.main) + '" and where it is set, without a ring');
+      ok(s.shown && s.sw && s.on && !s.steps && s.line && s.line.main === 'Saved to the repository as ACORN_LEAF_4821; future orders of this listing will use it' && /Linked on Etsy listing …4821/.test(s.line.sub) && !(await page.evaluate(() => document.querySelector('#cuKeep .cuKeepLine').classList.contains('cuRing'))), 'saved and linked before (KEEPUI: the switch shows ON, ONE calm line says where it is saved and that later orders use it, without a ring): "' + (s.line && s.line.main) + '"');
       await shot(page, '5-linked'); await closeWin(page);
       // saved, Etsy not updated: the steps with Retry on Etsy only
       await page.evaluate(() => { __kw.open = { saved: { sku: 'ACORN_LEAF_4821', etsy: { state: 'failed', text: 'Etsy refused the change' } }, aliasWorks: false }; });
       await dropDesign(page, '4196630602'); await ready(page, 'saved'); await settle(page);
       s = await strip(page);
-      ok(s.steps && s.rows[1].s === 'done' && s.rows[2].s === 'done' && s.rows[3].s === 'failed' && s.rows[3].t === 'Etsy not updated: Etsy refused the change' && s.rows[3].b.join() === 'Retry' && s.rows[1].b.length === 0 && s.rows[2].b.length === 0, 'saved, Etsy not updated: the steps show, Retry only on the Etsy row: ' + JSON.stringify(s.rows.map(r => r.s + ':' + r.t)));
-      ok(s.line && /^Saved to the repository · Etsy not updated$/.test(s.line.main) && /Until Etsy has the new SKU, the next order of this listing will still ask\./.test(s.line.sub), 'the line says it, and why Etsy matters');
+      // (KEEPUI: ONE calm line says the one thing that needs a person, with its one button; the rows do not say it again)
+      ok(!s.steps && s.line && s.line.main === 'Needs attention: Etsy refused the change' && s.line.btns && s.line.btns.join() === 'Try again', 'saved, Etsy not updated: ONE line "Needs attention: Etsy refused the change" with ONE button, Try again: ' + JSON.stringify(s.line));
+      ok(s.line && /^Saved to the repository as ACORN_LEAF_4821, but Etsy was not updated\. Until Etsy has the new SKU, the next order of this listing will still ask\.$/.test(s.line.sub), 'the line says what was saved, and why Etsy matters: ' + (s.line && s.line.sub));
       await shot(page, '12-saved');
-      await page.evaluate(() => { __kw.retrySteps = [{ row: 'etsy', state: 'work', text: 'Setting the SKU on Etsy…' }, 300, { row: 'etsy', state: 'done', text: 'Linked on Etsy' }, { done: 'linked', sku: 'ACORN_LEAF_4821' }]; });
-      await page.click('#cuKeep [data-k-retry="etsy"]');
-      await page.waitForFunction(() => document.getElementById('cuKeep').dataset.phase === 'linked', null, { timeout: 8000 });
-      ok(await page.evaluate(() => __kw.calls.includes('retry:etsy') && !__kw.calls.includes('run')), 'Retry in the window ran the Etsy step only');
+      // (KEEPSAVE: a save in the cloud's record that this browser holds no intent for: Retry adopts its Etsy step, which asks the cloud for the Etsy step alone; nothing is built or saved again)
+      await page.evaluate(() => { const real = window.api; window.__etsyAsked = []; window.api = async function (fn, body, o) { if (body && body.op === 'customEtsySkuWrite') { window.__etsyAsked.push(body.rid + '/' + body.listingId); return { ok: true, state: 'linked' }; } return real.apply(this, arguments); }; });
+      await page.click('#cuKeep .cuKeepLine [data-k-retry="again"]');
+      await page.waitForFunction(() => document.getElementById('cuKeep').dataset.phase === 'linked', null, { timeout: 15000 });
+      ok(await page.evaluate(() => window.__etsyAsked.length === 1 && !__kw.calls.includes('run') && !__kw.calls.some(c => /^retry/.test(c))), 'Retry in the window asked for the Etsy step only (order and listing), once');
       await closeWin(page);
       // the design is already in the repository (reuse), and the Etsy reading that will not match
       await page.evaluate(() => { __kw.open = { reuse: 'ACORN_LEAF_0007', sku: 'ACORN_LEAF_0007' }; });
@@ -679,7 +690,7 @@ async function main() {
       await ready(page, 'opening', 4000);
       s = await strip(page);
       ok(s.line && s.line.main === 'Checking this listing…' && (await page.evaluate(() => !!document.querySelector('#cuKeep .cuKeepLine .spin'))), 'while the engine looks: "Checking this listing…" with a small spinner');
-      await ready(page, 'ready', 8000);
+      await ready(page, 'off', 8000);
       await w.close();
     }
   } finally { await browser.close(); }
