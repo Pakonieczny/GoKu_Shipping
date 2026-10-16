@@ -76,7 +76,7 @@ require.cache[require.resolve(clientPath)] = { id: clientPath, filename: clientP
   ({ db, FV } = fakeDb());
   fa = fakeAnthropic(async () => reply({ adjust: { L: { scale: 9, sx: 0, dx: 50, dy: -9 }, M: { scale: -3, sx: 99, dx: -50, dy: 40 }, R: { scale: 'big', sx: null, dx: Infinity } }, why: '  Went   wild. ' }));
   r = await A.run(body({ adjust: { L: { scale: 1.1, sx: 1, dx: 0, dy: 0 }, M: IDENT, R: { scale: 1, sx: 1.2, dx: 0.5, dy: 0.5 } } }), { db, FV, anthropic: fa });
-  check(r.adjust.L.scale === 1.25 && r.adjust.L.sx === 0.8 && r.adjust.L.dx === 2 && r.adjust.L.dy === -1.5 && r.adjust.M.scale === 0.8 && r.adjust.M.sx === 1.25 && r.adjust.M.dx === -2 && r.adjust.M.dy === 1.5 && r.clamped === true, 'scale 9, dx 50, sx 0 ... are clamped to 0.8..1.25, 0.8..1.5 (centre 1.25), +-2 mm, +-1.5 mm: ' + JSON.stringify(r.adjust.L));
+  check(r.adjust.L.scale === 1.3 && r.adjust.L.sx === 0.7 && r.adjust.L.dx === 2 && r.adjust.L.dy === -2.5 && r.adjust.M.scale === 0.8 && r.adjust.M.sx === 1.25 && r.adjust.M.dx === -2 && r.adjust.M.dy === 1.5 && r.clamped === true, 'scale 9, dx 50, sx 0 ... are clamped to 0.75..1.30, 0.70..1.60 (centre 0.8..1.25), +-2 mm, +-2.5 mm (centre +-1.5): ' + JSON.stringify(r.adjust.L));
   check(r.adjust.R.scale === 1 && r.adjust.R.sx === 1.2 && r.adjust.R.dx === 0.5 && r.adjust.R.dy === 0.5 && r.why === 'Went wild.', 'a field that is not a number keeps the current value (R scale "big" -> 1, sx null -> 1.2, dx Infinity -> 0.5), the sentence is tidied');
   fa = fakeAnthropic(async () => reply({ adjust: { L: { scale: 1.1 } }, why: '' }));
   r = await A.run(body({ round: 2, adjust: { L: { scale: 1, sx: 1.1, dx: 0.3, dy: 0 }, M: IDENT, R: IDENT } }), { db, FV, anthropic: fa });
@@ -131,7 +131,7 @@ require.cache[require.resolve(clientPath)] = { id: clientPath, filename: clientP
       check(h.statusCode === 400 && called === 0, 'a kick that does not say monoAssist is a bad payload');
       h = await bg.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify({ id: 'agent-m1', mode: 'monoAssist' }) });
       const job = bdb.docs.get('Charm_Nest_Agent/agent-m1');
-      check(h.statusCode === 200 && job.status === 'done' && job.result.adjust.L.scale === 1.25 && job.result.adjust.L.dx === 2 && job.result.why === 'Moved the left letter toward the middle one.' && called === 1 && deleted.includes('charmnest/agent/agent-m1.json'), 'the job goes pending -> done with the clamped numbers; its parked payload is deleted (getAgent reads the record)');
+      check(h.statusCode === 200 && job.status === 'done' && job.result.adjust.L.scale === 1.3 && job.result.adjust.L.dx === 2 && job.result.why === 'Moved the left letter toward the middle one.' && called === 1 && deleted.includes('charmnest/agent/agent-m1.json'), 'the job goes pending -> done with the clamped numbers; its parked payload is deleted (getAgent reads the record)');
       h = await bg.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify({ id: 'agent-m1', mode: 'monoAssist' }) });
       check(h.body === 'already handled' && called === 1, 'a second kick of a finished job does nothing');
       h = await bg.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify({ id: 'nope', mode: 'monoAssist' }) });
@@ -223,13 +223,15 @@ require.cache[require.resolve(clientPath)] = { id: clientPath, filename: clientP
       // and the page's agent call stubbed: every call is recorded and answered from the queue, nothing leaves the page
       await page.evaluate(() => {
         window.__calls = []; window.__answers = {}; window.__fix = true;
-        const E = CharmNestMonogram, eb = E.build;
-        E.build = function (l, o) {
-          const r = eb.apply(this, arguments); if (!r || !r.ok || !window.__fix) return r;
+        const E = CharmNestMonogram, eb = E.build, ef = E.autoFit;
+        const stage = (r, l) => {
+          if (!r || !r.ok || !window.__fix) return r;
           const a = r.report.adjust, fixed = !!(a && a.L && a.L.dx >= 0.3), tag = l.left.letter + l.middle.letter + l.right.letter;
           r.report.metrics = Object.assign({}, r.report.metrics, fixed ? { violations: [], distance: 0.5, ok: true } : { violations: [{ rule: 'contacts', key: 'contacts', text: 'the left and middle letters are not held by one contact near the top and one near the bottom' }], distance: 3, ok: false });
           window.__lastBuild = { tag, adjust: a }; return r;
         };
+        E.build = function (l, o) { return stage(eb.apply(this, arguments), l); };
+        if (ef) E.autoFit = function (l, o) { return stage(ef.apply(this, arguments), l); };      // (the page builds through autoFit now: the verdict is staged there too)
         CN.setAgent(async (mode, payload, opts) => {
           window.__calls.push({ mode, payload, opts }); const q = window.__answers[payload.letters.join('')], next = q && q.shift();
           if (next === 'throw') throw new Error('network down'); return next || { skipped: 'nothing queued' };
@@ -265,7 +267,7 @@ require.cache[require.resolve(clientPath)] = { id: clientPath, filename: clientP
       const accepted = A.cleanRequest(c1.payload);
       check(!accepted.error && accepted.req.letters.join('') === 'APV', 'the server accepts exactly the payload the page sent: ' + (accepted.error || 'ok'));
       const s1 = await settings(), rec = Object.values(s1.assist || {})[0];
-      check(Object.keys(s1.assist || {}).length === 1 && rec.status === 'assembled' && rec.adjust.L.dx === 2 && rec.adjust.L.scale <= 1.25 && /Moved the A/.test(rec.why) && rec.rounds === 1, 'the final adjust (clamped by the engine: dx 2, scale <= 1.25), the sentence and the rounds are kept in the page\'s settings: ' + JSON.stringify(rec));
+      check(Object.keys(s1.assist || {}).length === 1 && rec.status === 'assembled' && rec.adjust.L.dx === 2 && rec.adjust.L.scale <= 1.3 && /Moved the A/.test(rec.why) && rec.rounds === 1, 'the final adjust (clamped by the engine: dx 2, scale <= 1.3), the sentence and the rounds are kept in the page\'s settings: ' + JSON.stringify(rec));
       check((s1.assistDay['4200683017_42006830171'] || {}).n === 1, 'the day\'s calls for the order are counted on the page too');
       await clickApprove('4200683017'); await until('4200683017', r => r.state === 'approved', 'APV approved');
       check((await files()).join('|') === 'Monogram APV.ai', 'Approve is one press for a word that now passes: Monogram APV.ai is on the order\'s designs');

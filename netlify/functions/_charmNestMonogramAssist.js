@@ -18,8 +18,8 @@ const EFFORT = /^(low|medium|high)$/.test(process.env.CHARM_NEST_MONOGRAM_EFFORT
 const COLL = "Charm_Nest_MonoAssist";
 const DAILY_MAX = 3, MAX_ROUND = 3, MAX_IMAGE_B64 = 2200000, MAX_METRICS_CHARS = 6000;
 /** The adjust contract's hard bounds (the engine clamps to the same ones: scale about the letter's body centre, sx extra horizontal-only stretch, dx / dy in mm, x right, y up). */
-const BOUNDS = { scale: [0.8, 1.25], sx: [0.8, 1.5], rot: [-6, 6], shear: [-0.15, 0.15], dx: [-2, 2], dy: [-1.5, 1.5] };
-const SX_CENTRE = [0.8, 1.25];      // (the centre letter's stretch is narrower than a side letter's)
+const BOUNDS = { scale: [0.75, 1.3], sx: [0.7, 1.6], rot: [-6, 6], shear: [-0.15, 0.15], dx: [-2, 2], dy: [-2.5, 2.5] };      // (a Left or Right letter)
+const CENTRE_BOUNDS = { scale: [0.8, 1.25], sx: [0.8, 1.25], dy: [-1.5, 1.5] };      // (the Middle letter keeps the tighter limits, the others as above)
 const IDENTITY = { scale: 1, sx: 1, rot: 0, shear: 0, dx: 0, dy: 0 };
 const SLOTS = ["L", "M", "R"];
 
@@ -36,11 +36,11 @@ What a good monogram is (the rules, in plain words):
 Anything that cannot meet all of them is left to a person; say so in the sentence instead of ruining a letter.
 
 Your answer: ONLY the JSON { "adjust": { "L": {scale, sx, rot, shear, dx, dy}, "M": {...}, "R": {...} }, "why": "one sentence" }. The adjust you return REPLACES the current one: give the complete new numbers for all three letters (the current number where you change nothing), never a difference.
-- scale: size multiplier of the whole letter about its centre (1 = as laid out); allowed 0.80 to 1.25.
-- sx: extra stretch across only (a thin or narrow letter wider: more than 1; a wide one narrower: less than 1); allowed 0.8 to 1.5 for a Left or Right letter, 0.8 to 1.25 for the Middle letter.
+- scale: size multiplier of the whole letter about its centre (1 = as laid out); allowed 0.75 to 1.30 for a Left or Right letter, 0.80 to 1.25 for the Middle letter.
+- sx: extra stretch across only (a thin or narrow letter wider: more than 1; a wide one narrower: less than 1); allowed 0.70 to 1.60 for a Left or Right letter (a wide side letter may be made narrower to match the other side), 0.8 to 1.25 for the Middle letter.
 - rot: rotation in degrees about the letter's centre (a side letter can lean toward or away from the Middle one); allowed -6 to 6.
 - shear: horizontal shear (the slant of the letter can follow the Middle letter's); allowed -0.15 to 0.15.
-- dx, dy: move of the letter in millimetres, x to the right, y UP, relative to where the software put it; allowed -2.0 to 2.0 for dx and -1.5 to 1.5 for dy.
+- dx, dy: move of the letter in millimetres, x to the right, y UP, relative to where the software put it; allowed -2.0 to 2.0 for dx and -2.5 to 2.5 for dy (-1.5 to 1.5 for the Middle letter).
 Whatever you give is clamped to these bounds by the software, so there is no use going past them.
 How to work: change only what the broken rules point at, one or two things per round, in small steps (a few percent of scale or sx, a few tenths of a millimetre of move): a refused earlier try tells you the step was wrong or too big, so do something different. Keep the two side letters level with each other. A letter must NEVER be altered to the point where it stops reading as that letter: never squeeze or stretch a letter so far that its shape changes, never push it so far that it is buried in or detached from its neighbour. If a rule cannot be met without doing that, return the current adjust unchanged and say in "why" which rule cannot be met and why.
 "why" is one plain sentence (at most 25 words) saying what you changed and for which rule, e.g. "Widened the right G and moved it down 0.4 mm so a lower contact joins it to the S."`;
@@ -60,7 +60,7 @@ function clampOne(a, base, slot) {
   const out = {}; let clamped = false; base = base || IDENTITY;
   for (const k of Object.keys(BOUNDS)) {
     const raw = a && typeof a === "object" && a[k] != null && a[k] !== "" && Number.isFinite(Number(a[k])) ? Number(a[k]) : base[k];
-    const cl = clamp(raw, k === "sx" && slot === "M" ? SX_CENTRE : BOUNDS[k]); if (cl !== raw) clamped = true; out[k] = r3(cl);
+    const cl = clamp(raw, slot === "M" && CENTRE_BOUNDS[k] ? CENTRE_BOUNDS[k] : BOUNDS[k]); if (cl !== raw) clamped = true; out[k] = r3(cl);
   }
   return { a: out, clamped };
 }
@@ -163,4 +163,4 @@ async function run(body, opts = {}) {
   return Object.assign(out, { model: log.model, usage, left, round: req.round });
 }
 
-module.exports = { run, cleanRequest, clampAdjust, clampOne, normalize, content, INSTRUCTIONS, SCHEMA, BOUNDS, DAILY_MAX, MAX_ROUND, MODEL, EFFORT, COLL, dayOf };
+module.exports = { run, cleanRequest, clampAdjust, clampOne, normalize, content, INSTRUCTIONS, SCHEMA, BOUNDS, CENTRE_BOUNDS, DAILY_MAX, MAX_ROUND, MODEL, EFFORT, COLL, dayOf };

@@ -44,24 +44,25 @@
      the centre letter 0.8 to 1.25: strokes thicken when a letter is stretched, which is fine and helps the cut; hairlines stay at least 0.2 mm); rot: degrees, -6 to 6, about the letter's body centre (a side letter can lean toward or
      away from the centre); shear: horizontal shear, -0.15 to 0.15 (the slant can follow the centre letter's); dx, dy: the placed letter moved by this many mm (x right, y up) from where the engine put it. Clamped HERE to ADJUST_LIMITS, never trusted
      from outside; report.adjust echoes what was applied, report.metrics.maxStretch the largest stretch used (counted from the letters as prepared: the letter prep's own widening is report.baseWiden, not a stretch). */
-  const ADJUST_LIMITS = { scale: [0.80, 1.25], sx: [0.8, 1.5], sxCentre: [0.8, 1.25], rotDeg: [-6, 6], shear: [-0.15, 0.15], dxMm: [-2.0, 2.0], dyMm: [-1.5, 1.5] };
+  const ADJUST_LIMITS = { scale: [0.75, 1.30], sx: [0.70, 1.60], rotDeg: [-6, 6], shear: [-0.15, 0.15], dxMm: [-2.0, 2.0], dyMm: [-2.5, 2.5], centre: { scale: [0.80, 1.25], sx: [0.8, 1.25], dyMm: [-1.5, 1.5] } };      // (a side letter: more freedom, the centre letter keeps the tighter limits)
   /* The hard rules every finished monogram must meet (a word that breaks one is flagged for a person; report.metrics.violations names them). */
   const LIMITS = {
-    BODY_OFFSET_MM: 0.70, BODY_TARGET_MM: 0.35, BASELINE_OFFSET_MM: [0.1, 2.0], ALIGN_LR_MM: 0.15, ALIGN_BODY_MM: 0.5, SIDE_HEIGHT: [0.74, 0.84], SIDE_WIDTH: [0.62, 0.95], CENTRE_WIDTH: [0.80, 1.15], VISIBLE_MM: 4.4, ASPECT: [0.95, 1.80], OVERLAP: 0.22, CROWD_MM: 3.6, COUNTERS: 0.9, OVERLAP_CENTRE: 0.30, BAR_MAX_MM: 1.04, VISIBLE_OUTLINE: 0.74,
+    BODY_OFFSET_MM: 0.60, BODY_TARGET_MM: 0.15, LR_BODY_MM: 0.40, SIL_OFFSET_MM: 0.80, COMBINED_MM: 0.65, SIDE_INK: [0.85, 0.98], SIDE_INK_TARGET: 0.90, CLEARANCE_MM: 2.25, BOTTOM_CLEAR_MM: 1.6, INK_LR: 0.05, WIDTH_LR: 0.15, BASELINE_OFFSET_MM: [0.1, 2.0], ALIGN_LR_MM: 0.15, ALIGN_BODY_MM: 0.5, SIDE_HEIGHT: [0.74, 0.92], SIDE_WIDTH: [0.55, 1.05], CENTRE_WIDTH: [0.80, 1.15], VISIBLE_MM: 4.4, ASPECT: [0.95, 1.80], OVERLAP: 0.22, CROWD_MM: 3.6, COUNTERS: 0.9, OVERLAP_CENTRE: 0.30, BAR_MAX_MM: 1.04, BAR_REACH_MM: 2.0, VISIBLE_OUTLINE: 0.74,
     BALANCE_UPPER: 0.6, BALANCE_LOWER: 0.4, BALANCE_APART: 0.45, CONTACT_MIN_MM: 0.2
   };
   /* ESG (Paul's reference monogram, 15 Oct 2026; the numbers re-measured 16 Oct 2026 with the widened and thickened letters of the letter prep (round 4), 13.0 x 14.8 mm with the raw letters: "absolutely perfect ... I want these exact ratios, sizes, the way things are connected and the way they are visible to be maintained"), measured on the engine: the layout aims at these. */
-  const ESG_PROFILE = { baselineOffsetMm: 1.54, bodyOffsetMm: [0.12, 0.58], wMm: 17.04, hMm: 14.93, aspect: 1.14, sideHeight: [0.80, 0.79], sideWidth: [0.86, 0.80], centreWidthVsMedian: 0.88, overlap: [0.09, 0.19, 0.20], visibleMm: [5.12, 5.02], crowdMm: 2.27 };
+  const ESG_PROFILE = { baselineOffsetMm: 1.1, bodyOffsetMm: [0.15, 0.15], wMm: 18.73, hMm: 14.93, aspect: 1.25, sideHeight: [0.83, 0.81], sideWidth: [0.89, 0.82], centreWidthVsMedian: 0.88, overlap: [0.11, 0.10, 0.01], visibleMm: [5.29, 5.24], crowdMm: 3.23 };
   function cleanAdjust(a) {
     const out = {}, c = (x, lim, d) => (finite(x) ? Math.min(lim[1], Math.max(lim[0], x)) : d);
     for (const [k, alias] of [['L', 'left'], ['M', 'middle'], ['R', 'right']]) {
       const v = a && typeof a === 'object' ? (a[k] || a[alias]) : null, w = v && typeof v === 'object' ? v : {};
-      out[k] = { scale: c(w.scale, ADJUST_LIMITS.scale, 1), sx: c(w.sx, k === 'M' ? ADJUST_LIMITS.sxCentre : ADJUST_LIMITS.sx, 1), rot: c(w.rot, ADJUST_LIMITS.rotDeg, 0), shear: c(w.shear, ADJUST_LIMITS.shear, 0), dx: c(w.dx, ADJUST_LIMITS.dxMm, 0), dy: c(w.dy, ADJUST_LIMITS.dyMm, 0) };
+      const lm = k === 'M' ? ADJUST_LIMITS.centre : ADJUST_LIMITS;
+      out[k] = { scale: c(w.scale, lm.scale, 1), sx: c(w.sx, lm.sx, 1), rot: c(w.rot, ADJUST_LIMITS.rotDeg, 0), shear: c(w.shear, ADJUST_LIMITS.shear, 0), dx: c(w.dx, ADJUST_LIMITS.dxMm, 0), dy: c(w.dy, lm.dyMm, 0) };
     }
     return out;
   }
   const NORMS = {
-    SIDE_HEIGHT_RATIO: 0.80, SIDE_HEIGHT_TOL: 0.04, SIDE_WIDTH_MIN: 0.60, SIDE_WIDTH_MAX: 0.95, MID_WIDTH_MIN: 0.84, MID_WIDTH_MAX: 1.11, MID_BODY_W_OVER_EM_MEDIAN: 0.3423, MID_BODY_W_OVER_INKH_MEDIAN: 0.4858, STRETCH_CAP: 0.25, BODY_TRIM: 0.05,
+    SIDE_HEIGHT_RATIO: 0.80, SIDE_HEIGHT_TOL: 0.04, SIDE_WIDTH_MIN: 0.55, SIDE_WIDTH_MAX: 1.0, MID_WIDTH_MIN: 0.84, MID_WIDTH_MAX: 1.11, MID_BODY_W_OVER_EM_MEDIAN: 0.3423, MID_BODY_W_OVER_INKH_MEDIAN: 0.4858, STRETCH_CAP: 0.25, SIDE_NARROW_CAP: 0.30, BODY_TRIM: 0.05,
     ASPECT_TARGET: 1.15, ASPECT_MIN: 0.95, ASPECT_MAX: 1.80, OVERLAP_SIDE_MAX: 0.22, OVERLAP_MID_MAX: 0.30, SIDE_VISIBLE_MIN_MM: 4.5, SIDE_HEIGHT_MIN: 0.72, GAP_MIN_MM: 0.35, COUNTERS_MIN: 0.9, BOX_OVERLAP_MAX: 0.7, BOX_OVERLAP_MIN: 0.06
   };
   /* The inner openings that count when it is asked whether a neighbour's stroke has closed them: those of 0.5 mm2 and more (a quarter of the counters of the real Left / Mid / Right alphabets are smaller: the eyes of a flourish,
@@ -568,22 +569,24 @@
     let layout = null;
     if (!N) adjSizes(NORMS.STRETCH_CAP);
     if (N) {
-      const [pl, pm, pr] = plan, cap = N.STRETCH_CAP, clampF = (v) => Math.min(1 + cap, Math.max(1 - cap, v));
+      const [pl, pm, pr] = plan, cap = N.STRETCH_CAP, clampF = (v) => Math.min(1 + cap, Math.max(1 - cap, v)), clampS = (v) => Math.min(1 + cap, Math.max(1 - N.SIDE_NARROW_CAP, v));
       // heights: the sides' BODY is SIDE_HEIGHT_RATIO of the centre's (1 / centerRatio), the ink of a side never taller than 95 % of the centre's, never shrunk more than 15 % from its drawn size
       const midBH = mid.bh * cs, ratio = 1 / o.centerRatio;
-      for (const q of [pl, pr]) { let v = ratio * midBH / q.p.bh; v = Math.min(v, 0.95 * mid.h * cs / q.p.h); q.s = Math.min(1.25, Math.max(0.85 * q.s, v)); }
+      // ROUND 4 (silhouette): the side's INK height is LIMITS.SIDE_INK_TARGET (0.90) of the centre's (ESG .88, HEY .93), never below the floor 0.86 nor with a body taller than 0.90 of the centre's body; the old rule (the body 0.80 of the
+      // centre's) left the sides of words whose letters have little ink beyond the body small and floating
+      for (const q of [pl, pr]) { const inkT = LIMITS.SIDE_INK_TARGET * mid.h * cs / q.p.h, inkLo = (LIMITS.SIDE_INK[0] + 0.01) * mid.h * cs / q.p.h, bodyHi = 0.90 * midBH / q.p.bh; q.s = Math.min(1.35, Math.max(0.85 * q.s, inkLo, Math.min(inkT, bodyHi))); }
       // the centre's width: into MID_WIDTH_MIN..MAX of the median centre
       const med = (mid.em ? N.MID_BODY_W_OVER_EM_MEDIAN * mid.em * SC : N.MID_BODY_W_OVER_INKH_MEDIAN * mid.h) * cs, mBW = mid.bw * cs;
       pm.need = Math.min(Math.max(mBW, N.MID_WIDTH_MIN * med), N.MID_WIDTH_MAX * med) / mBW; pm.f = clampF(pm.need);
       // the sides' width: into SIDE_WIDTH_MIN..MAX of the centre's body width (widened `wide` when that is inside)
       const mBW2 = mBW * pm.f;
-      for (const q of [pl, pr]) { const bw = q.p.bw * q.s; q.need = Math.min(Math.max(wide, N.SIDE_WIDTH_MIN * mBW2 / bw, (N.SIDE_VISIBLE_MIN_MM + 0.4) / MM * SC / bw), N.SIDE_WIDTH_MAX * mBW2 / bw); q.f = clampF(q.need); if (q.need > q.f + 0.005) { const boost = Math.min(q.need / q.f, (ratio + N.SIDE_HEIGHT_TOL) / ratio, 1.05); q.s *= boost; q.f = clampF(q.need / boost) ; } }
+      for (const q of [pl, pr]) { const bw = q.p.bw * q.s; q.need = Math.min(Math.max(wide, N.SIDE_WIDTH_MIN * mBW2 / bw, (N.SIDE_VISIBLE_MIN_MM + 0.4) / MM * SC / bw), N.SIDE_WIDTH_MAX * mBW2 / bw); q.f = clampS(q.need); if (q.need > q.f + 0.005) { const boost = Math.min(q.need / q.f, (ratio + N.SIDE_HEIGHT_TOL) / ratio, 1.05); q.s *= boost; q.f = clampS(q.need / boost) ; } }
       adjSizes(cap);
       // the whole: laid out for ASPECT_TARGET; when even the largest overlap leaves it outside the band the three are stretched together (within the caps)
       const Hp = mid.h * cs, wOf = q => q.p.w * q.s * q.f, ovOf = () => 1 - (N.ASPECT_TARGET * Hp - wOf(pm)) / (wOf(pl) + wOf(pr));
       let ov = ovOf(), fa = 1;
       const widthAt = o2 => wOf(pm) + (1 - o2) * (wOf(pl) + wOf(pr));
-      if (ov > N.BOX_OVERLAP_MAX) { const want = Math.min(N.ASPECT_MAX * Hp, Math.max(N.ASPECT_MIN * Hp, widthAt(N.BOX_OVERLAP_MAX))), lo = Math.max(...plan.map(q => (1 - cap) / q.f)); fa = Math.max(lo, want / widthAt(N.BOX_OVERLAP_MAX)); }
+      if (ov > N.BOX_OVERLAP_MAX) { const want = Math.min(N.ASPECT_MAX * Hp, Math.max(N.ASPECT_MIN * Hp, widthAt(N.BOX_OVERLAP_MAX))), lo = Math.max(...plan.map((q, i) => (1 - (i === 1 ? cap : N.SIDE_NARROW_CAP)) / q.f)); fa = Math.max(lo, want / widthAt(N.BOX_OVERLAP_MAX)); }
       else if (ov < N.BOX_OVERLAP_MIN) { const want = Math.min(N.ASPECT_MAX * Hp, widthAt(N.BOX_OVERLAP_MIN)), hi = Math.min(...plan.map(q => (1 + cap) / q.f)); fa = Math.min(hi, want / widthAt(N.BOX_OVERLAP_MIN)); }
       if (fa !== 1) { for (const q of plan) q.f *= fa; ov = ovOf(); }
       layout = { overlap: Math.min(N.BOX_OVERLAP_MAX, Math.max(N.BOX_OVERLAP_MIN, ov)), aspectAsked: N.ASPECT_TARGET, commonStretch: fa };
@@ -619,18 +622,27 @@
     // valign 'body' (the default with metrics): both sides on ONE baseline, raised so that the two side letters' BODY CENTRES (the measure of bodyCentre: the central 70 % of the ink, thin protrusions weighed down) stand on average
     // LIMITS.BODY_TARGET_MM above the centre letter's; 'center': the sides' height above their baseline centred on the centre letter's, the baseline offset kept inside a window (the first rule of this engine); 'baseline': on the centre's baseline
     const BODYM = metricsOn && N && o.valign === 'body', cyBody = P => bodyCentre(E, P.sreg).cy;
-    // the target offset of the sides' body centres above the centre's (the approved ESG and HEY stand 0.3 to 0.5 mm high): LIMITS.BODY_TARGET_MM, less when the two side letters' bodies sit so differently on their baseline that
-    // the pair would then be pushed past the limit (they share one baseline: the two offsets are the target plus and minus half that difference)
-    const bodyTarget = () => { const dHalf = Math.abs((cyBody(PL) - PL.base) - (cyBody(PR) - PR.base)) / 2 * MM / SC; return Math.max(0, Math.min(LIMITS.BODY_TARGET_MM, LIMITS.BODY_OFFSET_MM - 0.05 - dHalf)) / MM * SC; };
-    let baselineY = metricsOn ? (o.valign === 'baseline' ? midBase : BODYM ? cyBody(PM) + bodyTarget() + ((PL.base - cyBody(PL)) + (PR.base - cyBody(PR))) / 2 : midBase + (midTop - sideNom) / 2) : 0;
-    if (metricsOn && N && o.valign !== 'baseline') {      // (the sides never stand out beyond the centre letter's ink above or below: the baseline gives way, both sides together, so they stay level)
+    // ROUND 4 (Paul: "align the bodies"): in 'body' mode each side letter stands on its own height (no shared baseline): its body centre LIMITS.BODY_TARGET_MM above the centre letter's, then moved inside the window of the other
+    // measures (the body centre within BODY_OFFSET_MM, the silhouette centre within SIL_OFFSET_MM, their mean within COMBINED_MM, the side never more than 0.3 mm beyond the centre letter's ink, its bottom no higher than
+    // BOTTOM_CLEAR_MM above the centre letter's), the nearest to the target
+    const sideDyCache = new WeakMap(), mmS = v => v / MM * SC, nearInk = 0.3;
+    const sideDy = P => {
+      let h = sideDyCache.get(P.sreg); if (h != null) return h;
+      const dB = cyBody(P) - cyBody(PM), dS = P.h / 2 - PM.h / 2, dC = (dB + dS) / 2, m = 0.05;      // (offsets at dy = 0, the window kept 0.05 mm inside its limits)
+      let lo = Math.max(-mmS(LIMITS.BODY_OFFSET_MM - m) - dB, -mmS(LIMITS.SIL_OFFSET_MM - m) - dS, -mmS(LIMITS.COMBINED_MM - m) - dC, -mmS(nearInk)),
+          hi = Math.min(mmS(LIMITS.BODY_OFFSET_MM - m) - dB, mmS(LIMITS.SIL_OFFSET_MM - m) - dS, mmS(LIMITS.COMBINED_MM - m) - dC, PM.h - P.h + mmS(nearInk));
+      if (hi > lo && mmS(LIMITS.BOTTOM_CLEAR_MM) >= lo) hi = Math.min(hi, mmS(LIMITS.BOTTOM_CLEAR_MM));
+      const t = mmS(LIMITS.BODY_TARGET_MM) - dB; h = lo > hi ? (lo + hi) / 2 : Math.min(hi, Math.max(lo, t)); sideDyCache.set(P.sreg, h); return h;
+    };
+    let baselineY = metricsOn ? (o.valign === 'baseline' ? midBase : midBase + (midTop - sideNom) / 2) : 0;
+    if (metricsOn && N && o.valign !== 'baseline' && !BODYM) {      // (the sides never stand out beyond the centre letter's ink above or below: the baseline gives way, both sides together, so they stay level)
       const lo = Math.max(PL.base, PR.base), hi = PM.h - Math.max(PL.h - PL.base, PR.h - PR.base);
       if (lo <= hi) baselineY = Math.min(hi, Math.max(lo, baselineY));
     }
     // MONOESG rule 1 (by the font baseline: the sides stand on a baseline raised BASELINE_OFFSET_MM above the centre letter's, as in ESG and HEY): the window the offset may lie in
     const OFF_LO = LIMITS.BASELINE_OFFSET_MM[0] / MM * SC, OFF_HI = LIMITS.BASELINE_OFFSET_MM[1] / MM * SC;
     if (metricsOn && N && o.valign === 'center') baselineY = midBase + Math.min(OFF_HI, Math.max(OFF_LO, baselineY - midBase));
-    const dyOf = P => metricsOn ? Math.round(baselineY - P.base) : (o.valign === 'baseline' ? 0 : Math.round((PM.h - P.h) / 2));
+    const dyOf = P => BODYM ? Math.round(sideDy(P)) : metricsOn ? Math.round(baselineY - P.base) : (o.valign === 'baseline' ? 0 : Math.round((PM.h - P.h) / 2));
     const xOf = (P, side, ov) => side === 'left' ? Math.round(ov * P.w) - P.w : PM.w - Math.round(ov * P.w);
 
     const setSide = (k, V) => { placed0[k] = V; if (k === 0) PL = V; else PR = V; };
@@ -844,7 +856,7 @@
     function reachBoth(keep, jMax) {
       let bestPair = null, kOk = null;
       for (const j of [0, 1, -1, 2, -2, 3, -3].filter(v => Math.abs(v) <= Math.min(REACH_DYN, jMax == null ? 9 : jMax))) {
-        if (N && j !== 0) { const dyS = Math.max(1, Math.round(REACH_DY * PM.h)); if (metricsOn ? ![PL, PR].every(P => { const off = BODYM ? dyOf(P) + j * dyS + cyBody(P) - cyBody(PM) : dyOf(P) + j * dyS + P.base - PM.base, lo2 = BODYM ? -LIMITS.BODY_OFFSET_MM / MM * SC : OFF_LO, hi2 = BODYM ? LIMITS.BODY_OFFSET_MM / MM * SC : OFF_HI; return off >= lo2 - 1 && off <= hi2 + 1 && dyOf(P) + j * dyS + P.h <= PM.h + (BODYM ? 0.3 : 1.0) / MM * SC && dyOf(P) + j * dyS >= -(BODYM ? 0.3 : 1.0) / MM * SC; }) : Math.abs(j) > 1) continue; }      // (a nudge never takes the sides' baseline out of its window, nor a side out beyond the centre letter)      // (a nudge never lifts a side letter out beyond the centre letter's ink)
+        if (N && j !== 0) { const dyS = Math.max(1, Math.round(REACH_DY * PM.h)); if (metricsOn ? ![PL, PR].every(P => { const dyj = dyOf(P) + j * dyS; if (BODYM) { const bo = dyj + cyBody(P) - cyBody(PM), so = dyj + P.h / 2 - PM.h / 2; return Math.abs(bo) <= mmS(LIMITS.BODY_OFFSET_MM * 0.8) + 1 && Math.abs(so) <= mmS(LIMITS.SIL_OFFSET_MM * 0.8) + 1 && Math.abs((bo + so) / 2) <= mmS(LIMITS.COMBINED_MM * 0.8) + 1 && dyj + P.h <= PM.h + mmS(0.3) && dyj >= -mmS(0.3); } const off = dyj + P.base - PM.base; return off >= OFF_LO - 1 && off <= OFF_HI + 1 && dyj + P.h <= PM.h + 1.0 / MM * SC && dyj >= -1.0 / MM * SC; }) : Math.abs(j) > 1) continue; }      // (a nudge never takes a side out of the window of the alignment rules, nor out beyond the centre letter)
         if (j === 0 && keep && !kOk) { kOk = [0, 2].map(k => { const q = pairQ(keep[k], keep[k].dx, keep[k].dy, NECK_OK_MM, false, true, true); return q && q.good ? { x: keep[k].dx, y: keep[k].dy, ov: null, j: 0, q, keep: true } : null; }); }
         const l = j === 0 && kOk && kOk[0] || reachOf(PL, 'left', j), r = j === 0 && kOk && kOk[1] || reachOf(PR, 'right', j);
         if (!l || !r) continue;
@@ -961,7 +973,7 @@
         for (let i = 0; i < pts.length; i += stride) {
           const pt = pts[i]; let bd = Infinity, bq = null, inside = false;
           for (const r of cM) { if (C.Clipper.PointInPolygon(pt, r) !== 0) { inside = true; break; } for (let j = 0; j < r.length; j++) { const h = toSeg(pt, r[j], r[(j + 1) % r.length]); if (h.d < bd) { bd = h.d; bq = { X: h.X, Y: h.Y }; } } }
-          if (inside || !bq || bd > (N ? (LIMITS.BAR_MAX_MM + 2 * rr) / MM * SC : BAR_MAX) || bd <= 0) continue;
+          if (inside || !bq || bd > (N ? (LIMITS.BAR_REACH_MM + 2 * rr) / MM * SC : BAR_MAX) || bd <= 0) continue;
           if (exist.length && nearEx(bq) < gapSC) continue;
           if (taken.some(t => Math.hypot(t.X - bq.X, t.Y - bq.Y) < gapSC)) continue;
           if (zone) { const u = uOf(bq.Y, span); if (u < zone[0] - 1e-9 || u > zone[1] + 1e-9) continue; }
@@ -1010,12 +1022,28 @@
         if (!att2.connected) return failure('the adjustment moves a letter away from its neighbour: the letters no longer touch', { tries, searched, adjust: adjustApplied });
         best = Object.assign({}, best, { att: att2, g: guards(att2), joins: [0, 2].map(k => widestOf(E.meet(att2.pl[k].rg, att2.pl[1].rg), 1.0)), nc: ncOf(att2.pl), bars: bars2 });
       } }
+    /* CONNECTION BEATS BEAUTY (round 4): a pair that cannot get its top AND bottom contact, not even with a tie bar across the nearest gap (up to LIMITS.BAR_REACH_MM), has its side letter brought nearer the centre letter,
+       in steps of 0.4 mm up to 2 mm, until a bar can make the missing contact (the overlap rule may then break: a letter held at one end is the worse fault) */
+    let preDc = null;
+    if (need > 1 && balOn && ncm(best) < need && N) {
+      let dc0 = addContacts(best.att.pl, best.g);
+      if (!dc0.bal[0] || !dc0.bal[1]) {
+        for (const st of [0.4, 0.8, 1.2, 1.6, 2.0]) {
+          const d = Math.round(st / MM * SC), pl2 = best.att.pl.map((P, i) => (i === 1 || (i === 0 ? dc0.bal[0] : dc0.bal[1]) ? P : Object.assign({}, P, { dx: P.dx + (i === 0 ? d : -d), rg: shift(P.rg, i === 0 ? d : -d, 0), srg: shift(P.srg, i === 0 ? d : -d, 0) })));
+          const a2 = attemptPl(pl2, best.att.ov); tries++; if (!a2.connected) continue;
+          const g2 = guards(a2); if (g2.holesKept < Math.min(HOLES_MIN, best.g.holesKept) - 1e-9) continue;
+          const dc2 = addContacts(a2.pl, g2);
+          if (dc2.bal[0] && dc2.bal[1]) { best = Object.assign({}, best, { att: a2, g: g2 }); dc0 = dc2; notes.push(`a side letter was brought ${st} mm nearer the centre letter so that a tie bar can hold it at the top and the bottom`); break; }
+        }
+      }
+      preDc = dc0;
+    }
     const contactInfo = { leftMiddle: [], middleRight: [] };      // (where each contact is: y of its middle in 0.001 pt, before the piece is moved to 0,0; the natural ones and the tie bars' own)
     const contacts = { leftMiddle: [], middleRight: [] };      // (the natural contacts, in mm2 of the overlap: before any tie bar)
     [['leftMiddle', 0], ['middleRight', 2]].forEach(([nm, k]) => { const inter = E.meet(best.att.pl[k].rg, best.att.pl[1].rg); const cl = clustersOf(inter); contacts[nm] = cl.map(c => Math.round(E.netArea(E.meet(inter, [c.ring])) / SC / SC * MM * MM * 100) / 100); contactInfo[nm] = cl.map(c => { const part = E.meet(inter, [c.ring]), bb = bboxOf(part); return { x: (bb[0] + bb[2]) / 2, y: (bb[1] + bb[3]) / 2, w: widestOf(part, 1.0), kind: 'natural' }; }); });
     let tieBars = [0, 0], longContact = [false, false];
     if (need > 1 && ncm(best) < need) {
-      const dc = addContacts(best.att.pl, best.g);
+      const dc = preDc || addContacts(best.att.pl, best.g);
       if (dc.fail != null && !balOn) return failure(`the ${dc.fail === 0 ? 'Left and Middle' : 'Middle and Right'} letters can touch in only one place and no tie bar fits between them`, { tries, searched });
       const att2 = attemptPl(dc.pl, best.att.ov); tries++;
       best = Object.assign({}, best, { att: att2, g: guards(att2), nc: [dc.long[0] || dc.bal[0] ? need : need - 1, dc.long[1] || dc.bal[1] ? need : need - 1] }); tieBars = dc.added; longContact = dc.long; contacts.leftMiddle.push(...dc.areas[0]); contacts.middleRight.push(...dc.areas[1]); contactInfo.leftMiddle.push(...dc.ys[0].map(c => ({ x: c.x, y: c.y, w: o.barMm, len: c.len, kind: 'bar' }))); contactInfo.middleRight.push(...dc.ys[1].map(c => ({ x: c.x, y: c.y, w: o.barMm, len: c.len, kind: 'bar' })));
@@ -1056,7 +1084,7 @@
     let fx = 1; const aspect0 = (b[2] - b[0]) / H;
     if (N && (aspect0 < N.ASPECT_MIN + 0.04 || aspect0 > N.ASPECT_MAX - 0.04)) {
       const medW = (mid.em ? N.MID_BODY_W_OVER_EM_MEDIAN * mid.em * SC : N.MID_BODY_W_OVER_INKH_MEDIAN * mid.h) * cs, mW = mid.bw * cs * plan[1].f;
-      const capOf = i => (i !== 1 && adjustApplied[i].sx > 1.0001 ? 0.5 : N.STRETCH_CAP), capHi = Math.min(...plan.map((q, i) => (1 + capOf(i)) / q.f)), capLo = Math.max(...plan.map((q, i) => (1 - capOf(i)) / q.f));      // (the cap is never passed)
+      const capOf = i => (i !== 1 && adjustApplied[i].sx > 1.0001 ? 0.5 : N.STRETCH_CAP), capLoOf = i => (i !== 1 ? Math.max(capOf(i), N.SIDE_NARROW_CAP) : capOf(i)), capHi = Math.min(...plan.map((q, i) => (1 + capOf(i)) / q.f)), capLo = Math.max(...plan.map((q, i) => (1 - capLoOf(i)) / q.f));      // (the cap is never passed)
       const bandHi = N.MID_WIDTH_MAX * medW / mW, bandLo = N.MID_WIDTH_MIN * medW / mW;
       fx = Math.min(capHi, Math.max(capLo, Math.min(bandHi, Math.max(bandLo, N.ASPECT_TARGET / aspect0))));
       if (Math.abs(fx - 1) < 0.005) fx = 1;
@@ -1064,19 +1092,35 @@
     const W = (b[2] - b[0]) * fx;
     const toPt = r => { const pts = r.map(q => [(q.X - b[0]) / SC * fx, (q.Y - b[1]) / SC]); return pts; };
     /* the hard rules and the distance to ESG, from plain measures (the same numbers whether they come from a finished build or from the quick look of autoFit at a moved layout) */
-    const NAMES3 = ['L', 'M', 'R'], RULE_OF = { vertical: 'level', sideHeight: 'size', sideWidth: 'size', centreWidth: 'size', visibleWidth: 'size', aspect: 'size', overlap: 'legible', spacing: 'legible', visibleOutline: 'legible', crowding: 'legible', counters: 'counters', contacts: 'contacts' };
+    const NAMES3 = ['L', 'M', 'R'], RULE_OF = { vertical: 'level', sideHeight: 'size', sideMatch: 'size', sideWidth: 'size', centreWidth: 'size', visibleWidth: 'size', aspect: 'size', overlap: 'legible', spacing: 'legible', visibleOutline: 'legible', crowding: 'legible', counters: 'counters', contacts: 'contacts' };
     const mmv0 = v => v / SC * MM;
+    // the alignment measures of three placed letters, from their ink boxes and body centres (SC units): the silhouette (ink box) and the body (bodyCentre) of each side against the centre letter's
+    const boxOf = reg => bboxOf(reg.filter(r => E.area(r) > 0));
+    const alignOf = (boxes, cyB) => {
+      const h = boxes.map(b => b[3] - b[1]), c = boxes.map(b => (b[1] + b[3]) / 2), bot = boxes.map(b => b[1]), q = v => Math.round(v * 100) / 100;
+      const two = f => ({ L: q(mmv0(f(0))), R: q(mmv0(f(2))) });
+      return { inkHeightRatio: { L: Math.round(h[0] / h[1] * 1000) / 1000, R: Math.round(h[2] / h[1] * 1000) / 1000 }, clearanceMm: two(i => h[1] - h[i]), silhouetteOffsetMm: two(i => c[i] - c[1]), bottomClearanceMm: two(i => bot[i] - bot[1]), bodyOffsetMm: two(i => cyB[i] - cyB[1]),
+        lrBodyMm: q(mmv0(Math.abs(cyB[0] - cyB[2]))), lrInkDiff: Math.round(Math.abs(h[0] - h[2]) / Math.max(h[0], h[2]) * 1000) / 1000 };
+    };
     const rulesOf = m => {
       const { piece, ratios, align, overlap, outlineVisible, crowdTotal, countersOpen, balanced, maxBar } = m, visible = m.visible, T = o.norms, NAMES = NAMES3, r2 = x => Math.round(x * 100) / 100;
       const v = [], bad = (k, c, text) => { if (c) v.push({ rule: RULE_OF[k], key: k, text }); };
-      bad('vertical', Math.abs(align.bodyOffsetMm.L) > LIMITS.BODY_OFFSET_MM + 1e-9 || Math.abs(align.bodyOffsetMm.R) > LIMITS.BODY_OFFSET_MM + 1e-9 || align.lrDiffMm > LIMITS.ALIGN_LR_MM + 1e-9 || [align.aboveMm.L, align.aboveMm.R, align.belowMm.L, align.belowMm.R].some(x => x > LIMITS.ALIGN_BODY_MM + 1e-9), `a side letter's body centre stands ${align.bodyOffsetMm.L} / ${align.bodyOffsetMm.R} mm above the centre letter's (limit +-${LIMITS.BODY_OFFSET_MM}), or ${Math.max(align.aboveMm.L, align.aboveMm.R, align.belowMm.L, align.belowMm.R)} mm beyond its body, or the two sides' baselines are ${align.lrDiffMm} mm apart`);
-      bad('sideHeight', [ratios.sideHeightL, ratios.sideHeightR].some(x => x < LIMITS.SIDE_HEIGHT[0] - 1e-9 || x > LIMITS.SIDE_HEIGHT[1] + 1e-9), `a side letter is ${ratios.sideHeightL} / ${ratios.sideHeightR} of the centre in height (limit ${LIMITS.SIDE_HEIGHT[0]} to ${LIMITS.SIDE_HEIGHT[1]})`);
+      const bo = align.bodyOffsetMm, so = align.silhouetteOffsetMm, ar = align.inkHeightRatio, cl = align.clearanceMm, comb = k => (bo[k] + so[k]) / 2;
+      bad('vertical', ['L', 'R'].some(k => Math.abs(bo[k]) > LIMITS.BODY_OFFSET_MM + 1e-9 || Math.abs(so[k]) > LIMITS.SIL_OFFSET_MM + 1e-9 || Math.abs(comb(k)) > LIMITS.COMBINED_MM + 1e-9) || align.lrBodyMm > LIMITS.LR_BODY_MM + 1e-9,
+        `a side letter stands ${bo.L} / ${bo.R} mm (body centre) and ${so.L} / ${so.R} mm (silhouette centre) above the centre letter's (limits +-${LIMITS.BODY_OFFSET_MM} / +-${LIMITS.SIL_OFFSET_MM}, their mean +-${LIMITS.COMBINED_MM}), or the two sides' bodies are ${align.lrBodyMm} mm apart (limit ${LIMITS.LR_BODY_MM})`);
+      bad('sideHeight', [ar.L, ar.R].some(x => x < LIMITS.SIDE_INK[0] - 1e-9 || x > LIMITS.SIDE_INK[1] + 1e-9) || [cl.L, cl.R].some(x => x > LIMITS.CLEARANCE_MM + 1e-9),
+        `a side letter is ${ar.L} / ${ar.R} of the centre in ink height (limit ${LIMITS.SIDE_INK[0]} to ${LIMITS.SIDE_INK[1]}, at most ${LIMITS.CLEARANCE_MM} mm shorter)`);
+      bad('sideMatch', align.lrInkDiff > LIMITS.INK_LR + 1e-9, `the two side letters differ ${Math.round(align.lrInkDiff * 100)} % in ink height (limit ${Math.round(LIMITS.INK_LR * 100)} %)`);
       bad('sideWidth', [ratios.sideWidthL, ratios.sideWidthR].some(x => x < LIMITS.SIDE_WIDTH[0] - 1e-9 || x > LIMITS.SIDE_WIDTH[1] + 1e-9), `a side letter is ${ratios.sideWidthL} / ${ratios.sideWidthR} of the centre in width (limit ${LIMITS.SIDE_WIDTH[0]} to ${LIMITS.SIDE_WIDTH[1]})`);
       bad('centreWidth', ratios.centreWidthVsMedian < LIMITS.CENTRE_WIDTH[0] - 1e-9 || ratios.centreWidthVsMedian > LIMITS.CENTRE_WIDTH[1] + 1e-9, `the centre letter is ${ratios.centreWidthVsMedian} of the median centre in width (limit ${LIMITS.CENTRE_WIDTH[0]} to ${LIMITS.CENTRE_WIDTH[1]})`);
       bad('visibleWidth', visible.L < LIMITS.VISIBLE_MM - 1e-9 || visible.R < LIMITS.VISIBLE_MM - 1e-9, `a side letter shows only ${Math.min(visible.L, visible.R)} mm of its width beside the centre (limit ${LIMITS.VISIBLE_MM} mm)`);
       bad('aspect', piece.aspect < LIMITS.ASPECT[0] - 1e-9 || piece.aspect > LIMITS.ASPECT[1] + 1e-9, `the monogram is ${piece.aspect} as wide as it is high (limit ${LIMITS.ASPECT[0]} to ${LIMITS.ASPECT[1]})`);
       bad('overlap', Math.max(overlap.L, overlap.R) > LIMITS.OVERLAP + 1e-9 || overlap.M > LIMITS.OVERLAP_CENTRE + 1e-9, `a letter lies ${Math.round(Math.max(overlap.L, overlap.M, overlap.R) * 100)} % inside the others (limit ${Math.round(LIMITS.OVERLAP * 100)} % for a side letter, ${Math.round(LIMITS.OVERLAP_CENTRE * 100)} % for the centre)`);
-      bad('spacing', maxBar > LIMITS.BAR_MAX_MM + 1e-9, `a tie bar bridges ${maxBar} mm (limit ${LIMITS.BAR_MAX_MM} mm): the side letter stands too far from the centre letter`);
+      const warn = [], wn = (k, c, text) => { if (c) warn.push({ key: k, text }); };
+      wn('spacing', maxBar > LIMITS.BAR_MAX_MM + 1e-9, `a tie bar bridges ${maxBar} mm (more than ${LIMITS.BAR_MAX_MM} mm): the side letter stands far from the centre letter`);
+      wn('bodyHeight', [ratios.sideHeightL, ratios.sideHeightR].some(x => x < LIMITS.SIDE_HEIGHT[0] - 1e-9 || x > LIMITS.SIDE_HEIGHT[1] + 1e-9), `a side letter's body is ${ratios.sideHeightL} / ${ratios.sideHeightR} of the centre's in height (band ${LIMITS.SIDE_HEIGHT[0]} to ${LIMITS.SIDE_HEIGHT[1]})`);
+      wn('bottomClearance', align.bottomClearanceMm.L > LIMITS.BOTTOM_CLEAR_MM + 1e-9 || align.bottomClearanceMm.R > LIMITS.BOTTOM_CLEAR_MM + 1e-9, `a side letter's ink starts ${Math.max(align.bottomClearanceMm.L, align.bottomClearanceMm.R)} mm above the centre letter's lowest ink (more than ${LIMITS.BOTTOM_CLEAR_MM} mm)`);
+      wn('widthMatch', Math.abs(ratios.sideWidthL - ratios.sideWidthR) / Math.max(ratios.sideWidthL, ratios.sideWidthR) > LIMITS.WIDTH_LR + 1e-9, `the two side letters differ more than ${Math.round(LIMITS.WIDTH_LR * 100)} % in body width`);
       bad('visibleOutline', outlineVisible.L < LIMITS.VISIBLE_OUTLINE - 1e-9 || outlineVisible.R < LIMITS.VISIBLE_OUTLINE - 1e-9, `only ${Math.round(Math.min(outlineVisible.L, outlineVisible.R) * 100)} % of a side letter's outline lies outside the other letters (limit ${Math.round(LIMITS.VISIBLE_OUTLINE * 100)} %)`);
       bad('crowding', crowdTotal > LIMITS.CROWD_MM + 1e-9, `${r2(crowdTotal)} mm of strokes run closer than ${T.GAP_MIN_MM} mm without touching (limit ${LIMITS.CROWD_MM} mm)`);
       bad('counters', NAMES.some(n => countersOpen[n] != null && countersOpen[n] < LIMITS.COUNTERS - 1e-9), `a letter keeps only ${Math.round(Math.min(...NAMES.map(n => countersOpen[n] == null ? 1 : countersOpen[n])) * 100)} % of its inner openings open (limit ${Math.round(LIMITS.COUNTERS * 100)} %)`);
@@ -1087,26 +1131,28 @@
         + d2(ratios.centreWidthVsMedian, P0.centreWidthVsMedian, 0.04) + d2(overlap.L, P0.overlap[0], 0.05) + d2(overlap.M, P0.overlap[1], 0.05) + d2(overlap.R, P0.overlap[2], 0.05) + d2(visible.L, P0.visibleMm[0], 0.5) + d2(visible.R, P0.visibleMm[1], 0.5) + d2(crowdTotal, P0.crowdMm, 1)));
       // how badly: each broken rule's excess in units of "a little", the harm to letters (counters, overlap) counted triple; autoFit minimises violations, then this, then the distance
       const lo = (x, l) => Math.max(0, l - x), hi = (x, l) => Math.max(0, x - l), win = (x, [a, b]) => (x == null ? 0 : lo(x, a) + hi(x, b));
-      const severity = (hi(Math.abs(align.bodyOffsetMm.L), LIMITS.BODY_OFFSET_MM) + hi(Math.abs(align.bodyOffsetMm.R), LIMITS.BODY_OFFSET_MM)) / 0.5 + hi(align.lrDiffMm, LIMITS.ALIGN_LR_MM) / 0.15 + [align.aboveMm.L, align.aboveMm.R, align.belowMm.L, align.belowMm.R].reduce((a, x) => a + hi(x, LIMITS.ALIGN_BODY_MM), 0) / 0.5
+      const severity = ['L', 'R'].reduce((a, k) => a + hi(Math.abs(bo[k]), LIMITS.BODY_OFFSET_MM) + hi(Math.abs(so[k]), LIMITS.SIL_OFFSET_MM) + hi(Math.abs(comb(k)), LIMITS.COMBINED_MM) + lo(ar[k], LIMITS.SIDE_INK[0]) * 8 + hi(cl[k], LIMITS.CLEARANCE_MM), 0) / 0.5 + hi(align.lrBodyMm, LIMITS.LR_BODY_MM) / 0.4 + hi(align.lrInkDiff, LIMITS.INK_LR) / 0.05
         + (win(ratios.sideHeightL, LIMITS.SIDE_HEIGHT) + win(ratios.sideHeightR, LIMITS.SIDE_HEIGHT)) / 0.05 + (win(ratios.sideWidthL, LIMITS.SIDE_WIDTH) + win(ratios.sideWidthR, LIMITS.SIDE_WIDTH)) / 0.1 + win(ratios.centreWidthVsMedian, LIMITS.CENTRE_WIDTH) / 0.1
         + (lo(visible.L, LIMITS.VISIBLE_MM) + lo(visible.R, LIMITS.VISIBLE_MM)) / 0.5 + win(piece.aspect, LIMITS.ASPECT) / 0.05 + 3 * (hi(Math.max(overlap.L, overlap.R), LIMITS.OVERLAP) + hi(overlap.M, LIMITS.OVERLAP_CENTRE)) / 0.1
         + (lo(outlineVisible.L, LIMITS.VISIBLE_OUTLINE) + lo(outlineVisible.R, LIMITS.VISIBLE_OUTLINE)) / 0.1 + hi(crowdTotal, LIMITS.CROWD_MM) / 3 + 3 * NAMES.reduce((a, n) => a + (countersOpen[n] == null ? 0 : lo(countersOpen[n], LIMITS.COUNTERS)), 0) / 0.1 + hi(maxBar, LIMITS.BAR_MAX_MM) / 0.5 + (balanced.LM ? 0 : 1) + (balanced.MR ? 0 : 1);
-      return { violations: v, distance, severity: r2(Math.min(severity, 40)) };
+      // the autoFit tie-breakers after the violations: how unlike the two sides are (ink height, body width, body centre) and how far from the centre letter's centre
+      const symmetry = align.lrInkDiff / 0.05 + Math.abs(ratios.sideWidthL - ratios.sideWidthR) / Math.max(ratios.sideWidthL, ratios.sideWidthR, 0.01) / 0.15 + align.lrBodyMm / 0.4, centring = (Math.abs(bo.L) + Math.abs(bo.R) + Math.abs(so.L) + Math.abs(so.R)) / 4;
+      return { violations: v, warnings: warn, distance, severity: r2(Math.min(severity, 40)), symmetry: r2(symmetry), centring: r2(centring) };
     };
     /* report.metrics: every number the hard rules are checked with, measured on the three letters as placed (their own ink, no tie bar), in mm in the finished piece (x right, y up from its bottom left). The sheet and the
        callers read these, nothing is recomputed outside. contacts: where each solid contact lies (u: 0 at the bottom, 1 at the top of the vertical span both letters' bodies share), balanced = at least two, one in the
        upper 40 % and one in the lower 40 %, at least 0.45 of the span apart. violations: the keys of the hard rules (LIMITS) that this word breaks. */
     const metrics = !N ? null : (() => {
       const toP = reg => reg.map(r => r.map(q => ({ X: Math.round((q.X - b[0]) * fx), Y: q.Y - b[1] }))), mmv = v => v / SC * MM, r2 = v => Math.round(v * 100) / 100, r3 = v => Math.round(v * 1000) / 1000;
-      const fullLets = att.pl.map(P => toP(shift(P.region, P.dx, P.dy))), fullFinal = toP(att.rings), lets = fullLets.map(simp), NAMES = ['L', 'M', 'R'], T = o.norms, RULE_OF = { vertical: 'level', sideHeight: 'size', sideWidth: 'size', centreWidth: 'size', visibleWidth: 'size', aspect: 'size', overlap: 'legible', spacing: 'legible', visibleOutline: 'legible', crowding: 'legible', counters: 'counters', contacts: 'contacts' };
+      const fullLets = att.pl.map(P => toP(shift(P.region, P.dx, P.dy))), fullFinal = toP(att.rings), lets = fullLets.map(simp), NAMES = ['L', 'M', 'R'], T = o.norms, RULE_OF = { vertical: 'level', sideHeight: 'size', sideMatch: 'size', sideWidth: 'size', centreWidth: 'size', visibleWidth: 'size', aspect: 'size', overlap: 'legible', spacing: 'legible', visibleOutline: 'legible', crowding: 'legible', counters: 'counters', contacts: 'contacts' };
       const bx = lets.map(r => centralRange(r, 0, T.BODY_TRIM) || [0, 0]), by = lets.map(r => centralRange(r, 1, T.BODY_TRIM) || [0, 0]);
       const body = {}; NAMES.forEach((n, i) => { body[n] = { wMm: r2(mmv(bx[i][1] - bx[i][0])), hMm: r2(mmv(by[i][1] - by[i][0])), cxMm: r2(mmv((bx[i][0] + bx[i][1]) / 2)), cyMm: r2(mmv((by[i][0] + by[i][1]) / 2)), yLoMm: r2(mmv(by[i][0])), yHiMm: r2(mmv(by[i][1])) }; });
       const medMm = mmv((mid.em ? T.MID_BODY_W_OVER_EM_MEDIAN * mid.em * SC : T.MID_BODY_W_OVER_INKH_MEDIAN * mid.h) * cs);
       const ratios = { sideHeightL: r2(body.L.hMm / body.M.hMm), sideHeightR: r2(body.R.hMm / body.M.hMm), sideWidthL: r2(body.L.wMm / body.M.wMm), sideWidthR: r2(body.R.wMm / body.M.wMm), centreWidthVsMedian: r2(body.M.wMm / medMm) };
       const base = [pL, pR].map(P => (P.base == null ? null : P.dy + P.base));
       const offs = [pL, pR].map(P => (P.base == null || PM.base == null ? null : mmv(P.dy + P.base - (att.pl[1].dy + PM.base))));
-      const cyH = lets.map(l => bodyCentre(E, l).cy), bodyOffsetMm = { L: r2(mmv(cyH[0] - cyH[1])), R: r2(mmv(cyH[2] - cyH[1])) };
-      const align = { dyLMm: r2(body.L.cyMm - body.M.cyMm), dyRMm: r2(body.R.cyMm - body.M.cyMm), bodyOffsetMm, baselineOffsetMm: { L: offs[0] == null ? null : r2(offs[0]), R: offs[1] == null ? null : r2(offs[1]) }, lrDiffMm: base[0] != null && base[1] != null ? r2(mmv(Math.abs(base[0] - base[1]))) : r2(Math.abs(body.L.cyMm - body.R.cyMm)),
+      const cyH = lets.map(l => bodyCentre(E, l).cy), inkAlign = alignOf(lets.map(boxOf), cyH);
+      const align = { dyLMm: r2(body.L.cyMm - body.M.cyMm), dyRMm: r2(body.R.cyMm - body.M.cyMm), ...inkAlign, baselineOffsetMm: { L: offs[0] == null ? null : r2(offs[0]), R: offs[1] == null ? null : r2(offs[1]) }, lrDiffMm: base[0] != null && base[1] != null ? r2(mmv(Math.abs(base[0] - base[1]))) : r2(Math.abs(body.L.cyMm - body.R.cyMm)),
         aboveMm: { L: r2(body.L.yHiMm - body.M.yHiMm), R: r2(body.R.yHiMm - body.M.yHiMm) }, belowMm: { L: r2(body.M.yLoMm - body.L.yLoMm), R: r2(body.M.yLoMm - body.R.yLoMm) } };
       const area = r => E.netArea(r), others = i => E.union([].concat(...fullLets.filter((_, j) => j !== i)));
       const overlap = {}, visible = {}, countersOpen = {}, finalRings = simp(toP(att.rings));
@@ -1129,9 +1175,9 @@
       }
       const piece = { wMm: r2(mmv(W)), hMm: r2(mmv(H)) }; piece.aspect = r2(piece.wMm / piece.hMm);
       const rr = rulesOf({ piece, ratios, align, overlap, outlineVisible, crowdTotal, countersOpen, balanced, maxBar: Math.max(0, ...cont.LM.concat(cont.MR).map(c => c.lenMm || 0)), visible });
-      const v = rr.violations, esgDistance = rr.distance, severity = rr.severity;
+      const v = rr.violations, esgDistance = rr.distance, severity = rr.severity, warn = rr.warnings;
       const maxStretch = Math.round(Math.max(...plan.map(q => Math.max(q.f * fx, 1 / (q.f * fx)))) * 100) / 100;
-      return { piece, body, ratios, align, overlap, outlineVisible, maxStretch, visibleWidthMm: visible, crowdMm: Object.assign({ total: r2(crowdTotal) }, crowd), countersOpen, contacts: cont.LM.concat(cont.MR), balance: { LM: { span: span.LM, balanced: balanced.LM }, MR: { span: span.MR, balanced: balanced.MR } }, violations: v, ok: v.length === 0, severity, distance: esgDistance, esgDistance };
+      return { piece, body, ratios, align, overlap, outlineVisible, maxStretch, visibleWidthMm: visible, crowdMm: Object.assign({ total: r2(crowdTotal) }, crowd), countersOpen, contacts: cont.LM.concat(cont.MR), balance: { LM: { span: span.LM, balanced: balanced.LM }, MR: { span: span.MR, balanced: balanced.MR } }, violations: v, warnings: warn, ok: v.length === 0, severity, symmetry: rr.symmetry, centring: rr.centring, distance: esgDistance, esgDistance };
     })();
     // sizes and limits of this word (NORMS): what was measured, what was stretched, which limit is not met (the word is then for a person to look at)
     let sizes = null; const limits = [];
@@ -1161,20 +1207,20 @@
       const pl = att.pl, T = o.norms, mmSC = v => Math.round(v / MM * SC), medW = (mid.em ? T.MID_BODY_W_OVER_EM_MEDIAN * mid.em * SC : T.MID_BODY_W_OVER_INKH_MEDIAN * mid.h) * cs;
       const lets = pl.map(P => ({ reg: P.sreg, full: P.region, dx: P.dx, dy: P.dy, base: P.base, bars: P.rg.length === P.region.length ? [] : simp(E.diff(P.rg, shift(P.region, P.dx, P.dy))) }));
       const peri = rings => rings.reduce((a, r) => a + r.reduce((b2, q, k) => { const w2 = r[(k + 1) % r.length]; return b2 + Math.hypot(w2.X - q.X, w2.Y - q.Y); }, 0), 0) / SC * MM;
-      const capOf = i => (i !== 1 && adjustApplied[i].sx > 1.0001 ? 0.5 : T.STRETCH_CAP);
+      const capOf = i => (i !== 1 && adjustApplied[i].sx > 1.0001 ? 0.5 : T.STRETCH_CAP), capLoOf = i => (i !== 1 ? Math.max(capOf(i), T.SIDE_NARROW_CAP) : capOf(i));
       function look(sh, fullCrowd) {
         const pp = lets.map((l, i) => { const d = (sh && sh['LMR'[i]]) || {}, ox = l.dx + mmSC(d.dx || 0), oy = l.dy + mmSC(d.dy || 0); return { reg: shift(l.reg, ox, oy), bars: shift(l.bars, ox, oy), base: l.base == null ? null : oy + l.base, ox, oy, src: l.reg, full: shift(l.full, ox, oy), fsrc: l.full }; });
         const all = [].concat(...pp.map(q => q.reg), ...pp.map(q => q.bars)), bb = bboxOf(all.filter(r => E.area(r) > 0)), H2 = bb[3] - bb[1], W0 = bb[2] - bb[0], aspect0 = W0 / H2;
         let fx2 = 1;
         if (aspect0 < T.ASPECT_MIN + 0.04 || aspect0 > T.ASPECT_MAX - 0.04) {
-          const mW = mid.bw * cs * plan[1].f, capHi = Math.min(...plan.map((q, i) => (1 + capOf(i)) / q.f)), capLo = Math.max(...plan.map((q, i) => (1 - capOf(i)) / q.f)), bandHi = T.MID_WIDTH_MAX * medW / mW, bandLo = T.MID_WIDTH_MIN * medW / mW;
+          const mW = mid.bw * cs * plan[1].f, capHi = Math.min(...plan.map((q, i) => (1 + capOf(i)) / q.f)), capLo = Math.max(...plan.map((q, i) => (1 - capLoOf(i)) / q.f)), bandHi = T.MID_WIDTH_MAX * medW / mW, bandLo = T.MID_WIDTH_MIN * medW / mW;
           fx2 = Math.min(capHi, Math.max(capLo, Math.min(bandHi, Math.max(bandLo, T.ASPECT_TARGET / aspect0)))); if (Math.abs(fx2 - 1) < 0.005) fx2 = 1;
         }
         const bx = pp.map(q => centralRange(q.reg, 0, T.BODY_TRIM) || [0, 0]), by = pp.map(q => centralRange(q.reg, 1, T.BODY_TRIM) || [0, 0]);
         const bw = bx.map(r => mmv0(r[1] - r[0]) * fx2), bh = by.map(r => mmv0(r[1] - r[0]));
         const ratios = { sideHeightL: bh[0] / bh[1], sideHeightR: bh[2] / bh[1], sideWidthL: bw[0] / bw[1], sideWidthR: bw[2] / bw[1], centreWidthVsMedian: bw[1] / (medW / SC * MM) };
         const offs = [0, 2].map(i => (pp[i].base == null || pp[1].base == null ? null : (pp[i].base - pp[1].base) / SC * MM));
-        const cyL = pp.map(q => bodyCentre(E, q.src).cy + q.oy), align = { bodyOffsetMm: { L: mmv0(cyL[0] - cyL[1]), R: mmv0(cyL[2] - cyL[1]) }, baselineOffsetMm: { L: offs[0], R: offs[1] }, lrDiffMm: offs[0] != null && offs[1] != null ? Math.abs(offs[0] - offs[1]) : 0, aboveMm: { L: mmv0(by[0][1] - by[1][1]), R: mmv0(by[2][1] - by[1][1]) }, belowMm: { L: mmv0(by[1][0] - by[0][0]), R: mmv0(by[1][0] - by[2][0]) } };
+        const cyL = pp.map(q => bodyCentre(E, q.src).cy + q.oy), align = { ...alignOf(pp.map(q => boxOf(q.reg)), cyL), baselineOffsetMm: { L: offs[0], R: offs[1] }, lrDiffMm: offs[0] != null && offs[1] != null ? Math.abs(offs[0] - offs[1]) : 0, aboveMm: { L: mmv0(by[0][1] - by[1][1]), R: mmv0(by[2][1] - by[1][1]) }, belowMm: { L: mmv0(by[1][0] - by[0][0]), R: mmv0(by[1][0] - by[2][0]) } };
         const unionOthers = i => E.union([].concat(...pp.filter((_, j) => j !== i).map(q => q.reg))), overlap = {}, visible = {}, outlineVisible = {}, countersOpen = {}, finalU = E.union(all);
         ['L', 'M', 'R'].forEach((n, i) => {
           const oth = unionOthers(i), ink = E.netArea(pp[i].reg); overlap[n] = ink > 0 ? E.netArea(E.meet(pp[i].reg, oth)) / ink : 0;
@@ -1204,14 +1250,18 @@
      MONOESG (Paul, 15 Oct 2026): "if a letter is too thin make it wider, if too small a bit bigger, a little nudge to connect better". autoFit(letters, opts) builds the monogram, reads report.metrics.violations and tries bounded
      opts.adjust changes that answer the broken rules (a thin side letter wider, a small one bigger, the letters moved apart or together, the sides up or down), rebuilding after each, and keeps a change only when it is strictly better:
      fewer hard-rule violations, or as many and nearer to ESG_PROFILE. Deterministic (no randomness), bounded by opts.autoFitMs (4000) of wall time; the result is that of build() plus report.autoFit = { tried, ms, improved }. */
+  /* the autoFit objective (round 4): a huge penalty per hard violation, the connection (balanced contacts, one piece) before everything else, then how hard the broken rules are broken, then how alike the two side letters are
+     (ink height, body width, body centre), then how well they are centred on the middle letter, last the distance to ESG */
+  const fitScore = m => m.violations.reduce((a, v) => a + (v.key === 'contacts' ? 5000 : 1000), 0) + m.severity * 150 + (m.symmetry || 0) * 30 + (m.centring || 0) * 20 + m.distance;
   function proposalsFor(m, adj) {
     const L = LIMITS, out = [], clampA = a => cleanAdjust(a), copy = a => JSON.parse(JSON.stringify(a));
     const keys = new Set(m.violations.map(v => v.key));
     const sizes = copy(adj); let sizesChanged = false;
     const mul = (a, k, f, v) => { a[k][f] *= v; sizesChanged = true; };
-    if (keys.has('visibleWidth')) for (const k of ['L', 'R']) if (m.visibleWidthMm[k] < L.VISIBLE_MM) mul(sizes, k, 'sx', Math.min(1.12, (L.VISIBLE_MM + 0.15) / Math.max(0.5, m.visibleWidthMm[k])));
-    if (keys.has('sideWidth')) [['L', m.ratios.sideWidthL], ['R', m.ratios.sideWidthR]].forEach(([k, r]) => { if (r < L.SIDE_WIDTH[0]) mul(sizes, k, 'sx', Math.min(1.15, (L.SIDE_WIDTH[0] + 0.04) / r)); else if (r > L.SIDE_WIDTH[1]) mul(sizes, k, 'sx', Math.max(0.88, (L.SIDE_WIDTH[1] - 0.04) / r)); });
-    if (keys.has('sideHeight')) [['L', m.ratios.sideHeightL], ['R', m.ratios.sideHeightR]].forEach(([k, r]) => { if (r < L.SIDE_HEIGHT[0]) mul(sizes, k, 'scale', Math.min(1.1, 0.79 / r)); else if (r > L.SIDE_HEIGHT[1]) mul(sizes, k, 'scale', Math.max(0.9, 0.80 / r)); });
+    if (keys.has('visibleWidth')) for (const k of ['L', 'R']) if (m.visibleWidthMm[k] < L.VISIBLE_MM) mul(sizes, k, 'sx', Math.min(1.25, (L.VISIBLE_MM + 0.15) / Math.max(0.5, m.visibleWidthMm[k])));
+    if (keys.has('sideWidth')) [['L', m.ratios.sideWidthL], ['R', m.ratios.sideWidthR]].forEach(([k, r]) => { if (r < L.SIDE_WIDTH[0]) mul(sizes, k, 'sx', Math.min(1.15, (L.SIDE_WIDTH[0] + 0.04) / r)); else if (r > L.SIDE_WIDTH[1]) mul(sizes, k, 'sx', Math.max(0.75, (L.SIDE_WIDTH[1] - 0.04) / r)); });
+    if (keys.has('sideHeight')) ['L', 'R'].forEach(k => { const r = m.align.inkHeightRatio[k]; if (r < L.SIDE_INK[0]) mul(sizes, k, 'scale', Math.min(1.3, L.SIDE_INK_TARGET / r)); else if (r > L.SIDE_INK[1]) mul(sizes, k, 'scale', Math.max(0.8, L.SIDE_INK_TARGET / r)); });
+    if (keys.has('sideMatch')) { const ar = m.align.inkHeightRatio, mean = (ar.L + ar.R) / 2; for (const k of ['L', 'R']) mul(sizes, k, 'scale', mean / ar[k]); }
     if (keys.has('centreWidth')) { const c = m.ratios.centreWidthVsMedian; if (c < L.CENTRE_WIDTH[0]) mul(sizes, 'M', 'sx', Math.min(1.15, (L.CENTRE_WIDTH[0] + 0.05) / c)); else if (c > L.CENTRE_WIDTH[1]) mul(sizes, 'M', 'sx', Math.max(0.88, (L.CENTRE_WIDTH[1] - 0.05) / c)); }
     if (keys.has('aspect')) { const a = m.piece.aspect, f = a < L.ASPECT[0] ? Math.min(1.12, 0.88 / a) : Math.max(0.9, 0.94 / a); for (const k of ['L', 'M', 'R']) mul(sizes, k, 'sx', f); }
     if (sizesChanged) out.push(clampA(sizes));
@@ -1222,18 +1272,17 @@
       for (const k of ['L', 'R']) { up[k].dy += 0.4; down[k].dy -= 0.4; }
       out.push(clampA(up), clampA(down));
     }
-    if (keys.has('vertical')) {      // both sides together (they keep one baseline) to where their body centres average the target, then each side alone into the window
-      const bo = m.align.bodyOffsetMm, mean = (bo.L + bo.R) / 2, ind = copy(adj);
-      vert.L.dy += L.BODY_TARGET_MM - mean; vert.R.dy += L.BODY_TARGET_MM - mean; out.push(clampA(vert));
-      for (const k of ['L', 'R']) { const v = bo[k]; ind[k].dy += v > L.BODY_OFFSET_MM ? -(v - L.BODY_OFFSET_MM + 0.1) : v < -L.BODY_OFFSET_MM ? (-L.BODY_OFFSET_MM - v + 0.1) : 0; }
-      out.push(clampA(ind));
+    if (keys.has('vertical')) {      // each side alone to its body centre at the target, kept inside the silhouette window; then both sides to the pair's mean
+      const bo = m.align.bodyOffsetMm, so = m.align.silhouetteOffsetMm, ind = copy(adj), both = copy(adj), mean = (bo.L + bo.R) / 2;
+      for (const k of ['L', 'R']) { let d = L.BODY_TARGET_MM - bo[k]; d = Math.max(-L.SIL_OFFSET_MM + 0.1 - so[k], Math.min(L.SIL_OFFSET_MM - 0.1 - so[k], d)); ind[k].dy += d; both[k].dy += L.BODY_TARGET_MM - mean; }
+      out.push(clampA(ind), clampA(both));
     }
     return out;
   }
   /* the quick searches of autoFit: a coordinate search over moves (dx, dy in mm) judged by the quick look of a build (see `fit`): first the spacing of the sides (together, then each), then the baseline (both sides together), in steps that shrink;
      deterministic (a fixed order, strict improvement only). Returns the best moves found, best first. */
   function shiftSearch(fit, baseAdj, t0, ms) {
-    const score = r => r.violations.length * 1000 + r.severity * 150 + r.distance, key = d => JSON.stringify(d), seen = new Map();
+    const score = r => fitScore(r), key = d => JSON.stringify(d), seen = new Map();
     const lim = (a, k, v) => Math.abs((a[k] ? a[k].dx : 0) + v) <= 2 + 1e-9, limY = (a, k, v) => Math.abs((a[k] ? a[k].dy : 0) + v) <= 1.5 + 1e-9;
     const ev = d => { const kk = key(d); if (!seen.has(kk)) seen.set(kk, score(fit.look(d))); return seen.get(kk); };
     let cur = { L: { dx: 0, dy: 0 }, M: { dx: 0, dy: 0 }, R: { dx: 0, dy: 0 } }, curS = ev(cur), looks = 1;
@@ -1264,28 +1313,32 @@
     const t0 = Date.now(), o = options && typeof options === 'object' ? options : {}, budget = finite(o.autoFitMs) ? Math.max(500, o.autoFitMs) : 6500;
     let adj = cleanAdjust(o.adjust);
     const run = a => build(letters, Object.assign({}, o, { adjust: a }));
-    const score = r => (!r || !r.ok ? 1e9 : r.report.metrics.violations.length * 1000 + r.report.metrics.severity * 150 + r.report.metrics.distance);
+    const score = r => (!r || !r.ok ? 1e9 : fitScore(r.report.metrics));
     let best = run(adj), base = best, tried = 1, lastMs = Date.now() - t0, looks = 0;
-    const timeLeft = () => budget - (Date.now() - t0);
+    const timeLeft = () => (finite(o.autoFitMs) ? budget : Math.min(20000, Math.max(budget, 4 * lastMs))) - (Date.now() - t0);      // (a word whose first build is slow gets four builds, up to 20 s, unless the caller set the budget)
     const withShift = (a, d) => cleanAdjust(['L', 'M', 'R'].reduce((acc, k) => { acc[k] = Object.assign({}, a[k], { dx: a[k].dx + d[k].dx, dy: a[k].dy + d[k].dy }); return acc; }, {}));
     if (best.ok) {
       for (let round = 0; round < 6 && score(best) >= 1000 && timeLeft() > lastMs * 1.1; round++) {
         let improved = false;
-        // 1. the quick searches on the moves, then a real build of the best ones
-        if (best.fit) {
+        // the quick searches on the moves (then a real build of the best ones), and the sizes and the lean rule by rule (a real build each): a word that breaks a size rule is sized first, any other moved first
+        const stepShift = () => {
+          if (!best.fit) return;
           const ss = shiftSearch(best.fit, adj, t0, Math.min(1500, timeLeft() * 0.45) + (Date.now() - t0)); looks += ss.looks;
           for (const c of ss.ranked) {
             if (c.s >= ss.base - 1e-9 || timeLeft() < lastMs * 1.1) continue;
             const a2 = withShift(adj, c.d), t1 = Date.now(), r = run(a2); tried++; lastMs = Date.now() - t1;
             if (score(r) < score(best) - 1e-9) { best = r; adj = a2; improved = true; break; }
           }
-        }
-        // 2. the sizes and the lean, rule by rule (a real build each)
-        if (!improved) for (const a2 of proposalsFor(best.report.metrics, adj)) {
-          if (timeLeft() < lastMs * 1.1) break;
-          const t1 = Date.now(), r = run(a2); tried++; lastMs = Date.now() - t1;
-          if (score(r) < score(best) - 1e-9) { best = r; adj = a2; improved = true; break; }
-        }
+        };
+        const stepSizes = () => {
+          for (const a2 of proposalsFor(best.report.metrics, adj)) {
+            if (timeLeft() < lastMs * 1.1) break;
+            const t1 = Date.now(), r = run(a2); tried++; lastMs = Date.now() - t1;
+            if (score(r) < score(best) - 1e-9) { best = r; adj = a2; improved = true; break; }
+          }
+        };
+        const sizing = best.report.metrics.violations.some(v => ['sideWidth', 'visibleWidth', 'sideHeight', 'sideMatch', 'centreWidth', 'aspect'].includes(v.key));
+        for (const step of sizing ? [stepSizes, stepShift] : [stepShift, stepSizes]) { if (!improved) step(); }
         if (!improved) break;
       }
     }
