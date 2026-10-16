@@ -160,7 +160,7 @@ async function main() {
     const tabCustom = page => page.click('#reviewView .egTab[data-k="customOrder"]');
     const openWin = async (page, rid) => { await page.evaluate(rid => { const it = Review.customItemFor(Object.keys(Object.fromEntries(B.orders.byKey)).find(k => k.startsWith(rid + '_'))); CustomSheet.open(it, {}); }, rid); await page.waitForSelector('#cuDlg[open]'); };
     const note = (page, rid) => page.evaluate(rid => { const n = document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"] .cuKeepNote`); return n ? { text: n.textContent.replace(/\s+/g, ' ').trim(), state: n.dataset.keepState || '' } : null; }, rid);
-    const noteIs = (page, rid, re, ms = 20000) => page.waitForFunction(([rid, src]) => { const n = document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"] .cuKeepNote`); return !!n && new RegExp(src).test(n.textContent); }, [rid, re.source], { timeout: ms });
+    const noteIs = (page, rid, re, ms = 20000) => page.waitForFunction(([rid, src]) => { const n = document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"] .cuKeepNote`); return !!n && new RegExp(src).test(n.textContent); }, [rid, re.source], { timeout: ms }).catch(async e => { console.log('DBG noteIs', rid, re.source, JSON.stringify(await page.evaluate(rid => ({ intents: CustomSheet.keepIntents().map(r => ({ state: r.state, wait: r.wait, why: r.why, ck: r.ck })), online: CN.S.cloud.ok, row: (document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"]`) || { innerText: 'NO ROW' }).innerText.slice(0, 300), dlg: document.getElementById('cuDlg').open }), rid))); throw e; });
     const intents = page => page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('cn.keepIntents.v1') || '{"intents":{}}').intents));
     const runs = page => page.evaluate(() => __kw.calls.filter(c => c === 'run').length);
     const unlockOutside = page => page.evaluate(async pw => { const r = await CharmNestRepoLock.submitInline('upload', pw, { target: 'test' }); return r.ok; }, REPO_TEST.password);
@@ -244,11 +244,13 @@ async function main() {
       await seed(page, [FRESH(4196630831)]); await startRun(page); await tabCustom(page);
       await page.evaluate(s => { __kw.steps = s; }, steps.linked);
       await dropDesign(page, '4196630831'); await ready(page, 'off'); await settle(page);
+      await w.ctx.setOffline(true);   // (really offline: any call fails; the page's own flag follows)
       await page.evaluate(() => { CN.S.cloud.ok = false; });
       await page.click('#cuKeepSwitch');
       await closeWin(page);
       await noteIs(page, '4196630831', /Waiting for the connection/);
       ok((await note(page, '4196630831')).state === 'connection' && await runs(page) === 0, 'S4: offline: the card says it waits for the connection, nothing ran');
+      await w.ctx.setOffline(false);
       await page.evaluate(() => { CN.S.cloud.ok = true; window.dispatchEvent(new Event('online')); });
       await noteIs(page, '4196630831', /Saved and linked/, 30000);
       ok(await runs(page) === 1, 'S4: back online it completed by itself, once');
