@@ -8095,18 +8095,24 @@ const Engrave = window.Engrave = (() => {
   const monoOn = () => { try { return !(window.Recall && Recall.on && Recall.on()); } catch (_) { return true; } };   // (a recalled set shows its own engraving only: its monogram lines are not this run's to approve)
   let monoDoneW = null;        // the widget of the row that is open in Decided (one at a time)
   const monoMap = new Map();   // line key -> the stand-in object of that line (kept: the rows and the card are keyed by it)
-  /** The monogram lines as the Engrave lists carry them: [{ key: the line's key, mono: true, row, state: "review" (to approve) | "approved", st: the service's status, lines: [the letters] }]. Never an Engrave job (see above). */
+  /** The monogram PIECES as the Engrave lists carry them: [{ key: the piece's key (the line's key for a line of one piece, "<line>#C2" for piece 2 of a line of several: PIECES, Paul 16 Oct 2026), lineKey, rowKey, slot, n, of, copies: [its pool id],
+   *  mono: true, row (the line), state: "review" (to approve) | "approved", st: the service's status of THAT piece, lines: [the letters] }]. A line of quantity N is N stand-ins, each its own row, card and approval. Never an Engrave job (see above). */
   function monoItemsNow() {
     if (!monoOn()) return [];
     let rows = []; try { rows = MonoUI().rows() || []; } catch (_) { rows = []; }
     const out = [], live = new Set();
     for (const row of rows) {
       if (!row || row.state === "gone") continue;
-      let st = null; try { st = MonoUI().status ? MonoUI().status(row) : null; } catch (_) { st = null; }
-      st = st || { state: "reading", label: "", letters: "", approved: false, sent: false };
-      let m = monoMap.get(row.key); if (!m) { m = { key: row.key, mono: true, slot: null, copies: [] }; monoMap.set(row.key, m); }
-      m.row = row; m.st = st; m.state = st.approved ? "approved" : "review"; m.text = st.letters || ""; m.lines = st.letters ? [st.letters.split("").join(" ")] : [];
-      live.add(row.key); out.push(m);
+      let ps = null; try { ps = MonoUI().pieces ? MonoUI().pieces(row) : null; } catch (_) { ps = null; }
+      if (!ps || !ps.length) ps = [{ key: row.key, slot: null, n: 1, of: 1, lineKey: row.key, poolId: row.key + "_1" }];
+      for (const pc of ps) {
+        let st = null; try { st = MonoUI().status ? MonoUI().status(row, pc.slot) : null; } catch (_) { st = null; }
+        st = st || { state: "reading", label: "", letters: "", approved: false, sent: false };
+        let m = monoMap.get(pc.key); if (!m) { m = { key: pc.key, mono: true, copies: [] }; monoMap.set(pc.key, m); }
+        m.lineKey = row.key; m.rowKey = row.key; m.slot = pc.slot || null; m.n = pc.n; m.of = pc.of; m.copies = [pc.poolId];
+        m.row = row; m.st = st; m.state = st.approved ? "approved" : "review"; m.text = st.letters || ""; m.lines = st.letters ? [st.letters.split("").join(" ")] : [];
+        live.add(pc.key); out.push(m);
+      }
     }
     for (const k of [...monoMap.keys()]) if (!live.has(k)) monoMap.delete(k);
     return out;
@@ -8117,12 +8123,20 @@ const Engrave = window.Engrave = (() => {
   const tabItem = key => items().get(key) || (key != null && monoItemsNow().find(m => m.key === key)) || null;
   const decidedAll = () => { const m = monoItemsNow().filter(x => x.state === "approved"); return m.length ? decidedJobs().concat(m) : decidedJobs(); };
   /** What the order model asks of a line: null (not a monogram line) | "to-approve" | "held" (its letters cannot be read yet, or it is being made) | "approved". */
+  const monoStateOfItem = m => (m.st.approved ? "approved" : ["reading", "letters", "building", "error"].includes(m.st.state) ? "held" : "to-approve");
   const monoStateOf = row => {
     const r = row && (row.parentRow || row); if (!r || !r.spec || !r.spec.special || !r.spec.special.monogram || r.state === "gone" || !monoOn()) return null;
-    const m = monoItemsNow().find(x => x.key === r.key); if (!m) return null;
-    return m.st.approved ? "approved" : ["reading", "letters", "building", "error"].includes(m.st.state) ? "held" : "to-approve";
+    const ms = monoItemsNow().filter(x => x.lineKey === r.key); if (!ms.length) return null;
+    const st = ms.map(monoStateOfItem);      // (a line of several pieces: the least advanced of them, worst first)
+    return st.includes("held") ? "held" : st.includes("to-approve") ? "to-approve" : "approved";
   };
-  try { if (window.CharmNestEngraveOrder && window.CharmNestEngraveOrder.useMonogram) window.CharmNestEngraveOrder.useMonogram(monoStateOf); } catch (_) { /* the order model counts engraved pieces only */ }
+  /** The pieces of a monogram line for the order model (PIECES): [{ pieceKey, slot, n, of, state }] when the line has two or more, else null (the line is one piece, as it was). */
+  const monoPiecesOf = row => {
+    const r = row && (row.parentRow || row); if (!r || !r.spec || !r.spec.special || !r.spec.special.monogram || r.state === "gone" || !monoOn()) return null;
+    const ms = monoItemsNow().filter(x => x.lineKey === r.key); if (ms.length < 2) return null;
+    return ms.map(m => ({ pieceKey: m.key, slot: m.slot, n: m.n, of: m.of, state: monoStateOfItem(m) }));
+  };
+  try { if (window.CharmNestEngraveOrder && window.CharmNestEngraveOrder.useMonogram) window.CharmNestEngraveOrder.useMonogram(monoStateOf, monoPiecesOf); } catch (_) { /* the order model counts engraved pieces only */ }
   let monoTimer = 0;
   /** The service says a monogram changed (made, edited, approved): the Engrave tab's counts, rows and card are brought up to date at the next frame; a card is never rebuilt for it (renderView keeps it). */
   function monoMoved() {
@@ -8131,9 +8145,10 @@ const Engrave = window.Engrave = (() => {
   }
   /** Open one monogram line in the Engrave tab (the Review card's "Build monogram", the order window, the guide): its detail card in Placements while it waits, its row opened in Decided once approved. */
   function openMonogram(lineKey) {
-    const m = monoItemsNow().find(x => x.key === lineKey); EG.chosen = true; EG.list = false;
+    // (PIECES: a piece key opens that piece; a line key of several pieces opens the first still to approve, else the first)
+    const all = monoItemsNow(), m = all.find(x => x.key === lineKey) || (() => { const ps = all.filter(x => x.lineKey === lineKey); return ps.find(x => x.state !== "approved") || ps[0]; })(); EG.chosen = true; EG.list = false;
     if (m && m.state === "approved") Object.assign(EG, { tab: "done", openDone: m.key, focus: null, pin: null });
-    else Object.assign(EG, { tab: "place", focus: lineKey || null, pin: lineKey || null, openDone: null });
+    else Object.assign(EG, { tab: "place", focus: (m && m.key) || lineKey || null, pin: (m && m.key) || lineKey || null, openDone: null });
     EG.card = null; EG.cardKey = null;
     if (typeof setMode === "function") setMode("engrave");
     render();
@@ -8156,7 +8171,7 @@ const Engrave = window.Engrave = (() => {
     rid = String(rid == null ? "" : rid);
     const P = E.piecesOf(rid, { rows: orderRowsOf(rid), isWorking, seen: isShown }).find(p => p.pieceKey === pieceKey); if (!P) return false;
     if (P.kind === "monogram") {   // (MONOUI: a monogram piece is not an Engrave job: its card in Placements while it waits, its row opened in Decided once approved)
-      const m = monoItemsNow().find(x => x.key === P.lineKey); if (!m) return false;
+      const m = monoItemsNow().find(x => x.key === P.pieceKey); if (!m) return false;
       if (m.state === "approved") Object.assign(EG, { tab: "done", openDone: m.key, focus: null, pin: null, list: false, chosen: true });
       else {
         const here = EG.cardKey && tabItem(EG.cardKey); if (here && here !== m && o.card && o.card === EG.card) goes(here, { enter: "fade", quick: true }, o.card);
@@ -8682,13 +8697,14 @@ const Engrave = window.Engrave = (() => {
      widget (mode "detail") where an engraved piece's card holds the panel and the work area. Everything else about the card is the engraved piece's own: the counter, Back / Next, the strip of the order's pieces, Open order, the guide's
      one line, the buyer's words, the messages. The Approve is the widget's own; when it is done the card goes up to Decided like an approved placement and the detail goes on to what is left of the same order (guideNext). */
   const MU = () => window.CharmNestMonogramUI || null;
-  const monoThumb = (row, px) => { try { return MU() && MU().thumbHtml ? MU().thumbHtml(row, { px }) : ""; } catch (_) { return ""; } };
+  const monoThumb = (row, px, slot) => { try { return MU() && MU().thumbHtml ? MU().thumbHtml(row, { px, slot: slot || undefined }) : ""; } catch (_) { return ""; } };
+  const monoTag = m => (m.of > 1 ? `PIECE ${m.n} of ${m.of}` : "");      // (the small tag of a piece of a line of several: the one engraved copies and discs carry, charm-nest-piece-switch.js tagOf)
   const monoFill = scope => { try { if (scope && MU() && MU().fillThumbs) MU().fillThumbs(scope); } catch (_) { /* the letters stay */ } };
   const letterWord = m => (m.st && m.st.letters ? m.st.letters.split("").join(" ") : "");
   /** The widget in a host (the card's, or an open row of Decided). `card`: the Placements card it is in (null in Decided): its approval makes the card go up to Decided. */
   function monoMount(host, m, card) {
     const U = MU(); if (!U || !U.mountLine) { host.innerHTML = `<div class="libEmpty">The monogram editor did not load. Reload the page.</div>`; return null; }
-    let w = null; try { w = U.mountLine(host, { rid: String(lineOf(m.row).order.receiptId), lineKey: m.key, row: m.row, mode: "detail", sheetLink: true, onApproved: () => monoApproved(m, card) }); } catch (e) { console.warn("Monogram widget", e); }
+    let w = null; try { w = U.mountLine(host, { rid: String(lineOf(m.row).order.receiptId), lineKey: m.lineKey || m.key, slot: m.slot || undefined, row: m.row, mode: "detail", sheetLink: true, onApproved: () => monoApproved(m, card) }); } catch (e) { console.warn("Monogram widget", e); }
     if (!w) host.innerHTML = `<div class="libEmpty">This line's letters could not be opened as a monogram.</div>`;
     return w;
   }
@@ -8705,7 +8721,7 @@ const Engrave = window.Engrave = (() => {
     if (!row) {
       row = el("div", "doneRow placementRow hoverItem egMonoRow"); row.setAttribute("role", "button"); row.tabIndex = 0;
       row.dataset.kind = "monogram"; row.dataset.testid = "eg-mono-row"; row.dataset.open = m.key; row.dataset.mkey = "eg:" + m.key;
-      row.innerHTML = `<div class="egMonoMedia" data-testid="eg-mono-thumb">${monoThumb(m.row, 120)}</div><div class="engravingIdentity"><span class="queueLabel">Monogram</span><div class="engravingOrder"><b class="mono" data-order></b><span class="sku mono"></span><span class="mailSlot" hidden></span><span class="teamSlot" hidden></span></div><span class="purchaseLabel">The letters</span><span class="w egMonoLetters" data-mono-letters></span><span class="dim" data-stage></span></div><div class="purchaseSummary" data-purchase></div>`;
+      row.innerHTML = `<div class="egMonoMedia" data-testid="eg-mono-thumb">${monoThumb(m.row, 120, m.slot)}</div><div class="engravingIdentity"><span class="queueLabel">Monogram</span><div class="engravingOrder"><b class="mono" data-order></b><span class="sku mono"></span><span class="egPiece" data-testid="eg-mono-piece" hidden></span><span class="mailSlot" hidden></span><span class="teamSlot" hidden></span></div><span class="purchaseLabel">The letters</span><span class="w egMonoLetters" data-mono-letters></span><span class="dim" data-stage></span></div><div class="purchaseSummary" data-purchase></div>`;
       const open = () => { const lg = MO() && listCopy(row); if (lg) growsFrom = { key: m.key, rect: row.getBoundingClientRect(), until: Date.now() + 3000 }; EG.focus = m.key; EG.list = false; render(); if (lg) lg.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, easing: "ease-out", fill: "forwards" }).finished.catch(() => {}).then(() => lg.remove()); };
       row.onclick = e => { if (!e.target.closest("a,button")) open(); };
       row.onkeydown = e => { if (e.target === row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); open(); } };
@@ -8714,8 +8730,9 @@ const Engrave = window.Engrave = (() => {
     row._grp = grp;
     const set = (sel, v) => { const n = row.querySelector(sel); if (n && n.textContent !== v) n.textContent = v; };
     const letters = letterWord(m), busy = ["reading", "building"].includes(m.st.state);
-    row.dataset.rid = receipt; row.dataset.state = m.st.state; row.setAttribute("aria-busy", String(busy)); row.setAttribute("aria-label", `Open the monogram of order ${receipt}${letters ? " · " + letters : ""}`);
+    row.dataset.rid = receipt; row.dataset.state = m.st.state; row.dataset.open = m.key; row.dataset.mkey = "eg:" + m.key; row.dataset.slot = m.slot || ""; row.setAttribute("aria-busy", String(busy)); row.setAttribute("aria-label", `Open the monogram${m.of > 1 ? ", " + monoTag(m).toLowerCase() + "," : ""} of order ${receipt}${letters ? " · " + letters : ""}`);
     set("[data-order]", receipt); set(".sku", String((line.line && line.line.sku) || "")); set("[data-mono-letters]", letters || "Letters to confirm");
+    { const pt = row.querySelector("[data-testid=eg-mono-piece]"); if (pt) { const t = monoTag(m); pt.hidden = !t; if (pt.textContent !== t) pt.textContent = t; if (m.slot) pt.dataset.slot = m.slot; } }
     const st = row.querySelector("[data-stage]"); if (st) { if (st.textContent !== (m.st.label || "")) st.textContent = m.st.label || ""; const sk = busy ? "busy" : m.st.state; if (st.dataset.s !== sk) st.dataset.s = sk; }
     if (window.CustomerMail?.slot) CustomerMail.slot(row.querySelector(".mailSlot"), receipt);
     window.TeamMail?.slot(row.querySelector(".teamSlot"), line);
@@ -8725,7 +8742,7 @@ const Engrave = window.Engrave = (() => {
   /** The row of the Decided list for an approved monogram (a string, as the other rows are); open: the widget under it. */
   function monoDoneRow(m, open, said) {
     const line = lineOf(m.row), rid = String(line.order.receiptId), st = m.st, letters = letterWord(m);
-    return `<div class="doneRow decidedRow hoverItem egMonoRow${open ? " open" : ""}" tabindex="0" aria-expanded="${open}" data-kind="monogram" data-testid="eg-mono-done-row" data-rid="${esc(rid)}" data-key="${esc(m.key)}" title="View the monogram"><div class="egMonoMedia" data-testid="eg-mono-thumb">${monoThumb(m.row, 120)}</div><div class="engravingIdentity"><span class="queueLabel">Monogram · decided</span><div class="engravingOrder"><b class="mono">${esc(rid)}</b><span class="sku mono">${esc((line.line && line.line.sku) || "")}</span></div><span class="purchaseLabel">The letters</span><span class="w egMonoLetters">${esc(letters || "—")}</span></div><div class="purchaseSummary">${purchaseMarkup(line)}</div><div class="decisionActions"><div class="decisionStatus"><span class="ost ok" title="${st.sent ? "the monogram is on a sheet already" : "the monogram is on the order's designs: set its metal and send it to a sheet"}">${st.sent ? "On the sheets" : "Approved"}</span></div>${open ? "" : `<button class="btn ghost sm" data-a="monoChange" title="${st.sent ? "Open the monogram" : "Open the monogram: change its letters or its metal"}">${st.sent ? "Open" : "Change"}</button>`}</div>${open ? `<div class="doneDetail egMonoDetail"><div class="egMonoHost" data-testid="eg-mono-host"></div>${said || ""}</div>` : ""}</div>`;
+    return `<div class="doneRow decidedRow hoverItem egMonoRow${open ? " open" : ""}" tabindex="0" aria-expanded="${open}" data-kind="monogram" data-testid="eg-mono-done-row" data-rid="${esc(rid)}" data-key="${esc(m.key)}" title="View the monogram"><div class="egMonoMedia" data-testid="eg-mono-thumb">${monoThumb(m.row, 120, m.slot)}</div><div class="engravingIdentity"><span class="queueLabel">Monogram · decided</span><div class="engravingOrder"><b class="mono">${esc(rid)}</b><span class="sku mono">${esc((line.line && line.line.sku) || "")}</span>${m.of > 1 ? `<span class="egPiece" data-testid="eg-mono-piece" data-slot="${esc(m.slot || "")}">${esc(monoTag(m))}</span>` : ""}</div><span class="purchaseLabel">The letters</span><span class="w egMonoLetters">${esc(letters || "—")}</span></div><div class="purchaseSummary">${purchaseMarkup(line)}</div><div class="decisionActions"><div class="decisionStatus"><span class="ost ok" title="${st.sent ? "the monogram is on a sheet already" : "the monogram is on the order's designs: set its metal and send it to a sheet"}">${st.sent ? "On the sheets" : "Approved"}</span></div>${open ? "" : `<button class="btn ghost sm" data-a="monoChange" title="${st.sent ? "Open the monogram" : "Open the monogram: change its letters or its metal"}">${st.sent ? "Open" : "Change"}</button>`}</div>${open ? `<div class="doneDetail egMonoDetail"><div class="egMonoHost" data-testid="eg-mono-host"></div>${said || ""}</div>` : ""}</div>`;
   }
   /** Back / Next from a monogram card: the same stops as from an engraved piece's card (every piece of the order, in its line order, before the next order). */
   function monoStep(m, dir) {
@@ -8743,7 +8760,7 @@ const Engrave = window.Engrave = (() => {
       <div class="egGuide" hidden></div>
       <div class="placeView egMonoView"><div class="pvMain">${said}<div class="egMonoHost" data-testid="eg-mono-host"></div></div><section class="pvMail"></section></div>`;
     try { window.CharmNestEngraveGuide?.mount(card, rid, m.key); } catch (_) { /* no guide line */ }
-    const sub = () => { const t = ["Monogram", letterWord(m), sp.size].filter(Boolean).join(" · "), n = card.querySelector("[data-mono-sub]"); if (n && n.textContent !== t) n.textContent = t; };
+    const sub = () => { const t = ["Monogram", monoTag(m).replace(/^PIECE/, "Piece"), letterWord(m), sp.size].filter(Boolean).join(" · "), n = card.querySelector("[data-mono-sub]"); if (n && n.textContent !== t) n.textContent = t; };
     sub();
     cardMessages(card, m);
     const w = monoMount(card.querySelector(".egMonoHost"), m, card);
@@ -8751,7 +8768,7 @@ const Engrave = window.Engrave = (() => {
     card._dispose = () => { if (w) { try { w.destroy(); } catch (_) { /* gone with the card */ } } };
     card._stripSync = () => {
       const E = EO(), host = card.querySelector(".reviewIdentity"); if (!E || !host) return;
-      const ps = orderRowsOf(rid).length >= 2 ? orderPiecesOf(m) || [] : [], on = ps.length >= 2 && new Set(ps.map(p => p.lineKey)).size >= 2 && ps.some(p => p.pieceKey === m.key), html = on ? E.stripHtml(ps, m.key, {}) : "";
+      const ps = orderRowsOf(rid).length >= 1 ? orderPiecesOf(m) || [] : [], on = ps.length >= 2 && ps.some(p => p.pieceKey === m.key), html = on ? E.stripHtml(ps, m.key, {}) : "";
       if (card._stripHtml === html) return; card._stripHtml = html;
       host.querySelector(".egPcStrip")?.remove(); if (!on) return;
       for (const [a, t] of [["prev", "the previous piece of this order (then the order before it)"], ["next", "the next piece of this order (then the next order)"]]) { const bt = card.querySelector(`.rh [data-a="${a}"]`); if (bt) bt.title = t; }
@@ -12112,9 +12129,9 @@ const CustomSheet = window.CustomSheet = (() => {
   }
   function needOfNow(e, list) {
     const rows = list.filter(r => r && r.spec && Review.cardKey(r) === e.ck && r.state !== "gone" && !(r.poolIds || []).length && !r.spec.customDone && !["committed", "skipped"].includes(r.state));
-    let total = 0, pairs = 0;
-    for (const r of rows) { const plan = pairPlan(r); if (plan) { total += plan.length; pairs += plan.length; } else total += Math.max(1, Math.round(+r.spec.quantity || 1)); }
-    return { total, pairs };
+    let total = 0, pairs = 0, mono = 0;
+    for (const r of rows) { const plan = pairPlan(r); if (plan) { total += plan.length; pairs += plan.length; } else { const n = Math.max(1, Math.round(+r.spec.quantity || 1)); total += n; if (r.spec.special && r.spec.special.monogram) mono += n; } }
+    return { total, pairs, mono };
   }
   /** Why the card's designs cannot be sent yet, or "" when they can. */
   function notReady(e) {
@@ -12126,6 +12143,8 @@ const CustomSheet = window.CustomSheet = (() => {
     // a pair of earrings needs a left and a right piece for every pair: fewer pieces than that would leave an ear uncut
     const need = needOf(e);
     if (need.pairs) { const have = e.files.reduce((a, F) => a + F.pieces * F.qty, 0); if (have < need.total) return `This order is ${need.pairs === 2 ? "a pair of earrings" : "pairs of earrings"}: it needs ${plural(need.total, "piece")} (a left and a right for each pair) and the designs make ${have}. Raise how many to cut, or add the other ear's design`; }
+    // PIECES (Paul, 16 Oct 2026): a monogram line of quantity N is N pieces, each approved on its own with ITS design (quantity 1): the card is sent only when every piece has its design, never with a piece left out
+    if (need.mono) { const have = e.files.reduce((a, F) => a + (F.pieces || 1) * (F.qty || 1), 0); if (have < need.mono) return `Approve every monogram piece first: ${have} of ${plural(need.mono, "piece")} ${have === 1 ? "has" : "have"} a design on this order`; }
     return "";
   }
   function tooBig(F) {
@@ -12255,8 +12274,9 @@ const CustomSheet = window.CustomSheet = (() => {
     if (opts.gate && !(all()[c.ck] && all()[c.ck].files.length)) { askOverride(it).then(yes => { if (yes) add(it, ok, Object.assign({}, opts, { gate: false })); }); return; }
     const row = linesOf(it)[0];
     const e = all()[c.ck] || (all()[c.ck] = { ck: c.ck, rid: String(row.order.receiptId), at: Date.now(), files: [], sent: null });
-    const metal = e.files.length ? e.files[e.files.length - 1].metal || defaultMetal(it) : defaultMetal(it), qty = defaultQty(it);
-    const fresh = ok.map(f => ({ id: uid(), name: f.name, kind: /\.dxf$/i.test(f.name) ? "dxf" : "ai", size: f.size || 0, bytes: null, hash: null, cloud: null, metal, qty, pieces: 0, wMm: 0, hMm: 0, thumb: null, state: "reading", error: null }));
+    // (PIECES, Paul, 16 Oct 2026: opts.qty / opts.mono / opts.metal are the monogram widget's: ONE piece's design, quantity 1, tagged with the line and slot it is the design of, on the metal the design it replaces had)
+    const metal = (opts.metal && metalOf(opts.metal) ? opts.metal : null) || (e.files.length ? e.files[e.files.length - 1].metal || defaultMetal(it) : defaultMetal(it)), qty = opts.qty >= 1 ? Math.min(99, Math.round(opts.qty)) : defaultQty(it);
+    const fresh = ok.map(f => Object.assign({ id: uid(), name: f.name, kind: /\.dxf$/i.test(f.name) ? "dxf" : "ai", size: f.size || 0, bytes: null, hash: null, cloud: null, metal, qty, pieces: 0, wMm: 0, hMm: 0, thumb: null, state: "reading", error: null }, opts.mono && opts.mono.line ? { mono: { line: String(opts.mono.line), slot: opts.mono.slot || null } } : {}));
     fresh.forEach((F, i) => pending.set(F.id, ok[i]));
     if (!e.files.length && !opts.quiet) stripNew.add(c.ck);           // the card's strip of designs opens its room when it first shows
     if (!opts.quiet) for (const F of fresh) arriving.add(F.id);
@@ -16170,7 +16190,8 @@ const OrderWin = window.OrderWin = (() => {
     const MU = window.CharmNestMonogramUI, svc = MU && typeof MU.mountLine === "function" && window.Engrave && Engrave.monogramUI ? Engrave.monogramUI() : null;
     if (!svc || typeof svc.count !== "function" || !window.CharmNestMonogram) return null;
     const is = line => !!(line && (typeof svc.isMonogram === "function" ? svc.isMonogram(line) : line.spec && line.spec.special && line.spec.special.monogram));
-    return { is, mount: (el, line, o) => MU.mountLine(el, Object.assign({ row: line, lineKey: line.key }, o || {})) };
+    // (PIECES: pieces(line) are the monogram pieces of a line, [{ key, slot, n, of }]: a line of quantity N is N cards in the Engraving section, each its own widget)
+    return { is, pieces: line => (typeof svc.pieces === "function" ? svc.pieces(line) : []).map(p => ({ key: p.key, slot: p.slot, n: p.n, of: p.of })), mount: (el, line, o) => MU.mountLine(el, Object.assign({ row: line, lineKey: line.key }, o || {})) };
   }
   function paintEng(r) {
     const host = byId("owEng"), OE = window.OrderEngraving; if (!host || !OE || !r) return;

@@ -55,7 +55,7 @@
     }
     const nx = tryDo(() => O.nextUnapproved(rid, pk), null); if (!nx) return null;
     const j = tryDo(() => O.jobOf(nx), null);
-    return { rid, pieceKey: nx.pieceKey, face: j ? faceOf(j) : undefined, key: j ? j.key : (nx.kind === 'monogram' ? nx.lineKey : '') };   // (MONOUI: a monogram piece has no job: its key is its line's)
+    return { rid, pieceKey: nx.pieceKey, face: j ? faceOf(j) : undefined, key: j ? j.key : (nx.kind === 'monogram' ? nx.pieceKey : '') };   // (MONOUI: a monogram piece has no job: its key is its own, the line's for a line of one piece, "<line>#C2" for piece 2 of several: PIECES)
   }
 
   /* ── the line in the Engrave detail ── */
