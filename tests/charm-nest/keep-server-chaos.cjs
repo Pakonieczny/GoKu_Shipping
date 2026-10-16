@@ -407,6 +407,13 @@ function invariants(label) {
     invariants('etsy');
   }
 
+  /* ═══ a real master design with the same drawing but a SKU the save machinery does not own (spaces: "FOO BAR") is not taken over ═══ */
+  {
+    store.set('Charm_Master_Index/FOO BAR', { sku: 'FOO BAR', masterHash: 'e'.repeat(64), masterName: 'Foo.ai', charmHash: HASHOF(170), widthPt: 20, heightPt: 20, areaPt2: 300, members: 1, holes: 1, aiPath: 'charmnest/master/FOO_BAR.ai', thumbPath: 'charmnest/master/FOO_BAR.png', engravable: true, upAngle: 0, upSource: 'drawn', open: false, hashSource: 'browser' });
+    r = await save({ rid: '4200009700', listing: '1800000970', old: 'FOO OLD', sku: 'FOOBAR_0970', d: 170 });
+    eq([r.ok, r.created, r.sku], [true, true, 'FOOBAR_0970'], 'a drawing that is in the Library under a SKU with spaces is saved under its own custom SKU (the Etsy step can write it)');
+  }
+
   /* ═══ B9 · the hash can be made mandatory (the lead flips it when every page sends it) ═══ */
   {
     Save.config.requireFileHash = true;

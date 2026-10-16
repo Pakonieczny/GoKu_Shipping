@@ -216,6 +216,8 @@ async function commit(deps, b) {
   const linksOf = async e => { if (!e) return e; const [a, t] = await Promise.all([e.aiPath ? deps.tokenUrl(e.aiPath) : null, e.thumbPath ? deps.tokenUrl(e.thumbPath) : null]); if (a) e.aiUrl = a; if (t) e.thumbUrl = t; return e; };
   const up = s => String(s == null ? "" : s).trim().toUpperCase();
   const dataOf = s => (s && s.exists ? s.data() || {} : null);
+  // a design an order may be given by the server: a real entry, not blocked, whose SKU is one the Etsy step can write and the page's rules allow (a master design named "FOO BAR" is the Library's, not this save's)
+  const rules = skuRules(deps), usable = x => !!x && !!x.sku && !!x.aiPath && !x.blocked && SKU_RE.test(String(x.sku)) && !rules.reserved(String(x.sku));
   const mode = v.oldSku === "" ? "whole" : usableKey(v.oldSku) && !v.oldCut ? "bySku" : "none";   // KEEP B4: how the listing is answered (none: only the Etsy step links it)
 
   /* Everything is decided from what the transaction reads, so a retry (a concurrent writer, a lost reply, a record cut half way) starts from the truth. `made` holds the Storage links once the files were checked. */
@@ -255,7 +257,7 @@ async function commit(deps, b) {
       target = { sku: v.sku, data: ex };
     } else {
       const q = await tx.get(col(INDEX).where("charmHash", "==", v.entry.charmHash).limit(8));
-      const hits = q.docs.map(x => x.data() || {}).filter(x => x.sku && x.aiPath && !x.blocked && String(x.charmHash || "") === v.entry.charmHash)
+      const hits = q.docs.map(x => x.data() || {}).filter(x => usable(x) && String(x.charmHash || "") === v.entry.charmHash)
         .sort((a, c) => (c.sku === v.sku) - (a.sku === v.sku) || String(a.sku).localeCompare(String(c.sku)));
       if (hits.length) target = { sku: hits[0].sku, data: hits[0] };
       else if (ex) return { refusal: refuse("sku-taken", { sku: v.sku, by: "master" }) };   // (another drawing holds the SKU: the page asks for the next candidate)
@@ -270,7 +272,7 @@ async function commit(deps, b) {
     if (prior && prior !== target.sku) {
       const pe = dataOf(await tx.get(col(INDEX).doc(prior)));
       if (pe && pe.sku && !pe.blocked) {
-        if (str(pe.charmHash, 80) === v.entry.charmHash) { target = { sku: pe.sku, data: pe }; creating = false; linked = true; }   // the same drawing under another SKU already answers: that SKU stays
+        if (str(pe.charmHash, 80) === v.entry.charmHash && usable(pe)) { target = { sku: pe.sku, data: pe }; creating = false; linked = true; }   // the same drawing under another SKU already answers: that SKU stays
         else return { refusal: refuse("listing-linked", { sku: pe.sku, by: pe.hashSource === "custom-save" ? "save" : "repository" }) };
       }   // (an answer whose entry is gone is dangling: it is replaced below, and kept in keep.was)
     } else if (prior && prior === target.sku && !creating) linked = true;
