@@ -47,11 +47,11 @@
   const ADJUST_LIMITS = { scale: [0.80, 1.25], sx: [0.8, 1.5], sxCentre: [0.8, 1.25], rotDeg: [-6, 6], shear: [-0.15, 0.15], dxMm: [-2.0, 2.0], dyMm: [-1.5, 1.5] };
   /* The hard rules every finished monogram must meet (a word that breaks one is flagged for a person; report.metrics.violations names them). */
   const LIMITS = {
-    BODY_OFFSET_MM: 0.70, BODY_TARGET_MM: 0.35, BASELINE_OFFSET_MM: [0.1, 2.0], ALIGN_LR_MM: 0.15, ALIGN_BODY_MM: 0.5, SIDE_HEIGHT: [0.74, 0.84], SIDE_WIDTH: [0.62, 0.95], CENTRE_WIDTH: [0.80, 1.15], VISIBLE_MM: 3.8, ASPECT: [0.90, 1.25], OVERLAP: 0.22, CROWD_MM: 3.2, COUNTERS: 0.9, OVERLAP_CENTRE: 0.30, BAR_MAX_MM: 1.04, VISIBLE_OUTLINE: 0.74,
+    BODY_OFFSET_MM: 0.70, BODY_TARGET_MM: 0.35, BASELINE_OFFSET_MM: [0.1, 2.0], ALIGN_LR_MM: 0.15, ALIGN_BODY_MM: 0.5, SIDE_HEIGHT: [0.74, 0.84], SIDE_WIDTH: [0.62, 0.95], CENTRE_WIDTH: [0.80, 1.15], VISIBLE_MM: 4.4, ASPECT: [0.95, 1.80], OVERLAP: 0.22, CROWD_MM: 3.6, COUNTERS: 0.9, OVERLAP_CENTRE: 0.30, BAR_MAX_MM: 1.04, VISIBLE_OUTLINE: 0.74,
     BALANCE_UPPER: 0.6, BALANCE_LOWER: 0.4, BALANCE_APART: 0.45, CONTACT_MIN_MM: 0.2
   };
-  /* ESG (Paul's reference monogram, 15 Oct 2026; the numbers re-measured 16 Oct 2026 with the widened and thickened letters of the letter prep, 13.0 x 14.8 mm before it: "absolutely perfect ... I want these exact ratios, sizes, the way things are connected and the way they are visible to be maintained"), measured on the engine: the layout aims at these. */
-  const ESG_PROFILE = { baselineOffsetMm: 1.52, bodyOffsetMm: [0.11, 0.60], wMm: 14.54, hMm: 14.86, aspect: 0.98, sideHeight: [0.79, 0.79], sideWidth: [0.86, 0.80], centreWidthVsMedian: 0.90, overlap: [0.12, 0.22, 0.19], visibleMm: [4.45, 4.32], crowdMm: 2.53 };
+  /* ESG (Paul's reference monogram, 15 Oct 2026; the numbers re-measured 16 Oct 2026 with the widened and thickened letters of the letter prep (round 4), 13.0 x 14.8 mm with the raw letters: "absolutely perfect ... I want these exact ratios, sizes, the way things are connected and the way they are visible to be maintained"), measured on the engine: the layout aims at these. */
+  const ESG_PROFILE = { baselineOffsetMm: 1.54, bodyOffsetMm: [0.12, 0.58], wMm: 17.04, hMm: 14.93, aspect: 1.14, sideHeight: [0.80, 0.79], sideWidth: [0.86, 0.80], centreWidthVsMedian: 0.88, overlap: [0.09, 0.19, 0.20], visibleMm: [5.12, 5.02], crowdMm: 2.27 };
   function cleanAdjust(a) {
     const out = {}, c = (x, lim, d) => (finite(x) ? Math.min(lim[1], Math.max(lim[0], x)) : d);
     for (const [k, alias] of [['L', 'left'], ['M', 'middle'], ['R', 'right']]) {
@@ -61,8 +61,8 @@
     return out;
   }
   const NORMS = {
-    SIDE_HEIGHT_RATIO: 0.80, SIDE_HEIGHT_TOL: 0.04, SIDE_WIDTH_MIN: 0.60, SIDE_WIDTH_MAX: 0.95, MID_WIDTH_MIN: 0.84, MID_WIDTH_MAX: 1.11, MID_BODY_W_OVER_EM_MEDIAN: 0.2918, MID_BODY_W_OVER_INKH_MEDIAN: 0.416, STRETCH_CAP: 0.25, BODY_TRIM: 0.05,
-    ASPECT_TARGET: 0.96, ASPECT_MIN: 0.90, ASPECT_MAX: 1.25, OVERLAP_SIDE_MAX: 0.22, OVERLAP_MID_MAX: 0.30, SIDE_VISIBLE_MIN_MM: 3.9, SIDE_HEIGHT_MIN: 0.72, GAP_MIN_MM: 0.35, COUNTERS_MIN: 0.9, BOX_OVERLAP_MAX: 0.7, BOX_OVERLAP_MIN: 0.06
+    SIDE_HEIGHT_RATIO: 0.80, SIDE_HEIGHT_TOL: 0.04, SIDE_WIDTH_MIN: 0.60, SIDE_WIDTH_MAX: 0.95, MID_WIDTH_MIN: 0.84, MID_WIDTH_MAX: 1.11, MID_BODY_W_OVER_EM_MEDIAN: 0.3423, MID_BODY_W_OVER_INKH_MEDIAN: 0.4858, STRETCH_CAP: 0.25, BODY_TRIM: 0.05,
+    ASPECT_TARGET: 1.15, ASPECT_MIN: 0.95, ASPECT_MAX: 1.80, OVERLAP_SIDE_MAX: 0.22, OVERLAP_MID_MAX: 0.30, SIDE_VISIBLE_MIN_MM: 4.5, SIDE_HEIGHT_MIN: 0.72, GAP_MIN_MM: 0.35, COUNTERS_MIN: 0.9, BOX_OVERLAP_MAX: 0.7, BOX_OVERLAP_MIN: 0.06
   };
   /* The inner openings that count when it is asked whether a neighbour's stroke has closed them: those of 0.5 mm2 and more (a quarter of the counters of the real Left / Mid / Right alphabets are smaller: the eyes of a flourish,
      0.5 mm across, which a laser cannot keep open anyway and nobody reads as part of the letter). A smaller one that survives is still a hole of the piece. */
@@ -286,13 +286,19 @@
         the original unwidened letter, the widening having thickened the upright strokes already; the offset is at most THICKEN.MAX_MM per side and is made smaller when it would close the inner openings (they keep THICKEN.COUNTERS);
      C. the Q gets a small bar from the free end of its curl to the stroke nearest to it (Q_BRIDGE).
      The norms, ratios, adjust and stretch caps all see the letter as prepared; a stretch is counted from there (report.baseWiden is the widening of this step). */
-  const WIDEN = { M: 1.30, N: 1.30, W: 1.30, K: 1.30, R: 1.30, H: 1.30, A: 1.30, Q: 1.10, T: 1.10, G: 1.10, S: 1.10, J: 1.10, OTHER: 1.20 };
-  const THICKEN = { TARGET: 1.20, MAX_MM: 0.25, COUNTERS: 0.90 };
+  /* ROUND 4 (Paul, 16 Oct 2026: "The M N V W K A L X are still too thin and narrow. Widen all of these another 33 % and thicken the cut-out lines by another 33 %. Widen all other letters by another 15 % and thicken the cut-out
+     lines by another 20 %."): group 1 = M N V W K A L X, group 2 = every other letter. WIDEN is the CUMULATIVE widening from the raw glyph (round 3 x round 4), THICKEN.TARGET the mean stroke wanted relative to the ORIGINAL letter
+     (round 3's 1.20 x round 4's 1.33 / 1.20); the widening thickens the upright strokes by itself, only what is missing is added by the outward offset. The counters rule of the prep is relaxed: a counter is never closed and keeps
+     at least THICKEN.COUNTERS (70 %) of its area open (the build's own rule on the finished piece, LIMITS.COUNTERS 90 %, is not touched). */
+  const WIDEN = { M: 1.729, N: 1.729, W: 1.729, K: 1.729, A: 1.729, V: 1.596, L: 1.596, X: 1.596, H: 1.495, R: 1.495, Q: 1.265, T: 1.265, G: 1.265, S: 1.265, J: 1.265, OTHER: 1.38 };
+  const THICKEN = { TARGET: { G1: 1.596, G2: 1.44 }, GROUP1: 'MNVWKALX', MAX_MM: 0.25, COUNTERS: 0.70 };
+  const targetOf = L => (THICKEN.GROUP1.includes(String(L == null ? '' : L).trim().toUpperCase()) && /^[A-Za-z]$/.test(String(L).trim()) ? THICKEN.TARGET.G1 : THICKEN.TARGET.G2);
   const Q_BRIDGE = { WIDTH_MM: 0.4, LENGTH_MAX_MM: 1.0, LENGTH_MIN_MM: 0.35, EXTEND_MAX_MM: 2.5, TIP_ANGLE: 110, CAP_ANGLE: 150, REGION: [0.7, 0.35] };      // (the free end must lie in the left 70 % and the upper 65 % of the letter)
   const widenOf = L => { const k = String(L == null ? '' : L).trim().toUpperCase(); return /^[A-Z]$/.test(k) ? (WIDEN[k] || WIDEN.OTHER) : 1; };
   const PREP_CACHE = new Map();
   const ringLen = r => { let l = 0; for (let i = 0, n = r.length; i < n; i++) { const q = r[(i + 1) % n]; l += Math.hypot(q.X - r[i].X, q.Y - r[i].Y); } return l; };
   const meanStroke = (E, region) => { const P = region.reduce((a, r) => a + ringLen(r), 0); return P > 0 ? 2 * E.netArea(region) / P : 0; };      // (SC units; a stroke of width w and length l: area w*l, outline 2*l)
+  const countersN = (E, region) => region.filter(r => E.area(r) <= -COUNTER_MIN_PT2 * SC * SC).length;
   const countersArea = (E, region) => -region.filter(r => E.area(r) <= -COUNTER_MIN_PT2 * SC * SC).reduce((a, r) => a + E.area(r), 0);
   // the p5 stroke width: the width below which 5 % of the ink lies (the thinnest the strokes really are, not one stray corner), by openings of growing radius
   const thinWidth = (E, region) => {
@@ -417,19 +423,21 @@
       let hit = PREP_CACHE.get(key);
       if (!hit) {
         const r0 = region, b0 = bboxOf(r0.filter(r => E.area(r) > 0)), k = widenOf(spec.letter), widened = k === 1 ? r0 : scaled(r0, k, 1);
-        const w0 = meanStroke(E, r0), w1 = meanStroke(E, widened), want = THICKEN.TARGET * w0;
+        const w0 = meanStroke(E, r0), w1 = meanStroke(E, widened), tgt = targetOf(spec.letter), want = tgt * w0;
         let d = Math.max(0, (want - w1) / 2), cap = THICKEN.MAX_MM / MM * SC, capped = false, reg = widened;
         if (d > cap) { d = cap; capped = true; }
-        const c0 = countersArea(E, widened); let kept = 1;
+        const c0 = countersArea(E, widened), n0 = countersN(E, widened); let kept = 1;
+        // the largest offset up to d that never closes a counter and keeps THICKEN.COUNTERS of their area (bisection: the closing is monotone in the offset)
+        const fits = dd => { const cand = E.grow(widened, dd / SC), c1 = countersArea(E, cand), kk = c0 > 0 ? c1 / c0 : 1; return kk >= THICKEN.COUNTERS - 1e-9 && countersN(E, cand) >= n0 ? { cand, kk } : null; };
         if (d > 0) {
-          let ok = false;
-          for (let t = 0; t < 7 && !ok; t++) { const cand = E.grow(widened, d / SC), c1 = countersArea(E, cand), kk = c0 > 0 ? c1 / c0 : 1; if (kk >= THICKEN.COUNTERS - 1e-9) { reg = cand; kept = kk; ok = true; } else { d *= 0.7; capped = true; } }
-          if (!ok) d = 0;
+          let ok = fits(d);
+          if (ok) { reg = ok.cand; kept = ok.kk; }
+          else { capped = true; let lo = 0, hi = d, best = null; for (let t = 0; t < 7; t++) { const mid = (lo + hi) / 2, f = fits(mid); if (f) { lo = mid; best = f; } else hi = mid; } if (best) { reg = best.cand; kept = best.kk; d = lo; } else d = 0; }
         }
         const w2 = meanStroke(E, reg);
         let q = null; if (String(spec.letter).toUpperCase() === 'Q') q = C ? qBridge(E, reg, C) : null;
         const fin = q ? q.region : reg, b1 = bboxOf(fin.filter(r => E.area(r) > 0));
-        hit = { region: fin, baseAdd: b0[1] - b1[1], info: { widen: k, strokeBeforeMm: Math.round(w0 / SC * MM * 1000) / 1000, strokeWidenedMm: Math.round(w1 / SC * MM * 1000) / 1000, strokeAfterMm: Math.round(w2 / SC * MM * 1000) / 1000, offsetMm: Math.round(d / SC * MM * 1000) / 1000, offsetCapped: capped, countersKept: Math.round(kept * 1000) / 1000, qBridge: q ? { lengthMm: q.lengthMm, at: q.at, kind: q.kind, widthMm: q.widthMm || Q_BRIDGE.WIDTH_MM } : null } };
+        hit = { region: fin, baseAdd: b0[1] - b1[1], info: { widen: k, group: THICKEN.GROUP1.includes(String(spec.letter).trim().toUpperCase()) && /^[A-Za-z]$/.test(String(spec.letter).trim()) ? 1 : 2, strokeTarget: tgt, strokeRatio: Math.round(w2 / w0 * 1000) / 1000, strokeBeforeMm: Math.round(w0 / SC * MM * 1000) / 1000, strokeWidenedMm: Math.round(w1 / SC * MM * 1000) / 1000, strokeAfterMm: Math.round(w2 / SC * MM * 1000) / 1000, offsetMm: Math.round(d / SC * MM * 1000) / 1000, offsetCapped: capped, countersKept: Math.round(kept * 1000) / 1000, qBridge: q ? { lengthMm: q.lengthMm, at: q.at, kind: q.kind, widthMm: q.widthMm || Q_BRIDGE.WIDTH_MM } : null } };
         if (PREP_CACHE.size > 600) PREP_CACHE.clear(); PREP_CACHE.set(key, hit);
       }
       region = hit.region; baseAdd = hit.baseAdd; prepInfo = hit.info;
@@ -617,7 +625,7 @@
     }
     const attempt = ov => attemptPl(place(ov), ov);
     /* crowding: the length (mm) of one letter's outline that lies within GAP_MIN_MM of another letter's ink without touching it (away from where they cross): strokes that run side by side a hair apart are what reads as gibberish */
-    const GAPSC = o.norms.GAP_MIN_MM / MM, CROWD_TOTAL_MM = 3.2, CROWD_PAIR_MM = 1.5;
+    const GAPSC = o.norms.GAP_MIN_MM / MM, CROWD_TOTAL_MM = 3.6, CROWD_PAIR_MM = 1.7;
     const outlineLen = (rings, zone) => {
       if (!zone.length || !rings.length) return 0;
       const c = new C.Clipper(0), pt = new C.PolyTree(); c.AddPaths(rings.map(r => { const q = []; for (const v of r) { const w = q[q.length - 1]; if (!w || w.X !== v.X || w.Y !== v.Y) q.push(v); } if (q.length > 1 && q[0].X === q[q.length - 1].X && q[0].Y === q[q.length - 1].Y) q.pop(); return q.concat([q[0]]); }), C.PolyType.ptSubject, false); c.AddPaths(zone, C.PolyType.ptClip, true);
