@@ -8298,11 +8298,13 @@ const Engrave = window.Engrave = (() => {
   const donePairs = new Map();
   let placementLimit=40, placementQuery=null, doneLimit=40, doneQuery=null;
   /** One ear's tag in a row, with the copies it holds when there are several ("LEFT EAR ×2": a quantity of two pairs is one row, each ear held twice). */
-  const earTagText = job => ((SIDES() && SIDES().pieceTag(job, pieceCountOf(job.row))) || String(job.slot || "")) + ((job.copies || []).length > 1 ? " ×" + job.copies.length : "");
+  /** PIECES (Paul, 16 Oct 2026): the line's shape (how many pairs or sets, copies): a line bought twice tells "DISC 1 of 3 · SET 2", "LEFT EAR · PAIR 2", "PIECE 2 of 2"; a line of one unit says what it always said (shape.multi false). */
+  const lineShape = row => { try { const S = SIDES(); return S && S.shape ? S.shape(jobsOf(row).filter(j => j.slot).map(j => j.slot)) : null; } catch (_) { return null; } };
+  const earTagText = job => ((SIDES() && SIDES().pieceTag(job, pieceCountOf(job.row), lineShape(job.row))) || String(job.slot || "")) + ((job.copies || []).length > 1 ? " ×" + job.copies.length : "");
   const earChipHtml = job => `<span class="egPiece" data-slot="${esc(job.slot)}">${esc(earTagText(job))}</span>`;
   /* FACES in a list row (ENGUI1): a line with a front job tells each job by its piece AND its face ("LEFT EAR · FRONT", "DISC 2 of 3 · BACK", or just "FRONT" / "BACK" for a single charm). A back-only line
      uses earTagText / earChipHtml exactly as before. */
-  const faceTagText = job => [(SIDES() && job.slot ? SIDES().pieceTag(job, piecesIn(jobsOf(job.row))) : ""), faceNoun(faceOfJob(job)).toUpperCase()].filter(Boolean).join(" · ") + ((job.copies || []).length > 1 ? " ×" + job.copies.length : "");
+  const faceTagText = job => [(SIDES() && job.slot ? SIDES().pieceTag(job, piecesIn(jobsOf(job.row)), lineShape(job.row)) : ""), faceNoun(faceOfJob(job)).toUpperCase()].filter(Boolean).join(" · ") + ((job.copies || []).length > 1 ? " ×" + job.copies.length : "");
   const faceChipHtml = (job, title) => `<span class="egPiece" data-slot="${esc(job.slot || "")}" data-face="${faceNoun(faceOfJob(job))}"${title ? ` title="${esc(title)}"` : ""}>${esc(faceTagText(job))}</span>`;
   /** How the system read the line, in its one plain sentence (Faces.setupOf: spec.engraving's `why`, or "Set by <name>" when a person's choice is in force): shown beside the buyer's raw words, so a person can check it. */
   const faceReadingOf = row => { const F = UIFACES(), line = lineOf(row); if (!F || !line || !line.spec) return ""; try { const s_ = F.setupOf(line); return s_.mode === "both" || s_.mode === "front" ? (s_.why || "") : ""; } catch (_) { return ""; } };
@@ -16794,6 +16796,7 @@ const OrderWin = window.OrderWin = (() => {
      the row that ONE quiet chevron opens; of the row's actions only the main one shows (Print QR label, else Complete Order, else Hold), the rest are behind the three dots
      (charm-nest-order-rows.js). A row of one piece is drawn exactly as it always was. */
   const PC_OPEN = new Set();   // the items whose drawer is open ("<order>|<line key>"): a redraw puts every one back as it was
+  const PC_SEEN = new Set();   // PIECES: the lines of copies whose drawer has been opened once by default (a person who closes it keeps it closed)
   const pcIcon = (name, size, fallback) => { const I = window.CharmNestIcons; const svg = I && typeof I.svg === "function" ? tryDo(() => I.svg(name, { size: size || 14 })) : ""; return svg || `<span aria-hidden="true">${fallback || ""}</span>`; };
   /** SETBAR (Paul, 13 Oct 2026: "the two bars side by side with the chain length each sits on as a small label"): under the Vector design of a line that is a SET of bars the name and the chain length of each, in the order the
    *  picture draws them (the first design on the left), each label as wide as its bar's share of the picture (the picture draws both at one scale). Only a set whose rule says a name or a chain (charm-nest-engrave-sides.js
@@ -16882,6 +16885,8 @@ const OrderWin = window.OrderWin = (() => {
     const scope = r0 && !r0.loading ? tryDo(() => scopePieces(r0)) : null;   // (the sheets each piece's copies are on: its status names one)
     const OR = window.CharmNestOrderRows;
     const items = sum.each.map(x => pcItemOf(x, { scope, sideEach })), orderStep = items.length ? Math.min(...items.map(it => it.step)) : -1;
+    // (PIECES, Paul 16 Oct 2026: "ALL multipiece orders must always show each individual piece"): the drawer of a line bought several times is open the first time it is drawn, so every piece of it is on the list at once; the chevron still closes it
+    for (const it of items) if (it.kind === "counted" && it.x.p.copies) { const dk = `${rid}|${it.x.p.key}`; if (!PC_SEEN.has(dk)) { PC_SEEN.add(dk); PC_OPEN.add(dk); } }
     const hasTools = items.some(it => it.kind !== "single");
     const html = `<div class="owPcHd"><span class="fLabel">${all ? "Its pieces · the order is where the slowest one is" : list[0] && (list[0].sides || list[0].counted) ? "Its pieces" : "Its piece"}</span>${all ? '<span class="owPcState" aria-live="polite"></span>' : ""}</div>` + items.map((it, n) => {
       const x = it.x, slow = all && it.step === orderStep, tools = hasTools && it.kind === "single" ? '<span class="owPcTools" aria-hidden="true"></span>' : "";

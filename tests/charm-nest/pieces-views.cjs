@@ -47,7 +47,7 @@ const WIN = () => {
     words: [...c.querySelectorAll('.engFace .engTxt')].map(t => t.textContent.trim()).join(' | '), approve: !!c.querySelector('[data-e=approve]'), approveOff: !!c.querySelector('[data-e=approve][disabled]'), seals: c.querySelectorAll('.sealRow .seal, .sealRow > *').length,
     box: (() => { const r = c.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height), l: Math.round(r.left), r: Math.round(r.right) }; })() }));
   const rows = box ? [...box.querySelectorAll('.owPcRow')].map(r => ({ piece: r.dataset.piece || '', text: (r.querySelector('.owPcName') || r).textContent.replace(/\s+/g, ' ').trim(), sel: r.classList.contains('sel') })) : [];
-  const subs = box ? [...box.querySelectorAll('.owPcSub[data-sub]')].map(s => ({ sub: s.dataset.sub, text: s.textContent.replace(/\s+/g, ' ').trim(), sel: s.classList.contains('sel') })) : [];
+  const subs = box ? [...box.querySelectorAll('.owPcSub[data-sub]')].map(s => ({ sub: s.dataset.sub, text: s.textContent.replace(/\s+/g, ' ').trim(), sel: s.classList.contains('sel'), vis: s.getClientRects().length > 0 && s.getBoundingClientRect().height > 8 })) : [];
   const dlg = document.getElementById('orderWin');
   return { hostHidden: !host || host.hidden, cards, rows, subs, boxShown: vis(box), label: box ? ((box.querySelector('.owPcHd .fLabel') || {}).textContent || '').trim() : '', state: box ? ((box.querySelector('.owPcState') || {}).textContent || '').trim() : '',
     sub: (document.getElementById('owSub') || {}).textContent || '', left: (document.getElementById('owEngLeft') || {}).hidden === false ? document.getElementById('owEngLeft').textContent.replace(/\s+/g, ' ').trim() : '',
@@ -93,6 +93,7 @@ const jobsOf = (page, rid) => page.evaluate(rid => [...Engrave.items().values()]
     let s = await win(page);
     note(s.boxShown && /pieces/i.test(s.label), 'ITS PIECES is shown for the line of two (not "Its piece")', JSON.stringify(s.label));
     note(s.rows.length === 1 && /\b2 pieces\b/.test(s.rows[0].text) && !/×\s*2/.test(s.rows[0].text), 'the line row says "2 pieces", never "×2"', s.rows.map(r => r.text).join(' || '));
+    note(s.subs.length === 2 && s.subs.every(x => x.vis), 'both pieces are ON THE LIST at once (the drawer is open by default for a line bought twice), nothing to press', s.subs.map(x => x.vis).join(','));
     note(s.subs.length === 2 && /Piece 1 of 2/.test(s.subs[0].text) && /Piece 2 of 2/.test(s.subs[1].text), 'the line lists each piece: Piece 1 of 2, Piece 2 of 2', s.subs.map(x => x.sub.replace(/^.*#/, '#') + ' ' + x.text).join(' || '));
     note(/2 pieces/.test(s.sub) || s.sub === '', 'the header piece count agrees (2 pieces, or none)', s.sub);
     note(s.cards.length === 2, 'the Engraving section shows TWO cards for the two pieces (' + s.cards.length + ')');
@@ -217,6 +218,7 @@ const jobsOf = (page, rid) => page.evaluate(rid => [...Engrave.items().values()]
     let oneWide = 0;
     for (const W of [1440, 400]) {
       await page.setViewportSize({ width: W, height: W < 600 ? 800 : 900 }); await R.settle(page, 500);
+      await page.evaluate(w => { const a = document.getElementById('app'); if (a) a.classList.toggle('railOff', w < 600); }, W);   // (a phone has the nesting rail folded away, as a person folds it: the page was opened at desktop width)
       const secBox = () => page.evaluate(() => { const a = document.getElementById('owEng'); const r = a.getBoundingClientRect(); return { top: Math.round(r.top), h: Math.round(r.height), l: Math.round(r.left), r: Math.round(r.right) }; });
       await openWin(w, key('q1')); const s1 = await win(page), box1 = await secBox(); oneWide = s1.over;
       await openWin(w, key('q2')); s = await win(page);

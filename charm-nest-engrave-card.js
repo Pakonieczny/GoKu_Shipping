@@ -165,7 +165,9 @@
           else if (js.length === 1) approve = { jobs: js, ok: !busy(js[0]), why: busy(js[0]) ? 'Still being prepared' : '' };
           else { const g = F && F.approveAllGate ? tryDo(() => F.approveAllGate(js, { busy, shown: j => !o.seen || o.seen(j) }), { ok: false, why: '' }) : { ok: true, why: '' }; approve = { jobs: js, ok: !!g.ok, why: g.why || '' }; }
         }
-        out.push({ pieceKey: F && F.pieceKeyOf ? F.pieceKeyOf(jobsOfPiece[0] ? jobsOfPiece[0].key : jobKey(line.key, slot, 'back')) : line.key + (slot ? '#' + slot : ''),
+        // PIECES: the copies of a line bought several times (and the second pair or set) carry their number as a small tag under the name, the way the discs' tags are told: "Piece 1 of 2", "Disc 1 · set 2" (the title keeps it whole)
+        const si = slotInfo(slot), tagWord = !sps && si && (si.kind === 'copy' || (shp && shp.multi)) ? slotWord : (sps && shp && shp.multi && si ? slotWord : '');
+        out.push({ tag: tagWord, pieceKey: F && F.pieceKeyOf ? F.pieceKeyOf(jobsOfPiece[0] ? jobsOfPiece[0].key : jobKey(line.key, slot, 'back')) : line.key + (slot ? '#' + slot : ''),
           rid, lineKey: line.key, slot: slot || null, row: line, title, name: pname, lineName: name, design: sps || null, lengthText: lenWord, never, faces, jobs: jobsOfPiece, approve, seals,
           metal: metal ? metal.code : '', metalKey: metal ? metal.key : '', metalColor: metal ? metal.color : '', many,   // (ENGPICK: the code "SS" / "GF", its key and colour; `many`: the order has more than one line, so the title says the metal)
           state: worst(present.map(f => f.state)) });
@@ -239,9 +241,11 @@
     const mt = piece.many && piece.metal && piece.metalColor ? piece : null;
     const dot = `<i class="engDot" data-s="${esc(piece.state)}"${mt ? ` data-metal="${esc(piece.metalKey)}" style="--mc:${esc(piece.metalColor)}"` : ''} role="img" aria-label="${esc(word)}" title="${esc(word)}"></i>`;
     const head = mt && piece.name && String(piece.title).startsWith(piece.name) ? piece.name : '', tail = head ? String(piece.title).slice(head.length) : '';
-    const nm = head && tail ? `<span class="engNm">${esc(head)}</span><span class="engTail">${esc(tail)}</span>` : esc(piece.title);
+    // (PIECES: a piece with a number of its own, "Piece 1 of 2": its name and metal on the first line, the number as a small tag under it, never cut off by the Approve button)
+    const tagged = piece.tag && String(piece.title).endsWith(piece.tag) ? String(piece.title).slice(0, piece.title.length - piece.tag.length).replace(/\s*·\s*$/, '') : null;
+    const nm = tagged != null ? `<span class="engNm">${esc(tagged)}</span><span class="engPc">${esc(piece.tag)}</span>` : head && tail ? `<span class="engNm">${esc(head)}</span><span class="engTail">${esc(tail)}</span>` : esc(piece.title);
     return `<article class="engCard" data-piece="${esc(piece.pieceKey)}" data-state="${esc(piece.state)}" data-rid="${esc(piece.rid)}" data-key="${esc(piece.lineKey)}"${mt ? ` data-metal="${esc(piece.metalKey)}"` : ''}${piece.slot ? ` data-slot="${esc(piece.slot)}"` : ''}>`
-      + `<header class="engHd">${dot}<b class="engName" title="${esc(piece.title)}">${nm}</b>${act ? `<span class="engAct">${act}</span>` : ''}</header>`
+      + `<header class="engHd">${dot}<b class="engName${tagged != null ? ' engTagged' : ''}" title="${esc(piece.title)}">${nm}</b>${act ? `<span class="engAct">${act}</span>` : ''}</header>`
       + (shown.length ? `<div class="engFaces" data-n="${shown.length}">${shown.map(f => faceHtml(piece, f, cur)).join('')}</div>` : '')
       + (o.approve === false ? '' : openHtml(piece))
       + '<div class="engFail" role="alert" hidden></div></article>';
@@ -344,6 +348,7 @@
     + '.engDot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--ink45);opacity:.85}.engDot[data-s=words]{background:#b04a32;opacity:1}.engDot[data-s=approve]{background:#b8892f;opacity:1}.engDot[data-s=approved]{background:#5f7a5b;opacity:1}.engDot[data-s=plain]{background:var(--line);opacity:1}'
     + '.engDot[data-metal]{background:var(--mc);opacity:1}'
     + '.engName{flex:1 1 0;min-width:0;font:600 12.5px/1.3 var(--sans);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
+    + '.engName.engTagged{display:grid;gap:1px;line-height:1.25}.engName>.engPc{font:600 9.5px/1.2 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);overflow:hidden;text-overflow:ellipsis}'
     + '.engName:has(>.engTail){display:flex}.engName>.engNm{min-width:0;overflow:hidden;text-overflow:ellipsis}.engName>.engTail{flex:none;white-space:pre}'
     + '.engAct{flex:none;display:flex;align-items:center;min-width:0}.engAct:empty{display:none}.engCard .egApproveWrap{position:relative;display:flex;align-items:center;margin:0;min-width:0;overflow:visible}'
     + '.engCard .egApproveWrap>.egButtonSeal{position:static;left:auto;top:auto;z-index:auto;width:auto;height:auto;margin:0;padding:0;gap:2px;max-width:none;flex:none;justify-content:flex-start}.engCard .egApproveWrap>.egApproveButton~.egButtonSeal{position:absolute;right:-4px;left:auto;top:50%;width:24px;height:24px;margin:-12px 0 0}'
