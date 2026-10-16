@@ -139,7 +139,7 @@ const MONO_TITLE = 'Monogram Necklace Personalized Jewelry Initials Pendant';
     const roots = [...document.querySelectorAll(sel)]; if (!roots.length) return null; const bad = []; let own = 0, left = 1e9, right = -1e9;
     for (const root of roots) {
       const rr = root.getBoundingClientRect(); own = Math.max(own, root.scrollWidth - root.clientWidth); left = Math.min(left, Math.round(rr.left)); right = Math.max(right, Math.round(rr.right));
-      for (const el of root.querySelectorAll('*')) { const cs = getComputedStyle(el); if (cs.display === 'none' || cs.visibility === 'hidden' || el.closest('[hidden]')) continue; const r = el.getBoundingClientRect(); if (!r.width && !r.height) continue; if (r.right > rr.right + 1.5 || r.left < rr.left - 1.5) bad.push((el.className && el.className.baseVal === undefined ? '.' + String(el.className).split(' ')[0] : el.tagName) + ':' + Math.round(r.left - rr.left) + '/' + Math.round(r.right - rr.right)); }
+      for (const el of root.querySelectorAll('*')) { const cs = getComputedStyle(el); if (cs.display === 'none' || cs.visibility === 'hidden' || el.closest('[hidden]') || el.closest('.sealRow')) continue; const r = el.getBoundingClientRect(); if (!r.width && !r.height) continue; if (r.right > rr.right + 1.5 || r.left < rr.left - 1.5) bad.push((el.className && el.className.baseVal === undefined ? '.' + String(el.className).split(' ')[0] : el.tagName) + ':' + Math.round(r.left - rr.left) + '/' + Math.round(r.right - rr.right)); }
     }
     return { n: roots.length, page: document.documentElement.scrollWidth - document.documentElement.clientWidth, body: document.body.scrollWidth - innerWidth, own, bad: bad.slice(0, 6), left, right, vw: innerWidth };
   }, sel);

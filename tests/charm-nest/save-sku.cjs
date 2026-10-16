@@ -274,7 +274,7 @@ const LID = '1096264821';   // tail 4821, 64821, 264821
     store.delete('Charm_Listing_Skus/' + LID);
     // every one taken
     for (const s of FREE) store.set('Charm_Master_Index/' + s, { sku: s });
-    r = await run({ listingId: LID, candidates: FREE }); eq([r.out.ok, r.out.free, r.out.taken.length], [true, '', 6], 'all taken: free is empty');
+    r = await run({ listingId: LID, candidates: FREE }); eq([r.out.ok, r.out.free, r.out.taken.length, r.out.extended], [true, 'FOX_264821_D', 6, true], 'all taken: the order goes on with the next letter (KEEP K8: "No free SKU" cannot be reached)');
     for (const s of FREE) store.delete('Charm_Master_Index/' + s);
     store.delete('Charm_Sku_Aliases/' + LID);
     // the rule, per candidate: never a document id for what the rule refuses

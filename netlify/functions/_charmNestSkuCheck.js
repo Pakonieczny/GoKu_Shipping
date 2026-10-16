@@ -52,14 +52,36 @@ async function check(db, body) {
   const tableKeys = Sku.tableSkus(table), loose = Sku.looseKey;
 
   let free = "";
-  for (const s of list) {
+  const judge = (s, heldMaster) => {
     let hit = refused[s];
-    if (!hit && heldByMaster.has(s)) hit = { sku: s, by: "master", detail: "already a master design" };
+    if (!hit && heldMaster.has(s)) hit = { sku: s, by: "master", detail: "already a master design" };
     if (!hit && s && aliasKeys.has(loose(s))) hit = { sku: s, by: "alias", detail: aliasKeys.get(loose(s)) };
     if (!hit && s && tableKeys.has(loose(s))) hit = { sku: s, by: "listing", detail: tableKeys.get(loose(s)) };
-    if (hit) taken.push(hit); else if (!free) free = s;
+    return hit;
+  };
+  for (const s of list) { const hit = judge(s, heldByMaster); if (hit) taken.push(hit); else if (!free) free = s; }
+  // KEEP B2 (K8): "taken by another design" always ends: when every candidate the page knew is taken, the order goes on with the next letters (NAME_TAIL6_G ... _Z), checked the same way
+  let extended = false;
+  if (!free) {
+    const more = extension(list).filter(s => !seen.has(s));
+    const rule = {}; const ask2 = [];
+    for (const s of more) { const why = Sku.reservedWhy(s); if (why) rule[s] = { sku: s, by: "rule", detail: why }; else ask2.push(s); }
+    const docs2 = ask2.length ? await db.getAll(...ask2.map(s => db.collection(INDEX).doc(s)), { fieldMask: ["sku"] }) : [];
+    const held2 = new Set(); ask2.forEach((s, i) => { if (docs2[i] && docs2[i].exists) held2.add(s); });
+    for (const s of more) {
+      const hit = rule[s] || judge(s, held2);
+      if (hit) taken.push(hit); else { free = s; extended = true; break; }
+    }
   }
-  return { ok: true, free, taken, checked: { master: true, alias: true, listing: table && !table.gone ? "cache" : "none" } };
+  return Object.assign({ ok: true, free, taken, checked: { master: true, alias: true, listing: table && !table.gone ? "cache" : "none" } }, extended ? { extended: true } : {});
+}
+/** The letters after the last candidate given: HEART_364821_C gives HEART_364821_D ... _Z; a candidate with no letter gives _A ... _Z. At most 32 characters. */
+function extension(list) {
+  const last = list.length ? list[list.length - 1] : "";
+  if (!last) return [];
+  const m = /^(.*\d)_([A-Z])$/.exec(last), stem = m ? m[1] : last, from = m ? m[2].charCodeAt(0) + 1 : 65, out = [];
+  for (let c = from; c <= 90; c++) { const s = stem + "_" + String.fromCharCode(c); if (s.length <= 32) out.push(s); }
+  return out;
 }
 
 module.exports = { check, Sku, MAX_CANDIDATES };

@@ -86,6 +86,17 @@ exports.handler = async (event) => {
   { const RepoAuth = require("./_charmNestRepoAuth"), need = RepoAuth.requirement("charmNestOutput", body.op, body); if (need) { const no = await RepoAuth.authorize(admin.firestore(), need, body, event); if (no) return json(no.status, no.body); } }
   // the sandbox keeps its files apart: every path is moved under charmnest/sandbox/ (a path already there is left alone)
   if ((body.sandbox === true || body.sandbox === 1 || body.sandbox === "1") && typeof body.path === "string") { const p = safePath(body.path); body.path = /^charmnest\/sandbox\//.test(p) ? p : p.replace(/^charmnest\//, "charmnest/sandbox/"); }
+  // KEEP K4: the files of a design saved to the repository (charmnest/master/custom/{SKU}.ai|png) are never replaced: the page uploads BEFORE it commits, so an upload that names a SKU
+  // whose entry exists is another save's (a SKU two saves chose at the same moment) unless it says it is the same drawing (charmHash). The refusal is the commit's own word: sku-taken.
+  if ((body.op === "sign" || body.op === "put") && typeof body.path === "string") {
+    const m = /^charmnest\/master\/custom\/([^\/]+)\.(?:ai|png)$/.exec(safePath(body.path));
+    if (m) {
+      try {
+        const held = await admin.firestore().collection("Charm_Master_Index").doc(m[1]).get(), e = held.exists ? held.data() || {} : null;
+        if (e && e.sku && !(body.charmHash && String(e.charmHash || "") === String(body.charmHash))) return json(409, { ok: false, error: "sku-taken", sku: e.sku, by: "master", status: 409 });
+      } catch (e) { console.warn("[charmNestOutput] custom file guard not read:", (e && e.message) || e); }
+    }
+  }
   try { const out = await fn(body); return json(out && out.error ? 400 : 200, out); }
   catch (e) { console.error("[charmNestOutput]", body.op, e); return json(500, { error: e.message || String(e) }); }
 };
