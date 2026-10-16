@@ -59,7 +59,7 @@ async function main() {
   }
   const keyOf = o => `${o.rid}_${o.tid}`;
   const gets = (rid, since = 0) => ctl.gets.filter(g => g.rid === rid && g.t >= since).length;
-  const shown = page => page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, pill: document.getElementById('owNow').textContent, count: document.getElementById('owTlCount').textContent,
+  const shown = page => page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, pill: document.getElementById('owNowCard').dataset.now || '', count: document.getElementById('owTlCount').textContent,
     cx: document.getElementById('orderWin').classList.contains('owCancelled'), railFor: (document.querySelector('#owRail .tlUI') || {}).dataset?.order || '', rail: (document.querySelector('#owRail .tlNowT') || {}).textContent || '',
     full: (document.querySelector('#owTimeline .tlUI .tlNowT') || {}).textContent || '', card: (document.querySelector('#owNowCard') || {}).textContent || '',
     railMsg: (document.querySelector('#owRail .tlMsg:not([hidden])') || {}).textContent || '', fullMsg: (document.querySelector('#owTimeline .tlMsg:not([hidden])') || {}).textContent || '',

@@ -204,7 +204,7 @@
   }
   /** The Approve block, in the card's header row (a card of 207px is 170px tall, not 210): one small Approve button while a face waits for approval (disabled, with a title, until every placement is ready;
    *  an empty small seal row waits beside it, the seal is pressed on it); once the piece is approved its seals, small, in the button's place. Nothing else. */
-  const SEAL_PX = 24;
+  const SEAL_PX = 48;   // (HDRSEAL, Paul, 16 Oct 2026: twice the 24 px they were; where they sit, straddling the card's outer corner, is the order window's HDRSEAL block in charm-nest-1.html)
   function actHtml(piece, o) {
     const S = root && root.CNEngravingSeals, Seal = root && root.Seal, seals = piece.seals || [];
     const row = (n, inner) => `<span class="sealRow egButtonSeal" data-seal-group data-seal-max="${SEAL_PX}" data-seal-count="${n}" role="group" aria-label="Engraving approval history">${inner}</span>`;
