@@ -14707,21 +14707,21 @@ const Sandbox = window.Sandbox = (() => {
   const held = () => { try { return on() && localStorage.getItem(HOLD) != null; } catch (_) { return false; } };
   const lsJSON = k => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (_) { return null; } };
   /** The waiting sandbox's record: `dirty` (it may still hold an earlier run's orders: a start clears them first),
-      `failed` (the pull of the 250 newest orders did not work: the plain line the cloud gave, and the Etsy calls it used). */
+      `failed` (the pull of the newest orders did not work: the plain line the cloud gave, and the Etsy calls it used). */
   const holdInfo = () => lsJSON(HOLD) || {};
   function hold(info) { try { localStorage.setItem(HOLD, JSON.stringify(Object.assign({ at: Date.now() }, info || {}))); } catch (_) {} try { render(); if (window.Orders && Orders.render) Orders.render(); } catch (_) {} }
-  /* ── the sandbox's orders are the 250 newest Etsy orders, pulled once each time a sandbox run starts (Paul, 10 Oct:
+  /* ── the sandbox's orders are the newest Etsy orders (250 until Paul's number says otherwise, up to 1000), pulled once each time a sandbox run starts (Paul, 10 Oct:
      "when in the Sandbox mode always pull the 250 newest orders from etsy. Never retain previous or old orders from prior
      Sandbox runs/testing"). A run starts when the sandbox is switched on from the real orders, and when Start (or Auto,
      or Pull orders) is pressed after a clean-up. The previous sandbox is cleared first (Sandbox.wipe, the one complete
-     clean-up), then the cloud's sandboxPullOrders op asks Etsy for them (about 3 calls, a daily cap of its own) and starts
+     clean-up), then the cloud's sandboxPullOrders op asks Etsy for them (one call per 100: 3 for 250, 10 for 1000) and starts
      the stream on them. A page reload with the sandbox on does none of this: the stored set plays on. If the pull does
      not work the sandbox stays empty with the cloud's one-line reason (it never plays the old orders), and only the
      next Start asks again: nothing here retries by itself, and one start is one startId, so a repeat of that very
      request (a slow answer) is answered with the stored set and costs Etsy nothing. ── */
   const PULL_NEXT = "cn.sandboxPullNext";   // (sessionStorage, this tab) the page that opens next starts the sandbox by itself: switched on, or cleared first
   /* HOW MANY (Paul, 11 Oct 2026: "adjust the # of newest listings the Sandbox test pulls from Etsy"): a number in Settings, 250 until he
-     changes it. It lives in the cloud (config/charmNestSandboxPull, one document that no wipe touches), the cloud holds it to 10..500 and
+     changes it. It lives in the cloud (config/charmNestSandboxPull, one document that no wipe touches), the cloud holds it to 10..1000 (SBX1000, 16 Oct 2026) and
      uses it for every pull, and this page only SHOWS it: it arrives with the status read Settings and the sandbox already make (no poll,
      no listener of its own) and a pull's answer renews it. Saving a new number is a protected write (the charm repo password dialog). */
   const PULL_DEFAULT = 250;
@@ -14749,7 +14749,7 @@ const Sandbox = window.Sandbox = (() => {
     if (h.dirty) return `Sandbox is empty: it held orders from an earlier run, which are cleared first. Press Start to pull the ${want()} newest Etsy orders and play them.${auto ? " Auto is on, so the run then starts by itself." : ""}`;
     return `Sandbox is empty. Press Start${auto ? "" : " (or turn Auto on)"} to pull the ${want()} newest Etsy orders and play them.${auto ? " Auto is on, so the run then starts by itself." : ""}`;
   }
-  /** Start was pressed, Auto turned on, or orders were pulled: the sandbox plays, and the one pull of the 250 newest orders
+  /** Start was pressed, Auto turned on, or orders were pulled: the sandbox plays, and the one pull of the newest orders
       begins (a start asks for it exactly once; the stream and every check wait for it). false: nothing started (it was not
       waiting, or it holds an earlier run's orders, which are cleared first: the page reloads and starts by itself). */
   function release() {
@@ -14785,9 +14785,10 @@ const Sandbox = window.Sandbox = (() => {
       }
     }
   }
-  /** The cloud's answer, kept for the Settings line: when, how many, how many open, the Etsy calls it used. */
+  /** The cloud's answer, kept for the Settings line: when, how many, how many play, the Etsy calls it used. In the sandbox a SHIPPED order counts as open (SBX1000, Paul 16 Oct 2026:
+      "consider shipped orders as open"): `open` is the number that play (paid, not cancelled), `shipped` how many of them Etsy had shipped, `closedBy` the cancelled and unpaid ones left out. */
   function remember(r) {
-    pulled = { count: r.count, open: r.open, closed: r.closed, pulledAt: r.pulledAt, calls: r.already ? null : r.calls, tokenRefreshes: r.tokenRefreshes, label: r.label, startId: r.startId, already: !!r.already, callsToday: r.callsToday, pullsToday: r.pullsToday, cap: r.cap, capLeft: r.capLeft, callsCap: r.callsCap };
+    pulled = { count: r.count, open: r.open, closed: r.closed, closedBy: r.closedBy || {}, shipped: r.shipped || 0, pulledAt: r.pulledAt, calls: r.already ? null : r.calls, tokenRefreshes: r.tokenRefreshes, label: r.label, startId: r.startId, already: !!r.already, callsToday: r.callsToday, pullsToday: r.pullsToday, cap: r.cap, capLeft: r.capLeft, callsCap: r.callsCap };
     return pulled;
   }
   async function pullNewest() {
@@ -14798,8 +14799,9 @@ const Sandbox = window.Sandbox = (() => {
       if (!r || r.ok === false) throw new Error((r && r.error) || "Etsy gave no orders, so the sandbox is empty.");
       remember(r); setCheck = Promise.resolve(true); if (+r.want > 0 && (!pullCfg || +pullCfg.limit !== +r.want)) pullCfg = Object.assign({}, pullCfg || {}, { limit: +r.want, isDefault: +r.want === PULL_DEFAULT });
       adopt(r.stream && r.stream.on ? r.stream : null);
-      agent({ bridge: true }, "ok", `Sandbox: ${r.count} newest Etsy orders pulled (${r.open} open), ${calls(r.calls || 0)}${r.callsToday != null ? `, ${r.callsToday} today` : ""}`);
-      toast(`${r.open} of ${r.count} newest Etsy orders are open and play · ${calls(r.calls || 0)}${r.callsToday != null ? ` (${r.callsToday} today)` : ""}`, "ok", 9000);
+      const left = leftOut(r), shipped = +r.shipped || 0;
+      agent({ bridge: true }, "ok", `Sandbox: ${r.count} newest Etsy orders pulled, ${r.open} play${shipped ? ` (${shipped} already shipped on Etsy count as open)` : ""}${left ? `, ${left} cancelled or unpaid left out` : ""}, ${calls(r.calls || 0)}${r.callsToday != null ? `, ${r.callsToday} today` : ""}`);
+      toast(`${r.open} of ${r.count} newest Etsy orders play${shipped ? ` (shipped ones count as open)` : ""}${left ? ` · ${left} cancelled or unpaid left out` : ""} · ${calls(r.calls || 0)}${r.callsToday != null ? ` (${r.callsToday} today)` : ""}`, "ok", 9000);
       return r;
     } catch (e) {
       // the sandbox stays empty and waits (the cloud holds no orders after a failed pull, and none are played from before)
@@ -14818,7 +14820,7 @@ const Sandbox = window.Sandbox = (() => {
     if (!r || !r.ok) { setNext(""); const text = (r && r.text) || "the old sandbox orders could not be cleared"; hold({ dirty: true, failed: text }); throw new Error(text); }
     return r;
   })().finally(() => { clearing = null; });
-  /** The Start button: the sandbox clears an earlier run's orders first if it holds any, then pulls the 250 newest Etsy
+  /** The Start button: the sandbox clears an earlier run's orders first if it holds any, then pulls the newest Etsy
       orders and plays them (the stream, at step 0 with the seed in Settings; or, with the whole set at once, a pull of
       the orders); Auto then starts its run as it does on a fresh load. */
   const start = () => held() ? (starting ||= startOnce().finally(() => { starting = null; })) : Promise.resolve(false);   // (a second press, or the page's own start, while one is out is the same start)
@@ -14922,12 +14924,15 @@ const Sandbox = window.Sandbox = (() => {
   const simText = t => new Date(t).toLocaleString("en-US", { weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   /** What the pill and the arrivals counter say: the mode, and while the stream plays its speed and simulated time. */
   function label() { return !on() ? "" : held() ? (pulling() ? "Sandbox · starting" : "Sandbox · paused") : pullTask ? "Sandbox · pulling orders" : streaming() && SimClock.on() ? `Sandbox ${speed()}x · sim ${simText(SimClock.now())}${done() ? " · all orders in" : ""}` : "Sandbox"; }
-  /** Where the orders come from, as the Settings line says it: the pulled set, when, how many were open, the Etsy calls it cost. */
+  /** Where the orders come from, as the Settings line says it: the pulled set, when, how many were left out (cancelled or unpaid: shipped ones play as open, so "N open" is gone), the Etsy calls it cost. */
   const pulledNow = () => pulled || (status && status.snapshot && status.snapshot.source === "etsy-pull" ? status.snapshot : null);
+  /** The orders of a pull that do not play: cancelled and unpaid ones (a set stored before shipped ones played also counts its shipped ones in closedBy; they are not left out now). */
+  const leftOut = p => { const c = (p && p.closedBy) || {}; return (+c.canceled || 0) + (+c.unpaid || 0); };
+  const pulledWhen = at => (Date.now() - at < 90000 ? "just now" : when(at));
   function sourceText() {
     const p = pulledNow(); if (!p) return "";
-    const n = p.count != null ? p.count : want(), at = p.pulledAt || p.at;
-    return `${n} newest Etsy orders, pulled ${at ? when(at) : "just now"}${p.open != null && p.open < n ? ` (${p.open} open)` : ""}${p.calls ? ` with ${calls(p.calls)}` : ""}`;
+    const n = p.count != null ? p.count : want(), at = p.pulledAt || p.at, out = leftOut(p);
+    return `${n} newest Etsy orders, pulled ${at ? pulledWhen(at) : "just now"}${out ? ` (${out} cancelled or unpaid left out)` : ""}${p.calls ? ` with ${calls(p.calls)}` : ""}`;
   }
   function streamText() { return held() ? "Order stream: paused until Start" : stream && streaming() ? `Order stream: ${sourceText() ? sourceText() + " · " : ""}seed ${stream.seed} · step ${stream.tick} · ${stream.total ? `${stream.brought || 0} of ${stream.total}` : stream.brought || 0} orders in · simulated ${new Date(SimClock.now()).toLocaleString()} · ${speed()}x` : on() && !streaming() ? `Orders: ${sourceText() || `the ${want()} newest Etsy orders`}, all at once` : ""; }
   /** Settings' line beside the buttons says it again when the pull, the stream or the stored set changes (it is read when the dialog opens). */
@@ -14939,7 +14944,7 @@ const Sandbox = window.Sandbox = (() => {
   }
   /** "Rehearse a run in the sandbox": a start from the real orders. The sandbox is switched on and the sorter reloads with the
       sandbox waiting (nothing plays, nothing is checked); that page clears the previous sandbox (the complete clean-up),
-      reloads once more, and then pulls the 250 newest Etsy orders by itself (afterReload, the stream plays them). Nothing
+      reloads once more, and then pulls the newest Etsy orders by itself (afterReload, the stream plays them). Nothing
       real is touched: the real side's records and browser state are never matched by the clean-up. */
   async function enable() {
     if (on()) return;
@@ -14950,7 +14955,7 @@ const Sandbox = window.Sandbox = (() => {
     setTimeout(() => location.reload(), 700);
   }
   /** After a reload in the sandbox. A sandbox that is waiting (switched on just now, or cleaned) starts by itself when the page
-      opened for that (PULL_NEXT: the clean-up, if the sandbox held an earlier run, and then the one pull of the 250 newest
+      opened for that (PULL_NEXT: the clean-up, if the sandbox held an earlier run, and then the one pull of the newest
       orders), else it waits for Start. A sandbox that is not waiting plays what is stored: no pull, no clean-up. */
   function afterReload() {
     // what the clean-up before this reload did, said on the clean page (a toast under the Settings dialog was not seen);
@@ -15196,7 +15201,7 @@ const Sandbox = window.Sandbox = (() => {
     try { if (held() && document.querySelector) { const n = document.querySelector('[data-mkey="ordEmpty:held"] .sbWait'); if (n && n.textContent !== heldText()) n.textContent = heldText(); } } catch (_) {}
   }
   /* ── Settings → "Newest Etsy orders the sandbox pulls" (Paul, 11 Oct 2026). One number box and a Save: what a number means is worked out
-     here from the limits the cloud sent (pullFacts: held to 10..500, one Etsy call per 100 orders, how many pulls the sandbox's daily
+     here from the limits the cloud sent (pullFacts: held to 10..1000, one Etsy call per 100 orders, how many pulls the sandbox's daily
      Etsy calls allow), and the cloud holds it to the same limits again. Saving is a PROTECTED write: the charm repo password dialog
      (charm-nest-repo-lock.js, "modify"), then the cloud op sandboxPullLimitSet with the token it gave. The number is a setting, not a
      sandbox record: Reset and Purge leave it alone, and a change only takes effect at the next pull. ── */
@@ -15204,7 +15209,7 @@ const Sandbox = window.Sandbox = (() => {
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   /** What `n` means: the number held to the limits (held: it had to be), its Etsy calls per pull and the pulls a day those calls allow. */
   function pullFacts(n) {
-    const c = pullCfg || {}, min = +c.min || 10, max = +c.max || 500, per = +c.perPage || 100, cap = +c.callsCap || 0, most = +c.pullsCap || 0;
+    const c = pullCfg || {}, min = +c.min || 10, max = +c.max || 1000, per = +c.perPage || 100, cap = +c.callsCap || 0, most = +c.pullsCap || 0;   // (the server's own limits, once it has answered; 1000 before)
     const r = Math.round(+n), v = Math.min(max, Math.max(min, r)), calls = Math.ceil(v / per);
     return { value: v, held: v !== r, min, max, calls, cap, pulls: cap && most ? Math.max(1, Math.min(most, Math.floor(cap / calls))) : 0 };   // (NOLIMIT: no cap, no pulls-a-day figure)
   }

@@ -4,18 +4,23 @@
  *  Never retain previous or old orders from prior Sandbox runs/testing."). Op sandboxPullOrders (charmNestLibrary.js)
  *  calls pull() below. HOW MANY (Paul, 11 Oct 2026: "adjust the # of newest listings the Sandbox test pulls from Etsy"): the
  *  number is a setting, 250 until it is changed, kept in the ONE document config/charmNestSandboxPull (not sandbox data: no
- *  wipe touches it), read once per pull (readLimit) and held to 10..500 by the server (clampWant). Op sandboxPullLimitSet
+ *  wipe touches it), read once per pull (readLimit) and held to 10..1000 by the server (clampWant). Op sandboxPullLimitSet
  *  writes it behind the Charm repo password door (_charmNestRepoAuth.js, need "modify"); reading it is free (sandboxStatus).
- *  Each page of up to 100 orders is one Etsy call, so 250 is 3 calls and 500 is 5; the daily caps below are unchanged. pull()
+ *  Each page of up to 100 orders is one Etsy call, so 250 is 3 calls, 500 is 5 and 1000 is 10 (SBX1000, Paul, 16 Oct 2026: "I need to be
+ *  able to pull/test up-to 1000 of the most recent orders from etsy"); the daily caps below are unchanged. pull()
  *    1. checks the daily budget and the retry marker in ONE transaction (Charm_Sandbox/pulls: counts and start ids only),
  *    2. discards the previous order set (Charm_Sandbox/current, the old file under charmnest/sandbox/orders-pull/, and the
  *       stream that was playing it) BEFORE asking Etsy, so any failure leaves the sandbox empty, never the old orders,
  *    3. reads the newest receipts (250 unless the setting says otherwise), with their transactions, from Etsy: one call per
- *       100 (250 is 3 calls: pages of 100, 100 and 50), ALL AT ONCE inside one clock that runs from the start of the pull (WORK_MS), with the
- *       OAuth token and request headers the inbox and the receipts mirror already use (_etsyMailEtsy.js),
+ *       100 (250 is 3 calls: pages of 100, 100 and 50), all in flight together inside one clock that runs from the start of the pull
+ *       (WORK_MS) but STARTED 110 ms apart (Etsy allows about 10 requests a second per app, and 1000 orders are 10 pages), a page
+ *       Etsy answers with a short 429 asked once more, with the OAuth token and request headers the inbox and the receipts mirror
+ *       already use (_etsyMailEtsy.js),
  *    4. stores them as one JSON file and the pointer document Charm_Sandbox/current, which etsySandbox.js serves and
  *       the stream (charmNestLibrary sandboxStream) plays,
  *    5. starts the stream for the new set.
+ *  WHICH RECEIPTS PLAY (SBX1000): every receipt that is paid and not cancelled, shipped ones included (_charmNestSandboxOrders.js: the
+ *  sandbox serves a shipped receipt as a normal open order). Cancelled and unpaid ones are stored but left out, and counted.
  *  No other Etsy call is made: no listing, image or per-order look-up (SKUs stay on the 7-day listingSkus cache).
  *  Only the sandbox's own records are written; the one thing outside is the inbox's Etsy call counter (_etsyApiMeter).
  *  The families are in charm-nest-sandbox-families.js: Charm_Sandbox/current and /stream and the Storage prefix are wiped,
@@ -31,7 +36,7 @@ const SANDBOX = "Charm_Sandbox";
 const DIR = "charmnest/sandbox/orders-pull/";
 const SOURCE = "etsy-pull";
 const WANT = 250;                 // the newest receipts kept until the setting says otherwise (Paul, 10 Oct)
-const MIN_WANT = 10, MAX_WANT = 500;   // what the setting may be (Paul, 11 Oct): 500 is 5 Etsy calls, and the 20-call day below still allows 4 such pulls
+const MIN_WANT = 10, MAX_WANT = 1000;   // what the setting may be (Paul, 11 Oct: 500; 16 Oct: "up-to 1000 of the most recent orders"): 1000 is 10 Etsy calls of 100 receipts. A stored 500 stays valid.
 const PAGE = 100;                 // Etsy's receipts page: one call per 100 orders
 const LIMIT_DOC = "config/charmNestSandboxPull";   // the setting: ONE document, a setting and not sandbox data (the wipe never touches config)
 const limitRef = () => db.collection("config").doc("charmNestSandboxPull");
@@ -39,7 +44,11 @@ const MAX_PULLS = 6;              // sandbox starts per UTC day (Etsy's day): 6 
 const MAX_CALLS = 20;             // and never more than this many sandbox receipt calls in a day
 const CLAIM_MS = 30000;           // a pull that did not finish releases its claim after this: a function lives 10 s (26 s at most), and the page asks the same start again for about 35 s.
                                   // (ADVPULL, 15 Oct 2026: it was 90 s, so a pull cut off at the limit made the page give up on a start the cloud would have taken over)
-const FETCH_MS = 8000;            // one Etsy call may take this long (WORK_MS below is what really bounds it: every page is asked at once)
+const FETCH_MS = 8000;            // one Etsy call may take this long (WORK_MS below is what really bounds it: every page is in flight together)
+const STAGGER_MS = 110;           // pages are STARTED this far apart (page k at k x 110 ms): Etsy allows about 10 requests a second per app, so ten pages together would sit exactly on its limit
+const RETRY_MAX_S = 2;            // a page Etsy answers with 429 and a retry-after of this many seconds or less (or none: a per-second limit) is asked ONCE more, after that wait,
+const RETRY_NO_HEADER_S = 1;      // (no retry-after header: a per-second limit clears in a second)
+const RETRY_ROOM_MS = 1500;       // and only if this much of the pull's clock would be left for the answer; otherwise it fails as before, and the person presses Start again
 const WORK_MS = 8300;             // the Etsy part of a pull, counted from the moment the pull began (the sweep of the old files, the token and every page are inside it). The function's own limit is 10 s, and the file,
                                   // the pointer, the ledger and the stream are written after it; a pull cut off mid-way leaves a claim. (SBXPULL, 15 Oct 2026: the old clock started AFTER the clean-up and gave page one 6 s and the other pages
                                   // what was left, so a 400-order pull of four 100-order pages needed Etsy to answer twice in turn inside 8.2 s, and a slow day made it fail every time.)
@@ -52,15 +61,12 @@ const streamRef = () => db.collection(SANDBOX).doc("stream");
 const dayOf = ms => new Date(ms).toISOString().slice(0, 10);
 const nextDay = ms => Date.parse(dayOf(ms) + "T00:00:00Z") + 86400000;
 
-/** Etsy's own flags decide: paid, not shipped, not cancelled (the same test etsySandbox.js and the stream use). */
-const isOpen = r => !!r && r.is_paid !== false && r.was_paid !== false && !r.is_shipped && !r.was_shipped && !r.is_canceled && !r.was_canceled && !/cancel/i.test(r.status || "");
+/** Which receipts play: paid and not cancelled, SHIPPED ONES TOO (SBX1000; one rule for etsySandbox.js, the stream and these counts: _charmNestSandboxOrders.js).
+    The name stays: in the sandbox a shipped receipt counts as open, and is served as a normal open order. */
+const Orders = require("./_charmNestSandboxOrders");
+const isOpen = Orders.plays;
+const closedWhy = Orders.closedWhy;   // (for the count only: "canceled" or "unpaid"; the receipt itself is stored as Etsy returned it)
 const createdMs = r => (+(r && (r.created_timestamp || r.create_timestamp || r.creation_tsz)) || 0) * 1000;
-/** Why a receipt is not open (for the count only; the receipt itself is stored as Etsy returned it). */
-function closedWhy(r) {
-  if (r.is_canceled || r.was_canceled || /cancel/i.test(r.status || "")) return "canceled";
-  if (r.is_paid === false || r.was_paid === false) return "unpaid";
-  return "shipped";
-}
 
 /* ── the budget: one small document, today's counts and the starts that spent them ── */
 const fresh = (led, day) => (led && led.day === day
@@ -87,7 +93,7 @@ function clampWant(x) {
 /** The one plain line when a number had to be held: what the limit is and why. */
 const clampLine = value => (value <= MIN_WANT
   ? `Held to ${MIN_WANT}: the fewest one pull may bring.`
-  : `Held to ${MAX_WANT}: the most one pull may bring (${pagesFor(MAX_WANT)} Etsy calls).`);
+  : `Held to ${MAX_WANT}: the most one pull may bring (${pagesFor(MAX_WANT)} Etsy calls).`);   // ("Held to 1000: the most one pull may bring (10 Etsy calls).")
 /** What the browser shows for a number: the limits and what a pull costs (about: a token refresh can add one call). */
 function limitInfo(value, o) {
   const pages = pagesFor(value);
@@ -139,7 +145,7 @@ async function settle(startId, tally, ok, now) {
     led.calls += tally.pages; led.tokenRefreshes += tally.refreshes;
     if (!tally.pages && !tally.refreshes && led.pulls > 0) led.pulls -= 1;   // it never reached Etsy: the slot is given back
     if (led.claim && led.claim.startId === startId) led.claim = null;
-    led.starts = [{ id: startId, at: now, ok: !!ok, calls: tally.pages, ms: Date.now() - now, pages: (tally.timing || []).slice(0, 8) }].concat(led.starts.filter(x => x.id !== startId)).slice(0, 40);
+    led.starts = [{ id: startId, at: now, ok: !!ok, calls: tally.pages, ms: Date.now() - now, pages: (tally.timing || []).slice(0, 12) }].concat(led.starts.filter(x => x.id !== startId)).slice(0, 40);
     tx.set(ledgerRef(), Object.assign({}, led, { updatedAt: FV.serverTimestamp() }));
     return led;
   });
@@ -155,9 +161,21 @@ async function tokenDue(now) {
   return { seeded: !!t.refresh_token, due: !(t.access_token && exp - now > TOKEN_BUFFER_MS) };
 }
 class EtsyError extends Error { constructor(reason, message, status) { super(message); this.reason = reason; this.etsyStatus = status || 0; } }
-/** One Etsy page. `where` = { k, n, t0 }: which page of how many, and when the pull began (the seconds in a timed-out line count from there). The answer's own timing goes to `tally.timing`
-    ({ o: offset, ms, s: HTTP status, or 0 for no answer }: numbers only, no order data), so a slow day shows in the ledger which page was slow. */
-async function page(fetchFn, meter, env, token, [offset, limit], tally, deadline, where) {
+const sleep = ms => new Promise(res => setTimeout(res, ms));
+/** One Etsy page, and ONE more try of it when Etsy answered 429 with a short retry-after (SBX1000: ten pages in flight can brush Etsy's per-second limit). `where` and the answer's timing are as pageOnce's. */
+async function page(fetchFn, meter, env, token, p, tally, deadline, where) {
+  try { return await pageOnce(fetchFn, meter, env, token, p, tally, deadline, where); }
+  catch (e) {
+    if (!(e instanceof EtsyError) || !(e.retryWaitS > 0)) throw e;   // only a short 429 is asked again
+    const wait = e.retryWaitS * 1000;
+    if (Date.now() + wait + RETRY_ROOM_MS > deadline) throw e;   // no time left on the pull's clock: it fails as it always did, and Start asks again
+    await sleep(wait);
+    return pageOnce(fetchFn, meter, env, token, p, tally, deadline, Object.assign({}, where, { retry: true }));   // (the second answer is final, whatever it says)
+  }
+}
+/** One Etsy request for one page. `where` = { k, n, t0 }: which page of how many, and when the pull began (the seconds in a timed-out line count from there). The answer's own timing goes to `tally.timing`
+    ({ o: offset, ms, s: HTTP status, or 0 for no answer }: numbers only, no order data), so a slow day shows in the ledger which page was slow. A retry is another call: counted as one. */
+async function pageOnce(fetchFn, meter, env, token, [offset, limit], tally, deadline, where) {
   const qs = new URLSearchParams({ limit: String(limit), offset: String(offset), sort_on: "created", sort_order: "desc" });   // any status: no filters
   const url = `https://api.etsy.com/v3/application/shops/${env.shop}/receipts?${qs}`;
   const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), Math.max(1000, Math.min(FETCH_MS, deadline - Date.now()))), mark = meter.bump("sandbox.receiptsPage"), began = Date.now();
@@ -170,11 +188,13 @@ async function page(fetchFn, meter, env, token, [offset, limit], tally, deadline
     catch (e) { mark.failNet(); note(0); throw new EtsyError("etsy", `Etsy did not answer (${e && e.name === "AbortError" ? `timed out after ${secs()} s${at}` : "network error"}), so the sandbox is empty. Press Start to try again.`); }
     mark.fromHttp(res.status); note(res.status);
     if (!res.ok) {
-      const text = await res.text().catch(() => ""), retry = parseInt((res.headers && res.headers.get && res.headers.get("retry-after")) || "0", 10) || 0;
+      const text = await res.text().catch(() => ""), retry = parseInt((res.headers && res.headers.get && res.headers.get("retry-after")) || "0", 10) || 0;   // (0: none, or a date)
       if (res.status === 401 || res.status === 403) throw new EtsyError("token", `Etsy refused the server's sign-in (HTTP ${res.status}), so the sandbox is empty.`, res.status);
       if (res.status === 429) {
         if (/daily|day/i.test(text) || retry > 3600) throw new EtsyError("limit", "Etsy says its daily limit is reached, so the sandbox is empty until tomorrow.", 429);
-        throw new EtsyError("etsy", "Etsy is limiting requests right now (HTTP 429), so the sandbox is empty. Try again in a minute.", 429);
+        const again = new EtsyError("etsy", "Etsy is limiting requests right now (HTTP 429), so the sandbox is empty. Try again in a minute.", 429);
+        if (retry <= RETRY_MAX_S) again.retryWaitS = retry > 0 ? retry : RETRY_NO_HEADER_S;   // a short wait: page() asks this page once more
+        throw again;
       }
       throw new EtsyError("etsy", `Etsy did not answer (HTTP ${res.status}), so the sandbox is empty. Press Start to try again.`, res.status);
     }
@@ -185,8 +205,9 @@ async function page(fetchFn, meter, env, token, [offset, limit], tally, deadline
     return data.results;
   } finally { clearTimeout(timer); }
 }
-/** The newest `want` receipts (`plan`: their Etsy pages): every page is asked AT ONCE, so the pull needs Etsy to answer once inside `deadline`, not once per round (SBXPULL, 15 Oct 2026). No daily cap
-    exists any more (NOLIMIT), so a failing first page no longer has to be the only call made. `sweeping` (the old files being removed) finishes while Etsy answers. */
+/** The newest `want` receipts (`plan`: their Etsy pages): every page is in flight TOGETHER, so the pull needs Etsy to answer once inside `deadline`, not once per round (SBXPULL, 15 Oct 2026); but they are
+    STARTED STAGGER_MS apart (SBX1000: ten pages for 1000 orders, and Etsy allows about 10 requests a second per app), page k at k x 110 ms, so the last of ten starts about 1 s in and still has the rest of the
+    pull's clock. No daily cap exists any more (NOLIMIT), so a failing first page no longer has to be the only call made. `sweeping` (the old files being removed) finishes while Etsy answers. */
 async function readNewest(deps, tally, now, want, plan, deadline, sweeping) {
   const env = etsyEnv();
   if (!env.shop || !env.id || !env.secret) throw new EtsyError("token", "The server has no Etsy settings, so the sandbox is empty.");
@@ -202,7 +223,7 @@ async function readNewest(deps, tally, now, want, plan, deadline, sweeping) {
     if (e && e.late) throw new EtsyError("etsy", "Etsy's sign-in did not answer in time, so the sandbox is empty. Press Start to try again.");
     throw new EtsyError("token", "The server's Etsy sign-in is not working, so the sandbox is empty.");
   }
-  const got = await Promise.allSettled(plan.map((p, i) => page(deps.fetch, deps.meter, env, token, p, tally, deadline, { k: i + 1, n: plan.length, t0: now })));
+  const got = await Promise.allSettled(plan.map(async (p, i) => { if (i) await sleep(i * (deps.staggerMs >= 0 ? deps.staggerMs : STAGGER_MS)); return page(deps.fetch, deps.meter, env, token, p, tally, deadline, { k: i + 1, n: plan.length, t0: now }); }));
   const bad = got.filter(r => r.status === "rejected").map(r => r.reason);
   if (bad.length) throw bad.find(e => e instanceof EtsyError && e.reason !== "etsy") || bad[0];   // a sign-in or limit answer says more than a slow page
   await sweeping;   // (the old set is gone before the new one is written: the file below must not be swept away with it)
@@ -222,7 +243,7 @@ const safeId = s => (typeof s === "string" && /^[A-Za-z0-9_.:-]{8,80}$/.test(s) 
 
 /** The answer for a set that stands. */
 function setAnswer(cur, led, extra) {
-  return Object.assign({ ok: true, already: false, startId: cur.startId, source: SOURCE, label: cur.label || `${cur.count} newest Etsy orders`, count: cur.count, want: cur.want || WANT, open: cur.open, closed: cur.closed, closedBy: cur.closedBy || {},
+  return Object.assign({ ok: true, already: false, startId: cur.startId, source: SOURCE, label: cur.label || `${cur.count} newest Etsy orders`, count: cur.count, want: cur.want || WANT, open: cur.open, closed: cur.closed, closedBy: cur.closedBy || {}, shipped: cur.shipped || 0,
     pulledAt: cur.pulledAt, newestAt: cur.newestAt || null, oldestAt: cur.oldestAt || null, calls: 0, tokenRefreshes: 0 }, budget(led), { path: cur.path }, extra || {});
 }
 async function startStream(ctx, b) {
@@ -233,7 +254,7 @@ async function startStream(ctx, b) {
   } catch (e) { console.warn("[sandboxPull] stream not started:", e && e.message); return { stream: null, streamError: String((e && e.message) || e).slice(0, 200) }; }
 }
 
-/** ctx: { stream(b) → the library's sandboxStream, by } · deps: { fetch, token, meter, workMs } (tests replace them; workMs shortens the clock so a slow Etsy can be tested in a second). */
+/** ctx: { stream(b) → the library's sandboxStream, by } · deps: { fetch, token, meter, workMs, staggerMs } (tests replace them; workMs shortens the clock so a slow Etsy can be tested in a second; staggerMs 0 starts every page at once). */
 async function pull(b, ctx, deps) {
   b = b || {};
   const startId = safeId(b.startId);
@@ -269,14 +290,16 @@ async function pull(b, ctx, deps) {
     }
     const list = await readNewest(deps, tally, now, want, plan, now + (deps.workMs > 0 ? deps.workMs : WORK_MS), sweeping);
     if (!list.length) throw new EtsyError("etsy", "Etsy sent no orders, so the sandbox is empty. Press Start to try again.");
-    const closedBy = { shipped: 0, canceled: 0, unpaid: 0 };
-    let open = 0;
-    for (const r of list) { if (isOpen(r)) open += 1; else closedBy[closedWhy(r)] += 1; }
+    // what plays: paid and not cancelled, shipped ones too (they are served as normal open orders: etsySandbox.js). `open` is the number that PLAY (the stream's total), `closed` the cancelled and unpaid ones
+    // that are stored and left out, `closedBy` says which, and `shipped` how many of the playing ones Etsy had already shipped. The stored file is the pull exactly as Etsy returned it.
+    const closedBy = { canceled: 0, unpaid: 0 };
+    let open = 0, shipped = 0;
+    for (const r of list) { if (isOpen(r)) { open += 1; if (Orders.wasShipped(r)) shipped += 1; } else closedBy[closedWhy(r)] += 1; }
     const pullId = `${now}-${crypto.randomBytes(3).toString("hex")}`, path = `${DIR}${pullId}.json`;
     const body = Buffer.from(JSON.stringify({ at: now, count: list.length, source: SOURCE, startId, receipts: list }));
     const file = admin.storage().bucket().file(path);
     await file.save(body, { resumable: false, contentType: "application/json", metadata: { cacheControl: "no-store" } });
-    const doc = { path, source: SOURCE, startId, count: list.length, want, open, closed: list.length - open, closedBy, at: now, pulledAt: now, newestAt: createdMs(list[0]) || null, oldestAt: createdMs(list[list.length - 1]) || null,
+    const doc = { path, source: SOURCE, startId, count: list.length, want, open, closed: list.length - open, closedBy, shipped, at: now, pulledAt: now, newestAt: createdMs(list[0]) || null, oldestAt: createdMs(list[list.length - 1]) || null,
       takenBy: String(b.by || "").slice(0, 80) || null, label: `${list.length} newest Etsy orders`, calls: tally.pages, tokenRefreshes: tally.refreshes, bytes: body.length, note: null };
     try { await currentRef().set(Object.assign({}, doc, { updatedAt: FV.serverTimestamp() })); }
     catch (e) { await file.delete({ ignoreNotFound: true }).catch(() => {}); throw e; }
@@ -296,4 +319,4 @@ async function pull(b, ctx, deps) {
   }
 }
 
-module.exports = { pull, readBudget, readLimit, setLimit, clampWant, planFor, pagesFor, isOpen, SOURCE, WANT, MIN_WANT, MAX_WANT, MAX_PULLS, MAX_CALLS, LIMIT_DOC, DIR };
+module.exports = { pull, readBudget, readLimit, setLimit, clampWant, planFor, pagesFor, isOpen, SOURCE, WANT, MIN_WANT, MAX_WANT, MAX_PULLS, MAX_CALLS, LIMIT_DOC, DIR, WORK_MS, FETCH_MS, STAGGER_MS, RETRY_MAX_S };

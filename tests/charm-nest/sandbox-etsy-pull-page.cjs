@@ -13,7 +13,10 @@
 //     says, is never retried by the page (a reload neither), and the next Start asks again;
 //   · switching back to the real orders touches no sandbox record and makes no call that writes;
 //   · a sandbox with no pulled set (the old Sep 17 snapshot) waits empty for Start instead of playing it;
-//   · Settings say "N newest Etsy orders, pulled <time>" with the Etsy calls, and the old snapshot button is gone.
+//   · Settings say "N newest Etsy orders, pulled <time>" with the Etsy calls, and the old snapshot button is gone;
+//   · SBX1000 (Paul, 16 Oct 2026: "consider shipped orders as open"): the pull plays every receipt that is paid and not cancelled, the shipped ones too. A receipt Etsy had shipped reaches the sorter as an
+//     open order (a row that is not gone, and the Design Station's own fresh read of it says not gone, not shipped); cancelled ones stay out. The toast says "N of 250 newest Etsy orders play" and
+//     the status line has no "(N open)" (only the cancelled or unpaid ones left out are named), and says "pulled just now" when it is read at once.
 //   node tests/charm-nest/sandbox-etsy-pull-page.cjs [playwright-core dir]
 const fs = require('fs'), path = require('path'), assert = require('assert'), os = require('os');
 const root = path.join(__dirname, '../..');
@@ -28,11 +31,12 @@ const day = Math.floor(Date.now() / 1000);
 const GF = '14k Gold Filled', SS = 'Sterling Silver';
 const tx = (rid, i, sku, metal, created, ship) => ({ transaction_id: Number(`${rid}${i}`), listing_id: 1718000 + i, receipt_id: rid, sku, title: `${sku} charm`, quantity: 1, create_timestamp: created, created_timestamp: created, paid_timestamp: created, expected_ship_date: ship, shipped_timestamp: null, variations: [{ formatted_name: 'Metal', formatted_value: metal }], is_personalized: false });
 const receipt = (rid, hoursAgo, leadDays, sku, metal, extra = {}) => { const created = day - Math.round(hoursAgo * 3600), ship = created + leadDays * 86400; return Object.assign({ receipt_id: rid, order_number: rid, name: 'Buyer ' + rid, country_iso: 'US', city: 'Austin', message_from_buyer: '', create_timestamp: created, created_timestamp: created, update_timestamp: created + 60, updated_timestamp: created + 60, status: 'Paid', is_paid: true, is_shipped: false, transactions: [tx(rid, 1, sku, metal, created, ship)] }, extra); };
-// the shop's 250 newest receipts, newest first as Etsy lists them; a few are already shipped / cancelled (kept, never played)
+// the shop's 250 newest receipts, newest first as Etsy lists them; a few are already shipped (they play, as open orders) or cancelled (kept, never played)
 const SKUS = ['BR-TST-01', 'BR-TST-02', 'BR-TST-03', 'BR-TST-04', 'BR-TST-05', 'BR-TST-06'];
-const SHOP = Array.from({ length: 250 }, (_, k) => { const i = 249 - k; return receipt(3700000001 + i, 2 * (250 - i), 2 + (i % 6), SKUS[i % 6], i % 2 ? SS : GF, i % 13 === 0 ? { is_shipped: true, status: 'Completed' } : i % 41 === 0 ? { is_canceled: true, status: 'Canceled' } : {}); });
-const isOpen = r => !r.is_shipped && !r.is_canceled && r.is_paid !== false;
-const OPEN_IDS = SHOP.filter(isOpen).map(r => String(r.receipt_id)).reverse();   // oldest first: the order the stream plays them
+const SHOP = Array.from({ length: 250 }, (_, k) => { const i = 249 - k; return receipt(3700000001 + i, 2 * (250 - i), 2 + (i % 6), SKUS[i % 6], i % 2 ? SS : GF, i % 13 === 0 ? { is_shipped: true, was_shipped: true, status: 'Completed', shipments: [{ receipt_shipping_id: 8100 + i, carrier_name: 'usps', tracking_code: '9400' + i, shipment_notification_timestamp: day - 3600 }] } : i % 41 === 0 ? { is_canceled: true, status: 'Canceled' } : {}); });
+const plays = r => !r.is_canceled && r.is_paid !== false;   // paid and not cancelled: shipped ones play too
+const OPEN_IDS = SHOP.filter(plays).map(r => String(r.receipt_id)).reverse();   // oldest first: the order the stream plays them
+const SHIPPED_IDS = SHOP.filter(r => plays(r) && r.is_shipped).map(r => String(r.receipt_id)), LEFT_OUT = SHOP.length - OPEN_IDS.length;
 // the previous run's set (the Sep 17 kind: a pointer without source "etsy-pull") and what was built on it
 const OLD_RECEIPTS = Array.from({ length: 12 }, (_, i) => receipt(3300000001 + i, 900 - i, 3, SKUS[i % 6], GF));
 const OLD_IDS = new Set(OLD_RECEIPTS.map(r => String(r.receipt_id)));
@@ -140,8 +144,9 @@ const PROD_COLLECTIONS = ['Charm_Custom_Orders', 'Charm_Pool', 'Charm_Nest_Sheet
   assert(seen.bar, 'a labelled spinner in the top bar says "Pulling the 250 newest orders"');
   assert(seen.spin && /Pulling the 250 newest orders…/.test(seen.button), 'the Orders tab button shows a spinner and says what it waits for: ' + seen.button);
   assert(/clearing the old orders, then pulling the 250 newest|Asking Etsy/.test(seen.starting + ' ' + (seen.line || '')), 'the empty Orders tab says what is happening: ' + seen.starting + ' / ' + seen.line);
-  const toast1 = [...seen.toasts].find(t => /newest Etsy orders are open and play/.test(t));
-  assert(toast1 && toast1.includes(`${OPEN_IDS.length} of 250 newest Etsy orders are open and play · 3 Etsy calls`) && /\(3 today\)/.test(toast1) && !/of 20|pulls? left|used up/.test(toast1), 'the Etsy call count the op reports is shown, counted and not capped: ' + [...seen.toasts].join(' | '));
+  const toast1 = [...seen.toasts].find(t => /newest Etsy orders play/.test(t));
+  assert(SHIPPED_IDS.length > 5 && LEFT_OUT > 3, 'the fake shop has shipped and cancelled receipts');
+  assert(toast1 && toast1.includes(`${OPEN_IDS.length} of 250 newest Etsy orders play (shipped ones count as open) · ${LEFT_OUT} cancelled or unpaid left out · 3 Etsy calls`) && !/are open|\(\d+ open\)/.test(toast1) && /\(3 today\)/.test(toast1) && !/of 20|pulls? left|used up/.test(toast1), 'the Etsy call count the op reports is shown, counted and not capped: ' + [...seen.toasts].join(' | '));
   assert(!/until you press Start/.test([...seen.toasts].join(' ')), 'the start does not say the sandbox waits for Start: ' + [...seen.toasts].join(' | '));
   // the stream plays the NEW set, oldest first, and none of the old orders ever reaches the sorter
   const s1 = stream(); assert(s1.on && s1.total === OPEN_IDS.length && s1.snapshotPath === cur1.path, 'the stream plays the pulled set: ' + JSON.stringify(s1));
@@ -150,9 +155,17 @@ const PROD_COLLECTIONS = ['Charm_Custom_Orders', 'Charm_Pool', 'Charm_Nest_Sheet
   const got1 = [...new Set(await rows())];
   assert(got1.length >= 2 && got1.every(id => OPEN_IDS.includes(id)) && !got1.some(id => OLD_IDS.has(id)), 'only the 250 newest reach the sorter, none of the old orders: ' + got1.join(','));
   assert.deepStrictEqual([...got1].sort((a, b) => a - b), OPEN_IDS.slice(0, got1.length), 'the oldest first, each once');
+  // a receipt Etsy had shipped is the oldest of the set: it reached the sorter as an open order (a row that is not gone), and the Design Station's own fresh read of it says not gone
+  { const shipped1 = got1.filter(id => SHIPPED_IDS.includes(id)); assert(shipped1.length >= 1, 'a shipped receipt is among the first arrivals: ' + got1.join(','));
+    const states = await page.evaluate(() => B.orders.rows.map(r => ({ rid: String(r.order.receiptId), state: r.state, reason: r.reason })));
+    assert(shipped1.every(id => states.filter(x => x.rid === id).every(x => x.state !== 'gone')) && states.some(x => x.rid === shipped1[0]), 'its rows are not gone: ' + JSON.stringify(states.filter(x => x.rid === shipped1[0])));
+    const fresh = await page.evaluate(id => DesignLink.call('orders.detail', { receiptId: id, fresh: true }, { timeoutMs: 60000 }), shipped1[0]);
+    assert(fresh.gone === false && fresh.isShipped === false && fresh.status === 'Paid' && fresh.order && fresh.order.lines.length >= 1, 'the station reads it fresh as an open order: ' + JSON.stringify({ gone: fresh.gone, isShipped: fresh.isShipped, status: fresh.status })); }
   assert.strictEqual(await page.evaluate(() => localStorage.getItem('cn.team.drafts:sandbox')), null, 'the browser\'s old sandbox draft is gone');
   const line1 = await page.evaluate(() => { openSettings(); return new Promise(res => setTimeout(() => { const t = document.getElementById('stSbStatus').textContent; closeDlg(document.getElementById('dlgSettings')); res(t); }, 400)); });
-  assert.match(line1, new RegExp(`^Order stream: 250 newest Etsy orders, pulled \\d+ \\w+, \\d\\d:\\d\\d \\(${OPEN_IDS.length} open\\) with 3 Etsy calls · seed \\d+ · step \\d+ · \\d+ of ${OPEN_IDS.length} orders in · simulated .+ · 50x$`), 'Settings say where the orders come from: ' + line1);
+  assert.match(line1, new RegExp(`^Order stream: 250 newest Etsy orders, pulled (just now|\\d+ \\w+, \\d\\d:\\d\\d) \\(${LEFT_OUT} cancelled or unpaid left out\\) with 3 Etsy calls · seed \\d+ · step \\d+ · \\d+ of ${OPEN_IDS.length} orders in · simulated .+ · 50x$`), 'Settings say where the orders come from: ' + line1);
+  assert(!/\(\d+ open\)/.test(line1), 'no "(N open)": shipped orders play');
+  { const fresh1 = await page.evaluate(() => Sandbox.streamText()); assert(/pulled (just now|\d+ \w+, \d\d:\d\d)/.test(fresh1), 'the line names when: ' + fresh1); }
   assert.strictEqual(prodSnapshot(), prod0, 'production records are untouched');
   assert.strictEqual(await prodLocal(), prodKeys0, "the real side's browser keys are untouched");
   console.log('1 ok · switch ON:', pulls().length, 'pull,', etsy.calls.length, 'Etsy calls ·', line1);
@@ -262,7 +275,10 @@ const PROD_COLLECTIONS = ['Charm_Custom_Orders', 'Charm_Pool', 'Charm_Nest_Sheet
   assert.strictEqual(pulls()[pulls().length - 1].body.stream, false, 'asked without a stream');
   assert(current() && current().source === 'etsy-pull' && !stream(), 'the set is stored and no stream was started');
   const line7 = await page.evaluate(() => Sandbox.streamText());
-  assert.match(line7, /^Orders: 250 newest Etsy orders, pulled .+ \(\d+ open\) with 3 Etsy calls, all at once$/, 'the line names the set: ' + line7);
+  assert.match(line7, new RegExp(`^Orders: 250 newest Etsy orders, pulled .+ \\(${LEFT_OUT} cancelled or unpaid left out\\) with 3 Etsy calls, all at once$`), 'the line names the set: ' + line7);
+  // all at once, the shipped receipts are listed with the rest, as open orders
+  { await until(n => new Set(B.orders.rows.map(r => String(r.order.receiptId))).size >= n, 150000, 'the orders pulled at once are rows', OPEN_IDS.length); const listedAll = await page.evaluate(() => B.orders.rows.map(r => String(r.order.receiptId))); const ids = new Set(listedAll);
+    assert(SHIPPED_IDS.every(id => ids.has(id)), 'every shipped receipt is among the ' + ids.size + ' orders pulled at once'); assert.strictEqual(ids.size, OPEN_IDS.length, 'and nothing cancelled: exactly the ' + OPEN_IDS.length + ' that play'); }
   console.log('7 ok · no stream:', line7);
 
   assert.deepStrictEqual(etsy.calls.filter(c => !/\/receipts$/.test(c.path)), [], 'the only Etsy endpoint used was the receipts list');
