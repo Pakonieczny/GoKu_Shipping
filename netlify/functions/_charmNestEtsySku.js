@@ -46,7 +46,7 @@ const crypto = require("crypto");
 const Canon = require("./_etsyInventoryCanonical");
 const ListingSkus = require("./_charmNestListingSkus");
 
-const SAVES = "Charm_Custom_Saves", ALIASES = "Charm_Sku_Aliases", MIRROR = "EtsyMail_Listings";
+const SAVES = "Charm_Custom_Saves", ALIASES = "Charm_Sku_Aliases", MIRROR = "EtsyMail_Listings", LEASES = "Charm_Custom_EtsyLeases";
 const SITE = "custom.skuWrite";
 const MAX_CALLS = 3, TIMEOUT_MS = 8000, LEASE_MS = 60000;
 const RID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/, LISTING_RE = /^\d{3,20}$/, SKU_RE = /^[A-Z0-9_-]{1,32}$/;
@@ -69,6 +69,8 @@ const REASONS = {
   rejected: { text: "Etsy did not accept the change", retry: false },
   unverified: { text: "Etsy accepted the change but did not confirm it; press Retry to check", retry: true, state: "unverified" },
   running: { text: "the Etsy step is already running", retry: true },
+  interrupted: { text: "the last try was cut off; the next try checks Etsy first", retry: true, state: "unverified" },   // (KEEP R6: a run that died after its note "writing"; never shown as working)
+  "not-connected": { text: "Etsy is not connected on the server. Paul needs to connect it", retry: true, needs: "etsy-connection" },
   sandbox: { text: "nothing is written to Etsy from the sandbox", retry: false },
   rehearsal: { text: "this was only a rehearsal; nothing was saved", retry: false },
   "no-save": { text: "nothing is saved for this order yet", retry: false },
@@ -260,7 +262,14 @@ function classify(e) {
   if (e && e.timeout) return { reason: "etsy-down", ambiguous: true };
   const msg = String((e && e.message) || "");
   let st = +(e && e.status) || 0;
-  if (!st) { const m = /refresh failed:\s*(\d{3})/i.exec(msg); if (m) st = +m[1]; else if (/not seeded|No refresh_token/i.test(msg)) st = 401; }
+  if (!st) {
+    const m = /refresh failed:\s*(\d{3})/i.exec(msg);
+    // KEEP R8: a failed TOKEN REFRESH is about the connection, not about this write: 400 (invalid_grant: the refresh token is dead), 401, 403 = Paul must re-authorise (scope, retried on a later load);
+    // 429 and 5xx are Etsy's own weather. It must never read as "Etsy did not accept the change" (rejected, final).
+    if (m) { const r = +m[1]; st = r === 429 || r >= 500 ? r : 401; }
+    else if (/not seeded|No refresh_token/i.test(msg)) st = 401;
+    else if (/Missing SHOP_ID|CLIENT_ID|CLIENT_SECRET/i.test(msg)) return { reason: "not-connected" };
+  }
   const detail = e && e.data && typeof e.data.error === "string" ? [e.data.error] : [];
   if (st === 401 || st === 403) return { reason: "scope" };
   if (st === 404 || st === 410) return { reason: "listing-gone" };
@@ -314,7 +323,7 @@ function make(deps) {
     try { got = await claim(ref); } catch (e) { console.error("[etsySku] claim", rid, e && e.message); return answer("internal", { details: [e && e.message] }); }
     if (got.refusal) return answer(got.refusal);
     if (got.linked) return linkedAnswer(got.linked.d, got.linked.prev, 0);
-    const out = await run(ref, rid, got.d, got.prev, got.lease);
+    const out = await leased(ref, got, () => run(ref, rid, got.d, got.prev, got.lease));
     if (out.calls && meter && typeof meter.flushNow === "function") { try { await meter.flushNow(); } catch (_) { /* the counters are best effort */ } }
     return out;
   }
@@ -369,7 +378,14 @@ function make(deps) {
       const live = (Array.isArray(inv && inv.products) ? inv.products : []).filter(p => p && typeof p === "object" && !p.is_deleted);
       if (!live.length) return await stop("product-missing");
       const bought = findBought(live, d, cur.boughtKey);
-      if (!bought) return await stop("product-missing");
+      if (!bought) {
+        // KEEP R11: Etsy gives every product a NEW id on every write, so an order whose product id was read before ANOTHER order of the listing wrote the same SKU can no longer find its product by id.
+        // When that other order's write renamed it (its record's groupBefore holds this id) and the listing carries the SKU now, this order is linked by that write: nothing to write, nothing missing.
+        // (or, with no sibling record to say so: the listing carries the SKU and NO product still carries the old one, so everything that shared the bought product's SKU has been renamed)
+        const carried = live.filter(p => skuNorm(p.sku) === sku);
+        if (carried.length && (!live.some(p => skuNorm(p.sku) === oldSku) || await renamedBySibling(ref, d))) return await linked(ref, rid, d, inv, carried, calls, false, settle);
+        return await stop("product-missing");
+      }
       const bsku = skuNorm(bought.sku);
 
       if (bsku === sku) {   // already on Etsy (an earlier run's PUT landed, or a person set it): no write
@@ -459,6 +475,44 @@ function make(deps) {
     return out;
   }
 
+  /* KEEP R7: ONE Etsy write per LISTING at a time. Two orders of a listing (a race lost in the repository step, a second tab, a resume) each hold their own record and lease; without this both read the
+     inventory with the old SKU and both PUT the whole inventory. The listing's lease is a document of its own (Charm_Custom_EtsyLeases/{listing}, 60 s); the loser answers "running" (retry), reads the
+     winner's result on its next try (the SKU is on Etsy: linked, no second write). A function that dies leaves a lease that simply runs out. */
+  async function leaseListing(listingId, owner) {
+    const lref = db.collection(LEASES).doc(listingId), t = clock();
+    return db.runTransaction(async tx => {
+      const s = await tx.get(lref), c = s.exists ? s.data() || {} : null;
+      if (c && c.owner && c.owner !== owner && +c.until > t) return { ok: false, owner: c.owner };
+      tx.set(lref, { owner, until: t + LEASE_MS, at: t });
+      return { ok: true };
+    });
+  }
+  async function unleaseListing(listingId, owner) {
+    const lref = db.collection(LEASES).doc(listingId);
+    try { await db.runTransaction(async tx => { const s = await tx.get(lref); if (s.exists && (s.data() || {}).owner === owner) tx.delete(lref); }); }
+    catch (e) { console.warn("[etsySku] listing lease not released for", listingId, e && e.message); }   // (it runs out by itself)
+  }
+  async function leased(ref, got, work) {
+    const listingId = String(got.d.listingId), owner = String(ref.id || got.d.rid || "");
+    let l; try { l = await leaseListing(listingId, owner); } catch (e) { console.warn("[etsySku] listing lease not taken for", listingId, e && e.message); l = { ok: true, unchecked: true }; }   // (the rid lease still holds)
+    if (!l.ok) {
+      // give back this record's own lease (nothing was tried), so the next try is not refused for a minute
+      const back = Object.assign({}, got.prev); delete back.runningUntil;
+      try { await ref.update({ etsy: clean(back) }); } catch (_) { /* it runs out */ }
+      return answer("running", { calls: 0 });
+    }
+    try { return await work(); } finally { if (!l.unchecked) await unleaseListing(listingId, owner); }
+  }
+
+  async function renamedBySibling(ref, d) {
+    const pid = String(d.productId == null ? "" : d.productId).trim();
+    if (!pid) return false;
+    try {
+      const snap = await db.collection(SAVES).where("listingId", "==", String(d.listingId)).limit(50).get();
+      return snap.docs.some(x => { const o = x.data() || {}, e = o.etsy || {}; return x.id !== ref.id && String(o.sku) === String(d.sku) && e.state === "linked" && (Array.isArray(e.groupBefore) ? e.groupBefore : []).some(g => g && String(g.id) === pid); });
+    } catch (e) { console.warn("[etsySku] sibling saves not read for", d.listingId, e && e.message); return false; }
+  }
+
   return { customEtsySkuWrite };
 }
 
@@ -478,4 +532,13 @@ const ops = {
   customEtsySkuWrite: async body => (isSandbox(body) ? answer("sandbox") : real().customEtsySkuWrite(body))
 };
 
-module.exports = { make, ops, REASONS, internals: { decodeOnce, normalizeOnProperty, sanitizeProduct, buildPutBody, selfCheck, compareInventories, looksLikeFreshInventory, classify, findBought, pairList } };
+/** KEEP R6: the `etsy` object of a save record as a reader should see it NOW. A run notes "writing" (with a 60 s lease) from its before-copy to its last write; when the function is killed in between
+    that note would stay for ever. A "writing" past its lease is not working: it is "unverified" (the next try reads Etsy first and writes only if the SKU is not there). Pure; the store is not touched. */
+function effective(etsyDoc, now) {
+  const e = etsyDoc && typeof etsyDoc === "object" ? etsyDoc : { state: "pending" };
+  if (e.state !== "writing" || +e.runningUntil > (now == null ? Date.now() : now)) return e;
+  const r = REASONS.interrupted;
+  return Object.assign({}, e, { state: "unverified", reason: "interrupted", text: r.text, retry: true });
+}
+
+module.exports = { make, ops, REASONS, effective, LEASES, internals: { decodeOnce, normalizeOnProperty, sanitizeProduct, buildPutBody, selfCheck, compareInventories, looksLikeFreshInventory, classify, findBought, pairList } };
