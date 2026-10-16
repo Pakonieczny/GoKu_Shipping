@@ -184,6 +184,7 @@
     "_charmNestAuth.js",
     "_charmNestCustomRead.js",
     "_charmNestCustomSave.js",
+    "_charmNestCustomRepair.js",
     "_charmNestMonogramAssist.js",
     "_charmNestMonogramRef.js",
     "_charmNestEtsySku.js",
