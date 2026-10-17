@@ -53,14 +53,14 @@ const slice = (src, from, to) => { const a = src.indexOf(from); assert.ok(a >= 0
     // first person's Refresh: the whole ledger once, the rows built from it (no dcFor)
     await ctx.refreshOrders();
     assert.equal(calls.filter(u => /designCompleted=1/.test(u)).length, 1, 'the first Refresh reads the whole ledger once');
-    assert.deepEqual(j(builds[0]), { syncCompleted: false, allNotes: true, stream: false });
+    assert.deepEqual(j(builds[0]), { syncCompleted: false, allNotes: true, stream: false, targeted: false });
     assert.ok(ctx.ledgerAt() > 0);
     assert.deepEqual(j([...completedOrders].sort()), ['1001', '1002', '1003']);
     // another bench completes 1004 and un-completes 1002 meanwhile
     ledger.add('1004'); ledger.delete('1002');
     await ctx.refreshOrders(); await ctx.refreshOrders();
     assert.equal(calls.filter(u => /designCompleted=1/.test(u)).length, 1, 'later Refreshes do not read the whole ledger again');
-    assert.deepEqual(j(builds[1]), { syncCompleted: true, allNotes: true, stream: false }, 'later Refreshes ask only about the open orders');
+    assert.deepEqual(j(builds[1]), { syncCompleted: true, allNotes: true, stream: false, targeted: false }, 'later Refreshes ask only about the open orders');
     // the sync itself: exact for the open orders, chunks of 100, two at a time
     const open = Array.from({ length: 230 }, (_, i) => String(1000 + i));
     calls.length = 0;
@@ -70,7 +70,7 @@ const slice = (src, from, to) => { const a = src.indexOf(from); assert.ok(a >= 0
     // the sorter's sweep (targeted) never reads the whole ledger either
     calls.length = 0; builds.length = 0;
     await ctx.refreshOrders({ heal: false, targeted: true });
-    assert.deepEqual(j(builds[0]), { syncCompleted: true, allNotes: false, stream: false });
+    assert.deepEqual(j(builds[0]), { syncCompleted: true, allNotes: false, stream: false, targeted: true });
     assert.equal(calls.filter(u => /designCompleted=1/.test(u)).length, 0);
     ok('design-1: first Refresh reads the whole ledger once; later Refreshes and the sorter sweeps ask only about the open orders, with the same completed state for every order shown');
 
@@ -156,7 +156,7 @@ const slice = (src, from, to) => { const a = src.indexOf(from); assert.ok(a >= 0
       const rows = ids.filter(i => orders[i]).map(i => ({ id: i, data: () => Object.fromEntries(f.map(k => [k, orders[i][k]]).filter(([, v]) => v !== undefined)) }));
       reads += rows.length; return { docs: rows }; } }; } });
     const admin = { firestore: Object.assign(() => ({ collection: () => ({ where: (_f, _op, ids) => query(ids) }), batch() {}, getAll: async () => [] }), { FieldPath: { documentId: () => '__name__' }, FieldValue: {}, Timestamp: {} }) };
-    const sb = { exports: {}, console, Date, Promise, Map, Set, Array, JSON, Number, String, Math, Object, encodeURIComponent, Intl, require: n => { if (n === './firebaseAdmin') return admin; throw new Error('dep ' + n); } };
+    const sb = { exports: {}, console, Date, Promise, Map, Set, Array, JSON, Number, String, Math, Object, encodeURIComponent, Intl, require: n => { if (n === './firebaseAdmin') return admin; if (n === './_staffNotes') return require(path.join(fnDir, '_staffNotes.js')); throw new Error('dep ' + n); } };   // (the staff-note index: no FieldValue here, so it steps aside and the per-order asks answer)
     vm.runInNewContext(fs.readFileSync(path.join(fnDir, 'firebaseOrders.js'), 'utf8'), sb);
     const r = await sb.exports.handler({ httpMethod: 'GET', queryStringParameters: { staffNotesFor: '5001,5002,5003,5004' }, headers: {} });
     assert.equal(r.statusCode, 200);

@@ -17,12 +17,12 @@ function page(w, tab, { helper = true } = {}) {
     console, Set, Map, Promise, Date, encodeURIComponent, FN: "/fn", completedOrders: new Set(), selectedOrders: new Set(), orderCache: {}, allOpenReceipts: [], currentReceipts: [],
     $: () => ({ scrollTop: 0, clientHeight: 100 }), $$: () => rows, rtSet() {}, removePreviewBoxesForOrder() {}, updateCounters() {}, applyMetalFilter() {}, refreshChrome() {},
     document: tab.env.document, setTimeout: tab.env.setTimeout, clearTimeout: tab.env.clearTimeout,
-    served: new Set(),
+    served: new Set(), servedAt: new Map(), sinces: [],
     fetch: async url => {
       w.calls.push({ t: w.t, url, tab: tab.name });
       if (ctx.failFetch) throw new TypeError("network down");
-      const ids = new URL(url, "http://x").searchParams.get("dcFor").split(",");
-      return { ok: true, json: async () => ({ success: true, orderNumbers: ids.filter(i => ctx.served.has(i)) }) };
+      const since = Number(new URL(url, "http://x").searchParams.get("dcSince")); ctx.sinces.push(since);   // (COST, Oct 2026: the delta since the last answer, not a question per order)
+      return { ok: true, json: async () => ({ success: true, orderNumbers: [...ctx.served].filter(i => (ctx.servedAt.get(i) || 0) >= since), undone: [], now: w.t }) };
     }
   };
   ctx.window = ctx;
@@ -39,13 +39,14 @@ const gaps = w => w.calls.slice(1).map((c, i) => c.t - w.calls[i].t);
   {
     const w = makeWorld(), tab = makeTab(w, "d"), { ctx } = page(w, tab); ctx.__start(); await w.advance(200000);
     assert.deepEqual(gaps(w).slice(0, 8), [1500, 3000, 6000, 12000, 30000, 30000, 30000, 30000], "gaps " + gaps(w));
-    assert.ok(w.calls.every(c => /dcFor=1001%2C1002%2C1003/.test(c.url)), "it asks about the open orders on screen, as before");
+    assert.ok(w.calls.every(c => /dcSince=\d+/.test(c.url) && !/dcFor=/.test(c.url)), "it asks for the completions since its last answer, not about each order on screen");
+    assert.ok(ctx.sinces.slice(1).every((s, i) => s === w.calls[i].t - 2000), "each look starts where the server clock of the last answer stood (less 2 s)");
     ctx.__poll.p.stop(); ok("same wait schedule as the old loop (1.5, 3, 6, 12, 30 s)");
   }
   // 2. an order completed elsewhere: the row goes, and the next look is 0.75 s later; then it backs off again
   {
     const w = makeWorld(), tab = makeTab(w, "d"), { ctx, rows } = page(w, tab); ctx.__start(); await w.advance(40000);
-    const n = w.calls.length; ctx.served.add("1002"); await w.advance(30500);
+    const n = w.calls.length; ctx.served.add("1002"); ctx.servedAt.set("1002", w.t); await w.advance(30500);
     assert.ok(rows.every(r => r.dataset.receipt !== "1002") && ctx.completedOrders.has("1002"), "the completed order's row is removed");
     const g = w.calls.slice(n).map(c => c.t), after = g.slice(g.findIndex((t, i) => i > 0 && t - g[i - 1] === 750) - 1);
     assert.ok(g.some((t, i) => i && t - g[i - 1] === 750), "0.75 s after a change: " + g.map((t, i) => (i ? t - g[i - 1] : 0)).join(","));

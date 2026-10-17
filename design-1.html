@@ -1689,8 +1689,9 @@ const orderCache      = {};          // receipt_id → transactions[]
 const gridElements    = new Map();   // transaction_id → tile element   ← keyed by TX, not by size
 const itemsByTx       = new Map();   // transaction_id → transaction object
 let   staffNoteIDs    = new Set();   // ONE binding. Nothing else may declare this name.
+const staffNoteTexts  = new Map();   // receipt_id → its note's text, as the last staffNotesFor answer gave it (COST, Oct 2026: no read per noted order)
 const msgOrderIDs     = new Set();   // receipts with >=1 internal Brites message
-const msgProbed       = new Set();   // receipts already asked about this refresh
+const msgProbed       = new Set();   // receipts already asked about (kept 30 minutes across the sorter's sweeps; a person's Refresh asks again)
 
 let allOpenReceipts  = [];
 let currentReceipts  = [];
@@ -2816,7 +2817,14 @@ async function fetchAllLocksOnce() {
 /* While the Charm Sorter drives this station its lock view must stay current even when the sorter's tab is in the
    background: that view refuses a selection or a commit of an order locked at another bench. */
 const lockPollHidden = () => document.hidden && !(typeof Bridge !== "undefined" && Bridge.active());
-function nextRtDelay() { if(lockPollHidden())return 60000; return RT_STEPS[Math.min(__rtIdleHits, RT_STEPS.length - 1)]; }
+/* COST (Oct 2026): every sorter tab drives a framed station, and the clicks the sorter's commands make here woke this poll back to 2 s, in
+   tabs nobody looked at, all day. A hidden tab the sorter drives now polls on the usual back-off with a 60 s floor, and at the usual pace
+   only while the sorter is at work here (a command in flight or within the last 2 minutes: a claim, a selection, a commit). */
+function nextRtDelay() {
+  if (lockPollHidden()) return 60000;
+  const d = RT_STEPS[Math.min(__rtIdleHits, RT_STEPS.length - 1)];
+  return document.hidden && !(typeof Bridge !== "undefined" && Bridge.working && Bridge.working()) ? Math.max(60000, d) : d;
+}
 function scheduleRtPoll() {
   clearTimeout(RT_POLL.t);
   RT_POLL.t = setTimeout(fetchLocksOnce, nextRtDelay());
@@ -2827,21 +2835,23 @@ function fetchLocksOnce() {
   __rtInflight = fetch(`${FN}/firebaseOrders?rtSince=${__rtSince}`)
     .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(json => {
-      let changed = 0;
-      const idx = receiptElementIndex();   // one pass over the page for the whole delta
+      let changed = 0, claimsChanged = 0, idx = null, heal = false;
+      // COST (Oct 2026): the page is indexed (and every lock repainted) only when the delta changed something; an empty poll touches no DOM
+      const ix = () => idx || (idx = receiptElementIndex());   // one pass over the page for the whole delta
       Object.entries(json.locks || {}).forEach(([id, doc]) => {
         const owner = (doc || {}).selectedBy || null;
-        if (rtSelected.get(id) !== owner) { rtSelected.set(id, owner); paintLock(id, owner, idx); changed++; }
+        if (rtSelected.get(id) !== owner) { rtSelected.set(id, owner); paintLock(id, owner, ix()); changed++; }
       });
       (json.unlocks || []).forEach(id => {
-        if (rtSelected.has(id)) { rtSelected.delete(id); clearLock(id, idx); changed++; }
+        if (rtSelected.has(id)) { if (rtSelected.get(id) === RT.clientId && selectedOrders.has(id)) heal = true; rtSelected.delete(id); clearLock(id, ix()); changed++; }
       });
-      Object.entries(json.claims || {}).forEach(([id, c]) => { rtClaims.set(id, c); paintClaim(id, true, idx); });
-      (json.unclaims || []).forEach(id => { if (rtClaims.has(id)) { rtClaims.delete(id); paintClaim(id, false, idx); } });
+      Object.entries(json.claims || {}).forEach(([id, c]) => { const was = rtClaims.get(id), diff = !was || was.run !== (c || {}).run || was.claimedBy !== (c || {}).claimedBy; rtClaims.set(id, c); if (diff) { claimsChanged++; paintClaim(id, true, ix()); } });
+      (json.unclaims || []).forEach(id => { if (rtClaims.has(id)) { rtClaims.delete(id); paintClaim(id, false, ix()); claimsChanged++; } });
       if (changed && Bridge.active()) Bridge.hooks.locks();
       __rtSince = Number(json.now) || Date.now();
       __rtIdleHits = changed ? 0 : (__rtIdleHits + 1);
-      applyAllLocksToDOM(idx);
+      if (changed || claimsChanged) applyAllLocksToDOM(ix());
+      if (heal) scheduleHealMissingLocks();   // (a lock of ours released by the server's 24 h sweep while still selected here: written again)
     })
     .catch(() => { __rtIdleHits++; })
     .finally(() => { __rtInflight = null; scheduleRtPoll(); });
@@ -2965,7 +2975,7 @@ async function restoreCompleted() {
 
 /** Ask firebaseOrders a per-order question (dcFor, staffNotesFor) about many receipts: 100 ids per request, two requests
     at a time. It rejects if any part fails, so a caller never takes a partial answer for the whole one. */
-async function askFirebaseOrders(route, ids, chunk = 100) {
+async function askFirebaseOrders(route, ids, chunk = 100, texts = null) {
   const found = new Set(), parts = [];
   for (let i = 0; i < ids.length; i += chunk) parts.push(ids.slice(i, i + chunk));
   const run = makeQueue(2);
@@ -2974,6 +2984,7 @@ async function askFirebaseOrders(route, ids, chunk = 100) {
     const j = await r.json();
     if (!r.ok || !j || j.success === false || !Array.isArray(j.orderNumbers)) throw new Error(`firebaseOrders ${route}: ${(j && j.error) || "HTTP " + r.status}`);
     j.orderNumbers.forEach(id => found.add(String(id)));
+    if (texts && j.notes && typeof j.notes === "object") for (const [id, t] of Object.entries(j.notes)) if (typeof t === "string") texts.set(String(id), t);   // (staffNotesFor: the notes' texts)
   })));
   return found;
 }
@@ -3039,6 +3050,9 @@ function visibleReceiptIds(limit = 20) {
   const wrap = $("#queueWrap");
   const rows = $$("#newOrderContainer .orderRow");
   if (!wrap || document.hidden) return [];
+  // COST (Oct 2026): in the sorter the station's frame is usually not displayed: every row then has offsetTop 0, so "on screen" was the first
+  // 20 rows, asked about (dcFor, staff notes) every few seconds by a page nobody saw. A list that is not rendered has no rows on screen.
+  if (!wrap.clientHeight || (typeof wrap.getClientRects === "function" && !wrap.getClientRects().length)) return [];
 
   const top = wrap.scrollTop - 400, bottom = wrap.scrollTop + wrap.clientHeight + 400;
   const near = rows.filter(el => el.offsetTop + el.offsetHeight >= top && el.offsetTop <= bottom);
@@ -3101,13 +3115,17 @@ function wakeCompletionPolling() { __completeIdle = 0; }
    2026 and growing; FC3b, Firebase cost). The highlight is only ever looked up for an order this page lists, so "all" now asks (staffNotesFor, in chunks) about every
    order the page lists (the open orders, the current list, the search result) and every order it already flags: the same answer for everything shown, a read per
    order listed. Sweeps ask only about the open orders ({ ids }), in chunks; { merge: true } updates just those ids and keeps the rest (a search result). A failed
-   read keeps the notes already known. */
+   read keeps the notes already known. (COST, Oct 2026: in production the staff-note index answers each chunk in 4 reads, texts included.) */
 async function refreshStaffNoteIDs(opts = {}) {
   const mode = opts.mode || "visible";
   try {
     const list = [...new Set((mode === "all" ? staffNoteAskIds() : Array.isArray(opts.ids) ? opts.ids : visibleReceiptIds()).map(String))];
     if (!list.length) { if (!opts.merge) staffNoteIDs = new Set(); return; }
-    const found = await askFirebaseOrders("staffNotesFor", list);
+    // COST (Oct 2026): the answer carries each note's text too (production answers from the staff-note index: 4 reads a request), kept
+    // in staffNoteTexts, so the sorter's snapshot no longer reads each noted order for its note (staffNoteOf)
+    const texts = new Map(), found = await askFirebaseOrders("staffNotesFor", list, 100, texts);
+    list.forEach(id => { if (texts.has(id)) staffNoteTexts.set(id, texts.get(id)); else staffNoteTexts.delete(id); });
+    if (!opts.merge) [...staffNoteTexts.keys()].forEach(id => { if (!found.has(id)) staffNoteTexts.delete(id); });
     if (opts.merge) { list.forEach(id => { if (found.has(id)) staffNoteIDs.add(id); else staffNoteIDs.delete(id); }); }
     else staffNoteIDs = found;
   } catch (e) {
@@ -3141,7 +3159,12 @@ function setMessageFlag(rid, has) {
   if (had !== has) { markMessageOrders(); scheduleFilterRefresh(); }
 }
 
-function resetMessageFlags() { msgOrderIDs.clear(); msgProbed.clear(); }
+let __msgFlagsAt = 0;   // when the message flags were last cleared
+/** Clear the message flags (the rows are probed again). olderThan: only when they were cleared longer ago than that (ms). */
+function resetMessageFlags({ olderThan = 0 } = {}) {
+  if (olderThan && Date.now() - __msgFlagsAt < olderThan) return;
+  msgOrderIDs.clear(); msgProbed.clear(); __msgFlagsAt = Date.now();
+}
 
 function renderedReceiptIds() {
   return $$("#newOrderContainer .orderRow").map(r => String(r.dataset.receipt || "")).filter(Boolean);
@@ -3880,13 +3903,19 @@ let __sweepInFlight = 0;   // an Etsy sweep in progress: the bridge refuses a co
    about yet, reads the locks as the delta its own poll reads (fetchLocksOnce), and does the full asks once every five
    minutes. Between them the answers are the ones this page keeps itself: a completion or an undo made here, the completion
    poll's delta, the lock poll's delta. Production's sweeps (every ten minutes) and a person's Refresh are unchanged. */
-const SB_FULL_MS = 5 * 60000;
+/* COST (Oct 2026): production's sweeps (the sorter's order check every ten minutes, and its snapshots up to every 90 s) asked the ledger about
+   every open order too (dcFor: about 80 queries, 100+ reads a sweep for ~800 open orders). They now sweep the same way as the stream: the
+   full asks once an hour (SWEEP_FULL_MS), and between them only the orders not asked about yet, plus the completions AND un-completions on
+   record since the last answer (dcSince, one read or two when nothing changed). Staff notes are still asked about for every open order on
+   every sweep: the staff-note index answers that in a few reads. A person's own Refresh is unchanged. */
+const SB_FULL_MS = 5 * 60000, SWEEP_FULL_MS = 60 * 60000;
 const sbSweep = { fullAt: 0, asked: new Set(), inc: false, since: 0 };
-function sbSweepBegin(stream) {
+const sweepsByDelta = (stream, targeted) => !!((typeof SANDBOX !== "undefined" && SANDBOX && stream) || targeted);
+function sbSweepBegin(stream, targeted = false) {
   sbSweep.inc = false;
-  if (!(typeof SANDBOX !== "undefined" && SANDBOX && stream)) return false;
-  const now = Date.now();
-  if (!sbSweep.fullAt || now - sbSweep.fullAt >= SB_FULL_MS) { sbSweep.fullAt = now; sbSweep.asked.clear(); sbSweep.since = 0; return false; }
+  if (!sweepsByDelta(stream, targeted)) return false;
+  const now = Date.now(), fullMs = typeof SANDBOX !== "undefined" && SANDBOX && stream ? SB_FULL_MS : SWEEP_FULL_MS;
+  if (!sbSweep.fullAt || now - sbSweep.fullAt >= fullMs) { sbSweep.fullAt = now; sbSweep.asked.clear(); sbSweep.since = 0; return false; }
   return sbSweep.inc = true;
 }
 /** The orders completed on record since the last stream sweep, whoever completed them (completedAt after the watermark, which
@@ -3899,12 +3928,14 @@ async function sbCompletedDelta(first) {
     const j = await r.json();
     if (!r.ok || !j || !j.success || !Array.isArray(j.orderNumbers)) return false;
     j.orderNumbers.forEach(id => completedOrders.add(String(id)));
+    // (un-completed on record since then, at another bench: open again, unless this browser's own ledger still holds it, as syncCompletedFor reads it)
+    if (Array.isArray(j.undone) && j.undone.length) { const ledger = loadLocalCompleted(), back = new Set(j.orderNumbers.map(String)); j.undone.forEach(id => { id = String(id); if (!back.has(id) && !ledger.has(id)) completedOrders.delete(id); }); }
     sbSweep.since = (Number(j.now) || Date.now()) - 2000;
     return true;
   } catch (_) { return false; }
 }
-async function buildNewOrderList({ syncCompleted = false, allNotes = false, stream = false } = {}) {
-  const inc = sbSweepBegin(stream); let fresh = null;
+async function buildNewOrderList({ syncCompleted = false, allNotes = false, stream = false, targeted = false } = {}) {
+  const inc = sbSweepBegin(stream, targeted), byDelta = sweepsByDelta(stream, targeted), sbStream = !!(stream && SANDBOX); let fresh = null;
   if (allOpenReceipts.length === 0) {
     __sweepInFlight++;
     Activity.show("Loading open Etsy orders…");
@@ -3913,10 +3944,12 @@ async function buildNewOrderList({ syncCompleted = false, allNotes = false, stre
       if (inc) fresh = raw.map(r => String(r.receipt_id)).filter(id => !sbSweep.asked.has(id));
       if (syncCompleted) {
         Activity.msg("Checking which open orders are already done…");
-        if (stream && SANDBOX && !inc) await sbCompletedDelta(true);   // (a full stream sweep: the server's clock first, so the deltas after it miss nothing)
-        let ok = await syncCompletedFor(fresh || raw.map(r => String(r.receipt_id)));
+        if (byDelta && !inc) await sbCompletedDelta(true);   // (a full sweep: the server's clock first, so the deltas after it miss nothing)
+        const askIds = fresh || raw.map(r => String(r.receipt_id));
+        let ok = await syncCompletedFor(askIds);
+        if (ok && byDelta) askIds.forEach(id => sbSweep.asked.add(id));
         if (ok && inc) ok = await sbCompletedDelta(false);
-        if (stream && SANDBOX && !ok) sbSweep.fullAt = 0;   // a failed read: the next stream sweep asks about everything again
+        if (byDelta && !ok) sbSweep.fullAt = 0;   // a failed read: the next sweep asks about everything again
       }
       let fromCache = 0, needFetch = 0;
       raw.forEach(r => {
@@ -3943,7 +3976,7 @@ async function buildNewOrderList({ syncCompleted = false, allNotes = false, stre
 
   pruneStaleSelection();
   applyFilters({ rerender:true });
-  if (inc && fresh) { await refreshStaffNoteIDs({ ids: fresh, merge: true }); fresh.forEach(id => sbSweep.asked.add(id)); }
+  if (inc && fresh && sbStream) { await refreshStaffNoteIDs({ ids: fresh, merge: true }); fresh.forEach(id => sbSweep.asked.add(id)); }
   else await refreshStaffNoteIDs(allNotes ? { mode:"all" } : { ids: allOpenReceipts.map(r => String(r.receipt_id)) });
   markStaffNoteOrders();
   refreshMessageFlags();
@@ -7552,7 +7585,9 @@ async function refreshOrders({ heal = true, targeted = false, stream = false } =
   abortAllUpdateWork();
   updateRunId++;
   allOpenReceipts = [];
-  resetMessageFlags();          // a manual Refresh re-reads message flags
+  // a manual Refresh re-reads message flags. COST (Oct 2026): a sorter sweep keeps them for 30 minutes and probes only the rows not asked
+  // about yet (it cleared them every sweep: a Firestore probe per rendered row, every ten minutes and every snapshot)
+  resetMessageFlags(targeted ? { olderThan: 30 * 60000 } : {});
   // A person's own Refresh reads the whole completion ledger the FIRST time in this page session (as it always did); after that the set is
   // already in memory and each Refresh only asks which of the open orders are completed on record (dcFor, exact for every order shown).
   const wholeLedger = !targeted && !__ledgerFullAt;
@@ -7561,9 +7596,11 @@ async function refreshOrders({ heal = true, targeted = false, stream = false } =
     await restoreCompleted();
   }
   if (bar) bar.note("the open orders");
-  await buildNewOrderList({ syncCompleted: targeted || !wholeLedger, allNotes: !targeted, stream });
+  await buildNewOrderList({ syncCompleted: targeted || !wholeLedger, allNotes: !targeted, stream, targeted });
   if (bar) bar.note("who is working on what");
-  await (sbSweep.inc ? fetchLocksOnce() : fetchAllLocksOnce());   // (a stream sweep between two full ones reads the locks' delta)
+  // (a sorter sweep, and a stream sweep between two full ones, reads the locks' delta: COST (Oct 2026), ?rt=1 read every lock and claim
+  //  held, stale ones included, on every sweep; the lock poll keeps that view current since the page's first full read)
+  await ((targeted || sbSweep.inc) ? fetchLocksOnce() : fetchAllLocksOnce());
   if (SETTINGS.autoHeal && heal) {   // the bridge hydrates every order itself, so it asks for no heal passes: one read per order
     if (bar) bar.note("filling in what Etsy left out");
     await repairMissingReceiptData({ passes:1, concurrency:4 });
@@ -7848,6 +7885,7 @@ const Bridge = (() => {
   async function staffNoteOf(rid) {
     if (!staffNoteIDs.has(rid)) return "";
     if (notesCache.has(rid)) return notesCache.get(rid);
+    if (staffNoteTexts.has(rid)) return staffNoteTexts.get(rid);   // COST (Oct 2026): the text came with the sweep's staffNotesFor answer; a read only for a note too long for the index
     try { const r = await fetch(`${FN}/firebaseOrders?orderId=${encodeURIComponent(rid)}`); const j = await r.json(); const t = j && j.success && j.data ? String(j.data["Staff Note"] || "") : ""; notesCache.set(rid, t); return t; } catch (_) { return ""; }
   }
   // the sandbox has no Firestore client: the orders asked about within a moment share one server read
@@ -8043,7 +8081,7 @@ const Bridge = (() => {
       // and every other key of this origin that carries the sandbox's mark (the ledger's purge stamp, the Etsy call meter, and
       // any store added later): "ALL sandbox data goes" (Paul, 10 Oct); production's keys never carry the mark
       try { const mark = /(^|[:.])sandbox($|[:.])/, ks = []; for (let i = 0; i < localStorage.length; i++) ks.push(localStorage.key(i)); ks.forEach(k => { if (k && mark.test(k)) localStorage.removeItem(k); }); } catch (_) {}
-      detailCache.clear(); __imagesCache.clear(); __imagesSaved.clear(); __imagesMiss.clear(); notesCache.clear(); msgCache.clear();
+      detailCache.clear(); __imagesCache.clear(); __imagesSaved.clear(); __imagesMiss.clear(); notesCache.clear(); staffNoteTexts.clear(); msgCache.clear();
       // the History's copy of the sandbox archive (its own IndexedDB, mirrored from the records the reset deleted)
       try { archiveIndex = []; archiveById = new Map(); archiveDetail.clear(); archiveSyncAt = 0; archiveFloor = 0; archiveOlderDone = false; await Promise.all([idbClear("index"), idbClear("meta"), idbClear("detail")]); } catch (_) {}
       return { ok: true };
@@ -8143,7 +8181,7 @@ const Bridge = (() => {
         const rc = data.receipt; rc.receipt_id = rc.receipt_id || rid; rc.transactions = data.transactions || [];
         decorateReceipt(rc); orderCache[rid] = rc.transactions; cachePut(rid, rc.transactions, receiptStamp(rc), rc);
         if (r) { Object.assign(r, rc); decorateReceipt(r); paintRow(rid); }
-        notesCache.delete(rid); msgCache.delete(rid);
+        notesCache.delete(rid); staffNoteTexts.delete(rid); msgCache.delete(rid);
         const gone = !!rc.is_shipped || !!rc.was_shipped || !!rc.is_canceled || !!rc.was_canceled || rc.is_paid === false || rc.was_paid === false || !!(rc.status && /cancel|fully\s*refund/i.test(String(rc.status)));   // (ADV-CANCEL, Paul 15 Oct 2026: "Partially Refunded" is not a cancel, as in _orderCancel.isCancelled; a refunded part of a live order dropped it from the run and took its pieces off the sheets)
         return { order: await orderForBridge(r || rc), gone, status: String(rc.status || ""), isShipped: !!rc.is_shipped, etsyCalls: etsyMeter.total - calls0 };
       }
@@ -8211,7 +8249,7 @@ const Bridge = (() => {
       await Cursor.act("row", rid, `Staff note on ${rid}`);
       const r = await fetch(`${FN}/firebaseOrders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orderNumber: rid, staffNote: text }) });
       if (!r.ok) throw new Error("staff note not saved: HTTP " + r.status);
-      if (text.trim()) staffNoteIDs.add(rid); else staffNoteIDs.delete(rid); notesCache.set(rid, text); markStaffNoteOrders();
+      if (text.trim()) staffNoteIDs.add(rid); else staffNoteIDs.delete(rid); notesCache.set(rid, text); staffNoteTexts.set(rid, text); markStaffNoteOrders();
       return { receiptId: rid, hasNote: !!text.trim() };
     },
     async "chat.post"(a) { const rid = String(a.receiptId || ""); await Cursor.act("row", rid, `Post a chat message on ${rid}`); await BritesChat.postAs(rid, String(a.text || ""), a.sender || "Charm Sorter", a.imageUrl || null, a.clientId || null); msgCache.delete(rid); return { receiptId: rid }; },
@@ -8328,14 +8366,19 @@ const Bridge = (() => {
     try {
       mirrorBroadcast(d.type, d.args || {});
       S.busy = (S.busy || 0) + 1; S.lastCmdAt = Date.now(); inflight.add(progress);
+      if (WORK_CMDS.has(d.type)) { S.workBusy = (S.workBusy || 0) + 1; S.lastWorkAt = Date.now(); }
       const result = await fn(d.args || {}, progress, ev);
       reply({ id: d.id, type: "done", result });
     } catch (e) {
       reply({ id: d.id, type: "error", error: e && e.message || String(e) });
       ticker(`Sorter command failed: ${d.type} — ${e && e.message || e}`);
       emit("error", { command: d.type, error: e && e.message || String(e) });
-    } finally { inflight.delete(progress); S.busy = Math.max(0, (S.busy || 1) - 1); S.lastCmdAt = Date.now(); }
+    } finally { inflight.delete(progress); S.busy = Math.max(0, (S.busy || 1) - 1); S.lastCmdAt = Date.now(); if (WORK_CMDS.has(d.type)) { S.workBusy = Math.max(0, (S.workBusy || 1) - 1); S.lastWorkAt = Date.now(); } }
   }
+  /* COST (Oct 2026): the commands that act on orders another bench may hold (a claim, a selection, a commit). While one is in flight, or for
+     2 minutes after, the lock poll keeps its usual pace in a hidden tab (nextRtDelay); the sorter's pings, reads and order checks do not count. */
+  const WORK_CMDS = new Set(["claim", "unclaim", "ui.select", "ui.deselect", "complete.preview", "complete.commit", "complete.undo", "release"]);
+  const working = () => active() && ((S.workBusy || 0) > 0 || Date.now() - (S.lastWorkAt || 0) < 120000);
   /** What the station is waiting for (the operator passcode): every sorter command in flight shows it as its progress. */
   const inflight = new Set();
   function waiting(text) { ticker(text); inflight.forEach(p => { try { p(0, 0, text); } catch (_) {} }); }
@@ -8367,7 +8410,7 @@ const Bridge = (() => {
     swept() { S.lastSweepAt = Date.now(); },
     locks() { if (!active()) return; const cur = JSON.stringify([...rtSelected]); if (cur !== lastLocks) { lastLocks = cur; emit("lock.changed", { locks: Object.fromEntries([...rtSelected].filter(([, o]) => o && o !== RT.clientId)), claims: Object.fromEntries(rtClaims) }); } }
   };
-  return { hooks, active, framed, emit, ticker, waiting, endSession, state: () => Object.assign({}, S, { master: !!S.master }), snapshot: stateSnapshot, orderForBridge, commands: Object.keys(CMDS), ALLOWED, cursor: Cursor };
+  return { hooks, active, working, framed, emit, ticker, waiting, endSession, state: () => Object.assign({}, S, { master: !!S.master }), snapshot: stateSnapshot, orderForBridge, commands: Object.keys(CMDS), ALLOWED, cursor: Cursor };
 })();
 if (Bridge.framed()) document.documentElement.classList.add("framed");
 
