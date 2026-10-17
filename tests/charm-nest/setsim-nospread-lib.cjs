@@ -16,6 +16,7 @@ const { METALS, makeStream, orderOf, partOf, piecesOf, schedule, Sim, fillOf, me
 /** The made-up day. `day` is Paul's description (mostly single charms, 10-20 % of the orders with several pieces); `heavy` is a stress day (about 45 % multi-piece). */
 const MIXES = {
   day: { lines: [.82, .14, .04], kinds: { single: .80, pair: .10, mismatched: .005, discs: .025, qty: .025, huggie: .015, trio: .03 }, size: { small: .35, mid: .40, large: .25 }, metals: { gold: .55, silver: .45 } },
+  pairs: { lines: [1, 0, 0], kinds: { pair: 1 }, size: { small: .35, mid: .40, large: .25 }, metals: { gold: 1 } },   // an earring day (or the last orders of a day): only multi-piece orders come to close the sheets
   heavy: { lines: [.60, .28, .12], kinds: { single: .40, pair: .28, mismatched: .04, discs: .08, qty: .08, huggie: .05, trio: .07 }, size: { small: .35, mid: .40, large: .25 }, metals: { gold: .55, silver: .45 } },
 };
 

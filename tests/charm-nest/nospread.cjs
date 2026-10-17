@@ -300,9 +300,10 @@ function bridgeSide() {
   ok(a > 0 && b > a, 'the bridge has pieceTotals, orderInfo and attachOrder');
   const O = require('../../charm-nest-orders.js');
   const rows = [], pages = { gold: [], silver: [] }, S = { settings: {} };
-  const ctx = vm.createContext({ Orders: { rows: () => rows }, O, pagesOf: m => pages[m], S, Set, Map, Math, Number, String, Array });
+  const win = { CharmNestNoSpread: NS };   // (the page with the policy module loaded)
+  const ctx = vm.createContext({ Orders: { rows: () => rows }, O, pagesOf: m => pages[m], S, window: win, Set, Map, Math, Number, String, Array });
   vm.runInContext(text.slice(a, b) + '\nthis.orderInfo = orderInfo; this.attachOrder = attachOrder;', ctx);
-  const row = (rid, state, material, n) => ({ order: { receiptId: rid }, state, spec: { material, pieceCount: n } });
+  const row = (rid, state, material, n, extra) => ({ order: { receiptId: rid }, state, spec: Object.assign({ material, pieceCount: n }, extra || {}) });
   const charm = (rid, id, metal) => ({ order: rid, poolId: id, id, metal });
   rows.push(row('R1', 'pulled', 'gold', 2), row('R1', 'held', 'gold', 1), row('R1', 'pulled', 'silver', 1), row('R2', 'pulled', 'gold', 1), row('R3', 'pulled', 'gold', 1), row('R3', 'gone', 'gold', 4), row('R4', 'pooled', 'gold', 2), row('R4', 'pulled', 'gold', 1));
   const pair = [charm('R1', 'p1', 'gold'), charm('R1', 'p2', 'gold')];
@@ -322,6 +323,23 @@ function bridgeSide() {
   eq(ctx.attachOrder(made, batch).map(x => x[0].order.receiptId), ['R2', 'R3', 'R1'], 'an order with a line still to come is put on its sheet after the others of the update');
   S.settings.nospread = 'off';
   eq(ctx.attachOrder(made, batch).map(x => x[0].order.receiptId), ['R1', 'R2', 'R3'], 'with the policy off the update keeps its order');
+  // a line that is never cut and never pooled (no design: a chain, an extender, packaging; skipped; committed) is no piece to come: a one-charm order with a chain line is still a single-charm order
+  S.settings.nospread = undefined; delete S.settings.nospread;
+  rows.length = 0; pages.gold.length = 0;
+  rows.push(row('N1', 'pulled', 'gold', 1), row('N1', 'noDesign', '', 1, { noDesign: true }), row('N1', 'skipped', 'gold', 2), row('N1', 'committed', 'gold', 1), row('N1', 'pulled', 'gold', 1, { noDesign: true }));
+  const one = [charm('N1', 'n1', 'gold')];
+  info = ctx.orderInfo('N1', 'gold', one, new Map(), null);
+  eq([info.pieces.length, info.expected, info.placed], [1, 1, 0], 'a chain / packaging line (state noDesign or spec.noDesign), a skipped and a committed line are no piece to come');
+  const single = NS.orderOf({ pieces: info.pieces.map(c => ({ areaPt2: 100 })), more: Math.max(0, info.expected - info.pieces.length - info.placed), placed: info.placed });
+  ok(!single.multi && NS.admits({ usablePt2: 1000, placedPt2: 650, pendingPt2: 0, maxFill: .8, gapFilling: false }, single).take, 'so a one-charm order with a chain line tops up a sheet near completion, as any single charm does');
+  rows.push(row('N2', 'pulled', 'gold', 1), row('N2', 'held', 'gold', 1));
+  eq(ctx.orderInfo('N2', 'gold', [charm('N2', 'm1', 'gold')], new Map(), null).expected, 2, 'a line held for a question is still to come');
+  // the policy module absent (or switched off): the update keeps its order, as before
+  const made2 = [[row('N2', 'pulled', 'gold', 1), { sp: { material: 'gold' }, charms: [charm('N2', 'm1', 'gold')], custom: false }], [row('N3', 'pulled', 'gold', 1), prep('N3', 'c')]];
+  rows.push(row('N3', 'pulled', 'gold', 1));
+  eq(ctx.attachOrder(made2, new Map()).map(x => x[0].order.receiptId), ['N3', 'N2'], 'with the module an order with a line to come goes after the others');
+  delete win.CharmNestNoSpread;
+  eq(ctx.attachOrder(made2, new Map()).map(x => x[0].order.receiptId), ['N2', 'N3'], 'without the module the update keeps its order');
   section('the bridge: what the intake knows of an order (its other lines, the other metal, gone lines, pieces already placed) and the order of an update');
 }
 
@@ -359,6 +377,14 @@ async function days() {
     row('a bulk day, 20 % of the extra lines come late', lon, loff);
   }
   if (!QUICK) { const on = await run({ mix: 'heavy', late: .3 }), off = await run({ mix: 'heavy', late: .3 }, true); const r = row('a heavy day (45 % multi-piece), 30 % late', on, off); ok(r.so <= Math.max(1, r.sf / 3), `the heavy day: splits fall to a third or less (${r.sf} -> ${r.so})`); }
+  {
+    // a day of earring pairs only (or the last orders of a day): a pair that cannot fit the almost complete sheet is turned away at the door, so nothing is rejected -- the sheet is released all the same
+    const o = { mix: 'pairs', late: 0, orders: QUICK ? 150 : 200, perSheet: 20, mixed: 0 }, on = await run(o), off = await run(o, true);
+    console.log(`    a day of earring pairs only: sheets released ${sum(off, r => r.closed)} of ${sum(off, r => r.sheets)} -> ${sum(on, r => r.closed)} of ${sum(on, r => r.sheets)}`);
+    ok(sum(on, r => r.unplaced) === 0 && sum(on, r => (r.problems || []).length) === 0, 'a day of pairs only: every piece placed, no sheet stuck');
+    ok(sum(on, r => r.closed) >= sum(off, r => r.closed), `a day of pairs only: the policy releases as many sheets as the page without it (${sum(on, r => r.closed)} vs ${sum(off, r => r.closed)})`);
+    ok(sum(on, r => r.multiOrdersSplit) === 0, 'a day of pairs only: no pair is on two sheets');
+  }
   {
     const big = [{ pieces: 120, metal: 'gold', design: [10, 1], at: .3 }, { pieces: 200, metal: 'silver', design: [12, 1], at: .6 }];
     const on = await run({ mix: 'day', late: .1, orders: QUICK ? 300 : 400, big }), off = await run({ mix: 'day', late: .1, orders: QUICK ? 300 : 400, big }, true);

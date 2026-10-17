@@ -4,6 +4,8 @@
  * A scene is red (exit 1, the exact case printed) when an order's pieces end on two sheets, a piece is lost or waits to the end, or a multi-piece order
  * that cannot fit a nearly full sheet takes room that small single-charm orders could have filled.  --measure prints the same without failing.
  * Scenes:
+ *   closable (NOSPREAD) a sheet at the release fill (74-79%) that only earring pairs come to close: every pair is turned away at the door (nothing rejects), so the sheet must be released all the same, by ONE more nest
+ *           with nothing new on it (the 'nothing new went in' path): layout unchanged, no second record, no loop, no piece lost or doubled.  --off runs the page with S.settings.nospread = 'off' for comparison.
  *   big     (NOSPREAD) an order of about 2.4 sheets of area arrives with single charms behind it: it fills consecutive sheets, none stuck on "cannot fit on an empty sheet", none lost.
  *   late    a pair of an order sits on an OPEN sheet (about 65% full); the order's other line (5 discs) arrives 2 updates later and does not fit the gap.
  *           The WHOLE order must be on one sheet at the end (the pair moves with the discs, or the discs stay: never one on each).
@@ -22,7 +24,7 @@ const { orderOf, partOf, piecesOf, Sim, fillOf, L } = Lib;
 
 const argv = process.argv.slice(2), opt = (k, d) => { const i = argv.indexOf('--' + k); return i >= 0 ? argv[i + 1] : d; };
 const root = path.resolve(opt('root') || Lib.REPO), step = +opt('step', 60), sheet = opt('sheet', '60x40'), measure = argv.includes('--measure');
-const only = String(opt('only', 'late,queue,queue2,pair,lines,chain,big')).split(',').filter(Boolean), metal = opt('metal', 'gold');
+const only = String(opt('only', 'late,queue,queue2,pair,lines,chain,big,closable')).split(',').filter(Boolean), metal = opt('metal', 'gold');
 const S = L.solverOf(root);
 
 let nextId = 0;
@@ -32,6 +34,7 @@ const mk = (id, n, specs) => orderOf(S, id, n, specs.map(sp => Object.assign({ m
 class Scene {
   constructor(name) {
     this.name = name; this.sim = new Sim({ root, step, seed: 1, sheet }); this.m = this.sim.metal(metal); this.tick = 0;
+    if (argv.includes('--off')) Object.assign(this.sim.ctx.S.settings, { nospread: 'off' });   // (the page with the policy switched off, for comparison)
     this.orders = []; this.arrived = new Map(); this.done = new Map(); this.sentLines = new Map(); this.fails = []; this.notes = []; this.t0 = Date.now();
   }
   get pages() { return this.m.pages; }
@@ -173,6 +176,46 @@ const SCENES = {
     sc.expect(w.pages.size >= 2 && w.pages.size <= 4, `the order should fill 2 to 4 consecutive sheets, it is on ${w.pages.size}`);
     for (const o of sm) { sc.expect(sc.where(o).unplaced === 0, `a piece of ${label(sc, o)} was never placed`); sc.expect(sc.where(o).pages.size <= 1, `ORDER SPLIT: ${where(sc, o)}`); }
     return sc.report({ order: where(sc, B) });
+  },
+  async closable() {
+    // NOSPREAD (Paul, 17 Oct 2026): the policy turns a multi-piece order away from a sheet that cannot take it whole BEFORE it joins, so nothing is rejected and the miss that used to close the sheet never happens. A sheet at the
+    // release fill that only earring pairs come to is closed all the same: the refusal is counted (nospreadPassed) and the sheet is nested once more with nothing new on it (nospreadSettle), which finishNest takes as "nothing new went in".
+    const sc = new Scene('closable');
+    // (the real solver on this small sheet stops near 70-73% and closes a sheet itself by a missed single before 75% is in reach: the fill ceiling is lowered so that the release fill, min(75%, ceiling), is within its reach.
+    //  --maxfill .80 --fill .66 is the same case with the gap fill (below the release fill) as the outcome)
+    sc.sim.ctx.S.settings.maxFill = +opt('maxfill', .68);
+    // the page's own layoutKey (the test finishNest makes for "nothing new went in": the layout is the one already written), taken from its text
+    const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8'), at = html.indexOf('const layoutKey = '), layoutKey = require('node:vm').runInNewContext('(' + html.slice(at + 'const layoutKey = '.length, html.indexOf('\n', at)).replace(/;\s*$/, '') + ')');
+    // sheet 1: mid-size singles to about 60%, then tiny ones (they fit the last gaps; a mid-size single that misses would close the sheet before the case starts) one at a time to where the real solver stops: near completion, still open
+    await sc.fillTo(.56, .70);
+    for (let i = 0; i < 80 && sc.fill(1) < +opt('fill', .677) && !sc.pages[0].releaseFull; i++) await sc.bring(mk(oid(), 950 + i, [{ kind: 'single', idx: i % 4, f: .55 + .1 * (i % 3) }]));
+    sc.setup = { fill: +sc.fill(1).toFixed(3), closed: !!sc.pages[0].releaseFull }; sc.notes.push(`sheet 1 before the case: ${Math.round(100 * sc.setup.fill)}% full${sc.setup.closed ? ', already released' : ', open'}`);
+    precond(sc, `sheet 1 should be open and 62% to the ceiling full (--fill N sets how far the tiny singles go, default .677 with the ceiling at .68, within the .4 point the release test allows): it is ${Math.round(100 * sc.setup.fill)}%${sc.setup.closed ? ' and released' : ''}`, sc.setup.fill >= .62 && sc.setup.fill <= +opt('maxfill', .68) && !sc.setup.closed);
+    const p1 = sc.pages[0], key = () => layoutKey(p1, new Map(p1.charms.map(c => [c.id, c])));
+    const was = { placements: JSON.stringify(p1.placements), key: key(), searches: p1.searches, sheets: sc.pages.length, released: !!p1.releaseFull, topup: !!p1.topup };
+    sc.notes.push(`policy ${typeof sc.sim.ctx.nospread === 'function' && sc.sim.ctx.nospread() ? 'ON' : 'OFF'}; fill ceiling ${sc.sim.ctx.S.settings.maxFill}`);
+    sc.notes.push(`sheet 1 before the pairs: ${Math.round(100 * sc.fill(1))}% full, ${p1.searches} searches, ${p1.placements.length} pieces, released ${was.released}, gap fill ${was.topup}`);
+    // four earring pairs of different designs, each pair asking for about twice the room sheet 1 has left: none fits it whole
+    const room = sc.room(1), base = idx => L.charm(S, 'probe', idx, 1, 'probe', 0).areaPt2;
+    const P = [3, 5, 9, 12].map((idx, i) => mk(oid(), 900 + i, [{ kind: 'pair', idx, f: Math.sqrt(1.0 * room / base(idx)) }]));
+    await sc.bring(...P); await sc.idle(5);   // (half an hour of quiet is needed: 10 simulated minutes an update)
+    const searches = p1.searches - was.searches, sheets = sc.pages.filter(p => p.placements.length).length;
+    sc.notes.push(`pairs: ${P.map(o => where(sc, o)).join(' | ')}`);
+    sc.notes.push(`sheet 1 after: released ${!!p1.releaseFull}, gap fill ${p1.topup ? (p1.topup.closedAt ? 'closed' : 'open') : 'none'}, ${searches} more search(es), layout ${key() === was.key ? 'unchanged' : 'CHANGED'}; sheets with pieces ${was.sheets} -> ${sheets}`);
+    for (const o of P) { const w = sc.where(o); sc.expect(w.unplaced === 0, `a piece of ${label(sc, o)} was never placed: ${where(sc, o)}`); sc.expect(w.pages.size <= 1, `PAIR SPLIT: ${where(sc, o)}`); }
+    sc.expect(!sc.pages.some(p => p.problem), 'a sheet is stuck: ' + sc.pages.filter(p => p.problem).map(p => p.problem).join(' | '));
+    const ids = sc.pages.flatMap(p => p.charms.map(c => c.id)); sc.expect(new Set(ids).size === ids.length, 'a piece is on two sheets');
+    const placed = sc.pages.flatMap(p => p.placements.map(q => q.id)); sc.expect(new Set(placed).size === placed.length, 'a piece is placed twice');
+    sc.expect(JSON.stringify(p1.placements) === was.placements, 'sheet 1 was rearranged');
+    if (!argv.includes('--off')) {
+      const cap = +opt('maxfill', .68), shown = Math.round(100 * sc.fill(1)) / 100;
+      sc.expect(!!p1.releaseFull || !!p1.topup, `sheet 1 (${Math.round(100 * sc.fill(1))}%) was neither released nor put on its gap fill although every pair was turned away`);
+      if (shown >= Math.min(.75, cap)) sc.expect(!!p1.releaseFull, `sheet 1 (${Math.round(100 * sc.fill(1))}% full, the release fill is ${Math.round(100 * Math.min(.75, cap))}%) was not released`);
+      sc.expect(searches === 1, `sheet 1 was nested ${searches} more times; the one-off nest must be exactly one (no loop)`);
+      sc.expect(key() === was.key, 'sheet 1 layout key changed: finishNest would not take the "nothing new went in" path');
+      sc.expect(sheets >= was.sheets + 1 && sheets <= was.sheets + 3, `sheets with pieces: ${was.sheets} -> ${sheets} (the four pairs go whole to one or two new sheets)`);
+    }
+    return sc.report({ searches, released: !!p1.releaseFull });
   },
   async chain() {
     const sc = new Scene('chain');

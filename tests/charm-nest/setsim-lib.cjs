@@ -116,6 +116,7 @@ function pageWorld(root, ctl, extra = []) {
     activeCharms: sh => sh.charms.filter(c => !c.excluded), allSheets: () => METALS.flatMap(m => sheets[m].pages), manualSheetClosed: () => false, pagesOf: m => sheets[m].pages,
     addPage: metal => ctl.addPage(metal), startNest: sh => ctl.startNest(sh),
   };
+  ctx.window.SimClock = { now: () => (ctl.tick || 0) * 600000 };   // (NOSPREAD, Paul 17 Oct 2026: an update is 10 simulated minutes: a sheet that turned a whole order away is nested once more after 30 quiet minutes, nospreadSettle)
   ctx.window.CN.topupRoom = sh => ctx.topupRoom(sh);
   ctx.window.CN.topupTakes = (sh, pieces, order) => typeof ctx.topupTakes === 'function' ? ctx.topupTakes(sh, pieces, order) : true;   // (NESTQUEUE: a multi-piece order that cannot fit a gap-filling sheet whole goes on; NOSPREAD: asked with the whole order)
   // (NOSPREAD, Paul 17 Oct 2026: the pure policy module, when the root has it; an older root has none, and the page code then does what it did)
@@ -168,7 +169,7 @@ class MetalSim {
     const ctx = this.sim.ctx, S = this.S;
     let items = ctx.activeCharms(sh);
     if (!items.length) return;
-    ctx.prepareSheet(sh);   // (startNest does this for a sheet of a run: fill phase, and what is already placed is pinned as a saved piece, arrivalPin)
+    ctx.prepareSheet(sh); sh.dirty = false;   // (startNest does this for a sheet of a run: fill phase, and what is already placed is pinned as a saved piece, arrivalPin; the sheet is no longer waiting to be nested)
     items = ctx.feedTurn(sh, items);
     const onSheet = new Set(items.map(c => c.id)), kept = (sh.placements || []).filter(p => onSheet.has(p.id));
     sh.nestInitial = kept.length ? kept.map(p => ({ ...p })) : null;
@@ -188,6 +189,8 @@ class MetalSim {
     sh.releaseFull = ctx.topupSettle(sh, result, ctx.sheetFull(sh, result, items)) || !!(sh.keepRelease && sh.keepRelease.full);
     if (sh.releaseFull && !sh.releasedAt) sh.releasedAt = this.tick;
     sh.status = sh.rejects.length ? 'partial' : 'complete';
+    // (NOSPREAD, Paul 17 Oct 2026: the sheet is written and saved, as finishNest leaves it: the one-off nest of a sheet that turned a whole order away needs a sheet at rest, nospreadSettle)
+    sh.persistedDone = true; sh.sheetId = sh.sheetId || 'sim-' + sh.metal + sh.page; sh.fileBase = sh.fileBase || 'sim-' + sh.page; sh._written = { key: JSON.stringify([sh.page, sh.placements.map(p => [p.id, p.cxPt, p.cyPt, p.angle].join()).sort()]) }; sh.nests = (sh.nests || 0) + 1;
     if (sh.rejects.length && sh.endedBy !== 'stopped') ctx.overflowToNextSheet(sh, false);
     ctx.feedOn(sh);
   }
@@ -209,6 +212,8 @@ class MetalSim {
     }
     // (the sheet the intake chose first was empty at the start of a stream: the page nests the sheet the batch landed on)
     while (this.work.length) { const sh = this.work.shift(); await this.nest(sh); }
+    // (NOSPREAD, Paul 17 Oct 2026: the page's tick, settleTopups, brings a sheet that turned a whole order away to one more nest, once; a page without the policy has no such function)
+    for (let k = 0; k < 3 && typeof ctx.nospreadSettle === 'function'; k++) { ctx.nospreadSettle(); if (!this.work.length) break; while (this.work.length) { const sh = this.work.shift(); await this.nest(sh); } }
     this.ms += Date.now() - t0;
   }
 }

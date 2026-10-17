@@ -4937,7 +4937,10 @@ function sheetFull(sh, result, items) {
   const missed = sh.rejects.filter(id => !untriedIds(result).has(id));
   const overflow = missed.length > 0 && (result.density + 1e-6 >= Math.min(.74, cap) || finished) &&
     [...new Set(missed.map(id => byId.get(id) ? unitKey(byId.get(id)) : id))].some(order => items.filter(c => unitKey(c) === order).reduce((n, c) => n + inflatedArea(c), 0) <= result.usablePt2 * cap);   // (a unit: an order, or one chunk of an order bigger than a sheet)
-  return result.endedBy !== "stopped" && !!sh.verification?.ok && sh.placements.length > 0 && (overflow || result.placedPt2 / Math.max(1, result.usablePt2) >= cap - 1e-6);
+  // (NOSPREAD, Paul 17 Oct 2026: a whole order turned away at the door of a sheet that is at the release fill (nospreadPassed) is the miss that closes it; no reject records it, because the order never joined the sheet)
+  // (as a miss, in the one nest nospreadSettle asks for: the sheet is at the release fill, as for a reject, or the search shows no room even for one of the shop's smallest charms)
+  const passedAtDoor = !!sh._nsCheck && !!sh._nsPassed && (result.density + 1e-6 >= Math.min(.74, cap - .004) || result.smallRoom === false); sh._nsCheck = false; sh._nsMiss = passedAtDoor;
+  return result.endedBy !== "stopped" && !!sh.verification?.ok && sh.placements.length > 0 && (overflow || passedAtDoor || result.placedPt2 / Math.max(1, result.usablePt2) >= cap - 1e-6);
 }
 /* Gap fill (Paul, 24 Sep), Gold and Silver. Orders arrive a few at a time, so when the next one no longer fits a nearly
    full sheet there is no queue of waiting orders to fill the rest. The order that missed moves on to the next sheet and
@@ -4963,7 +4966,8 @@ function topupSettle(sh, result, full) {
   // only the live Auto run brings later orders to this sheet; anywhere else it would wait for nothing
   const live = S.settings.runMode === "auto" && !!sh.runId && window.B?.run?.runId === sh.runId && !["complete", "abandoned"].includes(window.B.run.status);
   if (!t) {
-    if (!full || atCeiling || reached || noRoom || !sh.rejects.length || !live) {
+    // (NOSPREAD: an order turned away at the door of a sheet at the release fill, nospreadPassed, is the miss that no reject records: in the one nest nospreadSettle asks for, sheetFull judges the sheet as if it had been rejected there)
+    if (!full || atCeiling || reached || noRoom || (!sh.rejects.length && !sh._nsMiss) || !live) {
       // a sheet released below the 75% target with no gap fill says why, on its card and in its log (Paul, 9 Oct: "the silver sheet
       // did not finish being filled and then the system decided to start a new sheet")
       if (full && !atCeiling && !reached) {
@@ -5036,7 +5040,7 @@ function topupTakes(sh, pieces, order) {
   if (NS && ["gold", "silver"].includes(sh.metal)) {
     if (!pieces || !pieces.length) return true;
     const o = nospreadOrder(pieces, order), a = NS.admits(nospreadSheet(sh, new Set(pieces.map(c => c.id))), o, nospreadCfg());
-    if (!a.take) nospreadSay(sh, pieces, o, a);
+    if (!a.take) { nospreadSay(sh, pieces, o, a); nospreadPassed(sh, a); }
     return a.take;
   }
   if (!gapFilling(sh) || !pieces || pieces.length < 2) return true;
@@ -5064,6 +5068,37 @@ function nospreadSay(sh, pieces, o, a) {
   const k = String(pieces[0].order || pieces[0].id).split("/")[0], said = sh._nospreadSaid || (sh._nospreadSaid = new Set()); if (said.has(k)) return; said.add(k);
   const why = { "near-completion": "this sheet is near completion and not all of the order fits it", "no-room-for-all": "not all of the order fits it", "lines-still-to-come": "this sheet is near completion and another piece of the order is still to come", "big-needs-a-fresh-sheet": "the order is bigger than a sheet and starts a fresh one" }[a.why] || a.why;
   log(sh, `Order ${k} (${o.count} pieces) was not put on this sheet: ${why}; it goes whole to the next sheet that takes it (${Math.round(100 * (a.room / Math.max(1, usableArea(sh))))}% of the sheet is left under the ceiling, the order asks for ${Math.round(100 * a.need / Math.max(1, usableArea(sh)))}%)`);
+}
+/** A whole order turned away from a Gold or Silver sheet that has no room for it (near-completion, no-room-for-all) while the sheet is near completion may be the miss that closes the sheet:
+    before the policy the order joined the sheet, was rejected, and sheetFull / topupSettle released it. Now the order never joins, nothing rejects, and a sheet that only multi-piece orders could close (a day of earring
+    pairs, the last orders of the day) sat open for good. The refusal is counted on the sheet (`_nsPassed`; `_nsSeen`: how many pieces it held when it last took one); sheetFull counts it as a miss only at the release fill
+    or with no room left for a small charm, and nospreadSettle brings the sheet to a nest once it has taken nothing for NS_QUIET_MS. */
+const NS_QUIET_MS = 30 * 60 * 1000;
+function nospreadPassed(sh, a) {
+  if (!a.near || (a.why !== "near-completion" && a.why !== "no-room-for-all") || !(sh.placements && sh.placements.length)) return;
+  const n = activeCharms(sh).length; if (!sh._nsSeen || sh._nsSeen.n !== n) sh._nsSeen = { n, at: topupNow() };
+  sh._nsPassed = (sh._nsPassed || 0) + 1;
+}
+/** A sheet that turned a whole order away and has taken no piece for NS_QUIET_MS (30 minutes: the late lines of an order come within that, and singles that would top it up come on a busy day) is nested once more, when it is at
+    rest (written, saved, nothing waiting on it), with nothing new on it: the search keeps every seated piece where it is (saved placements), the layout is the one already written, and finishNest takes the "nothing new went
+    in" path (the record's state is brought up to date, no file is written again) in which topupSettle / sheetFull judge the sheet with the refusal counted as the miss: released at the release fill, or its gap fill starts
+    below it. Called at every tick of the intake (settleTopups). A sheet that is busy, held, stopped, closed, already released or filling its gaps is left to the nest it has. */
+function nospreadSettle() {
+  if (!nospread()) return;
+  const run = window.B?.run; if (!run || ["complete", "abandoned", "stopped"].includes(run.status)) return;
+  const now = topupNow();
+  for (const sh of allSheets()) {
+    if (!(sh._nsPassed > (sh._nsHandled || 0)) || !["gold", "silver"].includes(sh.metal) || sh.runId !== run.runId || sh.releaseFull || sh.topup || sh.roseProtected || S.settings.topup === "off") continue;
+    const placed = new Set((sh.placements || []).map(p => p.id)), n = activeCharms(sh).length;
+    if (!sh._nsSeen || sh._nsSeen.n !== n) { sh._nsSeen = { n, at: now }; continue; }   // (a piece joined since: the quiet starts over)
+    if (now - sh._nsSeen.at < NS_QUIET_MS) continue;
+    if (!["complete", "partial"].includes(sh.status) || sh.dirty || !sh.persistedDone || sh._operationStarting || sh.runHold || sh.problem || sh.resumeWait || sh.keepRelease || sh.feedWait?.length || sh.rejects?.length ||
+      !sh.verification?.ok || !sh.sheetId || !sh.fileBase || (window.LiveNest && LiveNest.closed(sh)) || !placed.size || !activeCharms(sh).every(c => placed.has(c.id)) || (() => { try { return heldForResume(sh); } catch (_) { return false; } })()) continue;
+    sh._nsHandled = sh._nsPassed;   // (one more nest for each quiet stretch, not for each order turned away)
+    log(sh, `A whole order was turned away at ${fmt.pct(+sh.density || 0)} and nothing has joined the sheet for ${Math.round(NS_QUIET_MS / 60000)} minutes: the sheet is checked once more, with nothing new on it, so that it can be released`);
+    sh.appendOnly = sh.intakeAppend = true; sh.dirty = true; sh.status = "ready"; sh._nsCheck = true;   // (sheetFull reads it once)
+    startNest(sh);
+  }
 }
 /** The order as the policy reads it. `info` (what the intake knows of the order): { pieces (its pieces of this metal in hand, all its lines), expected (the pieces the order will have in all, CharmNestOrders.pieceCountOf of its lines of this metal, lines not pooled yet included), placed (already on a sheet) }. */
 function nospreadOrder(pieces, info) {
@@ -5138,6 +5173,7 @@ function qrRetryNote(sh) {
 }
 let settlingTopups = false;
 async function settleTopups() {
+  try { nospreadSettle(); } catch (e) { /* the policy never stops the release path below */ }
   const run = window.B?.run;
   if (settlingTopups || !run || ["complete", "abandoned"].includes(run.status)) return;
   const streamOver = !!window.Sandbox?.done?.() && !window.Arrivals?.held?.() && !window.Arrivals?.state?.().pending;
@@ -8047,7 +8083,7 @@ boot();
 <script src="charm-nest-review-link.js?v=20261013-rlk2"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
