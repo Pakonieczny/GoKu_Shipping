@@ -581,6 +581,25 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 /* (MONOROUTE) the card's shortcut into the Engraving tab, the same button as an engraved piece's card has */
 .engMono .engOpenRow{display:flex;min-width:0}.engMono .egOpen{flex:1 1 auto;min-width:0;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:22px;padding:0 10px;font-size:12px;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .engMono .engFail{font:12px/1.4 var(--sans);color:var(--ink70)}
+/* ── MONOSEAL (Paul, 17 Oct 2026: "the monogram stamp and seal animations appear in all the same places as the engraving stamp and seal animations already do"): the monogram card's seals lie exactly where the engraving cards' do (HDRSEAL above): 48 px, pressed
+   across the card's outer top-right corner (about 30 px above the card, 18 px on it, 8 px past its right edge for the newest), several overlapping a little, the oldest to the left and the newest on top. The widget (charm-nest-monogram-ui.js, mode "compact") puts its
+   seal row, `.mwSeal`, as the next child of the card's body; the card is a containing block (container-type), so the row, out of the flow, is laid against the card itself and moves nothing; the header keeps the room the part of the row that lies ON the card takes, and a
+   grid row that holds a sealed card is 34 px apart, exactly as for an engraving card. ── */
+#owEng.engGrid:has(.mwSeal>.seal){row-gap:34px}
+#owEng.engGrid>.engMono:has(.mwSeal>.seal){z-index:2}
+.engMono{position:relative;--hsD:48px;--hsK:.75;--hsM:0;--hsIn:16px;--hsUp:6px}
+.engMono:has(.mwSeal[data-seal-count="2"]){--hsM:1}
+.engMono:has(.mwSeal[data-seal-count="3"]){--hsM:2;--hsK:.58}
+.engMono:has(.mwSeal[data-seal-count="4"]){--hsM:3;--hsK:.44}
+.engMono:has(.mwSeal[data-seal-count="5"]){--hsM:4;--hsK:.35}
+.engMono:has(.mwSeal[data-seal-count="6"]){--hsM:5;--hsK:.25}
+.engMono:has(.mwSeal[data-seal-count="7"]){--hsM:6;--hsK:.21}
+.engMono:has(.mwSeal[data-seal-count="8"]){--hsM:7;--hsK:.18}
+.engMono:has(.mwSeal>.seal)>.engHd{padding-right:calc(var(--hsD) / 2 + var(--hsIn) - 1px + var(--hsM) * var(--hsK) * var(--hsD))}
+.engMono .mwSeal{position:absolute;z-index:3;top:calc(var(--hsD) / -2 - var(--hsUp));right:calc(var(--hsD) / -2 + var(--hsIn));left:auto;bottom:auto;display:flex;flex-direction:row;justify-content:flex-end;align-items:center;
+  flex:none;width:auto;height:var(--hsD);margin:0;padding:0;gap:0;max-width:none;--seal-fit:var(--hsD)!important;--seal-grow:1.55;--seal-cap:80}
+.engMono .mwSeal>.seal{flex:0 0 var(--hsD);width:var(--hsD);height:var(--hsD);margin:0}
+.engMono .mwSeal>.seal+.seal{margin-left:calc(var(--hsD) * (var(--hsK) - 1))}
 /* (a chip's card hangs over the section: the facts sit above the cards' own positioned parts, the section being a later sibling with its own stacking context) */
 #orderWin .owInfoMain>#owMeta{z-index:3}
 .owVector{width:100%;aspect-ratio:1;background:#fff;border:1px solid var(--line);border-radius:11px;display:grid;place-items:center;overflow:hidden;position:relative;font:11px var(--sans);color:var(--ink45);text-align:center}
@@ -3243,6 +3262,13 @@ dialog.cuAsk{width:min(440px,94vw)}.cuAskP{margin:0 0 10px;line-height:1.45}.cuA
 .mwAbcs{display:flex;flex-wrap:wrap;gap:8px}.mwAbcs label{flex:1 1 200px;min-width:0;display:grid;gap:3px;font:600 10px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--ink45)}.mwAbcs select{font:600 12.5px var(--sans);letter-spacing:0;text-transform:none;padding:5px 7px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);width:100%;max-width:none;box-sizing:border-box}
 .mwAct{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;min-height:34px}.mwAct .btn{padding:8px 22px}
 .mwOk{display:inline-flex;align-items:center;gap:6px;font:600 13px var(--sans);color:var(--sage)}
+/* MONOSEAL: the seals of an approved monogram rest in the action row beside the Approved mark (the Engrave detail), 50 px each (Seal.BASE_SIZE), newest last and on top; the row's negative margins keep the action row's own height (34 px): the seal costs the card no room.
+   The Order window's compact card lays the same row across its corner instead (the .engMono block above). A stamp being pressed waits unseen (.pending) in its place. */
+.mwSeal[hidden]{display:none!important}
+.mwAct>.mwSeal{margin:-9px 0 -9px -2px;flex:0 0 auto;flex-wrap:nowrap;gap:0;max-width:none;--seal-fit:var(--seal-base,50px)!important}   /* (the size is the regular one, never the fitter's: it counts the buttons that wrap onto another line as room taken) */
+.mwAct>.mwSeal>.seal+.seal{margin-left:-12px}
+.mwAct>.mwSeal[data-seal-count="4"]>.seal+.seal,.mwAct>.mwSeal[data-seal-count="5"]>.seal+.seal{margin-left:-26px}
+.mwAct>.mwSeal[data-seal-count="6"]>.seal+.seal,.mwAct>.mwSeal[data-seal-count="7"]>.seal+.seal,.mwAct>.mwSeal[data-seal-count="8"]>.seal+.seal{margin-left:-36px}
 @container mw (max-width:360px){.mwBody{--mwb:48px}.mwLtrs{gap:4px}}
 @container mw (min-width:520px){
 .mw[data-mode=detail] .mwBody{grid-template-columns:minmax(200px,300px) minmax(0,1fr);gap:26px;align-items:center;justify-items:stretch}
@@ -3699,13 +3725,13 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1-ml1-m2-m3-szf1-mfile1-mc1"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2-hdr1"></script>
-<script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1-hdr1-pl1"></script>
+<script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2-hdr1-ms1"></script>
+<script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1-hdr1-pl1-ms1"></script>
 <script src="charm-nest-geom.js?v=20261009-flat-col-fb1-fb2-fr1-rb1-m3"></script>
 <script src="charm-nest-monogram.js?v=20261015-mono1-monoui1-mx4"></script>
 <script src="charm-nest-monogram-fit.js?v=20261016-mx4"></script>
 <script src="charm-nest-monogram-edits.js?v=20261016-ed2"></script>
-<script src="charm-nest-monogram-ui.js?v=20261016-muw1-pol2-pcm1"></script>
+<script src="charm-nest-monogram-ui.js?v=20261016-muw1-pol2-pcm1-ms1"></script>
 <script src="charm-nest-pair.js?v=20261009-pr1-mi3-mi4-mi5-mi6-mi7-pm8-pm9-cg1-nk1-lm1-ko1-wo1-m2-m3-mc1"></script>
 <script src="charm-nest-pair-thumb.js?v=20261009-pt3-mi2-rlp1-rlp3-lm1"></script>
 <script src="charm-nest-pool-pieces.js?v=20261009-pp1-adv2-cg1"></script>
@@ -3745,7 +3771,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-order-group.js?v=20261013-on1"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2-cg1"></script>
 <script src="charm-nest-engrave-card.js?v=20261012-ec1-sm1-r2th1-bt1-bg1-pn1-pk1-sb1-hdr1-pc1-pv1"></script>
-<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1-dm1-su1-ui2-egm1-el1-ec1-mg1-crash1-sel1-op1-pn1-tx1-pk1-ap2-sb1-ow1-pv1-pcm1-nd1"></script>
+<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1-dm1-su1-ui2-egm1-el1-ec1-mg1-crash1-sel1-op1-pn1-tx1-pk1-ap2-sb1-ow1-pv1-pcm1-nd1-ms1"></script>
 <script src="charm-nest-engrave-guide.js?v=20261013-ap2-meg1-pcm1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2-sn1"></script>
 <script src="charm-nest-set-rules.js?v=20261010-sf2-sp1-setr1"></script>
@@ -7905,7 +7931,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="order-timeline.js?v=20261007-fc4-advoff1"></script>
+<script src="order-timeline.js?v=20261007-fc4-advoff1-ms1"></script>
 <!-- How long each person is signed in here, and what they did (station-session.js, station-activity.js). The sorter has no
      personal login: the person is the name it keeps (cn.employee: typed at the first approval, label or decision, or the
      Design Station's sign-in), the same name every seal it stamps carries. -->
@@ -7939,7 +7965,7 @@ boot();
 <script src="charm-nest-review-link.js?v=20261013-rlk2"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-ms1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>

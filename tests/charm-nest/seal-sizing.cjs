@@ -182,7 +182,7 @@ function fitted(f,label){
     assert(!rule(main,'.librarySheet:has(.processSealRow)'),'no redundant trailing seal padding remains under the QR area');
 
     // Every chosen family shares one regular viewport and grows in place by the one adaptive curve: no second surface, the signer stays historical (assistive text only).
-    const families=Object.keys(Seal.FAMILY);assert.equal(families.length,8);
+    const families=Object.keys(Seal.FAMILY);assert.equal(families.length,9,'eight hallmark families and the MONOSEAL monogram one');
     for(const family of families){
       const host=d.createElement('span');host.className='sealRow';host.innerHTML=`<span class="seal" tabindex="0" role="img" aria-label="Stamped by ${by} · Sep 30" data-at="${at}">${Seal.face({family,action:Seal.FAMILY[family].name,at,by})}</span>`;d.body.appendChild(host);
       const seal=host.firstElementChild;nearly(length(seal,'width'),BASE,family+' regular size');assert.doesNotMatch(seal.querySelector('svg').textContent,/Recorded Operator|Signed by/);
@@ -193,6 +193,6 @@ function fitted(f,label){
       assert.match(seal.getAttribute('aria-label'),/Recorded Operator/);assert.doesNotMatch(seal.outerHTML,/Current Viewer/);assert(!seal.hasAttribute('title'),family+' has no tooltip');
       seal.dispatchEvent(new w.MouseEvent('pointerout',{bubbles:true,relatedTarget:outside,clientX:-9,clientY:-9}));await tick();assert.equal(d.querySelector('[data-seal-zoom]'),null,family+' goes back with the pointer');host.remove();
     }
-    console.log('PASS: canonical50 normal / adaptive in-place zoom across all8 families; legacy sizes ignored; all12 historical seals retained; equal groups shrink, recover and respect calc/min caps; compact Approved control and workspace overlay preserved; no redundant Library padding.');
+    console.log('PASS: canonical50 normal / adaptive in-place zoom across all9 families; legacy sizes ignored; all12 historical seals retained; equal groups shrink, recover and respect calc/min caps; compact Approved control and workspace overlay preserved; no redundant Library padding.');
   }finally{w.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

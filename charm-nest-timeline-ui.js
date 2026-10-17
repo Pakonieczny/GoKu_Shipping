@@ -223,6 +223,7 @@
     customRead: K("velvet", "e", "eye", "office"), customDecided: K("green", "e", "check", "office"),
     designSent: K("gold", "e", "sheet", "office", "sh"), designDropped: K("gold", "e", "pen", "office", "sh"),
     engraveNeeded: K("gold", "e", "pen", "office"), engraveApproved: K("green", "e", "pen", "office"), engraveChanged: K("gold", "e", "pen", "office"),
+    monogramApproved: K("velvet", "e", "pen", "office"),
     pooled: K("gold", "e", "stack", "sheet", "sh"), placed: K("gold", "m", "sheet", "sheet", "sh"), moved: K("gold", "e", "moved", "sheet", "sh"),
     removed: K("clay", "e", "out", "sheet", "sh hc"), renested: K("gold", "e", "renest", "sheet", "sh"),
     held: K("clay", "a", "pause", "office", "hc"), released: K("green", "e", "play", "office", "hc"), restored: K("green", "e", "undo", "office", "hc"),
@@ -249,7 +250,8 @@
      the lanes, not in the "recent stamps" row, not on the Overview's "where it is now" card. */
   // (engraveApproved is the Engraved step; roseCut is a rose sheet's Laser cut; etsyCompleted folds into Shipped)
   const MILESTONE_SEAL = new Set(["arrived", "placed", "engraveApproved", "laserDone", "roseCut", "sorted", "welded", "assembled", "shipped", "etsyCompleted"]);
-  const PERSON_SEAL = new Set(["cancelled", "etsyCancelled", "cancelRestored", "removed", "cancelStep", "held", "released", "restored", "cancelAlert", "designSent"]);
+  // (MONOSEAL, Paul 17 Oct 2026: a monogram approved is a person's action and draws the monogram seal in the lane; it is not a rail step, so it is not in MILESTONE_SEAL: the Engraved step and its counts never see it)
+  const PERSON_SEAL = new Set(["cancelled", "etsyCancelled", "cancelRestored", "removed", "cancelStep", "held", "released", "restored", "cancelAlert", "designSent", "monogramApproved"]);
   const isPlainDecision = e => !!e && e.type === "engraveChanged" && !!e.data && e.data.how === "skipped";
   // (an engraving event of the FRONT of a charm says so in its data; one that says nothing is the back's, as every one was before the front existed)
   const frontEv = e => !!e && !!e.data && e.data.face === "front";
@@ -681,18 +683,21 @@
     arrived: "received", pulled: "received", interpreted: "received", decided: "received", customRead: "received", customDecided: "received",
     designSent: "prepared", designDropped: "prepared", pooled: "prepared", placed: "prepared", moved: "prepared", renested: "prepared",
     sizeChanged: "prepared", included: "prepared", excluded: "prepared", merged: "prepared", qrLabel: "prepared", setCommitted: "prepared", sealPrinted: "prepared", roseLine: "prepared",
-    engraveNeeded: "engraving", engraveApproved: "engraving", engraveChanged: "engraving",
+    engraveNeeded: "engraving", engraveApproved: "engraving", engraveChanged: "engraving", monogramApproved: "monogram",
     laserDone: "laser", roseCut: "laser", laserReady: "laser", sheetCompleted: "laser", setCompleted: "laser",
     scan: "finishing", sorted: "finishing", welded: "finishing", assembled: "finishing",
     packed: "fulfilment", labelPrinted: "fulfilment", shipped: "fulfilment", etsyCompleted: "fulfilment", sealCompleted: "fulfilment",
     cancelled: "cancelled", etsyCancelled: "cancelled", cancelStep: "cancelled", cancelAlert: "cancelled"
   };
-  const FACE_ACTION = { arrived: "ORDER RECEIVED", placed: "ON SHEET", designSent: "SENT TO SHEET", engraveApproved: "BACK ENGRAVING", laserDone: "LASER CUT", roseCut: "PARTIAL CUT", laserReady: "LASER READY", sheetCompleted: "SHEET COMPLETE", setCompleted: "SET COMPLETE", sealCompleted: "ORDER COMPLETE", etsyCompleted: "ETSY COMPLETE", cancelled: "CANCELLED", etsyCancelled: "ETSY CANCELLED", sealPrinted: "QR LABEL PRINTED" };
-  const CANONICAL_ICON = { arrived: "received", placed: "prepared", designSent: "prepared", engraveApproved: "engraving", laserDone: "laser", assembled: "finishing", shipped: "fulfilment", held: "exceptions", cancelled: "cancelled" };
+  const FACE_ACTION = { arrived: "ORDER RECEIVED", placed: "ON SHEET", designSent: "SENT TO SHEET", engraveApproved: "BACK ENGRAVING", monogramApproved: "MONOGRAM", laserDone: "LASER CUT", roseCut: "PARTIAL CUT", laserReady: "LASER READY", sheetCompleted: "SHEET COMPLETE", setCompleted: "SET COMPLETE", sealCompleted: "ORDER COMPLETE", etsyCompleted: "ETSY COMPLETE", cancelled: "CANCELLED", etsyCancelled: "ETSY CANCELLED", sealPrinted: "QR LABEL PRINTED" };
+  const CANONICAL_ICON = { arrived: "received", placed: "prepared", designSent: "prepared", engraveApproved: "engraving", monogramApproved: "monogram", laserDone: "laser", assembled: "finishing", shipped: "fulfilment", held: "exceptions", cancelled: "cancelled" };
   function faceModel(e) {
     const printed = !!e.print || isPrint(e), plain = isPlainDecision(e), at = +(plain ? e.data.decidedAt ?? e.at : e.at) || 0, family = printed ? "prepared" : FAMILY_BY_TYPE[e.type] || "exceptions";
     const action = plain ? (frontEv(e) ? "FRONT CUT PLAIN" : "CUT PLAIN") : printed ? "QR LABEL PRINTED" : e.type === "engraveApproved" && frontEv(e) ? "FRONT ENGRAVING" : FACE_ACTION[e.type] || String((e.data && e.data.ring) || labelOf(e.type)).toUpperCase();
-    return { family, action, icon: plain ? "plain" : CANONICAL_ICON[e.type], path: plain || CANONICAL_ICON[e.type] ? undefined : ICON[printed ? "qr" : kindOf(e.type).ic] || ICON.dot, date: at ? dateOf(at) : "", time: at ? timeOf(at) : "", by: e.ghost || (!at && !String(e.by || "").trim()) ? "" : personOf(e), at };
+    const m = { family, action, icon: plain ? "plain" : CANONICAL_ICON[e.type], path: plain || CANONICAL_ICON[e.type] ? undefined : ICON[printed ? "qr" : kindOf(e.type).ic] || ICON.dot, date: at ? dateOf(at) : "", time: at ? timeOf(at) : "", by: e.ghost || (!at && !String(e.by || "").trim()) ? "" : personOf(e), at };
+    // (MONOSEAL: the monogram seal carries the three letters of the monogram approved, as the seal on the card does; an event that does not say them draws the pictogram of three letters)
+    if (e.type === "monogramApproved") { const L = String((e.data && e.data.letters) || "").toUpperCase(); if (/^[A-Z]{3}$/.test(L)) m.letters = L; }
+    return m;
   }
   /** One stamp as SVG. full: the face that reads (ring words, icon, date, time, name); otherwise edge + big icon.
    *  opts.ghost draws a step still to come (dashed, no ink); opts.tex:false leaves out the ink texture; opts.uid names
@@ -920,7 +925,7 @@
      laser marks the sheet cut; then each station scans the order's QR label as it sorts, welds, assembles and ships. */
   const QUIET = {   // the in-between events a step lists as quiet facts (never sealed)
     arrived: ["pulled", "interpreted", "needsDecision", "decided", "customRead", "customDecided", "skipped"],
-    sheet: ["pooled", "moved", "renested", "included", "merged", "sizeChanged", "designSent", "designDropped"],
+    sheet: ["pooled", "moved", "renested", "included", "merged", "sizeChanged", "designSent", "designDropped", "monogramApproved"],
     engraved: ["engraveNeeded", "engraveChanged", "engraveApproved"],
     laser: ["qrLabel", "setCommitted", "sealPrinted", "sealCompleted", "recalled", "roseLine"],
     sorted: ["cancelAlert"], welded: [], assembled: [], shipped: ["packed", "etsyCompleted"]

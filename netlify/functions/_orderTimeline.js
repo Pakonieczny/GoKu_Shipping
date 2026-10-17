@@ -29,6 +29,7 @@ const CANCELLED = "Charm_Nest_Cancelled";
 const TYPES = new Set([
   "arrived", "pulled", "interpreted", "needsDecision", "decided", "skipped", "customRead", "customDecided", "designSent", "designDropped",
   "engraveNeeded", "engraveApproved", "engraveChanged",
+  "monogramApproved",   // (MONOSEAL, Paul 17 Oct 2026: a monogram approved, with its seal: a person's action like designSent, deliberately NOT a milestone (MILESTONES), a rail step (STEP / RANK) nor the Engraved step; data { letters, slot, n, of, poolId, name, ck })
   "pooled", "placed", "moved", "removed", "renested", "held", "released", "restored", "cancelled", "etsyCancelled", "cancelRestored", "cancelStep",
   "sizeChanged", "included", "excluded", "merged", "roseLine", "roseCut",
   "qrLabel", "setCommitted", "laserDone", "recalled",

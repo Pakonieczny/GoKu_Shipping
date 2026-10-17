@@ -495,7 +495,7 @@
       monoTitle(m);
       monoDot(m, null);
       let w = null;
-      try { w = ctx.mono.mount(m.body, line, { mode: 'compact', rid: String(ctx.rid || (line.order && line.order.receiptId) || ''), lineKey: line.key, slot: pc.slot || undefined, onChange: st => { if (!gone) monoDot(m, st); }, onApproved: () => { if (!gone) told(); } }); } catch (e) { tryDo(() => console.warn('order engraving: the monogram could not be drawn', e)); }
+      try { w = ctx.mono.mount(m.body, line, { mode: 'compact', rid: String(ctx.rid || (line.order && line.order.receiptId) || ''), lineKey: line.key, slot: pc.slot || undefined, events: () => (typeof ctx.events === 'function' ? tryDo(() => ctx.events(), null) : ctx.events), onChange: st => { if (!gone) monoDot(m, st); }, onApproved: () => { if (!gone) told(); } }); } catch (e) { tryDo(() => console.warn('order engraving: the monogram could not be drawn', e)); }
       if (w) { m.handle = w; monoDot(m, tryDo(() => w.state && w.state(), null)); }
       else { const f = d.createElement('div'); f.className = 'engFail'; f.setAttribute('role', 'alert'); f.textContent = 'The monogram could not be drawn here.'; m.body.append(f); }
       return m;
