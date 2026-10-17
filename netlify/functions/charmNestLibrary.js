@@ -3778,6 +3778,7 @@ async function op_flowState(b) {
    hold pieces of the moving sheets' orders (one query by order for each step outwards, a few steps at most), their sets for
    the reasons a sheet cannot change set (cut, completed, set committed), and the core's answer. `to` is {set} or {newSet}. ── */
 const SharedRule = require("../../charm-nest-shared-orders.js").core;
+const SetRepair = require("../../charm-nest-set-repair.js");      // (SETREPAIR, Paul 17 Oct 2026) the owner's set rules, read by CharmNestSetInvariants.check: a set that breaks them is never approved
 const SHARED_FIELDS = ["id", "sheetId", "metal", "metalLabel", "page", "sheetIndex", "setId", "draft", "solidIncluded", "poolIds", "orders", "archived", "runId", "laserDoneAt", "roseCutAt", "fileBase", "pieceSides", "releaseFull", "placedCount"];   // (pieceSides: a record that says which side each piece is, when two bodies of a mismatched pair share an id)
 const sharedOrdersOf = d => [...new Set((Array.isArray(d.orders) ? d.orders.map(String) : []).concat((Array.isArray(d.poolIds) ? d.poolIds : []).map(orderOfKey)).filter(x => /^\d{1,30}$/.test(x)))];
 /** The sheets that share orders with `seedIds`, outwards (a sheet that shares with a sheet that shares): { sheets: [core sheets], more: true when a cap cut it short }. */
@@ -3802,7 +3803,7 @@ async function sharedSheets(seedIds, { rounds = 4, cap = 500 } = {}) {
   const setIds = [...new Set([...docs.values()].filter(d => d.setId && !d.draft && d.solidIncluded !== false).map(d => String(d.setId)).filter(isId))], sets = new Map();
   for (let i = 0; i < setIds.length; i += 100) for (const d of await db.getAll(...setIds.slice(i, i + 100).map(id => col(SETS).doc(id)), { fieldMask: ["setId", "seq", "name", "status", "committedAt", "laserDoneAt"] })) if (d.exists) sets.set(d.id, d.data());
   const sheets = [...docs.values()].map(d => SharedRule.sheetOf(d, { label: sheetLabel(d), fixed: SharedRule.fixedWhy(d, SharedRule.effectiveSet(d) ? sets.get(String(d.setId)) : null) })).filter(Boolean);
-  return { sheets, more };
+  return { sheets, more, docs: [...docs.values()], setDocs: [...sets].map(([id, s]) => ({ ...s, setId: id })) };
 }
 async function sharedAnswer(move) {
   const kind = move.kind === "set" ? "set" : "sheet", id = str(move.id, 80), to = move.to || {};
@@ -3842,7 +3843,34 @@ async function setGatesFor(setIds, known) {
     const sheets = new Map((known || []).filter(x => x.setId === d.id).map(x => [x.id, x])), missing = members.filter(m => !sheets.has(m));
     for (let j = 0; j < missing.length; j += 100) for (const r of await db.getAll(...missing.slice(j, j + 100).map(m => col(SHEETS).doc(m)), { fieldMask: SLIM_SHEET.concat(["placements"]) })) if (r.exists && !r.data().archived) sheets.set(r.id, { ...r.data(), id: r.id });
     const records = await readinessRecords([...sheets.values()]);
-    out.set(d.id, { set: doc, gate: Readiness.setGate({ ...doc, name: doc.name || (doc.seq ? "Set " + doc.seq : "") }, records) });
+    // (SETREPAIR) and the owner's rules: a set that breaks them is never approved, however ready its sheets are (null for a right set and for every committed / completed / replaced one)
+    out.set(d.id, { set: doc, gate: Readiness.setGate({ ...doc, name: doc.name || (doc.seq ? "Set " + doc.seq : "") }, records), breaks: (await ruleBreaksFor([d.id])).get(d.id) || null });
+  }
+  return out;
+}
+/** (SETREPAIR, Paul 17 Oct 2026: "I want you to fix it once and for all.") The sets among `setIds` that break the owner's rules (charm-nest-set-invariants.js check, read through
+ *  charm-nest-set-repair.js diagnose): Map setId -> { name, line, short, items }. An UNCOMMITTED set of several sheets only: a set committed to the station, completed or replaced is never
+ *  judged (SetRules.exempt). The check needs every sheet an order chain runs through, members and the sheets outside the set that share an order with them (sharedSheets), and reads
+ *  the Rose Gold / 10K / 14K sheets' back-engraving report. It runs only where something is approved (this gate), never on a polled read. A read that fails does not stop the shop:
+ *  the page's own button is grey for the same set, and the failure is logged. */
+async function ruleBreaksFor(setIds) {
+  const out = new Map(), ids = [...new Set((setIds || []).filter(isId))].slice(0, 20);
+  for (const setId of ids) {
+    try {
+      const sd = await col(SETS).doc(setId).get(); if (!sd.exists) continue;
+      const doc = { ...sd.data(), setId }, members = [...new Set((doc.sheetIds || []).filter(isId))].slice(0, 300);
+      if (members.length < 2 || SetRepair.exempt(doc)) continue;
+      const { docs, setDocs } = await sharedSheets(members);
+      const rows = docs.map(d => ({ ...d, id: d.id }));
+      // the back-engraving report of a gold-family member (the green-line rule reads it): the readiness records of those sheets alone
+      const gold = rows.filter(r => members.includes(r.id) && CutLine.cuts(r.metal));
+      if (gold.length) {
+        const full = []; for (let i = 0; i < gold.length; i += 100) for (const d of await db.getAll(...gold.slice(i, i + 100).map(r => col(SHEETS).doc(r.id)), { fieldMask: SLIM_SHEET.concat(["placements"]) })) if (d.exists && !d.data().archived) full.push({ ...d.data(), id: d.id });
+        for (const r of await readinessRecords(full)) { const at = rows.findIndex(x => x.id === r.id); if (at >= 0) rows[at] = { ...rows[at], laser: r.laser }; }
+      }
+      const diag = SetRepair.diagnose([doc].concat(setDocs.filter(s => s.setId !== setId)), rows, {});
+      if (diag.bySet[setId]) out.set(setId, diag.bySet[setId]);
+    } catch (e) { console.warn("[charmNestLibrary] the rules of set", setId, "could not be read (the page's button is grey for it all the same):", e && e.message); }
   }
   return out;
 }
@@ -3870,8 +3898,10 @@ async function approveGate(steps) {
     const reviewing = await openReviews(got.flatMap(g => g.orders));
     for (const g of got) { const rid = g.orders.find(r => reviewing.has(r)); if (rid) return { error: `Order ${rid} is in Review, so the sheet it is on cannot go on until it is resolved in the Review tab`, status: 409, orderId: rid, sheetId: g.id }; }
   }
-  for (const [id, { set, gate }] of await setGatesFor([...setIds], null)) if (!gate.ready) {
-    return { error: `${gate.setLabel === "This set" ? "This set" : gate.setLabel} is approved together, so every sheet of it must be ready first: ${gate.reason}`, status: 409, blockers: gate.blockers, setId: id };
+  for (const [id, { set, gate, breaks: b }] of await setGatesFor([...setIds], null)) {
+    // a set that breaks the owner's rules is never approved (SETREPAIR): the plain line of the rules it breaks, and the way out (Rebuild this set correctly on its card)
+    if (b) return { error: `${b.line}, so it cannot be approved for laser cutting. Press "Rebuild this set correctly" on its card in the Library`, status: 409, setId: id, breaks: b.items, blockers: [{ sheetId: "", sheetLabel: b.name, step: "nesting", why: b.short, text: `${b.name} · ${b.short}`, rule: "setBreaks" }] };
+    if (!gate.ready) return { error: `${gate.setLabel === "This set" ? "This set" : gate.setLabel} is approved together, so every sheet of it must be ready first: ${gate.reason}`, status: 409, blockers: gate.blockers, setId: id };
   }
   return null;
 }

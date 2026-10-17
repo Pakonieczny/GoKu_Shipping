@@ -118,7 +118,9 @@
   }
   const memberReady = m => laserOf(m).ready;
   // (Paul, 10 Oct: an uncommitted set without a completed GF and a completed SS sheet is not ready, whatever its sheets have done: the Library's own read, CharmNestReadiness.laserGroup, says the same)
-  const rulesOk = v => { const R = RD(); if (!v.set || !R || typeof R.setRules !== 'function') return true; const g = R.setRules(v.set, v.members); return !g.applies || g.ok; };
+  // (SETREPAIR, Paul 17 Oct 2026) a set the Library's card says breaks the owner's rules (its `setBreaks`, derived at every drawing by charm-nest-set-repair.js) is never ready, whatever its sheets have done
+  const withBreaks = set => { try { const b = set && typeof hooks.breaks === 'function' ? hooks.breaks(set.setId) : null; return b ? Object.assign({}, set, { setBreaks: b }) : set; } catch (_) { return set; } };
+  const rulesOk = v => { const R = RD(); if (!v.set || !R || typeof R.setRules !== 'function') return true; const g = R.setRules(withBreaks(v.set), v.members); return !g.applies || g.ok; };
   const groupReady = v => !v.setMissing && v.missing.length === 0 && v.members.length > 0 && v.members.every(memberReady) && rulesOk(v);
   const readyNow = v => v.kind === 'set' || v.set ? groupReady(v) : memberReady(v.sheet);
   function areaOf(v) {
@@ -216,7 +218,7 @@
   function setGateOf(v) {
     const R = RD();
     if (!v.set || !R || typeof R.setGate !== 'function') return null;
-    return R.setGate(v.set, v.members);
+    return R.setGate(withBreaks(v.set), v.members);
   }
   function gateNeed(v, gate) {
     return { key: 'setGate', label: gate.reason, detail: `${setName(v.set)} is approved together, so every sheet of it must be ready first.`,
@@ -1271,6 +1273,7 @@
     const sheetsOf = c => (c && c._sheets) || [];
     hooks.rec = id => { for (const c of cards()) { const r = sheetsOf(c).find(x => x && x.id === id); if (r) return r; } try { return ((typeof S !== 'undefined' && S.library && S.library.rows) || []).find(r => r.id === id) || null; } catch (_) { return null; } };
     hooks.members = setId => { const c = cards().find(x => x._laserSet && x._laserSet.setId === setId); return c ? sheetsOf(c).filter(x => x && !x.draft && x.solidIncluded !== false && !x.archived) : null; };
+    hooks.breaks = setId => { const c = cards().find(x => x._laserSet && x._laserSet.setId === setId); return c && c._laserSet.setBreaks ? c._laserSet.setBreaks : null; };      // (SETREPAIR: the rules the card's set breaks)
     hooks.notReady = it => (LR() && LR().moveBlock ? LR().moveBlock(it) : '');
     Object.assign(hooks, mine);
   }

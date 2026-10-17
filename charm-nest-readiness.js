@@ -21,7 +21,12 @@
    * An uncommitted set without them is not ready, whatever its sheets have done: it waits, and says so. A set already committed, completed or replaced is never
    * blocked afterwards (SetRules.gate says applies:false), nor is one whose records carry no completion mark. Looked up when asked, so script order does not matter. */
   const noRules={applies:false,ok:true,missing:[],reason:'',short:'',line:'',have:{GF:0,SS:0}};
-  const setRules=(st,sheets)=>{let R=(typeof self!=='undefined'?self:globalThis).CharmNestSetRules;if(!R&&typeof require==='function'){try{R=require('./charm-nest-set-rules');}catch(_){R=null;}}return R&&R.gate?R.gate(st,sheets):noRules;};
+  /* (SETREPAIR, Paul 17 Oct 2026: "I want you to fix it once and for all.") An uncommitted set that breaks the owner's rules (docs/charm-nest/set-rules.md; CharmNestSetInvariants.check, read by
+   * charm-nest-set-repair.js) can never be approved for laser cutting. The reader that drew or fetched the set says so with `set.setBreaks` ({ items, line, short }: derived at every drawing, never
+   * saved, like cardinalWait); this gate then reads { applies:true, ok:false, short, line, breaks }, so the Approve button, its grey reason, the set's readiness (set, laserGroup) and the Library's
+   * plan all answer the same. A set committed, completed or replaced is never blocked (SetRules.exempt); a set with no `setBreaks` reads exactly as it always did. */
+  const withBreaks=(R,st,g)=>{const b=st && st.setBreaks;if(!b || !Array.isArray(b.items) || !b.items.length || !R || (R.exempt && R.exempt(st)))return g;return {...g,applies:true,ok:false,short:b.short || 'breaks your rules',line:b.line || 'This set breaks your rules.',reason:b.line || g.reason || '',breaks:b.items};};
+  const setRules=(st,sheets)=>{let R=(typeof self!=='undefined'?self:globalThis).CharmNestSetRules;if(!R&&typeof require==='function'){try{R=require('./charm-nest-set-rules');}catch(_){R=null;}}return R&&R.gate?withBreaks(R,st,R.gate(st,sheets)):noRules;};
   const ruleModule=()=>{let R=(typeof self!=='undefined'?self:globalThis).CharmNestSetRules;if(!R&&typeof require==='function'){try{R=require('./charm-nest-set-rules');}catch(_){R=null;}}return R;};
   /* Paul, 13 Oct: the ONE plain line a sheet in no set gives for why it is not in one. A partial GF or SS sheet (not fully nested) never joins a set; a sheet the page holds out of a set says why
    * (s.setWait: derived by the page at every drawing, never saved: a group waiting for a partial sheet, a set waiting for its other kind); any other draft keeps the line it always had. */
@@ -713,7 +718,7 @@
     }
     // the principle (Paul, 10 Oct): an uncommitted set without a completed GF sheet and a completed SS sheet is not ready, and is told first
     const rules=setRules(st,live);
-    if(rules.applies && !rules.ok){const b={sheetId:'',sheetLabel:setName(st),step:'nesting',stepLabel:stepName('nesting'),why:rules.short,counter:null,rule:'setPrinciple'};b.text=`${b.sheetLabel} · ${b.why}`;blockers.unshift(b);}
+    if(rules.applies && !rules.ok){const b={sheetId:'',sheetLabel:setName(st),step:'nesting',stepLabel:stepName('nesting'),why:rules.short,counter:null,rule:rules.breaks?'setBreaks':'setPrinciple'};b.text=`${b.sheetLabel} · ${b.why}`;blockers.unshift(b);}
     const reason=blockers.length?blockers[0].text+(blockers.length>1?`, and ${blockers.length-1} more`:''):'';
     return {ready:order.length>0 && !blockers.length,blockers,reason,rules,sheets:out,toApprove:out.filter(x=>!x.missing && x.state!=='past').map(x=>x.sheetId),single:order.length<2,setLabel:setName(st)};
   }
