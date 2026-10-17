@@ -578,6 +578,8 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .engMono{container:engm/inline-size;box-sizing:border-box;width:100%;min-width:0;padding:7px;border:1px solid var(--line);border-radius:12px;background:var(--card);display:grid;gap:4px;align-content:start;overflow-wrap:anywhere}
 .engMono>.engMonoBody{min-width:0;min-height:226px}
 @container engm (max-width:385px){.engMono>.engMonoBody{min-height:300px}}
+/* (a card narrower than 300 px, a 320 px phone: the approved state's actions wrap onto a second row there, +26 px, and the 159 px picture stands over the letters: 316 px holds the tallest state so the card keeps one height through an edit and an approval) */
+@container engm (max-width:299px){.engMono>.engMonoBody{min-height:316px}}
 /* (MONOROUTE) the card's shortcut into the Engraving tab, the same button as an engraved piece's card has */
 .engMono .engOpenRow{display:flex;min-width:0}.engMono .egOpen{flex:1 1 auto;min-width:0;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:22px;padding:0 10px;font-size:12px;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .engMono .engFail{font:12px/1.4 var(--sans);color:var(--ink70)}

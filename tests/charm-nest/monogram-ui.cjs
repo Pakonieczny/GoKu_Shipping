@@ -13,6 +13,9 @@
 //   8  the size option: the widest the finished piece may be (charm-nest-monogram-fit.js), the line says so, the file written is that size
 //   9  the AI assembly line ("Assembled with AI: …" / "Needs a person: …", Improve again, a second press to approve anyway); the AI itself is stubbed (tests/charm-nest/monogram-ai.cjs holds the rest)
 //   10 the alphabets: none, partial (the pickers appear inside the widget), chosen by hand; keys (Tab order, Enter approves, Esc), sent to the sheets, reduced motion, phone width 400, a second tab, a reload keeps the approved design
+//   12 (17 Oct 2026) MONOROUTE: a monogram line that asks nothing is NOT a card of the Review tab (approved or not; its custom card still exists and holds the design; a line with a question or a hold still is listed), and an approved one is sent
+//      to the sheets from the widget's own "Send to Sheet →"; MONOLETTERS: after a rotate or a swap the buyer's line offers "Use these" (one press puts the buyer's letters back); MONOBIG: the compact preview is 139 px beside the letters,
+//      159 px over them, inside the card from 300 px up, and the compact widget keeps one (taller) height in every state
 //   11 Paul's own file (fixtures/SKUs_MONOGRAM_2024-1015.ai, 78 letters of three embedded fonts) indexed by the local script into the fake library: the three families found, 10 words built from his real letters (one piece, joins, counters)
 //   Screenshots (the cases at 760 / 380 / 372 px, and the page at 1440 and 400) go to $SHOTS (default /tmp/mu/MU1/shots/<state>-<order>-<case>.png).
 //   node tests/charm-nest/monogram-ui.cjs [playwright-core dir]      MONO_REAL=0 leaves Paul's own file out (stand-in alphabets, no pictures), MONO_FONTS=<dir with LEFT.ttf MIDDLE.ttf RIGHT.ttf> makes the stand-in alphabets from his fonts
@@ -44,6 +47,8 @@ FX.ev = { rid: '4200900021', sku: 'MONOGRAM_5351', listing: '997905351', title: 
 FX.thm = { rid: '4200900022', sku: 'MONOGRAM_5351', listing: '997905351', title: MONO_TITLE, buyer: 'Name Thm', placed: { day: 0, h: 12, m: 2 }, ship: 5, variations: [V('Metal choice', 'Gold')], personalization: ['T.H.M'] };
 FX.siz = { rid: '4200900024', sku: 'MONOGRAM_5351', listing: '997905351', title: MONO_TITLE, buyer: 'Name Siz', placed: { day: 0, h: 12, m: 3 }, ship: 5, variations: [V('Metal choice', 'Silver')], personalization: ['A.S.D'] };
 FX.ai1 = { rid: '4200900025', sku: 'MONOGRAM_5351', listing: '997905351', title: MONO_TITLE, buyer: 'Name Ai1', placed: { day: 0, h: 12, m: 4 }, ship: 5, variations: [V('Metal choice', 'Gold')], personalization: ['P.Q.R'] };
+FX.trb = { rid: '4200900031', sku: 'MONOGRAM_5351', listing: '997905351', title: MONO_TITLE, buyer: 'Name Trb', placed: { day: 0, h: 12, m: 6 }, ship: 5, variations: [V('Metal choice', 'Gold')], personalization: ['T.R.B'] };   // (MONOROUTE: a monogram line with a question staged on it)
+FX.hld = { rid: '4200900032', sku: 'MONOGRAM_5351', listing: '997905351', title: MONO_TITLE, buyer: 'Name Hld', placed: { day: 0, h: 12, m: 7 }, ship: 5, variations: [V('Metal choice', 'Gold')], personalization: ['H.L.D'] };   // (MONOROUTE: a monogram line a person held)
 FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title: MONO_TITLE, buyer: 'Name Ai2', placed: { day: 0, h: 12, m: 5 }, ship: 5, variations: [V('Metal choice', 'Rose Gold')], personalization: ['W.N.K'] };
 
 (async () => {
@@ -92,7 +97,7 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
     return { state: h.dataset.state, busy: h.dataset.busy, mode: h.dataset.mode, says: txt('[data-mw-says]'), saysHidden: q('[data-mw-says]').hidden, size: txt('[data-mw-size]'), asm: txt('[data-mw-assembly]', '[data-mw-assembly] > span'), asmStatus: q('[data-mw-assembly]').hidden ? '' : q('[data-mw-assembly]').dataset.status,
       note: txt('[data-mw-note]'), msg: txt('[data-mw-msg]'), kind: q('[data-mw-msg]').hidden ? '' : q('[data-mw-msg]').dataset.kind, retry: !!q('[data-mw-retry]'), spin: !q('[data-mw-spin]').hidden, spinTx: q('[data-mw-spin] span').textContent, aria: q('[data-mw-pic]').getAttribute('aria-busy'),
       hint: q('.mwHint') ? q('.mwHint').textContent : '', d: q('[data-mw-pic] svg path') ? q('[data-mw-pic] svg path').getAttribute('d') : '', ins: [...h.querySelectorAll('[data-mw-letter]')].map(i => i.value), locked: [...h.querySelectorAll('[data-mw-letter]')].every(i => i.disabled), invalid: [...h.querySelectorAll('[data-mw-letter]')].map(i => i.getAttribute('aria-invalid')),
-      approve: btn('[data-mw-approve]'), ok: btn('[data-mw-approved]'), change: btn('[data-mw-change]'), sheet: btn('[data-mw-sheet]'), again: btn('[data-mw-again]'), bar: q('[data-mw-bar]') ? { ind: q('[data-mw-bar]').classList.contains('ind'), w: q('[data-mw-bar] b').style.width } : null };
+      buyerBtn: (() => { const e = q('[data-mw-buyer]'); return e && !e.closest('[hidden]') ? e.textContent.replace(/\s+/g, ' ').trim() : null; })(), approve: btn('[data-mw-approve]'), ok: btn('[data-mw-approved]'), change: btn('[data-mw-change]'), sheet: btn('[data-mw-sheet]'), again: btn('[data-mw-again]'), bar: q('[data-mw-bar]') ? { ind: q('[data-mw-bar]').classList.contains('ind'), w: q('[data-mw-bar] b').style.width } : null };
   }, W(rid, k));
   const until = async (rid, fn, what, ms = 20000, k = 'detail') => { const t0 = Date.now(); let r; for (;;) { r = await read(rid, k); if (r && fn(r)) return r; if (Date.now() - t0 > ms) { console.log('   (waiting for ' + what + ', last: ' + JSON.stringify(r).slice(0, 360) + ')'); return r; } await sleep(60); } };
   const ready = (rid, ms, k) => until(rid, r => !r.spin && (r.state === 'ready' || r.state === 'approved' || r.state === 'check'), 'a finished monogram', ms, k);
@@ -170,6 +175,8 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
   const TONE = { gold: '#d9bd78', silver: '#c8ccd2', rose: '#e2b4a1' };
   // (the sides are normalised to 0.80 of the centre by BODY height, their ink reaches 0.85 to 0.95 of the centre's: the centre is bigger by 1.05 or more, not by the 1.2 of the first rule)
   const POINT_FLOOR = 1500;    // (points in the path of a monogram of Paul's script letters; the block serif stand-ins make a few hundred)
+  const COMPACT_MAX_H = 285;   // (the compact widget's reserved height in the stacked layout, MONOBIG: picture 159 px; ~277 measured)
+  const PIC_WIDE = 139, PIC_STACKED = 159;      // (MONOBIG, Paul 17 Oct 2026: the compact preview, beside the letters / over them when the card is too narrow for both)
 
   if (process.env.MONO_ONLY_REAL === '1') await w.close();   // (MONO_ONLY_REAL=1: nothing here)
   else try {
@@ -199,7 +206,7 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
     check(await page.evaluate(() => CharmNestMonogramUI.widgets().length) === 12 && await page.evaluate(() => CharmNestMonogramUI.widgets().every(w => w.el && w.el.classList.contains('mw'))), 'three monogram lines mounted four times each (Engrave detail, Order window compact, each at phone width): 12 live widgets');
     check(await page.evaluate(() => CharmNestMonogramUI.isMonogram(Orders.rows().find(r => r.order.receiptId === '4200683017')) && !CharmNestMonogramUI.isMonogram(Orders.rows().find(r => r.order.receiptId === '4200900004')) && CharmNestMonogramUI.mountLine(document.createElement('div'), { rid: '4200900004' }) === null), 'a regular charm is no monogram line: isMonogram false, mountLine gives null (the caller keeps its own card)');
     let a = await read('4200683017');
-    check(a.state === 'ready' && a.d.length > 500 && a.ins.join('') === 'APV' && a.saysHidden && a.says === '', 'APV: the preview is drawn from the cut geometry; the letters are the buyer\'s own, so the widget does not repeat the words the order\'s strip already shows');
+    check(a.state === 'ready' && a.d.length > 500 && a.ins.join('') === 'APV' && a.saysHidden && a.says === '' && a.buyerBtn === null, 'APV: the preview is drawn from the cut geometry; the letters are the buyer\'s own, so the widget does not repeat the words the order\'s strip already shows (and has no "Use these" to offer)');
     check(/^\d+\.\d × \d+\.\d mm · Gold$/.test(a.size) && a.asm === '' && a.msg === '' && !a.ok.text.length === false, 'one size line, in the line\'s metal, nothing else to say: "' + a.size + '"');
     const four = await Promise.all(Object.keys(CASES).map(k => read('4200683017', k)));
     check(four.every(x => x.state === 'ready' && x.ins.join('') === 'APV' && x.d === a.d && x.size === a.size) && four[1].saysHidden && four[1].mode === 'compact' && four[0].mode === 'detail', 'all four mounts show ONE state (same picture, letters, size); the compact one keeps the buyer\'s line to itself until it matters');
@@ -214,6 +221,30 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
     a = await read('4202783520');
     check(a.ins.join('') === 'OSR' && a.saysHidden && a.state === 'ready' && /Silver$/.test(a.size), 'OSR: "' + a.says + '", ' + a.size);
     await shot('mw-1440-ready'); await caseShots('ready', T3); HH.ready = [await heightOf('4200683017'), await heightOf('4200683017', 'cphone')];
+    // MONOBIG (Paul, 17 Oct 2026: "the preview thumbnail for the monogram is too small to see the necessary detail. Please enlarge by 66% and ensure it still fits within the bounds of the monogram card"): the compact picture is
+    // 139 px (was 84) beside the letters, 159 px (was 96) over them when the card is too narrow for both; in a card of any width from a 320 px phone up it stays inside the card, nothing sideways
+    { const widths = [440, 420, 395, 380, 340, 320, 300];
+      const probe = await page.evaluate(async ({ rid, widths }) => {
+        const rootEl = document.getElementById('mwRoot'), row = Orders.rows().find(r => String(r.order.receiptId) === rid && r.spec && r.spec.special && r.spec.special.monogram), out = [];
+        for (const wpx of widths) {
+          const cs = document.createElement('div'); cs.className = 'mwCase'; cs.dataset.rid = rid; cs.dataset.case = 'probe';
+          cs.style.cssText = `box-sizing:border-box;width:${wpx}px;max-width:100%;border:1px solid var(--line);border-radius:12px;background:var(--card);padding:10px;`;
+          const host = document.createElement('div'); host.className = 'mwHost'; cs.append(host); rootEl.append(cs);
+          const w = CharmNestMonogramUI.mountLine(host, { rid, lineKey: row.key, mode: 'compact' });
+          const t0 = Date.now(); while (Date.now() - t0 < 15000) { const m = cs.querySelector('.mw'); if (m && m.querySelector('[data-mw-pic] svg path') && m.querySelector('[data-mw-spin]').hidden) break; await new Promise(r => setTimeout(r, 50)); }
+          const m = cs.querySelector('.mw'), pic = m.querySelector('[data-mw-pic]').getBoundingClientRect(), box = cs.getBoundingClientRect(), mr = m.getBoundingClientRect(), ls = m.querySelector('.mwLtrs').getBoundingClientRect();
+          const out1 = [...m.querySelectorAll('*')].filter(n => { const r = n.getBoundingClientRect(); return r.width > 0 && (r.right > box.right - 11 + 1 || r.left < box.left + 11 - 1); }).length;
+          out.push({ wpx, picW: Math.round(pic.width * 10) / 10, picH: Math.round(pic.height * 10) / 10, stacked: pic.bottom <= ls.top + 1 && pic.right > ls.left, beside: pic.right <= ls.left + 1, inside: pic.left >= box.left + 11 - 1 && pic.right <= box.right - 11 + 1, runs: out1, over: m.scrollWidth - m.clientWidth, mwW: Math.round(mr.width), h: Math.round(mr.height * 10) / 10 });
+          w.destroy(); cs.remove();
+        }
+        return out;
+      }, { rid: '4200683017', widths });
+      console.log('   the compact picture by card width:', JSON.stringify(probe));
+      const wide = probe.filter(p => p.beside), stk = probe.filter(p => p.stacked);
+      check(wide.length >= 2 && wide.every(p => Math.abs(p.picW - PIC_WIDE) <= 1), `the compact picture is ${PIC_WIDE} px wide beside the letters (cards ${wide.map(p => p.wpx).join('/')} px): ` + wide.map(p => p.picW).join('/'));
+      check(stk.length >= 3 && stk.every(p => Math.abs(p.picW - PIC_STACKED) <= 1), `and ${PIC_STACKED} px wide over the letters when the card is too narrow for both (cards ${stk.map(p => p.wpx).join('/')} px): ` + stk.map(p => p.picW).join('/'));
+      check(probe.every(p => (p.beside || p.stacked) && p.inside && p.runs === 0 && p.over <= 1), 'in every card width from 300 to 440 px the picture and everything else stay inside the card: ' + probe.map(p => p.wpx + ':' + (p.inside && p.runs === 0 && p.over <= 1 ? 'in' : 'OUT')).join(' '));
+      check(probe.every(p => p.picH >= p.picW * 0.7 && p.picH <= p.picW * 0.8), 'and the picture keeps its 4:3 shape (' + probe.map(p => p.picW + '×' + p.picH).join(' ') + ')'); }
     // the picture is the CUT piece of Paul's real script letters: the real glyph outlines (thousands of points, block letters never reach it), filled with the order's metal, a thin cut line round the outline and every counter, centred with an even margin
     if (REAL_OK) {
       const pics = {}; for (const [wd, rid] of TRIO) pics[wd] = await pictureOf(rid);
@@ -246,7 +277,8 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
     a = await read('4200683017'); let ac = await read('4200683017', 'compact');
     check(a.state === 'building' && a.spin && a.aria === 'true' && a.approve.disabled && ac.state === 'building' && ac.spin && ac.ins.join('') === 'ASV', 'a letter typed: the widget is busy at once (spinner on the picture, Approve waits), and so is the compact one, already showing A S V: ' + a.state);
     a = await ready('4200683017');
-    check(a.state === 'ready' && a.ins.join('') === 'ASV' && a.says === 'The buyer wrote A P V' && !a.spin && a.aria === 'false', 'the monogram was remade for A S V; the buyer\'s own line still says A P V');
+    // (MONOLETTERS, 17 Oct 2026: a card whose letters differ from the buyer's says what they wrote AND offers one press to put them back: "The buyer wrote A P V · Use these")
+    check(a.state === 'ready' && a.ins.join('') === 'ASV' && a.says === 'The buyer wrote A P V · Use these' && a.buyerBtn === 'Use these' && !a.spin && a.aria === 'false', 'the monogram was remade for A S V; the buyer\'s own line still says A P V, with a "Use these" button: "' + a.says + '"');
     check((await builds()).slice(b0).join() === 'ASV', 'one build for the edit (not one per mount): ' + (await builds()).slice(b0).join());
     check((await read('4200683017', 'cphone')).saysHidden === false, 'and the compact widget now shows what the buyer wrote, because the letters differ from it');
     { const bb = (await builds()).length; await typeIn('4200683017', 1, 'T'); await page.keyboard.type('X'); await ready('4200683017');   // two edits within the wait: one remake of the last
@@ -283,6 +315,20 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
     await page.click(`${W('4200683017')} [data-mw-rotate]`); a = await ready('4200683017');
     check(a.ins.join('') === 'UXA' && (await builds()).slice(-1)[0] === 'UXA', 'rotate moves every letter one place: A U X becomes U X A, remade');
     await page.click(`${W('4200683017')} [data-mw-rotate]`); await page.click(`${W('4200683017')} [data-mw-rotate]`); a = await ready('4200683017'); check(a.ins.join('') === 'AUX', 'three rotations are back where they began');
+    // "Use these" (MONOLETTERS, 17 Oct 2026: "the system did not use the buyer's requested letters"): a rotate press turns A P V into P V A; the line says what the buyer wrote and one press puts the buyer's letters back
+    await page.click(`${W('4200683017')} [data-mw-rotate]`); a = await ready('4200683017');
+    check(a.ins.join('') === 'UXA' && !a.saysHidden && a.buyerBtn === 'Use these' && /^The buyer wrote A P V/.test(a.says), 'after a rotate press (U X A) the widget offers the buyer\'s letters back: "' + a.says + '"');
+    ac = await read('4200683017', 'compact');
+    check(ac.ins.join('') === 'UXA' && !ac.saysHidden && ac.buyerBtn === 'Use these', 'and the compact widget of the line offers them too (one state)');
+    { const bu = (await builds()).length;
+      await page.click(`${W('4200683017')} [data-mw-buyer]`); a = await ready('4200683017'); ac = await read('4200683017', 'compact');
+      check(a.ins.join('') === 'APV' && ac.ins.join('') === 'APV' && a.state === 'ready' && a.saysHidden && a.buyerBtn === null && ac.buyerBtn === null && !a.invalid.includes('true'), 'Use these puts the buyer\'s A P V back in every mount; the line and the button go away: ' + a.ins.join('') + '/' + ac.ins.join(''));
+      check((await builds()).slice(bu).every(x => x === 'APV') && (await builds()).length - bu <= 1, 'and at most one build was made for it (the monogram of A P V is remembered): ' + ((await builds()).slice(bu).join() || 'none'));
+      // the same press from the compact widget (a swap of the first two letters first)
+      await page.click(`${W('4200683017', 'compact')} [data-mw-swap="0"]`); await ready('4200683017', 20000, 'compact'); const cs = await read('4200683017', 'compact');
+      check(cs.ins.join('') === 'PAV' && cs.buyerBtn === 'Use these', 'a swap in the compact widget (P A V) offers them there');
+      await page.click(`${W('4200683017', 'compact')} [data-mw-buyer]`); const cb = await ready('4200683017', 20000, 'compact');
+      check(cb.ins.join('') === 'APV' && cb.buyerBtn === null && (await read('4200683017')).ins.join('') === 'APV', 'and pressed there it puts A P V back in the detail widget too'); }
     // paste
     await pasteWord('4200683017', 'P.V.A');
     a = await ready('4200683017'); check(a.ins.join('') === 'PVA' && a.state === 'ready', 'three letters pasted into any box fill all three: ' + a.ins.join(''));
@@ -375,7 +421,8 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
     check(!a.locked && a.state === 'approved' && /Change a letter to replace/.test(a.note) && a.change.hidden, 'Change unlocks the boxes and says how to replace: "' + a.note + '"');
     await caseShots('change', ['4200683017'], ['detail', 'compact']); HH.change = [await heightOf('4200683017'), await heightOf('4200683017', 'cphone')];
     { const all = Object.values(HH).flat(); const sig = Object.entries(HH).map(([k, v]) => k + ' ' + v.map(x => Math.round(x)).join('/')).join(' · ');
-      check(Object.keys(HH).length >= 4 && Math.max(...all) <= 176 && Math.max(...all) - Math.min(...all) <= 1, 'the compact widget keeps ONE height (<= 176 px) in every state, so the Order window never jumps: ' + sig); }
+      // (MONOBIG, 17 Oct 2026: the compact picture is 139 px beside the letters and 159 px over them, was 84 / 96: the reserved height of the stacked widget is ~277 px now, was <= 176; what is kept is that it is ONE height in every state)
+      check(Object.keys(HH).length >= 4 && Math.max(...all) <= COMPACT_MAX_H && Math.max(...all) - Math.min(...all) <= 1, `the compact widget keeps ONE height (<= ${COMPACT_MAX_H} px) in every state, so the Order window never jumps: ` + sig); }
     await typeIn('4200683017', 1, 'S'); a = await ready('4200683017');
     check(a.state === 'ready' && !a.approve.hidden && a.approve.text === 'Replace approved', 'after a letter change the button says Replace approved: ' + JSON.stringify([a.state, a.approve]));
     await page.click(`${W('4200683017')} [data-mw-approve]`); a = await until('4200683017', r => r.state === 'approved', 'the replacement');
@@ -391,13 +438,35 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
     // approving another order's monogram does not touch this one
     await page.click(`${W('4202783520')} [data-mw-approve]`); await until('4202783520', r => r.state === 'approved', 'the second approval');
     const e4 = await entries(); check(e4.length === 2 && e4.map(e => e.files.map(f => f.name).join()).sort().join('|') === 'Monogram ASV.ai|Monogram OSR.ai', 'a second order\'s monogram is its own design: ' + JSON.stringify(e4.map(e => e.files.map(f => f.name))));
-    // the Review tab shows the design on the order's card
+    // MONOROUTE (Paul, 17 Oct 2026: "Monogram orders should be treated exactly like back engraving and should be routed to the Engraving tab and NOT the Review tab unless something else is wrong"):
+    // a monogram line that asks nothing is NOT listed in the Review tab, approved or not (it used to be a Custom Orders card with its design on it, or with Build monogram); its custom card still exists and
+    // holds the design (the monogram's Approve attaches it there: Review.customItemFor), and the Engraving tab's monogram service lists the line
     await hideCases(true);
     await page.evaluate(() => { CN.setMode('review'); Review.render(); });
-    await page.waitForSelector('#rvList .reviewListRow[data-rid="4200683017"]', { timeout: 15000 });
-    check(await page.evaluate(() => /Monogram ASV\.ai|1 design/.test(document.querySelector('#rvList .reviewListRow[data-rid="4200683017"]').textContent)), 'the order\'s Review card shows its design');
-    check(await page.evaluate(() => !document.querySelector('#rvList .reviewListRow[data-rid="4200683017"] [data-cu-mono]')), 'an order with its monogram already approved offers no Build monogram');
-    check(await page.evaluate(() => !!document.querySelector('#rvList .reviewListRow[data-rid="4200900001"] [data-cu-mono]')), 'an order with no design yet offers Build monogram');
+    await sleep(600);
+    const rvIn = rid => page.evaluate(rid => document.querySelectorAll(`#rvList [data-rid="${rid}"]`).length, rid);
+    check(await rvIn('4200683017') === 0 && await rvIn('4202783520') === 0 && await rvIn('4200900001') === 0, 'the Review tab lists none of the monogram lines: not the two approved ones (APV → ASV, OSR) and not the one still waiting for its approval (J.Q.X)');
+    check(await page.evaluate(() => !document.querySelector('#rvList [data-cu-mono]')), 'and no Review card offers "Build monogram" for a line that asks nothing');
+    const cardOfApv = await page.evaluate(() => { const row = Orders.rows().find(r => r.order.receiptId === '4200683017'), it = Review.customItemFor(row.key, row), c = it && CustomSheet.cardOf(it); return { has: !!it, files: c ? c.files.map(f => f.name) : null, rows: it ? (it.rows || []).map(r => r.key) : null, key: row.key }; });
+    check(cardOfApv.has && cardOfApv.files.join() === 'Monogram ASV.ai' && cardOfApv.rows.join() === cardOfApv.key, 'its custom card still exists (Review.customItemFor finds it) and holds the approved design, though Review does not list it: ' + JSON.stringify(cardOfApv.files));
+    check(await page.evaluate(() => { const ui = Engrave.monogramUI(), rows = ui.rows().map(r => r.order.receiptId); return ['4200683017', '4202783520', '4200900001'].every(r => rows.includes(r)); }), 'the Engraving tab\'s monogram service lists the three lines (the place a monogram is looked after now)');
+    // ... unless something else is wrong: a question the line raises, or a hold, keeps its card in Review as before (the intake itself raises none for a monogram, so the question is staged the way the reader's failure line is)
+    await seedOrders(['trb', 'hld']);
+    const trb = await page.evaluate(() => { const row = Orders.rows().find(r => r.order.receiptId === '4200900031'); row.problems = [{ kind: 'needsMapping', listingId: String(row.line.listingId), optionName: 'Pendant finish', optionValue: 'Mystery coating', title: row.line.title }]; Review.syncOrderItems(); Review.render(); return row.key; });
+    await page.waitForSelector('#rvList [data-rid="4200900031"]', { timeout: 15000 }).catch(() => {});
+    check(await rvIn('4200900031') >= 1, 'a monogram line WITH a real problem (an option nobody mapped) is still listed in Review');
+    check(await page.evaluate(() => { const b = document.querySelector('#rvList [data-rid="4200900031"] [data-cu-mono]'); return !!b && b.textContent.trim() === 'Build monogram' && !/Monograms/.test(b.title); }), 'its card offers Build monogram (the line has no design yet), which opens the Engraving tab\'s monogram');
+    await page.evaluate(k => { const row = B.orders.byKey.get(k); row.problems = []; Review.syncOrderItems(); Review.render(); }, trb);
+    await sleep(300); check(await rvIn('4200900031') === 0, 'the problem answered, the line leaves Review again (the Engraving tab\'s)');
+    // a person who sends the order to Review (Send to Review, charm-nest-review-mark.js) says something is wrong with it: that card is listed whatever the line is, until Mark OK
+    const mk = await page.evaluate(() => CharmNestReviewMark.mark('4200900032', { by: 'Test Operator' }));
+    await page.evaluate(() => { Review.syncOrderItems(); Review.render(); }); await sleep(700);
+    check(!!mk.ok && await rvIn('4200900032') >= 1, 'a monogram order a person sent to Review is listed there, marked, whatever the line says: ' + JSON.stringify(mk));
+    await page.evaluate(() => CharmNestReviewMark.resolve('4200900032', { by: 'Test Operator', how: 'ok' })); await page.evaluate(() => { Review.syncOrderItems(); Review.render(); }); await sleep(700);
+    check(await rvIn('4200900032') === 0, 'Mark OK takes it out of Review again (the Engraving tab\'s, as before)');
+    // a hold a person pressed on the line is a hold (its pill says held, the piece placement says "On hold"); with none the line waits in the Engraving tab (the pill says where, the placement does not call it a hold)
+    { const sts = await page.evaluate(() => { const row = Orders.rows().find(r => r.order.receiptId === '4200900032'), snap = () => ({ pill: Orders.statePill(row)[1], place: (PiecePlacement.ofRow(row) || {}).state }); row.state = 'held'; const free = snap(); row.hold = 'held by a person: wait for the buyer\'s reply'; const held = snap(); row.hold = null; return { free, held }; });
+      check(sts.free.pill === 'monogram · Engraving' && sts.free.place !== 'hold' && /held/i.test(sts.held.pill) && sts.held.place === 'hold', 'a monogram line with no hold waits in the Engraving tab (pill "monogram · Engraving", placement not "On hold"); with a hold a person pressed it is held and On hold: ' + JSON.stringify(sts)); }
     await hideCases(false);
 
     // ═══ 6 · the page is told, a host can hold Approve, a widget can be moved and removed ═══
@@ -553,13 +622,17 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
     }
 
     // sent to the sheets: the widget is final (boxes locked, no Approve, no Change), and it is no longer counted as waiting
-    await hideCases(true);
-    await page.evaluate(() => { CN.setMode('review'); Review.render(); });
-    await page.waitForSelector('#rvList .reviewListRow[data-rid="4200900001"] [data-cu-send]', { timeout: 15000 });
-    await page.click('#rvList .reviewListRow[data-rid="4200900001"] [data-cu-send]');
+    // (MONOROUTE, 17 Oct 2026: an approved monogram is no card of the Review tab any more, so its way to the sheets is the widget's own "Send to Sheet →": the designs window opens on the order's design and its Send to Sheet sends it)
+    await hideCases(false);
+    check(await page.evaluate(() => !document.querySelector('#rvList [data-rid="4200900001"]')), 'before it is sent the approved monogram J.Q.P has no card in the Review tab');
+    await page.click(`${W('4200900001')} [data-mw-sheet]`); await page.waitForSelector('#cuDlg[open] [data-send]', { timeout: 15000 });
+    check(await page.evaluate(() => document.querySelectorAll('#cuDlg .cuFile').length === 1 && /Monogram JQP\.ai/.test(document.querySelector('#cuDlg .cuFile').textContent)), 'the widget\'s Send to Sheet opens the designs window with Monogram JQP.ai');
+    await page.click('#cuDlg [data-send]'); await sleep(300);
+    if (await page.evaluate(() => { const who = document.getElementById('cuWho'); return !!who && !who.hidden && !!document.querySelector('#cuDlg[open]'); })) { await page.fill('#cuWho input', 'Test Operator'); await page.click('#cuDlg [data-send]'); }
     await page.click('[data-role="laser"]', { timeout: 2500 }).catch(() => {});       // (the page's own "Laser or Design?" bar, when it asks)
-    await page.waitForFunction(() => CustomSheet.decisionOf(B.orders.byKey.get('4200900001_42009000011')) && !document.querySelector('#rvList .cuStat, #rvList .btn.working'), null, { timeout: 40000 }).catch(() => {});
+    await page.waitForFunction(() => CustomSheet.decisionOf(B.orders.byKey.get('4200900001_42009000011')) && !document.querySelector('.cuStat, .btn.working'), null, { timeout: 40000 }).catch(() => {});
     await page.waitForFunction(() => !window.SendTour || !SendTour.playing(), null, { timeout: 40000 }).catch(() => {}); await sleep(900);   // (the send tour brings the Review tab back by itself when it ends)
+    await page.evaluate(() => { const d = document.getElementById('cuDlg'); if (d && d.open) d.querySelector('[data-x]').click(); });
     await hideCases(false); await page.evaluate(() => CharmNestMonogramUI.widgets().forEach(w => w.refresh())); await sleep(300);
     a = await until('4200900001', r => r.state === 'sent', 'the sent state', 10000);
     check(a && a.state === 'sent' && a.locked && a.approve.hidden && a.change.hidden && a.sheet.hidden && /^On the sheet · Monogram JQP$/.test(a.ok.text), 'a monogram sent to the sheets is final: "On the sheet · Monogram JQP", boxes locked, no Approve, no Change: ' + JSON.stringify([a && a.state, a && a.ok]));
