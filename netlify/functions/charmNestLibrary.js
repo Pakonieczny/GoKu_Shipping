@@ -3287,6 +3287,7 @@ async function op_customSheetPut(b) {
     }
     for (const [i, s] of claimed.entries()) if (!s.exists) tx.set(lineRefs[i], { ck: next.ck, rid: next.rid, sendId: next.sent.id });
     for (const [i, e] of events.entries()) if (!recorded[i].exists) tx.set(eventRefs[i], Object.assign({}, e.doc, { createdAt: FV.serverTimestamp() }));
+    if (events.some((e, i) => !recorded[i].exists)) Timeline.touch(tx, db, FV, [next.rid], PREFIX);   // (COST, Oct 2026: the order window's Order_Rev moves with its events)
     return { ok: true, record: customSheetRow(next) };
   });
 }
@@ -3611,7 +3612,7 @@ async function cancelSteps(b) {
 /* ── the order timeline (_orderTimeline.js): the sorter's own events, and the whole timeline of one order ── */
 const Timeline = require("./_orderTimeline");
 async function op_timelineAdd(b) { return Timeline.add(db, FV, b.events, { prefix: PREFIX, source: "sorter" }); }
-async function op_timelineGet(b) { return Timeline.get(db, b.orderId, { prefix: PREFIX, sandboxed: SANDBOXED, derive: b.derive !== false, ifRev: typeof b.ifRev === "string" && /^[0-9a-f]{12}$/.test(b.ifRev) ? b.ifRev : "", wantRev: b.wantRev === true }); }   // recorded + derived from the records already kept
+async function op_timelineGet(b) { return Timeline.get(db, b.orderId, { prefix: PREFIX, sandboxed: SANDBOXED, derive: b.derive !== false, ifRev: typeof b.ifRev === "string" && Timeline.REV_TOKEN.test(b.ifRev) ? b.ifRev : "", wantRev: b.wantRev === true, verify: b.verify === true, netMs: +b.netMs || 0 }); }   // recorded + derived from the records already kept (COST, Oct 2026: verify / netMs, the Order_Rev shortcut: see _orderTimeline get)
 // (full: each whole record, its lines, fates and removals, for an order read long after it left the pull)
 async function op_cancelCheck(b) { return Timeline.cancelCheck(db, b.orderIds || b.orderId, { prefix: PREFIX, full: b.full === true }); }
 /* Restoring a cancelled order deletes its cancel record; the timeline keeps it first: the cancelRestored event carries the
@@ -3628,6 +3629,7 @@ async function op_cancelRestore(b) {
   const batch = db.batch();
   if (rec) batch.set(col(CANCEL_HISTORY).doc(`${id}~${Math.round(num(rec.at)) || Date.now()}`), Object.assign({}, rec, { restoredAt: Date.now(), restoredBy: str(b.by, 80) || "operator" }));
   batch.delete(ref); OrderCancel.bump(batch, db, FV, PREFIX);   // (FC3b: the cancel counter moves with the delete, in this batch: readers of the cancelled list ask after it, see cancelList)
+  Timeline.touch(batch, db, FV, [id], PREFIX);   // (COST, Oct 2026: and the order window's Order_Rev: the restore event above moved it BEFORE the delete)
   await batch.commit(); return { ok: true };
 }
 /** A cancel record small enough for an event's data (≤ 2 KB): long titles are shortened, then dropped, then lines left out. */

@@ -131,7 +131,9 @@ function stage(w, db, FV, ref, p, prefix, create) {
   if (p.kind === "create") w[create ? "create" : "set"](ref, Object.assign({}, p.doc, { createdAt: FV.serverTimestamp() }));
   else if (p.kind === "set") w.set(ref, Object.assign({}, p.doc, { createdAt: FV.serverTimestamp() }));
   else if (p.kind === "update") w.update(ref, p.doc);
-  for (const { key, doc } of eventRows(p.events, prefix)) w.set(db.collection((prefix || "") + Timeline.COL).doc(key), Object.assign({}, doc, { createdAt: FV.serverTimestamp() }), { merge: true });
+  const rows = eventRows(p.events, prefix);
+  for (const { key, doc } of rows) w.set(db.collection((prefix || "") + Timeline.COL).doc(key), Object.assign({}, doc, { createdAt: FV.serverTimestamp() }), { merge: true });
+  if (p.kind || rows.length) Timeline.touch(w, db, FV, [ref.id], prefix);   // (COST, Oct 2026: the order window's one-read revision, Order_Rev, moves with the record)
 }
 const tidy = r => { const x = Object.assign({}, r); delete x.createdAt; return x; };
 
@@ -359,6 +361,7 @@ async function noteFates(db, orderId, fates, opts = {}) {
     if (m.left) patch.removalsLeftOut = n(d.removalsLeftOut) + m.left;
     if (!Object.keys(patch).length) return { ok: true, changed: false, fates: cur, removals: m.list };
     t.update(ref, patch);
+    Timeline.touch(t, db, null, [id], opts.prefix);   // (COST, Oct 2026: the order window's Order_Rev moves with the record; no FieldValue here, so n is the time)
     return { ok: true, changed: true, fates: patch.fates || cur, removals: m.list };
   });
 }

@@ -71,6 +71,29 @@ function clean(e, opts = {}) {
   return { key: `${orderId}~${type}~${key}`.slice(0, 400), doc: out };
 }
 const colOf = (db, prefix) => db.collection((prefix || "") + COL);
+/* ── the order's revision (COST, Oct 2026) ──────────────────────────────────────────────────────────────────────────────────
+   The change probe below still cost ~36 reads a poll (80 cold): a field mask carries no bytes, but every document it touches is
+   billed one read. Order_Rev/{orderId} (Sandbox_Order_Rev in the sandbox: the prefix the order's other records take) is one tiny
+   document whose update time moves with every write to the order's timeline: add() below, the cancel records and their events
+   (_orderCancel stage / noteFates, charmNestLibrary cancelRestore), the custom sheet's designSent events, the Team's messages
+   (firebaseOrders). A poll holding a revision whose digest was taken less than NET_MS ago and finding Order_Rev unmoved is answered
+   from that ONE read (get, below). What no writer raises it for (a pool row, a sheet, a set, a back, the design ledgers, the Etsy
+   mirror, a station writing with the client SDK) is caught by the full probe, which still runs at most every NET_MS (60 s) a window,
+   and at once when the page learns of a placement change from its own placement feed (verify). Raises are queued on the writer's own
+   batch or transaction where it has one, so the revision is never behind the record it stands for. */
+const REV_COL = "Order_Rev";
+const revColOf = (db, prefix) => db.collection((prefix || "") + REV_COL);
+/** Queue the raise of these orders' revisions on a batch or transaction. Returns how many were queued. */
+function touch(w, db, FV, ids, prefix) {
+  const list = [...new Set([].concat(ids || []).map(orderIdOf).filter(Boolean))].slice(0, 200);
+  for (const id of list) w.set(revColOf(db, prefix).doc(id), { n: FV && typeof FV.increment === "function" ? FV.increment(1) : Date.now(), at: Date.now() }, { merge: true });
+  return list.length;
+}
+/** The same in a batch of its own, for a writer with none at hand. A failure is never the writer's error: the probe's net covers it. */
+async function touchNow(db, FV, ids, prefix) {
+  try { const b = db.batch(); if (touch(b, db, FV, ids, prefix)) await b.commit(); }
+  catch (e) { console.warn("[orderTimeline] order revision not raised:", (e && e.message) || e); }
+}
 
 /** Writes events (at most 100 a call). Returns the keys written. */
 async function add(db, FV, events, opts = {}) {
@@ -78,6 +101,7 @@ async function add(db, FV, events, opts = {}) {
   if (!list.length) return { ok: true, ids: [] };
   const c = colOf(db, opts.prefix), batch = db.batch();
   for (const { key, doc } of list) batch.set(c.doc(key), Object.assign({}, doc, { createdAt: FV.serverTimestamp() }), { merge: true });
+  touch(batch, db, FV, list.map(x => x.doc.orderId), opts.prefix);   // (COST: the order's revision moves with its events, in the same batch)
   await batch.commit();
   return { ok: true, ids: list.map(x => x.key) };
 }
@@ -123,7 +147,8 @@ const leftOutOf = r => (r.truncated ? { types: r.skipped.slice(0, 20), kept: PER
    messages (count(): one read per 1,000). A page that holds the digest of its last answer sends it back (ifRev) and gets
    { unchanged: true } when it has not moved, which is almost always; a page that wants one to keep asks wantRev.
    What it cannot see: a recorded event or message rewritten in place with the same key and a different content (count stays).
-   The page reads the whole answer again at least once a minute, which bounds that. The digest is taken BEFORE the data is read, so a
+   The page reads the whole answer again at least once a minute, which bounds that (COST, Oct 2026: every 10 minutes now; an event rewritten
+   through add() moves Order_Rev, below, so only a message edited in place is left to it). The digest is taken BEFORE the data is read, so a
    write in between can only cost one more read, never hide a change. A failure of any part answers null (no digest: read in full).
    Keep the sources alike with deriveEvents (round 1 and round 2 below). */
 const NONE = ["_r"];   // a field no document has: update time and (almost) no bytes
@@ -172,13 +197,32 @@ async function probeRev(db, id, opts = {}) {
   ]);
   return Placement.digest(parts);
 }
+/* COST (Oct 2026): the revision a page holds is `${digest}.${orderRev}.${probedAt}`: probeRev's digest, 8 hex of Order_Rev's update time,
+   and when (server ms, base 36) that digest was taken. A bare 12-hex digest (a page loaded before this) is still understood. */
+const NET_MS = 60000, NET_MAX = 10 * 60000;
+const REV_TOKEN = /^([0-9a-f]{12})(?:\.([0-9a-f]{8})\.([0-9a-z]{1,10}))?$/;
+const tokenOf = (digest, orev, at) => (orev ? `${digest}.${orev}.${Math.round(at).toString(36)}` : digest);
+/** The order's revision now (8 hex of its update time, with the order and the workspace: a revision held for another never matches), null when it cannot be read. */
+async function orderRevOf(db, id, prefix) {
+  try { const [d] = await db.getAll(revColOf(db, prefix).doc(id), { fieldMask: ["n"] }); return Placement.digest([`${prefix || ""}${id}`, Placement.revOf(d)]).slice(0, 8); }
+  catch (e) { console.warn("[orderTimeline] order revision not read:", (e && e.message) || e); return null; }
+}
 async function get(db, orderId, opts = {}) {
   const id = orderIdOf(orderId); if (!id) return { error: "orderId required" };
   // (the digest first, then the data: see probeRev. Asked only by a page that follows the order; any failure leaves it out and the answer is read in full)
   let rev = null;
   if ((opts.ifRev || opts.wantRev) && opts.derive !== false) {
-    rev = await probeRev(db, id, opts).catch(() => null);
-    if (rev && opts.ifRev && String(opts.ifRev) === rev) return { orderId: id, unchanged: true, rev, now: Date.now() };
+    // COST (Oct 2026): Order_Rev first, ONE read. Unmoved, with the page's digest taken less than the net ago (60 s; a window unused for long
+    // asks up to NET_MAX, netMs), the answer is unchanged without the probe; verify (the page learnt of a placement change) skips this.
+    // Read BEFORE the probe and the data: a write landing meanwhile moves it past what the page is given (never stale, at worst a read too many).
+    const t = REV_TOKEN.exec(String(opts.ifRev || "")), now = Date.now(), net = Math.min(NET_MAX, Math.max(NET_MS, +opts.netMs || 0));
+    const orev = await orderRevOf(db, id, opts.prefix);
+    if (t && t[2] && orev && t[2] === orev && opts.verify !== true) { const age = now - parseInt(t[3], 36); if (age >= 0 && age < net) return { orderId: id, unchanged: true, rev: t[0], now }; }
+    const digest = await probeRev(db, id, opts).catch(() => null);
+    rev = digest ? tokenOf(digest, orev, now) : null;
+    // (digest and Order_Rev unmoved, or a page holding a bare digest: unchanged, the net starts again. Order_Rev moved under an unmoved
+    //  digest is an event rewritten in place, which the digest cannot see: read in full)
+    if (digest && t && t[1] === digest && (!t[2] || t[2] === orev)) return { orderId: id, unchanged: true, rev, now };
   }
   const [snap, can, derived] = await Promise.all([
     recordedOf(colOf(db, opts.prefix), id),
@@ -713,4 +757,4 @@ function whereOf(events, cancelled, hint = {}) {
   const held = Array.isArray(hint.sheets) ? hint.sheets : null, partial = held && held.length > 1 && held.some(x => x.cut) && held.some(x => !x.cut) ? { sheets: held.length, cut: held.filter(x => x.cut).length } : null;
   return Object.assign({ stage, label, text: s(bits.join(" · "), 200), sheet, sheetId, setId, station, device, by, at, since, cut, designed, cancelled: isCancelled, step, rail: RAIL }, partial ? { partial } : {});
 }
-module.exports = { RAIL, RAIL_KEYS, labelStepOf, cancelStepOf, stepId, COL, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, probeRev, cancelCheck, deriveEvents, dedupe, sameEvent, chronology, byTime, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };
+module.exports = { RAIL, RAIL_KEYS, labelStepOf, cancelStepOf, stepId, COL, REV_COL, REV_TOKEN, touch, touchNow, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, probeRev, cancelCheck, deriveEvents, dedupe, sameEvent, chronology, byTime, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };

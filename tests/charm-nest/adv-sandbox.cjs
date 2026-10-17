@@ -160,9 +160,9 @@ store.set(`Order_Timeline/${RID}~placed~p1`, { orderId: RID, type: "placed", at:
   await check("the stations' door: ?sandbox=1 keeps a station's events in the sandbox, and only then", async () => {
     const ev = { orderId: RID, type: "scan", at: NOW, by: "Ann", station: "welding", device: "weld-1", id: "weld-1-x" };
     const a = await watch(() => station("POST", { sandbox: "1" }, { timeline: [ev] }));
-    assert.deepEqual([...a.writes], ["Sandbox_Order_Timeline"]);
+    assert.deepEqual([...a.writes], ["Sandbox_Order_Timeline", "Sandbox_Order_Rev"]);   // (COST, Oct 2026: the order window's one-read revision moves with the events)
     const b = await watch(() => station("POST", {}, { timeline: [Object.assign({}, ev, { id: "weld-1-y" })] }));
-    assert.deepEqual([...b.writes], ["Order_Timeline"]);
+    assert.deepEqual([...b.writes], ["Order_Timeline", "Order_Rev"]);
     const c = await watch(() => station("GET", { cancelCheck: RID }));
     assert.deepEqual([...c.reads], ["Charm_Nest_Cancelled"]);
   });

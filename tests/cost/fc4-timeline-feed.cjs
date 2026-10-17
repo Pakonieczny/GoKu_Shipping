@@ -1,7 +1,8 @@
 // FC4 (Firebase cost): the order view's timeline feed (charm-nest-timeline-ui.js, feed()). The real file in a vm with a fake clock and a stub of
 // OrderTimeline.get; no network. Checks: the poll asks the cheap question (ifRev) and redraws nothing while it answers { unchanged }; a whole
-// read at least every minute; a change redraws at once; a change made on this page reads in full (now and 1.5 s later, as before); events this page
-// holds for the server read in full; the pace follows use (2.5 s in use and for 10 minutes after, slower unused, back at once on a touch); nothing in a hidden tab.
+// read at least every 10 minutes; a change redraws at once; a change made on this page reads in full (now and 1.5 s later, as before); events this page
+// holds for the server read in full; the pace follows use (COST, Oct 2026: 3.5 s touched in the last 2 minutes with the window focused, 15 s otherwise,
+// 60 s after 10 unused minutes, back at once on a touch); an unchanged answer's revision is kept; a poke asks verify; nothing in a hidden tab.
 //   node tests/cost/fc4-timeline-feed.cjs
 "use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm"), assert = require("assert/strict");
@@ -40,17 +41,18 @@ const touch = () => { for (const f of listeners.pointermove || []) f({}); };
   await f.refresh(); await advance(0);
   assert.deepEqual(ids(), ["full"], "the first read is whole and asks for its revision"); assert.equal(f.rev, rev); assert.equal(draws.length, 1);
 
-  // 1. polls: the cheap question every 2.5 s, nothing redrawn
-  await advance(10000);
-  assert.deepEqual(ids().slice(1), ["probe", "probe", "probe", "probe"], "four polls in 10 s, each the cheap question: " + ids()); assert.equal(draws.length, 1, "an unchanged answer redraws nothing");
+  // 1. polls: the cheap question every 3.5 s while the page is in use, nothing redrawn
+  await advance(14000);
+  assert.deepEqual(ids().slice(1), ["probe", "probe", "probe", "probe"], "four polls in 14 s, each the cheap question: " + ids()); assert.equal(draws.length, 1, "an unchanged answer redraws nothing");
   assert(calls.slice(1).every(c => c.ifRev === rev), "each carries the revision held");
 
-  // 2. a whole read at least every minute
-  calls = []; await advance(60000);
-  const fulls = calls.filter(c => c.wantRev && !c.ifRev); assert.equal(fulls.length, 1, "one whole read in a minute (the rest cheap): " + ids()); assert.equal(draws.length, 2);
+  // 2. a whole read at least every 10 minutes (COST, Oct 2026: it was every minute; the server's Order_Rev now sees an event rewritten in place)
+  calls = []; for (let i = 0; i < 10; i++) { touch(); await advance(60000); }
+  const fulls = calls.filter(c => c.wantRev && !c.ifRev); assert.equal(fulls.length, 1, "one whole read in 10 minutes (the rest cheap): " + fulls.length + " of " + calls.length); assert.equal(draws.length, 2);
+  assert(calls.length >= 150 && calls.length <= 180, "in use: about one read every 3.5 s: " + calls.length);
 
   // 3. the server's digest moved: the poll's answer is whole and redraws at once
-  calls = []; rev = "bbbbbbbbbbbb"; const d0 = draws.length; await advance(2600);
+  calls = []; rev = "bbbbbbbbbbbb"; const d0 = draws.length; await advance(3600);
   assert.deepEqual(ids().slice(0, 2), ["probe", "full"].slice(0, ids().length >= 2 ? 2 : 1), "a poll that finds it moved: " + ids());
   assert(draws.length > d0, "the change is drawn"); assert.equal(f.rev, "bbbbbbbbbbbb", "the new revision is held");
   // (the stub answers a whole read when the probe's revision is stale, as the server does)
@@ -61,26 +63,41 @@ const touch = () => { for (const f of listeners.pointermove || []) f({}); };
   assert(calls.length >= 2 && calls.slice(0, 2).every(c => c.wantRev && !c.ifRev), "a nudge reads in full, now and 1.5 s later: " + ids());
 
   // 5. an event this page recorded and the server has not answered for: whole reads while it waits, the cheap question again once it is answered
-  calls = []; await advance(3000); assert(ids().every(x => x === "probe"), "quiet again: " + ids());
+  calls = []; await advance(4000); assert(ids().every(x => x === "probe"), "quiet again: " + ids());
   const rec = [...recorded][0]; rec({ orderId: "4200000001", type: "sealCompleted", at: win.Date.now(), id: "pressed-1", by: "Tess" });
-  calls = []; await advance(8000);
+  calls = []; await advance(11000);
   assert(calls.length >= 3 && calls.every(c => !c.ifRev), "while an event of this page is unconfirmed every read is whole: " + ids());
 
-  // 6. the pace follows use: touched or moved in the last 10 minutes 2.5 s; unused for 10 minutes 5 s; an hour 10 s; a touch brings it back at once
+  // 6. the pace follows use (COST, Oct 2026): touched or moved in the last 2 minutes with the window focused 3.5 s; otherwise 15 s; 60 s after 10 unused
+  //    minutes (asking the server to let its one-read answer stand 5 minutes); a touch brings it back at once
   const f2 = UI.feed("4200000002"); f2.subscribe(() => {}); await f2.refresh(); await advance(0);
-  win.OrderTimeline.get = async (id, o) => { calls.push(Object.assign({ at: t, id }, o)); return o && o.ifRev ? { orderId: id, unchanged: true, rev: "cccccccccccc" } : { orderId: id, events: [], cancelled: null, where: {}, rev: "cccccccccccc" }; };
+  let n2 = 0;   // (the server hands back a fresh revision with every unchanged answer: when its digest was last taken)
+  win.OrderTimeline.get = async (id, o) => { calls.push(Object.assign({ at: t, id }, o)); return o && o.ifRev ? { orderId: id, unchanged: true, rev: "cccccccccccc.11111111." + (++n2).toString(36) } : { orderId: id, events: [], cancelled: null, where: {}, rev: "cccccccccccc.11111111.0" }; };
   f.destroy();
   const gaps = async ms => { calls = []; await advance(ms); const at = calls.filter(c => c.id === "4200000002").map(c => c.at); return at.slice(1).map((x, i) => x - at[i]); };
   await f2.refresh({ force: true }); await advance(0);
-  await advance(5 * 60000);   // (5 minutes with no touch: still the normal beat)
-  let g = await gaps(60000); assert(g.length && g.every(x => x >= 2400 && x <= 2700), "unused for 5 minutes the beat is still 2.5 s: " + g);
-  await advance(5 * 60000);
-  g = await gaps(120000); assert(g.length && g.every(x => x >= 4900 && x <= 5300), "after 10 unused minutes the beat is 5 s: " + g);
-  await advance(60 * 60000);
-  g = await gaps(300000); assert(g.length && g.every(x => x >= 9900 && x <= 10300), "after an hour 10 s: " + g);
-  calls = []; touch(); await advance(2700);
+  let g = await gaps(60000); assert(g.length && g.every(x => x >= 3400 && x <= 3700), "just moved: the beat is 3.5 s: " + g);
+  const probes = calls.filter(c => c.ifRev);
+  assert(probes.slice(1).every((c, i) => c.ifRev === "cccccccccccc.11111111." + (n2 - probes.length + 1 + i).toString(36)), "each probe sends the revision the last unchanged answer handed back: " + probes.map(c => c.ifRev));
+  await advance(2 * 60000);
+  g = await gaps(120000); assert(g.length && g.every(x => x >= 14900 && x <= 15300), "untouched for 2 minutes the beat is 15 s: " + g);
+  assert(calls.every(c => !c.netMs), "and the server's net stays a minute");
+  await advance(8 * 60000);
+  g = await gaps(300000); assert(g.length && g.every(x => x >= 59900 && x <= 60300), "after 10 unused minutes 60 s: " + g);
+  assert(calls.filter(c => c.ifRev).every(c => c.netMs === 5 * 60000), "an idle window lets the one-read answer stand 5 minutes: " + calls.map(c => c.netMs));
+  calls = []; touch(); await advance(3700);
   assert(calls.length >= 1, "a touch of the page reads within the normal beat, not at the slow one (a whole read when one is due, else the cheap question): " + JSON.stringify(calls.map(c => c.at)));
-  g = await gaps(20000); assert(g.length && g.every(x => x >= 2400 && x <= 2700), "and the beat is 2.5 s again: " + g);
+  g = await gaps(20000); assert(g.length && g.every(x => x >= 3400 && x <= 3700), "and the beat is 3.5 s again: " + g);
+  assert(calls.every(c => !c.netMs), "with the server's net back at a minute");
+  // touched, but the window is not focused (another window is in front): 15 s
+  doc.hasFocus = () => false; touch(); await advance(4000);
+  g = await gaps(60000); assert(g.length && g.every(x => x >= 14900 && x <= 15300), "an unfocused window is at 15 s: " + g);
+  doc.hasFocus = () => true; for (const fn of winListeners.focus || []) fn(); await advance(4000);
+  g = await gaps(20000); assert(g.length && g.every(x => x >= 3400 && x <= 3700), "focused again after a recent touch: 3.5 s: " + g);
+  // a poke (the page's placement feed saw the order move) asks the full digest
+  calls = []; assert.equal(UI.poke("4200000002"), 1); await advance(3600);
+  const pk = calls.filter(c => c.ifRev); assert(pk.length && pk[0].verify === true, "the probe after a poke asks verify: " + JSON.stringify(pk[0]));
+  assert(pk.slice(1).every(c => !c.verify), "once");
 
   // 7. a hidden tab reads nothing; seen again, one cheap question
   doc.visibilityState = "hidden"; for (const fn of listeners.visibilitychange || []) fn(); calls = []; await advance(30000);
