@@ -14250,13 +14250,13 @@ async function _handlerImpl(event) {
       ...Object.fromEntries(["batchName", "state", "collected", "locallyQueued", "retryBatchName",
         "retryRequested", "retryAttempt", "retryStatus", "setComplete", "repairPending", "collectionPending",
         "providerError", "responsesFile", "createdAt", "stallCancelRequestedAt", "stallRestartBlocked",
-        "stallRestartClosed", "stallRestarts", "retryNotBefore"].map(key => [key, record[key]])),
+        "stallRestartClosed", "stallRestarts", "retryNotBefore", "sweepParked"].map(key => [key, record[key]])),
       sets: (record.sets || []).map(set => ({ outputBasePath: set.outputBasePath, setKind: set.setKind })),
     });
     const sweepFields = ["batchName", "state", "collected", "locallyQueued", "retryBatchName", "retryRequested",
       "retryAttempt", "retryStatus", "setComplete", "repairPending", "collectionPending", "providerError",
       "responsesFile", "createdAt", "stallCancelRequestedAt", "stallRestartBlocked", "stallRestartClosed",
-      "stallRestarts", "retryNotBefore", "sets"];
+      "stallRestarts", "retryNotBefore", "sweepParked", "sets"];
 
     try {
       // Overlap guard: skip if another sweep started < 12 minutes ago.
@@ -14387,16 +14387,28 @@ async function _handlerImpl(event) {
       const usesSets = (r) => !r.retryBatchName && !r.collected && (!isFinal(r.state) || r.collectionPending ||
         r.repairPending || r.retryRequested || !!r.stallCancelRequestedAt ||
         normState(r.state) === "JOB_STATE_FAILED" && quotaFailure(r.providerError));
+      // COST (Oct 2026): even with small fields, every uncollected record ever made was still read on every run (707 reads
+      // at 600 records, every ten minutes, never draining): a failed, cancelled or expired job that nothing waits on stays
+      // collected:false for good. Such a record is now marked sweepParked:true at the end of a run (`parkable` below,
+      // re-checked in a transaction). A scheduled run lists only the uncollected records marked sweepParked:false (two
+      // equality filters: no composite index); new records and every write that gives a record work again (a retry, a
+      // forced collection) set sweepParked:false. Once an hour, and on every run a person or a continuation starts, the
+      // whole uncollected set is listed as before, which also marks older records and catches a record any other writer
+      // touched.
+      const openFullPass = !cronRun || !(Number(guardData.openFullPassAt) > Date.now() - 60 * 60 * 1000);
+      const openRefs = new Map();   // batchName -> the listed document (the park mark below writes to it)
       let cursor = null;
       while (open.length < 2000) {
-        let query = db.collection(BATCHES_COLL).where("collected", "==", false)
-          .orderBy(admin.firestore.FieldPath.documentId()).limit(50).select(...lightFields);
+        let query = db.collection(BATCHES_COLL).where("collected", "==", false);
+        if (!openFullPass) query = query.where("sweepParked", "==", false);
+        query = query.orderBy(admin.firestore.FieldPath.documentId()).limit(50).select(...lightFields);
         if (cursor) query = query.startAfter(cursor);
         const page = await query.get();
         const records = [], wanted = [];
         page.forEach((d) => {
           const rec = d.data();
           records.push(rec);
+          if (rec.batchName && d.ref) openRefs.set(rec.batchName, d.ref);
           if (rec.sets === undefined && d.ref && usesSets(rec)) wanted.push({ ref: d.ref, rec });
         });
         if (wanted.length) {
@@ -14600,6 +14612,34 @@ async function _handlerImpl(event) {
             updatedAt: admin.firestore.FieldValue.serverTimestamp(), rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         }
       }
+      // COST (Oct 2026): park the finished records nothing waits on, so scheduled runs stop listing them (see above).
+      // Final provider states never change; every other reason to look at a record again is a write that unparks it.
+      // A final job replaced by a retry (retryBatchName) is skipped by every step above whatever its other flags say.
+      const parkable = (b) => !!b && !b.collected && !b.locallyQueued && !!b.batchName && isFinal(b.state) && (!!b.retryBatchName ||
+        !b.collectionPending && !b.repairPending && !b.retryRequested && !stallRestartPending(b) &&
+        !(normState(b.state) === "JOB_STATE_FAILED" && quotaFailure(b.providerError) && !b.retryBatchName && !b.responsesFile &&
+          b.retryStatus !== "capacity_refused" && b.retryStatus !== "attempts_exhausted" &&
+          b.sets?.length === 1 && b.sets[0]?.setKind !== "charm_maker"));
+      let parked = 0;
+      for (const b of open) {
+        if (Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
+        if (!b.batchName || b.collected) continue;
+        const want = parkable(b);
+        if (b.sweepParked !== undefined && want === (b.sweepParked === true)) continue;
+        const ref = openRefs.get(b.batchName);
+        if (!ref) continue;
+        try {
+          if (!want) { await ref.set({ sweepParked: false, rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true }); continue; }
+          const done = await db.runTransaction(async (tx) => {
+            // Only the small routing fields are read again; `sets` (large, and fixed once a job exists) comes from this run.
+            const [fresh] = await tx.getAll(ref, { fieldMask: lightFields }), d = fresh && fresh.exists ? fresh.data() : null;
+            if (!d || !parkable({ ...compact(d), sets: b.sets })) return false;
+            tx.set(ref, { sweepParked: true, rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+            return true;
+          });
+          if (done) parked++;
+        } catch (err) { console.warn("[batch_sweep] park mark not written:", b.batchName, err?.message || err); }
+      }
       await guardRef.set({ stage: "checking stalled orchestrations" }, { merge: true });
 
       // Resume orchestrations whose self-chain got dropped (no update in 20m).
@@ -14643,7 +14683,8 @@ async function _handlerImpl(event) {
         lastResult: { statusChecked, collected, collectErrors, resumed, retriesSubmitted,
           stalledCancelled, stalledRestarted,
           waiting: waiting.length, activeAtAdmission: activeCount, openBatches: open.length,
-          refillContinuing: refillNeedsContinuation, validationUnconfirmed, sourceErrors },
+          refillContinuing: refillNeedsContinuation, validationUnconfirmed, sourceErrors, parked, openFullPass },
+        ...(openFullPass && open.length < 2000 ? { openFullPassAt: Date.now() } : {}),
       }, { merge: true });
       // Continue with a fresh background budget. The same shared admission
       // guard still validates every job and enforces the global 30-job cap.
@@ -15097,7 +15138,7 @@ async function _handlerImpl(event) {
             if (!existing.exists) tx.set(queueRef, {
               batchName: sourceName, docId: sourceName, displayName, sessionId: submitSessionId,
               state: "JOB_STATE_QUEUED", locallyQueued: true, retryRequested: true,
-              retryAttempt: 0, collected: false, model: batchModel, imageSize, sets,
+              retryAttempt: 0, collected: false, sweepParked: false, model: batchModel, imageSize, sets,
               setKeys: sets.map(s => s.outputBasePath), setsCount: sets.length,
               charmPaths: batchCharmPaths({ sets }),
               requestCount: sets.reduce((n, s) => n + s.tasks.filter(t => t.type !== "copy").length, 0),
@@ -15365,6 +15406,7 @@ async function _handlerImpl(event) {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         state: "JOB_STATE_PENDING",
         collected: false,
+        sweepParked: false,   // COST (Oct 2026): on the scheduled sweep's short list (see batch_sweep)
         model: batchModel,
         provider: "openai",
         quality: "high",
@@ -15446,7 +15488,7 @@ async function _handlerImpl(event) {
           continue;
         }
         if (d.retryRequested) { alreadyQueued++; continue; }
-        writes.set(doc.ref, { retryRequested: true,
+        writes.set(doc.ref, { retryRequested: true, sweepParked: false,
           retryQueuedAt: admin.firestore.FieldValue.serverTimestamp(), rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         pending++; queued++;
         if (pending >= 250) { await writes.commit(); writes = db.batch(); pending = 0; }
@@ -15579,7 +15621,7 @@ async function _handlerImpl(event) {
         }) });
         const result = JSON.parse(response.body || "{}");
         if (response.statusCode === 200 && result.ok && result.queued) {
-          await originalRef.set({ retryRequested: true, retryStatus: "queued", retryStartedAt: null,
+          await originalRef.set({ retryRequested: true, retryStatus: "queued", retryStartedAt: null, sweepParked: false,
             rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
           return json(200, { ok: true, queued: true, batchName: originalName });
         }
@@ -15624,7 +15666,7 @@ async function _handlerImpl(event) {
       // Recorded before the cancel, so a cancel that lands after this worker
       // stops is still known to be the collector's, and the set is queued.
       await ref.set({ stallCancelRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
-        retryStatus: "stalled", retryError: null,
+        retryStatus: "stalled", retryError: null, sweepParked: false,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(), rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
       const cancelled = await cancelGeminiBatchJob(apiKey, batchName);
       const state = cancelled?.state || "JOB_STATE_RUNNING";
@@ -15729,7 +15771,7 @@ async function _handlerImpl(event) {
         // Everything is saved: finish the set (manifest, charm) from this
         // job's results when it has any, as a normal collection would.
         if (respFile) {
-          await ref.set({ collected: false, collectionPending: true, rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+          await ref.set({ collected: false, collectionPending: true, sweepParked: false, rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
           await collectHere({});
         }
         else await close("complete");
@@ -15750,7 +15792,7 @@ async function _handlerImpl(event) {
           state: "JOB_STATE_QUEUED", locallyQueued: true, retryRequested: true, retryAttempt: Number(saved.retryAttempt || 0),
           capacityRefusals: Number(saved.capacityRefusals || 0), stallRestarts: restarts,
           contentRepairAttempt: Number(saved.contentRepairAttempt || 0),
-          collected: false, model: saved.model || null, imageSize: saved.imageSize || "2K",
+          collected: false, sweepParked: false, model: saved.model || null, imageSize: saved.imageSize || "2K",
           sets: [{ ...set, tasks: missingTasks, allTasks }], retryOf: batchName,
           setKeys: [set.outputBasePath], setsCount: 1, requestCount: toGenerate.length,
           charmPaths: batchCharmPaths({ sets: [{ ...set, tasks: missingTasks, allTasks }] }),
@@ -15837,7 +15879,7 @@ async function _handlerImpl(event) {
           const d = snap.data();
           if (d && !d.collected && !d.retryBatchName && d.retryStatus !== "capacity_refused" &&
               d.retryStatus !== "attempts_exhausted" && d.sets?.length === 1 && d.sets[0].setKind !== "charm_maker")
-            tx.set(ref, { retryRequested: true, retryQueuedAt: admin.firestore.FieldValue.serverTimestamp(),
+            tx.set(ref, { retryRequested: true, sweepParked: false, retryQueuedAt: admin.firestore.FieldValue.serverTimestamp(),
               rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         });
         await admissionControl(getDb(), BATCHES_COLL, () => admin.firestore.FieldValue.serverTimestamp()).rejected(batchName);

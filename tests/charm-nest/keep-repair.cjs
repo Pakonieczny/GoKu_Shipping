@@ -244,6 +244,19 @@ test('D5 the throttle: a full pass at most every five minutes unless forced; a p
   store.set('Charm_Custom_Repair/state', { runningUntil: clk + 60000, lastRunAt: 0 }); r = await Repair.repair(d, {}); eq(r.skipped, 'running'); clk += 3 * 60000; r = await Repair.repair(d, {}); ok(!r.skipped, 'a dead pass\'s lease ran out');
 });
 
+test('D6 COST (Oct 2026): unforced passes run the orphan and intent steps once a day (stamp dailyAt); forced or olderThanMs passes always do', async () => {
+  reset(); const d = deps();
+  putFiles('DAILY_OLD_0001', 1, clk - 3 * DAY);
+  let r = await Repair.repair(d, {}); eq(r.orphans.orphans, ['DAILY_OLD_0001'], 'the first pass runs them'); eq(store.get('Charm_Custom_Repair/state').dailyAt, clk);
+  putFiles('DAILY_OLD_0002', 2, clk - 3 * DAY); store.set('Charm_Custom_Intents/4400000099', { rid: '4400000099', listingId: '1800000001', state: 'done', updatedAtMs: clk - 9 * DAY, at: clk - 9 * DAY });
+  clk += 6 * 60000; r = await Repair.repair(d, {}); eq([r.orphans.skipped, r.intents.skipped], ['daily', 'daily'], 'a later pass the same day skips them');
+  ok(blobs.has(files('DAILY_OLD_0002').ai) && store.has('Charm_Custom_Intents/4400000099'), 'nothing removed by the skipped steps'); ok(r.records && !r.records.skipped, 'the records step still runs');
+  clk += 6 * 60000; r = await Repair.repair(d, { force: true }); eq([r.orphans.orphans, r.intents.deleted], [['DAILY_OLD_0002'], 1], 'forced: they run');
+  store.set('Charm_Custom_Intents/4400000098', { rid: '4400000098', listingId: '1800000001', state: 'cancelled', updatedAtMs: clk - 9 * DAY, at: clk - 9 * DAY });
+  clk += DAY; r = await Repair.repair(d, {}); eq([r.orphans.deleted, r.intents.deleted], [0, 1], 'a day later an unforced pass runs them again');
+  eq(store.get('Charm_Custom_Repair/state').dailyAt, clk);
+});
+
 /* ═══ F · the next run of the same save heals what the repair could only flag (needs KB's convergent commit: skipped, visibly, on a tree that has not got it yet) ═══ */
 const cbody = (rid, listing, sku, old, d) => ({ rid, listingId: listing, sku, oldSku: old, productId: '', optionPairs: [], group: { mode: 'all', productIds: [] }, title: 't', by: 'Paul', design: { name: 'D' + d + '.ai', kind: 'ai', hash: ('a' + d).padEnd(40, '0'), bytes: 1 }, reuse: false,
   entry: { charmHash: 'drawing-' + d, widthPt: 31, heightPt: 38, areaPt2: 700, members: 4, holes: 1, engravable: true, upAngle: 90, upSource: 'long' }, file: { masterHash: ('a' + d).padEnd(40, '0'), name: 'D' + d + '.ai', aiSha256: sha(AIOF(d)), aiBytes: AIOF(d).length, pngSha256: sha(PNGOF(d)) } });

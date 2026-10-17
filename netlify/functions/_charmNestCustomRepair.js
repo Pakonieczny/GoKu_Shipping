@@ -22,6 +22,10 @@
  *    3 · INTENTS       done / cancelled copies older than 7 days and wanted copies older than 30 days with no save record: removed (the browser's own copy is the actor, this is only the server's note).
  *    4 · ETSY STEPS    only with etsy:true and an injected step: the saves whose Etsy step is not done and not final (oldest first, at most maxEtsy, one after the other) are run by the server itself:
  *        the step takes only {rid} and is idempotent (reads Etsy first, one write per listing, leases), so any number of callers may do this at any time.
+ *  COST (Oct 2026): steps 1 and 3 work on a scale of days (a 24 h grace, 7 and 30 day ages), yet read every saved SKU's index entry and up to 200 intents
+ *  on every pass (the cron every 10 minutes, every sorter tab every 5): they now run at most once every DAILY_MS (stamp `dailyAt` in Charm_Custom_Repair/state),
+ *  unless the call is forced or names its own olderThanMs (a person's act). Step 4 no longer lists the failed saves that can never be retried (they stayed in its
+ *  query for ever): a failed save is listed only when its record says retry:true (every failed record the Etsy step writes carries retry).
  *  Throttled (a full pass at most every 5 minutes unless forced), leased (one pass at a time), bounded (limit records, 2,500 files), idempotent (a second pass finds nothing to do), never throws.
  *  The sandbox leaves no trace. Dependencies are passed in ({ db, FV, bucket, now?, etsySku? }), so a test runs on fakes.                                                                             */
 "use strict";
@@ -35,6 +39,7 @@ const GRACE_MS = DAY, SHORT_MS = 3600000;            // the default age of an or
 const THROTTLE_MS = 5 * MIN, PASS_LEASE_MS = 2 * MIN;
 const RECORDS_PER_PASS = 40, FILE_PAGES = 5, FILE_PAGE = 500;
 const INTENT_DONE_MS = 7 * DAY, INTENT_WANTED_MS = 30 * DAY;
+const DAILY_MS = DAY;                                 // COST (Oct 2026): how often the orphan and intent steps run on an unforced pass
 const COOLDOWN_MS = 2 * MIN, SCOPE_COOLDOWN_MS = 15 * MIN, ETSY_BUDGET_MS = 3000, PASS_BUDGET_MS = 7000;
 const up = s => String(s == null ? "" : s).trim().toUpperCase();
 const nowOf = deps => (typeof deps.now === "function" ? deps.now : Date.now)();
@@ -203,9 +208,14 @@ async function intents(deps, o) {
 /** The saves whose Etsy step is not done and not final, oldest first. */
 async function pendingEtsy(deps, max) {
   const { db } = deps, now = nowOf(deps), R = EtsySku().REASONS;
-  const snap = await db.collection(COLL).where("etsy.state", "in", ["pending", "failed", "unverified", "writing"]).limit(200).get();
+  // COST (Oct 2026): two queries instead of one "in" over all four states: a failed save that can never be retried (retry:false) stayed in that
+  // query and was read on every pass for ever. Equality filters only, so no composite index is needed.
+  const snaps = await Promise.all([
+    db.collection(COLL).where("etsy.state", "in", ["pending", "unverified", "writing"]).limit(200).get(),
+    db.collection(COLL).where("etsy.state", "==", "failed").where("etsy.retry", "==", true).limit(200).get()
+  ]);
   const rows = [];
-  for (const s of snap.docs) {
+  for (const s of snaps[0].docs.concat(snaps[1].docs)) {
     const d = dataOf(s) || {}, e = d.etsy && typeof d.etsy === "object" ? d.etsy : {};
     if (d.phase !== "repo" || d.rehearsal === true || e.state === "linked") continue;
     if (e.state === "failed" && (e.retry === false || (R[e.reason] && R[e.reason].retry === false))) continue;   // a person's matter, or nothing to retry
@@ -259,16 +269,21 @@ async function repair(deps, body) {
   try {
     if (!targeted && body.etsy === true) await step("etsy", () => etsySteps(deps, body));   // (first: it is what the shop is waiting for)
     await step("records", () => records(deps, { rid: body.rid, listingId: body.listingId, limit: body.limit, cursor: st.cursor }));
-    if (!targeted) await step("orphans", () => orphans(deps, { olderThanMs: timed ? +body.olderThanMs : GRACE_MS }));
-    if (!targeted) await step("intents", () => intents(deps, {}));
+    // COST (Oct 2026): the day-scale steps, once a day on an unforced pass (see the header)
+    const daily = !targeted && (body.force || timed || !(now - (+st.dailyAt || 0) < DAILY_MS));
+    if (daily) await step("orphans", () => orphans(deps, { olderThanMs: timed ? +body.olderThanMs : GRACE_MS }));
+    if (daily) await step("intents", () => intents(deps, {}));
+    if (!targeted && !daily) report.orphans = report.intents = { skipped: "daily", dailyAt: +st.dailyAt || null };
+    if (daily && report.orphans && !report.orphans.error && !report.orphans.skipped && report.intents && !report.intents.error && !report.intents.skipped) report.dailyDone = true;
   } finally {
     if (!targeted) {
       const cur = report.records && !report.records.error && !report.records.skipped ? report.records.cursor : st.cursor || 0;
-      try { await sref.set({ cursor: cur || 0, lastRunAt: now, runningUntil: 0, last: { orphans: report.orphans && report.orphans.deleted || 0, checked: report.records && report.records.checked || 0 } }, { merge: true }); }
+      const daily = report.dailyDone ? { dailyAt: now } : {}; delete report.dailyDone;
+      try { await sref.set(Object.assign({ cursor: cur || 0, lastRunAt: now, runningUntil: 0, last: { orphans: report.orphans && report.orphans.deleted || 0, checked: report.records && report.records.checked || 0 } }, daily), { merge: true }); }
       catch (e) { warn("state not written", e); }
     }
   }
   return report;
 }
 
-module.exports = { repair, orphans, records, intents, etsySteps, pendingEtsy, plan, fixRecord, GRACE_MS, SHORT_MS, THROTTLE_MS, STATE, DIR };
+module.exports = { repair, orphans, records, intents, etsySteps, pendingEtsy, plan, fixRecord, GRACE_MS, SHORT_MS, THROTTLE_MS, DAILY_MS, STATE, DIR };

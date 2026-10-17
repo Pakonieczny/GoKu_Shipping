@@ -554,7 +554,7 @@ const Simulator = (() => {
       if(!owner)throw fail('FORBIDDEN');
       const at=wallNow(),batches=(await rows(batchCol.where('owner','==',owner))).filter(b=>!b.resetAtMs);
       // Stop at the batch boundary first: even old workers check this pause flag.
-      for(let i=0;i<batches.length;i+=200){const write=rootBatch();for(const b of batches.slice(i,i+200))write.set(batchCol.doc(b.batchId),{resetAtMs:at,paused:true,status:'reset'},{merge:true});await write.commit();}
+      for(let i=0;i<batches.length;i+=200){const write=rootBatch();for(const b of batches.slice(i,i+200))write.set(batchCol.doc(b.batchId),{resetAtMs:at,paused:true,status:'reset',resetSettled:false},{merge:true});await write.commit();}
       for(const b of batches)for(let i=0;i<b.runIds.length;i+=200){const write=rootBatch();for(const runId of b.runIds.slice(i,i+200))write.set(runCol.doc(runId),{resetAtMs:at,paused:true,dispatchedUntil:0,nextAttemptAtMs:0},{merge:true});await write.commit();}
       return {reset:true,batches:batches.length,resetAtMs:at,sharedLibraryRetained:true};
     }
@@ -1750,7 +1750,10 @@ const Simulator = (() => {
     async function schedule({dispatch=null,batchId=null}={}) {
       if(!dispatch)return [];
       const guard=batchCol.doc('dispatch_lock'),ticket=crypto.randomBytes(8).toString('hex');
-      const locked=await rootTransaction(async tx=>{const s=await tx.get(guard);if(s.exists&&s.data().until>wallNow())return false;tx.set(guard,{ticket,until:wallNow()+25000});return true;});
+      // COST (Oct 2026): the lock document, read here anyway, also carries the tick's small bookkeeping (meta) so that knowing
+      // "nothing to look at" costs no extra read: merge, so the lock no longer wipes it.
+      let meta={};const metaOut={};
+      const locked=await rootTransaction(async tx=>{const s=await tx.get(guard);if(s.exists&&s.data().until>wallNow())return false;meta=s.data()||{};tx.set(guard,{ticket,until:wallNow()+25000},{merge:true});return true;});
       if(!locked)return [];
       const selected=[];
       try {
@@ -1758,7 +1761,13 @@ const Simulator = (() => {
         // history. Each query below asks only for the fields the code after it uses (same decisions, same writes); the runs of an old
         // incomplete batch are not read at all, because the loop further down skips such a batch before it looks at a run.
         const masked=(q,fields)=>typeof q.select==='function'?q.select(...fields):q;
-        const cleanup=(batchId?[]:await rows(masked(batchCol.where('repositoryMode','==','shared_first'),['batchId','cleanupVersion','cleanupLeaseUntil','cleanupDispatchedUntil','cleanupNextAtMs','cleanupSequence']))).filter(b=>b.cleanupVersion!==CLEANUP_VERSION&&!(b.cleanupLeaseUntil>wallNow())&&!(b.cleanupDispatchedUntil>wallNow())&&!(b.cleanupNextAtMs>wallNow()));
+        // COST (Oct 2026): every batch is created with cleanupVersion===CLEANUP_VERSION, so only legacy batches ever need this cleanup.
+        // Once one listing finds none left for this version, the lock remembers it and later ticks skip the listing (a new
+        // CLEANUP_VERSION in code makes it list again). Before: one read per shared_first batch ever made, every minute.
+        const swept=meta.cleanupSweptVersion===CLEANUP_VERSION;
+        const listed=batchId||swept?[]:await rows(masked(batchCol.where('repositoryMode','==','shared_first'),['batchId','cleanupVersion','cleanupLeaseUntil','cleanupDispatchedUntil','cleanupNextAtMs','cleanupSequence']));
+        if(!batchId&&!swept&&listed.every(b=>b.cleanupVersion===CLEANUP_VERSION))metaOut.cleanupSweptVersion=CLEANUP_VERSION;
+        const cleanup=listed.filter(b=>b.cleanupVersion!==CLEANUP_VERSION&&!(b.cleanupLeaseUntil>wallNow())&&!(b.cleanupDispatchedUntil>wallNow())&&!(b.cleanupNextAtMs>wallNow()));
         selected.push(...cleanup.map(async b=>{
           const sequence=(b.cleanupSequence||0)+1,out=await jobs.enqueueOnce({task:'simulation_cleanup',dedupeId:b.batchId+'_cleanup_'+sequence,accountId:b.batchId,payload:{batchId:b.batchId},createdBy:'simulator',priority:100});
           const job=(await admin.col(admin.COL.jobs).doc(out.jobId).get()).data();
@@ -1766,10 +1775,29 @@ const Simulator = (() => {
           try{const result=await dispatch(job);if(result?.error||result?.upstream>=300||result?.upstream===0)throw Error(result.error||'Cleanup worker returned '+result.upstream);return result;}
           catch(e){await batchCol.doc(b.batchId).set({cleanupDispatchedUntil:0,cleanupNextAtMs:wallNow()+15000,cleanupError:String(e.message).slice(0,300)},{merge:true});return {error:e.message};}
         }));
-        const batches=batchId?[await getBatch(batchId)]:await rows(batchCol.where('status','in',['running','incomplete','reset']));
+        // COST (Oct 2026): a reset batch keeps status 'reset' for ever, so listing every one and its runs each minute grew without end.
+        // A reset batch is marked resetSettled:true once nothing more can happen to it (below) and false while it may still owe a
+        // settlement (reset() marks it false). Each minute lists running/incomplete batches plus the unsettled reset ones (two
+        // single-field queries, no composite index); once an hour the full 'reset' listing still runs, which marks batches that
+        // predate the field and catches anything a marker missed.
+        const HOUR=3600000,resetFull=!(meta.resetFullPassAtMs>wallNow()-HOUR);
+        const batches=batchId?[await getBatch(batchId)]:[...new Map((await Promise.all([
+          rows(batchCol.where('status','in',resetFull?['running','incomplete','reset']:['running','incomplete'])),
+          resetFull?[]:rows(batchCol.where('resetSettled','==',false)),
+        ])).flat().filter(b=>!(b.resetAtMs&&b.resetSettled===true)).map(b=>[b.batchId,b])).values()];
+        if(!batchId&&resetFull)metaOut.resetFullPassAtMs=wallNow();
+        // COST (Oct 2026): the newest batch of an owner, which decides whether an incomplete batch is archived, was found by reading
+        // EVERY batch the owner ever made, each minute. It is now kept on the lock (meta.latestBatches) and refreshed from the full
+        // history once an hour; any newer batch this tick lists (a new batch is 'running') replaces it at once.
+        const known=meta.latestBatches||{},latest={};
+        for(const b of batches)if(b.owner&&b.createdAtMs&&!(known[b.owner]?.createdAtMs>=b.createdAtMs)&&!(latest[b.owner]?.createdAtMs>=b.createdAtMs))latest[b.owner]={batchId:b.batchId,createdAtMs:b.createdAtMs,checkedAtMs:known[b.owner]?.checkedAtMs||0};
         const latestByOwner=new Map(await Promise.all([...new Set(batches.filter(b=>b.status==='incomplete').map(b=>b.owner))].map(async owner=>{
-          const history=await rows(masked(batchCol.where('owner','==',owner),['batchId','createdAtMs']));return [owner,history.sort((a,b)=>b.createdAtMs-a.createdAtMs)[0]?.batchId];
+          const cached=latest[owner]||known[owner];
+          if(cached&&cached.checkedAtMs>wallNow()-HOUR)return [owner,cached.batchId];
+          const history=await rows(masked(batchCol.where('owner','==',owner),['batchId','createdAtMs'])),top=history.sort((a,b)=>b.createdAtMs-a.createdAtMs)[0];
+          if(top)latest[owner]={batchId:top.batchId,createdAtMs:top.createdAtMs,checkedAtMs:wallNow()};return [owner,top?.batchId];
         })));
+        if(!batchId&&Object.keys(latest).length)metaOut.latestBatches={...known,...latest};
         // A reset batch uses only these run fields (its totals, the settlement it may still owe, the lease checks); an old incomplete batch none.
         const RESET_RUN_FIELDS=['runId','spentNano','reservedNano','pendingAiCount','aiRecheckRequired','leaseUntil','dispatchedUntil','dispatchSequence'];
         // The two recoveries below are the only use of an incomplete batch's runs: one light read tells whether any run qualifies,
@@ -1782,13 +1810,24 @@ const Simulator = (() => {
           if(b.resetAtMs)return rows(masked(q,RESET_RUN_FIELDS));
           if(b.status!=='incomplete')return rows(q);                       // work in progress: whole records, as before
           if(latestByOwner.get(b.owner)!==b.batchId||b.paused)return [];   // archived or paused: the loop below continues before it uses a run
-          return (await rows(masked(q,RECOVERY_RUN_FIELDS))).some(r=>usageUnknown(r)||xomRecoverable(r))?rows(q):[];
+          // COST (Oct 2026): the runs of a finished batch only change when it is run again, which clears and later re-stamps
+          // completedAtMs (only the finish below sets 'incomplete', always with it). So once the light read finds nothing to recover
+          // for this completion (and this XOM version), say so on the batch and stop reading its runs every minute.
+          const checked=XOM_HISTORY_VERSION+'@'+(b.completedAtMs||0);
+          if(b.recoveryCheckedFor===checked)return [];
+          if((await rows(masked(q,RECOVERY_RUN_FIELDS))).some(r=>usageUnknown(r)||xomRecoverable(r)))return rows(q);
+          await batchCol.doc(b.batchId).set({recoveryCheckedFor:checked},{merge:true});
+          return [];
         };
         const sets=await Promise.all(batches.map(async b=>({b,runs:await runsOf(b)})));
         for(const {b,runs} of sets) {
           if(b.resetAtMs){
             const spentNano=runs.reduce((n,r)=>n+(r.spentNano||0),0),reservedNano=runs.reduce((n,r)=>n+(r.reservedNano||0),0);
-            if(b.spentNano!==spentNano||b.reservedNano!==reservedNano)await batchCol.doc(b.batchId).set({spentNano,reservedNano},{merge:true});
+            // Settled: its totals already agree, no run owes an AI settlement, and no worker holds or is starting a run (a reset run
+            // never starts new work, so nothing can change it after this). Ten minutes' grace after the reset for any late worker.
+            const settled=b.spentNano===spentNano&&b.reservedNano===reservedNano&&wallNow()-b.resetAtMs>600000&&runs.every(r=>!r.pendingAiCount&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow()));
+            const mark=settled?{resetSettled:true}:b.resetSettled===false?{}:{resetSettled:false};
+            if(b.spentNano!==spentNano||b.reservedNano!==reservedNano||Object.keys(mark).length)await batchCol.doc(b.batchId).set({spentNano,reservedNano,...mark},{merge:true});
             selected.push(...runs.filter(r=>r.pendingAiCount&&!r.aiRecheckRequired&&!(r.leaseUntil>wallNow())&&!(r.dispatchedUntil>wallNow())).map(async r=>{
               const sequence=(r.dispatchSequence||0)+1,out=await jobs.enqueueOnce({task:'simulation',dedupeId:r.runId+'_settlement_'+sequence,runId:r.runId,accountId:r.runId,payload:{runId:r.runId},createdBy:'simulator',priority:900});
               await runCol.doc(r.runId).set({paused:true,resetAtMs:b.resetAtMs,dispatchSequence:sequence,dispatchedUntil:wallNow()+90000},{merge:true});
@@ -1850,7 +1889,7 @@ const Simulator = (() => {
           }));
         }
         return await Promise.allSettled(selected);
-      }finally{await rootTransaction(async tx=>{const s=await tx.get(guard);if(s.data()?.ticket===ticket)tx.set(guard,{until:0},{merge:true});});}
+      }finally{await rootTransaction(async tx=>{const s=await tx.get(guard);if(s.data()?.ticket===ticket)tx.set(guard,{until:0,...metaOut},{merge:true});});}
     }
     async function outcomeAnalysis(run) {
       const I=require('./_investorSimulationInsights');

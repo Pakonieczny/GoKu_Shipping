@@ -58,7 +58,9 @@ function fixture(shape) {
   return docs;
 }
 
-async function tick(shape, { pending = false } = {}) {
+// A world that keeps its Firestore between ticks: the first tick is the cold one (what every minute cost before the Oct 2026
+// fix), later ticks show what it costs once the bookkeeping is in place. `clock.now` moves time forward between ticks.
+function world(shape, { pending = false } = {}) {
   const m = meter.create();
   const docs = fixture(shape);
   if (pending) {          // one run of a reset batch still owes an AI settlement: the tick must dispatch it exactly once
@@ -70,13 +72,17 @@ async function tick(shape, { pending = false } = {}) {
     COL: A.COL, FV: meter.FieldValue, TS: meter.Timestamp, envelope: () => ({}),
     col: n => m.db.collection(n), doc: p => m.db.doc(p), runTransaction: fn => m.db.runTransaction(fn), batch: () => m.db.batch(),
   };
-  const sim = Simulator.create({ admin, wallNow: () => NOW, env: {} });
-  const dispatched = [];
-  const before = m.snapshot();
-  await m.op('investorKick.simulator.schedule', () => sim.schedule({ dispatch: async job => { dispatched.push(job.jobId); return { upstream: 202 }; } }));
-  const d = m.since(before);
-  return { m, d, dispatched, after: m.db.dump() };
+  const clock = { now: NOW };
+  const sim = Simulator.create({ admin, wallNow: () => clock.now, env: {} });
+  const tick = async () => {
+    const dispatched = [];
+    const before = m.snapshot();
+    await m.op('investorKick.simulator.schedule', () => sim.schedule({ dispatch: async job => { dispatched.push(job.jobId); return { upstream: 202 }; } }));
+    return { m, d: m.since(before), dispatched, after: m.db.dump() };
+  };
+  return { m, clock, tick, sim };
 }
+async function tick(shape, opts) { return world(shape, opts).tick(); }
 
 (async () => {
   // a typical archive: 6 reset batches and 6 old incomplete batches of 40 runs, nothing running
@@ -89,12 +95,41 @@ async function tick(shape, { pending = false } = {}) {
   console.log(`one idle tick reads ${idle.d.reads} docs, ${kb(idle.d.bytes)}, writes ${idle.d.writes}   ->  per day ${(day.reads / 1e3).toFixed(0)}k reads, ${(day.bytes / 1e9).toFixed(2)} GB`);
   idle.m.print();
 
-  // behaviour: nothing to do means nothing dispatched and nothing written but the lock
+  // behaviour: nothing to do means nothing dispatched; the cold tick only adds the Oct 2026 markers (a settled reset batch, an
+  // incomplete batch whose runs were checked for this completion) and the lock's bookkeeping, never touching anything else
   assert.deepEqual(idle.dispatched, [], 'an idle archive dispatches nothing');
   const lock = idle.after['InvestorAI_SimulationBatches/dispatch_lock'];
   assert(lock && lock.until === 0, 'the lock is released');
-  const changed = Object.keys(idle.after).filter(p => p !== 'InvestorAI_SimulationBatches/dispatch_lock' && JSON.stringify(idle.after[p]) !== JSON.stringify(fixture(shape)[p]));
-  assert.deepEqual(changed, [], 'no archived document was rewritten');
+  const MARKERS = ['resetSettled', 'recoveryCheckedFor'];
+  const strip = o => o && Object.fromEntries(Object.entries(o).filter(([k]) => !MARKERS.includes(k)));
+  const changed = Object.keys(idle.after).filter(p => p !== 'InvestorAI_SimulationBatches/dispatch_lock' && JSON.stringify(strip(idle.after[p])) !== JSON.stringify(fixture(shape)[p]));
+  assert.deepEqual(changed, [], 'no archived document was rewritten beyond the markers');
+  for (let b = 0; b < shape.reset; b++) assert.equal(idle.after['InvestorAI_SimulationBatches/sim_reset' + b].resetSettled, true, 'reset batch settled');
+  assert.equal(idle.after[`InvestorAI_SimulationBatches/sim_inc${shape.incomplete - 1}`].recoveryCheckedFor, 'xom-sec-predecessor.v1@0', 'latest incomplete batch checked');
+  assert.equal(lock.cleanupSweptVersion, 'shared-evidence-copies.v1', 'cleanup listing remembered as swept');
+
+  // COST (Oct 2026): the warm tick, i.e. every minute after the first: no run is read, no archived batch beyond the incomplete ones
+  {
+    const w = world(shape);
+    await w.tick();
+    w.clock.now += 60000;
+    const warm = await w.tick();
+    console.log(`warm tick (every later minute) reads ${warm.d.reads} docs, writes ${warm.d.writes}   ->  per day ${(warm.d.reads * 1440 / 1e3).toFixed(1)}k reads (before ${(idle.d.reads * 1440 / 1e3).toFixed(0)}k)`);
+    assert.deepEqual(warm.dispatched, []);
+    const before = w.m.db.dump();
+    meter.assertMax(warm.d, { reads: shape.incomplete + 4, writes: 2 }, 'warm idle tick');
+    // hourly: the full 'reset' listing and the owner's history are read again, still no run
+    w.clock.now += 3600000;
+    const hourly = await w.tick();
+    console.log(`hourly full pass reads ${hourly.d.reads} docs`);
+    meter.assertMax(hourly.d, { reads: shape.incomplete + shape.reset + 2 * shape.incomplete + 4 }, 'hourly pass');
+    const after = w.m.db.dump();
+    const moved = Object.keys(after).filter(p => p !== 'InvestorAI_SimulationBatches/dispatch_lock' && JSON.stringify(after[p]) !== JSON.stringify(before[p]));
+    assert.deepEqual(moved, [], 'warm and hourly ticks rewrite nothing');
+    // the owner's newest batch is kept on the lock (refreshed hourly, and at once by any newer batch a tick lists)
+    const lockNow = w.m.db.dump()['InvestorAI_SimulationBatches/dispatch_lock'];
+    assert.equal(lockNow.latestBatches.operator.batchId, `sim_inc${shape.incomplete - 1}`, 'latest batch remembered on the lock');
+  }
 
   // behaviour: a reset batch with an unsettled run still dispatches its settlement once and fixes the batch totals
   const owed = await tick(shape, { pending: true });
@@ -103,6 +138,26 @@ async function tick(shape, { pending = false } = {}) {
   assert.equal(owed.after['InvestorAI_SimulationBatches/sim_reset0'].spentNano, 2000000 * shape.runsPerBatch, 'batch totals brought in line');
   assert.equal(owed.after['InvestorAI_Simulations/sim_reset0_run1'].dispatchSequence, 4);
   assert.equal(owed.after['InvestorAI_Simulations/sim_reset0_run1'].pendingAiCount, 2, 'fields the tick does not touch are intact');
+  assert.equal(owed.after['InvestorAI_SimulationBatches/sim_reset0'].resetSettled, false, 'a batch still owing a settlement is not settled');
+  // the unsettled batch stays on the per-minute list (resetSettled==false) after the cold tick: once its dispatch window lapses it
+  // is dispatched again, and once nothing is owed it settles and leaves the list
+  {
+    const w = world(shape, { pending: true });
+    await w.tick();
+    w.clock.now += 120000;
+    const again = await w.tick();
+    assert.equal(again.dispatched.length, 1, 'still owed: dispatched again from the unsettled list');
+    assert(again.dispatched[0].includes('sim_reset0_run1'));
+    w.m.db.seed({ 'InvestorAI_Simulations/sim_reset0_run1': { ...again.after['InvestorAI_Simulations/sim_reset0_run1'], pendingAiCount: 0, dispatchedUntil: 0 } });
+    w.clock.now += 120000;
+    const done = await w.tick();
+    assert.deepEqual(done.dispatched, []);
+    assert.equal(done.after['InvestorAI_SimulationBatches/sim_reset0'].resetSettled, true, 'settles once nothing is owed');
+    // a fresh reset marks the batch unsettled at once
+    await w.sim.control({ command: 'reset' }, 'operator');
+    const fresh = w.m.db.dump()['InvestorAI_SimulationBatches/sim_inc0'];
+    assert.equal(fresh.status, 'reset'); assert.equal(fresh.resetSettled, false, 'reset() marks resetSettled:false');
+  }
 
   // ceiling for the fix: the runs of archived batches no longer cost whole documents
   if (process.env.EXPECT_FIXED) {

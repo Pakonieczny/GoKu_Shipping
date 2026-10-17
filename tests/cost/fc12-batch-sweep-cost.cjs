@@ -65,9 +65,26 @@ for (const [sid, count] of SESS) for (let n = 1; n <= count; n++) { for (let s =
   assert.equal(cron.res.statusCode, 200);
   assert.equal(parsed.openBatches, 600, 'every uncollected record is still seen');
   // Ceilings for an idle scheduled run: the record scan and the 100 newest session ids, no session re-read, no file listing.
-  assert(cron.d.reads <= 600 + 100 + 60, 'idle run reads only routing fields of the open records, the 100 newest session ids and three small summaries (got ' + cron.d.reads + ')');
+  // (this first run is also the hourly full pass that parks the 600 replaced jobs: one more small read for each, once)
+  assert(cron.d.reads <= 600 + 600 + 100 + 60, 'idle run reads only routing fields of the open records, the 100 newest session ids and three small summaries (got ' + cron.d.reads + ')');
   assert(cron.d.bytes <= 5e5, 'idle run moves under 0.5 MB (got ' + cron.d.bytes + ')');
   assert.equal(cron.d.storage.lists, 0, 'no Storage listing while every session is idle');
+  // COST (Oct 2026): that first run (a full pass) parks the 600 finished, replaced jobs (sweepParked:true); the next scheduled
+  // runs list only the records not parked, until the hourly full pass.
+  const docs = m.db.dump();
+  const oldIds = Object.keys(docs).filter((p) => p.startsWith('ListingGenerator1Batches/old_'));
+  assert(oldIds.every((p) => docs[p].sweepParked === true), 'every finished replaced job is parked');
+  const cron2 = await run('batch_sweep (scheduled, idle, after parking)', { kind: 'batch_sweep', cronTriggered: true });
+  const parsed2 = JSON.parse(cron2.res.body || '{}');
+  console.log('next scheduled sweep: openBatches', parsed2.openBatches, ' Firestore reads', cron2.d.reads, ' writes', cron2.d.writes,
+    ' ->  per day (144 runs): reads', cron2.d.reads * 144, ' (before the parking every run listed all 600: 707 reads, 101808 a day)');
+  assert.equal(parsed2.openBatches, 0, 'parked records are not listed by a scheduled run');
+  assert(cron2.d.reads <= 100 + 60, 'scheduled run after parking reads only the session ids and summaries (got ' + cron2.d.reads + ')');
+  // a record that gets work again (here: a new job, written with sweepParked:false as batch_submit does) is listed at once
+  m.db.seed({ 'ListingGenerator1Batches/live_1': record('sess_aaaaaaaa', 5000, 'JOB_STATE_RUNNING', { collected: false, setComplete: false, sweepParked: false, locallyQueued: false, createdAt: new Date() }) });
+  const cron3 = await run('batch_sweep (scheduled, one live job)', { kind: 'batch_sweep', cronTriggered: true });
+  assert.equal(JSON.parse(cron3.res.body || '{}').openBatches, 1, 'a live job is listed');
+  await m.db.collection('ListingGenerator1Batches').doc('live_1').delete();
   // The page's own poll (every 60 s while the Batch panel is open and a job is open): one batch_list of the newest 1000 jobs.
   const list = await run('batch_list (page poll)', { kind: 'batch_list', limit: 1000, includeCollected: true });
   console.log('batch_list limit 1000 (one panel poll): reads', list.d.reads, ' document bytes', list.d.bytes, ' ->  per hour at 60 s: reads', list.d.reads * 60, ' MB', (list.d.bytes * 60 / 1e6).toFixed(0));

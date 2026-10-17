@@ -793,12 +793,24 @@ async function ensureBootstrapped({ force = false, enrich = true } = {}) {
   /* Attest pure invariants on the exact running commit. A stored `true` from
      an older deploy is not evidence about this one. */
   const commit = process.env.COMMIT_REF || process.env.DEPLOY_ID || "local";
+  /* COST (Oct 2026): the 250 fixtures (~86 s of CPU) ran on EVERY investorCycle
+     run, about every 5 minutes, although they attest pure invariants of the
+     code and the code only changes with the commit. A pass already recorded
+     for THIS exact commit (the same check investorApi's activateSafety makes)
+     is reused for a day; a new deploy, a failure, force, a pending bootstrap
+     or a build without a commit identity ("local") still runs them. */
+  const checkedMs = c.fixturesCheckedAt && typeof c.fixturesCheckedAt.toMillis === "function" ? c.fixturesCheckedAt.toMillis() : 0;
+  const attested = done && !force && commit !== "local" && c.fixturesPass === true
+    && c.fixturesCommit === commit && Date.now() - checkedMs < 24 * 3600 * 1000;
   let fixtures;
-  try { fixtures = await require("./_investorSelftest").runFixturesAsync(); }
-  catch (e) { fixtures = { pass: false, fixtureHash: null, error: String(e.message).slice(0, 200) }; }
-  await ref.set({ fixturesPass: fixtures.pass === true, fixturesCommit: commit,
-    fixtureHash: fixtures.fixtureHash || null, fixturesCheckedAt: A.FV.serverTimestamp(),
-    fixtureFailures: (fixtures.cases || []).filter((x) => !x.pass).slice(0, 10) }, { merge: true });
+  if (attested) fixtures = { pass: true, fixtureHash: c.fixtureHash || null, reused: true };
+  else {
+    try { fixtures = await require("./_investorSelftest").runFixturesAsync(); }
+    catch (e) { fixtures = { pass: false, fixtureHash: null, error: String(e.message).slice(0, 200) }; }
+    await ref.set({ fixturesPass: fixtures.pass === true, fixturesCommit: commit,
+      fixtureHash: fixtures.fixtureHash || null, fixturesCheckedAt: A.FV.serverTimestamp(),
+      fixtureFailures: (fixtures.cases || []).filter((x) => !x.pass).slice(0, 10) }, { merge: true });
+  }
   if (!fixtures.pass) {
     const failedNames = (fixtures.cases || []).filter((x) => !x.pass).map((x) => x.name).slice(0, 5);
     const freeze = { ...STATE.legacyPatch(STATE.STATES.ENTRY_FROZEN, c),
