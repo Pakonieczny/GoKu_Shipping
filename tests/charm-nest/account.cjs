@@ -589,13 +589,14 @@ SC.pulse = async (br, srv, errors) => {
   const ctx = await newContext(br, srv); const page = await openPage(ctx, srv, errors);
   try {
     await page.waitForFunction(() => document.getElementById('cnAcctChip').classList.contains('cnAcPulse'), null, { timeout: 6000 });
-    assert.notEqual(await page.evaluate(() => getComputedStyle(document.getElementById('cnAcctChip')).animationName), 'none', 'the chip pulses once');
+    // (the pulse is a ring on the chip's ::after, grown and faded on transform and opacity only: charm-nest-account.js)
+    assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById('cnAcctChip'), '::after').animationName), 'cnAcPulse', 'the chip pulses once');
     assert.equal(await page.$('#cnAcctPanel'), null, 'and no panel opens'); assert.equal((await snap(page)).bars.length, 0);
   } finally { await ctx.context.close(); }
   const ctx2 = await newContext(br, srv, { reducedMotion: 'reduce' }); const p2 = await openPage(ctx2, srv, errors);
   try {
     await p2.waitForFunction(() => document.getElementById('cnAcctChip').classList.contains('cnAcPulse'), null, { timeout: 6000 });
-    assert.equal(await p2.evaluate(() => getComputedStyle(document.getElementById('cnAcctChip')).animationName), 'none', 'no animation under reduced motion');
+    assert.equal(await p2.evaluate(() => getComputedStyle(document.getElementById('cnAcctChip')).animationName + '|' + getComputedStyle(document.getElementById('cnAcctChip'), '::after').animationName), 'none|none', 'no animation under reduced motion');
     await signInAs(p2, 'Tess W.', 'laser');
     assert.equal(await p2.evaluate(() => document.getElementById('cnAcctChip').classList.contains('cnAcSettle')), false, 'no settle animation under reduced motion');
     await chipClick(p2); await panelOpen(p2);

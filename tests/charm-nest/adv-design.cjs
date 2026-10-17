@@ -142,11 +142,12 @@ function fixture({ MAIN, CX, D }) {
       const tl = await page.evaluate(() => {
         const tools = document.getElementById('owTlTools'), top = document.querySelector('#owTimeline .tlTop'), grid = document.querySelector('#owTimeline .tlGrid');
         const heads = [...document.querySelectorAll('#owTimeline .tlDay:not(.idle)')].map(d => { const r = d.getBoundingClientRect(), s = d.querySelector('.dh small'); return { day: d.querySelector('.dh').firstChild.textContent, right: r.right, textRight: s.getBoundingClientRect().left + s.scrollWidth, cut: s.scrollWidth > s.clientWidth + 1 }; });
-        return { chips: document.querySelectorAll('#owTlTools .tlChip, #owTimeline .tlChip').length, legend: document.querySelectorAll('#owTimeline .tlLegend').length, pane: document.querySelectorAll('#owTimeline .tlDetail, #owTimeline .tlBig, #owTimeline .tlAround').length, top: top ? getComputedStyle(top).display : 'none', gridTop: grid.getBoundingClientRect().top, heads };
+        return { chips: document.querySelectorAll('#owTlTools .tlChip, #owTimeline .tlChip').length, legend: document.querySelectorAll('#owTimeline .tlLegend').length, pane: document.querySelectorAll('#owTimeline .tlDetail, #owTimeline .tlBig, #owTimeline .tlAround').length, top: top ? getComputedStyle(top).display : 'none', gridTop: grid.getBoundingClientRect().top, tabsBottom: document.querySelector('#orderWin .owTabsV').getBoundingClientRect().bottom, heads };
       });
       assert.equal(tl.chips, 0, 'no chip in the tab row: the filters went earlier, the Stamps chip with the detail pane'); assert.equal(tl.legend, 0, 'and no legend to open'); assert.equal(tl.pane, 0, 'and no detail pane under the chart');
       assert.equal(tl.top, 'none', 'no second Now + rail strip under the header');
-      assert(tl.gridTop <= 92, 'the lanes start right under the tab row: ' + tl.gridTop);
+      // (right under the tab row, wherever it stands: the header carries the order's rail (80 px), so the tab row ends near 118 px, not at the old fixed 92)
+      assert(tl.gridTop <= tl.tabsBottom + 2, 'the lanes start right under the tab row: ' + tl.gridTop + ' (tab row ends ' + tl.tabsBottom + ')');
       for (const h of tl.heads) assert(!h.cut && h.textRight <= h.right - 4, `${h.day}: its head stays inside its column (${Math.round(h.textRight)} > ${Math.round(h.right)})`);
       await close();
       assert.equal(await page.evaluate(() => document.querySelectorAll('#owTlTools .tlBar').length), 0, 'closing takes the bar out of the tab row');

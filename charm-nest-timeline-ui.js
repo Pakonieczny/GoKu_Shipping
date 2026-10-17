@@ -1551,9 +1551,10 @@
       return true;
     };
     // the placement of this order (on a sheet, held, released, cancelled, done by hand) moved: what the page's own placement reads (the feed's counter) have just told it
-    let plSig = null, unOP = null;
-    const placeSig = () => { try { const PP = root.PiecePlacement, o = PP && typeof PP.of === "function" ? PP.of(id) : null; return o ? String(o.sig || "") : ""; } catch (_) { return ""; } };
-    const hookOP = () => { try { const OP = root.OrderPieces; if (unOP || !OP || typeof OP.subscribe !== "function") return; plSig = placeSig(); unOP = OP.subscribe(() => { const x = placeSig(); if (x !== plSig) { plSig = x; F.poke(); } }); } catch (_) {} };
+    // (the page's own first read of the order's sheets, "loading" -> a placement, moves nothing: the feed's read at the open is the server's own answer, so it asks for no second read)
+    let plSig = null, plWait = false, unOP = null;
+    const placeNow = () => { try { const PP = root.PiecePlacement, o = PP && typeof PP.of === "function" ? PP.of(id) : null; return o ? { sig: String(o.sig || ""), wait: o.state === "loading" } : { sig: "", wait: false }; } catch (_) { return { sig: "", wait: false }; } };
+    const hookOP = () => { try { const OP = root.OrderPieces; if (unOP || !OP || typeof OP.subscribe !== "function") return; const p0 = placeNow(); plSig = p0.sig; plWait = p0.wait; unOP = OP.subscribe(() => { const p = placeNow(), was = plWait; plWait = p.wait; if (p.sig !== plSig) { plSig = p.sig; if (!was) F.poke(); } }); } catch (_) {} };
     F.subscribe = fn => { subs.add(fn); hookOP(); feeds.add(F); if (!pollT && !F.loading) arm(); return () => { subs.delete(fn); if (!subs.size) { clearTimeout(pollT); pollT = 0; clearTimeout(againT); againT = 0; feeds.delete(F); try { if (typeof unOP === "function") unOP(); } catch (_) {} unOP = null; } }; };
     const onVis = () => {
       if (F.dead || !subs.size) return;

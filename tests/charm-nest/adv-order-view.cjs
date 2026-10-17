@@ -90,7 +90,7 @@ async function main() {
     await page.keyboard.press('Escape'); await closed();
     net.hold = 0;
 
-    // 3 · a failing cloud read says so, instead of "no line in the sorter's records"
+    // 3 · a failing cloud read says so, instead of "no piece in the sorter's records"
     net.fail = true;
     await page.evaluate(() => OrderWin.openOrder('4170000001', {}));
     await page.waitForFunction(() => document.getElementById('owLoading').hidden && !/Reading the order/.test(document.getElementById('owNotes').textContent), null, { timeout: 15000 });
@@ -99,14 +99,14 @@ async function main() {
     net.fail = false;
     // …and Try again reads it again: here, the order found (C)
     const retry = await page.$('#owNotes [data-ow-retry]');
-    if (retry) { await retry.click(); await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe|no line/.test(document.getElementById('owMeta').textContent + document.getElementById('owNotes').textContent), null, { timeout: 15000 }); }
+    if (retry) { await retry.click(); await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe|no (line|piece)/.test(document.getElementById('owMeta').textContent + document.getElementById('owNotes').textContent), null, { timeout: 15000 }); }
     check(!!retry, 'failed read: a Try again button');
     await page.keyboard.press('Escape'); await closed();
     // an order that does not exist (the cloud answering): the plain message stays
     await page.evaluate(() => OrderWin.openOrder('4170000002', {}));
     await page.waitForFunction(() => document.getElementById('owLoading').hidden && !/Reading the order/.test(document.getElementById('owNotes').textContent), null, { timeout: 15000 });
     s = await page.evaluate(() => document.getElementById('owNotes').textContent);
-    check(/no line in the sorter's records/.test(s), `order that does not exist: the plain message (${s})`);
+    check(/no piece in the sorter's records/.test(s), `order that does not exist: the plain message (${s})`);
     await page.keyboard.press('Escape'); await closed();
 
     // 4 · a cancelled order whose line is still in the pull as gone (the Cancelled tab opens it by number): the view
