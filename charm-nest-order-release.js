@@ -352,7 +352,7 @@
 
     /* 3 · the hold is lifted through the existing path: the pieces are made up and put on the sheet the intake would use */
     try {
-      for (const r of rowsOfOrder(rid).filter(r => r.hold || (!resumed && r.releasing && isHeld(r)))) { r.heldAt = null; await G.Review.repool(r); }   // (a line the page shows as held with no flag of its own, a blocked SKU or a hold only the cloud knows, is made up again like the rest: Review says what is still wrong)
+      for (const r of rowsOfOrder(rid).filter(r => r.hold || (!resumed && r.releasing))) { r.heldAt = null; await G.Review.repool(r); }   // (a line the page shows as held with no flag of its own, a blocked SKU or a hold only the cloud knows, is made up again like the rest: Review says what is still wrong. `releasing` was set above on exactly the lines that were held, so a line a re-reading has since turned from "held" to "pulled" (a block the page no longer holds it for) is made up again too, RELTOQ)
       if (resumed && open) for (const r of rowsOfOrder(rid).filter(r => r.releasing && !r.hold && ['pulled', 'held'].includes(r.state) && !(r.problems || []).length && !(G.Pool && G.Pool.onSheets && G.Pool.onSheets(r)))) await G.Pool.poolAdd(r, theRun());
     } catch (e) { refresh(); return fail(`The hold could not be lifted: ${str(e && e.message || e)}`, 'hold', { released: rowsOfOrder(rid).every(r => !r.hold) }); }
     for (const r of rowsOfOrder(rid)) if (r.releasing) r.releasing.stage = 'attached';
@@ -364,7 +364,13 @@
     if (still.length) { for (const r of after) delete r.releasing; await persist(); return fail(str(still[0].hold), 'hold'); }
     await liftInCloud(rid);   // (the hold is lifted on this page: the cloud's take-off marks say so too, whether or not a run is open to make the pieces up again)
     const stuck =after.filter(r => (r.problems || []).length);
-    if (stuck.length) { for (const r of after) delete r.releasing; await persist(); return fail(`Order ${rid} is released and at the front of the queue, but it needs a look in Review: ${str(stuck[0].reason || (stuck[0].problems[0] && stuck[0].problems[0].reason) || 'a piece has no design yet')}`, 'review', { released: true }); }
+    if (stuck.length) {
+      for (const r of after) delete r.releasing; await persist();
+      // (a SKU the master blocks for a real reason: its Review row has the button that cuts it anyway)
+      const hint = (stuck[0].problems[0] && stuck[0].problems[0].kind === 'blockedSku' && !stuck[0].problems[0].noOutline) ? ' Its Review row has “Release to nesting queue” to cut it anyway.' : '';
+      const why = str(stuck[0].reason || (stuck[0].problems[0] && stuck[0].problems[0].reason) || 'a piece has no design yet').replace(/[.\s]+$/, '');
+      return fail(`Order ${rid} is released and at the front of the queue, but it needs a look in Review: ${why}.${hint}`, 'review', { released: true });
+    }
     const ids = [...new Set(after.filter(r => r.releasing).flatMap(r => r.poolIds || []))], fresh = ids.filter(id => !stay.has(id));
     const split = splitLines(rid, after.filter(r => r.releasing), new Set([...stay].map(String)), fresh);   // (a pair or line with pieces on a sheet already cut: split, R3)
     const done = ['pooled', 'written', 'labelled', 'committed'];

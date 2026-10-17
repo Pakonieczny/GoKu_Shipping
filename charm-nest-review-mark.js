@@ -10,7 +10,7 @@
    Orders.takeCustom route them), and the Review list builds one item for each open mark (Review.syncOrderItems asks itemsFor).
 
      mark(rid, {by})                     -> Promise<{ok, already, rid, error?}>   idempotent; an order already in Review writes nothing
-     resolve(rid, {by, how, sku, rowKey}) -> Promise<{ok, already, error?}>       how: "ok" (the match is right) | "pick" (a vector file was chosen)
+     resolve(rid, {by, how, sku, rowKey}) -> Promise<{ok, already, error?}>       how: "ok" (the match is right) | "pick" (a vector file was chosen) | "other" ("Release to nesting queue" on the Review row, RELTOQ)
      isMarked(rid) / markedRids() / openRids() / info(rid) / reasonOf(rid)         synchronous, no read; true / listed only while unresolved
      onChange(fn)                          fn({rid, kind: "marked" | "resolved" | "synced"}), also the document event "cn-review-mark"
      open(rid)                             the Review tab, at that order's row                                                              */
@@ -132,7 +132,7 @@
         if (!r || r.error) throw new Error((r && r.error) || "The cloud sent no answer");
         if (r.record) { put(r.record); seen.set(rid, stateSig(r.record)); told(rid, r.record); }
         redraw();
-        if (!r.already) line(rid, (how === "pick" ? "Review: charm picked" + (sku ? " (" + sku + ")" : "") : "Review: marked OK") + " by " + by, `rvmark.${rid}.done.${at}`, { by, how, sku });
+        if (!r.already) line(rid, (how === "pick" ? "Review: charm picked" + (sku ? " (" + sku + ")" : "") : how === "other" ? "Review: released to the nesting queue" : "Review: marked OK") + " by " + by, `rvmark.${rid}.done.${at}`, { by, how, sku });
         return { ok: true, already: !!r.already, rid };
       } catch (e) {   // not written: it is in Review again
         put(was); seen.set(rid, stateSig(was)); emit({ rid, kind: "synced" }); redraw();
@@ -163,7 +163,7 @@
       const sig = [v.doneAt, v.doneBy, v.how, v.sku, rs.length, rs[0] && rs[0].key].join("|"); live.add(rid);
       let d = doneCache.get(rid);
       if (!d || d.sig !== sig || d.row !== (rs[0] || null)) {
-        d = { sig, key: "ord:rvm:" + rid, row: rs[0] || null, kind: "reviewMark", why: v.how === "pick" ? "Charm picked" + (v.sku ? ": " + v.sku : "") : "Marked OK", lines: rs.length || 1, orders: [rid], by: v.doneBy || "", t: +v.doneAt || 0 };
+        d = { sig, key: "ord:rvm:" + rid, row: rs[0] || null, kind: "reviewMark", why: v.how === "pick" ? "Charm picked" + (v.sku ? ": " + v.sku : "") : v.how === "other" ? "Released to the nesting queue" : "Marked OK", lines: rs.length || 1, orders: [rid], by: v.doneBy || "", t: +v.doneAt || 0 };
         doneCache.set(rid, d);
       }
       out.push(d);

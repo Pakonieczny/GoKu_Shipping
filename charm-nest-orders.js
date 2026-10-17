@@ -1439,6 +1439,34 @@
     for (let n = 0; n <= 12; n++) for (const sep of [" ", "-", "_", ""]) add(base + sep + n + (want === "huggie" ? " (HUGGIE)" : ""), n, `numbered version ${n} of ${base}`);
     return out.sort((a, b) => a.n - b.n || a.sku.localeCompare(b.sku)).slice(0, 12);
   }
+  /* ═══ 3b · WHAT A MASTER BLOCK STOPS (BLOCKREL, Paul 17 Oct 2026, orders 4193111740 DRAGON11 and 4191826593 FLORALS2) ═══════════════════
+     "SKU DRAGON11 blocked: The charm outline is front artwork. Reload its CUT geometry before fitting engraving." held both orders for good ("rejected incorrectly"): the indexer (charm-nest-bridge.js writeIndex,
+     scripts/index-master.cjs, netlify/functions/charmMaster-background.js) runs the BACK-VIEW (flip) check on every charm and writes whatever it throws into entry.blocked, and every reader of .blocked refused to
+     cut ANY order of the SKU. But that check is about ENGRAVING a back (the back is the front turned over); the cut outline is the .ai file and is fine, and an earring is never engraved at all (section 3d).
+     The engraving path already handles its own flip failure per job (Engrave.fitJob → a "Flip" Review card), so a block that exists ONLY because the flip check threw must not stop cutting.
+     THE ONE ANSWER (entryBlock): the reason an entry is blocked for CUTTING, "" when it is not. The library stores no `flipOk` (slimEntry drops it), so the kind is read from the reasons themselves, which the three
+     indexers compose from exactly these parts: "open outline", the flip stage's message (BackViewError "flip check failed — …", "The charm outline is front artwork. …", a worker timeout), "detached ring not merged",
+     and (written by putIndex) "SKU present in two master files: …". A block is flip-only when it has no part but flip messages: not open (entry.open), not in a clash (entry.conflict), no genuine word in the text.
+     Every reader that decides whether a design may be CUT asks entryBlock; the Master tab still shows the original reason (entry.blocked) and its unblock still patches it away. Anything not recognised stays a
+     block: nothing genuine is let through (an open outline, a ring left loose, two master files, a design with no outline). */
+  const GENUINE_BLOCK = /open outline|detached ring|two master files|saved from an order|not written:|no outline/i;
+  const FLIP_BLOCK = /front artwork|reload its cut geometry|flip check failed|flipped back|background calculation (?:timed out|stopped)/i;
+  /** "" (not blocked) | "flip" (blocked only because the back-view check threw: engraving's business, not cutting's) | "genuine" (a block that stops cutting). */
+  function blockKind(entry) {
+    const text = entry && entry.blocked ? String(entry.blocked) : "";
+    if (!text) return "";
+    if (entry.open || entry.conflict || GENUINE_BLOCK.test(text)) return "genuine";
+    return entry.flipOk === false || FLIP_BLOCK.test(text) ? "flip" : "genuine";
+  }
+  /** The reason an entry may not be CUT, "" when it may (a flip-only block never stops cutting). */
+  const entryBlock = entry => (blockKind(entry) === "genuine" ? String(entry.blocked) : "");
+  /** A person's "Release to nesting queue" on a blocked SKU (row.blockOverride = { sku, by, at, skus? }): does it set aside the block of THIS sku? `ov` may be one such object or a list of them. */
+  function blockReleased(ov, sku) {
+    const k = upSku(sku); if (!ov || !k) return false;
+    return (Array.isArray(ov) ? ov : [ov]).some(o => !!o && typeof o === "object" && ((o.sku && upSku(o.sku) === k) || (Array.isArray(o.skus) && o.skus.some(s => upSku(s) === k))));
+  }
+  /** The block that holds a line from being cut: the entry's CUTTING block unless a person released that SKU for this line. */
+  const blockFor = (entry, sku, ov) => { const b = entryBlock(entry); return b && !blockReleased(ov, sku) ? b : ""; };
   /* ═══ 3b · LOOKALIKE NAMES (LOOKALIKE, 12 Oct 2026) ══════════════════════════════════════════════════════════════════════
      Four times on 12 Oct an exact SKU match put the wrong drawing on an order and Paul found it by eye. The one that this rule is for: the master holds TWO drawings whose names read alike once spaces, dashes,
      case and punctuation are dropped (CELESTIAL3-COMET and "CELESTIAL 3 - COMET": 138 such name groups), one a stud-size design with NO hanging hole (holes 0) and one the necklace charm with its ring. The Etsy SKU
@@ -1467,12 +1495,12 @@
   function lookalikeRead(x, lf, ctx) {
     ctx = ctx || {}; const me = ctx.masterEntry, like = ctx.masterLike, form = lf && typeof lf === "object" ? lf.form : lf;
     if (typeof me !== "function" || typeof like !== "function" || !x) return null;
-    const xe = me(x); if (!xe || xe.blocked) return null;
+    const xe = me(x); if (!xe || entryBlock(xe)) return null;
     const xh = holesOf(xe), xb = boxOf(xe); if (xh == null || !xb) return null;
     const row = (k, e) => ({ sku: k, holes: holesOf(e), mm: mmWords(e), ring: holesOf(e) > 0 });
     const big = [], small = [];   // big: ringed drawings clearly bigger than a loop-less x; small: loop-less drawings clearly smaller than a ringed x
     for (const k0 of like(x) || []) {
-      const k = upSku(k0), e = k && k !== x ? me(k) : null; if (!e || e.blocked) continue;
+      const k = upSku(k0), e = k && k !== x ? me(k) : null; if (!e || entryBlock(e)) continue;
       const h = holesOf(e), b = boxOf(e); if (h == null || !b) continue;
       if (looseDrawing(xe, e) || (xe.charmHash && e.charmHash && String(xe.charmHash) === String(e.charmHash))) continue;   // (one drawing under two names: nothing to choose)
       if (formClash(form, masterForm(k, ctx.guardCtx || { masterEntry: me }))) continue;   // (a huggie design is the form guard's, not this rule's)
@@ -1515,11 +1543,11 @@
     // DACHMAP (12 Oct 2026): a person's saved link for THIS listing and THIS transaction SKU (bySku, "Use this charm") beats an exact master match of that SKU when the saved design is in the master and
     // is not blocked. The Etsy SKU "DACHSHUND" is also a master entry (a cat disc filed under that name); Paul linked the listing to DACHSHUND_36943 and the exact match kept winning. Never the reverse:
     // no saved link (or one naming a design the master does not hold, or the same SKU) reads exactly as before. Only the SKU's own answer (own), never the listing-wide one (whole).
-    const ownEntry = held && own && own !== raw && masterEntry ? masterEntry(own) : null, ownWins = !!(ownEntry && !ownEntry.blocked);
+    const ownEntry = held && own && own !== raw && masterEntry ? masterEntry(own) : null, ownWins = !!(ownEntry && !entryBlock(ownEntry));
     // CHAMMAP (12 Oct 2026): a master entry filed under the shop's SHARED charm-only placeholder ("CO-GOLDCHARMO", a label on the astronaut; see genericSku) is no automatic match for any listing: the listing's
     // own saved answer for the SKU stands (ownWins above, or its listing-wide one), else the line waits (source "generic", held in interpretLine). A SKU on the no-design list is still that.
-    if (held && !held.blocked && !ownWins && !isNoDesign(raw, noDesign) && genericSku(raw)) return own ? { sku: own, source: "alias" } : whole ? { sku: whole, source: "alias" } : { sku: raw, source: "generic" };
-    if (raw && (!masterEntry || (held && !(own && (held.blocked || ownWins))) || isNoDesign(raw, noDesign))) return { sku: raw, source: "transaction" };
+    if (held && !entryBlock(held) && !ownWins && !isNoDesign(raw, noDesign) && genericSku(raw)) return own ? { sku: own, source: "alias" } : whole ? { sku: whole, source: "alias" } : { sku: raw, source: "generic" };
+    if (raw && (!masterEntry || (held && !(own && (entryBlock(held) || ownWins))) || isNoDesign(raw, noDesign))) return { sku: raw, source: "transaction" };
     if (own) return { sku: own, source: "alias" };
     // the master's own spelling of the SKU (a person's answer for the SKU as written came first), then the charm-only mark
     const spelt = raw && spelling(raw, masterEntry, masterLoose);
@@ -3517,7 +3545,7 @@
         if (sib.length) spec.siblings = sib;
         if (!optionOpen) problems.push(Object.assign({ kind: "unmatchedSku", reason: set && skuSource === "transaction" ? "Huggie CHARM SET: its huggie design is not in any master file" : "not in any master file", sku, listingId: String(line.listingId || ""), title: line.title || "" }, sib.length ? { siblings: sib } : {}));
       }
-      else if (entry.blocked) problems.push({ kind: "blockedSku", reason: entry.blocked, sku });
+      else if (blockFor(entry, sku, ctx.blockOverride)) problems.push({ kind: "blockedSku", reason: entryBlock(entry), sku });
       else {
         // SIZEFIT: the size the buyer chose is read against the design (a standard check of every line): drawn as is, scaled to the diameter chosen, left alone (not a disc), or asked
         if (spec.size && !sizeIsCharm(spec.sizeFrom, lf)) noFit(entry, spec.size);   // (an option that gives the size of something else: the check is off for this design at this size, here and in every page that draws it)
@@ -4000,7 +4028,7 @@
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar, tagOptionOf, tagOptionRead, TAG_SHAPES,
-    KNOWN_SKU_NAMES, knownName, namedSku, sameDesign, designFile, FORMS, formOfText, masterForm, lineForm, formClash, siblingsOf, formOfLine, lookalikeRead,
+    KNOWN_SKU_NAMES, knownName, namedSku, sameDesign, designFile, FORMS, formOfText, masterForm, lineForm, formClash, siblingsOf, formOfLine, lookalikeRead, entryBlock, blockKind, blockReleased, blockFor,
     SIGN_ORDER, skuSign, sharedZodiac, signsInText, signsNamed, zodiacRead,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });
