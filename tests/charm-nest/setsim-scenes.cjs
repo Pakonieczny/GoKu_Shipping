@@ -4,6 +4,7 @@
  * A scene is red (exit 1, the exact case printed) when an order's pieces end on two sheets, a piece is lost or waits to the end, or a multi-piece order
  * that cannot fit a nearly full sheet takes room that small single-charm orders could have filled.  --measure prints the same without failing.
  * Scenes:
+ *   big     (NOSPREAD) an order of about 2.4 sheets of area arrives with single charms behind it: it fills consecutive sheets, none stuck on "cannot fit on an empty sheet", none lost.
  *   late    a pair of an order sits on an OPEN sheet (about 65% full); the order's other line (5 discs) arrives 2 updates later and does not fit the gap.
  *           The WHOLE order must be on one sheet at the end (the pair moves with the discs, or the discs stay: never one on each).
  *   queue   an OPEN sheet about 65% full; one update brings a 5-disc necklace (cannot fit whole) and then three tiny single-charm orders.
@@ -21,7 +22,7 @@ const { orderOf, partOf, piecesOf, Sim, fillOf, L } = Lib;
 
 const argv = process.argv.slice(2), opt = (k, d) => { const i = argv.indexOf('--' + k); return i >= 0 ? argv[i + 1] : d; };
 const root = path.resolve(opt('root') || Lib.REPO), step = +opt('step', 60), sheet = opt('sheet', '60x40'), measure = argv.includes('--measure');
-const only = String(opt('only', 'late,queue,queue2,pair,lines,chain')).split(',').filter(Boolean), metal = opt('metal', 'gold');
+const only = String(opt('only', 'late,queue,queue2,pair,lines,chain,big')).split(',').filter(Boolean), metal = opt('metal', 'gold');
 const S = L.solverOf(root);
 
 let nextId = 0;
@@ -40,7 +41,11 @@ class Scene {
     for (const e of entries) {
       const o = e.order || e, idx = e.order ? e.lines : o.lines.map((_, i) => i);
       if (!this.orders.includes(o)) { this.orders.push(o); this.arrived.set(o.id, this.tick); this.sentLines.set(o.id, new Set()); }
-      idx.forEach(i => this.sentLines.get(o.id).add(i)); parts.push(partOf(o, metal, idx.map(i => o.lines[i])));
+      const before = [...this.sentLines.get(o.id)].reduce((n, i) => n + o.lines[i].pieces.length, 0);
+      idx.forEach(i => this.sentLines.get(o.id).add(i)); const part = partOf(o, metal, idx.map(i => o.lines[i]));
+      // (NOSPREAD, Paul 17 Oct 2026: the intake knows how many pieces the order will have in all, lines still to come included, and how many came before this update)
+      if (part) { part.expected = o.lines.filter(l => l.metal === metal).reduce((n, l) => n + l.pieces.length, 0); part.order = { pieces: part.pieces, expected: part.expected, placed: before }; }
+      parts.push(part);
     }
     await this.m.step(parts.filter(Boolean), this.tick); this.mark();
   }
@@ -153,6 +158,21 @@ const SCENES = {
     sc.expect(w.unplaced === 0, `a piece of ${label(sc, O)} was never placed: ${where(sc, O)}`);
     sc.expect(w.pages.size <= 1, `ORDER SPLIT: ${where(sc, O)}`);
     return sc.report({ order: where(sc, O) });
+  },
+  async big() {
+    // NOSPREAD (Paul, 17 Oct 2026): "a given order so big that it fills several sheets and the system must be smart enough and robust enough": 64 copies of a charm, about 2.5 sheets of this size, arrive with
+    // single-charm orders behind it. Consecutive sheets, the fewest, nothing lost, no sheet stuck on "cannot fit on an empty sheet"; the orders behind it whole.
+    const sc = new Scene('big');
+    const B = mk(oid(), 800, [{ kind: 'qty', k: 64, idx: 12, f: 1 }]);   // (a 60 x 40 mm sheet seats about 26 of these at the real solver's fill)
+    const sm = [0, 1, 2, 3].map(i => mk(oid(), 810 + i, [{ kind: 'single', idx: i, f: 1 }]));
+    await sc.bring(B); await sc.bring(...sm); await sc.idle(3);
+    const w = sc.where(B);
+    sc.notes.push(`big order: ${piecesOf(B).length} pieces: ${where(sc, B)}; ${sc.pages.filter(p => p.problem).length} sheet(s) stuck`);
+    sc.expect(w.unplaced === 0, `a piece of ${label(sc, B)} was never placed: ${where(sc, B)}`);
+    sc.expect(!sc.pages.some(p => p.problem), 'a sheet is stuck: ' + sc.pages.filter(p => p.problem).map(p => p.problem).join(' | '));
+    sc.expect(w.pages.size >= 2 && w.pages.size <= 4, `the order should fill 2 to 4 consecutive sheets, it is on ${w.pages.size}`);
+    for (const o of sm) { sc.expect(sc.where(o).unplaced === 0, `a piece of ${label(sc, o)} was never placed`); sc.expect(sc.where(o).pages.size <= 1, `ORDER SPLIT: ${where(sc, o)}`); }
+    return sc.report({ order: where(sc, B) });
   },
   async chain() {
     const sc = new Scene('chain');

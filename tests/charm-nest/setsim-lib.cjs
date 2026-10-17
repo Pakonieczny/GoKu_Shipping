@@ -117,7 +117,9 @@ function pageWorld(root, ctl, extra = []) {
     addPage: metal => ctl.addPage(metal), startNest: sh => ctl.startNest(sh),
   };
   ctx.window.CN.topupRoom = sh => ctx.topupRoom(sh);
-  ctx.window.CN.topupTakes = (sh, pieces) => typeof ctx.topupTakes === 'function' ? ctx.topupTakes(sh, pieces) : true;   // (NESTQUEUE: a multi-piece order that cannot fit a gap-filling sheet whole goes on)
+  ctx.window.CN.topupTakes = (sh, pieces, order) => typeof ctx.topupTakes === 'function' ? ctx.topupTakes(sh, pieces, order) : true;   // (NESTQUEUE: a multi-piece order that cannot fit a gap-filling sheet whole goes on; NOSPREAD: asked with the whole order)
+  // (NOSPREAD, Paul 17 Oct 2026: the pure policy module, when the root has it; an older root has none, and the page code then does what it did)
+  try { const NS = require(path.join(root || REPO, 'charm-nest-nospread.js')); ctx.CharmNestNoSpread = NS; ctx.window.CharmNestNoSpread = NS; } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
   ctx.stockFor = () => ctl.stock; ctx.angleSet = () => ctl.angles();
   vm.createContext(ctx);
   // pairs and groups, keepOrdersWhole, overflowToNextSheet, then sheetFull / the gap fill (TOPUP, topupSettle, topupRoom ...), then the feed (feedTurn, nestItems, feedOn)
@@ -193,8 +195,13 @@ class MetalSim {
   async step(parts, tick) {
     this.tick = tick; this.sim.ctl.tick = tick; const ctx = this.sim.ctx, run = { runId: 'run-1' }, t0 = Date.now();
     if (!this.pages.length) this.pages.push(this.newPage());
-    for (const part of parts) for (const line of part.lines) {
-      let page = ctx.intakePage(this.metal, run, part.id, line.pieces);
+    // (NOSPREAD, Paul 17 Oct 2026: an order with a line still to come is put on its sheet after the others of the update, as the bridge's addRows does)
+    const behind = part => !!(part.order && part.order.expected > part.order.pieces.length + (part.order.placed || 0) && typeof ctx.nospread === 'function' && ctx.nospread());
+    for (const part of parts.map((x, i) => [x, i]).sort((a, b) => behind(a[0]) - behind(b[0]) || a[1] - b[1]).map(x => x[0])) for (const line of part.lines) {
+      // (NOSPREAD, Paul 17 Oct 2026: the intake is told the order the line belongs to, as attachPool tells it: the order's pieces of this metal that came in with this update, and the number the order will have in all, late lines included)
+      const info = part.order || { pieces: part.pieces, expected: part.expected || part.pieces.length };
+      if (typeof ctx.nospreadChunk === 'function' && !info.pieces.some(c => c.chunk)) ctx.nospreadChunk(this.metal, info.pieces, info);   // (an order bigger than a sheet is cut into units that each fit one: attachPool does the same)
+      let page = ctx.intakePage(this.metal, run, part.id, line.pieces, info);
       if (!page || ctx.closed(page)) page = this.addPage();      // (attachPool: a closed sheet is never joined)
       for (const c of line.pieces) page.charms.push(Object.assign({}, c, { pinned: null }));
       page.appendOnly = page.placements.length > 0; page.intakeAppend = page.appendOnly;

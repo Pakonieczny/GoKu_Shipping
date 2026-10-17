@@ -4139,8 +4139,30 @@ const Pool = window.Pool = (() => {
     const ids = row.poolIds || []; if (!ids.length) return false;
     return PoolPieces.legacyGlued(ids.map(id => B.pool.rows.get(id) || { poolId: id }), r => !!r.sheetId || !!charmOf(r.poolId)) && !ids.some(id => charmOf(id)?.side);
   }
+  /** What the intake knows of the pieces of every order, counted once for an update (NOSPREAD, Paul 17 Oct 2026): how many pieces each order has of each metal in all (every line, pooled or not, by the app's own rule
+      CharmNestOrders.pieceCountOf; a line whose material is not known yet is counted under "") and how many are on this sorter's sheets before the update puts any on. */
+  function pieceTotals() {
+    const expected = new Map(), placed = new Map(), add = (m, k, n) => m.set(k, (m.get(k) || 0) + n);
+    for (const r of Orders.rows()) { if (r.state === "gone" || !r.spec) continue; add(expected, String(r.order.receiptId) + "|" + (r.spec.material || ""), Math.max(0, O.pieceCountOf(r.spec) || 0)); }
+    for (const metal of ["gold", "silver"]) for (const p of pagesOf(metal) || []) for (const c of (p && p.charms) || []) if (!c.excluded) add(placed, String(c.order) + "|" + metal, 1);
+    return { expected, placed };
+  }
+  /** What the intake knows of an order's pieces of one metal, for charm-nest-nospread.js: { pieces (the pieces in hand: this line and the order's other lines made up in the same update), expected (the pieces the
+      order will have of this metal in all: a line held for a question or read late is still to come), placed (pieces of it already on a sheet) }. `batch` carries the update's pieces by order and metal, and its totals. */
+  function orderInfo(rid, metal, list, batch, onSet) {
+    const key = String(rid), mine = (batch && batch.get(key + "|" + metal)) || list, hand = mine.filter(c => !(onSet && onSet.has(c.poolId)));
+    const t = batch ? (batch.totals || (batch.totals = pieceTotals())) : pieceTotals();
+    const placed = t.placed.get(key + "|" + metal) || 0, expected = (t.expected.get(key + "|" + metal) || 0) + (t.expected.get(key + "|") || 0);
+    return { pieces: hand.length ? hand : list, expected: Math.max(expected, hand.length + placed), placed };
+  }
+  /** The lines of an update in the order they are put on their sheets (NOSPREAD, Paul 17 Oct 2026): an order with a line still to come -- held for a question, read late, not pooled yet -- goes after the others, which keep their
+      order, oldest first. It cannot ship before that line, and the orders ahead of it in a big update would fill the sheet it joined and release it before the line arrives. [[row, prep]] */
+  function attachOrder(made, batch) {
+    const behind = ([row, prep]) => { try { const m = prep.custom ? null : prep.sp.material; if (!m || S.settings.nospread === "off") return 0; const info = orderInfo(row.order.receiptId, m, prep.charms, batch, null); return info.expected > info.pieces.length + info.placed ? 1 : 0; } catch (_) { return 0; } };
+    return made.map((x, i) => [x, i, behind(x)]).sort((a, b) => a[2] - b[2] || a[1] - b[1]).map(x => x[0]);
+  }
   /** The recorded line joins its sheet. A line a live run already holds (a pool row the record refused) is skipped. */
-  function attachPool(row, run, prep, contended, placed, short) {
+  function attachPool(row, run, prep, contended, placed, short, batch) {
     const { sp, pools, charms } = prep;
     // the cloud already holds this line with fewer pieces than the rule now gives (it was pooled before the pair and count rule): its
     // rows were not written, and none is added; the line is what it was, with a plain note
@@ -4166,7 +4188,10 @@ const Pool = window.Pool = (() => {
     // the sheets that already hold other pieces of this line (a pair's other piece, a disc necklace's other discs): a late piece goes to them (rule R2)
     const matePages = on.size ? [...holding(on)] : [];
     for (const [metal, list] of byMetal) {
-      let page=window.LiveNest ? LiveNest.intakePage(metal, run, row.order.receiptId, list) : pagesOf(metal).at(-1);
+      let info; try { info = typeof orderInfo === "function" ? orderInfo(row.order.receiptId, metal, list, batch, on) : undefined; } catch (e) { info = undefined; }   // (the policy never stops a line from joining its sheet: without what it needs the intake does what it did)
+      // an order bigger than one sheet is cut into units that each fit one (NOSPREAD, Paul 17 Oct 2026, CN.nospreadChunk: the pieces keep their order, so its sheets are one unit for a set), before the intake looks for its sheet
+      if (info && window.CN?.nospreadChunk && !info.pieces.some(c => c.chunk)) window.CN.nospreadChunk(metal, info.pieces, info);
+      let page=window.LiveNest ? LiveNest.intakePage(metal, run, row.order.receiptId, list, info) : pagesOf(metal).at(-1);
       // (a sheet kept for this order's own release stays open to the rest of the order's pieces: the order goes on one sheet whole)
       const shut = p => { const k = row.releasing && p.keepRelease && p.keepRelease.rid === String(row.order.receiptId) ? p.keepRelease : null; if (k) p.keepRelease = null; try { return !!(window.LiveNest && LiveNest.closed(p)); } finally { if (k) p.keepRelease = k; } };
       // (the line's own sheet first, when it still takes pieces: the order's home sheet can be an earlier one, and a pair is never put half on each)
@@ -4302,7 +4327,9 @@ const Pool = window.Pool = (() => {
       }
       catch (e) { failure = e; }
     }
-    for (const [row, prep] of made) { if (failure) { hold(row, failure); continue; } try { attachPool(row, run, prep, contended, placed, short); } catch (e) { hold(row, e); } }
+    // (NOSPREAD, Paul 17 Oct 2026: the pieces of each order made up in this update, all its lines, so that the intake asks about the whole order and not the line it is putting on)
+    const batch = new Map(); try { batch.totals = pieceTotals(); } catch (e) { /* the intake then counts for each line on its own, and does without when it cannot */ } for (const [row, prep] of made) for (const c of prep.charms || []) { const k = String(row.order.receiptId) + "|" + (prep.custom ? c.metal : prep.sp.material); if (!batch.has(k)) batch.set(k, []); batch.get(k).push(c); }
+    for (const [row, prep] of attachOrder(made, batch)) { if (failure) { hold(row, failure); continue; } try { attachPool(row, run, prep, contended, placed, short, batch); } catch (e) { hold(row, e); } }
     if (bar) bar.end();
     await Gate.afterPool(run);
     Review.syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards();
@@ -21023,7 +21050,7 @@ const LiveNest = window.LiveNest = (() => {
      that misses its gaps moves on to the next sheet, and the earlier sheet stays first in line: once a newer page existed
      it used to be passed over for good, short of full, so it was never released and its orders, the oldest, never cut.
      Rose Gold keeps the newest sheet, where its green line is. */
-  function intakePage(m, run, orderId, pieces) {
+  function intakePage(m, run, orderId, pieces, order) {
     const pages = pagesOf(m), newest = pages.at(-1), fast = O.FAST_MATERIALS.has(m);
     const open = p => p.charms.length && run && p.runId === run.runId && !closed(p);
     // an order goes onto one sheet whole: a line joins the order's lines already waiting on a sheet in line. Every metal (Paul, 13 Oct 2026: all the pieces
@@ -21035,7 +21062,9 @@ const LiveNest = window.LiveNest = (() => {
     // (CN.topupRoom; Paul, 27 Sep: a whole batch waited on the full sheet and the next sheet was not started)
     // (and a multi-piece order that cannot fit a gap-filling sheet whole goes on to the next sheet without costing the sheet a try: single-charm
     // orders fill its small gaps, CN.topupTakes; Paul, 13 Oct 2026)
-    const room = p => (!window.CN?.topupRoom || window.CN.topupRoom(p) > 0) && (!pieces || !window.CN?.topupTakes || window.CN.topupTakes(p, pieces));
+    // (NOSPREAD, Paul 17 Oct 2026: asked with the WHOLE order -- `order`: its pieces in hand, the number it will have in all, those already on a sheet -- so that a multi-piece or earring order
+    // goes onto a sheet near completion only if all its pieces fit, and otherwise to the next sheet in line, a new one when none takes it whole; an order bigger than a sheet starts a fresh one)
+    const room = p => (!window.CN?.topupRoom || window.CN.topupRoom(p) > 0) && (!pieces || !window.CN?.topupTakes || window.CN.topupTakes(p, pieces, order));
     const pick = pages.find(p => p !== newest && open(p) && room(p)) || newest;
     return pick === newest && open(newest) && !room(newest) ? addPage(m) : pick;
   }
