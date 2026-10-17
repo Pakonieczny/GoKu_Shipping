@@ -90,7 +90,7 @@ async function main() {
     await page.keyboard.press('Escape'); await closed();
     net.hold = 0;
 
-    // 3 · a failing cloud read says so, instead of "no line in the sorter's records"
+    // 3 · a failing cloud read says so, instead of "no piece in the sorter's records"
     net.fail = true;
     await page.evaluate(() => OrderWin.openOrder('4170000001', {}));
     await page.waitForFunction(() => document.getElementById('owLoading').hidden && !/Reading the order/.test(document.getElementById('owNotes').textContent), null, { timeout: 15000 });
@@ -99,14 +99,14 @@ async function main() {
     net.fail = false;
     // …and Try again reads it again: here, the order found (C)
     const retry = await page.$('#owNotes [data-ow-retry]');
-    if (retry) { await retry.click(); await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe|no line/.test(document.getElementById('owMeta').textContent + document.getElementById('owNotes').textContent), null, { timeout: 15000 }); }
+    if (retry) { await retry.click(); await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe|no (line|piece)/.test(document.getElementById('owMeta').textContent + document.getElementById('owNotes').textContent), null, { timeout: 15000 }); }
     check(!!retry, 'failed read: a Try again button');
     await page.keyboard.press('Escape'); await closed();
     // an order that does not exist (the cloud answering): the plain message stays
     await page.evaluate(() => OrderWin.openOrder('4170000002', {}));
     await page.waitForFunction(() => document.getElementById('owLoading').hidden && !/Reading the order/.test(document.getElementById('owNotes').textContent), null, { timeout: 15000 });
     s = await page.evaluate(() => document.getElementById('owNotes').textContent);
-    check(/no line in the sorter's records/.test(s), `order that does not exist: the plain message (${s})`);
+    check(/no piece in the sorter's records/.test(s), `order that does not exist: the plain message (${s})`);
     await page.keyboard.press('Escape'); await closed();
 
     // 4 · a cancelled order whose line is still in the pull as gone (the Cancelled tab opens it by number): the view
@@ -124,7 +124,8 @@ async function main() {
     await page.waitForTimeout(700);
     const nextTo = await page.evaluate(() => { const b = [document.getElementById('owNext'), document.getElementById('owPrev')].find(x => !x.hidden && !x.disabled); if (!b) return null; b.click(); return document.getElementById('owTitle').textContent; });
     if (nextTo) {
-      const into = await page.evaluate(() => { OrderWin.close(); const a = document.getElementById('orderWin').getAnimations().map(x => x.effect.getKeyframes()).filter(k => k.length && k[k.length - 1].clipPath).map(k => k[k.length - 1].clipPath); return a[0] || null; });
+      // (close() waits for the page to be idle (Seal.whenIdle) before it starts the shrink, so the clip animation exists a moment after the call, not in it)
+      const into = await page.evaluate(async () => { OrderWin.close(); for (const t = performance.now(); performance.now() - t < 2000;) { const a = document.getElementById('orderWin').getAnimations().map(x => x.effect.getKeyframes()).filter(k => k.length && k[k.length - 1].clipPath).map(k => k[k.length - 1].clipPath); if (a[0]) return a[0]; await new Promise(r => setTimeout(r, 16)); } return null; });
       const want = await page.evaluate(t => { const rid = t.replace(/\D/g, '').slice(0, 10); const n = [...document.querySelectorAll('#ordItems [data-key]')].find(x => x.dataset.key.startsWith(rid)); const r = n.getBoundingClientRect(); return Math.round(Math.max(0, r.top)); }, nextTo);
       const top = into ? +(/inset\((\d+(?:\.\d+)?)px/.exec(into) || [])[1] : null;
       check(top != null && Math.abs(top - want) < 2, `after Next: it shrinks into the row on screen now (clip top ${top}, row top ${want})`);

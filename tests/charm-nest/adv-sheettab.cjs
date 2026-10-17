@@ -60,7 +60,7 @@ async function main() {
       [order(X1.rid, 'Xan One', [line(X1.tid, 'TINY_TAG', 'gold', '14k Gold Filled')]), [null]], [order(X2.rid, 'Xan Two', [line(X2.tid, 'TINY_TAG', 'gold', '14k Gold Filled')]), [null]]] });
     const drawn = (rid, sheet) => page.waitForFunction(([rid, sheet]) => { const i = OrderWin._sheet(); return i && i.sheet.id === sheet && i.mine.every(x => x.rid === rid) && document.getElementById('owPlateWait').hidden && !document.getElementById('owSheetCv').getAnimations().some(a => a.playState === 'running'); }, [rid, sheet]);
     const panel = () => page.evaluate(() => ({ chips: [...document.querySelectorAll('#owSheetPanel .owShTabs button')].map(b => b.textContent.trim()), on: document.querySelector('#owSheetPanel .owShTabs button.on')?.textContent.trim(),
-      eng: document.querySelector('#owSheetPanel .owBackEng')?.textContent || '', charm: document.querySelector('#owSheetPanel .owCharm')?.textContent || '', mine: OrderWin._sheet()?.mine.map(x => x.poolId) }));
+      eng: document.querySelector('#owSheetPanel [data-engraving-panel]')?.textContent || '', charm: document.querySelector('#owSheetPanel .owCharm')?.textContent || '', mine: OrderWin._sheet()?.mine.map(x => x.poolId) }));
 
     // 1 · opened on line 1 (14K): both sheets, the 14K one first, its back engraving
     await page.evaluate(k => OrderWin.open(k, { view: 'sheet' }), `${S.rid}_${S.t1}`);
@@ -94,10 +94,11 @@ async function main() {
     assert.deepEqual(after, size14, 'the old sheet\'s drawing does not resize the plate to its own shape');
     // (and no second loop keeps painting the old sheet: the plate is painted once a frame)
     const perFrame = await page.evaluate(async () => {
-      const proto = CanvasRenderingContext2D.prototype, orig = proto.drawImage; let n = 0;
-      proto.drawImage = function (...a) { if (this.canvas && this.canvas.id === 'owSheetCv') n++; return orig.apply(this, a); };
+      // (a plate paint = ONE clearRect of the plate; it also draws the base and one halo per ringed piece, so drawImage is not the count of paints)
+      const proto = CanvasRenderingContext2D.prototype, orig = proto.clearRect; let n = 0;
+      proto.clearRect = function (...a) { if (this.canvas && this.canvas.id === 'owSheetCv') n++; return orig.apply(this, a); };
       let frames = 0; const t0 = performance.now(); await new Promise(res => { const f = () => { frames++; if (performance.now() - t0 < 600) requestAnimationFrame(f); else res(); }; requestAnimationFrame(f); });
-      proto.drawImage = orig; return n / Math.max(1, frames);
+      proto.clearRect = orig; return n / Math.max(1, frames);
     });
     assert(perFrame <= 1.3, 'one drawing loop on the plate, not one per sheet shown: ' + perFrame.toFixed(2) + ' draws a frame');
 
@@ -151,7 +152,7 @@ async function main() {
     await page.evaluate(() => OrderWin.view() === 'sheet' || document.querySelector('.owTabsV [data-ow-view="sheet"]').click());
     await drawn(S.rid, SH14);
     assert.deepEqual(await page.evaluate(() => { const x = OrderWin._sheet().mine[0]; return [x.p.cxPt, x.p.cyPt]; }), [150, 70], 'drawn from the live page');
-    assert.match(await page.textContent('#owSheetPanel .owBackEng'), /For Mia/, 'its back engraving still read from the saved record');
+    assert.match(await page.textContent('#owSheetPanel [data-engraving-panel]'), /For Mia/, 'its back engraving still read from the saved record');
     await page.evaluate(() => { const a = S.sheets.gold14k.pages; a.splice(a.indexOf(window.__livePage), 1); });
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 3000 });

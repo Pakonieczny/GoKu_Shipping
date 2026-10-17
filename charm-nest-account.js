@@ -184,11 +184,13 @@
     "@container workspace (max-width:900px){.cnAcChip{padding:3px;min-width:36px;justify-content:center;gap:0}.cnAcChip[data-st=none]{padding:3px 8px}.cnAcChip .cnAcName,.cnAcChip .cnAcPill{display:none}.cnAcChip[data-st=ask] .cnAcAv{box-shadow:0 0 0 2px var(--card,#fff),0 0 0 4px var(--clay,#b0563f)}}",
     "@media (max-width:719px){.cnAcChip{padding:3px;min-width:36px;justify-content:center;gap:0}.cnAcChip[data-st=none]{padding:3px 8px}.cnAcChip .cnAcName,.cnAcChip .cnAcPill{display:none}.cnAcChip[data-st=ask] .cnAcAv{box-shadow:0 0 0 2px var(--card,#fff),0 0 0 4px var(--clay,#b0563f)}}",
     "@media (pointer:coarse){.cnAcChip{min-height:44px;min-width:44px}}",
-    "@keyframes cnAcPulse{0%{box-shadow:0 0 0 0 rgba(169,130,63,.55)}70%{box-shadow:0 0 0 9px rgba(169,130,63,0)}100%{box-shadow:0 0 0 0 rgba(169,130,63,0)}}",
-    ".cnAcChip.cnAcPulse{animation:cnAcPulse 1.3s ease-out 1}",
+    // (the pulse is a ring on a pseudo-element that grows and fades: transform and opacity only, as every motion of the page, since it plays 1.8 s after a load, right when a sheet or order window may be flying)
+    "@keyframes cnAcPulse{0%{transform:scale(1);opacity:.85}70%{transform:scale(1.22,1.6);opacity:0}100%{transform:scale(1.22,1.6);opacity:0}}",
+    ".cnAcChip.cnAcPulse{position:relative}",
+    ".cnAcChip.cnAcPulse::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;box-shadow:0 0 0 3px rgba(169,130,63,.55);animation:cnAcPulse 1.3s ease-out 1}",
     "@keyframes cnAcSettle{0%{transform:scale(.9)}55%{transform:scale(1.06)}100%{transform:scale(1)}}",
     ".cnAcChip.cnAcSettle{animation:cnAcSettle .4s ease-out 1}",
-    "@media (prefers-reduced-motion:reduce){.cnAcChip.cnAcPulse{animation:none;box-shadow:0 0 0 3px var(--goldLine,#e3d3a6)}.cnAcChip.cnAcSettle{animation:none}.cnAcPanel{animation:none!important}.cnAcSpin{animation-duration:1.8s!important}}",
+    "@media (prefers-reduced-motion:reduce){.cnAcChip.cnAcPulse{animation:none;box-shadow:0 0 0 3px var(--goldLine,#e3d3a6)}.cnAcChip.cnAcPulse::after{animation:none;display:none}.cnAcChip.cnAcSettle{animation:none}.cnAcPanel{animation:none!important}.cnAcSpin{animation-duration:1.8s!important}}",
     // the panel
     ".cnAcPanel{position:fixed;z-index:2147482000;box-sizing:border-box;width:min(364px,calc(100vw - 16px));max-height:calc(100vh - 24px);overflow:auto;overscroll-behavior:contain;padding:16px;background:var(--card,#fffefb);color:var(--ink,#1c1a17);border:1px solid var(--line,#e4ddd0);border-radius:16px;box-shadow:0 18px 48px rgba(20,16,10,.22);font:14px/1.4 var(--sans,system-ui,sans-serif);animation:cnAcIn .14s ease-out}",
     "@keyframes cnAcIn{from{opacity:0;transform:translateY(-4px)}}@keyframes cnAcUp{from{opacity:0;transform:translateY(14px)}}",

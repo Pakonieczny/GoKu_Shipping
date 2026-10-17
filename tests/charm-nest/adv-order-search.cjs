@@ -157,7 +157,9 @@ async function main() {
         console.log('    self:', [...self].sort((a, b) => b[1] - a[1]).slice(0, 14).map(([k, v]) => `${k} ${(v / 1000).toFixed(1)}ms`).join(' | '));
         console.log('    incl:', [...incl].sort((a, b) => b[1] - a[1]).filter(([k]) => /\.js|\.html/.test(k)).slice(0, 22).map(([k, v]) => `${k} ${(v / 1000).toFixed(1)}ms`).join(' | '));
       }
-      assert(clips.some(c => /inset/.test(c) && !/inset\(0px/.test(c)) && new Set(clips).size >= 3, 'the order view is seen growing out of the card: ' + JSON.stringify(clips));
+      // (the view flies top left on top left of the card and its clip is anchored there (charm-nest-bridge.js growIn: inset(0 right bottom 0)), so the TOP inset is always 0 and the right/bottom insets shrink to nothing; "growing" = some clip mid-way that cuts more than a pixel off a side)
+      const cuts = c => { const m = /inset\(([^)]*?)(?:\s+round[^)]*)?\)/.exec(c); return !!m && m[1].split(/\s+/).some(v => parseFloat(v) > 1); };
+      assert(clips.some(cuts) && new Set(clips).size >= 3, 'the order view is seen growing out of the card: ' + JSON.stringify(clips));
       assert.equal(await page.evaluate(() => OrderSearch.isOpen()), false, 'the search gave way to the view');
       assert.equal(await page.evaluate(() => document.querySelectorAll('dialog[open]').length), 1, 'one window');
       console.log('    frames · open ' + JSON.stringify(openS) + ' · typing ' + JSON.stringify(typeS) + ' · order view ' + JSON.stringify(growS));
