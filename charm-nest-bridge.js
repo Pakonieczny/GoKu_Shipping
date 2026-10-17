@@ -4467,8 +4467,15 @@ const Gate = window.Gate = (() => {
      incorrectly takes all sheets even the ones that are partial ... each sheet should have to be toggled independently").
      The switch was the metal's: ticked on Sheet 1, it took the partial Sheet 2 with it. A sheet ticked before, when the
      tick was the metal's, keeps it until a sheet of its metal is ticked on its own (changeMembership hands it over). */
-  const picked = (sh, choices = selected()) => typeof sh.solidPick === "boolean" ? sh.solidPick : choices[sh.metal] === true;
+  /* (SETFIX, Paul 17 Oct 2026) Rose Gold joins a set a sheet at a time too, exactly like 10K and 14K: its OWN yes (the Include switch or the Cut Sheet press on that sheet, solidPick) is the only
+     tick. The run-wide Rose Gold tick (run.solidIncluded.rose, one press for every Rose Gold sheet of the run, and the former "even-numbered set" rule) brought every uncut, half-empty Rose Gold
+     sheet of the run into a set that had already formed: it is not read any more. A Rose Gold sheet that has no tick of its own is "picked" only while it is in a set (so a reload, or a run saved
+     under the old rule, never throws a sheet out of its set). */
+  const goldFamily = m => m === "rose" || solid(m);   // the metals with a green line that join a set by their own conditions (R12): Rose Gold, 10K, 14K
   const inSetNow = sh => !!sh.setId && !sh.draft;   // the sheet's real place: a set it is in (a draft is in none)
+  const picked = (sh, choices = selected()) => typeof sh.solidPick === "boolean" ? sh.solidPick : sh.metal === "rose" ? inSetNow(sh) : choices[sh.metal] === true;
+  /** A recorded green-line cut keeps a sheet in the set it is in (charm-nest-shared-orders.js fixedWhy; SetEdit sheetCut): a 10K or 14K sheet the cardinal rule pulled in and that was then cut stays, though nobody ticked it. */
+  const staysCut = sh => goldFamily(sh.metal) && !!sh.roseCutAt && inSetNow(sh) && sh.solidPick !== false;
   // (the run still arranges a metal's sheets once one of them is in, as it did once the metal was: only the set is per sheet)
   const anyPicked = (m, choices = selected(), runId = B.run?.runId) => choices[m] === true || allSheets().some(p => p.metal === m && p.solidPick === true && (!runId || !p.runId || p.runId === runId));
   const nestable = (sh, run) => !modern(run?.runId) || !solid(sh.metal) || anyPicked(sh.metal, run?.solidIncluded || selected(), run?.runId) || sh.isolated;
@@ -4522,8 +4529,9 @@ const Gate = window.Gate = (() => {
   function basePolicy(sh, seq, choices = selected()) {
     // a sheet a person took out of its committed set (the In current set switch, or the Library) stays out of every other set until it is put back: the run never pulls it in by itself
     if (sh.leftSet && !inSetNow(sh)) return { include: false, reason: "Taken out of its set" };
+    if (sh.roseCutAt && staysCut(sh)) return { include: true, reason: "Cut · stays in its set" };
     return O_.sheetRelease({ material: sh.metal, verified: !!sh.verification?.ok, placed: sh.placements.length,
-      stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: solid(sh.metal) ? Object.assign({}, choices, { [sh.metal]: picked(sh, choices) }) : choices });
+      stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: solid(sh.metal) ? Object.assign({}, choices, { [sh.metal]: picked(sh, choices) }) : sh.metal === "rose" ? Object.assign({}, choices, { rose: picked(sh, choices) ? true : undefined }) : choices });
   }
   async function upgrade(run) {
     if (!run || run.releasePolicy === 2) return;
@@ -4561,9 +4569,32 @@ const Gate = window.Gate = (() => {
     for (const p of allSheets().filter(p => p.runId === run.runId)) { const n = SO.fromPage(p); if (n) { sheets.push(n); page.set(n.id, p); idOf.set(p, n.id); } }
     return { SO, sheets, page, idOf, norm: new Map(sheets.map(n => [n.id, n])) };
   }
+  /* R12 (Paul, 12 Oct; docs/charm-nest/set-rules.md): a Rose Gold, 10K or 14K sheet joins a set only with exactly two conditions: (a) its green line is cut (or the person says yes at the Cut Sheet
+     press / Include, which is the sheet's own tick, solidPick) and (b) its back engraving is approved. (b) is SetEdit.engravingGap over the sheet's readiness report, the one rule the Library's drop
+     and the server read; where nothing says (no report on this page) a sheet is never refused for it, as everywhere else. One readiness read per assembly (backsMemo). */
+  let backsMemo = null;
+  function backsOf(p) {
+    try {
+      const RD = window.CharmNestReadiness, SE = window.SetEdit;
+      if (!RD || !SE || typeof RD.sheet !== "function" || typeof RD.decisions !== "function" || typeof SE.engravingGap !== "function") return null;
+      if (!backsMemo) {
+        const dec = RD.decisions(Orders.rows()), physical = allSheets().map(pg => ({ ...pg, roseStockId: pg.roseStock?.id, id: pg.sheetId, poolIds: (pg.placements || []).map(x => (pg.charms.find(c => c.id === x.id) || {}).poolId).filter(Boolean), placedCount: pg.placements.length, outputs: pg.cloud || {}, engraving: dec }));
+        backsMemo = { physical, orderReadiness: typeof RD.orderReports === "function" ? RD.orderReports(Orders.rows(), physical) : {} };
+      }
+      const row = backsMemo.physical.find(x => x.id === p.sheetId); if (!row) return null;
+      const g = SE.engravingGap({ id: p.sheetId, metal: p.metal, laser: RD.sheet({ ...row, orderReadiness: backsMemo.orderReadiness }) }, {});
+      return g ? { ok: false, line: String(g.label || "its back engraving is not approved").replace(/^[^:]*: /, "its ") } : { ok: true };
+    } catch (_) { return null; }
+  }
+  /** Why a Rose Gold / 10K / 14K sheet cannot join a set by the order rule (the cardinal pull); "" when it can. The sheet's own tick is the person's yes and never asks this. */
+  function goldGap(p) {
+    if (!goldFamily(p.metal)) return "";
+    if (!(p.roseCutAt || +p.laserDoneAt > 0)) return p.metal === "rose" ? "a Rose Gold sheet joins a set only by its own Cut Sheet press" : `a ${labelOf(p.metal)} sheet joins a set only by its own Include or Cut Sheet press`;
+    const b = backsOf(p); return b && !b.ok ? b.line : "";
+  }
   /** Why a sheet cannot join a set now, in plain words ("" when it can). `ready` = the run's sheets with saved files. */
   function cannotJoin(p, ready) {
-    if (p.metal === "rose") return "a Rose Gold sheet joins a set only by its own Cut Sheet press";
+    const gold = goldGap(p); if (gold) return gold;
     if (p.endedBy === "stopped") return "its nesting was stopped";
     if (p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone)) return "it is still being nested or saved";
     if (!(p.placements || []).length) return "nothing is placed on it";
@@ -4578,21 +4609,38 @@ const Gate = window.Gate = (() => {
   const closedSet = set => !!set && !!window.CharmNestSetRules && window.CharmNestSetRules.closed(membersOfSet(set));
   /** The set the run's next completed sheets join on their own: its newest open set while that has not formed; none when there is no open set or the newest has formed (a new set forms then). */
   function collectingOf(runId) { const open = openSetsOf(runId), last = open[open.length - 1]; return last && !closedSet(last) ? last : null; }
-  /** The run's newest open set, formed or not: the set a 10K, 14K or Rose Gold sheet is ticked into, and the one whose number Rose Gold's even-numbered rule reads. */
+  /** The run's newest open set, formed or not: the set a 10K, 14K or Rose Gold sheet is ticked into. (SETFIX: no rule reads its number any more; the former even-numbered rule for Rose Gold is gone.) */
   const newestOpenOf = runId => { const open = openSetsOf(runId); return open[open.length - 1] || null; };
   /** Marks the run's pages (p.cardinalPull / p.cardinalHold / p.cardinalNote / p.cardinalHome) from the live pages: assembleNow and validateRelease. `sets`: the run's open sets (one set is read as a list of one).
    *  Paul, 12 Oct: a partner sheet that cannot join yet (Rose Gold before its Cut Sheet press, a sheet still being saved) no longer holds the whole group out. The sheets that can join go in,
    *  each sheet of the group says plainly which partner to add ("orders shared with RG Draft 1: add that sheet to this set"), and the set cannot be approved until that sheet is in it
    *  (charm-nest-set-rules.js gate, Sets.validateRelease, the server's completion). cardinalHome: the open set that already holds a sheet of the group: the group's other sheets join THAT set,
    *  closed or not. A group already spread over two open sets is left as it is (never moved) and nothing joins a set because of it. */
+  /** (SETFIX, Paul 17 Oct 2026) The groups of sheets a set is formed from: charm-nest-shared-orders.js formation over the run's pages, a partial GF/SS sheet outside every set kept as an END node
+   *  (it holds the groups it touches whole; it never chains two groups together and never seeds the set they join), SetRules.PARTIAL_BRIDGE saying what a partial sheet with orders on several groups does. */
+  function formationOf(V) {
+    const SRp = window.CharmNestSetRules, core = V.SO.core;
+    const ends = SRp && SRp.isPartial ? V.sheets.filter(n => { const p = V.page.get(n.id); return p && SRp.isPartial(p) && !inSetNow(p); }).map(n => n.id) : [];
+    return Object.assign(core.formation ? core.formation(V.sheets, ends, SRp && SRp.PARTIAL_BRIDGE) : { groups: core.groups(V.sheets), bridges: [] }, { endIds: new Set(ends) });
+  }
   function cardinalApply(run, pages, sets, choices = selected()) {
     for (const p of allSheets().filter(p => p.runId === run.runId)) { delete p.cardinalPull; delete p.cardinalHold; delete p.cardinalNote; delete p.cardinalHome; }
+    backsMemo = null;
     const V = cardinalView(run); if (!V) return [];
     const open = (Array.isArray(sets) ? sets : sets ? [sets] : []).filter(Boolean), last = open[open.length - 1] || null, collecting = last && !closedSet(last) ? last : null;
     const ready = new Set(pages), homeOf = p => (p.setId && !p.draft && open.find(s => s.setId === p.setId)) || null;
-    const out = [];
-    for (const g of V.SO.core.groups(V.sheets)) {
-      const members = g.ids.map(id => V.page.get(id)).filter(Boolean), orders = g.orders, fixed = g.ids.filter(id => V.norm.get(id).fixed), tell = tellOf(V, g.ids);
+    const out = [], F = formationOf(V);
+    // (SetRules.PARTIAL_BRIDGE 'spread': a partial sheet with orders on several groups holds none of them; it and its mixed orders are flagged for a person to take off)
+    for (const b of F.bridges) {
+      const p = V.page.get(b.id); if (!p) continue;
+      p.cardinalNote = `${ordersWords(b.orders)} ${b.orders.length === 1 ? "is" : "are"} on ${sheetNameOf(p)} and on sheets of ${b.groups.length} different groups (${b.groups.map(ids => ids.map(id => sheetNameOf(V.page.get(id))).join(", ")).join("; ")}): each group is settled on its own, take ${b.orders.length === 1 ? "that order" : "those orders"} off a sheet so that no order is spread over two sets`;
+      out.push({ ids: [b.id, ...b.groups.flat()], orders: b.orders, state: "bridge", why: p.cardinalNote });
+    }
+    for (const g of F.groups) {
+      // (SETFIX) a sheet whose green line is cut and that is in one of the run's OPEN sets is fixed in that set, but it does not stop its group from joining the set: the set is still being made, so the
+      //  group's other sheets (a second Rose Gold sheet cut later, a partner that was still being saved) belong in it all the same. Only a sheet cut by the laser, or in a set sent to the station, does.
+      const openCut = p => !!p && !!p.roseCutAt && !(+p.laserDoneAt > 0) && !!homeOf(p);
+      const members = g.ids.map(id => V.page.get(id)).filter(Boolean), orders = g.orders, fixed = g.ids.filter(id => V.norm.get(id).fixed && !openCut(V.page.get(id))), tell = tellOf(V, g.ids);
       if (fixed.length) {
         // a sheet of the group is cut, or in a set already sent to the station: the others can never be in its set. Nothing is held back
         // for it (the work goes on); each sheet that is not fixed says so, with the exact reason.
@@ -4602,7 +4650,7 @@ const Gate = window.Gate = (() => {
         continue;
       }
       const homes = [...new Set(members.map(homeOf).filter(Boolean))], home = homes.length === 1 ? homes[0] : null;
-      // (the set number Rose Gold's even-numbered rule reads: the group's own set; else the set that is forming; none yet = no guess, so a set number is never taken for a sheet that then cannot join)
+      // (the set number the group is read against: the group's own set; else the set that is forming; none yet = no guess)
       const seq = home ? home.seq : collecting ? collecting.seq : 0, wants = p => basePolicy(p, seq, choices).include, inHome = p => !!home && homeOf(p) === home;
       // (Paul, 13 Oct) a PARTIAL GF or SS sheet (not fully nested: charm-nest-set-rules.js isPartial) outside every open set never joins a set, not even as a partner the cardinal rule would pull:
       // it is "stuck" until it is full. One already in an open set (made before this rule) is left exactly as it is.
@@ -4663,12 +4711,73 @@ const Gate = window.Gate = (() => {
     const ids = V.sheets.filter(n => n.setId === set.setId).map(n => n.id);
     return V.SO.core.between(V.sheets, ids, set.setId).filter(it => it.thereIds.some(i => !V.norm.get(i).fixed));
   }
-  let assemblyQueue = Promise.resolve(), completionClock = 0;
+  let assemblyQueue = Promise.resolve(), completionClock = 0, joinClock = 0;
+  /** One strictly increasing millisecond tick per look at a set (joinedAt on the sheets that join it, formedAt on the set when it first holds a valid minimum: charm-nest-set-invariants.js rule R6 reads them). */
+  const joinTick = () => (joinClock = Math.max(Date.now(), joinClock + 1));
+  /** What a sheet that joins a set writes of its own tick: Rose Gold only ever true or nothing (a false mark on a Rose Gold record would read as "not in its set" to everything that joins it from the Library);
+   *  10K and 14K as ever (true: its own tick · null: the cardinal rule pulled it in · false: neither). */
+  const solidMark = (sh, choices) => sh.metal === "rose" ? (sh.solidPick === true ? true : null) : solid(sh.metal) ? (picked(sh, choices) ? true : sh.cardinalPull ? null : false) : null;
   function assemble(run, context) {
     const ops = window.CharmNestOperations;
     if (ops && !context) return ops.run({key:'membership:'+run?.runId, label:'Updating set membership', resources:['production:'+run?.runId], latest:true, priority:10}, token=>assemble(run,token));
-    const task = assemblyQueue.catch(() => {}).then(() => assembleNow(run, context)).finally(() => { refreshAllCards(); });
+    const task = assemblyQueue.catch(() => {}).then(() => assembleNow(run, context)).then(r => { selfCheck(run); return r; }).finally(() => { refreshAllCards(); });
     assemblyQueue = task; return task;
+  }
+  /* ── THE SELF-CHECK (SETFIX, Paul 17 Oct 2026) ───────────────────────────────────────────────────────────────────────────────────────────────────────
+     "Set 2 was formed incorrectly ... I want you to fix it once and for all." After every assembly the run's open sets are read by charm-nest-set-invariants.js (the owner's rules, docs/charm-nest/set-rules.md,
+     one rule per violation), NON-BLOCKING: it never throws, never changes a sheet and never stops an assembly; a violation is written ONCE to the agent log (again only when the list changes) and kept for
+     Gate.violations(run), which the Library shows (and offers to rebuild the set from). A partial sheet that appears after a set formed is not a violation here (opts.partialPartners 'pending': the set names
+     it and waits for it, set.cardinalWait); formation itself never builds a set around one. A committed or completed set is never judged (skipExempt). */
+  const checks = new Map();
+  /** The run's sets and sheets as the checker reads them, and the options; null when it cannot be read (no checker or no shared-orders page side loaded). */
+  function invariantInput(run) {
+    const SO = SOrd(), SRp = window.CharmNestSetRules; if (!SO || !SRp || !run) return null;
+    backsMemo = null;
+    const keyOf = p => p.sheetId || `${p.runId || "run"}:${p.metal}:${p.page || 1}`;
+    const recs = [];
+    for (const p of allSheets().filter(p => p.runId === run.runId && !p.recalled)) {
+      const n = SO.fromPage(p); if (!n) continue;
+      // a completed GF/SS sheet outside every set that cannot join yet (still being saved or verified, or a person took it out) is not a fault of the assembly: it is left out until it is ready
+      if (!inSetNow(p) && SRp.isCompleted(p) && !goldFamily(p.metal) && (p.leftSet || !p.outputs || !p.persistedDone || basePolicy(p, 0).reason === "Nest and verify first")) continue;
+      const gold = goldFamily(p.metal), b = gold && (p.roseCutAt || +p.laserDoneAt > 0) ? backsOf(p) : null;
+      recs.push({ id: n.id, metal: p.metal, runId: p.runId, page: p.page, sheetIndex: p.sheetIndex, draft: !!p.draft, setId: p.setId || null, releaseFull: !!p.releaseFull, laserDoneAt: p.laserDoneAt, roseCutAt: p.roseCutAt,
+        density: p.density, placedCount: (p.placements || []).length, releasedAt: p.releasedAt, joinedAt: p.joinedAt, ...(p.joinedBy ? { joinedBy: p.joinedBy } : {}), pieces: n.pieces,
+        ...(gold ? { cutApproved: p.solidPick === true, ...(b ? { backsApproved: !!b.ok } : {}) } : {}) });
+    }
+    const ids = new Set(recs.map(r => r.id)), sets = [];
+    for (const set of Sets.ofRun(run.runId)) {
+      if (/^superseded/.test(String(set.status || ""))) continue;
+      const mine = allSheets().filter(p => p.runId === run.runId && p.setId === set.setId && !p.draft && !p.recalled).map(keyOf);
+      sets.push({ id: set.setId, name: set.name || `Set ${set.seq}`, seq: set.seq, formedAt: set.formedAt, committedAt: set.committedAt, status: set.status, laserDoneAt: set.laserDoneAt,
+        sheetIds: [...new Set(mine.concat(set.committedAt ? (set.sheetIds || []).filter(i => ids.has(i)) : []))] });
+    }
+    return { sets, sheets: recs, opts: { skipExempt: true, partialPartners: "pending" } };
+  }
+  /** The checker's whole answer for the run's sets now: { ok, violations, partners, warnings, sets, notes, lines }; null when it cannot be read. Pure: no sheet is touched. */
+  function selfCheckResult(run) {
+    const I = window.CharmNestSetInvariants; if (!I || typeof I.check !== "function") return null;
+    try {
+      const input = invariantInput(run); if (!input) return null;
+      const res = I.check(input.sets, input.sheets, input.opts);
+      return Object.assign({}, res, { lines: I.explain(res) });
+    } catch (e) { console.warn("[Gate.selfCheck]", e); return null; }
+  }
+  /** The checker's violations for the run's open (uncommitted) sets, [] when none: { rule, ruleNo, letter?, set, setName, sheets, names, message, ... } (charm-nest-set-invariants.js). The Library shows them and offers the rebuild. */
+  function violations(run) {
+    const r = run || B.run; if (!r) return [];
+    const res = selfCheckResult(r);
+    return res ? res.violations.map(v => Object.assign({}, v)) : [];
+  }
+  /** After an assembly: the check, and ONE agent-log warning when the list of violations changed. Never throws, never blocks. */
+  function selfCheck(run) {
+    try {
+      if (!run || !modern(run.runId)) return null;
+      const res = selfCheckResult(run); if (!res) return null;
+      const key = res.violations.map(v => v.id).sort().join("|"), was = checks.get(run.runId);
+      checks.set(run.runId, key);
+      if (res.violations.length && key !== was && typeof agent === "function") agent({ run: run.runId }, "warn", `Set check: ${res.violations.length} rule${res.violations.length === 1 ? "" : "s"} of a Set of Sheets broken · ${res.lines.join(" · ")}`);
+      return res;
+    } catch (e) { try { console.warn("[Gate.selfCheck]", e); } catch (_) { /* never blocks */ } return null; }
   }
   async function assembleNow(run, context) {
     const choices = Object.assign({}, selected());
@@ -4677,31 +4786,35 @@ const Gate = window.Gate = (() => {
     const committedSheets = new Set(Sets.ofRun(run.runId).filter(s => s.committedAt).flatMap(s => s.sheetIds));
     const pages = allSheets().filter(p => p.runId === run.runId && p.outputs && p.persistedDone && !committedSheets.has(p.sheetId));
     const SR = window.CharmNestSetRules;
+    // (SETFIX, Paul 17 Oct 2026) without the set rules no set is formed, and it is said loudly: the former fallback here put EVERY sheet that wanted in into one set ("every sheet that wants in
+    //  joins the run's open set"), which is exactly the set Paul found with 14 sheets in it. A page that cannot read charm-nest-set-rules.js must not guess.
+    if (!SR) { const why = "The set rules did not load (charm-nest-set-rules.js), so no set is formed and no sheet is moved. Reload the page."; try { if (typeof agent === "function") agent({ run: run.runId }, "warn", why); } catch (_) { /* the error below says it */ } throw new Error(why); }
     let open = openSetsOf(run.runId);
     /* Paul, 10 Oct: "In order for a Set of Sheets to be allowed to exist there must be at minimum 1 Completed GF Sheet and 1 Completed SS Sheet."
        Paul, 12 Oct: "as soon as the minimum criteria is met, and none of the other stipulations are conflicting, the set should be formed and as a result all following sheets
        should go into a following new set." (charm-nest-set-rules.js form/closed, the one definition; the server and the Library read the same.) The free sheets (full, in no set,
        and the partners the cardinal rule pulls with them) form a set the moment they hold a completed GF and a completed SS sheet; the newest open set takes them only while it
-       has not formed (a set that has formed is closed to automatic joining), otherwise they form the NEXT set. 10K, 14K and Rose Gold join by their own rules (Include, Cut Sheet,
-       an even-numbered set) and never start a set. A sheet that cannot go in waits outside any set with the reason on its card (p.setWait: derived, never saved, like the cardinal
+       has not formed (a set that has formed is closed to automatic joining), otherwise they form the NEXT set. 10K, 14K and Rose Gold join by their own rules (SETFIX: their own Include or Cut Sheet press, or the cardinal rule once green line and back engraving allow it, R12;
+       never an even-numbered set, never the whole metal at once) and never start or complete a set. A sheet that cannot go in waits outside any set with the reason on its card (p.setWait: derived, never saved, like the cardinal
        marks); a partial sheet never makes a set on its own. Back engraving is no part of any of this: it only decides when a set may go to the laser.
        Paul, 15 Oct: "a set of sheets requires at least one GF and one SS sheet at the minimum and when this threshold is met then that becomes an individual Set of sheets ... how is it that
        this one set has 4 GF and 2 SS sheets. This should be literally impossible". Sheets that were completed together (a stream's end, a reload, a slow cloud, GF sheets that waited for
        the first SS) used to ALL join the one set the batch made. Now ONE set forms per round, from the fewest units (sheets that share an order are one unit) that make it valid
        (charm-nest-set-rules.js form/formAll), is tended and saved, and the round runs again for what is left: the next set is numbered after this one holds its sheets (Sets.ensure, follow). */
     // the moment a sheet was first seen completed orders the sets (releasedAt, one tick per look so that two looks never tie); a sheet that is filling again loses it
-    if (SR) { const seen = pages.filter(p => !p.releasedAt && SR.isCompleted(p)); if (seen.length) { completionClock = Math.max(Date.now(), completionClock + 1); for (const p of seen) p.releasedAt = completionClock; } for (const p of pages) if (p.releasedAt && !SR.isCompleted(p)) delete p.releasedAt; }
+    { const seen = pages.filter(p => !p.releasedAt && SR.isCompleted(p)); if (seen.length) { completionClock = Math.max(Date.now(), completionClock + 1); for (const p of seen) p.releasedAt = completionClock; } for (const p of pages) if (p.releasedAt && !SR.isCompleted(p)) delete p.releasedAt; }
     const inOpen = p => !!p.setId && !p.draft && open.some(s => s.setId === p.setId), adder = p => p.metal === "rose" || solid(p.metal);
     // a person's drop of a sheet on one of the run's open sets (the Library, charm-nest-sheetwin.js joinSet sets p.handSet for this assembly only): that set takes it, formed or not
     const handOf = p => (p.handSet && !p.cardinalHome && !adder(p) && open.some(s => s.setId === p.handSet && !s.committedAt)) ? p.handSet : null;
     for (let round = 0; ; round++) {
     cardinalApply(run, pages, open, choices);   // (sheets that share a multi-piece order come in together; a partner that cannot join yet is named, never waited for)
     for (const p of allSheets()) if (p.runId === run.runId) delete p.setWait;
-    const last = open[open.length - 1] || null, lastClosed = !!last && !!SR && SR.closed(membersOfSet(last));
+    const last = open[open.length - 1] || null, lastClosed = !!last && SR.closed(membersOfSet(last));
     let target = null, addTarget = null, formed = 0, apart = new Set(), joinNow = null;       // target: the set the free sheets join now · addTarget: the set 10K, 14K and Rose Gold may join now · formed: sheets it takes · apart: partners that wait for another set
-    if (SR) {
+    {
       const free = pages.filter(p => !inOpen(p) && !p.cardinalHome && !handOf(p) && !adder(p) && release(p, last && !lastClosed ? last.seq : 0).include);
-      const V = cardinalView(run), links = V ? V.SO.core.groups(V.sheets).map(g => g.ids.map(id => V.page.get(id)).filter(Boolean)) : [];   // (the sheets that share an order: one unit, never split between sets)
+      // (the sheets that share an order: one unit, never split between sets. SETFIX: a partial sheet outside every set is an end of its groups, it never chains two of them together: formationOf)
+      const V = cardinalView(run), links = V ? formationOf(V).groups.map(g => g.ids.map(id => V.page.get(id)).filter(Boolean)) : [];
       const f = SR.form(last ? membersOfSet(last) : [], free, !!last, last && last.name, links);
       for (const w of f.wait) w.sheet.setWait = w.why;
       if (f.where === "last") target = last;
@@ -4714,16 +4827,10 @@ const Gate = window.Gate = (() => {
       if (!addTarget && adders.length) for (const w of SR.settle(last ? membersOfSet(last) : [], adders).wait) w.sheet.setWait = w.why;
       // a Rose Gold, 10K or 14K sheet the cardinal rule pulls goes with its partners' set: while a free partner waits for a later set, it waits too
       const joining = new Set(f.join || []);
-      for (const a of adders) if ((links.find(g => g.includes(a)) || []).some(q => q !== a && !adder(q) && free.includes(q) && !joining.has(q))) apart.add(a);
-    } else {
-      // (a page without the set rules: every sheet that wants in joins the run's open set, as it did before)
-      const regular = pages.filter(p => !inOpen(p) && p.metal !== "rose" && release(p, 2).include), roses = pages.filter(p => !inOpen(p) && p.metal === "rose" && release(p, 2).include);
-      target = last || (regular.length || roses.length ? await Sets.ensure(run.runId, "dispatch", { roseOnly: !regular.length && choices.rose !== true }) : null);
-      addTarget = target;
-      if (target) open = openSetsOf(run.runId);
+      for (const a of adders) if (links.filter(g => g.includes(a)).some(g => g.some(q => q !== a && !adder(q) && free.includes(q) && !joining.has(q)))) apart.add(a);
     }
     if (!open.length) { run.heldSheets = pages.length; return; }
-    cardinalApply(run, pages, open, choices);   // (again with the sets' own numbers: Rose Gold's even-numbered rule reads them)
+    cardinalApply(run, pages, open, choices);   // (again, now that the sets are numbered and tended)
     // a sheet of the run joins this set when it is the set's own (the cardinal rule: a mate is in it already), or when it is a free sheet the set takes now
     const admits = (sh, set) => sh.cardinalHome ? sh.cardinalHome === set.setId : handOf(sh) ? handOf(sh) === set.setId : adder(sh) ? !apart.has(sh) && !!addTarget && addTarget.setId === set.setId : !!target && target.setId === set.setId && (!joinNow || joinNow.has(sh));      // (only the sheets this round's set takes: the rest wait for the next round's)
     for (const set of open) {
@@ -4733,7 +4840,7 @@ const Gate = window.Gate = (() => {
       // (a set that formed earlier and nothing changed in is not saved again at every look)
       if (forming || membersOfSet(set).length !== wasThere || set.sheetIds.length !== kept || set.touched) { delete set.touched; await Sets.save(set); }
     }
-    if (!SR || !formed || ![...joinNow].some(p => p.setId && !p.draft) || round > pages.length) break;      // (a set was made or completed: the sheets left over may make the next one)
+    if (!formed || ![...joinNow].some(p => p.setId && !p.draft) || round > pages.length) break;      // (a set was made or completed: the sheets left over may make the next one)
     }
     for (const p of pages) delete p.handSet;      // (a drop is read by one assembly)
     run.heldSheets = pages.filter(p => p.draft).length;
@@ -4742,6 +4849,8 @@ const Gate = window.Gate = (() => {
   }
   /** One open set of the run, kept as the rules say: a sheet that no longer qualifies goes back out, the set's lists follow, a sheet the set takes now joins with its number and QR label. */
   async function tendSet(run, set, pages, choices, release, admits) {
+    const SRt = window.CharmNestSetRules, before = joinTick(), at = joinTick();
+    if (SRt && !set.formedAt && SRt.validSet(membersOfSet(set)).ok) set.formedAt = before;      // (a set that had formed before this look, a reload: its time is not known, so it counts from now: a sheet that joins it in this look is a late joiner)
     // (a sheet being rewritten by hand in the sheet window keeps its place and gets its new label once it is written)
     for (const sh of allSheets().filter(p => p.runId === run.runId && p.setId === set.setId && !holding(p) && !release(p, set.seq).include)) {
       const previous = {draft:sh.draft,setId:sh.setId,seq:sh.seq,sheetIndex:sh.sheetIndex,label:sh.label};
@@ -4773,6 +4882,7 @@ const Gate = window.Gate = (() => {
       if (!admits(sh, set)) continue;
       const previous = { draft:sh.draft, setId:sh.setId, setDay:sh.setDay, seq:sh.seq, group:sh.group, sheetIndex:sh.sheetIndex, fileBase:sh.fileBase };
       sh.draft = false; sh.setId = set.setId; sh.setDay = set.day; sh.seq = set.seq; sh.group = "dispatch";
+      sh.joinedAt = at; if (sh.handSet === set.setId && !sh.cardinalHome) sh.joinedBy = "person"; else delete sh.joinedBy;      // (SETFIX: when it joined, and whether a person's drop put it there: the checker's closed-set rule reads both)
       // after the highest number in use, and after any number that was ever in use in this set (set.sheetNos): a sheet that left the set must not leave its number to be taken twice.
       // A sheet coming back to the set it left takes its own number again when it is free; its page in the run is never its number (charm-nest-sheet-name.js)
       if (window.CharmNestSheetName) {
@@ -4786,7 +4896,7 @@ const Gate = window.Gate = (() => {
       // Membership changes reuse verified artwork and approved backs. Only the
       // manifest metadata and QR need saving; never re-render/re-upload the AI.
       try {
-        await api("charmNestLibrary", {op:"putSheet", sheet:{id:sh.sheetId,draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:sh.sheetIndex,fileBase:sh.fileBase,folder:sh.fileBase,solidIncluded:solid(sh.metal) ? (picked(sh, choices) ? true : sh.cardinalPull ? null : false) : null}});   // (a solid sheet the cardinal rule pulled in is in without its own tick: null, so it never reloads as ticked)
+        await api("charmNestLibrary", {op:"putSheet", sheet:{id:sh.sheetId,draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:sh.sheetIndex,fileBase:sh.fileBase,folder:sh.fileBase,solidIncluded:solidMark(sh, choices)}});   // (a solid sheet the cardinal rule pulled in is in without its own tick: null, so it never reloads as ticked; Rose Gold the same, its own tick or nothing)
         await Sets.onSheetSaved(sh, sh.charms, undefined, {setOverride:set});
         if (Engrave.saveSheetBacks) await Engrave.saveSheetBacks(sh);
         sh.problem = null;
@@ -4794,6 +4904,7 @@ const Gate = window.Gate = (() => {
       RunCtl.onSheetDone(sh);
       set.touched = true;
     }
+    if (SRt && !set.formedAt && SRt.validSet(membersOfSet(set)).ok) set.formedAt = at;      // it formed in this look: from now on it is closed to automatic joining (charm-nest-set-rules.js closed)
   }
   function editable(sh) {
     // Stock dimensions are shared only by pages of this material. Independent
@@ -4831,7 +4942,7 @@ const Gate = window.Gate = (() => {
       if(row.runId!==run.runId || !solid(row.metal)) return row;
       // a sheet in a committed set (or in a set this run does not hold), and a sheet a set edit held back, is as the cloud says: added to and taken out of a committed set from the Library (Paul, 7 Oct)
       if((row.setId && !row.draft && row.solidIncluded!==false && (!own.has(row.setId) || done.has(row.setId))) || (row.laserHold && +row.laserHold.at>0))return row;
-      const live=allSheets().find(p=>p.sheetId===row.id), included=live ? picked(live) || !!live.cardinalPull : !!selected()[row.metal] && row.solidIncluded!==false;
+      const live=allSheets().find(p=>p.sheetId===row.id), included=live ? picked(live) || !!live.cardinalPull || staysCut(live) : !!selected()[row.metal] && row.solidIncluded!==false;
       return {...row,solidIncluded:included,...(!included ? {draft:true,setId:null,setSeq:null,sheetIndex:null,label:null} : set && live && policy(live,set.seq).include ? {draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:live.sheetIndex || row.sheetIndex} : {})};
     });
   }
@@ -4849,16 +4960,20 @@ const Gate = window.Gate = (() => {
     const list=(Array.isArray(sh) ? sh : [sh]).filter(Boolean);   // one sheet, or the sheets an order spans (askSplit)
     // an Include is a person's own yes: a sheet they took out of a committed set may be taken into the run's sets again (basePolicy keeps it out until now)
     if(included)for(const p of (list.length ? list : allSheets().filter(p=>p.metal===m)))delete p.leftSet;
-    if(solid(m) && list.length){
+    if(goldFamily(m) && list.length){
       // the tick is each sheet's own: every sheet of the metal first keeps the metal's tick as it stands, then only the
-      // sheets' own are read (a new sheet starts out of the set)
-      for(const mm of new Set([m, ...list.map(p=>p.metal)].filter(solid))){
-        for(const p of allSheets().filter(p=>p.metal===mm && typeof p.solidPick!=='boolean'))p.solidPick=choices[mm]===true;
+      // sheets' own are read (a new sheet starts out of the set). SETFIX (Paul 17 Oct 2026): Rose Gold too. Its metal-level tick brought every uncut Rose Gold sheet of the run into the set
+      // with the first press; what the metal's tick stood for is now only "in a set now" (the sheets that are in one keep their place), never "every sheet".
+      for(const mm of new Set([m, ...list.map(p=>p.metal)].filter(goldFamily))){
+        for(const p of allSheets().filter(p=>p.metal===mm && typeof p.solidPick!=='boolean'))p.solidPick=mm==='rose' ? inSetNow(p) : choices[mm]===true;
         choices[mm]=false;
       }
       for(const p of list)p.solidPick=!!included;
+    } else if(m==='rose') {
+      // (a Rose Gold change that names no sheet has no sheet to change: there is no run-wide Rose Gold tick any more. Callers pass the sheet: charm-nest-rose-ui.js, charm-nest-flow.js)
+      if(typeof console!=='undefined')console.warn('[Gate.changeMembership] Rose Gold is included a sheet at a time: no sheet was named, nothing changed');
     } else choices[m]=!!included;
-    if(m==='rose' && included)for(const page of allSheets().filter(p=>p.metal==='rose'&&p.persistedDone&&p.verification?.ok&&!p.roseCutAt))window.RoseStock?.plan(page).catch(e=>toast('Rose Gold contour: '+e.message,'bad'));
+    if(m==='rose' && included)for(const page of list.filter(p=>p.metal==='rose'&&p.persistedDone&&p.verification?.ok&&!p.roseCutAt))window.RoseStock?.plan(page).catch(e=>toast('Rose Gold contour: '+e.message,'bad'));
     // (10K, 14K: the sheets just put in the set take their physical sheet when they still need a line, in RoseStock.plan once they are in)
     if (run) {
       run.membershipRevision=(run.membershipRevision||0)+1;run.commitRequested=false;run.membershipDirty=true;
@@ -5012,7 +5127,7 @@ const Gate = window.Gate = (() => {
     if (!inSetNow(sh)) return;
     const was = { leftSet: sh.leftSet, draft: sh.draft, solidPick: sh.solidPick }, setId = sh.setId, undo = () => { sh.leftSet = was.leftSet; sh.draft = was.draft; sh.solidPick = was.solidPick; };
     sh.leftSet = setId; sh.draft = true;      // (draft first: basePolicy keeps a sheet out only while it is not in its set now)
-    if (solid(sh.metal)) sh.solidPick = false;   // (10K, 14K: its own tick is off, as it is for a sheet taken out of a committed set)
+    if (goldFamily(sh.metal)) sh.solidPick = false;   // (10K, 14K, Rose Gold: its own tick is off, as it is for a sheet taken out of a committed set)
     try { await assemble(run); }
     catch (e) { undo(); throw e; }
     if (sh.setId) {      // (assembleNow lets a sheet go by clearing its set)
@@ -5110,7 +5225,7 @@ const Gate = window.Gate = (() => {
     if(!(lineUp&&!lineUp.hidden))sr.textContent=R.membershipError?'Selection not saved':working||sh.setWait||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';
     if(sh.el)sh.el.querySelector(".shHead").title=policy(sh,seq).reason;   // the same hover answer the Gold and Silver cards give
     const retry=inc.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
-    retry.onclick=()=>changeMembership(m,m==='rose'?!!selected()[m]:picked(sh),sh).catch(()=>{});
+    retry.onclick=()=>changeMembership(m,picked(sh),sh).catch(()=>{});
     include.onchange=async e=>{
       const want=e.target.checked,route=includeRoute(sh,want);
       // a press the rule refuses: the switch goes back to where the truth is and says why, next to itself
@@ -5857,8 +5972,8 @@ const Gate = window.Gate = (() => {
     seat(sh, el2, "row"); el2._sheetOptionsOwner = null; el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;   // (the line takes the node's place: Options is drawn again when the current rule is back)
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
-  return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
-     splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
+  return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull || staysCut(sh) : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
+     violations, selfCheck: selfCheckResult, invariantInput, splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -11149,8 +11264,8 @@ const RunCtl = window.RunCtl = (() => {
       const prim = S.sheets[d.metal]; let pg = prim.pages.find(p => p.sheetId === d.id) || (prim.pages[0].charms.length ? addPage(d.metal) : prim.pages[0]);
       const set = d.draft ? null : bySet.get(d.setId);
       pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull; pg.laserDoneAt = +d.laserDoneAt || null; pg.intakeFinalized = !!d.intakeFinalized; pg.intakeOptimized=!!d.intakeOptimized; pg.intakeOptimizedCount=+d.intakeOptimizedCount||0; pg.missRearranged=!!d.missRearranged; pg.topup=d.topup||null;
-      if (["gold10k","gold14k"].includes(d.metal) && d.solidIncluded === true) pg.solidPick = true;   // a 10K/14K sheet's own Include tick
-      pg.leftSet = Gate.leftSetOf(d); if (pg.leftSet && ["gold10k","gold14k"].includes(d.metal)) pg.solidPick = false;   // a sheet a person took out of a committed set stays out (and can be put back by the In current set switch)
+      if (["gold10k","gold14k","rose"].includes(d.metal) && d.solidIncluded === true) pg.solidPick = true;   // a 10K/14K/Rose Gold sheet's own Include tick
+      pg.leftSet = Gate.leftSetOf(d); if (pg.leftSet && ["gold10k","gold14k","rose"].includes(d.metal)) pg.solidPick = false;   // a sheet a person took out of a committed set stays out (and can be put back by the In current set switch)
       pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
       pg.restored = true; pg.persistedDone = true;
       // a 10K/14K sheet keeps its own size after a reload (keptStock: a cut sheet an Apply size left as it was), read from

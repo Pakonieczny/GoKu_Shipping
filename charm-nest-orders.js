@@ -3862,10 +3862,11 @@
     if (!sheet.verified || !sheet.placed || sheet.stopped || sheet.dirty) return { include: false, reason: "Nest and verify first" };
     if (FAST_MATERIALS.has(sheet.material)) return sheet.full
       ? { include: true, reason: "Full sheet" } : { include: false, reason: sheet.topup ? (typeof sheet.topup === "object" ? `Filling its gaps · ${sheet.topup.tried} of ${sheet.topup.of} later orders tried` : "Topping up · later orders fill its gaps first") : "Partial · held for a later set" };
-    if (sheet.material === "rose" && typeof opts.selected?.rose === "boolean") return opts.selected.rose
-      ? {include:true,reason:"Included by you"} : {include:false,reason:"Not selected for this set"};
-    if (sheet.material === "rose") return opts.seq > 0 && opts.seq % 2 === 0
-      ? { include: true, reason: "Rose gold · even-numbered set" } : { include: false, reason: "Held for Set 2, 4, 6…" };
+    // (SETFIX, Paul 17 Oct 2026: "partial sheets being added without the green line" . The 28 Sep rule that Rose Gold joined every even-numbered set, and the run-wide Rose Gold tick that brought
+    //  every uncut sheet in with the first press, are gone: a Rose Gold sheet is in a set only by its OWN yes (the Include / Cut Sheet press on that sheet, selected.rose true for it), or because
+    //  it is ready and shares an order with a sheet of that set (the cardinal rule, charm-nest-bridge.js Gate.cardinalApply). docs/charm-nest/set-rules.md R12, conflict C7.)
+    if (sheet.material === "rose") return opts.selected?.rose === true
+      ? {include:true,reason:"Included by you"} : {include:false,reason: opts.selected?.rose === false ? "Not selected for this set" : "Joins with its own Cut Sheet press"};
     if (["gold10k", "gold14k"].includes(sheet.material)) return opts.selected?.[sheet.material] === true
       ? { include: true, reason: "Included by you" } : { include: false, reason: "Not selected for this set" };
     return { include: false, reason: "Unknown material" };

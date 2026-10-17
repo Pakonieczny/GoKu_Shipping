@@ -3,9 +3,9 @@ const R=require('../../charm-nest-rose'),S=require('../../charm-nest-solver');
 const shape=(id,x,y,w,h)=>({id,paths:[[[x,y],[x+w,y],[x+w,y+h],[x,y+h]]]});
 (async()=>{
  const O=require('../../charm-nest-orders'),verified={material:'rose',verified:true,placed:7};
- assert(O.sheetRelease(verified,{seq:1,selected:{rose:true}}).include,'explicit inclusion overrides the former even-set cadence');
+ assert(O.sheetRelease(verified,{seq:1,selected:{rose:true}}).include,'a Rose Gold sheet is in a set by its own tick, at any set number');
  assert(!O.sheetRelease(verified,{seq:2,selected:{rose:false}}).include);
- assert(O.sheetRelease(verified,{seq:2,selected:{}}).include,'existing automatic cadence remains the default');
+ assert(!O.sheetRelease(verified,{seq:2,selected:{}}).include,'no tick of its own: the number of a set (the former even-set cadence, gone with SETFIX, Paul 17 Oct 2026) brings no Rose Gold sheet in');
  assert(!O.sheetRelease({...verified,dirty:true},{seq:1,selected:{rose:true}}).include);
 
  const first=R.plan([shape('a',2,2,10,15),shape('b',2,22,16,23)],100,50,null,.2);

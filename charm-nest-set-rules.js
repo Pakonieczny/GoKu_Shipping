@@ -74,6 +74,14 @@
  *   partialLine(sheet)         -> "GF Draft 3 is not full yet (65% full)"            partialDetail: "A partial sheet never joins a set."
  *   groupWait(sheets, inSet)   -> { ok, partial:[sheet], line } the group rule: ok only when no GF/SS sheet outside a set is partial
  *
+ * A PARTIAL SHEET THAT TOUCHES SEVERAL GROUPS (SETFIX, Paul 17 Oct 2026; docs/charm-nest/set-rules.md R11): a partial GF/SS sheet outside every set is an END node of the groups of sheets that share orders:
+ *   it never connects two groups and never seeds the set they join (charm-nest-shared-orders.js formation). The groups it shares an order with wait outside any set, whole, until it is full.
+ *   What happens when it is full and has orders on SEVERAL groups is the owner's open decision, so it is ONE switch, here:
+ *     PARTIAL_BRIDGE = 'hold'    (the rule as written, DEFAULT) every group it touches waits whole until it is full, then (it is a sheet like any other) they are one group and one set
+ *     PARTIAL_BRIDGE = 'spread'  a partial sheet that touches two or more groups holds none of them: each complete group forms its own minimal set now, the partial sheet and its mixed orders are
+ *                                flagged (cardinalNote; the checker lists it as a partner, not a violation) and a person takes those orders off (SharedOrders.removeFromSheet)
+ *   Read through SetRules.PARTIAL_BRIDGE by the page's assembly (Gate), the checker (charm-nest-set-invariants.js) and the tests; set it with SetRules.PARTIAL_BRIDGE = 'spread'.
+ *
  * Pure: no cloud, no page state. window.CharmNestSetRules in pages; module.exports in node and netlify functions
  * (charmNestLibrary.js requires this file, like charm-nest-set-edit.js).
  *
@@ -199,6 +207,8 @@
      To read it the other way (a set keeps taking every following completed sheet until a person approves it, as before) set CLOSING.afterFormation to false:
      this constant and closed() are the only two places that say it. */
   const CLOSING = { afterFormation: true };
+  // (SETFIX, Paul 17 Oct 2026) the ONE switch for a partial sheet that shares orders with several complete groups: see the head of this file
+  let partialBridge = 'hold';
   /** True when a set holding `members` has formed and takes no sheet on its own any more. An empty set, or one short of a completed GF or SS, is still forming. */
   const closed = members => CLOSING.afterFormation && validSet(list(members).filter(Boolean)).ok;
 
@@ -306,5 +316,7 @@
       line: `Waiting for ${need}: a set needs at least 1 completed GF sheet and 1 completed SS sheet before it can go to laser cutting.`, have: v.have, partial: flag };
   }
 
-  return { isCompleted, metalClass, validSet, wouldStayValid, whyNotCompleted, describe, settle, gate, exempt, enforce, waitWords, form, formAll, unitsOf, surplus, closed, partnerWords, nextSetWords, isPartial, recordPartial, partialLine, partialDetail, partialWhy, fillWords, groupWait, CLOSING, CODE };
+  const api = { isCompleted, metalClass, validSet, wouldStayValid, whyNotCompleted, describe, settle, gate, exempt, enforce, waitWords, form, formAll, unitsOf, surplus, closed, partnerWords, nextSetWords, isPartial, recordPartial, partialLine, partialDetail, partialWhy, fillWords, groupWait, CLOSING, CODE };
+  Object.defineProperty(api, 'PARTIAL_BRIDGE', { enumerable: true, get: () => partialBridge, set: v => { if (v !== 'hold' && v !== 'spread') throw new Error("PARTIAL_BRIDGE is 'hold' or 'spread'"); partialBridge = v; } });
+  return api;
 });

@@ -1,14 +1,14 @@
 // Cut Sheet on a held 10K or 14K sheet puts that sheet in the current set first (Gate.cutInclude): the sheet's own Include, refused with
 // the reason when the sheet cannot go in alone. Same harness as solid-per-sheet.cjs.
 //   node tests/charm-nest/gold-cut-include.cjs
-const assert = require('node:assert/strict'), fs = require('fs'), vm = require('vm'), Ops = require('../../charm-nest-operations.js'), O = require('../../charm-nest-orders.js');
+const assert = require('node:assert/strict'), fs = require('fs'), vm = require('vm'), Ops = require('../../charm-nest-operations.js'), O = require('../../charm-nest-orders.js'), SR = require('../../charm-nest-set-rules.js');
 const source = fs.readFileSync('charm-nest-bridge.js', 'utf8'), start = source.indexOf('const Gate ='), end = source.indexOf('/* ═══ 21', start);
 const ops = Ops.create(), sets = [], saved = new Map();
 const run = { runId: 'r', releasePolicy: 2, status: 'review', step: 'engrave', solidIncluded: { gold14k: true }, errors: [] };
 const sheet = (n, metal = 'gold14k') => ({ metal, page: n, runId: 'r', sheetId: metal + '-' + n, draft: true, status: 'complete', outputs: { ai: 'a' }, persistedDone: true, verification: { ok: true }, placements: [{ id: 'c' + n }], charms: [{ id: 'c' + n, poolId: 'p' + n }] });
 const pages = [sheet(1), sheet(2)];
-const base = fs.readFileSync('tests/charm-nest/solid-per-sheet.cjs', 'utf8').split('\n').find(l => l.startsWith('const ctx='));
-const ctx = vm.runInNewContext('(function(pages,run,ops,sets,saved,O){' + base.replace('const ctx=', 'return ') + '})', {})(pages, run, ops, sets, saved, O);
+const base = [Object.assign(sheet(8, 'gold'), { releaseFull: true }), Object.assign(sheet(9, 'silver'), { releaseFull: true })];   // (SETFIX: a 10K or 14K sheet never starts a set; a completed gold and silver sheet make the set the solid sheets join)
+const ctx = vm.runInNewContext('(function(pages,run,ops,sets,saved,O,SR,base){' + fs.readFileSync('tests/charm-nest/solid-per-sheet.cjs', 'utf8').split('\n').find(l => l.startsWith('const ctx=')).replace('const ctx=', 'return ') + '})', {})(pages, run, ops, sets, saved, O, SR, base);
 vm.createContext(ctx); vm.runInContext(source.slice(start, end), ctx); const Gate = ctx.window.Gate;
 const inSet = () => pages.filter(p => !p.draft && p.setId === 'set').map(p => p.page);
 const piece = (p, id, order) => { p.charms.push({ id, poolId: 'p' + id, order }); p.placements.push({ id }); };

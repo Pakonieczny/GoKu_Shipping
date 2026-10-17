@@ -220,10 +220,18 @@ const saved=[];
   w = world([sheet('gold', 1, { pool: ['9410001_1_1', '9410002_1_1'] }), sheet('silver', 1, { pool: ['9410001_2_1', '9410003_1_1'] }), sheet('gold', 2, { pool: ['9410003_2_1', '9410004_1_1'] }), sheet('silver', 2, { pool: ['9410004_2_1', '9410005_1_1'] }), sheet('gold', 3)]);
   await w.assemble(); sets = w.sets();
   assert.deepEqual(sets.map(s => s.ids.slice().sort()), [['g1x', 'g2x', 's1x', 's2x']], 'a chain of sheets tied by shared orders is one indivisible set (the cardinal rule outranks the closing)'); assert.match(w.by('g3x').setWait, /^Waits for a completed SS sheet|has formed, so this sheet waits/);
-  // a Rose Gold or 14K sheet that shares an order with the SECOND unit goes with that unit's set (Rose Gold by its even-numbered rule), never into the first set the same look makes
+  // a Rose Gold or 14K sheet that shares an order with the SECOND unit goes with that unit's set, never into the first set the same look makes.
+  // (SETFIX, Paul 17 Oct 2026: "partial sheets being added without the green line". The old rule here, Rose Gold joins Set 2 by its even-numbered rule, put an UNCUT Rose Gold sheet into the set;
+  //  R12: it joins only once its green line is cut and its back engraving is approved. Until then the set forms WITHOUT it and names it as the partner to add.)
   w = world([sheet('gold', 1), sheet('silver', 1), sheet('gold', 2, { pool: ['9420001_1_1', '9420002_1_1'] }), sheet('silver', 2), sheet('rose', 1, { pool: ['9420001_2_1'], releaseFull: false, density: .2 })]);
   await w.assemble(); sets = w.sets();
-  assert.deepEqual(sets.map(s => s.ids.slice().sort()), [['g1x', 's1x'], ['g2x', 'r1x', 's2x']], 'Rose Gold sheet 1 shares an order with GF 2: it goes into Set 2 (even), not Set 1');
+  assert.deepEqual(sets.map(s => s.ids.slice().sort()), [['g1x', 's1x'], ['g2x', 's2x']], 'the uncut Rose Gold sheet shares an order with GF 2: Set 2 forms without it, Set 1 never takes it');
+  assert.equal(w.by('r1x').draft, true); assert(!w.by('r1x').setId, 'an uncut Rose Gold sheet is in no set'); assert(!w.by('r1x').cardinalPull, 'it is not pulled');
+  assert(/^Order 9420001 shared with RG Draft 1: add that sheet to Set-2 \(a Rose Gold sheet joins a set only by its own Cut Sheet press\)$/.test(w.by('g2x').cardinalNote), w.by('g2x').cardinalNote);
+  // its green line is cut (no back engraving is waiting): it joins ITS unit's set, Set 2, and no other
+  w.by('r1x').roseCutAt = 1760000000000; await w.assemble(); sets = w.sets();
+  assert.deepEqual(sets.map(s => s.ids.slice().sort()), [['g1x', 's1x'], ['g2x', 'r1x', 's2x']], 'cut: Rose Gold sheet 1 joins Set 2, the set of the sheet it shares an order with, not Set 1');
+  assert.equal(w.by('r1x').seq, 2); assert(!w.by('g2x').cardinalNote, 'the partner is in: nothing is named any more');
   w = world([sheet('gold', 1), sheet('silver', 1), sheet('gold', 2, { pool: ['9430001_1_1', '9430002_1_1'] }), sheet('silver', 2), sheet('gold14k', 1, { pool: ['9430001_2_1'], releaseFull: false, density: .2, solidPick: true })]);
   await w.assemble(); sets = w.sets();
   assert.deepEqual(sets.map(s => s.ids.slice().sort()), [['g1x', 's1x'], ['g2x', 'k1x', 's2x']], 'a ticked 14K sheet that shares an order with GF 2 goes with GF 2 (Set 2), not into the first set of the look');

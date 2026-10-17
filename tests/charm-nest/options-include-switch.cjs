@@ -46,7 +46,7 @@ const until = async (f, what) => { for (let n = 0; n < 600; n++) { if (f()) retu
 
     // ── the page: its Gate (renderRelease and the switch), the Options window, SetEdit (the pages follow what the server wrote), LibraryFlow (the Library's own plan and commit) ──
     const dom = new JSDOM('<div id="toasts"></div><div id="cards"></div>', { url: 'https://example.test', runScripts: 'outside-only' }), w = dom.window, doc = w.document;
-    w.IntersectionObserver = undefined; w.CharmNestOrders = O; w.CharmNestRose = R; w.confirm = () => true;
+    w.IntersectionObserver = undefined; w.CharmNestOrders = O; w.CharmNestRose = R; w.confirm = () => true; w.CharmNestSetRules = require('../../charm-nest-set-rules.js');   // (SETFIX: the run's assembly needs the set rules)
     const toasts = [], WPT = 100 / 25.4 * 72, HPT = 50 / 25.4 * 72, pages = [], opsBusy = { commit: false };
     const sayTimers = []; const realST = w.setTimeout.bind(w); w.setTimeout = (f, ms, ...a) => { if (ms === 5200) { sayTimers.push(f); return sayTimers.length; } return realST(f, ms, ...a); };   // (the line's few seconds: fired by hand)
     w.CharmNestOperations = { running: k => opsBusy.commit && k === 'commit:run-x', run: async (o, f) => f({}) };
@@ -113,16 +113,19 @@ const until = async (f, what) => { for (let n = 0; n < 600; n++) { if (f()) retu
     assert(toasts.length === 0, 'no pop-up repeats it');
     // and back in: Rose Gold joins a committed set only by its own Cut Sheet press (the Library says so), so the switch is the run's own Include for it (the first step of the Cut Sheet press)
     // (the run's own set-making, faked at its edges only: which open set it fills, and the files it writes for a sheet that joins; the Library and the server are not involved)
-    w.B.run.solidIncluded.rose = false; const memberships = [], saved8 = w.B.sets.get('set-8'); w.B.sets.delete('set-8'); const joined = [];
+    // (SETFIX, Paul 17 Oct 2026: Rose Gold never starts a set and joins by its OWN tick, this sheet only: Set 8 is open and has formed, with a completed gold and a completed silver sheet, and the Rose Gold sheet joins it)
+    w.B.run.solidIncluded.rose = false; const memberships = [], set8 = w.B.sets.get('set-8'), sheetIds8 = set8.sheetIds.slice(); const joined = [];
+    const f8 = ['gold', 'silver'].map((metal, i) => ({ metal, page: 7 + i, runId: 'run-x', sheetId: 'f8-' + metal, draft: false, setId: 'set-8', seq: 8, sheetIndex: 1, group: 'dispatch', releaseFull: true, persistedDone: true, status: 'complete', verification: { ok: true }, outputs: { ai: 'a' }, charms: [], placements: [{ id: 'f8' + i }] }));
+    pages.push(...f8); set8.sheetIds.push('f8-gold', 'f8-silver'); Object.assign(set8, { labelFiles: [], materials: [], orders: {} });   // (the fields the run keeps on a set it tends)
     w.eval(`Object.assign(Sets,{ensure:async()=>{const s={setId:'set-8',runId:'run-x',seq:8,day:'${day}',group:'dispatch',committedAt:null,sheetIds:[],labelFiles:[],materials:[],orders:{}};B.sets.set(s.setId,s);return s;},save:async()=>{},labelsReady:()=>true,
       onSheetSaved:async(sh,c,u,o)=>{const s=o.setOverride;if(!s.sheetIds.includes(sh.sheetId))s.sheetIds.push(sh.sheetId);window.__joined.push(sh.sheetId);}});
      var Pool={update:async()=>{}},Orders={rows:()=>[]},Engrave={saveSheetBacks:async()=>{}};CN.sheetFileBase=sh=>'Set-'+sh.seq+'-Sheet-'+sh.sheetIndex;RunCtl.onSheetDone=()=>{};`);
     w.__joined = joined; w.SheetEvents = { membership: (list, on) => memberships.push([list.map(p => p.sheetId), on]) };
-    await press(rg); assert(line(rg).hidden, 'a press that works says nothing'); assert.equal(rg.p.leftSet, undefined, 'a person\'s own Include lets the run take the sheet again'); assert.equal(w.B.run.solidIncluded.rose, true, 'Rose Gold is included for the run');
+    await press(rg); assert(line(rg).hidden, 'a press that works says nothing'); assert.equal(rg.p.leftSet, undefined, 'a person\'s own Include lets the run take the sheet again'); assert.equal(rg.p.solidPick, true, 'Rose Gold is included for this sheet: its own tick'); assert.equal(w.B.run.solidIncluded.rose, false, 'and never for the run (there is no run-wide Rose Gold tick any more)');
     assert.equal(rg.input.checked, true, 'the switch is on again'); assert.equal(JSON.stringify(memberships), JSON.stringify([[['rg-1'], true]]), 'the sheet\'s timeline records the Include');
     assert.equal(permanent(), permanentBefore, 'putting it back changes no seal either'); assert.equal(sheet('rg-1').flowHistory.map(h => h.type).join(), 'setLeave', 'the history keeps the move out');
-    assert.equal(rg.p.setId, 'set-8', 'the run puts it in its current set, as it does any Rose Gold sheet'); assert.equal(rg.p.draft, false); assert.deepEqual(joined, ['rg-1']); assert.equal(toasts.length, 0, 'saved without a word of complaint');
-    w.B.sets.set('set-8', saved8); pages.splice(pages.indexOf(rg.p), 1);   // (the open set goes back to the shop as it was; this page copy is done with)
+    assert.equal(rg.p.setId, 'set-8', 'the run puts it in its current set (formed, closed to automatic joining: a Rose Gold sheet joins by its own press all the same)'); assert.equal(rg.p.draft, false); assert.deepEqual(joined, ['rg-1']); assert.equal(toasts.length, 0, 'saved without a word of complaint');
+    set8.sheetIds.splice(0, set8.sheetIds.length, ...sheetIds8); for (const k of ['labelFiles', 'materials', 'orders', 'sheetNos', 'formedAt', 'touched']) delete set8[k]; for (const p of [rg.p, ...f8]) pages.splice(pages.indexOf(p), 1);   // (the open set goes back to the shop as it was; this page copy is done with)
 
     // ═══ 2. what the rule refuses: the switch stays where it is true, shakes, and says why in one short line that goes away ═══
     const only = page('only5', 'gold14k'); await refuses(only, 'Last sheet of the set. Use Undo set in the Library.', 'the last sheet of a set');

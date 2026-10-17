@@ -639,7 +639,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     if (o.dock) { try { o.dock.close(); } catch (_) { /* gone */ } }
     const lift = m.lift; m.lift = null;
     await settleBack(item, lift);
-    const yes = await CL.ask(item, c, { from: elOf(item) || home, dest: name, fromName: here ? here.name : 'In progress', what: item.kind === 'set' ? label : '', also: hit.set ? (plan.notes.find(n => /joins a set by metal/i.test(String(n))) || '') : '' });
+    const yes = await CL.ask(item, c, { from: elOf(item) || home, dest: name, fromName: here ? here.name : 'In progress', what: item.kind === 'set' ? label : '', also: hit.set ? (plan.notes.find(n => /joins a set one sheet at a time/i.test(String(n))) || '') : '' });
     if (yes === null) return { o: again(Object.assign({}, o, { plan0: raw })) };         // (no window here: the bar of the move asks, as before)
     if (!yes) { refocus(item, o); return { stop: true, result: { ok: false, plan: raw, cancelled: true } }; }
     if (hit.set) return { o: again(Object.assign({}, o, { plan0: raw, pre: plan.confirm.filter(x => own.includes(x.key)).map(x => x.key) })) };       // (the press follows the membership, in the commit)

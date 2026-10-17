@@ -23,7 +23,7 @@ Date: 2026-09-23. Scope: Etsy intake at the Design Station, the Charm Sorter's A
 4. **Nest.** Arrivals fill the gaps of the metal's open sheet without moving pieces that are already placed, because an engraved back belongs to its piece. Gold and Silver fill the earliest open sheet. Rose Gold fills the newest sheet around its saved green cut line.
 5. **Checkpoint.** Every sheet is verified: no overlaps, inside the stock, and every piece accounted for.
 6. **Engrave.** Personalized lines get their words read and fitted to the back of the piece. A person approves each engraving before its back file is written. A changed order waits in Review until a person accepts it.
-7. **Release.** A Gold or Silver sheet is released only when it is full. Full means it reached the 80% ceiling, or a whole order that would fit an empty sheet no longer fits on it: at or above the 74% target, or below it once a fresh arrangement of the whole sheet has run to the end. Rose Gold joins only even-numbered sets. Solid gold stays out unless it is selected for the run. Released sheets form one dispatch set per run, numbered per day.
+7. **Release.** A Gold or Silver sheet is released only when it is full. Full means it reached the 80% ceiling, or a whole order that would fit an empty sheet no longer fits on it: at or above the 74% target, or below it once a fresh arrangement of the whole sheet has run to the end. Rose Gold joins a set only by its own Include / Cut Sheet press, or once its green line is cut and its back engraving is approved and it shares an order with a sheet of that set (never by the number of the set: docs/charm-nest/set-rules.md R12). Solid gold stays out unless it is selected for the run. Released sheets form one dispatch set per run, numbered per day.
 8. **Labels, commit and complete.** QR labels are saved for the set. The Design Station marks the set's orders design-complete, and the set record is closed. A run that keeps taking orders after a commit puts its next full sheets into a new set with the next number.
 9. **Cut.** The sheets of a committed set go to the laser. For Rose Gold, a person records the physical cut, which greys out those charms and keeps the rest of the sheet for the next layout.
 
@@ -36,7 +36,7 @@ At the end, a script compared the outcome with the intended process:
 - every order reached the sorter exactly once;
 - each line was read as its ordered metal;
 - only full Gold and Silver sheets were released;
-- Rose Gold went only to even-numbered sets;
+- no Rose Gold, 10K or 14K sheet is in a set without its green line cut or its own press (the owner's checker, charm-nest-set-invariants.js, says so after every assembly);
 - solid gold stayed out unless it was selected;
 - set numbers never repeated;
 - no piece sat on two released sheets;
