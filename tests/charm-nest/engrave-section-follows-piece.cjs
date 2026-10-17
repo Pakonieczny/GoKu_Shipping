@@ -1,7 +1,8 @@
 // ENGSEL (engrave-prenest-1013): the order window's ENGRAVING section follows the piece that is selected (Paul, 13 Oct 2026):
 //   "In a multipiece order if I select a certain piece, then the back engraving should reflect the selected piece not the one prior ... I've selected the hummingbird earrings, but the astronaut is still showing for
 //    the engraving, which is incorrect because the astronaut is the other charm which I don't have currently selected so it should have disappeared since the earrings don't have any back engraving."
-// The section = the title + rule + the cards (#owEng) + the customer's words under them (#owEngSaid). Expected: ONE piece selected -> only that piece's cards and words; "Show all" -> every engraved piece; a selected
+// The section = the title + rule + the cards (#owEng). (It used to carry the customer's words under the cards too, #owEngSaid; NOSAID, Paul 17 Oct 2026, took that block away: here it is checked ABSENT in every state, and the words
+// follow the pick in the Overview's own "What the customer wrote" box, #owNotes.) Expected: ONE piece selected -> only that piece's cards; "Show all" -> every engraved piece; a selected
 // piece with nothing to engrave (an earring pair, a plain piece) -> no section at all (host hidden, no title, no rule, no room); the swap is in the SAME tick as the selection (no stale card, no flash, no empty gap),
 // whichever path changed the selection: a click on a row of Its pieces, the Left | Right switch of the pair, "Show all", OrderWin.selectPiece, opening the window on a piece, the Sheet tab, the keyboard.
 //
@@ -37,15 +38,14 @@ const fails = [], note = (ok, what, more) => { console.log((ok ? '  PASS ' : '  
 
 /** What the section is, read in the page: the host's state, the title and rule's box, the cards (line key, slot, faces) and the words block. */
 const SECTION = () => {
-  const host = document.getElementById('owEng'), sec = document.getElementById('owEngSec'), said = document.getElementById('owEngSaid');
+  const host = document.getElementById('owEng'), sec = document.getElementById('owEngSec'), win = document.getElementById('orderWin');
   const title = sec && sec.querySelector('.engSecHd'), cs = [...(host ? host.children : [])].filter(n => n.classList.contains('engCard'));
   const box = n => { if (!n) return null; const r = n.getBoundingClientRect(), cs2 = getComputedStyle(n); return { h: Math.round(r.height * 10) / 10, shown: cs2.display !== 'none' && cs2.visibility !== 'hidden' && r.height > 0 }; };
   return {
     hostHidden: !host || host.hidden, kids: host ? host.children.length : 0,
     titleShown: !!(title && box(title).shown), secH: sec ? Math.round(sec.getBoundingClientRect().height) : -1, secBorder: sec ? parseFloat(getComputedStyle(sec).borderTopWidth) || 0 : 0,
     cards: cs.map(c => ({ line: c.dataset.key || '', piece: c.dataset.piece || '', faces: [...c.querySelectorAll('.engFace')].map(f => f.dataset.face).join('+'), thumbs: [...c.querySelectorAll('.engThumb')].map(t => !!(t.querySelector('svg,canvas,img') || t.style.backgroundImage || t.childElementCount)).join(','), name: (c.querySelector('.engName') || {}).textContent || '' })),
-    said: said && !said.hidden ? said.innerText.replace(/\s+/g, ' ').trim() : '',
-    saidNames: said && !said.hidden ? [...said.querySelectorAll('.esName')].map(n => n.textContent.trim()) : [],
+    saidBlocks: win ? win.querySelectorAll('#owEngSaid, .engSaid, .esRow, .esName, [data-said]').length : -1,   // (NOSAID: the customer's words block under the cards: none, in any state)
     selected: window.OrderWin.selectedPiece(), side: window.OrderWin.selectedSide(),
     shownLine: (document.querySelector('#orderWin .owPcRow[aria-current=true]') || {}).dataset ? ((document.querySelector('#orderWin .owPcRow[aria-current=true]') || {}).dataset.piece || '') : '',
     pcState: (document.querySelector('#owPcSum .owPcState') || {}).textContent || ''
@@ -79,7 +79,7 @@ const settledSection = async (page, ms = 700) => { await R.settle(page, ms); ret
     note(s.cards.length === 1 + 1 + 3, 'one card for each piece: 1 + 1 + 3 discs = 5 cards (' + s.cards.length + ')');
     note(!s.cards.some(c => c.line === kEars) && !s.cards.some(c => c.line === kPlain), 'the earring pair and the plain piece have no card');
     note(s.titleShown && s.secBorder > 0 && !s.hostHidden, 'the section shows its title and rule');
-    note(/Name One/.test(s.said) && /Name Two/.test(s.said), 'the words block says what each engraved piece\'s customer wrote', s.said.slice(0, 120));
+    note(s.saidBlocks === 0, 'NOSAID: no customer-words block under the cards (the words are in the Overview\'s own "What the customer wrote" box, which follows the pick: checked below)', 'blocks ' + s.saidBlocks);
 
     const pick = key => `(k) => { const ok = OrderWin.selectPiece(k); return ok; }`;
     // ── the earring row: no section at all ──
@@ -87,9 +87,9 @@ const settledSection = async (page, ms = 700) => { await R.settle(page, ms); ret
     note(r.after.selected === kEars, 'the earring row is selected', String(r.after.selected));
     note(r.after.hostHidden && r.after.kids === 0, 'earrings selected: the engraving cards are gone in the same tick (no stale card)', 'kids ' + r.after.kids + ' hidden ' + r.after.hostHidden);
     note(!r.after.titleShown && r.after.secH <= 1 && r.after.secBorder === 0, 'earrings selected: no title, no rule, no room (section height ' + r.after.secH + ' px)', 'title ' + r.after.titleShown + ' border ' + r.after.secBorder);
-    note(r.after.said === '', 'earrings selected: no words block either', r.after.said.slice(0, 80));
+    note(r.after.saidBlocks === 0, 'earrings selected: no words block either', 'blocks ' + r.after.saidBlocks);
     s = await settledSection(page);
-    note(s.hostHidden && s.kids === 0 && !s.titleShown && s.said === '', 'earrings selected, a moment later: still no section, nothing came back');
+    note(s.hostHidden && s.kids === 0 && !s.titleShown && s.saidBlocks === 0, 'earrings selected, a moment later: still no section, nothing came back');
 
     // ── the Left | Right switch of the pair ──
     r = await sameTick(page, () => { const b = document.querySelector('#owPcSum .egEarTab[data-ear$="#L"]'); if (!b) throw new Error('no Left tab'); b.click(); });
@@ -104,21 +104,21 @@ const settledSection = async (page, ms = 700) => { await R.settle(page, ms); ret
     note(r.after.cards.length === 1 && r.after.cards[0].line === kBack && !r.after.hostHidden, 'necklace selected: its card alone, drawn in the same tick', JSON.stringify(r.after.cards.map(c => c.line.slice(-4) + ' ' + c.faces)));
     note(r.after.cards[0] && !/\bfront\b/.test(r.after.cards[0].faces) && /back/.test(r.after.cards[0].faces), 'its card has the Back only (a back-only piece)', r.after.cards[0] && r.after.cards[0].faces);
     note(r.after.titleShown && r.after.secBorder > 0, 'necklace selected: the title and rule are back');
-    note(/Name One/.test(r.after.said) && !/Name Two/.test(r.after.said), 'necklace selected: the words block is this piece\'s own', r.after.said.slice(0, 100));
+    note(r.after.saidBlocks === 0, 'necklace selected: still no words block under its card (its own words are in the Overview\'s box: checked below)', 'blocks ' + r.after.saidBlocks);
     note(r.after.cards[0] && /^[,]*true/.test(r.after.cards[0].thumbs), 'the card\'s thumbnail is already painted in the same tick (no blank flash)', r.after.cards[0] && r.after.cards[0].thumbs);
 
     // ── Show all ──
     r = await sameTick(page, () => document.querySelector('#owPcSum [data-pc-all]').click());
     note(r.after.selected === null && set(r.after.cards) === engraved && r.after.cards.length === 5, 'Show all: every engraved piece again, in the same tick (5 cards: necklace, both-faces necklace, 3 discs)', r.after.cards.length + ' ' + r.after.selected);
-    note(/Name One/.test(r.after.said) && /Name Two/.test(r.after.said), 'Show all: the words of every engraved piece');
+    note(r.after.saidBlocks === 0, 'Show all: no words block under the cards either (NOSAID: the words of every piece are no longer said under them)', 'blocks ' + r.after.saidBlocks);
     // ── the earring row, then Show all: the cards are not lost ──
     // ── a front + back necklace ──
     r = await sameTick(page, k => OrderWin.selectPiece(k), kBoth);
     note(r.after.cards.length === 1 && r.after.cards[0].line === kBoth && /front\+back/.test(r.after.cards[0].faces), 'the front + back necklace selected: its one card with both faces', JSON.stringify(r.after.cards.map(c => c.faces)));
-    note(/Name Two/.test(r.after.said) && !/Name One/.test(r.after.said), 'its words only', r.after.said.slice(0, 100));
+    note(r.after.saidBlocks === 0, 'its card has no words block under it', 'blocks ' + r.after.saidBlocks);
     // ── the plain necklace: nothing to engrave, no section ──
     r = await sameTick(page, k => OrderWin.selectPiece(k), kPlain);
-    note(r.after.hostHidden && r.after.kids === 0 && !r.after.titleShown && r.after.secH <= 1 && r.after.said === '', 'the plain necklace selected: no engraving section at all');
+    note(r.after.hostHidden && r.after.kids === 0 && !r.after.titleShown && r.after.secH <= 1 && r.after.saidBlocks === 0, 'the plain necklace selected: no engraving section at all');
     // ── the discs: the line's three disc cards, and nothing of the other pieces ──
     r = await sameTick(page, k => OrderWin.selectPiece(k), kDiscs);
     note(r.after.cards.length === 3 && r.after.cards.every(c => c.line === kDiscs), 'the three-disc necklace selected: its three disc cards and no other piece\'s', r.after.cards.map(c => c.line.slice(-5) + '/' + c.piece.slice(-3)).join(' '));

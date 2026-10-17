@@ -51,7 +51,8 @@ const WIN = () => {
   const dlg = document.getElementById('orderWin');
   return { hostHidden: !host || host.hidden, cards, rows, subs, boxShown: vis(box), label: box ? ((box.querySelector('.owPcHd .fLabel') || {}).textContent || '').trim() : '', state: box ? ((box.querySelector('.owPcState') || {}).textContent || '').trim() : '',
     sub: (document.getElementById('owSub') || {}).textContent || '', left: (document.getElementById('owEngLeft') || {}).hidden === false ? document.getElementById('owEngLeft').textContent.replace(/\s+/g, ' ').trim() : '',
-    said: (document.getElementById('owEngSaid') || {}).hidden === false ? document.getElementById('owEngSaid').innerText.replace(/\s+/g, ' ').trim() : '',
+    saidBlocks: dlg ? dlg.querySelectorAll('#owEngSaid, .engSaid, .esRow, .esName, [data-said]').length : -1,   // (NOSAID, Paul 17 Oct 2026: the customer's words are no longer drawn under the cards: none, for any piece)
+    notes: (document.getElementById('owNotes') || {}).textContent || '',   // (the Overview's own "What the customer wrote" box: where the words are)
     over: dlg ? Math.max(0, dlg.scrollWidth - dlg.clientWidth) : -1, selected: window.OrderWin.selectedPiece(), disc: window.OrderWin.selectedDisc ? window.OrderWin.selectedDisc() : null, side: window.OrderWin.selectedSide() };
 };
 const win = page => page.evaluate(`(${WIN})()`);
@@ -101,6 +102,7 @@ const jobsOf = (page, rid) => page.evaluate(rid => [...Engrave.items().values()]
     note(s.cards.length === 2 && s.cards.every(c => c.approve), 'each card has its OWN Approve button', s.cards.map(c => c.approve + '/' + c.state).join(','));
     note(s.cards.length === 2 && s.cards[0].piece !== s.cards[1].piece && s.cards.every(c => /#C[12]$/.test(c.piece)), 'the cards are two different pieces (#C1, #C2)', s.cards.map(c => c.piece.replace(/^.*#/, '#')).join(','));
     note(s.cards.length === 2 && s.cards[0].words !== '' && s.cards[0].words === s.cards[1].words, 'one text for two pieces: both cards carry the whole text (editable on their own)', s.cards.map(c => c.words).join(' || '));
+    note(s.saidBlocks === 0 && /Name One/.test(s.notes), 'NOSAID: no customer-words block under the two pieces\' cards; the words are in the Overview\'s own "What the customer wrote" box', 'blocks ' + s.saidBlocks + ' / ' + s.notes.slice(0, 60));
     if (process.env.SHOTS) await R.shot(w, 'PV-1440-window-qty2');
 
     // a pick of one piece narrows the Engraving section to it (ENGSEL), Show all brings both back

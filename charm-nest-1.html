@@ -528,18 +528,7 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 #owEng .engCard .engFaces[data-n="1"] .engTxt{-webkit-line-clamp:2}
 #owEng .engCard .engThumb{max-width:var(--engPx)}
 @container engc (max-width:325px){#owEng .engCard .engFaces[data-n="2"]{grid-template-columns:minmax(0,1fr)}}
-/* ── the customer's words stay under their card (ENGTEXT; Paul, 13 Oct 2026 04:14 UTC: "Ensure this text stays contained underneath each engraving card."). #owEngSaid (charm-nest-order-engraving.js) is the grid's next sibling
-   in the section and it used to run the whole width of the section. It is now exactly as wide as the FIRST card above it: one track, or two when that card is a front + back card (the card's own span rule above); the track is the
-   grid's own arithmetic, (section width - 10px x (tracks - 1)) / tracks, with the tracks counted by the same container queries, so its right edge is the card's right edge. It wraps inside that width (the block's
-   overflow-wrap breaks a long word or address) and a long message scrolls inside its own max-height (charm-nest-order-engraving.js), so it never runs past the card and never pushes the window. The words are the order's, said once:
-   with several cards they sit once, under the first card's column (below the last row of cards), never repeated under every card. ── */
-#owEngSec>#owEngSaid{--engN:3;--engSpan:1;box-sizing:border-box;max-width:100%;width:calc((100cqw - (var(--engN) - 1) * 10px) / var(--engN) * var(--engSpan) + (var(--engSpan) - 1) * 10px)}
-@container eng (min-width:840px){#owEngSec>#owEngSaid{--engN:4}}
-@container eng (min-width:1060px){#owEngSec>#owEngSaid{--engN:5}}
-@container eng (max-width:547px){#owEngSec>#owEngSaid{--engN:2}}
-@container eng (max-width:361px){#owEngSec>#owEngSaid{--engN:1}}
-#owEngSec:has(>#owEng>.engCard:first-of-type .engFaces[data-n="2"])>#owEngSaid{--engSpan:2}
-@container eng (max-width:361px){#owEngSec:has(>#owEng>.engCard:first-of-type .engFaces[data-n="2"])>#owEngSaid{--engSpan:1}}
+/* (NOSAID, Paul 17 Oct 2026: "Remove the personalization info from beneath the Engraving card inside the Detailed Order modal": the customer's words no longer stand under the cards, so the rules that sized that block, #owEngSaid, ENGTEXT's, are gone; the Overview's "What the customer wrote" box above the section is where the words are) */
 /* ── HDRSEAL (Paul, 16 Oct 2026, the seals on an Engraving card: "Enlarge these seals by 2x and allow them to be stamped partially on-top of the engraving card and partially beyond the perimeter/outline of the engraving card. This is how
    real Seals actually work, they connect and seal to separate pieces of paper, we are reproducing the same digital effect here."). The seals of an approved card (charm-nest-engrave-card.js draws them in the header, in .engAct > .egApproveWrap >
    .egButtonSeal, 24 px each, and Seal.fit sets --seal-fit on the row) are now 48 px and are pressed across the card's outer top-right corner: each straddles the top border (about 30 px above the card, 18 px on it, and 8 px past its right edge for the newest),

@@ -36,9 +36,9 @@ R.ORDERS.one = { rid: '4290000133', buyer: 'Name Fourteen', placed: { day: 0, h:
 const fails = [], note = (ok, what, more) => { console.log((ok ? '  PASS ' : '  FAIL ') + what + (more ? '  [' + more + ']' : '')); if (!ok) fails.push(what); };
 const SILVER = 'rgb(141, 149, 160)', GOLD = 'rgb(200, 162, 78)';
 
-/** The section as the person sees it: each card's line, title, tail (the metal word after the name, and whether it is inside the card), dot colour, Approve; the words block; the header of Its pieces. */
+/** The section as the person sees it: each card's line, title, tail (the metal word after the name, and whether it is inside the card), dot colour, Approve; the count of customer-words blocks under the cards (NOSAID, Paul 17 Oct 2026: none); the header of Its pieces. */
 const SECTION = () => {
-  const host = document.getElementById('owEng'), said = document.getElementById('owEngSaid');
+  const host = document.getElementById('owEng'), win = document.getElementById('orderWin');
   const cs = [...(host ? host.children : [])].filter(n => n.classList.contains('engCard'));
   return {
     hostHidden: !host || host.hidden,
@@ -47,7 +47,8 @@ const SECTION = () => {
       return { line: c.dataset.key || '', piece: c.dataset.piece || '', metal: c.dataset.metal || '', title: ((nm || {}).textContent || '').trim(), tail: t ? t.textContent.trim() : '', tailIn: !!t && tr.width > 0 && tr.right <= cr.right + 0.5 && tr.left >= cr.left,
         dot: d ? getComputedStyle(d).backgroundColor : '', dotMetal: d ? d.dataset.metal || '' : '', dotLabel: d ? d.getAttribute('aria-label') || '' : '', state: c.dataset.state || '', approve: !!c.querySelector('[data-e=approve]:not([disabled])'), faces: [...c.querySelectorAll('.engFace')].map(f => f.dataset.face).join('+') };
     }),
-    said: said && !said.hidden ? said.innerText.replace(/\s+/g, ' ').trim() : '',
+    saidBlocks: win ? win.querySelectorAll('#owEngSaid, .engSaid, .esRow, .esName, [data-said]').length : -1,
+    notes: (document.getElementById('owNotes') || {}).textContent || '',   // (the Overview's own "What the customer wrote" box: where the words are now)
     showing: ((document.querySelector('#owPcSum .owPcState') || {}).textContent || '').replace(/\s+/g, ' ').trim(),
     selected: window.OrderWin.selectedPiece(),
     rows: [...document.querySelectorAll('#owPcSum .owPcRow[data-piece]')].map(r => ({ key: r.dataset.piece, text: r.querySelector('.owPcName') ? r.querySelector('.owPcName').textContent.replace(/\s+/g, ' ').trim() : '', dot: getComputedStyle(r.querySelector('.dot')).backgroundColor }))
@@ -84,7 +85,7 @@ const openOn = async (page, key, opts) => {
     note(cardSS.dotLabel === 'To approve' && cardGF.dotLabel === 'To approve' && cardSS.state === 'approve', 'the state is still said by the dot\'s label ("To approve"), the Approve button and the card\'s state', cardSS.dotLabel + ' / ' + cardSS.state);
     note(s.rows.find(r => r.key === kSS).dot === cardSS.dot && s.rows.find(r => r.key === kGF).dot === cardGF.dot, 'the card\'s dot is the very colour of its row on the Its pieces list');
     note(cardSS.approve && cardGF.approve, 'each card has its own Approve');
-    note(/COMET 9427 · SS.*COMET 9427 · GF/.test(s.said), 'the customer\'s words under the two cards are headed by their metals too (the two headings differ)', s.said.slice(0, 120));
+    note(s.saidBlocks === 0, 'NOSAID: no customer-words block under the two cards (it used to be headed by their metals; the cards themselves tell the pieces apart: checked above)', 'blocks ' + s.saidBlocks);
     if (shots) await R.shot(w, 'pk-' + (process.env.PK_TAG || 'after') + '-1-show-all');
 
     // ── pick the silver piece, then the gold piece: each card alone, in the same tick ──
@@ -92,7 +93,9 @@ const openOn = async (page, key, opts) => {
     note(r.selected === kSS && r.cards.length === 1 && r.cards[0].line === kSS, 'the silver row picked: its card alone, in the same tick', r.cards.map(c => c.title).join(','));
     note(r.cards[0] && r.cards[0].title === 'COMET 9427 · SS' && r.cards[0].dot === SILVER, 'the card says SS and wears the silver dot (not the gold piece\'s card)', r.cards[0] && (r.cards[0].title + ' ' + r.cards[0].dot));
     note(/^Showing COMET 9427 · SS/.test(r.showing), 'the header says which piece is shown: "Showing COMET 9427 · SS"', r.showing);
-    note(/Name One/.test(r.said), 'the words under it are this piece\'s');
+    note(r.saidBlocks === 0, 'no customer-words block under it (NOSAID)', 'blocks ' + r.saidBlocks);
+    s = await settled(page, 500);
+    note(/Name One/.test(s.notes), 'the Overview\'s own "What the customer wrote" box holds this piece\'s words', s.notes.slice(0, 80));
     if (shots) { await R.settle(page, 500); await R.shot(w, 'pk-' + (process.env.PK_TAG || 'after') + '-2-silver-picked'); }
     r = await sameTick(page, k => OrderWin.selectPiece(k), kGF);
     note(r.selected === kGF && r.cards.length === 1 && r.cards[0].line === kGF && r.cards[0].title === 'COMET 9427 · GF' && r.cards[0].dot === GOLD, 'the gold row picked: the gold card alone, GF, the gold dot', r.cards.map(c => c.title + ' ' + c.dot).join(','));

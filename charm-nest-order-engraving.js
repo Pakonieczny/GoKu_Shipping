@@ -9,7 +9,7 @@
  *       rid     the order (receipt id)           key    the order line's key
  *       rows    a function giving every line of the order; else `pieces` ([{ key, row, label }]), else the line `row`/`key`
  *       only    (ENGSEL, Paul 13 Oct 2026: "if I select a certain piece, then the back engraving should reflect the selected piece") a function (or object) saying which piece the order window is narrowed to: null
- *               for "Show all", else { line: the piece's line key, side?: 'L' | 'R' (one ear of a pair) }. Only that piece's cards and words are drawn; a piece with nothing to engrave (an earring, a plain piece) leaves
+ *               for "Show all", else { line: the piece's line key, side?: 'L' | 'R' (one ear of a pair) }. Only that piece's cards are drawn (and, in the Overview, its words in the "What the customer wrote" box); a piece with nothing to engrave (an earring, a plain piece) leaves
  *               the host hidden, so the section has no title, rule or room. It is read at every look, so the host only has to call refresh() (or update()) when the selection changes; nothing polls for it.
  *       nameOf  the name of a line, as the card says it (default: its design's name)
  *       events  the order's timeline events (an array, or a function giving them): an approval another computer makes shows here from them, within the timeline feed's own 2.5 s read
@@ -48,18 +48,13 @@
   function css() {
     const d = doc(); if (!d || d.getElementById('owEngCss')) return;
     const s = d.createElement('style'); s.id = 'owEngCss';
-    // (.engSaid: the customer's own words under the cards, one quiet block: a hairline at its left, small mono labels in front of each part, no box and no title; a very long message scrolls inside it like the Engrave tab's box, it never pushes the window)
     s.textContent = '.owEngWait{display:flex;align-items:center;gap:8px;min-width:0;padding:9px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card);font:11px var(--sans);color:var(--ink45)}'
-      + '.engSaid{margin:8px 0 0;padding:1px 0 1px 9px;border-left:2px solid var(--line);min-width:0;font:13px/1.45 var(--serif);color:var(--ink);overflow-wrap:anywhere;max-height:min(20vh,150px);overflow:auto}.engSaid[hidden]{display:none}'
-      + '.engSaid .esName{font:700 9.5px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);margin-top:6px}.engSaid .esName:first-child{margin-top:0}'
-      + '.engSaid .esRow{min-width:0}.engSaid .esFaces{font:12.5px/1.45 var(--sans);color:var(--ink70)}'
-      + '.engSaid i{font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);font-style:normal;margin-right:2px}.engSaid .esSep{margin:0 3px;color:var(--ink45)}'
       + '.engNote{margin:0 0 8px;padding:5px 10px;border:1px solid var(--line);border-radius:9px;background:var(--goldSoft,#f6efdc);font:12.5px/1.4 var(--sans);color:var(--ink70)}.engNote[hidden]{display:none}';
     (d.head || d.documentElement).appendChild(s);
   }
   const waitNode = text => { const n = doc().createElement('div'); n.className = 'owEngWait'; n.setAttribute('role', 'status'); n.setAttribute('aria-live', 'polite'); n.innerHTML = `<span class="owSpin" aria-hidden="true"></span><span>${esc(text)}</span>`; return n; };
 
-  /* ── what the customer wrote for the engraving, ONE quiet block under the cards (Paul, 12 Oct 2026, round 2: "in the detailed order modal I don't see the customers message for the back engraving") ──
+  /* ── what the customer wrote for the engraving, as DATA (NOSAID, Paul 17 Oct 2026: it is no longer drawn under the cards; paintSaid below only removes a block an earlier drawing left; OrderEngraving.said exports this reader). It was ONE quiet block under the cards (Paul, 12 Oct 2026, round 2: "in the detailed order modal I don't see the customers message for the back engraving") ──
    * Per engraved line: the customer's own words as they wrote them (the personalisation box, the buyer's message, the staff note) and the engraving choices among their options (front / back, the font), each under its
    * small label, and, only when the piece has BOTH faces, which words are engraved on which: "Front W  Back Name One". Nothing for a line the customer wrote and chose nothing for; no title, no sentence, no percentage.
    * The words and the options are read by charm-nest-engrave-said.js (the Engrave tab's box reads the same); when that file is not on the page the three plain parts are read here. */
@@ -364,10 +359,10 @@
       return { rows, pieces, monoAll, monoShown, loading: rows.some(r => r && r.loading), only: only ? only.line + '|' + only.side : '' };
     }
     const keyOf = p => p.pieceKey + '|' + p.rid + '|' + p.lineKey;
-    /** The customer's words block: the host's next sibling inside the section (never a child of the host: the host's children are the cards). Drawn again only when what it says changes. */
+    /** NOSAID (Paul 17 Oct 2026): the customer's words block that used to be the host's next sibling inside the section is no longer drawn; this only takes away one an earlier drawing left (the host's children are the cards, nothing else stands in the section after them). */
     let saidEl = null, saidSig = '';
     function paintSaid(r) {
-      // (NOSAID, Paul 17 Oct 2026: "Remove the personalization info from beneath the Engraving card inside the Detailed Order modal": the customer's words stay in the Overview's "What the customer wrote" box, nothing is drawn under the cards any more, and a block an earlier drawing left there is taken away; the reader, CharmNestOrderEngraving.said, stays for any host that wants the words as data)
+      // (NOSAID, Paul 17 Oct 2026: "Remove the personalization info from beneath the Engraving card inside the Detailed Order modal": the customer's words stay in the Overview's "What the customer wrote" box, nothing is drawn under the cards any more, and a block an earlier drawing left there is taken away; the reader, OrderEngraving.said (of / rows / html), stays for any host that wants the words as data; the rules that styled the block, .engSaid and #owEngSaid, are gone)
       if (saidEl) { saidEl.remove(); saidEl = null; }
       const stale = host.parentNode && host.parentNode.querySelector ? host.parentNode.querySelector(':scope > #owEngSaid') : null; if (stale) stale.remove();
       saidSig = '';
