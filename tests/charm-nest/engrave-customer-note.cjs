@@ -9,7 +9,7 @@
 //   4  the words are shown as text (no markup of the customer's is interpreted)
 //   5  the card of an APPROVED piece (its row opens the same detailed card: there is no Decided row or detail any more) shows the same box (and none for an order with nothing); its row carries the words and the seal
 //   6  the Review tab's card keeps its old "From the order" list and gets no second box
-//   (the order window's own "What the customer wrote" is ENGMSG's, not tested here)
+//   (the order window's own words are the Overview's box "What the customer wrote" (#owNotes), tested in engrave-job-entities.cjs / engrave-order-customer-words.cjs; the block ENGMSG put under its Engraving cards is gone since NOSAID, Paul 17 Oct 2026; not tested here)
 //   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-customer-note.cjs
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '../..');

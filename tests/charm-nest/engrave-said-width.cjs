@@ -1,18 +1,22 @@
 // ENGTEXT (Paul, 13 Oct 2026 04:14 UTC, over a screenshot of the order window's ENGRAVING section after ENGBIG's 2x pictures): "Ensure this text stays contained underneath each engraving card."
-// The customer-words block (#owEngSaid: a left rule, the small PERSONALISATION label, the buyer's sentence) sat under the cards and ran the FULL width of the section, far wider than the card above it, wrapping only at
-// the window's edge; and it printed the apostrophe as the raw text "&#39;". This test builds the REAL page over the REAL-drawing world (tests/charm-nest/_engraveRealWorld.cjs: real .ai drawings, real intake / pool / classifier /
-// fit, offline fake site, no Etsy, no paid AI, nothing real written, every name made up) and measures the block at 1024, 1280, 1356, 1440 and 1920 px wide, for
-//   one       a charm engraved on one face: ONE card, one track wide. The block is exactly that card's width, directly under it
-//   both      a charm engraved front + back: ONE card spanning two tracks. The block is that wider card's width
-//   long      a very long buyer message (with an address that has no spaces): the block wraps inside the card's width, never grows sideways, scrolls inside its own max-height, and every word can be read
-//   multiA    one order of three lines, first card single (the order of cards: one track, a two-track front + back card, then three discs on a second row): the words are said ONCE, under the FIRST card, its width
-//   multiB    the same lines with the front + back card FIRST: the block is that card's width (two tracks)
+// -> NOSAID (Paul, 17 Oct 2026): "Remove the personalization info from beneath the Engraving card inside the Detailed Order modal."
+// History: the customer-words block (#owEngSaid: a left rule, the small PERSONALISATION label, the buyer's sentence) sat under the cards; ENGTEXT made it exactly as wide as the card above it and decoded the apostrophe it
+// printed as the raw text "&#39;". NOSAID took the block away: nothing is drawn under the cards any more (charm-nest-order-engraving.js paintSaid only removes what an earlier drawing left). So what this test measures now is that,
+// at every width, with every kind of words, there is NO block, the cards are laid out as they were (tracks, spans, no sideways scroll), the Engraving section ends where its last row of cards ends, and the customer's words are
+// where they stay: the Overview's own "What the customer wrote" box (#owNotes), decoded, whole and wrapped inside its box. This test builds the REAL page over the REAL-drawing world (tests/charm-nest/_engraveRealWorld.cjs: real .ai drawings,
+// real intake / pool / classifier / fit, offline fake site, no Etsy, no paid AI, nothing real written, every name made up) and measures at 1024, 1280, 1356, 1440 and 1920 px wide, for
+//   one       a charm engraved on one face: ONE card, one track wide
+//   both      a charm engraved front + back: ONE card spanning two tracks
+//   long      a very long buyer message (with an address that has no spaces): the Engraving section is EXACTLY as tall as with a short message (the words never push the cards), and every word can be read in the Overview's box
+//   multiA    one order of three lines, first card single (the order of cards: one track, a two-track front + back card, then three discs on a second row)
+//   multiB    the same lines with the front + back card FIRST
 //   tracks    the section forced to 340, 361, 362, 547, 548, 713, 714, 839, 840, 1059, 1060 and 1196px (every grid rule's edge: 1 to 5 tracks), one card and front + back
-// and checks: the block's right edge never passes the right edge of the card it sits under (and its left edge is the card's), its width is the card's, nothing inside it sticks out, no sideways scroll anywhere
-// (the block, the section, the window's scroll area, the page), the words are the customer's with their HTML entities decoded (&#39; &amp; &quot; &lt; and a double-escaped &amp;#39;) in the personalisation, the buyer message and the staff
-// note, markup in a note stays text, nothing in the section prints an entity raw, the sentence is not repeated under every card, and what is stored (the order's own text) is not changed.
-// NOT this block's: the engraving JOB's own words (what a card prints under its picture, and the "Front / Back" line of this block) are the job's text as the intake made it; a personalisation that carries an entity gives a job that carries it
-// too (found by ENGTEXT with a made-up "Name One&#39;s": the card, its picture and the job read it raw, and a front + back job upper-cases "&amp;" to "&AMP;"). That is the engraving intake's, not display: this test does not decode it (it would hide it).
+// and checks: no words block anywhere in the order window (not under the cards, not in a card, not after the grid), the section ends where its cards end, no sideways scroll anywhere (the section, the window's scroll area, the page),
+// the words are the customer's with their HTML entities decoded (&#39; &amp; &quot; &lt; and a double-escaped &amp;#39;) in the Overview's box (the personalisation and the buyer message; the staff note was only ever in the removed block),
+// markup in a note stays text, nothing in the section prints an entity raw, and what is stored (the order's own text) is not changed.
+// NOT this test's: the engraving JOB's own words (what a card prints under its picture) are the job's text as the intake made it; a personalisation that carries an entity gives a job that carries it too (found by ENGTEXT with a made-up
+// "Name One&#39;s": the card, its picture and the job read it raw, and a front + back job upper-cases "&amp;" to "&AMP;"). That is the engraving intake's, not display: this test does not decode it (it would hide it).
+// Known red on main BEFORE NOSAID (the commit before it fails the same 54 checks, all of them "the section does not scroll sideways": the section's scrollWidth is its clientWidth + 20px at every width): kept as it was, not this test's change.
 // Run:  PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-said-width.cjs      SHOTS=<dir> keeps SAIDW-<scenario>-<width>.png (the section as the person sees it)
 // What a pass does NOT prove: a live order (the fake site has the real drawings and fonts but not the live data), a browser other than headless Chromium, widths other than the five run.
 'use strict';
@@ -56,58 +60,53 @@ const EXPECTED = {
 const URL = 'https://example.test/' + 'x'.repeat(150);
 const LONG = Array.from({ length: 14 }, (_, i) => `Sentence ${i + 1} is made up for Name One and Date One and goes on for a while.`).join(' ') + ' Address ' + URL + ' END-OF-MESSAGE';
 
-/** what the person sees of the block and of the card it sits under (runs in the page) */
+/** what the person sees of the Engraving section and of the Overview's words box (runs in the page) */
 function probe() {
   const rc = e => { if (!e) return null; const b = e.getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom, w: b.width, h: b.height }; };
-  const host = document.getElementById('owEng'), said = document.getElementById('owEngSaid'), sec = document.getElementById('owEngSec');
+  const host = document.getElementById('owEng'), sec = document.getElementById('owEngSec'), notes = document.getElementById('owNotes'), dlg = document.getElementById('orderWin');
   const scroller = document.querySelector('#orderWin .owVInfo .owMain');
   const cards = host ? [...host.querySelectorAll(':scope > .engCard')] : [];
-  const shown = !!(said && !said.hidden && said.getBoundingClientRect().width > 0);
-  const kids = shown ? [...said.querySelectorAll('*')].filter(n => { const b = n.getBoundingClientRect(), s = said.getBoundingClientRect(); return b.width > 0 && b.right > s.right + 0.5; }).map(n => n.className || n.tagName) : [];
   const grid = host ? getComputedStyle(host) : null;
   return {
-    shown, cards: cards.length, first: rc(cards[0]), cardRects: cards.map(rc), said: shown ? rc(said) : null, grid: rc(host), sec: rc(sec),
+    blocks: dlg ? dlg.querySelectorAll('#owEngSaid, .engSaid, .esRow, .esName, [data-said]').length : -1, byId: !!document.getElementById('owEngSaid'), gridNext: host && host.nextElementSibling ? (host.nextElementSibling.id || host.nextElementSibling.className) : '',
+    cards: cards.length, first: rc(cards[0]), cardRects: cards.map(rc), grid: rc(host), sec: rc(sec),
     tracks: grid ? grid.gridTemplateColumns.split(' ').length : 0,
     firstFaces: cards[0] ? (cards[0].querySelector('.engFaces') || { dataset: {} }).dataset.n || '' : '',
-    saidScrollW: said ? said.scrollWidth : 0, saidClientW: said ? said.clientWidth : 0, saidScrollH: said ? said.scrollHeight : 0, saidClientH: said ? said.clientHeight : 0,
-    saidMaxH: said ? getComputedStyle(said).maxHeight : '', saidOverflowY: said ? getComputedStyle(said).overflowY : '',
     secScrollW: sec ? sec.scrollWidth : 0, secClientW: sec ? sec.clientWidth : 0, hostScrollW: host ? host.scrollWidth : 0, hostClientW: host ? host.clientWidth : 0,
     docScrollW: document.documentElement.scrollWidth, innerW: innerWidth, scrollerScrollW: scroller ? scroller.scrollWidth : 0, scrollerClientW: scroller ? scroller.clientWidth : 0,
-    kids, text: said ? said.innerText.replace(/\s+/g, ' ').trim() : '', textContent: said ? said.textContent : '', html: said ? said.innerHTML : '',
-    rows: said ? [...said.querySelectorAll('.esRow')].map(r => [r.dataset.said, [...r.childNodes].filter(n => !(n.nodeType === 1 && n.tagName === 'I')).map(n => n.textContent).join('').trim()]) : [],
-    markup: said ? said.querySelectorAll('b').length : 0,
-    inCards: cards.reduce((n, c) => n + c.querySelectorAll('.esRow, .engSaid').length, 0), cardsText: host ? host.innerText.replace(/\s+/g, ' ') : '',
+    notesScrollW: notes ? notes.scrollWidth : 0, notesClientW: notes ? notes.clientWidth : 0, notesBox: rc(notes),
+    notesText: notes ? notes.innerText.replace(/\s+/g, ' ').trim() : '', notesContent: notes ? notes.textContent : '', notesHtml: notes ? notes.innerHTML : '',
+    notesParts: notes ? [...notes.querySelectorAll('.lbl')].map(l => { let t = ''; for (let n = l.nextSibling; n && !(n.nodeType === 1 && n.classList.contains('lbl')); n = n.nextSibling) t += n.textContent; return [l.textContent.trim(), t.trim()]; }) : [],
+    markup: notes ? notes.querySelectorAll('b').length : 0,
+    inCards: cards.reduce((n, c) => n + c.querySelectorAll('.esRow, .engSaid').length, 0), cardsText: host ? host.innerText.replace(/\s+/g, ' ') : '', secText: sec ? sec.innerText.replace(/\s+/g, ' ').trim() : '',
     lastRowBottom: cards.length ? Math.max(...cards.map(c => c.getBoundingClientRect().bottom)) : 0,
     firstRowBottom: cards.length ? Math.max(...cards.filter(c => Math.abs(c.getBoundingClientRect().top - cards[0].getBoundingClientRect().top) < 3).map(c => c.getBoundingClientRect().bottom)) : 0
   };
 }
-/** put made-up words on every line of the order the window shows (display fields only: the engraving jobs are untouched) */
+/** put made-up words on every line of the order the window shows (display fields only: the engraving jobs are untouched), and repaint the window so the Overview's box reads them */
 const words = (w, words) => w.page.evaluate(({ words }) => {
   const rid = document.getElementById('owTitle').textContent.match(/\d{8,}/); const rows = Orders.rows().filter(r => !rid || r.order.receiptId === rid[0]);
   rows.forEach((r, i) => { const o = words[Math.min(i, words.length - 1)]; if (!o) return; for (const k of Object.keys(o)) r.spec[k] = o[k]; });
+  OrderWin.paint();
   return rows.length;
 }, { words });
 const stored = w => w.page.evaluate(() => { const rid = document.getElementById('owTitle').textContent.match(/\d{8,}/); return Orders.rows().filter(r => !rid || r.order.receiptId === rid[0]).map(r => ({ p: r.spec.personalization, b: r.spec.buyerMessage, s: r.spec.staffNote })); });
-const waitSaid = (w, f) => w.page.waitForFunction(f, null, { timeout: 8000 }).catch(() => {});
+const waitNotes = (w, re) => w.page.waitForFunction(src => new RegExp(src).test((document.getElementById('owNotes') || {}).textContent || ''), re.source, { timeout: 8000 }).catch(() => {});
 const measure = async (w, width, height) => { await w.page.setViewportSize({ width, height }); await R.settle(w.page, 350); return w.page.evaluate(probe); };
 
-/** the width checks every case shares */
-function contained(tag, p) {
-  const f = p.first, s = p.said, E = 0.6;
-  ok(p.shown && p.cards >= 1 && !!f && !!s, `${tag}: the card and the words block are both on the page`, { shown: p.shown, cards: p.cards });
-  if (!f || !s) return;
-  ok(s.r <= f.r + E, `${tag}: the block's right edge (${s.r.toFixed(1)}) does not pass the card's right edge (${f.r.toFixed(1)})`, { block: s, card: f });
-  ok(Math.abs(s.l - f.l) <= E, `${tag}: the block starts at the card's left edge (${s.l.toFixed(1)} vs ${f.l.toFixed(1)})`, { block: s, card: f });
-  ok(Math.abs(s.w - f.w) <= 1, `${tag}: the block is exactly as wide as the card (${s.w.toFixed(1)} vs ${f.w.toFixed(1)}; ${p.firstFaces === '2' ? 'front + back, two tracks' : 'one track'}, ${p.tracks} tracks)`, { block: s, card: f });
-  ok(s.t >= p.lastRowBottom - 1, `${tag}: the block is under the cards (its top ${s.t.toFixed(0)} is not above the last row's bottom ${p.lastRowBottom.toFixed(0)})`, { block: s, lastRowBottom: p.lastRowBottom });
-  if (p.cards === 1 || p.cardRects.every(c => Math.abs(c.t - f.t) < 3)) ok(s.t - p.firstRowBottom <= 14, `${tag}: one row of cards: the block is directly beneath it (${(s.t - p.firstRowBottom).toFixed(1)}px below)`, { block: s, rowBottom: p.firstRowBottom });
-  ok(p.saidScrollW <= p.saidClientW + 1, `${tag}: nothing inside the block makes it scroll sideways (${p.saidScrollW} <= ${p.saidClientW})`);
-  ok(!p.kids.length, `${tag}: nothing inside the block sticks out of its right edge`, p.kids);
+/** the layout checks every case shares: the cards as they were, no block, no sideways scroll */
+function laidOut(tag, p) {
+  const f = p.first, E = 0.6;
+  ok(p.cards >= 1 && !!f && !!p.sec, `${tag}: the cards are on the page`, { cards: p.cards });
+  ok(p.blocks === 0 && !p.byId && p.gridNext === '' && p.inCards === 0, `${tag}: NOSAID: no customer-words block (none under the cards, none after the grid, none inside a card)`, { blocks: p.blocks, byId: p.byId, gridNext: p.gridNext, inCards: p.inCards });
+  if (!f || !p.sec) return;
+  ok(p.sec.b - p.lastRowBottom <= 4, `${tag}: the Engraving section ends where its last row of cards ends (${(p.sec.b - p.lastRowBottom).toFixed(1)}px below it)`, { sec: p.sec, lastRowBottom: p.lastRowBottom });
+  ok(f.r <= p.sec.r + E && f.l >= p.sec.l - E, `${tag}: the first card is inside the section`, { card: f, sec: p.sec });
   ok(p.secScrollW <= p.secClientW + 1 && p.hostScrollW <= p.hostClientW + 1, `${tag}: the section does not scroll sideways`, { sec: [p.secScrollW, p.secClientW], host: [p.hostScrollW, p.hostClientW] });
   ok(p.scrollerScrollW <= p.scrollerClientW + 1 && p.docScrollW <= p.innerW + 1, `${tag}: the window's scroll area and the page do not scroll sideways`, { scroller: [p.scrollerScrollW, p.scrollerClientW], doc: [p.docScrollW, p.innerW] });
-  ok(s.r <= p.sec.r + 0.6, `${tag}: and it is inside the section`, { block: s, sec: p.sec });
 }
-const noRawEntity = (tag, p) => ok(!/&(?:#\d+|#x[0-9a-f]+|amp|quot|lt|gt|apos);/i.test(p.textContent) && !/&(?:#\d+|#x[0-9a-f]+|amp|quot|lt|gt|apos);/i.test(p.cardsText), `${tag}: no entity printed raw in the block or in the cards`, { block: p.textContent.slice(0, 160), cards: p.cardsText.slice(0, 160) });
+const noRawEntity = (tag, p) => ok(!/&(?:#\d+|#x[0-9a-f]+|amp|quot|lt|gt|apos);/i.test(p.notesContent) && !/&(?:#\d+|#x[0-9a-f]+|amp|quot|lt|gt|apos);/i.test(p.cardsText), `${tag}: no entity printed raw in the Overview's box or in the cards`, { notes: p.notesContent.slice(0, 160), cards: p.cardsText.slice(0, 160) });
+const part = (p, k) => (p.notesParts.find(r => r[0] === k) || [])[1];
 
 (async () => {
   const w = await R.world({ viewport: { width: 1280, height: 720 }, shots: SHOTS || '/tmp/saidw-shots' });
@@ -125,17 +124,19 @@ const noRawEntity = (tag, p) => ok(!/&(?:#\d+|#x[0-9a-f]+|amp|quot|lt|gt|apos);/
     const open = async n => { await R.openOrderWindow(w, n); await R.settle(w.page, 300); };
     const shot = async (name) => { if (!SHOTS) return; await w.page.evaluate(() => { const s = document.getElementById('owEngSec'); const sc = document.querySelector('#orderWin .owVInfo .owMain'); if (s && sc) sc.scrollTop = Math.max(0, s.offsetTop - 40); }); await R.settle(w.page, 150); const el = await w.page.$('#owEngSec'); if (el) { const b = await el.boundingBox(); await w.page.screenshot({ path: `${SHOTS}/${name}.png`, clip: { x: Math.max(0, b.x - 12), y: Math.max(0, b.y - 8), width: Math.min(b.width + 24, w.page.viewportSize().width - Math.max(0, b.x - 12)), height: Math.min(b.height + 16, w.page.viewportSize().height - Math.max(0, b.y - 8)) } }); } };
     if (SHOTS) require('fs').mkdirSync(SHOTS, { recursive: true });
+    const secH = {};   // the Engraving section's height at each width with a short message (the long message must not change it)
 
     // ── one card ──
     console.log('one card (a charm engraved on one face)');
     await open('back');
     await words(w, [{ personalization: [RAW.pers], buyerMessage: '', staffNote: '' }]);
-    await waitSaid(w, () => /gift note/.test((document.getElementById('owEngSaid') || {}).textContent || ''));
+    await waitNotes(w, /gift note/);
     for (const [W, H] of WIDTHS) {
       const p = await measure(w, W, H); const tag = `one @${W}`;
-      contained(tag, p);
+      laidOut(tag, p);
+      secH[W] = p.sec && p.sec.h;
       ok(p.cards === 1, `${tag}: one card`, p.cards);
-      ok(p.rows.length === 1 && p.rows[0][0] === 'Personalisation' && p.rows[0][1] === EXPECTED.pers, `${tag}: the personalisation reads as the customer wrote it ("There's", "&", quotes, "<3")`, p.rows);
+      ok(p.notesParts.length === 1 && p.notesParts[0][0] === 'Personalisation' && p.notesParts[0][1] === EXPECTED.pers, `${tag}: the Overview's box reads the personalisation as the customer wrote it ("There's", "&", quotes, "<3")`, p.notesParts);
       noRawEntity(tag, p);
       if (W === 1280 || W === 1440) await shot(`SAIDW-one-${W}`);
     }
@@ -145,13 +146,14 @@ const noRawEntity = (tag, p) => ok(!/&(?:#\d+|#x[0-9a-f]+|amp|quot|lt|gt|apos);/
     // ── one card, all three kinds of words (personalisation, buyer message, staff note), markup stays text ──
     console.log('one card, three kinds of words');
     await words(w, [{ personalization: [RAW.pers], buyerMessage: RAW.buyer, staffNote: RAW.staff }]);
-    await waitSaid(w, () => /Staff note/.test((document.getElementById('owEngSaid') || {}).textContent || ''));
+    await waitNotes(w, /Buyer message/);
     for (const [W, H] of WIDTHS) {
       const p = await measure(w, W, H); const tag = `one, three kinds @${W}`;
-      contained(tag, p);
-      const by = k => (p.rows.find(r => r[0] === k) || [])[1];
-      ok(by('Personalisation') === EXPECTED.pers && by('Buyer message') === EXPECTED.buyer && by('Staff note') === EXPECTED.staff, `${tag}: personalisation, buyer message and staff note all read decoded (&#39; &#x27; &amp; &quot; &lt; &gt; and the double-escaped forms)`, p.rows);
-      ok(p.markup === 0, `${tag}: "<b>bold</b>" from the message is text, not markup`, p.html.slice(0, 200));
+      laidOut(tag, p);
+      ok(part(p, 'Personalisation') === EXPECTED.pers && part(p, 'Buyer message') === EXPECTED.buyer, `${tag}: the Overview's box reads the personalisation and the buyer message decoded (&#39; &#x27; &amp; &quot; &lt; &gt; and the double-escaped forms)`, p.notesParts);
+      ok(!/Staff note/.test(p.notesText) && !/Mind Name One/.test(p.notesText + ' ' + p.secText), `${tag}: the staff note (only ever in the removed block) is said neither under the cards nor in the Overview's box`, { notes: p.notesText, sec: p.secText });
+      ok(p.markup === 0, `${tag}: "<b>bold</b>" from the message is text, not markup`, p.notesHtml.slice(0, 200));
+      ok(p.sec && Math.abs(p.sec.h - secH[W]) <= 1, `${tag}: a buyer message and a staff note do not change the Engraving section (${p.sec && p.sec.h.toFixed(1)}px, as with the personalisation alone: ${secH[W] && secH[W].toFixed(1)}px)`, { h: p.sec && p.sec.h, was: secH[W] });
       noRawEntity(tag, p);
       if (W === 1280) await shot('SAIDW-three-1280');
     }
@@ -160,36 +162,32 @@ const noRawEntity = (tag, p) => ok(!/&(?:#\d+|#x[0-9a-f]+|amp|quot|lt|gt|apos);/
     console.log('front + back (one card of two tracks)');
     await open('both');
     await words(w, [{ personalization: [RAW.pers], buyerMessage: '', staffNote: '' }]);
-    await waitSaid(w, () => /gift note/.test((document.getElementById('owEngSaid') || {}).textContent || ''));
+    await waitNotes(w, /gift note/);
     for (const [W, H] of WIDTHS) {
       const p = await measure(w, W, H); const tag = `front+back @${W}`;
-      contained(tag, p);
+      laidOut(tag, p);
       ok(p.cards === 1 && p.firstFaces === '2', `${tag}: one card with both faces`, { cards: p.cards, faces: p.firstFaces });
-      ok(p.rows.some(r => r[0] === 'faces') && p.rows.find(r => r[0] === 'Personalisation')[1] === EXPECTED.pers, `${tag}: the personalisation and the "Front / Back" words line are both there`, p.rows);
+      ok(p.notesParts.length === 1 && part(p, 'Personalisation') === EXPECTED.pers, `${tag}: the Overview's box has the personalisation (and only that: the "Front / Back" words line was only ever in the removed block)`, p.notesParts);
       noRawEntity(tag, p);
       if (W === 1280 || W === 1440) await shot(`SAIDW-front-back-${W}`);
     }
     {
       const p = await measure(w, 1280, 720);
-      ok(p.said && p.first && p.said.w > 380, 'front + back @1280: the block is the wide card\'s width (two tracks, more than 380px), not a single track', { block: p.said, card: p.first });
+      ok(p.first && p.first.w > 380, 'front + back @1280: the wide card is two tracks (more than 380px), not a single track', { card: p.first });
     }
 
     // ── a very long message ──
     console.log('a very long buyer message with an address that has no spaces');
     await open('back');
     await words(w, [{ personalization: [RAW.pers], buyerMessage: LONG, staffNote: '' }]);
-    await waitSaid(w, () => /END-OF-MESSAGE/.test((document.getElementById('owEngSaid') || {}).textContent || ''));
+    await waitNotes(w, /END-OF-MESSAGE/);
     for (const [W, H] of WIDTHS) {
       const p = await measure(w, W, H); const tag = `long @${W}`;
-      contained(tag, p);
-      ok(p.saidScrollH > p.saidClientH + 4 && p.saidOverflowY === 'auto', `${tag}: the long message scrolls inside the block (${p.saidScrollH}px of words in ${p.saidClientH}px), it does not grow`, { scrollH: p.saidScrollH, clientH: p.saidClientH, overflowY: p.saidOverflowY });
-      ok(p.saidClientH <= 152 && p.said.h <= 156, `${tag}: the block is at most ${p.saidMaxH} tall (${p.said.h.toFixed(0)}px): the section is not pushed off the screen`, { h: p.said.h, max: p.saidMaxH });
-      ok(p.textContent.includes('END-OF-MESSAGE') && p.textContent.includes(URL), `${tag}: nothing is cut: the whole message and the whole address are in the block`);
-      const reach = await w.page.evaluate(() => { const s = document.getElementById('owEngSaid'); s.scrollTop = s.scrollHeight; const last = [...s.querySelectorAll('.esRow')].pop(), a = last.getBoundingClientRect(), b = s.getBoundingClientRect(); const r = { lastBottom: a.bottom, boxBottom: b.bottom, atEnd: s.scrollTop + s.clientHeight >= s.scrollHeight - 1 }; s.scrollTop = 0; return r; });
-      ok(reach.atEnd && reach.lastBottom <= reach.boxBottom + 1, `${tag}: scrolled to the end, the last words are readable inside the block`, reach);
-      const gutter = await w.page.evaluate(() => { const s = document.getElementById('owEngSaid'); return s.offsetWidth - s.clientWidth - 2; });   // (the 2px left rule is not a scrollbar)
-      console.log(`  info: ${tag}: the block's scrollbar takes ${gutter}px of its width (the page styles every scrollbar, 10px; the way to read the rest)`);
-      if (SHOTS && (W === 1280 || W === 1440)) { await w.page.evaluate(() => document.getElementById('owEngSaid').scrollIntoView({ block: 'center' })); await R.settle(w.page, 150); const el = await w.page.$('#owEngSaid'); if (el) await el.screenshot({ path: `${SHOTS}/SAIDW-long-block-${W}.png` }); }
+      laidOut(tag, p);
+      ok(p.sec && Math.abs(p.sec.h - secH[W]) <= 1, `${tag}: the long message does not make the Engraving section taller (${p.sec && p.sec.h.toFixed(1)}px, as with the short message: ${secH[W] && secH[W].toFixed(1)}px): the cards are not pushed`, { h: p.sec && p.sec.h, was: secH[W] });
+      ok(!/END-OF-MESSAGE|Sentence 1 /.test(p.secText), `${tag}: no word of it is in the Engraving section`, p.secText.slice(0, 200));
+      ok(p.notesContent.includes('END-OF-MESSAGE') && p.notesContent.includes(URL), `${tag}: nothing is cut: the whole message and the whole address are in the Overview's box`);
+      ok(p.notesScrollW <= p.notesClientW + 1, `${tag}: the Overview's box wraps the address inside itself (${p.notesScrollW} <= ${p.notesClientW}): no sideways scroll`, { scrollW: p.notesScrollW, clientW: p.notesClientW });
       if (W === 1280 || W === 1440) await shot(`SAIDW-long-${W}`);
     }
 
@@ -198,23 +196,21 @@ const noRawEntity = (tag, p) => ok(!/&(?:#\d+|#x[0-9a-f]+|amp|quot|lt|gt|apos);/
       console.log(`several cards, ${name}: the first card is ${firstKind}`);
       await open(name);
       await words(w, [{ personalization: [RAW.pers], buyerMessage: '', staffNote: '' }, { personalization: ['Name One - second line of the order, made up'], buyerMessage: '' }, { personalization: ['Name One - third line of the order, made up'], buyerMessage: '' }]);
-      await waitSaid(w, () => /second line/.test((document.getElementById('owEngSaid') || {}).textContent || ''));
+      await waitNotes(w, /Personalisation/);
       for (const [W, H] of WIDTHS) {
         const p = await measure(w, W, H); const tag = `${name} @${W}`;
-        contained(tag, p);
+        laidOut(tag, p);
         ok(p.cards === (name === 'multiA' ? 5 : 2), `${tag}: several cards (${p.cards}: ${name === 'multiA' ? 'one, one front + back, three discs' : 'one front + back, one single'})`, p.cards);
-        const said1 = (p.textContent.match(/gift note/g) || []).length;
-        ok(said1 === 1, `${tag}: the first line's sentence is said once, not under every card`, said1);
-        ok(p.inCards === 0, `${tag}: no words block inside any card (they are said once, under the first card)`, p.inCards);
-        ok(p.rows.filter(r => r[0] === 'Personalisation').length >= 2, `${tag}: each line's own words are there (one entry per line, named)`, p.rows);
+        ok(p.blocks === 0 && p.inCards === 0, `${tag}: no words block under the cards and none inside any card (it was said once, under the first card; now it is not said there at all)`, { blocks: p.blocks, inCards: p.inCards });
+        ok(p.notesParts.length === 1 && p.notesParts[0][0] === 'Personalisation' && p.notesParts[0][1] === EXPECTED.pers, `${tag}: the Overview's box holds the words of the line the window shows (the first line's, decoded), not the other lines'`, p.notesParts);
         noRawEntity(tag, p);
         if (W === 1280 || W === 1440) await shot(`SAIDW-${name}-${W}`);
       }
       const p = await measure(w, 1280, 720);
       ok(p.firstFaces === (name === 'multiB' ? '2' : '1'), `${name} @1280: the first card is ${firstKind}`, p.firstFaces);
-      if (name === 'multiA') ok(p.cardRects.some(c => c.t > p.first.t + 3), `${name} @1280: the cards run to a second row (the block sits under the last row, not between rows)`, p.cardRects);
-      if (name === 'multiA') ok(p.said.w < 230 && p.said.h > 0, 'multiA @1280: under a single first card the block is one track wide (about 207px), not the width of the section', p.said);
-      if (name === 'multiB') ok(p.said.w > 380, 'multiB @1280: under a front + back first card the block is that card\'s two tracks', p.said);
+      if (name === 'multiA') ok(p.cardRects.some(c => c.t > p.first.t + 3), `${name} @1280: the cards run to a second row (and the section still ends at the last row)`, p.cardRects);
+      if (name === 'multiA') ok(p.first.w < 230 && p.first.h > 0, 'multiA @1280: a single first card is one track wide (about 207px), not the width of the section', p.first);
+      if (name === 'multiB') ok(p.first.w > 380, 'multiB @1280: a front + back first card is two tracks', p.first);
     }
 
     // ── every track count, at the container query's own edges: the section is set to a width (in a 1920px window, where the column has room), so 1 track (under 362px, a phone), 2, 3, 4 and 5 are all reached, one card and front + back ──
@@ -223,14 +219,14 @@ const noRawEntity = (tag, p) => ok(!/&(?:#\d+|#x[0-9a-f]+|amp|quot|lt|gt|apos);/
     for (const n of ['back', 'both']) {
       await open(n);
       await words(w, [{ personalization: [RAW.pers], buyerMessage: '', staffNote: '' }]);
-      await waitSaid(w, () => /gift note/.test((document.getElementById('owEngSaid') || {}).textContent || ''));
+      await waitNotes(w, /gift note/);
       for (const px of [340, 361, 362, 547, 548, 713, 714, 839, 840, 1059, 1060, 1196]) {
         await w.page.evaluate(px => { document.getElementById('owEngSec').style.width = px + 'px'; }, px); await R.settle(w.page, 200);
         const p = await w.page.evaluate(probe); const tag = `${n === 'both' ? 'front+back' : 'one'} in a ${px}px section`;
-        contained(tag, p);
+        laidOut(tag, p);
         const want = px <= 361 ? 1 : px <= 547 ? 2 : px < 840 ? 3 : px < 1060 ? 4 : 5;
         ok(p.tracks === want, `${tag}: ${want} track(s)`, p.tracks);
-        if (n === 'both') ok(p.first && p.said && Math.abs(p.said.w - p.first.w) <= 1 && (px <= 361 ? p.first.w < px + 1 : p.first.w > (px - 10 * (want - 1)) / want * 1.9), `${tag}: the front + back card is ${px <= 361 ? 'the one track' : 'two tracks'} and the block is its width (${p.said && p.said.w.toFixed(1)})`, { card: p.first, block: p.said });
+        if (n === 'both') ok(p.first && (px <= 361 ? p.first.w < px + 1 : p.first.w > (px - 10 * (want - 1)) / want * 1.9), `${tag}: the front + back card is ${px <= 361 ? 'the one track' : 'two tracks'} (${p.first && p.first.w.toFixed(1)})`, { card: p.first });
       }
       await w.page.evaluate(() => { document.getElementById('owEngSec').style.width = ''; });
     }

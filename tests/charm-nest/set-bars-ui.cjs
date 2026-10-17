@@ -3,6 +3,8 @@
 //    buyer, as part of the Engraving detail modal and the Order details modal"
 //   "The thinner bar always sits on the shorter chain unless the user special requests a different layout": show each bar with the chain length it sits on, the buyer's wording that belongs to each in the order
 //    window, and, when the line is flagged 'layout requested', a calm one-line note that it waits for a person.
+//   (NOSAID, Paul 17 Oct 2026: "Remove the personalization info from beneath the Engraving card inside the Detailed Order modal": the per-bar wording block that stood under the cards, "Large bar · 18″ Ginger / Small bar · 16″ Catalina",
+//    is gone from the order window. Section E below now holds that nothing is drawn under the cards, and that each bar's own words are on its own card; the reader, OrderEngraving.said.of, still returns the per-bar wording as data.)
 //
 // What the data model gives (it exists since SIBLINGS / SCHROLINK; SETBAR-A adds the rule row for this listing): one order LINE with two pieces, slots D1 and D2, each its own design, job, words, Approve and seal.
 // This test builds that line the way the app does for a person's saved pair (aliasPut, the real call over the fake site), with two synthetic bar drawings of the sizes SETBAR-A reports (25.9 x 4.9 mm and
@@ -174,8 +176,8 @@ const settle = (page, ms = 700) => R.settle(page, ms);
       const frame = el => { const f = el && el.querySelector('.engpvFrame'); if (!f) return null; const r = f.getBoundingClientRect(); return { w: r.width, h: r.height, rel: f.style.getPropertyValue('--rel') || '' }; };
       const note = document.getElementById('owEngNote');
       return { lens: lens && !lens.hidden ? [...lens.querySelectorAll('.owSetLen')].map(n => txt(n)) : null, lensNote: lens ? txt(lens.querySelector('.owSetNote')) : '', sku: txt(document.getElementById('owSku')), note: note && !note.hidden ? txt(note) : '',
-        cards: cards.map(c => ({ title: txt(c.querySelector('.engName')), approve: !!c.querySelector('[data-e=approve]:not([disabled])'), faces: [...c.querySelectorAll('.engFace')].map(f => f.dataset.face).join('+'), frames: [...c.querySelectorAll('.engThumb')].map(t => frame(t)), words: txt(c.querySelector('.engTxt')) })),
-        said: [...document.querySelectorAll('#owEngSaid .esBar')].map(n => txt(n)), buttons: [...document.querySelectorAll('#owEng button')].map(b => txt(b)).filter(t => /both|all/i.test(t)),
+        cards: cards.map(c => ({ title: txt(c.querySelector('.engName')), approve: !!c.querySelector('[data-e=approve]:not([disabled])'), faces: [...c.querySelectorAll('.engFace')].map(f => f.dataset.face).join('+'), frames: [...c.querySelectorAll('.engThumb')].map(t => frame(t)), words: txt(c.querySelector('.engTxt')), allWords: [...c.querySelectorAll('.engFace .engTxt')].map(t => txt(t)).join(' | ') })),
+        saidBlocks: document.querySelectorAll('#orderWin #owEngSaid, #orderWin .engSaid, #orderWin .esRow, #orderWin .esBar, #orderWin [data-said]').length, buttons: [...document.querySelectorAll('#owEng button')].map(b => txt(b)).filter(t => /both|all/i.test(t)),
         rows: [...document.querySelectorAll('#owPcSum .owPcRow')].map(n => txt(n.querySelector('.owPcName'))), subs: [...document.querySelectorAll('#owPcSum .owPcSub')].map(n => txt(n.querySelector('.owPcSubName'))) };
     };
     await R.openOrderWindow(w, 'bars'); await page.evaluate(() => { const b = document.querySelector('#owPcSum .owPcX'); if (b) b.click(); }); await settle(page, 900);
@@ -205,7 +207,13 @@ const settle = (page, ms = 700) => R.settle(page, ms);
     note(o2.cards.length === 1 && o2.cards[0].title === 'SKINNY 0191 · 16″' && picked === 'D2', 'a press on "Small bar · 16″" in Its pieces shows that bar\'s card alone (the pick is its slot, D2)', JSON.stringify([o2.cards.map(c => c.title), picked]));
     await page.evaluate(() => document.querySelector('#owPcSum .owPcSub[data-sub$="#D2"]').click()); await settle(page, 500);
     o = await page.evaluate(`(${OWIN})()`);
-    note(o.said.length === 2 && /^Large bar · 18″.*Ginger/.test(o.said[0]) && /^Small bar · 16″.*Catalina/.test(o.said[1]), 'the buyer\'s wording that belongs to each bar is said under its own name and chain', JSON.stringify(o.said));
+    note(o.saidBlocks === 0, 'NOSAID: the buyer\'s wording that belongs to each bar is no longer said in a block under the cards ("Large bar · 18″ Ginger / Small bar · 16″ Catalina" is gone from the order window)', String(o.saidBlocks));
+    note(o.cards.length === 2 && /Ginger/i.test(o.cards[0].allWords) && /Catalina/i.test(o.cards[1].allWords) && !/Catalina/i.test(o.cards[0].allWords) && !/Ginger/i.test(o.cards[1].allWords), 'each bar\'s own words are on its own card: Ginger on the large bar\'s, Catalina on the small bar\'s', JSON.stringify(o.cards.map(c => c.allWords)));
+    // the reader keeps the per-bar wording as data (OrderEngraving.said.of: pieces of a set of different designs each say the words that belong to them)
+    const bars = await page.evaluate(() => { const S = window.OrderEngraving && OrderEngraving.said; const r = Orders.rows().find(x => String(x.order.receiptId) === '4290000151'); if (!S || !r || !window.CharmNestEngraveSides) return null;
+      const pcs = [['Large bar', '18"', 'Ginger'], ['Small bar', '16"', 'Catalina']].map(([label, length, t]) => ({ lineKey: r.key, lineName: 'BAR', design: { label, length }, faces: { back: { text: t } } }));
+      return S.of([r], pcs).map(e => e.bars); });
+    note(!!bars && !!bars[0] && bars[0].length === 2 && bars[0][0][0] === 'Large bar · 18″' && /Ginger/.test(bars[0][0][1]) && bars[0][1][0] === 'Small bar · 16″' && /Catalina/.test(bars[0][1][1]), 'the reader (OrderEngraving.said.of) still returns each bar\'s words, under its name and chain, as data', JSON.stringify(bars));
     if (shots) await R.shot(w, 'setbar-order');
 
     // ═══ F · the wide set: true relative size by LENGTH (50 mm bar and the 25.9 mm bar) ═══
@@ -225,7 +233,7 @@ const settle = (page, ms = 700) => R.settle(page, ms);
     note(!!d && d.tabs.map(t => t.chip).join('|') === 'DISC 1 of 3|DISC 2 of 3|DISC 3 of 3' && d.strip.length === 0 && d.sub.startsWith('COMET_9427') && /^COMET 9427 · Disc 2$/.test(d.cardTitle), 'three plain discs: "DISC n of 3" tabs, no strip, the line\'s own design and "COMET 9427 · Disc 2"', d && JSON.stringify([d.tabs.map(t => t.chip), d.strip.length, d.sub, d.cardTitle]));
     await R.openOrderWindow(w, 'discsCtl'); await page.evaluate(() => { const b = document.querySelector('#owPcSum .owPcX'); if (b) b.click(); }); await settle(page, 700);
     o = await page.evaluate(`(${OWIN})()`);
-    note(o.lens === null && o.note === '' && o.cards.map(c => c.title).join('|') === 'COMET 9427 · Disc 1|COMET 9427 · Disc 2|COMET 9427 · Disc 3' && o.subs.join('|') === 'Disc 1 of 3|Disc 2 of 3|Disc 3 of 3' && o.said.length === 0, 'three plain discs in the order window: no bar labels, the cards and the list as they always were', JSON.stringify([o.lens, o.cards.map(c => c.title), o.subs]));
+    note(o.lens === null && o.note === '' && o.cards.map(c => c.title).join('|') === 'COMET 9427 · Disc 1|COMET 9427 · Disc 2|COMET 9427 · Disc 3' && o.subs.join('|') === 'Disc 1 of 3|Disc 2 of 3|Disc 3 of 3' && o.saidBlocks === 0, 'three plain discs in the order window: no bar labels, the cards and the list as they always were', JSON.stringify([o.lens, o.cards.map(c => c.title), o.subs]));
 
     note(w.errors.length === 0, 'no page errors', w.errors.slice(0, 2).join(' | '));
   } catch (e) { console.log('  FAIL test crashed: ' + (e && e.stack || e)); fails.push('crash'); }
