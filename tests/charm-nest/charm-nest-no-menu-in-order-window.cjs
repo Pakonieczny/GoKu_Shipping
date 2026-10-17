@@ -103,10 +103,12 @@ const MENU = HOOKS + ', textarea, select';   // inside the engraving card/sectio
     const tab = await page.evaluate(KEY => {
       const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back');
       Object.assign(j, { state: 'review', approvedBy: null, approvedAt: null, decidedAt: null, decidedBy: null }); Object.assign(row.engrave, { state: 'review', approved: false, needed: true }); delete row.engravingOverride; CharmNestEngraveSetup.DRAFTS.clear();
-      const card = Engrave.placementCard(j, 1), slot = card.querySelector('[data-engsetup]');
-      return { slot: !!slot, filled: !!slot && !slot.hidden && slot.children.length > 0, text: slot ? slot.textContent.replace(/\s+/g, ' ').trim().slice(0, 100) : '' };
+      // (the Engrave tab builds its detail card with a context, placementCard(job, n, { counts, ears }); the Review tab's card is built without one and is NOT the Engrave detail: it has the slot but never fills it)
+      const look = card => { const slot = card.querySelector('[data-engsetup]'); return { slot: !!slot, filled: !!slot && !slot.hidden && slot.children.length > 0, text: slot ? slot.textContent.replace(/\s+/g, ' ').trim().slice(0, 100) : '' }; };
+      return { detail: look(Engrave.placementCard(j, 1, {})), review: look(Engrave.placementCard(j, 1)) };
     }, KEY).catch(e => ({ err: String(e.message || e) }));
-    check(tab.slot && tab.filled, 'the Engrave tab\'s placement card mounts the menu in its own slot: ' + JSON.stringify(tab));
+    check(tab.detail && tab.detail.slot && tab.detail.filled, 'the Engrave tab\'s placement card mounts the menu in its own slot: ' + JSON.stringify(tab.detail || tab));
+    check(tab.review && tab.review.slot && !tab.review.filled, 'and the Review tab\'s placement card (built without the Engrave detail\'s context) leaves that slot empty: ' + JSON.stringify(tab.review || tab));
 
     check(errors.length === 0, 'no page errors: ' + errors.join(' | ').slice(0, 300));
   } finally { await browser.close(); srv.close && srv.close(); }
