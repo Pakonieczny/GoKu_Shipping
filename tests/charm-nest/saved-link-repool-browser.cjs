@@ -81,7 +81,7 @@ const TITLE = 'Comet Pendant Charm Necklace Dainty Space Jewelry Tiny Celestial 
     }, A);
     ok(offered.flagged.join() === 'true,true', 'the pooled line is flagged to be made up again: ' + JSON.stringify(offered.flagged));
     ok(/Changed/.test(offered.rowText) && /CELESTIAL 3 - COMET/.test(offered.rowText) && /open sheet/.test(offered.rowText), 'Review has a row for the order: Changed, the repo charm, why: ' + offered.rowText.slice(0, 400));
-    ok(offered.accept === 'Accept the new order' && offered.buttons.includes('Hold'), 'with the button Accept the new order beside Hold: ' + JSON.stringify(offered.buttons));
+    ok(offered.accept === 'Accept the new order' && !offered.buttons.includes('Hold'), 'with the button Accept the new order and no Hold (NOHOLDREV, Paul 17 Oct 2026): ' + JSON.stringify(offered.buttons));
     ok(!offered.items.some(k => k.includes(E)), 'the other listing\'s order is offered nothing');
     if (shots) await page.screenshot({ path: path.join(shots, 'COMETMAP-review-row.png') });
     const writesBefore = st.calls.filter(c => c.name === 'charmNestLibrary' && /alias|master/i.test(String(c.body.op || ''))).length;

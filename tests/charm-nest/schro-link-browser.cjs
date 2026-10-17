@@ -117,7 +117,7 @@ const TITLE = "Schrödinger's Cat Necklace, Whimsical Cat Gift, Fun Jewelry Gift
     }, A);
     ok(offered.flagged.join() === 'true,true' && offered.pieces === 2, 'the pooled line is flagged to be made up again at 2 pieces: ' + JSON.stringify(offered.flagged));
     ok(/Changed/.test(offered.rowText) && /SCHRODINGER CAT 1 \+ SCHRODINGER CAT 2/.test(offered.rowText) && /open sheet/.test(offered.rowText), 'Review has a row for the order: Changed, both designs, why: ' + offered.rowText.slice(0, 500));
-    ok(offered.accept === 'Accept the new order' && offered.buttons.includes('Hold'), 'with the button Accept the new order beside Hold: ' + JSON.stringify(offered.buttons));
+    ok(offered.accept === 'Accept the new order' && !offered.buttons.includes('Hold'), 'with the button Accept the new order and no Hold (NOHOLDREV, Paul 17 Oct 2026): ' + JSON.stringify(offered.buttons));
     if (shots) await page.screenshot({ path: path.join(shots, 'SCHROLINK-review-row.png') });
     const writesBefore = st.calls.filter(c => c.name === 'charmNestLibrary' && /alias|master/i.test(String(c.body.op || ''))).length;
     await page.evaluate(rid => { document.querySelector('#rvList .reviewListRow[data-rid="' + rid + '"] [data-rv-accept]').click(); }, A);

@@ -3,8 +3,9 @@
  * Paul, 5 Oct 2026: "Add 1 extra button to both of these places in the UI. Orange 'Hold' button ... The user must be clearly
  * informed of the consequences of placing an order on hold with a popup and a final consent to continue button in the popup."
  *
- *   HoldUI.button(ctx)        -> the ONE orange Hold button (ctx = { rid, source: 'review' | 'orderWindow', label }). The Review cards (open and
- *                                completed) and the order window's piece row draw this same component, beside their other buttons.
+ *   HoldUI.button(ctx)        -> the ONE orange Hold button (ctx = { rid, source: 'review' | 'orderWindow', label }). The order window's piece row draws it,
+ *                                beside its other buttons (the Review cards, open and completed, drew it too until Paul, 17 Oct 2026: "Remove the
+ *                                'Hold' button from all listings inside the Review tab": NOHOLDREV; source 'review' is only the default now).
  *                                Hold always acts on the WHOLE order, whichever piece's button was pressed.
  *   HoldUI.confirm(plan)      -> Promise<boolean>: the consent popup, shown BEFORE anything changes. "Continue" is the final consent, "Not now"
  *                                (or Esc, or a press outside) leaves everything as it was. A plan that cannot be held says why, with Close only.
@@ -13,7 +14,7 @@
  *   HoldUI.release(rid, opts) -> the press of an existing "Release hold" button on a card in Orders > On hold: releasePlan -> OrderHold.release
  *                                feeding OrderHoldFx.playRelease -> back to Orders > On hold. One press: no popup, no question.
  *
- * Where it sits in the page: the Review card and the order window's piece row ask for a slot (HoldUI.slot(ctx), one span in their markup) and
+ * Where it sits in the page: the order window's piece row asks for a slot (HoldUI.slot(ctx), one span in its markup) and
  * the finished markup is given to HoldUI.fill(root), which swaps each slot for the real button. A held or cancelled order has no slot.
  *
  * Every call into another module is looked up when it is made and survives that module being absent (OrderHold: charm-nest-order-hold.js and
