@@ -34,9 +34,10 @@ const T = 1.7e12;
   const at = pred => m.log.findIndex(pred);
   const commit = at(e => e.col === 'WRITE Charm_Nest_Sheets/sheet-3-2');
   const raise = at(e => e.col === 'WRITE Charm_Nest_Rev/placement');
-  const recount = m.log.findIndex((e, i) => i > commit && e.col === 'Charm_Nest_Sheets' && e.kind === 'reads' && e.n > 20);
+  // (the recount is a count() of the completed sheets since the current flag, COST Oct 2026; before it, a read of every completed sheet)
+  const recount = m.log.findIndex((e, i) => i > commit && e.col === 'Charm_Nest_Sheets' && (e.kind === 'agg' || (e.kind === 'reads' && e.n > 20)));
   assert.ok(commit >= 0, 'the undo committed the sheet');
-  assert.ok(recount > commit, 'the Completed tab was recounted after the commit (every completed sheet is read)');
+  assert.ok(recount > commit, 'the Completed tab was recounted after the commit (the completed sheets are counted)');
   assert.ok(raise >= 0, 'the placement counter was raised');
   assert.ok(raise < recount, `the placement counter must be raised BEFORE the Completed recount (commit at ${commit}, raise at ${raise}, recount at ${recount}): other computers learn of the change when it moves`);
   assert.ok((m.db.docs.get('Charm_Nest_Rev/placement') || {}).n >= 1, 'and it stays raised');

@@ -10226,7 +10226,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
        · an answer that changes a card draws it again (the cards in place; a card that crossed between In progress and Laser
          cutting glides there); a sheet that moved to another set, or was cut or removed on another computer, has the Library's
          list read again (once the person's own work on it, a Moving bar or a drag, is done). */
-  const LIVE={every:3000,fast:2400,gap:600,max:30000,old:20000,second:1500,settle:1000,reloadEvery:10000,goneEvery:2500,goneSettle:50,verifyEvery:25,wasteMax:3,calm:20,sealVerify:10};   // (a sheet found GONE from the cloud has the list read again sooner: its card must not stay)
+  const LIVE={every:3000,fast:2400,gap:600,max:30000,old:20000,second:1500,settle:1000,reloadEvery:10000,goneEvery:2500,goneSettle:50,goneMax:3,goneWindow:60000,verifyEvery:25,wasteMax:3,calm:20,sealVerify:10};   // (a sheet found GONE from the cloud has the list read again sooner: its card must not stay)
   const liveOn=()=>S.mode==='library' && !document.hidden && !!S.cloud.ok;
   // the sheets and sets of the cards in view
   function shown(){
@@ -10354,15 +10354,20 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
      them. Its list is read again by the page's own read (loadLibrary), a moment after the change was seen (the person's own
      changes have been drawn by then, and a list read since says it already), never over a Moving bar, a flight or a drag,
      and at most every ten seconds. */
-  function wantReload(){live.reload=true;live.seen=Date.now();if(!live.reloadTimer)live.reloadTimer=setTimeout(tryReload,live.gone?LIVE.goneSettle:LIVE.settle);}
+  /* COST (Oct 2026): a sheet found gone has the list read again within 2.5 s — but each read is a Library load (setList + listSheets),
+     and a sheet the live read keeps not finding (one the list still holds) had it read every 2.5 s. The quick read is taken at most
+     LIVE.goneMax times a minute (goneWindow); after that a gone sheet waits the ordinary ten seconds. */
+  const goneFast=()=>{const now=Date.now();live.goneAt=(live.goneAt || []).filter(t=>now-t<LIVE.goneWindow);return live.gone && live.goneAt.length<LIVE.goneMax;};
+  function wantReload(){live.reload=true;live.seen=Date.now();if(!live.reloadTimer)live.reloadTimer=setTimeout(tryReload,goneFast()?LIVE.goneSettle:LIVE.settle);}
   const resumeReload=()=>{if(live.reload && !live.reloadTimer)live.reloadTimer=setTimeout(tryReload,LIVE.settle);};
   function tryReload(){
     live.reloadTimer=0;
     if(!live.reload || !liveOn())return;
     if((S.library?.loadedAt || 0)>live.seen){live.reload=false;return;}
     const holding=approving.size>0 || !!document.querySelector('[data-library-approval],[data-fx-hide],[data-library-drag]') || !!window.LibraryDnd?.busy?.() || !!window.LibraryFx?.active?.();
-    const wait=Math.max(holding?1500:0,live.reloadAt+(live.gone?LIVE.goneEvery:LIVE.reloadEvery)-Date.now());
+    const fast=goneFast(),wait=Math.max(holding?1500:0,live.reloadAt+(fast?LIVE.goneEvery:LIVE.reloadEvery)-Date.now());
     if(wait>0){live.reloadTimer=setTimeout(tryReload,wait);return;}
+    if(fast)live.goneAt.push(Date.now());
     live.reload=false;live.gone=false;live.reloadAt=Date.now();
     try{Promise.resolve(window.CN?.loadLibrary?.()).catch(()=>{});}catch(e){console.warn('Library read',e);}
   }

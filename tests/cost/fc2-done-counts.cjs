@@ -40,9 +40,17 @@ const T = 1.7e12;
   const ok = (name, got, want) => { assert.deepStrictEqual(got, want, `${name}: ${JSON.stringify(got)} vs ${JSON.stringify(want)}`); process.stdout.write(`ok   ${name} ${JSON.stringify(got)}\n`); };
 
   // 1. the first read counts (every sheet), keeps the answer; the next ones read one document
+  // (COST Oct 2026: the very first read also flags, once, the records that may be current — Charm_Nest_Rev/currentFlag; see 7 below)
+  const backfill = await cost(() => countOnly());
+  ok('the one-time backfill read is the full count', backfill.r, truth()); assert.ok(backfill.reads > 100, 'the backfill read every sheet: ' + backfill.reads);
+  const flagged = [...m.db.docs.entries()].filter(([, v]) => v && v.current === true).map(([k]) => k).sort();
+  assert.deepStrictEqual(flagged, ['Charm_Nest_Sets/part-0', 'Charm_Nest_Sets/part-1', ...['part-0-1', 'part-0-2', 'part-0-3', 'part-1-1', 'part-1-2', 'part-1-3'].map(x => 'Charm_Nest_Sheets/' + x)], 'the backfill flags the open sets and their sheets, and nothing filed');
+  assert.ok(m.db.docs.get('Charm_Nest_Rev/currentFlag'), 'and writes its marker');
+  m.db.docs.delete('Charm_Nest_Rev/done');
   const first = await cost(() => countOnly());
-  ok('first read is the full count', first.r, truth()); assert.ok(first.reads > 100, 'the first read counted: ' + first.reads);
+  ok('first read is the full count', first.r, truth()); assert.ok(first.reads < 30, 'the first read counts (count() and the flagged sheets), it does not read every completed sheet: ' + first.reads);
   assert.strictEqual(first.writes, 1, 'and kept it (one write)');
+  process.stdout.write(`     backfill ${backfill.reads} reads once, then a full count ${first.reads} reads\n`);
   const again = await cost(() => countOnly());
   ok('second read is the kept number', again.r, truth()); assert.strictEqual(again.reads, 1, 'one document read, got ' + again.reads); assert.strictEqual(again.writes, 0);
   process.stdout.write(`     full count ${first.reads} reads, kept answer ${again.reads} read\n`);
