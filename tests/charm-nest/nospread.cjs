@@ -235,6 +235,21 @@ async function scenes() {
     ok(w.pages.length >= 2, 'it is on more than one sheet');
     section(`an order of ${pieces} pieces (${(area / capacity).toFixed(2)} sheets of area) fills ${w.pages.length} consecutive sheets, the fewest by area ${fewest}, ${sc.searches} searches`);
   }
+  // the metals with a green cut line (Rose Gold, 10K, 14K) seat a big order too: consecutive sheets, never "cannot fit on an empty sheet"
+  for (const metal of ['rose', 'gold10k', 'gold14k']) {
+    const sc = new Scene('big ' + metal, { metal }); await sc.fillTo(.30, .55);
+    const B = sc.mk([{ kind: 'qty', k: 62, idx: 12, f: 1 }]);
+    const after = [0, 1, 2].map(i => sc.mk([{ kind: 'single', idx: i, f: 1 }], 900 + i));
+    await sc.bring(B); await sc.bring(...after); await sc.idle(3);
+    const w = sc.where(B);
+    ok(w.unplaced === 0, `${metal}: every piece of the order bigger than a sheet is placed: ${JSON.stringify(w)} (${sc.report()})`);
+    ok(!sc.pages.some(p => p.problem), `${metal}: no sheet is stuck on a problem: ${sc.pages.filter(p => p.problem).map(p => p.problem).join(' | ')}`);
+    ok(w.pages.length >= 2, `${metal}: it is on more than one sheet`);
+    eq([...new Set(piecesOf(B).map(c => c.order))].length, 1, `${metal}: the pieces keep their one order`);
+    for (const a of after) ok(sc.where(a).unplaced === 0, `${metal}: the orders behind it are placed`);
+    ok(sc.searches < 40, `${metal}: no loop: ${sc.searches} searches`);
+    section(`${metal}: an order of 62 pieces fills ${w.pages.length} consecutive sheets, nothing stuck`);
+  }
   // not interleaved with the spreading of other multi-piece orders
   {
     const sc = new Scene('big and others'); await sc.fillTo(.30, .55);

@@ -4145,7 +4145,7 @@ const Pool = window.Pool = (() => {
     const expected = new Map(), placed = new Map(), add = (m, k, n) => m.set(k, (m.get(k) || 0) + n);
     // (a line that is never cut and never pooled -- no design: a chain, an extender, packaging, a chain-only add-on --, one skipped, one committed, one gone is no piece to come: the page's own "done" states, settleTopups)
     for (const r of Orders.rows()) { if (["gone", "skipped", "noDesign", "committed"].includes(r.state) || !r.spec || r.spec.noDesign) continue; add(expected, String(r.order.receiptId) + "|" + (r.spec.material || ""), Math.max(0, O.pieceCountOf(r.spec) || 0)); }
-    for (const metal of ["gold", "silver"]) for (const p of pagesOf(metal) || []) for (const c of (p && p.charms) || []) if (!c.excluded) add(placed, String(c.order) + "|" + metal, 1);
+    for (const metal of ["gold", "silver", "rose", "gold10k", "gold14k"]) for (const p of pagesOf(metal) || []) for (const c of (p && p.charms) || []) if (!c.excluded) add(placed, String(c.order) + "|" + metal, 1);
     return { expected, placed };
   }
   /** What the intake knows of an order's pieces of one metal, for charm-nest-nospread.js: { pieces (the pieces in hand: this line and the order's other lines made up in the same update), expected (the pieces the
