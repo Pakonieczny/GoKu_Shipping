@@ -1163,8 +1163,16 @@
     const m = INDEXED_SKU.exec(s);
     if (m && String(+m[3]) === m[3] && full(m[1] + m[2])) return { base: m[1] + m[2], n: +m[3], own: true };
     for (const sep of ["-", "_"]) if (full(s + sep)) return { base: s + sep, n: -1, own: false };
+    // KEYALPHA (Paul, 17 Oct 2026, order 4196617547): the shop's key designs are named by their letter, HEARTKEY_NECKLACE_A … HEARTKEY_NECKLACE_Z: a family of the alphabet itself (the master holds at least 25 of the 26)
+    const lm = LETTERED_SKU.exec(s);
+    if (lm && alphabet(lm[1] + lm[2], me)) return { base: lm[1] + lm[2], n: lm[3].charCodeAt(0) - 65, own: true, lettered: true };
+    for (const sep of ["_", "-", " "]) if (alphabet(s + sep, me)) return { base: s + sep, n: -1, own: false, lettered: true };
     return null;
   }
+  const LETTERED_SKU = /^(.+?)([-_ ])([A-Z])$/;
+  const alphabet = (base, me) => { let held = 0; for (let i = 0; i < 26; i++) if (me(base + letterOfIndex(i))) held++; return held >= 25; };
+  /** The member of a letter family for place i: BASE0 … BASE25, or BASE + the letter for a lettered family. */
+  const familyMember = (fam, i) => fam.base + (fam.lettered ? letterOfIndex(i) : i);
   /** What the line says about a letter option: null (not a letter option, or the line's SKU is already that letter's own member: nothing to add), { sku, how, letter } (that member is the design:
    *  "base" | "named" | "said"), or { sku: "", letter, why, clash?: { has, want } } (no design: one plain line). sku: the line's design SKU (master spelling, "" when none); listingMap: the
    *  option maps saved for the listing ({ option: { value: { field, value } } }). */
@@ -1172,20 +1180,22 @@
     const idx = letterIndex(value); if (idx < 0 || !me) return null;
     const L = letterOfIndex(idx), s = upSku(sku), fam = letterFamily(s, me);
     // a person's answers for other letters of this option: each the right member of one family
-    const n = norm(name), byName = listingMap && (listingMap[n] || listingMap[Object.keys(listingMap).find(k => norm(k) === n)]), said = new Set();
-    for (const [k, hit] of Object.entries(byName || {})) { const j = letterIndex(k); if (j < 0 || !hit || hit.field !== "design" || !hit.value) continue; const f = letterFamily(hit.value, me); if (f && f.own && f.n === j) said.add(f.base); }
+    const n = norm(name), byName = listingMap && (listingMap[n] || listingMap[Object.keys(listingMap).find(k => norm(k) === n)]), said = new Map();
+    for (const [k, hit] of Object.entries(byName || {})) { const j = letterIndex(k); if (j < 0 || !hit || hit.field !== "design" || !hit.value) continue; const f = letterFamily(hit.value, me); if (f && f.own && f.n === j) said.set(f.base, !!f.lettered); }
     if (!LETTER_NAME.test(String(name || "")) && !fam && !said.size) return null;
     const none = why => ({ sku: "", letter: L, why });
     if (fam && fam.own) {
       if (!me(s)) return none(`no master design for letter ${L} on this listing (${s} is not in the master)`);
-      if (fam.n === idx) return null;                                                    // (the SKU is this letter's own member)
-      const want = fam.base + idx;
+      if (fam.n === idx) return fam.lettered ? { sku: s, how: "own", letter: L } : null;   // (the SKU is this letter's own member; a lettered family says so, so the option is answered and the line is read as a letter design)
+      const want = familyMember(fam, idx);
+      // KEYALPHA: the buyer's drop-down choice is the letter inside the key: a key SKU of another letter (an answer saved for the listing and its SKU, one letter for all) gives way to the chosen letter's own member
+      if (fam.lettered) return me(want) ? { sku: want, how: "chosen", letter: L } : none(`no master design for letter ${L} on this listing (${want} is not in the master)`);
       return Object.assign(none(`SKU ${s} is the letter ${letterOfIndex(fam.n)} but the buyer chose ${L}: a person says`), { clash: { has: s, want: me(want) ? want : "" } });
     }
-    if (fam) { const t = fam.base + idx; return me(t) ? { sku: t, how: "base", letter: L } : none(`no master design for letter ${L} on this listing (${t} is not in the master)`); }
+    if (fam) { const t = familyMember(fam, idx); return me(t) ? { sku: t, how: "base", letter: L } : none(`no master design for letter ${L} on this listing (${t} is not in the master)`); }
     const named = s ? ["-", "_", " "].map(sep => s + sep + L).filter(k => me(k)) : [];
     if (named.length === 1) return { sku: named[0], how: "named", letter: L };
-    if (said.size === 1) { const t = [...said][0] + idx; return me(t) ? { sku: t, how: "said", letter: L } : none(`no master design for letter ${L} on this listing (${t} is not in the master)`); }
+    if (said.size === 1) { const [[b, lt]] = [...said]; const t = b + (lt ? L : idx); return me(t) ? { sku: t, how: "said", letter: L } : none(`no master design for letter ${L} on this listing (${t} is not in the master)`); }
     // a line whose SKU is a master design that is no letter's (KEY_5598) has nothing more to wait for; one with no SKU or a SKU no master holds may still be answered by Etsy's SKU list: the old wording stays
     return s && me(s) ? none(`no master design for letter ${L} on this listing`) : null;
   }
@@ -2764,6 +2774,18 @@
     return { rule: "earring", form, by: by || (unsure && (df === "huggie" || df === "earring") ? "its design" : "its form"), why: EAR_NEVER_WHY };
   }
 
+  /* ═══ 3d' · A DESIGN THAT CARRIES ITS LETTER IS NEVER ENGRAVED (KEYNOENG, Paul 17 Oct 2026, order 4196617547, the heart keys HEARTKEY_NECKLACE_A … Z) ═══════════════════
+     ("These Key orders NEVER get engraved. When a user chooses a letter all it represents is the letter that must be inside the key.") A design that is a member of a lettered family of the master
+     (HEARTKEY_NECKLACE_A … Z: the letter is drawn in the key) has NO engraving, on either face: the buyer's letter picked the design (letterRead), and anything else in the box ("AT") is only what
+     the customer wrote, never words for the back and never a question. The same verdict as the earrings' (spec.engraveNever, read by every door through CharmNestEngraveFaces.neverOf). A numbered
+     family (INITIAL_NECKLACE_SCRIPT-0 … -25) is not touched: only the families named by their letter. An approved or written engraving is never touched (its seals are permanent). */
+  const LETTER_NEVER_WHY = "This design has its letter drawn in it: a letter key is never engraved (the shop's rule)";
+  function letterDesignNeverEngraves(sku, me) {
+    const s = upSku(sku); if (!s || typeof me !== "function") return null;
+    const fam = letterFamily(s, me);
+    return fam && fam.lettered && fam.own && me(s) ? { rule: "letter-design", form: "letter", by: "its design", why: LETTER_NEVER_WHY } : null;
+  }
+
   /* ═══ 3e · front and back engraving (ENGINTAKE, Paul 11 Oct 2026) ═══════════════════════════════════════════════════════
      (Paul, order 4195966039, Mini Tag listing 4458930445, Charm Type "Tag1 (front+back)", font Ace, personalisation "front - W" / "back - 1. 27. 24":
      "there must be an actual check on every single listing that is being processed to ensure that if there is back and front engraving, it's
@@ -3557,6 +3579,7 @@
     // ZODNOBACK (section 3d): NO EARRING IS EVER ENGRAVED. The form guard's verdict (lf: the line's form, df: its design's) decides, once, here; every later reader asks spec.engraveNever. The buyer's words stay in
     // spec.personalization (a zodiac sign typed in the box is the buyer's choice of sign, never words for the back) and are never a question.
     let never = null; try { never = earringNeverBackEngraves({ lineForm: lf, designForm: df, form: spec.form, pair: spec.pair, line }); } catch (_) { never = null; }
+    if (!never) { try { never = letterDesignNeverEngraves(spec.designSku, me); } catch (_) { never = null; } }   // (KEYNOENG, section 3d')
     if (never) spec.engraveNever = Object.assign({}, never, { note: (spec.personalization || []).map(x => visible(x).trim()).filter(Boolean).slice(0, 4).map(x => x.slice(0, 120)) });
     spec.engraveCandidate = !quiet && !never && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.some(m => engravingNote(m && m.text)));
     // BFFONT: a font the buyer named in their own words (personalisation, message, staff note), whatever the listing: spec.fontText (fontTextOf). A font option is read as before (spec.font) and wins over
@@ -3973,7 +3996,7 @@
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
   return { sizeFit, sizeMmOf, SIZE_PAD_PT, questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, tidyOption, optionView, optionViews, shownText, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, PINNED_LISTING_DESIGNS, pinnedDesign, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, SET_RULES, SET_LAYOUT_OPT, setRuleOf, setLengthsOf, setEngravedOf, barLengthOf, setLayoutAskOf, setPiecesOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
-    engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY, earringNeverBackEngraves, EAR_NEVER_WHY,
+    engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY, earringNeverBackEngraves, EAR_NEVER_WHY, letterDesignNeverEngraves, LETTER_NEVER_WHY,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar, tagOptionOf, tagOptionRead, TAG_SHAPES,

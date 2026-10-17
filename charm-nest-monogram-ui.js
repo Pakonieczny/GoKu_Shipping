@@ -664,7 +664,9 @@
       R.sw.forEach(b => { b.disabled = st.locked; });
       // what the buyer wrote (compact: only when it needs a look)
       const seen = st.buyer.letters ? spaced(st.buyer.letters.join("")) : st.buyer.words;
-      const says = seen ? `The buyer wrote <b>${esc(seen)}</b>` : "The buyer wrote nothing";
+      // (MONOLETTERS, Paul 17 Oct 2026: "the system did not use the buyer's requested letters": a card starts with the buyer's letters in the order they wrote them; one a person turned or swapped (the arrow moves the first letter to the end: A P V -> P V A) says what the buyer wrote, with one press to put them back)
+      const differs = !!(st.buyer.letters && st.buyer.letters.join("") !== st.letters.join(""));
+      const says = seen ? `The buyer wrote <b>${esc(seen)}</b>${differs && !st.locked ? ` · <button type="button" class="mwLink" data-mw-buyer title="Put the buyer's letters back, in the order they wrote them">Use these</button>` : ""}` : "The buyer wrote nothing";
       if (R.says._shown !== says) { R.says.innerHTML = says; R.says._shown = says; }
       R.says.hidden = st.message && st.message.kind === "letters" ? true : st.state !== "letters" && !(st.buyer.letters && st.buyer.letters.join("") !== st.letters.join(""));      // (an unreadable order's message says what the buyer wrote already; the order's own words stand in the strip above the widget, so the line is only for letters that differ from them)
       // ONE size line
@@ -746,6 +748,7 @@
         if (sw) { const i = +sw.dataset.mwSwap, ls = readLetters(c); [ls[i], ls[i + 1]] = [ls[i + 1], ls[i]]; c.hint = ""; editTo(c, ls); return; }
         if (hit("[data-mw-rotate]")) { const ls = readLetters(c); c.hint = ""; editTo(c, [ls[1], ls[2], ls[0]]); return; }
         if (hit("[data-mw-approve]")) viewApprove(v);
+        else if (hit("[data-mw-buyer]")) { c.hint = ""; editTo(c, buyerLetters(c).ls); }
         else if (hit("[data-mw-change]")) { c.unlocked = true; c.unlockedAt = Date.now(); paint(c); if (v.r.ins[0]) v.r.ins[0].focus(); }
         else if (hit("[data-mw-again]")) improve(c);
         else if (hit("[data-mw-retry]")) schedule(c, 0);

@@ -2001,6 +2001,7 @@ const Orders = window.Orders = (() => {
     // a special line that is not cut says which: finished by hand under Custom Orders, or chain only
     if (state === "noDesign" && r.spec && r.spec.customDone) return ["ok", "custom · done"];
     if (state === "noDesign" && r.spec && r.spec.special && r.spec.special.notCut) return ["info", r.spec.special.label.toLowerCase()];
+    if ((state === "held" || state === "pulled") && r.spec && r.spec.special && r.spec.special.monogram && !r.hold) return ["info", "monogram · Engraving"];   // (MONOROUTE)
     if ((state === "held" || state === "pulled") && r.spec && r.spec.ownDesign && !r.hold) return ["info", "custom · own design"];
     const [k, t] = STATE_PILL[state] || ["neutral", state];
     const i = PROGRESS.indexOf(state);
@@ -2169,7 +2170,7 @@ const Orders = window.Orders = (() => {
   function lineView(r) {
     const sp = r.spec || {}, m = r.material || "none";
     const st = stateWords(r), shown = stageText(st[1]) ? null : st, due = dueOf(r), where = placeOf(r), fc = faceChip(r);
-    const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
+    const attn = r.problems.length || (["held", "unmatched", "oversize"].includes(r.state) && !(r.state === "held" && !r.hold && r.spec && r.spec.special && r.spec.special.monogram));   // (MONOROUTE: a monogram line waits in the Engraving tab, it is not "attention")
     const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
     const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
     const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = window.TeamMail ? TeamMail.stamp(r) : "";
@@ -6102,6 +6103,8 @@ const Engrave = window.Engrave = (() => {
   const neverEngraves = row => { const r = row && (row.parentRow || row), F = FACES(); return F && F.neverOf ? F.neverOf(r) : (r && r.spec && r.spec.engraveNever) || null; };
   const NEVER_OPEN = j => !["approved", "written"].includes(j.state);   // (the jobs the rule may put away: not the ones with an approval on them)
   const NEVER_WHY = "Earrings are never engraved (the shop's rule)";
+  /** The verdict's own words for a line that never engraves (an earring's, or a letter key's: charm-nest-orders.js sections 3d, 3d'); the earrings' sentence when it says none. */
+  const neverWhy = row => { const v = neverEngraves(row); return (v && v.why) || NEVER_WHY; };
   /** The key of a saved record (a backPool entry / Charm_Pool_Back doc): the poolId for a back, `<poolId>~front` for a front. */
   const recKeyFor = (poolId, x) => { const F = FACES(); return F ? F.recKey(poolId, faceOf(x)) : poolId; };
   const slotKey = (row, slot, face) => (face === "front" && FACES() ? FACES().jobKey(row.key, slot, "front") : slot ? `${row.key}#${slot}` : row.key);
@@ -6550,9 +6553,9 @@ const Engrave = window.Engrave = (() => {
   function putAwayNever(row) {
     row = (row && row.parentRow) || row; if (!row || !row.spec || row.state === "gone" || !neverEngraves(row)) return false;
     let hit = false; const js = jobsOf(row);
-    for (const j of js) if (NEVER_OPEN(j) && j.state !== "none" && j.state !== "skipped") { setNone(j, NEVER_WHY); hit = true; }
+    for (const j of js) if (NEVER_OPEN(j) && j.state !== "none" && j.state !== "skipped") { setNone(j, neverWhy(row)); hit = true; }
     const e = row.engrave;
-    if (e && !js.length && e.needed && !e.approved && !["approved", "written", "skipped", "none"].includes(e.state)) { row.engrave = { ...e, needed: false, state: "none", approved: true, reason: NEVER_WHY, seals: CNEngravingSeals.merge(e) }; hit = true; }
+    if (e && !js.length && e.needed && !e.approved && !["approved", "written", "skipped", "none"].includes(e.state)) { row.engrave = { ...e, needed: false, state: "none", approved: true, reason: neverWhy(row), seals: CNEngravingSeals.merge(e) }; hit = true; }
     if (hit) { try { const S = SIDES(); if (S && row._engraveLinked) S.linkParent(sidesCtx, row, jobsOf(row)); } catch (_) { /* the summary is drawn again from the jobs */ } }
     return hit;
   }
@@ -6597,7 +6600,7 @@ const Engrave = window.Engrave = (() => {
     const jobs = ensureJobs(row), job = jobs[0]; const sp = row.spec; const owner = items();
     for (const j of jobs) CNEngravingSeals.keep(j);
     // NO EARRING IS EVER ENGRAVED (ZODNOBACK): nothing is read, nothing is paid for, nothing asks; a job with an approval on it stays as it is
-    if (neverEngraves(row)) { for (const j of jobs) if (NEVER_OPEN(j) && j.state !== "none") setNone(j, NEVER_WHY); return job; }
+    if (neverEngraves(row)) { for (const j of jobs) if (NEVER_OPEN(j) && j.state !== "none") setNone(j, neverWhy(row)); return job; }
     if (!sp.engraveCandidate && !raiseCandidate(row)) { for (const j of jobs) setNone(j, "no personalisation, message or note"); return job; }
     // a person said "no engraving" for this line: it stays so (never the paid reader again)
     const said = FACES() ? FACES().setupOf(row) : null;
@@ -6732,12 +6735,12 @@ const Engrave = window.Engrave = (() => {
     return setReady(job);
   }
   function setNone(job, why) { job.state = "none"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: false, state: "none", reason: why, approved: true }; Review.remove("eng:" + job.key); RunCtl.poke(); return job; }
-  function toWords(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, NEVER_WHY);   // (NO EARRING IS EVER ENGRAVED: nothing ever asks for words on an earring)
+  function toWords(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, neverWhy(job.row));   // (NO EARRING IS EVER ENGRAVED: nothing ever asks for words on an earring)
     job.state = "words"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: why }; Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why }); RunCtl.poke(); return job; }
   async function setReady(job, wake = true) {
     const owner = items(), state = job.state, row = job.row, preparing = !!job.approvalPreparing;
     if (owner.get(job.key) !== job || row.state === "gone" || job.stamping || job.backSaving || ["approved", "written", "skipped", "none"].includes(state)) return job;
-    if (neverEngraves(row)) return setNone(job, NEVER_WHY);   // (NO EARRING IS EVER ENGRAVED: a person's words for an earring never make it ready either)
+    if (neverEngraves(row)) return setNone(job, neverWhy(row));   // (NO EARRING IS EVER ENGRAVED: a person's words for an earring never make it ready either)
     await loadFonts();
     // A font arriving belongs to the proposal that asked for it. Closing an edit,
     // restoring another set, or deciding this job meanwhile must not undo approval.
@@ -7234,7 +7237,7 @@ const Engrave = window.Engrave = (() => {
     job.state = "skipped"; job.decidedAt=Date.now(); job.decidedBy=by; CNListActivity.touch(job.row,job.decidedAt); job.approvedBy = null; job.row.engrave = { ...job.row.engrave, needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; CNEngravingSeals.add(job,"engravePlain",by,job.decidedAt); wordsEvent(job, by, job.text, "skipped"); try { humanAct("note", { orderId: String(job.row.order.receiptId), line: String(job.row.line.transactionId || ""), detail: (isFront(job) ? "front " : "") + "engraving skipped (cut plain)" }); } catch (_) {} job.row.flag = `${isFront(job) ? "front " : ""}engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
     const saved = virtualJob(job) ? null : Pool.update(job.copies, isFront(job) ? { engraveFront: false, engraveFrontSkippedBy: by } : { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;   // (a skipped FRONT leaves the piece's back flags alone)
     if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
-  function sendBack(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, NEVER_WHY); CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job); job.state = "words"; job.reason = why || `sent back from the placement review — a decision on the ${facedJob(job) ? faceWord(job) + " " : ""}words is needed`; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); Orders.render(); }
+  function sendBack(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, neverWhy(job.row)); CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job); job.state = "words"; job.reason = why || `sent back from the placement review — a decision on the ${facedJob(job) ? faceWord(job) + " " : ""}words is needed`; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); Orders.render(); }
   /* ── NODECIDED (Paul, 16 Oct 2026: "Get rid of this Decided view. Instead just open the existing detailed Engraving modal without needing to 'Re-Open' the order. The user should be free to update/modify any already Approved
      engraving order and simply need to press the 'Approve' button again after the second change. This would then produce a second brand new seal.") ──
      There is no Decided tab and no Reopen step. A piece that is approved (or saved to its sheet, or cut plain) opens in the same detailed card as any other piece; looking at it changes nothing. The FIRST change a person makes to it
@@ -7434,7 +7437,7 @@ const Engrave = window.Engrave = (() => {
   async function approveOnce(job, by, button) {
     const owner=items(),row=job.row,pendingFit=fitTasks.get(job);
     if(owner.get(job.key)!==job || row?.state==="gone" || job.state!=="review" && !(job.state==="fitting" && pendingFit) || job.stamping || job.backSaving || job.approvalPreparing) return;
-    if(neverEngraves(row) && !job.approvalIntent){setNone(job,NEVER_WHY);Orders.render();render();return;}   // (NO EARRING IS EVER ENGRAVED: an old open card is put away, nothing is approved)
+    if(neverEngraves(row) && !job.approvalIntent){setNone(job,neverWhy(row));Orders.render();render();return;}   // (NO EARRING IS EVER ENGRAVED: an old open card is put away, nothing is approved)
     if(job.approvalIntent){recoverApprovals();if(job.state==="approved")await saveBacks(job);return;}
     if(pendingFit){
       // A can arrive while new words still wait for fonts or the fitting worker.
@@ -14771,16 +14774,19 @@ const Review = window.Review = (() => {
    *  both completed by hand and sent is one card, the completed one with its buttons: it keeps the send as `alsoSent`
    *  (its seal and its words) and the sent card is marked `foldedInto` it, so the list shows the order once. */
   function customLists(decided) {
-    const open = [], done = [], sent = [], recent = [], seen = new Set(), groups = new Map();
+    const open = [], done = [], sent = [], recent = [], engraving = [], seen = new Set(), groups = new Map();
     const itemFor = (key, extra) => { const it = infoItems.get(key) || { kind: "customOrder", key, info: true, t: Date.now() }; Object.assign(it, extra); infoItems.set(key, it); seen.add(key); return it; };
     for (const row of Orders.rows()) {
       const sp = row.spec, decision = CustomSheet.decisionOf(row), pending = CustomSheet.sending?.(row);
       if (!sp || !(sp.special || sp.customDone || decision || pending) || row.state === "gone") continue;
       const isDone = !!sp.customDone && !sentToSheet(sp.customDone), isSent = !isDone && !!decision;
+      // MONOROUTE (Paul, 17 Oct 2026: "Monogram orders should be treated exactly like back engraving and should be routed to the Engraving tab and NOT the Review tab unless something else is wrong"): a monogram line that asks nothing is the Engraving tab's, not a card of Review's Custom Orders (one with a problem, or a person's completion or send, is listed as before)
+      // (the card still exists, the monogram's Approve puts its design on it; it is only not LISTED in Review: customLists().engraving)
+      const mono = !!(sp.special && sp.special.monogram) && !isDone && !isSent && !pending;
       if (!isSent && decided.has(row.key)) continue;
       if (!isDone && !isSent && !pending && ((row.problems || []).length || row.hold || ["committed", "skipped"].includes(row.state))) continue;
       const key = (isDone ? "cdone:" : isSent ? "csent:" : "cinfo:") + customKey(row).slice(4);
-      if (!groups.has(key)) groups.set(key, { key, done: isDone, decided: isSent, rows: [] });
+      if (!groups.has(key)) groups.set(key, { key, done: isDone, decided: isSent, mono, rows: [] });
       groups.get(key).rows.push(row);
     }
     // when a completed card was last completed or printed: the list is in the order of the latest activity, so the card is
@@ -14793,7 +14799,7 @@ const Review = window.Review = (() => {
       const own = g.done ? g.rows.map(r => ({ r, d: CustomSheet.decisionOf(r) })).find(x => x.d) : null;
       const it = itemFor(g.key, { rows: g.rows, row: first, done: g.done, decided: g.decided, record, alsoSent: own ? sentRecord(own.r, own.d) : null, foldedInto: null,
         ...(g.decided ? { t: record.at } : g.done && doneTime(record) ? { t: doneTime(record) } : {}), why: customWhy(first, g.done, record) });
-      (g.done ? done : g.decided ? sent : open).push(it); if (g.done && CustomPrint.undoing(g.rows)) recent.push(it);
+      (g.done ? done : g.decided ? sent : g.mono ? engraving : open).push(it); if (g.done && CustomPrint.undoing(g.rows)) recent.push(it);
     }
     for (const [lineKey, rec] of Object.entries(B.maps.customDone || {})) {
       const r0 = B.orders.byKey && B.orders.byKey.get(lineKey);
@@ -14806,7 +14812,7 @@ const Review = window.Review = (() => {
     for (const it of done) if (it.alsoSent) { it.why = customWhy(it.row, true, it.record) + sentNote(it.alsoSent); it.t = Math.max(+it.t || 0, +it.alsoSent.at || 0); }
     for (const k of [...infoItems.keys()]) if (!seen.has(k)) infoItems.delete(k);
     done.sort((a, b) => doneTime(b.record) - doneTime(a.record));
-    return { open, done, sent, recent };
+    return { open, done, sent, recent, engraving };   // (engraving: a monogram line that asks nothing, the Engraving tab's: its card exists for the monogram's Approve but Review does not list it, MONOROUTE)
   }
   /** What a completed card says of the send it also had: " · sent to Sheet by whom · when". */
   const sentNote = rec => rec ? ` · sent to Sheet${rec.by ? " by " + rec.by : ""}${rec.at ? " · " + whenOf(rec.at) : ""}` : "";
@@ -15117,7 +15123,7 @@ const Review = window.Review = (() => {
     if (dec) return dec;
     const decided = new Set(); for (const it of items()) if (it.kind === "customOrder") for (const r of rowsOf(it)) decided.add(r.key);
     const cl = customLists(decided);
-    return cl.open.concat(cl.done,cl.sent).find(it => (it.rows || []).some(r => r.key === rowKey)) || null;
+    return cl.open.concat(cl.engraving, cl.done, cl.sent).find(it => (it.rows || []).some(r => r.key === rowKey)) || null;
   }
   /** The card a piece (one line of an order) has in the Review tab, whichever its tab, for the order window to act on beside the piece
    *  (Paul, 5 Oct: "place the available complete button beside the actual piece that has that given problem"): a custom order's,
@@ -17474,6 +17480,7 @@ const OrderWin = window.OrderWin = (() => {
     for (const x of [r].concat(tryDo(() => Orders.rows()) || [])) if (x && x.order && String(x.order.receiptId) === rid && x.spec && !x.loading && Array.isArray(x.spec.problems) && !mine.has(x.key)) mine.set(String(x.key), x);
     return { asks: (lineKey, kind) => {
       const x = mine.get(String(lineKey)); if (!x || x.state === "gone") return null;
+      if (kind === "engraveWords") return x.spec.engraveNever ? false : null;   // (a words question of a line that never engraves, an earring or a letter key, is no longer asked; for any other line the record stands as before)
       const kinds = new Set([].concat(x.spec.problems, x.problems || []).map(p => p && p.kind));
       if (x.materialOverride) kinds.delete("needsMaterial");
       if (x.sizeOverride) kinds.delete("missingSize");

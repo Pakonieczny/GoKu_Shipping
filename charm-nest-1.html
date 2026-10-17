@@ -576,8 +576,10 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 #owEng.engGrid>.engMono{grid-column:span 2}
 @container eng (max-width:361px){#owEng.engGrid>.engMono{grid-column:auto}}
 .engMono{container:engm/inline-size;box-sizing:border-box;width:100%;min-width:0;padding:7px;border:1px solid var(--line);border-radius:12px;background:var(--card);display:grid;gap:4px;align-content:start;overflow-wrap:anywhere}
-.engMono>.engMonoBody{min-width:0;min-height:176px}
-@container engm (max-width:299px){.engMono>.engMonoBody{min-height:270px}}
+.engMono>.engMonoBody{min-width:0;min-height:226px}
+@container engm (max-width:385px){.engMono>.engMonoBody{min-height:300px}}
+/* (MONOROUTE) the card's shortcut into the Engraving tab, the same button as an engraved piece's card has */
+.engMono .engOpenRow{display:flex;min-width:0}.engMono .egOpen{flex:1 1 auto;min-width:0;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:22px;padding:0 10px;font-size:12px;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .engMono .engFail{font:12px/1.4 var(--sans);color:var(--ink70)}
 /* (a chip's card hangs over the section: the facts sit above the cards' own positioned parts, the section being a later sibling with its own stacking context) */
 #orderWin .owInfoMain>#owMeta{z-index:3}
@@ -3250,7 +3252,7 @@ dialog.cuAsk{width:min(440px,94vw)}.cuAskP{margin:0 0 10px;line-height:1.45}.cuA
 @container mw (min-width:660px){.mw[data-mode=detail] .mwBody{grid-template-columns:minmax(240px,360px) minmax(0,1fr)}}
 /* compact: the Order details window (one tight block: the picture 84 px, small letter boxes) */
 .mw[data-mode=compact] .mwBody{--mwb:36px;--mwl:0px;grid-template-columns:auto minmax(0,1fr);gap:6px 12px;align-items:center;justify-items:start}
-.mw[data-mode=compact] .mwPic{width:84px;max-width:none;border-radius:9px}.mw[data-mode=compact] .mwSide{display:contents}
+.mw[data-mode=compact] .mwPic{width:139px;max-width:100%;border-radius:9px}.mw[data-mode=compact] .mwSide{display:contents}
 .mw[data-mode=compact] .mwLtrs{grid-column:2;grid-row:1}.mw[data-mode=compact] .mwPic{grid-column:1;grid-row:1}
 .mw[data-mode=compact] .mwSays,.mw[data-mode=compact] .mwLine,.mw[data-mode=compact] .mwMsg,.mw[data-mode=compact] .mwAct{grid-column:1/-1;text-align:left}
 .mw[data-mode=compact] .mwLt span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.mw[data-mode=compact] .mwLt{gap:0}
@@ -3259,7 +3261,9 @@ dialog.cuAsk{width:min(440px,94vw)}.cuAskP{margin:0 0 10px;line-height:1.45}.cuA
 .mw[data-mode=compact] .mwBusy span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.mw[data-mode=compact] .mwBusy{gap:6px}.mw[data-mode=compact] .mwBusy i{width:14px;height:14px}
 .mw[data-mode=compact] .mwHint{padding:4px;font-size:10.5px;line-height:1.25}.mw[data-mode=compact] .mwArt{padding:5%}
 .mw[data-mode=compact] .mwAct{justify-content:flex-start;min-height:29px}.mw[data-mode=compact] .mwAct .btn{padding:5px 16px}.mw[data-mode=compact] .mwMsg{font-size:12.5px;padding:7px 10px}
-@container mw (max-width:300px){.mw[data-mode=compact] .mwBody{grid-template-columns:minmax(0,1fr);justify-items:center}.mw[data-mode=compact] .mwLtrs,.mw[data-mode=compact] .mwPic{grid-column:1;grid-row:auto}.mw[data-mode=compact] .mwPic{width:96px}}
+/* (MONOBIG, Paul 17 Oct 2026: "the preview thumbnail for the monogram is too small to see the necessary detail. Please enlarge by 66% and ensure it still fits within the bounds of the monogram card": the picture is 139 px, was 84, and 159 px, was 96, when the card is too narrow to hold it beside the letters; the letters row is about 216 px wide (245 px with the 40 px phone targets), so the two stand side by side from 372 px of card, 400 px on a phone, and stack below that) */
+@container mw (max-width:371px){.mw[data-mode=compact] .mwBody{grid-template-columns:minmax(0,1fr);justify-items:center}.mw[data-mode=compact] .mwLtrs,.mw[data-mode=compact] .mwPic{grid-column:1;grid-row:auto}.mw[data-mode=compact] .mwPic{width:159px}}
+@media(max-width:760px){@container mw (max-width:399px){.mw[data-mode=compact] .mwBody{grid-template-columns:minmax(0,1fr);justify-items:center}.mw[data-mode=compact] .mwLtrs,.mw[data-mode=compact] .mwPic{grid-column:1;grid-row:auto}.mw[data-mode=compact] .mwPic{width:159px}}}
 /* compact keeps one height (the Order window never jumps): three single-line slots reserved even when empty (≤176 px wide-ish layout, ≤270 px stacked); a plain message replaces them and may be taller */
 .mw[data-mode=compact] .mwSays,.mw[data-mode=compact] .mwLine{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:100%;box-sizing:border-box;height:18px;line-height:18px}
 .mw[data-mode=compact]:not([data-msg]) .mwSays[hidden],.mw[data-mode=compact]:not([data-msg]) .mwLine[hidden]:not(.mwNote){display:block!important;visibility:hidden}   /* (REV: not while a message stands in their place: they were still kept as 36 px of blank above it) */

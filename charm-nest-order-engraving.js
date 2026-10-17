@@ -487,9 +487,11 @@
       tryDo(() => { const C = CARD(); if (C && C.css) C.css(); });   // (the header's dot and name are the engraving card's own styles, which a window with no engraving card has not had put in the page yet)
       el.className = 'engMono'; el.dataset.testid = 'ow-mono'; el.dataset.key = pc.key; el.dataset.line = line.key; el.dataset.slot = pc.slot || ''; el.dataset.piece = String(pc.n); el.dataset.rid = String(ctx.rid || (line.order && line.order.receiptId) || ''); el.dataset.state = 'reading';
       el.setAttribute('aria-label', 'Monogram');
-      el.innerHTML = '<header class="engHd" data-testid="ow-mono-head"><i class="engDot" data-testid="ow-mono-dot" role="img"></i><b class="engName">Monogram</b></header><div class="engMonoBody" data-testid="ow-mono-body"></div>';
+      el.innerHTML = '<header class="engHd" data-testid="ow-mono-head"><i class="engDot" data-testid="ow-mono-dot" role="img"></i><b class="engName">Monogram</b></header><div class="engMonoBody" data-testid="ow-mono-body"></div>'
+        + '<div class="engOpenRow"><button type="button" class="btn ghost sm egOpen" data-e="engrave" data-testid="ow-mono-open" title="Open this monogram in the Engraving tab">Open in Engraving <span aria-hidden="true">\u2192</span></button></div>';
       m = { el, body: el.querySelector('.engMonoBody'), line, row: line, piece: pc, handle: null };
       monos.set(pc.key, m);
+      { const ob = el.querySelector('[data-e=engrave]'); if (ob) ob.addEventListener('click', () => openMonoEngrave(pc, ob)); }
       monoTitle(m);
       monoDot(m, null);
       let w = null;
@@ -497,6 +499,15 @@
       if (w) { m.handle = w; monoDot(m, tryDo(() => w.state && w.state(), null)); }
       else { const f = d.createElement('div'); f.className = 'engFail'; f.setAttribute('role', 'alert'); f.textContent = 'The monogram could not be drawn here.'; m.body.append(f); }
       return m;
+    }
+    /** The shortcut of a monogram card (MONOROUTE): the piece opens in the Engraving tab, as an engraved piece's "Fix in Engraving" does; the wait is said on the button, a second press does nothing. */
+    function openMonoEngrave(pc, btn) {
+      if (!btn || btn.getAttribute('aria-busy') === 'true') return;
+      const link = root.EngraveLink, E = root.Engrave, was = btn.innerHTML;
+      btn.setAttribute('aria-busy', 'true'); btn.innerHTML = '<span class="spin" aria-hidden="true"></span>Opening Engraving\u2026';
+      const back = () => { if (btn.isConnected) { btn.removeAttribute('aria-busy'); btn.innerHTML = was; } };
+      let run; try { run = link && link.openMonogram ? link.openMonogram({ rid: String(ctx.rid || (pc.line && pc.line.order && pc.line.order.receiptId) || ''), key: pc.key }) : E && E.openMonogram ? Promise.resolve(E.openMonogram(pc.key)) : Promise.resolve(false); } catch (e) { back(); say('Could not open Engraving: ' + (e && e.message || e), 'bad', 5000); return; }
+      Promise.resolve(run).then(ok => { back(); if (ok === false) say('This monogram cannot be opened in Engraving here.', 'bad', 5000); }, e => { back(); say('Could not open Engraving: ' + (e && e.message || e), 'bad', 5000); });
     }
     /** PIECES: a monogram of a line of several says which piece it is, as an engraved copy's card does: "Monogram · Piece 1 of 2". A line of one piece: "Monogram", as ever. */
     function monoTitle(m) {

@@ -328,7 +328,9 @@
     const handOfRow = row => { try { return root.CharmNestReadiness && root.CharmNestReadiness.handOf ? root.CharmNestReadiness.handOf(row) : null; } catch (_) { return null; } };
     // (a row's own hold counts until the cloud has confirmed it (row.holdSeen, set by PlacementFeed.adoptHolds): from then on the cloud's pool rows are the hold's one record, so a Release made on
     //  another computer releases it here too. o.cloudOnly asks what the cloud alone says: the feed uses it to tell a hold the cloud confirms from one still being written)
-    const holdOfRow = (row, o) => row && !row.holdSeen && !(o && o.cloudOnly) && (row.hold || row.state === 'held') ? { reason: str(typeof row.hold === 'string' ? row.hold : (row.hold && (row.hold.reason || row.hold.text)) || row.reason || '', 200), at: +(row.hold && row.hold.at) || 0, by: str(row.hold && row.hold.by, 80) } : null;
+    // (MONOROUTE, Paul 17 Oct 2026: a monogram line waits for its letters in the Engraving tab, like a back engraving: the "held" state its intake gives it while no design exists is no hold; only a hold somebody pressed counts)
+    const waitsInEngraving = row => !row.hold && !!(row.spec && row.spec.special && row.spec.special.monogram);
+    const holdOfRow = (row, o) => row && !row.holdSeen && !(o && o.cloudOnly) && (row.hold || (row.state === 'held' && !waitsInEngraving(row))) ? { reason: str(typeof row.hold === 'string' ? row.hold : (row.hold && (row.hold.reason || row.hold.text)) || row.reason || '', 200), at: +(row.hold && row.hold.at) || 0, by: str(row.hold && row.hold.by, 80) } : null;
     /** The facts of one line of an order, from the line's row and its copies (OrderPieces entries: records first, live pages next, the pool row only a hint). */
     function factsOf(row, copies, o) {
       const mine = copies || [], sheets = [], seen = new Set();
