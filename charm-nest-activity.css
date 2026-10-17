@@ -1,17 +1,169 @@
-/* Quiet, consistent list controls; search stays with its own list header. */
-.cnListTools{display:flex;flex:0 0 auto;align-items:center;gap:6px;min-width:0;padding:0;font-size:11px;color:var(--ink60,#746f66)}
-.cnDatePresets{display:flex;align-items:center;gap:2px;flex-wrap:nowrap}
-.cnListTools .cnDatePresets button{appearance:none;border:0;background:transparent;border-radius:5px;padding:4px 7px;min-height:26px;font:inherit;color:inherit;white-space:nowrap;cursor:pointer;box-shadow:none}
-.cnListTools .cnDatePresets button:hover{background:var(--sand,#eee8db)}
-.cnListTools .cnDatePresets button[aria-pressed=true]{background:var(--ink,#39362f);color:var(--paper,#fffdf7)}
-.cnListTools .cnActivitySort{margin-left:0;max-width:135px;min-height:26px;border:0;border-left:1px solid var(--line,#ddd6c9);border-radius:0;background:transparent;color:inherit;font:inherit;padding:3px 7px;cursor:pointer}
-.cnListTools :is(button,select):focus-visible{outline:2px solid var(--slate,#68899d);outline-offset:2px}
-.ordBar:has(.cnListTools),.libBar:has(>.cnListTools),.masterHead:has(>.cnListTools),.hBar:has(>.cnListTools){flex-shrink:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}
-.ordBar:has(.cnListTools)>*,.masterHead:has(>.cnListTools)>*,.hBar:has(>.cnListTools)>*{flex-shrink:0;white-space:nowrap}
+/* ═══ FILTERBAR (Paul, 17 Oct 2026: "This much is much too crowded. Consolidate this entire menu into the smallest and most efficient footprint so it's easier to use and understand all of the options. Make it Beautiful and
+   tastefully looking so it's a pleasure to use easy to click easy to understand and real-time reactions with spinner/loader when waiting.") ═══════════════════════════════════════════════════════════════
+   The list tools (charm-nest-activity.js): ONE date menu and ONE sort control where there were five date chips and a select. The Orders tab's own bar (charm-nest-bridge.js, Orders buildHead / renderHead) is the second block below.
+   The app's own voice only: --line hairlines, --card / --paper2 surfaces, --gold / --goldSoft for what is in force, 9 px controls and 12 px panels, --sans / --mono / --serif; light theme (the app has no dark mode). */
+.cnListTools{display:inline-flex;flex:0 0 auto;align-items:center;gap:6px;min-width:0;padding:0;font:600 12px var(--sans);color:var(--ink70)}
+.cnDate,.cnSort{display:inline-flex;align-items:center;min-width:0}
+.cnBtn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:0;height:28px;padding:0 10px;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--ink70);font:600 12px/1 var(--sans);white-space:nowrap;cursor:pointer;box-shadow:none;transition:background-color .12s,border-color .12s,color .12s}
+.cnBtn[hidden]{display:none}
+.cnBtn:hover{background:var(--card2);border-color:var(--ink25);color:var(--ink)}
+.cnBtn:active{background:var(--paper2)}
+.cnBtn[aria-expanded=true]{background:var(--paper2);border-color:var(--ink25);color:var(--ink)}
+.cnBtn[data-on]{background:var(--goldSoft);border-color:var(--goldLine);color:var(--ink)}
+.cnBtn[data-on]:hover,.cnBtn[data-on][aria-expanded=true]{background:var(--goldSoft);border-color:var(--gold)}
+.cnBtn:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.cnLbl{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.cnShort{display:none}
+.cnIc,.cnArr{flex:0 0 auto;width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.cnChev{flex:0 0 auto;width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;opacity:.6;transition:transform .15s}
+.cnBtn[aria-expanded=true] .cnChev{transform:rotate(180deg)}
+.cnBtn[aria-busy=true]>.cnIc{display:none}
+.cnSpin{width:12px;height:12px;flex:0 0 12px;border-width:2px;border-color:rgba(28,26,23,.16);border-top-color:var(--gold)}
+/* the sort control: one button that says what the list is ordered by and a small arrow that reverses it (a list with one thing to sort by is the one Newest first / Oldest first button) */
+.cnSplit{gap:0}
+.cnSplit .cnKey{border-radius:9px 0 0 9px}
+.cnSplit .cnDir{width:30px;padding:0;margin-left:-1px;border-radius:0 9px 9px 0}
+.cnSplit .cnDir .cnLbl{display:none}
+.cnSplit .cnKey:is(:hover,:focus-visible,[aria-expanded=true])+.cnMenu+.cnDir,.cnSplit .cnDir:is(:hover,:focus-visible){position:relative;z-index:1}
+.cnSplit .cnKey[hidden]~.cnDir{width:auto;margin-left:0;padding:0 10px;border-radius:9px}
+.cnSplit .cnKey[hidden]~.cnDir .cnLbl{display:inline}
+.cnDir[data-dir=desc] .cnArrUp,.cnDir[data-dir=asc] .cnArrDown{display:none}
+.cnDir .cnArr{width:13px;height:13px;stroke-width:1.8}
+/* menus and small panels (charm-nest-activity.js popover): placed by script from the trigger's own box, so no scrolling bar or container clips them */
+.cnPop{z-index:90;min-width:176px;max-width:calc(100vw - 16px);box-sizing:border-box;padding:6px;border:1px solid var(--line);border-radius:12px;background:var(--card);box-shadow:0 14px 34px -12px rgba(30,26,20,.38),0 2px 6px rgba(30,26,20,.08);overflow:auto;overscroll-behavior:contain;color:var(--ink);font:12.5px var(--sans);white-space:normal}
+.cnPop[hidden]{display:none}
+.cnPop.cnIn{animation:cnPopIn .15s cubic-bezier(.2,.8,.2,1)}
+.cnPop.cnSheet.cnIn{animation:cnSheetIn .24s cubic-bezier(.2,.8,.2,1)}
+@keyframes cnPopIn{from{opacity:0;transform:translateY(-4px)}}
+@keyframes cnSheetIn{from{opacity:0;transform:translateY(22px)}}
+.cnScrim{position:fixed;inset:0;z-index:89;background:rgba(28,26,23,.34);animation:cnFadeIn .18s ease}
+@keyframes cnFadeIn{from{opacity:0}}
+.cnMenu{display:grid;gap:1px;min-width:188px}
+.cnCap{padding:6px 10px 4px;font:700 9.5px/1.2 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45)}
+.cnMenu>button{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:34px;padding:0 10px;border:0;border-radius:8px;background:transparent;color:var(--ink);font:500 12.5px var(--sans);text-align:left;white-space:nowrap;cursor:pointer}
+.cnMenu>button:hover{background:var(--paper2)}
+.cnMenu>button:focus-visible{outline:none;background:var(--paper2);box-shadow:inset 0 0 0 2px var(--gold)}
+.cnMenu>button[aria-checked=true]{font-weight:700}
+.cnCheck{flex:0 0 auto;width:13px;height:13px;fill:none;stroke:var(--gold);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:0}
+.cnMenu>button[aria-checked=true] .cnCheck{opacity:1}
+@media(max-width:760px),(pointer:coarse){.cnBtn{height:32px;padding:0 11px}.cnSplit .cnDir{width:32px;padding:0}.cnMenu>button{min-height:44px;font-size:14px}.cnCap{padding:8px 12px 4px}}
+@media(prefers-reduced-motion:reduce){.cnPop.cnIn,.cnPop.cnSheet.cnIn,.cnScrim{animation:none}.cnBtn,.cnChev{transition:none}}
+/* the other tabs' bars keep their own row (it scrolls sideways when a window is too narrow for it); the Orders bar is #ordBar and wraps (below) */
+.ordBar:not(#ordBar):has(.cnListTools),.libBar:has(>.cnListTools),.masterHead:has(>.cnListTools),.hBar:has(>.cnListTools){flex-shrink:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}
+.ordBar:not(#ordBar):has(.cnListTools)>*,.masterHead:has(>.cnListTools)>*,.hBar:has(>.cnListTools)>*{flex-shrink:0;white-space:nowrap}
 .egBar>.egSearchGroup{flex:0 1 220px}
 .egBar>.egSearchGroup>.ordSearch{width:100%;max-width:none;box-sizing:border-box}
 .hBar:has(>.cnListTools){gap:8px}
-@media(max-width:600px){.cnListTools{gap:3px}.cnListTools .cnDatePresets button{padding:4px 5px}.cnListTools .cnActivitySort{max-width:110px}}
+/* ── the Orders tab's bar: ONE slim row (the pile tabs and the count at the left; search, Filters, date, sort and view at the right), two rows where the window is narrower, three on a phone ── */
+#ordBar.ordCompact{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;overflow:visible;padding:0 0 8px}
+#ordBar.ordCompact>*{flex-shrink:1;white-space:normal}
+#ordBar .ordSummary{display:inline-flex;flex:0 1 auto;flex-wrap:wrap;align-items:center;gap:6px 8px;min-width:0;border:0;padding:0}
+#ordBar #ordChips{display:inline-flex;flex-wrap:nowrap;align-items:center;gap:6px}
+#ordBar .btn.sm,#ordBar .egTab{min-height:30px;box-sizing:border-box}
+#ordBar .egTab{padding:0 10px}
+#ordBar .ordCount{display:inline-flex;align-items:center;gap:6px;font:12px var(--sans);color:var(--ink70);white-space:nowrap}
+#ordBar .ordCount b{font:700 12px var(--mono);color:var(--ink)}
+#ordBar .ordCount:not([data-on]){position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+#ordBar .ordCount[data-on]{padding-left:2px}
+#ordBar .ordCount.none b{color:var(--clay)}
+#ordBar .ordTools{display:flex;flex:1 1 580px;flex-wrap:nowrap;align-items:center;justify-content:flex-end;gap:8px;min-width:0}
+#ordBar .ordTools>.cnListTools{gap:8px}
+#ordBar .cnBtn{height:30px}
+#ordBar .ordFind{position:relative;display:flex;flex:1 1 200px;align-items:center;gap:7px;min-width:140px;max-width:440px;height:30px;box-sizing:border-box;padding:0 3px 0 10px;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--ink45);cursor:text;transition:border-color .12s,box-shadow .12s}
+#ordBar .ordFind:hover{border-color:var(--ink25)}
+#ordBar .ordFind:focus-within{border-color:var(--gold);box-shadow:0 0 0 3px var(--goldSoft)}
+#ordBar .ordFind .ordSearch{flex:1 1 auto;width:100%;min-width:0;max-width:none;height:100%;margin:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;color:var(--ink);font:12.5px var(--sans);text-overflow:ellipsis}
+#ordBar .ordFind .ordSearch:focus-visible{outline:none}
+#ordBar .ordFind .ordSearch::placeholder{color:var(--ink45)}
+#ordBar .ordFind[aria-busy=true]>.cnIc{display:none}
+#ordBar .ordFind[data-has]{color:var(--ink70);border-color:var(--goldLine);background:var(--card)}
+#ordBar .ordFindX{display:grid;flex:0 0 auto;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--ink45);cursor:pointer}
+#ordBar .ordFindX[hidden]{display:none}
+#ordBar .ordFindX:hover{background:var(--paper2);color:var(--ink)}
+#ordBar .ordFindX .cnIc{width:12px;height:12px;stroke-width:1.8}
+#ordBar .ordFilters{display:inline-flex;flex:0 0 auto;min-width:0}
+#ordBar .ordFilters[hidden]{display:none}
+.cnBadge{display:inline-grid;place-items:center;min-width:17px;height:17px;box-sizing:border-box;padding:0 5px;border-radius:999px;background:var(--ink);color:var(--paper);font:700 10px/1 var(--mono)}
+.cnBadge[hidden]{display:none}
+#ordBar .viewSeg{display:inline-flex;flex:0 0 auto;gap:2px;height:30px;box-sizing:border-box;padding:2px;border:1px solid var(--line);border-radius:9px;background:var(--card2)}
+#ordBar .viewSeg button{display:grid;place-items:center;width:28px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--ink45);cursor:pointer;transition:background-color .12s,color .12s}
+#ordBar .viewSeg button:hover{color:var(--ink)}
+#ordBar .viewSeg button.on{background:var(--ink);color:var(--paper)}
+#ordBar .viewSeg button:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+#ordBar .viewSeg button[aria-busy=true]>.cnIc{display:none}
+/* Filters panel: Metal, Kind and Engraved as chip groups; what narrows the list is gold; Clear and the live count of what it leaves */
+.ordFp{width:min(344px,calc(100vw - 16px));padding:0}
+.ordFpHead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 12px 4px 16px}
+.ordFpHead b{font:500 17px/1.2 var(--serif);color:var(--ink)}
+.ordFpClear{padding:6px 10px;border:0;border-radius:8px;background:transparent;color:var(--ink70);font:600 12px var(--sans);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.ordFpClear:hover{background:var(--paper2);color:var(--ink)}
+.ordFpClear:disabled{opacity:.4;cursor:default;pointer-events:none}
+.ordFpBody{display:grid;gap:14px;padding:6px 16px 14px}
+.ordFg h4{margin:0 0 7px;font:700 9.5px/1.2 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45)}
+.ordFg .ordChipRow{display:flex;flex-wrap:wrap;gap:6px}
+.ordChip{display:inline-flex;align-items:center;gap:6px;min-height:30px;box-sizing:border-box;padding:0 11px;border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--ink70);font:600 12px var(--sans);white-space:nowrap;cursor:pointer;transition:background-color .12s,border-color .12s,color .12s}
+.ordChip:hover{background:var(--card2);border-color:var(--ink25);color:var(--ink)}
+.ordChip:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.ordChip small{font:700 10.5px var(--mono);color:var(--ink45)}
+.ordChip[aria-pressed=true]{background:var(--goldSoft);border-color:var(--gold);color:var(--ink)}
+.ordChip[aria-pressed=true] small{color:#7a5a1e}
+.ordChip[data-v=""][aria-pressed=true]{background:var(--paper2);border-color:var(--ink25);color:var(--ink)}
+.ordChip .sw{flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--ink25)}
+.ordChip .sw[data-metal=gold]{background:var(--m-gold)}.ordChip .sw[data-metal=silver]{background:var(--m-silver)}.ordChip .sw[data-metal=rose]{background:var(--m-rose)}.ordChip .sw[data-metal=gold10k]{background:var(--m-gold10k)}.ordChip .sw[data-metal=gold14k]{background:var(--m-gold14k)}.ordChip .sw[data-metal=none]{background:var(--clay)}
+.ordFpFoot{display:flex;justify-content:flex-end;padding:10px 12px 12px;border-top:1px solid var(--line2)}
+.ordFpFoot .btn{min-height:32px}
+/* what narrows the list, always in sight and one press to remove: a chip each (the search has its own ×) */
+#ordBar .ordActive{display:flex;flex:1 0 100%;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}
+#ordBar .ordActive[hidden]{display:none}
+.ordAx{display:inline-flex;align-items:center;gap:6px;min-height:26px;box-sizing:border-box;padding:0 8px 0 11px;border:1px solid var(--goldLine);border-radius:999px;background:var(--goldSoft);color:#6b4f1a;font:600 11.5px var(--sans);white-space:nowrap;cursor:pointer;animation:cnFadeIn .16s ease;transition:background-color .12s,border-color .12s}
+.ordAx:hover{border-color:var(--gold);background:#ecdfbc}
+.ordAx:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.ordAx .cnIc{width:10px;height:10px;stroke-width:2}
+.ordAx small{font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:#8a6a2a}
+.ordAxAll{min-height:26px;padding:0 8px;border:0;border-radius:8px;background:transparent;color:var(--ink70);font:600 11.5px var(--sans);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.ordAxAll:hover{background:var(--paper2);color:var(--ink)}
+/* the list under a change dims while it redraws (and cannot be pressed by mistake); an order-less answer never flashes */
+#ordBody{transition:opacity .14s}
+#ordBody[aria-busy=true]{opacity:.55;pointer-events:none}
+.cnDim{transition:opacity .14s}.cnDim[aria-busy=true]{opacity:.55;pointer-events:none}
+#ordBar.onCx #ordFilters,#ordBar.onCx #ordViewSeg{display:none}
+/* the window the bar is in (the workspace beside the rail), not the screen */
+@container workspace (max-width:1179px){#ordCharmTotal{display:none}}
+@container workspace (max-width:1000px){#ordChips .ordLong{display:none}}
+@container workspace (max-width:640px){
+  #ordBar.ordCompact{gap:8px}
+  #ordBar .ordSummary{flex:1 1 100%}
+  #ordBar .ordTools{flex:1 1 100%;flex-wrap:wrap;justify-content:flex-start}
+  #ordBar .ordFind{flex:1 1 calc(100% - 118px);max-width:none;min-width:0}   /* the search and Filters (with its badge) fill the row; the date, the sort and the view are the row under it */
+  #ordBar .ordTools>.cnListTools{display:contents}
+  #ordBar .cnDate{flex:0 1 auto}
+  #ordBar .cnSort{flex:1 1 0;min-width:124px}
+  #ordBar .cnSort .cnKey{flex:1 1 auto;justify-content:flex-start}
+  #ordBar .cnSort .cnKey .cnChev{margin-left:auto}
+  #ordBar .cnSort .cnDir{flex:0 0 auto}
+  #ordBar .cnSplit .cnKey[hidden]~.cnDir{flex:1 1 auto}
+  .cnKey .cnFull{display:none}
+  .cnKey .cnShort{display:inline}
+}
+@container workspace (max-width:380px){
+  #ordBar .cnDate .cnLbl{display:none}   /* the clock and the gold fill say it; the chip under the bar names the range in force */
+  #ordBar .cnDate .cnBtn{padding:0 10px}
+}
+@media(max-width:760px),(pointer:coarse){
+  #ordBar .btn.sm,#ordBar .egTab{min-height:40px}
+  #ordBar .egTab{padding:0 12px}
+  #ordBar .cnBtn,#ordBar .ordFind{height:40px;font-size:13px}
+  #ordBar .cnSplit .cnKey:not([hidden])~.cnDir{width:40px}
+  #ordBar .ordFindX{width:36px;height:36px}
+  #ordBar .viewSeg{height:40px;gap:0;padding:0;border:0;box-shadow:inset 0 0 0 1px var(--line)}   /* the frame is a hairline inside, so each of the two buttons is the full 40 px */
+  #ordBar .viewSeg button{width:40px;height:40px;border-radius:9px}
+  .ordChip{min-height:40px;padding:0 14px;font-size:13px}
+  .ordFpClear{min-height:40px;padding:0 12px}
+  .ordFpFoot .btn{min-height:44px;flex:1}
+  .ordAx{min-height:40px;padding:0 12px 0 14px;font-size:12.5px}
+  .ordAxAll{min-height:40px;padding:0 12px}
+}
+@media(prefers-reduced-motion:reduce){.ordAx,#ordBody,.cnDim,#ordBar .ordFind,.ordChip{animation:none;transition:none}}
 .btn.sm.egApproveButton{display:inline-flex;align-items:center;justify-content:center;font-size:18px;line-height:1.1;text-align:center;padding:6px 12px;min-width:144px;height:36px;box-sizing:border-box;border-radius:9px;white-space:nowrap}
 .egApproveWrap{position:relative;display:inline-flex;align-items:center;margin-right:calc(var(--seal-base,50px) / 2 + 12px);overflow:visible}
 .egApproveWrap>.egButtonSeal{position:absolute;left:calc(100% - var(--seal-base,50px) / 2 + 8px);top:calc(var(--seal-base,50px) / -2);width:var(--seal-base,50px);height:var(--seal-base,50px);margin:0;padding:0;z-index:4}

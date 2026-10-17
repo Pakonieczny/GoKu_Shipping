@@ -13,8 +13,13 @@ A.touch(rows[0],now+200);assert.equal(rows.slice().sort(A.compare)[0].id,'new-or
 const dom=new JSDOM('<input id="search" value="3701"><header></header>',{url:'https://test.invalid',runScripts:'outside-only'}),w=dom.window;
 w.localStorage.setItem('cn.activityLists.v1',JSON.stringify({library:{range:'yesterday',direction:'asc'}}));
 w.eval(fs.readFileSync('charm-nest-activity.js','utf8'));let changes=0;w.CNListActivity.mount(w.document.querySelector('header'),'orders',()=>changes++);
-w.document.querySelector('[data-range="yesterday"]').click();assert.equal(w.CNListActivity.state('orders').range,'yesterday');
-const sort=w.document.querySelector('select');sort.value='asc';sort.dispatchEvent(new w.Event('change'));assert.equal(w.CNListActivity.state('orders').direction,'asc');assert.equal(w.document.querySelector('#search').value,'3701');assert.equal(changes,2);
+/* (FILTERBAR, Paul 17 Oct 2026: the five date chips are one date menu (the ranges are its items, still data-range) and the Newest / Oldest select is one button, .cnDir, that reverses the order; the state is the same.
+   A change is painted busy first and the list's own redraw runs on the next frame, so the callback is counted once the frame has run.) */
+assert.equal(w.document.querySelector('.cnDateBtn').textContent.trim(),'Any time','the date menu says no range is in force');assert.equal(w.document.querySelectorAll('[data-range]').length,5,'the five ranges are the menu\'s items');
+w.document.querySelector('[data-range="yesterday"]').click();assert.equal(w.CNListActivity.state('orders').range,'yesterday');assert.equal(w.document.querySelector('.cnDateBtn').textContent.trim(),'Yesterday','the button names the range in force');assert.equal(w.document.querySelector('[data-range="yesterday"]').getAttribute('aria-checked'),'true');
+const dir=w.document.querySelector('.cnDir');assert.equal(dir.dataset.dir,'desc','newest first until it is reversed');assert.equal(w.document.querySelectorAll('select').length,0,'no select is left in the tools');
+dir.click();assert.equal(w.CNListActivity.state('orders').direction,'asc');assert.equal(dir.dataset.dir,'asc');assert.match(dir.textContent,/Oldest first/);assert.equal(w.document.querySelector('#search').value,'3701');
+const waited=new Promise(r=>w.setTimeout(r,450));
 const library=w.document.createElement('header');library.innerHTML='<input type="search"><button>Sheets</button>';w.document.body.append(library);
 w.CNListActivity.mount(library,'library',()=>{});
 assert.equal(library.querySelector('[data-range]'),null,'Library has no date filters');
@@ -22,8 +27,10 @@ assert.equal(library.firstElementChild.nextElementSibling.dataset.activityTools,
 assert.equal(w.CNListActivity.state('library').range,'all','an old saved Library date filter cannot remain active');
 assert.equal(w.CNListActivity.state('library').direction,'asc','the saved sort direction remains available');
 assert.equal(w.CNListActivity.select('library',rows,now).length,rows.length,'removing date filters restores every age of sheet');
-w.close();
+assert(library.querySelector('.cnDir'),'the Library keeps its sort direction button');
+const domClosed=waited.then(()=>{assert.equal(changes,2,'each change reaches the list once, on the next frame');assert.equal(w.document.querySelector('[data-activity-tools="orders"]').closest('header').hasAttribute('data-busy'),false,'and the busy state ends with it');w.close();});
 (async()=>{
+ await domClosed;
  const srv=await start({receipts:[]}),st=srv.st;
  const call=async b=>{const r=await fetch(srv.sorterOrigin+'/.netlify/functions/charmNestLibrary',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});const out=await r.json();assert.equal(r.status,200,JSON.stringify(out));return out;};
  try{

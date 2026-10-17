@@ -3452,7 +3452,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (!at && !loading && Date.now() - warmAt > 60000) { warmAt = Date.now(); load().then(() => { if (ids.size && window.Orders) Orders.render(); }, () => {}); }
       return ids.size;
     }
-    return { load, has, history, put, restore, renderInto, count, isEtsy, fatesOf, absorb, restoredAt, ids: () => [...ids] };
+    return { load, has, history, put, restore, renderInto, count, isEtsy, fatesOf, absorb, restoredAt, ids: () => [...ids], reading: () => !!reading };   // (reading: a page of the cancelled list is being read: the Orders bar's busy state lasts as long as it does, FILTERBAR)
   })();
   // the order's record is kept first; only then does it leave every list, so an interruption leaves it on hold
   async function cancelRecord(rid, o, keepSt, goneSt, paint) {
