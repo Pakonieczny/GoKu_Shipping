@@ -15087,7 +15087,7 @@ const Review = window.Review = (() => {
       c.innerHTML = head("Held order", it.rid, it.why) + `<div class="fixes"><button class="btn ghost sm" data-a="jump">Jump to the piece</button></div>`;
       c.querySelector("[data-a=jump]").onclick = () => { remove(it.key); focus(it.line); };
     } else { c.innerHTML = head(it.kind, it.why || "", orderSub); }
-    decorateRelease(c, it, c.querySelector(".fixes") || c);   // (RELTOQ: the one "Release to nesting queue", first among the card's buttons)
+    if (typeof decorateRelease === "function") decorateRelease(c, it, c.querySelector(".fixes") || c);   // (RELTOQ: the one "Release to nesting queue", first among the card's buttons)
     const skipB = c.querySelector("[data-a=skip]"); if (skipB) skipB.onclick = () => { const who = by(); if (!who) return; for (const rr of rowsOf(it)) { rr.state = "skipped"; rr.reason = `piece skipped by ${who}`; rr.problems = []; rr.hold = `piece skipped by ${who}`; } answered(it, "skipped", "Skip piece", null, who); syncOrderItems(); Orders.render(); RunCtl.poke(); };
     // (NOHOLDREV, Paul 17 Oct 2026: "Remove the 'Hold' button from all listings inside the Review tab": none of these cards has a Hold order button now, as no Review row has the orange Hold; an order is held from its order window's piece row)
     return c;
@@ -15353,7 +15353,7 @@ const Review = window.Review = (() => {
     if(sib){Master.mountPictures(node);wireSib(node,it,pk,sib,fn=>saving(node,fn,'.sibOffer button'));}   // (the saved pair link or alias, for good; the buttons hold while it saves)
     if(it.kind==='reviewMark'&&window.CharmNestReviewMark)CharmNestReviewMark.decorateRow(node,it);   // (a slot for each line's suggested charms, and Mark OK)
     if(it.kind==='reviewMark')fillMarkSlots(node,it);   // (REVSUGGEST: the similar charms of each line go in its slot, the charm it is matched to now marked; a line with nothing similar leaves its slot empty)
-    decorateRelease(node,it);   // (RELTOQ: "Release to nesting queue" under the row's reason; greyed with its one plain reason where the line cannot nest yet; "Unblock this SKU" beside it on a blocked SKU)
+    if (typeof decorateRelease === "function") decorateRelease(node,it);   // (RELTOQ: "Release to nesting queue" under the row's reason; greyed with its one plain reason where the line cannot nest yet; "Unblock this SKU" beside it on a blocked SKU)
     // (its custom buttons as a custom card's, and a click on the card opens its order; one whose line has left the pull
     // opens the order by its number)
     if(cx||row)wireAct(node,cx||{key:'rv:'+it.key,rows:[]},cx?cs:null,row);

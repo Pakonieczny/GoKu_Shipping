@@ -105,7 +105,12 @@ await t('4 the head card\'s sentence is a RECORD: the old reading wrote it once,
   assert.equal(UI.blockerOf(events, live(null)).text, SCREENSHOT, 'not known: the record stands');
   assert.equal(UI.blockerOf(events, { asks: () => false }), null, 'false for every line: nothing');
   // only the kinds the intake derives, only a line the page knows, never a hold, never a custom order's or the engraving's question
-  for (const kind of ['engraveWords', 'fontMissing', 'notRepresentable', 'orderChanged', 'flipFailed', 'customOrder']) assert.equal(UI.blockerOf(events.map(e => e === asked ? Object.assign({}, e, { data: { kind } }) : e), live(false)).text, SCREENSHOT, kind + ' is not the intake\'s to withdraw');
+  for (const kind of ['fontMissing', 'notRepresentable', 'orderChanged', 'flipFailed', 'customOrder']) assert.equal(UI.blockerOf(events.map(e => e === asked ? Object.assign({}, e, { data: { kind } }) : e), live(false)).text, SCREENSHOT, kind + ' is not the intake\'s to withdraw');
+  // (KEYNOENG, 17 Oct 2026: the engraving words' question IS withdrawn, but only when the page says the line is never engraved (a key: liveAsks answers false for that and null for everything else), and the record stands when it cannot tell)
+  const words = e => e === asked ? Object.assign({}, e, { data: { kind: 'engraveWords' } }) : e;
+  assert.equal(UI.blockerOf(events.map(words), live(false)), null, 'a design that is never engraved no longer asks for engraving words');
+  assert.equal(UI.blockerOf(events.map(words), live(null)).text, SCREENSHOT, 'engraving words: not known, the record stands');
+  assert.equal(UI.blockerOf(events.map(words)).text, SCREENSHOT, 'engraving words: without the page\'s reading, the record stands');
   assert.equal(UI.blockerOf(events.map(e => e === asked ? Object.assign({}, e, { data: { kind: 'needsMapping', custom: true } }) : e), live(false)).text, SCREENSHOT, 'a custom order\'s card keeps its record');
   assert.equal(UI.blockerOf(events.map(e => e === asked ? Object.assign({}, e, { lineKey: '' }) : e), live(false)).text, SCREENSHOT, 'a question with no line is not withdrawn');
   for (const kind of ['needsMaterial', 'needsMapping', 'unmatchedSku', 'blockedSku', 'missingSize']) assert.equal(UI.blockerOf(events.map(e => e === asked ? Object.assign({}, e, { data: { kind } }) : e), live(false)), null, kind);
