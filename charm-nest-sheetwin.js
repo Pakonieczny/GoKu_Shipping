@@ -2317,6 +2317,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     ctx.fillStyle = "rgba(200,162,78,.12)"; ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, t); for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, t); ctx.fill("evenodd");
     CharmNestPDF.drawCharm(ctx, c, t, k); ctx.restore();
   }
+  /** MSSTALE: what a monogram piece's panel says (its seals and its status), as one text: a monogram has no job, so engOf cannot tell the poll that its approval changed (another computer approved it while this window was open). "" for any other piece. */
+  function monoSigOf(x) {
+    const M = window.CNMonogramSeals; if (!M) return "";
+    const mp = tryDo(() => M.pieceFor(rowOf(x), x.poolId || x.id)); if (!mp) return "";
+    const st = tryDo(() => M.status(mp.row, mp.slot));
+    return JSON.stringify([M.signature(M.list(mp.row, mp.slot)), st ? [st.state, st.label, !!st.approved, st.letters || ""] : null]);
+  }
   function renderEng(x, flash) {
     if(window.Seal?.defer('sheet-engrave',()=>renderEng(x,flash)))return;
     const host = W.el.detail.querySelector("[data-r2=eng]"); if (!host) return;
@@ -2324,7 +2331,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (MONOSEAL2, Paul 17 Oct 2026: a MONOGRAM piece has no job, so this card used to say "No back engraving" for it; it gets the monogram's panel in the same visual language: the letters, "Approved by X" and its seal(s), or "Monogram waits for approval in Engraving", and a View in Engraving button
     //  (EngraveLink.openMonogram). Every other piece keeps the engraving card below, untouched.)
     const mp = window.CNMonogramSeals ? tryDo(() => CNMonogramSeals.pieceFor(rowOf(x), x.poolId || x.id)) : null;
-    if (mp) { host.innerHTML = CNMonogramSeals.panel(mp); CNMonogramSeals.wire(host, { open: b => goMonogram(x, mp, b) }); if (flash) host.querySelector('.swEng')?.classList.add('flash'); return; }
+    if (mp) { x._monoSig = monoSigOf(x); host.innerHTML = CNMonogramSeals.panel(mp); CNMonogramSeals.wire(host, { open: b => goMonogram(x, mp, b) }); if (flash) host.querySelector('.swEng')?.classList.add('flash'); return; }
     const e = shownEng(x);
     // (the discs of a counted order, one at a time: the Engrave tab's own switch, charm-nest-piece-switch.js; a press selects that disc's charm, here or on the sheet it is on.
     //  A piece engraved on both faces also has its Front | Back: the same switch, the face shown is the one the card is about)
@@ -4586,6 +4593,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     let changed = false;
     for (const x of W.pieces) { const e = engOf(x); if (!x.eng || !engSame(e, x.eng)) { x.eng = e; changed = true; } }
     if (changed) { renderStrip(); if (W.view === "sheet") renderSheetPane(); else if (W.sel) renderEng(W.sel, true); paintFx(); frontWordsAgain(); }
+    // (MSSTALE: the selected piece is a monogram whose seals or status moved since its panel was drawn: drawn again, unless its button is busy opening Engraving)
+    else if (W.view !== "sheet" && W.sel && typeof W.sel._monoSig === "string" && monoSigOf(W.sel) !== W.sel._monoSig && !(W.el && W.el.detail && W.el.detail.querySelector("[data-r2=eng] button:disabled"))) renderEng(W.sel, true);
   }, 1500);
 
   /* ── the window follows the cloud (Paul, 5 Oct: "make sure that everywhere the same information is available and that there's no mismatch in orders being on sheets, not

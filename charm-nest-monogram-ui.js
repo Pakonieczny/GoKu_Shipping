@@ -523,6 +523,16 @@
       let run; try { run = Promise.resolve(d.events(rid)); } catch (_) { run = Promise.resolve(null); }
       return run.then(list => { if (Array.isArray(list)) feedEvents(rid, list); else evAsked.delete(rid); }, () => { evAsked.delete(rid); });
     }
+    /** MSLIST: a list that shows an approved piece which has no stamp here (approved on another computer, or before stamps existed) asks the order's timeline for it, a few times and no more: at once, then 30 s, 2 min and 10 min later
+     *  (the design can reach this computer a moment before the event does); an order whose timeline never holds one (an approval from before this feature) is not asked again, so a list never polls the server. null: not asked now. */
+    const evEnsure = new Map(), ENSURE_WAIT = [0, 30000, 120000, 600000];      // order number -> { n: times asked, at: when last }
+    function ensureSeals(rid) {
+      rid = String(rid == null ? "" : rid); if (!rid || typeof d.events !== "function") return null;
+      const e = evEnsure.get(rid) || { n: 0, at: 0 }, t = Date.now();
+      if (e.n >= ENSURE_WAIT.length || t - e.at < ENSURE_WAIT[e.n]) return null;
+      evEnsure.set(rid, { n: e.n + 1, at: t });
+      return loadSeals(rid, true);
+    }
     /** Who presses Approve: { ok, by }. A page with no deps.who records no name (a test's fake service); with one, nobody signed in means the name bar, and a name bar put away means nothing happens. */
     async function whoApproves(c) {
       if (typeof d.who !== "function") return { ok: true, by: "" };
@@ -543,17 +553,18 @@
       if (!el) return;
       try { await S.press(el); } catch (e) { if (root.console) root.console.warn("Monogram seal", e); }
     }
-    /** The approval's seal: made, kept, laid unseen in every widget of the piece, pressed in the one the person used, then the timeline event; the card says Approved afterwards (the caller paints it). */
+    /** The approval's seal: made, kept, the timeline event queued (MSDUR: at once, before the press: the stamp takes about 2.3 s, and a reload or a closed tab in that time used to leave the seal kept on this computer alone, with no permanent record anywhere; the event id is the line, the piece and the time, so it is one event whatever happens next and it changes nothing on the screen),
+     *  laid unseen in every widget of the piece, pressed in the one the person used; the card says Approved afterwards (the caller paints it). */
     async function sealApproval(c, done, by, at) {
       const stamp = stampOf({ at, by, letters: done.letters, n: c.n, of: c.of });
       cardSeals(c); c.seals = mergeStamps(c.seals, [stamp]); keepSeals(c);
+      recordSeal(c, done, stamp);
       const S = SEALS();
       if (S && c.views.size) {
         c.sealNew = stamp.id; c.stamping = true; for (const v of c.views) if (v.r && v.r.seals) v.r.seals._sig = null;
         paint(c);
         try { await pressSeal(c, stamp); } finally { c.stamping = false; c.sealNew = ""; for (const v of c.views) if (v.r && v.r.seals) v.r.seals._sig = null; }
       }
-      recordSeal(c, done, stamp);
       return stamp;
     }
     /** The permanent record: one timeline event for the press (id: the line, the piece and the time, so a retry is the same event), small data: the letters, the piece, its pool id, the file. */
@@ -1039,7 +1050,7 @@
     const piecesNow = () => rowsNow().reduce((all, r) => all.concat(piecesOfLine(r).map(p => Object.assign(p, { row: r }))), []);
     const waiting = () => piecesNow().filter(p => { const c = cards.get(p.key), ap = c ? approvedFile(c) : null; return !(ap && ap.sent); });
     const svc = { count: () => waiting().length, rows: rowsNow, pieces: row => { const r = lineOf(row); return r && isMono(r) ? piecesOfLine(r).map(p => Object.assign(p, { row: r })) : []; }, piecesNow, pieceKey: (row, ask) => { const r = lineOf(row); return r ? slotKey(r.key, slotFor(r, ask)) : ""; }, families, alphabets, lettersOf: readLetters, cards, rebuild, approve, approvedFile, glyph, setAlphabet, results, improve,
-      mountLine, thumb, thumbHtml, fillThumbs, status, onChange, feedEvents, loadSeals,
+      mountLine, thumb, thumbHtml, fillThumbs, status, onChange, feedEvents, loadSeals, ensureSeals,
       sealsOf: (row, ask) => { const r = lineOf(row); if (!r || !isMono(r)) return []; const c = cardOf(r, askOf(ask)); cardSeals(c); return sealsFor(c); },
       sealHtml: (row, o) => {
         o = o || {}; const r = lineOf(row), S = SEALS(); if (!r || !isMono(r) || !S) return "";

@@ -16,7 +16,10 @@
   function times(value,seen=new Set()){
     if(!value || typeof value!=='object' || seen.has(value))return [0,0];seen.add(value);
     let event=Math.max(0,...eventFields.map(k=>ms(value[k])),seconds(value.updateTs)),fallback=Math.max(ms(value.createdAt),ms(value.arrivedAt),seconds(value.createTs));
+    // (MSSORT: an APPROVED monogram piece's stand-in that has its own seals is timed by them (one sent back for another approval keeps its row's time): the line row it shares with its sibling pieces carries the LATEST activity of any of them, which made every piece of a line read as the newest one's time)
+    const own=value.mono===true && value.state==='approved' && Array.isArray(value.seals) && value.seals.some(s=>s && ms(s.at)>0);
     for(const key of ['row','rows','order','record','settled','engrave','job','sheets','processSeals','seals','backs','backPool']){
+      if(own && key==='row')continue;
       const child=value[key];for(const x of Array.isArray(child)?child:[child]){const [e,f]=times(x,seen);event=Math.max(event,e);fallback=Math.max(fallback,f);}
     }
     if(!fallback && /^\d{4}-\d{2}-\d{2}$/.test(value.day || ''))fallback=Date.parse(value.day+'T12:00:00Z');

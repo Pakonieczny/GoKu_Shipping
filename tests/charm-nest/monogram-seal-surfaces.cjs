@@ -47,6 +47,9 @@ const BAD = /BACK ENGRAVING|FRONT ENGRAVING|CUT PLAIN|engraveApproved|engravePla
   check(nl.length === 2 && nl[0].at === 3 && nl[1].id === 'a' && nl[0].id === 'monogramApproved:3:Y', 'node: only monogram stamps are kept, once each, oldest first, an id is made for one without: ' + JSON.stringify(nl.map(s => s.id)));
   check(world(stand({ sealsOf: () => { throw new Error('boom'); } })).list(L1).length === 0, 'node: a reader that throws shows nothing');
   check(S.signature(a1) === S.signature(S.list(L1)) && S.signature(a1) !== S.signature([]) && S.lastAt(a1) === 2000 && S.lastAt([]) === 0, 'node: signature() changes exactly with the seals; lastAt() is the last approval time');
+  // MSSORT (review, 17 Oct 2026): an APPROVED stand-in is timed by its own seals, not by the line row it shares with its sibling pieces (that row carries the latest activity of any of them)
+  { const T = 1.76e12, st = (state, seals) => ({ mono: true, state, seals, row: { activityAt: T + 7000 } });
+    check(Act.at(st('approved', [{ at: T }])) === T && Act.at(st('approved', [])) === T + 7000 && Act.at(st('review', [{ at: T }])) === T + 7000 && Act.at({ job: 1, seals: [{ at: T }], row: { activityAt: T + 7000 } }) === T + 7000, 'node: CNListActivity.at() times an approved monogram stand-in by its own seals; one with none, one sent back (not approved) and every other object still read their row'); }
   // the markup
   const h1 = S.html(L1, null);
   check(/^<span class="monoSeals"/.test(h1) && /data-standin="monogramApproved:2000:Ana"/.test(h1) && /data-seal-count="1"/.test(h1) && !BAD.test(h1), 'node: html() is the reader\'s own sealRow in a .monoSeals wrapper, nothing of the engraving');
@@ -377,6 +380,14 @@ const BAD = /BACK ENGRAVING|FRONT ENGRAVING|CUT PLAIN|engraveApproved|engravePla
     check(await waitPanel(WIN, 'monoCard'), 'S3 Sheet window, the unapproved monogram: the Monogram panel');
     c = await panelOf(WIN);
     check(c.mono && c.state === 'approve' && /Monogram waits for approval in Engraving/.test(c.text) && c.seals === 0 && c.button && !c.approve && !BAD.test(c.html), 'S3 Sheet window: waits for approval, the same button, no seal');
+    // MSSTALE (review, 17 Oct 2026): the window stays open and the monogram becomes approved elsewhere: the 1.5 s poll draws the panel again (a monogram has no job, so engOf alone could not tell)
+    await openWin(pool(M2, 0)); await waitPanel(WIN, 'monoCard');
+    const stBefore = await panelOf(WIN);
+    await page.evaluate(k2 => { __ma[k2 + '|'] = { at: Date.now() - 500, by: 'Cy Late', letters: 'OSR' }; }, keyOf(M2, 0));
+    const staleOk = await page.waitForFunction(() => { const e = document.querySelector('[data-r2=eng] .swEng'); return !!e && e.dataset.state === 'approved' && /Approved by Cy Late/.test(e.innerText); }, null, { timeout: 8000 }).then(() => true, () => false);
+    check(stBefore.state === 'approve' && staleOk, 'S3 Sheet window: a monogram approved while the window is open turns its panel to "Approved by Cy Late" within the poll (before: ' + stBefore.state + ')');
+    await page.evaluate(k2 => { delete __ma[k2 + '|']; }, keyOf(M2, 0));
+    check(await page.waitForFunction(() => { const e = document.querySelector('[data-r2=eng] .swEng'); return !!e && e.dataset.state === 'approve'; }, null, { timeout: 8000 }).then(() => true, () => false), 'S3 Sheet window: and back to "waits for approval" when the approval goes');
     await openWin(pool(M3, 0, 2));
     check(await waitPanel(WIN, 'monoCard'), 'S3 Sheet window, piece 2 of the line of two: a Monogram panel');
     c = await panelOf(WIN);

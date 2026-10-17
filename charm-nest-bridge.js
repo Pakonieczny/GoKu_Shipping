@@ -8513,6 +8513,8 @@ const Engrave = window.Engrave = (() => {
         //  reader (charm-nest-monogram-seals.js) and NEVER from CNEngravingSeals: it invents a legacy BACK ENGRAVING seal at time 0 for any object whose state is approved with no seals. A page without the reader: none.)
         m.seals = window.CNMonogramSeals ? CNMonogramSeals.list(row, pc.slot) : [];
         live.add(pc.key); out.push(m);
+        // (MSLIST: an approved piece that has no stamp on this computer (approved on another one) asks its order's timeline for it: a few times and no more, the service keeps count; the answer repaints the list)
+        if (st.approved && !m.seals.length && window.CNMonogramSeals) { try { const U = MonoUI(); if (U.ensureSeals) U.ensureSeals(String((row.order && row.order.receiptId) || "")); } catch (_) { /* the row stays without its seal */ } }
       }
     }
     for (const k of [...monoMap.keys()]) if (!live.has(k)) monoMap.delete(k);

@@ -248,6 +248,39 @@ const finish = () => { console.log(`\nmonogram-seal: ${nCheck - fails.length}/${
     check((await presses()).length === p0 + 1 && await page.evaluate(() => /approved by Test Operator/.test((document.querySelector('#egQueue .mwSeal .seal') || { getAttribute: () => '' }).getAttribute('aria-label'))), 'and the stamp names Test Operator');
     await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-mono] [data-a=close]'); if (c) c.click(); }); await sleep(500);
 
+    // ═══ 8 · the three review fixes of 17 Oct 2026 (MSSORT, MSDUR, MSLIST) ═══
+    // 8a MSSORT: an approved piece of a line of two sorts and date-filters by ITS OWN seal, not by the line row's activity (the sibling piece's later approval touched it)
+    const at4 = await page.evaluate(kp => { const items = Engrave.monoItems(), g = n => items.find(m => m.key === kp + '#C' + n), seal = m => Math.max(...m.seals.map(x => x.at)), m1 = g(1), m2 = g(2); return { s1: seal(m1), s2: seal(m2), a1: CNListActivity.at(m1), a2: CNListActivity.at(m2), line: m1.row.activityAt, same: m1.row === m2.row }; }, kP);
+    check(at4.same && at4.s1 - at4.s2 > 1000 && at4.a2 === at4.s2 && at4.a1 === at4.s1 && at4.line >= at4.s1, 'MSSORT: piece 2 is timed by its own seal although the line row it shares was touched by piece 1 later: ' + JSON.stringify(at4));
+    // 8b MSDUR: Change and approve again: while the wooden stamp is down the permanent timeline event is already on its way (outbox or server), so a reload now would not lose it
+    await openDetail(kR); await detailReady(kR); await sleep(900);
+    await page.click('#egQueue .rvItem[data-mono] [data-mw-change]'); await page.click('#egQueue .rvItem[data-mono] [data-mw-letter="1"]'); await page.keyboard.type('Q');
+    await until(() => { const m = document.querySelector('#egQueue .rvItem[data-mono] .mw'); return m && m.dataset.state === 'ready' && !m.dataset.busy; }, 'the changed monogram (EQT)');
+    const evBefore = evs().filter(e => e.orderId === ridR).length;
+    { const clicking = page.click('#egQueue .rvItem[data-mono] [data-mw-approve]'); await page.waitForSelector('.sealTool', { timeout: 8000 }).catch(() => {}); await sleep(150);
+      const mid = await page.evaluate(() => { let box = []; try { box = JSON.parse(localStorage.getItem('orderTimeline.outbox.v1') || '[]'); } catch (_) {} return { tool: document.querySelectorAll('.sealTool').length, queued: box.filter(e => e.type === 'monogramApproved').length }; });
+      const evMid = evs().filter(e => e.orderId === ridR).length; await clicking;
+      check(mid.tool === 1 && evMid + mid.queued >= evBefore + 1, 'MSDUR: while the stamp is down the monogramApproved event is already queued or on the server (stamp ' + mid.tool + ', outbox ' + mid.queued + ', server ' + evMid + ' of ' + evBefore + ' before)'); }
+    check(await waitApproved(kR, 'EQT', 'the changed approval of 8b'), 'MSDUR: the approval itself is unchanged: approved once the stamp has lifted');
+    await page.waitForFunction(() => OrderTimeline.pending() === 0, null, { timeout: 15000 }).catch(() => {});
+    check(evs().filter(e => e.orderId === ridR).length === evBefore + 1, 'MSDUR: one event for the press, not two: ' + evs().filter(e => e.orderId === ridR).length);
+    // 8c MSLIST: another computer (no stamp kept here, the order's timeline not read): the Engrave list row of an approved piece asks the timeline itself and shows the seals
+    const rowSeals = rid => page.evaluate(r => { const row = [...document.querySelectorAll('#egQueue .egMonoRow')].find(x => x.dataset.rid === r); return row ? row.querySelectorAll('.egPlacementSeals .seal').length : -1; }, rid);
+    await page.evaluate(() => { CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', list: true, focus: null, chosen: true, q: '' }); Engrave.render(); }); await sleep(1500);
+    check(await rowSeals(ridR) === 2, 'MSLIST: before the wipe the list row of the order has its two seals (EMT, EQT): ' + await rowSeals(ridR));
+    await page.evaluate(() => { window.__gets = []; const g = OrderTimeline.get; OrderTimeline.get = function (rid) { window.__gets.push(String(rid)); return g.apply(this, arguments); }; });
+    const wipeAll = rid => page.evaluate(r => { delete S.settings.mono.seals; saveSettings(); const svc = Engrave.monogramUI(); for (const c of svc.cards.values()) { c.seals = null; c.sig = ''; } svc.feedEvents(r, []); Engrave.render(); }, rid);   // (and one drawing of the tab, which any page has all the time)
+    await wipeAll(ridR);
+    check(!!await until(r => window.__gets.includes(r), 'the list to ask the order\'s timeline', ridR, 20000), 'MSLIST: with no stamp kept here and the timeline not read, the Engrave list itself asks the order\'s timeline (nothing opened)');
+    check(!!await until(r => { const row = [...document.querySelectorAll('#egQueue .egMonoRow')].find(x => x.dataset.rid === r); return !!row && row.querySelectorAll('.egPlacementSeals .seal').length === 2; }, 'the list row to show the seals the timeline holds', ridR, 20000), 'MSLIST: and the Decided row shows both seals once the answer lands');
+    check((await page.evaluate(() => window.__gets)).filter(r => r === ridR).length === 1, 'MSLIST: it asked once: ' + JSON.stringify(await page.evaluate(() => window.__gets)));
+    // 8d MSLIST: an approval with no event anywhere (from before stamps existed): the row has no seal, and the list does not keep asking the server
+    for (const k of [...st.docs.keys()]) if (k.startsWith('Order_Timeline/' + ridR + '~monogramApproved~')) st.docs.delete(k);
+    await wipeAll(ridR);
+    for (let i = 0; i < 6; i++) { await page.evaluate(() => Engrave.render()); await sleep(700); }
+    check(await rowSeals(ridR) === 0 && (await page.evaluate(() => window.__gets)).filter(r => r === ridR).length === 1, 'MSLIST: an approved piece whose timeline holds no stamp shows none and is not asked again within 30 s (' + (await page.evaluate(() => window.__gets)).filter(r => r === ridR).length + ' ask in all, row seals ' + await rowSeals(ridR) + ')');
+    await page.evaluate(() => { const g = window.__gets; window.__gets = null; });
+
     // ═══ 7 · the order timeline, and a phone ═══
     await openWin(kA); await sleep(1500);
     const tlm = await until(() => { const n = document.querySelectorAll('#orderWin svg[data-seal-family="monogram"]'); return n.length >= 1 ? [...n].map(x => x.closest('[role=img],button,span,div') && 1).length : 0; }, 'a monogram stamp in the order timeline', null, 25000);
