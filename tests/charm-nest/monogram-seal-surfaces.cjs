@@ -177,9 +177,13 @@ const BAD = /BACK ENGRAVING|FRONT ENGRAVING|CUT PLAIN|engraveApproved|engravePla
     const eng0 = await page.evaluate(() => Object.fromEntries(Orders.rows().filter(r => r.spec && r.spec.special && r.spec.special.monogram).map(r => [r.key, [r.engrave == null, OrderTimelineUI.engraveOf(r)]])));
     check(Object.values(eng0).every(v => v[0] && v[1] !== true), 'a monogram line has no r.engrave and engraveOf(line) is not true, to begin with: ' + JSON.stringify(eng0));
 
+    if (process.env.MONO_REAL) await page.exposeFunction('__tlSet', (rid, evs) => {
+      for (const k of [...srv.st.docs.keys()]) if (k.startsWith('Order_Timeline/' + rid + '~monogramApproved~')) srv.st.docs.delete(k);
+      for (const e of evs) srv.st.put('Order_Timeline', rid + '~monogramApproved~' + e.id, Object.assign({ source: 'sorter', station: 'sorter', device: 'charm-nest-1', transactionId: '', sheetId: '', sheet: '', setId: '', text: 'Monogram ' + e.data.letters, milestone: false }, e));
+    });
     // the widget service's word for a piece (approved or not) and the CORE's two readers, as STAND-INS (the surfaces are what is tested)
     const NOW = Date.now(), A1 = { at: NOW - 60000, by: 'Ana Test', letters: 'APV' }, A3 = { at: NOW - 120000, by: 'Ben Test', letters: 'JQX' };
-    await page.evaluate(({ k1, k3, A1, A3, ls }) => {
+    await page.evaluate(({ REAL, k1, k3, A1, A3, ls }) => {
       window.__ma = { [k1 + '|']: A1, [k3 + '|C1']: A3 };
       const svc = Engrave.monogramUI(), MU = window.CharmNestMonogramUI, keyOf = (row, slot) => (row.parentRow || row).key + '|' + (slot || '');
       svc.status = (row, ask) => {
@@ -187,13 +191,25 @@ const BAD = /BACK ENGRAVING|FRONT ENGRAVING|CUT PLAIN|engraveApproved|engravePla
         const of = Math.max(1, +(r.spec.quantity || 1)), slot = typeof ask === 'string' && /^C\d+$/.test(ask) ? ask : of > 1 ? 'C1' : null, ap = !!__ma[keyOf(r, slot)];
         return { state: ap ? 'approved' : 'ready', label: ap ? 'Approved' : 'Ready to approve', letters: ls[r.key] || '', approved: ap, dirty: false, sent: false, rid: String(r.order.receiptId), lineKey: r.key, pieceKey: slot ? r.key + '#' + slot : r.key, slot, n: slot ? +slot.slice(1) : 1, of };
       };
+      window.__SEL = REAL ? '.seal.monogramSeal' : '[data-standin-monogram]';
+      if (REAL) {
+        // THE CORE'S REAL READERS (charm-nest-monogram-ui.js sealsOf / sealHtml) over the real service, fed the order's timeline events: nothing of the seals is a stand-in; only the widget's status above is
+        const rids = new Set(), sync = () => {
+          const byRid = {}; for (const r of rids) byRid[r] = [];
+          for (const [k, a] of Object.entries(window.__ma)) { const [lineKey, slot] = k.split('|'), rid = lineKey.split('_')[0], n = slot ? +slot.slice(1) : 1; rids.add(rid); (byRid[rid] = byRid[rid] || []).push({ id: lineKey + (slot ? '#' + slot : '') + '-' + a.at, type: 'monogramApproved', at: a.at, by: a.by, lineKey, orderId: rid, data: { letters: a.letters, slot: slot || '', n, of: slot ? 2 : 1 } }); }
+          for (const [rid, evs] of Object.entries(byRid)) { svc.feedEvents(rid, evs); window.__tlSet(rid, evs); }   // (the page's own copy, and the fake site's timeline: the order window reads the order's events from there)
+        };
+        window.__ma = new Proxy(window.__ma, { set(t, k, v) { t[k] = v; sync(); return true; }, deleteProperty(t, k) { delete t[k]; sync(); return true; } });
+        sync();
+        window.__readers = { sealsOf: MU.sealsOf, sealHtml: MU.sealHtml };
+      } else
       window.__readers = {
         sealsOf: (row, slot) => { const a = __ma[keyOf(row, slot)]; return a ? [{ id: 'monogramApproved:' + a.at + ':' + a.by, how: 'monogramApproved', at: a.at, by: a.by, letters: a.letters }] : []; },
         sealHtml: (row, slot) => { const s = __readers.sealsOf(row, slot); return s.length ? `<span class="sealRow standInRow" data-seal-group data-seal-count="${s.length}" role="group" aria-label="Monogram approval history">` + s.map(x => `<span class="seal standIn" data-standin-monogram="${x.id}" data-at="${x.at}" tabindex="0" role="img" aria-label="Monogram approved by ${x.by}" style="display:inline-block"><svg viewBox="0 0 50 50" width="100%" height="100%"><circle cx="25" cy="25" r="23" fill="#fff" stroke="#6b4aa0" stroke-width="3"/><text x="25" y="29" text-anchor="middle" font-size="8" fill="#6b4aa0">MONOGRAM</text></svg></span>`).join('') + '</span>' : ''; }
       };
-      Object.assign(MU, __readers);
+      if (!REAL) Object.assign(MU, __readers);
       window.__mlinks = []; EngraveLink.openMonogram = async a => { __mlinks.push({ rid: a.rid, key: a.key, closeFirst: typeof a.closeFirst }); return true; };
-    }, { k1: keyOf(M1, 0), k3: keyOf(M3, 0), A1, A3, ls: { [keyOf(M1, 0)]: 'APV', [keyOf(M2, 0)]: 'OSR', [keyOf(M3, 0)]: 'JQX' } });
+    }, { REAL: !!process.env.MONO_REAL, k1: keyOf(M1, 0), k3: keyOf(M3, 0), A1, A3, ls: { [keyOf(M1, 0)]: 'APV', [keyOf(M2, 0)]: 'OSR', [keyOf(M3, 0)]: 'JQX' } });
 
     // ═══ S1 · the Engrave tab ═══
     const openList = () => page.evaluate(() => { CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null, pin: null, openDone: null }); Engrave.render(); });
@@ -202,7 +218,7 @@ const BAD = /BACK ENGRAVING|FRONT ENGRAVING|CUT PLAIN|engraveApproved|engravePla
     await page.evaluate(() => document.querySelectorAll('.cnNbX, .toast .x').forEach(b => { try { b.click(); } catch (_) {} }));
     const rowsOf = () => page.evaluate(() => [...document.querySelectorAll('#egQueue .doneRow')].map(r => {
       const c = r.querySelector(':scope > .egPlacementSeals'), seals = c ? [...c.querySelectorAll('.seal')] : [], rr = r.getBoundingClientRect();
-      return { kind: r.dataset.kind || 'engraved', quiet: r.classList.contains('quietRow'), rid: r.dataset.rid, slot: r.dataset.slot || '', decided: r.classList.contains('isDecided'), cell: !!c, seals: seals.length, standIn: seals.filter(s => s.hasAttribute('data-standin-monogram')).length,
+      return { kind: r.dataset.kind || 'engraved', quiet: r.classList.contains('quietRow'), rid: r.dataset.rid, slot: r.dataset.slot || '', decided: r.classList.contains('isDecided'), cell: !!c, seals: seals.length, standIn: seals.filter(s => s.matches(window.__SEL)).length,
         models: seals.map(s => (s.querySelector('svg') || {}).getAttribute && s.querySelector('svg').getAttribute('data-seal-model') || '').join('|'), text: c ? c.innerText.trim() : '', html: c ? c.innerHTML : '',
         inside: seals.every(s => { const q = s.getBoundingClientRect(); return q.width >= 20 && q.right <= rr.right + 1 && q.left >= rr.left - 1; }) };
     }));
@@ -256,13 +272,14 @@ const BAD = /BACK ENGRAVING|FRONT ENGRAVING|CUT PLAIN|engraveApproved|engravePla
       const chip = document.querySelector('#owMeta [data-owf-chip="engraving"]'), more = document.querySelector('#owMeta .owfMore');
       if (more && more.getAttribute('aria-expanded') !== 'true') more.click();
       return new Promise(res => setTimeout(() => {
-        const cells = [...document.querySelectorAll('#owMeta .owfList .m')].map(m => ({ label: m.querySelector('i').textContent, text: m.innerText.replace(/\s+/g, ' ').trim(), seals: [...m.querySelectorAll('.seal')].length, standIn: m.querySelectorAll('[data-standin-monogram]').length, models: [...m.querySelectorAll('[data-seal-model]')].map(n => n.getAttribute('data-seal-model')).join('|'), html: m.innerHTML }));
+        const cells = [...document.querySelectorAll('#owMeta .owfList .m')].map(m => ({ cls: m.className, disp: getComputedStyle(m).display + ' | ' + [...m.children].map(c => c.tagName + '.' + c.className.split(' ')[0] + ':' + getComputedStyle(c).display + '@' + getComputedStyle(c).gridColumnStart).join(', '), label: m.querySelector('i').textContent, text: m.innerText.replace(/\s+/g, ' ').trim(), seals: [...m.querySelectorAll('.seal')].length, standIn: m.querySelectorAll(window.__SEL).length, models: [...m.querySelectorAll('[data-seal-model]')].map(n => n.getAttribute('data-seal-model')).join('|'), html: m.innerHTML }));
         res({ chip: chip ? chip.textContent.trim() : null, chipAria: chip ? chip.getAttribute('aria-label') : null, cells });
       }, 400));
     });
-    const popOf = async () => { await page.click('#owMeta [data-owf-chip="engraving"]'); await sleep(600); return page.evaluate(() => { const p = document.querySelector('.owfPop:not([hidden])'); return p ? { title: (p.querySelector('.owfPopHd') || {}).textContent, text: p.innerText.replace(/\s+/g, ' ').trim(), standIn: p.querySelectorAll('[data-standin-monogram]').length, html: p.innerHTML } : null; }); };
+    const popOf = async () => { await page.click('#owMeta [data-owf-chip="engraving"]'); await sleep(600); return page.evaluate(() => { const p = document.querySelector('.owfPop:not([hidden])'); return p ? { title: (p.querySelector('.owfPopHd') || {}).textContent, text: p.innerText.replace(/\s+/g, ' ').trim(), standIn: p.querySelectorAll(window.__SEL).length, html: p.innerHTML } : null; }); };
     await openOv(M1);
     let f = await facts(); let cellM = f.cells.find(c => c.label === 'Monogram');
+    if (process.env.DUMP_CELL) console.log('CELL ' + (cellM && cellM.cls + ' || ' + cellM.disp));
     check(f.chip === 'Monogram' && /Monogram: Monogram, approved/.test(f.chipAria || ''), 'S2 the approved monogram line\'s Overview has a "Monogram" chip: ' + JSON.stringify([f.chip, f.chipAria]));
     check(cellM && cellM.standIn === 1 && /approved · A P V/.test(cellM.text) && !f.cells.some(c => c.label === 'Engraving') && !BAD.test(cellM.html), 'S2 its Details list has the Monogram cell (the letters and its seal) and no Engraving cell: ' + JSON.stringify(cellM && cellM.text));
     let pop = await popOf();
@@ -298,7 +315,7 @@ const BAD = /BACK ENGRAVING|FRONT ENGRAVING|CUT PLAIN|engraveApproved|engravePla
       const c = host.querySelector('.swEng'); if (!c || !(c.offsetParent || c.getClientRects().length)) return { host: true, card: false, text: host.innerText.trim() };
       const b = c.querySelector('[data-e=monogram]'), seals = [...c.querySelectorAll('.seal')];
       return { host: true, card: true, mono: c.classList.contains('monoCard'), state: c.dataset.state, text: c.innerText.replace(/\s+/g, ' ').trim(), html: c.outerHTML, label: (host.querySelector('.fLabel') || {}).textContent || '', pill: (c.querySelector('.egPill') || {}).textContent || '',
-        words: (c.querySelector('.words') || {}).textContent || '', button: b ? { text: b.textContent.trim(), disabled: b.disabled } : null, approve: !!c.querySelector('[data-e=approve], .egApproveButton'), seals: seals.length, standIn: seals.filter(s => s.hasAttribute('data-standin-monogram')).length,
+        words: (c.querySelector('.words') || {}).textContent || '', button: b ? { text: b.textContent.trim(), disabled: b.disabled } : null, approve: !!c.querySelector('[data-e=approve], .egApproveButton'), seals: seals.length, standIn: seals.filter(s => s.matches(window.__SEL)).length,
         models: seals.map(s => (s.querySelector('svg') || {}).getAttribute && s.querySelector('svg').getAttribute('data-seal-model') || '').join('|'), engButton: (c.querySelector('.egApproveButton') || {}).textContent || '', inside: seals.every(s => { const q = s.getBoundingClientRect(), r = c.getBoundingClientRect(); return q.width >= 20 && q.right <= r.right + 1 && q.left >= r.left - 1; }) };
     }, sel);
     const waitPanel = (sel, cls, ms = 15000) => page.waitForFunction(({ sel, cls }) => { const e = document.querySelector(sel + ' .swEng'); return e && (e.offsetParent || e.getClientRects().length) && (!cls || e.classList.contains(cls)); }, { sel, cls }, { timeout: ms }).then(() => true, () => false);
