@@ -1445,6 +1445,8 @@ const Orders = window.Orders = (() => {
   const mapsSame = () => mapsRead[0] === B.maps.optionMaps && mapsRead[1] === B.maps.aliases && mapsRead[2] === B.maps.noDesign;
   // FLAGWHY: what the orders the page holds say about each listing's SKUs (O.seenSkus, rebuilt on every pass of interpretAll): a line's SKU is told to be an option's own, or shared, from them
   let seenIx = {};
+  /* BLOCKREL (Paul, 17 Oct 2026): "Release to nesting queue" on a blocked SKU's Review row sets row.blockOverride = { sku, by, at, skus? } (kept in the run's line record like materialOverride / sizeOverride). The line is read with it
+     (ctx.blockOverride, charm-nest-orders.js blockFor) and pooled with it (makePool): the SKU it names is cut although the master still blocks it. It is one of the inputs a line is read from (inputsOf) and of the signature of the pool's last try (trySig). */
   const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, listingSkus: B.maps.listingSkus, seen: seenIx, masterEntry: sku => Master.entryFor(sku), masterLoose: sku => Master.looseFor(sku), masterShared: sku => Master.sharedFor(sku), masterLike: sku => Master.likeFor(sku), masterSkus: () => [...B.master.entries.keys()] });   // (masterSkus: every SKU the library holds; read only by a line whose SKU is a shared zodiac SKU, ZODSIGN)
   /** The pull rule (Settings → Pull orders): every open order, those due by a date, or the N most urgent by ship-by date. */
   function applyPullRule(orders) {
@@ -1464,12 +1466,12 @@ const Orders = window.Orders = (() => {
   const libFacts = sku => { const e = sku ? Master.entryFor(sku) : null; return e ? `${e.blocked ? "b:" + e.blocked : "ok"}|${e.sizes ? Object.entries(e.sizes).map(([k, v]) => (v ? "+" : "-") + k).join("\n") : ""}` : ""; };
   const formFacts = sku => { try { const f = O.masterForm ? O.masterForm(sku, { masterEntry: s => Master.entryFor(s), masterShared: s => Master.sharedFor(s) }) : null; return f ? f.form + "/" + f.by : ""; } catch (_) { return ""; } };
   // LOOKALIKE (charm-nest-orders.js section 3b): the master SKUs that read like a SKU (spacing and punctuation set aside) with each one's hole count, box and blocked flag: a line is read again when a lookalike arrives, goes, is blocked or is redrawn
-  const lookFacts = sku => { try { const k = String(sku || "").trim().toUpperCase(), set = k ? Master.likeFor(k) : []; return set.length < 2 ? "" : set.map(x => { const e = Master.entryFor(x); return e ? `${x}:${e.blocked ? "b" : ""}${e.holes}:${e.widthPt}x${e.heightPt}:${e.charmHash || ""}` : x; }).join("|"); } catch (_) { return ""; } };
+  const lookFacts = sku => { try { const k = String(sku || "").trim().toUpperCase(), set = k ? Master.likeFor(k) : []; return set.length < 2 ? "" : set.map(x => { const e = Master.entryFor(x); return e ? `${x}:${O.entryBlock(e) ? "b" : ""}${e.holes}:${e.widthPt}x${e.heightPt}:${e.charmHash || ""}` : x; }).join("|"); } catch (_) { return ""; } };
   function inputsOf(row) {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
     const own = m.listingSkus && O.inventorySku(l, m.listingSkus[String(l.listingId)]);
     const link = a && a.pairBySku && O.bySkuOf(a.pairBySku, String(O.decodeEntities(l.sku) || "").trim().toUpperCase());   // (the pair of two designs a person saved for this listing and SKU, aliasPut pair)
-    return [o, +o.updateTs, o.staffNote, l, l.staffNote, row.materialOverride, row.sizeOverride, m.optionMaps, m.aliases, m.noDesign, m.customDone,
+    return [o, +o.updateTs, o.staffNote, l, l.staffNote, row.materialOverride, row.sizeOverride, row.blockOverride ? JSON.stringify(row.blockOverride) : "", m.optionMaps, m.aliases, m.noDesign, m.customDone,
       m.customRead && m.customRead[row.key], m.customDecided && m.customDecided[row.key], libFacts(String(l.sku || "").trim().toUpperCase()), libFacts(a && a.sku ? String(a.sku).trim().toUpperCase() : ""),
       // the catalogue design of a charm-only variation SKU (MAPLE_8065-CO), and the design the line was last read as (an alias or an option's pick)
       libFacts(O.variationBase(l.sku)), libFacts(row.spec && row.spec.designSku),
@@ -1503,7 +1505,7 @@ const Orders = window.Orders = (() => {
      Such a line is read again without its SKU, options and words (what the reader can always read), and then waits for a person with ONE plain line, like a line the form guard holds: no design on the row, nothing pooled,
      the others go on. A line the reader reads is read exactly as before. */
   function readLine(row) {
-    try { return O.interpretLine(row.order, row.line, ctx()); }
+    try { const c = ctx(); if (row.blockOverride) c.blockOverride = row.blockOverride; return O.interpretLine(row.order, row.line, c); }
     catch (e) {
       const l = (row.line && typeof row.line === "object" ? row.line : {}), o = row.order || {}, say = String((e && e.message) || e).slice(0, 140), sku = String(l.sku == null ? "" : l.sku).trim().toUpperCase().slice(0, 80);
       const bare = { transactionId: String(l.transactionId == null ? "" : l.transactionId), listingId: String(l.listingId == null ? "" : l.listingId), productId: "", sku, title: "", quantity: Number(l.quantity) || 1, metalKey: String(l.metalKey == null ? "" : l.metalKey), metalLabel: String(l.metalLabel == null ? "" : l.metalLabel), personalization: [], buyerMessage: "", variations: [] };
@@ -1754,7 +1756,7 @@ const Orders = window.Orders = (() => {
       ...(row.groupSize > 1 ? { groupSize: row.groupSize } : {}), ...(row.spec && row.spec.pair && Array.isArray(row.spec.pair.sides) && row.spec.pair.sides.some(x => x === "L" || x === "R") ? { sides: row.spec.pair.sides.slice(0, 400).map(x => x === "L" || x === "R" ? x : "") } : {}),
       ...(hand ? { handDone: { at: +cd.completedAt || 0, by: cap(cd.completedBy, 80), how: cd.how === "button" ? "button" : "print" } } : {}),
       activityAt:row.activityAt || 0, changePending:!!row.changePending,repoolChanged:!!row.repoolChanged,arrivedAt: row.arrivedAt || 0, createTs: o.createTs || 0, materialOverride: row.materialOverride || null, sizeOverride: row.sizeOverride || null, ...(row.engravingOverride ? { engravingOverride: row.engravingOverride } : {}), problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
-      ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), ...(row.releasing ? { releasing: { at: +row.releasing.at || 0, by: cap(row.releasing.by, 80), stage: String(row.releasing.stage || "").slice(0, 20) } } : {}),   // (released from hold: ahead of the orders coming in; a release not finished yet, taken up again by the next page, OrderHold)
+      ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), ...(row.releasing ? { releasing: { at: +row.releasing.at || 0, by: cap(row.releasing.by, 80), stage: String(row.releasing.stage || "").slice(0, 20) } } : {}), ...(row.blockOverride && typeof row.blockOverride === "object" && row.blockOverride.sku ? { blockOverride: { sku: cap(row.blockOverride.sku, 80), by: cap(row.blockOverride.by, 80), at: +row.blockOverride.at || 0, ...(Array.isArray(row.blockOverride.skus) && row.blockOverride.skus.length ? { skus: row.blockOverride.skus.slice(0, 20).map(x => cap(x, 80)) } : {}) } } : {}),   // (BLOCKREL: a person's "Release to nesting queue" on a blocked SKU; released from hold: ahead of the orders coming in; a release not finished yet, taken up again by the next page, OrderHold)
       snap: { title: cap(l.title, 160), listingId: cap(l.listingId, 24), metalKey: cap(l.metalKey, 24), metalLabel: cap(l.metalLabel, 40),
         orderNumber: cap(o.orderNumber, 24), buyer: cap(o.buyer && o.buyer.name, 60), shipBy: +o.shipBy || 0, isGift: !!o.isGift,
         vars: (l.variations || []).map(v => String(v.name ?? v.formatted_name ?? "") + "\u241f" + String(v.value ?? v.formatted_value ?? "")),
@@ -1775,7 +1777,7 @@ const Orders = window.Orders = (() => {
     O.cleanLine(line);   // (a line recorded while Etsy's text still carried entities is read decoded; the record is not rewritten)
     order.lines = [line];
     return { key, order, line, activityAt:+l.activityAt || 0, changePending:!!l.changePending,repoolChanged:!!l.repoolChanged, arrivedAt: +l.arrivedAt || 0, sizeOverride: l.sizeOverride || null, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
-      poolIds: l.poolIds || [], ...(+l.groupSize > 1 ? { groupSize: +l.groupSize } : {}), engrave: l.engrave || null, metal: l.material || null, materialOverride: l.materialOverride || l.material || null, ...(l.engravingOverride && typeof l.engravingOverride === "object" ? { engravingOverride: l.engravingOverride } : {}), fromRecord: true, ...(+l.frontAt > 0 ? { frontAt: +l.frontAt } : {}), ...(l.releasing && +l.releasing.at > 0 ? { releasing: l.releasing } : {}) };
+      poolIds: l.poolIds || [], ...(+l.groupSize > 1 ? { groupSize: +l.groupSize } : {}), engrave: l.engrave || null, metal: l.material || null, materialOverride: l.materialOverride || l.material || null, ...(l.engravingOverride && typeof l.engravingOverride === "object" ? { engravingOverride: l.engravingOverride } : {}), fromRecord: true, ...(+l.frontAt > 0 ? { frontAt: +l.frontAt } : {}), ...(l.releasing && +l.releasing.at > 0 ? { releasing: l.releasing } : {}), ...(l.blockOverride && typeof l.blockOverride === "object" && l.blockOverride.sku ? { blockOverride: l.blockOverride } : {}) };
   }
   /* The claim is a courtesy — a gold dot on the station's rows saying the sorter has these — never a lock. So it goes
      in batches of a hundred, each with its own time, and a batch the station does not answer is retried once and then
@@ -3176,7 +3178,7 @@ const Master = window.Master = (() => {
   /** The SKU of a non-blocked entry that is the very same drawing (exact charm hash), "" when the library holds none: the design a custom order brings may already be there (D8). */
   function sameDesign(charmHash) {
     const h = String(charmHash || ""); if (!h) return "";
-    let best = ""; for (const e of B.master.entries.values()) if (e && e.charmHash === h && e.aiPath && !e.blocked && e.sku && (!best || e.sku < best)) best = e.sku;
+    let best = ""; for (const e of B.master.entries.values()) if (e && e.charmHash === h && e.aiPath && !O.entryBlock(e) && e.sku && (!best || e.sku < best)) best = e.sku;
     return best;
   }
   /** A change to a charm in the repo: asks for the password when none is held (modify; an upload unlock serves too), then writes. */
@@ -3366,6 +3368,7 @@ const Master = window.Master = (() => {
         `<div class="meta"${ob ? ` title="A necklace charm: ${esc(ob.what)} only. The master file still holds the other body; it is not shown, cut or counted."` : ""}>${(e.widthPt * MM).toFixed(1)} × ${(e.heightPt * MM).toFixed(1)} mm${e.pair && e.pair.mismatched ? " both together" : ""} · ${e.holes} hole${e.holes === 1 ? "" : "s"}${sizes.length ? ` · sizes ${sizes.map(([k]) => k).join("/")}` : ""}${d.skus.length > 1 ? ` · ${d.skus.length} SKUs` : ""}</div>` +
         `<div class="meta">up ${e.upAngle == null ? "as drawn" : Math.round(e.upAngle) + "°"}${e.upSource === "long" ? " (long side flat)" : ""} · ${esc(e.labelSource || "text")}${e.hashSource === "server" ? " · server" : ""}</div>` +
         (blocked ? `<div class="bad">${esc(blocked)}</div>` : "") +
+        (blocked && d.list.every(x => !x.blocked || O.blockKind(x) === "flip") ? `<div class="meta" title="BLOCKREL: the back-view check is about engraving a back; the outline to cut is fine, so orders of this SKU are cut and nested as usual. A back engraving on it asks in Review.">Cutting is not held by this: only a back engraving cannot be fitted.</div>` : "") +
         `<div class="row">` +
         `<input type="number" data-up="${keys}" data-repo="modify" value="${e.upAngle == null ? "" : Math.round(e.upAngle)}" placeholder="up°" style="width:52px;border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px">` +
         facesBox(e, keys) +
@@ -3840,7 +3843,8 @@ const Pool = window.Pool = (() => {
     if (sp.formHold) { const hp = (sp.problems || []).find(p => p.formHold); if (hp) row.problems.push(hp); row.state = "unmatched"; row.reason = sp.formHold.reason; return null; }
     let entry = Master.entryFor(sp.designSku) || await Master.fetchEntry(sp.designSku);
     if (!entry) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push(Object.assign({ kind: "unmatchedSku", reason: "not in any master file", sku: sp.designSku, listingId: String(row.line.listingId || ""), title: row.line.title }, sp.siblings && sp.siblings.length ? { siblings: sp.siblings } : {})); agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: not in any master file`); return null; }
-    if (entry.blocked) { row.state = "held"; row.reason = `SKU blocked: ${entry.blocked}`; row.problems.push({ kind: "blockedSku", reason: entry.blocked, sku: sp.designSku }); return null; }
+    // BLOCKREL: a block that exists only because the back-view (flip) check threw does not stop cutting (O.entryBlock), and a person's "Release to nesting queue" (row.blockOverride) sets a genuine one aside for this SKU on this line
+    { const why = O.blockFor(entry, sp.designSku, row.blockOverride); if (why) { row.state = "held"; row.reason = `SKU blocked: ${why}`; row.problems.push({ kind: "blockedSku", reason: why, sku: sp.designSku }); return null; } }
     { const sh = sizeHold(entry, sp.size, sp.designSku); if (sh) { row.state = "held"; row.reason = sh.reason; row.problems.push(sh.problem); return null; } }
     const src = await masterCharm(entry, sp.size);
     const base = src.charms[0];
@@ -3852,7 +3856,7 @@ const Pool = window.Pool = (() => {
       const entry2 = Master.entryFor(two.R) || await Master.fetchEntry(two.R);
       const hold = (why, problem) => { row.state = "held"; row.reason = why; if (problem) row.problems.push(problem); agent({ pool: true }, "warn", `${row.order.receiptId} · ${two.R}: ${why}`); return null; };
       if (!entry2) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push({ kind: "unmatchedSku", reason: "not in any master file", sku: two.R, listingId: String(row.line.listingId || ""), title: row.line.title }); agent({ pool: true }, "warn", `${row.order.receiptId} · ${two.R}: not in any master file`); return null; }
-      if (entry2.blocked) return hold(`SKU blocked: ${entry2.blocked}`, { kind: "blockedSku", reason: entry2.blocked, sku: two.R });
+      { const why2 = O.blockFor(entry2, two.R, row.blockOverride); if (why2) return hold(`SKU blocked: ${why2}`, { kind: "blockedSku", reason: why2, sku: two.R }); }
       { const sh = sizeHold(entry2, sp.size, two.R); if (sh) return hold(sh.reason, sh.problem); }
       const src2 = await masterCharm(entry2, sp.size);
       if (src.bodies || src2.bodies) return hold(`${src.bodies ? two.L : two.R} draws two bodies: it cannot be one ear of a pair of two designs`);
@@ -3868,7 +3872,7 @@ const Pool = window.Pool = (() => {
       for (const k of setSkus.slice(1)) {
         const e2 = Master.entryFor(k) || await Master.fetchEntry(k), hold = (why, problem) => { row.state = "held"; row.reason = why; if (problem) row.problems.push(problem); agent({ pool: true }, "warn", `${row.order.receiptId} · ${k}: ${why}`); return null; };
         if (!e2) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push({ kind: "unmatchedSku", reason: "not in any master file", sku: k, listingId: String(row.line.listingId || ""), title: row.line.title }); agent({ pool: true }, "warn", `${row.order.receiptId} · ${k}: not in any master file`); return null; }
-        if (e2.blocked) return hold(`SKU blocked: ${e2.blocked}`, { kind: "blockedSku", reason: e2.blocked, sku: k });
+        { const why2 = O.blockFor(e2, k, row.blockOverride); if (why2) return hold(`SKU blocked: ${why2}`, { kind: "blockedSku", reason: why2, sku: k }); }
         { const sh = sizeHold(e2, sp.size, k); if (sh) return hold(sh.reason, sh.problem); }
         const s2 = await masterCharm(e2, sp.size);
         if (s2.bodies) return hold(`${k} draws two bodies: it cannot be one piece of a set of two designs`);
@@ -3905,7 +3909,7 @@ const Pool = window.Pool = (() => {
     const st = stockFor(sp.material); const usable = (st.wPt - 2 * (+S.settings.insetPt || 0)) * (st.hPt - 2 * (+S.settings.insetPt || 0)) * (+S.settings.maxFill || 0.80);
     for (const b of plan ? (ear2 ? [base, ear2.src.charms[0]] : [...new Set(plan.map(p => +p.bodyIndex))].map(i => wholeBody(src, i))) : setDs ? setDs.map(d => d.src.charms[0]) : [cutBase]) {
       // a design whose outline reads as nothing (no area or no size: collapsed, invalid) cannot be seated: first in line of its metal it stopped the whole sheet ("The oldest order cannot fit on an empty sheet"), so the line waits for a person instead
-      if (!(b.areaPt2 > 0) || !(b.widthPt > 0) || !(b.heightPt > 0)) { row.state = "held"; row.reason = "SKU blocked: its design has no outline to cut"; row.problems.push({ kind: "blockedSku", reason: "its design has no outline to cut", sku: sp.designSku }); return null; }
+      if (!(b.areaPt2 > 0) || !(b.widthPt > 0) || !(b.heightPt > 0)) { row.state = "held"; row.reason = "SKU blocked: its design has no outline to cut"; row.problems.push({ kind: "blockedSku", reason: "its design has no outline to cut", sku: sp.designSku, noOutline: true }); return null; }   // (noOutline: nothing to cut, so no "Release to nesting queue" can set it aside)
       if (b.areaPt2 > usable || Math.min(b.widthPt, b.heightPt) > Math.max(st.wPt, st.hPt) - 2 * (+S.settings.insetPt || 0)) { row.state = "oversize"; row.reason = `charm ${(b.widthPt * MM).toFixed(1)} × ${(b.heightPt * MM).toFixed(1)} mm does not fit the ${labelOf(sp.material)} plate under the ceiling`; row.problems.push({ kind: "oversize", sku: sp.designSku, widthMm: b.widthPt * MM, heightMm: b.heightPt * MM, material: sp.material }); return null; }
     }
     // a Right piece is drawn the other way round (its mirror image); a line whose mirrored charm cannot be made is held, never drawn the wrong way
@@ -4067,7 +4071,7 @@ const Pool = window.Pool = (() => {
   const RETRY_MS = 5 * 60000;
   function trySig(row) {
     const sp = row.spec || {}, e = sp.designSku ? Master.entryFor(sp.designSku) : null, st = sp.material ? stockFor(sp.material) : null;
-    return JSON.stringify([+row.order.updateTs || 0, sp.designSku || "", sp.size || "", sp.material || "", sp.quantity || 0, !!sp.noDesign, (sp.problems || []).map(p => p.kind), row.materialOverride || "", row.sizeOverride || "",
+    return JSON.stringify([+row.order.updateTs || 0, sp.designSku || "", sp.size || "", sp.material || "", sp.quantity || 0, !!sp.noDesign, (sp.problems || []).map(p => p.kind), row.materialOverride || "", row.sizeOverride || "", row.blockOverride ? JSON.stringify(row.blockOverride) : "",
       e ? [e.masterHash || "", e.updatedAt || 0, e.blocked || "", Object.keys(e.sizes || {}).sort().join(","), sizeEntry(e, sp.size)?.aiPath || ""] : B.master.entries.size,
       st ? [Math.round(st.wPt), Math.round(st.hPt)] : 0, +S.settings.insetPt || 0, +S.settings.maxFill || 0]);
   }
@@ -4130,7 +4134,7 @@ const Pool = window.Pool = (() => {
     const hold = (row, e, later) => { if (tryLater(row, e)) { passed = true; return; } row.state = "held"; row.reason = e.message; if (later) { row.poolError = Date.now(); row.poolTry = trySig(row); } agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${e.message}`); };
     // six at a time: a big batch after a reload started every design download at once, and they timed out against each
     // other while the page parsed them all together (audit, 25 Sep)
-    const loads = work.filter(row => row.spec && !row.spec.noDesign && !row.spec.ownDesign).map(row => { const e = Master.entryFor(row.spec.designSku); return e && !e.blocked && sizeEntry(e, row.spec.size)?.aiPath ? () => masterCharm(e, row.spec.size) : null; }).filter(Boolean);
+    const loads = work.filter(row => row.spec && !row.spec.noDesign && !row.spec.ownDesign).map(row => { const e = Master.entryFor(row.spec.designSku); return e && !O.blockFor(e, row.spec.designSku, row.blockOverride) && sizeEntry(e, row.spec.size)?.aiPath ? () => masterCharm(e, row.spec.size) : null; }).filter(Boolean);
     { let next = 0; await Promise.all(Array.from({ length: Math.min(6, loads.length) }, async () => { while (next < loads.length) await loads[next++]().catch(() => {}); })); }
     const made = [];
     for (const row of work) {
@@ -4187,7 +4191,7 @@ const Pool = window.Pool = (() => {
   async function previewOnce(row) {
     const sp = row.spec, entry = Master.entryFor(sp.designSku), none = () => { previewIdsOf.set(row.key, []); return []; };
     // (a line pooling would not cut from its own design makes no charm: custom, add-on, no design, the form guard, an unknown or blocked SKU, a size its design lacks)
-    if (!entry || entry.blocked || sp.noDesign || sp.ownDesign || sp.formHold || (window.CustomSheet && CustomSheet.sentOf && CustomSheet.sentOf(row)) || !sizeEntry(entry, sp.size)?.aiPath) return none();
+    if (!entry || O.blockFor(entry, sp.designSku, row.blockOverride) || sp.noDesign || sp.ownDesign || sp.formHold || (window.CustomSheet && CustomSheet.sentOf && CustomSheet.sentOf(row)) || !sizeEntry(entry, sp.size)?.aiPath) return none();
     const src = await masterCharm(entry, sp.size), base = src.charms[0], mine = !base.poolId;
     if (mine) base.poolId = "__preview";   // (makePool then clones every copy; a real pooling that starts meanwhile clones the first copy too, and the drawing is let go clean below)
     const keep = { state: row.state, reason: row.reason, problems: row.problems, poolTry: row.poolTry, poolError: row.poolError };
@@ -4291,6 +4295,7 @@ const Carry = window.Carry = (() => {
     for (let i = 0; i < B.orders.rows.length; i++) {
       const fresh = B.orders.rows[i], row = old.get(fresh.key);
       if (row && row.engravingOverride && !fresh.engravingOverride) fresh.engravingOverride = row.engravingOverride;   // (a person's engraving setup is never lost to a fresh pull, even of a changed order: CONTRACT 3)
+      if (row && row.blockOverride && !fresh.blockOverride) fresh.blockOverride = row.blockOverride;   // (BLOCKREL: a person's "cut it although the master blocks it" is for that SKU only, so a changed order keeps it; it does nothing if the SKU changed)
       if (!row || +row.order.updateTs !== +fresh.order.updateTs || JSON.stringify(row.line) !== JSON.stringify(fresh.line)) continue;
       row.order = fresh.order;
       // A previously released line remains written: mixed orders must never cut that line twice.
@@ -11100,7 +11105,7 @@ const RunCtl = window.RunCtl = (() => {
       for (const row of Orders.rows()) {
         const old = savedLines[row.key];
         if (!old || +old.updateTs !== +row.order.updateTs) continue;
-        for (const key of ["state", "poolIds", "reason", "hold", "wait", "engrave", "materialOverride", "sizeOverride", "engravingOverride", "changePending", "repoolChanged"]) if (old[key] != null) row[key] = old[key];
+        for (const key of ["state", "poolIds", "reason", "hold", "wait", "engrave", "materialOverride", "sizeOverride", "blockOverride", "engravingOverride", "changePending", "repoolChanged"]) if (old[key] != null) row[key] = old[key];
       }
       Orders.interpretAll();
       await restoreRunSheets(rec);
@@ -14247,7 +14252,7 @@ const Review = window.Review = (() => {
         return { lookalike: true, ask: "Which drawing is this necklace? One tap, kept for this listing:", pair: null, siblings: p.candidates.map(c => ({ sku: c.sku, note: `${c.ring ? "with ring" : "no loop"}${c.mm ? ", " + c.mm : ""}` })), rows: rows.length ? rows : [row] };
       }
       const S = window.CharmNestSiblings; if (!S || !row || !row.line) return null;
-      const blocked = k => { const e = Master.entryFor(k); return !!(e && e.blocked); };
+      const blocked = k => { const e = Master.entryFor(k); return !!(e && O.entryBlock(e)); };
       const ask = (x, own) => { if (!x || !x.line || !/^\d+$/.test(String(x.line.listingId || ""))) return null; return S.suggest(x.line, { spec: x.spec, siblings: own && p && Array.isArray(p.siblings) ? p.siblings : undefined, index: sibIndex(), base: p && p.sku || undefined, blocked }); };
       const lead = ask(row, true); if (!lead) return null;
       const rows = (group && group.length ? group : [row]).filter(x => x === row || (() => { const o = ask(x, false); return !!o && o.pair.L === lead.pair.L && o.pair.R === lead.pair.R; })());
@@ -14273,10 +14278,10 @@ const Review = window.Review = (() => {
     const e = B.master.entries; if (simIx.entries !== e || simIx.size !== e.size || simIx.at !== B.master.loadedAt) simIx = { entries: e, size: e.size, at: B.master.loadedAt, memo: new Map() };
     let lf = null; try { lf = O.lineForm ? O.lineForm(x.line, { optionMaps: B.maps.optionMaps }) : null; } catch (_) {}
     const cur = matchedNow(x), key = [String(x.line.sku || ""), lf ? lf.form : "", cur.join("+"), exclude.join("+")].join("\u0001");
-    if (simIx.memo.has(key)) { const kept = simIx.memo.get(key); if (!kept || !kept.choices.some(c => !c.current && (Master.entryFor(c.sku) || {}).blocked)) return kept; }   // (a design blocked since is never offered: the list is made again)
+    if (simIx.memo.has(key)) { const kept = simIx.memo.get(key); if (!kept || !kept.choices.some(c => !c.current && O.entryBlock(Master.entryFor(c.sku)))) return kept; }   // (a design blocked since is never offered: the list is made again)
     let out = null;
     try {
-      const blocked = k => { const m = Master.entryFor(k); return !!(m && m.blocked); };
+      const blocked = k => { const m = Master.entryFor(k); return !!(m && O.entryBlock(m)); };
       const formOk = k => { try { return !(lf && O.formClash && O.formClash(lf, O.masterForm(k, { masterEntry: s => Master.entryFor(s), masterShared: s => Master.sharedFor(s) }))); } catch (_) { return true; } };
       out = S.similar(x.line, { skus: e.keys(), like: k => Master.likeFor(k), entryFor: k => Master.entryFor(k), blocked, formOk, current: cur, exclude });
     } catch (_) { out = null; }
@@ -14411,6 +14416,163 @@ const Review = window.Review = (() => {
     if (r.state === "written" || r.state === "pooled") { if (sp.engraveCandidate) await Engrave.classify(r); else r.engrave = { needed: false, state: "none", approved: true, seals: CNEngravingSeals.merge(r.engrave) }; } else await repool(r);
     RunCtl.poke();
   }
+  /* ═══ RELTOQ · "Release to nesting queue" on every Review row and card (Paul, 17 Oct 2026, orders 4193111740 DRAGON11 and 4191826593 FLORALS2) ═══════════════════════════════════════════
+     Paul: "I asked you to add a button so that I can release orders that are flagged for review back to the production/nesting queue." The Review ROW (reviewRow; the decision card() below is drawn only inside a
+     Custom Orders card now) had no way out: "Unblock this SKU" sat on a card nobody sees, and "Release hold" ended in "was not fully released ... needs a look in Review".
+     ONE button, the same on every open row, under the row's reason. Pressed, the order goes to the FRONT of the queue and onto the next sheet the way Release hold does it (OrderHold.release: its lines made up
+     again, placed at once on the next GF / SS sheet with room, the sheet's QR label made again) and the answer is on the order's timeline ("Decided by … · Released to the nesting queue").
+       blockedSku    the master's block on the SKU is set aside for the card's lines only (row.blockOverride = { sku, by, at }, kept in the run's lines like materialOverride / sizeOverride): the design is cut as the
+                     master holds it. A block that is only the engraving's flip check never gets here (O.entryBlock); a design with no outline to cut cannot be released (nothing to cut).
+       reviewMark    "Send to Review" is resolved (how "other") and the order goes on; a line of it that is on hold is released too
+       heldOrder     Release hold (a change Etsy made after the sheet was cut or released: the piece on that sheet is kept)
+       orderChanged  the new order is accepted (acceptChange)
+       anything else the line cannot nest until something is answered (no design, an option, a metal, a size, too big): the button is there, greyed, and its title / aria text is the one plain reason; a piece
+                     whose cut is already in the queue and waits only on its engraving says so. A person's hold on a card of any kind is released as Release hold. */
+  const RELEASE_LABEL = "Release to nesting queue";
+  const upK = s => String(s == null ? "" : s).trim().toUpperCase();
+  const rowsOfOrder = rid => Orders.rows().filter(x => x && x.order && String(x.order.receiptId) === String(rid) && x.state !== "gone");
+  /** What "Release to nesting queue" does for a Review item: { how: "override" | "mark" | "hold" | "change" | "", why, title } (why = the one plain reason it cannot be pressed, "" when it can; title = what it does). */
+  function releaseOf(it) {
+    const rows = ((it && it.kind === "heldOrder" && it.rid ? rowsOfOrder(it.rid) : rowsOf(it)) || []).filter(r => r && r.order), p = (it && it.problem) || {}, n = rows.length, orders = new Set(rows.map(r => String(r.order.receiptId))).size;
+    const no = why => ({ how: "", why, title: why }), of = n === 1 ? "this piece goes" : `these ${n} pieces go`;
+    if (!it || !n) return no("This order is no longer in this run.");
+    const kind = it.kind, anyHold = rows.some(r => r.hold), anyProblem = rows.some(r => (r.problems || []).length);
+    if (kind === "blockedSku") {
+      if (p.noOutline) return no("Its design has no outline to cut, so nothing can be nested: put the right design in the master file first.");
+      return { how: "override", why: "", title: `Cut ${upK(p.sku)} although the master blocks it (${p.reason || "blocked"}): ${of} to the front of the queue and onto the next sheet. The block stays in the master; only ${orders === 1 ? "this order sets" : `these ${orders} orders set`} it aside.` };
+    }
+    if (kind === "reviewMark") return { how: "mark", why: "", title: "Take this order out of Review: it goes on to the sheets. A piece of it that is on hold goes to the front of the queue and onto the next sheet." };
+    if (kind === "heldOrder") return { how: "hold", why: "", title: "Release the hold: the order goes back to the front of the queue and onto the next sheet (a piece already on a sheet stays there)." };
+    if (kind === "orderChanged") return { how: "change", why: "", title: "Accept the new order: its pieces are made up again as it reads now and go onto the next sheet (a sheet already released or cut is never touched)." };
+    if (kind === "customOrder") return no("A custom order is made by hand or from its own designs: it does not go through the nesting queue.");
+    // a person's hold on a line that asks nothing else: Release hold
+    if (anyHold && !anyProblem) return { how: "hold", why: "", title: "Release the hold: the order goes back to the front of the queue and onto the next sheet." };
+    if (kind === "unmatchedSku") return no(p.formHold && p.reason ? p.reason : `SKU ${p.sku || "?"} has no design in any master file yet: pick its charm (or say there is nothing to cut) first.`);
+    if (kind === "needsMaterial") return no("Its metal is not read yet: pick the metal first, or it cannot be put on a sheet.");
+    if (kind === "needsMapping") return no(p.pairSecond ? "Say which design goes on the other ear first." : p.optionName ? `The option “${p.optionName}: ${p.optionValue}” is not answered yet: say what it decides first.` : "An option of this line is not answered yet: answer it first.");
+    if (kind === "missingSize") return no(`${p.sku || "Its design"} has no size ${p.size || "(none)"}: pick one of its sizes first.`);
+    if (kind === "oversize") return no("It does not fit the plate under the ceiling, so it cannot be nested as it is.");
+    // the engraving cards: what they wait on is not the cut
+    if (anyProblem) return no(`Its first question is not answered yet: ${problemText(rows.find(r => (r.problems || []).length).problems[0])}.`);
+    if (rows.every(r => (r.poolIds || []).length || ["pooled", "nested", "written", "labelled", "committed"].includes(r.state))) return no("Its cut piece is already in the nesting queue: this card waits only on its engraving.");
+    return no("Nothing holds this piece out of the nesting queue: the run's own intake places it.");
+  }
+  /** The run's lines and the workspace written now, so a "released anyway" survives a reload before anything else happens (the same save Release hold makes first). */
+  async function saveLinesNow() {
+    try { const S = window.Session; if (S) { if (S.schedule) S.schedule(); if (S.flushNow) await S.flushNow(); } } catch (_) { /* the page's own checkpoint carries it */ }
+    try { const run = B.run; if (run && Orders.lineRecord && RunCtl.save) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); await RunCtl.save(run); } } catch (_) { /* saved again at the next update */ }
+  }
+  /** One order back in line, at the front, on the next sheet: OrderHold.release (front of the queue, made up again, placed at once, its QR label) when a line of it is held; else its lines are made up again in line, first.
+   *  → true when nothing is left to look at. Says how it went on the page. */
+  async function liftOrder(rid, who, rows) {
+    const OH = window.OrderHold, mine = rowsOfOrder(rid);
+    if (window.HoldUI && HoldUI.busy && HoldUI.busy(rid)) { toast(`Order ${rid} is being held or released right now: try again when that has finished.`, "", 5000); return false; }
+    if (OH && typeof OH.release === "function" && mine.some(x => Orders.heldNow(x))) {
+      const res = await OH.release(rid, { name: who });
+      if (res && res.ok) {
+        const where = (res.sheets || []).map(s => s.label).filter(Boolean).join(", ");
+        toast(res.placed ? `Order ${rid} released to the nesting queue: first in line, placed on ${where || "the next sheet"}` : `Order ${rid} released to the nesting queue: first in line, placed when the next run starts`, "ok", 6000);
+        return true;
+      }
+      const msg = String((res && res.error) || "something went wrong");
+      toast(res && res.released ? `${msg} What was done is kept, and Release to nesting queue can be pressed again.` : `Order ${rid} was not released: ${msg}. It is still held.`, "bad", 9000);
+      return false;
+    }
+    const t = Date.now(), lines = (rows && rows.length ? rows : mine).filter(x => x && x.state !== "gone");
+    for (const x of lines) { x.frontAt = t; delete x.poolTry; await repool(x); }
+    const left = lines.find(x => (x.problems || []).length);
+    if (left) { toast(`Order ${rid} is back in line, but it still needs a look: ${problemText(left.problems[0])}`, "bad", 9000); return false; }
+    toast(`Order ${rid} released to the nesting queue: first in line`, "ok", 6000);
+    return true;
+  }
+  /** The press. it: the Review item (a row's or a card's). → true when every order of it went back in line. */
+  async function releaseToQueue(it) {
+    const live = items().find(x => x.key === it.key) || it, r = releaseOf(live);
+    if (!r.how) { toast(r.why, "", 6000); return false; }
+    const who = by(); if (!who) return false;
+    const rows = (live.kind === "heldOrder" && live.rid ? rowsOfOrder(live.rid) : rowsOf(live)).filter(x => x && x.order), rids = [...new Set(rows.map(x => String(x.order.receiptId)))];
+    const mineOf = rid => rows.filter(x => String(x.order.receiptId) === rid);
+    if (r.how === "override") {
+      const p = live.problem || {}, sku = upK(p.sku);
+      // (the oldest order first, one at a time: an order is marked just before its own turn, so the engine finds its lines still held, as it must, and an order not reached yet keeps its card)
+      const sorted = rids.slice().sort((a, b) => (+(rowsOfOrder(a)[0] && rowsOfOrder(a)[0].order.createTs) || 0) - (+(rowsOfOrder(b)[0] && rowsOfOrder(b)[0].order.createTs) || 0));
+      let ok = true;
+      for (const rid of sorted) {
+        const mine = mineOf(rid), at = Date.now();
+        for (const x of mine) {
+          const cur = x.blockOverride && typeof x.blockOverride === "object" ? x.blockOverride : null, skus = [...new Set([].concat(cur ? [cur.sku].concat(cur.skus || []) : [], [sku]).map(upK).filter(Boolean))];
+          x.blockOverride = skus.length > 1 ? { sku: skus[0], skus, by: who, at } : { sku, by: who, at };
+          delete x.poolTry;
+        }
+        answered({ kind: live.kind, rows: mine }, "decided", `Released to the nesting queue: ${sku} is cut although it is blocked (${String(p.reason || "blocked").slice(0, 120)})`, { sku, blockOverride: true, reason: p.reason || null, release: true }, who);
+        agent({ pool: true }, "warn", `${rid} · ${sku}: ${who} released it to the nesting queue although the master blocks it (${p.reason || "blocked"})`);
+        ok = (await liftOrder(rid, who, mine)) && ok;
+      }
+      await saveLinesNow(); syncOrderItems(); Orders.render(); RunCtl.poke();
+      return ok;
+    }
+    if (r.how === "change") { await acceptChange(live); return true; }
+    if (r.how === "mark") {
+      const M = window.CharmNestReviewMark; if (!M) { toast("Review is not ready on this page: try again in a moment.", "bad"); return false; }
+      const res = await M.resolve(live.rid || rids[0], { by: who, how: "other" });
+      if (!res.ok) { if (res.error !== "No name") toast(`Not released: ${res.error}`, "bad", 7000); return false; }
+      let ok = true; for (const rid of rids) if (rowsOfOrder(rid).some(x => x.hold)) ok = (await liftOrder(rid, who)) && ok;
+      const left = rids.flatMap(rowsOfOrder).filter(x => (x.problems || []).length).length;
+      toast(left ? `Order ${rids[0]} left Review. ${left} piece${left === 1 ? "" : "s"} of it still wait${left === 1 ? "s" : ""} on a question of their own (see Review).` : `Order ${rids[0]} left Review: it goes on to the sheets`, "ok", 6000);
+      syncOrderItems(); Orders.render(); RunCtl.poke();
+      return ok;
+    }
+    let ok = true; for (const rid of rids) ok = (await liftOrder(rid, who, mineOf(rid))) && ok;   // a person's hold: Release hold
+    syncOrderItems(); Orders.render(); RunCtl.poke();
+    return ok;
+  }
+  /** "Unblock this SKU": the Master tab's own unblock (it patches the master, the same repo-password guard), then every order held on the SKU goes back in line. */
+  async function unblockSku(it) {
+    const p = it.problem || {}, sku = upK(p.sku || (it.row && it.row.spec && it.row.spec.designSku)); if (!sku) return; const who = by(); if (!who) return;
+    try { await Master.patchMany([sku], { blocked: null }); }
+    catch (e) { if (e && e.cancelled) { toast(`${sku} not unblocked: the repo stayed locked`, "", 4000); return; } throw e; }
+    answered(it, "decided", `Unblocked ${sku}`, { sku, unblocked: true }, who);
+    toast(`${sku} unblocked: this order goes back in line`, "ok");
+    const lines = new Set(rowsOf(it)); for (const rr of Orders.rows()) if (rr.state !== "gone" && rr.problems.some(x => x.kind === "blockedSku" && upK(x.sku) === sku)) lines.add(rr);   // (every order held on this SKU, not only this card's)
+    for (const rr of lines) await repool(rr);
+  }
+  /** The buttons of a Review row: "Release to nesting queue" and, on a blocked SKU, "Unblock this SKU" after it, in a line of their own under the row's reason (the identity column, where the offers of charms are: the
+   *  row's .rowActions column is the Custom Orders card's, button for button). Or, in the decision card (host: its first .fixes), first among the card's buttons. Greyed (aria-disabled), with the one plain reason as
+   *  its title and aria text, when it cannot be pressed. A row that is done, decided, a Custom Order or a placement card has none. */
+  function decorateRelease(node, it, host) {
+    try {
+      if (!node || !it || it.done || it.decided || it.settled || it.info || it.nested || it.kind === "customOrder" || it.kind === "placement") return;
+      if (node.querySelector("[data-rv-release]")) return;
+      let acts = host;
+      if (!acts) {
+        const idn = node.querySelector(".engravingIdentity"); if (!idn) return;
+        acts = document.createElement("div"); acts.className = "rvRel";
+        const after = idn.querySelector(".reviewReason"); if (after) after.insertAdjacentElement("afterend", acts); else idn.appendChild(acts);
+      }
+      const r = releaseOf(it), on = !!r.how;
+      if (!on && r.why === "This order is no longer in this run.") { if (!host) acts.remove(); return; }
+      const b = document.createElement("button"); b.type = "button"; b.className = `btn ${on ? "gold" : "ghost"} sm`; b.dataset.rvRelease = r.how || "no"; b.textContent = RELEASE_LABEL;
+      b.title = r.title || r.why; b.setAttribute("aria-label", on ? `${RELEASE_LABEL}: ${r.title}` : `${RELEASE_LABEL} (not possible yet): ${r.why}`);
+      const rest = () => { if (on) b.removeAttribute("aria-disabled"); else b.setAttribute("aria-disabled", "true"); };
+      rest();
+      b.onclick = e => {
+        e.stopPropagation();
+        if (b.getAttribute("aria-disabled") === "true") { toast(on ? "One moment: it is being released." : r.why, "", 6000); return; }
+        if (node.dataset.saving) return;
+        node.dataset.saving = "1"; const was = b.innerHTML; b.setAttribute("aria-disabled", "true"); b.setAttribute("aria-busy", "true"); b.innerHTML = '<span class="spin"></span>Releasing…';
+        releaseToQueue(it).catch(err => toast("Could not release it: " + ((err && err.message) || err), "bad", 8000)).finally(() => { delete node.dataset.saving; if (b.isConnected) { b.removeAttribute("aria-busy"); b.innerHTML = was; rest(); } });
+      };
+      if (host) acts.insertBefore(b, acts.firstChild); else acts.appendChild(b);
+      if (it.kind === "blockedSku" && host) { const old = host.querySelector("[data-a=unblock]"); if (old) old.classList.replace("gold", "ghost"); }   // (the decision card has its own "Unblock this SKU": the release is the primary one)
+      else if (it.kind === "blockedSku") {
+        const u = document.createElement("button"); u.type = "button"; u.className = "btn ghost sm"; u.dataset.rvUnblock = "1"; u.textContent = "Unblock this SKU";
+        u.title = "Take the block off this SKU in the master itself (asks for the repo password); every order held on it goes back in line";
+        u.onclick = e => { e.stopPropagation(); if (u.disabled) return; u.disabled = true; unblockSku(it).catch(err => toast("Could not unblock it: " + ((err && err.message) || err), "bad", 8000)).finally(() => { u.disabled = false; }); };
+        acts.appendChild(u);
+      }
+    } catch (e) { console.warn("Release to nesting queue", e); }
+  }
+  window.ReviewRelease = { of: releaseOf, press: releaseToQueue, decorate: decorateRelease, unblock: unblockSku, label: RELEASE_LABEL };
   function card(it) {
     const c = el("div", "rvItem hoverItem"); c.dataset.kind = it.kind; if (it.row) { c.dataset.row = it.row.key; c.dataset.rid = String(it.row.order.receiptId); }
     const r = it.row, sp = r && r.spec, p = it.problem || {};
@@ -14574,15 +14736,7 @@ const Review = window.Review = (() => {
       c.querySelector("[data-a=nodesign]").onclick = saving(c, async () => { const who = by(); if (!who) return; const sku = p.sku || (sp && sp.designSku); if (sku) await api("charmNestLibrary", { op: "noDesignPut", sku, by: who, note: r.line.title }); else await api("charmNestLibrary", { op: "noDesignPut", pattern: p.huggie ? "^" + String(r.line.title).slice(0, 40).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ".*\\(HUGGIE\\)$" : "^" + String(r.line.title).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 40), by: who, note: p.huggie ? "by title · Huggie CHARM SET" : "by title" }); answered(it, "decided", "Nothing to cut", { noDesign: true, sku: sku || null }, who); await Orders.loadMaps(true); await repoolAll(it); });
       // a SKU blocked in the master (a flip check at indexing, an open outline) held every order of it with no way out but the Master tab: "Unblock this SKU" is that tab's own unblock (the same repo-password guard), then every line of the card goes back in line
       const ub = c.querySelector("[data-a=unblock]");
-      if (ub) ub.onclick = saving(c, async () => {
-        const sku = String(p.sku || (sp && sp.designSku) || "").trim(); if (!sku) return; const who = by(); if (!who) return;
-        try { await Master.patchMany([sku], { blocked: null }); }
-        catch (e) { if (e && e.cancelled) { toast(`${sku} not unblocked: the repo stayed locked`, "", 4000); return; } throw e; }
-        answered(it, "decided", `Unblocked ${sku}`, { sku, unblocked: true }, who);
-        toast(`${sku} unblocked: this order goes back in line`, "ok");
-        const lines = new Set(rowsOf(it)); for (const rr of Orders.rows()) if (rr.state !== "gone" && rr.problems.some(x => x.kind === "blockedSku" && String(x.sku).toUpperCase() === sku.toUpperCase())) lines.add(rr);   // (every order held on this SKU, not only this card's)
-        for (const rr of lines) await repool(rr);
-      });
+      if (ub) ub.onclick = saving(c, () => unblockSku(it));   // (RELTOQ: the same routine as the Review row's button)
       const mb = c.querySelector("[data-a=master]");
       if (mb) mb.onclick = () => {
         const sku = p.sku || (sp && sp.designSku) || "";
@@ -14639,6 +14793,7 @@ const Review = window.Review = (() => {
       c.innerHTML = head("Held order", it.rid, it.why) + `<div class="fixes"><button class="btn ghost sm" data-a="jump">Jump to the piece</button></div>`;
       c.querySelector("[data-a=jump]").onclick = () => { remove(it.key); focus(it.line); };
     } else { c.innerHTML = head(it.kind, it.why || "", orderSub); }
+    decorateRelease(c, it, c.querySelector(".fixes") || c);   // (RELTOQ: the one "Release to nesting queue", first among the card's buttons)
     const skipB = c.querySelector("[data-a=skip]"); if (skipB) skipB.onclick = () => { const who = by(); if (!who) return; for (const rr of rowsOf(it)) { rr.state = "skipped"; rr.reason = `piece skipped by ${who}`; rr.problems = []; rr.hold = `piece skipped by ${who}`; } answered(it, "skipped", "Skip piece", null, who); syncOrderItems(); Orders.render(); RunCtl.poke(); };
     const holdB = c.querySelector("[data-a=hold]"); if (holdB) holdB.onclick = () => { const who = by(); if (!who) return; const g = rowsOf(it); for (const rr of g) { rr.hold = `held by ${who}`; rr.reason = rr.hold; rr.state = "held"; } answered(it, "held", "Hold order", null, who); remove(it.key); Orders.render(); RunCtl.poke(); const ords = [...new Set(g.map(x => x.order.receiptId))]; if (!window.Motion) toast(`${ords.length === 1 ? ords[0] : ords.length + " orders"} held by ${who} — release them from the Orders tab`, ""); };
     return c;
@@ -14906,6 +15061,7 @@ const Review = window.Review = (() => {
     if(window.HoldUI)HoldUI.fill(node);   // (the one orange Hold button, beside Print QR label / Complete Order / Reopen)
     if(it.kind==='reviewMark'&&window.CharmNestReviewMark)CharmNestReviewMark.decorateRow(node,it);   // (a slot for each line's suggested charms, and Mark OK)
     if(it.kind==='reviewMark')fillMarkSlots(node,it);   // (REVSUGGEST: the similar charms of each line go in its slot, the charm it is matched to now marked; a line with nothing similar leaves its slot empty)
+    decorateRelease(node,it);   // (RELTOQ: "Release to nesting queue" under the row's reason; greyed with its one plain reason where the line cannot nest yet; "Unblock this SKU" beside it on a blocked SKU)
     // (its custom buttons as a custom card's, and a click on the card opens its order; one whose line has left the pull
     // opens the order by its number)
     if(cx||row)wireAct(node,cx||{key:'rv:'+it.key,rows:[]},cx?cs:null,row);

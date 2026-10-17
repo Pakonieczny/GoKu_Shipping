@@ -448,7 +448,7 @@
       const name = savedName();
       const out = await runWithFilm('release', rid, plan, name, from, feed => H.release(rid, { name, onStep: feed }));
       refreshViews();
-      if (out.failed) say(`Order ${rid} was not fully released: ${msgOf(out.res.error)}. What was done is kept, and Release hold can be pressed again.`);
+      if (out.failed) say(`Order ${rid} was not fully released: ${msgOf(out.res.error).replace(/[.\s]+$/, '')}. What was done is kept, and Release hold can be pressed again.`);   // (a reason that ends in a full stop made "..")
       await goHome(rid, from);
       return { ok: !out.failed, used: true, steps: out.steps, error: out.failed ? msgOf(out.res.error) : undefined };
     } catch (e) {
