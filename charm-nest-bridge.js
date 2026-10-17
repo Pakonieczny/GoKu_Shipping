@@ -8479,7 +8479,13 @@ const Engrave = window.Engrave = (() => {
     monoUI = (window.CharmNestMonogramUI && window.CharmNestMonogram && window.CharmNestMonogramUI.make({
       doc: document, Engine: window.CharmNestMonogram, rows: () => Orders.rows(), skus: () => [...B.master.entries.keys()], Master, Pool, Geom: G, P, CustomSheet: window.CustomSheet,
       itemOf: row => window.Review && Review.customItemFor ? Review.customItemFor(row.key, row) : null, settings: () => S.settings, saveSettings, toast, CNProgress: window.CNProgress,
-      changed: () => monoMoved()   // (an approval: drawn again a moment later, so the card that was approved is seen going up to Decided first: monoApproved)
+      changed: () => monoMoved(),   // (an approval: drawn again a moment later, so the card that was approved is seen going up to Decided first: monoApproved)
+      // (MONOSEAL, Paul 17 Oct 2026: approving a monogram is a stamp, as approving an engraving is) who presses: the name signed in here, else the small name bar (a string, or a promise of the name; "" when it is put away)
+      who: () => employeeName() || needEmployee("Kept with this approval and its seal."), Seal: window.Seal,
+      // the permanent record of the press: a timeline event, once, at once (the id is the line, the piece and the time); the list's "recently active" sort moves with it
+      record: (row, ev) => { if (!/^\d{4,}$/.test(String(ev && ev.orderId))) return false; const ok = TL.rec(ev, true, true); try { CNListActivity.touch(row, ev.at); } catch (_) { /* the sort keeps its order */ } return ok; },
+      // the order's timeline, for the stamps another computer pressed (the events still in this page's outbox are in it too)
+      events: rid => (window.OrderTimeline && OrderTimeline.get ? Promise.resolve(OrderTimeline.get(rid)).then(j => (j && j.events) || []) : Promise.resolve(null))
     })) || MONO_OFF;
     try { if (monoUI.onChange) monoUI.onChange(() => monoMoved()); } catch (_) { /* no news of the monograms: the lists are drawn again with the page's own renders */ }
     return monoUI;

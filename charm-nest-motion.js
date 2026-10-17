@@ -284,7 +284,19 @@
   /* ════ Seals ════ */
   const Seal = (() => {
     const BASE_SIZE = 50, META_INK = '#12294c';
-    const INK = { print: "#65737f", sheet: "#65737f", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58" };
+    const INK = { print: "#65737f", sheet: "#65737f", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58", monogramApproved:"#4d3f99" };
+    /* MONOSEAL (Paul, 17 Oct 2026: "When I approved the monogram, I didn't see any stamp or seal animation, and we do not have a custom-made seal that is
+       specifically for approving monograms ... a brand new seal that is specific for monograms and the stamping animation whenever a monogram is approved"):
+       the MONOGRAM seal, the ninth family. How to use it from any surface (the page's other modules never need to know more than this):
+         stamp  = { id: "monogramApproved:<at>:<by>", how: "monogramApproved", at, by, letters?: "APV", n?: 2, of?: 3 }     (letters, n and of are optional)
+         Seal.html(stamp, size, "monogramSeal")        the ink face (indigo, an ARCH with a flat foot, the three letters of THIS monogram in the icon place: the left and right
+                                                        ones small, the middle one large, as the charm is made; a pictogram of three letters when the letters are not known),
+                                                        "MONOGRAM", the date and the time; aria text "Monogram APV approved by <name> · <when> · piece 2 of 3"
+         Seal.press(sealEl)                            the wooden stamp comes down on it (a seal pressed with the class "pending" waits unseen until pressed), exactly as for every family
+         Seal.modelOf(stamp) / Seal.face(model)        { family: "monogram", action: "MONOGRAM", icon: "monogram", letters, at, by, n, of }
+       Its kind is "monogramApproved": a PROCESS seal (a click on it never presses the button beside it: it zooms, as every historical seal does) and a "green" one (turned a
+       little to the right like the engraving approval, and the button it is pressed beside takes the sealedDone tint). CharmNestMonogramUI (charm-nest-monogram-ui.js) records
+       and reads these stamps (sealsOf / sealHtml); this file only draws them. */
     // One outline drives both the ink face and the wooden/rubber head. Signatures remain record data, never a live viewer name.
     const FAMILY = {
       received:{name:'Received',ink:'#315e93',d:'M60 4A56 56 0 1 1 59.99 4Z'},
@@ -294,7 +306,9 @@
       finishing:{name:'Finishing',ink:'#276a74',d:'M60 5L112 20V73Q112 98 60 115Q8 98 8 73V20Z'},
       fulfilment:{name:'Fulfilment',ink:'#77518a',d:'M60 5C72-2 84 6 87 17C101 14 114 25 109 39C123 48 123 69 109 78C114 92 101 106 87 103C84 115 72 122 60 115C48 122 36 115 33 103C19 106 6 92 11 78C-3 69-3 48 11 39C6 25 19 14 33 17C36 6 48-2 60 5Z'},
       exceptions:{name:'Exceptions',ink:'#9f483d',d:'M36 6H84L114 36V84L84 114H36L6 84V36Z'},
-      cancelled:{name:'Cancelled Orders',ink:'#982f48',d:'M27 6H93L114 27V40Q95 60 114 80V93L93 114H27L6 93V80Q25 60 6 40V27Z'}
+      cancelled:{name:'Cancelled Orders',ink:'#982f48',d:'M27 6H93L114 27V40Q95 60 114 80V93L93 114H27L6 93V80Q25 60 6 40V27Z'},
+      // (MONOSEAL: an arch, round above and flat below, like the frame a monogram is mounted in: the one outline of the nine with a flat foot and a round head, so it is never taken for the circle, the oval or the shield)
+      monogram:{name:'Monogram',ink:'#4d3f99',d:'M8 104V60A52 52 0 0 1 112 60V104Q112 116 100 116H20Q8 116 8 104Z'}
     };
     const SYMBOL = {
       received:'<path d="M8 2h9l4 4v11H8zM17 2v5h4M11 9h7M11 12h7M3 15h5l2 4h8l2-4h4v8H3zM14 14v4m-2-2 2 2 2-2"/>',
@@ -306,12 +320,14 @@
       fulfilment:'<path d="M2 7l9-5 8 5v11l-8 5-9-5zM2 7l9 5 8-5M11 12v11M7 4l8 5M16 14h8m-3-3 3 3-3 3"/>',
       exceptions:'<circle cx="10" cy="10" r="8"/><path d="M7 6v8m6-8v8M18 12l6 11H12zM18 16v3m0 2v.2"/>',
       cancelled:'<path d="M5 1h11l4 4v18H5zM16 1v5h4M8 7h8M8 10h7M8 13l9 8m0-8-9 8"/>',
+      // (MONOSEAL: three letters side by side, the middle one large: a small A, a large P, a small V; the face draws the real three letters instead when it is told them)
+      monogram:'<path d="M0.8 20 4.2 9.5 7.6 20M2.2 16h4M9.4 3v17M9.4 3h3.1a3.9 3.9 0 0 1 0 7.8H9.4M17.6 9.5 20.5 20 23.4 9.5"/>',
       qr:'<path d="M6 8V2h12v6M3 8h18v11h-3M6 19H3V8M6 13h12v10H6zM8 15h2v2H8zM14 15h2v2h-2zM8 19h2m3 0h3M18 10h1"/>',
       plain:'<circle cx="9" cy="15" r="7"/><circle cx="9" cy="5" r="2"/><path d="M15 7h9m-3-3 3 3-3 3"/>',
       complete:'<path d="M3 7l8-4 8 4-8 4zM3 7v12l8 4V11M19 7v5M7 5l8 4M3 19l8 4 3-1M17 20l2 2 5-6"/>',
       set:'<path d="M2 5l10-4 10 4-10 4zM2 10l10 4 10-4M2 15l10 4 10-4M2 20l10 4 10-4M15 12l3 3 5-6"/>'
     };
-    const familyOf = st => st.how==='button'?'fulfilment':st.how==='laserReady' || st.how==='laserDone'?'laser':st.how==='engraveApproved' || st.how==='engravePlain'?'engraving':'prepared';
+    const familyOf = st => st.how==='button'?'fulfilment':st.how==='laserReady' || st.how==='laserDone'?'laser':st.how==='engraveApproved' || st.how==='engravePlain'?'engraving':st.how==='monogramApproved'?'monogram':'prepared';
     function face(model, opts={}) {
       model = Object.assign({}, model);
       model.family=FAMILY[model.family]?model.family:'received';
@@ -338,11 +354,19 @@
       if(model.family==='prepared')trim='<path d="M15 17h8m-4-4v8M97 17h8m-4-4v8M15 103h8m-4-4v8M97 103h8m-4-4v8" fill="none" stroke-width=".8"/>';
       if(model.family==='engraving')trim='<path d="M16 37l11-11 3 8-11 6zM104 37L93 26l-3 8 11 6zM16 83l11 11 3-8-11-6zM104 83L93 94l-3-8 11-6z" fill="none" stroke-width="1.1"/>';
       if(model.family==='laser')trim='<g fill="none" stroke-width="1.2"><circle cx="30" cy="22" r="2"/><circle cx="90" cy="22" r="2"/><circle cx="20" cy="75" r="2"/><circle cx="100" cy="75" r="2"/></g>';
+      // (MONOSEAL: a flat foot under the three letters, a rule with a small diamond)
+      if(model.family==='monogram')trim='<g fill="none" stroke-width=".9"><path d="M44 106.5H54M66 106.5H76"/><path d="M60 103.7l2.8 2.8-2.8 2.8-2.8-2.8z" stroke-width="1"/></g>';
       const symbol=model.path?`<path d="${esc(model.path)}"/>`:SYMBOL[model.icon || model.family] || SYMBOL[model.family] || SYMBOL.received;
+      // (MONOSEAL: the monogram's own three letters stand where the icon does: the left and right ones small, the middle one large, on one baseline, as the charm is made)
+      let mark=`<g transform="translate(46.2 13) scale(1.15)" fill="none" stroke-width="1.45">${symbol}</g>`;
+      if(model.family==='monogram' && /^[A-Z]{3}$/.test(String(model.letters || '')) && !model.path){
+        const [l,m,r]=String(model.letters).split(''),half=(widths[m] ?? .68)*25/2+2,ser='Georgia,Times New Roman,serif',gl=(c,x,size,anchor)=>`<text x="${x.toFixed(1)}" y="40" text-anchor="${anchor}" fill="${ink}" stroke="none" font-family="${ser}" font-size="${size}" font-weight="700" letter-spacing="0">${esc(c)}</text>`;
+        mark=gl(l,60-half,14,'end')+gl(m,60,25,'middle')+gl(r,60+half,14,'start');
+      }
       return `<svg viewBox="0 0 120 ${H}" aria-hidden="true" focusable="false" data-seal-family="${esc(model.family || 'received')}" data-seal-model="${esc(JSON.stringify(model))}"><g fill="${ink}" stroke="${ink}" stroke-linecap="round" stroke-linejoin="round"${opts.ghost?' opacity=".55"':''}>`+
         `<path data-seal-paper d="${f.d}" fill="#fffefb" stroke="none" opacity="0"/>`+
         `<path data-seal-outline d="${f.d}" fill="rgba(255,254,251,.08)" stroke-width="2.7"${opts.ghost?' stroke-dasharray="3 3"':''}/><path d="${f.d}" transform="translate(60 60) scale(.93) translate(-60 -60)" fill="none" stroke-width=".9"/>${trim}`+
-        `<g transform="translate(46.2 13) scale(1.15)" fill="none" stroke-width="1.45">${symbol}</g>`+
+        mark+
         lines.map((line,i)=>fitted(line,lines.length===2?54+i*14:64,lines.length===2 || line.length>10?14.6:15.8,labelWidth)).join('')+
         (opts.ghost || model.status?'':fitted(model.date || 'NOT RECORDED',82,model.date?14:11,model.family==='engraving'?82:86,META_INK)+fitted(model.time || '—',96,14.2,model.family==='engraving'?62:model.family==='finishing'?66:72,META_INK))+
         (opts.signer?'<path d="M32 124h56" fill="none" stroke-width=".7" opacity=".5"/>'+txt('Signed by',135,8,500,META_INK)+sigLines.map((s,i)=>txt(s,147+i*12,10,600,META_INK)).join(''):'')+'</g></svg>';
@@ -423,23 +447,27 @@
     const engravingOf=st=>st.how==='engraveApproved' || st.how==='engravePlain';
     // (a seal of the FRONT of a charm says so: face "front" on the seal, or on the event it came from; one that says nothing is the back, as every seal was)
     const frontOf=st=>!!st && (st.face==='front' || !!(st.data && st.data.face==='front'));
-    const processOf = st => st.how === 'sheet' || st.how === 'laserReady' || st.how === 'laserDone' || engravingOf(st);
+    const monogramOf=st=>st.how==='monogramApproved';   // (MONOSEAL: the monogram approval's seal: a process seal like the engraving's)
+    const processOf = st => st.how === 'sheet' || st.how === 'laserReady' || st.how === 'laserDone' || engravingOf(st) || monogramOf(st);
     const kindOf = st => processOf(st) ? st.how : st.how === "button" ? "button" : "print";
-    const green = k => k === 'button' || k === 'laserDone' || k === 'engraveApproved';
+    const green = k => k === 'button' || k === 'laserDone' || k === 'engraveApproved' || k === 'monogramApproved';
     const rotOf = st => { const h = hash(String(st.at) + (st.by || "")); return green(kindOf(st)) ? 5 + (h % 8) : -(5 + (h % 9)); };
     const whoOf = st => String(st.by || "").trim() || (processOf(st) ? "Not recorded" : "Sorting station");
     function modelOf(st) {
       if (st.model) return Object.assign({}, st.model);
       if (st.family) return Object.assign({}, st);
-      const action = st.how === 'sheet' ? 'SENT TO SHEET' : st.how === 'button' ? 'ORDER COMPLETE' : st.how === 'laserReady' ? 'LASER READY' : st.how === 'laserDone' ? 'LASER CUT' : st.how === 'engraveApproved' ? (frontOf(st) ? 'FRONT ENGRAVING' : 'BACK ENGRAVING') : st.how === 'engravePlain' ? (frontOf(st) ? 'FRONT CUT PLAIN' : 'CUT PLAIN') : 'QR LABEL PRINTED';
-      const icon = st.how === 'sheet' ? 'prepared' : st.how === 'button' ? 'complete' : st.how === 'laserReady' ? 'laserReady' : st.how === 'laserDone' ? 'laser' : st.how === 'engravePlain' ? 'plain' : st.how === 'engraveApproved' ? 'engraving' : 'qr';
-      return { family:familyOf(st), action, icon, at:+st.at || 0, by:String(st.by || ''), scope:st.scope || '', n:st.n || 0 };
+      const action = st.how === 'sheet' ? 'SENT TO SHEET' : st.how === 'button' ? 'ORDER COMPLETE' : st.how === 'laserReady' ? 'LASER READY' : st.how === 'laserDone' ? 'LASER CUT' : st.how === 'engraveApproved' ? (frontOf(st) ? 'FRONT ENGRAVING' : 'BACK ENGRAVING') : st.how === 'engravePlain' ? (frontOf(st) ? 'FRONT CUT PLAIN' : 'CUT PLAIN') : st.how === 'monogramApproved' ? 'MONOGRAM' : 'QR LABEL PRINTED';
+      const icon = st.how === 'monogramApproved' ? 'monogram' : st.how === 'sheet' ? 'prepared' : st.how === 'button' ? 'complete' : st.how === 'laserReady' ? 'laserReady' : st.how === 'laserDone' ? 'laser' : st.how === 'engravePlain' ? 'plain' : st.how === 'engraveApproved' ? 'engraving' : 'qr';
+      const m = { family:familyOf(st), action, icon, at:+st.at || 0, by:String(st.by || ''), scope:st.scope || '', n:st.n || 0 };
+      if (monogramOf(st)) { const L = String(st.letters || '').toUpperCase(); if (/^[A-Z]{3}$/.test(L)) m.letters = L; if (+st.of > 1) m.of = +st.of; }   // (MONOSEAL: the three letters of THIS monogram, and the piece of a line of several)
+      return m;
     }
     /** The selected hallmark family. Operator identity belongs only in the enlarged historical detail. */
     function svg(st) { return face(modelOf(st)); }
     function titleOf(st) {
       const d = new Date(+st.at || Date.now()), when = d.toLocaleString("en-US", { timeZone:"America/Toronto", weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
       if(st.how==='sheet')return `Sent to sheet${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
+      if(monogramOf(st))return `Monogram${/^[A-Za-z]{3}$/.test(String(st.letters || ''))?' '+String(st.letters).toUpperCase():''} approved${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}${+st.of>1?` · piece ${+st.n || 1} of ${+st.of}`:''}`;
       if(engravingOf(st))return `${st.how==='engravePlain'?(frontOf(st)?'Front engraving waived · cut plain':'Engraving waived · cut plain'):frontOf(st)?'Front engraving placement approved':'Engraving placement approved'}${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
       if(processOf(st))return `${st.how==='laserReady'?'Laser ready':st.scope==='set'?'Set completed':'Sheet completed'}${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
       return kindOf(st) === "button" ? `Completed with the Complete Order button by ${whoOf(st)} · ${when} (no label printed then)` : `QR label printed by ${whoOf(st)} · ${when}${st.n > 1 ? ` · print ${st.n}` : ""}`;

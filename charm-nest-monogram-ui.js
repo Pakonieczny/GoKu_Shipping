@@ -15,6 +15,25 @@
  *  "ABC / XYZ"), is edited on its own and approved on its own; approving writes THAT piece's design, quantity 1, "Monogram APV - piece 2.ai" tagged { mono: { line, slot } } on the card (CustomSheet.add opts qty / mono / metal), kept in piece order
  *  (Send to Sheet cuts the n-th design as copy n of the line). Never two designs for one piece; changing a piece after its approval replaces only its design; identical letters on two pieces are still two designs. A design made before pieces
  *  ("Monogram APV.ai", quantity k) covers the first k pieces nobody else has (both approved, nothing asked again) and is split in place into one design per piece when one of them is changed. svc.pieces(row) / piecesNow() / pieceKey(row, ask).
+ *  MONOSEAL (Paul, 17 Oct 2026: "When I approved the monogram, I didn't see any stamp or seal animation, and we do not have a custom-made seal that is specifically for approving monograms ... a brand new seal that is specific for monograms and
+ *  the stamping animation whenever a monogram is approved by the user ... in all the same places as the engraving stamp and seal animations ... 100% consistent"). Approving a monogram is now a PRESS, exactly as approving an engraving is:
+ *    1  who: the person signed in on this computer (deps.who(): a name, or a promise of one: the small name bar opens when nobody is signed in, never a browser box; put away = nothing happens);
+ *    2  the design is put on the order's custom designs as before; then ONE STAMP is made: { id: "monogramApproved:<at>:<name>", how: "monogramApproved", at, by, letters: "APV", n: piece, of: pieces of the line };
+ *    3  the new seal (the ninth family of charm-nest-motion.js: Seal.FAMILY.monogram, an indigo ARCH with the three letters, "MONOGRAM", the date and the time) is laid UNSEEN in the widget's seal row (`.mwSeal`, beside the Approve button in the
+ *       "detail" widget, across the card's top-right corner in the Order window's `.engMono` card as the engraving cards' seals are) while the Approve button reads "Approved" and cannot be pressed; the wooden stamp comes down on the seal
+ *       (Seal.press, in the widget the person pressed Approve in: the other host just shows the seal), ink, ripple, lift; ONLY THEN the card says Approved (the service reports the new state, the Engrave tab moves the card up to Decided);
+ *    4  the timeline event is written (type "monogramApproved", id "<lineKey>[#C2]-<at>", station sorter, data { letters, slot, n, of, poolId, name, ck, signedIn }): the permanent record, and the only one other computers can read;
+ *    5  Change and approve again: a NEW seal is pressed and the earlier seals stay (oldest first, the newest on top), as for engravings. The seals of a card are the stamps made here (kept in the service, and on this computer in
+ *       settings.mono.seals[pieceKey], so a reload or a reopen shows them at rest, never pressed again: only a fresh approval animates) plus the stamps of the order's timeline events (another computer's approval: shown at rest, no animation).
+ *       A seal never touches the design files (the custom-sheet record has no field for it): the file record is what it was.
+ *  THE SEAL API for every other surface (library, sheet window, laser, stations, list rows, search): all read-only and safe to call at any time (a surface that has no service gets [] / ""):
+ *      CharmNestMonogramUI.sealsOf(row, { slot } | "C2")        -> [{ id, how: "monogramApproved", at, by, letters, n, of }] oldest first: this computer's stamps of that piece merged with the timeline's events already fetched
+ *      CharmNestMonogramUI.sealHtml(row, { slot, size, cls })     -> '<span class="sealRow mwSeal ..." data-seal-group>' + one Seal.html(stamp, size, "monogramSeal") per stamp + '</span>', or "" when the piece has none
+ *      CharmNestMonogramUI.stampsFromEvents(events, lineKey, n?)  -> the same stamps, read from an order's timeline events (type "monogramApproved") with no service; n = the piece number (omitted: every piece of the line)
+ *      CharmNestMonogramUI.mergeStamps(a, b, ...)                 -> stamps of one piece, de-duplicated (one press is one seal: a second of leeway) and sorted
+ *      service().feedEvents(rid, events) / loadSeals(rid)         -> hands a timeline to the service (a surface that already holds the order's events) / fetches it (once in 20 s per order)
+ *      service().onChange(fn)                                     -> told when a piece's state changes, a stamp arriving included (status.seals = how many)
+ *    Press a stamp yourself with Seal.press(sealEl) for a seal you made `pending` (the widget does it for an approval; a surface never presses a seal it only shows).
  *  ═══════════════════════════════════════════════════════════════════════
  *  Paul: "Monograms are currently manually assembled by combining 3 individual letters from 3 separate alphabets ... Each alphabet of letters is made to fit the Left / Middle / Right side of the monogram ... the centre letter
  *  bigger ... The buyer will always provide 3 individual letters ... Each letter must be recognized by the system and fetched from the corresponding alphabet ... combine the 3 letters ... a perfect singular charm piece ...
@@ -108,6 +127,43 @@
     }
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="${(-pad).toFixed(2)} ${(-pad).toFixed(2)} ${(w + 2 * pad).toFixed(2)} ${(h + 2 * pad).toFixed(2)}"><rect x="${(-pad).toFixed(2)}" y="${(-pad).toFixed(2)}" width="${(w + 2 * pad).toFixed(2)}" height="${(h + 2 * pad).toFixed(2)}" fill="#fff"/><path d="${esc(E.svgPath(res))}" fill="${t[0]}" fill-rule="evenodd" stroke="${t[1]}" stroke-width="${(2.5 / k).toFixed(3)}" stroke-linejoin="round"/>${dots.join("")}</svg>`;
     return { svg, w: W, h: H };
+  }
+
+  /* ═══ MONOSEAL: the stamps of monogram approvals (pure: no page, no service) ═══ */
+  const SEAL_HOW = "monogramApproved";
+  const SAME_PRESS_MS = 1500;           // (one press is one seal, however many records say it: the local stamp and the timeline event of the same approval are a second apart at most)
+  const SEAL_KEEP = 8, SEAL_PIECES_KEEP = 150;       // (kept on this computer: the newest 8 stamps of a piece, the newest 150 pieces)
+  const pieceNo = slot => { const m = /^C(\d{1,3})$/.exec(String(slot || "")); return m ? +m[1] : 1; };
+  /** One stamp, as the seal draws it and the records keep it; null when it is not one (no time). */
+  function stampOf(o) {
+    if (!o || !(+o.at > 0)) return null;
+    const at = Math.round(+o.at), by = String(o.by == null ? "" : o.by).trim(), L = String(o.letters || "").toUpperCase(), s = { id: o.id || `${SEAL_HOW}:${at}:${by}`, how: SEAL_HOW, at, by };
+    if (/^[A-Z]{3}$/.test(L)) s.letters = L;
+    if (+o.n >= 1) s.n = Math.round(+o.n);
+    if (+o.of > 1) s.of = Math.round(+o.of);
+    return s;
+  }
+  /** Stamps of the same press are one (a second of leeway), the earlier record kept; oldest first. */
+  function mergeStamps() {
+    const out = [];
+    for (const list of arguments) for (const s0 of Array.isArray(list) ? list : []) {
+      // (the same press: the same id, or a second apart for the same piece with the same letters, whoever the two records name: the local stamp and the timeline's event of one approval; two approvals with other letters are two stamps whenever they were made)
+      const s = stampOf(s0); if (!s || out.some(x => x.id === s.id || (Math.abs(x.at - s.at) <= SAME_PRESS_MS && (x.n || 1) === (s.n || 1) && (!x.letters || !s.letters || x.letters === s.letters)))) continue;
+      out.push(s);
+    }
+    return out.sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1));
+  }
+  /** The stamps an order's timeline holds for the piece n of the line lineKey (n omitted: every piece of it): its monogramApproved events. */
+  function stampsFromEvents(events, lineKey, n) {
+    const out = [];
+    for (const e of Array.isArray(events) ? events : []) {
+      if (!e || e.type !== SEAL_HOW || !(+e.at > 0)) continue;
+      if (lineKey != null && String(e.lineKey || "") !== String(lineKey)) continue;
+      const dd = e.data && typeof e.data === "object" ? e.data : {}, no = +dd.n >= 1 ? Math.round(+dd.n) : pieceNo(dd.slot);
+      if (n != null && no !== +n) continue;
+      out.push({ at: +e.at, by: e.by, letters: dd.letters, n: no, of: dd.of });
+    }
+    return mergeStamps(out);
   }
 
   function make(d) {
@@ -215,7 +271,7 @@
     function cardOf(row, ask) {
       const slot = slotFor(row, ask), key = slotKey(row.key, slot);
       let c = cards.get(key);
-      if (!c) { c = { key, lineKey: row.key, slot, n: slot ? slotNo(slot) : 1, of: unitsOf(row), row, draft: null, approved: "", status: "idle", result: null, resultLetters: "", err: null, seq: 0, timer: 0, host: null, el: null, approving: false, hint: "", wantApprove: false, ai: null, fit: false, confirmed: false, views: new Set(), unlocked: false, prog: null, quiet: false, queued: false, aiKey: "", abcSig: "", sig: "", tsig: "" }; cards.set(key, c); }
+      if (!c) { c = { key, lineKey: row.key, slot, n: slot ? slotNo(slot) : 1, of: unitsOf(row), row, draft: null, approved: "", status: "idle", result: null, resultLetters: "", err: null, seq: 0, timer: 0, host: null, el: null, approving: false, hint: "", wantApprove: false, ai: null, fit: false, confirmed: false, views: new Set(), unlocked: false, prog: null, quiet: false, queued: false, aiKey: "", abcSig: "", sig: "", tsig: "", seals: null, sealNew: "", stamping: false, asking: false, pressView: null }; cards.set(key, c); }
       c.row = row; c.of = unitsOf(row); return c;
     }
     const lettersOk = ls => ls.length === 3 && ls.every(x => /^[A-Z]$/.test(x));
@@ -434,6 +490,82 @@
     function setAi(v) { const m = mstore(); m.ai = v === "off" ? "off" : "on"; keepSettings(); for (const c of cards.values()) if (c.views.size) paint(c); }
     function settled(c) { if (c.wantApprove && c.status === "ready" && !aiBusy(c)) { c.wantApprove = false; approve(c); } else if (c.status !== "building" && !aiBusy(c)) c.wantApprove = false; }
 
+    /* ── MONOSEAL: the stamps of a piece: made here (kept in the card, and on this computer in settings.mono.seals[pieceKey]) and read from the order's timeline (another computer's, or an earlier session's) ── */
+    const SEALS = () => d.Seal || root.Seal || null;
+    const ridOfCard = c => String((c.row.order || {}).receiptId || "");
+    const evCache = new Map(), evAsked = new Map();        // order number -> its monogramApproved events as the timeline last said them / when the timeline was last asked
+    const sealStore = () => { const m = mstore(); if (!m.seals || typeof m.seals !== "object") m.seals = {}; return m.seals; };
+    /** The stamps of this piece the card has: those kept on this computer (read once), merged with the timeline's. Oldest first, copies. */
+    function cardSeals(c) {
+      if (!c.seals) { let kept = []; try { kept = mergeStamps(sealStore()[c.key]); } catch (_) { kept = []; } c.seals = kept; }
+      return c.seals;
+    }
+    const sealsFor = c => mergeStamps(c.seals, stampsFromEvents(evCache.get(ridOfCard(c)), c.lineKey, c.n));
+    function keepSeals(c) {
+      try {
+        const all = sealStore(); all[c.key] = mergeStamps(c.seals).slice(-SEAL_KEEP);
+        const keys = Object.keys(all); if (keys.length > SEAL_PIECES_KEEP) { keys.sort((a, b) => ((all[a] || []).slice(-1)[0] || { at: 0 }).at - ((all[b] || []).slice(-1)[0] || { at: 0 }).at); for (const k of keys.slice(0, keys.length - SEAL_PIECES_KEEP)) delete all[k]; }
+        keepSettings();
+      } catch (_) { /* the stamp stands in the card and in the timeline */ }
+    }
+    /** An order's timeline reached the service (a host that holds it, or the fetch below): the cards of that order show the stamps it carries, at rest. */
+    function feedEvents(rid, events) {
+      rid = String(rid == null ? "" : rid); if (!rid || !Array.isArray(events)) return;
+      const mine = events.filter(e => e && e.type === SEAL_HOW), sig = x => JSON.stringify((x || []).map(e => [e.id || "", e.at, e.by, e.lineKey]));
+      if (sig(evCache.get(rid)) === sig(mine) && evCache.has(rid)) return;
+      evCache.set(rid, mine);
+      for (const c of cards.values()) if (ridOfCard(c) === rid) paint(c);
+    }
+    function loadSeals(rid, force) {
+      rid = String(rid == null ? "" : rid); if (!rid || typeof d.events !== "function") return null;
+      const t = Date.now(); if (!force && t - (evAsked.get(rid) || 0) < 20000) return null;
+      evAsked.set(rid, t);
+      let run; try { run = Promise.resolve(d.events(rid)); } catch (_) { run = Promise.resolve(null); }
+      return run.then(list => { if (Array.isArray(list)) feedEvents(rid, list); else evAsked.delete(rid); }, () => { evAsked.delete(rid); });
+    }
+    /** Who presses Approve: { ok, by }. A page with no deps.who records no name (a test's fake service); with one, nobody signed in means the name bar, and a name bar put away means nothing happens. */
+    async function whoApproves(c) {
+      if (typeof d.who !== "function") return { ok: true, by: "" };
+      let w; try { w = d.who(); } catch (_) { w = ""; }
+      if (w && typeof w.then === "function") { c.asking = true; try { w = await w; } catch (_) { w = ""; } finally { c.asking = false; } }
+      const by = String(w || "").trim(); return { ok: !!by, by };
+    }
+    /** The widget the approval is pressed in: the one the person pressed Approve in (the other host shows the seal at rest), else the first one on screen. */
+    function pressViewOf(c) {
+      const live = [...c.views].filter(v => !v.dead && v.r && v.r.seals && v.el && v.el.isConnected);
+      return (c.pressView && live.includes(c.pressView) ? c.pressView : null) || live.find(v => v.el.getClientRects().length) || null;
+    }
+    /** Presses the stamp that was just laid (unseen) in the widget's seal row; never throws; resolves when the ink is down and the stamp has lifted. */
+    async function pressSeal(c, stamp) {
+      const S = SEALS(); if (!S || typeof S.press !== "function" || !stamp) return;
+      const v = pressViewOf(c); if (!v) return;
+      const el = [...v.r.seals.children].find(n => n.getAttribute && n.getAttribute("data-process-seal") === stamp.id);
+      if (!el) return;
+      try { await S.press(el); } catch (e) { if (root.console) root.console.warn("Monogram seal", e); }
+    }
+    /** The approval's seal: made, kept, laid unseen in every widget of the piece, pressed in the one the person used, then the timeline event; the card says Approved afterwards (the caller paints it). */
+    async function sealApproval(c, done, by, at) {
+      const stamp = stampOf({ at, by, letters: done.letters, n: c.n, of: c.of });
+      cardSeals(c); c.seals = mergeStamps(c.seals, [stamp]); keepSeals(c);
+      const S = SEALS();
+      if (S && c.views.size) {
+        c.sealNew = stamp.id; c.stamping = true; for (const v of c.views) if (v.r && v.r.seals) v.r.seals._sig = null;
+        paint(c);
+        try { await pressSeal(c, stamp); } finally { c.stamping = false; c.sealNew = ""; for (const v of c.views) if (v.r && v.r.seals) v.r.seals._sig = null; }
+      }
+      recordSeal(c, done, stamp);
+      return stamp;
+    }
+    /** The permanent record: one timeline event for the press (id: the line, the piece and the time, so a retry is the same event), small data: the letters, the piece, its pool id, the file. */
+    function recordSeal(c, done, stamp) {
+      if (typeof d.record !== "function") return;
+      try {
+        d.record(c.row, { orderId: ridOfCard(c), type: SEAL_HOW, id: `${c.lineKey}${c.slot ? "#" + c.slot : ""}-${stamp.at}`, at: stamp.at, by: stamp.by, station: "sorter", device: "charm-nest-1", lineKey: c.lineKey,
+          transactionId: String((c.row.line && c.row.line.transactionId) || ""), text: `Monogram ${done.letters}${c.of > 1 ? " · " + pieceTag(c.n, c.of) : ""}`.slice(0, 200),
+          data: { letters: done.letters, slot: c.slot || null, n: c.n, of: c.of, poolId: c.lineKey + "_" + c.n, name: done.name, ck: done.ck || "", replaced: !!done.replaced, signedIn: !!stamp.by } });
+      } catch (e) { if (root.console) root.console.warn("Monogram seal: timeline", e); }
+    }
+
     const fileNameFor = (c, letters) => (c.of > 1 ? `Monogram ${letters} - piece ${c.n}.ai` : `Monogram ${letters}.ai`);
     /** The files of one line keep the order of its pieces (Send to Sheet cuts the n-th design as the n-th copy of the line): sorted among their own places in the card's list. */
     function orderFiles(e, lineKey) {
@@ -458,7 +590,7 @@
     }
 
     async function approve(c) {
-      if (c.approving || !c.result) return;
+      if (c.approving || c.stamping || c.asking || !c.result) return;
       if (c.status === "building" || aiBusy(c)) { c.wantApprove = true; return; }
       if (c.status !== "ready") return;
       // a monogram that still breaks a rule after the engine's search and the AI is approved only when the person confirms it (a second press), the limit named
@@ -468,9 +600,13 @@
       const letters = c.resultLetters; let old = approvedFile(c, true);
       if (old && old.sent) return;
       if (old && old.letters === letters) { paint(c); return; }
+      // MONOSEAL: who presses. The signed-in name, else the name bar (a name bar put away: nothing happens, nothing is lost); the letters may have been edited while it was open
+      const seq0 = c.seq, who = await whoApproves(c); if (!who.ok) return;
+      if (seq0 !== c.seq || c.status !== "ready" || c.resultLetters !== letters || c.approving) return;
+      old = approvedFile(c, true); if (old && old.sent) return; if (old && old.letters === letters) { paint(c); return; }
       const replaced = !!old;
       c.approving = true; c.err = null; paint(c);
-      let done = null;
+      let done = null, at = 0;
       try {
         const bytes = await E().toPdf(c.result, { title: "Monogram " + letters });
         const name = fileNameFor(c, letters), file = new File([bytes], name, { type: "application/illustrator" });
@@ -485,13 +621,16 @@
         if (old) d.CustomSheet.remove(old.ck, old.file.id);                     // (and the one it replaces goes: a monogram is one design, never two)
         { const kd2 = d.CustomSheet.cardOf && d.CustomSheet.cardOf(it), en2 = kd2 && d.CustomSheet.entries()[kd2.ck];      // (a design of a piece the line no longer has (its quantity was lowered) would be cut as an extra copy: it goes)
           if (en2) for (const F of [...(en2.files || [])]) if (F.mono && F.mono.line === c.lineKey && slotNo(F.mono.slot) > c.of) d.CustomSheet.remove(kd2.ck, F.id); }
-        c.approved = letters; c.approvedKey = c.resultKey; c.unlocked = false;
+        c.approved = letters; c.approvedKey = c.resultKey; c.unlocked = false; at = Date.now();
         const kard = d.CustomSheet.cardOf && d.CustomSheet.cardOf(it);
-        done = { rid: String((c.row.order || {}).receiptId || ""), lineKey: c.lineKey, pieceKey: c.key, slot: c.slot, n: c.n, of: c.of, letters, name, replaced, ck: (kard && kard.ck) || (old && old.ck) || "" };
+        done = { rid: String((c.row.order || {}).receiptId || ""), lineKey: c.lineKey, pieceKey: c.key, slot: c.slot, n: c.n, of: c.of, letters, name, replaced, ck: (kard && kard.ck) || (old && old.ck) || "", by: who.by, at };      // (MONOSEAL: who pressed and when: the monogram:approved event and onApproved say it too)
         d.toast(`Monogram ${letters}${c.of > 1 ? ` (${pieceTag(c.n, c.of).toLowerCase()})` : ""} is on order ${c.row.order.receiptId}'s designs · set its metal, then Send to Sheet`, "ok", 6000);
       } catch (e) { c.err = { kind: "save", text: "Not approved: " + String((e && e.message) || e).slice(0, 140) }; d.toast(c.err.text, "bad", 6000); }   // (the monogram stays on the card, Approve is still there to try again)
       finally {
-        c.approving = false; paint(c);
+        c.approving = false;
+        // MONOSEAL: the stamp comes down BEFORE the card says Approved (the state reads as it was until the ink is down: describe() with c.stamping); never throws
+        if (done) { try { await sealApproval(c, done, who.by, at); } catch (e) { if (root.console) root.console.warn("Monogram seal", e); } }
+        c.stamping = false; c.sealNew = ""; paint(c);
         if (done) approvedTold(c, done);
         try { d.changed(); } catch (_) { /* the pane keeps what it drew */ }
       }
@@ -546,7 +685,7 @@
 
     /** Everything a person (or a test) can know about one line, in one object (the contract's state()). Pure reading: it paints nothing and asks nothing. */
     function describe(c) {
-      const ls = readLetters(c), ap = approvedFile(c), sent = !!(ap && ap.sent), buyer = buyerLetters(c), said = wordsFor(c.row, c.n);
+      const ls = readLetters(c), ap = c.stamping ? null : approvedFile(c), sent = !!(ap && ap.sent), buyer = buyerLetters(c), said = wordsFor(c.row, c.n);   // (MONOSEAL: while the stamp comes down the monogram is not yet said to be approved: nothing moves in the page's lists until the ink is down)
       const dirty = !!(ap && !sent && (ls.join("") !== ap.letters || (c.status === "ready" && c.approvedKey && c.resultKey && c.resultKey !== c.approvedKey)));
       const settled = !!(ap && !dirty && !sent);
       const busy = c.approving ? "saving" : aiBusy(c) ? "ai" : c.fit ? "fitting" : c.status === "building" ? "building" : "";
@@ -574,13 +713,14 @@
         state, busy, round: busy === "ai" && c.ai ? c.ai.round | 0 : 0, letters: ls, lettersOk: lettersOk(ls),
         piece: { key: c.key, lineKey: c.lineKey, slot: c.slot, n: c.n, of: c.of, tag: pieceTag(c.n, c.of), poolId: c.lineKey + "_" + c.n },
         buyer: { words: said, letters: buyer.ls.every(Boolean) ? buyer.ls.slice() : null, why: buyer.why || "" },
-        canApproveBase: ok && !busy && !sent && !settled, approved: ap ? { letters: ap.letters, name: ap.file.name, sent } : null, dirty, locked: sent || (settled && !c.unlocked), unlocked: !!c.unlocked,
+        seals: cardSeals(c) && sealsFor(c), stamping: !!c.stamping,
+        canApproveBase: ok && !busy && !sent && !settled && !c.stamping, approved: ap ? { letters: ap.letters, name: ap.file.name, sent } : null, dirty, locked: sent || (settled && !c.unlocked), unlocked: !!c.unlocked,
         metal, sizeMm, fit: f ? { maxWidthMm: f.maxWidthMm, scale: rf && rf.scale != null ? rf.scale : 1, applied: !!(rf && rf.applied) } : null,
         assembly, notes: warnings, hint: c.hint || "", confirmed: !!c.confirmed, error, message, prog: c.prog ? { done: c.prog.done, total: c.prog.total } : null,
         again: ok && !busy && left.length > 0 && !sent && aiOn() && !aiServerOff && callAi()
       };
     }
-    const statusOf = (c, st) => ({ state: st.state, label: st.state === "building" && st.busy === "ai" ? "Assembling…" : LABEL[st.state] || "", letters: st.lettersOk ? st.letters.join("") : "", approved: !!st.approved, dirty: !!st.dirty, sent: st.state === "sent", rid: String((c.row.order || {}).receiptId || ""), lineKey: c.lineKey, pieceKey: c.key, slot: c.slot, n: c.n, of: c.of });
+    const statusOf = (c, st) => ({ state: st.state, label: st.state === "building" && st.busy === "ai" ? "Assembling…" : LABEL[st.state] || "", letters: st.lettersOk ? st.letters.join("") : "", approved: !!st.approved, dirty: !!st.dirty, sent: st.state === "sent", rid: String((c.row.order || {}).receiptId || ""), lineKey: c.lineKey, pieceKey: c.key, slot: c.slot, n: c.n, of: c.of, seals: st.seals.length });
     const gateWhy = v => { try { return v.o.gate ? String(v.o.gate() || "") : ""; } catch (_) { return ""; } };
     function stateFor(c, v, st) {
       const gate = gateWhy(v), out = Object.assign({}, st, { canApprove: st.canApproveBase && !gate, approveWhy: gate || (st.canApproveBase ? "" : st.state === "approved" || st.state === "sent" ? "Already approved" : st.busy ? "Making the monogram…" : "Type the three letters first"), rid: String((c.row.order || {}).receiptId || ""), lineKey: c.lineKey, pieceKey: c.key, slot: c.slot, n: c.n, of: c.of });
@@ -589,7 +729,7 @@
 
     /* ── telling the page: one call when a line's state really changed ── */
     function tellChange(c, st) {
-      const sig = JSON.stringify([st.state, st.busy, st.letters, st.approved && st.approved.letters, st.approved && st.approved.sent, st.dirty, st.locked, st.canApproveBase, st.error && st.error.kind, st.assembly.status]);
+      const sig = JSON.stringify([st.state, st.busy, st.letters, st.approved && st.approved.letters, st.approved && st.approved.sent, st.dirty, st.locked, st.canApproveBase, st.error && st.error.kind, st.assembly.status, st.seals.map(x => x.id), st.stamping]);
       if (sig === c.sig) return; c.sig = sig;
       const status = statusOf(c, st);
       for (const fn of [...listeners]) { try { fn(c.row, status); } catch (_) { /* a listener's trouble is its own */ } }
@@ -660,8 +800,8 @@
       const pct = st.busy === "building" && st.prog ? Math.round(100 * st.prog.done / st.prog.total) : st.busy === "ai" && st.round ? Math.round(100 * (st.round - 0.5) / AI_ROUNDS) : null;
       R.bar.classList.toggle("ind", pct == null); if (pct != null) { R.bar.firstChild.style.width = pct + "%"; R.bar.setAttribute("aria-valuenow", String(pct)); } else { R.bar.firstChild.style.width = ""; R.bar.removeAttribute("aria-valuenow"); }
       // the three boxes (never touched while a person is typing in one)
-      R.ins.forEach((inp, i) => { if (doc.activeElement !== inp && inp.value !== (st.letters[i] || "")) inp.value = st.letters[i] || ""; inp.disabled = st.locked; inp.setAttribute("aria-invalid", st.state === "letters" && !st.letters[i] ? "true" : "false"); });
-      R.sw.forEach(b => { b.disabled = st.locked; });
+      R.ins.forEach((inp, i) => { if (doc.activeElement !== inp && inp.value !== (st.letters[i] || "")) inp.value = st.letters[i] || ""; inp.disabled = st.locked || st.stamping; inp.setAttribute("aria-invalid", st.state === "letters" && !st.letters[i] ? "true" : "false"); });
+      R.sw.forEach(b => { b.disabled = st.locked || st.stamping; });
       // what the buyer wrote (compact: only when it needs a look)
       const seen = st.buyer.letters ? spaced(st.buyer.letters.join("")) : st.buyer.words;
       // (MONOLETTERS, Paul 17 Oct 2026: "the system did not use the buyer's requested letters": a card starts with the buyer's letters in the order they wrote them; one a person turned or swapped (the arrow moves the first letter to the end: A P V -> P V A) says what the buyer wrote, with one press to put them back)
@@ -692,12 +832,25 @@
       R.msg.hidden = !msg; R.msg.dataset.kind = msg ? msg.kind : ""; if (msg) el.setAttribute("data-msg", ""); else el.removeAttribute("data-msg");      // (a message replaces the compact widget's lines: the one allowed growth)
       if (R.msg._shown !== mh) { R.msg.innerHTML = msgHtml(msg); R.msg._shown = mh; }
       // the actions: Approve, or Approved with a way to change it
-      R.approve.hidden = settled || sent; R.approve.disabled = !can; R.approve.textContent = st.confirmed ? "Approve anyway" : st.dirty ? "Replace approved" : "Approve";
-      R.approve.title = can ? (st.confirmed ? "It still has the problem named here: put it on the order’s designs anyway" : "Put this monogram on the order’s designs") : (gate || (busy ? "Making the monogram…" : st.state === "letters" || st.state === "error" ? "Type the three letters first" : ""));
+      R.approve.hidden = settled || sent; R.approve.disabled = !can; R.approve.textContent = st.stamping ? "Approved" : st.confirmed ? "Approve anyway" : st.dirty ? "Replace approved" : "Approve";
+      R.approve.title = st.stamping ? "" : can ? (st.confirmed ? "It still has the problem named here: put it on the order’s designs anyway" : "Put this monogram on the order’s designs") : (gate || (busy ? "Making the monogram…" : st.state === "letters" || st.state === "error" ? "Type the three letters first" : ""));
       R.ok.hidden = !(settled || sent); const okTx = (sent ? "On the sheet" : "Approved") + (st.approved ? " · Monogram " + st.approved.letters : ""); if (R.okTx.textContent !== okTx) R.okTx.textContent = okTx;
-      { const lv = sent ? "On the sheet." : settled ? "Approved." : busy || st.message ? "" : st.state === "ready" ? "The monogram is ready." : st.state === "check" ? "The monogram is ready, but it needs a person to look at it." : ""; if (R.live.textContent !== lv) R.live.textContent = lv; }   // (for a screen reader: what the picture and the buttons show)
+      { const lv = sent ? "On the sheet." : settled || st.stamping ? "Approved." : busy || st.message ? "" : st.state === "ready" ? "The monogram is ready." : st.state === "check" ? "The monogram is ready, but it needs a person to look at it." : ""; if (R.live.textContent !== lv) R.live.textContent = lv; }   // (for a screen reader: what the picture and the buttons show)
       R.change.hidden = !(settled && st.locked);
       R.sheet.hidden = !(settled && v.sheetLink);
+      paintSeals(c, v, st);
+    }
+    /* MONOSEAL: the widget's seal row (`.mwSeal`): every stamp of the piece, oldest first, the newest on top. Built again only when the list of stamps changes (an element
+       mid-press is never touched); the stamp just made waits unseen (`pending`) in the widget the approval is pressed in, and is pressed by pressSeal. */
+    function paintSeals(c, v, st) {
+      const R = v.r, row = R && R.seals, S = SEALS(); if (!row) return;
+      const list = S ? st.seals : [], sig = list.map(x => x.id).join("|");
+      if (row._sig === sig) return;
+      row._sig = sig;
+      const pend = c.sealNew && c.stamping && pressViewOf(c) === v ? c.sealNew : "";
+      row.innerHTML = list.map(x => S.html(x, S.BASE_SIZE, "monogramSeal" + (x.id === pend ? " pending" : ""))).join("");
+      row.dataset.sealCount = String(list.length); row.hidden = !list.length;
+      if (list.length && S.fit) { try { S.fit(row); } catch (_) { /* the stylesheet's size stands */ } }
     }
     function paintViews(c) {
       const st = describe(c);
@@ -717,7 +870,7 @@
       c.hint = ""; t.value = l; const ls = readLetters(c); ls[i] = l; editTo(c, ls);
       if (l && i < 2 && inputType !== "deleteContentBackward") { const nx = v.r.ins[i + 1]; if (nx && !nx.disabled) nx.focus(); }
     }
-    const viewApprove = v => { if (v.dead || gateWhy(v)) return; approveBy(v.c); };
+    const viewApprove = v => { if (v.dead || gateWhy(v)) return; v.c.pressView = v; approveBy(v.c); };      // (MONOSEAL: the stamp is pressed in the widget the person pressed Approve in)
     function wireView(v) {
       const el = v.el;
       el.addEventListener("input", ev => { const t = ev.target; if (t.matches && t.matches("[data-mw-letter]")) typeInto(v, +t.getAttribute("data-mw-letter"), t, ev.inputType); });
@@ -762,17 +915,28 @@
       const q = s => el.querySelector(s);
       v.r = { pic: q("[data-mw-pic]"), art: q(".mwArt"), spin: q("[data-mw-spin]"), spinTx: q("[data-mw-spin] span"), bar: q("[data-mw-bar]"), ins: [...el.querySelectorAll("[data-mw-letter]")], sw: [...el.querySelectorAll(".mwSw")], says: q("[data-mw-says]"), size: q("[data-mw-size]"),
         asm: q("[data-mw-assembly]"), asmTx: q("[data-mw-assembly] > span"), again: q("[data-mw-again]"), note: q("[data-mw-note]"), msg: q("[data-mw-msg]"), approve: q("[data-mw-approve]"), ok: q("[data-mw-approved]"), okTx: q("[data-mw-approved] > span"), change: q("[data-mw-change]"), sheet: q("[data-mw-sheet]"), live: q("[data-mw-live]") };
+      // MONOSEAL: the seal row. The detail widget holds it in its action row beside the Approve button (in the flow, as the Engrave card's seals rest beside theirs); the compact one (the Order window's `.engMono` card) holds it as the
+      // host's next child, so the card's stylesheet can lay it across the card's top-right corner as it lays the engraving cards' seals (HDRSEAL). Empty and hidden until a stamp exists.
+      const sr = doc.createElement("span"); sr.className = "sealRow mwSeal"; sr.hidden = true; sr.setAttribute("data-seal-group", ""); sr.dataset.sealCount = "0"; sr.setAttribute("role", "group"); sr.setAttribute("aria-label", "Monogram approval history"); sr.dataset.testid = "mw-seals";
+      v.r.seals = sr; sr._sig = null;
       wireView(v); host.append(el);
+      if (v.mode === "compact") host.append(sr); else v.r.ok.after(sr);
     }
     /** Points a widget at a line (and builds what it shows): a line never made is made now; one made quietly for a thumbnail gets its AI check now that a person looks at it. */
     function attach(v, row, ask) {
       const c = cardOf(row, ask); if (v.c && v.c !== c) v.c.views.delete(v);
       v.c = c; c.views.add(v); c.quiet = false;
       if (!v.el) buildEl(v);
-      begin(c);
+      begin(c); pullEvents(v, true);
       if (c.status === "idle") schedule(c, 0);
       else if (c.status === "ready" && c.resultKey && c.aiKey !== c.resultKey && !aiBusy(c)) { paint(c); assist(c, c.resultKey, c.resultLetters.split(""), alphabets(), c.seq); }
       else paint(c);
+    }
+    /** MONOSEAL: the order's timeline stamps for a widget: from the host that holds them (opts.events: a function returning the order's events, the Order window's), else asked once (and again after 20 s at most) of deps.events. */
+    function pullEvents(v, first) {
+      const c = v.c; if (!c) return;
+      if (typeof v.o.events === "function") { let evs = null; try { evs = v.o.events(); } catch (_) { evs = null; } if (Array.isArray(evs)) feedEvents(ridOfCard(c), evs); }
+      else if (first) loadSeals(ridOfCard(c));
     }
     function mountLine(host, o) {
       o = o || {}; if (!host) return null;
@@ -786,7 +950,7 @@
         state: () => stateFor(v.c, v, describe(v.c)),
         refresh() {
           if (v.dead) return;
-          const row2 = rowByKey(v.c.lineKey) || v.c.row; cardOf(row2, v.c.slot);
+          const row2 = rowByKey(v.c.lineKey) || v.c.row; cardOf(row2, v.c.slot); pullEvents(v, false);
           const k = abcKey(alphabets());
           if (v.c.abcSig && v.c.abcSig !== k && v.c.status !== "idle" && v.c.status !== "building") schedule(v.c, 0); else paint(v.c);      // (the library gained or lost an alphabet: the monogram follows)
         },
@@ -800,7 +964,7 @@
         },
         destroy() {
           if (v.dead) return; v.dead = true; if (v.c) v.c.views.delete(v); widgets.delete(api);
-          if (v.host._mw === api) v.host._mw = null; if (v.el) v.el.remove(); v.el = null; v.r = null;
+          if (v.host._mw === api) v.host._mw = null; if (v.r && v.r.seals) v.r.seals.remove(); if (v.el) v.el.remove(); v.el = null; v.r = null;
         },
         focus() { const ins = v.r && v.r.ins, t = ins && (ins.find(x => !x.value && !x.disabled) || ins.find(x => !x.disabled)); if (t) { try { t.focus(); } catch (_) { /* no layout */ } } },
         approve() { viewApprove(v); },
@@ -875,15 +1039,22 @@
     const piecesNow = () => rowsNow().reduce((all, r) => all.concat(piecesOfLine(r).map(p => Object.assign(p, { row: r }))), []);
     const waiting = () => piecesNow().filter(p => { const c = cards.get(p.key), ap = c ? approvedFile(c) : null; return !(ap && ap.sent); });
     const svc = { count: () => waiting().length, rows: rowsNow, pieces: row => { const r = lineOf(row); return r && isMono(r) ? piecesOfLine(r).map(p => Object.assign(p, { row: r })) : []; }, piecesNow, pieceKey: (row, ask) => { const r = lineOf(row); return r ? slotKey(r.key, slotFor(r, ask)) : ""; }, families, alphabets, lettersOf: readLetters, cards, rebuild, approve, approvedFile, glyph, setAlphabet, results, improve,
-      mountLine, thumb, thumbHtml, fillThumbs, status, onChange, isMonogram: isMono, widgets: () => [...widgets], describe: (row, ask) => { const r = lineOf(row); return r && isMono(r) ? describe(cardOf(r, ask)) : null; }, setAi };
+      mountLine, thumb, thumbHtml, fillThumbs, status, onChange, feedEvents, loadSeals,
+      sealsOf: (row, ask) => { const r = lineOf(row); if (!r || !isMono(r)) return []; const c = cardOf(r, askOf(ask)); cardSeals(c); return sealsFor(c); },
+      sealHtml: (row, o) => {
+        o = o || {}; const r = lineOf(row), S = SEALS(); if (!r || !isMono(r) || !S) return "";
+        const c = cardOf(r, askOf(o)); cardSeals(c); const list = sealsFor(c); if (!list.length) return "";
+        const size = Math.round(+o.size) || S.BASE_SIZE;
+        return `<span class="sealRow mwSeal${o.cls ? " " + esc(o.cls) : ""}${o.size ? " mini" : ""}"${o.size ? ` data-seal-max="${size}"` : ""} data-seal-group data-seal-count="${list.length}" role="group" aria-label="Monogram approval history">` + list.map(x => S.html(x, size, "monogramSeal")).join("") + `</span>`;
+      }, isMonogram: isMono, widgets: () => [...widgets], describe: (row, ask) => { const r = lineOf(row); return r && isMono(r) ? describe(cardOf(r, ask)) : null; }, setAi };
     current = svc; made.push(svc);
     return svc;
   }
   // the page's one service: the last one made (the bridge makes it once), or the one a factory makes when asked (setFactory), so any module can mount a line without reaching for Engrave
   let current = null, factory = null; const made = [];
   const service = () => current || (factory ? (current = factory() || null) : null);
-  const via = name => (a, b) => { const s = (b && b.ui) || service(); return s && s[name] ? s[name](a, b) : (name === "thumbHtml" ? "" : null); };
+  const via = name => (a, b) => { const s = (b && b.ui) || service(); return s && s[name] ? s[name](a, b) : (name === "thumbHtml" || name === "sealHtml" ? "" : name === "sealsOf" ? [] : null); };
   return { make, FILE_RE, assistLoop, assistSvg, violationsOf, distanceOf, adjustOf, betterThan, AI_ROUNDS, AI_DAY_MAX, service, setFactory: f => { factory = typeof f === "function" ? f : null; },
-    mountLine: via("mountLine"), thumb: via("thumb"), thumbHtml: via("thumbHtml"), status: via("status"), isMonogram: (row, o) => { const s = (o && o.ui) || service(); return !!(s && s.isMonogram(row)); },
+    mountLine: via("mountLine"), thumb: via("thumb"), thumbHtml: via("thumbHtml"), status: via("status"), sealsOf: via("sealsOf"), sealHtml: via("sealHtml"), stampOf, stampsFromEvents, mergeStamps, SEAL_HOW, isMonogram: (row, o) => { const s = (o && o.ui) || service(); return !!(s && s.isMonogram(row)); },
     fillThumbs: scope => { const s = service(); if (s) s.fillThumbs(scope); }, widgets: () => made.reduce((all, s) => all.concat(s.widgets()), []) };
 });

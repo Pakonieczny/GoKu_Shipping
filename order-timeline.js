@@ -30,6 +30,8 @@
     engraveNeeded:   { label: "Back engraving",      group: "engrave" },
     engraveApproved: { label: "Engraving approved",  group: "engrave",  milestone: true },
     engraveChanged:  { label: "Engraving changed",   group: "engrave" },
+    // (MONOSEAL, Paul 17 Oct 2026: a monogram approved is a stamp of its own, the monogram seal: a person's action, never a rail step, so no milestone and never the Engraved step)
+    monogramApproved: { label: "Monogram approved",  group: "design" },
     pooled:          { label: "Ready to nest",       group: "sheet" },
     placed:          { label: "On sheet",            group: "sheet",    milestone: true },
     moved:           { label: "Moved sheet",         group: "sheet" },
