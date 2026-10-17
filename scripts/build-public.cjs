@@ -218,6 +218,7 @@ const assets = [
   "charm-nest-siblings.js",
   "charm-nest-review-link.js",
   "charm-nest-shared-orders.js",
+  "charm-nest-nospread.js",
   "charm-nest-set-rules.js",
   "charm-nest-set-edit.js",
   "charm-nest-sheet-name.js",

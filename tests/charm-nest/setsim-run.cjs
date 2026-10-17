@@ -1,5 +1,5 @@
 /* SETSIM runner: a seeded synthetic order stream through the sorter's own nesting and set rules, measured (see setsim-lib.cjs for what is real and what is stand-in).
- *   node tests/charm-nest/setsim-run.cjs [--root DIR] [--label NAME] [--orders N] [--seed N] [--step DEG] [--batches 2,3,5,4] [--metals gold,silver,rose,gold14k,gold10k] [--late 0.3] [--sheet 60x40] [--out FILE.json] [--quiet]
+ *   node tests/charm-nest/setsim-run.cjs [--root DIR] [--label NAME] [--orders N] [--seed N] [--step DEG] [--batches 2,3,5,4] [--metals gold,silver,rose,gold14k,gold10k] [--late 0.3] [--sheet 60x40] [--out FILE.json] [--quiet] [--check]
  * `--root` is a checkout of the code to judge (default: this repository); run it once on the commit before a change and once after, with the same seed, then
  *   node tests/charm-nest/setsim-report.cjs before.json after.json
  * Every simulated 10 minutes brings 2-5 orders (the sorter's trickle); each metal's sheets are fed as the page feeds them; after each update the page's own set assembly
@@ -19,7 +19,7 @@ async function run(o = {}) {
   const log = o.quiet ? () => {} : (...a) => console.log(...a);
   const byId = new Map(stream.map(x => [x.id, x]));
   const arrival = new Map(), lastArrival = new Map(), done = new Map(), firstSeen = new Map(), t00 = Date.now(), ticks = [];
-  const everPartialInSet = new Set(), everInSet = new Set();
+  const everPartialInSet = new Set(), everInSet = new Set(), seenPieces = new Map();
   let tick = 0;
   const mine = o => piecesOf(o).filter(c => metals.includes(c.metal));   // (an order's pieces of the metals this run nests; an order of 10K or 14K only is not on any sheet here)
   const placedIds = () => new Set(sim.pages.flatMap(p => p.placements.map(q => q.id)));
@@ -28,7 +28,8 @@ async function run(o = {}) {
     tick = ev.tick; const t0 = Date.now();
     for (const x of ev.orders) arrival.set(x.id, tick);
     for (const a of ev.arrivals) lastArrival.set(a.order.id, tick);   // (the update the order's LAST line came in)
-    for (const m of metals) { const parts = ev.arrivals.map(a => partOf(a.order, m, a.lines)).filter(Boolean); if (parts.length || (sim.metals[m] && sim.metals[m].work.length)) await sim.metal(m).step(parts, tick); }
+    // (NOSPREAD, Paul 17 Oct 2026: the intake is told how many pieces the order will have of the metal in all, lines still to come included, and how many came before this update)
+    for (const m of metals) { const parts = ev.arrivals.map(a => { const p = partOf(a.order, m, a.lines); if (p) { const k = a.order.id + '|' + m, before = seenPieces.get(k) || 0; seenPieces.set(k, before + p.pieces.length); p.expected = a.order.lines.filter(l => l.metal === m).reduce((n, l) => n + l.pieces.length, 0); p.order = { pieces: p.pieces, expected: p.expected, placed: before }; } return p; }).filter(Boolean); if (parts.length || (sim.metals[m] && sim.metals[m].work.length)) await sim.metal(m).step(parts, tick); }
     // where every order's pieces are now: an order is placed when each piece is on a sheet
     const placed = placedIds();
     for (const [id, at] of arrival) if (!done.has(id) && mine(byId.get(id)).length && mine(byId.get(id)).every(c => placed.has(c.id))) done.set(id, tick);
@@ -75,6 +76,13 @@ async function run(o = {}) {
     sheetRows,
   };
   void setValid;
+  // (NOSPREAD, Paul 17 Oct 2026: sheets stuck on a problem, e.g. "The oldest order cannot fit on an empty sheet", and the invariants every run must keep, checked with --check)
+  out.problems = sim.pages.filter(p => p.problem).map(p => ({ metal: p.metal, page: p.page, problem: p.problem }));
+  out.invariants = [];
+  if (out.queue.unplacedAtEnd) out.invariants.push(`${out.queue.unplacedAtEnd} piece(s) were never placed`);
+  if (out.queue.neverPlaced) out.invariants.push(`${out.queue.neverPlaced} order(s) were never placed`);
+  if (out.problems.length) out.invariants.push(`${out.problems.length} sheet(s) are stuck: ${out.problems[0].problem}`);
+  if (!(+o.late > 0) && out.split.sameMetal) out.invariants.push(`${out.split.sameMetal} order(s) are on two sheets of one metal although every line of every order came together`);
   return out;
 }
 const REPO_DEFAULT = Lib.REPO;
@@ -84,6 +92,7 @@ module.exports = { run };
 if (require.main === module) {
   run({ root: opt('root'), label: opt('label'), orders: opt('orders'), seed: opt('seed'), step: opt('step'), sheet: opt('sheet'), late: opt('late'), batches: opt('batches'), metals: opt('metals'), drain: opt('drain'), extra: opt('extra'), job: opt('job'), quiet: argv.includes('--quiet') }).then(r => {
     const f = opt('out'); if (f) fs.writeFileSync(f, JSON.stringify(r, null, 1));
+    if (argv.includes('--check') && r.invariants.length) { console.error('INVARIANT FAILED: ' + r.invariants.join(' | ')); process.exitCode = 1; }
     const { sheetRows, split, sets, ...head } = r; console.log(JSON.stringify({ ...head, split: { sameMetal: split.sameMetal }, sets: { ...sets, list: undefined } }, null, 1));
   }).catch(e => { console.error(e); process.exit(1); });
 }
