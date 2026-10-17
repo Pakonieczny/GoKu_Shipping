@@ -124,7 +124,8 @@ async function main() {
     await page.waitForTimeout(700);
     const nextTo = await page.evaluate(() => { const b = [document.getElementById('owNext'), document.getElementById('owPrev')].find(x => !x.hidden && !x.disabled); if (!b) return null; b.click(); return document.getElementById('owTitle').textContent; });
     if (nextTo) {
-      const into = await page.evaluate(() => { OrderWin.close(); const a = document.getElementById('orderWin').getAnimations().map(x => x.effect.getKeyframes()).filter(k => k.length && k[k.length - 1].clipPath).map(k => k[k.length - 1].clipPath); return a[0] || null; });
+      // (close() waits for the page to be idle (Seal.whenIdle) before it starts the shrink, so the clip animation exists a moment after the call, not in it)
+      const into = await page.evaluate(async () => { OrderWin.close(); for (const t = performance.now(); performance.now() - t < 2000;) { const a = document.getElementById('orderWin').getAnimations().map(x => x.effect.getKeyframes()).filter(k => k.length && k[k.length - 1].clipPath).map(k => k[k.length - 1].clipPath); if (a[0]) return a[0]; await new Promise(r => setTimeout(r, 16)); } return null; });
       const want = await page.evaluate(t => { const rid = t.replace(/\D/g, '').slice(0, 10); const n = [...document.querySelectorAll('#ordItems [data-key]')].find(x => x.dataset.key.startsWith(rid)); const r = n.getBoundingClientRect(); return Math.round(Math.max(0, r.top)); }, nextTo);
       const top = into ? +(/inset\((\d+(?:\.\d+)?)px/.exec(into) || [])[1] : null;
       check(top != null && Math.abs(top - want) < 2, `after Next: it shrinks into the row on screen now (clip top ${top}, row top ${want})`);
