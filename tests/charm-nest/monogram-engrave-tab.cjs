@@ -2,6 +2,7 @@
 // The ENGRAVE TAB part: a MONOGRAM order line is a PIECE of its order, drawn as what it is.
 //   1  the order model (node, no page): charm-nest-engrave-order.js lists a monogram line as a piece (no faces, no job) once the page says which lines are monograms; nothing changes without that
 //   2  the tab: no Monograms tab; Placements holds the monogram lines beside the engraved ones; a monogram row shows the finished charm (the service's thumbnail) and its three letters, never Front / Back
+//   2b (17 Oct 2026, MONOROUTE) the Review tab lists none of the monogram-only orders (the Engraving tab is where they are looked after; their custom card still exists), the Orders list says "monogram · Engraving", the piece placement does not say "On hold" (a hold a person pressed still does)
 //   3  the detail card of a monogram line holds the widget (mode "detail"), the engraved piece's own head (counter, Back / Next, strip of the order's pieces, Open order, close), the buyer's words and messages
 //   4  a MIXED order (a monogram line and an engraved bar): the strip says "Piece 1 of 2", Back / Next walk both kinds, Approve on the monogram is that piece's approval and the detail goes on to the bar (never another order),
 //      the bar approved first goes on to the monogram, leaving an order with a piece not approved is said by the guide's one line; once approved both stay as rows of the ONE list (NODECIDED: no Decided tab) and the
@@ -138,6 +139,16 @@ const check = (ok, msg) => { nCheck++; if (!ok) fails.push(msg); console.log((ok
     await page.fill('#egQ', 'monogram'); await settle(700);
     rs = await rows(); check(rs.length === 4 && rs.every(r => r.kind === 'monogram'), 'searching "monogram" lists the 4 monogram rows: ' + rs.length);
     await page.fill('#egQ', ''); await settle(700);
+    // MONOROUTE (Paul, 17 Oct 2026: "Monogram orders should be treated exactly like back engraving and should be routed to the Engraving tab and NOT the Review tab unless something else is wrong"): the monogram lines of a
+    // monogram-only order ask nothing, so the Review tab lists none of them; they are rows of this tab (above) and their custom card is still there for the monogram's Approve to put its design on
+    await page.evaluate(() => { CN.setMode('review'); Review.render(); }); await settle(900);
+    check(await page.evaluate(rids => rids.every(r => !document.querySelector(`#rvList [data-rid="${r}"]`)) && !document.querySelector('#rvList [data-cu-mono]'), [rid('mono'), rid('mono2')]), 'the Review tab lists neither monogram-only order (not as a Custom Orders card, no Build monogram)');
+    check(await page.evaluate(ks => ks.every(k => { const row = B.orders.byKey.get(k), it = Review.customItemFor(row.key, row); return !!it && (it.rows || []).some(r => r.key === k); }), [monoKey('mono'), monoKey('mono2')]), 'their custom cards still exist (Review.customItemFor): the monogram\'s Approve puts the design on them');
+    check(await page.evaluate(ks => ks.every(k => { const st = Orders.statePill(B.orders.byKey.get(k)); return st[1] === 'monogram · Engraving' && st[0] === 'info'; }), [monoKey('mono'), monoKey('mono2')]), 'the Orders list calls them "monogram · Engraving", not held');
+    // (the "held" state the intake gives a line that waits for its own design, staged on each line so the check has something to say whatever the line's state is now)
+    check(await page.evaluate(ks => ks.every(k => { const row = B.orders.byKey.get(k), was = row.state; row.state = 'held'; try { const p = PiecePlacement.ofRow(row); return !!p && p.state !== 'hold'; } finally { row.state = was; } }), [monoKey('mono'), monoKey('mono2')]), 'and the piece placement does not call them "On hold" although their state is "held" (a monogram waits for its letters in the Engraving tab): ' + await page.evaluate(ks => ks.map(k => (PiecePlacement.ofRow(B.orders.byKey.get(k)) || {}).state).join(' '), [monoKey('mono'), monoKey('mono2')]));
+    check(await page.evaluate(k => { const row = B.orders.byKey.get(k), was = row.hold; row.hold = 'held by a person'; try { const p = PiecePlacement.ofRow(row); return !!p && p.state === 'hold'; } finally { row.hold = was; } }, monoKey('mono')), 'while a hold a person pressed on a monogram line still reads "On hold"');
+    await openList(); await settle(1200);
 
     // ═══ 3 · the detail card of a monogram line (a monogram-only order) ═══
     await page.click(`#egQueue .doneRow[data-kind=monogram][data-rid="${rid('mono')}"]`);

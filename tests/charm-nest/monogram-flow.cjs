@@ -11,7 +11,8 @@
 //   7  Approve: Monogram APV.ai on the order's custom designs (read back by the page's own cut-file preflight as ONE piece of the previewed size), the widget says Approved with Change; the same state in the OTHER place; Change then a new
 //      letter REPLACES the design (never two, the metal a person set kept), the same letters again change nothing; another order's monogram is its own design
 //   8  the Order details window: the compact widget, the same state as the Engrave detail (typing in one shows in the other), no Front / Back cards for the monogram, a mixed order keeps its engraved bar's card
-//   9  Send to Sheet: the approved design goes to the sheet from Review, the widget says it is on the sheets and is read only; a reload / second tab keeps the approved design
+//   9  Send to Sheet: the Review tab does not list the approved monogram (MONOROUTE, 17 Oct 2026: it is the Engraving tab's, its custom card still holds the design); the design goes to the sheet from the widget's own "Send to Sheet →" (the designs window),
+//      the widget says it is on the sheets and is read only; a reload / second tab keeps the approved design
 //  10  the AI line (stubbed agent): "Assembled with AI: …", "Needs a person: …" with Approve anyway on the second press, Improve again, a failing call, the day's 3 calls
 //  11  phone width 400: the list, the Engrave detail and the Order window fit (no sideways scroll, nothing outside its card), reduced motion; no console error and no page error anywhere
 //   node tests/charm-nest/monogram-flow.cjs [playwright-core dir]      run it through /tmp/cn-run.sh 1500      Screenshots (1440 and 400 px) go to $SHOTS (default: monogram-flow-shots in the temp directory).
@@ -408,13 +409,16 @@ const MONO_TITLE = 'Monogram Necklace Personalized Jewelry Initials Pendant';
       let ap = (await files(R0)).map(f => f.name);
       if (!ap.length) { await openDetail('osr'); await ready(R0, 'detail'); await page.click(`${mwSel(R0, 'detail')} [data-mw-approve]`); await sleep(1500); await readyFiles(); ap = (await files(R0)).map(f => f.name); }
       check(ap.join() === 'Monogram OSR.ai', 'OSR has its design on the order: ' + ap.join());
+      // MONOROUTE (Paul, 17 Oct 2026: "Monogram orders should be treated exactly like back engraving and should be routed to the Engraving tab and NOT the Review tab unless something else is wrong"): an approved monogram that is not sent yet is
+      // no card of the Review tab, so it is sent from where it is made: the widget's own "Send to Sheet →" opens the designs window and its Send to Sheet puts the design on the sheets
+      await page.evaluate(() => { CN.setMode('review'); Review.render(); }); await sleep(700);
+      check(await page.evaluate(r => !document.querySelector(`#rvList [data-rid="${r}"]`) && !document.querySelector('#rvList [data-cu-mono]'), R0), 'the Review tab does not list the approved monogram waiting to be sent (no card, no Build monogram)');
+      check(await page.evaluate(k => { const row = B.orders.byKey.get(k), it = Review.customItemFor(row.key, row), c = it && CustomSheet.cardOf(it); return !!c && c.files.map(f => f.name).join() === 'Monogram OSR.ai'; }, keyOf('osr')), 'though its custom card exists and holds the design (Review.customItemFor)');
       await openDetail('osr'); const x = await read(R0, 'detail');
       if (x && x.sheet) { await page.click(`${mwSel(R0, 'detail')} [data-mw-sheet]`); await page.waitForSelector('#cuDlg[open] .cuFile', { timeout: 15000 }).catch(() => {});
         check(await page.evaluate(() => document.querySelectorAll('#cuDlg .cuFile').length === 1 && /Monogram OSR\.ai/.test(document.querySelector('#cuDlg .cuFile').textContent)), '"Metal · Send to Sheet" opens the designs window with the monogram');
-        await page.click('#cuDlg [data-x]').catch(() => {}); await sleep(300); } else check(false, 'the approved widget offers "Metal · Send to Sheet"');
-      await page.evaluate(() => { CN.setMode('review'); Review.render(); });
-      await page.waitForSelector(`#rvList .reviewListRow[data-rid="${R0}"] [data-cu-send]`, { timeout: 30000 }).catch(() => {});
-      await page.click(`#rvList .reviewListRow[data-rid="${R0}"] [data-cu-send]`).catch(e => console.log('   (no send button: ' + e.message.split('\n')[0] + ')'));
+        await page.click('#cuDlg [data-send]').catch(e => console.log('   (no send button: ' + e.message.split('\n')[0] + ')')); await sleep(300);
+        if (await page.evaluate(() => { const who = document.getElementById('cuWho'); return !!who && !who.hidden && !!document.querySelector('#cuDlg[open]'); })) { await page.fill('#cuWho input', 'Test Operator'); await page.click('#cuDlg [data-send]'); } } else check(false, 'the approved widget offers "Metal · Send to Sheet"');
       await page.click('[data-role="laser"]', { timeout: 2500 }).catch(() => {});
       await page.waitForFunction(k => CustomSheet.decisionOf(B.orders.byKey.get(k)), keyOf('osr'), { timeout: 60000 }).catch(() => {});
       await page.waitForFunction(() => !window.SendTour || !SendTour.playing(), null, { timeout: 40000 }).catch(() => {}); await sleep(900);
