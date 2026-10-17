@@ -185,6 +185,9 @@
 .swEng .egSealLine{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 10px;min-width:0}
 .swEng .egSealLine .egWhy{flex:1 1 150px}
 .swEng .egSealLine .monoSeals>.sealRow{flex:0 0 auto;padding:0;max-width:100%}
+/* the order window's Details list: the Monogram cell's words and its seal(s) on one line, the seal centred beside the words (the seal is taller than a line of text) */
+.owfList .m.block>span:not(.monoSeals){vertical-align:middle}
+.owfList .m>.monoSeals>.sealRow{vertical-align:middle;margin-left:6px}
 .egPlacementSeals:empty{display:none}
 .egPlacementSeals{justify-self:end;overflow:visible}
 /* (where a Placements row puts its seals is the EGROW block at the end of this file) */
