@@ -94,7 +94,8 @@ async function main() {
 
     // ── Settings before: the line shows what the sandbox holds, and what is kept ──
     const line = (p, id) => p.evaluate(i => (document.querySelector(`#stBuildNote [data-i="${i}"]`) || {}).textContent || '', id);
-    const openSettings = async p => { await p.evaluate(() => openSettings()); await p.waitForFunction(() => /In the sandbox now: /.test((document.querySelector('#stBuildNote [data-i="now"]') || {}).textContent || '') && /Kept, never wiped/.test((document.querySelector('#stBuildNote [data-i="kept"]') || {}).textContent || ''), null, { timeout: 20000 }); };
+    // (COST, Oct 2026: a production page reads the counts only when "Count the sandbox" is pressed; a page in the sandbox on opening)
+    const openSettings = async p => { await p.evaluate(() => { openSettings(); const b = !WORKSPACE_SANDBOX && document.querySelector('#stBuildNote [data-i="count"] button'); if (b) b.click(); }); await p.waitForFunction(() => /In the sandbox now: /.test((document.querySelector('#stBuildNote [data-i="now"]') || {}).textContent || '') && /Kept, never wiped/.test((document.querySelector('#stBuildNote [data-i="kept"]') || {}).textContent || ''), null, { timeout: 20000 }); };
     await openSettings(page);
     const before = await line(page, 'now'), keptBefore = await line(page, 'kept');
     assert(/\b[1-9]\d* (sheets|pool rows|runs)\b/.test(before) && !/nothing —/.test(before), `${name}: before, the line lists what the sandbox holds: ${before.slice(0, 200)}`);

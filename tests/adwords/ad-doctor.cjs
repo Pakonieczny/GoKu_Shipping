@@ -224,43 +224,7 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     check(out.unchanged && /Insufficient/.test(out.reason), 'a verified fix without a measured result is not lesson evidence, and no AI request is made');
   }
 
-  // ── The diagnostic page is locked with the console passcode ────────────
-  {
-    const reply = (status, body) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
-    let asked = '';
-    const stubFetch = async (url, o) => { if (/oauth2/.test(url)) return reply(200, { access_token: 't' }); asked = String(o && o.body || '');
-      return reply(200, { results: [{ campaign: { id: '1', name: 'A', status: 'PAUSED' }, campaignBudget: { amountMicros: '5000000', period: 'DAILY' }, customer: { currencyCode: 'CAD' } },
-        { campaign: { id: '2', name: 'B', status: 'ENABLED' }, campaignBudget: { period: 'CUSTOM_PERIOD', totalAmountMicros: '150000000' }, customer: { currencyCode: 'CAD' } }] }); };
-    const empty = { where() { return this; }, limit() { return this; }, orderBy() { return this; }, doc() { return this; }, get: async () => ({ exists: false, forEach() {}, data: () => ({}) }) };
-    const admin = { firestore: () => ({ collection: () => empty }) };
-    const realResolve = Module._resolveFilename;
-    Module._resolveFilename = function (request, parent, ...rest) {
-      if (request === 'node-fetch' && /googleAdsDiag/.test((parent || {}).filename || '')) return 'STUB:diag-fetch';
-      if (/firebaseAdmin$/.test(request) && /googleAdsDiag/.test((parent || {}).filename || '')) return 'STUB:diag-admin';
-      return realResolve.call(this, request, parent, ...rest);
-    };
-    require.cache['STUB:diag-fetch'] = { id: 'STUB:diag-fetch', filename: 'STUB:diag-fetch', loaded: true, exports: stubFetch };
-    require.cache['STUB:diag-admin'] = { id: 'STUB:diag-admin', filename: 'STUB:diag-admin', loaded: true, exports: admin };
-    // Node caches "node-fetch"/"./firebaseAdmin" per directory once any sibling function has loaded
-    // them, which would bypass the resolver hook above; swap the cached modules too while the page runs.
-    const fnDir = path.join(repo, 'netlify/functions'), swapped = [];
-    for (const [request, exports] of [['node-fetch', stubFetch], ['./firebaseAdmin', admin]]) {
-      let file; try { file = require.resolve(request, { paths: [fnDir] }); } catch (e) { continue; }
-      swapped.push([file, require.cache[file]]); require.cache[file] = { id: file, filename: file, loaded: true, exports };
-    }
-    delete require.cache[require.resolve(path.join(fnDir, 'googleAdsDiag.js'))];
-    Object.assign(process.env, { GADS_CUSTOMER_ID: '123', EDIT_PASSCODE: 'secret' });
-    const diag = require(path.join(repo, 'netlify/functions/googleAdsDiag.js'));
-    check((await diag.handler({ queryStringParameters: {}, headers: {} })).statusCode === 401, 'the diagnostic page refuses a request without the passcode');
-    check((await diag.handler({ queryStringParameters: { key: 'wrong' }, headers: {} })).statusCode === 401, 'the diagnostic page refuses a wrong passcode');
-    const ok = await diag.handler({ queryStringParameters: { key: 'secret' }, headers: { accept: 'text/html' } });
-    check(ok.statusCode === 200 && /5 CAD/.test(ok.body) && !/\$5/.test(ok.body), 'with the passcode it opens, showing budgets in the account currency');
-    const raw = JSON.parse((await diag.handler({ queryStringParameters: { key: 'secret' }, headers: {} })).body).campaigns[1];
-    check(/Total 150 CAD/.test(ok.body) && raw.budget === null && raw.budgetTotal === 150 && raw.budgetPeriod === 'CUSTOM_PERIOD' && /campaign_budget\.period/.test(asked) && /campaign_budget\.total_amount_micros/.test(asked),
-      'a total budget is read with its period and reported as a total, never as a daily amount');
-    Module._resolveFilename = realResolve; delete process.env.EDIT_PASSCODE;
-    for (const [file, prev] of swapped) { if (prev) require.cache[file] = prev; else delete require.cache[file]; }
-  }
+  // (the diagnostic page googleAdsDiag.js was deleted, Oct 2026: nothing linked to it)
 
   // ── The Ad Doctor card ───────────────────────────────────────────────────
   {

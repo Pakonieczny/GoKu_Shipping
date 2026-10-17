@@ -1,15 +1,16 @@
 // Settings > "Build · last reset": the line about the page build (Paul, 10 Oct 2026: it was ALWAYS red, "a newer build is live",
 // because the build it called the page's own was a constant typed into charm-nest-bridge.js on 3 Oct, while the live build is
-// read from the ?v= tokens of the page's tags). Now both sides are the same read of the same tags: the running page's own
-// script and stylesheet tags against the HTML the server holds now (the one check the page already makes: no new request).
+// read from the ?v= tokens of the page's tags). The page build is read from the running page's own tags; whether a newer one
+// is live is PageVersion's HEAD check of the page (its ETag: COST, Oct 2026, it was a no-store download of the whole HTML).
 // The real page in real headless Chromium, offline, against the repo's fake server (bridge-server.cjs). Nothing here touches
 // a live site, and nothing is written: Settings is only opened.
 //   1 · the server holds the build the page runs      -> grey "Page build <id> — up to date" (no red, no "newer")
-//   2 · the server holds a newer build                -> red, the same words as before: "Page build <id> — a newer build
-//       (<id>) is live: reload this page with Ctrl+Shift+R to run it" — both when the bridge's own token changed and when
-//       only another file's token did (a release that touched a stylesheet only is still a newer build)
-//   and each time: one check of the page per opening of Settings (nothing added), the id is not a constant of the script
-//   (Sandbox.build() is what the page's tags say), and a server that cannot answer leaves the line neutral, never red.
+//   2 · the server holds a newer build (another ETag) -> red: "Page build <id> — a newer build is live: reload this page
+//       with Ctrl+Shift+R to run it"
+//   and each time: one HEAD of the page per opening of Settings and no download of it, the id is not a constant of the
+//   script (Sandbox.build() is what the page's tags say), and a server that cannot answer leaves the line neutral, never red.
+//   COST (Oct 2026): opening Settings on a production page reads the light sandbox status only (no census of every family);
+//   "Count the sandbox" reads the counts when it is pressed.
 //   node tests/charm-nest/settings-build-line.cjs [playwright-core dir]
 'use strict';
 const path = require('path'), assert = require('assert'), fs = require('fs');
@@ -18,8 +19,7 @@ const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_mod
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
 const { start } = require('./bridge-server.cjs');
 const HTML = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
-const BRIDGE_TAG = /(charm-nest-bridge\.js\?v=[\w.-]+)/, CSS_TAG = /(charm-nest-activity\.css\?v=[\w.-]+)/;
-assert(BRIDGE_TAG.test(HTML) && CSS_TAG.test(HTML), 'the page has the bridge script tag and the activity stylesheet tag, each with a ?v= token');
+assert(/charm-nest-bridge\.js\?v=[\w.-]+/.test(HTML), 'the page has the bridge script tag with a ?v= token');
 
 async function main() {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
@@ -34,12 +34,21 @@ async function main() {
     const page = await ctx.newPage();
     page.on('pageerror', e => errors.push(e.message));
 
-    // The server's answer to the page's own check (charm-nest-1.html?_=…): what the live HTML is, per scenario. Every
-    // other request goes on to the fake server untouched. `checks` counts the page's check requests.
-    let live = HTML, checks = 0, fail = false;
-    await page.route(/charm-nest-1\.html\?_=/, r => { checks++; return fail ? r.fulfill({ status: 503, contentType: 'text/plain', body: 'down' }) : r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: live }); });
+    // The server's answer to the page's own check (a HEAD of charm-nest-1.html): the live page's ETag, per scenario. Every
+    // other request goes on to the fake server untouched. `checks` counts the page's HEAD checks, `downloads` any GET of the page after its load.
+    let live = '"build-1"', checks = 0, fail = false, loaded = false, downloads = 0;
+    await page.route(/charm-nest-1\.html(\?|$)/, r => {
+      if (r.request().method() === 'HEAD') { checks++; return fail ? r.fulfill({ status: 503, contentType: 'text/plain', body: '' }) : r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', headers: { etag: live }, body: '' }); }
+      if (loaded && r.request().resourceType() !== 'document') downloads++;
+      return r.continue();
+    });
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`);
-    await page.waitForFunction(() => window.CN && window.Sandbox && window.Session && Session.ready(), null, { timeout: 60000 });
+    await page.waitForFunction(() => window.CN && window.Sandbox && window.Session && Session.ready() && window.PageVersion, null, { timeout: 60000 });
+    loaded = true;
+    await page.waitForTimeout(4500);   // (the page's own first check, 4 s after its load, has set its starting point)
+    const known = tag => page.evaluate(t => PageVersion._set(t), tag);   // (the page's ETag at load, as the tests' known starting point)
+    await known('"build-1"');
+    const status = () => srv.st.calls.filter(c => c.op === 'sandboxStatus').map(c => (c.body && c.body.light ? 'light' : 'full'));
 
     const written = () => srv.st.calls.filter(c => c.op && /^(poolPut|poolUpdate|setAllocate|setUpdate|putSheet|deleteSheet|runPut|runArchive|backPut|releasePut|arrivalRecord|customPut|timelineAdd|sandboxStream|sandboxPut|sandboxPullOrders|putCharms|startAgent|startJob|purgeHistory|sandboxReset)$/.test(c.op)).length;
     const writesBefore = written();
@@ -55,7 +64,8 @@ async function main() {
     const ID = '2\\d{7}-[0-9a-f]{6}';
 
     /* ── 1 · the server holds the build the page runs ── */
-    live = HTML;
+    const status0 = status().length;
+    live = '"build-1"';
     const same = await look(/up to date/);
     console.log('1 up to date:', same.text);
     assert(new RegExp(`^Page build ${ID} — up to date$`).test(same.text), 'the line says the page build and that it is up to date: ' + same.text);
@@ -66,28 +76,25 @@ async function main() {
     assert(same.text.includes(same.page), 'the line names it: ' + JSON.stringify([same.page, same.text]));
     assert.strictEqual(same.checks, 1, 'one check of the page per opening of Settings, as before: ' + same.checks);
     assert.strictEqual(same.lines, 1, 'one build line');
+    assert.deepStrictEqual(status().slice(status0), ['light'], 'a production page reads the light status on opening Settings, not the census: ' + JSON.stringify(status().slice(status0)));
 
-    /* ── 2a · a newer build: the bridge's own token changed ── */
-    live = HTML.replace(BRIDGE_TAG, '$1-bl9');
+    /* ── the census only on a press ── */
+    await page.click('#stBuildNote [data-i="count"] button');
+    await page.waitForFunction(() => /In the sandbox now/.test(document.querySelector('#stBuildNote [data-i="now"]').textContent), null, { timeout: 15000 });
+    assert.deepStrictEqual(status().slice(status0), ['light', 'full'], '"Count the sandbox" reads the counts once: ' + JSON.stringify(status().slice(status0)));
+
+    /* ── 2 · a newer build: the page's ETag changed ── */
+    live = '"build-2"';
     const newer = await look(/a newer build/);
-    console.log('2a newer (bridge):', newer.text);
-    assert(new RegExp(`^Page build ${same.page} — a newer build \\(${ID}\\) is live: reload this page with Ctrl\\+Shift\\+R to run it$`).test(newer.text), 'the red line keeps its words and names the page build and the newer one: ' + newer.text);
-    const liveId = /a newer build \(([^)]+)\)/.exec(newer.text)[1];
-    assert.notStrictEqual(liveId, same.page, 'the newer build is not named the same as the page build');
+    console.log('2 newer:', newer.text);
+    assert(new RegExp(`^Page build ${same.page} — a newer build is live: reload this page with Ctrl\\+Shift\\+R to run it$`).test(newer.text), 'the red line names the page build and says what to do: ' + newer.text);
     assert.strictEqual(newer.inline, 'var(--clay)', 'it is red (the page\'s own clay colour, as before)');
     assert.notStrictEqual(newer.color, newer.grey, 'and it looks different from the grey lines: ' + JSON.stringify([newer.color, newer.grey]));
     assert.strictEqual(newer.page, same.page, 'the page build did not move: it is what this page loaded');
-    assert.strictEqual(newer.checks, 1, 'one check per opening of Settings: ' + newer.checks);
+    assert(newer.checks <= 1, 'at most one check per opening of Settings: ' + newer.checks);
 
-    /* ── 2b · a newer build: only the stylesheet's token changed (the bridge's did not) ── */
-    live = HTML.replace(CSS_TAG, '$1-bl9');
-    const css = await look(/a newer build/);
-    console.log('2b newer (stylesheet only):', css.text);
-    assert(new RegExp(`^Page build ${same.page} — a newer build \\(${ID}\\) is live: reload this page with Ctrl\\+Shift\\+R to run it$`).test(css.text) && css.inline === 'var(--clay)', 'a release that changed only another file is a newer build too: ' + css.text);
-    assert.notStrictEqual(/a newer build \(([^)]+)\)/.exec(css.text)[1], liveId, 'and it is a different build from the one above');
-
-    /* ── back to the same: the line is grey again ── */
-    live = HTML;
+    /* ── back to the same (a page reloaded on it): the line is grey again ── */
+    live = '"build-1"'; await known('"build-1"');
     const again = await look(/up to date/);
     assert.strictEqual(again.inline, '', 'when the server holds the page\'s build again the line is grey again');
 
@@ -98,6 +105,7 @@ async function main() {
     assert(new RegExp(`^Page build ${same.page}$`).test(down.text) && down.inline === '' && down.checks === 1, 'an unanswered check leaves the plain page build, not red: ' + JSON.stringify(down));
     fail = false;
 
+    assert.strictEqual(downloads, 0, 'the page is never downloaded again to compare its tokens');
     assert.strictEqual(written(), writesBefore, 'Settings only reads: nothing was written');
     assert.deepStrictEqual(errors, [], 'no script error: ' + errors.join(' | '));
     await ctx.close();

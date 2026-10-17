@@ -6,7 +6,8 @@
 //       it follows a login change at once (another person takes over, sign-out); data-master-only elements show only for the master admin
 //   2 · SIGNED OUT, then a NORMAL EMPLOYEE (the real sorter page): the Workspace menu entry is there but hidden (the other entries are not),
 //       the tab cannot be opened by CN.setMode, Efficiency.open / go, the address (#efficiency, #efficiency/stations, typed or by Back) or a
-//       hand-removed `hidden`: the screen they are on stays; the console makes no request and writes no address; no page error
+//       hand-removed `hidden`: the screen they are on stays; the console makes no request and writes no address; no page error;
+//       COST (Oct 2026): the console's scripts are not even loaded on their page (window.Efficiency stays undefined, no request for them)
 //   3 · NOTHING FLASHES: with the helper's script held back, the entry is hidden in the page as served and stays hidden for a normal employee
 //   4 · the MASTER ADMIN: the entry shows (after the server's answer), opens the tab, the passcode is still asked; a deep link
 //       (#efficiency/stations) that arrives before the answer is kept and opened once it is Paul's; and with NO reload: another person signing in
@@ -92,14 +93,14 @@ async function helper() {
   const open = async (ctx, url = sorter) => {
     const page = await ctx.newPage(); page.on('pageerror', e => seen.errs.push(e.message));
     await page.goto(url);
-    await page.waitForFunction(() => window.Efficiency && window.CN && window.CNRole && window.CharmNestMasterAdmin && document.readyState === 'complete', null, { timeout: 60000 });
+    await page.waitForFunction(() => window.CN && window.CNRole && window.CharmNestMasterAdmin && document.readyState === 'complete', null, { timeout: 60000 });
     return page;
   };
   /** the Admin answer for the signed-in name has arrived (either way) */
   const answered = page => page.waitForFunction(() => { const s = CNRole.state(); return s === 'admin' || s === 'role' || s === 'ask' || s === 'none'; }, null, { timeout: 15000 });
   const menu = async page => { if (!(await page.evaluate(() => document.getElementById('moreMenu').open))) await page.click('#moreMenu > summary'); };
   const noTab = async (page, why) => {
-    const s = await page.evaluate(() => ({ mode: CN.S.mode, view: !document.getElementById('efficiencyView').classList.contains('hidden'), shown: Efficiency.state.shown, hash: location.hash, btn: document.querySelector('#moreMenu .moreList button[data-mode="efficiency"]').hidden }));
+    const s = await page.evaluate(() => ({ mode: CN.S.mode, view: !document.getElementById('efficiencyView').classList.contains('hidden'), shown: window.Efficiency ? Efficiency.state.shown : false, hash: location.hash, btn: document.querySelector('#moreMenu .moreList button[data-mode="efficiency"]').hidden }));
     assert.equal(s.view, false, why + ': the screen is not shown'); assert.equal(s.shown, false, why + ': the console is not running'); assert.notEqual(s.mode, 'efficiency', why);
     assert(!/^#efficiency/.test(s.hash), why + ': no efficiency address (' + s.hash + ')');
     return s;
@@ -113,8 +114,9 @@ async function helper() {
     await page.click('#moreMenu > summary');    // (close it)
     const before = seen.eff.length;
     await page.evaluate(() => { CN.setMode('efficiency'); }); await noTab(page, who + ' CN.setMode');
-    await page.evaluate(() => { Efficiency.open(); Efficiency.go('stations'); Efficiency.go('person', 'Ana M.'); Efficiency.go('overview'); Efficiency.api.openPerson('Ana M.'); Efficiency.api.openStations(); }); await noTab(page, who + ' Efficiency.open / go / api');
-    const r = await page.evaluate(() => Efficiency.api.call({ op: 'overview' }).then(() => 'answered', e => (e && e.barred ? 'barred' : String(e && e.message)))); assert.equal(r, 'barred', who + ': the console makes no read');
+    // (COST, Oct 2026: the console is not loaded on this page at all, so there is no Efficiency.open / go / api to call)
+    assert.equal(await page.evaluate(() => typeof window.Efficiency), 'undefined', who + ': the console\'s scripts are not loaded');
+    assert.equal(await page.evaluate(() => performance.getEntriesByType('resource').filter(e => /charm-nest-efficiency/.test(e.name)).length), 0, who + ': not one request for them');
     // the address, typed, and by Back
     for (const h of ['#efficiency', '#efficiency/stations', '#efficiency/person/Ana%20M.']) {
       await page.evaluate(h => { location.hash = h; }, h); await sleep(250);
@@ -123,9 +125,11 @@ async function helper() {
     await page.evaluate(() => { history.pushState(null, '', '#efficiency'); history.pushState(null, '', '#nest'); history.back(); }); await sleep(250); await noTab(page, who + ' Back');
     // a hand-removed `hidden` (the browser's inspector): the entry clicked, the screen un-hidden
     await page.evaluate(() => { const b = document.querySelector('#moreMenu .moreList button[data-mode="efficiency"]'); b.hidden = false; b.click(); document.getElementById('efficiencyView').classList.remove('hidden'); });
-    await sleep(300); const s = await noTab(page, who + ' forced');
-    await page.evaluate(() => { document.querySelector('#moreMenu .moreList button[data-mode="efficiency"]').hidden = true; });
-    assert.equal(await page.evaluate(() => document.getElementById('efficiencyView').classList.contains('hidden')), true, who + ': a screen un-hidden by hand is put away again');
+    await sleep(300);
+    // (the click is refused, so the tab is not opened; the screen un-hidden by hand holds nothing: the console that would fill it was never loaded)
+    assert.equal(await page.evaluate(() => [CN.S.mode !== 'efficiency', document.getElementById('efficiencyView').children.length, typeof window.Efficiency].join('|')), 'true|0|undefined', who + ': un-hidden by hand, the screen is empty and nothing runs');
+    await page.evaluate(() => { document.querySelector('#moreMenu .moreList button[data-mode="efficiency"]').hidden = true; document.getElementById('efficiencyView').classList.add('hidden'); });
+    const s = await noTab(page, who + ' forced');
     assert.equal(seen.eff.length, before, who + ': not one request to employeeEfficiency');
     assert.equal(s.mode, await page.evaluate(() => CN.S.mode));
   }
@@ -135,7 +139,7 @@ async function helper() {
     {
       const html = read('charm-nest-1.html');
       assert(/<button data-mode="efficiency" hidden data-master-only /.test(html), 'the entry is written hidden in the page as served');
-      assert(/<script src="charm-nest-master-admin\.js\?v=[^"]+"><\/script>/.test(html) && /charm-nest-role\.js\?v=[^"]+-ma1"/.test(html) && html.indexOf('<script src="charm-nest-master-admin.js') > html.indexOf('<script src="charm-nest-role.js'), 'the helper loads after the role module, with a version token');
+      assert(/<script src="charm-nest-master-admin\.js\?v=[^"]+"><\/script>/.test(html) && /charm-nest-role\.js\?v=[^"]+-ma1[^"]*"/.test(html) && html.indexOf('<script src="charm-nest-master-admin.js') > html.indexOf('<script src="charm-nest-role.js'), 'the helper loads after the role module, with a version token');
       assert(/"charm-nest-master-admin\.js"/.test(read('scripts/build-public.cjs')), 'and it is in the published asset list');
       const ctx = await context(null); const page = await open(ctx); await answered(page);
       assert.equal(await page.evaluate(() => [CharmNestMasterAdmin.is(), CharmNestMasterAdmin.login(), CharmNestMasterAdmin.state()].join('|')), 'false||none');
@@ -187,6 +191,7 @@ async function helper() {
     /* ── 4 · the master admin ── */
     {
       const ctx = await context('Paul K'); const page = await open(ctx);
+      await page.waitForFunction(() => window.Efficiency, null, { timeout: 30000 });   // (the console loads once the server has said this is the master admin)
       await page.evaluate(() => { Efficiency.options.pollMs = 400; Efficiency.options.liveMs = 400; Efficiency.options.growMs = 0; });
       await page.waitForFunction(() => CharmNestMasterAdmin.is() === true, null, { timeout: 15000 });
       assert.equal(await page.evaluate(() => CharmNestMasterAdmin.login()), 'Paul K.', 'the name as the sorter keeps it (a lone initial gets its dot; the server folds the dot away)');
@@ -224,10 +229,10 @@ async function helper() {
       const pd = await ctxD.newPage(); pd.on('pageerror', e => seen.errs.push(e.message));
       await pd.addInitScript(k => { try { sessionStorage.setItem('cn.eff.key', k); } catch (_) {} }, F.KEY);
       await pd.goto(sorter + '#efficiency/stations');
-      await pd.waitForFunction(() => window.Efficiency && window.CN && document.readyState === 'complete', null, { timeout: 60000 });
+      await pd.waitForFunction(() => window.CN && document.readyState === 'complete', null, { timeout: 60000 });
       assert.equal(await pd.evaluate(() => CN.S.mode), 'nest', 'before the answer: the normal default view, nothing of the screen');
       assert.equal(await pd.evaluate(() => document.getElementById('efficiencyView').classList.contains('hidden')), true);
-      await pd.waitForFunction(() => CN.S.mode === 'efficiency' && location.hash === '#efficiency/stations' && Efficiency.state.tab === 'stations', null, { timeout: 20000 });
+      await pd.waitForFunction(() => CN.S.mode === 'efficiency' && location.hash === '#efficiency/stations' && window.Efficiency && Efficiency.state.tab === 'stations', null, { timeout: 20000 });
       await pd.waitForSelector(`${V}:not(.hidden)`);
       console.log('  ✓ the master admin: entry shows, opens the tab, the passcode is still asked; another sign-in takes it away with no reload and the reads stop; Paul back shows it; a deep link waits for the answer and opens on the stations tab');
       await ctxD.close(); await ctx.close();

@@ -946,7 +946,8 @@ const receipts = [
   const pools = st.list('Charm_Pool');
   assert(pools.length === 4 && pools.filter(p => p.state === 'committed').length === 4, 'four pool rows (3 lines, one ×2) committed: ' + pools.map(p => p.poolId + ':' + p.state).join(' '));
   const runRec = st.doc('Charm_Nest_Runs', run.runId); assert(runRec && runRec.status === 'complete', 'run record complete');
-  const log = st.list('Design_Bridge'); assert(log.length >= 1, 'bridge session recorded');
+  assert.strictEqual(st.list('Design_Bridge').length, 0, 'the bridge log is not sent to the cloud (COST, Oct 2026: nothing read it)');
+  assert(await page.evaluate(() => DesignLink.log.length > 0), 'the page keeps its own log for the console');
   // the commit is idempotent per run: the same request again returns the same result without touching the ledger
   const again = await page.evaluate((ids) => DesignLink.call('complete.commit', { receiptIds: ids, labels: { files: [{ path: 'x' }] }, runId: B.run.runId }), run.committed);
   assert(again.idempotent && again.completed.length === 3, 'second commit for the run is a no-op: ' + JSON.stringify(again));

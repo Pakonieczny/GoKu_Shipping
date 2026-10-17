@@ -265,7 +265,7 @@ async function checkPages() {
   Object.assign(console, quietConsole);
   try {
     const EP = require(dir + '_editPasscode.js'); EP.resetCache();
-    for (const file of ['googleAdsAuthCheck.js', 'googleAdsDiag.js', 'googleConnectionsCheck.js', 'googleMerchantHealth.js', 'shopifyAttributionCheck.js']) {
+    for (const file of ['googleAdsAuthCheck.js', 'googleConnectionsCheck.js', 'googleMerchantHealth.js', 'shopifyAttributionCheck.js']) {
       const mod = require(dir + file), name = file.replace('.js', '');
       const f0 = work();
       const none = seen(await mod.handler({ queryStringParameters: {}, headers: {} }));
@@ -280,7 +280,7 @@ async function checkPages() {
     }
     // An empty passcode in Firebase locks the check pages outright.
     passcode = ''; EP.resetCache();
-    const f2 = work(), locked = seen(await require(dir + 'googleAdsDiag.js').handler({ queryStringParameters: { key: pass }, headers: {} }));
+    const f2 = work(), locked = seen(await require(dir + 'googleAdsAuthCheck.js').handler({ queryStringParameters: { key: pass }, headers: {} }));
     check(locked.statusCode === 403 && JSON.parse(locked.body).code === 'EDIT_PASSCODE_NOT_SET' && JSON.parse(locked.body).error === 'Locked until a passcode is saved in Firebase (Firestore config/editPasscode)' && work() === f2,
       'an empty Firebase passcode locks the check pages (403) before anything is fetched');
   } finally {

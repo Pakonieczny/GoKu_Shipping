@@ -353,9 +353,14 @@
       const bar = d.CNProgress && !c.quiet ? d.CNProgress.start(`Building monogram ${letters.join("")}`) : null;      // (a picture asked for by a list thumbnail alone is made quietly: no bar, no AI)
       try {
         if (bar && bar.set) bar.set(0, 4);
+        // COST (Oct 2026): the edited letters' table (charm-nest-monogram-edits.js, 0.8 MB) is loaded by the page the first time a
+        // monogram is made (d.ready), beside the letters; nothing is built without it (the plain glyphs are not what is cut)
+        const ready = d.ready ? Promise.resolve().then(d.ready).then(() => null, e => e || new Error("the edited letters did not load")) : null;
         let done = 0;
         const parts = await Promise.all(SLOTS.map(([slot], i) => glyph(slot, letters[i], abc).then(g => { if (bar && bar.set) bar.set(++done, 4); if (seq === c.seq) { c.prog = { done, total: 4 }; paint(c); } return g; })));
         if (seq !== c.seq) return;                       // (a newer edit took over: this answer is never shown)
+        const notReady = ready && await ready; if (notReady) throw notReady;
+        if (seq !== c.seq) return;
         await later();                                   // (the spinner is on the screen before the joining starts)
         if (seq !== c.seq) return;
         const trio = { left: parts[0], middle: parts[1], right: parts[2] };

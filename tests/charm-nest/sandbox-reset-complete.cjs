@@ -164,7 +164,8 @@ async function seed(sb) {
   await L({ op: 'runPut', run: { runId: RUN, status: 'complete', step: 'complete', day: DAY, lines: { [`${A}_10010`]: { orderId: A, key: `${A}_10010` } } } });
   await L({ op: 'runArchive', runId: RUN, parts: [{ json: JSON.stringify({ [`${C}_30030`]: { orderId: C, key: `${C}_30030` } }) }] });
   await L({ op: 'releasePut', released: { gf: DAY }, lastReleased: { gf: DAY } });
-  await L({ op: 'bridgeLog', session: SESSION, meta: { by: 'paul' }, rows: [{ t: Date.now(), dir: 'cmd', type: 'ping' }, { t: Date.now(), dir: 'evt', type: 'pong' }] });
+  // (COST, Oct 2026: bridgeLog writes nothing any more; a session's log written before that is still there to be wiped)
+  store.set(`${P}Design_Bridge/${SESSION}`, { sessionId: SESSION, by: 'paul', updatedAt: new Date() }); store.set(`${P}Design_Bridge/${SESSION}/log/l1`, { t: Date.now(), dir: 'cmd', type: 'ping' }); store.set(`${P}Design_Bridge/${SESSION}/log/l2`, { t: Date.now(), dir: 'evt', type: 'pong' });
   await L({ op: 'arrivalRecord', orders: [{ id: A, createTs: 1 }, { id: C, createTs: 1 }] });
   // cancel records ("kept for good") and the history a restore keeps; the order's timeline, written by each op that stamps it
   await L({ op: 'cancelPut', orderId: C, by: 'Etsy', why: 'buyer cancelled', record: { buyer: 'Buyer C', lines: [{ transactionId: '30030', title: 'Charm' }] } });

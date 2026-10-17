@@ -991,7 +991,7 @@ const Ladder = window.Ladder = (() => {
 })();
 
 const DesignLink = window.DesignLink = (() => {
-  const S_ = { frame: null, nonce: null, id: 0, pending: new Map(), state: null, log: [], logBuf: [], up: false, control: false, misses: 0, hb: null, flushT: null, dropped: 0, lastHello: 0, count: 0, replies: 0, errors: 0 };
+  const S_ = { frame: null, nonce: null, id: 0, pending: new Map(), state: null, log: [], up: false, control: false, misses: 0, hb: null, dropped: 0, lastHello: 0, count: 0, replies: 0, errors: 0 };
   const origin = () => (S.settings.dsOrigin || DEFAULTS.dsOrigin).replace(/\/+$/, "");
   const frameUrl = () => `${origin()}/design-1.html?bridge=1${WORKSPACE_SANDBOX ? "&sandbox=1" : "&sandbox=0"}`;
   /* The station's calls to the emulated Etsy and the order archive need the operator passcode once one is set: it goes
@@ -1054,7 +1054,6 @@ const DesignLink = window.DesignLink = (() => {
     agent({ bridge: true }, "DS", `Session ${S_.nonce.slice(0, 4)} open on ${st.bench} · ${st.counts.open} open orders (${st.counts.hydrated} read) · ${st.selection.length} selected · Etsy ${st.etsy.signedIn ? "signed in" : "NOT signed in"}${st.releasedFromPreviousSession && st.releasedFromPreviousSession.length ? ` · released ${st.releasedFromPreviousSession.length} lock(s) from a previous session` : ""}`);
     if (!st.etsy.signedIn) toast("The Design Station is not signed in to Etsy — press Connect Etsy", "bad", 8000);
     startHeartbeat(); renderConsole(); if (B.run && window.RunCtl) RunCtl.renderBanner();   // a stopped run's banner says what is left to press
-    api("charmNestLibrary", { op: "bridgeLog", session: S_.nonce, rows: [], meta: { sorterClientId: S_.nonce, bench: st.bench, startedAt: Date.now(), version: st.version } }).catch(() => {});
     return st;
   }
   function call(type, args = {}, { timeoutMs = 120000, onProgress, quiet = false } = {}) {
@@ -1153,13 +1152,11 @@ const DesignLink = window.DesignLink = (() => {
   function logLine(dir, type, payload, ms, err) {
     const row = { t: Date.now(), dir, type, ms: ms == null ? null : Math.round(ms), payload: slimForLog(payload), err: !!err };
     S_.log.push(row); if (S_.log.length > 400) S_.log.shift();
-    S_.logBuf.push(row);
-    if (!S_.flushT) S_.flushT = setTimeout(flushLog, 2500);
     renderConsole();
   }
-  // (rows wait in the buffer while the cloud is offline, the newest thousand of them, and go when it is back: they were
-  // taken out first and dropped)
-  function flushLog() { S_.flushT = null; if (!S.cloud.ok || !S_.nonce) { S_.logBuf.splice(0, S_.logBuf.length - 1000); return; } const rows = S_.logBuf.splice(0, 200); if (!rows.length) return; api("charmNestLibrary", { op: "bridgeLog", session: S_.nonce, rows, meta: { dropped: S_.dropped } }).catch(() => {}); if (S_.logBuf.length) S_.flushT = setTimeout(flushLog, 2500); }
+  /* COST (Oct 2026): the log is the page's own (the console below, the newest 400 rows). It was also sent to Firestore
+     (Design_Bridge/{session}/log, a write per row every 2.5 s, plus the session's document and the later deletes) and
+     nothing ever read it back, so it is no longer sent. */
   function startHeartbeat() {
     stopHeartbeat();
     const every = Math.max(2, +S.settings.heartbeatS || 5) * 1000;
@@ -1241,16 +1238,19 @@ const DesignLink = window.DesignLink = (() => {
   }
   async function release() { S_.control = false; stopHeartbeat(); try { await call("release", {}, { timeoutMs: 5000 }); } catch (_) {} S_.up = false; S_.veil && S_.veil.classList.remove("hidden"); Dock.layout(); renderConsole(); }
   function ensure() { if (S_.control && S_.up) return Promise.resolve(S_.state); if (!S_.frame) mount(document.querySelector("#designView .dsFrameHost") || Views.designHost()); return open(); }
+  // COST (Oct 2026): only what is on screen is painted: the 200 log rows were rebuilt on every line with the panel hidden
+  // (another tab, folded, a narrow window); showing the tab or unfolding the panel paints it (Views.onShow, the fold)
+  const shown = el => !!el && el.offsetParent !== null;
   function renderConsole() {
+    const tb = document.getElementById("tabDesignN"); if (tb) tb.textContent = S_.control && !S_.up ? "!" : "";
     const host = document.getElementById("dsConsole"); if (!host) return;
     const st = S_.state || {};
-    const kv = host.querySelector(".kv"); if (kv) kv.innerHTML = `<b>${S_.control ? (S_.up ? "Connected" : "Link down") : "Not in control"}</b> · session <span class="mono">${S_.nonce ? S_.nonce.slice(0, 6) : "—"}</span><br>${S_.count} commands · ${S_.replies} replies · ${S_.errors} errors · ${S_.dropped} dropped · ${S_.pending.size} pending<br>${st.bench ? `bench ${esc(st.bench)} · ${esc(st.version || "")} · employee ${esc(st.employee || "—")}` : ""}<br>${st.etsy ? `Etsy: ${st.etsy.signedIn ? "signed in" + (st.etsy.expiresAt ? ` · token to ${new Date(st.etsy.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "") : "<span style='color:#8a3a26'>NOT signed in</span>"}` : ""}<br>${st.counts ? `${st.counts.open} open · ${st.counts.selected} selected · ${st.counts.claimed} claimed · ${st.counts.locked} locked elsewhere` : ""}<br>Etsy calls: <b>${hourCalls()}</b> this hour of ${etsyCap()} · ${E_.sessionTotal} by this sorter · ${E_.stationTotal} on the station`;
+    const kv = host.querySelector(".kv"); if (shown(kv)) kv.innerHTML = `<b>${S_.control ? (S_.up ? "Connected" : "Link down") : "Not in control"}</b> · session <span class="mono">${S_.nonce ? S_.nonce.slice(0, 6) : "—"}</span><br>${S_.count} commands · ${S_.replies} replies · ${S_.errors} errors · ${S_.dropped} dropped · ${S_.pending.size} pending<br>${st.bench ? `bench ${esc(st.bench)} · ${esc(st.version || "")} · employee ${esc(st.employee || "—")}` : ""}<br>${st.etsy ? `Etsy: ${st.etsy.signedIn ? "signed in" + (st.etsy.expiresAt ? ` · token to ${new Date(st.etsy.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "") : "<span style='color:#8a3a26'>NOT signed in</span>"}` : ""}<br>${st.counts ? `${st.counts.open} open · ${st.counts.selected} selected · ${st.counts.claimed} claimed · ${st.counts.locked} locked elsewhere` : ""}<br>Etsy calls: <b>${hourCalls()}</b> this hour of ${etsyCap()} · ${E_.sessionTotal} by this sorter · ${E_.stationTotal} on the station`;
     const cb = host.querySelector("#dsConnectEtsy"); if (cb) { const signed = !!(st.etsy && st.etsy.signedIn); cb.classList.toggle("gold", !signed); cb.classList.toggle("ghost", signed); cb.textContent = signed ? "Etsy signed in ✓" : "Connect Etsy"; }
     const sw = host.querySelector("#dsControl"); if (sw) { sw.classList.toggle("on", S_.control); sw.textContent = S_.control ? "Release" : "Take control"; }
-    const log = host.querySelector(".log"); if (log) { const rows = S_.log.slice(-200); log.innerHTML = rows.map(r => `<div class="row ${r.dir}${r.err ? " err" : ""}"><span class="d">${fmtT(r.t)}</span><span class="ty">${r.dir === "cmd" ? "→" : r.dir === "reply" ? "←" : "·"} ${esc(r.type)}</span><span class="pl">${esc(r.payload ? JSON.stringify(r.payload) : "")}</span><span class="ms">${r.ms != null ? r.ms + "ms" : ""}</span></div>`).join(""); log.scrollTop = log.scrollHeight; }
-    const tb = document.getElementById("tabDesignN"); if (tb) tb.textContent = S_.control && !S_.up ? "!" : "";
+    const log = host.querySelector(".log"); if (shown(log)) { const rows = S_.log.slice(-200); log.innerHTML = rows.map(r => `<div class="row ${r.dir}${r.err ? " err" : ""}"><span class="d">${fmtT(r.t)}</span><span class="ty">${r.dir === "cmd" ? "→" : r.dir === "reply" ? "←" : "·"} ${esc(r.type)}</span><span class="pl">${esc(r.payload ? JSON.stringify(r.payload) : "")}</span><span class="ms">${r.ms != null ? r.ms + "ms" : ""}</span></div>`).join(""); log.scrollTop = log.scrollHeight; }
   }
-  return { mount, open, call, release, ensure, feed, meter, etsyBudgetOk, etsyReadout, connectEtsy, etsy: () => ({ hour: hourCalls(), cap: etsyCap(), session: E_.sessionTotal, station: E_.stationTotal, meter: E_.station }), state: () => S_.state, log: S_.log, up: () => S_.up, inControl: () => S_.control, nonce: () => S_.nonce, renderConsole, flushLog, origin, frameUrl, _S: S_, _E: E_ };
+  return { mount, open, call, release, ensure, feed, meter, etsyBudgetOk, etsyReadout, connectEtsy, etsy: () => ({ hour: hourCalls(), cap: etsyCap(), session: E_.sessionTotal, station: E_.stationTotal, meter: E_.station }), state: () => S_.state, log: S_.log, up: () => S_.up, inControl: () => S_.control, nonce: () => S_.nonce, renderConsole, origin, frameUrl, _S: S_, _E: E_ };
 })();
 
 /* ── the dock: where the station frame is kept. "full" over the Design Station tab's placeholder; "live", out of sight on
@@ -1321,7 +1321,7 @@ const Views = window.Views = (() => {
     { const console_ = v.querySelector("#dsConsole");
       const btn = document.createElement("button"); btn.type = "button"; btn.className = "dsFold";
       const paint = () => { const on = v.classList.contains("dsWide"); btn.textContent = on ? "‹ Panel" : "Hide panel ›"; btn.title = on ? "Bring the controls back" : "Fold the controls away and give the station the whole tab"; btn.setAttribute("aria-expanded", on ? "false" : "true"); };
-      btn.onclick = () => { const on = !v.classList.contains("dsWide"); v.classList.toggle("dsWide", on); localStorage.setItem("cn.dsWide", on ? "1" : "0"); paint(); Dock.schedule(); };
+      btn.onclick = () => { const on = !v.classList.contains("dsWide"); v.classList.toggle("dsWide", on); localStorage.setItem("cn.dsWide", on ? "1" : "0"); paint(); Dock.schedule(); if (!on) DesignLink.renderConsole(); };
       v.classList.toggle("dsWide", localStorage.getItem("cn.dsWide") === "1");
       paint(); console_.insertBefore(btn, console_.firstChild); }
     const host = v.querySelector(".dsFrameHost");
@@ -2609,12 +2609,12 @@ const PageVersion = (() => {
   const MSG = "The app was updated while this page was open: reload the page (Ctrl+Shift+R, or Cmd+Shift+R), then continue.";
   async function check(force) {
     if (stale) return true;
-    const now = await tag(); if (!now) return false;
+    const now = await tag(); if (!now) return null;   // (null: nothing known; a caller reads it as not stale)
     if (base == null) { base = now; return false; }
     if (now !== base) { stale = true; if (!said || force) { said = true; try { toast(MSG, "bad", 20000, "page-stale"); } catch (_) {} } }
     return stale;
   }
-  function start() { if (timer) return; setTimeout(() => check(false), 4000); timer = setInterval(() => check(false), 15 * 60000); document.addEventListener("visibilitychange", () => { if (!document.hidden) check(false); }); }
+  function start() { if (timer) return; setTimeout(() => check(false), 4000); timer = setInterval(() => { if (!document.hidden) check(false); }, 15 * 60000);   /* COST (Oct 2026): not while hidden; looked at again, it checks */ document.addEventListener("visibilitychange", () => { if (!document.hidden) check(false); }); }
   return { start, check, message: MSG, isStale: () => stale, _set: v => { base = v; stale = false; said = false; } };   // (tests: a known starting point)
 })();
 window.PageVersion = PageVersion; PageVersion.start();
@@ -8479,7 +8479,9 @@ const Engrave = window.Engrave = (() => {
   const MonoUI = () => {
     if (monoUI) return monoUI;
     monoUI = (window.CharmNestMonogramUI && window.CharmNestMonogram && window.CharmNestMonogramUI.make({
-      doc: document, Engine: window.CharmNestMonogram, rows: () => Orders.rows(), skus: () => [...B.master.entries.keys()], Master, Pool, Geom: G, P, CustomSheet: window.CustomSheet,
+      doc: document, Engine: window.CharmNestMonogram, rows: () => Orders.rows(),
+      // COST (Oct 2026): the edited letters load the first time a monogram is made, not with the page (charm-nest-monogram.js reads window.CharmNestMonogramEdits)
+      ready: () => window.CharmNestMonogramEdits || typeof window.cnLoadScript !== "function" ? true : window.cnLoadScript("charm-nest-monogram-edits.js?v=20261016-ed2"), skus: () => [...B.master.entries.keys()], Master, Pool, Geom: G, P, CustomSheet: window.CustomSheet,
       itemOf: row => window.Review && Review.customItemFor ? Review.customItemFor(row.key, row) : null, settings: () => S.settings, saveSettings, toast, CNProgress: window.CNProgress,
       changed: () => monoMoved(),   // (an approval: drawn again a moment later, so the card that was approved is seen going up to Decided first: monoApproved)
       // (MONOSEAL, Paul 17 Oct 2026: approving a monogram is a stamp, as approving an engraving is) who presses: the name signed in here, else the small name bar (a string, or a promise of the name; "" when it is put away)
@@ -13267,7 +13269,8 @@ const CustomSheet = window.CustomSheet = (() => {
       repairAt = Date.now(); await api("charmNestLibrary", { op: "customSaveRepair", etsy: true }, { quiet: true });
     } catch (_) { /* the next pass */ }
   }
-  setInterval(() => { try { keepRepair("beat"); } catch (_) { /* quiet */ } }, 10 * 60 * 1000);
+  // COST (Oct 2026): not in a hidden tab (the next beat after it is looked at again does it; a load and online still do)
+  setInterval(() => { try { if (!document.hidden) keepRepair("beat"); } catch (_) { /* quiet */ } }, 10 * 60 * 1000);
   const keepKick = reason => { try { const kp = keeperOf(); if (kp) { kp.resume(reason || "kick"); keepPaintLater(); if (reason === "load" || reason === "online") setTimeout(() => keepRepair(reason), 3000); } } catch (err) { console.warn("Save keeper", err); } };
   /** This workspace's intents only (a sandbox page never runs a real save, and a real page never runs a rehearsal). */
   const mine = rec => !!rec && !!rec.sandbox === !!WORKSPACE_SANDBOX;
@@ -15605,13 +15608,13 @@ const Sandbox = window.Sandbox = (() => {
   /* The build a page runs is what that page loaded, never a constant typed into a file (Paul, 3 Oct: "it still didn't purge
      the system fully": which build was he running?). A constant typed here went stale with the next release and Settings
      was red for everyone from then on. The build is read from the page's own tags: the ?v= cache token of every script and
-     stylesheet in its HTML (the token is what makes the browser fetch a changed file). The live side is the same read
-     of the HTML the server holds now (latestBuild, below), so the two are equal exactly when the page runs what is live.
+     stylesheet in its HTML (the token is what makes the browser fetch a changed file). Whether a newer build is live
+     is PageVersion's HEAD check of the page (its ETag); COST (Oct 2026): it was a no-store download of the whole HTML.
      A page kept open across a deploy, or a page file kept by a cache, still carries its old tokens and says so. */
   const buildOf = root => {
     try {
-      const toks = [];
-      root.querySelectorAll("script[src],link[rel~='stylesheet'][href]").forEach(e => { const u = new URL(e.getAttribute("src") || e.getAttribute("href"), "http://x/"), v = u.searchParams.get("v"); if (v) toks.push(u.pathname.split("/").pop() + "?v=" + v); });
+      const toks = [];   // (a script the page loads later, data-lazy (cnLoadScript), is not part of the page as served)
+      root.querySelectorAll("script[src]:not([data-lazy]),link[rel~='stylesheet'][href]").forEach(e => { const u = new URL(e.getAttribute("src") || e.getAttribute("href"), "http://x/"), v = u.searchParams.get("v"); if (v) toks.push(u.pathname.split("/").pop() + "?v=" + v); });
       if (!toks.length) return null;
       const sig = toks.sort().join(" "); let h = 2166136261;
       for (let i = 0; i < sig.length; i++) { h ^= sig.charCodeAt(i); h = Math.imul(h, 16777619); }
@@ -15863,7 +15866,7 @@ const Sandbox = window.Sandbox = (() => {
   function paintLine() { try { const el = document.getElementById("stSbStatus"); if (el) { const t = streamText(); if (el.textContent !== t) el.textContent = t; } } catch (_) {} }
   async function refresh(light) {
     if (!S.cloud.ok) return null;if(refreshTask)return refreshTask;
-    refreshTask=(async()=>{try {status=await api("charmNestLibrary",light?{op:"sandboxStatus",light:true}:{op:"sandboxStatus"});}catch(e){status={error:e.message};}if(status&&status.pullLimit&&+status.pullLimit.limit>0)pullCfg=status.pullLimit;render();paintLine();try{paintPull();}catch(_){}return status;})();
+    refreshTask=(async()=>{try {status=await api("charmNestLibrary",light?{op:"sandboxStatus",light:true,withLimit:true}:{op:"sandboxStatus"});}catch(e){status={error:e.message};}if(status&&status.pullLimit&&+status.pullLimit.limit>0)pullCfg=status.pullLimit;render();paintLine();try{paintPull();}catch(_){}return status;})();
     try{return await refreshTask;}finally{refreshTask=null;}
   }
   /** "Rehearse a run in the sandbox": a start from the real orders. The sandbox is switched on and the sorter reloads with the
@@ -15920,6 +15923,17 @@ const Sandbox = window.Sandbox = (() => {
      and counted by every reset (Paul, 10 Oct: "ALL other data should be wiped": the readings Claude was paid for and the
      photo framing are the sandbox's too now). Only the epoch and the reset's own marks stay. */
   const BX = () => window.CharmNestSandboxBrowser || null;
+  /* COST (Oct 2026): the registry and the engine are no longer tags of the page (a blocking script in its head for every
+     production page): they load here, at once on a page in the sandbox, when Settings opens, and before anything that
+     clears or counts the browser's side (wipe, browserLeft, wipeBrowser). The tokens are the ones the tags had. */
+  const SBX_FILES = ["charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1-spl1-sv1-advsb1-krep1-kt1", "charm-nest-sandbox-browser.js?v=20261010-wb1"];
+  let sbxTask = null, hooked = false;
+  function loadScripts() {
+    const done = () => { if (!hooked && BX()) { hooked = true; try { BX().setHooks(memoryHooks); } catch (_) {} } return !!(BX() && window.CharmNestSandboxFamilies); };
+    if (done()) return Promise.resolve(true);
+    if (typeof window.cnLoadScript !== "function") return Promise.resolve(false);
+    return sbxTask ||= window.cnLoadScript(...SBX_FILES).then(done, e => { sbxTask = null; console.warn("sandbox scripts", e); return false; });
+  }
   const ready_ = () => { try { return !!(BX() && window.CharmNestSandboxFamilies && BX().entries().length); } catch (_) { return false; } };   // (a registry file the browser kept from before the list existed has no entries: nothing is deleted then)
   let barred = false;
   /** From the first press to the reload, no timer, queue or pagehide of this page writes the sandbox's keys back. */
@@ -15953,14 +15967,16 @@ const Sandbox = window.Sandbox = (() => {
     try { if (stream) n += 1; if (window.SimClock && SimClock.on()) n += 1; } catch (_) {}
     return n;
   }
-  try { if (BX()) BX().setHooks({ memoryCount, memoryClear: () => { if (!on()) return 0; const n = memoryCount(); clearMemory(); return n; } }); } catch (_) {}
+  const memoryHooks = { memoryCount, memoryClear: () => { if (!on()) return 0; const n = memoryCount(); clearMemory(); return n; } };
+  if (on() || BX()) loadScripts();   // (a page in the sandbox needs them from the start: the write guard, the stand-down)
   /** What this browser still holds of the sandbox, per store of the registry: [{ key, label, n }], READ ONLY (no write, no
       reload, no call to the cloud). n is null for a store this page cannot count (the Design Station's own). */
-  async function browserLeft() { try { return BX() ? await BX().left() : []; } catch (_) { return []; } }
+  async function browserLeft() { try { await loadScripts(); return BX() ? await BX().left() : []; } catch (_) { return []; } }
   /** What this browser kept of the sandbox: the saved workspace (IndexedDB), the queues, drafts and journals (localStorage),
       and every other store of the registry. own: this page is the sandbox's (it stops saving and sending, and its memory
       goes); else only the stored sandbox side goes. */
   async function wipeBrowser(own) {
+    await loadScripts();
     let workspace = 0; const SS = window.Session;
     try { if (!own && SS && SS.bumpEpoch) SS.bumpEpoch("sandbox"); if (own) { if (SS && SS.discard) workspace = await SS.discard(); } else if (SS && SS.forgetScope) workspace = await SS.forgetScope("sandbox"); }
     catch (e) { console.warn("sandbox workspace", e); }
@@ -16049,6 +16065,7 @@ const Sandbox = window.Sandbox = (() => {
        wipes the same cloud records and the same stored browser side, and leaves its own live state alone. */
     const own = on(), reload = how.reload != null ? !!how.reload : own; let finished = false;
     const stop = text => { line(text, true); toast(text, "bad", 12000); noteReset({ ok: false, verb, text, records: tally.records, files: tally.files }); return { ok: false, text }; };
+    await loadScripts();
     if (!ready_()) return stop("Nothing was deleted: this page's list of what to clear did not load. Reload with Ctrl+Shift+R and press again.");
     spin(`${how.verb || "Resetting"} the sandbox…`);
     // no arrivals check may sweep while the records go: with the stream deleted the emulator lists the whole snapshot
@@ -16248,21 +16265,36 @@ const Sandbox = window.Sandbox = (() => {
     set(line("now"), nowText()); set(line("kept"), keptText());
     readBrowser().then(() => set(line("now"), nowText())).catch(() => {});   // (the browser's own counts follow: IndexedDB and the cache answer later)
   }
-  const latestBuild = async () => { try { const r = await fetch("charm-nest-1.html?_=" + Date.now(), { cache: "no-store" }); return r.ok ? buildOf(new DOMParser().parseFromString(await r.text(), "text/html")) : null; } catch (_) { return null; } };   // (the one check there already was; a parsed copy loads nothing)
+  /* COST (Oct 2026): opening Settings used to read the whole census (sandboxStatus: a count of every family, the bucket's
+     listings, ~40 reads) and download the page's HTML uncached to compare its tokens. Now the build is PageVersion's own
+     HEAD check (no body), and a production page reads the light status (the snapshot and the pull number, 2 reads); the
+     counts are read when "Count the sandbox" is pressed. A page in the sandbox still counts on opening (it is what the
+     operator is looking at). */
   async function paintInfo(host) {
     host = host || document.getElementById("stBuildNote"); if (!host) return;
     const line = id => { let n = host.querySelector(`[data-i="${id}"]`); if (!n) { n = document.createElement("div"); n.dataset.i = id; host.appendChild(n); } return n; };
     const set = (n, text, bad) => { n.textContent = text; n.style.color = bad ? "var(--clay)" : ""; };
     try { paintPull(); } catch (_) {}   // (the number box shows what the page holds now; the status read below brings the cloud's)
     const b = line("build"), l = line("last"), n = line("now"), kp = line("kept"), cur = buildOf(document);
+    if (!BX() || !window.CharmNestSandboxFamilies) loadScripts().then(ok => { if (ok) set(n, nowText()); }).catch(() => {});
     set(b, cur ? `Page build ${cur.id}` : "Page build unknown", false);
     set(l, lastText(), (lsJSON(LAST) || {}).ok === false); set(n, nowText()); set(kp, keptText());
-    refresh().then(st => (st && st.light ? refresh() : st)).then(() => { set(n, nowText()); set(kp, keptText()); return readBrowser(); }).then(() => set(n, nowText())).catch(() => {});   // (a production page's first read is the light one: Settings wants the counts)
-    const latest = await latestBuild();
-    if (cur && latest && latest.sig !== cur.sig) set(b, `Page build ${cur.id} — a newer build (${latest.id}) is live: reload this page with Ctrl+Shift+R to run it`, true);
-    else if (cur && latest) set(b, `Page build ${cur.id} — up to date`);
+    const full = () => refresh().then(st => (st && st.light ? refresh() : st)).then(() => { set(n, nowText()); set(kp, keptText()); return readBrowser(); }).then(() => set(n, nowText()));
+    const cb0 = host.querySelector('[data-i="count"]');
+    if (on()) { if (cb0) cb0.remove(); full().catch(() => {}); }
+    else {
+      // (production: one light read; the census only on a press. The button sits above the two lines it fills)
+      const cb = cb0 || line("count"); if (!cb0) host.insertBefore(cb, n);
+      if (!cb.firstChild) { const btn = document.createElement("button"); btn.type = "button"; btn.className = "btn ghost xs"; btn.textContent = "Count the sandbox"; btn.title = "Reads how many records of every kind the sandbox holds now, and what is kept (about 40 reads)";
+        btn.onclick = () => { btn.disabled = true; btn.textContent = "Counting…"; full().catch(() => {}).finally(() => { btn.disabled = false; btn.textContent = "Count again"; }); };
+        cb.appendChild(btn); }
+      if (!status || status.light || status.error) refresh(true).then(() => { set(n, nowText()); set(kp, keptText()); }).catch(() => {});
+    }
+    const stale = cur && window.PageVersion ? await PageVersion.check(false) : null;   // (null: the server gave no ETag, or no answer: the line stays plain)
+    if (cur && stale === true) set(b, `Page build ${cur.id} — a newer build is live: reload this page with Ctrl+Shift+R to run it`, true);
+    else if (cur && stale === false) set(b, `Page build ${cur.id} — up to date`);
   }
-  return { on, refresh, enable, afterReload, reset, wipe, forgetStores, standDown, staleStop, restoredStream, runId: () => streamIdent, browserLeft, mountPanel, render, status: () => status, want, pullLimit: () => pullCfg, paintPull, streaming, done, speed, ready, advance, restream, label, streamText, held, start, heldText, pulling, pulled: pulledNow, checkSet, paintInfo, build: pageBuild, pageBuild, lastText, nowText, keptText, paintLines, seed: () => stream && stream.seed, stream: () => stream };
+  return { on, refresh, enable, afterReload, reset, wipe, forgetStores, loadScripts, standDown, staleStop, restoredStream, runId: () => streamIdent, browserLeft, mountPanel, render, status: () => status, want, pullLimit: () => pullCfg, paintPull, streaming, done, speed, ready, advance, restream, label, streamText, held, start, heldText, pulling, pulled: pulledNow, checkSet, paintInfo, build: pageBuild, pageBuild, lastText, nowText, keptText, paintLines, seed: () => stream && stream.seed, stream: () => stream };
 })();
 
 
@@ -21510,14 +21542,13 @@ async function bootBridge() {
   offerRuns();
   /* The cloud back after a page load, a sleep or an outage it was offline for (the page's cloudRecovered): what the boot
      skipped without it is done now, the run's record is saved again (its "Not saved online" goes), back files waiting
-     for it are written, and the bridge log kept meanwhile is sent. */
+     for it are written. */
   window.addEventListener("cn-cloud-back", () => {
     Orders.loadMaps().catch(() => {}); Master.load().catch(() => {}); offerRuns();
     Cleanups.check().catch(() => {});
     if (B.run && B.run.saveError) RunCtl.save(B.run).catch(() => {});
     if (!recoveryFailed) Engrave.resumeBacks();
     if (!recoveryFailed) CustomSheet.load({ force: true }).catch(e => console.warn("Custom design recovery", e));
-    DesignLink.flushLog();
   });
   // the Design Station frame mounts on first visit to its tab; Auto mode mounts it now
   // (not in a sandbox that was cleaned: it waits for Start, which starts Auto's run as it does here)

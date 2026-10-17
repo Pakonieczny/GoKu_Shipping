@@ -78,10 +78,9 @@ const ENDPOINTS = [
   ['googleMerchantHealth.js', { format: 'json', key: 'secret' }],
   ['shopifyAttributionCheck.js', { format: 'json', key: 'secret' }],
   ['shopifyAttributionCheck.js', { format: 'json', diagnose: '1', key: 'secret' }],
-  ['googleAdsAuthCheck.js', { key: 'secret' }],
-  ['googleAdsDiag.js', { key: 'secret' }]
+  ['googleAdsAuthCheck.js', { key: 'secret' }]
 ];
-const CHECKS = ['googleConnectionsCheck.js', 'googleMerchantHealth.js', 'shopifyAttributionCheck.js', 'googleAdsAuthCheck.js', 'googleAdsDiag.js'];
+const CHECKS = ['googleConnectionsCheck.js', 'googleMerchantHealth.js', 'shopifyAttributionCheck.js', 'googleAdsAuthCheck.js'];
 
 (async () => {
   for (const [file, params] of ENDPOINTS) {

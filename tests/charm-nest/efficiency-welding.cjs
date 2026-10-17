@@ -65,6 +65,7 @@ function welding(now, o = {}) {
   const load = async ctx => {
     const page = await ctx.newPage(), errs = track(page);
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`);
+    await page.evaluate(() => loadEfficiency());   // (COST, Oct 2026: the console's scripts load on the master admin's page only; this test mounts its parts by itself)
     await page.waitForFunction(() => window.EfficiencyStations && window.QRCode && window.Motion && window.OrderWin && document.readyState === 'complete', null, { timeout: 60000 });
     await page.evaluate(k => sessionStorage.setItem('cn.eff.key', k), F.KEY);
     return { page, errs };

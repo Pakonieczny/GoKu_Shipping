@@ -473,6 +473,7 @@ async function partD(srv) {
     page.on('pageerror', e => { errors.push(e.message); console.error('page error:', e.message); });
     page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push('console: ' + m.text().slice(0, 200)); });
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
+    await page.evaluate(() => loadEfficiency());   // (COST, Oct 2026: the console's scripts load on the master admin's page only; this test mounts its parts by itself)
     await page.waitForFunction(() => window.CN && window.StationSession && window.LaserSheetTime && window.EfficiencyEmployee && window.EfficiencyLaser && window.EfficiencyStations && window.EfficiencyCharts && CN.S.cloud.ok === true, null, { timeout: 60000 });
     ok('the page loads the new module and the new section\'s file');
 

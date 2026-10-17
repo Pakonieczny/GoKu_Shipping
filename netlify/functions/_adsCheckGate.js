@@ -1,8 +1,8 @@
 // netlify/functions/_adsCheckGate.js
 // ─────────────────────────────────────────────────────────────────────────────
 // The passcode door for the Ad Autopilot's check pages — the ones opened by URL
-// rather than from the console: googleAdsAuthCheck, googleAdsDiag,
-// googleConnectionsCheck, googleMerchantHealth and shopifyAttributionCheck.
+// rather than from the console: googleAdsAuthCheck, googleConnectionsCheck,
+// googleMerchantHealth and shopifyAttributionCheck.
 //
 // They only read, but what they read is not public (account and customer IDs,
 // credential shapes, approvals and the mutate ledger, order IDs and values), and
