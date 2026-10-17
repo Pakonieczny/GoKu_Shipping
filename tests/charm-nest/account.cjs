@@ -139,6 +139,8 @@ SC.chip = async (br, srv, errors) => {
     assert.equal(await page.getAttribute('#cnAcctChip', 'aria-haspopup'), 'dialog');
     // nothing is open by itself and no request is made to open or close it
     await wait(2600);
+    // (the page's own start-up reads - the cancel list, the pending custom saves, a version check - can still be arriving on a slow computer: the count below is taken once the page has been quiet for 1.5 s, so only what opening the panel does is counted)
+    for (let q = ctx.rec.reqs, since = Date.now(), t0 = Date.now(); Date.now() - t0 < 30000 && Date.now() - since < 1500; await wait(100)) if (ctx.rec.reqs !== q) { q = ctx.rec.reqs; since = Date.now(); }
     assert.equal(await page.$('#cnAcctPanel'), null, 'the panel does not open by itself on load');
     assert.equal((await snap(page)).bars.length, 0, 'the load-time name hint is replaced by the chip: no name bar appears by itself');
     const reqs0 = ctx.rec.reqs;

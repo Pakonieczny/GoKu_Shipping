@@ -57,7 +57,9 @@ for (let k = 0; k < SETS; k++) { const mine = Array.from({ length: PER }, (_, i)
     // 4 · a Library with nothing on screen (a fresh page, the internet down): it says it could not load, with Try again - not an empty list
     st.down = true; await page.reload(); await ready();
     await page.evaluate(() => CN.setMode('library'));
-    await page.waitForFunction(() => /Could not load/.test(document.getElementById('libBody').innerText), null, { timeout: 30000 });
+    // (the reloaded page opens in the Library, so its own first read (the cloud check) and the one asked for just above each paint "Loading sets…" then the error, one after the other:
+    //  wait until the error has stood still for a moment, or this reads the first error while the second read has already put "Loading sets…" over it)
+    await page.waitForFunction(() => { const t = document.getElementById('libBody').innerText, now = performance.now(); if (t !== window.__libT) { window.__libT = t; window.__libAt = now; return false; } return /Could not load/.test(t) && now - window.__libAt > 800; }, null, { timeout: 30000, polling: 100 });
     ok(await cards() === 0 && await page.evaluate(() => !!document.querySelector('#libBody .libEmpty button')) && !/No sets yet/.test(await page.evaluate(() => document.getElementById('libBody').innerText)), 'nothing on screen: "Could not load sets", a Try again button, never "No sets yet"');
     st.down = false; await page.evaluate(() => document.querySelector('#libBody .libEmpty button').click());
     await page.waitForFunction(() => document.querySelectorAll('#libBody .setCard').length === 2, null, { timeout: 30000 });
