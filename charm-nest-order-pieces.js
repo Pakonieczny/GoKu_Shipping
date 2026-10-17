@@ -219,7 +219,7 @@
     const learned = new Map();      // orderId -> { at, pools, sheets, rows, ok, failed, task }
     const revs = new Map();         // the orders of one read (joined) -> the digest of the answer the cloud made (getOrderPieces `rev`), sent back as ifRev on the next forced read
     const gens = new Map();         // the same key -> { gen, at }: the cloud's placement counter when that answer was made (FC3: sent back as ifGen, so a counter that has not moved is `unchanged` for one small read, not a re-read of every sheet and pool row), and when the page last had a full answer
-    const GEN_DEEP = 60000;         // a forced read asks in full (no ifGen) at least this often: a write nothing raised the counter for shows within a minute
+    const GEN_DEEP = 300000;        // a forced read asks in full (no ifGen) at least this often: a write nothing raised the counter for shows within five minutes (was 1 min: a full read of every sheet and pool row of 30 orders a minute per tab, for a case every charmNestLibrary write already covers)
     const fullSheets = new Map();   // sheetId -> the sheet's record with ALL its poolIds (loadSheet)
     const subs = new Set();
     let version = 0, lib = null;
@@ -345,7 +345,8 @@
 
     /** One read of the sheet records and pool rows of these orders (op getOrderPieces); a fresh answer is reused for 30 s. */
     function load(orderIds, opts = {}) {
-      const rids = [...new Set((Array.isArray(orderIds) ? orderIds : [orderIds]).map(ridOf).filter(Boolean))];
+      // (sorted: the chunks of 30 and their cache keys (revs, gens) stay the same when the screen scrolls or re-sorts, so the next read can still be `unchanged` for one small read)
+      const rids = [...new Set((Array.isArray(orderIds) ? orderIds : [orderIds]).map(ridOf).filter(Boolean))].sort();
       const api = root.CN && root.CN.api; if (!api || !rids.length) return Promise.resolve(false);
       const want = rids.filter(r => { const e = learned.get(r); return opts.force || !e || !(e.ok && Date.now() - e.at < 30000); });
       const waiting = rids.map(r => learned.get(r) && learned.get(r).task).filter(Boolean);

@@ -88,7 +88,7 @@ function seed(st, pre = '') {
       const { out, reads: n } = await reads(() => call({ op: 'getOrderPieces', orderIds: ids30, ifRev: s1.rev, ifGen: 0 }, true));
       assert(n > 60, 'full read: ' + n); assert.equal(out.body.gen, undefined);
     });
-    await t('H1 the page (OrderPieces.load) sends ifGen on a forced re-read, takes the new gen after a change, and asks in full once a minute', async () => {
+    await t('H1 the page (OrderPieces.load) sends ifGen on a forced re-read, takes the new gen after a change, and asks in full once every five minutes', async () => {
       const vm = require('vm'); const src = require('fs').readFileSync(path.join(root, 'charm-nest-order-pieces.js'), 'utf8');
       const sent = []; let clock = 1000000;
       const ctx = { console, setTimeout, clearTimeout, Date: Object.assign(function () { return new Date(clock); }, { now: () => clock }), Promise, Map, Set, JSON, Math, Number, String, Array, Object };
@@ -102,7 +102,8 @@ function seed(st, pre = '') {
       clock += 2500; await OP.load(['4190000000'], { force: true }); // forced, gen known
       assert.equal(sent.at(-1).ifRev, 'aaaaaaaaaaaa'); assert.equal(sent.at(-1).ifGen, 5);
       clock += 2500; await OP.load(['4190000000'], { force: true }); assert.equal(sent.at(-1).ifGen, 5, 'still cheap');
-      clock += 61000; await OP.load(['4190000000'], { force: true }); assert.equal(sent.at(-1).ifGen, undefined, 'a minute on: the page asks in full');
+      clock += 61000; await OP.load(['4190000000'], { force: true }); assert.ok(sent.at(-1).ifGen != null, 'a minute on: still the one small read (GEN_DEEP is five minutes)');
+      clock += 240000; await OP.load(['4190000000'], { force: true }); assert.equal(sent.at(-1).ifGen, undefined, 'five minutes on: the page asks in full');
       assert.equal(sent.at(-1).ifRev, 'aaaaaaaaaaaa', 'the digest still saves the payload');
       clock += 2500; await OP.load(['4190000000'], { force: true }); assert.equal(sent.at(-1).ifGen, 5, 'and the minute starts again');
       ctx.__moved = true; clock += 2500; await OP.load(['4190000000'], { force: true }); clock += 2500; await OP.load(['4190000000'], { force: true });

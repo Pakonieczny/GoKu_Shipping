@@ -1630,13 +1630,21 @@ async function op_getOrderPieces(b) {
      again, never the reverse. No gen (the sandbox, a failed read) is the old full read, and the page still asks in full once a minute. */
   const gen = sheetIds.length ? null : await placementGen();
   if (gen != null && ifRev && b.ifGen != null && Number(b.ifGen) === gen) return { ok: true, unchanged: true, rev: ifRev, gen };
+  /* COST (Oct 2026): every sorter tab on every computer asks about the same orders on screen. An answer made at placement gen G is still the
+     answer while the gen is G (every write a placement answer is made from raises it, after it lands), so a warm instance hands it to the next
+     asker of the same orders at the same gen instead of reading every pool row and sheet again. Production only (the sandbox has no gen). */
+  // (only for a page that sent its last gen and the gen has moved: a first read, and the page's periodic full read without ifGen, always read the documents)
+  const memoKey = gen != null && b.ifGen != null ? gen + "|" + ids.slice().sort().join(",") : null, memo = memoKey && PIECES_MEMO.get(memoKey);
+  if (memo && Date.now() - memo.at < PIECES_MEMO_MS) { const out = ifRev && memo.answer.rev === ifRev ? { ok: true, unchanged: true, rev: ifRev } : memo.answer; return Object.assign({}, out, { gen }); }
   let answer;
   try { answer = await db.runTransaction(tx => readOrderPieces({ get: q => tx.get(q), getAll: (...a) => (typeof a[a.length - 1].get === "function" ? txGetAll(tx, a) : txGetAll(tx, a.slice(0, -1), a[a.length - 1].fieldMask)) }, ids, sheetIds), { readOnly: true }); }
   catch (e) { console.warn("[charmNestLibrary] getOrderPieces: snapshot read failed, reading without one:", (e && e.message) || e); answer = await readOrderPieces({ get: q => q.get(), getAll: (...a) => db.getAll(...a) }, ids, sheetIds); }
-  const out = ifRev && answer.rev === ifRev ? { ok: true, unchanged: true, rev: answer.rev } : answer;
+  if (memoKey) { PIECES_MEMO.set(memoKey, { answer, at: Date.now() }); if (PIECES_MEMO.size > 60) PIECES_MEMO.delete(PIECES_MEMO.keys().next().value); }
+  const out = ifRev && answer.rev === ifRev ? { ok: true, unchanged: true, rev: answer.rev } : Object.assign({}, answer);
   if (gen != null) out.gen = gen;
   return out;
 }
+const PIECES_MEMO = new Map(), PIECES_MEMO_MS = 30000;
 /* The placement gen (FC3): Charm_Nest_Rev/placement { n }, raised by the handler after any op that may have written a pool row or a
    sheet (everything except the ops listed below, which only read, or write records no placement answer is made from). Production
    only: the sandbox keeps no counter (it would be a leftover of every reset) and answers in full, as before. A read or a raise that

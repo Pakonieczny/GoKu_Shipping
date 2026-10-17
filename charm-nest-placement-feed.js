@@ -30,6 +30,13 @@
   const doc = root.document;
   if (!doc || root.PlacementFeed) return;
   const EVERY = 2500, GAP = 600, SECOND = 1500, FAIL_MAX = 30000, MAX_ORDERS = 48, NEAR = 700;
+  /* COST (Firestore bill, Oct 2026): a tab left on screen read every 2.5 s all day, and a busy shop raises the placement counter so often that
+     nearly every read was a full one (pool rows + every sheet of up to 48 orders). The cadence now follows the person: every 4 s while they work
+     in this window (input in the last 2 minutes, window focused), 15 s for the next 10 minutes or while another window has the focus, then 60 s.
+     A person's own change still reads at once (nudge), and any input brings the fast cadence back at the next tick. */
+  const ACTIVE = 4000, RECENT = 15000, IDLE = 60000, ACTIVE_FOR = 120000, RECENT_FOR = 600000;
+  let lastInput = Date.now();
+  const cadence = () => { const quiet = Date.now() - lastInput, focused = safe(() => doc.hasFocus(), true); return quiet < ACTIVE_FOR && focused ? ACTIVE : quiet < RECENT_FOR ? RECENT : IDLE; };
   const st = { timer: 0, second: 0, busy: false, again: false, fails: 0, start: 0, end: 0, ticks: 0, last: '', lastOk: 0, sig: '', cancelSig: '', dead: false };
   const watchers = new Map();   // token -> { ids: () => Iterable, at }
   const safe = (f, d) => { try { const v = f(); return v === undefined ? d : v; } catch (_) { return d; } };
@@ -106,7 +113,7 @@
   const arm = ms => { clearTimeout(st.timer); st.timer = setTimeout(tick, Math.max(0, ms)); };
   function schedule() {
     if (st.timer || st.busy || !live()) return;
-    const every = Math.min(FAIL_MAX, EVERY * 2 ** Math.min(st.fails, 4));
+    const every = st.fails ? Math.max(cadence(), Math.min(FAIL_MAX, EVERY * 2 ** Math.min(st.fails, 4))) : cadence();
     arm(Math.max(st.start + every, st.end + GAP) - Date.now());
   }
   const cancelSig = rids => safe(() => rids.map(r => (root.Cancelled && root.Cancelled.has && root.Cancelled.has(r) ? 1 : 0)).join(''), '');
@@ -143,6 +150,7 @@
   }
   // a tab change shows other orders: read for them now (the feed finds them by what is drawn, a moment after the tab has drawn)
   doc.addEventListener('click', ev => { const t = ev.target; if (t && t.closest && t.closest('#modeSeg')) setTimeout(nudge, 350); }, true);
+  for (const ev of ['pointerdown', 'keydown', 'wheel', 'focus']) (ev === 'focus' ? root : doc).addEventListener(ev, () => { const was = cadence(); lastInput = Date.now(); if (was > ACTIVE && st.timer && !st.busy) arm(Math.max(0, st.end + GAP - Date.now())); }, { capture: true, passive: true });   // (back from idle: read now, not at the end of a 60 s wait)
   doc.addEventListener('visibilitychange', () => { if (doc.hidden) { clearTimeout(st.timer); clearTimeout(st.second); st.timer = st.second = 0; } else { st.fails = 0; arm(0); } });
   root.addEventListener && root.addEventListener('online', () => { st.fails = 0; arm(0); });
   // anything the page learns of the sheets (a load made for a window, the Library's list) is adopted into the rows too
@@ -151,5 +159,5 @@
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', () => setTimeout(start, 0)); else setTimeout(start, 0);
   // (the page's mode and the windows change what is on screen: a look every few seconds is enough to start the loop when there was nothing to read)
   setInterval(() => { hook(); if (!st.timer && !st.busy) schedule(); safe(() => root.ReviewLive && root.ReviewLive.ensure && root.ReviewLive.ensure()); }, EVERY);   // (the custom records feed, for the search box or the order window opened over a tab that does not follow them)
-  root.PlacementFeed = { watch, nudge, watched, adoptHolds, state: () => ({ busy: st.busy, fails: st.fails, ticks: st.ticks, last: st.last, every: EVERY, orders: watched().length, lastOk: st.lastOk }), _tick: tick };
+  root.PlacementFeed = { watch, nudge, watched, adoptHolds, state: () => ({ busy: st.busy, fails: st.fails, ticks: st.ticks, last: st.last, every: cadence(), orders: watched().length, lastOk: st.lastOk }), _tick: tick };
 })(typeof self !== 'undefined' ? self : this);
