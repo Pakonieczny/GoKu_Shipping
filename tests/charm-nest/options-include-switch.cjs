@@ -66,7 +66,7 @@ const until = async (f, what) => { for (let n = 0; n < 600; n++) { if (f()) retu
     const src = fs.readFileSync('charm-nest-bridge.js', 'utf8'); w.eval(src.slice(src.indexOf('const Gate ='), src.indexOf('/* ═══ 21', src.indexOf('const Gate ='))));
     w.eval(fs.readFileSync('charm-nest-set-edit.js', 'utf8')); w.eval(fs.readFileSync('charm-nest-options-modal.js', 'utf8'));
     for (const s of [committed1, committed5, committed6, committed7, committed9, committed10, openSet]) w.B.sets.set(s.setId, s);
-    LF.configure({ api: post, employee: () => 'Paul', rows: () => [], live: id => { const p = pages.find(x => x.sheetId === id); return p ? { runHere: true, draft: !!p.draft, dispatchSetId: null, can: { ok: true }, split: [] } : null; },   // (the sheet window's joinInfo: a sheet on a page of the open run)
+    LF.configure({ api: post, employee: () => 'Paul', rows: () => [], live: id => { const p = pages.find(x => x.sheetId === id); return p ? { runHere: !p.recalled, draft: !!p.draft, dispatchSetId: null, can: { ok: true }, split: [] } : null; },   // (the sheet window's joinInfo: a sheet on a page of the open run)
        remakeLabel: async () => { }, include: async () => { }, relabelSet: async () => { }, setFiles: async () => { }, applyMembership: async m => w.SetEdit.applyMembership(m) });
     w.LibraryFlow = LF;
 

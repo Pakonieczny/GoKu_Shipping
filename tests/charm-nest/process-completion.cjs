@@ -8,9 +8,9 @@ const source = fs.readFileSync('charm-nest-bridge.js', 'utf8');
 let controller = source.slice(source.indexOf('const RunCtl ='), source.indexOf('/* ═══ 24 · Review'));
 // Use the actual controller and save queue; only DOM rendering is irrelevant here.
 const renderStart = controller.indexOf('  function renderBanner()');
-const renderEnd = controller.indexOf('  return { optionsChanged', renderStart);
+const renderEnd = controller.search(/\n  return \{[^\n]*optionsChanged/) + 1;   // (the return list begins with the banner helpers now: find it by optionsChanged, not by its first name)
 controller = controller.slice(0, renderStart) + '  function renderBanner() {}\n' + controller.slice(renderEnd);
-controller = controller.replace('return { optionsChanged', 'return { _loop:loop, _nest:nestAll, optionsChanged');
+controller = controller.replace(/return \{ (?=[^\n]*optionsChanged)/, 'return { _loop:loop, _nest:nestAll, ');
 function fixture({pending=1, review=1, autoCommit='on', pages=[], sets, rows}={}) {
   const calls=[], jobs=new Map();
   const state={pending,review,fail:null};
@@ -24,7 +24,7 @@ function fixture({pending=1, review=1, autoCommit='on', pages=[], sets, rows}={}
       // the words are read and fitted beside the run: the step only starts that work (see Engrave.background)
       background:()=>{calls.push('classify');calls.push('fit');return Promise.resolve();},saveBacks:asyncCall('backs')},
     Review:{count:()=>state.review},Gate:{flush:asyncCall('flush'),nestable:()=>true,modern:()=>true,assemble:asyncCall('assemble'),upgrade:asyncCall('upgrade')},
-    LiveNest:{finish:asyncCall('finish')},Sets:{ofRun:()=>sets,releaseIssue:s=>s.blocked?'Approval pending':null,
+    LiveNest:{finish:asyncCall('finish')},Sets:{ofRun:()=>sets,unrecorded:()=>false,releaseIssue:s=>s.blocked?'Approval pending':null,
       save:asyncCall('set-save'),finalize:async s=>{calls.push('labels:'+s.setId);if(state.fail)throw Error(state.fail);},
       commit:async s=>{assert(!s.blocked,'unready set cannot commit');calls.push('commit:'+s.setId);s.committedAt=Date.now();return{completed:[s.setId],refused:[]};}},
     api:async(_,b)=>{calls.push('save');return{};},Session:{schedule(){}},LiveStrip:{render(){}},Arrivals:{start:()=>calls.push('arrivals')},

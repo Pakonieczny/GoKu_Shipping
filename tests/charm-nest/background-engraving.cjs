@@ -55,7 +55,7 @@ async function poolTest() {
   const run = { runId: 'run', lines: {} };
   const held = mk('1', 'NEEDS'), unknown = mk('2', 'NOPE'), big = mk('3', 'BIG'), broken = mk('4', 'BROKEN'), fine = mk('5', 'OK');
   await Pool.addAll(run);
-  assert.deepEqual(calls.bars, [['Preparing 5 order lines', 5]]);
+  assert.deepEqual(calls.bars, [['Preparing 5 pieces', 5]]);
   assert.equal(held.state, 'held'); assert.equal(unknown.state, 'unmatched'); assert.equal(big.state, 'oversize'); assert.equal(broken.state, 'held'); assert.equal(fine.state, 'pooled');
   // (a design that would not load is asked for by the preload and by the line itself)
   assert.equal(calls.fetch, 1); assert(calls.design >= 1); const design1 = calls.design;
@@ -63,7 +63,7 @@ async function poolTest() {
   // the next update: one new line, nothing else changed: only the new line is made up, and no unknown SKU looked up again
   const next = mk('6', 'OK');
   await Pool.addAll(run);
-  assert.deepEqual(calls.bars.at(-1), ['Preparing 1 order line', 1], 'only the new line is prepared');
+  assert.deepEqual(calls.bars.at(-1), ['Preparing 1 piece', 1], 'only the new line is prepared');
   assert.equal(next.state, 'pooled'); assert.equal(calls.fetch, 1, 'an unknown SKU is not looked up at every update'); assert.equal(calls.design, design1, 'a design that would not load waits');
 
   // an update with nothing new shows no bar at all
@@ -74,7 +74,7 @@ async function poolTest() {
   entries.set('NOPE', { sku: 'NOPE', aiPath: 'ok.ai', masterHash: 'm5' });
   now += 5 * 60000;
   await Pool.addAll(run);
-  assert.deepEqual(calls.bars.at(-1), ['Preparing 3 order lines', 3]);
+  assert.deepEqual(calls.bars.at(-1), ['Preparing 3 pieces', 3]);
   assert.equal(held.state, 'pooled'); assert.equal(unknown.state, 'pooled'); assert.equal(broken.state, 'held'); assert(calls.design > design1, 'tried again once its wait is over');
   assert.equal(big.state, 'oversize', 'an oversize line is not tried again while nothing changed');
   // a plate made bigger lets the oversize line be tried again
@@ -86,11 +86,12 @@ async function poolTest() {
 
 /* ── 2 · Engrave.background ── */
 async function backgroundTest() {
-  const log = [];
+  const log = [], ctxItems = new Map();
   let release, gate = new Promise(r => { release = r; }), work = 1;
   const ctx = { B: { run: { runId: 'r1' } }, Promise, console,
     classifyAll: async r => { log.push('classify:' + (r && r.runId)); await gate; const n = work; work = 0; return n; },
     fitAll: async r => { log.push('fit:' + (r && r.runId)); return 0; },
+    items: () => ctxItems, Orders: { rows: () => [] },   // (ENGPRE: the pass ends with earlyAll, which prepares lines not nested yet: no line here, so no work and nothing to wake the run with)
     agent: (s, k, t) => log.push('warn:' + t), RunCtl: { backgroundSettled: () => log.push('settled') } };
   vm.createContext(ctx);
   vm.runInContext(slice('  let backgroundPass = null, backgroundAgain = null, settledPasses = 0;', '  function revokeBacks(') + ';this.background=background;this.settled=()=>settledPasses;', ctx);
@@ -108,9 +109,9 @@ async function backgroundTest() {
 /* ── 3 · the run's Engraving step ── */
 function controllerContext({ background, onSets }) {
   let controller = slice('const RunCtl =', "/* ═══ 23c · Custom Orders' QR sticker");
-  const renderStart = controller.indexOf('  function renderBanner()'), renderEnd = controller.indexOf('  return { optionsChanged', renderStart);
+  const renderStart = controller.indexOf('  function renderBanner()'), renderEnd = controller.search(/\n  return \{[^\n]*optionsChanged/) + 1;   // (the return list begins with the banner helpers now: find it by optionsChanged, not by its first name)
   controller = controller.slice(0, renderStart) + '  function renderBanner() {}\n' + controller.slice(renderEnd);
-  controller = controller.replace('return { optionsChanged', 'return { _loop:loop, optionsChanged');
+  controller = controller.replace(/return \{ (?=[^\n]*optionsChanged)/, 'return { _loop:loop, ');
   const calls = [], jobs = new Map();
   const r = { runId: 'run', step: 'engrave', status: 'running', mode: 'auto', sheets: {}, errors: [], orders: ['order'], workspaceRestored: true };
   const rows = [{ key: 'order:1', order: { receiptId: 'order' }, state: 'pooled', poolIds: ['p'] }];
@@ -159,7 +160,7 @@ async function wakeTest() {
   const jobs = new Map(),retryTimers=[];
   const ctx = { Promise, Map, Set, Object, Error, console, B: { run: null }, render() {}, refreshBacks() {}, agent() {},
     Orders: { render() {}, rows: () => [], lineRecord: r => [r.key, r] }, Session: { schedule() {} }, Review: { add() {} }, RunCtl: { backgroundSettled: () => { settled++; }, save: async () => {} },
-    items: () => jobs, isWorking: () => false, canFit: () => true, Pool: { sheetOf: () => ({ fileBase: 'GF_1' }) }, writeBacks: async () => {}, fitJob: async () => {},
+    items: () => jobs, unplacedPre: () => false, EG: { cardKey: null }, isWorking: () => false, canFit: () => true, Pool: { sheetOf: () => ({ fileBase: 'GF_1' }) }, writeBacks: async () => {}, fitJob: async () => {},
     setTimeout:(fn,ms)=>(retryTimers.push({fn,ms}),retryTimers.length),clearTimeout(){} };
   vm.createContext(ctx);
   vm.runInContext(slice('  async function saveBacks(job) {', '  /** A reload while an approval') + slice('  /** Fits every job whose words are read', '  /* Reading the words and fitting them') + ';this.saveBacks=saveBacks;this.fitAll=fitAll;', ctx);
@@ -197,11 +198,15 @@ async function lockTest() {
     verifyBackFile: async () => ({ ok: true }),
     uploadBytes: async path => { events.push('upload'); await uploaded; return { path, url: 'https://x/' + path }; },
     api: async (fn, body) => { events.push(body.op); return { sheet: sh }; },
-    Pool: { update: async () => {} }, Review: { add() {} }, refreshBacks() {}, scheduleBackOutputs() {}, render() {}, agent() {}, toast() {}, syncEditedBack: async () => {} };
+    Pool: { update: async () => {} }, Review: { add() {} }, refreshBacks() {}, scheduleBackOutputs() {}, render() {}, agent() {}, toast() {}, syncEditedBack: async () => {},
+    /* (what the page's saving of a back now also reads: its font, its piece, the cards open: none of it is what this test is about, the lock) */
+    fontIdOf: () => 'font', pieceFields: () => ({}), jobsOf: () => [], items: () => new Map(), EG: { cardKey: null }, isWorking: () => false, recalledJob: () => false, F_: { ok: true } };
   vm.createContext(ctx);
-  vm.runInContext(src + ';this.writeBacks=writeBacks;', ctx);
+  /* (the page's own face helpers, one line each: the back file is named and verified by the job's face) */
+  const helpers = ['FACES', 'faceOf', 'isFront', 'faceWord', 'fileViewOf'].map(n => slice('  const ' + n + ' =', '\n') + '\n').join('');
+  vm.runInContext(helpers + src + ';this.writeBacks=writeBacks;', ctx);
   const saving = ctx.writeBacks(job);
-  await tick(); await tick();
+  for (let i = 0; i < 50 && !events.includes('upload'); i++) await tick();   // (the upload follows a few awaited steps: how many is the page's business)
   assert(events.includes('upload'), 'the back is being uploaded');
   // meanwhile the next intake takes the production lock and finishes: it does not wait for the back
   let intakeDone = false;

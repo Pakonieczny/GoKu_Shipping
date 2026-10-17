@@ -5,7 +5,7 @@
 // listing's SKU is written once. The same properties P1-P8, the same faults at every step (net error, 500, reply lost, token expiry, slow), the same final-state
 // assertions, in about a minute with no CPU slot.
 //   node tests/charm-nest/keep-chaos-node.cjs          (ONLY=<regex> · OUT=<file.json> · DRIVER=press|auto)
-//   DRIVER=press (default): the engine as it is used today: ONE run() per press; a "reload" is a new engine, nobody presses. Every scenario that needs the save to resume
+//   DRIVER=durable (default now that CharmNestKeep.durable exists: the page's own keeper). DRIVER=press: the engine as it was used before the keeper: ONE run() per press; a "reload" is a new engine, nobody presses. Every scenario that needs the save to resume
 //   by itself fails here, and says so.  DRIVER=auto: the harness presses retry() the way a durable keeper would (after every failure, after the password, after a
 //   reload), up to 6 times: it measures the engine and the server alone. When CharmNestKeep.durable exists the scenarios run through it too (DRIVER=durable).
 'use strict';
@@ -20,7 +20,7 @@ const ages = new Map();   // path -> ms of the file's last update (default: now)
 Fk.bucket.file = p => { const f = origFile(p), gm = f.getMetadata; f.getMetadata = async () => { const [m] = await gm.call(f); return [Object.assign({}, m, { updated: new Date(ages.has(p) ? ages.get(p) : Date.now()).toISOString(), metadata: { firebaseStorageDownloadTokens: 'tok' + String(p.length) } })]; }; return f; };
 const lib = require(path.join(fnDir, 'charmNestLibrary.js')), RA = require(path.join(fnDir, '_charmNestRepoAuth.js'));
 const O = require(path.join(root, 'charm-nest-orders.js')), Sku = require(path.join(root, 'charm-nest-sku.js')), Keep = require(path.join(root, 'charm-nest-keep.js'));
-const ONLY = process.env.ONLY ? new RegExp(process.env.ONLY, 'i') : null, DRIVER = process.env.DRIVER || 'press';
+const ONLY = process.env.ONLY ? new RegExp(process.env.ONLY, 'i') : null, DRIVER = process.env.DRIVER || (typeof Keep.durable === 'function' ? 'durable' : 'press');   // (the page saves through the durable keeper, charm-nest-bridge.js KeepLib().durable: the one-press engine is only what the page used before it, and fails every resume scenario by design)
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const GOOD = 'pw-' + crypto.randomBytes(5).toString('hex');
 const post = async b => { const r = await lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(b), queryStringParameters: {} }); return { status: r.statusCode, body: JSON.parse(r.body || '{}') }; };

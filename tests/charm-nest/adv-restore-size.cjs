@@ -9,7 +9,7 @@ assert(from > 0, 'restoreRunSheets found');
 
 (async () => {
   const PT = 72 / 25.4, mm = pt => Math.round(pt / PT * 100) / 100;
-  const ctx = vm.createContext({ assert, console });
+  const ctx = vm.createContext({ assert, console, CharmNestPoolPieces: require('../../charm-nest-pool-pieces.js') });   // (the real piece module, a global of the page)
   vm.runInContext(`
     const settings = { gold14k: [120 / 25.4, 46 / 25.4] }, window = {};
     const stockFor = (metal, sheet) => { const k = sheet && sheet.keptStock; if (k && k.wPt && k.hPt) return { wPt: k.wPt, hPt: k.hPt }; const i = settings[metal]; return { wIn: i[0], hIn: i[1], wPt: i[0] * 72, hPt: i[1] * 72 }; };
@@ -25,8 +25,9 @@ assert(from > 0, 'restoreRunSheets found');
     const rows = [{ state: 'written', poolIds: ['p-s1'] }, { state: 'written', poolIds: ['p-s2'] }];
     const Orders = { rows: () => rows }, O = { setLabel: s => 'Set ' + s, setFolder: () => 'f' };
     const byRun = new Map(), Sets = { byRun: () => byRun, keyOf: (a, b) => a + ':' + b };
-    const Master = { entryFor: () => ({}) }, Pool = { masterCharm: async () => ({ id: 'src', charms: [{ sourceId: 'src' }] }), cloneCharm: (c, id) => ({ ...c, id }), charmOf: id => pages.some(p => p.charms.some(c => c.poolId === id)) };
+    const Master = { entryFor: () => ({}) }, Pool = { masterCharm: async () => ({ id: 'src', charms: [{ sourceId: 'src' }] }), ensureBase: async src => src, cloneCharm: (c, id) => ({ ...c, id }), charmOf: id => pages.some(p => p.charms.some(c => c.poolId === id)) };
     const Engrave = { items: () => new Map(), ensureJob: () => ({ backs: [] }) };
+    const Gate = { leftSetOf: () => null };   // (restoreRunSheets asks the Gate whether a sheet was taken out of its committed set: none was)
     const computeSaturation = () => {}, renderCard = () => {}, agent = () => {}, sheetDirty = p => { delete p.keptStock; p.dirty = true; };
   ` + restore, ctx);
   await vm.runInContext(`(async () => {
