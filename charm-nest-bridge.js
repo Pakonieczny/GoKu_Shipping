@@ -8217,6 +8217,9 @@ const Engrave = window.Engrave = (() => {
         let m = monoMap.get(pc.key); if (!m) { m = { key: pc.key, mono: true, copies: [] }; monoMap.set(pc.key, m); }
         m.lineKey = row.key; m.rowKey = row.key; m.slot = pc.slot || null; m.n = pc.n; m.of = pc.of; m.copies = [pc.poolId];
         m.row = row; m.st = st; m.state = st.approved ? "approved" : "review"; m.text = st.letters || ""; m.lines = st.letters ? [st.letters.split("").join(" ")] : [];
+        // (MONOSEAL2, Paul 17 Oct 2026: the piece's approval seal(s) travel on its stand-in, as a job's do, so CNListActivity.at(m) reads seals[] and an approved monogram sorts and date-filters by its approval time like the engraved pieces; the list row paints them. They come from the monogram's own
+        //  reader (charm-nest-monogram-seals.js) and NEVER from CNEngravingSeals: it invents a legacy BACK ENGRAVING seal at time 0 for any object whose state is approved with no seals. A page without the reader: none.)
+        m.seals = window.CNMonogramSeals ? CNMonogramSeals.list(row, pc.slot) : [];
         live.add(pc.key); out.push(m);
       }
     }
@@ -8710,7 +8713,7 @@ const Engrave = window.Engrave = (() => {
     if (!row) {
       row = el("div", "doneRow placementRow hoverItem egMonoRow"); row.setAttribute("role", "button"); row.tabIndex = 0;
       row.dataset.kind = "monogram"; row.dataset.testid = "eg-mono-row"; row.dataset.open = m.key; row.dataset.mkey = "eg:" + m.key;
-      row.innerHTML = `<div class="egMonoMedia" data-testid="eg-mono-thumb">${monoThumb(m.row, 120, m.slot)}</div><div class="engravingIdentity"><span class="queueLabel">Monogram</span><div class="engravingOrder"><b class="mono" data-order></b><span class="sku mono"></span><span class="egPiece" data-testid="eg-mono-piece" hidden></span><span class="mailSlot" hidden></span><span class="teamSlot" hidden></span></div><span class="purchaseLabel">The letters</span><span class="w egMonoLetters" data-mono-letters></span><span class="dim" data-stage></span></div><div class="purchaseSummary" data-purchase></div>`;
+      row.innerHTML = `<div class="egMonoMedia" data-testid="eg-mono-thumb">${monoThumb(m.row, 120, m.slot)}</div><div class="engravingIdentity"><span class="queueLabel">Monogram</span><div class="engravingOrder"><b class="mono" data-order></b><span class="sku mono"></span><span class="egPiece" data-testid="eg-mono-piece" hidden></span><span class="mailSlot" hidden></span><span class="teamSlot" hidden></span></div><span class="purchaseLabel">The letters</span><span class="w egMonoLetters" data-mono-letters></span><span class="dim" data-stage></span></div><div class="purchaseSummary" data-purchase></div><div class="egPlacementSeals"></div>`;   // (MONOSEAL2, Paul 17 Oct 2026: the engraved row's own seals cell, so the piece's approval seal(s) stand on its row as an engraved piece's do; painted below)
       const open = () => { const lg = MO() && listCopy(row); if (lg) growsFrom = { key: m.key, rect: row.getBoundingClientRect(), until: Date.now() + 3000 }; focusOn(m.key); EG.list = false; render(); if (lg) lg.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300, easing: "ease-out", fill: "forwards" }).finished.catch(() => {}).then(() => lg.remove()); };
       row.onclick = e => { if (!e.target.closest("a,button")) open(); };
       row.onkeydown = e => { if (e.target === row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); open(); } };
@@ -8726,6 +8729,8 @@ const Engrave = window.Engrave = (() => {
     if (window.CustomerMail?.slot) CustomerMail.slot(row.querySelector(".mailSlot"), receipt);
     window.TeamMail?.slot(row.querySelector(".teamSlot"), line);
     const purchase = purchaseMarkup(line); if (row._purchase !== purchase) { row.querySelector("[data-purchase]").innerHTML = purchase; row._purchase = purchase; }
+    // (MONOSEAL2: the seal(s) of this piece's approval, painted again only when they change, as the engraved row's are; nothing for a piece nobody approved, and never a CNEngravingSeals seal)
+    if (window.CNMonogramSeals) { const stamp = CNMonogramSeals.signature(m.seals); if (row._seals !== stamp) { row.querySelector(".egPlacementSeals").innerHTML = CNMonogramSeals.html(m.row, m.slot); row._seals = stamp; } }
     return row;
   }
   /** Back / Next from a monogram card: the same stops as from an engraved piece's card (every piece of the order, in its line order, before the next order). */
@@ -16250,7 +16255,7 @@ const OrderWin = window.OrderWin = (() => {
       if (W.dlg.open) return; tryDo(() => window.CNLive && CNLive.close("sorter")); tryDo(() => window.CNZoomPan && CNZoomPan.forget("ow:")); giveBack(0); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
       W.closing = false; stopMotion(); flightGone(); W.dlg.classList.remove("owGrow", "owBack"); endFind();
       unmountTimeline(); tryDo(() => { if (W.engCard) W.engCard.destroy(); W.engCard = null; }); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); SV.shown = null; W.dlg.classList.remove("owCancelled"); lookDone();
-      W.engHist = null; tryDo(() => window.OrderFacts && OrderFacts.collapse(byId("owMeta")));   // (the next order opens with the facts calm: its card put away, Details shut)
+      W.engHist = null; W.monoHist = null; tryDo(() => window.OrderFacts && OrderFacts.collapse(byId("owMeta")));   // (the next order opens with the facts calm: its card put away, Details shut)
       try { window.CustomerMail?.orderClosed(); } catch (_) {}
     });
     // back from a Send to Sheet flight that took the view out of the way (SendTour): drawn as it is now, still unseen
@@ -16591,8 +16596,11 @@ const OrderWin = window.OrderWin = (() => {
     const hist = W.engHist && W.engHist.key === r.key ? W.engHist.html : "";
     const seals = r.engrave ? CNEngravingSeals.list(r.engrave).length : 0, hasEng = !!(hist || (r.engrave && (r.engrave.needed || seals)));
     const engHtml = hasEng ? hist || engCellHtml(r, "waiting") : "";
-    const read = hasEng ? null : tryDo(() => engReadingOf(r));   // (BFREAL: what the order itself says, while Engrave holds nothing for it)
-    if (hasEng) cells.push({ label: "Engraving", html: engHtml, wide: 1, block: 1 }); else if (read) cells.push({ label: "Engraving", html: read.html, wide: 1, block: 1 });
+    // MONOSEAL2 (Paul, 17 Oct 2026): a MONOGRAM line is no engraving (it has no r.engrave, no job, and engraveOf(line) stays false), but its approval has seals like an engraved line's: told here in the same cell, chip and card, as "Monogram" (its own seals, from the monogram's
+    // reader: charm-nest-monogram-seals.js; never CNEngravingSeals). A monogram nobody approved has no seal and shows no cell, as before.
+    const mono = hasEng || !window.CNMonogramSeals ? null : tryDo(() => CNMonogramSeals.facts(r));
+    const read = hasEng || mono ? null : tryDo(() => engReadingOf(r));   // (BFREAL: what the order itself says, while Engrave holds nothing for it)
+    if (hasEng) cells.push({ label: "Engraving", html: engHtml, wide: 1, block: 1 }); else if (mono) cells.push({ label: "Monogram", html: mono.html, wide: 1, block: 1 }); else if (read) cells.push({ label: "Engraving", html: read.html, wide: 1, block: 1 });
     const views = tryDo(() => O.optionViews(bought, r.line)) || bought.map(o => ({ label: o.name, text: o.value, changed: false }));   // (OPTTIDY: "Metal: Gold · Engraved"; the Details list keeps the original as the cell's hover)
     if (bought.length) views.forEach(v => cell(v.label || "Option", v.text, v.changed ? { raw: v.was } : null)); else (sp.options || []).filter(o => o.mapped).forEach(o => cell(o.name, o.value));
     cell("Listing", String(r.line.listingId || "—"), r.line.listingId ? { copy: String(r.line.listingId), mono: 1 } : { mono: 1 });
@@ -16611,7 +16619,7 @@ const OrderWin = window.OrderWin = (() => {
       metal: { label: r.material ? labelOf(r.material) : (sp.materialLabel || ""), none: !r.material && !sp.materialLabel, color: r.material ? colorOf(r.material) : "", choices: bought.map((o, i) => [o, views[i]]).filter(([o]) => /metal|material/i.test(o.name || "")).map(([, v]) => ({ name: v.label, value: v.text })) },
       qty: { n: qn, pieces: sides.length, pair: sides.length > 0, mismatched: sides.length > 0 && !!ListMedia.pairRow(r), counted: counted ? { total: counted.total, noun: counted.noun } : null, notes: pnotes },
       custom: sp.special ? { label: sp.special.label, note: [sp.special.read && !sp.special.decided ? `Claude ${Math.round((+sp.special.read.confidence || 0) * 100)}% sure` : "", sp.special.why || ""].filter(Boolean).join(" · ") } : sp.customDone ? { label: "Custom: " + (sp.customDone.category || "completed"), note: "" } : null,
-      engraving: hasEng ? { chip: engMode === "both" ? "Front + back" : engMode === "front" ? "Front only" : "Engraving", html: engHtml, approved: !!(r.engrave && r.engrave.approved) } : read ? { chip: read.chip, html: read.html, approved: false } : null,
+      engraving: hasEng ? { chip: engMode === "both" ? "Front + back" : engMode === "front" ? "Front only" : "Engraving", html: engHtml, approved: !!(r.engrave && r.engrave.approved) } : mono ? { chip: "Monogram", title: "Monogram", html: mono.html, approved: mono.approved } : read ? { chip: read.chip, html: read.html, approved: false } : null,
       message: bm || gm || (news && (news.unread || news.bad)) ? { buyer: bm, gift: gm, unread: news && news.unread ? 1 : 0, bad: !!(news && news.bad) } : null,
       listing: { id: String(r.line.listingId || ""), title: String(r.line.title || "") },
       state: stageText(st[1]) ? null : { tone: st[0] || "neutral", text: st[1], sheet: sheetCell || "" }   // (no pill for a numbered stage; an exception keeps its pill and its card)
@@ -17556,6 +17564,11 @@ const OrderWin = window.OrderWin = (() => {
       const html=engCellHtml(r,'Approval history',job,historical);
       if(!W.engHist||W.engHist.key!==r.key||W.engHist.html!==html){W.engHist={key:r.key,html};paintFacts(r);}
     }
+    // (MONOSEAL2: a monogram line's Monogram fact and the Sheet tab's Monogram panel follow its own seals, which the service and the permanent timeline bring in after the window opened: drawn again only when they change)
+    if (window.CNMonogramSeals) {
+      const mf = tryDo(() => CNMonogramSeals.facts(r)), mh = mf ? mf.html : "", was = W.monoHist && W.monoHist.key === r.key ? W.monoHist.html : "";
+      if (mh !== was) { W.monoHist = { key: r.key, html: mh }; paintFacts(r); if (SV.info && W.view === "sheet") tryDo(() => paintPanel(SV.info)); }
+    }
     const n = nowOf(r);   // (HDRHEAD, Paul, 16 Oct 2026: the state chip in the header, "ENGRAVING APPROVED", is gone: the head card below says where the order is, in the same words)
     W.dlg.classList.toggle("owCancelled", !!n.cancelled);
     // (the Sheet view's "no sheet" line follows the cancel record once it is read)
@@ -18324,7 +18337,10 @@ const OrderWin = window.OrderWin = (() => {
     SV.seen ||= new Set();if(job&&cyc&&cyc.faces)SV.seen.add(job.key);
     const both=cyc&&cyc.faces&&OEc.bothFor?tryDo(()=>OEc.bothFor(cyc,job,j=>SV.seen.has(j.key))):null;
     if(both)eng.both={ok:both.ok,why:both.why};
-    const engHtml=CNEngravingSeals.panel(eng);
+    // (MONOSEAL2, Paul 17 Oct 2026: a MONOGRAM piece has no job, so this card used to say "No back engraving" for it; it gets the monogram's panel in the same visual language: the letters, "Approved by X" and its seal(s), or "Monogram waits for approval in Engraving", and a View in Engraving button.
+    //  Every other piece keeps the engraving panel, byte for byte.)
+    const monoPc=window.CNMonogramSeals?tryDo(()=>CNMonogramSeals.pieceFor(lr,x0?.poolId || SV.focus)):null;
+    const engHtml=monoPc?CNMonogramSeals.panel(monoPc):CNEngravingSeals.panel(eng);
     const bk = BK.length && BK[BK.length - 1].to === rid ? BK[BK.length - 1] : null;
     const vis = list.map((s, i) => i).filter(i => SCOPE.ok(i));   // (the sheets of the piece shown, or of all of them: never another piece's)
     // (a sheet's own tab names it, so a piece and its tab always say the same; nothing is said while its sheets are still being found)
@@ -18365,7 +18381,8 @@ const OrderWin = window.OrderWin = (() => {
       if(i>=0){SV.at=i;SV.focus=pid;sheetDraw();return;}
       SV.disc={key:k,focus:SV.focus};paintPanel(SV.info);
     };
-    CNEngravingSeals.wirePanel(panel.querySelector('[data-engraving-panel]'),eng,{
+    if(monoPc)CNMonogramSeals.wire(panel.querySelector('[data-engraving-panel]'),{open:()=>CNMonogramSeals.openIn(monoPc,{rid})});   // (the monogram's panel: its one button asks EngraveLink.openMonogram, which closes this window as it opens the piece's card)
+    else CNEngravingSeals.wirePanel(panel.querySelector('[data-engraving-panel]'),eng,{
       imageUrl:url=>/^https?:/.test(url)?cors(url):url,pick:pickDisc,
       // "Approve both faces": the ordinary approval of the charm's Front, then its Back (two approvals, two seals, two back files); only when the model's gate allows it
       approveBoth:async()=>{

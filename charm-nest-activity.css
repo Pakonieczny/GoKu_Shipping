@@ -24,6 +24,15 @@
 .sealRow.engravingSeals{display:inline-flex;flex-wrap:nowrap;align-items:center;gap:4px;margin:0;padding:4px;max-width:min(240px,100%);min-height:0;overflow:visible}
 .sealRow.engravingSeals>.seal,.egButtonSeal>.seal{position:relative;flex:0 0 var(--seal-fit,var(--seal-base,50px));margin:0;width:var(--seal-fit,var(--seal-base,50px));height:var(--seal-fit,var(--seal-base,50px));max-width:none;max-height:none}
 .decisionStatus:has(.engravingSeals){gap:2px;overflow:visible}
+/* MONOSEAL2 (Paul, 17 Oct 2026): a monogram piece's approval seal(s) at rest where the engraving seals stand (charm-nest-monogram-seals.js): the Engrave tab's list row (the .egPlacementSeals cell, generic below), the order window's Monogram fact and chip card, the Sheet tab and the Sheet window's Monogram panel
+   (.swEng .egHistory). The widget's own `.sealRow` sits in a `.monoSeals` wrapper (no box of its own), sized exactly like `.sealRow.engravingSeals`, whatever extra class the row carries. */
+.monoSeals{display:contents}
+.monoSeals>.sealRow{display:inline-flex;flex-wrap:nowrap;align-items:center;gap:4px;margin:0;padding:4px;max-width:min(240px,100%);min-height:0;overflow:visible}
+.monoSeals>.sealRow>.seal{position:relative;flex:0 0 var(--seal-fit,var(--seal-base,50px));margin:0;width:var(--seal-fit,var(--seal-base,50px));height:var(--seal-fit,var(--seal-base,50px));max-width:none;max-height:none}
+.swEng .egHistory .monoSeals>.sealRow{max-width:100%}
+.swEng .egSealLine{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 10px;min-width:0}
+.swEng .egSealLine .egWhy{flex:1 1 150px}
+.swEng .egSealLine .monoSeals>.sealRow{flex:0 0 auto;padding:0;max-width:100%}
 .egPlacementSeals:empty{display:none}
 .egPlacementSeals{justify-self:end;overflow:visible}
 /* (where a Placements row puts its seals is the EGROW block at the end of this file) */

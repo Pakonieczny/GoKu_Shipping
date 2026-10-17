@@ -2320,7 +2320,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function renderEng(x, flash) {
     if(window.Seal?.defer('sheet-engrave',()=>renderEng(x,flash)))return;
     const host = W.el.detail.querySelector("[data-r2=eng]"); if (!host) return;
-    x.eng = engOf(x); if (x.eng.faces) x._face = shownFace(x); const e = shownEng(x);
+    x.eng = engOf(x); if (x.eng.faces) x._face = shownFace(x);
+    // (MONOSEAL2, Paul 17 Oct 2026: a MONOGRAM piece has no job, so this card used to say "No back engraving" for it; it gets the monogram's panel in the same visual language: the letters, "Approved by X" and its seal(s), or "Monogram waits for approval in Engraving", and a View in Engraving button
+    //  (EngraveLink.openMonogram). Every other piece keeps the engraving card below, untouched.)
+    const mp = window.CNMonogramSeals ? tryDo(() => CNMonogramSeals.pieceFor(rowOf(x), x.poolId || x.id)) : null;
+    if (mp) { host.innerHTML = CNMonogramSeals.panel(mp); CNMonogramSeals.wire(host, { open: b => goMonogram(x, mp, b) }); if (flash) host.querySelector('.swEng')?.classList.add('flash'); return; }
+    const e = shownEng(x);
     // (the discs of a counted order, one at a time: the Engrave tab's own switch, charm-nest-piece-switch.js; a press selects that disc's charm, here or on the sheet it is on.
     //  A piece engraved on both faces also has its Front | Back: the same switch, the face shown is the one the card is about)
     const cyc = cycleFor(x, e), shown = cyc ? Object.assign({}, e, { cycle: cyc }) : e;
@@ -2600,6 +2605,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       return;
     }
     plain();
+  }
+  /** MONOSEAL2: the monogram panel's View in Engraving. A monogram is no Engrave job, so EngraveLink.open cannot name it: EngraveLink.openMonogram({ rid, key }) does (this window closes first); the way back is the same pill as for an engraved piece (no job to wait on). */
+  function goMonogram(x, mp, b) {
+    const rec = W.rec; RET.ctx = { sheetId: rec.id, poolId: x.poolId || x.id, rid: x.rid, key: null, label: nameOf(rec), was: null };
+    const c0 = RET.ctx;
+    return Promise.resolve(CNMonogramSeals.openIn(mp, { rid: x.rid, closeFirst: () => close() })).then(ok => {
+      if (ok === false) { if (RET.ctx === c0) RET.ctx = null; toast("This monogram cannot be opened in Engraving here", "bad", 5000); return ok; }
+      returnPill(); return ok;
+    }, err => { if (RET.ctx === c0) RET.ctx = null; throw err; });
   }
   function returnPill() {
     // (the pill is the one EngraveReturn draws for every start, the order window and the tabs too: one control, one memory, the newest journey in it)

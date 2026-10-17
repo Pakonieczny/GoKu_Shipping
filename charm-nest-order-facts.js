@@ -128,7 +128,8 @@
     const c = f.custom;
     if (c && c.label) out.push({ id: 'custom', icon: 'custom', text: c.label, aria: 'Custom order: ' + c.label, pop: { title: 'Custom order', icon: 'custom', rows: [row('Kind', c.label)].concat(c.note ? [row('Reading', c.note)] : []) } });
     const e = f.engraving;
-    if (e) out.push({ id: 'engraving', icon: 'engrave', text: e.chip || 'Engraving', tone: e.approved ? 'ok' : '', aria: 'Engraving: ' + (e.chip || 'needed') + (e.approved ? ', approved' : ''), pop: { title: 'Engraving', icon: 'engrave', html: e.html || '' } });
+    // (MONOSEAL2, Paul 17 Oct 2026: a monogram line tells its seals here as an engraved line does; its card is titled by what it is: engraving.title "Monogram". Every other line's card says "Engraving", as it did.)
+    if (e) out.push({ id: 'engraving', icon: 'engrave', text: e.chip || 'Engraving', tone: e.approved ? 'ok' : '', aria: (e.title || 'Engraving') + ': ' + (e.chip || 'needed') + (e.approved ? ', approved' : ''), pop: { title: e.title || 'Engraving', icon: 'engrave', html: e.html || '' } });
     const g = f.message;
     if (g && (g.buyer || g.gift || g.unread || g.bad)) {
       const secs = [];
