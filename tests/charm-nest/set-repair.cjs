@@ -430,7 +430,10 @@ function ownerPage({ tie = null } = {}) {
     assert.equal(g2.setBreaks.line.startsWith('Set 2 breaks your rules: it is bigger than the minimum ('), true);
     const html = SRp.lineHtml(g2);
     assert.match(html, /role="note"/); assert.match(html, /data-set-break="set-2"/); assert.match(html, /<button type="button" class="btn sm" data-rebuild-set="set-2">Rebuild this set correctly<\/button>/);
-    assert.equal((html.match(/<button/g) || []).length, 1, 'ONE button'); assert.equal((html.match(/data-set-break-line/g) || []).length, 1, 'ONE line');
+    // (SETFIX A, Paul 17 Oct 2026) its uncut Rose Gold sheets have their own press, "Cut ...", before the rebuild, and the set says exactly what to press, in that order
+    assert.equal((html.match(/<button/g) || []).length, 2, 'the Cut press and the rebuild'); assert.equal((html.match(/data-set-break-line/g) || []).length, 1, 'ONE line');
+    assert.match(html, /<button type="button" class="btn sm" data-cut-set="set-2">Cut RG Sheet 16 and RG Sheet 29<\/button><button type="button" class="btn sm" data-rebuild-set="set-2">/);
+    assert.match(html, /data-set-break-todo>Press &quot;Cut RG Sheet 16 and RG Sheet 29&quot; first \(the Cut Sheet press: it draws their green lines and records their cuts\), then &quot;Rebuild this set correctly&quot;\.</);
     assert.equal(SRp.lineHtml(g1), '', 'a right or committed set: no line, no button');
     // the card, the gate and the board read the same annotation
     const members = rows.filter(r => r.setId === 'set-2');

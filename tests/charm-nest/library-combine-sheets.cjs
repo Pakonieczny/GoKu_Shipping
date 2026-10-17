@@ -110,7 +110,12 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
     // the other sets: an uncommitted set that is not the open one is dimmed, said in plain words, before any plan is asked for
     const sets0 = LF.hooks.sets; LF.configure({ sets: () => sets0().concat([{ setId: 'set-7', seq: 7 }]) });
     assert.match(z(zs('gf-4'), x => x.set === 'set-7').reason, /Set 7 is not the open set\. Drop it on Set 8/); assert.equal(z(zs('gf-4'), x => x.set === 'set-8').ok, true);
-    p = await plan('gf-4', { set: 'set-8' }); assert.equal(p.ok, true, JSON.stringify(p.needs)); LF.configure({ sets: sets0 });
+    // (SETFIX B, Paul 17 Oct 2026: "a sheet someone drags into a formed set can make that set unapprovable") Set 8 has formed (a completed GF and a completed SS sheet), and gf-4 comes
+    // with ss-5 (they share an order) but shares no order with Set 8: the drop would make Set 8 bigger than the minimum, so it is refused in plain words and nothing is planned
+    p = await plan('gf-4', { set: 'set-8' }); assert.equal(p.ok, false, JSON.stringify(p.needs)); assert.deepEqual(p.needs.map(n => n.key), ['setRules']);
+    assert.match(p.needs[0].label, /^GF Draft 4 and SS Draft 5 cannot go into Set 8: Set 8 would be bigger than the minimum$/); assert.match(p.needs[0].detail, /your rule R7/); assert.match(p.needs[0].detail, /Leave GF Draft 4 and SS Draft 5 out: they form the next set\.$/);
+    assert.deepEqual(p.needs[0].items.map(i => i.label), ['GF Draft 4', 'SS Draft 5']); assert.equal(p.steps.length + p.confirm.length, 0, 'nothing to commit');
+    LF.configure({ sets: sets0 });
 
     // ═══ E. sheets that share a multi-piece order: the cardinal rule, with its one yes ═══
     for (const id of Object.keys(L)) if (id !== 'in-set') L[id].dispatchSetId = null;     // (back to no open set, for the next scenes)

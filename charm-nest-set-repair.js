@@ -22,6 +22,26 @@
  *       Idempotent: a set that is right says so (noop) and nothing is changed.
  *   rebuild(set, opts?)  (page) -> Promise<{ok, ...}>   the press: reads the set and its run's sheets again, plans, asks in a small window, reads again, applies, checks.
  *
+ * (SETFIX A, Paul 17 Oct 2026: "fix the below" — "a set holding an uncut Rose Gold, 10K or 14K sheet can no longer be approved until that sheet is cut or the set is rebuilt. Existing sets
+ *  that break your rule will be blocked at approval.") A blocked set is never a dead end: every set that breaks a rule carries its ONE way out, `remedy`, and says exactly what to press.
+ *   info.remedy = { kind:'cut'|'rebuild', then?:'rebuild', button, sheets:[id], names, say, short, server }
+ *       'cut'      the set's only fault is a Rose Gold / 10K / 14K sheet with no green line cut (R12 (a)): the press is "Cut RG Sheet 16", the existing Cut Sheet press (LibraryFlow.cutLine,
+ *                  charm-nest-flow-rose.js: the green dash line drawn and dated, the cut recorded). A person's explicit press only: the line is NEVER added by itself, and the window says
+ *                  that a recorded cut is permanent. Nothing moves: the sheet stays in its set, which then follows the rules (an uncommitted set may be cut in place: R12 (a) is "its line is cut").
+ *                  With other faults as well (bigger than the minimum, ...): "Cut ..." first, then "Rebuild this set correctly" (cut first, so the rebuild keeps the sheet with its unit).
+ *       'rebuild'  everything else: "Rebuild this set correctly", as before.
+ *   Neither press is ever run by itself: the rebuild moves sheets between sets and the cut is permanent, so both stay the person's explicit act (a window, Cancel changes nothing).
+ *   cutGold(set, opts?) (page) the "Cut ..." press · fix(set, opts?) (page) the remedy's first press, for the button under Approve for laser cutting.
+ *
+ * (SETFIX B, Paul 17 Oct 2026: "a sheet someone drags into a formed set can make that set unapprovable".)
+ *   joinCheck(set, joinIds, sheets, allSets, opts?) -> { ok, items:[violation], rules, label, detail, sheets:[id] }   pure
+ *       The state AFTER the sheets `joinIds` are in `set`, judged by CharmNestSetInvariants.check (through diagnose) against the state before: a move that adds a violation the set did not
+ *       have is refused, with the rule and what to do instead. Only a FORMED set is judged (it holds a completed GF and a completed SS sheet before the move: a set still forming is the
+ *       run's own business, R5/R8); a committed / completed / replaced set never is (its edit has its own rule, charm-nest-set-edit.js). A Rose Gold / 10K / 14K sheet that joins is read
+ *       as cut (it joins only by its Cut Sheet press or its own tick, R12); R14 numbers and R6 are not judged (the join gives the number; a person's drop is allowed after formation).
+ *       opts.rules: only these rules (the server, at the write: 'surplus' and 'partial', the two a saved record always answers). The Library plan (LibraryFlow) and the server's write
+ *       (charmNestLibrary putSheet / flowApply setMember) read this one function.
+ *
  * What the repair does to a set (page side, the existing rule-respecting operations only):
  *   1. the sheets that the correct first set does not hold are marked taken out and made drafts, ALL AT ONCE (a unit that shares an order leaves whole, so the cardinal rule
  *      cannot pull one of them back), and the run's own assembly (Gate.assemble: tendSet) lets them go exactly as it lets a sheet go that stops qualifying: pieces back
@@ -143,10 +163,26 @@
     const cl = RULE_ORDER.filter(r => by.has(r)).concat([...by.keys()].filter(r => !RULE_ORDER.includes(r))).map(r => ({ rule: r, ...clause(r, by.get(r), rowOf) })).filter(c => c.long);
     const sheets = [...new Set(cl.flatMap(c => c.sheets))];
     return {
-      setId: set.id, name: setWord(set), seq: setNumber(set), items: vs.map(v => ({ rule: v.rule, ruleNo: v.ruleNo, letter: v.letter || '', sheets: v.sheets.slice(), names: v.names.slice(), message: v.message })),
+      setId: set.id, name: setWord(set), seq: setNumber(set), items: vs.map(v => Object.assign({ rule: v.rule, ruleNo: v.ruleNo, letter: v.letter || '', sheets: v.sheets.slice(), names: v.names.slice(), message: v.message },
+        ...['outside', 'partial'].filter(k => v[k]).map(k => ({ [k]: v[k] })), ...['orders', 'reasons'].filter(k => Array.isArray(v[k])).map(k => ({ [k]: v[k].slice() })))),   // (SETFIX B: what a refused move names, joinWords)
       line: `${setWord(set)} breaks your rules: ${cl.map(c => c.long).join('; ')}`, short: `breaks your rules: ${cl.map(c => c.short).join('; ')}`,
-      rules: [...new Set(vs.map(v => v.ruleNo))], sheets, names: sheets.map(i => rowOf.has(i) ? currentName(rowOf.get(i)) : i), clauses: cl.map(c => ({ rule: c.rule, text: c.long }))
+      rules: [...new Set(vs.map(v => v.ruleNo))], sheets, names: sheets.map(i => rowOf.has(i) ? currentName(rowOf.get(i)) : i), clauses: cl.map(c => ({ rule: c.rule, text: c.long })),
+      remedy: remedyOf(set, vs, rowOf)
     };
+  }
+  /** (SETFIX A, Paul 17 Oct 2026) The press that puts a set that breaks a rule right, in the words the person reads: see the head of this file. */
+  const REBUILD = 'Rebuild this set correctly';
+  function remedyOf(set, vs, rowOf) {
+    const name = setWord(set), nm = i => (rowOf.has(i) ? currentName(rowOf.get(i)) : i);
+    const lineless = vs.filter(v => v.rule === 'notReady' && list(v.reasons).some(x => /green line/.test(str(x))));
+    const cut = [...new Set(lineless.map(v => v.sheets[0]))].filter(i => rowOf.has(i)).sort((a, b) => byKindNo(rowOf.get(a), rowOf.get(b)));
+    const rest = vs.some(v => v.rule !== 'notReady' || list(v.reasons).some(x => /back engraving/.test(str(x))));
+    if (!cut.length) return { kind: 'rebuild', button: REBUILD, sheets: [], names: [], say: `Press "${REBUILD}" on its card in the Library.`, short: `press "${REBUILD}"`, server: `Press "${REBUILD}" on its card in the Library` };
+    const names = cut.map(nm), one = cut.length === 1, button = `Cut ${and(names)}`, does = `the Cut Sheet press: it draws ${one ? 'its green line and records its cut' : 'their green lines and records their cuts'}`;
+    if (rest) return { kind: 'cut', then: 'rebuild', button, sheets: cut, names, say: `Press "${button}" first (${does}), then "${REBUILD}".`, short: `press "${button}", then "${REBUILD}"`, server: `Press "${button}" on its card in the Library (${does}), then "${REBUILD}"` };
+    // (a sheet that shares no order with the rest of the set may simply leave it instead: the rebuild makes the set again without it; one that shares an order would only become the partner the set waits for)
+    const loose = lineless.every(v => !list(v.tied).length);
+    return { kind: 'cut', button, sheets: cut, names, say: `Press "${button}" (${does}), and ${name} can then be approved${loose ? `. Or press "${REBUILD}": ${name} is made again without ${one ? 'it' : 'them'} until ${one ? 'it is' : 'they are'} cut` : ''}.`, short: `press "${button}"`, server: `Press "${button}" on its card in the Library (${does})` };
   }
 
   /* ── diagnose ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -177,7 +213,70 @@
     return { list: out, bySet, result };
   }
   /** The annotation a set group carries for the Library and the readiness gate: { items, line, short, rules }, or null. */
-  const breaksOf = (diag, setId) => { const i = diag && diag.bySet[setId]; return i ? { items: i.items, line: i.line, short: i.short, rules: i.rules, sheets: i.sheets.slice(), names: i.names.slice() } : null; };
+  const breaksOf = (diag, setId) => { const i = diag && diag.bySet[setId]; return i ? { items: i.items, line: i.line, short: i.short, rules: i.rules, sheets: i.sheets.slice(), names: i.names.slice(), ...(i.remedy ? { remedy: Object.assign({}, i.remedy) } : {}) } : null; };
+
+  /* ── joinCheck (SETFIX B) ────────────────────────────────────────────────────────────────────────────────────────────────────────────── */
+  const GOLD_JOIN = { cutApproved: true };
+  /** What a move of the sheets `joinIds` into `setIn` would do to the owner's rules: see the head of this file. Pure: nothing is written. */
+  function joinCheck(setIn, joinIdsIn, sheetsIn, allSetsIn, opts) {
+    const I = INV(), R = SR(), o = opts || {}, pass = extra => Object.assign({ ok: true, items: [], rules: [], label: '', detail: '', sheets: [] }, extra || {});
+    if (!I || !R) return pass({ skipped: 'rules' });
+    const doc = setIn && typeof setIn === 'object' ? setIn : null, setId = str(doc && (doc.setId || doc.id));
+    if (!doc || !setId) return pass({ skipped: 'noSet' });
+    if (R.exempt(doc)) return pass({ skipped: 'committed' });
+    const rows = rowsOf(sheetsIn), rowOf = new Map(rows.map(r => [r.id, r]));
+    const join = new Set(list(joinIdsIn).map(idOf).filter(i => i && rowOf.has(i) && inSetOf(rowOf.get(i)) !== setId));
+    if (!join.size) return pass({ skipped: 'nothing' });
+    // only a FORMED set: it holds a completed GF and a completed SS sheet before the move (a set still forming is completed by the run, R5 / R8)
+    const before = rows.filter(r => inSetOf(r) === setId);
+    if (!R.validSet(before).ok) return pass({ skipped: 'forming' });
+    const docs = list(allSetsIn).filter(d => d && str(d.setId || d.id) !== setId).concat([doc]);
+    const after = rows.map(r => {
+      if (!join.has(r.id)) return r;
+      const x = Object.assign({}, r, { setId, draft: false, archived: false, joinedBy: 'person', sheetIndex: null });
+      if (GOLD_FAMILY.includes(classOf(r))) Object.assign(x, { solidIncluded: true }, GOLD_JOIN);   // (it joins only by its own Cut Sheet press or its own tick: R12 (a)'s yes)
+      else if (x.solidIncluded === false) x.solidIncluded = null;
+      return x;
+    });
+    const was = diagnose(docs, rows, { includeStarted: true }).bySet[setId], now = diagnose(docs, after, { includeStarted: true }).bySet[setId];
+    if (!now) return pass();
+    // a violation the set already had is not this move's doing; one that only names the joining sheets as well as those it had is the same fault (a unit that grows)
+    const key = v => `${v.rule}:${v.sheets.filter(i => !join.has(i)).slice().sort().join('+')}`, had = new Set(((was && was.items) || []).map(key));
+    const SKIP = new Set(['numbering', 'closedJoin']), want = o.rules ? new Set(list(o.rules)) : null;
+    const fresh = now.items.filter(v => !SKIP.has(v.rule) && (!want || want.has(v.rule)) && !had.has(key(v)));
+    if (!fresh.length) return pass();
+    return Object.assign({ ok: false, items: fresh, rules: [...new Set(fresh.map(v => v.ruleNo))], sheets: [...join], names: [...join].map(i => currentName(rowOf.get(i))) }, joinWords(doc, [...join], fresh, rowOf, rows));
+  }
+  /** The refusal of a move into a set, in plain words: which rule, and what to do instead. Names as the sheets are called now (before the move). */
+  function joinWords(doc, joinIds, vs, rowOf, rows) {
+    const R = SR(), set = setWord(doc), nm = i => (rowOf.has(i) ? currentName(rowOf.get(i)) : i);
+    const who = and(joinIds.slice().sort((a, b) => byKindNo(rowOf.get(a), rowOf.get(b))).map(nm)), many = joinIds.length > 1;
+    const lines = [], first = vs[0];
+    for (const rule of RULE_ORDER.concat([...new Set(vs.map(v => v.rule))].filter(r => !RULE_ORDER.includes(r)))) {
+      const mine = vs.filter(v => v.rule === rule); if (!mine.length) continue;
+      if (rule === 'surplus') {
+        const have = rows.filter(r => inSetOf(r) === str(doc.setId || doc.id));
+        // (the sheets the move adds are what makes the set bigger than it needs: the checker may name an earlier member as the spare one, the words name the move)
+        const kinds = [...new Set(joinIds.map(i => classOf(rowOf.get(i))).filter(c => c === 'GF' || c === 'SS'))];
+        const needs = kinds.length === 1 ? ` with a completed ${kinds[0] === 'GF' ? 'SS' : 'GF'} sheet` : '';
+        lines.push({ rule, label: `${set} would be bigger than the minimum`, text: `${set} already holds a completed GF and a completed SS sheet${have.length ? ` (${and(have.slice().sort(byKindNo).slice(0, 4).map(r => nm(r.id)))}${have.length > 4 ? ' and more' : ''})` : ''}, and no order ties ${who} to its sheets, so ${set} does not need ${many ? 'them' : 'it'}. A set holds only the sheets it needs (your rule R7): with ${many ? 'them' : 'it'}, ${set} could not be approved for laser cutting. Leave ${who} out: ${many ? 'they form' : 'it forms'} the next set${needs}.` });
+      } else if (rule === 'partial') {
+        const p = [...new Set(mine.flatMap(v => v.sheets))], one = p.length === 1;
+        lines.push({ rule, label: `${some(p.map(nm))} ${one ? 'is' : 'are'} not full yet`, text: `${some(p.map(nm))} ${one ? 'is' : 'are'} not full yet${one && R ? R.fillWords(rowOf.get(p[0]) || {}) : ''}, and a partial sheet never joins a set (your rule R3). Let ${one ? 'it' : 'them'} finish nesting, or release ${one ? 'it' : 'them'} as ${one ? 'it stands' : 'they stand'}, then add ${one ? 'it' : 'them'} to ${set}.` });
+      } else if (rule === 'notReady') {
+        const p = [...new Set(mine.flatMap(v => v.sheets))], one = p.length === 1;
+        lines.push({ rule, label: `${some(p.map(nm))} ${one ? 'is' : 'are'} not ready to join a set`, text: `${some(p.map(nm))} ${one ? 'has' : 'have'} no cut green line or no approved back engraving yet (your rule R12). Press Cut Sheet on ${one ? 'it' : 'them'} and approve ${one ? 'its' : 'their'} back engraving, then add ${one ? 'it' : 'them'} to ${set}.` });
+      } else if (rule === 'cardinal') {
+        const out = [...new Set(mine.map(v => v.outside).filter(Boolean))].map(nm), os = [...new Set(mine.flatMap(v => list(v.orders)))];
+        lines.push({ rule, label: 'Orders shared with another sheet', text: `${os.length ? (os.length === 1 ? `Order ${os[0]} has` : `Orders ${os.slice(0, 3).join(', ')}${os.length > 3 ? ' and more' : ''} have`) + ' pieces' : 'Pieces of an order are'} on ${out.length ? and(out) : 'a sheet'} too, and sheets that share a multi-piece order are always in the same set (your rule R9). Drop them together, or take the order off one of the sheets first.` });
+      } else if (rule === 'partialPartner') {
+        const p = [...new Set(mine.map(v => v.partial).filter(Boolean))].map(nm);
+        lines.push({ rule, label: `${who} waits for ${and(p)}`, text: `${who} ${many ? 'share' : 'shares'} an order with ${and(p)}, which ${p.length === 1 ? 'is' : 'are'} not full yet: that group waits outside every set until ${p.length === 1 ? 'it is' : 'they are'} full (your rule R11).` });
+      } else lines.push({ rule, label: `${set} would break your rules`, text: mine.map(v => v.message).join('. ') + '.' });
+    }
+    const head = `${who} cannot go into ${set}`;
+    return { label: `${head}: ${lines.map(l => l.label).join('; ')}`, detail: lines.map(l => l.text).join(' '), lines, rule: first.rule };
+  }
 
   /* ── plan ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── */
   const refuse = (out, key, reason) => Object.assign(out, { ok: false, refused: { key, reason } });
@@ -364,6 +463,7 @@
 .setBreak .setBreakLine{flex:1 1 320px;min-width:0;font-size:12.5px;line-height:1.45;font-weight:600}
 .setBreak .btn{flex:0 0 auto}
 .setBreak .setBreakSay{flex:1 1 100%;font-size:12px;line-height:1.4;color:var(--ink70,#5b554c);font-weight:500}
+.setBreak .setBreakTodo{flex:1 1 100%;min-width:0;font-size:12px;line-height:1.4;color:var(--ink,#1c1a17);font-weight:500}
 .setBreak[aria-busy="true"] .btn{opacity:.6}
 dialog.setRepairDlg{width:min(540px,94vw)}
 .setRepairDlg .dlgBody p{margin:0 0 10px;line-height:1.5;color:var(--ink70,#5b554c)}
@@ -380,7 +480,9 @@ dialog.setRepairDlg{width:min(540px,94vw)}
   /** The red line and its one button for a set group that carries `setBreaks` (the Library's libraryGroups sets it at every drawing; never saved). '' when the set is right. */
   function lineHtml(st) {
     const b = st && st.setBreaks; if (!b || !b.line) return '';
-    return `<div class="setBreak" data-set-break="${esc(st.setId)}" role="note"><span class="setBreakLine" data-set-break-line title="${esc((b.rules || []).join(' · ') + ' · docs/charm-nest/set-rules.md')}">${esc(b.line)}</span><button type="button" class="btn sm" data-rebuild-set="${esc(st.setId)}">Rebuild this set correctly</button><span class="setBreakSay" data-set-break-say hidden></span></div>`;
+    // (SETFIX A) the set says exactly what to press, and the press is right here: "Cut RG Sheet 16" for a sheet whose green line is not cut, and "Rebuild this set correctly"
+    const r = b.remedy, cut = r && r.kind === 'cut' ? `<button type="button" class="btn sm" data-cut-set="${esc(st.setId)}">${esc(r.button)}</button>` : '';
+    return `<div class="setBreak" data-set-break="${esc(st.setId)}" role="note"><span class="setBreakLine" data-set-break-line title="${esc((b.rules || []).join(' · ') + ' · docs/charm-nest/set-rules.md')}">${esc(b.line)}</span>${cut}<button type="button" class="btn sm" data-rebuild-set="${esc(st.setId)}">${REBUILD}</button>${r && r.say ? `<span class="setBreakTodo" data-set-break-todo>${esc(r.say)}</span>` : ''}<span class="setBreakSay" data-set-break-say hidden></span></div>`;
   }
 
   /** The page's own state the repair reads and drives. A test passes its own `env`. */
@@ -402,6 +504,17 @@ dialog.setRepairDlg{width:min(540px,94vw)}
       say: (text, kind) => { if (C && C.toast) C.toast(text, kind || 'bad', 7000); },
       by: () => (root.CNEmployee && root.CNEmployee.name ? root.CNEmployee.name() : ''),
       confirm: p => confirmDialog(p),
+      confirmCut: words => confirmDialog({ words }),
+      // (SETFIX A) the Cut Sheet press of the Library (LibraryFlow.cutLine: the green dash line drawn and dated, the cut recorded, LibraryFlowRose.calculate with recordCut); a sheet whose line
+      // is drawn already is skipped by that press and has its cut recorded by the Cut Sheet button's own press (RoseStock.record). Called only after the person's yes in the window.
+      cut: async (ids, by) => {
+        const F = root.LibraryFlow, RS = root.RoseStock, pageOf = id => (C && C.allSheets ? C.allSheets() : []).find(p => p.sheetId === id && !p.recalled);
+        if (!F || typeof F.cutLine !== 'function') throw new Error('The Cut Sheet press is not loaded on this page: reload it');
+        const r = await F.cutLine({ kind: 'sheet', id: ids[0], sheetIds: ids, by });
+        if (!r || r.ok === false) throw new Error((r && r.error) || 'The green dash line could not be added');
+        for (const id of ids) { const pg = pageOf(id); if (pg && !pg.roseCutAt && RS && typeof RS.record === 'function') await RS.record(pg, { by }); }
+        return ids.map(id => ({ id, cut: !!(pageOf(id) || {}).roseCutAt }));
+      },
       note: () => {}
     };
   }
@@ -554,9 +667,55 @@ dialog.setRepairDlg{width:min(540px,94vw)}
     return { ok: true, rebuilt: true, formed, words };
   }
 
+  /** (SETFIX A) The "Cut RG Sheet 16" press of a set whose only fault is a Rose Gold / 10K / 14K sheet with no green line cut: a small window (what is drawn, that a recorded cut is permanent,
+   *  Cancel changes nothing), then the existing Cut Sheet press for those sheets. Nothing moves: the sheets stay in the set. Resolves { ok, cut:[{id,cut}] } or { ok:false, refused|cancelled|error }. */
+  async function cutGold(st, o) {
+    const env = Object.assign({}, pageEnv({}), (o && o.env) || {}), b = st && st.setBreaks, r = b && b.remedy, id = str(st && st.setId);
+    const refuse = (key, reason) => { env.say(reason); return { ok: false, refused: { key, reason } }; };
+    if (!r || r.kind !== 'cut' || !list(r.sheets).length) return refuse('none', `${setWord(st || {})} has no sheet whose green line is to be cut`);
+    if (running.has('cut:' + id)) return { ok: false, refused: { key: 'busy', reason: 'This sheet is being cut right now' } };
+    const ids = list(r.sheets).map(str), names = and(list(r.names).length ? r.names : ids), one = ids.length === 1, set = setWord(st);
+    const by = str(env.by()).trim();
+    if (!by) return refuse('who', 'Sign in first: the cut is recorded with your name');
+    if (!env.cloud()) return refuse('offline', 'The page is offline: reconnect, then press it again. Nothing was changed');
+    const pages = env.pages(), pageOf = x => list(pages).find(p => p && p.sheetId === x && !p.recalled);
+    const away = ids.filter(x => !pageOf(x));
+    if (away.length) return refuse('away', `${and(away.map(x => list(r.names)[ids.indexOf(x)] || x))} ${away.length === 1 ? 'is' : 'are'} not open on this page, so ${away.length === 1 ? 'its' : 'their'} green line cannot be cut from here. Open ${away.length === 1 ? 'it' : 'them'} on the Nest tab and press Cut Sheet there; ${set} can then be approved`);
+    for (const x of ids) { const why = busyOf(pageOf(x), env); if (why) return refuse('busy', `${list(r.names)[ids.indexOf(x)] || x} is ${why}: try again when it is done. Nothing was changed`); }
+    const words = {
+      title: `Cut ${names}?`, intro: `${set} cannot be approved while ${names} ${one ? 'has' : 'have'} no cut green line: a Rose Gold, 10K or 14K sheet is in a set only once its green line is cut (your rule R12). This is the Cut Sheet press:`,
+      lines: ids.map((x, k) => ({ kind: 'set', text: `${list(r.names)[k] || x}: the green dash line is drawn and dated, and the cut is recorded` })),
+      what: `${one ? 'It stays' : 'They stay'} in ${set} with ${one ? 'its' : 'their'} pieces; nothing else changes. A recorded cut is permanent.`, numbering: '',
+      nothing: 'Nothing is added until you press Cut.', confirm: 'Cut', cancel: 'Cancel'
+    };
+    if (!(o && o.skipConfirm) && !(await env.confirmCut(words))) return { ok: false, cancelled: true };
+    running.add('cut:' + id);
+    try {
+      if (o && typeof o.onState === 'function') { try { o.onState('cutting', `Cutting ${names}: the green dash line is drawn, then the cut is recorded.`); } catch (_) { /* a line of text only */ } }
+      const done = await env.cut(ids, by), left = done.filter(d => !d.cut);
+      if (left.length) { const reason = `The green line of ${and(left.map(d => list(r.names)[ids.indexOf(d.id)] || d.id))} is not cut yet: open it on the Nest tab and press Cut Sheet there`; env.say(reason); return { ok: false, error: reason, cut: done }; }
+      env.say(`${names} cut. ${set} follows your rules${r.then ? `: now press "${REBUILD}"` : ' and can be approved for laser cutting'}.`, 'ok');
+      return { ok: true, cut: done, words: r.then ? `Cut. Now press "${REBUILD}".` : `Cut. ${set} can be approved for laser cutting.` };
+    } catch (e) {
+      const reason = `${(e && e.message) || e}`; env.say(`${names} ${one ? 'was' : 'were'} not cut: ${reason}`); return { ok: false, error: reason };
+    } finally { running.delete('cut:' + id); env.refresh(); }
+  }
+  /** (SETFIX A) The remedy's first press (the button under Approve for laser cutting): the Cut Sheet press, or the rebuild. */
+  const fix = (st, o) => (st && st.setBreaks && st.setBreaks.remedy && st.setBreaks.remedy.kind === 'cut' ? cutGold(st, o) : rebuild(st, o));
+
   /** Wires the button of a drawn card. `card` holds lineHtml(st). */
   function wire(card, st, o) {
     if (!card || typeof card.querySelector !== 'function') return;
+    const c = card.querySelector('[data-cut-set]');
+    if (c) c.onclick = async e => {
+      if (e && e.stopPropagation) e.stopPropagation();
+      const box = c.closest('.setBreak'), say = box && box.querySelector('[data-set-break-say]');
+      c.disabled = true; if (box) box.setAttribute('aria-busy', 'true');
+      try {
+        const r = await cutGold(st, Object.assign({}, o || {}, { onState: (kind, text) => { if (say) { say.hidden = false; say.textContent = text; } } }));
+        if (say) { say.textContent = r.ok ? r.words || '' : r.cancelled ? '' : r.refused ? r.refused.reason : r.error || ''; say.hidden = !say.textContent; }
+      } finally { c.disabled = false; if (box) box.removeAttribute('aria-busy'); }
+    };
     const b = card.querySelector('[data-rebuild-set]'); if (!b) return;
     styleOnce();
     b.onclick = async e => {
@@ -590,5 +749,6 @@ dialog.setRepairDlg{width:min(540px,94vw)}
   }
 
   const exempt = d => { const R = SR(); return !!R && R.exempt(d); };
-  return { diagnose, breaksOf, plan, rebuild, apply, lineHtml, wire, annotate, confirmDialog, busyOf, infoOf, clause, numberJoiners, inSetOf, rowsOf, setsOf, exempt, NOT_SHOWN: [...NOT_SHOWN] };
+  return { diagnose, breaksOf, plan, rebuild, apply, lineHtml, wire, annotate, confirmDialog, busyOf, infoOf, clause, numberJoiners, inSetOf, rowsOf, setsOf, exempt, NOT_SHOWN: [...NOT_SHOWN],
+    remedyOf, joinCheck, cutGold, fix, REBUILD };
 });

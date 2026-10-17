@@ -10062,7 +10062,9 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     if(ids.length>=2){
       const held=holdCase(ids.filter(id=>records.get(id) && !records.get(id).laserDoneAt));if(held)return {...held,set:true};   // (a held sheet holds the whole set's Approve, said once here)
       const gate=R.setGate(st,recs.map(projected));
-      return gate.ready?{why:'',set:true}:{why:gate.reason,set:true,blocker:gate.blockers[0]?.sheetId || ''};
+      // (SETFIX A, Paul 17 Oct 2026: a set that breaks the owner's rules is blocked here, never dead-ended: its grey line says what to press, and the press is offered right beside it, `fix`)
+      const fix=gate.blockers[0]?.rule==='setBreaks' && gate.rules?.remedy && window.SetRepair?.fix?gate.rules.remedy:null;
+      return gate.ready?{why:'',set:true}:{why:gate.reason,set:true,blocker:gate.blockers[0]?.sheetId || '',...(fix?{fix}:{})};
     }
     const rec=recs.find(r=>r.id===ids[0]) || recs[0],c=rec?approveCase([rec]):null;
     return c?{...c,blocker:rec.id}:null;
@@ -10078,6 +10080,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       if(t.matches('[data-approve-btn]'))pressApprove(box);
       else if(t.matches('[data-approve-reason]'))openWhy(box);
       else if(t.matches('[data-approve-review]'))window.LibraryReviewHold?.open?.(t.dataset.approveReview);
+      else if(t.matches('[data-approve-fix]'))pressFix(box,t);
       else if(t.matches('[data-approve-yes]'))confirmPlan(box,[t.dataset.approveYes]);
       else if(t.matches('[data-approve-no]'))cancelPlan(box);
       else if(t.matches('[data-approve-hide]'))hidePlan(box);
@@ -10092,7 +10095,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     // (the reason is a link when there is something to open: the '!' on the rail of the sheet it is about, which opens the issues panel)
     const key=approvalKey(box),busy=approving.has(key),about=c?.blocker || box._id,card=hostOf(box);
     const open=typeof window.LaserReview?.openChecklist==='function' && !!(box._kind==='set'?card.querySelector(`.flowBox[data-flow-for="sheet:${about}"] [data-issues-open]`):box.parentElement?.querySelector('.flowBox [data-issues-open]'));
-    const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',c?.quiet?1:0,open?1:0,about,box._name || '',(c?.hold || []).join(',')].join('|');
+    const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',c?.quiet?1:0,open?1:0,about,box._name || '',(c?.hold || []).join(','),c?.fix?.button || ''].join('|');
     box._case=c;
     if(box.dataset.sig===sig)return;
     box.dataset.sig=sig;box.dataset.mode=mode;
@@ -10106,6 +10109,14 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     why.id=reasonId;
     // (one order in Review holds it: the line opens that order in the Review tab; several: it opens the '!' list like every other reason)
     why.innerHTML=mode!=='blocked' || c.quiet?'':c.hold?.length===1?`<button type="button" class="approveReason" data-approve-review="${esc(c.hold[0])}" title="${esc('Open order '+c.hold[0]+' in Review')}">${esc(c.why)}</button>`:open?`<button type="button" class="approveReason" data-approve-reason>${esc(c.why)}</button>`:`<span class="approveReason">${esc(c.why)}</span>`;
+    // (SETFIX A) the one press that puts the set right, beside the reason that names it ("Cut RG Sheet 16" / "Rebuild this set correctly"): never run by itself, it opens its own small window
+    if(mode==='blocked' && c.fix)why.insertAdjacentHTML('beforeend',` <button type="button" class="btn sm approveFix" data-approve-fix="${esc(c.fix.kind)}">${esc(c.fix.button)}</button>`);
+  }
+  async function pressFix(box,t){
+    const card=hostOf(box),st=card && card._laserSet;if(!st || !window.SetRepair?.fix || t.disabled)return;
+    t.disabled=true;
+    try{await SetRepair.fix(st);}catch(e){console.warn('[SetRepair] fix',e);}
+    finally{t.disabled=false;changed();}
   }
   function syncBox(host,kind,id,c,name){
     const key=boxKey(kind,id);let box=[...host.children].find(x=>x.dataset?.approveFor===key);
