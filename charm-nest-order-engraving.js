@@ -367,12 +367,10 @@
     /** The customer's words block: the host's next sibling inside the section (never a child of the host: the host's children are the cards). Drawn again only when what it says changes. */
     let saidEl = null, saidSig = '';
     function paintSaid(r) {
-      const entries = r && !r.loading ? tryDo(() => saidOf(r.rows, r.pieces), []) || [] : [];
-      if (!saidEl && entries.length && host.parentNode) { saidEl = doc().createElement('div'); saidEl.className = 'engSaid'; saidEl.id = 'owEngSaid'; saidEl.setAttribute('role', 'group'); saidEl.setAttribute('aria-label', 'What the customer wrote'); saidEl.hidden = true; host.parentNode.insertBefore(saidEl, host.nextSibling); }
-      if (!saidEl) return;
-      const sig = JSON.stringify(entries);
-      if (sig !== saidSig) { saidSig = sig; saidEl.innerHTML = entries.length ? saidHtml(entries) : ''; }
-      saidEl.hidden = !entries.length;
+      // (NOSAID, Paul 17 Oct 2026: "Remove the personalization info from beneath the Engraving card inside the Detailed Order modal": the customer's words stay in the Overview's "What the customer wrote" box, nothing is drawn under the cards any more, and a block an earlier drawing left there is taken away; the reader, CharmNestOrderEngraving.said, stays for any host that wants the words as data)
+      if (saidEl) { saidEl.remove(); saidEl = null; }
+      const stale = host.parentNode && host.parentNode.querySelector ? host.parentNode.querySelector(':scope > #owEngSaid') : null; if (stale) stale.remove();
+      saidSig = '';
     }
     /** SETBAR: a set of bars whose buyer asked for another layout says so in ONE calm line above the cards (a person decides which bar hangs on which chain): charm-nest-engrave-card.js layoutNoteOf. Nothing for any other line. */
     let noteEl = null;
