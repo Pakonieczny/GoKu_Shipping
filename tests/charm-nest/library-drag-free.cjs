@@ -8,6 +8,7 @@
 // (c) by a sheet that was laser cut (rule B), (d) because a set would be emptied, (e) by a physical-safety rule that already existed
 // (a sheet is approved for Laser cutting only with its engravings, orders and QR labels in place; a partial Rose Gold sheet needs its Cut Sheet press),
 // each with ONE plain line at the drop place, and a refusal writes nothing. Fake Firestore: no nested arrays are written.
+// (SETFIX B, Paul 17 Oct 2026) and (f) by a drop that would make a FORMED set break the owner's rules (bigger than the minimum, R7): the plan and the server (putSheet) refuse it alike.
 //   node tests/charm-nest/library-drag-free.cjs
 const assert = require('node:assert/strict');
 const { start } = require('./bridge-server.cjs');
@@ -169,11 +170,16 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
     assert.deepEqual(st.doc(SET, 'set-1').sheetIds, ['gf-1', 'ss-2'], 'the set is made again without it by the run (its assembly), not by the server');
     assert.equal(log.applied.at(-1).sheets[0].run, true); assert.equal(log.applied.at(-1).sheets[0].fromSetId, 'set-1');
     assert.equal(RULES.isCompleted(g), true); assert.equal(RULES.validSet(membersOf('set-1')).ok, true, 'Set 1 keeps a completed GF and a completed SS sheet (SS Sheet 2)');
-    // it comes back: dropped on Set 1 (the open set), the hold it was given is lifted; its own seals and approvals stayed
+    // it comes back? (SETFIX B, Paul 17 Oct 2026: "a sheet someone drags into a formed set can make that set unapprovable") Set 1 has formed again with GF Sheet 1 and SS Sheet 2, and no order
+    // ties SS Draft 1 to them: dropped on Set 1 it would make it bigger than the minimum (R7), so the drop is refused in plain words, nothing is written and the hold stays
     pageLive['ss-1'] = { runHere: true, draft: true, dispatchSetId: 'set-1', can: { ok: true, byHand: true }, split: [] };
-    p = await LF.plan({ kind: 'sheet', id: 'ss-1', to: { set: 'set-1' } }); assert.equal(p.ok, true, JSON.stringify(p.needs));
-    c = await LF.commit(p, { by: 'Paul', confirmed: p.confirm.map(x => x.key) }); assert.equal(c.ok, true, JSON.stringify(c)); assert.equal(log.include.at(-1).id, 'ss-1');
-    assert.equal(recOf('ss-1').setId, 'set-1'); assert(!held('ss-1'), 'the hold taking it out made is lifted when it is put back'); assert.deepEqual(st.doc(SET, 'set-1').sheetIds.sort(), ['gf-1', 'ss-1', 'ss-2']);
+    before = all(); p = await LF.plan({ kind: 'sheet', id: 'ss-1', to: { set: 'set-1' } }); assert.equal(p.ok, false, JSON.stringify(p.needs)); assert.deepEqual(p.needs.map(n => n.key), ['setRules']);
+    assert.match(p.needs[0].label, /^SS Draft 1 cannot go into Set 1: Set 1 would be bigger than the minimum$/); assert.match(p.needs[0].detail, /Leave SS Draft 1 out: it forms the next set with a completed GF sheet\.$/);
+    c = await LF.commit(p, { by: 'Paul', confirmed: ['leaveSet'] }); assert.equal(c.ok, false); assert.deepEqual(wrote(before, all()), [], 'a refused drop writes nothing'); assert(held('ss-1'));
+    // (the server refuses the same write from a page that tries anyway: putSheet into the formed set)
+    const r0 = await post({ op: 'putSheet', sheet: { id: 'ss-1', draft: false, setId: 'set-1', setSeq: 1, sheetIndex: 3 } }); assert.equal(r0.status, 409, JSON.stringify(r0)); assert.match(r0.error, /^SS Draft 1 cannot go into Set 1: Set 1 would be bigger than the minimum\. /); assert.equal(recOf('ss-1').setId || null, null);
+    // (the scenes below start from Set 1 as it was: GF Sheet 1, SS Sheet 1 and SS Sheet 2, by the records)
+    st.put(S, 'ss-1', { draft: false, setId: 'set-1', setSeq: 1, sheetIndex: 1 }); st.put(SET, 'set-1', { sheetIds: ['gf-1', 'ss-1', 'ss-2'] });
 
     // ═══ 3. a sheet that is simply ready (in no set): In progress <-> Laser cutting <-> Completed are all free, both ways, each step keeping every seal ═══
     delete pageLive['ss-1'];
@@ -247,11 +253,11 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
     // a sheet of a committed set into the open set: it leaves (hold), the run takes it in as it would any full sheet, the hold is lifted
     pageLive['s2-a'] = { runHere: false, sent: true, draft: false, dispatchSetId: 'set-1', can: { ok: true, byHand: true, reason: '' }, split: [] };
     pageLive['g2-b'] = { runHere: false, sent: true, draft: false, dispatchSetId: 'set-1', can: { ok: true, byHand: true, reason: '' }, split: [] };
-    p = await LF.plan({ kind: 'sheet', id: 'g2-b', to: { set: 'set-1' } });
-    assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.deepEqual(p.steps.map(x => x.type), ['setMember', 'setFiles', 'include', 'release']); assert.deepEqual(p.confirm.map(x => x.key), ['leaveSet']);
-    c = await LF.commit(p, { by: 'Paul', confirmed: ['leaveSet'] }); assert.equal(c.ok, true, JSON.stringify(c));
-    assert.equal(recOf('g2-b').setId, 'set-1'); assert(!held('g2-b'), 'the hold is lifted once it is in Set 1'); assert.equal(log.include.at(-1).id, 'g2-b'); assert(!st.doc(SET, 'set-2').sheetIds.includes('g2-b'));
-    assert.equal(st.doc(SET, 'set-2').committedAt > 0, true, 'Set 2 stays committed');
+    // (SETFIX B) Set 1 has formed (GF Sheet 1 + SS Sheet 2) and nothing ties GF Sheet 2 to it: refused, R7, nothing written
+    before = all(); p = await LF.plan({ kind: 'sheet', id: 'g2-b', to: { set: 'set-1' } }); assert.equal(p.ok, false); assert.deepEqual(p.needs.map(n => n.key), ['setRules']);
+    assert.match(p.needs[0].label, /^GF Sheet 2 cannot go into Set 1: Set 1 would be bigger than the minimum$/); assert.deepEqual(wrote(before, all()), []);
+    // (the scene below starts from GF Sheet 2 out of Set 2, by the records)
+    st.put(S, 'g2-b', { draft: true, setId: null, setSeq: null, sheetIndex: null }); st.put(SET, 'set-2', { sheetIds: st.doc(SET, 'set-2').sheetIds.filter(i => i !== 'g2-b') });
     // ...but not when that would break Set 2 (its only completed GF is g2-a now)
     zs = await zonesOf('g2-a'); assert.equal(zoneBy(zs, 'set-1').ok, false); assert.match(zoneBy(zs, 'set-1').reason, /Set 2 needs a completed GF sheet/);
     // a screen that does not hold the run cannot start a new set from a sheet: the plain reason, not "committed"

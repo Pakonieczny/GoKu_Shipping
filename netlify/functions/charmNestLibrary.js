@@ -853,6 +853,12 @@ async function op_putSheet(b) {
       if (differs) {
         const ids = [...new Set([was, want].filter(Boolean))].filter(isId), sets = ids.length ? await txGetAll(tx, ids.map(id => col(SETS).doc(id))) : [];
         if (sets.some(d => d.exists && SetEdit.committedSet(d.data()))) for (const k of ["setId", "setSeq", "draft", "solidIncluded", "sheetIndex"]) delete doc[k];
+        // (SETFIX B, Paul 17 Oct 2026) a save that puts this sheet into a FORMED set it is not in yet: refused, and nothing written, when the set would then break the owner's rules
+        // (bigger than the minimum, a partial sheet in it), whichever screen sends it. Read from the records outside this transaction; the run's own assembly never adds such a sheet.
+        else if (want && want !== was && isId(want)) {
+          const r = await joinRulesFor(want, [s.id], { rules: JOIN_RULES_AT_WRITE, overlay: { [s.id]: s } });
+          if (!r.ok) return joinRefusal(r);
+        }
       }
     }
     if (!ex.exists) doc.createdAt = FV.serverTimestamp();
@@ -3768,10 +3774,17 @@ async function op_flowState(b) {
   // the cardinal rule of a Set of Sheets (below): for a move into a set, the orders it would split, read from the records
   const mv = b.move && typeof b.move === "object" ? b.move : null;
   const shared = mv && mv.to && (mv.to.set || mv.to.newSet || mv.to.leave) ? await sharedAnswer(mv) : null;
+  // (SETFIX B) a sheet moved into a set: the set as it would be after the move (the sheet, the sheets dropped on, and the partners that come with it), judged by the owner's rules
+  let rules = null;
+  if (mv && mv.kind !== "set" && mv.to && isId(mv.to.set) && isId(mv.id)) {
+    const g = shared && shared.group, fixed = new Set(((g && g.fixed) || []).map(f => f.sheetId));
+    const mates = ((g && g.members) || []).filter(m => m && m.id && !m.setId && !fixed.has(m.id)).map(m => m.id);
+    rules = await joinRulesFor(String(mv.to.set), [str(mv.id, 80)].concat((Array.isArray(mv.also) ? mv.also : []).slice(0, 4), mates));
+  }
   // a set of several sheets advances as one: its gate (Readiness.setGate) from these same records, so the page can say why none of it is approved
   const gates = {};
   for (const x of docs) if ((x.sheetIds || []).length > 1) { const g = Readiness.setGate({ ...x, name: x.name || (x.seq ? "Set " + x.seq : "") }, (status.sheets || []).filter(r => r.setId === x.setId)); gates[x.setId] = { ready: g.ready, reason: g.reason, blockers: g.blockers, toApprove: g.toApprove }; }
-  return { sheets: status.sheets || [], sets: status.sets || [], setDocs: docs, runs, gates, checkedAt: Date.now(), ...(shared ? { shared: shared.shared, group: shared.group } : {}) };
+  return { sheets: status.sheets || [], sets: status.sets || [], setDocs: docs, runs, gates, checkedAt: Date.now(), ...(shared ? { shared: shared.shared, group: shared.group } : {}), ...(rules ? { rules } : {}) };
 }
 /* ── The cardinal rule of a Set of Sheets (Paul, 5 Oct 2026; charm-nest-shared-orders.js, window.SharedOrders, which this
    file shares): every sheet that shares a multi-piece order with another is in the SAME set. Read only here: the sheets that
@@ -3874,6 +3887,28 @@ async function ruleBreaksFor(setIds) {
   }
   return out;
 }
+/** (SETFIX B, Paul 17 Oct 2026: "a sheet someone drags into a formed set can make that set unapprovable".) What putting the sheets `joinIds` into the set `setId` would do to the owner's rules:
+ *  charm-nest-set-repair.js joinCheck (the set after the move judged by CharmNestSetInvariants.check against the set before; only a FORMED, uncommitted set is judged), read from the records:
+ *  the set, its sheets and every sheet an order chain runs through (sharedSheets). opts.rules: only those rules; opts.overlay: {sheetId: fields this very save writes}.
+ *  -> { ok, setId, label, detail, rules, sheets, lines }. A read that fails answers ok and is logged: the page's own plan and the approval gate still stand. */
+const JOIN_RULES_AT_WRITE = ["surplus", "partial"];      // (at the write itself only the rules a saved record always answers: the run's own assembly is never refused for a record still on its way)
+const JOIN_OVERLAY = ["metal", "releaseFull", "poolIds", "orders", "placedCount", "density"];
+async function joinRulesFor(setId, joinIds, opts = {}) {
+  const ok = { ok: true, setId };
+  try {
+    const ids = [...new Set((joinIds || []).map(x => str(x, 80)).filter(isId))].slice(0, 20);
+    if (!isId(setId) || !ids.length) return ok;
+    const sd = await col(SETS).doc(setId).get(); if (!sd.exists) return ok;
+    const doc = { ...sd.data(), setId };
+    if (SetRepair.exempt(doc)) return ok;
+    const members = [...new Set((doc.sheetIds || []).filter(isId))].slice(0, 300);
+    const { docs, setDocs } = await sharedSheets(members.concat(ids));
+    const over = opts.overlay || {}, rows = docs.map(d => { const o = over[d.id]; return o ? { ...d, ...Object.fromEntries(JOIN_OVERLAY.filter(k => Object.prototype.hasOwnProperty.call(o, k)).map(k => [k, o[k]])), id: d.id } : { ...d, id: d.id }; });
+    return { ...SetRepair.joinCheck(doc, ids, rows, setDocs.filter(s => s.setId !== setId), opts.rules ? { rules: opts.rules } : {}), setId };
+  } catch (e) { console.warn("[charmNestLibrary] the rules of set", setId, "could not be read for a move into it (the page's plan and the approval gate stand):", e && e.message); return ok; }
+}
+/** The plain refusal of a write that would make a set break the owner's rules (SETFIX B). */
+const joinRefusal = r => ({ error: `${r.label}. ${r.detail}`.trim(), status: 409, setId: r.setId, rule: (r.items && r.items[0] && r.items[0].rule) || "", rules: r.rules || [], refused: "setRules" });
 /** null when every approving step in `steps` may go ahead, else the refusal ({error, status:409, blockers, set}). */
 async function approveGate(steps) {
   const sheetIds = new Set(), setIds = new Set();
@@ -3899,8 +3934,9 @@ async function approveGate(steps) {
     for (const g of got) { const rid = g.orders.find(r => reviewing.has(r)); if (rid) return { error: `Order ${rid} is in Review, so the sheet it is on cannot go on until it is resolved in the Review tab`, status: 409, orderId: rid, sheetId: g.id }; }
   }
   for (const [id, { set, gate, breaks: b }] of await setGatesFor([...setIds], null)) {
-    // a set that breaks the owner's rules is never approved (SETREPAIR): the plain line of the rules it breaks, and the way out (Rebuild this set correctly on its card)
-    if (b) return { error: `${b.line}, so it cannot be approved for laser cutting. Press "Rebuild this set correctly" on its card in the Library`, status: 409, setId: id, breaks: b.items, blockers: [{ sheetId: "", sheetLabel: b.name, step: "nesting", why: b.short, text: `${b.name} · ${b.short}`, rule: "setBreaks" }] };
+    // a set that breaks the owner's rules is never approved (SETREPAIR): the plain line of the rules it breaks, and the way out, the one press that puts it right (SETFIX A, Paul 17 Oct 2026:
+    // "Cut RG Sheet 16" for a sheet whose green line is not cut, else "Rebuild this set correctly", on its card)
+    if (b) return { error: `${b.line}, so it cannot be approved for laser cutting. ${(b.remedy && b.remedy.server) || 'Press "Rebuild this set correctly" on its card in the Library'}`, status: 409, setId: id, breaks: b.items, ...(b.remedy ? { remedy: b.remedy } : {}), blockers: [{ sheetId: "", sheetLabel: b.name, step: "nesting", why: b.short, text: `${b.name} · ${b.short}`, rule: "setBreaks" }] };
     if (!gate.ready) return { error: `${gate.setLabel === "This set" ? "This set" : gate.setLabel} is approved together, so every sheet of it must be ready first: ${gate.reason}`, status: 409, blockers: gate.blockers, setId: id };
   }
   return null;
@@ -3965,6 +4001,11 @@ async function applySetMembers(step, by, device, via) {
   // the sheets that share an order with a moving sheet (found now, read again inside the transaction)
   const near = (await sharedSheets(moves.map(m => m.id))).sheets.map(s => s.id).filter(id => !seen.has(id)).slice(0, 400);
   const engravings = await joinEngravings(moves);
+  // (SETFIX B, Paul 17 Oct 2026) a move into a FORMED set that is not committed (a committed set's edit is SetEdit's rule, below): refused when the set would then break the owner's rules
+  for (const to of [...new Set(moves.filter(m => m.to).map(m => m.to))]) {
+    const r = await joinRulesFor(to, moves.filter(m => m.to === to).map(m => m.id), { rules: JOIN_RULES_AT_WRITE });
+    if (!r.ok) return joinRefusal(r);
+  }
   const at = Date.now();
   const res = await db.runTransaction(async tx => {
     const rec = new Map(), setDoc = new Map();

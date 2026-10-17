@@ -221,8 +221,11 @@
     return R.setGate(withBreaks(v.set), v.members);
   }
   function gateNeed(v, gate) {
-    return { key: 'setGate', label: gate.reason, detail: `${setName(v.set)} is approved together, so every sheet of it must be ready first.`,
-      items: gate.blockers.slice(0, LISTED).map(b => ({ kind: 'sheet', id: b.sheetId, label: b.sheetLabel, why: b.why })) };
+    // (SETFIX A, Paul 17 Oct 2026) a set that breaks the owner's rules says exactly what to press, and names the sheets that press is about (the press itself is on the set's card)
+    const m = gate.rules && gate.rules.breaks && gate.rules.remedy ? gate.rules.remedy : null;
+    const items = gate.blockers.slice(0, LISTED).filter(b => !(m && b.rule === 'setBreaks' && (m.sheets || []).length)).map(b => ({ kind: 'sheet', id: b.sheetId, label: b.sheetLabel, why: b.why }));
+    if (m) items.unshift(...(m.sheets || []).map((id, k) => ({ kind: 'sheet', id, label: (m.names || [])[k] || id, why: `press "${m.button}" on ${setName(v.set)}'s card` })));
+    return { key: 'setGate', label: gate.reason, detail: m ? m.say : `${setName(v.set)} is approved together, so every sheet of it must be ready first.`, items, ...(m ? { remedy: m } : {}) };
   }
 
   /* ── planning ───────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -383,7 +386,20 @@
   /* A sheet into a set, or into a new one. A set is made by its run (a sheet joins the open one by the release rules, a full
      sheet always does), so a drop is the sheet window's own Include / Make QR label for a sheet the open run holds here, and
      is refused, with the reason, for every set that is fixed. */
-  function planMembership(state, v, to, plan, env) { return setPrinciple(state, v, to, withCardinal(state, v, to, planMembershipBase(state, v, to, plan, env), env), env); }
+  function planMembership(state, v, to, plan, env) { return setRulesJoin(state, v, to, setPrinciple(state, v, to, withCardinal(state, v, to, planMembershipBase(state, v, to, plan, env), env), env), env); }
+  /* (SETFIX B, Paul 17 Oct 2026: "a sheet someone drags into a formed set can make that set unapprovable".) Before anything is written, the set as it would be after the drop is judged by
+     the owner's rules (charm-nest-set-repair.js joinCheck over CharmNestSetInvariants.check, read by the server from the records: op flowState answers it as `rules` for the move): a drop
+     that would make a FORMED set break a rule it did not break before is refused with the rule and what to do instead (need key `setRules`), so the card flies back and nothing changes.
+     The server refuses the same write (putSheet, flowApply setMember). A drop that keeps the set right plans exactly as before. */
+  function setRulesJoin(state, v, to, plan, env) {
+    const r = state.rules;
+    if (!r || r.ok !== false || plan.noop || plan.needs.length || !plan.to || !plan.to.setId || String(r.setId || '') !== String(plan.to.setId)) return plan;
+    if (plan.to.setId && committedSet(state.sets[plan.to.setId])) return plan;     // (a committed set's edit has its own rule, charm-nest-set-edit.js)
+    plan.needs.push({ key: 'setRules', label: r.label || `${v.label} would make ${setName(state.sets[plan.to.setId])} break your rules`, detail: r.detail || '', rules: r.rules || [],
+      items: (r.sheets || []).slice(0, LISTED).map((id, k) => ({ kind: 'sheet', id, label: (r.names || [])[k] || (state.sheets[id] ? sheetName(state.sheets[id]) : id), why: (r.lines && r.lines[0] && r.lines[0].label) || '' })) });
+    plan.steps = []; plan.confirm = []; plan.auto = [];
+    return finish(plan);
+  }
   /* Paul, 10 Oct: "In order for a Set of Sheets to be allowed to exist there must be at minimum 1 Completed GF Sheet and 1 Completed SS Sheet." Only a drop that MAKES a
      set can make an invalid one (a sheet that joins a set only adds to it), so a New set drop is refused, with the one plain reason, unless the sheets that would be in it
      (the one dropped, the ones dropped on, the partners that come with it) hold a completed GF and a completed SS sheet. charm-nest-set-rules.js is the one definition. */
@@ -898,7 +914,7 @@
   const reviewed = rec => { try { const H = root.CharmNestReviewHold; return H && typeof H.overlayFlow === 'function' ? H.overlayFlow(rec) : rec; } catch (_) { return rec; } };
   async function readState(item, extraSets, move, extraSheets) {
     const r = answer(await cloud({ op: 'flowState', sheetIds: item.kind === 'sheet' ? [item.id, ...(extraSheets || [])] : [], setIds: [...(item.kind === 'set' ? [item.id] : []), ...(extraSets || [])], ...(move ? { move } : {}) }));
-    const state = { sheets: {}, sets: {}, runs: r.runs || {}, live: {}, shared: Array.isArray(r.shared) ? r.shared : null, group: r.group || null };
+    const state = { sheets: {}, sets: {}, runs: r.runs || {}, live: {}, shared: Array.isArray(r.shared) ? r.shared : null, group: r.group || null, rules: r.rules && typeof r.rules === 'object' ? r.rules : null };
     for (const s of r.sheets || []) state.sheets[sid(s)] = reviewed(s);
     for (const x of r.sets || []) state.sets[x.setId] = x;
     for (const d of r.setDocs || []) state.sets[d.setId] = { ...(state.sets[d.setId] || {}), ...d };
@@ -920,7 +936,7 @@
     // dropped on another sheet: both go where the open run takes a sheet (its open set, else a new one); the other sheet is read with it
     const also = item.kind === 'sheet' && to.sheet && String(to.sheet) !== item.id ? [String(to.sheet)] : [];
     const dest = also.length ? destOf(joinableNow(item.id)) : to, joining = item.kind === 'sheet' && !!(dest.set || dest.newSet);
-    const state = await readState(item, dest.set ? [dest.set] : [], joining ? { kind: item.kind, id: item.id, to: dest.set ? { set: dest.set } : { newSet: true }, together } : null, also);
+    const state = await readState(item, dest.set ? [dest.set] : [], joining ? { kind: item.kind, id: item.id, to: dest.set ? { set: dest.set } : { newSet: true }, together, ...(also.length ? { also } : {}) } : null, also);   // (also: the sheets dropped on join too, and the set's rules are judged with them: SETFIX B)
     // a sheet of a committed set dropped on In progress leaves it (Paul, 7 Oct): the orders it shares with the set's other sheets are read from the records too
     let leaving = false;
     if (item.kind === 'sheet' && to.area === 'progress') { const lv = view(state, 'sheet', item.id); if (!lv.error && leavesOnProgress(lv)) { const r = answer(await cloud({ op: 'sharedOrders', kind: 'sheet', id: item.id, to: { leave: true } })); state.shared = r.shared || []; state.group = r.group || null; leaving = true; } }

@@ -184,8 +184,8 @@
       // ── (d) R12: a Rose Gold / 10K / 14K sheet in the set without its green line cut (or approved) or its back engraving approved ──
       for (const r of live) {
         const gaps = goldGaps(r); if (!gaps.length) continue;
-        const partnerOf = [...new Set(live.filter(m => m !== r && (groupOfId.get(r.id) || { ids: [] }).ids.includes(m.id)).map(m => C.name(m.id)))];
-        add('notReady', st, [r.id], `${C.name(r.id)} is in ${st.name} but ${and(gaps)}: a ${WORD[R.metalClass(r)]} sheet joins a set only once its green line is cut (or the Cut Sheet press is approved) and its back engraving is approved. It belongs outside the set, named as a partner to add${partnerOf.length ? ` (it shares orders with ${and(partnerOf)})` : ''}`, { reasons: gaps });
+        const tied = [...new Set(live.filter(m => m !== r && (groupOfId.get(r.id) || { ids: [] }).ids.includes(m.id)).map(m => m.id))], partnerOf = tied.map(C.name);
+        add('notReady', st, [r.id], `${C.name(r.id)} is in ${st.name} but ${and(gaps)}: a ${WORD[R.metalClass(r)]} sheet joins a set only once its green line is cut (or the Cut Sheet press is approved) and its back engraving is approved. It belongs outside the set, named as a partner to add${partnerOf.length ? ` (it shares orders with ${and(partnerOf)})` : ''}`, { reasons: gaps, tied });   // (tied: the sheets of the set it shares orders with; charm-nest-set-repair.js remedyOf reads it)
       }
 
       // ── (b) R7: a unit the set does not need (SetRules.surplus over SharedOrders units) ──
