@@ -109,11 +109,14 @@ async function run(mode) {
     const found = await G.entries(page);
     ok('10a search for the order number: the one grouped order', found.length === 1 && found[0].grouped && found[0].keys.length === 2, JSON.stringify(found.map(e => [e.rid, e.keys.length])));
     await page.fill('#ordQ', ''); await page.waitForTimeout(200);
-    const metals = await page.evaluate(() => [...(document.querySelector('#ordMetal') || { options: [] }).options].map(o => o.value + '=' + o.textContent));
-    await page.selectOption('#ordMetal', 'silver'); await page.waitForTimeout(300);
+    // (FILTERBAR, Paul 17 Oct 2026: the Metal select is the Metal chip group in the Filters panel, #ordFiltersBtn; Any = the select's empty answer)
+    await page.click('#ordFiltersBtn'); await page.waitForSelector('#ordFiltersPop:not([hidden])');
+    const metals = await page.evaluate(() => [...document.querySelectorAll('#ordFiltersPop .ordChip[data-f="metal"]')].map(o => o.dataset.v + '=' + o.textContent));
+    await page.click('#ordFiltersPop .ordChip[data-f="metal"][data-v="silver"]'); await page.waitForTimeout(500);
     const silver = await G.entries(page), sTwo = silver.find(e => e.rid === O.twoPiece.rid);
     ok('10b the Silver filter shows the order\'s Silver piece (a filter leaves one piece: drawn as a row), never the Gold piece', !!sTwo && !sTwo.grouped && sTwo.keys.join() === K('twoPiece', 0) && !silver.some(e => e.keys.includes(K('twoPiece', 1))), JSON.stringify([metals, silver.map(e => [e.rid, e.keys])]));
-    await page.selectOption('#ordMetal', ''); await page.waitForTimeout(300);
+    await page.click('#ordFiltersPop .ordChip[data-f="metal"][data-v=""]'); await page.waitForTimeout(500);
+    await page.keyboard.press('Escape'); await page.waitForSelector('#ordFiltersPop', { state: 'hidden' });
 
     // 11. the On hold pile: a held piece of a grouped order; one Release hold for the order
     await page.evaluate(k => { Orders.rows().find(r => r.key === k).hold = { by: 'Test Operator', at: Date.now(), reason: 'test' }; Orders.render(); }, K('twoPiece', 1));

@@ -2237,10 +2237,11 @@ const Orders = window.Orders = (() => {
     }
     const at = host.scrollTop;                                             // a run writing to the list must not scroll it away
     const rows = visibleRows();
+    paintCount(rows);                                                      // (the live count and the charms, FILTERBAR: whatever drew this, the bar says what the list holds)
     const alive=new Set(rowsOf().map(r=>r.key));for(const key of orderNodes.keys())if(!alive.has(key))orderNodes.delete(key);
     // (the Cancelled list is the sheet window script's: searched with this tab's search box, paged down to what "Show" asked for)
     if (OV.pile === "cancelled") { drawnOn = ""; listKey = "cancelled"; if (window.Cancelled) Cancelled.renderInto(host, () => { const v = document.getElementById("ordersView"); if (v && v.querySelector("#ordChips")) renderHead(v); }, { q: OV.q, focus: cxFocus, live: () => OV.pile === "cancelled" && host.isConnected, clear: () => { OV.q = ""; const box = document.getElementById("ordQ"); if (box) box.value = ""; renderBody(); } }); else host.innerHTML = '<div class="libEmpty">The cancelled orders open with the sheet window script.</div>'; return; }
-    const nextKey=JSON.stringify([OV.pile,OV.q,OV.metal,OV.form,OV.eng,OV.sort,OV.desc,viewMode(),CNListActivity.key("orders")]);
+    const nextKey=JSON.stringify([OV.pile,OV.q,OV.metal,OV.form,OV.eng,OV.sort,OV.desc,viewMode(),CNListActivity.key("orders")]);   // (what the bar can change: a change of any resets the list to its first 48)
     if(nextKey!==listKey){OV.limit=48;listKey=nextKey;}
     const anchor=at>0?[...host.querySelectorAll('[data-key]')].find(n=>n.getBoundingClientRect().bottom>host.getBoundingClientRect().top):null;
     const anchorKey=anchor?.dataset.key, anchorTop=anchor?.getBoundingClientRect().top;
@@ -2333,18 +2334,114 @@ const Orders = window.Orders = (() => {
     return {orders:receipts.size,charms};
   }
   let pullClick = null;   // the pull the Pull orders button started, while it runs
+  /* ═══ FILTERBAR (Paul, 17 Oct 2026: "This much is much too crowded. Consolidate this entire menu into the smallest and most efficient footprint ... real-time reactions with spinner/loader when waiting.") ═══
+     The bar was ONE row of eleven loose controls (three selects, the search, five date chips, a direction select, a sort select, Cards | List). It is now the pile tabs and the count at the left, and at the right:
+     the search (with its ×), ONE Filters button (a count badge; Metal, Kind and Engraved are chip groups in its panel, with Clear and the live count of what it leaves), the date menu and the sort control
+     (charm-nest-activity.js: key + direction), and the Cards | List switch. What narrows the list is also a gold chip under the bar, one press to remove, only while something does.
+     Every change reacts at once: the control repaints, the count is the new count, the control that was touched shows a small spinner and the list dims (CNListActivity.react / working) until the list has been redrawn
+     (the Cancelled pile: until its read has landed). The state is still OV (+ the activity range): the same fields, the same ids (ordQ, ordPull, ordChips, ordBody, ordSort, ordViewSeg, data-pile, data-view). */
+  const SORTS = [["activity", "Last activity", "Activity"], ["arrival", "Order date", "Ordered"], ["due", "Ship-by date", "Ship-by"], ["order", "Order number", "Order #"], ["state", "State", "State"]];   // (id, words, the short words a phone's one line has room for)
+  const SORT_NATURAL = { activity: "desc", arrival: "desc", due: "asc", order: "asc", state: "asc" };   // the direction each key has until it is reversed (OV.desc; the activity key's own is the shared one)
+  const SORT_WORDS = { activity: { desc: "Newest first", asc: "Oldest first" }, arrival: { desc: "Newest first", asc: "Oldest first" }, due: { asc: "Soonest first", desc: "Latest first" }, order: { asc: "Lowest number first", desc: "Highest number first" }, state: { asc: "A to Z", desc: "Z to A" } };
+  const sortKey = () => OV.pile === "cancelled" ? "activity" : (SORT_NATURAL[OV.sort] ? OV.sort : "activity");   // (the Cancelled pile is read newest or oldest first, by activity, and nothing else)
+  const sortDir = () => { const k = sortKey(); if (k === "activity") return CNListActivity.state("orders").direction; const nat = SORT_NATURAL[k]; return OV.desc ? (nat === "asc" ? "desc" : "asc") : nat; };
+  const sortCfg = () => ({ id: "ordSort", keys: SORTS, hideKeys: OV.pile === "cancelled", key: sortKey, dir: sortDir, words: (k, d) => (SORT_WORDS[k] || SORT_WORDS.activity)[d],
+    setKey: id => { OV.sort = id; OV.desc = false; },
+    flip: () => { const k = sortKey(); if (k === "activity") CNListActivity.set("orders", { direction: sortDir() === "asc" ? "desc" : "asc" }); else OV.desc = !OV.desc; } });
+  const ordBar = () => document.getElementById("ordBar");
+  const ordIcons = () => window.CNListActivity.icons;
+  /** The tools the shared component draws (date menu, sort control), after the Filters button; the list redraws when one is changed. */
+  const mountTools = v => CNListActivity.mount(v.querySelector("#ordBar"), "orders", () => { renderHead(v); renderBody(); return waitCx(); }, { after: v.querySelector("#ordFilters"), list: "#ordBody", sort: sortCfg() });
+  /** The Cancelled pile reads from the library: the busy state lasts until that read has landed (at most 20 s). */
+  function waitCx() {
+    if (OV.pile !== "cancelled" || !window.Cancelled || !Cancelled.reading) return undefined;
+    return new Promise(res => { const t0 = Date.now(), tick = () => (Cancelled.reading() && Date.now() - t0 < 20000) ? setTimeout(tick, 120) : res(); tick(); });
+  }
+  /** A change to what the list shows. The state is changed now, the controls repaint now (the head is cheap) with the new count, and the list redraws behind the busy state: a small spinner on the control that
+   *  was touched, the list dimmed. o: { delay, key } for typing (one redraw for a burst), { sync } to draw in the same breath (a pile or a view: the list slides or swaps as it always did). */
+  function narrow(touch, change, o) {
+    change();
+    const v = document.getElementById("ordersView"); if (!v) return;
+    renderHead(v); paintCount(visibleRows());
+    CNListActivity.react(ordBar(), () => { renderBody(); return waitCx(); }, Object.assign({ touch, list: "#ordBody" }, o));
+  }
+  let ordBase = { orders: 0 };   // the orders in the pile, whatever narrows them: the "of 48" in "12 of 48 orders"
+  /** The live count of what the list shows, and the charms in it. "12 of 48 orders" the moment anything narrows the list (the pile tab says 48 while nothing does); also the Filters panel's button. */
+  function paintCount(rows) {
+    const v = document.getElementById("ordersView"), cnt = v && v.querySelector("#ordCount"); if (!cnt) return;
+    syncFind(v);
+    const ct = v.querySelector("#ordCharmTotal"), done = v.querySelector("#ordFiltersPop [data-done]"), cx = OV.pile === "cancelled";
+    if (cx) { cnt.removeAttribute("data-on"); cnt.textContent = ""; if (ct) { ct.innerHTML = `<b>${ordBase.charms || 0}</b> charms`; ct.title = "Charm quantity across the open orders; chain-only and packaging items are excluded"; } return; }   // (the Cancelled list counts itself: its own line says how many)
+    const t = orderTotals(rows), narrowed = !!(OV.metal || OV.form || OV.eng || OV.q.trim() || CNListActivity.state("orders").range !== "all"), of = Math.max(ordBase.orders, t.orders);
+    cnt.classList.toggle("none", narrowed && !t.orders);
+    cnt.innerHTML = narrowed ? `<b>${t.orders}</b> of ${of} order${of === 1 ? "" : "s"}` : `<b>${t.orders}</b> order${t.orders === 1 ? "" : "s"}`;
+    if (narrowed) cnt.setAttribute("data-on", "1"); else cnt.removeAttribute("data-on");
+    cnt.title = narrowed ? "What the search and the filters leave, of the orders in this list" : "";
+    if (ct) { ct.innerHTML = `<b>${t.charms}</b> charms`; ct.title = "Charm quantity across the orders shown; chain-only and packaging items are excluded"; }
+    if (done) done.textContent = t.orders ? `Show ${t.orders} order${t.orders === 1 ? "" : "s"}` : "No orders match";
+  }
+  /** The search box's × and its gold edge, from what the list is searched by. */
+  function syncFind(v) {
+    const x = v.querySelector("#ordFindX"), f = v.querySelector("#ordFind"), has = !!OV.q;
+    if (x) x.hidden = !has;
+    if (f) { if (has) f.setAttribute("data-has", "1"); else f.removeAttribute("data-has"); }
+  }
+  let ordFp = null;   // the Filters panel's popover
   function buildHead(v) {
-    // One compact row: totals, filters/search, then the display controls.
+    // One slim row: the piles and the count at the left; the search, Filters, the date menu, the sort and the view at the right (wraps to two rows in a narrow window, three on a phone).
+    const I = ordIcons();
     v.innerHTML = `<div class="ordHead">
         <div class="ordBar ordCompact" id="ordBar">
-          <span class="controlGroup ordSummary"><button class="btn sm" id="ordPull">Pull orders</button><span class="chips" id="ordChips"></span><span class="charmTotal" id="ordCharmTotal"></span></span>
-          <span class="controlGroup ordNarrow"><span class="chips" id="ordMetalHost"></span><input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" title="search the order number, the SKU, the title and everything the customer or the shop wrote"></span>
-          <span class="controlGroup ordDisplay"><select class="ordSort" id="ordSort" title="what orders the cards"><option value="activity">last activity</option><option value="arrival">order date</option><option value="due">by ship-by</option><option value="order">by order</option><option value="state">by state</option></select><span class="viewSeg" id="ordViewSeg"></span></span>
+          <span class="controlGroup ordSummary"><button class="btn sm" id="ordPull">Pull orders</button><span class="chips" id="ordChips"></span><span class="ordCount" id="ordCount" role="status" aria-live="polite"></span><span class="charmTotal" id="ordCharmTotal"></span></span>
+          <span class="ordTools" id="ordTools">
+            <label class="ordFind" id="ordFind">${I.search}<input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" aria-label="Search the orders" autocomplete="off" spellcheck="false" enterkeyhint="search" title="search the order number, the SKU, the title and everything the customer or the shop wrote"><button type="button" class="ordFindX" id="ordFindX" aria-label="Clear the search" title="Clear the search" hidden>${I.x}</button></label>
+            <span class="ordFilters" id="ordFilters" hidden><button type="button" class="cnBtn" id="ordFiltersBtn" aria-haspopup="dialog" aria-expanded="false" aria-controls="ordFiltersPop" title="narrow the list by material, kind of jewellery and engraving">${I.filter}<span class="cnLbl">Filters</span><b class="cnBadge" hidden></b></button><div class="cnPop ordFp" id="ordFiltersPop" role="dialog" aria-label="Filters" hidden></div></span>
+            <span class="viewSeg" id="ordViewSeg" role="group" aria-label="How the orders are shown"><button type="button" data-view="cards" aria-label="Cards" aria-pressed="false" title="a card for every piece, with its picture">${I.cards}</button><button type="button" data-view="list" aria-label="List" aria-pressed="false" title="the same pieces as rows">${I.list}</button></span>
+          </span>
+          <div class="ordActive" id="ordActive" role="group" aria-label="What narrows the list" hidden></div>
         </div>
       </div><div class="ordBody" id="ordBody"></div>`;
-    const q = v.querySelector("#ordQ");
-    q.oninput = () => { OV.q = q.value; renderBody(); };                 // never rebuilt now, so the caret needs no restoring
-    v.querySelector("#ordSort").onchange = e => { OV.sort = e.target.value; OV.desc = false; renderBody(); };
+    const q = v.querySelector("#ordQ"), find = v.querySelector("#ordFind");
+    // typing: the count is the new count at once, the list redraws once the typing pauses (140 ms), and the search box shows the busy state meanwhile
+    const typed = o => { OV.q = q.value; renderActive(v); paintCount(visibleRows()); CNListActivity.react(ordBar(), () => { renderBody(); return waitCx(); }, Object.assign({ touch: find, list: "#ordBody", key: "q", delay: 140 }, o)); };   // never rebuilt now, so the caret needs no restoring
+    q.oninput = () => typed();
+    q.onkeydown = e => {
+      if (e.key === "Escape" && q.value) { e.preventDefault(); e.stopPropagation(); q.value = ""; typed({ delay: 0 }); }
+      else if (e.key === "Enter") { e.preventDefault(); typed({ delay: 0 }); }   // Enter draws now, without waiting out the pause
+    };
+    v.querySelector("#ordFindX").onclick = () => { q.value = ""; typed({ delay: 0 }); q.focus(); };
+    // Filters: a panel of chip groups under the button (a bottom sheet on a phone); a press on a chip narrows the list at once
+    const fbtn = v.querySelector("#ordFiltersBtn"), fpop = v.querySelector("#ordFiltersPop");
+    ordFp = CNListActivity.popover({ trigger: fbtn, panel: fpop, sheet: true, sheetMax: 640, focus: p => p.querySelector('.ordChip[aria-pressed=true]:not([data-v=""])') || p.querySelector(".ordChip") });
+    fbtn.onclick = () => ordFp.toggle();
+    fbtn.addEventListener("keydown", e => { if (e.key === "ArrowDown") { e.preventDefault(); ordFp.open(); } });
+    fpop.addEventListener("click", e => {
+      const chip = e.target.closest(".ordChip");
+      if (chip) { const f = chip.dataset.f, val = chip.dataset.v || null; narrow(fbtn, () => { OV[f] = OV[f] === val ? null : val; }); return; }
+      if (e.target.closest("[data-clear]")) { narrow(fbtn, () => { OV.metal = OV.form = OV.eng = null; }); return; }
+      if (e.target.closest("[data-done]")) ordFp.close(true);
+    });
+    fpop.addEventListener("keydown", e => {   // arrows walk the chips; Enter or Space presses the one that has the focus; Esc is the popover's own
+      if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+      const chips = [...fpop.querySelectorAll(".ordChip")], i = chips.indexOf(document.activeElement); if (i < 0) return;
+      e.preventDefault(); chips[e.key === "Home" ? 0 : e.key === "End" ? chips.length - 1 : (i + (e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1) + chips.length) % chips.length].focus();
+    });
+    // what narrows the list, as chips: one press on a chip lets go of it; Clear all lets go of everything (the search too)
+    v.querySelector("#ordActive").addEventListener("click", e => {
+      const b = e.target.closest("[data-ax],[data-ax-all]"); if (!b) return;
+      const k = b.dataset.ax, touch = k === "range" ? v.querySelector(".cnDateBtn") : fbtn;
+      narrow(touch, () => {
+        if (b.hasAttribute("data-ax-all")) { OV.metal = OV.form = OV.eng = null; OV.q = ""; q.value = ""; CNListActivity.set("orders", { range: "all" }); }
+        else if (k === "range") CNListActivity.set("orders", { range: "all" });
+        else OV[k] = null;
+      }, { sync: true });
+      if (document.activeElement === document.body || !v.contains(document.activeElement)) (v.querySelector("#ordActive [data-ax]") || touch).focus();   // the chip that had the focus is gone
+    });
+    // the view: Cards | List (kept in Settings), drawn in the same breath
+    v.querySelectorAll("#ordViewSeg [data-view]").forEach(b => b.onclick = () => {
+      if (viewMode() === b.dataset.view) return;
+      narrow(b, () => { OV.view = b.dataset.view; S.settings.orderView = OV.view; saveSettings(); }, { sync: true });
+    });
     // (ADV-MONKEY, Paul 15 Oct 2026, "unexpected user behaviour": the pull reads the whole shop and takes tens of seconds; a second press meanwhile asked the station
     // for the same orders again, a third again, each one replacing the list under the others. One pull at a time: a press while it runs does nothing, and the button says it is busy)
     { const go = v.querySelector("#ordPull");
@@ -2354,31 +2451,73 @@ const Orders = window.Orders = (() => {
         pullClick = pull(null).catch(e => { toast(e.message, "bad", 7000); agent({ bridge: true }, "warn", e.message); }).finally(() => { pullClick = null; go.removeAttribute("aria-busy"); });
       };
     }
-    CNListActivity.mount(v.querySelector("#ordBar"), "orders", () => { OV.sort="activity"; renderHead(v); renderBody(); });
     Sandbox.mountPanel(v);
     watch(v);
   }
+  /** The chips under the bar for what narrows the list (not the search: it has its own ×): material, kind, engraved, and the date range; none, and the row is not there. */
+  function renderActive(v) {
+    const box = v.querySelector("#ordActive"); if (!box) return;
+    const cx = OV.pile === "cancelled", I = ordIcons(), items = [];
+    if (!cx) {
+      if (OV.metal) items.push(["metal", OV.metal === "none" ? "No material" : labelOf(OV.metal), "Material"]);
+      if (OV.form) items.push(["form", FORM_LABEL[OV.form] || (OV.form === "none" ? "Kind not set" : OV.form), "Kind"]);
+      if (OV.eng) items.push(["eng", OV.eng === "yes" ? "Engraved" : "Not engraved", "Engraving"]);
+    }
+    const range = CNListActivity.state("orders").range;
+    if (range !== "all") items.push(["range", CNListActivity.rangeLabel(range), "Last activity"]);
+    const sig = JSON.stringify([items, items.length + (OV.q.trim() ? 1 : 0) > 1]);
+    if (box._sig === sig) return;
+    box._sig = sig; box.hidden = !items.length;
+    box.innerHTML = items.map(([k, label, what]) => `<button type="button" class="ordAx" data-ax="${k}" aria-label="Remove the filter: ${esc(what)}, ${esc(label)}" title="Remove: ${esc(label)}">${esc(label)}${I.x}</button>`).join("")
+      + (items.length + (OV.q.trim() ? 1 : 0) > 1 ? `<button type="button" class="ordAxAll" data-ax-all>Clear all</button>` : "");
+  }
+  /** The Filters button and its panel (Metal, Kind, Engraved as chip groups), from the lines the tab holds. A group with a single answer is not drawn (it could only do nothing), as before.
+   *  The panel is rebuilt only when its options or their counts change, so a chip that has the focus keeps it. */
+  function renderFilters(v, d) {
+    const wrap = v.querySelector("#ordFilters"), btn = v.querySelector("#ordFiltersBtn"), pop = v.querySelector("#ordFiltersPop"), badge = btn.querySelector(".cnBadge"), cx = OV.pile === "cancelled";
+    const groups = [];
+    if (d.metals.length > 1 || OV.metal) groups.push(["metal", "Metal", d.metals.map(m => [m, m === "none" ? "No material" : labelOf(m), d.byMetal[m] || 0])]);
+    if (d.forms.length > 1 || OV.form) groups.push(["form", "Kind", d.forms.map(f => [f, FORM_LABEL[f] || (f === "none" ? "Kind not set" : f), d.byForm[f] || 0])]);
+    if ((d.engN && d.engN < d.allN) || OV.eng) groups.push(["eng", "Engraved", [["yes", "Engraved", d.engN], ["no", "Not engraved", d.allN - d.engN]]]);
+    wrap.hidden = !groups.length;
+    const sig = JSON.stringify(groups);
+    if (pop._sig !== sig) {
+      const had = document.activeElement && pop.contains(document.activeElement) ? document.activeElement : null, hadKey = had && had.dataset ? (had.dataset.f || "") + "|" + (had.dataset.v ?? "") + "|" + (had.hasAttribute("data-clear") ? "c" : had.hasAttribute("data-done") ? "d" : "") : null;
+      pop._sig = sig;
+      const chip = (f, val, label, n, sw) => `<button type="button" class="ordChip" data-f="${f}" data-v="${esc(val)}" aria-pressed="false">${sw ? `<i class="sw" data-metal="${esc(val)}"></i>` : ""}${esc(label)}${n == null ? "" : `<small>${n}</small>`}</button>`;
+      pop.innerHTML = `<div class="ordFpHead"><b>Filters</b><button type="button" class="ordFpClear" data-clear>Clear</button></div><div class="ordFpBody">`
+        + groups.map(([f, title, opts]) => `<section class="ordFg"><h4 id="ordFg-${f}">${title}</h4><div class="ordChipRow" role="group" aria-labelledby="ordFg-${f}">${chip(f, "", "Any", null)}${opts.map(o => chip(f, o[0], o[1], o[2], f === "metal")).join("")}</div></section>`).join("")
+        + `</div><div class="ordFpFoot"><button type="button" class="btn sm" data-done></button></div>`;
+      if (hadKey != null) { const [f, val, kind] = hadKey.split("|"); const back = kind === "c" ? pop.querySelector("[data-clear]") : kind === "d" ? pop.querySelector("[data-done]") : [...pop.querySelectorAll(".ordChip")].find(c => c.dataset.f === f && c.dataset.v === val); if (back) back.focus({ preventScroll: true }); }
+    }
+    for (const c of pop.querySelectorAll(".ordChip")) c.setAttribute("aria-pressed", String(c.dataset.v ? OV[c.dataset.f] === c.dataset.v : !OV[c.dataset.f]));
+    const n = [OV.metal, OV.form, OV.eng].filter(Boolean).length;
+    badge.hidden = !n; badge.textContent = n || "";
+    if (n) btn.setAttribute("data-on", "1"); else btn.removeAttribute("data-on");
+    btn.setAttribute("aria-label", n ? `Filters, ${n} applied` : "Filters");
+    const clear = pop.querySelector("[data-clear]"); if (clear) clear.disabled = !n;
+    if (cx && ordFp && ordFp.isOpen) ordFp.close(false);
+  }
   /** Update totals and filters without rebuilding the search field. */
   function renderHead(v) {
-    CNListActivity.mount(v.querySelector("#ordBar"),"orders",()=>{OV.sort="activity";renderHead(v);renderBody();});
     const all = rowsOf().filter(r=>r.state!=="gone"), totals=orderTotals(all);
     // Open Orders, and beside it On hold and Cancelled when there are any (or one is being shown)
     if (OV.pile && !["hold", "cancelled"].includes(OV.pile)) OV.pile = null;
+    mountTools(v);
     const running = B.run && !["complete", "stopped"].includes(B.run.status);
     const pull = v.querySelector("#ordPull");
     pull.disabled = !!running;
     // between arrivals there is no Stop to press: say what the run is doing with the lines instead
     pull.title = !running ? "refresh open orders using the pull rule in Settings" : B.run.status === "processed" ? "the open run holds these pieces · new orders join it as they arrive" : "a run is open — stop it first, or its pieces would be replaced under it";
-    v.querySelector("#ordSort").value = OV.sort;
     // the search box always shows the search the list is narrowed by: the sheet window's "In Orders" set it before the
     // tab was first drawn, and the box came up empty over a list of one order's lines (Paul, 27 Sep 22:28: "It's only
     // showing me two orders in the orders tab where it says 360")
-    { const q = v.querySelector("#ordQ"); if (q && q.value !== OV.q && document.activeElement !== q) q.value = OV.q; }
-    const charmTotal=v.querySelector("#ordCharmTotal");
-    charmTotal.innerHTML=`<b>${totals.charms}</b> charms`;
-    charmTotal.title="Total charm quantity across these open orders; chain-only and packaging items are excluded";
+    { const q = v.querySelector("#ordQ"); if (q && q.value !== OV.q && document.activeElement !== q) q.value = OV.q; syncFind(v); }
+    // (the live count and the charms are drawn with the list: paintCount, from renderBody; what is known here is the size of the pile)
+    ordBase = { orders: OV.pile === "hold" ? new Set(all.filter(r => heldNow(r)).map(r => String(r.order.receiptId))).size : totals.orders, charms: totals.charms };
+    { const charmTotal = v.querySelector("#ordCharmTotal"); if (charmTotal && !charmTotal.firstChild) { charmTotal.innerHTML = `<b>${totals.charms}</b> charms`; charmTotal.title = "Charm quantity across the orders shown; chain-only and packaging items are excluded"; } }
     const byMetal = {}; for (const r of all) { const m = r.material || "none"; byMetal[m] = (byMetal[m] || 0) + 1; }
-    const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${label === "Open Orders" ? 'Open<span class="ordLong"> Orders</span>' : esc(label)}<b class="${cls}">${n}</b></button>`;
+    const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${label === "Open Orders" ? '<span>Open<span class="ordLong"> Orders</span></span>' : esc(label)}<b class="${cls}">${n}</b></button>`;
     const metals = ["gold", "silver", "rose", "gold10k", "gold14k", "none"].filter(m => byMetal[m] || OV.metal === m);
     /* Material, kind of jewellery and "does it get engraved" are the three ways a bench actually narrows a day's work.
        Each one appears only when the lines on screen give it more than one answer — a filter with one option is a
@@ -2400,21 +2539,21 @@ const Orders = window.Orders = (() => {
       pills.innerHTML = pillsHtml; pills._html = pillsHtml;
       if (had.size && window.Motion && !Motion.reduced() && onScreen()) for (const b of pills.querySelectorAll("[data-pile]")) if (!had.has(b.dataset.pile)) b.animate([{ opacity: 0, transform: "scale(.6)" }, { opacity: 1, transform: "none" }], { duration: 560, easing: "cubic-bezier(.3,1.3,.5,1)" });
     }
-    const sel = (id, ttl, any, opts, cur) => opts.length > 1 || cur ? `<select class="ordMetal" id="${id}" title="${esc(ttl)}">${[`<option value="">${esc(any)}</option>`].concat(opts.map(o => `<option value="${esc(o[0])}"${cur === o[0] ? " selected" : ""}>${esc(o[1])} \u00b7 ${o[2]}</option>`)).join("")}</select>` : "";
-    v.querySelector("#ordMetalHost").innerHTML =
-      sel("ordMetal", "narrow it to one material", "Any material", metals.map(m => [m, m === "none" ? "No material" : labelOf(m), byMetal[m] || 0]), OV.metal)
-      + sel("ordForm", "narrow it to one kind of jewellery", "Any kind", forms.map(f => [f, FORM_LABEL[f] || (f === "none" ? "Kind not set" : f), byForm[f] || 0]), OV.form)
-      + (engN && engN < all.length || OV.eng ? sel("ordEng", "engraved or not", "Engraved or not", [["yes", "Engraved", engN], ["no", "Not engraved", all.length - engN]], OV.eng) : "");
-    // another pile slides in softly from the side it lies on (pills left to right), so a switch is seen as one
+    // Material, kind and engraved are the Filters panel's chip groups (and the gold chips under the bar while one is in force)
+    renderFilters(v, { metals, byMetal, forms, byForm, engN, allN: all.length });
+    renderActive(v);
+    // another pile slides in softly from the side it lies on (pills left to right), so a switch is seen as one; the tab that was pressed shows the busy state until the list is drawn
     v.querySelectorAll("[data-pile]").forEach(b => b.onclick = () => {
       const PILES = ["", "hold", "cancelled"], was = PILES.indexOf(OV.pile || ""), to = PILES.indexOf(b.dataset.pile || "");
-      OV.pile = b.dataset.pile || null; renderHead(v); renderBody();
-      const body = document.getElementById("ordBody"); body?.scrollTo?.(0, 0);
-      if (body && was !== to && window.Motion && !Motion.reduced() && body.animate) body.animate([{ opacity: 0, transform: `translateX(${to > was ? 14 : -14}px)` }, { opacity: 1, transform: "none" }], { duration: 300, easing: "cubic-bezier(.2,.8,.2,1)" });
+      OV.pile = b.dataset.pile || null; renderHead(v);
+      CNListActivity.react(ordBar(), () => {
+        renderBody();
+        const body = document.getElementById("ordBody"); body?.scrollTo?.(0, 0);
+        if (body && was !== to && window.Motion && !Motion.reduced() && body.animate) body.animate([{ opacity: 0, transform: `translateX(${to > was ? 14 : -14}px)` }, { opacity: 1, transform: "none" }], { duration: 300, easing: "cubic-bezier(.2,.8,.2,1)" });
+        return waitCx();
+      }, { sync: true, touch: v.querySelector(PILL(OV.pile)), list: "#ordBody" });
     });
-    for (const [id, k] of [["ordMetal", "metal"], ["ordForm", "form"], ["ordEng", "eng"]]) { const n = v.querySelector("#" + id); if (n) n.onchange = () => { OV[k] = n.value || null; renderHead(v); renderBody(); }; }
-    v.querySelector("#ordViewSeg").innerHTML = ["cards", "list"].map(k => `<button data-view="${k}"${viewMode() === k ? ' class="on"' : ""} title="${k === "cards" ? "a card for every piece, with its picture" : "the same pieces as rows"}">${k === "cards" ? "Cards" : "List"}</button>`).join("");
-    v.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { OV.view = b.dataset.view; S.settings.orderView = OV.view; saveSettings(); renderHead(v); renderBody(); });
+    for (const b of v.querySelectorAll("#ordViewSeg [data-view]")) { const on = viewMode() === b.dataset.view; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); }
   }
   /* Drawn once a frame (CNFrame): a run step, the banner, each arrival and the pool pass every five lines asked for it,
      many times in one go. A hidden tab draws only its count, and is drawn when shown (Views.onShow); one asked for while

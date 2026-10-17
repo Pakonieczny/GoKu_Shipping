@@ -1447,12 +1447,10 @@ dialog.cmDlg .owHead [data-open-order]{display:inline-flex;align-items:center;ga
 .ordFilters .chips{display:flex;gap:6px;align-items:center;flex-wrap:nowrap;flex:1 1 220px;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;padding-bottom:1px}
 .ordFilters .chips::-webkit-scrollbar{display:none}
 .ordFilters .chips>*{flex:0 0 auto}
-.ordMetal{border:1px solid var(--line);border-radius:999px;padding:5px 9px;font-size:11.5px;background:var(--card2);color:var(--ink70);max-width:150px}
 .ordFilters .tail{display:flex;gap:6px;align-items:center;margin-left:auto;flex:0 0 auto}
 .ordFilters .chips{flex:1 1 140px}
 .ordFilters .sep{width:1px;align-self:stretch;background:var(--line);margin:0 3px}
 .ordSearch{border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:12.5px;background:var(--card);min-width:0;flex:0 1 200px}
-.ordSort{border:1px solid var(--line);border-radius:999px;padding:5px 10px;font-size:12.5px;background:var(--card);flex:0 0 auto}
 .viewSeg{display:flex;border:1px solid var(--line);border-radius:999px;background:var(--card2);padding:2px;gap:2px;flex:0 0 auto}
 .viewSeg button{border:0;background:transparent;border-radius:999px;padding:4px 11px;font:600 11.5px var(--sans);color:var(--ink70);cursor:pointer;white-space:nowrap}
 .viewSeg button.on{background:var(--ink);color:var(--paper)}
@@ -1926,7 +1924,6 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
 .ordBar .chips{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
 .ordBar .ordSearch{flex:1 1 130px;min-width:110px;max-width:260px}
 .ordBar .egTab{padding:4px 9px}
-.ordBar .ordMetal{max-width:130px}
 .ordMeta{font-size:11px;color:var(--ink45);white-space:nowrap}
 .ordMeta.warn{color:var(--warn,#a2591c)}
 .ordMeta:empty{display:none}
@@ -1962,7 +1959,6 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
 .ordRow .why button{margin-left:8px}
 /* ── Orders › Cancelled (Paul, 28 Sep, A5): every cancelled order, newest first. Etsy's carry slate, a person's clay;
    what happened on each sheet sits under the reason (sage: taken off, gold: already cut, set aside) ── */
-.ordBar.onCx #ordMetalHost,.ordBar.onCx .ordDisplay{display:none}
 .cxWrap{display:grid;gap:8px;padding:2px 0 10px}
 .cxSum{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:18px;padding:0 4px;font:11.5px var(--sans);color:var(--ink45)}
 .cxSum b{font:700 12px var(--mono);color:var(--ink70)}
@@ -2435,8 +2431,6 @@ details.masterHist>summary{white-space:nowrap}
    and cut off Cards | List (audit, 25 Sep) */
 .ordCompact .ordNarrow{flex:1 0 auto}
 .ordCompact .ordSearch{flex:1 1 96px;width:96px;min-width:96px;max-width:230px}
-.ordCompact .ordSort{max-width:162px}
-.ordCompact .ordMetal{max-width:170px;padding:6px 7px}
 .charmTotal{display:inline-flex;gap:5px;align-items:baseline;white-space:nowrap;font:12px var(--sans);color:var(--ink70)}
 .charmTotal b{font:600 12px var(--mono);color:var(--ink)}
 .topbar .topTools{border-left:1px solid #d5cdbf;padding-left:10px}
@@ -2448,8 +2442,7 @@ details.masterHist>summary{white-space:nowrap}
 .assetFailed{cursor:pointer;object-fit:contain;color:var(--clay);font:12px var(--sans)}
 .libBar #libKind{border-radius:0;border-top:0;border-right:0;border-bottom:0;background:transparent}
 /* with On hold or Cancelled beside Open Orders the bar keeps one line under 1400 px: the charm count steps aside, the filters narrow */
-@media(max-width:1399px){#ordChips:has(.egTab + .egTab) ~ .charmTotal,#ordChips:has(.egTab + .egTab) .ordLong{display:none}.ordCompact .ordMetal{max-width:112px}.ordCompact:has(#ordChips .egTab + .egTab + .egTab) .ordMetal{max-width:100px}.ordCompact:has(#ordChips .egTab + .egTab + .egTab) .ordSort{max-width:96px}.ordCompact:has(#ordChips .egTab + .egTab + .egTab) .ordSearch{width:80px;min-width:80px;flex-basis:80px}.ordCompact:has(#ordChips .egTab + .egTab + .egTab) .egTab{padding:4px 7px}}
-@media(max-width:1100px){.ordCompact{gap:8px}.ordCompact .controlGroup+.controlGroup{padding-left:8px}.ordCompact .ordMetal{max-width:106px}.ordCompact .ordSort{max-width:140px}.ordCompact .ordSearch{width:120px}}
+/* (FILTERBAR, Paul 17 Oct 2026: the Orders bar's widths are charm-nest-activity.css now: it wraps by the width of the workspace beside the rail, not by the screen; the select-and-chip rules that stood here are gone with the selects) */
 @media(max-width:700px){.topbar .topTools{border-left:0;padding-left:0}}
 /* Quiet boundaries between tasks; related buttons stay together. */
 .ordBar,.libBar{padding-bottom:10px;border-bottom:1px solid var(--line)}
@@ -2784,9 +2777,6 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .ordBar .egTab{padding:3px 9px}
 .ordSearch{padding:4px 11px;font-size:11.5px}
 .ordBar select,.ordBar input[type=date],.ordBar input[type=number]{padding:4px 8px;font-size:11.5px}
-.ordCompact .ordMetal{padding:4px 7px}
-.viewSeg{padding:1px}
-.viewSeg button{padding:3px 10px;font-size:10.5px}
 .charmTotal,.charmTotal b{font-size:11px}
 .egPane,.ordBody{margin-top:5px}
 .ordDay{padding:5px 12px;margin:10px 0 3px;font-size:13px}
@@ -2819,7 +2809,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
    (and again since the bar holds the Newest first sort, ~110 px: each step starts that much sooner; at 1500 the last switch was cut off) */
 @container workspace (max-width:1370px){.libBar .fchip .lng{display:none}}
 @container workspace (max-width:1185px){.libBar{gap:6px}.libTabs button{padding:3px 8px}.libBar .libFilterGroup{gap:4px;padding-left:8px}.libBar .fchip{padding:4px 7px;gap:4px}.libBar #libKind{padding-left:8px}.libBar .seg button{padding:4px 8px}.libBar input[type=search]{min-width:110px;flex-basis:130px}}
-@container workspace (max-width:1050px){.libBar .cnListTools .cnActivitySort{padding:3px 4px}.libTabs button{padding:3px 7px}.libBar .libFilterGroup{gap:3px}.libBar .fchip .sw{display:none}.libBar input[type=search]{min-width:100px}}
+@container workspace (max-width:1050px){.libTabs button{padding:3px 7px}.libBar .libFilterGroup{gap:3px}.libBar .fchip .sw{display:none}.libBar input[type=search]{min-width:100px}}
 /* a search waiting for its answer turns in the field, beside the field's own × */
 .libBar input[type=search].searching{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='none' stroke='%23c4bdb0' stroke-width='2'/%3E%3Cpath d='M8 2a6 6 0 0 1 6 6' fill='none' stroke='%235b554c' stroke-width='2' stroke-linecap='round'%3E%3CanimateTransform attributeName='transform' type='rotate' from='0 8 8' to='360 8 8' dur='.7s' repeatCount='indefinite'/%3E%3C/path%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 26px center;background-size:12px 12px;padding-right:44px}
 #libBody[hidden],#libDone[hidden]{display:none}
@@ -3485,7 +3475,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .owPcRow .pcAct .owCuMore:hover,.owPcRow .pcAct .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
 </style>
 <link rel="preload" href="charm-nest-stamp-walnut.png" as="image">
-<link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small-en3-pe1-re1-wd1-dc1-dm1-eu1-pc1-egr1">
+<link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small-en3-pe1-re1-wd1-dc1-dm1-eu1-pc1-egr1-fb1">
 </head>
 <body>
 <div class="app" id="app">
@@ -3722,7 +3712,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-backs.js?v=20261005-engtog1-pe1-fb1-eu3-pv1"></script>
 <script src="charm-nest-engraving-toggle.js?v=20261005-engtog1-eu3"></script>
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
-<script src="charm-nest-activity.js?v=20261001-compact-controls-lo1"></script>
+<script src="charm-nest-activity.js?v=20261001-compact-controls-lo1-fb1"></script>
 <script src="charm-nest-zoompan.js?v=20261005-zp1"></script>
 <script src="charm-nest-engrave-setup.js?v=20261011-su1-bf1-nb1-ud1-pv1-el1-au1-au2-au3-wy1-od1-sb2-pc1-nd1"></script>
 <script src="charm-nest-engrave-panel.js?v=20261012-ep1-ep2-hl1-hl2-sm1-r2wk1-wy1-r2th1-fr1-rb1-ag1-nd1"></script>
@@ -7939,7 +7929,7 @@ boot();
 <script src="charm-nest-review-link.js?v=20261013-rlk2"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-fb1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
@@ -8004,7 +7994,7 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-fb1"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
 <script src="charm-nest-order-hold.js?v=20261005-oh5-pf2-gc1-pr1-al1-cg1-dr2"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
