@@ -1,5 +1,5 @@
 // The sorter stays on for days (Paul, 24 Sep: "everything must be able to stay on indefinitely ... nothing may accumulate").
-//   1. The workspace checkpoint: at most one every ten seconds, never back to back, none when nothing changed; the last
+//   1. The workspace checkpoint: at most one a minute (PERF, Oct 2026; was ten seconds), never back to back, none when nothing changed; the last
 //      change before the page is hidden is still saved; a failed save is one standing line until the next good one.
 //   2. Best-layout records go once their sheet is saved, and at start for sheets that were not cut short.
 //   3. The checkpoint shares bytes nothing changes, and leaves out master designs nothing uses and the lines of finished
@@ -80,11 +80,11 @@ async function paceTest() {
   sheet.status = 'first'; Session.schedule();
   assert.equal(timers.size, 1); assert.equal(next().ms, 1000);
   clock.now += 1000; await t.fire(); assert.equal(puts(), 2);
-  // changes right after it wait for the next turn, ten seconds after the last one started, however many there are
+  // changes right after it wait for the next turn, a minute after the last one started, however many there are
   for (let i = 0; i < 50; i++) { sheet.status = 'burst ' + i; Session.schedule(); await Session.flush(); }
   assert.equal(puts(), 2, 'a burst of changes writes nothing at once');
-  assert.equal(timers.size, 1); assert.equal(next().due, clock.now + 10000, 'one checkpoint every ten seconds at most');
-  clock.now += 9000; await t.fire(); assert.equal(puts(), 2);
+  assert.equal(timers.size, 1); assert.equal(next().due, clock.now + 60000, 'one checkpoint a minute at most');
+  clock.now += 59000; await t.fire(); assert.equal(puts(), 2);
   clock.now += 1000; await t.fire(); assert.equal(puts(), 3); assert.equal(stored(), 'burst 49', 'the checkpoint holds the latest change');
   // leaving the page: the change made just before is written in the same task; with nothing changed, nothing is written
   sheet.status = 'last'; Session.schedule();
@@ -95,7 +95,7 @@ async function paceTest() {
   t.env.document.hidden = false;
   // a failed save is one standing line (and one toast), tried again with a growing wait, cleared by the next good save
   const banners = seen.banners;
-  idb.control.fail = 'QuotaExceededError'; sheet.status = 'unsaved'; Session.schedule(); clock.now += 20000; await t.fire();
+  idb.control.fail = 'QuotaExceededError'; sheet.status = 'unsaved'; Session.schedule(); clock.now += 60000; await t.fire();
   assert.equal(Session.failure()?.message, 'QuotaExceededError'); assert.equal(seen.toasts.length, 1); assert.equal(seen.banners, banners + 1);
   assert.equal(next().ms, 15000, 'tried again after 15 s');
   clock.now += 15000; await t.fire();

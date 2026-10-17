@@ -38,13 +38,17 @@
   const cloudOk = () => safe(() => !!(root.CN && root.CN.S && root.CN.S.cloud && root.CN.S.cloud.ok), false);
   const live = () => !st.dead && !doc.hidden && cloudOk();
 
-  /** The orders on screen, nearest the top of the screen first. */
+  /** The orders on screen, nearest the top of the screen first.
+      PERF (Oct 2026): the page's views that are not shown (the .lib views carrying .hidden) are skipped by one look per
+      parent, before anything is measured: every node of every view used to be looked up twice and measured at every tick. */
+  const UNSHOWN = '[hidden], dialog:not([open]), .lib.hidden';
   function onScreen() {
-    const out = new Map();
+    const out = new Map(), shut = new Map();
     const add = (rid, y) => { rid = ridOf(rid); if (OK.test(rid) && (!out.has(rid) || y < out.get(rid))) out.set(rid, y); };
     const vh = root.innerHeight || 900;
+    const unshown = n => { const p = n.parentElement; if (!p) return false; let v = shut.get(p); if (v === undefined) shut.set(p, v = !!p.closest(UNSHOWN)); return v; };
     for (const n of doc.querySelectorAll('[data-rid]')) {
-      if (n.closest('[hidden]') || n.closest('dialog:not([open])')) continue;
+      if (n.matches(UNSHOWN) || unshown(n)) continue;
       const r = n.getBoundingClientRect(); if (!(r.width > 0 && r.height > 0) || r.bottom < -NEAR || r.top > vh + NEAR) continue;
       add(n.dataset.rid, Math.abs(r.top));
     }
@@ -73,14 +77,15 @@
   const flowBusy = rid => safe(() => !!((root.OrderHold && root.OrderHold.status && (root.OrderHold.status(rid) || {}).running)
     || (root.OrderHold && root.OrderHold.releaseStatus && (root.OrderHold.releaseStatus(rid) || {}).running)
     || (root.HoldUI && root.HoldUI.busy && root.HoldUI.busy(rid)) || (root.CancelUI && root.CancelUI.busy && root.CancelUI.busy(rid))), false);
-  function adoptHolds(ids) {
+  // (opt.seen: also every row whose hold the cloud has said, wherever it is: a release made elsewhere is let go even off screen)
+  function adoptHolds(ids, opt) {
     const PP = root.PiecePlacement, Orders = root.Orders;
     if (!PP || !Orders || !Orders.rows) return 0;
-    const want = ids ? new Set(ids.map(ridOf)) : null;
+    const want = ids ? new Set(ids.map(ridOf)) : null, seen = !!(opt && opt.seen);
     let changed = 0;
     for (const r of safe(() => Orders.rows(), [])) {
       if (!r || !r.order || r.state === 'gone') continue;
-      const rid = ridOf(r.order.receiptId); if ((want && !want.has(rid)) || flowBusy(rid)) continue;
+      const rid = ridOf(r.order.receiptId); if ((want && !want.has(rid) && !(seen && r.holdSeen)) || flowBusy(rid)) continue;
       // p: what this page says (the row's own hold counts until the cloud has confirmed it); c: what the cloud alone says (pool rows taken off for a hold, no row flag)
       const p = safe(() => PP.ofRow(r), null); if (!p || p.state === 'loading' || p.state === 'cancelled') continue;
       const c = safe(() => PP.ofRow(r, { cloudOnly: true }), null) || p;
@@ -146,7 +151,8 @@
   doc.addEventListener('visibilitychange', () => { if (doc.hidden) { clearTimeout(st.timer); clearTimeout(st.second); st.timer = st.second = 0; } else { st.fails = 0; arm(0); } });
   root.addEventListener && root.addEventListener('online', () => { st.fails = 0; arm(0); });
   // anything the page learns of the sheets (a load made for a window, the Library's list) is adopted into the rows too
-  const hook = () => { const OP = root.OrderPieces; if (!OP || !OP.subscribe || hook.done) return; hook.done = true; let queued = false; OP.subscribe(() => { if (queued) return; queued = true; Promise.resolve().then(() => { queued = false; adoptHolds(); safe(() => { if (root.CN && root.CN.S && root.CN.S.mode === 'library' && root.LaserReview && root.LaserReview.nudge) root.LaserReview.nudge(); }); }); }); };   // (a piece that moved on the cloud: the Library's own read of the sheets follows at once, not at its next beat; a quiet cloud bumps nothing)
+  // (PERF, Oct 2026: for the orders on screen and the rows the cloud had on hold, not all ~800 rows read twice at every bump)
+  const hook = () => { const OP = root.OrderPieces; if (!OP || !OP.subscribe || hook.done) return; hook.done = true; let queued = false; OP.subscribe(() => { if (queued) return; queued = true; Promise.resolve().then(() => { queued = false; adoptHolds(watched(), { seen: true }); safe(() => { if (root.CN && root.CN.S && root.CN.S.mode === 'library' && root.LaserReview && root.LaserReview.nudge) root.LaserReview.nudge(); }); }); }); };   // (a piece that moved on the cloud: the Library's own read of the sheets follows at once, not at its next beat; a quiet cloud bumps nothing)
   const start = () => { hook(); schedule(); };
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', () => setTimeout(start, 0)); else setTimeout(start, 0);
   // (the page's mode and the windows change what is on screen: a look every few seconds is enough to start the loop when there was nothing to read)

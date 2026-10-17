@@ -7,6 +7,10 @@
  // (the open dialog, or the page). Pages that never call it keep the behaviour below unchanged.
  function own(check){owner=typeof check==='function'?check:null;}
  function shown(host){try{return !!owner&&!!owner(host);}catch(e){return false;}}
+ // PERF (Oct 2026): render() and enhance() run every 500 ms on every page. Each write below happens only when the value
+ // changes: a text written again was a DOM mutation (and a style recalculation) twice a second that every observer of the
+ // page woke for, even with nothing new to say.
+ const text=(n,v)=>{if(n.textContent!==v)n.textContent=v;},hide=(n,v)=>{if(n.hidden!==v)n.hidden=v;},data=(n,k,v)=>{if(n.dataset[k]!==v)n.dataset[k]=v;};
  function render(){
   const now=Date.now(),jobs=[...active.values()].filter(j=>now-j.started>=1800);
   if(!jobs.length){notice?.remove();notice=null;return;}
@@ -18,33 +22,33 @@
   const oldest=jobs.reduce((a,b)=>a.started<b.started?a:b),age=now-oldest.started;
   const label=jobs.length===1?oldest.label:jobs.length+' requests in progress';
   if(notice.querySelector('b').textContent!==label)notice.querySelector('b').textContent=label;
-  notice.querySelector('progress').hidden=age<8000;notice.querySelector('.bp-spinner').hidden=age>=8000;
-  notice.querySelector('small').setAttribute('aria-live','off');
-  notice.querySelector('small').textContent=duration(age)+' elapsed · '+(age>60000?'Taking longer than usual. Waiting for a response; completion is not confirmed.':'Waiting for the server response');
+  hide(notice.querySelector('progress'),age<8000);hide(notice.querySelector('.bp-spinner'),age>=8000);
+  const small=notice.querySelector('small');if(small.getAttribute('aria-live')!=='off')small.setAttribute('aria-live','off');
+  text(small,duration(age)+' elapsed · '+(age>60000?'Taking longer than usual. Waiting for a response; completion is not confirmed.':'Waiting for the server response'));
  }
  function reset(p){if(!p)return;const key=(p.closest('[id]')?.id||'page')+'|'+p.getAttribute('aria-label');histories.delete(key);delete p._bp;if(p.nextElementSibling?.classList.contains('bp-note'))p.nextElementSibling.hidden=true;}
  function enhance(){
   document.querySelectorAll('progress').forEach(p=>{
    let meter=p.parentElement;
    if(!meter.classList.contains('bp-meter')){meter=document.createElement('div');meter.className='bp-meter';p.before(meter);meter.appendChild(p);}
-   meter.hidden=p.hidden||!!meter.parentElement?.closest('[hidden]');
-   p.classList.add('bp-track');
+   hide(meter,p.hidden||!!meter.parentElement?.closest('[hidden]'));
+   if(!p.classList.contains('bp-track'))p.classList.add('bp-track');
    const known=p.hasAttribute('value'),percent=Math.max(0,Math.min(100,p.value/(p.max||1)*100));
-   meter.dataset.label=known?Math.round(percent)+'%':'Working…';
-   meter.dataset.determinate=String(known);meter.style.setProperty('--bp-pct',percent+'%');
+   data(meter,'label',known?Math.round(percent)+'%':'Working…');
+   data(meter,'determinate',String(known));if(meter.style.getPropertyValue('--bp-pct')!==percent+'%')meter.style.setProperty('--bp-pct',percent+'%');
    if(p.closest('[data-bp-managed]'))return;
    if(p.hidden||p.closest('[hidden]'))return;
-   p.classList.add('bp-track');
+   if(!p.classList.contains('bp-track'))p.classList.add('bp-track');
    const key=(p.closest('[id]')?.id||'page')+'|'+p.getAttribute('aria-label');
    if(!p._bp){const old=histories.get(key);p._bp=old&&Date.now()-old.seen<2500?old:{started:Date.now(),changed:Date.now(),value:p.getAttribute('value')};histories.set(key,p._bp);}p._bp.seen=Date.now();
    const value=p.getAttribute('value');if(value!==p._bp.value){p._bp.value=value;p._bp.changed=Date.now();}
    let note=p.nextElementSibling;if(!note?.classList.contains('bp-note')){note=document.createElement('small');note.className='bp-note';note.setAttribute('aria-live','off');p.after(note);}
    const elapsed=Date.now()-p._bp.started,unchanged=Date.now()-p._bp.changed;
-   note.hidden=elapsed<2000||p.hasAttribute('value')&&p.value>=p.max;
-   note.textContent=duration(elapsed)+' elapsed'+(unchanged>30000?' · No new progress reported for '+duration(unchanged):p.hasAttribute('value')?' · Completed steps':' · Waiting for a response');
+   hide(note,elapsed<2000||p.hasAttribute('value')&&p.value>=p.max);
+   text(note,duration(elapsed)+' elapsed'+(unchanged>30000?' · No new progress reported for '+duration(unchanged):p.hasAttribute('value')?' · Completed steps':' · Waiting for a response'));
   });
   for(const [key,h] of histories)if(Date.now()-h.seen>10000)histories.delete(key);
-  document.querySelectorAll('.bp-note').forEach(n=>{if(n.previousElementSibling?.tagName!=='PROGRESS')n.remove();else if(n.previousElementSibling.hidden)n.hidden=true;});
+  document.querySelectorAll('.bp-note').forEach(n=>{if(n.previousElementSibling?.tagName!=='PROGRESS')n.remove();else if(n.previousElementSibling.hidden)hide(n,true);});
  }
  root.BritesProgress={begin,duration,reset,own};
  setInterval(()=>{render();enhance();},500);
