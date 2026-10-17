@@ -4611,7 +4611,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      while the window sits unused: 2 s while a person touched the page or the sheet moved in the last 10 minutes, then 4 s, 8 s once it has sat unused for an
      hour; a touch is back at 2 s at the next beat. */
   for (const ev of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"]) document.addEventListener(ev, () => { FOLLOW.touch = Date.now(); }, { capture: true, passive: true });
-  const followGap = () => { const idle = Date.now() - Math.max(FOLLOW.touch, FOLLOW.moved); return idle < 600000 ? 0 : idle < 3600000 ? 3500 : 7500; };
+  /* COST (Oct 2026): the beat follows the person, as the Library's does: every 2 s while somebody uses the page (a touch in the last 2 minutes, the window
+     focused), about 15 s otherwise, about 60 s once nobody has touched it (and the sheet has not moved) for 10 minutes. A window left open on a screen was
+     1,800 reads an hour; it is 240, then 60. A touch is back at 2 s at the next beat; a placement read that moved a piece of its orders still asks at once. */
+  const followGap = () => {
+    const now = Date.now();
+    if (now - FOLLOW.touch < 120000 && (typeof document.hasFocus !== "function" || document.hasFocus())) return 0;
+    return now - Math.max(FOLLOW.touch, FOLLOW.moved) < 600000 ? 13500 : 59500;   // (the beat is 2 s: these read at about 14 s and 60 s)
+  };
   const memberSig = r => !r ? "gone" : JSON.stringify([(r.poolIds || []).map(String).sort(), (r.orders || []).map(String).sort(), r.setId || "", +r.laserDoneAt || 0, r.archived ? 1 : 0]);
   const followBusy = () => !!(W.hand || W.add || W.fill || W.flow || W.flying || W.leaving || W.folding || W.away || W.coming || (W.going && W.going.size) || (W.landing && W.landing.length));
   async function follow(now) {
@@ -4643,10 +4650,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   setInterval(follow, 2000);
   // a read that moved a piece of one of the orders this window shows (the placement feed's, or any other) asks for the sheet's own read at once, not at the next beat
   const followHook = () => { try { const OP = window.OrderPieces; if (!OP || !OP.subscribe || followHook.on) return; followHook.on = true; OP.subscribe(() => { if (W.dlg && W.dlg.open) { clearTimeout(followHook.t); followHook.t = setTimeout(() => follow(true), 80); } }); } catch (_) {} };
-  setInterval(followHook, 2000);
   // what the window shows is on the placement feed's screen (the cancelled marks, the pieces' other sheets)
   const feedWatch = () => { try { if (window.PlacementFeed && !feedWatch.on) { feedWatch.on = true; PlacementFeed.watch("sheetwin", () => (W.dlg && W.dlg.open ? [...W.orders.keys()].filter(k => /^\d+$/.test(k)) : [])); } } catch (_) {} };
-  setInterval(feedWatch, 2000);
+  // (each is hooked once, as soon as what it hooks into is on the page; then its look every 2 s stops)
+  const hooking = setInterval(() => { followHook(); feedWatch(); if (followHook.on && feedWatch.on) clearInterval(hooking); }, 2000);
 
   function veil(text) { const E = W.el; if (!text) { E.veil.hidden = true; return; } E.veilText.textContent = text; E.veil.hidden = false; }
 

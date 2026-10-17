@@ -127,6 +127,9 @@ async function page() {
   const ctx = vm.createContext({ window: win, document, console: { ...console, warn() {} }, esc, cors: x => x, S: { mode: 'library', cloud: { ok: true }, library: { loadedAt: 0 } }, allSheets: () => [], Orders: { rows: () => [] }, Engrave: { items: () => new Map() }, O: { setLabel: n => 'Set ' + n }, CNListActivity: { compare: () => 0, compareBlocks: () => 0, state: () => ({ direction: 1 }) }, innerHeight: 800, requestAnimationFrame: fn => (frames.push(fn), frames.length), setTimeout: setT, clearTimeout: clearT, setInterval() {}, api, Date: FakeDate });
   vm.runInContext(src.slice(src.indexOf('const LaserReview ='), src.indexOf('const Sets =')), ctx);
   const L = win.LaserReview, body = document.querySelector('#libBody');
+  // (COST, Oct 2026: the beat follows the person; someone is at this page, the window focused, touching it every 30 s, until section 13 says otherwise)
+  let focus = true, busy = true; document.hasFocus = () => focus;
+  const keepBusy = () => { if (busy) document.dispatchEvent(new win.Event('pointerdown')); setT(keepBusy, 30000); }; keepBusy();
   // (the Library's own glide helpers, as charm-nest-library.js exports them; refresh() calls its bare name, so it is in both places)
   ctx.LibraryDone = win.LibraryDone = { isDone: r => !!(r && r.laserDoneAt), addedSeals() {}, refreshCards() {}, snapshot: () => new Map([['x', 1]]), glideFrom: (b, before) => glides.push(before) };
   win.LibraryFx = { pulse: el => pulses.push(el), active: () => 0 };
@@ -251,6 +254,38 @@ async function page() {
   // 12. a cloud that does not know ifRevs (the page is newer than the function): answered in full each time, so asked 20 s apart
   world.legacy = true; await advance(30000); const nl = fast().length; await advance(100000);
   const legacyGaps = gaps(fast().slice(nl - 1)); assert(legacyGaps.length >= 4 && legacyGaps.every(g => g >= 20000), 'a cloud that cannot say "unchanged" is asked every 20 s, not every 3 s');
+
+  // 13. COST (Oct 2026): the beat follows the person. 3 s while someone uses the page (a touch in the last 2 minutes, the window focused), 15 s once nobody
+  //     has for 2 minutes or the window is not focused, 60 s after 10 minutes; a touch after a lull reads at once (the 3 s beat from the last read is past)
+  world.legacy = false; await advance(25000); assert.equal(L.liveState().legacy, false);
+  busy = false; await advance(130000); let n6 = fast().length; await advance(60000);
+  let beat = gaps(fast().slice(n6 - 1)); assert(beat.length >= 3 && beat.every(g => g === 15000), `nobody touched it for 2 minutes: every 15 s (${beat})`);
+  await advance(450000); n6 = fast().length; await advance(240000);
+  beat = gaps(fast().slice(n6 - 1)); assert(beat.length >= 3 && beat.every(g => g === 60000), `nobody for 10 minutes: every 60 s (${beat})`);
+  const backAt = clock.now; busy = true; document.dispatchEvent(new win.Event('pointermove')); await advance(700);
+  assert(fast().slice(-1)[0].at >= backAt && fast().slice(-1)[0].at - backAt <= 600, 'a touch after the lull reads at once'); n6 = fast().length; await advance(12000);
+  assert(gaps(fast().slice(n6 - 1)).every(g => g === 3000), 'and every 3 s again');
+  focus = false; await advance(20000); n6 = fast().length; await advance(45000);
+  beat = gaps(fast().slice(n6 - 1)); assert(beat.length >= 2 && beat.every(g => g === 15000), `the window not focused: every 15 s (${beat})`);
+  const refocus = clock.now; focus = true; win.dispatchEvent(new win.Event('focus')); await advance(700);
+  assert(fast().slice(-1)[0].at >= refocus && fast().slice(-1)[0].at - refocus <= 600, 'focused again: a read at once');
+  // the slow check that records seals keeps its minute while the Library is shown, and stops once it is not (it ran on every page all day)
+  const sealsNow = () => requests.filter(r => r.payload.recordSeals === true).length;
+  let s0 = sealsNow(); await advance(125000); assert(sealsNow() - s0 >= 2, 'the minute\'s check while the Library is shown');
+  ctx.S.mode = 'orders'; await advance(61000); s0 = sealsNow(); const t0n = requests.length; await advance(600000);
+  assert.equal(sealsNow(), s0, 'no slow check off the Library'); assert.equal(requests.length, t0n, 'and nothing else is read');
+
+  // 14. COST (Oct 2026): the cards in view are kept by an IntersectionObserver: a card is measured once, then the observer says when it comes and goes
+  const watched = new Set(); let report = null;
+  win.IntersectionObserver = class { constructor(cb) { report = cb; } observe(x) { watched.add(x); } unobserve(x) { watched.delete(x); } disconnect() {} };
+  let measured = 0; for (const c of Object.values(cards)) { const g = c.getBoundingClientRect; c.getBoundingClientRect = () => { measured++; return g(); }; }
+  ctx.S.mode = 'library'; L.changed(); await advance(700);
+  const m0 = measured; assert(m0 >= 3 && watched.has(cards.A) && watched.has(cards.C), 'each card measured once and observed'); await advance(9000);
+  assert.equal(measured, m0, 'and not measured again at each beat');
+  report([{ target: cards.C, isIntersecting: true, boundingClientRect: { width: 300, height: 350 } }, { target: cards.A, isIntersecting: false, boundingClientRect: { width: 300, height: 350 } }]);
+  const nC = fast().length; await advance(3100); const asked = fast().slice(nC)[0].payload.sheetIds;
+  assert(asked.includes('shC') && !asked.includes('shA'), `the observer's word decides what is read (${asked})`);
+  cards.C.remove(); await advance(3100); assert(!watched.has(cards.C), 'a card gone from the page is let go');
   mo.disconnect(); win.close();
   return { quick, slow };
 }

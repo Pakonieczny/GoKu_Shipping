@@ -53,6 +53,25 @@ db.seed(seed);
   await sleep(4); await db.collection(S).doc(id).delete();
   const gone = await ask({ ifRevs: { [key]: moved.revs[key] }, setIds: [] });
   assert(!gone.unchanged, "a sheet deleted is a change");
+  // COST (Oct 2026): the window's beat follows the person (charm-nest-sheetwin.js followGap, read from the page's own source): 2 s while used and focused,
+  // about 15 s otherwise, about 60 s after 10 minutes untouched; at the window's 2 s tick, the reads an hour of a window left open
+  {
+    const src = require("node:fs").readFileSync(path.join(__dirname, "../../charm-nest-sheetwin.js"), "utf8"), from = src.indexOf("const followGap = () => {"), to = src.indexOf("\n  };", from) + 4;
+    assert(from > 0 && to > from, "followGap is in the sheet window");
+    let now = 1.8e12, focus = true; const FOLLOW = { touch: now, moved: now - 3600000 };
+    const ctx = require("node:vm").createContext({ Date: { now: () => now }, document: { hasFocus: () => focus }, FOLLOW });
+    const gap = require("node:vm").runInContext(src.slice(from, to) + "\nfollowGap", ctx);
+    const reads = mins => { let at = -Infinity, n = 0; for (let t = 0; t < mins * 60000; t += 2000) { now = FOLLOW.t0 + t; if (now - at >= gap()) { at = now; n++; } } return n; };
+    FOLLOW.t0 = now; assert.equal(gap(), 0, "used, focused: every beat (2 s)");
+    focus = false; assert(gap() >= 13000 && gap() < 15000, "not focused: about 15 s"); focus = true;
+    now += 121000; assert(gap() >= 13000 && gap() < 15000, "untouched for 2 minutes: about 15 s");
+    now += 600000; assert(gap() >= 58000 && gap() < 60000, "untouched for 10 minutes: about 60 s");
+    FOLLOW.moved = now; assert(gap() < 15000, "the sheet moved: back to about 15 s");
+    FOLLOW.touch = now; assert.equal(gap(), 0, "a touch: every beat again");
+    FOLLOW.touch = FOLLOW.moved = FOLLOW.t0 = now = 1.9e12 - 3600000;
+    realLog(`  a sheet window open for an hour, used for its first 2 minutes, then left: ${reads(60)} reads (was 1,800 at a 2 s beat)`);
+    assert(reads(60) < 150, "an hour of a window nobody uses reads far less than the 1,800 of a 2 s beat");
+  }
   realLog("fc4-sheetwin-follow: all checks passed");
   m.uninstall();
 })().catch(e => { realLog(e); process.exit(1); });
