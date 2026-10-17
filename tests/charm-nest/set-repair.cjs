@@ -131,9 +131,13 @@ const idsIn = (p, k) => sorted(p.sets[k].sheetIds);
   // a later set that has formed (a valid set) does not stop it: the new sets are numbered after it
   { const f = owner2(), a = sheet('l-gf', 'gold', 1, { setId: 'set-3', page: 40 }), b = sheet('l-ss', 'silver', 1, { setId: 'set-3', page: 41 }); f.sheets.push(a, b); f.sets.push({ setId: 'set-3', id: 'set-3', name: 'Set-3', seq: 3, runId: 'run-1', day: '2026-10-17', group: 'dispatch', status: 'open', sheetIds: ['l-gf', 'l-ss'] });
     const p = SRp.plan(f.set, f.sheets, f.sets, {}); assert.equal(p.ok, true, JSON.stringify(p.refused)); assert.deepEqual(p.sets.map(s => s.name), ['Set 2', 'Set 4', 'Set 5'], 'the shop\'s counter is past Set 3: the new sets are numbered after every set it knows'); assert(!p.expel.some(i => i.startsWith('l-')), 'Set 3 is untouched'); }
-  // a rebuild that would still break a rule is refused BEFORE anything is applied: GF 1 shares an order with a sheet of the committed Set 1, so no formation of these sheets can follow the cardinal rule
+  // an order-mate in a COMMITTED set is fixed work (the app lets the work go on: bridge Gate 'fixed' groups): the open set is not at fault, so it is neither flagged for it nor refused (review V2, 17 Oct 2026: it was a dead end that also stopped the approval)
   { const f = owner2(); link(f.gf[1], f.sheets.find(s => s.id === 's1-gf1'), 4200000888);
-    const p = refused(f, 'unfixed', {}, /^A rebuild would still break your rules \(.*\): Set 2 was not changed$/); assert.match(p.refused.reason, /different sets|not in any set|must be in the same set/); }
+    const p = SRp.plan(f.set, f.sheets, f.sets, {}); assert.equal(p.ok, true, JSON.stringify(p.refused)); assert.equal(I.check(f.sets, f.sheets, { skipExempt: true, unformed: false, membership: false }).violations.some(v => v.rule === 'cardinal'), false, 'no cardinal violation against the open set'); }
+  // a rebuild that would still break a rule is refused BEFORE anything is applied (a group spread over TWO OPEN sets, which no formation of these sheets can mend)
+  { const f = owner2(), a = sheet('o-gf', 'gold', 1, { setId: 'set-3', page: 50 }), b = sheet('o-ss', 'silver', 1, { setId: 'set-3', page: 51 }); f.sheets.push(a, b);
+    f.sets.push({ setId: 'set-3', id: 'set-3', name: 'Set-3', seq: 3, runId: 'run-1', day: '2026-10-17', group: 'dispatch', status: 'open', sheetIds: ['o-gf', 'o-ss'] }); link(f.gf[1], a, 4200000999);
+    const p = SRp.plan(f.set, f.sheets, f.sets, {}); assert.equal(p.ok, false); }
   // no such set / an empty set
   assert.equal(SRp.plan(null, [], []).refused.key, 'noSet');
   { const f = owner2(); const p = SRp.plan({ setId: 'set-77', seq: 77, sheetIds: [] }, f.sheets, f.sets, {}); assert.equal(p.refused.key, 'empty'); }
@@ -305,6 +309,19 @@ function ownerPage({ tie = null } = {}) {
   const g0 = { id: 's1-gf1', metal: 'gold', page: 1, full: true, pieces: [own1(90), `${X(60)}_1_1`], inSet: 'set-1', sheetIndex: 1, setMeta: { doc: { committedAt: 1760600000000, status: 'complete' } } }, s0 = { id: 's1-ss1', metal: 'silver', page: 1, full: true, pieces: [own1(91), `${X(60)}_1_2`], inSet: 'set-1', sheetIndex: 1, density: .74 };
   L.unshift(g0, s0);
   return L;
+}
+/* ── review V2 (17 Oct 2026): what the first version got wrong ─────────────────────────────────────────────────────────────────────────── */
+{
+  // a set approved for laser cutting NOW, or already partly laser-cut, is history: not flagged, not held back from Laser cutting, not rebuilt
+  { const f = owner2({ extra: { processReady: true } }); assert.deepEqual(SRp.diagnose(f.sets, f.sheets).list, [], 'an approved set says nothing'); const p = SRp.plan(f.set, f.sheets, f.sets, {}); assert.equal(p.refused.key, 'approved'); }
+  { const f = owner2(); f.gf[3].laserDoneAt = 99; assert.deepEqual(SRp.diagnose(f.sets, f.sheets).list, [], 'a set with a laser-cut sheet says nothing'); assert.equal(SRp.plan(f.set, f.sheets, f.sets, {}).refused.key, 'cut', 'and the press still says why it cannot be rebuilt'); }
+  // a person's tick is the yes of R12(a): a ticked 14K sheet (saved as solidIncluded: true, no cut recorded) is ready; unticked, it is not
+  for (const ticked of [true, false]) {
+    const gf = sheet('t-gf', 'gold', 1, { setId: 'set-9' }), ss = sheet('t-ss', 'silver', 1, { setId: 'set-9' }), k = sheet('t-k', 'gold14k', 1, { setId: 'set-9', releaseFull: false, density: .2, backsApproved: true, ...(ticked ? { solidIncluded: true } : {}) });
+    link(gf, ss, 4200009001); link(gf, k, 4200009002);
+    const d = SRp.diagnose([{ setId: 'set-9', id: 'set-9', name: 'Set-9', seq: 9, runId: 'run-1', status: 'open', sheetIds: ['t-gf', 't-ss', 't-k'] }], [gf, ss, k]);
+    assert.equal(d.list.some(i => i.rules.includes('R12')), !ticked, ticked ? 'a ticked 14K sheet is not "not cut yet"' : 'an unticked, uncut 14K sheet in a set still is');
+  }
 }
 (async () => {
   const done = [];

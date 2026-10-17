@@ -67,6 +67,7 @@
       const id = idOf(s); if (!id || seen.has(id) || s.archived) continue;
       seen.add(id);
       const row = Object.assign({}, s, { id });
+      if (GOLD_FAMILY.includes(classOf(row)) && row.solidIncluded === true && row.cutApproved == null) row.cutApproved = true;   // (the page reads a person's tick as R12(a)'s yes: so do the Library cards and the server, which only see the saved tick)
       if (['GF', 'SS'].includes(classOf(row)) && !Object.prototype.hasOwnProperty.call(row, 'releaseFull') && !isCut(row)) { row.releaseFull = true; row._unmarked = true; }
       out.push(row);
     }
@@ -157,7 +158,9 @@
     const o = opts || {}, rows = rowsOf(sheetsIn), sets = setsOf(rows, setDocs), rowOf = new Map(rows.map(r => [r.id, r]));
     // (a set whose GF and SS records carry no completion mark at all cannot be read: SetRules.gate leaves it alone too)
     const readable = s => s.sheetIds.some(i => { const r = rowOf.get(i); return r && ['GF', 'SS'].includes(classOf(r)) && !r._unmarked; });
-    const judged = sets.filter(s => !R.exempt(s) && !s.unlisted && s.sheetIds.length >= 2 && readable(s));
+    // (a set that is approved for laser cutting, or already partly cut, is history: it is neither flagged, nor held back from Laser cutting, nor rebuilt)
+    const started = s => !!approvedWhy(s, rows.filter(r => inSetOf(r) === s.id)) || s.sheetIds.some(i => { const r = rowOf.get(i); return r && +r.laserDoneAt > 0; });   // (approvedWhy: a ready flag that is a moment old, with a sheet that says it is not ready now, is no approval)
+    const judged = sets.filter(s => !R.exempt(s) && !s.unlisted && s.sheetIds.length >= 2 && readable(s) && (o.includeStarted || !started(s)));
     if (!judged.length) return empty();
     let result;
     try { result = I.check(sets.map(s => ({ id: s.id, name: s.name, seq: s.seq, sheetIds: s.sheetIds, committedAt: s.committedAt, laserDoneAt: s.laserDoneAt, status: s.status })), rows, { skipExempt: true, unformed: false, membership: false, partialPartners: 'pending' }); }
@@ -236,7 +239,7 @@
     const later = sets.filter(s => s.id !== setId && !R.exempt(s) && !s.unlisted && str(s.runId) === str(doc.runId) && setNumber(s) > setNumber(doc) && !R.closed(rows.filter(r => inSetOf(r) === s.id)));
     if (later.length) return refuse(out, 'later', `${later[0].name} comes after ${out.name} in this run and is still forming: finish it first, then rebuild ${out.name}`);
 
-    const diag = diagnose(docs, rows, {}); out.before = diag.bySet[setId] || null;
+    const diag = diagnose(docs, rows, { includeStarted: true }); out.before = diag.bySet[setId] || null;   // (the press says WHY a started set cannot be rebuilt: the refusals above and below)
     if (!out.before) { out.noop = true; return refuse(out, 'right', `${out.name} already follows your rules: nothing to rebuild`); }
 
     // the sheets the formation works from: this set's sheets and the loose sheets of its run (a sheet in another set is not free; one a person took out stays out)
@@ -255,7 +258,10 @@
       const keep = mode === 'trim' ? firstIds.slice() : [], keepSet = new Set(keep), expel = members.filter(r => !keepSet.has(r.id)).map(r => r.id);
       return { mode, keep, expel };
     };
-    const modes = trim ? [tryMode('trim'), tryMode('dissolve')] : [tryMode('dissolve')];
+    // (dissolve empties the set and leaves its refill to the run's formation, which fills the run's NEWEST set only: with a later set of the run, formed or not, Set N would stay empty and its sheets would form later numbers)
+    const laterSet = sets.some(s => s.id !== setId && !R.exempt(s) && !s.unlisted && str(s.runId) === str(doc.runId) && setNumber(s) > setNumber(doc));
+    const modes = (trim ? [tryMode('trim'), tryMode('dissolve')] : [tryMode('dissolve')]).filter(m => !(laterSet && m.mode === 'dissolve'));
+    if (!modes.length) return refuse(out, 'later', `${out.name} would have to be made again from scratch, and a later set of this run exists: the sheets would form later sets and leave ${out.name} empty. Nothing was changed`);
 
     // the numbers the new sets will carry: the day's counter hands out the next one after every set it knows (op setAllocate); the set keeps its own
     const known = sets.filter(s => !s.unlisted && (!doc.day || !s.day || str(s.day) === str(doc.day))).map(setNumber);
@@ -512,13 +518,13 @@ dialog.setRepairDlg{width:min(540px,94vw)}
     const marks = pagesOfExpelled.map(x => ({ x, was: { leftSet: x.pg.leftSet, draft: x.pg.draft, solidPick: x.pg.solidPick } }));
     // the loose sheets the plan puts into the new sets: held for the first pass too, or the run would form their set before the sheets that leave are free (the numbers would not follow the plan)
     const leaving = new Set(p.expel), staying = new Set(p.keep);
-    const outsiders = p.sets.flatMap(s => s.sheetIds).filter(i => !leaving.has(i) && !staying.has(i)).map(i => pageOf(i)).filter(pg => pg && !pg.setId).map(pg => ({ pg, was: pg.leftSet }));
+    const outsiders = p.sets.flatMap(s => s.sheetIds).filter(i => !leaving.has(i) && !staying.has(i)).map(i => pageOf(i)).filter(pg => pg && !pg.setId).map(pg => ({ pg, was: pg.leftSet === setId ? undefined : pg.leftSet }));
     const letGo = () => { for (const q of outsiders) { if (q.was === undefined) delete q.pg.leftSet; else q.pg.leftSet = q.was; } };
     // 1. all the sheets that leave, at once: taken out and drafts (a unit that shares an order leaves whole, so the cardinal rule pulls none of them back)
     for (const m of marks) { m.x.pg.leftSet = setId; m.x.pg.draft = true; if (solid(m.x.pg.metal)) m.x.pg.solidPick = false; }
     for (const q of outsiders) q.pg.leftSet = setId;
     const undo = list => { for (const m of list) { m.x.pg.leftSet = m.was.leftSet; m.x.pg.draft = m.was.draft; m.x.pg.solidPick = m.was.solidPick; if (m.was.leftSet === undefined) delete m.x.pg.leftSet; } };
-    try { if (marks.length) await env.assemble(run); } catch (e) { letGo(); undo(marks.filter(m => m.x.pg.setId)); throw e; }
+    try { if (marks.length) await env.assemble(run); } catch (e) { letGo(); undo(marks.filter(m => m.x.pg.setId)); for (const m of marks) if (!m.x.pg.setId && !family(m.x)) delete m.x.pg.leftSet; throw e; }   // (a sheet already taken out is free again, not marked for the next press)
     letGo();
     const stuck = marks.filter(m => m.x.pg.setId);
     if (stuck.length) {

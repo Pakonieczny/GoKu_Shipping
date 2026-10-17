@@ -256,7 +256,7 @@
       const sets = [...new Set(g.ids.map(i => setOf.get(i)).filter(Boolean))];
       if (sets.length < 2) continue;
       const st = setList.find(s => s.id === sets[0]), by = sets.map(sid => `${(setList.find(s => s.id === sid) || {}).name || sid}: ${and(g.ids.filter(i => setOf.get(i) === sid).map(C.name))}`);
-      if (o.skipExempt && setList.filter(s => sets.includes(s.id)).every(s => R.exempt(s.doc))) continue;
+      if (o.skipExempt && setList.filter(s => sets.includes(s.id)).some(s => R.exempt(s.doc))) continue;      // (a mate in a set sent to the station, completed or replaced is fixed: the open set is not at fault, the work goes on)
       add('cardinal', st, g.ids.filter(i => setOf.has(i)), `${cap(orderWords(g.orders))} ${g.orders.length === 1 ? 'has' : 'have'} pieces on sheets of different sets (${by.join('; ')}): sheets that share a multi-piece order must always be in the same set`, { sets, orders: g.orders });
     }
 

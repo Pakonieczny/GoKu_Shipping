@@ -66,7 +66,7 @@
     if (hold) return 'held';   // (the cloud says a person took this piece off its sheet: whatever this page's own line says)
     if (!l) return sku ? null : 'noSku';
     const sp = l.spec || {}, kinds = (l.problems || []).map(p => String((p && p.kind) || p || ''));
-    if (l.hold || l.state === 'held' || l.state === 'oversize' || kinds.includes('oversize')) return 'held';
+    if (l.hold || (l.state === 'held' && !(sp.special && sp.special.monogram)) || l.state === 'oversize' || kinds.includes('oversize')) return 'held';   // (a monogram line waits in Engraving: its state "held" is no hold)
     if (handOf(l)) return null;   // (resolved: it has no SKU or design question left, whatever its record still says)
     if (l.state === 'noDesign' || l.noDesign || sp.noDesign || kinds.includes('missingSize')) return 'noDesign';
     if (!sku) return 'noSku';

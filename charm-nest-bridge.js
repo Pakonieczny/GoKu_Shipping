@@ -5070,7 +5070,7 @@ const Gate = window.Gate = (() => {
       RunCtl.onSheetDone(sh);
       set.touched = true;
     }
-    if (SRt && !set.formedAt && SRt.validSet(membersOfSet(set)).ok) set.formedAt = at;      // it formed in this look: from now on it is closed to automatic joining (charm-nest-set-rules.js closed)
+    if (SRt) { if (!SRt.validSet(membersOfSet(set)).ok) delete set.formedAt; else if (!set.formedAt) set.formedAt = at; }      // (a set that lost a member and holds no valid minimum any more is forming again: its sheets that rejoin are no late joiners) it formed in this look: from now on it is closed to automatic joining (charm-nest-set-rules.js closed)
   }
   function editable(sh) {
     // Stock dimensions are shared only by pages of this material. Independent
@@ -18570,7 +18570,7 @@ const OrderWin = window.OrderWin = (() => {
   }
   /** The facts of one scope piece (scopePieces) for PiecePlacement.resolve: the sheets it is on, a hold on its line, a hand completion, a cancel, whether the records are read. */
   function placeFacts(p, cx) {
-    const row = p.row || {}, held = !!(row.hold || row.state === "held"), pools = new Set();
+    const row = p.row || {}, held = !!(row.hold || (row.state === "held" && !(row.spec && row.spec.special && row.spec.special.monogram))), pools = new Set();   // (a monogram line waits in Engraving: the intake's own state "held" for it is no hold, as in PiecePlacement.holdOfRow)
     for (const h of p.sheets) for (const id of h.pools || []) pools.add(id);
     return { key: p.key, name: p.name, metal: p.metal, qty: p.qty, cancelled: cx || (row.state === "gone" ? true : false),
       hold: held ? { reason: String(row.reason || (typeof row.hold === "string" ? row.hold : "") || ""), at: +row.heldAt || 0, by: "" } : null,

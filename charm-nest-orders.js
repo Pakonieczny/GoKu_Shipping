@@ -1183,6 +1183,8 @@
     const n = norm(name), byName = listingMap && (listingMap[n] || listingMap[Object.keys(listingMap).find(k => norm(k) === n)]), said = new Map();
     for (const [k, hit] of Object.entries(byName || {})) { const j = letterIndex(k); if (j < 0 || !hit || hit.field !== "design" || !hit.value) continue; const f = letterFamily(hit.value, me); if (f && f.own && f.n === j) said.set(f.base, !!f.lettered); }
     if (!LETTER_NAME.test(String(name || "")) && !fam && !said.size) return null;
+    // (a LETTERED family is the buyer's own letter inside the key: only an option that is about a letter ("Initial", "Letter") or one a person answered swaps the key; "Add a card: Y" or "Packaging: X" never does)
+    if (fam && fam.lettered && !LETTER_NAME.test(String(name || "")) && !said.size) return null;
     const none = why => ({ sku: "", letter: L, why });
     if (fam && fam.own) {
       if (!me(s)) return none(`no master design for letter ${L} on this listing (${s} is not in the master)`);

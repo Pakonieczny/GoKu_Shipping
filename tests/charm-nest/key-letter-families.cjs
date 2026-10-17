@@ -74,4 +74,14 @@ for (const [sku, how] of [['HEARTKEY_NECKLACE_A', 'one letter saved for every bu
   const sp2 = read(plain); ok(!sp2.engraveNever && sp2.engraveCandidate === true, 'an ordinary design is engraved as ever');
   step('a numbered letter family and an ordinary charm keep their engraving');
 }
+// 6 · an option that is not about a letter never swaps a key's letter (review V1, 17 Oct 2026)
+{
+  for (const [name, value] of [['Add a card', 'Y'], ['Rush order', 'Y'], ['Packaging', 'X']]) {
+    const sp = read(line('1099225598', 'HEARTKEY_NECKLACE_A', KEYTITLE, [['Finish', 'Gold • 14" • heart', '513', '105'], ['Initial', 'A', '514', 'v-A'], [name, value]], { personalization: ['AT'] }));
+    eq(sp.designSku, 'HEARTKEY_NECKLACE_A', `"${name}: ${value}" is not a letter option: the key stays the A key`);
+  }
+  const only = read(line('1099225598', 'HEARTKEY_NECKLACE_A', KEYTITLE, [['Finish', 'Gold • 14" • heart', '513', '105'], ['Rush order', 'Y']], { personalization: ['AT'] }));
+  eq(only.designSku, 'HEARTKEY_NECKLACE_A', 'a lone unrelated one-letter option does not pick the Y key');
+  step('an unrelated one-letter option (Add a card: Y, Rush order: Y, Packaging: X) never swaps the key');
+}
 console.log('key-letter-families: ' + n + ' checks passed');
