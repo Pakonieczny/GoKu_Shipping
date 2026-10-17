@@ -4143,7 +4143,8 @@ const Pool = window.Pool = (() => {
       CharmNestOrders.pieceCountOf; a line whose material is not known yet is counted under "") and how many are on this sorter's sheets before the update puts any on. */
   function pieceTotals() {
     const expected = new Map(), placed = new Map(), add = (m, k, n) => m.set(k, (m.get(k) || 0) + n);
-    for (const r of Orders.rows()) { if (r.state === "gone" || !r.spec) continue; add(expected, String(r.order.receiptId) + "|" + (r.spec.material || ""), Math.max(0, O.pieceCountOf(r.spec) || 0)); }
+    // (a line that is never cut and never pooled -- no design: a chain, an extender, packaging, a chain-only add-on --, one skipped, one committed, one gone is no piece to come: the page's own "done" states, settleTopups)
+    for (const r of Orders.rows()) { if (["gone", "skipped", "noDesign", "committed"].includes(r.state) || !r.spec || r.spec.noDesign) continue; add(expected, String(r.order.receiptId) + "|" + (r.spec.material || ""), Math.max(0, O.pieceCountOf(r.spec) || 0)); }
     for (const metal of ["gold", "silver"]) for (const p of pagesOf(metal) || []) for (const c of (p && p.charms) || []) if (!c.excluded) add(placed, String(c.order) + "|" + metal, 1);
     return { expected, placed };
   }
@@ -4158,7 +4159,7 @@ const Pool = window.Pool = (() => {
   /** The lines of an update in the order they are put on their sheets (NOSPREAD, Paul 17 Oct 2026): an order with a line still to come -- held for a question, read late, not pooled yet -- goes after the others, which keep their
       order, oldest first. It cannot ship before that line, and the orders ahead of it in a big update would fill the sheet it joined and release it before the line arrives. [[row, prep]] */
   function attachOrder(made, batch) {
-    const behind = ([row, prep]) => { try { const m = prep.custom ? null : prep.sp.material; if (!m || S.settings.nospread === "off") return 0; const info = orderInfo(row.order.receiptId, m, prep.charms, batch, null); return info.expected > info.pieces.length + info.placed ? 1 : 0; } catch (_) { return 0; } };
+    const behind = ([row, prep]) => { try { const m = prep.custom ? null : prep.sp.material; if (!m || S.settings.nospread === "off" || !window.CharmNestNoSpread) return 0; const info = orderInfo(row.order.receiptId, m, prep.charms, batch, null); return info.expected > info.pieces.length + info.placed ? 1 : 0; } catch (_) { return 0; } };
     return made.map((x, i) => [x, i, behind(x)]).sort((a, b) => a[2] - b[2] || a[1] - b[1]).map(x => x[0]);
   }
   /** The recorded line joins its sheet. A line a live run already holds (a pool row the record refused) is skipped. */
@@ -8512,9 +8513,9 @@ const Engrave = window.Engrave = (() => {
         // (MONOSEAL2, Paul 17 Oct 2026: the piece's approval seal(s) travel on its stand-in, as a job's do, so CNListActivity.at(m) reads seals[] and an approved monogram sorts and date-filters by its approval time like the engraved pieces; the list row paints them. They come from the monogram's own
         //  reader (charm-nest-monogram-seals.js) and NEVER from CNEngravingSeals: it invents a legacy BACK ENGRAVING seal at time 0 for any object whose state is approved with no seals. A page without the reader: none.)
         m.seals = window.CNMonogramSeals ? CNMonogramSeals.list(row, pc.slot) : [];
-        live.add(pc.key); out.push(m);
         // (MSLIST: an approved piece that has no stamp on this computer (approved on another one) asks its order's timeline for it: a few times and no more, the service keeps count; the answer repaints the list)
         if (st.approved && !m.seals.length && window.CNMonogramSeals) { try { const U = MonoUI(); if (U.ensureSeals) U.ensureSeals(String((row.order && row.order.receiptId) || "")); } catch (_) { /* the row stays without its seal */ } }
+        live.add(pc.key); out.push(m);
       }
     }
     for (const k of [...monoMap.keys()]) if (!live.has(k)) monoMap.delete(k);
@@ -17136,7 +17137,7 @@ const OrderWin = window.OrderWin = (() => {
     paintSend(r);
     paintNow(r);
     paintWho();
-    if (W.view === "sheet" && SV.rid && SV.rid !== rid) sheetShow();
+    if (W.view === "sheet" && SV.rid && SV.rid !== String(r.order.receiptId)) sheetShow();   // (this line named a variable "rid" that paint() never had: every repaint of the order window on its Sheet tab threw a ReferenceError and stopped half way)
   }
   /** Send to Sheet in the header, on every tab, while the order's own designs are ready and not sent: its Review card's
    *  button. The design lifts off it and the view steps out of the way for the flight, then comes back as it was (SendTour,

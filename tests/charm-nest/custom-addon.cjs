@@ -48,9 +48,10 @@ const read = (title, over) => spec(Object.assign({}, HUGGIE, { title, sku: 'NEWS
     const s = spec(f), now = { special: s.special ? s.special.kind + '/' + s.special.signals.join(',') : null, noDesign: !!s.noDesign, readable: !!s.readable, problems: s.problems.map(p => p.kind + (p.optionName ? ':' + p.optionName : '')).sort().join(','), pieces: s.pieceCount, engrave: !!s.engraveCandidate };
     if (JSON.stringify(now) !== JSON.stringify(f.before)) changed.push([f.rid + ' ' + f.sku, f.before, now]);
   }
+  // (BLOCKREL, 17 Oct 2026: Compass_4682's master block is only the engraving flip check's "The charm outline is front artwork. Reload its CUT geometry before fitting engraving.": that is no block for CUTTING any more, so its line has no blockedSku question: the same case as the DRAGON11 / FLORALS2 orders)
   assert.equal(FIX.lines.length, 411);
   // (REVDROP, 15 Oct 2026: the two Modification Rework lines, SKU Re_5460, are the shop's own rework code too: the master happens to hold a design of that name, which is not their design (custom-sku-collision.cjs))
-  assert.deepEqual(changed.map(c => c[0]), ['4176744752 Huggie_3722', '4176576272 Re_5460', '4176537942 Re_5460', '4174476673 Custom_6673'], 'only the two add-on lines and the two rework lines of the snapshot change');
+  assert.deepEqual(changed.map(c => c[0]), ['4176744752 Huggie_3722', '4176576272 Re_5460', '4176537942 Re_5460', '4174476673 Custom_6673', '4171597510 Compass_4682'], 'only the two add-on lines, the two rework lines and the flip-blocked compass of the snapshot change');
   assert.deepEqual(changed[0][2], { special: 'customHuggies/listing', noDesign: false, readable: false, problems: '', pieces: 2, engrave: false });
   for (const i of [1, 2]) { assert.equal(changed[i][1].special, 'special/price', 'the rework line was a special order by its Price option, and drawn as the master design Re_5460'); assert.equal(changed[i][2].special, 'rework/sku', 'now a rework by its SKU code'); assert.equal(changed[i][2].problems, '', 'its own design: no metal, SKU or option question'); }
   assert.deepEqual([changed[3][1].special, changed[3][2].special], ['customCharm/sku', 'customCharm/listing'], 'a line that was custom stays custom (its kind), now by its listing, and no longer cut as the master design its SKU matches (CUSTOM_6673 is a bunny)');
