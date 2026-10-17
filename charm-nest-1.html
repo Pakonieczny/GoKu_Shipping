@@ -528,18 +528,7 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 #owEng .engCard .engFaces[data-n="1"] .engTxt{-webkit-line-clamp:2}
 #owEng .engCard .engThumb{max-width:var(--engPx)}
 @container engc (max-width:325px){#owEng .engCard .engFaces[data-n="2"]{grid-template-columns:minmax(0,1fr)}}
-/* ── the customer's words stay under their card (ENGTEXT; Paul, 13 Oct 2026 04:14 UTC: "Ensure this text stays contained underneath each engraving card."). #owEngSaid (charm-nest-order-engraving.js) is the grid's next sibling
-   in the section and it used to run the whole width of the section. It is now exactly as wide as the FIRST card above it: one track, or two when that card is a front + back card (the card's own span rule above); the track is the
-   grid's own arithmetic, (section width - 10px x (tracks - 1)) / tracks, with the tracks counted by the same container queries, so its right edge is the card's right edge. It wraps inside that width (the block's
-   overflow-wrap breaks a long word or address) and a long message scrolls inside its own max-height (charm-nest-order-engraving.js), so it never runs past the card and never pushes the window. The words are the order's, said once:
-   with several cards they sit once, under the first card's column (below the last row of cards), never repeated under every card. ── */
-#owEngSec>#owEngSaid{--engN:3;--engSpan:1;box-sizing:border-box;max-width:100%;width:calc((100cqw - (var(--engN) - 1) * 10px) / var(--engN) * var(--engSpan) + (var(--engSpan) - 1) * 10px)}
-@container eng (min-width:840px){#owEngSec>#owEngSaid{--engN:4}}
-@container eng (min-width:1060px){#owEngSec>#owEngSaid{--engN:5}}
-@container eng (max-width:547px){#owEngSec>#owEngSaid{--engN:2}}
-@container eng (max-width:361px){#owEngSec>#owEngSaid{--engN:1}}
-#owEngSec:has(>#owEng>.engCard:first-of-type .engFaces[data-n="2"])>#owEngSaid{--engSpan:2}
-@container eng (max-width:361px){#owEngSec:has(>#owEng>.engCard:first-of-type .engFaces[data-n="2"])>#owEngSaid{--engSpan:1}}
+/* (NOSAID, Paul 17 Oct 2026: "Remove the personalization info from beneath the Engraving card inside the Detailed Order modal": the customer's words no longer stand under the cards, so the rules that sized that block, #owEngSaid, ENGTEXT's, are gone; the Overview's "What the customer wrote" box above the section is where the words are) */
 /* ── HDRSEAL (Paul, 16 Oct 2026, the seals on an Engraving card: "Enlarge these seals by 2x and allow them to be stamped partially on-top of the engraving card and partially beyond the perimeter/outline of the engraving card. This is how
    real Seals actually work, they connect and seal to separate pieces of paper, we are reproducing the same digital effect here."). The seals of an approved card (charm-nest-engrave-card.js draws them in the header, in .engAct > .egApproveWrap >
    .egButtonSeal, 24 px each, and Seal.fit sets --seal-fit on the row) are now 48 px and are pressed across the card's outer top-right corner: each straddles the top border (about 30 px above the card, 18 px on it, and 8 px past its right edge for the newest),
@@ -576,8 +565,12 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 #owEng.engGrid>.engMono{grid-column:span 2}
 @container eng (max-width:361px){#owEng.engGrid>.engMono{grid-column:auto}}
 .engMono{container:engm/inline-size;box-sizing:border-box;width:100%;min-width:0;padding:7px;border:1px solid var(--line);border-radius:12px;background:var(--card);display:grid;gap:4px;align-content:start;overflow-wrap:anywhere}
-.engMono>.engMonoBody{min-width:0;min-height:176px}
-@container engm (max-width:299px){.engMono>.engMonoBody{min-height:270px}}
+.engMono>.engMonoBody{min-width:0;min-height:226px}
+@container engm (max-width:385px){.engMono>.engMonoBody{min-height:300px}}
+/* (a card narrower than 300 px, a 320 px phone: the approved state's actions wrap onto a second row there, +26 px, and the 159 px picture stands over the letters: 316 px holds the tallest state so the card keeps one height through an edit and an approval) */
+@container engm (max-width:299px){.engMono>.engMonoBody{min-height:316px}}
+/* (MONOROUTE) the card's shortcut into the Engraving tab, the same button as an engraved piece's card has */
+.engMono .engOpenRow{display:flex;min-width:0}.engMono .egOpen{flex:1 1 auto;min-width:0;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:22px;padding:0 10px;font-size:12px;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .engMono .engFail{font:12px/1.4 var(--sans);color:var(--ink70)}
 /* (a chip's card hangs over the section: the facts sit above the cards' own positioned parts, the section being a later sibling with its own stacking context) */
 #orderWin .owInfoMain>#owMeta{z-index:3}
@@ -3251,7 +3244,7 @@ dialog.cuAsk{width:min(440px,94vw)}.cuAskP{margin:0 0 10px;line-height:1.45}.cuA
 @container mw (min-width:660px){.mw[data-mode=detail] .mwBody{grid-template-columns:minmax(240px,360px) minmax(0,1fr)}}
 /* compact: the Order details window (one tight block: the picture 84 px, small letter boxes) */
 .mw[data-mode=compact] .mwBody{--mwb:36px;--mwl:0px;grid-template-columns:auto minmax(0,1fr);gap:6px 12px;align-items:center;justify-items:start}
-.mw[data-mode=compact] .mwPic{width:84px;max-width:none;border-radius:9px}.mw[data-mode=compact] .mwSide{display:contents}
+.mw[data-mode=compact] .mwPic{width:139px;max-width:100%;border-radius:9px}.mw[data-mode=compact] .mwSide{display:contents}
 .mw[data-mode=compact] .mwLtrs{grid-column:2;grid-row:1}.mw[data-mode=compact] .mwPic{grid-column:1;grid-row:1}
 .mw[data-mode=compact] .mwSays,.mw[data-mode=compact] .mwLine,.mw[data-mode=compact] .mwMsg,.mw[data-mode=compact] .mwAct{grid-column:1/-1;text-align:left}
 .mw[data-mode=compact] .mwLt span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.mw[data-mode=compact] .mwLt{gap:0}
@@ -3260,7 +3253,9 @@ dialog.cuAsk{width:min(440px,94vw)}.cuAskP{margin:0 0 10px;line-height:1.45}.cuA
 .mw[data-mode=compact] .mwBusy span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.mw[data-mode=compact] .mwBusy{gap:6px}.mw[data-mode=compact] .mwBusy i{width:14px;height:14px}
 .mw[data-mode=compact] .mwHint{padding:4px;font-size:10.5px;line-height:1.25}.mw[data-mode=compact] .mwArt{padding:5%}
 .mw[data-mode=compact] .mwAct{justify-content:flex-start;min-height:29px}.mw[data-mode=compact] .mwAct .btn{padding:5px 16px}.mw[data-mode=compact] .mwMsg{font-size:12.5px;padding:7px 10px}
-@container mw (max-width:300px){.mw[data-mode=compact] .mwBody{grid-template-columns:minmax(0,1fr);justify-items:center}.mw[data-mode=compact] .mwLtrs,.mw[data-mode=compact] .mwPic{grid-column:1;grid-row:auto}.mw[data-mode=compact] .mwPic{width:96px}}
+/* (MONOBIG, Paul 17 Oct 2026: "the preview thumbnail for the monogram is too small to see the necessary detail. Please enlarge by 66% and ensure it still fits within the bounds of the monogram card": the picture is 139 px, was 84, and 159 px, was 96, when the card is too narrow to hold it beside the letters; the letters row is about 216 px wide (245 px with the 40 px phone targets), so the two stand side by side from 372 px of card, 400 px on a phone, and stack below that) */
+@container mw (max-width:371px){.mw[data-mode=compact] .mwBody{grid-template-columns:minmax(0,1fr);justify-items:center}.mw[data-mode=compact] .mwLtrs,.mw[data-mode=compact] .mwPic{grid-column:1;grid-row:auto}.mw[data-mode=compact] .mwPic{width:159px}}
+@media(max-width:760px){@container mw (max-width:399px){.mw[data-mode=compact] .mwBody{grid-template-columns:minmax(0,1fr);justify-items:center}.mw[data-mode=compact] .mwLtrs,.mw[data-mode=compact] .mwPic{grid-column:1;grid-row:auto}.mw[data-mode=compact] .mwPic{width:159px}}}
 /* compact keeps one height (the Order window never jumps): three single-line slots reserved even when empty (≤176 px wide-ish layout, ≤270 px stacked); a plain message replaces them and may be taller */
 .mw[data-mode=compact] .mwSays,.mw[data-mode=compact] .mwLine{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:100%;box-sizing:border-box;height:18px;line-height:18px}
 .mw[data-mode=compact]:not([data-msg]) .mwSays[hidden],.mw[data-mode=compact]:not([data-msg]) .mwLine[hidden]:not(.mwNote){display:block!important;visibility:hidden}   /* (REV: not while a message stands in their place: they were still kept as 36 px of blank above it) */

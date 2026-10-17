@@ -364,7 +364,7 @@
      `live` is the page's own reading of the order's lines now, { asks(lineKey, kind) -> true | false | null } (null: not known, the record stands). A question of a kind the intake
      derives itself (LIVE_ASKS) that its line no longer raises is not a blocker. Everything else (a hold, a question of the engraving or of a custom order, a line this page does not
      hold) reads exactly as before. */
-  const LIVE_ASKS = new Set(["needsMaterial", "needsMapping", "unmatchedSku", "blockedSku", "missingSize"]);
+  const LIVE_ASKS = new Set(["needsMaterial", "needsMapping", "unmatchedSku", "blockedSku", "missingSize", "engraveWords"]);   // (engraveWords: only a line that never engraves drops it, KEYNOENG: the host answers null for every other line, so the record stands)
   /** What is holding this order up, in plain words: a hold nobody released, or a question nobody answered (live: the questions its lines still raise, optional). */
   function blockerOf(events, live) {
     let hold = null; const need = new Map(), byHand = new Map(), dropped = new Set();

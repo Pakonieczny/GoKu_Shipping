@@ -1,6 +1,6 @@
 // The order timeline from the sorter's own browser code (Paul, 28 Sep, D1-D3): what happens to an order only in the
 // sorter's page is recorded through OrderTimeline.record — an order entering the pull, each line read, each question a
-// line raises and a person's answer to it (decided, skipped, held), a held line restored, the back engraving read and
+// line raises and a person's answer to it (decided, skipped), a held line restored, the back engraving read and
 // its words decided, and a custom order's designs dropped and sent to the sheets. The sorter's timeline is configured
 // as the sorter (its sandbox, the passcode api() sends, the employee on duty, kept current when the name changes).
 // Opens the sorter in headless Chromium against the local fake site (bridge-server.cjs): every request that is not to
@@ -17,7 +17,7 @@ const silver = { metalKey: 'silver', metalLabel: 'Sterling Silver' };
 const ORDERS = [
   order(4179000001, [line(41790000011, 'SEA_TURTLE', 'Sea Turtle Charm', [['Metal', 'Mystery alloy']])]),        // A: material → decided
   order(4179000002, [line(41790000021, 'SEA_TURTLE', 'Sea Turtle Charm', [['Metal', 'Mystery alloy']])]),        // B: Skip line
-  order(4179000003, [line(41790000031, 'SEA_TURTLE', 'Sea Turtle Charm', [['Metal', 'Mystery alloy']])]),        // C: Hold order, released
+  order(4179000003, [line(41790000031, 'SEA_TURTLE', 'Sea Turtle Charm', [['Metal', 'Mystery alloy']])]),        // C: held (no card has a Hold order button now), released
   order(4179000004, [line(41790000041, 'UNKNOWN_77', 'Mystery Charm', [['Metal', 'Sterling Silver']], silver)]), // D: Nothing to cut
   order(4175423829, [line(41754238291, 'CUSTOM-N-001-665441', 'Custom Name Necklace, Personalized Gold Charm Necklace', [['Metal', '14k Gold Filled']], { metalKey: 'gold', metalLabel: 'GF 14/20' })]), // E: designs
   order(4179000006, [line(41790000061, 'BUNNY5', 'Bunny Charm', [['Metal', 'Sterling Silver']], silver)]),       // F: skipped in its order window
@@ -96,8 +96,9 @@ const DESIGN_DXF = DG(0, 'SECTION', 2, 'HEADER', 9, '$INSUNITS', 70, 4, 0, 'ENDS
     await until('decided', '4179000001');
     await act('4179000002', 'needsMaterial', 'skip');
     await until('skipped', '4179000002');
-    await act('4179000003', 'needsMaterial', 'hold');
-    await until('held', '4179000003');
+    // (NOHOLDREV, Paul 17 Oct 2026: no Review card has a Hold order button now, so a card answers no "held": the line is held the way an order's hold leaves it, then released)
+    assert.equal(await page.evaluate(() => Review.card(Review.items().find(x => x.kind === 'needsMaterial' && x.row.order.receiptId === '4179000003')).querySelectorAll('[data-a=hold]').length), 0, 'no card has a Hold order button');
+    await page.evaluate(() => { const r = B.orders.byKey.get('4179000003_41790000031'); r.hold = 'held by Test Operator'; r.reason = r.hold; r.state = 'held'; Review.syncOrderItems(); });
     await page.evaluate(() => Review.repool(B.orders.byKey.get('4179000003_41790000031')));   // Release hold (Orders › On hold)
     await until('restored', '4179000003');
     await act('4179000004', 'unmatchedSku', 'nodesign');
@@ -110,12 +111,12 @@ const DESIGN_DXF = DG(0, 'SECTION', 2, 'HEADER', 9, '$INSUNITS', 70, 4, 0, 'ENDS
     assert.equal(dA.data.kind, 'needsMaterial'); assert.equal(dA.data.material, 'gold'); assert.equal(dA.lineKey, '4179000001_41790000011'); assert.equal(dA.by, 'Test Operator');
     assert.match(dA.text, /^Decided by Test Operator · Options · metal: material /);
     const sB = of(ev, 'skipped', '4179000002')[0]; assert.equal(sB.data.kind, 'needsMaterial'); assert.equal(sB.data.from, 'review');
-    const hC = of(ev, 'held', '4179000003')[0]; assert.equal(hC.data.kind, 'needsMaterial'); assert.equal(hC.data.answer, 'Hold order');
+    assert.equal(of(ev, 'held', '4179000003').length, 0, 'a card gives no held answer now');
     const rC = of(ev, 'restored', '4179000003')[0]; assert.equal(rC.data.was, 'held by Test Operator');
     const dD = of(ev, 'decided', '4179000004')[0]; assert.equal(dD.data.kind, 'unmatchedSku'); assert.equal(dD.data.answer, 'Nothing to cut'); assert.equal(dD.data.noDesign, true);
     assert.equal(of(ev, 'skipped', '4179000006')[0].data.from, 'order');
     for (const t of ['decided', 'skipped', 'held']) assert.equal(of(ev, t, '4179000006').concat(of(ev, t, '4179000007')).filter(e => t !== 'skipped' || e.orderId !== '4179000006').length, 0, 'no answer where none was given');
-    console.log('  ✓ decided (material, nothing to cut), skipped (Review, order window), held and restored');
+    console.log('  ✓ decided (material, nothing to cut), skipped (Review, order window), a held line restored, no Hold order on a card');
 
     // 5 · the back engraving: read as needed, then its words decided
     await page.evaluate(async () => { const r = B.orders.byKey.get('4179000007_41790000071'); r.state = 'pooled'; await Engrave.classify(r); });

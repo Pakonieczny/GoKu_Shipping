@@ -2003,6 +2003,7 @@ const Orders = window.Orders = (() => {
     // a special line that is not cut says which: finished by hand under Custom Orders, or chain only
     if (state === "noDesign" && r.spec && r.spec.customDone) return ["ok", "custom · done"];
     if (state === "noDesign" && r.spec && r.spec.special && r.spec.special.notCut) return ["info", r.spec.special.label.toLowerCase()];
+    if ((state === "held" || state === "pulled") && r.spec && r.spec.special && r.spec.special.monogram && !r.hold) return ["info", "monogram · Engraving"];   // (MONOROUTE)
     if ((state === "held" || state === "pulled") && r.spec && r.spec.ownDesign && !r.hold) return ["info", "custom · own design"];
     const [k, t] = STATE_PILL[state] || ["neutral", state];
     const i = PROGRESS.indexOf(state);
@@ -2171,7 +2172,7 @@ const Orders = window.Orders = (() => {
   function lineView(r) {
     const sp = r.spec || {}, m = r.material || "none";
     const st = stateWords(r), shown = stageText(st[1]) ? null : st, due = dueOf(r), where = placeOf(r), fc = faceChip(r);
-    const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
+    const attn = r.problems.length || (["held", "unmatched", "oversize"].includes(r.state) && !(r.state === "held" && !r.hold && r.spec && r.spec.special && r.spec.special.monogram));   // (MONOROUTE: a monogram line waits in the Engraving tab, it is not "attention")
     const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
     const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
     const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = window.TeamMail ? TeamMail.stamp(r) : "";
@@ -2259,7 +2260,7 @@ const Orders = window.Orders = (() => {
       wanted.push(n);
     }
     else if (!rowsOf().length) wanted.push(blank("none", '<span>Nothing pulled yet — press <b>Pull orders</b> above.</span>'));   // one line: .libEmpty stacks its children
-    else if (!rows.length && OV.pile === "hold" && !OV.q && !OV.metal && !OV.form && !OV.eng) wanted.push(blank("hold", 'No order is on hold. An order taken off a sheet, or held from Review, waits here until someone puts it back.'));
+    else if (!rows.length && OV.pile === "hold" && !OV.q && !OV.metal && !OV.form && !OV.eng) wanted.push(blank("hold", 'No order is on hold. An order taken off a sheet, or held from its order window, waits here until someone puts it back.'));
     else if (!rows.length) wanted.push(blank("filters", 'Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button>', n => { n.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; render(); }; }));
     else {
     let lastDay=null;
@@ -6107,6 +6108,8 @@ const Engrave = window.Engrave = (() => {
   const neverEngraves = row => { const r = row && (row.parentRow || row), F = FACES(); return F && F.neverOf ? F.neverOf(r) : (r && r.spec && r.spec.engraveNever) || null; };
   const NEVER_OPEN = j => !["approved", "written"].includes(j.state);   // (the jobs the rule may put away: not the ones with an approval on them)
   const NEVER_WHY = "Earrings are never engraved (the shop's rule)";
+  /** The verdict's own words for a line that never engraves (an earring's, or a letter key's: charm-nest-orders.js sections 3d, 3d'); the earrings' sentence when it says none. */
+  const neverWhy = row => { const v = neverEngraves(row); return (v && v.why) || NEVER_WHY; };
   /** The key of a saved record (a backPool entry / Charm_Pool_Back doc): the poolId for a back, `<poolId>~front` for a front. */
   const recKeyFor = (poolId, x) => { const F = FACES(); return F ? F.recKey(poolId, faceOf(x)) : poolId; };
   const slotKey = (row, slot, face) => (face === "front" && FACES() ? FACES().jobKey(row.key, slot, "front") : slot ? `${row.key}#${slot}` : row.key);
@@ -6555,9 +6558,9 @@ const Engrave = window.Engrave = (() => {
   function putAwayNever(row) {
     row = (row && row.parentRow) || row; if (!row || !row.spec || row.state === "gone" || !neverEngraves(row)) return false;
     let hit = false; const js = jobsOf(row);
-    for (const j of js) if (NEVER_OPEN(j) && j.state !== "none" && j.state !== "skipped") { setNone(j, NEVER_WHY); hit = true; }
+    for (const j of js) if (NEVER_OPEN(j) && j.state !== "none" && j.state !== "skipped") { setNone(j, neverWhy(row)); hit = true; }
     const e = row.engrave;
-    if (e && !js.length && e.needed && !e.approved && !["approved", "written", "skipped", "none"].includes(e.state)) { row.engrave = { ...e, needed: false, state: "none", approved: true, reason: NEVER_WHY, seals: CNEngravingSeals.merge(e) }; hit = true; }
+    if (e && !js.length && e.needed && !e.approved && !["approved", "written", "skipped", "none"].includes(e.state)) { row.engrave = { ...e, needed: false, state: "none", approved: true, reason: neverWhy(row), seals: CNEngravingSeals.merge(e) }; hit = true; }
     if (hit) { try { const S = SIDES(); if (S && row._engraveLinked) S.linkParent(sidesCtx, row, jobsOf(row)); } catch (_) { /* the summary is drawn again from the jobs */ } }
     return hit;
   }
@@ -6602,7 +6605,7 @@ const Engrave = window.Engrave = (() => {
     const jobs = ensureJobs(row), job = jobs[0]; const sp = row.spec; const owner = items();
     for (const j of jobs) CNEngravingSeals.keep(j);
     // NO EARRING IS EVER ENGRAVED (ZODNOBACK): nothing is read, nothing is paid for, nothing asks; a job with an approval on it stays as it is
-    if (neverEngraves(row)) { for (const j of jobs) if (NEVER_OPEN(j) && j.state !== "none") setNone(j, NEVER_WHY); return job; }
+    if (neverEngraves(row)) { for (const j of jobs) if (NEVER_OPEN(j) && j.state !== "none") setNone(j, neverWhy(row)); return job; }
     if (!sp.engraveCandidate && !raiseCandidate(row)) { for (const j of jobs) setNone(j, "no personalisation, message or note"); return job; }
     // a person said "no engraving" for this line: it stays so (never the paid reader again)
     const said = FACES() ? FACES().setupOf(row) : null;
@@ -6737,12 +6740,12 @@ const Engrave = window.Engrave = (() => {
     return setReady(job);
   }
   function setNone(job, why) { job.state = "none"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: false, state: "none", reason: why, approved: true }; Review.remove("eng:" + job.key); RunCtl.poke(); return job; }
-  function toWords(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, NEVER_WHY);   // (NO EARRING IS EVER ENGRAVED: nothing ever asks for words on an earring)
+  function toWords(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, neverWhy(job.row));   // (NO EARRING IS EVER ENGRAVED: nothing ever asks for words on an earring)
     job.state = "words"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: why }; Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why }); RunCtl.poke(); return job; }
   async function setReady(job, wake = true) {
     const owner = items(), state = job.state, row = job.row, preparing = !!job.approvalPreparing;
     if (owner.get(job.key) !== job || row.state === "gone" || job.stamping || job.backSaving || ["approved", "written", "skipped", "none"].includes(state)) return job;
-    if (neverEngraves(row)) return setNone(job, NEVER_WHY);   // (NO EARRING IS EVER ENGRAVED: a person's words for an earring never make it ready either)
+    if (neverEngraves(row)) return setNone(job, neverWhy(row));   // (NO EARRING IS EVER ENGRAVED: a person's words for an earring never make it ready either)
     await loadFonts();
     // A font arriving belongs to the proposal that asked for it. Closing an edit,
     // restoring another set, or deciding this job meanwhile must not undo approval.
@@ -7239,7 +7242,7 @@ const Engrave = window.Engrave = (() => {
     job.state = "skipped"; job.decidedAt=Date.now(); job.decidedBy=by; CNListActivity.touch(job.row,job.decidedAt); job.approvedBy = null; job.row.engrave = { ...job.row.engrave, needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; CNEngravingSeals.add(job,"engravePlain",by,job.decidedAt); wordsEvent(job, by, job.text, "skipped"); try { humanAct("note", { orderId: String(job.row.order.receiptId), line: String(job.row.line.transactionId || ""), detail: (isFront(job) ? "front " : "") + "engraving skipped (cut plain)" }); } catch (_) {} job.row.flag = `${isFront(job) ? "front " : ""}engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
     const saved = virtualJob(job) ? null : Pool.update(job.copies, isFront(job) ? { engraveFront: false, engraveFrontSkippedBy: by } : { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;   // (a skipped FRONT leaves the piece's back flags alone)
     if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
-  function sendBack(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, NEVER_WHY); CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job); job.state = "words"; job.reason = why || `sent back from the placement review — a decision on the ${facedJob(job) ? faceWord(job) + " " : ""}words is needed`; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); Orders.render(); }
+  function sendBack(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, neverWhy(job.row)); CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job); job.state = "words"; job.reason = why || `sent back from the placement review — a decision on the ${facedJob(job) ? faceWord(job) + " " : ""}words is needed`; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); Orders.render(); }
   /* ── NODECIDED (Paul, 16 Oct 2026: "Get rid of this Decided view. Instead just open the existing detailed Engraving modal without needing to 'Re-Open' the order. The user should be free to update/modify any already Approved
      engraving order and simply need to press the 'Approve' button again after the second change. This would then produce a second brand new seal.") ──
      There is no Decided tab and no Reopen step. A piece that is approved (or saved to its sheet, or cut plain) opens in the same detailed card as any other piece; looking at it changes nothing. The FIRST change a person makes to it
@@ -7439,7 +7442,7 @@ const Engrave = window.Engrave = (() => {
   async function approveOnce(job, by, button) {
     const owner=items(),row=job.row,pendingFit=fitTasks.get(job);
     if(owner.get(job.key)!==job || row?.state==="gone" || job.state!=="review" && !(job.state==="fitting" && pendingFit) || job.stamping || job.backSaving || job.approvalPreparing) return;
-    if(neverEngraves(row) && !job.approvalIntent){setNone(job,NEVER_WHY);Orders.render();render();return;}   // (NO EARRING IS EVER ENGRAVED: an old open card is put away, nothing is approved)
+    if(neverEngraves(row) && !job.approvalIntent){setNone(job,neverWhy(row));Orders.render();render();return;}   // (NO EARRING IS EVER ENGRAVED: an old open card is put away, nothing is approved)
     if(job.approvalIntent){recoverApprovals();if(job.state==="approved")await saveBacks(job);return;}
     if(pendingFit){
       // A can arrive while new words still wait for fonts or the fitting worker.
@@ -14598,7 +14601,7 @@ const Review = window.Review = (() => {
     }
     if (it.kind === "needsMaterial") {
       c.innerHTML = head("Needs material", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Station read", esc(p.metalLabel || "nothing"))}${evRow("Options", optQs(r.line))}${evRow("Title", esc(r.line.title))}</div><div class="why">${esc(it.why)}</div>
-        <div class="fixes"><select data-f="mat"><option value="">pick a material…</option>${METALS.map(m => `<option value="${m.key}">${esc(m.label)}</option>`).join("")}</select><button class="btn gold sm" data-a="mat">Use it (writes a staff note)</button><button class="btn ghost sm" data-a="skip">Skip piece</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
+        <div class="fixes"><select data-f="mat"><option value="">pick a material…</option>${METALS.map(m => `<option value="${m.key}">${esc(m.label)}</option>`).join("")}</select><button class="btn gold sm" data-a="mat">Use it (writes a staff note)</button><button class="btn ghost sm" data-a="skip">Skip piece</button></div>`;
       bindNeeds(c, "mat", "mat");
       c.querySelector("[data-a=mat]").onclick = async () => { const m = c.querySelector("[data-f=mat]").value; if (!m) return; const who = by(); if (!who) return; answered(it, "decided", `material ${labelOf(m)}`, { material: m }, who); row_material(it, m, who); };
     } else if (it.kind === "needsMapping" && p.pairSecond) {
@@ -14727,7 +14730,7 @@ const Review = window.Review = (() => {
       const sibHtml = sib ? `<div class="ask">${esc(sib.ask)}</div>
         <div class="fixes pick sibs">${sibButtons(sib)}</div>` : "";
       c.innerHTML = head(it.kind === "blockedSku" ? "SKU blocked" : "Unmatched SKU", p.sku || "no SKU", orderSub) + (it.kind === "unmatchedSku" && !it.nested ? CustomRead.panel(r, group) : "") + `<div class="why">${esc(p.reason || it.why)}</div>${sibHtml}
-        <div class="fixes"><input list="rvSkus" data-f="sku" placeholder="pick the charm from the master index…"><datalist id="rvSkus">${skus.map(s => `<option value="${esc(s)}">`).join("")}</datalist><button class="btn gold sm" data-a="alias" title="every piece of this listing with this SKU uses that charm from now on">Use this charm</button><button class="btn ghost sm" data-a="nodesign" title="this piece never needs a design — remembered, so it stops asking">Nothing to cut</button><button class="btn ghost sm" data-a="hold" title="hold the whole order until someone sorts it out">Hold order</button>${it.kind === "blockedSku" ? `<button class="btn gold sm" data-a="unblock" title="the design is fine to cut: lift its block in the master (asks for the repo password) and put this order back in line">Unblock this SKU</button><button class="btn ghost sm" data-a="master">Open Master</button>` : ""}</div>`;
+        <div class="fixes"><input list="rvSkus" data-f="sku" placeholder="pick the charm from the master index…"><datalist id="rvSkus">${skus.map(s => `<option value="${esc(s)}">`).join("")}</datalist><button class="btn gold sm" data-a="alias" title="every piece of this listing with this SKU uses that charm from now on">Use this charm</button><button class="btn ghost sm" data-a="nodesign" title="this piece never needs a design — remembered, so it stops asking">Nothing to cut</button>${it.kind === "blockedSku" ? `<button class="btn gold sm" data-a="unblock" title="the design is fine to cut: lift its block in the master (asks for the repo password) and put this order back in line">Unblock this SKU</button><button class="btn ghost sm" data-a="master">Open Master</button>` : ""}</div>`;
       if (sib) Master.mountPictures(c);
       bindNeeds(c, "alias", "sku"); CustomRead.wire(c, group);
       c.querySelector("[data-a=alias]").onclick = saving(c, () => saveCharm(it, p, c.querySelector("[data-f=sku]").value));
@@ -14754,10 +14757,10 @@ const Review = window.Review = (() => {
         show();
       };
     } else if (it.kind === "missingSize") {
-      c.innerHTML = head("Missing size", `${p.sku} · size ${p.size || "(none)"}`, orderSub) + `<div class="ev">${evRow("Sizes available", (p.available || []).join(", "))}${evRow("Options", optQs(r.line))}</div><div class="fixes"><select data-f="size">${(p.available || []).map(s => `<option>${esc(s)}</option>`).join("")}</select><button class="btn gold sm" data-a="size">Use this size (staff decision)</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
+      c.innerHTML = head("Missing size", `${p.sku} · size ${p.size || "(none)"}`, orderSub) + `<div class="ev">${evRow("Sizes available", (p.available || []).join(", "))}${evRow("Options", optQs(r.line))}</div><div class="fixes"><select data-f="size">${(p.available || []).map(s => `<option>${esc(s)}</option>`).join("")}</select><button class="btn gold sm" data-a="size">Use this size (staff decision)</button></div>`;
       c.querySelector("[data-a=size]").onclick = async () => { const s = c.querySelector("[data-f=size]").value; const who = by(); if (!who) return; r.sizeOverride = s; answered(it, "decided", `size ${s}`, { size: s }, who); try { await DesignLink.call("notes.set", { receiptId: r.order.receiptId, text: `${sp.staffNote ? sp.staffNote + "\n" : ""}Size ${s} chosen by ${who} (sorter)` }); } catch (_) {} await repool(r); };
     } else if (it.kind === "oversize") {
-      c.innerHTML = head("Oversize", `${p.sku} · ${p.widthMm.toFixed(1)} × ${p.heightMm.toFixed(1)} mm`, orderSub) + `<div class="ev">${evRow("Plate", `${labelOf(p.material)} ${fmt.mm(stockFor(p.material).wPt)} × ${fmt.mm(stockFor(p.material).hPt)} under the ${fmt.pct(S.settings.maxFill)} ceiling`)}</div><div class="fixes"><button class="btn ghost sm" data-a="stock">Different stock (Settings)</button><button class="btn ghost sm" data-a="retry">Try again</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
+      c.innerHTML = head("Oversize", `${p.sku} · ${p.widthMm.toFixed(1)} × ${p.heightMm.toFixed(1)} mm`, orderSub) + `<div class="ev">${evRow("Plate", `${labelOf(p.material)} ${fmt.mm(stockFor(p.material).wPt)} × ${fmt.mm(stockFor(p.material).hPt)} under the ${fmt.pct(S.settings.maxFill)} ceiling`)}</div><div class="fixes"><button class="btn ghost sm" data-a="stock">Different stock (Settings)</button><button class="btn ghost sm" data-a="retry">Try again</button></div>`;
       c.querySelector("[data-a=stock]").onclick = () => openSettings(); c.querySelector("[data-a=retry]").onclick = () => repool(r);
     } else if (it.kind === "engraveWords" || it.kind === "notRepresentable" || it.kind === "fontMissing") {
       const j = it.job; const miss = j.missing || [];
@@ -14777,14 +14780,14 @@ const Review = window.Review = (() => {
     } else if (it.kind === "flipFailed") {
       const j = it.job; const ch = it.checks || (j.flipError && j.flipError.checks) || {}, fw = faceWordOf(j);
       // (the front is drawn as the charm is, not turned over: its check is an identity check, so it is not called a flip)
-      c.innerHTML = head(fw === "Front" ? "Front placement check failed" : fw === "Back" ? "Back flip check failed" : "Flip check failed", r.order.receiptId + (j.slot ? " · " + Engrave.earOf(j.slot) : "") + (fw ? " · " + fw : ""), orderSub) + `<div class="ev">${evRow("Checks", Object.keys(ch).length ? Object.entries(ch).map(([k, ok]) => `${esc(k)} ${ok ? "✓" : "<b style='color:#8a3a26'>✗</b>"}`).join(" · ") : esc(it.why || ""))}</div><div class="imgs" style="display:flex;gap:8px"></div><div class="why">${esc(it.why || j.reason || "")}</div><div class="fixes"><button class="btn gold sm" data-a="rerun">Re-run</button><button class="btn ghost sm" data-a="noeng">No engraving for this order</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
+      c.innerHTML = head(fw === "Front" ? "Front placement check failed" : fw === "Back" ? "Back flip check failed" : "Flip check failed", r.order.receiptId + (j.slot ? " · " + Engrave.earOf(j.slot) : "") + (fw ? " · " + fw : ""), orderSub) + `<div class="ev">${evRow("Checks", Object.keys(ch).length ? Object.entries(ch).map(([k, ok]) => `${esc(k)} ${ok ? "✓" : "<b style='color:#8a3a26'>✗</b>"}`).join(" · ") : esc(it.why || ""))}</div><div class="imgs" style="display:flex;gap:8px"></div><div class="why">${esc(it.why || j.reason || "")}</div><div class="fixes"><button class="btn gold sm" data-a="rerun">Re-run</button><button class="btn ghost sm" data-a="noeng">No engraving for this order</button></div>`;
       const imgs = it.images || (j.flipError && j.flipError.images); if (imgs) { for (const [k, m] of [["front", imgs.F], ["back", imgs.B], ["front flipped", imgs.flipF]]) { if (!m) continue; const cv = document.createElement("canvas"); cv.width = m.w; cv.height = m.h; cv.style.cssText = "width:150px;border:1px solid var(--line);background:#fff"; cv.title = k; const ctx = cv.getContext("2d"); const img = ctx.createImageData(m.w, m.h); for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) { const i = ((m.h - 1 - y) * m.w + x) * 4, v = m.bits[y * m.w + x] ? 40 : 255; img.data[i] = v; img.data[i + 1] = v; img.data[i + 2] = v; img.data[i + 3] = 255; } ctx.putImageData(img, 0, 0); c.querySelector(".imgs").appendChild(cv); } }
       c.querySelector("[data-a=rerun]").onclick = () => { remove(it.key); j.state = "ready"; Engrave.fitJob(j).catch(e => toast(e.message, "bad")); };
       c.querySelector("[data-a=noeng]").onclick = async () => { const who = by(); if (!who) return; remove(it.key); Engrave.decideWords(j, { none: true, by: who }); };
     } else if (it.kind === "placement") {
       return Engrave.placementCard(it.job, 1);
     } else if (it.kind === "orderChanged") {
-      c.innerHTML = head("Order changed", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Was", `<q>${esc(it.old && it.old.text || (it.old && it.old.spec && it.old.spec.personalization || []).join(" / ") || "—")}</q> · ${esc(it.old && it.old.spec ? `${it.old.spec.designSku} · ${it.old.spec.material || "?"} · ${it.old.spec.form || ""} ${it.old.spec.size || ""}` : "")}`)}${evRow("Now", `<q>${esc((sp.personalization || []).join(" / ") || "—")}</q> · ${esc(`${(O.setDesignsOf(sp) || [sp.designSku]).join(" + ")} · ${sp.material || "?"} · ${sp.form || ""} ${sp.size || ""}`)}`)}${evRow("Buyer / note", `<q>${esc(sp.buyerMessage || "—")}</q> / <q>${esc(sp.staffNote || "—")}</q>`)}</div><div class="why">${esc(it.why)}</div><div class="fixes"><button class="btn gold sm" data-a="accept">Accept the new order (re-read, re-fit)</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
+      c.innerHTML = head("Order changed", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Was", `<q>${esc(it.old && it.old.text || (it.old && it.old.spec && it.old.spec.personalization || []).join(" / ") || "—")}</q> · ${esc(it.old && it.old.spec ? `${it.old.spec.designSku} · ${it.old.spec.material || "?"} · ${it.old.spec.form || ""} ${it.old.spec.size || ""}` : "")}`)}${evRow("Now", `<q>${esc((sp.personalization || []).join(" / ") || "—")}</q> · ${esc(`${(O.setDesignsOf(sp) || [sp.designSku]).join(" + ")} · ${sp.material || "?"} · ${sp.form || ""} ${sp.size || ""}`)}`)}${evRow("Buyer / note", `<q>${esc(sp.buyerMessage || "—")}</q> / <q>${esc(sp.staffNote || "—")}</q>`)}</div><div class="why">${esc(it.why)}</div><div class="fixes"><button class="btn gold sm" data-a="accept">Accept the new order (re-read, re-fit)</button></div>`;
       c.querySelector("[data-a=accept]").onclick = () => acceptChange(it);
     } else if (it.kind === "reviewMark") {
       c.innerHTML = head(KIND_WORDS.reviewMark, it.rid, it.why) + `<div class="fixes"><button class="btn gold sm" data-a="markok" title="the match is right: this order leaves Review">Mark OK</button></div>`;
@@ -14795,7 +14798,7 @@ const Review = window.Review = (() => {
     } else { c.innerHTML = head(it.kind, it.why || "", orderSub); }
     decorateRelease(c, it, c.querySelector(".fixes") || c);   // (RELTOQ: the one "Release to nesting queue", first among the card's buttons)
     const skipB = c.querySelector("[data-a=skip]"); if (skipB) skipB.onclick = () => { const who = by(); if (!who) return; for (const rr of rowsOf(it)) { rr.state = "skipped"; rr.reason = `piece skipped by ${who}`; rr.problems = []; rr.hold = `piece skipped by ${who}`; } answered(it, "skipped", "Skip piece", null, who); syncOrderItems(); Orders.render(); RunCtl.poke(); };
-    const holdB = c.querySelector("[data-a=hold]"); if (holdB) holdB.onclick = () => { const who = by(); if (!who) return; const g = rowsOf(it); for (const rr of g) { rr.hold = `held by ${who}`; rr.reason = rr.hold; rr.state = "held"; } answered(it, "held", "Hold order", null, who); remove(it.key); Orders.render(); RunCtl.poke(); const ords = [...new Set(g.map(x => x.order.receiptId))]; if (!window.Motion) toast(`${ords.length === 1 ? ords[0] : ords.length + " orders"} held by ${who} — release them from the Orders tab`, ""); };
+    // (NOHOLDREV, Paul 17 Oct 2026: "Remove the 'Hold' button from all listings inside the Review tab": none of these cards has a Hold order button now, as no Review row has the orange Hold; an order is held from its order window's piece row)
     return c;
   }
   async function row_material(it, m, who) {
@@ -14872,12 +14875,10 @@ const Review = window.Review = (() => {
     return x;
   }
   const actStamp = x => x ? [CustomPrint.stamp(x), CustomSheet.stamp(x), x.rows.map(r => r.key + ":" + r.state + ":" + (r.poolIds || []).length).join()].join("|") : "";
-  /** Whether the card's order shows a Hold button (HoldUI): the card is drawn again when that changes (an order held, cancelled or released). */
-  const holdStamp = row => (row && row.order && window.HoldUI ? HoldUI.stamp(row.order.receiptId) : "");
   /** What a decision card is drawn from: while it reads the same, the card (and whatever is typed in it) is kept. */
   function stampOf(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
-    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,!!it.decided,it.record&&[it.record.lastPrintedAt,it.record.prints,it.record.stamps,it.record.completedAt,it.record.decidedAt,it.record.by],it.done&&group.length>1&&group.map(r=>{const d=r.spec?.customDone;return d&&[d.stamps,d.completedAt,d.lastPrintedAt,d.prints];}),it.alsoSent&&[it.alsoSent.at,it.alsoSent.by,it.alsoSent.stamps],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):actStamp(actOf(it)),CustomRead.stamp(row),holdStamp(row),siblingStamp(it)]);
+    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,!!it.decided,it.record&&[it.record.lastPrintedAt,it.record.prints,it.record.stamps,it.record.completedAt,it.record.decidedAt,it.record.by],it.done&&group.length>1&&group.map(r=>{const d=r.spec?.customDone;return d&&[d.stamps,d.completedAt,d.lastPrintedAt,d.prints];}),it.alsoSent&&[it.alsoSent.at,it.alsoSent.by,it.alsoSent.stamps],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):actStamp(actOf(it)),CustomRead.stamp(row),siblingStamp(it)]);
   }
   /* ── Custom Orders that ask nothing, and those completed ── */
   const infoItems = new Map();
@@ -14926,16 +14927,19 @@ const Review = window.Review = (() => {
    *  both completed by hand and sent is one card, the completed one with its buttons: it keeps the send as `alsoSent`
    *  (its seal and its words) and the sent card is marked `foldedInto` it, so the list shows the order once. */
   function customLists(decided) {
-    const open = [], done = [], sent = [], recent = [], seen = new Set(), groups = new Map();
+    const open = [], done = [], sent = [], recent = [], engraving = [], seen = new Set(), groups = new Map();
     const itemFor = (key, extra) => { const it = infoItems.get(key) || { kind: "customOrder", key, info: true, t: Date.now() }; Object.assign(it, extra); infoItems.set(key, it); seen.add(key); return it; };
     for (const row of Orders.rows()) {
       const sp = row.spec, decision = CustomSheet.decisionOf(row), pending = CustomSheet.sending?.(row);
       if (!sp || !(sp.special || sp.customDone || decision || pending) || row.state === "gone") continue;
       const isDone = !!sp.customDone && !sentToSheet(sp.customDone), isSent = !isDone && !!decision;
+      // MONOROUTE (Paul, 17 Oct 2026: "Monogram orders should be treated exactly like back engraving and should be routed to the Engraving tab and NOT the Review tab unless something else is wrong"): a monogram line that asks nothing is the Engraving tab's, not a card of Review's Custom Orders (one with a problem, or a person's completion or send, is listed as before)
+      // (the card still exists, the monogram's Approve puts its design on it; it is only not LISTED in Review: customLists().engraving)
+      const mono = !!(sp.special && sp.special.monogram) && !isDone && !isSent && !pending;
       if (!isSent && decided.has(row.key)) continue;
       if (!isDone && !isSent && !pending && ((row.problems || []).length || row.hold || ["committed", "skipped"].includes(row.state))) continue;
       const key = (isDone ? "cdone:" : isSent ? "csent:" : "cinfo:") + customKey(row).slice(4);
-      if (!groups.has(key)) groups.set(key, { key, done: isDone, decided: isSent, rows: [] });
+      if (!groups.has(key)) groups.set(key, { key, done: isDone, decided: isSent, mono, rows: [] });
       groups.get(key).rows.push(row);
     }
     // when a completed card was last completed or printed: the list is in the order of the latest activity, so the card is
@@ -14948,7 +14952,7 @@ const Review = window.Review = (() => {
       const own = g.done ? g.rows.map(r => ({ r, d: CustomSheet.decisionOf(r) })).find(x => x.d) : null;
       const it = itemFor(g.key, { rows: g.rows, row: first, done: g.done, decided: g.decided, record, alsoSent: own ? sentRecord(own.r, own.d) : null, foldedInto: null,
         ...(g.decided ? { t: record.at } : g.done && doneTime(record) ? { t: doneTime(record) } : {}), why: customWhy(first, g.done, record) });
-      (g.done ? done : g.decided ? sent : open).push(it); if (g.done && CustomPrint.undoing(g.rows)) recent.push(it);
+      (g.done ? done : g.decided ? sent : g.mono ? engraving : open).push(it); if (g.done && CustomPrint.undoing(g.rows)) recent.push(it);
     }
     for (const [lineKey, rec] of Object.entries(B.maps.customDone || {})) {
       const r0 = B.orders.byKey && B.orders.byKey.get(lineKey);
@@ -14961,7 +14965,7 @@ const Review = window.Review = (() => {
     for (const it of done) if (it.alsoSent) { it.why = customWhy(it.row, true, it.record) + sentNote(it.alsoSent); it.t = Math.max(+it.t || 0, +it.alsoSent.at || 0); }
     for (const k of [...infoItems.keys()]) if (!seen.has(k)) infoItems.delete(k);
     done.sort((a, b) => doneTime(b.record) - doneTime(a.record));
-    return { open, done, sent, recent };
+    return { open, done, sent, recent, engraving };   // (engraving: a monogram line that asks nothing, the Engraving tab's: its card exists for the monogram's Approve but Review does not list it, MONOROUTE)
   }
   /** What a completed card says of the send it also had: " · sent to Sheet by whom · when". */
   const sentNote = rec => rec ? ` · sent to Sheet${rec.by ? " by " + rec.by : ""}${rec.at ? " · " + whenOf(rec.at) : ""}` : "";
@@ -14997,9 +15001,7 @@ const Review = window.Review = (() => {
     host.innerHTML='';host.appendChild(card(it));host._rvStamp=stamp;host._rvKey=it.key;
     const refocus=putTyped(host,was);if(refocus)refocus();
   }
-  /** The place of the Hold button in a card's buttons (Paul, 5 Oct: an orange Hold button on the Review cards, open and completed): it acts on the whole
-   *  order the card shows; none while the card is busy (a label being made, a name asked) and none for an order that is held or cancelled. */
-  const holdSlotFor=(row,it,busy)=>row&&row.order&&window.HoldUI&&!(busy&&!it.decided)?HoldUI.slot({rid:String(row.order.receiptId),source:'review',label:row.spec?.designSku||row.line?.sku||''}):'';
+  // (NOHOLDREV, Paul 17 Oct 2026: "Remove the 'Hold' button from all listings inside the Review tab": a Review row has no orange Hold, open or completed (Paul, 5 Oct, had put one last among its buttons: HoldUI.slot, source 'review'). An order is held from its order window's piece row, whose Hold (holdSlotOf, source 'orderWindow') is not the row's; Release hold stays in Orders › On hold.)
   function reviewRow(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
     const stamp=stampOf(it);
@@ -15054,11 +15056,10 @@ const Review = window.Review = (() => {
     const pk=it.problem||{},sib=!cu&&!it.done&&!it.decided&&row&&(it.kind==='unmatchedSku'||it.kind==='blockedSku')?similarOffer(row,pk,group,it):null;
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
-    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind)+(it.job&&faceWordOf(it.job)?' · '+faceWordOf(it.job):''))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${sib?`<div class="sibOffer" data-sib="${esc(JSON.stringify(siblingStamp(it)))}"><div class="sibAsk">${esc(sib.ask)}</div><div class="sibPicks">${sibButtons(sib)}</div></div>`:''}${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${it.kind==='orderChanged'&&row&&!it.decided?'<button type="button" class="btn gold sm" data-rv-accept title="make this order up again as it reads now: the old pieces come off the sheet they are on (a sheet already released or cut is never touched)">Accept the new order</button>':''}${holdSlotFor(row,it,busy)}</div>${cs?CustomSheet.stripHtml(cx):''}`;
+    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind)+(it.job&&faceWordOf(it.job)?' · '+faceWordOf(it.job):''))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${sib?`<div class="sibOffer" data-sib="${esc(JSON.stringify(siblingStamp(it)))}"><div class="sibAsk">${esc(sib.ask)}</div><div class="sibPicks">${sibButtons(sib)}</div></div>`:''}${cu||it.decided?'':Orders.tableNoteHtml?.(group)||''}${group.length>1 ? `<span class="groupScope">${orders.size} order${orders.size===1?'':'s'} · ${groupPieces(group)} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${it.kind==='orderChanged'&&row&&!it.decided?'<button type="button" class="btn gold sm" data-rv-accept title="make this order up again as it reads now: the old pieces come off the sheet they are on (a sheet already released or cut is never touched)">Accept the new order</button>':''}</div>${cs?CustomSheet.stripHtml(cx):''}`;
     // (a row drawn again for another reason keeps the offer's loaded thumbnails, as it keeps its .comparePair: they are not asked for twice)
     if(sib&&cached?.node){const was=cached.node.querySelector('.sibOffer'),now=node.querySelector('.sibOffer');if(was&&now&&was.dataset.sib===now.dataset.sib)now.replaceWith(was);}
     if(sib){Master.mountPictures(node);wireSib(node,it,pk,sib,fn=>saving(node,fn,'.sibOffer button'));}   // (the saved pair link or alias, for good; the buttons hold while it saves)
-    if(window.HoldUI)HoldUI.fill(node);   // (the one orange Hold button, beside Print QR label / Complete Order / Reopen)
     if(it.kind==='reviewMark'&&window.CharmNestReviewMark)CharmNestReviewMark.decorateRow(node,it);   // (a slot for each line's suggested charms, and Mark OK)
     if(it.kind==='reviewMark')fillMarkSlots(node,it);   // (REVSUGGEST: the similar charms of each line go in its slot, the charm it is matched to now marked; a line with nothing similar leaves its slot empty)
     decorateRelease(node,it);   // (RELTOQ: "Release to nesting queue" under the row's reason; greyed with its one plain reason where the line cannot nest yet; "Unblock this SKU" beside it on a blocked SKU)
@@ -15273,7 +15274,7 @@ const Review = window.Review = (() => {
     if (dec) return dec;
     const decided = new Set(); for (const it of items()) if (it.kind === "customOrder") for (const r of rowsOf(it)) decided.add(r.key);
     const cl = customLists(decided);
-    return cl.open.concat(cl.done,cl.sent).find(it => (it.rows || []).some(r => r.key === rowKey)) || null;
+    return cl.open.concat(cl.engraving, cl.done, cl.sent).find(it => (it.rows || []).some(r => r.key === rowKey)) || null;
   }
   /** The card a piece (one line of an order) has in the Review tab, whichever its tab, for the order window to act on beside the piece
    *  (Paul, 5 Oct: "place the available complete button beside the actual piece that has that given problem"): a custom order's,
@@ -17293,7 +17294,7 @@ const OrderWin = window.OrderWin = (() => {
    *  round 8: the buttons "on the same line", and the Custom Orders bar that repeated them is gone, so a single-piece order, or one
    *  piece picked, has its own row alone when it has any). A piece sent to its sheet has its seal and its ways to the designs and the
    *  sheet there. EVERY other piece, in a card or not (an ordinary piece on a sheet), has the orange Hold at the right end of its row, where its words
-   *  sit (Paul, 5 Oct: Hold matters most for ordinary orders): the same HoldUI button as the cards', and a single piece with nothing else to press has
+   *  sit (Paul, 5 Oct: Hold matters most for ordinary orders): the HoldUI button, which the Review cards no longer draw (NOHOLDREV, 17 Oct), and a single piece with nothing else to press has
    *  a row of its own for it. */
   /* ── ONE ROW PER ORDER ITEM (Paul, 12 Oct 2026, image 1: "Each order should only take up one line and you need to amalgamate multi charm orders, including all earring orders ...
      stay minimalist ... hide options that are not immediately necessary behind hover states or drop-down menus") ──
@@ -17537,7 +17538,7 @@ const OrderWin = window.OrderWin = (() => {
   /** What a press on a piece's controls does (h: the span holding them, data-pc-act its piece's key): the card as it is when pressed, not
    *  as it was drawn, of an order that is still the one the window shows. typed: the names being typed in the rows drawn before. */
   function wirePcAct(h, typed) {
-    if (window.HoldUI) tryDo(() => HoldUI.fill(h));   // (the row's Hold button: the one component the Review cards draw too)
+    if (window.HoldUI) tryDo(() => HoldUI.fill(h));   // (the row's Hold button: the one place the orange Hold is now, NOHOLDREV: the Review rows do not draw it)
     const key = h.dataset.pcAct, here = () => { const w = W.dlg && W.dlg.open ? rowOf(W.key) : null; return w ? String(w.order.receiptId) : ""; };
     const now = () => { const r = rowOf(key), at = here(); return r && at && String(r.order.receiptId) === at ? tryDo(() => pieceItem(key)) : null; }, it = now();
     if (!it) return;
@@ -17630,6 +17631,7 @@ const OrderWin = window.OrderWin = (() => {
     for (const x of [r].concat(tryDo(() => Orders.rows()) || [])) if (x && x.order && String(x.order.receiptId) === rid && x.spec && !x.loading && Array.isArray(x.spec.problems) && !mine.has(x.key)) mine.set(String(x.key), x);
     return { asks: (lineKey, kind) => {
       const x = mine.get(String(lineKey)); if (!x || x.state === "gone") return null;
+      if (kind === "engraveWords") return x.spec.engraveNever ? false : null;   // (a words question of a line that never engraves, an earring or a letter key, is no longer asked; for any other line the record stands as before)
       const kinds = new Set([].concat(x.spec.problems, x.problems || []).map(p => p && p.kind));
       if (x.materialOverride) kinds.delete("needsMaterial");
       if (x.sizeOverride) kinds.delete("missingSize");

@@ -1,10 +1,12 @@
 // The orange Hold button, its consent popup and the glue for Hold and Release hold (Paul, 5 Oct 2026: "Add 1 extra button to both of these places in
 // the UI. Orange 'Hold' button ... The user must be clearly informed of the consequences of placing an order on hold with a popup and a final consent
 // to continue button in the popup."). charm-nest-hold-ui.js (window.HoldUI), over the real Review cards, order window and Orders > On hold.
+// (NOHOLDREV, Paul 17 Oct 2026: "Remove the 'Hold' button from all listings inside the Review tab": a Review card, open or completed, has no Hold
+// any more; the one orange Hold is on the order window's piece rows, so every press below is made there.)
 // The engine (OrderHold) and the film (OrderHoldFx) are FAKES made here: the real ones are other workers' modules, so this proves only the glue.
 // Proves, in headless Chromium against the local fake site (bridge-server.cjs; nothing live, no Etsy, no paid call):
-//  - the Hold button is in the Review card (Open and Completed) and on the order window's piece row that carries the Review buttons, once each, the
-//    same component (class, orange, words) in both; not on a piece row without buttons; not for a held order, not for a cancelled one, and not at all
+//  - the Hold button is NOT in the Review card (Open or Completed); it is on every piece row of the order window (the row that carries the Review
+//    buttons, and the plain rows of pieces on sheets), orange, with its words; not for a held order, not for a cancelled one, and not at all
 //    while the engine is missing
 //  - the press shows a small labelled spinner while the plan is read; then ONE popup: the plan's sentences (its own effects, or made from its pieces,
 //    sheets and fills), QR labels, sheets already cut, the wait in On hold, nothing deleted; "pieces", never "lines"; Continue and Not now
@@ -14,7 +16,7 @@
 //    finishes it and goes home; without a film it still runs and ends in Orders > On hold; a failed run says so plainly and never leaves the Nest tab
 //  - a plan that cannot be held shows its reason with Close only
 //  - Release hold on an On hold card goes through releasePlan, release and the film, then home; without release it is today's press (Review.repool)
-//  - 900 and 390 px: nothing sideways, the button inside its card / row, the popup inside the screen
+//  - 900 and 390 px: nothing sideways, the button inside its row, the popup inside the screen
 //   node tests/charm-nest/hold-ui.cjs   (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>, SHOTS=<dir>)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
@@ -104,6 +106,12 @@ async function main() {
     const closeWin = async () => { await page.evaluate(() => OrderWin.isOpen() && OrderWin.close()); await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 8000 }); };
     const cable = kOf(P, 'cable'), gf = kOf(P, 'gf'), solo = kOf(S, 'solo'), held = kOf(H, 'solo'), gone = kOf(X, 'solo');
     const card = k => `#rvList .reviewListRow[data-row="${k}"]`;
+    // the press on a piece's Hold in the order window (a Review card has none): the window is opened if it is not, and waited for if it is on its way back from a popup
+    const pressHold = async (key = cable) => {
+      await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && !document.querySelector('dialog.holdDlg[open]'), key, { timeout: 3000 }).catch(async () => { await closeWin().catch(() => {}); await openWin(key); });
+      await page.waitForFunction(k => { const b = document.querySelector(`#owPcSum [data-piece="${k}"] [data-hold-btn]`); return b && !b.disabled && b.textContent.trim() === 'Hold'; }, key, { timeout: 15000 });
+      await page.click(`#owPcSum [data-piece="${key}"] [data-hold-btn]`);
+    };
 
     // ── the fake engine and film (the real ones are other workers' modules: only the glue is proved here) ──
     const install = (opts = {}) => page.evaluate(({ plan, noFx, noRelease }) => {
@@ -151,34 +159,35 @@ async function main() {
     if (await page.evaluate(() => !!(window.OrderHold && OrderHold.plan && OrderHold.run))) assert.equal(await page.evaluate(() => HoldUI.available()), true, 'the real engine is on the page: the button is offered');
     await page.evaluate(() => { window.__real = { hold: window.OrderHold || null, fx: window.OrderHoldFx || null }; delete window.OrderHold; delete window.OrderHoldFx; Review.syncOrderItems(); Review.render(); });
     await page.waitForFunction(() => !document.querySelector('#rvList [data-hold-btn]'), null, { timeout: 10000 });
-    assert.deepEqual(await holdBtns(P.rid), [], 'without the engine there is no Hold button in Review');
+    assert.deepEqual(await holdBtns(P.rid), [], 'without the engine there is no Hold button');
     assert.equal(await page.evaluate(() => HoldUI.available()), false);
+    await openWin(cable); await page.waitForTimeout(500);
+    assert.deepEqual(await holdBtns(P.rid), [], 'nor on the order window\'s piece rows');
+    await closeWin();
 
-    // ── 2 · the button: the Review card (open), the order window's piece row, the same component ──
+    // ── 2 · the button: none on the Review card (open), one on each piece row of the order window ──
     await installFake();
     await page.evaluate(() => { Review.syncOrderItems(); Review.render(); });
-    await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-hold-btn]`), cable, { timeout: 15000 });
+    await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-cu-complete]`), cable, { timeout: 15000 });
+    await idle(); await page.waitForTimeout(500);
     let b = await holdBtns(P.rid);
-    assert.equal(b.length, 1, 'one Hold button for the order in Review: ' + JSON.stringify(b));
-    assert(b[0].text === 'Hold' && b[0].where === 'card' && b[0].src === 'review' && /\bbtn\b/.test(b[0].cls) && /\bholdBtn\b/.test(b[0].cls), 'the card\'s Hold: ' + JSON.stringify(b[0]));
+    assert.deepEqual(b, [], 'no Hold button for the order in Review, with the engine in: ' + JSON.stringify(b));
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#rvList [data-hold-btn], #rvList .holdBtn, #rvList [data-hold-slot]').length), 0, 'nothing of a Hold anywhere in the Review list');
     const look = sel => page.evaluate(s => { const x = document.querySelector(s), c = getComputedStyle(x); return { bg: c.backgroundColor, color: c.color, radius: c.borderRadius, fs: c.fontSize, h: Math.round(x.getBoundingClientRect().height) }; }, sel);
-    const rv = await look(`${card(cable)} [data-hold-btn]`);
-    assert.equal(rv.bg, 'rgb(162, 89, 28)', 'the app\'s own warning orange: ' + JSON.stringify(rv)); assert.equal(rv.color, 'rgb(255, 255, 255)');
     const order0 = await page.evaluate(k => [...document.querySelectorAll(`#rvList .reviewListRow[data-row="${k}"] .rowActions button`)].map(x => x.textContent.trim()), cable);
-    assert(order0.includes('Print QR label') && order0.includes('Complete Order') && order0[order0.length - 1] === 'Hold', 'with the other action buttons, last: ' + JSON.stringify(order0));
+    assert(order0.includes('Print QR label') && order0.includes('Complete Order') && !order0.includes('Hold'), 'the other action buttons stay, and none is Hold: ' + JSON.stringify(order0));
     await shot('review-open-1440');
     await openWin(cable);
     await page.waitForFunction(() => document.querySelector('#owPcSum [data-hold-btn]'), null, { timeout: 15000 });
     b = (await holdBtns(P.rid)).filter(x => x.where === 'row');
     assert.equal(b.length, 3, 'one Hold button on each of the order window\'s three piece rows: ' + JSON.stringify(b));
     assert(b.every(x => x.text === 'Hold' && x.src === 'orderWindow' && /\bholdBtn\b/.test(x.cls)) && b[0].text === 'Hold' && b[0].src === 'orderWindow' && /\bholdBtn\b/.test(b[0].cls), JSON.stringify(b[0]));
-    const rw = await look('#owPcSum [data-hold-btn]'); assert.equal(rw.bg, rv.bg, 'the same orange in both places'); assert.equal(rw.color, rv.color);
+    const rw = await look('#owPcSum [data-hold-btn]'); assert.equal(rw.bg, 'rgb(162, 89, 28)', 'the app\'s own warning orange: ' + JSON.stringify(rw)); assert.equal(rw.color, 'rgb(255, 255, 255)');
     const onRow = await page.evaluate(() => [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => ({ key: r.dataset.piece, hold: r.querySelectorAll('[data-hold-btn]').length, btns: [...r.querySelectorAll('.pcAct button')].map(x => x.textContent.trim()) })));
     assert.deepEqual(onRow.map(r => r.hold), [1, 1, 1], 'on every piece row, the pieces on sheets (no Review card) too: ' + JSON.stringify(onRow));
     assert.deepEqual(onRow.slice(1).map(r => r.btns), [['Hold'], ['Hold']], 'a piece on a sheet has the Hold alone at the right end of its row: ' + JSON.stringify(onRow));
     assert.deepEqual(onRow[0].btns, ['Print QR label', 'Complete Order', 'Hold'], JSON.stringify(onRow[0]));
-    const same = await page.evaluate(() => { const a = document.querySelector('#owPcSum [data-hold-btn]'), c = document.querySelector('#rvList [data-hold-btn]'); const strip = n => n.className.replace(/\b(xs|sm)\b/g, '').replace(/\s+/g, ' ').trim(); return { a: strip(a), c: strip(c), same: a.title === c.title }; });
-    assert.equal(same.a, same.c, 'one component, two places: ' + JSON.stringify(same));
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#rvList [data-hold-btn]').length), 0, 'and still none in the list behind the window');
     await shot('orderwin-row-1440');
 
     // ── 3 · the press: a small labelled spinner while the plan is read, then ONE popup with the plan's sentences ──
@@ -207,17 +216,18 @@ async function main() {
     await page.waitForFunction(() => { const b = document.querySelector('#owPcSum [data-hold-btn]'); return b && !b.disabled && b.textContent.trim() === 'Hold'; }, null, { timeout: 8000 });
     await closeWin();
 
-    // 3b · Esc and a press outside are Not now too (from the Review card: no window to hand off)
-    await page.click(`${card(cable)} [data-hold-btn]`);
+    // 3b · Esc and a press outside are Not now too (the window steps aside and comes back each time)
+    await pressHold();
     await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
     await page.keyboard.press('Escape');
-    await page.waitForFunction(() => !document.querySelector('dialog.holdDlg'), null, { timeout: 8000 });
-    await page.click(`${card(cable)} [data-hold-btn]`);
+    await page.waitForFunction(() => !document.querySelector('dialog.holdDlg') && OrderWin.isOpen(), null, { timeout: 15000 });
+    await pressHold();
     await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
     await page.mouse.click(4, 4);
-    await page.waitForFunction(() => !document.querySelector('dialog.holdDlg'), null, { timeout: 8000 });
+    await page.waitForFunction(() => !document.querySelector('dialog.holdDlg') && OrderWin.isOpen(), null, { timeout: 15000 });
     t = await T(); assert.equal(t.runs.length, 0, 'Esc and outside: no run'); assert.equal(t.fx.length, 0); assert.equal(writes() - w0, 0);
     assert.equal(t.plans.length, 3, 'the plan was read once per press');
+    await closeWin();
 
     // ── 3c · EVERY piece row has the Hold, the plain rows too (pieces on sheets, in no Review card): the same button, one press, one consent ──
     await openWin(cable);
@@ -262,7 +272,7 @@ async function main() {
 
     // ── 4 · the plan's own sentences (effects) are shown as given ──
     await page.evaluate(() => { window.__t.effects = ['4 pieces come off GF Sheet 2 and SS Sheet 1.', '3 waiting orders and 1 order from GF Sheet 3 fill the 4 empty spots.']; });
-    await page.click(`${card(cable)} [data-hold-btn]`);
+    await pressHold();
     await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
     text = await dlgText();
     for (const want of ['4 pieces come off GF Sheet 2 and SS Sheet 1.', '3 waiting orders and 1 order from GF Sheet 3 fill the 4 empty spots.', 'QR labels are made again on 2 sheets.', 'Sheets already cut keep their pieces', 'Nothing is deleted.']) assert(text.includes(want), `the popup says "${want}": ` + text);
@@ -273,7 +283,7 @@ async function main() {
     // ── 4b · the orders that move in are counted ONCE each, by order id: ONE order that fills a spot on each of two sheets reads "1 order", not one for each sheet ──
     const popupSays = async fills => {
       await page.evaluate(f => { window.__t.override = { fills: f }; }, fills);
-      await page.click(`${card(cable)} [data-hold-btn]`);
+      await pressHold();
       await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
       const said = await dlgText();
       await page.click('dialog.holdDlg [data-k=no]'); await page.waitForFunction(() => !document.querySelector('dialog.holdDlg'));
@@ -291,7 +301,7 @@ async function main() {
 
     // ── 5 · a plan that cannot be held: its reason, Close only ──
     await page.evaluate(() => { window.__t.override = { canHold: false, blockedWhy: 'Undo the set first: a piece of this order is inside a committed set.' }; });
-    await page.click(`${card(cable)} [data-hold-btn]`);
+    await pressHold();
     await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
     text = await dlgText();
     assert(text.includes('Undo the set first') && text.includes("can't be put on hold yet"), 'its reason, plainly: ' + text);
@@ -303,6 +313,7 @@ async function main() {
     await page.evaluate(() => { window.__t.override = null; });
 
     // ── 5b · a window that cannot step aside (the sheet window under an order window, say): the popup is drawn on its surface, never over it ──
+    await page.waitForFunction(() => OrderWin.isOpen(), null, { timeout: 15000 }); await closeWin();
     await page.evaluate(() => { document.getElementById('dlgSettings').showModal(); });
     await page.evaluate(plan => { window.__asked = HoldUI.confirm(plan).then(v => { window.__answer = v; return v; }); }, PLAN(P.rid));
     await page.waitForFunction(() => document.querySelector('#dlgSettings .holdInline'), null, { timeout: 8000 });
@@ -314,19 +325,19 @@ async function main() {
     assert.equal(await page.evaluate(() => document.getElementById('dlgSettings').open), true, 'Esc put the question away, not the window under it');
     await page.evaluate(() => document.getElementById('dlgSettings').close());
 
-    // ── 6 · layout: the card, the row and the popup at 900 and 390 (the dark rail folds below 900 px, as the page's own toggle does) ──
+    // ── 6 · layout: the card (no Hold, nothing sideways), the row and the popup at 900 and 390 (the dark rail folds below 900 px, as the page's own toggle does) ──
     const fold = w => page.evaluate(w => { const off = document.getElementById('app').classList.contains('railOff'); if ((w < 900) !== off) document.getElementById('btnRail').click(); }, w);
     const fit = () => page.evaluate(k => {
       const out = { over: document.documentElement.scrollWidth > innerWidth + 1 };
       const c = document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`); c.scrollIntoView({ block: 'center' });
-      const cr = c.getBoundingClientRect(), hb = c.querySelector('[data-hold-btn]').getBoundingClientRect(), others = [...c.querySelectorAll('.rowActions button')].filter(x => !x.hasAttribute('data-hold-btn')).map(x => x.getBoundingClientRect());
-      out.card = { rects: [cr, hb].map(r => [r.left, r.top, r.right, r.bottom].map(Math.round)), inside: hb.left >= cr.left - 1 && hb.right <= cr.right + 1 && hb.top >= cr.top - 1 && hb.bottom <= cr.bottom + 1 && hb.width > 20, apart: others.every(o => o.right <= hb.left + 1 || o.left >= hb.right - 1 || o.bottom <= hb.top + 1 || o.top >= hb.bottom - 1), h: Math.round(cr.height) };
+      const cr = c.getBoundingClientRect();
+      out.card = { holds: c.querySelectorAll('[data-hold-btn], .holdBtn, [data-hold-slot]').length, buttons: c.querySelectorAll('.rowActions button').length, h: Math.round(cr.height) };
       return out;
     }, cable);
     for (const [w, h] of [[900, 800], [390, 844]]) {
       await page.setViewportSize({ width: w, height: h }); await fold(w); await page.waitForTimeout(500);
       const f = await fit(); await shot(`review-open-${w}`);
-      assert(!f.over, `${w}: no sideways scroll of the page`); assert(f.card.inside && f.card.apart, `${w}: the Hold button is inside its card, clear of the others: ` + JSON.stringify(f.card));
+      assert(!f.over, `${w}: no sideways scroll of the page`); assert(f.card.holds === 0 && f.card.buttons >= 2, `${w}: the card has its other buttons and no Hold: ` + JSON.stringify(f.card));
       await openWin(cable); await page.waitForTimeout(500);
       const g = await page.evaluate(() => {
         const sum = document.getElementById('owPcSum'); sum.scrollIntoView({ block: 'center' });
@@ -347,20 +358,19 @@ async function main() {
         return { sum: [s.scrollWidth, s.clientWidth], out, sr: [Math.round(sr.left), Math.round(sr.right)], dr: [Math.round(dr.left), Math.round(dr.right)], page: document.documentElement.scrollWidth > innerWidth + 1 }; });
       assert(sw.sum[0] <= sw.sum[1] + 1 && sw.out.length === 0 && !sw.page && sw.sr[1] <= sw.dr[1] + 1, `${w}: nothing of the piece rows sticks out sideways: ` + JSON.stringify(sw));
       await shot(`orderwin-plain-rows-${w}`);
-      await closeWin();
-      await page.click(`${card(cable)} [data-hold-btn]`);
+      await pressHold();
       await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 }); await page.waitForTimeout(700);
       const p = await page.evaluate(() => { const d = document.querySelector('dialog.holdDlg'), r = d.getBoundingClientRect(), foot = [...d.querySelectorAll('.dlgFoot button')].map(x => x.getBoundingClientRect()); return { fits: r.left >= 0 && r.right <= innerWidth + 0.5 && r.top >= 0 && r.bottom <= innerHeight + 0.5, noScroll: d.scrollWidth <= d.clientWidth + 1, buttons: foot.length === 2 && foot.every(x => x.width > 30 && x.left >= r.left && x.right <= r.right + 0.5) }; });
       assert(p.fits && p.noScroll && p.buttons, `${w}: the popup is inside the screen: ` + JSON.stringify(p));
       await shot(`popup-${w}`);
-      await page.keyboard.press('Escape'); await page.waitForFunction(() => !document.querySelector('dialog.holdDlg'));
+      await page.keyboard.press('Escape'); await page.waitForFunction(() => !document.querySelector('dialog.holdDlg') && OrderWin.isOpen(), null, { timeout: 15000 }); await closeWin();
     }
     await page.setViewportSize({ width: 1440, height: 900 }); await fold(1440); await page.waitForTimeout(400);
 
     // ── 7 · Continue: the name bar when none is saved, then one run, every step to the film in order, home ──
     await page.evaluate(() => { B.employee = ''; });
     assert.equal(await page.evaluate(() => CNEmployee.name()), '', 'no name saved');
-    await page.click(`${card(cable)} [data-hold-btn]`);
+    await pressHold();
     await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
     await page.click('dialog.holdDlg [data-k=go]');
     await page.waitForFunction(() => document.querySelector('.cnNameBar input'), null, { timeout: 10000 });
@@ -380,7 +390,7 @@ async function main() {
     assert.deepEqual(await page.evaluate(() => ({ mode: CN.S.mode, pile: Orders.view().pile })), { mode: 'orders', pile: 'hold' }, 'back in Orders > On hold');
     assert.equal(await page.evaluate(() => window.__dlg.max), 1, 'never two dialogs at once, all the way through');
 
-    // ── 8 · held and cancelled orders have no button; an order released shows it again ──
+    // ── 8 · held and cancelled orders have no button (and no Review row ever had one) ──
     await page.evaluate(() => { CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
     await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`), solo, { timeout: 15000 });
     await page.evaluate(([h]) => { for (const r of Orders.rows()) if (String(r.order.receiptId) === h) { r.hold = 'Taken off SS Sheet 1, GF Sheet 2 by Paul: Add to next sheet'; r.state = 'held'; } Review.syncOrderItems(); Review.render(); }, [H.rid]);
@@ -389,7 +399,7 @@ async function main() {
     assert.deepEqual(await holdBtns(H.rid), [], 'a held order has no Hold button in Review');
     assert.equal(await page.evaluate(r => HoldUI.shown(r), H.rid), false);
     assert.equal(await page.evaluate(r => HoldUI.shown(r), X.rid), true, 'before it is cancelled the order has one');
-    assert((await cardHold(gone)) === 1, 'its card shows it');
+    assert((await cardHold(gone)) === 0, 'its Review row is there, with no Hold on it');
     await page.evaluate(([x]) => { Cancelled.absorb([x]); Review.syncOrderItems(); Review.render(); }, [X.rid]);
     await page.waitForFunction(x => !document.querySelector(`[data-hold-btn][data-rid="${x}"]`), X.rid, { timeout: 12000 });
     assert.deepEqual(await holdBtns(X.rid), [], 'a cancelled order has no Hold button');
@@ -399,23 +409,23 @@ async function main() {
     assert.deepEqual((await holdBtns(H.rid)), [], 'a held order has none in the order window either');
     await closeWin();
 
-    // ── 9 · a completed card has the button too ──
+    // ── 9 · a completed card has no Hold either (Reopen and Print QR label stay) ──
     await idle(); await page.click(`${card(solo)} [data-cu-complete]`);
     await page.waitForFunction(k => B.maps.customDone[k], solo, { timeout: 20000 });
     await page.waitForFunction(k => !document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`), solo, { timeout: 15000 });
     await seg('done'); await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`), solo, { timeout: 15000 });
     await idle(); await page.waitForTimeout(600);
-    const done0 = await page.evaluate(k => { const n = document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`); return { q: n.querySelector('.queueLabel').textContent.trim(), btns: [...n.querySelectorAll('.rowActions button')].map(x => x.textContent.trim()), holds: n.querySelectorAll('[data-hold-btn]').length }; }, solo);
-    assert(/completed/i.test(done0.q) && done0.holds === 1 && done0.btns.includes('Reopen') && done0.btns.includes('Hold'), 'the completed card: ' + JSON.stringify(done0));
-    await page.waitForFunction(r => document.querySelectorAll(`[data-hold-btn][data-rid="${r}"]`).length === 1, S.rid, { timeout: 10000 }).catch(async () => { throw new Error('once: ' + JSON.stringify(await holdBtns(S.rid))); });   // (the card's flight to Completed leaves a copy for a moment)
+    const done0 = await page.evaluate(k => { const n = document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`); return { q: n.querySelector('.queueLabel').textContent.trim(), btns: [...n.querySelectorAll('.rowActions button')].map(x => x.textContent.trim()), holds: n.querySelectorAll('[data-hold-btn], .holdBtn, [data-hold-slot]').length }; }, solo);
+    assert(/completed/i.test(done0.q) && done0.holds === 0 && done0.btns.includes('Reopen') && !done0.btns.includes('Hold'), 'the completed card: Reopen and no Hold: ' + JSON.stringify(done0));
+    await page.waitForFunction(r => document.querySelectorAll(`[data-hold-btn][data-rid="${r}"]`).length === 0, S.rid, { timeout: 10000 }).catch(async () => { throw new Error('none: ' + JSON.stringify(await holdBtns(S.rid))); });   // (the card's flight to Completed leaves a copy for a moment: it has no Hold either)
     await shot('review-completed-1440');
     // (a wide screen, Paul's: the card's buttons stand in a column at the right)
     await page.setViewportSize({ width: 2000, height: 600 }); await fold(2000); await page.waitForTimeout(600);
-    const wide = await page.evaluate(k => { const c = document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`); c.scrollIntoView({ block: 'center' }); const cr = c.getBoundingClientRect(), hb = c.querySelector('[data-hold-btn]').getBoundingClientRect(); return { over: document.documentElement.scrollWidth > innerWidth + 1, inside: hb.left >= cr.left - 1 && hb.right <= cr.right + 1 && hb.bottom <= cr.bottom + 1 && hb.top >= cr.top - 1, h: Math.round(cr.height) }; }, solo);
-    await shot('review-completed-2000'); assert(!wide.over && wide.inside, '2000: the completed card holds its button: ' + JSON.stringify(wide));
+    const wide = await page.evaluate(k => { const c = document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`); c.scrollIntoView({ block: 'center' }); const cr = c.getBoundingClientRect(); return { over: document.documentElement.scrollWidth > innerWidth + 1, holds: c.querySelectorAll('[data-hold-btn], .holdBtn, [data-hold-slot]').length, h: Math.round(cr.height) }; }, solo);
+    await shot('review-completed-2000'); assert(!wide.over && wide.holds === 0, '2000: the completed card fits, with no Hold: ' + JSON.stringify(wide));
     await page.setViewportSize({ width: 390, height: 844 }); await fold(390); await page.waitForTimeout(500);
-    const f2 = await page.evaluate(k => { const c = document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`); c.scrollIntoView({ block: 'center' }); const cr = c.getBoundingClientRect(), hb = c.querySelector('[data-hold-btn]').getBoundingClientRect(); return { over: document.documentElement.scrollWidth > innerWidth + 1, inside: hb.left >= cr.left - 1 && hb.right <= cr.right + 1 && hb.bottom <= cr.bottom + 1 }; }, solo);
-    assert(!f2.over && f2.inside, '390: the completed card holds its button: ' + JSON.stringify(f2)); await shot('review-completed-390');
+    const f2 = await page.evaluate(k => { const c = document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`); c.scrollIntoView({ block: 'center' }); return { over: document.documentElement.scrollWidth > innerWidth + 1, holds: c.querySelectorAll('[data-hold-btn], .holdBtn, [data-hold-slot]').length }; }, solo);
+    assert(!f2.over && f2.holds === 0, '390: the completed card fits, with no Hold: ' + JSON.stringify(f2)); await shot('review-completed-390');
     // (the same order's piece row in the order window, completed: Completed, its seal, Print QR label, Hold: it fits at 900 and 390)
     for (const [w, h] of [[900, 800], [390, 844]]) {
       await page.setViewportSize({ width: w, height: h }); await fold(w); await page.waitForTimeout(400);
@@ -434,8 +444,8 @@ async function main() {
 
     // ── 10 · a failed run says so plainly, keeps what was done and never leaves the person in the Nest tab ──
     await page.evaluate(() => { for (const r of Orders.rows()) if (String(r.order.receiptId) === '4170837249') { r.hold = null; r.state = r.poolIds.length ? 'pooled' : 'pulled'; } window.__t.runs.length = 0; window.__t.returns.length = 0; window.__t.fx.length = 0; window.__t.runResult = { ok: false, error: 'the sheet could not be saved' }; window.OrderHoldFx.returnToOnHold = () => {}; B.employee = 'Test Operator'; CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
-    await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-hold-btn]`), cable, { timeout: 15000 });
-    await page.click(`${card(cable)} [data-hold-btn]`);
+    await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-cu-complete]`), cable, { timeout: 15000 });
+    await pressHold();
     await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
     await page.click('dialog.holdDlg [data-k=go]');
     await page.waitForFunction(() => /not fully put on hold/.test((document.getElementById('toasts') || {}).textContent || ''), null, { timeout: 20000 });
@@ -443,16 +453,17 @@ async function main() {
     assert(/the sheet could not be saved/.test(bad) && !/\blines?\b/i.test(bad), 'a plain message, the reason in it: ' + bad);
     await page.waitForFunction(() => CN.S.mode === 'review' && !HoldUI.busy('4170837249'), null, { timeout: 15000 });
     t = await T(); assert.equal(t.runs.length, 1); assert(t.fx[0].finished && t.fx[0].pushed.includes('error'), 'the film was told how it ended: ' + JSON.stringify(t.fx[0].pushed));
-    await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-hold-btn]`), cable, { timeout: 15000 });
-    await page.waitForFunction(r => document.querySelectorAll(`[data-hold-btn][data-rid="${r}"]`).length === 1, P.rid, { timeout: 10000 }).catch(async () => { throw new Error('the button is back, once: ' + JSON.stringify(await page.evaluate(r => [...document.querySelectorAll(`[data-hold-btn][data-rid="${r}"]`)].map(b => { const chain = []; for (let n = b; n && n !== document.body; n = n.parentElement) chain.push(n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + (n.className && typeof n.className === 'string' ? '.' + n.className.split(' ').join('.') : '')); return chain.slice(0, 7).join(' < ') + ' | ' + (b.closest('.reviewListRow') ? b.closest('.reviewListRow').dataset.row : ''); }), P.rid))); });   // (a card that flew away leaves its copy for a moment)
-    assert.equal(await page.evaluate(() => document.querySelector('#rvList [data-hold-btn]').disabled), false);
+    await openWin(cable);   // (the window stepped aside for the popup and stays away after a run: opened again, its buttons are back)
+    await page.waitForFunction(r => document.querySelectorAll(`#owPcSum [data-hold-btn][data-rid="${r}"]`).length === 3 && document.querySelectorAll(`[data-hold-btn][data-rid="${r}"]`).length === 3, P.rid, { timeout: 10000 }).catch(async () => { throw new Error('the button is back on each of the three rows: ' + JSON.stringify(await page.evaluate(r => [...document.querySelectorAll(`[data-hold-btn][data-rid="${r}"]`)].map(b => { const chain = []; for (let n = b; n && n !== document.body; n = n.parentElement) chain.push(n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + (n.className && typeof n.className === 'string' ? '.' + n.className.split(' ').join('.') : '')); return chain.slice(0, 7).join(' < ') + ' | ' + (b.closest('.reviewListRow') ? b.closest('.reviewListRow').dataset.row : ''); }), P.rid))); });   // (a card that flew away leaves its copy for a moment)
+    assert.equal(await page.evaluate(() => [...document.querySelectorAll('#owPcSum [data-hold-btn]')].some(b => b.disabled)), false);
+    await closeWin();
     await page.evaluate(() => { document.getElementById('toasts').innerHTML = ''; });
 
     // ── 11 · no film: the hold still runs and ends in Orders > On hold ──
     await installFake({ noFx: true });
     await page.evaluate(() => { CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
-    await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-hold-btn]`), cable, { timeout: 15000 });
-    await page.click(`${card(cable)} [data-hold-btn]`);
+    await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-cu-complete]`), cable, { timeout: 15000 });
+    await pressHold();
     await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
     await page.click('dialog.holdDlg [data-k=go]');
     await page.waitForFunction(() => window.__t.runs.length === 1 && CN.S.mode === 'orders' && Orders.view().pile === 'hold' && !HoldUI.busy('4170837249'), null, { timeout: 20000 });
@@ -494,9 +505,9 @@ async function main() {
     // ── 13 · the page's own engine (when its module is in): its plan is read only, and its sentences are shown as they come ──
     if (await page.evaluate(() => !!(window.__real.hold && window.__real.hold.plan))) {
       await page.evaluate(() => { window.OrderHold = window.__real.hold; window.OrderHoldFx = window.__real.fx || undefined; if (!window.__real.fx) delete window.OrderHoldFx; for (const r of Orders.rows()) if (String(r.order.receiptId) === '4170837249') { r.hold = null; r.state = r.poolIds.length ? 'pooled' : 'pulled'; } CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
-      await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-hold-btn]`), cable, { timeout: 15000 });
+      await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-cu-complete]`), cable, { timeout: 15000 });
       const w1 = writes();
-      await page.click(`${card(cable)} [data-hold-btn]`);
+      await pressHold();
       await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 30000 });
       text = await dlgText();
       assert(!/\blines?\b/i.test(text), 'pieces, never lines: ' + text);
@@ -504,10 +515,11 @@ async function main() {
       await shot('popup-real-plan-1440');
       await page.keyboard.press('Escape'); await page.waitForFunction(() => !document.querySelector('dialog.holdDlg'));
       assert.equal(writes() - w1, 0, 'reading the real plan writes nothing');
+      await page.waitForFunction(() => OrderWin.isOpen(), null, { timeout: 15000 }); await closeWin();
     }
     assert.deepEqual(outside, [], 'no Etsy call');
     assert.deepEqual(errors, [], 'no page errors');
-    console.log('  ✓ Hold button (Review open and completed, order window piece row), consent popup, name bar, run with film, errors, Release hold wiring, 900 and 390 px');
+    console.log('  ✓ Hold button (none in Review open or completed; the order window piece rows), consent popup, name bar, run with film, errors, Release hold wiring, 900 and 390 px');
   } finally { await browser.close(); srv.close(); }
 }
 main().then(() => console.log('Hold UI OK')).catch(e => { console.error(e); process.exit(1); });

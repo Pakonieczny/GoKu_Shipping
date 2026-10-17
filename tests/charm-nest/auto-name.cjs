@@ -9,7 +9,7 @@
 //       words / Approve engraving go on by themselves (no second press); Esc puts it away and the words typed stay as typed
 //       after an IDLE sign-out of a non-Admin (cause of the empty name: the name is cleared by the idle rule): the same, with "Continue as"
 //       CAUSE (reproduced): a typed name that is not the Admin's is cleared after 10 minutes without input; cn.lastEmployee keeps it for the chip
-//   B · Review's Complete Order, Hold, Cancel Order and a message in the order window (the Review / Hold fixture of hold-ui.cjs)
+//   B · Review's Complete Order, Hold (pressed in the order window: a Review row has no Hold), Cancel Order and a message in the order window (the Review / Hold fixture of hold-ui.cjs)
 //       signed in: no field, no bar, no pop-up, the name is on the record; nobody signed in: the card's own field or the bar, the last name ready, the press goes on
 //   C · when the Sorter opens with nobody signed in the calm name hint is already there (not first at the first approval), with the chip
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/auto-name.cjs      (ONLY=A,B,C)
@@ -262,6 +262,8 @@ async function partB(browser) {
   const T = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__t)));
   const idle = async () => { await page.evaluate(() => Seal.whenIdle()); await page.waitForTimeout(800); };      // (the cards finish their motion first: a press in the middle of it is lost)
   const card = o => `#rvList .reviewListRow[data-row="${o.rid}_${o.solo}"]`;
+  // (NOHOLDREV, Paul 17 Oct 2026: a Review row has no Hold; the order is held from its order window's piece row, the one orange Hold left)
+  const holdBtn = async o => { const k = `${o.rid}_${o.solo}`; await page.evaluate(k => OrderWin.open(k), k); await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && document.querySelector('#owPcSum [data-hold-btn]'), k, { timeout: 20000 }); await page.click('#owPcSum [data-hold-btn]'); };
   const bar = () => page.evaluate(() => { const b = document.querySelector('.cnNameBar'); return b ? { kind: b.dataset.kind, chip: (b.querySelector('.cnNbCont:not([hidden])') || {}).textContent || '', input: b.querySelector('input') ? b.querySelector('input').value : null, inWin: !!b.closest('dialog') } : null; });
   const named = (txt) => JSON.stringify(posts.filter(p => p.body).map(p => p.body)).includes(txt);
   await page.evaluate(() => { B.employee = 'Paul K'; }); await page.waitForTimeout(700);
@@ -273,9 +275,10 @@ async function partB(browser) {
   check(!(await bar()) && !(await page.evaluate(() => document.querySelector('[data-cu-name]'))), 'no field, no bar');
   check(named('Paul K'), 'the completion was written under the name: ' + JSON.stringify(posts.filter(p => p.body && JSON.stringify(p.body).includes('Paul K')).map(p => p.fn).slice(0, 4)));
 
-  console.log('· B2: Hold, signed in');
+  console.log('· B2: Hold (from the order window), signed in');
   await idle();
-  await page.click(`${card(o2)} [data-hold-btn]`);
+  check(await page.evaluate(sel => !!document.querySelector(sel) && !document.querySelector(sel + ' [data-hold-btn]'), card(o2)), 'the Review row of the order has no Hold');
+  await holdBtn(o2);
   await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
   await page.click('dialog.holdDlg [data-k=go]'); await page.waitForFunction(() => window.__t.runs.length >= 1, null, { timeout: 15000 });
   let t = await T();
@@ -299,7 +302,7 @@ async function partB(browser) {
   await page.press('[data-cu-name]', 'Enter'); await page.waitForTimeout(1500);
   check(!(await page.evaluate(() => document.querySelector('[data-cu-name]'))) && (await page.evaluate(() => CNEmployee.name())) === ADMIN + '.', 'Enter kept it: signed in again and the order was completed by itself');
   await page.evaluate(() => { try { localStorage.removeItem('cn.employee'); } catch (_) {} B.employee = ''; });
-  await idle(); await page.click(`${card(o4)} [data-hold-btn]`); await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
+  await idle(); await holdBtn(o4); await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
   await page.click('dialog.holdDlg [data-k=go]'); await page.waitForSelector('.cnNameBar', { timeout: 8000 });
   let b = await bar();
   check(b && /^Continue as /.test(b.chip) && (await T()).runs.length === 1, 'Hold with no name: the inline bar with Continue as; nothing runs before it: ' + JSON.stringify(b));

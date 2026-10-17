@@ -235,5 +235,17 @@
     return false;
   }
 
-  window.EngraveLink = { open, resolve };
+  /** A monogram piece's way into the Engraving tab (MONOROUTE, Paul 17 Oct 2026: "There is no shortcut to open the Detailed Engraving Modal"): its card, in the Engraving tab, the order window (and the Sheet window) closed first as for any engraved piece. A monogram is
+   *  no Engrave job, so open() cannot name it: Engrave.openMonogram does (the piece's key, or its line's), after the tab's search box is cleared (a search for another order would hide it). true when asked, false when the page cannot. */
+  async function openMonogram(t) {
+    t = t || {}; const E = window.Engrave, key = String(t.key || t.piece || "");
+    if (!E || typeof E.openMonogram !== "function" || !key) return false;
+    const my = ++seq;
+    try { document.querySelectorAll(".elWait[data-note]").forEach(n => n.remove()); } catch (_) {}
+    await shut(t.closeFirst); if (my !== seq) return false;
+    try { if (E.view && E.restoreView) E.restoreView(Object.assign({}, E.view(), { q: "" })); } catch (_) { /* the card is opened with the search it has */ }
+    E.openMonogram(key); return true;
+  }
+
+  window.EngraveLink = { open, resolve, openMonogram };
 })();

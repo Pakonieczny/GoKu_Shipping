@@ -6,7 +6,8 @@
 // cells in the order the real nest ranks them (CharmNestOrders.rankDate, frontAt first), saving the sheet as the real nest saves it.
 //   node tests/charm-nest/hold-release-cancel-e2e.cjs      (PW_DIR=<dir holding playwright-core>, CHROMIUM=<chrome>, SHOTS=<dir>, ONLY=A,B,C,D,E,F,G)
 // A  Hold from an order window piece row (no name saved: the name bar), the consent popup, Not now changes nothing, Continue: the film, On hold, the data
-// B  Hold from an open Review card          C  Hold from a completed Review card
+// B  an open Review card has no Hold (NOHOLDREV, Paul 17 Oct 2026); the order is held from its order window
+// C  a completed Review card has no Hold either; the order is held from its order window
 // D  Release hold on the On hold card: ahead of 3 incoming orders, the next available sheet at once, the film, home, QR step, timeline
 // E  Cancel Order on On hold cards: the flight, the count, the note, Undo          F  Esc and the Skip button during a film
 // G  no console or page errors, no leftover overlay, frame time
@@ -485,18 +486,20 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const busyNow = () => { const os = require('os'); return os.loadavg()[0] > os.cpus().length * 2; };
   // (and then a frame time is only reported)
   const frameCheck = () => { const os = require('os'), busy = os.loadavg()[0] > os.cpus().length * 2; for (const [n, f] of frames) { const m = `${n}: smooth frames: median ${f.p50.toFixed(1)} ms, worst ${f.max.toFixed(0)} ms, ${f.over100} of ${f.n} over 100 ms`; if (busy) { if (f.p50 >= 40) notes.add('not judged, the machine was busy (load ' + os.loadavg()[0].toFixed(1) + ' on ' + os.cpus().length + ' cores): ' + m); } else assert(f.p50 < 40, m); } };
-  /* ═════ B · Hold from an open Review card ═════ */
-  await flow('B · Hold from an open Review card (order ' + H2 + ': a chain line and a piece on each sheet)', async () => {
-    const k = kOf(H2, 1), card = `#rvList .reviewListRow[data-row="${k}"]`, btn = card + ' [data-hold-btn]';
+  /* ═════ B · an open Review card has no Hold; the order is held from its order window ═════ */
+  await flow('B · no Hold on an open Review card; Hold from the order window (order ' + H2 + ': a chain line and a piece on each sheet)', async () => {
+    const k = kOf(H2, 1), card = `#rvList .reviewListRow[data-row="${k}"]`, btn = `#owPcSum [data-piece="${k}"] [data-hold-btn]`;
     await page.evaluate(() => { CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
-    await page.waitForFunction(s => document.querySelector(s), btn, { timeout: 20000 });
-    const ui = await page.evaluate(s => { const b = document.querySelector(s); b.closest('.reviewListRow').scrollIntoView({ block: 'center' }); const c = getComputedStyle(b); return { n: document.querySelectorAll('[data-hold-btn][data-rid="4170000110"]').length, text: b.textContent.trim(), bg: c.backgroundColor, shown: b.offsetParent !== null, where: b.closest('.reviewListRow').dataset.row, others: [...b.closest('.reviewListRow').querySelectorAll('.rowActions button')].map(x => x.textContent.trim()) }; }, btn);
-    assert(ui.text === 'Hold' && ui.bg === 'rgb(162, 89, 28)' && ui.shown && ui.n === 1, 'the orange Hold on the open Review card, once: ' + JSON.stringify(ui));
-    pass('the open Review card shows one orange Hold (beside ' + ui.others.filter(x => x !== 'Hold').join(', ') + ')');
-    await shot('b1-review-card-hold-button');
+    await page.waitForFunction(s => document.querySelector(s + ' [data-cu-complete]'), card, { timeout: 20000 });
+    // (NOHOLDREV, Paul 17 Oct 2026: "Remove the 'Hold' button from all listings inside the Review tab": the open card keeps its other buttons, and nothing in the list is a Hold)
+    const ui = await page.evaluate(s => { const n = document.querySelector(s); n.scrollIntoView({ block: 'center' }); return { n: document.querySelectorAll('#rvList [data-hold-btn], #rvList .holdBtn, #rvList [data-hold-slot]').length, all: document.querySelectorAll('[data-hold-btn][data-rid="4170000110"]').length, btns: [...n.querySelectorAll('.rowActions button')].map(x => x.textContent.trim()) }; }, card);
+    assert(ui.n === 0 && ui.all === 0 && ui.btns.includes('Complete Order') && !ui.btns.includes('Hold'), 'no Hold on the open Review card, nor anywhere in the list: ' + JSON.stringify(ui));
+    pass('the open Review card has no Hold (its buttons: ' + ui.btns.join(', ') + ')');
+    await shot('b1-review-card-no-hold-button');
+    await openWin(k);
     const seen = await holdFrom(H2, btn, 'b', { grabs: [['Taking the pieces off', 'b2-film-lift'], ['is on hold', 'b3-film-held']] });
-    assert(/Put order 4170000110 on hold\?/.test(seen.text) && /Continue/.test(seen.text) && /Not now/.test(seen.text) && /QR label/.test(seen.text) && /Nothing is deleted/.test(seen.text) && !/\blines?\b/i.test(seen.text), 'the consent popup from a Review card: ' + seen.text);
-    pass('the consent popup from the Review card: plain words, what comes off, what moves in, QR labels, nothing deleted');
+    assert(/Put order 4170000110 on hold\?/.test(seen.text) && /Continue/.test(seen.text) && /Not now/.test(seen.text) && /QR label/.test(seen.text) && /Nothing is deleted/.test(seen.text) && !/\blines?\b/i.test(seen.text), 'the consent popup from the order window: ' + seen.text);
+    pass('the consent popup from the order window\'s row of a Review card\'s piece: plain words, what comes off, what moves in, QR labels, nothing deleted');
     await verifyHold(H2, 'B', { sheets: ['e2e-gold-2', 'e2e-silver-1'], names: 'GF Sheet 2, SS Sheet 1', pieces: idsOf(H2, 2, 3), fills: { 'e2e-gold-2': [W(3)], 'e2e-silver-1': [V(3)] }, from: { 'e2e-gold-2': ['e2e-gold-3'], 'e2e-silver-1': ['e2e-silver-2'] } }, seen);
     pass('B: the film followed the engine, the order is in On hold with "Taken off GF Sheet 2, SS Sheet 1 by Paul", both sheets refilled (next oldest waiting order and next oldest of the newer SS sheet), one timeline step per sheet, nothing lost, nothing left on the screen');
     // the Review card is redrawn: it is gone, and so is its button
@@ -510,29 +513,27 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   });
   await ensureHeld(H2).catch(e => fail('H2 could not be held to carry on', e));
 
-  /* ═════ C · Hold from a completed Review card ═════ */
-  await flow('C · Hold from a completed Review card (order ' + H3 + ')', async () => {
-    const k = kOf(H3, 1), card = `#rvList .reviewListRow[data-row="${k}"]`, btn = card + ' [data-hold-btn]', idle = () => page.evaluate(() => Seal.whenIdle());
+  /* ═════ C · a completed Review card has no Hold either; the order is held from its order window ═════ */
+  await flow('C · no Hold on a completed Review card; Hold from the order window (order ' + H3 + ')', async () => {
+    const k = kOf(H3, 1), card = `#rvList .reviewListRow[data-row="${k}"]`, btn = `#owPcSum [data-piece="${k}"] [data-hold-btn]`, idle = () => page.evaluate(() => Seal.whenIdle());
     await page.evaluate(() => { CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
     await page.waitForFunction(s => document.querySelector(s + ' [data-cu-complete]'), card, { timeout: 20000 });
     await idle(); await page.click(card + ' [data-cu-complete]');
     await page.waitForFunction(k => B.maps.customDone[k], k, { timeout: 30000 });
     await page.waitForFunction(s => !document.querySelector(s), card, { timeout: 20000 });
     await idle(); await page.evaluate(() => document.querySelector('#reviewView .rvSeg [data-cseg="done"]').click());
-    await page.waitForFunction(s => document.querySelector(s + ' [data-hold-btn]'), card, { timeout: 20000 });
+    await page.waitForFunction(s => document.querySelector(s + ' [data-cu-reopen]'), card, { timeout: 20000 });
     await idle(); await sleep(700);
-    // (the card's flight to Completed leaves its copy in the air for a moment; it must be gone soon, and never keep a second Hold on the screen)
-    const t1 = Date.now(); let copies = null;
-    await page.waitForFunction(() => document.querySelectorAll('[data-hold-btn][data-rid="4170000120"]').length === 1, null, { timeout: 12000 }).catch(async () => { copies = await page.evaluate(() => [...document.querySelectorAll('[data-hold-btn][data-rid="4170000120"]')].map(b => { const c = []; for (let n = b; n && n !== document.body; n = n.parentElement) c.push(n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + (typeof n.className === 'string' && n.className ? '.' + n.className.split(' ').slice(0, 2).join('.') : '')); return c.slice(0, 6).join(' < '); })); });
-    assert.equal(copies, null, 'C: only one Hold stays on the completed card after its flight: ' + JSON.stringify(copies));
-    console.log('  (the copy of the card left the air after ' + (Date.now() - t1 + 700) + ' ms)');
-    const ui = await page.evaluate(s => { const n = document.querySelector(s); n.scrollIntoView({ block: 'center' }); const holds = [...document.querySelectorAll('[data-hold-btn][data-rid="4170000120"]')]; return { q: (n.querySelector('.queueLabel') || {}).textContent.trim(), btns: [...n.querySelectorAll('.rowActions button')].map(x => x.textContent.trim()), holds: holds.length, shown: holds.every(b => b.offsetParent !== null) }; }, card);
-    assert(/completed/i.test(ui.q) && ui.holds === 1 && ui.shown && ui.btns.includes('Reopen') && ui.btns.includes('Hold'), 'the completed card has Hold beside Reopen: ' + JSON.stringify(ui));
-    pass('the completed Review card shows one orange Hold (beside ' + ui.btns.filter(x => x !== 'Hold').join(', ') + ')');
-    await shot('c1-review-completed-hold-button');
+    // (NOHOLDREV, Paul 17 Oct 2026: the completed card has Reopen and no Hold; the card's flight to Completed leaves no second button of any kind on the screen)
+    await page.waitForFunction(() => document.querySelectorAll('[data-hold-btn][data-rid="4170000120"]').length === 0, null, { timeout: 12000 });
+    const ui = await page.evaluate(s => { const n = document.querySelector(s); n.scrollIntoView({ block: 'center' }); return { q: (n.querySelector('.queueLabel') || {}).textContent.trim(), btns: [...n.querySelectorAll('.rowActions button')].map(x => x.textContent.trim()), holds: document.querySelectorAll('#rvList [data-hold-btn], #rvList .holdBtn, #rvList [data-hold-slot]').length }; }, card);
+    assert(/completed/i.test(ui.q) && ui.holds === 0 && ui.btns.includes('Reopen') && !ui.btns.includes('Hold'), 'the completed card has Reopen and no Hold: ' + JSON.stringify(ui));
+    pass('the completed Review card has no Hold (its buttons: ' + ui.btns.join(', ') + ')');
+    await shot('c1-review-completed-no-hold-button');
+    await openWin(k);
     const seen = await holdFrom(H3, btn, 'c', { grabs: [['Taking the pieces off', 'c2-film-lift']] });
     await verifyHold(H3, 'C', { sheets: ['e2e-gold-2', 'e2e-silver-1'], names: 'GF Sheet 2, SS Sheet 1', pieces: idsOf(H3, 2, 3), fills: { 'e2e-gold-2': [W(4)], 'e2e-silver-1': [V(4)] }, from: { 'e2e-gold-2': ['e2e-gold-3'], 'e2e-silver-1': ['e2e-silver-2'] } }, seen);
-    pass('C: same Hold from a completed card: film, On hold, both sheets refilled, timeline, nothing lost');
+    pass('C: same Hold from the order window of a completed card\'s piece: film, On hold, both sheets refilled, timeline, nothing lost');
     await page.evaluate(() => { CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
     await sleep(900);
     const stale = await page.evaluate(k => ({ card: !!document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`), btn: document.querySelectorAll('[data-hold-btn][data-rid="4170000120"]').length }), k);

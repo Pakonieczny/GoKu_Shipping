@@ -9,7 +9,7 @@
  *       rid     the order (receipt id)           key    the order line's key
  *       rows    a function giving every line of the order; else `pieces` ([{ key, row, label }]), else the line `row`/`key`
  *       only    (ENGSEL, Paul 13 Oct 2026: "if I select a certain piece, then the back engraving should reflect the selected piece") a function (or object) saying which piece the order window is narrowed to: null
- *               for "Show all", else { line: the piece's line key, side?: 'L' | 'R' (one ear of a pair) }. Only that piece's cards and words are drawn; a piece with nothing to engrave (an earring, a plain piece) leaves
+ *               for "Show all", else { line: the piece's line key, side?: 'L' | 'R' (one ear of a pair) }. Only that piece's cards are drawn (and, in the Overview, its words in the "What the customer wrote" box); a piece with nothing to engrave (an earring, a plain piece) leaves
  *               the host hidden, so the section has no title, rule or room. It is read at every look, so the host only has to call refresh() (or update()) when the selection changes; nothing polls for it.
  *       nameOf  the name of a line, as the card says it (default: its design's name)
  *       events  the order's timeline events (an array, or a function giving them): an approval another computer makes shows here from them, within the timeline feed's own 2.5 s read
@@ -48,18 +48,13 @@
   function css() {
     const d = doc(); if (!d || d.getElementById('owEngCss')) return;
     const s = d.createElement('style'); s.id = 'owEngCss';
-    // (.engSaid: the customer's own words under the cards, one quiet block: a hairline at its left, small mono labels in front of each part, no box and no title; a very long message scrolls inside it like the Engrave tab's box, it never pushes the window)
     s.textContent = '.owEngWait{display:flex;align-items:center;gap:8px;min-width:0;padding:9px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card);font:11px var(--sans);color:var(--ink45)}'
-      + '.engSaid{margin:8px 0 0;padding:1px 0 1px 9px;border-left:2px solid var(--line);min-width:0;font:13px/1.45 var(--serif);color:var(--ink);overflow-wrap:anywhere;max-height:min(20vh,150px);overflow:auto}.engSaid[hidden]{display:none}'
-      + '.engSaid .esName{font:700 9.5px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);margin-top:6px}.engSaid .esName:first-child{margin-top:0}'
-      + '.engSaid .esRow{min-width:0}.engSaid .esFaces{font:12.5px/1.45 var(--sans);color:var(--ink70)}'
-      + '.engSaid i{font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);font-style:normal;margin-right:2px}.engSaid .esSep{margin:0 3px;color:var(--ink45)}'
       + '.engNote{margin:0 0 8px;padding:5px 10px;border:1px solid var(--line);border-radius:9px;background:var(--goldSoft,#f6efdc);font:12.5px/1.4 var(--sans);color:var(--ink70)}.engNote[hidden]{display:none}';
     (d.head || d.documentElement).appendChild(s);
   }
   const waitNode = text => { const n = doc().createElement('div'); n.className = 'owEngWait'; n.setAttribute('role', 'status'); n.setAttribute('aria-live', 'polite'); n.innerHTML = `<span class="owSpin" aria-hidden="true"></span><span>${esc(text)}</span>`; return n; };
 
-  /* ── what the customer wrote for the engraving, ONE quiet block under the cards (Paul, 12 Oct 2026, round 2: "in the detailed order modal I don't see the customers message for the back engraving") ──
+  /* ── what the customer wrote for the engraving, as DATA (NOSAID, Paul 17 Oct 2026: it is no longer drawn under the cards; paintSaid below only removes a block an earlier drawing left; OrderEngraving.said exports this reader). It was ONE quiet block under the cards (Paul, 12 Oct 2026, round 2: "in the detailed order modal I don't see the customers message for the back engraving") ──
    * Per engraved line: the customer's own words as they wrote them (the personalisation box, the buyer's message, the staff note) and the engraving choices among their options (front / back, the font), each under its
    * small label, and, only when the piece has BOTH faces, which words are engraved on which: "Front W  Back Name One". Nothing for a line the customer wrote and chose nothing for; no title, no sentence, no percentage.
    * The words and the options are read by charm-nest-engrave-said.js (the Engrave tab's box reads the same); when that file is not on the page the three plain parts are read here. */
@@ -364,15 +359,13 @@
       return { rows, pieces, monoAll, monoShown, loading: rows.some(r => r && r.loading), only: only ? only.line + '|' + only.side : '' };
     }
     const keyOf = p => p.pieceKey + '|' + p.rid + '|' + p.lineKey;
-    /** The customer's words block: the host's next sibling inside the section (never a child of the host: the host's children are the cards). Drawn again only when what it says changes. */
+    /** NOSAID (Paul 17 Oct 2026): the customer's words block that used to be the host's next sibling inside the section is no longer drawn; this only takes away one an earlier drawing left (the host's children are the cards, nothing else stands in the section after them). */
     let saidEl = null, saidSig = '';
     function paintSaid(r) {
-      const entries = r && !r.loading ? tryDo(() => saidOf(r.rows, r.pieces), []) || [] : [];
-      if (!saidEl && entries.length && host.parentNode) { saidEl = doc().createElement('div'); saidEl.className = 'engSaid'; saidEl.id = 'owEngSaid'; saidEl.setAttribute('role', 'group'); saidEl.setAttribute('aria-label', 'What the customer wrote'); saidEl.hidden = true; host.parentNode.insertBefore(saidEl, host.nextSibling); }
-      if (!saidEl) return;
-      const sig = JSON.stringify(entries);
-      if (sig !== saidSig) { saidSig = sig; saidEl.innerHTML = entries.length ? saidHtml(entries) : ''; }
-      saidEl.hidden = !entries.length;
+      // (NOSAID, Paul 17 Oct 2026: "Remove the personalization info from beneath the Engraving card inside the Detailed Order modal": the customer's words stay in the Overview's "What the customer wrote" box, nothing is drawn under the cards any more, and a block an earlier drawing left there is taken away; the reader, OrderEngraving.said (of / rows / html), stays for any host that wants the words as data; the rules that styled the block, .engSaid and #owEngSaid, are gone)
+      if (saidEl) { saidEl.remove(); saidEl = null; }
+      const stale = host.parentNode && host.parentNode.querySelector ? host.parentNode.querySelector(':scope > #owEngSaid') : null; if (stale) stale.remove();
+      saidSig = '';
     }
     /** SETBAR: a set of bars whose buyer asked for another layout says so in ONE calm line above the cards (a person decides which bar hangs on which chain): charm-nest-engrave-card.js layoutNoteOf. Nothing for any other line. */
     let noteEl = null;
@@ -487,9 +480,11 @@
       tryDo(() => { const C = CARD(); if (C && C.css) C.css(); });   // (the header's dot and name are the engraving card's own styles, which a window with no engraving card has not had put in the page yet)
       el.className = 'engMono'; el.dataset.testid = 'ow-mono'; el.dataset.key = pc.key; el.dataset.line = line.key; el.dataset.slot = pc.slot || ''; el.dataset.piece = String(pc.n); el.dataset.rid = String(ctx.rid || (line.order && line.order.receiptId) || ''); el.dataset.state = 'reading';
       el.setAttribute('aria-label', 'Monogram');
-      el.innerHTML = '<header class="engHd" data-testid="ow-mono-head"><i class="engDot" data-testid="ow-mono-dot" role="img"></i><b class="engName">Monogram</b></header><div class="engMonoBody" data-testid="ow-mono-body"></div>';
+      el.innerHTML = '<header class="engHd" data-testid="ow-mono-head"><i class="engDot" data-testid="ow-mono-dot" role="img"></i><b class="engName">Monogram</b></header><div class="engMonoBody" data-testid="ow-mono-body"></div>'
+        + '<div class="engOpenRow"><button type="button" class="btn ghost sm egOpen" data-e="engrave" data-testid="ow-mono-open" title="Open this monogram in the Engraving tab">Open in Engraving <span aria-hidden="true">\u2192</span></button></div>';
       m = { el, body: el.querySelector('.engMonoBody'), line, row: line, piece: pc, handle: null };
       monos.set(pc.key, m);
+      { const ob = el.querySelector('[data-e=engrave]'); if (ob) ob.addEventListener('click', () => openMonoEngrave(pc, ob)); }
       monoTitle(m);
       monoDot(m, null);
       let w = null;
@@ -497,6 +492,15 @@
       if (w) { m.handle = w; monoDot(m, tryDo(() => w.state && w.state(), null)); }
       else { const f = d.createElement('div'); f.className = 'engFail'; f.setAttribute('role', 'alert'); f.textContent = 'The monogram could not be drawn here.'; m.body.append(f); }
       return m;
+    }
+    /** The shortcut of a monogram card (MONOROUTE): the piece opens in the Engraving tab, as an engraved piece's "Fix in Engraving" does; the wait is said on the button, a second press does nothing. */
+    function openMonoEngrave(pc, btn) {
+      if (!btn || btn.getAttribute('aria-busy') === 'true') return;
+      const link = root.EngraveLink, E = root.Engrave, was = btn.innerHTML;
+      btn.setAttribute('aria-busy', 'true'); btn.innerHTML = '<span class="spin" aria-hidden="true"></span>Opening Engraving\u2026';
+      const back = () => { if (btn.isConnected) { btn.removeAttribute('aria-busy'); btn.innerHTML = was; } };
+      let run; try { run = link && link.openMonogram ? link.openMonogram({ rid: String(ctx.rid || (pc.line && pc.line.order && pc.line.order.receiptId) || ''), key: pc.key }) : E && E.openMonogram ? Promise.resolve(E.openMonogram(pc.key)) : Promise.resolve(false); } catch (e) { back(); say('Could not open Engraving: ' + (e && e.message || e), 'bad', 5000); return; }
+      Promise.resolve(run).then(ok => { back(); if (ok === false) say('This monogram cannot be opened in Engraving here.', 'bad', 5000); }, e => { back(); say('Could not open Engraving: ' + (e && e.message || e), 'bad', 5000); });
     }
     /** PIECES: a monogram of a line of several says which piece it is, as an engraved copy's card does: "Monogram · Piece 1 of 2". A line of one piece: "Monogram", as ever. */
     function monoTitle(m) {

@@ -1,4 +1,4 @@
-// ENGENT (Paul's brief 13 Oct 2026, after ENGTEXT found it): Etsy hands the customer's words over HTML-escaped ("Name One&#39;s", "Name One &amp; Date One"). The order window's words block already read them decoded, but the
+// ENGENT (Paul's brief 13 Oct 2026, after ENGTEXT found it): Etsy hands the customer's words over HTML-escaped ("Name One&#39;s", "Name One &amp; Date One"). The order window's words block already read them decoded (that block under the cards is gone since NOSAID, 17 Oct 2026; the Overview's "What the customer wrote" box reads them decoded), but the
 // ENGRAVING JOB's own words (the card's face words and title, the picture, the fit, job.text, the laser file) carried the raw entity, and a front + back job in a capitals font even upper-cased "&amp;" to "&AMP;". A buyer who
 // writes "Mom's" or "Mom & Dad" must get exactly that on the card, in the picture and on the laser job.
 // This test builds the REAL page over the REAL-drawing world (tests/charm-nest/_engraveRealWorld.cjs: real .ai drawings, real intake / pool / classifier / fit, offline fake site, no Etsy, no paid AI, nothing real written, every name made up)
@@ -99,13 +99,14 @@ const noEntity = x => !ENTITY.test(JSON.stringify(x)) && !/&(?:AMP|QUOT|LT|GT|AP
       await R.openOrderWindow(w, n);
       const win = await w.page.evaluate(() => {
         const cards = [...document.querySelectorAll('#owEng .engCard')];
-        return { cards: cards.map(c => flat(c.innerText)), titles: cards.flatMap(c => [...c.querySelectorAll('[title]')].map(x => x.title)), pv: cards.flatMap(c => [...c.querySelectorAll('.engpvText')].map(x => x.textContent)), notes: (document.getElementById('owNotes') || {}).innerText || '', notesHtml: (document.getElementById('owNotes') || {}).innerHTML || '' };
+        return { cards: cards.map(c => flat(c.innerText)), titles: cards.flatMap(c => [...c.querySelectorAll('[title]')].map(x => x.title)), pv: cards.flatMap(c => [...c.querySelectorAll('.engpvText')].map(x => x.textContent)), notes: (document.getElementById('owNotes') || {}).innerText || '', notesHtml: (document.getElementById('owNotes') || {}).innerHTML || '', saidBlocks: document.querySelectorAll('#orderWin #owEngSaid, #orderWin .engSaid, #orderWin .esRow, #orderWin [data-said]').length };
         function flat(s) { return String(s).replace(/\s+/g, ' ').trim(); }
       });
       const wantAll = Object.values(WANT[n]);
       ok(win.cards.length >= 1 && wantAll.every(t => win.cards.join(' ').indexOf(t) >= 0), `${n}: the order window's card(s) print the words as the customer wrote them`, win.cards);
       ok(wantAll.every(t => win.titles.some(x => flat(x).indexOf(t) >= 0)) && wantAll.every(t => flat(win.pv.join(' ')).indexOf(t) >= 0), `${n}: the card's title attribute and the picture carry them too`, { titles: win.titles, pv: win.pv });
       ok(noEntity([win.cards, win.titles, win.pv, win.notes]), `${n}: no entity printed raw in the card, its title, the picture or the Overview's "What the customer wrote"`, win);
+      ok(win.saidBlocks === 0, `${n}: NOSAID (Paul, 17 Oct 2026): no second copy of the customer's words under the cards; the Overview's "What the customer wrote" (#owNotes) is where they are`, win.saidBlocks);
       if (n === 'entBack') ok(flat(win.notes) === "PERSONALISATION Name One's & Date One", `${n}: the Overview's "What the customer wrote" (#owNotes) reads "Name One's & Date One"`, win.notes);
       if (n === 'entQuote') ok(flat(win.notes).indexOf('<b>bold</b>') >= 0 && win.notesHtml.indexOf('<b>') < 0, `${n}: markup in the buyer message is shown as text in #owNotes, never drawn`, win.notesHtml);
     }
