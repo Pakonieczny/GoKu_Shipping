@@ -219,6 +219,9 @@ const closeWin = async pg => { await pg.page.evaluate(() => { try { OrderWin.clo
   const etsy = [];
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   const A = await libraryPage(browser, srv, shop, 'A'), B = await libraryPage(browser, srv, shop, 'B');
+  // (COST, Oct 2026: the Library's beat follows the person, 3 s while the page is used and 15 s when not: somebody is at both computers, moving the mouse now and then)
+  const used = () => { for (const pg of [A, B]) pg.page.mouse.move(20 + Math.round(Math.random() * 40), 20 + Math.round(Math.random() * 40)).catch(() => {}); };
+  used(); const usedIv = setInterval(used, 20000);
   const reqs = { A: [], B: [] };
   for (const [k, pg] of [['A', A], ['B', B]]) {
     pg.page.on('request', r => { if (/charmNestLibrary/.test(r.url()) && r.method() === 'POST') { let op = ''; try { op = JSON.parse(r.postData() || '{}').op; } catch (_) {} if (op === 'laserStatus') reqs[k].push({ at: Date.now(), body: r.postData(), req: r }); } });
@@ -248,7 +251,8 @@ const closeWin = async pg => { await pg.page.evaluate(() => { try { OrderWin.clo
     say(`  ${name}: full read ${cFull.docs} docs ${cFull.bytes} B · idle poll ${cIdle.docs} doc ${cIdle.bytes} B · safety probe ${cVer.docs} docs · after someone else's write ${cWaste.docs} docs`);
     check(idle.unchanged === true && cIdle.docs === 1 && cIdle.bytes <= 64, `${name}: an idle poll reads ONE document (the revision) and at most 64 bytes`, JSON.stringify(cIdle));
     check(ver.unchanged === true && cVer.docs === (full.revs ? Object.keys(full.revs).length : 0) + 1, `${name}: the safety probe reads the documents' update times (one each) and the revision, no more`, `${cVer.docs} docs`);
-    check(waste.unchanged === true && waste.via === 'docs' && cWaste.docs === cVer.docs, `${name}: a poll after somebody else's write costs the old probe plus the one revision read, and is not a full answer`, `${cWaste.docs} docs`);
+    // (COST, Oct 2026: the revision's list of what was written says the write was not ours: two documents, where it was the old probe plus the revision)
+    check(waste.unchanged === true && waste.via === 'list' && cWaste.docs === 2, `${name}: a poll after somebody else's write costs two documents (the revision and its list of what was written), and is not a full answer`, `${cWaste.docs} docs, via ${waste.via}`);
     check(cFull.bytes <= 400000, `${name}: the full read takes the sheets by field mask (the placements only for a sheet without a count)`, `${cFull.bytes} B`);
     // the slow check
     a = M.snap(); const s1 = await srv.call({ op: 'laserStatus', sheetIds: v.sheetIds, setIds: v.setIds, recordSeals: true, wantRev: true, by: 'T' }); const s1c = M.since(a);
@@ -256,6 +260,9 @@ const closeWin = async pg => { await pg.page.evaluate(() => { try { OrderWin.clo
     a = M.snap(); const s3 = await srv.call({ op: 'laserStatus', sheetIds: v.sheetIds, setIds: v.setIds, recordSeals: true, wantRev: true, ifRev: s2.rev, by: 'T' }); const s3c = M.since(a);
     say(`  ${name}: slow check ${s1c.docs} docs ${s1c.bytes} B in full, ${s3c.docs} doc when nothing changed`);
     check(s3.unchanged === true && s3c.docs === 1 && Array.isArray(s3.added) && !s3.added.length, `${name}: the slow check that records seals costs ONE document when nothing changed since its last pass`, JSON.stringify(s3c));
+    await srv.call({ op: 'customPut', key: oKey, receiptId: '4173000000', transactionId: oKey.split('_')[1], sku: 'X', how: 'print', by: 'Paul' });
+    a = M.snap(); const s4 = await srv.call({ op: 'laserStatus', sheetIds: v.sheetIds, setIds: v.setIds, recordSeals: true, wantRev: true, ifRev: s2.rev, ifRevs: full.revs, by: 'T' }); const s4c = M.since(a);
+    check(s4.unchanged === true && s4c.docs === 2 && !s4.added.length, `${name}: and TWO after somebody else's write (the revision's list: none of these cards' documents), where it ran in full`, JSON.stringify(s4c) + ' ' + s4.via);
   }
   for (const b of shop.target.blockers) await srv.call({ op: 'customReopen', key: b.key, by: 'x' });
   await srv.call({ op: 'customReopen', key: Object.keys(shop.runLines).find(k => k.startsWith('4173000000_')), by: 'x' });
@@ -274,11 +281,11 @@ const closeWin = async pg => { await pg.page.evaluate(() => { try { OrderWin.clo
     const polls = reqs[k].slice(i0[k]).filter(r => r.answer), cheap = polls.filter(r => r.answer.unchanged && r.answer.probed === 1);
     say(`  ${k}: ${polls.length} reads in 12 s, ${cheap.length} of them one-document`);
     if (polls.length < 3) { const now = Date.now(), d = await (k === 'A' ? A : B).page.evaluate(() => ({ live: LaserReview.liveState(), reads: window.__reads.slice(-6), long: window.__long.slice(-6), hidden: document.hidden })); say('   what the page was doing:', JSON.stringify({ ...d, reads: d.reads.map(r => [r[0] - now, r[1] == null ? null : r[1] - now, r[2]]), long: d.long.map(l => [l[0] - now, l[1]]) })); }
-    check(polls.length >= 3 && polls.length <= 7, `${k}: the loop reads about every 2.4 s while the cloud answers the revision (3 to 7 reads in 12 s)`, String(polls.length));
+    check(polls.length >= 3 && polls.length <= 6, `${k}: the loop reads about every 3 s while the page is used (3 to 6 reads in 12 s)`, String(polls.length));
     check(polls.length > 0 && cheap.length >= polls.length - 1, `${k}: every idle read but at most one is a one-document read`, `${cheap.length} of ${polls.length}`);
   }
 
-  if (process.env.LIBRARY_RT_STOP === 'idle') { await browser.close(); srv.close(); process.exit(fails.length ? 1 : 0); }   // (a look at the opening and the idle loop alone, while writing the test)
+  if (process.env.LIBRARY_RT_STOP === 'idle') { clearInterval(usedIv); await browser.close(); srv.close(); process.exit(fails.length ? 1 : 0); }   // (a look at the opening and the idle loop alone, while writing the test)
   /* ── the computer that pressed ── */
   say('\n== the computer that pressed');
   const timings = { same: [], cross: [], tab: [], show: [], ui: [] };
@@ -344,11 +351,11 @@ const closeWin = async pg => { await pg.page.evaluate(() => { try { OrderWin.clo
     const rid = shop.target.blockers[i].rid, last = i === 2, b = shop.target.blockers[i];
     const wa = A.page.evaluate(([w]) => window.__lr.waitFor(w, 20000), [last ? "s.area === 'ready'" : `s.panel && !s.panel.includes('${rid}')`]);
     if (i === 0) await openPanel(A);
-    // (the write is made just after this tab's own loop read ended: its next turn is 2.4 s away, so a repaint inside a second can only be the nudge)
+    // (the write is made just after this tab's own loop read ended: its next turn is 3 s away, so a repaint inside a second can only be the nudge)
     for (const n0 = reqs.A.length; reqs.A.length === n0 || !reqs.A[reqs.A.length - 1].answer;) await sleep(15);
     await C.page.evaluate(async ([k, rid, tid, sku]) => { await api('charmNestLibrary', { op: 'customPut', key: k, receiptId: rid, transactionId: tid, sku, how: 'button', by: 'Paul' }, { quiet: true }); }, [b.key, rid, b.key.split('_')[1], b.sku]);
     const rec = lastWrite(), ra = await wa, tw = (await C.page.evaluate(() => window.__wrote.slice())).pop() || rec, ms = ra.at ? ra.at - tw : null;   // (tw: the other tab had the answer of its write: it tells this one then)
-    const aw = afterWrite(await readsOf(A), tw), quick = !!aw.r && aw.r[0] - tw <= 450;   // a read within 450 ms of the write: the nudge, not the 2.4 s loop
+    const aw = afterWrite(await readsOf(A), tw), quick = !!aw.r && aw.r[0] - tw <= 450;   // a read within 450 ms of the write: the nudge, not the 3 s loop
     timings.tab.push(ms);
     say(`  piece ${i + 1}: written in the other tab (the record ${tw - rec} ms before it had the answer), this tab repainted ${ms} ms after that; ${aw.text}`);
     { const d = await A.page.evaluate(() => ({ heard: window.__heard.slice(), long: window.__long.slice() })); say(`     this tab heard the message ${d.heard.filter(h => h >= tw - 50).map(h => h - tw).slice(0, 2).join(', ') || 'never'} ms after the write; its main thread was blocked: ${d.long.filter(l => l[0] + l[1] >= tw - 50 && l[0] <= tw + 3000).map(l => `${l[1]} ms at ${l[0] - tw}`).join(', ') || 'never'}`); }
@@ -379,7 +386,7 @@ const closeWin = async pg => { await pg.page.evaluate(() => { try { OrderWin.clo
   check(!bad.length, 'no page error', bad.slice(0, 2).join(' | '));
   const cfin = await A.page.evaluate(() => LaserReview.liveState());
   say('\nA after the run:', JSON.stringify(cfin), '\ntimings', JSON.stringify(timings));
-  await browser.close(); srv.close();
+  clearInterval(usedIv); await browser.close(); srv.close();
   if (fails.length) { console.error('\nFAILED:\n - ' + fails.join('\n - ')); process.exit(1); }
   console.log('\nLibrary real time OK: the Library repaints a Complete Order / Print QR Label within ' + SAME_MS + ' ms on the computer that pressed it, ' + TAB_MS + ' ms on another tab of it and ' + CROSS_MS + ' ms on another computer; an idle poll is one document');
 })().catch(e => { console.error(e); process.exit(1); });
