@@ -45,9 +45,10 @@ const domClosed=waited.then(()=>{assert.equal(changes,2,'each change reaches the
   const recent=await call({op:'laserDoneList',sort:'activity',range:'today'});assert.equal(recent.rows.length,9,'date filter uses updates, not old set/completion dates');
   const hist=await call({op:'history',sort:'activity',direction:'asc',limit:2});assert.equal(hist.sets[0].sheets[0].id,'older');assert(hist.next);
   const found=await call({op:'history',sort:'activity',q:'3701',range:'today'});assert(found.sets.length);assert(found.sets.every(x=>A.matches(x,'today')));
-  const old={id:'a',how:'engraveApproved',at:t-10000,by:'Paul'};
+  const seen=Date.now()-10000;   /* (the first approval is 10 s ago: `t` is noon today, which is still ahead of the clock before noon in Toronto, and an approval dated in the future makes every later one look older) */
+  const old={id:'a',how:'engraveApproved',at:seen,by:'Paul'};
   st.put('Charm_Nest_Sheets','engrave-sheet',{id:'engrave-sheet',poolIds:['3701000_10000_1'],backPool:[],orders:['3701000']});
-  const back={poolId:'3701000_10000_1',sheetId:'engrave-sheet',order:'3701000',approvedAt:t-10000,approvedBy:'Paul',engravingSeals:[old]};
+  const back={poolId:'3701000_10000_1',sheetId:'engrave-sheet',order:'3701000',approvedAt:seen,approvedBy:'Paul',engravingSeals:[old]};
   await call({op:'backPut',back});await call({op:'backInvalidate',poolIds:[back.poolId]});
   await call({op:'backPut',back:{...back,approvedAt:Date.now()+1000,approvedBy:'Seth',engravingSeals:[]}});
   const seals=st.doc('Charm_Pool_Back',back.poolId).engravingSeals;assert(seals.some(s=>s.by==='Paul'));assert(seals.some(s=>s.by==='Seth'),'a later client cannot erase prior approvals');

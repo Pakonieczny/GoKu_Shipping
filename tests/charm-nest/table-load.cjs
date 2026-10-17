@@ -272,7 +272,7 @@ function source() {
   assert.deepEqual(fam.ownerOf('firestore', 'Charm_Listing_Skus/_budget'), { kind: 'protected', key: 'Charm_Listing_Skus' });
   const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
   assert(/\.tblFail\{/.test(html) && /\.cuStat\{/.test(html), 'the spinner is the page\'s own (.cuStat .spin)');
-  assert(/charm-nest-bridge\.js\?v=[^"]*-tb1"/.test(html), 'the bridge\'s cache token carries tb1');
+  assert(/charm-nest-bridge\.js\?v=[^"]*-tb1(-[^"]*)?"/.test(html), 'the bridge\'s cache token carries tb1');
   ok('source: the sandbox is not cache-only; the shop\'s listing tables are on the wipe\'s keep list; the page styles and cache token are in');
 }
 

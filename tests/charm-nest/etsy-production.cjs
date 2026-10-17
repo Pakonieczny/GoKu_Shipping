@@ -36,7 +36,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
  replies=[response(401),response(401)];await assert.rejects(c.apiFetch('/listOpenOrders'),/Unauthorized/);
  // Snapshot emulator must respect the production paid/open filter, including edited snapshot records.
  const sb=fs.readFileSync('netlify/functions/etsySandbox.js','utf8');const a=sb.indexOf('    if (fn === "listOpenOrders")'),b=sb.indexOf('    if (fn === "etsyOrderProxy")',a);
- const fake={receipts:[{receipt_id:1,is_paid:true},{receipt_id:2,is_paid:false},{receipt_id:3,is_shipped:true},{receipt_id:4,status:'Canceled'}],q:{offset:0},PAGE:100,json:(status,body)=>({status,body})};vm.createContext(fake);vm.runInContext('var page=(()=>{const fn="listOpenOrders";'+sb.slice(a,b)+'})();',fake);assert.equal(fake.page.body.results.length,1);
+ const fake={receipts:[{receipt_id:1,is_paid:true},{receipt_id:2,is_paid:false},{receipt_id:3,is_shipped:true},{receipt_id:4,status:'Canceled'}],q:{offset:0},PAGE:100,isOpen:require('../../netlify/functions/_charmNestSandboxOrders').plays,json:(status,body)=>({status,body})};vm.createContext(fake);vm.runInContext('var page=(()=>{const fn="listOpenOrders";'+sb.slice(a,b)+'})();',fake);assert.deepEqual(fake.page.body.results.map(r=>r.receipt_id),[1,3],'paid and not cancelled play, a shipped one too (SBX1000: the sandbox serves the shop\'s newest orders, shipped or not); unpaid and cancelled stay out');
  console.log('Production Etsy boundaries OK: paid/open filtering, pagination, auth required, 401 refresh, 429 Retry-After pause, and sandbox filter parity');
 })().catch(e=>{console.error(e);process.exitCode=1;});
 (async()=>{

@@ -95,7 +95,7 @@ const liveOf = rec => rec.liveLines ? Object.assign({}, ...rec.liveLines.ids.map
 /* ── the page's run controller, as in tests/charm-nest/process-completion.cjs, with the page's own line record ── */
 const source = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
 let controller = source.slice(source.indexOf('const RunCtl ='), source.indexOf('/* ═══ 24 · Review'));
-controller = controller.slice(0, controller.indexOf('  function renderBanner()')) + '  function renderBanner() {}\n' + controller.slice(controller.indexOf('  return { optionsChanged'));
+controller = controller.slice(0, controller.indexOf('  function renderBanner()')) + '  function renderBanner() {}\n' + controller.slice(controller.search(/\n  return \{[^\n]*optionsChanged/) + 1);   // (the return list begins with the banner helpers now)
 const lineRecordSource = source.slice(source.indexOf('  const cap = (v, n)'), source.indexOf('  /** The other direction'));
 const workTextSource = source.slice(source.indexOf('  function workText(r)'), source.indexOf('  // the state of the work as a short hash'));
 assert(lineRecordSource.includes('function lineRecord(row)') && workTextSource.includes('function workText(r)'), 'the page source still has the pieces this test runs');
@@ -123,7 +123,7 @@ function controllerFor({ rows = [], sandbox = false } = {}) {
     Pool: { sheetOf: () => null, addAll: async () => 0, charmOf: () => ({}) },
     Engrave: { items: () => new Map(), pendingCount: () => 0, classifyAll: async () => {}, fitAll: async () => {}, background: () => Promise.resolve(), saveBacks: async () => {} },
     Review: { count: () => 0 }, Gate: { flush: async () => {}, nestable: () => true, modern: () => true, assemble: async () => {}, upgrade: async () => {} },
-    LiveNest: { finish: async () => {} }, Sets: { ofRun: () => [], releaseIssue: () => null, save: async () => {}, finalize: async () => {}, byRun: () => new Map(), keyOf: () => '' },
+    LiveNest: { finish: async () => {} }, Sets: { ofRun: () => [], unrecorded: () => false, releaseIssue: () => null, save: async () => {}, finalize: async () => {}, byRun: () => new Map(), keyOf: () => '' },
     api, Session: { schedule() {} }, LiveStrip: { render() {} }, Arrivals: { start() {}, processPending: async () => {} },
     agent: (scope, kind, text) => { st.logs.push({ kind, text }); }, toast: text => st.toasts.push(text), notifyPerson() {}, ding() {}, CN: { renderCard() {} }, sheetName: s => s.metal,
     startNest() {}, sheetDirty() {}, METALS: [] };

@@ -379,7 +379,7 @@ const ListMedia = (() => {
     const io=window.IntersectionObserver ? new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))go();},{rootMargin:'160px'}) : null;
     button.onclick=go;host.appendChild(button);if(io){pages.set(host,io);io.observe(button);}
   }
-  return {pair,pairRow,earPair,earMirror,mount,vectorInto,vectorBig,vectorThumb,vectorKey,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
+  return {pair,pairRow,oneRow,earPair,earMirror,mount,vectorInto,vectorBig,vectorThumb,vectorKey,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
 })();
 // (the piece dots' hover card, charm-nest-piece-dots.js, reads the vector design through these two only: ListMedia itself stays private to this page's code)
 window.PieceMedia = { vectorKey: (row, opts) => ListMedia.vectorKey(row, opts && opts.pair === true ? opts : Object.assign({}, opts, { piece: true })), vectorThumb: ListMedia.vectorThumb, pairRow: ListMedia.pairRow, earMirror: ListMedia.earMirror };
@@ -4443,7 +4443,7 @@ const Pool = window.Pool = (() => {
     let n = Pair && Pair.pieceCountOf && row.line ? Pair.pieceCountOf(pairLine(row), src ? src.charms[0] : null) : q;
     // (the master entry says two bodies; the charm is not traced yet. Two pieces per unit is an earring pair's: a necklace, pendant, bracelet or charm line of such a design is ONE piece per unit, and so is a
     //  line that makes one body of a design drawn twice: Paul, 11 Oct 2026, "This listing is not an earring so it should NOT have duplicate charms")
-    if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(oneRow(row) >= 0)) n = 2 * q;
+    if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(ListMedia.oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
   return { pinPooled, wholeHashes, designLoaded, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig };
@@ -5258,7 +5258,8 @@ const Gate = window.Gate = (() => {
     const by = who() || (typeof needEmployee === "function" ? await needEmployee("Kept with this change to the set.") : "");
     if (!by) throw said("Sign in to change a set.");
     const plan = await LF.plan({ kind: "sheet", id: sh.sheetId, to: want ? { set: sh.leftSet } : { area: "progress" }, by });
-    if (plan.needs && plan.needs.length) throw said(needWords(plan.needs[0]));
+    // (a saved sheet is never on a page of the open run (joinInfo), so the plan calls its run "open on another screen": it may well be open on this one. The reason is the sheet's own: it is saved, and its set is fixed)
+    if (plan.needs && plan.needs.length) throw said(sh.recalled && plan.needs[0].key === "runElsewhere" ? "Saved sheet. Its set is fixed." : needWords(plan.needs[0]));
     if (want && plan.noop) return "";   // (already in that set)
     // only a set that is committed is the Library's to edit; any other plan for the same drop (a hold on a sheet of an open set, a reopened one, "already in progress") is not what this switch means
     if (want ? !plan.committed : !plan.leave) throw said(plan.from && plan.from.area === "completed" ? WHY.sheetCompleted : sh.recalled ? "Saved sheet. Its set is fixed." : "Its set is fixed.");

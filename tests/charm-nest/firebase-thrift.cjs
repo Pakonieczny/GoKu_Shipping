@@ -14,7 +14,8 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),station=fs.readFileS
  // Simultaneous sandbox receipt calls share one metadata read and Storage download.
  let metaReads=0,streamReads=0,downloads=0;const sandbox={exports:{},console,Date,require:name=>{
   if(name==='./firebaseAdmin')return{firestore:()=>({collection:()=>({doc:id=>({get:async()=>{if(id==='stream'){streamReads++;return{exists:false}}metaReads++;return{exists:true,data:()=>({path:'snapshot.json',source:'etsy-pull'})}}})})}),storage:()=>({bucket:()=>({file:()=>({download:async()=>{downloads++;return[Buffer.from(JSON.stringify([{receipt_id:123,transactions:[]}]))]}})})})};
-  if(name==='./_charmNestAuth')return{CORS:{},gate:()=>null};throw Error('Unexpected dependency '+name);
+  if(name==='./_charmNestAuth')return{CORS:{},gate:()=>null};if(name==='./_charmNestSandboxOrders')return require('../../netlify/functions/_charmNestSandboxOrders');   /* (the pure rule of which receipts play, shared by the function, the stream and the counts) */
+  throw Error('Unexpected dependency '+name);
  }};vm.runInNewContext(fs.readFileSync('netlify/functions/etsySandbox.js','utf8'),sandbox);
  await Promise.all(Array.from({length:100},()=>sandbox.exports.handler({queryStringParameters:{fn:'etsyOrderProxy',orderId:'123'}})));assert.equal(metaReads,1);assert.equal(downloads,1);assert.equal(streamReads,1,'and one read of the order stream');
  // Browser photo cache survives reload and shields BOTH services.
