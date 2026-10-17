@@ -14,6 +14,12 @@
  *   S5  an existing set that already holds a partial sheet (made before this rule) is not touched or rebuilt
  *   S6  sheets that share an order stay together: a group is wholly in one set, or wholly outside (Rose Gold waits for its own press and is named, never counted against this)
  *   S7  when every sheet is completed at the end, every completed GF and SS sheet is in a set unless it has no counterpart (nothing is lost)
+ *   S8  (SETFIX, Paul 17 Oct 2026: "partial sheets being added without the green line") no Rose Gold, 10K or 14K sheet is in a set unless its green line is cut (nobody presses Include here)
+ *   S9  (SETFIX: "way too many sheets in total ended up in set 2") every set is as small as the rules allow: it holds no unit (sheets tied by a shared order) it does not need
+ *   S10 anything else the owner's own checker (charm-nest-set-invariants.js, docs/charm-nest/set-rules.md) finds wrong in the run's sets, rule by rule (R-number in the message)
+ *   INCREMENTAL (--incremental, on by default): the sheets of a day exist from the start, filling, with Rose Gold / 10K / 14K sheets verified BEFORE their partners complete (or after, or in between),
+ *   the groups complete one at a time or sheet by sheet, drafts bridging groups fill up late: after EVERY event the Gate's sets are exactly the sets the rules make of the sheets as they are
+ *   (CharmNestSetInvariants.expected), and S1-S4, S6, S8-S10 hold. Both settings of SetRules.PARTIAL_BRIDGE. The runs that complete every sheet together hid the Set 2 of 17 Oct.
  * The toy model: a sheet of one metal takes a whole order-part (all the pieces of the order of that metal) when it fits, else the order goes to the next sheet; a sheet is completed
  * when the next order does not fit and it is 70% full, or at 78%. Orders with lines of two metals tie sheets of two metals into one group (the cardinal rule), which is how a
  * partial GF sheet came into Set-1 of Paul's picture. Pieces never go on two sheets unless `--split P` is given (the old behaviour, to show what splitting does to the sets).      */
@@ -74,7 +80,7 @@ async function run(o = {}) {
   const info = [], fails = [], limits = [];
   // S6 and S7 are asserted when no order is ever split. With `--late`, a line that arrives after its mates' sheet was RELEASED cannot join it (a released sheet is never rebuilt): that
   // order is split by force, and the sets it ties together (S6) or leaves waiting at the end (S7) are MEASURED as forced-split consequences, not failed (the nesting side, not set assembly).
-  const forcedMode = !!(o.mix && o.mix.late > 0), note = (rule, msg, tick) => { if (forcedMode && (rule === 'S6' || rule === 'S7')) { if (limits.length < 60) limits.push({ rule: rule + '*', tick, msg }); return; } if (fails.length < 60) fails.push({ rule, tick, msg }); };
+  const forcedMode = !!(o.mix && o.mix.late > 0), note = (rule, msg, tick) => { if (forcedMode && (rule === 'S6' || rule === 'S7' || rule === 'S10')) { if (limits.length < 60) limits.push({ rule: rule + '*', tick, msg }); return; } if (fails.length < 60) fails.push({ rule, tick, msg }); };
   const memberOf = new Map(), setsAt = new Map();   // sheet id -> set id (S3), set id -> sheet ids
   const waitStart = new Map(), waits = [];          // completed GF/SS sheets: ticks from completion to joining a set
   const everPartial = new Set(), blockedSheets = new Set(); let tick = 0, maxPartialIn = 0, blockedTicks = 0;
@@ -86,12 +92,14 @@ async function run(o = {}) {
     for (const p of pg) if (inSet(p) && p.setId !== 'set-legacy' && ['gold', 'silver'].includes(p.metal) && !SR.isCompleted(p)) { everPartial.add(p.sheetId); note('S1', `${label(p)} (${Math.round(100 * p.density)}% full, still filling) is in ${setName(sets, p)} with ${(sets.find(x => x.setId === p.setId) || { ids: [] }).ids.filter(id => id !== p.sheetId).map(id => byId.get(id)).filter(Boolean).map(x => label(x) + (SR.isCompleted(x) ? ' done' : ' filling')).join(', ')}; sheets sharing its orders: ${groupOfSheet(world, pg, p).map(x => label(x) + (SR.isCompleted(x) ? ' done' : ' filling') + (inSet(x) ? ' in a set' : ' outside')).join(', ') || 'none'}`, tick); }
     maxPartialIn = Math.max(maxPartialIn, pg.filter(p => inSet(p) && p.setId !== 'set-legacy' && ['gold', 'silver'].includes(p.metal) && !SR.isCompleted(p)).length);
     for (const s of sets) { const members = s.ids.map(id => byId.get(id)).filter(Boolean), v = SR.validSet(members); if (!v.ok) note('S2', `${s.name} holds ${members.map(label).join(', ') || 'no sheet'}: no completed ${v.missing.join(' / ')}`, tick); }
+    const fresh = sets.filter(s => !setsAt.has(s.setId));   // (the sets that formed in THIS update)
     // S3 membership only grows
     for (const s of sets) { const prev = setsAt.get(s.setId) || []; const lost = prev.filter(id => !s.ids.includes(id)); if (lost.length) note('S3', `${s.name} lost ${lost.map(id => byId.get(id) ? label(byId.get(id)) : id).join(', ')}`, tick); setsAt.set(s.setId, s.ids.slice()); }
     for (const [id, set] of memberOf) { const p = byId.get(id); if (!p || !inSet(p) || p.setId !== set) note('S3', `${p ? label(p) : id} left ${set}`, tick); }
     for (const p of pg) if (inSet(p)) memberOf.set(p.sheetId, p.setId);
     // S4 nothing waits that could form a set
-    const groups = world.SO.core.groups(pg.map(p => world.SO.fromPage(p)).filter(Boolean)), grp = new Map(); for (const g of groups) for (const id of g.ids) grp.set(id, g);
+    const norm = pg.map(p => world.SO.fromPage(p)).filter(Boolean), ends = pg.filter(p => !inSet(p) && ['gold', 'silver'].includes(p.metal) && !SR.isCompleted(p)).map(p => p.sheetId);
+    const groups = world.SO.core.formation ? world.SO.core.formation(norm, ends, SR.PARTIAL_BRIDGE).groups : world.SO.core.groups(norm), grp = new Map(); for (const g of groups) for (const id of g.ids) grp.set(id, g);
     const blocked = p => { const g = grp.get(p.sheetId); return !!g && g.ids.some(id => { const q = byId.get(id); return q && ['gold', 'silver'].includes(q.metal) && !SR.isCompleted(q); }); };
     const free = pg.filter(p => !inSet(p) && ['gold', 'silver'].includes(p.metal) && SR.isCompleted(p) && !blocked(p) && !(grp.get(p.sheetId) && grp.get(p.sheetId).ids.some(id => inSet(byId.get(id)))));
     for (const p of pg) if (!inSet(p) && ['gold', 'silver'].includes(p.metal) && SR.isCompleted(p) && blocked(p)) { blockedTicks++; blockedSheets.add(p.sheetId); }
@@ -100,6 +108,14 @@ async function run(o = {}) {
     for (const p of pg) if (inSet(p) && waitStart.has(p.sheetId)) { waits.push(tick - waitStart.get(p.sheetId)); waitStart.delete(p.sheetId); }
     // S6 sheets that share an order are together
     for (const g of groups) { const ps = g.ids.map(id => byId.get(id)).filter(p => p && p.metal !== 'rose' && !['gold10k', 'gold14k'].includes(p.metal) && !(['gold', 'silver'].includes(p.metal) && !SR.isCompleted(p) && !inSet(p))), sets2 = new Set(ps.map(p => (inSet(p) ? p.setId : 'none'))); if (sets2.size > 1 && ps.some(inSet)) note('S6', `orders ${g.orders.slice(0, 3).join(', ')} are on ${ps.map(p => label(p) + (inSet(p) ? ' (' + p.setId + ')' : ' (no set)')).join(' and ')}`, tick); }
+    // S8 no gold-family sheet in a set without its green line (nobody pressed Include or Cut Sheet in this run)
+    for (const p of pg) if (inSet(p) && p.setId !== 'set-legacy' && ['rose', 'gold10k', 'gold14k'].includes(p.metal) && !p.roseCutAt && !p.laserDoneAt && !p.solidPick) note('S8', `${label(p)} (${Math.round(100 * p.density)}% full) is in ${setName(sets, p)} without its green line cut`, tick);
+    // S9 a set is as small as the rules allow WHEN IT FORMS: it holds no unit (sheets tied by a shared order) it does not need. (Judged at its formation: an order line that reaches a Rose Gold sheet
+    // later can tie two sheets of a set that had no link when it formed, and a set that exists is never dissolved: that later state is the checker's to report, Gate.violations, below)
+    for (const st of fresh) { const members = st.ids.map(id => byId.get(id)).filter(Boolean), spare = st.setId === 'set-legacy' ? [] : SR.surplus(members, groups); if (spare.length) note('S9', `${st.name} formed with ${spare.map(label).join(', ')} that it does not need (${members.map(label).join(', ')}): it is valid without ${spare.length === 1 ? 'it' : 'them'}`, tick); }
+    // S10 the rest of the owner's own rules, rule by rule, as the Gate itself reads them after every assembly (a checkout from before the checker has no verdict). R7 surplus is S9's, at formation.
+    const verdict = legacy ? null : world.selfCheck();
+    if (verdict) for (const v of verdict.violations) { if (v.rule === 'surplus') continue; note(v.rule === 'notReady' ? 'S8' : 'S10', `[${v.ruleNo} ${v.rule}] ${v.message}`, tick); }
     return { pg, sets };
   };
   // S5: a set made before the rule, holding a filling GF sheet (as Set-1 of Paul's picture), must stay exactly as it is
@@ -153,6 +169,17 @@ if (require.main === module) (async () => {
     bad += r.fails.length;
   }
   if (opt('json')) require('node:fs').writeFileSync(opt('json'), JSON.stringify(res, null, 1));
+  // the INCREMENTAL scenario (setsim-incremental.cjs: Rose Gold sheets verified before their partners complete, groups completing one at a time, in both settings of SetRules.PARTIAL_BRIDGE)
+  if (!argv.includes('--no-incremental')) {
+    const { incremental } = require('./setsim-incremental.cjs'); let inc = 0, steps = 0, skipped = 0;
+    for (let seed = 1; seed <= +opt('days', 12); seed++) for (const bridge of ['hold', 'spread']) {
+      const r = await incremental({ root: path.resolve(opt('root') || Lib.REPO), seed, bridge });
+      if (r.skipped) { skipped++; continue; } steps += r.steps;
+      for (const f of r.fails || []) { inc++; console.log(`   INCREMENTAL seed ${f.seed} (${f.bridge}) step ${f.step} after "${f.what}": ${f.msg}`); }
+    }
+    console.log(skipped ? '   incremental scenario skipped (this checkout has no set checker)' : `   incremental scenario: ${+opt('days', 12)} days x 2 settings, ${steps} events, ${inc ? inc + ' broken' : 'every event judged by the rules: ok'}`);
+    bad += inc;
+  }
   if (!argv.includes('--measure') && bad) { console.log('FAIL: ' + bad + ' broken invariant reading(s)'); process.exit(1); }
   console.log(bad ? 'MEASURED (not asserted): ' + bad + ' broken invariant reading(s)' : 'PASS: setsim-sets: every invariant holds at every update on ' + res.length + ' seed(s)');
 })().catch(e => { console.error(e); process.exit(1); });

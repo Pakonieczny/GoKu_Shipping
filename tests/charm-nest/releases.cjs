@@ -28,13 +28,17 @@ for (const material of ['gold10k','gold14k']) {
   assert.equal(O.sheetRelease({...base,material},{seq:1,selected:{[material]:true}}).include,true);
   assert.equal(O.sheetRelease({...base,material,verified:false},{seq:1,selected:{[material]:true}}).include,false);
 }
-for (const seq of [1,2,3,4,5,6]) assert.equal(O.sheetRelease({...base,material:'rose'},{seq}).include,seq%2===0);
+// (SETFIX, Paul 17 Oct 2026: the 28 Sep rule that Rose Gold joined every even-numbered set is gone: "partial sheets being added without the green line". Rose Gold is in a set by its own tick, never by the number of the set)
+for (const seq of [1,2,3,4,5,6]) assert.deepEqual(O.sheetRelease({...base,material:'rose'},{seq}),{include:false,reason:'Joins with its own Cut Sheet press'},'Rose Gold is not released by the number of a set: '+seq);
+assert.equal(O.sheetRelease({...base,material:'rose'},{seq:3,selected:{rose:true}}).include,true,'its own tick releases it, whatever the number');
+assert.equal(O.sheetRelease({...base,material:'rose'},{seq:2,selected:{rose:false}}).include,false);
+assert.equal(O.sheetRelease({...base,material:'rose',verified:false},{seq:2,selected:{rose:true}}).include,false,'a sheet that is not verified is not released');
 const code=fs.readFileSync(require('node:path').join(__dirname,'../../charm-nest-bridge.js'),'utf8');
 const part=(name,end)=>code.slice(code.indexOf(`const ${name} = window.${name} =`),code.indexOf(end,code.indexOf(`const ${name} = window.${name} =`)));
 // (the Carry slice also holds SheetEvents, which names its store by the side of the sandbox)
-const c=vm.createContext({assert,O,console,WORKSPACE_SANDBOX:false});
+const c=vm.createContext({assert,O,SR:require('../../charm-nest-set-rules.js'),SO:require('../../charm-nest-shared-orders.js'),console,WORKSPACE_SANDBOX:false});
 vm.runInContext(`
-const window={CharmNestOrders:O}, S={cloud:{ok:true},settings:{}}, METALS=['gold','silver','rose','gold10k','gold14k'].map(key=>({key}));
+const window={CharmNestOrders:O,CharmNestSetRules:SR,SharedOrders:SO}, S={cloud:{ok:true},settings:{}}, METALS=['gold','silver','rose','gold10k','gold14k'].map(key=>({key}));
 const B={run:{runId:'run-test',releasePolicy:2,solidIncluded:{}},sets:new Map(),engrave:{items:new Map()},pool:{rows:new Map()},orders:{rows:[],byKey:new Map()}};
 const pages=[], writes=[]; let seq=1, allocations=0;
 const allSheets=()=>pages, labelOf=m=>m, today=()=> '2026-09-19', refreshAllCards=()=>{};
@@ -96,20 +100,26 @@ vm.runInContext(part('Gate','/* ═══ 21'),c);
  pages.push(page('gold'),page('silver'),page('rose'),page('gold10k'),page('gold14k'));
  await Gate.assemble(B.run);assert.equal(allocations,0,'partials/unselected solids/odd rose must not consume a set number');
  pages[0].releaseFull=true;await Gate.assemble(B.run);
- assert.equal(allocations,1);assert.equal(pages[0].setId,'set-1');assert.equal(pages[1].setId,undefined);assert.equal(pages[2].setId,undefined);
+ assert.equal(allocations,0,'a completed gold sheet alone is no set: it needs a completed silver sheet with it (Paul, 10 Oct)');
+ pages[1].releaseFull=true;await Gate.assemble(B.run);
+ assert.equal(allocations,1);assert.equal(pages[0].setId,'set-1');assert.equal(pages[1].setId,'set-1');assert.equal(pages[2].setId,undefined,'an uncut Rose Gold sheet is not in it');
  B.run.solidIncluded.gold10k=true;await Gate.assemble(B.run);assert.equal(pages[3].setId,'set-1');assert.equal(pages[4].setId,undefined);
  const n=writes.length;await Gate.assemble(B.run);assert.equal(writes.length,n,'repeat checkpoint cannot duplicate outputs');
  B.run.solidIncluded.gold10k=false;await Gate.assemble(B.run);assert.equal(pages[3].setId,null);assert.equal(pages[3].draft,true);assert(![...B.sets.values()][0].sheetIds.includes('gold10k-id'));
- B.sets.clear();pages.splice(0,pages.length,page('rose'));await Gate.assemble(B.run);assert.equal(pages[0].seq,2,'even set accepts accumulated rose');
- B.sets.clear();pages.splice(0,pages.length,page('silver',true));
+ // a Rose Gold sheet alone starts no set, and the number of a set takes it nowhere (SETFIX: it used to join every even-numbered set)
+ B.sets.clear();pages.splice(0,pages.length,page('rose'));{const made=allocations;await Gate.assemble(B.run);assert.equal(pages[0].setId,undefined);assert.equal(allocations,made,'a Rose Gold sheet never starts a set');}
+ B.sets.clear();pages.splice(0,pages.length,page('silver',true),page('gold',true));
  const write=Sets.onSheetSaved; Sets.onSheetSaved=async()=>{throw new Error('test upload interrupted')};
  await assert.rejects(Gate.assemble(B.run),/interrupted/);assert.equal(pages[0].draft,true);assert.equal(pages[0].setId,undefined);
  Sets.onSheetSaved=write;await Promise.all([Gate.assemble(B.run),Gate.assemble(B.run)]);
- assert.equal([...B.sets.values()][0].sheetIds.length,1,'failed publication can retry; concurrent checkpoints serialize without duplicate membership');
+ assert.equal([...B.sets.values()][0].sheetIds.length,2,'failed publication can retry; concurrent checkpoints serialize without duplicate membership');
  // a sheet that leaves the set does not hand its number to the next one while a later sheet still carries that number
- B.sets.clear();const g1={...page('gold',true),sheetId:'g1'},g2={...page('gold',true),sheetId:'g2'},g3={...page('gold',true),sheetId:'g3'};
- pages.splice(0,pages.length,g1,g2);await Gate.assemble(B.run);assert.deepEqual([g1.sheetIndex,g2.sheetIndex],[1,2]);
- g1.releaseFull=false;await Gate.assemble(B.run);assert.equal(g1.setId,null,'the first sheet left the set');
+ // (g1, g2 and g3 share orders, so they are one unit and one set: g1 and g2 on order 7001, g2 and g3 on order 7002; the silver sheet makes the minimum)
+ B.sets.clear();const mk=(id,pool,full=true)=>({...page('gold',full),sheetId:id,charms:pool.map(p=>({id:id+p,poolId:p,order:p.split('_')[0]})),placements:pool.map(p=>({id:id+p}))});
+ const g1=mk('g1',['7001_1_1']),g2=mk('g2',['7001_1_2','7002_1_1']),g3=mk('g3',['7002_1_2']),s1={...page('silver',true),sheetId:'s1'};
+ pages.splice(0,pages.length,g1,g2,s1);await Gate.assemble(B.run);assert.deepEqual([g1.sheetIndex,g2.sheetIndex],[1,2]);
+ g1.verification={ok:false};await Gate.assemble(B.run);   /* (its layout is not verified any more: it goes back out, as a sheet that no longer qualifies does; a PARTIAL sheet that shares an order with the set stays, as before) */
+ assert.equal(g1.setId,null,'the first sheet left the set');
  pages.push(g3);await Gate.assemble(B.run);assert.equal(g3.sheetIndex,3,'the next sheet takes a new number, not the one sheet 2 still carries: '+g3.sheetIndex);
  })()`,c);
  vm.runInContext(`const Session={copy:x=>structuredClone(x)};`,c); c.structuredClone=structuredClone;
@@ -180,5 +190,5 @@ vm.runInContext(part('Gate','/* ═══ 21'),c);
    if(refuse){await assert.rejects(sets.window.Sets.ensure('r','dispatch'),/cannot be completed/);assert.deepEqual(calls,['save set-2 complete'],'no set is numbered after a set the server has not recorded');}
    else {const next=await sets.window.Sets.ensure('r','dispatch');assert.equal(next.setId,'set-3');assert.deepEqual(calls,['save set-2 complete','number after set-2']);}
  }
- console.log('releases OK · strict partial holds, verification, manual solids, rose parity, idempotent assembly, deselection, carry-forward approvals, duplicate-cut prevention, sheet numbering, undo, run lines saved before a commit and the committed set saved before the next is numbered');
+ console.log('releases OK · strict partial holds, verification, manual solids, Rose Gold by its own tick (no even-numbered rule), idempotent assembly, deselection, carry-forward approvals, duplicate-cut prevention, sheet numbering, undo, run lines saved before a commit and the committed set saved before the next is numbered');
 })().catch(e=>{console.error(e);process.exitCode=1});

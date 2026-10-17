@@ -97,6 +97,44 @@
   /** The group one sheet belongs to: { ids, orders } (just itself when it shares nothing). */
   function groupOf(sheets, id) { return groups(sheets).find(g => g.ids.includes(id)) || { ids: [id], orders: [] }; }
 
+  /** THE GROUPS A SET IS FORMED FROM (SETFIX, Paul 17 Oct 2026: his Set 2 held 14 sheets, three unrelated groups and a loose sheet glued into one).
+   *  `groups` above ties sheets through ANY sheet, so one partial drafts' orders chained every group it touched into one component, and the cardinal rule then dragged the whole
+   *  chain into a set that had already formed. Here the sheets that cannot be in a set yet (`ends`: a partial GF/SS sheet outside every set) are END nodes: they never connect two groups
+   *  and never seed a home. Every other sheet connects as before (a Rose Gold partner outside a set still ties the sheets it shares orders with: the cardinal rule, R9).
+   *  An end sheet is attached to the groups it shares an order with (`ends`), so those groups are still held whole until it is full (SETPART, charm-nest-set-rules.js groupWait).
+   *    bridge 'hold'   (the rule as written, default): an end sheet that touches several groups is attached to all of them: they all wait whole until it is full, then (it is a
+   *                    sheet like any other) they are one group and one set.
+   *    bridge 'spread' an end sheet that touches two or more groups is attached to none: each group is settled on its own now, and the end sheet is listed in `bridges`
+   *                    (it and its mixed orders are flagged for a person to take those orders off; once it is full the groups it joins are spread over several sets).
+   *  → { groups: [{ ids, orders, ends }], bridges: [{ id, groups: [[sheetId]], orders }] }
+   *    ids: the group's own sheets, then the end sheets attached to it; a lone sheet whose only order mate is an end sheet is a group of its own (so it waits whole too). */
+  function formation(sheets, ends, bridge) {
+    const endSet = new Set([].concat(ends || []).map(String)), spread = bridge === 'spread';
+    const by = index(sheets), cores = sheets.filter(s => !endSet.has(s.id)), parent = new Map(cores.map(s => [s.id, s.id]));
+    const find = x => { let r = x; while (parent.get(r) !== r) r = parent.get(r); while (parent.get(x) !== r) { const n = parent.get(x); parent.set(x, r); x = n; } return r; };
+    const shared = [];
+    for (const [oid, m] of by) {
+      if (!spans(m)) continue;
+      const ids = [...m.keys()], core = ids.filter(i => !endSet.has(i)), end = ids.filter(i => endSet.has(i));
+      shared.push({ oid, core, end });
+      for (let i = 1; i < core.length; i++) { const a = find(core[0]), b = find(core[i]); if (a !== b) parent.set(a, b); }
+    }
+    const comp = new Map();
+    for (const s of cores) { const r = find(s.id); let c = comp.get(r); if (!c) comp.set(r, c = { ids: [], orders: new Set(), ends: new Set() }); c.ids.push(s.id); }
+    const touch = new Map();
+    for (const { oid, core, end } of shared) {
+      if (!core.length) continue;
+      const c = comp.get(find(core[0])); c.orders.add(oid);
+      for (const e of end) { let t = touch.get(e); if (!t) touch.set(e, t = new Map()); t.set(find(core[0]), (t.get(find(core[0])) || new Set()).add(oid)); }
+    }
+    const bridges = [];
+    for (const [e, roots] of touch) {
+      if (spread && roots.size > 1) { bridges.push({ id: e, groups: [...roots.keys()].map(r => comp.get(r).ids.slice()), orders: [...new Set([...roots.values()].flatMap(s => [...s]))].sort() }); continue; }
+      for (const [r, os] of roots) { const c = comp.get(r); c.ends.add(e); for (const o of os) c.orders.add(o); }
+    }
+    return { groups: [...comp.values()].filter(c => c.ids.length > 1 || c.ends.size).map(c => ({ ids: c.ids.concat([...c.ends]), orders: [...c.orders].sort(), ends: [...c.ends] })), bridges };
+  }
+
   /**
    * The multi-piece orders that would be split if the sheets `moving` (ids; they travel together) end up in set `dest`
    * (a set id, 'new' for a set not made yet, or null for no set) while every other sheet stays where it is. An order is
@@ -221,7 +259,7 @@
     if (one && items[0].words) return `Order ${items[0].orderId} ${items[0].words}: sheets that share a multi-piece order stay in the same set.`;
     return `${one ? 'Order ' + items[0].orderId + ' has pieces' : items.length + ' orders have pieces'} on ${there.join(', ')}${here ? ' and on ' + here : ''}: sheets that share a multi-piece order stay in the same set.`;
   }
-  const core = { orderOfKey, parseKey, describe, sheetOf, sheetLabelOf, effectiveSet, fixedWhy, index, spans, groups, groupOf, between, composition, sentence, committedSet, CODE };
+  const core = { orderOfKey, parseKey, describe, sheetOf, sheetLabelOf, effectiveSet, fixedWhy, index, spans, groups, groupOf, formation, between, composition, sentence, committedSet, CODE };
 
   /* ── the page's side ────────────────────────────────────────────────────────────────────────────────────────── */
   const hooks = {

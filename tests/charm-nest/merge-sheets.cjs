@@ -15,7 +15,7 @@
 //   node tests/charm-nest/merge-sheets.cjs     (PW_DIR: playwright-core's folder, CHROMIUM: the browser)
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const root = path.join(__dirname, '../..');
-const Ops = require(path.join(root, 'charm-nest-operations.js')), O = require(path.join(root, 'charm-nest-orders.js'));
+const Ops = require(path.join(root, 'charm-nest-operations.js')), O = require(path.join(root, 'charm-nest-orders.js')), SR = require(path.join(root, 'charm-nest-set-rules.js'));
 const source = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8'), start = source.indexOf('const Gate ='), end = source.indexOf('/* ═══ 21', start);
 const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
 const slice = (from, to) => { const a = html.indexOf(from), b = html.indexOf(to, a); assert(a >= 0 && b > a, 'slice ' + from); return html.slice(a, b); };
@@ -27,7 +27,10 @@ function world() {
   const run = { runId: 'r', releasePolicy: 2, status: 'processed', step: 'complete', solidIncluded: {}, errors: [], sheets: {}, sheetHolds: {} };
   const S = { mode: 'nest', settings: {}, cloud: { ok: true }, library: { rows: [] }, sheets: {} };
   for (const m of ['gold10k', 'gold14k']) S.sheets[m] = { pages: [], active: 0, cardEl: null };
-  const pagesOf = m => S.sheets[m].pages, allSheets = () => [...pagesOf('gold10k'), ...pagesOf('gold14k')];
+  // (SETFIX, Paul 17 Oct 2026: the assembly needs the set rules, and a 10K or 14K sheet never starts a set (R4): a completed gold and a completed silver sheet, `base`, make the set the 14K sheets join)
+  const base = ['gold', 'silver'].map((metal, i) => ({ metal, page: 8 + i, runId: 'r', sheetId: `${metal}-base`, draft: true, status: 'complete', outputs: { ai: 'a' }, persistedDone: true, verification: { ok: true }, releaseFull: true, cloud: { ai: 'u' },
+    charms: [{ id: `base${i}`, poolId: `p-base${i}`, order: `9${i}0` }], placements: [{ id: `base${i}` }], rejects: [], backPool: [] }));
+  const pagesOf = m => S.sheets[m].pages, allSheets = () => [...pagesOf('gold10k'), ...pagesOf('gold14k'), ...base];
   let nextId = 0;
   const charm = (id, order, orderDate) => ({ id, order, orderDate, poolId: 'p-' + id, pinned: { cxPt: 1, cyPt: 1, angle: 0 }, arrivalPin: true, thumb: 't' });
   const sheet = (metal, page, charms, more = {}) => {
@@ -65,7 +68,7 @@ function world() {
     }, 60);
   };
   const ctx = {
-    window: { CharmNestOrders: O, CharmNestOperations: ops }, B: { run, sets: new Map() }, S, O, setTimeout, console, allSheets, pagesOf, refreshAllCards() {}, Session: { schedule() {} },
+    window: { CharmNestOrders: O, CharmNestOperations: ops, CharmNestSetRules: SR }, B: { run, sets: new Map() }, S, O, setTimeout, console, allSheets, pagesOf, refreshAllCards() {}, Session: { schedule() {} },
     document: { getElementById: () => null }, toast: (t) => calls.toasts.push(t), agent() {}, sheetDirty, removePage, startNest, activeCharms: sh => sh.charms.filter(c => !c.excluded),
     activePage: m => S.sheets[m].pages[S.sheets[m].active], heldForResume: () => false,
     Pool: { update: async () => {} }, Orders: { rows: () => [] }, Engrave: { items: () => new Map(), saveSheetBacks: async () => {} },
@@ -90,7 +93,7 @@ const ids = pages => [...pages.flatMap(p => [...p.charms.map(c => c.id)])].sort(
     const k1 = sheet('gold10k', 1, [charm('x', '200', 1)]), k2 = sheet('gold10k', 2, [charm('y', '201', 2)]);
     // both 14K sheets in the current set, with their QR labels
     await Gate.assemble(run);
-    assert.deepEqual(w.sets[0].sheetIds.sort(), ['gold14k-s1', 'gold14k-s2'], 'both 14K sheets start in the set');
+    assert.deepEqual(w.sets[0].sheetIds.filter(i => /^gold14k/.test(i)).sort(), ['gold14k-s1', 'gold14k-s2'], 'both 14K sheets start in the set (beside the minimum that formed it)');
     const before = ids(pagesOf('gold14k')), beforeK = ids(pagesOf('gold10k'));
     const plan = Gate.mergePlan('gold14k');
     assert.equal(plan.target, s1); assert.deepEqual(plan.sources, [s2]); assert.equal(plan.moving, 3);
@@ -119,7 +122,7 @@ const ids = pages => [...pages.flatMap(p => [...p.charms.map(c => c.id)])].sort(
     // the set takes Sheet 1 back, with a new label, once it is nested and verified
     s1.outputs = { ai: 'a' }; s1.persistedDone = true; s1.dirty = false;
     await Gate.assemble(run);
-    assert.deepEqual(w.sets[0].sheetIds, ['gold14k-s1'], 'Sheet 1 is back in the set');
+    assert.deepEqual(w.sets[0].sheetIds.filter(i => /^gold14k/.test(i)), ['gold14k-s1'], 'Sheet 1 is back in the set');
     // too little room: what does not fit stays on Sheet 2, at the spot it had there, never on a new sheet
     const t2 = sheet('gold14k', 2, [charm('f', '105', 6), charm('g', '106', 7)]), gWas = t2.placements.find(p => p.id === 'g');
     const layout2 = JSON.stringify(s1.placements), retired = run.intakeRecovery.retire.length;

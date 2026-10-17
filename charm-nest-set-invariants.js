@@ -21,8 +21,11 @@
  *     rule 'numbering'           R14 two sheets of one metal in one set carry the same number
  *     rule 'unformed'            R5  completed sheets wait outside every set although a completed GF and a completed SS sheet among them make a valid set (opts.unformed:false switches it off)
  *     rule 'membership'          bookkeeping: a sheet the set lists does not exist / is archived / is a draft / says it is in another set / is in two sets
- *   partners = [{ set, setName, sheet, name, kind:'notReady'|'partial', because:[orderId], with:[label], reasons:[string] }]: a sheet outside the set that shares an order with it and
- *     cannot join yet (R10). Not a violation: the set is right without it; it cannot be approved for laser cutting until that sheet is in it.
+ *   partners = [{ set, setName, sheet, name, kind:'notReady'|'partial'|'bridge', because:[orderId], with:[label], reasons:[string] }]: a sheet outside the set that shares an order with it and
+ *     cannot join yet (R10). Not a violation: the set is right without it; it cannot be approved for laser cutting until that sheet is in it. kind 'bridge' (SetRules.PARTIAL_BRIDGE 'spread' only): a
+ *     partial sheet with orders on several groups, which holds none of them: a person takes those orders off.
+ *   GROUPS (SETFIX, Paul 17 Oct 2026): the sheets that share a multi-piece order are read by SharedOrders formation: a partial GF/SS sheet outside every set is an END of its groups (it holds them
+ *     whole, it never chains two groups together or makes the set they join); every other sheet, a Rose Gold partner outside a set included, ties the sheets it shares orders with (R9).
  *   warnings = [{ rule:'orderSplit', ruleNo:'R16', ... }]: a multi-piece order spread over two sheets of one colour (a nesting fault that makes the chains); never fails ok.
  *
  * INPUT (page objects, Library rows and fixtures are all read; nothing is written, no page state, no network):
@@ -137,13 +140,15 @@
       if (rec.archived) continue;
       const n = toShared(rec, label, inSet); if (n) norm.push(n);
     }
-    const groups = S.groups(norm), groupOfId = new Map(), normById = new Map(norm.map(n => [n.id, n]));
-    for (const g of groups) for (const id of g.ids) groupOfId.set(id, g);
-    return { R, S, opts: opts || {}, recs, setList, setOf, twice, norm, normById, groups, groupOfId, name: id => nameById.get(id) || id };
+    const ends = [...recs.values()].filter(r => !r.archived && ['GF', 'SS'].includes(R.metalClass(r)) && R.isPartial(r) && !setOf.has(r.id)).map(r => r.id);
+    const F = typeof S.formation === 'function' ? S.formation(norm, ends, R.PARTIAL_BRIDGE) : { groups: S.groups(norm), bridges: [] };
+    const groups = F.groups, bridges = F.bridges, groupOfId = new Map(), normById = new Map(norm.map(n => [n.id, n]));
+    for (const g of groups) for (const id of g.ids) if (!groupOfId.has(id)) groupOfId.set(id, g);
+    return { R, S, opts: opts || {}, recs, setList, setOf, twice, norm, normById, groups, bridges, groupOfId, name: id => nameById.get(id) || id };
   }
 
   function evaluate(setsIn, sheetsIn, opts) {
-    const C = context(setsIn, sheetsIn, opts), { R, S, recs, setList, setOf, groups, groupOfId } = C, o = C.opts;
+    const C = context(setsIn, sheetsIn, opts), { R, S, recs, setList, setOf, groups, bridges, groupOfId } = C, o = C.opts;
     const violations = [], partners = [], warnings = [], notes = [], summary = [], seen = new Set();
     const add = (rule, st, sheets, message, extra) => {
       const id = `${rule}:${st ? st.id : '-'}:${sheets.join('+')}`; if (seen.has(id)) return; seen.add(id);
@@ -206,15 +211,21 @@
           const cls = R.metalClass(r), n = C.normById.get(id), because = g.orders.filter(oid => n && n.pieces.some(p => p.orderId === oid)), withNames = mine.map(C.name);
           if (cls === 'GF' || cls === 'SS') {
             if (R.isPartial(r)) {
-              partners.push({ set: st.id, setName: st.name, sheet: id, name: C.name(id), kind: 'partial', because, with: withNames, reasons: [`it is not full yet${R.fillWords(r)}: it joins ${st.name} once it is full`] }); row.partners++;
+              if (!partners.some(x => x.set === st.id && x.sheet === id && x.kind === 'partial')) { partners.push({ set: st.id, setName: st.name, sheet: id, name: C.name(id), kind: 'partial', because, with: withNames, reasons: [`it is not full yet${R.fillWords(r)}: it joins ${st.name} once it is full`] }); row.partners++; }
               if (!pend) add('partialPartner', st, mine.concat(id), `${C.name(id)} is not full yet${R.fillWords(r)} and shares ${orderWords(because)} with ${and(withNames)}: the sheets that share an order with a partial sheet wait outside any set until it is full, so ${st.name} should not have been formed with them`, { partial: id, orders: because });
             } else add('cardinal', st, mine.concat(id), `${C.name(id)} is not in any set but shares ${orderWords(because)} with ${and(withNames)} in ${st.name}: sheets that share a multi-piece order must be in the same set (it is completed, so it joins ${st.name})`, { outside: id, orders: because });
           } else if (GOLD_FAMILY.includes(cls)) {
             const gaps = goldGaps(r);
-            if (gaps.length) { partners.push({ set: st.id, setName: st.name, sheet: id, name: C.name(id), kind: 'notReady', because, with: withNames, reasons: gaps }); row.partners++; }
+            if (gaps.length) { if (!partners.some(x => x.set === st.id && x.sheet === id && x.kind === 'notReady')) { partners.push({ set: st.id, setName: st.name, sheet: id, name: C.name(id), kind: 'notReady', because, with: withNames, reasons: gaps }); row.partners++; } }
             else add('cardinal', st, mine.concat(id), `${C.name(id)} is not in any set but shares ${orderWords(because)} with ${and(withNames)} in ${st.name}, and nothing stops it joining (its green line is cut and its back engraving is approved): add it to ${st.name}`, { outside: id, orders: because });
           }
         }
+      }
+
+      // ── SetRules.PARTIAL_BRIDGE 'spread': a partial sheet with orders on several groups holds none of them; with this set's sheets among them it is named, not a fault ──
+      for (const b of bridges) {
+        const mine = b.groups.filter(ids => ids.some(i => inside.has(i))).flat().filter(i => inside.has(i)); if (!mine.length) continue;
+        partners.push({ set: st.id, setName: st.name, sheet: b.id, name: C.name(b.id), kind: 'bridge', because: b.orders, with: mine.map(C.name), reasons: [`it is not full yet${R.fillWords(recs.get(b.id))} and has orders on sheets of ${b.groups.length} different groups: take those orders off a sheet so that no order is spread over two sets`] }); row.partners++;
       }
 
       // ── (f) R6: a sheet joined after the set had formed ──
@@ -301,14 +312,14 @@
       why.set(r.id, R.isPartial(r) ? R.partialWhy(r) : gaps.length ? `a ${WORD[R.metalClass(r)]} sheet joins a set by its own press: ${gaps.join(' and ')}` : 'it shares no order with a set that has formed: a person adds it (Include / Cut Sheet)');
     }
     const waiting = [...why].map(([id, w]) => ({ id, name: C.name(id), ...(C.recs.get(id).sheetIndex ? { was: nameOf(C.recs.get(id), 'was') } : {}), why: w }));
-    return { sets, waiting, held: heldGroups, partners: evaluate(sets, sheetsIn, opts).partners };
+    return { sets, waiting, held: heldGroups, bridges: C.bridges.map(b => ({ id: b.id, name: C.name(b.id), groups: b.groups, orders: b.orders })), partners: evaluate(sets, sheetsIn, opts).partners };
   }
 
   /** One plain line per violation, partner and warning (a log, a failing test). */
   function explain(result) {
     const out = [];
     for (const v of result.violations) out.push(`[${v.ruleNo}${v.letter ? ' (' + v.letter + ')' : ''} ${v.rule}] ${v.message}`);
-    for (const p of result.partners) out.push(`[R10 partner] ${p.setName}: add ${p.name} (${p.reasons.join('; ')}), it shares ${orderWords(p.because)} with ${and(p.with)}`);
+    for (const p of result.partners) out.push(p.kind === 'bridge' ? `[R11 bridge] ${p.name} (${p.reasons.join('; ')}) shares ${orderWords(p.because)} with ${and(p.with)} in ${p.setName}` : `[R10 partner] ${p.setName}: add ${p.name} (${p.reasons.join('; ')}), it shares ${orderWords(p.because)} with ${and(p.with)}`);
     for (const w of result.warnings) out.push(`[${w.ruleNo} ${w.rule}] ${w.message}`);
     return out;
   }

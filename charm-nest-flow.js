@@ -359,8 +359,8 @@
     const name = sheetName(s), target = to.newSet ? 'a new set' : setName(T);
     plan.auto.push({ key: 'membership', label: `${name} added to ${target}`, detail: cutDone ? 'Its green line is already cut: it only joins, and no second cut is recorded.' : full ? 'This sheet is full: it takes the rest of the metal whole, so it gets no green dash line and no cut is recorded.' : `Joining a set is the Cut Sheet press: ${line ? 'its green dash line is drawn and dated, and ' : ''}the cut is recorded, and a recorded cut is permanent.` });
     plan.auto.push({ key: 'qrLabel', label: `QR label made for ${target}`, detail: 'The label names the set and the sheet, and covers every order on it.', stamp: true });
-    plan.notes.push('Rose Gold joins a set by metal, as Cut Sheet does: every Rose Gold sheet of this run joins the same set (their own green lines are not added).');
-    plan.confirm.push({ key: 'roseSet', label: `Add ${name} to ${target}?`, detail: cutDone ? 'Rose Gold joins a set by metal. Its green line is already cut, so no line is added and no cut is recorded.' : full ? 'Rose Gold joins a set the way Cut Sheet does. This sheet is full, so no green dash line is added and no cut is recorded.' : 'Rose Gold joins a set the way Cut Sheet does, with its green dash line. The cut is recorded with it, and a recorded cut is permanent.' });
+    plan.notes.push('Rose Gold joins a set one sheet at a time, as Cut Sheet does: only this sheet is added (a Rose Gold sheet that shares an order with it comes with it, never the other Rose Gold sheets of the run).');   // (SETFIX, Paul 17 Oct 2026: it used to say that every Rose Gold sheet of the run joined the same set)
+    plan.confirm.push({ key: 'roseSet', label: `Add ${name} to ${target}?`, detail: cutDone ? 'Rose Gold joins a set one sheet at a time. Its green line is already cut, so no line is added and no cut is recorded.' : full ? 'Rose Gold joins a set the way Cut Sheet does. This sheet is full, so no green dash line is added and no cut is recorded.' : 'Rose Gold joins a set the way Cut Sheet does, with its green dash line. The cut is recorded with it, and a recorded cut is permanent.' });
     if (line) plan.confirm.push(roseLineConfirm([s], env));
     plan.steps.push({ type: 'roseJoin', sheetId: v.id, setId: T ? T.setId : null, newSet: !!to.newSet, line, full, ...(cutDone ? { joinOnly: true } : {}), key: 'membership' });
   }
@@ -710,7 +710,7 @@
     const rec = state.sheets[m.id] || { id: m.id, metal: 'rose' }, l = joinableNow(m.id) || {}, R = roseAnswer(env), e = R && (R.sheets || []).find(x => x && x.sheetId === m.id);
     const cutDone = !!rec.roseCutAt, full = !cutDone && !!(l.rose && l.rose.full), line = !full && !cutDone && needsRoseLine(rec) && !(R && !(e && e.needsLine));
     if (line && roseBlocked(plan, [rec], env)) return;
-    plan.confirm.push({ key: 'roseSet', label: `Add ${m.label} to ${target}?`, detail: cutDone ? `${m.label} shares an order with the sheet you moved, so it joins too. Rose Gold joins a set by metal; its green line is already cut.` : full ? `${m.label} shares an order with the sheet you moved, so it joins too. It is full, so no green dash line is added and no cut is recorded.` : `${m.label} shares an order with the sheet you moved, so it joins too, the way Cut Sheet does: with its green dash line, and the cut is recorded (it is permanent).` });
+    plan.confirm.push({ key: 'roseSet', label: `Add ${m.label} to ${target}?`, detail: cutDone ? `${m.label} shares an order with the sheet you moved, so it joins too. Its green line is already cut.` : full ? `${m.label} shares an order with the sheet you moved, so it joins too. It is full, so no green dash line is added and no cut is recorded.` : `${m.label} shares an order with the sheet you moved, so it joins too, the way Cut Sheet does: with its green dash line, and the cut is recorded (it is permanent).` });
     if (line) {
       const c = plan.confirm.find(x => x.key === 'roseLine'), more = roseLineConfirm([rec], env);
       if (c) { c.sheetIds = [...new Set((c.sheetIds || []).concat(more.sheetIds))]; c.count = c.sheetIds.length; if (more.sheets) c.sheets = (c.sheets || []).concat(more.sheets); } else plan.confirm.push(more);
@@ -1208,7 +1208,7 @@
       try {
         if (o.full || o.joinOnly) {          // (a full sheet has no cut to record; a sheet whose green line is already cut only joins: no second cut, Paul 12 Oct)
           if (!G || !G.changeMembership) throw new Error('Sets are not loaded yet · try again in a moment');
-          await G.changeMembership('rose', true);
+          await G.changeMembership('rose', true, sh);   // (SETFIX: this sheet only; the run-wide Rose Gold tick is gone)
           if (!inSetNow()) throw new Error('Not added: ' + ((G.policy && G.policy(sh) && G.policy(sh).reason) || 'this sheet is not in a set yet'));
         } else await RS.record(sh, { by: o.by });
       } catch (e) { sh._roseError = e.message; return { ok: false, error: `${name}: ${e.message}` }; }

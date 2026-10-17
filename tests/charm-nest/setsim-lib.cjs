@@ -227,9 +227,11 @@ function setWorld(root, extraStubs = '') {
   const code = read(root, 'charm-nest-bridge.js'), gateAt = code.indexOf('const Gate = window.Gate ='), GATE = code.slice(gateAt, code.indexOf('/* ═══ 21', gateAt));
   if (gateAt < 0 || !GATE) throw new Error('setsim: cannot find the Gate in the bridge');
   const RUN = 'run-1', writes = [];
-  const c = vm.createContext({ O, SO, SR, SN, console, RUN, allocations: 0, writes });
+  // (SETFIX, Paul 17 Oct 2026: the owner's rules as a checker, charm-nest-set-invariants.js, run by the Gate itself after every assembly; a checkout from before it has no checker and simply has no verdict)
+  let II = null; try { II = require(path.join(root || REPO, 'charm-nest-set-invariants.js')); } catch (_) { II = null; }
+  const c = vm.createContext({ O, SO, SR, SN, II, console, RUN, allocations: 0, writes });
   vm.runInContext(`
-const window={CharmNestOrders:O,SharedOrders:SO,CharmNestSetRules:SR,CharmNestSheetName:SN}, S={cloud:{ok:true},settings:{}}, METALS=['gold','silver','rose','gold10k','gold14k'].map(key=>({key}));
+const window={CharmNestOrders:O,SharedOrders:SO,CharmNestSetRules:SR,CharmNestSheetName:SN,CharmNestSetInvariants:II}, S={cloud:{ok:true},settings:{}}, METALS=['gold','silver','rose','gold10k','gold14k'].map(key=>({key}));
 const CharmNestSheetName=SN;
 const B={run:{runId:RUN,releasePolicy:2,solidIncluded:{}},sets:new Map(),engrave:{items:new Map()},pool:{rows:new Map()},orders:{rows:[],byKey:new Map()}};
 const pages=[]; let seq=1;
@@ -258,6 +260,12 @@ ${extraStubs}
       }
     },
     gatePages: () => vm.runInContext('pages', c),
+    /** a page the Gate holds already built (the incremental scenario adds sheets one by one) */
+    addPage(pg) { c.__p = [pg]; vm.runInContext('pages.push(...__p)', c); return pg; },
+    /** the Gate's own self-check (the owner's rules, rule by rule), or null when this checkout has none */
+    selfCheck: () => II ? JSON.parse(vm.runInContext('JSON.stringify(Gate.selfCheck ? Gate.selfCheck(B.run) : null)', c)) : null,
+    /** the sheets as the checker reads them (Gate.invariantInput), or null */
+    checkerInput: () => II ? JSON.parse(vm.runInContext('JSON.stringify(Gate.invariantInput ? Gate.invariantInput(B.run) : null)', c)) : null, II,
     assemble: () => vm.runInContext('Gate.assemble(B.run)', c),
     sets: () => JSON.parse(vm.runInContext('JSON.stringify([...B.sets.values()].map(s=>({name:s.name,seq:s.seq,setId:s.setId,ids:s.sheetIds.slice()})))', c)),
     allocations: () => c.allocations, writes,
