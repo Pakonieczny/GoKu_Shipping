@@ -1384,10 +1384,28 @@ const Orders = window.Orders = (() => {
   let mapsSig = "", mapsRead = [], mapsCut = "", customListAt = 0, customBase = null, mapsSeq = 0, mapsApplied = 0;
   const mapReply = {};   // the last whole answer of each learned map, with the signature it came with
   let mapAsk = 0;
+  /* COST (Oct 2026): a map whose signature moved (a person's answer, by anyone, on any computer) was read whole again by every tab: about
+     3,000 + 2,000 + 300 documents. The answer held is sent as `since` (its signature and how many documents it was read from), and the cloud
+     answers with what was written since (`changes`, by key: null takes one away), which is put over a copy of the answer held, the same shape
+     a whole read gives. A removal, or anything the cloud cannot vouch for, answers the whole map as before. */
+  function withChanges(key, had, changes) {
+    if (key === "nd") {
+      const rows = new Map(((had.list && had.list.rows) || []).map(x => [x.id, x]));
+      for (const [id, v] of Object.entries(changes || {})) { if (v) rows.set(id, v); else rows.delete(id); }
+      const list = [...rows.values()];
+      return Object.assign({}, had, { list: { patterns: list.filter(x => x.pattern).map(x => x.pattern), skus: list.filter(x => x.sku).map(x => x.sku), rows: list } });
+    }
+    const field = key === "al" ? "aliases" : "maps", next = Object.assign({}, had[field]);
+    for (const [id, v] of Object.entries(changes || {})) { if (v) next[id] = v; else delete next[id]; }
+    return Object.assign({}, had, { [field]: next });
+  }
   async function readMap(key, op) {
-    const had = mapReply[key], at = ++mapAsk, r = await api("charmNestLibrary", had && had.sig ? { op, ifSig: had.sig } : { op });
+    const had = mapReply[key], at = ++mapAsk;
+    const since = had && had.sig && Array.isArray(had.n) && !had.r.truncated ? { sig: had.sig, n: had.n } : null;
+    const r = await api("charmNestLibrary", had && had.sig ? Object.assign({ op, ifSig: had.sig }, since ? { since } : {}) : { op });
     if (r && r.unchanged && had) return (mapReply[key] || had).r;   // (the newest whole answer held: one that came back meanwhile is newer)
-    if (r && r.sig) { if (!mapReply[key] || at > mapReply[key].at) mapReply[key] = { sig: r.sig, r, at }; } else delete mapReply[key];
+    if (r && r.since && since && r.sig && Array.isArray(r.n)) { const whole = Object.assign(withChanges(key, had.r, r.changes), { sig: r.sig, n: r.n }); if (!mapReply[key] || at > mapReply[key].at) mapReply[key] = { sig: r.sig, n: r.n, r: whole, at }; return whole; }
+    if (r && r.sig) { if (!mapReply[key] || at > mapReply[key].at) mapReply[key] = { sig: r.sig, n: Array.isArray(r.n) ? r.n : null, r, at }; } else delete mapReply[key];
     return r;
   }
   if (!B.maps.customDone) B.maps.customDone = {};
@@ -2771,17 +2789,24 @@ const Master = window.Master = (() => {
         const sig = x => JSON.stringify(x || null), MC = window.CharmNestMasterCache;
         // a page with nothing yet starts from the copy kept on this computer; it is believed only once the cloud's signatures say nothing changed
         let held = null; if (MC && !B.master.index && !o.force) { try { held = await MC.read(); } catch (_) { held = null; } }
-        const base = held || (o.quiet && B.master.index ? B.master : null);
+        // (COST, Oct 2026: a foreground load that already holds the index checks its signature too, where it read all of it again; load(true) still does)
+        const base = held || (!o.force && B.master.index ? B.master : null);
         const first = base ? await api("charmNestLibrary", base.filesSig ? { op: "masterListFiles", ifFilesSig: base.filesSig } : { op: "masterListFiles" }, held && !o.quiet ? { label: "Checking the charm library" } : quiet) : null;   // (the file records are sent again only when they changed)
         const unchanged = !!(first && first.index && sig(first.index) === sig(base.index));
-        const [ix, fl] = await Promise.all([unchanged ? null : api("charmNestLibrary", { op: "masterList", limit: 3000 }, Object.assign({ label: "Loading the charm library", all: "entries" }, quiet)), first || api("charmNestLibrary", { op: "masterListFiles" }, quiet)]);
-        if (ix) { B.master.entries = new Map((ix.entries || []).map(e => [e.sku, e])); B.master.index = ix.index || null; changed = true; }
-        else if (held) { B.master.entries = new Map(held.entries.map(e => [e.sku, e])); B.master.index = held.index; changed = true; }   // (the signatures agree: the copy is the index)
+        /* COST (Oct 2026): a signature that moved read all ~7,000 entries again on every tab. A copy that knows how many documents it stands
+           for (docs: its entries and shells, as read) asks only for what was written since its stamps (charmNestLibrary masterListSince);
+           a removal, or anything the cloud cannot vouch for, answers `full` and the index is read whole as before. */
+        const since = !unchanged && base && base.index && base.index.indexedAt != null && Number.isFinite(base.docs) ? { indexedAt: base.index.indexedAt, updatedAt: base.index.updatedAt, shape: base.index.shape, docs: base.docs } : null;
+        const step = since ? await api("charmNestLibrary", { op: "masterList", since }, quiet).catch(() => null) : null, delta = step && step.since && step.index && Array.isArray(step.entries) ? step : null;
+        const [ix, fl] = await Promise.all([unchanged || delta ? null : api("charmNestLibrary", { op: "masterList", limit: 3000 }, Object.assign({ label: "Loading the charm library", all: ["entries", "shells"] }, quiet)), first || api("charmNestLibrary", { op: "masterListFiles" }, quiet)]);
+        if (ix) { B.master.entries = new Map((ix.entries || []).map(e => [e.sku, e])); B.master.index = ix.index || null; B.master.docs = ix.index && Array.isArray(ix.shells) ? (ix.entries || []).length + ix.shells.length : null; changed = true; }
+        else if (delta) { const m = new Map(base === held ? held.entries.map(e => [e.sku, e]) : B.master.entries); for (const e of delta.entries) m.set(e.sku, e); B.master.entries = m; B.master.index = delta.index; B.master.docs = delta.index.count; changed = true; }   // (the cloud counted no removal: the copy and what was written since are the index)
+        else if (held) { B.master.entries = new Map(held.entries.map(e => [e.sku, e])); B.master.index = held.index; B.master.docs = Number.isFinite(held.docs) ? held.docs : null; changed = true; }   // (the signatures agree: the copy is the index)
         if (fl.unchanged) fl.files = held ? held.files : B.master.files || [];
         if (!changed && sig(fl.files) !== sig(B.master.files)) changed = true;
         B.master.files = fl.files || []; B.master.filesSig = fl.filesSig || null; B.master.loadedAt = Date.now();
         // what was read whole is kept (serialised now, written in the background); files that changed under an unchanged index replace the kept ones
-        if (MC) { try { if (ix) { if (ix.index) MC.save({ index: ix.index, entries: ix.entries || [], files: B.master.files, filesSig: B.master.filesSig }); else MC.forget(); } else if (!fl.unchanged) MC.saveFiles(B.master.files, B.master.filesSig); } catch (_) { /* the page does not depend on it */ } }
+        if (MC) { try { if (ix) { if (ix.index) MC.save({ index: ix.index, entries: ix.entries || [], files: B.master.files, filesSig: B.master.filesSig, docs: B.master.docs }); else MC.forget(); } else if (delta) MC.save({ index: B.master.index, entries: [...B.master.entries.values()], files: B.master.files, filesSig: B.master.filesSig, docs: B.master.docs }); else if (!fl.unchanged) MC.saveFiles(B.master.files, B.master.filesSig); } catch (_) { /* the page does not depend on it */ } }
         if (B.master.error) changed = true;
         B.master.error = null;
       } catch (e) { if (B.master.error !== e.message) changed = true; B.master.error = e.message; throw e; }   // a failed load must not look like an empty library
@@ -12371,6 +12396,8 @@ const CustomSheet = window.CustomSheet = (() => {
   const busy = new Map();         // card key → what is happening (a spinner on the card, and in the window)
   const tasks = new Map();        // a single send/recovery per card; never copied into a workspace
   let loading = null, loadedOwner = null, loadedSig = "", loadedAt = 0;
+  let csRev = null, csAsked = new Set(), csOwner = null;   // COST (Oct 2026): the cloud's revision of the custom sheet records, and the "c:"card / "l:"line keys asked at it (load)
+  const legacyNone = new Map(), LEGACY_NONE_MS = 6 * 3600000;   // legacy line → when its history showed no old send (load)
   const syncing = new Map();
   // motion (Paul, 27 Sep 20:09-20:24): files just dropped, still on their way into their rows; thumbnails new on a card;
   // cards whose strip of designs is about to show for the first time
@@ -12793,15 +12820,35 @@ const CustomSheet = window.CustomSheet = (() => {
     const sig=JSON.stringify([keys.slice().sort(),lineKeys.slice().sort(),legacyLineKeys.slice().sort()]);
     if(!opts.force && loadedOwner===owner && loadedSig===sig && Date.now()-loadedAt<60000)return recover();
     loadedOwner=owner;loadedSig=sig;loadedAt=Date.now();
+    /* COST (Oct 2026): this asked about EVERY pulled line and card once a minute (about 1,400 document reads per tab, a missing one billed
+       too). The cloud keeps a revision of these records (charmNestLibrary CUSTOM_SHEET_LOG): what was asked at the revision held (csAsked) is
+       sent as heldKeys / heldLines and read again only when a put since touched it, only new keys and lines are read, and an unchanged load
+       is one read. A legacy line whose history showed no old send is not asked again for LEGACY_NONE_MS (no new send is ever a legacy one). */
+    if(csOwner!==owner){csOwner=owner;csRev=null;csAsked=new Set();}
+    for(const [k,t] of legacyNone)if(Date.now()-t>LEGACY_NONE_MS)legacyNone.delete(k);
+    const legacyAsk=legacyLineKeys.filter(k=>!legacyNone.has(k));
+    const noteLegacy=(sent,reply)=>{if(!sent.length || !reply || reply.legacyTruncated!==false)return;const recs=Object.values(reply.records || {});for(const k of sent)if(!recs.some(r=>r?.sent?.lines && Object.prototype.hasOwnProperty.call(r.sent.lines,k)))legacyNone.set(k,Date.now());};
     loading=(async()=>{let updated=0;
-      try{for(let i=0;i<Math.max(keys.length,lineKeys.length);i+=800){
-        const reply=await api("charmNestLibrary",{op:"customSheetGet",keys:keys.slice(i,i+800),lineKeys:lineKeys.slice(i,i+800),legacyLineKeys:i ? [] : legacyLineKeys.slice(0,40)},{quiet:true});if(all()!==owner)return 0;
-        updated+=hydrate(reply.records,owner);
-      }
+      try{
+        const rev=csRev,held=k=>!!rev && csAsked.has(k),heldKeys=keys.filter(k=>held("c:"+k)),heldLines=lineKeys.filter(k=>held("l:"+k)),newKeys=keys.filter(k=>!held("c:"+k)),newLines=lineKeys.filter(k=>!held("l:"+k));
+        let first=null;const marked=[];
+        for(let i=0;i===0 || i<Math.max(newKeys.length,newLines.length);i+=800){
+          const body={op:"customSheetGet",keys:newKeys.slice(i,i+800),lineKeys:newLines.slice(i,i+800),legacyLineKeys:i ? [] : legacyAsk.slice(0,40)};
+          if(i===0)Object.assign(body,rev?{ifRev:rev,heldKeys,heldLines}:{wantRev:true});
+          const reply=await api("charmNestLibrary",body,{quiet:true});if(all()!==owner)return 0;
+          if(i===0)first=reply;
+          if(!reply.truncated)marked.push(...body.keys.map(k=>"c:"+k),...body.lineKeys.map(k=>"l:"+k));
+          noteLegacy(body.legacyLineKeys,reply);
+          updated+=hydrate(reply.records,owner);
+        }
+        // (the revision the FIRST answer was read at: a put made while the later parts were read is in the next answer's log)
+        if(!first || typeof first.rev!=="string" || (first.full && first.truncated)){csRev=null;csAsked=new Set();}
+        else{if(first.full){csAsked=new Set([...heldKeys.map(k=>"c:"+k),...heldLines.map(k=>"l:"+k)]);}for(const k of marked)csAsked.add(k);csRev=first.rev;}   // (full: the held ones were read again with it, the first part not cut short)
       // Legacy evidence has its own smaller server budget. Page every candidate
       // without repeating modern reads or starving later lines behind missing history.
-      for(let i=40;i<legacyLineKeys.length;i+=40){
-        const reply=await api("charmNestLibrary",{op:"customSheetGet",legacyLineKeys:legacyLineKeys.slice(i,i+40)},{quiet:true});if(all()!==owner)return 0;
+      for(let i=40;i<legacyAsk.length;i+=40){
+        const body={op:"customSheetGet",legacyLineKeys:legacyAsk.slice(i,i+40)},reply=await api("charmNestLibrary",body,{quiet:true});if(all()!==owner)return 0;
+        noteLegacy(body.legacyLineKeys,reply);
         updated+=hydrate(reply.records,owner);
       }if(updated){ver++;Session.schedule();redraw();}await recover();return updated;
       }catch(err){loadedAt=Date.now()-45000;console.warn("Custom design recovery",err);await recover();return 0;}
