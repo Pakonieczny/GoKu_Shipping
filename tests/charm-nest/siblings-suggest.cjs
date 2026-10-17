@@ -261,8 +261,9 @@ const read = (line, c) => O.interpretLine(order, line, c || ctx({ aliases: LINK 
     ok(/answerKeysOf\(it, sib\.rows\)/.test(helpers) && /answered\(\{ kind: it\.kind, rows: sib\.rows \}/.test(helpers) && /pickSimilar\(it, p, b\.dataset\.dsku, sib && \(b\.dataset\.sim && sib\.rowsFor \? sib\.rowsFor\(b\.dataset\.dsku\) : sib\.rows\)\)/.test(helpers) && /x === row \|\|/.test(src.slice(src.indexOf('function siblingOffer'), src.indexOf('const answerKeysOf'))), 'the tap covers only the lines of the card that are offered the same pair (a huggie or earring listing with the same SKU is never linked)');
     ok(/siblingStamp\(it\)\]\);/.test(src), 'the row is drawn again when the offer or its pictures change (stampOf)');
     ok(/similarOffer\(r, p, group, it\)/.test(card) && /sibButtons\(sib\)/.test(card) && /wireSib\(c, it, p, sib/.test(card) && /it\.kind === "unmatchedSku" \|\| it\.kind === "blockedSku" \? similarOffer/.test(card), 'the decision card shares the same offer and save');
-    ok(/data-a="alias"[^`]*Use this charm/.test(card) && /data-a="nodesign"/.test(card) && /data-a="hold"/.test(card), 'the card\'s own buttons are all still there');
-    ok(/CustomPrint\.keptButtonHtml\(x,'print'/.test(rr) && /CustomPrint\.keptButtonHtml\(x,'complete'/.test(rr) && /CustomSheet\.buttonsHtml\(x,true\)/.test(rr) && /HoldUI\.fill\(node\)/.test(rr), 'the row\'s own buttons (Print QR label, Complete Order, Send to Sheet, Hold) are drawn as before');
+    // (NOHOLDREV, Paul 17 Oct 2026: no Hold on a Review row or card)
+    ok(/data-a="alias"[^`]*Use this charm/.test(card) && /data-a="nodesign"/.test(card) && !/data-a="hold"/.test(card) && !/Hold order/.test(card), 'the card\'s own buttons are all still there, and none is Hold order');
+    ok(/CustomPrint\.keptButtonHtml\(x,'print'/.test(rr) && /CustomPrint\.keptButtonHtml\(x,'complete'/.test(rr) && /CustomSheet\.buttonsHtml\(x,true\)/.test(rr) && !/HoldUI|holdSlotFor|holdStamp/.test(rr), 'the row\'s own buttons (Print QR label, Complete Order, Send to Sheet) are drawn as before, with no Hold');
     ok(!/prompt\(|confirm\(|openModal|modal|showModal|\.open\(/.test(helpers + rr.slice(rr.indexOf('const pk=it.problem'), rr.indexOf('const summary='))), 'no pop-up on a pop-up');
     pass('wiring: script tag, tokens, build list, the Review row\'s chip and buttons');
   }

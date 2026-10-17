@@ -153,7 +153,7 @@ async function browser() {
       buttons: [...n.querySelectorAll('.rowActions button')].map(x => x.textContent.trim()), send: (() => { const s = n.querySelector('[data-cu-send]'); return s ? { aria: s.getAttribute('aria-disabled'), cls: s.className, title: s.title } : null; })(), drop: !!n.querySelector('[data-cu-designs].cuHint') }; }, cardSel);
     assert.match(info.cls, /cuRow/); assert.match(info.cls, /cuInfo/, 'a card that asks nothing'); assert.equal(info.queue, 'Custom order'); assert.equal(info.label, 'Custom huggies');
     assert(!/not mapped/.test(info.text), 'no "option … not mapped" on the card: ' + info.text.slice(0, 200)); assert.match(info.text, /is an add-on listing: a charm made to the buyer's own request, not a master design · Complete Order or print its QR label when it is ready/);
-    assert.deepEqual(info.buttons.filter(x => x !== 'Hold'), ['Print QR label', 'Complete Order', 'Send to Sheet', 'Drop .ai / .dxf designs here']); assert(info.buttons.includes('Hold'), 'the Hold button is still there: ' + info.buttons.join(', '));
+    assert.deepEqual(info.buttons, ['Print QR label', 'Complete Order', 'Send to Sheet', 'Drop .ai / .dxf designs here'], 'and no Hold button on a Review card (NOHOLDREV, Paul 17 Oct 2026): ' + info.buttons.join(', '));
     assert.equal(info.send.aria, 'true', 'Send to Sheet is greyed until a design is dropped'); assert.doesNotMatch(info.send.cls, /gold/); assert.equal(info.drop, true);
     // the pictures: no master drawing (the ladybug) in the vector box, the Etsy listing's blue photo beside it
     await page.waitForFunction(sel => { const n = document.querySelector(sel); return n.querySelector('[data-vector]').textContent.includes('No vector available') && n.querySelector('[data-listing] img'); }, cardSel, { timeout: 20000 });
@@ -195,7 +195,7 @@ async function browser() {
     assert.equal(await page.evaluate(k => B.orders.byKey.get(k).spec.special.label, KEY), 'Custom huggies', 'back as custom with the word taken off: the wording alone says it');
     assert.equal(await page.evaluate(() => window.__reads > 0), true, 'the page asked for Claude\'s reading of the chain line, which the test swallowed'); assert.equal(await page.evaluate(k => B.orders.byKey.get(k).spec.readable, KEY), false, 'the add-on line is never one of those');
     assert.deepEqual(errors, [], 'no page errors');
-    console.log('  ✓ Chromium: one Custom Orders card for 4176744752, no question, no ladybug, the blue Etsy photo, Send to Sheet greyed until a .ai, Hold; re-read by itself, pooled pieces kept');
+    console.log('  ✓ Chromium: one Custom Orders card for 4176744752, no question, no ladybug, the blue Etsy photo, Send to Sheet greyed until a .ai, no Hold; re-read by itself, pooled pieces kept');
   } finally { await b.close(); srv.close(); }
   return true;
 }

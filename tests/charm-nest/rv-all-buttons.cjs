@@ -68,7 +68,7 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
       Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('review'); Review.render();
     }, ORDERS);
     const card = rid => `#rvList .reviewListRow[data-rid="${rid}"]`;
-    const buttons = () => page.evaluate(() => [...document.querySelectorAll('#rvList .reviewListRow')].map(n => ({ rid: n.dataset.rid, b: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()).filter(t => t !== 'Hold'), h: Math.round(n.getBoundingClientRect().height) })));
+    const buttons = () => page.evaluate(() => [...document.querySelectorAll('#rvList .reviewListRow')].map(n => ({ rid: n.dataset.rid, b: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()), h: Math.round(n.getBoundingClientRect().height) })));   // (no Hold filtered out any more: a Review row has none, NOHOLDREV, Paul 17 Oct 2026)
 
     // 1 · Unknown SKU: every card, no "Review & resolve", the custom card's column: its buttons in its order, classes and
     //     sizes, Send to Sheet greyed and disabled (no design yet) and the dashed drop zone under them
@@ -138,7 +138,7 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     await page.waitForFunction(() => /^Order 4175892473 moved to Completed · completed by Test Operator/.test(document.querySelector('.mNote .mNoteT')?.textContent || ''), null, { timeout: 10000 });
     await page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close && n.close()));
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
-    const doneA = await page.evaluate(sel => { const n = document.querySelector(sel); return n && { seals: [...n.querySelectorAll('.seal')].map(x => x.classList.contains('seal-button')), b: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()).filter(t => t !== 'Hold'), q: n.querySelector('.queueLabel').textContent, l: n.querySelector('.engravingIdentity .purchaseLabel').textContent, chips: [...document.querySelectorAll('#reviewView .egTab')].map(c => c.dataset.k) }; }, card('4175892473'));
+    const doneA = await page.evaluate(sel => { const n = document.querySelector(sel); return n && { seals: [...n.querySelectorAll('.seal')].map(x => x.classList.contains('seal-button')), b: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()), q: n.querySelector('.queueLabel').textContent, l: n.querySelector('.engravingIdentity .purchaseLabel').textContent, chips: [...document.querySelectorAll('#reviewView .egTab')].map(c => c.dataset.k) }; }, card('4175892473'));
     assert(doneA, 'under Completed');
     assert.deepEqual(doneA.seals, [true], 'the green Complete Order seal'); assert.deepEqual(doneA.b, ['Print QR label', 'Reopen']);
     assert.equal(doneA.q, 'Completed by hand'); assert.equal(doneA.l, 'Unknown SKU'); assert(doneA.chips.includes('unmatchedSku'), 'under its own chip there: ' + doneA.chips);
