@@ -10481,6 +10481,9 @@ const Sets = window.Sets = (() => {
       for (const id of sheet.orders || []) if (!group.orders?.[id]) (group.orders ||= {})[id]={};
     }
     partnersOf([...groups.values()]);
+    // (SETREPAIR, Paul 17 Oct 2026: "I want you to fix it once and for all.") a set that breaks the owner's rules says so on its card, with one button that rebuilds it correctly
+    // (charm-nest-set-repair.js): read from EVERY sheet the Library holds (an order chain runs through sheets outside the set), derived at every drawing, never saved
+    try { if (window.SetRepair) SetRepair.annotate([...groups.values()], (_cache && _cache.sheets) || sheets, sets); } catch (e) { console.warn("[SetRepair] annotate", e); }
     return [...groups.values()].sort((a,b)=>a.setId && b.setId ? O.compareCompleted(a,b) : a.setId ? -1 : b.setId ? 1 : String(b.day || "").localeCompare(String(a.day || "")));
   }
   /** (Paul, 12 Oct) A set formed with the sheets that could join. The sheets outside it that share a multi-piece order with a sheet of it, and could still join it (not cut, not in a set
@@ -10524,9 +10527,11 @@ const Sets = window.Sets = (() => {
     card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Sheets" : "Sheets"}</span></div>` : `<div class="sh"><span class="nm" data-set-title>${esc(O.setLabel(st.seq))}${st.day?" · "+esc(st.day):""}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
           <div class="sheetsRow">${shown.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span data-sheet-count="${esc(r.id)}"><b>${r.placedCount}</b>/${r.charmCount}</span><span data-sheet-density="${esc(r.id)}"><b>${Math.round((r.density || 0) * 100)}%</b></span><span data-sheet-orders="${esc(r.id)}">${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r),'Sheet',r)}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
           ${st.cardinalLinks ? `<div class="noteBox" data-set-links>${esc(st.cardinalLinks.charAt(0).toUpperCase() + st.cardinalLinks.slice(1))}.</div>` : ""}
+          ${window.SetRepair ? SetRepair.lineHtml(st) : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
           `;
     card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
+    try { if (window.SetRepair) SetRepair.wire(card, st); } catch (e) { console.warn("[SetRepair] wire", e); }      // (SETREPAIR, Paul 17 Oct 2026: the one button of a set that breaks the owner's rules, "Rebuild this set correctly"; its red line is drawn above, under the sheets)
     // a QR label ([data-big]) opens in the zoom viewer, wherever it is shown (PhotoView, charm-nest-mail.js)
     // (a set a Library search found comes with only what this card shows, `partial`: its whole record is read before undoing)
     // Undo set (Paul, 27 Sep 20:09-20:24: nothing a click changes may just be drawn again in one go): the card lifts while

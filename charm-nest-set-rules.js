@@ -47,7 +47,8 @@
  *       closed, and the next set starts from the units that are left;
  *     · units left over that cannot make a valid set wait outside every set with their plain line ("Set 1 has formed, so this sheet waits for the next set: it needs a completed SS sheet with it");
  *     · a set that exists but is short of a class (an empty or half-made one) is completed first, with the fewest units that complete it, before any new set starts;
- *     · a set that already exists is never touched. 10K, 14K and Rose Gold sheets never start or complete a set, a partial sheet never joins one.
+ *     · a set that already exists is never touched (by the assembly: a set that breaks the owner's rules is put right only by the person's own press, "Rebuild this set correctly",
+ *       charm-nest-set-repair.js, SETREPAIR 17 Oct). 10K, 14K and Rose Gold sheets never start or complete a set, a partial sheet never joins one.
  *   Sheets that share an order stay one unit however many sheets that is: a day whose cross-metal orders (GF with SS, or either with Rose Gold, 14K, 10K) link every sheet is ONE unit and so one
  *   set. That is the cardinal rule outranking the closing rule, never a formation fault.
  *   formAll(lastMembers, free, hasLast, lastName, shareGroups) -> { last:[sheet], sets:[[sheet]], wait:[{sheet, why}], valid, closed }  `last`: the sheets that complete the newest open set;
