@@ -269,8 +269,9 @@ Object.assign(R.EXPECT_JOBS, { mono: 0, mixed: 1, odd: 0, review: 0, trouble: 0,
     await jump('417 px', 'D');
     for (const [vw, letter] of [[375, 'F'], [360, 'G'], [340, 'H']]) {      // (phones 375, 360 and 340 px wide: the widths between the ones the page was tuned for)
       await page.setViewportSize({ width: vw, height: 900 }); await settle(500);
+      const plainW = await phone(`the ${vw} px plain piece`, kBack, true);   // (the Orders bar behind the window sets the page's width at these widths with the rail open: the monogram is judged against a plain piece's window, as at 320 px)
       p = await phone(`the ${vw} px monogram`, kMono);
-      check(p.pageScrollW <= Math.max(p.vw, 344) && p.overSec.length === 0 && p.cardL >= 0 && p.cardR <= p.vw && p.wide === 0, `${vw} px: the monogram card is in the window (${p.cardL}–${p.cardR} of ${p.vw}), nothing of it runs past it`);
+      check(p.pageScrollW <= Math.max(p.vw, 344, plainW.pageScrollW) && p.overSec.length === 0 && p.cardL >= 0 && p.cardR <= p.vw && p.wide === 0, `${vw} px: the monogram card is in the window (${p.cardL}–${p.cardR} of ${p.vw}), nothing of it runs past it`);
       picChecks(p, `${vw} px`);
       await jump(`${vw} px`, letter);
     }
