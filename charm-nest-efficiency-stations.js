@@ -565,7 +565,8 @@
   const Feed = (() => {
     const subs = new Set(); let timer = 0, busy = false, fails = 0, okAt = 0, nCalls = 0, inflight = null;
     const live = () => [...subs].filter(s => { try { return s.active(); } catch (_) { return false; } });
-    const next = () => (fails ? Math.min(options.maxBackoffMs, options.pollMs * Math.pow(2, fails)) : options.pollMs);
+    const pace = ms => { const A = root.Efficiency && root.Efficiency.api; return A && typeof A.pace === "function" ? A.pace(ms) : ms; };   // (COST, Oct 2026)
+    const next = () => (fails ? Math.min(options.maxBackoffMs, options.pollMs * Math.pow(2, fails)) : pace(options.pollMs));
     function plan(ms) { clearTimeout(timer); timer = 0; if (live().length) timer = setTimeout(poll, ms); }
     async function poll() {
       clearTimeout(timer); timer = 0;
@@ -1067,7 +1068,8 @@
     else { E.retry.addEventListener("click", () => { E.retry.hidden = true; Feed.now(); }); if (root.IntersectionObserver) { io = new IntersectionObserver(() => Feed.wake()); io.observe(R); } Feed.add(sub); }
     return {
       /** The console has shown this board (or wants it fresh now): read at once. */
-      refresh() { return E1 ? E1.call({ op: "live" }).then(r => { if (!S.dead) apply(r, Date.now()); }, () => {}) : Feed.now(); },
+      // (COST, Oct 2026: inside the console a refresh is the console's own live read, shared with one already out; its answer reaches this board through onLive)
+      refresh() { return E1 ? (typeof E1.liveNow === "function" ? E1.liveNow().then(() => {}, () => {}) : E1.call({ op: "live" }).then(r => { if (!S.dead) apply(r, Date.now()); }, () => {})) : Feed.now(); },
       destroy() { this.unmount(); },
       unmount() {
         if (S.dead) return; S.dead = true; if (E1) { if (off) off(); } else Feed.remove(sub); if (io) io.disconnect(); stopLive(); stopIdle(); stopWeld(); stopRoster();

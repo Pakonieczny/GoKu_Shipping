@@ -675,7 +675,9 @@
     const request = () => { const p = period(); return { op: "person", name: S.name, range: S.range === "custom" ? { from: p.from, to: p.to } : S.range, day: S.range === "custom" ? p.to : S.anchor, compare: true }; };
     const visible = () => !S.dead && !S.locked && host.isConnected && doc.visibilityState !== "hidden" && host.getClientRects().length > 0;
     const POLL = { range: () => fetchRange(S.gen, true), live: () => pollLive(), cal: () => pollCal(), orders: () => pollOrders() };
-    function schedule(kind, ms) { clearTimeout(T[kind]); T[kind] = 0; if (visible()) T[kind] = setTimeout(POLL[kind], ms); }
+    // COST (Oct 2026): a poll's wait follows the console's pace (Efficiency.api.pace): as set while the person works here, slower when nobody is at the keyboard
+    const pace = ms => { const A = EA(); return ms >= 1000 && A && typeof A.pace === "function" ? A.pace(ms) : ms; };
+    function schedule(kind, ms) { clearTimeout(T[kind]); T[kind] = 0; if (visible()) T[kind] = setTimeout(POLL[kind], pace(ms)); }
     const backoff = n => Math.min(options.maxBackoffMs, 3000 * Math.pow(2, Math.max(0, n - 1)));
     function lockOut(e) {
       S.locked = true; for (const k of ["range", "live", "cal", "orders"]) { clearTimeout(T[k]); T[k] = 0; }

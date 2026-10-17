@@ -3196,9 +3196,32 @@ async function op_customGet(b) {
     return { records, at, more: snap.size > CUSTOM_FEED, last: docs.length ? num(docs[docs.length - 1].data().updatedAtMs) : 0 };
   }
   const at = Date.now(), since = at - Math.max(1, Math.min(CUSTOM_DAYS, b.days == null ? CUSTOM_DAYS : num(b.days))) * 86400000;
+  if (b.days == null && !PREFIX) { const kept = await customListKept(at, since); if (kept) return kept; }
   const snap = await col(CUSTOM).where("updatedAtMs", ">=", since).orderBy("updatedAtMs", "desc").limit(1000).select(...CUSTOM_FIELDS).get();
   const records = {}; snap.docs.forEach(d => { records[d.id] = customRow(d.data(), false); });
+  if (b.days == null && !PREFIX) customList = { at, rows: new Map(snap.docs.map(d => [d.id, records[d.id]])), born: at };
   return { records, truncated: snap.size >= 1000, at };
+}
+/* COST (Oct 2026): the whole list above (every sorter tab at load and every 30 minutes, Orders.loadMaps) read up to 1000 records of 180
+   days at every call (~600 reads and growing). A warm instance keeps the list it read and tops it up from the changes feed: the records
+   written at or after what it held, less CUSTOM_LIST_MARGIN (the same guard as the Review tab's feed: updatedAtMs is this server's clock
+   taken BEFORE the write's read and commit, and another instance's clock may differ), then answers exactly what a fresh read would (newest
+   first, the 180-day window, the 1000 cap, truncated). A record is never deleted in production (a reopen is a write with a new updatedAtMs),
+   so a top-up cannot miss a removal; the sandbox (Reset deletes its records) and a call with its own `days` always read the store. One
+   read when nothing changed; a feed page that comes back full, or a list older than CUSTOM_LIST_MAX, is read again whole. */
+const CUSTOM_LIST_MARGIN = 60000, CUSTOM_LIST_MAX = 6 * 3600000;
+let customList = null;   // { at, rows: Map key → row (no sticker), born }
+async function customListKept(at, since) {
+  const L = customList;
+  if (!L || at - L.born > CUSTOM_LIST_MAX || at < L.at) return null;
+  const snap = await col(CUSTOM).where("updatedAtMs", ">=", Math.max(0, L.at - CUSTOM_LIST_MARGIN)).orderBy("updatedAtMs", "asc").limit(CUSTOM_FEED + 1).select(...CUSTOM_FIELDS).get();
+  if (snap.size > CUSTOM_FEED || customList !== L) return null;
+  snap.docs.forEach(d => { L.rows.set(d.id, customRow(d.data(), false)); });
+  const rows = [...L.rows].filter(([, r]) => num(r.updatedAtMs) >= since).sort((a, b) => num(b[1].updatedAtMs) - num(a[1].updatedAtMs) || (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0));
+  const top = rows.slice(0, 1000), records = {};
+  top.forEach(([k, r]) => { records[k] = r; });
+  L.rows = new Map(top); L.at = at;   // (a record past the top 1000 or out of the window can only come back by a write, which the next top-up reads)
+  return { records, truncated: rows.length >= 1000, at };
 }
 const CUSTOM_FEED = 300;
 /* Custom designs accepted by Send to Sheet are a different decision from a Custom Order completed by hand.

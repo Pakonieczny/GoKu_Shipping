@@ -8,7 +8,7 @@
    least ten minutes apart) and the order window's own timeline feed, which carries events but not the records the cards are
    drawn from. Now, while the Review tab is on screen (the browser tab visible, Review the mode shown):
 
-     · every EVERY (2 s) one small read, charmNestLibrary customGet { since }: the records written after the last answer's
+     · every EVERY (2 s; COST (Oct 2026): only on the Review tab while the person works there, else SLOW 10 s and IDLE 60 s, see pace()) one small read, charmNestLibrary customGet { since }: the records written after the last answer's
        server time less a margin (one query on updatedAtMs; nothing written; { records: {}, at } and no document read when
        nothing changed, Firestore bills one read for an empty query). Not read while the tab is hidden or the Nest or Engraving tab is on screen (the Review, Orders and Library tabs follow it; 1 800 calls an hour while it is watched,
        none otherwise; watched: the Review, Orders and Library tabs); a failed read backs off (x2 up to 30 s) and says nothing; no Etsy call, ever;
@@ -29,7 +29,16 @@
   "use strict";
   const doc = root.document;
   const EVERY = 2000, GAP = 600, SECOND = 1500, OVERLAP = 15000, FAIL_MAX = 30000, FRESH = 20000, AWAY = 10000, OTHER_TAB = 5000, MAX_LOUD = 3, PAGES = 5;
-  const st = { timer: 0, second: 0, busy: false, again: false, hint: false, quietNext: true, fails: 0, cursor: 0, lastOk: 0, lastAny: 0, start: 0, end: 0, polls: 0, applied: 0, dead: false, loud: 0, error: "", heard: 0 };
+  /* COST (Oct 2026): the 2 s read was 1 800 calls an hour per open tab whether anybody was there or not (1 read each when idle, the bill grew with
+     time, not with changes). Now it is 2 s only on the Review tab while the person works there (an input in the last WORKING, the window focused),
+     SLOW on the Orders and Library tabs, under an open search box or order window, or when nobody is at the keyboard, and IDLE after IDLE_AFTER
+     with no input at all. Another computer's change is seen within that interval; this page's own press reads at once (nudge), another tab of this
+     browser hears it at once (announce), and the first input after a quiet spell pulls the next read forward. OVERLAP stays 15 s: updatedAtMs is
+     the server's clock taken BEFORE its read and commit (customPut / customReopen / reviewMarkPut), and two instances' clocks may differ, so a
+     write can land with a time older than the last answer's `at`; at 10-60 s cadences the margin re-reads a write about once or twice, a cost
+     of nothing next to the calls saved. Not shared across tabs (CnPoll): a cursor feed is per tab, and every tab of this sorter shows it. */
+  const SLOW = 10000, IDLE = 60000, WORKING = 120000, IDLE_AFTER = 600000;
+  const st = { timer: 0, due: 0, every: EVERY, second: 0, busy: false, again: false, hint: false, quietNext: true, fails: 0, cursor: 0, lastOk: 0, lastAny: 0, start: 0, end: 0, polls: 0, applied: 0, dead: false, loud: 0, error: "", heard: 0, input: Date.now() };
   const modeOf = () => { try { return S.mode; } catch (_) { return ""; } };
   const cloudOk = () => { try { return !!(S.cloud && S.cloud.ok); } catch (_) { return false; } };
   const onReview = () => modeOf() === "review" && !doc.hidden;
@@ -41,6 +50,13 @@
   const watching = () => (FOLLOW.has(modeOf()) || overlay()) && !doc.hidden;
   const live = () => !st.dead && watching() && cloudOk();
   const TABS = new Set(["nest", "engrave"]);
+  const focused = () => { try { return typeof doc.hasFocus !== "function" || doc.hasFocus(); } catch (_) { return true; } };
+  /** How long between two reads now (COST, Oct 2026: see SLOW). */
+  function pace() {
+    const quiet = Date.now() - st.input;
+    if (quiet > IDLE_AFTER) return IDLE;
+    return onReview() && quiet <= WORKING && focused() ? EVERY : SLOW;
+  }
 
   /** Where the page's records stand: the server's clock at the whole list's read (Orders.loadMaps), taken once. */
   function seed() {
@@ -50,12 +66,22 @@
     st.cursor = b.at; st.lastOk = Math.max(st.lastOk, b.seen || 0);
     return true;
   }
-  function arm(ms) { clearTimeout(st.timer); st.timer = setTimeout(tick, Math.max(0, ms)); }
+  function arm(ms) { clearTimeout(st.timer); ms = Math.max(0, ms); st.due = Date.now() + ms; st.timer = setTimeout(tick, ms); }
   function schedule() {
     if (st.timer || st.busy || !live()) return;
-    const every = Math.min(FAIL_MAX, EVERY * 2 ** Math.min(st.fails, 4));
+    st.every = pace();
+    const every = Math.max(st.every, Math.min(FAIL_MAX, EVERY * 2 ** Math.min(st.fails, 4)));
     arm(Math.max(st.start + every, st.end + GAP) - Date.now());
   }
+  /* The person is back at the keyboard (or the window got the focus): a read planned at the slow pace comes forward to the pace it is now. */
+  function stir() {
+    const was = st.input; st.input = Date.now();
+    if (Date.now() - was < 1000 || !st.timer || st.busy || !live()) return;
+    const want = Math.max(st.start + pace(), st.end + GAP);
+    if (want < st.due - 250) arm(want - Date.now());
+  }
+  for (const n of ["pointerdown", "keydown", "wheel", "touchstart", "pointermove"]) doc.addEventListener(n, stir, { capture: true, passive: true });
+  root.addEventListener("focus", stir);
   function tick() {
     st.timer = 0;
     const hint = st.hint; st.hint = false;   // (a read asked for by the order window's timeline is made wherever the page is)
@@ -142,7 +168,8 @@
     if (st.busy) { st.again = true; if (o.quiet) st.quietNext = true; return false; }
     if (!cloudOk() || typeof root.api !== "function" || !root.Orders || !root.Orders.takeCustom || !seed()) return false;
     st.busy = true; st.start = Date.now(); st.polls++;
-    const away = st.lastOk && st.start - st.lastOk > AWAY, quiet = !!o.quiet || st.quietNext || st.fails > 0 || !!away;
+    // (an absence is longer than the pace the reads were planned at)
+    const away = st.lastOk && st.start - st.lastOk > AWAY + st.every, quiet = !!o.quiet || st.quietNext || st.fails > 0 || !!away;
     st.quietNext = false;
     try {
       let since = Math.max(0, st.cursor - OVERLAP), at = 0, truncated = false;
@@ -225,5 +252,5 @@
   /** Start the loop when a surface that needs it has come on screen since it last stopped (the search box or the order window opened over a tab that does not follow); the placement feed asks every few seconds. */
   const ensure = () => { if (!st.dead && !st.timer && !st.busy && live()) schedule(); };
   channel();   // (listening for the other tabs of this computer from the start)
-  root.ReviewLive = { nudge, announce, heard, shown, poll, ensure, state: () => ({ polls: st.polls, applied: st.applied, loud: st.loud, heard: st.heard, fails: st.fails, cursor: st.cursor, lastOk: st.lastOk, busy: st.busy, armed: !!st.timer, dead: st.dead, error: st.error, every: EVERY }) };
+  root.ReviewLive = { nudge, announce, heard, shown, poll, ensure, state: () => ({ polls: st.polls, applied: st.applied, loud: st.loud, heard: st.heard, fails: st.fails, cursor: st.cursor, lastOk: st.lastOk, busy: st.busy, armed: !!st.timer, dead: st.dead, error: st.error, every: st.every, pace: pace() }) };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -355,6 +355,26 @@
     desk: { asked: new Set(), busy: false, calls: 0 } };   // (desk numbers of older days: the days asked for this page load, see deskFix)
   if (![1, 7, 30].includes(st.days)) st.days = 1;
   const now = () => Date.now() + st.off;
+  /* COST (Oct 2026): every timer of the console (the live read 3 s, the overview 10 s, and the modules' own: a person's orders 5 s, their range 15 s,
+     the laser sheets 30 s) ran at that pace for as long as the tab was on screen, watched or not, and each call is reads of the employee documents
+     (the overview cold ~1 300, a person's month ~1 600). pace(ms) is the wait now: ms while the person works here (an input in the last 2 minutes,
+     the window focused), at least 10 s (three times ms) when nobody is at the keyboard, at least a minute after 10 minutes with no input. The first
+     input after a quiet spell pulls the live read and the overview forward (stir). A change still shows: the live read is at most 10 s behind (a
+     minute for a screen nobody has touched for 10 minutes), and the overview follows the live read the moment it sees work recorded. */
+  const ACT = { at: Date.now(), WORKING: 120000, IDLE_AFTER: 600000 };
+  const focused = () => { try { return typeof doc.hasFocus !== "function" || doc.hasFocus(); } catch (_) { return true; } };
+  function pace(ms) {
+    ms = Math.max(0, +ms || 0); const quiet = Date.now() - ACT.at, slow = Math.max(10000, ms * 3);
+    return quiet > ACT.IDLE_AFTER ? Math.max(60000, slow) : quiet > ACT.WORKING || !focused() ? slow : ms;
+  }
+  function stir() {
+    const was = ACT.at; ACT.at = Date.now();
+    if (ACT.at - was < 1000 || !active()) return;
+    if (st.liveTimer && st.liveDue - Date.now() > options.liveMs + 250) scheduleLive(Math.max(0, st.liveAt + options.liveMs - Date.now()));
+    if (st.timer && st.due - Date.now() > options.pollMs + 250 && needOverview()) schedule(Math.max(0, st.at + options.pollMs - Date.now()));
+  }
+  if (doc && doc.addEventListener) for (const n of ["pointerdown", "keydown", "wheel", "touchstart", "pointermove"]) doc.addEventListener(n, stir, { capture: true, passive: true });
+  if (root.addEventListener) root.addEventListener("focus", stir);
   let host = null, E = {};
   const endpoint = () => root.location.origin + "/.netlify/functions/employeeEfficiency";
   /** The sorter's OWN mode (Settings): shown as a quiet hint, never used to choose what the console reads. */
@@ -717,7 +737,7 @@
     clearTimeout(st.timer); clearTimeout(st.liveTimer); st.timer = st.liveTimer = 0;
     st.busy = false; st.liveBusy = false; st.ctl = st.liveCtl = null;
     st.data = null; st.M = null; st.feed = []; st.feedSig = ""; st.off = 0; st.at = 0; st.err = ""; st.errShort = ""; st.fails = 0; st.hold = 0; st.reset = true;
-    st.live = null; st.liveAt = 0; st.liveErr = ""; st.liveShort = ""; st.liveFails = 0; st.liveSig = ""; st.resuming = false; st.renderErr = "";
+    st.live = null; st.liveAt = 0; st.liveErr = ""; st.liveShort = ""; st.liveFails = 0; st.liveSig = ""; st.liveRev = ""; st.resuming = false; st.renderErr = "";
     st.hist.clear(); st.ord.clear(); st.ordOpen.clear(); st.find = ""; st.open.clear();
     if (E.ov) { E.ov.classList.add("hidden"); E.findIn.value = ""; }
     for (const r of st.rows.values()) r.e.remove(); st.rows.clear(); E.people.textContent = "";
@@ -912,23 +932,26 @@
     return j;
   }
   const active = () => st.built && st.shown && doc.visibilityState !== "hidden" && !!st.key && !st.locked;
-  function schedule(ms) { clearTimeout(st.timer); st.timer = 0; if (active() && needOverview()) st.timer = setTimeout(poll, ms); }
+  function schedule(ms) { clearTimeout(st.timer); st.timer = 0; if (active() && needOverview()) { st.due = Date.now() + ms; st.timer = setTimeout(poll, ms); } }
   function backoff() { return Math.min(options.maxBackoffMs, options.pollMs * Math.pow(2, st.fails)); }
   async function poll() {
     clearTimeout(st.timer); st.timer = 0;
     if (!active() || !needOverview() || st.busy) return;
     const gen = st.gen, delta = st.data && st.data.cursor && !st.reset ? st.data.cursor : "";
+    // COST (Oct 2026): the answer held is named (ifRev, the server's `rev` of it): while nothing was written since, the server answers `unchanged` from one small read
+    const ifRev = st.data && !st.reset && st.data.rev ? st.data.rev : undefined;
     st.busy = true; st.ctl = root.AbortController ? new AbortController() : null; paintLive();
     try {
-      const r = await call({ op: "overview", day: st.day || undefined, days: st.days, trend: st.days === 1 ? false : undefined, after: delta || undefined, roster: true }, null, st.ctl && st.ctl.signal);
+      const r = await call({ op: "overview", day: st.day || undefined, days: st.days, trend: st.days === 1 ? false : undefined, after: delta || undefined, roster: true, ifRev }, null, st.ctl && st.ctl.signal);
       if (gen !== st.gen) return;
-      st.fails = 0; st.err = ""; st.errShort = ""; accept(r, false);
+      st.fails = 0; st.err = ""; st.errShort = "";
+      if (r && r.unchanged && ifRev && st.data) { st.at = Date.now(); st.resuming = false; } else accept(r, false);
     } catch (e) {
       if (gen !== st.gen || (e && e.name === "AbortError")) return;
       if (e.auth || e.locked) { authFail(e); return; }
       st.fails++; st.err = String(e.message || e).slice(0, 200); st.errShort = e.short || "Reconnecting…"; st.hold = e.limited ? options.holdMs : 0; st.resuming = false;
       if (!st.data) { setText(E.waitT, `${st.err} Trying again.`); E.wait.querySelector(".spin").style.visibility = "hidden"; } paintLive();
-    } finally { if (gen === st.gen) { st.busy = false; st.loadingDay = false; st.reset = false; E.body.classList.remove("dim"); paintLive(); schedule(st.err ? Math.max(backoff(), st.hold || 0) : (live() ? options.pollMs : Math.max(options.pollMs * 3, 30000))); } }
+    } finally { if (gen === st.gen) { st.busy = false; st.loadingDay = false; st.reset = false; E.body.classList.remove("dim"); paintLive(); schedule(st.err ? Math.max(backoff(), st.hold || 0) : pace(live() ? options.pollMs : Math.max(options.pollMs * 3, 30000))); } }
   }
   /** Desk numbers for days recorded before desks were told apart (Assembly 1..4, Shipping 1..3). The answer lists the days in view whose rollups still lack them (`deskPending`);
    *  each such day is asked for ONCE per page load (op deskBackfill: the server reads that day's events once, a few hundred at a time, and writes the desk counters; a day it has
@@ -968,21 +991,26 @@
 
   /* ── the live read: who is signed in, and the order each station has now (op live), about every 3 s while in sight ── */
   const backoffLive = () => Math.min(30000, options.liveMs * Math.pow(2, st.liveFails));
-  function scheduleLive(ms) { clearTimeout(st.liveTimer); st.liveTimer = 0; if (active() && st.liveSupported) st.liveTimer = setTimeout(pollLive, ms); }
-  async function pollLive() {
+  function scheduleLive(ms) { clearTimeout(st.liveTimer); st.liveTimer = 0; if (active() && st.liveSupported) { st.liveDue = Date.now() + ms; st.liveTimer = setTimeout(pollLive, ms); } }
+  /** One live read at a time for the whole console: a second asker (the stations board's refresh) shares the read that is out (COST, Oct 2026). */
+  function liveNow() { return pollLive(); }
+  function pollLive() { if (st.liveBusy) return st.liveP || Promise.resolve(); const p = pollLive1(); st.liveP = st.liveBusy ? p : null; return p; }
+  async function pollLive1() {
     clearTimeout(st.liveTimer); st.liveTimer = 0;
     if (!active() || !st.liveSupported || st.liveBusy) return;
     const gen = st.liveGen; st.liveBusy = true; st.liveCtl = root.AbortController ? new AbortController() : null;
+    const ifRev = st.live && st.liveRev ? st.liveRev : undefined;   // (COST, Oct 2026: unchanged since the answer held: one small read on the server, nothing drawn again)
     try {
-      const r = await call({ op: "live" }, null, st.liveCtl && st.liveCtl.signal);
+      const r = await call(ifRev ? { op: "live", ifRev } : { op: "live" }, null, st.liveCtl && st.liveCtl.signal);
       if (gen !== st.liveGen) return;
-      st.liveFails = 0; st.liveErr = ""; st.liveShort = ""; acceptLive(r);
+      st.liveFails = 0; st.liveErr = ""; st.liveShort = "";
+      if (r && r.unchanged && ifRev && st.live) { st.liveAt = Date.now(); st.resuming = false; paintLive(); } else { st.liveRev = (r && r.rev) || ""; acceptLive(r); }
     } catch (e) {
       if (gen !== st.liveGen || (e && e.name === "AbortError")) return;
       if (e.auth || e.locked) { authFail(e); return; }
       if (e.status === 400 && /unknown op/i.test(e.serverError || "")) { st.liveSupported = false; st.liveRetryAt = Date.now() + 300000; st.liveErr = ""; st.resuming = false; renderNow(); }   // an older server: the overview alone, and a look again in five minutes
       else { st.liveFails++; st.liveErr = String(e.message || e).slice(0, 200); st.liveShort = e.short || "Reconnecting…"; st.liveHold = e.limited ? options.holdMs : 0; st.resuming = false; }
-    } finally { if (gen === st.liveGen) { st.liveBusy = false; paintLive(); scheduleLive(st.liveErr ? Math.max(backoffLive(), st.liveHold || 0) : options.liveMs); } }
+    } finally { if (gen === st.liveGen) { st.liveBusy = false; paintLive(); scheduleLive(st.liveErr ? Math.max(backoffLive(), st.liveHold || 0) : pace(options.liveMs)); } }
   }
   function acceptLive(r) {
     const L = normLive(r);
@@ -1577,8 +1605,8 @@
   /** Starts whatever read is due (a read that is still out is left alone). True when one started. */
   function catchUp() {
     let did = false;
-    if (needOverview() && !st.busy) { if (!st.at || Date.now() - st.at > 2000) { poll(); did = true; } else if (!st.timer) schedule(options.pollMs); }
-    if (st.liveSupported && !st.liveBusy) { if (!st.liveAt || Date.now() - st.liveAt > 1500) { pollLive(); did = true; } else if (!st.liveTimer) scheduleLive(options.liveMs); }
+    if (needOverview() && !st.busy) { if (!st.at || Date.now() - st.at > 2000) { poll(); did = true; } else if (!st.timer) schedule(pace(options.pollMs)); }
+    if (st.liveSupported && !st.liveBusy) { if (!st.liveAt || Date.now() - st.liveAt > 1500) { pollLive(); did = true; } else if (!st.liveTimer) scheduleLive(pace(options.liveMs)); }
     return did;
   }
   /** The screen was opened (the Workspace menu, a link, Back): the address and the tab agree, the passcode is asked if needed. */
@@ -1595,6 +1623,7 @@
     const was = st.shown; st.shown = !barred && !host.classList.contains("hidden");
     if (st.shown && !was) onShown();
     if (!st.shown && was) unmountAll();                       // another Workspace tab is open: nothing of ours runs
+    ticking(st.shown && doc.visibilityState !== "hidden");
     if (!(st.shown && doc.visibilityState !== "hidden")) { clearTimeout(st.timer); clearTimeout(st.liveTimer); st.timer = st.liveTimer = 0; if (!st.out) st.out = Date.now(); paintLive(); return; }   // out of sight: nothing is read
     const away = st.out ? Date.now() - st.out : 0; st.out = 0;
     if (st.key && !st.locked) {
@@ -1604,6 +1633,11 @@
     }
     paintLive();
   }
+  /** COST (Oct 2026): the 1 s tick ran for every person on every sorter page, the console shown or not; it runs only while the console is on screen. */
+  function ticking(on) {
+    if (on && !st.tick) st.tick = setInterval(tickLive, Math.max(250, +options.tickMs || 1000));
+    else if (!on && st.tick) { clearInterval(st.tick); st.tick = 0; }
+  }
   /** Each second: the status line and the ticking times; and a safety net, so a read that should be running always is. */
   function tickLive() {
     if (!(st.built && st.shown && doc.visibilityState !== "hidden")) return;
@@ -1611,8 +1645,8 @@
     const td = today(); if (st.data && !st.day && st.data.day && st.data.day !== td) { paintDay(); if (!st.busy) poll(); }
     if (!active()) return;
     if (!st.liveSupported && st.liveRetryAt && Date.now() > st.liveRetryAt) { st.liveSupported = true; st.liveRetryAt = 0; pollLive(); }
-    if (st.liveSupported && !st.liveBusy && !st.liveTimer) scheduleLive(options.liveMs);
-    if (needOverview() && !st.busy && !st.timer) schedule(options.pollMs);
+    if (st.liveSupported && !st.liveBusy && !st.liveTimer) scheduleLive(pace(options.liveMs));
+    if (needOverview() && !st.busy && !st.timer) schedule(pace(options.pollMs));
   }
   function open() { try { if (root.CN && typeof root.CN.setMode === "function") root.CN.setMode("efficiency"); } catch (_) {} }
   /** Opens the screen on a tab (or a person) from anywhere. (The sorter page decides whether this person may have the tab: charm-nest-1.html setMode.) */
@@ -1625,6 +1659,8 @@
     onView(fn) { st.subs.view.add(fn); return () => st.subs.view.delete(fn); },
     live: () => st.live,
     onLive(fn) { st.subs.live.add(fn); return () => st.subs.live.delete(fn); },
+    liveNow,     // (the live read now, shared with the one already out)
+    pace,        // (COST, Oct 2026: the wait a module's own timer should use now, see pace above)
     state: () => ({ visible: active(), connected: !st.err && !st.liveErr, view: st.view, liveSupported: st.liveSupported, age: driveAt() ? Date.now() - driveAt() : null }),
     now, openOrder, openPerson, openStations: () => goTo("stations"), openOverview: () => goTo("overview"), openPeople: () => goTo("people"),
     fmt: { nf, dur, durMs, ago, clock, since, stName, nyDay, initials }
@@ -1633,7 +1669,6 @@
     if (!build()) return;
     try { const M = root.CharmNestMasterAdmin; if (M && typeof M.onChange === "function") M.onChange(visibility); } catch (_) {}      // (the master admin signs in or out: the screen follows at once)
     visibility();
-    setInterval(tickLive, Math.max(250, +options.tickMs || 1000));
   }
   if (doc.getElementById("efficiencyView")) mount(); else doc.addEventListener("DOMContentLoaded", mount, { once: true });
   if (root.EfficiencyStations && typeof root.EfficiencyStations.displayStation !== "function") root.EfficiencyStations.displayStation = displayStation;   // (the stations module is older than this file: the same function)

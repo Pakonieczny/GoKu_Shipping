@@ -167,6 +167,39 @@ const roll = (day, person, parts) => ({ day, person, v: 1, events: 3, firstAt: N
     assert.strictEqual(await AS.endOne(db, 'Station_Sessions', 's3aaaaaaaa', NOW), 'ended-by-then'); assert.strictEqual(revDoc().ses, 1, 'ended once, counted once');
     say('5 the writers: an activity event, a new or finished order and a session the rules end are counted; a repeat, a beat and the sandbox are not');
   }
+
+  /* 6 · COST (Oct 2026): ifRev → unchanged. An answer of op live / overview names itself (rev); sent back while the revision has not moved, the
+         same scope and within 20 s, it is answered `unchanged` from the revision alone, even on an instance that kept nothing (another warm one) */
+  {
+    colls.clear(); reset(); tick(11 * 60000);
+    const today = dayNow(), cold = () => { const c = T.cacheOf(db); c.memo.clear(); c.recent.clear(); };
+    data('Efficiency_Daily').set(today + '__Ana M', roll(today, 'Ana M', 5));
+    data('Station_Sessions').set('s6aaaaaaaa', sess('s6aaaaaaaa', 'Ana M', NOW - 3600e3, { last: NOW - 10e3, input: NOW - 5e3 }));
+    await Rev.afterWrite(db, '', ['act', 'ses', 'live']); tick(2000);
+    const body = { op: 'overview', days: 1, trend: false, roster: true };
+    cold(); reset(); const o = await call(body), coldReads = reads.length;
+    assert(typeof o.rev === 'string' && o.rev.startsWith('ov.' + today + '.1.n'), 'the overview names itself: ' + o.rev);
+    const lv = await call({ op: 'live' }); assert(typeof lv.rev === 'string' && lv.rev.startsWith('live~'), 'so does op live');
+    cold(); reset(); tick(3000);
+    const u = await call(Object.assign({ ifRev: o.rev }, body));
+    assert.deepStrictEqual([u.ok, u.unchanged], [true, true], 'unchanged since the answer held: ' + JSON.stringify(u).slice(0, 200));
+    assert.strictEqual(dataReads(), 0, 'answered from the revision alone, on an instance that kept nothing: ' + JSON.stringify(reads));
+    const ul = await call({ op: 'live', ifRev: lv.rev }); assert.strictEqual(ul.unchanged, true, 'op live too');
+    say(`  (overview on a cold instance: ${coldReads} reads; the same call with ifRev: ${reads.length} read${reads.length === 1 ? '' : 's'}: the revision, and the alias list an empty instance reads once a minute)`);
+    assert.notStrictEqual((await call({ op: 'live', ifRev: o.rev })).unchanged, true, 'another scope (an overview rev sent to live) is a full answer');
+    assert.notStrictEqual((await call(Object.assign({ ifRev: o.rev }, body, { days: 7 }))).unchanged, true, 'another range is a full answer');
+    // a counted change: the full answer, with a new rev
+    data('Efficiency_Daily').set(today + '__Ana M', roll(today, 'Ana M', 9)); await Rev.afterWrite(db, '', ['act']); tick(6000);   // (after the 5 s answer cache)
+    const o2 = await call(Object.assign({ ifRev: o.rev }, body));
+    assert.notStrictEqual(o2.unchanged, true, 'the revision moved: the whole answer'); assert.strictEqual(o2.people[0].totals.parts, 9); assert.notStrictEqual(o2.rev, o.rev);
+    // the age cap: an answer older than 20 s is answered in full, whatever the revision says
+    tick(21000); const o3 = await call(Object.assign({ ifRev: o2.rev }, body));
+    assert.notStrictEqual(o3.unchanged, true, 'older than 20 s: the whole answer'); assert(o3.people && o3.rev);
+    // garbage and the sandbox never short-circuit
+    assert.notStrictEqual((await call(Object.assign({ ifRev: 'x~y~z' }, body))).unchanged, true);
+    const sb = await call({ op: 'live', sandbox: true, ifRev: lv.rev }); assert.notStrictEqual(sb.unchanged, true, 'the sandbox has no revision'); assert.strictEqual(sb.rev, undefined);
+    say('6 ifRev: an unmoved revision answers `unchanged` from one small read (any instance), a change, another scope, an old answer or the sandbox get the whole answer');
+  }
   Date.now = realNow;
   say('employee-rev: all checks passed');
 })().catch(e => { Date.now = realNow; process.stdout.write('FAILED: ' + (e && e.stack || e) + '\n' + logs.slice(-5).join('\n') + '\n'); process.exit(1); });
