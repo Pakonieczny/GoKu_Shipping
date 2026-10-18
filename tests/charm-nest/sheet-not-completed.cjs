@@ -81,7 +81,7 @@ const OLD = [
     // 0 · the switch is Open | Completed, nothing else
     const b0 = await bar();
     assert.deepEqual(b0.segs, ['open', 'done'], 'two segments');
-    assert.equal(b0.sentSeg, false, 'no Decided segment'); assert.doesNotMatch(b0.text, /Decided/, 'no Decided word in the bar'); assert.equal(b0.aria, 'Open or completed');
+    assert.equal(b0.sentSeg, false, 'no Decided segment'); assert.doesNotMatch(b0.text, /Decided/, 'no Decided word in the bar'); assert.equal(b0.aria, 'Open or resolved');   // (the segment reads Resolved, RVRESOLVED: Paul, 18 Oct 2026)
 
     // 1 · Send to Sheet on an Unknown SKU card: a design dropped, its metal picked, sent
     await press('#reviewView .egTab[data-k="unmatchedSku"]');
@@ -115,7 +115,7 @@ const OLD = [
     assert.deepEqual(await btn(HAND), ['Print QR label', 'Reopen'], 'the hand-completed order keeps its seal and buttons');
     assert.deepEqual((await btn(SENT)).filter(t => /sheet|History/i.test(t)), ['Open sheet', 'History'], 'the sent order keeps its sheet and history links');
     assert.equal(await page.evaluate(sel => document.querySelectorAll(sel + ' .seal-sheet').length, card(SENT)), 1, 'and its Sent to Sheet seal');
-    assert.match(await page.evaluate(sel => document.querySelector(sel + ' .queueLabel').textContent, card(SENT)), /^Completed · sent to sheet$/, 'its card says Completed, not Decided');
+    assert.match(await page.evaluate(sel => document.querySelector(sel + ' .queueLabel').textContent, card(SENT)), /^Resolved · sent to sheet$/, 'its card says Resolved, not Decided');
 
     const mkeys = await page.evaluate(([a, b]) => ({ [a]: document.querySelector(`#rvList [data-rid="${a}"]`).dataset.mkey, [b]: document.querySelector(`#rvList [data-rid="${b}"]`).dataset.mkey }), [SENT, HAND]);
 

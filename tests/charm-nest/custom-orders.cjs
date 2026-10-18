@@ -211,7 +211,7 @@ async function browserChecks() {
     const seg = await page.evaluate(() => ({ first: document.querySelector('#reviewView .ordBar').firstElementChild.className, b: [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim()), all: !!document.querySelector('#reviewView .egTab[data-k=""]'), n: Review.count() }));
     assert.equal(seg.first, 'rvSeg', 'the switch comes first in the bar'); assert.equal(seg.all, false, 'no Everything chip');
     const openAll = +seg.b[0].replace('Open', '');
-    assert.deepEqual(seg.b, ['Open' + openAll, 'Completed0']); assert(openAll >= 6, 'Open counts everything that waits: ' + JSON.stringify(seg));
+    assert.deepEqual(seg.b, ['Open' + openAll, 'Resolved0']);   // (the segment reads Resolved, RVRESOLVED: Paul, 18 Oct 2026) assert(openAll >= 6, 'Open counts everything that waits: ' + JSON.stringify(seg));
     const barH = await page.evaluate(() => document.querySelector('#reviewView .ordBar').getBoundingClientRect().height);
     assert(barH < 40, 'the bar stays one line: ' + barH);
     // a click on the card opens the order window, which asks nothing (Paul, 29 Sep 01:01: no decision box in Review or
@@ -230,8 +230,8 @@ async function browserChecks() {
     if (shots) { await page.waitForTimeout(420); await page.screenshot({ path: path.join(shots, 'seal-stamp.png') }); await page.waitForTimeout(700); await page.screenshot({ path: path.join(shots, 'seal-stamped.png') }); await page.waitForTimeout(1500); await page.screenshot({ path: path.join(shots, 'seal-flight.png') }); }
     await page.waitForFunction(() => document.querySelector('.mNote') && !document.querySelector('#motionLayer .mGhost'), null, { timeout: 8000 });
     const note1 = await page.evaluate(() => ({ text: document.querySelector('.mNote .mNoteT').textContent, acts: [...document.querySelectorAll('.mNote .mNoteBtn')].map(b => b.textContent), card: !!document.querySelector('#rvList .reviewListRow[data-rid="4176744752"]'), stamped: document.querySelector('#rvList .reviewListRow[data-rid="4176744752"]') }));
-    assert.equal(note1.text, 'Order 4176744752 moved to Completed · QR label printed by Test Operator'); assert.deepEqual(note1.acts, ['Undo', 'Show']);
-    assert.equal(note1.card, false, 'the card left Open (it flew to Completed)');
+    assert.equal(note1.text, 'Order 4176744752 moved to Resolved · QR label printed by Test Operator'); assert.deepEqual(note1.acts, ['Undo', 'Show']);
+    assert.equal(note1.card, false, 'the card left Open (it flew to Resolved)');
     if (shots) await page.screenshot({ path: path.join(shots, 'seal-note.png') });
     const printed = await page.evaluate(() => ({ docs: window.__qrDocs, printed: window.__printed, handed: JSON.parse(localStorage.getItem('qrPrintAll')) }));
     assert.equal(printed.printed, 1, 'the print dialog was opened once (a stub: nothing printed)');
@@ -247,7 +247,7 @@ async function browserChecks() {
     const rec = srv.st.doc('Charm_Custom_Orders', '4176744752_41767447521');
     assert(rec && rec.state === 'completed' && rec.prints === 1 && rec.printedBy === 'Test Operator' && rec.category === 'Chain only', 'marked completed in the cloud: ' + JSON.stringify(rec));
     await page.waitForFunction(() => !CustomPrint.busy('cinfo:custom:4176744752:CHAIN_8941'));
-    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim())), ['Open' + (openAll - 1), 'Completed1']);
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim())), ['Open' + (openAll - 1), 'Resolved1']);
     await page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close()));
 
     // a decision printed by hand: completed, no longer a decision, never pooled
@@ -282,7 +282,7 @@ async function browserChecks() {
       document.querySelector('#reviewView .egTab[data-k="needsMapping"]').click(); out.only = [...document.querySelectorAll('#rvList .reviewListRow')].map(n => n.dataset.rid);
       Review.settled().shift(); Review.add(it); return out;
     });
-    assert.deepEqual(opt.chips, ['Custom Orders2', 'Options1'], JSON.stringify(opt)); assert.equal(opt.seg, 'Completed3');
+    assert.deepEqual(opt.chips, ['Custom Orders2', 'Options1'], JSON.stringify(opt)); assert.equal(opt.seg, 'Resolved3');
     assert.match(opt.row, /^Resolved\s*Test Operator · /, 'who answered it and when'); assert.deepEqual(opt.only, ['4178000003'], 'Options under Completed: its answer only');
     await page.click('#reviewView .egTab[data-k="customOrder"]');
     for (const r of list) { assert.match(r.cls, /cuDone/); assert.deepEqual(r.buttons, ['Print again', 'Reopen']); assert.match(r.why, /QR label printed by Test Operator/); }
@@ -340,7 +340,7 @@ async function browserChecks() {
     await page.fill(huggies + ' [data-cu-name]', 'Test Operator');
     await page.click(huggies + ' [data-cu-name-ok]');
     await page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close()));
-    await page.waitForFunction(k => B.maps.customDone[k] && [...document.querySelectorAll('.mNote .mNoteT')].some(n => /^Order 4177425406 moved to Completed/.test(n.textContent)), hKey, { timeout: 30000 });
+    await page.waitForFunction(k => B.maps.customDone[k] && [...document.querySelectorAll('.mNote .mNoteT')].some(n => /^Order 4177425406 moved to Resolved/.test(n.textContent)), hKey, { timeout: 30000 });
     assert.equal(srv.st.doc('Charm_Custom_Orders', hKey).printedBy, 'Test Operator', 'the name typed in the card is recorded');
     await page.click('.mNote .mNoteBtn:text("Undo")');
     await page.waitForFunction(k => !B.maps.customDone[k] && !document.querySelector('.cuStat, .btn.working'), hKey, { timeout: 30000 })
@@ -384,7 +384,7 @@ async function browserChecks() {
     await page.click('#rvList .reviewListRow[data-rid="4177425406"] [data-cu-complete]');
     await page.waitForFunction(k => B.maps.customDone[k] && document.querySelector('#motionLayer .mGhost .seal.seal-button'), hKey, { timeout: 30000 });
     if (shots) { await page.waitForTimeout(1100); await page.screenshot({ path: path.join(shots, 'seal-complete.png') }); }
-    await page.waitForFunction(() => /moved to Completed · completed by Test Operator with no label printed$/.test(document.querySelector('.mNote .mNoteT')?.textContent || ''), null, { timeout: 8000 });
+    await page.waitForFunction(() => /moved to Resolved · completed by Test Operator with no label printed$/.test(document.querySelector('.mNote .mNoteT')?.textContent || ''), null, { timeout: 8000 });
     const byButton = srv.st.doc('Charm_Custom_Orders', hKey);
     // (its print before the Undo is kept: that label was printed, and its seal stays with the order)
     assert(byButton && byButton.how === 'button' && byButton.completedBy === 'Test Operator' && byButton.prints === 1 && byButton.stamps.map(x => x.how).join() === 'print,button', 'completed without a new print: ' + JSON.stringify(byButton));

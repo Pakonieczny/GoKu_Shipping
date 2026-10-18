@@ -135,7 +135,7 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     await page.waitForFunction(k => __tl.some(e => e.key === k && e.type === 'decided'), aKey, { timeout: 10000 });
     const tlA = await page.evaluate(k => __tl.filter(e => e.key === k && e.type === 'decided'), aKey);
     assert(tlA.length === 1 && tlA[0].by === 'Test Operator' && /Unknown SKU: completed by hand \(Complete Order\)/.test(tlA[0].text), 'the question is answered, with who: ' + JSON.stringify(tlA));
-    await page.waitForFunction(() => /^Order 4175892473 moved to Completed · completed by Test Operator/.test(document.querySelector('.mNote .mNoteT')?.textContent || ''), null, { timeout: 10000 });
+    await page.waitForFunction(() => /^Order 4175892473 moved to Resolved · completed by Test Operator/.test(document.querySelector('.mNote .mNoteT')?.textContent || ''), null, { timeout: 10000 });
     await page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close && n.close()));
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
     const doneA = await page.evaluate(sel => { const n = document.querySelector(sel); return n && { seals: [...n.querySelectorAll('.seal')].map(x => x.classList.contains('seal-button')), b: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()), q: n.querySelector('.queueLabel').textContent, l: n.querySelector('.engravingIdentity .purchaseLabel').textContent, chips: [...document.querySelectorAll('#reviewView .egTab')].map(c => c.dataset.k) }; }, card('4175892473'));

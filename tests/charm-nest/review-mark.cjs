@@ -87,7 +87,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.deepEqual(await A.page.evaluate(rid => CharmNestReviewMark.mark(rid), R1), { ok: true, already: true, rid: R1 });
     const both = await A.page.evaluate(rid => Promise.all([CharmNestReviewMark.mark(rid), CharmNestReviewMark.mark(rid)]), R2);
     assert.ok(both[0].ok && both[1].ok, 'both answer ok'); assert.equal(writes().length, 2, 'a double press on a new order is one write (one for R1, one for R2)');
-    if (process.env.SHOT) { await A.page.click('#reviewView .ordBar [data-k="reviewMark"]'); await A.page.waitForTimeout(800); await A.page.screenshot({ path: process.env.SHOT }); await A.page.click('#reviewView .ordBar [data-k="reviewMark"]'); }
+    // (no Marked chip since RVRESOLVED, Paul 18 Oct 2026: the marked order is a plain card in all of Open)
+    if (process.env.SHOT) { await A.page.waitForTimeout(800); await A.page.screenshot({ path: process.env.SHOT }); }
     rows = await A.rows(); assert.equal(rows.find(r => r.rid === R2 && r.kind === 'Marked').slots, 2, 'a two-line order has a slot for each line');
     // the order's timeline gets one plain line (a note), never a seal
     const tlEvents = () => srv.st.calls.filter(c => c.name === 'charmNestLibrary' && c.body && c.body.op === 'timelineAdd').flatMap(c => Array.isArray(c.body.events) ? c.body.events : []);
