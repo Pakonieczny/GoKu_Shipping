@@ -1,6 +1,6 @@
 // SHEETWIN TWO BODIES (Paul, 18 Oct 2026, order 4193072538, a GF sheet): "These 2 charms (Moon + Star) are not being correctly identified as belonging to the same order."
-// The design TINY MOON & STARS 2 draws two bodies, a crescent moon and a star, and its line is cut as ONE piece holding both (a two-body design on a line that is not an earring pair, an old
-// glued pair, or a pair whose bodies share a group of the master: Paul's rulings of 10 and 11 Oct keep such a piece whole). The sheet window rang only the piece's first body (its outline) and
+// The design TINY MOON & STARS 2 draws two bodies, a crescent moon and a star, and its line is cut as ONE piece holding both (a two-body design on a line that is not an earring pair, Paul's
+// rulings of 10 and 11 Oct; or a pair whose bodies share a group of the master). The sheet window rang only the piece's first body (its outline) and
 // said "This order · 1 piece · this charm", so the star beside the ringed moon looked like no part of the order. This pins what the window says and draws of such a piece:
 //   pure: the sheet window's own helpers (ringParts, charmsIn, copyText) read as source and run in node's vm over the real CharmNestPair;
 //   browser (headless Chromium over the fake site, bridge-server.cjs: nothing live): the panel's heading and words, the plate's tip, and the gold line round the star as well as the moon.
@@ -31,14 +31,22 @@ function onlyMoon() { const c = moonAndStar(); c.members = [c.outline]; c.bbox =
 const src = fs.readFileSync(path.join(root, 'charm-nest-sheetwin.js'), 'utf8');
 const lineOf = start => { const i = src.indexOf(start); assert.ok(i > 0, 'found: ' + start); return src.slice(i, src.indexOf('\n', i)); };
 function helpers(o) {
-  const ctx = Object.assign({ window: { CharmNestPair: Pair }, cutLinesOf: c => c.members.filter(m => m !== c.outline && m.kind === 'path' && m.closed), tryDo: f => { try { return f ? f() : null; } catch (_) { return null; } },
+  const ctx = Object.assign({ window: { CharmNestPair: Pair }, tryDo: f => { try { return f ? f() : null; } catch (_) { return null; } },
     sideOfPiece: x => x.side || null, discOfPiece: () => null, sideWord: s => (s === 'L' ? 'Left' : s === 'R' ? 'Right' : '') }, o || {});
-  vm.runInNewContext(['  const ringParts = ', '  const charmsIn = ', '  const charmsWord = ', '  const copyText = '].map(lineOf).join('\n') + '\n;this.H = { ringParts, charmsIn, charmsWord, copyText };', ctx);
+  vm.runInNewContext(['  const bodiesIn = ', '  const ringParts = ', '  const charmsIn = ', '  const charmsWord = ', '  const copyText = '].map(lineOf).join('\n') + '\n;this.H = { ringParts, charmsIn, charmsWord, copyText };', ctx);
   return ctx.H;
 }
 
 t('the design reads as two different bodies (a mismatched design), the way the pair model reads every design', () => {
   const d = Pair.describe(moonAndStar()); assert.equal(d.count, 2); assert.equal(d.mismatched, true);
+});
+t('the one piece: on a necklace line the two bodies are ONE piece of the order (no side, both bodies); on an earring line they are a Left (the moon) and a Right (the star)', () => {
+  const c = moonAndStar(), neck = { receiptId: '4193072538', transactionId: '5000000071', quantity: 1, title: 'Tiny Moon & Stars Necklace', spec: { quantity: 1, form: 'necklace' } };
+  const one = Pair.piecesFor(neck, c);
+  assert.equal(one.length, 1); assert.equal(one[0].side, null); assert.equal(one[0].groupKey, '4193072538:5000000071'); assert.equal(Pair.kindOf(neck, c), 'single', 'one piece of the order');
+  assert.equal(Pair.isEarringPair(neck, c), false); assert.equal(Pair.isGroupLine(neck, c), false, 'one piece: no group to keep together');
+  const ear = Object.assign({}, neck, { title: 'Tiny Moon & Stars Earrings', spec: { quantity: 1, form: 'earrings' } }), two = Pair.piecesFor(ear, c);
+  assert.deepEqual(two.map(p => [p.side, p.bodyIndex, p.groupKey]), [['L', 0, '4193072538:5000000071'], ['R', 1, '4193072538:5000000071']]);
 });
 t('charmsIn: a piece holding both bodies is 2 charms; a piece of one body, a piece with no drawing and a page without the pair model are 1', () => {
   const H = helpers();
@@ -51,7 +59,10 @@ t('ringParts: the line round a piece goes round the star as well as the moon; a 
   const H = helpers(), c = moonAndStar(), parts = H.ringParts(c);
   assert.equal(parts.length, 2); assert.equal(parts[0], c.outline.subpaths[0]); assert.equal(parts[1], c.members[1].subpaths[0], 'the star is a part of the ring');
   const one = onlyMoon(); assert.deepEqual(H.ringParts(one), one.outline.subpaths);
-  assert.deepEqual(helpers({ cutLinesOf: undefined }).ringParts(c), c.outline.subpaths, 'a page without cutLinesOf rings the outline, as before');
+  assert.deepEqual(helpers({ window: {} }).ringParts(c), c.outline.subpaths, 'a page without CharmNestPair rings the outline, as before');
+  // a charm of one body with a hole: the hole is no part of the ring (it stays filled inside its body)
+  const holed = onlyMoon(), hole = star(5 * MM, 6.9 * MM, 1.2 * MM); holed.members = [holed.outline, hole];
+  assert.equal(Pair.bodiesOf(holed).length, 1, 'a small cut-out is no second body'); assert.deepEqual(H.ringParts(holed), holed.outline.subpaths);
 });
 t('copyText: the panel says "2 charms, one piece" before the size; an ear, a copy and a single charm read as before', () => {
   const H = helpers();
@@ -111,6 +122,13 @@ if (process.argv.includes('--pure') || process.exitCode) return;
     await page.mouse.move(at.x, at.y); await page.waitForTimeout(250);
     const tip = await page.evaluate(() => SheetWin._W.el.tip.innerText.replace(/\s+/g, ' ').trim());
     assert.match(tip, /4193072538 TINY MOON & STARS 2 · 2 charms, one piece/, 'the tip says the piece is two charms: ' + tip);
+    // the star is the same piece: pointing at it says the same order and the same two charms
+    const atStar = await page.evaluate(pid => { const W = SheetWin._W, x = W.pieces.find(y => y.poolId === pid), b = x.c.members[1].bbox, r = W.el.fx.getBoundingClientRect(), s = r.width / W.el.fx.width;
+      return { x: r.left + (W.R + x.p.cxPt * W.k + ((b[0] + b[2]) / 2 - x.c.centerPt[0]) * W.k) * s, y: r.top + (W.R + x.p.cyPt * W.k + (x.c.centerPt[1] - (b[1] + b[3]) / 2) * W.k) * s }; }, pE);
+    await page.mouse.move(atStar.x, atStar.y); await page.waitForTimeout(250);
+    const starTip = await page.evaluate(() => SheetWin._W.hover && SheetWin._W.hover.poolId + ' ' + SheetWin._W.el.tip.innerText.replace(/\s+/g, ' ').trim());
+    assert.match(starTip || '', new RegExp('^' + pE + ' 4193072538 TINY MOON & STARS 2 · 2 charms, one piece'), 'the star is the same piece of the order: ' + starTip);
+    await page.mouse.move(at.x, at.y); await page.waitForTimeout(150);
     await page.mouse.click(at.x, at.y);
     await until(() => page.evaluate(pid => SheetWin._W.sel && SheetWin._W.sel.poolId === pid && /TINY MOON/.test((document.querySelector('.swPiece .facts b') || {}).textContent || ''), pE), 10000, 'the moon-and-star piece selected');
     await until(() => page.evaluate(() => [...document.querySelectorAll('.swTrail li')].some(li => /TINY MOON/.test(li.innerText))), 10000, 'its order list');

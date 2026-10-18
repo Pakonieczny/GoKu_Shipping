@@ -1509,13 +1509,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      about the charm's middle, which stood unevenly off any charm that is not round and doubled the gold line. ── */
   const HALO = { gap: 2.6, w: 1.5, gold: "#b8893a" };   // css px: out from the cut edge, and the line's width
   /* ── a piece that is SEVERAL charms (Paul, 18 Oct 2026, order 4193072538: "These 2 charms (Moon + Star) are not being correctly identified as belonging to the same order"). A design that
-     draws two bodies and is cut as ONE piece holding both (a two-body design on a line that is not an earring pair: Paul 10-11 Oct, "BEE + HIVE, WOLF + MOON keep one piece holding both"; an
-     old glued mismatched pair; a pair whose bodies share one group of the master) is one pool piece of its order, but the window rang only its first body's outline and its panel said "1 piece
-     · this charm": the star beside the ringed moon looked like no part of the order, though it is the same piece. The line now goes round every cut part of the piece (ringParts), and the panel,
-     its order list and the tip say how many charms the one piece is (charmsIn: CharmNestPair.bodiesOf, the one definition of a design's bodies). A charm of one body reads as before. ── */
-  const ringParts = c => (c.outline.subpaths || []).concat(...(typeof cutLinesOf === "function" ? tryDo(() => cutLinesOf(c)) || [] : []).map(m => m.subpaths || []));
+     draws two different bodies is cut as ONE piece holding both on a line that is not an earring pair (Paul, 10 Oct: only earring pairs are a Left and a Right; 11 Oct, charm-nest-pair.js 4c:
+     two clearly different bodies keep one piece holding both), and so is a pair whose bodies share one group of the master. It is one pool piece of its order, but the window rang only its
+     first body (the charm's outline) and its panel said "1 piece · this charm": the star beside the ringed moon looked like no part of the order, though it is the same piece. The line now
+     goes round every body of the piece (ringParts), and the panel, its order list and the tip say how many charms the one piece is (charmsIn). Both read CharmNestPair.bodiesOf, the one
+     definition of a design's bodies; a charm of one body is ringed along its outline and reads exactly as before. ── */
+  const bodiesIn = c => { const P = window.CharmNestPair; if (!c || !c.outline || !P || typeof P.bodiesOf !== "function") return null; const b = tryDo(() => P.bodiesOf(c)); return Array.isArray(b) && b.length > 1 ? b : null; };
+  /** The closed paths the gold line goes round: the outline's, and the outline of every other body of a piece that holds several (never a hole: it stays filled inside its body). */
+  const ringParts = c => { const b = bodiesIn(c); return b ? [].concat(...b.map(y => (y.outline && y.outline.subpaths) || [])) : (c.outline.subpaths || []); };
   /** How many separate charms one piece of this sheet holds: its design's bodies (2 for the moon and the star cut as one piece), 1 for every other piece and for one whose drawing is not read. */
-  const charmsIn = x => { const c = x && x.c, P = window.CharmNestPair; if (!c || !c.outline || !P || typeof P.bodiesOf !== "function") return 1; return Math.max(1, tryDo(() => P.bodiesOf(c).length) || 1); };
+  const charmsIn = x => { const b = bodiesIn(x && x.c); return b ? b.length : 1; };
   const charmsWord = n => `${n} charms, one piece`;
   function haloOf(x, k, dpr, back, o = {}) {
     const p = x.p, c = x.c, sc = p.scale || 1, gap = (o.gap || HALO.gap) * dpr, lw = (o.w || HALO.w) * dpr, col = o.color || HALO.gold;
@@ -1526,8 +1529,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const cv = document.createElement("canvas"); cv.width = cv.height = 2 * half;
     const ctx = cv.getContext("2d");
     ctx.translate(half, half); if (back) ctx.scale(-1, 1); ctx.rotate((+p.angle || 0) * Math.PI / 180); ctx.scale(sc, sc);
-    // its solid parts one closed path at a time: a hole or a jump ring's opening is filled, so the line goes round its outside. Every cut part of the piece is one (ringParts:
-    // the star beside the moon of a piece that holds two bodies, Paul 18 Oct 2026); a hole is filled inside its body, so it changes nothing of the line round a charm of one body
+    // its solid parts one closed path at a time: a hole or a jump ring's opening is filled, so the line goes round its outside. The outline of every body of the piece is one
+    // (ringParts: the star beside the moon of a piece that holds two bodies, Paul 18 Oct 2026); a charm of one body is ringed along its outline alone, as before
     const subs = c && c.outline ? ringParts(c) : [];
     let parts;
     if (subs.length) { const cx = c.centerPt[0], cy = c.centerPt[1], t = (px, py) => [(px - cx) * k, (cy - py) * k];
@@ -1704,7 +1707,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       for (const [d, px, a0] of [[0, 22, .95], [.16, 38, .7]]) {
         const u = (t - d) / (1 - d); if (u <= 0 || u >= 1) continue;
         const s = 1 + px * W.dpr * out(u) / rad;
-        ctx.save(); ctx.scale(s, s); outlinePath(ctx, x); ctx.strokeStyle = `rgba(184,137,58,${a0 * Math.pow(1 - u, 1.3)})`; ctx.lineWidth = 3.5 * W.dpr / s; ctx.stroke(); ctx.restore();
+        // (round every body of a piece that holds several, the star with the moon: ringParts, Paul 18 Oct 2026; one body's outline as before)
+        ctx.save(); ctx.scale(s, s); if (x.c && x.c.outline) { ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, { subpaths: ringParts(x.c) }, tx0(x.c)); } else outlinePath(ctx, x); ctx.strokeStyle = `rgba(184,137,58,${a0 * Math.pow(1 - u, 1.3)})`; ctx.lineWidth = 3.5 * W.dpr / s; ctx.stroke(); ctx.restore();
       }
     });
   }
