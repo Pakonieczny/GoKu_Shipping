@@ -1433,6 +1433,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function geometryReady(tok) {
     if (tok !== W.token) return;
     W.geom = true; W.pre = null; paintBase();
+    // (the piece in hand, chosen before its drawing was read: once it is, a piece that is several charms says so in its panel, Paul 18 Oct 2026)
+    { const x = W.sel; if (x && W.view === "piece" && W.pieces.includes(x) && charmsIn(x) > 1) { const mm = W.el.detail.querySelector("[data-r2=mm]"); if (mm) mm.textContent = `${copyText(x)}${mmOf(x)}`; tryDo(() => renderTrail(x)); } }
     W.el.base.style.opacity = "1";
     // (the picture shown until now goes once the drawing has come in over it: never both half there)
     if (W.pieces.every(x => x.c)) { W.el.pv.style.transitionDelay = ".3s"; W.el.pv.style.opacity = "0"; }
@@ -1501,6 +1503,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      picture of its own, so a pulse only moves and fades it (transform and opacity). It replaces the outline scaled up
      about the charm's middle, which stood unevenly off any charm that is not round and doubled the gold line. ── */
   const HALO = { gap: 2.6, w: 1.5, gold: "#b8893a" };   // css px: out from the cut edge, and the line's width
+  /* ── a piece that is SEVERAL charms (Paul, 18 Oct 2026, order 4193072538: "These 2 charms (Moon + Star) are not being correctly identified as belonging to the same order"). A design that
+     draws two bodies and is cut as ONE piece holding both (a two-body design on a line that is not an earring pair: Paul 10-11 Oct, "BEE + HIVE, WOLF + MOON keep one piece holding both"; an
+     old glued mismatched pair; a pair whose bodies share one group of the master) is one pool piece of its order, but the window rang only its first body's outline and its panel said "1 piece
+     · this charm": the star beside the ringed moon looked like no part of the order, though it is the same piece. The line now goes round every cut part of the piece (ringParts), and the panel,
+     its order list and the tip say how many charms the one piece is (charmsIn: CharmNestPair.bodiesOf, the one definition of a design's bodies). A charm of one body reads as before. ── */
+  const ringParts = c => (c.outline.subpaths || []).concat(...(typeof cutLinesOf === "function" ? tryDo(() => cutLinesOf(c)) || [] : []).map(m => m.subpaths || []));
+  /** How many separate charms one piece of this sheet holds: its design's bodies (2 for the moon and the star cut as one piece), 1 for every other piece and for one whose drawing is not read. */
+  const charmsIn = x => { const c = x && x.c, P = window.CharmNestPair; if (!c || !c.outline || !P || typeof P.bodiesOf !== "function") return 1; return Math.max(1, tryDo(() => P.bodiesOf(c).length) || 1); };
+  const charmsWord = n => `${n} charms, one piece`;
   function haloOf(x, k, dpr, back, o = {}) {
     const p = x.p, c = x.c, sc = p.scale || 1, gap = (o.gap || HALO.gap) * dpr, lw = (o.w || HALO.w) * dpr, col = o.color || HALO.gold;
     const key = [k, dpr, back ? 1 : 0, p.angle, sc, p.wPt, p.hPt, gap, lw, col].join("|"), was = x._halo;
@@ -1510,8 +1521,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const cv = document.createElement("canvas"); cv.width = cv.height = 2 * half;
     const ctx = cv.getContext("2d");
     ctx.translate(half, half); if (back) ctx.scale(-1, 1); ctx.rotate((+p.angle || 0) * Math.PI / 180); ctx.scale(sc, sc);
-    // its solid parts one closed path at a time: a hole or a jump ring's opening is filled, so the line goes round its outside
-    const subs = c && c.outline && c.outline.subpaths || [];
+    // its solid parts one closed path at a time: a hole or a jump ring's opening is filled, so the line goes round its outside. Every cut part of the piece is one (ringParts:
+    // the star beside the moon of a piece that holds two bodies, Paul 18 Oct 2026); a hole is filled inside its body, so it changes nothing of the line round a charm of one body
+    const subs = c && c.outline ? ringParts(c) : [];
     let parts;
     if (subs.length) { const cx = c.centerPt[0], cy = c.centerPt[1], t = (px, py) => [(px - cx) * k, (cy - py) * k];
       parts = subs.map(sp => { const q = new Path2D(); CharmNestPDF.pathToCanvas(q, { subpaths: [sp] }, t); return q; }); }
@@ -1741,12 +1753,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const mates = (p.rid && W.orders.get(p.rid)) || [p], elsewhere = otherSheets(p.rid), side = sideOfPiece(p), pn = pairNote(p);
     // (a pair's other piece is said plainly, once: the "also on" line stays for the sheets that hold something else of the order)
     const plain = !!pn && elsewhere.every(e => pn.away.some(a => a.on && (a.sheetId === e.id || (e.name && a.sheetLabel === e.name))));
-    const key = p.id + "|" + elsewhere.length + "|" + (side || "") + "|" + (pn ? pn.text : "");
+    const nC = side ? 1 : charmsIn(p), key = p.id + "|" + elsewhere.length + "|" + (side || "") + "|" + (pn ? pn.text : "") + "|" + nC;
     if (t.dataset.k !== key) {
       t.dataset.k = key;
       // (a piece engraved on both faces says each: "Front · approved", "Back · to approve")
       const eng = p.eng && p.eng.kind !== "none" ? (p.eng.faces ? p.eng.units.filter(u => u.kind !== "none") : [p.eng]).map(u => `<em style="--c:${u.kind === "approved" ? "#7fb877" : "#e0876c"}"><i></i>${u.face === "front" ? "Front" : "Back"} · ${esc(u.label)}</em>`).join("") : "";
-      t.innerHTML = `<b>${esc(p.rid || p.name || "Charm")}</b><span>${esc(p.sku || "")}${side ? ` · ${sideWord(side)} piece` : p.qty > 1 ? ` · copy ${p.copy} of ${p.qty}` : ""}</span>${eng}` +
+      t.innerHTML = `<b>${esc(p.rid || p.name || "Charm")}</b><span>${esc(p.sku || "")}${side ? ` · ${sideWord(side)} piece` : p.qty > 1 ? ` · copy ${p.copy} of ${p.qty}` : ""}${nC > 1 ? ` · ${charmsWord(nC)}` : ""}</span>${eng}` +
         (mates.length > 1 ? `<em><i></i>${mates.length - 1} more of this order here</em>` : "") +
         (pn ? `<em><i></i>${esc(pn.text)}</em>` : "") +
         (elsewhere.length && !plain ? `<em><i></i>also on ${esc(elsewhere.map(s => `${CODE[s.metal] || ""} ${s.n}`).join(", "))}</em>` : "");
@@ -1830,7 +1842,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const F = FACES(), of = F && F.pieceCount && c && c.pieces.some(p => faceOfJob(p.job) === "front") ? F.pieceCount(c.pieces.map(p => p.job)) : c && c.pieces.length;
     return at ? { n: at.n, of, name: at.name } : null;
   }
-  const copyText = x => { const q = sideOfPiece(x); if (q) return `${sideWord(q)} piece · `; const d = x.qty > 1 && discOfPiece(x); return d ? `Disc ${d.n} of ${d.of} · ` : x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : ""; };
+  // (a piece that is several charms says so after its copy: "2 charms, one piece · 18.3 × 13.8 mm", Paul 18 Oct 2026)
+  const copyText = x => { const q = sideOfPiece(x); if (q) return `${sideWord(q)} piece · `; const d = x.qty > 1 && discOfPiece(x), n = charmsIn(x); return (d ? `Disc ${d.n} of ${d.of} · ` : x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : "") + (n > 1 ? `${charmsWord(n)} · ` : ""); };
   const sideOfId = (rid, poolId) => { for (const g of groupsOf(rid)) { const part = g.pieces.find(q => q.key === poolId); if (part) return part.side; } return null; };
   const matchesQ = (x, q) => /^[\d\s#-]+$/.test(q) ? CharmNestOrders.orderMatches(x.rid,q) : `${x.rid} ${x.sku} ${x.name}`.toLowerCase().includes(q);
 
@@ -2441,7 +2454,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const host = W.el.detail.querySelector("[data-r2=trail]"), headN = W.el.detail.querySelector("[data-r2=trailHead]"); if (!host) return;
     const rid = x.rid; if (!rid) { host.innerHTML = `<li class="off"><span class="n"></span><span class="sku">Not part of an order</span></li>`; return; }
     const list = trailItems(x, rid);
-    headN.textContent = `This order · ${list.length} piece${list.length === 1 ? "" : "s"}`;
+    // (a piece of this sheet that is several charms, the moon and the star cut as one piece, counts its charms too: "This order · 1 piece · 2 charms", Paul 18 Oct 2026)
+    const nOf = it => it.piece && !it.side ? charmsIn(it.piece) : 1, charms = list.reduce((n, it) => n + nOf(it), 0);
+    headN.textContent = `This order · ${list.length} piece${list.length === 1 ? "" : "s"}${charms > list.length ? ` · ${charms} charms` : ""}`;
     // (a pair or group with a piece on another sheet, or on none: said once, plainly, above the list: "Right piece is on RG Sheet 2, in the same set.")
     const pnHost = W.el.detail.querySelector("[data-r2=pairNote]"), pn = pairNote(x);
     if (pnHost) {
@@ -2451,13 +2466,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     host.innerHTML = list.map((it, i) => {
       const here = it.here, cur = it.piece === x;
-      const where = here ? `<span class="where" style="--c:${colorOf(W.rec.metal)}"><i></i>${cur ? "this charm" : "on this sheet"}</span>`
+      const nC = nOf(it), where = here ? `<span class="where" style="--c:${colorOf(W.rec.metal)}"><i></i>${cur ? (nC > 1 ? "these charms" : "this charm") : "on this sheet"}</span>`
         : it.sheetId ? `<span class="where" style="--c:${colorOf(it.metal)}"><i></i>${esc(CODE[it.metal] || "")} Sheet ${esc(it.n || "?")}${ICON.go}</span>`
         : it.state === "hand" ? `<span class="where"><i style="background:var(--ink25)"></i><span title="${esc((it.reason || "It was completed by hand and needs no sheet").charAt(0).toUpperCase() + (it.reason || "It was completed by hand and needs no sheet").slice(1))}">completed by hand</span>${handSeal(it)}</span>`
         : it.state === "loading" ? `<span class="where"><i style="background:var(--ink25)"></i>reading its sheet…</span>`
         : it.state === "unsure" ? `<span class="where" title="${esc(it.reason || "")}"><i style="background:var(--ink25)"></i>sheet not read just now</span>`
         : `<span class="where"${it.reason ? ` title="${esc(it.reason.charAt(0).toUpperCase() + it.reason.slice(1))}"` : ""}><i style="background:var(--ink25)"></i>not on a sheet yet</span>`;
-      return `<li data-i="${i}" class="${cur ? "cur" : !it.sheetId && !here ? "off" : ""}"><span class="n">${i + 1}</span><span class="sku">${esc(it.sku || it.label || "No SKU")}${it.side ? `<small class="side">${sideWord(it.side)}</small>` : it.qty > 1 ? `<small>copy ${it.copy} of ${it.qty}</small>` : ""}</span>${where}</li>`;
+      return `<li data-i="${i}" class="${cur ? "cur" : !it.sheetId && !here ? "off" : ""}"><span class="n">${i + 1}</span><span class="sku">${esc(it.sku || it.label || "No SKU")}${it.side ? `<small class="side">${sideWord(it.side)}</small>` : it.qty > 1 ? `<small>copy ${it.copy} of ${it.qty}</small>` : ""}${nC > 1 ? `<small>${charmsWord(nC)}</small>` : ""}</span>${where}</li>`;
     }).join("");
     host.querySelectorAll("li[data-i]").forEach(li => {
       const it = list[+li.dataset.i];
