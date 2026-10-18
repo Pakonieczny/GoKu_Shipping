@@ -507,7 +507,8 @@
       if (!M.dead && !root_.isConnected && !M.orphanT) M.orphanT = setTimeout(() => { M.orphanT = 0; if (!M.dead && !root_.isConnected) unmount(); }, options.orphanMs);
       if (M.dead || !pollingOn()) { paintLive(); return; }
       if (!inSight()) { M.waiting = true; paintLive(); return; }
-      const wait = M.fails ? Math.min(options.maxBackoffMs, pollMs * Math.pow(2, M.fails)) : pollMs;
+      // COST (Oct 2026): the console's pace (Efficiency.api.pace): pollMs while the person works here, slower when nobody is at the keyboard
+      const A = shell(), wait = M.fails ? Math.min(options.maxBackoffMs, pollMs * Math.pow(2, M.fails)) : A && typeof A.pace === "function" ? A.pace(pollMs) : pollMs;
       M.pollT = setTimeout(poll, wait); paintLive();
     }
     async function poll() {

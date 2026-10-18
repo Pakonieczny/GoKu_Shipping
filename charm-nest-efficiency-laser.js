@@ -213,7 +213,9 @@
         if (gen === S.gen && !S.dead) { S.busy = false; clearTimeout(S.wait); S.wait = 0; paint(); schedule(); }
       }
     }
-    function schedule() { clearTimeout(S.poll); S.poll = 0; if (S.dead || !S.range) return; S.poll = setTimeout(() => { S.poll = 0; if (visible()) load(); else schedule(); }, options.pollMs); }
+    // COST (Oct 2026): the console's pace (Efficiency.api.pace): 30 s while the person works here, slower when nobody is at the keyboard
+    const pace = ms => { const A = root.Efficiency && root.Efficiency.api; return A && typeof A.pace === "function" ? A.pace(ms) : ms; };
+    function schedule() { clearTimeout(S.poll); S.poll = 0; if (S.dead || !S.range) return; S.poll = setTimeout(() => { S.poll = 0; if (visible()) load(); else schedule(); }, pace(options.pollMs)); }
 
     function setRange(r) {
       if (S.dead) return; const next = r && isDay(r.from) && isDay(r.to) ? { from: r.from, to: r.to } : null; if (!next || sigOf(next) === sigOf(S.range)) return;

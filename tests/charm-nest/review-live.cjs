@@ -315,8 +315,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       await dueIn(A, { f: k => !B.maps.customDone[k], a: key }, 'A holding the reopen'); await dueIn(B, { f: k => !B.maps.customDone[k], a: key }, 'B holding the reopen');
       await A.page.evaluate(() => CN.setMode('orders')); await sleep(900); await A.calm();
       const a0 = await A.mark(), t = Date.now(); await cloud('customPut', Object.assign(target(rid), { by: 'Maria B', how: 'button' }));
-      await dueIn(A, { f: k => B.maps.customDone[k], a: KEY(rid) }, 'A following on the Orders tab', 6000);
-      assert(Date.now() - t <= 5000, 'the Orders tab held the completion within seconds');
+      // (COST, Oct 2026: off the Review tab the feed reads every 10 s, charm-nest-review-live.js SLOW: within one such beat and its read)
+      await dueIn(A, { f: k => B.maps.customDone[k], a: KEY(rid) }, 'A following on the Orders tab', 13000);
+      assert(Date.now() - t <= 12500, 'the Orders tab held the completion within one slow beat');
       await nap(1500);
       assert.deepEqual((await A.since(a0)).filter(e => e.k !== 'note'), [], 'nothing stamped or flown on the Orders tab');
       await A.page.evaluate(() => CN.setMode('review')); await sleep(800); await A.calm();

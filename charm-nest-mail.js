@@ -160,25 +160,34 @@
   // ─── sync: what changed, shared by every tab ────────────────────────────
   const bc = "BroadcastChannel" in window ? new BroadcastChannel("cn-mail") : null;
   const TAB = uidOf();
-  let syncTimer = 0, syncing = false, lastTouch = Date.now();
-  ["pointerdown", "keydown"].forEach(ev => document.addEventListener(ev, () => { lastTouch = Date.now(); }, { capture: true, passive: true }));
+  let syncTimer = 0, syncDue = 0, syncing = false, lastTouch = Date.now();
+  // (COST, Oct 2026: the first input after a quiet spell brings a sync planned at the slow pace forward to the pace it is now)
+  const touched = () => { const was = lastTouch; lastTouch = Date.now(); if (lastTouch - was > 1000 && syncTimer && !syncing && M.key) { const ms = pace(); if (syncDue - Date.now() > ms + 250) kick(ms); } };
+  ["pointerdown", "keydown", "wheel", "touchstart"].forEach(ev => document.addEventListener(ev, touched, { capture: true, passive: true }));
+  window.addEventListener("focus", touched);
   /* The pace follows what the person is looking at: a conversation on screen or a message on its way is watched every
      few seconds; open questions without a window on them every quarter minute; nothing open, every minute or two. A tab
      in the background slows down, and a poll another tab already made is not made again. */
   /** A message of ours is on its way (in this browser's outbox or in the inbox's queue). */
   function moving() { return !!(pendingOut().length || [...M.store.values()].some(s => s.pending > 0)); }
+  /* COST (Oct 2026): a line's node counted as "on screen" whenever it was in the page, so the Orders cards of a tab nobody looked at (the Review
+     tab shown, the cards kept in the DOM) held the 4 s sync for the whole day. Now only a pane or a line that is laid out on screen counts, and the
+     4 s pace is for a person at work (an input in the last 2 minutes, the window focused): 15 s otherwise, a minute after 10 minutes with no input.
+     A message of ours on its way keeps 4 s while the person is there, 15 s when not; the person's own send syncs at once (flushOut / kick). */
+  const onScreen = n => !!(n && n.isConnected && n.offsetParent !== null && !n.closest("[hidden]"));
   function pace() {
     if (!M.key) return 0;
-    const shown = [...M.panes].some(P => P.visible()) || [...M.lines.values()].some(L => L.node.isConnected);
+    const shown = [...M.panes].some(P => P.visible()) || [...M.lines.values()].some(L => onScreen(L.node));
     const mv = moving();
     const open = [...M.store.values()].some(s => s.status === "open");
-    const idle = Date.now() - lastTouch > 10 * 60000;
-    let ms = shown || mv ? 4000 : open ? 15000 : 90000;
+    const quiet = Date.now() - lastTouch, idle = quiet > 10 * 60000;
+    let focused = true; try { focused = typeof document.hasFocus !== "function" || document.hasFocus(); } catch (_) {}
+    let ms = shown || mv ? (quiet <= 2 * 60000 && focused ? 4000 : 15000) : open ? 15000 : 90000;
     if (document.hidden) ms = Math.max(ms * 3, mv ? 15000 : 45000);
-    else if (idle) ms = Math.max(ms, 30000);
+    else if (idle) ms = Math.max(ms, 60000);
     return ms;
   }
-  function kick(ms) { clearTimeout(syncTimer); if (!M.key) return; syncTimer = setTimeout(syncNow, ms == null ? pace() : ms); }
+  function kick(ms) { clearTimeout(syncTimer); if (!M.key) return; const w = ms == null ? pace() : ms; syncDue = Date.now() + w; syncTimer = setTimeout(syncNow, w); }
   async function syncNow() {
     if (syncing || !M.key) return;
     syncing = true;

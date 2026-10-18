@@ -782,6 +782,30 @@ const INBOX = require("./_employeeInbox");
 INBOX.bind({ cleanName, okName, niceName, bestForm, nameKeyOf, canonOf, num, validDay, addDays, nyDay, nyMidnight, cached, safe, json, resolveRange: PROFILE.resolveRange, RANGE_DAYS: PROFILE.RANGE_DAYS, DAILY_MAX: PROFILE.DAILY_MAX });
 OPS.inbox = INBOX.opInbox;
 OPS.personInbox = INBOX.opPersonInbox;
+/* COST (Oct 2026): `ifRev` → `unchanged`. The console asks for op live every few seconds and the overview every ten; a warm instance answers them
+   from its memo for about one read (the revision), but a call that lands on another instance rebuilt the whole answer (the overview cold ~1 300
+   reads). Every answer of these two ops now carries `rev`: what it was asked for (scope), the employee revision it was read under (Station_Rev,
+   _employeeRev.js: every counted write moves it) and the server time. A call that sends it back (ifRev) while the revision has not moved, for the
+   same scope and within UNCHANGED_MAX of that answer, is answered { ok, unchanged: true } from the revision read alone, on any instance. The age
+   cap keeps what the clock alone changes (signed-in minutes, the sign-out rules, a live document's keep-alive beats, which are not counted) at most
+   that much behind; the sandbox, a failed or missing revision, and an answer with errors in it never take part. */
+const UNCHANGED_MAX = 20000;
+function revScope(ctx, opName, body) {
+  if (opName === "live") return "live";
+  if (opName !== "overview") return "";
+  let day = body.day == null || body.day === "" ? ctx.today : String(body.day);
+  if (!validDay(day)) return "";
+  if (day > ctx.today) day = ctx.today;
+  const n = Math.floor(num(body.days)), days = n <= 1 ? 1 : n <= 7 ? 7 : 30;
+  const trend = !(body.trend === false || body.trend === 0 || body.trend === "0"), roster = body.roster === true || body.roster === 1 || body.roster === "1";
+  return `ov.${day}.${days}.${trend ? "t" : "n"}${roster ? "r" : ""}`;
+}
+const revOf = rev => `${rev.act}.${rev.ses}.${rev.live}`;
+function unchangedSince(ctx, scope, ifRev) {
+  if (!scope || typeof ifRev !== "string" || ifRev.length > 120 || ctx.aliasError) return false;
+  const [s0, v0, t0] = ifRev.split("~"), age = ctx.now - Number(t0);
+  return s0 === scope && v0 === revOf(ctx.rev) && age >= 0 && age < UNCHANGED_MAX;
+}
 function senderOf(event) {
   const h = (event && event.headers) || {};
   const get = k => { for (const x in h) if (x.toLowerCase() === k) return h[x]; return ""; };
@@ -810,8 +834,16 @@ async function handle(event, handle_) {
   if (!op) return json(400, { ok: false, error: "unknown op" });
   const [al, rev] = await Promise.all([safe(loadAliases(ctx), "aliases"), ctx.prefix ? null : Rev.read(ctx.db, ctx.now)]);   // (the revision: one small document, kept 1 s; the sandbox never uses it)
   ctx.aliases = al.ok ? al.value : buildAliases(null); ctx.aliasError = al.ok ? "" : al.error; ctx.rev = rev;
+  const scope = rev && rev.ok && !ctx.prefix ? revScope(ctx, opName, body) : "";
+  if (unchangedSince(ctx, scope, body.ifRev)) return json(200, { ok: true, unchanged: true, now: ctx.now, rev: body.ifRev });
   try {
     const res = await op(ctx, body);
+    if (scope && !ctx.aliasError && res && res.statusCode === 200) {    // (the answer is named, so the next call can say it holds it)
+      try {
+        const j = JSON.parse(res.body);
+        if (j && typeof j === "object" && !Array.isArray(j) && j.ok !== false && !(Array.isArray(j.errors) && j.errors.length)) { j.rev = `${scope}~${revOf(rev)}~${ctx.now}`; return Object.assign({}, res, { body: JSON.stringify(j) }); }
+      } catch (_) { /* not JSON: leave it */ }
+    }
     if (ctx.aliasError && res && res.statusCode === 200) {           // without the alias list two spellings of one person may show as two: every answer says so, once
       try {
         const j = JSON.parse(res.body);
