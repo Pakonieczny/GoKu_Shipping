@@ -201,7 +201,8 @@ const sheetUnflagged = s => (s.archived ? !(num(s.laserDoneAt) > 0) : Readiness.
 const setUnflagged = s => num(s.laserDoneAt) > 0;
 async function currentFlagReady() {
   if (PREFIX) return false;
-  if (currentReady) return true;
+  // (the marker is read every time, one small read: an instance that remembered it would trust it after the records were replaced under it,
+  //  a restored backup or a test store reset, and list nothing; currentReady only says this instance has seen it)
   try {
     const ref = db.collection(REV_COLL).doc(CURRENT_MARK), mark = await ref.get();
     if (mark.exists && num((mark.data() || {}).v) >= 1) return (currentReady = true);
