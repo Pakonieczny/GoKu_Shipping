@@ -27,7 +27,7 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),station=fs.readFileS
  const p={window:{},polling:false,lastPoll:0,Date:{now:()=>1000000},S:{mode:'library',cloud:{ok:true}},document:{hidden:false,querySelectorAll:()=>[visible,offscreen]},innerHeight:800,Set,records:new Map(),changed:()=>{},console};let polls=[];p.api=async(_,b)=>{polls.push(b);return {sheets:[],sets:[]}};
  // (the live read's poll takes (force, now) and the cards in view come from shown(), both in the bridge now: the stand-in loads them with the live-state stubs poll touches)
  p.live={seq:0,applied:0};p.applyStatus=()=>{};p.nudge=()=>{};
- const shownAt=bridge.indexOf('  function shown(){'),start=bridge.indexOf('  async function poll(force=false,now=false)');vm.runInNewContext(bridge.slice(shownAt,bridge.indexOf('  /** An answer, taken in',shownAt))+bridge.slice(start,bridge.indexOf('  function saved(sh)',start))+';this.poll=poll;',p);
+ const shownAt=bridge.indexOf('  const inView=new Map();let viewer=null;'),start=bridge.indexOf('  async function poll(force=false,now=false)');vm.runInNewContext(bridge.slice(shownAt,bridge.indexOf('  /** An answer, taken in',shownAt))+bridge.slice(start,bridge.indexOf('  function saved(sh)',start))+';this.poll=poll;',p);
  await p.poll();await p.poll();assert.equal(polls.length,1);assert.deepEqual(Array.from(polls[0].sheetIds),['visible']);p.document.hidden=true;await p.poll(true);assert.equal(polls.length,1);
  // Known arrivals are not re-read on later checks.
  const a={Date,Object,Set,state:{seen:{}},S:{cloud:{ok:true}},at:id=>a.state.seen[id],interval:()=>600000,save:()=>{},paint:()=>{}};let sent=[];a.api=async(_,b)=>{sent.push(b.orders);return {firstSeen:Object.fromEntries(b.orders.map(o=>[o.id,123])),count24:2,count1:2}};
