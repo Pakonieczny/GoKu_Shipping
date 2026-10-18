@@ -235,6 +235,7 @@ const assets = [
   "charm-nest-progress.js",
   "charm-nest-pair-remove.js",
   "charm-nest-sheetwin.js",
+  "charm-nest-sheet-hop.js",
   "charm-nest-order-hold.js",
   "charm-nest-engrave-link.js",
   "charm-nest-engrave-return.js",
