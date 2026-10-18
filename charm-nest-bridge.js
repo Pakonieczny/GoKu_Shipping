@@ -1401,7 +1401,12 @@ const Orders = window.Orders = (() => {
     try { O.cleanMaps(next[1], next[2]); } catch (_) {}   // (a person's answer saved while its SKU still carried an entity, "ACORN&#39;S LEAF", is read under "ACORN'S LEAF"; nothing stored is rewritten)
     const sig = JSON.stringify(next);
     // (a read that was asked for before another one that has already come back is older than it: its answer is not put over the newer)
-    if (seq > mapsApplied && (sig !== mapsSig || !mapsSame())) { mapsSig = sig; [B.maps.optionMaps, B.maps.aliases, B.maps.noDesign] = next; mapsRead = next; }
+    if (seq > mapsApplied && (sig !== mapsSig || !mapsSame())) {
+      // (LISTPICK: what the answers were, so the lines of a listing whose pick moved are made up again with it, on this computer and every other: Review.relinkMaps. The session's first read changes nothing)
+      const had = mapsSig ? { optionMaps: B.maps.optionMaps, aliases: B.maps.aliases } : null;
+      mapsSig = sig; [B.maps.optionMaps, B.maps.aliases, B.maps.noDesign] = next; mapsRead = next;
+      if (had) try { window.Review?.relinkMaps?.(had); } catch (e) { console.warn("[relink]", e && e.message); }
+    }
     if (seq > mapsApplied) mapsApplied = seq;
     B.maps.loadedAt = Date.now();
     // a map larger than one answer holds comes back cut short (truncated), where it used to stop at a count in silence: said
@@ -3970,6 +3975,7 @@ const Pool = window.Pool = (() => {
       // (the Etsy SKU read as a look-alike master entry: CELESTIAL3-COMET, a comet with no loop, before the link to CELESTIAL 3 - COMET). Only that source, and only a line that reads clean and is not made by hand
       const one = !set && sp && sp.skuSource === "alias" && sp.designSku && !sp.noDesign && !sp.ownDesign && !sp.customDone && !(sp.problems || []).length ? [String(sp.designSku)] : null, want = set || one;
       if (!want || ["gone", "committed"].includes(row.state) || row.hold) return;
+      if (one && row._relinkTold && O.sameDesign(row._relinkTold, want[0], k => Master.entryFor(k))) return;   // (LISTPICK told a person this line's piece is cut, committed or released with the old drawing: no card offers to take it off)
       if (row.changePending && row.repoolChanged && ((B.review && B.review.items) || []).some(x => x.key === "chg:" + row.key)) return;   // (already offered: the card stands until a person answers it)
       const units = Math.max(1, Math.round(+sp.quantity || 1)), expect = []; for (let u = 0; u < units; u++) for (const d of want) expect.push(d.toUpperCase());
       const made = live.slice().sort((a, b) => (+a.copy || 0) - (+b.copy || 0)).map(r => String(r.sku || "").toUpperCase());
@@ -4270,6 +4276,9 @@ const Pool = window.Pool = (() => {
       const shut = p => { const k = row.releasing && p.keepRelease && p.keepRelease.rid === String(row.order.receiptId) ? p.keepRelease : null; if (k) p.keepRelease = null; try { return !!(window.LiveNest && LiveNest.closed(p)); } finally { if (k) p.keepRelease = k; } };
       // (the line's own sheet first, when it still takes pieces: the order's home sheet can be an earlier one, and a pair is never put half on each)
       { const open = matePages.filter(p => p.metal === metal && !shut(p) && (!run || !p.runId || p.runId === run.runId)); if (open.length && !open.includes(page)) page = open[0]; }
+      // (LISTPICK, Paul 18 Oct 2026: a line made up again because its listing's charm was picked goes first into the vacant space its old pieces left, on the sheet they were taken off; when
+      //  that sheet is closed meanwhile the intake's own choice stands, and what does not fit there moves on to the next sheet, overflowToNextSheet)
+      if (!matePages.length && row._relink && Array.isArray(row._relink.homes)) { const home = row._relink.homes.find(p => p && p.metal === metal && pagesOf(metal).includes(p) && !shut(p) && (!run || !p.runId || p.runId === run.runId)); if (home) page = home; }
       if((run && page.runId && page.runId!==run.runId) || shut(page))page=addPage(metal);
       S.sheets[metal].active=pagesOf(metal).indexOf(page);if(!page.el)window.CN?.showPage(metal,S.sheets[metal].active);   // the card shows the page its buttons act on
       if (run) page.runId = run.runId;
@@ -7991,8 +8000,8 @@ const Engrave = window.Engrave = (() => {
     const bc = c.querySelector(".backHost canvas"); if (bc && bc._paint) bc._paint();
     const rec = DRAFTS.get(job.key), none = !!(rec && rec.fit && rec.fit.empty), f = rec && rec.fit && !none ? rec.fit : job.fit, cap = c.querySelector("[data-cap]");
     if (cap && f && Number.isFinite(f.capMm)) cap.textContent = capText(f);
-    const rh = c.querySelector(".reviewIdentity") || c.querySelector(".rh");   // (the SMALL / THIN STROKES chips say what is drawn, as refresh() keeps them)
-    if (rh && f) { rh.querySelectorAll(".small").forEach(n => n.remove()); if (!none && f.small) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>`); if (!none && f.thin) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>`); }
+    const rh = c.querySelector(".reviewIdentity") || c.querySelector(".rh");   // (the SMALL chip says what is drawn, as refresh() keeps it; HDRMETA: never a THIN STROKES chip)
+    if (rh && f) { rh.querySelectorAll(".small").forEach(n => n.remove()); if (!none && f.small) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>`); }
     draftNote(c, rec);
   }
   /** THE ONE CALL of the panel (onDraft): the staged edit of ONE face job, drawn in the work area at once. staged = { text, fontWord, mode, position? } (the panel's own words for that face: the textarea, the font
@@ -8944,7 +8953,6 @@ const Engrave = window.Engrave = (() => {
     const rh = c.querySelector(".reviewIdentity") || c.querySelector(".rh"); if (rh) {
       rh.querySelectorAll(".small").forEach(n => n.remove());
       if (f.small) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>`);
-      if (f.thin) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>`);
     }
     const cl = c.querySelector(".claude"); if (cl) cl.remove();
     LiveStrip.render();
@@ -9136,18 +9144,17 @@ const Engrave = window.Engrave = (() => {
   }
   /** The detail card of a monogram piece: the engraved piece's own head (counter, Back / Next, order number, the strip of the order's pieces, Open order, close), the guide's line, then the widget and the buyer's messages. */
   function monogramCard(m, remaining, ctx) {
-    const r = m.row, line = lineOf(r), sp = line.spec || {}, rid = String(line.order.receiptId), counts = (ctx && ctx.counts) || rowCountsOf({ length: remaining });
+    const r = m.row, line = lineOf(r), rid = String(line.order.receiptId), counts = (ctx && ctx.counts) || rowCountsOf({ length: remaining });
     const card = el("div", "rvItem egMonoCard"); card.dataset.kind = "placement"; card.dataset.mono = "1"; card.dataset.testid = "eg-mono-card"; card.dataset.state = m.state; card.dataset.key = m.key; card.dataset.rid = rid; card.tabIndex = 0; card._job = m; card._headSig = "";
     const said = window.CharmNestEngraveSaid ? CharmNestEngraveSaid.html(r) : "";
-    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this piece's place in the queue · how many orders are decided">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(rid)}</span><span class="sub" data-mono-sub></span>${window.OrderWin && /^\d+$/.test(rid) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
+    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this piece's place in the queue · how many orders are decided">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(rid)}</span>${window.OrderWin && /^\d+$/.test(rid) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="egGuide" hidden></div>
       <div class="placeView egMonoView"><div class="pvMain">${said}<div class="egMonoHost" data-testid="eg-mono-host"></div></div><section class="pvMail"></section></div>`;
     try { window.CharmNestEngraveGuide?.mount(card, rid, m.key); } catch (_) { /* no guide line */ }
-    const sub = () => { const t = ["Monogram", monoTag(m).replace(/^PIECE/, "Piece"), letterWord(m), sp.size].filter(Boolean).join(" · "), n = card.querySelector("[data-mono-sub]"); if (n && n.textContent !== t) n.textContent = t; };
-    sub();
+    // (HDRMETA, Paul 18 Oct 2026: no "Monogram · Piece n of N · A P V · size" line under the number, as an engraved piece's head has no size · kind line; the letters are the widget's three boxes, the piece is the strip's tab)
     cardMessages(card, m);
     const w = monoMount(card.querySelector(".egMonoHost"), m, card);
-    card._sync = () => { if (card.dataset.state !== m.state) card.dataset.state = m.state; sub(); card._stripSync(); };
+    card._sync = () => { if (card.dataset.state !== m.state) card.dataset.state = m.state; card._stripSync(); };
     card._dispose = () => { if (w) { try { w.destroy(); } catch (_) { /* gone with the card */ } } };
     card._stripSync = () => {
       const E = EO(), host = card.querySelector(".reviewIdentity"); if (!E || !host) return;
@@ -9339,7 +9346,10 @@ const Engrave = window.Engrave = (() => {
     const said = panelOn && window.CharmNestEngraveSaid ? CharmNestEngraveSaid.html(job.row) : "";
     const fromOrder = panelOn ? (window.CharmNestEngraveSaid ? "" : `${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}`)   // (the file did not load: the plain rows, never nothing)
       : `${faced ? row2("Reading", faceReadingOf(job.row)) : ""}${fontMapped ? row2("Font", fontText.replace(/^Font: /, "")) : noteFont ? row2("Font", noteFont) : ""}${row2("Personalization", (sp.personalization || []).map(x => O.visible(x)).join(" / "))}${row2("Buyer's note", O.visible(sp.buyerMessage))}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
-    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a line's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? ` (an order's ${countedNoun(ears)}s are one placement: Back and Next go through every ${countedNoun(ears)})` : " (an earring line's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc((setPieceOfJob(job) || {}).sku || sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${ears ? earSwitchHtml(job, ears, panelOn) : faced ? (panelOn ? "" : faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`)) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().pieceTag(job, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
+    // HDRMETA (Paul, 18 Oct 2026, of the detail head "9 OF 9 · 9 DONE | ‹ Back | Next › | 4195215444  5X8.5 · charm  [Open order ↗]  THIN STROKES": "Remove 'Thin Strokes', 'charm', '5x8.5'
+    // text from the UI."): the head keeps the counter, Back / Next, the order number, the piece / face tag, Open order and the SMALL chip; the size · kind · copies line under the number and the THIN STROKES chip are
+    // never drawn (refit() and refresh() no longer put the chip back). job.fit.thin is still measured and still saved with the placement (rec.thin); only the words on screen are gone.
+    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a line's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? ` (an order's ${countedNoun(ears)}s are one placement: Back and Next go through every ${countedNoun(ears)})` : " (an earring line's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span>${ears ? earSwitchHtml(job, ears, panelOn) : faced ? (panelOn ? "" : faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`)) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().pieceTag(job, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain">${byCard ? "" : `<h4 class="pvH">${cap1(fw)} · engraving</h4>`}<div class="pvApproval">${appView || keptView ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton egApproved" data-a="approved" disabled aria-disabled="true" title="approved — change anything and press Approve again: it gets a new seal">Approved</button></span>${job.state === "written" ? `<span class="egWrittenNote hint">Saved to sheet · approving again replaces its file</span>` : ""}` : f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the ${fw} file">Approve</button></span>` : ""}${f && !wordsJob && ears && !appView ? approveBothHtml(ears, job) : ""}</div><div class="backHost"></div></div>
         <div class="ctl">${!f && !wordsJob && panelOn && job.reason ? `<span class="why" role="status">${esc(isFrontJob(job) ? String(job.reason).replace(/\bback area\b/, "front area") : job.reason)}</span>` : ""}${f && !wordsJob ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="egTurn" role="group" aria-label="Turn the whole charm and its engraving" title="Turn the whole charm and its engraving together, in degrees. Counter-clockwise is plus. 0 is where the system placed it."><button type="button" class="egTurnStep" data-a="turnStep" data-step="-1" title="Turn 1° clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree clockwise">↷</button><label class="egTurnField"><input type="number" data-a="turn" inputmode="numeric" min="-360" max="360" step="1" value="${turnOf(job)}" aria-label="Turn the whole charm and its engraving, in degrees"><span class="egTurnDeg" aria-hidden="true">°</span></label><button type="button" class="egTurnStep" data-a="turnStep" data-step="1" title="Turn 1° counter-clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree counter-clockwise">↶</button></span>` : ""}
@@ -12262,7 +12272,7 @@ const CustomPrint = window.CustomPrint = (() => {
       if (done.length && it.onDone) { try { it.onDone(who, "print"); } catch (_) {} }   // a Review card's question: answered, by who
       if (done.length && cancelled) printedAnyway(cancelled, who, "print", done.length);
       settle(); say(key, null); unlay(); pressSoon(); if (done.length) tlFresh();   // (the open order window reads its timeline now, as after Complete Order)
-      agent({ bridge: true }, putErr ? "warn" : "DS", `${targets[0].receiptId}: sorting-station QR label printed by ${who}${putErr ? ` — not marked completed (${putErr.message})` : cut.size ? ` — ${cut.size} piece(s) went on a sheet meanwhile, not marked` : " · Review → Completed"}`);
+      agent({ bridge: true }, putErr ? "warn" : "DS", `${targets[0].receiptId}: sorting-station QR label printed by ${who}${putErr ? ` — not marked completed (${putErr.message})` : cut.size ? ` — ${cut.size} piece(s) went on a sheet meanwhile, not marked` : " · Review → Resolved"}`);
       if (putErr) toast(`The QR label was printed but ${done.length ? "not every piece was" : "the order was not"} marked completed: ${putErr.message} — press Print again to retry`, "bad", 9000);
       else if (cut.size) toast(`${targets[0].receiptId}: ${cut.size === targets.length ? "its piece" : cut.size + " of its pieces"} went on a sheet while the label printed — cut on the laser, not marked completed`, "bad", 9000);
       else if (it.done) toast(`${targets[0].receiptId} · QR label printed again`, "ok", 3000);
@@ -12317,7 +12327,7 @@ const CustomPrint = window.CustomPrint = (() => {
       if (done.length && it.onDone) { try { it.onDone(who, "button"); } catch (_) {} }
       if (done.length && cancelled) printedAnyway(cancelled, who, "complete", done.length);
       settle(); say(key, null); pressSoon(); if (done.length) tlFresh();
-      agent({ bridge: true }, putErr ? "warn" : "DS", `${rid}: custom order completed by ${who} (no label printed)${putErr ? ` — not every piece was saved (${putErr.message})` : " · Review → Completed"}`);
+      agent({ bridge: true }, putErr ? "warn" : "DS", `${rid}: custom order completed by ${who} (no label printed)${putErr ? ` — not every piece was saved (${putErr.message})` : " · Review → Resolved"}`);
       if (putErr) toast(`${rid}: ${done.length ? "not every piece was" : "the order was not"} completed: ${putErr.message} — press Complete Order to try again`, "bad", 9000);
       else if (cut) toast(`${rid}: ${cut} of its pieces went on a sheet meanwhile — cut on the laser, not completed`, "bad", 8000);
     }).catch(e => { humanAct("error", { orderId: String(rows[0].order.receiptId || ""), detail: "Complete Order failed" }); failed(key, e.message); acting.delete(key); say(key, null); toast("Complete Order: " + e.message, "bad", 7000); }).finally(() => { release(); acting.delete(key); drop(mine); });
@@ -12334,7 +12344,7 @@ const CustomPrint = window.CustomPrint = (() => {
     offerUndo(done, rows.filter(r => saved[r.key]), who);
     const rid = rows[0].order.receiptId, inWin = OrderWin.isOpen();
     const what = how === "button" ? `completed by ${who} with no label printed` : `QR label printed by ${who}`;
-    const note = inWin ? null : { text: `Order ${rid} moved to Completed · ${what}`, ms: UNDO_MS, actions: [{ label: "Undo", title: "take the completion back (a printed label is not undone)", fn: () => undoKeys(done) }, { label: "Show", title: "open Completed at this order", fn: () => Review.showCard(mk, "done") }] };
+    const note = inWin ? null : { text: `Order ${rid} moved to Resolved · ${what}`, ms: UNDO_MS, actions: [{ label: "Undo", title: "take the completion back (a printed label is not undone)", fn: () => undoKeys(done) }, { label: "Show", title: "open Resolved at this order", fn: () => Review.showCard(mk, "done") }] };   // (the segment reads Resolved, RVRESOLVED: Paul, 18 Oct 2026)
     // a card of another Review tab acts for the order it shows (Paul, 28 Sep 23:55): it leaves under its own name, or,
     // kept open by other orders that ask the same, stays where it is while Completed answers
     if (it.stays) { if (note) Motion.arrive(DONE_SW, { note }); return; }
@@ -12368,7 +12378,7 @@ const CustomPrint = window.CustomPrint = (() => {
     if (ev.loud) fresh.set(mk, +st.at || Date.now());
     if (ev.kind !== "complete" || !ev.loud || !window.Motion) { pressSoon(); return; }
     const what = how === "button" ? `completed by ${who} with no label printed` : `QR label printed by ${who}`;
-    const note = { text: `Order ${rid} moved to Completed · ${what}`, ms: 9000, actions: [{ label: "Show", title: "open Completed at this order", fn: () => Review.showCard(mk, "done") }] };
+    const note = { text: `Order ${rid} moved to Resolved · ${what}`, ms: 9000, actions: [{ label: "Show", title: "open Resolved at this order", fn: () => Review.showCard(mk, "done") }] };
     // a card kept open by other orders that ask the same stays where it is while Completed answers
     if (it && it.stays) { Motion.arrive(DONE_SW, { note }); pressSoon(); return; }
     // (a person typing keeps every key: the stamp holds the page's presses for a second, so it is not brought down on them)
@@ -12394,7 +12404,7 @@ const CustomPrint = window.CustomPrint = (() => {
   /** Undo from the note under Completed: the lines it completed, by their keys. */
   function undoKeys(keys) {
     const u = keys.map(k => undos.get(k)).find(Boolean);
-    if (!u) { toast("Too late to undo here: open Completed and press Reopen on the order", "", 5000); return; }
+    if (!u) { toast("Too late to undo here: open Resolved and press Reopen on the order", "", 5000); return; }
     clearTimeout(u.timer); for (const k of u.keys) if (undos.get(k) === u) undos.delete(k);
     comesBack(u.rows);
     takeBack("cdone:" + Review.cardKey(u.rows[0]), u.rows, employeeName() || u.who, "undo", pressedIn(null));
@@ -14507,11 +14517,11 @@ const Review = window.Review = (() => {
     if (gone && !/^(eng|held):/.test(String(key))) {
       settled.unshift({ key, row:gone.row || gone.rows?.[0] || null, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, pieces: groupPieces((gone.rows || [gone.row]).filter(Boolean)), orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
       const d0 = settled[0], rid = d0.orders[0] || "", who = d0.orders.length > 1 ? `${d0.orders.length} orders` : rid ? "Order " + rid : "The decision";
-      // held: the order is under Orders › On hold (its decision is kept under Completed); answered: under Completed
+      // held: the order is under Orders › On hold (its decision is kept under Resolved); answered: under Resolved
       const held = (gone.rows || [gone.row]).filter(Boolean).every(r2 => r2.hold);
       if (window.Motion) Motion.expect(mkeyOf(gone), held
         ? { to: ORDERS_TAB, note: { text: `${who} ${d0.orders.length > 1 ? "are" : "is"} on hold under Orders · release ${d0.orders.length > 1 ? "them" : "it"} there`, actions: [{ label: "Show", fn: () => showHeld() }] } }
-        : { to: DONE_SW, note: { text: `${who} moved to Completed · ${KIND_WORDS[gone.kind] || "answered"}`, actions: [{ label: "Show", fn: () => showCard("settled:" + d0.key + ":" + d0.t, "done") }] } });
+        : { to: DONE_SW, note: { text: `${who} moved to Resolved · ${KIND_WORDS[gone.kind] || "answered"}`, actions: [{ label: "Show", fn: () => showCard("settled:" + d0.key + ":" + d0.t, "done") }] } });
     }
     if (settled.length > 200) settled.length = 200;
     redraw();
@@ -14610,14 +14620,26 @@ const Review = window.Review = (() => {
     const v = document.getElementById("reviewView");
     if (v && v.classList.contains("hidden") && typeof setMode === "function") setMode("review");
     // (RV.want: the list is drawn down to this card, however old; raised to 400 cards, an older one was never drawn)
-    RV.cseg = seg === "done" || seg === "sent" ? "done" : "open"; RV.filter = kind && RV.cseg === "open" ? kind : null; RV.want = mk;
+    RV.cseg = seg === "done" || seg === "sent" ? "done" : "open"; RV.filter = kind && RV.cseg === "open" && !NO_CHIP.has(kind) ? kind : null; RV.want = mk;   // (a kind with no chip, RVRESOLVED: the card is shown in all of Open)
     render();
     const n = [...document.querySelectorAll("#rvList .reviewListRow")].find(x => x.dataset.mkey === mk);
     if (n) { n.scrollIntoView({ behavior: "smooth", block: "center" }); found(n); }
   }
 
   // the order timeline: a line whose hold is lifted here (Release hold, the sheet window, an answer) is restored
-  async function repool(row) {
+  /* LISTPICK (Paul, 18 Oct 2026): ONE make-up of a line at a time. A listing pick re-makes every order of the listing in the background (relink below) while a person's own answer
+     (Use this charm's loop, Accept the new order) may repool the same line: two at once each took the pieces off and the second took off what the first had just put on.
+     A second call for a line waits for the first, then runs on what the line is THEN. `pre(row)` (relink's) runs in the line's turn and may decline (false): nothing is done. */
+  const repoolTurn = new Map();
+  function repool(row, pre) {
+    const k = row && row.key, prev = k ? repoolTurn.get(k) : null;
+    const go = () => (pre ? Promise.resolve(pre(row)).then(ok => (ok === false ? false : repoolOnce(row))) : repoolOnce(row));
+    // (no other make-up of the line under way and no `pre`: it starts at once, as it always did)
+    const mine = prev || pre ? (prev || Promise.resolve()).catch(() => {}).then(go) : go();
+    if (k) { repoolTurn.set(k, mine); const free = () => { if (repoolTurn.get(k) === mine) repoolTurn.delete(k); }; mine.then(free, free); }
+    return mine;
+  }
+  async function repoolOnce(row) {
     const was = row && row.hold;
     // a hold lifted puts the order ahead of the orders coming in from Etsy, wherever it is lifted (OrderHold.release does it first, with its time)
     if (was && row && !row.releasing) row.frontAt = Date.now();
@@ -14637,7 +14659,8 @@ const Review = window.Review = (() => {
     if(row.repoolChanged && fixedSheets.length){
       row.changePending=false;row.repoolChanged=false;row.state="held";
       const wasCut=fixedSheets.some(cut);
-      row.hold=row.reason=`Etsy changed this piece after it was ${wasCut ? "cut on" : "released to the laser on"} ${fixedSheets.map(sh=>sh.fileBase || sheetName(sh)).join(", ")} — make the change by hand, then release it (the piece on that sheet is kept)${wasCut ? " or skip it" : "; its set waits for that"}`;
+      // (LISTPICK: a listing pick that found the sheet released or cut between its look and this turn says so in its own words)
+      row.hold=row.reason=`${row._relink ? `The listing's charm is now ${row._relink.sku} (picked by ${row._relink.by || "a person"}), but this piece was` : "Etsy changed this piece after it was"} ${wasCut ? "cut on" : "released to the laser on"} ${fixedSheets.map(sh=>sh.fileBase || sheetName(sh)).join(", ")} — make the change by hand, then release it (the piece on that sheet is kept)${wasCut ? " or skip it" : "; its set waits for that"}`;
       add({kind:"heldOrder",key:"held:"+row.order.receiptId,rid:row.order.receiptId,why:`${row.order.receiptId} held — ${row.hold}`,line:row.key});
       agent({run:B.run?.runId},"warn",`${row.order.receiptId}: ${row.hold}`);
       syncOrderItems();Orders.render();RunCtl.poke();return;
@@ -14667,7 +14690,10 @@ const Review = window.Review = (() => {
         if(row.engrave && was.length && to.every(Boolean) && !was.every(w=>to.some(t=>O.sameDesign(w,t,k=>Master.entryFor(k))))){ row.engrave.invalidatedBy="design changed"; row.engrave.approved=false; row.engrave.state="reclassify"; Engrave.invalidate(row,"design changed"); } } catch(_) {}
       // (a sheet already released keeps its set and gets its QR label made again for the orders left on it: it used to leave
       // the set without a label and wait to fill again, as a sheet did after charms were taken off by hand, 26 Sep)
-      for(const sh of allSheets())if(sh.charms.some(c=>old.has(c.poolId))){Gate.keep(sh);sh.charms=sh.charms.filter(c=>!old.has(c.poolId));sh.placements=sh.placements.filter(pl=>sh.charms.some(c=>c.id===pl.id));Orders.keepRest(sh);}
+      // (LISTPICK: the sheets the old pieces leave are the line's home: its new pieces try that vacant space first, attachPool; a sheet that cannot take them passes them on, overflowToNextSheet)
+      const homes=[];
+      for(const sh of allSheets())if(sh.charms.some(c=>old.has(c.poolId))){homes.push(sh);Gate.keep(sh);sh.charms=sh.charms.filter(c=>!old.has(c.poolId));sh.placements=sh.placements.filter(pl=>sh.charms.some(c=>c.id===pl.id));Orders.keepRest(sh);}
+      if(row._relink)row._relink.homes=homes;
       await Pool.update([...old],{state:"superseded",sheetId:null,setId:null});for(const id of old)B.pool.rows.delete(id);
       row.poolIds=[];row.repoolChanged=false;
     }
@@ -14820,7 +14846,9 @@ const Review = window.Review = (() => {
     answered(rows ? { kind: it.kind, rows } : it, "decided", `Use this charm: ${sku}`, { sku, from: p.sku || null }, who);
     await Orders.loadMaps(true); toast(`${p.sku || "No SKU"} → ${sku} remembered${lids.length > 1 ? ` on ${lids.length} listings` : ""}`, "ok");
     linkHolds(rows || rowsOf(it), sku); pickedMarks(rows || rowsOf(it), sku, who);
-    for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId))) await repool(rr);
+    // (LISTPICK: every open order of the listing made up again with the pick first; a line it held for a person, or made up, is not made up again here)
+    const relinked = (await relinkNow().catch(() => null)) || { keys: new Set() };
+    for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId)) && !relinked.keys.has(rr.key)) await repool(rr);
   }
   /** "Use both: X 1 + X 2" (SIBLINGS, 12 Oct 2026): the page's saved pair link (aliasPut with pair, kept per listing and per transaction SKU under Charm_Sku_Aliases/{listing}.pairBySku), so this
    *  listing's next order is already linked with no question; the line then reads as two pieces of one group (charm-nest-orders.js pairInfo, source "alias"), never mirrored. A person tapped it. */
@@ -14863,7 +14891,7 @@ const Review = window.Review = (() => {
   }
   /** A tap on a charm of an offer. An order a person sent to Review (reviewMark) is matched already: its pick is REVLINK's (charm-nest-review-link.js pick: ONE write under the key the matcher reads, an option value
    *  when the charm comes from an option, read back by the server, the links reloaded, a new order of the listing read as proof; it resolves the mark itself). Only a line still waiting on its SKU is made up
-   *  again here: a line that is pooled or on a sheet keeps its pieces, and the saved link is offered by the existing "Order changed" row (Accept the new order), never applied. Any other row: saveCharm. */
+   *  again here; a line of the listing that is pooled or on an open sheet is made up again with the pick by LISTPICK (relinkNow, Paul 18 Oct 2026), one cut or released is held for a person. Any other row: saveCharm. */
   async function pickSimilar(it, p, sku, rows) {
     const RL = window.CharmNestReviewLink;
     if (it.kind !== "reviewMark" || !RL || !RL.pick) return saveCharm(it, p, sku, rows);
@@ -14873,6 +14901,7 @@ const Review = window.Review = (() => {
     const r = await RL.pick(row, sku, { by: who });
     if (!r || !r.ok) { toast((r && r.why) || "That charm could not be kept for this listing", "bad", 7000); return; }
     toast(`${p.sku || "No SKU"} → ${sku} remembered`, "ok");
+    await relinkNow().catch(() => null);   // (LISTPICK: every open order of the listing, this one too, made up again with the pick, in place on its sheet when it fits)
     const lid = String(row.line.listingId);
     for (const rr of Orders.rows()) if (String(rr.line.listingId) === lid && rr.state === "unmatched") await repool(rr);
     Orders.interpretAll(); syncOrderItems(); Orders.render();
@@ -14894,6 +14923,179 @@ const Review = window.Review = (() => {
     if (r.repoolChanged) { await repool(r); RunCtl.poke(); return; }
     if (r.state === "written" || r.state === "pooled") { if (sp.engraveCandidate) await Engrave.classify(r); else r.engrave = { needed: false, state: "none", approved: true, seals: CNEngravingSeals.merge(r.engrave) }; } else await repool(r);
     RunCtl.poke();
+  }
+  /* ═══ LISTPICK · a person's pick for a listing re-makes every open order of that listing, in the background (Paul, 18 Oct 2026) ═══════════════════════════════════════════════════════
+     Paul (order 4201900041 "Charm picked: FEATHER_4102"; 4204208130 of the same listing stayed on the old feather): "if a given listing is manually corrected and released by the user then immediately
+     all already purchased orders using the exact same listing must be identified and updated accordingly ... in the background with no user intervention. If the charms have already been nested onto
+     a sheet ... those already nested charms must be removed and replaced with the updated user selected charm ... If the updated charm/charms do not fit into the vacant space left behind on the
+     sheet then that charm/charms must move onto the next available sheet".
+     WHEN: the saved links change (Orders.loadMaps, on EVERY computer: the one that saved the pick reads its maps again at once, the others with the maps' delta). The lines of the listings whose
+     answers moved are noted as they read BEFORE (relinkMaps); the sweep reads them again with the new maps and decides each one (charm-nest-listing-relink.js classify: the SAME listing at the
+     granularity the matcher reads, CharmNestReviewLink.linkOf: listing + SKU, or listing + the option value that gives the charm; a person's own pick for an order wins).
+     WHAT: a line not made yet just reads the new charm. A line whose pieces are pooled or on a sheet still open is made up again the way "Accept the new order" does it (repool with
+     repoolChanged: its old pieces come off in ONE commit, Pool.update superseded, the line is made up as the pick, attachPool puts it first on the sheet the old pieces left, row._relink.homes,
+     appended into their room; what does not fit moves on to the next sheet, overflowToNextSheet). A line cut, committed, released to the laser or inside a protected Rose Gold / 10K / 14K contour
+     is never changed physically: it is held for a person (the Review's Held row) when this page holds its sheet, and told (toast, log, timeline) in every case. An order in Review keeps its
+     piece (REVHOLD) and is made up once its Review is resolved. Every order changed gets "Charm updated from listing pick by <name>" on its timeline (one id per line and pick: the same
+     event whichever computer writes it).
+     TWO COMPUTERS: a line is made up again only by the page whose run holds its pieces; right before the take-off the cloud's own pool rows are read: pieces another live run holds are that
+     run's (the pool's contention rule), pieces that already carry the pick were made up elsewhere (nothing is taken off twice). One make-up of a line at a time on a page (repool's turn).
+     Idempotent: every decision is read from what the line and its pieces ARE; a second sweep finds nothing to do. */
+  const relinkWait = new Map(), RELINK_TRIES = 40, RELINK_RETRY_MS = 3000, RELINK_TAKEN = new Set(["abandoned", "superseded"]);
+  let relinkTimer = 0, relinkChain = Promise.resolve();
+  const relinkLib = () => window.CharmNestListingRelink || null, relinkRL = () => window.CharmNestReviewLink || null;
+  /** The maps were replaced: `prev` is what they were. The live lines of every listing whose answers moved are noted as they read now (before they are read again). */
+  function relinkMaps(prev) {
+    try {
+      const L = relinkLib(), RL = relinkRL(); if (!L || !RL || !prev) return;
+      const entries = L.snapshot(Orders.rows(), prev, { aliases: B.maps.aliases, optionMaps: B.maps.optionMaps }, (r, m) => RL.linkOf(r, m));
+      // (a line already waiting keeps what it read before the FIRST change: its pieces are still that)
+      for (const e of entries) { const had = relinkWait.get(e.key); relinkWait.set(e.key, had ? Object.assign(e, { from: had.from || e.from, was: had.was, tries: 0 }) : e); }
+      if (relinkWait.size > 3000) for (const k of [...relinkWait.keys()].slice(0, relinkWait.size - 3000)) relinkWait.delete(k);
+      if (entries.length) relinkLater(0);
+    } catch (e) { console.warn("[relink] the maps were not compared:", e && e.message); }
+  }
+  function relinkLater(ms) { clearTimeout(relinkTimer); relinkTimer = setTimeout(() => { relinkTimer = 0; relinkNow().catch(() => {}); }, ms || 0); }
+  /** The sweep now (after any sweep under way). → { keys: the lines it changed or held, swapped, flagged } */
+  function relinkNow() { clearTimeout(relinkTimer); relinkTimer = 0; const p = relinkChain.then(relinkSweep, relinkSweep); relinkChain = p.catch(() => {}); return p; }
+  // an order whose Review is resolved (or marked) is looked at again: a line kept on its sheet while it was in Review is made up now
+  try { document.addEventListener("cn-review-mark", ev => { const rid = String((ev && ev.detail && ev.detail.rid) || ""); if (rid && [...relinkWait.values()].some(e => e.row && e.row.order && String(e.row.order.receiptId) === rid)) relinkLater(300); }); } catch (_) {}
+  const relinkMade = row => {
+    const ids = (row && row.poolIds) || []; if (!ids.length) return [];
+    const got = ids.map(id => B.pool.rows.get(id)); if (got.some(r => !r)) return null;
+    return got.filter(r => !RELINK_TAKEN.has(r.state)).sort((a, b) => (+a.copy || 0) - (+b.copy || 0)).map(r => String(r.sku || "").trim().toUpperCase());
+  };
+  /** The sheets that keep the line's pieces as they are: cut, in a committed set, recalled, released to the laser, or inside a protected Rose Gold / 10K / 14K contour (this page's sheets, local),
+   *  and a live piece whose record puts it on a sheet this page does not hold or past it (written, committed: not local). */
+  function relinkFixed(row) {
+    const ids = new Set((row && row.poolIds) || []), out = [], seen = new Set(); if (!ids.size) return out;
+    const committed = sh => Sets.ofRun(sh.runId).some(s => s.committedAt && (s.sheetIds || []).includes(sh.sheetId));
+    const contour = m => m === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(m));
+    for (const sh of allSheets()) {
+      if (!sh.charms.some(c => ids.has(c.poolId))) continue;
+      for (const c of sh.charms) if (ids.has(c.poolId)) seen.add(c.poolId);
+      const cutNow = !!(sh.laserDoneAt || sh.roseCutAt), inSet = committed(sh);
+      const why = cutNow ? "cut" : inSet ? "in a committed set" : sh.recalled ? "recalled from the laser" : (sh.releaseFull || (Gate.modern(sh.runId) && sh.setId && !sh.draft)) ? "released to the laser"
+        : contour(sh.metal) && (sh.rosePlan || sh.roseProtected) ? `inside the protected ${typeof CharmNestRose !== "undefined" && CharmNestRose.cutWord ? CharmNestRose.cutWord(sh.metal) : "Rose Gold"} contour` : "";
+      if (why) out.push({ name: sh.fileBase || sheetName(sh), why, cut: cutNow || inSet, local: true, sheetId: sh.sheetId || null });
+    }
+    for (const id of ids) {
+      if (seen.has(id)) continue; const p = B.pool.rows.get(id); if (!p || RELINK_TAKEN.has(p.state)) continue;
+      if (["committed", "written", "engraved", "labelled"].includes(p.state) || p.sheetId) out.push({ name: p.sheetName || p.sheetId || "a saved sheet", why: p.state === "committed" ? "committed" : "on a sheet this computer does not hold open", cut: p.state === "committed", local: false, sheetId: p.sheetId || null });
+    }
+    return out;
+  }
+  const relinkOwn = row => { try { const M = window.CharmNestReviewMark, i = M && M.info ? M.info(String(row.order.receiptId)) : null; return i && i.state === "done" && i.how === "pick" && i.sku && (!i.rowKey || i.rowKey === row.key) ? String(i.sku) : ""; } catch (_) { return ""; } };
+  const relinkHelpers = () => ({ maps: B.maps, linkOf: (r, m) => relinkRL().linkOf(r, m), made: relinkMade, fixedOf: relinkFixed, keepsPlace: r => !!(Pool.keepsPlace && Pool.keepsPlace(r)), ownPick: relinkOwn,
+    sameDesign: (a, b) => O.sameDesign(a, b, k => Master.entryFor(k)), cancelled: r => !!(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId)), readNow: r => O.interpretLine(r.order, r.line, Orders.ctx()) });
+  /** Who picked: the name the saved answer carries (an option value's own, or the listing's alias record's), else the person signed in here. */
+  function relinkBy(row, link) {
+    try {
+      const lid = String(row.line.listingId).replace(/\D/g, "");
+      if (link && link.via === "option") { const opt = relinkRL().optionOf(row.spec), hit = opt && O.optionLookup(B.maps.optionMaps, lid, opt.name, opt.value); if (hit && hit.by) return String(hit.by).slice(0, 80); }
+      const a = B.maps.aliases && B.maps.aliases[lid]; if (a && a.by) return String(a.by).slice(0, 80);
+    } catch (_) {}
+    return employeeName() || "";
+  }
+  const relinkId = (row, c, part) => `${row.key}.lpick.${part ? part + "." : ""}${TL.hash(String(c.link && c.link.key) + "|" + c.to)}`;
+  const relinkSay = (row, c, by, more) => TL.line(row, "interpreted", { id: relinkId(row, c, more.part), once: true, by, text: `Charm updated from listing pick by ${by || "a person"}: ${c.from ? c.from + " → " : "now "}${c.to}${more.text ? " · " + more.text : ""}`.slice(0, 200),
+    data: { listingPick: true, sku: c.to, was: c.from || null, link: c.link ? c.link.key : null, via: c.link ? c.link.via : null, by: by || null, action: c.action, sheets: more.sheets || [] } });
+  /** One line made up again with the pick (see the block above). → { ok, retry, why } */
+  async function relinkSwap(row, e, c, h) {
+    let went = false, why = "", homes = [];
+    const by = relinkBy(row, c.link);
+    await repool(row, async r => {
+      const now = relinkLib().classify(Object.assign({}, e, { row: r }), h);
+      if (now.action !== "swap") { why = "now " + now.action; return false; }
+      const run = B.run;
+      if (!run || ["complete", "abandoned"].includes(run.status) || O.stepIndex(run.step) < O.stepIndex("pool")) { why = "retry: no open run on this computer"; return false; }
+      const ids = new Set(r.poolIds || []), on = allSheets().filter(sh => sh.charms.some(x => ids.has(x.poolId)));
+      // (a sheet being arranged or saved keeps its pieces until it is done: taken off in the middle, its layout came back with them)
+      if (on.some(sh => ["nesting", "finishing", "queued"].includes(sh.status) || sh._operationStarting || sh._learnedStarting || (sh.persisted && !sh.persistedDone))) { why = "retry: a sheet is being arranged"; return false; }
+      if (S.cloud.ok) {
+        let cloud; try { const got = await api("charmNestLibrary", { op: "poolGet", poolIds: [...ids] }, { quiet: true }); cloud = (got && got.pools) || {}; } catch (err) { why = "retry: " + ((err && err.message) || err); return false; }
+        const live = [...ids].map(id => cloud[id]).filter(p => p && !RELINK_TAKEN.has(p.state));
+        if (!on.length && live.some(p => p.runId && p.runId !== run.runId)) { why = "another run holds its pieces"; return false; }
+        if (live.length && live.every(p => h.sameDesign(p.sku, c.to))) { for (const id of ids) if (cloud[id]) B.pool.rows.set(id, Object.assign({}, B.pool.rows.get(id), cloud[id])); why = "made up elsewhere"; return false; }
+      }
+      homes = on.map(sh => sh.fileBase || sheetName(sh));
+      r.repoolChanged = true; r.changePending = true; r._relink = { sku: c.to, by, at: Date.now(), from: c.from };
+      went = true; return true;
+    });
+    if (!went) return { ok: !/^retry:/.test(why) && why !== "another run holds its pieces", retry: /^retry:/.test(why), why };
+    delete row._relink;
+    B.review.items = items().filter(x => x.key !== "chg:" + row.key);   // (the Order changed card this reading raised is answered by the pick)
+    const ok = !row.hold && (row.state === "pooled" || row.state === "pulled") && !(row.problems || []).length;
+    relinkSay(row, c, by, { text: homes.length ? `the old piece came off ${homes.join(", ")}; the new one takes its room there, or the next sheet when it does not fit` : "made up again", sheets: homes });
+    if (!ok) agent({ metal: row.spec && row.spec.material, pool: true }, "warn", `${row.order.receiptId} · listing pick ${c.to}: the old pieces came off, but the line was not made up again: ${row.reason || (row.problems || []).map(p => p.kind).join(", ") || row.state}`);
+    return { ok: true, made: ok, homes };
+  }
+  /** A line that keeps its pieces (cut, committed, released, a protected contour): told plainly, held for a person when this page holds that sheet. Nothing physical changes. */
+  const relinkTold = new Set();
+  function relinkFlag(row, c) {
+    const told = row.key + "\u0000" + c.to; if (relinkTold.has(told)) return false; relinkTold.add(told);   // (told once a session for a line and a pick: a second sweep says nothing again)
+    const rid = String(row.order.receiptId), by = relinkBy(row, c.link), fixed = c.fixed || [], where = [...new Set(fixed.map(f => f.name))].join(", ") || "its sheet";
+    const cutNow = row.state === "committed" || fixed.some(f => f.cut), how = cutNow ? "cut" : fixed.map(f => f.why).find(Boolean) || "released to the laser";
+    const say = `The listing's charm is now ${c.to} (picked by ${by || "a person"}), but this piece was ${cutNow ? "cut" : how} as ${c.from} on ${where}`;
+    // (no "Order changed" card offers to take a cut or released piece off: the person is told, and holds or releases it)
+    row._relinkTold = c.to; row.changePending = false; row.repoolChanged = false; B.review.items = items().filter(x => x.key !== "chg:" + row.key);
+    if (c.hold && !row.hold && row.state !== "committed") {
+      row.state = "held"; row.hold = row.reason = `${say} — make the change by hand, then release it (the piece on that sheet is kept)${cutNow ? " or skip it" : "; its set waits for that"}`;
+      add({ kind: "heldOrder", key: "held:" + rid, rid, why: `${rid} held — ${row.hold}`, line: row.key });
+    }
+    agent({ metal: row.spec && row.spec.material, pool: true }, "warn", `${rid} · ${say}: left as it was, a person must make it`);
+    relinkSay(row, c, by, { part: "fixed", text: `but ${c.from} is ${cutNow ? "cut" : how} on ${where}: left as it was, a person must make it`, sheets: fixed.map(f => f.sheetId).filter(Boolean) });
+    return true;
+  }
+  async function relinkSweep() {
+    const L = relinkLib(), RL = relinkRL(), out = { keys: new Set(), swapped: [], flagged: [], design: [], kept: [] };
+    if (!relinkWait.size || !L || !RL) return out;
+    try { Orders.interpretAll(); } catch (e) { console.warn("[relink] lines not read:", e && e.message); }
+    // the pieces of the lines are read from the cloud once a sweep: what they ARE decides (another computer may have made them up again already; a piece this page never read is read)
+    // (a row this page wrote since the cloud's copy keeps what this page knows)
+    const ids = [...new Set([...relinkWait.values()].flatMap(e => ((B.orders.byKey.get(e.key) || e.row || {}).poolIds) || []).filter(Boolean))];
+    if (ids.length && S.cloud.ok) try {
+      const got = await api("charmNestLibrary", { op: "poolGet", poolIds: ids.slice(0, 300) }, { quiet: true });
+      for (const [id, p] of Object.entries((got && got.pools) || {})) { const mine = B.pool.rows.get(id); if (!mine) B.pool.rows.set(id, p); else if ((+p.updatedAt || 0) >= (+mine.updatedAt || 0)) B.pool.rows.set(id, Object.assign({}, mine, p)); }
+    } catch (_) { /* asked again at the next sweep */ }
+    const h = relinkHelpers(); let again = false;
+    for (const [k, e0] of [...relinkWait]) {
+      const row = (B.orders.byKey && B.orders.byKey.get(k)) || e0.row; if (!row) { relinkWait.delete(k); continue; }
+      const e = Object.assign({}, e0, { row });
+      let c; try { c = L.classify(e, h); } catch (err) { c = { action: "skip", why: (err && err.message) || String(err) }; }
+      const retry = () => { e0.tries = (e0.tries || 0) + 1; if (e0.tries < RELINK_TRIES) { again = true; return true; } agent({ pool: true }, "warn", `${row.order.receiptId} · listing pick ${c.to || ""}: not made up again (${c.why}); the Review's Order changed row offers it`); relinkWait.delete(k); return false; };
+      if (c.action === "swap") {
+        let r; try { r = await relinkSwap(row, e, c, h); } catch (err) { r = { ok: false, retry: true, why: (err && err.message) || String(err) }; }
+        if (r.ok) { relinkWait.delete(k); if (r.homes) { out.swapped.push({ row, c, homes: r.homes }); out.keys.add(k); } }
+        else if (r.retry) { c.why = r.why; retry(); }
+        else relinkWait.delete(k);
+        continue;
+      }
+      if (c.action === "kept") { const by = relinkBy(row, c.link); relinkSay(row, c, by, { part: "kept", text: "its piece stays on its sheet while the order is in Review, and is made up again when the Review is resolved" }); out.kept.push(row); continue; }
+      if (c.retry) { retry(); continue; }
+      relinkWait.delete(k);
+      if (c.action === "design") { relinkSay(row, c, relinkBy(row, c.link), { text: "not made yet: it is made with the picked charm" }); out.design.push({ row, c }); }
+      else if (c.action === "flag") { out.keys.add(k); if (relinkFlag(row, c)) out.flagged.push({ row, c }); }
+    }
+    // the sheets the new pieces joined are arranged now, appended into the room the old ones left (the nest's own append rules; what does not fit moves on, overflowToNextSheet), as Release hold
+    // places an order at once; a stopped run's sheet waits for Resume (startNest says so itself)
+    if (out.swapped.length) {
+      const fresh = new Set(out.swapped.flatMap(x => x.row.poolIds || []));
+      for (const sh of allSheets()) {
+        const mine = sh.charms.filter(c => fresh.has(c.poolId)); if (!mine.length || mine.every(c => sh.placements.some(p => p.id === c.id))) continue;
+        if (sh.runHold || ["nesting", "finishing", "queued"].includes(sh.status) || sh._operationStarting || sh._learnedStarting || (sh.persisted && !sh.persistedDone)) continue;
+        sh.status = "ready"; try { const go = typeof window.startNest === "function" ? window.startNest : null; if (go) go(sh); } catch (e) { console.warn("[relink] sheet not started:", e && e.message); }
+      }
+    }
+    if (out.swapped.length || out.flagged.length || out.design.length) {
+      try { syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {}
+      const n = new Set(out.swapped.concat(out.design).map(x => String(x.row.order.receiptId))).size, to = [...new Set(out.swapped.concat(out.design, out.flagged).map(x => x.c.to))].join(", ");
+      if (n) toast(`Listing pick ${to}: ${n} order${n === 1 ? "" : "s"} of the listing updated${out.swapped.length ? `, ${out.swapped.length} piece line${out.swapped.length === 1 ? "" : "s"} taken off and made up again` : ""}`, "ok", 6000);
+      for (const f of out.flagged.slice(0, 3)) toast(`Order ${f.row.order.receiptId} was ${f.row.state === "committed" || (f.c.fixed || []).some(x => x.cut) ? "cut" : "released"} with the old charm ${f.c.from}: the listing now uses ${f.c.to}. It needs a person (Review)`, "bad", 10000);
+      RunCtl.poke();
+    }
+    if (again) relinkLater(RELINK_RETRY_MS);
+    return out;
   }
   /* ═══ RELTOQ · "Release to nesting queue" on every Review row and card (Paul, 17 Oct 2026, orders 4193111740 DRAGON11 and 4191826593 FLORALS2) ═══════════════════════════════════════════
      Paul: "I asked you to add a button so that I can release orders that are flagged for review back to the production/nesting queue." The Review ROW (reviewRow; the decision card() below is drawn only inside a
@@ -15235,6 +15437,7 @@ const Review = window.Review = (() => {
         await Orders.loadMaps(true);
         toast(`“${p.optionValue}” → ${sku} · remembered for listing ${p.listingId}`, "ok");
         linkHolds(rowsOf(it), sku); pickedMarks(rowsOf(it), sku, who);
+        await relinkNow().catch(() => null);   // (LISTPICK: the open orders with this option value made up again with the pick)
         for (const rr of Orders.rows()) if (String(rr.line.listingId) === String(p.listingId) && rr.problems.length) await repool(rr);
       })();
       c.querySelectorAll("[data-dsku]").forEach(b => { b.onclick = () => pickCharm(b.dataset.dsku); });
@@ -15333,7 +15536,14 @@ const Review = window.Review = (() => {
   }
   /** The face a Review card is about, in a word: "Front" for a front job, "Back" for a back job of a line that also has a front, "" for every other line (their cards say nothing new). */
   const faceWordOf = j => { const F = window.CharmNestEngraveFaces; if (!F || !j) return ""; if (F.isFront(j)) return "Front"; try { return Engrave.jobsOf(j.row).some(x => F.isFront(x)) ? "Back" : ""; } catch (_) { return ""; } };
-  const KIND_WORDS = { customOrder: "Custom Orders", needsMaterial: "Options · metal", needsMapping: "Options", unmatchedSku: "Unknown SKU", blockedSku: "Blocked SKU", missingSize: "Size", oversize: "Too big", fontMissing: "Font", engraveWords: "Words", notRepresentable: "Characters", flipFailed: "Flip", placement: "Placement", orderChanged: "Changed", heldOrder: "Held", reviewMark: "Marked" };
+  const KIND_WORDS = { customOrder: "Custom Orders", needsMaterial: "Options · metal", needsMapping: "Options", unmatchedSku: "Unknown SKU", blockedSku: "Blocked SKU", missingSize: "Size", oversize: "Too big", fontMissing: "Font", engraveWords: "Words", notRepresentable: "Characters", flipFailed: "Flip", placement: "Placement", orderChanged: "Changed", heldOrder: "Held", reviewMark: "Marked", released: "Released" };
+  /* RVRESOLVED (Paul, 18 Oct 2026: "remove both the Changed and Marked chips and their function from the UI, they are not needed").
+     The two kinds keep their words above (a card still says what it is, its records and timeline lines read them back:
+     kindOfWords), but neither has a chip in the bar, so neither can be a filter: an order Etsy changed after the pull
+     (orderChanged, "Accept the new order") or one a person sent to Review (reviewMark, Mark OK) still needs a person, so it
+     stays in Open as a plain card, listed with everything else; a filter left on one of them (a saved workspace, a note's
+     Show, the Orders tab's "In Review") lets go of it, and a card of one of them that moves goes to its switch, not a chip. */
+  const NO_CHIP = new Set(["orderChanged", "reviewMark"]);
   // the one line under a Custom Orders card's facts: what its first question asks
   const CUSTOM_ASK = {
     needsMaterial: "Pick the material to cut it on the laser — or, made by hand, print its QR label to complete it.",
@@ -15347,11 +15557,18 @@ const Review = window.Review = (() => {
   // completed tab that is global for the main Review Tab"). Completed holds everything finished or answered, whichever
   // way: orders completed by hand, orders sent to a sheet (Send to Sheet: their original decision and live sheet/history
   // links stay on the card) and every decision answered, in one list with one count.
+  // RVRESOLVED (Paul, 18 Oct 2026): the second segment reads "Resolved", everywhere a person reads it (its label, title and
+  // aria, the notes and the flights that land on it, the empty list), and "All orders that get Release Hold, Print QR and
+  // all Custom orders must all be placed under the Resolved tab": besides what it held, it lists every order released to
+  // the nesting queue (Release Hold, the hold lifted anywhere: the line's frontAt, kept in the run's lines, releasedCards)
+  // and every custom order once nothing waits on a person (sent, completed, or already on its way to the laser); a custom
+  // order still waiting for its decision, its designs or its label stays in Open. The internal key stays "done"
+  // (data-cseg, RV.cseg, a saved workspace's reviewView.cseg, DONE_SW): only the words changed.
   const RV = { filter: null, limit:40, open:null, cseg:"open", q:"" };
   // The switch has no Decided segment now, but a workspace saved before (reviewView.cseg), a note's Show or an older
-  // caller may still name it ("sent"): it is Completed, so no state lands on a segment that is not drawn (showCard, render
+  // caller may still name it ("sent"): it is Resolved, so no state lands on a segment that is not drawn (showCard, render
   // and the workspace restore each say so).
-  // where things go (Paul, 27 Sep 20:09-20:24): the Open and Completed switches, the Orders tab
+  // where things go (Paul, 27 Sep 20:09-20:24): the Open and Resolved switches, the Orders tab
   const DONE_SW = '#reviewView .rvSeg [data-cseg="done"]', OPEN_SW = '#reviewView .rvSeg [data-cseg="open"]', ORDERS_TAB = '#modeSeg [data-mode="orders"]', NEST_TAB = '#modeSeg [data-mode="nest"]';
   const chipSel = k => `#reviewView .ordBar .egTab[data-k="${k}"]`;
   // the card last acted on (its buttons, or its question in the order window): a card that leaves just after is seen
@@ -15490,6 +15707,41 @@ const Review = window.Review = (() => {
     done.sort((a, b) => doneTime(b.record) - doneTime(a.record));
     return { open, done, sent, recent, engraving };   // (engraving: a monogram line that asks nothing, the Engraving tab's: its card exists for the monogram's Approve but Review does not list it, MONOROUTE)
   }
+  /* RVRESOLVED · the orders released to the nesting queue, for Resolved (Paul, 18 Oct 2026: "All orders that get Release Hold,
+     Print QR and all Custom orders must all be placed under the Resolved tab"). Read from what the run's lines keep, whichever
+     button released them (Release Hold on a Review card, Release to nesting queue, Orders › On hold, the sheet window), so a
+     reload and the button's own words change nothing: a line whose hold was lifted, or that was sent to the front of the
+     queue, carries frontAt (OrderHold.release, repool, liftOrder; saved with the run's lines, lineRecord), and one still being
+     released carries `releasing` ({ at, by }) until its pieces are placed. One card for each order (a settled record:
+     settledRow draws it, with the custom card's buttons while a line of it is open), dated by its latest release. Not one: a
+     line held again, still asking a question, listed in Open (skip), gone or skipped, a special line (its Custom Orders card
+     is listed), or one completed by hand or sent (listed already); nor an order whose release a card under Resolved already
+     says (a Send to Review resolved by it, a change accepted: `answered`, within two minutes of it). Nothing is written. */
+  const relCache = new Map();
+  function releasedCards(skip, answered) {
+    const by = new Map();
+    for (const r of Orders.rows()) {
+      if (!r || !r.order || r.hold || ["gone", "skipped"].includes(r.state) || (r.problems || []).length || skip.has(r.key)) continue;
+      if ((r.spec && (r.spec.special || r.spec.customDone)) || CustomSheet.decisionOf(r)) continue;
+      const at = Math.max(+r.frontAt || 0, +(r.releasing && r.releasing.at) || 0); if (!(at > 0)) continue;
+      const rid = String(r.order.receiptId); if (!by.has(rid)) by.set(rid, []); by.get(rid).push(r);
+    }
+    const said = new Map(); for (const x of answered || []) for (const rid of x.settled.orders || []) said.set(String(rid), Math.max(said.get(String(rid)) || 0, +x.settled.t || 0));
+    const out = [];
+    for (const [rid, rows] of by) {
+      const at = Math.max(...rows.map(r => Math.max(+r.frontAt || 0, +(r.releasing && r.releasing.at) || 0)));
+      if (said.has(rid) && said.get(rid) >= at - 120000) continue;
+      const going = rows.some(r => r.releasing), who = ((rows.find(r => r.releasing && r.releasing.by) || {}).releasing || {}).by || "";
+      const now = String(Orders.statePill(rows[0])[1] || "").replace(/^\d\/\d\s.*$/, "");
+      const why = (going ? "Being released to the nesting queue" : "Released to the nesting queue") + (now ? " · " + now : "");
+      const sig = [at, who, why, rows.map(r => r.key).join()].join("|");
+      let d = relCache.get(rid);
+      if (!d || d.sig !== sig || d.row !== rows[0]) { d = { sig, key: "rel:" + rid, row: rows[0], rows, kind: "released", why, lines: rows.length, pieces: groupPieces(rows), orders: [rid], by: who, t: at }; relCache.set(rid, d); }
+      out.push(d);
+    }
+    for (const rid of [...relCache.keys()]) if (!by.has(rid)) relCache.delete(rid);
+    return out;
+  }
   /** What a completed card says of the send it also had: " · sent to Sheet by whom · when". */
   const sentNote = rec => rec ? ` · sent to Sheet${rec.by ? " by " + rec.by : ""}${rec.at ? " · " + whenOf(rec.at) : ""}` : "";
   /** A completed card's record with the sheet seals of its send added: every seal of an order stays on its card. */
@@ -15536,7 +15788,7 @@ const Review = window.Review = (() => {
     const aiChip=row&&!it.done&&!it.decided&&(cu||it.kind==='unmatchedSku')?CustomRead.chip(row):'',conf=cu&&!it.done&&!it.decided&&row?CustomRead.bandOf(row):'';
     const node=el('div','doneRow workRow reviewListRow'+(cu?' cuRow':'')+(ax?' rvCu':'')+(it.info?(it.done?' cuDone':' cuInfo'):'')+(conf?' conf-'+conf:''));node.dataset.row=row?.key || '';node.dataset.rid=String(row?.order?.receiptId || rec?.receiptId || '');node.dataset.mkey=mkeyOf(it);
     const orders=new Set(group.map(r=>r.order.receiptId));
-    const queue=it.decided?'Completed · sent to sheet':cu?(it.done?(row&&!row.spec?.special?'Completed by hand':'Custom order · completed'):it.info?'Custom order':'Review required'):'Review required';
+    const queue=it.decided?'Resolved · sent to sheet':cu?(it.done?(row&&!row.spec?.special?'Completed by hand':'Custom order · completed'):it.info?'Custom order':'Review required'):'Review required';
     // no card asks its question anywhere (Paul: no "Review & resolve", 27 Sep 19:45 and 29 Sep 00:38; the decision box
     // gone from the order window, 28 Sep 16:45, and from the Review tab and every window, 29 Sep 01:01): a card is dealt
     // with by its buttons (Print QR label, Complete Order, Send to Sheet, its designs), and a click on it opens its order
@@ -15619,7 +15871,7 @@ const Review = window.Review = (() => {
       node.onclick=e=>{if(e.detail>1||e.target.closest('button,a,input,select,textarea,label,.comparePair,.cuDesigns'))return;openIt();};
       node.onkeydown=e=>{if(e.target===node&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openIt();}};}
   }
-  /** A decision answered, under Completed: who answered it and when (kept with the workspace, the newest 200). */
+  /** A decision answered, under Completed: who answered it and when (kept with the workspace, the newest 200; the segment reads Resolved now, and an order released to the nesting queue is drawn here too: releasedCards). */
   const settledRows = new WeakMap();
   function settledRow(d) {
     // its line still in the pull: the custom card's buttons for it while it is open, and a click opens its order
@@ -15645,8 +15897,9 @@ const Review = window.Review = (() => {
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
     try { CustomSheet.prune(); } catch (_) {}
     const active=v.contains(document.activeElement)?document.activeElement:null;
-    // the old Decided chip, and the Decided segment, are Completed now
+    // the old Decided chip, and the Decided segment, are Resolved now; a filter on a kind that has no chip lets go (RVRESOLVED)
     if (RV.filter === "done" || RV.filter === "sent") { RV.filter = null; RV.cseg = "done"; }
+    if (RV.filter && NO_CHIP.has(RV.filter)) RV.filter = null;
     RV.cseg = RV.cseg === "done" || RV.cseg === "sent" ? "done" : "open";
     // Options and Unknown SKU are one chip, Need Resolution (Paul, 18 Oct 2026: "Combine these 2 tabs into a new tab called
     // 'Need Resolution'"): a chip may hold several kinds (CHIPS: chip → kinds), its count theirs together, and pressed it
@@ -15671,34 +15924,48 @@ const Review = window.Review = (() => {
     }).filter(Boolean);
     const decided = new Set(); for (const it of all) if (it.kind === "customOrder") for (const r of rowsOf(it)) decided.add(r.key);
     const cl = customLists(decided);
-    const ORDER = ["customOrder", "needResolution", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "heldOrder", "reviewMark"];
+    // (no Changed and no Marked chip, RVRESOLVED, Paul 18 Oct 2026: their cards are in Open with the rest, NO_CHIP; a released order's card has none either)
+    const ORDER = ["customOrder", "needResolution", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "heldOrder"];
+    // a card that moves to a kind with no chip goes to its switch, and is said to be under it
+    const chipOr = (k, seg) => ORDER.includes(k) ? chipSel(k) : seg === "done" ? DONE_SW : OPEN_SW, underOf = (k, seg) => ORDER.includes(k) ? wordOf(k) : seg === "done" ? "Resolved" : "Open";
+    // Custom orders that ask nothing (RVRESOLVED, Paul 18 Oct 2026: "all Custom orders must all be placed under the Resolved
+    // tab"): one still waits on a person while a line of it is not on its way to the laser (no piece of it placed in the
+    // nesting queue: it waits for its QR label, Complete Order or Send to Sheet, made by hand or from its own designs), or
+    // while its send is under way: it stays in Open. One whose lines are all placed in the queue waits on nobody: Resolved.
+    const customWaits = it => rowsOf(it).some(r => CustomSheet.sending?.(r) || !(r.poolIds || []).length);
+    const clWait = cl.open.filter(customWaits), clLaid = cl.open.filter(it => !customWaits(it));
     // Every tab uses the latest actual change, including a completion or reopen.
-    // Completed, for every filter, is one list: custom orders completed by hand (print again or reopen), orders sent to a
-    // sheet (their decision, seal, sheet and history) and every decision answered, newest first; an order in both lists is
-    // one card (customLists). A custom order answered but not yet finished is still under Open, so its answer waits.
+    // Resolved, for every filter, is one list: custom orders completed by hand (print again or reopen), orders sent to a
+    // sheet (their decision, seal, sheet and history), custom orders that wait on nobody (clLaid), every order released to
+    // the nesting queue (releasedCards) and every decision answered, newest first; an order in both lists is one card
+    // (customLists). A custom order answered but not yet finished is still under Open, so its answer waits.
     const openCustom = new Set(all.filter(it => it.kind === "customOrder").map(it => it.key.slice(4)).concat(cl.open.concat(cl.done,cl.sent).map(it => it.key.slice(6))));
-    const doneAt = it => it.settled ? it.settled.t || 0 : (it.record && Math.max(+it.record.lastPrintedAt || 0, +it.record.completedAt || 0, +it.record.printedAt || 0, +it.record.at || 0)) || 0;
+    const doneAt = it => it.settled ? it.settled.t || 0 : (it.record && Math.max(+it.record.lastPrintedAt || 0, +it.record.completedAt || 0, +it.record.printedAt || 0, +it.record.at || 0)) || (it.record ? 0 : CNListActivity.at(it)) || 0;   // (a custom card that waits on nobody has no record: its latest activity, clLaid)
     // (the records of older sends kept in the workspace, flagged or by their words, stay stored and are still not listed: sentToSheet)
-    const finished = cl.done.concat(cl.sent.filter(it => !it.foldedInto), settled.filter(d => !sentToSheet(d) && !(d.kind === "customOrder" && openCustom.has(String(d.key).slice(4)))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d })), (window.CharmNestReviewMark ? CharmNestReviewMark.doneSettled(Orders.rows()) : []).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }))).sort((a, b) => doneAt(b) - doneAt(a));
+    const answeredCards = settled.filter(d => !sentToSheet(d) && !(d.kind === "customOrder" && openCustom.has(String(d.key).slice(4)))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d })).concat((window.CharmNestReviewMark ? CharmNestReviewMark.doneSettled(Orders.rows()) : []).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d })));
+    // (a line still listed in Open is not a released card: it waits on something else)
+    const inOpen = new Set(all.concat(clWait).flatMap(it => rowsOf(it).map(r => r.key)));
+    const releasedNow = releasedCards(inOpen, answeredCards).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }));
+    const finished = cl.done.concat(cl.sent.filter(it => !it.foldedInto), clLaid, answeredCards, releasedNow).sort((a, b) => doneAt(b) - doneAt(a));
     const alive=new Set(all.concat(cl.open, cl.done, cl.sent).map(it=>it.key));for(const key of reviewRows.keys())if(!alive.has(key))reviewRows.delete(key);
     // the kinds present are the filter: one chip each, so a long mixed list becomes the one kind being worked through
     const byKind = new Map(); for (const it of all) byKind.set(chipIt(it), (byKind.get(chipIt(it)) || 0) + 1);
-    const customAsk = byKind.get("customOrder") || 0, customN = customAsk + cl.open.length;
+    const customAsk = byKind.get("customOrder") || 0, customN = customAsk + clWait.length;
     if (customN) byKind.set("customOrder", customN); else byKind.delete("customOrder");
     const doneKind = new Map(); for (const it of finished) doneKind.set(chipIt(it), (doneKind.get(chipIt(it)) || 0) + 1);
     const kinds = doneMode ? doneKind : byKind;
-    // a filter emptied under Open goes back to Everything; under Completed it is only not shown, so Open keeps it
+    // a filter emptied under Open goes back to Everything; under Resolved it is only not shown, so Open keeps it
     if (!doneMode && RV.filter && !byKind.has(RV.filter)) RV.filter = null;
     const f = RV.filter && kinds.has(RV.filter) ? RV.filter : null;
     // what asks nothing comes after what does, in Everything as under Custom Orders; one just completed there stays in
     // place while its card offers Undo (not counted as open)
-    const customOpen = all.filter(it => it.kind === "customOrder").concat(cl.open);
+    const customOpen = all.filter(it => it.kind === "customOrder").concat(clWait);
     // A card keeps its place in Open through a Complete and a Reopen (Paul, 29 Sep 02:05: "go back in the same place where it came
-    // from"; a hard rule). Completed lists by the latest change, a completion and a reopen among them, but Open orders a card by
+    // from"; a hard rule). Resolved lists by the latest change, a completion and a reopen among them, but Open orders a card by
     // what it had when it left, until something else happens to it more than a few seconds after the reopen.
     const place = RV.place || (RV.place = new Map()), placeAt = new Map(), nowT = Date.now();
     for (const it of finished) { if (it.settled) continue; const p = place.get(mkeyOf(it)); if (p) p.away = true; }
-    for (const it of all.concat(cl.open)) {
+    for (const it of all.concat(clWait)) {
       const k = mkeyOf(it), a = CNListActivity.at(it); let p = place.get(k);
       if (!p) place.set(k, p = { at: a });
       else if (p.away) { p.away = false; p.hold = { since: nowT }; }
@@ -15706,7 +15973,7 @@ const Review = window.Review = (() => {
       placeAt.set(k, p.at);
     }
     let list = doneMode ? (f ? finished.filter(it => chipIt(it) === f) : finished)
-      : f === "customOrder" ? customOpen : f ? all.filter(it => chipIt(it) === f) : all.concat(cl.open);
+      : f === "customOrder" ? customOpen : f ? all.filter(it => chipIt(it) === f) : all.concat(clWait);
     const orderQ=O.orderQuery(RV.q);
     if(orderQ)list=list.filter(it=>[it.rid,...(it.settled?.orders || []),...(it.settled ? [it.settled.row,...(it.settled.rows || [])] : rowsOf(it)).filter(Boolean).map(r=>r.order?.receiptId)].some(id=>O.orderMatches(id,orderQ)));
     list=CNListActivity.select(scope,list);
@@ -15719,14 +15986,14 @@ const Review = window.Review = (() => {
     if (RV.back && RV.back.until < Date.now()) RV.back = null;
     if (RV.back && !doneMode) { const ks = new Set(RV.back.keys); back = list.find(it => rowsOf(it).some(r => ks.has(r.key))) || null; if (back) { RV.back = null; const i = list.indexOf(back); if (i >= RV.limit) RV.limit = Math.ceil((i + 1) / 40) * 40; } }
     const chip = (id, label, n, cls, title) => `<button class="egTab${(f || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
-    // Open or Completed first, then the filters: the switch holds for every chip, and pressing it shows all it holds
-    // (one Completed count: the cards listed under it, an order in both kinds counted once)
-    const openN = all.length + cl.open.length;
-    const seg = `<span class="rvSeg${f ? "" : " all"}" role="group" aria-label="Open or completed"><button type="button" data-cseg="open" class="${!doneMode ? "on" : ""}" aria-pressed="${!doneMode}" title="everything that still waits">Open<b>${openN}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything finished: orders completed by hand (print again or reopen), orders sent to the sheets, and every decision answered">Completed<b>${finished.length}</b></button></span>`;
-    const chips = ORDER.filter(k => kinds.has(k)).map(k => doneMode ? chip(k, wordOf(k), kinds.get(k), "ok", `${wordOf(k)} completed`)
-      : k === "customOrder" ? chip(k, "Custom Orders", customN, customAsk ? "warn" : "info", `${customAsk} need a decision · ${cl.open.length} listed with nothing to decide`) : chip(k, wordOf(k), kinds.get(k))).join("");
+    // Open or Resolved first, then the filters: the switch holds for every chip, and pressing it shows all it holds
+    // (one Resolved count: the cards listed under it, an order in both kinds counted once; "Resolved", RVRESOLVED: Paul, 18 Oct 2026)
+    const openN = all.length + clWait.length;
+    const seg = `<span class="rvSeg${f ? "" : " all"}" role="group" aria-label="Open or resolved"><button type="button" data-cseg="open" class="${!doneMode ? "on" : ""}" aria-pressed="${!doneMode}" title="everything that still waits on a person">Open<b>${openN}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything resolved: orders released to the nesting queue (Release Hold), orders whose QR label was printed or that were completed by hand (print again or reopen), custom orders sent to the sheets or on their way to the laser, and every decision answered">Resolved<b>${finished.length}</b></button></span>`;
+    const chips = ORDER.filter(k => kinds.has(k)).map(k => doneMode ? chip(k, wordOf(k), kinds.get(k), "ok", `${wordOf(k)} resolved`)
+      : k === "customOrder" ? chip(k, "Custom Orders", customN, customAsk ? "warn" : "info", `${customAsk} need a decision · ${clWait.length} wait for their label, their designs or Complete Order`) : chip(k, wordOf(k), kinds.get(k))).join("");
     if(!v.querySelector('#rvList'))v.innerHTML='<div class="ordBar egBar"></div><div class="egPane grow scroll"><div class="rvList" id="rvList"></div></div>';
-    // no Everything chip (it always read the same as Open): Open or Completed, pressed, is everything in it
+    // no Everything chip (it always read the same as Open): Open or Resolved, pressed, is everything in it
     const keptFind=v.querySelector('#rvOrderFind')?.closest('label');
     v.querySelector('.ordBar').innerHTML = `${seg}${chips}<span class="spacer"></span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="rvOrderFind" type="search" inputmode="numeric" placeholder="Order #" aria-label="Search order numbers in Review" aria-controls="rvList" autocomplete="off" spellcheck="false"></label>${CustomRead.count() ? `<span class="aiReading" title="Claude reads pieces with no design of their own to tell custom orders from regular listings"><span class="spin"></span>Claude reading ${CustomRead.count()}</span>` : ""}`;
     CNListActivity.mount(v.querySelector(".ordBar"),scope,()=>render({still:true}));
@@ -15741,16 +16008,18 @@ const Review = window.Review = (() => {
     const what = f ? wordOf(f) : "";
     // one keyed update (Motion.reconcile): what leaves is seen going where it went, what stays glides into the gap
     const where = new Map();
-    for (const it of all.concat(cl.open)) where.set(mkeyOf(it), { seg: "open", kind: chipIt(it), it });
+    for (const it of all.concat(clWait)) where.set(mkeyOf(it), { seg: "open", kind: chipIt(it), it });
     for (const it of finished) where.set(it.settled ? it.settled.key : mkeyOf(it), { seg: "done", kind: chipIt(it), it });
-    const ridWhere = new Map(); for (const it of all.concat(cl.open)) for (const r of rowsOf(it)) if (!ridWhere.has(String(r.order.receiptId))) ridWhere.set(String(r.order.receiptId), { kind: chipIt(it), mk: mkeyOf(it) });
+    const ridWhere = new Map(); for (const it of all.concat(clWait)) for (const r of rowsOf(it)) if (!ridWhere.has(String(r.order.receiptId))) ridWhere.set(String(r.order.receiptId), { kind: chipIt(it), mk: mkeyOf(it) });
+    // an order released to the nesting queue (Release Hold, whichever button: RVRESOLVED) is under Resolved by its card there
+    const relWhere = new Map(); for (const it of releasedNow) for (const rid of it.settled.orders) relWhere.set(String(rid), it.key);
     const leave = (mk, node) => {
       const w = where.get(mk), rid = node && node.dataset.rid, mine = acted.mk === mk && Date.now() - acted.t < 10000;
       const who = rid ? "Order " + rid : "The decision";
       // (Hold's film plays in the Nest tab and walks the person to On hold itself: this list's flight and its "is on hold under Orders" note were drawn at the top left, over the film)
       if (rid && window.HoldUI && HoldUI.busy && HoldUI.busy(rid)) return null;
-      if (w && w.seg !== RV.cseg) return { to: w.seg === "done" ? DONE_SW : OPEN_SW, note: mine ? { text: `${who} moved to ${w.seg === "done" ? "Completed" : "Open"}`, actions: [{ label: "Show", fn: () => showCard(w.it.settled ? "settled:" + w.it.settled.key + ":" + w.it.settled.t : mk, w.seg) }] } : null };
-      if (w && f && w.kind !== f) return { to: chipSel(w.kind), note: mine ? { text: `${who} is now under ${wordOf(w.kind)}`, actions: [{ label: "Show", fn: () => showCard(mk, w.seg, w.kind) }] } : null };
+      if (w && w.seg !== RV.cseg) return { to: w.seg === "done" ? DONE_SW : OPEN_SW, note: mine ? { text: `${who} moved to ${w.seg === "done" ? "Resolved" : "Open"}`, actions: [{ label: "Show", fn: () => showCard(w.it.settled ? "settled:" + w.it.settled.key + ":" + w.it.settled.t : mk, w.seg) }] } : null };
+      if (w && f && w.kind !== f) return { to: chipOr(w.kind, w.seg), note: mine ? { text: `${who} is now under ${underOf(w.kind, w.seg)}`, actions: [{ label: "Show", fn: () => showCard(mk, w.seg, w.kind) }] } : null };
       // its line sent to the sheets with the order's own designs (Send to Sheet on any card): it goes to the sheets, whose
       // tab says what came (CustomSheet)
       const lr = !w && node && node.dataset.row && B.orders.byKey?.get(node.dataset.row);
@@ -15758,8 +16027,11 @@ const Review = window.Review = (() => {
       if (!w && mine && rid && ridWhere.has(rid) && ridWhere.get(rid).mk !== mk) {
         // read again as another kind of question (e.g. "Not a custom order"): it is under that chip now
         const o = ridWhere.get(rid);
-        return { to: chipSel(o.kind), note: { text: `${who} is now under ${wordOf(o.kind)}`, actions: [{ label: "Show", fn: () => showCard(o.mk, "open", o.kind) }] } };
+        return { to: chipOr(o.kind, "open"), note: { text: `${who} is now under ${underOf(o.kind, "open")}`, actions: [{ label: "Show", fn: () => showCard(o.mk, "open", o.kind) }] } };
       }
+      // released to the nesting queue from Open (Release Hold, RVRESOLVED): its card is under Resolved now
+      const rel = !w && !doneMode && rid ? relWhere.get(rid) : null;
+      if (rel) return { to: DONE_SW, note: mine ? { text: `${who} moved to Resolved · released to the nesting queue`, actions: [{ label: "Show", fn: () => showCard(rel, "done") }] } : null };
       if (!w && mine) {
         // answered: its lines went back to the orders (on hold, or in line for the sheets)
         const rows = Orders.rows().filter(r => String(r.order.receiptId) === String(rid)), held = rows.some(r => r.hold);
@@ -15767,7 +16039,7 @@ const Review = window.Review = (() => {
       }
       return null;
     };
-    const empty = () => { const n = el("div", "libEmpty"); n.innerHTML = `${orderQ ? "No matching order numbers." : doneMode ? (f === "customOrder" ? "No custom order completed yet. Print its QR label or press Complete Order under Open." : f ? `Nothing completed under ${esc(what)} yet.` : "Nothing completed yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}`; return n; };
+    const empty = () => { const n = el("div", "libEmpty"); n.innerHTML = `${orderQ ? "No matching order numbers." : doneMode ? (f === "customOrder" ? "No custom order resolved yet. Print its QR label under Open, or send it to the sheets." : f ? `Nothing resolved under ${esc(what)} yet.` : "Nothing resolved yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}`; return n; };
     const desired = list.length ? list.slice(0,RV.limit).map(it=>({it,node:it.settled?settledRow(it.settled):reviewRow(it)})) : [];
     for(const {node} of desired)node.classList.toggle('orderMatch',!!orderQ);
     // A card the Send to Sheet tour is carrying (Motion.carry) stays where it stood, however the list sorts it now: sent,
@@ -15829,7 +16101,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */

@@ -159,25 +159,29 @@ function facedPage(o) {
 
 /* the markup the page drew for the BACK-ONLY lines before faces existed: SHA-1 (12 hex) of the normalised markup of each surface, captured from the unchanged page (origin/main at 59c294c) with
    `node tests/charm-nest/engrave-ui-faces.cjs --capture <path to a charm-nest-bridge.js>` (the card without the empty hidden slot the setup editor mounts into; see SETUP_SLOT).
-   Re-captured on 16 Oct 2026 from origin/main 3a4e42f0 (the page BEFORE NODECIDED): the older hashes had gone stale (purchaseMarkup's option titles, the work area's controls), so these pins now say "a piece still to approve draws its row and its card exactly as it did before the Decided view was removed". */
+   Re-captured on 16 Oct 2026 from origin/main 3a4e42f0 (the page BEFORE NODECIDED): the older hashes had gone stale (purchaseMarkup's option titles, the work area's controls), so these pins now say "a piece still to approve draws its row and its card exactly as it did before the Decided view was removed".
+   The six card pins were captured again on 18 Oct 2026 (HDRMETA) from origin/main 688d321 with HDR_META taken out, the same way: the new page draws exactly those cards. */
 const SETUP_SLOT = /<section class="pvSec pvSetup"[^>]*>.*?<\/section>/;
+/* HDRMETA (Paul, 18 Oct 2026: "Remove 'Thin Strokes', 'charm', '5x8.5' text from the UI."): the card's head no longer draws the size · kind line under the order number or the THIN STROKES chip. Both are taken out of
+   the card's markup before it is hashed (on the unchanged page they are there, on the new page they never are), so the pins still say "everything else in the card is byte for byte what it was"; 5d proves they are gone. */
+const HDR_META = /<span class="sub">[^<]*<\/span>|<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES<\/span>/g;
 /* EGROW (Paul, 15 Oct 2026, "be clever in how you display and arrange this information ... a more minimalist approach"): a row of SEVERAL pieces (the ears of a pair, the discs of a necklace, the faces of a line) is now one line for each piece
    (a chip, its words, then ITS OWN state), no longer a block of words with a second block of states. Those rows' markup is no longer the one captured below, so their hashes are not compared
    (REDRAWN); a single piece's rows ('pend') and every editor card stay byte for byte, and 5b still demands that a page with the faces module and no front job draws every row exactly as a page without it. */
 const REDRAWN = new Set(['row:tag', 'row:ears', 'row:discs', 'row:pair', 'row:neck']);
 const GOLDEN = {
   'row:tag': 'd3bca07bc601',
-  'card:tag': '8efcf97cebd6',
+  'card:tag': 'bf9f3e28597a',
   'row:ears': '135eef145959',
-  'card:ears': '9a2cc0744183',
+  'card:ears': '3394a2547059',
   'row:discs': 'f3db36e29c63',
-  'card:discs': 'aefafb09c0bc',
+  'card:discs': '6095d865d46c',
   'row:pend': 'e8d992610875',
-  'card:pend': 'de8132f54a3b',
+  'card:pend': 'cf9cef9e4b56',
   'row:pair': 'd3f2f66d7381',
-  'card:pair': '37d6a1b1dc28',
+  'card:pair': '031569d1bdc7',
   'row:neck': '5afec64f788f',
-  'card:neck': '35f69ee15666',
+  'card:neck': '201d96e29a04',
 };
 
 /** Every surface a line draws with its back job only: its row in the list and its editor card (the Decided row is gone: NODECIDED). */
@@ -185,7 +189,7 @@ function surfaces(P, k) {
   const out = {}, line = P.ROW[k], rid = line.order.receiptId, E = P.E;
   const jobs = P.made[k];
   P.reset(); P.showList(); const row = P.rowsOnPage().find(r => r.dataset.rid === rid); out['row:' + k] = row ? sha1(norm(row.outerHTML)) : 'missing';
-  const card = P.open(jobs[0].key); out['card:' + k] = card ? sha1(norm(card.outerHTML.replace(SETUP_SLOT, ''))) : 'missing';
+  const card = P.open(jobs[0].key); out['card:' + k] = card ? sha1(norm(card.outerHTML.replace(SETUP_SLOT, '').replace(HDR_META, ''))) : 'missing';
   P.reset(); return out;
 }
 const BACK_ONLY = ['pend', 'pair', 'neck'];
@@ -510,6 +514,19 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
     Q.reset(); Q.showList(); assert.equal(Q.document.querySelectorAll('.egMode').length, 0); assert.equal(Q.document.querySelectorAll('[data-face]').length, 0);
     const card = Q.open(Q.made.tag[0].key); assert.equal(card.querySelectorAll('.egEarSwitch').length, 0); assert.equal(card.querySelector('.pvMain .pvH').textContent, 'Back · engraving'); assert.equal(card.querySelector('.wordsHead .lbl').textContent, 'Words on the back');
     assert.equal(card.querySelector('.rh .reviewIdentity > .egPiece'), null, 'a single charm has no tag at all, as before');
+  });
+  await t('5d HDRMETA (Paul, 18 Oct 2026): the card\'s head is the counter, Back / Next, the order number and Open order: no size · kind line ("5X8.5 · charm") and no THIN STROKES chip, even for thin strokes', () => {
+    P.reset(); for (const k of ['pend', 'tag', 'neck']) {
+      const j = P.made[k][0]; j.fit = Object.assign({}, j.fit, { thin: true });
+      const card = P.open(j.key), head = card.querySelector('.rh'), txt = head.textContent;
+      assert.equal(head.querySelector('.sub'), null, k + ': no size · kind line under the number');
+      assert.ok(!/THIN STROKES/i.test(txt), k + ': no THIN STROKES chip: ' + txt);
+      assert.ok(!/·\s*charm\b/i.test(txt) && !/\b\d+(\.\d+)?\s*x\s*\d+(\.\d+)?\b/i.test(txt), k + ': no kind or size words in the head: ' + txt);
+      assert.match(head.querySelector('.kind').textContent, /^\d+ of \d+ · \d+ done$/, k + ': the counter stays');
+      assert.ok(head.querySelector('[data-a="prev"]') && head.querySelector('[data-a="next"]'), k + ': Back / Next stay');
+      assert.equal(head.querySelector('.reviewIdentity .ttl').textContent, String(P.ROW[k].order.receiptId), k + ': the order number stays');
+    }
+    P.reset();
   });
   await t('5c the changed files carry a new cache token (-eu1), the existing suffixes are kept, and the stylesheet only gained rules for the chips and the stacked switches', () => {
     assert.match(html, /charm-nest-bridge\.js\?v=[^"]*-eu1/); assert.match(html, /charm-nest-activity\.css\?v=[^"]*-eu1/);
