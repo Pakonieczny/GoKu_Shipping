@@ -35,10 +35,10 @@ const finish = () => { console.log(`\nmonogram-seal: ${nCheck - fails.length}/${
   Base.orderOf = orderOf;
   const MONO_TITLE = 'Monogram Necklace Personalized Jewelry Initials Pendant';
   const mono = (words, extra) => Object.assign({ listing: '997905351', sku: 'MONOGRAM_5351', title: MONO_TITLE, variations: [V('Metal choice', 'Gold')], personalization: [words], metalKey: 'gold' }, extra || {});
-  R.ORDERS.mA = { rid: '4200683017', buyer: 'Name One', placed: { day: 0, h: 9, m: 10 }, ship: 5, lines: [mono('APV')] };
+  R.ORDERS.mA = { rid: '4200683017', buyer: 'Name One', placed: { day: 0, h: 9, m: 10 }, ship: 5, lines: [mono('APV', { metalKey: 'moonlight' })] };   // (MONOSEND, Paul 18 Oct 2026: Approve also sends a monogram to the sheets, and one on a sheet is final; A and R are changed and approved again here, so their orders give no metal: approved, not sent)
   R.ORDERS.mB = { rid: '4202783520', buyer: 'Name Two', placed: { day: 0, h: 9, m: 20 }, ship: 5, lines: [mono('O S R')] };
   R.ORDERS.mP = { rid: '4290000141', buyer: 'Name Three', placed: { day: 0, h: 9, m: 30 }, ship: 5, lines: [mono('J.Q.X', { qty: 2 })] };
-  R.ORDERS.mR = { rid: '4290000142', buyer: 'Name Four', placed: { day: 0, h: 9, m: 40 }, ship: 5, lines: [mono('E.M.T')] };
+  R.ORDERS.mR = { rid: '4290000142', buyer: 'Name Four', placed: { day: 0, h: 9, m: 40 }, ship: 5, lines: [mono('E.M.T', { metalKey: 'moonlight' })] };
   Object.assign(R.EXPECT_JOBS, { mA: 0, mB: 0, mP: 0, mR: 0 });
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const w = await R.world({ viewport: { width: 1440, height: 900 }, reducedMotion: 'no-preference', shots: SHOTS });
@@ -54,6 +54,8 @@ const finish = () => { console.log(`\nmonogram-seal: ${nCheck - fails.length}/${
     const keysOf = rid => page.evaluate(r => Orders.rows().filter(x => x.order.receiptId === r).map(x => x.key), rid);
     const kA = (await keysOf(R.ORDERS.mA.rid))[0], kB = (await keysOf(R.ORDERS.mB.rid))[0], kP = (await keysOf(R.ORDERS.mP.rid))[0], kR = (await keysOf(R.ORDERS.mR.rid))[0];
     check(!!kA && !!kB && !!kP && !!kR, 'the four monogram orders are in the page');
+    // (MONOSEND: the designs window the page opens for a metal the order does not give is held shut here, counted: A and R give none; tests/charm-nest/monogram-ui.cjs has the window itself)
+    await page.evaluate(() => { window.__openCalls = 0; CustomSheet.open = () => { window.__openCalls++; return Promise.resolve(); }; });
     const ridA = R.ORDERS.mA.rid, ridB = R.ORDERS.mB.rid, ridP = R.ORDERS.mP.rid, ridR = R.ORDERS.mR.rid;
 
     // ═══ the instruments: every Seal.press (what it pressed, the card's state at the start and when the ink was down), every wooden stamp that appeared ═══
@@ -87,7 +89,7 @@ const finish = () => { console.log(`\nmonogram-seal: ${nCheck - fails.length}/${
 
     // ═══ 2 · the Engrave tab's detail card ═══
     const openDetail = async key => { await page.evaluate(k => { CN.setMode('engrave'); Engrave.openMonogram(k); }, key); await page.waitForSelector('#egQueue .rvItem[data-mono] .mw[data-mode="detail"]', { timeout: 30000 }); };
-    const detailReady = key => until(k => { const c = document.querySelector('#egQueue .rvItem[data-mono]'), m = c && c.querySelector('.mw'); return !!c && c.dataset.key === k && !!m && ['ready', 'approved'].includes(m.dataset.state) && !m.dataset.busy; }, 'the detail card of ' + key, key);
+    const detailReady = key => until(k => { const c = document.querySelector('#egQueue .rvItem[data-mono]'), m = c && c.querySelector('.mw'); return !!c && c.dataset.key === k && !!m && ['ready', 'approved', 'sent'].includes(m.dataset.state) && !m.dataset.busy; }, 'the detail card of ' + key, key);
     await openDetail(kA); check(!!await detailReady(kA), 'the Engrave detail card of APV is open and its monogram is made');
     check(await page.evaluate(() => !document.querySelector('#egQueue .mwSeal .seal')), 'before the approval the card has no seal');
     await shot('1-detail-ready');
@@ -100,7 +102,7 @@ const finish = () => { console.log(`\nmonogram-seal: ${nCheck - fails.length}/${
     check(pr[0] && pr[0].end && !pr[0].end.approveHidden && pr[0].end.okHidden && pr[0].end.state === 'ready', 'Seal.press had resolved BEFORE the Approve button was hidden (the state was still "ready" when the ink was down): ' + JSON.stringify(pr[0] && pr[0].end));
     check(tl.length === 1 && tl[0].family === 'monogram', 'the wooden stamp was the monogram\'s own (a .sealTool of the monogram family appeared once): ' + JSON.stringify(tl.map(t => t.family)));
     await openDetail(kA); await detailReady(kA); await sleep(700);
-    check(await page.evaluate(() => { const m = document.querySelector('#egQueue .rvItem[data-mono] .mw'), b = m.querySelector('[data-mw-approve]'), ok = m.querySelector('[data-mw-approved]'); return m.dataset.state === 'approved' && b.hidden && !ok.hidden && /Approved · Monogram APV/.test(ok.textContent) && !m.querySelector('[data-mw-change]').hidden; }), 'the card opened again says "Approved · Monogram APV" with its Change, as before');
+    check(await page.evaluate(() => { const m = document.querySelector('#egQueue .rvItem[data-mono] .mw'), b = m.querySelector('[data-mw-approve]'), ok = m.querySelector('[data-mw-approved]'); return m.dataset.state === 'approved' && m.dataset.queue === 'metal' && !ok.hidden && /Approved · Monogram APV/.test(ok.textContent) && !m.querySelector('[data-mw-change]').hidden; }), 'the card opened again says "Approved · Monogram APV" with its Change, as before (not on a sheet: this order gives no metal, MONOSEND)');
     let seals = await page.evaluate(() => [...document.querySelectorAll('#egQueue .rvItem[data-mono] .mwSeal .seal')].map(s => ({ fam: s.querySelector('svg').dataset.sealFamily, label: s.getAttribute('aria-label'), pending: s.classList.contains('pending'), op: getComputedStyle(s).opacity, text: s.textContent, w: s.offsetWidth })));
     check(seals.length === 1 && seals[0].fam === 'monogram' && !seals[0].pending && +seals[0].op > .5 && Math.abs(seals[0].w - 50) < 2, 'one monogram seal rests in the card\'s seal row, inked and 50 px: ' + JSON.stringify(seals.map(s => [s.fam, s.op, s.w])));
     check(/^Monogram APV approved by Test Operator · /.test(seals[0].label) && /MONOGRAM/.test(seals[0].text) && /A/.test(seals[0].text) && /P/.test(seals[0].text) && /V/.test(seals[0].text), 'it carries who and when and the letters: "' + seals[0].label + '"');
@@ -140,7 +142,7 @@ const finish = () => { console.log(`\nmonogram-seal: ${nCheck - fails.length}/${
 
     // ═══ 3 · the Order window's compact card ═══
     const openWin = async key => { await page.evaluate(async k => { CN.setMode('orders'); await OrderWin.open(k); }, key); await page.waitForSelector('#orderWin[open] #owEng .mw', { timeout: 30000 }); await sleep(900); };
-    const winReady = () => until(() => { const m = document.querySelector('#owEng .mw'); return !!m && ['ready', 'approved'].includes(m.dataset.state) && !m.dataset.busy; }, 'the window\'s monogram');
+    const winReady = () => until(() => { const m = document.querySelector('#owEng .mw'); return !!m && ['ready', 'approved', 'sent'].includes(m.dataset.state) && !m.dataset.busy; }, 'the window\'s monogram');
     await openWin(kA); await winReady();
     let geo = await page.evaluate(() => { const card = document.querySelector('#owEng .engMono'), row = card.querySelector('.mwSeal'), seals = [...row.querySelectorAll('.seal')], c = card.getBoundingClientRect(), r = seals.map(s => s.getBoundingClientRect()), cs = getComputedStyle(row);
       return { n: seals.length, pos: cs.position, w: seals.map(s => s.offsetWidth), top: Math.round(r[0].top - c.top), over: Math.round(r[r.length - 1].right - c.right), cardH: Math.round(c.height), op: seals.map(s => +getComputedStyle(s).opacity), fam: seals.map(s => s.querySelector('svg').dataset.sealFamily) }; });
@@ -154,7 +156,7 @@ const finish = () => { console.log(`\nmonogram-seal: ${nCheck - fails.length}/${
     const hB0 = await page.evaluate(() => Math.round(document.querySelector('#owEng .engMono').getBoundingClientRect().height));
     await page.evaluate(() => { window.__hs = { min: 1e9, max: 0, on: true }; const loop = () => { const h = window.__hs; if (!h.on) return; const c = document.querySelector('#owEng .engMono'); if (c) { const x = c.getBoundingClientRect().height; h.min = Math.min(h.min, x); h.max = Math.max(h.max, x); } requestAnimationFrame(loop); }; loop(); });
     { const clicking = page.click('#owEng .mw [data-mw-approve]'); await page.waitForSelector('.sealTool', { timeout: 6000 }).catch(() => {}); await sleep(430); try { await page.screenshot({ path: path.join(SHOTS, '3-window-stamping.png') }); } catch (_) { /* no picture */ } await clicking; }
-    check(!!await until(() => { const m = document.querySelector('#owEng .mw'); return m && m.dataset.state === 'approved' && !document.querySelector('.sealTool'); }, 'the window\'s approval'), 'Approve in the window: the card says approved once the stamp has lifted');
+    check(!!await until(() => { const m = document.querySelector('#owEng .mw'); return m && ['approved', 'sent'].includes(m.dataset.state) && !document.querySelector('.sealTool'); }, 'the window\'s approval'), 'Approve in the window: the card says approved once the stamp has lifted');
     pr = await presses(); tl = await tools();
     check(pr.length === 3 && pr[2].compact && pr[2].family === 'monogram' && pr[2].inRow, 'one more press, on a monogram seal in the window\'s card: ' + JSON.stringify(pr.slice(2).map(p => [p.family, p.compact])));
     check(pr[2] && pr[2].start.approveText === 'Approved' && pr[2].start.approveDisabled && !pr[2].start.approveHidden && pr[2].end && !pr[2].end.approveHidden && pr[2].end.okHidden, 'there too the button read "Approved" and the card said Approved only after the ink was down: ' + JSON.stringify(pr[2] && [pr[2].start, pr[2].end]));

@@ -9099,7 +9099,7 @@ const Engrave = window.Engrave = (() => {
   /** The widget in a host (the card's). `card`: the card it is in: its approval makes the card go up into the count and the detail go on to what is left of the order. */
   function monoMount(host, m, card) {
     const U = MU(); if (!U || !U.mountLine) { host.innerHTML = `<div class="libEmpty">The monogram editor did not load. Reload the page.</div>`; return null; }
-    let w = null; try { w = U.mountLine(host, { rid: String(lineOf(m.row).order.receiptId), lineKey: m.lineKey || m.key, slot: m.slot || undefined, row: m.row, mode: "detail", sheetLink: true, onApproved: () => monoApproved(m, card) }); } catch (e) { console.warn("Monogram widget", e); }
+    let w = null; try { w = U.mountLine(host, { rid: String(lineOf(m.row).order.receiptId), lineKey: m.lineKey || m.key, slot: m.slot || undefined, row: m.row, mode: "detail", onApproved: () => monoApproved(m, card) }); } catch (e) { console.warn("Monogram widget", e); }
     if (!w) host.innerHTML = `<div class="libEmpty">This line's letters could not be opened as a monogram.</div>`;
     return w;
   }
@@ -12790,7 +12790,9 @@ const CustomSheet = window.CustomSheet = (() => {
 
   /* ── Send to Sheet ── */
   /** how.from: the button pressed in a window (the order window's Send to Sheet): the design lifts off it, and the
-   *  window steps out of the way and comes back as it was (SendTour); no copy of the card behind it is lifted. */
+   *  window steps out of the way and comes back as it was (SendTour); no copy of the card behind it is lifted.
+   *  (MONOSEND, Paul 18 Oct 2026: the monogram's Approve sends with how.by, the person who pressed it, how.stamp false (its own monogram seal was the press, so no sheet stamp
+   *  comes down on a card that is not on screen) and how.tour false (the press was on the monogram's card, not on a Review card: no tour of the Review tab). A design tagged with its monogram line (F.mono.line) is that line's copy, not the next line's in turn.) */
   async function checkpoint() {
     Session.schedule();
     if (await Session.flushNow?.() === false) throw new Error("Workspace saving is unavailable; keep this order open and retry the send");
@@ -12833,7 +12835,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const why=notReady(e), hint=cardNode(ck)?.querySelector(".cuHint");
     if(how.from && (why || !e?.sendIntent && !employeeName())){toast(why || "Your name is needed first","bad",5000);return;}
     if(why){if(!how.recover){if((e && e.files.length) || !hint){open(it,{from:cardNode(ck)});nudge();}else{lit(hint,"cuNudge");toast(why,"bad",5000);}}return;}
-    const who=e.sendIntent?.by || employeeName();if(!who){if(!how.recover)open(it,{askName:true,from:cardNode(ck)});return;}
+    const who=e.sendIntent?.by || (how.by && String(how.by).trim()) || employeeName();if(!who){if(!how.recover)open(it,{askName:true,from:cardNode(ck)});return;}
     const rows=e.sendIntent?currentRows(e):openLines(it);
     if(!rows.length || e.sendIntent && rows.length!==Object.keys(e.sendIntent.lines).length){if(!how.recover)toast("The recorded pieces of the order are still loading; retry when the order is available","bad",5000);return;}
     const files=e.files.slice(), fileSig=JSON.stringify(files.map(F=>[F.id,F.hash,F.metal,F.qty]));
@@ -12849,7 +12851,7 @@ const CustomSheet = window.CustomSheet = (() => {
       }
       if(!e.sendIntent){
         const lines={};for(const r of rows)lines[r.key]=[];
-        for(const F of files)for(let q=0;q<F.qty;q++){const r=rows[q%rows.length],{charms}=await read(F);if(!current())return;for(let i=0;i<charms.length;i++)lines[r.key].push({f:F.id,i});}
+        for(const F of files)for(let q=0;q<F.qty;q++){const r=(F.mono && rows.find(x=>x.key===F.mono.line)) || rows[q%rows.length],{charms}=await read(F);if(!current())return;for(let i=0;i<charms.length;i++)lines[r.key].push({f:F.id,i});}
         const at=Date.now();e.sendIntent={id:`custom-sheet:${e.ck}:${at}`,at,by:who,lines};ver++;
       }
       const intent=e.sendIntent, lines=intent.lines;
@@ -12859,13 +12861,13 @@ const CustomSheet = window.CustomSheet = (() => {
       if(receipt?.phase==="sent"){
         e.sent={id:intent.id,at:intent.at,by:intent.by,lines:intent.lines};delete e.sendIntent;delete e.sendError;e.sendCloudPending=false;ver++;await checkpoint();redraw();return e.sent;
       }
-      const touring=!how.recover && tourOk();if(touring && !how.from)try{snap=SendTour.snap(cardNode(ck));}catch(_){}
+      const touring=!how.recover && how.tour!==false && tourOk();if(touring && !how.from)try{snap=SendTour.snap(cardNode(ck));}catch(_){}
       holdKey=touring?cardNode(ck)?.dataset.mkey || "":"";if(holdKey && window.Motion && Motion.carry)Motion.carry(holdKey,30000);
       if(!how.recover && !intent.pressed){
         say("Sending to the sheets…");
         const button=(how.from?.isConnected?how.from:null) || (D.ck===ck && D.dlg?.open?D.dlg.querySelector("[data-send]"):null) || cardNode(ck)?.querySelector("[data-cu-send]");
         keepStart(keepK);   // (the save starts with the stamp, beside it: its work never waits for the animation, is never awaited here, and a failure in it never reaches the send; the send is already recorded)
-        stampHost=await stampSend(button,intent);if(!current())return;
+        stampHost=how.stamp===false?null:await stampSend(button,intent);if(!current())return;
         intent.pressed=true;await checkpoint();
       }
       // Recovery does not replay historical ink; only unfinished rows are retried under their original pool ids.

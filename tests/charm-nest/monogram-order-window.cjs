@@ -5,7 +5,8 @@
 //   1  a monogram order: the section keeps its place and title (after the chip strip, "Engraving"), has ONE monogram card with the widget in compact density, NO Front/Back card, the three letters as the buyer wrote them, a preview
 //      of the cut piece, ONE size line, ONE Approve; the window does not jump while it is built (the card keeps one height through reading, building, ready, an edit, approved)
 //   2  editing a letter in the window remakes the monogram (building, then ready, the newest edit wins, typing a letter back is instant); Approve puts "Monogram <letters>.ai" on the order's custom designs, once; Change and a new
-//      letter REPLACE it (never two); reopening the window shows it approved
+//      letter REPLACE it (never two); reopening the window shows it approved. MONOSEND (Paul, 18 Oct 2026): Approve also sends it to the sheets; this order's metal is staged as one the order does not give (approved,
+//      not sent, Change kept), and the mixed order's monogram goes to the sheets with its one press (SS, one piece, no designs window)
 //   3  a MIXED order (a monogram line, an engraved bar, a plain piece): "Show all" has the monogram card and the bar's own Front/Back card side by side, in the lines' order; one piece picked shows only that piece (the bar: its card,
 //      the monogram: its card with the letters a person typed still there, the plain piece: no section at all); the swap is in the SAME tick; the bar's Approve is its own, untouched
 //   4  an ORDER WITH ONLY A PLAIN PIECE keeps today's cards: no monogram card, the same .engCard, the same Front/Back; an earring pair still has no section
@@ -149,10 +150,16 @@ Object.assign(R.EXPECT_JOBS, { mono: 0, mixed: 1, odd: 0, review: 0, trouble: 0,
     await typeIn(0, 'A');
     check(!!await until(isState('ready', 'check'), 'the first monogram again'), 'typing the letter back gives the first monogram again');
     check((await page.evaluate(() => window.__builds.slice())).length === b1, 'typing a letter back is instant: nothing is built again');
+    // MONOSEND (Paul, 18 Oct 2026): Approve also puts the monogram on the next sheet of the buyer's metal, and a monogram on a sheet is final (no Change). This order is about the window through approvals and
+    // changes, so its metal is staged as one the order does not give: the approval is kept off the sheets (approved, the designs window asked for the metal, Change kept). The designs window is held shut here
+    // (counted): the mixed order below goes all the way to the sheets with one press; tests/charm-nest/monogram-ui.cjs has the window itself.
+    await page.evaluate(k => { const r = B.orders.byKey.get(k); r.line.metalKey = 'moonlight'; Orders.interpretAll(); window.__openCalls = 0; if (!window.__openHeld) { window.__openHeld = CustomSheet.open; CustomSheet.open = () => { window.__openCalls++; return Promise.resolve(); }; } }, kMono);
     await page.click(mw('[data-mw-approve]'));
     check(!!await until(isState('approved'), 'the approval'), 'Approve: the card says approved');
     let es = await entries();
     check(es.length === 1 && es[0].files.join() === 'Monogram APV.ai', 'the design is on the order\'s custom designs, once: ' + JSON.stringify(es.map(e => e.files)));
+    { const q = await page.evaluate(k => { const e = document.querySelector('#owEng .mw'); return { queue: e.dataset.queue, sent: !!CustomSheet.decisionOf(B.orders.byKey.get(k)), asked: window.__openCalls, change: !e.querySelector('[data-mw-change]').hidden }; }, kMono);
+      check(q.queue === 'metal' && !q.sent && q.asked === 1 && q.change, 'with no metal on the order it is approved but not sent: the designs window is asked for once, Change stays: ' + JSON.stringify(q)); }
     check(await page.evaluate(() => { const d = document.querySelector('#owEng [data-testid="ow-mono-dot"]'); return d && d.dataset.s === 'approved'; }), 'the dot is the green "approved" one');
     const hAppr = await heightNow(); await shot('1440-monogram-approved');
     // Change and a new letter REPLACE the design
@@ -201,10 +208,14 @@ Object.assign(R.EXPECT_JOBS, { mono: 0, mixed: 1, odd: 0, review: 0, trouble: 0,
     check(t.kids.length === 2 && t.kids[0].kind === 'mono' && t.kids[1].kind === 'card', 'Show all again: both cards, the monogram first');
     check(await page.evaluate(() => [0, 1, 2].map(i => document.querySelector(`#owEng .mw [data-mw-letter="${i}"]`).value).join('') === 'OXR'), 'the monogram card is back with its letters (O X R)');
     // the monogram approved in the mixed order: its own design, on its own order
+    // (MONOSEND: the buyer's metal is on this order (SS): the one press approves it AND sends it to the sheets, with no designs window)
+    const asked0 = await page.evaluate(() => window.__openCalls);
     await page.click(mw('[data-mw-approve]')).catch(() => {});
-    await until(isState('approved'), 'the mixed order\'s approval');
+    await until(isState('sent'), 'the mixed order\'s approval and send', 60000);
     es = await entries();
     check(es.some(e => e.files.join() === 'Monogram OXR.ai') && es.length === 2, 'approving the mixed order\'s monogram puts Monogram OXR.ai on that order, the first order\'s design stays: ' + JSON.stringify(es.map(e => e.files)));
+    { const q = await page.evaluate(k => { const r = B.orders.byKey.get(k), d = CustomSheet.decisionOf(r), e = Object.values(CustomSheet.entries()).find(x => x.files.some(f => f.name === 'Monogram OXR.ai')); return { sent: !!d, pieces: d ? (d.lines[k] || []).length : 0, lines: d ? Object.keys(d.lines) : [], metal: e && e.files[0].metal, asked: window.__openCalls, ok: (document.querySelector('#owEng .mw [data-mw-approved]') || {}).textContent }; }, kOsr);
+      check(q.sent && q.pieces === 1 && q.lines.length === 1 && q.metal === 'silver' && q.asked === asked0 && /On the sheet · Monogram OXR/.test(q.ok || ''), 'and the same press sent it: one piece of its own line, on the buyer\'s metal (SS), no designs window, "On the sheet": ' + JSON.stringify(q)); }
     check(await page.evaluate(() => { const b = document.querySelector('#owEng .engCard [data-e=approve]'); return !!b && !b.disabled; }), 'and the bar\'s Approve is still its own, still waiting');
 
     // ═══ 4 · only a plain piece: today's cards, untouched ═══
@@ -234,7 +245,7 @@ Object.assign(R.EXPECT_JOBS, { mono: 0, mixed: 1, odd: 0, review: 0, trouble: 0,
 
     // ═══ 6 · phone width ═══
     const phone = async (name, key, plain) => {
-      await page.evaluate(() => OrderWin.close()); await settle(300); await openWin(key, 1400); if (!plain) await until(isState('ready', 'check', 'approved'), name); await inView(); await settle(400);
+      await page.evaluate(() => OrderWin.close()); await settle(300); await openWin(key, 1400); if (!plain) await until(isState('ready', 'check', 'approved', 'sent'), name); await inView(); await settle(400);
       return page.evaluate(() => {
         const win = document.getElementById('orderWin'), card = document.querySelector('#owEng [data-testid="ow-mono"]'), mwEl = card && card.querySelector('.mw'), cr = card && card.getBoundingClientRect(), vw = innerWidth;
         const wide = mwEl ? [...mwEl.querySelectorAll('*')].filter(n => { const r = n.getBoundingClientRect(); return r.width > 0 && (r.right > cr.right + 1 || r.left < cr.left - 1); }).length : 0;
