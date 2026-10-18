@@ -14912,7 +14912,7 @@ const Review = window.Review = (() => {
      4204568396 SEA_96442) "Remove this 'Release to nesting queue' button since it will clash with the new 'Release Hold' button". So this release IS the card's Release Hold: ONE button, in the card's own column
      of buttons where Complete Order stood (Print QR label · Release Hold · Send to Sheet), the same rules (releaseOf: enabled with what it does as its title, or greyed with its one plain reason), and no
      second button under the row's reason any more. A Custom Orders card keeps Complete Order: a piece made by hand never goes through the nesting queue (releaseOf says so), so there it is not this action.
-     The press records who and when (the signed-in name, else the name bar): the RELEASE HOLD seal (charm-nest-motion.js, how "releaseHold") is stamped on the button as the card leaves Review for Resolved;
+     The press records who and when (the one signed-in identity, employeeName()): the RELEASE HOLD seal (charm-nest-motion.js, how "releaseHold") is stamped on the button as the card leaves Review for Resolved;
      the order's lines keep { at, by, id } (row.releaseHold, in the run's lines), the order's Review document keeps it in the cloud (CharmNestReviewMark.release: every computer and a reload read it), and
      the timeline's "released" step carries it (data.seal "releaseHold"; OrderHold.release writes that step for a held order, this code for any other). The Orders tab draws the seal large on the order's card
      with the date, the time and who (Orders.releaseSealHtml). */
@@ -15560,9 +15560,9 @@ const Review = window.Review = (() => {
     // (RELHOLD, Paul 18 Oct 2026: on every card but a Custom Orders one, Release Hold stands where Complete Order stood: the slot decorateRelease fills with the one release button; a Custom Orders card,
     // made by hand and never nested, keeps Complete Order)
     const column=x=>CustomPrint.failNote(x)
-      +(printable(x)&&!cs?.busy?CustomPrint.keptButtonHtml(x,'print',sendFirst?'ghost':'gold','Print QR label',`print ${ord} 1 × 1 in QR sticker for the sorting station; ${ax?'its piece is then completed by hand and moves':'the order then moves'} to Completed`,'sm')
-        +(ax?'':CustomPrint.keptButtonHtml(x,'complete','ghost','Complete Order','mark this order completed now without printing its label; it moves to Completed','sm')):'')
-      +(ax?'<span data-rel-slot hidden></span>':'')
+      +(printable(x)&&!cs?.busy?CustomPrint.keptButtonHtml(x,'print',sendFirst?'ghost':'gold','Print QR label',`print ${ord} 1 × 1 in QR sticker for the sorting station; ${ax?'its piece is then completed by hand and moves':'the order then moves'} to Resolved`,'sm')
+        +(ax?'':CustomPrint.keptButtonHtml(x,'complete','ghost','Complete Order','mark this order completed now without printing its label; it moves to Resolved','sm')):'')
+      +(ax?'<span data-rel-slot hidden></span>'+CustomPrint.keptSeals(x,'button'):'')   // (the ORDER COMPLETE seals of an older Complete Order press rest after it: a seal is for good)
       +(cs?CustomSheet.buttonsHtml(x,true):'');
     // (each button keeps the seals it made, for good: a reopened order's too, Paul 29 Sep 00:35)
     const sentActs=it.decided?seals+(cs?.files?.length?'<button type="button" class="btn ghost sm" data-cu-designs>View designs</button>':'')
@@ -17473,7 +17473,7 @@ const OrderWin = window.OrderWin = (() => {
     if (c.busy && !c.busy.includes("cuUndo")) return c.busy;
     const undo = c.busy && c.busy.includes("cuUndo") ? c.busy : "";
     const print = !c.can ? "" : it.done ? CustomPrint.buttonHtml(it, "print", c.printed ? "sealedPrint" : "ghost", c.printed ? "Print again" : "Print QR label", `print this order's 1 × 1 in QR sticker for the sorting station${c.printed ? " again" : ""}`, "xs", "data-seal-btn")
-      : CustomPrint.keptButtonHtml(it, "print", "gold", "Print QR label", "print this order's 1 × 1 in QR sticker for the sorting station; the order then moves to Completed", "xs", c.keptP);
+      : CustomPrint.keptButtonHtml(it, "print", "gold", "Print QR label", "print this order's 1 × 1 in QR sticker for the sorting station; the order then moves to Resolved", "xs", c.keptP);
     if (it.done) {
       // (one seal, the latest the card above does not draw, sits by the button that made it: by "Completed" when it is the Complete
       // seal, by Print again when it is a print seal; "+N" last, for the others the Timeline holds)
@@ -17482,10 +17482,10 @@ const OrderWin = window.OrderWin = (() => {
       return CustomPrint.failNote(it) + CU_DONE_BTN + (byDone ? c.sealOf(c.pick) : "") + print + (!byDone ? c.sealOf(c.pick) : "") + c.moreBtn + holdSlotOf(it) + undo;
     }
     // (RELHOLD, Paul 18 Oct 2026: a piece whose card is another Review tab's (an Unknown SKU, Options, a blocked SKU…) has that card's Release Hold where Complete Order stood; a Custom Orders piece,
-    // made by hand, keeps Complete Order)
+    // made by hand, keeps Complete Order; the ORDER COMPLETE seals an older Complete Order press kept still rest there, after Release Hold: a seal is for good)
     const rel = it.kind === "reviewAct" && it.src && window.ReviewRelease && ReviewRelease.buttonHtml ? tryDo(() => ReviewRelease.buttonHtml(it, "xs")) || "" : "";
     return CustomPrint.failNote(it) + print +
-      (it.kind === "reviewAct" ? rel + (c.can ? c.moreBtn : "") : c.can ? CustomPrint.keptButtonHtml(it, "complete", "ghost", "Complete Order", "mark this order completed now without printing its label; it moves to Completed", "xs", c.keptC) + c.moreBtn : "") + holdSlotOf(it) + undo;
+      (it.kind === "reviewAct" ? rel + (c.can ? CustomPrint.keptSeals(it, "button", c.keptC) + c.moreBtn : "") : c.can ? CustomPrint.keptButtonHtml(it, "complete", "ghost", "Complete Order", "mark this order completed now without printing its label; it moves to Resolved", "xs", c.keptC) + c.moreBtn : "") + holdSlotOf(it) + undo;
   }
   /** The place of the orange Hold button on a piece's row, last among its buttons (Paul, 5 Oct: Hold beside Print QR label / Complete Order): HoldUI.fill
    *  makes the button once the row is drawn. It acts on the WHOLE order, whichever piece's row it is on; none for an order that is held or cancelled. */

@@ -14,7 +14,7 @@
 //  - the Timeline tab draws every press once; the Sheet tab's "Completed by hand" draws the picked piece's completion seal
 //  - no seal appears twice in a surface; no seal has a tooltip or a caption; a single-piece order draws its completion once (the card)
 //  - fits at 1440, 900 and 390 (no sideways scroll, every seal inside its row, small)
-//  - Reopen (Review tab) keeps every seal (record, timeline, row); Complete Order again adds one seal and removes none
+//  - Reopen (Review tab) keeps every seal (record, timeline, row); the reopened Review piece has Release Hold where Complete Order stood (RELHOLD, 18 Oct 2026), its old seal still on its row
 //  - a mutant that drops the seals (Seal.ofPiece / Seal.pieceRow return nothing) is caught by the same check
 //   node tests/charm-nest/completed-seals-order-window.cjs   (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>, SHOTS=<dir>)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
@@ -193,7 +193,7 @@ async function main() {
     await page.evaluate(() => OrderWin.selectPiece(null)); await page.waitForTimeout(800); await idle();
     p = await aProblems(); assert.deepEqual(p, [], 'all pieces again: ' + p.join(' | '));
 
-    // ── 3 · reopen keeps every seal; Complete Order again adds one and takes none away ──
+    // ── 3 · reopen keeps every seal; Release Hold stands where Complete Order was (RELHOLD), the old seal still beside it ──
     const foot = kOf(A, 'foot'), before = JSON.stringify(recOf(foot).stamps);
     await closeWin();
     await page.evaluate(() => { document.querySelector('#reviewView .rvSeg [data-cseg="done"]').click(); });
@@ -203,18 +203,14 @@ async function main() {
     assert.equal(recOf(foot).state, 'open', 'the record is open again'); assert.equal(JSON.stringify(recOf(foot).stamps), before, 'its stamps are the same, none taken away');
     await openWin(foot, 3);
     s = await snap(); assert.deepEqual(s.rows[foot].seals, [OC('10:57 AM')], 'the reopened piece\'s seal rests on its row: ' + JSON.stringify(s.rows[foot]));
-    assert(s.rows[foot].btns.includes('Complete Order'), 'its Complete Order button is back: ' + JSON.stringify(s.rows[foot].btns));
+    // (RELHOLD, Paul 18 Oct 2026: a Review piece's Complete Order is Release Hold now; the ORDER COMPLETE seal the older press kept still rests on its row, after it)
+    assert(s.rows[foot].btns.includes('Release Hold') && !s.rows[foot].btns.includes('Complete Order'), 'Release Hold stands where its Complete Order was: ' + JSON.stringify(s.rows[foot].btns));
     assert.deepEqual(s.rows[kOf(A, 'fig')].seals, [QR('12:41 PM')], 'the other piece keeps its seal');
     await shot('a-reopened'); await layout('a-reopened', [[390, 844]]);
     await view('timeline'); tl = await tlSeals(); assert(tl.includes(OC('10:57 AM')), 'the Timeline still has the seal after the reopen: ' + JSON.stringify(tl)); await view('info');
-    await idle(); await page.click(`#owPcSum [data-piece="${foot}"] [data-cu-complete]`);
-    await page.waitForFunction(k => B.maps.customDone[k] && (B.maps.customDone[k].stamps || []).length === 2, foot, { timeout: 30000 });
-    await page.waitForFunction(k => document.querySelectorAll(`#owPcSum [data-piece="${k}"] svg[data-seal-model]`).length === 2, foot, { timeout: 15000 });
-    await page.mouse.move(3, 3); await page.waitForTimeout(1500); await idle();
-    s = await snap(); assert.equal(s.rows[foot].seals.length, 2, 'two ORDER COMPLETE seals now (the first, and the new one): ' + JSON.stringify(s.rows[foot].seals));
-    assert(s.rows[foot].seals.every(x => /^ORDER COMPLETE /.test(x)) && s.rows[foot].seals.includes(OC('10:57 AM')) && !dup(s.rows[foot].seals), 'the first seal stays, the new one is another: ' + JSON.stringify(s.rows[foot].seals));
+    assert.equal(await page.$(`#owPcSum [data-piece="${foot}"] [data-cu-complete]`), null, 'no Complete Order to press again');
     assert.equal(s.cardControls, 0, 'and the head card still has no box or control');
-    assert.equal(recOf(foot).stamps.length, 2); assert.deepEqual(await fitProblems(), []);
+    assert.equal(JSON.stringify(recOf(foot).stamps), before, "still none taken away"); assert.deepEqual(await fitProblems(), []);
     await closeWin();
 
     // ── 4 · order B, every piece completed: the card says it, with ONE seal of that very press (the line and the seal agree) ──

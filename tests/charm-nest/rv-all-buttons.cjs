@@ -225,7 +225,8 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     //     click opens its order, which asks nothing
     await page.click('#reviewView .egTab[data-k="needResolution"]');
     list = await buttons();
-    assert.deepEqual(list.map(x => [x.rid, x.b]).sort(), [[other.split('_')[0], WANT], ['4178100002', WANT]].sort(), JSON.stringify(list));
+    // (RELHOLD: the greyed Release Hold of step 3 changed nothing, so the first Unknown SKU card is still here too)
+    assert.deepEqual(list.map(x => [x.rid, x.b]).sort(), [['4175892473', WANT], [other.split('_')[0], WANT], ['4178100002', WANT]].sort(), JSON.stringify(list));
     assert.deepEqual(same(await page.evaluate(COLUMN, card('4178100002'))), same(cuCol), 'Options and Custom Orders: one column');
     await page.click(card('4178100002') + ' .engravingIdentity');
     await page.waitForFunction(() => OrderWin.isOpen(), null, { timeout: 10000 });

@@ -115,11 +115,11 @@ async function partB() {
     assert.equal(await page.evaluate(() => document.querySelectorAll('#owPcSum > .owPcRow[data-side], #owPcSum > .owPcRow .owPcSide').length), 0, 'no row of its own for Left or for Right, no LEFT tag on a row');
     assert.equal(await page.evaluate(() => !!document.querySelector('#owPcSum .owPcHd .owPcState') && document.querySelector('#owPcSum .owPcState').textContent.trim()), 'Showing all 3 pieces', 'the quiet line still counts pieces');
     assert(pair.h <= neck.h + 1, `the pair is no taller than an ordinary row: ${pair.h} vs ${neck.h}`); assert(pair.h <= 40, 'and not tall: ' + pair.h);
-    assert.deepEqual(pair.prim, ['Print QR label'], 'ONE primary action: ' + JSON.stringify(pair.prim)); assert.equal(pair.menuBtn, true); assert.deepEqual(pair.menuItems, ['Complete Order', 'Hold'], 'the rest is behind the three dots');
+    assert.deepEqual(pair.prim, ['Print QR label'], 'ONE primary action: ' + JSON.stringify(pair.prim)); assert.equal(pair.menuBtn, true); assert.deepEqual(pair.menuItems, ['Release Hold', 'Hold'], 'the rest is behind the three dots (RELHOLD, Paul 18 Oct 2026: a Review piece\'s Release Hold where Complete Order stood)');
     assert.equal(pair.hold, 1, 'one Hold, in the menu'); assert.deepEqual(pair.chev, { open: 'false' });
     assert.equal(pair.drawer.hidden, true); assert.deepEqual(pair.drawer.subs.map(s => s.label), ['Left', 'Right']);
     assert.equal(neck.hold, 1, 'an ordinary row keeps its own Hold, as before'); assert.equal(neck.menuBtn, false, 'and has no menu, no chevron'); assert.equal(neck.chev, null);
-    ok('1 the screenshot\'s order: three pieces on TWO rows; the pair is one row (name once, Left | Right, one status, six dots, a chevron) no taller than the necklace\'s; one primary action (Print QR label), Complete Order and Hold behind the three dots');
+    ok('1 the screenshot\'s order: three pieces on TWO rows; the pair is one row (name once, Left | Right, one status, six dots, a chevron) no taller than the necklace\'s; one primary action (Print QR label), Release Hold and Hold behind the three dots');
     await shot('1-collapsed');
 
     // the dots and the status hover on the SLOWEST piece and open the same card that lists each piece
@@ -151,8 +151,8 @@ async function partB() {
     await page.keyboard.press('Escape'); m = await menuOpen(); assert.equal(m.open, false); assert.match(m.focus, /owPcMoreBtn/, 'Esc closes it and the focus goes back to the three dots: ' + m.focus);
     assert.equal(await page.evaluate(() => document.getElementById('orderWin').open), true, 'Esc closed the menu, not the window');
     await page.click('#owPcSum > .owPcMulti .owPcMoreBtn'); await page.click('#owPcSum .owPcHd .fLabel'); m = await menuOpen(); assert.equal(m.open, false, 'a press elsewhere closes it'); assert.equal(await page.evaluate(() => document.getElementById('orderWin').open), true);
-    await page.focus('#owPcSum > .owPcMulti .owPcMoreBtn'); await page.keyboard.press('Enter'); m = await menuOpen(); assert.equal(m.open, true); assert.match(m.focus, /Complete Order/, 'opened from the keyboard: the first item has the focus: ' + m.focus);
-    await page.keyboard.press('ArrowDown'); assert.match((await menuOpen()).focus, /Hold/); await page.keyboard.press('ArrowDown'); assert.match((await menuOpen()).focus, /Complete Order/, 'Up and Down go round');
+    await page.focus('#owPcSum > .owPcMulti .owPcMoreBtn'); await page.keyboard.press('Enter'); m = await menuOpen(); assert.equal(m.open, true); assert.match(m.focus, /Release Hold/, 'opened from the keyboard: the first item has the focus: ' + m.focus);
+    await page.keyboard.press('ArrowDown'); assert.match((await menuOpen()).focus, /Hold/); await page.keyboard.press('ArrowDown'); assert.match((await menuOpen()).focus, /Release Hold/, 'Up and Down go round');
     await page.keyboard.press('Escape'); await away();
     ok('1e the menu: opens under the three dots, Esc closes it (focus back, the window stays), a press elsewhere closes it, the keyboard opens it on its first item and Up / Down go round');
 
@@ -169,7 +169,7 @@ async function partB() {
     await page.focus('#owPcSum > .owPcMulti .owPcName'); await page.keyboard.press('ArrowRight'); await page.waitForTimeout(350); R = await read(); assert.equal(R[1].drawer.hidden, false);
     await page.keyboard.press('ArrowLeft'); await page.waitForTimeout(350); R = await read(); assert.equal(R[1].drawer.hidden, true); ok('1h Right and Left on the name open and close the drawer');
 
-    // every action is still reachable and works: Print QR label (the primary), Complete Order and Hold (the menu)
+    // every action is still reachable and works: Print QR label (the primary), Release Hold and Hold (the menu)
     const prints = () => page.evaluate(() => (window.__qrDocs || []).length);
     const before = await prints();
     await page.hover('#owPcSum > .owPcMulti .owPcName'); await page.click('#owPcSum > .owPcMulti .pcAct > [data-cu-print]');
@@ -181,16 +181,19 @@ async function partB() {
     ok('1j Printing completes the piece: Completed is the primary, "Marked completed · Undo" stays in sight, Print again and Hold are behind the three dots, the row stays one line');
     await page.evaluate(() => document.querySelector('#owPcSum > .owPcMulti [data-cu-undo]').click());   // (the offer lasts a few seconds: pressed at once)
     await page.waitForFunction(() => document.querySelector('#owPcSum > .owPcMulti .pcAct > [data-cu-print]') && !document.querySelector('#owPcSum > .owPcMulti [data-cu-done]'), null, { timeout: 45000 }); await page.waitForTimeout(500);
-    R = await read(); assert.equal(R[1].multi, true, 'the row is still one row after the Undo'); assert.deepEqual(R[1].primBtns, ['Print QR label'], 'one primary button (its seal rests beside it)'); assert.deepEqual(R[1].menuItems, ['Complete Order', 'Hold']); ok('1k Undo from the row takes the completion back: Print QR label is the primary again, Complete Order and Hold are behind the dots');
+    R = await read(); assert.equal(R[1].multi, true, 'the row is still one row after the Undo'); assert.deepEqual(R[1].primBtns, ['Print QR label'], 'one primary button (its seal rests beside it)'); assert.deepEqual(R[1].menuItems, ['Release Hold', 'Hold']); ok('1k Undo from the row takes the completion back: Print QR label is the primary again, Release Hold and Hold are behind the dots');
     const rowRec = () => srv.st.doc('Charm_Custom_Orders', fx.kOf(O.SHOT, 1));
+    // (RELHOLD, Paul 18 Oct 2026: a Review piece has no Complete Order any more: Release Hold stands in its place, behind the dots; the piece is completed by printing its label again)
     await page.hover('#owPcSum > .owPcMulti .owPcName'); await page.click('#owPcSum > .owPcMulti .owPcMoreBtn');
-    await page.click('#owPcSum > .owPcMulti .owPcMenu [data-cu-complete]');
+    assert.deepEqual(await page.evaluate(() => ({ rel: document.querySelectorAll('#owPcSum > .owPcMulti .owPcMenu [data-rel-hold]').length, complete: document.querySelectorAll('#owPcSum [data-cu-complete]').length, old: [...document.querySelectorAll('#orderWin button')].filter(b => /Release to nesting queue/i.test(b.textContent)).length })), { rel: 1, complete: 0, old: 0 }, 'Release Hold behind the dots, no Complete Order, no "Release to nesting queue"');
+    await page.keyboard.press('Escape'); await away();
+    await page.hover('#owPcSum > .owPcMulti .owPcName'); await page.click('#owPcSum > .owPcMulti .pcAct > [data-cu-print]');
     await page.waitForFunction(() => document.querySelector('#owPcSum > .owPcMulti [data-cu-done]'), null, { timeout: 45000 });
     await page.waitForTimeout(700);
     R = await read();
     assert.equal(R[1].done, true, 'completed: the green Completed button is the primary and its status chip is not said twice'); assert.deepEqual(R[1].primBtns.filter(x => x !== 'Undo'), ['Completed']); assert.equal(R[1].multi, true);
     assert(R[1].menuItems.some(x => /Print/.test(x)), 'Print again is behind the three dots: ' + JSON.stringify(R[1].menuItems));
-    assert(rowRec() && rowRec().completedAt, 'Complete Order from the menu wrote the completion'); ok('1l Complete Order from the three dots completes the piece; the row reads Completed, Print again is behind the dots');
+    assert(rowRec() && rowRec().completedAt, 'printing again wrote the completion'); ok('1l Release Hold (not Complete Order) is behind the three dots; printing completes the piece; the row reads Completed, Print again is behind the dots');
     // (the Undo offer ends by itself: the row is tidy again)
     await page.waitForFunction(() => !document.querySelector('#owPcSum .cuUndo'), null, { timeout: 100000 }); await page.waitForTimeout(500);
     c = await cell(); assert.equal(c.undo, false); assert.equal(c.done, true); assert(c.menu.length >= 1, 'the dots are still there: ' + JSON.stringify(c));

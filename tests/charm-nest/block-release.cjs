@@ -173,7 +173,7 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
     ok(!('blockOverride' in c.rowFromRecord('k_1', JSON.parse(JSON.stringify(none)))), 'and a row made from a record without it has none');
     ok(!('blockOverride' in c.rowFromRecord('k_1', { orderId: '1', blockOverride: 'junk' })), 'junk is not a release');
     // the same list the materialOverride / sizeOverride sit in (resume), and Carry.adopt
-    ok(/"materialOverride", "sizeOverride", "blockOverride", "engravingOverride"/.test(src), 'the resume keep-list carries it beside the other overrides');
+    ok(/"materialOverride", "sizeOverride", "blockOverride", ("releaseHold", )?"engravingOverride"/.test(src), 'the resume keep-list carries it beside the other overrides');   // (RELHOLD, 18 Oct 2026: the Release Hold press's who and when sits beside it)
     ok(/if \(row && row\.blockOverride && !fresh\.blockOverride\) fresh\.blockOverride = row\.blockOverride;/.test(src), 'Carry.adopt carries it to a changed order');
     ok(/row\.sizeOverride, row\.blockOverride \? JSON\.stringify\(row\.blockOverride\) : "", m\.optionMaps/.test(src) && /row\.sizeOverride \|\| "", row\.blockOverride \? JSON\.stringify\(row\.blockOverride\) : "",/.test(src), 'the reading (inputsOf) and the pool\'s retry signature (trySig) depend on it, with no helper outside their own modules to be missing from a slice');
     // the whole cycle on the real reader: a restored row, read again, is not asked
@@ -219,7 +219,7 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
     ENT.DRAGON11 = design({ blocked: 'open outline', open: true });
     rows.length = 0; repooled.length = 0; rows.push(mk('dragon', { problems: [{ kind: 'blockedSku', sku: 'DRAGON11', reason: 'open outline' }], reason: 'SKU blocked: open outline' }));
     res = await OH.release(rid, { name: 'Paul' });
-    ok(res.ok === false && res.released === true && /needs a look in Review: SKU blocked: open outline\.? Its Review row has “Release to nesting queue” to cut it anyway\.$/.test(res.error), 'an open outline still ends in "needs a look in Review", and points at the Review button: ' + res.error);
+    ok(res.ok === false && res.released === true && /needs a look in Review: SKU blocked: open outline\.? Its Review row has “Release Hold” to cut it anyway\.$/.test(res.error), 'an open outline still ends in "needs a look in Review", and points at the Review button: ' + res.error);
     ok(!/\.\./.test(res.error), 'with no doubled full stop: ' + res.error);
     // ...and with the person's release of that SKU: success
     rows[0].blockOverride = { sku: 'DRAGON11', by: 'Paul', at: 1 }; repooled.length = 0;
@@ -239,7 +239,8 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
   /* ── F · the Review button's logic ── */
   {
     const src = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
-    const a = src.indexOf('  const RELEASE_LABEL = "Release to nesting queue";'), b = src.indexOf('  /** The buttons of a Review row: "Release to nesting queue"', a);
+    // (RELHOLD, Paul 18 Oct 2026: the button is the card's "Release Hold" now; its block ends where the button is drawn)
+    const a = src.indexOf('  const RELEASE_LABEL = "Release Hold";'), b = src.indexOf('  /** RELHOLD: the one Release Hold button', a);
     assert.ok(a > 0 && b > a, 'the RELTOQ block is where the test expects it');
     const calls = { toasts: [], answers: [], repooled: [], released: [], otherMarked: [], resolved: [], accepted: [], saved: 0, synced: 0, agent: [] };
     const rowsAll = [];
@@ -252,7 +253,8 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
       by: () => 'Paul', answered: (it, type, say, detail, who) => { calls.answers.push({ kind: it.kind, type, say, detail, who }); },
       problemText: p => (p.kind === 'blockedSku' ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind), syncOrderItems: () => { calls.synced++; },
       repool: async r => { calls.repooled.push(r.key); r.state = 'pooled'; r.problems = []; }, acceptChange: async it => { calls.accepted.push(it.key); },
-      items: () => c.__items || [], rowsOf: it => (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).filter(r => r.state !== 'gone'), document: {}
+      items: () => c.__items || [], rowsOf: it => (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).filter(r => r.state !== 'gone'), document: {},
+      mkeyOf: it => String(it.key), DONE_SW: '#done', TL: { rec: e => { (calls.tl = calls.tl || []).push(e); } }   // (RELHOLD: the press's flight and its timeline step)
     };
     c.window.OrderHold = { release: async (rid, o) => { calls.released.push([rid, o.name, rowsAll.filter(r => r.order.receiptId === rid).map(r => !!r.blockOverride)]); calls.otherMarked.push(rowsAll.filter(r => r.order.receiptId !== rid && /^o[12]_/.test(r.key)).map(r => !!r.blockOverride)); for (const r of rowsAll.filter(x => x.order.receiptId === rid)) { r.state = 'pooled'; r.problems = []; } return { ok: true, released: true, placed: true, sheets: [{ label: 'RG Sheet 2' }] }; } };
     c.window.CharmNestReviewMark = { resolve: async (rid, o) => { calls.resolved.push([rid, o.how]); return { ok: true }; } };
@@ -306,7 +308,7 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
     calls.toasts.length = 0; const r4 = mkRow('o4_1', '4190000002'); rowsAll.push(r4);
     c.window.OrderHold.release = async () => ({ ok: false, released: true, error: 'Order 4190000002 is released and at the front of the queue, but it needs a look in Review: x.' });
     const bad = await c.releaseToQueue(item('blockedSku', r4));
-    ok(bad === false && calls.toasts.some(t => t[0] === 'bad' && /needs a look in Review: x\. What was done is kept, and Release to nesting queue can be pressed again/.test(t[1])), 'a failure is said, and the button can be pressed again: ' + JSON.stringify(calls.toasts));
+    ok(bad === false && calls.toasts.some(t => t[0] === 'bad' && /needs a look in Review: x\. What was done is kept, and Release Hold can be pressed again/.test(t[1])), 'a failure is said, and the button can be pressed again: ' + JSON.stringify(calls.toasts));
     ok(r4.blockOverride && r4.blockOverride.sku === 'DRAGON11', 'and the release stays on the line');
     // no engine (or nothing held): the lines are made up again in line, first
     calls.toasts.length = 0; calls.repooled.length = 0; delete c.window.OrderHold; const r5 = mkRow('o5_1', '4190000003', { state: 'pulled' }); rowsAll.push(r5);
