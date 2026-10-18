@@ -133,7 +133,8 @@ const section = t => console.log('\n── ' + t);
     // a quantity-1 line is exactly what it was
     const one = lineOf('4200683017', '557', 1, 'APV'), w3 = world([one], { defaultQty: 1 }), co = await w3.type(one, undefined, 'APV'); await w3.ui.approve(co);
     const g = w3.store['ord:custom:4200683017:X'].files[0];
-    check(g.name === 'Monogram APV.ai' && g.qty === 1 && !g.mono, 'a line of ONE piece: "Monogram APV.ai", the card\'s own quantity, no tag (byte for byte what it was): ' + g.name + ' x' + g.qty + ' ' + JSON.stringify(g.mono));
+    // (MONOSEND, Paul 18 Oct 2026: the approval also sends the card's designs, so a line of one piece is ONE piece, tagged with its line (no slot): the send gives it to this line, never to another line of the card)
+    check(g.name === 'Monogram APV.ai' && g.qty === 1 && !!g.mono && g.mono.line === one.key && g.mono.slot == null, 'a line of ONE piece: "Monogram APV.ai", quantity 1, tagged with its line and no slot: ' + g.name + ' x' + g.qty + ' ' + JSON.stringify(g.mono));
     const done = []; // onApproved details
   }
 
