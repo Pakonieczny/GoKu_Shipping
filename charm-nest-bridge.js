@@ -2383,7 +2383,7 @@ const Orders = window.Orders = (() => {
     if (window.Motion) Motion.reconcile(list, wanted, { animate: same, leave: leaveFor(new Set()), get clip() { settle(); return host; } });
     else put(list, wanted);
     for (const [node, pair] of pairs) node.querySelector('.comparePair')?.replaceWith(pair);
-    for (const [node, r, only] of mounts) { if (only !== "review") ListMedia.mount(node, r); if (only !== "media" && window.ReviewSend) ReviewSend.mount(node, r); }   // (a grouped order's pieces mount their pictures, its one card mounts the button; Send to Review: the one button under Qty · Ship by, charm-nest-review-send.js; it draws nothing until the Review mark API is there)
+    for (const [node, r, only] of mounts) { if (only !== "review") { ListMedia.mount(node, r); try { Review.fixMount(node, r); } catch (_) {} } if (only !== "media" && window.ReviewSend) ReviewSend.mount(node, r); }   // (a grouped order's pieces mount their pictures, its one card mounts the button; Send to Review: the one button under Qty · Ship by, charm-nest-review-send.js; it draws nothing until the Review mark API is there)
     ListMedia.more(list,groupTotal||rows.length,shown.length,()=>{OV.limit=(OV.limit || 48)+48;renderBody();});
     settle();
     drawnOn = onScreen() ? nextKey : ""; drawnLimit = OV.limit;
@@ -14906,6 +14906,83 @@ const Review = window.Review = (() => {
     for (const rr of Orders.rows()) if (String(rr.line.listingId) === lid && rr.state === "unmatched") await repool(rr);
     Orders.interpretAll(); syncOrderItems(); Orders.render();
   }
+  /* ═══ WRONGCHARM · "Wrong charm?" on a matched order's piece (Paul, 18 Oct 2026; order 4193072538, listing 1819191541 "Tiny Moon Charm Celestial Charm … Add On Charm", GF) ═══════════════════
+     The listing's Etsy SKU "TINY MOON & STARS 2" is an exact master SKU (a star and a moon), so the line was matched and nested with no question; it is the moon MOON_3288. A line whose SKU
+     matched never reaches Review, so its charm could not be corrected. "Wrong charm?" (the order window's Vector design, the Orders card's) opens a small picker: the Review card's own similar
+     charms (similarOffer) and the master index search. The pick is the SAME saved link a Review pick writes (CharmNestReviewLink.pick: listing + the SKU the line was matched by, or listing +
+     the option value that gives its charm, the key linkOf reads), which the matcher reads BEFORE an exact master match of that SKU, for THIS listing only (DACHMAP, saved-link-wins). The person
+     confirms one line first (CharmNestCharmFix.askText: the listing, the count of its open orders); then LISTPICK (relinkNow) re-makes every open order of the listing: swapped on an open sheet,
+     a cut / committed / released / protected piece held and told. Etsy is never changed here. */
+  const fixLib = () => window.CharmNestCharmFix || null;
+  const fixHelpers = () => ({ RL: relinkRL(), O, cancelled: r => !!(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId)) });
+  /** Whether "Wrong charm?" is offered for a line: { ok, why, listingId, cur, from, key, via, option } (CharmNestCharmFix.offerOf). */
+  function fixOffer(row) {
+    const F = fixLib(); if (!F || !relinkRL()) return { ok: false, why: "the charm correction did not load" };
+    try { return F.offerOf(row, fixHelpers()); } catch (e) { return { ok: false, why: (e && e.message) || String(e) }; }
+  }
+  /** The charms the picker offers: the Review card's own (its numbered designs and lookalikes, then the similar charms), the one matched now marked. */
+  function fixChoices(row) {
+    let off = null; try { off = similarOffer(row, {}, [row]); } catch (_) { off = null; }
+    const cur = matchedNow(row), seen = new Set(cur), more = [];
+    for (const x of ((off && off.siblings) || []).concat((off && off.more) || [])) { const k = String(x.sku || "").trim().toUpperCase(); if (!k || seen.has(k) || !B.master.entries.has(k)) continue; seen.add(k); more.push({ sku: k, why: x.why || x.note || "" }); }
+    return { cur, more, moreExtra: (off && off.moreExtra) || 0 };
+  }
+  /** The correction: checked, confirmed in one line, saved as the listing's link (read back), then every open order of the listing re-made with it (LISTPICK). → { ok, why, sku, key, orders } */
+  async function fixCharm(row, sku, o) {
+    o = o || {}; const F = fixLib(), RL = relinkRL(); sku = String(sku || "").trim().toUpperCase();
+    const no = (why, tone) => { if (why) toast(why, tone || "bad", 7000); return { ok: false, why }; };
+    if (!F || !RL) return no("The charm correction did not load");
+    const off = fixOffer(row); if (!off.ok) return no(off.why);
+    if (!sku) return no("Pick a charm from the library first");
+    const e = Master.entryFor(sku); if (!e || !B.master.entries.has(sku)) return no(`${sku} is not in the master index`);
+    if (O.entryBlock(e)) return no(`${sku} is blocked in the master, so it cannot be cut`);
+    if (sku === off.cur || O.sameDesign(sku, off.cur, k => Master.entryFor(k))) return no(`${off.cur} is already this listing's charm`, "ok");
+    const plan = RL.planOf(row, sku); if (!plan.ok) return no(plan.why);
+    // (before anything is written: a NEW order of the listing read with the link in it must read as the pick, or the link would not win and is not saved)
+    const pre = RL.proof(row, sku, Object.assign({}, Orders.ctx(), F.mapsWith(B.maps, plan, O)));
+    if (!pre.designOk) return no(`Not saved: ${pre.why}`);
+    const who = by(); if (!who) return { ok: false, why: "nobody signed in" };
+    const aff = F.affectedOf(Orders.rows(), row, sku, fixHelpers()), ask = F.askText(sku, off.listingId, aff);
+    if (!(o.confirm || window.confirm)(ask)) return { ok: false, why: "not confirmed", ask };
+    const r = await RL.pick(row, sku, { by: who });   // (REVLINK: ONE write under the matcher's key, read back by the server, the maps read again; it throws when it is not saved)
+    if (!r || !r.ok) return no((r && r.why) || "That charm could not be kept for this listing");
+    toast(`${off.from || off.cur} → ${sku} kept for listing ${off.listingId}`, "ok");
+    linkHolds([row], sku);
+    await relinkNow().catch(() => null);   // (LISTPICK: every open order of the listing made up again with the pick, in place on its sheet when it fits)
+    for (const rr of Orders.rows()) if (String(rr.line.listingId).replace(/\D/g, "") === off.listingId && rr.state === "unmatched") await repool(rr);
+    Orders.interpretAll(); syncOrderItems(); Orders.render();
+    return { ok: true, sku, key: r.key, via: r.via, ask, orders: aff.orders };
+  }
+  /** The picker, drawn into `host` for a line: the similar charms (one tap each), the master index search, Cancel. o.close() when it is put away, o.done(result) after a saved pick. */
+  function fixPicker(host, row, o) {
+    o = o || {}; if (!host) return false;
+    const off = fixOffer(row);
+    if (!off.ok) { host.innerHTML = `<div class="sibOffer cfPick"><div class="dsFor">${esc(off.why)}</div><div class="cfFind"><button type="button" class="btn ghost sm" data-a="close">Close</button></div></div>`; host.querySelector("[data-a=close]").onclick = () => o.close && o.close(); return false; }
+    const ch = fixChoices(row); masterSkuList();
+    const scope = off.via === "option" && off.option ? `its option “${off.option.name}: ${off.option.value}”` : off.from ? `the SKU “${off.from}”` : "no SKU";
+    host.innerHTML = `<div class="sibOffer cfPick" data-row="${esc(row.key)}"><div class="sibAsk">Which library charm is this? It is matched to ${esc(off.cur)} now.</div>`
+      + (ch.more.length ? `<div class="sibPicks">${sibButtons({ cur: ch.cur, more: ch.more, moreExtra: ch.moreExtra, siblings: [], pair: null })}</div>` : "")
+      + `<div class="cfFind"><input list="cnMasterSkus" data-f="dsku" aria-label="Search the library for the charm" placeholder="${ch.more.length ? "or search the library…" : "search the library…"}"><button type="button" class="btn gold sm" data-a="dsku">Use this charm</button><button type="button" class="btn ghost sm" data-a="close">Cancel</button></div>`
+      + `<div class="dsFor">Kept for listing ${esc(off.listingId)} and ${esc(scope)} only: every open order of it changes, the same SKU on other listings stays. Etsy is not changed.</div></div>`;
+    Master.mountPictures(host);
+    const box = host.querySelector(".cfPick");
+    const go = k => saving(box, async () => { const r = await fixCharm(row, k); if (r && r.ok && o.done) o.done(r); }, "button");
+    host.querySelectorAll("[data-dsku]").forEach(b => { b.onclick = go(b.dataset.dsku); });
+    bindNeeds(box, "dsku", "dsku");
+    host.querySelector("[data-a=dsku]").onclick = () => go(host.querySelector("[data-f=dsku]").value)();
+    host.querySelector("[data-f=dsku]").addEventListener("keydown", ev => { if (ev.key === "Enter" && String(ev.target.value || "").trim()) { ev.preventDefault(); go(ev.target.value)(); } });
+    host.querySelector("[data-a=close]").onclick = () => o.close && o.close();
+    return true;
+  }
+  /** "Wrong charm?" under the Vector design of an Orders card: it opens the order window on the line with the picker open. Drawn, or taken away, as the line's offer says. */
+  function fixMount(node, row) {
+    const cap = node && node.querySelector(".comparePair figure:first-child figcaption"); if (!cap) return;
+    let b = cap.querySelector(".cfOpen"); const off = row && !row.loading ? fixOffer(row) : { ok: false };
+    if (!off.ok) { if (b) b.remove(); return; }
+    if (!b) { b = el("button", "cfOpen", "Wrong charm?"); b.type = "button"; cap.appendChild(b); }
+    b.title = `Pick the right library charm for listing ${off.listingId} (matched to ${off.cur} now)`;
+    b.onclick = ev => { ev.stopPropagation(); ev.preventDefault(); OrderWin.open(row.key, { from: node }); OrderWin.charmFix(true); };
+  }
   /** One list of the master's SKUs for every field that picks a charm, made again when the index changes. */
   let skuListFor = null;
   function masterSkuList() {
@@ -16101,7 +16178,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -17250,6 +17327,7 @@ const OrderWin = window.OrderWin = (() => {
     wireZoom();
     // the buyer's message chip carries the Customer tab's own unread dot: it follows that dot (the mail module sets it as threads change)
     tryDo(() => { const dot = W.dlg.querySelector('[data-ow-tab="customer"] .owDot'); if (dot && window.MutationObserver) new MutationObserver(() => { const r = W.dlg.open && !W.closing && rowOf(W.key); if (r && !r.loading) paintFacts(r); }).observe(dot, { attributes: true, attributeFilter: ["hidden", "class"] }); });
+    byId("owWrongCharm").onclick = () => charmFix(false);   // (WRONGCHARM: the picker for the line shown, opened or put away)
     byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && (O.setDesignsOf(r.spec) || []).join(" + ")) || (r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
     // (no name chip in Team messages: a message carries the person of the account chip; nobody signed in, Send asks for the name inline; Paul, 18 Oct 2026)
     const input = byId("owInput");
@@ -17641,6 +17719,7 @@ const OrderWin = window.OrderWin = (() => {
     const vh = byId("owVector"); if (vh) { if (W.zoom) tryDo(() => W.zoom.vector.key(vectorKey(r))); tryDo(() => ListMedia.vectorInto(vh, r)); }
     // (the SKU alone, as the Copy button copies it: an earring pair says its Left and Right in its pieces and facts, not on this line: Paul, 12 Oct 2026)
     byId("owSku").textContent = "SKU: " + ((O.setDesignsOf(sp) || []).join(" + ") || sp.designSku || r.line.sku || "—");   // (a necklace of saved charms names them all)
+    paintCharmFix(r);
     paintSetLens(r);
     paintEng(r);
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller
@@ -17672,6 +17751,32 @@ const OrderWin = window.OrderWin = (() => {
     paintNow(r);
     paintWho();
     if (W.view === "sheet" && SV.rid && SV.rid !== String(r.order.receiptId)) sheetShow();   // (this line named a variable "rid" that paint() never had: every repaint of the order window on its Sheet tab threw a ReferenceError and stopped half way)
+  }
+  /** WRONGCHARM (Paul, 18 Oct 2026, order 4193072538): "Wrong charm?" beside the SKU under the Vector design, for a line matched to a library charm (Review.fixOffer); its picker
+   *  (Review.fixPicker) opens below it for THIS line and is put away when the window shows another line or the line can no longer be corrected. The picker is drawn once when it opens
+   *  (a repaint never empties what is being typed into its search). */
+  function paintCharmFix(r) {
+    const b = byId("owWrongCharm"), host = byId("owCharmFix"); if (!b || !host) return;
+    const off = r && !r.loading && window.Review && Review.fixOffer ? tryDo(() => Review.fixOffer(r)) : null, ok = !!(off && off.ok);
+    b.hidden = !ok; if (ok) b.title = `Pick the right library charm for listing ${off.listingId} (matched to ${off.cur} now)`;
+    if (!ok || (W.cfKey && W.cfKey !== r.key)) shutCharmFix();
+    if (ok && W.cfWant === r.key) { W.cfWant = null; openCharmFix(r); }
+  }
+  function shutCharmFix() { const b = byId("owWrongCharm"), host = byId("owCharmFix"); W.cfKey = null; if (host && !host.hidden) { host.hidden = true; host.innerHTML = ""; } if (b) b.setAttribute("aria-expanded", "false"); }
+  function openCharmFix(r) {
+    const b = byId("owWrongCharm"), host = byId("owCharmFix"); if (!b || !host || !r) return false;
+    W.cfKey = r.key; host.hidden = false; b.setAttribute("aria-expanded", "true");
+    const drawn = Review.fixPicker(host, r, { close: () => { shutCharmFix(); tryDo(() => b.focus()); }, done: () => { shutCharmFix(); if (W.dlg && W.dlg.open && !W.closing && rowOf(W.key)) tryDo(paint); } });
+    const f = host.querySelector("[data-f=dsku]"); if (drawn && f) tryDo(() => f.focus({ preventScroll: true }));
+    return drawn;
+  }
+  /** "Wrong charm?" pressed (or the Orders card's): the picker for the line shown, opened or put away; want=true opens it (the window may still be opening: then it opens at its paint). */
+  function charmFix(want) {
+    const r = W.dlg && W.dlg.open && W.key ? rowOf(W.key) : null;
+    if (!r) { if (want && W.key) W.cfWant = W.key; return false; }
+    if (W.cfKey === r.key && !want) { shutCharmFix(); return false; }
+    if (!tryDo(() => Review.fixOffer(r).ok)) { if (want) W.cfWant = r.key; return false; }
+    return openCharmFix(r);
   }
   /** Send to Sheet in the header, on every tab, while the order's own designs are ready and not sent: its Review card's
    *  button. The design lifts off it and the view steps out of the way for the flight, then comes back as it was (SendTour,
@@ -19941,7 +20046,7 @@ const OrderWin = window.OrderWin = (() => {
     show((opts.row && opts.row.key && rows.find(r => r.key === opts.row.key)) || ofPool(rows, opts.poolId) || rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId, pick: o.pick }); shown();
   }
   // (a repaint asked from outside, an image or a record arriving, waits for the view to land)
-  return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: o => shut(o && o.into), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v),
+  return { open, openOrder, focusSearch, charmFix, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: o => shut(o && o.into), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v),
     // the piece shown in the order window (Paul, 5 Oct, round 16: the "Its pieces" rows are the selector): selectPiece(key | null for all pieces) -> whether it is shown now
     selectPiece: k => selectPiece(k), selectedPiece: () => (W.pieces || []).length > 1 ? W.piece || null : null, selectedSide: () => (W.side && narrowSide()) ? W.side : null, selectedDisc: () => W.disc || null, repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed,
     // (read-only, for the checks: the pieces of the order on screen, each with the sheets it is on, and the one in focus)
