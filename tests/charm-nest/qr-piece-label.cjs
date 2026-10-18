@@ -1,13 +1,14 @@
 // QRLABEL (Paul, 14 Oct 2026): ONE QR sticker per order at the Sorting Station, whatever the order holds; the only exception is a sticker a
 // person prints BY HAND at the Design Station (the Charm Sorter's Print QR label) for one piece of an order that has more pieces: the same
-// 1 x 1 in sticker, its QR still the MASTER ORDER's number, with a note (what the piece is for) and ORDER <number> in big type, fitted to the
-// note area so a longer message gets smaller type and never overflows.
+// 1 x 1 in sticker, its QR still the MASTER ORDER's number, with a note (what the piece is for) in big type, fitted to the note area so a
+// longer message gets smaller type and never overflows. NO "ORDER <number>" block in the note area (Paul, 18 Oct 2026: "Remove the 'ORDER
+// 4201047416' since it's a duplicate from the partial 'Print QR' process"): the order number under the QR, with the date, stays.
 //   1 · the note fitter (node): 1 word, 20 characters, 60 characters, a 30-character single word: every line inside the box, the type never
-//       larger for a longer text, the order line never touching the note
+//       larger for a longer text; the note alone fills the area (no ORDER block) and a word is not broken when every word fits a line
 //   2 · the Sorting Station (sorting.html in Chromium): a mismatched pair, a matching pair and a 3-line order hand QR Printer.html NO `pieces`
 //       (StationLiveOrder.ears still lists ears for the pairs: they are simply not handed over), and the printer makes ONE page for each
 //   3 · QR Printer.html itself (Chromium, stubbed PDF library): the QR text is the order number; a stale list of ears prints one page (single and
-//       batch); a piece sticker has the fitted note and ORDER <number> in place of Metal / Title / Match, with the date and order number kept
+//       batch); a piece sticker has the fitted note alone in place of Metal / Title / Match (no ORDER block), with the date and order number kept
 //   4 · the Charm Sorter (Chromium, fake site): Print QR label on a card that is the whole order prints the ordinary sticker with no question; on
 //       one piece of a two-line order it asks for the note (prefilled, 60 characters, live size), Cancel prints nothing, Print label prints the
 //       piece sticker, and the order's timeline says it was a piece label
@@ -38,15 +39,21 @@ const J = o => JSON.parse(JSON.stringify(o));
   const big = Q.fitNote('M'.repeat(200), { boxW, boxH: 12 }); assert.ok(big.truncated && big.fits && big.h <= 12 && big.lines.join('').endsWith('…'));
   ok('1 fitNote: 1 word / 20 / 60 characters / a 30-character word all inside the box, type shrinks as the text grows (' + Object.entries(out).map(([k, r]) => r.pt + ' pt').join(', ') + '), overlong text is shortened, never overflows');
 
-  // the whole sticker's note area (72 x 72 pt page): the note and ORDER <number> stay inside x 33..70, y 0.5..52 and apart
+  // the whole sticker's note area (72 x 72 pt page): the note alone stays inside x 33..70, y 0.5..52; no ORDER <number> block (Paul, 18 Oct 2026)
   for (const n of ['', 'Chain', 'Extra chain', cases['20 characters'], cases['60 characters'], cases['a 30-character single word'], 'i'.repeat(60)]) for (const rid of ['4194598655', '41945986551234', 'UnknownOrder']) {
-    const L = Q.layout(n, rid), g = L.geo;
-    for (const part of [L.note, L.order]) { assert.ok(part.x >= 33 && part.x + part.w <= 70 + 1e-9, 'inside the page width: ' + (part.x + part.w)); assert.ok(part.y >= 0.5 && part.y + part.h <= g.bottom + 1e-9, 'inside the page height: ' + (part.y + part.h)); }
-    assert.ok(L.note.y + L.note.h <= L.order.y + 1e-9, 'the note ends above the order line'); assert.ok(L.order.lines.join(' ').includes(rid.slice(0, 4)) || /…/.test(L.order.lines.join('')), 'the order number is said');
+    const L = Q.layout(n, rid), g = L.geo, part = L.note, ns = Q.nodes(L);
+    assert.ok(part.x >= 33 && part.x + part.w <= 70 + 1e-9, 'inside the page width: ' + (part.x + part.w)); assert.ok(part.y >= 0.5 && part.y + part.h <= g.bottom + 1e-9, 'inside the page height: ' + (part.y + part.h));
+    assert.ok(!('order' in L), 'no ORDER block in the layout'); assert.equal(part.boxH, g.bottom - g.y, 'the note has the whole area');
+    assert.equal(ns.length, 1, 'one node, the note'); assert.ok(!/ORDER/.test(ns[0].text) && !ns[0].text.includes(rid.toUpperCase()), 'no ORDER line, the order number not repeated: ' + ns[0].text);
   }
-  assert.deepEqual(J(Q.layout('Extra chain', '4194598655').order.lines), ['ORDER', '4194598655'], 'ORDER and its number');
   assert.deepEqual(J(Q.layout('Extra chain', '4194598655').note.lines), ['EXTRA', 'CHAIN'], 'the note is set in capitals');
-  ok('1b layout: the note and ORDER <number> stay inside the note area of the 72 x 72 pt page, apart, for every length');
+  // Paul's 18 Oct 2026 sticker: the freed height goes to the note, and no word is broken (it was BRACELE / T CHAIN / 6190 above the ORDER block)
+  const pb = Q.layout('Bracelet chain 6190', '4201047416');
+  assert.deepEqual(J(pb.note.lines), ['BRACELET', 'CHAIN', '6190'], 'whole words: ' + pb.note.lines.join(' / ')); assert.ok(Q.width('BRACELET', pb.note.pt) <= 37 + 1e-9);
+  assert.deepEqual(J(Q.nodes(pb)).map(n => n.text), ['BRACELET\nCHAIN\n6190'], 'only the note is drawn, no ORDER 4201047416');
+  assert.ok(Q.layout('Extra chain 18 in', '4194598655').note.pt > 9.5, 'a 3-line note is set larger than above the ORDER block (9.5 pt)');
+  assert.equal(Q.layout(cases['a 30-character single word'], '1').note.lines.join(''), cases['a 30-character single word'], 'a word too long for a line at any size is still broken by characters, none lost');
+  ok('1b layout: the note alone fills the note area of the 72 x 72 pt page for every length, no ORDER <number> block; BRACELET CHAIN 6190 in whole words at ' + pb.note.pt + ' pt');
 
   // the card is one piece of a bigger order only when the order has a line that is not on it
   const a = { key: 'a' }, b = { key: 'b' };
@@ -154,23 +161,24 @@ async function main() {
       const batch = await run('qrPrintBatch', [order(4194000001, { pieces: ears }), order(4194000002, { pieces: ears }), order(4194000003)]);
       assert.equal(batch.docs[0].content.filter(c => c.pageBreak).length, 2, 'three orders, three pages'); assert.ok(!/LEFT|RIGHT/.test(JSON.stringify(batch.docs[0])));
       assert.deepEqual(batch.texts, ['4194000001', '4194000002', '4194000003']);
-      // the piece sticker: the same page, the QR the MASTER ORDER's number, the note and ORDER <number> where Metal / Title / Match were
+      // the piece sticker: the same page, the QR the MASTER ORDER's number, the note alone where Metal / Title / Match were (no ORDER block, Paul 18 Oct 2026)
       const piece = await run('qrPrintAll', order(4194598655, { pieceLabel: { note: 'Extra chain 18 in' } }));
       const dd = piece.docs[0], text = JSON.stringify(dd), ex = Q.layout('Extra chain 18 in', '4194598655');
       assert.equal(dd.content.filter(c => c.pageBreak).length, 0, 'one page'); assert.deepEqual(piece.texts, ['4194598655'], 'the QR text is the master order number');
       assert.ok(!/Metal:|Title:|Match:/.test(text), 'no Metal / Title / Match on a piece sticker');
       assert.equal(at(dd, 2, 6).width, 28.9); assert.equal(at(dd, 2, 39).text, '14 Oct 2026', 'the date stays'); assert.equal(at(dd, 2, 46).text, '4194598655', 'the order number stays bottom left');
-      const noteNode = at(dd, 33, 0.5), orderNode = dd.content.find(c => c.text === 'ORDER\n4194598655');
+      const noteNode = at(dd, 33, 0.5);
       assert.equal(noteNode.text, ex.note.lines.join('\n')); assert.equal(noteNode.text.replace(/\n/g, ' '), 'EXTRA CHAIN 18 IN'); assert.equal(noteNode.fontSize, ex.note.pt); assert.equal(noteNode.bold, true);
-      assert.ok(orderNode && orderNode.absolutePosition.y === ex.order.y && orderNode.fontSize === ex.order.pt, 'ORDER <number> in big type, bottom of the note area');
-      assert.ok(noteNode.fontSize >= 4.5 && noteNode.fontSize <= 10 && noteNode.absolutePosition.y + ex.note.h <= orderNode.absolutePosition.y, 'the note fits above ORDER <number>');
+      assert.ok(!/ORDER/.test(text), 'no ORDER <number> block: the number under the QR is the only one'); assert.equal(dd.content.filter(c => String(c.text || '').includes('4194598655')).length, 1, 'the order number printed once');
+      assert.equal(dd.content.length, 5, 'dots, QR, date, order number, the note: nothing else');
+      assert.ok(noteNode.fontSize >= 4.5 && noteNode.fontSize <= 10 && noteNode.absolutePosition.y + ex.note.h <= 52 + 1e-9, 'the note fits the note area');
       // a long note is smaller than a short one, in the real printed document
       const longer = await run('qrPrintAll', order(4194598655, { pieceLabel: { note: 'EXTRA 18 INCH GOLD FILLED CHAIN FOR THE NECKLACE IN THIS ORDER'.slice(0, 60) } }));
       assert.ok(at(longer.docs[0], 33, 0.5).fontSize < noteNode.fontSize, 'a 60-character note is set smaller');
       // a piece sticker listing ears (the engine kept for it) puts the ear in the note, one page each, all with the master order's QR
       const earPiece = await run('qrPrintAll', order(4194598655, { pieceLabel: { note: 'Studs' }, pieces: ears }));
       assert.equal(earPiece.docs[0].content.filter(c => c.pageBreak).length, 1); assert.match(JSON.stringify(earPiece.docs[0]), /STUDS\\nLEFT/); assert.match(JSON.stringify(earPiece.docs[0]), /STUDS\\nRIGHT/);
-      ok('3 QR Printer.html: QR text = order number; stale ears print one page (single and batch of 3); a piece sticker = fitted note (' + noteNode.fontSize + ' pt) + ORDER <number>, no Metal/Title/Match, date and order number kept');
+      ok('3 QR Printer.html: QR text = order number; stale ears print one page (single and batch of 3); a piece sticker = fitted note (' + noteNode.fontSize + ' pt) alone, no ORDER block, no Metal/Title/Match, date and order number kept');
     }
 
     /* ── 4 · the Charm Sorter: Print QR label by hand ── */
@@ -218,7 +226,7 @@ async function main() {
         await page.click(btn('4194000020'));
         await page.waitForSelector('dialog.pieceDlg[open]');
         let d = await dlg();
-        assert.equal(d.value, 'Chain only', 'prefilled with the piece\'s own name'); assert.equal(d.max, 60); assert.match(d.text, /Order 4194000020 has more pieces/); assert.match(d.size, /^Prints at \d+(\.\d+)? pt$/); assert.deepEqual(d.preview, ['CHAIN', 'ONLY', 'ORDER', '4194000020']);
+        assert.equal(d.value, 'Chain only', 'prefilled with the piece\'s own name'); assert.equal(d.max, 60); assert.match(d.text, /Order 4194000020 has more pieces/); assert.match(d.size, /^Prints at \d+(\.\d+)? pt$/); assert.deepEqual(d.preview, ['CHAIN', 'ONLY'], 'the preview has no ORDER block');
         const sizeShort = +/(\d+(\.\d+)?)/.exec(d.size)[1];
         await page.fill('#pieceNote', ''); await page.type('#pieceNote', 'Extra chain 18 inch gold filled for the necklace in this order, please');   // (typed: the field stops at 60)
         d = await dlg(); assert.equal(d.value.length, 60, 'at most 60 characters'); assert.ok(+/(\d+(\.\d+)?)/.exec(d.size)[1] < sizeShort, 'the live size shrinks as the note grows: ' + d.size);
@@ -240,7 +248,7 @@ async function main() {
         assert.equal(st.handed.items.length, 2, 'the label still belongs to the whole order (both lines)');
         assert.equal(st.texts[1], '4194000020', 'the QR text is the master order number');
         const dd = st.docs[1], note = dd.content.find(c => c.absolutePosition && c.absolutePosition.x === 33 && c.absolutePosition.y === 0.5);
-        assert.equal(note.text.replace(/\n/g, ' '), 'EXTRA CHAIN 18 IN'); assert.ok(dd.content.some(c => c.text === 'ORDER\n4194000020')); assert.ok(!/Metal:|Match:/.test(JSON.stringify(dd)));
+        assert.equal(note.text.replace(/\n/g, ' '), 'EXTRA CHAIN 18 IN'); assert.ok(!/ORDER/.test(JSON.stringify(dd)), 'no ORDER block on the piece sticker'); assert.ok(!/Metal:|Match:/.test(JSON.stringify(dd)));
         const ev = st.ev[st.ev.length - 1]; assert.equal(ev.orderId, '4194000020'); assert.equal(ev.data.piece, 'Extra chain 18 in'); assert.match(ev.text, /^Piece QR label printed at the Design Station \(Review\): Extra chain 18 in \(scans to this order\)$/);
         const rec = srv.st.doc('Charm_Custom_Orders', '4194000020_41940000202'); assert.ok(rec && rec.state === 'completed' && rec.prints === 1, 'marked completed in the cloud as before: ' + JSON.stringify(rec && [rec.state, rec.prints]));
         assert.deepEqual(errors, []);
