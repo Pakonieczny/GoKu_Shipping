@@ -217,6 +217,7 @@ const assets = [
   "charm-nest-sku.js",
   "charm-nest-siblings.js",
   "charm-nest-review-link.js",
+  "charm-nest-listing-relink.js",
   "charm-nest-shared-orders.js",
   "charm-nest-nospread.js",
   "charm-nest-set-rules.js",
