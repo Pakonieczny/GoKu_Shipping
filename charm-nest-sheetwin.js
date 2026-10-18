@@ -5932,7 +5932,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     W, open: (id, o) => open(id, o), switchSheet, plateGrid, variantOf, toPlate, hitPt, whoAmI, needName, note: swNote, paintFx, tip,
     moveIn: (k, spots, target, who, o) => moveIn(k, spots, target, who, Object.assign({}, o || {}, { hop: true })),
     word: sh => sheetWord(sh.sheetId, sh.fileBase, sh), ridOf, rowsOfOrder, busy, sheetWorking, sentToStation, flow: () => (W.flow ? W.flow.title : ""),
-    cancelled: rid => { try { return Cancelled.has(String(rid)); } catch (_) { return false; } }, back: () => backFace()
+    cancelled: rid => { try { return Cancelled.has(String(rid)); } catch (_) { return false; } }, back: () => backFace(),
+    // (with Manual Control on, the charm in hand is its selection, not the piece view's, and a charm it moved is drawn where it was put, not saved yet)
+    selected: () => (MC.on ? MC.sel : W.sel) || null, manualPose: id => (MC.on && MC.id === W.id && MC.edits.get(id)) || null
   };
 })();
 

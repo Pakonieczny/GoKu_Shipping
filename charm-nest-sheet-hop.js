@@ -58,6 +58,9 @@
   const actives = sh => (typeof activeCharms === "function" ? activeCharms(sh) : (sh.charms || []).filter(c => !c.excluded));
   const colorOf = m => ((typeof METALS !== "undefined" ? METALS : []).find(x => x.key === m) || {}).color || "#b08d2a";
   const lineOf = c => String(c.poolId || "").replace(/_\d+$/, "");
+  // (Manual Control on: the charm in hand is its selection, and a charm it moved, not saved yet, is drawn where it was put: the hand lifts it from there)
+  const selOf = K => (K.selected ? K.selected() : K.W.sel) || null;
+  const shown = (c, p) => { const K = kit(), q = p && K && K.manualPose ? tryDo(() => K.manualPose(c.id)) : null; return q ? Object.assign({}, p, { cxPt: q.cxPt, cyPt: q.cyPt, angle: q.angle }) : p; };
   const SVG = {
     bad: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="currentColor" opacity=".14"/><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
     room: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="6" cy="7" r="1.6" fill="currentColor"/><circle cx="10" cy="9" r="1.6" fill="currentColor"/><path d="M4 13 12 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
@@ -195,7 +198,7 @@
     // an order already on the other sheet: only this charm's line (a pair moves whole) goes, which brings the order together
     const list = onTarget ? mine.filter(z => lineOf(z) === lineOf(c)) : mine;
     const byId = new Map((src.placements || []).map(p => [p.id, p]));
-    const pieces = [c, ...list.filter(z => z !== c)].map(z => ({ c: z, src, placed: byId.has(z.id), p: byId.get(z.id) || null }));
+    const pieces = [c, ...list.filter(z => z !== c)].map(z => ({ c: z, src, placed: byId.has(z.id), p: byId.has(z.id) ? shown(z, byId.get(z.id)) : null }));
     return { rid, pieces, whole: !onTarget && pieces.length > 1, lineOnly: onTarget && pieces.length < mine.length };
   }
   /** Why this unit may not go from src to target ("" to go): the order's own state, the source never emptied, and the set rule. */
@@ -409,7 +412,7 @@
     if (e.key === "Escape" && H.drag) { e.preventDefault(); e.stopImmediatePropagation(); abort(H.drag); return; }
     // the keyboard way: Alt + Shift + ← / → moves the selected charm to the previous / next sheet, at the same place (Alt + ← alone is the browser's Back)
     if (e.altKey && e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight") && !(e.target instanceof Element && e.target.closest("input,textarea,[contenteditable]"))) {
-      const K = kit(), pg = here(); if (!K || !pg || !manualOn(pg) || !K.W.sel || H.drag || H.busy) return;
+      const K = kit(), pg = here(); if (!K || !pg || !manualOn(pg) || !selOf(K) || H.drag || H.busy) return;
       e.preventDefault(); e.stopImmediatePropagation(); hopSelected(e.key === "ArrowLeft" ? "prev" : "next");
     }
   }
@@ -456,7 +459,7 @@
   function begin(p, x, y) {
     const K = kit(); if (!K || H.drag) return;
     const pg = p.pg, live = (pg.placements || []).find(q => q.id === p.c.id);
-    const z0 = { c: p.c, src: pg, placed: !!live, p: live || p.x.p };
+    const z0 = { c: p.c, src: pg, placed: !!live, p: live ? shown(p.c, live) : p.x.p };
     const unit = unitOf(pg, p.c, null); if (unit.why) { popup(K.W.el.plate, unit.why + ".", "Nothing was changed."); return; }
     for (const z of unit.pieces) if (!z.p && z.c === p.c) z.p = z0.p;
     const d = H.drag = { pid: p.pid, x, y, px: x, tilt: 0, pg, c: p.c, sheetId: pg.sheetId, unit, hot: null, peekT: 0, raf: 0, nope: false };
@@ -655,7 +658,7 @@
   }
   /** The selected charm (the window's piece view) to the previous or next sheet, at the same place: the keyboard's way, and a name given late. */
   function hopSelected(side, pt) {
-    const K = kit(), pg = here(), x = K && K.W.sel; if (!pg || !x || !x.poolId) return Promise.resolve(false);
+    const K = kit(), pg = here(), x = K && selOf(K); if (!pg || !x || !x.poolId) return Promise.resolve(false);
     const c = actives(pg).find(z => z.poolId === x.poolId); if (!c) return Promise.resolve(false);
     return hopPiece(pg, c, side, pt, x.p);
   }
@@ -663,7 +666,7 @@
     const K = kit(); if (!K || !pg || here() !== pg || !manualOn(pg) || H.drag || H.busy) return false;
     refresh(true);
     const dk = H.docks[side]; if (!dk) return false;
-    const live = (pg.placements || []).find(q => q.id === c.id), p0 = live || p1; if (!p0) return false;
+    const live = (pg.placements || []).find(q => q.id === c.id), p0 = live ? shown(c, live) : p1; if (!p0) return false;
     const unit = unitOf(pg, c, null); if (unit.why) { popup(dk.el, unit.why + ".", "Nothing was changed."); return false; }
     for (const z of unit.pieces) if (!z.p && z.c === c) z.p = p0;
     const d = { pid: -1, pg, c, sheetId: pg.sheetId, unit, x: 0, y: 0, nope: false };
