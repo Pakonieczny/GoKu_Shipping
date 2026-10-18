@@ -4989,6 +4989,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** The window read the sheet again while Manual Control is on: the poses moved so far are drawn on the new pieces. */
   function mcReattach() {
     MC.sel = null; MC.lift = null; MC.drag = null; MC.valid = null;
+    for (const id of [...MC.edits.keys()]) if (!MC.sh.placements.some(p => p.id === id)) MC.edits.delete(id);   // (a charm dragged onto the next sheet meanwhile is no longer this sheet's move)
     for (const x of W.pieces) { const q = MC.edits.get(x.id); if (q) mcShow(x, q); }
     mcRender();
   }
@@ -5113,7 +5114,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (x.gone || x === MC.sel || !mcChanged(MC.from.get(x.id), MC.edits.get(x.id) || MC.from.get(x.id))) continue;
       ctx.beginPath(); ctx.arc(plateX(x.p.cxPt), R + x.p.cyPt * k, 3.4 * d, 0, Math.PI * 2); ctx.fillStyle = "#caa861"; ctx.fill(); ctx.lineWidth = 1.2 * d; ctx.strokeStyle = "#fffefb"; ctx.stroke();
     }
-    const x = MC.sel; if (!x || x.gone) return;
+    const x = MC.sel; if (!x || x.gone || W.hop) return;   // (while the sheet hop holds a charm the tool stays down: the charm is in its hand)
     const dr = MC.drag, bad = !!(dr && dr.moved && dr.res && !dr.res.ok) || MC.springBad;
     // where it goes back to if it is let go where it cannot stay
     if (dr && dr.moved && MC.valid && mcChanged(MC.valid, dr.show)) {
