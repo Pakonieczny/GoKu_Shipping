@@ -185,7 +185,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
     }
     {
       await B.page.evaluate(() => { Review.view().filter = null; Review.render(); });
-      await B.page.evaluate(() => { const b = document.querySelector('#reviewView .egTab[data-k="unmatchedSku"]'); if (b) b.click(); });
+      await B.page.evaluate(() => { const b = document.querySelector('#reviewView .egTab[data-k="needResolution"]'); if (b) b.click(); });
       const x = await seen1(STAR, 'Unknown SKU', null, 'button'); lat.push(x.late);
       await B.page.evaluate(() => { Review.view().filter = null; Review.render(); });
     }

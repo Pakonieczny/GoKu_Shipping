@@ -193,7 +193,7 @@ const ROWS = {
     // 2 · Complete Order and Reopen with the real buttons: the seal is on every surface, and stays after the reopen
     await page.evaluate(() => CN.setMode('review'));
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
-    await page.click('#reviewView .egTab[data-k="unmatchedSku"]');
+    await page.click('#reviewView .egTab[data-k="needResolution"]');
     const ucard = `#rvList .reviewListRow[data-rid="${U}"]`, ukey = `${U}_41758924731`;
     await page.click(ucard + ' [data-cu-complete]');
     await page.waitForFunction(k => B.maps.customDone[k] && !document.querySelector('.cuStat, .btn.working'), ukey, { timeout: 30000 });

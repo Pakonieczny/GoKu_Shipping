@@ -76,7 +76,7 @@ const OLD = [
       });
       return page.evaluate(() => ({ n: +document.querySelector('#reviewView .rvSeg [data-cseg="done"] b').textContent, rids: [...document.querySelectorAll('#rvList .reviewListRow')].map(n => n.dataset.rid), chips: [...document.querySelectorAll('#reviewView .ordBar .egTab')].map(b => b.textContent.trim()) }));
     };
-    const WANT = { n: 2, rids: [HAND, SENT], chips: ['Custom Orders1', 'Unknown SKU1'] };   // newest first: the hand completion came after the send
+    const WANT = { n: 2, rids: [HAND, SENT], chips: ['Custom Orders1', 'Need Resolution1'] };   // newest first: the hand completion came after the send
 
     // 0 · the switch is Open | Completed, nothing else
     const b0 = await bar();
@@ -84,7 +84,7 @@ const OLD = [
     assert.equal(b0.sentSeg, false, 'no Decided segment'); assert.doesNotMatch(b0.text, /Decided/, 'no Decided word in the bar'); assert.equal(b0.aria, 'Open or completed');
 
     // 1 · Send to Sheet on an Unknown SKU card: a design dropped, its metal picked, sent
-    await press('#reviewView .egTab[data-k="unmatchedSku"]');
+    await press('#reviewView .egTab[data-k="needResolution"]');
     await page.evaluate(({ sel, text }) => {
       const dt = new DataTransfer(); dt.items.add(new File([text], 'rose.dxf'));
       const n = document.querySelector(sel);
@@ -121,10 +121,10 @@ const OLD = [
 
     // 4 · the chips filter the one list by kind; the count stays the sum; Open shows its own counts again
     await press('#reviewView .egTab[data-k="customOrder"]');
-    assert.deepEqual(await completed(1), { n: 2, rids: [SENT], chips: ['Custom Orders1', 'Unknown SKU1'] }, 'Custom Orders chip: the sent one');
-    await press('#reviewView .egTab[data-k="unmatchedSku"]');
-    assert.deepEqual(await completed(1), { n: 2, rids: [HAND], chips: ['Custom Orders1', 'Unknown SKU1'] }, 'Unknown SKU chip: the hand-completed one');
-    await press('#reviewView .egTab[data-k="unmatchedSku"]');
+    assert.deepEqual(await completed(1), { n: 2, rids: [SENT], chips: ['Custom Orders1', 'Need Resolution1'] }, 'Custom Orders chip: the sent one');
+    await press('#reviewView .egTab[data-k="needResolution"]');
+    assert.deepEqual(await completed(1), { n: 2, rids: [HAND], chips: ['Custom Orders1', 'Need Resolution1'] }, 'Need Resolution chip (Unknown SKU and Options, Paul 18 Oct 2026): the hand-completed one');
+    await press('#reviewView .egTab[data-k="needResolution"]');
     assert.deepEqual(await completed(2), WANT, 'the chip pressed again lets go');
     await press('#reviewView .rvSeg [data-cseg="open"]');
     await page.waitForFunction(() => document.querySelector('#reviewView .rvSeg [data-cseg="open"].on'));
