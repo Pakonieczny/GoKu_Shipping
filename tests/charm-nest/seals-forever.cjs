@@ -40,9 +40,12 @@ const ORDERS = [order(RID, [line(41767447521, 'CHAIN_8941', 'CHAIN REPLACEMENT',
     const boot = async () => {
       await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
       await page.waitForFunction(() => window.CN && window.Orders && window.Review && window.CustomPrint && window.Seal && window.Motion && CN.S.cloud.ok === true, null, { timeout: 60000 });
+      // (a reload restores the saved workspace, its rows with it, and only then listens: Session.ready(). A row seeded before that
+      // was replaced, or doubled when the restore ended first: two rows of one key on the card, two writes for one press)
+      await page.waitForFunction(() => !window.Session || typeof Session.ready !== 'function' || Session.ready() === true || (Session.failure && Session.failure()), null, { timeout: 60000 });
       await page.evaluate(async orders => {
         await Orders.loadMaps(true);
-        for (const order of orders) for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); }
+        for (const order of orders) for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); if (B.orders.byKey.has(key)) continue; const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); }
         Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('review'); Review.render();
         // every stamp pressed: none may come from a redraw or a reload
         window.__stamped = 0; const on = Seal.stampOn, pr = Seal.press;
