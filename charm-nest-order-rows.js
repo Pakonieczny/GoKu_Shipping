@@ -49,9 +49,10 @@
   }
 
   /* ── the actions of a row: one primary, the rest behind the three dots ── */
-  const HEAD = '[data-cu-print],[data-cu-complete],[data-cu-done],[data-cu-view-designs],[data-cu-open-sheet],[data-cu-history],[data-cu-more],[data-hold-slot],[data-hold-btn]';
+  // (RELHOLD, Paul 18 Oct 2026: [data-rel-hold], the Review card's Release Hold where Complete Order stood on a piece of another Review tab's card, is a unit of its own, as Complete Order is)
+  const HEAD = '[data-cu-print],[data-cu-complete],[data-rel-hold],[data-cu-done],[data-cu-view-designs],[data-cu-open-sheet],[data-cu-history],[data-cu-more],[data-hold-slot],[data-hold-btn]';
   const BUSY = '.cuStat,.cuWho,[data-cu-name]';
-  const headKind = n => n.matches('[data-cu-print]') ? 'print' : n.matches('[data-cu-complete]') ? 'complete' : n.matches('[data-cu-done]') ? 'done' : n.matches('[data-cu-view-designs]') ? 'designs'
+  const headKind = n => n.matches('[data-cu-print]') ? 'print' : n.matches('[data-cu-complete]') ? 'complete' : n.matches('[data-rel-hold]') ? 'release' : n.matches('[data-cu-done]') ? 'done' : n.matches('[data-cu-view-designs]') ? 'designs'
     : n.matches('[data-cu-open-sheet]') ? 'sheet' : n.matches('[data-cu-history]') ? 'history' : n.matches('[data-cu-more]') ? 'more' : 'hold';
   /** The units of a cell: a button and the seals that rest after it travel together. */
   function unitsOf(host) {
@@ -68,9 +69,9 @@
     const has = k => units.find(u => u.kind === k) || null, take = (...ks) => units.filter(u => ks.includes(u.kind));
     const stay = take('note', 'lead');
     let main = [], rest = [];
-    if (has('done')) { main = take('done', 'more'); rest = take('print', 'hold', 'complete', 'designs', 'sheet', 'history'); }
-    else if (has('print') || has('complete')) { const p = has('print') || has('complete'); main = [p].concat(take('more')); rest = units.filter(u => !stay.includes(u) && !main.includes(u)); }
-    else if (has('sheet') || has('designs') || has('history')) { main = take('sheet', 'more'); rest = take('designs', 'history', 'hold', 'print', 'complete'); }
+    if (has('done')) { main = take('done', 'more'); rest = take('print', 'hold', 'complete', 'release', 'designs', 'sheet', 'history'); }
+    else if (has('print') || has('complete') || has('release')) { const p = has('print') || has('complete') || has('release'); main = [p].concat(take('more')); rest = units.filter(u => !stay.includes(u) && !main.includes(u)); }
+    else if (has('sheet') || has('designs') || has('history')) { main = take('sheet', 'more'); rest = take('designs', 'history', 'hold', 'print', 'complete', 'release'); }
     else { main = take('hold', 'more'); rest = []; }
     return { stay, main, rest };
   }

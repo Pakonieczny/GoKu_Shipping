@@ -3520,7 +3520,7 @@ const lineKeyOk = s => /^[\w\-]{3,120}$/.test(String(s || ""));
 // sticker, is read by its key when that sticker is printed again. The lists read every field but the sticker (up to 20 KB
 // each); a record written before hasLabel was kept is taken to have one (every print hands one), and printing it again
 // reads it by its key and says so when there is none.
-const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "completedAt", "completedBy", "how", "stamps", "history", "reopenedAt", "reopenedBy", "updatedAtMs", "hasLabel", "review"];
+const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "completedAt", "completedBy", "how", "stamps", "history", "reopenedAt", "reopenedBy", "updatedAtMs", "hasLabel", "review", "release"];
 const customRow = (d, withLabel) => { const x = Object.assign({}, d); delete x.updatedAt; if (!withLabel) { x.hasLabel = typeof x.hasLabel === "boolean" ? x.hasLabel : x.label !== undefined ? !!x.label : true; delete x.label; } return x; };
 async function op_customGet(b) {
   if (b.key != null) { const key = String(b.key); if (!lineKeyOk(key)) return { error: "bad key" }; const s = await col(CUSTOM).doc(key).get(); return { record: s.exists ? customRow(s.data(), true) : null }; }
@@ -3833,12 +3833,29 @@ const STAMPS_MAX = 2000;
    with no read of its own, and the sandbox keeps its own copy and a reset clears it). It is NOT a completion and carries no seal or
    stamp: state stays "open", kind "reviewMark"; the mark is review {state "open" | "done", markedAt/By, doneAt/By, how "ok" | "pick",
    sku}. Marking an order already marked (and not resolved) and resolving one not marked change nothing (already: true). A mark made
-   again after a resolve starts a new cycle; the earlier one is kept in review.earlier. Never writes Etsy. ── */
+   again after a resolve starts a new cycle; the earlier one is kept in review.earlier. Never writes Etsy.
+   RELHOLD (Paul, 18 Oct 2026: the Review card's "Release Hold" replaces Complete Order; "In the Orders tab, that released order's card shows a large, clearly
+   visible Release Hold seal with the date/time and the person who released it"): action "release" keeps WHO released the order from Review and WHEN on the
+   same document, release { at, by, how, id, earlier? } (the press's seal: how "releaseHold"), beside its mark and never touching it (a document made for it
+   alone has no `review`, so it is no mark: nothing reads it as in Review). It rides the same maps' list and changes feed, so every computer's Orders tab
+   draws the seal within seconds and after a reload, with no read of its own. The same press (its id) is written once; an earlier release is kept in
+   release.earlier (newest first, at most 10). A mark made later keeps the release. ── */
 async function op_reviewMarkPut(b) {
   const rid = String(b.rid != null ? b.rid : b.receiptId == null ? "" : b.receiptId).replace(/\D/g, "").slice(0, 30); if (!rid) return { error: "rid (the order's receipt id) required" };
-  const action = b.action === "resolve" ? "resolve" : b.action === "mark" ? "mark" : ""; if (!action) return { error: "action must be mark or resolve" };
+  const action = b.action === "resolve" ? "resolve" : b.action === "mark" ? "mark" : b.action === "release" ? "release" : ""; if (!action) return { error: "action must be mark, resolve or release" };
   const key = rid + "_review", ref = col(CUSTOM).doc(key), now = Date.now(), who = str(b.by || "operator", 80);
   const snap = await ref.get(), cur = snap.exists ? snap.data() : null, rv = cur && cur.review && typeof cur.review === "object" ? cur.review : null, open = !!rv && rv.state === "open";
+  if (action === "release") {   // (RELHOLD: who released the order from Review with Release Hold, and when; the mark, if any, is left as it is)
+    const was = cur && cur.release && typeof cur.release === "object" ? cur.release : null, id = str(b.id || "", 120);
+    if (was && id && was.id === id) return { ok: true, already: true, record: customRow(cur, false) };
+    const at = num(b.at) > 0 && num(b.at) <= now + 60000 ? num(b.at) : now;
+    const earlier = was ? [Object.assign({}, was)].concat(Array.isArray(was.earlier) ? was.earlier : []).map(e => { const o = Object.assign({}, e); delete o.earlier; return o; }).slice(0, 10) : [];
+    const release = Object.assign({ at, by: who, how: str(b.how || "releaseHold", 20), id: id || `releaseHold:${rid}:${at}` }, b.path ? { path: str(b.path, 20) } : {}, earlier.length ? { earlier } : {});
+    const doc = cur ? { release, updatedAtMs: now, updatedAt: FV.serverTimestamp() }
+      : { key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", hasLabel: false, release, updatedAtMs: now, updatedAt: FV.serverTimestamp() };
+    await ref.set(doc, { merge: true });
+    return { ok: true, record: customRow(Object.assign({}, cur || {}, doc), false) };
+  }
   if (action === "resolve") {
     if (!open) return { ok: true, already: true, record: cur ? customRow(cur, false) : null };
     const review = Object.assign({}, rv, { state: "done", doneAt: now, doneBy: who, how: b.how === "pick" ? "pick" : b.how === "ok" ? "ok" : "other" });
@@ -3850,7 +3867,7 @@ async function op_reviewMarkPut(b) {
   }
   if (open) return { ok: true, already: true, record: customRow(cur, false) };
   const earlier = rv ? [Object.assign({}, rv)].concat(Array.isArray(rv.earlier) ? rv.earlier : []).map(e => { const o = Object.assign({}, e); delete o.earlier; return o; }).slice(0, 10) : [];
-  const doc = { key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", hasLabel: false, review: Object.assign({ state: "open", markedAt: now, markedBy: who }, earlier.length ? { earlier } : {}), updatedAtMs: now, updatedAt: FV.serverTimestamp() };
+  const doc = { key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", hasLabel: false, review: Object.assign({ state: "open", markedAt: now, markedBy: who }, earlier.length ? { earlier } : {}), ...(cur && cur.release ? { release: cur.release } : {}), updatedAtMs: now, updatedAt: FV.serverTimestamp() };   // (RELHOLD: a mark made after a release keeps it)
   await ref.set(doc);
   return { ok: true, record: customRow(doc, false) };
 }

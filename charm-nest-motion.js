@@ -284,7 +284,7 @@
   /* ════ Seals ════ */
   const Seal = (() => {
     const BASE_SIZE = 50, META_INK = '#12294c';
-    const INK = { print: "#65737f", sheet: "#65737f", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58", monogramApproved:"#4d3f99" };
+    const INK = { print: "#65737f", sheet: "#65737f", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58", monogramApproved:"#4d3f99", releaseHold:"#2f6b45" };
     /* MONOSEAL (Paul, 17 Oct 2026: "When I approved the monogram, I didn't see any stamp or seal animation, and we do not have a custom-made seal that is
        specifically for approving monograms ... a brand new seal that is specific for monograms and the stamping animation whenever a monogram is approved"):
        the MONOGRAM seal, the ninth family. How to use it from any surface (the page's other modules never need to know more than this):
@@ -297,6 +297,16 @@
        Its kind is "monogramApproved": a PROCESS seal (a click on it never presses the button beside it: it zooms, as every historical seal does) and a "green" one (turned a
        little to the right like the engraving approval, and the button it is pressed beside takes the sealedDone tint). CharmNestMonogramUI (charm-nest-monogram-ui.js) records
        and reads these stamps (sealsOf / sealHtml); this file only draws them. */
+    /* RELHOLD (Paul, 18 Oct 2026: "Replace the 'Completed' function & button with a new button and functionality called 'Release Hold'" and "Modify and update the current Stamp/Seal
+       used to represent 'Completed' into an updated design representing 'Release Hold'"): the RELEASE HOLD seal, the tenth family, made from the Completed one (the Complete Order
+       press's ORDER COMPLETE: the fulfilment rosette, a dotted inner ring, an icon over two lines of words): a rosette still, of twelve small scallops round a medallion instead of
+       eight lobes, in the green of a hold lifted (the timeline's "released"), with an OPEN padlock and an arrow onward for its icon and "RELEASE / HOLD" for its words.
+         stamp  = { id: "releaseHold:<rid>:<at>", how: "releaseHold", at, by }
+         Seal.html(stamp, size, cls)                   the ink face: RELEASE HOLD, the date and the time; aria text "Hold released to the nesting queue by <name> · <when>"
+         Seal.modelOf(stamp) / Seal.face(model)        { family: "release", action: "RELEASE HOLD", icon: "release", at, by }
+       Its kind is "releaseHold": a PROCESS seal (a click on it zooms; it never presses a button) and a "green" one (turned a little to the right; the button it is stamped on
+       takes the sealedDone tint). The old ORDER COMPLETE seals (how "button") are drawn exactly as before: every record that kept one still shows it. The Review card's Release
+       Hold button stamps it (charm-nest-bridge.js, ReviewRelease) and the Orders card shows it large with who and when (Orders.releaseSealHtml). */
     // One outline drives both the ink face and the wooden/rubber head. Signatures remain record data, never a live viewer name.
     const FAMILY = {
       received:{name:'Received',ink:'#315e93',d:'M60 4A56 56 0 1 1 59.99 4Z'},
@@ -308,7 +318,9 @@
       exceptions:{name:'Exceptions',ink:'#9f483d',d:'M36 6H84L114 36V84L84 114H36L6 84V36Z'},
       cancelled:{name:'Cancelled Orders',ink:'#982f48',d:'M27 6H93L114 27V40Q95 60 114 80V93L93 114H27L6 93V80Q25 60 6 40V27Z'},
       // (MONOSEAL: an arch, round above and flat below, like the frame a monogram is mounted in: the one outline of the nine with a flat foot and a round head, so it is never taken for the circle, the oval or the shield)
-      monogram:{name:'Monogram',ink:'#4d3f99',d:'M8 104V60A52 52 0 0 1 112 60V104Q112 116 100 116H20Q8 116 8 104Z'}
+      monogram:{name:'Monogram',ink:'#4d3f99',d:'M8 104V60A52 52 0 0 1 112 60V104Q112 116 100 116H20Q8 116 8 104Z'},
+      // (RELHOLD: the Completed rosette made over: twelve small scallops round a medallion, one at the top over the padlock, so it is never taken for the eight-lobed Fulfilment rosette or the plain Received circle)
+      release:{name:'Release Hold',ink:'#2f6b45',d:'M72.68 12.67A13.2 13.2 0 0 1 94.65 25.35A13.2 13.2 0 0 1 107.33 47.32A13.2 13.2 0 0 1 107.33 72.68A13.2 13.2 0 0 1 94.65 94.65A13.2 13.2 0 0 1 72.68 107.33A13.2 13.2 0 0 1 47.32 107.33A13.2 13.2 0 0 1 25.35 94.65A13.2 13.2 0 0 1 12.67 72.68A13.2 13.2 0 0 1 12.67 47.32A13.2 13.2 0 0 1 25.35 25.35A13.2 13.2 0 0 1 47.32 12.67A13.2 13.2 0 0 1 72.68 12.67Z'}
     };
     const SYMBOL = {
       received:'<path d="M8 2h9l4 4v11H8zM17 2v5h4M11 9h7M11 12h7M3 15h5l2 4h8l2-4h4v8H3zM14 14v4m-2-2 2 2 2-2"/>',
@@ -322,12 +334,14 @@
       cancelled:'<path d="M5 1h11l4 4v18H5zM16 1v5h4M8 7h8M8 10h7M8 13l9 8m0-8-9 8"/>',
       // (MONOSEAL: three letters side by side, the middle one large: a small A, a large P, a small V; the face draws the real three letters instead when it is told them)
       monogram:'<path d="M0.8 20 4.2 9.5 7.6 20M2.2 16h4M9.4 3v17M9.4 3h3.1a3.9 3.9 0 0 1 0 7.8H9.4M17.6 9.5 20.5 20 23.4 9.5"/>',
+      // (RELHOLD: a padlock with its shackle swung open, and an arrow onward: the hold is lifted and the order goes on to the nesting queue)
+      release:'<path d="M2 11h12v11H2zM5 11V7a4 4 0 0 1 7.8-1.4M8 15v3M16 16.5h7.5m-3-3 3 3-3 3"/>',
       qr:'<path d="M6 8V2h12v6M3 8h18v11h-3M6 19H3V8M6 13h12v10H6zM8 15h2v2H8zM14 15h2v2h-2zM8 19h2m3 0h3M18 10h1"/>',
       plain:'<circle cx="9" cy="15" r="7"/><circle cx="9" cy="5" r="2"/><path d="M15 7h9m-3-3 3 3-3 3"/>',
       complete:'<path d="M3 7l8-4 8 4-8 4zM3 7v12l8 4V11M19 7v5M7 5l8 4M3 19l8 4 3-1M17 20l2 2 5-6"/>',
       set:'<path d="M2 5l10-4 10 4-10 4zM2 10l10 4 10-4M2 15l10 4 10-4M2 20l10 4 10-4M15 12l3 3 5-6"/>'
     };
-    const familyOf = st => st.how==='button'?'fulfilment':st.how==='laserReady' || st.how==='laserDone'?'laser':st.how==='engraveApproved' || st.how==='engravePlain'?'engraving':st.how==='monogramApproved'?'monogram':'prepared';
+    const familyOf = st => st.how==='button'?'fulfilment':st.how==='laserReady' || st.how==='laserDone'?'laser':st.how==='engraveApproved' || st.how==='engravePlain'?'engraving':st.how==='monogramApproved'?'monogram':st.how==='releaseHold'?'release':'prepared';
     function face(model, opts={}) {
       model = Object.assign({}, model);
       model.family=FAMILY[model.family]?model.family:'received';
@@ -336,7 +350,7 @@
       if (!model.date && +model.at > 0) model.date = dateOf(model.at);
       if (!model.time && +model.at > 0) model.time = timeOf(model.at);
       const f=FAMILY[model.family] || FAMILY.received, ink=opts.ghost?'#92968f':f.ink;
-      const action=String(model.action || f.name).toUpperCase(), words=action.split(/\s+/), lines=action==='FRONT CUT PLAIN'?['FRONT','CUT PLAIN']:(['BACK ENGRAVING','FRONT ENGRAVING','ORDER RECEIVED','ORDER COMPLETE'].includes(action) || action.length>14) && words.length>1?[words.slice(0,Math.ceil(words.length/2)).join(' '),words.slice(Math.ceil(words.length/2)).join(' ')]:[action];
+      const action=String(model.action || f.name).toUpperCase(), words=action.split(/\s+/), lines=action==='FRONT CUT PLAIN'?['FRONT','CUT PLAIN']:(['BACK ENGRAVING','FRONT ENGRAVING','ORDER RECEIVED','ORDER COMPLETE','RELEASE HOLD'].includes(action) || action.length>14) && words.length>1?[words.slice(0,Math.ceil(words.length/2)).join(' '),words.slice(Math.ceil(words.length/2)).join(' ')]:[action];
       const serifFree='system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif';
       const txt=(value,y,size,weight=700,color=ink)=>`<text x="60" y="${y}" text-anchor="middle" fill="${color}" stroke="none" font-family="${serifFree}" font-size="${size}" font-weight="${weight}" letter-spacing="0">${esc(value)}</text>`;
       // Explicit typographic widths keep every glyph inside the actual family silhouette,
@@ -350,7 +364,7 @@
       const signer=String(model.by || '').trim() || 'Not recorded', sigLines=signer.match(/.{1,21}(?:\s|$)|\S+/g)?.map(s=>s.trim()) || [signer];
       const H=opts.signer?137+sigLines.length*12:120;
       let trim='';
-      if(model.family==='received' || model.family==='fulfilment')trim=`<path d="${f.d}" transform="translate(60 60) scale(.86) translate(-60 -60)" fill="none" stroke-width=".9" stroke-dasharray=".2 2.7" stroke-linecap="round"/>`;
+      if(model.family==='received' || model.family==='fulfilment' || model.family==='release')trim=`<path d="${f.d}" transform="translate(60 60) scale(.86) translate(-60 -60)" fill="none" stroke-width=".9" stroke-dasharray=".2 2.7" stroke-linecap="round"/>`;
       if(model.family==='prepared')trim='<path d="M15 17h8m-4-4v8M97 17h8m-4-4v8M15 103h8m-4-4v8M97 103h8m-4-4v8" fill="none" stroke-width=".8"/>';
       if(model.family==='engraving')trim='<path d="M16 37l11-11 3 8-11 6zM104 37L93 26l-3 8 11 6zM16 83l11 11 3-8-11-6zM104 83L93 94l-3-8 11-6z" fill="none" stroke-width="1.1"/>';
       if(model.family==='laser')trim='<g fill="none" stroke-width="1.2"><circle cx="30" cy="22" r="2"/><circle cx="90" cy="22" r="2"/><circle cx="20" cy="75" r="2"/><circle cx="100" cy="75" r="2"/></g>';
@@ -448,16 +462,17 @@
     // (a seal of the FRONT of a charm says so: face "front" on the seal, or on the event it came from; one that says nothing is the back, as every seal was)
     const frontOf=st=>!!st && (st.face==='front' || !!(st.data && st.data.face==='front'));
     const monogramOf=st=>st.how==='monogramApproved';   // (MONOSEAL: the monogram approval's seal: a process seal like the engraving's)
-    const processOf = st => st.how === 'sheet' || st.how === 'laserReady' || st.how === 'laserDone' || engravingOf(st) || monogramOf(st);
+    const releaseOf=st=>st.how==='releaseHold';   // (RELHOLD: the Release Hold press's seal: a process seal, historical wherever it is drawn)
+    const processOf = st => st.how === 'sheet' || st.how === 'laserReady' || st.how === 'laserDone' || engravingOf(st) || monogramOf(st) || releaseOf(st);
     const kindOf = st => processOf(st) ? st.how : st.how === "button" ? "button" : "print";
-    const green = k => k === 'button' || k === 'laserDone' || k === 'engraveApproved' || k === 'monogramApproved';
+    const green = k => k === 'button' || k === 'laserDone' || k === 'engraveApproved' || k === 'monogramApproved' || k === 'releaseHold';
     const rotOf = st => { const h = hash(String(st.at) + (st.by || "")); return green(kindOf(st)) ? 5 + (h % 8) : -(5 + (h % 9)); };
     const whoOf = st => String(st.by || "").trim() || (processOf(st) ? "Not recorded" : "Sorting station");
     function modelOf(st) {
       if (st.model) return Object.assign({}, st.model);
       if (st.family) return Object.assign({}, st);
-      const action = st.how === 'sheet' ? 'SENT TO SHEET' : st.how === 'button' ? 'ORDER COMPLETE' : st.how === 'laserReady' ? 'LASER READY' : st.how === 'laserDone' ? 'LASER CUT' : st.how === 'engraveApproved' ? (frontOf(st) ? 'FRONT ENGRAVING' : 'BACK ENGRAVING') : st.how === 'engravePlain' ? (frontOf(st) ? 'FRONT CUT PLAIN' : 'CUT PLAIN') : st.how === 'monogramApproved' ? 'MONOGRAM' : 'QR LABEL PRINTED';
-      const icon = st.how === 'monogramApproved' ? 'monogram' : st.how === 'sheet' ? 'prepared' : st.how === 'button' ? 'complete' : st.how === 'laserReady' ? 'laserReady' : st.how === 'laserDone' ? 'laser' : st.how === 'engravePlain' ? 'plain' : st.how === 'engraveApproved' ? 'engraving' : 'qr';
+      const action = st.how === 'sheet' ? 'SENT TO SHEET' : st.how === 'button' ? 'ORDER COMPLETE' : st.how === 'laserReady' ? 'LASER READY' : st.how === 'laserDone' ? 'LASER CUT' : st.how === 'engraveApproved' ? (frontOf(st) ? 'FRONT ENGRAVING' : 'BACK ENGRAVING') : st.how === 'engravePlain' ? (frontOf(st) ? 'FRONT CUT PLAIN' : 'CUT PLAIN') : st.how === 'monogramApproved' ? 'MONOGRAM' : st.how === 'releaseHold' ? 'RELEASE HOLD' : 'QR LABEL PRINTED';
+      const icon = st.how === 'releaseHold' ? 'release' : st.how === 'monogramApproved' ? 'monogram' : st.how === 'sheet' ? 'prepared' : st.how === 'button' ? 'complete' : st.how === 'laserReady' ? 'laserReady' : st.how === 'laserDone' ? 'laser' : st.how === 'engravePlain' ? 'plain' : st.how === 'engraveApproved' ? 'engraving' : 'qr';
       const m = { family:familyOf(st), action, icon, at:+st.at || 0, by:String(st.by || ''), scope:st.scope || '', n:st.n || 0 };
       if (monogramOf(st)) { const L = String(st.letters || '').toUpperCase(); if (/^[A-Z]{3}$/.test(L)) m.letters = L; if (+st.of > 1) m.of = +st.of; }   // (MONOSEAL: the three letters of THIS monogram, and the piece of a line of several)
       return m;
@@ -467,6 +482,7 @@
     function titleOf(st) {
       const d = new Date(+st.at || Date.now()), when = d.toLocaleString("en-US", { timeZone:"America/Toronto", weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
       if(st.how==='sheet')return `Sent to sheet${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
+      if(releaseOf(st))return `Hold released to the nesting queue${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
       if(monogramOf(st))return `Monogram${/^[A-Za-z]{3}$/.test(String(st.letters || ''))?' '+String(st.letters).toUpperCase():''} approved${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}${+st.of>1?` · piece ${+st.n || 1} of ${+st.of}`:''}`;
       if(engravingOf(st))return `${st.how==='engravePlain'?(frontOf(st)?'Front engraving waived · cut plain':'Engraving waived · cut plain'):frontOf(st)?'Front engraving placement approved':'Engraving placement approved'}${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
       if(processOf(st))return `${st.how==='laserReady'?'Laser ready':st.scope==='set'?'Set completed':'Sheet completed'}${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
@@ -817,7 +833,7 @@
       const t=doc.createElement('span');t.className='sealTool';t.innerHTML=tool(kind,seal);
       Object.assign(t.style,{left:cx-size/2+'px',top:cy-size/2+'px',width:size+'px',height:size+'px'});
       host.appendChild(seal);host.appendChild(t);
-      const rot=rotOf(st),paint=()=>btn.classList.add(kind==='button'?'sealedDone':'sealedPrint');
+      const rot=rotOf(st),paint=()=>btn.classList.add(kind==='button' || kind==='releaseHold'?'sealedDone':'sealedPrint');   // (RELHOLD: the Release Hold button takes the green of its seal, as Complete Order did)
       if(reduced() || spec.still){seal.style.opacity='';t.remove();paint();return;}
       const down=t.animate([
         {transform:`translate(34px,-46px) rotate(${rot-16}deg) scale(1.7)`,opacity:0},

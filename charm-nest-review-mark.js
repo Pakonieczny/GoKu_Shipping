@@ -13,6 +13,9 @@
      resolve(rid, {by, how, sku, rowKey}) -> Promise<{ok, already, error?}>       how: "ok" (the match is right) | "pick" (a vector file was chosen) | "other" ("Release to nesting queue" on the Review row, RELTOQ)
      isMarked(rid) / markedRids() / openRids() / info(rid) / reasonOf(rid)         synchronous, no read; true / listed only while unresolved
      onChange(fn)                          fn({rid, kind: "marked" | "resolved" | "synced"}), also the document event "cn-review-mark"
+     released(rid)                         RELHOLD (Paul, 18 Oct 2026): who released the order with the Review card's Release Hold, and when: { at, by, how, id } from the cloud's
+                                           record (the same document; every computer has it from the maps' list and the changes feed), or null; synchronous, no read
+     release(rid, {by, at, id, how, path})  -> Promise<{ok, already, error?}>  records that release (charmNestLibrary reviewMarkPut action "release"); never a mark, never resolves one
      open(rid)                             the Review tab, at that order's row                                                              */
 (function (root) {
   "use strict";
@@ -100,7 +103,7 @@
       if (isMarked(rid)) return { ok: true, already: true, rid };
       const key = keyOf(rid), was = recOf(rid), at = Date.now();
       // at once: the Review list and every Hold / button that asks isMarked say so while the cloud writes (an older answer of the feed cannot undo it: customWrites)
-      put({ key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", review: { state: "open", markedAt: at, markedBy: by }, updatedAtMs: 0, pending: true });
+      put(Object.assign({ key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", review: { state: "open", markedAt: at, markedBy: by }, updatedAtMs: 0, pending: true }, was && was.release ? { release: was.release } : {}));   // (RELHOLD: a release kept on the record stays)
       seen.set(rid, stateSig(recOf(rid))); emit({ rid, kind: "marked" }); redraw();
       try {
         const r = await root.api("charmNestLibrary", { op: "reviewMarkPut", action: "mark", rid, by }, { quiet: true });
@@ -139,6 +142,28 @@
         return { ok: false, rid, error: String((e && e.message) || e || "Not saved") };
       }
     });
+  }
+
+  /* RELHOLD (Paul, 18 Oct 2026): the Review card's Release Hold press, kept in the cloud on the order's own Review document (release { at, by, how, id }), so the Orders tab's
+     RELEASE HOLD seal reads the same on every computer and after a reload. Written once per press (its id); the page has it at once (put), and the cloud's answer replaces it. */
+  function released(rid) {
+    const r = recOf(ridOf(rid)), v = r && r.release && typeof r.release === "object" ? r.release : null;
+    return v && +v.at > 0 ? { at: +v.at, by: String(v.by || ""), how: String(v.how || "releaseHold"), id: String(v.id || "") } : null;
+  }
+  async function release(rid, opts) {
+    rid = ridOf(rid); opts = opts || {}; if (!rid) return { ok: false, rid, error: "No order number" };
+    const by = String(opts.by || "").trim().slice(0, 80); if (!by) return { ok: false, rid, error: "No name" };
+    const at = +opts.at > 0 ? +opts.at : Date.now(), id = String(opts.id || `releaseHold:${rid}:${at}`).slice(0, 120), how = String(opts.how || "releaseHold").slice(0, 20), key = keyOf(rid), was = recOf(rid);
+    const mine = Object.assign({ at, by, how, id }, opts.path ? { path: String(opts.path).slice(0, 20) } : {});
+    put(Object.assign({ key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", hasLabel: false }, was || {}, { release: mine, updatedAtMs: 0, pending: true }));
+    try {
+      const r = await root.api("charmNestLibrary", Object.assign({ op: "reviewMarkPut", action: "release", rid, by, at, id, how }, opts.path ? { path: mine.path } : {}), { quiet: true });
+      if (!r || r.error || !r.record) throw new Error((r && r.error) || "The cloud sent no record");
+      put(r.record); told(rid, r.record);
+      return { ok: true, already: !!r.already, rid };
+    } catch (e) {   // not kept in the cloud: the page keeps what it showed (the run's lines and the timeline still have the release), and says so to the caller
+      return { ok: false, rid, error: String((e && e.message) || e || "Not saved") };
+    }
   }
 
   /** The items Review.syncOrderItems adds to the list: one for each open mark whose order has a line in the pull (keys "ord:rvm:" + rid, so the list drops one the moment its mark is resolved). */
@@ -218,5 +243,5 @@
   /** A sandbox reset cleared the records: forget them here too. */
   function reset() { const B = root.B; if (B && B.maps) B.maps.reviewMarks = {}; seen.clear(); doneCache.clear(); }
 
-  root.CharmNestReviewMark = { mark, resolve, isMarked, markedRids, openRids: markedRids, info, reasonOf, onChange, onRow, refresh, open, itemsFor, doneSettled, decorateRow, sync, reset, _key: keyOf, _sandbox: sandbox };
+  root.CharmNestReviewMark = { mark, resolve, release, released, isMarked, markedRids, openRids: markedRids, info, reasonOf, onChange, onRow, refresh, open, itemsFor, doneSettled, decorateRow, sync, reset, _key: keyOf, _sandbox: sandbox };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -11,7 +11,9 @@
  *         targets:[{ metal, metalLabel, sheetId|null, label, page, newSheet, partial, density, inSet, pieces }],  target = targets[0],
  *         stays:[{ label, sheetLabel }]  (pieces of the order that stay on a sheet already cut),
  *         effects:[plain sentences, ready to show] }
- *   OrderHold.release(rid, { name, onStep })    -> Promise<{ ok, released, rid, placed, sheets:[{sheetId,label,metal,page,newSheet}], steps, error? }>
+ *   OrderHold.release(rid, { name, onStep, seal })    -> Promise<{ ok, released, rid, placed, sheets:[{sheetId,label,metal,page,newSheet}], steps, error? }>
+ *       seal (RELHOLD, Paul 18 Oct 2026): the Review card's Release Hold press, { how: 'releaseHold', id, at, by }: its 'released' step on the timeline carries it (data.seal 'releaseHold', data.sealAt,
+ *       data.sealId), so the order's RELEASE HOLD seal is read back from the permanent timeline on every computer; a release from anywhere else carries none, as before
  *   OrderHold.releaseStatus(rid)                -> { running:boolean, step }   (for resume after a reload)
  *   OrderHold.resumeReleases()                  -> Promise: finishes any release a reload cut short (the page does this by itself)
  *
@@ -367,7 +369,7 @@
     if (stuck.length) {
       for (const r of after) delete r.releasing; await persist();
       // (a SKU the master blocks for a real reason: its Review row has the button that cuts it anyway)
-      const hint = (stuck[0].problems[0] && stuck[0].problems[0].kind === 'blockedSku' && !stuck[0].problems[0].noOutline) ? ' Its Review row has “Release to nesting queue” to cut it anyway.' : '';
+      const hint = (stuck[0].problems[0] && stuck[0].problems[0].kind === 'blockedSku' && !stuck[0].problems[0].noOutline) ? ' Its Review row has “Release Hold” to cut it anyway.' : '';
       const why = str(stuck[0].reason || (stuck[0].problems[0] && stuck[0].problems[0].reason) || 'a piece has no design yet').replace(/[.\s]+$/, '');
       return fail(`Order ${rid} is released and at the front of the queue, but it needs a look in Review: ${why}.${hint}`, 'review', { released: true });
     }
@@ -382,7 +384,8 @@
       const first = pages[0], where = pages.map(label).join(', '), said = landed && landed.length ? ` · ${landed.join(' ')}` : '';
       if (G.SheetEvents && G.SheetEvents.order) G.SheetEvents.order({ type: 'released', orderId: rid, id: `oh-rel-${rid}-${frontAt}`, by: who, at: Date.now(), sheetId: first ? first.sheetId || '' : '', sheet: where, setId: first && inSet(first) ? first.setId : '',
         text: (placed && where ? `Released from hold by ${who} · placed on ${where}` : `Released from hold by ${who} · front of the queue`) + (split.length ? ` · pair split: ${split.map(splitWords).join('; ')}` : '') + said,
-        data: Object.assign({ frontAt, sheets: pages.map(label), newSheet: targets.some(t => t.newSheet), pieces: fresh.length }, Object.assign(split.length ? { split: split.map(x => x.groupKey) } : {}, said ? { landed: true } : null)) });
+        data: Object.assign({ frontAt, sheets: pages.map(label), newSheet: targets.some(t => t.newSheet), pieces: fresh.length }, Object.assign(split.length ? { split: split.map(x => x.groupKey) } : {}, said ? { landed: true } : null),
+          opts.seal && opts.seal.how === 'releaseHold' ? { seal: 'releaseHold', sealAt: +opts.seal.at || 0, sealId: str(opts.seal.id).slice(0, 120) } : null) });   // (RELHOLD: the Release Hold press's seal, read back from here)
       for (const r of rowsOfOrder(rid)) delete r.releasing;
       for (const sh of kept) unkeep(sh);
       refresh(); await persist();

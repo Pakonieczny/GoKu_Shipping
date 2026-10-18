@@ -1,6 +1,6 @@
 // Draws the page's seals (charm-nest-motion.js, Seal.face) to a PNG at the sizes they appear at (24, 50 and 84 px, and 150 px to look at): a quick visual check of a seal family, no page, no server.
 //   PW_DIR=<dir holding playwright-core> CHROMIUM=<chrome binary> node scripts/render-seal.cjs <out.png> [family[:LETTERS] ...]
-//   families: the keys of Seal.FAMILY (received prepared engraving laser finishing fulfilment exceptions cancelled monogram); default: every family, and the monogram seal with letters, wide letters, and none.
+//   families: the keys of Seal.FAMILY (received prepared engraving laser finishing fulfilment exceptions cancelled monogram release); default: every family, and the monogram seal with letters, wide letters, and none.
 //   "monogram:APV" draws the monogram seal with those three letters; "monogram" alone draws its pictogram.
 // (MONOSEAL, Paul 17 Oct 2026: written to look at the new monogram seal; any family works.)
 'use strict';
