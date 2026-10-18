@@ -4,7 +4,7 @@
   "doneSheets": { "reads": 150, "bytes": 150000 },
   "doneSets": { "reads": 350, "bytes": 400000 },
   "doneAct": { "reads": 400, "bytes": 450000 },
-  "listSheets": { "reads": 600, "bytes": 800000 },
-  "setList": { "reads": 700, "bytes": 350000 },
+  "listSheets": { "reads": 200, "bytes": 800000 },
+  "setList": { "reads": 150, "bytes": 350000 },
   "runList": { "reads": 60, "bytes": 20000 }
 }

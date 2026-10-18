@@ -179,6 +179,69 @@ const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash",
 const LASER_SHEET = SLIM_SHEET.filter(f => f !== "sources").concat(["seq", "sourcesLite"]);
 /** What decides whether a sheet is on the Library's Current list (op_listSheets with excludeDone): archived, completed, its set (filingRecords), the filters and the order. */
 const FILTER_SHEET = ["archived", "laserDoneAt", "setId", "draft", "solidIncluded", "metal", "runId", "updatedAt"];
+/* COST (Oct 2026): THE CURRENT FLAG. The Library's Current lists (listSheets / setList with excludeDone) read the newest 500 sheets by
+   day and the 600 most recently saved sets only to drop the ones the laser has cut, and the Completed count (countDone) read every sheet
+   ever cut: reads that grew with the shop's history, at every Library load. A sheet or set that may be current carries `current: true`
+   (one field, its own automatic index: no composite index), and those lists read `where("current", "==", true)` — the records still in
+   progress, a few dozen, however long the history.
+   The flag is a SUPERSET, never a subset: a record may carry it and not be current (the lists still filter exactly as before), but a
+   current record always carries it. So every write that can make a record current sets it (putSheet, restoreSheet, setAllocate, a new set
+   by setUpdate, laserDone taken back, a sheet moved between sets by flowApply), and the writes that end it clear it in the same commit when
+   they are sure (laserDone, archiveEmptySheet, the laserDoneList repair; a deleted record is simply gone). A flagged record found not
+   current by a read is cleared there, in a transaction that reads it again (clearStale). A sheet ARCHIVED WITH its laser mark (old records)
+   keeps the flag too, so the Completed count can take it off without reading every completed sheet (countDone).
+   The records saved before the flag existed are flagged once, by the first read that finds no Charm_Nest_Rev/currentFlag marker (one read
+   of each collection, as the lists used to read every time); the marker is written after the flags. Production only: the sandbox reads as
+   it always did (its records come and go with a reset). */
+const CURRENT_MARK = "currentFlag", CURRENT_CAP = 1000, STALE_MAX = 40;
+let currentReady = false;   // (the marker seen by this instance: it is never taken away)
+const inCommittedSet = s => !!(s && s.setId && !s.draft && s.solidIncluded !== false);
+// a sheet the flag may leave off (filingRecords' laserSetPending on it): cut and filed, and not archived — or archived without a laser mark
+const sheetUnflagged = s => (s.archived ? !(num(s.laserDoneAt) > 0) : Readiness.filed(s));
+const setUnflagged = s => num(s.laserDoneAt) > 0;
+async function currentFlagReady() {
+  if (PREFIX) return false;
+  if (currentReady) return true;
+  try {
+    const ref = db.collection(REV_COLL).doc(CURRENT_MARK), mark = await ref.get();
+    if (mark.exists && num((mark.data() || {}).v) >= 1) return (currentReady = true);
+    // the one-time backfill: idempotent (it only ever sets the flag, and a flag set on a record that is not current is cleared by a read)
+    const [sh, st] = await Promise.all([col(SHEETS).select(...FILTER_SHEET, "current").get(), col(SETS).select("laserDoneAt", "current").get()]);
+    const rows = sh.docs.map(d => ({ ...d.data(), id: d.id })), cut = await filingRecords(rows.filter(s => !s.archived && num(s.laserDoneAt) > 0));
+    const filed = new Set(cut.filter(s => Readiness.filed(s)).map(s => s.id));
+    const refs = rows.filter(s => s.current !== true && !(s.archived ? !(num(s.laserDoneAt) > 0) : filed.has(s.id))).map(s => col(SHEETS).doc(s.id))
+      .concat(st.docs.filter(d => d.data().current !== true && !setUnflagged(d.data())).map(d => d.ref));
+    // (update, not set: a record deleted since it was read is not made again as a flag alone)
+    for (let i = 0; i < refs.length; i += 100) await Promise.all(refs.slice(i, i + 100).map(r => r.update({ current: true }).catch(() => {})));
+    await ref.set({ v: 1, at: Date.now(), flagged: refs.length, sheets: sh.size, sets: st.size }, { merge: true });
+    return (currentReady = true);
+  } catch (e) { console.warn("[charmNestLibrary] current flag not ready:", (e && e.message) || e); return false; }
+}
+/** The flagged sheets, with what decides them (FILTER_SHEET and filingRecords): { rows, stale } — stale: the ids flagged and not current. */
+async function flaggedSheets() {
+  const snap = await col(SHEETS).where("current", "==", true).limit(CURRENT_CAP).select(...FILTER_SHEET).get();
+  const rows = await filingRecords(snap.docs.map(d => ({ ...d.data(), id: d.id })));
+  return { rows, stale: rows.filter(sheetUnflagged).map(s => s.id) };
+}
+/** Clears the flag of records a read found flagged and not current: each read again in its own transaction (a record made current again
+    since stays flagged), at most STALE_MAX a call. Never fails the read that found them. */
+async function clearStale(kind, ids) {
+  await Promise.all(ids.slice(0, STALE_MAX).map(id => db.runTransaction(async tx => {
+    const ref = col(kind === "set" ? SETS : SHEETS).doc(id), [d] = await txGetAll(tx, [ref], kind === "set" ? ["laserDoneAt", "current"] : FILTER_SHEET.concat(["current"]));
+    if (!d.exists || d.data().current !== true) return;
+    let s = d.data();
+    if (kind === "set") { if (!setUnflagged(s)) return; }
+    else {
+      if (!s.archived && num(s.laserDoneAt) > 0 && inCommittedSet(s)) {
+        if (!isId(s.setId)) return;
+        const [t] = await txGetAll(tx, [col(SETS).doc(s.setId)], ["laserDoneAt"]);
+        s = { ...s, laserSetPending: !(t.exists && num(t.data().laserDoneAt) > 0) };
+      }
+      if (!sheetUnflagged(s)) return;
+    }
+    tx.update(ref, { current: false });
+  }).catch(e => console.warn("[charmNestLibrary] current flag not cleared:", (e && e.message) || e))));
+}
 /** A sheet's sources are, with each one's download links, the largest field its entry reads (and its entry keeps a name and a hash of each): putSheet keeps that short
     list beside them (sourcesLite) and the live read takes it instead. A record saved before that has no short list, so its sources are read, as they always were. */
 async function withSources(records) {
@@ -938,6 +1001,8 @@ async function op_putSheet(b) {
     // a completed sheet whose set, draft or archive state this save changes changes the Completed count (doneCounts)
     const decides = d => [d.setId || "", !!d.draft, d.solidIncluded === false, !!d.archived].join("|");
     if (num(old.laserDoneAt) > 0 && decides(Object.assign({}, old, doc)) !== decides(old)) DONE_TOUCH = true;
+    // COST (Oct 2026): a saved sheet is current (CURRENT_MARK) unless it was cut and is in no set it waits for (the save never marks or unmarks it)
+    doc.current = !(num(old.laserDoneAt) > 0 && !inCommittedSet(Object.assign({}, old, doc)));
     tx.set(ref, doc, {merge:true});
     return null;
   });
@@ -948,7 +1013,16 @@ async function op_putSheet(b) {
 async function op_listSheets(b) {
   let rows;
   if (b.cursor && Array.isArray(b.cursor.sheets)) rows = b.cursor.sheets.filter(isId).slice(0, 500).map(id => [id]);
-  else {
+  else if (b.excludeDone && !b.runId && !b.setId && !b.from && !b.to && await currentFlagReady()) {
+    /* COST (Oct 2026): the Current tab is the FLAGGED sheets (see CURRENT_MARK), not the newest `limit` by day of which most were cut:
+       a few dozen reads however long the history (727 at 1,500 completed sheets), and a current sheet older than that window is no longer
+       left out. The same filter decides, the newest `limit` by day are kept, and the list is in the same order. */
+    const limit = Math.min(500, Math.max(1, num(b.limit) || 300)), { rows: flagged, stale } = await flaggedSheets();
+    if (stale.length) await clearStale("sheet", stale);
+    rows = flagged.filter(d => !d.archived && !Readiness.filed(d)).sort((x, y) => String(y.day || "").localeCompare(String(x.day || ""))).slice(0, limit).map(d => [d.id, d]);
+    if (b.metal && /^(gold|silver|rose|gold10k|gold14k)$/.test(b.metal)) rows = rows.filter(([, d]) => d.metal === b.metal);
+    rows = rows.sort(([, x], [, y]) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0)).map(([id]) => [id]);
+  } else {
     const limit = Math.min(500, Math.max(1, num(b.limit) || 300));
     let q = b.runId ? col(SHEETS).where("runId", "==", b.runId) : b.setId ? col(SHEETS).where("setId", "==", b.setId) : col(SHEETS).orderBy("day", "desc");
     if (b.from && /^\d{4}-\d{2}-\d{2}$/.test(b.from)) q = q.where("day", ">=", b.from);
@@ -2056,7 +2130,8 @@ async function op_restoreSheet(b) {
   const doc = { id, metal: rep.metal, metalLabel: rep.metalLabel || null, day, folder: name, fileBase: name, seq, runId, setId, setSeq: seq, sheetIndex: +((/_Sheet-(\d+)$/.exec(name) || [])[1]) || null,
     status: "complete", endedBy: rep.endedBy || null, trials: rep.trials || 0, elapsedMs: rep.elapsedMs || 0, stock: rep.stock || null, params: rep.params || null, density: rep.density || 0, freePt2: Math.round(rep.freePt2 || 0), usablePt2: Math.round(rep.usablePt2 || 0), pocket: rep.pocket || null,
     charmCount: charms.length || placements.length, placedCount: placements.length, rejectCount: (rep.rejects || []).length, page: 1, verification: rep.verification ? { ok: !!rep.verification.ok, minGapPt: rep.verification.minGapPt, minEdgePt: rep.verification.minEdgePt } : null,
-    outputs: out, sources: [], orders, poolIds: charms.map(c => c.poolId).filter(Boolean), backPool: [], backOutputs: null, label: null, charms, placements, rejects: rep.rejects || [], names: charms.map(c => c.name).filter(Boolean).join(" "), restored: true, archived: false, sourcesLite: [], updatedAt: FV.serverTimestamp(), ...(out.preview ? { previewAt: Date.now() } : {}) };
+    outputs: out, sources: [], orders, poolIds: charms.map(c => c.poolId).filter(Boolean), backPool: [], backOutputs: null, label: null, charms, placements, rejects: rep.rejects || [], names: charms.map(c => c.name).filter(Boolean).join(" "), restored: true, archived: false, current: true, sourcesLite: [], updatedAt: FV.serverTimestamp(), ...(out.preview ? { previewAt: Date.now() } : {}) };
+  // (current: true — a restored record is in the Current list's reads, CURRENT_MARK; one the laser had cut is cleared by the next read)
   const ref = col(SHEETS).doc(id); const ex = await ref.get(); if (!ex.exists) doc.createdAt = FV.serverTimestamp();
   await ref.set(doc, { merge: true });
   if (setId) { const st = col(SETS).doc(setId); const sd = await st.get(); if (sd.exists) { const ids = new Set(sd.data().sheetIds || []); ids.add(id); await st.set({ sheetIds: [...ids] }, { merge: true }); } }
@@ -2218,7 +2293,7 @@ async function op_setAllocate(b) {
     if (b.roseOnly && seq % 2 !== 0) return { deferred: true, nextSeq: seq };
     const setId = `set-${day}-${seq}`;
     t.set(cref, { day, seq, updatedAt: FV.serverTimestamp() }, { merge: true });
-    t.set(col(SETS).doc(setId), { setId, runId: runId || null, key, group: group || null, day, seq, name: `Set-${seq}`, folder: `charmnest/sets/${day}/Set-${seq}`, materials: [], sheetIds: [], orders: {}, labels: null, status: "open", createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() });
+    t.set(col(SETS).doc(setId), { setId, runId: runId || null, key, group: group || null, day, seq, name: `Set-${seq}`, folder: `charmnest/sets/${day}/Set-${seq}`, materials: [], sheetIds: [], orders: {}, labels: null, status: "open", current: true, createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() });   // (current: COST Oct 2026, CURRENT_MARK)
     if (allocation) t.set(allocation, { setId, seq });
     return { setId, seq };
   });
@@ -2265,6 +2340,8 @@ async function op_setUpdate(b) {
     const doc=Object.assign({}, patch,{setId:id,updatedAt:FV.serverTimestamp()});
     delete doc.laserDoneAt;delete doc.laserDoneBy;delete doc.processSeals;delete doc.processReady;   // process records are server-owned
     delete doc.flowHistory;
+    // COST (Oct 2026): the current flag is the server's (CURRENT_MARK): a set made here has no laser mark, so it is current
+    delete doc.current; if(!old.exists)doc.current=true;
     if(old.exists)tx.update(ref,doc);else tx.set(ref,doc);
   });
   return { ok: true };
@@ -2309,12 +2386,21 @@ async function op_setList(b) {
     sheetIds = (Array.isArray(cur.sheets) ? cur.sheets : []).filter(isId).slice(0, 20000);
   } else {
     const limit = Math.min(500, num(b.limit) || 200);
+    if (b.excludeDone && !isDay(b.from) && !isDay(b.to) && await currentFlagReady()) {
+      // COST (Oct 2026): the Sets view's sets are the FLAGGED ones (see CURRENT_MARK), not the 600 saved last of which most were cut (587
+      // reads at 1,500 completed sheets); the same filter and order choose among them, and a set still open but saved long ago is no longer missed
+      const snap = await col(SETS).where("current", "==", true).limit(CURRENT_CAP).select(...FILTER_SET).get();
+      rows = snap.docs.map(setRow);
+      const stale = rows.filter(([, r]) => setUnflagged(r)).map(([id]) => id);
+      if (stale.length) await clearStale("set", stale);
+    } else {
     let q = col(SETS).orderBy("updatedAt", "desc");
     if (isDay(b.from) && !PREFIX) q = q.where("updatedAt", ">=", new Date(Date.parse(b.from + "T00:00:00Z") - 7 * 86400000));
     // (the up to 3 x limit sets are read for the fields that choose among them, FILTER_SET; the `limit` chosen are then read whole: a set
     // record holds its orders with their lines and copies, and most of the sets read were left out again — Firebase cost, FC2)
     const snap = await q.limit(Math.min(1000, 3 * limit)).select(...FILTER_SET).get();
     rows = snap.docs.map(setRow);
+    }
     rows=rows.filter(([,r])=>(!isDay(b.from) || OrderRules.completionDay(r)>=b.from)&&(!isDay(b.to) || OrderRules.completionDay(r)<=b.to)&&(!b.status || r.status===b.status)&&!(b.excludeDone && num(r.laserDoneAt)>0)).sort(([,x],[,y])=>OrderRules.compareCompleted(x,y)).slice(0,limit);
     const whole = new Map();
     for (let i = 0; i < rows.length; i += 100) for (const d of await db.getAll(...rows.slice(i, i + 100).map(([id]) => col(SETS).doc(id)))) if (d.exists) whole.set(d.id, setRow(d)[1]);
@@ -2347,7 +2433,8 @@ async function op_archiveEmptySheet(b) {
     // its files go only if it was never cut or released: a cut Rose Gold contour or a sheet of a committed set keeps them
     const d = sheet.data(), set = isId(d.setId) ? await tx.get(col(SETS).doc(d.setId)) : null, keep = !!d.roseCutAt || !!(set && set.exists && set.data().committedAt);
     // a laser mark is kept beside it (archivedLaserDoneAt/By): an archived sheet is in no list, nor in the Completed count
-    tx.set(ref, Object.assign({ archived: true, archivedReason: "open sheets repacked", updatedAt: FV.serverTimestamp() }, keep ? {} : { outputs: null }, num(d.laserDoneAt) > 0 ? archivedMark(d) : {}), { merge: true });
+    // (current: false — an archived sheet whose mark is put aside is on no Current list, COST Oct 2026, CURRENT_MARK)
+    tx.set(ref, Object.assign({ archived: true, archivedReason: "open sheets repacked", current: false, updatedAt: FV.serverTimestamp() }, keep ? {} : { outputs: null }, num(d.laserDoneAt) > 0 ? archivedMark(d) : {}), { merge: true });
     return { ok: true, files: keep ? [] : outputPaths(d) };
   });
   if (!done.ok) return done;
@@ -2542,22 +2629,108 @@ function historyRows(q, sets, sheets, runs) {
   }).filter(g => g.match).sort((a, b) => String(b.day || "").localeCompare(String(a.day || "")) || (b.seq || 0) - (a.seq || 0) || (b.updatedAt || 0) - (a.updatedAt || 0) || String(a.key).localeCompare(String(b.key)));
   return { rows, runRows };
 }
+/* COST (Oct 2026): the History window by last activity read the whole of Charm_Nest_Sets, Charm_Nest_Sheets and Charm_Nest_Runs at every
+   open and every "Load more" (939 reads at 300 completed sheets, 4,539 at 3,000), to show 60 groups. It now reads each by updatedAt (one
+   field, its own index), newest first (oldest first for "Oldest"), a window at a time, and stops when the page is decided:
+   · a group's activity (Activity.at) is at least the updatedAt of each of its records (updatedAt is one of the times it takes), and at
+     most the newest of them plus ACTIVITY_SKEW (a laser mark or a seal is stamped by the function's clock, its updatedAt by Firestore's);
+   · so a group none of whose records was read yet is older than the oldest record read in any collection still being read (plus the skew),
+     newest first; and newer than the newest record read, oldest first. A group past that line is decided: it is on the page in the order
+     the whole read gave it, and one before it is never missing;
+   · the groups that are decided are made whole first (completeGroups): their sets and runs read by id, the sheets of their sets and runs
+     (and a run's sets, so a run that a set or sheet names is not shown alone), as the whole read had them.
+   A cursor's time (newest first) starts the read there: every record of a group after it is at most that time. Records with no updatedAt
+   are not in an updatedAt query (all of these collections stamp it on every write). Only a list (no q): a search reads everything, as before. */
+const ACTIVITY_SKEW = 10 * 60000, ACTIVITY_ROUNDS = 6;
+async function activityWindow(b, fields, direction, cur, limit) {
+  const names = [SETS, SHEETS, RUNS], maps = [new Map(), new Map(), new Map()], desc = direction === "desc";
+  const put = (i, d) => maps[i].set(d.id, { ...d.data(), ...(i === 1 ? { id: d.id } : i === 2 ? { runId: d.id } : {}) });
+  const want = [limit + 10, limit + 10, 20], edge = [null, null, null], ties = [0, 0, 0], ended = [false, false, false], seen = { sets: new Set(), runs: new Set(), days: new Set(), alone: new Set() };
+  const start = cur && desc && num(cur.at) > 0 ? admin.firestore.Timestamp.fromMillis(num(cur.at)) : null;
+  const range = Activity.bounds(b.range), lo = range ? Activity.dayStart(range[0]) : null, hi = range ? Activity.dayStart(Activity.shift(range[1], 1)) : null;
+  const whole = new Set();   // (the groups made whole: only those are ever on the page, until every record has been read)
+  let line = desc ? -Infinity : Infinity, sure = () => true, pick = [0, 1, 2];
+  for (let round = 0; round < ACTIVITY_ROUNDS; round++) {
+    await Promise.all(pick.map(async i => {
+      let query = col(names[i]).orderBy("updatedAt", direction);
+      const from = edge[i] != null ? edge[i] : start;
+      if (from != null) query = query.startAt(from);   // (inclusive: the records of the last time read are asked for again, ties counted in the limit)
+      const n = want[i] + (edge[i] != null ? ties[i] : 0), snap = await query.limit(n).select(...fields[i]).get();
+      snap.docs.forEach(d => put(i, d));
+      if (snap.size < n) { ended[i] = true; return; }
+      const lastAt = snap.docs[snap.size - 1].data().updatedAt, t = Activity.ms(lastAt);
+      edge[i] = lastAt; ties[i] = snap.docs.filter(d => Activity.ms(d.data().updatedAt) === t).length; want[i] *= 2;
+    }));
+    const open = [0, 1, 2].filter(i => !ended[i]), at = i => Activity.ms(edge[i]);
+    line = !open.length ? (desc ? -Infinity : Infinity) : desc ? Math.max(...open.map(at)) + ACTIVITY_SKEW : Math.min(...open.map(at));
+    const decided = r => { const t = Activity.at(r); return desc ? t > line : t > 0 && t < line; };
+    sure = r => !open.length || (decided(r) && whole.has(r.key));
+    const shown = () => historyRows("", ...maps).rows.filter(r => (!open.length || decided(r)) && Activity.matches(r, b.range) && (!cur || Activity.compare(r, { key: cur.key, activityAt: cur.at }, direction) > 0)).sort((x, y) => Activity.compare(x, y, direction));
+    // the first page's worth of decided groups are made whole; one that is then no longer decided (oldest first: a later record of it), or
+    // a run that a set or sheet now names, gives its place to the next, made whole in turn
+    if (open.length) for (let k = 0; k < 6; k++) {
+      const todo = shown().slice(0, limit).filter(r => !whole.has(r.key));
+      if (!todo.length) break;
+      await completeGroups(todo, maps, fields, seen); todo.forEach(r => whole.add(r.key));
+    }
+    if (!open.length) break;
+    if (shown().filter(sure).length >= limit) break;
+    if (range && (desc ? line < lo : line >= hi)) break;   // (every group not read yet is outside the date range)
+    // the next window is read only where the line is drawn: the collection read least far
+    const bound = desc ? Math.max(...open.map(at)) : Math.min(...open.map(at));
+    pick = open.filter(i => at(i) === bound);
+  }
+  const more = ended.some(e => !e) && !(range && (desc ? line < lo : line >= hi));
+  // (in the order the whole read had them, by document id: a group's sheets and the runs are listed in it)
+  const byId = m => new Map([...m].sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)));
+  return { maps: maps.map(byId), sizes: maps.map(x => x.size), sure, more };
+}
+/** Makes the groups given whole (see activityWindow): their set records, the sheets of their sets and of their runs (or, for a loose sheet
+    with no run, of its day), the sets of a run shown alone, and the run of each. Each set, run and day is asked for once a call (seen). */
+async function completeGroups(groups, maps, fields, seen) {
+  const [sets, sheets, runs] = maps, put = (map, docs, extra) => docs.forEach(d => map.set(d.id, { ...d.data(), ...extra(d) }));
+  const setIds = new Set(), runIds = new Set(), days = new Set(), alone = new Set();
+  for (const g of groups) {
+    const key = String(g.key || "");
+    if (key.startsWith("set:") && g.setId) setIds.add(g.setId);
+    else if (key.startsWith("run:")) alone.add(g.runId);
+    else for (const x of g.sheets || []) { const r = sheets.get(x.id); if (r && r.runId) runIds.add(r.runId); else if (r && isDay(r.day)) days.add(r.day); }
+  }
+  const fresh = (xs, done) => [...xs].filter(x => x && !done.has(x) && done.add(x));
+  const sIds = fresh(setIds, seen.sets).filter(isId), rIds = fresh(new Set([...runIds, ...alone]), seen.runs).filter(isId), aIds = [...alone].filter(isId), dIds = fresh(days, seen.days);
+  const missing = sIds.filter(id => !sets.has(id));
+  for (let i = 0; i < missing.length; i += 100) put(sets, (await db.getAll(...missing.slice(i, i + 100).map(id => col(SETS).doc(id)), { fieldMask: fields[0] })).filter(d => d.exists), () => ({}));
+  const sheetOf = () => d => ({ id: d.id }), [bySet, byRun, byDay, setsOfRuns] = await Promise.all([
+    sIds.length ? whereIn(SHEETS, "setId", sIds, fields[1], HISTORY_CAP.sheets) : [], rIds.length ? whereIn(SHEETS, "runId", rIds, fields[1], HISTORY_CAP.sheets) : [],
+    dIds.length ? whereIn(SHEETS, "day", dIds, fields[1], HISTORY_CAP.sheets) : [], aIds.length ? whereIn(SETS, "runId", aIds.filter(id => !seen.alone.has(id) && seen.alone.add(id)), fields[0], HISTORY_CAP.sets) : []]);
+  put(sheets, bySet, sheetOf()); put(sheets, byRun, sheetOf()); put(sheets, byDay, sheetOf()); put(sets, setsOfRuns, () => ({}));
+  // the run of every group given, and of the sets just read (the status a group shows is its run's)
+  const want = new Set([...groups.map(g => g.runId), ...sIds.map(id => sets.get(id) && sets.get(id).runId)].filter(id => isId(id) && !runs.has(id)));
+  const ids = [...want];
+  for (let i = 0; i < ids.length; i += 100) put(runs, (await db.getAll(...ids.slice(i, i + 100).map(id => col(RUNS).doc(id)), { fieldMask: fields[2] })).filter(d => d.exists), d => ({ runId: d.id }));
+}
 async function activityHistory(b) {
   const omit=new Set(['outputs','backPool','sources','poolIds','verification','stock','sheets','processSeals']);
   const fields=[HISTORY_SET,HISTORY_SHEET,HISTORY_RUN].map((xs,i)=>xs.filter(x=>!omit.has(x) && !(i===0 && x==='orders')));
-  const snaps=await Promise.all([SETS,SHEETS,RUNS].map((name,i)=>col(name).select(...fields[i]).get()));
-  const maps=snaps.map((snap,i)=>new Map(snap.docs.map(d=>[d.id,{...d.data(),...(i===1?{id:d.id}:i===2?{runId:d.id}:{})}])));
   const q=String(b.q||'').trim().toLowerCase(), direction=b.direction==='asc'?'asc':'desc';
+  const cur=b.cursor?.activity ? b.cursor:null, limit=Math.min(100,Math.max(1,num(b.limit)||60));
+  let maps, sizes, sure=null, more=false;
+  if(q){
+    // (an order number is looked for in every group's orders and lines: the whole of the three collections, as before)
+    const snaps=await Promise.all([SETS,SHEETS,RUNS].map((name,i)=>col(name).select(...fields[i]).get()));
+    maps=snaps.map((snap,i)=>new Map(snap.docs.map(d=>[d.id,{...d.data(),...(i===1?{id:d.id}:i===2?{runId:d.id}:{})}])));
+    sizes=snaps.map(s=>s.size);
+  } else ({maps,sizes,sure,more}=await activityWindow(b,fields,direction,cur,limit));
   const {rows:all,runRows}=historyRows(q,...maps);
   const rows=all.filter(r=>Activity.matches(r,b.range)).sort((a,b)=>Activity.compare(a,b,direction));
-  const cur=b.cursor?.activity ? b.cursor:null;
-  const after=cur?rows.filter(r=>Activity.compare(r,{key:cur.key,activityAt:cur.at},direction)>0):rows;
-  const limit=Math.min(100,Math.max(1,num(b.limit)||60)), chosen=after.slice(0,limit), budget=answerBudget(), page=[];
+  let after=cur?rows.filter(r=>Activity.compare(r,{key:cur.key,activityAt:cur.at},direction)>0):rows;
+  if(sure){const cut=after.findIndex(r=>!sure(r));if(cut>=0)after=after.slice(0,cut);}   // (a window: the groups it decided, in order, up to the first it did not)
+  const chosen=after.slice(0,limit), budget=answerBudget(), page=[];
   const ids=[...new Set(chosen.flatMap(g=>g.sheets.map(x=>x.id)))].filter(isId), full=new Map();
   for(let i=0;i<ids.length;i+=100)for(const d of await db.getAll(...ids.slice(i,i+100).map(id=>col(SHEETS).doc(id)),{fieldMask:HISTORY_SHEET}))if(d.exists)full.set(d.id,{...d.data(),id:d.id});
   for(const g of chosen){g.sheets=g.sheets.map(x=>full.has(x.id)?{...slim(full.get(x.id)),orders:x.orders,orderIds:x.orderIds,sheetIndex:x.sheetIndex}:x);delete g.search;delete g.match;delete g.exact;if(!budget.fits(g))break;page.push(g);}
   const last=page[page.length-1], onPage=new Set(page.map(g=>g.runId));
-  return {sets:page,runs:runRows.filter(r=>onPage.has(r.runId)),next:after.length>page.length && last?{activity:true,at:Activity.at(last),key:last.key}:null,total:rows.length,scanned:{sets:snaps[0].size,sheets:snaps[1].size,runs:snaps[2].size},truncated:{size:page.length<chosen.length}};
+  return {sets:page,runs:runRows.filter(r=>onPage.has(r.runId)),next:(after.length>page.length || more) && last?{activity:true,at:Activity.at(last),key:last.key}:null,total:rows.length,scanned:{sets:sizes[0],sheets:sizes[1],runs:sizes[2]},truncated:{size:page.length<chosen.length}};
 }
 async function op_history(b) {
   if(b.sort==="activity" && /^\d*$/.test(String(b.q || "").trim()))return activityHistory(b);
@@ -2686,6 +2859,16 @@ async function doneMembers(sets, fields) {
    and one archived with a mark keeps it as archivedLaserDoneAt/By (op_archiveEmptySheet; laserDoneList moves one marked
    before that as it reads it), so the one-field count below holds no archived sheet, with no composite index. */
 async function countDone() {
+  /* COST (Oct 2026): every completed sheet (with its set) was read to count them (2,002 reads at 1,500 completed sheets, 4,002 at 3,000), at
+     every laserDone and each time the kept count was behind. The same number now: the sheets with a mark are COUNTED (count(), one read
+     per 1,000), less the marked ones that are not filed — waiting for their set, or archived with their mark — which are all flagged
+     current (CURRENT_MARK) and read here, a few dozen, with their sets. Without the flag (the sandbox, a marker not readable) it counts as before. */
+  if (await currentFlagReady()) {
+    const [n, t, f] = await Promise.all([col(SHEETS).where("laserDoneAt", ">", 0).count().get(), col(SETS).where("laserDoneAt", ">", 0).count().get(), flaggedSheets()]);
+    if (f.stale.length) await clearStale("sheet", f.stale);
+    const notFiled = f.rows.filter(d => num(d.laserDoneAt) > 0 && (d.archived || !Readiness.filed(d))).length;
+    return { sheets: n.data().count - notFiled, sets: t.data().count };
+  }
   const [s,t]=await Promise.all([col(SHEETS).where("laserDoneAt",">",0).select("setId","draft","solidIncluded","laserDoneAt","archived").get(),col(SETS).where("laserDoneAt",">",0).count().get()]);
   const records=await filingRecords(s.docs.map(d=>d.data()));
   return {sheets:records.filter(d=>!d.archived && Readiness.filed(d)).length,sets:t.data().count};
@@ -2763,12 +2946,18 @@ async function op_laserDone(b) {
     const state = new Map(members.filter(m => m.exists && !m.data().archived).map(m => [m.id, num(m.data().laserDoneAt) > 0]));
     // every read is made: the writes follow. Reopening changes the current flag, never the seal history.
     const touched = [], process = [], added = [];
+    /* COST (Oct 2026): the current flag (CURRENT_MARK) is written with the mark. What the set will be when this commits (every member
+       marked) is worked out first: a sheet marked is no longer current when it is in no set it waits for, or its set is completed here. */
+    const after = new Map(state);
+    if (kind === "sheet") { if (after.has(id) || !set) after.set(id, done); } else for (const sid of after.keys()) after.set(sid, done);
+    const setWillBeDone = !!setRef && after.size > 0 && after.size === ids.length && [...after.values()].every(Boolean);
+    const flagOf = (k, d, completed) => (k === "set" ? !completed : !completed || (inCommittedSet(d) && !(setRef && d.setId === setRef.id && setWillBeDone)));
     const write = (k,key,old,completed) => {
       const processSeals=recovered.get(k+':'+key).slice();
       const add=how=>{const event=processEvent(how,at,by,processSeals.length);processSeals.push(event);added.push({kind:k,id:key,eventId:event.id});};
       if(completed!==false && !old.processReady && !num(old.laserDoneAt))add('laserReady');
       if(completed===true)add('laserDone');
-      const current=completed==null?{}:completed?{laserDoneAt:at,laserDoneBy:by}:mark;
+      const current=completed==null?{}:{...(completed?{laserDoneAt:at,laserDoneBy:by}:mark),current:flagOf(k,old,completed)};
       tx.set(col(k==='set'?SETS:SHEETS).doc(key),{...current,processSeals,processReady:completed==null,updatedAt:FV.serverTimestamp()},{merge:true});
       process.push(processRecord(k,key,{...old,...(completed==null?{}:{laserDoneAt:completed?at:null,laserDoneBy:completed?by:null}),processSeals,processReady:completed==null}));
     };
@@ -2781,6 +2970,8 @@ async function op_laserDone(b) {
       if (setDone !== was) write('set',setRef.id,set,setDone);
       else if(!was && done && !set.processReady)write('set',setRef.id,set,undefined);
       else if(!done && set.processReady)write('set',setRef.id,set,false);
+      // (COST Oct 2026: the set's other cut sheets are filed with it, or wait for it again when it is taken back: their current flag with it)
+      if (setChanged) for (const [sid, cut] of state) if (cut && !touched.includes(sid) && (!setDone || (inCommittedSet(facts.get(sid)) && facts.get(sid).setId === setRef.id))) tx.set(col(SHEETS).doc(sid), { current: !setDone }, { merge: true });
     }
     // (a sheet saved without its `orders` list still names them in its pieces' pool ids, "rid_tid_copy")
     const ordersOf = d => Array.isArray(d.orders) && d.orders.length ? d.orders : (Array.isArray(d.poolIds) ? d.poolIds : []).map(orderOfKey).filter(Boolean);
@@ -2862,7 +3053,8 @@ async function op_laserDoneList(b) {
   // a sheet archived with its mark before archiving kept the mark aside: kept aside now, so the count comes to what the
   // list shows (one at the page's last moment stays, as the next page's cursor counts it among those it passes)
   const fix = repair.filter(([, , t]) => t !== at);
-  if (fix.length) { const batch = db.batch(); for (const [id, d] of fix) batch.set(col(SHEETS).doc(id), archivedMark(d), { merge: true }); await batch.commit().catch(() => {}); }
+  // (current: false with it — archived, its mark put aside: CURRENT_MARK)
+  if (fix.length) { const batch = db.batch(); for (const [id, d] of fix) batch.set(col(SHEETS).doc(id), { ...archivedMark(d), current: false }, { merge: true }); await batch.commit().catch(() => {}); }
   return { kind, rows, next: end ? null : { at, skip }, scanned, ...(counts ? { counts } : {}) };
 }
 /* Activity pages scan a single updatedAt index. Cursor ties retain every record; completion
@@ -4136,7 +4328,7 @@ async function applySetMembers(step, by, device, via) {
       // the set's remaining sheets are all cut: the set is completed (with the last cut's time and name: nobody is marked here)
       if (!(num(S.doc.laserDoneAt) > 0) && !join.length && stay.length && stay.every(x => num(x.laserDoneAt) > 0)) {
         const last = stay.reduce((a, b) => (num(b.laserDoneAt) > num(a.laserDoneAt) ? b : a));
-        patch.laserDoneAt = num(last.laserDoneAt); patch.laserDoneBy = last.laserDoneBy || null; doneSets.push(id);
+        patch.laserDoneAt = num(last.laserDoneAt); patch.laserDoneBy = last.laserDoneBy || null; patch.current = false; doneSets.push(id);   // (current: CURRENT_MARK)
         process.push(processRecord("set", id, { ...S.doc, laserDoneAt: patch.laserDoneAt, laserDoneBy: patch.laserDoneBy }));
       }
       setPatch.set(id, patch);
@@ -4160,7 +4352,8 @@ async function applySetMembers(step, by, device, via) {
         history.push({ id: `setJoin-${at}-${m.id}`, at, by, type: "setJoin", note: `Put in ${setWord(m.to)}`, setId: m.to, fromSetId: from, laserDoneAt: num(r.laserDoneAt) || null });
         if (isHeld && /^Taken out of /.test(str(r.laserHold.note, 200))) { view.laserHold = null; hold = FV.delete(); history.push({ id: `release-${at}-${m.id}`, at, by, type: "release", note: `Put in ${setWord(m.to)}`, setId: m.to, laserDoneAt: null }); process.push({ kind: "sheet", id: m.id, patch: { laserHold: null } }); }
       }
-      const patch = { ...view, flowHistory: history.slice(-100), updatedAt: FV.serverTimestamp() };
+      // (current: COST Oct 2026 — a sheet moved into or out of a set may be current again, CURRENT_MARK; one that is not is cleared by the next read)
+      const patch = { ...view, flowHistory: history.slice(-100), current: true, updatedAt: FV.serverTimestamp() };
       if (hold !== undefined) patch.laserHold = hold; else delete patch.laserHold;
       tx.set(col(SHEETS).doc(m.id), patch, { merge: true });
       membership.sheets.push({ id: m.id, patch: view, ...(!m.to && from ? { fromSetId: from } : {}), ...(m.run ? { run: true } : {}) });
