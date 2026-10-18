@@ -500,7 +500,8 @@
     function row(rec, opts = {}) {
       const st = list(rec); if (!st.length) return "";
       const shown = st, more = 0, size = BASE_SIZE;
-      return `<span class="sealRow n${Math.min(shown.length, 5)}${opts.size ? " mini" : ""}"${opts.size ? ` data-seal-max="${Math.round(+opts.size) || BASE_SIZE}"` : ""} data-seal-group data-seal-count="${shown.length}" role="group" aria-label="${st.length === 1 ? "Seal" : st.length + " seals"}">` +
+      // (a strip's size keeps its fraction of a pixel: the order window's piece rows ask for 38.5 px, 1.75 × 22, PCSEAL, Paul 18 Oct 2026)
+      return `<span class="sealRow n${Math.min(shown.length, 5)}${opts.size ? " mini" : ""}"${opts.size ? ` data-seal-max="${Math.round(+opts.size * 100) / 100 || BASE_SIZE}"` : ""} data-seal-group data-seal-count="${shown.length}" role="group" aria-label="${st.length === 1 ? "Seal" : st.length + " seals"}">` +
         (more ? `<span class="sealMore" title="${esc(st.slice(0, more).map(titleOf).join("\n"))}">+${more} earlier</span>` : "") +
         shown.map(s => html(s, size, opts.pending && +s.at >= opts.pending ? "pending" : "")).join("") + `</span>`;
     }

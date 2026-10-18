@@ -12124,13 +12124,17 @@ const CustomPrint = window.CustomPrint = (() => {
   const sealSig = rec => stampsOfRecord(rec).map(s => s.how[0] + s.at).join();
   /** The kept seals of one kind ("print" | "button") of an open card, as they were, on the button that made them: the
    *  same seals (their look and turn come from who and when), never pressed again on a redraw. "" when there are none. */
+  /* PCSEAL (Paul, 18 Oct 2026: "Enlarge the seal size by 1.75x"): the seals of a piece's row under "Its piece(s)" in the order window are 1.75 × the 22 px
+     they were, 38.5 px; one number for every seal that row draws (the Review card's own, cuState, and the kept ones here). Seal.fit still shrinks a row of
+     several together when the line is short of room, never past this. */
+  const PIECE_SEAL = 22 * 1.75;
   function keptSeals(it, how, only) {
     if (!window.Seal) return "";
     const kind = x => (x.how === "button") === (how === "button");
     // (only: the stamps a piece's row in the order window draws, small, each on the button of its own kind: one stamp, or the list; {} or [] for none of this kind)
     if (only) {
       const st = (Array.isArray(only) ? only : only.how ? [only] : []).filter(kind);
-      return st.length ? Seal.row({ stamps: st, prints: st.reduce((m, x) => Math.max(m, x.n || 0), 0) }, { size: 22 }) : "";
+      return st.length ? Seal.row({ stamps: st, prints: st.reduce((m, x) => Math.max(m, x.n || 0), 0) }, { size: PIECE_SEAL }) : "";
     }
     const rec = keptOf(it); if (!rec) return "";
     const st = Seal.list(rec).filter(kind);
@@ -12511,7 +12515,7 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   const keptSig = it => { const k = keptOf(it); return k ? (Array.isArray(k.stamps) ? k.stamps.map(x => x.how[0] + x.at).join() : "l") + ":" + (+k.prints || 0) : ""; };
   const stamp = it => { const f = fails.get(it.key); return [busy.get(it.key) || "", acting.get(it.key) || "", asking.has(it.key), !!undoOf(it), f ? (f.st ? "held:" + f.st.at : "") + (f.retrying ? ":r" : "") || "fail" : "", armed.has(it.key + "|print"), armed.has(it.key + "|complete"), keptSig(it)].join("|"); };
-  return { print, complete, reopen, undo, statusHtml, buttonHtml, working, freshOf, failNote, wire, stamp, keptOf, keptSeals, keptButtonHtml, cardRecord, sealsOfRow, sealsOfOrder, recordOfRow, sealSig, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)), touching: key => touching.has(key), remote, settle };
+  return { print, complete, reopen, undo, statusHtml, buttonHtml, working, freshOf, failNote, wire, stamp, keptOf, keptSeals, keptButtonHtml, PIECE_SEAL, cardRecord, sealsOfRow, sealsOfOrder, recordOfRow, sealSig, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)), touching: key => touching.has(key), remote, settle };
 })();
 
 /* ═══ 23a · Custom Orders — the order's own designs, dropped on its card and sent to the sheets ═══════════════════
@@ -17724,11 +17728,12 @@ const OrderWin = window.OrderWin = (() => {
     const rest = all.filter(s => !(above && sealKey(Seal.modelOf(s).action, s.at) === above)), pick = rest[rest.length - 1] || null;
     const more = decided ? 0 : multi ? Math.max(0, rest.length - ROW_MAX) : Math.max(0, rest.length - 1);
     const shown = multi ? rest.slice(Math.max(0, rest.length - ROW_MAX)) : pick ? [pick] : [];
-    // Completed: its seals beside the button that made each, and "+N" to the Timeline for the others (a line sent to its sheet has its History button for that).
+    // Completed: its seals beside the button that made each, and "+N" to the Timeline for the others (a line sent to its sheet draws its one seal alone: the Timeline tab holds the rest).
     const moreOf = n => n > 0 ? `<button type="button" class="owCuMore" data-cu-more title="${n} more seal${n > 1 ? "s" : ""}: open the Timeline" aria-label="${n} more seal${n > 1 ? "s" : ""}: open the Timeline">+${n}</button>` : "";
     const moreBtn = moreOf(more), pending = decided ? false : CustomPrint.freshOf("cu:" + String(it.key).replace(/^[a-z]+:/, ""));
-    const group = list => list.length ? Seal.row({ stamps: list, prints: list.reduce((m, x) => Math.max(m, x.n || 0), 0) }, { size: 22, pending }) : "";
-    const sealOf = st => st ? Seal.row({ stamps: [st], prints: st.n || 0 }, { size: 22, pending }) : "";
+    const size = +CustomPrint.PIECE_SEAL || 22 * 1.75;   // (PCSEAL, Paul 18 Oct 2026: 1.75 × the 22 px they were; CustomPrint holds the one number)
+    const group = list => list.length ? Seal.row({ stamps: list, prints: list.reduce((m, x) => Math.max(m, x.n || 0), 0) }, { size, pending }) : "";
+    const sealOf = st => st ? Seal.row({ stamps: [st], prints: st.n || 0 }, { size, pending }) : "";
     const byHow = how => shown.filter(x => (x.how === "button") === (how === "button"));
     const seals = (multi ? group(shown) : pick && (it.done || decided) ? sealOf(pick) : "") + (it.done || decided ? moreBtn : "");
     return { rec, decided, busy, can, printed, above, pick, more, moreBtn, moreOf, sealOf, rest, seals, multi, shown, btnSeals: group(byHow("button")), printSeals: group(byHow("print")),
@@ -18385,13 +18390,8 @@ const OrderWin = window.OrderWin = (() => {
     if (!it) return;
     // (another piece picked, where there is more than one; the one piece of a single-piece order is already the one shown)
     const toPiece = k => { if ((W.pieces || []).length > 1) pickPiece(k); };
-    if (cuState(it, key).decided) {
-      // a piece sent to its sheet: its designs, its sheet and its history
-      const db = h.querySelector("[data-cu-view-designs]"); if (db) db.onclick = () => { const current = now(); if (current) CustomSheet.open(current, { from: db }); };
-      const sb = h.querySelector("[data-cu-open-sheet]"); if (sb) sb.onclick = () => { if (now()) { toPiece(key); setView("sheet"); } };
-      const hb = h.querySelector("[data-cu-history]"); if (hb) hb.onclick = () => { if (now()) { toPiece(key); setView("timeline"); } };
-      return;
-    }
+    // (a piece sent to its sheet has nothing to press here but its Hold: NOROWBTNS, see pieceCtl)
+    if (cuState(it, key).decided) return;
     // (the press runs inside this call: a question it asks is drawn, and its field given the focus, in the row that was pressed)
     const who = wireCu(h, it, now, { press: f => { W.pcAsk = key; try { f(); } finally { W.pcAsk = ""; } }, more: () => { toPiece(key); setView("timeline"); } });
     const box2 = h.querySelector("[data-cu-name]"), was = (typed || []).find(t => t.key === key);
@@ -18411,10 +18411,10 @@ const OrderWin = window.OrderWin = (() => {
   function pieceCtl(key) {
     const r = rowOf(key), it = pieceItem(key); if (!r || !it) return null;
     const c = cuState(it, key), label = c.decided ? "Sent to sheet" : (r.spec && r.spec.special && r.spec.special.label) || (c.rec && c.rec.category) || it.category || "";
-    if (c.decided) {
-      const designs = tryDo(() => CustomSheet.cardOf(it));
-      return { it, decided: true, label, why: it.why || "", html: c.seals + (designs && designs.files.length ? '<button type="button" class="btn ghost xs" data-cu-view-designs>View designs</button>' : "") + '<button type="button" class="btn ghost xs" data-cu-open-sheet>Open sheet</button><button type="button" class="btn ghost xs" data-cu-history>History</button>' + holdSlotOf(it) };
-    }
+    // NOROWBTNS (Paul, 18 Oct 2026: "Remove these 3 buttons from the detailed order view"): a piece sent to its sheet has its seal (and the order's Hold) and no
+    // View designs, Open sheet or History here. Each is still where it lives: its sheet in the Sheet tab (and its status chip, where it names one), its history in the
+    // Timeline tab, its designs from the Review card's View designs.
+    if (c.decided) return { it, decided: true, label, why: it.why || "", html: c.seals + holdSlotOf(it) };
     const html = tryDo(() => cuControls(it, c).trim()) || "";
     return html ? { it, html, label, why: it.why || "" } : null;
   }
