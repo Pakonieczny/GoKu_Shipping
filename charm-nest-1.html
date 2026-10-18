@@ -5321,6 +5321,9 @@ function sheetT0(sh) { const ids = new Set(sh.charms.map(c => c.sourceId)); cons
 function log(sh, msg) { sh.log.push(`${new Date().toLocaleTimeString()} ${msg}`); if (sh.log.length > 200) sh.log.shift(); if (window.DesignLink && DesignLink.feed) DesignLink.feed({ kind: (METAL_TAG && METAL_TAG[sh.metal]) || sh.metal, text: msg }); }
 /** After nesting, every charm is written and previewed 2.5 % smaller than drawn, scaled about its own centre: the layout is solved at full size and the shrink afterwards makes minor overlaps disappear. */
 const CHARM_SCALE = 0.975;
+/** The size a person gave a piece by hand in the sheet window (Manual Control, 10K / 14K; Paul, 18 Oct 2026): 1 = its design size, bounded 0.8 to 1.2;
+    the piece is nested, checked and written at that size (buildJob, finishNest). */
+function manualSize(c) { const v = c && c.manual ? +c.manual.size : 0; return v >= 0.8 && v <= 1.2 ? v : 1; }
 /** What a sheet's written files depend on: each placed charm, where and how it lies, and its artwork and name. */
 const layoutKey = (sh, byId) => JSON.stringify([sh.sheetId, (sh.placements || []).map(p => { const c = byId.get(p.id); return [String(p.id), +(+p.cxPt).toFixed(3), +(+p.cyPt).toFixed(3), p.angle, p.scale || 1, c ? c.hash : null, c ? c.name : null]; }).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)]);
 /** One charm at a time on every sheet (Paul, 24 Sep): Gold, Silver, Rose Gold past its green line, a sheet's first
@@ -5330,7 +5333,7 @@ const layoutKey = (sh, byId) => JSON.stringify([sh.sheetId, (sh.placements || []
 const CAREFUL_ANGLES = Array.from({ length: 180 }, (_, i) => i * 2);
 const carefulNest = sh => sh.nestFlow !== "learned";
 function buildJob(sh) {
-  const st = stockFor(sh.metal, sh);
+  const st = stockFor(sh.metal, sh), sizeOf = c => (typeof manualSize === "function" ? manualSize(c) : 1);   // (a test that slices buildJob out alone has no manualSize)
   const items = nestItems(sh), careful = carefulNest(sh);
   return {
     sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, ...(sh.roseStock?.profileJson ? {remnant:JSON.parse(sh.roseStock.profileJson)} : {}) },
@@ -5351,7 +5354,8 @@ function buildJob(sh) {
     initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.80, nearFullContact: !(sh.metal==="rose"||(typeof CharmNestRose!=="undefined"&&CharmNestRose.cuts(sh.metal))),
     // filling its gaps, a sheet takes any later order that fits, not only the oldest; the pockets go to single-charm orders before a multi-piece order that was turned away (solver: singlesFirst)
     ...(gapFilling(sh) ? { singlesFirst: true } : {}),
-    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: typeof orderKey === "function" ? orderKey(c) : c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : orderRank(c), pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null, hold: !!(c.pinned && !c.arrivalPin), ...(typeof CharmNestSolver !== "undefined" && CharmNestSolver.pairFields ? CharmNestSolver.pairFields(c) : {}) }))   // (hold: pinned by a person, never lifted; the run's own pin on every placed charm is arrivalPin; pairFields: the group, side and "seat near its mate" of a pair's pieces, nothing for any other charm)
+    // (a piece a person resized by hand, Manual Control: its bitmap is read at that size, so the nest, its check and the written file all see the same piece)
+    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: sizeOf(c) === 1 ? c.scale : c.scale / sizeOf(c), bits: c.bits, areaPt2: sizeOf(c) === 1 ? c.areaPt2 : c.areaPt2 * sizeOf(c) ** 2, order: typeof orderKey === "function" ? orderKey(c) : c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : orderRank(c), pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null, hold: !!(c.pinned && !c.arrivalPin), ...(typeof CharmNestSolver !== "undefined" && CharmNestSolver.pairFields ? CharmNestSolver.pairFields(c) : {}) }))   // (hold: pinned by a person, never lifted; the run's own pin on every placed charm is arrivalPin; pairFields: the group, side and "seat near its mate" of a pair's pieces, nothing for any other charm)
   };
 }
 function packingKey(sh, items) {
@@ -5376,6 +5380,7 @@ async function checkLearnedRunner(token = localStorage.getItem("cn.learnedKey") 
   finally { clearTimeout(timeout); }
 }
 function startNest(sh) {
+  if (sh._manualHold) { sh._manualAsked = true; return; }   // a person is moving its charms by hand in the sheet window (Manual Control): its nest waits until they are done, and is asked for then
   if (window.NestHold && NestHold.block(sh)) return;   // a piece of it is still flying (Send to Sheet): its nest starts once the last has landed
   if(sh.roseCutAt)return toast("This layout has been cut. Start a new sheet to use its remainder.","bad");
   if (S.settings.nestFlow !== "learned" || sh.appendOnly || (sh.metal==="rose"||(typeof CharmNestRose!=="undefined"&&CharmNestRose.cuts(sh.metal)))&&(sh.rosePlan||sh.roseProtected)) return startNestReady(sh);
@@ -5960,7 +5965,8 @@ async function finishNest(sh, { result, error }) {
     sh.progressKind = "optimize"; sh.progress = [0, sh.placements.length]; sh.stage = `Optimizing charms · shrinking each of ${sh.placements.length} by ${shrinkPct}% about its own centre…`; renderCard(sh);
     // all at once: the pass used to be played charm by charm over ~2.5 s, which only delayed the next charm
     const optT0 = performance.now(), kept = new Map(((sh.appendOnly ? sh.nestInitial : sh.roseProtected?.placements) || []).map(p => [p.id, p.scale]));
-    for (const p of sh.placements) p.scale = kept.get(p.id) || CHARM_SCALE;
+    // (a piece resized by hand, Manual Control, is written at its own size: the same shrink of its new size)
+    for (const p of sh.placements) p.scale = kept.get(p.id) || (manualSize(byId.get(p.id)) !== 1 ? +(CHARM_SCALE * manualSize(byId.get(p.id))).toFixed(5) : CHARM_SCALE);
     sh.progress = [sh.placements.length, sh.placements.length]; renderProgress(sh); drawPreview(sh);
     sh.optimized = { count: sh.placements.length, scale: CHARM_SCALE, ms: Math.round(performance.now() - optT0) };
     // Nothing new went in (a Gold or Silver sheet filling its gaps, whose new orders all found no room): the layout is
@@ -6170,7 +6176,7 @@ async function persistSheet(sh, items, context) {
     orders: [...new Set(sh.placements.map(p => { const c = byId.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))],
     ...(listings => listings ? { listings } : {})(listingsOf(sh.placements.map(p => byId.get(p.id)))),
     poolIds: sh.placements.map(p => byId.get(p.id) && byId.get(p.id).poolId).filter(Boolean), backPool: sh.backPool || [], backOutputs: sh.backOutputs || null, label: sh.label || null,
-    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, custom: !!c.custom, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open, ...(typeof pairDescriptor === "function" ? pairDescriptor(c) : {}), ...(shapes.get(c.id) || {}) })),
+    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, custom: !!c.custom, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open, ...(typeof pairDescriptor === "function" ? pairDescriptor(c) : {}), ...(c.manual ? { manual: c.manual } : {}), ...(shapes.get(c.id) || {}) })),
     placements: sh.outputs.report.placements, rejects: sh.outputs.report.rejects,
     names: items.map(c => c.name).filter(Boolean).join(" ")
   });
