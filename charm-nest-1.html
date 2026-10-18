@@ -3481,8 +3481,11 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .rvItem .cuStep>.rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
 .rvItem .cuStep>.rvItem>.rh .ttl,.rvItem .cuStep>.rvItem>.rh .sub,.rvItem .cuStep>.rvItem>.ev,.rvItem .cuStep>.rvItem>.why{display:none}
 .rvItem .cuStep>.rvItem>.rh{padding-bottom:0;border-bottom:0}
-/* the order window: a custom order's one line */
+/* the order window: a custom order's one line. Its seals are 38.5 px, 1.75 × the 22 px they were (PCSEAL, Paul 18 Oct 2026: "Enlarge the seal size by 1.75x"; the size is
+   CustomPrint.PIECE_SEAL, Seal.row's data-seal-max): on one line they stand over the row's padding, as the smaller ones did, so the row is no taller. Where the room is short
+   and the row's buttons wrap onto lines of their own (a phone), the seal keeps its whole height on its line, so it never lies over the button above or below it. */
 .owPcRow .pcAct .sealRow{margin:calc(var(--seal-fit,var(--seal-base)) * -.28) 0;max-width:50%;flex:0 0 auto}
+@container (max-width:470px){.owPcRow .pcAct .sealRow{margin:0}}
 /* the small seals a piece keeps in the Orders list (completed by hand, printed) and an order's on its Cancelled card: their records keep them for good */
 .orderListRow .rowActions .sealRow,.ocard .rowActions .sealRow,.cxSeals .sealRow{margin:3px 0 3px 3px;max-width:100%}
 .cxSeals{margin-top:3px}
