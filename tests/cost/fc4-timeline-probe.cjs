@@ -1,6 +1,8 @@
 // FC4 (Firebase cost): the order window's timeline poll. An open order window asked the whole timeline every 2.5 s (1,440 calls an hour).
 // This test measures one call before (whole answer) and after (the change probe: ifRev -> { unchanged }), and proves the probe cannot miss a
 // change in any document the answer is made of. Own in-memory Firestore (tests/cost/meter.cjs); no network, no real service.
+// COST (Oct 2026): the probe itself read ~36 documents. The cheap answer now comes from ONE document, Order_Rev/{orderId}, which every
+// writer of the order's timeline raises; the full digest (verify, or once the net of 60 s has passed) still sees every document.
 //   node tests/cost/fc4-timeline-probe.cjs
 "use strict";
 const assert = require("node:assert/strict"), path = require("node:path");
@@ -30,12 +32,13 @@ db.seed(seed);
 
 const run = (name, opts) => m.op(name, () => Timeline.get(db, O, Object.assign({ prefix: "", sandboxed: Timeline.SANDBOXED_DEFAULT }, opts)));
 const delta = async (name, opts) => { const a = m.snapshot(); const out = await run(name, opts); return { out, d: m.since(a) }; };
+// (the full digest: what a poke (verify) or the 60 s net asks; the one-read answer is checked on its own below)
 const mut = async (label, fn, expect = true) => {
   await sleep(4);   // (the in-memory update time has millisecond resolution)
   const before = (await run("probe", { wantRev: true })).rev;
   await fn(); await sleep(4);
-  const after = await run("probe", { ifRev: before });
-  if (expect) { assert(!after.unchanged, label + ": the probe must see this change"); assert(after.rev && after.rev !== before, label + ": a new revision"); }
+  const after = await run("probe", { ifRev: before, verify: true });
+  if (expect) { assert(!after.unchanged, label + ": the probe must see this change"); assert(after.rev && after.rev.split(".")[0] !== before.split(".")[0], label + ": a new revision"); }
   else assert(after.unchanged === true, label + ": a rewrite in place is the known blind spot (the page's full read, at least once a minute, covers it)");
   console.log(`  ${expect ? "seen " : "blind"}  ${label}`);
 };
@@ -46,15 +49,19 @@ const mut = async (label, fn, expect = true) => {
   assert(before.out.events.length >= 40);
   // ── after: the first read keeps a revision; the next polls send it back ──
   const first = await delta("get (first read, asks wantRev)", { wantRev: true });
-  assert(/^[0-9a-f]{12}$/.test(first.out.rev), "a revision comes with the answer");
+  assert(Timeline.REV_TOKEN.test(first.out.rev) && first.out.rev.split(".").length === 3, "a revision comes with the answer (digest.orderRev.probedAt): " + first.out.rev);
   assert.deepEqual(JSON.parse(JSON.stringify(Object.assign({}, first.out, { rev: undefined, now: 0 }))), JSON.parse(JSON.stringify(Object.assign({}, before.out, { now: 0 }))), "the answer itself is the same with or without wantRev");
-  const probe = await delta("get (after: probe, unchanged)", { ifRev: first.out.rev });
-  assert.equal(probe.out.unchanged, true); assert.equal(probe.out.rev, first.out.rev);
+  const full = await delta("get (probe: the full digest)", { ifRev: first.out.rev, verify: true });
+  assert.equal(full.out.unchanged, true);
+  const probe = await delta("get (after: Order_Rev, unchanged)", { ifRev: full.out.rev });
+  assert.equal(probe.out.unchanged, true); assert.equal(probe.out.rev, full.out.rev);
   assert.equal(probe.out.events, undefined, "an unchanged answer carries no events");
+  assert.equal(probe.d.reads + probe.d.aggs, 1, "an unchanged poll is ONE read (Order_Rev): " + (probe.d.reads + probe.d.aggs));
   const per = d => meter.perHour(d, 1440);
   console.log(`\none poll of an order window (40 recorded events, 5 pieces, 2 sheets, 1 set, 12 messages):`);
   const row = (n, x) => console.log(`  ${n.padEnd(34)} reads ${String(x.d.reads + x.d.aggs).padStart(4)}   bytes ${String(x.d.bytes).padStart(8)}   per hour at 2.5 s: reads ${String(per(x.d).reads).padStart(7)}  MB ${(per(x.d).bytes / 1e6).toFixed(1).padStart(6)}  USD ${per(x.d).usd.toFixed(4)}`);
-  row("before (whole answer)", before); row("first read (answer + digest)", first); row("after (probe, unchanged)", probe);
+  row("before (whole answer)", before); row("first read (answer + digest)", first); row("probe (full digest, Oct 7)", full); row("after (Order_Rev, unchanged)", probe);
+  assert(full.d.reads + full.d.aggs > 20, "the full digest is the dear one (the net, at most once a minute)");
   assert(probe.d.bytes < before.d.bytes / 50, "the probe carries about nothing");
   assert(probe.d.reads + probe.d.aggs < before.d.reads + before.d.aggs, "and reads fewer documents");
 
@@ -82,13 +89,56 @@ const mut = async (label, fn, expect = true) => {
   await mut("a cancel's step rewritten in place (same key: set aside, then done)", () => db.collection("Order_Timeline").doc(`${O}~cancelStep~cx-1700000000000-GF_Sheet_1`).set({ at: Date.now(), text: "On a cut sheet: set aside by Tess (GF Sheet 1)", data: { outcome: "setAside", done: true } }, { merge: true }));
   await mut("a recorded event rewritten in place", () => db.collection("Order_Timeline").doc(`${O}~scan~k2`).set({ text: "changed" }, { merge: true }), false);
 
+  // ── the one-read answer (COST, Oct 2026): every writer of the timeline moves Order_Rev, so a change shows at the next poll; a record no writer
+  //    raises it for waits for the net (60 s) or a poke (verify), never longer ──
+  console.log("\nthe one-read answer (Order_Rev) sees what the timeline's writers wrote:");
+  const FV = meter.FieldValue;
+  const cheap = async (label, fn, expect = true) => {
+    await sleep(4);
+    const held = (await run("probe", { wantRev: true })).rev;
+    assert.equal((await run("probe", { ifRev: held })).unchanged, true, label + ": quiet before");
+    await fn(); await sleep(4);
+    const a = m.snapshot(), after = await run("probe", { ifRev: held }), d = m.since(a);
+    if (expect) assert(!after.unchanged && after.events, label + ": seen at the next poll, without verify");
+    else { assert.equal(after.unchanged, true, label + ": not raised, so not seen before the net"); assert.equal(d.reads + d.aggs, 1, "and that cost one read"); }
+    console.log(`  ${expect ? "seen " : "net  "}  ${label}`);
+    return held;
+  };
+  await cheap("an event added (Timeline.add)", () => Timeline.add(db, FV, [{ orderId: O, type: "note", text: "hello", id: "cheap-1" }], { prefix: "" }));
+  await cheap("the same event rewritten in place (Timeline.add, same key: the digest's blind spot)", () => Timeline.add(db, FV, [{ orderId: O, type: "note", text: "hello again", id: "cheap-1" }], { prefix: "" }));
+  await cheap("a raise on its own (Timeline.touchNow: a Team message)", () => Timeline.touchNow(db, FV, [O], ""));
+  const held = await cheap("a piece's row written directly (nothing raises Order_Rev)", () => db.collection("Charm_Pool").doc(`${O}_90_1`).update({ state: "written" }), false);
+  // the net: a revision whose digest is older than 60 s takes the full digest again, and sees it
+  const realNow = Date.now; Date.now = () => realNow() + 61000;
+  try { const late = await run("probe", { ifRev: held }); assert(!late.unchanged && late.events, "past the net the full digest sees what nothing raised"); }
+  finally { Date.now = realNow; }
+  // a window unused for long may let the one-read answer stand up to 10 minutes (netMs), never longer, never under 60 s
+  const h2 = (await run("probe", { wantRev: true })).rev;
+  Date.now = () => realNow() + 61000;
+  try {
+    assert.equal((await run("probe", { ifRev: h2, netMs: 5 * 60000 })).unchanged, true, "netMs 5 min: still the one-read answer at 61 s");
+    assert.notEqual((await run("probe", { ifRev: h2, netMs: 1000 })).rev, h2, "netMs under 60 s is 60 s: the digest is taken again");
+    Date.now = () => realNow() + 11 * 60000;
+    const a = m.snapshot(); await run("probe", { ifRev: h2, netMs: 60 * 60000 }); assert(m.since(a).reads > 5, "netMs is capped at 10 minutes");
+  } finally { Date.now = realNow; }
+  // another order's events do not move this order's revision
+  const h3 = (await run("probe", { wantRev: true })).rev;
+  await Timeline.add(db, FV, [{ orderId: "999", type: "note", text: "x", id: "other" }], { prefix: "" });
+  assert.equal((await run("probe", { ifRev: h3 })).unchanged, true, "another order's event leaves this one's revision");
+  console.log("  ok     the net (60 s; netMs up to 10 min) and other orders");
+
   // sandbox: the same order's sandbox records are separate, and the Etsy mirror is not read
   const sbSeed = { [`Sandbox_Order_Timeline/${O}~note~a`]: { orderId: O, type: "note", at: NOW, text: "s" } }; db.seed(sbSeed);
   const sb = await m.op("sb", () => Timeline.get(db, O, { prefix: "Sandbox_", sandboxed: Timeline.SANDBOXED_DEFAULT, wantRev: true }));
-  assert(/^[0-9a-f]{12}$/.test(sb.rev)); const sb2 = await Timeline.get(db, O, { prefix: "Sandbox_", sandboxed: Timeline.SANDBOXED_DEFAULT, ifRev: sb.rev }); assert.equal(sb2.unchanged, true);
+  assert(Timeline.REV_TOKEN.test(sb.rev)); const sb2 = await Timeline.get(db, O, { prefix: "Sandbox_", sandboxed: Timeline.SANDBOXED_DEFAULT, ifRev: sb.rev }); assert.equal(sb2.unchanged, true);
   const real = await Timeline.get(db, O, { prefix: "", sandboxed: Timeline.SANDBOXED_DEFAULT, ifRev: sb.rev }); assert(!real.unchanged, "a sandbox revision never matches the real order's");
   // a digest that is not one (a stale page, a bad value) reads in full
   const bad = await Timeline.get(db, O, { prefix: "", sandboxed: Timeline.SANDBOXED_DEFAULT, ifRev: "000000000000" }); assert(!bad.unchanged && bad.events.length);
+  // a sandbox event moves the sandbox's Order_Rev only
+  const pr = (await run("probe", { wantRev: true })).rev;
+  await Timeline.add(db, meter.FieldValue, [{ orderId: O, type: "note", text: "sb", id: "sb-1" }], { prefix: "Sandbox_" });
+  assert.equal((await run("probe", { ifRev: pr })).unchanged, true, "a sandbox event leaves production's revision");
+  assert(db.docs.get(`Sandbox_Order_Rev/${O}`), "the sandbox raises Sandbox_Order_Rev");
   console.log("\nfc4-timeline-probe: all checks passed");
   m.uninstall();
 })().catch(e => { console.error(e); process.exit(1); });

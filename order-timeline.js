@@ -156,6 +156,9 @@
     const id = digits(orderId); if (!id) throw new Error("no order number");
     const body = { op: "timelineGet", orderId: id, sandbox: cfg.sandbox };
     if (o && o.ifRev) body.ifRev = String(o.ifRev); else if (o && o.wantRev) body.wantRev = true;
+    // (COST, Oct 2026: verify skips the server's one-read Order_Rev answer and takes the full digest; netMs stretches how long that answer may stand)
+    if (o && o.ifRev && o.verify) body.verify = true;
+    if (o && o.ifRev && +o.netMs > 0) body.netMs = Math.round(+o.netMs);
     const j = await post("charmNestLibrary", body);
     if (j && j.unchanged) return j;
     // events still in this page's outbox are part of the timeline too (they are on their way)

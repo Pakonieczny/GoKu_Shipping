@@ -1,10 +1,10 @@
 // LB2 (7 Oct 2026). Paul: every effect of Complete Order / Print QR label / Hold / Release / Cancel shows in about 3 s on EVERY screen, one that somebody only WATCHES
-// (a wall monitor, waiting for the other person to press) included. The cost work (FC4) slows an order window nobody touches: 5 s after 10 minutes, 10 s after an hour.
+// (a wall monitor, waiting for the other person to press) included. The cost work (FC4) slows an order window nobody touches (COST, Oct 2026: 15 s untouched for 2 minutes, 60 s after 10 minutes).
 // This keeps that slow-down and makes it safe: the page's CHEAP shared signals (the custom records feed of Review: Complete, QR Print, Reopen; the placement feed's counter:
 // Hold, Release, Cancel, take-off) wake the window of that order at once. The real files in a vm with a fake clock and stubs; no browser, no network.
 //   node tests/charm-nest/complete-realtime-wake.cjs
-//   1  the order window's feed (charm-nest-timeline-ui.js) slowed to 10 s: poke() reads the cheap question within 0.7 s, a whole read follows when the digest moved, the
-//      full pace is back; without the poke the slowed window really takes 10 s (the test means something); another order's poke wakes nothing
+//   1  the order window's feed (charm-nest-timeline-ui.js) slowed to 60 s: poke() reads the cheap question within 0.7 s, a whole read follows when the digest moved, the
+//      full pace is back; without the poke the slowed window really takes 60 s (the test means something); another order's poke wakes nothing
 //   2  the placement of the order moves (PiecePlacement's signature, told by OrderPieces): the slowed feed wakes; a quiet cloud (same signature) wakes nothing
 //   3  ReviewLive (charm-nest-review-live.js): a record another computer or tab wrote, applied, pokes that order's window and tells OrderPieces; and the BroadcastChannel
 //      tells the other tabs the very record (the sandbox has its own channel), no read of any kind
@@ -44,10 +44,10 @@ async function feedTests() {
   const f = UI.feed("4200000001"); const draws = []; f.subscribe(k => { if (k === "data") draws.push(t); });
   await f.refresh(); await advance(0);
   await advance(61 * 60000);
-  calls = []; await advance(60000);
+  calls = []; await advance(240000);
   const at = calls.filter(c => c.id === "4200000001").map(c => c.at), gaps = at.slice(1).map((x, i) => x - at[i]);
-  assert(gaps.length >= 3 && gaps.every(x => x >= 9900 && x <= 10300), "unused for an hour the beat is 10 s (the slow-down this test is about): " + gaps);
-  // the cloud changes (a Complete Order on another computer); nothing has told this page yet: the slowed window takes up to 10 s
+  assert(gaps.length >= 3 && gaps.every(x => x >= 59900 && x <= 60300), "unused for an hour the beat is 60 s (the slow-down this test is about): " + gaps);
+  // the cloud changes (a Complete Order on another computer); nothing has told this page yet: the slowed window takes up to 60 s
   rev["4200000001"] = "bbbbbbbbbbbb"; const d0 = draws.length, tChange = t;
   calls = []; await advance(1500);
   assert.equal(draws.length, d0, "without a signal the slowed window has not drawn it 1.5 s on");
@@ -59,9 +59,9 @@ async function feedTests() {
   assert(kinds(calls).length <= 2 && kinds(calls).includes("full") && kinds(calls).every((k, i, a) => k === "full" || i === 0), "one probe at most, then the whole answer: " + kinds(calls));
   assert(calls.filter(c => c.ifRev).every(c => c.ifRev === "aaaaaaaaaaaa"), "a probe carries the revision held");
   // full pace again: the next beats are 2.5 s apart
-  calls = []; await advance(12000);
+  calls = []; await advance(15000);
   const at2 = calls.filter(c => c.id === "4200000001").map(c => c.at), g2 = at2.slice(1).map((x, i) => x - at2[i]);
-  assert(g2.length >= 3 && g2.every(x => x >= 2400 && x <= 2700), "back at full speed after the change (it moved): " + g2);
+  assert(g2.length >= 3 && g2.every(x => x >= 3400 && x <= 3700), "back at full speed after the change (it moved): " + g2);
   assert.equal(UI.poke("4299999999"), 0, "another order's window is not woken");
   assert.equal(UI.poke(""), 0, "nor is any, for no order");
   f.destroy(); assert.equal(UI.poke("4200000001"), 0, "a closed window is not woken");
@@ -71,7 +71,7 @@ async function feedTests() {
   await g.refresh(); await advance(0); await advance(61 * 60000);
   const realGet = win.OrderTimeline.get;
   win.OrderTimeline.get = (id, o) => new Promise(res => { release = () => res(realGet(id, o)); });
-  await advance(10000);   // (a slow poll is now on its way, held)
+  await advance(60000);   // (a slow poll is now on its way, held)
   assert(release, "a read is on its way"); rev["4200000002"] = "bbbbbbbbbbbb"; const dG = drawsG.length;
   UI.poke("4200000002"); await advance(0);
   win.OrderTimeline.get = realGet; const r1 = release; release = null; r1(); await advance(1500);
@@ -94,7 +94,7 @@ async function feedTests() {
   assert(drawsH.length > dH, "a Hold / Release / Cancel read by the placement feed reaches the slowed window within 0.8 s: " + kinds(calls));
   h.destroy(); assert.equal(subs.length, 0, "the feed stops listening when it is destroyed");
   delete win.PiecePlacement; delete win.OrderPieces;
-  console.log("  ok  the order window's feed: a slowed window (10 s) is woken by a signal within 0.8 s, back at full speed; the placement wake; nothing woken without a signal");
+  console.log("  ok  the order window's feed: a slowed window (60 s) is woken by a signal within 0.8 s, back at full speed; the placement wake; nothing woken without a signal");
 }
 
 /* ───────────── 3 · ReviewLive: apply pokes + notifies, the BroadcastChannel tells the other tabs ───────────── */

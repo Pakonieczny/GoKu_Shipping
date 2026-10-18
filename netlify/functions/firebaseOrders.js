@@ -453,6 +453,8 @@ exports.handler = async (event) => {
             if (!prior.exists) tx.set(ref, designSetId !== undefined ? { ...message, setId: designSetId } : message);
           });
         } else await messages.add(message);
+        // COST (Oct 2026): an open order window answers its poll from Order_Rev alone (_orderTimeline get); the Team's message is on its timeline
+        await require("./_orderTimeline").touchNow(db, admin.firestore.FieldValue, [orderNumber], PREFIX);
 
         return {
           statusCode: 200,

@@ -26,7 +26,7 @@
  *  compact: true draws the rail alone, sized to its host (the order view's header); a rail stamp asks the host to open
  *  it on the Timeline: opts.onOpen(event), or else a bubbling "timeline:focus" event, detail { eventId }.
  *  nowStamps()/wireNow(): the order view's "Where it is now" seal and latest stamps (see the end of this file).
- *  Live: OrderTimeline.onRecord for this order, plus a refresh while the tab is visible: every 2.5 s for the order view that
+ *  Live: OrderTimeline.onRecord for this order, plus a refresh while the tab is visible: every 3.5 s (15 s, 60 s unused) for the order view that
  *  is open (its shared feed, below; a change made on this page is read again at once and 1.5 s later), every 20 s for a
  *  mount of its own; a new stamp comes down on its lane, the NOW line glides and the rail moves on. Motion is transform and opacity only; none under
  *  prefers-reduced-motion. destroy() clears every timer and listener it set.
@@ -42,15 +42,23 @@
   // doing"): its feed reads every POLL_OPEN while the tab is visible, and again at once and POLL_AGAIN after a change made
   // on this page; reads are never closer than POLL_GAP, fail with a back-off up to POLL_FAIL, and a seal this page stamped
   // is kept for LOCAL_TTL until the server's answer has it
-  const POLL_OPEN = 2500, POLL_AGAIN = 1500, POLL_GAP = 600, POLL_FAIL = 30000, LOCAL_TTL = 180000;
+  const POLL_OPEN = 3500, POLL_AGAIN = 1500, POLL_GAP = 600, POLL_FAIL = 30000, LOCAL_TTL = 180000;
   /* Firebase cost (7 Oct 2026): a poll of an open order view read the whole timeline (dozens of documents and their bytes) every 2.5 s, 1,440 times an
      hour, answered or not. Now the poll carries the revision of the answer the view holds (OrderTimeline.get ifRev: the server compares the update times of
      the documents the answer is made of, no field read back) and gets { unchanged } when none moved, which is nearly always: the view is redrawn from a
      whole answer only when something changed, and a whole answer is read at least every FULL_EVERY (a record rewritten in place leaves no trace in the
      digest). The pace follows the person: 2.5 s while anyone touched the page or something moved in the last 10 minutes (a person watching for what another
      computer does is served as before), then 5 s, and 10 s once the window has sat unused for an hour (one left open overnight); a touch of the page, a change
-     made on it, or the tab shown again is back at 2.5 s at once. */
-  const FULL_EVERY = 60000, IDLE_STEPS = [[10 * 60000, 1], [60 * 60000, 2], [Infinity, 4]];
+     made on it, or the tab shown again is back at 2.5 s at once.
+     COST (Oct 2026): that probe still read ~36 documents a poll (a field mask is billed a read per document). The server now answers the cheap question
+     from ONE document, Order_Rev, which moves with every write to the order's timeline (an event rewritten in place included), and takes the full digest at
+     most once a minute (the net for the records nothing raises it for), or at once when this page asks `verify` (poke: its own placement feed saw the order
+     move). The revision it hands back carries when that digest was taken, so an unchanged answer's rev is kept. Pace: POLL_OPEN (3.5 s) while the person
+     uses the window (a touch, or something moved, in the last ACTIVE_MS = 2 minutes, with the window focused), POLL_QUIET (15 s) otherwise, POLL_IDLE (60 s)
+     once nothing was touched or moved for IDLE_MS = 10 minutes, when the server may let its one-read answer stand NET_IDLE (5 min) between digests; a
+     change made here still reads at once (nudge). A whole read at least every FULL_EVERY (10 min; it was a minute while the digest was all there was). */
+  const FULL_EVERY = 10 * 60000, ACTIVE_MS = 2 * 60000, IDLE_MS = 10 * 60000, POLL_QUIET = 15000, POLL_IDLE = 60000, NET_IDLE = 5 * 60000;
+  const focused = () => { try { return typeof doc.hasFocus !== "function" || doc.hasFocus(); } catch (_) { return true; } };
   let lastTouch = Date.now(), touchAt = 0; const wakers = new Set();
   const feeds = new Set();   // (the open feeds: poke(orderId) wakes the ones of that order)
   const touch = () => {
@@ -59,6 +67,8 @@
     for (const w of [...wakers]) { try { w(); } catch (_) {} }
   };
   try { for (const ev of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"]) doc.addEventListener(ev, touch, { capture: true, passive: true }); } catch (_) {}
+  // (COST: the window focused again after a recent touch is back at the full pace at once; focus alone is not a touch)
+  try { root.addEventListener("focus", () => { for (const w of [...wakers]) { try { w(); } catch (_) {} } }); } catch (_) {}
   const reduced = () => { try { return !!root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (_) { return false; } };
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const digits = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
@@ -1448,7 +1458,7 @@
      timelineGet an open, a fourth at every return to the tab, and two polls): they now take one feed (mount's
      opts.feed). A refresh while one is on its way joins it; one not forced reuses an answer younger than the poll (the
      feed is live), so a return to the tab reads nothing; Retry forces. While anyone listens it reads again every pollMs
-     (POLL_OPEN, 2.5 s: only an open order view has a feed) with the tab visible; kinds: "wait", "data", "error".
+     (POLL_OPEN, 3.5 s, slower unused: only an open order view has a feed) with the tab visible; kinds: "wait", "data", "error".
      Paul, 3 Oct 04:03 (an engraving approved took 30 s to reach the open view: its own record had to be saved first, and
      the view then waited out a 20 s poll): what the view shows now follows what is done, within 2-3 s.
        · nudge() says something changed here: read at once, and again POLL_AGAIN later for the server's own copy. A read
@@ -1467,11 +1477,13 @@
   function feed(orderId, o) {
     o = o || {};
     const id = digits(orderId), pollMs = Math.max(250, +o.pollMs || openPoll()), gap = Math.min(POLL_GAP, pollMs / 2), subs = new Set(), local = new Map();
-    const F = { orderId: id, answer: null, error: "", loading: null, at: 0, tried: 0, began: 0, fails: 0, skips: 0, dirty: false, dead: false, rev: null, fullAt: 0, moved: Date.now(), fullNext: false };
+    const F = { orderId: id, answer: null, error: "", loading: null, at: 0, tried: 0, began: 0, fails: 0, skips: 0, dirty: false, dead: false, rev: null, fullAt: 0, moved: Date.now(), fullNext: false, verifyNext: false };
     let pollT = 0, againT = 0, seq = 0, unrec = null, slow = 1;
     const fullEvery = () => { const v = +(root.OrderTimelineUI && root.OrderTimelineUI.fullEveryMs); return v >= 250 ? v : FULL_EVERY; };   // (fullEveryMs: tests only)
-    /** How many polls apart the next read is: 1 while the page is in use or something moved lately, more as it sits unused. */
-    const pace = () => { const idle = Date.now() - Math.max(lastTouch, F.moved); for (const [ms, k] of IDLE_STEPS) if (idle < ms) return k; return 1; };
+    /** How many polls apart the next read is (COST, Oct 2026): 1 while the person uses the window (touched or moved in ACTIVE_MS, focused), POLL_QUIET's worth otherwise, POLL_IDLE's after IDLE_MS. */
+    const IDLE_K = POLL_IDLE / POLL_OPEN;
+    const pace = () => { const idle = Date.now() - Math.max(lastTouch, F.moved); if (idle >= IDLE_MS) return IDLE_K; return idle < ACTIVE_MS && focused() ? 1 : POLL_QUIET / POLL_OPEN; };
+    const core = r => String(r || "").split(".").slice(0, 2).join(".");   // (the server's digest and Order_Rev, without the time the digest was taken)
     const emit = kind => { for (const fn of [...subs]) { try { fn(kind, F); } catch (err) { warn("feed", err); } } };
     const seen = () => doc.visibilityState !== "hidden";
     /** The next read in `ms` (by default pollMs after the last one began, and a longer wait after failures). */
@@ -1505,6 +1517,9 @@
       // the cheap question: only for a poll, with a revision in hand, an answer drawn, nothing of this page's own waiting for the server's copy, and a whole read not due
       const ask = r && r.probe && !F.fullNext && F.rev && F.answer && !local.size && F.began - F.fullAt < fullEvery() * Math.min(4, slow || 1) ? { ifRev: F.rev } : { wantRev: true };
       F.fullNext = false;
+      // (COST, Oct 2026: a poke asks the server's full digest, not its one-read Order_Rev answer; a window at the idle pace lets that answer stand NET_IDLE)
+      if (ask.ifRev) { if (F.verifyNext) ask.verify = true; if (slow >= IDLE_K) ask.netMs = NET_IDLE; }
+      F.verifyNext = false;
       // (deferred: a throw before the read still reaches the subscribers after "wait", never before it)
       const p = F.loading = Promise.resolve().then(() => {
         if (!id) throw new Error("no order number");
@@ -1512,10 +1527,11 @@
         return api.get(id, ask);
       }).then(j => done(my, () => {
         F.fails = 0; F.error = "";
-        if (j && j.unchanged && ask.ifRev) { F.skips = 0; F.at = F.tried; return; }   // (nothing it was made of has moved: the view keeps what it draws, nothing is redrawn)
+        // (nothing it was made of has moved: the view keeps what it draws, nothing is redrawn; the rev handed back says when the server's digest was last taken, so it is kept)
+        if (j && j.unchanged && ask.ifRev) { F.skips = 0; F.at = F.tried; if (typeof j.rev === "string" && j.rev) F.rev = j.rev; return; }
         if (partial(j) && F.answer && F.skips < 2) { F.skips++; F.rev = null; return; }   // (what is drawn keeps its seals; the next read tries again)
         const rev = !partial(j) && j && typeof j.rev === "string" ? j.rev : null;
-        if (rev !== F.rev || !F.rev) F.moved = Date.now();
+        if (core(rev) !== core(F.rev) || !F.rev) F.moved = Date.now();
         F.rev = rev; F.fullAt = F.began;
         F.skips = 0; F.answer = withLocal(j || {}); F.at = F.tried; emit("data");
       }), e => done(my, () => { F.fails++; F.error = String((e && e.message) || e || "failed"); if (!F.answer || F.fails >= 3) emit("error"); }));
@@ -1539,12 +1555,13 @@
       clearTimeout(againT); againT = setTimeout(() => { againT = 0; want(); }, POLL_AGAIN);
     };
     /** LB2 (7 Oct, Paul: every effect of Complete / QR Print / Hold / Release / Cancel shows in about 3 s on every screen, one only watched included): the page learnt from a CHEAP shared
-     *  signal (the custom records feed of Review, the placement feed's counter) that something this order's answer is made of moved. A window slowed for being unused (5 s, 10 s) asks the cheap
-     *  question NOW (a read in flight is followed by one more), and keeps the full pace from here on (F.moved). A window at the full pace has nothing to wake: its next poll is within 2.5 s.
+     *  signal (the custom records feed of Review, the placement feed's counter) that something this order's answer is made of moved. A window slowed for being unused (15 s, 60 s) asks the cheap
+     *  question NOW (a read in flight is followed by one more), and keeps the full pace from here on (F.moved). A window at the full pace has nothing to wake: its next poll is within 3.5 s.
      *  No read of its own: the signals are the ones the page already reads; this only brings forward a probe the window would have made later. */
     F.poke = () => {
       if (F.dead || !subs.size) return false;
       F.moved = Date.now();
+      F.verifyNext = true;   // (COST, Oct 2026: what moved may be a record nothing raises Order_Rev for, a pool row or a sheet: the probe takes the full digest)
       if (!seen()) { F.dirty = true; return true; }   // (a hidden tab reads nothing; shown again, it reads in full)
       if (F.loading) { F.dirty = true; return true; }
       if (slow > 1) arm(Math.max(0, F.began + gap - Date.now()));
