@@ -224,6 +224,7 @@ const assets = [
   "charm-nest-set-edit.js",
   "charm-nest-set-invariants.js",
   "charm-nest-set-repair.js",
+  "charm-nest-charm-fix.js",
   "charm-nest-sheet-name.js",
   "charm-nest-laser-act.js",
   "charm-nest-bridge.js",
