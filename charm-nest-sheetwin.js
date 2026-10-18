@@ -4799,7 +4799,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (sh.recalled) return "This sheet was brought back from the Library: rebuild it first, then its charms can be moved by hand.";
     if (mcApproved(sh) || sentToStation(sh) || (rec && (rec.processReady || rec.laserSetPending))) return "This sheet's set is approved for laser cutting: its layout can no longer change.";
     if (sh.rosePlanHash || (rec && rec.rosePlanHash)) return "This sheet already has its green cut line. A charm moved by hand would no longer match that line, so its layout stays as it is.";
-    if (!o.saving && (busy(sh) || sh._operationStarting)) return "The sheet is being nested or saved right now. Try again once it has saved.";
+    if (!o.saving && (busy(sh) || sh._operationStarting || sh._learnedStarting || sh._rosePlanning || sh._roseLoading || sh._roseAction)) return "The sheet is being nested or saved right now. Try again once it has saved.";
     if (!o.saving && sh.problem) return `The sheet has a problem to settle first: ${sh.problem}`;
     if (!o.saving && (sh.dirty || !sh.persistedDone)) return "The sheet is waiting to be written again. Try again once it has saved.";
     if (!o.saving && !o.api && W.flow) return "Another change in this window is still running. Try again once it is done.";
