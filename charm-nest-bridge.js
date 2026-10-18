@@ -8757,11 +8757,27 @@ const Engrave = window.Engrave = (() => {
     return line("Nothing in this run needs engraving.", `<button class="btn ghost sm" data-go="hist">Another run…</button>`);
   }
   const STEP_WORDS_EG = { pull: "pulling orders", claim: "claiming", pool: "pooling", plan: "planning", nest: "nesting", checkpoint: "checking the sheets", labels: "writing labels", commit: "committing" };
+  // CLEAR SEARCH (Paul, 18 Oct 2026: "Add a 'X' inside the search bar to clear the currently written search query"): the search box holds
+  // the Orders bar's own × (.ordFindX), at its right and only while it holds text; the ×, Esc in the box and the empty list's Clear search all
+  // empty it, redraw the whole list at once (not after the typing pause) and leave the focus in the box
+  function syncEgFind(v) {
+    const q = v && v.querySelector("#egQ"), x = v && v.querySelector("#egQX"); if (!q || !x) return;
+    const has = !!q.value; x.hidden = !has;
+    if (has) x.parentElement.setAttribute("data-has", "1"); else x.parentElement.removeAttribute("data-has");
+  }
+  function clearEgSearch() {
+    const i = document.getElementById("egQ");
+    EG.q = ""; EG.pin = null; clearTimeout(egTyping); egTyping = 0;
+    if (i) { i.value = ""; syncEgFind(document.getElementById("engraveView")); i.focus({ preventScroll: true }); }   // focused first: a rebuild keeps the focus of the box it replaces
+    render();
+    const n = document.getElementById("egQ"); if (n && document.activeElement !== n) n.focus({ preventScroll: true });
+  }
   /** Bring the counts and the up-next rail up to date without touching the card a person is working on. */
   function renderChrome(v, queue) {
     const jobs = CNListActivity.select(activityScope(), [...items().values()].filter(j => j.row.state !== "gone"));
     activityTools(v);
     renderWorking(v, jobs);
+    syncEgFind(v);
     const qrows = rowsIn(queue, queueUniverse()), counts = rowCountsOf(qrows);
     const n = { place: qrows.length };
     v.querySelectorAll(".egTab[data-tab]").forEach(b => {
@@ -8887,7 +8903,7 @@ const Engrave = window.Engrave = (() => {
     const q = String(EG.q || "").trim(); if (!m) { m = el("div", "libEmpty egNone"); m.setAttribute("role", "status"); host.appendChild(m); }
     const jobs = [...items().values()].filter(j => j.row && j.row.state !== "gone"), nDone = jobs.filter(j => DECIDED.includes(j.state)).length;
     m.innerHTML = q ? `<b>Nothing here matches “${esc(q)}”.</b><button class="btn ghost sm" data-eg-clear>Clear search</button>` : emptyWhy(jobs, 0, nDone);
-    const clr = m.querySelector("[data-eg-clear]"); if (clr) clr.onclick = () => { EG.q = ""; const i = document.getElementById("egQ"); if (i) i.value = ""; render(); };
+    const clr = m.querySelector("[data-eg-clear]"); if (clr) clr.onclick = () => clearEgSearch();
     m.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { const g = b.dataset.go; if (g === "hist") RunHistory.show(); else if (g === "words") { EG.tab = "words"; EG.chosen = true; render(); } else { setMode(g); if (g === "review") Review.render(); } });
   }
   /** Repaint the card in place: the picture, the numbers, the chips. The pane is only rebuilt when what it holds changes. */
@@ -9006,7 +9022,7 @@ const Engrave = window.Engrave = (() => {
     v.innerHTML = `<div class="ordBar egBar">
         <span class="controlGroup">${tabBtn("place", "Placements", qrows.length, "info")}
         <span data-eg-working hidden></span>
-        </span><span class="controlGroup egSearchGroup"><input class="ordSearch" id="egQ" placeholder="order, SKU, words…" value="${esc(EG.q || "")}" title="search every piece by order number, SKU or the engraved words"></span>
+        </span><span class="controlGroup egSearchGroup"><span class="egFind"${EG.q ? ' data-has="1"' : ""}><input class="ordSearch" id="egQ" placeholder="order, SKU, words…" value="${esc(EG.q || "")}" autocomplete="off" spellcheck="false" title="search every piece by order number, SKU or the engraved words"><button type="button" class="ordFindX" id="egQX" aria-label="Clear search" title="Clear search"${EG.q ? "" : " hidden"}>${CNListActivity.icons.x}</button></span></span>
         </div>
       <div class="egPane grow"><div class="rvList" id="egQueue"></div>
         <div class="egNext" id="egNext"></div></div>`;
@@ -9016,7 +9032,10 @@ const Engrave = window.Engrave = (() => {
     v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { const was = EG.tab; EG.tab = b.dataset.tab; EG.chosen = true; render(); const p = was !== EG.tab && MO() && document.querySelector("#engraveView .egPane:not([hidden])"); if (p) p.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: "ease-out" }); });
     // PERF (Oct 2026): one redraw once the typing pauses (150 ms), not a full rebuild of the tab at every key; the search
     // itself is kept at once, so a redraw for anything else meanwhile already shows what was typed
-    { const q = v.querySelector("#egQ"); q.oninput = () => { EG.q = q.value; EG.pin = null; clearTimeout(egTyping); egTyping = setTimeout(() => { egTyping = 0; render(); }, 150); }; if (searching) { q.focus({ preventScroll: true }); q.setSelectionRange(searching.start, searching.end); } }
+    { const q = v.querySelector("#egQ"); q.oninput = () => { EG.q = q.value; EG.pin = null; syncEgFind(v); clearTimeout(egTyping); egTyping = setTimeout(() => { egTyping = 0; render(); }, 150); };
+      q.onkeydown = e => { if (e.key === "Escape" && q.value) { e.preventDefault(); e.stopPropagation(); clearEgSearch(); } };   // (an empty box leaves Esc to whatever else listens)
+      v.querySelector("#egQX").onclick = () => clearEgSearch();
+      if (searching) { q.focus({ preventScroll: true }); q.setSelectionRange(searching.start, searching.end); } }
     {
       const q = v.querySelector("#egQueue");
       if (wantList) {

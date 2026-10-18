@@ -52,7 +52,13 @@
 .ordBar:not(#ordBar):has(.cnListTools),.libBar:has(>.cnListTools),.masterHead:has(>.cnListTools),.hBar:has(>.cnListTools){flex-shrink:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}
 .ordBar:not(#ordBar):has(.cnListTools)>*,.masterHead:has(>.cnListTools)>*,.hBar:has(>.cnListTools)>*{flex-shrink:0;white-space:nowrap}
 .egBar>.egSearchGroup{flex:0 1 220px}
-.egBar>.egSearchGroup>.ordSearch{width:100%;max-width:none;box-sizing:border-box}
+.egBar>.egSearchGroup>.egFind{position:relative;display:flex;flex:1 1 auto;align-items:center;min-width:0}
+.egBar>.egSearchGroup .ordSearch{width:100%;max-width:none;box-sizing:border-box}
+/* the Engrave box's × (Paul, 18 Oct 2026: "Add a 'X' inside the search bar"): the Orders bar's .ordFindX (below), inside the round box at its right, only while it holds text */
+.egBar .egFind[data-has]>.ordSearch{padding-right:28px}
+.egBar .egFind>.ordFindX{position:absolute;top:50%;right:3px;width:20px;height:20px;margin-top:-10px;border-radius:999px}
+.egBar .egFind>.ordFindX:focus-visible{outline-offset:0}
+@media(max-width:760px),(pointer:coarse){.egFind>.ordFindX::before{content:"";position:absolute;inset:-8px}}   /* a finger's reach, the box keeps its size */
 .hBar:has(>.cnListTools){gap:8px}
 /* ── the Orders tab's bar: ONE slim row (the pile tabs and the count at the left; search, Filters, date, sort and view at the right), two rows where the window is narrower, three on a phone ── */
 #ordBar.ordCompact{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;overflow:visible;padding:0 0 8px}
@@ -77,10 +83,10 @@
 #ordBar .ordFind .ordSearch::placeholder{color:var(--ink45)}
 #ordBar .ordFind[aria-busy=true]>.cnIc{display:none}
 #ordBar .ordFind[data-has]{color:var(--ink70);border-color:var(--goldLine);background:var(--card)}
-#ordBar .ordFindX{display:grid;flex:0 0 auto;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--ink45);cursor:pointer}
-#ordBar .ordFindX[hidden]{display:none}
-#ordBar .ordFindX:hover{background:var(--paper2);color:var(--ink)}
-#ordBar .ordFindX .cnIc{width:12px;height:12px;stroke-width:1.8}
+#ordBar .ordFindX,.egFind>.ordFindX{display:grid;flex:0 0 auto;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--ink45);cursor:pointer}
+#ordBar .ordFindX[hidden],.egFind>.ordFindX[hidden]{display:none}
+#ordBar .ordFindX:hover,.egFind>.ordFindX:hover{background:var(--paper2);color:var(--ink)}
+#ordBar .ordFindX .cnIc,.egFind>.ordFindX .cnIc{width:12px;height:12px;stroke-width:1.8}
 #ordBar .ordFilters{display:inline-flex;flex:0 0 auto;min-width:0}
 #ordBar .ordFilters[hidden]{display:none}
 .cnBadge{display:inline-grid;place-items:center;min-width:17px;height:17px;box-sizing:border-box;padding:0 5px;border-radius:999px;background:var(--ink);color:var(--paper);font:700 10px/1 var(--mono)}
