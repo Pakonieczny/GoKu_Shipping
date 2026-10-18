@@ -4033,7 +4033,7 @@ const Pool = window.Pool = (() => {
     return out;
   }
   const swapWaits = rid => { rid = String(rid || ""); try { return !!rid && pickedIn(rid) && (B.orders.rows || []).some(row => row && row.order && String(row.order.receiptId) === rid && drawingDiffers(row)); } catch (_) { return false; } };
-  function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); delete k.frontAt; return k; }   // (a copy never carries another order's place in the queue)
+  function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); delete k.frontAt; delete k.manual; return k; }   // (a copy never carries another order's place in the queue, nor a size a person gave another piece by hand: Manual Control)
   /** §6.4 · one pooled charm per copy of the line, on the material card the ORDER says. */
   /** A line's copies, made from its traced design, ready to record; null when the line is held, has no design or does
       not fit (row.state says which). A copy a cleanup took off its sheet on purpose (Cleanups.removed: the sheet's record
@@ -4696,7 +4696,20 @@ const SheetEvents = window.SheetEvents = (() => {
   }
   /** One event of one order (the sheet window's hold and release). */
   function order(e) { try { if (e && /^\d{4,}$/.test(String(e.orderId || ""))) send([Object.assign({ by: who() }, e, { orderId: String(e.orderId) })]); } catch (_) {} }
-  return { renested, merged, sizeChanged, membership, qrLabel, roseLines, undone, recalled, order, label, where, ordersOf };
+  /** Manual Control (Paul, 18 Oct 2026): charms of a 10K / 14K sheet moved, turned or resized by hand in the sheet window and saved. Each order whose
+   *  pieces changed gets one "moved" step: who (the person signed in), which sheet, how many of its pieces. ids: the charm ids that changed. */
+  function adjusted(sh, ids, by) {
+    try {
+      const w = where(sh), at = Date.now(), mine = new Set(ids || []), per = new Map();
+      for (const c of sh.charms || []) {
+        if (!mine.has(c.id)) continue; const rid = ridOf(c); if (!rid) continue;
+        const lk = c.lineKey || "", tid = String(c.orderInfo?.transactionId || ""), o = per.get(rid);
+        if (!o) per.set(rid, { pieces: 1, lineKey: lk, transactionId: tid }); else { o.pieces++; if (o.lineKey !== lk) { o.lineKey = ""; o.transactionId = ""; } }
+      }
+      send([...per].map(([rid, o]) => ev("moved", rid, o, w, { id: `${w.sheetId || sh.metal + "-" + sh.page}-manual-${at}`, at, by: by || who(), text: `${w.sheet}: ${o.pieces === 1 ? "its charm was" : o.pieces + " of its charms were"} moved by hand (Manual Control)`, data: { kind: "manual" } })));
+    } catch (e) { console.warn("[SheetEvents] adjusted", e); }
+  }
+  return { renested, merged, sizeChanged, membership, qrLabel, roseLines, undone, recalled, order, adjusted, label, where, ordersOf };
 })();
 
 /* ═══ 20b · Gate — what goes to the laser today═══════════════════════════════════════════════════════════════════
@@ -11624,8 +11637,10 @@ const RunCtl = window.RunCtl = (() => {
         const piece = CharmNestPoolPieces.cleanFields(pool).side ? pool : CharmNestPoolPieces.cleanFields(rc).side ? rc : null, base = await Pool.ensureBase(src, piece, rc.hash ? rc : pool).catch(() => null);
         if (!base) { agent({ metal: d.metal }, "warn", `${pool.orderId} · ${pool.sku}: its ${piece.side === "L" ? "left" : "right"} body is no longer in the design — that piece is not put back`); continue; }
         const charm = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); charm.name = rc.name; charm.order = pool.orderId; charm.orderDate = pool.orderDate || 0; charm.arrivedAt = pool.arrivedAt || 0; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (piece) Object.assign(charm, CharmNestPoolPieces.fieldsOf(piece));
+        // (Manual Control: a piece a person moved, turned or resized by hand keeps that, its pin and its size, from its record)
+        const man = window.CNManual && CNManual.fromRecord ? CNManual.fromRecord(rc) : null; if (man) { charm.manual = man; if (man.size) charm.pinned.size = man.size; }
         if (!pg.charms.some(c => c.poolId === rc.poolId)) pg.charms.push(charm);
-        pg.placements = pg.placements.filter(x => x.id !== charm.id).concat([{ id: charm.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer, scale: 0.975 }]);
+        pg.placements = pg.placements.filter(x => x.id !== charm.id).concat([{ id: charm.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer, scale: man && man.size ? +(0.975 * man.size).toFixed(5) : 0.975 }]);
       }
       pg.status = d.status === "complete" ? "complete" : "partial"; pg.dirty = false; pg.verification = d.verification ? Object.assign({ ok: !!d.verification.ok, geom: { ok: !!d.verification.ok, res: 6, overlapPx: 0, outsidePx: 0, overlappingPairs: [] }, render: d.verification.render || null }, d.verification) : null; pg.endedBy = d.endedBy; pg.density = d.density; pg.liveInfo = { freePt2: d.freePt2, usablePt2: d.usablePt2, placedPt2: (d.usablePt2 || 0) - (d.freePt2 || 0), pocket: d.pocket, placed: pg.placements.length, total: pg.charms.length };
       pg.persisted = Promise.resolve();
@@ -11635,7 +11650,7 @@ const RunCtl = window.RunCtl = (() => {
       // Cloud-only recovery has file links, not the editable output bytes. A working
       // sheet must be rebuilt and verified before it can acquire set membership.
       if (pg.draft || pg.placements.length !== (d.placements || []).length) {
-        for (const c of pg.charms) c.pinned = null;
+        for (const c of pg.charms) if (!c.manual) c.pinned = null;   // (a piece placed by hand, Manual Control, stays where the person put it)
         sheetDirty(pg);
         for (const j of Engrave.items().values()) if (j.copies.some(id => (d.poolIds || []).includes(id))) {
           j.state = "ready"; j.backs = []; j.row.engrave.state = "ready"; j.row.engrave.approved = false;
@@ -20750,8 +20765,10 @@ const Recall = window.Recall = (() => {
         const piece = CharmNestPoolPieces.cleanFields(pool).side ? pool : CharmNestPoolPieces.cleanFields(rc).side ? rc : null, base = await Pool.ensureBase(src, piece, rc.hash ? rc : pool).catch(() => null);
         if (!base) { agent({ metal: d.metal }, "warn", `${pool.orderId} · ${pool.sku}: its ${piece.side === "L" ? "left" : "right"} body is no longer in the design — that piece is not put back`); continue; }
         const charm = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); charm.name = rc.name; charm.order = pool.orderId; charm.orderDate = pool.orderDate || 0; charm.arrivedAt = pool.arrivedAt || 0; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (piece) Object.assign(charm, CharmNestPoolPieces.fieldsOf(piece));
+        // (Manual Control: a piece a person moved, turned or resized by hand keeps that, its pin and its size, from its record)
+        const man = window.CNManual && CNManual.fromRecord ? CNManual.fromRecord(rc) : null; if (man) { charm.manual = man; if (man.size) charm.pinned.size = man.size; }
         pg.charms.push(charm);
-        pg.placements.push({ id: charm.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer, scale: 0.975 });
+        pg.placements.push({ id: charm.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer, scale: man && man.size ? +(0.975 * man.size).toFixed(5) : 0.975 });
       }
       pg.recalled = null; pg.status = "complete"; pg.dirty = false;
       CN.computeSaturation(pg); CN.renderCard(pg);
@@ -21597,7 +21614,7 @@ const LiveNest = window.LiveNest = (() => {
     return plan;
   }
   // the page's own marks first; the sets of its run are looked at only when none says so
-  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!p.cardinalPull || !!window.Gate?.holding?.(p) || !!p.laserDoneAt || (!((p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal)))&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
+  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!p.cardinalPull || !!window.Gate?.holding?.(p) || !!p.laserDoneAt || !!p._manualHold ||   // (_manualHold: a person is moving its charms by hand in the sheet window, Manual Control: nothing arrives on it meanwhile) (!((p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal)))&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
     Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId));
   /* Gold and Silver arrivals go to the run's earliest open sheet first (the pool puts them on the same one). An order
      that misses its gaps moves on to the next sheet, and the earlier sheet stays first in line: once a newer page existed
