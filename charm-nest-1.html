@@ -595,7 +595,7 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .owVector{width:100%;aspect-ratio:1;background:#fff;border:1px solid var(--line);border-radius:11px;display:grid;place-items:center;overflow:hidden;position:relative;font:11px var(--sans);color:var(--ink45);text-align:center}
 .owSku b{font:600 12.5px var(--mono);overflow-wrap:anywhere}
 /* WRONGCHARM (Paul, 18 Oct 2026): "Wrong charm?" beside the SKU under the Vector design, its picker below it (the Review card's .sibOffer chips and the master search), and the Orders card's quiet link in the Vector design caption */
-#owWrongCharm{margin-left:auto;flex:none}#owWrongCharm[hidden],.owCharmFix[hidden]{display:none}
+.owFixBar{display:flex;min-width:0;margin-top:-4px}.owFixBar:has(>#owWrongCharm[hidden]){display:none}#owWrongCharm[hidden],.owCharmFix[hidden]{display:none}
 .owCharmFix{grid-column:1/-1;border:1px solid var(--goldLine);background:var(--goldSoft);border-radius:11px;padding:10px 12px;min-width:0}
 .cfPick .cfFind{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0}.cfPick .cfFind input{flex:1 1 160px;min-width:0}
 .comparePair figcaption .cfOpen{margin-left:6px;padding:0;border:0;background:none;font:inherit;color:var(--ink70);text-decoration:underline;cursor:pointer}.comparePair figcaption .cfOpen:hover{color:var(--ink)}
@@ -8280,7 +8280,8 @@ try {
         <div class="owPics">
           <figure><div class="owPhoto" id="owPhoto" data-zp aria-label="Etsy listing photo"><span class="ph">no image</span></div><figcaption>Etsy listing</figcaption></figure>
           <figure><div class="owVector" id="owVector" data-zp aria-label="Charm vector design"></div><div class="owSetLens" id="owSetLens" hidden></div><figcaption>Vector design</figcaption></figure>
-          <div class="owSku"><b id="owSku">SKU: —</b><button class="btn ghost xs" id="owCopy">Copy</button><button class="btn ghost xs" id="owWrongCharm" type="button" aria-expanded="false" aria-controls="owCharmFix" hidden>Wrong charm?</button></div>
+          <div class="owSku"><b id="owSku">SKU: —</b><button class="btn ghost xs" id="owCopy">Copy</button></div>
+          <div class="owFixBar"><button class="btn ghost xs" id="owWrongCharm" type="button" aria-expanded="false" aria-controls="owCharmFix" hidden>Wrong charm?</button></div>
           <!-- WRONGCHARM (Paul, 18 Oct 2026): the picker "Wrong charm?" opens: the Review card's similar charms and the master index search; the pick is the listing's saved link (Review.fixPicker) -->
           <div class="owCharmFix" id="owCharmFix" role="group" aria-label="Pick the right charm for this listing" hidden></div>
         </div>
