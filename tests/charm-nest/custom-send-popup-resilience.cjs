@@ -100,8 +100,11 @@ async function main() {
       assert.doesNotMatch(seal.querySelector('svg').textContent, /Paul/, 'signer stays in shared hover detail');
       assert.equal(f.bar().querySelector('.seal.pending'), null, 'old saved decision is never an invisible pending stamp');
       assert.equal(f.bar().querySelector('[data-cu-complete], [data-cu-print], [data-cu-reopen], [data-cu-done]'), null, 'sent designs offer no hand-completion controls');
-      f.bar().querySelector('[data-cu-open-sheet]').click(); f.bar().querySelector('[data-cu-history]').click(); f.bar().querySelector('[data-cu-view-designs]').click();
-      assert.deepEqual(f.calls.views, ['sheet','timeline']); assert.equal(f.calls.designs[0],f.item);
+      // (NOROWBTNS, Paul 18 Oct 2026: "Remove these 3 buttons from the detailed order view": no View designs, Open sheet or History on the piece's row; the Sheet and
+      //  Timeline tabs and the Review card's View designs are where they are)
+      assert.equal(f.bar().querySelector('[data-cu-view-designs], [data-cu-open-sheet], [data-cu-history]'), null, 'a sent piece\'s row has no View designs, Open sheet or History');
+      assert.deepEqual([...f.bar().querySelectorAll('.pcAct button')].map(b => b.textContent), [], 'nothing to press on it but the order\'s Hold (none here)');
+      assert.deepEqual(f.calls.views, []); assert.deepEqual(f.calls.designs, []);
       const snapshot = JSON.stringify(f.rec);
       f.w.paintPieceSum(); assert.equal(f.bar().querySelector('.seal-sheet'), seal, 'unchanged redraw keeps the historical seal node');
       assert.equal(JSON.stringify(f.rec), snapshot, 'rendering changes no saved signer, date, or history');
@@ -112,17 +115,16 @@ async function main() {
     const f = fixture();
     try {
       f.rec.stamps.unshift({how:'print',at:at-60000,by:'Seth'}); f.w.paintPieceSum();
-      // (the bar draws one small seal, the latest the card above does not show, and the Timeline through History holds the rest, since 2 Oct:
+      // (the bar draws one small seal, the latest the card above does not show, and the Timeline tab holds the rest, since 2 Oct:
       //  each seal once on the overview. Display only: every seal stays in the record, none is replaced, and each is reachable)
       assert.equal(f.bar().querySelectorAll('.seal').length,1, 'one seal in the bar');
       assert(f.bar().querySelector('.seal-sheet'), 'the latest is the sent seal');
       assert.deepEqual(f.rec.stamps.map(x => [x.how,x.by]),[['print','Seth'],['sheet','Paul']], 'previous QR history remains in the record beside the sent seal');
-      f.bar().querySelector('[data-cu-history]').click(); assert.equal(f.calls.views[f.calls.views.length - 1],'timeline','and is reachable through History');
       f.rec.stamps.push({how:'engraveApproved',at:at+60000,by:'Paul'}); f.w.paintPieceSum();
       assert.equal(f.bar().querySelectorAll('.seal').length,1, 'still one seal in the bar: the latest real history');
       assert(f.bar().querySelector('.seal-engraveApproved'), 'additional real history becomes the seal shown');
       assert.deepEqual(f.rec.stamps.map(x => x.how),['print','sheet','engraveApproved'], 'every earlier seal is still in the record, none replaced');
-      assert(f.bar().querySelector('[data-cu-history]'), 'History still holds them all');
+      assert.equal(f.bar().querySelector('[data-cu-history]'), null, 'no History button on the row (NOROWBTNS): the Timeline tab holds them all');
       cases++;
     } finally { f.close(); }
   }
@@ -130,10 +132,9 @@ async function main() {
     const f = fixture();
     try {
       f.state.files = []; f.w.paintPieceSum();
-      assert(f.bar().querySelector('[data-cu-open-sheet]')); assert(f.bar().querySelector('[data-cu-history]'));
-      assert.equal(f.bar().querySelector('[data-cu-view-designs]'),null,'unavailable source designs are not offered as a broken action');
-      f.w.W.key = 'another-order'; f.bar().querySelector('[data-cu-open-sheet]').click(); f.bar().querySelector('[data-cu-history]').click();
-      assert.deepEqual(f.calls.views,[], 'buttons from a superseded order cannot navigate the new order');
+      assert.equal(f.bar().querySelector('[data-cu-view-designs], [data-cu-open-sheet], [data-cu-history]'),null,'no row buttons, with or without its source designs (NOROWBTNS)');
+      assert(f.bar().querySelector('.seal-sheet'), 'its SENT TO SHEET seal is still on the row');
+      assert.deepEqual(f.calls.views,[], 'nothing on the row navigates');
       cases++;
     } finally { f.close(); }
   }
@@ -252,8 +253,8 @@ async function main() {
       if(legacy){assert.equal(old.spec.special,undefined,'ordinary legacy custom designs need no special/custom-order classification');assert.equal(f.w.B.pool.rows.size,0,'legacy lookup does not add pool copies');}
       f.w.paintPieceSum();
       const seal = f.bar().querySelector('.seal-sheet'); assert.equal(seal.dataset.at,String(decision.at)); assert.match(seal.getAttribute('aria-label'),/by Seth/);
-      const designs = f.bar().querySelector('[data-cu-view-designs]'); assert(designs,'cloud-only source files expose a working View designs action'); designs.click();
-      assert.equal(f.calls.designs[0].record.id,decision.id); assert(f.bar().querySelector('[data-cu-open-sheet]')); assert(f.bar().querySelector('[data-cu-history]'));
+      assert(f.w.cardOf(f.w.Review.customItemFor(old.key, old))?.files?.length, 'cloud-only source files reach the card (the Review card\'s View designs opens them)');
+      assert.equal(f.bar().querySelector('[data-cu-view-designs], [data-cu-open-sheet], [data-cu-history]'),null,'the row itself offers no View designs, Open sheet or History (NOROWBTNS)');
       cases++;
     } finally { f.close(); }
   }

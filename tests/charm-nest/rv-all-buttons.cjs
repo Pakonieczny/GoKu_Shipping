@@ -219,6 +219,42 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     const res = await page.evaluate(sel => ({ cards: document.querySelectorAll(sel).length, n: +document.querySelector('#reviewView .rvSeg [data-cseg="done"] b').textContent, listed: document.querySelectorAll('#rvList .reviewListRow').length, sentSeg: !!document.querySelector('#reviewView [data-cseg="sent"]') }), card('4178100001'));
     assert.deepEqual(res, { cards: 1, n: res.listed, listed: res.listed, sentSeg: false }, 'sent to the sheets: under Completed once, counted once: ' + JSON.stringify(res));
     assert(res.n >= doneBefore, 'the count counts the sent order: ' + JSON.stringify({ doneBefore, res }));
+    // NOROWBTNS + PCSEAL (Paul, 18 Oct 2026: "1. Remove these 3 buttons from the detailed order view. 2. Enlarge the seal size by 1.75x."): the sent piece's row in its
+    // order window has its SENT TO SHEET seal at 1.75 × the 22 px it was (38.5 px), beside its words, and nothing to press but the order's Hold; the Completed card here
+    // keeps its own View designs, Open sheet and History, and the window its Sheet and Timeline tabs. At a phone's width the row still fits.
+    // (once the timeline has answered, the "Where it is now" card draws that same seal and the row of a one-piece order draws it no more: one seal per fact, 2 Oct;
+    //  so the row's seal is measured the moment it is drawn, in the very poll that finds it)
+    const sentCard = await page.evaluate(sel => [...document.querySelectorAll(sel + ' [data-cu-designs], ' + sel + ' [data-cu-sheet], ' + sel + ' [data-cu-history]')].map(b => b.textContent.trim()), card('4178100001'));
+    for (const b of ['View designs', 'Open sheet', 'History']) assert(sentCard.includes(b), 'the Completed card keeps its ' + b + ': ' + JSON.stringify(sentCard));
+    await page.evaluate(k => OrderWin.open(k), eKey);
+    const sealAt = await (await page.waitForFunction(() => {
+      const seal = OrderWin.isOpen() && document.querySelector('#owPcSum .owPcRow .pcAct .seal-sheet'); if (!seal || !seal.closest('.sealRow').style.getPropertyValue('--seal-fit')) return null;   // (drawn, and fitted: Seal.fit)
+      const row = seal.closest('.owPcRow'), nm = row.querySelector('.nm').getBoundingClientRect(), s = seal.getBoundingClientRect();
+      return { w: seal.offsetWidth, h: seal.offsetHeight, fit: getComputedStyle(seal).width, max: seal.closest('.sealRow').dataset.sealMax, mid: Math.abs((s.top + s.bottom) / 2 - (nm.top + nm.bottom) / 2),
+        old: row.querySelectorAll('[data-cu-view-designs], [data-cu-open-sheet], [data-cu-history]').length };
+    }, null, { timeout: 15000, polling: 'raf' })).jsonValue();
+    assert(sealAt.fit === '38.5px' && sealAt.max === '38.5' && Math.abs(sealAt.w - 22 * 1.75) <= 1 && sealAt.w === sealAt.h, 'the row\'s SENT TO SHEET seal is 1.75 × 22 = 38.5 px, square: ' + JSON.stringify(sealAt));
+    assert(sealAt.mid <= 12 && sealAt.old === 0, 'on the line of the row\'s words, with no View designs, Open sheet or History beside it: ' + JSON.stringify(sealAt));
+    await page.waitForTimeout(800);
+    const pcRow = () => page.evaluate(() => {
+      const row = document.querySelector('#owPcSum .owPcRow'), r = row.getBoundingClientRect();
+      return { text: row.textContent, btns: [...row.querySelectorAll('.pcAct button, .pcAct [role=button]')].map(b => b.textContent.trim()).filter(t => t && t !== 'Hold'),
+        old: row.querySelectorAll('[data-cu-view-designs], [data-cu-open-sheet], [data-cu-history]').length,
+        seals: [...row.querySelectorAll('.seal')].map(s => { const b = s.getBoundingClientRect(); return { w: s.offsetWidth, inside: b.left >= r.left - 2 && b.right <= r.right + 2 }; }),
+        sideways: document.documentElement.scrollWidth > innerWidth + 1, tabs: ['sheet', 'timeline'].filter(v => document.querySelector(`#orderWin [data-ow-view="${v}"]`)) };
+    });
+    for (const [vw, vh] of [[1720, 950], [900, 800], [390, 844]]) {
+      await page.setViewportSize({ width: vw, height: vh }); await page.waitForTimeout(700);
+      const pr = await pcRow();
+      assert.match(pr.text, /Sent to sheet/, vw + ': the sent piece\'s row');
+      assert.equal(pr.old, 0, vw + ': no View designs, Open sheet or History on the piece\'s row');
+      assert.deepEqual(pr.btns, [], vw + ': nothing else to press on it: ' + JSON.stringify(pr.btns));
+      assert(pr.seals.every(s => Math.abs(s.w - 22 * 1.75) <= 1 && s.inside) && !pr.sideways, vw + ': any seal the row draws is 38.5 px and inside it, no sideways scroll: ' + JSON.stringify(pr));
+      assert.deepEqual(pr.tabs, ['sheet', 'timeline'], vw + ': its sheet and its history are the window\'s own tabs');
+      if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, `pc-row-sent-${vw}.png`) });
+    }
+    await page.setViewportSize({ width: 1720, height: 950 }); await page.waitForTimeout(300);
+    await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
 
     // 6 · Options (under Need Resolution, with the Unknown SKU card still open for its other order): the same column; a

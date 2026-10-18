@@ -120,6 +120,8 @@ function fitted(f,label){
       if(count>1){f.parent._width=count*20+4*(count-1);assert(fitted(f,count+' constrained small-strip seals')<=20,'a short strip still shrinks them together');}
       f.parent.remove();
     }
+    // (PCSEAL, Paul 18 Oct 2026: the order window's piece rows ask for 1.75 × 22 = 38.5 px: the strip keeps the half pixel, it is not rounded to 39)
+    {const f=fixture(1,1200,'',BAR*1.75);assert.equal(f.row.dataset.sealMax,'38.5');assert.equal(fitted(f,'a 38.5px strip'),38.5,'a fractional strip size is kept');f.parent.remove();}
     // (the order window's custom bar: a row beside words that take what is left, in a flex line, never collapses to a pixel)
     {
       const bar=d.createElement('div');bar.style.cssText='display:flex;gap:8px;padding:5px 8px 5px 10px';bar.style.width='772px';bar._width=772;

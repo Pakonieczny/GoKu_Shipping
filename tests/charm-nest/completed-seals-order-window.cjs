@@ -13,7 +13,7 @@
 //    and a record with nothing recorded shows no seal (nothing invented)
 //  - the Timeline tab draws every press once; the Sheet tab's "Completed by hand" draws the picked piece's completion seal
 //  - no seal appears twice in a surface; no seal has a tooltip or a caption; a single-piece order draws its completion once (the card)
-//  - fits at 1440, 900 and 390 (no sideways scroll, every seal inside its row, small)
+//  - fits at 1440, 900 and 390 (no sideways scroll, every seal inside its row, 38.5 px: 1.75 × the 22 px it was, PCSEAL, Paul 18 Oct 2026)
 //  - Reopen (Review tab) keeps every seal (record, timeline, row); the reopened Review piece has Release Hold where Complete Order stood (RELHOLD, 18 Oct 2026), its old seal still on its row
 //  - a mutant that drops the seals (Seal.ofPiece / Seal.pieceRow return nothing) is caught by the same check
 //   node tests/charm-nest/completed-seals-order-window.cjs   (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>, SHOTS=<dir>)
@@ -137,11 +137,11 @@ async function main() {
     };
     // the same pieces on the Timeline (the stamps drawn on its canvas, one for each press) and the Sheet tab
     const tlSeals = () => page.evaluate(() => [...document.querySelectorAll('#orderWin .tlCanvas button.tlSt svg[data-seal-model]')].map(s => { const j = JSON.parse(s.getAttribute('data-seal-model')); return `${j.action} ${j.date} ${j.time}`; }));
-    // layout: nothing leaves its row or the screen, every row seal is small, the page never scrolls sideways
+    // layout: nothing leaves its row or the screen, every row seal is 38.5 px (its box, before its turn: PCSEAL), the page never scrolls sideways
     const fitProblems = () => page.evaluate(() => {
       const out = [];
       if (document.documentElement.scrollWidth > innerWidth + 1) out.push('the page scrolls sideways');
-      const inside = (n, box, what) => { const r = n.getBoundingClientRect(), b = box.getBoundingClientRect(); if (r.width && (r.left < b.left - 5 || r.right > b.right + 5)) out.push(`${what} leaves its box (${Math.round(r.left)}-${Math.round(r.right)} in ${Math.round(b.left)}-${Math.round(b.right)})`); if (r.width > 30) out.push(`${what} is ${Math.round(r.width)}px wide (it is a small seal)`); };
+      const inside = (n, box, what) => { const r = n.getBoundingClientRect(), b = box.getBoundingClientRect(); if (r.width && (r.left < b.left - 5 || r.right > b.right + 5)) out.push(`${what} leaves its box (${Math.round(r.left)}-${Math.round(r.right)} in ${Math.round(b.left)}-${Math.round(b.right)})`); if (n.classList.contains('seal') && n.offsetWidth && Math.abs(n.offsetWidth - 22 * 1.75) > 1) out.push(`${what} is ${n.offsetWidth}px wide (a piece row's seal is 1.75 × 22 = 38.5 px, PCSEAL)`); };
       for (const r of document.querySelectorAll('#owPcSum .owPcRow')) for (const s of r.querySelectorAll('.seal')) inside(s, r, 'a seal of the row ' + r.dataset.piece.slice(-2));
       for (const s of document.querySelectorAll('#orderWin .seal')) { const r = s.getBoundingClientRect(); if (r.width && (r.right > innerWidth + 1 || r.left < -1)) out.push('a seal is off the screen'); }
       return out;

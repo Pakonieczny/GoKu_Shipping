@@ -67,7 +67,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     check(Object.values(counts).every(n => n <= 1), 'each seal is drawn once on the Overview (outside the progress strip): ' + JSON.stringify(counts));
     const barSeals = await page.evaluate(() => [...document.querySelectorAll('#owPcSum .seal')].map(s => ({ kind: [...s.classList].find(c => /^seal-/.test(c)), at: +s.dataset.at, w: s.offsetWidth })));
     check(barSeals.length <= 1, `the bar shows at most one seal (${barSeals.length}): ${JSON.stringify(barSeals)}`);
-    check(barSeals.length === 1 && barSeals[0].kind === 'seal-print' && barSeals[0].at === TP && barSeals[0].w >= 18 && barSeals[0].w <= 30, 'it is the QR label seal, the latest one the Now card above does not show, small (22px; 18 is the legible least)');
+    check(barSeals.length === 1 && barSeals[0].kind === 'seal-print' && barSeals[0].at === TP && Math.abs(barSeals[0].w - 22 * 1.75) <= 1, 'it is the QR label seal, the latest one the Now card above does not show, 38.5px (1.75 × the 22px it was: PCSEAL, Paul 18 Oct 2026)');
     const nowSeal = await page.evaluate(() => JSON.parse(document.querySelector('#owNowCard .tlNowSeal svg[data-seal-model]').getAttribute('data-seal-model')));
     check(nowSeal.action === 'ORDER COMPLETE' && +nowSeal.at === TB, 'the Now card keeps its Order complete seal');
     const more = await page.evaluate(() => { const m = document.querySelector('#owPcSum [data-cu-more]'); return m ? { text: m.textContent.trim(), tag: m.tagName } : null; });
@@ -117,7 +117,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     await page.waitForFunction(() => document.querySelector('#owPcSum [data-cu-more]'), null, { timeout: 10000 });
     await page.waitForTimeout(500);
     const open = await page.evaluate(() => ({ seals: [...document.querySelectorAll('#owPcSum .seal')].map(s => ({ kind: [...s.classList].find(c => /^seal-/.test(c)), w: s.offsetWidth, onBtn: !!s.closest('.sealRow').previousElementSibling?.matches('[data-seal-btn]') })), more: document.querySelector('#owPcSum [data-cu-more]')?.textContent.trim() || '', btns: [...document.querySelectorAll('#owPcSum button')].map(b => b.textContent.trim()) }));
-    check(open.seals.length === 1 && open.seals[0].w >= 18 && open.seals[0].w <= 30 && open.seals[0].onBtn && open.more === '+1', 'reopened: one small seal on its button and +1: ' + JSON.stringify(open));
+    check(open.seals.length === 1 && Math.abs(open.seals[0].w - 22 * 1.75) <= 1 && open.seals[0].onBtn && open.more === '+1', 'reopened: one seal (38.5px) on its button and +1: ' + JSON.stringify(open));
     if (shots) await page.screenshot({ path: path.join(shots, 'overview-reopened.png'), clip: { x: 0, y: 90, width: 1040, height: 220 } });
     check(errors.length === 0, 'no page errors: ' + errors.join(' | '));
   } finally { await browser.close(); srv.close(); }
