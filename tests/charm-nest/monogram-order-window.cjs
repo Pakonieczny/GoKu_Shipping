@@ -152,12 +152,14 @@ Object.assign(R.EXPECT_JOBS, { mono: 0, mixed: 1, odd: 0, review: 0, trouble: 0,
     check((await page.evaluate(() => window.__builds.slice())).length === b1, 'typing a letter back is instant: nothing is built again');
     // MONOSEND (Paul, 18 Oct 2026): Approve also puts the monogram on the next sheet of the buyer's metal, and a monogram on a sheet is final (no Change). This order is about the window through approvals and
     // changes, so its metal is staged as one the order does not give: the approval is kept off the sheets (approved, the designs window asked for the metal, Change kept). The designs window is held shut here
-    // (counted): the mixed order below goes all the way to the sheets with one press; tests/charm-nest/monogram-ui.cjs has the window itself.
-    await page.evaluate(k => { const r = B.orders.byKey.get(k); r.line.metalKey = 'moonlight'; Orders.interpretAll(); window.__openCalls = 0; if (!window.__openHeld) { window.__openHeld = CustomSheet.open; CustomSheet.open = () => { window.__openCalls++; return Promise.resolve(); }; } }, kMono);
+    // (counted): the mixed order below goes all the way to the sheets with one press; tests/charm-nest/monogram-ui.cjs has the window itself. (The line is not read again for a changed field of
+    // the same line object, so its reading is cleared too: spec.material, what the order says.)
+    await page.evaluate(k => { const r = B.orders.byKey.get(k); r.line.metalKey = 'moonlight'; r.spec.material = null; Orders.interpretAll(); window.__openCalls = 0; if (!window.__openHeld) { window.__openHeld = CustomSheet.open; CustomSheet.open = () => { window.__openCalls++; return Promise.resolve(); }; } }, kMono);
     await page.click(mw('[data-mw-approve]'));
     check(!!await until(isState('approved'), 'the approval'), 'Approve: the card says approved');
     let es = await entries();
     check(es.length === 1 && es[0].files.join() === 'Monogram APV.ai', 'the design is on the order\'s custom designs, once: ' + JSON.stringify(es.map(e => e.files)));
+    await until(`(() => { const e = document.querySelector('#owEng .mw'); return !!e && !!e.dataset.queue && e.dataset.queue !== 'sending'; })()`, 'the send to settle', 40000);     // (the press reads the design it made before it sends: a moment)
     { const q = await page.evaluate(k => { const e = document.querySelector('#owEng .mw'); return { queue: e.dataset.queue, sent: !!CustomSheet.decisionOf(B.orders.byKey.get(k)), asked: window.__openCalls, change: !e.querySelector('[data-mw-change]').hidden }; }, kMono);
       check(q.queue === 'metal' && !q.sent && q.asked === 1 && q.change, 'with no metal on the order it is approved but not sent: the designs window is asked for once, Change stays: ' + JSON.stringify(q)); }
     check(await page.evaluate(() => { const d = document.querySelector('#owEng [data-testid="ow-mono-dot"]'); return d && d.dataset.s === 'approved'; }), 'the dot is the green "approved" one');
