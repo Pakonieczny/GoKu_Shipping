@@ -8,7 +8,9 @@
 //      and a filter or a note's Show naming them lets go, so the card is shown in all of Open
 //   3  Resolved lists an order released to the nesting queue (Release Hold: its line's frontAt, as the run's lines keep it),
 //      an order whose QR label was printed, and a custom order sent to the sheets, each once; Open lists none of them
-//   4  a custom order still waiting for its label stays in Open, under Custom Orders; the waiting order with a question too
+//   4  a custom order still waiting for its label stays in Open, under Custom Orders; the waiting order with a question too;
+//      once its piece is on its way to the laser (placed in the nesting queue) it is under Resolved
+//   6  the Need Resolution chip (Options + Unknown SKU) still filters Open to its questions, and lets go when pressed again
 //   5  a card leaving Open when its order is released flies to the Resolved switch, with "moved to Resolved"
 //   node tests/charm-nest/review-resolved.cjs [playwright-core dir]   (PW_DIR=... works too)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
@@ -107,6 +109,14 @@ const PRINT_REC = { key: KEY(PRINTED, 41892000051), receiptId: PRINTED, transact
     ok(open.rids.includes(CHAIN) && open.chips.some(c => c.k === 'customOrder'), 'the custom order waiting for its label stays in Open, under Custom Orders', JSON.stringify(open.chips));
     ok(![REL, PRINTED, SENT].some(r => open.rids.includes(r)), 'Open lists none of the released, printed or sent orders', JSON.stringify(open.rids));
     ok(open.counts[0] === open.rids.length, 'the Open count is what Open lists', JSON.stringify([open.counts, open.rids.length]));
+    // the Need Resolution chip (Options + Unknown SKU, Paul 18 Oct 2026) still filters: the question only, not the changed or marked cards
+    const nr = open.chips.find(c => c.k === 'needResolution');
+    ok(nr && /^Need Resolution\d+$/.test(nr.t), 'Open has the Need Resolution chip, with its count', JSON.stringify(open.chips));
+    await page.click('#reviewView .ordBar .egTab[data-k="needResolution"]');
+    const nrOn = await bar();
+    ok(nrOn.filter === 'needResolution' && nrOn.rids.includes(ASK) && ![CHG, MARK, REL, PRINTED, SENT].some(r => nrOn.rids.includes(r)) && nrOn.rids.length === +nr.t.replace(/\D/g, ''), 'pressed, Need Resolution lists its questions only', JSON.stringify([nrOn.filter, nrOn.rids]));
+    await page.click('#reviewView .ordBar .egTab[data-k="needResolution"]');
+    ok((await bar()).filter === null, 'pressed again, it lets go');
     // a filter left on a chipless kind (a saved workspace, the Orders tab's "In Review" Show) lets go: the card is shown in all of Open
     await page.evaluate(() => { Review.view().filter = 'orderChanged'; Review.render(); });
     const f1 = await bar();
@@ -130,6 +140,14 @@ const PRINT_REC = { key: KEY(PRINTED, 41892000051), receiptId: PRINTED, transact
     ok(relCard && /^Released to the nesting queue/.test(relCard.why) && relCard.label === 'Released', 'the released order\'s card says it was released to the nesting queue', JSON.stringify(relCard));
     const sentQ = await page.evaluate(rid => document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"] .queueLabel`)?.textContent, SENT);
     ok(sentQ === 'Resolved · sent to sheet', 'the sent custom order\'s card says Resolved · sent to sheet', sentQ);
+    // a custom order once decided (its piece on its way to the laser: placed in the nesting queue) waits on nobody: Resolved, not Open
+    const laid = await page.evaluate(k => {
+      const r = B.orders.byKey.get(k), was = r.poolIds, flags = r.spec && { own: r.spec.ownDesign, none: r.spec.noDesign };
+      const ids = () => [...document.querySelectorAll('#rvList .reviewListRow')].map(n => n.dataset.rid), seg = s => { Review.view().cseg = s; Review.view().filter = null; Review.render(); return ids(); };
+      r.poolIds = ['pool-rvresolved']; const out = { done: seg('done'), open: seg('open'), flags };
+      r.poolIds = was; out.back = seg('open'); seg('done'); return out;
+    }, KEY(CHAIN, 41892000071));
+    ok(laid.done.includes(CHAIN) && !laid.open.includes(CHAIN) && laid.back.includes(CHAIN), 'a custom order on its way to the laser is under Resolved (and back in Open while it still waits)', JSON.stringify(laid));
     // the empty list's words
     await page.evaluate(() => { Review.view().q = '0000000'; Review.render({ still: true }); });
     const emptyQ = await page.evaluate(() => document.querySelector('#rvList .libEmpty')?.textContent || '');

@@ -15657,10 +15657,10 @@ const Review = window.Review = (() => {
     // a card that moves to a kind with no chip goes to its switch, and is said to be under it
     const chipOr = (k, seg) => ORDER.includes(k) ? chipSel(k) : seg === "done" ? DONE_SW : OPEN_SW, underOf = (k, seg) => ORDER.includes(k) ? wordOf(k) : seg === "done" ? "Resolved" : "Open";
     // Custom orders that ask nothing (RVRESOLVED, Paul 18 Oct 2026: "all Custom orders must all be placed under the Resolved
-    // tab"): one still waits on a person while a line of it is to be made by hand or from its own designs and is not on its
-    // way to the laser (its QR label, Complete Order or Send to Sheet), or while its send is under way: it stays in Open.
-    // One whose lines are all on their way to the laser, or are simply cut with the next run, waits on nobody: Resolved.
-    const customWaits = it => rowsOf(it).some(r => CustomSheet.sending?.(r) || (!(r.poolIds || []).length && r.spec && (r.spec.ownDesign || r.spec.noDesign)));
+    // tab"): one still waits on a person while a line of it is not on its way to the laser (no piece of it placed in the
+    // nesting queue: it waits for its QR label, Complete Order or Send to Sheet, made by hand or from its own designs), or
+    // while its send is under way: it stays in Open. One whose lines are all placed in the queue waits on nobody: Resolved.
+    const customWaits = it => rowsOf(it).some(r => CustomSheet.sending?.(r) || !(r.poolIds || []).length);
     const clWait = cl.open.filter(customWaits), clLaid = cl.open.filter(it => !customWaits(it));
     // Every tab uses the latest actual change, including a completion or reopen.
     // Resolved, for every filter, is one list: custom orders completed by hand (print again or reopen), orders sent to a

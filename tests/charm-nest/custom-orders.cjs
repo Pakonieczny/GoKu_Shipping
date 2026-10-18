@@ -211,7 +211,7 @@ async function browserChecks() {
     const seg = await page.evaluate(() => ({ first: document.querySelector('#reviewView .ordBar').firstElementChild.className, b: [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim()), all: !!document.querySelector('#reviewView .egTab[data-k=""]'), n: Review.count() }));
     assert.equal(seg.first, 'rvSeg', 'the switch comes first in the bar'); assert.equal(seg.all, false, 'no Everything chip');
     const openAll = +seg.b[0].replace('Open', '');
-    assert.deepEqual(seg.b, ['Open' + openAll, 'Resolved0']);   // (the segment reads Resolved, RVRESOLVED: Paul, 18 Oct 2026) assert(openAll >= 6, 'Open counts everything that waits: ' + JSON.stringify(seg));
+    assert.deepEqual(seg.b, ['Open' + openAll, 'Resolved0']); assert(openAll >= 6, 'Open counts everything that waits: ' + JSON.stringify(seg));   // (the segment reads Resolved, RVRESOLVED: Paul, 18 Oct 2026)
     const barH = await page.evaluate(() => document.querySelector('#reviewView .ordBar').getBoundingClientRect().height);
     assert(barH < 40, 'the bar stays one line: ' + barH);
     // a click on the card opens the order window, which asks nothing (Paul, 29 Sep 01:01: no decision box in Review or
