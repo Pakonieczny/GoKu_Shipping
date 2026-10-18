@@ -1964,7 +1964,6 @@ const Orders = window.Orders = (() => {
     return mode === "both" ? ["info", "Front + back"] : mode === "front" ? ["info", "Front only"] : ["", ""];
   }
   const OV = { pile: null, metal: null, form: null, eng: null, q: "", view: null, sort: "activity", desc: false, limit:48 };   // what the tab is showing right now
-  const FORM_LABEL = { necklace: "Necklaces", earrings: "Earrings", "earring-single": "Single earrings", huggie: "Huggies", charm: "Charms only", bracelet: "Bracelets", anklet: "Anklets", keychain: "Keychains" };
   const viewMode = () => OV.view || S.settings.orderView || "list";
   /** The lines the filters leave, in ship-by order. */
   function visibleRows() {
@@ -2357,7 +2356,7 @@ const Orders = window.Orders = (() => {
   let pullClick = null;   // the pull the Pull orders button started, while it runs
   /* ═══ FILTERBAR (Paul, 17 Oct 2026: "This much is much too crowded. Consolidate this entire menu into the smallest and most efficient footprint ... real-time reactions with spinner/loader when waiting.") ═══
      The bar was ONE row of eleven loose controls (three selects, the search, five date chips, a direction select, a sort select, Cards | List). It is now the pile tabs and the count at the left, and at the right:
-     the search (with its ×), ONE Filters button (a count badge; Metal, Kind and Engraved are chip groups in its panel, with Clear and the live count of what it leaves), the date menu and the sort control
+     the search (with its ×), ONE Filters button (a count badge; Metal and Engraved are chip groups in its panel (Kind went, Paul 18 Oct 2026), with Clear and the live count of what it leaves), the date menu and the sort control
      (charm-nest-activity.js: key + direction), and the Cards | List switch. What narrows the list is also a gold chip under the bar, one press to remove, only while something does.
      Every change reacts at once: the control repaints, the count is the new count, the control that was touched shows a small spinner and the list dims (CNListActivity.react / working) until the list has been redrawn
      (the Cancelled pile: until its read has landed). The state is still OV (+ the activity range): the same fields, the same ids (ordQ, ordPull, ordChips, ordBody, ordSort, ordViewSeg, data-pile, data-view). */
@@ -2475,13 +2474,12 @@ const Orders = window.Orders = (() => {
     Sandbox.mountPanel(v);
     watch(v);
   }
-  /** The chips under the bar for what narrows the list (not the search: it has its own ×): material, kind, engraved, and the date range; none, and the row is not there. */
+  /** The chips under the bar for what narrows the list (not the search: it has its own ×): material, engraved, and the date range; none, and the row is not there. */
   function renderActive(v) {
     const box = v.querySelector("#ordActive"); if (!box) return;
     const cx = OV.pile === "cancelled", I = ordIcons(), items = [];
     if (!cx) {
       if (OV.metal) items.push(["metal", OV.metal === "none" ? "No material" : labelOf(OV.metal), "Material"]);
-      if (OV.form) items.push(["form", FORM_LABEL[OV.form] || (OV.form === "none" ? "Kind not set" : OV.form), "Kind"]);
       if (OV.eng) items.push(["eng", OV.eng === "yes" ? "Engraved" : "Not engraved", "Engraving"]);
     }
     const range = CNListActivity.state("orders").range;
@@ -2492,13 +2490,13 @@ const Orders = window.Orders = (() => {
     box.innerHTML = items.map(([k, label, what]) => `<button type="button" class="ordAx" data-ax="${k}" aria-label="Remove the filter: ${esc(what)}, ${esc(label)}" title="Remove: ${esc(label)}">${esc(label)}${I.x}</button>`).join("")
       + (items.length + (OV.q.trim() ? 1 : 0) > 1 ? `<button type="button" class="ordAxAll" data-ax-all>Clear all</button>` : "");
   }
-  /** The Filters button and its panel (Metal, Kind, Engraved as chip groups), from the lines the tab holds. A group with a single answer is not drawn (it could only do nothing), as before.
+  /** The Filters button and its panel (Metal, Engraved as chip groups), from the lines the tab holds. A group with a single answer is not drawn (it could only do nothing), as before.
    *  The panel is rebuilt only when its options or their counts change, so a chip that has the focus keeps it. */
   function renderFilters(v, d) {
     const wrap = v.querySelector("#ordFilters"), btn = v.querySelector("#ordFiltersBtn"), pop = v.querySelector("#ordFiltersPop"), badge = btn.querySelector(".cnBadge"), cx = OV.pile === "cancelled";
     const groups = [];
     if (d.metals.length > 1 || OV.metal) groups.push(["metal", "Metal", d.metals.map(m => [m, m === "none" ? "No material" : labelOf(m), d.byMetal[m] || 0])]);
-    if (d.forms.length > 1 || OV.form) groups.push(["form", "Kind", d.forms.map(f => [f, FORM_LABEL[f] || (f === "none" ? "Kind not set" : f), d.byForm[f] || 0])]);
+    // (no Kind group: Paul, 18 Oct 2026, "Remove this option from the filter UI"; Metal and the rest stay)
     if ((d.engN && d.engN < d.allN) || OV.eng) groups.push(["eng", "Engraved", [["yes", "Engraved", d.engN], ["no", "Not engraved", d.allN - d.engN]]]);
     wrap.hidden = !groups.length;
     const sig = JSON.stringify(groups);
@@ -2542,11 +2540,9 @@ const Orders = window.Orders = (() => {
     const byMetal = {}; for (const r of all) { const m = r.material || "none"; byMetal[m] = (byMetal[m] || 0) + 1; }
     const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${label === "Open Orders" ? '<span>Open<span class="ordLong"> Orders</span></span>' : esc(label)}<b class="${cls}">${n}</b></button>`;
     const metals = ["gold", "silver", "rose", "gold10k", "gold14k", "none"].filter(m => byMetal[m] || OV.metal === m);
-    /* Material, kind of jewellery and "does it get engraved" are the three ways a bench actually narrows a day's work.
+    /* Material and "does it get engraved" are the ways a bench narrows a day's work (kind of jewellery went, Paul 18 Oct 2026).
        Each one appears only when the lines on screen give it more than one answer — a filter with one option is a
        control that can only ever do nothing. */
-    const byForm = {}; for (const r of all) { const f = (r.spec && r.spec.form) || "none"; byForm[f] = (byForm[f] || 0) + 1; }
-    const forms = Object.keys(byForm).filter(f => f !== "none" || OV.form === "none").sort((a2, b2) => byForm[b2] - byForm[a2]);
     const engN = all.filter(r => r.engrave && r.engrave.needed).length;
     const cxN = window.Cancelled ? Cancelled.count() : 0;
     // (Cancelled is always there, Paul 28 Sep A5: every cancelled order, Etsy's and a person's, whatever the pull holds)
@@ -2562,8 +2558,8 @@ const Orders = window.Orders = (() => {
       pills.innerHTML = pillsHtml; pills._html = pillsHtml;
       if (had.size && window.Motion && !Motion.reduced() && onScreen()) for (const b of pills.querySelectorAll("[data-pile]")) if (!had.has(b.dataset.pile)) b.animate([{ opacity: 0, transform: "scale(.6)" }, { opacity: 1, transform: "none" }], { duration: 560, easing: "cubic-bezier(.3,1.3,.5,1)" });
     }
-    // Material, kind and engraved are the Filters panel's chip groups (and the gold chips under the bar while one is in force)
-    renderFilters(v, { metals, byMetal, forms, byForm, engN, allN: all.length });
+    // Material and engraved are the Filters panel's chip groups (and the gold chips under the bar while one is in force)
+    renderFilters(v, { metals, byMetal, engN, allN: all.length });
     renderActive(v);
     // another pile slides in softly from the side it lies on (pills left to right), so a switch is seen as one; the tab that was pressed shows the busy state until the list is drawn
     v.querySelectorAll("[data-pile]").forEach(b => b.onclick = () => {

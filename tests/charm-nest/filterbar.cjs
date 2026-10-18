@@ -2,7 +2,7 @@
 // tastefully looking so it's a pleasure to use easy to click easy to understand and real-time reactions with spinner/loader when waiting."
 // The Orders tab's bar: the REAL page over the repo's fake site, with 48 seeded orders of several metals, kinds and engraving (no Etsy, nothing live). What it proves:
 //   1  the bar is one row at a wide window, never scrolls sideways at 1500 / 1024 / 760 / 400 / 320 px, and holds no <select> (the three selects, the date chips and both sort selects are gone)
-//   2  Filters: one button with a count badge; its panel holds Metal, Kind and Engraved as chip groups with every answer the old selects offered (and their counts); Esc closes it and gives the focus back; Clear
+//   2  Filters: one button with a count badge; its panel holds Metal and Engraved as chip groups (no Kind: Paul, 18 Oct 2026) with every answer the old selects offered (and their counts); Esc closes it and gives the focus back; Clear
 //   3  a chip narrows the list at once: the live count ("12 of 48 orders"), the gold chip under the bar (one press removes it), the badge; Clear all
 //   4  the date menu (all five ranges, the one in force named on its button) and the sort control (all five keys, one arrow reverses the order, keys and direction really reorder the list)
 //   5  Cards | List (and S.settings.orderView), search with its ×, Esc in the box, Enter
@@ -49,9 +49,9 @@ for (let i = 0; i < 40; i++) FIXTURES['x' + i] = { rid: String(4195100000 + i), 
     check(await page.locator(fb).getAttribute('aria-expanded') === 'true', 'a press opens it (aria-expanded)');
     const inPanel = await page.evaluate(() => { const p = document.getElementById('ordFiltersPop'); return { focus: p.contains(document.activeElement), groups: [...p.querySelectorAll('.ordFg h4')].map(h => h.textContent), metals: [...p.querySelectorAll('.ordChip[data-f="metal"]')].map(c => c.dataset.v + ':' + (c.querySelector('small') || {}).textContent), forms: [...p.querySelectorAll('.ordChip[data-f="form"]')].map(c => c.dataset.v + ':' + (c.querySelector('small') || {}).textContent), eng: [...p.querySelectorAll('.ordChip[data-f="eng"]')].map(c => c.dataset.v + ':' + (c.querySelector('small') || {}).textContent), done: p.querySelector('[data-done]').textContent, clearOff: p.querySelector('[data-clear]').disabled, inside: (r => r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight)(p.getBoundingClientRect()) }; });
     check(inPanel.focus, 'the focus goes into the panel');
-    check(inPanel.groups.join() === 'Metal,Kind,Engraved', 'the panel has Metal, Kind and Engraved: ' + inPanel.groups);
+    check(inPanel.groups.join() === 'Metal,Engraved', 'the panel has Metal and Engraved, no Kind: ' + inPanel.groups);
     check(['gold', 'silver', 'rose', 'gold10k', 'gold14k'].every(m => inPanel.metals.some(x => x.startsWith(m + ':'))) && inPanel.metals[0].startsWith(':'), 'every metal the old select offered, with its count, and Any first: ' + inPanel.metals);
-    check(['necklace', 'earrings', 'huggie', 'bracelet', 'charm', 'keychain'].every(f => inPanel.forms.some(x => x.startsWith(f + ':'))), 'every kind: ' + inPanel.forms);
+    check(inPanel.forms.length === 0, 'no Kind chips (Necklaces, Charms only, Huggies…): ' + inPanel.forms);
     const lines = await page.evaluate(() => Orders.rows().filter(r => r.state !== 'gone').length);
     check(inPanel.eng.length === 3 && inPanel.eng[1].startsWith('yes:') && inPanel.eng[2].startsWith('no:') && +inPanel.eng[1].split(':')[1] + +inPanel.eng[2].split(':')[1] === lines, 'Engraved / Not engraved split the tab\'s lines (' + lines + '), as the old select did: ' + inPanel.eng);
     check(inPanel.clearOff && /^Show \d+ orders$/.test(inPanel.done) && inPanel.inside, 'Clear is off while nothing narrows; the button says what it shows (' + inPanel.done + '); the panel is inside the window');
@@ -72,13 +72,15 @@ for (let i = 0; i < 40; i++) FIXTURES['x' + i] = { rid: String(4195100000 + i), 
     const settled = await page.evaluate(() => ({ busy: document.getElementById('ordBody').hasAttribute('aria-busy'), spin: document.querySelectorAll('#ordBar .spin').length, bar: document.getElementById('ordBar').hasAttribute('data-busy'), mats: [...new Set(Orders.view && Orders.walkRows().map(r => r.material))], n: new Set(Orders.walkRows().map(r => r.order.receiptId)).size, done: document.querySelector('#ordFiltersPop [data-done]').textContent }));
     check(!settled.busy && settled.spin === 0 && !settled.bar, 'then the busy state ends: no aria-busy, no spinner, no data-busy');
     check(settled.mats.join() === 'silver' && settled.done === 'Show ' + settled.n + ' orders', 'and the list is only Silver (' + settled.n + ' orders); the panel button says "' + settled.done + '"');
-    await page.click(pop + ' .ordChip[data-f="form"][data-v="necklace"]'); await page.click(pop + ' .ordChip[data-f="eng"][data-v="yes"]'); await sleep(600);
-    const three = await page.evaluate(() => ({ badge: document.querySelector('#ordFiltersBtn .cnBadge').textContent, chips: [...document.querySelectorAll('#ordActive .ordAx')].map(x => x.dataset.ax), all: !!document.querySelector('#ordActive [data-ax-all]'), on: document.getElementById('ordFiltersBtn').hasAttribute('data-on'), vis: Orders.walkRows().every(r => r.material === 'silver' && r.spec.form === 'necklace' && r.engrave && r.engrave.needed) }));
-    check(three.badge === '3' && three.chips.join() === 'metal,form,eng' && three.all && three.on && three.vis, 'three filters: badge 3, three chips and Clear all, the Filters button gold, and every line shown passes all three: ' + JSON.stringify(three));
+    await page.click(pop + ' .ordChip[data-f="eng"][data-v="yes"]'); await sleep(600);
+    const three = await page.evaluate(() => ({ badge: document.querySelector('#ordFiltersBtn .cnBadge').textContent, chips: [...document.querySelectorAll('#ordActive .ordAx')].map(x => x.dataset.ax), all: !!document.querySelector('#ordActive [data-ax-all]'), on: document.getElementById('ordFiltersBtn').hasAttribute('data-on'), vis: Orders.walkRows().every(r => r.material === 'silver' && r.engrave && r.engrave.needed) }));
+    check(three.badge === '2' && three.chips.join() === 'metal,eng' && three.all && three.on && three.vis, 'two filters: badge 2, two chips and Clear all, the Filters button gold, and every line shown passes both: ' + JSON.stringify(three));
     await page.keyboard.press('Escape'); await sleep(100);
     await page.click('#ordActive [data-ax="eng"]'); await sleep(500);
-    const afterX = await page.evaluate(() => ({ chips: [...document.querySelectorAll('#ordActive .ordAx')].map(x => x.dataset.ax), eng: Orders.view().eng, badge: document.querySelector('#ordFiltersBtn .cnBadge').textContent }));
-    check(afterX.chips.join() === 'metal,form' && afterX.eng === null && afterX.badge === '2', 'one press on a chip lets go of that filter only: ' + JSON.stringify(afterX));
+    const afterX = await page.evaluate(() => ({ chips: [...document.querySelectorAll('#ordActive .ordAx')].map(x => x.dataset.ax), eng: Orders.view().eng, badge: document.querySelector('#ordFiltersBtn .cnBadge').textContent, all: !!document.querySelector('#ordActive [data-ax-all]') }));
+    check(afterX.chips.join() === 'metal' && afterX.eng === null && afterX.badge === '1' && !afterX.all, 'one press on a chip lets go of that filter only (one chip left, so no Clear all): ' + JSON.stringify(afterX));
+    // (Clear all is there only for two or more: Engraved goes back on, then Clear all lets go of both)
+    await page.click(fb); await page.click(pop + ' .ordChip[data-f="eng"][data-v="yes"]'); await sleep(500); await page.keyboard.press('Escape'); await sleep(100);
     await page.click('#ordActive [data-ax-all]'); await sleep(500);
     const cleared = await page.evaluate(() => ({ hidden: document.getElementById('ordActive').hidden, v: Orders.view(), count: document.getElementById('ordCount').hasAttribute('data-on'), badge: document.querySelector('#ordFiltersBtn .cnBadge').hidden, range: CNListActivity.state('orders').range }));
     check(cleared.hidden && !cleared.v.metal && !cleared.v.form && !cleared.v.eng && !cleared.count && cleared.badge && cleared.range === 'all', 'Clear all: no chip row, no badge, nothing narrowed');
