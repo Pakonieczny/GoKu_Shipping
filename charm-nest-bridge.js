@@ -12242,7 +12242,7 @@ const CustomPrint = window.CustomPrint = (() => {
       if (done.length && it.onDone) { try { it.onDone(who, "print"); } catch (_) {} }   // a Review card's question: answered, by who
       if (done.length && cancelled) printedAnyway(cancelled, who, "print", done.length);
       settle(); say(key, null); unlay(); pressSoon(); if (done.length) tlFresh();   // (the open order window reads its timeline now, as after Complete Order)
-      agent({ bridge: true }, putErr ? "warn" : "DS", `${targets[0].receiptId}: sorting-station QR label printed by ${who}${putErr ? ` — not marked completed (${putErr.message})` : cut.size ? ` — ${cut.size} piece(s) went on a sheet meanwhile, not marked` : " · Review → Completed"}`);
+      agent({ bridge: true }, putErr ? "warn" : "DS", `${targets[0].receiptId}: sorting-station QR label printed by ${who}${putErr ? ` — not marked completed (${putErr.message})` : cut.size ? ` — ${cut.size} piece(s) went on a sheet meanwhile, not marked` : " · Review → Resolved"}`);
       if (putErr) toast(`The QR label was printed but ${done.length ? "not every piece was" : "the order was not"} marked completed: ${putErr.message} — press Print again to retry`, "bad", 9000);
       else if (cut.size) toast(`${targets[0].receiptId}: ${cut.size === targets.length ? "its piece" : cut.size + " of its pieces"} went on a sheet while the label printed — cut on the laser, not marked completed`, "bad", 9000);
       else if (it.done) toast(`${targets[0].receiptId} · QR label printed again`, "ok", 3000);
@@ -12297,7 +12297,7 @@ const CustomPrint = window.CustomPrint = (() => {
       if (done.length && it.onDone) { try { it.onDone(who, "button"); } catch (_) {} }
       if (done.length && cancelled) printedAnyway(cancelled, who, "complete", done.length);
       settle(); say(key, null); pressSoon(); if (done.length) tlFresh();
-      agent({ bridge: true }, putErr ? "warn" : "DS", `${rid}: custom order completed by ${who} (no label printed)${putErr ? ` — not every piece was saved (${putErr.message})` : " · Review → Completed"}`);
+      agent({ bridge: true }, putErr ? "warn" : "DS", `${rid}: custom order completed by ${who} (no label printed)${putErr ? ` — not every piece was saved (${putErr.message})` : " · Review → Resolved"}`);
       if (putErr) toast(`${rid}: ${done.length ? "not every piece was" : "the order was not"} completed: ${putErr.message} — press Complete Order to try again`, "bad", 9000);
       else if (cut) toast(`${rid}: ${cut} of its pieces went on a sheet meanwhile — cut on the laser, not completed`, "bad", 8000);
     }).catch(e => { humanAct("error", { orderId: String(rows[0].order.receiptId || ""), detail: "Complete Order failed" }); failed(key, e.message); acting.delete(key); say(key, null); toast("Complete Order: " + e.message, "bad", 7000); }).finally(() => { release(); acting.delete(key); drop(mine); });
@@ -12314,7 +12314,7 @@ const CustomPrint = window.CustomPrint = (() => {
     offerUndo(done, rows.filter(r => saved[r.key]), who);
     const rid = rows[0].order.receiptId, inWin = OrderWin.isOpen();
     const what = how === "button" ? `completed by ${who} with no label printed` : `QR label printed by ${who}`;
-    const note = inWin ? null : { text: `Order ${rid} moved to Completed · ${what}`, ms: UNDO_MS, actions: [{ label: "Undo", title: "take the completion back (a printed label is not undone)", fn: () => undoKeys(done) }, { label: "Show", title: "open Completed at this order", fn: () => Review.showCard(mk, "done") }] };
+    const note = inWin ? null : { text: `Order ${rid} moved to Resolved · ${what}`, ms: UNDO_MS, actions: [{ label: "Undo", title: "take the completion back (a printed label is not undone)", fn: () => undoKeys(done) }, { label: "Show", title: "open Resolved at this order", fn: () => Review.showCard(mk, "done") }] };   // (the segment reads Resolved, RVRESOLVED: Paul, 18 Oct 2026)
     // a card of another Review tab acts for the order it shows (Paul, 28 Sep 23:55): it leaves under its own name, or,
     // kept open by other orders that ask the same, stays where it is while Completed answers
     if (it.stays) { if (note) Motion.arrive(DONE_SW, { note }); return; }
@@ -12348,7 +12348,7 @@ const CustomPrint = window.CustomPrint = (() => {
     if (ev.loud) fresh.set(mk, +st.at || Date.now());
     if (ev.kind !== "complete" || !ev.loud || !window.Motion) { pressSoon(); return; }
     const what = how === "button" ? `completed by ${who} with no label printed` : `QR label printed by ${who}`;
-    const note = { text: `Order ${rid} moved to Completed · ${what}`, ms: 9000, actions: [{ label: "Show", title: "open Completed at this order", fn: () => Review.showCard(mk, "done") }] };
+    const note = { text: `Order ${rid} moved to Resolved · ${what}`, ms: 9000, actions: [{ label: "Show", title: "open Resolved at this order", fn: () => Review.showCard(mk, "done") }] };
     // a card kept open by other orders that ask the same stays where it is while Completed answers
     if (it && it.stays) { Motion.arrive(DONE_SW, { note }); pressSoon(); return; }
     // (a person typing keeps every key: the stamp holds the page's presses for a second, so it is not brought down on them)
@@ -12374,7 +12374,7 @@ const CustomPrint = window.CustomPrint = (() => {
   /** Undo from the note under Completed: the lines it completed, by their keys. */
   function undoKeys(keys) {
     const u = keys.map(k => undos.get(k)).find(Boolean);
-    if (!u) { toast("Too late to undo here: open Completed and press Reopen on the order", "", 5000); return; }
+    if (!u) { toast("Too late to undo here: open Resolved and press Reopen on the order", "", 5000); return; }
     clearTimeout(u.timer); for (const k of u.keys) if (undos.get(k) === u) undos.delete(k);
     comesBack(u.rows);
     takeBack("cdone:" + Review.cardKey(u.rows[0]), u.rows, employeeName() || u.who, "undo", pressedIn(null));
@@ -14487,11 +14487,11 @@ const Review = window.Review = (() => {
     if (gone && !/^(eng|held):/.test(String(key))) {
       settled.unshift({ key, row:gone.row || gone.rows?.[0] || null, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, pieces: groupPieces((gone.rows || [gone.row]).filter(Boolean)), orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
       const d0 = settled[0], rid = d0.orders[0] || "", who = d0.orders.length > 1 ? `${d0.orders.length} orders` : rid ? "Order " + rid : "The decision";
-      // held: the order is under Orders › On hold (its decision is kept under Completed); answered: under Completed
+      // held: the order is under Orders › On hold (its decision is kept under Resolved); answered: under Resolved
       const held = (gone.rows || [gone.row]).filter(Boolean).every(r2 => r2.hold);
       if (window.Motion) Motion.expect(mkeyOf(gone), held
         ? { to: ORDERS_TAB, note: { text: `${who} ${d0.orders.length > 1 ? "are" : "is"} on hold under Orders · release ${d0.orders.length > 1 ? "them" : "it"} there`, actions: [{ label: "Show", fn: () => showHeld() }] } }
-        : { to: DONE_SW, note: { text: `${who} moved to Completed · ${KIND_WORDS[gone.kind] || "answered"}`, actions: [{ label: "Show", fn: () => showCard("settled:" + d0.key + ":" + d0.t, "done") }] } });
+        : { to: DONE_SW, note: { text: `${who} moved to Resolved · ${KIND_WORDS[gone.kind] || "answered"}`, actions: [{ label: "Show", fn: () => showCard("settled:" + d0.key + ":" + d0.t, "done") }] } });
     }
     if (settled.length > 200) settled.length = 200;
     redraw();
@@ -14590,7 +14590,7 @@ const Review = window.Review = (() => {
     const v = document.getElementById("reviewView");
     if (v && v.classList.contains("hidden") && typeof setMode === "function") setMode("review");
     // (RV.want: the list is drawn down to this card, however old; raised to 400 cards, an older one was never drawn)
-    RV.cseg = seg === "done" || seg === "sent" ? "done" : "open"; RV.filter = kind && RV.cseg === "open" ? kind : null; RV.want = mk;
+    RV.cseg = seg === "done" || seg === "sent" ? "done" : "open"; RV.filter = kind && RV.cseg === "open" && !NO_CHIP.has(kind) ? kind : null; RV.want = mk;   // (a kind with no chip, RVRESOLVED: the card is shown in all of Open)
     render();
     const n = [...document.querySelectorAll("#rvList .reviewListRow")].find(x => x.dataset.mkey === mk);
     if (n) { n.scrollIntoView({ behavior: "smooth", block: "center" }); found(n); }
@@ -15267,7 +15267,14 @@ const Review = window.Review = (() => {
   }
   /** The face a Review card is about, in a word: "Front" for a front job, "Back" for a back job of a line that also has a front, "" for every other line (their cards say nothing new). */
   const faceWordOf = j => { const F = window.CharmNestEngraveFaces; if (!F || !j) return ""; if (F.isFront(j)) return "Front"; try { return Engrave.jobsOf(j.row).some(x => F.isFront(x)) ? "Back" : ""; } catch (_) { return ""; } };
-  const KIND_WORDS = { customOrder: "Custom Orders", needsMaterial: "Options · metal", needsMapping: "Options", unmatchedSku: "Unknown SKU", blockedSku: "Blocked SKU", missingSize: "Size", oversize: "Too big", fontMissing: "Font", engraveWords: "Words", notRepresentable: "Characters", flipFailed: "Flip", placement: "Placement", orderChanged: "Changed", heldOrder: "Held", reviewMark: "Marked" };
+  const KIND_WORDS = { customOrder: "Custom Orders", needsMaterial: "Options · metal", needsMapping: "Options", unmatchedSku: "Unknown SKU", blockedSku: "Blocked SKU", missingSize: "Size", oversize: "Too big", fontMissing: "Font", engraveWords: "Words", notRepresentable: "Characters", flipFailed: "Flip", placement: "Placement", orderChanged: "Changed", heldOrder: "Held", reviewMark: "Marked", released: "Released" };
+  /* RVRESOLVED (Paul, 18 Oct 2026: "remove both the Changed and Marked chips and their function from the UI, they are not needed").
+     The two kinds keep their words above (a card still says what it is, its records and timeline lines read them back:
+     kindOfWords), but neither has a chip in the bar, so neither can be a filter: an order Etsy changed after the pull
+     (orderChanged, "Accept the new order") or one a person sent to Review (reviewMark, Mark OK) still needs a person, so it
+     stays in Open as a plain card, listed with everything else; a filter left on one of them (a saved workspace, a note's
+     Show, the Orders tab's "In Review") lets go of it, and a card of one of them that moves goes to its switch, not a chip. */
+  const NO_CHIP = new Set(["orderChanged", "reviewMark"]);
   // the one line under a Custom Orders card's facts: what its first question asks
   const CUSTOM_ASK = {
     needsMaterial: "Pick the material to cut it on the laser — or, made by hand, print its QR label to complete it.",
@@ -15281,11 +15288,18 @@ const Review = window.Review = (() => {
   // completed tab that is global for the main Review Tab"). Completed holds everything finished or answered, whichever
   // way: orders completed by hand, orders sent to a sheet (Send to Sheet: their original decision and live sheet/history
   // links stay on the card) and every decision answered, in one list with one count.
+  // RVRESOLVED (Paul, 18 Oct 2026): the second segment reads "Resolved", everywhere a person reads it (its label, title and
+  // aria, the notes and the flights that land on it, the empty list), and "All orders that get Release Hold, Print QR and
+  // all Custom orders must all be placed under the Resolved tab": besides what it held, it lists every order released to
+  // the nesting queue (Release Hold, the hold lifted anywhere: the line's frontAt, kept in the run's lines, releasedCards)
+  // and every custom order once nothing waits on a person (sent, completed, or already on its way to the laser); a custom
+  // order still waiting for its decision, its designs or its label stays in Open. The internal key stays "done"
+  // (data-cseg, RV.cseg, a saved workspace's reviewView.cseg, DONE_SW): only the words changed.
   const RV = { filter: null, limit:40, open:null, cseg:"open", q:"" };
   // The switch has no Decided segment now, but a workspace saved before (reviewView.cseg), a note's Show or an older
-  // caller may still name it ("sent"): it is Completed, so no state lands on a segment that is not drawn (showCard, render
+  // caller may still name it ("sent"): it is Resolved, so no state lands on a segment that is not drawn (showCard, render
   // and the workspace restore each say so).
-  // where things go (Paul, 27 Sep 20:09-20:24): the Open and Completed switches, the Orders tab
+  // where things go (Paul, 27 Sep 20:09-20:24): the Open and Resolved switches, the Orders tab
   const DONE_SW = '#reviewView .rvSeg [data-cseg="done"]', OPEN_SW = '#reviewView .rvSeg [data-cseg="open"]', ORDERS_TAB = '#modeSeg [data-mode="orders"]', NEST_TAB = '#modeSeg [data-mode="nest"]';
   const chipSel = k => `#reviewView .ordBar .egTab[data-k="${k}"]`;
   // the card last acted on (its buttons, or its question in the order window): a card that leaves just after is seen
@@ -15424,6 +15438,41 @@ const Review = window.Review = (() => {
     done.sort((a, b) => doneTime(b.record) - doneTime(a.record));
     return { open, done, sent, recent, engraving };   // (engraving: a monogram line that asks nothing, the Engraving tab's: its card exists for the monogram's Approve but Review does not list it, MONOROUTE)
   }
+  /* RVRESOLVED · the orders released to the nesting queue, for Resolved (Paul, 18 Oct 2026: "All orders that get Release Hold,
+     Print QR and all Custom orders must all be placed under the Resolved tab"). Read from what the run's lines keep, whichever
+     button released them (Release Hold on a Review card, Release to nesting queue, Orders › On hold, the sheet window), so a
+     reload and the button's own words change nothing: a line whose hold was lifted, or that was sent to the front of the
+     queue, carries frontAt (OrderHold.release, repool, liftOrder; saved with the run's lines, lineRecord), and one still being
+     released carries `releasing` ({ at, by }) until its pieces are placed. One card for each order (a settled record:
+     settledRow draws it, with the custom card's buttons while a line of it is open), dated by its latest release. Not one: a
+     line held again, still asking a question, listed in Open (skip), gone or skipped, a special line (its Custom Orders card
+     is listed), or one completed by hand or sent (listed already); nor an order whose release a card under Resolved already
+     says (a Send to Review resolved by it, a change accepted: `answered`, within two minutes of it). Nothing is written. */
+  const relCache = new Map();
+  function releasedCards(skip, answered) {
+    const by = new Map();
+    for (const r of Orders.rows()) {
+      if (!r || !r.order || r.hold || ["gone", "skipped"].includes(r.state) || (r.problems || []).length || skip.has(r.key)) continue;
+      if ((r.spec && (r.spec.special || r.spec.customDone)) || CustomSheet.decisionOf(r)) continue;
+      const at = Math.max(+r.frontAt || 0, +(r.releasing && r.releasing.at) || 0); if (!(at > 0)) continue;
+      const rid = String(r.order.receiptId); if (!by.has(rid)) by.set(rid, []); by.get(rid).push(r);
+    }
+    const said = new Map(); for (const x of answered || []) for (const rid of x.settled.orders || []) said.set(String(rid), Math.max(said.get(String(rid)) || 0, +x.settled.t || 0));
+    const out = [];
+    for (const [rid, rows] of by) {
+      const at = Math.max(...rows.map(r => Math.max(+r.frontAt || 0, +(r.releasing && r.releasing.at) || 0)));
+      if (said.has(rid) && said.get(rid) >= at - 120000) continue;
+      const going = rows.some(r => r.releasing), who = ((rows.find(r => r.releasing && r.releasing.by) || {}).releasing || {}).by || "";
+      const now = String(Orders.statePill(rows[0])[1] || "").replace(/^\d\/\d\s.*$/, "");
+      const why = (going ? "Being released to the nesting queue" : "Released to the nesting queue") + (now ? " · " + now : "");
+      const sig = [at, who, why, rows.map(r => r.key).join()].join("|");
+      let d = relCache.get(rid);
+      if (!d || d.sig !== sig || d.row !== rows[0]) { d = { sig, key: "rel:" + rid, row: rows[0], rows, kind: "released", why, lines: rows.length, pieces: groupPieces(rows), orders: [rid], by: who, t: at }; relCache.set(rid, d); }
+      out.push(d);
+    }
+    for (const rid of [...relCache.keys()]) if (!by.has(rid)) relCache.delete(rid);
+    return out;
+  }
   /** What a completed card says of the send it also had: " · sent to Sheet by whom · when". */
   const sentNote = rec => rec ? ` · sent to Sheet${rec.by ? " by " + rec.by : ""}${rec.at ? " · " + whenOf(rec.at) : ""}` : "";
   /** A completed card's record with the sheet seals of its send added: every seal of an order stays on its card. */
@@ -15470,7 +15519,7 @@ const Review = window.Review = (() => {
     const aiChip=row&&!it.done&&!it.decided&&(cu||it.kind==='unmatchedSku')?CustomRead.chip(row):'',conf=cu&&!it.done&&!it.decided&&row?CustomRead.bandOf(row):'';
     const node=el('div','doneRow workRow reviewListRow'+(cu?' cuRow':'')+(ax?' rvCu':'')+(it.info?(it.done?' cuDone':' cuInfo'):'')+(conf?' conf-'+conf:''));node.dataset.row=row?.key || '';node.dataset.rid=String(row?.order?.receiptId || rec?.receiptId || '');node.dataset.mkey=mkeyOf(it);
     const orders=new Set(group.map(r=>r.order.receiptId));
-    const queue=it.decided?'Completed · sent to sheet':cu?(it.done?(row&&!row.spec?.special?'Completed by hand':'Custom order · completed'):it.info?'Custom order':'Review required'):'Review required';
+    const queue=it.decided?'Resolved · sent to sheet':cu?(it.done?(row&&!row.spec?.special?'Completed by hand':'Custom order · completed'):it.info?'Custom order':'Review required'):'Review required';
     // no card asks its question anywhere (Paul: no "Review & resolve", 27 Sep 19:45 and 29 Sep 00:38; the decision box
     // gone from the order window, 28 Sep 16:45, and from the Review tab and every window, 29 Sep 01:01): a card is dealt
     // with by its buttons (Print QR label, Complete Order, Send to Sheet, its designs), and a click on it opens its order
@@ -15550,7 +15599,7 @@ const Review = window.Review = (() => {
       node.onclick=e=>{if(e.detail>1||e.target.closest('button,a,input,select,textarea,label,.comparePair,.cuDesigns'))return;openIt();};
       node.onkeydown=e=>{if(e.target===node&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openIt();}};}
   }
-  /** A decision answered, under Completed: who answered it and when (kept with the workspace, the newest 200). */
+  /** A decision answered, under Completed: who answered it and when (kept with the workspace, the newest 200; the segment reads Resolved now, and an order released to the nesting queue is drawn here too: releasedCards). */
   const settledRows = new WeakMap();
   function settledRow(d) {
     // its line still in the pull: the custom card's buttons for it while it is open, and a click opens its order
@@ -15576,8 +15625,9 @@ const Review = window.Review = (() => {
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
     try { CustomSheet.prune(); } catch (_) {}
     const active=v.contains(document.activeElement)?document.activeElement:null;
-    // the old Decided chip, and the Decided segment, are Completed now
+    // the old Decided chip, and the Decided segment, are Resolved now; a filter on a kind that has no chip lets go (RVRESOLVED)
     if (RV.filter === "done" || RV.filter === "sent") { RV.filter = null; RV.cseg = "done"; }
+    if (RV.filter && NO_CHIP.has(RV.filter)) RV.filter = null;
     RV.cseg = RV.cseg === "done" || RV.cseg === "sent" ? "done" : "open";
     // Options and Unknown SKU are one chip, Need Resolution (Paul, 18 Oct 2026: "Combine these 2 tabs into a new tab called
     // 'Need Resolution'"): a chip may hold several kinds (CHIPS: chip → kinds), its count theirs together, and pressed it
@@ -15602,34 +15652,48 @@ const Review = window.Review = (() => {
     }).filter(Boolean);
     const decided = new Set(); for (const it of all) if (it.kind === "customOrder") for (const r of rowsOf(it)) decided.add(r.key);
     const cl = customLists(decided);
-    const ORDER = ["customOrder", "needResolution", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "heldOrder", "reviewMark"];
+    // (no Changed and no Marked chip, RVRESOLVED, Paul 18 Oct 2026: their cards are in Open with the rest, NO_CHIP; a released order's card has none either)
+    const ORDER = ["customOrder", "needResolution", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "heldOrder"];
+    // a card that moves to a kind with no chip goes to its switch, and is said to be under it
+    const chipOr = (k, seg) => ORDER.includes(k) ? chipSel(k) : seg === "done" ? DONE_SW : OPEN_SW, underOf = (k, seg) => ORDER.includes(k) ? wordOf(k) : seg === "done" ? "Resolved" : "Open";
+    // Custom orders that ask nothing (RVRESOLVED, Paul 18 Oct 2026: "all Custom orders must all be placed under the Resolved
+    // tab"): one still waits on a person while a line of it is to be made by hand or from its own designs and is not on its
+    // way to the laser (its QR label, Complete Order or Send to Sheet), or while its send is under way: it stays in Open.
+    // One whose lines are all on their way to the laser, or are simply cut with the next run, waits on nobody: Resolved.
+    const customWaits = it => rowsOf(it).some(r => CustomSheet.sending?.(r) || (!(r.poolIds || []).length && r.spec && (r.spec.ownDesign || r.spec.noDesign)));
+    const clWait = cl.open.filter(customWaits), clLaid = cl.open.filter(it => !customWaits(it));
     // Every tab uses the latest actual change, including a completion or reopen.
-    // Completed, for every filter, is one list: custom orders completed by hand (print again or reopen), orders sent to a
-    // sheet (their decision, seal, sheet and history) and every decision answered, newest first; an order in both lists is
-    // one card (customLists). A custom order answered but not yet finished is still under Open, so its answer waits.
+    // Resolved, for every filter, is one list: custom orders completed by hand (print again or reopen), orders sent to a
+    // sheet (their decision, seal, sheet and history), custom orders that wait on nobody (clLaid), every order released to
+    // the nesting queue (releasedCards) and every decision answered, newest first; an order in both lists is one card
+    // (customLists). A custom order answered but not yet finished is still under Open, so its answer waits.
     const openCustom = new Set(all.filter(it => it.kind === "customOrder").map(it => it.key.slice(4)).concat(cl.open.concat(cl.done,cl.sent).map(it => it.key.slice(6))));
-    const doneAt = it => it.settled ? it.settled.t || 0 : (it.record && Math.max(+it.record.lastPrintedAt || 0, +it.record.completedAt || 0, +it.record.printedAt || 0, +it.record.at || 0)) || 0;
+    const doneAt = it => it.settled ? it.settled.t || 0 : (it.record && Math.max(+it.record.lastPrintedAt || 0, +it.record.completedAt || 0, +it.record.printedAt || 0, +it.record.at || 0)) || (it.record ? 0 : CNListActivity.at(it)) || 0;   // (a custom card that waits on nobody has no record: its latest activity, clLaid)
     // (the records of older sends kept in the workspace, flagged or by their words, stay stored and are still not listed: sentToSheet)
-    const finished = cl.done.concat(cl.sent.filter(it => !it.foldedInto), settled.filter(d => !sentToSheet(d) && !(d.kind === "customOrder" && openCustom.has(String(d.key).slice(4)))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d })), (window.CharmNestReviewMark ? CharmNestReviewMark.doneSettled(Orders.rows()) : []).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }))).sort((a, b) => doneAt(b) - doneAt(a));
+    const answeredCards = settled.filter(d => !sentToSheet(d) && !(d.kind === "customOrder" && openCustom.has(String(d.key).slice(4)))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d })).concat((window.CharmNestReviewMark ? CharmNestReviewMark.doneSettled(Orders.rows()) : []).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d })));
+    // (a line still listed in Open is not a released card: it waits on something else)
+    const inOpen = new Set(all.concat(clWait).flatMap(it => rowsOf(it).map(r => r.key)));
+    const releasedNow = releasedCards(inOpen, answeredCards).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }));
+    const finished = cl.done.concat(cl.sent.filter(it => !it.foldedInto), clLaid, answeredCards, releasedNow).sort((a, b) => doneAt(b) - doneAt(a));
     const alive=new Set(all.concat(cl.open, cl.done, cl.sent).map(it=>it.key));for(const key of reviewRows.keys())if(!alive.has(key))reviewRows.delete(key);
     // the kinds present are the filter: one chip each, so a long mixed list becomes the one kind being worked through
     const byKind = new Map(); for (const it of all) byKind.set(chipIt(it), (byKind.get(chipIt(it)) || 0) + 1);
-    const customAsk = byKind.get("customOrder") || 0, customN = customAsk + cl.open.length;
+    const customAsk = byKind.get("customOrder") || 0, customN = customAsk + clWait.length;
     if (customN) byKind.set("customOrder", customN); else byKind.delete("customOrder");
     const doneKind = new Map(); for (const it of finished) doneKind.set(chipIt(it), (doneKind.get(chipIt(it)) || 0) + 1);
     const kinds = doneMode ? doneKind : byKind;
-    // a filter emptied under Open goes back to Everything; under Completed it is only not shown, so Open keeps it
+    // a filter emptied under Open goes back to Everything; under Resolved it is only not shown, so Open keeps it
     if (!doneMode && RV.filter && !byKind.has(RV.filter)) RV.filter = null;
     const f = RV.filter && kinds.has(RV.filter) ? RV.filter : null;
     // what asks nothing comes after what does, in Everything as under Custom Orders; one just completed there stays in
     // place while its card offers Undo (not counted as open)
-    const customOpen = all.filter(it => it.kind === "customOrder").concat(cl.open);
+    const customOpen = all.filter(it => it.kind === "customOrder").concat(clWait);
     // A card keeps its place in Open through a Complete and a Reopen (Paul, 29 Sep 02:05: "go back in the same place where it came
-    // from"; a hard rule). Completed lists by the latest change, a completion and a reopen among them, but Open orders a card by
+    // from"; a hard rule). Resolved lists by the latest change, a completion and a reopen among them, but Open orders a card by
     // what it had when it left, until something else happens to it more than a few seconds after the reopen.
     const place = RV.place || (RV.place = new Map()), placeAt = new Map(), nowT = Date.now();
     for (const it of finished) { if (it.settled) continue; const p = place.get(mkeyOf(it)); if (p) p.away = true; }
-    for (const it of all.concat(cl.open)) {
+    for (const it of all.concat(clWait)) {
       const k = mkeyOf(it), a = CNListActivity.at(it); let p = place.get(k);
       if (!p) place.set(k, p = { at: a });
       else if (p.away) { p.away = false; p.hold = { since: nowT }; }
@@ -15637,7 +15701,7 @@ const Review = window.Review = (() => {
       placeAt.set(k, p.at);
     }
     let list = doneMode ? (f ? finished.filter(it => chipIt(it) === f) : finished)
-      : f === "customOrder" ? customOpen : f ? all.filter(it => chipIt(it) === f) : all.concat(cl.open);
+      : f === "customOrder" ? customOpen : f ? all.filter(it => chipIt(it) === f) : all.concat(clWait);
     const orderQ=O.orderQuery(RV.q);
     if(orderQ)list=list.filter(it=>[it.rid,...(it.settled?.orders || []),...(it.settled ? [it.settled.row,...(it.settled.rows || [])] : rowsOf(it)).filter(Boolean).map(r=>r.order?.receiptId)].some(id=>O.orderMatches(id,orderQ)));
     list=CNListActivity.select(scope,list);
@@ -15650,14 +15714,14 @@ const Review = window.Review = (() => {
     if (RV.back && RV.back.until < Date.now()) RV.back = null;
     if (RV.back && !doneMode) { const ks = new Set(RV.back.keys); back = list.find(it => rowsOf(it).some(r => ks.has(r.key))) || null; if (back) { RV.back = null; const i = list.indexOf(back); if (i >= RV.limit) RV.limit = Math.ceil((i + 1) / 40) * 40; } }
     const chip = (id, label, n, cls, title) => `<button class="egTab${(f || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
-    // Open or Completed first, then the filters: the switch holds for every chip, and pressing it shows all it holds
-    // (one Completed count: the cards listed under it, an order in both kinds counted once)
-    const openN = all.length + cl.open.length;
-    const seg = `<span class="rvSeg${f ? "" : " all"}" role="group" aria-label="Open or completed"><button type="button" data-cseg="open" class="${!doneMode ? "on" : ""}" aria-pressed="${!doneMode}" title="everything that still waits">Open<b>${openN}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything finished: orders completed by hand (print again or reopen), orders sent to the sheets, and every decision answered">Completed<b>${finished.length}</b></button></span>`;
-    const chips = ORDER.filter(k => kinds.has(k)).map(k => doneMode ? chip(k, wordOf(k), kinds.get(k), "ok", `${wordOf(k)} completed`)
-      : k === "customOrder" ? chip(k, "Custom Orders", customN, customAsk ? "warn" : "info", `${customAsk} need a decision · ${cl.open.length} listed with nothing to decide`) : chip(k, wordOf(k), kinds.get(k))).join("");
+    // Open or Resolved first, then the filters: the switch holds for every chip, and pressing it shows all it holds
+    // (one Resolved count: the cards listed under it, an order in both kinds counted once; "Resolved", RVRESOLVED: Paul, 18 Oct 2026)
+    const openN = all.length + clWait.length;
+    const seg = `<span class="rvSeg${f ? "" : " all"}" role="group" aria-label="Open or resolved"><button type="button" data-cseg="open" class="${!doneMode ? "on" : ""}" aria-pressed="${!doneMode}" title="everything that still waits on a person">Open<b>${openN}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything resolved: orders released to the nesting queue (Release Hold), orders whose QR label was printed or that were completed by hand (print again or reopen), custom orders sent to the sheets or on their way to the laser, and every decision answered">Resolved<b>${finished.length}</b></button></span>`;
+    const chips = ORDER.filter(k => kinds.has(k)).map(k => doneMode ? chip(k, wordOf(k), kinds.get(k), "ok", `${wordOf(k)} resolved`)
+      : k === "customOrder" ? chip(k, "Custom Orders", customN, customAsk ? "warn" : "info", `${customAsk} need a decision · ${clWait.length} wait for their label, their designs or Complete Order`) : chip(k, wordOf(k), kinds.get(k))).join("");
     if(!v.querySelector('#rvList'))v.innerHTML='<div class="ordBar egBar"></div><div class="egPane grow scroll"><div class="rvList" id="rvList"></div></div>';
-    // no Everything chip (it always read the same as Open): Open or Completed, pressed, is everything in it
+    // no Everything chip (it always read the same as Open): Open or Resolved, pressed, is everything in it
     const keptFind=v.querySelector('#rvOrderFind')?.closest('label');
     v.querySelector('.ordBar').innerHTML = `${seg}${chips}<span class="spacer"></span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="rvOrderFind" type="search" inputmode="numeric" placeholder="Order #" aria-label="Search order numbers in Review" aria-controls="rvList" autocomplete="off" spellcheck="false"></label>${CustomRead.count() ? `<span class="aiReading" title="Claude reads pieces with no design of their own to tell custom orders from regular listings"><span class="spin"></span>Claude reading ${CustomRead.count()}</span>` : ""}`;
     CNListActivity.mount(v.querySelector(".ordBar"),scope,()=>render({still:true}));
@@ -15672,16 +15736,18 @@ const Review = window.Review = (() => {
     const what = f ? wordOf(f) : "";
     // one keyed update (Motion.reconcile): what leaves is seen going where it went, what stays glides into the gap
     const where = new Map();
-    for (const it of all.concat(cl.open)) where.set(mkeyOf(it), { seg: "open", kind: chipIt(it), it });
+    for (const it of all.concat(clWait)) where.set(mkeyOf(it), { seg: "open", kind: chipIt(it), it });
     for (const it of finished) where.set(it.settled ? it.settled.key : mkeyOf(it), { seg: "done", kind: chipIt(it), it });
-    const ridWhere = new Map(); for (const it of all.concat(cl.open)) for (const r of rowsOf(it)) if (!ridWhere.has(String(r.order.receiptId))) ridWhere.set(String(r.order.receiptId), { kind: chipIt(it), mk: mkeyOf(it) });
+    const ridWhere = new Map(); for (const it of all.concat(clWait)) for (const r of rowsOf(it)) if (!ridWhere.has(String(r.order.receiptId))) ridWhere.set(String(r.order.receiptId), { kind: chipIt(it), mk: mkeyOf(it) });
+    // an order released to the nesting queue (Release Hold, whichever button: RVRESOLVED) is under Resolved by its card there
+    const relWhere = new Map(); for (const it of releasedNow) for (const rid of it.settled.orders) relWhere.set(String(rid), it.key);
     const leave = (mk, node) => {
       const w = where.get(mk), rid = node && node.dataset.rid, mine = acted.mk === mk && Date.now() - acted.t < 10000;
       const who = rid ? "Order " + rid : "The decision";
       // (Hold's film plays in the Nest tab and walks the person to On hold itself: this list's flight and its "is on hold under Orders" note were drawn at the top left, over the film)
       if (rid && window.HoldUI && HoldUI.busy && HoldUI.busy(rid)) return null;
-      if (w && w.seg !== RV.cseg) return { to: w.seg === "done" ? DONE_SW : OPEN_SW, note: mine ? { text: `${who} moved to ${w.seg === "done" ? "Completed" : "Open"}`, actions: [{ label: "Show", fn: () => showCard(w.it.settled ? "settled:" + w.it.settled.key + ":" + w.it.settled.t : mk, w.seg) }] } : null };
-      if (w && f && w.kind !== f) return { to: chipSel(w.kind), note: mine ? { text: `${who} is now under ${wordOf(w.kind)}`, actions: [{ label: "Show", fn: () => showCard(mk, w.seg, w.kind) }] } : null };
+      if (w && w.seg !== RV.cseg) return { to: w.seg === "done" ? DONE_SW : OPEN_SW, note: mine ? { text: `${who} moved to ${w.seg === "done" ? "Resolved" : "Open"}`, actions: [{ label: "Show", fn: () => showCard(w.it.settled ? "settled:" + w.it.settled.key + ":" + w.it.settled.t : mk, w.seg) }] } : null };
+      if (w && f && w.kind !== f) return { to: chipOr(w.kind, w.seg), note: mine ? { text: `${who} is now under ${underOf(w.kind, w.seg)}`, actions: [{ label: "Show", fn: () => showCard(mk, w.seg, w.kind) }] } : null };
       // its line sent to the sheets with the order's own designs (Send to Sheet on any card): it goes to the sheets, whose
       // tab says what came (CustomSheet)
       const lr = !w && node && node.dataset.row && B.orders.byKey?.get(node.dataset.row);
@@ -15689,8 +15755,11 @@ const Review = window.Review = (() => {
       if (!w && mine && rid && ridWhere.has(rid) && ridWhere.get(rid).mk !== mk) {
         // read again as another kind of question (e.g. "Not a custom order"): it is under that chip now
         const o = ridWhere.get(rid);
-        return { to: chipSel(o.kind), note: { text: `${who} is now under ${wordOf(o.kind)}`, actions: [{ label: "Show", fn: () => showCard(o.mk, "open", o.kind) }] } };
+        return { to: chipOr(o.kind, "open"), note: { text: `${who} is now under ${underOf(o.kind, "open")}`, actions: [{ label: "Show", fn: () => showCard(o.mk, "open", o.kind) }] } };
       }
+      // released to the nesting queue from Open (Release Hold, RVRESOLVED): its card is under Resolved now
+      const rel = !w && !doneMode && rid ? relWhere.get(rid) : null;
+      if (rel) return { to: DONE_SW, note: mine ? { text: `${who} moved to Resolved · released to the nesting queue`, actions: [{ label: "Show", fn: () => showCard(rel, "done") }] } : null };
       if (!w && mine) {
         // answered: its lines went back to the orders (on hold, or in line for the sheets)
         const rows = Orders.rows().filter(r => String(r.order.receiptId) === String(rid)), held = rows.some(r => r.hold);
@@ -15698,7 +15767,7 @@ const Review = window.Review = (() => {
       }
       return null;
     };
-    const empty = () => { const n = el("div", "libEmpty"); n.innerHTML = `${orderQ ? "No matching order numbers." : doneMode ? (f === "customOrder" ? "No custom order completed yet. Print its QR label or press Complete Order under Open." : f ? `Nothing completed under ${esc(what)} yet.` : "Nothing completed yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}`; return n; };
+    const empty = () => { const n = el("div", "libEmpty"); n.innerHTML = `${orderQ ? "No matching order numbers." : doneMode ? (f === "customOrder" ? "No custom order resolved yet. Print its QR label under Open, or send it to the sheets." : f ? `Nothing resolved under ${esc(what)} yet.` : "Nothing resolved yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}`; return n; };
     const desired = list.length ? list.slice(0,RV.limit).map(it=>({it,node:it.settled?settledRow(it.settled):reviewRow(it)})) : [];
     for(const {node} of desired)node.classList.toggle('orderMatch',!!orderQ);
     // A card the Send to Sheet tour is carrying (Motion.carry) stays where it stood, however the list sorts it now: sent,

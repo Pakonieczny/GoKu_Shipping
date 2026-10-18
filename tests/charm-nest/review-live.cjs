@@ -152,7 +152,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       assert(ghost.t <= tool.t + 50, label + ': the copy of the card is lifted first, the stamp comes down on it');
       assert(tool.t < got.t && got.t <= out.t + 400, label + ': the stamp, then the flight lands on Completed: ' + JSON.stringify(ev.map(e => [e.k, e.t - ev[0].t])));
       assert.equal(ev.filter(e => e.k === 'tool').length, 1, label + ': one stamp on A, no second one');
-      assert(note && new RegExp(`Order ${rid} moved to Completed · ${how === 'print' ? 'QR label printed' : 'completed'} by Maria B`).test(note.d), label + ': the note names who and what: ' + (note && note.d));
+      assert(note && new RegExp(`Order ${rid} moved to Resolved · ${how === 'print' ? 'QR label printed' : 'completed'} by Maria B`).test(note.d), label + ': the note names who and what: ' + (note && note.d));
       // B, who pressed, saw one stamp of its own, and nothing came after it for the same change
       await B.calm(); await nap(3200);
       const bev = (await B.since(b0));
@@ -205,7 +205,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       await A.calm(); await B.calm();
       const ev = await A.since(a0);
       assert(!ev.some(e => e.k === 'tool' || e.k === 'ghostIn'), 'nothing is stamped or flown over a card nobody sees: ' + JSON.stringify(ev.map(e => e.k)));
-      assert(ev.some(e => e.k === 'note' && new RegExp(`Order ${rid} moved to Completed · completed by Maria B`).test(e.d)), 'the note says who: ' + JSON.stringify(ev.filter(e => e.k === 'note')));
+      assert(ev.some(e => e.k === 'note' && new RegExp(`Order ${rid} moved to Resolved · completed by Maria B`).test(e.d)), 'the note says who: ' + JSON.stringify(ev.filter(e => e.k === 'note')));
       await A.page.setViewportSize({ width: 1440, height: 900 });
       await A.page.evaluate(() => { document.querySelectorAll('.mNote').forEach(n => n.close && n.close()); const sc = document.querySelector('#rvList').closest('.scroll'); if (sc) sc.scrollTop = 0; });
       const sa = await A.state(), sb = await B.state(); assert.deepEqual(sa, sb, 'the counts agree: ' + JSON.stringify([sa, sb]));
