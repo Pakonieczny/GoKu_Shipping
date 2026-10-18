@@ -57,7 +57,8 @@ async function browser(opts) {
     async upload(bytes, name, o) {
       o = o || {};
       const file = path.join(tmp, name); fs.writeFileSync(file, bytes);
-      await page.evaluate(({ all }) => { const cb = document.querySelector('#mAllSkus'); if (cb) { cb.checked = !!all; cb.onchange && cb.onchange(); } B.master.jobs.clear(); }, { all: !!o.reindexAll });
+      // "SKUs already held" (MASTERNEW, 18 Oct 2026): o.held 'newest' (the default) | 'keep' | 'all'; o.reindexAll is the old tick, 'all'
+      await page.evaluate(({ held }) => { const sel = document.querySelector('#mHeld'); if (sel) { sel.value = held; sel.onchange && sel.onchange(); } B.master.jobs.clear(); }, { held: o.held || (o.reindexAll ? 'all' : 'newest') });
       await page.setInputFiles('#mFile', file);
       await page.waitForFunction(() => { const j = [...B.master.jobs.values()].pop(); return j && ['done', 'error'].includes(j.state) && !(j.vision || []).some(v => !v.confirmed) || (j && j.state === 'done'); }, null, { timeout: o.timeout || 120000 });
       return page.evaluate(() => {

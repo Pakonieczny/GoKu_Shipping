@@ -3052,11 +3052,13 @@ const Master = window.Master = (() => {
       const savedHere = e => !!e && e.hashSource === "custom-save" && e.masterHash !== masterHash;
       const stays = l => { const e = known.get(String(l.sku || "").toUpperCase()); return !!e && (e.masterHash === masterHash || savedHere(e)); };
       const replacing = [];                                              // the held lines of another master file this run re-indexes from this one (the card lists what landed: writeIndex)
+      // ...and a SKU the library holds as a PAIR that this sheet draws with fewer bodies stays the pair it is (charm-nest-pair.js keepPairs, "held"; the server's pairKept): it is held here, before anything is traced, so the same file added again does nothing
+      const pairHeld = (() => { try { const Pr = window.CharmNestPair; if (mode === "keep" || all || !Pr || !Pr.keepPairs) return new Map(); return new Map([...Pr.keepPairs(g.charms.filter(c => c.mergedInto == null), c => { const x = lab.labels.get(c.index); return x ? [x].concat(x.extra || []).map(y => ({ sku: y.sku, size: y.size, bbox: y.bbox })) : []; }, known)].filter(([, w]) => w.kind === "held")); } catch (_) { return new Map(); } })();
       for (const c of labelledCharms) {
         const lines = [{ sku: c.sku, size: c.skuSize }].concat((c.extraSkus || []).map(x => ({ sku: x.sku, size: x.size })));
-        if (!all && lines.every(holds) && !staleOf.has(c.index) && (mode === "keep" || lines.every(stays))) {
+        if (!all && lines.every(holds) && !staleOf.has(c.index) && (mode === "keep" || lines.every(stays) || pairHeld.has(c.index))) {
           c.alreadyHeld = true; held++;
-          for (const l of lines) heldList.push(lineOf(l, c));
+          for (const l of lines) { const e = known.get(String(l.sku || "").toUpperCase()); heldList.push(Object.assign(lineOf(l, c), mode !== "keep" && pairHeld.has(c.index) && e.masterHash !== masterHash ? { pairKept: true } : {}, savedHere(e) ? { saved: true } : {})); }
           continue;
         }
         // rebuilt whole: the master they came from is superseded (it no longer blocks them as a clash), and each held line of another file is a replacement the card names. A design saved from an order is not superseded: the library keeps it and says so (putIndex keepSaved).
@@ -3065,8 +3067,9 @@ const Master = window.Master = (() => {
       job.held = held; job.supersede = [...supersede]; job.older = older; job.heldList = heldList; job.replacing = replacing;
       if (staleOf.size && !all) say("MASTER", `${staleOf.size} design(s) the library already holds are built again, because it holds them wrong: ${[...staleOf].slice(0, 8).map(([i, w]) => `${w.skus[0]} (${w.kind === "pair" ? "held as one body of a pair" : "held without the letter set inside it"})`).join(", ")}${staleOf.size > 8 ? " …" : ""}`);
       if (older && !all) say("MASTER", `${older} SKU line(s) of this file were indexed by an older reader and are built again with the current one`);
-      if (replacing.length) say("MASTER", `${replacing.length} SKU line(s) the library holds from an older master file are re-indexed from this file, the newest: ${replacing.slice(0, 8).map(x => `${x.sku}${x.size ? " · " + x.size : ""} (from ${x.from})`).join(", ")}${replacing.length > 8 ? " …" : ""}`);
-      if (held) say("MASTER", `${held} charm(s) are already in the library${mode === "keep" ? "" : heldList.some(x => x.from !== "this file") ? " (this file's, or designs saved from an order)" : " from this file"} and are left as they are · ${labelledCharms.length - held} to index${all ? "" : " (choose “rebuild every charm” under SKUs already held to rebuild them all)"}`);
+      if (replacing.length) say("MASTER", `${replacing.length} SKU line(s) the library holds from an older master file are built again from this file, the newest (the card lists what replaced them): ${replacing.slice(0, 8).map(x => `${x.sku}${x.size ? " · " + x.size : ""} (from ${x.from})`).join(", ")}${replacing.length > 8 ? " …" : ""}`);
+      if (held) say("MASTER", `${held} charm(s) are already in the library${mode === "keep" ? "" : heldList.some(x => x.from !== "this file") ? " (this file's, a design saved from an order, or a pair this sheet draws one body of)" : " from this file"} and are left as they are · ${labelledCharms.length - held} to index${all ? "" : " (choose “rebuild every charm” under SKUs already held to rebuild them all)"}`);
+      { const pk = heldList.filter(x => x.pairKept); if (pk.length) say("warn", `${pk.length} SKU line(s) the library holds as a pair are drawn with one body on this sheet, so they keep the library's pair: ${pk.slice(0, 12).map(x => `${x.sku} (from ${x.from})`).join(", ")}${pk.length > 12 ? " …" : ""}`); }
       if (labelledCharms.length && held === labelledCharms.length) {
         // nothing to build. What the sheet still leaves open stays on the card, a design the library holds as ONE body of a pair this sheet draws is said, and a library that lost this file's record (a run that stopped after the SKUs) gets it back
         const pl = foldPairs(job, g.charms, lab, say);
@@ -3500,11 +3503,13 @@ const Master = window.Master = (() => {
       }
       // what the run left as it was, and whose it is: a SKU the library already holds is not built again, and "19 written, 14 held" must say which 14 and from which file
       if ((job.heldList || []).length) {
-        const hl = job.heldList, diff = hl.filter(x => x.differs), keep = job.heldMode === "keep", saved = hl.some(x => x.from !== "this file");
+        const hl = job.heldList, diff = hl.filter(x => x.differs), keep = job.heldMode === "keep", saved = hl.some(x => x.saved), pairs = hl.some(x => x.pairKept), mine = !keep && hl.every(x => x.from === "this file");
         const d = el("details", "noteBox");
-        d.innerHTML = `<summary>${hl.length} SKU line(s) already in the library${keep || saved ? "" : " from this file"}, left as they are${diff.length ? ` · <b style="color:#8a3a26">${diff.length} drawn a different size on this sheet</b>` : ""}</summary>`
-          + hl.map(x => `<div>${esc(x.sku)}${x.size ? " · " + esc(x.size) : ""} — from ${esc(x.from)}${x.at ? ", " + esc(when(x.at)) : ""}${x.differs && x.sheetMm && x.libraryMm ? ` — <b>this sheet draws it ${x.sheetMm.join(" × ")} mm, the library holds ${x.libraryMm.join(" × ")} mm</b>` : ""}</div>`).join("")
-          + (keep ? `<div style="margin-top:6px">To replace them with this file's drawings, choose “replace with this file's drawings” under SKUs already held and add the file again.</div>` : saved ? `<div style="margin-top:6px">A design saved from an order is never replaced by a master file.</div>` : "");
+        d.innerHTML = `<summary>${hl.length} SKU line(s) already in the library${mine ? " from this file" : ""}, left as they are${diff.length ? ` · <b style="color:#8a3a26">${diff.length} drawn a different size on this sheet</b>` : ""}</summary>`
+          + hl.map(x => `<div>${esc(x.sku)}${x.size ? " · " + esc(x.size) : ""} — from ${esc(x.from)}${x.at ? ", " + esc(when(x.at)) : ""}${x.pairKept ? " — <b>held as a pair, and this sheet draws one body: kept</b>" : x.saved ? " — a design saved from an order" : ""}${x.differs && x.sheetMm && x.libraryMm ? ` — <b>this sheet draws it ${x.sheetMm.join(" × ")} mm, the library holds ${x.libraryMm.join(" × ")} mm</b>` : ""}</div>`).join("")
+          + (keep ? `<div style="margin-top:6px">To replace them with this file's drawings, choose “replace with this file's drawings” under SKUs already held and add the file again.</div>` : "")
+          + (pairs ? `<div style="margin-top:6px">A SKU the library holds as a pair is never overwritten by a drawing of one body: draw both bodies under its label, or make it one charm in the Library first.</div>` : "")
+          + (saved ? `<div style="margin-top:6px">A design saved from an order is never replaced by a master file.</div>` : "");
         card.appendChild(d);
       }
       const pending = (job.vision || []).filter(x => !x.confirmed);

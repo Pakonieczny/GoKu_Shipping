@@ -1,7 +1,7 @@
 // ADV-MASTER (Paul, 15 Oct 2026: "a final test before I push everything to production ... resilient against lost internet connections, interruptions and unexpected user behaviour").
 // The Master tab's indexing, attacked like a clumsy offline user would. Headless Chromium over the in-memory stand-in of the site (tests/charm-nest/bridge-server.cjs); nothing leaves this machine.
 // Each scenario answers "what is lost, duplicated, stuck or wrong?":
-//   1 · two master files dropped TOGETHER that share a SKU: the second finds it held (left alone, said), nothing is blocked as a clash with a file that was only a second ago being indexed;
+//   1 · two master files dropped TOGETHER that share a SKU: they are indexed one after the other and the second, the newer (MASTERNEW, Paul 18 Oct 2026), replaces it (said, old file → new file), nothing is blocked as a clash, nothing duplicated;
 //   2 · a charm with two SKU lines, one held by another master: rebuilt whole, the other master superseded, nothing blocked, that master's other SKUs untouched;
 //   3 · the internet drops in the middle of the design-file uploads: the run says failed, NOTHING is in the index (no SKU without its file), no page error, the same file dropped again builds all of it once;
 //   4 · the page is closed / reloaded while the index write is on its way (the server stored it, the answer never arrived): the SKUs are in, the upload-history record is not; dropping the file again writes the record and builds nothing twice;
@@ -21,7 +21,7 @@ const grid12 = () => scene({ page: [420, 300], bodies: names12.map((_, i) => ({ 
 
 (async () => {
   const br = await R.browser(), st = br.st, page = br.page, ctx = page.context();
-  const job = (k = -1) => page.evaluate(i => { const js = [...B.master.jobs.values()], j = js.at(i); return { state: j.state, error: j.error || null, written: j.written, held: j.held, name: j.name, supersede: j.supersede || [], heldList: (j.heldList || []).map(x => [x.sku, x.from]), log: j.log }; }, k);
+  const job = (k = -1) => page.evaluate(i => { const js = [...B.master.jobs.values()], j = js.at(i); return { state: j.state, error: j.error || null, written: j.written, held: j.held, name: j.name, supersede: j.supersede || [], heldList: (j.heldList || []).map(x => [x.sku, x.from]), replaced: (j.replaced || []).map(x => [x.sku, x.from]), log: j.log }; }, k);
   const wipe = async () => { for (const k of [...st.docs.keys()]) if (/^Charm_Master_(Index|Files)\//.test(k)) st.docs.delete(k); await page.evaluate(() => { B.master.jobs.clear(); return Master.load(true); }); };
   const ready = async () => {
     await page.waitForFunction(() => window.CN && window.CN.S && window.RunCtl && window.DesignLink && CN.S.cloud.ok !== null, null, { timeout: 60000 });
@@ -44,8 +44,10 @@ const grid12 = () => scene({ page: [420, 300], bodies: names12.map((_, i) => ({ 
     await settled(2);
     const shared = st.doc('Charm_Master_Index', 'SHARED_1'), jb = await job(-1);
     ok(libSkus(st).join() === 'A_ONLY_1,B_ONLY_1,SHARED_1', 'both files are indexed: ' + libSkus(st));
-    ok(shared && !shared.blocked && !shared.conflict && shared.masterName === 'A.ai', 'the SKU both files carry is the first file\'s and is NOT blocked as a clash: ' + JSON.stringify(shared && { m: shared.masterName, b: shared.blocked, c: shared.conflict }));
-    ok(jb.name === 'B.ai' && jb.held === 1 && jb.written === 1 && jb.heldList.join() === 'SHARED_1,A.ai', 'the second file found it held, says whose it is, and wrote only its own: ' + JSON.stringify(jb));
+    ok(shared && !shared.blocked && !shared.conflict && shared.masterName === 'B.ai' && shared.replaced && shared.replaced.fromName === 'A.ai', 'the SKU both files carry is the second (newer) file\'s, records what it replaced, and is NOT blocked as a clash: ' + JSON.stringify(shared && { m: shared.masterName, b: shared.blocked, c: shared.conflict, r: shared.replaced }));
+    ok(jb.name === 'B.ai' && jb.held === 0 && jb.written === 2 && jb.replaced.join() === 'SHARED_1,A.ai' && jb.heldList.length === 0, 'the second file found it held by the first, says whose it was, and replaced it: ' + JSON.stringify(jb));
+    { const fa = st.list('Charm_Master_Files').find(f => f.name === 'A.ai'), fb = st.list('Charm_Master_Files').find(f => f.name === 'B.ai');
+      ok(fa && fa.skus.join() === 'A_ONLY_1' && fb && fb.skus.slice().sort().join() === 'B_ONLY_1,SHARED_1', 'the upload history lists SHARED_1 under B.ai only: ' + JSON.stringify({ a: fa && fa.skus, b: fb && fb.skus })); }
     ok(st.list('Charm_Master_Index').every(e => !e.blocked), 'nothing in the library is blocked');
 
     // 2 · a charm with two SKU lines, one of them held by another master

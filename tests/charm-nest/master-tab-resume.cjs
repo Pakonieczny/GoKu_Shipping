@@ -1,6 +1,7 @@
 // What a person sees when a master file is dropped in the Master tab and something goes wrong, and what the next drop of the same file does (MASTER2, Paul 14 Oct 2026).
 // Headless Chromium over the in-memory stand-in of the site (tests/charm-nest/bridge-server.cjs); nothing leaves this machine.
-//   · a library that holds a pair design as ONE body has it built again from both bodies on the next drop, with no tick (ACORN_4721, 15 Oct 2026: it was only said, and its other body stayed "a charm with no SKU"); "re-index SKUs already held" still builds it too;
+//   · a library that holds a pair design as ONE body has it built again from both bodies on the next drop, with no tick (ACORN_4721, 15 Oct 2026: it was only said, and its other body stayed "a charm with no SKU"); "rebuild every charm" (the old "re-index SKUs already held") still builds it too;
+//   · a SKU another master file wrote is re-indexed from the file added (MASTERNEW, Paul 18 Oct 2026: the newest file wins) and the card lists it, old file → new file, old size → new size; "keep the library's drawings" leaves it;
 //   · a drop where everything is held keeps the leftovers on the card and writes back an upload-history record the library lost;
 //   · the first write fails: the job says failed, nothing is half-built, and dropping the file again builds all of it;
 //   · the library answers a write without having stored one SKU: the index is read back and that SKU is written again;
@@ -98,7 +99,7 @@ const libSkus = st => st.list('Charm_Master_Index').map(e => e._id).sort();
     const corrected = await scene({ page: [420, 300], bodies: [{ shape: 'house', x: 60, y: 150, w: 45, h: 45, ink: A }, { shape: 'notch', x: 107, y: 150, w: 45, h: 45, ink: B }, { shape: 'house', x: 300, y: 150, w: 45, h: 45, ink: C }, { shape: 'house', x: 300, y: 60, w: 40, h: 40, ink: A }], labels: [{ text: 'Spider / Web_1', cx: 106, top: 149 }, { text: 'LONE_9002', cx: 322.5, top: 146 }, { text: 'THIRD_9003', cx: 320, top: 59 }] });
     r = await br.upload(corrected, 'A (corrected).ai', { reindexAll: true }); j = await job();
     ok(j.state === 'done' && libSkus(st).length === 3 && st.list('Charm_Master_Index').every(e => !e.blocked && !e.conflict), 'a corrected copy under a new name with "re-index held" blocks nothing: ' + JSON.stringify(st.list('Charm_Master_Index').map(e => [e._id, e.blocked])));
-    await page.evaluate(() => { const cb = document.querySelector('#mAllSkus'); cb.checked = false; cb.onchange && cb.onchange(); });
+    await page.evaluate(() => { const sel = document.querySelector('#mHeld'); sel.value = 'newest'; sel.onchange && sel.onchange(); });
 
     // 10 · a refused name does not replace the file of the SKU its name is cleaned to
     await wipe(); await page.evaluate(() => { CN.S.settings.skuPattern = "^[A-Z0-9#][A-Z0-9 #_.,'&()+\\-]{1,60}$"; });
@@ -199,7 +200,8 @@ const libSkus = st => st.list('Charm_Master_Index').map(e => e._id).sort();
     r = await br.upload(sheet, 'PAIR.ai'); j = await job(); ok(j.written === 0 && j.held === 2, 'and the drop after that builds nothing');
     for (const e of st.list('Charm_Master_Index')) { const d = st.doc('Charm_Master_Index', e._id); delete d.readerV; d.masterHash = 'ffffffffeeeeeeee'; d.masterName = 'OTHER.ai'; }
     await page.evaluate(() => Master.load(true));
-    r = await br.upload(sheet, 'PAIR.ai'); j = await job(); ok(j.written === 0 && j.held === 2, 'a design another master file wrote with an older reader is left as it is: ' + JSON.stringify({ w: j.written, h: j.held }));
+    r = await br.upload(sheet, 'PAIR.ai', { held: 'keep' }); j = await job(); ok(j.written === 0 && j.held === 2, 'with "keep the library\'s drawings", a design another master file wrote with an older reader is left as it is: ' + JSON.stringify({ w: j.written, h: j.held }));
+    r = await br.upload(sheet, 'PAIR.ai'); j = await job(); ok(j.written === 2 && j.held === 0 && st.list('Charm_Master_Index').every(e => e.masterName === 'PAIR.ai' && e.replaced && e.replaced.fromName === 'OTHER.ai'), 'by default (MASTERNEW) it is re-indexed from this file, the newest: ' + JSON.stringify({ w: j.written, h: j.held, m: st.list('Charm_Master_Index').map(e => e.masterName) }));
     
     // 21 · a page that is out of date reads and writes nothing (it would use the old reader), and says why
     await wipe();
@@ -219,11 +221,17 @@ const libSkus = st => st.list('Charm_Master_Index').map(e => e._id).sort();
     { const d = st.doc('Charm_Master_Index', 'LONE_9002'); d.masterHash = 'ffffffffeeeeeeee'; d.masterName = 'OLD MASTER.ai'; delete d.readerV; d.widthPt = 90; d.heightPt = 90;
       const g = st.doc('Charm_Master_Index', 'SPIDER - WEB_1'); g.aiPath = ''; }
     await page.evaluate(() => Master.load(true));
-    r = await br.upload(sheet, 'PAIR.ai'); j = await job();
+    r = await br.upload(sheet, 'PAIR.ai', { held: 'keep' }); j = await job();
     ok(j.state === 'done' && j.written === 1 && st.doc('Charm_Master_Index', 'SPIDER - WEB_1').aiPath && st.doc('Charm_Master_Index', 'SPIDER - WEB_1').pair.bodies === 2, 'a record with no design file is built, not held: ' + JSON.stringify({ w: j.written, ai: st.doc('Charm_Master_Index', 'SPIDER - WEB_1').aiPath }));
     const heldCard = await page.evaluate(() => { const d = [...document.querySelectorAll('#mJobs details.noteBox')].pop(); return d ? d.textContent : ''; });
     ok(/1 SKU line\(s\) already in the library, left as they are · 1 drawn a different size on this sheet/.test(heldCard) && /LONE_9002 — from OLD MASTER\.ai/.test(heldCard) && /this sheet draws it .* mm, the library holds 31\.7 × 31\.7 mm/.test(heldCard), 'the held SKU is listed with its file and the size difference: ' + heldCard.replace(/\n/g, ' | '));
+    ok(/To replace them with this file's drawings, choose “replace with this file's drawings” under SKUs already held/.test(heldCard), 'and says how to replace it');
     ok(st.list('Charm_Master_Files').find(f => f.name === 'PAIR.ai').labelled === 3 && st.list('Charm_Master_Files').find(f => f.name === 'PAIR.ai').held === 1, 'the file record counts the pair\'s second body as labelled and says how many it left held: ' + JSON.stringify(st.list('Charm_Master_Files').map(f => [f.labelled, f.charms, f.held])));
+    // ...and by default (MASTERNEW, Paul 18 Oct 2026) it is replaced: the card names it with its old file and its old size beside the new
+    r = await br.upload(sheet, 'PAIR.ai'); j = await job();
+    const repCard = await page.evaluate(() => { const d = [...document.querySelectorAll('#mJobs details.noteBox')].find(x => /replaced with this file/.test(x.textContent)); return d ? d.textContent : ''; });
+    ok(j.state === 'done' && j.written === 1 && st.doc('Charm_Master_Index', 'LONE_9002').masterName === 'PAIR.ai' && !st.doc('Charm_Master_Index', 'LONE_9002').blocked, 'the SKU held from the older file is re-indexed from this one: ' + JSON.stringify({ w: j.written, m: st.doc('Charm_Master_Index', 'LONE_9002').masterName }));
+    ok(/1 SKU line\(s\) replaced with this file's drawings \(1 at a different size\)/.test(repCard) && /LONE_9002 — OLD MASTER\.ai.* → PAIR\.ai — 31\.7 × 31\.7 mm → .* mm/.test(repCard) && /Added by Tester/.test(repCard), 'the card lists it, old file → new file, old size → new size, and who: ' + repCard.replace(/\n/g, ' | '));
     
     // 23 · a design file that other SKUs of the library share is never written over (an old master drew one charm with three SKU lines; the corrected sheet carries one of them)
     await wipe(); await br.upload(sheet, 'PAIR.ai');
