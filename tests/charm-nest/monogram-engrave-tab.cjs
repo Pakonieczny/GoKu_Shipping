@@ -226,6 +226,9 @@ const check = (ok, msg) => { nCheck++; if (!ok) fails.push(msg); console.log((ok
     const ord = await page.evaluate(r => CharmNestEngraveOrder.piecesOf(r).map(p => p.kind + ':' + p.state).join(' '), rid('mixed'));
     check(/monogram:approved/.test(ord) && /to-approve/.test(ord), 'the order model: the monogram is approved, the bar is still to approve: ' + ord);
     check(await page.evaluate(k => { const s = Engrave.monogramUI().status(Orders.rows().find(r => r.key === k)); return s.approved; }, monoKey('mixed')), 'and the design is on the order (the service says approved)');
+    // (MONOSEND, Paul 18 Oct 2026: the same press put it in the nesting queue on the buyer's metal, with no designs window)
+    { const q = await page.evaluate(k => { const row = Orders.rows().find(r => r.key === k), d = CustomSheet.decisionOf(row), e = Object.values(CustomSheet.entries()).find(x => x.rid === row.order.receiptId); return { sent: !!d, pieces: d ? (d.lines[k] || []).length : 0, metal: e && e.files.map(f => f.metal).join(), dlg: !!document.querySelector('#cuDlg[open]'), label: Engrave.monogramUI().status(row).label }; }, monoKey('mixed'));
+      check(q.sent && q.pieces === 1 && q.metal === 'gold' && !q.dlg && q.label === 'On the sheets', 'and the same press sent it to the sheets: one piece, GF (the buyer\'s metal), no designs window: ' + JSON.stringify(q)); }
     // the guide: leaving an order with a piece still to approve is said, once, in one line (the bar is the piece left)
     await page.click('#egQueue .rvItem [data-a=next]'); await settle(600);
     c = await card();
@@ -238,13 +241,13 @@ const check = (ok, msg) => { nCheck++; if (!ok) fails.push(msg); console.log((ok
     // NODECIDED: both pieces of the finished order stay in the ONE list, the monogram row with its picture and letters and "Approved"; the row opens the same card with the widget (its own Change)
     await openList(); await settle(1200);
     const dr = await page.evaluate(() => [...document.querySelectorAll('#egQueue .egPlacementList .doneRow')].map(r => ({ kind: r.dataset.kind || 'engraved', rid: r.dataset.rid, decided: r.classList.contains('isDecided'), thumb: !!r.querySelector('[data-mw-thumb]'), text: r.innerText.replace(/\s+/g, ' ').trim() })));
-    check(dr.filter(r => r.rid === rid('mixed')).length === 2 && dr.filter(r => r.rid === rid('mixed')).every(r => r.decided) && dr.some(r => r.rid === rid('mixed') && r.kind === 'monogram' && r.thumb && /A P V|J Q X/.test(r.text) && /approved/i.test(r.text)), 'the one list holds both rows of the finished mixed order (calm, nothing left to decide), the monogram one with its charm, its letters and "Approved": ' + dr.map(r => r.kind[0] + r.rid.slice(-3) + (r.decided ? 'D' : 'P')).join(' '));
+    check(dr.filter(r => r.rid === rid('mixed')).length === 2 && dr.filter(r => r.rid === rid('mixed')).every(r => r.decided) && dr.some(r => r.rid === rid('mixed') && r.kind === 'monogram' && r.thumb && /A P V|J Q X/.test(r.text) && /on the sheets/i.test(r.text)), 'the one list holds both rows of the finished mixed order (calm, nothing left to decide), the monogram one with its charm, its letters and "On the sheets" (MONOSEND: its Approve sent it): ' + dr.map(r => r.kind[0] + r.rid.slice(-3) + (r.decided ? 'D' : 'P')).join(' '));
     check(await page.evaluate(() => !document.querySelector('#egDone, #egBacks, .decidedRow, .doneDetail, [data-a=reopen], [data-a=monoChange], .egTab[data-tab="done"]')), 'and there is no Decided tab, row, detail, Reopen or Change under a row anywhere');
     await shot('approved-in-list-1440');
     await page.click(`#egQueue .egPlacementList .doneRow[data-kind=monogram][data-rid="${rid('mixed')}"]`);
     await page.waitForSelector('#egQueue .rvItem[data-mono] .mw', { timeout: 15000 }); await settle(900);
     const dd = await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-mono]'), m = c && c.querySelector('.mw'); return { card: c && c.dataset.state, mode: m && m.dataset.mode, state: m && m.dataset.state, change: !!(m && m.querySelector('[data-mw-change]')), approve: !!(c && c.querySelector('[data-mw-approve]:not([disabled])')) }; });
-    check(dd.mode === 'detail' && dd.state === 'approved' && dd.change, 'the approved monogram\'s row opens the same card with the widget under it, approved, with its own Change: ' + JSON.stringify(dd));
+    check(dd.mode === 'detail' && dd.state === 'sent' && dd.change && !dd.approve, 'the approved monogram\'s row opens the same card with the widget under it, on the sheet (MONOSEND: its Approve sent it, final: nothing to press): ' + JSON.stringify(dd));
     await shot('approved-card-1440');
     noSideways(await atPhone('approved-card-400'), 'an approved monogram\'s card');
     check(await page.evaluate(() => { Engrave.render(); Engrave.render(); const c = document.querySelector('#egQueue .rvItem[data-mono]'); return !!(c && c.querySelector('.mw')); }), 'a re-render of the tab keeps the open approved monogram card');
