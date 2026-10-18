@@ -2948,7 +2948,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!allSheets().includes(sh) || !sh.placements.length && !activeCharms(sh).length) { st.state = "ok"; st.detail = "nothing left to write"; return true; }
     // the run may already have started it on its own (the sheet was left to be written): that search is this one
     const job0 = sh.jobId, running = sheetWorking(sh), prob0 = sh.problem || null, t0 = Date.now();
-    if (!running) { if (!o.manual) sh._byHand = true; startNest(sh); }
+    // (a sheet held by Manual Control is written all the same when a person's own change asks for it, such as a charm dragged onto the next sheet
+    //  (charm-nest-sheet-hop.js) while Manual Control is on: the hold keeps the run's own nests and arrivals away, never a write the person asked for)
+    if (!running) { if (!o.manual) sh._byHand = true; const held = sh._manualHold; delete sh._manualHold; try { startNest(sh); } finally { if (held && !o.manual) sh._manualHold = held; } }
     const until = t0 + 240000;
     while (Date.now() < until) {
       if ((running || sh.jobId !== job0) && !busy(sh) && (sh.persistedDone || sh.problem)) break;
@@ -4771,6 +4773,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
                                                    line), "drawing", "pose", "size", "edge", "overlap" or "verify"; reason: one sentence for a person.
        CNManual.available(sheet)                -> { ok, reason }     the guards alone
        CNManual.onToggle(fn)                    -> off()              fn({ on, sheetId, sheet }) when Manual Control goes on, and when it goes off (its save started)
+       CNManual.cancelDrag()                    -> boolean            the drag of a charm in hand stops (the sheet hop took it over: the pointer left the plate or
+                                                   reached a dock): it springs back to where it last stood, nothing is written; false when nothing was being dragged
+     isOn and fits take the live page objects of allSheets() (charm-nest-sheet-hop.js passes those; a sheet id works too); fits' piece may be the live charm
+     object of another sheet, and its pose { cxPt, cyPt, angle } is in sheet points, y down, as placements are. A charm that leaves the sheet while Manual
+     Control is on (the hop) is dropped from what the save writes, and the hop's own writes of the held sheet pass its hold (rewritePage).
        CNManual.fromRecord(charm)               -> { by, at, size? } | null   a saved charm's manual mark, as the page's restore of a sheet reads it ── */
   const MANUAL_METALS = ["gold10k", "gold14k"], MC_MIN = 0.8, MC_MAX = 1.2, MC_TURN = 15, MC_SNAP_PT = 1, MC_STALE = 90000, MC_BEAT = 30000;
   // this tab (a claim names the screen that holds it; a reload of the same tab is the same screen)
@@ -4804,7 +4811,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!o.saving && (sh.dirty || !sh.persistedDone)) return "The sheet is waiting to be written again. Try again once it has saved.";
     if (!o.saving && !o.api && W.flow) return "Another change in this window is still running. Try again once it is done.";
     const Sv = SV(); if (!Sv || !Sv.makeSheetGrid || !Sv.prepareVariant || !Sv.verify) return "The layout check is not loaded in this page.";
-    if (!sh.placements.length) return "No charm is placed on this sheet yet.";
+    if (!o.api && !sh.placements.length) return "No charm is placed on this sheet yet.";   // (CNManual.fits may ask about an empty sheet: a charm dragged onto it)
     return "";
   }
   /** Why this one charm stays where it is ("" = it may move). */
@@ -5025,7 +5032,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       x = hit; mode = "move";
     }
     const b = mcBox(x);
-    MC.drag = { mode, x, q0: mcDraftOf(x), pt0: pt, c: [b.X, b.Y], r0: Math.max(4 * W.dpr, Math.hypot(pt[0] - b.X, pt[1] - b.Y)), a0: Math.atan2(pt[1] - b.Y, pt[0] - b.X), raw: null, res: null, show: null, moved: false };
+    MC.drag = { pid: e.pointerId, mode, x, q0: mcDraftOf(x), pt0: pt, c: [b.X, b.Y], r0: Math.max(4 * W.dpr, Math.hypot(pt[0] - b.X, pt[1] - b.Y)), a0: Math.atan2(pt[1] - b.Y, pt[0] - b.X), raw: null, res: null, show: null, moved: false };
     try { W.el.fx.setPointerCapture(e.pointerId); } catch (_) {}
     W.el.plate.classList.add("mcDrag"); tip(null);
   }
@@ -5049,7 +5056,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (res.ok) mcCommit(d.x, res.pose, res.v);
     else mcSpring(d.x, d.show || d.raw, MC.valid, res.reason);
   }
-  function mcCancel() { const d = MC.drag; MC.drag = null; if (W.el.plate) W.el.plate.classList.remove("mcDrag"); if (d && MC.valid) mcSpring(d.x, d.show || d.raw || MC.valid, MC.valid, ""); }
+  function mcCancel() { const d = MC.drag; MC.drag = null; if (W.el.plate) W.el.plate.classList.remove("mcDrag"); if (d) { try { if (d.pid != null && W.el.fx.hasPointerCapture(d.pid)) W.el.fx.releasePointerCapture(d.pid); } catch (_) {} } if (d && MC.valid) mcSpring(d.x, d.show || d.raw || MC.valid, MC.valid, ""); return !!d; }
   function mcCommit(x, q, v) {
     if (mcChanged(MC.from.get(x.id), q)) MC.edits.set(x.id, q); else MC.edits.delete(x.id);
     MC.valid = q; mcShow(x, q); if (v) { x.p.wPt = v.solid.w / 2; x.p.hPt = v.solid.h / 2; }
@@ -5081,7 +5088,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** A key with a charm in hand: the arrows nudge it (0.5 pt, Shift 2 pt), [ ] turn it 15° ({ } 1°), + − size it 1 %; a step it may not take is refused. */
   function mcKey(e) {
-    const x = MC.sel; if (!x || MC.drag || MC.spring) return false;
+    const x = MC.sel; if (!x || MC.drag || MC.spring || e.altKey || e.ctrlKey || e.metaKey) return false;   // (Alt + Shift + ← / → is the sheet hop's: the charm onto the next sheet)
     const st = e.shiftKey ? 2 : .5, mv = { ArrowLeft: [-st, 0], ArrowRight: [st, 0], ArrowUp: [0, -st], ArrowDown: [0, st] }[e.key];
     const turn = { "[": -MC_TURN, "]": MC_TURN, "{": -1, "}": 1 }[e.key], grow = { "+": .01, "=": .01, "-": -.01, "_": -.01 }[e.key];
     if (!mv && !turn && !grow) return false;
@@ -5127,11 +5134,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 
   /* ── off: the moves saved ── */
   async function mcSave(sh, edits, who) {
+    // a charm that left the sheet while Manual Control was on (dragged onto the next sheet: it was pinned there) is not this save's
+    for (const id of [...edits.keys()]) if (!sh.placements.some(p => p.id === id)) edits.delete(id);
+    if (!edits.size) { delete sh._manualHold; if (sh._manualAsked) { delete sh._manualAsked; tryDo(() => startNest(sh)); } mcRelease(sh.sheetId); return false; }
     const name = sheetWord(sh.sheetId, sh.fileBase, sh), n = edits.size, ids = [...edits.keys()];
     const wait = stepOf("Waiting for the sheet to finish its current step"), check = stepOf(`Checking ${n === 1 ? "the charm" : `the ${n} charms`} moved by hand against the sheet`);
     const put = stepOf(`Writing ${name} with its new layout`), labels = stepOf("Remaking the QR label"), read = stepOf("Reading the saved sheet back");
+    // another change of this window may still be running (a charm dragged onto the next sheet): the save waits its turn (the sheet stays held meanwhile)
+    for (const until = Date.now() + 300000; W.flow && Date.now() < until;) await pause(300);
     const work = beginFlow({ state: "working", title: `Saving ${n === 1 ? "1 charm" : n + " charms"} moved by hand on ${name}`, steps: [wait, check, put, labels, read], note: "" });
-    if (!work) { delete sh._manualHold; mcRelease(sh.sheetId); return false; }
+    if (!work) { delete sh._manualHold; if (sh._manualAsked) { delete sh._manualAsked; tryDo(() => startNest(sh)); } mcRelease(sh.sheetId); toast(`The charms moved by hand on ${name} were not saved: another change in this window never finished. Nothing on the sheet was changed.`, "bad", 9000); return false; }
     if (!busy(sh)) work.steps.shift();
     const paint = () => { if (W.dlg && W.dlg.open && W.work === work) renderWork(); };
     const ui = () => W.dlg && W.dlg.open && W.id === sh.sheetId;
@@ -5233,6 +5245,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       return Object.assign({ ok: r.ok, why: r.why, reason: r.reason }, r.ok && r.pose ? { pose: r.pose } : {});
     },
     onToggle(fn) { if (typeof fn !== "function") return () => {}; MC.subs.add(fn); return () => MC.subs.delete(fn); },
+    cancelDrag() { if (!MC.drag) return false; const had = mcCancel(); tryDo(paintFx); return had; },
     fromRecord(rc) {
       const m = rc && rc.manual; if (!m || typeof m !== "object") return null;
       const size = +m.size;

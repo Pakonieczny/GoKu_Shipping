@@ -159,7 +159,19 @@ const root = path.join(__dirname, '../..');
     await drag(await at(40, 95), await at(aAt[0] + 20, aAt[1]), { steps: 14 });
     q = await pose(cC); assert(Math.abs(q.cxPt - (aAt[0] + 20)) <= .8 && Math.abs(q.cyPt - aAt[1]) <= .8, 'C placed edge to edge with A: ' + JSON.stringify(q));
     const poseC = q;
-    console.log(`ok   4  edge to edge with A allowed (C at ${poseC.cxPt}, ${poseC.cyPt}; fits right of A and under A), 3 pt into A refused ("overlap"), off the sheet refused ("edge"), 130 % refused ("size")`);
+    // the sheet hop's way in (charm-nest-sheet-hop.js): live page and charm objects, a pose in sheet points; and its cancelDrag()
+    const objFit = await page.evaluate(([cid, x, y]) => { const sh = CN.S.sheets.gold10k.pages.at(-1), c = sh.charms.find(z => z.id === cid); return [CNManual.isOn(sh), CNManual.fits(sh, c, { cxPt: x, cyPt: y, angle: 0 }), CNManual.fits(sh, c, { cxPt: x - 3, cyPt: y, angle: 0 })].map(r => typeof r === 'object' ? { ok: r.ok, reason: r.reason } : r); }, [cD, 230, 100]);
+    assert.equal(objFit[0], true); assert.equal(objFit[1].ok, true, 'fits(page, charm, pose) with live objects: ' + objFit[1].reason); assert.equal(objFit[2].ok, true);
+    const d0 = await pose(cD), dAt = await at(170, 100), dTo = await at(110, 100);
+    await page.mouse.move(dAt[0], dAt[1]); await page.mouse.down(); for (let i = 1; i <= 6; i++) await page.mouse.move(dAt[0] + (dTo[0] - dAt[0]) * i / 6, dAt[1]);
+    const cancelled = await page.evaluate(() => [CNManual.cancelDrag(), !!CNManual._MC.drag, CNManual.cancelDrag()]);
+    await page.mouse.up(); await page.waitForTimeout(150);
+    assert.deepEqual(cancelled, [true, false, false], 'cancelDrag stops the drag once: ' + cancelled);
+    q = await pose(cD); assert.deepEqual([q.cxPt, q.cyPt, q.angle], [d0.cxPt, d0.cyPt, d0.angle], 'after cancelDrag D is back where it stood, nothing kept');
+    assert.equal(await page.evaluate(id => CNManual._MC.edits.has(id), cD), false);
+    // the run's own nest waits while Manual Control holds the sheet (it is asked for again once it is off)
+    assert.deepEqual(await page.evaluate(() => { const sh = CN.S.sheets.gold10k.pages.at(-1), st0 = sh.status; CN.startNest(sh); const r = [st0, sh.status, !!sh._manualAsked]; delete sh._manualAsked; return r; }), ['complete', 'complete', true], 'startNest waits under the hold');
+    console.log(`ok   4  fits(page, charm, pose) with live objects, cancelDrag() springs D back; edge to edge with A allowed (C at ${poseC.cxPt}, ${poseC.cyPt}; fits right of A and under A), 3 pt into A refused ("overlap"), off the sheet refused ("edge"), 130 % refused ("size")`);
 
     /* ── 6 · a second computer, while this one holds the sheet ── */
     const B = await mkCtx('Other Person');
