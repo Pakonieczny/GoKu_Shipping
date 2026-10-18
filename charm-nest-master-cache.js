@@ -69,7 +69,7 @@
       const entries = JSON.parse(row.entriesJson), files = JSON.parse(row.filesJson);
       if (!Array.isArray(entries) || !Array.isArray(files) || entries.length !== row.n) return null;
       for (const e of entries) if (!e || typeof e !== 'object' || typeof e.sku !== 'string' || !e.sku) return null;
-      return { entries, index: row.index, files, filesSig: row.filesSig || null, at: row.at };
+      return { entries, index: row.index, files, filesSig: row.filesSig || null, at: row.at, docs: Number.isFinite(row.docs) ? row.docs : null };   // (docs: how many index documents the copy stands for, so a moved signature asks only for what was written since: Master.load)
     } catch (_) { return null; }
   }
 
@@ -86,14 +86,14 @@
     } catch (_) { return null; }
   }
 
-  /** Keep a whole answer: { index, entries, files, filesSig }. It is serialised NOW (the page goes on changing its own objects),
+  /** Keep a whole answer: { index, entries, files, filesSig, docs? }. It is serialised NOW (the page goes on changing its own objects),
       written in one transaction that also removes every other record. Answers whether it was kept. */
   async function save(rec) {
     try {
       if (!rec || !rec.index || typeof rec.index !== 'object' || !Array.isArray(rec.entries) || !rec.entries.length) return false;
       const entriesJson = JSON.stringify(rec.entries), filesJson = JSON.stringify(Array.isArray(rec.files) ? rec.files : []);
       if (entriesJson.length + filesJson.length > LIMITS.chars) { await forget(); return false; }
-      const row = { k: keyNow(), v: SCHEMA, rev: revision(), at: Date.now(), n: rec.entries.length, index: JSON.parse(JSON.stringify(rec.index)), filesSig: rec.filesSig || null, entriesJson, filesJson };
+      const row = { k: keyNow(), v: SCHEMA, rev: revision(), at: Date.now(), n: rec.entries.length, index: JSON.parse(JSON.stringify(rec.index)), filesSig: rec.filesSig || null, entriesJson, filesJson, docs: Number.isFinite(rec.docs) ? rec.docs : null };
       const db = await open(); if (!db) return false;
       const t = db.transaction(STORE, 'readwrite'), s = t.objectStore(STORE);
       s.clear(); s.put(row);

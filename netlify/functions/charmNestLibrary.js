@@ -1350,14 +1350,17 @@ async function masterIndexSig() {
    without a word. The first part says the index's signature (index), read before any entry is: a change made while the
    parts are read shows as a change the next time. */
 async function op_masterList(b) {
+  if (b.since && typeof b.since === "object" && !b.cursor && !b.q && !b.masterHash) return masterListSince(b);
   const began = Date.now(), q = str(b.q, 80).toUpperCase(), limit = Math.min(3000, Math.max(1, num(b.limit) || 1500));
   const index = b.cursor ? null : await masterIndexSig(), rows = [], size = q || b.masterHash ? 500 : Math.min(500, limit);   // a few entries (the connections check) read a few
   let after = b.cursor ? str(b.cursor, 80) : null, used = 0, next = null, truncated = false;
+  const shells = [];   // COST (Oct 2026): the documents read that are no entry, so the page knows how many documents its copy stands for (masterListSince)
   read: for (;;) {
     let page = db.collection(Master.INDEX).orderBy(docOrder()).limit(size); if (after) page = page.startAfter(after);
     const snap = await page.get();
     for (const d of snap.docs) {
       const e = d.data(), r = e.sku ? Master.slimEntry(e) : null;   // a shell without a SKU (a patch on an unindexed SKU) is not an entry
+      if (!r && !q && !b.masterHash) shells.push(d.id);
       if (r && (!b.masterHash || r.masterHash === b.masterHash) && (!q || String(r.sku || "").includes(q))) {
         const n = bytesOf(r);
         if (rows.length && used + n > ANSWER_BYTES) { next = after; truncated = true; break read; }
@@ -1371,7 +1374,44 @@ async function op_masterList(b) {
   }
   rows.sort((x, y) => x.sku.localeCompare(y.sku));
   if (b.links) for (const r of rows) await withLinks(r);
-  return Object.assign({ entries: rows, next, truncated }, index ? { index } : {});
+  return Object.assign({ entries: rows, next, truncated }, index ? { index } : {}, !q && !b.masterHash ? { shells } : {});
+}
+/* COST (Oct 2026): a page that holds the whole index and sees its signature move (a re-index, a patch, a custom save, a removal: checked every
+   2 to 10 minutes on every sorter tab) read all of it again, about 7,000 documents. It now sends what its copy was read with (since: the
+   signature's indexedAt and updatedAt, and `docs`, how many documents the copy stands for: its entries and shells) and is answered with the
+   entries written at or after those stamps (every write of an entry stamps one of them: putIndex and a custom save indexedAt, masterPatch
+   updatedAt), each a single-field range query, no composite index. A removal is never in such a read, so the count says it: the signature
+   (read FIRST) must hold exactly the copy's documents plus those created since (a document's createTime later than both stamps); anything
+   else (a removal, a create that landed during the read, a store that gives no createTime, more than MASTER_SINCE_MAX changed) answers
+   { full: true } and the page reads the whole index as before. `since` is the stamp floored to the millisecond and asked with >=, so a write
+   in the same millisecond is read again rather than missed. */
+const MASTER_SINCE_MAX = 2500;
+/* A document created after a copy was read has a createTime later than every stamp that copy's signature held (a creating write stamps the
+   commit time it is created at). Counting one too MANY as created only costs a whole read (the count no longer matches); one too few could hide
+   a removal behind it, which is why a store that gives no createTime is read whole. (The stamps are compared in milliseconds: a create in the very
+   millisecond of the last write before the signature was read is the one case this cannot tell.) */
+const createdMs = d => (d && d.createTime && typeof d.createTime.toMillis === "function" ? d.createTime.toMillis() : null);
+async function masterListSince(b) {
+  const index = await masterIndexSig(), s = b.since, docs = Math.round(num(s.docs)), full = { entries: [], next: null, truncated: false, full: true, index };
+  const sI = num(s.indexedAt), sU = num(s.updatedAt);
+  if (!(sI > 0) || !(docs >= 0) || s.shape !== index.shape) return full;
+  const ix = db.collection(Master.INDEX), at = v => admin.firestore.Timestamp.fromMillis(Math.floor(v));
+  const asks = [ix.where("indexedAt", ">=", at(sI)).limit(MASTER_SINCE_MAX + 1).get()];
+  if (index.updatedAt != null) asks.push(ix.where("updatedAt", ">=", at(sU > 0 ? sU : 0)).limit(MASTER_SINCE_MAX + 1).get());   // (no stamp yet when the copy was read: every patched entry)
+  const snaps = await Promise.all(asks);
+  if (snaps.some(x => x.size > MASTER_SINCE_MAX)) return full;
+  const changed = new Map(); for (const x of snaps) for (const d of x.docs) changed.set(d.id, d);
+  const newest = Math.max(sI, sU > 0 ? sU : 0); let created = 0;
+  for (const d of changed.values()) { const c = createdMs(d); if (c == null) return full; if (c > newest) created++; }
+  if (index.count !== docs + created) return full;
+  const entries = [], shells = []; let used = 0;
+  for (const d of changed.values()) {
+    const e = d.data(), r = e.sku ? Master.slimEntry(e) : null;
+    if (!r) { shells.push(d.id); continue; }
+    used += bytesOf(r); if (used > ANSWER_BYTES) return full;
+    entries.push(r);
+  }
+  return { entries, shells, next: null, truncated: false, since: true, index };
 }
 async function op_masterPatch(b) {
   const sku = String(b.sku || "").trim().toUpperCase(); if (!Master.isSku(sku)) return { error: "bad sku" };
@@ -3287,6 +3327,43 @@ async function mapSig(name) {
   const shared = await collSig(name, MAP_STAMP[name]); if (!shared || !PREFIX) return shared;
   const own = await collSig(PREFIX + name, MAP_STAMP[name]); return own ? `${shared}~${own}` : null;
 }
+/* COST (Oct 2026): a map whose signature moved (any aliasPut / optionMapPut / noDesignPut, by anyone) was read whole again by every sorter tab:
+   about 3,000 alias, 2,000 option-map and 300 no-design documents. A page now sends what its copy was read with (since: the signature, and `n`,
+   how many documents of each collection it read) and is answered with the documents written at or after the signature's stamp (every writer
+   stamps it: updatedAt, createdAt for a no-design row), one single-field range query per collection that moved. A removal is in no such read,
+   so the count says it: each collection must now hold exactly what the copy read plus what was created since (createTime later than the stamp,
+   exact to the nanosecond); anything else (a removal, a create during the copy's read, a store that gives no createTime, more than MAP_SINCE_MAX
+   written since) answers null and the caller sends the whole map, as before. In the sandbox both the shared collection and the sandbox's own
+   copy are asked, and each changed key is merged from both documents exactly as a whole read merges it (REVLINK, HUGTWIN). */
+const MAP_SINCE_MAX = 1000;
+const tsOfStamp = t => { const m = /^(\d+)\.(\d+)$/.exec(String(t || "")); return m ? new admin.firestore.Timestamp(+m[1], +m[2]) : String(t) === "0" ? new admin.firestore.Timestamp(0, 0) : null; };
+const tsLater = (a, b) => a.seconds > b.seconds || (a.seconds === b.seconds && a.nanoseconds > b.nanoseconds);
+async function mapSince(name, b, sig) {
+  const s = b.since, cols = PREFIX ? [name, PREFIX + name] : [name];
+  if (!sig || !s || typeof s !== "object" || typeof s.sig !== "string" || !Array.isArray(s.n) || s.n.length !== cols.length) return null;
+  const was = s.sig.split("~"), now = sig.split("~"); if (was.length !== cols.length || now.length !== cols.length) return null;
+  const got = cols.map(() => new Map());
+  for (let i = 0; i < cols.length; i++) {
+    const known = Math.round(num(s.n[i])), count = Math.round(num(now[i].split(":")[0]));
+    if (!(known >= 0)) return null;
+    if (was[i] === now[i]) { if (count !== known) return null; continue; }   // (this collection did not move: what the copy read is all of it)
+    const at = tsOfStamp(was[i].split(":")[1]); if (!at) return null;
+    const snap = await db.collection(cols[i]).where(MAP_STAMP[name], ">=", at).limit(MAP_SINCE_MAX + 1).get();
+    if (snap.size > MAP_SINCE_MAX) return null;
+    let created = 0;
+    for (const d of snap.docs) { if (!d.createTime || d.createTime.seconds == null) return null; if (tsLater(d.createTime, at)) created++; got[i].set(d.id, d.data()); }
+    if (count !== known + created) return null;
+  }
+  return { got, cols, n: now.map(p => Math.round(num(p.split(":")[0]))) };
+}
+/* the other collection's document of each key that changed in one (the sandbox merges the two): read by key, what is already in hand is not read again */
+async function mapCounterparts(m) {
+  if (m.cols.length < 2) return;
+  for (let i = 0; i < 2; i++) {
+    const other = 1 - i, ids = [...m.got[i].keys()].filter(id => !m.got[other].has(id));
+    for (let k = 0; k < ids.length; k += 100) for (const sn of await db.getAll(...ids.slice(k, k + 100).map(id => db.collection(m.cols[other]).doc(id)))) m.got[other].set(sn.id, sn.exists ? sn.data() : null);
+  }
+}
 /* The SKU table of each listing a line waits on (the SKU Etsy keeps for each product: charm-nest-orders.js inventorySku). One
    stored table per listing, kept 7 days; Etsy is asked at most once per listing then, 6 listings a request and 60 a day for the
    whole shop, the sandbox included (at most 30 of the 60, and the table it stores is the shop's table: the cache is shared, not
@@ -3296,23 +3373,31 @@ async function op_listingSkus(b = {}) {
   const nameIds = Array.isArray(b.nameIds) ? b.nameIds.slice(0, 25) : [];   // (the listings a line needs Etsy's value names for: a table stored without them is asked again once)
   return require("./_charmNestListingSkus").lookup(ids, { db, nameIds, sandbox: !!PREFIX, cacheOnly: b.cacheOnly === true || b.cacheOnly === "1", fetchInventory: id => require("./_etsyMailEtsy").getListingInventory(id) });
 }
+// the sandbox's own answer for a listing stands over the shared one's, field by field (its per-SKU answers join the shared ones)
+// (a listing's saved pairs of two designs, pairBySku, join the same way)
+// REVLINK: a person's pick is written to the shared store in the sandbox too (aliasPut), so a copy the sandbox kept BEFORE that stands only while it is the later write:
+// the sandbox's old copy never hides a pick made since (the SKU answers sku / v / huggie, bySku and pairBySku follow the document's own update time)
+function aliasMerged(was, mine) {
+  if (!mine) return was; if (!was) return mine;
+  // (HUGTWIN, 14 Oct 2026: the time of the sandbox copy's ANSWERS is `answeredAt` when listingKindPut carried it, else its update time: a listing-kind write bumps updatedAt and must not make an old answer look newer than a pick)
+  const sharedLater = (ms(was.updatedAt) || 0) > (ms(mine.answeredAt) || ms(mine.updatedAt) || 0), a = sharedLater ? mine : was, z = sharedLater ? was : mine;   // (z = the later write of the two)
+  const next = Object.assign({}, was, mine, was.bySku || mine.bySku ? { bySku: Object.assign({}, a.bySku, z.bySku) } : {}, was.pairBySku || mine.pairBySku ? { pairBySku: Object.assign({}, a.pairBySku, z.pairBySku) } : {}, was.byVia || mine.byVia ? { byVia: Object.assign({}, a.byVia, z.byVia) } : {});
+  if (sharedLater) { for (const k of ["sku", "v", "huggie"]) { if (was[k] !== undefined) next[k] = was[k]; else if (k === "v" && was.sku !== undefined) delete next.v; } }
+  return next;
+}
 async function op_aliasGet(b = {}) {
   const sig = await mapSig(ALIASES); if (sig && b.ifSig === sig) return { unchanged: true, sig };
+  // COST (Oct 2026): only what was written since the page's copy, each key merged as a whole read merges it (mapSince); null reads the whole map
+  const m = b.since ? await mapSince(ALIASES, b, sig) : null;
+  if (m) {
+    await mapCounterparts(m);
+    const changes = {}; for (const id of new Set([...m.got[0].keys(), ...(m.got[1] ? m.got[1].keys() : [])])) changes[id] = aliasMerged(m.got[0].get(id) || null, m.got[1] ? m.got[1].get(id) || null : null) || null;
+    return { since: true, changes, sig, n: m.n };
+  }
   const { docs, own = [], truncated } = await mapDocs(ALIASES), out = {};
   docs.forEach(d => { out[d.id] = d.data(); });
-  // the sandbox's own answer for a listing stands over the shared one's, field by field (its per-SKU answers join the shared ones)
-  // (a listing's saved pairs of two designs, pairBySku, join the same way)
-  // REVLINK: a person's pick is written to the shared store in the sandbox too (aliasPut), so a copy the sandbox kept BEFORE that stands only while it is the later write:
-  // the sandbox's old copy never hides a pick made since (the SKU answers sku / v / huggie, bySku and pairBySku follow the document's own update time)
-  own.forEach(d => {
-    const mine = d.data(), was = out[d.id]; if (!was) { out[d.id] = mine; return; }
-    // (HUGTWIN, 14 Oct 2026: the time of the sandbox copy's ANSWERS is `answeredAt` when listingKindPut carried it, else its update time: a listing-kind write bumps updatedAt and must not make an old answer look newer than a pick)
-    const sharedLater = (ms(was.updatedAt) || 0) > (ms(mine.answeredAt) || ms(mine.updatedAt) || 0), a = sharedLater ? mine : was, z = sharedLater ? was : mine;   // (z = the later write of the two)
-    const next = Object.assign({}, was, mine, was.bySku || mine.bySku ? { bySku: Object.assign({}, a.bySku, z.bySku) } : {}, was.pairBySku || mine.pairBySku ? { pairBySku: Object.assign({}, a.pairBySku, z.pairBySku) } : {}, was.byVia || mine.byVia ? { byVia: Object.assign({}, a.byVia, z.byVia) } : {});
-    if (sharedLater) { for (const k of ["sku", "v", "huggie"]) { if (was[k] !== undefined) next[k] = was[k]; else if (k === "v" && was.sku !== undefined) delete next.v; } }
-    out[d.id] = next;
-  });
-  return Object.assign({ aliases: out, truncated }, sig ? { sig } : {});
+  own.forEach(d => { out[d.id] = aliasMerged(out[d.id], d.data()); });
+  return Object.assign({ aliases: out, truncated }, sig ? { sig } : {}, !truncated ? { n: PREFIX ? [docs.length, own.length] : [docs.length] } : {});
 }
 /* "Use this charm": for the listing and the SKU the line came with (fromSku, kept under bySku), so on a listing whose
    variations each have a SKU one variation's answer is never another's; a line with no SKU answers for the listing (sku).
@@ -3375,10 +3460,19 @@ async function op_listingKindPut(b = {}) {
 }
 async function op_noDesignGet(b = {}) {
   const sig = await mapSig(NODESIGN); if (sig && b.ifSig === sig) return { unchanged: true, sig };
+  // COST (Oct 2026): the rows written since the page's copy (mapSince), by row id; null takes a row away (the sandbox's mark del_<id> hides the shared row <id>)
+  const m = b.since ? await mapSince(NODESIGN, b, sig) : null;
+  if (m) {
+    const changes = {}, own = m.got[1], ask = own ? [...m.got[0].keys()].filter(id => !own.has("del_" + id)) : [];
+    for (let k = 0; k < ask.length; k += 100) for (const sn of await db.getAll(...ask.slice(k, k + 100).map(id => db.collection(m.cols[1]).doc("del_" + id)))) own.set(sn.id, sn.exists ? sn.data() : null);
+    for (const [id, d] of m.got[0]) changes[id] = own && own.get("del_" + id) ? null : Object.assign({ id }, d);
+    if (own) for (const [id, d] of own) { if (d && d.tombstone) changes[d.tombstone] = null; else if (d && !/^del_/.test(id)) changes[id] = Object.assign({ id }, d); }
+    return { since: true, changes, sig, n: m.n };
+  }
   const { docs, own = [], truncated } = await mapDocs(NODESIGN);
   const hidden = new Set(own.map(d => d.data()).filter(r => r.tombstone).map(r => r.tombstone));
   const rows = docs.filter(d => !hidden.has(d.id)).concat(own.filter(d => !d.data().tombstone)).map(d => Object.assign({ id: d.id }, d.data()));
-  return Object.assign({ list: { patterns: rows.filter(r => r.pattern).map(r => r.pattern), skus: rows.filter(r => r.sku).map(r => r.sku), rows }, truncated }, sig ? { sig } : {});
+  return Object.assign({ list: { patterns: rows.filter(r => r.pattern).map(r => r.pattern), skus: rows.filter(r => r.sku).map(r => r.sku), rows }, truncated }, sig ? { sig } : {}, !truncated ? { n: PREFIX ? [docs.length, own.length] : [docs.length] } : {});
 }
 async function op_noDesignPut(b) { const doc = { by: str(b.by || "operator", 80), note: str(b.note, 200), createdAt: FV.serverTimestamp() }; if (b.pattern) { try { new RegExp(String(b.pattern)); } catch (_) { return { error: "bad pattern" }; } doc.pattern = str(b.pattern, 120); } else if (b.sku) doc.sku = String(b.sku).trim().toUpperCase().slice(0, 40); else return { error: "pattern or sku required" }; const ref = await db.collection(PREFIX + NODESIGN).add(doc); return { ok: true, id: ref.id }; }
 /* In the sandbox only the sandbox's own row is deleted. A shared row (production's) is never touched from there: the
@@ -3391,21 +3485,33 @@ async function op_noDesignDelete(b) {
   await db.collection(PREFIX + NODESIGN).doc("del_" + b.id).set({ tombstone: b.id, by: str(b.by || "operator", 80), createdAt: FV.serverTimestamp() });
   return { ok: true };
 }
+// the sandbox's own answer for an option value stands over the shared one's (the listing's other answers are kept)
+// REVLINK: except a person's pick of the charm an option gives (field design), which is written to the shared store in the sandbox too: a copy the sandbox kept before stands only while it is the later pick (its `at`)
+function optionMerged(was, own) {
+  const mine = own.map || {}, next = {}; was = was || {};
+  for (const n of new Set([...Object.keys(was), ...Object.keys(mine)])) {
+    next[n] = Object.assign({}, was[n], mine[n]);
+    for (const v of Object.keys(was[n] || {})) { const w = was[n][v], m = mine[n] && mine[n][v]; if (m && w && w.field === "design" && (+w.at || 0) > (+m.at || 0)) next[n][v] = w; }
+  }
+  return next;
+}
 async function op_optionMapGet(b = {}) {
   const sig = await mapSig(OPTMAP); if (sig && b.ifSig === sig) return { unchanged: true, sig };
+  // COST (Oct 2026): only what was written since the page's copy, each listing merged as a whole read merges it (mapSince); null reads the whole map
+  const m = b.since ? await mapSince(OPTMAP, b, sig) : null;
+  if (m) {
+    await mapCounterparts(m);
+    const changes = {};
+    for (const id of new Set([...m.got[0].keys(), ...(m.got[1] ? m.got[1].keys() : [])])) {
+      const shared = m.got[0].get(id), own = m.got[1] ? m.got[1].get(id) : null;
+      changes[id] = own ? optionMerged(shared ? shared.map || {} : undefined, own) : shared ? shared.map || {} : null;
+    }
+    return { since: true, changes, sig, n: m.n };
+  }
   const { docs, own = [], truncated } = await mapDocs(OPTMAP), out = {};
   docs.forEach(d => { out[d.id] = d.data().map || {}; });
-  // the sandbox's own answer for an option value stands over the shared one's (the listing's other answers are kept)
-  // REVLINK: except a person's pick of the charm an option gives (field design), which is written to the shared store in the sandbox too: a copy the sandbox kept before stands only while it is the later pick (its `at`)
-  own.forEach(d => {
-    const mine = d.data().map || {}, was = out[d.id] || {}, next = {};
-    for (const n of new Set([...Object.keys(was), ...Object.keys(mine)])) {
-      next[n] = Object.assign({}, was[n], mine[n]);
-      for (const v of Object.keys(was[n] || {})) { const w = was[n][v], m = mine[n] && mine[n][v]; if (m && w && w.field === "design" && (+w.at || 0) > (+m.at || 0)) next[n][v] = w; }
-    }
-    out[d.id] = next;
-  });
-  return Object.assign({ maps: out, truncated }, sig ? { sig } : {});
+  own.forEach(d => { out[d.id] = optionMerged(out[d.id], d.data()); });
+  return Object.assign({ maps: out, truncated }, sig ? { sig } : {}, !truncated ? { n: PREFIX ? [docs.length, own.length] : [docs.length] } : {});
 }
 async function op_optionMapPut(b) {
   const lid = b.listingId === "*" ? "*" : str(b.listingId, 30).replace(/\D/g, ""); const name = str(b.optionName, 80).toLowerCase().trim(), value = str(b.optionValue, 200).toLowerCase().replace(/\s+/g, " ").trim();
@@ -3482,6 +3588,17 @@ const customSheetHash = key => require("crypto").createHash("sha256").update(key
 const customSheetRef = key => col(CUSTOM_SHEET).doc("card-" + customSheetHash(key));
 const customSheetLineRef = key => col(CUSTOM_SHEET).doc("line-" + customSheetHash(key));
 const customSheetRow = d => { const r = Object.assign({}, d); delete r.updatedAt; delete r.fingerprint; return r; };
+/* COST (Oct 2026): every sorter tab asked customSheetGet about once a minute for EVERY pulled line (getAll of line-<hash>, a missing document
+   is still a read) and every card key: about 1,400 reads a minute per tab to learn that nothing changed. customSheetPut is the only writer of
+   this collection, so it raises ONE revision document in its own transaction: rev = { id (made once, so a Reset that deletes the collection
+   never gives back a number a page already holds), n, log: the last CUSTOM_SHEET_LOG puts, each with its card key and its lines }. A page
+   sends the revision it last read at (ifRev) with the keys and lines it already asked about at it (heldKeys, heldLines) and only the new
+   ones (keys, lineKeys): an unchanged revision reads nothing for the held ones (one read for the revision), a moved one whose puts the log
+   still covers re-reads only the cards those puts wrote that touch what the page holds, and anything else reads everything, as before
+   (`full`). The revision is read BEFORE the documents: a put that lands meanwhile is in the next answer's log. */
+const CUSTOM_SHEET_LOG = 60;
+const customSheetRevRef = () => col(CUSTOM_SHEET).doc("rev");
+const customSheetRevOf = d => ({ id: d && typeof d.id === "string" ? d.id : "0", n: d ? Math.max(0, Math.round(num(d.n))) : 0, log: d && Array.isArray(d.log) ? d.log : [] });
 function customSheetCanonical(v) {
   return JSON.stringify(v, function (_, x) { return x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map(k => [k, x[k]])) : x; });
 }
@@ -3551,6 +3668,12 @@ async function op_customSheetPut(b) {
     })])) });
     const events = phase === "sent" ? customSheetEvents(next) : [], eventRefs = events.map(e => db.collection(PREFIX + Timeline.COL).doc(e.key));
     const recorded = eventRefs.length ? await tx.getAll(...eventRefs) : [];
+    const revRef = customSheetRevRef(), revSnap = await tx.get(revRef);
+    // COST (Oct 2026): the revision every page asks with (customSheetGet ifRev) moves with each put that writes the card or claims a line
+    if (!old || old.phase !== phase || removalChanged || claimed.some(s => !s.exists)) {
+      const r = customSheetRevOf(revSnap.exists ? revSnap.data() : null), id = r.id !== "0" ? r.id : require("crypto").randomBytes(6).toString("hex"), n = r.n + 1;
+      tx.set(revRef, { id, n, log: r.log.concat([{ n, ck: next.ck, lines: Object.keys(next.sent.lines).slice(0, 100) }]).slice(-CUSTOM_SHEET_LOG), updatedAt: FV.serverTimestamp() });
+    }
     if (!old || old.phase !== phase || removalChanged) {
       next.history = (old?.history || []).concat(old?.phase === "sent" || phase !== "sent" ? [] : [{ phase: "sent", id: next.sent.id, at: next.sent.at, by: next.sent.by }]);
       next.updatedAtMs = Date.now(); next.updatedAt = FV.serverTimestamp(); next.fingerprint = fingerprint;
@@ -3635,7 +3758,22 @@ async function legacyCustomSheets(lineKeys, known) {
 }
 async function op_customSheetGet(b) {
   if (!Array.isArray(b.keys) && !Array.isArray(b.lineKeys) && !Array.isArray(b.legacyLineKeys)) return { error: "known custom card keys or piece keys required" };
-  const asked = [...new Set((Array.isArray(b.keys) ? b.keys : []).filter(customSheetKeyOk))], lines = [...new Set((Array.isArray(b.lineKeys) ? b.lineKeys : []).map(String).filter(lineKeyOk))];
+  let asked = [...new Set((Array.isArray(b.keys) ? b.keys : []).filter(customSheetKeyOk))], lines = [...new Set((Array.isArray(b.lineKeys) ? b.lineKeys : []).map(String).filter(lineKeyOk))];
+  // COST (Oct 2026): the revision (see CUSTOM_SHEET_LOG): what the page held at ifRev is read again only when a put since touched it
+  const revDoc = b.ifRev !== undefined || b.wantRev ? customSheetRevOf(await customSheetRevRef().get().then(x => (x.exists ? x.data() : null))) : null;
+  let full = false;
+  if (revDoc) {
+    const heldKeys = [...new Set((Array.isArray(b.heldKeys) ? b.heldKeys : []).filter(customSheetKeyOk))], heldLines = [...new Set((Array.isArray(b.heldLines) ? b.heldLines : []).map(String).filter(lineKeyOk))];
+    const m = /^([0-9a-f]{1,32})\.(\d+)$/.exec(String(b.ifRev == null ? "" : b.ifRev)), n0 = m ? +m[2] : -1;
+    const covered = m && m[1] === revDoc.id && n0 <= revDoc.n && (n0 === revDoc.n || revDoc.log.some(e => num(e.n) === n0 + 1));
+    if (!covered) { full = true; asked = [...new Set(heldKeys.concat(asked))]; lines = [...new Set(heldLines.concat(lines))]; }
+    else if (n0 < revDoc.n) {
+      const hk = new Set(heldKeys), hl = new Set(heldLines), touched = revDoc.log.filter(e => num(e.n) > n0 && e && customSheetKeyOk(e.ck) && (hk.has(e.ck) || (Array.isArray(e.lines) && e.lines.some(l => hl.has(String(l)))))).map(e => e.ck);
+      asked = [...new Set(asked.concat(touched))];
+    }
+    if (!asked.length && !lines.length && !(Array.isArray(b.legacyLineKeys) && b.legacyLineKeys.length)) return { records: {}, keys: 0, truncated: false, unchanged: !full, full, rev: revDoc.id + "." + revDoc.n };
+  }
+  const withRev = o => (revDoc ? Object.assign(o, { rev: revDoc.id + "." + revDoc.n, full }) : o);
   const keys = new Set(asked.slice(0, 1000));
   for (let i = 0; i < Math.min(lines.length, 1000); i += 100) {
     const snaps = await db.getAll(...lines.slice(i, Math.min(i + 100, 1000)).map(customSheetLineRef));
@@ -3646,14 +3784,14 @@ async function op_customSheetGet(b) {
     const snaps = await db.getAll(...list.slice(i, i + 50).map(customSheetRef));
     for (const [j, s] of snaps.entries()) {
       const r = s.exists ? customSheetRow(s.data()) : null;
-      if (r && !budget.fits(r)) return { records, keys: read, truncated: true };
+      if (r && !budget.fits(r)) return withRev({ records, keys: read, truncated: true });
       read++; if (r && r.ck === list[i + j]) records[r.ck] = r;
-      if (budget.late()) return { records, keys: read, truncated: read < list.length || keys.size > 1000 || lines.length > 1000 };
+      if (budget.late()) return withRev({ records, keys: read, truncated: read < list.length || keys.size > 1000 || lines.length > 1000 });
     }
   }
   const legacy = Array.isArray(b.legacyLineKeys) ? await legacyCustomSheets(b.legacyLineKeys, records) : null;
   if (legacy) Object.assign(records, legacy.records);
-  return { records, keys: read, truncated: keys.size > 1000 || asked.length > 1000 || lines.length > 1000, ...(legacy ? { legacyTruncated: legacy.truncated } : {}) };
+  return withRev({ records, keys: read, truncated: keys.size > 1000 || asked.length > 1000 || lines.length > 1000, ...(legacy ? { legacyTruncated: legacy.truncated } : {}) });
 }
 
 /* how: "print" (the QR label was printed, the default) or "button" (Complete Order, 27 Sep: completed with no label

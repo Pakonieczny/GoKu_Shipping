@@ -89,15 +89,20 @@ async function partB() {
     ok((await api(h, { op: 'masterPatch', sku: 'MC003', patch: { facing: 'L' } })).ok, 'a person sets a facing (masterPatch)');
     await boot(h);
     ok(ops(h, 'masterList').length >= 1 && (await lib(h)).e.MC003.f === 'L', 'masterPatch: the next load reads the index again and shows the facing');
+    // COST (Oct 2026): only what was written since the copy was read, never the whole index again (masterList since; no part read without it)
+    ok(ops(h, 'masterList').some(c => c.since && c.since.docs === COUNT) && !ops(h, 'masterList').some(c => !c.since), 'masterPatch: the reload asks only for what was written since the copy (masterList since, ' + COUNT + ' documents known), no whole read (' + JSON.stringify(ops(h, 'masterList').map(c => !!c.since)) + ')');
+    ok((await lib(h)).n === COUNT, 'and the library is whole (' + (await lib(h)).n + ' charms)');
     await waitKept(h); await boot(h); ok(ops(h, 'masterList').length === 0, 'and the new copy is used after that');
     entries[1].widthPt = 99; entries[1].charmHash = 'hNEW';
     await api(h, { op: 'masterPutIndex', entries: [entries[1]], masterHash: 'aa11bb22', masterPath: 'charmnest/master/m.ai', masterName: 'MASTER A', hashSource: 'browser' });
     await boot(h);
     ok(ops(h, 'masterList').length >= 1 && (await lib(h)).e.MC002.w === 99, 'masterPutIndex (a re-index): the next load shows the new drawing size');
+    ok(ops(h, 'masterList').some(c => c.since) && !ops(h, 'masterList').some(c => !c.since) && (await lib(h)).n === COUNT, 'masterPutIndex: the reload reads only what was written since, the library stays whole');
     await waitKept(h);
     ok((await api(h, { op: 'masterRemoveSku', sku: 'MC004' })).ok, 'a prune (masterRemoveSku)');
     await boot(h);
     ok(ops(h, 'masterList').length >= 1 && (await lib(h)).n === COUNT - 1, 'masterRemoveSku: the next load has one charm fewer');
+    ok(ops(h, 'masterList').some(c => c.since) && ops(h, 'masterList').some(c => !c.since) && !(await lib(h)).e.MC004, 'a removal is no write the since-read sees: the count says it (full) and the whole index is read again, MC004 gone');
     await waitKept(h);
 
     // 4 · a new master file record alone: the entries are not read again, the files are, and the copy follows

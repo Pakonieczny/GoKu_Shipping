@@ -3183,10 +3183,33 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       }
       return { add, cursor: c };   // (more than 2500 at once: the rest at the next read, from where this one stopped)
     }
+    /* COST (Oct 2026): every page load read the whole set (idsOnly track: the collection, up to 5000, about 300 reads and growing). What the
+       last read left is kept on this computer per workspace (the ids, the cursor, how many were left out past 5000), so a reload asks only for
+       what was written after the cursor, with the count, exactly as a check does: a restore made meanwhile (its record deleted) shows as a
+       collection that holds fewer than is known, and the whole set is read again. Nothing kept, or storage that throws: the whole read, as before. */
+    const STORE = () => "cn.cancelIds.v1:" + (typeof WORKSPACE_SANDBOX !== "undefined" && WORKSPACE_SANDBOX ? "sandbox" : "production");
+    let stored = "";
+    function keep() {
+      try {
+        if (!cursor) { localStorage.removeItem(STORE()); stored = ""; return; }
+        const mark = JSON.stringify(cursor) + "|" + ids.size + "|" + beyond; if (mark === stored) return;
+        localStorage.setItem(STORE(), JSON.stringify({ cursor, beyond, ids: [...ids], at: Date.now() })); stored = mark;
+      } catch (_) { /* the next page load reads the whole set */ }
+    }
+    function kept() {
+      try {
+        const s = JSON.parse(localStorage.getItem(STORE()) || "null"), c = s && s.cursor;
+        if (!c || !(+c.s > 0) || !(+c.n >= 0) || !c.id || !Array.isArray(s.ids) || !(+s.beyond >= 0) || !(Date.now() - +s.at < 30 * 86400000)) return null;
+        return { cursor: { s: +c.s, n: +c.n, id: String(c.id) }, beyond: +s.beyond, ids: new Set(s.ids.map(String)) };
+      } catch (_) { return null; }
+    }
     function load(force) {
       if (loading) return loading;
       if (!force && at && Date.now() - at < 60000) return Promise.resolve(ids);
       const t0 = Date.now();
+      // (the first read of this page starts from what the last one kept: only what was written after its cursor is read)
+      const seed = !at && !cursor ? kept() : null;
+      if (seed) { ids = seed.ids; cursor = seed.cursor; beyond = seed.beyond; }
       loading = (cursor ? readNew() : Promise.resolve(null))
         .then(n => n || api("charmNestLibrary", { op: "cancelList", idsOnly: true, track: true, wantGen: true }, { quiet: true }).then(r => { gen = r && r.gen != null ? r.gen : null; genAt = Date.now(); return r; }))
         .then(r => {
@@ -3195,10 +3218,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
           else { ids = new Set((r.ids || []).map(String)); beyond = +r.total - ids.size; cursor = r.cursor && beyond >= 0 ? r.cursor : null; }
           for (const [id, t] of learned) { if (t >= t0) ids.add(id); else if (Date.now() - t > 600000) learned.delete(id); }
           for (const [id, t] of restored) { if (t >= t0) ids.delete(id); else if (Date.now() - t > 600000) restored.delete(id); }
-          at = Date.now(); if (was) arrived([...ids].filter(id => !was.has(id))); return ids;
+          at = Date.now(); keep(); if (was) arrived([...ids].filter(id => !was.has(id))); return ids;
         })
         // (never read yet: the orders check waits, so a cancelled order cannot come back in; read once, the last list stands)
-        .catch(e => { console.warn("cancelled orders", e.message); if (!at) throw new Error(`the cancelled orders could not be read (${e.message})`); return ids; })
+        .catch(e => { console.warn("cancelled orders", e.message); if (!at) { if (seed) { ids = new Set(); cursor = null; beyond = 0; } throw new Error(`the cancelled orders could not be read (${e.message})`); } return ids; })
         .finally(() => { loading = null; });
       return loading;
     }

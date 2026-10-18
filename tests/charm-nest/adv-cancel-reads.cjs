@@ -88,8 +88,8 @@ async function check(name, fn) { await fn(); passed++; realLog("ok  " + name); }
 /* ── the client modules, as the page runs them ── */
 const src = fs.readFileSync(path.join(root, "charm-nest-sheetwin.js"), "utf8");
 const cut = (a, b) => { const i = src.indexOf(a), j = src.indexOf(b, i); assert(i >= 0 && j > i, "slice " + a); return src.slice(i, j); };
-function page({ held = [] } = {}) {
-  const ls = new Map(), timers = [], intervals = [], listeners = {}, said = [];
+function page({ held = [], storage = null } = {}) {
+  const ls = storage || new Map(), timers = [], intervals = [], listeners = {}, said = [];
   let skew = 0; const RealDate = Date;                              // (the page's clock, which a test can move on: the deep read of the cancel counter is due after a minute)
   class PageDate extends RealDate { constructor(...a) { if (a.length) super(...a); else super(RealDate.now() + skew); } static now() { return RealDate.now() + skew; } }
   const document = { hidden: false, addEventListener: (t, f) => (listeners[t] = listeners[t] || []).push(f), querySelector: () => null, querySelectorAll: () => [], getElementById: () => null };
@@ -143,6 +143,23 @@ const cancelReads = () => calls.filter(c => c.op === "cancelList").length;
     assert(!Cancelled.has("3000000007"), "an order restored elsewhere is pulled again");
     c0 = calls.length; cost.docsRead = 0; await Cancelled.load(true);
     assert.equal(wholeReads(c0), 0, "and the reads after that are of what changed again"); assert(cost.docsRead <= 5, `(read ${cost.docsRead})`);
+    for (const k of [...store.keys()]) store.delete(k);
+  });
+
+  await check("COST (Oct 2026): a page load starts from what the last one kept on this computer; a restore made meanwhile still reads the whole set", async () => {
+    for (let i = 0; i < 400; i++) await put(String(3000000000 + i), { at: 1e12 + i });
+    const disk = new Map();
+    let c0 = calls.length; await page({ storage: disk }).Cancelled.load(true);
+    assert.equal(wholeReads(c0), 1, "the first page ever reads the whole set"); assert([...disk.keys()].some(k => /^cn\.cancelIds\.v1:/.test(k)), "and keeps the ids and the cursor");
+    await post({ op: "cancelPut", orderId: "4000000009", by: "Paul", why: "", record: {} });   // a cancel made while no page was open
+    const p2 = page({ storage: disk }); c0 = calls.length; cost.docsRead = 0; await p2.Cancelled.load(true);
+    assert.equal(wholeReads(c0), 0, "a reload asks only after the kept cursor"); assert(cost.docsRead <= 5, `(read ${cost.docsRead}, the whole set is 400)`);
+    assert(p2.Cancelled.has("3000000123") && p2.Cancelled.has("4000000009"), "it knows the kept cancels and the new one");
+    assert.equal((await post({ op: "cancelRestore", orderId: "3000000123", by: "Tess" })).ok, true);   // restored while no page was open
+    const p3 = page({ storage: disk }); c0 = calls.length; await p3.Cancelled.load(true);
+    assert.equal(wholeReads(c0), 1, "a restore since: the count is short, the whole set is read again"); assert(!p3.Cancelled.has("3000000123") && p3.Cancelled.has("4000000009"), "and the restored order is pulled again");
+    const broken = new Map([...disk].map(([k]) => [k, "{not json"])), p4 = page({ storage: broken }); c0 = calls.length; await p4.Cancelled.load(true);
+    assert.equal(wholeReads(c0), 1, "a kept record that does not read back: the whole set, as before"); assert(p4.Cancelled.has("4000000009"));
     for (const k of [...store.keys()]) store.delete(k);
   });
 
