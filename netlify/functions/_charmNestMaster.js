@@ -2,7 +2,9 @@
  *  The master index write, shared by charmNestLibrary (browser-side indexing of a small master) and
  *  charmMaster-background (server-side indexing of a large one), so both paths apply the same rules:
  *    · Charm_Master_Index is keyed by SKU alone — a SKU is one design whatever colour it is ordered in;
- *    · a SKU present in two different master files is a duplicate: BOTH entries are blocked until fixed;
+ *    · a SKU present in two different master files is a duplicate: BOTH entries are blocked until fixed — unless the write says
+ *      `newest` (MASTERNEW, Paul 18 Oct 2026: "Any existing/duplicated SKUs must be removed in favour of the new file"): then the
+ *      file being indexed wins, the entry is re-indexed from it, and what it replaced is recorded on the entry (`replaced`);
  *    · re-indexing the same master (same hash, or a file that `replaces` an older hash) simply updates;
  *    · a size that moved more than 5 % on re-index is flagged, never silently accepted;
  *    · operator overrides (engravable, upAngle, backKeepOut, confirmed vision labels) survive a re-index.        */
@@ -67,7 +69,9 @@ async function putIndex(db, FV, body) {
   // a name the library cannot hold is refused and SAID (`rejected`), never dropped without a word: the run that sent it shows it, and the read-back finds nothing for it
   const sent = (body.entries || []), entries = sent.filter(e => e && isSku(String(e.sku || "").toUpperCase()));
   const masterHash = str(body.masterHash, 80), replaces = new Set((body.replaces || []).map(String).concat([masterHash]));
-  const out = { written: 0, blocked: [], sizeMoved: [], pairKept: [], rejected: sent.filter(e => !(e && isSku(String(e.sku || "").toUpperCase()))).slice(0, 200).map(e => ({ sku: String((e && e.sku) || "").slice(0, 80), reason: "not a name the library can hold (2 to 61 characters: letters, digits, space and _ . , ' & ( ) + -)" })) };
+  // MASTERNEW (Paul, 18 Oct 2026): `newest` = the file being indexed wins over every other master file for the SKUs it carries; `by` = the signed-in person who added it (recorded with what was replaced)
+  const newest = body.newest === true, by = str(body.by, 80) || null, movedOut = new Map();   // (movedOut: old master hash → the SKUs this write took from it, for its upload-history record)
+  const out = { written: 0, blocked: [], sizeMoved: [], replaced: [], pairKept: [], rejected: sent.filter(e => !(e && isSku(String(e.sku || "").toUpperCase()))).slice(0, 200).map(e => ({ sku: String((e && e.sku) || "").slice(0, 80), reason: "not a name the library can hold (2 to 61 characters: letters, digits, space and _ . , ' & ( ) + -)" })) };
   // group sized designs under one SKU
   const bySku = new Map();
   for (const e of entries) { const sku = String(e.sku).toUpperCase(); if (!bySku.has(sku)) bySku.set(sku, []); bySku.get(sku).push(e); }
@@ -129,9 +133,9 @@ async function putIndex(db, FV, body) {
     if (!(ex && ex.engravableBy === "operator")) { doc.engravable = base.engravable !== false; doc.engravableBy = "index"; }
     if (!(ex && ex.upSource === "operator")) { doc.upAngle = base.upAngle == null ? null : num(base.upAngle); doc.upSource = str(base.upSource || "index", 20); }
     if (base.backKeepOut) doc.backKeepOut = base.backKeepOut;
-    // duplicates across masters
+    // duplicates across masters (with `newest`, there are none: the newest file's drawing is the one entry)
     let blocked = base.blocked ? str(base.blocked, 300) : null;
-    if (ex && ex.masterHash && !replaces.has(ex.masterHash) && ex.masterHash !== masterHash) {
+    if (ex && ex.masterHash && !replaces.has(ex.masterHash) && ex.masterHash !== masterHash && !newest) {
       blocked = `SKU present in two master files: ${ex.masterName || ex.masterHash} and ${doc.masterName || masterHash}`;
       doc.conflict = { with: ex.masterHash, withName: ex.masterName || null, at: Date.now() };
       out.blocked.push({ sku, reason: blocked, with: ex.masterHash });
@@ -139,15 +143,30 @@ async function putIndex(db, FV, body) {
     // size moved more than 5 % on re-index — only against a different master file; re-writing the same one is not a change
     if (ex && ex.masterHash && ex.masterHash !== masterHash && num(ex.widthPt) && num(doc.widthPt)) {
       const dw = Math.abs(doc.widthPt - ex.widthPt) / ex.widthPt, dh = Math.abs(doc.heightPt - ex.heightPt) / (ex.heightPt || 1);
-      if (dw > 0.05 || dh > 0.05) { doc.sizeMoved = { from: [ex.widthPt, ex.heightPt], to: [doc.widthPt, doc.heightPt], at: Date.now() }; out.sizeMoved.push({ sku, from: [ex.widthPt, ex.heightPt], to: [doc.widthPt, doc.heightPt] }); }
+      if (dw > 0.05 || dh > 0.05) { doc.sizeMoved = { from: [ex.widthPt, ex.heightPt], to: [doc.widthPt, doc.heightPt], at: Date.now(), by }; out.sizeMoved.push({ sku, from: [ex.widthPt, ex.heightPt], to: [doc.widthPt, doc.heightPt] }); }
       else doc.sizeMoved = FV.delete();
     } else doc.sizeMoved = FV.delete();
     doc.blocked = blocked || FV.delete();
+    // MASTERNEW: an entry another master file wrote is re-indexed from this one (newest, or a file that replaces it): what it was, from which file, and who replaced it, stay on the entry.
+    // The write is a merge, so what a person set that the drawing does not carry (their angle, engravable, pair and facing words, confirmations, keep-outs) is kept, as for any re-index.
+    if (ex && ex.masterHash && ex.masterHash !== masterHash && (newest || replaces.has(ex.masterHash))) {
+      const rec = { from: ex.masterHash, fromName: ex.masterName || null, fromSize: [num(ex.widthPt), num(ex.heightPt)], toSize: [doc.widthPt, doc.heightPt], at: Date.now(), by };
+      doc.replaced = rec; out.replaced.push(Object.assign({ sku }, rec));
+      if (!movedOut.has(ex.masterHash)) movedOut.set(ex.masterHash, []); movedOut.get(ex.masterHash).push(sku);
+    }
     if (!ex) doc.firstIndexedAt = FV.serverTimestamp();
     queue.push({ ref, doc, sku, ex }); out.written++;
     if (queue.length >= 400) await flush();
   }
   await flush();
+  // the older file's upload-history record stops listing the SKUs it no longer holds (its other SKUs, and its own entries, are as they were): one read and one merge per older file
+  for (const [old, list] of movedOut) {
+    try {
+      const ref = db.collection(FILES).doc(old), sn = await ref.get(); if (!sn.exists) continue;
+      const f = sn.data() || {}, gone = new Set(list);
+      if (Array.isArray(f.skus)) await ref.set({ skus: f.skus.filter(s => !gone.has(String(s).toUpperCase())), movedOut: { to: masterHash, toName: str(body.masterName, 200) || null, skus: list.slice(0, 500), count: list.length, at: Date.now(), by } }, { merge: true });
+    } catch (_) { /* the entries are written; the old record is display only */ }
+  }
   return out;
 }
 
@@ -159,6 +178,7 @@ async function putFile(db, FV, body) {
     duplicateCount: Array.isArray(f.duplicates) ? f.duplicates.length : num(f.duplicateCount), blockedCount: Array.isArray(f.blocked) ? f.blocked.length : num(f.blockedCount), skus: (f.skus || []).map(s => String(s).toUpperCase()).slice(0, 2000), indexedAt: FV.serverTimestamp(), indexedAtMs: Date.now(), indexedBy: str(f.indexedBy || "browser", 20), pageW: num(f.pageW), pageH: num(f.pageH) };
   if (Array.isArray(f.visionReads)) doc.visionReads = f.visionReads.slice(0, 1000);
   if (f.replaces) doc.replaces = (f.replaces || []).map(String).slice(0, 20);
+  if (f.by) doc.by = str(f.by, 80);   // (MASTERNEW: the signed-in person who added the file)
   await db.collection(FILES).doc(hash).set(doc, { merge: true });
   return { ok: true, masterHash: hash };
 }

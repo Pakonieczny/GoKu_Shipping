@@ -17,7 +17,11 @@
  *    --upload-master     also store the master file itself under charmnest/master/files/
  *    --replaces HASH     an earlier version of this master to supersede (repeatable)
  *    --resume            continue an interrupted run (progress is kept in <file>.index-progress.json)
- *    --all               rebuild every charm on the sheet, including SKUs the library already holds (default: skip those)
+ *    --all               rebuild every charm on the sheet, including SKUs this same file already wrote (default: skip those)
+ *    --keep-held         leave every SKU the library already holds as it is, whichever master file wrote it (the rule before
+ *                        18 Oct 2026). By default the NEWEST file wins (MASTERNEW, Paul): a SKU another master file wrote is
+ *                        re-indexed from this one, the person-set fields kept; a design saved from an order is never replaced
+ *    --by NAME           who is indexing, recorded with what the run replaced
  *    --only LIST         rebuild ONLY the charms carrying one of these SKUs (a JSON file: an array of SKUs, of {sku} rows, or
  *                        an object with .skus / .offending; or SKUs separated by commas). Implies --all for those charms and
  *                        reads the library for just those SKUs (masterGetMany) instead of the whole index (masterList).
@@ -63,6 +67,8 @@ function args(argv) {
     else if (a === "--replaces") { o.replaces.push(String(v || "")); i++; }
     else if (a === "--resume") o.resume = true;
     else if (a === "--all") o.all = true;
+    else if (a === "--keep-held") o.keepHeld = true;
+    else if (a === "--by") { o.by = String(v || "").slice(0, 80); i++; }
     else if (a === "--only") { o.only = String(v || ""); i++; }
     else if (a === "--new-hash") o.newHash = true;
     else if (a === "--pin") { o.pin = String(v || ""); i++; }
@@ -327,14 +333,15 @@ async function main(argv, log = console.log) {
     const stale = Pair && Pair.staleHeld ? Pair.staleHeld(g.charms.filter(c => c.mergedInto == null), labelsOf, held, P.LETTERS_READER_VERSION) : new Map();
     items = items.filter(({ index, l }) => {
       const mine = [l.sku, ...(l.extra || []).map(x => x.sku)].filter(Boolean).map(x => String(x).toUpperCase());
-      for (const sk of mine) { const e = held.get(sk); if (e && e.masterHash && e.masterHash !== masterHash) supersede.add(e.masterHash); }
-      // held: the library has it (and the size), and it was not written by an older reader from this same file
-      if (!o.all && !only && !stale.has(index) && [l].concat(l.extra || []).every(x => { const e = held.get(String(x.sku).toUpperCase()); if (!e) return false; const sz = x.size ? (e.sizes || {})[String(x.size).toUpperCase()] : null; if (x.size && !sz) return false; return !(e.masterHash === masterHash && (+((sz || e).readerV) || 0) < P.READER_VERSION); })) return false;   // (held per size: "ALPHA_1 · M" is new beside a held "ALPHA_1 · S")
+      // (a design saved from an order is never superseded: the library keeps it and says so, KEEP R4)
+      for (const sk of mine) { const e = held.get(sk); if (e && e.masterHash && e.masterHash !== masterHash && e.hashSource !== "custom-save") supersede.add(e.masterHash); }
+      // held: the library has it (and the size), and it was not written by an older reader from this same file; and (MASTERNEW, Paul 18 Oct 2026: the newest file wins) this same file wrote it, or it is a design saved from an order, unless --keep-held
+      if (!o.all && !only && !stale.has(index) && [l].concat(l.extra || []).every(x => { const e = held.get(String(x.sku).toUpperCase()); if (!e) return false; const sz = x.size ? (e.sizes || {})[String(x.size).toUpperCase()] : null; if (x.size && !sz) return false; if (!o.keepHeld && e.masterHash !== masterHash && e.hashSource !== "custom-save") return false; return !(e.masterHash === masterHash && (+((sz || e).readerV) || 0) < P.READER_VERSION); })) return false;   // (held per size: "ALPHA_1 · M" is new beside a held "ALPHA_1 · S")
       return true;
     });
     heldCount = before - items.length;
     if (stale.size && !o.all && !only) log(`${stale.size} design(s) the library already holds are built again, because it holds them wrong: ${[...stale].slice(0, 12).map(([i, w]) => `${w.skus[0]} (${w.kind === "pair" ? "held as one body of a pair" : "held without the letter set inside it"})`).join(", ")}${stale.size > 12 ? " …" : ""}`);
-    if (heldCount) log(`${heldCount} charm(s) are already in the library and are left as they are · ${items.length} to index (--all rebuilds every one)`);
+    if (heldCount) log(`${heldCount} charm(s) are already in the library${o.keepHeld ? "" : " from this file"} and are left as they are · ${items.length} to index (--all rebuilds every one)`);
     if (!items.length) { log("nothing new on this sheet"); return { file: name, masterHash, charms: liveCharms, written: 0, held: before, dry: false, at: new Date().toISOString() }; }
   }
   const entries = [], blocked = [], skus = [], kept = [], ringsLeft = [], islands = [];   // kept: pair designs left as they were (see one()); ringsLeft: a hoop that could not join its charm, by SKU
@@ -403,7 +410,7 @@ async function main(argv, log = console.log) {
   if (kept.length) log(`${kept.length} pair design(s) were NOT written, because this run drew them as one body and the library holds them as a pair: ${kept.slice(0, 40).map(k => k.sku).join(", ")}${kept.length > 40 ? " …" : ""}`);
   log(`${entries.length} SKU entr${entries.length === 1 ? "y" : "ies"} ready (${skipped} from the previous run) · ${blocked.length} blocked · ${((Date.now() - t0) / 1000).toFixed(0)} s`);
 
-  let conflicts = [], sizeMoved = [], keptAtServer = [], rejected = [], written = 0;
+  let conflicts = [], sizeMoved = [], keptAtServer = [], rejected = [], replaced = [], written = 0;
   if (stage) {
     written = new Set(entries.map(e => String(e.sku).toUpperCase())).size;
     fs.writeFileSync(path.join(o.outDir, "records.json"), JSON.stringify({ masterHash, masterName: name, hashSource: "local", replaces: [...new Set(o.replaces)], only: only ? [...only] : null, entries, blocked }, null, 1));
@@ -414,8 +421,8 @@ async function main(argv, log = console.log) {
     // the master's stored path (the entries already name it) is kept when this run does not upload the master again
     const keepPath = masterUp ? masterUp.path : ([...held.values()].find(e => e.masterHash === masterHash && e.masterPath) || {}).masterPath || null;
     for (let i = 0; i < entries.length; i += 150) {
-      const r = await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutIndex", entries: entries.slice(i, i + 150), masterHash, masterPath: keepPath, masterName: name, hashSource: "local", replaces: i === 0 ? [...new Set(o.replaces.concat([...supersede]))] : [] });
-      conflicts = conflicts.concat(r.blocked || []); sizeMoved = sizeMoved.concat(r.sizeMoved || []); keptAtServer = keptAtServer.concat(r.pairKept || []); rejected = rejected.concat(r.rejected || []);
+      const r = await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutIndex", entries: entries.slice(i, i + 150), masterHash, masterPath: keepPath, masterName: name, hashSource: "local", replaces: i === 0 ? [...new Set(o.replaces.concat([...supersede]))] : [], newest: !o.keepHeld, by: o.by || null });
+      conflicts = conflicts.concat(r.blocked || []); sizeMoved = sizeMoved.concat(r.sizeMoved || []); replaced = replaced.concat(r.replaced || []); keptAtServer = keptAtServer.concat(r.pairKept || []); rejected = rejected.concat(r.rejected || []);
       log(`  index ${Math.min(i + 150, entries.length)}/${entries.length}`);
     }
     // --only rewrites a few SKUs of a master whose file record is already there: that record (its counts and lists) is left as it is
@@ -430,6 +437,7 @@ async function main(argv, log = console.log) {
     if (keptAtServer.length) log(`  ${keptAtServer.length} SKU(s) the library holds as a pair were NOT overwritten with one body (the server refused): ${keptAtServer.slice(0, 30).map(b => b.sku).join(", ")}`);
     if (conflicts.length) log(`  ${conflicts.length} SKU(s) also live in another master file — blocked until fixed: ${conflicts.slice(0, 30).map(b => b.sku).join(", ")}`);
     if (sizeMoved.length) log(`  ${sizeMoved.length} SKU(s) changed size by more than 5 % since the last index: ${sizeMoved.slice(0, 30).map(b => b.sku).join(", ")}`);
+    if (replaced.length) log(`  ${replaced.length} SKU(s) replaced with this file's drawings: ${replaced.slice(0, 30).map(b => `${b.sku} (${b.fromName || String(b.from || "").slice(0, 8)} → ${name})`).join(", ")}`);
     // read the index back: a batch that times out can answer without having stored everything
   {
     const want = [...new Set(entries.map(e => String(e.sku).toUpperCase()))];
@@ -441,12 +449,12 @@ async function main(argv, log = console.log) {
       log(`  ${missing.length} SKU(s) did not land — writing them again (pass ${pass})`);
       if (pass === 3) { log(`  still missing: ${missing.slice(0, 40).join(", ")}${missing.length > 40 ? " …" : ""}`); break; }
       const again = entries.filter(e => missing.includes(String(e.sku).toUpperCase()));
-      for (let i = 0; i < again.length; i += 100) await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutIndex", entries: again.slice(i, i + 100), masterHash, masterPath: keepPath, masterName: name, hashSource: "local", replaces: [] });
+      for (let i = 0; i < again.length; i += 100) await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutIndex", entries: again.slice(i, i + 100), masterHash, masterPath: keepPath, masterName: name, hashSource: "local", replaces: [], newest: !o.keepHeld, by: o.by || null });
     }
   }
   log(`index written: ${written} SKU(s) on ${o.origin} — the Master tab shows them after Reload index`);
   }
-  const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: liveCharms, labelled: lab.labels.size, unlabelled: lab.unlabelled, absorbed: lab.absorbed || [], titles: lab.titles || [], inlays: lab.inlays || [], islands, looseRings: lab.looseRings || [], ringsLeft, slashLabels: [...lab.labels.values()].flatMap(l => [l].concat(l.extra || [])).filter(x => x.slash).map(x => ({ typed: String(x.str).trim(), sku: x.sku })), orphans: lab.orphans, duplicates: lab.duplicates, unlabelledWhy, joinedLabels: lab.joined || [], ignoredText: lab.ignoredText || [], liveText: (P.liveTextNotes ? P.liveTextNotes(parsed) : []).map(n => n.text), captions: (lab.captions || []).map(c => c.str), pageCount: parsed.pageCount || 1, twins, pairs: pairs.rows, pairsKept: kept, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, pairsKeptAtServer: keptAtServer, rejected, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
+  const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: liveCharms, labelled: lab.labels.size, unlabelled: lab.unlabelled, absorbed: lab.absorbed || [], titles: lab.titles || [], inlays: lab.inlays || [], islands, looseRings: lab.looseRings || [], ringsLeft, slashLabels: [...lab.labels.values()].flatMap(l => [l].concat(l.extra || [])).filter(x => x.slash).map(x => ({ typed: String(x.str).trim(), sku: x.sku })), orphans: lab.orphans, duplicates: lab.duplicates, unlabelledWhy, joinedLabels: lab.joined || [], ignoredText: lab.ignoredText || [], liveText: (P.liveTextNotes ? P.liveTextNotes(parsed) : []).map(n => n.text), captions: (lab.captions || []).map(c => c.str), pageCount: parsed.pageCount || 1, twins, pairs: pairs.rows, pairsKept: kept, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, replaced, pairsKeptAtServer: keptAtServer, rejected, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
   try { fs.writeFileSync(workBase + ".index-report.json", JSON.stringify(report, null, 1)); log(`report: ${workBase}.index-report.json`); } catch (_) {}
   return report;
 }
