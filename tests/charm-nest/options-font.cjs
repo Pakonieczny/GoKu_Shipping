@@ -144,9 +144,10 @@ eq(asks(read(FIX.find(l => l.rid === '4172791262'))).length, 0, 'with the switch
   const panel = (spec, requests) => SEALS.panel({ kind: 'approve', text: 'J', job: { key: 'k', row: { spec }, requests, state: 'review' }, pieceLabel: '' });
   ok(/Font: Typewriter → Crimson Text/.test(panel(sp)), 'the Engraving card says "Font: Typewriter → Crimson Text" under the words');
   ok(!/Asked for the font/.test(panel(sp)) && !/Requested font/.test(panel(sp)), 'and asks nothing about it');
-  ok(/Requested font: Dancing Script \(a drop-down option, engraved in Source Sans 3\)/.test(panel(unk)), 'a word the shop does not offer is "Requested font: Dancing Script (a drop-down option, engraved in Source Sans 3)"');
+  // (NOWORTH, Paul 18 Oct 2026: "Remove this info/note from all UI in the app": the card's "Worth a look" list, where these asks were said, is gone; the placement card above still lists them)
+  ok(!/Requested font/.test(panel(unk)) && !/Worth a look|What is unclear|egUnclear/i.test(panel(unk)), 'a word the shop does not offer is no longer a "Worth a look" note on the card');
   ok(!/Font: /.test(panel({})) && !/Requested font/.test(panel({})), 'nothing for a line with no font option');
-  eq((panel(sp, { font: 'typewriter' }).match(/Asked for the font/g) || []).length, 1, 'a note that asks for a font is still said (once)');
-  eq((panel(unk, { font: 'Comic Sans' }).match(/(Asked for the font|Requested font)/g) || []).length, 2, 'both when the note and the option ask for different fonts'); }
+  eq((panel(sp, { font: 'typewriter' }).match(/Asked for the font/g) || []).length, 0, 'nor is a note that asks for a font');
+  eq((panel(unk, { font: 'Comic Sans' }).match(/(Asked for the font|Requested font|Worth a look)/g) || []).length, 0, 'nor both when the note and the option ask for different fonts'); }
 
 console.log(`options-font: ${n} checks passed`);

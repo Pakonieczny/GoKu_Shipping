@@ -1775,10 +1775,8 @@
     const list = forReceipt(L.row.order.receiptId).filter(s => s.scope === "engraving" && String(s.lineId || "") === String(lid || ""));
     return list.find(s => s.status === "open") || list[0] || null;
   }
-  function suggestion(L) {
-    const qs = ((L.job && L.job.questions) || []).filter(Boolean);
-    return qs.length ? "e.g. " + qs[0] : "Ask about this engraving…";
-  }
+  // (NOWORTH, Paul 18 Oct 2026: "Remove this info/note from all UI in the app": the reader's first question is no longer the box's "e.g. …" placeholder)
+  function suggestion() { return "Ask about this engraving…"; }
   function paintLine(L) {
     const e = L.el;
     if (!M.key) {

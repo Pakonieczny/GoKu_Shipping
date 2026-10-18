@@ -219,14 +219,12 @@
 .swEng .pv:empty{display:none}
 .swEng .pv.egPvNone{height:auto;min-height:0;padding:12px 10px;text-align:center;background:var(--paper2);border-style:dashed}
 .swEng .pv canvas,.swEng .pv img{width:100%;height:100%;max-width:100%;max-height:none;object-fit:contain;display:block;border-radius:0}
-.egCard .egWords,.egCard .egUnclear{display:grid;gap:4px;min-width:0}
+/* (NOWORTH, Paul 18 Oct 2026: "Remove this info/note from all UI in the app": the card's "Worth a look" / "What is unclear" list is gone, and its .egUnclear rules with it) */
+.egCard .egWords{display:grid;gap:4px;min-width:0}
 .egCard .egLbl{font:700 9px/1.2 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45)}
 .swEng .words{font:15px/1.45 var(--serif);white-space:pre-wrap;overflow-wrap:anywhere;background:var(--paper2);border-radius:8px;padding:7px 10px;min-width:0}
 .swEng .words.egNone{font:italic 13px/1.4 var(--serif);color:var(--ink45);background:transparent;padding:0}
 .egCard .egMeta{font:11px/1.4 var(--sans);color:var(--ink45)}
-.egCard .egUnclear ul{margin:0;padding:0;list-style:none;display:grid;gap:3px}
-.egCard .egUnclear li{position:relative;padding-left:13px;font:12px/1.4 var(--sans);color:#8a3a26}
-.egCard .egUnclear li::before{content:"";position:absolute;left:2px;top:.55em;width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.6}
 .swEng .acts{display:grid;gap:8px;min-width:0;padding-top:4px}
 .swEng .acts .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;max-width:100%;white-space:normal;text-align:center;line-height:1.25}
 .swEng .acts .egOpen{min-width:0}

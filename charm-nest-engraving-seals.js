@@ -43,14 +43,13 @@
   function record(e){return {key:e.job?.key,engravingSeals:merge(e.job,faced(e.job,e.job?.row?.engrave),...(e.job?.backs || []),e.job?.editOriginal,e.back,faced(e.job,e.saved)),state:e.kind==='approved'?'approved':e.kind==='skipped'?'skipped':e.job?.state,approvedAt:e.kind==='approved'?e.at:0,approvedBy:e.kind==='approved'?e.by:'',decidedAt:e.kind==='skipped'?e.at:0,decidedBy:e.kind==='skipped'?e.by:''};}
   /* ── the back engraving card, one card for every place an order is shown (the order window's Overview and Sheet tab, the sheet window) ──
    * What it says is read from the real data the host hands over (e: {kind, job, text, note, working, reason, back, by, at, saved,
-   * pieceLabel, pieceMeta, compact}): one quiet status, the plain reason what is missing, the words as read and what is unclear, the back
+   * pieceLabel, pieceMeta, compact}): one quiet status, the plain reason what is missing, the words as read (NOWORTH: no reader's notes), the back
    * preview, the piece it belongs to, and two real buttons: Fix in Engraving (EngraveLink) and Approve engraving (the host's own approval,
    * which presses the permanent BACK ENGRAVING seal on that very button). Approving is offered only where it is possible; where it is not
    * (the words are not confirmed, the back is not ready) the button is there, disabled, with one line of why. */
   const STATUS={approve:'To approve',words:'Words to confirm',preparing:'Being prepared',approved:'Approved',skipped:'Cut plain',none:'No back engraving'};
   const WHY={approve:'Waiting for your approval',words:'The words need a decision',approved:'The back is approved',skipped:'Cut plain: nothing on the back'};
   const SOURCE={personalization:'the personalisation box',personalisation:'the personalisation box',buyerMessage:"the buyer's message",staffNote:'the staff note',messages:'the staff messages'};
-  const NOT_ENGRAVABLE=/not engravable|cannot (?:be |take )engrav|design.*engrav/i;
   let askN=0;
   /* What an approval that did not go through said, kept for the card until the next press or until the piece is no longer to approve (a toast sits
      under a modal order window where nobody sees it; the card says it where the button is). Keyed by the job. */
@@ -75,22 +74,11 @@
     if(job.state==='approved')return {note:'Saving the back file…',working:true};
     return null;
   }
-  /** What is unclear about the words, in plain lines: what was read with a question, and what the buyer asked for that the words alone do not carry. */
-  function unclear(e){
-    const job=e.job || {},out=[],add=t=>{t=String(t ?? '').trim();if(t && !NOT_ENGRAVABLE.test(t) && !out.includes(t))out.push(t);};
-    if(e.kind!=='words' && e.kind!=='approve')return out;
-    if(e.kind==='words')add(e.reason || job.reason);
-    for(const q of job.questions || [])add(q);
-    const r=job.requests || {};
-    if(r.side && ![faceOf(job),'unspecified'].includes(r.side))add(`Asked for the ${r.side} side`);   // (a side other than the face this card is about)
-    if(r.font)add(`Asked for the font ${r.font}`);
-    const of=job.row?.spec?.font;   // a font chosen in a drop-down that the app does not have (Font: Script): said like one asked for in a note; one the app has is engraved in its lookalike (spec.font.id) and is no question
-    if(of?.asked && !of.id && String(of.asked).toLowerCase()!==String(r.font || '').toLowerCase())add(`Requested font: ${of.asked} (a drop-down option, engraved in Source Sans 3)`);
-    if(r.handwriting)add('Asked for handwriting');
-    if(r.image)add('Asked for an image');
-    return out.slice(0,4);
-  }
-  /** The font the order's drop-down chose and the installed font it is engraved in, in one plain line ("Font: Stylish → Playwrite US Trad"); '' when the line has no font or the shop does not offer the word (that one is said under unclear). */
+  /* NOWORTH (Paul, 18 Oct 2026, of the card's "WORTH A LOOK" note: "Remove this info/note from all UI in the app"): the reader's notes (its questions, the
+     side / font / handwriting / image it says the buyer asked for, the reason the words wait) are no longer listed on the card, under "Worth a look" nor under
+     its sibling "What is unclear". Nothing was ever gated on that list: words to confirm are still never approved here (canApprove), and the reader still
+     stores what it found (job.questions, job.requests) for the decisions it drives. */
+  /** The font the order's drop-down chose and the installed font it is engraved in, in one plain line ("Font: Stylish → Playwrite US Trad"); '' when the line has no font or the shop does not offer the word (NOWORTH: that one is no longer said on the card). */
   const orders=()=>root?.CharmNestOrders || (typeof module==='object' && typeof require==='function'?(()=>{try{return require('./charm-nest-orders.js');}catch(_){return null;}})():null);
   function fontMeta(e){
     const O=orders(),sp=e.job?.row?.spec;if(!O || !O.fontLine || !O.pieceFont || !sp?.font)return '';
@@ -168,13 +156,12 @@
     const lbl=say(kind==='approve' || kind==='approved'?'Words on the back':'Words as read'),from=kind==='approved'?'':readFrom(e);
     const words=e.text?`<div class="egWords"><span class="egLbl">${lbl}</span><div class="words">${esc(e.text)}</div>${from?`<span class="egMeta">${esc(from)}</span>`:''}${fontMeta(e)?`<span class="egMeta egFont">${esc(fontMeta(e))}</span>`:''}</div>`
       :kind==='words' || kind==='preparing'?`<div class="egWords"><span class="egLbl">${lbl}</span><div class="words egNone">Nothing read yet</div></div>`:'';
-    const un=unclear(e),unclearHtml=un.length?`<div class="egUnclear"><span class="egLbl">${kind==='words'?'What is unclear':'Worth a look'}</span><ul>${un.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></div>`:'';
     const saving=kind==='approved' && !e.note?savingNote(e.job):null,note=e.note || (saving?say(saving.note):'') || '',working=e.note?e.working:saving?.working;
     const sub=note?`<span class="by egSub">${working?'<span class="owSpin" aria-hidden="true"></span>':''}<span>${esc(note)}</span></span>`:'';
     const failKey=e.job?.key,failed=kind==='approve' && failKey?fails.get(failKey):'';if(kind!=='approve' && failKey)fails.delete(failKey);
     const forPiece=e.pieceLabel?`<span class="egFor"><b>${esc(e.pieceLabel)}</b>${e.pieceMeta?` <small>${esc(e.pieceMeta)}</small>`:''}</span>`:'';
     const pill=status?`<span class="egPill" data-s="${esc(kind)}"><i aria-hidden="true"></i>${status}</span>`:'';
-    return `${compact?'':`<span class="fLabel">${say('Back engraving')}</span>`}<div class="swEng egCard${compact?' egCompact':''}" data-state="${esc(kind)}"${face==='front'?' data-face="front"':''}><div class="top egTop">${cycle}${forPiece}${pill}</div><div class="egWhy"><b>${why}</b>${sub}</div>${preview}${words}${unclearHtml}<div class="acts">${acts}</div>${failed?`<div class="egFail" role="alert">${esc(failed)}</div>`:''}${history?`<div class="egHistory">${history}</div>`:''}</div>`;
+    return `${compact?'':`<span class="fLabel">${say('Back engraving')}</span>`}<div class="swEng egCard${compact?' egCompact':''}" data-state="${esc(kind)}"${face==='front'?' data-face="front"':''}><div class="top egTop">${cycle}${forPiece}${pill}</div><div class="egWhy"><b>${why}</b>${sub}</div>${preview}${words}<div class="acts">${acts}</div>${failed?`<div class="egFail" role="alert">${esc(failed)}</div>`:''}${history?`<div class="egHistory">${history}</div>`:''}</div>`;
   }
   /** The preview zooms and pans where it lies (charm-nest-zoompan.js, the one module for every order picture): a click zooms in on the
    *  point clicked, a drag pans, the frame keeps its size. `zoom` ({id, key}) names the place and what it shows, so a card drawn again for
