@@ -60,6 +60,7 @@
     // the stations' copies of the orders
     fs("Brites_Orders", "station orders", { subs: ["messages"] }),
     fs("Design_Completed Orders", "finished orders"),
+    fs("Design_Completed_Undone", "un-completed marks"),
     fs("Design_RealTime_Selected_Orders", "order locks"),
     fs("Design_Order_Archive", "order archive"),
     // engraving jobs, shape guidance and the paid readings the sandbox saved

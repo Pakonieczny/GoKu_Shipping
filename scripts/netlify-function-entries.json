@@ -215,6 +215,7 @@
     "_stationPinLogin.js",
     "_orderCancel.js",
     "_designCompleted.js",
+    "_staffNotes.js",
     "_etsyApiMeter.js",
     "_etsyApiUsage.js",
     "_etsyImageCache.js",
