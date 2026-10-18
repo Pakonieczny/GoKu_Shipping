@@ -11,8 +11,8 @@
        listing: the same SKU on another listing is read exactly as before;
      · every open order of the listing is then re-made with the pick by LISTPICK (Review.relinkNow, charm-nest-listing-relink.js): a line not made yet reads it, a piece on an open sheet is swapped (its
        old room first, else the next sheet), a cut / committed / released / protected one is held and told for a person; each order gets "Charm updated from listing pick by <name>" on its timeline.
-   Before anything is written the person confirms ONE line: "Use MOON_3288 for every order of listing 1819191541?" with the count of the open orders it changes. Putting the picked SKU on the Etsy listing
-   (EtsyLink, the repo password) is a SEPARATE button offered after the save: never done by itself.
+   Before anything is written the person confirms ONE line: "Use MOON_3288 for every order of listing 1819191541?" with the count of the open orders it changes. The Etsy listing (its SKU) is never changed
+   here: the link lives in the sorter's saved links only.
 
    WHAT THIS FILE IS (pure functions: no Firestore, no Etsy, no page; the bridge's Review.fixCharm does the work):
      offerOf(row, h)                → { ok, why, listingId, cur, from, key, via }   whether a line's charm can be corrected for its listing (the button is shown only when ok)
