@@ -1,8 +1,9 @@
 // Complete Order and Reopen on the order's timeline (Paul, 29 Sep 02:08: "The timeline also doesn't have the seals or the
 // points for when an order was manually completed by pressing the completed button in the Review tab").
-// Each press of Complete Order (a Custom Orders card, any other Review card, the order window) is a point of its own on the
+// Each press of Complete Order (a Custom Orders card, the order window) is a point of its own on the
 // Office lane ("Operator"), with the shared "ORDER | COMPLETE" seal face, its time, who pressed it (in its accessible name) and where; a Reopen is a
-// point of its own and never takes the Complete point away; a later Complete adds another.
+// point of its own and never takes the Complete point away; a later Complete adds another. Any other Review card has Release Hold where
+// Complete Order stood (RELHOLD, Paul 18 Oct 2026): its press is a "released" step carrying the RELEASE HOLD seal, never a Complete point.
 // Part 1 runs the real charmNestLibrary ops (customPut, customReopen, timelineGet with the records' history derived) over
 // the in-memory store: what each press records, an order completed before (only its record, or its record and the event
 // its press recorded then) answered once per press. Part 2 opens the sorter in headless Chromium against the local
@@ -92,10 +93,31 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     await page.click(`#rvList .reviewListRow[data-rid="${RID}"] [data-cu-reopen]`);
     await page.waitForFunction(k => !B.maps.customDone[k], K); await idle(); await stamped(); await calm();
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
-    // Complete Order on another Review tab's card (Unknown SKU)
+    // Release Hold on another Review tab's card (RELHOLD, Paul 18 Oct 2026: on every Review card but a Custom Orders one, Release Hold stands where Complete Order stood).
+    // The Unknown SKU card has it greyed with its one plain reason (its SKU has no design); the order sent to Review by hand has it enabled: pressed, the order is
+    // released, and its timeline gets a "released" step with the RELEASE HOLD seal (data.seal "releaseHold"), not a Complete point
     await page.click('#reviewView .egTab[data-k="needResolution"]');
-    await page.click(`#rvList .reviewListRow[data-rid="${U}"] [data-cu-complete]`);
-    await page.waitForFunction(k => B.maps.customDone[k], KU); await idle(); await stamped(); await calm();
+    const uLook = await page.evaluate(rid => { const n = document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"]`), b = n && n.querySelector('[data-rel-hold]'); return n && { complete: n.querySelectorAll('[data-cu-complete]').length, rel: b && b.textContent.trim(), dis: b && b.getAttribute('aria-disabled'), title: b && b.title }; }, U);
+    assert(uLook && uLook.complete === 0 && uLook.rel === 'Release Hold' && uLook.dis === 'true' && /UNKNOWN_77 has no design/.test(uLook.title), 'the Unknown SKU card: Release Hold where Complete Order stood, greyed with its reason: ' + JSON.stringify(uLook));
+    const marked = await page.evaluate(async rid => { const r = await CharmNestReviewMark.mark(rid, { by: 'Test Operator' }); Review.view().filter = null; Review.syncOrderItems(); Review.render(); return r; }, U);
+    assert(marked && marked.ok, 'the order is sent to Review: ' + JSON.stringify(marked));
+    const uRel = `#rvList .reviewListRow[data-rid="${U}"] [data-rel-hold][data-rv-release="mark"]`;
+    await page.waitForSelector(uRel, { state: 'visible' });
+    const tRel = Date.now();
+    await page.click(uRel);
+    await page.waitForFunction(rid => !CharmNestReviewMark.isMarked(rid) && !document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"] [data-rel-hold][data-rv-release="mark"]`), U, { timeout: 30000 }); await idle(); await stamped(); await calm();
+    const relEv = async () => { for (let i = 0; i < 60; i++) { const e = srv.st.list('Order_Timeline').find(x => x.orderId === U && x.type === 'released' && x.data && x.data.seal === 'releaseHold'); if (e) return e; await sleep(250); } return null; };
+    const uStep = await relEv();
+    assert(uStep && uStep.by === 'Test Operator' && +uStep.data.sealAt >= tRel - 1000 && /Release Hold \(Review\)/.test(uStep.text), 'the "released" step carries the RELEASE HOLD seal, who and when: ' + JSON.stringify(uStep));
+    const uRow = await page.evaluate(k => B.orders.byKey.get(k).releaseHold || null, KU);
+    assert(uRow && uRow.by === 'Test Operator' && uRow.at === +uStep.data.sealAt, 'who and when kept on its line (row.releaseHold): ' + JSON.stringify(uRow));
+    const uDoc = async () => { for (let i = 0; i < 60; i++) { const d = srv.st.doc('Charm_Custom_Orders', U + '_review'); if (d && d.release && d.release.at) return d; await sleep(250); } return null; };
+    const uRec = await uDoc();
+    assert(uRec && uRec.release.by === 'Test Operator' && uRec.release.at === uRow.at && uRec.release.how === 'releaseHold' && uRec.review.state === 'done', 'and in the cloud, on its Review document (reviewMarkPut "release"): ' + JSON.stringify(uRec && { release: uRec.release, review: uRec.review }));
+    assert.equal(await page.evaluate(k => !!B.maps.customDone[k], KU), false, 'no completion by hand: it is released, not completed');
+    await page.click('#reviewView .rvSeg [data-cseg="done"]');
+    await page.waitForFunction(rid => document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"]`), U, { timeout: 15000 });
+    await page.click('#reviewView .rvSeg [data-cseg="open"]');
     // and in the order window
     await page.evaluate(k => OrderWin.open(k), K);
     await page.waitForSelector('#owPcSum [data-cu-complete]', { state: 'visible' });
@@ -103,8 +125,8 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     await page.waitForFunction(k => B.maps.customDone[k], K); await idle();
     const recorded = rid => opsOf(srv.st.list('Order_Timeline').filter(e => e.orderId === rid).sort((x, y) => x.at - y.at));
     assert.deepEqual(recorded(RID), [['complete', 'Test Operator', 'Review · Custom Orders', false], ['reopen', 'Test Operator', 'Review · Custom Orders', false], ['complete', 'Test Operator', 'Order window', false]], 'the page says where each was pressed: ' + JSON.stringify(recorded(RID)));
-    assert.deepEqual(recorded(U), [['complete', 'Test Operator', 'Review · Unknown SKU', false]], 'a card of another Review tab says its tab');
-    console.log('  ✓ pressed on a Custom Orders card, reopened, pressed on an Unknown SKU card and in the order window: each recorded with where');
+    assert.deepEqual(recorded(U), [], 'Release Hold on a card of another Review tab is no Complete point (its "released" step has the seal): ' + JSON.stringify(recorded(U)));
+    console.log('  ✓ pressed on a Custom Orders card, reopened, Release Hold on another Review tab\'s card (a released step with its seal, its line and its Review document keep who and when, in Resolved) and Complete Order in the order window: each recorded with where');
 
     // the Timeline tab (its feed read again once the press was saved): the two Complete seals and the Reopen, on the Office lane
     await page.evaluate(() => OrderWin.setView('timeline'));

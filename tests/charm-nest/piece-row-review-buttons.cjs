@@ -23,6 +23,9 @@
 // bar is gone from the order window (no #owCustom, no .owCustom), every piece has its Print QR label / Complete Order (or Completed and
 // Print again) exactly once, on its own row, whose vertical centre is the name's, at 1440, 900 and 390: in an order of several, in order
 // 4171409060's shape (BLUE 72587 on GF Sheet 1, LONGER CHAIN 5682 on no sheet), in a single-piece chain-only order, and with one piece picked.
+// RELHOLD (Paul, 18 Oct 2026): on a piece of another Review tab's card (these pieces are Unknown SKU lines) Release Hold stands where Complete Order stood:
+// greyed with the card's one plain reason (the SKU has no design), a press writes nothing; such a piece is completed by hand with its Print QR label, so the
+// completion, seal, record, timeline, Reopen, Undo and name-asked checks below go through the print path, and Release Hold is counted wherever Complete Order was.
 //   node tests/charm-nest/piece-row-review-buttons.cjs   (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>, SHOTS=<dir>)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
@@ -113,13 +116,13 @@ async function main() {
     // the tan "Custom Orders" bar is gone from the order window, and its duplicate buttons with it: every piece's Print QR label, Complete Order
     // (or Print again) is on its own row, once (count by piece), and nothing of them stands outside a row
     const noBar = () => page.evaluate(() => !document.getElementById('owCustom') && !document.querySelector('.owCustom') && !/Custom Orders ·/i.test(document.getElementById('orderWin').textContent));
-    const dupes = () => page.evaluate(() => { const cnt = {}; for (const b of document.getElementById('orderWin').querySelectorAll('button, [data-cu-print], [data-cu-complete]')) { const t = b.textContent.trim(); if (!/^(Print QR label|Complete Order|Print again|Completed)$/.test(t)) continue; const k = (b.closest('[data-pc-act]') || { dataset: { pcAct: 'OUTSIDE A ROW' } }).dataset.pcAct + ' | ' + t; cnt[k] = (cnt[k] || 0) + 1; } return cnt; });
+    const dupes = () => page.evaluate(() => { const cnt = {}; for (const b of document.getElementById('orderWin').querySelectorAll('button, [data-cu-print], [data-cu-complete]')) { const t = b.textContent.trim(); if (!/^(Print QR label|Complete Order|Release Hold|Print again|Completed)$/.test(t)) continue; const k = (b.closest('[data-pc-act]') || { dataset: { pcAct: 'OUTSIDE A ROW' } }).dataset.pcAct + ' | ' + t; cnt[k] = (cnt[k] || 0) + 1; } return cnt; });
     // the order window holds no Reopen button anywhere (Paul, 5 Oct, round 8); Reopen stays in the Review tab
     const reopenInWin = () => page.evaluate(() => [...document.getElementById('orderWin').querySelectorAll('button, [data-cu-reopen]')].filter(b => b.hasAttribute('data-cu-reopen') || /^\s*Reopen\s*$/i.test(b.textContent)).length);
     // the bar's controls and the row's are one code: the row adds the done state of Complete Order ("Completed"), nothing else
     const sansDone = list => list.filter(t => t !== 'Completed');
     // the Review card of a piece, in the list showing (Open or Completed), by its line
-    const card = key => page.evaluate(k => { const n = document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`); return n && { q: n.querySelector('.queueLabel').textContent.trim(), btns: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()).filter(t => /^(Print QR label|Print again|Complete Order|Reopen)$/.test(t)), seals: n.querySelectorAll('.rowActions .seal').length }; }, key);
+    const card = key => page.evaluate(k => { const n = document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`); return n && { q: n.querySelector('.queueLabel').textContent.trim(), btns: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()).filter(t => /^(Print QR label|Print again|Complete Order|Release Hold|Reopen)$/.test(t)), seals: n.querySelectorAll('.rowActions .seal').length }; }, key);
     const seg = async which => { await idle(); await page.evaluate(w => { document.querySelector(`#reviewView .rvSeg [data-cseg="${w}"]`).click(); }, which); };   // (while a seal is being stamped the page lets no press through)
     const recStamps = key => (rec(key) && rec(key).stamps || []);
     const uniqueStamps = key => { const s = recStamps(key).map(x => [x.how, x.at, x.by, x.n || ''].join('|')); return s.length === new Set(s).size; };
@@ -135,13 +138,14 @@ async function main() {
     let R = await rows();
     assert.deepEqual(R.map(r => r.key), [cable, gf, rg], 'the three pieces, in order');
     assert(R[0].act && R[0].tag === 'DIV', 'the piece in Review has a row with its card\'s buttons');
-    assert.deepEqual(R[0].btns, ['Print QR label', 'Complete Order'], 'Print QR label and Complete Order, as its Review card has them: ' + JSON.stringify(R[0]));
+    assert.deepEqual(R[0].btns, ['Print QR label', 'Release Hold'], 'Print QR label and Release Hold (where Complete Order stood, RELHOLD), as its Review card has them: ' + JSON.stringify(R[0]));
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#owPcSum [data-cu-complete]').length), 0, 'no Complete Order on a piece of another Review tab\'s card');
     assert.equal(R[0].st, null, 'its words are not shown beside them (they are in place of the words)');
     for (const r of [R[1], R[2]]) { assert(!r.act && r.plain && r.tag === 'DIV' && r.hold === 1 && r.btns.length === 0, 'a piece on a sheet keeps its row, its words and, at the right end, one orange Hold: ' + JSON.stringify(r)); assert.match(r.st, /^(GF|RG) Sheet 1$/, 'and its status chip, no "next: ...": ' + r.st); }
     // (no tan Custom Orders bar at the foot: its buttons were a second copy of these)
-    assert(await noBar(), 'no Custom Orders bar, open'); const d1 = await dupes(); assert.deepEqual(d1, { [`${cable} | Print QR label`]: 1, [`${cable} | Complete Order`]: 1 }, 'each button exactly once, on its own row: ' + JSON.stringify(d1));
+    assert(await noBar(), 'no Custom Orders bar, open'); const d1 = await dupes(); assert.deepEqual(d1, { [`${cable} | Print QR label`]: 1, [`${cable} | Release Hold`]: 1 }, 'each button exactly once, on its own row: ' + JSON.stringify(d1));
     // and the Review tab's card for the same piece has those buttons
-    let c0 = await card(cable); assert(c0 && c0.q === 'Review required' && c0.btns.join() === 'Print QR label,Complete Order', 'its Review card: ' + JSON.stringify(c0));
+    let c0 = await card(cable); assert(c0 && c0.q === 'Review required' && c0.btns.join() === 'Print QR label,Release Hold', 'its Review card: ' + JSON.stringify(c0));
     assert.equal(await card(gf), null, 'the pieces on sheets have no card');
 
     // ── 2 · layout: the row fits at 1440, 900 and 390 (no overflow, dots column aligned, buttons inside the row) ──
@@ -196,61 +200,55 @@ async function main() {
     };
     await layout('open');
 
-    // ── 3 · Complete Order from the row: one completion, one seal, the cloud record, the Review tab, everything at once ──
-    const before = puts();
-    await page.dblclick(`#owPcSum [data-piece="${cable}"] [data-cu-complete]`);   // (a double press is one press)
-    await page.waitForFunction(k => B.maps.customDone[k], cable, { timeout: 20000 });
-    await page.waitForFunction(k => { const r = document.querySelector(`#owPcSum [data-piece="${k}"] .pcAct`); return r && r.querySelector('[data-cu-done]'); }, cable, { timeout: 10000 });
-    assert.equal(puts() - before, 1, 'one write to the cloud for two clicks');
-    const r1 = rec(cable);
-    assert(r1 && r1.state === 'completed' && r1.how === 'button' && r1.completedBy === 'Test Operator', 'the cloud record says completed by hand, by whom: ' + JSON.stringify(r1));
-    assert.equal(recStamps(cable).length, 1, 'one seal, not two'); assert(uniqueStamps(cable));
-    assert.equal(rec(kOf(P, 'gf')), undefined, 'the other pieces are not touched'); assert.equal(rec(rg), undefined);
-    const call = srv.st.calls.filter(c => c.op === 'customPut').pop(); assert.equal(call.body.from, 'Order window', 'pressed in the Order window, as the bar\'s press is'); assert.equal(call.body.how, 'button');
-    R = await rows();
-    // the Complete Order button in its done state, then Print QR label (no label printed yet); no Reopen, no Complete Order
-    assert.deepEqual(core(R[0].btns), ['Completed', 'Print QR label'], 'the completed piece: ' + JSON.stringify(R[0].btns));
-    const done0 = await page.evaluate(k => { const b = document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-done]`), c = getComputedStyle(b), go = document.querySelector('#owPcSum [data-piece="' + k + '"] [data-cu-print]'); return { dis: b.disabled, cls: b.className, bg: c.backgroundColor, op: c.opacity, text: b.textContent.trim(), seal: !!b.nextElementSibling && b.nextElementSibling.classList.contains('sealRow'), before: !!(b.compareDocumentPosition(go) & Node.DOCUMENT_POSITION_FOLLOWING) }; }, cable);
-    assert(done0.dis && /sealedDone/.test(done0.cls) && done0.bg === 'rgb(226, 238, 230)' && done0.op === '1' && done0.text === 'Completed', 'Completed: the Complete Order button in its done state (the green a Complete seal gives it), full strength, no press: ' + JSON.stringify(done0));
-    assert(done0.before, 'Completed first, Print QR label after it');
-    assert.equal(await reopenInWin(), 0, 'no Reopen button in the order window once completed');
-    assert(R[1].btns.length === 0 && R[2].btns.length === 0, 'still nothing on the pieces on sheets');
-    assert(await noBar(), 'no green Custom Orders bar either, completed'); R = await rows();
-    assert(!R[0].btns.includes('Reopen'), 'no Reopen on the row');
-    // Review: out of Open, under Completed with its buttons and seal
-    await page.waitForFunction(k => !document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`), cable, { timeout: 15000 });
-    await seg('done'); await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`), cable, { timeout: 15000 });
-    c0 = await card(cable); assert(c0.q === 'Completed by hand' && c0.btns.includes('Reopen') && c0.btns.includes('Print QR label') && c0.seals === 1, 'the Review card under Completed: ' + JSON.stringify(c0));
-    // the timeline: one point for the press, pressed in the order window
-    await page.waitForTimeout(600);
-    const ops1 = tlOps(P.rid).filter(e => e.type === 'sealCompleted'); assert.equal(ops1.length, 1, 'one Complete point on the order\'s timeline: ' + JSON.stringify(ops1.map(e => [e.type, e.by, e.data])));
-    assert.equal(ops1[0].data.pressedIn, 'Order window'); assert.equal(ops1[0].by, 'Test Operator');
-    // the header's rail and the piece row read it too: the piece is completed by hand (its words are in the Review row's place)
-    assert.equal(await page.evaluate(() => /Order completed|COMPLETED/i.test(document.getElementById('owNowCard').dataset.now || '') || !!document.querySelector('#owRail .tlStop.d')), true);
-    await layout('completed');
+    // ── 3 · Release Hold from the row (RELHOLD, Paul 18 Oct 2026: where Complete Order stood): this piece's SKU has no design, so it is greyed with its card's
+    //        one plain reason, and a press (a double one too) writes nothing: no record, no release, the card stays under Open ──
+    const relOf = k => page.evaluate(k => { const b = document.querySelector(`#owPcSum [data-piece="${k}"] [data-rel-hold]`); return b && { text: b.textContent.trim(), dis: b.getAttribute('aria-disabled'), title: b.title }; }, k);
+    const marks = () => srv.st.calls.filter(c => c.op === 'reviewMarkPut').length;
+    const rel0 = await relOf(cable);
+    assert(rel0 && rel0.text === 'Release Hold' && rel0.dis === 'true' && /CABLE CHAIN ONLY has no design in any master file yet/.test(rel0.title), 'Release Hold, greyed with its one plain reason: ' + JSON.stringify(rel0));
+    const before = puts(), m0 = marks();
+    await page.$eval(`#owPcSum [data-piece="${cable}"] [data-rel-hold]`, b => { b.click(); b.click(); }); await page.waitForTimeout(1500);   // (aria-disabled, not disabled: it can be pressed, and says why)
+    assert.equal(puts() - before, 0, 'the greyed Release Hold writes no completion'); assert.equal(marks(), m0, 'and keeps no release');
+    assert.equal(rec(cable), undefined, 'no record'); assert.equal(await page.evaluate(k => !!B.orders.byKey.get(k).releaseHold, cable), false, 'nothing kept on its line');
+    c0 = await card(cable); assert(c0 && c0.q === 'Review required', 'its card stays under Open: ' + JSON.stringify(c0));
 
-    // ── 4 · Print QR label from the row (the print path), then Print again: seals added, never duplicated ──
-    await seg('open');
+    // ── 4 · Print QR label from the row (the print path, how such a piece is completed by hand): one completion, one seal, written to the cloud record
+    //        (customPut), pressed in "Order window", one point on the order's timeline; the row, the Review tab (Completed) and the header read it at once; then Print again ──
     const p0 = await page.evaluate(() => window.__printed || 0), pb = puts();
     await idle(); await page.click(`#owPcSum [data-piece="${cable}"] [data-cu-print]`);
     await page.waitForFunction(p0 => (window.__printed || 0) > p0, p0, { timeout: 30000 });
     await page.waitForFunction(k => { const r = B.maps.customDone[k]; return r && r.prints === 1; }, cable, { timeout: 30000 });
     await page.waitForFunction(k => /Print again/.test(document.querySelector(`#owPcSum [data-piece="${k}"] .pcAct`).textContent) && !document.querySelector('#owPcSum .cuStat'), cable, { timeout: 15000 });
     assert.equal(puts() - pb, 1, 'one write for the print');
-    assert(rec(cable).prints === 1 && rec(cable).printedBy === 'Test Operator', JSON.stringify(rec(cable)));
-    assert.deepEqual(recStamps(cable).map(s => s.how), ['button', 'print'], 'the completion\'s seal stays, the print has its own'); assert(uniqueStamps(cable));
-    R = await rows(); assert.deepEqual(core(R[0].btns), ['Completed', 'Print again'], JSON.stringify(R[0].btns));
+    const r1 = rec(cable);
+    assert(r1 && r1.state === 'completed' && r1.prints === 1 && r1.printedBy === 'Test Operator', 'the cloud record says completed by its print, by whom: ' + JSON.stringify(r1));
+    assert.deepEqual(recStamps(cable).map(s => s.how), ['print'], 'one seal, not two'); assert(uniqueStamps(cable));
+    assert.equal(rec(kOf(P, 'gf')), undefined, 'the other pieces are not touched'); assert.equal(rec(rg), undefined);
+    const call = srv.st.calls.filter(c => c.op === 'customPut').pop(); assert.notEqual(call.body.how, 'button', 'a print, not a Complete Order press');   // (a print's write says no "from": the where of a press is a Complete Order / Reopen point's)
+    R = await rows();
+    // the done state ("Completed"), then Print again; no Reopen
+    assert.deepEqual(core(R[0].btns), ['Completed', 'Print again'], 'the completed piece: ' + JSON.stringify(R[0].btns));
+    const done0 = await page.evaluate(k => { const b = document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-done]`), c = getComputedStyle(b), go = document.querySelector('#owPcSum [data-piece="' + k + '"] [data-cu-print]'); return { dis: b.disabled, cls: b.className, bg: c.backgroundColor, op: c.opacity, text: b.textContent.trim(), before: !!(b.compareDocumentPosition(go) & Node.DOCUMENT_POSITION_FOLLOWING) }; }, cable);
+    assert(done0.dis && /sealedDone/.test(done0.cls) && done0.bg === 'rgb(226, 238, 230)' && done0.op === '1' && done0.text === 'Completed', 'Completed: the done state (green), full strength, no press: ' + JSON.stringify(done0));
+    assert(done0.before, 'Completed first, Print again after it');
+    assert.equal(await reopenInWin(), 0, 'no Reopen button in the order window once completed');
+    assert(R[1].btns.length === 0 && R[2].btns.length === 0, 'still nothing on the pieces on sheets');
+    assert(await noBar(), 'no green Custom Orders bar either, completed'); R = await rows();
+    assert(!R[0].btns.includes('Reopen'), 'no Reopen on the row');
     assert(R[0].seals + (R[0].more ? +R[0].more.slice(1) : 0) >= 1, 'its seal(s) with the +N for the rest: ' + JSON.stringify(R[0]));
-    assert(await noBar(), 'no bar, printed'); assert(R[0].btns.includes('Print again') && !R[0].btns.includes('Reopen'));
-    // a print seal rests by Print again, a Complete seal by Completed: each by the button that made it (the "+N" follows its seal)
     const seatOf = await page.evaluate(k => [...document.querySelectorAll(`#owPcSum [data-piece="${k}"] .pcAct > *`)].map(n => n.matches('button') ? n.textContent.trim() : n.matches('.sealRow') ? 'seal:' + [...n.querySelectorAll('.seal')].map(x => x.className.match(/seal-(\w+)/)[1]).join('+') : n.textContent.trim()), cable);
-    assert(seatOf.includes('Completed') && seatOf.includes('Print again'), 'Completed and Print again: ' + JSON.stringify(seatOf));
     if (seatOf.includes('seal:print')) assert.equal(seatOf.indexOf('seal:print'), seatOf.indexOf('Print again') + 1, 'the print seal right after Print again: ' + JSON.stringify(seatOf));
-    if (seatOf.includes('seal:button')) assert.equal(seatOf.indexOf('seal:button'), seatOf.indexOf('Completed') + 1, 'the Complete seal right after Completed: ' + JSON.stringify(seatOf));
-    assert(seatOf.includes('seal:print') || seatOf.includes('seal:button'), 'a seal is drawn: ' + JSON.stringify(seatOf));
+    // Review: out of Open, under Completed with its buttons and seal
+    await page.waitForFunction(k => !document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`), cable, { timeout: 15000 });
     await seg('done'); await page.waitForFunction(k => /Print again/.test(document.querySelector(`#rvList .reviewListRow[data-row="${k}"] .rowActions`)?.textContent || ''), cable, { timeout: 15000 });
-    c0 = await card(cable); assert(c0.btns.includes('Print again') && c0.btns.includes('Reopen') && c0.seals === 2, 'Review shows the same (and keeps its Reopen): ' + JSON.stringify(c0));
-    await layout('printed');
+    c0 = await card(cable); assert(c0.btns.includes('Reopen') && c0.btns.includes('Print again') && c0.seals === 1, 'the Review card under Completed: ' + JSON.stringify(c0));
+    // the timeline: one point for the press
+    await page.waitForTimeout(600);
+    const ops1 = tlOps(P.rid).filter(e => e.type === 'sealPrinted' || e.type === 'sealCompleted'); assert.equal(ops1.length, 1, 'one point for the press on the order\'s timeline: ' + JSON.stringify(ops1.map(e => [e.type, e.by, e.data])));
+    assert.equal(ops1[0].by, 'Test Operator');
+    // the header's rail and the piece row read it too: the piece is completed by hand (its words are in the Review row's place)
+    assert.equal(await page.evaluate(() => /Order completed|COMPLETED/i.test(document.getElementById('owNowCard').dataset.now || '') || !!document.querySelector('#owRail .tlStop.d')), true);
+    await layout('completed');
     // "+N" opens the piece's timeline
     if (R[0].more) { await page.click(`#owPcSum [data-piece="${cable}"] [data-cu-more]`); await page.waitForFunction(() => OrderWin.view() === 'timeline', null, { timeout: 10000 }); await page.evaluate(() => OrderWin.setView('info')); await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow').length === 3, null, { timeout: 10000 }); }
     // the other pieces are as they were
@@ -263,7 +261,7 @@ async function main() {
     await idle(); await page.click(`#owPcSum [data-piece="${cable}"] [data-cu-print]`);
     await page.waitForFunction(p1 => (window.__printed || 0) > p1, p1, { timeout: 30000 });
     await page.waitForFunction(k => B.maps.customDone[k] && B.maps.customDone[k].prints === 2, cable, { timeout: 30000 });
-    assert.deepEqual(recStamps(cable).map(s => s.how), ['button', 'print', 'print'], 'a third seal; none replaced'); assert(uniqueStamps(cable));
+    assert.deepEqual(recStamps(cable).map(s => s.how), ['print', 'print'], 'a second seal; none replaced'); assert(uniqueStamps(cable));
     assert.deepEqual(await page.evaluate(k => Seal.list(B.maps.customDone[k]).filter(s => s.how !== 'button').map(s => s.n), cable), [1, 2], 'print 1 and print 2 (as the seals number them)');
     await page.waitForFunction(k => !document.querySelector('#owPcSum .cuStat, #owPcSum .working'), cable, { timeout: 15000 });
 
@@ -274,20 +272,20 @@ async function main() {
     await idle(); await page.click(`#rvList .reviewListRow[data-row="${cable}"] [data-cu-reopen]`);
     await page.waitForFunction(k => !B.maps.customDone[k] && B.maps.customKept[k], cable, { timeout: 30000 });
     await openWin(cable);
-    await page.waitForFunction(k => { const r = document.querySelector(`#owPcSum [data-piece="${k}"] .pcAct`); return r && r.querySelector('[data-cu-complete]') && !r.querySelector('[data-cu-done]'); }, cable, { timeout: 15000 });
-    assert.equal(rec(cable).state, 'open', 'the cloud record is open again'); assert.equal(recStamps(cable).length, 3, 'its seals are kept for good'); assert(uniqueStamps(cable));
-    R = await rows(); assert.deepEqual(core(R[0].btns), ['Print QR label', 'Complete Order'], JSON.stringify(R[0].btns)); assert(R[0].seals >= 1, 'the kept seals rest on its buttons: ' + JSON.stringify(R[0]));
+    await page.waitForFunction(k => { const r = document.querySelector(`#owPcSum [data-piece="${k}"] .pcAct`); return r && r.querySelector('[data-rel-hold]') && !r.querySelector('[data-cu-done]'); }, cable, { timeout: 15000 });
+    assert.equal(rec(cable).state, 'open', 'the cloud record is open again'); assert.equal(recStamps(cable).length, 2, 'its seals are kept for good'); assert(uniqueStamps(cable));
+    R = await rows(); assert.deepEqual(core(R[0].btns), ['Print QR label', 'Release Hold'], JSON.stringify(R[0].btns)); assert(R[0].seals >= 1, 'the kept seals rest on its buttons: ' + JSON.stringify(R[0]));
     assert(await noBar(), 'no bar, open again');
     assert.equal(await reopenInWin(), 0, 'no Reopen in the order window, open again');
     await seg('open'); await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`), cable, { timeout: 15000 });
-    c0 = await card(cable); assert(c0.q === 'Review required' && c0.btns.join() === 'Print QR label,Complete Order' && c0.seals === 3, 'back under Open, seals on its buttons: ' + JSON.stringify(c0));
+    c0 = await card(cable); assert(c0.q === 'Review required' && c0.btns.join() === 'Print QR label,Release Hold' && c0.seals === 2, 'back under Open, seals on its buttons: ' + JSON.stringify(c0));
     await page.waitForTimeout(600);
     const ops2 = tlOps(P.rid); assert(ops2.some(e => e.type === 'note' && e.data && e.data.reopened) , 'the reopen is on the timeline: ' + JSON.stringify(ops2.map(e => [e.type, e.data && e.data.pressedIn])));
     await layout('reopened');
-    // Complete once more: one more seal (the 4th), not two
-    await idle(); await page.click(`#owPcSum [data-piece="${cable}"] [data-cu-complete]`);
-    await page.waitForFunction(k => B.maps.customDone[k], cable, { timeout: 20000 });
-    assert.equal(recStamps(cable).filter(s => s.how === 'button').length, 2, 'the second completion adds one seal'); assert(uniqueStamps(cable));
+    // completed once more (its Print QR label: RELHOLD): one more seal (the 3rd), not two
+    await idle(); await page.click(`#owPcSum [data-piece="${cable}"] [data-cu-print]`);
+    await page.waitForFunction(k => B.maps.customDone[k] && B.maps.customDone[k].prints === 3, cable, { timeout: 30000 });
+    assert.equal(recStamps(cable).length, 3, 'the second completion adds one seal'); assert(uniqueStamps(cable));
     await page.waitForFunction(k => document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-done]`), cable, { timeout: 15000 });
     await layout('completed-again');
     await closeWin();
@@ -299,27 +297,30 @@ async function main() {
     await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow.hasAct:not(.hasHold)').length === 2, null, { timeout: 15000 });
     R = await rows();
     assert.deepEqual(R.map(r => [r.key, r.act]), [[alpha, true], [beta, true], [charm, false]]);
-    for (const r of R.slice(0, 2)) assert.deepEqual(r.btns, ['Print QR label', 'Complete Order'], r.key);
+    for (const r of R.slice(0, 2)) assert.deepEqual(r.btns, ['Print QR label', 'Release Hold'], r.key);
     assert.match(R[2].st, /^GF Sheet 1$/);
     assert(await noBar(), 'the piece shown is on a sheet: no Custom Orders bar, yet the Review pieces have their buttons');
     await shot("r8-2-1440-two-pieces");
-    // pressing Complete Order on BETA with no name known: the question is asked in BETA's row, and only there
-    await idle(); await page.click(`#owPcSum [data-piece="${beta}"] [data-cu-complete]`);
+    // pressing Print QR label on BETA (RELHOLD: its hand completion) with no name known: the question is asked in BETA's row, and only there
+    await idle(); await page.click(`#owPcSum [data-piece="${beta}"] [data-cu-print]`);
     await page.waitForFunction(k => document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-name]`), beta, { timeout: 10000 });
     let asked = await page.evaluate(() => [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => [r.dataset.piece, !!r.querySelector('[data-cu-name]')]));
     assert.deepEqual(asked.filter(x => x[1]).map(x => x[0]), [beta], 'asked in the row pressed, not in the other: ' + JSON.stringify(asked));
-    assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.hasAttribute('data-cu-name')), true, 'its field has the focus');
+    // (RELHOLD: asked through Print QR label, whose sticker question for a piece of a multi-piece order comes first and hands the focus back when it closes, so the field's focus is not asserted here; it is focused below)
     assert.equal(rec(beta), undefined, 'nothing is written before the name');
     await layout('name-asked', [[390, 844]]);
     await page.evaluate(k => document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-name]`).focus(), beta);   // (the field is where it was, and typing goes on)
     // (a redraw meanwhile keeps what is typed)
+    // (one identity, employeeName() = B.employee: with none signed in, the field holds the last name used on this computer, ready for Enter; another name replaces it)
+    assert.equal(await page.evaluate(k => document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-name]`).value, beta), 'Test Operator', 'the last name used is ready in the field');
+    await page.keyboard.press('Control+A'); await page.keyboard.press('Backspace');
     await page.keyboard.type('Pat'); await page.evaluate(() => OrderWin.paint()); await page.waitForTimeout(300);
     assert.equal(await page.evaluate(k => document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-name]`).value, beta), 'Pat');
     await page.keyboard.press('Enter');
-    await page.waitForFunction(k => B.maps.customDone[k], beta, { timeout: 20000 });
-    assert(rec(beta).completedBy === 'Pat' && rec(beta).how === 'button', JSON.stringify(rec(beta))); assert.equal(rec(alpha), undefined, 'ALPHA is untouched'); assert.equal(recStamps(beta).length, 1);
+    await page.waitForFunction(k => B.maps.customDone[k] && B.maps.customDone[k].prints === 1, beta, { timeout: 30000 });
+    assert(rec(beta).printedBy === 'Pat' && rec(beta).state === 'completed', JSON.stringify(rec(beta))); assert.equal(rec(alpha), undefined, 'ALPHA is untouched'); assert.equal(recStamps(beta).length, 1);
     await page.waitForFunction(k => document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-done]`), beta, { timeout: 15000 });
-    R = await rows(); assert(R.find(r => r.key === alpha).btns.join() === 'Print QR label,Complete Order', 'ALPHA still has its own open buttons: ' + JSON.stringify(R[0].btns));
+    R = await rows(); assert(R.find(r => r.key === alpha).btns.join() === 'Print QR label,Release Hold', 'ALPHA still has its own open buttons: ' + JSON.stringify(R[0].btns));
     assert(R.find(r => r.key === beta).btns.includes('Completed') && !R.find(r => r.key === beta).btns.includes('Reopen'), 'BETA: Completed, and no Reopen in the order window');
     assert.equal(await reopenInWin(), 0, 'no Reopen anywhere in the window: two pieces in Review, one completed');
     // Undo, offered for a few seconds beside the completed piece, as in Review: takes BETA's completion back, ALPHA never involved
@@ -329,16 +330,16 @@ async function main() {
       await page.click(undoBtn);
       await page.waitForFunction(k => !B.maps.customDone[k] && B.maps.customKept[k], beta, { timeout: 30000 });
       assert.equal(rec(beta).state, 'open'); assert.equal(recStamps(beta).length, 1, 'its seal is kept');
-      await page.waitForFunction(k => document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-complete]`), beta, { timeout: 15000 });
+      await page.waitForFunction(k => document.querySelector(`#owPcSum [data-piece="${k}"] [data-rel-hold]`), beta, { timeout: 15000 });
     }
     // BETA (open again, its first seal kept): Print QR label from its own row, the print path of an open card. The seal is stamped on
     // the button of THIS row while the label is made, the print opens, and the card is completed by it, with a seal of its own.
     await page.evaluate(() => { window.__stamps = []; const tick = () => { for (const n of document.querySelectorAll('.cuSealHost .seal')) { const r = n.getBoundingClientRect(); if (r.width > 4) __stamps.push([Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)]); } requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
     const pbRect = await page.evaluate(k => { const r = document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-print]`).getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom]; }, beta);
-    const pp0 = await page.evaluate(() => window.__printed || 0), betaStamps = recStamps(beta).length;
+    const pp0 = await page.evaluate(() => window.__printed || 0), betaStamps = recStamps(beta).length, betaPrints = +rec(beta).prints || 0;
     await idle(); await page.click(`#owPcSum [data-piece="${beta}"] [data-cu-print]`);
     await page.waitForFunction(p0 => (window.__printed || 0) > p0, pp0, { timeout: 30000 });
-    await page.waitForFunction(k => B.maps.customDone[k] && B.maps.customDone[k].prints === 1, beta, { timeout: 30000 });
+    await page.waitForFunction(([k, n]) => B.maps.customDone[k] && B.maps.customDone[k].prints === n, [beta, betaPrints + 1], { timeout: 30000 });
     assert.equal(recStamps(beta).length, betaStamps + 1, 'the print adds one seal to the one kept'); assert(uniqueStamps(beta)); assert.equal(rec(beta).state, 'completed');
     assert.equal(rec(alpha), undefined, 'ALPHA is untouched by BETA\'s print');
     const stamped = await page.evaluate(() => __stamps);
@@ -346,10 +347,11 @@ async function main() {
     await page.waitForFunction(k => /Print again/.test(document.querySelector(`#owPcSum [data-piece="${k}"] .pcAct`)?.textContent || ''), beta, { timeout: 15000 });
     await seg('done'); await page.waitForFunction(k => /Print again/.test(document.querySelector(`#rvList .reviewListRow[data-row="${k}"] .rowActions`)?.textContent || ''), beta, { timeout: 15000 });
     assert.equal((await card(beta)).seals, betaStamps + 1, 'the Review card under Completed shows every seal'); await seg('open');
-    // ALPHA completed by a press on its own row (BETA's state unchanged by it)
-    await idle(); await page.click(`#owPcSum [data-piece="${alpha}"] [data-cu-complete]`);
-    await page.waitForFunction(k => B.maps.customDone[k], alpha, { timeout: 20000 });
-    assert(rec(alpha).completedBy === 'Pat' && recStamps(alpha).length === 1, JSON.stringify(rec(alpha)));
+    // ALPHA completed by a press on its own row, its Print QR label (BETA's state unchanged by it)
+    const betaNow = JSON.stringify(recStamps(beta));
+    await idle(); await page.click(`#owPcSum [data-piece="${alpha}"] [data-cu-print]`);
+    await page.waitForFunction(k => B.maps.customDone[k] && B.maps.customDone[k].prints === 1, alpha, { timeout: 30000 });
+    assert(rec(alpha).printedBy === 'Pat' && recStamps(alpha).length === 1, JSON.stringify(rec(alpha))); assert.equal(JSON.stringify(recStamps(beta)), betaNow, 'BETA unchanged');
     await closeWin();
 
     // ── 7 · order 4171409060's shape (Paul, 5 Oct: "These buttons should be on the same line as the Longer Chain 5682"): BLUE 72587 on GF
@@ -380,6 +382,7 @@ async function main() {
     await layout('t-printed');
     await closeWin();
 
+    // (RELHOLD: LONGER CHAIN 5682 and CHAIN ONLY 5601, "Charm: Chain only", are Custom Orders pieces: they keep Complete Order)
     // ── 8 · a single-piece chain-only order: its one piece has its own row (there is no bar to carry the buttons any more) ──
     const solo = kOf(S, 'solo');
     await openWin(solo, 1);
