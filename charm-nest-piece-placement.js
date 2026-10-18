@@ -323,7 +323,20 @@
     const subs = new Set();
     let hooked = false;
     const hook = () => { if (hooked) return; const OP = root.OrderPieces; if (!OP || !OP.subscribe) return; hooked = true; OP.subscribe(() => { for (const f of [...subs]) { try { f(); } catch (e) { console.warn('PiecePlacement subscriber', e); } } }); };
-    const rowsOf = rid => { try { return (root.Orders && root.Orders.rows ? root.Orders.rows() || [] : []).filter(r => r && r.order && ridOf(r.order.receiptId) === rid && r.state !== 'gone'); } catch (_) { return []; } };
+    /* PERF (Oct 2026): an order's rows were found by reading every row of the page (a regex on each receipt) at each ask, and a surface
+       that asks for every row (the Orders tab's head counts the holds of all of them, at every pile, view or filter press) made that
+       800 × 800: seconds per click. The rows are indexed by receipt once and the index is kept for the rest of the task, while the
+       page's row list is the same list of the same length (a row added or taken out is seen at once); a row's state is read at each ask. */
+    let rowIndex = null;
+    const indexOf = list => {
+      if (rowIndex && rowIndex.list === list && rowIndex.n === list.length) return rowIndex.by;
+      const by = new Map();
+      for (const r of list) if (r && r.order) { const k = ridOf(r.order.receiptId); const a = by.get(k); if (a) a.push(r); else by.set(k, [r]); }
+      rowIndex = { list, n: list.length, by };
+      Promise.resolve().then(() => { rowIndex = null; });   // (kept for this task only: the next one reads the rows afresh)
+      return by;
+    };
+    const rowsOf = rid => { try { const list = root.Orders && root.Orders.rows ? root.Orders.rows() || [] : []; return (indexOf(list).get(rid) || []).filter(r => r.state !== 'gone'); } catch (_) { return []; } };
     const cancelled = rid => { try { return !!(root.Cancelled && root.Cancelled.has && root.Cancelled.has(rid)); } catch (_) { return false; } };
     const handOfRow = row => { try { return root.CharmNestReadiness && root.CharmNestReadiness.handOf ? root.CharmNestReadiness.handOf(row) : null; } catch (_) { return null; } };
     // (a row's own hold counts until the cloud has confirmed it (row.holdSeen, set by PlacementFeed.adoptHolds): from then on the cloud's pool rows are the hold's one record, so a Release made on

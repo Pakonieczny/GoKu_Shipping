@@ -79,33 +79,60 @@
   const secs = ms => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s"; };
   const nice = n => n >= 1000 ? n.toLocaleString() : String(n);
 
+  /** The slot's width while shown, kept by a ResizeObserver (null until it has said). */
+  const slot = { el: null, ro: null, room: null };
+  function watchSlot(el) {
+    if (!el || slot.el === el || typeof root.ResizeObserver !== "function") return;
+    if (!slot.ro) slot.ro = new root.ResizeObserver(entries => {
+      for (const e of entries) if (e.target === slot.el) {
+        // (the slot is hidden while no bar is on, between tasks: the width it had stands; while shown, its width is the room, none at all included)
+        const shown = !!(host && host.parentNode === slot.el && host.classList.contains("on")); if (!shown) continue;
+        slot.room = slot.el.clientWidth || 0;
+        if (host.classList.contains("mini")) { host.classList.toggle("snug", slot.room < 150); host.classList.toggle("tight", slot.room < 60); }
+      }
+    });
+    if (slot.el) slot.ro.unobserve(slot.el);
+    slot.el = el; slot.room = null; slot.ro.observe(el);
+  }
+
   function draw() {
     const h = mount(); if (!h) return; const now = Date.now();
     const list = [...tasks.values()].filter(t => !t.quiet);
     if (!list.length) { h.classList.remove("on"); h.removeAttribute("title"); if (timer) { clearInterval(timer); timer = null; } return; }
-    h.classList.add("on");
+    // PERF (Oct 2026): this runs four times a second while anything works. Its slot's width was read after the writes
+    // below, a forced layout of the whole page at every beat; now a ResizeObserver tells it (read when the browser has
+    // laid out anyway; a bar shown again starts from the width it had, the observer says at once if it moved), and the slot
+    // is measured here only when it has never been seen. The slot takes the
+    // room its bar leaves (flex-basis 0), so its width does not depend on the words written here. Each text, the tooltip
+    // and the bar's width are written only when they change (every write was a DOM mutation the page's observers woke for).
+    const mini = h.classList.contains("mini");
+    if (mini) watchSlot(h.parentNode);
+    let room = mini && slot.el === h.parentNode && slot.room != null ? slot.room : null;
+    h.classList.toggle("on", true);
     const t = list.filter(x => x.asked).pop() || list[0];                    // the newest one asked for, else the first; the rest are a count
-    const q = s => h.querySelector(s), mini = h.classList.contains("mini");
+    const q = s => h.querySelector(s), put = (s, text) => { const n = q(s); if (n.textContent !== text) n.textContent = text; };
     const known = t.total > 0;
     const frac = known ? Math.max(0, Math.min(1, t.done / t.total)) : 0;
     const elapsed = now - t.t0;
-    q(".cnpLabel").textContent = t.label;
-    q(".cnpNote").textContent = t.noteText || "";
-    q(".cnpPct").textContent = known ? Math.floor(frac * 100) + "%" : "";
+    put(".cnpLabel", t.label);
+    put(".cnpNote", t.noteText || "");
+    put(".cnpPct", known ? Math.floor(frac * 100) + "%" : "");
     let meta = known ? `${nice(t.done)} / ${nice(t.total)} · ${secs(elapsed)}` : secs(elapsed);
     if (known && t.done > 0 && frac < 1 && elapsed > 2500) meta += ` · about ${secs(elapsed / frac - elapsed)} left`;
     // small: the percentage, or the time spent while there is nothing to count; the rest is in the tooltip
-    q(".cnpMeta").textContent = mini ? (known ? "" : secs(elapsed)) : meta;
-    q(".cnpMore").textContent = list.length > 1 ? `+${list.length - 1}` : "";
+    put(".cnpMeta", mini ? (known ? "" : secs(elapsed)) : meta);
+    put(".cnpMore", list.length > 1 ? `+${list.length - 1}` : "");
     if (mini) {
-      h.title = [t.label + (t.noteText ? ` · ${t.noteText}` : ""), meta, ...list.filter(x => x !== t).slice(0, 6).map(x => `also: ${x.label}`)].join("\n");
+      const tip = [t.label + (t.noteText ? ` · ${t.noteText}` : ""), meta, ...list.filter(x => x !== t).slice(0, 6).map(x => `also: ${x.label}`)].join("\n");
+      if (h.title !== tip) h.title = tip;
       // short of room beside the tabs the numbers go first, then the words (the page's CSS then draws the bar on its edge)
-      const room = h.parentNode.clientWidth || 0;
+      if (room == null) room = h.parentNode.clientWidth || 0;
       h.classList.toggle("snug", room < 150); h.classList.toggle("tight", room < 60);
     }
     const track = q(".cnpTrack"), fill = q(".cnpFill");
     track.classList.toggle("cnpIndet", !known);
-    fill.style.width = known ? (frac * 100).toFixed(1) + "%" : "";
+    const width = known ? (frac * 100).toFixed(1) + "%" : "";
+    if (fill.style.width !== width) fill.style.width = width;
     if (!timer) timer = setInterval(draw, 250);
   }
 

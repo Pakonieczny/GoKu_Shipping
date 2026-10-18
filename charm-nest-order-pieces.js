@@ -264,8 +264,21 @@
       return { key: r.key, receiptId: r.order && r.order.receiptId, form: sp.form || '', transactionId: ln.transactionId, sku: sp.designSku || ln.sku || '', title: ln.title || '', material: r.material || sp.material || r.metal || null,
         quantity: sp.quantity || ln.quantity || 1, state: r.state, poolIds: r.poolIds || [], hold: r.hold || null, changePending: !!r.changePending, problems: r.problems || [], spec: { noDesign: sp.noDesign, customDone: sp.customDone || null, pieceCount: sp.pieceCount, pair: sp.pair }, reason: r.reason || '', listingId: ln.listingId || '' };
     }
+    /* PERF (Oct 2026): an order's pulled rows were found by reading every row of the page at each ask: 800 × 800 when a surface asks for
+       every row (the Orders tab's hold counts). They are indexed by receipt once and the index kept for the rest of the task, while the
+       page's row list is the same list of the same length; a row's state is read at each ask. */
+    let pulledIndex = null;
+    const pulledOf = (list, rid) => {
+      if (!pulledIndex || pulledIndex.list !== list || pulledIndex.n !== list.length) {
+        const by = new Map();
+        for (const r of list) { const k = String(r && r.order && r.order.receiptId); const a = by.get(k); if (a) a.push(r); else by.set(k, [r]); }
+        pulledIndex = { list, n: list.length, by };
+        Promise.resolve().then(() => { pulledIndex = null; });   // (kept for this task only)
+      }
+      return pulledIndex.by.get(rid) || [];
+    };
     function linesOf(rid) {
-      const pulled = root.Orders && root.Orders.rows ? (root.Orders.rows() || []).filter(r => String(r.order && r.order.receiptId) === rid && r.state !== 'gone') : [];
+      const pulled = root.Orders && root.Orders.rows ? pulledOf(root.Orders.rows() || [], rid).filter(r => r.state !== 'gone') : [];
       if (pulled.length) return pulled.map(lineOfRow);
       const e = learned.get(rid); return e && e.rows ? e.rows.filter(r => r.state !== 'gone').map(lineOfRow) : [];
     }

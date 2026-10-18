@@ -1968,7 +1968,8 @@ const Orders = window.Orders = (() => {
   const viewMode = () => OV.view || S.settings.orderView || "list";
   /** The lines the filters leave, in ship-by order. */
   function visibleRows() {
-    const q = OV.q.trim().toLowerCase();
+    // (PERF, Oct 2026: each row's activity time is worked out once for this sort, and the date range and direction read once, not per row)
+    const q = OV.q.trim().toLowerCase(), times = new Map(), act = CNListActivity.state("orders");
     return rowsOf().filter(r => {
       if (r.state === "gone") return false;
       if (OV.pile === "hold" && !heldNow(r)) return false;
@@ -1979,8 +1980,8 @@ const Orders = window.Orders = (() => {
       const sp = r.spec || {};
       return [r.order.receiptId, sp.designSku, r.line.sku, r.line.title, (sp.personalization || []).join(" "), sp.buyerMessage, sp.staffNote, r.reason]
         .some(x => String(x || "").toLowerCase().includes(q));
-    }).filter(r => CNListActivity.matches(r, CNListActivity.state("orders").range)).sort((x, y) => {
-      if (OV.sort === "activity") return CNListActivity.compare(x,y,CNListActivity.state("orders").direction);
+    }).filter(r => CNListActivity.matches(r, act.range)).sort((x, y) => {
+      if (OV.sort === "activity") return CNListActivity.compare(x,y,act.direction,times);
       const k = OV.sort === "arrival" ? (O.orderPlacedAt(y) - O.orderPlacedAt(x)) : OV.sort === "order" ? String(x.order.receiptId).localeCompare(String(y.order.receiptId))
         : OV.sort === "state" ? String(x.state).localeCompare(String(y.state))
         : (x.order.shipBy || 0) - (y.order.shipBy || 0);
@@ -2534,7 +2535,9 @@ const Orders = window.Orders = (() => {
     // showing me two orders in the orders tab where it says 360")
     { const q = v.querySelector("#ordQ"); if (q && q.value !== OV.q && document.activeElement !== q) q.value = OV.q; syncFind(v); }
     // (the live count and the charms are drawn with the list: paintCount, from renderBody; what is known here is the size of the pile)
-    ordBase = { orders: OV.pile === "hold" ? new Set(all.filter(r => heldNow(r)).map(r => String(r.order.receiptId))).size : totals.orders, charms: totals.charms };
+    // (the orders on hold, read once per head: each row's answer is a PiecePlacement read, PERF, Oct 2026; it was read twice on the hold pile)
+    const heldN = new Set(all.filter(r => heldNow(r)).map(r => String(r.order.receiptId))).size;
+    ordBase = { orders: OV.pile === "hold" ? heldN : totals.orders, charms: totals.charms };
     { const charmTotal = v.querySelector("#ordCharmTotal"); if (charmTotal && !charmTotal.firstChild) { charmTotal.innerHTML = `<b>${totals.charms}</b> charms`; charmTotal.title = "Charm quantity across the orders shown; chain-only and packaging items are excluded"; } }
     const byMetal = {}; for (const r of all) { const m = r.material || "none"; byMetal[m] = (byMetal[m] || 0) + 1; }
     const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${label === "Open Orders" ? '<span>Open<span class="ordLong"> Orders</span></span>' : esc(label)}<b class="${cls}">${n}</b></button>`;
@@ -2545,7 +2548,7 @@ const Orders = window.Orders = (() => {
     const byForm = {}; for (const r of all) { const f = (r.spec && r.spec.form) || "none"; byForm[f] = (byForm[f] || 0) + 1; }
     const forms = Object.keys(byForm).filter(f => f !== "none" || OV.form === "none").sort((a2, b2) => byForm[b2] - byForm[a2]);
     const engN = all.filter(r => r.engrave && r.engrave.needed).length;
-    const heldN = new Set(all.filter(r => heldNow(r)).map(r => String(r.order.receiptId))).size, cxN = window.Cancelled ? Cancelled.count() : 0;
+    const cxN = window.Cancelled ? Cancelled.count() : 0;
     // (Cancelled is always there, Paul 28 Sep A5: every cancelled order, Etsy's and a person's, whatever the pull holds)
     const pills = v.querySelector("#ordChips"), pillsHtml = chip(!OV.pile,"","Open Orders",totals.orders,"","Distinct open order numbers, across all materials")
       + (heldN || OV.pile === "hold" ? chip(OV.pile === "hold","hold","On hold",heldN,"","Orders a person put on hold or took off a sheet; release them from here or from the sheet window") : "")
@@ -8378,6 +8381,7 @@ const Engrave = window.Engrave = (() => {
   /* ── the Engraving tab ── */
   // drafts: words typed on a card and not yet applied, per job. A card is rebuilt whenever its job changes state (an
   // auto-refit, a background render, a tab switch, a reload); the typing it held must come back with it.
+  let egTyping = 0;   // the search box's pause before its redraw (PERF, Oct 2026)
   const EG = { tab: "place", focus: null, opened: null, chosen: false, card: null, cardKey: null, reread: 0, q: "", drafts: {} };   // (NODECIDED: the tab is always "place": there is one list; opened = the key of a decided piece a person opened, shown in the detail card)
   /* ── ONE ROW per earring order line (Paul, 10 Oct 2026; charm-nest-engrave-rows.js). The lists, the counters and Back / Next count and move by ROW: the Left job and
      the Right job of one earring line are one row; every other job (a single, a disc, a necklace, a plain quantity-N line) is a row of its own, as before. This is
@@ -8982,7 +8986,9 @@ const Engrave = window.Engrave = (() => {
     renderWorking(v, jobs);
     // a tab pressed shows what it holds softly (a quick fade), rather than at a blink
     v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { const was = EG.tab; EG.tab = b.dataset.tab; EG.chosen = true; render(); const p = was !== EG.tab && MO() && document.querySelector("#engraveView .egPane:not([hidden])"); if (p) p.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: "ease-out" }); });
-    { const q = v.querySelector("#egQ"); q.oninput = () => { EG.q = q.value; EG.pin = null; render(); }; if (searching) { q.focus({ preventScroll: true }); q.setSelectionRange(searching.start, searching.end); } }
+    // PERF (Oct 2026): one redraw once the typing pauses (150 ms), not a full rebuild of the tab at every key; the search
+    // itself is kept at once, so a redraw for anything else meanwhile already shows what was typed
+    { const q = v.querySelector("#egQ"); q.oninput = () => { EG.q = q.value; EG.pin = null; clearTimeout(egTyping); egTyping = setTimeout(() => { egTyping = 0; render(); }, 150); }; if (searching) { q.focus({ preventScroll: true }); q.setSelectionRange(searching.start, searching.end); } }
     {
       const q = v.querySelector("#egQueue");
       if (wantList) {
@@ -20374,8 +20380,14 @@ const Session = window.Session = (() => {
   /* The sorter stays on for days (Paul, 24 Sep: "everything must be able to stay on indefinitely"). A checkpoint copies
      every sheet, order and decision, and one used to be written a second after every change, back to back while a sheet
      nested. Now one is written at most every ten seconds, never straight after the last, and not at all when nothing
-     changed since it: rev counts the changes schedule() is told of, savedRev is the one the stored checkpoint holds. */
-  const EVERY = 10000;
+     changed since it: rev counts the changes schedule() is told of, savedRev is the one the stored checkpoint holds.
+     PERF (Oct 2026): capture() deep-copies the whole workspace and IndexedDB structured-clones it, both on the main thread
+     (hundreds of ms with ~800 orders), so a click landing on one waited for it. Now at most one a minute, started from an
+     idle slice of the main thread (requestIdleCallback, at most 5 s late); leaving or hiding the page still writes at once. */
+  const EVERY = 60000, IDLE_MS = 5000;
+  let idleId = 0;
+  const whenIdle = fn => typeof window.requestIdleCallback === "function" ? window.requestIdleCallback(fn, { timeout: IDLE_MS }) : (fn(), 0);
+  function disarm() { clearTimeout(timer); timer = 0; if (idleId) { try { window.cancelIdleCallback?.(idleId); } catch (_) {} idleId = 0; } }
   let rev = 1, savedRev = 0, lastStart = 0, lastEnd = 0, lastMs = 0, failures = 0, failure = null, bestFailure = null;
   const bestPending = new Map(); let bestSaving = false, bestChain = Promise.resolve();
   const DROP = {};                                                      // a best-layout record to delete, in turn with the writes
@@ -20522,15 +20534,15 @@ const Session = window.Session = (() => {
     if (failures === 1) toast(`Workspace could not be saved on this browser: ${failure.message}. Keep this tab open — it is tried again by itself.`, "bad", 10000);
     if (!was || was.message !== failure.message) banner();
   }
-  /** When the next pass may start: ten seconds after the last one started, and never before the last has rested as long
+  /** When the next pass may start: a minute (EVERY) after the last one started, and never before the last has rested as long
       as it took (a second at least); after a failure, 15 s doubling to 5 min. */
   function due() {
     const t = Math.max(lastStart + EVERY, lastEnd + Math.max(1000, lastMs));
     return failures ? Math.max(t, lastEnd + Math.min(300000, 15000 * 2 ** (failures - 1))) : t;
   }
   function arm(delay) {
-    if (frozen || !ready || timer || saving || rev === savedRev) return;
-    timer = setTimeout(() => { timer = 0; flush(); }, Math.max(delay, due() - Date.now(), 0));
+    if (frozen || !ready || timer || idleId || saving || rev === savedRev) return;
+    timer = setTimeout(() => { timer = 0; idleId = -1; const id = whenIdle(() => { idleId = 0; flush(); }); if (idleId) idleId = id; }, Math.max(delay, due() - Date.now(), 0));
   }
   async function pass() {
     if (frozen) return;
@@ -20547,7 +20559,7 @@ const Session = window.Session = (() => {
   /** flush(true) writes now (after a pass in flight); flush() only when something changed and the pace allows. */
   function flush(force) {
     // (a save asked for before the page listens, a cleanup put on the restored workspace: made as soon as it does)
-    clearTimeout(timer); timer = 0; if (frozen) return chain; if (!ready) { if (force) early = true; return chain; }
+    disarm(); if (frozen) return chain; if (!ready) { if (force) early = true; return chain; }
     if (force) forced = true;
     else if (rev === savedRev) return chain;
     else if (due() > Date.now()) { arm(0); return chain; }
@@ -20565,7 +20577,7 @@ const Session = window.Session = (() => {
       was done in the last second before a reload (a nudge, a word, a decision) was lost. The write is issued here, in the
       same task; IndexedDB orders it after any earlier write. Nothing changed since the last checkpoint: nothing to write. */
   function flushNow() {
-    clearTimeout(timer); timer = 0; if (frozen) return Promise.resolve(false); if (!ready) {early=true;return Promise.resolve(false);} if(rev === savedRev)return Promise.resolve(true);
+    disarm(); if (frozen) return Promise.resolve(false); if (!ready) {early=true;return Promise.resolve(false);} if(rev === savedRev)return Promise.resolve(true);
     let snapshot; const scope = key(), at = rev;
     try { snapshot = capture(); } catch (_) { return flush(true).then(()=>!failure); }
     // synchronously on the open connection and committed at once: a transaction left to auto-commit, or created a
@@ -20744,7 +20756,7 @@ const Session = window.Session = (() => {
     // asked once, never waited for: a browser short of space may otherwise clear this workspace while the tab is closed
     try { navigator.storage?.persisted?.().then(p => p || navigator.storage.persist?.()).catch(() => {}); } catch (_) {}
   }
-  function freeze() { frozen = true; clearTimeout(timer); timer = 0; bestPending.clear(); }
+  function freeze() { frozen = true; disarm(); bestPending.clear(); }
   /** Deletes a side's checkpoint and its best-layout records from this browser (IndexedDB). Returns how many it deleted. */
   async function forgetScope(scope) {
     try {

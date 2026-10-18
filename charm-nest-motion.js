@@ -491,12 +491,26 @@
     /** One uniform fit for a history group. Independent seals keep the canonical size. */
     let groupSizeObserver=null;
     const fitParents=new Set();
-    function fit(row) {
+    /* PERF (Oct 2026): a fit is three steps, so a pass over many rows does every write of one kind, then every read, then
+       the last writes: it used to write and read row by row, a forced layout per row (hundreds of milliseconds with the
+       Orders list's rows on the page). fit(row) runs the three for one row, as before. */
+    function fitPrep(row) {
       const seals=[...row.children].filter(n=>n.classList.contains('seal'));
       // a strip that asks for smaller seals (the order window's one line, data-seal-max) never grows them past that
       const MAX=Math.max(16,Math.min(BASE_SIZE,+row.dataset.sealMax||BASE_SIZE));
-      if(!seals.length)return MAX;
-      row.style.setProperty('--seal-fit',MAX+'px');
+      if(seals.length)row.style.setProperty('--seal-fit',MAX+'px');
+      return {row,seals,MAX};
+    }
+    function fitApply({row,seals},size) {
+      const value=(Math.floor(size*100)/100)+'px';
+      if(row.style.getPropertyValue('--seal-fit')!==value)row.style.setProperty('--seal-fit',value);
+      row.dataset.sealCount=String(seals.length);return size;
+    }
+    function fit(row) {
+      const p=fitPrep(row);if(!p.seals.length)return p.MAX;
+      return fitApply(p,fitMeasure(p));
+    }
+    function fitMeasure({row,seals,MAX}) {
       const parent=row.parentElement, cs=getComputedStyle(row), ps=parent?getComputedStyle(parent):null;
       if(parent && groupSizeObserver && !fitParents.has(parent)){fitParents.add(parent);groupSizeObserver.observe(parent);}
       let available=parent?.clientWidth || parent?.getBoundingClientRect().width || row.clientWidth || seals.length*BASE_SIZE;
@@ -525,22 +539,67 @@
         const button=parent?.querySelector('.egApproveButton'),room=(parent?.clientWidth || 0)-(button?.offsetWidth || 144)-8-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0)-gap*(seals.length-1);
         size=Math.max(1,Math.min(BASE_SIZE,room/(seals.length-.5)));
       }
-      const value=(Math.floor(size*100)/100)+'px';
-      if(row.style.getPropertyValue('--seal-fit')!==value)row.style.setProperty('--seal-fit',value);
-      row.dataset.sealCount=String(seals.length);return size;
+      return size;
+    }
+    /** Rows out of sight (in a hidden view or tab) have no width to fit to: the passes the page's changes ask for leave
+        them, and watch their box instead, so they are fitted the moment they show (the ResizeObserver below). */
+    const unseen=row=>row.offsetParent===null && !row.getClientRects().length;
+    function fitRows(rows, shownOnly) {
+      for(const parent of fitParents)if(!parent.isConnected){groupSizeObserver?.unobserve(parent);fitParents.delete(parent);}
+      if(shownOnly)rows=rows.filter(row=>{if(!row.isConnected)return false;if(!unseen(row))return true;const parent=row.parentElement;if(parent && groupSizeObserver && !fitParents.has(parent)){fitParents.add(parent);groupSizeObserver.observe(parent);}return false;});
+      // rows that share a parent are fitted one after another, as they always were (each one's room counts the others' widths)
+      const perParent=new Map();for(const row of rows)perParent.set(row.parentElement,(perParent.get(row.parentElement)||0)+1);
+      const together=[],alone=[];for(const row of rows)(perParent.get(row.parentElement)>1?alone:together).push(row);
+      const preps=together.map(fitPrep).filter(p=>p.seals.length), sizes=preps.map(fitMeasure);
+      preps.forEach((p,i)=>fitApply(p,sizes[i]));
+      for(const row of alone)fit(row);
     }
     function fitGroups(scope=doc) {
       if(busy()){defer('seal-layout',()=>fitGroups(scope));return;}
-      for(const parent of fitParents)if(!parent.isConnected){groupSizeObserver?.unobserve(parent);fitParents.delete(parent);}
-      if(scope.matches?.('.sealRow'))fit(scope);
-      for(const row of scope.querySelectorAll?.('.sealRow') || [])fit(row);
+      const rows=[];if(scope.matches?.('.sealRow'))rows.push(scope);
+      for(const row of scope.querySelectorAll?.('.sealRow') || [])rows.push(row);
+      fitRows(rows,false);
     }
-    let fitting=0;
-    const scheduleFit=()=>{if(!fitting)fitting=requestAnimationFrame(()=>{fitting=0;fitGroups();});};
-    const rowObserver=new MutationObserver(()=>{scheduleFit();zoom.check();});
+    /* PERF (Oct 2026): the page's own changes used to refit every seal row in the document (hidden views too) after ANY
+       change anywhere, the progress line's text four times a second among them. Now a change refits only the rows it can
+       move: rows added, rows it changed inside, and the rows beside what changed; changes inside the page's busy text
+       (progress line, toasts, the console, progress meters) none. Resizes of the window or of the page's width refit every
+       row in sight; a watched parent's resize, the rows in it. */
+    const BUSY_TEXT='.cnp, .toasts, #dsConsole, .bp-meter';
+    let fitting=0,fitAll=false,lastDocWidth=-1;const fitQueue=new Set();
+    const runFits=()=>{
+      fitting=0;
+      if(busy()){defer('seal-layout',runFits);return;}
+      const rows=fitAll?[...doc.querySelectorAll('.sealRow')]:[...fitQueue];fitAll=false;fitQueue.clear();
+      fitRows(rows,true);
+    };
+    const scheduleFit=rows=>{if(rows)for(const row of rows)fitQueue.add(row);else fitAll=true;if(!fitting)fitting=requestAnimationFrame(runFits);};
+    const rowsBeside=n=>{const out=[];if(n && n.children)for(const c of n.children)if(c.classList.contains('sealRow'))out.push(c);return out;};
+    const rowObserver=new MutationObserver(recs=>{
+      const rows=[];
+      for(const r of recs){
+        const t=r.target;if(!t || t.nodeType!==1 || t.closest(BUSY_TEXT))continue;
+        const own=t.closest('.sealRow');if(own)rows.push(own);
+        rows.push(...rowsBeside(t),...rowsBeside(t.parentElement));
+        for(const n of r.addedNodes)if(n.nodeType===1){if(n.classList.contains('sealRow'))rows.push(n);rows.push(...n.querySelectorAll('.sealRow'));}
+      }
+      if(rows.length)scheduleFit(rows);
+      zoom.check();
+    });
     rowObserver.observe(doc.documentElement,{subtree:true,childList:true});
-    if(root.ResizeObserver){groupSizeObserver=new root.ResizeObserver(scheduleFit);groupSizeObserver.observe(doc.documentElement);}
-    root.addEventListener('resize',scheduleFit);scheduleFit();
+    if(root.ResizeObserver){
+      groupSizeObserver=new root.ResizeObserver(entries=>{
+        const rows=[];
+        for(const e of entries){
+          // (the page only taller or shorter: its changes already said which rows they moved)
+          if(e.target===doc.documentElement){const w=e.contentRect?e.contentRect.width:-2;if(w!==lastDocWidth){lastDocWidth=w;scheduleFit();}continue;}
+          rows.push(...rowsBeside(e.target));
+        }
+        if(rows.length)scheduleFit(rows);
+      });
+      groupSizeObserver.observe(doc.documentElement);
+    }
+    root.addEventListener('resize',()=>scheduleFit());scheduleFit();
     /** Every seal waiting to be pressed, pressed where it shows (one out of sight just shows). */
     function pressPending() {
       for (const s of doc.querySelectorAll(".seal.pending")) {

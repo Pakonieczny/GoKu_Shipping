@@ -35,8 +35,11 @@
   }
   function matches(value,range='all',now=Date.now()){const b=bounds(range,now);if(!b)return true;const d=day(typeof value==='number'?value:at(value));return !!d && d>=b[0] && d<=b[1];}
   const identity=x=>String(x.key || x.id || x.setId || x.runId || x.orderId || x.order?.receiptId || '');
-  function compare(a,b,direction='desc'){
-    const x=at(a),y=at(b);if(!x||!y)return (x?0:1)-(y?0:1) || identity(a).localeCompare(identity(b));
+  // PERF (Oct 2026): memo (a Map, optional) keeps each item's time for one sort: at() walks the item and everything it holds, and a sort
+  // asks it about twenty times per item (800 order rows: some 16 000 walks per redraw of the Orders list)
+  function compare(a,b,direction='desc',memo){
+    const atm=v=>{if(!memo)return at(v);let t=memo.get(v);if(t===undefined){t=at(v);memo.set(v,t);}return t;};
+    const x=atm(a),y=atm(b);if(!x||!y)return (x?0:1)-(y?0:1) || identity(a).localeCompare(identity(b));
     return (direction==='asc'?x-y:y-x) || identity(a).localeCompare(identity(b));
   }
   /* The Library's blocks (Paul, 10 Oct 2026: "Actual Sets of Sheets should always be prioritized above all in-progress sheets when showing the
@@ -52,7 +55,7 @@
   }
   function set(scope,patch){const current=state(scope);states[scope]={...current,...patch};state(scope);try{root?.localStorage?.setItem(KEY,JSON.stringify(states));}catch(_){}return states[scope];}
   const key=scope=>{const s=state(scope);return s.range+':'+s.direction;};
-  function select(scope,items,now=Date.now()){const s=state(scope);return (items || []).filter(x=>matches(x,s.range,now)).slice().sort((a,b)=>compare(a,b,s.direction));}
+  function select(scope,items,now=Date.now()){const s=state(scope),memo=new Map();return (items || []).filter(x=>matches(x,s.range,now)).slice().sort((a,b)=>compare(a,b,s.direction,memo));}
   function selectBlocks(scope,items,now=Date.now()){const s=state(scope);return (items || []).filter(x=>matches(x,s.range,now)).slice().sort((a,b)=>compareBlocks(a,b,s.direction));}
   function touch(value,t=Date.now()){if(value && typeof value==='object')value.activityAt=Math.max(ms(value.activityAt),ms(t));return value;}
   /* ═══ FILTERBAR (Paul, 17 Oct 2026: "This much is much too crowded. Consolidate this entire menu into the smallest and most efficient footprint ... real-time reactions with spinner/loader when waiting.") ═══
