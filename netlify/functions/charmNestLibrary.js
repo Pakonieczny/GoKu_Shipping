@@ -168,13 +168,17 @@ function slim(d) {
     cardStartedAt: ms(d.cardStartedAt) || ms(d.createdAt), updatedAt: ms(d.updatedAt), createdAt: ms(d.createdAt),
     // a cleanup made on the record (the pieces it took off, the green line it removed): a page whose own copy of the sheet
     // is older puts the same change on it (Cleanups, charm-nest-bridge.js). Only on a record that has one
+    // Manual Control (Paul, 18 Oct 2026): the last layout a person saved by hand, and who is moving its charms by hand now (op_manualClaim), so a second screen
+    // that follows the sheet reads it again when either changes. Only on a record that has them
+    ...(d.manual && num(d.manual.at) > 0 ? { manual: { at: num(d.manual.at), by: str(d.manual.by, 80), n: num(d.manual.n) } } : {}),
+    ...(d.manualEdit && num(d.manualEdit.at) > 0 && d.manualEdit.tab ? { manualEdit: { at: num(d.manualEdit.at), by: str(d.manualEdit.by, 80), tab: str(d.manualEdit.tab, 40) } } : {}),
     ...(d.cleanup && d.cleanup.id ? { cleanup: { id: str(d.cleanup.id, 80), mode: d.cleanup.mode || null, at: num(d.cleanup.at) || null, removedPoolIds: (d.cleanup.removedPoolIds || []).slice(0, 50), removedCharmIds: (d.cleanup.removedCharmIds || []).slice(0, 50), lineRemoved: num(d.cleanup.lineRemoved) || null, lineKept: num(d.cleanup.lineKept) || null } } : {})
   };
 }
 /* The fields of a sheet record that its list entry (slim) and its laser readiness (Readiness.sheet) read, and the lists
    filter on. A list reads only these: the rest of a record (its charms with their outlines, its placements) is most of
    its up to 900 KB, and a list of 500 sheets used to read all of it to send none of it. */
-const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold"];
+const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit"];
 /** What the Library's live read (op_laserStatus) reads of a sheet: SLIM_SHEET, and the sheet's own number (readiness labels a sheet that is in no set by it). */
 const LASER_SHEET = SLIM_SHEET.filter(f => f !== "sources").concat(["seq", "sourcesLite"]);
 /** What decides whether a sheet is on the Library's Current list (op_listSheets with excludeDone): archived, completed, its set (filingRecords), the filters and the order. */
@@ -618,7 +622,7 @@ async function laserUnchanged(sheetIds, setIds, revs) {
    same way (ifRev of its own last pass, for the same cards), because a pass that finds nothing new reads and writes nothing. ── */
 const REV = "Charm_Nest_Rev", REV_DOC = "library";   // (beside the placement counter, Charm_Nest_Rev/placement; production only, as that one is: the sandbox keeps no counter, a leftover of every reset, and its readers ask in full)
 // (the sandbox-only ops are not here: they write Sandbox_ records only, whatever the request says, so not even a sandbox request without its flag moves the production counter)
-const REV_OPS = new Set(["backPut", "backInvalidate", "setAllocate", "setUpdate", "runPut", "runArchive", "laserDone", "putSheet", "deleteSheet", "restoreSheet", "archiveEmptySheet", "roseRecordCut", "roseTakeOff", "roseClaim", "roseRelease", "partialClaim", "partialRelease", "flowApply", "customDecide", "customPut", "customReopen", "customDelete", "customSheetPut", "cancelPut", "cancelRestore", "noDesignPut", "noDesignDelete", "sheetPdf", "cancelSweep", "purgeHistory"]);
+const REV_OPS = new Set(["backPut", "backInvalidate", "setAllocate", "setUpdate", "runPut", "runArchive", "laserDone", "putSheet", "deleteSheet", "restoreSheet", "archiveEmptySheet", "roseRecordCut", "roseTakeOff", "roseClaim", "roseRelease", "partialClaim", "partialRelease", "flowApply", "customDecide", "customPut", "customReopen", "customDelete", "customSheetPut", "cancelPut", "cancelRestore", "noDesignPut", "noDesignDelete", "sheetPdf", "cancelSweep", "purgeHistory", "manualClaim"]);
 /* COST (Oct 2026): WHAT moved, beside THAT something moved. The revision moved for every write in REV_OPS, and a nesting run writes runPut every few
    seconds: every Library on screen then probed every document of its answer (one read each, ~59 for a screen of cards) at each beat, for a write to some
    other run. The revision document now also keeps which documents the recent writes touched: changed {'s:<sheet>' | 't:<set>' | 'r:<run>' | 'c:<custom
@@ -1044,6 +1048,28 @@ async function op_listSheets(b) {
   }
   const { sheets, rest } = await sheetEntries(rows, answerBudget());
   return { sheets, next: rest.length ? { sheets: rest } : null, truncated: rest.length > 0 };
+}
+/* Manual Control (Paul, 18 Oct 2026): one person at a time moves, turns and resizes the charms of a 10K / 14K sheet by hand in the sheet window. The claim is the
+   sheet record's manualEdit { by, tab, at }: taken in a transaction when nobody else holds it (a claim not kept alive for MANUAL_STALE_MS is a closed tab's
+   and lapses), kept alive by its holder (the same call, every 30 s), and given back by its holder alone (release). A cut sheet is never claimed.
+   Answers { ok: true, held } with the claim now held (null once released), or { ok: false, held } with the other person's claim. */
+const MANUAL_STALE_MS = 90000;
+async function op_manualClaim(b) {
+  if (!isId(b.id)) return { error: "bad sheet id" };
+  const tab = str(b.tab, 40).trim(), by = str(b.by, 80).trim();
+  if (!/^[\w-]{4,40}$/.test(tab)) return { error: "bad tab" };
+  revTouch(b, ["s:" + b.id]);
+  const ref = col(SHEETS).doc(b.id);
+  return db.runTransaction(async tx => {
+    const snap = await tx.get(ref); if (!snap.exists) return { error: "This sheet is no longer in the Library.", status: 404 };
+    const d = snap.data(), cur = d.manualEdit && typeof d.manualEdit === "object" && d.manualEdit.tab ? d.manualEdit : null, now = Date.now();
+    if (b.release === true) { if (cur && cur.tab === tab) tx.set(ref, { manualEdit: null }, { merge: true }); return { ok: true, held: null }; }
+    if (cur && cur.tab !== tab && now - num(cur.at) < MANUAL_STALE_MS) return { ok: false, held: { by: str(cur.by, 80), at: num(cur.at) } };
+    if (num(d.laserDoneAt) > 0 || d.roseCutAt) return { ok: false, held: null, refused: "cut" };
+    const held = { by, tab, at: now };
+    tx.set(ref, { manualEdit: held }, { merge: true });
+    return { ok: true, held };
+  });
 }
 async function op_getSheet(b) {
   if (!isId(b.id)) return { error: "bad id" };
@@ -1830,7 +1856,8 @@ const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces
   "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "remnantList", "remnantMark", "remnantBackfill", "partialList", "partialPolicyGet", "partialPolicySet", "partialPlan", "partialUse", "partialStocks", "sheetHistory", "partialSearchList", "sheetMake", "sheetDelete", "partialBackfill", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
   "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "listingKindPut", "noDesignPut", "noDesignDelete", "optionMapPut",
   "sandboxCancel", "sandboxPut", "sandboxPullOrders", "sandboxPullLimitSet", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
-["customSaveGet", "customSaveCommit", "customSavePending", "customSaveIntent"].forEach(op => NO_GEN_BUMP.add(op));   // (the save writes a master entry, an alias and its own record: nothing a placement answer is made from)
+["customSaveGet", "customSaveCommit", "customSavePending", "customSaveIntent"].forEach(op => NO_GEN_BUMP.add(op));
+NO_GEN_BUMP.add("manualClaim");   // (Manual Control's claim writes the sheet record's manualEdit alone: nothing a placement answer is made from)   // (the save writes a master entry, an alias and its own record: nothing a placement answer is made from)
 async function placementGen() {
   if (PREFIX) return null;
   try { const s = await db.collection(REV_COLL).doc("placement").get(); return s.exists ? Number((s.data() || {}).n) || 0 : 0; }
@@ -4053,7 +4080,7 @@ function cancelCopy(r) {
   if (!fits()) for (const k of Object.keys(x)) if (!["orderId", "by", "why", "at", "source", "etsyStatus", "etsyAt"].includes(k)) delete x[k];
   return x;
 }
-const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
+const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, manualClaim: op_manualClaim, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, masterRemoveSkus: op_masterRemoveSkus, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxPullOrders: op_sandboxPullOrders, sandboxPullLimitSet: op_sandboxPullLimitSet, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
