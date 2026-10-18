@@ -28,11 +28,13 @@ function orderOf(fx, now) {
 Base.orderOf = orderOf;   // (R.build serialises Base.orderOf into the page)
 const MONO_TITLE = 'Monogram Necklace Personalized Jewelry Initials Pendant';
 const MONO = (words, qty, metal) => ({ listing: '997905351', sku: 'MONOGRAM_5351', title: MONO_TITLE, qty, variations: [V('Metal choice', metal === 'silver' ? 'Silver' : 'Gold'), V('Chain length', '16 inches')], personalization: [words], metalKey: metal || 'gold' });
+// (MONOSEND, Paul 18 Oct 2026: Approve also sends a monogram's card to the sheets once every piece has its design, and a piece on a sheet is final. 'two' is changed after both its pieces are approved, so its order gives no metal
+//  ('moonlight' is no metal the page knows): approved, not sent, the designs window asked for (held shut here, counted). 'diff', 'legacy' and 'solo' give theirs (GF) and go to the sheets with their last press.)
 const MONO_OSR = { listing: '606439317', sku: 'MONOGRAM_9317', title: 'Monogram Necklace Dainty Monogram Necklace', qty: 2, variations: [V('Metal choice', 'Silver')], personalization: ['O S R'], metalKey: 'silver' };
 const BAR = { listing: '1890000101', sku: 'COMET_9427', title: 'Comet Necklace, Celestial Charm Necklace in 14k Gold Fill', qty: 3, variations: [V('Metal choice', 'Gold'), V('Font Choice', 'Stylish')], personalization: ['Name One'] };
 const CAT = { listing: '1890000107', sku: 'SCHRODINGER CAT 1', title: 'Cat Necklace, Whimsical Cat Charm Gift', qty: 2, variations: [V('Metal choice', 'Gold')], personalization: [] };
 const O = R.ORDERS, ADD = (name, rid, buyer, lines, n, jobs) => { O[name] = { rid, buyer, placed: { day: 0, h: 9, m: n }, ship: 5, lines }; R.EXPECT_JOBS[name] = jobs || 0; };
-ADD('two', '4195059483', 'Mandy Bellamy', [MONO('APV', 2)], 10);
+ADD('two', '4195059483', 'Mandy Bellamy', [MONO('APV', 2, 'moonlight')], 10);
 ADD('diff', '4290000141', 'Name Two', [MONO('ABC / XYZ', 2)], 11);
 ADD('mixed', '4290000142', 'Name Three', [MONO_OSR, BAR, CAT], 12, 1);
 ADD('legacy', '4290000143', 'Name Four', [MONO('APV', 2)], 13);
@@ -72,6 +74,8 @@ ADD('solo', '4200683017', 'Name One', [MONO('APV', 1)], 14);
     const K = (name, i = 0) => rows.filter(r => r.rid === O[name].rid)[i].key;
     check(rows.filter(r => r.mono).length === 5 && rows.filter(r => r.mono && r.qty === 2).length === 4, 'the world: 5 monogram lines (4 of quantity 2, 1 of quantity 1) read as monograms: ' + rows.filter(r => r.mono).map(r => r.rid.slice(-3) + '×' + r.qty).join(' '));
     const [kTwo, kDiff, kMono, kBar, kCat, kLeg, kSolo] = [K('two'), K('diff'), K('mixed', 0), K('mixed', 1), K('mixed', 2), K('legacy'), K('solo')];
+    await page.evaluate(() => { window.__openCalls = 0; CustomSheet.open = () => { window.__openCalls++; return Promise.resolve(); }; });      // (MONOSEND: the designs window a missing metal opens is held shut, counted; monogram-ui.cjs has the window itself)
+    const decided = k => page.evaluate(k => { const d = CustomSheet.decisionOf(Orders.rows().find(r => r.key === k)); return d ? (d.lines[k] || []).filter(p => !p.removed).length : 0; }, k);
     const settle = (ms = 500) => R.settle(page, ms);
     const until = async (fn, what, ms = 60000, arg) => { const t0 = Date.now(); let v; for (;;) { v = await page.evaluate(fn, arg); if (v) return v; if (Date.now() - t0 > ms) { console.log('   (waiting for ' + what + ')'); return null; } await sleep(100); } };
     const entries = () => page.evaluate(() => Object.values(CustomSheet.entries()).map(e => ({ rid: e.rid, files: e.files.map(f => ({ id: f.id, name: f.name, qty: f.qty, metal: f.metal, slot: f.mono && f.mono.slot, line: f.mono && f.mono.line })), sent: !!e.sent })));
@@ -158,7 +162,7 @@ ADD('solo', '4200683017', 'Name One', [MONO('APV', 1)], 14);
     const section = () => page.evaluate(() => {
       const host = document.getElementById('owEng'), sec = document.getElementById('owEngSec');
       return { hostHidden: !host || host.hidden, kids: [...(host ? host.children : [])].map(n => ({ kind: n.matches('[data-testid="ow-mono"]') ? 'mono' : n.classList.contains('engCard') ? 'card' : 'other', key: n.dataset.key || n.dataset.piece || '', slot: n.dataset.slot || '', state: n.dataset.state || '', title: (n.querySelector('.engName') || {}).textContent || '', widgets: n.querySelectorAll('.mw').length, mwKey: (n.querySelector('.mw') || { dataset: {} }).dataset.key || '', mwState: (n.querySelector('.mw') || { dataset: {} }).dataset.state || '',
-        letters: n.querySelector('.mw') ? [0, 1, 2].map(i => n.querySelector(`.mw [data-mw-letter="${i}"]`).value).join('') : '', approve: !!n.querySelector('[data-mw-approve]:not([hidden])'), approved: !!n.querySelector('[data-mw-approved]:not([hidden])'), change: !!n.querySelector('[data-mw-change]:not([hidden])'), box: (() => { const r = n.getBoundingClientRect(); return { l: Math.round(r.left), t: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) }; })() })),
+        letters: n.querySelector('.mw') ? [0, 1, 2].map(i => n.querySelector(`.mw [data-mw-letter="${i}"]`).value).join('') : '', approve: !!n.querySelector('[data-mw-approve]:not([hidden])'), queue: (n.querySelector('.mw') || { dataset: {} }).dataset.queue || '', approved: !!n.querySelector('[data-mw-approved]:not([hidden])'), change: !!n.querySelector('[data-mw-change]:not([hidden])'), box: (() => { const r = n.getBoundingClientRect(); return { l: Math.round(r.left), t: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) }; })() })),
         selected: window.OrderWin.selectedPiece(), secH: sec ? Math.round(sec.getBoundingClientRect().height) : -1 };
     });
     const monoCard = (n, sel = '') => `#owEng [data-testid="ow-mono"][data-slot="C${n}"] .mw ${sel}`.trim();
@@ -168,7 +172,7 @@ ADD('solo', '4200683017', 'Name One', [MONO('APV', 1)], 14);
     check(s.kids.length === 2 && s.kids.every(k => k.kind === 'mono' && k.widgets === 1) && s.kids.map(k => k.key).join() === `${kTwo}#C1,${kTwo}#C2`, 'the Engraving section has ONE card for each piece, in order: ' + s.kids.map(k => k.key.slice(-9) + ' ' + k.title).join(' | '));
     check(s.kids.map(k => k.title).join('|') === 'Monogram · Piece 1 of 2|Monogram · Piece 2 of 2', 'each card says which piece it is: ' + s.kids.map(k => k.title).join(' | '));
     check(s.kids.map(k => k.mwKey).join() === `${kTwo}#C1,${kTwo}#C2` && s.kids.map(k => k.letters).join() === 'APV,XPV', 'each card holds the widget of ITS piece, with its own letters (A P V, X P V)');
-    check(s.kids.every(k => k.mwState === 'approved' && k.approved && !k.approve), 'both pieces were approved in the Engrave tab, and the window says so for each');
+    check(s.kids.every(k => k.mwState === 'approved' && k.queue === 'metal' && k.change) && !await decided(kTwo) && await page.evaluate(() => window.__openCalls) === 1, 'both pieces were approved in the Engrave tab, and the window says so for each; not sent: the order gives no metal, the designs window was asked for once, Change kept (MONOSEND): ' + JSON.stringify([s.kids.map(k => [k.mwState, k.queue, k.change]), await decided(kTwo), await page.evaluate(() => window.__openCalls)]));
     check(s.kids[0].box.t === s.kids[1].box.t && s.kids[0].box.l < s.kids[1].box.l || s.kids[1].box.t > s.kids[0].box.t, 'the two cards stand side by side, or one under the other, both visible: ' + JSON.stringify(s.kids.map(k => k.box)));
     await shot('window-two-approved-1440');
     // change piece 1: it alone is replaced; piece 2's design is untouched
@@ -223,8 +227,9 @@ ADD('solo', '4200683017', 'Name One', [MONO('APV', 1)], 14);
     check((await pst(kLeg, 1)).approved === true && (await pst(kLeg, 2)).approved === true && (await pst(kLeg, 1)).state === 'approved' && (await pst(kLeg, 2)).state === 'approved', 'it reads as pieces 1 AND 2 both approved, no second approval asked');
     await openWin(kLeg, 1500);
     s = await section();
-    check(s.kids.length === 2 && s.kids.every(k => k.mwState === 'approved' && k.approved && !k.approve), 'the window: both piece cards say Approved, neither has an Approve button: ' + JSON.stringify(s.kids.map(k => [k.mwState, k.approve])));
-    check(await page.evaluate(() => [...document.querySelectorAll('#owEng [data-mw-approved]')].every(n => /Monogram APV/.test(n.textContent))), 'each says "Approved · Monogram APV"');
+    // (MONOSEND: an approval from before the rule is approved but not on a sheet: each card keeps Approve to finish it, and nothing is asked again)
+    check(s.kids.length === 2 && s.kids.every(k => k.mwState === 'approved' && k.queue === 'idle' && k.approve && k.change), 'the window: both piece cards are approved, not on a sheet yet, each with Approve to finish it: ' + JSON.stringify(s.kids.map(k => [k.mwState, k.queue, k.approve])));
+    check(await page.evaluate(() => [...document.querySelectorAll('#owEng [data-mw-approved]')].every(n => /Monogram APV/.test(n.textContent))), 'each badge says "Approved · Monogram APV"');
     await shot('window-legacy-1440');
     // change piece 2: it is split in place, only piece 2 gets a new design
     await page.click(monoCard(2, '[data-mw-change]'));
@@ -236,6 +241,8 @@ ADD('solo', '4200683017', 'Name One', [MONO('APV', 1)], 14);
     check(leg.map(f => f.name).join('|') === 'Monogram APV - piece 1.ai|Monogram XPV - piece 2.ai' && leg.every(f => f.qty === 1), 'piece 2 changed: the old design is split: piece 1 keeps APV, piece 2 has XPV, in order: ' + leg.map(f => f.name + ' x' + f.qty).join(' | '));
     check(leg[0].id === oldId, 'piece 1\'s file is the old file itself (same id), now quantity 1 and tagged C1: ' + leg[0].slot);
     check((await pst(kLeg, 1)).approved && (await pst(kLeg, 2)).approved && (await pst(kLeg, 1)).letters === 'APV', 'both still approved, piece 1 never asked again');
+    await until(k => !!CustomSheet.decisionOf(Orders.rows().find(r => r.key === k)), 'the legacy order sent', 60000, kLeg);
+    check(await decided(kLeg) === 2, 'and that press sent the card: the two pieces, one each (MONOSEND): ' + await decided(kLeg));
     await closeWin();
 
     // ═══ 5 · a MIXED order: monogram x2, an engraved bar x3, a plain charm x2 ═══
@@ -265,7 +272,9 @@ ADD('solo', '4200683017', 'Name One', [MONO('APV', 1)], 14);
     await page.click('#owEng [data-testid="ow-mono"] [data-mw-approve]');
     await until(k => Engrave.monogramUI().status(Orders.rows().find(r => r.key === k)).approved, 'solo approved', 60000, kSolo);
     fl = await filesOf(O.solo.rid);
-    check(fl.length === 1 && fl[0].name === 'Monogram APV.ai' && fl[0].qty === 1 && !fl[0].slot, 'its design is "Monogram APV.ai", quantity 1, no tag (byte for byte what it was): ' + JSON.stringify(fl.map(f => [f.name, f.qty, f.slot])));
+    check(fl.length === 1 && fl[0].name === 'Monogram APV.ai' && fl[0].qty === 1 && !fl[0].slot && fl[0].line === kSolo, 'its design is "Monogram APV.ai", quantity 1, no piece slot (tagged with its line, MONOSEND): ' + JSON.stringify(fl.map(f => [f.name, f.qty, f.slot])));
+    await until(k => !!CustomSheet.decisionOf(Orders.rows().find(r => r.key === k)), 'the solo order sent', 60000, kSolo);
+    check(await decided(kSolo) === 1 && fl[0].metal === 'gold', 'and the one press sent it: ONE piece on the buyer\'s metal (GF), no designs window: ' + JSON.stringify([await decided(kSolo), fl[0].metal]));
     await closeWin();
 
     // ═══ 7 · phone width ═══

@@ -8,10 +8,11 @@
 //      instant (no fetch, no build), a digit / emoji is refused calmly, an empty box waits (no build)
 //   5  trouble: a letter missing from an alphabet (plain message naming it), a letter file that fails (Try again), odd buyer words (2 letters, a name, 4 letters, digits, emoji, non-Latin): a plain message and the three boxes
 //   6  the piece size: the order's size option (16MM) is the envelope: the piece never passes it, the line says so; an order without a size is the natural piece
-//   7  Approve: Monogram APV.ai on the order's custom designs (read back by the page's own cut-file preflight as ONE piece of the previewed size), the widget says Approved with Change; the same state in the OTHER place; Change then a new
+//   7  Approve (MONOSEND, 18 Oct 2026: the green Approve, one press approves AND sends, on the buyer's metal, no designs window; final on the sheet, a second press is nothing; a metal the order does not give: approved, the designs window
+//      opens): Monogram APV.ai on the order's custom designs (read back by the page's own cut-file preflight as ONE piece of the previewed size), the same state in the OTHER place; Change then a new
 //      letter REPLACES the design (never two, the metal a person set kept), the same letters again change nothing; another order's monogram is its own design
 //   8  the Order details window: the compact widget, the same state as the Engrave detail (typing in one shows in the other), no Front / Back cards for the monogram, a mixed order keeps its engraved bar's card
-//   9  Send to Sheet: the Review tab does not list the approved monogram (MONOROUTE, 17 Oct 2026: it is the Engraving tab's, its custom card still holds the design); the design goes to the sheet from the widget's own "Send to Sheet →" (the designs window),
+//   9  on the sheets: the Review tab does not list the approved monogram (MONOROUTE, 17 Oct 2026: it is the Engraving tab's, its custom card still holds the design); the design went to the sheet from the widget's own Approve (MONOSEND, 18 Oct 2026: no link, no designs window),
 //      the widget says it is on the sheets and is read only; a reload / second tab keeps the approved design
 //  10  the AI line (stubbed agent): "Assembled with AI: …", "Needs a person: …" with Approve anyway on the second press, Improve again, a failing call, the day's 3 calls
 //  11  phone width 400: the list, the Engrave detail and the Order window fit (no sideways scroll, nothing outside its card), reduced motion; no console error and no page error anywhere
@@ -331,49 +332,63 @@ const MONO_TITLE = 'Monogram Necklace Personalized Jewelry Initials Pendant';
       await shot('1440-detail-sized'); void apv;
     }
 
-    // ═══ 7 · Approve, the design on the order, replace ═══
+    // ═══ 7 · Approve, the design on the order and on the sheets, replace ═══
+    // MONOSEND (Paul, 18 Oct 2026: "remove the 'Send to sheet' button and replace it with the same green 'Approve' button we use for the engravings ... Once the user presses the 'Approve' button on a given Monogram order then that
+    // particular Monogram should automatically be added to the Nesting queue"): ONE press approves (the design, the seal) AND sends it, on the buyer's metal, with no designs window; on the sheet it is final. A metal the order does not
+    // give is never guessed: the designs window opens so a person picks it (the 'sized' order is staged so), and Change / Replace is shown there, before it is on a sheet.
     if (!ONLY || ONLY.has(7)) {
       console.log('\n── 7 · Approve');
+      const decided = k => page.evaluate(k => { const row = B.orders.byKey.get(k), d = row && CustomSheet.decisionOf(row); return d ? { pieces: (d.lines[k] || []).filter(p => !p.removed).length, by: d.by } : null; }, k);
       await openDetail('apv'); let x = await ready(rid('apv'), 'detail'); const R0 = rid('apv');
-      check(x.state === 'ready' && x.ins.join('') === 'APV' && x.approve && x.approve.shown && !x.approve.disabled && x.approve.text === 'Approve', 'ready to approve: the button says Approve');
+      check(x.state === 'ready' && x.ins.join('') === 'APV' && x.approve && x.approve.shown && !x.approve.disabled && x.approve.text === 'Approve' && !x.sheet, 'ready to approve: the button says Approve, and there is no "Send to Sheet →" link');
+      check(await page.evaluate(r => { const b = document.querySelector(`.mw[data-rid="${r}"][data-mode="detail"] [data-mw-approve]`); return !!b && b.classList.contains('sage'); }, R0), 'it is the engravings\' green Approve (btn sage)');
       check((await files(R0)).length === 0, 'no design on the order yet');
       await page.click(`${mwSel(R0, 'detail')} [data-mw-approve]`);
-      await page.waitForFunction(r => { const h = document.querySelector(`.mw[data-rid="${r}"]`); return !h || h.dataset.state === 'approved'; }, R0, { timeout: 60000 }).catch(() => {});
-      let fl = await files(R0);
+      await page.waitForFunction(k => !!CustomSheet.decisionOf(B.orders.byKey.get(k)), keyOf('apv'), { timeout: 60000 }).catch(() => {});
+      await readyFiles(); let fl = await files(R0);
       check(fl.length === 1 && fl[0].name === 'Monogram APV.ai', 'Approve puts Monogram APV.ai on the order\'s custom designs: ' + JSON.stringify(fl.map(f => f.name)));
-      await readyFiles(); fl = await files(R0);
-      const sz = (await states(R0))[0] || {}, t = await truthOf('APV');
+      const t = await truthOf('APV');
       check(fl[0].state === 'ready' && fl[0].pieces === 1 && !fl[0].error, 'the page\'s cut-file preflight read it as ONE closed piece: ' + JSON.stringify({ state: fl[0].state, pieces: fl[0].pieces, error: fl[0].error }));
       check(t && Math.abs(fl[0].wMm - t.wMm) < 0.3 && Math.abs(fl[0].hMm - t.hMm) < 0.3, `of the previewed size: ${fl[0].wMm.toFixed(2)} × ${fl[0].hMm.toFixed(2)} mm (the engine: ${t && t.wMm.toFixed(2)} × ${t && t.hMm.toFixed(2)})`);
+      const dA = await decided(keyOf('apv'));
+      check(dA && dA.pieces === 1 && fl[0].metal === 'gold' && fl[0].qty === 1, 'and the same press sent it to the nesting queue: ONE piece, on the buyer\'s metal (GF): ' + JSON.stringify({ d: dA, metal: fl[0].metal, qty: fl[0].qty }));
       check(await page.evaluate(() => !document.querySelector('#cuDlg[open]')), 'the designs window did not open over the page');
       // the Engrave detail moves on (a one-piece order: back to the list or on); look at the widget wherever it is, in both places
-      const inDetail = await read(R0, 'detail');
-      if (inDetail) check(inDetail.state === 'approved' && inDetail.approve && !inDetail.approve.shown && /Monogram APV/.test(inDetail.badge) && inDetail.change && inDetail.insDisabled.every(Boolean), 'the Engrave detail says Approved · Monogram APV, offers Change, the boxes are locked: ' + JSON.stringify([inDetail.state, inDetail.badge, inDetail.change]));
+      await openDetail('apv'); const inDetail = await ready(R0, 'detail');
+      check(inDetail && inDetail.state === 'sent' && inDetail.approve && !inDetail.approve.shown && /On the sheet · Monogram APV/.test(inDetail.badge) && !inDetail.change && inDetail.insDisabled.every(Boolean), 'the Engrave detail says On the sheet · Monogram APV, final: no Approve, no Change, the boxes locked: ' + JSON.stringify(inDetail && [inDetail.state, inDetail.badge, inDetail.change]));
+      { const nb = (await allNames()).join('|'); await page.evaluate(r => { const w = CharmNestMonogramUI.widgets().find(x => x.state().rid === r); return w.approve(); }, R0); await sleep(500);
+        check((await allNames()).join('|') === nb && JSON.stringify(await decided(keyOf('apv'))) === JSON.stringify(dA), 'a second press changes nothing (the same design, the same one-piece decision)'); }
       await openWin('apv'); let c = await read(R0, 'compact');
-      check(c && c.state === 'approved' && c.ins.join('') === 'APV' && /Monogram APV/.test(c.badge) && c.change && c.approve && !c.approve.shown, 'the Order details window shows the same design as approved (compact): ' + JSON.stringify(c && [c.state, c.badge, c.change]));
+      check(c && c.state === 'sent' && c.ins.join('') === 'APV' && /Monogram APV/.test(c.badge) && !c.change && c.approve && !c.approve.shown, 'the Order details window shows the same design on the sheet (compact): ' + JSON.stringify(c && [c.state, c.badge, c.change]));
       await shot('1440-orderwin-approved'); await closeWin();
-      // Change, then a new letter REPLACES the design (the metal a person set is kept)
-      await openDetail('apv'); await page.click(`${mwSel(R0, 'detail')} [data-mw-sheet]`); await page.waitForSelector('#cuDlg[open] .cuFile', { timeout: 15000 });
-      await page.click('#cuDlg .cuFile .cuM[data-m="silver"]'); await page.click('#cuDlg [data-x]'); await sleep(300);
-      await openWin('apv'); await page.click(`${mwSel(R0, 'compact')} [data-mw-change]`);
-      await page.waitForFunction(r => { const h = document.querySelector(`.mw[data-rid="${r}"][data-mode="compact"] [data-mw-letter="1"]`); return h && !h.disabled; }, R0, { timeout: 10000 }).catch(() => {});
-      await typeIn(R0, 'compact', 1, 'S'); c = await ready(R0, 'compact', 90000);
+      // a metal the order does not give ('sized', staged): approved, not sent, the designs window opens to pick it; Change, then a new letter REPLACES the design (the metal a person set is kept) and that press sends it
+      const RS = rid('sized'), kS = keyOf('sized');
+      await page.evaluate(k => { const r = B.orders.byKey.get(k); r.line.metalKey = 'moonlight'; r.spec.material = null; }, kS);
+      await openDetail('sized'); await ready(RS, 'detail', 90000);
+      await page.click(`${mwSel(RS, 'detail')} [data-mw-approve]`);
+      await page.waitForSelector('#cuDlg[open] .cuFile', { timeout: 30000 }).catch(() => {});
+      fl = await files(RS);
+      check(await page.evaluate(() => !!document.querySelector('#cuDlg[open]') && /no metal on the order/.test(document.querySelector('#cuDlgSub').textContent)) && fl.length === 1 && !fl[0].metal && !await decided(kS), 'with no metal on the order it is approved but not sent, never guessed: the designs window opens (no metal on the order): ' + JSON.stringify(fl.map(f => [f.name, f.metal])));
+      await page.click('#cuDlg .cuFile .cuM[data-m="silver"]'); await page.click('#cuDlg [data-x]'); await sleep(600);
+      await openWin('sized'); await page.click(`${mwSel(RS, 'compact')} [data-mw-change]`);
+      await page.waitForFunction(r => { const h = document.querySelector(`.mw[data-rid="${r}"][data-mode="compact"] [data-mw-letter="1"]`); return h && !h.disabled; }, RS, { timeout: 10000 }).catch(() => {});
+      await typeIn(RS, 'compact', 1, 'S'); c = await ready(RS, 'compact', 90000);
       check(c.ins.join('') === 'ASV' && c.approve && c.approve.shown && /Replace approved/.test(c.approve.text) && !c.approve.disabled, 'after Change and a new letter the button says Replace approved: ' + JSON.stringify([c.ins.join(''), c.approve && c.approve.text, c.state]));
-      check((await files(R0)).map(f => f.name).join() === 'Monogram APV.ai', 'until it is pressed the approved design is untouched');
-      await page.click(`${mwSel(R0, 'compact')} [data-mw-approve]`);
-      await page.waitForFunction(r => { const h = document.querySelector(`.mw[data-rid="${r}"]`); return h && h.dataset.state === 'approved'; }, R0, { timeout: 60000 }).catch(() => {}); await sleep(600); await readyFiles();
-      fl = await files(R0);
+      check((await files(RS)).map(f => f.name).join() === 'Monogram APV.ai', 'until it is pressed the approved design is untouched');
+      await page.click(`${mwSel(RS, 'compact')} [data-mw-approve]`);
+      await page.waitForFunction(k => !!CustomSheet.decisionOf(B.orders.byKey.get(k)), kS, { timeout: 60000 }).catch(() => {}); await sleep(600); await readyFiles();
+      fl = await files(RS);
       check(fl.length === 1 && fl[0].name === 'Monogram ASV.ai', 'the approved design is REPLACED, never two: ' + JSON.stringify(fl.map(f => f.name)));
-      check(fl[0].metal === 'silver' && fl[0].state === 'ready' && fl[0].pieces === 1, 'and the metal a person set carries over to it: ' + fl[0].metal);
-      const nbef = (await allNames()).join('|'); await page.evaluate(r => { const w = CharmNestMonogramUI.widgets().find(x => x.state().rid === r); return w.approve(); }, R0); await sleep(500);
+      check(fl[0].metal === 'silver' && fl[0].state === 'ready' && fl[0].pieces === 1 && (await decided(kS) || {}).pieces === 1, 'the metal a person set carries over to it, and that press sent it (one piece): ' + fl[0].metal);
+      const nbef = (await allNames()).join('|'); await page.evaluate(r => { const w = CharmNestMonogramUI.widgets().find(x => x.state().rid === r); return w.approve(); }, RS); await sleep(500);
       check((await allNames()).join('|') === nbef, 'approving the same letters again changes nothing');
       // the other place follows: the Engrave detail of the same line shows the replaced design
-      await closeWin(); await openDetail('apv'); const d2 = await ready(R0, 'detail');
-      check(d2.state === 'approved' && d2.ins.join('') === 'ASV' && /Monogram ASV/.test(d2.badge), 'the Engrave detail shows the replaced design too (A S V, approved): ' + d2.badge);
+      await closeWin(); await openDetail('sized'); const d2 = await ready(RS, 'detail');
+      check(d2.state === 'sent' && d2.ins.join('') === 'ASV' && /Monogram ASV/.test(d2.badge), 'the Engrave detail shows the replaced design too (A S V, on the sheet): ' + d2.badge);
       // another order's monogram is its own design
       await openDetail('osr'); await ready(rid('osr'), 'detail'); await page.click(`${mwSel(rid('osr'), 'detail')} [data-mw-approve]`);
-      await page.waitForFunction(r => { const h = document.querySelector(`.mw[data-rid="${r}"]`); return !h || h.dataset.state === 'approved'; }, rid('osr'), { timeout: 60000 }).catch(() => {}); await sleep(600);
-      check((await allNames()).join('|') === 'Monogram ASV.ai|Monogram OSR.ai', 'a second order\'s monogram is its own design: ' + (await allNames()).join(' | '));
+      await page.waitForFunction(k => !!CustomSheet.decisionOf(B.orders.byKey.get(k)), keyOf('osr'), { timeout: 60000 }).catch(() => {}); await sleep(600);
+      check((await allNames()).join('|') === 'Monogram APV.ai|Monogram ASV.ai|Monogram OSR.ai', 'a second order\'s monogram is its own design: ' + (await allNames()).join(' | '));
     }
 
     // ═══ 8 · the Order details window ═══
@@ -402,28 +417,26 @@ const MONO_TITLE = 'Monogram Necklace Personalized Jewelry Initials Pendant';
       check(plain.mw === 0 && plain.cards >= 1, 'a plain engraved order has no monogram widget and its engraving cards as before: ' + JSON.stringify(plain)); await closeWin();
     }
 
-    // ═══ 9 · Send to Sheet, reload ═══
+    // ═══ 9 · on the sheets from its own Approve, reload ═══
     if (!ONLY || ONLY.has(9)) {
-      console.log('\n── 9 · Send to Sheet');
+      console.log('\n── 9 · on the sheets from its own Approve');
       const R0 = rid('osr');
       let ap = (await files(R0)).map(f => f.name);
+      await page.evaluate(() => { window.__dlgSeen = 0; if (!window.__dlgSpy) { window.__dlgSpy = true; const o = CustomSheet.open; CustomSheet.open = function () { window.__dlgSeen++; return o.apply(this, arguments); }; } });
       if (!ap.length) { await openDetail('osr'); await ready(R0, 'detail'); await page.click(`${mwSel(R0, 'detail')} [data-mw-approve]`); await sleep(1500); await readyFiles(); ap = (await files(R0)).map(f => f.name); }
       check(ap.join() === 'Monogram OSR.ai', 'OSR has its design on the order: ' + ap.join());
-      // MONOROUTE (Paul, 17 Oct 2026: "Monogram orders should be treated exactly like back engraving and should be routed to the Engraving tab and NOT the Review tab unless something else is wrong"): an approved monogram that is not sent yet is
-      // no card of the Review tab, so it is sent from where it is made: the widget's own "Send to Sheet →" opens the designs window and its Send to Sheet puts the design on the sheets
+      // MONOROUTE (Paul, 17 Oct 2026: "Monogram orders should be treated exactly like back engraving and should be routed to the Engraving tab and NOT the Review tab unless something else is wrong"): an approved monogram is
+      // no card of the Review tab; MONOSEND (Paul, 18 Oct 2026): it is sent from where it is made, by its own Approve (no "Send to Sheet →" link, no designs window)
       await page.evaluate(() => { CN.setMode('review'); Review.render(); }); await sleep(700);
-      check(await page.evaluate(r => !document.querySelector(`#rvList [data-rid="${r}"]`) && !document.querySelector('#rvList [data-cu-mono]'), R0), 'the Review tab does not list the approved monogram waiting to be sent (no card, no Build monogram)');
+      check(await page.evaluate(r => !document.querySelector(`#rvList [data-rid="${r}"]`) && !document.querySelector('#rvList [data-cu-mono]'), R0), 'the Review tab does not list the approved monogram (no card, no Build monogram)');
       check(await page.evaluate(k => { const row = B.orders.byKey.get(k), it = Review.customItemFor(row.key, row), c = it && CustomSheet.cardOf(it); return !!c && c.files.map(f => f.name).join() === 'Monogram OSR.ai'; }, keyOf('osr')), 'though its custom card exists and holds the design (Review.customItemFor)');
       await openDetail('osr'); const x = await read(R0, 'detail');
-      if (x && x.sheet) { await page.click(`${mwSel(R0, 'detail')} [data-mw-sheet]`); await page.waitForSelector('#cuDlg[open] .cuFile', { timeout: 15000 }).catch(() => {});
-        check(await page.evaluate(() => document.querySelectorAll('#cuDlg .cuFile').length === 1 && /Monogram OSR\.ai/.test(document.querySelector('#cuDlg .cuFile').textContent)), '"Metal · Send to Sheet" opens the designs window with the monogram');
-        await page.click('#cuDlg [data-send]').catch(e => console.log('   (no send button: ' + e.message.split('\n')[0] + ')')); await sleep(300);
-        if (await page.evaluate(() => { const who = document.getElementById('cuWho'); return !!who && !who.hidden && !!document.querySelector('#cuDlg[open]'); })) { await page.fill('#cuWho input', 'Test Operator'); await page.click('#cuDlg [data-send]'); } } else check(false, 'the approved widget offers "Metal · Send to Sheet"');
+      check(x && !x.sheet && !await page.evaluate(r => !!document.querySelector(`.mw[data-rid="${r}"] [data-mw-sheet]`), R0), 'the widget has no "Send to Sheet →" link');
       await page.click('[data-role="laser"]', { timeout: 2500 }).catch(() => {});
       await page.waitForFunction(k => CustomSheet.decisionOf(B.orders.byKey.get(k)), keyOf('osr'), { timeout: 60000 }).catch(() => {});
       await page.waitForFunction(() => !window.SendTour || !SendTour.playing(), null, { timeout: 40000 }).catch(() => {}); await sleep(900);
       const sent = await page.evaluate(k => { const row = B.orders.byKey.get(k), d = CustomSheet.decisionOf(row); return { decided: !!d, pooled: (row.poolIds || []).length, state: row.state }; }, keyOf('osr'));
-      check(sent.decided, 'Send to Sheet put the monogram on the sheets: ' + JSON.stringify(sent));
+      check(sent.decided && await page.evaluate(() => !window.__dlgSeen && !document.querySelector('#cuDlg[open]')), 'its Approve put the monogram on the sheets, with no designs window: ' + JSON.stringify(sent));
       const pcs = await page.evaluate(r => { const e = Object.values(CustomSheet.entries()).find(e => String(e.rid) === r); return e && e.sent ? Object.values(e.sent.lines).reduce((a, l) => a + l.filter(p => !p.removed).length, 0) : -1; }, R0);
       check(pcs === 1, 'the record of the send holds exactly ONE piece for the monogram (one connected charm, one quantity): ' + pcs);
       await openDetail('osr').catch(() => {}); let s = await read(R0, 'detail');
@@ -442,7 +455,7 @@ const MONO_TITLE = 'Monogram Necklace Personalized Jewelry Initials Pendant';
         const orderOf = eval('(' + orderSrc + ')'), now = Date.now(); await Orders.loadMaps(true);
         for (const fx of fixtures) { const order = orderOf(fx, now); for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); if (B.orders.byKey.get(key)) continue; const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); } }
         Orders.interpretAll(); try { await CustomSheet.load(); } catch (_) { /* nothing saved */ }
-      }, { fixtures: ['apv', 'osr'].map(n => O[n]), orderSrc: orderOf.toString() });
+      }, { fixtures: ['apv', 'osr', 'sized'].map(n => O[n]), orderSrc: orderOf.toString() });
       await sleep(1500);
       const p2 = await page2.evaluate(() => Object.values(CustomSheet.entries()).map(e => e.files.map(f => f.name).join()).sort());
       check(p2.join('|') === apvNow.join('|') && p2.length >= 1, 'a second tab (a reload reads the same workspace) has the approved designs: ' + p2.join(' | ') + ' (first tab: ' + apvNow.join(' | ') + ')');
