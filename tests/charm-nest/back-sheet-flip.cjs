@@ -169,7 +169,9 @@ async function view() {
     const behind = Object.fromEntries((await read()).map(p => [p.poolId, p.ink]));
     for (const p of [PA, PB, PC]) assert(behind[p] >= 4, `${p}: its words in ink on the sheet window's back (${behind[p]})`);
     assert.equal(behind[PD], 0, 'the copy with no engraving stays plain in the sheet window too');
-    assert.match(await page.textContent('.swStrip'), /Back side, mirrored as the laser sees it/);
+    // (the strip on one line, Paul 18 Oct 2026: "Back side · mirrored", its sentence in the tooltip)
+    assert.match(await page.textContent('.swStrip'), /Back side · mirrored/);
+    assert.equal(await page.getAttribute('.swStrip [title^="Back side"]', 'title'), 'Back side, mirrored as the laser sees it');
     // a click still finds the charm under the pointer on the mirrored plate
     const hit = await page.evaluate(() => { const W = SheetWin._W, r = W.el.fx.getBoundingClientRect(), sx = W.el.fx.width / r.width;
       const x = W.pieces[0], px = W.R + (W.st.wPt - x.p.cxPt) * W.k, py = W.R + x.p.cyPt * W.k;

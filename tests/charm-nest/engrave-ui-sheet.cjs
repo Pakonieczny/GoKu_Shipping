@@ -15,7 +15,7 @@ let n = 0; const t = (name, fn) => Promise.resolve().then(fn).then(() => { n++; 
 /* ── the sheet window's helpers, run as written ── */
 const sw = src('charm-nest-sheetwin.js');
 const cut = (a, b) => { const i = sw.indexOf(a), j = sw.indexOf(b, i); assert(i > 0 && j > i, 'markers ' + a); return sw.slice(i, j); };
-const disc = cut('  function discOfPiece(x) {', '  const copyText = ');
+const disc = cut('  const countedSlot = slot =>', '  const copyText = ');   // (from countedSlot: discOfPiece asks it which slots are counted, Paul 16 Oct 2026)
 const block = cut('  const FACES = () =>', '  /* ── the sheet pane: its orders ── */');
 function world(jobs, rec, extra) {
   const items = new Map(jobs.map(j => [j.key, j]));
@@ -251,12 +251,14 @@ async function browser() {
     }, [EARS, NECK, PLAIN, '4300000104']);
     await page.evaluate(id => SheetWin.open('gold-open-1', { select: id }), pid(NECK, 2, 1));
     const strip = () => page.evaluate(() => (document.querySelector('.swStrip, [data-r2=strip]') || {}).innerText || '');
-    await until(async () => /engravings? approved/.test(await strip()), 30000, 'the strip counts the engravings');
-    let s = await strip();
-    assert.match(s, /7 engravings approved/, '2 ears x 2 faces + 2 faces + 1 back = 7 engravings (on 4 pieces): ' + s);
-    assert.match(s, /Front side, front engraving as laid/, 'the sheet says the front side carries front engraving: ' + s);
+    // (the strip on one line, Paul 18 Oct 2026: the dots say "7 approved", the side "Front side"; the whole words are their tooltips)
+    const tips = () => page.evaluate(() => [...document.querySelectorAll('.swStrip [title]')].map(e => e.title).join(' | '));
+    await until(async () => /\d+ approved/.test(await strip()), 30000, 'the strip counts the engravings');
+    let s = await strip(), tip = await tips();
+    assert.match(s, /\b7 approved/, 'the dot: ' + s); assert.match(tip, /7 engravings approved/, '2 ears x 2 faces + 2 faces + 1 back = 7 engravings (on 4 pieces): ' + tip);
+    assert.match(s, /Front side/, s); assert.match(tip, /Front side, front engraving as laid/, 'the sheet says the front side carries front engraving: ' + tip);
     assert.doesNotMatch(s, /to approve/, s);
-    console.log('ok   sheet window strip: "7 engravings approved" (4 pieces: a pair x 2 faces, 4195966039 front W / back 1. 27. 24, a back-only charm)');
+    console.log('ok   sheet window strip: "7 approved", "7 engravings approved" on hover (4 pieces: a pair x 2 faces, 4195966039 front W / back 1. 27. 24, a back-only charm)');
     // the card of the piece: Front | Back on the very same switch, the words of the face shown
     await until(() => page.evaluate(() => document.querySelectorAll('[data-r2=eng] .egEarTab').length >= 2), 20000, 'the face switch on the piece card');
     const tabs = await page.evaluate(() => [...document.querySelectorAll('[data-r2=eng] .egEarTab')].map(b => b.innerText.replace(/\s+/g, ' ').trim()));
@@ -270,7 +272,7 @@ async function browser() {
     console.log('ok   piece card: Front | Back switch; Front shows W, Back shows 1. 27. 24; no engraving menu under it');
     // the plate turned over: every engraved charm's back, no page error
     await page.evaluate(() => document.querySelector('[data-r2=face]').click());
-    await until(async () => /Back side, mirrored/.test(await strip()), 15000, 'the plate on its back');
+    await until(async () => /Back side · mirrored/.test(await strip()) && /Back side, mirrored as the laser sees it/.test(await tips()), 15000, 'the plate on its back');
     await page.waitForTimeout(500);
     await page.evaluate(() => document.querySelector('[data-r2=face]').click());
     await until(async () => /Front side/.test(await strip()), 15000, 'the plate on its front');
@@ -278,10 +280,10 @@ async function browser() {
     // a back-only sheet reads as ever
     await page.evaluate(() => SheetWin.close()); await page.waitForTimeout(700);
     await page.evaluate(() => SheetWin.open('gold-open-2'));
-    await until(async () => /1 back approved/.test(await strip()), 30000, 'a back-only strip');
-    s = await strip();
-    assert.match(s, /1 back approved/); assert.doesNotMatch(s, /engravings|Front side/, 'a back-only sheet never says engravings or front side: ' + s); assert.match(s, /Hover a charm for its order/);
-    console.log('ok   back-only sheet: "1 back approved", no front wording');
+    await until(async () => /1 back approved/.test(await tips()), 30000, 'a back-only strip');
+    s = await strip(); tip = await tips();
+    assert.match(s, /\b1 approved/); assert.match(tip, /1 back approved/); assert.doesNotMatch(s + tip, /engravings|Front side/, 'a back-only sheet never says engravings or front side: ' + s + tip); assert.match(s, /Hover a charm for its order/);
+    console.log('ok   back-only sheet: "1 approved" ("1 back approved" on hover), no front wording');
     assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
     console.log('\nbrowser checks passed');
   } finally { await browser.close(); srv.close(); }

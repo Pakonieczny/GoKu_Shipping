@@ -169,16 +169,20 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swTip span{display:block;font:11px var(--sans);color:#cdc4b2;margin-top:1px;white-space:nowrap}
 .swTip em{display:flex;align-items:center;gap:6px;font:normal 10.5px var(--sans);color:#e8d9b0;margin-top:4px;white-space:nowrap}
 .swTip em i{width:7px;height:7px;border-radius:50%;background:var(--c,#caa861)}
-.swStrip{display:flex;align-items:center;gap:14px;padding:7px 16px 9px;font:11.5px var(--sans);color:var(--ink45);min-width:0;white-space:nowrap;overflow:hidden;min-height:30px}
-.swStrip .swToggle{margin:-4px 0}
+/* the strip on one line (Paul, 18 Oct 2026: "Remove the '1336 mm free' and condense some of this UI so that everything easily fits on
+   one line"; the Back · engraving switch ran off its end): tighter gaps and smaller pills; the counts on the left, the engraving and the
+   switches together on the right (.swStripR). A window too narrow for both takes them onto a second line whole, still to the right, and
+   never clips a word. */
+.swStrip{display:flex;flex-wrap:wrap;align-items:center;column-gap:10px;row-gap:5px;padding:6px 14px 8px;font:11px var(--sans);color:var(--ink45);min-width:0;white-space:nowrap;min-height:30px}
+.swStripR{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;column-gap:8px;row-gap:5px;margin-left:auto;min-width:0}
+.swStrip .swToggle{margin:-3px 0}
 .swStrip .spin{width:10px;height:10px;flex:0 0 10px;border:2px solid var(--line);border-top-color:var(--gold2);border-radius:50%;animation:swSpin .8s linear infinite}
-.swStrip b{font:600 12px var(--mono);color:var(--ink)}
-.swStrip .grow{flex:1}
-.swLegend{display:inline-flex;align-items:center;gap:6px}
-.swLegend i{width:9px;height:9px;border-radius:50%;background:var(--clay);box-shadow:0 0 0 2px #fff,0 0 0 3px rgba(0,0,0,.08)}
+.swStrip b{font:600 11.5px var(--mono);color:var(--ink)}
+.swLegend{display:inline-flex;align-items:center;gap:5px}
+.swLegend i{width:8px;height:8px;border-radius:50%;background:var(--clay);box-shadow:0 0 0 2px #fff,0 0 0 3px rgba(0,0,0,.08)}
 .swLegend i.ok{background:var(--sage)}
 .swLegend i.freed{background:transparent;border:1.5px dashed var(--clay);box-shadow:none;border-radius:3px}
-.swToggle{border:1px solid var(--line);background:var(--card);border-radius:999px;padding:3px 10px;font:600 11px var(--sans);color:var(--ink70);cursor:pointer}
+.swToggle{border:1px solid var(--line);background:var(--card);border-radius:999px;padding:2px 8px;font:600 10.5px var(--sans);color:var(--ink70);cursor:pointer}
 .swToggle[aria-pressed=true]{background:var(--claySoft);border-color:#e7b9aa;color:#8a3a26}
 .swSide{position:relative;border-left:1px solid var(--line);background:var(--card);min-width:0;min-height:0;overflow:hidden}
 .swPane{position:absolute;inset:0;display:grid;grid-template-rows:auto minmax(0,1fr) auto;grid-template-columns:minmax(0,1fr);min-height:0}
@@ -1937,11 +1941,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (engravings, not pieces: a piece with a front and a back has two to approve; "back" until a piece has a front)
     const units = W.pieces.flatMap(unitsOf), backs = units.filter(needsEng).length, ok = units.filter(u => u.kind === "approved").length, fr = units.some(u => u.face === "front");
     const pc = pairCounts(); W.pairKey = pc.pairs + ":" + pc.halves;
-    E.strip.innerHTML = `<span><b>${n}</b> charm${n === 1 ? "" : "s"}</span>${pc.pairs ? `<span title="Pairs with both pieces on this sheet"><b>${pc.pairs}</b> pair${pc.pairs === 1 ? "" : "s"}</span>` : ""}${pc.halves ? `<span class="swLegend" title="A piece of a pair is here and its other piece is on another sheet or on none"><i class="freed"></i><b>${pc.halves}</b> half pair${pc.halves === 1 ? "" : "s"}</span>` : ""}<span><b>${orders}</b> order${orders === 1 ? "" : "s"}</span><span><b>${fmt.pct(rec.density || 0)}</b> full</span><span><b>${fmt.area(rec.freePt2 || 0).replace(" mm²", "")}</b> mm² free</span>` +
-      `<span class="grow"></span>` + (W.freed.length ? `<span class="swLegend"><i class="freed"></i>Freed room</span>` : "") + (backs + ok ? (backs ? `<span class="swLegend"><i></i>${backs} ${engWord(backs, fr)} to approve</span>` : "") + (ok ? `<span class="swLegend"><i class="ok"></i>${ok} ${engWord(ok, fr)} approved</span>` : "") + `<button class="swToggle" data-r2="backs" aria-pressed="${W.showBacks}">${W.showBacks ? "Hide" : "Show"} marks</button>` : "") +
+    // one line (Paul, 18 Oct 2026: "Remove the '1336 mm free' and condense some of this UI so that everything easily fits on one line"): no free
+    // area; the dots say "11 to approve" / "3 approved" with the whole words ("11 engravings to approve") in their tooltip; the side the plate
+    // shows in a word or two, its sentence in the tooltip
+    const dot = (cls, k, what) => `<span class="swLegend" title="${k} ${engWord(k, fr)} ${what}"><i${cls ? ` class="${cls}"` : ""} aria-hidden="true"></i>${k} ${what}</span>`;
+    const side = backFace() ? ["Back side · mirrored", "Back side, mirrored as the laser sees it"] : fr ? ["Front side", "Front side, front engraving as laid · hover a charm for its order"] : ["Hover a charm for its order", "Hover a charm for its order · click to open it"];
+    E.strip.innerHTML = `<span><b>${n}</b> charm${n === 1 ? "" : "s"}</span>${pc.pairs ? `<span title="Pairs with both pieces on this sheet"><b>${pc.pairs}</b> pair${pc.pairs === 1 ? "" : "s"}</span>` : ""}${pc.halves ? `<span class="swLegend" title="A piece of a pair is here and its other piece is on another sheet or on none"><i class="freed"></i><b>${pc.halves}</b> half pair${pc.halves === 1 ? "" : "s"}</span>` : ""}<span><b>${orders}</b> order${orders === 1 ? "" : "s"}</span><span><b>${fmt.pct(rec.density || 0)}</b> full</span>` +
+      `<div class="swStripR">` + (W.freed.length ? `<span class="swLegend"><i class="freed"></i>Freed room</span>` : "") + (backs + ok ? (backs ? dot("", backs, "to approve") : "") + (ok ? dot("ok", ok, "approved") : "") + `<button class="swToggle" data-r2="backs" aria-pressed="${W.showBacks}" title="${W.showBacks ? "Hide" : "Show"} the engraving marks on the charms">${W.showBacks ? "Hide" : "Show"} marks</button>` : "") +
       `<button class="swToggle" data-r2="face" aria-pressed="${backFace()}" title="${backFace() ? "Turn the sheet back to its front" : fr ? "Turn the sheet over: every charm's back engraving, mirrored, where the laser burns it (the front engraving is drawn as laid on this side)" : "Turn the sheet over: every charm's back engraving, where the laser burns it"}">${backFace() ? "Front" : "Back · engraving"}</button>` +
       (W.backsWait ? `<span class="swLegend"><span class="spin"></span>${esc(W.backsWait)}</span>` : "") +
-      `<span>${backFace() ? "Back side, mirrored as the laser sees it" : fr ? "Front side, front engraving as laid · hover a charm for its order" : "Hover a charm for its order · click to open it"}</span>`;
+      `<span title="${side[1]}">${side[0]}</span></div>`;
     const t = E.strip.querySelector("[data-r2=backs]"); if (t) t.onclick = () => { W.showBacks = !W.showBacks; renderStrip(); paintFx(); };
     const f = E.strip.querySelector("[data-r2=face]"); if (f) { f.onclick = () => turnPlate(backFace() ? "front" : "back");
       // the turn never waits on a download: the font is loaded in idle time, the sheet's backs read as the switch is neared
