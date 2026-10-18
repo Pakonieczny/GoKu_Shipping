@@ -2305,7 +2305,9 @@ let rtSelected = new Map();   // receipt_id → owner clientId
 let __rtSince    = Date.now() - 5 * 60 * 1000;
 let __rtInflight = null;
 let __rtIdleHits = 0;
-const RT_STEPS = [100, 200, 400, 800, 1600, 3200, 6400];
+/* COST (Oct 2026): the back-off stopped at 6.4 s, so a visible tab nobody touched asked for lock changes ~560 times an hour (each a billed
+   read). It now goes on to 60 s, as design-1.html's does; a click or a key brings it back to 100 ms at once. */
+const RT_STEPS = [100, 200, 400, 800, 1600, 3200, 6400, 15000, 30000, 60000];
 const RT_POLL  = { t: null };
 
 function paintLock(id, owner) {
@@ -2418,17 +2420,18 @@ function fetchLocksOnce() {
   __rtInflight = fetch(`${FN}/firebaseOrders?rtSince=${__rtSince}`)
     .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(json => {
-      let changed = 0;
+      let changed = 0, heal = false;
       Object.entries(json.locks || {}).forEach(([id, doc]) => {
         const owner = (doc || {}).selectedBy || null;
         if (rtSelected.get(id) !== owner) { rtSelected.set(id, owner); paintLock(id, owner); changed++; }
       });
       (json.unlocks || []).forEach(id => {
-        if (rtSelected.has(id)) { rtSelected.delete(id); clearLock(id); changed++; }
+        if (rtSelected.has(id)) { if (rtSelected.get(id) === RT.clientId && selectedOrders.has(id)) heal = true; rtSelected.delete(id); clearLock(id); changed++; }
       });
       __rtSince = Number(json.now) || Date.now();
       __rtIdleHits = changed ? 0 : (__rtIdleHits + 1);
-      applyAllLocksToDOM();
+      if (changed) applyAllLocksToDOM();   // (COST, Oct 2026: an empty delta repaints nothing)
+      if (heal) scheduleHealMissingLocks();   // (a lock of ours released by the server's 24 h sweep while still selected here: written again)
     })
     .catch(() => {})
     .finally(() => { __rtInflight = null; scheduleRtPoll(); });
@@ -2624,13 +2627,22 @@ function removeCompletedRows(idSet) {
   return removed;
 }
 
+/* COST (Oct 2026): the check asked the ledger about up to 120 orders on screen (dcFor: 12 ten-id queries, 12+ reads) every look, 30 s apart
+   at rest. It now asks what was completed or un-completed on record since its last answer (dcSince: two reads when nothing changed),
+   from the server's own clock (less 2 s); the first look reaches 5 minutes back. Nothing on screen: nothing asked, and the next look
+   covers the gap. */
+let __dcSince = 0;
 async function pollCompletedTargeted() {
   const ids = visibleReceiptIds();
   if (!ids.length) return false;
-  const r = await fetch(`${FN}/firebaseOrders?dcFor=${encodeURIComponent(ids.join(","))}`);
+  const r = await fetch(`${FN}/firebaseOrders?dcSince=${__dcSince || Date.now() - 5 * 60000}`);
   const j = await r.json();
-  const live = new Set((j.orderNumbers || []).map(String));
+  if (!r.ok || !j || j.success === false || !Array.isArray(j.orderNumbers)) throw new Error("firebaseOrders dcSince: " + ((j && j.error) || "HTTP " + r.status));
+  __dcSince = (Number(j.now) || Date.now()) - 2000;
+  const live = new Set(j.orderNumbers.map(String));
   live.forEach(id => completedOrders.add(id));
+  // (un-completed at another bench: no longer counted as done, unless this browser's own ledger holds it)
+  if (Array.isArray(j.undone) && j.undone.length) { const ledger = typeof loadLocalCompleted === "function" ? loadLocalCompleted() : new Set(); j.undone.forEach(id => { id = String(id); if (!live.has(id) && !ledger.has(id)) completedOrders.delete(id); }); }
   return removeCompletedRows(live) > 0;
 }
 
@@ -2670,7 +2682,9 @@ function wakeCompletionPolling() { __completeIdle = 0; if (COMPLETE_POLL.p) COMP
 
 /* FC3b (Firebase cost): mode "all" used to read every staff note on record (staffNotes=1: a billed read for each order that ever had a note, 3,372 on 7 Oct 2026
    and growing) at every Refresh. The highlight is only ever looked up for an order this page lists, so "all" now asks (staffNotesFor, 100 ids a request, two at a
-   time) about every order the page lists and every order it already flags: the same answer for everything shown, a read per order listed. A failed ask keeps the set. */
+   time) about every order the page lists and every order it already flags: the same answer for everything shown. A failed ask keeps the set.
+   COST (Oct 2026): production answers staffNotesFor from the staff-note index (4 reads a request, not a read per order listed), and the old
+   whole read (?staffNotes=1) is gone from firebaseOrders. */
 async function askStaffNotes(ids) {
   const found = new Set(), parts = [];
   for (let i = 0; i < ids.length; i += 100) parts.push(ids.slice(i, i + 100));

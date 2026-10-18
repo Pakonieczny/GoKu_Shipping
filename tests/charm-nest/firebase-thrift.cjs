@@ -43,6 +43,9 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),station=fs.readFileS
  const start=station.indexOf('function visibleReceiptIds('),end=station.indexOf('function removeCompletedRows',start);
  vm.runInNewContext(station.slice(start,end)+';this.visible=visibleReceiptIds;',c);
  assert.deepEqual(Array.from(c.visible()),Array.from({length:13},(_,i)=>String(i+6)));c.document.hidden=true;assert.equal(c.visible().length,0);
+ // COST (Oct 2026): a station frame the sorter does not display (display:none: no box, every offsetTop 0) has no rows on screen
+ {const flat=Array.from({length:120},(_,i)=>({offsetTop:0,offsetHeight:0,dataset:{receipt:String(i)}}));const n={document:{hidden:false},$:()=>({scrollTop:0,clientHeight:0,getClientRects:()=>[]}),$$:()=>flat};
+  vm.runInNewContext(station.slice(start,end)+';this.visible=visibleReceiptIds;',n);assert.equal(n.visible().length,0,'a list that is not displayed asks about no order');}
  const startPoll=station.indexOf('async function pollCompletedTargeted'),endPoll=station.indexOf('function startCompletionPolling',startPoll);
  const hidden={document:{hidden:true},visibleReceiptIds:()=>{throw Error('Hidden page scanned orders');},fetch:()=>{throw Error('Hidden page made a request');}};
  vm.runInNewContext(station.slice(startPoll,endPoll)+';this.poll=pollCompletedTargeted;',hidden);hidden.poll().then(r=>assert.equal(r,false));

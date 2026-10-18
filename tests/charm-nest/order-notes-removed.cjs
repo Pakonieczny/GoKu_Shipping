@@ -308,7 +308,7 @@ async function linkPart(chromium) {
   }
   // and what stays: the stored notes and the ops and flags that serve them (read here from the source)
   const fo = read('netlify/functions/firebaseOrders.js'), d1 = read('design-1.html'), d0 = read('design.html');
-  check(/staffNote\s+!==\s+undefined/.test(fo) && /staffNotesFor/.test(fo) && /staffNotes\s*===\s*"1"/.test(fo), 'firebaseOrders still stores a staffNote and answers ?staffNotes and ?staffNotesFor');
+  check(/staffNote\s+!==\s+undefined/.test(fo) && /staffNotesFor/.test(fo) && !/staffNotes\s*===\s*"1"/.test(fo), 'firebaseOrders still stores a staffNote and answers ?staffNotesFor (?staffNotes=1, the whole read, is gone: COST, Oct 2026)');
   check(/async "notes\.set"\(a\)/.test(d1) && /markStaffNoteOrders/.test(d1) && /markStaffNoteOrders/.test(d0), 'the station keeps notes.set and the purple note flag on its rows');
 
   // 6 · the Design Station's order pop-up (design.html and design-1.html) on the fake station: no staff note box, the rest as it was

@@ -22,6 +22,7 @@ section('sorter sweeps read completions and notes for the open orders only', asy
     + cut('/**\n * Pull the open-order list', '/** Re-fetch items for rows') + cut("/** The Refresh button's sequence", 'function wireUI()');
   const done = new Set(['C1', 'O7x']), notes = new Set(['O3', 'H9']), history = Array.from({ length: 500 }, (_, i) => 'H' + i);
   let open = [...Array.from({ length: 250 }, (_, i) => 'O' + i), 'C1', 'L1'], urls = [], failFull = false, failDc = false, onDc = null;
+  const recent = new Map(), undoneAt = new Map();   // (dcSince: completed / un-completed on record, id → server time)
   const store = new Map([['ledger', JSON.stringify({ L1: clock.t })]]);
   const c = vm.createContext({
     console: quiet, Date: FakeDate, FN: '/fn', LS: { ledger: 'ledger', ledgerPurge: 'purge' }, LEDGER_TTL_DAYS: 60, LEDGER_MAX: Infinity,
@@ -31,18 +32,19 @@ section('sorter sweeps read completions and notes for the open orders only', asy
       if (q.get('designCompleted')) return failFull ? { ok: false, status: 500, json: async () => ({ error: 'deadline' }) } : ok({ success: true, orderNumbers: [...done, ...history] });
       if (q.get('dcFor')) { const ids = q.get('dcFor').split(','); if (onDc) await onDc(ids); if (failDc) throw new TypeError('Failed to fetch'); return ok({ success: true, orderNumbers: ids.filter(id => done.has(id) || history.includes(id)) }); }
       if (q.get('staffNotes')) return ok({ success: true, orderNumbers: [...notes] });
-      if (q.get('staffNotesFor')) return ok({ success: true, orderNumbers: q.get('staffNotesFor').split(',').filter(id => notes.has(id)) });
+      if (q.get('staffNotesFor')) return ok({ success: true, orderNumbers: q.get('staffNotesFor').split(',').filter(id => notes.has(id)), notes: Object.fromEntries(q.get('staffNotesFor').split(',').filter(id => notes.has(id)).map(id => [id, 'note of ' + id])) });
+      if (q.get('dcSince')) { const since = +q.get('dcSince'); return ok({ success: true, orderNumbers: [...recent].filter(([, t]) => t >= since).map(([id]) => id), undone: [...undoneAt].filter(([, t]) => t >= since).map(([id]) => id), now: clock.t }); }
       throw new Error('unexpected ' + url);
     },
     window: {}, SETTINGS: { autoHeal: false }, Activity: { show() {}, msg() {}, hide() {}, progress() {} },
     fetchOpenOrdersSequential: async () => open.map(id => ({ receipt_id: id })), cacheIsFresh: () => false, detailCache: new Map(),
     decorateReceipt() {}, receiptStamp: () => 0, pruneStaleSelection() {}, markStaffNoteOrders() {}, refreshMessageFlags() {},
-    Bridge: { hooks: { swept() {}, orders() {} } }, fetchAllLocksOnce: async () => {}, ensureSelectedPreviews: async () => {},
+    Bridge: { hooks: { swept() {}, orders() {} } }, fetchAllLocksOnce: async () => {}, fetchLocksOnce: async () => {}, ensureSelectedPreviews: async () => {},
     abortAllUpdateWork() {}, resetMessageFlags() {}, visibleReceiptIds: () => [], repairMissingReceiptData: async () => {}, healZeroMetalRows: async () => {}
   });
   vm.runInContext(code + `;var lastClearedReceipts = [], searchSnapshot = null, updateRunId = 0;
     function applyFilters() { currentReceipts = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id))); }
-    this.api = { refreshOrders, restoreCompleted, completed: completedOrders, notes: () => staffNoteIDs, shown: () => currentReceipts.map(r => String(r.receipt_id)) };`, c);
+    this.api = { refreshOrders, restoreCompleted, completed: completedOrders, notes: () => staffNoteIDs, texts: () => staffNoteTexts, shown: () => currentReceipts.map(r => String(r.receipt_id)) };`, c);
   const { api } = c;
   await api.refreshOrders();                                    // the station's own Refresh button
   assert(urls.some(u => /designCompleted=1/.test(u)), "a person's Refresh still reads every completion (the first of the page session)");
@@ -64,6 +66,17 @@ section('sorter sweeps read completions and notes for the open orders only', asy
   assert(!api.completed.has('C1') && api.shown().includes('C1'), 'an order undone elsewhere comes back, as the full read would have it');
   assert(api.completed.has('L1') && !api.shown().includes('L1'), "this browser's ledger still counts");
   assert(api.notes().has('O3') && !api.notes().has('H9'), 'staff notes of the open orders');
+  assert.equal(api.texts().get('O3'), 'note of O3', "and the note's text, from the same answer (COST, Oct 2026: no read per noted order)");
+  // COST (Oct 2026): the next sweeps within the hour ask the ledger only about orders not asked about yet, plus the delta since the last answer
+  clock.t += 10 * 60000; urls = []; open = [...open, 'N1']; done.add('O8'); recent.set('O8', clock.t - 1000); done.delete('O7'); undoneAt.set('O7', clock.t - 1000);
+  await api.refreshOrders({ heal: false, targeted: true });
+  { const dcAsked = urls.filter(u => /dcFor=/.test(u)).flatMap(u => new URL(u, 'http://x').searchParams.get('dcFor').split(','));
+    assert.deepEqual(dcAsked, ['N1'], 'a sweep within the hour asks the ledger only about the order not asked about yet: ' + dcAsked.slice(0, 5));
+    assert.equal(urls.filter(u => /dcSince=/.test(u)).length, 1, 'and once for the completions and un-completions since the last answer');
+    assert(api.completed.has('O8') && !api.shown().includes('O8'), 'an order completed elsewhere since then is filtered out');
+    assert(!api.completed.has('O7') && api.shown().includes('O7'), 'an order un-completed elsewhere since then comes back');
+    assert(urls.filter(u => /staffNotesFor=/.test(u)).flatMap(u => new URL(u, 'http://x').searchParams.get('staffNotesFor').split(',')).length === open.length, 'staff notes are still asked about for every open order'); }
+  open = open.filter(id => id !== 'N1'); clock.t += 61 * 60000; done.add('O7'); recent.set('O7', clock.t - 5000);   // (an hour on, the next sweep is a full one again; O7 was completed again just before it)
   // a failed read keeps what is known instead of clearing it first
   const before = api.completed.size; failFull = true;
   await api.restoreCompleted();
@@ -74,7 +87,7 @@ section('sorter sweeps read completions and notes for the open orders only', asy
   onDc = async () => { onDc = null; api.completed.add('O9'); }; await api.refreshOrders({ heal: false, targeted: true });
   assert(api.completed.has('O9'), 'a completion made during the read stands');
   // and a sandbox reset (completedOrders.clear()) during the read is not undone by the answer
-  onDc = async () => { onDc = null; api.completed.clear(); }; await api.refreshOrders({ heal: false, targeted: true });
+  clock.t += 61 * 60000; onDc = async () => { onDc = null; api.completed.clear(); }; await api.refreshOrders({ heal: false, targeted: true });
   assert(!api.completed.has('O7') && !api.completed.has('O9'), 'a reset made during the read stands');
 });
 
@@ -98,7 +111,7 @@ section('claims and lock repaints index the page once', async () => {
     Bridge: { active: () => active, hooks: { locks() {} } },
     fetch: async url => { fetches.push(url); return { ok: true, status: 200, json: async () => ({ locks: {}, unlocks: [], claims: {}, unclaims: [], now: clock.t }) }; } });
   vm.runInContext(cut('let rtSelected = new Map();', '/* Micro-batched writer') + cut('async function fetchAllLocksOnce()', 'let __healTimer = null;')
-    + ';var cmds={' + cut('    async claim(a) {', '    async "orders.snapshot"') + '};this.st={rtSelected:()=>rtSelected,rtClaims:()=>rtClaims};this.apply=applyAllLocksToDOM;this.poll=fetchLocksOnce;', c);
+    + ';var cmds={' + cut('    async claim(a) {', '    async "orders.snapshot"') + '};this.st={rtSelected:()=>rtSelected,rtClaims:()=>rtClaims};this.apply=applyAllLocksToDOM;this.poll=fetchLocksOnce;this.delay=nextRtDelay;', c);
   queries = 0; await c.cmds.claim({ receiptIds: ids, runId: 'run1' });
   assert(queries <= 1, `a claim of 300 orders queries the page once, not per order (${queries})`);
   assert.equal(document.querySelectorAll('.orderRow.claimed').length, 300); assert.equal(document.querySelectorAll('.tile.claimed').length, 300);
@@ -109,6 +122,12 @@ section('claims and lock repaints index the page once', async () => {
   assert.equal(document.querySelectorAll('.orderRow.rtLocked').length, 300);
   fetches = []; await c.poll(); assert(fetches.some(u => /rtSince=/.test(u)), 'while the sorter drives the station, a hidden tab still polls its locks');
   active = false; fetches = []; await c.poll(); assert.equal(fetches.length, 0, 'a hidden tab on its own still rests');
+  // COST (Oct 2026): a hidden tab the sorter drives but is not working in polls at most once a minute; at work, on the usual back-off.
+  // An empty delta touches no DOM (no index of the page, no repaint).
+  active = true; let working = false; c.Bridge.working = () => working;
+  assert.equal(c.delay(), 60000, 'hidden, driven, idle: a 60 s floor'); working = true; assert(c.delay() < 60000, 'hidden, driven, at work: the usual pace (' + c.delay() + ' ms)');
+  hidden = false; working = false; assert(c.delay() < 60000, 'shown: the usual pace');
+  queries = 0; await c.poll(); assert.equal(queries, 0, 'an empty lock delta queries the page not at all');
 });
 
 /* ── 3 · nothing kept per order, per listing, per commit or per run grows without bound ── */
@@ -180,11 +199,11 @@ section('caches are bounded', async () => {
 
   // sandbox.reset clears every sandbox-only key and cache, not only the ledger (RG2: and the sandbox's chat drafts, designStation.chatDrafts.v1 + NS, which the page added on 3 Oct: the page's global NS is given to the slice)
   const keys = new Map([['ledger:sandbox', '{}'], ['commits:sandbox', '{}'], ['orders:sandbox', '{}'], ['images:sandbox', '[]'], ['designStation.chatDrafts.v1:sandbox', '{}'], ['token', 'keep']]);
-  const sb = { SANDBOX: true, NS: ':sandbox', completedOrders: new Set(['1']), LS: { ledger: 'ledger:sandbox' }, LSK: { commits: 'commits:sandbox' }, CACHE_KEY: 'orders:sandbox', __imagesKey: 'images:sandbox', detailCache: new Map([['1', {}]]), __imagesCache: new Map([['1', []]]), __imagesSaved: new Map([['1', {}]]), __imagesMiss: new Map(), notesCache: new Map([['1', 'n']]), msgCache: new Map([['1', []]]), allOpenReceipts: [1], S: {}, localStorage: { removeItem: k => keys.delete(k) } };
+  const sb = { SANDBOX: true, NS: ':sandbox', completedOrders: new Set(['1']), staffNoteTexts: new Map([['1', 'n']]), LS: { ledger: 'ledger:sandbox' }, LSK: { commits: 'commits:sandbox' }, CACHE_KEY: 'orders:sandbox', __imagesKey: 'images:sandbox', detailCache: new Map([['1', {}]]), __imagesCache: new Map([['1', []]]), __imagesSaved: new Map([['1', {}]]), __imagesMiss: new Map(), notesCache: new Map([['1', 'n']]), msgCache: new Map([['1', []]]), allOpenReceipts: [1], S: {}, localStorage: { removeItem: k => keys.delete(k) } };
   vm.createContext(sb); vm.runInContext('var cmds={' + cut('    async "sandbox.reset"() {', '    /** The open receipts exactly as Etsy returned them') + '};', sb);
   await sb.cmds['sandbox.reset']();
   assert.deepEqual([...keys.keys()], ['token'], 'sandbox.reset removes the sandbox ledger, commit memory, order and photo caches');
-  assert(!sb.detailCache.size && !sb.__imagesCache.size && !sb.notesCache.size, 'and their copies in memory');
+  assert(!sb.detailCache.size && !sb.__imagesCache.size && !sb.notesCache.size && !sb.staffNoteTexts.size, 'and their copies in memory');
 
   // storage full: the essential write drops the rebuildable caches (both namespaces) and lands
   const full = new Map([['designStation.orders.v2', 'x'.repeat(10)], ['designStation.listingImages.v1:sandbox', 'y']]); let room = false;
@@ -221,7 +240,7 @@ section('firebaseOrders: dcFor and staffNotesFor run ten-id "in" queries five at
   assert.deepEqual(Array.from(r1), ids.filter(id => Number(id) % 7 === 0), 'dcFor answers in the order asked'); assert.equal(queries, 10);
   assert(most > 1 && most <= 5, `dcFor runs its ten queries up to five at a time (${most} at once)`);
   inFlight = most = queries = 0;
-  const sn = { CORS: {}, PREFIX: '', parseIds, admin, db: { collection: () => ({ where: where(id => Number(id) % 9 === 0), doc: () => ({ get: async () => { gets++; return { exists: false }; } }) }) } };
+  const sn = { CORS: {}, PREFIX: '', parseIds, admin, SN: () => ({ lookup: async () => null }), db: { collection: () => ({ where: where(id => Number(id) % 9 === 0), doc: () => ({ get: async () => { gets++; return { exists: false }; } }) }) } };
   vm.createContext(sn); vm.runInContext('this.lookup=async function(event){' + cutFrom(fnSrc, '      /* ?staffNotesFor', '      /* ?rtFor=') + '};', sn);
   const r2 = JSON.parse((await sn.lookup({ queryStringParameters: { staffNotesFor: ids.join(',') } })).body).orderNumbers;
   assert.equal(gets, 0, 'staffNotesFor makes no document get per order'); assert.equal(queries, 10);

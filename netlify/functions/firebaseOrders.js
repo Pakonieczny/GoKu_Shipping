@@ -4,7 +4,12 @@ const db    = admin.firestore();
 
 const COMPLETED_COLL = "Design_Completed Orders";
 const DC = { stage: (...a) => require("./_designCompleted").stage(...a), list: (...a) => require("./_designCompleted").list(...a) };   // the completion ledger's index (production only; loaded when a completion is written or the ledger is read, as the other helpers are)
+const SN = () => require("./_staffNotes");   // the staff-note index (production only; loaded when a note is written or asked about)
 const REALTIME_COLL  = "Design_RealTime_Selected_Orders";
+/* COST (Oct 2026): the sweeps ask "what was completed or un-completed since my last answer" (?dcSince) instead of asking about every open
+   order. An un-complete deletes the ledger's document, which no delta can see, so it leaves a small mark here ({ at, expireAt: 30 days }),
+   in the same batch; a completion removes the mark of its order. */
+const UNDONE_COLL    = "Design_Completed_Undone";
 /* sandbox: ?sandbox=1 keeps every read and write in Sandbox_-prefixed copies of these collections (and of Brites_Orders),
    so a sorter run against the emulated Etsy never touches a real lock, claim, ledger entry or note */
 let PREFIX = "";
@@ -12,7 +17,12 @@ const col = name => db.collection(PREFIX + name);
 
 /* Released locks and claims stay as tombstones so delta polls see them; nothing reads one a month on. They go here, a page
    at a time and at most once every 10 minutes per instance and workspace (a TTL policy on expireAt, if one is switched on,
-   does the same). A lock or claim still held goes only once it is 60 days old: none is held that long. */
+   does the same). A lock or claim still held goes only once it is 60 days old: none is held that long.
+   COST (Oct 2026): a selection lock is written when a station selects an order and released when it lets go or its tab closes; a tab that
+   crashed or lost its network never released its locks, and they stayed "selected" for 60 days (every ?rt=1 read them all, and the stations
+   painted them as worked on elsewhere). The same sweep now releases a selection not written for 24 hours (a tombstone, as a de-select
+   writes, so every delta poll sees it). A station still holding it writes it again when its lock poll sees the release (healMissingLocks). */
+const RT_STALE_SELECTED_MS = 24 * 3600000;
 const rtSweptAt = new Map();
 async function sweepRealtime() {
   if (Date.now() - (rtSweptAt.get(PREFIX) || 0) < 600000) return 0;
@@ -21,9 +31,17 @@ async function sweepRealtime() {
     const now = Date.now(), ms = v => (v && typeof v.toMillis === "function" ? v.toMillis() : v instanceof Date ? v.getTime() : Number(v) || 0);
     const snap = await col(REALTIME_COLL).where("at", "<", new Date(now - 30 * 86400000)).limit(200).get();
     const doomed = snap.docs.filter(d => { const v = d.data() || {}; return !(v.selected === true || v.claimed === true) || ms(v.at) < now - 60 * 86400000; });
-    if (!doomed.length) return 0;
-    const batch = db.batch(); doomed.forEach(d => batch.delete(d.ref)); await batch.commit();
-    return doomed.length;
+    let n = 0;
+    if (doomed.length) { const batch = db.batch(); doomed.forEach(d => batch.delete(d.ref)); await batch.commit(); n += doomed.length; }
+    // (one equality query: the locks held now, live ones only after the first sweep; "selected" with a range on "at" would need a composite index)
+    const held = await col(REALTIME_COLL).where("selected", "==", true).limit(500).get();
+    const stale = held.docs.filter(d => { const v = d.data() || {}; return ms(v.at) < now - RT_STALE_SELECTED_MS; });
+    if (stale.length) {
+      const batch = db.batch();
+      stale.forEach(d => { const v = d.data() || {}; batch.set(d.ref, { selected: false, selectedBy: null, page: null, at: admin.firestore.FieldValue.serverTimestamp(), expireAt: v.claimed === true ? admin.firestore.FieldValue.delete() : new Date(now + 30 * 86400000) }, { merge: true }); });
+      await batch.commit(); n += stale.length;
+    }
+    return n;
   } catch (e) { console.warn("[firebaseOrders] realtime sweep:", e && e.message); return 0; }
 }
 
@@ -380,6 +398,7 @@ exports.handler = async (event) => {
               { merge: true }
             );
           });
+          part.forEach((id) => batch.delete(col(UNDONE_COLL).doc(String(id))));   // (the un-complete mark, if any: completed again)
           if (!PREFIX) DC.stage(batch, db, admin.firestore.FieldValue, part, true);
           await batch.commit();
         }
@@ -402,6 +421,7 @@ exports.handler = async (event) => {
             const ref = col(COMPLETED_COLL).doc(String(id));
             batch.delete(ref);
           });
+          part.forEach((id) => batch.set(col(UNDONE_COLL).doc(String(id)), { at: admin.firestore.FieldValue.serverTimestamp(), expireAt: new Date(Date.now() + 30 * 86400000) }));
           if (!PREFIX) DC.stage(batch, db, admin.firestore.FieldValue, part, false);
           await batch.commit();
         }
@@ -494,10 +514,17 @@ exports.handler = async (event) => {
         };
       }
 
-      await db
-        .collection(PREFIX + "Brites_Orders")
-        .doc(String(orderNumber))
-        .set(dataToStore, { merge: true });
+      const orderRef = db.collection(PREFIX + "Brites_Orders").doc(String(orderNumber));
+      /* COST (Oct 2026): a Staff Note is written with its line in the staff-note index (_staffNotes.js, production only), in the same batch,
+         so "which orders have a note, and what does it say" is 4 reads instead of a read per order. Should that batch fail (a shard too
+         large) the order is written alone, as before, and the index is told it no longer knows this order. */
+      if (staffNote !== undefined && !PREFIX && SN().isReceipt(orderNumber)) {
+        const batch = db.batch();
+        batch.set(orderRef, dataToStore, { merge: true });
+        SN().stage(batch, db, admin.firestore.FieldValue, String(orderNumber), staffNote);
+        try { await batch.commit(); }
+        catch (e) { console.warn("[firebaseOrders] note and index not written together:", e && e.message); await orderRef.set(dataToStore, { merge: true }); await SN().spoil(db, admin.firestore.FieldValue, String(orderNumber)); }
+      } else await orderRef.set(dataToStore, { merge: true });
 
       return {
         statusCode: 200,
@@ -574,30 +601,40 @@ exports.handler = async (event) => {
         };
       }
 
-      /* ?staffNotesFor=rid1,rid2 → which of these Brites_Orders have a non-empty "Staff Note" */
+      /* ?staffNotesFor=rid1,rid2 → which of these Brites_Orders have a non-empty "Staff Note", and `notes` { rid: text } (a note over
+         _staffNotes.TEXT_MAX characters is listed in orderNumbers without its text: the page reads it from the order) */
       if (event.queryStringParameters?.staffNotesFor) {
         const ids = parseIds(event.queryStringParameters.staffNotesFor);
         if (!ids.length) {
-          return { statusCode: 200, headers: CORS, body: JSON.stringify({ success:true, orderNumbers: [] }) };
+          return { statusCode: 200, headers: CORS, body: JSON.stringify({ success:true, orderNumbers: [], notes: {} }) };
+        }
+        /* COST (Oct 2026): production answers from the staff-note index: 4 reads however many ids are asked about (it was a read per
+           order: about 800 for each sweep of the open orders), with the texts, so the station no longer reads each noted order for its
+           note. No usable index (the sandbox, the first ask, a build already running): the per-order asks below, as before. */
+        const viaIndex = await SN().lookup(db, admin.firestore.FieldValue, ids, { prefix: PREFIX });
+        if (viaIndex) {
+          const notes = {};
+          viaIndex.notes.forEach((t, id) => { if (typeof t === "string") notes[id] = t; });
+          return { statusCode: 200, headers: CORS, body: JSON.stringify({ success: true, orderNumbers: ids.filter(id => viaIndex.notes.has(String(id))), notes, via: viaIndex.via, now: Date.now() }) };
         }
         // Every sweep of the station now asks about all of its open orders (100 ids a
         // request): ten-id queries, five at a time, return only the orders that have a
         // record at all, instead of a billed document get per order.
         const uniq = [...new Set(ids.map(String))], groups = [];
         for (let i = 0; i < uniq.length; i += 10) groups.push(uniq.slice(i, i + 10));
-        const noted = new Set(); let next = 0;
+        const noted = new Set(), texts = {}; let next = 0;
         const worker = async () => {
           while (next < groups.length) {
             const g = groups[next++];
             const snap = await db.collection(PREFIX + "Brites_Orders").where(admin.firestore.FieldPath.documentId(), "in", g).select("Staff Note").get();   // (only the note comes over the wire, not the order's whole record)
-            snap.docs.forEach(d => { const note = ((d.data() || {})["Staff Note"] ?? "").toString().trim(); if (note) noted.add(d.id); });
+            snap.docs.forEach(d => { const raw = ((d.data() || {})["Staff Note"] ?? "").toString(); if (raw.trim()) { noted.add(d.id); texts[d.id] = raw; } });
           }
         };
         await Promise.all(Array.from({ length: Math.min(5, groups.length) }, worker));
         const withNotes = ids.filter(id => noted.has(String(id)));
         return {
           statusCode: 200, headers: CORS,
-          body: JSON.stringify({ success:true, orderNumbers: withNotes, now: Date.now() })
+          body: JSON.stringify({ success:true, orderNumbers: withNotes, notes: texts, now: Date.now() })
         };
       }
 
@@ -676,23 +713,24 @@ exports.handler = async (event) => {
         };
       }
 
-       /* ?dcSince=NUMBER(ms) → completed IDs changed since watermark */
+       /* ?dcSince=NUMBER(ms) → completed IDs changed since watermark, and `undone`: the IDs un-completed since then */
      if (event.queryStringParameters?.dcSince) {
        const sinceMs = Number(event.queryStringParameters.dcSince);
        if (!Number.isFinite(sinceMs)) {
          return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: "bad dcSince" }) };
        }
        const sinceTs = admin.firestore.Timestamp.fromMillis(sinceMs);
-       const snap = await col(COMPLETED_COLL)
-         .where("completedAt", ">=", sinceTs)
-         .select()
-         .get();
+       const [snap, undone] = await Promise.all([
+         col(COMPLETED_COLL).where("completedAt", ">=", sinceTs).select().get(),
+         col(UNDONE_COLL).where("at", ">=", sinceTs).select().get()
+       ]);
        return {
          statusCode: 200,
          headers: CORS,
          body: JSON.stringify({
            success: true,
            orderNumbers: snap.docs.map(d => d.id),
+           undone: undone.docs.map(d => d.id),
            now: Date.now()
          })
        };
@@ -715,22 +753,8 @@ exports.handler = async (event) => {
         };
       }
 
-      /* ?staffNotes=1 → array of order IDs with a Staff Note in Brites_Orders */
-      if (event.queryStringParameters?.staffNotes === "1") {
-        const snap = await db
-          .collection(PREFIX + "Brites_Orders")
-          .where("Staff Note", "!=", "")
-          .select()
-          .get();
-        return {
-          statusCode: 200,
-          headers: CORS,
-          body: JSON.stringify({
-            success      : true,
-            orderNumbers : snap.docs.map((d) => d.id)
-          })
-        };
-      }
+      /* ?staffNotes=1 (every order with a Staff Note: a read per noted order, 3,480 on 17 Oct 2026 and growing) is gone (COST, Oct 2026): its
+         last caller asks ?staffNotesFor, which the staff-note index answers in 4 reads. */
 
       /* ?deskFor=assembly-N → { signedIn } is somebody signed in at that Assembly desk page now (the phone scanner asks after a scan, so the
          assembler is told when nothing will be recorded). A yes or no, never a name; reads only. */
