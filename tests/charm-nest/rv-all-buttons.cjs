@@ -70,11 +70,26 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     const card = rid => `#rvList .reviewListRow[data-rid="${rid}"]`;
     const buttons = () => page.evaluate(() => [...document.querySelectorAll('#rvList .reviewListRow')].map(n => ({ rid: n.dataset.rid, b: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()), h: Math.round(n.getBoundingClientRect().height) })));   // (no Hold filtered out any more: a Review row has none, NOHOLDREV, Paul 17 Oct 2026)
 
-    // 1 · Unknown SKU: every card, no "Review & resolve", the custom card's column: its buttons in its order, classes and
-    //     sizes, Send to Sheet greyed and disabled (no design yet) and the dashed drop zone under them
-    await page.click('#reviewView .egTab[data-k="unmatchedSku"]');
+    // 0 · Options and Unknown SKU are one chip, Need Resolution (Paul, 18 Oct 2026: "Combine these 2 tabs into a new tab
+    //     called 'Need Resolution'"): its count is theirs together (3 Unknown SKU cards, the two-order one counted once, and
+    //     1 Options card), no chip of either is left, and pressed it lists the cards of both, each keeping its own kind
+    const bar = await page.evaluate(() => ({ chips: [...document.querySelectorAll('#reviewView .ordBar .egTab')].map(c => c.dataset.k + '=' + c.textContent.trim()), kinds: Review.items().filter(x => x.kind === 'unmatchedSku' || x.kind === 'needsMapping').map(x => x.kind).sort() }));
+    assert(bar.chips.includes('needResolution=Need Resolution4'), 'one Need Resolution chip, the two counts summed: ' + bar.chips);
+    assert(!bar.chips.some(c => /^(unmatchedSku|needsMapping)=/.test(c)), 'no Options or Unknown SKU chip of its own: ' + bar.chips);
+    assert.deepEqual(bar.kinds, ['needsMapping', 'unmatchedSku', 'unmatchedSku', 'unmatchedSku'], 'the cards keep their own kinds');
+    // a filter that still names one of the two (a note's Show, a workspace saved before) lands on the combined chip
+    for (const k of ['unmatchedSku', 'needsMapping']) {
+      const on = await page.evaluate(k => { Review.view().filter = k; Review.render(); const r = { f: Review.view().filter, on: (document.querySelector('#reviewView .ordBar .egTab.on') || {}).dataset?.k, n: document.querySelectorAll('#rvList .reviewListRow').length }; Review.view().filter = null; Review.render(); return r; }, k);
+      assert.deepEqual(on, { f: 'needResolution', on: 'needResolution', n: 4 }, k + ' opens Need Resolution: ' + JSON.stringify(on));
+    }
+
+    // 1 · Unknown SKU (under Need Resolution, with the Options card): every card, no "Review & resolve", the custom card's
+    //     column: its buttons in its order, classes and sizes, Send to Sheet greyed and disabled (no design yet) and the
+    //     dashed drop zone under them
+    await page.click('#reviewView .egTab[data-k="needResolution"]');
     let list = await buttons();
-    assert.deepEqual(list.map(x => x.rid).sort(), ['4175892473', '4177368830', '4178100001'].sort(), JSON.stringify(list));
+    assert.deepEqual(list.map(x => x.rid).sort(), ['4175892473', '4177368830', '4178100001', '4178100002'].sort(), 'both kinds listed: ' + JSON.stringify(list));
+    assert.equal(await page.evaluate(() => document.querySelector('#reviewView .egTab[data-k="needResolution"]').classList.contains('on')), true, 'the chip is pressed');
     for (const x of list) assert.deepEqual(x.b, WANT, x.rid + ': ' + x.b.join(' | '));
     assert.equal(await page.$('#rvList [data-review-open]'), null, 'no Review & resolve');
     const sizes = await page.evaluate(sel => { const n = document.querySelector(sel); const hs = [...n.querySelectorAll('.rowActions .btn')].map(b => Math.round(b.getBoundingClientRect().height)); const act = n.querySelector('.rowActions').getBoundingClientRect(), side = n.querySelector('.engravingIdentity').getBoundingClientRect(); return { hs, act: Math.round(act.height), card: Math.round(n.getBoundingClientRect().height), dropOk: n.classList.contains('cuDropOk'), side: Math.round(side.height) }; }, card('4175892473'));
@@ -95,14 +110,14 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     const shot = process.env.CN_SHOT || '/mnt/project-files/plans/review-buttons-2.png';
     try {
       const cuPng = await page.locator(card(CUSTOM)).screenshot();
-      await page.click('#reviewView .egTab[data-k="unmatchedSku"]');
+      await page.click('#reviewView .egTab[data-k="needResolution"]');
       const skuPng = await page.locator(card('4175892473')).screenshot();
       const side2 = await context.newPage();
       await side2.setContent(`<body style="margin:0;padding:16px;background:#efe9dd;display:flex;gap:16px;align-items:flex-start;font:600 13px system-ui">${[['Unknown SKU', skuPng], ['Custom Orders', cuPng]].map(([t, b]) => `<figure style="margin:0;flex:1"><figcaption style="margin:0 0 6px">${t}</figcaption><img style="width:100%" src="data:image/png;base64,${b.toString('base64')}"></figure>`).join('')}</body>`);
       await side2.setViewportSize({ width: 3400, height: 400 });
       fs.mkdirSync(path.dirname(shot), { recursive: true }); await side2.screenshot({ path: shot, fullPage: true }); await side2.close();
       console.log('  · screenshot: ' + shot);
-    } catch (e) { console.log('  – screenshot not saved: ' + e.message); await page.click('#reviewView .egTab[data-k="unmatchedSku"]').catch(() => {}); }
+    } catch (e) { console.log('  – screenshot not saved: ' + e.message); await page.click('#reviewView .egTab[data-k="needResolution"]').catch(() => {}); }
 
     // 2 · a click on an Unknown SKU card, or on a custom one, opens its order; nothing asks its question: no panel on the
     //     card, no decision box in the window (what is under it stands where it stood)
@@ -123,7 +138,7 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     assert.equal(await page.evaluate(() => !!document.getElementById('owCustom')), false, 'no tan Custom Orders bar in the window (5 Oct, round 8)');
     assert.match(await page.evaluate(() => document.getElementById('owPcSum').textContent), /Print QR label[\s\S]*Complete Order/, 'its piece\'s own row carries its buttons');
     await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
-    await page.click('#reviewView .egTab[data-k="unmatchedSku"]');
+    await page.click('#reviewView .egTab[data-k="needResolution"]');
 
     // 3 · Complete Order on an Unknown SKU line: completed by hand (how "button", by who), its question answered with who,
     //     the card leaves for Completed with its seal, under the Unknown SKU chip there
@@ -141,11 +156,11 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     const doneA = await page.evaluate(sel => { const n = document.querySelector(sel); return n && { seals: [...n.querySelectorAll('.seal')].map(x => x.classList.contains('seal-button')), b: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()), q: n.querySelector('.queueLabel').textContent, l: n.querySelector('.engravingIdentity .purchaseLabel').textContent, chips: [...document.querySelectorAll('#reviewView .egTab')].map(c => c.dataset.k) }; }, card('4175892473'));
     assert(doneA, 'under Completed');
     assert.deepEqual(doneA.seals, [true], 'the green Complete Order seal'); assert.deepEqual(doneA.b, ['Print QR label', 'Reopen']);
-    assert.equal(doneA.q, 'Completed by hand'); assert.equal(doneA.l, 'Unknown SKU'); assert(doneA.chips.includes('unmatchedSku'), 'under its own chip there: ' + doneA.chips);
+    assert.equal(doneA.q, 'Completed by hand'); assert.equal(doneA.l, 'Unknown SKU'); assert(doneA.chips.includes('needResolution') && !doneA.chips.includes('unmatchedSku'), 'under Need Resolution there too: ' + doneA.chips);
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
 
     // 4 · two orders, one question: Print QR label acts for the order shown; the card stays for the other one
-    await page.click('#reviewView .egTab[data-k="unmatchedSku"]');
+    await page.click('#reviewView .egTab[data-k="needResolution"]');
     const shown = await page.evaluate(() => { const it = Review.items().find(x => x.key === 'ord:sku:SURFER_4264'); return it.row.key; });
     const other = shown === '4177368830_41773688301' ? '4177368831_41773688311' : '4177368830_41773688301';
     const p0 = await page.evaluate(() => window.__printed || 0);
@@ -199,10 +214,11 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     assert(res.n >= doneBefore, 'the count counts the sent order: ' + JSON.stringify({ doneBefore, res }));
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
 
-    // 6 · Options: the same column; a click opens its order, which asks nothing
-    await page.click('#reviewView .egTab[data-k="needsMapping"]');
+    // 6 · Options (under Need Resolution, with the Unknown SKU card still open for its other order): the same column; a
+    //     click opens its order, which asks nothing
+    await page.click('#reviewView .egTab[data-k="needResolution"]');
     list = await buttons();
-    assert.deepEqual(list.map(x => [x.rid, x.b]), [['4178100002', WANT]], JSON.stringify(list));
+    assert.deepEqual(list.map(x => [x.rid, x.b]).sort(), [[other.split('_')[0], WANT], ['4178100002', WANT]].sort(), JSON.stringify(list));
     assert.deepEqual(same(await page.evaluate(COLUMN, card('4178100002'))), same(cuCol), 'Options and Custom Orders: one column');
     await page.click(card('4178100002') + ' .engravingIdentity');
     await page.waitForFunction(() => OrderWin.isOpen(), null, { timeout: 10000 });
@@ -210,7 +226,8 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     assert.deepEqual(await asked(), none, 'Options: no question box');
     assert.equal(await page.$('#orderWin [data-pick]'), null, 'no option to map there');
     await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
-    await page.click('#reviewView .egTab[data-k="needsMapping"]');   // (the filter let go: Open, everything)
+    await page.click('#reviewView .egTab[data-k="needResolution"]');   // (pressed again, the filter let go: Open, everything)
+    assert.equal(await page.evaluate(() => !!document.querySelector('#reviewView .egTab.on')), false, 'no chip pressed');
     list = await buttons();
     for (const x of list) assert.deepEqual(x.b, WANT, 'Open: ' + x.rid + ' ' + x.b.join(' | '));
 

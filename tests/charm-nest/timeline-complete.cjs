@@ -93,7 +93,7 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     await page.waitForFunction(k => !B.maps.customDone[k], K); await idle(); await stamped(); await calm();
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
     // Complete Order on another Review tab's card (Unknown SKU)
-    await page.click('#reviewView .egTab[data-k="unmatchedSku"]');
+    await page.click('#reviewView .egTab[data-k="needResolution"]');
     await page.click(`#rvList .reviewListRow[data-rid="${U}"] [data-cu-complete]`);
     await page.waitForFunction(k => B.maps.customDone[k], KU); await idle(); await stamped(); await calm();
     // and in the order window

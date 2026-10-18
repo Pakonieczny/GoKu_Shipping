@@ -15529,6 +15529,15 @@ const Review = window.Review = (() => {
     // the old Decided chip, and the Decided segment, are Completed now
     if (RV.filter === "done" || RV.filter === "sent") { RV.filter = null; RV.cseg = "done"; }
     RV.cseg = RV.cseg === "done" || RV.cseg === "sent" ? "done" : "open";
+    // Options and Unknown SKU are one chip, Need Resolution (Paul, 18 Oct 2026: "Combine these 2 tabs into a new tab called
+    // 'Need Resolution'"): a chip may hold several kinds (CHIPS: chip → kinds), its count theirs together, and pressed it
+    // lists the cards of all of them, each its own card with its own buttons. The cards keep their own kinds (needsMapping,
+    // unmatchedSku: other code reads them); only the bar groups them. A filter that still names one of them (a note's Show,
+    // a workspace saved before) lands on its chip.
+    const CHIPS = { needResolution: { label: "Need Resolution", kinds: ["needsMapping", "unmatchedSku"] } };
+    const chipOf = k => Object.keys(CHIPS).find(c => CHIPS[c].kinds.includes(k)) || k, chipIt = it => chipOf(tabOf(it));
+    const wordOf = k => (CHIPS[k] && CHIPS[k].label) || KIND_WORDS[k] || k;
+    if (RV.filter) RV.filter = chipOf(RV.filter);
     const doneMode = RV.cseg === "done";
     const scope = "review-" + RV.cseg;
     const view = RV.cseg + "|" + (RV.filter || "") + "|" + (RV.q || "") + "|" + CNListActivity.key(scope);
@@ -15543,7 +15552,7 @@ const Review = window.Review = (() => {
     }).filter(Boolean);
     const decided = new Set(); for (const it of all) if (it.kind === "customOrder") for (const r of rowsOf(it)) decided.add(r.key);
     const cl = customLists(decided);
-    const ORDER = ["customOrder", "needsMapping", "unmatchedSku", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "heldOrder", "reviewMark"];
+    const ORDER = ["customOrder", "needResolution", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "heldOrder", "reviewMark"];
     // Every tab uses the latest actual change, including a completion or reopen.
     // Completed, for every filter, is one list: custom orders completed by hand (print again or reopen), orders sent to a
     // sheet (their decision, seal, sheet and history) and every decision answered, newest first; an order in both lists is
@@ -15554,10 +15563,10 @@ const Review = window.Review = (() => {
     const finished = cl.done.concat(cl.sent.filter(it => !it.foldedInto), settled.filter(d => !sentToSheet(d) && !(d.kind === "customOrder" && openCustom.has(String(d.key).slice(4)))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d })), (window.CharmNestReviewMark ? CharmNestReviewMark.doneSettled(Orders.rows()) : []).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }))).sort((a, b) => doneAt(b) - doneAt(a));
     const alive=new Set(all.concat(cl.open, cl.done, cl.sent).map(it=>it.key));for(const key of reviewRows.keys())if(!alive.has(key))reviewRows.delete(key);
     // the kinds present are the filter: one chip each, so a long mixed list becomes the one kind being worked through
-    const byKind = new Map(); for (const it of all) byKind.set(tabOf(it), (byKind.get(tabOf(it)) || 0) + 1);
+    const byKind = new Map(); for (const it of all) byKind.set(chipIt(it), (byKind.get(chipIt(it)) || 0) + 1);
     const customAsk = byKind.get("customOrder") || 0, customN = customAsk + cl.open.length;
     if (customN) byKind.set("customOrder", customN); else byKind.delete("customOrder");
-    const doneKind = new Map(); for (const it of finished) doneKind.set(tabOf(it), (doneKind.get(tabOf(it)) || 0) + 1);
+    const doneKind = new Map(); for (const it of finished) doneKind.set(chipIt(it), (doneKind.get(chipIt(it)) || 0) + 1);
     const kinds = doneMode ? doneKind : byKind;
     // a filter emptied under Open goes back to Everything; under Completed it is only not shown, so Open keeps it
     if (!doneMode && RV.filter && !byKind.has(RV.filter)) RV.filter = null;
@@ -15577,8 +15586,8 @@ const Review = window.Review = (() => {
       if (p.hold) { if (a > p.hold.since + 20000) { p.hold = null; p.at = a; } } else p.at = a;
       placeAt.set(k, p.at);
     }
-    let list = doneMode ? (f ? finished.filter(it => tabOf(it) === f) : finished)
-      : f === "customOrder" ? customOpen : f ? all.filter(it => tabOf(it) === f) : all.concat(cl.open);
+    let list = doneMode ? (f ? finished.filter(it => chipIt(it) === f) : finished)
+      : f === "customOrder" ? customOpen : f ? all.filter(it => chipIt(it) === f) : all.concat(cl.open);
     const orderQ=O.orderQuery(RV.q);
     if(orderQ)list=list.filter(it=>[it.rid,...(it.settled?.orders || []),...(it.settled ? [it.settled.row,...(it.settled.rows || [])] : rowsOf(it)).filter(Boolean).map(r=>r.order?.receiptId)].some(id=>O.orderMatches(id,orderQ)));
     list=CNListActivity.select(scope,list);
@@ -15595,8 +15604,8 @@ const Review = window.Review = (() => {
     // (one Completed count: the cards listed under it, an order in both kinds counted once)
     const openN = all.length + cl.open.length;
     const seg = `<span class="rvSeg${f ? "" : " all"}" role="group" aria-label="Open or completed"><button type="button" data-cseg="open" class="${!doneMode ? "on" : ""}" aria-pressed="${!doneMode}" title="everything that still waits">Open<b>${openN}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything finished: orders completed by hand (print again or reopen), orders sent to the sheets, and every decision answered">Completed<b>${finished.length}</b></button></span>`;
-    const chips = ORDER.filter(k => kinds.has(k)).map(k => doneMode ? chip(k, KIND_WORDS[k] || k, kinds.get(k), "ok", `${KIND_WORDS[k] || k} completed`)
-      : k === "customOrder" ? chip(k, "Custom Orders", customN, customAsk ? "warn" : "info", `${customAsk} need a decision · ${cl.open.length} listed with nothing to decide`) : chip(k, KIND_WORDS[k] || k, kinds.get(k))).join("");
+    const chips = ORDER.filter(k => kinds.has(k)).map(k => doneMode ? chip(k, wordOf(k), kinds.get(k), "ok", `${wordOf(k)} completed`)
+      : k === "customOrder" ? chip(k, "Custom Orders", customN, customAsk ? "warn" : "info", `${customAsk} need a decision · ${cl.open.length} listed with nothing to decide`) : chip(k, wordOf(k), kinds.get(k))).join("");
     if(!v.querySelector('#rvList'))v.innerHTML='<div class="ordBar egBar"></div><div class="egPane grow scroll"><div class="rvList" id="rvList"></div></div>';
     // no Everything chip (it always read the same as Open): Open or Completed, pressed, is everything in it
     const keptFind=v.querySelector('#rvOrderFind')?.closest('label');
@@ -15610,19 +15619,19 @@ const Review = window.Review = (() => {
     v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { RV.filter = b.dataset.k === f ? null : b.dataset.k; render(); });
     v.querySelectorAll("[data-cseg]").forEach(b => b.onclick = () => { RV.cseg = b.dataset.cseg; RV.filter = null; render(); });
     const host = v.querySelector("#rvList");
-    const what = f ? (KIND_WORDS[f] || f) : "";
+    const what = f ? wordOf(f) : "";
     // one keyed update (Motion.reconcile): what leaves is seen going where it went, what stays glides into the gap
     const where = new Map();
-    for (const it of all.concat(cl.open)) where.set(mkeyOf(it), { seg: "open", kind: tabOf(it), it });
-    for (const it of finished) where.set(it.settled ? it.settled.key : mkeyOf(it), { seg: "done", kind: tabOf(it), it });
-    const ridWhere = new Map(); for (const it of all.concat(cl.open)) for (const r of rowsOf(it)) if (!ridWhere.has(String(r.order.receiptId))) ridWhere.set(String(r.order.receiptId), { kind: tabOf(it), mk: mkeyOf(it) });
+    for (const it of all.concat(cl.open)) where.set(mkeyOf(it), { seg: "open", kind: chipIt(it), it });
+    for (const it of finished) where.set(it.settled ? it.settled.key : mkeyOf(it), { seg: "done", kind: chipIt(it), it });
+    const ridWhere = new Map(); for (const it of all.concat(cl.open)) for (const r of rowsOf(it)) if (!ridWhere.has(String(r.order.receiptId))) ridWhere.set(String(r.order.receiptId), { kind: chipIt(it), mk: mkeyOf(it) });
     const leave = (mk, node) => {
       const w = where.get(mk), rid = node && node.dataset.rid, mine = acted.mk === mk && Date.now() - acted.t < 10000;
       const who = rid ? "Order " + rid : "The decision";
       // (Hold's film plays in the Nest tab and walks the person to On hold itself: this list's flight and its "is on hold under Orders" note were drawn at the top left, over the film)
       if (rid && window.HoldUI && HoldUI.busy && HoldUI.busy(rid)) return null;
       if (w && w.seg !== RV.cseg) return { to: w.seg === "done" ? DONE_SW : OPEN_SW, note: mine ? { text: `${who} moved to ${w.seg === "done" ? "Completed" : "Open"}`, actions: [{ label: "Show", fn: () => showCard(w.it.settled ? "settled:" + w.it.settled.key + ":" + w.it.settled.t : mk, w.seg) }] } : null };
-      if (w && f && w.kind !== f) return { to: chipSel(w.kind), note: mine ? { text: `${who} is now under ${KIND_WORDS[w.kind] || w.kind}`, actions: [{ label: "Show", fn: () => showCard(mk, w.seg, w.kind) }] } : null };
+      if (w && f && w.kind !== f) return { to: chipSel(w.kind), note: mine ? { text: `${who} is now under ${wordOf(w.kind)}`, actions: [{ label: "Show", fn: () => showCard(mk, w.seg, w.kind) }] } : null };
       // its line sent to the sheets with the order's own designs (Send to Sheet on any card): it goes to the sheets, whose
       // tab says what came (CustomSheet)
       const lr = !w && node && node.dataset.row && B.orders.byKey?.get(node.dataset.row);
@@ -15630,7 +15639,7 @@ const Review = window.Review = (() => {
       if (!w && mine && rid && ridWhere.has(rid) && ridWhere.get(rid).mk !== mk) {
         // read again as another kind of question (e.g. "Not a custom order"): it is under that chip now
         const o = ridWhere.get(rid);
-        return { to: chipSel(o.kind), note: { text: `${who} is now under ${KIND_WORDS[o.kind] || o.kind}`, actions: [{ label: "Show", fn: () => showCard(o.mk, "open", o.kind) }] } };
+        return { to: chipSel(o.kind), note: { text: `${who} is now under ${wordOf(o.kind)}`, actions: [{ label: "Show", fn: () => showCard(o.mk, "open", o.kind) }] } };
       }
       if (!w && mine) {
         // answered: its lines went back to the orders (on hold, or in line for the sheets)

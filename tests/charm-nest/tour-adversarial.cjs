@@ -79,8 +79,8 @@ const ONE = [{ metal: 'gold' }];
    act: something done mid-flight; same: the key of starting points that send the same thing (compared) */
 const SCENARIOS = [
   { name: 'review-custom', title: 'Custom Orders card, 1 piece, GF (queued, Manual)', rid: CUSTOM, chip: 'customOrder', designs: ONE, from: 'card', same: 'one-gf' },
-  { name: 'review-unknown', title: 'Unknown SKU card, 1 piece, GF', rid: UNKNOWN, chip: 'unmatchedSku', designs: ONE, from: 'card', same: 'one-gf' },
-  { name: 'review-options', title: 'Options card, 1 piece, GF', rid: OPTIONS, chip: 'needsMapping', designs: ONE, from: 'card', same: 'one-gf' },
+  { name: 'review-unknown', title: 'Unknown SKU card, 1 piece, GF', rid: UNKNOWN, chip: 'needResolution', designs: ONE, from: 'card', same: 'one-gf' },
+  { name: 'review-options', title: 'Options card, 1 piece, GF', rid: OPTIONS, chip: 'needResolution', designs: ONE, from: 'card', same: 'one-gf' },
   { name: 'review-open', title: 'Open list (no filter), custom card, 1 piece, GF', rid: CUSTOM, chip: null, designs: ONE, from: 'card', same: 'one-gf' },
   { name: 'designs-window', title: 'Designs window footer (#cuDlg), 1 piece, GF', rid: CUSTOM, chip: 'customOrder', designs: ONE, from: 'designs', same: 'one-gf' },
   { name: 'orderwin-overview', title: 'Order window, Overview tab, 1 piece, GF', rid: CUSTOM, chip: 'customOrder', designs: ONE, from: 'orderwin', view: 'info', same: 'one-gf' },
@@ -262,7 +262,7 @@ async function run(browser, sc) {
     const chip = async k => { const cur = await chipOn(); if (k) { if (cur !== k) await page.click(`#reviewView .egTab[data-k="${k}"]`); } else if (cur) await page.click('#reviewView .rvSeg [data-cseg="open"]'); await page.waitForTimeout(250); };
     const card = `#rvList .reviewListRow[data-rid="${sc.rid}"]`;
     // its designs dropped on its card, each on its metal, with its count of copies
-    await chip(sc.chip || (sc.rid === UNKNOWN ? 'unmatchedSku' : sc.rid === OPTIONS ? 'needsMapping' : 'customOrder'));
+    await chip(sc.chip || (sc.rid === UNKNOWN || sc.rid === OPTIONS ? 'needResolution' : 'customOrder'));
     await page.waitForSelector(card);
     await page.evaluate(({ sel, files }) => { const dt = new DataTransfer(); for (const f of files) dt.items.add(new File([f.text], f.name)); const n = document.querySelector(sel); n.scrollIntoView({ block: 'center' }); for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: 700, clientY: 400 })); { const a = document.querySelector('#cuAsk [data-ask-yes]'); if (a) a.click(); } },
       { sel: card, files: sc.designs.map((d, i) => ({ name: `design-${i + 1}.dxf`, text: DXF(d.w || 18, d.h || 20) })) });

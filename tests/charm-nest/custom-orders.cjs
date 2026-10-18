@@ -192,7 +192,7 @@ async function browserChecks() {
     const chips = await bar();
     assert(chips.some(t => /^Custom Orders5$/.test(t)), 'one Custom Orders chip counting the five lines: ' + chips.join(' | '));
     assert(!chips.some(t => /Material/.test(t)), 'no Material chip any more');
-    assert(chips.some(t => /^Options\d/.test(t)), 'a regular line whose metal was not read is under Options');
+    assert(chips.some(t => /^Need Resolution\d/.test(t)) && !chips.some(t => /^(Options|Unknown SKU)\d/.test(t)), 'a regular line whose metal was not read is under Need Resolution (Options and Unknown SKU are one chip, Paul 18 Oct 2026)');
     assert(!chips.some(t => /^Everything/.test(t)), 'no Everything chip: Open is everything');
     const state = await page.evaluate(() => ({ chain: B.orders.byKey.get('4176744752_41767447521').state, pool: B.orders.byKey.get('4176744752_41767447521').poolIds.length, decisions: Review.count() }));
     assert.equal(state.chain, 'noDesign', 'chain only never goes into the pool'); assert.equal(state.pool, 0);
@@ -279,11 +279,11 @@ async function browserChecks() {
     const opt = await page.evaluate(() => {
       const it = Review.items().find(x => x.kind === 'needsMaterial' || x.kind === 'needsMapping'); Review.remove(it.key, 'Test Operator'); Review.view().filter = null; Review.render();
       const out = { chips: [...document.querySelectorAll('#reviewView .ordBar .egTab')].map(b => b.textContent.trim()), row: document.querySelector('#rvList .rvSettled .rowActions')?.textContent.trim(), seg: document.querySelector('#reviewView .rvSeg [data-cseg="done"]').textContent.trim() };
-      document.querySelector('#reviewView .egTab[data-k="needsMapping"]').click(); out.only = [...document.querySelectorAll('#rvList .reviewListRow')].map(n => n.dataset.rid);
+      document.querySelector('#reviewView .egTab[data-k="needResolution"]').click(); out.only = [...document.querySelectorAll('#rvList .reviewListRow')].map(n => n.dataset.rid);
       Review.settled().shift(); Review.add(it); return out;
     });
-    assert.deepEqual(opt.chips, ['Custom Orders2', 'Options1'], JSON.stringify(opt)); assert.equal(opt.seg, 'Completed3');
-    assert.match(opt.row, /^Resolved\s*Test Operator · /, 'who answered it and when'); assert.deepEqual(opt.only, ['4178000003'], 'Options under Completed: its answer only');
+    assert.deepEqual(opt.chips, ['Custom Orders2', 'Need Resolution1'], JSON.stringify(opt)); assert.equal(opt.seg, 'Completed3');
+    assert.match(opt.row, /^Resolved\s*Test Operator · /, 'who answered it and when'); assert.deepEqual(opt.only, ['4178000003'], 'Options, under Need Resolution in Completed (Paul, 18 Oct 2026): its answer only');
     await page.click('#reviewView .egTab[data-k="customOrder"]');
     for (const r of list) { assert.match(r.cls, /cuDone/); assert.deepEqual(r.buttons, ['Print again', 'Reopen']); assert.match(r.why, /QR label printed by Test Operator/); }
     // a completed line whose SKU has since got a design (no longer special) is still listed, to be reopened
