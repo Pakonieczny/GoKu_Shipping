@@ -5,12 +5,15 @@
  * Sorter's Print QR label) for one piece of an order that has more pieces, for example an extra chain that never goes on a
  * sheet. That sticker is the same 1 x 1 in label: its QR is still the MASTER ORDER number (scanning it opens the master
  * order, and the link is never cut), and the note area on the right, where an ordinary sticker prints Metal / Title /
- * Match, says in big type what the sticker is for and which order it belongs to. The note is typed (or edited) at print
- * time; it is wrapped and set at the LARGEST size that fits the area, so a long message shrinks and a short one stays big.
+ * Match, says in big type what the sticker is for. The note is typed (or edited) at print time; it is wrapped and set at
+ * the LARGEST size that fits the area, so a long message shrinks and a short one stays big.
+ * NO "ORDER <number>" in the note area (Paul, 18 Oct 2026: "Remove the 'ORDER 4201047416' since it's a duplicate from the
+ * partial 'Print QR' process"): the order number is already printed under the QR, with the date, as on every sticker. The
+ * note has the whole area, and a word is not broken across lines when a size in range sets every word on one line.
  *
  *   QrPieceLabel.fitNote(text, { boxW, boxH, maxPt, minPt })  -> { pt, lines, h, w, fits, truncated }
- *   QrPieceLabel.layout(note, orderNumber)                    -> { note: {...}, order: {...} } where each part is placed on the 72 x 72 pt page
- *   QrPieceLabel.nodes(layout)                                -> the two pdfMake text nodes QR Printer.html puts where Metal / Title / Match go
+ *   QrPieceLabel.layout(note, orderNumber)                    -> { note: {...}, geo } the note placed on the 72 x 72 pt page (no ORDER block since 18 Oct 2026)
+ *   QrPieceLabel.nodes(layout)                                -> the one pdfMake text node QR Printer.html puts where Metal / Title / Match go
  *   QrPieceLabel.isPiece(cardRows, orderRows)                 -> true when the order has a line that is not on the card (the card is a piece of it)
  *   QrPieceLabel.nameOf(rows)                                 -> the note offered first (the piece's own name)
  *   QrPieceLabel.ask({ rid, note })                           -> a small dialog: the note, a live preview of its size; resolves to the note or null
@@ -27,7 +30,7 @@
   const BOX = { x: 33, y: 0.5, w: 37, bottom: 52 };   // the right-hand area of the 72 x 72 pt page, in pt: right of the QR (as the Metal / Title / Match block), 2 pt margin on the right, down to the order number's line on the left
   const LINE = 1.2;                       // the line pitch counted per pt of type (pdfMake's Roboto lays out at 1.17: the extra is margin)
   const SAFETY = 1.02;                    // widths are Helvetica Bold's (wider than Roboto Bold's, apart from the digits, 1 % wider) plus 2 %
-  const NOTE_MAX_PT = 10, NOTE_MIN_PT = 4.5, FOOT_MAX_PT = 7, FOOT_MIN_PT = 4, FOOT_GAP = 1.5;
+  const NOTE_MAX_PT = 10, NOTE_MIN_PT = 4.5, STEP = 0.25;
 
   // Helvetica Bold advance widths per 1000 em for ASCII 32..126
   const HB = [278, 333, 474, 556, 556, 889, 722, 278, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 333, 333, 584, 584, 584, 611,
@@ -73,7 +76,7 @@
    *  The longer the text, the smaller the size (never larger), so a message always fits the label. Text that does not fit even at minPt is
    *  shortened with an ellipsis until it does (truncated: true); the box is never overflowed. */
   function fitNote(text, o) {
-    const p = Object.assign({ boxW: BOX.w, boxH: 30, maxPt: NOTE_MAX_PT, minPt: NOTE_MIN_PT, step: 0.25, lineH: LINE, measure: width }, o || {});
+    const p = Object.assign({ boxW: BOX.w, boxH: 30, maxPt: NOTE_MAX_PT, minPt: NOTE_MIN_PT, step: STEP, lineH: LINE, measure: width }, o || {});
     const src = String(text == null ? "" : text).replace(/[ \t]+/g, " ").trim();
     const take = (t, pt) => {
       const lines = wrap(t, pt, p.boxW, p.measure), h = lines.length * pt * p.lineH;
@@ -92,27 +95,28 @@
     return { pt: p.minPt, lines: [], h: 0, w: 0, fits: false, truncated: true };
   }
 
-  /** Both parts of the piece sticker on the 72 x 72 pt page: the note (what the sticker is for, set as large as it fits) above, and
-   *  ORDER <number> pinned to the bottom of the same area. Positions are the top-left of each text block, in pt. */
+  /** The piece sticker's note on the 72 x 72 pt page: what the sticker is for, set as large as it fits, in the whole note area (top-left of
+   *  the text block, in pt). No ORDER <number> block (Paul, 18 Oct 2026: a duplicate of the number printed under the QR); `orderNumber` stays
+   *  in the signature for the callers and is not drawn here. The largest size tried is the one at which the longest word still fits a line
+   *  (on the fitter's 0.25 pt steps), so "BRACELET CHAIN 6190" is set BRACELET / CHAIN / 6190, not BRACE / LET; a word too long for a line
+   *  even at the smallest size is still broken by characters, as before. */
   function layout(note, orderNumber, geo) {
     const g = Object.assign({}, BOX, geo || {});
     const text = cleanNote(note).toUpperCase() || "PIECE";
-    const rid = String(orderNumber == null ? "" : orderNumber).replace(/\s+/g, " ").trim().slice(0, 30) || "?";
-    const foot = fitNote("ORDER\n" + rid, { boxW: g.w, boxH: 17, maxPt: FOOT_MAX_PT, minPt: FOOT_MIN_PT });
-    const footY = g.bottom - foot.h;
-    const noteH = Math.max(NOTE_MIN_PT * LINE, footY - FOOT_GAP - g.y);
-    const big = fitNote(text, { boxW: g.w, boxH: noteH, maxPt: NOTE_MAX_PT, minPt: NOTE_MIN_PT });
+    const noteH = g.bottom - g.y;
+    const widest = text.split(" ").reduce((m, w) => Math.max(m, width(w, 1)), 0);
+    const whole = Math.floor(g.w / widest / STEP + 1e-9) * STEP;   // the largest size (on the steps) at which every word fits a line
+    const big = fitNote(text, { boxW: g.w, boxH: noteH, maxPt: whole >= NOTE_MIN_PT ? Math.min(NOTE_MAX_PT, whole) : NOTE_MAX_PT, minPt: NOTE_MIN_PT });
     return {
       note: { text, pt: big.pt, lines: big.lines, x: g.x, y: g.y, w: big.w, h: big.h, boxH: noteH, truncated: big.truncated },
-      order: { text: rid, pt: foot.pt, lines: foot.lines, x: g.x, y: footY, w: foot.w, h: foot.h },
       geo: g
     };
   }
 
-  /** The pdfMake nodes of a layout (QR Printer.html puts them where an ordinary sticker prints Metal / Title / Match). */
+  /** The pdfMake node of a layout, the note alone (QR Printer.html puts it where an ordinary sticker prints Metal / Title / Match). */
   function nodes(L) {
     const at = part => ({ text: part.lines.join("\n"), fontSize: part.pt, bold: true, lineHeight: 1, absolutePosition: { x: part.x, y: part.y } });
-    return [at(L.note), at(L.order)];
+    return [at(L.note)];
   }
 
   /** The card is ONE PIECE of a bigger order when the order has a line that is not on the card: [{ key }] each. */
@@ -169,7 +173,7 @@
         go.disabled = !t;
         prev.style.width = Math.round(g.w * SCALE) + "px"; prev.style.height = Math.round((g.bottom - g.y) * SCALE) + "px";
         prev.innerHTML = "";
-        for (const part of [L.note, L.order]) part.lines.forEach((line, i) => {
+        for (const part of [L.note]) part.lines.forEach((line, i) => {
           const n = doc.createElement("div"); n.textContent = line;
           n.style.fontSize = Math.round(part.pt * SCALE * 10) / 10 + "px"; n.style.top = Math.round((part.y - g.y + i * part.pt * LINE) * SCALE * 10) / 10 + "px";
           prev.appendChild(n);

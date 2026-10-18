@@ -166,7 +166,8 @@ function piecesOf(dataObj) {
   const list = Array.isArray(dataObj && dataObj.pieces) ? dataObj.pieces : [];
   return list.filter(p => p && (p.side === "L" || p.side === "R")).slice(0, 40);
 }
-/** The note area of a sticker: Metal / Title / Match (small, 3 lines) for an order, or the fitted note and ORDER <number> for a piece sticker. */
+/** The note area of a sticker: Metal / Title / Match (small, 3 lines) for an order, or the fitted note alone for a piece sticker (no ORDER <number>
+ *  since Paul, 18 Oct 2026: a duplicate of the order number printed under the QR on every sticker, the piece sticker included). */
 function noteAreaNodes(normMetal, normTitle4, normMatch, pieceLabel, orderNum) {
   if (pieceLabel) {
     if (!window.QrPieceLabel) throw new Error("the piece label layout (qr-piece-label.js) did not load");

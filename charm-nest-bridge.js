@@ -11970,7 +11970,8 @@ const CustomPrint = window.CustomPrint = (() => {
      exactly as before the 9 Oct per-ear pages, here and at the Sorting Station. The only exception is a sticker a person prints BY HAND for one piece of an
      order that has more pieces (an extra chain that never goes on a sheet): the card is one piece of the order when the order has a line that is not on the
      card. That press first asks, in one small dialog, what the sticker is for (QrPieceLabel.ask), and the label carries `pieceLabel`: QR Printer.html prints
-     the same sticker, its QR still the MASTER ORDER's number, with that note and ORDER <number> in big type, fitted to the label, where Metal / Title / Match go. */
+     the same sticker, its QR still the MASTER ORDER's number, with that note in big type, fitted to the label, where Metal / Title / Match go (no ORDER <number>
+     there since Paul, 18 Oct 2026: the order number under the QR already says it). */
   const designEntryOf = r => (r && r.spec && r.spec.designSku && !r.spec.ownDesign ? (Master.entryFor(r.spec.designSku) || null) : null);
   /** The card as one piece of a bigger order: { rid, name, prior } (the note offered first), or null for a card that is the whole order (the ordinary sticker). */
   function pieceInfo(it) {
