@@ -4480,6 +4480,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   // o.free: the nest itself picks the spots (spots are only proof that there is room); otherwise each piece is pinned
   // o.headless: the Hold engine's fill (charm-nest-order-hold.js): the same move, nothing drawn, for the sheet it is given
+  // o.hop: a person's drag of a charm onto the next or previous sheet of its metal (charm-nest-sheet-hop.js): o.guard(sheet) says why a sheet may not
+  //   give or take it now ("" to go; it replaces the run's own movableFrom, so a full or released 10K/14K sheet can give a charm up by hand), no freed room is kept
   async function moveIn(k, spots, target, who, o = {}) {
     const rid = k.rid, ids = new Set(spots.map(s => s.c.poolId)), ui = !o.headless, sheetId = ui ? W.id : target.sheetId;
     const srcs = [...new Set(spots.map(s => s.src))], tName = sheetWord(target.sheetId, target.fileBase, target);
@@ -4500,8 +4502,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     try {
       await waitIdle(all, wait, paint);
       // its sheet may have been released, cut or sent while this waited: then the order stays where it is
-      const shut = srcs.find(src => !movableFrom(src, target));
-      if (shut) throw new Error(`${sName(shut)} was released or sent meanwhile, so order ${rid} stays on it`);
+      if (o.guard) { const why = [...srcs, target].map(sh => o.guard(sh)).find(Boolean); if (why) throw new Error(why); }
+      else { const shut = srcs.find(src => !movableFrom(src, target)); if (shut) throw new Error(`${sName(shut)} was released or sent meanwhile, so order ${rid} stays on it`); }
       // the list it was picked from may be minutes old: each piece must still be on the sheet it was listed on (the run
       // passes waiting charms on), and the order must not have been put on hold or cancelled since
       for (const s of spots) { const on = allSheets().filter(sh => sh.charms.includes(s.c)); if (on.length !== 1 || on[0] !== s.src) throw new Error(`order ${rid} went to another sheet meanwhile; pick again from the new list`); }
@@ -4553,14 +4555,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const ok = await verifySaved([{ sh: target, name: tName, on: ids }, ...saves.map(r => ({ sh: r.sh, name: r.name, off: ids }))], ids, p => p.sheetId === target.sheetId && p.state !== "abandoned" && p.state !== "superseded", check, paint);
       if (ok) await Pool.update([...ids], { moveVerifiedAt: Date.now() }).catch(() => {});
       journal(rid, null);
-      agent({ metal: target.metal, run: target.runId }, "POOL", `Order ${rid} moved by ${who} from ${srcs.map(sheetName).join(", ")} to ${sheetName(target)} into the room freed there${ok ? "; both saved sheets read back and match" : "; the read-back flagged: " + check.detail}`);
+      agent({ metal: target.metal, run: target.runId }, "POOL", `Order ${rid} moved by ${who} from ${srcs.map(sheetName).join(", ")} to ${sheetName(target)} ${o.hop ? `by hand (${spots.length === 1 ? "1 piece" : spots.length + " pieces"}, dragged in the sheet window)` : "into the room freed there"}${ok ? "; both saved sheets read back and match" : "; the read-back flagged: " + check.detail}`);
       // the room it took is no longer free
-      const landed = target.placements.filter(p => spots.some(s => s.c.id === p.id));
-      let G2 = null; try { G2 = plateGrid(target); } catch (_) {}
-      const left = (FREED.get(sheetId) || []).filter(gh => freeStill(gh, G2, target, g => landed.some(s => Math.hypot(s.cxPt - g.x.p.cxPt, s.cyPt - g.x.p.cyPt) < Math.max(g.x.p.wPt || 20, g.x.p.hPt || 20) / 2)));
-      setFreed(sheetId, left);
+      if (!o.hop) {
+        const landed = target.placements.filter(p => spots.some(s => s.c.id === p.id));
+        let G2 = null; try { G2 = plateGrid(target); } catch (_) {}
+        const left = (FREED.get(sheetId) || []).filter(gh => freeStill(gh, G2, target, g => landed.some(s => Math.hypot(s.cxPt - g.x.p.cxPt, s.cyPt - g.x.p.cyPt) < Math.max(g.x.p.wPt || 20, g.x.p.hPt || 20) / 2)));
+        setFreed(sheetId, left);
+      }
       work.state = "done"; work.title = ok ? `Order ${rid} moved to ${tName}` : `Order ${rid} moved to ${tName} · check flagged`;
-      work.note = (ok ? "Verified: the saved sheets and piece records match. " : "") + `${srcs.map(s => esc(sName(s))).join(", ")} keep${srcs.length === 1 ? "s" : ""} filling with the next orders.`;
+      work.note = (ok ? "Verified: the saved sheets and piece records match. " : "") + (o.hop ? `Moved by ${esc(who)}; it is pinned where it was put on ${esc(tName)}.` : `${srcs.map(s => esc(sName(s))).join(", ")} keep${srcs.length === 1 ? "s" : ""} filling with the next orders.`);
       paint(); endFlow(work);
       if (window.RunCtl) RunCtl.poke();
       if (W.dlg && W.dlg.open && W.id === sheetId) open(sheetId, { keepWork: true, keepSet: false, glow: [...ids] }); else unland(rid);
@@ -4699,7 +4703,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return now - Math.max(FOLLOW.touch, FOLLOW.moved) < 600000 ? 13500 : 59500;   // (the beat is 2 s: these read at about 14 s and 60 s)
   };
   const memberSig = r => !r ? "gone" : JSON.stringify([(r.poolIds || []).map(String).sort(), (r.orders || []).map(String).sort(), r.setId || "", +r.laserDoneAt || 0, r.archived ? 1 : 0, (r.manual && +r.manual.at) || 0, (r.manualEdit && r.manualEdit.tab) || ""]);   // (Manual Control: a layout saved by hand, and who holds the sheet's claim now)
-  const followBusy = () => !!(MC.on || MC.claiming || W.hand || W.add || W.fill || W.flow || W.flying || W.leaving || W.folding || W.away || W.coming || (W.going && W.going.size) || (W.landing && W.landing.length));
+  const followBusy = () => !!(MC.on || MC.claiming || W.hand || W.hop || W.add || W.fill || W.flow || W.flying || W.leaving || W.folding || W.away || W.coming || (W.going && W.going.size) || (W.landing && W.landing.length));
   async function follow(now) {
     if (!W.dlg || !W.dlg.open || !W.rec || !W.id || document.hidden || FOLLOW.busy || followBusy()) return;
     if (FOLLOW.id !== W.id) { FOLLOW.id = W.id; FOLLOW.revs = null; FOLLOW.fails = 0; FOLLOW.moved = Date.now(); }
@@ -5919,6 +5923,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     };
   })();
   window.SheetWin = { remakeLabel, joinSet, joinInfo, takeOffOrder, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, pieceBase, _W: W };
+  /* ── the sheet hop (charm-nest-sheet-hop.js; Paul, 18 Oct 2026: on 10K and 14K sheets a person drags a charm onto the next or previous sheet
+     of its metal): this window's own pieces for it, nothing new. The move itself is moveIn (o.hop: pinned where it was put, the hop's own
+     guards), the room is the window's collision grid (plateGrid / variantOf: real outlines and the run's clearance). W.hop, set while a charm
+     is held, keeps the window's follow from reading the sheet again under the hand. (Set after the export: tests that slice the module up to
+     it run without it.) ── */
+  window.SheetWin.hopKit = {
+    W, open: (id, o) => open(id, o), switchSheet, plateGrid, variantOf, toPlate, hitPt, whoAmI, needName, note: swNote, paintFx, tip,
+    moveIn: (k, spots, target, who, o) => moveIn(k, spots, target, who, Object.assign({}, o || {}, { hop: true })),
+    word: sh => sheetWord(sh.sheetId, sh.fileBase, sh), ridOf, rowsOfOrder, busy, sheetWorking, sentToStation, flow: () => (W.flow ? W.flow.title : ""),
+    cancelled: rid => { try { return Cancelled.has(String(rid)); } catch (_) { return false; } }, back: () => backFace()
+  };
 })();
 
 /* Charm Nest · the Library turned over (Paul, 28 Sep 21:22: "add the back engraving view … to all places where a sheet is
