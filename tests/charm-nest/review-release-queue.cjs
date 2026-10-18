@@ -10,6 +10,8 @@
 //      placed, the card leaves Review, the timeline has the answer ("Decided by …") and the step; the override is in the run's record and comes back from it
 //   4  a Send to Review mark: the row has the button, pressing it takes the order out of Review
 //   5  "Unblock this SKU" on a blocked SKU's row still works: the master's own unblock, then the order goes back in line
+//   RELHOLD (Paul, 18 Oct 2026): the button is the card's "Release Hold" now, in the card's own column where Complete Order stood (no "Release to nesting queue", nothing under the reason), and a press
+//      keeps who and when (row.releaseHold) and puts the seal on the release step of the timeline (data.seal "releaseHold"); tests/charm-nest/release-hold.cjs has the seal, the Orders card and the cloud
 //   node tests/charm-nest/review-release-queue.cjs     (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>, SHOTS=<dir> saves a PNG of the Review rows)
 'use strict';
 const path = require('path'), fs = require('fs');
@@ -99,12 +101,13 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
       return b ? { text: b.textContent.trim(), cls: b.className, how: b.dataset.rvRelease, disabled: b.getAttribute('aria-disabled'), title: b.title, aria: b.getAttribute('aria-label'), unblock: u ? { text: u.textContent.trim(), cls: u.className } : null, box: box(b), row: box(n), parent: b.parentElement.className, reason: (n.querySelector('.reviewReason') || {}).textContent || '', rowActions: [...n.querySelectorAll('.rowActions button')].map(x => x.textContent.trim()) } : { none: true, rowActions: [...n.querySelectorAll('.rowActions button')].map(x => x.textContent.trim()) };
     }, rowSel(fx));
     const cat = await look(CAT2);
-    check(cat && cat.text === 'Release to nesting queue' && /\bgold\b/.test(cat.cls) && cat.how === 'override' && cat.disabled === null && /Cut SCHRODINGER CAT 2 although the master blocks it \(open outline\)/.test(cat.title), `2 · the blocked SKU has "Release to nesting queue", primary, enabled, and the title says what it does (${JSON.stringify(cat && [cat.text, cat.cls, cat.disabled, cat.title])})`);
+    check(cat && cat.text === 'Release Hold' && /\bgold\b/.test(cat.cls) && cat.how === 'override' && cat.disabled === null && /Cut SCHRODINGER CAT 2 although the master blocks it \(open outline\)/.test(cat.title), `2 · the blocked SKU has "Release Hold", primary, enabled, and the title says what it does (${JSON.stringify(cat && [cat.text, cat.cls, cat.disabled, cat.title])})`);
     check(cat && cat.unblock && cat.unblock.text === 'Unblock this SKU' && /\bghost\b/.test(cat.unblock.cls), `2 · "Unblock this SKU" is beside it, secondary (${JSON.stringify(cat && cat.unblock)})`);
-    check(cat && cat.parent === 'rvRel' && cat.box.x >= cat.row.x && cat.box.x + cat.box.w <= cat.row.x + cat.row.w && cat.box.y >= cat.row.y && cat.box.y + cat.box.h <= cat.row.y + cat.row.h + 1, `2 · it sits inside the row's box, under the reason (${JSON.stringify(cat && [cat.box, cat.row])})`);
-    check(cat && !cat.rowActions.includes('Release to nesting queue'), `2 · the row's own column of buttons is unchanged (${JSON.stringify(cat && cat.rowActions)})`);
+    check(cat && cat.parent === 'rowActions' && cat.box.x >= cat.row.x && cat.box.x + cat.box.w <= cat.row.x + cat.row.w && cat.box.y >= cat.row.y && cat.box.y + cat.box.h <= cat.row.y + cat.row.h + 1, `2 · it sits inside the row's box, in the card's own column of buttons (${JSON.stringify(cat && [cat.parent, cat.box, cat.row])})`);
+    check(cat && cat.rowActions.filter(t => t === 'Release Hold').length === 1 && !cat.rowActions.includes('Complete Order') && !cat.rowActions.includes('Release to nesting queue'), `2 · ONE Release Hold in that column, where Complete Order stood, and no "Release to nesting queue" (${JSON.stringify(cat && cat.rowActions)})`);
+    check(await page.evaluate(() => ![...document.querySelectorAll('button')].some(b => /Release to nesting queue/i.test(b.textContent)) && !document.querySelector('.rvRel')), '2 · no "Release to nesting queue" button anywhere on the page, none under a reason');
     const unk = await look(UNKNOWN);
-    check(unk && unk.text === 'Release to nesting queue' && /\bghost\b/.test(unk.cls) && unk.disabled === 'true' && /SKU NO_SUCH_DESIGN_77 has no design in any master file yet: pick its charm/.test(unk.title) && unk.aria.includes(unk.title.slice(0, 40)), `2 · the unknown SKU shows the same button, greyed, with the one plain reason as title and aria text (${JSON.stringify(unk && [unk.disabled, unk.title])})`);
+    check(unk && unk.text === 'Release Hold' && /\bghost\b/.test(unk.cls) && unk.disabled === 'true' && /SKU NO_SUCH_DESIGN_77 has no design in any master file yet: pick its charm/.test(unk.title) && unk.aria.includes(unk.title.slice(0, 40)), `2 · the unknown SKU shows the same button, greyed, with the one plain reason as title and aria text (${JSON.stringify(unk && [unk.disabled, unk.title])})`);
     await shot('02-review-rows');
     const before = await rowOf(UNKNOWN), n0 = (await page.evaluate(() => window.__toasts)).length;
     await page.$eval(rowSel(UNKNOWN) + ' [data-rv-release]', b => b.click());   // (a greyed button is aria-disabled, not disabled: it can be pressed, and says why; Playwright's click() waits for it to be enabled)
@@ -112,7 +115,7 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     const after = await rowOf(UNKNOWN), toasts2 = await page.evaluate(() => window.__toasts.slice());
     check(JSON.stringify(before) === JSON.stringify(after) && toasts2.length === n0 + 1 && /has no design in any master file yet/.test(toasts2[toasts2.length - 1][1]), `2 · pressing the greyed button says why and changes nothing (${JSON.stringify(toasts2.slice(-1))})`);
 
-    // ── 3 · Release to nesting queue on the blocked SKU ──
+    // ── 3 · Release Hold on the blocked SKU ──
     const master0 = await page.evaluate(() => Master.entryFor('SCHRODINGER CAT 2').blocked);
     const t3 = Date.now();
     await page.click(rowSel(CAT2) + ' [data-rv-release]');
@@ -132,6 +135,9 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     check(dec.length >= 1 && /^Decided by Test Operator · Blocked SKU: Released to the nesting queue: SCHRODINGER CAT 2 is cut although it is blocked \(open outline\)/.test(dec[0].text), `3 · the timeline records the answer: "${dec[0] && dec[0].text}"`);
     const rel3 = await until(() => { const l = tl(CAT2.rid).filter(e => e.type === 'released'); return l.length && l; }, 60000, 'the released step');
     check(rel3.length === 1 && /^Released from hold by Test Operator · placed on /.test(rel3[0].text), `3 · and the step of the release: "${rel3[0] && rel3[0].text}"`);
+    check(rel3[0] && rel3[0].data && rel3[0].data.seal === 'releaseHold' && +rel3[0].data.sealAt >= t3 - 1000, `3 · the step carries the Release Hold press's seal (RELHOLD: ${JSON.stringify(rel3[0] && rel3[0].data)})`);
+    const kept3 = await page.evaluate(k => B.orders.byKey.get(k).releaseHold || null, keyOf(CAT2));
+    check(kept3 && kept3.by === 'Test Operator' && kept3.at >= t3 - 1000, `3 · who and when are kept on its line (${JSON.stringify(kept3)})`);
     // persistence: in the run's lines, and back from them
     const rec = await page.evaluate(k => { const row = B.orders.byKey.get(k), r = Orders.lineRecord(row)[1], back = Orders.rowFromRecord(k, JSON.parse(JSON.stringify(r))); return { rec: r.blockOverride, back: back.blockOverride }; }, keyOf(CAT2));
     check(rec.rec && rec.rec.sku === 'SCHRODINGER CAT 2' && rec.back && rec.back.sku === 'SCHRODINGER CAT 2' && rec.back.by === 'Test Operator', `3 · the release is in the line's record and comes back from it (${JSON.stringify(rec)})`);

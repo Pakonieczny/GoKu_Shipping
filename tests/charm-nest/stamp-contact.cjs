@@ -3,7 +3,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),{JSDOM}=require('jsdom');
 const source=fs.readFileSync(path.join(__dirname,'../../charm-nest-motion.js'),'utf8');
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
-const FAMILIES=['received','prepared','engraving','laser','finishing','fulfilment','exceptions','cancelled','monogram'];
+const FAMILIES=['received','prepared','engraving','laser','finishing','fulfilment','exceptions','cancelled','monogram','release'];   // (RELHOLD, 18 Oct 2026: the Release Hold seal, the tenth)
 const MODEL={action:'BACK ENGRAVING',date:'30 SEP 2026',time:'9:44 PM',by:'Paul Konieczny'};
 const dom=new JSDOM('<section class="setCard"><span class="sealRow"></span></section><section class="stampHost"><button>Approved</button></section>',{runScripts:'outside-only',pretendToBeVisual:true});
 const w=dom.window,d=w.document,moves=[],pending=[];
@@ -47,7 +47,7 @@ async function movingSource(){
 
 (async()=>{
   try{
-    assert.equal(typeof w.Seal.face,'function','one shared face API represents all nine families');assert.equal(typeof w.Seal.tool,'function','matching stamp API is exposed');
+    assert.equal(typeof w.Seal.face,'function','one shared face API represents all ten families');assert.equal(typeof w.Seal.tool,'function','matching stamp API is exposed');
     const outlines=[];
     for(const family of FAMILIES){
       const svg=parse(w.Seal.face({...MODEL,family})),outline=svg.querySelector('[data-seal-outline]');
@@ -62,7 +62,7 @@ async function movingSource(){
         const clip=tool.querySelector('clipPath path');assert(clip,`${family}: grain is clipped to the shaped base`);assert.equal(clip.getAttribute('d'),outline.getAttribute('d'),`${family}: texture cannot extend outside the family shape`);
       }
     }
-    assert.equal(new Set(outlines).size,9,'all nine families keep distinct silhouettes');
+    assert.equal(new Set(outlines).size,10,'all ten families keep distinct silhouettes');
     const row=d.querySelector('.sealRow');
     const contacts=[84,66,48].flatMap(size=>[-12,11].map(rotation=>({size,rotation,family:'engraving'}))).concat([{size:84,rotation:-8,family:'cancelled',generic:true},{size:66,rotation:11,family:'finishing',generic:true}]);
     for(const {size,rotation,family,generic} of contacts){
@@ -86,6 +86,6 @@ async function movingSource(){
     assert.equal(tool.querySelector('[data-stamp-contact]').getAttribute('d'),seal.querySelector('[data-seal-outline]').getAttribute('d'),'button uses the actual face outline');
     pending.shift()();await wait(1);pending.shift()();await stamping;assert.equal(d.querySelector('.sealTool'),null);
     await movingSource();
-    console.log('PASS: nine matching silhouettes; clipped grain; exact responsive/rotated contact; tool and ripple follow movement/resize throughout the full queued stamp and stop tracking on cleanup');
+    console.log('PASS: ten matching silhouettes; clipped grain; exact responsive/rotated contact; tool and ripple follow movement/resize throughout the full queued stamp and stop tracking on cleanup');
   }finally{w.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

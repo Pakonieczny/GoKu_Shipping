@@ -707,6 +707,9 @@
     const m = { family, action, icon: plain ? "plain" : CANONICAL_ICON[e.type], path: plain || CANONICAL_ICON[e.type] ? undefined : ICON[printed ? "qr" : kindOf(e.type).ic] || ICON.dot, date: at ? dateOf(at) : "", time: at ? timeOf(at) : "", by: e.ghost || (!at && !String(e.by || "").trim()) ? "" : personOf(e), at };
     // (MONOSEAL: the monogram seal carries the three letters of the monogram approved, as the seal on the card does; an event that does not say them draws the pictogram of three letters)
     if (e.type === "monogramApproved") { const L = String((e.data && e.data.letters) || "").toUpperCase(); if (/^[A-Z]{3}$/.test(L)) m.letters = L; }
+    // (RELHOLD, Paul 18 Oct 2026: a hold released with the Review card's Release Hold button says so in its data, seal "releaseHold": its step in the lane is the RELEASE HOLD seal the card was
+    //  stamped with, the release family; a hold released anywhere else (Orders › On hold, the sheet window) is drawn as it always was)
+    if (e.type === "released" && e.data && e.data.seal === "releaseHold") Object.assign(m, { family: "release", action: "RELEASE HOLD", icon: "release", path: undefined });
     return m;
   }
   /** One stamp as SVG. full: the face that reads (ring words, icon, date, time, name); otherwise edge + big icon.
