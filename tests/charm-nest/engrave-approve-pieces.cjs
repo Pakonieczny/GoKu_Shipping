@@ -209,6 +209,8 @@ const fails = [], note = (ok, what, more) => { console.log((ok ? '  PASS ' : '  
       const went = await page.evaluate(() => ({ went: window.__went, shown: !!document.querySelector('#egQueue .egGuide:not([hidden])') }));
       note(lv && went.went === 1 && !went.shown, '"Leave" does the press once and the line is gone', JSON.stringify(went));
       // the REAL buttons of the detail (not a call into the guide): close, Back and Next are held back at the order's edge and free inside it
+      // (HDRMETA, Paul 18 Oct 2026: the head lost its size · kind line and fits on one line, so its close sits under the fixed "Laser or Design" bar a fresh browser shows; it is put away first, as a person would)
+      await page.evaluate(() => { const x = document.querySelector('.cnNameBar .cnNbX'); if (x) x.click(); }); await R.settle(page, 300);
       if (await page.evaluate(() => !!document.querySelector('#egQueue [data-a=close]'))) {
         await openDetail(kGF2); d = await DETAIL();
         await page.click('#egQueue [data-a=close]'); await R.settle(page, 500);

@@ -83,7 +83,7 @@ ADD('solo', '4200683017', 'Name One', [MONO('APV', 1)], 14);
     const openList = () => page.evaluate(() => { CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null, pin: null, openDone: null }); Engrave.render(); });
     const monoRows = () => page.evaluate(() => [...document.querySelectorAll('#egQueue .doneRow[data-kind=monogram]')].map(r => ({ rid: r.dataset.rid, key: r.dataset.open || r.dataset.key, slot: r.dataset.slot || '', tag: (r.querySelector('.egPiece') || {}).textContent || '', thumb: (r.querySelector('[data-mw-thumb]') || { dataset: {} }).dataset.mwThumb || '', thumbText: ((r.querySelector('.mwThumb') || {}).textContent || '').trim(), letters: ((r.querySelector('.egMonoLetters') || {}).textContent || '').trim(), hasSvg: !!r.querySelector('.mwThumb svg') })));
     const card = () => page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (!c) return null; const mw = c.querySelector('.mw');
-      return { mono: !!c.dataset.mono, key: c.dataset.key, mw: !!mw, mwKey: mw && mw.dataset.key, mwSlot: mw && mw.dataset.slot, mwPiece: mw && mw.dataset.piece, mwState: mw && mw.dataset.state, widgets: c.querySelectorAll('.mw').length, sub: ((c.querySelector('[data-mono-sub]') || {}).textContent || ''),
+      return { mono: !!c.dataset.mono, key: c.dataset.key, mw: !!mw, mwKey: mw && mw.dataset.key, mwSlot: mw && mw.dataset.slot, mwPiece: mw && mw.dataset.piece, mwState: mw && mw.dataset.state, widgets: c.querySelectorAll('.mw').length, sub: ((c.querySelector('.rh .sub, [data-mono-sub]') || {}).textContent || ''), meta: !!c.querySelector('.rh .sub, [data-mono-sub]'),
         strip: c.querySelector('.egPcStrip') ? c.querySelector('.egPcStrip').innerText.replace(/\s+/g, ' ').trim() : '', tabs: [...c.querySelectorAll('.egPcTab')].map(b => b.dataset.piece), letters: mw ? [0, 1, 2].map(i => mw.querySelector(`[data-mw-letter="${i}"]`).value).join('') : '' }; });
     const cardKey = () => page.evaluate(() => (document.querySelector('#egQueue .rvItem[data-kind=placement]') || { dataset: {} }).dataset.key);
     const waitCard = (k, what) => page.waitForFunction(k => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return c && c.dataset.key === k && c.querySelector('.mw'); }, k, { timeout: 60000 }).catch(() => console.log('   (waiting for ' + what + ')'));
@@ -111,13 +111,14 @@ ADD('solo', '4200683017', 'Name One', [MONO('APV', 1)], 14);
     await waitCard(`${kTwo}#C1`, 'the card of piece 1');
     let c = await card();
     check(c && c.mono && c.key === `${kTwo}#C1` && c.widgets === 1 && c.mwKey === `${kTwo}#C1` && c.mwSlot === 'C1' && c.mwPiece === '1', 'piece 1 opens ITS card: ONE widget, of piece 1 (' + JSON.stringify(c && { key: c.key.slice(-9), widgets: c.widgets, slot: c.mwSlot }) + ')');
-    check(c && /Piece 1 of 2/.test(c.sub), 'its head says "Piece 1 of 2": "' + (c && c.sub) + '"');
+    // HDRMETA (Paul, 18 Oct 2026: "Remove 'Thin Strokes', 'charm', '5x8.5' text from the UI."): the head has no "Monogram · Piece 1 of 2 · A P V" line under the number; the strip's tab says which piece it is
+    check(c && !c.meta && c.sub === '', 'its head draws no meta line under the number (HDRMETA): "' + (c && c.sub) + '"');
     check(c && /Piece 1 of 2/i.test(c.strip) && c.tabs.join() === `${kTwo}#C1,${kTwo}#C2`, 'the strip of the order lists both pieces: "' + (c && c.strip) + '"');
     await untilPiece(kTwo, 1, readyOrApproved, 'piece 1 made');
     await settle(700); await shot('detail-piece1-1440');
     // Next -> piece 2, Back -> piece 1
     await page.click('#egQueue .rvItem [data-a=next]'); await waitCard(`${kTwo}#C2`, 'Next to piece 2'); c = await card();
-    check(c && c.key === `${kTwo}#C2` && c.widgets === 1 && c.mwSlot === 'C2' && /Piece 2 of 2/.test(c.sub) && /Piece 2 of 2/i.test(c.strip), 'Next goes to piece 2 of the SAME order: its own card and widget ("' + (c && c.sub) + '")');
+    check(c && c.key === `${kTwo}#C2` && c.widgets === 1 && c.mwSlot === 'C2' && !c.meta && /Piece 2 of 2/i.test(c.strip), 'Next goes to piece 2 of the SAME order: its own card and widget ("' + (c && c.strip) + '")');
     await page.click('#egQueue .rvItem [data-a=prev]'); await waitCard(`${kTwo}#C1`, 'Back to piece 1'); c = await card();
     check(c && c.key === `${kTwo}#C1` && c.mwSlot === 'C1', 'Back returns to piece 1');
     // a strip button picks the other piece
