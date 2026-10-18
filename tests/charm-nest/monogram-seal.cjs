@@ -82,7 +82,7 @@ const finish = () => { console.log(`\nmonogram-seal: ${nCheck - fails.length}/${
     // ═══ 1 · the seal ═══
     const fam = await page.evaluate(() => ({ n: Object.keys(Seal.FAMILY).length, mono: !!Seal.FAMILY.monogram, ink: Seal.FAMILY.monogram && Seal.FAMILY.monogram.ink, kinds: Seal.INK.monogramApproved, model: Seal.modelOf({ how: 'monogramApproved', at: 1760000000000, by: 'X', letters: 'apv', n: 2, of: 3 }),
       title: Seal.titleOf({ how: 'monogramApproved', at: 1760000000000, by: 'Sam', letters: 'APV', n: 2, of: 3 }), html: Seal.html({ how: 'monogramApproved', at: 1760000000000, by: 'Sam', letters: 'APV', id: 'k' }, 50, 'monogramSeal') }));
-    check(fam.n === 9 && fam.mono && fam.ink === '#4d3f99' && fam.kinds === '#4d3f99', 'Seal has nine families and the monogram one is indigo #4d3f99: ' + fam.n);
+    check(fam.n === 10 && fam.mono && fam.ink === '#4d3f99' && fam.kinds === '#4d3f99', 'Seal has ten families (RELHOLD added the release one) and the monogram one is indigo #4d3f99: ' + fam.n);
     check(fam.model.family === 'monogram' && fam.model.action === 'MONOGRAM' && fam.model.letters === 'APV' && fam.model.of === 3, 'modelOf: family monogram, action MONOGRAM, the letters and the piece: ' + JSON.stringify(fam.model));
     check(/^Monogram APV approved by Sam · .*2025.* · piece 2 of 3$/.test(fam.title), 'the seal says who and when: "' + fam.title + '"');
     check(/seal-monogramApproved/.test(fam.html) && /data-process-seal="k"/.test(fam.html) && /data-seal-family="monogram"/.test(fam.html) && />MONOGRAM</.test(fam.html), 'Seal.html draws the process seal of kind monogramApproved with the word MONOGRAM');
