@@ -166,7 +166,9 @@ const check = (ok, msg) => { nCheck++; if (!ok) fails.push(msg); console.log((ok
     await untilWidget(rid('mono'), s => s.letters === 'AQV' && s.state === 'ready', 'AQV made');
     check(await page.evaluate(() => { const n = document.activeElement; const ok0 = n && n.matches('[data-mw-letter]'); Engrave.render(); Engrave.render(); return ok0 && n === document.activeElement && document.activeElement.isConnected; }), 'typing in a letter box: a re-render of the Engrave tab leaves the focused box (and its caret) alone');
     await settle(500);
-    check(/A Q V/.test((await page.evaluate(() => document.querySelector('#egQueue .rvItem[data-mono] [data-mono-sub]').textContent))), 'the card\'s head follows the letters (A Q V)');
+    // HDRMETA (Paul, 18 Oct 2026: "Remove 'Thin Strokes', 'charm', '5x8.5' text from the UI."): the head has no "Monogram · A P V · size" line under the number, as an engraved piece's head has no size · kind line; the letters are the widget's boxes
+    { const h = await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-mono]'), rh = c.querySelector('.rh'); return { sub: !!rh.querySelector('.sub, [data-mono-sub]'), head: rh.textContent, boxes: [...c.querySelectorAll('[data-mw-letter]')].map(n => n.value).join('') }; });
+      check(!h.sub && !/Monogram|A Q V|THIN STROKES/i.test(h.head) && h.boxes === 'AQV', 'the card\'s head draws no meta line (no "Monogram · A Q V"); the letters are in the widget\'s boxes: ' + JSON.stringify(h)); }
     await page.evaluate(() => document.activeElement.blur());
     await page.click('#egQueue .rvItem[data-mono] [data-mw-letter="1"]'); await page.keyboard.type('P');
     await untilWidget(rid('mono'), s => s.letters === 'APV' && s.state === 'ready', 'APV again');

@@ -70,7 +70,7 @@ const DETAIL = () => {
   const strip = [...c.querySelectorAll('.pvMain .engSet .engSetPc')].map(b => ({ piece: b.dataset.piece, ear: b.dataset.ear || '', label: txt(b.querySelector('.engSetLbl')), len: txt(b.querySelector('.engSetLen')), pressed: b.getAttribute('aria-pressed') === 'true', canvas: !!b.querySelector('.engSetPic canvas'), frame: frame(b.querySelector('.engSetPic')), box: (() => { const r = b.getBoundingClientRect(); return { l: r.left, r: r.right }; })() }));
   const card = c.querySelector('.pvSetup .engCard'), approve = c.querySelector('.pvApproval [data-a=approve]'), pa = c.querySelector('.pvApproval').getBoundingClientRect(), st = c.querySelector('.pvMain .engSet');
   return {
-    key: c.dataset.key, sub: txt(c.querySelector('.reviewIdentity .sub')), tabs, strip, note: txt(c.querySelector('.pvMain .engSetNote')), stripBox: st ? (() => { const r = st.getBoundingClientRect(); return { l: r.left, r: r.right }; })() : null, approveBox: { l: pa.left, r: pa.right },
+    key: c.dataset.key, sub: txt(c.querySelector('.reviewIdentity .sub')), meta: !!c.querySelector('.rh .sub'), tabs, strip, note: txt(c.querySelector('.pvMain .engSetNote')), stripBox: st ? (() => { const r = st.getBoundingClientRect(); return { l: r.left, r: r.right }; })() : null, approveBox: { l: pa.left, r: pa.right },
     cardTitle: card ? txt(card.querySelector('.engName')) : '', cardThumbs: card ? [...card.querySelectorAll('.engFace')].map(f => ({ face: f.dataset.face, frame: frame(f.querySelector('.engThumb')) })) : [],
     approve: !!approve && !approve.disabled, texts: txt(c).length, turn: (c.querySelector('input[data-a=turn]') || {}).value, bothBars: [...c.querySelectorAll('button')].map(b => txt(b)).filter(t => /both bars|all bars|approve all|both pieces/i.test(t)),
     counter: txt(c.querySelector('.reviewProgress .kind')), canvasW: (c.querySelector('.backHost canvas') || {}).width || 0
@@ -108,7 +108,8 @@ const settle = (page, ms = 700) => R.settle(page, ms);
     await R.openEngraveDetail(w, 'bars', { face: 'back', slot: 'D1' }); await settle(page, 900);
     let d = await page.evaluate(`(${DETAIL})()`);
     note(d && d.tabs.length === 2 && d.tabs.map(t => t.chip).join('|') === 'LARGE BAR · 18″|SMALL BAR · 16″', 'the piece switch names the bars and the chain each hangs on, not "Disc 1 of 2"', d && d.tabs.map(t => t.chip).join('|'));
-    note(d && d.sub.startsWith('BAR_1548') && d.cardTitle === 'BAR 1548 · 18″', 'the large bar\'s detail says its own design (header BAR_1548, card "BAR 1548 · 18″")', d && (d.sub + ' / ' + d.cardTitle));
+    // HDRMETA (Paul, 18 Oct 2026: "Remove 'Thin Strokes', 'charm', '5x8.5' text from the UI."): the head no longer draws the design · kind · size line under the order number; the card's own title names the bar
+    note(d && !d.meta && d.cardTitle === 'BAR 1548 · 18″', 'the large bar\'s detail says its own design (card "BAR 1548 · 18″"; no meta line in the head, HDRMETA)', d && (d.sub + ' / ' + d.cardTitle));
     note(d && d.strip.length === 2 && d.strip.map(s => s.label + ' ' + s.len).join('|') === 'Large bar 18″|Small bar 16″', 'both bars are shown side by side above the work area, each with its chain length: the thinner (small) bar on the shorter chain', d && d.strip.map(s => s.label + ' ' + s.len).join('|'));
     note(d && d.strip.length === 2 && d.strip.every(s => s.canvas) && d.strip[0]?.pressed && !d.strip[1]?.pressed, 'both bars are drawn (their real geometry) and the one being edited is marked', d && d.strip.map(s => s.pressed + ':' + s.canvas).join(' '));
     const f0 = d && d.strip[0]?.frame, f1 = d && d.strip[1]?.frame, pad = 0.04 * 25.9, expectH = (3.9 + 2 * pad) / (4.9 + 2 * pad);
@@ -123,7 +124,7 @@ const settle = (page, ms = 700) => R.settle(page, ms);
     await settle(page, 1100);
     d = await page.evaluate(`(${DETAIL})()`);
     note(!!d && /#D2$/.test(d.key || '') && d.tabs[1]?.pressed && d.strip[1]?.pressed && !d.strip[0]?.pressed, 'a press on the small bar\'s picture shows the small bar (switch and strip agree)', d && d.key);
-    note(!!d && d.sub.startsWith('SKINNY_0191') && d.cardTitle === 'SKINNY 0191 · 16″', 'its header says SKINNY_0191 (not the line\'s first design) and its card "SKINNY 0191 · 16″"', d && (d.sub + ' / ' + d.cardTitle));
+    note(!!d && !d.meta && d.cardTitle === 'SKINNY 0191 · 16″', 'its card says "SKINNY 0191 · 16″" (not the line\'s first design; no meta line in the head, HDRMETA)', d && (d.sub + ' / ' + d.cardTitle));
     note(!!d && d.cardThumbs.length === 2 && d.cardThumbs.every(t => t.frame), 'the small bar\'s Front and Back are drawn in the panel card', d && JSON.stringify(d.cardThumbs));
     const ANG = () => page.evaluate(() => Object.fromEntries([...Engrave.items().values()].filter(j => j.row.order.receiptId === '4290000151').map(j => [j.key.replace(/^\d+_\d+/, ''), j.fit ? Math.round((j.fit.angle || 0) * 10) / 10 : null])));
     const angles0 = await ANG();
@@ -230,7 +231,7 @@ const settle = (page, ms = 700) => R.settle(page, ms);
     // ═══ G · nothing else changed: three plain discs of one design ═══
     await R.openEngraveDetail(w, 'discsCtl', { face: 'back', slot: 'D2' }); await settle(page, 900);
     d = await page.evaluate(`(${DETAIL})()`);
-    note(!!d && d.tabs.map(t => t.chip).join('|') === 'DISC 1 of 3|DISC 2 of 3|DISC 3 of 3' && d.strip.length === 0 && d.sub.startsWith('COMET_9427') && /^COMET 9427 · Disc 2$/.test(d.cardTitle), 'three plain discs: "DISC n of 3" tabs, no strip, the line\'s own design and "COMET 9427 · Disc 2"', d && JSON.stringify([d.tabs.map(t => t.chip), d.strip.length, d.sub, d.cardTitle]));
+    note(!!d && d.tabs.map(t => t.chip).join('|') === 'DISC 1 of 3|DISC 2 of 3|DISC 3 of 3' && d.strip.length === 0 && !d.meta && /^COMET 9427 · Disc 2$/.test(d.cardTitle), 'three plain discs: "DISC n of 3" tabs, no strip, the line\'s own design and "COMET 9427 · Disc 2"', d && JSON.stringify([d.tabs.map(t => t.chip), d.strip.length, d.sub, d.cardTitle]));
     await R.openOrderWindow(w, 'discsCtl'); await page.evaluate(() => { const b = document.querySelector('#owPcSum .owPcX'); if (b) b.click(); }); await settle(page, 700);
     o = await page.evaluate(`(${OWIN})()`);
     note(o.lens === null && o.note === '' && o.cards.map(c => c.title).join('|') === 'COMET 9427 · Disc 1|COMET 9427 · Disc 2|COMET 9427 · Disc 3' && o.subs.join('|') === 'Disc 1 of 3|Disc 2 of 3|Disc 3 of 3' && o.saidBlocks === 0, 'three plain discs in the order window: no bar labels, the cards and the list as they always were', JSON.stringify([o.lens, o.cards.map(c => c.title), o.subs]));
