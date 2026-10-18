@@ -116,8 +116,13 @@ const libSkus = st => st.list('Charm_Master_Index').map(e => e._id).sort();
     const sizeS = await scene({ page: [420, 300], bodies: [{ shape: 'house', x: 60, y: 150, w: 45, h: 45, ink: A }], labels: [{ text: 'ALPHA_1 · S', cx: 82.5, top: 149 }] });
     await br.upload(sizeS, 'SIZES.ai');
     const sizeSM = await scene({ page: [420, 300], bodies: [{ shape: 'house', x: 60, y: 150, w: 45, h: 45, ink: A }, { shape: 'house', x: 200, y: 150, w: 60, h: 60, ink: A }], labels: [{ text: 'ALPHA_1 · S', cx: 82.5, top: 149 }, { text: 'ALPHA_1 · M', cx: 230, top: 149 }] });
-    r = await br.upload(sizeSM, 'SIZES.ai'); j = await job();
+    r = await br.upload(sizeSM, 'SIZES.ai', { held: 'keep' }); j = await job();
     ok(j.state === 'done' && j.written === 1 && j.held === 1 && Object.keys(st.doc('Charm_Master_Index', 'ALPHA_1').sizes || {}).includes('M'), 'a new size of a held SKU is built, not skipped: ' + JSON.stringify({ w: j.written, h: j.held, sizes: Object.keys(st.doc('Charm_Master_Index', 'ALPHA_1').sizes || {}) }));   // (the stand-in merges a document one level deep: the real library keeps size S beside M)
+    // ...and by default (MASTERNEW) the newer version of the file also re-draws the size S it held, and says so
+    await wipe(); await br.upload(sizeS, 'SIZES.ai');
+    r = await br.upload(sizeSM, 'SIZES.ai'); j = await job();
+    { const rep = await page.evaluate(() => ([...B.master.jobs.values()].pop().replaced || []).map(x => x.sku + (x.size ? ' · ' + x.size : '')));
+      ok(j.state === 'done' && j.written === 2 && j.held === 0 && rep.join() === 'ALPHA_1 · S' && Object.keys(st.doc('Charm_Master_Index', 'ALPHA_1').sizes || {}).sort().join() === 'M,S', 'the newer version of the file re-draws the held size and builds the new one: ' + JSON.stringify({ w: j.written, h: j.held, rep })); }
 
     // 12 · the same file dropped twice at once starts one run
     await wipe(); { const file = require('path').join(require('os').tmpdir(), 'twice-' + Date.now() + '.ai'); require('fs').writeFileSync(file, sheet);
