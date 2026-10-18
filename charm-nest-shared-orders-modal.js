@@ -612,7 +612,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     box.querySelector('[data-keep]').onclick = () => closeAsk(M, card, true);
     yes.onclick = () => {
       const v = (box.querySelector('input:checked') || {}).value; if (!v || yes.disabled) return;
-      if (need) { const n = nameIn.value.trim(); try { if (W.B) B.employee = n; localStorage.setItem('cn.employee', n); } catch (_) {} }
+      if (need && !who()) { const n = nameIn.value.trim(); try { if (W.B) B.employee = n; else localStorage.setItem('cn.employee', n); } catch (_) {} }   // (a sign-in only, through the one setter: the account chip and the sessions follow; Paul, 18 Oct 2026)
       takeOff(M, card, o, v);
     };
     box.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target === nameIn) { e.preventDefault(); yes.click(); } });

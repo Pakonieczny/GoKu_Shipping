@@ -11,8 +11,9 @@
   const CODE = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
   const METAL_OF_CODE = Object.fromEntries(Object.entries(CODE).map(([k, v]) => [v, k]));
   const colorOf = m => (METALS.find(x => x.key === m) || {}).color || "#999";
-  // the operator's name, as the bridge keeps it (its helpers are inside the bridge's own scope)
-  const whoAmI = () => (window.CNEmployee && typeof CNEmployee.name === "function" && CNEmployee.name()) || (window.B && (B.employee || (B.link && B.link.state && B.link.state() && B.link.state().employee))) || (() => { try { return localStorage.getItem("cn.employee") || ""; } catch (_) { return ""; } })();
+  // the operator's name, as the bridge keeps it (its helpers are inside the bridge's own scope): the sorter's signed-in person only, never the
+  // Design Station frame's own stored name (Paul, 18 Oct 2026: everything is recorded under the person signed in)
+  const whoAmI = () => (window.CNEmployee && typeof CNEmployee.name === "function" && CNEmployee.name()) || (window.B && B.employee) || (() => { try { return localStorage.getItem("cn.employee") || ""; } catch (_) { return ""; } })();
   // the name that goes with each change, asked for in a small bar inside the window (never a browser pop-up over it);
   // once given, the change the person pressed carries on by itself
   function needName(retry) {
@@ -23,7 +24,7 @@
     const inp = bar.querySelector("input"); try { inp.value = (window.CNEmployee && CNEmployee.last && CNEmployee.last()) || ""; } catch (_) {}      // (the last name used on this computer is ready: Continue keeps it)
     const go = () => {
       const v = inp.value.trim(); if (!v) return inp.focus();
-      if (window.B) B.employee = v; try { localStorage.setItem("cn.employee", v); } catch (_) {}
+      if (!whoAmI()) { if (window.B) B.employee = v; else try { localStorage.setItem("cn.employee", v); } catch (_) {} }   // (a sign-in only, through the one setter: the account chip and the sessions follow)
       hideName(); if (retry) retry();
     };
     inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); go(); } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); hideName(); } };
@@ -3463,7 +3464,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       requestAnimationFrame(() => (inp || yes).focus());
       yes.onclick = e => {
         e.stopPropagation(); let who = whoAmI();
-        if (!who && inp) { who = inp.value.trim(); if (!who) { inp.focus(); return; } if (window.B) B.employee = who; try { localStorage.setItem("cn.employee", who); } catch (_) {} }
+        if (!who && inp) { who = inp.value.trim(); if (!who) { inp.focus(); return; } if (window.B) { B.employee = who; who = whoAmI() || who; } else try { localStorage.setItem("cn.employee", who); } catch (_) {} }   // (through the one setter: the tidied name)
         clearTimeout(t); document.removeEventListener("pointerdown", away, true); inp?.remove(); doRestore(node, c, yes, back, who);
       };
     }

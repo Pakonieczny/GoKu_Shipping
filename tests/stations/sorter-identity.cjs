@@ -188,33 +188,42 @@ async function sorterPage(browser, srv, errors, { sandbox = false } = {}) {
       assert.strictEqual(await page.evaluate(() => localStorage.getItem('cn.employee')), null, 'and not kept');
       assert.strictEqual(await page.evaluate(() => StationActivity.who()), null, 'nobody is signed in by a number');
       assert.strictEqual(await page.evaluate(pin => CNEmployee.normalize(' ' + pin + ' '), PIN), '');
-      // (the field refuses it too, and keeps the name that was there; the press that opened it is not lost)
+      // ONE signed-in person (Paul, 18 Oct 2026): with someone signed in the name field never opens (no second way to type another person):
+      // the Account panel does, and the person stays
       await page.evaluate(() => { B.employee = 'Tess Welder'; });
+      assert.strictEqual(await page.evaluate(() => CNEmployee.edit({})), 'Tess Welder', 'signed in: the press goes on under the person signed in');
+      await page.waitForSelector('#cnAcctPanel');
+      assert.strictEqual((await page.$$(nameBar)).length, 0, 'signed in: no name field opens');
+      assert.strictEqual(await page.evaluate(() => B.employee), 'Tess Welder', 'and the person is unchanged');
+      await page.evaluate(() => CNAccount.close());
+      // (nobody signed in: the field is the sign-in; it refuses a number and keeps nobody; the press that opened it is not lost)
+      await page.evaluate(() => { B.employee = ''; });
       await page.evaluate(() => { CNEmployee.edit({}); });
       await page.waitForSelector(nameBar + '[data-kind="edit"]');
       assert.strictEqual(await page.evaluate(() => document.activeElement === document.querySelector('.cnNameBar input')), true, 'asked for by a press: it takes focus');
-      assert.strictEqual(await page.inputValue(nameBar + ' input'), 'Tess Welder', 'it shows the name now kept');
+      assert.strictEqual(await page.inputValue(nameBar + ' input'), 'Tess Welder', 'it has the last name used on this computer ready');
       await page.fill(nameBar + ' input', PIN); await page.press(nameBar + ' input', 'Enter');
       await page.waitForFunction(() => { const e = document.querySelector('.cnNameBar .cnNbErr'); return e && !e.hidden && /number/.test(e.textContent); });
-      assert.strictEqual(await page.evaluate(() => B.employee), 'Tess Welder', 'the name that was there stays');
+      assert.strictEqual(await page.evaluate(() => B.employee), '', 'a number signs nobody in');
       await page.press(nameBar + ' input', 'Escape');
       await page.waitForFunction(() => !document.querySelector('.cnNameBar'));
-      assert.strictEqual(await page.evaluate(() => B.employee), 'Tess Welder', 'Esc puts the field away and changes nothing');
+      assert.strictEqual(await page.evaluate(() => B.employee), '', 'Esc puts the field away and changes nothing');
       await flush();
       const allReq = rec.reqs.map(r => r.body).join('\n') + JSON.stringify(rec.events) + JSON.stringify(rec.sessions);
       assert(!allReq.includes(PIN), 'the number is in no request');
 
-      // the name buttons use the field, not a browser pop-up: the order window's name chip and Review's
+      // no second copy of the name (Paul, 18 Oct 2026: "I should not be seeing my name logged in and also again my name"): Review's toolbar has
+      // no name pill, whoever is signed in; the account chip in the top bar is the one place the name shows
       await page.evaluate(() => { B.employee = ''; });
       await page.evaluate(() => { CN.setMode('review'); Review.render(); });
-      await page.waitForSelector('#rvName');
-      assert.match(await page.textContent('#rvName'), /set your name/i, 'the Review name button says no name is set');
-      await page.click('#rvName');
-      await page.waitForSelector(nameBar + '[data-kind="edit"]');
-      await page.fill(nameBar + ' input', 'pat  PACKER'); await page.click(nameBar + ' button[type="submit"]');
-      await page.waitForFunction(() => !document.querySelector('.cnNameBar') && B.employee === 'Pat Packer');
-      await page.waitForFunction(() => /Pat Packer/.test((document.querySelector('#rvName') || {}).textContent || ''));   // (Review repaints when the page is idle)
-      assert.deepStrictEqual(await page.evaluate(() => window.__prompts), [], 'no browser pop-up from the name buttons');
+      await page.waitForSelector('#reviewView .ordBar #rvOrderFind');
+      assert.strictEqual(await page.$('#rvName'), null, 'no name button in Review (nobody signed in)');
+      await page.evaluate(() => { B.employee = 'pat  PACKER'; Review.render(); });
+      await wait(400);
+      const bar = await page.evaluate(() => ({ rv: !!document.getElementById('rvName'), text: document.querySelector('#reviewView .ordBar').textContent }));
+      assert(!bar.rv && !/Pat/.test(bar.text), 'no name pill in the Review toolbar with Pat signed in: ' + bar.text);
+      assert.strictEqual(await page.evaluate(() => CNAccount.view().name), 'Pat Packer', 'the account chip is who is signed in');
+      assert.deepStrictEqual(await page.evaluate(() => window.__prompts), [], 'no browser pop-up');
 
       // 3 · nothing automatic is a person's work
       await page.evaluate(() => { B.employee = 'Tess Welder'; });
@@ -233,18 +242,19 @@ async function sorterPage(browser, srv, errors, { sandbox = false } = {}) {
       await flush();
       assert.deepStrictEqual(rec.events, [], 'interpretation, a Review sync, a checkpoint and a card refresh log nothing: ' + JSON.stringify(rec.events.map(brief)));
       assert.strictEqual(await page.evaluate(() => CNAct.held()), 0);
-      // the order window's name chip (a modal window) opens the field INSIDE the window, not a browser pop-up over it
+      // the order window (a modal window) has no name chip of its own in Team messages; with nobody signed in, a press that needs a name
+      // opens the sign-in field INSIDE the window, not a browser pop-up over it
       await page.evaluate(() => { B.employee = ''; });
       await page.evaluate(key => OrderWin.open(key), RID + '_41765762721');
-      await page.waitForSelector('#owWhoBtn');
       await page.waitForFunction(() => document.querySelector('dialog#orderWin').open);
-      assert.match(await page.textContent('#owWho'), /Set your name/);
-      assert.match(await page.getAttribute('#owWhoBtn', 'title'), /No name set yet/, 'the chip says plainly that no name is set');
-      await page.click('#owWhoBtn');
-      await page.waitForSelector('dialog#orderWin .cnNameBar[data-kind="edit"]');
+      assert.strictEqual(await page.$('#owWhoBtn'), null, 'no name chip in the order window');
+      assert.strictEqual(await page.$('#owWho'), null);
+      await page.evaluate(() => { CNEmployee.ask(() => {}); });
+      await page.waitForSelector('dialog#orderWin .cnNameBar[data-kind="ask"]');
       assert.strictEqual(await page.evaluate(() => document.querySelector('.cnNameBar').parentNode.id), 'orderWin', 'inside the open window');
       await page.fill('.cnNameBar input', 'Nia  nameless'); await page.press('.cnNameBar input', 'Enter');
-      await page.waitForFunction(() => !document.querySelector('.cnNameBar') && /Nia Nameless/.test(document.getElementById('owWho').textContent));
+      await page.waitForFunction(() => !document.querySelector('.cnNameBar') && B.employee === 'Nia Nameless' && CNAccount.view().name === 'Nia Nameless');
+      assert.strictEqual(await page.evaluate(() => /Nia/.test(document.querySelector('dialog#orderWin').textContent)), false, 'the window does not show the name a second time');
       assert.strictEqual(await page.evaluate(() => document.querySelector('dialog#orderWin').open), true, 'the window is still open (Enter put only the field away)');
       assert.deepStrictEqual(await page.evaluate(() => window.__prompts), [], 'no browser pop-up over the window');
       await page.evaluate(() => { document.querySelector('dialog#orderWin').close(); });

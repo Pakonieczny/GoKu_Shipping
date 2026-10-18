@@ -1459,10 +1459,26 @@ const DsName = (() => {
     return v;
   }
 
-  let box = null, input = null, hint = null, what = "", timer = 0;
+  /* ONE signed-in person (Paul, 18 Oct 2026: "The user that is officially logged in must have all attributes and actions recorded under that
+     particular signed in user"): framed and driven by the Charm Sorter, the person here is the one signed in to the sorter (its account
+     chip), handed over by the sorter's "employee" command (Bridge.employee(): the name, "" for nobody there, null when this sorter session
+     sent none: a station on its own, and a sorter from before, behave exactly as before). Then the gate below and the chat's name control
+     never set a different person: they point to the sorter's account chip, and the sorter is asked to open its sign-in. */
+  const sorterName = () => { try { return Bridge.employee(); } catch (_) { return null; } };      // (Bridge is made further down; asked only after load)
+  const driven = () => sorterName() != null;
+  /** The sorter's person signed out (or nobody is signed in there): the name goes and this station's session ends, as its own sign-out does. */
+  function clear() {
+    const before = current();
+    if (before) { try { if (window.StationSession) StationSession.signedOut("signOut"); } catch (_) {} }
+    try { localStorage.removeItem(LS.employee); } catch (_) {}
+    if (before) { try { DsLive.sync(); } catch (_) {} }
+  }
+
+  let box = null, input = null, hint = null, lab = null, what = "", timer = 0;
   const say = (text, bad) => { hint.textContent = text; if (bad) box.dataset.bad = "1"; else delete box.dataset.bad; };
   function hide() { try { clearTimeout(timer); if (box) { box.hidden = true; delete box.dataset.bad; } } catch (_) {} }
   function commit() {
+    if (driven()) return false;                               // (driven by the sorter: its signed-in person, never one typed here)
     const v = set(input.value);
     if (!v) { if (input.value.trim()) { input.value = ""; say("Please type your name (letters, not a number).", true); } return false; }   // a number is not left on screen
     input.value = ""; try { BritesChat.whoChanged(); } catch (_) {}
@@ -1474,7 +1490,7 @@ const DsName = (() => {
     if (box) return;
     box = document.createElement("div"); box.id = "dsNameGate"; box.className = "dsGate"; box.hidden = true;
     box.setAttribute("role", "group"); box.setAttribute("aria-label", "Set your name");
-    const lab = document.createElement("label"); lab.htmlFor = "dsNameInput"; lab.textContent = "Set your name";
+    lab = document.createElement("label"); lab.htmlFor = "dsNameInput"; lab.textContent = "Set your name";
     input = document.createElement("input"); input.id = "dsNameInput"; input.type = "text"; input.className = "inp";
     input.placeholder = "First name and initial"; input.autocomplete = "off"; input.maxLength = MAX; input.setAttribute("enterkeyhint", "done");
     hint = document.createElement("div"); hint.className = "dsGateHint"; hint.setAttribute("aria-live", "polite");
@@ -1492,16 +1508,28 @@ const DsName = (() => {
       the person presses the action again once named. */
   function need(action, host) {
     if (current()) { hide(); return true; }
+    const s = sorterName();
+    // driven by the sorter: its signed-in person (signed out here by this station's own idle rule meanwhile) is the person again, at once
+    if (s && set(s)) { hide(); try { BritesChat.whoChanged(); } catch (_) {} return true; }
     try {
       build(); what = String(action || "the action");
       if (host) { host.insertBefore(box, host.firstChild); box.classList.remove("float"); }
       else { document.body.appendChild(box); box.classList.add("float"); }
-      say(`Your prints and completions are counted under it. Press Enter, then press ${what} again.`, false);
-      box.hidden = false; input.focus();
+      const sorter = s != null;
+      lab.textContent = sorter ? "Sign in on the Charm Sorter" : "Set your name"; input.hidden = sorter;
+      if (sorter) {
+        // nobody is signed in there: no name is typed here; the sorter opens its own sign-in (the account chip), and its person comes back here
+        say(`Nobody is signed in on the Charm Sorter. Sign in with the name at the top of the sorter, then press ${what} again.`, false);
+        try { Bridge.emit("employee.need", { action: what }); } catch (_) {}
+        box.hidden = false;
+      } else {
+        say(`Your prints and completions are counted under it. Press Enter, then press ${what} again.`, false);
+        box.hidden = false; input.focus();
+      }
     } catch (_) {}
     return false;
   }
-  return { normalize, current, set, need, hide };
+  return { normalize, current, set, clear, need, hide, driven };
 })();
 
 /* The sandbox streams orders many times faster than the shop, and its ledger shares this origin's storage quota with
@@ -5616,6 +5644,8 @@ const BritesChat = (() => {
     el.whoAv.style.background = n ? hueFor(n) : "var(--ink25)";
   }
   function editWho() {
+    // driven by the Charm Sorter (Paul, 18 Oct 2026): the person is the one signed in there; another name is never typed here
+    if (DsName.driven()) { if (DsName.need("Send")) toast(`Signed in on the Charm Sorter as ${meName()}. To switch person, use the name at the top of the sorter.`); paintWho(); return; }
     if (el.who.dataset.editing === "1") return;
     el.who.dataset.editing = "1";
     const cur = meName();
@@ -5904,8 +5934,9 @@ const BritesChat = (() => {
   }
 
   async function sendAll() {
-    const staff = meName();
-    if (!staff) { toast("Set your name before sending", "bad"); editWho(); return; }
+    let staff = meName();
+    if (!staff && DsName.driven() && DsName.need("Send")) staff = meName();   // (driven by the Charm Sorter: its signed-in person; Paul, 18 Oct 2026)
+    if (!staff) { if (DsName.driven()) return; toast("Set your name before sending", "bad"); editWho(); return; }
     const rid = S.rid;
     if (!rid) return;
 
@@ -8059,11 +8090,24 @@ const Bridge = (() => {
         if (released.length) { persistSelection(); refreshChrome(); }
       }
       S.nonce = ev.data.nonce; S.origin = ev.origin; S.master = ev.source; S.startedAt = Date.now(); S.count = 0; S.dropped = 0; S.previewed = null; S.down = false; S.lastPing = Date.now();
-      S.sorterClientId = String(a.sorterClientId || ""); S.runId = a.runId ? String(a.runId) : null; S.sorterSelected = new Set(); rememberSorterSelection();
+      S.sorterClientId = String(a.sorterClientId || ""); S.runId = a.runId ? String(a.runId) : null; S.sorterSelected = new Set(); rememberSorterSelection(); S.employee = null;   // (the sorter's person comes with its "employee" command, right after)
       paintBanner(); ticker(`Remote control opened by the Charm Sorter${S.runId ? ` · run ${S.runId}` : ""}`);
       S.feed = []; paintFeed();
       Cursor.reset(); Cursor.act("banner", null, "Charm Sorter connected", { click: false }).catch(() => {});
       return Object.assign(stateSnapshot(), { releasedFromPreviousSession: released, commands: Object.keys(CMDS) });
+    },
+    /** The person signed in to the Charm Sorter (Paul, 18 Oct 2026: "The user that is officially logged in must have all attributes and
+        actions recorded under that particular signed in user"): while the sorter drives this station everything it records (labels printed on
+        the order timeline, completedBy, Team messages, this station's own session and the live board) is under that name. Set the way the
+        station's own sign-in sets it (DsName.set: tidied, StationSession.signedIn; another person ends the old session, "switched"); "" (a
+        sign-out, midnight, idle, nobody signed in there) signs this station's person out. The sorter sends it after each hello and on every change. */
+    async employee(a) {
+      const n = DsName.normalize(a && a.name);
+      S.employee = n;
+      if (n) DsName.set(n); else DsName.clear();
+      if (n) { try { DsName.hide(); } catch (_) {} }
+      try { BritesChat.whoChanged(); } catch (_) {}
+      return { employee: DsName.current() };
     },
     async ping() { S.lastPing = Date.now(); if (S.down) { S.down = false; paintBanner(); } return { pong: true, etsy: etsyMeterSnapshot(), signedIn: etsyState().signedIn }; },
     /** The sorter reset the sandbox's records: the completions this page keeps (in memory and in its sandbox-only browser
@@ -8388,7 +8432,7 @@ const Bridge = (() => {
     if (!active()) return;
     ticker(`Remote control ended — ${reason}`);
     emit("state", { ended: true, reason });
-    S.master = null; S.origin = null; S.previewed = null; S.watch = false; S.down = false;
+    S.master = null; S.origin = null; S.previewed = null; S.watch = false; S.down = false; S.employee = null;
     Cursor.reset(); S.feed = []; paintFeed();
     paintBanner(); toast(`Charm Sorter released this station (${reason})`);
   }
@@ -8410,7 +8454,7 @@ const Bridge = (() => {
     swept() { S.lastSweepAt = Date.now(); },
     locks() { if (!active()) return; const cur = JSON.stringify([...rtSelected]); if (cur !== lastLocks) { lastLocks = cur; emit("lock.changed", { locks: Object.fromEntries([...rtSelected].filter(([, o]) => o && o !== RT.clientId)), claims: Object.fromEntries(rtClaims) }); } }
   };
-  return { hooks, active, working, framed, emit, ticker, waiting, endSession, state: () => Object.assign({}, S, { master: !!S.master }), snapshot: stateSnapshot, orderForBridge, commands: Object.keys(CMDS), ALLOWED, cursor: Cursor };
+  return { hooks, active, working, framed, emit, ticker, waiting, endSession, employee: () => (S.master && S.employee != null ? S.employee : null), state: () => Object.assign({}, S, { master: !!S.master }), snapshot: stateSnapshot, orderForBridge, commands: Object.keys(CMDS), ALLOWED, cursor: Cursor };
 })();
 if (Bridge.framed()) document.documentElement.classList.add("framed");
 
@@ -8505,7 +8549,8 @@ window.DesignStation = {
       try { if (why) Passcode.note(why); } catch (_) {}
       if (document.readyState !== "loading") { try { Passcode.gate().catch(() => {}).then(() => { try { Passcode.note(""); } catch (_) {} }); } catch (_) {} }   // while loading, boot asks; the reason is said once
     }
-    try { if (why) toast(why + " Sign back in and set your name in the chat.", "", 8000); } catch (_) {}
+    let driven = false; try { driven = DsName.driven(); } catch (_) {}      // (driven by the Charm Sorter: its signed-in person comes back at the next print, nothing to set here)
+    try { if (why) toast(why + (driven ? "" : " Sign back in and set your name in the chat."), "", 8000); } catch (_) {}
   }
   // the sandbox flag is the page's own (the address says ?sandbox=1 or 0, and a tab keeps it): the sign-in and every event follow it,
   // so a sandbox tab opened again without the address never writes into the real station numbers
