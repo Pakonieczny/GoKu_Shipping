@@ -221,19 +221,21 @@ async function doorRole() {
     assert.deepStrictEqual(await page.evaluate(() => StationActivity.current().map(c => [c.station, c.device])), [['design', 'charm-nest-1']], 'the open sheet is the Design person\'s live card');
     assert(rec.live.some(l => l.event === 'work' && l.station === 'design' && l.person === 'Tess Welder' && l.device === DEV), 'the live write names the role as its station: ' + JSON.stringify(rec.live.map(l => [l.event, l.station])));
     rec.events.length = 0;
-    // the name bar has the same quiet control (it is what the name buttons open); one tap, nothing asked, the bar stays for the name
+    // ONE signed-in person (Paul, 18 Oct 2026): with someone signed in the name bar never opens (no second way to type another person): the
+    // Account panel does; the switch back is the Workspace menu's quiet control again, one tap, nothing asked
     await page.evaluate(() => { CNEmployee.edit({}); });
-    await page.waitForSelector('.cnNameBar[data-kind="edit"] .cnNbSwitch:not([hidden])');
-    assert.strictEqual((await page.textContent('.cnNbSwitch')).trim(), 'Design · switch to Laser');
-    await shot(page, '5-namebar-switch-design');
-    await page.click('.cnNbSwitch');
+    await page.waitForSelector('#cnAcctPanel');
+    assert.strictEqual((await page.$$('.cnNameBar')).length, 0, 'signed in: the Account panel, not the name bar');
+    await page.evaluate(() => CNAccount.close());
+    await page.click('#moreMenu > summary');
+    assert.strictEqual(await page.evaluate(() => document.getElementById('btnRoleSwitch').textContent.trim()), 'Design · switch to Laser');
+    await page.click('#btnRoleSwitch');
     await page.waitForFunction(() => StationActivity.who() && StationActivity.who().role === 'laser');
-    assert.strictEqual((await page.textContent('.cnNbSwitch')).trim(), 'Laser · switch to Design', 'the control says the new state');
+    assert.strictEqual(await page.evaluate(() => document.getElementById('btnRoleSwitch').textContent.trim()), 'Laser · switch to Design', 'the control says the new state');
     assert.strictEqual(await page.evaluate(() => StationActivity.current().length), 0, 'the live card of the role that was left is ended');
     await flush(); await page.evaluate(() => new Promise(r => setTimeout(r, 400)));
     assert(rec.live.some(l => l.event === 'idle' && l.station === 'design'), 'and the board hears it: ' + JSON.stringify(rec.live.map(l => [l.event, l.station])));
     assert.strictEqual((await page.$$(roleBar)).length, 0, 'no question after a switch');
-    await page.press('.cnNameBar input', 'Escape');
     await page.waitForFunction(() => !document.querySelector('.cnNameBar'));
     await flush();
     const seq = rec.sessions.filter(s => s.event === 'start' || s.event === 'end').map(s => [s.event, s.station, s.reason || '']);
@@ -307,9 +309,9 @@ async function doorRole() {
     assert.deepStrictEqual(await page.evaluate(() => StationActivity.current().map(c => c.station)), ['laser'], 'the Admin\'s open sheet is the laser\'s card, as before');
     await page.evaluate(() => CNLive.close('laser'));
     assert.strictEqual(await page.evaluate(() => { CNEmployee.edit({}); return true; }), true);
-    await page.waitForSelector('.cnNameBar[data-kind="edit"]');
-    assert.strictEqual(await page.evaluate(() => document.querySelector('.cnNbSwitch').hidden), true, 'no switch in the name bar for the Admin');
-    await page.press('.cnNameBar input', 'Escape');
+    await page.waitForSelector('#cnAcctPanel');
+    assert.strictEqual((await page.$$('.cnNameBar')).length, 0, 'the Admin signed in: the Account panel, never the name bar (Paul, 18 Oct 2026)');
+    await page.evaluate(() => CNAccount.close());
     // a reload keeps the Admin's sign-in, with nothing asked, and the answer is not asked again
     rec.sessions.length = 0;
     await page.reload({ waitUntil: 'load' }); await ready(page);
@@ -388,16 +390,9 @@ async function doorRole() {
       assert(!m.kids.some(k => k.clipX), `${w}px: no clipped text`);
       assert(m.pageW <= Math.max(baseW, m.vw), `${w}px: the page gets no sideways scroll from it (${m.pageW} vs ${baseW} without it)`);
       await shot(page, `2-role-question-${w}`);
-      // and the name bar with the quiet switch, in the same width
+      // (signed in: the name bar no longer opens at all, Paul 18 Oct 2026; the Account panel's own widths are tests/charm-nest/account.cjs)
       await page.click(roleBar + ' [data-role="laser"]');
       await page.waitForFunction(() => !document.querySelector('.cnNameBar') && StationSession.role() === 'laser');
-      await page.evaluate(() => { CNEmployee.edit({}); });
-      await page.waitForSelector('.cnNameBar[data-kind="edit"] .cnNbSwitch:not([hidden])');
-      await wait(100);
-      const n = await page.evaluate(() => { const f = document.querySelector('.cnNameBar'), r = f.getBoundingClientRect(), vw = document.documentElement.clientWidth; const sw = f.querySelector('.cnNbSwitch').getBoundingClientRect(); return { l: r.left, r: r.right, vw, scrollW: f.scrollWidth, clientW: f.clientWidth, swIn: sw.left >= r.left - 0.5 && sw.right <= r.right + 0.5 }; });
-      assert(n.l >= 0 && n.r <= n.vw + 0.5 && n.scrollW <= n.clientW + 1 && n.swIn, `${w}px: the name bar with the switch stays inside: ${JSON.stringify(n)}`);
-      await shot(page, `3-namebar-switch-${w}`);
-      await page.press('.cnNameBar input', 'Escape');
       await signOutNow(page);
     }
     await page.setViewportSize({ width: 1440, height: 950 });

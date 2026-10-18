@@ -45,7 +45,7 @@
   const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + "s")}`;
   const joinAnd = list => list.length < 2 ? list.join("") : list.slice(0, -1).join(", ") + " and " + list[list.length - 1];
   const uniq = list => [...new Set(list.filter(Boolean))];
-  const whoNow = () => String((W.B && (B.employee || (B.link && B.link.state && B.link.state() && B.link.state().employee))) || (() => { try { return localStorage.getItem("cn.employee") || ""; } catch (_) { return ""; } })() || "").trim();
+  const whoNow = () => String((W.B && B.employee) || (() => { try { return localStorage.getItem("cn.employee") || ""; } catch (_) { return ""; } })() || "").trim();   // (the sorter's signed-in person only, never the Design Station frame's own name; Paul, 18 Oct 2026)
   const msOf = t => { t = +t || 0; return t > 0 && t < 1e11 ? t * 1000 : t; };
   // does this design draw two different bodies (a mismatched pair: left and right)? (the master's `pair` field, read by CharmNestPair)
   const misSku = sku => (W.PairRemove ? W.PairRemove.isMismatchedSku(sku) : false);

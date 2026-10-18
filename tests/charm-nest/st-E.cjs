@@ -26,7 +26,7 @@ delete process.env.EDIT_PASSCODE;
     ctx.B.employee = 'Marco R.';
     assert.deepStrictEqual(JSON.parse(JSON.stringify(run.stampWho())), { by: 'Marco R.', device: 'charm-nest-1' });
     ctx.B.employee = ''; ctx.B.link = { state: () => ({ employee: 'Nia' }) };
-    assert.strictEqual(run.stampWho().by, 'Nia', 'the name the Design Station hello gave, when the sorter has none of its own');
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(run.stampWho())), { by: '', signedIn: false, device: 'charm-nest-1' }, 'ONE signed-in person (Paul, 18 Oct 2026): the Design Station\'s own name is never the sorter\'s person');
     ctx.B.link = null; ctx.B.employee = '   ';
     assert.deepStrictEqual(JSON.parse(JSON.stringify(run.stampWho())), { by: '', signedIn: false, device: 'charm-nest-1' }, 'nobody named: no guess');
     ctx.B.employee = 'Marco R.';

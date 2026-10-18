@@ -389,7 +389,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // only for someone not looking at the sorter, as the sheet-complete alert does: on screen, the toast already says it
 const notifyPerson = (title, body) => { if (document.hidden && S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification(title, { body }); } catch (_) {} } };
 /* Who is working. The sorter has no PIN sign-in (a plan decision): the person is a typed name kept in this browser
-   (cn.employee) and cleared at New York midnight, or the Design Station frame's sign-in when it brings one. One person must
+   (cn.employee) and cleared at New York midnight; the account chip in the top bar (charm-nest-account.js) is how a person signs in, out
+   and switches. One person must
    be one name, so every name that is set, however it was typed, is made the same way here: trimmed, spaces collapsed, Title
    Case ("tess  WELDER" and "Tess Welder" are one person), a lone initial gets its dot ("Marco R" = "Marco R."), and a name
    typed with capitals of its own ("McDonald", "DeShawn") is kept as typed: the same rules the Design Stations use, so the name the
@@ -408,7 +409,11 @@ const normName = raw => {
 };
 /* One person, one name (Paul, 9 Oct 2026: "Ana_M and Anna are the same person ... standardize her login under Ana_M"): her other spellings are the one login name. The server folds the same way (netlify/functions/_activityKinds.js loginName). */
 function ONE_LOGIN(s) { const k = String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); return k === "anna" || k === "anns" || k === "ana m" ? "Ana_M" : s; }
-const employeeName = () => B.employee || (B.link && B.link.state() && B.link.state().employee) || "";
+/* ONE signed-in person (Paul, 18 Oct 2026: "I should not be seeing my name logged in and also again my name when logging information about a
+   given user activities. The user that is officially logged in must have all attributes and actions recorded under that particular signed in
+   user"): the name is the sorter's own sign-in and nothing else. It no longer falls back to the name the Design Station frame keeps in its own
+   browser storage (another origin, another person maybe); the frame is told who is signed in here instead (DesignLink.employee). */
+const employeeName = () => B.employee || "";
 /* The last name used in this browser (cn.lastEmployee: kept after a sign-out, midnight or an idle end clears cn.employee), so the next
    press can offer "Continue as <name>" in one tap. A name only: nothing that records a person reads it (employeeName is the one source). */
 const LAST_KEY = "cn.lastEmployee";
@@ -436,8 +441,9 @@ function needEmployee(why) {
   return Promise.resolve(NameBar.open({ kind: "ask", why: why || "Kept with this approval or decision, and with your work today." })).then(n => String(n || "").trim() || employeeName(), () => "");
 }
 /* The small name field: inline, never a browser pop-up and never modal, so it can sit over an open window (the order window,
-   the sheet window) without being a pop-up on a pop-up. It is what the name buttons open (Review, the order window, the
-   station panel), and it is what appears, calmly, when something a person did could not be put under a name. */
+   the sheet window) without being a pop-up on a pop-up. It is the sign-in for when NOBODY is signed in: what appears, calmly, when
+   something a person did could not be put under a name. With someone signed in it never opens: the Account panel does (the account
+   chip is the one place to switch person; Paul, 18 Oct 2026: no second copy of the name, no second way to type another person). */
 const NameBar = (() => {
   let bar = null, finish = null, pr = null, quietUntil = 0;   // (a hint put away with ✕ or Esc does not come back for 90 s: calm, not nagging)
   let resumeFn = null;                                         // (the press that asked for a name: goes on by itself once one is saved; put away = forgotten)
@@ -478,6 +484,9 @@ const NameBar = (() => {
       css();
       const hint = o.kind === "hint", why = o.why || (hint ? "Add it and the work you just did is counted under it." : "Kept with your work on this computer today.");
       if (hint && !bar && Date.now() < quietUntil) return Promise.resolve("");
+      // ONE signed-in person (Paul, 18 Oct 2026): someone is signed in, so a different person is never typed here; the Account panel (sign out,
+      // switch person) opens instead, and the press goes on under the person signed in
+      if (employeeName()) { if (!hint) { try { const A = window.CNAccount; if (A && typeof A.open === "function") A.open(); } catch (_) {} } return Promise.resolve(employeeName()); }
       // ACCOUNT (Paul, 15 Oct 2026): the Account panel is the sign-in face. While it is open it already asks "Who's working?" (a hint adds nothing);
       // a press that needs a name takes the field, and the panel steps aside
       try { const A = window.CNAccount; if (A && typeof A.isOpen === "function") { if (hint && A.isOpen()) return Promise.resolve(""); if (!hint) A.yieldTo(); } } catch (_) {}
@@ -502,7 +511,7 @@ const NameBar = (() => {
       input.value = hint ? "" : (employeeName() || lastName());       // (nobody named: the last name used on this computer is ready, Enter keeps it)
       const me = bar;
       const take = n => {
-        B.employee = n;
+        if (!employeeName()) B.employee = n;       // (only a sign-in: a person signed in meanwhile, in another tab or the Account panel, stays the person)
         const saved = B.employee; close(saved);
         try { if (typeof o.onSet === "function") o.onSet(saved); } catch (_) {}
         runResume();
@@ -525,7 +534,7 @@ const NameBar = (() => {
     } catch (_) { return Promise.resolve(""); }
   }
   /** A name was set somewhere else: a field that only offered to take one is no longer needed. */
-  const settled = () => { if (bar && (bar.dataset.kind === "hint" || bar.dataset.kind === "ask")) { close(employeeName()); runResume(); } };
+  const settled = () => { if (bar) { close(employeeName()); runResume(); } };      // (every kind: the field is only ever a sign-in, Paul 18 Oct 2026)
   /* ── the role step (charm-nest-role.js decides when; Paul, 6 Oct 2026): the same small bar, right after the name is set, asking
      "Laser or Design?" with two buttons, or (only if the Admin answer is slow) a small labelled spinner. Never a pop-up and never on top
      of one: it sits inside the window that is open, like the name field, and follows it when windows open and close. Nothing behind it is
@@ -869,10 +878,11 @@ const CNFrame = window.CNFrame = (() => {
   return { later, cancel: key => due.delete(key) };
 })();
 /* B.employee: the one place a name is set. Every way of typing it ends here (the prompt, the card's field, the sheet window's
-   bar, the small name field, the Design Station's sign-in), so they all make it one name (normName), keep it in this browser,
+   bar, the small name field, the Account panel), so they all make it one name (normName), keep it in this browser,
    and refuse a number. The accessor is the order timeline's (above), wrapped: it still re-syncs the timeline's `by`. After the
    setter returns (charm-nest-1.html signs the person in right after it) what was pressed before a name existed is recorded
-   under it. */
+   under it, and the Design Station frame is told who is signed in now (DesignLink.employee: a sign-in, a switch, a sign-out,
+   midnight or idle all end here; Paul, 18 Oct 2026). */
 try {
   const base = Object.getOwnPropertyDescriptor(B, "employee");
   if (base && typeof base.get === "function" && typeof base.set === "function") {
@@ -883,6 +893,7 @@ try {
       try { if (n) { localStorage.setItem("cn.employee", n); localStorage.setItem(LAST_KEY, n); } else if (raw) localStorage.removeItem("cn.employee"); } catch (_) {}
       if (raw && !n) { try { toast("That isn't a name. Please type your name (letters, not a number).", "bad", 5000); } catch (_) {} }
       if (n) queueMicrotask(() => { try { humanAct.release(); NameBar.settled(); } catch (_) {} });
+      queueMicrotask(() => { try { if (window.DesignLink && typeof DesignLink.employee === "function") DesignLink.employee(); } catch (_) {} });   // (the frame records under this person too)
     } });
     // a name kept from before this version is the "last name" too (Continue as <name> after the next sign-out)
     try { const n0 = String(B.employee || "").trim(); if (n0 && !localStorage.getItem(LAST_KEY)) localStorage.setItem(LAST_KEY, n0); } catch (_) {}
@@ -1049,12 +1060,29 @@ const DesignLink = window.DesignLink = (() => {
       try { st = await call("hello", { sorterClientId: S_.nonce, runId: B.run ? B.run.runId : null }, { timeoutMs: 30000 }); } catch (e2) { if (S_.up && S_.state) return S_.state; reloadFrame("two hellos went unanswered"); throw e2; } }
     S_.state = st; S_.up = true; S_.misses = 0; S_.lastHello = Date.now(); if (st.etsy && st.etsy.meter) etsyReadout(st.etsy.meter);
     if (!!st.sandbox !== (WORKSPACE_SANDBOX)) { S_.control = false; S_.up = false; const why = `the station is in ${st.sandbox ? "SANDBOX" : "production"} mode but this sorter is in ${WORKSPACE_SANDBOX ? "SANDBOX" : "production"} mode`; agent({ bridge: true }, "warn", `Session refused: ${why}`); toast(`Session refused — ${why}. Reload the frame.`, "bad", 9000); throw new Error(why); }
-    if (st.employee && !B.employee) B.employee = st.employee;   // (the station's own sign-in: kept, as before; the setter keeps it in this browser)
+    // ONE signed-in person (Paul, 18 Oct 2026): the station's own stored name (st.employee) is no longer adopted here; the station is told
+    // who is signed in to the sorter instead, before anything else is asked of it, so what it records is under that person
+    S_.sentEmployee = undefined; await sendEmployee();
     S_.veil && S_.veil.classList.add("hidden"); Dock.layout();
     agent({ bridge: true }, "DS", `Session ${S_.nonce.slice(0, 4)} open on ${st.bench} · ${st.counts.open} open orders (${st.counts.hydrated} read) · ${st.selection.length} selected · Etsy ${st.etsy.signedIn ? "signed in" : "NOT signed in"}${st.releasedFromPreviousSession && st.releasedFromPreviousSession.length ? ` · released ${st.releasedFromPreviousSession.length} lock(s) from a previous session` : ""}`);
     if (!st.etsy.signedIn) toast("The Design Station is not signed in to Etsy — press Connect Etsy", "bad", 8000);
     startHeartbeat(); renderConsole(); if (B.run && window.RunCtl) RunCtl.renderBanner();   // a stopped run's banner says what is left to press
     return st;
+  }
+  /* The station records under the person signed in HERE (Paul, 18 Oct 2026: "The user that is officially logged in must have all attributes and
+     actions recorded under that particular signed in user"): its labels printed on the order timeline, its completions, its Team messages and
+     its own station session carry the name of the account chip, not a name kept in the station's own browser storage (another origin: it can
+     be someone else). Sent right after each hello and whenever B.employee changes (sign in, switch, sign out, midnight, idle); "" signs the
+     station's person out. Only what changed is sent; a station from before this command (its hello lists no "employee") is not asked, since
+     an unknown command is never answered. Never throws. */
+  function sendEmployee() {
+    try {
+      if (!S_.frame || !S_.up || !S_.state || !Array.isArray(S_.state.commands) || !S_.state.commands.includes("employee")) return Promise.resolve(null);
+      const name = employeeName();
+      if (S_.sentEmployee === name) return Promise.resolve(null);
+      S_.sentEmployee = name;
+      return call("employee", { name }, { timeoutMs: 15000, quiet: true }).catch(e => { if (S_.sentEmployee === name) S_.sentEmployee = undefined; agent({ bridge: true }, "warn", `The station was not told who is signed in: ${e.message}`); return null; });
+    } catch (_) { return Promise.resolve(null); }
   }
   function call(type, args = {}, { timeoutMs = 120000, onProgress, quiet = false } = {}) {
     if (!S_.frame || !S_.frame.contentWindow) return Promise.reject(new Error(`${type}: the Design Station frame is not open`));
@@ -1128,6 +1156,9 @@ const DesignLink = window.DesignLink = (() => {
     else if (d.type === "ui.modal") agent({ bridge: true }, "DS", d.open ? `Station opened item ${d.transactionId} of order ${d.receiptId}` : "Station closed its dialog");
     else if (d.type === "error") agent({ bridge: true }, "warn", `Station reported: ${d.command} — ${d.error}`);
     else if (d.type === "etsy.alarm") { etsyReadout(d); }
+    // a person pressed Print labels or Generate QR at the station with nobody signed in here: the Account panel opens (the one sign-in), and the
+    // name goes to the station as it is set (B.employee); someone signed in already: the station is told again (Paul, 18 Oct 2026)
+    else if (d.type === "employee.need") { if (employeeName()) { S_.sentEmployee = undefined; sendEmployee(); } else { try { if (window.CNAccount && typeof CNAccount.open === "function") CNAccount.open(); else NameBar.open({ kind: "ask", why: "The Design Station records its work under your name." }); } catch (_) {} } }
     else if (d.type === "etsy.connected") { onEtsyConnected(d); }
     // (only a run at work is stopped: one resting between updates, or complete, used to be turned into a stopped one, and a
     // complete one stopped kept Auto from starting the next run)
@@ -1163,7 +1194,7 @@ const DesignLink = window.DesignLink = (() => {
     S_.hb = setInterval(async () => {
       if (!S_.control) return;
       try {
-        const pong = await call("ping", {}, { timeoutMs: Math.max(1500, every - 500), quiet: true }); if (pong && pong.etsy) etsyReadout(pong.etsy); if (!S_.up) { S_.up = true; agent({ bridge: true }, "DS", "Design Station is back"); } S_.misses = 0;
+        const pong = await call("ping", {}, { timeoutMs: Math.max(1500, every - 500), quiet: true }); if (pong && pong.etsy) etsyReadout(pong.etsy); if (!S_.up) { S_.up = true; agent({ bridge: true }, "DS", "Design Station is back"); sendEmployee(); } S_.misses = 0;
         // In Auto nobody may be at the bench: a run stopped only because the station went quiet, or because the hour's
         // Etsy calls ran out, carries on by itself once the station answers again or the hour has room. It used to wait
         // for someone to press Resume while the orders piled up.
@@ -1250,7 +1281,7 @@ const DesignLink = window.DesignLink = (() => {
     const sw = host.querySelector("#dsControl"); if (sw) { sw.classList.toggle("on", S_.control); sw.textContent = S_.control ? "Release" : "Take control"; }
     const log = host.querySelector(".log"); if (shown(log)) { const rows = S_.log.slice(-200); log.innerHTML = rows.map(r => `<div class="row ${r.dir}${r.err ? " err" : ""}"><span class="d">${fmtT(r.t)}</span><span class="ty">${r.dir === "cmd" ? "→" : r.dir === "reply" ? "←" : "·"} ${esc(r.type)}</span><span class="pl">${esc(r.payload ? JSON.stringify(r.payload) : "")}</span><span class="ms">${r.ms != null ? r.ms + "ms" : ""}</span></div>`).join(""); log.scrollTop = log.scrollHeight; }
   }
-  return { mount, open, call, release, ensure, feed, meter, etsyBudgetOk, etsyReadout, connectEtsy, etsy: () => ({ hour: hourCalls(), cap: etsyCap(), session: E_.sessionTotal, station: E_.stationTotal, meter: E_.station }), state: () => S_.state, log: S_.log, up: () => S_.up, inControl: () => S_.control, nonce: () => S_.nonce, renderConsole, origin, frameUrl, _S: S_, _E: E_ };
+  return { mount, open, call, release, ensure, employee: sendEmployee, feed, meter, etsyBudgetOk, etsyReadout, connectEtsy, etsy: () => ({ hour: hourCalls(), cap: etsyCap(), session: E_.sessionTotal, station: E_.stationTotal, meter: E_.station }), state: () => S_.state, log: S_.log, up: () => S_.up, inControl: () => S_.control, nonce: () => S_.nonce, renderConsole, origin, frameUrl, _S: S_, _E: E_ };
 })();
 
 /* ── the dock: where the station frame is kept. "full" over the Design Station tab's placeholder; "live", out of sight on
@@ -1313,7 +1344,6 @@ const Views = window.Views = (() => {
     v.innerHTML = `<div class="dsFrameHost"></div>
       <div class="dsConsole" id="dsConsole">
         <div class="card"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="switchBtn" id="dsControl" type="button">Take control</button><a class="btn ghost xs" id="dsOpenTab" target="_blank" rel="noopener">Open station in a tab</a><button class="btn gold xs" id="dsConnectEtsy" type="button" title="Signs the station in to Etsy in its own window; the framed station picks the token up">Connect Etsy</button><button class="btn ghost xs" id="dsReload" type="button">Reload frame</button></div><div class="kv">Not in control</div></div>
-        <div class="card" style="gap:4px"><div class="section" style="margin:0 0 4px">Employee</div><div style="display:flex;gap:6px;align-items:center"><span id="dsEmployee" class="mono">${esc(employeeName() || "— not set —")}</span><button class="btn ghost xs" id="dsSetEmployee" type="button">Change</button></div><div class="help" style="font-size:11px;color:var(--ink45)">Recorded with every approval. Any employee may approve.</div></div>
         <div class="log"></div>
       </div>`;
     // The fold lives in the panel's own column, never over the station, and the column keeps a strip of itself when
@@ -1333,7 +1363,7 @@ const Views = window.Views = (() => {
     v.querySelector("#dsControl").onclick = async () => { if (DesignLink.inControl()) { if (B.run && B.run.status === "running" && !confirm("The run is working through the station right now. Releasing the station stops the run until you take control again and press Resume.\n\nRelease anyway?")) return; await DesignLink.release(); } else { try { await DesignLink.ensure(); } catch (e) { toast("Could not open the session: " + e.message, "bad", 6000); } } DesignLink.renderConsole(); };
     v.querySelector("#dsConnectEtsy").onclick = () => DesignLink.connectEtsy().catch(e => toast(e.message, "bad", 6000));
     v.querySelector("#dsReload").onclick = () => { const f = document.getElementById("dsFrame"); if (f) f.src = DesignLink.frameUrl(); };
-    v.querySelector("#dsSetEmployee").onclick = () => { NameBar.open({ onSet: () => { const d = document.getElementById("dsEmployee"); if (d) d.textContent = employeeName() || "— not set —"; } }); };
+    // (no Employee card here: the account chip in the top bar is who is signed in, and the station records under that person; Paul, 18 Oct 2026)
     return host;
   }
   function onShow(mode) {
@@ -11951,7 +11981,7 @@ const CustomPrint = window.CustomPrint = (() => {
   function withName(key, go) { const who = employeeName(); if (who) { go(who); return; } asking.set(key, go); redraw(); }
   function named(key, name) {
     const go = asking.get(key); name = normName(name); if (!go || !name) return false;
-    B.employee = name;
+    if (!employeeName()) B.employee = name;      // (a sign-in only: a person signed in meanwhile stays the person, Paul 18 Oct 2026)
     asking.delete(key); redraw(); go(employeeName());
     return true;
   }
@@ -15604,12 +15634,12 @@ const Review = window.Review = (() => {
     if(!v.querySelector('#rvList'))v.innerHTML='<div class="ordBar egBar"></div><div class="egPane grow scroll"><div class="rvList" id="rvList"></div></div>';
     // no Everything chip (it always read the same as Open): Open or Completed, pressed, is everything in it
     const keptFind=v.querySelector('#rvOrderFind')?.closest('label');
-    v.querySelector('.ordBar').innerHTML = `${seg}${chips}<span class="spacer"></span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="rvOrderFind" type="search" inputmode="numeric" placeholder="Order #" aria-label="Search order numbers in Review" aria-controls="rvList" autocomplete="off" spellcheck="false"></label>${CustomRead.count() ? `<span class="aiReading" title="Claude reads pieces with no design of their own to tell custom orders from regular listings"><span class="spin"></span>Claude reading ${CustomRead.count()}</span>` : ""}<button class="btn ghost xs" id="rvName" title="every decision is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button>`;
+    v.querySelector('.ordBar').innerHTML = `${seg}${chips}<span class="spacer"></span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="rvOrderFind" type="search" inputmode="numeric" placeholder="Order #" aria-label="Search order numbers in Review" aria-controls="rvList" autocomplete="off" spellcheck="false"></label>${CustomRead.count() ? `<span class="aiReading" title="Claude reads pieces with no design of their own to tell custom orders from regular listings"><span class="spin"></span>Claude reading ${CustomRead.count()}</span>` : ""}`;
     CNListActivity.mount(v.querySelector(".ordBar"),scope,()=>render({still:true}));
     if(keptFind)v.querySelector('#rvOrderFind').closest('label').replaceWith(keptFind);
     const find=v.querySelector('#rvOrderFind');find.value=RV.q || '';
     find.oninput=()=>{RV.q=find.value;render({still:true});};
-    v.querySelector("#rvName").onclick = () => { NameBar.open({ onSet: () => render() }); };
+    // (no name pill here: every decision is recorded under the person of the account chip in the top bar, the one place to see and switch who is signed in; Paul, 18 Oct 2026: "I should not be seeing my name logged in and also again my name")
     // a chip pressed again lets go of its filter
     v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { RV.filter = b.dataset.k === f ? null : b.dataset.k; render(); });
     v.querySelectorAll("[data-cseg]").forEach(b => b.onclick = () => { RV.cseg = b.dataset.cseg; RV.filter = null; render(); });
@@ -16855,7 +16885,7 @@ const OrderWin = window.OrderWin = (() => {
     // the buyer's message chip carries the Customer tab's own unread dot: it follows that dot (the mail module sets it as threads change)
     tryDo(() => { const dot = W.dlg.querySelector('[data-ow-tab="customer"] .owDot'); if (dot && window.MutationObserver) new MutationObserver(() => { const r = W.dlg.open && !W.closing && rowOf(W.key); if (r && !r.loading) paintFacts(r); }).observe(dot, { attributes: true, attributeFilter: ["hidden", "class"] }); });
     byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && (O.setDesignsOf(r.spec) || []).join(" + ")) || (r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
-    byId("owWhoBtn").onclick = () => { NameBar.open({ onSet: paintWho }); };
+    // (no name chip in Team messages: a message carries the person of the account chip; nobody signed in, Send asks for the name inline; Paul, 18 Oct 2026)
     const input = byId("owInput");
     input.oninput = () => { grow(); TeamMail.setDraft(W.rid, input.value); };
     input.onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
@@ -16962,8 +16992,6 @@ const OrderWin = window.OrderWin = (() => {
     if (next && next.key !== W.key) { show(next, { dir: d }); }
   }
   function paintWho() {
-    const w = byId("owWho"); if (w) w.textContent = me() || "Set your name";
-    const wb = byId("owWhoBtn"); if (wb) wb.title = me() ? "The name your messages and your work carry · press to change it" : "No name set yet · press to add yours, so your work is counted";
     // messages go to the order's record itself: this says whether it can be reached right now, and a
     // message typed meanwhile waits here and goes by itself
     const st = byId("owLink"); if (!st) return;
