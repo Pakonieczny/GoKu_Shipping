@@ -68,7 +68,6 @@ const assets = [
   "brites-groups.js",
   "brites-groups.css",
   "12x12_Grid_Gld+Slvr+EXTRA.jpg",
-  "Test Matrix_DELETE_3.jpg",
   "assets/ChitChats.png",
   "assets/Favicon.PNG",
   "assets/Globe.png",

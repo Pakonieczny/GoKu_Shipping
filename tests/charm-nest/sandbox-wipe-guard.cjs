@@ -91,7 +91,8 @@ async function session(sb) {
   await L({ op: 'runPut', run: { runId: RUN, status: 'complete', step: 'complete', day: DAY, lines: { [`${A}_10010`]: { orderId: A, key: `${A}_10010` } } } });
   await L({ op: 'runArchive', runId: RUN, parts: [{ json: JSON.stringify({ [`${C}_30030`]: { orderId: C, key: `${C}_30030` } }) }] });
   await L({ op: 'releasePut', released: { gf: DAY }, lastReleased: { gf: DAY } });
-  await L({ op: 'bridgeLog', session: SESSION, meta: { by: 'paul' }, rows: [{ t: Date.now(), dir: 'cmd', type: 'ping' }, { t: Date.now(), dir: 'evt', type: 'pong' }] });
+  // (COST, Oct 2026: bridgeLog writes nothing any more; a session's log written before that is still there to be wiped)
+  store.set(`${P}Design_Bridge/${SESSION}`, { sessionId: SESSION, by: 'paul', updatedAt: new Date() }); store.set(`${P}Design_Bridge/${SESSION}/log/l1`, { t: Date.now(), dir: 'cmd', type: 'ping' }); store.set(`${P}Design_Bridge/${SESSION}/log/l2`, { t: Date.now(), dir: 'evt', type: 'pong' });
   await L({ op: 'arrivalRecord', orders: [{ id: A, createTs: 1 }, { id: C, createTs: 1 }] });
   // ── sheets: saved, cut, hold/release, back records, pdf, an empty one archived, one deleted and the sandbox's restore of it ──
   await L({ op: 'putSheet', sheet: { id: SHEET, metal: 'gold', metalLabel: 'GF 14/20', day: DAY, status: 'complete', charmCount: 3, placedCount: 3, density: 0.71, runId: RUN, setId: SET, orders: [A, B], poolIds: [`${A}_10010_1`], outputs: { preview: { url: 'https://saved.example/p.png', path: `charmnest/${sb ? 'sandbox/' : ''}sheets/${DAY}/${SHEET}/${SHEET}.png` } }, names: 'anna' } });
@@ -291,7 +292,7 @@ const sandboxDoc = (k, v) => { const o = own('firestore', k); if (!o || o.kind !
   const keptWritten = [...new Set(writes.map(w => own('firestore', w.path)).filter(o => o && o.kind === 'protected').map(o => o.key))].sort();
   // every op of the library: driven, or named with its reason and scanned for a write
   const OPS = Object.keys(lib.ops);
-  const READ_ONLY = new Set(['ping', 'lookupCharms', 'listCharms', 'listSheets', 'getSheet', 'listingPhotos', 'getShapeGuidance', 'laserStatus', 'laserDoneList', 'getCalibration', 'jobList', 'getJob', 'getAgent', 'poolList', 'poolGet', 'backList', 'backPreview', 'setGet', 'setList', 'runGet', 'runList', 'history', 'releaseGet', 'cancelCheck', 'timelineGet', 'listingSkus', 'aliasGet', 'noDesignGet', 'optionMapGet', 'customReadGet',
+  const READ_ONLY = new Set(['bridgeLog' /* (COST, Oct 2026: answers, writes nothing) */, 'ping', 'lookupCharms', 'listCharms', 'listSheets', 'getSheet', 'listingPhotos', 'getShapeGuidance', 'laserStatus', 'laserDoneList', 'getCalibration', 'jobList', 'getJob', 'getAgent', 'poolList', 'poolGet', 'backList', 'backPreview', 'setGet', 'setList', 'runGet', 'runList', 'history', 'releaseGet', 'cancelCheck', 'timelineGet', 'listingSkus', 'aliasGet', 'noDesignGet', 'optionMapGet', 'customReadGet',
     'customSheetGet', 'customGet', 'sandboxStatus', 'roseGet', 'roseList', 'remnantList', 'partialList', 'partialPolicyGet', 'partialPlan', 'partialStocks', 'sheetHistory', 'partialSearchList', 'masterGet', 'masterGetMany', 'masterList', 'masterListFiles', 'flowState', 'sharedOrders', 'getOrderPieces', 'laserDoneList', 'sessionsList']);
   READ_ONLY.add('reviewMarkOpen');   // REVMARK: one batch get by key of {rid}_review documents (which orders are in Review); writes nothing (tests/charm-nest/review-mark.cjs drives reviewMarkPut, this guard drives it on both sides)
   READ_ONLY.add('customSkuCheck');   // SKUGEN: reads the master by id, the listing's alias and cached table; writes nothing and asks Etsy nothing (tests/charm-nest/save-sku.cjs drives it)

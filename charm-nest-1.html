@@ -8,7 +8,6 @@
 <meta name="theme-color" content="#221f1b">
 <!-- first, so every timer and frame the page sets keeps full speed while the tab is out of view -->
 <script src="charm-nest-clock.js?v=20260924-recover"></script>
-<script src="charm-nest-sandbox-browser.js?v=20261010-wb1"></script>
 <link rel="stylesheet" href="brites-progress.css">
 <style>
 /* ═══ BRITES DESIGN SYSTEM — tokens copied verbatim from design-1.html ═══ */
@@ -3712,7 +3711,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-geom.js?v=20261009-flat-col-fb1-fb2-fr1-rb1-m3"></script>
 <script src="charm-nest-monogram.js?v=20261015-mono1-monoui1-mx4"></script>
 <script src="charm-nest-monogram-fit.js?v=20261016-mx4"></script>
-<script src="charm-nest-monogram-edits.js?v=20261016-ed2"></script>
+<!-- charm-nest-monogram-edits.js (0.8 MB) loads the first time a monogram is made (charm-nest-bridge.js MonoUI: ready) -->
 <script src="charm-nest-monogram-ui.js?v=20261016-muw1-pol2-pcm1-ms1-ms3"></script>
 <script src="charm-nest-pair.js?v=20261009-pr1-mi3-mi4-mi5-mi6-mi7-pm8-pm9-cg1-nk1-lm1-ko1-wo1-m2-m3-mc1"></script>
 <script src="charm-nest-pair-thumb.js?v=20261009-pt3-mi2-rlp1-rlp3-lm1"></script>
@@ -6231,6 +6230,25 @@ function ensurePdfJs() {
   if (!pdfjsReady) pdfjsReady = import("./vendor/pdfjs-4.10.38/pdf.min.mjs" + (pdfjsTries ? "?again=" + pdfjsTries : "")).then(m => { m.GlobalWorkerOptions.workerSrc = new URL("vendor/pdfjs-4.10.38/pdf.worker.min.mjs", location.href).href; window.pdfjsLib = m; return m; }).catch(e => { pdfjsReady = null; pdfjsTries++; throw e; });
   return pdfjsReady;
 }
+/* COST (Oct 2026): scripts that only some pages ever run are loaded the first time they are needed, the way pdf.js is:
+   the sandbox's two (a page in the sandbox, or Settings opened), the monogram letters' edits (a monogram drawn) and the
+   efficiency console (its tab). One promise per file; files asked for together run in the order given; a load that failed
+   is not kept, and the next try asks under another query (the browser remembers a failed address for the page's life). */
+const lazyScripts = new Map(); let lazyTries = 0;
+function cnLoadScript(...srcs) {
+  return Promise.all(srcs.map(src => {
+    let p = lazyScripts.get(src); if (p) return p;
+    p = new Promise((res, rej) => {
+      const s = document.createElement("script"); s.async = false; s.dataset.lazy = "1";   // (in the order asked, as the tags were; data-lazy: not part of the page build Settings names)
+      s.src = src + (lazyTries ? (src.includes("?") ? "&" : "?") + "again=" + lazyTries : "");
+      s.onload = () => res(true);
+      s.onerror = () => { lazyScripts.delete(src); lazyTries++; s.remove(); rej(new Error(src.split("?")[0] + " did not load")); };
+      document.head.appendChild(s);
+    });
+    lazyScripts.set(src, p); return p;
+  })).then(() => true);
+}
+window.cnLoadScript = cnLoadScript;
 async function previewPng(sh) {
   try { const cv = document.createElement("canvas"); const st = stockFor(sh.metal, sh); cv.width = 1026; cv.height = Math.round(1026 * st.hPt / st.wPt); paintPreview(cv, sh, true); const blob = await new Promise(r => cv.toBlob(r, "image/png")); return blob; } catch (_) { return null; }
 }
@@ -7729,8 +7747,17 @@ async function loadCharms() {
    signed in (charm-nest-master-admin.js), so a deep link that arrives before that answer is kept for a moment and opened if the answer is Paul. */
 const effAllowed = () => { try { return !!(window.CharmNestMasterAdmin && CharmNestMasterAdmin.is()); } catch (_) { return false; } };
 let effWanted = 0, effWantedHash = "";
+/* COST (Oct 2026): the console's six scripts (0.7 MB, and a one-second ticker) were loaded by every page; only the master admin's
+   page loads them now, once the server has said it is his (or his tab is asked for). They mount themselves on #efficiencyView
+   when they arrive (charm-nest-efficiency.js), the tab already shown included; another person signing in later is put away by
+   the console's own watch, as before. The tokens are the ones the tags had, in the tags' order. */
+const EFF_FILES = ["charm-nest-efficiency-charts.js?v=20261006-efc4-pb1", "charm-nest-efficiency-stations.js?v=20261006-es11-fx1-sb1-dk1-ps1-rlp2", "charm-nest-efficiency.js?v=20261006-ef17-fx1-sb1-dk1-wh1-ma1",
+  "charm-nest-efficiency-orders.js?v=20261006-eo6-in2-rlp2", "charm-nest-efficiency-laser.js?v=20261006-int2", "charm-nest-efficiency-person.js?v=20261006-ep14-ad4"];
+let effLoading = null;
+const loadEfficiency = () => effLoading ||= cnLoadScript(...EFF_FILES).catch(e => { effLoading = null; console.warn("Employee efficiency", e); toast("Employee efficiency did not load: " + e.message, "bad", 6000); return false; });
 window.addEventListener("charmnest:master-admin", () => {
   try {
+    if (effAllowed()) loadEfficiency();
     if (!effAllowed()) { if (S.mode === "efficiency") setMode("nest"); return; }
     if (effWanted && Date.now() - effWanted < 20000 && S.mode !== "efficiency") {
       const h = effWantedHash; effWanted = 0; effWantedHash = ""; setMode("efficiency");
@@ -7742,7 +7769,7 @@ function setMode(mode) {
   if(window.Seal?.defer("main-mode",()=>setMode(mode)))return;
   if (modeFromUser) effWanted = 0;
   if (mode === "efficiency") {
-    if (effAllowed()) { effWanted = 0; effWantedHash = ""; }
+    if (effAllowed()) { effWanted = 0; effWantedHash = ""; loadEfficiency(); }
     else {
       if (!modeFromUser) { effWanted = Date.now(); if (/^#efficiency(\/|$)/.test(location.hash || "")) effWantedHash = location.hash; }
       modeFromUser = false;
@@ -8036,6 +8063,18 @@ async function boot() {
   // more after it stops, so its tab does not keep the spinner); the whole row of every metal used to be written again
   const tabsWatched = new Set();
   setInterval(() => { for (const sh of allSheets()) { if (["nesting", "finishing"].includes(sh.status)) renderProgress(sh); } for (const m of METALS) { const busy = pagesOf(m.key).some(sh => sh.status === "nesting" && !sh.el); if (!busy && !tabsWatched.has(m.key)) continue; if (busy) tabsWatched.add(m.key); else tabsWatched.delete(m.key); tabMarks(activePage(m.key)); } }, 1000);
+  /* COST (Oct 2026): the background clock (charm-nest-clock.js) keeps this tab at full speed out of view only while there is
+     work that must keep pace: a sheet nesting, finishing, queued or being saved; files being read in; labelled work on the
+     top bar (uploads, saves, the cloud's answers waiting); a run that is going; Auto mode (nobody may be at the bench: its
+     checks and runs start by themselves). Otherwise the page's timers run on the browser's own and slow down when hidden. */
+  if (window.CharmNestClock && CharmNestClock.need) CharmNestClock.need(() =>
+    allSheets().some(sh => ["nesting", "finishing", "queued"].includes(sh.status) || sh._operationStarting || sh._learnedStarting || sh._rosePlanning || sh._roseLoading || sh._roseAction || sh.persisted && !sh.persistedDone)
+    || (S.nestQueue || []).length > 0
+    || S.sources.some(s => !["ready", "error", "master"].includes(s.state) || s.review && s.review.state === "running")
+    || !!(window.CNProgress && CNProgress.count() > 0)
+    || !!(window.CharmNestOperations && (CharmNestOperations.snapshot().active.length || CharmNestOperations.snapshot().queued.length))
+    || !!(window.B && B.run && ["running", "review"].includes(B.run.status))
+    || S.settings.runMode === "auto");
   await gate();
   cloudProbe();
   // (the cloud offline: the network back, or the tab looked at again after a sleep, checks it at once)
@@ -8066,7 +8105,7 @@ boot();
 <!-- Is the person signed in the master admin (Paul)? CharmNestMasterAdmin.is() / login(): true only for the master admin, by the server's Admin answer for the signed-in name (charm-nest-role.js CNRole). An element with data-master-only shows only for him. -->
 <script src="charm-nest-master-admin.js?v=20261011-ma1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
-<script src="charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1-spl1-sv1-advsb1-krep1-kt1-cost18"></script>
+<!-- charm-nest-sandbox-families.js and charm-nest-sandbox-browser.js load when needed (Sandbox.loadScripts in charm-nest-bridge.js: a page in the sandbox, Settings opened, a reset) -->
 <script src="charm-nest-repo-lock.js?v=20261011-rpu1-as1-sv1"></script>
 <!-- put a master charm's SKU on one existing Etsy listing (charm-nest-etsy-link.js, SWANSKU 12 Oct 2026): the Etsy chip on a master card of the Library, behind the repo password -->
 <script src="charm-nest-etsy-link.js?v=20261012-el1-cs1-fm1-bt1-dh1"></script>
@@ -8193,12 +8232,7 @@ try {
 <script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3-pow1-sk1-sn1-dm1-eu3-pv1"></script>
 <!-- the persistent Alert for password attempts on the Charm Repo Library: the master admin's login only, a pill at the right end of the top bar until he closes it (CharmNestRepoAlerts) -->
 <script src="charm-nest-repo-alerts.js?v=20261011-ra1"></script>
-<script src="charm-nest-efficiency-charts.js?v=20261006-efc4-pb1"></script>
-<script src="charm-nest-efficiency-stations.js?v=20261006-es11-fx1-sb1-dk1-ps1-rlp2"></script>
-<script src="charm-nest-efficiency.js?v=20261006-ef17-fx1-sb1-dk1-wh1-ma1"></script>
-<script src="charm-nest-efficiency-orders.js?v=20261006-eo6-in2-rlp2"></script>
-<script src="charm-nest-efficiency-laser.js?v=20261006-int2"></script>
-<script src="charm-nest-efficiency-person.js?v=20261006-ep14-ad4"></script>
+<!-- the Employee efficiency console (charm-nest-efficiency*.js) loads on the master admin's page only: loadEfficiency, above -->
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin owFull" aria-labelledby="owTitle" data-no-grow>
   <div class="owBox">

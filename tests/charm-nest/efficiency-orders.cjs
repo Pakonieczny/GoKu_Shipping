@@ -79,6 +79,7 @@ const F = require('./efficiency-orders-fixture.cjs');
   const boot = async (page, w, h) => {
     await page.setViewportSize({ width: w, height: h || 900 });
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`);
+    await page.evaluate(() => loadEfficiency());   // (COST, Oct 2026: the console's scripts load on the master admin's page only; this test mounts its parts by itself)
     await page.waitForFunction(() => window.EfficiencyOrders && window.PieceMedia && window.Efficiency && window.Efficiency.api && document.readyState === 'complete', null, { timeout: 60000 });
     await page.addScriptTag({ url: `${srv.sorterOrigin}/lib/jsQR.js` });
   };

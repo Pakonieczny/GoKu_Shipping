@@ -1924,7 +1924,8 @@ const idAfter = p => p.slice(0, -1) + String.fromCharCode(p.charCodeAt(p.length 
 async function op_sandboxStatus(b) {
   const doc = await db.collection(SANDBOX).doc("current").get(), set = pulled(doc.exists ? doc.data() : null);
   // light: the snapshot alone (a production page that is not in the sandbox only needs to know one was taken): one read, no counts
-  if (b && b.light === true) return { ok: true, light: true, snapshot: set, records: {} };
+  // (withLimit: Settings on a production page also shows Paul's pull number, one more read: COST (Oct 2026) that is all it reads on opening)
+  if (b && b.light === true) return Object.assign({ ok: true, light: true, snapshot: set, records: {} }, b.withLimit === true ? { pullLimit: await SandboxPull.readLimit().catch(() => null) } : {});
   const counts = {}, capped = {}, kept = {}, jobs = [];
   const count = q => q.count().get().then(s => s.data().count);
   // each count is asked on its own and all at once; one that cannot be read is null (the page says so), never the whole answer lost
@@ -3238,44 +3239,13 @@ function findSetRow(id, d) {
     labels: d.labels || null, labelFiles: (d.labelFiles || []).map(f => ({ path: f.path || null, url: f.url || null, sheetId: f.sheetId || null, part: f.part || 1, parts: f.parts || 1, orders: f.orders || [] })),
     refused: d.refused || null, completionDay: d.completionDay || null, completedAt: ms(d.completedAt), committedAt: ms(d.committedAt), updatedAt: ms(d.updatedAt), partial: true };
 }
-// ── bridge session log: Design_Bridge/{session} + /log rows (ids and counts only, never order text) ──
+/* ── bridge session log. COST (Oct 2026): it wrote a row per station command to Design_Bridge/{session}/log (and the
+   session's document, and swept old sessions later) and nothing read it back; the page no longer sends it. The op stays
+   for a page still open from before, and answers as it did without writing anything. Rows already written go with a
+   TTL policy on expireAt where one is on, and with the purge and the sandbox wipe (they still clear Design_Bridge). ── */
 async function op_bridgeLog(b) {
   const session = str(b.session, 80); if (!/^[\w\-]{6,80}$/.test(session)) return { error: "bad session" };
-  const ref = col(BRIDGE).doc(session);
-  // nothing reads the log in bulk: a TTL policy on expireAt (collection group log, and the session documents) removes a
-  // row 30 days after it was written, a sandbox row after 3; the session's own date moves with its latest row
-  const expireAt = new Date(Date.now() + (PREFIX ? 3 : 30) * 86400000);
-  const meta = Object.assign({}, b.meta || {}, { sessionId: session, updatedAt: FV.serverTimestamp(), expireAt });
-  const rows = (b.rows || []).slice(0, 200);
-  if (rows.length) meta.commands = FV.increment(rows.filter(r => r.dir === "cmd").length);
-  await ref.set(meta, { merge: true });
-  let batch = db.batch(), n = 0;
-  for (const r of rows) { batch.set(ref.collection("log").doc(), { t: num(r.t) || Date.now(), dir: str(r.dir, 10), type: str(r.type, 40), ms: r.ms == null ? null : num(r.ms), payload: r.payload && typeof r.payload === "object" ? r.payload : (r.payload == null ? null : str(r.payload, 400)), expireAt }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
-  if (n) await batch.commit();
-  await sweepBridge(session);
-  return { ok: true, rows: rows.length };
-}
-/* Nothing reads an old session's log. A session not written for 30 days (3 in the sandbox) goes with its log, a page per
-   call and at most once every 10 minutes per instance and workspace, and a session left open that long lets go of its own
-   rows past that age (a TTL policy on expireAt, if one is switched on, does the same). */
-const bridgeSweptAt = new Map();
-async function sweepBridge(session) {
-  if (Date.now() - (bridgeSweptAt.get(PREFIX) || 0) < 600000) return 0;
-  bridgeSweptAt.set(PREFIX, Date.now());
-  let gone = 0;
-  try {
-    const keepMs = (PREFIX ? 3 : 30) * 86400000, cutoff = new Date(Date.now() - keepMs);
-    const old = await col(BRIDGE).where("updatedAt", "<", cutoff).limit(3).get();
-    for (const d of old.docs) {
-      if (d.id === session) continue;
-      const logs = await d.ref.collection("log").limit(400).get();
-      const batch = db.batch(); logs.docs.forEach(x => batch.delete(x.ref)); if (logs.size < 400) batch.delete(d.ref);
-      await batch.commit(); gone += logs.size;
-    }
-    const mine = await col(BRIDGE).doc(session).collection("log").where("expireAt", "<", new Date()).limit(400).get();
-    if (!mine.empty) { const batch = db.batch(); mine.docs.forEach(x => batch.delete(x.ref)); await batch.commit(); gone += mine.size; }
-  } catch (e) { console.warn("[charmNestLibrary] old bridge log not deleted:", e && e.message); }
-  return gone;
+  return { ok: true, rows: 0 };
 }
 // ── learned maps: aliases, no-design list, option maps ──
 /** Every document of a map, read 500 at a time in document order, as much as fits in one answer and is read within

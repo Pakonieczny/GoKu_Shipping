@@ -81,7 +81,8 @@ const OLD = 'OLDREC';
     await L({ op: 'runArchive', runId: RUN, parts: [{ json: JSON.stringify({ [`${D}_${TX[D]}`]: { orderId: D, key: `${D}_${TX[D]}` } }) }] });
     await L({ op: 'backPut', back: { poolId: poolId(A), sheetId: SHEET, setId: SET, approvedAt: NOW, approvedBy: 'paul', text: 'ANNA' } }).catch(() => null);
     await L({ op: 'releasePut', released: { gf: DAY }, lastReleased: { gf: DAY } });
-    await L({ op: 'bridgeLog', session: 'sorter-session-1', meta: { by: 'paul' }, rows: [{ t: Date.now(), dir: 'cmd', type: 'ping' }, { t: Date.now(), dir: 'evt', type: 'pong' }] });
+    // (COST, Oct 2026: bridgeLog writes nothing any more; a session's log written before that is still there to be wiped)
+    st.put(P + 'Design_Bridge', 'sorter-session-1', { sessionId: 'sorter-session-1', by: 'paul' }); st.put(P + 'Design_Bridge', 'sorter-session-1/log/l1', { t: Date.now(), dir: 'cmd', type: 'ping' }); st.put(P + 'Design_Bridge', 'sorter-session-1/log/l2', { t: Date.now(), dir: 'evt', type: 'pong' });
     await L({ op: 'arrivalRecord', orders: [{ id: A, createTs: 1 }, { id: C, createTs: 1 }] });
     await L({ op: 'cancelPut', orderId: C, by: 'Etsy', why: 'buyer cancelled', record: { buyer: 'Buyer C', lines: [{ transactionId: TX[C], title: 'Charm C' }] } });
     await L({ op: 'timelineAdd', events: [{ orderId: A, type: 'qrLabel', id: 'q1', text: 'QR label for GF Sheet 1', by: 'paul' }, { orderId: B, type: 'designSent', id: 'ds1', text: 'sent', by: 'paul' }] });

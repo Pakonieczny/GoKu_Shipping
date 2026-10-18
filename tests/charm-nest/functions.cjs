@@ -389,8 +389,9 @@ const post = async (h, body, headers = {}) => h.handler({ httpMethod: 'POST', he
   r=await post(lib,{op:'archiveEmptySheet',id:'old-0',runId:'run-other'});assert.equal(r.status,400);
   r=await post(lib,{op:'archiveEmptySheet',id:'old-0',runId:'run-old'});assert.equal(r.status,400);
   for(const key of [...store.keys()]) if (/^(Charm_Nest_Sheets\/(recent-|old-)|Charm_Nest_Sets\/history-old|Charm_Nest_Runs\/run-old)/.test(key)) store.delete(key);
-  r = await post(lib, { op: 'bridgeLog', session: 'k3f9a2xyz', rows: [{ t: 1, dir: 'cmd', type: 'hello' }, { t: 2, dir: 'reply', type: 'hello', ms: 12 }], meta: { bench: 'design-1' } }); assert.strictEqual(r.body.rows, 2);
-  assert.strictEqual([...store.keys()].filter(k => k.startsWith('Design_Bridge/k3f9a2xyz/log/')).length, 2, 'two log rows under the session');
+  // COST (Oct 2026): the bridge log is no longer written; the op still answers a page open from before, and writes nothing
+  r = await post(lib, { op: 'bridgeLog', session: 'k3f9a2xyz', rows: [{ t: 1, dir: 'cmd', type: 'hello' }, { t: 2, dir: 'reply', type: 'hello', ms: 12 }], meta: { bench: 'design-1' } }); assert.strictEqual(r.body.ok, true); assert.strictEqual(r.body.rows, 0);
+  assert.strictEqual([...store.keys()].filter(k => k.startsWith('Design_Bridge/')).length, 0, 'nothing is written under Design_Bridge');
   r = await post(lib, { op: 'aliasPut', listingId: '1718', sku: 'BR-CMP-01', by: 'Ana' }); r = await post(lib, { op: 'aliasGet' }); assert.strictEqual(r.body.aliases['1718'].sku, 'BR-CMP-01');
   r = await post(lib, { op: 'noDesignPut', pattern: '^CHAIN' }); r = await post(lib, { op: 'noDesignPut', sku: 'BOX-01' }); r = await post(lib, { op: 'noDesignPut', pattern: '(' }); assert.strictEqual(r.status, 400, 'a bad pattern is refused');
   r = await post(lib, { op: 'noDesignGet' }); assert.deepStrictEqual(r.body.list.patterns, ['^CHAIN']); assert.deepStrictEqual(r.body.list.skus, ['BOX-01']);

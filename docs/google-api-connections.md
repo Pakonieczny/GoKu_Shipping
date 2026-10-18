@@ -13,8 +13,8 @@ https://goldenspike.app/.netlify/functions/googleConnectionsCheck?write=1  # add
 ```
 
 Add `?key=<passcode>` (or send the `X-Edit-Passcode` header). This check,
-`googleMerchantHealth`, `shopifyAttributionCheck`, `googleAdsAuthCheck` and
-`googleAdsDiag` show account IDs, credential shapes or order values, so they
+`googleMerchantHealth`, `shopifyAttributionCheck` and `googleAdsAuthCheck`
+show account IDs, credential shapes or order values, so they
 answer only with the passcode; while no passcode is set they refuse with
 "Locked until a passcode is saved in Firebase (Firestore config/editPasscode)".
 The default run is read-only: every probe is a `SELECT` or a `GET`. The write
