@@ -21614,7 +21614,7 @@ const LiveNest = window.LiveNest = (() => {
     return plan;
   }
   // the page's own marks first; the sets of its run are looked at only when none says so
-  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!p.cardinalPull || !!window.Gate?.holding?.(p) || !!p.laserDoneAt || !!p._manualHold ||   // (_manualHold: a person is moving its charms by hand in the sheet window, Manual Control: nothing arrives on it meanwhile) (!((p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal)))&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
+  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!p.cardinalPull || !!window.Gate?.holding?.(p) || !!p.laserDoneAt || !!p._manualHold /* (a person is moving its charms by hand in the sheet window, Manual Control: nothing arrives on it meanwhile) */ || (!((p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal)))&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
     Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId));
   /* Gold and Silver arrivals go to the run's earliest open sheet first (the pool puts them on the same one). An order
      that misses its gaps moves on to the next sheet, and the earlier sheet stays first in line: once a newer page existed

@@ -1856,8 +1856,8 @@ const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces
   "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "remnantList", "remnantMark", "remnantBackfill", "partialList", "partialPolicyGet", "partialPolicySet", "partialPlan", "partialUse", "partialStocks", "sheetHistory", "partialSearchList", "sheetMake", "sheetDelete", "partialBackfill", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
   "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "listingKindPut", "noDesignPut", "noDesignDelete", "optionMapPut",
   "sandboxCancel", "sandboxPut", "sandboxPullOrders", "sandboxPullLimitSet", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
-["customSaveGet", "customSaveCommit", "customSavePending", "customSaveIntent"].forEach(op => NO_GEN_BUMP.add(op));
-NO_GEN_BUMP.add("manualClaim");   // (Manual Control's claim writes the sheet record's manualEdit alone: nothing a placement answer is made from)   // (the save writes a master entry, an alias and its own record: nothing a placement answer is made from)
+["customSaveGet", "customSaveCommit", "customSavePending", "customSaveIntent"].forEach(op => NO_GEN_BUMP.add(op));   // (the save writes a master entry, an alias and its own record: nothing a placement answer is made from)
+NO_GEN_BUMP.add("manualClaim");   // (Manual Control's claim writes the sheet record's manualEdit alone: nothing a placement answer is made from)
 async function placementGen() {
   if (PREFIX) return null;
   try { const s = await db.collection(REV_COLL).doc("placement").get(); return s.exists ? Number((s.data() || {}).n) || 0 : 0; }
