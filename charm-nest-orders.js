@@ -3790,6 +3790,56 @@
     for (const t of texts) { const body = decodeEntities(String(t || "")); MSG_FACE_ASK.lastIndex = 0; for (let m; (m = MSG_FACE_ASK.exec(body));) out.add(m[1].toLowerCase()); }
     return ["front", "back"].filter(f => out.has(f));
   }
+  /* FRONTDEFAULT (Paul, 19 Oct 2026, order 4205982652): "This order should always have engraving by default as the Front option. Make sure this listing gets profiled and correctly shows the engraving on the Front by default."
+     THE LISTING: Etsy 1830130714, "Tiny Bar Necklace Custom Engraved Jewelry Dainty Necklace ..." (Etsy SKU BEADY). Its drop-downs are "METAL - ENGRAVING" ("GOLD·6-10·Characters") and "LENGTH / FONT / ALIGNMENT"
+     ("16\"·PRISTINA·Center"): neither names a face, so the order ("Layla 3HEARTS Skye") had no spec.engraving and the faces model fell to the shop's usual BACK (charm-nest-engrave-faces.js setupOf), unless the
+     paid reader or a person said otherwise. The bar is engraved on its FRONT.
+     THE RULE, one row of LISTING_FACES per listing ({ "<Etsy listing id>": "front" | "back" }; nothing else here names a listing): a line of the listing whose order says NOTHING about a face (no spec.engraving from
+     engravingOf: no option, label, title or note naming one) and that has words to engrave is engraved on that face, with the words of the personalisation box exactly as read (a font request taken out, as everywhere;
+     several names, several lines, symbols and tokens such as "3HEARTS" as written: one face, no question). spec.engraving source "profile", why "front only from this listing's profile" (the BARS wording), so the
+     Engrave tab and the order window show "Front only". A face the order DOES name (a drop-down offering Front / Back / Both, "on the back: ...", "front: A back: B") is read exactly as on any other listing and wins;
+     words only in a note, or a note to the shop in brackets taken out of the words, keep a person confirming the WORDS (never the face). "Love you to the moon and back" (a back reading whose only face word is that "... and back") is no face named. A listing with a PIECE_LISTINGS row uses that row's `face` instead.
+     A line of SEVERAL pieces (a counted disc necklace, "Necklace Options: GOLD - 2 Disc": slots D1..Dn) gives each disc its own words on its own front when the pieces' reader splits them one per disc ("A / B", "A, B",
+     "Disc 1: A Disc 2: B"); words it cannot split stay on the fronts with a person saying which words go on which disc (the face is never asked).
+     Listing 1008014571 (order 4204843889, "Back: B" on its card): neither drop-down ("Necklace Options", "Fonts") names a face, so its line had no spec.engraving and fell to the usual back like 1830130714.
+     TO ADD a listing: one row below. TO UNDO: delete the row; nothing stored is rewritten (a line read again reads as it did before). */
+  const LISTING_FACES = Object.freeze({
+    "1830130714": "front",   // FRONTDEFAULT: Tiny Bar Necklace Custom Engraved (SKU BEADY), order 4205982652
+    "1008014571": "front"    // FRONTDEFAULT (Paul, 19 Oct 2026, order 4204843889): Initial Disc Necklace (SKU INITIAL_DISC_4571, "nitial_Disc_4571" on Etsy), 1 or more discs ("Necklace Options: ROSEGOLD - 2 Disc")
+  });
+  /** (FRONTDEFAULT) The default-face reading of a line of a LISTING_FACES listing whose order names no face (spec.engraving absent), or null. */
+  function listingFaceOf(line, spec) {
+    const face = LISTING_FACES[pieceListingId(line)];
+    if (face !== "front" && face !== "back") return null;
+    if (!spec || spec.engraveNever || spec.noDesign || !spec.engraveCandidate) return null;
+    // ("Love you to the moon and back" is read as a back label by the faces reading: on a listing with a default face, a back reading whose ONLY face word is that "... and back" is no face the buyer named)
+    const idiomBack = e => !!(e && e.source === "note" && e.mode === "back" && !e.front && !e.back && !e.needsPerson) && [].concat(spec.personalization || [], spec.buyerMessage || "", spec.staffNote || "").some(t => /\b(?:and|&|n)\s+back\b/i.test(decodeEntities(String(t))))
+      && ![].concat(spec.personalization || [], spec.buyerMessage || "", spec.staffNote || "").some(t => /\b(?:front|back|sides?|reverse)\b/i.test(decodeEntities(String(t)).replace(/\b(?:and|&|n)\s+back\b/gi, " ")));
+    if (spec.engraving && !idiomBack(spec.engraving)) return null;
+    let pers = (spec.personalization || []).map(x => visible(x).replace(/\r/g, "").trim()).filter(Boolean);
+    try { const fr = fontReadText(pers.join("\n"), { cueOnly: true }); if (fr.changed) pers = fr.lines.map(x => String(x).trim()).filter(Boolean); } catch (_) { /* the words stay as written */ }   // ("Typewriter font" is spec.fontText, no words)
+    let notes = [];
+    try { const ER = engraveReadModule(), rd = ER && ER.readPersonalisation && pers.length ? ER.readPersonalisation(pers.join("\n")) : null; if (rd && !rd.unsure && !rd.labelled && rd.lines && rd.lines.length && (rd.dropped || []).length) { notes = rd.dropped.map(d => String(d.text || "").trim()).filter(Boolean); pers = rd.lines.map(x => String(x).trim()).filter(Boolean); } } catch (_) { notes = []; }
+    const ls = pers.join("\n").split("\n").map(x => x.replace(/[ \t]+/g, " ").trim()).filter(Boolean);
+    const words = ls.length ? { text: ls.join("\n"), lines: ls, fontWord: null } : null;
+    const eng = { v: 1, mode: face, source: "profile", front: null, back: null, textSource: "none", needsPerson: false, confidence: 0.5, why: "", option: null };
+    if (!words) return Object.assign(eng, { needsPerson: true, reviewKind: "texts", why: clip(`${face} only from this listing's profile, but the words are only in a note, not in the personalisation box: a person says exactly what is engraved`, 170), raw: [spec.buyerMessage, spec.staffNote].map(x => String(x || "").trim()).filter(Boolean).join("\n").slice(0, 300) });
+    eng[face] = words; eng.textSource = "single"; eng.confidence = 0.9;
+    // (a counted line of several pieces, the discs D1..Dn: each disc its own words, in order, on its own face; words that do not split one per disc wait for a person, on the same face)
+    const pr = spec.pair, pc = Math.floor(+spec.pieceCount) || 0, per = pr && !pr.earring && !pr.glued && pr.kind === "multi" && pc >= 2 ? Math.round(pc / Math.max(1, Math.round(+spec.quantity) || 1)) : 0;
+    if (per >= 2 && per <= 24) {
+      const slots = Array.from({ length: per }, (_, i) => "D" + (i + 1)), noun = (pr && pr.noun) || "disc";
+      let r = null; try { const PW = pieceWordsModule(); r = PW ? PW.read(pers, per, { noun }) : null; } catch (_) { r = null; }
+      if (r && r.split && slots.every((_, i) => String(r.words[i] || "").trim())) {
+        eng.pieces = {}; slots.forEach((sl, i) => { const l2 = String(r.words[i]).split("\n").map(x => x.replace(/[ \t]+/g, " ").trim()).filter(Boolean), f2 = { text: l2.join("\n"), lines: l2, fontWord: null }; eng.pieces[sl] = { front: face === "front" ? f2 : null, back: face === "back" ? f2 : null }; });
+        eng.textSource = "labelled";
+        eng.why = clip(`${face} only from this listing's profile (every ${noun} is engraved on its ${face}): ${slots.map((sl, i) => `“${clip(r.words[i], 20)}” on ${noun} ${i + 1}`).join(", ")}`, 200);
+      } else return Object.assign(eng, { needsPerson: true, reviewKind: "pieces", textSource: "unlabelled", confidence: 0.5, raw: pers.join("\n").slice(0, 300), why: clip(`${face} only from this listing's profile (every ${noun} is engraved on its ${face}), but the words do not give one text for each of the ${per} ${noun}s: a person says what goes on each`, 170) });
+    }
+    if (!eng.pieces) eng.why = clip(`${face} only from this listing's profile (this listing is engraved on its ${face}): “${clip(ls.join(" / "), 40)}” goes on the ${face}`, 200);
+    if (notes.length) Object.assign(eng, { needsPerson: true, reviewKind: "texts", textSource: "labelled", confidence: 0.5, raw: pers.join("\n").slice(0, 300), why: clip(`${face} only from this listing's profile; the buyer also wrote a note to the shop (${notes.map(t => `“${clip(t, 40)}”`).join(", ")}), which is not engraved: a person confirms the words`, 170) });
+    return eng;
+  }
   /** What the buyer chose and wrote about the faces of ONE line (the CONTRACT's spec.engraving, plans/front-back-1011/CONTRACT.md section 2). line: the Etsy line (variations, title,
    *  personalization); spec: its reading (personalization, buyerMessage, staffNote, messages, font, pair, pieceCount). null when the line has no face word anywhere: such a line has no
    *  `spec.engraving`, which the faces model reads as today's default (the back, as the engraving reader always read it). Never a person's word: that is row.engravingOverride. */
@@ -4496,6 +4546,8 @@
           && (spec.personalization || []).every(x => String(x).split("\n").every(l => !l.trim() || pl.value.test(shownText(l).normalize("NFKC").replace(PIECE_PRICE, " "))))) spec.engraveCandidate = false;
       }
     } catch (_) { /* a reading that fails leaves the line as it always was */ }
+    // FRONTDEFAULT (Paul, 19 Oct 2026, order 4205982652): a listing of LISTING_FACES engraves its face (the front of listing 1830130714) when the order names none; a face the order names (spec.engraving above) stands
+    if (!quiet) { try { const lfe = listingFaceOf(line, spec); if (lfe) spec.engraving = lfe; } catch (_) { /* the line stays as it was read */ } }
     // HUGGIEGUARD: the line's form and the design's form are always told; a clash holds the line with ONE plain line and the siblings that fit (spec.formHold), and no design is on the row
     spec.lineForm = lf.form; spec.designForm = df.soft ? "unknown" : df.form;   // (a necklace read only from a distinct huggie twin is not told: it only keeps a huggie line off the plain design)
     if (symHeld) {
