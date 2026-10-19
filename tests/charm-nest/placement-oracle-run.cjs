@@ -69,6 +69,7 @@ const R = {   // browser-side readers (they run in the page)
     for (const c of cards) {
       const n = +String(c.dataset.row || '').split('_')[1] - 5000000000;
       out.push({ s: 'rv.queue', n, text: T(c.querySelector('.queueLabel')) });
+      // NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): the row's Open sheet button is gone; the claim now proves it stays gone
       out.push({ s: 'rv.sheetButton', n, kind: 'openSheet', shown: !!c.querySelector('[data-cu-sheet]') });
     }
     return out;
@@ -102,7 +103,7 @@ const VIEWS = [
     // (opened over the Library, where the sheets are being read: the window asks the page's own state, and that is how a person gets to it)
     open: async (p, c) => { await p.evaluate(() => document.querySelector('#modeSeg [data-mode="library"]').click()); await p.waitForSelector('#libBody .libCard[data-id]', { timeout: 15000 }).catch(() => {}); await p.evaluate(o => { SharedOrdersModal.open(o); }, SO); await p.waitForSelector('dialog.soDlg[open]', { timeout: 8000 }).catch(() => {}); await p.waitForTimeout(300); },
     close: p => p.evaluate(() => { try { SharedOrdersModal.close(); } catch (_) {} }), read: (p, c) => p.evaluate(R.so, SO) },
-  { id: 'rv', label: 'Review · cards (words, Open sheet button)', page: 'v', when: sc => sc.lines.some(l => l.custom),
+  { id: 'rv', label: 'Review · cards (words, no Open sheet button)', page: 'v', when: sc => sc.lines.some(l => l.custom),
     open: async (p, c) => { await p.evaluate(() => document.querySelector('#modeSeg [data-mode="review"]').click()); await p.waitForSelector('#rvList .reviewListRow', { timeout: 8000 }).catch(() => {}); },
     close: async () => {}, read: (p, c) => p.evaluate(R.rv, c.rid) },
   { id: 'pairs', label: 'Pairs · the cloud\'s records of every group agree about sheet, side and group', page: null, when: sc => sc.lines.some(l => l.kind),

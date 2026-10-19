@@ -113,7 +113,8 @@ const OLD = [
     assert(await page.evaluate(() => CustomSheet.sentOf(B.orders.byKey.get('4179100001_41791000011'))), 'the send itself stands');
     const btn = rid => page.evaluate(sel => [...document.querySelector(sel).querySelectorAll('.rowActions button')].map(b => b.textContent.trim()).filter(t => t !== 'Hold'), card(rid));
     assert.deepEqual(await btn(HAND), ['Print QR label', 'Reopen'], 'the hand-completed order keeps its seal and buttons');
-    assert.deepEqual((await btn(SENT)).filter(t => /sheet|History/i.test(t)), ['Open sheet', 'History'], 'the sent order keeps its sheet and history links');
+    // NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): the Open sheet button is gone from the card; History stays
+    assert.deepEqual((await btn(SENT)).filter(t => /sheet|History/i.test(t)), ['History'], 'the sent order keeps its history link (no Open sheet button)');
     assert.equal(await page.evaluate(sel => document.querySelectorAll(sel + ' .seal-sheet').length, card(SENT)), 1, 'and its Sent to Sheet seal');
     assert.match(await page.evaluate(sel => document.querySelector(sel + ' .queueLabel').textContent, card(SENT)), /^Resolved · sent to sheet$/, 'its card says Resolved, not Decided');
 

@@ -223,7 +223,8 @@ function judge(c, T, S) {
       return c.rids.join() === want.join() ? [] : [`lists orders ${c.rids.join(', ') || 'none'}, the cloud's are ${want.join(', ') || 'none'}`];
     }
     case 'holdPile': { const want = new Set(Object.values(T).filter(t => t.state === 'held').map(t => t.rid)).size; return c.count === want ? [] : [`On hold pile counts ${c.count} order(s), the cloud has ${want} held`]; }
-    case 'openSheet': { const on = tl && tl.state === 'sheet'; return c.shown === !!on ? [] : [`${c.shown ? 'offers' : 'does not offer'} Open sheet, the piece is ${tl ? tl.state : '?'}${on ? ' on ' + tl.sheets.join(' + ') : ''}`]; }
+    // NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): the Review row has no Open sheet button any more (History stays): it is never offered, on a sheet or not
+    case 'openSheet': return c.shown ? [`offers Open sheet (removed from the Review row), the piece is ${tl ? tl.state : '?'}`] : [];
     case 'cancelFlag': { const want = orderT.length > 0 && orderT.every(t => t.state === 'cancelled'); return c.cancelled === want ? [] : [`says the order is ${c.cancelled ? '' : 'not '}cancelled, the cloud says ${want ? '' : 'not '}cancelled`]; }
   }
   if (c.dots != null) {            // the progress dots: Nested done means it is on a sheet (or later)
