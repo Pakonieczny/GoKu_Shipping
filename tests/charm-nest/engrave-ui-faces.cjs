@@ -336,7 +336,7 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
     assert.deepEqual([...row.querySelectorAll('.egEar .egPiece')].map(n => n.textContent), ['FRONT', 'BACK'], 'both faces are told on the row, each on its own line'); assert.equal(row.querySelector('.egMode').textContent, 'Front + back');
     assert.equal(row.classList.contains('isDecided'), false, 'the back is still to decide: the row is not a calm one');
     const [fe, be] = [...row.querySelectorAll('.egEar')]; assert.equal(fe.querySelector('[data-s]').dataset.s, 'skipped'); assert.equal(fe.querySelector('[data-s]').textContent, 'No engraving'); assert.equal(fe.querySelector('.egPiece').dataset.face, 'front', 'on the front\'s own line'); assert.notEqual(be.querySelector('[data-s]') && be.querySelector('[data-s]').dataset.s, 'skipped');
-    assert.equal(row.querySelector('.egPlacementSeals .seal').dataset.face, 'front', 'the front\'s plain seal is on the row'); assert.equal(document.querySelectorAll('#egDone, #egBacks, .decidedRow, [data-a="reopen"], .egTab[data-tab="done"]').length, 0, 'no Decided tab, row or Reopen');
+    assert.equal(row.querySelector('.egEarSeal .seal, .egPlacementSeals .seal').dataset.face, 'front', 'the front\'s plain seal is on the row'); assert.equal(document.querySelectorAll('#egDone, #egBacks, .decidedRow, [data-a="reopen"], .egTab[data-tab="done"]').length, 0, 'no Decided tab, row or Reopen');
     P.reset(); P.jobs.get(fronts.tag[0].key).state = 'review';
   });
   await t('2j both faces approved is ONE row with the chip and each face\'s seal, no Reopen anywhere; changing one face puts only that face back to "needs Approve" (its seal stays, a note says why), the other face keeps its approval', async () => {
@@ -346,7 +346,7 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
     const rows = P.rowsOnPage().filter(r => r.dataset.rid === RID_TAG); assert.equal(rows.length, 1, 'one row for the tag'); const dn = rows[0];
     assert.equal(dn.querySelector('.egMode').textContent, 'Front + back'); assert.equal(dn.dataset.jobs, [fj.key, bj.key].join(' ')); assert.ok(dn.classList.contains('isDecided'), 'nothing left to decide: the calm row');
     assert.deepEqual([...dn.querySelectorAll('.egEar [data-s]')].map(n => n.dataset.s + ':' + n.textContent), ['approved:Approved', 'approved:Approved'], 'each face is told Approved on its own line');
-    assert.deepEqual([...dn.querySelectorAll('.egPlacementSeals .seal')].map(s => s.dataset.face), ['front', 'back'], 'both faces\' seals');
+    assert.deepEqual([...dn.querySelectorAll('.egEarSeal .seal, .egPlacementSeals .seal')].map(s => s.dataset.face), ['front', 'back'], 'both faces\' seals');
     assert.equal(document.querySelectorAll('[data-a="reopen"]').length, 0, 'there is no Reopen'); assert.equal(document.querySelectorAll('#egDone, #egBacks, .decidedRow, .egTab[data-tab="done"]').length, 0);
     // the front is changed on its card: only the front goes back (its seal stays), the back keeps its approval
     const card = P.open(fj.key); assert.equal(card.dataset.key, fj.key); assert.equal(card.dataset.state, 'approved', 'the approved front opens in the same card'); assert.ok(card.querySelector('.egApproved[data-a="approved"][disabled]'), 'a calm Approved tick where Approve was'); assert.equal(card.querySelector('[data-a="approve"]'), null);

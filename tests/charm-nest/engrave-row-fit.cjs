@@ -221,8 +221,9 @@ function pin(m, tab, width, label) {
       const m = await page.evaluate(`(${MEASURE})("#egQueue .placementRow")`);
       const withSeals = m.rows.filter(r => r.seals > 0).map(r => r.rid).sort().join();
       note(withSeals === '4290000201,4290000203,4290000204,4290000205', `seals @${width}: the four rows with approvals show their seals`, withSeals);
-      const sz = await page.evaluate(() => [...document.querySelectorAll('#egQueue .placementRow .egPlacementSeals .seal')].map(n => Math.round(n.getBoundingClientRect().width)));
-      note(sz.length >= 5 && sz.every(n => n >= 24 && n <= 44), `seals @${width}: the seals are smaller than the 50px of the other lists, never squeezed to nothing`, JSON.stringify(sz));
+      // (SEAL15 + ROWALIGN, Paul 19 Oct 2026: the list seal is 57 px, 1.5 x the 38 it was, and a piece's seal stands at the end of its own line (.egEarSeal); offsetWidth: the seal is drawn turned a few degrees)
+      const sz = await page.evaluate(() => [...document.querySelectorAll('#egQueue .placementRow :is(.egPlacementSeals, .egEarSeal) .seal')].map(n => n.offsetWidth));
+      note(sz.length >= 5 && sz.every(n => n >= 54 && n <= 60), `seals @${width}: the list seals are the list size (57 px), never squeezed to nothing`, JSON.stringify(sz));
       pin(m, 'place', width, '(with seals)');
       await shotRows('place', width, '#egQueue .placementRow', '-seals');
     }

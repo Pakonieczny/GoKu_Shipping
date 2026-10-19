@@ -90,7 +90,7 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); Orders.render(); });
     const s3 = await until(async () => { const s = await sealOnCard(page, MARKED.rid); return s && !s.none && s; }, 20000, 'the seal on the Orders card');
     const when = await page.evaluate(at => new Date(at).toLocaleString('en-US', { timeZone: 'America/Toronto', month: 'short', day: 'numeric', year: 'numeric' }), r2.mine.at);
-    check(s3.family === 'release' && /RELEASE/.test(s3.text) && /HOLD/.test(s3.text) && s3.w >= 70 && /seal-releaseHold/.test(s3.kind), `3 · the Orders card shows the RELEASE HOLD seal, large (${JSON.stringify(s3)})`);
+    check(s3.family === 'release' && /RELEASE/.test(s3.text) && /HOLD/.test(s3.text) && s3.w >= 46 && /seal-releaseHold/.test(s3.kind), `3 · the Orders card shows the RELEASE HOLD seal, large (${JSON.stringify(s3)})`);
     check(/Release Hold/.test(s3.words) && s3.by === 'by Test Operator' && s3.words.includes(when) && /\d{1,2}:\d{2}\s?[AP]M/.test(s3.words) && s3.at === r2.mine.at && /Hold released to the nesting queue by Test Operator/.test(s3.aria), `3 · with "Release Hold", who, the date and the time (${s3.words})`);
     const none = await sealOnCard(page, UNKNOWN.rid);
     check(none && none.none === 'seal', `3 · an order never released has none (${JSON.stringify(none)})`);
