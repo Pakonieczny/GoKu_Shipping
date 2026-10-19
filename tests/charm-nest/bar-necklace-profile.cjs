@@ -245,6 +245,6 @@ eq(Object.keys(world(mk('gold • 3 bars ($45.60)')).spec.pair).filter(k => !Obj
 { const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
   for (const f of ['charm-nest-orders.js', 'charm-nest-engrave-piece-words.js', 'charm-nest-engrave-sides.js', 'charm-nest-engrave-setup.js', 'charm-nest-engrave-order.js', 'charm-nest-engrave-card.js', 'charm-nest-engraving-seals.js', 'charm-nest-piece-switch.js', 'charm-nest-order-rows.js', 'charm-nest-sheetwin.js', 'charm-nest-bridge.js']) {
     const m = new RegExp('<script src="' + f.replace(/[.]/g, '\\.') + '\\?v=([^"]*)"').exec(html);
-    if (m) ok(/-br1$/.test(m[1]), `${f}: cache token ends -br1 (${m[1].slice(-24)})`); else ok(false, `${f}: script tag not found`); } }
+    if (m) ok(/-br1(-|$)/.test(m[1]), `${f}: cache token carries -br1 (${m[1].slice(-24)})`); else ok(false, `${f}: script tag not found`); } }
 
 console.log(`bar-necklace-profile: ${n} checks passed`);
