@@ -13252,13 +13252,15 @@ const CustomSheet = window.CustomSheet = (() => {
         const pcs=lines[r.key] || [],expected=pcs.map((pc,n)=>pc.removed?null:O.poolId(r.order,r.line,n+1)).filter(Boolean);
         const swap=!!(intent.replace && intent.replace.includes(r.key) && !(intent.replaced && intent.replaced[r.key]));
         const present=!swap && expected.length && expected.every(id=>Pool.charmOf(id) || B.pool.rows.get(id)?.sheetId);
-        if(swap){r.repoolChanged=true;r.changePending=true;await Review.repool(r);(intent.replaced=intent.replaced || {})[r.key]=Date.now();}   // (REVDROP: the matched charm's pieces come off their open sheet in one commit and the line is made up again from the dropped designs)
+        if(swap){r.repoolChanged=true;r.changePending=true;r.replaceByDesign=true;try{await Review.repool(r);}finally{delete r.replaceByDesign;}(intent.replaced=intent.replaced || {})[r.key]=Date.now();}   // (REVDROP: the matched charm's pieces come off their open sheet in one commit and the line is made up again from the dropped designs)
         else if(present){r.poolIds=expected;Pool.settle(r);}
         else await Review.repool(r);
         if(!current())return;
         if(["held","unmatched","oversize","contended"].includes(r.state))throw new Error(r.reason || "One design could not join its sheet yet");
         await checkpoint();
       }
+      // (REVDROP: the sheets a replaced line's new pieces joined are arranged now, appended into the room the old ones left, as a listing pick's swap does: relinkSweep; a sheet busy or held waits for its own turn)
+      if(intent.replace && intent.replace.length){const fresh=new Set(rows.filter(r=>intent.replace.includes(r.key)).flatMap(r=>r.poolIds || []));for(const sh of allSheets()){const mine=sh.charms.filter(c=>fresh.has(c.poolId));if(!mine.length || mine.every(c=>sh.placements.some(p=>p.id===c.id)))continue;if(sh.runHold || ["nesting","finishing","queued"].includes(sh.status) || sh._operationStarting || sh._learnedStarting || (sh.persisted && !sh.persistedDone))continue;sh.status="ready";try{if(typeof window.startNest==="function")window.startNest(sh);}catch(err){console.warn("[revdrop] sheet not started:",err && err.message);}}}
       // A cloud receipt and local checkpoint complete the same immutable decision; a lost reply leaves it retryable.
       await saveCloud(e,"sent");if(!current())return;
       e.sent={id:intent.id,at:intent.at,by:intent.by,lines:intent.lines};delete e.sendIntent;delete e.sendError;ver++;
@@ -15045,7 +15047,8 @@ const Review = window.Review = (() => {
     }
     // REVHOLD: an order in Review keeps its place on its sheet. Accepting the new order leaves its pieces where they are, with the drawing they have
     // (nothing swaps a drawing in place): never lifted, never nested again, and a piece cut or released was left alone above.
-    if(row.repoolChanged && Pool.keepsPlace(row)){
+    if(row.repoolChanged && Pool.keepsPlace(row) && !row.replaceByDesign){   // (REVDROP: designs a person dropped on the order's Review card and sent replace its pieces even while it is in Review: that send IS the person's answer)
+      
       row.repoolChanged=false;
       const kept="Kept on its sheet with its old drawing: the order was sent to Review";
       try { toast(kept,"warn",6000); } catch(_) {}

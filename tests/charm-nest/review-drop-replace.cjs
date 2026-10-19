@@ -101,7 +101,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
   try {
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.CN && CN.S.cloud.ok === true && window.Orders && window.Review && window.CustomSheet && window.CharmNestReviewMark && window.Pool && window.startNest && window.startNest.__stub && B.master.loadedAt > 0 && !B.master.loading, null, { timeout: 60000 });
-    await page.evaluate(() => { const P = window.CharmNestPDF; if (P) { P.drawCharm = () => {}; P.cutLinesOf = () => []; } });
+    await page.evaluate(() => { const P = window.CharmNestPDF; if (P) { P.drawCharm = () => {}; P.cutLinesOf = () => []; P.pathToCanvas = () => {}; } }); // (the world's charms carry a stand-in outline, no subpaths)
     /* ── the world: three gold sheets (open draft, cut, in a committed set), the lines pooled on them, the run ── */
     await page.evaluate(async ({ LINES, PAGES, RUN, SET_ID, BASE_TS, SHIP }) => {
       await Orders.loadMaps(true);
