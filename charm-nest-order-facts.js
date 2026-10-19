@@ -45,6 +45,8 @@
     return Math.round((Date.UTC(b.getFullYear(), b.getMonth(), b.getDate()) - Date.UTC(a.getFullYear(), a.getMonth(), a.getDate())) / 86400000);
   }
   const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+  // (MOONSTARS, Paul 19 Oct 2026: a counted line with a companion, the moon of a moon and stars necklace, says "2 stars + 1 moon", never "3 stars"; every other counted line: "3 discs")
+  const countedWords = c => (c.companion && c.companion.n > 0 && c.counted > 0 ? plural(c.counted, c.noun) + ' + ' + plural(c.companion.n, c.companion.noun) : plural(c.total, c.noun));
   /** How long ago, in the few words a glance wants: "just now", "12 minutes ago", "3 hours ago", "2 days ago"; "" for a time in the future. */
   function ago(ms, now) {
     now = now == null ? nowMs() : now;
@@ -119,10 +121,10 @@
       if (q.pair) {
         rows.push(row('Quantity', plural(q.n, 'pair') + ' · ' + plural(q.pieces, 'piece') + ', Left and Right'));
         rows.push(row('Pair', q.mismatched ? 'Mismatched: the Left and the Right are different charms of one listing' : 'Matching: the Right is the mirror of the Left'));
-      } else if (q.counted) rows.push(row('Quantity', q.n + ' \u00b7 ' + plural(q.counted.total, q.counted.noun)));
+      } else if (q.counted) rows.push(row('Quantity', q.n + ' \u00b7 ' + countedWords(q.counted)));
       else rows.push(row('Quantity', String(q.n)));
       for (const n of q.notes || []) rows.push(row('Note', n));
-      const text = q.pair ? plural(q.n, 'pair') : q.counted ? plural(q.counted.total, q.counted.noun) : '×' + q.n;
+      const text = q.pair ? plural(q.n, 'pair') : q.counted ? countedWords(q.counted) : '×' + q.n;
       out.push({ id: 'qty', icon: q.pair ? 'pair' : 'quantity', text, aria: (q.pair ? 'Pair: ' : 'Quantity: ') + text, pop: { title: q.pair ? 'Pair' : 'Quantity', icon: q.pair ? 'pair' : 'quantity', rows } });
     }
     const c = f.custom;
