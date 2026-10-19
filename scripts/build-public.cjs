@@ -177,6 +177,7 @@ const assets = [
   "charm-nest-zoompan.js",
   "charm-nest-engraving-seals.js",
   "charm-nest-monogram-seals.js",
+  "charm-nest-order-seals.js",
   "charm-nest-activity.css",
   "charm-nest-export.js",
   "charm-nest-export-ui.js",
