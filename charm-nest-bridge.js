@@ -17766,6 +17766,26 @@ const OrderWin = window.OrderWin = (() => {
     // (the module did not load: the grid as it always was)
     host.innerHTML = f.loading ? '<div class="m"><i>Order</i><span>' + esc(f.order.id) + '</span></div>' : f.cells.map(c => '<div class="m"><i>' + esc(c.label) + '</i>' + (c.html != null ? c.html : '<span>' + esc(c.text) + '</span>') + '</div>').join("");
   }
+  /** WINSEAL (Paul, 19 Oct 2026: "All orders that are approved for engraving, or monograms by the user must have a clear seal that is easily visible to the user whether they are inside the Detail Order view or looking at a list view in the Orders tab"):
+   *  the approval strip at the top of the Overview (#owSeals): one real seal for every approved piece and face, the engraving's from CNEngravingSeals and the monogram's from CNMonogramSeals (a monogram is never given to CNEngravingSeals), each with its word
+   *  (BACK ENGRAVING / FRONT ENGRAVING / MONOGRAM), the piece when the order has several, who and when, and "N of M pieces approved" while some pieces of the order are not. An order with nothing approved draws nothing (the strip is hidden); "No engraving"
+   *  (cut plain) is no approval and no piece to approve. It reads only what the page holds (the Engraving section's own reading of the pieces, OrderEngraving.approvals: no read, no timer, no listener) and is drawn again only when it changes, from paintNow() (paint() ends in it, and so does the timeline feed), the path an approval made here, or on another computer, already takes. */
+  function paintSeals(r) {
+    const host = byId("owSeals"); if (!host) return;
+    const a = r && !r.loading && W.engCard && W.engCard.approvals ? tryDo(() => W.engCard.approvals()) : null, S = window.CNEngravingSeals, MS = window.CNMonogramSeals;
+    const shown = a ? a.pieces.filter(p => p.stamps.length) : [], many = !!a && a.m > 1, left = a ? a.pieces.filter(p => !p.approved) : [];
+    const one = (p, st) => {
+      const s = st.stamp, who = String(s.by || "").trim(), when = +s.at > 0 ? pdotWhen(s.at) : "", seal = tryDo(() => p.kind === "monogram" ? MS.html(p.line, p.slot) : S.html({ seals: [s] }));
+      if (!seal) return "";
+      return `<div class="owApItem" data-ow-seal data-kind="${p.kind}" data-face="${st.face}" data-piece="${esc(p.key)}">${seal}<div class="owApWords"><b>${p.kind === "monogram" ? "MONOGRAM" : st.face === "front" ? "FRONT ENGRAVING" : "BACK ENGRAVING"}</b>${many ? `<span class="for">${esc(p.title)}</span>` : ""}<span class="by">${who ? "Approved by " + esc(who) : "Approved · operator not recorded"}</span><span class="at">${esc(when || "time not recorded")}</span></div></div>`;
+    };
+    const items = shown.flatMap(p => p.stamps.map(st => one(p, st))).filter(Boolean), kinds = new Set(shown.map(p => p.kind));
+    const count = a && a.n < a.m ? `${a.n} of ${a.m} piece${a.m === 1 ? "" : "s"} approved` : many ? `All ${a.m} pieces approved` : "", tip = left.length ? "Still to approve: " + left.map(p => p.title + (p.stamps.length ? ` (${p.stamps.map(x => x.face).join(" + ")} approved)` : "")).join(", ") : "";
+    const html = items.length ? `<div class="owApHd"><span class="k" data-ow-seals-head>${kinds.size > 1 ? "Engraving and monogram approved" : kinds.has("monogram") ? "Monogram approved" : "Engraving approved"}</span>${count ? `<span class="owApCount${left.length ? " part" : ""}" data-ow-seals-count${tip ? ` title="${esc(tip)}"` : ""}>${esc(count)}</span>` : ""}</div><div class="owApRow">${items.join("")}</div>` : "";
+    host.dataset.n = a ? a.n : 0; host.dataset.m = a ? a.m : 0;
+    if (host._h === html) return;
+    host._h = html; host.hidden = !html; host.innerHTML = html;   // (the seals' size is the strip's own CSS, so no fit is asked of Seal)
+  }
   /** Paint the window from the row it is showing. */
   function paint() {
     if(window.Seal?.defer('order-view-paint',paint))return;
@@ -18715,6 +18735,7 @@ const OrderWin = window.OrderWin = (() => {
     // (where each piece IS now, again: the timeline brought a step, a sheet's record landed, a hold was pressed or let go; the rail and the Timeline redraw on it)
     if (refreshPlacement(r) !== W.placeDrawn) { W.placeDrawn = W.placeSig; for (const m of [W.rail, W.tl]) if (m && m.setPieces) tryDo(() => m.setPieces(W.pieces || [], W.piece, 0)); }
     paintEng(r);
+    paintSeals(r);   // (WINSEAL: the approval strip, drawn again only when it changes; paint() reaches it through paintNow, as does the timeline feed when another computer approves)
     // Older compact order rows omitted approval metadata. Their permanent timeline keeps the exact signature.
     const events=W.evFor===String(r.order.receiptId)?W.events:[],historical=CNEngravingSeals.fromEvents(events,r);
     if(historical.length){
