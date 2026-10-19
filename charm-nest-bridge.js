@@ -2250,14 +2250,18 @@ const Orders = window.Orders = (() => {
   function releaseSealHtml(st) {
     if (!st || !window.Seal) return "";
     const by = st.by || "someone", when = relWhen(st.at);
-    return `<span class="relSeal" data-rel-seal="${+st.at}" title="${esc(`Hold released to the nesting queue by ${by} · ${when}`)}">${Seal.html(st, Seal.BASE_SIZE, "relSealFace")}<span class="relSealWords"><b>Release Hold</b><span class="relSealBy">by ${esc(by)}</span><span class="relSealAt">${esc(when)}</span></span></span>`;
+    return `<span class="relSeal" data-testid="release-seal" data-rel-seal="${+st.at}" title="${esc(`Hold released to the nesting queue by ${by} · ${when}`)}">${Seal.html(st, Seal.BASE_SIZE, "relSealFace")}<span class="relSealWords"><b>Release Hold</b><span class="relSealBy">by ${esc(by)}</span><span class="relSealAt">${esc(when)}</span></span></span>`;
   }
   const relSig = st => st ? st.at + ":" + st.by : "";
   /* CARDSEAL (Paul, 19 Oct 2026: "I'm also not seeing the Approved Engraving/Monograms Seals in each order card in the Orders tab"): the approved engraving (each piece and face) and monogram (each piece) seals of an order's lines,
      charm-nest-order-seals.js: the real Engrave-tab seals from what is in memory (the line's Engrave jobs, the monogram widget's seals), no read, no timer. `cardSeals(rows)` is the model (its `sig` is in the card's stamp, so the card is drawn
      again when an approval stands: Engrave.approve and the monogram's change both call Orders.render), `cardSealHtml(model)` the strip ("" while nothing is approved). */
-  const cardSeals = rows => { try { return window.CNOrderSeals ? CNOrderSeals.of(rows) : null; } catch (_) { return null; } };
-  const cardSealHtml = m => { try { return m && m.approved ? CNOrderSeals.html(m) : ""; } catch (_) { return ""; } };
+  /* (RELSEAL, Paul 19 Oct 2026: "I believe we already designed a custom seal for releasing orders, and the seal would be visible in the list of view of each order card and both the Engraving and Orders Tabs as part of each relevant Order card. Please verify."): the
+     Release Hold seal (releaseSealHtml, 72 px with its words: the ONE design) stands FIRST in the seals row of an Orders card or list row, the approval strip beside it (it wraps under it when there is no room), so both read as one tidy row; the model carries
+     the order's release stamp (`rel`, from memory: releaseStampOf) and cardSealHtml draws the row. It was in the actions column, where a list row's narrow column cut its date and time. Just the strip, as before, for an order never released with it.
+     The Engraving tab's rows draw the same seal in their seals cell (releaseOfRow there). */
+  const cardSeals = rows => { try { const m = window.CNOrderSeals ? CNOrderSeals.of(rows) : { approved: 0, sig: "" }; m.rel = releaseStampOf(rows); return m; } catch (_) { return null; } };   // (RELSEAL: m.rel, the order's Release Hold stamp or null)
+  const cardSealHtml = m => { try { const strip = m && m.approved ? CNOrderSeals.html(m) : "", seal = m && m.rel ? releaseSealHtml(m.rel) : ""; return seal ? `<div class="ordSealsRow" data-testid="order-seals-row">${seal}${strip}</div>` : strip; } catch (_) { return ""; } };
   /** The pictures a node of an earlier drawing holds for a line (a row, or a piece of a grouped order), to carry over when the node is drawn again. */
   const pairIn = (node, key) => { const p = node.classList.contains("ordGroup") ? [...node.querySelectorAll(".ogPiece")].find(n => n.dataset.key === key) : node; return p ? p.querySelector(".comparePair") : null; };
   const wireGate = n => { const gb = n.querySelector("[data-gate]"); if (gb) gb.onclick = e => { e.stopPropagation(); gb.disabled = true; (gb.dataset.gate === "release" ? Gate.release(gb.dataset.gm) : Gate.cutAnyway(gb.dataset.gm)).catch(err => toast(err.message, "bad", 6000)); }; };
@@ -2285,7 +2289,7 @@ const Orders = window.Orders = (() => {
       + `<div class="purchaseSummary">${purchaseMarkup(v.r)}</div><div class="rowActions">${v.shown ? `<span class="ost ${v.shown[0]}">${esc(v.shown[1])}</span>` : ""}${v.fc[1] ? `<span class="ost ${v.fc[0]} engFaces" title="${v.fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${v.fc[1]}</span>` : ""}${v.seals}<span class="rowFacts">Qty ${qtyOf(v)}${earPairRow(v.r) ? pairFactOf(qtyOf(v)) : O.countedFact(v.r)}</span>${v.why ? `<span class="rowExcerpt reviewReason" title="${esc(v.why)}">${esc(v.why)}</span>` : ""}${v.gateBtn}</div></div>`;
     node.innerHTML = `<div class="ogHead"><div class="engravingIdentity ogId"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(rid)}</b><span class="groupScope">${OG.countWord(total)}</span></div></div>`
       + (said ? `<div class="engravingIdentity ogSaid"><span class="purchaseLabel">${label(V[0])}</span><span class="rowExcerpt" title="${esc(text(V[0]))}">${esc(text(V[0]))}</span></div>` : "")
-      + `<div class="rowActions ogActs">${team ? TeamMail.mark(first) : ""}${mail && mail !== "null" ? CustomerMail.badge(rid) : ""}${releaseSealHtml(rel)}<span class="rowFacts"><span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${held.length ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ""}</div>${cardSealHtml(sealM)}</div>`
+      + `<div class="rowActions ogActs">${team ? TeamMail.mark(first) : ""}${mail && mail !== "null" ? CustomerMail.badge(rid) : ""}<span class="rowFacts"><span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${held.length ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ""}</div>${cardSealHtml(sealM)}</div>`
       + `<div class="ogPieces">${V.map(piece).join("")}</div>`;
     const number = node.querySelector(".onum"); if (number) { const time = el("span", "orderTime"); time.textContent = date.time; time.title = date.label; number.appendChild(time); }
     // a press on a piece opens the order window on THAT piece (picked in "Its pieces"); a press on the top, the order
@@ -2361,7 +2365,7 @@ const Orders = window.Orders = (() => {
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
       const identity=`<div class="engravingIdentity"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(r.order.receiptId)}</b><span class="sku mono">${esc(sp.designSku || r.line.sku || 'No SKU')}</span></div><span class="purchaseLabel">${wordsOf(sp) ? 'Personalisation' : 'Item'}</span><span class="rowExcerpt" title="${esc(wordsOf(sp) || r.line.title || '')}">${esc(wordsOf(sp) || r.line.title || 'No title')}</span>${where ? `<span class="rowExcerpt dim">${esc(where.set)} · ${esc(where.sheet)}</span>` : ''}${cardSealHtml(sealM)}</div>`;
-      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}${shown ? `<span class="ost ${shown[0]}">${esc(shown[1])}</span>` : ""}${fc[1] ? `<span class="ost ${fc[0]} engFaces" title="${fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${fc[1]}</span>` : ""}${releaseSealHtml(rel)}${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? pairFactOf(qty) : O.countedFact(r)} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
+      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}${shown ? `<span class="ost ${shown[0]}">${esc(shown[1])}</span>` : ""}${fc[1] ? `<span class="ost ${fc[0]} engFaces" title="${fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${fc[1]}</span>` : ""}${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? pairFactOf(qty) : O.countedFact(r)} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
       // (the order view grows out of the row that was clicked)
       node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key, { from: node }); };
@@ -8938,6 +8942,9 @@ const Engrave = window.Engrave = (() => {
    *  (the line's row: both vectors side by side, the Etsy photo), its words and state are told ear by ear, and a click opens the editor on the first ear still to settle. */
   /** The job a click on a row opens: the first piece still to settle that is not being prepared, else the first not busy (NODECIDED: a row may hold decided pieces too). */
   const leadOf = g => (ROWS() ? (g.jobs.find(j => !DECIDED.includes(j.state) && !isWorking(j)) || ROWS().openLead(g, isWorking)) : g.lead);
+  /* (RELSEAL, Paul 19 Oct 2026: the Release Hold seal "as part of each relevant Order card" in the Engraving tab too): the order's Release Hold seal for a row of this list, the SAME seal the Orders card draws (Orders.releaseSealHtml, 72 px with its words), from what the page
+     holds (the line's releaseHold, else the order's Review document the maps list brought: Orders.releaseStampOf; no read, no timer). { sig: the text that changes exactly when the seal does, html(): "" until the order was released with Release Hold }. */
+  const releaseOfRow = row => { try { const O_ = window.Orders, st = O_ && O_.releaseStampOf && row ? O_.releaseStampOf([lineOf(row)]) : null; return st ? { sig: st.at + ":" + st.by, html: () => O_.releaseSealHtml(st) } : { sig: "", html: () => "" }; } catch (_) { return { sig: "", html: () => "" }; } };
   function renderPlacementRows(list, queue, decided) {
     if(placementQuery!==EG.tab+EG.q+CNListActivity.key("engrave-place")){placementLimit=40;placementQuery=EG.tab+EG.q+CNListActivity.key("engrave-place");}
     const rows = onApproved() ? listRows((decided || []).filter(isApprovedJob)) : listRows((queue || []).concat(decided || []));   // (APPTAB: the Approved tab draws only the rows of its approved pieces, the same rows approvedRows counts) (NODECIDED: the one list: pending rows first, then the decided ones; an order with several pieces keeps its rows together, in its line order, as Back / Next walk them)
@@ -8972,8 +8979,8 @@ const Engrave = window.Engrave = (() => {
       window.TeamMail?.slot(row.querySelector('.teamSlot'),line);
       const purchase=purchaseMarkup(line);
       if(row._purchase!==purchase){row.querySelector('[data-purchase]').innerHTML=purchase;row._purchase=purchase;}
-      const stamp=told?JSON.stringify(grp.jobs.map(j=>CNEngravingSeals.list(j))):JSON.stringify(CNEngravingSeals.list(job));
-      if(row._seals!==stamp){row.querySelector('.egPlacementSeals').innerHTML=told?grp.jobs.map(j=>{const h=CNEngravingSeals.html(j);return h?`<div class="egEarSeals" data-slot="${esc(j.slot || "")}">${jobChipHtml(j,faced)}${h}</div>`:"";}).join(""):CNEngravingSeals.html(job);row._seals=stamp;}
+      const rel=releaseOfRow(job.row),stamp=(told?JSON.stringify(grp.jobs.map(j=>CNEngravingSeals.list(j))):JSON.stringify(CNEngravingSeals.list(job)))+"|"+rel.sig;   // (RELSEAL: the Release Hold seal stands first in the cell, the approval seals after it)
+      if(row._seals!==stamp){row.querySelector('.egPlacementSeals').innerHTML=rel.html()+(told?grp.jobs.map(j=>{const h=CNEngravingSeals.html(j);return h?`<div class="egEarSeals" data-slot="${esc(j.slot || "")}">${jobChipHtml(j,faced)}${h}</div>`:"";}).join(""):CNEngravingSeals.html(job));row._seals=stamp;}
       if(!told){write('[data-stage]',busyAny ? (job.state === "classify" ? "Reading words…" : "Preparing preview…") : DECIDED.includes(job.state) ? stageText(job,false) : "");const st=row.querySelector('[data-stage]'),sk=busyAny?'busy':DECIDED.includes(job.state)?String(job.state):"";if(st&&(st.dataset.s||"")!==sk){if(sk)st.dataset.s=sk;else delete st.dataset.s;}}
       return row;
     }));
@@ -9208,7 +9215,8 @@ const Engrave = window.Engrave = (() => {
     window.TeamMail?.slot(row.querySelector(".teamSlot"), line);
     const purchase = purchaseMarkup(line); if (row._purchase !== purchase) { row.querySelector("[data-purchase]").innerHTML = purchase; row._purchase = purchase; }
     // (MONOSEAL2: the seal(s) of this piece's approval, painted again only when they change, as the engraved row's are; nothing for a piece nobody approved, and never a CNEngravingSeals seal)
-    if (window.CNMonogramSeals) { const stamp = CNMonogramSeals.signature(m.seals); if (row._seals !== stamp) { row.querySelector(".egPlacementSeals").innerHTML = CNMonogramSeals.html(m.row, m.slot); row._seals = stamp; } }
+    // (RELSEAL: the order's Release Hold seal stands first in the same cell, painted again only when it changes too)
+    { const rel = releaseOfRow(m.row), stamp = (window.CNMonogramSeals ? CNMonogramSeals.signature(m.seals) : "") + "|" + rel.sig; if (row._seals !== stamp) { row.querySelector(".egPlacementSeals").innerHTML = rel.html() + (window.CNMonogramSeals ? CNMonogramSeals.html(m.row, m.slot) : ""); row._seals = stamp; } }
     return row;
   }
   /** Back / Next from a monogram card: the same stops as from an engraved piece's card (every piece of the order, in its line order, before the next order). */
@@ -15349,6 +15357,8 @@ const Review = window.Review = (() => {
       try { const M = window.CharmNestReviewMark; if (M && M.release) M.release(rid, { by: st.by, at: st.at, id: st.id, how: "releaseHold", path: how }).then(r => { if (!r.ok) console.warn("Release Hold: not kept in the cloud", rid, r.error); try { Orders.render(); } catch (_) {} }); } catch (e) { console.warn("Release Hold record", e); }
       if (!out.viaHold.has(rid)) TL.rec({ orderId: rid, type: "released", id: st.id, by: st.by, at: st.at, text: `Released to the nesting queue by ${st.by} · Release Hold (Review)`, data: { seal: "releaseHold", sealAt: st.at, sealId: st.id, how, from: "review" } }, true, true);
     }
+    // (RELSEAL, Paul 19 Oct 2026: the Engraving tab's rows draw the same seal: painted at once, when that tab is the one in front; the Orders tab is drawn by the caller)
+    try { const v = document.getElementById("engraveView"); if (window.Engrave && v && !v.classList.contains("hidden")) Engrave.render(); } catch (_) {}
   }
   /** The press. it: the Review item (a row's or a card's). → true when every order of it went back in line. */
   async function releaseToQueue(it) {
