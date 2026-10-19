@@ -14250,13 +14250,13 @@ async function _handlerImpl(event) {
       ...Object.fromEntries(["batchName", "state", "collected", "locallyQueued", "retryBatchName",
         "retryRequested", "retryAttempt", "retryStatus", "setComplete", "repairPending", "collectionPending",
         "providerError", "responsesFile", "createdAt", "stallCancelRequestedAt", "stallRestartBlocked",
-        "stallRestartClosed", "stallRestarts", "retryNotBefore", "sweepParked"].map(key => [key, record[key]])),
+        "stallRestartClosed", "stallRestarts", "retryNotBefore", "sweepParked", "sessionId"].map(key => [key, record[key]])),
       sets: (record.sets || []).map(set => ({ outputBasePath: set.outputBasePath, setKind: set.setKind })),
     });
     const sweepFields = ["batchName", "state", "collected", "locallyQueued", "retryBatchName", "retryRequested",
       "retryAttempt", "retryStatus", "setComplete", "repairPending", "collectionPending", "providerError",
       "responsesFile", "createdAt", "stallCancelRequestedAt", "stallRestartBlocked", "stallRestartClosed",
-      "stallRestarts", "retryNotBefore", "sweepParked", "sets"];
+      "stallRestarts", "retryNotBefore", "sweepParked", "sessionId", "sets"];
 
     try {
       // Overlap guard: skip if another sweep started < 12 minutes ago.
@@ -14279,9 +14279,29 @@ async function _handlerImpl(event) {
 
       // A collected job may still have missing images, or have been repaired
       // manually/approved since collection. Reconcile the current submissions.
-      const recent = await db.collection(BATCHES_COLL).orderBy("createdAt", "desc").limit(100).select("sessionId").get();
-      const sessionIds = [...new Set([body?.sessionId, ...recent.docs.map(d => d.data().sessionId)]
-        .filter(id => /^sess_[A-Za-z0-9_-]{8,80}$/.test(id || "")))].slice(0, 3);
+      // COST (Oct 2026): reading the 100 newest job records for their session ids was 100 of the ~107 reads of an idle
+      // scheduled run, 144 times a day, and the answer (the same one to three sessions) almost never changes. A scheduled
+      // run now keeps the ids it found on the guard record and re-checks them with ONE read, the newest job's session:
+      // while that is still the newest kept session and the list is under an hour old, the list stands; a new session,
+      // an older list, a person's own sweep or any error in the check list the 100 newest records exactly as before.
+      const SESSION_ID_RE = /^sess_[A-Za-z0-9_-]{8,80}$/;
+      const KEEP_SESSIONS_MS = 60 * 60 * 1000;
+      const keptSessions = Array.isArray(guardData.recentSessions) ? guardData.recentSessions.filter(id => SESSION_ID_RE.test(id || "")).slice(0, 3) : [];
+      let recentFound = null;       // the ids read from the 100 newest records in this run (kept on the guard at the end)
+      let sessionIds = null;
+      if (body?.cronTriggered === true && !body?.sessionId && keptSessions.length &&
+          Date.now() - (Number(guardData.recentSessionsAt) || 0) < KEEP_SESSIONS_MS) {
+        try {
+          const newest = await db.collection(BATCHES_COLL).orderBy("createdAt", "desc").limit(1).select("sessionId").get();
+          if (newest.docs.length && newest.docs[0].data().sessionId === keptSessions[0]) sessionIds = keptSessions;
+        } catch (_) { sessionIds = null; }
+      }
+      if (!sessionIds) {
+        const recent = await db.collection(BATCHES_COLL).orderBy("createdAt", "desc").limit(100).select("sessionId").get();
+        recentFound = [...new Set(recent.docs.map(d => d.data().sessionId).filter(id => SESSION_ID_RE.test(id || "")))].slice(0, 3);
+        sessionIds = [...new Set([body?.sessionId, ...recent.docs.map(d => d.data().sessionId)]
+          .filter(id => SESSION_ID_RE.test(id || "")))].slice(0, 3);
+      }
       // COST: this check reads every batch record of the session in full (prompts and all, up to 4000) and lists
       // every saved file of its categories, so six of them every ten minutes were the sweep's biggest cost while
       // nothing was running. A scheduled run now repeats it for a session only while that session has a job
@@ -14370,6 +14390,17 @@ async function _handlerImpl(event) {
 
       let statusChecked = 0, collected = 0, collectErrors = 0, resumed = 0, retriesSubmitted = 0;
       let stalledCancelled = 0, stalledRestarted = 0, stateChanges = 0;
+      // COST (Oct 2026): "checking provider job" was written to the guard record once for EVERY open job of every run (30 live
+      // jobs = 30 writes, 144 runs a day) only to move the name of the job being looked at. It is written at most once every
+      // 15 seconds now; every other stage is written as before.
+      let lastJobCheckpointAt = 0;
+      // COST (Oct 2026): the session audit at the end of a scheduled run (below) re-read EVERY record of up to three sessions whenever
+      // anything at all changed, so one job finishing in today's session also re-read yesterday's finished sessions. A scheduled run now
+      // audits again only the sessions whose jobs this run changed (a job without a known session, or a resumed orchestration, counts
+      // as every session); a person's own sweep audits all of them, as before.
+      const touchedSessions = new Set();
+      let touchedAll = false;
+      const touch = (b) => { if (b && b.sessionId) touchedSessions.add(b.sessionId); else touchedAll = true; };
 
       const open = [];
       // A 250-document first page can be saturated by failed jobs forever,
@@ -14436,7 +14467,7 @@ async function _handlerImpl(event) {
           b.retryRequested = true;
         }
         if (!b.batchName || b.collected || b.locallyQueued || b.retryBatchName || isFinal(b.state) && !b.collectionPending) continue;
-        await checkpoint("checking provider job", b.batchName);
+        if (Date.now() - lastJobCheckpointAt >= 15000) { lastJobCheckpointAt = Date.now(); await checkpoint("checking provider job", b.batchName); }
         let state = b.state;
         if (!isSucceeded(state) && !b.collectionPending) {
           let st = await inProcessLimited({ kind: "batch_status", batchName: b.batchName });
@@ -14446,7 +14477,7 @@ async function _handlerImpl(event) {
             catch (err) { console.warn("[batch_sweep] validation not confirmed:", b.batchName, err?.message || err); }
           }
           statusChecked++;
-          if (st?.state && normState(st.state) !== normState(state)) stateChanges++;
+          if (st?.state && normState(st.state) !== normState(state)) { stateChanges++; touch(b); }
           state = st?.state || state;
           // Admission below must use the state we just fetched, not the
           // snapshot from before this sweep started.
@@ -14461,7 +14492,7 @@ async function _handlerImpl(event) {
           if (!b.setComplete && neverStarted(b, st, Date.now(), stallAfterMs)) {
             const stop = await inProcessLimited({ kind: "batch_stall_cancel", batchName: b.batchName, minAgeMs: stallAfterMs, resetNow });
             if (stop?.cancelRequested) {
-              stalledCancelled++;
+              stalledCancelled++; touch(b);
               b.stallCancelRequestedAt = true;
               if (stop.state) b.state = stop.state;
             } else if (!stop?.ok) {
@@ -14471,7 +14502,7 @@ async function _handlerImpl(event) {
         }
         if (isSucceeded(state) || b.collectionPending && b.responsesFile) {
           const col = await inProcessLimited({ kind: "batch_collect", batchName: b.batchName, force: !isSucceeded(state) });
-          if (col?.ok) { if (col.collected !== false) collected++; b.collected = col.collected !== false; } else collectErrors++;
+          if (col?.ok) { if (col.collected !== false) { collected++; touch(b); } b.collected = col.collected !== false; } else { collectErrors++; touch(b); }
         }
       }
       // Queue the set of each job cancelled because OpenAI never started it,
@@ -14499,10 +14530,10 @@ async function _handlerImpl(event) {
           b.retryBatchName = restart.batchName;
           setsInFlight.add(path);
           if (restart.created) {
-            stalledRestarted++;
+            stalledRestarted++; touch(b);
             // Submitted by the refill below, after the sets already waiting.
             open.push({ batchName: restart.batchName, state: "JOB_STATE_QUEUED", locallyQueued: true,
-              retryRequested: true, retryAttempt: 0, collected: false, sets: b.sets });
+              retryRequested: true, retryAttempt: 0, collected: false, sessionId: b.sessionId, sets: b.sets });
           }
         } else if (!restart?.ok) {
           console.warn("[batch_sweep] stalled restart postponed:", b.batchName, restart?.error?.message || "unknown error");
@@ -14566,7 +14597,7 @@ async function _handlerImpl(event) {
           break;
         }
         if (retry?.batchName && retry.batchName !== b.batchName) {
-          retriesSubmitted++;
+          retriesSubmitted++; touch(b);
           // The provider can reject a newly created batch during validation.
           // Stop this sweep at the first observed quota refusal instead of
           // sending the rest of the queue into the same rejection.
@@ -14659,7 +14690,7 @@ async function _handlerImpl(event) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ kind: "charm_batch_orchestrate", orchestrationId: id, resume: true }),
           });
-          resumed++;
+          resumed++; touchedAll = true;
         } catch (e) { console.warn("[batch_sweep] orchestration resume failed:", id, e?.message || e); }
       }
 
@@ -14668,7 +14699,7 @@ async function _handlerImpl(event) {
       const somethingChanged = !cronRun || stateChanges || collected || collectErrors || resumed ||
         retriesSubmitted || stalledCancelled || stalledRestarted;
       if (somethingChanged && Date.now() - sweepStart < SWEEP_BUDGET_MS - 60000) {
-        for (const sessionId of sessionIds) {
+        for (const sessionId of (cronRun && !touchedAll ? sessionIds.filter(id => touchedSessions.has(id)) : sessionIds)) {
           try { await reconcileSession({ db, bucket: admin.storage().bucket(), collection: BATCHES_COLL,
             sessionId, timestamp: () => admin.firestore.FieldValue.serverTimestamp() }); }
           catch (err) { console.warn("[batch_sweep] saved-file check failed:", sessionId, err?.message || err); }
@@ -14684,7 +14715,10 @@ async function _handlerImpl(event) {
           stalledCancelled, stalledRestarted,
           waiting: waiting.length, activeAtAdmission: activeCount, openBatches: open.length,
           refillContinuing: refillNeedsContinuation, validationUnconfirmed, sourceErrors, parked, openFullPass },
-        ...(openFullPass && open.length < 2000 ? { openFullPassAt: Date.now() } : {}),
+        // COST (Oct 2026): the hour's mark used to be written only when the list was shorter than the 2,000 the sweep can hold. With
+        // 2,000 or more uncollected records no run was ever the cheap kind: every run, every ten minutes, listed the same first 2,000.
+        ...(openFullPass ? { openFullPassAt: Date.now() } : {}),
+        ...(recentFound && recentFound.length ? { recentSessions: recentFound, recentSessionsAt: Date.now() } : {}),
       }, { merge: true });
       // Continue with a fresh background budget. The same shared admission
       // guard still validates every job and enforces the global 30-job cap.

@@ -1178,8 +1178,9 @@ async function conversionHealth({ force } = {}) {
     const r = await gaql(`SELECT metrics.conversions, metrics.all_conversions FROM customer WHERE segments.date BETWEEN '${start}' AND '${end}'`);
     out.recentConversions = r[0] && r[0].metrics ? Number(r[0].metrics.conversions || 0) : 0;
   } catch (e) {}
+  let pendingQueue = null; // the unsent rows read just below; the Data Manager health check below needs the same ones
   if (f) {
-    try { const q = await f.db.collection(COL.convQueue).where("uploaded", "==", false).limit(500).get(); out.queueDepth = q.size; } catch (e) {}
+    try { const q = await f.db.collection(COL.convQueue).where("uploaded", "==", false).limit(500).get(); out.queueDepth = q.size; pendingQueue = q; } catch (e) {}
     // Sales Google Ads REFUSED. These are the ones that show in the store's own sales log
     // but will never appear in campaign metrics, ROAS or the daily charts. Surfacing the
     // count (and a few examples) is the difference between a visible failure and a sale
@@ -1205,7 +1206,7 @@ async function conversionHealth({ force } = {}) {
   out.validated = !!(out.healthy && out.lastUpload && out.lastUpload.ok && !out.lastUpload.validateOnly && out.lastUpload.count > 0 && !out.failedCount);
   if (ENV.GADS_CONVERSION_UPLOAD_API !== "legacy") {
     try {
-      out.dataManager = await dataManagerService().health({ probeScopes: true });
+      out.dataManager = await dataManagerService().health({ probeScopes: true, pending: pendingQueue });
       out.healthy = out.healthy && out.dataManager.configured;
       out.validated = !!(out.healthy && out.dataManager.confirmed > 0 && !out.failedCount && !out.dataManager.unknown);
       if (!out.dataManager.configured) out.reasons.push("Google requires Data Manager authorization for conversion uploads. Connect its dedicated OAuth scope before syncing orders.");

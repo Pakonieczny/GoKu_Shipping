@@ -100,7 +100,7 @@ function summarizeDiagnostics(data, target) {
 }
 
 function createDataManager({ env, fetch, fb, COL, ledger, now = Date.now }) {
-  let token = null, expires = 0, connection = null, loadedAt = 0;
+  let token = null, expires = 0, connection = null, loadedAt = 0, countRefused = false;
   const credentials=()=>connection||{refresh:env.GADS_DATAMANAGER_REFRESH_TOKEN,client:env.GADS_DATAMANAGER_CLIENT_ID||env.GADS_CLIENT_ID,secret:env.GADS_DATAMANAGER_CLIENT_SECRET||env.GADS_CLIENT_SECRET};
   async function loadConnection(){if(configured()&&!connection)return;if(!env.FIREBASE_PRIVATE_KEY||now()-loadedAt<300000)return;const f=fb();if(!f)throw Error('Credential storage unavailable.');const snapshot=await f.db.doc(CREDENTIAL_DOC).get();connection=snapshot.exists?openCredentials(snapshot.data(),env):null;loadedAt=now();}
   async function saveCredentials(value){const next={client:String(value?.client||'').trim(),secret:String(value?.secret||'').trim(),refresh:String(value?.refresh||'').trim()};if(!next.client.endsWith('.apps.googleusercontent.com')||!next.secret||!next.refresh||Object.values(next).some(v=>v.length>4096))throw Error('Complete all three Google connection fields.');const encrypted=sealCredentials(next,env),f=fb();if(!f)throw Error('Credential storage unavailable.');const prior=connection;connection=next;token=null;expires=0;try{await mintToken(true);await f.db.doc(CREDENTIAL_DOC).set({...encrypted,updatedAt:now(),provider:'google_datamanager'});loadedAt=now();return {ok:true,configured:true,storage:'firebase_encrypted'};}catch(e){connection=prior;token=null;expires=0;throw e;}}
@@ -291,13 +291,14 @@ function errorDetail(data, status) {
     result.errors = result.errors.slice(0, 10);
     return result;
   }
-  async function health({ probeScopes = false } = {}) {
+  async function health({ probeScopes = false, pending = null } = {}) {
     await loadConnection();
     if (probeScopes && configured()) { try { await mintToken(); } catch (error) { /* the rows below report it */ } }
     const info = { configured: configured(), transport: 'data_manager', scopes: grantedScopes, missingScopes: grantedScopes ? [SCOPE, COMPANION_SCOPE].filter(s => !grantedScopes.includes(s)) : null, processing: 0, unknown: 0, confirmed: 0, retryable: 0, awaitingAccess: 0, awaitingRetry: 0, blocked: !configured() };
     const f = fb(); if (!f) return info;
     const queue = f.db.collection(COL.convQueue);
-    const rows = await queue.where('uploaded', '==', false).limit(500).get();
+    // `pending`: the same query, already read a moment ago by the caller (conversionHealth); read here only when it was not.
+    const rows = pending || await queue.where('uploaded', '==', false).limit(500).get();
     Object.assign(info, { staleProcessing: 0, oldestProcessingAt: null, latestSubmittedAt: null, staleReasons: {}, consentMissing: 0, unsent: 0, oldestUnsentAt: null, unsendable: 0, unsendableReasons: {} });
     rows.forEach(d => { const x = d.data(); if (x.dmRequestId && x.dmState === 'processing') info.processing++; if (['submitting', 'submission_unknown'].includes(x.dmState)) info.unknown++; if (retryable(x)) info.retryable++; if (accountLevelRejection(x)) { if (correctedRefusal(x)) info.awaitingRetry++; else info.awaitingAccess++; }
       if (x.dmRequestId && x.dmState === 'processing') {
@@ -319,8 +320,18 @@ function errorDetail(data, status) {
       }
       if (needsConsent(x)) info.consentMissing++; });
     if (!env.GADS_CONVERSION_ACTION) return { ...info, blocked: true };
-    const confirmed = await queue.where('dmState', '==', 'success').limit(500).get();
     const target = destination(env.GADS_CONVERSION_ACTION, env.GADS_LOGIN_CUSTOMER_ID);
+    // COST: this was a read of up to 500 whole conversion rows on every dashboard load and diagnostics refresh, only to count the ones
+    // sent to this destination. The same question is asked of Firestore as a count (one read per 1,000 matches, no rows moved):
+    // equality filters only, so no composite index. Any refusal (a missing filter value, a store without count) reads the rows as before.
+    let counted = null;
+    if (!countRefused) try {
+      const sent = queue.where('dmState', '==', 'success').where('dmDestination.operatingAccount.accountId', '==', target.operatingAccount.accountId)
+        .where('dmDestination.productDestinationId', '==', target.productDestinationId);
+      if (typeof sent.count === 'function') { const n = Number(((await sent.count().get()).data() || {}).count); if (Number.isFinite(n) && n >= 0) counted = n; }
+    } catch (_) { counted = null; countRefused = true; }   // not asked again by this instance
+    if (counted != null) { info.confirmed = counted; info.confirmedComplete = true; return info; }
+    const confirmed = await queue.where('dmState', '==', 'success').limit(500).get();
     info.confirmed = confirmed.docs.filter(d => {
       const original = d.data().dmDestination;
       return original?.operatingAccount?.accountId === target.operatingAccount.accountId && original?.productDestinationId === target.productDestinationId;
