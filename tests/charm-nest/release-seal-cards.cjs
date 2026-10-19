@@ -3,6 +3,7 @@
 // The real sorter in headless Chromium over the repo's fake site (the engraving-UI real world: real orders through the real intake, pool, classifier and fit). Orders are released the way a person does it: the Review card's Release Hold button
 // (and, for the live cases, the same press from code while the tab in question is in front). Every name is made up.
 //   1  source: the seal is drawn once per card, in the seals row beside the approval strip (CNOrderSeals), no longer in the actions column; the Engraving rows have it in their seals cell; nothing in it reads, waits or listens; cache token
+//   ORDLIST (Paul, 19 Oct 2026): the Orders rows and cards are laid out like the Engraving rows: a one-line order's Release Hold seal stands first in its seals cell (.egPlacementSeals, as on an Engraving row), a grouped order's in its head; the approval strip is gone
 //   2  Orders tab, CARDS view: an engraved order, an order of two lines (one card for the order), a monogram: the same 72 px seal with its words, whole inside the card, in the seals row beside the approval strip; an order never released: none
 //   3  Orders tab, LIST view (rows): the same
 //   4  Engraving tab (Placements list): the engraved row, the two-face row (front + back), the monogram row: the same seal, in the seals cell, whole inside the row; engraved orders never released: none
@@ -109,15 +110,15 @@ try {
 
     // ── 2 · Orders, cards ──
     const cards = await orders(page, 'cards');
-    for (const n of BY_CARD) check(seeSeal(cards[RID(n)], WHO) && cards[RID(n)].row && !cards[RID(n)].inActions, `2 · Orders cards: ${n}: the large seal with "Release Hold", ${WHO}, the date and the time, whole inside the card, in the seals row (${JSON.stringify(cards[RID(n)])})`);
-    check(/\bordGroup\b/.test(cards[RID('g2')].cls) && cards[RID('g2')].beside && cards[RID('g2')].stripIn, `2 · the two-line order is one card: its approval strip stands BESIDE the release seal in one row (${JSON.stringify([cards[RID('g2')].cls, cards[RID('g2')].beside, cards[RID('g2')].stripIn])})`);
-    check(cards[RID('back')].strip && cards[RID('back')].stripIn, '2 · a one-line card: the approval strip and the release seal are in the same seals row');
+    for (const n of BY_CARD) check(seeSeal(cards[RID(n)], WHO) && (cards[RID(n)].row || cards[RID(n)].cell) && !cards[RID(n)].inActions, `2 · Orders cards: ${n}: the large seal with "Release Hold", ${WHO}, the date and the time, whole inside the card, in its seals cell (or the order's head) (${JSON.stringify(cards[RID(n)])})`);
+    check(/\bordGroup\b/.test(cards[RID('g2')].cls) && cards[RID('g2')].row && !cards[RID('g2')].strip, `2 · the two-line order is one card: its release seal in the order's head, no approval strip (each approval seal is on its own piece) (${JSON.stringify([cards[RID('g2')].cls, cards[RID('g2')].row, cards[RID('g2')].strip])})`);
+    check(cards[RID('back')].cell && !cards[RID('back')].strip, '2 · a one-line card: the release seal stands in the seals cell with the approval seals, and no strip is drawn');
     check(!cards[RID(NEVER)].seal && !cards[RID(LIVE_ENG)].seal && !cards[RID(LIVE_ORD)].seal, '2 · orders never released (and the two marked but not pressed yet): no seal');
     await shot('cards');
 
     // ── 3 · Orders, list rows ──
     const list = await orders(page, 'list');
-    for (const n of BY_CARD) check(seeSeal(list[RID(n)], WHO) && list[RID(n)].row && !list[RID(n)].inActions, `3 · Orders list: ${n}: the same seal, whole inside the row (its date and time are not cut at the column's edge) (${JSON.stringify(list[RID(n)])})`);
+    for (const n of BY_CARD) check(seeSeal(list[RID(n)], WHO) && (list[RID(n)].row || list[RID(n)].cell) && !list[RID(n)].inActions, `3 · Orders list: ${n}: the same seal, whole inside the row (its date and time are not cut at the column's edge) (${JSON.stringify(list[RID(n)])})`);
     check(!list[RID(NEVER)].seal && !list[RID(LIVE_ENG)].seal, '3 · Orders list: an order never released has none');
     await shot('list');
 

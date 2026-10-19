@@ -155,11 +155,9 @@ const LONGNAME = 'Bartholomew-Maximilian Featherstonehaugh-Wolfeschlegelsteinhau
 
     // ═══ 6 · a released order with an approved engraving: both, one above the other, no overlap ═══
     await openOv(ENG); r = await rel(); const w2 = await when(AT2);
-    check(r.shown && r.n === 1 && r.apItems === 1 && r.hasAp, `6 released + approved engraving: the strip holds the release seal AND the approval (${JSON.stringify([r.n, r.apItems, r.hasAp])})`);
-    check(r.box && r.apHd && r.ap && r.box.b <= r.apHd.t + 1 && r.box.b <= r.ap.t + 1 && r.box.r > 0 && r.strip && r.box.t >= r.strip.t - 1 && r.ap.b <= r.strip.b + 1, `6 they do not overlap: the release seal ends above the approvals (${JSON.stringify([r.box, r.apHd, r.ap, r.strip])})`);
+    // (NOWINSEAL, Paul 19 Oct 2026: the order window's approvals panel is removed: "Remove this UI from the Detailed Order view. I did not ask for this.": the strip holds the release seal alone)
+    check(r.shown && r.n === 1 && !r.apItems && !r.hasAp && !r.apHd, `6 released + approved engraving: the strip holds the release seal ALONE, no approvals panel (${JSON.stringify([r.n, r.apItems, r.hasAp])})`);
     check(r.by === 'by Cy Releaser' && r.words.includes(w2.d) && r.seal.lw >= 72 && r.inside && r.aboveNow, `6 and the release seal is still the large one with who and when (${r.words}) inside the window`);
-    const both = await page.evaluate(() => { const s = document.getElementById('owSeals'); return { head: (s.querySelector('[data-ow-seals-head]') || {}).textContent || '', words: (s.querySelector('[data-ow-seal] .owApWords') || {}).textContent || '', w: (s.querySelector('[data-ow-seal] .seal') || { offsetWidth: 0 }).offsetWidth }; });
-    check(/Engraving approved/i.test(both.head) && /BACK ENGRAVING/.test(both.words) && /Approved by Ana/.test(both.words) && both.w === 60, `6 the approvals are what they were (60 px, "Engraving approved", Approved by Ana): ${JSON.stringify(both)}`);
     await shot('06-released-and-approved-1440');
 
     // ═══ 5 · only the timeline knows (a reload on another computer): shown; the latest wins ═══
@@ -196,7 +194,7 @@ const LONGNAME = 'Bartholomew-Maximilian Featherstonehaugh-Wolfeschlegelsteinhau
       check(!wrap.clipped && /Featherstonehaugh/.test(await page.evaluate(() => document.querySelector('#owSeals .relSealBy').textContent)), `7 at ${w} px: the whole long name is there and not clipped (${JSON.stringify(wrap)})`);
       await shot(`07-long-${w}`);
       await openOv(ENG); r = await rel();
-      check(r.shown && r.n === 1 && r.apItems === 1 && r.box.b <= r.ap.t + 1 && r.boxInside && !r.sideways && r.aboveNow, `7 at ${w} px: with an approval too, the release seal is above it, inside, nothing sideways`);
+      check(r.shown && r.n === 1 && !r.apItems && r.boxInside && !r.sideways && r.aboveNow, `7 at ${w} px: an approved order too: the release seal alone, inside, nothing sideways, no approvals panel`);
       await shot(`07-both-${w}`);
     }
     await page.setViewportSize({ width: 1440, height: 900 });
