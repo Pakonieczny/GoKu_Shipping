@@ -4,13 +4,13 @@
 //
 // What it proves, offline: the REAL page in Chromium over the repo's fake site with the real drawings (_engraveRealWorld.cjs); made-up buyers only; no Etsy, no paid call, no live write (the approvals
 // below are made on the fake site's in-memory Firestore). It does NOT prove a live order, a live sheet or a live laser: only that the page's own code does this on the offline fake.
-//   1  there is no Decided tab, no Decided list, no Reopen button anywhere (the Engrave tab, the order window's engraving cards); one chip "Placements" counts what still needs a decision
+//   1  there is no Decided tab, no Decided list, no Reopen button anywhere (the Engrave tab, the order window's engraving cards); chips "Placements" (counts what still needs a decision) and, since APPTAB (19 Oct 2026), "Approved" (a view of the same list: tests/charm-nest/engrave-approved-tab.cjs)
 //   2  an approved piece is in the SAME list as the pending ones (pending first, then the approved rows, with the state word and its seals); the date chips and the search apply to all of it
 //   3  a click on an approved piece opens the SAME detailed card, its Approve a calm "Approved"; just looking changes nothing (state, seals, back file, no write)
 //   4  the first change (words in the panel; a position button) puts the piece back to "needs Approve" (state review, back file superseded, the first seal kept) and Approve then adds a SECOND seal
 //   5  a piece "Saved to sheet" follows the rule Reopen had: no block, its back record is superseded, one calm line in the card, no confirm
 //   6  a mixed order (a line of discs, a faced line): each piece is told with its own state in its row; a click on a decided piece's line opens that piece
-//   7  old views and links that say tab "done" still land on the one list / the card; the order window's "View in Engraving" lands on the card of an approved piece
+//   7  old views and links that say tab "done" still land on the list / the card (APPTAB: on its Approved chip); the order window's "View in Engraving" lands on the card of an approved piece
 //   8  phone width (400 px) and desktop (1440 px): screenshots in SHOTS (default /tmp/dec/shots); no console or page errors
 //   PW_DIR=/opt/node-tools/node_modules node tests/charm-nest/engrave-no-decided.cjs      (CHROMIUM=<chrome>  SHOTS=<dir>)
 'use strict';
@@ -56,8 +56,8 @@ const SHOTS = process.env.SHOTS || '/tmp/dec/shots';
     // ═══ 1 · no Decided tab, one chip ═══
     await showList(); await settle(300);
     const chrome = await page.evaluate(() => ({ tabs: [...document.querySelectorAll('#engraveView .ordBar .egTab[data-tab]')].map(b => b.dataset.tab + ':' + b.textContent.replace(/\s+/g, ' ').trim()), done: !!document.querySelector('#engraveView [data-tab="done"]'), egBacks: !!document.getElementById('egBacks'), egDone: !!document.getElementById('egDone'), decided: !!document.querySelector('#engraveView .decidedRow, #engraveView .doneDetail'), reopen: !!document.querySelector('#engraveView [data-a=reopen]'), view: Engrave.view().tab, q: !!document.getElementById('egQ') }));
-    note(chrome.tabs.length === 1 && /^place:Placements/.test(chrome.tabs[0]) && !chrome.done && !chrome.egBacks && !chrome.egDone && !chrome.decided && !chrome.reopen, 'the Engrave tab has ONE chip (Placements) and no Decided tab, list, detail or Reopen', chrome.tabs.join(' | '));
-    note(chrome.view === 'place', 'Engrave.view().tab is always "place"', chrome.view);
+    note(chrome.tabs.length === 2 && /^place:Placements/.test(chrome.tabs[0]) && /^approved:Approved/.test(chrome.tabs[1]) && !chrome.done && !chrome.egBacks && !chrome.egDone && !chrome.decided && !chrome.reopen, 'the Engrave tab has TWO chips (Placements, and Approved: a view of the same list, APPTAB) and no Decided tab, list, detail or Reopen', chrome.tabs.join(' | '));
+    note(chrome.view === 'place', 'Engrave.view().tab is "place" while Placements is the open chip', chrome.view);
     const pendingRowsBefore = (await listRows()).filter(r => !r.decided).length;
     const badge0 = await page.evaluate(() => +((document.querySelector('#engraveView .egTab[data-tab="place"] b') || {}).textContent || 0));
     note(pendingRowsBefore > 0 && badge0 === pendingRowsBefore, 'the chip counts the rows that still need a decision', badge0 + ' / rows ' + pendingRowsBefore);
@@ -188,7 +188,7 @@ const SHOTS = process.env.SHOTS || '/tmp/dec/shots';
     // ═══ 7 · old views and links ═══
     const comp = await page.evaluate(k => { Engrave.restoreView({ tab: 'done', openDone: k, list: false, chosen: true }); Engrave.render(); return Engrave.view(); }, backKey);
     await page.waitForSelector(`#egQueue .rvItem[data-key="${backKey}"]`, { timeout: 15000 }); await settle(600);
-    note(comp.tab === 'place' && comp.focus === backKey, 'an old view {tab:"done", openDone} lands on the card of that piece', JSON.stringify({ tab: comp.tab, focus: tails(comp.focus) }));
+    note(comp.tab === 'approved' && comp.focus === backKey, 'an old view {tab:"done", openDone} lands on the card of that piece (on the Approved chip, APPTAB)', JSON.stringify({ tab: comp.tab, focus: tails(comp.focus) }));
     await page.evaluate(() => { Engrave.restoreView({ tab: 'done', list: false, chosen: true, focus: null, q: '' }); Engrave.render(); }); await settle(700);
     note(!!(await page.$('#egQueue .egPlacementList')) && !(await page.$('#engraveView [data-tab="done"]')), 'an old view {tab:"done"} with nothing open lands on the one list', '');
     const link = await page.evaluate(async ({ rid, key }) => { try { const r = await window.EngraveLink.open({ rid, key }); return { ok: !!(r === true || (r && r.ok !== false)), tab: Engrave.view().tab, focus: Engrave.view().focus }; } catch (e) { return { err: String(e && e.message || e) }; } }, { rid: RID.back, key: backKey });

@@ -7926,7 +7926,7 @@ const Engrave = window.Engrave = (() => {
     job.approvalPreparing=false;
     if(typeof Session!=="undefined"){Session.schedule();await Session.flushNow?.();}
     if (EG.opened === job.key) EG.opened = null;   // (NODECIDED: the card of a piece just approved moves on to the next piece; the approved piece is in the list, its seals on its row)
-    for(const show of [()=>goes(job,{to:EG_TAB()}),()=>Review.remove("eng:"+job.key),()=>agent({engrave:true},"ENGRAVE",`${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""})`),render])try{show();}catch(e){console.warn("Engraving approval view",e);}
+    for(const show of [()=>goes(job,{to:EG_TAB("approved")}),()=>Review.remove("eng:"+job.key),()=>agent({engrave:true},"ENGRAVE",`${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""})`),render])try{show();}catch(e){console.warn("Engraving approval view",e);}
     await saveBacks(job);
     } finally {
       job.approvalPreparing=false;
@@ -8499,7 +8499,7 @@ const Engrave = window.Engrave = (() => {
   // drafts: words typed on a card and not yet applied, per job. A card is rebuilt whenever its job changes state (an
   // auto-refit, a background render, a tab switch, a reload); the typing it held must come back with it.
   let egTyping = 0;   // the search box's pause before its redraw (PERF, Oct 2026)
-  const EG = { tab: "place", focus: null, opened: null, chosen: false, card: null, cardKey: null, reread: 0, q: "", drafts: {} };   // (NODECIDED: the tab is always "place": there is one list; opened = the key of a decided piece a person opened, shown in the detail card)
+  const EG = { tab: "place", focus: null, opened: null, chosen: false, card: null, cardKey: null, reread: 0, q: "", drafts: {} };   // (NODECIDED: there is one list; opened = the key of a decided piece a person opened, shown in the detail card. APPTAB: tab is "place" (every row) or "approved" (a view of the same list, below))
   /* ── ONE ROW per earring order line (Paul, 10 Oct 2026; charm-nest-engrave-rows.js). The lists, the counters and Back / Next count and move by ROW: the Left job and
      the Right job of one earring line are one row; every other job (a single, a disc, a necklace, a plain quantity-N line) is a row of its own, as before. This is
      presentation and navigation only: the jobs, their words, fits, approvals, seals and back files underneath are exactly what they were. ── */
@@ -8573,12 +8573,19 @@ const Engrave = window.Engrave = (() => {
   const focusOn = key => { EG.focus = key; EG.opened = key; };
   /* ENGPIECES: what the Placements list shows now, in its own order (the same activity range, search box and sort the tab draws with), so Back / Next never go to a card the list hides. A card asked for BY NAME (a piece switched to,
      the stop Back / Next chose: EG.pin) is shown even when the range or the search would hide it: a piece of an order is never unreachable because of a filter. */
-  const withFocus = q => { const j = EG.pin && EG.pin === EG.focus && !EG.list && EG.tab === "place" && tabItem(EG.pin); return j && j.row.state !== "gone" && queuedJobs([j]).length && !q.includes(j) ? [...q, j] : q; };
+  const withFocus = q => { const j = EG.pin && EG.pin === EG.focus && !EG.list && tabItem(EG.pin); return j && j.row.state !== "gone" && queuedJobs([j]).length && !q.includes(j) ? [...q, j] : q; };   // (APPTAB: a piece named by Back / Next is shown on either tab)
   const shownQueue = () => CNListActivity.select("engrave-place", queuedJobs(CNListActivity.select(activityScope(), tabItems().filter(j => j.row.state !== "gone")).filter(matchesQ)));
   /* NODECIDED: the ONE list. Every piece the tab can show: what still needs a decision and what is decided (approved, saved to its sheet, cut plain; monograms too). The date chips and the search apply to all of it; the rows are
      built by the same ROWS().group per line, so a row's pieces are each told with their own state. Pending rows first, then the rows with nothing left to settle (each part in its order's line order). */
   const decidedSelect = () => CNListActivity.select("engrave-place", decidedAll().filter(matchesQ));
-  const shownList = () => shownQueue().concat(decidedSelect());
+  /* APPTAB (Paul, 19 Oct 2026: "I'm not seeing the Tab for Approved engravings/Monograms inside the Engraving tab"): the chip "Approved" beside Placements is a VIEW of this same list, not a second one. EG.tab "place" shows every row as it always did; "approved" shows
+     the rows that hold an approved piece (an approved or "Saved to sheet" engraving, an approved monogram), drawn by the same renderPlacementRows from the same decidedSelect() (so the search and the date chips apply, and a row is told as it is in Placements). A piece cut
+     plain (skipped) is decided but not approved: a row of only those is in Placements alone. The chip's number is the rows it shows (approvedRows). Nothing is read, stored or waited on for it. */
+  const onApproved = () => EG.tab === "approved";
+  const isApprovedJob = j => j.state === "approved" || j.state === "written";
+  const approvedSelect = () => decidedSelect().filter(isApprovedJob);
+  const approvedRows = () => listRows(approvedSelect());
+  const shownList = () => (onApproved() ? approvedSelect() : shownQueue().concat(decidedSelect()));   // (APPTAB: Back / Next stop at what the open tab lists, and at the rest of the piece's own order)
   const listUniverse = () => { const q = queueUniverse(); return q.concat(decidedAll().filter(j => !q.includes(j))); };
   const rowPending = r => !!r && r.jobs.some(j => !DECIDED.includes(j.state));
   function listRows(selected) {
@@ -8615,7 +8622,7 @@ const Engrave = window.Engrave = (() => {
      from the queue's side, where the Placements tab is. Only copies move: the next card is there and answers its keys at
      once, so someone pressing A again and again never waits for any of it (copies still in the air hurry to make way). */
   const MO = () => window.Motion && !Motion.reduced() ? Motion : null;
-  const EG_TAB = () => `#engraveView .ordBar .egTab[data-tab="place"]`;   // (NODECIDED: the one chip: a decided card goes up into the count of the one list)
+  const EG_TAB = (tab = "place") => `#engraveView .ordBar .egTab[data-tab="${tab}"]`;   // (NODECIDED: a decided card goes up into the count of the list. APPTAB: an approved card goes up into "Approved", a piece cut plain into "Placements")
   /* MONOGRAM (charm-nest-monogram-ui.js; MONOUI, Paul, 16 Oct 2026: "the monogram options, previews, functionality ... as part of the Engraving Tab ... in place of the currently existing back/front engraving"): a monogram order line is a PIECE of its order
      like an engraved bar is. It is listed in Placements while it waits for its Approve and in Decided once approved, as a row with the finished charm and its three letters where an engraved piece has its Front and Back, and its
      detail card holds the monogram widget (CharmNestMonogramUI.mountLine, mode "detail") where an engraved piece's card holds the panel. There is no tab of its own. It is NEVER an Engrave job: nothing is stored, checkpointed
@@ -8870,8 +8877,9 @@ const Engrave = window.Engrave = (() => {
     renderWorking(v, jobs);
     syncEgFind(v);
     const qrows = rowsIn(queue, queueUniverse()), counts = rowCountsOf(qrows);
-    const n = { place: qrows.length };
+    const n = { place: qrows.length, approved: approvedRows().length };   // (APPTAB: the Approved chip counts the rows it shows, live with every approval: this runs with each render)
     v.querySelectorAll(".egTab[data-tab]").forEach(b => {
+      b.classList.toggle("on", b.dataset.tab === EG.tab); b.setAttribute("aria-pressed", String(b.dataset.tab === EG.tab));
       const k = n[b.dataset.tab]; let t = b.querySelector("b");
       if (!k) { if (t) t.remove(); return; }
       if (!t) { t = el("b", b.dataset.tab === "words" ? "warn" : b.dataset.tab === "place" ? "info" : "ok"); b.appendChild(t); }
@@ -8926,8 +8934,8 @@ const Engrave = window.Engrave = (() => {
   /** The job a click on a row opens: the first piece still to settle that is not being prepared, else the first not busy (NODECIDED: a row may hold decided pieces too). */
   const leadOf = g => (ROWS() ? (g.jobs.find(j => !DECIDED.includes(j.state) && !isWorking(j)) || ROWS().openLead(g, isWorking)) : g.lead);
   function renderPlacementRows(list, queue, decided) {
-    if(placementQuery!==EG.q+CNListActivity.key("engrave-place")){placementLimit=40;placementQuery=EG.q+CNListActivity.key("engrave-place");}
-    const rows = listRows((queue || []).concat(decided || []));   // (NODECIDED: the one list: pending rows first, then the decided ones; an order with several pieces keeps its rows together, in its line order, as Back / Next walk them)
+    if(placementQuery!==EG.tab+EG.q+CNListActivity.key("engrave-place")){placementLimit=40;placementQuery=EG.tab+EG.q+CNListActivity.key("engrave-place");}
+    const rows = onApproved() ? listRows((decided || []).filter(isApprovedJob)) : listRows((queue || []).concat(decided || []));   // (APPTAB: the Approved tab draws only the rows of its approved pieces, the same rows approvedRows counts) (NODECIDED: the one list: pending rows first, then the decided ones; an order with several pieces keeps its rows together, in its line order, as Back / Next walk them)
     const shown = rows.slice(0,placementLimit), nodes = shown.map(grp => quietRow(grp, () => {
       if (grp.lead && grp.lead.mono) return monoPlacementRow(grp);
       // (faced: the line has a front job, so each job is told by its piece AND its face, in the row's one list of what is engraved; a back-only line is not faced and draws what it always drew)
@@ -8993,8 +9001,9 @@ const Engrave = window.Engrave = (() => {
     if (n) { if (m) m.remove(); return; }
     const q = String(EG.q || "").trim(); if (!m) { m = el("div", "libEmpty egNone"); m.setAttribute("role", "status"); host.appendChild(m); }
     const jobs = [...items().values()].filter(j => j.row && j.row.state !== "gone"), nDone = jobs.filter(j => DECIDED.includes(j.state)).length;
-    m.innerHTML = q ? `<b>Nothing here matches “${esc(q)}”.</b><button class="btn ghost sm" data-eg-clear>Clear search</button>` : emptyWhy(jobs, 0, nDone);
+    m.innerHTML = q ? `<b>Nothing here matches “${esc(q)}”.</b><button class="btn ghost sm" data-eg-clear>Clear search</button>` : onApproved() ? `<b>No approved engravings or monograms here yet.</b><button class="btn ghost sm" data-eg-place>Show placements</button>` : emptyWhy(jobs, 0, nDone);   // (APPTAB: the empty Approved tab says so)
     const clr = m.querySelector("[data-eg-clear]"); if (clr) clr.onclick = () => clearEgSearch();
+    const pl = m.querySelector("[data-eg-place]"); if (pl) pl.onclick = () => { EG.tab = "place"; EG.chosen = true; render(); };
     m.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { const g = b.dataset.go; if (g === "hist") RunHistory.show(); else if (g === "words") { EG.tab = "words"; EG.chosen = true; render(); } else { setMode(g); if (g === "review") Review.render(); } });
   }
   /** Repaint the card in place: the picture, the numbers, the chips. The pane is only rebuilt when what it holds changes. */
@@ -9084,11 +9093,11 @@ const Engrave = window.Engrave = (() => {
     const words = jobs.filter(matchesQ).filter(j => j.state === "words" || j.state === "blocked"), queue = withFocus(CNListActivity.select("engrave-place",queuedJobs(jobs.filter(matchesQ)))), decided = decidedSelect();
     // NODECIDED (Paul, 16 Oct 2026): there is ONE list. What still needs a decision comes first, then every piece that is decided, in the same rows; a click on any of them opens the same detail card. An older saved view
     // that says "done" (or "mono", "words") lands here too.
-    EG.tab = "place";
+    if (!onApproved()) EG.tab = "place";   // (APPTAB: "place", or "approved": a view of the same list)
     if (EG.list == null && jobs.some(isWorking)) EG.list = true;
     const tab = EG.tab;
     // MONOUI: the monogram card is kept while its piece is the one in front and still to approve: the widget paints itself, and a rebuild would take the caret from a letter box
-    if (!EG.list && v.dataset.egTab === "place" && EG.card && EG.card.isConnected && EG.card.dataset.mono) {
+    if (!EG.list && v.dataset.egTab === tab && EG.card && EG.card.isConnected && EG.card.dataset.mono) {
       const f3 = pickFocus(queue, decided);
       if (f3 && f3.mono && f3.key === EG.cardKey && f3 === EG.card._job) { EG.card._sync?.(); renderChrome(v, queue); return; }
     }
@@ -9097,11 +9106,11 @@ const Engrave = window.Engrave = (() => {
     const qrows = rowsIn(queue, queueUniverse()), counts = rowCountsOf(qrows), allRows = listRows(queue.concat(decided)), nDone = decidedAll().length;
     const wantList = !!EG.list || (!focus && allRows.length > 0);   // (nothing to settle and nothing opened: the list itself, with every piece in it)
     const liveList = v.querySelector('.egPlacementList');
-    if(wantList && liveList && v.dataset.egTab === "place") {
+    if(wantList && liveList && v.dataset.egTab === tab) {
       renderChrome(v,queue);renderPlacementRows(liveList,queue,decided);return;
     }
     v.dataset.egTab=tab;
-    const tabBtn = (id, label, n, cls) => `<button class="egTab on" data-tab="${id}" title="${esc(label)}: every piece of this run, the ones still to approve first">${label}${n ? `<b class="${cls}">${n}</b>` : ""}</button>`;
+    const tabBtn = (id, label, n, cls, tip = "every piece of this run, the ones still to approve first") => `<button class="egTab${tab === id ? " on" : ""}" data-tab="${id}" aria-pressed="${tab === id}" title="${esc(label)}: ${tip}">${label}${n ? `<b class="${cls}">${n}</b>` : ""}</button>`;   // (APPTAB: two chips, the open one is on)
     // the words field someone is typing in keeps its focus and caret through the rebuild (its text is kept as a draft)
     const typing = (() => { const a = document.activeElement, c = a && v.contains(a) && a.matches('[data-f="words"]') && a.closest(".rvItem"); return c ? { key: c.dataset.key, start: a.selectionStart, end: a.selectionEnd } : null; })();
     // so does the search box: a rebuild used to drop its focus, the new card took it, and the next letters typed into the
@@ -9110,7 +9119,7 @@ const Engrave = window.Engrave = (() => {
     const out = copyOutgoing();                      // the card in front that is going, copied where it stands (launch, below)
     disposeCards();
     v.innerHTML = `<div class="ordBar egBar">
-        <span class="controlGroup">${tabBtn("place", "Placements", qrows.length, "info")}
+        <span class="controlGroup">${tabBtn("place", "Placements", qrows.length, "info")}${tabBtn("approved", "Approved", approvedRows().length, "ok", "the approved engravings and monograms, as they are in Placements")}
         <span data-eg-working hidden></span>
         </span><span class="controlGroup egSearchGroup"><span class="egFind"${EG.q ? ' data-has="1"' : ""}><input class="ordSearch" id="egQ" placeholder="order, SKU, words…" value="${esc(EG.q || "")}" autocomplete="off" spellcheck="false" title="search every piece by order number, SKU or the engraved words"><button type="button" class="ordFindX" id="egQX" aria-label="Clear search" title="Clear search"${EG.q ? "" : " hidden"}>${CNListActivity.icons.x}</button></span></span>
         </div>
@@ -9119,7 +9128,7 @@ const Engrave = window.Engrave = (() => {
     activityTools(v);
     renderWorking(v, jobs);
     // a tab pressed shows what it holds softly (a quick fade), rather than at a blink
-    v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { const was = EG.tab; EG.tab = b.dataset.tab; EG.chosen = true; render(); const p = was !== EG.tab && MO() && document.querySelector("#engraveView .egPane:not([hidden])"); if (p) p.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: "ease-out" }); });
+    v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { const was = EG.tab; EG.tab = b.dataset.tab; EG.chosen = true; EG.list = true; render(); const p = was !== EG.tab && MO() && document.querySelector("#engraveView .egPane:not([hidden])"); if (p) p.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: "ease-out" }); });   // (APPTAB: a chip shows its list, whatever card was in front)
     // PERF (Oct 2026): one redraw once the typing pauses (150 ms), not a full rebuild of the tab at every key; the search
     // itself is kept at once, so a redraw for anything else meanwhile already shows what was typed
     { const q = v.querySelector("#egQ"); q.oninput = () => { EG.q = q.value; EG.pin = null; syncEgFind(v); clearTimeout(egTyping); egTyping = setTimeout(() => { egTyping = 0; render(); }, 150); };
@@ -9167,7 +9176,7 @@ const Engrave = window.Engrave = (() => {
   }
   /** The widget approved the design: the card in front goes up into the count and the detail goes on to what is left of the order (guideNext, at the render). */
   function monoApproved(m, card) {
-    if (card && card.isConnected && EG.card === card && EG.cardKey === m.key) { goes(m, { to: EG_TAB() }, card); EG.focus = m.key; EG.opened = null; EG.pin = null; EG.list = false; }
+    if (card && card.isConnected && EG.card === card && EG.cardKey === m.key) { goes(m, { to: EG_TAB("approved") }, card); EG.focus = m.key; EG.opened = null; EG.pin = null; EG.list = false; }
     render();
   }
   /** The row of the Placements list for a monogram piece. Kept by its stand-in object, drawn again in place (the thumbnail, the stage word and the options line follow the service). */
@@ -9780,10 +9789,11 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  /* NODECIDED: the view a person left (checkpoint, saved view, link) is put back. There is one list now: an older view that says tab "done" lands on it, with the piece it had open (openDone) in the detail card. */
+  /* NODECIDED: the view a person left (checkpoint, saved view, link) is put back. There is one list now: an older view that says tab "mono" or "words" lands on it; one that says "done" lands on its Approved view (APPTAB), with the piece it had open (openDone) in the detail card. */
   function restoreEngraveView(v) {
     const w = Object.assign({}, v || {});
-    if (w.tab === "done" || w.tab === "mono" || w.tab === "words") { if (w.tab === "done") { if (w.openDone) { w.focus = w.openDone; w.list = false; } else if (!w.focus) w.list = true; } w.tab = "place"; }
+    if (w.tab === "done" || w.tab === "approved") { if (w.openDone) { w.focus = w.openDone; w.list = false; } else if (!w.focus) w.list = true; w.tab = "approved"; }   // (APPTAB: a saved view that says "done" or "approved" lands on the Approved chip)
+    else if (w.tab === "mono" || w.tab === "words") w.tab = "place";
     delete w.openDone;
     if (w.focus) w.opened = w.focus;
     return Object.assign(EG, w, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) });

@@ -253,7 +253,7 @@ const receipts = [
           inner: { w: window.innerWidth, h: window.innerHeight } };
       });
       console.log('engraving screen', JSON.stringify(eg));
-      assert.deepStrictEqual(eg.tabs.map(t => t.id), ['place'], 'one chip, Placements (NODECIDED: there is no Decided tab)');
+      assert.deepStrictEqual(eg.tabs.map(t => t.id), ['place', 'approved'], 'two chips, Placements and Approved (NODECIDED: there is no Decided tab; APPTAB: Approved is a view of the same list)');
       assert(eg.zeroBadges === 0, 'an empty queue is not dressed as work: ' + eg.zeroBadges + ' zero badge(s)');
       assert.strictEqual(eg.tabs.filter(t => t.on).length, 1, 'exactly one tab is open');
       assert.strictEqual(eg.openPanes, 1, 'and exactly one pane is shown');
@@ -749,11 +749,11 @@ const receipts = [
       await page.evaluate(() => { CN.setMode('engrave'); Engrave.render(); });
       const switched = await page.evaluate(() => {
         const v = document.getElementById('engraveView');
-        v.querySelector('.egTab[data-tab=done]').click();   // an empty tab still opens when it is asked for
+        v.querySelector('.egTab[data-tab=approved]').click();   // an empty tab still opens when it is asked for
         const v2 = document.getElementById('engraveView');
         return { on: [...v2.querySelectorAll('.egTab')].filter(b => b.classList.contains('on')).map(b => b.dataset.tab), panes: [...v2.querySelectorAll('.egPane')].map(p2 => !p2.hasAttribute('hidden')).filter(Boolean).length };
       });
-      assert.deepStrictEqual(switched.on, ['done'], 'a tab switches the screen');
+      assert.deepStrictEqual(switched.on, ['approved'], 'a tab switches the screen');
       assert.strictEqual(switched.panes, 1, 'and still one pane at a time');
       await page.evaluate(() => { const v = document.getElementById('engraveView'); const b = v.querySelector('.egTab[data-tab=place]'); if (b) b.click(); });
 

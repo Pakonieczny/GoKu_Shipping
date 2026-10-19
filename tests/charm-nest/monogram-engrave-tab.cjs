@@ -116,7 +116,7 @@ const check = (ok, msg) => { nCheck++; if (!ok) fails.push(msg); console.log((ok
 
     // ═══ 2 · the tab: no Monograms tab, the monogram lines beside the engraved ones ═══
     await openList(); await settle(2500);
-    check(!(await page.evaluate(() => !!document.querySelector('#engraveView .egTab[data-tab="mono"], #egMono'))) && (await tabs()).map(t => t.split(':')[0]).join() === 'place', 'there is no Monograms tab and no Decided tab: the one chip is Placements: ' + (await tabs()).join(' '));
+    check(!(await page.evaluate(() => !!document.querySelector('#engraveView .egTab[data-tab="mono"], #egMono'))) && (await tabs()).map(t => t.split(':')[0]).join() === 'place,approved', 'there is no Monograms tab and no Decided tab: the chips are Placements and Approved (APPTAB, a view of the same list): ' + (await tabs()).join(' '));
     let rs = await rows();
     check(rs.length === 7 && rs.filter(r => r.kind === 'monogram').length === 4 && rs.filter(r => r.kind === 'engraved').length === 3, 'Placements lists the 4 monogram lines beside the 3 engraved ones (7 rows): ' + rs.map(r => r.kind[0] + r.rid.slice(-3)).join(' '));
     check((await tabs())[0] === 'place:7', 'the Placements badge counts them: ' + (await tabs())[0]);
