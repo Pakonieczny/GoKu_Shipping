@@ -88,10 +88,13 @@ for (const d of DRAWN) {
 }
 pass('necklace listings: Necklace_Angel_N and Necklace_1_Angel_N are the one ringed necklace drawing; a stud SKU never reads as a necklace drawing, nor the reverse');
 
-/* ── 2b · before the page holds Etsy's table: the design and the pair are already right; only the Angel Number drop-down waits until the table (fetched for exactly such a line) ties each value to its SKU ── */
+/* ── 2b · before the page holds Etsy's table: the design and the pair are already right, and (FALSEHOLD, Paul 19 Oct 2026, order 4207131438) the Angel Number drop-down is answered by the line's own SKU:
+   "333" names member 3 of STUD_ANGEL_N, the SKU's own number, so nothing waits for the table any more (it used to ask until the table tied each value to its SKU). A value naming another number still asks. ── */
 { const sp = read(studA(3), ctxOf(null, {}));
-  eq([sp.designSku, sp.pieceCount, sp.pair.sides, kinds(sp), (sp.problems[0] || {}).optionName], ['STUD_ANGEL_3', 2, ['L', 'R'], ['needsMapping'], 'Angel Number'], 'no table yet: STUD_ANGEL_3 as a pair, the drop-down asked until Etsy\'s table answers it'); }
-pass('without Etsy\'s table the design and the pair are right and the drop-down waits for the table (fetched automatically for such a line); with it nothing is asked');
+  eq([sp.designSku, sp.pieceCount, sp.pair.sides, kinds(sp), (sp.options.find(o => o.name === 'Angel Number') || {}).mapped], ['STUD_ANGEL_3', 2, ['L', 'R'], [], { field: 'design', value: 'STUD_ANGEL_3', source: 'sku:number' }], 'no table yet: STUD_ANGEL_3 as a pair, the drop-down answered by its own number');
+  const x = read(Object.assign(studA(3), { sku: 'Stud_Angel_5' }), ctxOf(null, {}));
+  ok(kinds(x).length === 1 && x.problems[0].contradiction, 'no table, "333" on Stud_Angel_5: a contradiction, asked'); }
+pass('without Etsy\'s table the design and the pair are right and the drop-down is answered by the SKU\'s own number; a value naming another number asks');
 
 /* ── 3 · 000 and 999 are not drawn: they wait as not in any master file, never another number's drawing ── */
 for (const d of [0, 9]) {

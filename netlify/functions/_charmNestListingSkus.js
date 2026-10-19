@@ -27,6 +27,7 @@
 "use strict";
 
 const COLL = "Charm_Listing_Skus", BUDGET_ID = "_budget";
+const REFRESH_MIN_MS = 10 * 60000;   // FALSEHOLD: a table the page found stale is asked again only when it was stored more than ten minutes ago (never in a loop)
 const TTL_MS = 7 * 86400000, DAY_CAP = Infinity, CALL_CAP = 6, MAX_ASK = 25, MAX_PRODUCTS = 1500;   // NOLIMIT (Paul, 13 Oct 2026): no daily limit on listing look-ups (it was 60); CALL_CAP is only how many one request asks
 const SANDBOX_CAP = DAY_CAP;   // SBCAP (Paul, 13 Oct 2026: "remove this limit for now"): the sandbox no longer has a share of its own (it was 30 of the day's 60, so production kept half); it may spend up to the whole day's DAY_CAP. To bring the share back, put 30 here.
 
@@ -98,6 +99,9 @@ async function lookup(ids, env) {
   const want = [...new Set((ids || []).map(x => String(x == null ? "" : x).trim()).filter(x => /^\d{3,20}$/.test(x)))].slice(0, MAX_ASK);
   // listings the page needs Etsy's value names for (nameIds): a stored table of options with no names is asked again for them, once
   const needNames = new Set((env.nameIds || []).map(x => String(x == null ? "" : x).trim()));
+  // FALSEHOLD (Paul, 19 Oct 2026, order 4207131438): listings the page found STALE (refreshIds: a line's own SKU names a design while the stored table says one other SKU for every choice; Etsy's
+  // inventory changed after it was stored): a stored table older than REFRESH_MIN_MS is asked of Etsy again, once (the page asks once per listing per page), within the same caps
+  const refresh = new Set((env.refreshIds || []).map(x => String(x == null ? "" : x).trim()));
   const out = { tables: {}, pending: [], why: null, etsyCalls: 0, cap: { used: 0, max: DAY_CAP } };
   if (!want.length) return out;
   const snaps = await db.getAll(...want.map(id => coll.doc(id)), coll.doc(BUDGET_ID));
@@ -108,8 +112,9 @@ async function lookup(ids, env) {
   want.forEach((id, i) => {
     const s = snaps[i], t = s.exists ? s.data() : null;
     const noNames = !!t && needNames.has(id) && Array.isArray(t.products) && !Array.isArray(t.nm);   // (stored before the names were kept)
-    if (t && now - (+t.at || 0) < TTL_MS && !noNames) out.tables[id] = fromStored(t);
-    else { if (t) out.tables[id] = fromStored(t); stale.push({ id, rank: !t ? 0 : noNames ? 1 : 2 }); }
+    const again = !!t && refresh.has(id) && now - (+t.at || 0) >= REFRESH_MIN_MS;   // (FALSEHOLD: a stale table the page asks to refresh)
+    if (t && now - (+t.at || 0) < TTL_MS && !noNames && !again) out.tables[id] = fromStored(t);
+    else { if (t) out.tables[id] = fromStored(t); stale.push({ id, rank: !t ? 0 : noNames || again ? 1 : 2 }); }
   });
   stale.sort((a, b) => a.rank - b.rank);   // (stable: inside a group, the page's order, oldest waiting order first)
   let attempts = 0, stop = !!env.cacheOnly;
@@ -137,4 +142,4 @@ async function lookup(ids, env) {
   return out;
 }
 
-module.exports = { lookup, compact, toStored, fromStored, packNames, unpackNames, COLL, TTL_MS, DAY_CAP, CALL_CAP, SANDBOX_CAP, MAX_ASK };
+module.exports = { lookup, compact, toStored, fromStored, packNames, unpackNames, COLL, TTL_MS, REFRESH_MIN_MS, DAY_CAP, CALL_CAP, SANDBOX_CAP, MAX_ASK };

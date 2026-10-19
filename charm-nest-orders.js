@@ -525,6 +525,51 @@
   }
   /** A font hidden in a METAL option that is named for one too ("Metal? Font Choice?": "Gold • Typewriter", "Silver • Custom"): the shop's font word in it, else null. */
   const fontInMetal = (name, value, fx) => isMetalOption(name) && FONT_NAME.test(String(name || "")) ? fontFrom(fontParts(value), fx || null, true) : null;
+  /* ═══ FALSEHOLD (Paul, 19 Oct 2026, orders 4207131438 / 4204710975): "Both of these orders got put on hold even though they were matched correctly … I don't want false holds."
+     Order 4204710975 (the bar necklace, listing 982791277, SKU VERTICAL BAR_1277) waited on "Font/ Chain Length: stylish • 19 inches": the name is a FONT and a CHAIN LENGTH, never a design, but no
+     rule read it whole. isFontOption refuses a name that also says "length" (NOT_FONT_NAME), isChainOption took the name but its value does not START with a length, so the option fell through to the generic
+     "not mapped — Etsy keeps one SKU (VERTICAL BAR_1277) for every choice of this listing" question. THE RULE: an option whose NAME is made only of non-design kinds (a font, a chain / necklace length, a size,
+     a metal, a quantity / count, a personalisation / engraving, an engraving face / side, an alignment), split at / • · & + , | ; and "and", or whose VALUE is made only of such parts (a length, a font word, a
+     size in mm, a number of sides, a face, an alignment, a price, a count of bars / discs), is never a design option: it is never asked about as one. A value whose only part is a metal word or a font word is
+     not enough on its own ("Rose" is also a flower, "Ace" a card): it takes the name, or another part beside it. → { kinds, byName, byValue, length, size, font } or null when the option may pick a design. */
+  const ND_SPLIT_NAME = /\s*(?:[\/\\•·&+,|;]|\band\b|\bwith\b)\s*/i, ND_SPLIT_VALUE = /\s*[\/\\•·&+,|;]\s*|\s+(?:[-–—]|and)\s+/i;
+  function nameKind(part) {
+    const s = String(part || "").replace(/[?:!*()"]+/g, " ").replace(/\s+/g, " ").trim(); if (!s) return "filler";
+    if (/^(?:choose|choice|select|pick|your|the|a|option|options|please)$/i.test(s)) return "filler";
+    if (FONT_NAME.test(s)) return "font";
+    if (/\b(?:chains?|lengths?|extenders?)\b/i.test(s)) return "length";
+    if (/\b(?:sizes?|diameters?|dimensions?)\b|\bmm\b/i.test(s)) return "size";
+    if (isMetalOption(s) || /\b(?:gold|silver|sterling|karat|plated|material)\b/i.test(s)) return "metal";
+    if (/\b(?:quantity|qty|count|how many|pieces?|pcs)\b|\b(?:number|no\.?)\s+of\b|#\s*(?:of\b|bars?\b|discs?\b|charms?\b)|^#/i.test(s)) return "count";
+    if (isPersonalisation(s) || /\b(?:engrav(?:e|ed|ing)s?|personali[sz]ed|custom (?:text|words?)|wording|text)\b/i.test(s)) return "words";
+    if (/\b(?:sides?|faces?|front|back)\b/i.test(s)) return "face";
+    if (/\balign(?:ed|ment)?\b|\bjustif/i.test(s)) return "align";
+    return "";
+  }
+  function valueKind(part) {
+    const s = String(part || "").replace(/^[\s"'(\[]+|[\s')\].!]+$/g, "").trim(); if (!s) return "filler";
+    if ((looksLikeLength(s) && !/^\s*\d+(?:\.\d+)?\s*$/.test(s)) || /^(?:chain|length)\s*:?\s*\d{1,2}(?:\.\d)?\s*(?:"|''|”|″|in\b|inch(?:es)?|cm\b)/i.test(s)) return "length";
+    if (mmTokenOf(s)) return "size";
+    if (/^\(?\s*[$€£]\s*\d+(?:[.,]\d{2})?\s*\)?$/.test(s)) return "price";
+    if (/^\d{1,2}\s*(?:bars?|discs?|charms?|pieces?|pcs)$/i.test(s)) return "count";
+    if (/^(?:front|back|both|both sides|front only|back only|front side|back side|[12]\s*sides?|one side|two sides|single sided|double sided|no engraving)$/i.test(s)) return "face";
+    if (ALIGN_WORD.test(s)) return "align";
+    if (NO_FONT.test(fontKey(s)) || fontOfWord(s)) return "font";
+    if (s.split(/[^\p{L}\p{N}]+/u).filter(Boolean).every(w => SPEC_METAL_WORD.test(w.toLowerCase()) || SPEC_FILLER_WORD.test(w.toLowerCase()))) return "metal";
+    return "";
+  }
+  function nonDesignOption(name, value) {
+    const n = decodeEntities(String(name == null ? "" : name)), v = decodeEntities(String(value == null ? "" : value)).replace(/&quot;/g, "\"");
+    const nk = n.split(ND_SPLIT_NAME).map(nameKind).filter(k => k !== "filler"), vparts = v.split(ND_SPLIT_VALUE).map(s => s.trim()).filter(Boolean), vk = vparts.map(valueKind).filter(k => k !== "filler");
+    // (the value must say what the name does: every part read, or, under a font name, a part taken as the font asked for; "CUSTOM · (add note)" is a request to read the note, never answered here)
+    const unread = vparts.filter(p => !valueKind(p)), seeNote = /\b(?:custom|note|other|see|message|special|request|different|personali[sz]ed?)\b/i;
+    const byName = nk.length > 0 && nk.every(Boolean) && (!unread.length || (nk.includes("font") && unread.length === 1 && !seeNote.test(unread[0])));
+    const strong = vk.some(k => ["length", "size", "price", "count", "face", "align"].includes(k));
+    const byValue = vk.length > 0 && vk.every(Boolean) && (strong || vk.length >= 2) && !vk.every(k => k === "metal");
+    if (!byName && !byValue) return null;
+    const at = k => vparts.find(p => valueKind(p) === k) || "";
+    return { kinds: [...new Set(byName ? nk : vk)], byName, byValue, length: at("length"), size: at("size"), font: at("font") };
+  }
   /** What a line keeps of a font reading (spec.font). `id` is the installed font ("" = the app falls back to Source Sans 3 and says "Requested font"). */
   const fontSpecOf = (fr, source) => Object.assign({ asked: fr.asked, id: fr.id || "", name: fr.name || "", source }, fr.align ? { align: fr.align } : {}, fr.listing ? { listing: true } : {});
   /** The engraving font of ONE piece of a line (a counted disc, a left ear, a single charm): { id, name, asked, mapped, source }. A piece's own font (spec.fontPieces[index],
@@ -1228,6 +1273,28 @@
   }
   /** The listing's table says this SKU is the listing's own: its only SKU, or on several products. */
   const tableShares = (table, sku) => !!table && typeof table === "object" && !table.gone && (Array.isArray(table.products) ? listingWide(table, upSku(sku)) : !!table.uni && upSku(table.uni) === upSku(sku));
+  /** FALSEHOLD (Paul, 19 Oct 2026, order 4207131438): is the table the page holds for this line's listing a STALE "one SKU for every choice" record? It says one SKU (or none) for every product, while
+   *  the transaction carries ANOTHER SKU, which names a master design (its exact or loose spelling, a known typo or name) or the listing is pinned to a design: Etsy's inventory changed after the
+   *  table was read (Paul gave each variation its own SKU). → { uni, sku } or null. */
+  function staleShared(table, line, masterEntry, masterLoose) {
+    if (!table || typeof table !== "object" || table.gone || Array.isArray(table.products) || !line) return null;
+    const tx = upSku(line.sku), uni = upSku(table.uni); if (!tx || tx === uni) return null;
+    const id = String(line.listingId == null ? "" : line.listingId), mine = masterSku(tx, masterEntry, masterLoose);
+    if (mine && uni && sameDesign(mine, masterSku(uni, masterEntry, masterLoose) || uni, masterEntry)) return null;   // (the table's SKU is a spelling or a known typo of the same design: nothing has changed)
+    return mine || pinnedDesign(id) || listingDesign(id) ? { uni, sku: tx, at: +table.at || 0 } : null;
+  }
+  /** FALSEHOLD: what an option's value says against a design numbered in its family (STUD_1_ANGEL_4 is member 4 of STUD_1_ANGEL_N): "same" when the value names that number ("444", "4", "No. 4",
+   *  "Angel Number 444": a run of one digit names that digit), "other" when it names another number (a contradiction), "" when it names no number, or more than one (a price is left out). */
+  function familyNumberSays(value, sku) {
+    const m = INDEXED_SKU.exec(upSku(sku)); if (!m) return "";
+    // (a number standing alone: "Tag2" is the name of a shape, not a number of the family; another word than number / no. / # / angel beside it, and a mismatch is no contradiction, only no match)
+    const t = optionText(value).replace(/\(?\s*[$€£]\s*\d+(?:[.,]\d+)?\s*\)?/g, " "), num = /(?<![\p{L}\p{N}])\d+(?![\p{L}\p{N}])/gu, nums = t.match(num);
+    if (!nums || nums.length !== 1 || nums[0].length > 3) return "";
+    const words = t.replace(num, " ").split(/[^\p{L}]+/u).filter(Boolean); if (words.length > 3) return "";
+    const d = nums[0], said = new Set([+d]); if (/^(\d)\1+$/.test(d)) said.add(+d[0]);
+    if (said.has(+m[3])) return "same";
+    return words.every(w => /^(?:no|nr|num|number|angel|n)$/i.test(w)) ? "other" : "";
+  }
   /* ── family: what a SKU and a line say they are (necklace, earrings…) ─────────────────────────────────────────────────
      Paul, 10 Oct: each drop-down option's own SKU decides the charm. Etsy's SKU for the product bought is exact evidence only
      when it is also the right KIND of design for the line: the Greek Goddess EARRINGS listing carries "GreekGoddess_Necklace_4"
@@ -3835,7 +3902,11 @@
     // differ in their options) while the product has a SKU of its own. Never for a SKU that names a design and is no one
     // else's, and a product SKU no master file holds is taken only over a listing's own SKU that names no design (the person
     // is then asked about the product's SKU, not the listing's, which every other option of the listing shares).
-    const table = ctx.listingSkus && ctx.listingSkus[String(line.listingId)], listing = inventorySku(line, table);
+    // FALSEHOLD (Paul, 19 Oct 2026, order 4207131438): the table the page holds says ONE SKU for every choice of the listing ({ uni: "ANGEL NUMBERS" }), but the transaction carries another SKU that names a
+    // design (Stud_1_Angel_4): Etsy's inventory has changed since the table was read (Paul set a SKU on every variation), so the table is STALE. It is not used for this line (it would only ask to "map
+    // this option once"), the line says so (spec.staleTable) and the page asks Etsy for the listing again (charm-nest-bridge.js askTables, refreshIds).
+    const rawTable = ctx.listingSkus && ctx.listingSkus[String(line.listingId)], staleTable = staleShared(rawTable, line, me, loose);
+    const table = staleTable ? undefined : rawTable, listing = inventorySku(line, table);
     let viaInventory = null, heldFamily = null;
     if (listing && listing.sku) {
       const tx = upSku(line.sku), names = s => !!s && (isNoDesign(s, ctx.noDesign) || !!masterSku(s, me, loose) || !!spelling(variationBase(s), me, loose));
@@ -4088,6 +4159,19 @@
         if (!mapped && cx && cx.certain && cx.n > 1 && cx.cls !== "design") mapped = { field: "count", value: String(cx.n), source: "rule:" + cx.rule };
         // "GOLD - 1 Disc" (one of the 15 choices of the 180-product disc listing) answers itself as ONE piece too: it used to fall to the generic "not mapped" hold (DISCREAD)
         else if (!mapped && cx && cx.certain && cx.n === 1 && cx.cls === "piece") mapped = { field: "count", value: "1", source: "rule:" + cx.rule };
+        // FALSEHOLD (Paul, 19 Oct 2026, orders 4207131438 / 4204710975): an option made only of non-design kinds ("Font/ Chain Length: stylish • 19 inches", "Metal / Length", "Engraving Side: Front") is
+        // never a design question (nonDesignOption): its length is the line's chain, its font word the line's font, the rest changes nothing. A count or a size that no rule above could read still asks
+        // (how many pieces, or which size, is a real question, not a design one), and so does a value of a profile's own drop-down (PIECE_LISTINGS: pieceAsk says why in one plain line).
+        if (!mapped && !(pl && pl.option && !piecesFixed(pl) && pl.option.test(decodeEntities(String(name || ""))))) {
+          const nd = nonDesignOption(name, value);
+          if (nd && !nd.kinds.includes("count") && !nd.kinds.includes("size")) {
+            mapped = nd.length ? { field: "chain", value: nd.length, source: "rule:non-design" } : { field: "ignore", value: null, source: "rule:non-design" };
+            if (!spec.font && !fh && (nd.kinds.includes("font") || nd.font)) {
+              const fp = fontParts(value); fp.words = fp.words.filter(w => valueKind(w) === "font" || (nd.byName && nd.kinds.includes("font") && !valueKind(w)));
+              const ff = fp.words.length ? fontFrom(fp, fx, false) : null; if (ff) spec.font = fontSpecOf(ff, "rule:font-in-option");
+            }
+          }
+        }
       }
       // a font hidden in a length option ("16"·STYLISH·Center"): the line's font too; the option itself reads as the length it always did
       if (fh && !spec.font) spec.font = fontSpecOf(fh, fh.listing ? "rule:font-listing" : "rule:font-in-length");
@@ -4109,12 +4193,43 @@
       else if (mapped.field === "size" && !spec.size) { spec.size = mapped.value; spec.sizeFrom = name; }
       else if (mapped.field === "chain" && !spec.chain) spec.chain = mapped.value;
     }
+    // FALSEHOLD (Paul, 19 Oct 2026, orders 4207131438 / 4204710975): the line's design is already decided with confidence — its own transaction SKU is a master design (exact, loose spelling, known
+    // typo or name; not a pick, not another family's, not Etsy's table standing in for it), or the listing's profile (PIECE_LISTINGS design) or a pin (PINNED_LISTING_DESIGNS / LISTING_DESIGNS) names it.
+    // An option nobody has read is then NOT a design question when:
+    //   · the table the page holds for the listing is a stale "one SKU for every choice" record (staleShared: the transaction's SKU is another one), or the profile / pin decides the design whatever
+    //     the option says: the option is the decided design's (source "sku:stale-table" / "rule:listing-decided");
+    //   · its value names the decided design's member of its numbered family ("444" on STUD_1_ANGEL_4) and nothing says the SKU is shared by other choices (no table that shares it, no other order of the
+    //     page with another choice and the same SKU): the option is the SKU's own (source "sku:number").
+    // A value that names ANOTHER member ("444" on STUD_1_ANGEL_7) contradicts the SKU: the question stays, said as the contradiction it is. A yes / no value is never a choice of charm (as FLAGWHY).
+    {
+      const lid = String(line.listingId || ""), pin = upSku(pinnedDesign(lid) || listingDesign(lid));
+      const decided = quiet || !sku || !me || !me(sku) || viaPick || heldFamily || set || skuFamilyConflict(sku, line) ? ""
+        : viaProfile && upSku(viaProfile.design) === sku ? "profile" : skuSource === "alias" && pin && (pin === sku || masterSku(pin, me, loose) === sku) ? "pinned"
+        : txSku && !viaInventory && ["transaction", "spelling", "variation"].includes(skuSource) ? "sku" : "";
+      if (decided) for (const o of spec.options) {
+        if (o.mapped || (pl && pl.option && !piecesFixed(pl) && pl.option.test(decodeEntities(String(o.name || ""))))) continue;   // (a value of the profile's own drop-down it cannot read keeps its own plain question, pieceAsk)
+        const at = problems.findIndex(q => q.kind === "needsMapping" && !q.font && !q.count && !q.earWords && !q.pairSecond && !q.setLayout && !q.letter && q.optionName === o.name && q.optionValue === o.value);
+        if (at < 0 || /^\s*(?:yes|no|none|n\/a|true|false)\b/i.test(o.value)) continue;
+        const says = familyNumberSays(o.value, sku), p = problems[at];
+        if (says === "other") {
+          p.why = `the option says “${optionText(o.value)}” but the SKU on the order${txSku && txSku !== sku ? ` (${txSku})` : ""} is ${sku}: they contradict each other, say which charm is right`;
+          p.contradiction = { option: optionText(o.value), sku, etsy: txSku || "" };
+          continue;
+        }
+        const fixed = decided !== "sku" || !!staleTable;
+        const own = says === "same" && !tableShares(rawTable, txSku) && seenVerdict(ctx.seen, line.listingId, o.name, o.value, txSku) !== "shared";
+        if (!fixed && !own) continue;
+        o.mapped = { field: "design", value: sku, source: decided === "sku" ? (staleTable ? "sku:stale-table" : "sku:number") : "rule:listing-decided" };
+        problems.splice(at, 1);
+      }
+    }
+    if (staleTable) spec.staleTable = staleTable;   // (the page asks Etsy for this listing's table again: charm-nest-bridge.js askTables)
     // FLAGWHY: the transaction's SKU is a master design that is demonstrably THIS option's own (skuIndexFamily, or the page's own orders: seenVerdict; never when the page's
     // orders or the listing's table say it is shared): the one option nothing else could read is answered by it, as a table's tied SKU answers it. No hold, no person asked.
     if (!quiet && !viaPick && !viaInventory && !heldFamily && !set && sku && txSku && me && me(sku) && ["transaction", "spelling", "variation"].includes(skuSource) && !skuFamilyConflict(sku, line) && !tableShares(table, txSku)) {
       const unread = spec.options.filter(o => !o.mapped), ask = unread.length === 1 ? problems.find(p => p.kind === "needsMapping" && !p.font && p.optionName === unread[0].name && p.optionValue === unread[0].value) : null;
       // (a yes / no / none answer is never a choice of charm: "Gift Wrap: Yes" on a numbered-SKU line is still an option nobody has read)
-      if (ask && !(ask.letter && ask.letter.clash) && !/^\s*(?:yes|no|none|n\/a|true|false)\b/i.test(unread[0].value)) {
+      if (ask && !(ask.letter && ask.letter.clash) && !ask.contradiction && !/^\s*(?:yes|no|none|n\/a|true|false)\b/i.test(unread[0].value)) {
         const seen = seenVerdict(ctx.seen, line.listingId, unread[0].name, unread[0].value, txSku), how = seen === "shared" ? "" : seen === "follows" ? "seen" : skuIndexFamily(sku, me) ? "index" : "";
         if (how) { unread[0].mapped = { field: "design", value: sku, source: "sku:" + how }; problems.splice(problems.indexOf(ask), 1); }
       }
@@ -4651,7 +4766,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { sizeFit, sizeMmOf, SIZE_PAD_PT, questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, tidyOption, optionView, optionViews, shownText, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, PINNED_LISTING_DESIGNS, pinnedDesign, PINNED_HUGGIE_SETS, pinnedHuggieSet, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, PIECE_LISTINGS, pieceListing, pieceValueRead, pieceOptionOf, pieceSlots, pieceExtra, profileDesignOf, pieceBodiesOf, piecesFixed, pieceFacesRead, pieceNouns, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, SET_RULES, SET_LAYOUT_OPT, setRuleOf, setLengthsOf, setEngravedOf, barLengthOf, setLayoutAskOf, setPiecesOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { sizeFit, sizeMmOf, SIZE_PAD_PT, questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, tidyOption, optionView, optionViews, shownText, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, PINNED_LISTING_DESIGNS, pinnedDesign, PINNED_HUGGIE_SETS, pinnedHuggieSet, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, nonDesignOption, staleShared, familyNumberSays, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, PIECE_LISTINGS, pieceListing, pieceValueRead, pieceOptionOf, pieceSlots, pieceExtra, profileDesignOf, pieceBodiesOf, piecesFixed, pieceFacesRead, pieceNouns, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, SET_RULES, SET_LAYOUT_OPT, setRuleOf, setLengthsOf, setEngravedOf, barLengthOf, setLayoutAskOf, setPiecesOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY, earringNeverBackEngraves, EAR_NEVER_WHY, letterDesignNeverEngraves, LETTER_NEVER_WHY,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
