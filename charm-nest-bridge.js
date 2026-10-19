@@ -17781,6 +17781,18 @@ const OrderWin = window.OrderWin = (() => {
     // (the module did not load: the grid as it always was)
     host.innerHTML = f.loading ? '<div class="m"><i>Order</i><span>' + esc(f.order.id) + '</span></div>' : f.cells.map(c => '<div class="m"><i>' + esc(c.label) + '</i>' + (c.html != null ? c.html : '<span>' + esc(c.text) + '</span>') + '</div>').join("");
   }
+  /** RELWIN (Paul, 19 Oct 2026: "The release hold seal should be visible also in the detailed Order popup modal. Make sure it's big enough to be visible and legible."): the latest Release Hold press of the order the window shows, { how: "releaseHold", at, by, id } or null, from what the page
+   *  already holds: the Orders card's own reading (Orders.releaseStampOf: the order's lines, this page's press and the run's record, and the order's Review document in the cloud, which a reload and every other computer read) and the "released" steps of the order's timeline that the window
+   *  has already read (data.seal "releaseHold": W.events, which is also how a press made on another computer reaches an open window). The latest of them wins; the earlier ones stay in the Timeline tab as they were. No read, no timer, no listener. */
+  function windowReleaseOf(r, sibs) {
+    let best = r && r.order ? tryDo(() => Orders.releaseStampOf(sibs)) : null;
+    const evs = r && r.order && W.evFor === String(r.order.receiptId) && Array.isArray(W.events) ? W.events : [];
+    for (const e of evs) {
+      const d = e && e.type === "released" && e.data && e.data.seal === "releaseHold" ? e.data : null, at = d ? +d.sealAt || +e.at || 0 : 0;
+      if (at > 0 && (!best || at > best.at)) best = { how: "releaseHold", at, by: String(e.by || ""), id: String(d.sealId || e.id || "") };
+    }
+    return best;
+  }
   /** WINSEAL (Paul, 19 Oct 2026: "All orders that are approved for engraving, or monograms by the user must have a clear seal that is easily visible to the user whether they are inside the Detail Order view or looking at a list view in the Orders tab"):
    *  the approval strip at the top of the Overview (#owSeals): one real seal for every approved piece and face, the engraving's from CNEngravingSeals and the monogram's from CNMonogramSeals (a monogram is never given to CNEngravingSeals), each with its word
    *  (BACK ENGRAVING / FRONT ENGRAVING / MONOGRAM), the piece when the order has several, who and when, and "N of M pieces approved" while some pieces of the order are not. An order with nothing approved draws nothing (the strip is hidden); "No engraving"
@@ -17796,10 +17808,13 @@ const OrderWin = window.OrderWin = (() => {
     };
     const items = shown.flatMap(p => p.stamps.map(st => one(p, st))).filter(Boolean), kinds = new Set(shown.map(p => p.kind));
     const count = a && a.n < a.m ? `${a.n} of ${a.m} piece${a.m === 1 ? "" : "s"} approved` : many ? `All ${a.m} pieces approved` : "", tip = left.length ? "Still to approve: " + left.map(p => p.title + (p.stamps.length ? ` (${p.stamps.map(x => x.face).join(" + ")} approved)` : "")).join(", ") : "";
-    const html = items.length ? `<div class="owApHd"><span class="k" data-ow-seals-head>${kinds.size > 1 ? "Engraving and monogram approved" : kinds.has("monogram") ? "Monogram approved" : "Engraving approved"}</span>${count ? `<span class="owApCount${left.length ? " part" : ""}" data-ow-seals-count${tip ? ` title="${esc(tip)}"` : ""}>${esc(count)}</span>` : ""}</div><div class="owApRow">${items.join("")}</div>` : "";
+    // (RELWIN, Paul 19 Oct 2026: the order's latest Release Hold, first in the strip: the Orders card's own seal and words (Orders.releaseSealHtml), large; nothing for an order never released with it; the approvals follow it, under a rule)
+    const rel = r && !r.loading && r.order ? windowReleaseOf(r, linesOf(r)) : null, relHtml = rel ? tryDo(() => Orders.releaseSealHtml(rel)) : "";
+    const ap = items.length ? `<div class="owApHd"><span class="k" data-ow-seals-head>${kinds.size > 1 ? "Engraving and monogram approved" : kinds.has("monogram") ? "Monogram approved" : "Engraving approved"}</span>${count ? `<span class="owApCount${left.length ? " part" : ""}" data-ow-seals-count${tip ? ` title="${esc(tip)}"` : ""}>${esc(count)}</span>` : ""}</div><div class="owApRow">${items.join("")}</div>` : "";
+    const html = relHtml ? `<div class="owRelRow" data-ow-release>${relHtml}</div>` + ap : ap;
     host.dataset.n = a ? a.n : 0; host.dataset.m = a ? a.m : 0;
     if (host._h === html) return;
-    host._h = html; host.hidden = !html; host.innerHTML = html;   // (the seals' size is the strip's own CSS, so no fit is asked of Seal)
+    host._h = html; host.hidden = !html; host.classList.toggle("owRelOnly", !!relHtml && !ap); host.innerHTML = html;   // (the seals' size is the strip's own CSS, so no fit is asked of Seal)
   }
   /** Paint the window from the row it is showing. */
   function paint() {
