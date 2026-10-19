@@ -160,6 +160,12 @@ const check = (ok, msg) => { nCheck++; if (!ok) fails.push(msg); console.log((ok
     const s1 = await untilWidget(rid('mono'), s => ['ready', 'check', 'approved'].includes(s.state), 'the monogram APV to be made');
     check(s1 && s1.letters === 'APV' && s1.state === 'ready', 'the widget reads the buyer\'s letters and makes the monogram: ' + JSON.stringify(s1));
     await settle(900); await shot('detail-mono-1440');
+    // (MONOTHUMB, Paul 19 Oct 2026: "Once a monogram is generated, it should be shown in the thumbnails of a given order": the order window's Vector design is the monogram, never "No vector available")
+    { const mt = await page.evaluate(async r => { const row = Orders.rows().find(x => String(x.order.receiptId) === String(r) && x.spec && x.spec.special && x.spec.special.monogram); if (!row) return { none: true };
+        CN.setMode('orders'); await OrderWin.open(row.key); for (let i = 0; i < 60; i++) { const v = document.getElementById('owVector'); if (v && v.querySelector('.mwThumb svg')) break; await new Promise(z => setTimeout(z, 100)); }
+        const v = document.getElementById('owVector'), out = { thumb: !!(v && v.querySelector('.mwThumb svg')), text: v ? v.textContent.trim().slice(0, 60) : null };
+        try { OrderWin.close && OrderWin.close(); } catch (_) {} CN.setMode('engrave'); return out; }, rid('mono'));
+      check(mt.thumb && !/No vector available/.test(mt.text || ''), 'the order window\'s Vector design shows the monogram once it is made: ' + JSON.stringify(mt)); await settle(600); }
     noSideways(await atPhone('detail-mono-400'), 'a monogram card');
     // typing a letter: the widget remakes the monogram, the card's head and (after close) the row follow, and a re-render of the tab never takes the caret away
     await page.click('#egQueue .rvItem[data-mono] [data-mw-letter="1"]'); await page.keyboard.type('Q');

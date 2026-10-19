@@ -362,7 +362,30 @@ const ListMedia = (() => {
     return id?'pool:'+id:'';
   }
   /** A line's vector design into one box: a list row's, or the order window's beside its listing photo. */
+  /* MONOTHUMB (Paul, 19 Oct 2026: "Once a monogram is generated, it should be shown in the thumbnails of a given order"): a monogram line's Vector design is its monogram, the cut piece the
+     monogram service draws (CharmNestMonogramUI.thumb, the Engrave card's own picture), once one was made (ready, to check, approved or sent); drawn when the box comes into view, so a long
+     list does not build every monogram at once. Before that the box says what it always said. */
+  const MONO_MADE=new Set(['ready','check','approved','sent','building']);
+  const monoView=window.IntersectionObserver?new IntersectionObserver(es=>{for(const e of es)if(e.isIntersecting){monoView.unobserve(e.target);const f=e.target._monoMount;e.target._monoMount=null;if(f)f();}},{rootMargin:'200px'}):null;
+  function monoInto(host,row){
+    try{
+      const MU=window.CharmNestMonogramUI;if(!MU||typeof MU.thumb!=='function'||typeof MU.status!=='function')return false;
+      const isMono=typeof MU.isMonogram==='function'?MU.isMonogram(row):!!row?.spec?.special?.monogram;if(!isMono)return false;
+      const st=MU.status(row);if(!st||!MONO_MADE.has(st.state))return false;
+      if(host.dataset.monoKey===row.key && host.querySelector('.mwThumb'))return true;   // (already shown: the service repaints it as the monogram changes)
+      host.dataset.monoKey=row.key;
+      const px=Math.max(48,Math.round(Math.min(host.clientWidth||104,host.clientHeight||104)||104));
+      const mount=()=>{if(!host.isConnected)return;try{MU.thumb(row,{px,into:host});host.removeAttribute('aria-busy');}catch(_){/* the box keeps what it had */}};
+      if(monoView){host._monoMount=mount;monoView.observe(host);}else mount();
+      return true;
+    }catch(_){return false;}
+  }
+  /** MONOTHUMB: a monogram made (or changed) after its row was drawn shows at once in every Vector design box of that line on the page (the service tells, Engrave monoMoved). */
+  function monoSweep(){ try{ for(const el of document.querySelectorAll('[data-vector],#owVector')){ const r=el._mvRow; if(r && !el.querySelector('.mwThumb'))monoInto(el,r); } }catch(_){ /* nothing shown */ } }
   function vectorInto(host,row) {
+    if(host && row)host._mvRow=row;   // (MONOTHUMB: monoSweep finds the line of a box drawn before its monogram was made)
+    if(host && row && monoInto(host,row))return;   // (MONOTHUMB, above)
+    if(host && host.dataset.monoKey){delete host.dataset.monoKey;host._monoMount=null;if(monoView)monoView.unobserve(host);}
     const sku=row?.spec?.designSku || row?.line?.sku || '';
     const both=matchPair(row),two=twoOf(row),one=oneRow(row),set=setOf(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again; one body once it is known to make one; the two designs of a set)
     watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[]).concat(two?['two',two,!!Master.entryFor(two),Master.entryFor(two)?.updatedAt || 0]:[]).concat(set.length?['set',set.join('+'),set.map(k=>Master.entryFor(k)?.updatedAt || 0).join('+')]:[]).concat(one>=0?['one',one]:[])),false,JSON.stringify([sku,row?.spec?.size].concat(both?['pair']:[]).concat(two?['two',two]:[]).concat(set.length?['set',set.join('+')]:[]).concat(one>=0?['one',one]:[])));
@@ -384,7 +407,7 @@ const ListMedia = (() => {
     const io=window.IntersectionObserver ? new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))go();},{rootMargin:'160px'}) : null;
     button.onclick=go;host.appendChild(button);if(io){pages.set(host,io);io.observe(button);}
   }
-  return {pair,pairRow,oneRow,earPair,earMirror,mount,vectorInto,vectorBig,vectorThumb,vectorKey,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
+  return {pair,pairRow,oneRow,earPair,earMirror,mount,vectorInto,monoSweep,vectorBig,vectorThumb,vectorKey,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
 })();
 // (the piece dots' hover card, charm-nest-piece-dots.js, reads the vector design through these two only: ListMedia itself stays private to this page's code)
 window.PieceMedia = { vectorKey: (row, opts) => ListMedia.vectorKey(row, opts && opts.pair === true ? opts : Object.assign({}, opts, { piece: true })), vectorThumb: ListMedia.vectorThumb, pairRow: ListMedia.pairRow, earMirror: ListMedia.earMirror };
@@ -9071,7 +9094,7 @@ const Engrave = window.Engrave = (() => {
   /** The service says a monogram changed (made, edited, approved): the Engrave tab's counts, rows and card are brought up to date at the next frame; a card is never rebuilt for it (renderView keeps it). */
   function monoMoved() {
     if (monoTimer) return;
-    monoTimer = setTimeout(() => { monoTimer = 0; try { Orders.render(); } catch (_) { /* (CARDSEAL: the Orders cards say a monogram's approval seal; drawn only while that tab is on screen, and a card only when its seals changed) */ } const v = document.getElementById("engraveView"); if (v && !v.classList.contains("hidden")) { try { render(); } catch (_) { /* kept */ } } else { try { LiveStrip.render(); } catch (_) { /* kept */ } } }, 60);
+    monoTimer = setTimeout(() => { monoTimer = 0; try { Orders.render(); } catch (_) { /* (CARDSEAL: the Orders cards say a monogram's approval seal; drawn only while that tab is on screen, and a card only when its seals changed) */ } const v = document.getElementById("engraveView"); if (v && !v.classList.contains("hidden")) { try { render(); } catch (_) { /* kept */ } } else { try { LiveStrip.render(); } catch (_) { /* kept */ } } try { ListMedia.monoSweep(); } catch (_) { /* MONOTHUMB: the boxes show it at their next draw */ } }, 60);
   }
   /** Open one monogram line in the Engrave tab (the Review card's "Build monogram", the order window, the guide): its detail card in Placements while it waits, its row opened in Decided once approved. */
   function openMonogram(lineKey) {
