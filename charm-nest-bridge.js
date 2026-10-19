@@ -15274,8 +15274,12 @@ const Review = window.Review = (() => {
     const no = why => ({ how: "", why, title: why }), of = n === 1 ? "this piece goes" : `these ${n} pieces go`;
     if (!it || !n) return no("This order is no longer in this run.");
     const kind = it.kind, anyHold = rows.some(r => r.hold), anyProblem = rows.some(r => (r.problems || []).length);
+    /* NOBLOCK (Paul, 19 Oct 2026: "there should be nothing preventing the user from pressing this button, it's up to the user NOT up to the system"): a question still open on the card never greys Release Hold.
+       The press puts the order back at the front of the queue as far as it can go (liftOrder: a piece that is already on a sheet is not placed again), and says plainly afterwards what is still open and
+       keeps the card in Review until it is answered. Only an order that is not in this run (nothing to release) and a Custom Order (its own Complete Order button) have no Release Hold. */
+    const open = text => ({ how: "queue", why: "", title: `Put the order back at the front of the queue now. Still open: ${text.replace(/\s*$/, "")} The piece is placed on a sheet as soon as that is answered.` });
     if (kind === "blockedSku") {
-      if (p.noOutline) return no("Its design has no outline to cut, so nothing can be nested: put the right design in the master file first.");
+      if (p.noOutline) return open("its design has no outline to cut, so nothing can be nested until the right design is in the master file.");
       return { how: "override", why: "", title: `Cut ${upK(p.sku)} although the master blocks it (${p.reason || "blocked"}): ${of} to the front of the queue and onto the next sheet. The block stays in the master; only ${orders === 1 ? "this order sets" : `these ${orders} orders set`} it aside.` };
     }
     if (kind === "reviewMark") return { how: "mark", why: "", title: "Take this order out of Review: it goes on to the sheets. A piece of it that is on hold goes to the front of the queue and onto the next sheet." };
@@ -15284,15 +15288,15 @@ const Review = window.Review = (() => {
     if (kind === "customOrder") return no("A custom order is made by hand or from its own designs: it does not go through the nesting queue.");
     // a person's hold on a line that asks nothing else: Release hold
     if (anyHold && !anyProblem) return { how: "hold", why: "", title: "Release the hold: the order goes back to the front of the queue and onto the next sheet." };
-    if (kind === "unmatchedSku") return no(p.formHold && p.reason ? p.reason : `SKU ${p.sku || "?"} has no design in any master file yet: pick its charm (or say there is nothing to cut) first.`);
-    if (kind === "needsMaterial") return no("Its metal is not read yet: pick the metal first, or it cannot be put on a sheet.");
-    if (kind === "needsMapping") return no(p.pairSecond ? "Say which design goes on the other ear first." : p.optionName ? `The option “${p.optionName}: ${p.optionValue}” is not answered yet: say what it decides first.` : "An option of this line is not answered yet: answer it first.");
-    if (kind === "missingSize") return no(`${p.sku || "Its design"} has no size ${p.size || "(none)"}: pick one of its sizes first.`);
-    if (kind === "oversize") return no("It does not fit the plate under the ceiling, so it cannot be nested as it is.");
+    if (kind === "unmatchedSku") return open(p.formHold && p.reason ? p.reason : `SKU ${p.sku || "?"} has no design in any master file yet: pick its charm (or say there is nothing to cut).`);
+    if (kind === "needsMaterial") return open("its metal is not read yet: pick the metal.");
+    if (kind === "needsMapping") return open(p.pairSecond ? "say which design goes on the other ear." : p.optionName ? `the option “${p.optionName}: ${p.optionValue}” is not answered yet: say what it decides.` : "an option of this line is not answered yet.");
+    if (kind === "missingSize") return open(`${p.sku || "its design"} has no size ${p.size || "(none)"}: pick one of its sizes.`);
+    if (kind === "oversize") return open("it does not fit the plate under the ceiling, so it cannot be nested as it is.");
     // the engraving cards: what they wait on is not the cut
-    if (anyProblem) return no(`Its first question is not answered yet: ${problemText(rows.find(r => (r.problems || []).length).problems[0])}.`);
-    if (rows.every(r => (r.poolIds || []).length || ["pooled", "nested", "written", "labelled", "committed"].includes(r.state))) return no("Its cut piece is already in the nesting queue: this card waits only on its engraving.");
-    return no("Nothing holds this piece out of the nesting queue: the run's own intake places it.");
+    if (anyProblem) return open(`its first question is not answered yet: ${problemText(rows.find(r => (r.problems || []).length).problems[0])}.`);
+    if (rows.every(r => (r.poolIds || []).length || ["pooled", "nested", "written", "labelled", "committed"].includes(r.state))) return { how: "queue", why: "", title: "Put the order back at the front of the queue. Its cut piece is already in the nesting queue (or on a sheet) and is not placed again: this card waits only on its engraving." };
+    return { how: "queue", why: "", title: "Put the order back at the front of the queue and onto the next sheet." };
   }
   /** The run's lines and the workspace written now, so a "released anyway" survives a reload before anything else happens (the same save Release hold makes first). */
   async function saveLinesNow() {
@@ -15442,7 +15446,7 @@ const Review = window.Review = (() => {
   /** The order window's piece row (RELHOLD): the Review card's own Release Hold for the card that piece is in (x: the act item, x.src its Review card), drawn as HTML and wired after (wireButton). */
   function releaseButtonHtml(x, sz) {
     const src = x && x.src; if (!src) return "";
-    const r = releaseOf(src); if (!r.how && r.why === "This order is no longer in this run.") return "";
+    const r = releaseOf(src); if (!r.how) return "";   // (nothing to release: no dead, greyed button is drawn; a card with something to release always has a pressable one, NOBLOCK)
     return `<button type="button" class="btn ${r.how ? "gold" : "ghost"} ${sz || "xs"}" data-rv-release="${esc(r.how || "no")}" data-rel-hold="1"${r.how ? "" : ' aria-disabled="true"'} title="${esc(r.title || r.why)}" aria-label="${esc(r.how ? `${RELEASE_LABEL}: ${r.title}` : `${RELEASE_LABEL} (not possible yet): ${r.why}`)}">${RELEASE_LABEL}</button>`;
   }
   function wireReleaseButton(old, x, sz) { if (!old || !x || !x.src) return; const { b } = releaseButton(x.src, null, sz || "xs"); old.replaceWith(b); }

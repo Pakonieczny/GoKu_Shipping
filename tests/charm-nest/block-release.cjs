@@ -9,7 +9,8 @@
 //   C  the pool (makePool): flip-only → pooled; genuine → held with the blockedSku problem; released → pooled; a release of another SKU / of a design with no outline → still held; a pair of two designs and a set read it too
 //   D  the line record: blockOverride round-trips through lineRecord / rowFromRecord, and the resume keep-list and Carry.adopt carry it
 //   E  the engine (OrderHold.release): a line held only by a flip-only block is released in SUCCESS; a genuine block ends in the old failure (with the hint to the Review button); a released line ends in success
-//   F  the Review button's logic (releaseOf / releaseToQueue, the page's own code sliced over stand-ins): the reason of every kind that cannot be released, what each kind that can does, the timeline answer
+//   F  the Review button's logic (releaseOf / releaseToQueue, the page's own code sliced over stand-ins): NOBLOCK (Paul, 19 Oct 2026: nothing may stop the user pressing Release Hold): every card with an order behind it is pressable, a
+//      question still open is said in the title and after the press, only an order that left the run and a Custom Order have none; what each kind does, the timeline answer
 'use strict';
 const assert = require('assert/strict'), fs = require('fs'), path = require('path'), vm = require('vm');
 const root = path.join(__dirname, '../..');
@@ -260,27 +261,29 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
     c.window.CharmNestReviewMark = { resolve: async (rid, o) => { calls.resolved.push([rid, o.how]); return { ok: true }; } };
     vm.createContext(c); vm.runInContext(src.slice(a, b) + '\nthis.releaseOf = releaseOf; this.releaseToQueue = releaseToQueue; this.liftOrder = liftOrder;', c);
     const item = (kind, row, extra) => Object.assign({ kind, key: 'ord:' + kind + ':' + (row ? row.key : 'x'), row, rows: row ? [row] : [], problem: row && row.problems[0] || {}, why: 'w' }, extra || {});
-    const R = it => { const r = c.releaseOf(it); return [r.how, r.why]; };
+    const R = it => { const r = c.releaseOf(it); return [r.how, r.why, r.title]; };
     // what each kind says
     const dragon1 = mkRow('a_1', '4193111740'); rowsAll.push(dragon1);
     eq(R(item('blockedSku', dragon1))[0], 'override', 'a blocked SKU can be released'); ok(/Cut DRAGON11 although the master blocks it \(open outline\)/.test(c.releaseOf(item('blockedSku', dragon1)).title) && /this piece goes to the front of the queue and onto the next sheet/.test(c.releaseOf(item('blockedSku', dragon1)).title), 'and its title says what it does: ' + c.releaseOf(item('blockedSku', dragon1)).title);
     const none = mkRow('n_1', '4193111741', { problems: [{ kind: 'blockedSku', sku: 'DRAGON11', reason: 'its design has no outline to cut', noOutline: true }] });
-    ok(R(item('blockedSku', none))[0] === '' && /no outline to cut, so nothing can be nested/.test(R(item('blockedSku', none))[1]), 'a design with no outline cannot: ' + R(item('blockedSku', none))[1]);
+    ok(R(item('blockedSku', none))[0] === 'queue' && R(item('blockedSku', none))[1] === '' && /no outline to cut, so nothing can be nested/.test(R(item('blockedSku', none))[2]), 'a design with no outline can still be pressed (back in line, nothing is overridden), and its title says what is open: ' + R(item('blockedSku', none))[2]);
     eq([R(item('reviewMark', dragon1, { rid: '4193111740' }))[0], R(item('heldOrder', null, { rid: '4193111740' }))[0], R(item('orderChanged', dragon1))[0]], ['mark', 'hold', 'change'], 'a mark, a held notice and a changed order can be released');
     const asks = (kind, p) => item(kind, mkRow('q_1', '4193111742', { problems: [Object.assign({ kind }, p)] }), { problem: Object.assign({ kind }, p) });
     for (const [it, re] of [
-      [asks('unmatchedSku', { sku: 'NOPE', reason: 'not in any master file' }), /SKU NOPE has no design in any master file yet: pick its charm/],
-      [asks('needsMaterial', {}), /Its metal is not read yet: pick the metal first/],
-      [asks('needsMapping', { optionName: 'Style', optionValue: 'Odd' }), /The option “Style: Odd” is not answered yet/],
-      [asks('needsMapping', { pairSecond: { why: 'x' } }), /Say which design goes on the other ear first/],
-      [asks('missingSize', { sku: 'DRAGON11', size: 'XL' }), /DRAGON11 has no size XL: pick one of its sizes first/],
-      [asks('oversize', {}), /does not fit the plate under the ceiling/],
-      [item('customOrder', mkRow('c_1', '4193111743', { problems: [] })), /A custom order is made by hand/]
-    ]) { const r = R(it); ok(r[0] === '' && re.test(r[1]), `${it.kind}: greyed with its one plain reason: ${r[1]}`); }
+      [asks('unmatchedSku', { sku: 'NOPE', reason: 'not in any master file' }), /Still open: SKU NOPE has no design in any master file yet: pick its charm/],
+      [asks('needsMaterial', {}), /Still open: its metal is not read yet: pick the metal\./],
+      [asks('needsMapping', { optionName: 'Style', optionValue: 'Odd' }), /Still open: the option “Style: Odd” is not answered yet/],
+      [asks('needsMapping', { pairSecond: { why: 'x' } }), /Still open: say which design goes on the other ear/],
+      [asks('missingSize', { sku: 'DRAGON11', size: 'XL' }), /Still open: DRAGON11 has no size XL: pick one of its sizes/],
+      [asks('oversize', {}), /Still open: it does not fit the plate under the ceiling/]
+    ]) { const r = R(it); ok(r[0] === 'queue' && r[1] === '' && re.test(r[2]), `${it.kind}: NOT greyed, pressable, its title says what is still open: ${r[2]}`); }
+    // a Custom Order keeps its own Complete Order button instead (it never goes through the nesting queue)
+    { const r = R(item('customOrder', mkRow('c_1', '4193111743', { problems: [] }))); ok(r[0] === '' && /A custom order is made by hand/.test(r[1]), 'a custom order has no Release Hold: ' + r[1]); }
     // a piece whose cut is in the queue and which waits only on its engraving
     const queued = mkRow('e_1', '4193111744', { problems: [], state: 'pooled', poolIds: ['p1'] });
-    ok(/already in the nesting queue: this card waits only on its engraving/.test(R(item('engraveWords', queued, { problem: {} }))[1]), 'an engraving card says the cut piece is queued');
-    ok(/Its first question is not answered yet: SKU DRAGON11 blocked/.test(R(item('engraveWords', mkRow('e_2', '4193111745', { problems: [{ kind: 'blockedSku', sku: 'DRAGON11', reason: 'open outline' }] }), { problem: {} }))[1]), 'an engraving card of a line that is itself held says what it waits on first');
+    ok(R(item('engraveWords', queued, { problem: {} }))[0] === 'queue' && /already in the nesting queue \(or on a sheet\) and is not placed again: this card waits only on its engraving/.test(R(item('engraveWords', queued, { problem: {} }))[2]), 'an engraving card can be pressed too, and its title says the cut piece is queued and not placed again');
+    ok(R(item('engraveWords', mkRow('e_2', '4193111745', { problems: [{ kind: 'blockedSku', sku: 'DRAGON11', reason: 'open outline' }] }), { problem: {} }))[0] === 'queue' && /Still open: its first question is not answered yet: SKU DRAGON11 blocked/.test(R(item('engraveWords', mkRow('e_2', '4193111745', { problems: [{ kind: 'blockedSku', sku: 'DRAGON11', reason: 'open outline' }] }), { problem: {} }))[2]), 'an engraving card of a line that is itself held says what it waits on first, and can be pressed');
+    eq(R(item('engraveWords', mkRow('e_4', '4193111747', { problems: [], state: 'pulled' }), { problem: {} }))[0], 'queue', 'a card with nothing open still has a Release Hold that puts the order back in line');
     eq(R(item('engraveWords', mkRow('e_3', '4193111746', { problems: [], state: 'pulled', hold: 'held by Paul' }), { problem: {} }))[0], 'hold', 'a person\'s hold on a line that asks nothing else is released as Release hold');
     ok(/no longer in this run/.test(R(item('blockedSku', null))[1]), 'an item whose lines left the run says so');
 
@@ -321,11 +324,16 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
     eq(calls.resolved, [['4192000001', 'other']], 'a Send to Review mark is resolved ("other": released to the nesting queue)'); eq(calls.released, [['4192000001']], 'and a line of it that was on hold is released'); ok(calls.toasts.some(t => /left Review/.test(t[1])), 'and it says so');
     // a change
     await c.releaseToQueue(item('orderChanged', m1)); eq(calls.accepted, ['ord:orderChanged:m_1'], 'a changed order is accepted');
-    // greyed: nothing happens but the reason
-    calls.toasts.length = 0; calls.answers.length = 0; const g = await c.releaseToQueue(asks('needsMaterial', {}));
-    ok(g === false && calls.answers.length === 0 && calls.toasts.length === 1 && /metal/.test(calls.toasts[0][1]), 'pressing the greyed button says why and changes nothing');
+    // a card with a question still open: the press is not refused, it acts (the line is made up again, first in line) and no card is "answered" by it
+    calls.toasts.length = 0; calls.answers.length = 0; calls.repooled.length = 0; const g = await c.releaseToQueue(asks('needsMaterial', {}));
+    ok(g === true && calls.repooled.includes('q_1') && calls.answers.length === 0, 'pressing Release Hold on a card with an open question is carried out, not refused: ' + JSON.stringify([g, calls.repooled, calls.toasts]));
+    // and when the line is made up again but its question is still open, the page says so plainly instead of refusing beforehand (liftOrder, no engine: the line is made up again)
+    calls.toasts.length = 0; calls.repooled.length = 0; delete c.window.OrderHold;
+    const open1 = mkRow('q_9', '4193111749', { state: 'pulled', problems: [{ kind: 'needsMaterial' }] }); rowsAll.push(open1); c.repool = async r => { calls.repooled.push(r.key); };
+    const g2 = await c.releaseToQueue(item('needsMaterial', open1, { problem: { kind: 'needsMaterial' } }));
+    ok(g2 === false && calls.repooled.includes('q_9') && calls.toasts.some(t => t[0] === 'bad' && /back in line, but it still needs a look/.test(t[1])), 'a question still open after the press is said after it, and the line was put back in line first: ' + JSON.stringify(calls.toasts));
   }
-  pass('F · the Review button: reasons for what cannot be released; the release, its note on the timeline and the order of the engine for what can');
+  pass('F · the Review button: never greyed for an order in the run (what is still open is in its title and said after the press); the release, its note on the timeline and the order of the engine');
 
   console.log(`block-release: ${n} checks passed`);
 })().catch(e => { console.error(e); process.exit(1); });
