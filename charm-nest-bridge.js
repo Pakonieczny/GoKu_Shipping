@@ -6296,6 +6296,110 @@ const Engrave = window.Engrave = (() => {
       new Promise((_,reject)=>{timer=setTimeout(()=>{reject(new Error("Engraving font download timed out"));controller.abort();},12000);})
     ]);}finally{clearTimeout(timer);}
   }
+  /* ═══ the script fonts (WORLD, Paul 19 Oct 2026: "add the compatibility with the Arabic, Hebrew, Chinese, Japanese, Korean, Indian letters, characters, words/symbols depending on the language") ═══
+     Source Sans 3 and the shop's faces draw Latin, Greek and Cyrillic. The letters of another script are set by a Noto Sans script font (vendor/fonts/script-fonts.json lists them, vendor/fonts/scripts/ holds them) through the shaping
+     engine (charm-nest-shape.js: HarfBuzz in vendor/hb.wasm, 0.4 MB; UAX #9 for right to left). They are big (up to 8 MB for Chinese, Japanese, Korean), so NOTHING of this is fetched until a line has a letter of such a script: the manifest,
+     the engine and then only the fonts that line needs (a Japanese line: the Japanese font; an Arabic line: the Arabic font), once per page, from the browser cache after the first time (force-cache; the file's hash is in its URL).
+     The fitting worker gets the same bytes once (the "scripts" message). A font or the engine that cannot be had leaves the line "not in this font" for a person, exactly as before; it is asked again after a minute or when the network is back.
+     No Firestore read or write, no poll and no listener: static files, fetched on demand. */
+  const SCRIPT_MANIFEST = "vendor/fonts/script-fonts.json", SHAPE_WASM = "vendor/hb.wasm?v=hb1460", SHAPE_URL = "charm-nest-shape.js?v=20261019-wd1";
+  const SCRIPTS = { set: null, manifest: null, manifestLoading: null, manifestError: null, manifestAt: 0, wasm: null, shapeLoading: null, shapeError: null, shapeAt: 0, fonts: new Map(), failed: new Map() };
+  /** The script set every engraving font set is wrapped with (charm-nest-text.js sharedScripts, which withEmoji takes when it is not given another): empty until a script font is loaded, so a Latin line is set exactly as before. Null where the text file has no such thing. */
+  const scriptSet = () => (window.CharmNestText && window.CharmNestText.sharedScripts) || null;
+  async function scriptManifest() {
+    if (SCRIPTS.manifest) return SCRIPTS.manifest;
+    if (SCRIPTS.manifestLoading) return SCRIPTS.manifestLoading;
+    if (SCRIPTS.manifestError && Date.now() - SCRIPTS.manifestAt < 60000) return null;   // (a manifest that failed is asked for again at most once a minute)
+    SCRIPTS.manifestAt = Date.now();
+    SCRIPTS.manifestLoading = (async () => {
+      try {
+        const m = await fontResource(SCRIPT_MANIFEST, "json", "no-cache");
+        if (!m || !Array.isArray(m.fonts) || !m.fonts.length) throw new Error("no fonts listed");
+        SCRIPTS.manifest = m; SCRIPTS.manifestError = null; const set = scriptSet(); if (set) set.declare(m.fonts);
+        return m;
+      } catch (e) { SCRIPTS.manifestError = `${SCRIPT_MANIFEST}: ${e.message}`; return null; }
+      finally { SCRIPTS.manifestLoading = null; }
+    })();
+    return SCRIPTS.manifestLoading;
+  }
+  /** The shaping engine, started once (vendor/hb.wasm): true when it is ready. */
+  async function scriptShaper() {
+    const S = window.CharmNestShape, set = scriptSet(); if (!S || !set) return false;
+    if (S.ready) { if (set.shape !== S) set.attach(S); return true; }
+    if (SCRIPTS.shapeLoading) return SCRIPTS.shapeLoading;
+    if (SCRIPTS.shapeError && Date.now() - SCRIPTS.shapeAt < 60000) return false;
+    SCRIPTS.shapeAt = Date.now();
+    SCRIPTS.shapeLoading = (async () => {
+      try {
+        const wasm = SCRIPTS.wasm || await fontResource(SHAPE_WASM);
+        if (wasm.byteLength < 10000) throw new Error("empty file");
+        await S.init({ wasm }); SCRIPTS.wasm = wasm; set.attach(S); SCRIPTS.shapeError = null;
+        agent({ engrave: true }, "ENGRAVE", `Shaping engine loaded (${(wasm.byteLength / 1024).toFixed(0)} KB)`);
+        return true;
+      } catch (e) { SCRIPTS.shapeError = `${SHAPE_WASM}: ${e.message}`; agent({ engrave: true }, "warn", `Shaping engine could not load (${e.message}): words in Arabic, Hebrew, Indian, Chinese, Japanese or Korean letters wait for a person`); return false; }
+      finally { SCRIPTS.shapeLoading = null; }
+    })();
+    return SCRIPTS.shapeLoading;
+  }
+  /** One script font of the manifest: fetched, checked against the manifest (size and sha-256), handed to the shaper, registered with its capital height. Null when it cannot be had (asked again after a minute). */
+  function loadScriptFont(entry) {
+    let rec = SCRIPTS.fonts.get(entry.id);
+    if (rec && (rec.ok || rec.loading)) return rec.loading || Promise.resolve(rec);
+    const failed = SCRIPTS.failed.get(entry.id); if (failed && Date.now() - failed.at < 60000) return Promise.resolve(null);
+    rec = { id: entry.id, ok: false, loading: null, bytes: null, entry: null }; SCRIPTS.fonts.set(entry.id, rec);
+    rec.loading = (async () => {
+      try {
+        const bytes = await fontResource(entry.file + (entry.sha256 ? "?v=" + String(entry.sha256).slice(0, 12) : ""));
+        if (bytes.byteLength < 1000 || (entry.bytes && bytes.byteLength !== entry.bytes)) throw new Error("the file is not the one the manifest lists");
+        if (entry.sha256 && await CN.sha256(new Uint8Array(bytes)) !== entry.sha256) throw new Error("font version differs from the manifest");
+        const m = window.CharmNestShape.addFont(entry.id, bytes);
+        rec.bytes = bytes; rec.entry = Object.assign({}, entry); rec.ok = true; SCRIPTS.failed.delete(entry.id);
+        scriptSet().use(Object.assign({}, entry, { capEm: m.capHeight / m.unitsPerEm }));
+        agent({ engrave: true }, "ENGRAVE", `Script font loaded: ${entry.name} (${(bytes.byteLength / 1048576).toFixed(1)} MB)`);
+      } catch (e) {
+        SCRIPTS.fonts.delete(entry.id); SCRIPTS.failed.set(entry.id, { at: Date.now(), error: `${entry.name}: ${e.message}` });
+        agent({ engrave: true }, "warn", `Script font ${entry.name} could not load (${e.message}): its words wait for a person`);
+      } finally { rec.loading = null; }
+      return rec.ok ? rec : null;
+    })();
+    return rec.loading;
+  }
+  /** Loads what the words need of the script fonts and says which they are set in: ensureScriptFonts(job) reads job.lineInput / job.lines and keeps job.scriptFonts ([{id, name, scripts}], the card says "Set in Noto Sans Arabic");
+   *  ensureScriptFonts(lines, font) is the same for words that are not a job's (the staged draft). A Latin line costs one regular-expression test and no request. Never rejects: what cannot be loaded stays "not in this font". */
+  async function ensureScriptFonts(source, wrapper) {
+    const job = source && !Array.isArray(source) && typeof source === "object" ? source : null;
+    const text = (job ? (job.lineInput || job.lines || []) : [].concat(source || [])).map(l => String(l == null ? "" : l)).join("\n");
+    const font = wrapper || (job ? setOf(job).Regular : F_.Regular), T = window.CharmNestText;
+    if (!T || typeof T.scriptHint !== "function" || !T.scriptHint(text) || !font || typeof font.coverage !== "function") { if (job) delete job.scriptFonts; return []; }
+    try {
+      const man = await scriptManifest(), set = scriptSet();
+      if (man && set) {
+        const asked = new Set();
+        for (let round = 0; round < 6; round++) {   // (the first fonts, then the next of a chain for what they lack: a Traditional-only ideograph after the Simplified font)
+          const want = set.needs(text, font.coverage(text).missing, asked); if (!want.length) break;
+          if (!await scriptShaper()) break;
+          want.forEach(e => asked.add(e.id));
+          await Promise.all(want.map(loadScriptFont));
+        }
+      }
+    } catch (e) { agent({ engrave: true }, "warn", `Script fonts could not be prepared: ${e.message}`); }
+    const used = typeof font.scriptFonts === "function" ? font.scriptFonts(text) : [];
+    if (job) { if (used.length) job.scriptFonts = used; else delete job.scriptFonts; }
+    return used;
+  }
+  /** What the fitting worker is sent for these script fonts (once per worker): the shaping engine the first time, then each font's file. */
+  function scriptsPack(ids, withWasm) {
+    const fonts = []; for (const id of ids) { const r = SCRIPTS.fonts.get(id); if (r && r.ok) fonts.push({ id, bytes: r.bytes, entry: r.entry }); }
+    return !fonts.length || (withWasm && !SCRIPTS.wasm) ? null : { shapeUrl: SHAPE_URL, wasm: withWasm ? SCRIPTS.wasm : undefined, fonts };
+  }
+  /** Why the words are still refused when the cause is a script font or the engine that could not load ("" otherwise). */
+  const scriptWhy = text => { const T = window.CharmNestText, why = SCRIPTS.manifestError || SCRIPTS.shapeError || [...SCRIPTS.failed.values()].map(f => f.error)[0]; return why && T && typeof T.scriptHint === "function" && T.scriptHint(text) ? ` — ${why}` : ""; };
+  /** The network is back: script fonts that failed are asked for again, and words held for them are read again. */
+  function retryScripts() {
+    if (!SCRIPTS.failed.size && !SCRIPTS.manifestError && !SCRIPTS.shapeError) return;
+    SCRIPTS.failed.clear(); SCRIPTS.manifestError = SCRIPTS.shapeError = null;
+    try { for (const job of items().values()) if (job.state === "words" && job.missing && window.CharmNestText.scriptHint(job.missing.join(""))) setReady(job).catch(() => {}); } catch (_) { /* (the workspace is not up yet: nothing is held) */ }
+  }
   async function loadFonts(force) {
     // An emoji map or font that did not load (a flaky network after a wake) is tried again, at most once a minute and when
     // the network is back: every engraving with an emoji went to Review as unsupported for the rest of the session.
@@ -6344,7 +6448,9 @@ const Engrave = window.Engrave = (() => {
   const fontSetOf = who => { const id = fontIdOf(who); return id === O.DEFAULT_FONT ? F_ : (FONT_SETS.get(id) && FONT_SETS.get(id).ok ? FONT_SETS.get(id) : null); };
   /** The loaded set a job, a saved record or a font id engraves with: Source Sans 3 when it is that, or when the font is not loaded (callers load it first: ensureJobFont, loadFontSet). */
   const setOf = who => fontSetOf(who) || F_;
-  const fontFor = (weight, who) => { const s = setOf(who); return (weight === "Semibold" && s.Semibold) || s.Regular; };
+  const pinFont = (font, who) => (font && typeof font.pin === "function" && who && who.scriptFonts && who.scriptFonts.length ? font.pin(who.scriptFonts.map(f => f.id)) : font);
+  // (WORLD, Paul 19 Oct 2026: a job whose words are set in script fonts (job.scriptFonts, from ensureScriptFonts) draws with exactly those: "日本" wrapped onto a line of its own stays Japanese although the Chinese font is loaded too)
+  const fontFor = (weight, who) => { const s = setOf(who); return pinFont((weight === "Semibold" && s.Semibold) || s.Regular, who); };
   function loadFontSet(id) {
     const meta = O.fontById(id); if (!meta || meta.id === O.DEFAULT_FONT) return loadFonts();
     let set = FONT_SETS.get(meta.id);
@@ -6394,6 +6500,8 @@ const Engrave = window.Engrave = (() => {
       const up = t => O.capsText(t, askedKey), lines = (job.lines || []).map(up);
       if (lines.some((l, i) => l !== job.lines[i]) || up(job.text) !== job.text) { job.lines = lines; job.text = up(job.text); if (Array.isArray(job.lineInput)) job.lineInput = job.lineInput.map(up); job.fontCapsApplied = true; }
     }
+    // (WORLD, Paul 19 Oct 2026: the Arabic, Hebrew, Indian, Chinese, Japanese or Korean letters of the words come from their script font, loaded here and set in the face's place; a face of the shop cannot draw them)
+    if (typeof ensureScriptFonts === "function") await ensureScriptFonts(job);
     job.fontName = (O.fontById(job.fontKey) || O.fontById(O.DEFAULT_FONT)).name;
     job.font = { asked: job.fontAsked || "", id: job.fontKey, name: job.fontName, source: "font-map" };   // (what the piece is engraved in: the piece switch and the per-piece records read it)
     return setOf(job);
@@ -7181,8 +7289,8 @@ const Engrave = window.Engrave = (() => {
     if (!F_.ok) { job.state = "blocked"; job.reason = FONT_MISSING_WHY; job.row.engrave = { ...job.row.engrave, needed: true, state: "blocked", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "fontMissing", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: F_.error }); return job; }
     await ensureJobFont(job);   // (the font this piece engraves in; a font that will not load is Source Sans 3)
     if (items() !== owner || owner.get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== state || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
-    const cov = G.glyphCoverage(setOf(job).Regular, job.lines.join("\n"));
-    if (!cov.ok) { job.state = "words"; job.reason = `Unsupported engraving characters: ${cov.missing.map(c => c + " (" + [...c].map(x=>"U+"+x.codePointAt(0).toString(16).toUpperCase()).join(" ") + ")").join(", ")}${F_.emojiError ? " — " + F_.emojiError : ""}`; job.missing = cov.missing; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "notRepresentable", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); return job; }
+    const cov = G.glyphCoverage(fontFor("Regular", job), job.lines.join("\n"));
+    if (!cov.ok) { job.state = "words"; job.reason = `Unsupported engraving characters: ${cov.missing.map(c => c + " (" + [...c].map(x=>"U+"+x.codePointAt(0).toString(16).toUpperCase()).join(" ") + ")").join(", ")}${F_.emojiError ? " — " + F_.emojiError : ""}${scriptWhy(job.lines.join("\n"))}`; job.missing = cov.missing; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "notRepresentable", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); return job; }
     job.state = "ready"; job.reason = null; job.missing = null; job.row.engrave = { ...job.row.engrave, needed: true, state: "ready", text: job.text, approved: false }; Review.remove("eng:" + job.key);
     if(!job.editingBack) {if (!virtualJob(job)) Pool.update(job.copies, isFront(job) ? { engraveFront: true } : { engrave: true }).catch(() => {});if (wake) RunCtl.poke();}   // (ENGPRE: a piece not pooled yet has no pool row to flag: its row is written, with the flag, when it is pooled)                                                        // a waiting run fits it now (the classifier answers asynchronously)
     return job;
@@ -7349,7 +7457,7 @@ const Engrave = window.Engrave = (() => {
   function fitClient() {
     if (!workerClient) {
       if (!window.Worker || !F_.workerFonts?.Regular) throw new Error("Background engraving could not start. Reload and retry this placement.");
-      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col-vf1-fb1-fb2-fr1-sy1",fonts:F_.workerFonts,fontsFor:id=>{const set=FONT_SETS.get(id);return set&&set.ok?set.workerFonts:null;}});
+      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col-vf1-fb1-fb2-fr1-wd1-sy1",fonts:F_.workerFonts,fontsFor:id=>{const set=FONT_SETS.get(id);return set&&set.ok?set.workerFonts:null;},scriptsFor:scriptsPack});
     }
     return workerClient;
   }
@@ -7357,7 +7465,7 @@ const Engrave = window.Engrave = (() => {
     // Keep path identity (outline may also be a member), but exclude UI/cache
     // objects and any DOM references from the structured-clone payload.
     return {charm:charm && {outline:charm.outline,members:charm.members,bbox:charm.bbox,widthPt:charm.widthPt,heightPt:charm.heightPt,upAngle:charm.upAngle},
-      lines:(job.lineInput || job.lines).slice(),lineMode:job.lineMode || "auto",opts:fitOpts(job),fontKey:fontIdOf(job),
+      lines:(job.lineInput || job.lines).slice(),lineMode:job.lineMode || "auto",opts:fitOpts(job),fontKey:fontIdOf(job),...(job.scriptFonts && job.scriptFonts.length ? {scriptIds:job.scriptFonts.map(f=>f.id)} : {}),
       viewOptions:G.viewOptionsFor({editingBack:!!job.editingBack,savedUp:job.editingBack ? job.editOriginal.upAngle : null,charmUp:charm?.upAngle,entry,nudged:!!job.nudged,viewUp:job.view?.upAngle,oriented:job.orientVersion === G.ORIENT,turnUp:job.turnUp,...(isFront(job) ? {face:"front"} : {})}),
       maskOptions:{marginMm:+S.settings.engraveMarginMm || .8,keepOut:(isFront(job) ? charm?.frontKeepOut : charm?.backKeepOut) || []}};
   }
@@ -7381,7 +7489,7 @@ const Engrave = window.Engrave = (() => {
     if (!F_.ok) return setReady(job);
     await ensureJobFont(job);
     if (items() !== currentItems || currentItems.get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== state || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
-    if (!G.glyphCoverage(setOf(job).Regular, job.lines.join("\n")).ok) return setReady(job);
+    if (!G.glyphCoverage(fontFor("Regular", job), job.lines.join("\n")).ok) return setReady(job);
     const poolId = job.copies[0]; const charm = charmFor(job); if (!charm) { job.state = "ready"; return job; }
     job.state = "fitting"; job.row.engrave.state = "fitting"; render();
     const entry = Master.entryFor(job.row.spec.designSku) || {};
@@ -7978,7 +8086,7 @@ const Engrave = window.Engrave = (() => {
     }
     if (waiting) retryBacksLater();
   }
-  window.addEventListener("online", () => { resumeBacks(true); if (!F_.ok || F_.emojiError) loadFonts(true).catch(() => {}); });
+  window.addEventListener("online", () => { resumeBacks(true); if (!F_.ok || F_.emojiError) loadFonts(true).catch(() => {}); retryScripts(); });
 
   /* ── 7.5b · the WORK AREA follows the staged edit (ENGWORK; Paul, 12 Oct 2026, round 2: "nothing seems to happen in real-time" and "The text in the work area does not show the preview of the selected text font style") ──
      The engraving panel (charm-nest-engrave-panel.js) holds the words, the font and the mode as a staged edit until Save, and Save re-seeds the job and fits it again, so the big drawing kept the OLD words in the OLD font until then.
@@ -8039,8 +8147,18 @@ const Engrave = window.Engrave = (() => {
         return rec;
       }
     }
-    if (!G.glyphCoverage(set.Regular, lines.join("\n")).ok) { rec.note = "Not in this font"; return rec; }   // (the previous drawing stays)
-    const font = (job.fit.weight === "Semibold" && set.Semibold) || set.Regular, pos = st.position || {}, want = pos.size ?? job.wantSize ?? job.fit.size;
+    if (!G.glyphCoverage(set.Regular, lines.join("\n")).ok) {
+      // (WORLD, Paul 19 Oct 2026: staged words in Arabic, Hebrew, an Indian script, Chinese, Japanese or Korean: their script font is fetched once for these words, and the draft is made as soon as it is there)
+      const said = lines.join("\n");
+      if (window.CharmNestText && window.CharmNestText.scriptHint(said) && rec.scriptAsked !== said) {
+        rec.scriptAsked = said; rec.wait = "font"; const token = rec.token = (rec.token || 0) + 1;
+        ensureScriptFonts(lines, set.Regular).catch(() => {}).then(() => { if (DRAFTS.get(job.key) === rec && rec.token === token) { rec.sig = ""; draftRepaint(job); } });
+        return rec;
+      }
+      rec.note = "Not in this font"; return rec;   // (the previous drawing stays)
+    }
+    const sf = typeof set.Regular.scriptFonts === "function" ? set.Regular.scriptFonts(lines.join("\n")) : [];   // (WORLD: the staged words in script fonts are drawn with exactly those)
+    const font = pinFont((job.fit.weight === "Semibold" && set.Semibold) || set.Regular, { scriptFonts: sf }), pos = st.position || {}, want = pos.size ?? job.wantSize ?? job.fit.size;
     const f = G.reflowAt(lines, font, job.mask, fitOpts(job, true), { centre: pos.centre || job.fit.centre, angle: pos.angle ?? job.fit.angle, size: want }, "auto");   // (refit's own call: the stroke measure too, so SMALL / THIN STROKES say it before a Save)
     if (!f.ok) { rec.note = "No room for these words"; return rec; }
     f.atLimit = f.size < want - .005; f.weight = job.fit.weight;
@@ -8407,6 +8525,11 @@ const Engrave = window.Engrave = (() => {
   function reviveShelved(job) {
     if (!job || job.editingBack || !["approved", "written"].includes(job.state) || (job.fit && job.view && job.mask) || !job.writtenFit || recalledJob(job)) return;
     if (!F_.ok || !fontSetOf(job)) { Promise.resolve(F_.ok ? loadFontSet(fontIdOf(job)) : loadFonts()).then(() => { if (F_.ok && fontSetOf(job) && !job.view && items().get(job.key) === job) render(); }).catch(() => {}); return; }
+    // (WORLD, Paul 19 Oct 2026: words in Arabic, Hebrew, Indian, Chinese, Japanese or Korean letters: their script font is loaded, once, before the placement is built again)
+    if (window.CharmNestText && window.CharmNestText.scriptHint(job.writtenFit.lines.join("\n")) && !G.glyphCoverage(fontFor("Regular", job), job.writtenFit.lines.join("\n")).ok) {
+      if (job._scriptRevive !== job.approvedAt) { job._scriptRevive = job.approvedAt; ensureScriptFonts(Object.assign({}, job, { lineInput: job.writtenFit.lines, lines: job.writtenFit.lines })).then(used => { job.scriptFonts = used; if (!job.view && items().get(job.key) === job) render(); }).catch(() => {}); }
+      return;
+    }
     try { restoreWritten(job); } catch (_) { /* the saved picture stands in for the preview */ }
   }
   /** The picture of a decided piece's saved back (its newest record of this face and piece), drawn into `host`; false when the piece has no saved picture. */
@@ -9398,6 +9521,7 @@ const Engrave = window.Engrave = (() => {
     const pIx = pieceIndexOf(job), fontText = O.fontLine(sp, pIx), fontMapped = O.pieceFont(sp, pIx).mapped;
     if (fontText && !fontMapped && String((sp.font && sp.font.asked) || (sp.fontText && sp.fontText.asked) || "").toLowerCase() !== String(requests.font || "").toLowerCase()) wants.push(fontText);
     if (job.fontFallback) wants.push(`${job.fontFallback}: engraved in Source Sans 3`);
+    if (job.scriptFonts && job.scriptFonts.length) wants.push(`Set in ${job.scriptFonts.map(f => f.name).join(" and ")}${job.fontKey !== O.DEFAULT_FONT ? ` (${job.fontName} has no letters for ${job.scriptFonts.length > 1 ? "them" : "it"})` : ""}`);   // (WORLD, Paul 19 Oct 2026: a script the face cannot draw)
     if (requests.handwriting) wants.push("Requested handwriting");
     if (requests.image) wants.push("Requested an image");
     const noteFont = job.fontFromNote && job.fontMapped && requests.font ? `${requests.font} → ${job.fontName} (asked in the note)` : "";
@@ -9788,7 +9912,7 @@ const Engrave = window.Engrave = (() => {
     if (w.focus) w.opened = w.focus;
     return Object.assign(EG, w, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) });
   }
-  return { openMonogram, monogramUI: () => MonoUI(), reopenForEdit, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { openMonogram, monogramUI: () => MonoUI(), reopenForEdit, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
    list of pieces, the Pieces counts and a monogram line's pieces (the same slots and piece keys: "<line>" for one piece, "<line>#C<u>" for several) read THIS. Added beside the Engrave object, not inside its return. */

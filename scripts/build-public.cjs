@@ -212,6 +212,11 @@ const assets = [
   "vendor/fonts/LibreFranklin-OFL.txt",
   "vendor/fonts/Unicode-LICENSE.txt",
   "vendor/fonts/DejaVuSans-LICENSE.txt",
+  "charm-nest-shape.js",
+  "vendor/hb.wasm",
+  "vendor/harfbuzz-LICENSE.txt",
+  "vendor/bidi-js-LICENSE.txt",
+  "vendor/fonts/script-fonts.json",
   "charm-nest-orders.js",
   "charm-nest-icons.js",
   "charm-nest-keep.js",
@@ -273,13 +278,14 @@ for (const asset of assets) {
 }
 // The engraving fonts (Source Sans 3, SIL Open Font License) live in vendor/fonts/ and are committed; the copy stays
 // optional so a build never fails if the folder is ever emptied on a deploy machine.
-const optionalDirs = ["vendor/fonts"];
+// (WORLD, Paul 19 Oct 2026) the script fonts (Noto Sans Arabic, Hebrew, Indian scripts, Chinese, Japanese, Korean; vendor/fonts/script-fonts.json lists them) and their licences load only when a line needs them, but ship with the site
+const optionalDirs = ["vendor/fonts", "vendor/fonts/scripts"];
 let optional = 0;
 for (const dir of optionalDirs) {
   const src = path.join(root, dir);
   if (!fs.existsSync(src)) continue;
   for (const name of fs.readdirSync(src)) {
-    if (!/\.(otf|ttf)$/i.test(name)) continue;
+    if (!/\.(otf|ttf)$/i.test(name) && !(dir.endsWith("/scripts") && /-OFL\.txt$/i.test(name))) continue;
     const target = path.join(output, dir, name);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.copyFileSync(path.join(src, name), target);

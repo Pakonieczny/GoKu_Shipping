@@ -60,8 +60,8 @@
 
   // One worker, one active calculation. Queued inputs stay on the caller's
   // side; they are not cloned into dozens of workers or an unbounded inbox.
-  function createClient({WorkerClass, url, fonts, fontsFor, timeoutMs=120000}) {
-    let worker=null, active=null, seq=0, sent=new Set();   // sent: the other fonts (a piece in Stylish, Typewriter...) this worker already has
+  function createClient({WorkerClass, url, fonts, fontsFor, scriptsFor, timeoutMs=120000}) {
+    let worker=null, active=null, seq=0, sent=new Set();   // sent: the other fonts (a piece in Stylish, Typewriter...) this worker already has, and the script fonts ("script:id") and shaping engine ("script:wasm")
     const queue=[];
     function finish(error,result) {
       if(!active)return;
@@ -94,6 +94,12 @@
         if(key && fontsFor && !sent.has(key)) {
           const set=fontsFor(key);
           if(set){worker.postMessage({type:"fonts",key,fonts:set});sent.add(key);}
+        }
+        // (WORLD, Paul 19 Oct 2026) the words are in a script that needs a script font (Arabic, Hebrew, Indic, CJK): this worker gets those font files, and the shaping engine, once, before the fit
+        const need=((active.input && active.input.scriptIds) || []).filter(id=>!sent.has("script:"+id));
+        if(need.length && scriptsFor) {
+          const pack=scriptsFor(need,!sent.has("script:wasm"));
+          if(pack){worker.postMessage(Object.assign({type:"scripts"},pack));need.forEach(id=>sent.add("script:"+id));if(pack.wasm)sent.add("script:wasm");}
         }
         active.timer=setTimeout(()=>failed(new Error("This engraving preview took too long. Retry this placement.")),timeoutMs);
         worker.postMessage({type:"fit",id:active.id,input:active.input});
