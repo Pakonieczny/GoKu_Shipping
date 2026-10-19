@@ -508,3 +508,6 @@
 }
 :is(.ordCards .ocard,.ordCards .ogPiece) .ordEngId .egEars{grid-template-columns:max-content minmax(0,1fr) max-content}
 :is(.ordCards .ocard,.ordCards .ogPiece) .ordEngId .egEar .egEarSeal{grid-column:3;grid-row:1/3}
+/* (ROWALIGN: when any piece of a line has its seal, every piece's line is the seal's height, so the lines stay evenly spaced and each seal sits level with its own chip, words and state) */
+.egEars:has(.egEarSeal .seal)>.egEar{min-height:calc(var(--list-seal) + 4px)}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEars:has(.egEarSeal .seal)>.egEar,:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId .egEars:has(.egEarSeal .seal)>.egEar{min-height:calc(var(--list-seal) + 4px)}
