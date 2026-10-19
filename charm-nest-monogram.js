@@ -10,6 +10,7 @@
  *    build({left,middle,right}, opts) → { ok, why, rings, bboxPt, wMm, hMm, placed, report }
  *        a letter is { letter, rings, fill? }: fill 'auto' reads a font's overlapping contours as ink, the default reads a ring inside another as a counter (fillOf);
  *        opts { overlap, maxOverlap, centerRatio, valign, reach, fit: { maxWidthMm, maxHeightMm } (the finished piece scaled into that envelope: charm-nest-monogram-fit.js, report.fit) }; report { connected, joinMm: { leftMiddle, middleRight }, holesKept, centerScale, overlap, warnings[], notes[], … }
+ *        MONOHOOPS (Paul, 19 Oct 2026): the finished piece carries TWO HOOPS, one over the Left and one over the Right letter, both at one height (section 3b; opts.hoops: false leaves them off, report.hoops says where they are)
  *    preparedLetter(family, letter, glyph) → the letter as the engine prepares it (widened, thicker lines, Q's curl tied): { rings, metrics, strokeMm, widen, offsetMm, qBridge, … } (see the letter prep)
  *    toPdf(result, { title })   → Promise<Uint8Array>   one page, one charm, holes as separate stroked paths
  *    svgPath(result)            → SVG path data (even-odd, y flipped for the screen)
@@ -528,10 +529,45 @@
     let res;
     try { res = buildInner(letters, options); }
     catch (e) { return failure('the letters could not be combined (' + String(e && e.message || e).slice(0, 120) + ')'); }
+    const hoopsOn = !(options && options.hoops === false);
     if (options && options.fit && res.ok) {      // opts.fit = { maxWidthMm, maxHeightMm }: the finished piece scaled into the envelope (charm-nest-monogram-fit.js, the piece-size policy; MONOX E4)
-      try { const F = root.CharmNestMonogramFit || (typeof require === 'function' ? require('./charm-nest-monogram-fit.js') : null); if (F) F.applyFit(res, options.fit); else res.report.warnings.push('opts.fit was not applied: charm-nest-monogram-fit.js is not loaded'); }
-      catch (e) { res.report.warnings.push('opts.fit was not applied (' + String(e && e.message || e).slice(0, 80) + ')'); }
+      try {
+        const F = fitLib();
+        if (F) {
+          // MONOHOOPS: the hoops keep their size, so an envelope's HEIGHT is the letters' height plus what the hoops add above them (the width is the letters': the hoops stand inside it)
+          let fit = options.fit; const mh = heightOf(F, fit);
+          if (hoopsOn && mh) {      // (what the hoops add depends on the letters' size, and the spot can change with it: the largest letters whose piece with its hoops fits, by halving, each step judged on the piece scaled to it)
+            const H0 = res.hMm, over = k => { const p = hoopsPlan(scaledCopy(res, k), k); return k * H0 + (p.ok ? p.info.addedHeightMm : 0) - mh; };
+            let lo = Math.max(0.05, (mh - HOOPS.OUTER_D_MM - HOOPS.NECK_MAX_MM - 1.5) / H0), hi = Math.min(1, mh / H0);
+            if (over(hi) <= 0) lo = hi; else for (let i = 0; i < 7 && hi - lo > 1e-3; i++) { const k = (lo + hi) / 2; if (over(k) <= 0) lo = k; else hi = k; }
+            if (lo < 1) fit = Object.assign({}, fit, { maxHeightMm: Math.max(1, lo * H0) });
+          }
+          F.applyFit(res, fit);
+        } else res.report.warnings.push('opts.fit was not applied: charm-nest-monogram-fit.js is not loaded');
+      } catch (e) { res.report.warnings.push('opts.fit was not applied (' + String(e && e.message || e).slice(0, 80) + ')'); }
     }
+    if (hoopsOn && res.ok) withHoops(res, options);
+    return res;
+  }
+  /** The result's piece scaled by k (rings, box, sizes, letters' boxes), for a look at its hoops before opts.fit scales it: nothing of the result is changed. */
+  const scaledCopy = (res, k) => ({ rings: res.rings.map(g => ({ pts: g.pts.map(p => [p[0] * k, p[1] * k]), hole: g.hole })), bboxPt: res.bboxPt.map(v => v * k), wMm: res.wMm * k, hMm: res.hMm * k, placed: res.placed, hoopInk: res.hoopInk });
+  const fitLib = () => root.CharmNestMonogramFit || (typeof require === 'function' ? require('./charm-nest-monogram-fit.js') : null);
+  const heightOf = (F, fit) => { const f = F && F.cleanFit ? F.cleanFit(fit) : null; return f && f.maxHeightMm ? f.maxHeightMm : 0; };
+  /** MONOHOOPS: the two hoops put on a finished result (in place). With a height envelope (opts.fit.maxHeightMm) that the letters plus the hoops still pass, the letters are brought down once more so the whole piece fits. Never throws. */
+  function withHoops(res, options) {
+    try {
+      const F = options && options.fit ? fitLib() : null, mh = heightOf(F, options && options.fit), fitScale = () => (res.report.fit && res.report.fit.applied ? res.report.fit.scale : 1);
+      let p = hoopsPlan(res, fitScale());
+      if (p.ok && mh && res.hMm + p.info.addedHeightMm > mh + 1e-3) {
+        const before = res.report.fit ? Object.assign({}, res.report.fit) : null;
+        F.applyFit(res, { maxHeightMm: Math.max(1, mh - p.info.addedHeightMm) });
+        const now = res.report.fit;
+        if (before && now && now.applied) Object.assign(now, { scale: Math.round((before.applied ? before.scale : 1) * now.scale * 1e4) / 1e4, designMm: before.designMm, maxWidthMm: before.maxWidthMm, maxHeightMm: before.maxHeightMm, limiting: 'height' });
+        p = hoopsPlan(res, fitScale());
+      }
+      hoopsApply(res, p);
+      if (res.report.fit) { res.report.fit.sizeMm = [Math.round(res.wMm * 1000) / 1000, Math.round(res.hMm * 1000) / 1000]; res.report.fit.hoops = true; }
+    } catch (e) { try { hoopsApply(res, { ok: false, info: { why: 'an error (' + String(e && e.message || e).slice(0, 80) + ')' } }); } catch (_) { /* the piece stays as it was built */ } }
     return res;
   }
 
@@ -1221,6 +1257,8 @@
       report: { connected: true, metrics, adjust: { L: adjustApplied[0], M: adjustApplied[1], R: adjustApplied[2] }, baseWiden: { L: left.prep ? left.prep.widen : 1, M: mid.prep ? mid.prep.widen : 1, R: right.prep ? right.prep.widen : 1 }, prep: { L: left.prep || null, M: mid.prep || null, R: right.prep || null }, sizes, limits, review: limits.length > 0, overlapPct: { leftMiddle: Math.round(g.lm.pct * 10) / 10, middleRight: Math.round(g.mr.pct * 10) / 10 }, holesKept: round3(g.holesKept), centerScale: round3(cs), overlap: att.ov == null ? round3((ovs[0] + ovs[1]) / 2) : att.ov, reach: reached, searched, warnings, parts, bridges: bars, contacts, tieBars: { leftMiddle: tieBars[0], middleRight: tieBars[1] }, altered, level, joinMm: { leftMiddle: joins[0], middleRight: joins[1] }, moveMm: { left: Math.round(moved[0] / SC * MM * 100) / 100, right: Math.round(moved[2] / SC * MM * 100) / 100 }, joinMm2: { leftMiddle: Math.round(g.lm.i / SC / SC * MM * MM * 100) / 100, middleRight: Math.round(g.mr.i / SC / SC * MM * MM * 100) / 100 }, tries, notes }
     };
     if (N) Object.defineProperty(result, 'letters', { enumerable: false, value: metrics ? metrics.letterRegions : null });      // (the three placed letters' full outlines in 0.001 pt, in the finished piece's frame: for the legibility check of a caller)
+    // MONOHOOPS: the three placed letters' own ink in the finished piece's frame (0.001 pt, before opts.fit), where build() puts the two hoops (not part of the result's data)
+    Object.defineProperty(result, 'hoopInk', { enumerable: false, value: { letters: metrics ? metrics.letterRegions : att.pl.map(P => shift(P.region, P.dx, P.dy).map(r => r.map(q => ({ X: Math.round((q.X - b[0]) * fx), Y: q.Y - b[1] })))) } });
     /* The quick look (autoFit): the placed letters of this build, moved by dx / dy in mm (per letter, on top of where they stand), measured on the coarse outlines with the same rules: a few dozen looks a second, where a build takes
        seconds. It does not redo the trim, the bars or the reach search; it says which move is worth a real build. Not part of the result's data (not enumerable). */
     if (N) Object.defineProperty(result, 'fit', { enumerable: false, value: (() => {
@@ -1332,7 +1370,7 @@
   function autoFit(letters, options) {
     const t0 = Date.now(), o = options && typeof options === 'object' ? options : {}, budget = finite(o.autoFitMs) ? Math.max(500, o.autoFitMs) : 6500;
     let adj = cleanAdjust(o.adjust);
-    const run = a => build(letters, Object.assign({}, o, { adjust: a }));
+    const run = a => build(letters, Object.assign({}, o, { adjust: a, hoops: false }));      // (MONOHOOPS: the search judges the letters; the hoops go on the piece it keeps, below)
     const score = r => (!r || !r.ok ? 1e9 : fitScore(r.report.metrics));
     let best = run(adj), base = best, tried = 1, lastMs = Date.now() - t0, looks = 0;
     const timeLeft = () => (finite(o.autoFitMs) ? budget : Math.min(20000, Math.max(budget, 4 * lastMs))) - (Date.now() - t0);      // (a word whose first build is slow gets four builds, up to 20 s, unless the caller set the budget)
@@ -1362,8 +1400,233 @@
         if (!improved) break;
       }
     }
+    if (best.ok && o.hoops !== false) {      // MONOHOOPS: the kept piece gets its hoops (a height envelope is the letters plus the hoops: that piece is built again, with them)
+      if (o.fit && heightOf(fitLib(), o.fit)) { const r = build(letters, Object.assign({}, o, { adjust: adj })); tried++; if (r.ok) best = r; else withHoops(best, o); }
+      else withHoops(best, o);
+    }
     if (best.ok) best.report.autoFit = { tried, looks, ms: Date.now() - t0, improved: best !== base };
     return best;
+  }
+
+  /* ═══ 3b · MONOHOOPS: the two hoops the monogram hangs by ═══════════════════════════════════════════════════════════
+     MONOHOOPS (Paul, 19 Oct 2026): "1. The Monograms need 2 hoops per each monogram. 2. The hoops must be placed on the left and right side of each Monogram. 3. The hoops must be aligned on the same horizontal axis to ensure it hangs
+     correctly. 4. Do NOT place the hoops right at the edge of the monogram, each hoop should be near the center of the Left and Right letters of each Monogram. The spacing can vary slightly within reason, but must be pretty closely aligned."
+     build() adds them to the FINISHED piece (after opts.fit: a hoop is hardware for a jump ring, it keeps its size whatever the piece is scaled to), so the preview, the approval, the cut file, the nesting outline and the sheet all get
+     the same piece. A hoop is a ring (the outer circle) with a hole (the inner circle), welded to the piece: the outline is the letters and the two rings together, the holes are the letters' openings and the two hoop holes.
+       · WHERE: one hoop over the LEFT letter, one over the RIGHT letter, its centre inside the middle BAND (30 %) of that letter's width, around the centre of the letter's body (the central 90 % of its ink across), never
+         nearer than EDGE_MIN_MM to the piece's left or right edge;
+       · LEVEL: both hoop centres on ONE horizontal line (the same y, to the last digit), so the piece hangs level; the two x roughly symmetric about the piece's centre where the letters allow (report.hoops.asymmetryMm);
+       · SOUND: the hole keeps INK_CLEAR_MM from every ink of the piece (it never bites into a letter) and the ring keeps COUNTER_CLEAR_MM from every inner opening (it never fills one, so the hole has its full 0.5 mm wall all round);
+         the ring overlaps the ink under it by WELD_MIN_MM2 or more (a solid weld, not a touch). The common height is searched with the two spots of each letter's band (a raster of RES_MM, then the exact outlines): the height
+         where BOTH rings weld best while BOTH holes stay clear, the spots nearest the letters' centres and most symmetric. Where the two letters' tops differ too much for one ring height to weld both, the lower letter's
+         ring gets a NECK (NECK_W_MM wide, from the ring down into its letter) rather than a hole in ink or a ring in the air; a neck over NECK_MAX_MM, or no sound spot at all, is a warning (report.warnings, and a
+         'hoops' rule of report.metrics.violations when no sound spot exists: the piece is then for a person).
+     report.hoops = { version, ok, sizeMm, yMm, yPt, left / right: { letter, xMm, xPt, yPt, centreMm, offsetMm, bandMm, edgeMm, weldMm2, neckMm, inkClearMm }, asymmetryMm, levelMm (0), lettersMm [w, h] (the piece before the
+     hoops), addedHeightMm, warnings }. The layout rules (report.metrics: aspect, sizes, overlaps) are the LETTERS' and are judged without the hoops; bboxPt / wMm / hMm are the whole piece, hoops included (what is cut and nested).
+     opts.hoops === false builds without them (the engine's own searches: autoFit adds them to the piece it keeps). */
+  const HOOPS = {
+    VERSION: 2,                    // (a design file made with hoops says so on the order's designs: mono { hoops: 2 }; one made before carries no such field)
+    OUTER_D_MM: 2.30,              // the shop's necklace hoop, as the master file draws it on the angel, the T-Rex and the number charms: outer r 3.26 pt (2.30 mm across)
+    HOLE_D_MM: 1.30,               // its hole: r 1.84 pt (1.30 mm across), a 0.50 mm wall, the jump rings the shop uses
+    BAND: 0.30,                    // the hoop's centre lies in the middle 30 % of its own letter's width
+    EDGE_MIN_MM: 2.0,              // never nearer than this to the piece's left or right edge (the ring's own edge stays 0.85 mm in)
+    INK_CLEAR_MM: 0.08,            // the hole keeps this far from every ink of the piece
+    COUNTER_CLEAR_MM: 0.12,        // the ring keeps this far from every inner opening of the piece
+    WELD_MIN_MM2: 0.25,            // the ring overlaps the ink under it by at least this area (a flat letter top under a ring whose hole just clears it: about 0.5 mm2)
+    WELD_GOOD_MM2: 0.50,           // more overlap than this counts no more in the search
+    DEPTH_MAX_MM: 3.0,             // the hoop's centre is never lower than this under the highest ink in its band (the piece hangs from its top, not from inside a letter)
+    NECK_W_MM: 0.9, NECK_PEN_MM: 0.35, NECK_MAX_MM: 1.5,      // the neck: its width, how far it goes into the letter, the length over which it is a warning
+    SYM_WARN_MM: 1.0,              // the two hoops standing more off symmetric about the piece's centre line than the two letters' own centres do, by more than this, is a warning
+    POCKET_FILL_MM2: 1.0,          // a pocket of air the ring closes against the ink, smaller than this, is filled (no sliver for the laser); a bigger one: another spot
+    RES_MM: 0.025                  // the search's raster
+  };
+  const SLOT_NAME = ['left', 'middle', 'right'];
+  /** Even-odd raster of SC rings on the grid g = { x0, y0, res, nx, ny } (pixel centres), 1 = inside. */
+  function rasterOf(rings, g) {
+    const out = new Uint8Array(g.nx * g.ny), rows = Array.from({ length: g.ny }, () => []);
+    for (const r of rings) for (let k = 0, m = r.length; k < m; k++) {
+      const p = r[k], q = r[(k + 1) % m]; if (p.Y === q.Y) continue;
+      const lo = Math.min(p.Y, q.Y), hi = Math.max(p.Y, q.Y), j0 = Math.max(0, Math.ceil((lo - g.y0) / g.res - 0.5)), j1 = Math.min(g.ny - 1, Math.floor((hi - g.y0) / g.res - 0.5));
+      for (let j = j0; j <= j1; j++) { const yc = g.y0 + (j + 0.5) * g.res; if ((p.Y <= yc) !== (q.Y <= yc)) rows[j].push(p.X + (yc - p.Y) / (q.Y - p.Y) * (q.X - p.X)); }
+    }
+    for (let j = 0; j < g.ny; j++) {
+      const xs = rows[j]; if (xs.length < 2) continue; xs.sort((a, b) => a - b);
+      for (let k = 0; k + 1 < xs.length; k += 2) { const i0 = Math.max(0, Math.ceil((xs[k] - g.x0) / g.res - 0.5)), i1 = Math.min(g.nx - 1, Math.floor((xs[k + 1] - g.x0) / g.res - 0.5)); for (let i = i0; i <= i1; i++) out[j * g.nx + i] = 1; }
+    }
+    return out;
+  }
+  /** Euclidean distance (pixels) from every pixel to the nearest pixel where mask is 1 (the exact transform of Felzenszwalb and Huttenlocher, columns then rows). */
+  function distOf(mask, nx, ny) {
+    const INF = 1e12, g = new Float64Array(nx * ny), n = Math.max(nx, ny), f = new Float64Array(n), d = new Float64Array(n), v = new Int32Array(n), z = new Float64Array(n + 1);
+    for (let i = 0; i < g.length; i++) g[i] = mask[i] ? 0 : INF;
+    const dt = len => {
+      let k = 0; v[0] = 0; z[0] = -Infinity; z[1] = Infinity;
+      for (let q = 1; q < len; q++) {
+        let s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+        while (s <= z[k]) { k--; s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]); }
+        k++; v[k] = q; z[k] = s; z[k + 1] = Infinity;
+      }
+      k = 0; for (let q = 0; q < len; q++) { while (z[k + 1] < q) k++; d[q] = (q - v[k]) * (q - v[k]) + f[v[k]]; }
+    };
+    for (let i = 0; i < nx; i++) { for (let j = 0; j < ny; j++) f[j] = g[j * nx + i]; dt(ny); for (let j = 0; j < ny; j++) g[j * nx + i] = d[j]; }
+    for (let j = 0; j < ny; j++) { for (let i = 0; i < nx; i++) f[i] = g[j * nx + i]; dt(nx); for (let i = 0; i < nx; i++) g[j * nx + i] = Math.sqrt(d[i]); }
+    return g;
+  }
+  const circleSC = (cx, cy, r, n, cw) => { const o = []; for (let i = 0; i < n; i++) { const t = (cw ? -1 : 1) * i / n * 2 * Math.PI; o.push({ X: Math.round(cx + r * Math.cos(t)), Y: Math.round(cy + r * Math.sin(t)) }); } return o; };
+  /** Where the two hoops go on a finished build() result (rings in pt, its hoopInk), at the fit scale k: { ok, plan: { outer, holes (SC), hoops }, info } — nothing is changed (hoopsApply does that). */
+  function hoopsPlan(res, k) {
+    const C = clipper(); if (!C) return { ok: false, info: { ok: false, why: 'the geometry library is not loaded' } };
+    const E = engine(C), H = HOOPS, mmSC = v => v / MM * SC, toMm = v => v / SC * MM, r2 = v => Math.round(v * 100) / 100, r3 = v => Math.round(v * 1000) / 1000;
+    const sc = r => r.pts.map(p => ({ X: Math.round(p[0] * SC), Y: Math.round(p[1] * SC) }));
+    const outer = sc(res.rings[0]), holes = res.rings.slice(1).map(sc), piece = [outer].concat(holes);
+    const W = res.bboxPt[2] * SC, Hp = res.bboxPt[3] * SC, kk = finite(k) && k > 0 ? k : 1;
+    const ink = res.hoopInk && Array.isArray(res.hoopInk.letters) ? res.hoopInk.letters.map(reg => (kk === 1 ? reg : reg.map(r => r.map(q => ({ X: Math.round(q.X * kk), Y: Math.round(q.Y * kk) }))))) : null;
+    if (!ink) return { ok: false, info: { ok: false, why: 'the letters of the piece are not known' } };
+    const RO = mmSC(H.OUTER_D_MM / 2), RH = mmSC(H.HOLE_D_MM / 2), res0 = mmSC(H.RES_MM), m = RO + mmSC(H.COUNTER_CLEAR_MM + 0.4);
+    const holeNeed = (RH + mmSC(H.INK_CLEAR_MM)) / res0, ringNeed = (RO + mmSC(H.COUNTER_CLEAR_MM)) / res0, roPx = RO / res0;
+    // each side letter: its body centre across, its band, the highest ink of the piece over the band
+    const sides = [0, 2].map(i => {
+      const own = ink[i], bb = bboxOf(own.filter(r => E.area(r) > 0)), w = bb[2] - bb[0], cr = centralRange(own, 0, NORMS.BODY_TRIM) || [bb[0], bb[2]], cx = (cr[0] + cr[1]) / 2;
+      let b0 = Math.max(bb[0], cx - H.BAND / 2 * w), b1 = Math.min(bb[2], cx + H.BAND / 2 * w);
+      b0 = Math.max(b0, mmSC(H.EDGE_MIN_MM)); b1 = Math.min(b1, W - mmSC(H.EDGE_MIN_MM));
+      const strip = E.meet(piece.filter(r => E.area(r) > 0), [[{ X: Math.round(b0), Y: -1e8 }, { X: Math.round(b1), Y: -1e8 }, { X: Math.round(b1), Y: 1e8 }, { X: Math.round(b0), Y: 1e8 }]]);
+      const top = strip.length ? bboxOf(strip)[3] : bb[3];
+      return { i, slot: SLOT_NAME[i], letter: (res.placed[i] && res.placed[i].letter) || '', own, bb, w, cx, b0, b1, top, ok: b1 > b0 };
+    });
+    if (!sides.every(s => s.ok)) return { ok: false, info: { ok: false, why: 'a side letter has no room for a hoop away from the piece\'s edge' } };
+    // one grid of rows for both sides (the same y to the last digit), each side its own columns
+    const yTop = Math.max(...sides.map(s => s.top)), y0 = Math.max(-m, Math.min(...sides.map(s => s.top)) - mmSC(H.DEPTH_MAX_MM) - m), y1 = yTop + 2 * RO + mmSC(H.NECK_MAX_MM + 1.5) + m, ny = Math.ceil((y1 - y0) / res0);
+    const NECKW = Math.round(mmSC(H.NECK_W_MM) / 2 / res0), PEN = mmSC(H.NECK_PEN_MM), RJ = Math.floor(roPx), span = [];      // (the ring's disc as one span of pixels per row: the weld is summed from each row's running total)
+    for (let dj = -RJ; dj <= RJ; dj++) span.push(Math.floor(Math.sqrt(roPx * roPx - dj * dj)));
+    for (const s of sides) {
+      const x0 = s.b0 - m, nx = Math.ceil((s.b1 + m - x0) / res0), g = { x0, y0, res: res0, nx, ny };
+      const inkR = rasterOf(piece, g), outR = rasterOf([outer], g), cnt = new Uint8Array(nx * ny); for (let p = 0; p < cnt.length; p++) cnt[p] = outR[p] && !inkR[p] ? 1 : 0;
+      const dInk = distOf(inkR, nx, ny), dCnt = distOf(cnt, nx, ny), run = new Int32Array((nx + 1) * ny);
+      for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) run[j * (nx + 1) + i + 1] = run[j * (nx + 1) + i] + inkR[j * nx + i];
+      // (per column: the highest ink pixel below each row, and the running count of opening pixels up the column: a neck is found and checked in a few steps)
+      const below = new Int32Array(nx * ny), cntUp = new Int32Array(nx * (ny + 1));
+      for (let i = 0; i < nx; i++) { let last = -1; for (let j = 0; j < ny; j++) { below[j * nx + i] = last; if (inkR[j * nx + i]) last = j; cntUp[(j + 1) * nx + i] = cntUp[j * nx + i] + cnt[j * nx + i]; } }
+      s.g = g; s.inkR = inkR; s.cntR = cnt; s.rows = new Map();
+      const jLo = 2 * Math.ceil(Math.max(0, Math.ceil((s.top - mmSC(H.DEPTH_MAX_MM) - y0) / res0)) / 2),      // (even rows on both sides: one grid of heights)
+         iLo = Math.max(0, Math.ceil((s.b0 - x0) / res0 - 0.5)), iHi = Math.min(nx - 1, Math.floor((s.b1 - x0) / res0 - 0.5));
+      for (let j = jLo; j < ny; j += 2) for (let i = iLo; i <= iHi; i += 2) {
+        const p = j * nx + i; if (dInk[p] < holeNeed || dCnt[p] < ringNeed) continue;
+        let weld = 0, neck = 0;
+        if (dInk[p] < roPx) { let n = 0; for (let dj = -RJ; dj <= RJ; dj++) { const jj = j + dj; if (jj < 0 || jj >= ny) continue; const w = span[dj + RJ], a0 = Math.max(0, i - w), a1 = Math.min(nx - 1, i + w); if (a1 >= a0) n += run[jj * (nx + 1) + a1 + 1] - run[jj * (nx + 1) + a0]; } weld = n * H.RES_MM * H.RES_MM; }
+        if (weld < H.WELD_MIN_MM2) {      // a neck: down from the ring to the highest ink under it, not across an inner opening
+          let jInk = -1; for (let ii = Math.max(0, i - NECKW); ii <= Math.min(nx - 1, i + NECKW); ii++) if (below[j * nx + ii] > jInk) jInk = below[j * nx + ii];
+          if (jInk < 0) continue;
+          const jEnd = Math.max(0, jInk - Math.round(PEN / res0)); let blocked = false;
+          for (let ii = Math.max(0, i - NECKW - 2); ii <= Math.min(nx - 1, i + NECKW + 2) && !blocked; ii++) if (cntUp[(j + 1) * nx + ii] - cntUp[jEnd * nx + ii] > 0) blocked = true;
+          if (blocked) continue;
+          neck = Math.max(0.01, (j - jInk) * H.RES_MM - H.OUTER_D_MM / 2);
+        }
+        const x = x0 + (i + 0.5) * res0, cen = Math.abs(x - s.cx) / Math.max(1, H.BAND / 2 * s.w);
+        let row = s.rows.get(j); if (!row) s.rows.set(j, row = []);
+        row.push({ i, j, x, weld, neck, cen, clear: (dInk[p] * res0 - RH) / SC * MM });
+      }
+    }
+    // the common height: the row where both rings weld best (necks cost), the spots nearest their letters' centres and most symmetric about the piece's centre
+    const WG = H.WELD_GOOD_MM2, Wc = W / 2, opts = [], ownAsym = Math.abs((Wc - sides[0].cx) - (sides[1].cx - Wc)) / SC * MM;      // (ownAsym: how far off symmetric the two letters' own centres stand: the hoops are never pulled off their letters' centres to be more symmetric than the letters are)
+    const val = c => (c.neck ? WG * 0.9 : Math.min(c.weld, WG));
+    const alone = c => val(c) / WG - 0.4 * c.cen - (c.neck ? 1.2 + 2 * c.neck : 0), topK = row => (row.length <= 16 ? row : row.slice().sort((p, q) => alone(q) - alone(p) || p.x - q.x).slice(0, 16));      // (the 16 best spots of a row on each side: the pairs are judged among them)
+    for (const [j, rowL0] of sides[0].rows) {
+      const rowR0 = sides[1].rows.get(j); if (!rowR0) continue;
+      const rowL = topK(rowL0), rowR = topK(rowR0);
+      let best = null;
+      for (const a of rowL) for (const b of rowR) {
+        const asym = Math.abs((Wc - a.x) - (b.x - Wc)) / SC * MM, wl = val(a), wr = val(b);
+        const score = 2 * Math.min(wl, wr) / WG + 0.5 * (wl + wr) / (2 * WG) - 0.8 * (a.cen + b.cen) / 2 - 0.5 * Math.max(0, asym - Math.max(0.2, ownAsym)) - (a.neck ? 1.2 + 2 * a.neck : 0) - (b.neck ? 1.2 + 2 * b.neck : 0);
+        if (!best || score > best.score + 1e-9) best = { j, a, b, asym, score };
+      }
+      if (best) opts.push(best);
+    }
+    opts.sort((p, q) => q.score - p.score || q.j - p.j);
+    if (!opts.length) return { ok: false, info: { ok: false, why: 'no spot over the left and right letters takes a hoop at one height' } };
+    // the best spots, checked on the exact outlines (the raster is a guide): hole clear of the ink, ring clear of the openings, a weld, one piece, no pocket that matters
+    const pieceAll = E.regionOf(piece), countersAll = holes.map(h => h.slice().reverse()), ringN = 96;
+    for (const s of sides) {      // (the exact checks look at the piece near the band only)
+      const x0 = Math.round(s.b0 - RO - mmSC(H.NECK_W_MM + 0.5)), x1 = Math.round(s.b1 + RO + mmSC(H.NECK_W_MM + 0.5)), box = [[{ X: x0, Y: Math.round(y0 - m) }, { X: x1, Y: Math.round(y0 - m) }, { X: x1, Y: Math.round(y1 + m) }, { X: x0, Y: Math.round(y1 + m) }]];
+      s.inkLocal = E.meet(pieceAll, box); s.cntLocal = countersAll.length ? E.meet(countersAll, box) : []; s.ownLocal = E.meet(E.regionOf(s.own), box);
+    }
+    const tryOpt = o => {
+      const yc = y0 + (o.j + 0.5) * res0, parts = [], hs = [], out = [];
+      for (const [s, c] of [[sides[0], o.a], [sides[1], o.b]]) {
+        const pieceRegion = s.inkLocal, counters = s.cntLocal;
+        const ring = circleSC(c.x, yc, RO, ringN, false), hole = circleSC(c.x, yc, RH, ringN, true), holeIn = circleSC(c.x, yc, RH + mmSC(H.INK_CLEAR_MM) * 0.5, ringN, false);
+        if (E.netArea(E.meet([holeIn], pieceRegion)) > 1e-6 * SC * SC) return null;
+        if (counters.length && E.netArea(E.meet([ring], counters)) > 1e-4 * SC * SC) return null;
+        let neck = null;
+        if (c.neck) {
+          const g = s.g, iw = NECKW, jInkTop = (() => { for (let jj = o.j - 1; jj >= 0; jj--) for (let ii = c.i - iw; ii <= c.i + iw; ii++) if (ii >= 0 && ii < g.nx && s.inkR[jj * g.nx + ii]) return jj; return 0; })();
+          c.neckTop = jInkTop;
+          // (the neck goes into its letter NECK_PEN_MM, further where the stroke under it is thin, until it holds as much ink as a neck NECK_PEN_MM deep into a solid stroke would; never across an inner opening)
+          const hw = mmSC(H.NECK_W_MM) / 2, yInk = y0 + (jInkTop + 0.5) * res0, need = H.NECK_W_MM * H.NECK_PEN_MM * 0.6;
+          const rect = yb => [{ X: Math.round(c.x - hw), Y: Math.round(yb) }, { X: Math.round(c.x + hw), Y: Math.round(yb) }, { X: Math.round(c.x + hw), Y: Math.round(yc) }, { X: Math.round(c.x - hw), Y: Math.round(yc) }];
+          for (let pen = PEN; pen <= PEN + mmSC(1.0) + 1; pen += mmSC(0.1)) {
+            const nk = rect(yInk - pen);
+            if (counters.length && E.netArea(E.meet([nk], counters)) > 1e-4 * SC * SC) break;
+            neck = nk; if (E.netArea(E.meet([nk], pieceRegion)) / SC / SC * MM * MM >= need) break;
+          }
+          if (!neck) return null;
+        }
+        const weld = E.netArea(E.meet(neck ? [ring, neck] : [ring], pieceRegion)) / SC / SC * MM * MM;
+        const weldInk = neck ? E.netArea(E.meet([neck], pieceRegion)) / SC / SC * MM * MM : weld;
+        if (weldInk < (neck ? H.NECK_W_MM * H.NECK_PEN_MM * 0.6 : H.WELD_MIN_MM2) - 1e-9) return null;
+        parts.push(ring); if (neck) parts.push(neck); hs.push(hole);
+        const own = E.netArea(E.meet(neck ? [ring, neck] : [ring], s.ownLocal)) / SC / SC * MM * MM;
+        out.push({ s, c, yc, weld, ownWeld: own, neckMm: neck ? Math.max(0.01, toMm(yc - RO - (y0 + (c.neckTop + 0.5) * res0))) : 0 });
+      }
+      let u = E.clean(E.union([outer].concat(parts)));
+      const outs = u.filter(r => E.area(r) > 0); if (outs.length !== 1) return null;
+      const pockets = u.filter(r => E.area(r) < 0);
+      if (pockets.some(r => -E.area(r) / SC / SC * MM * MM >= H.POCKET_FILL_MM2)) return null;
+      return { outer: outs[0], pockets: pockets.length, holes: hs, sides: out, yc };
+    };
+    let got = null, tried = 0;
+    for (const o of opts.slice(0, 40)) { tried++; got = tryOpt(o); if (got) { got.opt = o; break; } }
+    if (!got) return { ok: false, info: { ok: false, why: 'no spot that the raster found holds on the exact outlines', tried } };
+    const o = got.opt, warnings = [], notes = [], yMm = r2(toMm(got.yc));
+    const one = (x, i) => {
+      const s = x.s, c = x.c, edge = Math.min(c.x, W - c.x);
+      return { letter: s.letter, slot: s.slot, xPt: r3(c.x / SC), yPt: r3(got.yc / SC), xMm: r2(toMm(c.x)), yMm, centreMm: r2(toMm(s.cx)), offsetMm: r2(toMm(c.x - s.cx)), band: [r3(s.b0 / SC), r3(s.b1 / SC)], bandMm: [r2(toMm(s.b0)), r2(toMm(s.b1))],
+        edgeMm: r2(toMm(edge)), weldMm2: r2(x.weld), ownWeldMm2: r2(x.ownWeld), neckMm: r2(x.neckMm), inkClearMm: r2(c.clear) };
+    };
+    const L = one(got.sides[0]), R = one(got.sides[1]), asym = r2(Math.abs((Wc - o.a.x) - (o.b.x - Wc)) / SC * MM);
+    for (const h of [L, R]) {
+      if (h.neckMm > 0) (h.neckMm > H.NECK_MAX_MM ? warnings : notes).push(`the ${h.slot} hoop is joined to its letter by a ${h.neckMm.toFixed(1)} mm neck (the ${h.slot === 'left' ? 'right' : 'left'} letter stands higher there and both hoops hang at one height)` + (h.neckMm > H.NECK_MAX_MM ? ', look at the picture' : ''));
+    }
+    if (asym - ownAsym > H.SYM_WARN_MM) warnings.push(`the hoops stand ${asym.toFixed(1)} mm off symmetric about the monogram's centre (the letters' own centres ${ownAsym.toFixed(1)} mm), look at the picture`);
+    if (got.pockets) notes.push(`a small pocket between a hoop and its letter was filled`);
+    const top = Math.max(Hp, got.yc + RO);
+    const info = { version: H.VERSION, ok: true, sizeMm: { outer: H.OUTER_D_MM, hole: H.HOLE_D_MM, wall: r2((H.OUTER_D_MM - H.HOLE_D_MM) / 2) }, yMm, yPt: r3(got.yc / SC), left: L, right: R, levelMm: 0, asymmetryMm: asym, lettersAsymmetryMm: r2(ownAsym),
+      lettersMm: [r3(res.wMm), r3(res.hMm)], addedHeightMm: r3(toMm(top - Hp)), searched: opts.length, tried, warnings, notes };
+    return { ok: true, plan: { outer: got.outer, holes: got.holes, top }, info };
+  }
+  /** Puts the planned hoops on the result, in place: the outline, the two hoop holes among the holes (largest first, as the engine orders them), the box, report.hoops (and its warnings). */
+  function hoopsApply(res, p) {
+    const rep = res.report, C = clipper(), area = r => C.Clipper.Area(r);
+    if (!p.ok) {
+      const why = (p.info && p.info.why) || 'no sound spot';
+      rep.hoops = Object.assign({ version: HOOPS.VERSION, ok: false, warnings: [`the hoops could not be placed: ${why}, a person must look`] }, p.info, { ok: false, lettersMm: [Math.round(res.wMm * 1000) / 1000, Math.round(res.hMm * 1000) / 1000] });
+      rep.warnings.push(rep.hoops.warnings[0]);
+      if (rep.metrics && Array.isArray(rep.metrics.violations)) { rep.metrics.violations.push({ rule: 'hoops', key: 'hoops', text: `the two hoops could not be placed on the left and right letters at one height (${why})` }); rep.metrics.ok = false; }
+      rep.review = true; return res;
+    }
+    const toPt = r => r.map(q => [Math.round(q.X / SC * 1e4) / 1e4, Math.round(q.Y / SC * 1e4) / 1e4]);
+    const oldHoles = res.rings.slice(1), newHoles = p.plan.holes.map(h => ({ pts: toPt(h), hole: true, hoop: true }));
+    const ptArea = pts => pts.reduce((a, q, i) => a + q[0] * pts[(i + 1) % pts.length][1] - pts[(i + 1) % pts.length][0] * q[1], 0) / 2;
+    const bbP = pts => { let x0 = Infinity, y0 = Infinity; for (const q of pts) { if (q[0] < x0) x0 = q[0]; if (q[1] < y0) y0 = q[1]; } return [x0, y0]; };
+    const all = oldHoles.concat(newHoles).sort((a, b) => ptArea(a.pts) - ptArea(b.pts) || bbP(a.pts)[1] - bbP(b.pts)[1] || bbP(a.pts)[0] - bbP(b.pts)[0]);
+    if (!(area(p.plan.outer) > 0)) return hoopsApply(res, { ok: false, info: { why: 'the outline came out inside out' } });
+    res.rings = [{ pts: toPt(p.plan.outer), hole: false }].concat(all.map(h => ({ pts: h.pts, hole: true })));
+    const H2 = Math.round(p.plan.top / SC * 1e4) / 1e4;
+    res.bboxPt = [0, 0, res.bboxPt[2], Math.max(res.bboxPt[3], H2)]; res.hMm = Math.round(res.bboxPt[3] * MM * 1e4) / 1e4;
+    rep.hoops = p.info;
+    for (const w of p.info.warnings) rep.warnings.push(w);
+    if (Array.isArray(rep.notes)) { rep.notes.push(`two hoops (${HOOPS.OUTER_D_MM} mm, hole ${HOOPS.HOLE_D_MM} mm) on the left and right letters, both ${p.info.yMm} mm up, ${p.info.asymmetryMm} mm off symmetric`); for (const n of p.info.notes) rep.notes.push(n); }
+    if (p.info.warnings.length) rep.review = true;
+    return res;
   }
 
   /* ═══ 4 · the preview and the file ═══════════════════════════════════════════════════════════════════════════════ */
@@ -1389,7 +1652,7 @@
     return await doc.save({ useObjectStreams: false });
   }
 
-  const api = { lettersOf, familiesOf, slotsOf, build, autoFit, toPdf, svgPath, preparedLetter, setLetterEdits, bodyCentre: bodyCentreOf, NORMS, LIMITS, ADJUST_LIMITS, ESG_PROFILE, WIDEN, THICKEN, Q_BRIDGE, BODY };
+  const api = { lettersOf, familiesOf, slotsOf, build, autoFit, toPdf, svgPath, preparedLetter, setLetterEdits, bodyCentre: bodyCentreOf, NORMS, LIMITS, ADJUST_LIMITS, ESG_PROFILE, WIDEN, THICKEN, Q_BRIDGE, BODY, HOOPS };
   root.CharmNestMonogram = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

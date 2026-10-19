@@ -11,6 +11,8 @@
  *  MONOSEND (Paul, 18 Oct 2026): there is no "Send to Sheet →" link and no designs window in the monogram's way any more: ONE press of the green Approve approves (the seal, the timeline event) AND sends the card's designs to the
  *  nesting queue (CustomSheet.send, as the window's Send to Sheet does), on the buyer's metal, one piece per piece ordered. An approved piece not on a sheet says why in its note line (status(row).queue / describe().queue: sending,
  *  wait (other pieces of the card to approve), metal (the buyer's metal cannot be read: the designs window opens, nothing is guessed), blocked, error, idle) and keeps Approve to finish it; on the sheet it is final.
+ *  MONOHOOPS (Paul, 19 Oct 2026): every piece the engine makes carries its two hoops (the picture, the approved design, the sheet); a design approved before them and not on a sheet gets them with its letters unchanged and its approval kept
+ *  (see MONOHOOPS below: addHoops / upgradeCard, which CustomSheet.send asks first); its file's monogram tag says { hoops: 2 }.
  *  The contract, with the hooks (data-mw-*) and the events (monogram:change, monogram:approved), is /tmp/mu/CONTRACT.md. The CSS is the `.mw*` block of charm-nest-1.html.
  *  PIECES (Paul, 16 Oct 2026, order 4195059483: "ALL multipiece orders must always show each individual piece with respect to all Engravings and Monograms"): a monogram line of quantity N is N PIECES. Piece u of N is the pieceKey "<lineKey>#C<u>"
  *  (slot C<u>, the grammar of charm-nest-engrave-sides.js; a line of one piece keeps its line's key and no slot, exactly as it was). Everything above is per PIECE: mountLine(host, { ..., slot: "C2" }) (or lineKey "<line>#C2", or piece: 2), thumb /
@@ -83,6 +85,8 @@
   const metricsOf = res => (res && res.report && res.report.metrics && typeof res.report.metrics === "object" ? res.report.metrics : null);
   /** The rules a result breaks, in words ([] = every hard rule met); null when the engine does not report them (an older engine: the AI is never asked). */
   const violationsOf = res => { const m = metricsOf(res); return m && Array.isArray(m.violations) ? m.violations.map(v => String(typeof v === "string" ? v : (v && (v.text || v.rule)) || "a rule is broken")) : null; };
+  /** The broken rules the model can answer (the letters' layout: not the hoops, which the engine places on the piece the model's numbers make). */
+  const aiRulesOf = res => { const m = metricsOf(res); return m && Array.isArray(m.violations) ? m.violations.filter(v => !(v && v.key === "hoops")).map(v => String(typeof v === "string" ? v : (v && (v.text || v.rule)) || "a rule is broken")) : null; };
   const distanceOf = res => { const m = metricsOf(res), v = m && (m.distance != null ? m.distance : m.esgDistance); return Number.isFinite(+v) && v !== null && v !== "" ? +v : 0; };
   const IDENT = { scale: 1, sx: 1, dx: 0, dy: 0 };
   const adjustOf = res => { const a = res && res.report && res.report.adjust || {}, one = x => Object.assign({}, IDENT, x && typeof x === "object" ? x : {}); return { L: one(a.L), M: one(a.M), R: one(a.R) }; };
@@ -459,7 +463,7 @@
     }
     async function assistRun(c, key, letters, abc, seq, o) {
       o = o || {}; c.aiKey = key;
-      const res0 = c.result, v0 = violationsOf(res0);
+      const res0 = c.result, v0 = (violationsOf(res0) || null) && aiRulesOf(res0);      // (MONOHOOPS: a hoop that found no sound spot is for a person, never a question to the model)
       if (!v0 || !v0.length) {                               // (ESG-like and every word that meets the rules: never asked; one the AI made pass keeps its line when the finished monogram comes from memory)
         const kept = (mstore().assist || {})[recKey(c, key)]; c.ai = kept && kept.status === "assembled" && !o.again ? { state: "done", status: "assembled", why: kept.why, rounds: kept.rounds, cached: true } : null; return;
       }
@@ -496,7 +500,7 @@
       assist(c, c.resultKey, c.resultLetters.split(""), alphabets(), c.seq, { again: true }); paint(c);
     }
     function setAi(v) { const m = mstore(); m.ai = v === "off" ? "off" : "on"; keepSettings(); for (const c of cards.values()) if (c.views.size) paint(c); }
-    function settled(c) { if (c.wantApprove && c.status === "ready" && !aiBusy(c)) { c.wantApprove = false; approve(c); } else if (c.status !== "building" && !aiBusy(c)) c.wantApprove = false; }
+    function settled(c) { if (c.wantApprove && c.status === "ready" && !aiBusy(c)) { c.wantApprove = false; approve(c); } else { if (c.status !== "building" && !aiBusy(c)) c.wantApprove = false; if (c.status === "ready" && !aiBusy(c)) hoopsSoon(c); } }      // (MONOHOOPS: a design approved before the hoops gets them once its piece is made)
 
     /* ── MONOSEAL: the stamps of a piece: made here (kept in the card, and on this computer in settings.mono.seals[pieceKey]) and read from the order's timeline (another computer's, or an earlier session's) ── */
     const SEALS = () => d.Seal || root.Seal || null;
@@ -610,10 +614,90 @@
 
     /** A piece whose approved design is not what its card shows now (other letters, or a remake of them): Approve replaces it. */
     const dirtyOf = (c, ap) => !!(ap && !ap.sent && (readLetters(c).join("") !== ap.letters || (c.status === "ready" && c.approvedKey && c.resultKey && c.resultKey !== c.approvedKey)));
+    /* ═══ MONOHOOPS (Paul, 19 Oct 2026: "The Monograms need 2 hoops per each monogram ... aligned on the same horizontal axis"). The engine puts the two hoops on every piece it makes (charm-nest-monogram.js, section 3b), so the
+       card's picture shows them and every design approved from now on carries them; its file says so on the order's designs: the monogram tag { line, slot, hoops: 2 } (HOOPS.VERSION). A design ON A SHEET (or cut) is never
+       touched. A design approved BEFORE the hoops and not on a sheet yet keeps its approval and gets its hoops, its letters unchanged: the piece is made again from the same letters (the same engine, the same kept
+       adjustments), and when the piece made now is the piece that was approved (the same letters, and the letters' size the same as the approved file was read at, within HOOPS_SAME_MM: report.hoops.lettersMm against the
+       design's wMm x hMm) its design is replaced in place by the same piece with its hoops: same name, metal, piece and quantity, no new seal, no new timeline event (the approval stands: it was of those letters).
+       That happens as soon as the card has made its piece (a list thumbnail is enough), and at the latest when the order's designs are sent (CustomSheet.send asks upgradeCard first, from the Approve here or the designs
+       window). A design whose letters can no longer be made the same (an alphabet changed since) is NOT changed silently: it is not sent, its card says "approve it again", and Approve then replaces it with a fresh approval. ═══ */
+    const HOOPS_SAME_MM = 0.1;
+    const hoopsV = () => { const H = E() && E().HOOPS; return H && H.VERSION ? H.VERSION : 0; };
+    const hoopsTag = res => (res && res.report && res.report.hoops && res.report.hoops.version) || 0;
+    /** An approved design not on a sheet that was made before the hoops. */
+    const hoopsDue = ap => !!(ap && !ap.sent && ap.file && hoopsV() && !((+(ap.file.mono || {}).hoops || 0) >= hoopsV()));
+    /** What the approved design is against the piece the card has made now: "letters" (the same letters, without the hoops: it gets them), "piece" (already this very piece, hoops and all: nothing to do),
+     *  false (another piece), or null (not known yet: the piece not made, or the design not read). */
+    function approvedVs(c, ap) {
+      const r = c.result, h = r && r.report && r.report.hoops; if (!r || !r.ok || c.status !== "ready" || !h) return null;
+      if (c.resultLetters !== ap.letters || readLetters(c).join("") !== ap.letters) return false;
+      const F = ap.file, lm = h.lettersMm || [r.wMm, r.hMm], near = (w, hh) => Math.abs(F.wMm - w) <= HOOPS_SAME_MM && Math.abs(F.hMm - hh) <= HOOPS_SAME_MM;
+      if (!(+F.wMm > 0 && +F.hMm > 0) || F.state !== "ready") return null;
+      return h.ok && near(r.wMm, r.hMm) ? "piece" : near(lm[0], lm[1]) ? "letters" : false;
+    }
+    const sameAsApproved = (c, ap) => { const v = approvedVs(c, ap); return v == null ? null : !!v; };
+    /** The piece's approved design must be approved again before it can have its hoops (its letters cannot be made the same any more). */
+    const hoopsRedo = (c, ap) => hoopsDue(ap) && readLetters(c).join("") === ap.letters && sameAsApproved(c, ap) === false;
+    /** The approved design of a piece made before the hoops, replaced by the same piece with them (see above). -> true when it was (or did not need to be). Never throws. */
+    async function addHoops(c) {
+      const ap = approvedFile(c, true); if (!hoopsDue(ap)) return true;
+      if (c.hoopsBusy) return c.hoopsBusy;
+      const run = (async () => {
+        const vs = approvedVs(c, ap); if (vs === "piece") return true; if (vs !== "letters") return false;      // ("piece": the design is this piece with its hoops already, its file only lacks the tag)
+        const it = itemOf(c, true); if (!it) return false;
+        try { await putDesign(c, it, ap.letters, ap, ap.file.metal || lineMetal(c)); c.approvedKey = c.resultKey; } catch (e) { if (root.console) root.console.warn("Monogram hoops", e); return false; }
+        try { d.changed(); } catch (_) { /* the lists follow */ }
+        paint(c); return true;
+      })();
+      c.hoopsBusy = run; try { return await run; } finally { c.hoopsBusy = null; }
+    }
+    /** The card has made its piece: a design approved before the hoops gets them now (quietly, one at a time). */
+    function hoopsSoon(c) { try { const ap = approvedFile(c); if (hoopsDue(ap) && approvedVs(c, ap) === "letters") addHoops(c); } catch (_) { /* at the send */ } }
+    /** CustomSheet.send asks this before it sends a card: every monogram piece of the card whose approved design was made before the hoops gets them (its piece made first when the card has not made it).
+     *  -> { ok, n (designs given their hoops), why (when not ok: what a person must do) } */
+    async function upgradeCard(it) {
+      const ck = it && d.CustomSheet.cardOf ? (d.CustomSheet.cardOf(it) || {}).ck : null; if (!ck || !hoopsV()) return { ok: true, n: 0 };
+      let n = 0;
+      for (const r of rowsNow()) {
+        const o = itemOf(cardOf(r)), k = o && d.CustomSheet.cardOf(o); if (!k || k.ck !== ck) continue;
+        for (const p of piecesOfLine(r)) {
+          const c = cardOf(r, p.slot), ap = approvedFile(c, true); if (!hoopsDue(ap)) continue;
+          const tag = `Monogram ${ap.letters}${c.of > 1 ? ` (${pieceTag(c.n, c.of).toLowerCase()})` : ""}`;
+          if (readLetters(c).join("") !== ap.letters) return { ok: false, n, why: `${tag} has letters changed since it was approved: approve it again (it gets its two hoops then)` };
+          if (sameAsApproved(c, ap) == null) { if (!c.views.size) c.quiet = true; try { await rebuild(c); } catch (_) { /* said below */ } }
+          const same = sameAsApproved(c, ap);
+          if (same !== true) return { ok: false, n, why: same === false ? `${tag} was approved before the hoops and cannot be made with the same letters any more: open it, check it and approve it again` : `${tag} could not be made again to add its hoops: open it and try again` };
+          const had = approvedVs(c, ap) === "piece";
+          if (!(await addHoops(c))) return { ok: false, n, why: `${tag}: its hoops could not be added to the approved design, try again` };
+          if (!had) n++;
+        }
+      }
+      return { ok: true, n };
+    }
+    /** The design of a piece written onto the order's custom card: the PDF of the card's piece, quantity 1, tagged with its line, its piece and the hoops version, on `metal`; `old` (that piece's design it replaces) goes. -> its name */
+    async function putDesign(c, it, letters, old, metal) {
+      const bytes = await E().toPdf(c.result, { title: "Monogram " + letters });
+      const name = fileNameFor(c, letters), file = new File([bytes], name, { type: "application/illustrator" }), hv = hoopsTag(c.result);
+      if (c.of > 1) {
+        // PIECES: THIS piece's design, quantity 1, tagged with its piece (the order of the files is the order of the pieces: the send gives copy n to the n-th design); the design it replaces is ITS OWN, no other piece's
+        if (old && old.legacy) old = detach(c, old);
+        d.CustomSheet.add(it, [file], { quiet: true, qty: 1, mono: Object.assign({ line: c.lineKey, slot: c.slot }, hv ? { hoops: hv } : {}), metal: metal || undefined }); c.itemAt = 0;
+        const kd = d.CustomSheet.cardOf && d.CustomSheet.cardOf(it), en = kd && d.CustomSheet.entries()[kd.ck];
+        if (!en || !en.files.some(F => F.name === name && F.mono && F.mono.line === c.lineKey && F.mono.slot === c.slot)) throw new Error("the order's designs would not take it");
+        orderFiles(en, c.lineKey);
+      } else { d.CustomSheet.add(it, [file], { quiet: true, qty: 1, mono: Object.assign({ line: c.lineKey, slot: null }, hv ? { hoops: hv } : {}), metal: metal || undefined }); c.itemAt = 0; }     // (first, so the metal a person set carries over to the new design; MONOSEND: one piece, tagged with its line, so the send gives it to this line)
+      if (old) d.CustomSheet.remove(old.ck, old.file.id);                     // (and the one it replaces goes: a monogram is one design, never two)
+      { const kd2 = d.CustomSheet.cardOf && d.CustomSheet.cardOf(it), en2 = kd2 && d.CustomSheet.entries()[kd2.ck];      // (a design of a piece the line no longer has (its quantity was lowered) would be cut as an extra copy: it goes)
+        if (en2) for (const F of [...(en2.files || [])]) if (F.mono && F.mono.line === c.lineKey && slotNo(F.mono.slot) > c.of) d.CustomSheet.remove(kd2.ck, F.id);
+        // (MONOSEND: with no metal of its own and none a person set, the design has none: it is never given another line's metal; the designs window asks for it)
+        const F0 = !metal && en2 && (en2.files || []).find(F => F.name === name && F.mono && F.mono.line === c.lineKey); if (F0) F0.metal = null; }
+      return name;
+    }
     async function approve(c) {
       if (c.approving || c.stamping || c.asking) return;
       // MONOSEND: a piece on a sheet is final (a second press is nothing); one approved already and not changed is not approved again: the press only puts it on the next sheet
-      { const ap = approvedFile(c, true); if (ap && ap.sent) return; if (ap && !dirtyOf(c, ap)) return queuePress(c); }
+      // (MONOHOOPS: one approved before the hoops whose letters cannot be made the same any more is approved again here: a fresh design, a fresh seal)
+      { const ap = approvedFile(c, true); if (ap && ap.sent) return; if (ap && !dirtyOf(c, ap) && !hoopsRedo(c, ap)) return queuePress(c); }
       if (!c.result) return;
       if (c.status === "building" || aiBusy(c)) { c.wantApprove = true; return; }
       if (c.status !== "ready") return;
@@ -623,32 +707,18 @@
       const it = itemOf(c, true); if (!it) { d.toast("This order has no custom card to put the monogram on", "bad", 5000); return; }
       const letters = c.resultLetters; let old = approvedFile(c, true);
       if (old && old.sent) return;
-      if (old && old.letters === letters) return queuePress(c);
+      if (old && old.letters === letters && !hoopsRedo(c, old)) return queuePress(c);
       // MONOSEAL: who presses. The signed-in name, else the name bar (a name bar put away: nothing happens, nothing is lost); the letters may have been edited while it was open
       const seq0 = c.seq, who = await whoApproves(c); if (!who.ok) return;
       if (seq0 !== c.seq || c.status !== "ready" || c.resultLetters !== letters || c.approving) return;
-      old = approvedFile(c, true); if (old && old.sent) return; if (old && old.letters === letters) return queuePress(c, who);
+      old = approvedFile(c, true); if (old && old.sent) return; if (old && old.letters === letters && !hoopsRedo(c, old)) return queuePress(c, who);
       const replaced = !!old;
       // MONOSEND: the metal is the one a person set on the design it replaces, else the buyer's own (the option chosen at purchase, read into the line: spec.material, what the designs window calls "… on the order"); never another line's
       const metal = (old && old.file.metal) || lineMetal(c);
       c.approving = true; c.err = null; paint(c);
       let done = null, at = 0;
       try {
-        const bytes = await E().toPdf(c.result, { title: "Monogram " + letters });
-        const name = fileNameFor(c, letters), file = new File([bytes], name, { type: "application/illustrator" });
-        if (c.of > 1) {
-          // PIECES: THIS piece's design, quantity 1, tagged with its piece (the order of the files is the order of the pieces: the send gives copy n to the n-th design); the design it replaces is ITS OWN, no other piece's
-          if (old && old.legacy) old = detach(c, old);
-          d.CustomSheet.add(it, [file], { quiet: true, qty: 1, mono: { line: c.lineKey, slot: c.slot }, metal: metal || undefined }); c.itemAt = 0;
-          const kd = d.CustomSheet.cardOf && d.CustomSheet.cardOf(it), en = kd && d.CustomSheet.entries()[kd.ck];
-          if (!en || !en.files.some(F => F.name === name && F.mono && F.mono.line === c.lineKey && F.mono.slot === c.slot)) throw new Error("the order's designs would not take it");
-          orderFiles(en, c.lineKey);
-        } else { d.CustomSheet.add(it, [file], { quiet: true, qty: 1, mono: { line: c.lineKey, slot: null }, metal: metal || undefined }); c.itemAt = 0; }     // (first, so the metal a person set carries over to the new design; MONOSEND: one piece, tagged with its line, so the send gives it to this line)
-        if (old) d.CustomSheet.remove(old.ck, old.file.id);                     // (and the one it replaces goes: a monogram is one design, never two)
-        { const kd2 = d.CustomSheet.cardOf && d.CustomSheet.cardOf(it), en2 = kd2 && d.CustomSheet.entries()[kd2.ck];      // (a design of a piece the line no longer has (its quantity was lowered) would be cut as an extra copy: it goes)
-          if (en2) for (const F of [...(en2.files || [])]) if (F.mono && F.mono.line === c.lineKey && slotNo(F.mono.slot) > c.of) d.CustomSheet.remove(kd2.ck, F.id);
-          // (MONOSEND: with no metal of its own and none a person set, the design has none: it is never given another line's metal; the designs window asks for it)
-          const F0 = !metal && en2 && (en2.files || []).find(F => F.name === name && F.mono && F.mono.line === c.lineKey); if (F0) F0.metal = null; }
+        const name = await putDesign(c, it, letters, old, metal);
         c.approved = letters; c.approvedKey = c.resultKey; c.unlocked = false; at = Date.now();
         const kard = d.CustomSheet.cardOf && d.CustomSheet.cardOf(it);
         done = { rid: String((c.row.order || {}).receiptId || ""), lineKey: c.lineKey, pieceKey: c.key, slot: c.slot, n: c.n, of: c.of, letters, name, replaced, ck: (kard && kard.ck) || (old && old.ck) || "", by: who.by, at };      // (MONOSEAL: who pressed and when: the monogram:approved event and onApproved say it too)
@@ -696,6 +766,7 @@
       if (c.queueing || (e && e.sendIntent && !e.sendError) || (card && card.busy)) return { kind: "sending", text: "Going to the next sheet…", can: false, warn: false };
       if (e && e.sendError) return { kind: "error", text: "Not on a sheet yet: " + String(e.sendError).slice(0, 140), can: true, warn: true };
       if (c.queue) return Object.assign({ can: true, warn: true }, c.queue);
+      if (hoopsRedo(c, ap)) return { kind: "hoops", text: "Approved before the hoops were added, and these letters now make a different piece: check it and approve it again.", can: true, warn: true };      // (MONOHOOPS)
       if (!e || !card) return null;
       // (the other pieces first: a card goes to the sheets whole, so a metal is asked for once, when the last piece is approved, never at every piece)
       const w = waitingOf(c, card); if (w.total) return { kind: "wait", text: `Goes to the sheet once every piece is approved (${w.done} of ${w.total})`, can: false, warn: false };
@@ -1159,7 +1230,7 @@
     const piecesNow = () => rowsNow().reduce((all, r) => all.concat(piecesOfLine(r).map(p => Object.assign(p, { row: r }))), []);
     const waiting = () => piecesNow().filter(p => { const c = cards.get(p.key), ap = c ? approvedFile(c) : null; return !(ap && ap.sent); });
     const svc = { count: () => waiting().length, rows: rowsNow, pieces: row => { const r = lineOf(row); return r && isMono(r) ? piecesOfLine(r).map(p => Object.assign(p, { row: r })) : []; }, piecesNow, pieceKey: (row, ask) => { const r = lineOf(row); return r ? slotKey(r.key, slotFor(r, ask)) : ""; }, families, alphabets, lettersOf: readLetters, cards, rebuild, approve, queue, approvedFile, glyph, setAlphabet, results, improve,
-      mountLine, thumb, thumbHtml, fillThumbs, status, onChange, feedEvents, loadSeals, ensureSeals,
+      mountLine, thumb, thumbHtml, fillThumbs, status, onChange, feedEvents, loadSeals, ensureSeals, upgradeCard, addHoops,
       sealsOf: (row, ask) => { const r = lineOf(row); if (!r || !isMono(r)) return []; const c = cardOf(r, askOf(ask)); cardSeals(c); return sealsFor(c); },
       sealHtml: (row, o) => {
         o = o || {}; const r = lineOf(row), S = SEALS(); if (!r || !isMono(r) || !S) return "";

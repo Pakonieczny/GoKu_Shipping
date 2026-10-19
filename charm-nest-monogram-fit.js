@@ -65,6 +65,18 @@
     if (rep.joinMm && typeof rep.joinMm === 'object') for (const key of Object.keys(rep.joinMm)) if (finite(rep.joinMm[key])) rep.joinMm[key] = r3(rep.joinMm[key] * k);
     if (rep.contacts && typeof rep.contacts === 'object') for (const key of ['leftMiddle', 'middleRight']) if (Array.isArray(rep.contacts[key])) rep.contacts[key] = rep.contacts[key].map(a => (finite(a) ? r3(a * k * k) : a));
     if (Array.isArray(rep.altered)) for (const a of rep.altered) if (finite(a.mm)) a.mm = r3(a.mm * k);
+    // MONOHOOPS (Paul, 19 Oct 2026): build() puts the hoops on AFTER the fit, at their real size; a piece that already has them and is scaled here has its hoops scaled with it, and report.hoops says so (its lengths follow the piece)
+    const hp = rep.hoops;
+    if (hp && hp.ok) {
+      for (const key of ['yMm', 'yPt', 'addedHeightMm', 'asymmetryMm', 'lettersAsymmetryMm']) if (finite(hp[key])) hp[key] = r4(hp[key] * k);
+      if (Array.isArray(hp.lettersMm)) hp.lettersMm = hp.lettersMm.map(v => r4(v * k));
+      for (const side of [hp.left, hp.right]) if (side) {
+        for (const key of ['xMm', 'xPt', 'yMm', 'yPt', 'centreMm', 'offsetMm', 'edgeMm', 'neckMm', 'inkClearMm']) if (finite(side[key])) side[key] = r4(side[key] * k);
+        for (const key of ['weldMm2', 'ownWeldMm2']) if (finite(side[key])) side[key] = r4(side[key] * k * k);
+        for (const key of ['band', 'bandMm']) if (Array.isArray(side[key])) side[key] = side[key].map(v => r4(v * k));
+      }
+      if (hp.sizeMm) { hp.sizeMm = { outer: r3(hp.sizeMm.outer * k), hole: r3(hp.sizeMm.hole * k), wall: r3(hp.sizeMm.wall * k) }; info.warnings.push(`the hoops were scaled with the piece: the hoop hole is now ${hp.sizeMm.hole} mm across (opts.fit given to the build keeps them at their real size)`); }
+    }
     info.applied = true; info.scale = r4(k); info.sizeMm = [r3(result.wMm), r3(result.hMm)];
     if (designStroke != null) info.strokeMm.final = r3(designStroke * k);
     if (k < f.minScale - 1e-9) info.warnings.push(`the piece is scaled to ${Math.round(k * 100)} % to fit ${f.maxWidthMm != null ? f.maxWidthMm + ' mm wide' : f.maxHeightMm + ' mm tall'}: that is more than the ${Math.round((1 - f.minScale) * 100)} % a monogram can shrink and stay legible`);

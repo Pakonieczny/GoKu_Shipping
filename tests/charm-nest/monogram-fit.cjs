@@ -17,7 +17,7 @@ const MM = 25.4 / 72;
   const fs = require('fs'), path = require('path'), root = path.resolve(__dirname, '../..');
   const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8'), build = fs.readFileSync(path.join(root, 'scripts/build-public.cjs'), 'utf8');
   const at = re => { const m = re.exec(html); return m ? m.index : -1; };
-  ok(at(/<script src="charm-nest-monogram\.js\?v=[^"]*-mx4"><\/script>/) >= 0 && at(/<script src="charm-nest-monogram-fit\.js\?v=[^"]*-mx4"><\/script>/) > at(/<script src="charm-nest-monogram\.js/) && at(/<script src="charm-nest-monogram-ui\.js/) > at(/<script src="charm-nest-monogram-fit\.js/), 'charm-nest-1.html: the fit module is loaded after the engine and before the card (cache token -mx4)');
+  ok(at(/<script src="charm-nest-monogram\.js\?v=[^"]*-mx4(?:-[a-z0-9]+)*"><\/script>/) >= 0 && at(/<script src="charm-nest-monogram-fit\.js\?v=[^"]*-mx4(?:-[a-z0-9]+)*"><\/script>/) > at(/<script src="charm-nest-monogram\.js/) && at(/<script src="charm-nest-monogram-ui\.js/) > at(/<script src="charm-nest-monogram-fit\.js/), 'charm-nest-1.html: the fit module is loaded after the engine and before the card (cache token -mx4, or a later one after it)');
   ok(/"charm-nest-monogram-fit\.js"/.test(build), 'scripts/build-public.cjs ships the fit module');
 }
 
@@ -40,7 +40,8 @@ const A = { letter: 'A', rings: [[[0, 0], [5, 0], [6.5, 9], [13.5, 9], [15, 0], 
 const Pp = { letter: 'P', rings: [[[0, 0], [5, 0], [5, 12], [12, 12], [17, 16], [17, 26], [12, 30], [0, 30]], [[5, 17], [11, 17], [11, 25], [5, 25]]] };
 const V = { letter: 'V', rings: [[[0, 30], [5, 30], [10, 10], [15, 30], [20, 30], [12, 0], [8, 0]]] };
 const trio = { left: A, middle: Pp, right: V };
-const OPT = { centerRatio: 1.5, sideWiden: 1, contacts: 1, allowTrim: false, normalise: false };
+// (MONOHOOPS, Paul 19 Oct 2026: the two hoops keep their size whatever the piece is scaled to, so this section, which reads the uniform scale of the letters point for point, builds without them: monogram-hoops.cjs fits a piece WITH its hoops)
+const OPT = { centerRatio: 1.5, sideWiden: 1, contacts: 1, allowTrim: false, normalise: false, hoops: false };
 const base = M.build(trio, OPT);
 ok(base.ok && !base.report.fit, 'the plain build has no report.fit');
 const k = 0.6, want = base.wMm * k;
@@ -59,7 +60,7 @@ ok(r.report.notes.some(t => /^scaled to 60 % to fit .* mm wide \(drawn /.test(t)
 // the normalised build (today's defaults, with the glyph metrics): the judged layout stays, the marks follow the piece
 const withM = (l, b) => Object.assign({ metrics: { baselinePt: b, emPt: 53 } }, l);
 const ntrio = { left: withM(A, 0), middle: withM(Pp, 0), right: withM(V, 0) };
-const nb = M.build(ntrio, {}), nr = M.build(ntrio, { fit: { maxWidthMm: nb.wMm * 0.7 } });
+const nb = M.build(ntrio, { hoops: false }), nr = M.build(ntrio, { fit: { maxWidthMm: nb.wMm * 0.7 }, hoops: false });
 ok(nb.ok && nr.ok && nb.report.metrics && nr.report.metrics, 'normalised builds have metrics');
 near(nr.wMm, nb.wMm * 0.7, 1e-3, 'normalised: width is the envelope');
 ok(JSON.stringify(nr.report.metrics.violations) === JSON.stringify(nb.report.metrics.violations) && nr.report.metrics.piece.aspect === nb.report.metrics.piece.aspect && nr.report.metrics.severity === nb.report.metrics.severity && nr.report.metrics.piece.wMm === nb.report.metrics.piece.wMm, 'the judged layout (metrics) is untouched');

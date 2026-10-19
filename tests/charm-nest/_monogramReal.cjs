@@ -57,8 +57,12 @@ function sound(r, o) {
   if (shoelace(outer[0].pts) <= 0) bad.push('the outer ring does not run counter-clockwise');
   if (r.rings.filter(g => g.hole).some(h => !inPoly(h.pts[0], outer[0].pts))) bad.push('a counter lies outside the outline');
   if (r.bboxPt[0] !== 0 || r.bboxPt[1] !== 0 || Math.abs(r.wMm - r.bboxPt[2] * MM) > 2e-3 || Math.abs(r.hMm - r.bboxPt[3] * MM) > 2e-3) bad.push('bbox is not 0,0 to wMm x hMm');
+  // (MONOHOOPS, Paul 19 Oct 2026: the piece carries two hoops above its side letters: the nominal height is the LETTERS' (report.hoops.lettersMm), the hoops add a little above them, never more than a hoop's diameter and its neck)
+  const hp = r.report.hoops, lettersH = hp && Array.isArray(hp.lettersMm) ? hp.lettersMm[1] : r.hMm;
+  if (hp && hp.ok && !(Math.abs(r.hMm - (lettersH + hp.addedHeightMm)) <= 3e-3 && hp.addedHeightMm <= 2.3 + 1.6)) bad.push(`${r.hMm.toFixed(2)} mm tall with its hoops, the letters ${lettersH.toFixed(2)} mm`);
+  if (hp && !hp.ok) bad.push('the hoops were not placed: ' + (hp.why || ''));
   const want = NOMINAL_H * (o.scale || 1), tol = H_TOL * (o.scale || 1);
-  if (Math.abs(r.hMm - want) > tol) bad.push(`${r.hMm.toFixed(2)} mm tall, not ${want.toFixed(1)} +- ${tol.toFixed(2)}`);
+  if (Math.abs(lettersH - want) > tol) bad.push(`${lettersH.toFixed(2)} mm tall, not ${want.toFixed(1)} +- ${tol.toFixed(2)}`);
   if (!(r.wMm > 8 && r.wMm < 40)) bad.push(`${r.wMm.toFixed(1)} mm wide`);
   return bad;
 }

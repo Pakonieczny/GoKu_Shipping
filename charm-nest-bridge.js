@@ -13237,7 +13237,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const e = all()[c.ck] || (all()[c.ck] = { ck: c.ck, rid: String(row.order.receiptId), at: Date.now(), files: [], sent: null });
     // (PIECES, Paul, 16 Oct 2026: opts.qty / opts.mono / opts.metal are the monogram widget's: ONE piece's design, quantity 1, tagged with the line and slot it is the design of, on the metal the design it replaces had)
     const metal = (opts.metal && metalOf(opts.metal) ? opts.metal : null) || (e.files.length ? e.files[e.files.length - 1].metal || defaultMetal(it) : defaultMetal(it)), qty = opts.qty >= 1 ? Math.min(99, Math.round(opts.qty)) : defaultQty(it);
-    const fresh = ok.map(f => Object.assign({ id: uid(), name: f.name, kind: /\.dxf$/i.test(f.name) ? "dxf" : "ai", size: f.size || 0, bytes: null, hash: null, cloud: null, metal, qty, pieces: 0, wMm: 0, hMm: 0, thumb: null, state: "reading", error: null }, opts.mono && opts.mono.line ? { mono: { line: String(opts.mono.line), slot: opts.mono.slot || null } } : {}));
+    const fresh = ok.map(f => Object.assign({ id: uid(), name: f.name, kind: /\.dxf$/i.test(f.name) ? "dxf" : "ai", size: f.size || 0, bytes: null, hash: null, cloud: null, metal, qty, pieces: 0, wMm: 0, hMm: 0, thumb: null, state: "reading", error: null }, opts.mono && opts.mono.line ? { mono: Object.assign({ line: String(opts.mono.line), slot: opts.mono.slot || null }, +opts.mono.hoops > 0 ? { hoops: +opts.mono.hoops } : {}) } : {}));   // (MONOHOOPS: mono.hoops, the design carries the two hoops)
     fresh.forEach((F, i) => pending.set(F.id, ok[i]));
     if (!e.files.length && !opts.quiet) stripNew.add(c.ck);           // the card's strip of designs opens its room when it first shows
     if (!opts.quiet) for (const F of fresh) arriving.add(F.id);
@@ -13312,6 +13312,17 @@ const CustomSheet = window.CustomSheet = (() => {
   async function sendOnce(it, how, ck) {
     const owner=all(), e=owner[ck];if(busy.has(ck))return;
     if(e?.sent){if(e.sendCloudPending && how.recover){await syncSent(e);return;}if(!how.recover)toast("That order's designs are already on the sheets","bad",5000);return;}
+    // MONOHOOPS (Paul, 19 Oct 2026): a monogram design approved before the two hoops existed gets them now, its letters unchanged (charm-nest-monogram-ui.js upgradeCard: the same piece made again, its design replaced in place,
+    // the approval kept); one whose letters cannot be made the same any more is not sent: its card asks for a new approval. A send already recorded (sendIntent) is finished exactly as it was recorded.
+    if(e && !e.sendIntent && !how.recover){
+      const HV=+(window.CharmNestMonogram && CharmNestMonogram.HOOPS && CharmNestMonogram.HOOPS.VERSION) || 0;
+      const svc=HV && e.files.some(F=>F.mono && !(+F.mono.hoops>=HV)) && window.Engrave && Engrave.monogramUI ? Engrave.monogramUI() : null;
+      if(svc && typeof svc.upgradeCard==="function"){
+        let up; try { up=await svc.upgradeCard(it); } catch (err) { up={ok:false,why:"The monogram's hoops could not be added: "+String(err && err.message || err).slice(0,120)}; }
+        if(!up || !up.ok){toast((up && up.why) || "The monogram's hoops could not be added","bad",8000);return;}
+        for(const t0=Date.now();e.files.some(F=>F.state==="reading") && Date.now()-t0<30000;)await new Promise(r=>setTimeout(r,120));   // (the design with its hoops is read before it is sent)
+      }
+    }
     const why=notReady(e), hint=cardNode(ck)?.querySelector(".cuHint");
     if(how.from && (why || !e?.sendIntent && !employeeName())){toast(why || "Your name is needed first","bad",5000);return;}
     if(why){if(!how.recover){if((e && e.files.length) || !hint){open(it,{from:cardNode(ck)});nudge();}else{lit(hint,"cuNudge");toast(why,"bad",5000);}}return;}

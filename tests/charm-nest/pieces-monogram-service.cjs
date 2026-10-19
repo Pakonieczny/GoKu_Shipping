@@ -42,7 +42,7 @@ const section = t => console.log('\n── ' + t);
         const ck = ckOf(it), e = store[ck] || (store[ck] = { ck, rid: it.rid, files: [], sent: null });
         if (e.sent) { toasts.push('sent'); return; }
         const last = e.files[e.files.length - 1], metal = opts.metal || (last ? last.metal : 'gold'), qty = opts.qty >= 1 ? Math.min(99, Math.round(opts.qty)) : (o.defaultQty || 1);
-        for (const f of files) e.files.push(Object.assign({ id: 'f' + (++ids), name: f.name, size: f.size, state: 'ready', metal, qty, pieces: 1, wMm: 14, hMm: 14.8, bytes: new Uint8Array([1, 2, 3]) }, opts.mono ? { mono: { line: String(opts.mono.line), slot: opts.mono.slot || null } } : {}));
+        for (const f of files) e.files.push(Object.assign({ id: 'f' + (++ids), name: f.name, size: f.size, state: 'ready', metal, qty, pieces: 1, wMm: 14, hMm: 14.8, bytes: new Uint8Array([1, 2, 3]) }, opts.mono ? { mono: Object.assign({ line: String(opts.mono.line), slot: opts.mono.slot || null }, opts.mono.hoops ? { hoops: opts.mono.hoops } : {}) } : {}));
       },
       remove(ck, id) { const e = store[ck]; if (!e || e.sent) return; e.files = e.files.filter(f => f.id !== id); if (!e.files.length) delete store[ck]; },
       open() {}
@@ -180,7 +180,8 @@ const section = t => console.log('\n── ' + t);
   // ═══ 6 · migration of a design approved before pieces ═══
   section('6 · migration: one design of quantity 2 is pieces 1 and 2 both approved');
   {
-    const legacy = (ck, name, qty, extra) => ({ ck, rid: '4195059483', files: [Object.assign({ id: 'old1', name, qty, metal: 'gold', state: 'ready', pieces: 1, wMm: 14, hMm: 14.8, bytes: new Uint8Array([9, 9]), cloud: { path: 'charmnest/custom/x.pdf' }, hash: 'h1', thumb: 'data:image/png;base64,AA' }, extra || {})], sent: null });
+    // (MONOHOOPS, Paul 19 Oct 2026: the old design's size is left unread here (0): a design approved before the hoops whose size differs from the piece made now is asked again, the upgrade is monogram-hoops.cjs's)
+    const legacy = (ck, name, qty, extra) => ({ ck, rid: '4195059483', files: [Object.assign({ id: 'old1', name, qty, metal: 'gold', state: 'ready', pieces: 1, wMm: 0, hMm: 0, bytes: new Uint8Array([9, 9]), cloud: { path: 'charmnest/custom/x.pdf' }, hash: 'h1', thumb: 'data:image/png;base64,AA' }, extra || {})], sent: null });
     const ck = 'ord:custom:4195059483:X';
     const row = lineOf('4195059483', '888', 2, 'APV'), w = world([row]);
     w.store[ck] = legacy(ck, 'Monogram APV.ai', 2);
