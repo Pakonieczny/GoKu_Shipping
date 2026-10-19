@@ -173,7 +173,7 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
     ok(!('blockOverride' in c.rowFromRecord('k_1', JSON.parse(JSON.stringify(none)))), 'and a row made from a record without it has none');
     ok(!('blockOverride' in c.rowFromRecord('k_1', { orderId: '1', blockOverride: 'junk' })), 'junk is not a release');
     // the same list the materialOverride / sizeOverride sit in (resume), and Carry.adopt
-    ok(/"materialOverride", "sizeOverride", "blockOverride", ("releaseHold", )?"engravingOverride"/.test(src), 'the resume keep-list carries it beside the other overrides');   // (RELHOLD, 18 Oct 2026: the Release Hold press's who and when sits beside it)
+    ok(/"materialOverride", "sizeOverride", "blockOverride", ("releaseHold", )?("releaseAnyway", )?"engravingOverride"/.test(src), 'the resume keep-list carries it beside the other overrides');   // (RELHOLD, 18 Oct 2026: the Release Hold press's who and when sits beside it; RELEASE, 19 Oct 2026: and the questions a Release Hold set aside)
     ok(/if \(row && row\.blockOverride && !fresh\.blockOverride\) fresh\.blockOverride = row\.blockOverride;/.test(src), 'Carry.adopt carries it to a changed order');
     ok(/row\.sizeOverride, row\.blockOverride \? JSON\.stringify\(row\.blockOverride\) : "", m\.optionMaps/.test(src) && /row\.sizeOverride \|\| "", row\.blockOverride \? JSON\.stringify\(row\.blockOverride\) : "",/.test(src), 'the reading (inputsOf) and the pool\'s retry signature (trySig) depend on it, with no helper outside their own modules to be missing from a slice');
     // the whole cycle on the real reader: a restored row, read again, is not asked
@@ -248,7 +248,8 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
     const c = {
       console, Date, JSON, Set, Map, Array, Object, String, Number, Promise, Error, window: {},
       B: { run: { lines: {} } }, RunCtl: { save: async () => { calls.saved++; }, poke() {} },
-      Orders: { rows: () => rowsAll, heldNow: r => !!r.hold || r.state === 'held', lineRecord: r => [r.key, { state: r.state, blockOverride: r.blockOverride || null }], render() {} },
+      O: { shownText: x => String(x) }, isCustomRow: r => !!(r.spec && r.spec.special),   // (RELEASE, Paul 19 Oct 2026: what the set-aside words read)
+      Orders: { rows: () => rowsAll, releaseAway: r => ((r.problems || []).some(p => p.kind === 'unmatchedSku') ? 'no design' : ''), heldNow: r => !!r.hold || r.state === 'held', lineRecord: r => [r.key, { state: r.state, blockOverride: r.blockOverride || null }], render() {} },
       toast: (m, k) => { calls.toasts.push([k || '', m]); }, agent: (...x) => { calls.agent.push(x.slice(1).join(' ')); },
       by: () => 'Paul', answered: (it, type, say, detail, who) => { calls.answers.push({ kind: it.kind, type, say, detail, who }); },
       problemText: p => (p.kind === 'blockedSku' ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind), syncOrderItems: () => { calls.synced++; },
@@ -265,22 +266,25 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
     const dragon1 = mkRow('a_1', '4193111740'); rowsAll.push(dragon1);
     eq(R(item('blockedSku', dragon1))[0], 'override', 'a blocked SKU can be released'); ok(/Cut DRAGON11 although the master blocks it \(open outline\)/.test(c.releaseOf(item('blockedSku', dragon1)).title) && /this piece goes to the front of the queue and onto the next sheet/.test(c.releaseOf(item('blockedSku', dragon1)).title), 'and its title says what it does: ' + c.releaseOf(item('blockedSku', dragon1)).title);
     const none = mkRow('n_1', '4193111741', { problems: [{ kind: 'blockedSku', sku: 'DRAGON11', reason: 'its design has no outline to cut', noOutline: true }] });
-    ok(R(item('blockedSku', none))[0] === '' && /no outline to cut, so nothing can be nested/.test(R(item('blockedSku', none))[1]), 'a design with no outline cannot: ' + R(item('blockedSku', none))[1]);
+    // (RELEASE, Paul 19 Oct 2026: was "a design with no outline cannot [be released]": it is released with nothing to place now, its reason a note)
+    ok(R(item('blockedSku', none))[0] === 'anyway' && /Releasing anyway: its design has no outline to cut/.test(c.releaseOf(item('blockedSku', none)).title), 'a design with no outline is released anyway, nothing to place: ' + c.releaseOf(item('blockedSku', none)).title);
     eq([R(item('reviewMark', dragon1, { rid: '4193111740' }))[0], R(item('heldOrder', null, { rid: '4193111740' }))[0], R(item('orderChanged', dragon1))[0]], ['mark', 'hold', 'change'], 'a mark, a held notice and a changed order can be released');
     const asks = (kind, p) => item(kind, mkRow('q_1', '4193111742', { problems: [Object.assign({ kind }, p)] }), { problem: Object.assign({ kind }, p) });
+    // (RELEASE, Paul 19 Oct 2026: each of these was "greyed with its one plain reason"; none is greyed now: the press sets the question aside and the old reason is a note on the title. A Custom Orders card is the one that stays blocked.)
     for (const [it, re] of [
-      [asks('unmatchedSku', { sku: 'NOPE', reason: 'not in any master file' }), /SKU NOPE has no design in any master file yet: pick its charm/],
-      [asks('needsMaterial', {}), /Its metal is not read yet: pick the metal first/],
-      [asks('needsMapping', { optionName: 'Style', optionValue: 'Odd' }), /The option “Style: Odd” is not answered yet/],
-      [asks('needsMapping', { pairSecond: { why: 'x' } }), /Say which design goes on the other ear first/],
-      [asks('missingSize', { sku: 'DRAGON11', size: 'XL' }), /DRAGON11 has no size XL: pick one of its sizes first/],
-      [asks('oversize', {}), /does not fit the plate under the ceiling/],
-      [item('customOrder', mkRow('c_1', '4193111743', { problems: [] })), /A custom order is made by hand/]
-    ]) { const r = R(it); ok(r[0] === '' && re.test(r[1]), `${it.kind}: greyed with its one plain reason: ${r[1]}`); }
+      [asks('unmatchedSku', { sku: 'NOPE', reason: 'not in any master file' }), /Releasing anyway: SKU NOPE has no design in any master file yet/],
+      [asks('needsMaterial', {}), /Releasing anyway: its metal is not read/],
+      [asks('needsMapping', { optionName: 'Style', optionValue: 'Odd' }), /Releasing anyway: the option “Style: Odd” is not mapped/],
+      [asks('needsMapping', { pairSecond: { why: 'x' } }), /Releasing anyway: it is not said which design goes on the other ear/],
+      [asks('missingSize', { sku: 'DRAGON11', size: 'XL' }), /Releasing anyway: DRAGON11 has no size XL/],
+      [asks('oversize', {}), /Releasing anyway: it does not fit the plate/]
+    ]) { const r = c.releaseOf(it); ok(r.how === 'anyway' && r.why === '' && re.test(r.title), `${it.kind}: not greyed, its old reason a note on the title: ${r.title}`); }
+    { const r = R(item('customOrder', mkRow('c_1', '4193111743', { problems: [] }))); ok(r[0] === '' && /A custom order is made by hand/.test(r[1]), `customOrder: greyed with its one plain reason: ${r[1]}`); }
     // a piece whose cut is in the queue and which waits only on its engraving
     const queued = mkRow('e_1', '4193111744', { problems: [], state: 'pooled', poolIds: ['p1'] });
     ok(/already in the nesting queue: this card waits only on its engraving/.test(R(item('engraveWords', queued, { problem: {} }))[1]), 'an engraving card says the cut piece is queued');
-    ok(/Its first question is not answered yet: SKU DRAGON11 blocked/.test(R(item('engraveWords', mkRow('e_2', '4193111745', { problems: [{ kind: 'blockedSku', sku: 'DRAGON11', reason: 'open outline' }] }), { problem: {} }))[1]), 'an engraving card of a line that is itself held says what it waits on first');
+    // (RELEASE, Paul 19 Oct 2026: was "says what it waits on first", greyed; a line that is itself held by a block is released anyway: the block is set aside for it)
+    ok(R(item('engraveWords', mkRow('e_2', '4193111745', { problems: [{ kind: 'blockedSku', sku: 'DRAGON11', reason: 'open outline' }] }), { problem: {} }))[0] === 'anyway' && /Releasing anyway: SKU DRAGON11 is blocked in the master \(open outline\): it is cut anyway/.test(c.releaseOf(item('engraveWords', mkRow('e_2', '4193111745', { problems: [{ kind: 'blockedSku', sku: 'DRAGON11', reason: 'open outline' }] }), { problem: {} })).title), 'an engraving card of a line that is itself held by a block is released anyway, the block a note');
     eq(R(item('engraveWords', mkRow('e_3', '4193111746', { problems: [], state: 'pulled', hold: 'held by Paul' }), { problem: {} }))[0], 'hold', 'a person\'s hold on a line that asks nothing else is released as Release hold');
     ok(/no longer in this run/.test(R(item('blockedSku', null))[1]), 'an item whose lines left the run says so');
 
@@ -321,9 +325,15 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
     eq(calls.resolved, [['4192000001', 'other']], 'a Send to Review mark is resolved ("other": released to the nesting queue)'); eq(calls.released, [['4192000001']], 'and a line of it that was on hold is released'); ok(calls.toasts.some(t => /left Review/.test(t[1])), 'and it says so');
     // a change
     await c.releaseToQueue(item('orderChanged', m1)); eq(calls.accepted, ['ord:orderChanged:m_1'], 'a changed order is accepted');
-    // greyed: nothing happens but the reason
-    calls.toasts.length = 0; calls.answers.length = 0; const g = await c.releaseToQueue(asks('needsMaterial', {}));
-    ok(g === false && calls.answers.length === 0 && calls.toasts.length === 1 && /metal/.test(calls.toasts[0][1]), 'pressing the greyed button says why and changes nothing');
+    // greyed (RELEASE, Paul 19 Oct 2026: a Custom Orders card; it was a needsMaterial question): nothing happens but the reason
+    calls.toasts.length = 0; calls.answers.length = 0; const g = await c.releaseToQueue(item('customOrder', mkRow('c_2', '4193111747', { problems: [] })));
+    ok(g === false && calls.answers.length === 0 && calls.toasts.length === 1 && /made by hand/.test(calls.toasts[0][1]), 'pressing the greyed button says why and changes nothing');
+    // a question set aside (RELEASE): the press writes it on the line, says it, and releases (no engine here: the line is made up again, first)
+    calls.toasts.length = 0; calls.answers.length = 0; calls.repooled.length = 0; delete c.window.OrderHold; const q1 = mkRow('q1_1', '4190000004', { state: 'held', problems: [{ kind: 'needsMapping', optionName: 'Style', optionValue: 'Box' }] }); rowsAll.push(q1);
+    const qi = item('needsMapping', q1, { problem: q1.problems[0] }); c.__items = [qi];
+    ok((await c.releaseToQueue(qi)) === true && q1.releaseAnyway && q1.releaseAnyway.kinds.join() === 'needsMapping' && q1.releaseAnyway.by === 'Paul' && calls.repooled.includes('q1_1'), 'an unmapped option does not stop the press: set aside on the line and made up again: ' + JSON.stringify(q1.releaseAnyway));
+    ok(calls.answers.length === 0, 'and no per-line answer is written (the order\'s one released step carries what was set aside; nothing is written that a release did not write before)');
+    ok(calls.toasts.some(t => t[0] === 'ok' && /Released anyway: the option “Style: Box” is not mapped/.test(t[1])), 'and the page says what was set aside: ' + JSON.stringify(calls.toasts.map(t => t[1])));
   }
   pass('F · the Review button: reasons for what cannot be released; the release, its note on the timeline and the order of the engine for what can');
 

@@ -5,7 +5,7 @@
 //   1  the Orders tab, On hold: a stud earrings order (COMET_9427, a master entry blocked ONLY by the flip check's message) that the page held under the old rule: "Release hold" ends in SUCCESS, with no
 //      "was not fully released", the pair is on a gold sheet (placed and saved), first in the queue, with its step on the timeline
 //   2  Review: a SKU blocked for a real reason (SCHRODINGER CAT 2, an open outline) has "Release to nesting queue" (primary) and "Unblock this SKU" under its reason; the button is the same on every row:
-//      an unknown SKU shows it greyed with the one plain reason (title and aria text), and pressing it changes nothing
+//      an unknown SKU shows it ENABLED (RELEASE, Paul 19 Oct 2026: a question a line still asks is no reason to grey it): "Releasing anyway: ..." and "nothing to place" in its title and aria text; the press itself is release-hold-button.cjs
 //   3  "Release to nesting queue" on the blocked SKU: the block is set aside for that line (blockOverride { sku, by, at }), the master still says blocked, the order goes first in line onto the next sheet and is
 //      placed, the card leaves Review, the timeline has the answer ("Decided by …") and the step; the override is in the run's record and comes back from it
 //   4  a Send to Review mark: the row has the button, pressing it takes the order out of Review
@@ -107,13 +107,10 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     check(cat && cat.rowActions.filter(t => t === 'Release Hold').length === 1 && !cat.rowActions.includes('Complete Order') && !cat.rowActions.includes('Release to nesting queue'), `2 · ONE Release Hold in that column, where Complete Order stood, and no "Release to nesting queue" (${JSON.stringify(cat && cat.rowActions)})`);
     check(await page.evaluate(() => ![...document.querySelectorAll('button')].some(b => /Release to nesting queue/i.test(b.textContent)) && !document.querySelector('.rvRel')), '2 · no "Release to nesting queue" button anywhere on the page, none under a reason');
     const unk = await look(UNKNOWN);
-    check(unk && unk.text === 'Release Hold' && /\bghost\b/.test(unk.cls) && unk.disabled === 'true' && /SKU NO_SUCH_DESIGN_77 has no design in any master file yet: pick its charm/.test(unk.title) && unk.aria.includes(unk.title.slice(0, 40)), `2 · the unknown SKU shows the same button, greyed, with the one plain reason as title and aria text (${JSON.stringify(unk && [unk.disabled, unk.title])})`);
+    // (RELEASE, Paul 19 Oct 2026: was "greyed, with the one plain reason"; the unknown SKU's question is set aside by the press, so the button is enabled and the old reason is a note)
+    check(unk && unk.text === 'Release Hold' && /\bgold\b/.test(unk.cls) && unk.how === 'anyway' && unk.disabled === null && /Releasing anyway: SKU NO_SUCH_DESIGN_77 has no design in any master file yet/.test(unk.title) && /nothing to place/.test(unk.title) && unk.aria.includes(unk.title.slice(0, 40)), `2 · the unknown SKU shows the same button, enabled, with the old reason as a note in its title and aria text (${JSON.stringify(unk && [unk.disabled, unk.title])})`);
     await shot('02-review-rows');
-    const before = await rowOf(UNKNOWN), n0 = (await page.evaluate(() => window.__toasts)).length;
-    await page.$eval(rowSel(UNKNOWN) + ' [data-rv-release]', b => b.click());   // (a greyed button is aria-disabled, not disabled: it can be pressed, and says why; Playwright's click() waits for it to be enabled)
-    await page.waitForTimeout(500);
-    const after = await rowOf(UNKNOWN), toasts2 = await page.evaluate(() => window.__toasts.slice());
-    check(JSON.stringify(before) === JSON.stringify(after) && toasts2.length === n0 + 1 && /has no design in any master file yet/.test(toasts2[toasts2.length - 1][1]), `2 · pressing the greyed button says why and changes nothing (${JSON.stringify(toasts2.slice(-1))})`);
+    // (RELEASE, Paul 19 Oct 2026: the greyed press that said why and changed nothing is gone with the grey; pressing the unknown SKU's button releases it, tests/charm-nest/release-hold-button.cjs)
 
     // ── 3 · Release Hold on the blocked SKU ──
     const master0 = await page.evaluate(() => Master.entryFor('SCHRODINGER CAT 2').blocked);

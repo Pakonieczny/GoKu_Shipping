@@ -3,7 +3,7 @@
 // clearly visible 'Release Hold' seal with the date/time and the person who released it"; and, order 4204568396 SEA_96442: "Remove this 'Release to nesting queue' button since it will clash with the new
 // 'Release Hold' button"). The real sorter in headless Chromium over the repo's fake site (bridge-server.cjs: the real charmNest* handlers over an in-memory store), motion ON. Every name is made up.
 //   1  the Review rows: Release Hold stands in the card's own column where Complete Order stood (no Complete Order on them, no "Release to nesting queue" anywhere, none under a reason): enabled (gold) on an
-//      order sent to Review, greyed with its one plain reason on an unknown SKU; a Custom Orders card keeps Complete Order
+//      order sent to Review, and (RELEASE, Paul 19 Oct 2026) on an unknown SKU too: its old reason is the note "Releasing anyway: ..." on the title, not a grey; a Custom Orders card keeps Complete Order
 //   2  the press: the RELEASE HOLD seal is stamped on the button (Seal.stampOn, how "releaseHold", who) as the card leaves Review; the order is released (its Send to Review mark resolved: out of Review),
 //      who and when kept on its lines (row.releaseHold, in the run's line record and back from it), in the cloud (its Review document's release { at, by }) and on its timeline (a "released" step, data.seal)
 //   3  the Orders tab: the order's card shows the seal LARGE (72 px), family "release", with "Release Hold", the person and the date / time
@@ -63,7 +63,8 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     }, rowSel(fx));
     const m1 = await look(MARKED), u1 = await look(UNKNOWN);
     check(m1 && m1.n === 1 && m1.text === 'Release Hold' && m1.how === 'mark' && m1.disabled === null && /\bgold\b/.test(m1.cls) && m1.parent === 'rowActions' && !m1.complete, `1 · the marked order: ONE Release Hold, enabled, in the card's column, no Complete Order (${JSON.stringify(m1)})`);
-    check(u1 && u1.n === 1 && u1.text === 'Release Hold' && u1.disabled === 'true' && /NO_SUCH_DESIGN_78 has no design in any master file yet/.test(u1.title) && !u1.complete && u1.col[1] === 'Release Hold', `1 · the unknown SKU: Release Hold greyed with its one plain reason, where Complete Order stood (${JSON.stringify(u1)})`);
+    // (RELEASE, Paul 19 Oct 2026: was "greyed with its one plain reason"; the unknown SKU's question is set aside by the press, so the button is enabled and the old reason is a note in its title)
+    check(u1 && u1.n === 1 && u1.text === 'Release Hold' && u1.how === 'anyway' && u1.disabled === null && /\bgold\b/.test(u1.cls) && /Releasing anyway: SKU NO_SUCH_DESIGN_78 has no design in any master file yet/.test(u1.title) && !u1.complete && u1.col[1] === 'Release Hold', `1 · the unknown SKU: Release Hold enabled, its old reason a note in the title, where Complete Order stood (${JSON.stringify(u1)})`);
     check(JSON.stringify(await page.evaluate(OLD)) === JSON.stringify({ old: 0, under: 0 }), '1 · no "Release to nesting queue" button anywhere, none under a reason');
     await shot('01-review');
 

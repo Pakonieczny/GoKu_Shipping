@@ -192,12 +192,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       const sel = `#rvList .reviewListRow[data-rid="${STAR}"]`;
       await B.page.waitForSelector(sel + ' [data-rel-hold]');
       const look = await B.page.evaluate(sel => { const n = document.querySelector(sel), b = n && n.querySelector('[data-rel-hold]'); return n && { complete: n.querySelectorAll('[data-cu-complete]').length, rel: b && b.textContent.trim(), dis: b && b.getAttribute('aria-disabled'), title: b && b.title, old: [...document.querySelectorAll('button')].filter(x => /Release to nesting queue/i.test(x.textContent)).length }; }, sel);
-      assert(look && look.complete === 0 && look.rel === 'Release Hold' && look.dis === 'true' && /DAVID STAR has no design in any master file yet/.test(look.title) && look.old === 0, 'Unknown SKU: Release Hold where Complete Order stood, greyed with its reason: ' + JSON.stringify(look));
+      assert(look && look.complete === 0 && look.rel === 'Release Hold' && look.dis === null && /Releasing anyway: SKU DAVID STAR has no design in any master file yet/.test(look.title) && look.old === 0, 'Unknown SKU: Release Hold where Complete Order stood, enabled, its reason a note in its title (RELEASE, Paul 19 Oct 2026: was greyed with its reason): ' + JSON.stringify(look));
       const sa = await A.state(), sb = await B.state(), a0 = await A.mark(), b0 = await B.mark(), w0 = B.writes.length, c0 = srv.st.calls.length;
       await A.page.evaluate(rid => { const n = document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"]`); if (n) n.scrollIntoView({ block: 'center' }); }, STAR);
-      await B.page.$eval(sel + ' [data-rel-hold]', b => b.click());   // (aria-disabled, not disabled: it can be pressed, and says why)
+      // (RELEASE, Paul 19 Oct 2026: the greyed button was pressed here and wrote nothing; it is enabled now and its press releases the line, tests/charm-nest/release-hold-button.cjs. Not pressed here: this card stays under Open for the steps below.)
       await nap(3500); await A.calm(); await B.calm();
-      assert.equal(B.writes.length, w0, 'Unknown SKU: the greyed Release Hold writes no completion');
+      assert.equal(B.writes.length, w0, 'Unknown SKU: showing the Release Hold writes no completion');
       assert.deepEqual(srv.st.calls.slice(c0).filter(c => c.op === 'reviewMarkPut' || c.op === 'customPut').map(c => c.op), [], 'and no release record');
       assert.equal(srv.st.doc(CUSTOM, STAR + '_review'), undefined, 'no Review document of a release for it');
       assert.equal(await A.has(KEY(STAR)), false, 'A holds no completion for it'); assert.equal(await B.has(KEY(STAR)), false, 'nor B');
@@ -206,7 +206,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       assert.deepEqual([await A.state(), await B.state()], [sa, sb], 'the counts are unchanged on both');
       assert((await A.cards()).includes(STAR), 'its card is still under Open on A');
       await B.page.evaluate(() => { Review.view().filter = null; Review.render(); });
-      log('Unknown SKU card: Release Hold (greyed, its reason) where Complete Order stood; a press writes nothing and moves nothing on A or B');
+      log('Unknown SKU card: Release Hold (enabled, its reason a note) where Complete Order stood; showing it writes nothing and moves nothing on A or B');
     }
     log(`B → A, Complete Order on two kinds of card: in ${lat.map(x => (x / 1000).toFixed(2) + ' s').join(', ')} from the cloud write to A holding it (${lastPress.map(x => (x / 1000).toFixed(2) + ' s').join(', ')} from B's press; budget 3.5 s from the write, load factor ${K.toFixed(1)}); one stamp on A, then the flight, one on B`);
     for (const x of lat) assert(x <= 3500 * K, 'within the time budget: ' + x + ' ms (budget ' + Math.round(3500 * K) + ' ms, machine load factor ' + K.toFixed(1) + ')');

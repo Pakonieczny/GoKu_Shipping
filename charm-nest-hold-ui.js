@@ -423,6 +423,8 @@
   /**
    * HoldUI.release(rid, { button }) -> { ok, used }: the press of an existing "Release hold" button. `used: false` means the engine has no release
    * (the caller does what it always did). One press: no popup. The name is the saved one (today's Release hold asks for none).
+   * (RELEASE, Paul 19 Oct 2026: the press OVERRIDES the hold. The plan refuses only what is truly impossible (the order is not here, was cancelled, is not on hold); a question a line still asks, an option not mapped, no design to cut,
+   * is set aside by the engine and said on the page after the press ("Released anyway: ..."), never a reason to refuse or to grey the button.)
    */
   async function release(rid, opts) {
     rid = str(rid); opts = opts || {};
@@ -447,9 +449,14 @@
       rest();
       flows.set(rid, { phase: 'run' });
       const name = savedName();
-      const out = await runWithFilm('release', rid, plan, name, from, feed => H.release(rid, { name, onStep: feed }));
+      // (RELEASE, Paul 19 Oct 2026: every release a press allows records the same seal as the Review card's Release Hold: who and when on the order's lines (row.releaseHold), in the cloud's Review record, and on the timeline's "released" step)
+      const at = Date.now(), seal = { how: 'releaseHold', at, by: name, id: `releaseHold:${rid}:${at}` };
+      const out = await runWithFilm('release', rid, plan, name, from, feed => H.release(rid, { name, onStep: feed, seal }));
+      if (!out.failed || (out.res && out.res.released)) { const RR = root.ReviewRelease; if (RR && typeof RR.keep === 'function') { try { await RR.keep([rid], seal, 'hold'); } catch (e) { warn('release seal', e); } } }
       refreshViews();
       if (out.failed) say(`Order ${rid} was not fully released: ${msgOf(out.res.error).replace(/[.\s]+$/, '')}. What was done is kept, and Release hold can be pressed again.`);   // (a reason that ends in a full stop made "..")
+      // (RELEASE, Paul 19 Oct 2026: the press overrides the hold; what it set aside, and a line with nothing to place, are said, never refused)
+      else if (out.res && (out.res.nothing || arr(out.res.anyway).length)) say(`Order ${rid} released${out.res.nothing ? `: nothing to place (${str(out.res.nothing)}), so it is released without a sheet and carries on` : ''}.${arr(out.res.anyway).length ? ` Released anyway: ${arr(out.res.anyway).join('; ')}.` : ''}`, 'ok');
       await goHome(rid, from);
       return { ok: !out.failed, used: true, steps: out.steps, error: out.failed ? msgOf(out.res.error) : undefined };
     } catch (e) {

@@ -10,8 +10,13 @@
  *         pieces:[{ lineKey, label, metal, qty }],
  *         targets:[{ metal, metalLabel, sheetId|null, label, page, newSheet, partial, density, inSet, pieces }],  target = targets[0],
  *         stays:[{ label, sheetLabel }]  (pieces of the order that stay on a sheet already cut),
+ *         overrides:[phrases] (RELEASE: the open questions a press sets aside), nothing:[{ label, why }] (lines with nothing to place),
  *         effects:[plain sentences, ready to show] }
- *   OrderHold.release(rid, { name, onStep, seal })    -> Promise<{ ok, released, rid, placed, sheets:[{sheetId,label,metal,page,newSheet}], steps, error? }>
+ *   OrderHold.release(rid, { name, onStep, seal })    -> Promise<{ ok, released, rid, placed, sheets:[{sheetId,label,metal,page,newSheet}], steps, error?, anyway?:[phrases], nothing?:'why' }>
+ *       RELEASE (Paul, 19 Oct 2026: "very little ... prevents the user from pressing that button and overwriting the hold"): a press OVERRIDES the hold. A question a held line still asks (an option not mapped, no design, no metal, a size
+ *       its design lacks, a blocked SKU) is set aside for that line (ReviewRelease.setAside: row.releaseAnyway, kept in the run's lines) and said, never an error: a line with a design is cut as it reads, a line with NOTHING TO PLACE (the empty
+ *       chain, "No vector available") is released as "noDesign" with no pieces, like a chain only line: nothing is nested for it, its QR label and its completion go on, `nothing` says why. The plan says it first (overrides, nothing, effects).
+ *       Only a real impossibility refuses: the order is not here, was cancelled, or is not on hold (nothing to release).
  *       seal (RELHOLD, Paul 18 Oct 2026): the Review card's Release Hold press, { how: 'releaseHold', id, at, by }: its 'released' step on the timeline carries it (data.seal 'releaseHold', data.sealAt,
  *       data.sealId), so the order's RELEASE HOLD seal is read back from the permanent timeline on every computer; a release from anywhere else carries none, as before
  *   OrderHold.releaseStatus(rid)                -> { running:boolean, step }   (for resume after a reload)
@@ -174,16 +179,21 @@
     base.canRelease = true;
     const mine = rows.filter(r => isHeld(r) || r.releasing), byMetal = new Map();
     const pairs = [];
+    // (RELEASE, Paul 19 Oct 2026: what the press sets aside is a note on the plan, not a refusal; a line with nothing to place is counted for no sheet)
+    const RR = G.ReviewRelease, aside = RR && RR.asideOf ? RR.asideOf(mine) : { notes: [], away: [], left: [] }, away = new Map(aside.away.map(x => [x.row, x.why]));
+    base.overrides = aside.notes.slice(); base.nothing = [];
     for (const r of mine) {
       const m = metalOf(r), qty = Math.max(1, +(r.spec && r.spec.quantity) || +(r.line && r.line.quantity) || 1);
       const lk = lineKind(r), pc = { lineKey: r.key, label: str((r.spec && r.spec.designSku) || (r.line && r.line.sku) || 'piece'), metal: m, qty };
       // (an earring pair line makes a Left and a Right for each unit, so it is counted by its pieces; every other line keeps the count it had)
-      if (lk.pair) { pc.kind = lk.mismatched ? 'mismatched' : 'pair'; pc.pieces = lk.pieces; pc.sides = ['Left', 'Right']; pairs.push(pc); }
+      if (lk.pair) { pc.kind = lk.mismatched ? 'mismatched' : 'pair'; pc.pieces = lk.pieces; pc.sides = ['Left', 'Right']; if (!away.has(r)) pairs.push(pc); }
       base.pieces.push(pc);
+      if (away.has(r)) { pc.nothing = away.get(r); base.nothing.push({ label: pc.label, why: pc.nothing }); continue; }
       if (m) byMetal.set(m, (byMetal.get(m) || 0) + (lk.pair ? lk.pieces : pieceCount(r, rid)));   // (any other line: the pieces the cloud lists for it, n discs, else its quantity)
     }
     const open = runOpen(), fx = base.effects;
     fx.push(`Order ${rid} goes to the front of the queue, ahead of the orders coming in from Etsy.`);
+    if (RR && RR.asideText && (aside.notes.length || aside.away.length)) fx.push(RR.asideText(aside));
     if (!open) fx.push('No run is open, so the order waits at the front and is placed first when the next run starts.');
     else for (const [m, n] of byMetal) {
       const page = pick(m, rid), t = describe(m, page, n);
@@ -204,7 +214,7 @@
     const cutIds = new Set([...stayIds]), freshIds = mine.flatMap(r => (r.poolIds || []).map(String)).filter(id => !cutIds.has(id));
     const split = splitLines(rid, mine, cutIds, freshIds);
     if (split.length) { base.split = split; for (const x of split) fx.push(`${splitWords(x)}.`); }
-    if (mine.some(r => (r.problems || []).length)) fx.push('A piece needs a look in Review before it can be placed; it stays at the front of the queue.');
+    if (RR && RR.asideOf ? aside.left.length : mine.some(r => (r.problems || []).length)) fx.push('A piece needs a look in Review before it can be placed; it stays at the front of the queue.');   // (RELEASE: only a line the press cannot set aside, a Custom Orders line)
     return base;
   }
   OH.releasePlan = function releasePlan(rid) {
@@ -332,6 +342,8 @@
 
     /* 1 · the place at the front of the queue, saved before anything else changes (a reload from here on finishes it) */
     const frontAt = resumed ? +rows0.find(r => r.releasing).releasing.at || Date.now() : Date.now();
+    // (RELEASE, Paul 19 Oct 2026: the press overrides the hold: what these lines still ask is set aside, row.releaseAnyway, and said on the timeline step; kept in the lines' record with the front place just below)
+    const RR = G.ReviewRelease, aside = RR && RR.setAside ? RR.setAside(rows0.filter(r => (isHeld(r) || r.releasing) && (r.problems || []).length), who, frontAt) : { notes: [], away: [], left: [] };
     for (const r of rows0) if (isHeld(r) || r.releasing) { r.frontAt = frontAt; r.releasing = { at: frontAt, by: who, stage: (r.releasing && r.releasing.stage) || 'queued' }; }
     await persist();
     emit({ type: 'queued', rid, front: true, frontAt });
@@ -378,13 +390,18 @@
     const done = ['pooled', 'written', 'labelled', 'committed'];
     // (a line that is never cut, a chain only line or one completed by hand, has nothing to put on a sheet: it is "noDesign" with no pieces, and no reason to stop the release)
     const unplaced = after.filter(r => !done.includes(r.state) && !(r.state === 'noDesign' && !(r.poolIds || []).length));
+    // (RELEASE, Paul 19 Oct 2026: a line with nothing to place, the empty chain, is "noDesign" with no pieces: released as it is, and said; it is no error and nothing is nested for it)
+    const awayRows = new Set(aside.away.map(x => x.row)), nothingRows = after.filter(r => awayRows.has(r) && r.releasing && r.state === 'noDesign' && !(r.poolIds || []).length);   // (only the lines the press set aside: a chain only line was never asked)
+    const nothingWhy = nothingRows.length ? ([...new Set(aside.away.filter(x => nothingRows.includes(x.row)).map(x => x.why))].join('; ') || 'no design to cut') : '';
+    const anyway = (aside.notes || []).slice(0, 6).map(t => str(t).slice(0, 160));
+    const said2 = (nothingRows.length ? ` · nothing to place for ${word(nothingRows.length, 'piece', 'pieces')} (${nothingWhy})` : '') + (anyway.length ? ` · released anyway: ${anyway.join('; ')}` : '');
     if (unplaced.length && open) { const r = unplaced[0]; for (const x of after) delete x.releasing; await persist(); return fail(`Order ${rid} is released and at the front of the queue, but ${str(r.reason || r.state)}`, 'place', { released: true }); }
 
     const finish = async (pages, placed, why, landed) => {
       const first = pages[0], where = pages.map(label).join(', '), said = landed && landed.length ? ` · ${landed.join(' ')}` : '';
       if (G.SheetEvents && G.SheetEvents.order) G.SheetEvents.order({ type: 'released', orderId: rid, id: `oh-rel-${rid}-${frontAt}`, by: who, at: Date.now(), sheetId: first ? first.sheetId || '' : '', sheet: where, setId: first && inSet(first) ? first.setId : '',
-        text: (placed && where ? `Released from hold by ${who} · placed on ${where}` : `Released from hold by ${who} · front of the queue`) + (split.length ? ` · pair split: ${split.map(splitWords).join('; ')}` : '') + said,
-        data: Object.assign({ frontAt, sheets: pages.map(label), newSheet: targets.some(t => t.newSheet), pieces: fresh.length }, Object.assign(split.length ? { split: split.map(x => x.groupKey) } : {}, said ? { landed: true } : null),
+        text: ((placed && where ? `Released from hold by ${who} · placed on ${where}` : `Released from hold by ${who} · front of the queue`) + (split.length ? ` · pair split: ${split.map(splitWords).join('; ')}` : '') + said + said2).slice(0, 500),
+        data: Object.assign({ frontAt, sheets: pages.map(label), newSheet: targets.some(t => t.newSheet), pieces: fresh.length }, Object.assign(split.length ? { split: split.map(x => x.groupKey) } : {}, said ? { landed: true } : null, nothingRows.length ? { nothing: nothingRows.length, nothingWhy: nothingWhy.slice(0, 200) } : null, anyway.length ? { anyway } : null),
           opts.seal && opts.seal.how === 'releaseHold' ? { seal: 'releaseHold', sealAt: +opts.seal.at || 0, sealId: str(opts.seal.id).slice(0, 120) } : null) });   // (RELHOLD: the Release Hold press's seal, read back from here)
       for (const r of rowsOfOrder(rid)) delete r.releasing;
       for (const sh of kept) unkeep(sh);
@@ -393,10 +410,10 @@
       const sheets = pages.map(sh => ({ sheetId: sh.sheetId || null, label: label(sh), metal: sh.metal, page: sh.page, newSheet: !!targets.find(t => t.metal === sh.metal && t.newSheet) }));
       emit({ type: 'released', rid, sheets, placed });
       emit(Object.assign({ type: 'done', placed }, why ? { why } : {}));
-      return out(true, { released: true, placed, sheets });
+      return out(true, Object.assign({ released: true, placed, sheets }, nothingRows.length && !fresh.length ? { nothing: nothingWhy } : null, anyway.length ? { anyway } : null));
     };
     if (!open) return finish([], false, 'no run is open: the order waits at the front of the queue');
-    if (!fresh.length) return finish([], true);   // every piece was already on a sheet (one that is cut): nothing to place
+    if (!fresh.length) return nothingRows.length && !ids.length ? finish([], false, 'nothing to place: ' + nothingWhy) : finish([], true);   // every piece was already on a sheet (one that is cut): nothing to place (RELEASE: or no piece at all, the lines have no design to cut)
 
     /* 4 · its pieces leave On hold for their sheet, the sheet nests now, and the engine waits until they are placed and saved */
     const to = new Map(); for (const [id, x] of locate(fresh)) { if (!to.has(x.sh)) to.set(x.sh, []); to.get(x.sh).push(id); }
