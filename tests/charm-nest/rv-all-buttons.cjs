@@ -108,7 +108,8 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     assert.equal(skuCol[2].dis, 'true', 'Send to Sheet is disabled with no design'); assert.match(skuCol[2].cls, /\bghost\b/);
     assert.match(await page.getAttribute(card('4175892473') + ' [data-cu-send]', 'title'), /Drop the order's \.ai or \.dxf designs/, 'and says why');
     assert.equal(skuCol[3].cls, 'cuHint', 'the dashed drop zone');
-    assert.match(await page.getAttribute(card('4175892473') + ' [data-rel-hold]', 'title'), /SKU DAVID STAR has no design in any master file yet: pick its charm/, 'and its title is the one plain reason');
+    // (RELEASE, Paul 19 Oct 2026: was "its title is the one plain reason"; the question is a note now: "Releasing anyway: ...")
+    assert.match(await page.getAttribute(card('4175892473') + ' [data-rel-hold]', 'title'), /Releasing anyway: SKU DAVID STAR has no design in any master file yet/, 'and its title says what the press sets aside');
     // the Custom Orders card: the same column, control for control (classes, disabled state, width and height)
     await page.click('#reviewView .egTab[data-k="customOrder"]');
     const cuCol = await page.evaluate(COLUMN, card(CUSTOM));
@@ -116,7 +117,8 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     const same = c => c.filter((_, i) => i !== 1).map(({ t, cls, dis, w, h }) => ({ t, cls: cls.replace(/\s*\bworking\b/, ''), dis, w, h }));
     assert.deepEqual(same(skuCol), same(cuCol), 'Unknown SKU and Custom Orders: one column\n' + JSON.stringify(skuCol) + '\n' + JSON.stringify(cuCol));
     assert.equal(skuCol[1].t, 'Release Hold'); assert.equal(cuCol[1].t, 'Complete Order');
-    assert.equal(skuCol[1].dis, 'true', 'an Unknown SKU cannot be released yet: Release Hold is greyed'); assert.match(skuCol[1].cls, /\bghost\b/); assert.equal(skuCol[1].h, cuCol[1].h, 'the same size as the button it replaced');
+    // (RELEASE, Paul 19 Oct 2026: was "an Unknown SKU cannot be released yet: Release Hold is greyed" / ghost; the press sets its question aside, so it is enabled and primary)
+    assert.notEqual(skuCol[1].dis, 'true', 'an Unknown SKU can be released: Release Hold is not greyed'); assert.match(skuCol[1].cls, /\bgold\b/); assert.equal(skuCol[1].h, cuCol[1].h, 'the same size as the button it replaced');
     const shot = process.env.CN_SHOT || '/mnt/project-files/plans/review-buttons-2.png';
     try {
       const cuPng = await page.locator(card(CUSTOM)).screenshot();
@@ -137,9 +139,9 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     await page.waitForFunction(() => OrderWin.isOpen() && OrderWin.key() === '4175892473_41758924731', null, { timeout: 10000 });
     await page.waitForTimeout(300);
     assert.deepEqual(await asked(), none, 'Unknown SKU: its order, and no question box');
-    // (its piece's row in the order window: the card's own Release Hold where Complete Order stood, greyed with the same reason; no Complete Order, no old release button)
+    // (its piece's row in the order window: the card's own Release Hold where Complete Order stood, enabled (RELEASE, Paul 19 Oct 2026: was greyed with the same reason); no Complete Order, no old release button)
     await page.waitForFunction(() => document.querySelector('#owPcSum [data-rel-hold]'), null, { timeout: 10000 });
-    assert.deepEqual(await page.evaluate(() => { const b = document.querySelector('#owPcSum [data-rel-hold]'); return { t: b.textContent.trim(), dis: b.getAttribute('aria-disabled'), complete: !!document.querySelector('#owPcSum [data-cu-complete]') }; }), { t: 'Release Hold', dis: 'true', complete: false }, 'the order window\'s piece row: Release Hold, greyed, and no Complete Order');
+    assert.deepEqual(await page.evaluate(() => { const b = document.querySelector('#owPcSum [data-rel-hold]'); return { t: b.textContent.trim(), dis: b.getAttribute('aria-disabled'), complete: !!document.querySelector('#owPcSum [data-cu-complete]') }; }), { t: 'Release Hold', dis: null, complete: false }, 'the order window\'s piece row: Release Hold, enabled, and no Complete Order');
     assert.deepEqual(await page.evaluate(NO_OLD_RELEASE), { old: 0, under: 0 }, 'no "Release to nesting queue" in the order window either');
     await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
     assert.equal(await page.evaluate(sel => document.querySelector(sel).querySelectorAll('.reviewDetails, .rvItem').length, card('4175892473')), 0, 'nothing unfolded on the card');
@@ -154,12 +156,12 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
     await page.click('#reviewView .egTab[data-k="needResolution"]');
 
-    // 3 · Release Hold on an Unknown SKU line (RELHOLD: it replaced Complete Order): its SKU has no design yet, so it cannot go to the nesting queue: the greyed button, pressed, says the one plain
-    //     reason and changes nothing (no record, no completion, no timeline answer); the card stays under Open
+    // 3 · Release Hold on an Unknown SKU line (RELHOLD: it replaced Complete Order). RELEASE (Paul, 19 Oct 2026): it used to be greyed ("its SKU has no design yet, so it cannot go to the nesting queue"): the button, pressed, said the
+    //     one plain reason and changed nothing. It is enabled now and its press releases the line with nothing to place (tests/charm-nest/release-hold-button.cjs); this test does not press it, so the card stays under Open
+    //     for the steps below, and nothing is written by merely looking at it
     const aKey = '4175892473_41758924731';
     const before3 = await page.evaluate(k => { const r = B.orders.byKey.get(k); return JSON.stringify([r.state, r.problems.map(p => p.kind), r.releaseHold || null, !!B.maps.customDone[k]]); }, aKey);
-    await page.$eval(card('4175892473') + ' [data-rel-hold]', b => b.click());   // (aria-disabled, not disabled: it can be pressed, and says why)
-    await page.waitForFunction(() => /has no design in any master file yet/.test(document.getElementById('toasts')?.textContent || ''), null, { timeout: 5000 });
+    assert.equal(await page.getAttribute(card('4175892473') + ' [data-rel-hold]', 'aria-disabled'), null, 'the Unknown SKU\'s Release Hold is enabled');
     await page.waitForTimeout(500);
     assert.equal(await page.evaluate(k => { const r = B.orders.byKey.get(k); return JSON.stringify([r.state, r.problems.map(p => p.kind), r.releaseHold || null, !!B.maps.customDone[k]]); }, aKey), before3, 'nothing changed');
     assert.equal(srv.st.doc('Charm_Custom_Orders', aKey), undefined, 'no completion record was written');
@@ -261,7 +263,7 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     //     click opens its order, which asks nothing
     await page.click('#reviewView .egTab[data-k="needResolution"]');
     list = await buttons();
-    // (RELHOLD: the greyed Release Hold of step 3 changed nothing, so the first Unknown SKU card is still here too)
+    // (RELHOLD: step 3 pressed nothing (RELEASE, Paul 19 Oct 2026: the Release Hold there is enabled now, its press is release-hold-button.cjs), so the first Unknown SKU card is still here too)
     assert.deepEqual(list.map(x => [x.rid, x.b]).sort(), [['4175892473', WANT], [other.split('_')[0], WANT], ['4178100002', WANT]].sort(), JSON.stringify(list));
     assert.deepEqual(same(await page.evaluate(COLUMN, card('4178100002'))), same(cuCol), 'Options and Custom Orders: one column');
     await page.click(card('4178100002') + ' .engravingIdentity');

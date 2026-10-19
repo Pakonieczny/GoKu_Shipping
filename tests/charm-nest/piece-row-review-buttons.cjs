@@ -24,7 +24,8 @@
 // Print again) exactly once, on its own row, whose vertical centre is the name's, at 1440, 900 and 390: in an order of several, in order
 // 4171409060's shape (BLUE 72587 on GF Sheet 1, LONGER CHAIN 5682 on no sheet), in a single-piece chain-only order, and with one piece picked.
 // RELHOLD (Paul, 18 Oct 2026): on a piece of another Review tab's card (these pieces are Unknown SKU lines) Release Hold stands where Complete Order stood:
-// greyed with the card's one plain reason (the SKU has no design), a press writes nothing; such a piece is completed by hand with its Print QR label, so the
+// (RELEASE, Paul 19 Oct 2026: it was greyed with the card's one plain reason, the SKU has no design; it is ENABLED now, that reason a note "Releasing anyway: ..." on its title, and its press releases the piece with nothing to place:
+// tests/charm-nest/release-hold-button.cjs; this test does not press it) such a piece is completed by hand with its Print QR label, so the
 // completion, seal, record, timeline, Reopen, Undo and name-asked checks below go through the print path, and Release Hold is counted wherever Complete Order was.
 //   node tests/charm-nest/piece-row-review-buttons.cjs   (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>, SHOTS=<dir>)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
@@ -200,15 +201,15 @@ async function main() {
     };
     await layout('open');
 
-    // ── 3 · Release Hold from the row (RELHOLD, Paul 18 Oct 2026: where Complete Order stood): this piece's SKU has no design, so it is greyed with its card's
-    //        one plain reason, and a press (a double one too) writes nothing: no record, no release, the card stays under Open ──
+    // ── 3 · Release Hold from the row (RELHOLD, Paul 18 Oct 2026: where Complete Order stood): this piece's SKU has no design. It was greyed with its card's one plain reason and a press wrote nothing; RELEASE (Paul, 19 Oct 2026):
+    //        it is enabled, its old reason is a note in its title ("Releasing anyway: ..."), and its press releases the piece (release-hold-button.cjs). Not pressed here: the card stays under Open for the print path below ──
     const relOf = k => page.evaluate(k => { const b = document.querySelector(`#owPcSum [data-piece="${k}"] [data-rel-hold]`); return b && { text: b.textContent.trim(), dis: b.getAttribute('aria-disabled'), title: b.title }; }, k);
     const marks = () => srv.st.calls.filter(c => c.op === 'reviewMarkPut').length;
     const rel0 = await relOf(cable);
-    assert(rel0 && rel0.text === 'Release Hold' && rel0.dis === 'true' && /CABLE CHAIN ONLY has no design in any master file yet/.test(rel0.title), 'Release Hold, greyed with its one plain reason: ' + JSON.stringify(rel0));
+    assert(rel0 && rel0.text === 'Release Hold' && rel0.dis === null && /Releasing anyway: SKU CABLE CHAIN ONLY has no design in any master file yet/.test(rel0.title), 'Release Hold, enabled, its old reason a note in its title: ' + JSON.stringify(rel0));
     const before = puts(), m0 = marks();
-    await page.$eval(`#owPcSum [data-piece="${cable}"] [data-rel-hold]`, b => { b.click(); b.click(); }); await page.waitForTimeout(1500);   // (aria-disabled, not disabled: it can be pressed, and says why)
-    assert.equal(puts() - before, 0, 'the greyed Release Hold writes no completion'); assert.equal(marks(), m0, 'and keeps no release');
+    await page.waitForTimeout(500);
+    assert.equal(puts() - before, 0, 'looking at the Release Hold writes no completion'); assert.equal(marks(), m0, 'and keeps no release');
     assert.equal(rec(cable), undefined, 'no record'); assert.equal(await page.evaluate(k => !!B.orders.byKey.get(k).releaseHold, cable), false, 'nothing kept on its line');
     c0 = await card(cable); assert(c0 && c0.q === 'Review required', 'its card stays under Open: ' + JSON.stringify(c0));
 

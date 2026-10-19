@@ -94,11 +94,11 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     await page.waitForFunction(k => !B.maps.customDone[k], K); await idle(); await stamped(); await calm();
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
     // Release Hold on another Review tab's card (RELHOLD, Paul 18 Oct 2026: on every Review card but a Custom Orders one, Release Hold stands where Complete Order stood).
-    // The Unknown SKU card has it greyed with its one plain reason (its SKU has no design); the order sent to Review by hand has it enabled: pressed, the order is
+    // The Unknown SKU card has it enabled too (RELEASE, Paul 19 Oct 2026: it was greyed with its one plain reason, its SKU has no design; that reason is a note in its title now); the order sent to Review by hand has it enabled: pressed, the order is
     // released, and its timeline gets a "released" step with the RELEASE HOLD seal (data.seal "releaseHold"), not a Complete point
     await page.click('#reviewView .egTab[data-k="needResolution"]');
     const uLook = await page.evaluate(rid => { const n = document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"]`), b = n && n.querySelector('[data-rel-hold]'); return n && { complete: n.querySelectorAll('[data-cu-complete]').length, rel: b && b.textContent.trim(), dis: b && b.getAttribute('aria-disabled'), title: b && b.title }; }, U);
-    assert(uLook && uLook.complete === 0 && uLook.rel === 'Release Hold' && uLook.dis === 'true' && /UNKNOWN_77 has no design/.test(uLook.title), 'the Unknown SKU card: Release Hold where Complete Order stood, greyed with its reason: ' + JSON.stringify(uLook));
+    assert(uLook && uLook.complete === 0 && uLook.rel === 'Release Hold' && uLook.dis === null && /Releasing anyway: SKU UNKNOWN_77 has no design/.test(uLook.title), 'the Unknown SKU card: Release Hold where Complete Order stood, enabled, its reason a note in its title: ' + JSON.stringify(uLook));
     const marked = await page.evaluate(async rid => { const r = await CharmNestReviewMark.mark(rid, { by: 'Test Operator' }); Review.view().filter = null; Review.syncOrderItems(); Review.render(); return r; }, U);
     assert(marked && marked.ok, 'the order is sent to Review: ' + JSON.stringify(marked));
     const uRel = `#rvList .reviewListRow[data-rid="${U}"] [data-rel-hold][data-rv-release="mark"]`;
