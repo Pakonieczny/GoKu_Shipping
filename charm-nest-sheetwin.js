@@ -4605,6 +4605,198 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       Orders.keepRest(m.src); await rewritePage(m.src, quiet, none);
     }
   }
+  /* ── MANUALHOP (Paul, 19 Oct 2026: "When I moved the charm from one sheet to another, it took a very long time, and it froze ... There was no
+     feedback ... it took me out of the manual mode ... This needs to be a near instantaneous process ... part of the whole manual operations process flow.")
+     Root cause of the slowness: a hop went through moveIn, which (after a cloud check the hop awaited first) nested and wrote the source sheet and then
+     the target (rewritePage -> startNest: a nest search, .ai, proof, render check and uploads for each, one after the other), remade the QR labels and read
+     both back, all before the hand was let go, behind a "Moving order ..." steps panel that held the window (W.flow) for 10 to 20 s.
+     Now (moveNow, the sheet hop's way while Manual Control is on): the move is made on the live sheets at once (off A, onto B pinned where it was put, its
+     manual mark {by, at}), A's plate drops the piece in the same frame, Manual Control stays on, and a small chip by the plate says "Saving..." then
+     "Saved". In the background, one move after another (HOP.chain): the cloud check, both records rewritten from their saved selves (A without the pieces
+     first, then B with them: a piece is never on two records), the piece records, a read-back. No nest runs because of a move: both sheets are held
+     (sh._manualHold: the run neither nests them nor sends arrivals) and owe their files (MC.owed), which are written as they stand, every charm held where
+     it is, with their QR labels, once, when Manual Control is turned off (mcOff -> writeOwed), however many charms were moved meanwhile. A background step
+     that fails puts the pieces back where they were, on the screen and on the records, and says so on the chip. ── */
+  const HOP = { chain: Promise.resolve(), pending: 0, chip: null, chipT: 0 };
+  const hopIdle = () => HOP.chain.then(() => true, () => true);
+  function hopChip(state, text) {
+    const E = W.el; if (!E || !E.plateBox) return;
+    if (!document.getElementById("mhStyle")) { const s = document.createElement("style"); s.id = "mhStyle"; s.textContent = ".mhChip{position:absolute;left:50%;top:8px;z-index:5;transform:translateX(-50%);display:inline-flex;align-items:center;gap:6px;padding:3px 10px 3px 8px;border:1px solid var(--line);border-radius:999px;background:color-mix(in srgb,var(--card) 94%,transparent);box-shadow:0 4px 14px rgba(30,24,16,.1);font:600 11px var(--sans);color:var(--ink70);pointer-events:none;transition:opacity .25s ease;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}.mhChip[hidden]{display:inline-flex;opacity:0}.mhChip i{flex:0 0 9px;width:9px;height:9px;box-sizing:border-box;border-radius:50%;border:2px solid var(--gold2,#caa861);border-top-color:transparent;animation:mhSpin .8s linear infinite}.mhChip.ok i{border:0;background:var(--sage,#5f7a5b);animation:none}.mhChip.bad{border-color:#e7b9aa;color:#8a3a26;max-width:min(520px,90%);white-space:normal}.mhChip.bad i{border:0;background:var(--clay,#b0563f);animation:none}@keyframes mhSpin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){.mhChip i{animation:none}}"; document.head.appendChild(s); }
+    let n = HOP.chip; if (!n || !n.isConnected) { n = HOP.chip = document.createElement("div"); n.className = "mhChip"; n.dataset.mh = "chip"; n.setAttribute("role", "status"); n.setAttribute("aria-live", "polite"); E.plateBox.appendChild(n); }
+    clearTimeout(HOP.chipT); n.hidden = false; n.className = "mhChip" + (state === "ok" ? " ok" : state === "bad" ? " bad" : "");
+    n.innerHTML = `<i aria-hidden="true"></i><span></span>`; n.querySelector("span").textContent = text;
+    if (state !== "saving") HOP.chipT = setTimeout(() => { n.hidden = true; }, state === "bad" ? 9000 : 3200);
+  }
+  const hopChipNow = () => { if (HOP.pending) hopChip("saving", HOP.pending > 1 ? `Saving ${HOP.pending} moves…` : "Saving…"); };
+  /** The pieces that went to another sheet leave this window's plate at once (no read of the cloud: the window shows the live sheet). */
+  function dropFromPlate(ids) {
+    const gone = W.pieces.filter(x => x.poolId && ids.has(x.poolId)); if (!gone.length) return null;
+    const gid = new Set(gone.map(x => x.id)), was = { id: W.id, pieces: W.pieces, rec: W.rec };
+    W.pieces = W.pieces.filter(x => !gid.has(x.id)); for (const x of gone) { W.byId.delete(x.id); W.byPool.delete(x.poolId); }
+    if (W.sel && gid.has(W.sel.id)) W.sel = null; if (W.hover && gid.has(W.hover.id)) W.hover = null;
+    if (W.rec) W.rec = Object.assign({}, W.rec, { poolIds: (W.rec.poolIds || []).filter(id => !ids.has(String(id))), placements: (W.rec.placements || []).filter(p => !gid.has(p.id)), charms: (W.rec.charms || []).filter(c => !gid.has(c.id)) });
+    plateChanged();
+    return Object.assign(was, { now: W.rec });
+  }
+  /** A move that did not save: its pieces back on the plate it left, as they were (the window has not read its sheet since). */
+  function backOnPlate(was) {
+    if (!was || W.id !== was.id || W.rec !== was.now || !W.dlg || !W.dlg.open) return false;
+    const have = new Set(W.pieces.map(x => x.id)), back = was.pieces.filter(x => !have.has(x.id));
+    W.pieces = was.pieces.filter(x => have.has(x.id) || back.includes(x)); for (const x of back) { W.byId.set(x.id, x); if (x.poolId) W.byPool.set(x.poolId, x); }
+    W.rec = was.rec; plateChanged(); return true;
+  }
+  function plateChanged() {
+    W.orders = new Map(); for (const x of W.pieces) { const k = x.rid || "—"; if (!W.orders.has(k)) W.orders.set(k, []); W.orders.get(k).push(x); }
+    tryDo(paintBase); tryDo(paintFx);
+    // (the counts and the orders list a moment later, in a task of their own: the plate is what the eye is on)
+    const id = W.id, later = () => { if (W.id === id && W.dlg && W.dlg.open) { tryDo(renderStrip); tryDo(renderSheetPane); } };
+    requestAnimationFrame(() => setTimeout(later, 0));   // (right after the frame that shows the plate: soon enough that nothing around the plate shifts under a hand reaching for the next charm)
+  }
+  /** The move, now: { ok } once it is on the live sheets (its save follows in the background), or { ok: false, why } with nothing changed.
+   *  o.guard(sheet) as moveIn's; o.check() -> "" or why the cloud says another computer changed the sheets (run before anything is written). */
+  function moveNow(k, spots, target, who, o = {}) {
+    const rid = k.rid, ids = new Set(spots.map(s => s.c.poolId)), srcs = [...new Set(spots.map(s => s.src))], src = srcs[0];
+    if (srcs.length !== 1 || src === target) return { ok: false, why: "the pieces are not on one other sheet" };
+    // the same guards moveIn applies, without waiting for anything
+    const why = o.guard ? [src, target].map(sh => o.guard(sh)).find(Boolean) : ""; if (why) return { ok: false, why };
+    if ([src, target].some(sheetWorking)) return { ok: false, why: "a sheet is being nested or saved right now; try again once it has saved" };
+    for (const s of spots) { const on = allSheets().filter(sh => sh.charms.includes(s.c)); if (on.length !== 1 || on[0] !== src) return { ok: false, why: `order ${rid} went to another sheet meanwhile` }; }
+    if (Cancelled.has(rid) || rowsOfOrder(rid).some(r => r.hold || ["held", "skipped", "gone"].includes(r.state))) return { ok: false, why: `order ${rid} was put on hold or cancelled meanwhile` };
+    if (pairGuard(target)(k)) return { ok: false, why: `order ${rid} has a pair with a piece on another sheet that cannot give it up, so it stays where it is` };
+    { const w = pairHold(k, rowsOfOrder(rid), target); if (w) return { ok: false, why: `order ${rid} stays where it is: ${w} (a pair or group is never moved in halves)` }; }
+    // the room, as the sheet stands this instant: each pose through Manual Control's one check (its grid of the sheet is the one the hop's fit test
+    // just built, kept by the sheet's layout: no new grid is made on the drop), the pieces among themselves as the hop's search stamped them
+    const clr = +S.settings.clearancePt || 0, vs = [];
+    for (const s of spots) {
+      const pose = { cxPt: s.cxPt, cyPt: s.cyPt, angle: normDeg(s.angle), size: sizeOf(s.c) };
+      const res = mcLocked(target, s.c) ? { ok: false, reason: mcLocked(target, s.c) } : mcCheck(mcGrid(target, s.c.id, null), s.c, pose, 0, true);
+      if (!res.ok) return { ok: false, why: `the room changed (${String(res.reason || "it no longer fits there").replace(/\.$/, "")}); try again` };
+      const v = mcVariant(s.c, pose.angle, pose.size, clr); if (!v) return { ok: false, why: "its outline is not known here" };
+      vs.push(v);
+    }
+    // on the live sheets now: off A, onto B pinned where it was put (no nest is asked for: both stay held until Manual Control is turned off)
+    const at = Date.now(), cids = new Set(spots.map(s => s.c.id));
+    const undo = { src, target, charms: src.charms.filter(c => cids.has(c.id)), placements: src.placements.filter(p => cids.has(p.id)).map(p => Object.assign({}, p)), backs: (src.backPool || []).filter(b => ids.has(b.poolId)), pins: spots.map(s => ({ c: s.c, pinned: s.c.pinned, arrivalPin: s.c.arrivalPin, manual: s.c.manual })) };
+    src.charms = src.charms.filter(c => !cids.has(c.id)); src.placements = src.placements.filter(p => !cids.has(p.id));
+    src.rejects = (src.rejects || []).filter(id => !cids.has(id)); if (Array.isArray(src.feedWait)) src.feedWait = src.feedWait.filter(id => !cids.has(id));
+    if (src.backPool) src.backPool = src.backPool.filter(b => !ids.has(b.poolId));
+    spots.forEach((s, i) => {
+      const c = s.c, v = vs[i], was = undo.placements.find(p => p.id === c.id) || {}, size = c.manual && +c.manual.size;
+      delete c.arrivalPin; c.pinned = Object.assign({ cxPt: s.cxPt, cyPt: s.cyPt, angle: s.angle }, size && size !== 1 ? { size } : {});
+      c.manual = Object.assign({ by: who, at }, size && size !== 1 ? { size } : {});
+      if (!target.charms.includes(c)) target.charms.push(c);
+      target.placements = target.placements.filter(p => p.id !== c.id).concat(Object.assign({}, was, { id: c.id, cxPt: s.cxPt, cyPt: s.cyPt, angle: s.angle, wPt: v.solid.w / 2, hPt: v.solid.h / 2 }));
+    });
+    if (undo.backs.length) target.backPool = (target.backPool || []).concat(undo.backs);
+    const held = MC.on && MC.sh === src;
+    if (held) { target._manualHold = true; MC.owed.add(src); MC.owed.add(target); undo.mc = [...cids].map(id => [id, MC.from.get(id), MC.edits.get(id)]); for (const id of cids) { MC.edits.delete(id); MC.from.delete(id); } if (MC.sel && cids.has(MC.sel.id)) { MC.sel = null; MC.lift = null; MC.valid = null; MC.G = null; } }
+    if (W.dlg && W.dlg.open && W.id === src.sheetId) undo.plate = dropFromPlate(ids);
+    journal(rid, { rid, ids: [...ids], from: [src.sheetId], to: target.sheetId, by: who, at, stage: "start" });
+    // its save, after the moves before it
+    HOP.pending++; hopChipNow();
+    const job = { rid, ids, cids, src, target, who, spots, undo, check: o.check, failed: o.failed, held, at };
+    HOP.chain = HOP.chain.then(() => hopSaveTry(job)).then(() => true, e => { console.warn("sheet window: move not saved", e); return false; }).then(ok => {
+      HOP.pending--;
+      if (HOP.pending) hopChipNow(); else if (ok) hopChip("ok", "Saved");
+      if (ok && !job.held) return writeOwed([src, target], null, true);   // (no Manual Control to end: the two sheets are written as they stand now)
+    }).catch(e => console.warn("sheet window: after a move", e));   // (the chain stays whole: the next move's save always runs)
+    return { ok: true };
+  }
+  const sheetRec = id => api("charmNestLibrary", { op: "getSheet", id }, { quiet: true, timeoutMs: 12000 }).then(r => (r && r.sheet) || null);
+  const putRec = async patch => { const r = await api("charmNestLibrary", { op: "putSheet", sheet: patch }, { quiet: true, timeoutMs: 15000 }); if (r && r.error) throw new Error(r.error); return r; };
+  const recOrders = (charms, placements) => { const by = new Map(charms.map(c => [c.id, c])); return [...new Set(placements.map(p => { const c = by.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))]; };
+  const membership = r => ({ id: r.id, charms: r.charms || [], placements: r.placements || [], poolIds: r.poolIds || [], orders: r.orders || [], charmCount: (r.charms || []).length, placedCount: (r.placements || []).length, backPool: r.backPool || [] });
+  /** One move saved: the cloud check, A's record without the pieces, B's record with them, the piece records, a read-back. A failure puts it all back. */
+  async function hopSaveTry(j) { for (j.tries = 0; ; j.tries++) { try { return await hopSave(j); } catch (e) { if (!e.retry) throw e; await pause(1500 * (j.tries + 1)); } } }
+  async function hopSave(j) {
+    const { rid, ids, cids, src, target, who, spots } = j;
+    let ra = null, aWritten = false;
+    try {
+      if (j.check) { const stale = await j.check(); if (stale) throw new Error(stale); }
+      let rb; [ra, rb] = await Promise.all([sheetRec(src.sheetId), sheetRec(target.sheetId)]);
+      if (!ra || !rb) throw new Error("one of the two sheets is no longer in the Library");
+      // each record rewritten from its saved self: only these pieces change sheets (the files stay as they are until the sheets are written as they stand)
+      const moved = (ra.charms || []).filter(c => cids.has(c.id)), mPl = new Map((ra.placements || []).filter(p => cids.has(p.id)).map(p => [p.id, p])), backs = (ra.backPool || []).filter(b => ids.has(b.poolId));
+      const aCharms = (ra.charms || []).filter(c => !cids.has(c.id)), aPl = (ra.placements || []).filter(p => !cids.has(p.id));
+      const patchA = { id: src.sheetId, charms: aCharms, placements: aPl, poolIds: (ra.poolIds || []).filter(id => !ids.has(String(id))), orders: recOrders(aCharms, aPl), charmCount: aCharms.length, placedCount: aPl.length, backPool: (ra.backPool || []).filter(b => !ids.has(b.poolId)), filesOwed: j.at };
+      const live = new Map(target.placements.map(p => [p.id, p]));
+      const entry = c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, order: c.order || c.id, poolId: c.poolId || null, sku: c.sku || null, areaPt2: +(+c.areaPt2 || 0).toFixed(1), widthPt: +(+c.widthPt || 0).toFixed(2), heightPt: +(+c.heightPt || 0).toFixed(2) });
+      const bCharms = (rb.charms || []).filter(c => !cids.has(c.id)).concat(spots.map(s => Object.assign({}, moved.find(c => c.id === s.c.id) || entry(s.c), s.c.manual ? { manual: s.c.manual } : {})));
+      const bPl = (rb.placements || []).filter(p => !cids.has(p.id)).concat(spots.map(s => { const lp = live.get(s.c.id) || {}; return Object.assign({}, mPl.get(s.c.id) || { id: s.c.id, name: s.c.name, scale: lp.scale || 1 }, { cxPt: s.cxPt, cyPt: s.cyPt, angle: s.angle }, lp.wPt ? { wPt: +lp.wPt, hPt: +lp.hPt } : {}); }));
+      const patchB = { id: target.sheetId, charms: bCharms, placements: bPl, poolIds: [...new Set((rb.poolIds || []).map(String).concat([...ids]))], orders: recOrders(bCharms, bPl), charmCount: bCharms.length, placedCount: bPl.length, backPool: (rb.backPool || []).filter(b => !ids.has(b.poolId)).concat(backs), filesOwed: j.at };
+      journal(rid, { rid, ids: [...ids], from: [src.sheetId], to: target.sheetId, by: who, at: j.at, stage: "sources" });
+      await putRec(patchA); aWritten = true;
+      journal(rid, { rid, ids: [...ids], from: [src.sheetId], to: target.sheetId, by: who, at: j.at, stage: "target" });
+      await putRec(patchB);
+      await Pool.update([...ids], { sheetId: target.sheetId, sheetName: target.fileBase || null, movedFrom: src.sheetId || null, movedTo: target.sheetId, movedBy: who, movedAt: Date.now() }).catch(e => console.warn("sheet window: pool after move", e));
+      journal(rid, null);
+      // read back: on B, off A, the piece records on B
+      const [a2, b2, pr] = await Promise.all([sheetRec(src.sheetId), sheetRec(target.sheetId), api("charmNestLibrary", { op: "poolGet", poolIds: [...ids] }, { quiet: true, timeoutMs: 12000 }).catch(() => null)]);
+      const has = (r, id) => ((r && r.poolIds) || []).map(String).includes(id);
+      const ok = [...ids].every(id => has(b2, id) && !has(a2, id)) && !!pr && Object.values(pr.pools || {}).every(p => p.sheetId === target.sheetId);
+      if (ok) Pool.update([...ids], { moveVerifiedAt: Date.now() }).catch(() => {});
+      agent({ metal: target.metal, run: target.runId }, "POOL", `Order ${rid} moved by ${who} from ${sheetName(src)} to ${sheetName(target)} by hand (${spots.length === 1 ? "1 piece" : spots.length + " pieces"}, dragged in the sheet window)${ok ? "; both saved sheets read back and match" : "; the read-back did not match yet"}; the two sheets' files are written as they stand when Manual Control is turned off`);
+      return true;
+    } catch (e) {
+      // (a cloud that did not answer, before anything was written: tried again, twice, before the move is put back)
+      if (j.tries < 2 && !aWritten && /could not be read|timed? ?out|failed to fetch|network|no answer|no longer in the Library/i.test(String(e.message || e)) && !/another computer/i.test(String(e.message || e))) throw Object.assign(e, { retry: true });
+      // put back: A's record as it was (the only one written before a failure), then the live sheets and the plate as they were
+      let back = "";
+      if (aWritten && ra) back = await putRec(Object.assign(membership(ra), { id: src.sheetId })).then(() => "", e2 => ` Putting its record back stopped too (${e2.message}); the run places order ${rid} again.`);
+      journal(rid, null);
+      hopUndo(j.undo);
+      hopChip("bad", `Not moved: ${String(e.message || e).replace(/\.$/, "")}. ${spots.length === 1 ? "The charm is" : "Its pieces are"} back on ${sheetWord(src.sheetId, src.fileBase, src)}.${back}`);
+      if (j.failed) tryDo(() => j.failed(String(e.message || e) + back));
+      throw e;
+    }
+  }
+  /** A move whose save failed: the pieces back on their sheet, where they were, as the screen showed them before. */
+  function hopUndo(u) {
+    const { src, target } = u, cids = new Set(u.charms.map(c => c.id)), bids = new Set(u.backs.map(b => b.poolId));
+    target.charms = target.charms.filter(c => !cids.has(c.id)); target.placements = target.placements.filter(p => !cids.has(p.id));
+    if (target.backPool) target.backPool = target.backPool.filter(b => !bids.has(b.poolId));
+    for (const c of u.charms) if (!src.charms.includes(c)) src.charms.push(c);
+    for (const p of u.placements) if (!src.placements.some(q => q.id === p.id)) src.placements.push(p);
+    if (u.backs.length) src.backPool = (src.backPool || []).concat(u.backs);
+    for (const q of u.pins) { q.c.pinned = q.pinned; if (q.arrivalPin) q.c.arrivalPin = q.arrivalPin; else delete q.c.arrivalPin; if (q.manual) q.c.manual = q.manual; else delete q.c.manual; }
+    tryDo(() => window.SheetHop && SheetHop.refresh());
+    // the plate it left shows them again at once, as they were (a window that has read its sheet since shows the live sheet already)
+    backOnPlate(u.plate);
+    // (and Manual Control holds them as it did: where each stood when it was turned on, and a move by hand not saved yet)
+    if (u.mc && MC.on && MC.sh === src) for (const [id, from, edit] of u.mc) { if (from) MC.from.set(id, from); if (edit) { MC.edits.set(id, edit); const x = W.byId.get(id); if (x && W.id === src.sheetId) mcShow(x, edit); } }
+    if (W.dlg && W.dlg.open && W.id === src.sheetId) { tryDo(paintBase); tryDo(paintFx); }
+  }
+  /** The sheets the charms moved between, written as they stand (every charm kept where it is: no search moves one), with their QR labels. owner: the
+   *  sheet whose Manual Control claim is given back after. Its own steps panel (quiet: none): it runs when Manual Control is turned off, never during a move. */
+  async function writeOwed(sheets, owner, quiet) {
+    const list = [...new Set(sheets)].filter(sh => sh && allSheets().includes(sh));
+    for (const sh of list) { delete sh._manualHold; delete sh._manualAsked; }
+    if (!list.length) { if (owner) await mcRelease(owner.sheetId); return false; }
+    for (const until = Date.now() + 300000; W.flow && Date.now() < until;) await pause(300);
+    const steps = list.map(sh => ({ sh, st: stepOf(`Writing ${sheetWord(sh.sheetId, sh.fileBase, sh)} as it stands`) })), labels = stepOf(`Remaking the QR label${list.length === 1 ? "" : "s"}`);
+    const work = quiet ? null : beginFlow({ state: "working", title: `Writing the sheet${list.length === 1 ? "" : "s"} the charms were moved between`, steps: [...steps.map(s => s.st), labels], note: "" });
+    const paint = () => { if (work && W.dlg && W.dlg.open && W.work === work) renderWork(); };
+    if (work) renderWork();
+    let bad = "";
+    for (const { sh, st } of steps) {
+      try {
+        // everything on it stays where it is: only its files, its check and its record are made again (appendOnly: the nest keeps every charm it has)
+        if (sh.placements.length) { sh.appendOnly = sh.intakeAppend = true; sh.dirty = true; if (!busy(sh)) sh.status = "ready"; }
+        holdRelease([sh]);
+        if (await rewritePage(sh, st, paint, { manual: true })) await putRec({ id: sh.sheetId, filesOwed: null }).catch(() => {});   // (its record no longer owes its files: filesOwed, set by a move)
+      } catch (e) { st.state = "bad"; st.detail = e.message; bad = bad || e.message; }
+      letGo([sh]);
+    }
+    await remakeLabels(list, labels, paint).catch(e => { labels.state = "bad"; labels.detail = e.message; });
+    if (owner) await mcRelease(owner.sheetId);
+    if (work) {
+      work.state = bad ? "failed" : "done"; work.title = bad ? "A sheet the charms were moved between was not written" : `${list.map(sh => sheetWord(sh.sheetId, sh.fileBase, sh)).join(" and ")} written as ${list.length === 1 ? "it stands" : "they stand"}`;
+      work.note = bad ? esc(bad) + "." : "Every charm stays where it was put; the files, checks and QR labels were made again.";
+      paint(); endFlow(work);
+    }
+    if (W.dlg && W.dlg.open && list.some(sh => sh.sheetId === W.id) && !MC.on) open(W.id, { keepWork: true, keepSet: false });
+    return !bad;
+  }
   // a move this browser was making when it was closed: its pieces are wherever the saved sheets put them (a piece on
   // no sheet is placed again by the run); the interruption is written to the run's log once
   setTimeout(() => {
@@ -4708,7 +4900,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return now - Math.max(FOLLOW.touch, FOLLOW.moved) < 600000 ? 13500 : 59500;   // (the beat is 2 s: these read at about 14 s and 60 s)
   };
   const memberSig = r => !r ? "gone" : JSON.stringify([(r.poolIds || []).map(String).sort(), (r.orders || []).map(String).sort(), r.setId || "", +r.laserDoneAt || 0, r.archived ? 1 : 0, (r.manual && +r.manual.at) || 0, (r.manualEdit && r.manualEdit.tab) || ""]);   // (Manual Control: a layout saved by hand, and who holds the sheet's claim now)
-  const followBusy = () => !!(MC.on || MC.claiming || W.hand || W.hop || W.add || W.fill || W.flow || W.flying || W.leaving || W.folding || W.away || W.coming || (W.going && W.going.size) || (W.landing && W.landing.length));
+  const followBusy = () => !!(MC.on || MC.claiming || HOP.pending || W.hand || W.hop || W.add || W.fill || W.flow || W.flying || W.leaving || W.folding || W.away || W.coming || (W.going && W.going.size) || (W.landing && W.landing.length));
   async function follow(now) {
     if (!W.dlg || !W.dlg.open || !W.rec || !W.id || document.hidden || FOLLOW.busy || followBusy()) return;
     if (FOLLOW.id !== W.id) { FOLLOW.id = W.id; FOLLOW.revs = null; FOLLOW.fails = 0; FOLLOW.moved = Date.now(); }
@@ -4791,7 +4983,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const MANUAL_METALS = ["gold10k", "gold14k"], MC_MIN = 0.8, MC_MAX = 1.2, MC_TURN = 15, MC_SNAP_PT = 1, MC_STALE = 90000, MC_BEAT = 30000;
   // this tab (a claim names the screen that holds it; a reload of the same tab is the same screen)
   const MC_TAB = (() => { const mk = () => "t" + Math.random().toString(36).slice(2, 12); try { let t = sessionStorage.getItem("cn.sheetwin.tab"); if (!/^[\w-]{4,40}$/.test(t || "")) { t = mk(); sessionStorage.setItem("cn.sheetwin.tab", t); } return t; } catch (_) { return mk(); } })();
-  const MC = { on: false, sh: null, id: null, who: "", sel: null, lift: null, drag: null, edits: new Map(), from: new Map(), G: null, valid: null, msg: "", tone: "", msgT: 0, beat: 0, spring: 0, springBad: false, claiming: false, subs: new Set(), grids: new Map() };
+  const MC = { on: false, sh: null, id: null, who: "", sel: null, lift: null, drag: null, edits: new Map(), from: new Map(), G: null, valid: null, msg: "", tone: "", msgT: 0, beat: 0, spring: 0, springBad: false, claiming: false, subs: new Set(), grids: new Map(), owed: new Set() };   // (owed: the sheets charms were moved between while it was on, MANUALHOP)
   const drawScale = () => (typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.975);
   const scaleOf = size => +(drawScale() * size).toFixed(5);
   const sizeOf = c => { const v = c && c.manual ? +c.manual.size : 0; return v >= MC_MIN && v <= MC_MAX ? v : 1; };
@@ -4960,7 +5152,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (W.id !== sh.sheetId || !W.dlg.open || again) { mcRelease(sh.sheetId); mcButton(); if (again) mcSay(again, "bad"); return; }
     stopHand(true); if (W.add) closeAdd();
     if (backFace()) turnPlate("front");   // (the tool works on the sheet as it lies, face up)
-    Object.assign(MC, { on: true, sh, id: sh.sheetId, who, sel: null, lift: null, drag: null, edits: new Map(), valid: null, msg: "", tone: "" });
+    Object.assign(MC, { on: true, sh, id: sh.sheetId, who, sel: null, lift: null, drag: null, edits: new Map(), valid: null, msg: "", tone: "", owed: new Set() });
     MC.from = new Map(sh.placements.map(p => [p.id, mcPoseOf(sh, p.id, null)]));
     for (const x of W.pieces) { const q = MC.from.get(x.id); if (q) mcShow(x, q); }   // (drawn as this sorter holds them)
     sh._manualHold = true;
@@ -4980,8 +5172,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function mcOff() {
     if (!MC.on) return Promise.resolve(false);
     const sh = MC.sh, id = MC.id, who = MC.who || whoAmI(), edits = new Map([...MC.edits].filter(([pid, q]) => mcChanged(MC.from.get(pid), q)));
+    // MANUALHOP (Paul, 19 Oct 2026): the sheets charms were dragged between meanwhile owe their files; they are written now, after the moves still saving
+    const owed = new Set(MC.owed); MC.owed = new Set();
     mcStop();
     if (W.dlg && W.dlg.open && W.id === id) { paintBase(); paintFx(); }   // (the charm that was in hand goes back onto the sheet's own layer)
+    if (owed.size || HOP.pending) { const p = hopIdle().then(() => mcSave(sh, edits, who, owed)); mcNotify(); return p; }
     if (!edits.size) {
       // nothing moved: the sheet is let go as it was, and a nest asked for meanwhile starts now
       delete sh._manualHold; if (sh._manualAsked) { delete sh._manualAsked; tryDo(() => startNest(sh)); }
@@ -5147,9 +5342,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
 
   /* ── off: the moves saved ── */
-  async function mcSave(sh, edits, who) {
+  async function mcSave(sh, edits, who, owed) {
     // a charm that left the sheet while Manual Control was on (dragged onto the next sheet: it was pinned there) is not this save's
     for (const id of [...edits.keys()]) if (!sh.placements.some(p => p.id === id)) edits.delete(id);
+    // (MANUALHOP: the sheets charms were dragged between are written as they stand, this one with its own moves first when it has any)
+    const rest = owed ? [...owed].filter(x => x !== sh) : [];
+    if (!edits.size && owed && owed.size) return writeOwed([...owed], sh);
+    const restAfter = () => (rest.length ? writeOwed(rest, null) : Promise.resolve(false));
     if (!edits.size) { delete sh._manualHold; if (sh._manualAsked) { delete sh._manualAsked; tryDo(() => startNest(sh)); } mcRelease(sh.sheetId); return false; }
     const name = sheetWord(sh.sheetId, sh.fileBase, sh), n = edits.size, ids = [...edits.keys()];
     const wait = stepOf("Waiting for the sheet to finish its current step"), check = stepOf(`Checking ${n === 1 ? "the charm" : `the ${n} charms`} moved by hand against the sheet`);
@@ -5157,7 +5356,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // another change of this window may still be running (a charm dragged onto the next sheet): the save waits its turn (the sheet stays held meanwhile)
     for (const until = Date.now() + 300000; W.flow && Date.now() < until;) await pause(300);
     const work = beginFlow({ state: "working", title: `Saving ${n === 1 ? "1 charm" : n + " charms"} moved by hand on ${name}`, steps: [wait, check, put, labels, read], note: "" });
-    if (!work) { delete sh._manualHold; if (sh._manualAsked) { delete sh._manualAsked; tryDo(() => startNest(sh)); } mcRelease(sh.sheetId); toast(`The charms moved by hand on ${name} were not saved: another change in this window never finished. Nothing on the sheet was changed.`, "bad", 9000); return false; }
+    if (!work) { delete sh._manualHold; if (sh._manualAsked) { delete sh._manualAsked; tryDo(() => startNest(sh)); } mcRelease(sh.sheetId); toast(`The charms moved by hand on ${name} were not saved: another change in this window never finished. Nothing on the sheet was changed.`, "bad", 9000); for (const x of rest) { delete x._manualHold; delete x._manualAsked; } return false; }
     if (!busy(sh)) work.steps.shift();
     const paint = () => { if (W.dlg && W.dlg.open && W.work === work) renderWork(); };
     const ui = () => W.dlg && W.dlg.open && W.id === sh.sheetId;
@@ -5210,6 +5409,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       work.note = (ok ? "Checked and saved: " : "Saved: ") + `the sheet's files and QR label were made again, and ${n === 1 ? "the charm stays" : "the charms stay"} where ${n === 1 ? "it was" : "they were"} put. ` + (sh.metal && window.CharmNestRose && CharmNestRose.owesLine && CharmNestRose.owesLine(sh) ? "Its green line is drawn by Cut Sheet, as before." : "");
       paint(); endFlow(work);
       if (window.RunCtl) tryDo(() => RunCtl.poke());
+      await restAfter();
       if (ui()) open(sh.sheetId, { keepWork: true, keepSet: false, glow: ids.map(id => (sh.charms.find(c => c.id === id) || {}).poolId).filter(Boolean) });
       return true;
     } catch (e) {
@@ -5224,6 +5424,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       letGo([sh]); mcRelease(sh.sheetId);
       work.state = "failed"; work.title = `The charms moved by hand on ${name} were not saved`; work.note = esc(String(e.message || e).replace(/^./, ch => ch.toUpperCase())) + "." + esc(back);
       paint(); endFlow(work);
+      await restAfter();
       if (ui()) open2(sh.sheetId);
       return false;
     }
@@ -5941,6 +6142,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   window.SheetWin.hopKit = {
     W, open: (id, o) => open(id, o), switchSheet, plateGrid, variantOf, toPlate, hitPt, whoAmI, needName, note: swNote, paintFx, tip,
     moveIn: (k, spots, target, who, o) => moveIn(k, spots, target, who, Object.assign({}, o || {}, { hop: true })),
+    // (MANUALHOP: the move made at once on the live sheets, its save in the background; hopState() for the tests)
+    moveNow: (k, spots, target, who, o) => moveNow(k, spots, target, who, o || {}), hopState: () => ({ pending: HOP.pending, saving: HOP.pending > 0, owed: MC.on ? [...MC.owed].map(sh => sh.sheetId) : [] }),
     word: sh => sheetWord(sh.sheetId, sh.fileBase, sh), ridOf, rowsOfOrder, busy, sheetWorking, sentToStation, flow: () => (W.flow ? W.flow.title : ""),
     cancelled: rid => { try { return Cancelled.has(String(rid)); } catch (_) { return false; } }, back: () => backFace(),
     // (with Manual Control on, the charm in hand is its selection, not the piece view's, and a charm it moved is drawn where it was put, not saved yet)

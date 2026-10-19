@@ -16,6 +16,9 @@
      · found: the charm flies on an arc into its spot on that sheet and lands with a ring; the move is the window's own verified,
        restart-safe moveIn (off this sheet, saved without it, onto the other pinned where it was put, saved, piece records, QR labels
        and sets, both sheets read back; the pool row says who moved it, which the order's timeline shows as "Moved to ...");
+       MANUALHOP (Paul, 19 Oct 2026): with the sheet window's moveNow on the page (always, beside its Manual Control) the move is made at once on
+       the live sheets and saved in the background (records, piece records, read-back; "Saving..." -> "Saved" by the plate); the two sheets'
+       files are written as they stand when Manual Control is turned off (hopNow below);
      · not found: the charm flies back to its spot and a small pop-up says "Not enough space on 10K Draft 3 — the charm stayed on
        10K Draft 2". Nothing is written.
    Guards (refused with a plain sentence, the charm flies back, nothing is written): another metal is never offered (10K to 10K, 14K to
@@ -70,15 +73,16 @@
     x: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>'
   };
 
+  // (MANUALHOP, 19 Oct 2026: a dock lets presses through to the plate, only its tab takes them: its card, still folding away after a drop, never covers the next charm)
   const CSS = `
-.shpDock{position:absolute;top:50%;z-index:4;display:flex;align-items:center;gap:0;transform:translateY(-50%);transition:transform .32s ${EASE},opacity .22s ease;-webkit-user-select:none;user-select:none;touch-action:none}
+.shpDock{position:absolute;top:50%;z-index:4;display:flex;align-items:center;gap:0;transform:translateY(-50%);transition:transform .32s ${EASE},opacity .22s ease;-webkit-user-select:none;user-select:none;touch-action:none;pointer-events:none}
 .shpDock[data-side=prev]{left:6px;flex-direction:row}
 .shpDock[data-side=next]{right:6px;flex-direction:row-reverse}
 .shpDock.in{animation:shpIn .34s ${EASE} backwards}
 .shpDock[data-side=next].in{animation-name:shpInR}
 @keyframes shpIn{from{opacity:0;transform:translate(-18px,-50%)}}
 @keyframes shpInR{from{opacity:0;transform:translate(18px,-50%)}}
-.shpTab{display:grid;justify-items:center;gap:4px;width:30px;padding:9px 0;border:1px solid var(--goldLine,#e2cf9f);border-radius:11px;background:color-mix(in srgb,var(--card) 92%,transparent);color:var(--ink70);box-shadow:0 6px 18px rgba(30,24,16,.12);cursor:pointer;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);transition:background-color .15s,border-color .15s,box-shadow .2s,width .3s ${EASE}}
+.shpTab{pointer-events:auto;display:grid;justify-items:center;gap:4px;width:30px;padding:9px 0;border:1px solid var(--goldLine,#e2cf9f);border-radius:11px;background:color-mix(in srgb,var(--card) 92%,transparent);color:var(--ink70);box-shadow:0 6px 18px rgba(30,24,16,.12);cursor:pointer;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);transition:background-color .15s,border-color .15s,box-shadow .2s,width .3s ${EASE}}
 .shpTab svg{width:14px;height:14px}
 .shpTab b{writing-mode:vertical-rl;transform:rotate(180deg);font:700 10px var(--mono);letter-spacing:.06em;color:var(--ink);white-space:nowrap}
 .shpTab i{width:8px;height:8px;border-radius:50%;background:var(--c)}
@@ -237,6 +241,7 @@
             const v = K.variantOf(z.c, ang, G.clearancePt); if (!v) continue;
             const r = S2.tryPlaceTight(grid, v, anchor.x, anchor.y, R);
             if (r && r.ok) { const cx = (r.x + v.solid.cx) / 2, cy = (r.y + v.solid.cy) / 2, d = Math.hypot(cx - anchor.x, cy - anchor.y) + angDist(ang, a0) * 0.02; if (!best || d < best.d) best = { v, x: r.x, y: r.y, cxPt: cx, cyPt: cy, d, how: R === 3 ? "drop" : "near" }; }
+            await breathe();   // (MANUALHOP: a breath between angles too: a charm's first turns are each made here, and 36 of them in one go held the page ~90 ms)
           }
           await breathe();
           if (best) break;
@@ -257,7 +262,7 @@
       if (i === 0) anchor = { x: best.cxPt, y: best.cyPt };
     }
     // every pose confirmed by the one fit test, against the sheet as it stands (CNManual's verifier when it is here)
-    for (const s of spots) { const f = fitOne(target, s.c, { cxPt: s.cxPt, cyPt: s.cyPt, angle: s.angle }, G); if (!f.ok) return null; }
+    for (const s of spots) { const f = fitOne(target, s.c, { cxPt: s.cxPt, cyPt: s.cyPt, angle: s.angle }, G); if (!f.ok) return null; await breathe(); }
     return spots;
   }
 
@@ -508,6 +513,22 @@
     const r = Sv().tryPlaceTight(grid, v, pt.x, pt.y, 3), ok = !!(r && r.ok);
     const spot = ok ? { c: z.c, cxPt: (r.x + v.solid.cx) / 2, cyPt: (r.y + v.solid.cy) / 2, angle: a0 } : { c: z.c, cxPt: pt.x, cyPt: pt.y, angle: a0 };
     dk.ghost = { ok, spots: [spot] }; fillDock(dk);
+    warm(d, dk, G, spot);
+  }
+  /** MANUALHOP (Paul, 19 Oct 2026): while the hand waits over the open view, what the drop will need is made in idle slices (the held charm's turns,
+   *  and the fit test's grid of that sheet, kept by its layout), so letting go does not make them all at once. */
+  function warm(d, dk, G, spot) {
+    if (d.warmed === dk) return; d.warmed = dk;
+    const K = kit(), z = d.unit.pieces[0], todo = [...new Set(G.angles.map(norm))];
+    const idle = f => (window.requestIdleCallback ? requestIdleCallback(f, { timeout: 120 }) : setTimeout(() => f({ timeRemaining: () => 8 }), 16));
+    let fitted = false;
+    const step = dl => {
+      if (H.drag !== d || d.hot !== dk) return;
+      if (!fitted) { fitted = true; tryDo(() => fitOne(dk.sh, z.c, { cxPt: spot.cxPt, cyPt: spot.cyPt, angle: spot.angle })); return idle(step); }
+      while (todo.length && dl.timeRemaining() > 3) tryDo(() => K.variantOf(z.c, todo.shift(), G.clearancePt));
+      if (todo.length) idle(step);
+    };
+    idle(step);
   }
   function stopDrag(d) {
     const K = kit(); cancelAnimationFrame(d.raf); clearTimeout(d.peekT);
@@ -534,7 +555,7 @@
     L.el.remove(); d.lift = null;
   }
   /** The copy flies on an arc into its spot on the other sheet's view, turning to the angle it was given, and lands. */
-  async function flyInto(L, from, to, rotTo, delay) {
+  async function flyInto(L, from, to, rotTo, delay, ms) {
     if (!L) return;
     if (reduced() || !L.el.animate) { L.el.remove(); return; }
     const dx = to.x - from.x, dy = to.y - from.y, bend = Math.min(120, 36 + Math.hypot(dx, dy) * .16), s1 = to.kc / from.kc;
@@ -543,7 +564,7 @@
       { transform: tf(L, from.x + dx * .42, from.y + dy * .42 - bend, (from.rot + rotTo) / 2, (from.s + s1) / 1.7, 1), opacity: 1, offset: .42 },
       { transform: tf(L, to.x, to.y - 2, rotTo, s1 * 1.14, 1), opacity: 1, offset: .86 },
       { transform: tf(L, to.x, to.y, rotTo, s1, 1), opacity: 0 }
-    ], { duration: 760, delay: delay || 0, easing: "cubic-bezier(.5,.05,.3,1)", fill: "forwards" }).finished.catch(() => {});
+    ], { duration: ms || 760, delay: delay || 0, easing: "cubic-bezier(.5,.05,.3,1)", fill: "forwards" }).finished.catch(() => {});
     L.el.remove();
   }
   async function drop(d) {
@@ -594,6 +615,7 @@
       const title = u.pieces.length === 1 ? `Not enough space on ${tName} — the charm stayed on ${sName}` : `Not enough space on ${tName} — the ${u.pieces.length} pieces of order ${u.rid} stayed on ${sName}`;
       return refuse(title, u.pieces.length === 1 ? "The charm could not be moved to that sheet. Nothing was changed." : "An order's pieces on a sheet move together. Nothing was changed.");
     }
+    if (K.moveNow) return hopNow(d, dk, u, spots, who, from, L, refuse);
     // found: it flies into its spot, its order's other pieces after it from where they lie; the view keeps them drawn there while the sheets save.
     // Meanwhile (not after: the flight never waits on the network) the cloud is asked whether another computer changed these pieces or sheets
     const checking = cloudCheck(u, src, target);
@@ -629,6 +651,35 @@
     }
     popup((H.docks[dk.side] || dk).el, err ? `Not moved: ${err.message}` : "Not moved: another change is still running", `${u.pieces.length === 1 ? "The charm" : "Its pieces"} stayed on ${sName}.`);
     return false;
+  }
+  /* MANUALHOP (Paul, 19 Oct 2026: "When I moved the charm from one sheet to another, it took a very long time, and it froze ... This needs to be a near
+     instantaneous process"). Root cause of the slowness: the drop awaited the cloud check, then moveIn, which nested, wrote, labelled and read back both sheets
+     one after the other before the hand was let go (10 to 20 s, the window held by its steps panel). Now the sheet window's moveNow makes the move on the live
+     sheets at once (the guards first: a refusal flies the charm back and says why, nothing changed), the hand is free in the same frame, and the copies finish
+     a short flight into the open view while the save runs in the background (the cloud check included; a save that fails puts the pieces back and says so). */
+  const FLY_NOW = 420;
+  function hopNow(d, dk, u, spots, who, from, L, refuse) {
+    const K = kit(), src = d.pg, target = dk.sh, sName = word(src);
+    const k = { rid: u.rid, pieces: u.pieces.map(z => ({ c: z.c, src, placed: z.placed })), srcs: new Set([src]) };
+    // where each copy flies, read before the sheets change (the open view keeps its scale), and where the order's other pieces lie on this plate
+    const tos = spots.map(s => dockAtPose(dk, s));
+    const lying = spots.map(s => { const z = u.pieces.find(q => q.c === s.c); return z && z.p && K.W.id === d.sheetId ? { z, a: plateAt(K, z.p) } : null; });
+    const failed = why => { const dk2 = H.docks[dk.side]; popup(dk2 && dk2.sh === target ? dk2.el : K.W.el.plateBox, `Not moved: ${String(why || "it could not be saved").replace(/\.$/, "")}.`, `${u.pieces.length === 1 ? "The charm went" : "Its pieces went"} back to ${sName}.`); };
+    let r; try { r = K.moveNow(k, spots.map(s => ({ c: s.c, src, placed: s.placed, cxPt: s.cxPt, cyPt: s.cyPt, angle: s.angle })), target, who, { guard: sheetRefusal, check: () => cloudCheck(u, src, target), failed }); }
+    catch (e) { console.warn("sheet hop: move", e); r = { ok: false, why: e.message || "it could not be moved" }; }
+    if (!r || !r.ok) return refuse(`Not moved: ${String((r && r.why) || "it could not be moved").replace(/\.$/, "")}.`, `${u.pieces.length === 1 ? "The charm" : "Its pieces"} stayed on ${sName}. Nothing was changed.`);
+    // on B now: the hand is free, the dock answers, the copies land
+    H.busy = null; dk.ghost = null; fillDock(dk);
+    dk.el.classList.remove("got"); void dk.el.offsetWidth; dk.el.classList.add("got");
+    if (window.Motion && Motion.arrive && !reduced()) tryDo(() => Motion.arrive(dk.el.querySelector(".shpCard"), { plus: "+" + spots.length, tone: "ok" }));
+    const flights = [];
+    if (L) { flights.push(flyInto(L, from, tos[0], spots[0].angle, 0, FLY_NOW)); if (d.lift === L) d.lift = null; }
+    spots.slice(1).forEach((s, i) => { const q = lying[i + 1]; if (!q) return; const Lm = makeLift(K, q.z, 0); Lm.place(q.a.x, q.a.y, +q.z.p.angle || 0, 1); flights.push(flyInto(Lm, { x: q.a.x, y: q.a.y, rot: +q.z.p.angle || 0, s: 1, kc: q.a.kc }, tos[i + 1], s.angle, 60 + i * 60, FLY_NOW)); });
+    endHold(); paintPlateFx();
+    Promise.all(flights).then(() => { if (!H.drag && !H.busy) { setOpen(false); refresh(true); } });
+    const anchor = (H.docks[dk.side] && H.docks[dk.side].el) || K.W.el.plateBox;
+    K.note(anchor, { text: `Order ${u.rid}: ${u.pieces.length === 1 ? "the charm" : u.pieces.length + " pieces"} moved to ${word(target)}`, tone: "ok", actions: [{ label: "Show it", fn: () => K.switchSheet(target.sheetId, { select: spots[0].c.poolId }) }] });
+    return true;
   }
   /** The two saved records and the pieces' records, read now: "" when they still say what this screen holds, else what changed. */
   async function cloudCheck(u, src, target) {

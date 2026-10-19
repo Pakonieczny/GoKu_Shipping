@@ -194,7 +194,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   }
   const shownAt = poolId => page.evaluate(id => { const x = SheetWin.hopKit.W.byPool.get(id); return x ? { x: x.p.cxPt, y: x.p.cyPt } : null; }, poolId);
   const recAt = (sheetId, poolId) => { const r = rec(sheetId), c = (r.charms || []).find(z => z.poolId === poolId), p = c && (r.placements || []).find(z => z.id === c.id); return p ? { x: p.cxPt, y: p.cyPt, manual: c.manual || null } : null; };
-  const settled = () => until(() => page.evaluate(() => { const s = SheetHop.state(); const W = SheetWin.hopKit.W; return !s.busy && !s.dragging && !W.flow && !W.hop && !document.querySelector('.shpLift'); }), 60000, 'the move settles');
+  const settled = () => until(() => page.evaluate(() => { const s = SheetHop.state(); const K = SheetWin.hopKit, W = K.W; return !s.busy && !s.dragging && !W.flow && !W.hop && !document.querySelector('.shpLift') && !(K.hopState && K.hopState().pending); }), 60000, 'the move settles');   // (MANUALHOP: and its save in the background)
   const popText = () => page.evaluate(() => { const p = document.querySelector('.shpPop:not(.out)'); return p ? p.textContent : ''; });
   const closePops = () => page.evaluate(() => { for (const n of document.querySelectorAll('.shpPop, .mNote')) n.remove(); SheetHop._H.pop = null; });
   /** each piece on exactly one saved record, and the live sheets say the same */
@@ -355,12 +355,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       await settled(); await closePops();
       assert.equal(writes(), w1);
       // the green line, through the hand, from 10K Draft 3 to 10K Draft 4
-      await openSheet('k10-3'); await manual(true);
+      // (MANUALHOP, 19 Oct 2026: leaving 10K Draft 2 ends its Manual Control, and the sheets charms were dragged between are written as they stand then: the count starts after)
+      await openSheet('k10-3'); await until(() => page.evaluate(() => !SheetWin.hopKit.W.flow), 60000, 'the sheets written as they stand'); await manual(true); const w2 = writes();
       const p = idOf(P, 1);
       await carry(p, 'next', null);
       await until(popText, 10000, 'the pop-up'); assert(/10K (Sheet|Draft) 4 has its green line cut/.test(await popText()), await popText());   // (a cut sheet keeps the number its file carries: charm-nest-sheet-name.js)
       await settled(); await closePops();
-      assert.equal(writes(), w1);
+      assert.equal(writes(), w2, 'nothing written for the green line');
       pass('5 · refused with a plain sentence, the charm flies back, nothing written: an order on a third sheet (dim dock says why), another computer held it meanwhile, nesting, green line cut or drawn, in a set, laser cut');
     } catch (e) { fail('5 · guards', e); }
     await closePops();
@@ -442,12 +443,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       // R40 hops, and Manual Control is turned off while that move is writing: the save waits its turn, then saves S41 alone (Q left the sheet)
       await page.evaluate(() => { window.__flows = []; const W = SheetWin.hopKit.W; let last = ''; window.__fl = setInterval(() => { const t = W.flow ? W.flow.title : ''; if (t !== last) { window.__flows.push(t); last = t; } }, 15); });
       await carry(o40, 'next', cell(2, 1));
-      await until(() => page.evaluate(() => /^Moving order/.test(SheetWin.hopKit.W.flow ? SheetWin.hopKit.W.flow.title : '')), 20000, "the hop's move is writing");
+      // (MANUALHOP, 19 Oct 2026: a hop writes no steps panel; its save runs in the background, and Manual Control turned off meanwhile waits for it)
+      const pendingAtOff = await page.evaluate(() => SheetWin.hopKit.hopState().pending);
       await page.click('.sheetWin [data-r=manual]');
       await until(async () => !(await mcOn()), 5000, 'Manual Control off');
-      await until(() => page.evaluate(() => { const W = SheetWin.hopKit.W, w = W.work; return !W.flow && !!w && /moved by hand/.test(w.title) && w.state !== 'working'; }), 120000, 'its save ended');
+      await until(() => page.evaluate(() => { const W = SheetWin.hopKit.W, w = W.work; return !W.flow && (window.__flows || []).filter(Boolean).length >= 2 && !!w && w.state !== 'working'; }), 180000, 'its saves ended');
       const flows = await page.evaluate(() => { clearInterval(window.__fl); return window.__flows.filter(Boolean); });
-      assert(flows.length === 2 && /^Moving order 4180000040 to 10K Draft 3/.test(flows[0]) && /^Saving 1 charm moved by hand on 10K Draft 2/.test(flows[1]), 'the save waited for the hop, then saved the one charm that stayed: ' + JSON.stringify(flows));
+      assert(flows.length === 2 && /^Saving 1 charm moved by hand on 10K Draft 2/.test(flows[0]) && /^Writing the sheets? the charms were moved between/.test(flows[1]), 'the save waited for the hop (pending when Manual Control went off: ' + pendingAtOff + '), saved the one charm that stayed, then wrote the sheet it went to as it stands: ' + JSON.stringify(flows));
       const work = await page.evaluate(() => { const w = SheetWin.hopKit.W.work; return { state: w.state, title: w.title, note: w.note }; });
       assert.equal(work.state, 'done', JSON.stringify(work));
       await settled(); await shot('9-saved');
