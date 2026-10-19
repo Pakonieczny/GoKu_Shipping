@@ -86,9 +86,11 @@ try {
     }
     assert.deepEqual(addCalls, []);
   });
-  check('Open sheet, History and View designs act on the live original row identity', () => {
-    const n = get(gf); n.querySelector('[data-cu-sheet]').click(); n.querySelector('[data-cu-history]').click(); n.querySelector('[data-cu-designs]').click();
-    assert.deepEqual(calls, [['sheet', gf.key], ['timeline', gf.key], ['designs', gf.key]]);
+  check('History and View designs act on the live original row identity (no Open sheet button)', () => {
+    // NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): the Review row has no "Open sheet" button any more; History and View designs stay.
+    const n = get(gf); assert.equal(n.querySelector('[data-cu-sheet]'), null, 'no Open sheet button on the Review row');
+    n.querySelector('[data-cu-history]').click(); n.querySelector('[data-cu-designs]').click();
+    assert.deepEqual(calls, [['timeline', gf.key], ['designs', gf.key]]);
   });
   check('the two-segment switch and minimal order search occupy the existing toolbar', () => {
     assert.equal(d.querySelectorAll('#reviewView .ordBar').length, 1); assert.equal(d.querySelectorAll('#reviewView .rvSeg').length, 1);
@@ -151,8 +153,9 @@ try {
     w.B.review.items = w.B.review.items.filter(it => !it.rows?.includes(gf));
     const before = JSON.stringify(gf); mode('open'); const n = get(gf); assert(n, 'the unproven partial is still visible in Open');
     assert.equal(n.querySelectorAll('.seal').length, 0); assert(!n.querySelector('[data-cu-print],[data-cu-complete],[data-cu-send]'), 'already pooled copies do not offer another hand completion or send');
-    const start = calls.length; n.querySelector('[data-cu-sheet]').click(); n.querySelector('[data-cu-history]').click();
-    assert.deepEqual(calls.slice(start), [['sheet', gf.key], ['timeline', gf.key]]);
+    // NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): no Open sheet button on the Review row; History is the remaining access.
+    const start = calls.length; assert.equal(n.querySelector('[data-cu-sheet]'), null, 'no Open sheet button on the Review row'); n.querySelector('[data-cu-history]').click();
+    assert.deepEqual(calls.slice(start), [['timeline', gf.key]]);
     assert.equal(R.isDecided(gf), false); assert.equal(R.customItemFor(gf.key).record, null);
     mode('done'); assert(!ids().includes(gf.order.receiptId), 'without a send record it is not under Completed');
     assert.equal(JSON.stringify(gf), before); assert.deepEqual(addCalls, []); decisions.set(gf.key, original);

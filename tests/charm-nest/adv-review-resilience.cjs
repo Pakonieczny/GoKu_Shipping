@@ -45,7 +45,7 @@ const CARD = rid => `#reviewView [data-mkey="ord:rvm:${rid}"]`;
   const step = async (id, title, fn) => {
     const t0 = Date.now();
     try { await fn(); results.push({ id, title, ok: true, ms: Date.now() - t0 }); }
-    catch (e) { results.push({ id, title, ok: false, why: String(e && e.message || e).split('\n').slice(0, 3).join(' | ') }); }
+    catch (e) { results.push({ id, title, ok: false, why: String(e && e.message || e).split('\n').slice(0, 25).join(' | ') }); }
   };
   try {
     await W.addOrders(w, ['matched', 'alone']);
@@ -91,10 +91,14 @@ const CARD = rid => `#reviewView [data-mkey="ord:rvm:${rid}"]`;
     await W.reboot(w);
     const sh = await W.seedSheet(w, { id: 'sh-rs1', orders: ['sheeted', 'mate'] });
     const S1 = ORDERS.sheeted.rid, S2 = ORDERS.mate.rid;
-    // (the card's Mark OK button, as a locator: the Review list redraws under a press, so a held element handle would be stale)
+    // (the card's Release Hold button, as a locator: the Review list redraws under a press, so a held element handle would be stale)
+    // NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): there is no Mark OK button any more (neither the row's [data-rv-markok] nor the card's [data-a="markok"]);
+    // Release Hold ([data-rel-hold], CharmNestReviewMark.resolve how "other") is how the order leaves Review, so steps 3, 4 and 6 press it instead.
     const card = async rid => {
       await page.evaluate(() => { CN.setMode('review'); const v = Review.view(); v.cseg = 'open'; v.filter = null; v.q = ''; Review.render(); });
-      const sel = CARD(rid) + ' [data-rv-markok], ' + CARD(rid) + ' [data-a="markok"]';
+      const gone = await page.$$(CARD(rid) + ' [data-rv-markok], ' + CARD(rid) + ' [data-a="markok"]');
+      assert.equal(gone.length, 0, 'no Mark OK button on the card (NOMARKOK)');
+      const sel = CARD(rid) + ' [data-rel-hold]';
       return (await until(() => page.$(sel), 6000)) ? page.locator(sel).first() : null;
     };
     const mark = async rid => { const r = await page.evaluate(rid => CharmNestReviewMark.mark(rid, { by: 'Name One' }), rid); assert(r.ok, 'marked: ' + J(r)); await until(() => rec(rid)); };
@@ -103,10 +107,12 @@ const CARD = rid => `#reviewView [data-mkey="ord:rvm:${rid}"]`;
     assert(await held(sh.id), 'the sheet is held by the order in Review (control)');
 
     await step('3', 'Mark OK with no connection: still in Review, the sheet still held, one toast; works once back online', async () => {
-      const b = await card(S1); assert(b, 'the order has its Mark OK button');
+      const b = await card(S1); assert(b, 'the order has its Release Hold button');
+      console.log('DBG', await page.evaluate(sel => [...document.querySelectorAll(sel)].map(e => { const r = e.getBoundingClientRect(); return e.outerHTML.slice(0, 600) + ' RECT ' + JSON.stringify(r) + ' vis ' + getComputedStyle(e).visibility + ' disp ' + getComputedStyle(e).display + ' card ' + (e.closest('[data-mkey]')||{}).outerHTML.slice(0, 3000); }), '#reviewView [data-mkey="ord:rvm:' + S1 + '"] [data-rel-hold]'));   // NOMARKOK (Paul, 19 Oct 2026): Release Hold, not Mark OK
       await ctx.setOffline(true);
       await b.click();
-      const t = await until(async () => { const l = (await toasts()).filter(x => /not saved/i.test(x)); return l.length ? l : null; }, 8000);
+      // NOMARKOK (Paul, 19 Oct 2026): Release Hold's own toast says "Not released: ..." (Mark OK's said "Not saved: ...")
+      const t = await until(async () => { const l = (await toasts()).filter(x => /not saved|not released/i.test(x)); return l.length ? l : null; }, 8000);
       assert(t && t.length === 1, 'one toast says it was not saved: ' + J(await toasts()));
       assert(await marked(S1), 'the page still has the order in Review');
       assert(await held(sh.id), 'and the sheet is still held');
@@ -122,11 +128,11 @@ const CARD = rid => `#reviewView [data-mkey="ord:rvm:${rid}"]`;
     await step('4', 'Mark OK saved but its answer lost: the page says "not saved", then agrees with the cloud (resolved) by itself; nothing more is written', async () => {
       await page.evaluate(rid => CharmNestReviewMark.mark(rid, { by: 'Name One' }), S1);   // (a new cycle)
       await until(async () => rec(S1).review.state === 'open' && (await held(sh.id)));
-      const b = await card(S1); assert(b, 'Mark OK is there');
+      const b = await card(S1); assert(b, 'Release Hold is there');   // NOMARKOK (Paul, 19 Oct 2026)
       const n0 = calls('reviewMarkPut');
       mode = 'lose';
       await b.click();
-      await until(async () => (await toasts()).some(x => /not saved/i.test(x)), 8000);
+      await until(async () => (await toasts()).some(x => /not saved|not released/i.test(x)), 8000);
       const cloud = rec(S1).review; assert.equal(cloud.state, 'done', 'the cloud did resolve it: ' + J(cloud));
       // (the page first rolls back to "in Review", having heard nothing; the Review feed then brings the cloud's answer within seconds: no second press is needed)
       assert(await until(async () => !(await marked(S1)), 10000), 'the page agrees with the cloud: resolved');
@@ -162,7 +168,7 @@ const CARD = rid => `#reviewView [data-mkey="ord:rvm:${rid}"]`;
       assert.equal(rec(S1).review.state, 'open');
       // (b) the cloud got it, the page died before hearing: after the reload the order is resolved
       const b2 = await (async () => { await W.addOrders(w, ['sheeted', 'mate'], { loadMaps: true }); return card(S1); })();
-      assert(b2, 'Mark OK is on the card again');
+      assert(b2, 'Release Hold is on the card again');   // NOMARKOK (Paul, 19 Oct 2026)
       mode = 'stallAfter'; await b2.click(); await until(() => rec(S1).review.state === 'done', 8000); await sleep(200);
       await W.reboot(w);
       await page.evaluate(() => { CN.setMode('orders'); });

@@ -91,9 +91,11 @@ async function main() {
       const model = JSON.parse(seal.querySelector('svg').dataset.sealModel); assert.equal(model.by, rec.by); assert.equal(model.at, rec.at); assert.equal(model.action, 'SENT TO SHEET');
       assert.doesNotMatch(seal.querySelector('svg').textContent, /paul|Historic SS signer|Different current viewer|COMPLETE|QR LABEL/);
       assert(!card.querySelector('[data-cu-print],[data-cu-complete],[data-cu-send]'), 'recovered decisions cannot ask to approve again or claim completion');
-      card.querySelector('[data-cu-sheet]').click(); card.querySelector('[data-cu-history]').click();
+      // NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): the Review row has no "Open sheet" button any more; History stays.
+      assert.equal(card.querySelector('[data-cu-sheet]'), null, 'no Open sheet button on the Review row');
+      card.querySelector('[data-cu-history]').click();
     }
-    assert.deepEqual(opens, evidence.flatMap(rec => [[rec.line, 'sheet'], [rec.line, 'timeline']]));
+    assert.deepEqual(opens, evidence.flatMap(rec => [[rec.line, 'timeline']]));
     assert.equal(d.querySelector('[data-cseg="done"] b').textContent, '2', 'one Completed count'); assert.equal(d.querySelector('[data-cseg="sent"]'), null, 'no Decided segment');
     mode('open'); assert.deepEqual(shown(), [unknown.rid], 'unproven metadata stays open');
     mode('done'); assert(!shown().includes(unknown.rid), 'unproven metadata is not listed as sent or completed');
