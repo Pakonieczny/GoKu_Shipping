@@ -1622,6 +1622,10 @@ const Orders = window.Orders = (() => {
       row.problems = row.spec.problems.slice(); if (row.spec.noDesign) row.state = row.state === "pulled" ? "noDesign" : row.state;
       // a line held for a question it no longer raises (its option was read again, the library gained its design: DISCREAD) is a line to make up again; its pieces, if any, are never touched
       if (O.questionGone && O.questionGone(row, prev)) { row.state = "pulled"; row.reason = null; delete row.poolTry; }
+      // FALSEHOLD (Paul, 19 Oct 2026, orders 4207131438 / 4204710975): a line built from a run's record (its stored reason a question: "option … not mapped") that reads clean now is not held for it
+      // either, as the order window already reads it (specOf). A person's hold, pieces made and any other reason are left exactly as they are (staleQuestionHold).
+      // (only an OPTION question: a record keeps the line's options, not the buyer's note or messages, so a question about those is never let go from a record)
+      else if (row.fromRecord && !prev && /^(?:Options:\s*)?option "/i.test(String(row.reason || "")) && O.staleQuestionHold && O.staleQuestionHold(row)) { row.state = "pulled"; row.reason = null; }
       // a line that read as chain only or as completed by hand, and no longer does (the library has since given its SKU a
       // design, its completion was taken back), is a line to cut again: it used to stay "no design" for good
       // (ADV-SPECIALS 15 Oct 2026: only when it no longer reads as no-design; a chain-only or hand-completed line read again, as every reading does, went back to "pulled" at each one: the Orders list showed it as pulled and every intake took it up)
@@ -1663,6 +1667,11 @@ const Orders = window.Orders = (() => {
      answer is read at once, and the Review row says what is happening: a spinner while it is asked, one plain line when it could not be. */
   const TABLES_LS = "cn.listingSkus.v1", TABLES_ASK_MS = 7 * 86400000, TABLES_KEEP_MS = 14 * 86400000, TABLES_CHUNK = 6, tableTry = new Map(), tableNote = new Map();   // (listing id → { until, n }: not asked again before `until`; → { busy } while asked, { why } when it could not be)
   let tableTimer = 0, tableBusy = false, tablesRead = false, tableRetryTimer = 0;
+  /* FALSEHOLD (Paul, 19 Oct 2026, order 4207131438): a line whose transaction SKU names a design while the table the page holds says ONE other SKU for every choice of the listing (spec.staleTable,
+     charm-nest-orders.js staleShared) shows the table is stale: Etsy's inventory changed after it was read. The line is read without it (nothing is asked for it), and the listing's table is asked for
+     again, ONCE per page, whatever its age (refreshIds: the cloud asks Etsy again for a stored table older than ten minutes), so every other line of the listing reads the new SKUs too. */
+  const tableRefreshed = new Set();
+  const staleOf = r => { const st = r && r.spec && r.spec.staleTable, id = r && r.line && r.line.listingId ? String(r.line.listingId) : ""; return st && id && !tableRefreshed.has(id) && r.state !== "gone" && r.state !== "committed" ? id : ""; };
   function tablesLoad() {
     if (tablesRead) return; tablesRead = true;
     try {
@@ -1724,12 +1733,13 @@ const Orders = window.Orders = (() => {
     if (tableBusy || !S.cloud.ok) return;
     const now = Date.now(), want = new Map();
     for (const r of rowsOf()) {
-      if (!needsTable(r)) continue;
+      const stale = staleOf(r);   // (FALSEHOLD: a stale one-SKU table is asked for again once, whatever its age)
+      if (!needsTable(r) && !stale) continue;
       // (a table the page already holds is asked for again, once, only when a line needs Etsy's value names and the table has none: the cloud answers from its cache or from Etsy, within the day's caps)
       const id = String(r.line.listingId), have = B.maps.listingSkus[id], t = tableTry.get(id), names = needsNames(r) && !!have && Array.isArray(have.products) && !have.names;
-      if ((have && now - (+have.at || 0) < TABLES_ASK_MS && !names) || (t && now < t.until)) continue;
-      const age = +(r.order && r.order.createTs) || (+r.arrivedAt ? r.arrivedAt / 1000 : 9e12), w = want.get(id) || { id, rank: 9, age: 9e13, names: false };
-      want.set(id, { id, rank: Math.min(w.rank, tableRank(r)), age: Math.min(w.age, age), names: w.names || names });
+      if ((have && now - (+have.at || 0) < TABLES_ASK_MS && !names && !stale) || (t && now < t.until)) continue;
+      const age = +(r.order && r.order.createTs) || (+r.arrivedAt ? r.arrivedAt / 1000 : 9e12), w = want.get(id) || { id, rank: 9, age: 9e13, names: false, refresh: false };
+      want.set(id, { id, rank: Math.min(w.rank, stale ? 0 : tableRank(r)), age: Math.min(w.age, age), names: w.names || names, refresh: w.refresh || !!stale });
     }
     const list = [...want.values()].sort((a, b) => a.rank - b.rank || a.age - b.age || (a.id < b.id ? -1 : 1));
     if (!list.length) return;
@@ -1739,8 +1749,9 @@ const Orders = window.Orders = (() => {
     let stop = null;   // the cloud's answer that ends the round: the day's (or the sandbox's) calls used, Etsy failing, or no answer at all
     try {
       for (let i = 0; i < list.length; i += TABLES_CHUNK) {
-        const part = list.slice(i, i + TABLES_CHUNK), ids = part.map(w => w.id), nm = part.filter(w => w.names).map(w => w.id);
-        const r = stop ? null : await api("charmNestLibrary", { op: "listingSkus", listingIds: ids, ...(nm.length ? { nameIds: nm } : {}) }, { quiet: true }).catch(() => null);
+        const part = list.slice(i, i + TABLES_CHUNK), ids = part.map(w => w.id), nm = part.filter(w => w.names).map(w => w.id), rf = part.filter(w => w.refresh).map(w => w.id);
+        if (!stop) for (const id of rf) tableRefreshed.add(id);   // (FALSEHOLD: once per page, answered or not)
+        const r = stop ? null : await api("charmNestLibrary", { op: "listingSkus", listingIds: ids, ...(nm.length ? { nameIds: nm } : {}), ...(rf.length ? { refreshIds: rf } : {}) }, { quiet: true }).catch(() => null);
         const pending = new Set((r && r.pending || []).map(String)), why = stop ? stop.why : r ? r.why : "net";
         for (const id of ids) {
           const t = tableTry.get(id), n = t ? t.n : 0, back = r && r.tables && r.tables[id], noNames = nm.includes(id) && !!back && Array.isArray(back.products) && !back.names;   // (asked for names and still none: not again before the backoff)

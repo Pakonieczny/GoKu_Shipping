@@ -185,9 +185,12 @@ function corpora() {
   for (const l of J('fixtures/font-option-lines.json').lines) lines.push(['E:' + l.rid + '/' + l.tid, { transactionId: l.tid, listingId: l.listingId, sku: l.sku, title: l.title, quantity: l.q, metalKey: 'gold', metalLabel: '', personalization: [], buyerMessage: '', variations: l.vars.map(v => ({ name: v[0], value: v[1] })) }, { receiptId: l.rid, updateTs: 1 }, false]);
   for (const g of W.gg) lines.push([g.key, g.line, g.order, false]);
   const rec = sp => ({ design: sp.designSku || null, src: sp.skuSource || null, problems: (sp.problems || []).map(p => p.kind + (p.optionName ? ':' + p.optionName : '')), pieces: sp.pieceCount });
+  // FALSEHOLD (Paul, 19 Oct 2026, orders 4207131438 / 4204710975): an option made only of a chain length ("Price: 20"-21"" on the longer-chain add-on) is no design question any more: the line waits on
+  // what it really lacks, its SKU in a master file, instead of "option not mapped". The one corpus line this changes, read as it is now:
+  const FALSEHOLD_NOW = { 'A:4171409060/5213382667': { design: 'LONGER_CHAIN_5682', src: 'transaction', problems: ['unmatchedSku'], pieces: 1 } };
   const changed = [];
   for (const [key, line, order, tables] of lines) {
-    const sp = O.interpretLine(order, JSON.parse(JSON.stringify(line)), c(tables ? OL.tables : null)), b = W.before[key]; ok(b, 'a before for ' + key);
+    const sp = O.interpretLine(order, JSON.parse(JSON.stringify(line)), c(tables ? OL.tables : null)), b = FALSEHOLD_NOW[key] || W.before[key]; ok(b, 'a before for ' + key);
     if (JSON.stringify(rec(sp)) !== JSON.stringify(b)) changed.push({ key, sku: line.sku, held: !!sp.formHold, why: sp.formHold && sp.formHold.reason, before: b.design });
   }
   ok(lines.length >= 560, 'the corpora: ' + lines.length + ' lines (411 of the Sep 17 snapshot, the 18 option-link, 118 count, 17 font lines, 5 Greek Goddess earrings)');

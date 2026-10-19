@@ -3381,7 +3381,8 @@ async function mapCounterparts(m) {
 async function op_listingSkus(b = {}) {
   const ids = Array.isArray(b.listingIds) ? b.listingIds : String(b.listingIds || b.listingId || "").split(",");
   const nameIds = Array.isArray(b.nameIds) ? b.nameIds.slice(0, 25) : [];   // (the listings a line needs Etsy's value names for: a table stored without them is asked again once)
-  return require("./_charmNestListingSkus").lookup(ids, { db, nameIds, sandbox: !!PREFIX, cacheOnly: b.cacheOnly === true || b.cacheOnly === "1", fetchInventory: id => require("./_etsyMailEtsy").getListingInventory(id) });
+  const refreshIds = Array.isArray(b.refreshIds) ? b.refreshIds.slice(0, 25) : [];   // (FALSEHOLD, 19 Oct 2026: the listings whose stored one-SKU table a line showed to be stale: asked of Etsy again when older than ten minutes)
+  return require("./_charmNestListingSkus").lookup(ids, { db, nameIds, refreshIds, sandbox: !!PREFIX, cacheOnly: b.cacheOnly === true || b.cacheOnly === "1", fetchInventory: id => require("./_etsyMailEtsy").getListingInventory(id) });
 }
 // the sandbox's own answer for a listing stands over the shared one's, field by field (its per-SKU answers join the shared ones)
 // (a listing's saved pairs of two designs, pairBySku, join the same way)
