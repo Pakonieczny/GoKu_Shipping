@@ -929,7 +929,7 @@ const LiveStrip = window.LiveStrip = (() => {
     const b = document.getElementById("railRecentBody");
     // newest first, and only drawn while the disclosure is open — it used to be a permanent band that clipped the newest line
     if (b && b.parentElement && b.parentElement.open) b.innerHTML = rows.length ? rows.slice().reverse().map(r => `<div><i>${fmtT(r.t)}</i><b>${esc(r.kind)}</b> ${esc(r.text).slice(0, 160)}</div>`).join("") : "<div>nothing yet</div>";
-    const n = Review.count(); const rb = document.getElementById("tabReviewN"); if (rb) rb.textContent = n ? String(n) : "";
+    const n = Review.openCount ? Review.openCount() : Review.count(); /* (RVCOUNT: the tab says what Open says) */ const rb = document.getElementById("tabReviewN"); if (rb) rb.textContent = n ? String(n) : "";
     const eb = document.getElementById("tabEngraveN"); if (eb) { const k = Engrave.pendingRows(); eb.textContent = k ? String(k) : ""; }
     if (window.Ladder) Ladder.now();
   }
@@ -14938,6 +14938,10 @@ const Review = window.Review = (() => {
   const items = () => B.review.items;
   const mine = it => !String(it.key || "").startsWith("eng:") && !(it.row && it.row.state === "gone");   // engraving is the Engraving tab's
   const isNotice = it => String(it.key || "").startsWith("held:");        // an order left open, not a decision to make
+  // (RVCOUNT, Paul 19 Oct 2026: "the Review total of 17 is wrong. This number should reflect the number of open/unresolved orders": the TAB's count (openCount) is Open's own, openParts below,
+  // the decisions AND the custom orders still waiting on a person; it skipped the waiting custom orders)
+  const openCount = () => { try { const o = openParts(); return o.all.length + o.clWait.length; } catch (_) { return 0; } };
+  // (what still waits for a DECISION: the engraving gate, the run's pending work and the give-up warning read this one; the tab shows openCount)
   const count = () => items().filter(it => mine(it) && !isNotice(it) && (!rowsOf(it).length || rowsOf(it).some(r=>!CustomSheet.decisionOf(r)))).length;
   /* Custom Orders (Paul, 25 Sep): every special line — custom charms and pieces, rework, chain only, add-ons, anything
      that is not a regular listing purchase (O.specialOf) — is grouped under one tab. A special line with questions is one
@@ -16484,6 +16488,20 @@ const Review = window.Review = (() => {
    *  listed under Completed as well, in the one list with the completed ones (Paul, 2 Oct: "one completed tab"). An order
    *  both completed by hand and sent is one card, the completed one with its buttons: it keeps the send as `alsoSent`
    *  (its seal and its words) and the sent card is marked `foldedInto` it, so the list shows the order once. */
+  /** What Open holds (RVCOUNT): the decisions (a shared question narrowed to its orders still waiting) and the custom orders that still wait on a person
+   *  (a line not on its way to the laser: no piece placed in the nesting queue, or its send under way). Open's chip and the Review tab's count are both its length. */
+  function openParts() {
+    const all = items().filter(it => mine(it) && !isNotice(it)).map(it => {
+      const group=rowsOf(it),open=group.filter(r=>!CustomSheet.decisionOf(r));
+      // A shared SKU/options question can cover several orders. A sent first order must not hide the controls of
+      // another order still waiting in that question while its next interpretation/sync is catching up.
+      return !group.length || open.length===group.length ? it : open.length ? {...it,rows:open,row:open[0]} : null;
+    }).filter(Boolean);
+    const decided = new Set(); for (const it of all) if (it.kind === "customOrder") for (const r of rowsOf(it)) decided.add(r.key);
+    const cl = customLists(decided);
+    const customWaits = it => rowsOf(it).some(r => CustomSheet.sending?.(r) || !(r.poolIds || []).length);
+    return { all, cl, customWaits, clWait: cl.open.filter(customWaits) };
+  }
   function customLists(decided) {
     const open = [], done = [], sent = [], recent = [], engraving = [], seen = new Set(), groups = new Map();
     const itemFor = (key, extra) => { const it = infoItems.get(key) || { kind: "customOrder", key, info: true, t: Date.now() }; Object.assign(it, extra); infoItems.set(key, it); seen.add(key); return it; };
@@ -16734,14 +16752,7 @@ const Review = window.Review = (() => {
     let oldScroll=v.querySelector(".egPane.scroll")?.scrollTop || 0;
     if(reviewFilter!==view){RV.limit=Math.max(40,RV.keep||0);reviewFilter=view;oldScroll=0;}
     RV.keep=0;
-    const all = items().filter(it => mine(it) && !isNotice(it)).map(it => {
-      const group=rowsOf(it),open=group.filter(r=>!CustomSheet.decisionOf(r));
-      // A shared SKU/options question can cover several orders. A sent first order must not hide the controls of
-      // another order still waiting in that question while its next interpretation/sync is catching up.
-      return !group.length || open.length===group.length ? it : open.length ? {...it,rows:open,row:open[0]} : null;
-    }).filter(Boolean);
-    const decided = new Set(); for (const it of all) if (it.kind === "customOrder") for (const r of rowsOf(it)) decided.add(r.key);
-    const cl = customLists(decided);
+    const { all, cl, customWaits, clWait } = openParts();   // (RVCOUNT: the very lists the tab's count is made of)
     // (no Changed and no Marked chip, RVRESOLVED, Paul 18 Oct 2026: their cards are in Open with the rest, NO_CHIP; a released order's card has none either)
     const ORDER = ["customOrder", "needResolution", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "heldOrder"];
     // a card that moves to a kind with no chip goes to its switch, and is said to be under it
@@ -16750,8 +16761,7 @@ const Review = window.Review = (() => {
     // tab"): one still waits on a person while a line of it is not on its way to the laser (no piece of it placed in the
     // nesting queue: it waits for its QR label, Complete Order or Send to Sheet, made by hand or from its own designs), or
     // while its send is under way: it stays in Open. One whose lines are all placed in the queue waits on nobody: Resolved.
-    const customWaits = it => rowsOf(it).some(r => CustomSheet.sending?.(r) || !(r.poolIds || []).length);
-    const clWait = cl.open.filter(customWaits), clLaid = cl.open.filter(it => !customWaits(it));
+    const clLaid = cl.open.filter(it => !customWaits(it));
     // Every tab uses the latest actual change, including a completion or reopen.
     // Resolved, for every filter, is one list: custom orders completed by hand (print again or reopen), orders sent to a
     // sheet (their decision, seal, sheet and history), custom orders that wait on nobody (clLaid), every order released to
@@ -16921,7 +16931,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, openCount, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */

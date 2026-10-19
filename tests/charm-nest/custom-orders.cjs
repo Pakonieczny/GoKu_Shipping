@@ -211,6 +211,10 @@ async function browserChecks() {
     const seg = await page.evaluate(() => ({ first: document.querySelector('#reviewView .ordBar').firstElementChild.className, b: [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim()), all: !!document.querySelector('#reviewView .egTab[data-k=""]'), n: Review.count() }));
     assert.equal(seg.first, 'rvSeg', 'the switch comes first in the bar'); assert.equal(seg.all, false, 'no Everything chip');
     const openAll = +seg.b[0].replace('Open', '');
+    // (RVCOUNT, Paul 19 Oct 2026: "the Review total of 17 is wrong. This number should reflect the number of open/unresolved orders": the tab reads what Open reads)
+    const tabN = await page.evaluate(() => { const rb = document.getElementById('tabReviewN'); if (window.LiveStrip && LiveStrip.now) LiveStrip.now(); return [rb ? rb.textContent : null, Review.openCount()]; });
+    assert.equal(tabN[1], openAll, 'Review.openCount() is Open\'s count: ' + JSON.stringify(tabN));
+    assert.equal(tabN[0], '' + openAll, 'the Review tab shows Open\'s count: ' + JSON.stringify(tabN) + ' vs ' + openAll);
     assert.deepEqual(seg.b, ['Open' + openAll, 'Resolved0']); assert(openAll >= 6, 'Open counts everything that waits: ' + JSON.stringify(seg));   // (the segment reads Resolved, RVRESOLVED: Paul, 18 Oct 2026)
     const barH = await page.evaluate(() => document.querySelector('#reviewView .ordBar').getBoundingClientRect().height);
     assert(barH < 40, 'the bar stays one line: ' + barH);
