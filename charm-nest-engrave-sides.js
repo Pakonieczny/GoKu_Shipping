@@ -114,6 +114,19 @@
     if (!sp || !pr || pr.earring || pr.glued || pr.legacy || !(pc >= 2) || pr.kind !== 'multi' || pc % q) return 0;
     const per = pc / q; return per >= 2 && per <= 24 ? per : 0;
   }
+  /** MOONSTARS (Paul, 19 Oct 2026, order 4203628477): the pieces of ONE unit of a counted line that are never engraved: a listing's profile with a COMPANION (charm-nest-orders.js PIECE_LISTINGS: the moon of every moon and
+   *  stars necklace, spec.pair.companion { noun, n }) makes the last n pieces of each necklace that companion, D(per-n+1)..D(per) (D3 for 1 moon and 2 stars; D3.2 for the second necklace). 0 for every other line. */
+  function blankPerUnit(row) {
+    const sp = row && row.spec, c = sp && sp.pair && sp.pair.companion, per = perUnitOf(row), n = c && typeof c === 'object' ? Math.floor(+c.n) : 0;
+    return n >= 1 && per > n ? n : 0;
+  }
+  /** The slots of those pieces (a Set, empty for every other line): they get NO engraving job (plan leaves them out) and their decision is "nothing to engrave" (summary: needed false, approved), so nothing waits on them. */
+  function blankSlots(row) {
+    const out = new Set(), n = blankPerUnit(row); if (!n) return out;
+    const per = perUnitOf(row), units = Math.max(1, Math.round(+(row.spec && row.spec.quantity) || +(row.line && row.line.quantity) || 1));
+    for (let u = 1; u <= units; u++) for (let d = per - n + 1; d <= per; d++) out.add('D' + d + (u > 1 ? '.' + u : ''));
+    return out;
+  }
   function discsOf(ctx, row) {
     const own = perUnitOf(row); if (own) return own;
     const P = pairLib(ctx); if (!P || !P.discsOf) return 0;
@@ -211,7 +224,8 @@
     const legacyDecided = !!plain && ['approved', 'written', 'skipped'].includes(plain.state) && !slotted.length && !(byUnit && distinct.length >= 2);
     const split = !legacyDecided && (distinct.length >= 2 || slotted.length > 0);
     if (!split) return { split: false, slots: [null], of: new Map(ids.map(id => [id, null])) };
-    const slots = [...new Set([...distinct, ...slotted.map(e => e.slot)])].sort((a, b) => order(a) - order(b));
+    const blank = blankSlots(row);   // (MOONSTARS: the moon of a moon and stars necklace is a piece of the line, its slot in `of`, but never a job: nothing is engraved on it)
+    const slots = [...new Set([...distinct, ...slotted.map(e => e.slot)])].filter(s => !blank.has(s)).sort((a, b) => order(a) - order(b));
     if ([...of.values()].some(s => !s)) slots.push(null);
     return byUnit ? { split: true, slots, of, byUnit: true } : { split: true, slots, of };
   }
@@ -292,6 +306,17 @@
     for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
     return out;
   }
+  /** MOONSTARS: the line's summary with the decision of every piece that is never engraved (blankSlots: the moon) said plainly, `pieces[poolId] = { needed: false, state: 'none', approved: true }`: the readiness check, the
+   *  release check and the run record read a piece's own decision first, so the moon waits on nothing and never takes the stars' decision. The summary of every other line is returned as it is. */
+  function withBlank(ctx, parent, out) {
+    if (!out || typeof out !== 'object') return out;
+    const blank = blankSlots(parent); if (!blank.size) return out;
+    const ids = (parent && Array.isArray(parent.poolIds) ? parent.poolIds : []).filter(id => blank.has(slotOfId(ctx, parent, id)));
+    if (!ids.length) return out;
+    const pieces = Object.assign({}, out.pieces || {});
+    for (const id of ids) if (!pieces[id]) pieces[id] = { needed: false, state: 'none', approved: true };
+    return Object.assign({}, out, { pieces });
+  }
   /** The line's row reads and writes its `engrave` through its slots. A write (a whole new record) reaches every slot. */
   function linkParent(ctx, parent, jobs) {
     const had = Object.getOwnPropertyDescriptor(parent, 'engrave');
@@ -301,7 +326,7 @@
     Object.defineProperty(parent, '_engraveLinked', { value: link, enumerable: false, configurable: true, writable: true });
     Object.defineProperty(parent, 'engrave', {
       enumerable: true, configurable: true,
-      get() { return summary(ctx, link.legacy, link.jobs); },
+      get() { return withBlank(ctx, parent, summary(ctx, link.legacy, link.jobs)); },
       set(v) { link.legacy = v; for (const j of link.jobs) j.engraveRec = v && typeof v === 'object' ? Object.assign({}, v) : v; }
     });
     return parent;
@@ -309,7 +334,7 @@
   /** Takes the line's row back to a plain record (the last slot is gone): its summary is written as data. */
   function unlinkParent(ctx, parent) {
     const link = parent._engraveLinked; if (!link) return parent;
-    const value = summary(ctx, link.legacy, link.jobs);
+    const value = withBlank(ctx, parent, summary(ctx, link.legacy, link.jobs));
     delete parent._engraveLinked;
     Object.defineProperty(parent, 'engrave', { value, writable: true, enumerable: true, configurable: true });
     return parent;
@@ -437,6 +462,15 @@
     }
     const pre = ids.map((id, k) => ({ poolId: id, n: copyOf(id) || k + 1, slot: slotOfId(ctx, row, id) || null }));
     const shp = shape(pre.map(x => x.slot)), of = pre.length, tagOf2 = shp.kind === 'disc' ? shp.per || of : of, multi = shp.multi || shp.kind === 'copy';
+    // (MOONSTARS: a line with a companion, the moon of each necklace: its pieces are "Star 1", "Star 2" (of the stars alone) and "Moon", which carries `blank`: nothing is engraved on it. Every other line: as it always was)
+    const blank = blankSlots(row);
+    if (blank.size) {
+      const cw = companionWord(row), starsOf = Math.max(1, (shp.per || of) - blankPerUnit(row));
+      return pre.map((x, k) => {
+        const i = slotInfo(x.slot), within = i ? (i.kind === 'disc' ? i.n : 1) : 1, b = !!x.slot && blank.has(x.slot), unit = i && (i.unit > 1 || multi) ? ' · set ' + i.unit : '';
+        return Object.assign({ poolId: x.poolId, n: x.n, unit: i ? i.unit : 1, within, slot: x.slot, index: k + 1, of, label: b ? cw + unit : x.slot ? nounWord(labelOf(x.slot, multi ? shp : null), row) : '', tag: b ? cw.toUpperCase() + unit.toUpperCase() : x.slot ? nounWord(tagOf(x.slot, starsOf, multi ? shp : null), row) : '' }, b ? { blank: true } : {});
+      });
+    }
     return pre.map((x, k) => {
       const i = slotInfo(x.slot), within = i ? (i.kind === 'ear' ? (i.side === 'L' ? 1 : 2) : i.kind === 'disc' ? i.n : 1) : 1;
       return { poolId: x.poolId, n: x.n, unit: i ? i.unit : 1, within, slot: x.slot, index: k + 1, of, label: x.slot ? labelOf(x.slot, multi ? shp : null) : '', tag: x.slot ? tagOf(x.slot, tagOf2, multi ? shp : null) : '' };
@@ -455,6 +489,9 @@
        slotWord(job, short) "Left ear" | "Disc 2" | "Small bar"   ·   pieceTag(job, of) "DISC 2 of 3" | "SMALL BAR · 16″"   (the one wording every list, card and message uses for a piece)
        nounOf(x) · nounWord(text, x)   (BARS, Paul 19 Oct 2026) the noun a line's pieces go by when its listing's profile names one ("bar": charm-nest-orders.js PIECE_LISTINGS, spec.pair.noun). The bars of such a line are cut as the
                             discs of a counted necklace are (slots D1..Dn, one job each), so slotWord / pieceTag / pieceRecord say "Bar 2 of 3" where a disc would say "Disc 2 of 3"; a line with no noun reads exactly as it did.
+       blankPerUnit(row) · blankSlots(row) · companionWord(x) · isBlankSlot(x, slot)   (MOONSTARS, Paul 19 Oct 2026) a profile with a COMPANION (spec.pair.companion: the moon of a moon and stars necklace) makes the
+                            last n pieces of each necklace that companion: they are pieces of the line (pool, sheet, slot D(n+1) in plan.of) but NEVER engraved: plan gives them no job, the line's summary says
+                            "nothing to engrave" for them (needed false, approved), pieceList calls them "Moon" (`blank`), the stars are counted alone ("Star 1 of 2").
      Derived, never stored, no arrays inside arrays. */
   const skuName = s => String(s == null ? '' : s).replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
   const lineOfAny = x => (x && x.row && typeof x.row === 'object' && !x.spec ? x.row : x) || null;
@@ -466,6 +503,9 @@
   const lengthOfWord = v => (v == null || v === '' ? null : String(v));
   // (BARS, Paul 19 Oct 2026) the noun a profiled listing's pieces go by ("bar"), else ''; a piece's words with "Disc" said as that noun
   const nounOf = x => { const sp = specOfAny(x), pr = sp && sp.pair, n = pr && typeof pr.noun === 'string' ? pr.noun.trim().toLowerCase() : ''; return /^[a-z]{2,12}$/.test(n) ? n : ''; };
+  // (MOONSTARS, Paul 19 Oct 2026) the word a line's companion piece goes by ("Moon": spec.pair.companion.noun), '' for a line with none; and whether a slot of x's line is that piece (blankSlots: never engraved)
+  const companionWord = x => { const sp = specOfAny(x), c = sp && sp.pair && sp.pair.companion, n = c && typeof c.noun === 'string' ? c.noun.trim().toLowerCase() : ''; return /^[a-z]{2,12}$/.test(n) ? n[0].toUpperCase() + n.slice(1) : ''; };
+  const isBlankSlot = (x, slot) => { const l = lineOfAny(x), row = l && l.parentRow ? l.parentRow : l; return !!slot && !!row && blankSlots(row).has(String(slot)); };
   const nounWord = (text, x) => { const n = nounOf(x); return n ? String(text == null ? '' : text).replace(/\bDisc\b/g, n[0].toUpperCase() + n.slice(1)).replace(/\bDISC\b/g, n.toUpperCase()).replace(/\bdisc\b/g, n) : text; };
   function setPieces(x) {
     const designs = setDesigns(x); if (!designs) return null;
@@ -512,7 +552,7 @@
     // (the place of the piece among the pieces of the line: Left 1, Right 2, Disc n, Piece n; a unit after the first counts on from the unit before it: Right of the 2nd pair is 4)
     const within = info ? (info.kind === 'ear' ? (info.side === 'L' ? 1 : 2) : info.n) : 1, perU = shp && shp.per ? shp.per : info && info.kind === 'ear' ? 2 : info && info.kind === 'disc' ? info.n : 1;
     const idx = !info ? 1 : info.kind === 'copy' ? info.n : info.unit > 1 ? (info.unit - 1) * perU + within : within;
-    const of = Math.max(1, Math.floor(+(o && o.of) || 0) || (job.row && job.row.parentRow && perUnitOf(job.row.parentRow)) || idx);
+    const of = Math.max(1, Math.floor(+(o && o.of) || 0) || (job.row && job.row.parentRow && (perUnitOf(job.row.parentRow) - blankPerUnit(job.row.parentRow))) || idx);   // (MOONSTARS: "Star 2 of 2": the moon is no piece of the stars' count)
     const lines = (Array.isArray(job.lines) ? job.lines : []).map(x => String(x).trim()).filter(Boolean), font = fontOf(job);
     const seals = [].concat(job.engravingSeals || [], (job.engraveRec && job.engraveRec.seals) || [], job.seals || []);
     const face = faceOf(job), lineKey = job.rowKey || parseKey(job.key).rowKey, withBack = !!(o && o.faces > 1);
@@ -538,5 +578,5 @@
     const shp = shape(list.map(j => j.slot || (j.row && j.row.slot) || null)), shpArg = shp.multi || shp.kind === 'copy' ? shp : null;   // (a line of one unit: no shape, the records it always gave)
     return list.map(j => pieceRecord(j, Object.assign({ of, faces: front ? per.get(j.slot || (j.row && j.row.slot) || '') : 1 }, shpArg ? { shape: shpArg } : {})));
   }
-  return { faceOf, isFront, jobKey, parseKey, labelOf, earOf, tagOf, copyOf, slotOfId, slotInfo, isSlot, isCopy, baseSlot, unitOf, sideOfSlot, slotRank, shape, unitsOfRow, unitOfId, unitShape, wordsForPieces, pieceList, mirrorOfId, pieceCharm, plan, idsOfSlot, sideRow, summary, linkParent, unlinkParent, perUnitOf, splitWords, wordsForDiscs, pieceRecord, pieceRecords, setDesigns, setPieces, setPieceOf, pieceName, lengthText, slotWord, pieceTag, nounOf, nounWord, skuName, STATE_ORDER, SLOT: SLOT };
+  return { faceOf, isFront, jobKey, parseKey, labelOf, earOf, tagOf, copyOf, slotOfId, slotInfo, isSlot, isCopy, baseSlot, unitOf, sideOfSlot, slotRank, shape, unitsOfRow, unitOfId, unitShape, wordsForPieces, pieceList, mirrorOfId, pieceCharm, plan, idsOfSlot, sideRow, summary, linkParent, unlinkParent, perUnitOf, splitWords, wordsForDiscs, pieceRecord, pieceRecords, setDesigns, setPieces, setPieceOf, pieceName, lengthText, slotWord, pieceTag, nounOf, nounWord, blankPerUnit, blankSlots, companionWord, isBlankSlot, skuName, STATE_ORDER, SLOT: SLOT };
 });

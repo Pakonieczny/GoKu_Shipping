@@ -44,7 +44,7 @@
   function subLabel(kind, i, n, o) {
     o = o || {};
     if (kind === 'pair') return (o.side === 'L' ? 'Left' : o.side === 'R' ? 'Right' : 'Piece') + (o.qty > 1 ? ` ×${o.qty}` : '');
-    const noun = o.noun === 'disc' ? 'Disc' : o.noun === 'bar' ? 'Bar' : 'Piece';   // (BARS, Paul 19 Oct 2026: a profiled listing's pieces are bars)
+    const noun = o.noun === 'disc' ? 'Disc' : o.noun === 'bar' ? 'Bar' : o.noun === 'star' ? 'Star' : 'Piece';   // (BARS, Paul 19 Oct 2026: a profiled listing's pieces are bars; MOONSTARS: stars)
     return `${noun} ${i + 1} of ${n}`;
   }
 

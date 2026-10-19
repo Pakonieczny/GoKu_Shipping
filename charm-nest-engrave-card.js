@@ -176,7 +176,8 @@
       if (groups.length) for (const g of groups) make(g.slot || null, g.jobs);
       else if (o.stage || (setup && setup.faces && setup.faces.length && (setup.source !== 'default' || (line.engrave && line.engrave.needed)))) {
         // (PIECES: a line of several pieces with no job yet is one card for each piece, as it will be once its jobs are made; a line of one piece: the one card it always had)
-        const S2 = Sides(), plist = S2 && S2.pieceList ? tryDo(() => S2.pieceList({}, line), []) : [], pslots = [...new Set((plist || []).map(p => p.slot))];
+        const S2 = Sides(), plist = S2 && S2.pieceList ? tryDo(() => S2.pieceList({}, line), []) : [], pslots = [...new Set((plist || []).filter(p => !p.blank).map(p => p.slot))];   // (MOONSTARS: the moon of a moon and stars necklace, `blank`, is never engraved: no card)
+        if (pslots.length === 1 && (plist || []).some(p => p.blank) && pslots[0]) make(pslots[0], []); else
         if (pslots.length > 1 && pslots.every(Boolean)) for (const sl of pslots) make(sl, []); else make(null, []);
       }
       relOfSet(out.slice(was));

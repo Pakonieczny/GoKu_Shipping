@@ -1876,7 +1876,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   const discWordOf = x => { const S = window.CharmNestEngraveSides, r = rowOf(x), n = S && S.nounOf && r ? tryDo(() => S.nounOf(r), "") : ""; return n ? n[0].toUpperCase() + n.slice(1) : "Disc"; };   // (BARS, Paul 19 Oct 2026: a bar listing's line says "Bar 2 of 3"; every other line says "Disc")
   // (a piece that is several charms says so after its copy: "2 charms, one piece · 18.3 × 13.8 mm", Paul 18 Oct 2026)
-  const copyText = x => { const q = sideOfPiece(x); if (q) return `${sideWord(q)} piece · `; const d = x.qty > 1 && discOfPiece(x), n = charmsIn(x); return (d ? `${discWordOf(x)} ${d.n} of ${d.of} · ` : x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : "") + (n > 1 ? `${charmsWord(n)} · ` : ""); };
+  // (MOONSTARS, Paul 19 Oct 2026: the companion piece of a moon and stars necklace, the moon, has no engraving job: it says "Moon", never "Copy 3 of 3"; charm-nest-engrave-sides.js pieceList `blank`)
+  const companionOfPiece = x => { const S = window.CharmNestEngraveSides, r = x && x.poolId ? rowOf(x) : null; if (!S || !S.pieceList || !S.companionWord || !r || !tryDo(() => S.companionWord(r.parentRow || r), "")) return ""; const p = tryDo(() => (S.pieceList(window.CharmNestEngraveSidesCtx || {}, r.parentRow || r) || []).find(q => q.poolId === x.poolId), null); return p && p.blank ? p.label : ""; };
+  const copyText = x => { const q = sideOfPiece(x); if (q) return `${sideWord(q)} piece · `; const cw = companionOfPiece(x); if (cw) return `${cw} · `; const d = x.qty > 1 && discOfPiece(x), n = charmsIn(x); return (d ? `${discWordOf(x)} ${d.n} of ${d.of} · ` : x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : "") + (n > 1 ? `${charmsWord(n)} · ` : ""); };
   const sideOfId = (rid, poolId) => { for (const g of groupsOf(rid)) { const part = g.pieces.find(q => q.key === poolId); if (part) return part.side; } return null; };
   const matchesQ = (x, q) => /^[\d\s#-]+$/.test(q) ? CharmNestOrders.orderMatches(x.rid,q) : `${x.rid} ${x.sku} ${x.name}`.toLowerCase().includes(q);
 

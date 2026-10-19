@@ -24,6 +24,8 @@
  *        engraving; absent, every message counts): this file reads nothing then (how 'deferred', words all '', bySlot all ''), the caller asks its reader once and gives that one reading to every piece.
  *   read(texts, n, { noun })  (BARS, Paul 19 Oct 2026: the bar listing's "Bar names:" and "Bar 1: A, Bar 2: B") a list label may carry the piece's own noun in front of it ("Bar names: Sophie, Sam, Eddy", "Bar names:" on a line of its own,
  *        "Bar 1: A, Bar 2: B" after "Bar names:"), and a line of ONE piece has that label taken off too; without `noun` every reading below is exactly what it was.
+ *        (MOONSTARS, Paul 19 Oct 2026: the moon and stars listing's "First Star: M / Second Star: T") a noun the label words below do not hold ("star") is a label word of that reading too: "Star 2: T", "Second Star: T",
+ *        "1st Star: M"; a noun they hold (bar, disc, tag ..) reads exactly as before.
  *   isNoWords(text)  true when the text says there is nothing to write ("N/A", "none", "no personalisation", "Not requested on this item.", "see message", only punctuation).   SAME_NOTE.
  *
  * THE RULE (in this order; the first that fits decides):
@@ -153,21 +155,25 @@
   const OPEN = '(^|[\\s,;|/&+(\\[])';
   const SEPS = '(?:=>|->|\u2192|[:=)\\]\\-\u2013\u2014.])';
   const numOf = w => { w = str(w).toLowerCase(); const d = /^(\d{1,3})(?:st|nd|rd|th)?$/.exec(w); return d ? +d[1] : NUMW[w] || 0; };
-  const MARK = [
+  // (MOONSTARS, Paul 19 Oct 2026: the label words are a parameter, so a reading with a noun the list does not hold, "star", reads "Star 1:" and "First Star:" as it reads "Piece 1:" and "First piece:"; MARK is the old list)
+  const makeMarks = LW => [
     // Piece 1 · Charm #2 · Tag two · No. 3 (a separator after the number is optional: "Piece 1 Anna Piece 2 Ben")
-    { rx: new RegExp(OPEN + '(?:' + LABELW + ')\\.?\\s*#?\\s*(\\d{1,3}|' + NUMALT + ')(?:st|nd|rd|th)?(?![\\d\\p{L}])(?:\\s*' + SEPS + '+(?!\\d))?\\s*', 'giu'), num: 2, kind: 'n' },
+    { rx: new RegExp(OPEN + '(?:' + LW + ')\\.?\\s*#?\\s*(\\d{1,3}|' + NUMALT + ')(?:st|nd|rd|th)?(?![\\d\\p{L}])(?:\\s*' + SEPS + '+(?!\\d))?\\s*', 'giu'), num: 2, kind: 'n' },
     // #1 · # 2
     { rx: new RegExp(OPEN + '#\\s*(\\d{1,3})(?![\\d\\p{L}])(?:\\s*' + SEPS + '+(?!\\d))?\\s*', 'giu'), num: 2, kind: 'n' },
     // 1) · (1) · 1. · 1: · 1- · 1= (a separator right after the number, and no digit right after the separator: not 1.5, not 10:30, not 1-2-3)
     { rx: new RegExp(OPEN + '\\(?(\\d{1,2})(?:\\)|[\\]:.=\\-\u2013\u2014])(?!\\d)\\s*', 'gu'), num: 2, kind: 'n' },
     // First: · 2nd - · Third piece:
-    { rx: new RegExp(OPEN + '(' + ORDALT + ')(?:\\s+(?:' + LABELW + '))?\\s*' + SEPS + '+\\s*', 'giu'), num: 2, kind: 'n' },
+    { rx: new RegExp(OPEN + '(' + ORDALT + ')(?:\\s+(?:' + LW + '))?\\s*' + SEPS + '+\\s*', 'giu'), num: 2, kind: 'n' },
     // Left: · Right ear - · L: · R)
     { rx: new RegExp(OPEN + '(left|right|l|r)(?:\\s+(?:ear|earring|piece|side|one|charm|stud|hoop|hand))?\\s*(?:=>|->|\u2192|[:=)\\-\u2013\u2014])\\s*', 'giu'), side: 2, kind: 's' }
   ];
-  function findMarks(text) {
+  const MARK = makeMarks(LABELW), MARKS_BY = new Map();
+  /** The marks of a reading: the old list, or (MOONSTARS) the same with the piece's own noun as a label word too ("Star 2:", "Second Star:"). A noun the list already holds (bar, disc, tag ..) gives the old list itself. */
+  const marksFor = noun => { if (!noun || new RegExp('^(?:' + LABELW + ')$', 'i').test(noun)) return MARK; if (!MARKS_BY.has(noun)) MARKS_BY.set(noun, makeMarks(LABELW + '|' + noun + 's?')); return MARKS_BY.get(noun); };
+  function findMarks(text, marks) {
     const hits = [];
-    for (const M of MARK) {
+    for (const M of marks || MARK) {
       M.rx.lastIndex = 0;
       for (let m; (m = M.rx.exec(text));) {
         const at = m.index + m[1].length, end = m.index + m[0].length;
@@ -188,11 +194,11 @@
     const noun = o && o.noun ? str(o.noun).toLowerCase().replace(/[^a-z]/g, '') : '';
     if (!noun) return { LEADIN, LEAD, LABEL_LINE, noun: '' };
     const pre = '(?:' + noun + 's?\\s+)?', at = rx => new RegExp(rx.source.replace('^(?:please\\s+)?', '^(?:please\\s+)?' + pre).replace('(?:engrav\\w*|', '(?:' + noun + 's?|engrav\\w*|'), 'i');   // ("Bars:" alone is a label too)
-    return { LEADIN: at(LEADIN), LEAD: at(LEAD), LABEL_LINE: at(LABEL_LINE), MARK1: new RegExp('^' + noun + 's?\\s*#?\\s*(?:1|one|first)\\s*[:=)\\-\\u2013\\u2014.]\\s*', 'i'), noun };
+    return { LEADIN: at(LEADIN), LEAD: at(LEAD), LABEL_LINE: at(LABEL_LINE), MARK1: new RegExp('^(?:' + noun + 's?\\s*#?\\s*(?:1|one|first)|(?:first|1st)\\s+' + noun + ')\\s*[:=)\\-\\u2013\\u2014.]\\s*', 'i'), MARKS: marksFor(noun), noun };   // (MOONSTARS: "First Star: M" is the one star's label too)
   }
   /** { words } when the text numbers or labels its pieces and fits n, { why } when it tries to and does not, null when it holds no (or only a lone) marker. */
-  function fromMarks(text, n, lead0) {
-    const marks = findMarks(text);
+  function fromMarks(text, n, lead0, marks0) {
+    const marks = findMarks(text, marks0);
     if (marks.length < 2) return null;
     const kinds = new Set(marks.map(m => m.kind));
     if (kinds.size > 1) return { why: 'the labels are of different kinds' };
@@ -283,7 +289,7 @@
     const s = saidSame(text);
     if (s && hasWords(s) && !noLines([s])) return result(n, { words: new Array(n).fill(s), same: true, said: true, how: 'same', sure: true, found: 1, note: SAME_NOTE });
 
-    const mk = fromMarks(text, n, L.LEAD);
+    const mk = fromMarks(text, n, L.LEAD, L.MARKS);
     if (mk && mk.words) return splitDone(n, partWords(mk.words), mk.kind === 's' ? 'labelled' : 'numbered', true);
     if (mk && mk.why) return whole(n, lines, 0, mk.why);
 
