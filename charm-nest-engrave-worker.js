@@ -2,14 +2,14 @@
  * the page. No cloud calls, DOM work or production writes happen here. */
 "use strict";
 importScripts("vendor/opentype-1.3.4.min.js", "charm-nest-text.js", "charm-nest-geom.js?v=20261009-flat-col-fb1-fb2-fr1-m3", "charm-nest-engrave-fit.js");
-let fonts=null, fontError=null, emojiFont=null, emojiMap=null; const sets={};   // sets: the other engraving fonts by id (sent once, before the first piece that uses one)
+let fonts=null, fontError=null, emojiFont=null, emojiMap=null, sansRaw=null, symbolFont=null; const sets={};   // sets: the other engraving fonts by id (sent once, before the first piece that uses one)
 self.onmessage=({data})=>{
   if(data.type === "fonts" && data.key) {
     try {
       const set={};
       for(const weight of ["Regular","Semibold"]) if(data.fonts[weight]) set[weight]=opentype.parse(data.fonts[weight]);
       if(!set.Regular)throw new Error("Engraving font is unavailable.");
-      if(emojiFont && emojiMap) for(const weight of ["Regular","Semibold"]) if(set[weight]) set[weight]=CharmNestText.withEmoji(set[weight],emojiFont,emojiMap,opentype.Path);
+      if(emojiFont && emojiMap) for(const weight of ["Regular","Semibold"]) if(set[weight]) set[weight]=CharmNestText.withEmoji(set[weight],emojiFont,emojiMap,opentype.Path,[sansRaw,symbolFont].filter(Boolean));   // (as the page sets it: a letter this face lacks in Source Sans 3, a ♡ in the symbol font)
       sets[data.key]=set;
     } catch(error) {sets[data.key]={error};}
     return;
@@ -20,7 +20,8 @@ self.onmessage=({data})=>{
       for(const weight of ["Regular","Semibold"]) if(data.fonts[weight]) fonts[weight]=opentype.parse(data.fonts[weight]);
       if(data.fonts.emoji && data.fonts.emojiMap) {
         const emoji=opentype.parse(data.fonts.emoji); emojiFont=emoji; emojiMap=data.fonts.emojiMap;
-        for(const weight of ["Regular","Semibold"]) if(fonts[weight]) fonts[weight]=CharmNestText.withEmoji(fonts[weight],emoji,data.fonts.emojiMap,opentype.Path);
+        sansRaw=fonts.Regular; symbolFont=data.fonts.symbol ? opentype.parse(data.fonts.symbol) : null;   // (the face itself, before it is wrapped, is every other font's fallback)
+        for(const weight of ["Regular","Semibold"]) if(fonts[weight]) fonts[weight]=CharmNestText.withEmoji(fonts[weight],emoji,data.fonts.emojiMap,opentype.Path,symbolFont ? [symbolFont] : []);
       }
       if(!fonts.Regular)throw new Error("Engraving font is unavailable.");
       fontError=null;

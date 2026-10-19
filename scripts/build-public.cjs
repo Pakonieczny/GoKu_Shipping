@@ -211,6 +211,7 @@ const assets = [
   "vendor/fonts/JostSlashedZero-OFL.txt",
   "vendor/fonts/LibreFranklin-OFL.txt",
   "vendor/fonts/Unicode-LICENSE.txt",
+  "vendor/fonts/DejaVuSans-LICENSE.txt",
   "charm-nest-orders.js",
   "charm-nest-icons.js",
   "charm-nest-keep.js",

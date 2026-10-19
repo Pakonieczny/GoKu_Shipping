@@ -6286,6 +6286,8 @@ const Engrave = window.Engrave = (() => {
   const F_ = B.engrave.fonts;
   // Source Sans 3 (Adobe, SIL Open Font License): a humanist sans drawn in the same tradition as Myriad Pro, shipped with the app
   const FONT_FILES = { Regular: "vendor/fonts/SourceSans3-Regular.otf", Semibold: "vendor/fonts/SourceSans3-Semibold.otf" };
+  // DejaVu Sans (Bitstream Vera licence, free to ship): the symbols neither the face nor Noto Emoji has (♡ ☆ ✿ ✓ ∞ ♪ ...), drawn at the capital height of the face
+  const SYMBOL_FILE = "vendor/fonts/DejaVuSans.ttf";
   const FONT_MISSING_WHY = "Source Sans 3 font files are missing";   // (what a line is blocked with while the font files cannot be had: loadFonts reads it again when they are)
   async function fontResource(path,type="arrayBuffer",cache="force-cache") {
     const controller=new AbortController();let timer;
@@ -6306,12 +6308,18 @@ const Engrave = window.Engrave = (() => {
         catch (e) { if (w === "Regular") F_.error = `${path}: ${e.message}`; else F_.semiboldMissing = `${path}: ${e.message}`; }
       }
       if (F_.Regular) try {
+        const symbolReq = fontResource(SYMBOL_FILE).then(b => ({ b }), e => ({ e }));   // (asked together with the emoji font, not after it)
         const map = await fontResource("vendor/fonts/emoji-sequences.json","json","no-cache");
         const bytes = await fontResource("vendor/fonts/NotoEmoji-Regular.ttf?v="+map.fontSha256);
         if (await CN.sha256(new Uint8Array(bytes)) !== map.fontSha256) throw new Error("Emoji font version differs from its shape map");
-        const emoji = opentype.parse(bytes); F_.emojiFont = emoji;
-        for (const weight of ["Regular", "Semibold"]) if (F_[weight]) F_[weight] = window.CharmNestText.withEmoji(F_[weight], emoji, map, opentype.Path);
-        F_.workerFonts.emoji = bytes; F_.workerFonts.emojiMap = map; F_.emoji = true;
+        const emoji = opentype.parse(bytes);
+        // The symbol font rides with the emoji font. A bad connection retries like the emoji font does; a file the site does not have (HTTP 4xx) leaves the symbols out, it never holds the emoji back.
+        let symbols = null, symbolBytes = null;
+        try { const got = await symbolReq; if (got.e) throw got.e; symbolBytes = got.b; if (symbolBytes.byteLength < 1000) throw new Error("empty file"); symbols = opentype.parse(symbolBytes); }
+        catch (e) { if (!/HTTP 4\d\d/.test(e.message)) throw e; symbolBytes = null; F_.symbolError = `${SYMBOL_FILE}: ${e.message}`; }
+        F_.emojiFont = emoji; F_.symbolFont = symbols; F_.sansRaw = F_.sansRaw || F_.Regular;   // (sansRaw: the face itself, the fallback of every other engraving font)
+        for (const weight of ["Regular", "Semibold"]) if (F_[weight]) F_[weight] = window.CharmNestText.withEmoji(F_[weight], emoji, map, opentype.Path, symbols ? [symbols] : []);
+        F_.workerFonts.emoji = bytes; F_.workerFonts.emojiMap = map; if (symbolBytes) F_.workerFonts.symbol = symbolBytes; F_.emoji = true;
         // (loaded late: the fitting worker takes it at its next start, and words held for their emoji are looked at again)
         if (late) { delete F_.emojiError; workerClient = null; agent({ engrave: true }, "ENGRAVE", "Emoji font loaded"); for (const job of items().values()) if (job.state === "words" && job.missing && G.glyphCoverage(F_.Regular, job.lines.join("\n")).ok) setReady(job); return; }
       } catch (e) { F_.emojiError = e.message; if (!late) agent({engrave:true}, "warn", "Emoji font could not load: " + e.message); }
@@ -6350,7 +6358,7 @@ const Engrave = window.Engrave = (() => {
           try { const buf = await fontResource(path); if (buf.byteLength < 1000) throw new Error("empty file"); set[w] = opentype.parse(buf); set.workerFonts[w] = buf; }
           catch (e) { if (w === "Regular") throw e; set.semiboldMissing = `${path}: ${e.message}`; }
         }
-        if (F_.emojiFont && F_.workerFonts && F_.workerFonts.emojiMap) for (const w of ["Regular", "Semibold"]) if (set[w]) set[w] = window.CharmNestText.withEmoji(set[w], F_.emojiFont, F_.workerFonts.emojiMap, opentype.Path);
+        if (F_.emojiFont && F_.workerFonts && F_.workerFonts.emojiMap) for (const w of ["Regular", "Semibold"]) if (set[w]) set[w] = window.CharmNestText.withEmoji(set[w], F_.emojiFont, F_.workerFonts.emojiMap, opentype.Path, [F_.sansRaw, F_.symbolFont].filter(Boolean));   // (a letter this face lacks, "ñ" in a script, is set in Source Sans 3; a ♡ in the symbol font)
         set.ok = true; agent({ engrave: true }, "ENGRAVE", `Engraving font loaded: ${meta.name}${set.Semibold ? " + Semibold" : " (one weight: Regular at every size)"}`);
       } catch (e) { set.error = `${meta.name}: ${e.message}`; agent({ engrave: true }, "warn", `Engraving font ${meta.name} could not load (${e.message}): Source Sans 3 is used`); }
       finally { set.loading = null; }
@@ -7341,7 +7349,7 @@ const Engrave = window.Engrave = (() => {
   function fitClient() {
     if (!workerClient) {
       if (!window.Worker || !F_.workerFonts?.Regular) throw new Error("Background engraving could not start. Reload and retry this placement.");
-      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col-vf1-fb1-fb2-fr1",fonts:F_.workerFonts,fontsFor:id=>{const set=FONT_SETS.get(id);return set&&set.ok?set.workerFonts:null;}});
+      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col-vf1-fb1-fb2-fr1-sy1",fonts:F_.workerFonts,fontsFor:id=>{const set=FONT_SETS.get(id);return set&&set.ok?set.workerFonts:null;}});
     }
     return workerClient;
   }
