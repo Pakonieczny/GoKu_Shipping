@@ -5112,10 +5112,19 @@ const Gate = window.Gate = (() => {
    *  closed or not. A group already spread over two open sets is left as it is (never moved) and nothing joins a set because of it. */
   /** (SETFIX, Paul 17 Oct 2026) The groups of sheets a set is formed from: charm-nest-shared-orders.js formation over the run's pages, a partial GF/SS sheet outside every set kept as an END node
    *  (it holds the groups it touches whole; it never chains two groups together and never seeds the set they join), SetRules.PARTIAL_BRIDGE saying what a partial sheet with orders on several groups does. */
-  function formationOf(V) {
+  /** SETFIX (Paul, 19 Oct 2026): the sheets that cannot go into the set being formed now, whatever it is, and so never tie two other sheets together (charm-nest-shared-orders.js formation `anchors`):
+   *  a sheet whose layout is fixed (cut by the laser, or in a set sent to the station), a Rose Gold / 10K / 14K sheet outside every set that cannot join yet (no green line cut and no tick of its
+   *  own, or its back engraving not approved: goldGap) and, `withSets`, every sheet already in a set (open or committed). */
+  function anchorsOf(V, choices = selected(), withSets = true) {
+    return V.sheets.filter(n => { const p = V.page.get(n.id); return !!p && ((withSets && inSetNow(p)) || !!n.fixed || (!inSetNow(p) && goldFamily(p.metal) && !picked(p, choices) && !!goldGap(p))); }).map(n => n.id);
+  }
+  function formationOf(V, anchored, choices) {
     const SRp = window.CharmNestSetRules, core = V.SO.core;
     const ends = SRp && SRp.isPartial ? V.sheets.filter(n => { const p = V.page.get(n.id); return p && SRp.isPartial(p) && !inSetNow(p); }).map(n => n.id) : [];
-    return Object.assign(core.formation ? core.formation(V.sheets, ends, SRp && SRp.PARTIAL_BRIDGE) : { groups: core.groups(V.sheets), bridges: [] }, { endIds: new Set(ends) });
+    // (SETFIX, Paul 19 Oct 2026) `anchored` true: the groups a NEW set is formed from and a free sheet's home is read from (every sheet in a set is an anchor too); "set": the groups the marks of
+    //  the sheets already in an open set are read from (a pull keeps such a sheet where it is), where only the fixed sheets and the uncut gold-family sheets outside every set tie nothing
+    const anchors = anchored ? anchorsOf(V, choices, anchored === true) : [];
+    return Object.assign(core.formation ? core.formation(V.sheets, ends, SRp && SRp.PARTIAL_BRIDGE, anchors) : { groups: core.groups(V.sheets), bridges: [] }, { endIds: new Set(ends), anchorIds: new Set(anchors) });
   }
   function cardinalApply(run, pages, sets, choices = selected()) {
     for (const p of allSheets().filter(p => p.runId === run.runId)) { delete p.cardinalPull; delete p.cardinalHold; delete p.cardinalNote; delete p.cardinalHome; }
@@ -5123,7 +5132,14 @@ const Gate = window.Gate = (() => {
     const V = cardinalView(run); if (!V) return [];
     const open = (Array.isArray(sets) ? sets : sets ? [sets] : []).filter(Boolean), last = open[open.length - 1] || null, collecting = last && !closedSet(last) ? last : null;
     const ready = new Set(pages), homeOf = p => (p.setId && !p.draft && open.find(s => s.setId === p.setId)) || null;
-    const out = [], F = formationOf(V);
+    /* SETFIX (Paul, 19 Oct 2026): "the first set is always correct, but all subsequent sets ... jamming all of the available sheets into a single set". Root cause: a free sheet's group was the whole
+       chain of sheets tied by orders, THROUGH sheets that are in a set (the committed Set 1), cut, or an uncut Rose Gold sheet that keeps filling: a sheet with one order on a Set 1 sheet and a sheet
+       with another order on it were one unit (and with a Set 2 sheet in the chain, both went into Set 2, closed or not). The marks of every sheet outside an open set are now read from the anchored
+       groups (formationOf(V, true)): a sheet goes with the sheets it shares an order with, never with the sheets its order mates share orders with in a set. The sheets already IN an open set keep the
+       marks the groups gave them before (a pull keeps such a sheet where it is): nothing that is in a set moves because of this. */
+    const MARKS = ["cardinalPull", "cardinalHold", "cardinalNote", "cardinalHome"];
+    const pass = (F, anchored) => {
+    const out = [];
     // (SetRules.PARTIAL_BRIDGE 'spread': a partial sheet with orders on several groups holds none of them; it and its mixed orders are flagged for a person to take off)
     for (const b of F.bridges) {
       const p = V.page.get(b.id); if (!p) continue;
@@ -5134,14 +5150,16 @@ const Gate = window.Gate = (() => {
       // (SETFIX) a sheet whose green line is cut and that is in one of the run's OPEN sets is fixed in that set, but it does not stop its group from joining the set: the set is still being made, so the
       //  group's other sheets (a second Rose Gold sheet cut later, a partner that was still being saved) belong in it all the same. Only a sheet cut by the laser, or in a set sent to the station, does.
       const openCut = p => !!p && !!p.roseCutAt && !(+p.laserDoneAt > 0) && !!homeOf(p);
-      const members = g.ids.map(id => V.page.get(id)).filter(Boolean), orders = g.orders, fixed = g.ids.filter(id => V.norm.get(id).fixed && !openCut(V.page.get(id))), tell = tellOf(V, g.ids);
+      let members = g.ids.map(id => V.page.get(id)).filter(Boolean); const orders = g.orders, fixed = g.ids.filter(id => V.norm.get(id).fixed && !openCut(V.page.get(id))), tell = tellOf(V, g.ids);
       if (fixed.length) {
         // a sheet of the group is cut, or in a set already sent to the station: the others can never be in its set. Nothing is held back
         // for it (the work goes on); each sheet that is not fixed says so, with the exact reason.
         const why = fixed.map(f => `${V.norm.get(f).label}: ${V.norm.get(f).fixed}`).join("; ");
         for (const p of members) if (!fixed.includes(V.idOf.get(p))) p.cardinalNote = `${ordersWords(orders, tell)} also on ${why}, so ${members.length > 2 ? "they cannot" : "it cannot"} be in the same set`;
-        out.push({ ids: g.ids, orders, state: "fixed", why });
-        continue;
+        // (SETFIX, Paul 19 Oct 2026) in the anchored groups a fixed sheet is an order mate the group can never be with (the order is split already, by necessity): the group's other sheets go on by
+        //  their own rule, with the open set their other order mates are in when there is one, else into the next set on their own merits (the formation's units do not tie through it)
+        if (!anchored || !members.some(p => !fixed.includes(V.idOf.get(p)) && homeOf(p))) { out.push({ ids: g.ids, orders, state: "fixed", why }); continue; }
+        members = members.filter(p => !fixed.includes(V.idOf.get(p)));
       }
       const homes = [...new Set(members.map(homeOf).filter(Boolean))], home = homes.length === 1 ? homes[0] : null;
       // (the set number the group is read against: the group's own set; else the set that is forming; none yet = no guess)
@@ -5178,6 +5196,17 @@ const Gate = window.Gate = (() => {
       for (const p of members) if (!stuckSet.has(p)) p.cardinalNote = `${ordersWords(orders, tell).replace(/^o/, "O")} shared with ${names.join(" and ")}: ${what} (${stuck.map(x => x.w).join("; ")})`;
       out.push({ ids: g.ids, orders, state: "partial", why: waits, stuck: names });
     }
+    return out;
+    };
+    const runPages = allSheets().filter(p => p.runId === run.runId), FA = formationOf(V, true, choices);
+    // (the sheets that are no free sheet: in an open set, or outside every set but tying nothing, a partial GF/SS sheet or an uncut gold-family one: their marks (a pull, the set they are reserved
+    //  for, the partner line) come from the groups that read the open sets' sheets as one with the sheets they share orders with)
+    const notFree = p => !!homeOf(p) || (!inSetNow(p) && (FA.endIds.has(V.idOf.get(p)) || FA.anchorIds.has(V.idOf.get(p))));
+    pass(formationOf(V, "set", choices), false);
+    const kept = new Map(runPages.filter(notFree).map(p => [p, MARKS.map(k => p[k])]));
+    for (const p of runPages) for (const k of MARKS) delete p[k];
+    const out = pass(FA, true);
+    for (const [p, was] of kept) MARKS.forEach((k, i) => { if (was[i] === undefined) delete p[k]; else p[k] = was[i]; });
     return out;
   }
   /** What the rule says of one sheet changing set on its own (a tick of Include): { list: the solid sheets that change with it,
@@ -5228,11 +5257,13 @@ const Gate = window.Gate = (() => {
     const SO = SOrd(), SRp = window.CharmNestSetRules; if (!SO || !SRp || !run) return null;
     backsMemo = null;
     const keyOf = p => p.sheetId || `${p.runId || "run"}:${p.metal}:${p.page || 1}`;
-    const recs = [];
+    const recs = [], waiting = [];
     for (const p of allSheets().filter(p => p.runId === run.runId && !p.recalled)) {
       const n = SO.fromPage(p); if (!n) continue;
-      // a completed GF/SS sheet outside every set that cannot join yet (still being saved or verified, or a person took it out) is not a fault of the assembly: it is left out until it is ready
-      if (!inSetNow(p) && SRp.isCompleted(p) && !goldFamily(p.metal) && (p.leftSet || !p.outputs || !p.persistedDone || basePolicy(p, 0).reason === "Nest and verify first")) continue;
+      // a completed GF/SS sheet outside every set that cannot join yet (still being saved or verified, or a person took it out) is not a fault of the assembly: it is not counted as a sheet that should
+      // be in a set (opts.waiting). SETFIX (Paul, 19 Oct 2026): it is still read, because it ties the sheets it shares orders with exactly as it does in the assembly (left out, the checker split a unit
+      // the assembly had rightly kept whole and called its sheets spare)
+      if (!inSetNow(p) && SRp.isCompleted(p) && !goldFamily(p.metal) && (p.leftSet || !p.outputs || !p.persistedDone || basePolicy(p, 0).reason === "Nest and verify first")) waiting.push(n.id);
       const gold = goldFamily(p.metal), b = gold && (p.roseCutAt || +p.laserDoneAt > 0) ? backsOf(p) : null;
       recs.push({ id: n.id, metal: p.metal, runId: p.runId, page: p.page, sheetIndex: p.sheetIndex, draft: !!p.draft, setId: p.setId || null, releaseFull: !!p.releaseFull, laserDoneAt: p.laserDoneAt, roseCutAt: p.roseCutAt,
         density: p.density, placedCount: (p.placements || []).length, releasedAt: p.releasedAt, joinedAt: p.joinedAt, ...(p.joinedBy ? { joinedBy: p.joinedBy } : {}), pieces: n.pieces,
@@ -5245,7 +5276,7 @@ const Gate = window.Gate = (() => {
       sets.push({ id: set.setId, name: set.name || `Set ${set.seq}`, seq: set.seq, formedAt: set.formedAt, committedAt: set.committedAt, status: set.status, laserDoneAt: set.laserDoneAt,
         sheetIds: [...new Set(mine.concat(set.committedAt ? (set.sheetIds || []).filter(i => ids.has(i)) : []))] });
     }
-    return { sets, sheets: recs, opts: { skipExempt: true, partialPartners: "pending" } };
+    return { sets, sheets: recs, opts: { skipExempt: true, partialPartners: "pending", waiting } };
   }
   /** The checker's whole answer for the run's sets now: { ok, violations, partners, warnings, sets, notes, lines }; null when it cannot be read. Pure: no sheet is touched. */
   function selfCheckResult(run) {
@@ -5308,12 +5339,22 @@ const Gate = window.Gate = (() => {
     {
       const free = pages.filter(p => !inOpen(p) && !p.cardinalHome && !handOf(p) && !adder(p) && release(p, last && !lastClosed ? last.seq : 0).include);
       // (the sheets that share an order: one unit, never split between sets. SETFIX: a partial sheet outside every set is an end of its groups, it never chains two of them together: formationOf)
-      const V = cardinalView(run), links = V ? formationOf(V).groups.map(g => g.ids.map(id => V.page.get(id)).filter(Boolean)) : [];
+      // (SETFIX, Paul 19 Oct 2026: the units never tie through a sheet in a set, a cut one or an uncut Rose Gold / 10K / 14K one: formationOf(V, true). They did, so Set 2 took every unit that had one order
+      //  on a sheet of Set 1)
+      const V = cardinalView(run), pagesOfIds = ids => (ids || []).map(id => V.page.get(id)).filter(Boolean), links = V ? formationOf(V, true, choices).groups.map(g => ({ ids: pagesOfIds(g.ids), anchors: pagesOfIds(g.anchors), ends: pagesOfIds(g.ends) })) : [];
       const f = SR.form(last ? membersOfSet(last) : [], free, !!last, last && last.name, links);
       for (const w of f.wait) w.sheet.setWait = w.why;
       if (f.where === "last") target = last;
       else if (f.where === "new") target = await Sets.ensure(run.runId, "dispatch", last ? { follow: last } : {});
       if (f.where === "new" && !target) return;      // (the cloud deferred the number: nothing joins now)
+      // (SETFIX, Paul 19 Oct 2026) a NEW set is new: when the numbering hands back a set that already holds sheets (it has formed, or it is the formed set being followed), nothing joins it and
+      //  it is said once. Every round of this loop used to put the next set's sheets into that one set
+      if (f.where === "new" && target && (target === last || target.committedAt || membersOfSet(target).length)) {
+        const why = `${target.name || "A set"} was handed back as the next set but it already holds sheets: no sheet joins it, the next set waits (reload the page if this stays)`;
+        try { if (typeof agent === "function") agent({ run: run.runId }, "warn", why); } catch (_) { /* the wait lines below say it */ }
+        for (const p of f.join || []) p.setWait = why;
+        target = null; f.join = [];
+      }
       formed = (f.join || []).length; joinNow = new Set(f.join || []);
       if (target) open = openSetsOf(run.runId);
       addTarget = target || (last && lastClosed ? last : null);
@@ -5321,7 +5362,7 @@ const Gate = window.Gate = (() => {
       if (!addTarget && adders.length) for (const w of SR.settle(last ? membersOfSet(last) : [], adders).wait) w.sheet.setWait = w.why;
       // a Rose Gold, 10K or 14K sheet the cardinal rule pulls goes with its partners' set: while a free partner waits for a later set, it waits too
       const joining = new Set(f.join || []);
-      for (const a of adders) if (links.filter(g => g.includes(a)).some(g => g.some(q => q !== a && !adder(q) && free.includes(q) && !joining.has(q)))) apart.add(a);
+      for (const a of adders) if (links.filter(g => g.ids.includes(a)).some(g => g.ids.some(q => q !== a && !adder(q) && free.includes(q) && !joining.has(q)))) apart.add(a);
     }
     if (!open.length) { run.heldSheets = pages.length; return; }
     cardinalApply(run, pages, open, choices);   // (again, now that the sets are numbered and tended)
@@ -11060,8 +11101,11 @@ const Sets = window.Sets = (() => {
     agent({ run: runId }, "cloud", `${set.name} allocated for ${set.day}${group ? ` · ${group.split("+").map(m => labelOf(m)).join(" + ")}` : ""} → ${set.folder}`);
     return set;
   }
-  /** Every set of a run, in set order. */
-  const ofRun = runId => (grouped().runs.get(runId) || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+  /** Every set of a run, in set order. SETFIX (Paul, 19 Oct 2026): by day, then number. The number is the DAY's counter (op setAllocate), so a run that goes on past midnight (or is left on for days)
+   *  numbers its next set 1 again: ordered by the number alone that set came first, the run's "newest" set was an older one, and Sets.ensure({follow}) handed back the formed set of the new day
+   *  for every following set (each round of the assembly put its sheets into it). */
+  const setOrder = (a, b) => String(a.day || "").localeCompare(String(b.day || "")) || (a.seq || 0) - (b.seq || 0);
+  const ofRun = runId => (grouped().runs.get(runId) || []).slice().sort(setOrder);
   const setOfSheet = sh => sh.draft || (["gold10k","gold14k"].includes(sh.metal) && !Gate.solidSelected(sh.metal, sh)) ? null : sh.runId ? ((sh.setId ? grouped().ids.get(sh.setId) : null) || byRun().get(keyOf(sh.runId, sh.group)) || null) : null;
   /** The QR label, 145 × 145 pt, the print page's exact geometry (QR 85 pt at 3,3 · label 9 pt bold at 1,93 · "Notes:" at 92,0.5), ECC M. */
   async function renderLabelPng(payload, label, scale, notes) {
@@ -12017,7 +12061,7 @@ const RunCtl = window.RunCtl = (() => {
       sets.push(set);
     }
     // (Paul, 12 Oct: a run holds several open sets, the ones that have formed beside the one that is forming: the newest keeps the run's own place, the others each have theirs)
-    const newestOpen = sets.filter(x => !x.committedAt && x.group === "dispatch").sort((a, b) => (a.seq || 0) - (b.seq || 0)).pop() || null;
+    const newestOpen = sets.filter(x => !x.committedAt && x.group === "dispatch").sort((a, b) => String(a.day || "").localeCompare(String(b.day || "")) || (a.seq || 0) - (b.seq || 0)).pop() || null;   // (SETFIX 19 Oct 2026: by day, then number, as Sets.ofRun)
     for (const set of sets) Sets.byRun().set(Sets.keyOf(rec.runId, set.committedAt ? "committed:" + set.setId : set.group === "dispatch" && set !== newestOpen ? "closed:" + set.setId : set.group), set);
     const bySet = new Map(sets.map(x => [x.setId, x]));
     const ls = await api("charmNestLibrary", { op: "listSheets", limit: 500, runId: rec.runId }, { all: "sheets" });

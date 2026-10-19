@@ -99,30 +99,37 @@ function owner2({ tie = 'B', setId = 'set-2' } = {}) {
 
 /* ── 3 · the correct formation of the same sheets ────────────────────────────────────────────────────────────────────────────────────────── */
 /* Every unit of Set 2 except GF 8 holds a completed GF and a completed SS sheet by itself, so each makes its OWN set (SETRULE: one set at a time, each as small as the minimum allows);
-   the units form in the order the sheets were seen completed (unknown here), then sheet number, GF before SS: C (GF 1), B (SS 2), A (SS 3). GF 8 has no SS to go with and waits outside every set.
-   The Rose Gold sheets are never in a set uncut: each is named as the partner to add to the set of its unit. A group that shares an order with a partial sheet waits whole until it is full. */
+   the units form in the order the sheets were seen completed (unknown here), then sheet number, GF before SS. GF 8 has no SS to go with and waits outside every set.
+   The Rose Gold sheets are never in a set uncut: each is named as the partner to add to the set(s) of the sheets it shares orders with. A group that shares an order with a partial sheet waits whole.
+   SETFIX (Paul, 19 Oct 2026): an uncut Rose Gold sheet outside every set cannot join any set yet, so it ties nothing together (charm-nest-shared-orders.js formation `anchors`): RG 16 no longer glues
+   GF 5 to GF 4 (GF 5 waits for an SS sheet of its own, and joins GF 4's set by the cardinal rule once RG 16 is cut), RG 29 no longer glues GF 7 + SS 4 to GF 6 + SS 3 (two valid units, two sets,
+   RG 29 is the partner of both). That is what stops one Rose Gold sheet that keeps filling from pulling every later unit into Set 2. */
 {
   const sorted = l => l.slice().sort();
   const f0 = owner2({ tie: null }), e0 = I.expected(f0.sheets, { firstSeq: 2 });
-  assert.deepEqual(e0.sets.map(s => [s.name, sorted(s.sheetIds)]), [['Set 2', ['gf1', 'gf2', 'ss1']], ['Set 3', ['gf3', 'gf4', 'gf5', 'ss2']], ['Set 4', ['gf6', 'gf7', 'ss3', 'ss4']]],
-    'no partial tie: Set 2 = group C (GF 1, GF 2, SS 1), Set 3 = group B, Set 4 = group A, the loose GF 8 waits');
-  assert.deepEqual(e0.waiting.filter(w => w.id === 'gf8').map(w => w.why), ['The set has formed, so this sheet waits for the next set: it needs a completed SS sheet with it']);
-  assert.deepEqual(e0.partners.map(p => [p.setName, p.sheet, p.kind]).sort(), [['Set 3', 'rg16', 'notReady'], ['Set 4', 'rg29', 'notReady']].sort(), 'the Rose Gold sheets are partners to add, in the set of the unit they are tied to');
+  const C = ['gf1', 'gf2', 'ss1'], Bm = ['gf3', 'gf4', 'ss2'], A1 = ['gf6', 'ss3'], A2 = ['gf7', 'ss4'];
+  assert.deepEqual(e0.sets.map(s => [s.name, sorted(s.sheetIds)]), [['Set 2', C], ['Set 3', Bm], ['Set 4', A1], ['Set 5', A2]],
+    'no partial tie: Set 2 = group C (GF 1, GF 2, SS 1), Set 3 = GF 3, GF 4, SS 2, Set 4 = GF 6 + SS 3, Set 5 = GF 7 + SS 4; GF 5 and the loose GF 8 wait');
+  assert.deepEqual(e0.waiting.filter(w => w.id === 'gf8' || w.id === 'gf5').map(w => [w.id, w.why]).sort(), [['gf5', 'The set has formed, so this sheet waits for the next set: it needs a completed SS sheet with it'], ['gf8', 'The set has formed, so this sheet waits for the next set: it needs a completed SS sheet with it']]);
+  assert.deepEqual(e0.partners.map(p => [p.setName, p.sheet, p.kind]).sort(), [['Set 3', 'rg16', 'notReady'], ['Set 4', 'rg29', 'notReady'], ['Set 5', 'rg29', 'notReady']].sort(), 'the Rose Gold sheets are partners to add, in the set of each sheet they share an order with');
   const r0 = I.check(e0.sets, f0.sheets);
   assert.equal(r0.ok, true, 'the correct formation is accepted:\n  ' + show(r0));
   assert(r0.sets.every(s => !s.canApprove || s.id === 'set-2'), 'a set with a partner to add cannot be approved for laser cutting; the one with none can');
-  assert.deepEqual(r0.sets.map(s => s.canApprove), [true, false, false]);
-  assert.deepEqual(r0.sets.map(s => s.units.length), [1, 1, 1], 'each set is exactly one unit');
+  assert.deepEqual(r0.sets.map(s => s.canApprove), [true, false, false, false]);
+  assert.deepEqual(r0.sets.map(s => s.units.length), [1, 1, 1, 1], 'each set is exactly one unit');
   // the same formation by hand, with the joinedAt times of an assembly that formed them in turn: still accepted (nothing joined late)
-  const hand = owner2({ tie: null }); const times = { gf1: 10, ss1: 11, gf2: 12, gf3: 20, gf4: 21, gf5: 22, ss2: 23, gf6: 30, gf7: 31, ss3: 32, ss4: 33 }; hand.sheets.forEach(s => { s.joinedAt = times[s.id]; });
-  const handSets = [['gf1', 'gf2', 'ss1'], ['gf3', 'gf4', 'gf5', 'ss2'], ['gf6', 'gf7', 'ss3', 'ss4']].map((l, k) => ({ id: 'set-' + (k + 2), name: 'Set ' + (k + 2), seq: k + 2, sheetIds: l }));
+  const hand = owner2({ tie: null }); const times = { gf1: 10, ss1: 11, gf2: 12, gf3: 20, gf4: 21, ss2: 23, gf6: 30, ss3: 32, gf7: 40, ss4: 41 }; hand.sheets.forEach(s => { s.joinedAt = times[s.id]; });
+  const handSets = [C, Bm, A1, A2].map((l, k) => ({ id: 'set-' + (k + 2), name: 'Set ' + (k + 2), seq: k + 2, sheetIds: l }));
   hand.sheets.forEach(s => { s.setId = handSets.find(x => x.sheetIds.includes(s.id))?.id; if (!s.setId) { delete s.setId; s.draft = true; } });
   const rh = I.check(handSets, hand.sheets); assert.equal(rh.ok, true, 'the hand-made correct formation is accepted:\n  ' + show(rh));
-  // ... and the three sets are exactly what the checker says one big set should have been: merging any two of them is refused
-  for (const [a, b] of [[0, 1], [0, 2], [1, 2]]) { const merged = [{ id: 'm', name: 'Set 2', sheetIds: handSets[a].sheetIds.concat(handSets[b].sheetIds) }], rm = I.check(merged, hand.sheets); assert.equal(ofRule(rm, 'surplus').length, 1, 'two valid units in one set: one is spare'); }
+  // ... and the sets are exactly what the checker says one big set should have been: merging any two of them is refused
+  for (const [a, b] of [[0, 1], [0, 2], [1, 2], [2, 3]]) { const merged = [{ id: 'm', name: 'Set 2', sheetIds: handSets[a].sheetIds.concat(handSets[b].sheetIds) }], rm = I.check(merged, hand.sheets); assert.equal(ofRule(rm, 'surplus').length, 1, 'two valid units in one set: one is spare'); }
+  // RG 16 is cut (and its backs approved): it can join now, so it ties again: GF 5 belongs with GF 4 (and RG 16 with them)
+  const cut = owner2({ tie: null }); cut.rg16.roseCutAt = 5; cut.rg16.backsApproved = true;
+  assert.deepEqual(I.expected(cut.sheets, { firstSeq: 2 }).sets.map(s => sorted(s.sheetIds)), [C, ['gf3', 'gf4', 'gf5', 'rg16', 'ss2'], A1, A2], 'a cut Rose Gold sheet ties the sheets it shares orders with, as every sheet that can join');
 
-  // the partial GF Draft 10 ties to a unit: that whole unit waits (with its Rose Gold partner and the draft) until the draft is full; the other units form as before
-  const held = { A: [['Set 2', ['gf1', 'gf2', 'ss1']], ['Set 3', ['gf3', 'gf4', 'gf5', 'ss2']]], B: [['Set 2', ['gf1', 'gf2', 'ss1']], ['Set 3', ['gf6', 'gf7', 'ss3', 'ss4']]], C: [['Set 2', ['gf3', 'gf4', 'gf5', 'ss2']], ['Set 3', ['gf6', 'gf7', 'ss3', 'ss4']]] };
+  // the partial GF Draft 10 ties to a unit: that whole unit waits (with the draft) until the draft is full; the other units form as before
+  const held = { A: [['Set 2', C], ['Set 3', Bm], ['Set 4', A2]], B: [['Set 2', C], ['Set 3', A1], ['Set 4', A2]], C: [['Set 2', Bm], ['Set 3', A1], ['Set 4', A2]] };
   for (const tie of ['A', 'B', 'C']) {
     const f = owner2({ tie }), e = I.expected(f.sheets, { firstSeq: 2 });
     assert.deepEqual(e.sets.map(s => [s.name, sorted(s.sheetIds)]), held[tie], `GF Draft 10 shares an order with unit ${tie}: that unit waits outside every set`);
@@ -135,7 +142,7 @@ function owner2({ tie = 'B', setId = 'set-2' } = {}) {
   }
   // when GF Draft 10 is full, its group is eligible: it forms its set too
   const full = owner2({ tie: 'B' }); full.draft.releaseFull = true; full.draft.draft = true;
-  assert.deepEqual(I.expected(full.sheets, { firstSeq: 2 }).sets.map(s => sorted(s.sheetIds)), [['gf1', 'gf2', 'ss1'], ['gf-draft-10', 'gf3', 'gf4', 'gf5', 'ss2'], ['gf6', 'gf7', 'ss3', 'ss4']], 'a full Draft 10 joins its group\'s set (it is a unit mate), nothing waits for it any more');
+  assert.deepEqual(I.expected(full.sheets, { firstSeq: 2 }).sets.map(s => sorted(s.sheetIds)), [['gf1', 'gf2', 'ss1'], ['gf-draft-10', 'gf3', 'gf4', 'ss2'], ['gf6', 'ss3'], ['gf7', 'ss4']], 'a full Draft 10 joins its group\'s set (it is a unit mate), nothing waits for it any more');
 }
 
 /* ── 4 · each rule alone ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────── */

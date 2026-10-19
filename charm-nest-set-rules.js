@@ -233,7 +233,9 @@
     const parent = sheets.map((_, i) => i), find = i => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
     const at = new Map(); sheets.forEach((s, i) => { at.set(s, i); const id = idOf(s); if (id && !at.has('#' + id)) at.set('#' + id, i); });
     for (const g of list(shareGroups)) {
-      const ix = list(g && !Array.isArray(g) && g.ids ? g.ids : g).map(m => (m && typeof m === 'object' ? at.get(m) : at.get('#' + str(m)))).filter(i => i != null);
+      // (SETFIX, Paul 19 Oct 2026) a group's anchors and ends (charm-nest-shared-orders.js formation) are attached to it but tie nothing: a free sheet among them is a unit of its own
+      const skip = g && !Array.isArray(g) ? new Set(list(g.anchors).concat(list(g.ends)).map(m => (m && typeof m === 'object' ? idOf(m) : str(m)))) : null;
+      const ix = list(g && !Array.isArray(g) && g.ids ? g.ids : g).filter(m => !skip || !skip.has(m && typeof m === 'object' ? idOf(m) : str(m))).map(m => (m && typeof m === 'object' ? at.get(m) : at.get('#' + str(m)))).filter(i => i != null);
       for (let k = 1; k < ix.length; k++) { const a = find(ix[0]), b = find(ix[k]); if (a !== b) parent[Math.max(a, b)] = Math.min(a, b); }
     }
     const by = new Map(); sheets.forEach((s, i) => { const r = find(i); if (!by.has(r)) by.set(r, []); by.get(r).push(s); });

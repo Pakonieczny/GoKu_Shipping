@@ -106,33 +106,44 @@
    *                    sheet like any other) they are one group and one set.
    *    bridge 'spread' an end sheet that touches two or more groups is attached to none: each group is settled on its own now, and the end sheet is listed in `bridges`
    *                    (it and its mixed orders are flagged for a person to take those orders off; once it is full the groups it joins are spread over several sets).
-   *  → { groups: [{ ids, orders, ends }], bridges: [{ id, groups: [[sheetId]], orders }] }
-   *    ids: the group's own sheets, then the end sheets attached to it; a lone sheet whose only order mate is an end sheet is a group of its own (so it waits whole too). */
-  function formation(sheets, ends, bridge) {
-    const endSet = new Set([].concat(ends || []).map(String)), spread = bridge === 'spread';
-    const by = index(sheets), cores = sheets.filter(s => !endSet.has(s.id)), parent = new Map(cores.map(s => [s.id, s.id]));
+   *  SETFIX (Paul, 19 Oct 2026: "the first set is always correct, but all subsequent sets ... jamming all of the available sheets into a single set"). `anchors` are END nodes of another kind: the
+   *  sheets that cannot go into the set being formed now (a sheet already in a set, open or committed; a sheet the laser cut; a Rose Gold / 10K / 14K sheet outside every set that cannot join yet).
+   *  Root cause: the groups tied sheets THROUGH such a sheet, so units that each share one order with a sheet of the committed Set 1 (or with an uncut Rose Gold sheet that keeps filling) became
+   *  ONE unit, and Set 2 took all of them. An anchor is attached to every group it shares an order with (the group still sees it: its open set is the group's home, a committed one says why it
+   *  cannot be, an uncut one is the partner to add), but it never connects two sheets, never holds a group (that is the partial `ends`' rule) and is never a bridge.
+   *  → { groups: [{ ids, orders, ends, anchors }], bridges: [{ id, groups: [[sheetId]], orders }] }
+   *    ids: the group's own sheets, then the end sheets and anchors attached to it; a lone sheet whose only order mate is an end sheet or an anchor is a group of its own (so it waits whole too). */
+  function formation(sheets, ends, bridge, anchors) {
+    const endSet = new Set([].concat(ends || []).map(String)), ancSet = new Set([].concat(anchors || []).map(String).filter(id => !endSet.has(id))), spread = bridge === 'spread';
+    const by = index(sheets), cores = sheets.filter(s => !endSet.has(s.id) && !ancSet.has(s.id)), parent = new Map(cores.map(s => [s.id, s.id]));
     const find = x => { let r = x; while (parent.get(r) !== r) r = parent.get(r); while (parent.get(x) !== r) { const n = parent.get(x); parent.set(x, r); x = n; } return r; };
     const shared = [];
     for (const [oid, m] of by) {
       if (!spans(m)) continue;
-      const ids = [...m.keys()], core = ids.filter(i => !endSet.has(i)), end = ids.filter(i => endSet.has(i));
-      shared.push({ oid, core, end });
+      const ids = [...m.keys()], core = ids.filter(i => !endSet.has(i) && !ancSet.has(i)), end = ids.filter(i => endSet.has(i)), anc = ids.filter(i => ancSet.has(i));
+      shared.push({ oid, core, end, anc });
       for (let i = 1; i < core.length; i++) { const a = find(core[0]), b = find(core[i]); if (a !== b) parent.set(a, b); }
     }
     const comp = new Map();
-    for (const s of cores) { const r = find(s.id); let c = comp.get(r); if (!c) comp.set(r, c = { ids: [], orders: new Set(), ends: new Set() }); c.ids.push(s.id); }
-    const touch = new Map();
-    for (const { oid, core, end } of shared) {
-      if (!core.length) continue;
+    for (const s of cores) { const r = find(s.id); let c = comp.get(r); if (!c) comp.set(r, c = { ids: [], orders: new Set(), ends: new Set(), anchors: new Set() }); c.ids.push(s.id); }
+    const touch = new Map(), byId = new Map(sheets.map(s => [s.id, s])), held = new Map();
+    const touchOf = (e, key, oid) => { let t = touch.get(e); if (!t) touch.set(e, t = new Map()); t.set(key, (t.get(key) || new Set()).add(oid)); };
+    for (const { oid, core, end, anc } of shared) {
+      if (!core.length) {
+        // (SETFIX 19 Oct 2026) an end sheet whose order mate is only an anchor still touches that anchor's group (its set, or the anchor alone): 'spread' counts it among the groups it touches
+        for (const e of end) for (const a of anc) { const key = 'anchor:' + ((byId.get(a) && byId.get(a).setId) || a); touchOf(e, key, oid); if (!held.has(key)) held.set(key, []); if (!held.get(key).includes(a)) held.get(key).push(a); }
+        continue;
+      }
       const c = comp.get(find(core[0])); c.orders.add(oid);
-      for (const e of end) { let t = touch.get(e); if (!t) touch.set(e, t = new Map()); t.set(find(core[0]), (t.get(find(core[0])) || new Set()).add(oid)); }
+      for (const a of anc) c.anchors.add(a);
+      for (const e of end) touchOf(e, find(core[0]), oid);
     }
     const bridges = [];
     for (const [e, roots] of touch) {
-      if (spread && roots.size > 1) { bridges.push({ id: e, groups: [...roots.keys()].map(r => comp.get(r).ids.slice()), orders: [...new Set([...roots.values()].flatMap(s => [...s]))].sort() }); continue; }
-      for (const [r, os] of roots) { const c = comp.get(r); c.ends.add(e); for (const o of os) c.orders.add(o); }
+      if (spread && roots.size > 1) { bridges.push({ id: e, groups: [...roots.keys()].map(r => comp.has(r) ? comp.get(r).ids.slice() : held.get(r).slice()), orders: [...new Set([...roots.values()].flatMap(s => [...s]))].sort() }); continue; }
+      for (const [r, os] of roots) { const c = comp.get(r); if (!c) continue; c.ends.add(e); for (const o of os) c.orders.add(o); }
     }
-    return { groups: [...comp.values()].filter(c => c.ids.length > 1 || c.ends.size).map(c => ({ ids: c.ids.concat([...c.ends]), orders: [...c.orders].sort(), ends: [...c.ends] })), bridges };
+    return { groups: [...comp.values()].filter(c => c.ids.length > 1 || c.ends.size || c.anchors.size).map(c => ({ ids: c.ids.concat([...c.ends], [...c.anchors]), orders: [...c.orders].sort(), ends: [...c.ends], anchors: [...c.anchors] })), bridges };
   }
 
   /**

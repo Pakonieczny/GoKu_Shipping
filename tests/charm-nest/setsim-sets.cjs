@@ -99,7 +99,9 @@ async function run(o = {}) {
     for (const p of pg) if (inSet(p)) memberOf.set(p.sheetId, p.setId);
     // S4 nothing waits that could form a set
     const norm = pg.map(p => world.SO.fromPage(p)).filter(Boolean), ends = pg.filter(p => !inSet(p) && ['gold', 'silver'].includes(p.metal) && !SR.isCompleted(p)).map(p => p.sheetId);
-    const groups = world.SO.core.formation ? world.SO.core.formation(norm, ends, SR.PARTIAL_BRIDGE).groups : world.SO.core.groups(norm), grp = new Map(); for (const g of groups) for (const id of g.ids) grp.set(id, g);
+    // (SETFIX, Paul 19 Oct 2026: a Rose Gold / 10K / 14K sheet outside every set that cannot join yet ties nothing together, charm-nest-shared-orders.js formation `anchors`)
+    const uncut = pg.filter(p => !inSet(p) && ['rose', 'gold10k', 'gold14k'].includes(p.metal) && !p.roseCutAt && !p.laserDoneAt && !p.solidPick).map(p => p.sheetId);
+    const groups = world.SO.core.formation ? world.SO.core.formation(norm, ends, SR.PARTIAL_BRIDGE, uncut).groups : world.SO.core.groups(norm), grp = new Map(); for (const g of groups) for (const id of g.ids) grp.set(id, g);
     const blocked = p => { const g = grp.get(p.sheetId); return !!g && g.ids.some(id => { const q = byId.get(id); return q && ['gold', 'silver'].includes(q.metal) && !SR.isCompleted(q); }); };
     const free = pg.filter(p => !inSet(p) && ['gold', 'silver'].includes(p.metal) && SR.isCompleted(p) && !blocked(p) && !(grp.get(p.sheetId) && grp.get(p.sheetId).ids.some(id => inSet(byId.get(id)))));
     for (const p of pg) if (!inSet(p) && ['gold', 'silver'].includes(p.metal) && SR.isCompleted(p) && blocked(p)) { blockedTicks++; blockedSheets.add(p.sheetId); }

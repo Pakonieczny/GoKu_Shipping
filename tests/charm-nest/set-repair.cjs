@@ -47,6 +47,8 @@ function owner2({ tie = null, setId = 'set-2', withSet1 = true, extra = {} } = {
 const idsIn = (p, k) => sorted(p.sets[k].sheetIds);
 
 /* ── 1 · the owner's Set 2 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────── */
+/* SETFIX (Paul, 19 Oct 2026): an uncut Rose Gold sheet outside every set cannot join any set yet, so it ties nothing together (charm-nest-shared-orders.js formation `anchors`): the formation of
+   these sheets is Set 2 = C, Set 3 = GF 3, GF 4, SS 2, Set 4 = GF 6 + SS 3, Set 5 = GF 7 + SS 4; GF 5 (tied to GF 4 only through the uncut RG 16) and GF 8 wait for an SS sheet of their own. */
 {
   const f = owner2();
   const d = SRp.diagnose(f.sets, f.sheets), info = d.bySet['set-2'];
@@ -64,15 +66,15 @@ const idsIn = (p, k) => sorted(p.sets[k].sheetIds);
   assert.equal(p.mode, 'trim', 'the first correct set is made of sheets the set already holds: they stay, nothing of them is touched');
   assert.deepEqual(sorted(p.keep), ['gf1', 'gf2', 'ss1']);
   assert.deepEqual(sorted(p.expel), ['gf3', 'gf4', 'gf5', 'gf6', 'gf7', 'gf8', 'rg16', 'rg29', 'ss2', 'ss3', 'ss4']);
-  // the plan equals CharmNestSetInvariants.expected(): Set 2 = C, Set 3 = B, Set 4 = A, GF 8 waits, RG 16 and RG 29 are partners to add
+  // the plan equals CharmNestSetInvariants.expected(): Set 2 = C, Set 3 = GF 3 + GF 4 + SS 2, Set 4 = GF 6 + SS 3, Set 5 = GF 7 + SS 4, GF 5 and GF 8 wait, RG 16 and RG 29 are partners to add
   const pool = f.sheets.filter(s => !['s1-gf1', 's1-ss1'].includes(s.id)), e = I.expected(pool, { firstSeq: 2 });
   assert.deepEqual(p.sets.map(s => sorted(s.sheetIds)), e.sets.map(s => sorted(s.sheetIds)), 'exactly the formation the rules make');
-  assert.deepEqual(p.sets.map(s => sorted(s.sheetIds)), [['gf1', 'gf2', 'ss1'], ['gf3', 'gf4', 'gf5', 'ss2'], ['gf6', 'gf7', 'ss3', 'ss4']]);
-  assert.deepEqual(p.sets.map(s => s.name), ['Set 2', 'Set 3', 'Set 4'], 'the dissolved set\'s number goes to the first correct set, the next numbers follow it');
-  assert.deepEqual(p.sets.map(s => s.setId), ['set-2', null, null], 'only the first keeps the set record; the others are allocated through the existing numbering path when made');
-  assert.deepEqual(p.sets.map(s => !!s.predicted), [false, true, true]);
-  assert.deepEqual(sorted(p.waiting.map(w => w.id)), ['gf8', 'rg16', 'rg29']);
-  assert.deepEqual(p.partners.map(x => [x.set, x.sheet]).sort(), [['Set 3', 'rg16'], ['Set 4', 'rg29']]);
+  assert.deepEqual(p.sets.map(s => sorted(s.sheetIds)), [['gf1', 'gf2', 'ss1'], ['gf3', 'gf4', 'ss2'], ['gf6', 'ss3'], ['gf7', 'ss4']]);
+  assert.deepEqual(p.sets.map(s => s.name), ['Set 2', 'Set 3', 'Set 4', 'Set 5'], 'the dissolved set\'s number goes to the first correct set, the next numbers follow it');
+  assert.deepEqual(p.sets.map(s => s.setId), ['set-2', null, null, null], 'only the first keeps the set record; the others are allocated through the existing numbering path when made');
+  assert.deepEqual(p.sets.map(s => !!s.predicted), [false, true, true, true]);
+  assert.deepEqual(sorted(p.waiting.map(w => w.id)), ['gf5', 'gf8', 'rg16', 'rg29']);
+  assert.deepEqual(p.partners.map(x => [x.set, x.sheet]).sort(), [['Set 3', 'rg16'], ['Set 4', 'rg29'], ['Set 5', 'rg29']]);
   assert.equal(p.after.ok, true); assert.equal(p.after.violations, 0);
   assert.match(p.signature, /^\["trim","set-2"/);
   // it was verified BEFORE applying: lay the plan on the state and ask the checker, with the rest of the shop around it
@@ -88,7 +90,8 @@ const idsIn = (p, k) => sorted(p.sets[k].sheetIds);
   assert(!p.sets.some(s => s.sheetIds.some(i => i.startsWith('s1-'))), 'Set 1\'s sheets are in no rebuilt set');
 
   // the partial GF Draft 10 shares an order with one of the units: that unit (with its Rose Gold partner) waits whole outside every set until the draft is full; the others form
-  const expectSets = { A: [['gf1', 'gf2', 'ss1'], ['gf3', 'gf4', 'gf5', 'ss2']], B: [['gf1', 'gf2', 'ss1'], ['gf6', 'gf7', 'ss3', 'ss4']], C: [['gf3', 'gf4', 'gf5', 'ss2'], ['gf6', 'gf7', 'ss3', 'ss4']] };
+  const C_ = ['gf1', 'gf2', 'ss1'], B_ = ['gf3', 'gf4', 'ss2'], A1 = ['gf6', 'ss3'], A2 = ['gf7', 'ss4'];
+  const expectSets = { A: [C_, B_, A2], B: [C_, A1, A2], C: [B_, A1, A2] };
   for (const tie of ['A', 'B', 'C']) {
     const g = owner2({ tie }), q = SRp.plan(g.set, g.sheets, g.sets, {});
     assert.equal(q.ok, true, tie + ' ' + JSON.stringify(q.refused));
@@ -130,7 +133,7 @@ const idsIn = (p, k) => sorted(p.sets[k].sheetIds);
   { const f = owner2(); f.sets.push({ setId: 'set-3', id: 'set-3', name: 'Set-3', seq: 3, runId: 'run-1', day: '2026-10-17', group: 'dispatch', status: 'open', sheetIds: [] }); refused(f, 'later', {}, /Set 3 comes after Set 2 in this run and is still forming/); }
   // a later set that has formed (a valid set) does not stop it: the new sets are numbered after it
   { const f = owner2(), a = sheet('l-gf', 'gold', 1, { setId: 'set-3', page: 40 }), b = sheet('l-ss', 'silver', 1, { setId: 'set-3', page: 41 }); f.sheets.push(a, b); f.sets.push({ setId: 'set-3', id: 'set-3', name: 'Set-3', seq: 3, runId: 'run-1', day: '2026-10-17', group: 'dispatch', status: 'open', sheetIds: ['l-gf', 'l-ss'] });
-    const p = SRp.plan(f.set, f.sheets, f.sets, {}); assert.equal(p.ok, true, JSON.stringify(p.refused)); assert.deepEqual(p.sets.map(s => s.name), ['Set 2', 'Set 4', 'Set 5'], 'the shop\'s counter is past Set 3: the new sets are numbered after every set it knows'); assert(!p.expel.some(i => i.startsWith('l-')), 'Set 3 is untouched'); }
+    const p = SRp.plan(f.set, f.sheets, f.sets, {}); assert.equal(p.ok, true, JSON.stringify(p.refused)); assert.deepEqual(p.sets.map(s => s.name), ['Set 2', 'Set 4', 'Set 5', 'Set 6'], 'the shop\'s counter is past Set 3: the new sets are numbered after every set it knows'); assert(!p.expel.some(i => i.startsWith('l-')), 'Set 3 is untouched'); }
   // an order-mate in a COMMITTED set is fixed work (the app lets the work go on: bridge Gate 'fixed' groups): the open set is not at fault, so it is neither flagged for it nor refused (review V2, 17 Oct 2026: it was a dead end that also stopped the approval)
   { const f = owner2(); link(f.gf[1], f.sheets.find(s => s.id === 's1-gf1'), 4200000888);
     const p = SRp.plan(f.set, f.sheets, f.sets, {}); assert.equal(p.ok, true, JSON.stringify(p.refused)); assert.equal(I.check(f.sets, f.sheets, { skipExempt: true, unformed: false, membership: false }).violations.some(v => v.rule === 'cardinal'), false, 'no cardinal violation against the open set'); }
@@ -339,13 +342,15 @@ function ownerPage({ tie = null } = {}) {
     assert.equal(w.confirmed.length, 1, 'the small window asked once, with the plan'); assert.equal(w.confirmed[0].words.title, 'Rebuild Set 2 correctly?');
     assert.equal(w.calls, 2, 'the run\'s own assembly ran twice: sheets leave (once, all at once), then the next sets form');
     const sets = w.sets();
-    assert.deepEqual(sets.map(s => [s.name, w.ids(s)]), [['Set-1', ['s1-gf1', 's1-ss1']], ['Set-2', ['gf1', 'gf2', 'ss1']], ['Set-3', ['gf3', 'gf4', 'gf5', 'ss2']], ['Set-4', ['gf6', 'gf7', 'ss3', 'ss4']]],
-      'Set 2 = GF 1 + GF 2 + SS 1 under its own number; Set 3 and Set 4 were numbered through the existing path (Sets.ensure) in order; Set 1 is untouched');
+    assert.deepEqual(sets.map(s => [s.name, w.ids(s)]), [['Set-1', ['s1-gf1', 's1-ss1']], ['Set-2', ['gf1', 'gf2', 'ss1']], ['Set-3', ['gf3', 'gf4', 'ss2']], ['Set-4', ['gf6', 'ss3']], ['Set-5', ['gf7', 'ss4']]],
+      'Set 2 = GF 1 + GF 2 + SS 1 under its own number; Set 3, Set 4 and Set 5 were numbered through the existing path (Sets.ensure) in order; Set 1 is untouched');
     assert.equal(sets[1].setId, 'set-2', 'the dissolved set kept its record and its number');
     // where every sheet is now
     for (const id of ['gf1', 'gf2', 'ss1']) assert.deepEqual([w.page(id).setId, w.page(id).draft, w.page(id).sheetIndex], ['set-2', false, id === 'gf2' ? 2 : 1], id + ' stays where it was, with its number');
-    for (const id of ['gf3', 'gf4', 'gf5', 'ss2']) assert.deepEqual([w.page(id).setId, w.page(id).draft], ['set-3', false], id);
-    for (const id of ['gf6', 'gf7', 'ss3', 'ss4']) assert.deepEqual([w.page(id).setId, w.page(id).draft], ['set-4', false], id);
+    for (const id of ['gf3', 'gf4', 'ss2']) assert.deepEqual([w.page(id).setId, w.page(id).draft], ['set-3', false], id);
+    for (const id of ['gf6', 'ss3']) assert.deepEqual([w.page(id).setId, w.page(id).draft], ['set-4', false], id);
+    for (const id of ['gf7', 'ss4']) assert.deepEqual([w.page(id).setId, w.page(id).draft], ['set-5', false], id);
+    assert.deepEqual([w.page('gf5').setId || null, w.page('gf5').draft], [null, true]); assert.match(w.page('gf5').setWait, /needs a completed SS sheet with it$/, 'GF 5 (tied to GF 4 only through the uncut RG 16) waits for an SS sheet of its own');
     assert.equal(w.page('gf3').sheetIndex, 1); assert.equal(w.page('gf4').sheetIndex, 2); assert.equal(w.page('ss2').sheetIndex, 1, 'a sheet that joins a new set takes the next number of its metal in it (charm-nest-sheet-name.js)');
     assert.deepEqual([w.page('gf8').setId || null, w.page('gf8').draft], [null, true]); assert.match(w.page('gf8').setWait, /needs a completed SS sheet with it$/, 'GF 8 waits outside every set, with the plain line');
     for (const id of ['rg16', 'rg29']) { const p = w.page(id); assert.deepEqual([p.setId || null, p.draft, p.leftSet], [null, true, 'set-2'], id + ' waits for its green line: out of every set until you Include / Cut it'); }
@@ -364,7 +369,7 @@ function ownerPage({ tie = null } = {}) {
     // pressed again: nothing to do, nothing written
     const n0 = w.writes.length, again = await SRp.rebuild(w.group('set-2'), { env: w.env() });
     assert.deepEqual([again.ok, again.noop, again.refused.key], [false, true, 'right']); assert.equal(w.writes.length, n0, 'idempotent: not a single write'); assert.equal(w.confirmed.length, 1, 'and no window');
-    for (const s of ['set-3', 'set-4']) { const q = await SRp.rebuild(w.group(s), { env: w.env() }); assert.equal(q.noop, true, s + ' is right'); }
+    for (const s of ['set-3', 'set-4', 'set-5']) { const q = await SRp.rebuild(w.group(s), { env: w.env() }); assert.equal(q.noop, true, s + ' is right'); }
     done.push('A');
   }
   /* B · a refusal writes nothing at all */
@@ -397,8 +402,8 @@ function ownerPage({ tie = null } = {}) {
   {
     const w = pageWorld(ownerPage({ tie: 'B' })), r = await SRp.rebuild(w.group('set-2'), { env: w.env() });
     assert.equal(r.ok, true, JSON.stringify([r.error, r.refused, r.still, w.said]));
-    assert.deepEqual(w.sets().map(s => [s.name, w.ids(s)]), [['Set-1', ['s1-gf1', 's1-ss1']], ['Set-2', ['gf1', 'gf2', 'ss1']], ['Set-3', ['gf6', 'gf7', 'ss3', 'ss4']]]);
-    for (const id of ['gf3', 'gf4', 'gf5', 'ss2']) assert(w.page(id).draft && !w.page(id).setId, id + ' waits with its group');
+    assert.deepEqual(w.sets().map(s => [s.name, w.ids(s)]), [['Set-1', ['s1-gf1', 's1-ss1']], ['Set-2', ['gf1', 'gf2', 'ss1']], ['Set-3', ['gf6', 'ss3']], ['Set-4', ['gf7', 'ss4']]]);
+    for (const id of ['gf3', 'gf4', 'gf5', 'ss2']) assert(w.page(id).draft && !w.page(id).setId, id + ' waits with its group (GF 5: for an SS sheet of its own)');
     const rows = w.rows(), sets = w.sets().map(s => ({ ...s, id: s.setId, sheetIds: s.ids }));
     assert.equal(I.check(sets, rows, { skipExempt: true, unformed: false, partialPartners: 'pending' }).ok, true);
     done.push('C');
@@ -408,8 +413,8 @@ function ownerPage({ tie = null } = {}) {
     const layout = ownerPage(); layout.push({ id: 'l-gf', metal: 'gold', page: 20, full: true, pieces: [own1(80)], inSet: null, sheetIndex: undefined }, { id: 'l-ss', metal: 'silver', page: 21, full: true, pieces: [own1(81)], inSet: null, sheetIndex: undefined });
     const w = pageWorld(layout), r = await SRp.rebuild(w.group('set-2'), { env: w.env() });
     assert.equal(r.ok, true, JSON.stringify([r.error, r.refused, r.still, w.said]));
-    assert.deepEqual(r.plan.sets.map(s => [s.name, sorted(s.sheetIds)]), [['Set 2', ['gf1', 'gf2', 'ss1']], ['Set 3', ['gf3', 'gf4', 'gf5', 'ss2']], ['Set 4', ['gf6', 'gf7', 'ss3', 'ss4']], ['Set 5', ['gf8', 'l-ss']]]);
-    assert.deepEqual(w.sets().map(s => [s.name, w.ids(s)]), [['Set-1', ['s1-gf1', 's1-ss1']], ['Set-2', ['gf1', 'gf2', 'ss1']], ['Set-3', ['gf3', 'gf4', 'gf5', 'ss2']], ['Set-4', ['gf6', 'gf7', 'ss3', 'ss4']], ['Set-5', ['gf8', 'l-ss']]], 'the sets were made in the order the plan said: GF 8 (it was loose after the rebuild) pairs with the loose SS, last');
+    assert.deepEqual(r.plan.sets.map(s => [s.name, sorted(s.sheetIds)]), [['Set 2', ['gf1', 'gf2', 'ss1']], ['Set 3', ['gf3', 'gf4', 'ss2']], ['Set 4', ['gf6', 'ss3']], ['Set 5', ['gf7', 'ss4']], ['Set 6', ['gf5', 'l-ss']]]);
+    assert.deepEqual(w.sets().map(s => [s.name, w.ids(s)]), [['Set-1', ['s1-gf1', 's1-ss1']], ['Set-2', ['gf1', 'gf2', 'ss1']], ['Set-3', ['gf3', 'gf4', 'ss2']], ['Set-4', ['gf6', 'ss3']], ['Set-5', ['gf7', 'ss4']], ['Set-6', ['gf5', 'l-ss']]], 'the sets were made in the order the plan said: GF 5 (loose after the rebuild, the earliest page) pairs with the loose SS, last');
     assert(w.page('l-gf').draft && !w.page('l-gf').setId, 'the loose GF that has no SS left waits');
     assert.equal(w.page('l-gf').leftSet, undefined, 'the loose sheets are not left marked');
     done.push('D');
@@ -482,8 +487,8 @@ function ownerPage({ tie = null } = {}) {
         const ask = SRp.confirmDialog(plan), dlg = doc.querySelector('dialog.setRepairDlg');
         assert(dlg, 'the window opened'); assert.equal(dlg.querySelector('h3').textContent, 'Rebuild Set 2 correctly?');
         const items = [...dlg.querySelectorAll('li')].map(li => li.textContent);
-        assert.equal(items[0], 'Set 2: GF Sheet 1, GF Sheet 2, SS Sheet 1'); assert(items[1].startsWith('Set 3: GF Sheet 1 (was GF Sheet 3), GF Sheet 2 (was GF Sheet 4), GF Sheet 3 (was GF Sheet 5), SS Sheet 1 (was SS Sheet 2)'), items[1]); assert(items[2].startsWith('Set 4: '));
-        assert(items.some(t => /^GF Draft 8 \(was GF Sheet 8\) waits for a completed SS sheet$/.test(t)) && items.some(t => /RG Draft 16 \(was RG Sheet 16\) and RG Draft 29 \(was RG Sheet 29\) wait for their green line$/.test(t)), items.join(' | '));
+        assert.equal(items[0], 'Set 2: GF Sheet 1, GF Sheet 2, SS Sheet 1'); assert(items[1].startsWith('Set 3: GF Sheet 1 (was GF Sheet 3), GF Sheet 2 (was GF Sheet 4), SS Sheet 1 (was SS Sheet 2)'), items[1]); assert(items[2].startsWith('Set 4: ')); assert(items[3].startsWith('Set 5: '));
+        assert(items.some(t => /GF Draft 8 \(was GF Sheet 8\) wait/.test(t) && /for a completed SS sheet$/.test(t)) && items.some(t => /GF Draft 5 \(was GF Sheet 5\)/.test(t)) && items.some(t => /RG Draft 16 \(was RG Sheet 16\) and RG Draft 29 \(was RG Sheet 29\) wait for their green line$/.test(t)), items.join(' | '));
         assert.equal(dlg.querySelector('.nothing').textContent.startsWith('Nothing is deleted'), true);
         assert.deepEqual([...dlg.querySelectorAll('.dlgFoot button')].map(b => b.textContent), ['Cancel', 'Rebuild']);
         dlg.querySelector('[data-k=cancel]').click(); assert.equal(await ask, false); assert.equal(doc.querySelector('dialog.setRepairDlg'), null, 'Cancel closes it and changes nothing');
@@ -492,8 +497,8 @@ function ownerPage({ tie = null } = {}) {
         const w2 = pageWorld(ownerPage()), env = w2.env(); let seen = null;
         card.innerHTML = html; SRp.wire(card, { setId: 'set-2', runId: RUN, seq: 2 }, { env: { ...env, confirm: async p => { seen = p; return true; } } });
         card.querySelector('[data-rebuild-set]').click();
-        for (let i = 0; i < 400 && w2.sets().length < 4; i++) await new Promise(r => setTimeout(r, 5));
-        assert.equal(w2.sets().length, 4, 'one press: Set 2, Set 3 and Set 4'); assert(seen && seen.ok, 'the window showed the plan first');
+        for (let i = 0; i < 400 && w2.sets().length < 5; i++) await new Promise(r => setTimeout(r, 5));
+        assert.equal(w2.sets().length, 5, 'one press: Set 2, Set 3, Set 4 and Set 5'); assert(seen && seen.ok, 'the window showed the plan first');
         for (let i = 0; i < 100 && card.querySelector('[data-rebuild-set]').disabled; i++) await new Promise(r => setTimeout(r, 5));
       } finally { delete globalThis.document; }
     } else console.log('(jsdom is not installed here: the small window is checked only through its words)');

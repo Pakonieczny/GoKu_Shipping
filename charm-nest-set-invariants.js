@@ -37,7 +37,7 @@
  *   sets    [ { id | setId, name, seq | setSeq, sheetIds | sheets | members, formedAt?, committedAt?, status? } ]  or  [ [sheetId, ...] ]  or  { setId: [sheetId...] | set }
  *   opts    { skipExempt (a set committed to the Design Station / completed / replaced is not checked, as SetRules.gate; default: checked),
  *             partialPartners:'pending' (R11 listed in partners, not a violation: only for a set that already held a sheet of the group before the partial sheet appeared),
- *             legacySets:[setId] (the same, per set), membership:false (do not read a listed sheet's own draft flag) | 'strict' (also refuse a sheet whose own setId names another set; the sets argument is otherwise the truth), allowShort:[setId] (a set still forming), firstSeq }
+ *             legacySets:[setId] (the same, per set), waiting:[sheetId] (completed sheets outside every set that cannot join yet, still saving: they tie the sheets they share orders with, R5 and R9 do not call them due; SETFIX 19 Oct 2026), membership:false (do not read a listed sheet's own draft flag) | 'strict' (also refuse a sheet whose own setId names another set; the sets argument is otherwise the truth), allowShort:[setId] (a set still forming), firstSeq }
  *
  * Reads the real helpers, never a copy of them: SetRules (validSet, isCompleted, isPartial, metalClass, unitsOf, surplus, groupWait, formAll, exempt, fillWords),
  * SharedOrders core (sheetOf, groups, index, spans), SheetName (name, numberOf), SetEdit.engravingGap, CharmNestRose.cuts.
@@ -141,10 +141,19 @@
       const n = toShared(rec, label, inSet); if (n) norm.push(n);
     }
     const ends = [...recs.values()].filter(r => !r.archived && ['GF', 'SS'].includes(R.metalClass(r)) && R.isPartial(r) && !setOf.has(r.id)).map(r => r.id);
-    const F = typeof S.formation === 'function' ? S.formation(norm, ends, R.PARTIAL_BRIDGE) : { groups: S.groups(norm), bridges: [] };
-    const groups = F.groups, bridges = F.bridges, groupOfId = new Map(), normById = new Map(norm.map(n => [n.id, n]));
+    /* SETFIX (Paul, 19 Oct 2026: "the first set is always correct, but all subsequent sets ... jamming all of the available sheets into a single set"). The groups tied sheets THROUGH a sheet that can
+       never be in the set being judged, so the app's Set 2 made of units that each shared one order with a sheet of the committed Set 1 (or with an uncut Rose Gold sheet) read as ONE unit here, and
+       this check said ok. The same anchors as the page's assembly (charm-nest-shared-orders.js formation): they are attached to the groups they share an order with but never tie two sheets together.
+         anchors          a sheet in a set committed / completed / replaced (SetRules.exempt), and a sheet outside every set that the laser cut or that is a Rose Gold / 10K / 14K sheet that cannot join yet
+         unitAnchors(st)  those, and every sheet in ANOTHER set: the units a set's minimality (R7) is judged by */
+    const exemptSet = new Set(setList.filter(st => R.exempt(st.doc)).map(st => st.id));
+    const anchors = [...recs.values()].filter(r => !r.archived && (setOf.has(r.id) ? exemptSet.has(setOf.get(r.id)) : (+r.laserDoneAt > 0 || (GOLD_FAMILY.includes(R.metalClass(r)) && goldGaps(r).length > 0)))).map(r => r.id);
+    const formation = anc => typeof S.formation === 'function' ? S.formation(norm, ends, R.PARTIAL_BRIDGE, anc) : { groups: S.groups(norm), bridges: [] };
+    const F = formation(anchors);
+    const groups = F.groups, bridges = F.bridges, groupOfId = new Map(), normById = new Map(norm.map(n => [n.id, n])), anchorSet = new Set(anchors);
     for (const g of groups) for (const id of g.ids) if (!groupOfId.has(id)) groupOfId.set(id, g);
-    return { R, S, opts: opts || {}, recs, setList, setOf, twice, norm, normById, groups, bridges, groupOfId, name: id => nameById.get(id) || id };
+    const unitGroups = st => formation(anchors.concat([...setOf].filter(([, sid]) => sid !== st.id).map(([id]) => id))).groups;
+    return { R, S, opts: opts || {}, recs, setList, setOf, twice, norm, normById, groups, bridges, groupOfId, anchorSet, unitGroups, name: id => nameById.get(id) || id };
   }
 
   function evaluate(setsIn, sheetsIn, opts) {
@@ -154,7 +163,7 @@
       const id = `${rule}:${st ? st.id : '-'}:${sheets.join('+')}`; if (seen.has(id)) return; seen.add(id);
       violations.push(Object.assign({ rule, ruleNo: RULE_NO[rule], ...(LETTER[rule] ? { letter: LETTER[rule] } : {}), id, set: st ? st.id : null, setName: st ? st.name : '', sheets, names: sheets.map(C.name), message }, extra || {}));
     };
-    const legacy = new Set(list(o.legacySets).map(str)), short = new Set(list(o.allowShort).map(str));
+    const legacy = new Set(list(o.legacySets).map(str)), short = new Set(list(o.allowShort).map(str)), waitingIds = new Set(list(o.waiting).map(str));      // (waiting: completed sheets that cannot join yet, still saving: they tie, they are not due in a set)
 
     for (const st of setList) {
       const exempt = R.exempt(st.doc), members = st.ids.map(i => recs.get(i)).filter(Boolean), live = members.filter(r => !r.archived);
@@ -188,13 +197,13 @@
         add('notReady', st, [r.id], `${C.name(r.id)} is in ${st.name} but ${and(gaps)}: a ${WORD[R.metalClass(r)]} sheet joins a set only once its green line is cut (or the Cut Sheet press is approved) and its back engraving is approved. It belongs outside the set, named as a partner to add${partnerOf.length ? ` (it shares orders with ${and(partnerOf)})` : ''}`, { reasons: gaps, tied });   // (tied: the sheets of the set it shares orders with; charm-nest-set-repair.js remedyOf reads it)
       }
 
-      // ── (b) R7: a unit the set does not need (SetRules.surplus over SharedOrders units) ──
-      const units = R.unitsOf(live, groups), spare = new Set(R.surplus(live, groups).map(r => r.id));
+      // ── (b) R7: a unit the set does not need (SetRules.surplus over SharedOrders units; SETFIX 19 Oct 2026: units never tie through a sheet of another set, a cut one or an uncut gold-family one) ──
+      const ug = C.unitGroups(st), units = R.unitsOf(live, ug), spare = new Set(R.surplus(live, ug).map(r => r.id));
       row.units = units.map(u => u.sheets.map(r => r.id));
       const keep = units.filter(u => !u.sheets.every(r => spare.has(r.id)));
       for (const u of units) {
         if (!u.sheets.length || !u.sheets.every(r => spare.has(r.id))) continue;
-        const ids = u.sheets.slice().sort(byKind).map(r => r.id), names = ids.map(C.name), tied = [...new Set(groups.filter(g => g.ids.some(i => ids.includes(i))).flatMap(g => g.orders))].filter(oid => ids.filter(i => { const n = C.normById.get(i); return n && n.pieces.some(p => p.orderId === oid); }).length > 1);
+        const ids = u.sheets.slice().sort(byKind).map(r => r.id), names = ids.map(C.name), tied = [...new Set(ug.filter(g => g.ids.some(i => ids.includes(i))).flatMap(g => g.orders))].filter(oid => ids.filter(i => { const n = C.normById.get(i); return n && n.pieces.some(p => p.orderId === oid); }).length > 1);
         const keeps = and(keep.flatMap(k => k.sheets).sort(byKind).map(r => C.name(r.id)));
         add('surplus', st, ids, ids.length === 1
           ? `${names[0]} shares no order with the others and ${st.name} is valid without it${keeps ? ` (${keeps} are enough)` : ''}`
@@ -207,7 +216,7 @@
       for (const g of groups.filter(g => g.ids.some(i => inside.has(i)))) {
         const mine = g.ids.filter(i => inside.has(i)), outside = g.ids.filter(i => !inside.has(i) && !setOf.has(i));
         for (const id of outside) {
-          const r = recs.get(id); if (!r || r.archived) continue;
+          const r = recs.get(id); if (!r || r.archived || +r.laserDoneAt > 0 || waitingIds.has(id)) continue;      // (SETFIX 19 Oct 2026: a sheet the laser cut moves to no set: the order is split for good, like an order mate in a committed set)
           const cls = R.metalClass(r), n = C.normById.get(id), because = g.orders.filter(oid => n && n.pieces.some(p => p.orderId === oid)), withNames = mine.map(C.name);
           if (cls === 'GF' || cls === 'SS') {
             if (R.isPartial(r)) {
@@ -252,22 +261,26 @@
     }
 
     // ── (e) R9: a group spread over two sets ──
+    // (SETFIX, Paul 19 Oct 2026: read per ORDER: an order whose pieces are on sheets of two sets. A group whose sets are tied only through a sheet outside every set has no such order: that sheet is
+    //  the fault, and it is named as the completed sheet that is in no set ('cardinal' above), never as "orders on sheets of different sets", which those orders are not)
+    const idxR9 = S.index(C.norm);
     for (const g of groups) {
-      const sets = [...new Set(g.ids.map(i => setOf.get(i)).filter(Boolean))];
-      if (sets.length < 2) continue;
-      const st = setList.find(s => s.id === sets[0]), by = sets.map(sid => `${(setList.find(s => s.id === sid) || {}).name || sid}: ${and(g.ids.filter(i => setOf.get(i) === sid).map(C.name))}`);
+      const crossing = g.orders.filter(oid => { const m = idxR9.get(oid); return !!m && new Set([...m.keys()].map(i => setOf.get(i)).filter(Boolean)).size > 1; });
+      if (!crossing.length) continue;
+      const on = [...new Set(crossing.flatMap(oid => [...idxR9.get(oid).keys()]))].filter(i => setOf.has(i)), sets = [...new Set(on.map(i => setOf.get(i)))];
+      const st = setList.find(s => s.id === sets[0]), by = sets.map(sid => `${(setList.find(s => s.id === sid) || {}).name || sid}: ${and(on.filter(i => setOf.get(i) === sid).map(C.name))}`);
       if (o.skipExempt && setList.filter(s => sets.includes(s.id)).some(s => R.exempt(s.doc))) continue;      // (a mate in a set sent to the station, completed or replaced is fixed: the open set is not at fault, the work goes on)
-      add('cardinal', st, g.ids.filter(i => setOf.has(i)), `${cap(orderWords(g.orders))} ${g.orders.length === 1 ? 'has' : 'have'} pieces on sheets of different sets (${by.join('; ')}): sheets that share a multi-piece order must always be in the same set`, { sets, orders: g.orders });
+      add('cardinal', st, on, `${cap(orderWords(crossing))} ${crossing.length === 1 ? 'has' : 'have'} pieces on sheets of different sets (${by.join('; ')}): sheets that share a multi-piece order must always be in the same set`, { sets, orders: crossing });
     }
 
     // ── R5: completed sheets that wait outside every set although they make a valid set ("as soon as the minimum criteria is met ... the set should be formed") ──
     if (o.unformed !== false) {
       const near = new Set(), heldIds = new Set();
       for (const g of groups) {
-        if (g.ids.some(i => setOf.has(i))) g.ids.forEach(i => near.add(i));                                 // it belongs with the set its partner is in (R9), not to a new set
+        if (g.ids.some(i => setOf.has(i) && !C.anchorSet.has(i))) g.ids.forEach(i => near.add(i));          // it belongs with the set its partner is in (R9), not to a new set (SETFIX 19 Oct: a committed set is no partner's place)
         else if (!R.groupWait(g.ids.map(i => recs.get(i)).filter(Boolean), () => false).ok) g.ids.forEach(i => heldIds.add(i));   // a group with a partial sheet waits whole (R11)
       }
-      const free = [...recs.values()].filter(r => !r.archived && !setOf.has(r.id) && !near.has(r.id) && !heldIds.has(r.id) && ['GF', 'SS'].includes(R.metalClass(r)) && R.isCompleted(r));
+      const free = [...recs.values()].filter(r => !r.archived && !waitingIds.has(r.id) && !setOf.has(r.id) && !near.has(r.id) && !heldIds.has(r.id) && ['GF', 'SS'].includes(R.metalClass(r)) && R.isCompleted(r));
       for (const l of R.formAll([], free, false, '', groups).sets) {
         const sids = l.map(r => r.id);
         add('unformed', null, sids, `${and(sids.map(C.name))} ${sids.length === 1 ? 'is' : 'are'} completed, in no set, and make a valid set (a completed GF and a completed SS sheet): a set forms the moment its minimum is met`, { unit: sids });

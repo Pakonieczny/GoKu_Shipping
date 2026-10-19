@@ -72,52 +72,51 @@ const idsOf = (...k) => k.map(x => ID[x]).sort();
 const page = (w, k) => w.pages.find(p => p.sheetId === ID[k]);
 
 (async () => {
-  /* 1a · (Paul, 13 Oct) the picture as it was: GF Draft 3 is a PARTIAL sheet that shares an order with the group (through the Rose Gold sheet). A partial sheet never joins a set, and a group
-         is eligible for a set only when every GF and SS sheet of it is full: so NO set forms, nothing is split, nothing is dissolved, and each waiting sheet says why in one plain line */
+  /* 1a · the picture as it was: GF Draft 3 is a PARTIAL sheet; it shares an order with the group only THROUGH the Rose Gold sheet (SS1+RG1, RG1+GF3). SETFIX (Paul, 19 Oct 2026): a Rose Gold sheet
+         that cannot join yet (no green line) ties nothing together (charm-nest-shared-orders.js formation `anchors`), so it does not tie the group to the partial GF Draft 3 either: GF 1, GF 2 and
+         SS 1 make the minimum and form Set 1 at once (Paul, 12 Oct: "as soon as the minimum criteria is met ... the set should be formed"); GF Draft 3 never joins a set while it is partial
+         (Paul, 13 Oct) and the Rose Gold sheet is the partner to add (R10). Before, the uncut Rose Gold sheet chained the group to the partial sheet and NO set formed. */
   let w = world();
-  await w.assemble();
-  assert.equal(w.allocations(), 0, 'no set was numbered: the group waits for its partial sheet'); assert.equal(w.sets().length, 0);
-  for (const k of ['GF1', 'GF2', 'SS1']) { const p = page(w, k); assert.equal(p.draft, true, k + ' stays a draft'); assert(!p.setId); assert.match(p.cardinalHold, /^Waits: orders? [\d, ]+(and more)? shared with GF Draft 3, which is not full yet, so they stay out of a set together$/, k + ': ' + p.cardinalHold); assert.equal(Gate_policy(w, k).include, false, k + ' is not released'); }
-  for (const k of ['GF3', 'RG1', 'SS2']) { assert.equal(page(w, k).draft, true); assert(!page(w, k).setId, k + ' is in no set'); assert(!page(w, k).cardinalPull, k + ' is never pulled in'); }
-  assert.equal(Gate_policy(w, 'GF3').reason, 'Partial · held for a later set', 'the partial sheet says it is partial');
-  assert(w.c.writes.filter(x => x.n === 'charmNestLibrary').length === 0, 'nothing at all was written');
-  const quiet = w.writes(); await w.assemble(); assert.equal(w.writes(), quiet, 'looked at again: nothing moves');
-  // GF Draft 3 reaches its fill (the app's own mark: released/full): the group is eligible, Set 1 forms
-  page(w, 'GF3').releaseFull = true;
   await w.assemble();
   assert.equal(w.allocations(), 1, 'one set was numbered, and it is not empty');
   let sets = w.sets(); assert.equal(sets.length, 1);
   assert.equal(sets[0].name, 'Set-1');
-  assert.deepEqual(w.ids(sets[0]), idsOf('GF1', 'GF2', 'GF3', 'SS1'), 'Set 1 = the four sheets of the group, now that every GF and SS sheet of it is full');
-  for (const k of ['GF1', 'GF2', 'SS1', 'GF3']) assert(!page(w, k).cardinalHold, k + ' is no longer held');
-  for (const k of ['GF1', 'GF2', 'SS1', 'GF3']) { const p = page(w, k); assert.equal(p.draft, false, k + ' left Draft'); assert.equal(p.setId, 'set-1'); assert(p.sheetIndex >= 1, k + ' has its number inside the set: GF Sheet n / SS Sheet n'); assert(!p.cardinalHold, k + ' is not held'); assert(!p.setWait); }
+  assert.deepEqual(w.ids(sets[0]), idsOf('GF1', 'GF2', 'SS1'), 'Set 1 = the completed sheets of the group, at once: the partial GF Draft 3 is tied to them only through the uncut Rose Gold sheet');
+  for (const k of ['GF1', 'GF2', 'SS1']) { const p = page(w, k); assert.equal(p.draft, false, k + ' left Draft'); assert.equal(p.setId, 'set-1'); assert(p.sheetIndex >= 1, k + ' has its number inside the set: GF Sheet n / SS Sheet n'); assert(!p.cardinalHold, k + ' is not held'); assert(!p.setWait); }
   assert.deepEqual([page(w, 'GF1').sheetIndex, page(w, 'GF2').sheetIndex, page(w, 'SS1').sheetIndex], [1, 2, 1], 'loose GF Draft 1 and 2 became GF Sheet 1 and 2, SS Draft 1 became SS Sheet 1');
-  for (const k of ['RG1', 'SS2']) { assert.equal(page(w, k).draft, true, k + ' stays a draft'); assert(!page(w, k).setId); }
+  for (const k of ['GF3', 'RG1', 'SS2']) { assert.equal(page(w, k).draft, true); assert(!page(w, k).setId, k + ' is in no set'); assert(!page(w, k).cardinalPull, k + ' is never pulled in'); }
+  assert.equal(Gate_policy(w, 'GF3').reason, 'Partial · held for a later set', 'the partial sheet says it is partial');
   assert(page(w, 'SS2').density < .5 && !page(w, 'SS2').releaseFull, 'SS Draft 2 is a partial sheet: it never starts a set and waits');
   assert(w.pages.every(p => !p.cardinalHold), 'no sheet is held for the Rose Gold sheet');
   const saved = w.c.writes.filter(x => x.n === 'charmNestLibrary' && x.b.op === 'putSheet').map(x => x.b.sheet);
-  assert.equal(saved.length, 4, 'four sheets were given their set, nothing else was written'); assert(saved.every(s => s.draft === false && s.setId === 'set-1' && !('releaseFull' in s) && !('placements' in s)), 'only the membership, never the artwork or the completion mark');
-  const before = w.writes(); await w.assemble(); assert.equal(w.writes(), before, 'looked at again: nothing moves, nothing is written'); assert.equal(w.allocations(), 1);
-  // the partner is named on every sheet that shares orders with it, in Paul's words, and the work is not held for it
-  for (const k of ['GF1', 'GF2', 'GF3', 'SS1']) assert(/^Orders? [\d, ]+(and more)? shared with RG Draft 1: add that sheet to (this set|Set-1) \(a Rose Gold sheet joins a set only by its own Cut Sheet press\)$/.test(page(w, k).cardinalNote), k + ': ' + page(w, k).cardinalNote);
+  assert.equal(saved.length, 3, 'three sheets were given their set, nothing else was written'); assert(saved.every(s => s.draft === false && s.setId === 'set-1' && !('releaseFull' in s) && !('placements' in s)), 'only the membership, never the artwork or the completion mark');
+  const quiet = w.writes(); await w.assemble(); assert.equal(w.writes(), quiet, 'looked at again: nothing moves, nothing is written'); assert.equal(w.allocations(), 1);
+  // the partner is named on every sheet of the set that shares orders with it, in Paul's words, and the work is not held for it
+  for (const k of ['GF1', 'GF2', 'SS1']) assert(/^Orders? [\d, ]+(and more)? shared with RG Draft 1: add that sheet to (this set|Set-1) \(a Rose Gold sheet joins a set only by its own Cut Sheet press\)$/.test(page(w, k).cardinalNote), k + ': ' + page(w, k).cardinalNote);
   assert(!page(w, 'RG1').cardinalNote && !page(w, 'RG1').cardinalPull, 'the Rose Gold sheet is never pulled in by itself (its own Cut Sheet press does that)');
+  // GF Draft 3 reaches its fill: it shares an order only with the uncut Rose Gold sheet, so it is a sheet of its own: Set 1 has formed, it waits for an SS sheet of its own
+  page(w, 'GF3').releaseFull = true;
+  await w.assemble(); sets = w.sets();
+  assert.equal(w.allocations(), 1); assert.deepEqual(w.ids(sets[0]), idsOf('GF1', 'GF2', 'SS1'), 'Set 1 is closed: it does not take GF Draft 3 (nothing it can hold ties them)');
+  assert.equal(page(w, 'GF3').draft, true); assert.equal(page(w, 'GF3').setWait, 'Set-1 has formed, so this sheet waits for the next set: it needs a completed SS sheet with it');
 
-  /* 2 · Set 1 is closed. A completed GF and a completed SS that come later form Set 2; the Rose Gold sheet is not taken to Set 2 by the even-numbered rule (its orders are in Set 1) */
+  /* 2 · Set 1 is closed. A completed GF and a completed SS that come later: GF Draft 3 (completed first) and the completed SS form Set 2; the Rose Gold sheet goes into no set by itself */
   w.add(extra('gold', 4, 'gf4x', true), extra('silver', 3, 'ss3xx', true));
   await w.assemble(); sets = w.sets();
-  assert.equal(sets.length, 2, 'Set 2 formed'); assert.deepEqual(w.ids(sets[1]), ['gf4x', 'ss3xx'].sort(), 'from the completed pair alone');
-  assert.deepEqual(w.ids(sets[0]), idsOf('GF1', 'GF2', 'GF3', 'SS1'), 'Set 1 is as it was: not emptied, not renamed, nothing added or taken out');
-  assert.equal(page(w, 'RG1').draft, true, 'the Rose Gold sheet is not put into Set 2 by parity: it belongs with its orders in Set 1'); assert.equal(page(w, 'RG1').cardinalHome, 'set-1');
-  assert.equal(page(w, 'GF3').setId, 'set-1', 'GF Draft 3 stays in Set 1 (it was not thrown out when Set 2 formed)');
+  assert.equal(sets.length, 2, 'Set 2 formed'); assert.deepEqual(w.ids(sets[1]), [ID.GF3, 'ss3xx'].sort(), 'from the earliest completed GF (GF Draft 3) and the completed SS');
+  assert.deepEqual(w.ids(sets[0]), idsOf('GF1', 'GF2', 'SS1'), 'Set 1 is as it was: not emptied, not renamed, nothing added or taken out');
+  assert.equal(page(w, 'RG1').draft, true, 'the Rose Gold sheet is not put into a set by itself');
   assert(/shared with RG Draft 1: add that sheet to Set-1/.test(page(w, 'GF1').cardinalNote), page(w, 'GF1').cardinalNote);
+  assert(/shared with RG Draft 1: add that sheet to Set-2/.test(page(w, 'GF3').cardinalNote), 'the Rose Gold sheet is named on Set 2 as well (it shares an order with GF 3): ' + page(w, 'GF3').cardinalNote);
   // a lone completed GF after that waits outside every set, with one plain line; it makes no Set 3
+  assert.equal(w.pages.find(p => p.sheetId === 'gf4x').setWait, 'Set-2 has formed, so this sheet waits for the next set: it needs a completed SS sheet with it');
   w.add(extra('gold', 5, 'gf5xx', true)); await w.assemble();
-  assert.equal(w.sets().length, 2, 'no Set 3 for a lone completed GF'); assert.equal(w.by('GF Draft 5').draft, true);
+  assert.equal(w.sets().length, 2, 'no Set 3 for lone completed GF sheets'); assert.equal(w.by('GF Draft 5').draft, true);
   assert.equal(w.by('GF Draft 5').setWait, 'Set-2 has formed, so this sheet waits for the next set: it needs a completed SS sheet with it');
-  // the next completed SS: GF Draft 5 and it form Set 3
+  // the next completed SS: the earliest waiting GF (GF Draft 4) and it form Set 3; GF Draft 5 waits on
   w.add(extra('silver', 4, 'ss4xx', true)); await w.assemble(); sets = w.sets();
-  assert.equal(sets.length, 3); assert.deepEqual(w.ids(sets[2]), ['gf5xx', 'ss4xx'].sort(), 'Set 3'); const gf5 = w.pages.find(p => p.sheetId === 'gf5xx'); assert(gf5.setId === 'set-3' && !gf5.draft && !gf5.setWait);
-  assert.deepEqual(w.ids(sets[1]), ['gf4x', 'ss3xx'].sort(), 'Set 2 is not touched'); assert.equal(w.allocations(), 3);
+  assert.equal(sets.length, 3); assert.deepEqual(w.ids(sets[2]), ['gf4x', 'ss4xx'].sort(), 'Set 3'); const gf4 = w.pages.find(p => p.sheetId === 'gf4x'); assert(gf4.setId === 'set-3' && !gf4.draft && !gf4.setWait);
+  assert.deepEqual(w.ids(sets[1]), [ID.GF3, 'ss3xx'].sort(), 'Set 2 is not touched'); assert.equal(w.allocations(), 3); assert.equal(w.by('GF Draft 5').draft, true);
   // the cardinal rule outranks the closing: a new completed sheet that shares an order with a sheet of closed Set 1 goes into Set 1
   w.add(extra('gold', 6, 'gf6xx', true, ['4190000001_1_2', '4190000099_1_1'])); await w.assemble(); sets = w.sets();
   assert.equal(w.pages.find(p => p.sheetId === 'gf6xx').setId, 'set-1', 'it shares order 4190000001 with GF Sheet 1 of Set 1'); assert.equal(sets.length, 3); assert(w.ids(sets[0]).includes('gf6xx'));
@@ -127,21 +126,22 @@ const page = (w, k) => w.pages.find(p => p.sheetId === ID[k]);
   await w.assemble(); assert.equal(gf7.setId, 'set-1', 'the dropped sheet joined the set it was dropped on, closed or not'); assert(!('handSet' in gf7), 'a drop is read by one assembly');
   assert.equal(gf8.draft, true, 'the sheet nobody dropped waits for the next set'); assert.equal(w.sets().length, 3); gf7.handSet = 'set-nope'; gf8.handSet = 'set-nope';
   await w.assemble(); assert.equal(gf8.draft, true, 'a drop on a set the run does not hold is no drop');
-
   /* 3 · the one switch: read the other way (a set keeps taking every following completed sheet until a person approves it) and the same pair joins Set 1 */
   SR.CLOSING.afterFormation = false;
   try {
-    w = world(); await w.assemble(); w.add(extra('gold', 4, 'gf4x', true), extra('silver', 3, 'ss3xx', true)); await w.assemble();
+    // (SETFIX 19 Oct 2026: the picture's completed sheets form Set 1 at once now, so the switch is read on its not-yet-completed sheets, as this part always read it: no set before the pair)
+    w = world({ sheets: PICTURE.filter(s => !s.full) }); await w.assemble(); assert.equal(w.sets().length, 0); w.add(extra('gold', 4, 'gf4x', true), extra('silver', 3, 'ss3xx', true)); await w.assemble();
     assert.equal(w.sets().length, 1); assert(w.ids(w.sets()[0]).includes('gf4x') && w.ids(w.sets()[0]).includes('ss3xx'));
   } finally { SR.CLOSING.afterFormation = true; }
 
   /* 4 · the sandbox state of the picture: Set-1 already exists, EMPTY (the old logic numbered it and then held the group). It is the set that forms: no second number is taken */
   w = world({ emptySet: true, firstSeq: 1 });
-  await w.assemble(); assert.equal(w.allocations(), 0); assert.deepEqual(w.ids(w.sets()[0]), [], 'with GF Draft 3 still partial the group waits: the empty Set-1 stays empty and nothing joins it');
+  // (SETFIX 19 Oct 2026: GF Draft 3 is tied to the group only through the uncut Rose Gold sheet, so the group does not wait for it: the empty Set-1 is the set the completed sheets form)
+  await w.assemble(); assert.equal(w.allocations(), 0, 'no new number: the empty Set-1 is the set that forms'); assert.deepEqual(w.ids(w.sets()[0]), idsOf('GF1', 'GF2', 'SS1'), 'GF Draft 3, still partial, is not in it');
   w = world({ emptySet: true, firstSeq: 1, sheets: FULL3() });
   await w.assemble(); sets = w.sets();
   assert.equal(w.allocations(), 0, 'no new number: the empty Set-1 is the set that forms'); assert.equal(sets.length, 1);
-  assert.deepEqual(w.ids(sets[0]), idsOf('GF1', 'GF2', 'GF3', 'SS1'));
+  assert.deepEqual(w.ids(sets[0]), idsOf('GF1', 'GF2', 'SS1'), 'a full GF Draft 3 that shares an order only with the uncut Rose Gold sheet is a sheet of its own: it waits for an SS sheet');
   assert.equal(page(w, 'GF1').setId, 'set-old');
 
   /* 5 · what must NOT make a set: partial sheets only, a lone completed GF, a completed GF whose only SS is partial; a completed sheet sharing orders with the Rose Gold sheet alone */
