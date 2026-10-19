@@ -26,6 +26,7 @@ function world(o = {}) {
   for (const k of ['HUGGIE HOOPS- ZODIAC', 'HUGGIE HOOPS- ZODIAC AVATAR', 'ZODIAC ICONS LIBRA (HUGGIE)']) put(k, 'HUGGIE_HOOPS-_ZODIAC_AVATAR');
   put('ZODIAC ICONS LEO (HUGGIE)', 'ZODIAC_ICONS_LEO_HUGGIE_'); put('ZODIAC ICONS LEO', 'ZODIAC_ICONS_LEO', 30, 34);
   for (const k of ['ASTRONAUT_9809', 'ASTRONAUT_', 'CO-GOLDCHARMO']) put(k, 'ASTRONAUT_', 25.8, 40.3);
+  for (const k of ['BLOOMING_16014', 'BLOOMING_35148', 'BLOOMING_44107']) put(k, 'BLOOMING_16014', 27, 39);
   put('MAPLE_8065', 'MAPLE_8065', 30, 33); put('COMET_9427', 'COMET_9427', 30, 33);
   const byFile = new Map(); for (const [k, e] of lib) { if (!byFile.has(e.aiPath)) byFile.set(e.aiPath, []); byFile.get(e.aiPath).push(k); }
   const loose = {}; for (const k of lib.keys()) { const l = O.looseKey(k); loose[l] = l in loose ? '' : k; }
@@ -174,7 +175,7 @@ pass('runes: a person\'s link, option answer or saved pair wins');
   eq(O.resolveSku(astro(), {}, W.masterEntry, { patterns: [], skus: [] }, W.masterLoose), { sku: 'ASTRONAUT_9809', source: 'alias', listed: true }, 'resolveSku (the save-to-repo flow\'s) says the same');
   for (const sku of ['CO-GOLDCHARMO', 'SOMETHING ELSE', 'astronaut_']) eq(read(astro({ sku })).designSku, 'ASTRONAUT_9809', `whatever the transaction carries (${sku})`);
   eq([O.listingDesign('1630282472'), O.listingDesign(1630282472), O.listingDesign(''), O.listingDesign('constructor'), O.listingDesign(null)], ['ASTRONAUT_9809', 'ASTRONAUT_9809', '', '', ''], 'the table answers for the listing number, and nothing for junk');
-  eq(JSON.parse(JSON.stringify(O.LISTING_DESIGNS)), { 1630282472: 'ASTRONAUT_9809' }, 'the table holds this listing only'); }
+  eq(JSON.parse(JSON.stringify(O.LISTING_DESIGNS)), { 1630282472: 'ASTRONAUT_9809', 4456808584: 'BLOOMING_16014' }, 'the table holds the astronaut and the blooming listings only'); }
 { const al = ctxOf(W, { aliases: { 1630282472: { sku: 'ASTRONAUT_' } } });
   eq([read(astro(), al).designSku, read(astro(), al).skuSource], ['ASTRONAUT_', 'alias'], 'a person\'s listing-wide answer wins');
   const by = ctxOf(W, { aliases: { 1630282472: { bySku: { 'CO-GOLDCHARMO': 'MAPLE_8065' } } } });
@@ -187,6 +188,16 @@ pass('runes: a person\'s link, option answer or saved pair wins');
   const g = read(astro(), ctxOf(gone));
   ok(g.designSku !== 'ASTRONAUT_' && g.problems.some(p => p.kind === 'unmatchedSku' && p.reason === 'not in any master file'), 'ASTRONAUT_9809 not in the library: waits as an unknown SKU, never another design'); }
 pass('astronaut: listing 1630282472 is ASTRONAUT_9809, its words stay engraving text, a person\'s answer wins');
+
+/* ── 9b · BLOOMING: listing 4456808584 (order 4205305534), Etsy SKU BLOOMING_40376 in no master file → BLOOMING_16014 (Paul, 19 Oct 2026) ── */
+{ const bloom = over => astro(Object.assign({ listingId: '4456808584', sku: 'BLOOMING_40376', title: 'Blooming Dandelion Charm: Sterling Silver, Gold Filled, 14K Solid Gold Floral Jewelry Gift', personalization: ['Sharney ( can you add a small heart too)'],
+    variations: [{ name: 'Metal', value: 'Sterling Silver' }, { name: 'Personalization', value: 'Sharney ( can you add a small heart too)' }] }, over || {}));
+  const sp = read(bloom(), null, { receiptId: '4205305534' });
+  eq([sp.designSku, sp.skuSource, (sp.problems || []).some(p => p.kind === 'unknownSku')], ['BLOOMING_16014', 'alias', false], 'order 4205305534: BLOOMING_16014, no "Unknown SKU" for BLOOMING_40376');
+  eq(O.listingDesign('4456808584'), 'BLOOMING_16014', 'the table answers for the listing');
+  const lc = ctxOf(W, { aliases: { 4456808584: { sku: 'MAPLE_8065' } } });
+  eq(read(bloom(), lc).designSku, 'MAPLE_8065', 'a person\'s saved design for the listing wins'); }
+pass('blooming: listing 4456808584 is BLOOMING_16014');
 
 /* ── 10 · every other listing reads as before ── */
 { const plain = read({ transactionId: String(++tx), listingId: '555000111', sku: 'ASTRONAUT_9809', title: 'Astronaut Charm', quantity: 1, metalKey: 'gold', metalLabel: 'Gold', personalization: [], variations: [{ name: 'Metal', value: 'Gold' }] });
