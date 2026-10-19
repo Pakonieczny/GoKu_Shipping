@@ -1,10 +1,11 @@
 // Send to Review: the model (REVMARK, Paul 12 Oct 2026: "mark an order for review and add it to the review tab"). TWO simulated computers, A and B, are
 // two browser contexts on ONE in-memory backend (bridge-server.cjs: the real charmNestLibrary handler over a fake Firestore that refuses nested arrays);
 // every request off the loopback is aborted, no Etsy call, no paid AI, no real name (the orders are "Name One" / "Name Two").
-//   1 · CharmNestReviewMark.mark(rid): isMarked is true at once, the order is a row in A's Review tab under "Marked" (a slot for suggested charms, Mark OK),
+//   1 · CharmNestReviewMark.mark(rid): isMarked is true at once, the order is a row in A's Review tab under "Marked" (a slot for suggested charms, Release Hold, no Mark OK),
 //       ONE document Charm_Custom_Orders/{rid}_review (no stamps, no completion, no seal), a second mark and a double press write nothing more
 //   2 · B (another computer) holds it through the Review tab's existing 2 s changes feed: no new op, no new listener; its row, its count
-//   3 · Mark OK on B resolves it: A sees it leave Open for Completed (who, how), isMarked false on both, ONE more write; a reload of B still has it, resolved
+//   3 · Release Hold on B resolves it (how "other"): A sees it leave Open for Completed (who, how), isMarked false on both, the resolve and its release record; a reload of B still has it, resolved
+//   NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): there is no Mark OK button any more; Release Hold is how the order leaves Review
 //   4 · marked again after a resolve starts a new cycle (the earlier one is kept in review.earlier), a failed write puts the order back as it was
 //   5 · the sandbox: a sandbox page writes Sandbox_Charm_Custom_Orders only and production's collection is untouched
 //   node tests/charm-nest/review-mark.cjs [playwright-core dir]   (CHROMIUM=<chrome>)
@@ -54,7 +55,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       for (const order of orders) for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: at, spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); }
       Orders.interpretAll(); Review.syncOrderItems(); CN.setMode(mode); Review.render();
     }, { orders: ORDERS, skus: SKUS, mode });
-    c.rows = () => page.evaluate(() => [...document.querySelectorAll('#rvList .reviewListRow')].map(n => ({ rid: n.dataset.rid, mkey: n.dataset.mkey, kind: (n.querySelector('.purchaseLabel') || {}).textContent, slots: n.querySelectorAll('.rvMarkSlot').length, ok: !!n.querySelector('[data-rv-markok]'), why: (n.querySelector('.rowExcerpt') || {}).textContent, by: (n.querySelector('.by') || {}).textContent })));
+    c.rows = () => page.evaluate(() => [...document.querySelectorAll('#rvList .reviewListRow')].map(n => ({ rid: n.dataset.rid, mkey: n.dataset.mkey, kind: (n.querySelector('.purchaseLabel') || {}).textContent, slots: n.querySelectorAll('.rvMarkSlot').length, ok: !!n.querySelector('[data-rv-markok], [data-a="markok"]'), rel: !!n.querySelector('[data-rel-hold]'), why: (n.querySelector('.rowExcerpt') || {}).textContent, by: (n.querySelector('.by') || {}).textContent })));
     c.seg = async s => { await page.click(`#reviewView .rvSeg [data-cseg="${s}"]`); await page.waitForFunction(s => Review.view().cseg === s, s); };
     c.counts = () => page.evaluate(() => ({ open: +(document.querySelector('#reviewView .rvSeg [data-cseg="open"] b') || {}).textContent, done: +(document.querySelector('#reviewView .rvSeg [data-cseg="done"] b') || {}).textContent }));
     c.is = rid => page.evaluate(rid => CharmNestReviewMark.isMarked(rid), rid);
@@ -82,7 +83,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(writes().length, 1, 'ONE write');
     let rows = await A.rows(), mine = rows.find(r => r.rid === R1 && r.kind === 'Marked');
     assert.ok(mine, 'the order is a row in Review under Marked: ' + JSON.stringify(rows.map(r => [r.rid, r.kind])));
-    assert.equal(mine.slots, 1, 'one slot for the one line'); assert.equal(mine.ok, true, 'Mark OK on the row'); assert.match(mine.why, /^Sent to Review by Name A/);
+    assert.equal(mine.slots, 1, 'one slot for the one line'); // NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): no Mark OK on the row; Release Hold is there instead
+    assert.equal(mine.ok, false, 'no Mark OK on the row'); assert.equal(mine.rel, true, 'Release Hold on the row'); assert.match(mine.why, /^Sent to Review by Name A/);
     // pressing again, and two presses together: nothing more is written
     assert.deepEqual(await A.page.evaluate(rid => CharmNestReviewMark.mark(rid), R1), { ok: true, already: true, rid: R1 });
     const both = await A.page.evaluate(rid => Promise.all([CharmNestReviewMark.mark(rid), CharmNestReviewMark.mark(rid)]), R2);
@@ -96,7 +98,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const line = tlEvents().find(e => /Sent to Review by Name Alpha/.test(e.text || ''));
     assert.ok(line, 'a plain line on the order\'s timeline'); assert.equal(line.type, 'note'); assert.equal(String(line.orderId), R1);
     assert.ok(!tlEvents().some(e => /^seal/.test(e.type || '')), 'no seal on the timeline');
-    log('marked: one document, no seal, a row with a slot per line and Mark OK; a repeated or double press writes nothing more');
+    log('marked: one document, no seal, a row with a slot per line and Release Hold (no Mark OK); a repeated or double press writes nothing more');
 
     /* ── 2 · the other computer holds it through the existing feed ── */
     const tB = Date.now();
@@ -106,10 +108,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await waitFor(Bc, () => [...document.querySelectorAll('#rvList .reviewListRow')].some(n => n.dataset.rid === '4100000001' && /Marked/.test(n.textContent)), null, 'B drawing the row');
     assert.deepEqual((await Bc.counts()).open >= 2, true);
 
-    /* ── 3 · Mark OK on B ── */
-    await Bc.page.click(`#rvList .reviewListRow[data-rid="${R1}"] [data-rv-markok]`);
+    /* ── 3 · Release Hold on B ── */
+    // NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): Release Hold (CharmNestReviewMark.resolve how "other", then its release record) replaces Mark OK (how "ok")
+    assert.equal(await Bc.page.$$eval(`#rvList .reviewListRow[data-rid="${R1}"] [data-rv-markok], #rvList .reviewListRow[data-rid="${R1}"] [data-a="markok"]`, l => l.length), 0, 'no Mark OK on B either');
+    await Bc.page.click(`#rvList .reviewListRow[data-rid="${R1}"] [data-rel-hold]`);
     await waitFor(Bc, rid => !CharmNestReviewMark.isMarked(rid), R1, 'B resolving');
-    assert.equal(rec(R1).review.state, 'done'); assert.equal(rec(R1).review.doneBy, 'Name Beta'); assert.equal(rec(R1).review.how, 'ok'); assert.equal(writes().length, 3);
+    assert.equal(rec(R1).review.state, 'done'); assert.equal(rec(R1).review.doneBy, 'Name Beta'); assert.equal(rec(R1).review.how, 'other');
+    for (let i = 0; i < 60 && writes().length < 4; i++) await sleep(100);
+    assert.deepEqual(writes().map(c => c.body.action), ['mark', 'mark', 'resolve', 'release'], 'the resolve and the release record Release Hold keeps, nothing more');
     await waitFor(A, rid => !CharmNestReviewMark.isMarked(rid), R1, 'A learning of it');
     assert.equal((await A.rows()).some(r => r.rid === R1 && r.kind === 'Marked'), false, 'gone from A\'s Open list');
     await A.seg('done'); rows = await A.rows(); const dn = rows.find(r => r.rid === R1);

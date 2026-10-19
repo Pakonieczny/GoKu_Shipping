@@ -3,12 +3,13 @@
 // charmNestLibrary handler over an in-memory Firestore. Nothing leaves the machine; every buyer is made up. Production workspace (the sandbox runs the same code: review-send-e2e).
 //   1  no connection: Send to Review says so in one line, marks nothing (page and cloud), and a press once back online marks the order ONCE
 //   2  the cloud saved the mark but its reply was lost: the page says "not sent", the press again finds it already there (no second cycle, same time)
-//   3  Mark OK with no connection: the order stays in Review, the sheet stays held, one toast; the press again once online resolves it
-//   4  Mark OK saved but its reply lost: the page says "not saved", then agrees with the cloud (resolved, sheet released) by itself; nothing more is written
+//   3  Release Hold with no connection: the order stays in Review, the sheet stays held, one toast; the press again once online resolves it
+//   4  Release Hold saved but its reply lost: the page says "not saved", then agrees with the cloud (resolved, sheet released) by itself; nothing more is written
 //   5  a second bench resolved it first: a stale page pressing Mark OK ends resolved, no error, the first person's name stays, no second timeline line
-//   6  a reload while Mark OK is in flight: the page afterwards says what the cloud says, whichever way the request went
+//   6  a reload while Release Hold is in flight: the page afterwards says what the cloud says, whichever way the request went
 //   7  the order is cancelled (Etsy) while in Review and its piece stays on a committed sheet: the sheet is NOT held for a card nobody can see
 //   0  nothing left the fake site and the page threw no error
+// NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): the Review card has no Mark OK any more; steps 3, 4 and 6 press its Release Hold (resolve how "other"); step 5 still calls CharmNestReviewMark.resolve directly.
 'use strict';
 const assert = require('assert');
 const W = require('./_reviewSendWorld.cjs');
@@ -45,7 +46,7 @@ const CARD = rid => `#reviewView [data-mkey="ord:rvm:${rid}"]`;
   const step = async (id, title, fn) => {
     const t0 = Date.now();
     try { await fn(); results.push({ id, title, ok: true, ms: Date.now() - t0 }); }
-    catch (e) { results.push({ id, title, ok: false, why: String(e && e.message || e).split('\n').slice(0, 25).join(' | ') }); }
+    catch (e) { results.push({ id, title, ok: false, why: String(e && e.message || e).split('\n').slice(0, 3).join(' | ') }); }
   };
   try {
     await W.addOrders(w, ['matched', 'alone']);
@@ -99,6 +100,8 @@ const CARD = rid => `#reviewView [data-mkey="ord:rvm:${rid}"]`;
       const gone = await page.$$(CARD(rid) + ' [data-rv-markok], ' + CARD(rid) + ' [data-a="markok"]');
       assert.equal(gone.length, 0, 'no Mark OK button on the card (NOMARKOK)');
       const sel = CARD(rid) + ' [data-rel-hold]';
+      // (Release Hold stands at the card's top right, under where a toast shows: an earlier "Not released" toast would take the press, so the toasts are cleared before each press)
+      await page.evaluate(() => document.querySelectorAll('#toasts .toast').forEach(t => t.remove()));
       return (await until(() => page.$(sel), 6000)) ? page.locator(sel).first() : null;
     };
     const mark = async rid => { const r = await page.evaluate(rid => CharmNestReviewMark.mark(rid, { by: 'Name One' }), rid); assert(r.ok, 'marked: ' + J(r)); await until(() => rec(rid)); };
@@ -106,9 +109,8 @@ const CARD = rid => `#reviewView [data-mkey="ord:rvm:${rid}"]`;
     await until(() => held(sh.id));
     assert(await held(sh.id), 'the sheet is held by the order in Review (control)');
 
-    await step('3', 'Mark OK with no connection: still in Review, the sheet still held, one toast; works once back online', async () => {
-      const b = await card(S1); assert(b, 'the order has its Release Hold button');
-      console.log('DBG', await page.evaluate(sel => [...document.querySelectorAll(sel)].map(e => { const r = e.getBoundingClientRect(); return e.outerHTML.slice(0, 600) + ' RECT ' + JSON.stringify(r) + ' vis ' + getComputedStyle(e).visibility + ' disp ' + getComputedStyle(e).display + ' card ' + (e.closest('[data-mkey]')||{}).outerHTML.slice(0, 3000); }), '#reviewView [data-mkey="ord:rvm:' + S1 + '"] [data-rel-hold]'));   // NOMARKOK (Paul, 19 Oct 2026): Release Hold, not Mark OK
+    await step('3', 'Release Hold with no connection: still in Review, the sheet still held, one toast; works once back online', async () => {
+      const b = await card(S1); assert(b, 'the order has its Release Hold button');   // NOMARKOK (Paul, 19 Oct 2026): Release Hold, not Mark OK
       await ctx.setOffline(true);
       await b.click();
       // NOMARKOK (Paul, 19 Oct 2026): Release Hold's own toast says "Not released: ..." (Mark OK's said "Not saved: ...")
@@ -125,7 +127,7 @@ const CARD = rid => `#reviewView [data-mkey="ord:rvm:${rid}"]`;
       assert(await until(async () => !(await held(sh.id))), 'the sheet is released');
     });
 
-    await step('4', 'Mark OK saved but its answer lost: the page says "not saved", then agrees with the cloud (resolved) by itself; nothing more is written', async () => {
+    await step('4', 'Release Hold saved but its answer lost: the page says "not saved", then agrees with the cloud (resolved) by itself; nothing more is written', async () => {
       await page.evaluate(rid => CharmNestReviewMark.mark(rid, { by: 'Name One' }), S1);   // (a new cycle)
       await until(async () => rec(S1).review.state === 'open' && (await held(sh.id)));
       const b = await card(S1); assert(b, 'Release Hold is there');   // NOMARKOK (Paul, 19 Oct 2026)
@@ -156,8 +158,8 @@ const CARD = rid => `#reviewView [data-mkey="ord:rvm:${rid}"]`;
       assert.deepEqual(await page.evaluate(() => window.__lines.filter(x => /marked OK|charm picked/i.test(x))), [], 'no second timeline line for a decision already made');
     });
 
-    await step('6', 'a reload while Mark OK is in flight: the page says what the cloud says, whichever way the request went', async () => {
-      // (a) the request never reached the cloud: after the reload the order is still in Review and Mark OK still works
+    await step('6', 'a reload while Release Hold is in flight: the page says what the cloud says, whichever way the request went', async () => {
+      // (a) the request never reached the cloud: after the reload the order is still in Review and Release Hold still works
       await page.evaluate(rid => CharmNestReviewMark.mark(rid, { by: 'Name One' }), S1);
       await until(async () => rec(S1).review.state === 'open');
       const b = await card(S1); assert(b);

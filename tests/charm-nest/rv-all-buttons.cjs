@@ -223,11 +223,14 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     assert(res.n >= doneBefore, 'the count counts the sent order: ' + JSON.stringify({ doneBefore, res }));
     // NOROWBTNS + PCSEAL (Paul, 18 Oct 2026: "1. Remove these 3 buttons from the detailed order view. 2. Enlarge the seal size by 1.75x."): the sent piece's row in its
     // order window has its SENT TO SHEET seal at 1.75 × the 22 px it was (38.5 px), beside its words, and nothing to press but the order's Hold; the Completed card here
-    // keeps its own View designs, Open sheet and History, and the window its Sheet and Timeline tabs. At a phone's width the row still fits.
+    // keeps its own View designs and History (no Open sheet since NOSHEETBTN), and the window its Sheet and Timeline tabs. At a phone's width the row still fits.
     // (once the timeline has answered, the "Where it is now" card draws that same seal and the row of a one-piece order draws it no more: one seal per fact, 2 Oct;
     //  so the row's seal is measured the moment it is drawn, in the very poll that finds it)
     const sentCard = await page.evaluate(sel => [...document.querySelectorAll(sel + ' [data-cu-designs], ' + sel + ' [data-cu-sheet], ' + sel + ' [data-cu-history]')].map(b => b.textContent.trim()), card('4178100001'));
-    for (const b of ['View designs', 'Open sheet', 'History']) assert(sentCard.includes(b), 'the Completed card keeps its ' + b + ': ' + JSON.stringify(sentCard));
+    // NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): the Review row has no Open sheet button any more ([data-cu-sheet]); View designs and History stay
+    for (const b of ['View designs', 'History']) assert(sentCard.includes(b), 'the Completed card keeps its ' + b + ': ' + JSON.stringify(sentCard));
+    assert(!sentCard.includes('Open sheet'), 'no Open sheet on the Completed card: ' + JSON.stringify(sentCard));
+    assert.equal(await page.evaluate(sel => document.querySelectorAll(sel + ' [data-cu-sheet]').length, card('4178100001')), 0, 'no [data-cu-sheet] button on the Completed card');
     await page.evaluate(k => OrderWin.open(k), eKey);
     const sealAt = await (await page.waitForFunction(() => {
       const seal = OrderWin.isOpen() && document.querySelector('#owPcSum .owPcRow .pcAct .seal-sheet'); if (!seal || !seal.closest('.sealRow').style.getPropertyValue('--seal-fit')) return null;   // (drawn, and fitted: Seal.fit)
