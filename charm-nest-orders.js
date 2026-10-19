@@ -2667,6 +2667,127 @@
     return r;
   }
 
+  /* ═══ 3c''' · CHARM-ONLY LISTINGS BY FORM: one listing sells the SAME charm as a necklace charm or as a huggie charm set; the form picks the library entry (CHARMONLY (Paul, 19 Oct 2026, orders 4203879769 / 4202871419)) ═══
+     Paul: "This charm only listing has to be profiled to match the SKU from image #1 for the Necklace Option and image #3 SKU for the Huggie Options." The shop's charm-only listings carry the option
+     "Charm Type: Necklace CHARM / CHARM + Engraving / Huggie CHARM SET" (the Sep 17 snapshot, tests/charm-nest/fixtures/addon-snapshot-lines.json: 33 "CHARM + Engraving", 9 "Huggie CHARM SET"); a Huggie CHARM
+     SET is huggieSet (section 3), any other value the necklace charm, and "CHARM + Engraving" the necklace charm with the buyer's words engraved.
+       · listing 1816093385 "Viking Runes Charm Rune Pendant Add On Charm …" (order 4203879769, Etsy SKU "VIKING RUNES_URUZ", Gold Filled, necklace): "Unknown SKU" / "No vector available": every rune's
+         variation SKU is "VIKING RUNES_<RUNE NAME>", in no master file. The library holds the necklace runes as RUNE_NECKLACE_CHARM-0 … -23 (all 24 runes of the Elder Futhark in the standard order: the real
+         master read on 10 Oct 2026, tests/charm-nest/options-link-data.json, where Etsy's own variation SKUs tie "Algiz - Divine Plan" to RUNE_NECKLACE_CHARM-14 and "Sowilo - Guidance" to -15) and the huggie
+         runes as RUNE_HUGGIE_CHARM-0 … -11 (the first twelve only, RUNE_NAMES; the other twelve, RUNES_ABSENT, are not in the library: HUGSYM, section 3c').
+       · listing 1801964100 "Playing Cards Charm Add On Charm Poker Card Charm …" (order 4202871419) was matched to "CARDS 2 - (4 CARDS)" (the four-card drawing). Its charm is the library's "CARDS 1 - (2 CARDS)"
+         (the same card lists "CARDS 1 - 2 CARDS" and "PLAYING_0805": one drawing under three names); the huggie set is its "(HUGGIE)" entry.
+     THE RULE, one row of CHARM_ONLY_LISTINGS per listing, read for EVERY line of the listing whatever SKU Etsy's transaction carries (TO ADD a listing: a row; TO UNDO: delete the row, the lines read as before):
+       · the FORM decides: a huggie line (a Huggie CHARM SET, a huggie option value, lineForm's huggie) takes the row's huggie entry, on both ears (a Left and a Right, as every huggie set); every other line the
+         necklace entry, ONE piece. Each form has its own entry: a huggie line is never given the necklace drawing, nor a necklace line a "(HUGGIE)" one (checked again on the master's spelling, charmOnlyCross);
+       · an entry is a fixed library SKU (`sku`: names of ONE drawing, the first the master holds; a huggie entry lists only huggie names) or a numbered family (`base` + `names`: member base+i is names[i]) whose
+         member is the symbol the buyer CHOSE: the line's own SKU ("VIKING RUNES_URUZ" → Uruz, `skuRead`; a member SKU of either family), else the drop-down (any option that is not the metal, a size, a length
+         or a price), else the buyer's words (the personalisation box, then the notes: runesInText). The symbol words are the buyer's choice, NEVER words to engrave (spec.engraveNever, rule
+         "charm-only-choice"), unless the buyer chose an engraving the listing offers ("CHARM + Engraving"): then the box is NOT read for the symbol and is engraved as on any line. A huggie is never engraved (3d);
+       · a member or entry the library lacks WAITS with ONE plain line naming it ("The Algiz huggie charm is not in the repo yet …", "… CARDS 1 - (2 CARDS) (HUGGIE) is not in the library"), never another
+         symbol's or another charm's file; no symbol named, or several, waits ("Which rune? …");
+       · WHO WINS. A person's answer for THIS line stands: an option mapped to a charm (Options), a saved pair or a second design for the line (pairMembers' person sources), and a link saved under the line's
+         own SKU when that SKU is ONE product of the listing (a rune's "VIKING RUNES_URUZ": `ownSku`). A person's pick for one order in Review is kept by the Review layer (charm-nest-listing-relink.js) as before.
+         The row REPLACES every automatic match (the transaction's SKU, a spelling, Etsy's inventory SKU) AND a listing-wide saved answer (the listing's design `sku`, its huggie answer `huggie`, a link under a
+         SKU every product of the listing shares, a product link to such a SKU): a listing-wide answer gives every buyer ONE charm whatever form or symbol they chose, and that is what made order 4202871419
+         "CARDS 2 - (4 CARDS)" (and would make every Huggie set a necklace drawing, or every rune Uruz). */
+  const CHARM_ONLY_RUNES_FUTHARK = Object.freeze(RUNE_NAMES.concat(RUNES_ABSENT));   // Fehu 0 … Jera 11, Eihwaz 12 … Othala 23: the standard Elder Futhark order (RUNES_ABSENT is listed in it)
+  /* The necklace runes' base, in ONE place. The library writes them RUNE_NECKLACE_CHARM-0 … -23 (the real master read, tests/charm-nest/options-link-data.json). A member is found by masterSku: the master's exact
+     spelling, else the one master SKU with the same loose key, so a library that writes RUNE_NECKLACE_CHARM_1 or Rune_Necklace_Charm-1 is found as well; a different NAME (not only punctuation) is changed here. */
+  const CHARM_ONLY_RUNE_NECKLACE_BASE = "RUNE_NECKLACE_CHARM-";
+  const CHARM_ONLY_RUNE_HUGGIE_BASE = "RUNE_HUGGIE_CHARM-";
+  /** The rune a "VIKING RUNES_<RUNE NAME>" SKU names ("VIKING RUNES_URUZ" → Uruz), "" for any other SKU or a SKU naming none or several. */
+  const vikingRuneOfSku = s => { const u = upSku(s); if (!/^VIKING[\s_-]*RUNES?[\s_-]/.test(u)) return ""; const r = runesInText(u.replace(/^VIKING[\s_-]*RUNES?[\s_-]+/, ""), true); return r.length === 1 ? r[0].name : ""; };
+  /* THE TABLE. id; listings: Etsy listing numbers; noun / nouns / ask: what one choice is; necklace / huggie: the entry of each form, { sku: [names of one drawing] } or { base, names } (a family);
+     read(text, whole): the symbols a text names; skuRead(sku): the symbol a SKU of the listing names; ownSku(sku): is a SKU ONE product of the listing (a link saved under it is a person's answer for that product). */
+  const CHARM_ONLY_LISTINGS = Object.freeze([
+    Object.freeze({ id: "rune-charm-only", listings: Object.freeze(["1816093385"]), noun: "rune", nouns: "runes", ask: "Which rune?",
+      necklace: Object.freeze({ base: CHARM_ONLY_RUNE_NECKLACE_BASE, names: CHARM_ONLY_RUNES_FUTHARK }), huggie: Object.freeze({ base: CHARM_ONLY_RUNE_HUGGIE_BASE, names: RUNE_NAMES }),
+      read: runesInText, skuRead: vikingRuneOfSku, ownSku: s => !!vikingRuneOfSku(s) }),
+    Object.freeze({ id: "cards-charm-only", listings: Object.freeze(["1801964100"]), noun: "playing cards charm",
+      necklace: Object.freeze({ sku: Object.freeze(["CARDS 1 - (2 CARDS)", "CARDS 1 - 2 CARDS", "PLAYING_0805"]) }), huggie: Object.freeze({ sku: Object.freeze(["CARDS 1 - (2 CARDS) (HUGGIE)"]) }),
+      ownSku: () => false })
+  ]);
+  const CHARM_ONLY_BY_LISTING = new Map(); for (const x of CHARM_ONLY_LISTINGS) for (const l of x.listings) CHARM_ONLY_BY_LISTING.set(String(l), x);
+  /** The CHARM_ONLY_LISTINGS row a line falls under (its Etsy listing number), null for every other line. */
+  const charmOnlyListing = line => { const id = String(line && line.listingId != null ? line.listingId : "").replace(/\D/g, ""); return id && CHARM_ONLY_BY_LISTING.get(id) || null; };
+  /** Is the line the huggie set? (a Huggie CHARM SET, lineForm's huggie, a huggie word in an option value that is not the metal; the SKU Etsy carries never decides the form) */
+  const charmOnlyHuggie = (line, lf) => huggieSet(line) || (lf && (lf.form || lf)) === "huggie" || (line.variations || []).some(v => { const nm = lvName(v); return !!nm && !isMetalOption(nm) && !isPersonalisation(nm) && HUGG_WORD.test(lvValue(v)); });
+  /** Would the master SKU cross forms? A necklace line on a "(HUGGIE)" (or stud) drawing; a huggie line on the row's necklace entry, or on a drawing whose name says another form. */
+  const charmOnlyCross = (row, form, sku, me, loose) => {
+    const f = formOfText(sku); if (form !== "huggie") return f === "huggie" || f === "earring";
+    if (row.necklace.sku && row.necklace.sku.some(n => masterSku(n, me, loose) === sku)) return true;
+    return row.huggie.sku ? f !== "huggie" : f === "necklace";
+  };
+  /** May a design from a person's SAVED link (resolveSku source "alias") stand over the row? Only a link saved under the line's own SKU when that SKU is one product of the listing (row.ownSku). raw: the SKU the
+   *  link was looked up under (a huggie set's "X (HUGGIE)"). A listing-wide answer, a huggie-set answer, a link under a SKU the listing's products share never does. */
+  function charmOnlyAliasStands(row, line, raw, sku, aliases) {
+    const a = aliases && aliases[String(line && line.listingId)], k = upSku(raw), bare = k.replace(/\s*\(\s*HUGGIES?\s*\)\s*$/, "");
+    if (!sku || !a || !a.bySku || !k || !row.ownSku(bare)) return false;
+    return upSku(bySkuOf(a.bySku, k) || "") === upSku(sku);
+  }
+  const CHARM_ONLY_NEVER_WHY = "The rune is the buyer's choice of charm, not words to engrave (the buyer chose no engraving)";
+  /** What a line of a CHARM_ONLY_LISTINGS row reads as, in symbolRead's shape (so the reading, the option answer, the hold and the facts are told as HUGSYM's): → { profile, noun, family, form, symbols, textOnly,
+   *  variation?, optionSku, pick? | hold?: { kind, reason, missing? }, note, never? }. o: { me, loose, lf, skus (the line's SKUs: the transaction's, the inventory's, the line's) }. */
+  function charmOnlyRead(line, order, row, o) {
+    o = o || {}; const me = o.me, loose = o.loose; if (!row || !me) return null;
+    line = line || {}; const huggie = charmOnlyHuggie(line, o.lf), form = huggie ? "huggie" : "necklace", ent = row[form], engraved = numberEngraveChosen(line), formWord = form;
+    const out = { profile: row.id, noun: row.noun, family: ent.base || ent.sku[0], form, symbols: [], textOnly: false, optionSku: "" };
+    if (huggie) out.never = { rule: "earring", form: "huggie", by: "its charm-only listing profile", why: EAR_NEVER_WHY };
+    if (ent.sku) {
+      // a fixed entry: the first of its names the master holds (one drawing under several names), never the other form's
+      const sku = ent.sku.map(n => masterSku(n, me, loose)).find(s => !!s && !charmOnlyCross(row, form, s, me, loose)) || "";
+      out.symbols = [{ name: ent.sku[0], from: "listing", sku }];
+      if (!sku) { const reason = `The ${formWord} charm of this listing is not in the repo yet (${upSku(ent.sku[0])} is not in the library)`; return Object.assign(out, { hold: { kind: "missing", reason, missing: [ent.sku[0]] }, note: reason }); }
+      out.note = `Charm-only listing: ${sku}${huggie ? ", both ears" : ""} (the ${huggie ? "Huggie CHARM SET" : "necklace charm"} of this listing)`;
+      return Object.assign(out, { pick: sku });
+    }
+    // a family: the symbol the buyer chose. 1 · the line's own SKU (Etsy keeps each variation's SKU on the transaction), a member SKU of either form's family included
+    let chosen = null;
+    for (const s of o.skus || []) {
+      if (!s || chosen) continue;
+      const nm = row.skuRead ? row.skuRead(s) : "", m = INDEXED_SKU.exec(upSku(s).replace(/\s*\(\s*HUGGIES?\s*\)\s*$/, ""));
+      if (nm) { chosen = { name: nm, from: "sku", word: upSku(s), text: upSku(s) }; break; }
+      for (const e of [row.necklace, row.huggie]) if (!chosen && m && looseKey(m[1] + m[2]) === looseKey(e.base) && String(+m[3]) === m[3] && e.names[+m[3]]) chosen = { name: e.names[+m[3]], from: "sku", word: upSku(s), text: upSku(s) };
+    }
+    // 2 · the drop-down (not the metal, a size, a length, a price; the Charm Type values name no symbol)
+    const opts = [], add = (list, rec) => { if (!list.some(x => x.name === rec.name)) list.push(rec); }, boxVals = [];
+    for (const v of line.variations || []) {
+      const name = lvName(v), value = lvValue(v).trim(); if (!name || !value) continue;
+      if (isPersonalisation(name)) { boxVals.push(value); continue; }
+      if (isMetalVariation(name, value) || isSizeOption(name, value) || isChainOption(name) || isPriceOption(name)) continue;
+      for (const r of row.read(value, true)) add(opts, Object.assign({ from: "option", optionName: name, text: value, variation: v }, r));
+    }
+    if (!chosen && opts.length > 1) { const reason = `${row.ask} The “${clip(opts[0].optionName, 30)}” drop-down names ${joinSigns(opts.map(x => x.name))}`; return Object.assign(out, { hold: { kind: "which", reason }, note: reason }); }
+    if (!chosen && opts.length === 1) chosen = opts[0];
+    // 3 · the buyer's words: the box (not when the buyer chose an engraving: the box is then the words to engrave), then the notes
+    const box = uniqStr([].concat(line.personalization || [], boxVals).map(t => visible(t).trim()).filter(Boolean));
+    if (!chosen) {
+      const groups = [["box", engraved ? [] : box], ["note", [line.buyerMessage || (order && order.buyerMessage) || ""]], ["staff", [line.staffNote || (order && order.staffNote) || ""]]];
+      for (const [from, texts] of groups) {
+        const words = []; for (const t of texts) { const tt = visible(t).trim(); if (tt) for (const r of row.read(tt, false)) add(words, Object.assign({ from, text: tt }, r)); }
+        if (words.length > 1) { const reason = `${row.ask} The buyer names ${joinSigns(words.map(x => x.name))}`; return Object.assign(out, { hold: { kind: "which", reason }, note: reason }); }
+        if (words.length === 1) { chosen = words[0]; break; }
+      }
+    }
+    if (!chosen) { const reason = `${row.ask} The buyer named none (${box.length ? `the personalisation box says “${clip(box.join(" · "), 40)}”` : "the personalisation box is empty"})`; return Object.assign(out, { hold: { kind: "which", reason }, note: reason }); }
+    out.textOnly = !engraved && box.length > 0 && box.every(t => runeText(visible(t)).split(/[^a-z]+/).filter(Boolean).every(w => SYMBOL_FILLER.has(w) || row.read(w, false).length > 0));
+    if (!huggie && !engraved) out.never = { rule: "charm-only-choice", form: "necklace", by: "its charm-only listing profile", why: CHARM_ONLY_NEVER_WHY };
+    const i = ent.names.indexOf(chosen.name), member = i < 0 ? "" : masterSku(ent.base + i, me, loose) || "", sku = member && !charmOnlyCross(row, form, member, me, loose) ? member : "";
+    const dd = opts.find(x => x.name === chosen.name);   // (the drop-down that names the chosen symbol is answered by its member, whatever else named it)
+    if (dd) { out.variation = dd.variation; out.optionSku = sku; }
+    const from = chosen.from === "sku" ? "the line's SKU" : chosen.from === "option" ? `the “${clip(chosen.optionName, 30)}” option` : SYMBOL_FROM[chosen.from] || chosen.from;
+    out.symbols = [Object.assign({ name: chosen.name, from: chosen.from, word: chosen.word, text: chosen.text }, chosen.optionName ? { optionName: chosen.optionName } : {}, { sku })];
+    if (!sku) {
+      const held = ent.names.filter((_, j) => !!masterSku(ent.base + j, me, loose));
+      const why = i < 0 ? (held.length ? `the repo has the ${held.length} ${formWord} ${row.nouns} ${held[0]} … ${held[held.length - 1]}` : `the repo has no ${formWord} ${row.nouns}`) : `${upSku(ent.base + i)} is not in the library`;
+      const reason = `The ${chosen.name} ${formWord} charm is not in the repo yet (${why})`;
+      return Object.assign(out, { hold: { kind: "missing", reason, missing: [chosen.name] }, note: reason });
+    }
+    out.note = `${capFirst(row.noun)}: ${chosen.name} (${sku}${huggie ? ", both ears" : ""}), from ${from}`;
+    return Object.assign(out, { pick: sku });
+  }
+
   /** The pair of designs a person saved for this line's listing and SKU ({ L, R }, aliasPut pair), or null. The listing's own record and the SKU as the line carries it: no other listing, no other SKU, no title. */
   function pairLinkOf(line, aliases) {
     const a = aliases && line && aliases[String(line.listingId)], raw = upSku(line && line.sku), k = a && a.pairBySku && raw && bySkuOf(a.pairBySku, raw);
@@ -3975,6 +4096,19 @@
         }
       }
     } catch (_) { numberHit = null; }
+    // CHARMONLY (Paul, 19 Oct 2026, orders 4203879769 / 4202871419; section 3c'''): a line of a CHARM_ONLY_LISTINGS row (listing 1816093385 the Viking runes, 1801964100 the playing cards) takes the entry its FORM picks
+    // (the necklace charm, or the huggie set on both ears) whatever SKU the transaction carries; a family row's member is the symbol the buyer chose (the SKU, the drop-down, the words), or ONE plain wait. A person's
+    // answer for this line (an option mapped to a charm, a saved pair or second design, a link under the line's own product SKU) stands; an automatic match and a listing-wide saved answer are replaced.
+    let charmOnlyHit = null;
+    try {
+      const crow = !symbol && !quiet && !viaPick && !viaLetter && !viaProfile && me ? charmOnlyListing(line) : null;
+      if (crow && !(members && !["skus", "title", "signs"].includes(members.source))) {
+        if (skuSource !== "alias" || !charmOnlyAliasStands(crow, line, set ? bought : upSku(line.sku), sku, ctx.aliases)) {
+          charmOnlyHit = charmOnlyRead(line, order, crow, { me, loose, lf, skus: [txSku, viaInventory && viaInventory.etsy, upSku(line.sku)] });
+          if (charmOnlyHit) { charmOnlyHit.was = { sku: sku || "", source: skuSource || "" }; symbol = charmOnlyHit; members = null; }
+        }
+      }
+    } catch (_) { charmOnlyHit = null; }
     if (symbol && symbol.pair) { members = { members: symbol.pair, source: "profile", profile: symbol.profile }; sku = symbol.pair[0].sku; skuSource = PIECE_RULES.mismatchedMakesTwo ? "pair" : "profile"; }
     else if (symbol && symbol.pick) { sku = symbol.pick; skuSource = "profile"; }
     let zodiac = null;
@@ -4172,6 +4306,7 @@
       spec.listingProfile = { profile: symbol.profile, noun: symbol.noun, family: symbol.family, symbols: symbol.symbols.map(x => Object.assign({}, x)), textOnly: !!symbol.textOnly, held: symbol.hold ? symbol.hold.kind : "", reason: symbol.hold ? symbol.hold.reason : "", note: symbol.note };
       if (symProf && symProf.zodiac && symbol.symbols.length === 1) { const x = symbol.symbols[0]; spec.zodiacSign = { sign: x.name, from: x.from, word: x.word, typo: !!x.typo, text: x.text, textOnly: !!symbol.textOnly, family: symbol.family, design: x.sku || null, how: "profile", held: symbol.hold ? symbol.hold.kind : "", note: symbol.note }; }
       if (numberHit) Object.assign(spec.listingProfile, { form: numberHit.form, was: numberHit.was });   // (NUMBERS: which family the form picked, and the reading it replaced)
+      if (charmOnlyHit) Object.assign(spec.listingProfile, { form: charmOnlyHit.form, was: charmOnlyHit.was });   // (CHARMONLY: which entry the form picked, and the reading it replaced)
       if (symbol.note) spec.pair.notes.push(symbol.note);
     }
     if (zodiac && zodiac.sign) {
@@ -4206,6 +4341,7 @@
     let never = null; try { never = earringNeverBackEngraves({ lineForm: lf, designForm: df, form: spec.form, pair: spec.pair, line }); } catch (_) { never = null; }
     if (!never) { try { never = letterDesignNeverEngraves(spec.designSku, me); } catch (_) { never = null; } }   // (KEYNOENG, section 3d')
     if (!never && numberHit && numberHit.never) never = numberHit.never;   // (NUMBERS, section 3c'': the digit in the box is the buyer's choice of charm, never words to engrave)
+    if (!never && charmOnlyHit && charmOnlyHit.never) never = charmOnlyHit.never;   // (CHARMONLY, section 3c''': the rune named is the buyer's choice of charm; a huggie set is never engraved)
     if (never) spec.engraveNever = Object.assign({}, never, { note: (spec.personalization || []).map(x => visible(x).trim()).filter(Boolean).slice(0, 4).map(x => x.slice(0, 120)) });
     spec.engraveCandidate = !quiet && !never && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.some(m => engravingNote(m && m.text)));
     // BFFONT: a font the buyer named in their own words (personalisation, message, staff note), whatever the listing: spec.fontText (fontTextOf). A font option is read as before (spec.font) and wins over
@@ -4660,5 +4796,6 @@
     SIGN_ORDER, skuSign, sharedZodiac, signsInText, signsNamed, zodiacRead,
     SYMBOL_LISTINGS, symbolListing, symbolRead, symbolMember, runesInText, RUNE_NAMES, RUNES_ABSENT, LISTING_DESIGNS, listingDesign,
     NUMBER_LISTINGS, numberListing, numberRead, numberMemberOf, digitsInText, NUMBER_NEVER_WHY,
+    CHARM_ONLY_LISTINGS, CHARM_ONLY_RUNE_NECKLACE_BASE, charmOnlyListing, charmOnlyRead, vikingRuneOfSku, CHARM_ONLY_NEVER_WHY,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });
