@@ -2042,7 +2042,7 @@
     for (const v of (line && line.variations) || []) {
       const name = lvName(v), value = lvValue(v).trim(); if (!name || !value || isPersonalisation(name)) continue;
       const hit = optionLookup(o.optionMaps, line.listingId, name, value);
-      const own = !!(pl && pl.option.test(decodeEntities(name))), extra = own ? pieceExtra(pl) : 0;   // (MOONSTARS: extra = the moon every necklace carries besides the stars the drop-down counts)
+      const own = !!(pl && !piecesFixed(pl) && pl.option.test(decodeEntities(name))), extra = own ? pieceExtra(pl) : 0;   // (MOONSTARS: extra = the moon every necklace carries besides the stars the drop-down counts. BROKENHEART: a row of fixed pieces has no count in its drop-down)
       if (own) profiled = true;
       // (MOONSTARS: a person's count for a value of a drop-down with a companion is the number of STARS: the moon is added)
       if (hit && hit.field === "count") { const k = Math.max(1, Math.min(12, Math.floor(+hit.value) || 1)), n = Math.min(12, k + extra); opts.push(Object.assign({ name, value, n, cls: "", rule: "answer", certain: true, ask: false, why: "", answered: true }, extra ? { counted: k } : {})); if (!answered) answered = n; continue; }
@@ -2051,6 +2051,10 @@
       if (pr && pr.ok) { opts.push(Object.assign({ name, value, n: pr.n + extra, cls: "piece", rule: "count:profile", certain: true, ask: false, why: "", unit: pl.noun, text: value }, extra ? { counted: pr.n } : {})); continue; }
       const c = optionCount(name, value); if (c) opts.push(Object.assign({ name, value }, c));
     }
+    // (BROKENHEART, Paul 19 Oct 2026, order 4204452679: a row of FIXED pieces, the left half and the right half of the heart: every unit IS those pieces, certain, whatever the drop-down says (its drop-down, which Etsy names
+    // "Personalization" and the loop above skips, names only the metal and the faces). Nothing to ask, no table of Etsy's to wait for.)
+    const fixed = piecesFixed(pl);
+    if (fixed) { profiled = true; const pv = pieceOptionOf(line, pl); opts.push({ name: pv ? pv.name : "Listing profile", value: pv ? pv.value : pl.id, n: fixed.length, cls: "piece", rule: "count:profile", certain: true, ask: false, why: "", unit: pl.noun, text: pv ? pv.value : pl.id, fixed: true }); }
     const settled = opts.filter(c => c.certain && !c.answered && c.cls !== "design" && c.n > 1);
     const ns = [...new Set(settled.map(c => c.n))];
     const read = { n: answered || (ns.length === 1 ? ns[0] : 0), certain: !!answered || ns.length === 1, answered: !!answered, opts, asks, designs: 0, note: noteCountOf(line) };
@@ -2069,6 +2073,7 @@
     }
     read.designs = Math.max(0, ...opts.filter(c => c.cls === "design" && !c.answered).map(c => c.n));
     if (profiled) read.profile = { id: pl.id, noun: pl.noun };   // (BARS: the line's pieces are the profile's bars, whoever settled their number)
+    if (profiled && fixed) Object.assign(read.profile, { nouns: pieceNouns(pl), bodies: fixed.map(x => x.body), labels: fixed.map(x => x.label) });   // (BROKENHEART: the left half and the right half, each its own body)
     if (profiled && pieceExtra(pl)) Object.assign(read.profile, { body: Math.max(0, Math.floor(+pl.body) || 0), companion: { noun: String(pl.companion.noun || "piece"), n: pieceExtra(pl), body: Math.max(0, Math.floor(+pl.companion.body) || 0) } });   // (MOONSTARS: the moon of every necklace)
     return read;
   }
@@ -2704,6 +2709,11 @@
       info.pieceBodies = Array.from({ length: info.perUnit }, (_, i) => (i < stars ? cr.profile.body : comp.body));
       delete info.twoBodies; delete info.oneBody;   // (the design's two bodies are cut apart, piece by piece: never one piece holding both, never the left one alone)
       info.notes.push(`${comp.n} ${comp.noun}${comp.n === 1 ? "" : "s"} and ${stars} ${info.noun}${stars === 1 ? "" : "s"} on one necklace (this listing's profile): each ${info.noun} is its own piece with its own engraving, cut from the design's ${cr.profile.body === 0 ? "left" : "right"} body; the ${comp.noun} is cut from its ${comp.body === 0 ? "left" : "right"} body and is never engraved`);
+    } else if (cr.profile && cr.profile.bodies && cr.profile.labels && info.perUnit === cr.profile.bodies.length && !info.earring && !info.single && !info.set) {
+      // (BROKENHEART, Paul 19 Oct 2026, order 4204452679: a row of FIXED pieces, the left half and the right half of a heart broken in two: each half is its own piece, cut from its own body of the design, with its own engraving)
+      info.pieceBodies = cr.profile.bodies.slice(); info.labels = cr.profile.labels.slice(); info.nouns = cr.profile.nouns;
+      delete info.twoBodies; delete info.oneBody;   // (the design's two bodies are cut apart: never one piece holding both halves, never the left half alone)
+      info.notes.push(`one heart in ${info.perUnit} ${info.nouns} (this listing's profile): ${info.labels.map(x => "the " + x.toLowerCase()).join(" and ")}, each its own piece on its own chain with its own engraving, cut from the design's ${info.pieceBodies.map(b => (b === 0 ? "left" : b === 1 ? "right" : "body " + (b + 1))).join(" and ")} body`);
     } else if (info.noun && info.perUnit > 1 && !info.earring) info.notes.push(`${info.perUnit} ${info.noun}s on one necklace (this listing's profile): each is its own piece with its own engraving`);   // (BARS)
     // what a person should see, plainly
     if (info.asks.some(a => a.rule === "ear:words")) info.notes.push("it waits until a person says whether this is a pair of earrings (" + askWords.why + ")");
@@ -2765,11 +2775,14 @@
       // (MOONSTARS: a necklace with a companion: `counted` of its pieces are the noun's (the stars), `companion` the rest ({ noun "moon", n: one for each necklace }): "2 stars + 1 moon", never "3 stars")
       const cp = pr.companion, per = Math.round(pc / q);
       if (cp && cp.noun && +cp.n >= 1 && pc % q === 0 && per > +cp.n) Object.assign(out, { counted: (per - cp.n) * q, companion: { noun: String(cp.noun), n: cp.n * q } });
+      // (BROKENHEART: the plural of a profile's noun, "halves", and the names of the pieces of one unit, ["Left half", "Right half"])
+      if (pr.nouns && typeof pr.nouns === "string") out.nouns = pr.nouns;
+      if (Array.isArray(pr.labels) && pr.labels.length === per && pc % q === 0 && pr.labels.every(x => typeof x === "string" && x)) out.labels = pr.labels.slice();
       return out;
     } catch (_) { return null; }
   }
   /** What a counted line adds to its Etsy quantity in words: " · 2 discs" (Quantity 1 · 2 discs); "" for every other line. (MOONSTARS: " · 2 stars + 1 moon") */
-  const countedFact = x => { const c = countedPieces(x); return !c ? "" : c.companion ? ` · ${c.counted} ${c.noun}${c.counted === 1 ? "" : "s"} + ${c.companion.n} ${c.companion.noun}${c.companion.n === 1 ? "" : "s"}` : ` · ${c.total} ${c.noun}s`; };
+  const countedFact = x => { const c = countedPieces(x); return !c ? "" : c.companion ? ` · ${c.counted} ${c.noun}${c.counted === 1 ? "" : "s"} + ${c.companion.n} ${c.companion.noun}${c.companion.n === 1 ? "" : "s"}` : ` · ${c.total} ${c.nouns || c.noun + "s"}`; };   // (BROKENHEART: " · 2 halves")
   /** The pieces of a line in order: [{ n, of, unit, side, bodyIndex }] (flat). An earring pair is a Left then a Right for every unit (L R L R),
    *  matching or mismatched (bodyIndex 0 then 1 for a mismatched design's own bodies); a single earring has the side its line names, or null;
    *  a glued mismatched copy, discs, letters and charms: no side. A piece an old line already has carries no side. */
@@ -2835,12 +2848,39 @@
        bought twice: 2 moons and 2N stars (D1.2 is star 1 of the second necklace, D(N+1).2 its moon). A person's own count answer for a value of the drop-down is the number of STARS (the moon is added).
      TO ADD such a listing: one row with listings, skus, noun, min, max, face, option, and (for a design the Etsy SKU does not name) design, (for a two-body file) body, (for pieces every necklace carries besides the counted
      ones) companion. TO UNDO: delete the row; nothing stored is rewritten (an order read again reads as it did before the row). */
+  /* BROKENHEART (Paul, 19 Oct 2026, order 4204452679): "this piece comes as 2 individual sides of the heart charm. The charm vector is correct but must be interpreted as 2 individual sides of one heart charm. Each side of the
+     heart must be treated as individual pieces and the engraving must also recognize that."
+     THE LISTING: "Best Friends Necklace Set of 2, Set of 2 Necklaces, Best Friends Forever Personalized Jewelry, BFF Jewelry ...", Etsy SKU Best_4003 (the library's design BEST 4003 / BEST_4003, matched by the SKU as it always
+     was: no `design` field). ONE drop-down, which Etsy calls "Personalization" (the same word as the text box, so it is found by its VALUE, never by its name), of 9 values "<METAL>·<faces>": SILVER·BLANK, SILVER·Front,
+     SILVER·Front&Back, GOLD·BLANK, GOLD·Front, GOLD· Front&Back, ROSEGOLD·BLANK, ROSEGOLD·Front, ROSEGOLD·Front&Back. The order (SILVER·Front, "Sisters") was read as ONE heart piece with ONE engraving across it.
+     THE DESIGN draws a heart broken in two along a zigzag: the LEFT half and the RIGHT half, each with its own hanging hole, each worn on its own chain. The listing photos engrave each half on its own: "BFF" / "BFF",
+     "Mama" / "Daughter", "Sis" / "ters".
+     THE RULE: one more row of PIECE_LISTINGS, read generically by a field the bars and the moon do not have:
+       · pieces  [{ label, body }] the FIXED pieces every unit is, in order: { "Left half", body 0 } and { "Right half", body 1 } (body 0 = the left body of the drawing by x position, charm-nest-pair.js bodiesOf). Every unit
+                 bought is exactly those pieces (quantity 2 = 4 pieces, 2 hearts), whatever the drop-down says; there is no count to read. The pieces of a unit are one group (one heart: one sheet), the same metal.
+                 spec.pair.pieceBodies [0, 1] (the pool cuts each half from ITS body alone, charm-nest-bridge.js bodyPlanFor, as the moon and the stars; a master that does not draw the two halves as two separate
+                 bodies, one outline with the zigzag as a line inside it, holds the line for a person: never the whole heart twice, never one heart), spec.pair.labels ["Left half", "Right half"] (what every list, card
+                 and chip calls a piece: "LEFT HALF · FRONT", never "Disc 1 of 2" or "Left earring"), spec.pair.noun "half", spec.pair.nouns "halves" (the plural: "2 halves").
+       · value   the pattern of the drop-down's VALUE (pieceOptionOf): its metal fills spec.material when the station gave none, and its faces are the engraving of BOTH halves (pieceFacesRead): "Front" = the front of each half,
+                 "Front&Back" = the front and the back of each half (the words read go on the fronts, a person says what goes on each back), "BLANK" = nothing engraved (no job, nothing waits; words written beside BLANK stay
+                 the conflict a person decides, as on every listing). The faces reading of the drop-down (engravingOf, which read "Front: Sisters" for the whole heart) is replaced by the profile's, half by half.
+       · the words: one text per half, in order, left half first (the pieces' own reader: two lines, "Mama / Daughter", "Mama & Daughter", "Left: Mama Right: Daughter", "Left half: ...", "Half 1: ...", "BFF BFF" (one word
+                 written once for each half)). ONE text that cannot be split ("Sisters") is NEVER guessed (not copied onto both halves, never cut into "Sis" / "ters"): the line's engraving waits for a person ("Say which
+                 words go on each half"), with NO proposal on either half, exactly as the bars and the stars do for fewer texts than pieces (the buyer's words are kept in `raw`). A note to the shop in brackets ("(Can you use
+                 the same font as pictured?)", charm-nest-engrave-read.js peelBrackets) is never engraved: it is taken out of the words and a person confirms.
+     The listing id is not known yet: the row matches the Etsy SKU alone (looseKey: Best_4003 = BEST 4003 = BEST_4003). WHEN THE LISTING ID IS KNOWN, add it to the row's `listings` (nothing else changes).
+     TO UNDO: delete the row; nothing stored is rewritten. */
+  const PIECE_FACES_VALUE = /^\s*(?:silver|sterling\s*silver|gold|gold\s*filled|rose\s*gold|rosegold|rg|gf|ss)\s*[·•∙⋅.\-–—|\/:,]?\s*(?:blank|front\s*(?:&|\+|and|\/)\s*back|back\s*(?:&|\+|and|\/)\s*front|front|back|both(?:\s*sides)?)\s*(?:\([^)]*\))?\s*$/i;
   const PIECE_LISTINGS = Object.freeze([
     Object.freeze({ id: "VERTICAL BAR_1277", listings: Object.freeze(["982791277"]), skus: Object.freeze(["VERTICAL BAR_1277"]), noun: "bar", min: 1, max: 5, face: "front", option: /\bbars\b|\b(?:#|number|no\.?)\s*(?:of\s+)?bar\b/i,
       words: "Etsy listing 982791277, Skinny MINI Vertical Bar Necklace with Heart: 1 to 5 separate bars on one necklace, engraved on the front of each bar" }),
     Object.freeze({ id: "MOON_3288", listings: Object.freeze(["1095123288"]), skus: Object.freeze(["MOON_3288"]), noun: "star", min: 1, max: 5, face: "front", option: /\bnecklace\s+options?\b|\bstars\b|\b(?:#|number|no\.?)\s*(?:of\s+)?stars?\b/i,
       design: "TINY MOON & STARS 2", body: 0, companion: Object.freeze({ noun: "moon", n: 1, body: 1 }),
-      words: "Etsy listing 1095123288, Moon Necklace Gold Crescent: one moon and 1 to 5 stars on one necklace (the design TINY MOON & STARS 2: the stars its left body, the moon its right body), each star engraved on its front, the moon never" })
+      words: "Etsy listing 1095123288, Moon Necklace Gold Crescent: one moon and 1 to 5 stars on one necklace (the design TINY MOON & STARS 2: the stars its left body, the moon its right body), each star engraved on its front, the moon never" }),
+    // (BROKENHEART, Paul 19 Oct 2026, order 4204452679: the listing id is unknown, add it to `listings` when it is known)
+    Object.freeze({ id: "BEST_4003", listings: Object.freeze([]), skus: Object.freeze(["BEST_4003"]), noun: "half", nouns: "halves", min: 2, max: 2, face: "front", option: /\bpersonali[sz]ation\b|\bmetal\b|\bengrav/i, value: PIECE_FACES_VALUE,
+      pieces: Object.freeze([Object.freeze({ label: "Left half", body: 0 }), Object.freeze({ label: "Right half", body: 1 })]),
+      words: "Etsy SKU Best_4003, Best Friends Necklace Set of 2: a heart broken in two along a zigzag (the design BEST 4003: the left half its left body, the right half its right body), each half its own piece on its own chain with its own engraving; the drop-down names the metal and the faces (BLANK, Front, Front&Back)" })
   ]);
   const PIECE_BY_LISTING = new Map(), PIECE_BY_SKU = new Map();
   for (const x of PIECE_LISTINGS) { for (const l of x.listings) PIECE_BY_LISTING.set(String(l), x); for (const k of x.skus) PIECE_BY_SKU.set(looseKey(k), x); }
@@ -2854,6 +2894,10 @@
   }
   /** (MOONSTARS) The pieces a necklace of the row carries besides the counted ones (the moon: 1), 0 for a row with no companion (the bars). */
   const pieceExtra = pl => { const c = pl && pl.companion; return c ? Math.max(0, Math.floor(+c.n) || 0) : 0; };
+  /** (BROKENHEART) The FIXED pieces every unit of the row is ([{ label, body }]: the left half and the right half), or null for a row whose pieces are counted by its drop-down (the bars, the stars). */
+  const piecesFixed = pl => { const p = pl && Array.isArray(pl.pieces) ? pl.pieces : null; return p && p.length >= 2 && p.length <= 8 && p.every(x => x && typeof x.label === "string" && x.label && Number.isInteger(x.body) && x.body >= 0 && x.body < 8) ? p : null; };
+  /** (BROKENHEART) A row's plural noun ("halves"), else the noun with an s ("bars", "stars"). */
+  const pieceNouns = pl => String((pl && pl.nouns) || ((pl && pl.noun) || "piece") + "s");
   /** (MOONSTARS) The design a profiled line is made from, or "": the row's `design` for a line of its listing or its SKU that carries the row's drop-down. `sku` / `source`: what the line read as so far; a person's
    *  own pick of another design (source "alias" or "option", a design that is none of the row's Etsy SKUs) stands. masterEntry / masterLoose: the master's own spelling of the design, when it holds it. */
   function profileDesignOf(line, pl, sku, source, masterEntry, masterLoose) {
@@ -2894,17 +2938,34 @@
     const metal = pieceMetalOf(rest);
     return metal ? { ok: true, n: h.n, metal, why: "" } : none(`“${shown}” is not one of this listing's choices (“${clip(rest, 30)}” is no metal this shop sells here): a person says what it is`);
   }
-  /** What a line's drop-down for the profile says: null when the line has none; else { ok, name, value, n, metal, why, variation }. Two such options that disagree are not read. */
+  /** (BROKENHEART) One value of a FIXED-pieces row's drop-down ("SILVER·Front", "GOLD· Front&Back", "ROSEGOLD·BLANK") as { ok, n (the pieces of a unit), metal, mode: "front" | "both" | "back" | "none", why }. Not ok (with `why`):
+   *  a value that names no faces, two faces words, or a word that is no metal. metal is "" when the value names none. */
+  function pieceFacesRead(value, pl) {
+    const fx = piecesFixed(pl), n = fx ? fx.length : 1, shown = clip(optionText(value), 60);
+    const t = shownText(value).normalize("NFKC").replace(PIECE_PRICE, " ").replace(/\s+/g, " ").trim();
+    const none = why => ({ ok: false, n, metal: "", mode: "", why });
+    const faces = [];
+    const rest = t.replace(/\bfront\s*(?:&|\+|and|\/)\s*back\b|\bback\s*(?:&|\+|and|\/)\s*front\b|\bboth(?:\s*sides)?\b/gi, () => { faces.push("both"); return " "; }).replace(/\bblank\b/gi, () => { faces.push("none"); return " "; }).replace(/\bfront\b/gi, () => { faces.push("front"); return " "; }).replace(/\bback\b/gi, () => { faces.push("back"); return " "; })
+      .replace(/[\s·•∙⋅‣‧◦●○▪.,;:|\/\\_\-–—+&*()]+/g, " ").trim();
+    if (faces.length !== 1) return none(`“${shown}” is not one of this listing's choices (${faces.length ? "it names more than one engraving" : "it names no engraving: BLANK, Front or Front&Back"}): a person says what it is`);
+    if (!rest) return { ok: true, n, metal: "", mode: faces[0], why: "" };
+    const metal = pieceMetalOf(rest);
+    return metal ? { ok: true, n, metal, mode: faces[0], why: "" } : none(`“${shown}” is not one of this listing's choices (“${clip(rest, 30)}” is no metal this shop sells here): a person says what it is`);
+  }
+  /** What a line's drop-down for the profile says: null when the line has none; else { ok, name, value, n, metal, why, variation }. Two such options that disagree are not read.
+   *  (BROKENHEART: a row with a `value` pattern finds its drop-down by the VALUE, whatever its name, "Personalization" too: { ok, n, metal, mode } of pieceFacesRead) */
   function pieceOptionOf(line, pl) {
     const found = [];
     for (const v of (line && line.variations) || []) {
-      const name = lvName(v), value = lvValue(v).trim(); if (!name || !value || isPersonalisation(name) || !pl.option.test(decodeEntities(name))) continue;
+      const name = lvName(v), value = lvValue(v).trim();
+      if (pl.value) { if (value && pl.value.test(shownText(value).normalize("NFKC").replace(PIECE_PRICE, " "))) found.push(Object.assign({ name, value, variation: v }, pieceFacesRead(value, pl))); continue; }
+      if (!name || !value || isPersonalisation(name) || !pl.option.test(decodeEntities(name))) continue;
       found.push(Object.assign({ name, value, variation: v }, pieceValueRead(value, pl)));
     }
     if (!found.length) return null;
     if (found.length === 1) return found[0];
     const ok = found.filter(f => f.ok);
-    return ok.length === found.length && ok.every(f => f.n === ok[0].n && f.metal === ok[0].metal) ? ok[0] : Object.assign({}, found[0], { ok: false, why: `two options of this line name a number of ${pl.noun}s: a person says which is right` });
+    return ok.length === found.length && ok.every(f => f.n === ok[0].n && f.metal === ok[0].metal && f.mode === ok[0].mode) ? ok[0] : Object.assign({}, found[0], { ok: false, why: `two options of this line name a number of ${pl.noun}s: a person says which is right` });
   }
   /** The engraving slots of a profiled line, piece by piece in the order the pool makes them: per pieces on each of `units` necklaces. D1..Dn (D1.2 .. for the second necklace), C1..Cn for a single bar bought more than once, none for one piece. */
   function pieceSlots(per, units, extra) {
@@ -2915,26 +2976,40 @@
     return out;
   }
   const pieceWordsModule = () => { try { const g = typeof self !== "undefined" ? self : typeof globalThis !== "undefined" ? globalThis : null; if (g && g.CharmNestEngravePieceWords) return g.CharmNestEngravePieceWords; if (typeof require === "function") return require("./charm-nest-engrave-piece-words.js"); } catch (_) { /* the page without the reader: every name is a question for a person */ } return null; };
+  // (BROKENHEART) the reading of what the buyer typed (charm-nest-engrave-read.js: the notes to the shop in brackets), loaded after this file in the page
+  const engraveReadModule = () => { try { const g = typeof self !== "undefined" ? self : typeof globalThis !== "undefined" ? globalThis : null; if (g && g.CharmNestEngraveRead) return g.CharmNestEngraveRead; if (typeof require === "function") return require("./charm-nest-engrave-read.js"); } catch (_) { /* without it the words stay as written */ } return null; };
   /** What a profiled line says about its pieces' words and faces, read from the line's own text: { profile, engraving } (see the section above). `profile` is kept in spec.pieceProfile: { id, noun, count (pieces on a necklace), units,
    *  metal, face, how ("lines" | "list" | "numbered" | "labelled" | "same" | "single" | ""), ok (every piece has words), sure (nothing is asked of a person), why, words: { slot | "*": text } }. `engraving` is the faces reading the
    *  engraving setup starts from (spec.engraving: a front reading with the names bar by bar), or null when the line writes nothing to engrave. pv: pieceOptionOf (or null); counted: how many bars the line has is settled (the
-   *  drop-down was read, or a person said): else the words wait for it, a person is asked and no name is given to a bar by a guess. */
-  function pieceProfileOf(line, spec, pl, pv, counted) {
+   *  drop-down was read, or a person said): else the words wait for it, a person is asked and no name is given to a bar by a guess.
+   *  (BROKENHEART: `face0`, the faces the row's drop-down chose, "front" | "both" | "back" | "none", stands over the row's own `face`; a row of FIXED pieces names its pieces by their labels, "the left half", reads one word
+   *  written once for each piece ("BFF BFF") and takes a note to the shop in brackets out of the words) */
+  function pieceProfileOf(line, spec, pl, pv, counted, face0) {
     // (MOONSTARS: a row with a companion, the moon, counts its own pieces only: per is the stars of a necklace, the moon is no slot of theirs, and one star has the slot D1 like any piece of a counted necklace: single is false)
     const extra = pieceExtra(pl), units = Math.max(1, Math.round(+spec.quantity) || 1), total = Math.max(1, Math.floor(+spec.pieceCount) || units), per = Math.max(1, Math.round(total / units) - extra), slots = pieceSlots(per, units, extra), n = Math.max(1, slots.length), noun = pl.noun, single = !slots.length;
-    const pers0 = (spec.personalization || []).map(x => visible(x).trim()).filter(Boolean), cand = !!spec.engraveCandidate;
+    let pers0 = (spec.personalization || []).map(x => visible(x).trim()).filter(Boolean), cand = !!spec.engraveCandidate;
+    // (BROKENHEART: the station reads a drop-down Etsy calls "Personalization" as buyer text too ("SILVER·Front" beside "Sisters"): a line that is the row's drop-down value is its choice, never words for a piece)
+    if (pl.value) pers0 = pers0.map(x => x.split("\n").filter(l => !pl.value.test(shownText(l).normalize("NFKC").replace(PIECE_PRICE, " "))).join("\n").trim()).filter(Boolean);
     let pers = pers0; try { const fr = fontReadText(pers0.join("\n"), { cueOnly: true }); if (fr.changed) pers = fr.lines.map(x => String(x).trim()).filter(Boolean); } catch (_) { pers = pers0; }   // (a font the buyer asked for in the box, "Typewriter font", is spec.fontText: it is no name for a bar)
     const others = !!(String(spec.buyerMessage || "").trim() || String(spec.staffNote || "").trim() || (spec.messages || []).some(m => engravingNote(m && m.text)));
-    const say = slot => { const m = /^D(\d+)(?:\.(\d+))?$/.exec(slot || ""), c = /^C(\d+)$/.exec(slot || ""); return m ? `${noun} ${m[1]}${m[2] ? ` of necklace ${m[2]}` : ""}` : c ? `${noun} ${c[1]}` : `the ${noun}`; };
+    // (BROKENHEART: a row of FIXED pieces, the left half and the right half: `labels` name them, `nouns` is the plural ("halves"))
+    const fixed = piecesFixed(pl), labels = fixed && fixed.length === per ? fixed.map(x => x.label) : null, nouns = pieceNouns(pl);
+    const say = slot => { const m = /^D(\d+)(?:\.(\d+))?$/.exec(slot || ""), c = /^C(\d+)$/.exec(slot || ""); if (m && labels && labels[+m[1] - 1]) return `the ${labels[+m[1] - 1].toLowerCase()}${m[2] ? ` of set ${m[2]}` : ""}`; return m ? `${noun} ${m[1]}${m[2] ? ` of necklace ${m[2]}` : ""}` : c ? `${noun} ${c[1]}` : `the ${noun}`; };
+    // (BROKENHEART: a note to the shop in brackets, "(Can you use the same font as pictured?)", is no words to engrave: charm-nest-engrave-read.js takes it out (peelBrackets); a person confirms the words that are left)
+    const notes = [];
+    if (fixed && pers.length) { try { const ER = engraveReadModule(), rd = ER && ER.readPersonalisation ? ER.readPersonalisation(pers.join("\n")) : null; for (const d of (rd && rd.dropped) || []) { const t = String(d.text || "").trim(); if (!/^[(\[{]/.test(t)) continue; const rx = new RegExp(t.split(/\s+/).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+")); const was = pers.join("\n"), cut = was.replace(rx, " "); if (cut !== was) { notes.push(t); pers = cut.split("\n").map(x => x.replace(/[ \t]+/g, " ").trim()).filter(Boolean); } } } catch (_) { /* the words stay as written */ } }
     const profile = { id: pl.id, noun, count: per, units, metal: pv && pv.ok ? pv.metal : "", face: pl.face || "", how: "", ok: false, sure: false, why: "", words: {} };
     if (extra) profile.companion = { noun: String(pl.companion.noun || "piece"), n: extra, engraved: false };   // (MOONSTARS: the moon of every necklace, never engraved: no words are read for it)
+    if (face0 === "none") { Object.assign(profile, { face: "none", sure: true }); return { profile, engraving: null }; }   // (BROKENHEART: BLANK: nothing is engraved on any piece; words written beside it are the faces reading's conflict, for a person)
     let kind = "", why = "", r = null;
     try { const PW = pieceWordsModule(); r = PW && pers.length ? PW.read(pers, n, { noun }) : null; } catch (_) { r = null; }
+    // (BROKENHEART: ONE word written once for each piece, "BFF BFF" for the two halves, is one word per piece, in order)
+    if (fixed && r && !r.split && !r.said && pers.length === 1) { const ws = pers[0].split(/\s+/).filter(Boolean); if (ws.length === n && n >= 2 && ws.every(w => w === ws[0]) && /[\p{L}\p{N}]/u.test(ws[0])) r = { words: ws, split: true, how: "list", found: n, said: false, same: true, none: false, why: "" }; }
     const words = {};
-    if (!counted) { if (!cand) return { profile, engraving: null }; kind = "texts"; why = `how many ${noun}s this line has is not settled yet (the drop-down was not read): a person says what goes on each ${noun}`; }
-    else if (!pers.length) { if (!cand) return { profile, engraving: null }; kind = "texts"; why = `the words are only in a note, not in the personalisation box: a person says exactly what goes on ${n === 1 ? `the ${noun}` : `the ${n} ${noun}s`}`; }
+    if (!counted) { if (!cand) return { profile, engraving: null }; kind = "texts"; why = `how many ${nouns} this line has is not settled yet (the drop-down was not read): a person says what goes on each ${noun}`; }
+    else if (!pers.length) { if (!cand) return { profile, engraving: null }; kind = "texts"; why = `the words are only in a note, not in the personalisation box: a person says exactly what goes on ${n === 1 ? `the ${noun}` : `the ${n} ${nouns}`}`; }
     else if (!r) { kind = "texts"; why = `the personalisation could not be read here: a person says what goes on each ${noun}`; }
-    else if (r.none) { kind = "nowords"; why = `the personalisation says there is nothing to engrave, but this listing is engraved on ${n === 1 ? `its ${noun}` : `every ${noun}`}: a person says what goes on ${n === 1 ? `the ${noun}` : `the ${n} ${noun}s`}`; }
+    else if (r.none) { kind = "nowords"; why = `the personalisation says there is nothing to engrave, but this listing is engraved on ${n === 1 ? `its ${noun}` : `every ${noun}`}: a person says what goes on ${n === 1 ? `the ${noun}` : `the ${n} ${nouns}`}`; }
     else if (n === 1) { const w = String(r.words[0] || "").trim(); if (w) { words[single ? "*" : slots[0]] = w; profile.how = "single"; } else { kind = "nowords"; why = `the personalisation holds no name for the ${noun}: a person says what goes on it`; } }
     else if (r.split || (r.said && r.same)) {
       slots.forEach((sl, i) => { if (String(r.words[i] || "").trim()) words[sl] = String(r.words[i]).trim(); });
@@ -2946,20 +3021,28 @@
       // (the names that were written stand as the proposal, bar 1 first: the bar with none is the one flagged. MOONSTARS: numbered labels that stop short, "First Star: M / Second Star: T" for 3 stars, are read as the 2 they number)
       if (!(found > n)) for (let k = found >= 2 && found < n ? found : n - 1; k >= 2; k--) { let r2 = null; try { r2 = pieceWordsModule().read(pers, k, { noun }); } catch (_) { r2 = null; } if (r2 && r2.split) { slots.slice(0, k).forEach((sl, i) => { if (String(r2.words[i] || "").trim()) words[sl] = String(r2.words[i]).trim(); }); found = k; break; } if (k === found) break; }
       kind = "pieces";
-      why = found > n ? `the buyer wrote ${found} names for ${n} ${noun}s (more names than ${noun}s): a person says which names go on which ${noun}`
-        : found >= 1 && found < n && found !== 1 ? `the buyer wrote ${found} names for ${n} ${noun}s: ${say(slots[found])} has none, a person says what goes on it`
-        : `the personalisation does not give one name for each of the ${n} ${noun}s${r.why ? ` (${r.why})` : ""}: a person says what goes on each`;
+      why = found > n ? `the buyer wrote ${found} names for ${n} ${nouns} (more names than ${nouns}): a person says which names go on which ${noun}`
+        : found >= 1 && found < n && found !== 1 ? `the buyer wrote ${found} names for ${n} ${nouns}: ${say(slots[found])} has none, a person says what goes on it`
+        : `the personalisation does not give one name for each of the ${n} ${nouns}${r.why ? ` (${r.why})` : ""}: a person says what goes on each`;
+      // (BROKENHEART: ONE text for the halves of the heart, "Sisters", is never copied onto both halves nor cut by a guess: no proposal on either half, a person says)
+      if (labels && found <= 1 && !Object.keys(words).length) why = `the buyer wrote one text (“${clip(pers.join(" / "), 40)}”) for the ${n} ${nouns} of the heart: it is not copied onto both nor cut by a guess. Say which words go on each half`;
     }
     { const odd = Object.keys(words).find(sl => /\b(?:fonts?|typefaces?)\b/i.test(words[sl])); if (!kind && odd) { kind = "texts"; why = `“${clip(words[odd], 30)}” for ${say(odd)} reads like a font request, not a name: a person checks what goes on it`; } }   // (a request riding on the last name is never engraved with it)
     if (!kind && others) { kind = "texts"; why = `the buyer or the shop also wrote a message or a note about the engraving: a person confirms the words of ${n === 1 ? `the ${noun}` : `each ${noun}`}`; }
+    if (!kind && notes.length) { kind = "texts"; why = `the buyer also wrote a note to the shop (${notes.map(t => `“${clip(t, 50)}”`).join(", ")}), which is not engraved: a person confirms the words of each ${noun}`; }   // (BROKENHEART)
+    else if (kind && notes.length) why += ` (the note to the shop, ${notes.map(t => `“${clip(t, 40)}”`).join(", ")}, is not engraved)`;
     Object.assign(profile.words, words); profile.ok = !kind && Object.keys(words).length > 0; profile.sure = !kind; profile.why = kind ? clip(why, 170) : "";
-    const mode = pl.face === "back" ? "back" : pl.face === "front" ? "front" : "";
+    // (BROKENHEART: the faces the drop-down chose stand over the row's face: "none" (BLANK) engraves nothing; "both" puts the words read on the front of each piece and a person says what goes on each back)
+    const face = face0 === "front" || face0 === "back" || face0 === "both" || face0 === "none" ? face0 : pl.face;
+    if (face0) profile.face = face;
+    const mode = face === "back" ? "back" : face === "front" ? "front" : face === "both" && !single ? "both" : "";
     if (!mode) return { profile, engraving: null };
+    if (mode === "both" && !kind) { kind = "texts"; why = `front and back of each ${noun} (the drop-down's choice): the words read go on the front of each ${noun}; a person says what goes on each back`; profile.sure = false; profile.ok = false; profile.why = clip(why, 170); }
     const faceOut = text => { const ls = String(text || "").split("\n").map(x => x.replace(/[ \t]+/g, " ").trim()).filter(Boolean); return ls.length ? { text: ls.join("\n"), lines: ls, fontWord: null } : null; };
     const eng = { v: 1, mode, source: "profile", front: null, back: null, textSource: "none", needsPerson: false, confidence: 0.5, why: "", option: null };
     if (single) { const f = faceOut(words["*"]); if (f) eng[mode] = f; }
     else {
-      const pieces = {}; for (const sl of slots) { const f = faceOut(words[sl]); if (f) pieces[sl] = { front: mode === "front" ? f : null, back: mode === "back" ? f : null }; }
+      const pieces = {}; for (const sl of slots) { const f = faceOut(words[sl]); if (f) pieces[sl] = { front: mode === "front" || mode === "both" ? f : null, back: mode === "back" ? f : null }; }
       if (Object.keys(pieces).length) eng.pieces = pieces;
     }
     const given = single ? !!eng[mode] : !!eng.pieces;
@@ -3838,7 +3921,7 @@
       return Object.assign({ letter: { letter: r.letter, why, clash: !!r.clash }, why }, r.clash && r.clash.want ? { picks: [{ sku: r.clash.want, why: `the letter ${r.letter} of the same family` }] } : {});
     };
     // (BARS) a value of the profile's drop-down that cannot be read says why in one plain line, instead of Etsy's table not being loaded
-    const pieceAsk = (name, value) => { if (!pl || !pl.option.test(decodeEntities(String(name || "")))) return {}; const r = pieceValueRead(value, pl); return r && !r.ok && r.why ? { why: r.why } : {}; };
+    const pieceAsk = (name, value) => { if (!pl || piecesFixed(pl) || !pl.option.test(decodeEntities(String(name || "")))) return {}; const r = pieceValueRead(value, pl); return r && !r.ok && r.why ? { why: r.why } : {}; };   // (BROKENHEART: a row of fixed pieces has no count to ask about)
     // a listing that engraves in ONE font whatever the buyer picks (FONT_LISTINGS): its font option never holds, asks or changes the font
     const fx = fontListing(line, sku, bought);
     for (const v of line.variations || []) {
@@ -4021,10 +4104,22 @@
     // when the order says nothing. A line the profile does not cover (no drop-down read, another listing's SKU) is read exactly as it was.
     try {
       // (MOONSTARS: a row that names its own design covers only the lines that carry its drop-down, as its design does: a line of the listing without it is some other product)
-      if (pl && (pv && pv.ok || (PIECE_BY_LISTING.has(pieceListingId(line)) && (!pl.design || pv))) && !quiet && !spec.engraveNever) {
-        const bp = pieceProfileOf(line, spec, pl, pv, !!(pv && pv.ok && spec.pieceCount === (pv.n + pieceExtra(pl)) * spec.quantity) || !!cr.answered);   // (settled: the line makes the pieces its drop-down says, or a person said how many)
+      // (BROKENHEART: a row of FIXED pieces covers every line it made into its pieces, spec.pair.labels: the left half and the right half)
+      const fixedRow = !!(pl && piecesFixed(pl) && spec.pair && Array.isArray(spec.pair.labels) && Array.isArray(spec.pair.pieceBodies));
+      if (pl && (pv && pv.ok || fixedRow || (PIECE_BY_LISTING.has(pieceListingId(line)) && (!pl.design || pv))) && !quiet && !spec.engraveNever) {
+        const settled = fixedRow ? spec.pieceCount === piecesFixed(pl).length * spec.quantity : !!(pv && pv.ok && spec.pieceCount === (pv.n + pieceExtra(pl)) * spec.quantity);
+        const bp = pieceProfileOf(line, spec, pl, pv, settled || !!cr.answered, fixedRow && pv && pv.ok ? pv.mode : "");   // (settled: the line makes the pieces its drop-down says, or a person said how many)
         spec.pieceProfile = bp.profile;
-        if (!spec.engraving && bp.engraving && spec.engraveCandidate) spec.engraving = bp.engraving;
+        // (BROKENHEART: the faces reading of the row's OWN drop-down (engravingOf: "Front: Sisters" for the whole heart) is replaced by the profile's, half by half: the drop-down was read (its value, with or without the
+        //  value id that tells a drop-down from the text box), so its faces are the buyer's choice. A BLANK chosen with words written beside it (the conflict a person decides) or a front-and-back reading that already gives
+        //  each half its words stays)
+        const own = e => !!(e && pv && pv.ok && e.source !== "person");
+        const keep = e => e.mode === "none" || (e.mode === "both" && !e.needsPerson && e.pieces && spec.pair.labels.every((_, i) => e.pieces["D" + (i + 1)]));
+        if (fixedRow && bp.engraving && spec.engraveCandidate && own(spec.engraving) && !keep(spec.engraving)) spec.engraving = Object.assign(bp.engraving, { option: spec.engraving.option, modeFrom: spec.engraving.modeFrom || `${pv.name}: ${pv.value}` });
+        else if (!spec.engraving && bp.engraving && spec.engraveCandidate) spec.engraving = bp.engraving;
+        // (BROKENHEART: BLANK, and nothing written but the drop-down's own value, which the station hands over as buyer text too: nothing to engrave, nothing waits)
+        if (fixedRow && pv && pv.ok && pv.mode === "none" && spec.engraveCandidate && !String(spec.buyerMessage || "").trim() && !String(spec.staffNote || "").trim() && !(spec.messages || []).some(m => engravingNote(m && m.text))
+          && (spec.personalization || []).every(x => String(x).split("\n").every(l => !l.trim() || pl.value.test(shownText(l).normalize("NFKC").replace(PIECE_PRICE, " "))))) spec.engraveCandidate = false;
       }
     } catch (_) { /* a reading that fails leaves the line as it always was */ }
     // HUGGIEGUARD: the line's form and the design's form are always told; a clash holds the line with ONE plain line and the siblings that fit (spec.formHold), and no design is on the row
@@ -4433,7 +4528,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { sizeFit, sizeMmOf, SIZE_PAD_PT, questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, tidyOption, optionView, optionViews, shownText, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, PINNED_LISTING_DESIGNS, pinnedDesign, PINNED_HUGGIE_SETS, pinnedHuggieSet, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, PIECE_LISTINGS, pieceListing, pieceValueRead, pieceOptionOf, pieceSlots, pieceExtra, profileDesignOf, pieceBodiesOf, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, SET_RULES, SET_LAYOUT_OPT, setRuleOf, setLengthsOf, setEngravedOf, barLengthOf, setLayoutAskOf, setPiecesOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { sizeFit, sizeMmOf, SIZE_PAD_PT, questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, tidyOption, optionView, optionViews, shownText, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, PINNED_LISTING_DESIGNS, pinnedDesign, PINNED_HUGGIE_SETS, pinnedHuggieSet, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, PIECE_LISTINGS, pieceListing, pieceValueRead, pieceOptionOf, pieceSlots, pieceExtra, profileDesignOf, pieceBodiesOf, piecesFixed, pieceFacesRead, pieceNouns, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, SET_RULES, SET_LAYOUT_OPT, setRuleOf, setLengthsOf, setEngravedOf, barLengthOf, setLayoutAskOf, setPiecesOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY, earringNeverBackEngraves, EAR_NEVER_WHY, letterDesignNeverEngraves, LETTER_NEVER_WHY,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,

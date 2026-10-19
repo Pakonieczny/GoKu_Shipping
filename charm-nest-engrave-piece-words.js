@@ -26,6 +26,7 @@
  *        "Bar 1: A, Bar 2: B" after "Bar names:"), and a line of ONE piece has that label taken off too; without `noun` every reading below is exactly what it was.
  *        (MOONSTARS, Paul 19 Oct 2026: the moon and stars listing's "First Star: M / Second Star: T") a noun the label words below do not hold ("star") is a label word of that reading too: "Star 2: T", "Second Star: T",
  *        "1st Star: M"; a noun they hold (bar, disc, tag ..) reads exactly as before.
+ *        (BROKENHEART, Paul 19 Oct 2026, order 4204452679: the two halves of a broken heart) "Left half:" / "Right half:" are side labels as "Left ear:" / "Right ear:" are.
  *   isNoWords(text)  true when the text says there is nothing to write ("N/A", "none", "no personalisation", "Not requested on this item.", "see message", only punctuation).   SAME_NOTE.
  *
  * THE RULE (in this order; the first that fits decides):
@@ -165,8 +166,8 @@
     { rx: new RegExp(OPEN + '\\(?(\\d{1,2})(?:\\)|[\\]:.=\\-\u2013\u2014])(?!\\d)\\s*', 'gu'), num: 2, kind: 'n' },
     // First: · 2nd - · Third piece:
     { rx: new RegExp(OPEN + '(' + ORDALT + ')(?:\\s+(?:' + LW + '))?\\s*' + SEPS + '+\\s*', 'giu'), num: 2, kind: 'n' },
-    // Left: · Right ear - · L: · R)
-    { rx: new RegExp(OPEN + '(left|right|l|r)(?:\\s+(?:ear|earring|piece|side|one|charm|stud|hoop|hand))?\\s*(?:=>|->|\u2192|[:=)\\-\u2013\u2014])\\s*', 'giu'), side: 2, kind: 's' }
+    // Left: · Right ear - · L: · R) · (BROKENHEART, Paul 19 Oct 2026, order 4204452679: "Left half: Mama, Right half: Daughter", the two halves of a broken heart)
+    { rx: new RegExp(OPEN + '(left|right|l|r)(?:\\s+(?:ear|earring|piece|side|one|charm|stud|hoop|hand|half))?\\s*(?:=>|->|\u2192|[:=)\\-\u2013\u2014])\\s*', 'giu'), side: 2, kind: 's' }
   ];
   const MARK = makeMarks(LABELW), MARKS_BY = new Map();
   /** The marks of a reading: the old list, or (MOONSTARS) the same with the piece's own noun as a label word too ("Star 2:", "Second Star:"). A noun the list already holds (bar, disc, tag ..) gives the old list itself. */

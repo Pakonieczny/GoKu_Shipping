@@ -46,7 +46,8 @@
   }
   const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
   // (MOONSTARS, Paul 19 Oct 2026: a counted line with a companion, the moon of a moon and stars necklace, says "2 stars + 1 moon", never "3 stars"; every other counted line: "3 discs")
-  const countedWords = c => (c.companion && c.companion.n > 0 && c.counted > 0 ? plural(c.counted, c.noun) + ' + ' + plural(c.companion.n, c.companion.noun) : plural(c.total, c.noun));
+  // (BROKENHEART, Paul 19 Oct 2026, order 4204452679: a noun with its own plural, the halves of a heart broken in two (c.nouns "halves"): "2 halves", never "2 halfs")
+  const countedWords = c => (c.companion && c.companion.n > 0 && c.counted > 0 ? plural(c.counted, c.noun) + ' + ' + plural(c.companion.n, c.companion.noun) : c.nouns && c.total !== 1 ? c.total + ' ' + c.nouns : plural(c.total, c.noun));
   /** How long ago, in the few words a glance wants: "just now", "12 minutes ago", "3 hours ago", "2 days ago"; "" for a time in the future. */
   function ago(ms, now) {
     now = now == null ? nowMs() : now;

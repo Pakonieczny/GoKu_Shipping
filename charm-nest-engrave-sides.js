@@ -471,9 +471,10 @@
         return Object.assign({ poolId: x.poolId, n: x.n, unit: i ? i.unit : 1, within, slot: x.slot, index: k + 1, of, label: b ? cw + unit : x.slot ? nounWord(labelOf(x.slot, multi ? shp : null), row) : '', tag: b ? cw.toUpperCase() + unit.toUpperCase() : x.slot ? nounWord(tagOf(x.slot, starsOf, multi ? shp : null), row) : '' }, b ? { blank: true } : {});
       });
     }
+    const named = labelsOf(row) ? t => nounWord(t, row) : t => t;   // (BROKENHEART: a line whose profile names its pieces lists "Left half", "Right half"; every other line: as it always was)
     return pre.map((x, k) => {
       const i = slotInfo(x.slot), within = i ? (i.kind === 'ear' ? (i.side === 'L' ? 1 : 2) : i.kind === 'disc' ? i.n : 1) : 1;
-      return { poolId: x.poolId, n: x.n, unit: i ? i.unit : 1, within, slot: x.slot, index: k + 1, of, label: x.slot ? labelOf(x.slot, multi ? shp : null) : '', tag: x.slot ? tagOf(x.slot, tagOf2, multi ? shp : null) : '' };
+      return { poolId: x.poolId, n: x.n, unit: i ? i.unit : 1, within, slot: x.slot, index: k + 1, of, label: x.slot ? named(labelOf(x.slot, multi ? shp : null)) : '', tag: x.slot ? named(tagOf(x.slot, tagOf2, multi ? shp : null)) : '' };
     });
   }
 
@@ -492,6 +493,9 @@
        blankPerUnit(row) · blankSlots(row) · companionWord(x) · isBlankSlot(x, slot)   (MOONSTARS, Paul 19 Oct 2026) a profile with a COMPANION (spec.pair.companion: the moon of a moon and stars necklace) makes the
                             last n pieces of each necklace that companion: they are pieces of the line (pool, sheet, slot D(n+1) in plan.of) but NEVER engraved: plan gives them no job, the line's summary says
                             "nothing to engrave" for them (needed false, approved), pieceList calls them "Moon" (`blank`), the stars are counted alone ("Star 1 of 2").
+       labelsOf(x)          (BROKENHEART, Paul 19 Oct 2026, order 4204452679) the names a profile gives the pieces of one unit (spec.pair.labels: ["Left half", "Right half"], the two halves of a broken heart), else null. They are
+                            cut and engraved as the discs of a counted necklace (slots D1, D2, one job each); nounWord, and so slotWord / pieceTag / pieceRecord / pieceList, say "Left half" / "LEFT HALF" where a disc says
+                            "Disc 1" / "DISC 1 of 2" ("Right half · set 2" for the second heart). A line with no labels reads exactly as it did.
      Derived, never stored, no arrays inside arrays. */
   const skuName = s => String(s == null ? '' : s).replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
   const lineOfAny = x => (x && x.row && typeof x.row === 'object' && !x.spec ? x.row : x) || null;
@@ -506,7 +510,11 @@
   // (MOONSTARS, Paul 19 Oct 2026) the word a line's companion piece goes by ("Moon": spec.pair.companion.noun), '' for a line with none; and whether a slot of x's line is that piece (blankSlots: never engraved)
   const companionWord = x => { const sp = specOfAny(x), c = sp && sp.pair && sp.pair.companion, n = c && typeof c.noun === 'string' ? c.noun.trim().toLowerCase() : ''; return /^[a-z]{2,12}$/.test(n) ? n[0].toUpperCase() + n.slice(1) : ''; };
   const isBlankSlot = (x, slot) => { const l = lineOfAny(x), row = l && l.parentRow ? l.parentRow : l; return !!slot && !!row && blankSlots(row).has(String(slot)); };
-  const nounWord = (text, x) => { const n = nounOf(x); return n ? String(text == null ? '' : text).replace(/\bDisc\b/g, n[0].toUpperCase() + n.slice(1)).replace(/\bDISC\b/g, n.toUpperCase()).replace(/\bdisc\b/g, n) : text; };
+  // (BROKENHEART, Paul 19 Oct 2026, order 4204452679) the names of the pieces of ONE unit when the listing's profile names them (spec.pair.labels: ["Left half", "Right half"] of a heart broken in two), else null
+  const labelsOf = x => { const sp = specOfAny(x), pr = sp && sp.pair, l = pr && Array.isArray(pr.labels) ? pr.labels : null; return l && l.length >= 2 && l.length <= 8 && l.every(v => typeof v === 'string' && /^[A-Za-z][A-Za-z ]{0,23}$/.test(v)) ? l : null; };
+  // (BROKENHEART: a line whose pieces have names says them where a disc says its number: "Disc 1 of 2" is "Left half", "DISC 2 of 2 · SET 2" is "RIGHT HALF · SET 2")
+  const labelWord = (text, L) => String(text == null ? '' : text).replace(/\b(Disc|DISC|disc) (\d{1,2})(?: of \d{1,3})?/g, (m, w, k) => { const v = L[+k - 1]; return !v ? m : w === 'DISC' ? v.toUpperCase() : w === 'disc' ? v.toLowerCase() : v; });
+  const nounWord = (text, x) => { const L = labelsOf(x); if (L) text = labelWord(text, L); const n = nounOf(x); return n ? String(text == null ? '' : text).replace(/\bDisc\b/g, n[0].toUpperCase() + n.slice(1)).replace(/\bDISC\b/g, n.toUpperCase()).replace(/\bdisc\b/g, n) : text; };
   function setPieces(x) {
     const designs = setDesigns(x); if (!designs) return null;
     const l = lineOfAny(x), sp = specOfAny(x), meta = (sp.pair && sp.pair.set) || {};
@@ -578,5 +586,5 @@
     const shp = shape(list.map(j => j.slot || (j.row && j.row.slot) || null)), shpArg = shp.multi || shp.kind === 'copy' ? shp : null;   // (a line of one unit: no shape, the records it always gave)
     return list.map(j => pieceRecord(j, Object.assign({ of, faces: front ? per.get(j.slot || (j.row && j.row.slot) || '') : 1 }, shpArg ? { shape: shpArg } : {})));
   }
-  return { faceOf, isFront, jobKey, parseKey, labelOf, earOf, tagOf, copyOf, slotOfId, slotInfo, isSlot, isCopy, baseSlot, unitOf, sideOfSlot, slotRank, shape, unitsOfRow, unitOfId, unitShape, wordsForPieces, pieceList, mirrorOfId, pieceCharm, plan, idsOfSlot, sideRow, summary, linkParent, unlinkParent, perUnitOf, splitWords, wordsForDiscs, pieceRecord, pieceRecords, setDesigns, setPieces, setPieceOf, pieceName, lengthText, slotWord, pieceTag, nounOf, nounWord, blankPerUnit, blankSlots, companionWord, isBlankSlot, skuName, STATE_ORDER, SLOT: SLOT };
+  return { faceOf, isFront, jobKey, parseKey, labelOf, earOf, tagOf, copyOf, slotOfId, slotInfo, isSlot, isCopy, baseSlot, unitOf, sideOfSlot, slotRank, shape, unitsOfRow, unitOfId, unitShape, wordsForPieces, pieceList, mirrorOfId, pieceCharm, plan, idsOfSlot, sideRow, summary, linkParent, unlinkParent, perUnitOf, splitWords, wordsForDiscs, pieceRecord, pieceRecords, setDesigns, setPieces, setPieceOf, pieceName, lengthText, slotWord, pieceTag, nounOf, nounWord, labelsOf, blankPerUnit, blankSlots, companionWord, isBlankSlot, skuName, STATE_ORDER, SLOT: SLOT };
 });
