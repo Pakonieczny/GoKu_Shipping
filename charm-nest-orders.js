@@ -1375,6 +1375,8 @@
   /** The form a SKU's TEXT says: "huggie" | "earring" | "necklace", or "" when it says none or two families ("HUGGIE_3722", a numbered design named Huggie, says nothing). */
   function formOfText(sku) {
     const s = upSku(sku), h = FORM_TEXT.huggie.some(r => r.test(s)), e = FORM_TEXT.earring.some(r => r.test(s)), n = FORM_TEXT.necklace.some(r => r.test(s));
+    // NUMBERS (Paul, 19 Oct 2026): "X (HUGGIE)" is the shop's name for the huggie version of the design X, whatever X's own words say: "NECKLACE_CHARM-7 (HUGGIE)" is the huggie drawing of the necklace charm NECKLACE_CHARM-7
+    if (/\(\s*HUGGIES?\s*\)\s*$/.test(s) && !e) return "huggie";
     if (n && (h || e)) return "";
     return h ? "huggie" : e ? "earring" : n ? "necklace" : "";
   }
@@ -2491,16 +2493,18 @@
     for (const s of [txSku, line && line.sku]) { const k = s ? looseKey(s) : ""; if (k && SYMBOL_BY_SKU.has(k)) return SYMBOL_BY_SKU.get(k); }
     return null;
   }
-  /** The master SKU of a name's member (base + its place, the master's own spelling); "" when the library does not hold it or the name is not one of the family's. */
-  const symbolMember = (prof, name, me, loose) => { const i = prof.names.indexOf(name); return i < 0 || !me ? "" : masterSku(prof.base + i, me, loose) || ""; };
+  /** The master SKU of a name's member (base + its place + the row's suffix, the master's own spelling); "" when the library does not hold it or the name is not one of the family's.
+   *  (NUMBERS, section 3c'': a row may carry a suffix after the place, " (HUGGIE)" for the huggie version of the number charms, NECKLACE_CHARM-7 (HUGGIE); the HUGSYM rows have none.) */
+  const symbolMember = (prof, name, me, loose) => { const i = prof.names.indexOf(name); return i < 0 || !me ? "" : masterSku(prof.base + i + (prof.suffix || ""), me, loose) || ""; };
   /** Does the master hold any member of the row's family? (none: the row stands aside and the line is read as before) */
-  const symbolFamilyIn = (prof, me, loose) => !!me && prof.names.some((_, i) => !!masterSku(prof.base + i, me, loose));
+  const symbolFamilyIn = (prof, me, loose) => !!me && prof.names.some((_, i) => !!masterSku(prof.base + i + (prof.suffix || ""), me, loose));
   const SYMBOL_FROM = Object.assign({ sku: "the line's SKU" }, SIGN_FROM);
   const capFirst = s => String(s || "").charAt(0).toUpperCase() + String(s || "").slice(1);
   /** What a line of a SYMBOL_LISTINGS row reads as. o: { me, loose, sku (the SKU read so far), sameSaid (a person said "the same on both ears" for the line) }.
    *  → null (the master holds nothing of the family) | { profile, noun, family, symbols: [{ name, from, word, text, side?, sku }], textOnly, variation?, optionSku, pick?, pair?: [{ side, sku }], hold?: { kind, reason, missing? }, note } */
   function symbolRead(line, order, prof, o) {
-    o = o || {}; const me = o.me, loose = o.loose; if (!prof || !symbolFamilyIn(prof, me, loose)) return null;
+    // (NUMBERS: a number row has already asked whether the library holds ANY of its families, `familyIn`: a library with the necklace row only still makes a huggie line wait, never read as before)
+    o = o || {}; const me = o.me, loose = o.loose; if (!prof || !(prof.familyIn || symbolFamilyIn(prof, me, loose))) return null;
     line = line || {}; const opt = [], words = [], boxVals = [], add = (list, rec) => { if (!list.some(x => x.name === rec.name)) list.push(rec); };
     let variation = null;
     for (const v of line.variations || []) {
@@ -2540,20 +2544,122 @@
     if (os) for (const x of out.symbols) if (x.name === os.name && x.from !== "option") { x.from = "option"; x.optionName = os.optionName; x.alsoIn = "the buyer's words"; }
     const froms = uniqStr(out.symbols.map(x => x.from === "option" ? `the “${clip(x.optionName, 30)}” option` : SYMBOL_FROM[x.from] || x.from));
     const one = out.symbols[0], two = out.symbols[1], at = x => x.sku ? ` (${x.sku})` : " (not in the repo)";
-    out.note = !two ? `${capFirst(prof.noun)}: ${one.name}${one.sku ? ` (${one.sku}, both ears)` : " (not in the repo)"}, from ${froms[0]}${one.typo ? ` (typed “${clip(one.text, 30)}”)` : ""}`
+    // (NUMBERS: a necklace row, `single`, is one piece: no "both ears")
+    out.note = !two ? `${capFirst(prof.noun)}: ${one.name}${one.sku ? ` (${one.sku}${prof.single ? "" : ", both ears"})` : " (not in the repo)"}, from ${froms[0]}${one.typo ? ` (typed “${clip(one.text, 30)}”)` : ""}`
       : `${capFirst(prof.nouns)}: Left ${one.name}${at(one)}, Right ${two.name}${at(two)}, from ${froms.join(" and ")}`;
     const missing = out.symbols.filter(x => !x.sku);
     if (missing.length) {
       // (a name the library does not hold at all: what the repo has instead; a member of the family the master lacks: its SKU)
-      const held = prof.names.filter(n => !!symbolMember(prof, n, me, loose)), gone = missing.filter(x => prof.names.includes(x.name)).map(x => upSku(prof.base + prof.names.indexOf(x.name)));
+      const held = prof.names.filter(n => !!symbolMember(prof, n, me, loose)), gone = missing.filter(x => prof.names.includes(x.name)).map(x => upSku(prof.base + prof.names.indexOf(x.name) + (prof.suffix || "")));
       const why = [];
       if (missing.some(x => !prof.names.includes(x.name))) why.push(held.length === prof.names.length ? `the repo has the ${held.length} ${prof.nouns} ${held[0]} … ${held[held.length - 1]}` : `the repo has ${held.length} of the ${prof.names.length} ${prof.nouns} ${prof.names[0]} … ${prof.names[prof.names.length - 1]}`);
       if (gone.length) why.push(`${joinSigns(gone)} ${gone.length > 1 ? "are" : "is"} not in the library`);
-      const reason = `The ${joinSigns(missing.map(x => x.name))} charm${missing.length > 1 ? "s are" : " is"} not in the repo yet (${why.join("; ")})`;
+      const reason = `The ${joinSigns(missing.map(x => prof.say ? prof.say(x.name) : x.name))} charm${missing.length > 1 ? "s are" : " is"} not in the repo yet (${why.join("; ")})`;
       return Object.assign(out, { hold: { kind: "missing", reason, missing: missing.map(x => x.name) } });
     }
     if (two) return Object.assign(out, { pair: out.symbols.map(x => ({ side: x.side, sku: x.sku })) });
     return Object.assign(out, { pick: one.sku });
+  }
+
+  /* ═══ 3c'' · NUMBER CHARMS: the buyer's digit picks one member of a numbered family, the form picks the family (NUMBERS, Paul, 19 Oct 2026, orders 4199087297 / 4193596549, listing 1871838409) ═══════════════
+     Paul, on the Etsy listing 1871838409 "Number Charm Gold Number Pendant Add On Charm Personalized Jewelry Team Number Charm …" (drop-downs "Metal Choice" and "Numbers" 0 … 9, whose variation SKUs are
+     Necklace_Charm-0 … Necklace_Charm-9): "these number charms are the NECKLACE-type charms in the .ai file … make sure this listing is correctly profiled … tell the Huggie option apart from the Necklace Charm
+     option on this listing: when Huggie is chosen, choose the HUGGIE version of the number". Order 4199087297 (personalisation "6", Charm Type "Necklace CHARM", SKU "Comic Number") was read as the generic
+     library design COMIC NUMBER (ONE drawing, a "4") and asked "Words: Check the requested inscription"; order 4193596549 (a Huggie CHARM SET, personalisation "7") was read as COMIC NUMBER (HUGGIE), a wrong
+     drawing. THE CAUSE: the listing's older products all carry the shared SKU "Comic Number" (the shop's charm-only listing, one SKU for every number: the number is in the personalisation box), the master holds
+     COMIC NUMBER / COMIC NUMBER (HUGGIE) under that name, and nothing read the digit; the box's "6" then looked like words to engrave.
+     THE LIBRARY (Paul's design file SKUs_CORRECTED_Numbers.ai, its Numbers section): the necklace row is labelled Necklace_Charm-0 … -9 (ringed drawings), the huggie row "Necklace_Charm-N (HUGGIE)" (the shop's
+     own huggie-version naming: a necklace SKU with " (HUGGIE)" after it is the small drawing that hangs from a pair of huggie hoops; a Huggie CHARM SET of a SKU X is already read as "X (HUGGIE)", huggieSku);
+     the stud row carries no SKU (none was given).
+     THE RULE, one row of NUMBER_LISTINGS (TO ADD a listing: its id in `listings`; a SKU family is matched by `base` on any listing. TO UNDO: delete the row, and the lines read exactly as before):
+       · a line falls under the row by its Etsy listing number, or by its own SKU (the transaction's, Etsy's inventory SKU, without "(HUGGIE)" or "-CO") being a member of the family (Necklace_Charm-N);
+       · the FORM picks the family: a huggie line (a Huggie CHARM SET, an option or the SKU saying huggie: lineForm) takes NECKLACE_CHARM-N (HUGGIE), on both ears (a Left and a Right, as every huggie set);
+         any other line the necklace charm NECKLACE_CHARM-N, ONE piece. A stud (earring) line has no SKUs in the file: the row stands aside and the line is read as before. Never the other form's drawing;
+       · the NUMBER is what the buyer chose, in this order of trust: the Numbers drop-down (any option that is not the metal, a size, a length or a price, whose value is one digit), the line's own SKU when it is a member
+         (Necklace_Charm-6 → 6), then ONE digit in the personalisation box (order 4199087297's "6"), then in the buyer's or staff note (read only when nothing before named a digit). Two different digits in the words
+         of a huggie line are a pair (the first named the Left, as the rune row's pairFromWords); on a necklace line they wait ("Which number?"), as a drop-down and words that disagree do;
+       · the digit is the buyer's CHOICE, never words to engrave: the necklace line has NO engraving (spec.engraveNever, rule "number-choice": no "Check the requested inscription" question, no engraving job),
+         unless the buyer chose an engraving option the listing offers (a value with an engraving word, the charm-only "CHARM + Engraving"): then the engraving is read as for any line. A huggie line is never engraved anyway (3d);
+       · WHO WINS. A person's explicit answer for THIS line stands: an option mapped to a charm (Options), a saved pair (pairBySku), a second design / "same on both ears" for the line, and a link saved under
+         the line's own member SKU (bySku["NECKLACE_CHARM-6"]: that one product). The profile REPLACES: any automatic match (the transaction's "Comic Number" → COMIC NUMBER, its Huggie set → COMIC NUMBER (HUGGIE),
+         a spelling, Etsy's inventory SKU), the listing-wide saved answers (the listing's own design `sku`, its huggie set design `huggie`), a link saved under a SKU that is NOT a member (bySku["COMIC NUMBER"]: every
+         number of the listing shares that SKU, so it is a listing-wide answer, and it, or a product link to it, would give every buyer the same digit) and any saved link to the generic drawings COMIC NUMBER /
+         COMIC NUMBER (HUGGIE) (one fixed digit for every order: never the buyer's number);
+       · a member the master does not hold WAITS with ONE plain line naming the number ("The number 7 charm is not in the repo yet (NECKLACE_CHARM-7 (HUGGIE) is not in the library)"), never another digit's drawing
+         and never COMIC NUMBER; no digit named waits ("Which number? …"). The line is read again when the library grows;
+       · a library that holds NONE of the family (before the new design file is added) is no profile: the line is read exactly as before (as HUGSYM does), so nothing that works today stops on the day of the change. */
+  const NUMBER_DIGITS = Object.freeze(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
+  const NUMBER_WORDS = Object.freeze(["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]);
+  const NUMBER_FILLER = new Set(["number", "numbers", "no", "nr", "num", "charm", "digit", "the", "a", "please", "pls", "thanks", "thank", "you", "for", "my", "is", "it", "and", "both", "left", "right", "ear", "ears", "huggie", "necklace", "same", "one"]);
+  /** The digits a text names, in order, each once: [{ name: "7", word }]. A digit stands alone ("7", "#7", "No. 7", "number 7"; never a part of "23", "14k", "7mm", "1/2", "3rd" or a date). A number WORD ("seven") counts only when
+   *  the text holds nothing else but filler words (a drop-down's whole value, or a box that says only "Seven"). whole: the text is a drop-down's whole value. */
+  function digitsInText(text, whole) {
+    const t = plainText(visible(text)), out = [], add = (n, w) => { if (!out.some(x => x.name === n)) out.push({ name: n, word: w }); };
+    const re = /(^|[^0-9a-z.,:/\\-])([0-9])(?![0-9]|[.,:/\\][0-9]|\s*(?:mm|cm|in(?:ch(?:es)?)?\b|k\b|kt\b|st\b|nd\b|rd\b|th\b|"|”|x\b|%))/g;
+    for (let m; (m = re.exec(t));) add(m[2], m[2]);
+    const toks = t.split(/[^a-z0-9]+/).filter(Boolean);
+    if (toks.length && toks.every(w => NUMBER_FILLER.has(w) || NUMBER_WORDS.includes(w) || /^[0-9]$/.test(w))) for (const w of toks) { const i = NUMBER_WORDS.indexOf(w); if (i >= 0 && (w !== "one" || toks.length === 1 || whole)) add(String(i), w); }
+    return out;
+  }
+  /* THE TABLE. id; listings: Etsy listing numbers; base: the family's SKU without its number (as the master writes it, upper case); huggieSuffix: what the huggie version adds; generic: the shop's old one-drawing
+     designs the listing used to be matched with, never the buyer's number (a saved link to one of them is set aside). */
+  const NUMBER_LISTINGS = Object.freeze([
+    Object.freeze({ id: "number-charm", listings: Object.freeze(["1871838409"]), base: "NECKLACE_CHARM-", huggieSuffix: " (HUGGIE)", generic: Object.freeze(["COMIC NUMBER", "COMIC NUMBER (HUGGIE)"]) })
+  ]);
+  const NUMBER_BY_LISTING = new Map(); for (const x of NUMBER_LISTINGS) for (const l of x.listings) NUMBER_BY_LISTING.set(String(l), x);
+  /** A SKU without its huggie mark or the charm-only mark ("Necklace_Charm-6 (HUGGIE)", "Necklace_Charm-6-CO" → NECKLACE_CHARM-6). */
+  const numberBareSku = s => { const u = upSku(s).replace(/\s*\(\s*HUGGIES?\s*\)\s*$/, ""); return variationBase(u) || u; };
+  /** The NUMBER_LISTINGS row whose family a SKU is a member of, and its digit: { row, n } or null ("Necklace_Charm-6", any case or punctuation, with or without " (HUGGIE)" / "-CO"). */
+  function numberMemberOf(sku) {
+    const m = INDEXED_SKU.exec(numberBareSku(sku)); if (!m || String(+m[3]) !== m[3] || +m[3] > 9) return null;
+    const row = NUMBER_LISTINGS.find(x => looseKey(x.base) === looseKey(m[1])); return row ? { row, n: +m[3] } : null;
+  }
+  /** The NUMBER_LISTINGS row a line falls under: its listing number, else one of its SKUs being a member of a row's family. null for every other line. */
+  function numberListing(line, skus) {
+    const id = String(line && line.listingId != null ? line.listingId : "").replace(/\D/g, "");
+    if (id && NUMBER_BY_LISTING.has(id)) return NUMBER_BY_LISTING.get(id);
+    for (const s of [].concat(skus || [], line && line.sku)) { const mm = s ? numberMemberOf(s) : null; if (mm) return mm.row; }
+    return null;
+  }
+  /** Is the line the HUGGIE version? A Huggie CHARM SET, the line's form (lineForm: an option or its words say huggie), a huggie word in an option value that is not the metal, or a SKU ending in "(HUGGIE)". */
+  const numberHuggie = (line, lf, skus) => huggieSet(line) || (lf && (lf.form || lf)) === "huggie" || (line.variations || []).some(v => { const nm = lvName(v); return !!nm && !isMetalOption(nm) && !isPersonalisation(nm) && HUGG_WORD.test(lvValue(v)); }) || [].concat(skus || []).some(s => /\(\s*HUGGIES?\s*\)\s*$/i.test(String(s || "")));
+  /** The profile (a symbolRead row) of a number row for a line of form `form` ("huggie" | "necklace"). */
+  const numberProfile = (row, form) => ({ id: row.id, noun: "number", nouns: "numbers", ask: "Which number?", base: row.base, suffix: form === "huggie" ? row.huggieSuffix : "", names: NUMBER_DIGITS, absent: [], read: digitsInText,
+    pairFromWords: form === "huggie", single: form !== "huggie", form, say: n => "number " + n });
+  /** Does the master hold any member of the row's families (necklace or huggie)? None: the row stands aside, the line is read as before. */
+  const numberFamilyIn = (row, me, loose) => symbolFamilyIn(numberProfile(row, "necklace"), me, loose) || symbolFamilyIn(numberProfile(row, "huggie"), me, loose);
+  /** Is a design one of the row's old one-drawing designs (COMIC NUMBER, COMIC NUMBER (HUGGIE))? */
+  const numberGeneric = (row, sku) => !!sku && row.generic.some(g => looseKey(g) === looseKey(sku));
+  /** May a design that came from a person's SAVED link (resolveSku source "alias") stand over the number profile? Only a link saved under the line's own member SKU (that one product) to a design that is not one of
+   *  the generic drawings. raw: the SKU the link was looked up under (a huggie set's "X (HUGGIE)"). A listing-wide answer, a huggie set answer, a link under a shared SKU ("COMIC NUMBER") never does. */
+  function numberAliasStands(row, line, raw, sku, aliases) {
+    if (!sku || numberGeneric(row, sku)) return false;
+    const a = aliases && aliases[String(line && line.listingId)], k = upSku(raw), mm = k ? numberMemberOf(k) : null;
+    if (!a || !mm || mm.row !== row || !a.bySku) return false;
+    return upSku(bySkuOf(a.bySku, k) || "") === upSku(sku);
+  }
+  /** Did the buyer choose an engraving the listing offers (a value with an engraving word, "CHARM + Engraving")? Then the box's words are read as an engraving, as on any line. */
+  const numberEngraveChosen = line => (line && line.variations || []).some(v => { const nm = lvName(v), val = lvValue(v); return !!nm && !isMetalOption(nm) && !isPersonalisation(nm) && /engrav/i.test(val) && !/\b(?:no|without)\s+engrav/i.test(val); });
+  const NUMBER_NEVER_WHY = "The digit is the buyer's choice of number charm, not words to engrave (this listing offers no engraving)";
+  /** What a line of a NUMBER_LISTINGS row reads as: symbolRead's answer for the form's family (null when the master holds none of the row's families, or the line is a stud), with `form` and the engraving verdict.
+   *  o: { me, loose, lf, skus (the line's SKUs: the transaction's, the inventory's, the one read), sku (the line's own SKU, the transaction's or the inventory's), sameSaid }. */
+  function numberRead(line, order, row, o) {
+    o = o || {}; const me = o.me, loose = o.loose; if (!row || !numberFamilyIn(row, me, loose)) return null;
+    const lf = o.lf || { form: "unknown" };
+    const huggie = numberHuggie(line, lf, o.skus);
+    if (!huggie && lf.form === "earring") return null;                                       // (a stud line: the file's stud row carries no SKU, read as before)
+    const prof = Object.assign(numberProfile(row, huggie ? "huggie" : "necklace"), { familyIn: true }), own =numberMemberOf(o.sku) ? numberBareSku(o.sku) : "";
+    // the buyer's notes are read only when neither the drop-down, the line's SKU nor the box names a digit ("ship in 2 days" in a note is no second number)
+    const named = !!own || (line.variations || []).some(v => { const nm = lvName(v), val = lvValue(v).trim(); return !!nm && !!val && !isMetalVariation(nm, val) && !isSizeOption(nm, val) && !isChainOption(nm) && !isPriceOption(nm) && digitsInText(val, !isPersonalisation(nm)).length > 0; }) ||
+      [].concat(line.personalization || []).some(t => digitsInText(t, false).length > 0);
+    const l2 = named ? Object.assign({}, line, { buyerMessage: "", staffNote: "" }) : line, o2 = named ? Object.assign({}, order || {}, { buyerMessage: "", staffNote: "" }) : order;
+    const r = symbolRead(l2, o2, prof, { me, loose, sku: own, sameSaid: o.sameSaid });
+    if (!r) return null;
+    r.form = prof.form;
+    // (the huggie version is an earring: never engraved, section 3d, also when its title names a pendant and only the profile knew it is the huggie)
+    if (huggie) r.never = { rule: "earring", form: "huggie", by: "its number charm profile", why: EAR_NEVER_WHY };
+    else if (!numberEngraveChosen(line)) r.never = { rule: "number-choice", form: "necklace", by: "its number charm profile", why: NUMBER_NEVER_WHY };
+    return r;
   }
 
   /** The pair of designs a person saved for this line's listing and SKU ({ L, R }, aliasPut pair), or null. The listing's own record and the SKU as the line carries it: no other listing, no other SKU, no title. */
@@ -3771,6 +3877,21 @@
       if (symProf && !quiet && !set && !viaPick && !viaLetter && !members && me && skuSource !== "alias" && !(symProf.zodiac && lineSignals(line).says))
         symbol = symbolRead(line, order, symProf, { me, loose, sku, sameSaid: !!(said2 && said2.field === "ignore") });
     } catch (_) { symbol = null; }
+    // NUMBERS (section 3c''): a line of a NUMBER_LISTINGS row (listing 1871838409, or a Necklace_Charm-N SKU) takes the member of the family its FORM picks (the necklace charm NECKLACE_CHARM-N, or the huggie
+    // version NECKLACE_CHARM-N (HUGGIE) on both ears) for the digit the buyer chose (the drop-down, the line's own SKU, the box, the note), or ONE plain wait. A person's answer for this line (an option mapped to
+    // a charm, a saved pair or second design, a link under the line's own member SKU) stands; an automatic match, a listing-wide answer and any link to the generic COMIC NUMBER drawings are replaced.
+    let numberHit = null;
+    try {
+      if (!symbol && !quiet && !viaPick && !viaLetter && !viaProfile && !members && me) {
+        const nrow = numberListing(line, [txSku, viaInventory && viaInventory.etsy, bought]);
+        const raw0 = set ? bought : upSku(line.sku), said3 = secondId ? optionLookup(ctx.optionMaps, line.listingId, SECOND_OPT, secondId) : null;
+        if (nrow && (skuSource !== "alias" || !numberAliasStands(nrow, line, raw0, sku, ctx.aliases))) {
+          const own = [upSku(line.sku), txSku].find(s => !!numberMemberOf(s)) || "";
+          numberHit = numberRead(line, order, nrow, { me, loose, lf, skus: [txSku, upSku(line.sku), bought], sku: own, sameSaid: !!(said3 && said3.field === "ignore") });
+          if (numberHit) { numberHit.was = { sku: sku || "", source: skuSource || "" }; symbol = numberHit; }
+        }
+      }
+    } catch (_) { numberHit = null; }
     if (symbol && symbol.pair) { members = { members: symbol.pair, source: "profile", profile: symbol.profile }; sku = symbol.pair[0].sku; skuSource = PIECE_RULES.mismatchedMakesTwo ? "pair" : "profile"; }
     else if (symbol && symbol.pick) { sku = symbol.pick; skuSource = "profile"; }
     let zodiac = null;
@@ -3967,6 +4088,7 @@
     if (symbol) {
       spec.listingProfile = { profile: symbol.profile, noun: symbol.noun, family: symbol.family, symbols: symbol.symbols.map(x => Object.assign({}, x)), textOnly: !!symbol.textOnly, held: symbol.hold ? symbol.hold.kind : "", reason: symbol.hold ? symbol.hold.reason : "", note: symbol.note };
       if (symProf && symProf.zodiac && symbol.symbols.length === 1) { const x = symbol.symbols[0]; spec.zodiacSign = { sign: x.name, from: x.from, word: x.word, typo: !!x.typo, text: x.text, textOnly: !!symbol.textOnly, family: symbol.family, design: x.sku || null, how: "profile", held: symbol.hold ? symbol.hold.kind : "", note: symbol.note }; }
+      if (numberHit) Object.assign(spec.listingProfile, { form: numberHit.form, was: numberHit.was });   // (NUMBERS: which family the form picked, and the reading it replaced)
       if (symbol.note) spec.pair.notes.push(symbol.note);
     }
     if (zodiac && zodiac.sign) {
@@ -4000,6 +4122,7 @@
     // spec.personalization (a zodiac sign typed in the box is the buyer's choice of sign, never words for the back) and are never a question.
     let never = null; try { never = earringNeverBackEngraves({ lineForm: lf, designForm: df, form: spec.form, pair: spec.pair, line }); } catch (_) { never = null; }
     if (!never) { try { never = letterDesignNeverEngraves(spec.designSku, me); } catch (_) { never = null; } }   // (KEYNOENG, section 3d')
+    if (!never && numberHit && numberHit.never) never = numberHit.never;   // (NUMBERS, section 3c'': the digit in the box is the buyer's choice of charm, never words to engrave)
     if (never) spec.engraveNever = Object.assign({}, never, { note: (spec.personalization || []).map(x => visible(x).trim()).filter(Boolean).slice(0, 4).map(x => x.slice(0, 120)) });
     spec.engraveCandidate = !quiet && !never && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.some(m => engravingNote(m && m.text)));
     // BFFONT: a font the buyer named in their own words (personalisation, message, staff note), whatever the listing: spec.fontText (fontTextOf). A font option is read as before (spec.font) and wins over
@@ -4441,5 +4564,6 @@
     KNOWN_SKU_NAMES, knownName, namedSku, sameDesign, designFile, FORMS, formOfText, masterForm, lineForm, formClash, siblingsOf, formOfLine, lookalikeRead, entryBlock, blockKind, blockReleased, blockFor,
     SIGN_ORDER, skuSign, sharedZodiac, signsInText, signsNamed, zodiacRead,
     SYMBOL_LISTINGS, symbolListing, symbolRead, symbolMember, runesInText, RUNE_NAMES, RUNES_ABSENT, LISTING_DESIGNS, listingDesign,
+    NUMBER_LISTINGS, numberListing, numberRead, numberMemberOf, digitsInText, NUMBER_NEVER_WHY,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });
