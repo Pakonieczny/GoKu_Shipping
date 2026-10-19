@@ -511,3 +511,9 @@
 /* (ROWALIGN: when any piece of a line has its seal, every piece's line is the seal's height, so the lines stay evenly spaced and each seal sits level with its own chip, words and state) */
 .egEars:has(.egEarSeal .seal)>.egEar{min-height:calc(var(--list-seal) + 4px)}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEars:has(.egEarSeal .seal)>.egEar,:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId .egEars:has(.egEarSeal .seal)>.egEar{min-height:calc(var(--list-seal) + 4px)}
+/* ═══ RELUNDER (Paul, 19 Oct 2026: "Relocate the 'Release Hold' Seal/UI to be underneath the 'Send to Review' button. Leave enough space under the button so it does not look crowded") ═══
+   The order's Release Hold seal is the last thing in the order's own column of an Orders row or card (charm-nest-bridge.js relSlotHtml), under Send to Review, 16 px clear of it. */
+.rowActions>.relSealSlot{display:flex;max-width:100%;min-width:0;margin-top:16px}
+.rowActions>.relSealSlot>.relSeal{margin:0;max-width:100%}
+.ogHead .ogActs>.relSealSlot{flex:1 0 100%;justify-content:flex-end;margin-top:12px}
+@container (max-width:1100px){.ordList .doneRow.orderListRow>.rowActions>.relSealSlot{flex:1 0 100%;margin-top:10px}}

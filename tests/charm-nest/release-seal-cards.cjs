@@ -25,10 +25,10 @@ try {
   const code = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   const fn = (src, start, end) => { const i = src.indexOf(start), j = src.indexOf(end, i + 10); if (!(i > 0 && j > i)) throw new Error('markers ' + start); return src.slice(i, j); };
   const group = fn(bridge, 'function groupNode(', 'function renderBody()'), single = fn(bridge, 'const { sp, m, st, shown, due, where, fc, attn, why, gateBtn, mail, team, sealRec, seals, held, rel } = lineView(r)', 'const number=node.querySelector');
-  check(/ordSealsRow" data-testid="order-seals-row">\$\{releaseSealHtml\(rel\)\}/.test(group) && /lineSealsHtml\(r, e, rel\)/.test(single) && !/rowActions[^`]*releaseSealHtml/.test(code(single)) && /relSig\(rel\)/.test(group) && /relSig\(rel\)/.test(single),
-    'source: (ORDLIST) a grouped order draws the Release Hold seal once in its head, a one-line card / row first in its seals cell (lineSealsHtml), never in the actions column; the seal is in the stamp (a release repaints it)');
+  check(/\$\{relSlotHtml\(rel\)\}<\/div><\/div>`/.test(group) && /\$\{gateBtn\}\$\{relSlotHtml\(rel\)\}<\/div>`/.test(single) && /lineSealsHtml\(r, e, null\)/.test(single) && /relSig\(rel\)/.test(group) && /relSig\(rel\)/.test(single),
+    'source: (RELUNDER) the Release Hold seal is the last thing of the order\'s own column (relSlotHtml), so it stands under Send to Review; it is in the stamp (a release repaints it)');
   const row = fn(bridge, 'const cardSeals = rows =>', '/** The pictures a node of an earlier drawing'), eg = fn(bridge, 'const releaseOfRow = row =>', '  function renderPlacementRows(');
-  check(/const lineSealsHtml = \(r, e, rel\) => `<div class="egPlacementSeals">\$\{rel \? releaseSealHtml\(rel\) : ""\}\$\{e \? e\.seals : recordSealHtml\(r\)\}<\/div>`/.test(row), 'source: the seals cell holds the release seal first and the line\'s approval seals after it (no strip)');
+  check(/const relSlotHtml = rel => \(rel \? `<div class="relSealSlot"/.test(row), 'source: the Release Hold seal has its own slot (relSealSlot) at the end of the order\'s column');
   check(!/fetch\(|api\(|setTimeout|setInterval|requestAnimationFrame|addEventListener|onSnapshot|OrderTimeline|ensureSeals|loadSeals/.test(code(row) + code(eg)), 'source: the seals row and the Engraving rows\' lookup read what the page holds: no read, timer or listener');
   const place = fn(bridge, 'function renderPlacementRows(', 'function quietRow('), mono = fn(bridge, 'function monoPlacementRow(grp) {', 'function monoStep(');
   check(/rel\.html\(\)\+\(told\?/.test(place) && /"\|"\+rel\.sig|\+"\|"\+rel\.sig/.test(place) && /rel\.html\(\) \+ \(window\.CNMonogramSeals/.test(mono) && /"\|" \+ rel\.sig/.test(mono), 'source: the Engraving tab\'s engraved row and monogram row draw the seal first in their seals cell, and keep its signature in the cell\'s stamp');
@@ -65,7 +65,7 @@ try {
       const o = {
         seal: !!s, w: face ? Math.round(face.getBoundingClientRect().width) : 0, family: svg && svg.dataset.sealFamily, text: svg ? svg.textContent : '', all: s ? s.querySelector('.relSealWords').textContent : '', by: s ? s.querySelector('.relSealBy').textContent : '', at: s ? +s.dataset.relSeal : 0,
         whole: !!(sb && sb.width > 0 && sb.left >= nb.left - 1 && sb.right <= nb.right + 1 && words.every(c => { const rg = document.createRange(); rg.selectNodeContents(c); const b = rg.getBoundingClientRect(); return b.width > 0 && b.right <= nb.right + 1 && b.right <= sb.right + 1; })   /* (the text itself, not its box: a nowrap word stretches its box over the seal's width and runs out of it) */),
-        row: !!(s && s.closest('.ordSealsRow')), inActions: !!(s && s.closest('.rowActions')), cell: !!(s && s.closest('.egPlacementSeals')), strip: !!strip, stripIn: !!(strip && s && s.closest('.ordSealsRow') && s.closest('.ordSealsRow').contains(strip)),
+        row: !!(s && s.closest('.ordSealsRow')), inActions: !!(s && s.closest('.rowActions')), under: (() => { const b = n.querySelector('.revSendBtn'); return !!(b && s && s.getBoundingClientRect().top >= b.getBoundingClientRect().bottom + 10); })(), cell: !!(s && s.closest('.egPlacementSeals')), strip: !!strip, stripIn: !!(strip && s && s.closest('.ordSealsRow') && s.closest('.ordSealsRow').contains(strip)),
         beside: !!(tb && sb && tb.left >= sb.right - 1 && tb.top < sb.bottom && tb.bottom > sb.top), cls: n.className.slice(0, 60)
       };
       if (!out[rid] || (o.seal && !out[rid].seal)) out[rid] = o;
@@ -110,15 +110,15 @@ try {
 
     // ── 2 · Orders, cards ──
     const cards = await orders(page, 'cards');
-    for (const n of BY_CARD) check(seeSeal(cards[RID(n)], WHO) && (cards[RID(n)].row || cards[RID(n)].cell) && !cards[RID(n)].inActions, `2 · Orders cards: ${n}: the large seal with "Release Hold", ${WHO}, the date and the time, whole inside the card, in its seals cell (or the order's head) (${JSON.stringify(cards[RID(n)])})`);
-    check(/\bordGroup\b/.test(cards[RID('g2')].cls) && cards[RID('g2')].row && !cards[RID('g2')].strip, `2 · the two-line order is one card: its release seal in the order's head, no approval strip (each approval seal is on its own piece) (${JSON.stringify([cards[RID('g2')].cls, cards[RID('g2')].row, cards[RID('g2')].strip])})`);
-    check(cards[RID('back')].cell && !cards[RID('back')].strip, '2 · a one-line card: the release seal stands in the seals cell with the approval seals, and no strip is drawn');
+    for (const n of BY_CARD) check(seeSeal(cards[RID(n)], WHO) && cards[RID(n)].inActions && cards[RID(n)].under, `2 · Orders cards: ${n}: (RELUNDER) the seal with "Release Hold", ${WHO}, the date and the time, whole inside the card, under Send to Review with room above it (${JSON.stringify(cards[RID(n)])})`);
+    check(/\bordGroup\b/.test(cards[RID('g2')].cls) && cards[RID('g2')].inActions && cards[RID('g2')].under && !cards[RID('g2')].strip, `2 · the two-line order is one card: its release seal ends the head's buttons, under Send to Review; no approval strip (${JSON.stringify([cards[RID('g2')].cls, cards[RID('g2')].inActions, cards[RID('g2')].under, cards[RID('g2')].strip])})`);
+    check(cards[RID('back')].inActions && !cards[RID('back')].cell && !cards[RID('back')].strip, '2 · a one-line card: the release seal is in the order\'s own column (not the seals cell), and no strip is drawn');
     check(!cards[RID(NEVER)].seal && !cards[RID(LIVE_ENG)].seal && !cards[RID(LIVE_ORD)].seal, '2 · orders never released (and the two marked but not pressed yet): no seal');
     await shot('cards');
 
     // ── 3 · Orders, list rows ──
     const list = await orders(page, 'list');
-    for (const n of BY_CARD) check(seeSeal(list[RID(n)], WHO) && (list[RID(n)].row || list[RID(n)].cell) && !list[RID(n)].inActions, `3 · Orders list: ${n}: the same seal, whole inside the row (its date and time are not cut at the column's edge) (${JSON.stringify(list[RID(n)])})`);
+    for (const n of BY_CARD) check(seeSeal(list[RID(n)], WHO) && list[RID(n)].inActions && list[RID(n)].under, `3 · Orders list: (RELUNDER) under Send to Review, ${n}: the same seal, whole inside the row (its date and time are not cut at the column's edge) (${JSON.stringify(list[RID(n)])})`);
     check(!list[RID(NEVER)].seal && !list[RID(LIVE_ENG)].seal, '3 · Orders list: an order never released has none');
     await shot('list');
 
