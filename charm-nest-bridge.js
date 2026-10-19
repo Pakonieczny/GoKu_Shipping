@@ -12945,7 +12945,11 @@ const CustomSheet = window.CustomSheet = (() => {
   /** The metal of a sent line's first piece: the line reads as that metal (lists, the day's plan). */
   const metalOfRow = row => { const e = sentOf(row), pc = e && (decisionLines(e)[row.key] || [])[0], F = pc && e.files.find(x => x.id === pc.f); return (F && F.metal) || null; };
   /** Every line of the card that can still take designs: not on a sheet, not completed. */
-  const openLines = it => linesOf(it).filter(r => !(r.poolIds || []).length && !(r.spec && r.spec.customDone) && !["committed", "skipped"].includes(r.state));
+  /* REVDROP (Paul, 19 Oct 2026: "All orders being held inside the Review tab need to have the Drag and Drop option, so that a user can overwrite the currently matched charm with a new charm"): a line takes dropped designs
+     while it can still be cut from them: not completed, not skipped or committed, and its pieces (when it has some) on a sheet that is still open. A line whose pieces are on a sheet cut, committed, recalled or released to
+     the laser is not changed (it is left for a person). Sending designs to a line that already has pieces takes those off first (sendOnce: intent.replace), exactly as "Accept the new order" does. */
+  const lockedOnSheet = r => { const ids = new Set((r && r.poolIds) || []); if (!ids.size) return false; try { return allSheets().some(sh => sh.charms.some(c => ids.has(c.poolId)) && (!!sh.roseCutAt || !!sh.laserDoneAt || !!sh.recalled || Sets.ofRun(sh.runId).some(x => x.committedAt && (x.sheetIds || []).includes(sh.sheetId)) || (sh.releaseFull && !(Gate.modern(sh.runId) && (sh.draft || !sh.setId) && !(sh.label && sh.label.own))) || (Gate.modern(sh.runId) && sh.setId && !sh.draft))); } catch (_) { return true; } };
+  const openLines = it => linesOf(it).filter(r => !(r.spec && r.spec.customDone) && !["committed", "skipped"].includes(r.state) && !lockedOnSheet(r));
   const defaultMetal = it => { const r = linesOf(it)[0], m = r && r.spec && r.spec.material; return metalOf(m) ? m : null; };
   const defaultQty = it => Math.max(1, linesOf(it).reduce((n, r) => n + ((r.spec && r.spec.quantity) || 1), 0));
   /** The pieces the order asks for, as the card says them ("2 pieces ordered"): an earring pair is a Left and a Right per unit (pairPlan, the same count notReady
@@ -13222,7 +13226,7 @@ const CustomSheet = window.CustomSheet = (() => {
       if(!e.sendIntent){
         const lines={};for(const r of rows)lines[r.key]=[];
         for(const F of files)for(let q=0;q<F.qty;q++){const r=(F.mono && rows.find(x=>x.key===F.mono.line)) || rows[q%rows.length],{charms}=await read(F);if(!current())return;for(let i=0;i<charms.length;i++)lines[r.key].push({f:F.id,i});}
-        const at=Date.now();e.sendIntent={id:`custom-sheet:${e.ck}:${at}`,at,by:who,lines};ver++;
+        const at=Date.now(),replace=rows.filter(r=>(r.poolIds || []).length).map(r=>r.key);e.sendIntent={id:`custom-sheet:${e.ck}:${at}`,at,by:who,lines,...(replace.length?{replace,replaced:{}}:{})};ver++;   // (REVDROP: the lines that already have pieces on an open sheet: those come off first)
       }
       const intent=e.sendIntent, lines=intent.lines;
       // The exact file/copy assignment and signer are durable before any pool mutation or stamp.
@@ -13246,8 +13250,10 @@ const CustomSheet = window.CustomSheet = (() => {
       say("Placing on the sheets…");
       for(const r of rows){
         const pcs=lines[r.key] || [],expected=pcs.map((pc,n)=>pc.removed?null:O.poolId(r.order,r.line,n+1)).filter(Boolean);
-        const present=expected.length && expected.every(id=>Pool.charmOf(id) || B.pool.rows.get(id)?.sheetId);
-        if(present){r.poolIds=expected;Pool.settle(r);}
+        const swap=!!(intent.replace && intent.replace.includes(r.key) && !(intent.replaced && intent.replaced[r.key]));
+        const present=!swap && expected.length && expected.every(id=>Pool.charmOf(id) || B.pool.rows.get(id)?.sheetId);
+        if(swap){r.repoolChanged=true;r.changePending=true;await Review.repool(r);(intent.replaced=intent.replaced || {})[r.key]=Date.now();}   // (REVDROP: the matched charm's pieces come off their open sheet in one commit and the line is made up again from the dropped designs)
+        else if(present){r.poolIds=expected;Pool.settle(r);}
         else await Review.repool(r);
         if(!current())return;
         if(["held","unmatched","oversize","contended"].includes(r.state))throw new Error(r.reason || "One design could not join its sheet yet");
@@ -16040,8 +16046,7 @@ const Review = window.Review = (() => {
       c.innerHTML = head("Order changed", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Was", `<q>${esc(it.old && it.old.text || (it.old && it.old.spec && it.old.spec.personalization || []).join(" / ") || "—")}</q> · ${esc(it.old && it.old.spec ? `${it.old.spec.designSku} · ${it.old.spec.material || "?"} · ${it.old.spec.form || ""} ${it.old.spec.size || ""}` : "")}`)}${evRow("Now", `<q>${esc((sp.personalization || []).join(" / ") || "—")}</q> · ${esc(`${(O.setDesignsOf(sp) || [sp.designSku]).join(" + ")} · ${sp.material || "?"} · ${sp.form || ""} ${sp.size || ""}`)}`)}${evRow("Buyer / note", `<q>${esc(sp.buyerMessage || "—")}</q> / <q>${esc(sp.staffNote || "—")}</q>`)}</div><div class="why">${esc(it.why)}</div><div class="fixes"><button class="btn gold sm" data-a="accept">Accept the new order (re-read, re-fit)</button></div>`;
       c.querySelector("[data-a=accept]").onclick = () => acceptChange(it);
     } else if (it.kind === "reviewMark") {
-      c.innerHTML = head(KIND_WORDS.reviewMark, it.rid, it.why) + `<div class="fixes"><button class="btn gold sm" data-a="markok" title="the match is right: this order leaves Review">Mark OK</button></div>`;
-      c.querySelector("[data-a=markok]").onclick = saving(c, async () => { const r = await CharmNestReviewMark.resolve(it.rid, { how: "ok" }); if (!r.ok && r.error !== "No name") toast(`Not saved: ${r.error}`, "bad"); });
+      c.innerHTML = head(KIND_WORDS.reviewMark, it.rid, it.why) + `<div class="fixes"></div>`;   // (NOMARKOK, Paul 19 Oct 2026: no Mark OK: the card's Release Hold (decorateRelease, first in .fixes) takes the order out of Review)
     } else if (it.kind === "heldOrder") {
       c.innerHTML = head("Held order", it.rid, it.why) + `<div class="fixes"><button class="btn ghost sm" data-a="jump">Jump to the piece</button></div>`;
       c.querySelector("[data-a=jump]").onclick = () => { remove(it.key); focus(it.line); };
@@ -16342,13 +16347,13 @@ const Review = window.Review = (() => {
       +(cs?CustomSheet.buttonsHtml(x,true):'');
     // (each button keeps the seals it made, for good: a reopened order's too, Paul 29 Sep 00:35)
     const sentActs=it.decided?seals+(cs?.files?.length?'<button type="button" class="btn ghost sm" data-cu-designs>View designs</button>':'')
-      +'<button type="button" class="btn ghost sm" data-cu-sheet>Open sheet</button><button type="button" class="btn ghost sm" data-cu-history>History</button>':'';
+      +'<button type="button" class="btn ghost sm" data-cu-history>History</button>':'';   // (NOSHEETBTN, Paul 19 Oct 2026: "remove the 'Open Sheet' button, it's not necessary")
     // Placement alone is not a recorded send. Keep its existing Open card useful while the original decision is
     // absent: these are read-only links to its actual pool/sheet membership and timeline, with no inferred seal.
     // (placement is the cloud's answer as PiecePlacement resolves it, never this page's own row.poolIds: a piece taken off a sheet, held or cancelled elsewhere has no sheet to open)
     const onASheet=r=>{try{const p=window.PiecePlacement?.ofRow?.(r);if(p)return p.state==='sheet';}catch(_){}return (r.poolIds || []).length>0;};
     const placedActs=!it.decided&&row&&group.some(onASheet)
-      ?'<button type="button" class="btn ghost sm" data-cu-sheet>Open sheet</button><button type="button" class="btn ghost sm" data-cu-history>History</button>':'';
+      ?'<button type="button" class="btn ghost sm" data-cu-history>History</button>':'';
     const acts=(it.decided?sentActs:busy?busy
       :cx&&!cx.done?column(cx)
       :(cu?CustomPrint.failNote(it):'')

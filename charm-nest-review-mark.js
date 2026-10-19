@@ -201,7 +201,7 @@
   /** onRow(fn): fn(node, item) is called each time a Review row of an open mark is BUILT (the row is kept while it reads the same), after its slots exist: REVSUGGEST fills the slots there. Returns an unsubscribe. */
   function onRow(fn) { if (typeof fn !== "function") return () => {}; rowHooks.add(fn); return () => rowHooks.delete(fn); }
 
-  /** A Review row of an open mark (Review.reviewRow, once, when it is built): one empty slot for each line, where the suggested charms go (REVSUGGEST; an empty slot is nothing), and the one button that says the match was right. */
+  /** A Review row of an open mark (Review.reviewRow, once, when it is built): one empty slot for each line, where the suggested charms go (REVSUGGEST; an empty slot is nothing), (NOMARKOK: no Mark OK button any more; Release Hold takes the order out of Review). */
   function decorateRow(node, it) {
     try {
       if (!node || !it || it.kind !== "reviewMark") return;
@@ -213,19 +213,7 @@
           if (after) after.insertAdjacentElement("afterend", s); else idn.appendChild(s);
         }
       }
-      const acts = node.querySelector(".rowActions");
-      if (acts && !acts.querySelector("[data-rv-markok]")) {
-        const b = doc.createElement("button"); b.type = "button"; b.className = "btn gold sm"; b.dataset.rvMarkok = "1"; b.textContent = "Mark OK";
-        b.title = "the match is right: this order leaves Review";
-        b.onclick = async e => {
-          e.stopPropagation(); if (b.disabled) return;
-          b.disabled = true; b.setAttribute("aria-busy", "true"); b.innerHTML = '<span class="spin"></span>Saving';
-          const r = await resolve(rid, { how: "ok" });
-          if (b.isConnected) { b.disabled = false; b.removeAttribute("aria-busy"); b.textContent = "Mark OK"; }
-          if (!r.ok && r.error !== "No name") toast("Not saved: " + r.error, "bad");
-        };
-        acts.appendChild(b);
-      }
+      // (NOMARKOK, Paul 19 Oct 2026: "Remove the 'Mark OK' button and function. This is NOT necessary as we already have the 'Release Hold' button for this": the row has no Mark OK any more; Release Hold resolves the mark (how "other"))
       for (const fn of [...rowHooks]) { try { fn(node, it); } catch (e) { console.warn("[ReviewMark] row hook", e); } }
     } catch (e) { console.warn("[ReviewMark] row", e); }
   }
