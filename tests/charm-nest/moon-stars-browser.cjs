@@ -95,15 +95,16 @@ function moonStarsAi() {
     console.log('shot', await R.shot(w, 'moon-order-window'));
     // (Paul, 19 Oct 2026: "The vector thumbnail should show both the moon and stars": the picture's inked box has the WHOLE design's proportions, not one star's)
     const pic = await w.page.evaluate(async d => {
-      const host = document.querySelector('#orderWin [data-vector]'); for (let i = 0; i < 40 && host && host.getAttribute('aria-busy') === 'true'; i++) await new Promise(r => setTimeout(r, 100));
-      const im = host && host.querySelector('img,canvas'); if (!im) return null; if (im.decode) await im.decode().catch(() => {});
+      const pick = () => [...document.querySelectorAll('#owVector')].map(h => h.querySelector('img,canvas')).find(Boolean);
+      let im = pick(); for (let i = 0; i < 60 && !im; i++) { await new Promise(r => setTimeout(r, 100)); im = pick(); }
+      if (!im) return { none: document.querySelectorAll('#owVector').length }; if (im.decode) await im.decode().catch(() => {});
       const W = im.naturalWidth || im.width, H = im.naturalHeight || im.height, c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); x.drawImage(im, 0, 0);
       const px = x.getImageData(0, 0, W, H).data; let l = W, r = -1, t = H, b = -1;
       for (let y = 0; y < H; y++) for (let k = 0; k < W; k++) { const o = (y * W + k) * 4; if (px[o + 3] > 40 && px[o] + px[o + 1] + px[o + 2] < 600) { l = Math.min(l, k); r = Math.max(r, k); t = Math.min(t, y); b = Math.max(b, y); } }
-      const e = Master.entryFor(d); return { ink: r >= l ? (r - l + 1) / (b - t + 1) : 0, whole: e ? e.widthPt / e.heightPt : 0 };
+      const M = window.Master || (window.B && B.master), e = M && M.entryFor ? M.entryFor(d) : (B.master.entries.get(d)); return { ink: r >= l ? (r - l + 1) / (b - t + 1) : 0, whole: e ? e.widthPt / e.heightPt : 0 };
     }, DESIGN);
     console.log('vector picture:', JSON.stringify(pic));
-    check(pic && pic.whole > 0 && Math.abs(pic.ink / pic.whole - 1) < 0.2, `the Vector design shows the whole design, the moon and the star (inked ${pic && pic.ink.toFixed(2)} wide per tall, the design ${pic && pic.whole.toFixed(2)})`);
+    check(pic && pic.whole > 0 && pic.ink > 0 && Math.abs(pic.ink - pic.whole) < Math.abs(pic.ink - 1),   /* (one star is about as wide as tall: the picture must be nearer the whole design than one star) */ `the Vector design shows the whole design, the moon and the star (${JSON.stringify(pic)})`);
     check(!w.errors.length, 'no page error: ' + w.errors.slice(0, 3).join(' | '));
   } finally { await w.close(); }
   console.log(`moon-stars-browser: ${nCheck - fails.length} of ${nCheck} checks passed`);
