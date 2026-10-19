@@ -196,6 +196,21 @@
 .owfList .m>.monoSeals>.sealRow{vertical-align:middle;margin-left:6px}
 .egPlacementSeals:empty{display:none}
 .egPlacementSeals{justify-self:end;overflow:visible}
+/* CARDSEAL (Paul, 19 Oct 2026: "All orders that are approved for engraving, or monograms by the user must have a clear seal that is easily visible ... inside the Detail Order view or looking at a list view in the Orders tab"): the approved engraving / monogram seals of an
+   order (charm-nest-order-seals.js) on its Orders card or row, and in the order window's Overview. Each approved piece and face is one `.ordSeal`: its real seal(s) (the Engrave tab's own `.sealRow`) with its words beside it, in the green of the Release Hold seal
+   (charm-nest-1.html .relSeal); "1 of 2 approved" says a half-approved order is not finished (amber until it is). The seal is 58 px, a little over the regular 50 (so its words read at a glance); the words wrap, so the strip fits the narrowest card. */
+.ordSeals{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:8px 0 2px;min-width:0;max-width:100%;flex:1 0 100%}
+.ordSealsCount{flex:none;padding:3px 10px;border-radius:999px;background:rgba(47,107,69,.12);color:#2f6b45;font:600 11px/1.3 var(--sans);white-space:nowrap}
+.ordSealsCount b{font-weight:800}
+.ordSealsCount[data-complete="0"]{background:rgba(202,168,97,.2);color:#7a5412}
+.ordSealList{display:flex;flex-wrap:wrap;gap:6px 10px;min-width:0;max-width:100%}
+.ordSeal{display:inline-flex;align-items:center;gap:8px;min-width:0;max-width:100%;padding:4px 12px 4px 4px;border:1px solid rgba(47,107,69,.38);border-radius:14px;background:rgba(47,107,69,.07);color:#2f6b45;box-sizing:border-box}
+.ordSeal .sealRow{margin:0;padding:0;max-width:none;flex:0 0 auto;--seal-fit:58px!important}
+.ordSealWords{display:flex;flex:1 1 auto;flex-direction:column;gap:1px;min-width:0;line-height:1.25;font:12px var(--sans);text-align:left}
+.ordSealWords b{font-size:13px;font-weight:800;letter-spacing:.02em;color:#2f6b45;overflow-wrap:anywhere}
+.ordSealLetters{white-space:nowrap}
+.ordSealWords .ordSealFor{font-weight:600;color:var(--ink,#222);overflow-wrap:anywhere}
+.ordSealWords .ordSealBy{color:var(--ink70,#555);overflow-wrap:anywhere}
 /* (where a Placements row puts its seals is the EGROW block at the end of this file) */
 
 /* The back engraving card, one card for every place an order is shown (the order window's Overview and Sheet tab, the sheet window): charm-nest-engraving-seals.js, CNEngravingSeals.panel.
