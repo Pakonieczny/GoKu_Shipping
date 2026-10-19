@@ -156,7 +156,8 @@ const MONO_TITLE = 'Monogram Necklace Personalized Jewelry Initials Pendant';
     st.repoStrict = true; process.env.CHARM_REPO_PASSWORD = REPO_TEST.password;
     await main(['node', 'x', file, '--origin', srv.sorterOrigin], () => {});
   };
-  const truthOf = async word => { if (!REAL_OK) return null; truth = truth || await Real.load(); const r = M.build(await truth.word(word)); return r && r.ok ? r : null; };
+  const truthOf = async (word, o) => { if (!REAL_OK) return null; truth = truth || await Real.load(); const r = M.build(await truth.word(word), o); return r && r.ok ? r : null; };
+  const lettersH = r => (r.report.hoops && r.report.hoops.lettersMm ? r.report.hoops.lettersMm[1] : r.hMm);      // (MONOHOOPS, Paul 19 Oct 2026: the piece carries two hoops; 14.8 mm is the letters' height)
 
   const SECTIONS = [];
   let made = null;
@@ -211,7 +212,7 @@ const MONO_TITLE = 'Monogram Necklace Personalized Jewelry Initials Pendant';
       check(/^\d+\.\d × \d+\.\d mm/.test(x.size) || /\d+\.\d\s*[×x]\s*\d+\.\d\s*mm/.test(x.size), 'ONE calm size line: "' + x.size + '"');
       const t = await truthOf('APV'), s = (await states(rid('apv')))[0];
       if (t) {
-        check(s.sizeMm && Math.abs(s.sizeMm[0] - t.wMm) < 0.1 && Math.abs(s.sizeMm[1] - t.hMm) < 0.1 && Math.abs(t.hMm - 14.8) < 0.5, `the preview is the geometry the engine cuts: ${s.sizeMm && s.sizeMm.map(v => v.toFixed(2)).join(' × ')} mm = the engine on Paul's letters ${t.wMm.toFixed(2)} × ${t.hMm.toFixed(2)} mm (14.8 mm tall)`);
+        check(s.sizeMm && Math.abs(s.sizeMm[0] - t.wMm) < 0.1 && Math.abs(s.sizeMm[1] - t.hMm) < 0.1 && Math.abs(lettersH(t) - 14.8) < 0.5, `the preview is the geometry the engine cuts: ${s.sizeMm && s.sizeMm.map(v => v.toFixed(2)).join(' × ')} mm = the engine on Paul's letters ${t.wMm.toFixed(2)} × ${t.hMm.toFixed(2)} mm (the letters ${lettersH(t).toFixed(2)} mm tall, with the hoops)`);
         check(x.subpaths === t.rings.length && Math.abs(x.points - t.rings.reduce((a, g) => a + g.pts.length, 0)) <= 4, `the same rings: ${x.subpaths} paths and ${x.points} points = ${t.rings.length} and ${t.rings.reduce((a, g) => a + g.pts.length, 0)} (outline + ${t.rings.length - 1} counters)`);
       }
       check(x.size.includes('Gold') && s.metal === 'gold', 'the metal of the line is in the size line and in the state: ' + x.size);
@@ -324,8 +325,8 @@ const MONO_TITLE = 'Monogram Necklace Personalized Jewelry Initials Pendant';
       await openDetail('sized'); const x = await ready(rid('sized'), 'detail', 90000), s = (await states(rid('sized')))[0];
       check(s.fit && s.fit.maxWidthMm === 16 && s.sizeMm && s.sizeMm[0] <= 16.01, `the order's size option 16MM is the envelope: the piece is ${s.sizeMm && s.sizeMm.map(v => v.toFixed(2)).join(' × ')} mm and never wider than 16 mm (${JSON.stringify(s.fit)})`);
       check(/16/.test(x.size) && /\d+\.\d × \d+\.\d mm/.test(x.size), 'the size line says so: "' + x.size + '"');
-      const t = await truthOf('APV');
-      if (t) { const f = F.applyFit(JSON.parse(JSON.stringify(t)), { maxWidthMm: 16 }); check(Math.abs(s.sizeMm[0] - f.wMm) < 0.1 && Math.abs(s.sizeMm[1] - f.hMm) < 0.1, `the same as the engine fitted to 16 mm: ${f.wMm.toFixed(2)} × ${f.hMm.toFixed(2)} mm`); }
+      const f = await truthOf('APV', { fit: { maxWidthMm: 16 } });      // (MONOHOOPS: the engine fits the letters, then puts the hoops on at their real size)
+      if (f) { check(Math.abs(s.sizeMm[0] - f.wMm) < 0.1 && Math.abs(s.sizeMm[1] - f.hMm) < 0.1, `the same as the engine fitted to 16 mm: ${f.wMm.toFixed(2)} × ${f.hMm.toFixed(2)} mm`); }
       check((await builds()).some(b => b.endsWith('@16')), 'the build was given the envelope (opts.fit 16 mm)');
       const apv = (await states(rid('apv')))[0] || {}; await openDetail('apv'); const a2 = (await states(rid('apv')))[0];
       check(a2 && !a2.fit, 'an order without a size is the natural piece (no envelope): ' + JSON.stringify(a2 && a2.fit));

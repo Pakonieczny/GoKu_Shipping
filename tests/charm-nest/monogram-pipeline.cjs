@@ -181,10 +181,12 @@ const TABLE = ['997905351', '606439317', '1844317367', '1009221671', '1844317391
   const fittedOf = {};
   for (const w of ['APV', 'OSR']) {
     for (const mm of F.ENVELOPES) {
+      // (MONOHOOPS, Paul 19 Oct 2026: the hoops keep their real size, so the proportions kept are the LETTERS', report.hoops.lettersMm)
+      const lettersAspect = x => { const lm = x.report.hoops && x.report.hoops.lettersMm; return lm ? lm[0] / lm[1] : x.wMm / x.hMm; };
       const fitted = M.build(await L.word(w), { fit: { maxWidthMm: mm } }), sc = fitted.report.fit && fitted.report.fit.scale; fittedOf[w + mm] = fitted;
       // (a plain build, not the autoFit result: the fit scales the finished layout, it never re-judges it)
       const plain = plainOf[w], want = Math.min(1, mm / plain.wMm), bad = R.sound(fitted, { scale: want });
-      check(bad.length === 0 && fitted.wMm <= mm + 1e-3 && Math.abs(sc - want) < 1e-3 && Math.abs(fitted.wMm / fitted.hMm - plain.wMm / plain.hMm) < 1e-3 && JSON.stringify(fitted.report.metrics.violations) === JSON.stringify(plain.report.metrics.violations),
+      check(bad.length === 0 && fitted.wMm <= mm + 1e-3 && Math.abs(sc - want) < 1e-3 && Math.abs(lettersAspect(fitted) - lettersAspect(plain)) < 1e-3 && JSON.stringify(fitted.report.metrics.violations) === JSON.stringify(plain.report.metrics.violations),
         `${w} at ${mm} mm: ${bad.join('; ') || `${fitted.wMm.toFixed(2)} x ${fitted.hMm.toFixed(2)} mm (scale ${want.toFixed(3)}), same proportions, one piece, same judged rules`}`);
       check(fitted.report.fit && fitted.report.fit.maxWidthMm === mm && (want < 1 ? fitted.report.fit.applied === true : fitted.report.fit.applied === false), `${w} at ${mm} mm: report.fit says what was done`);
     }

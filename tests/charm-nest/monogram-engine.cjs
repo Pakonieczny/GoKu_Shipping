@@ -7,7 +7,9 @@
 'use strict';
 const assert = require('assert');
 const C = require('../../vendor/clipper-6.4.2.js');
-const M0 = require('../../charm-nest-monogram.js');
+// (MONOHOOPS, Paul 19 Oct 2026: every finished piece now carries two hoops; this file reads the LETTERS' geometry (exact holes, boxes, sizes), so it builds without them: monogram-hoops.cjs is the test of the hoops)
+const MRAW = require('../../charm-nest-monogram.js');
+const M0 = Object.assign({}, MRAW, { build: (l, o) => MRAW.build(l, Object.assign({ hoops: false }, o)), autoFit: (l, o) => MRAW.autoFit(l, Object.assign({ hoops: false }, o)) });
 // the sections below that read the geometry of the original rules (the middle 1.5 times the sides, the sides as drawn) ask for exactly that; sections 3e and on use the defaults of today (1.25 = sides 80 % of the middle, sides widened 1.15, metrics)
 const M = Object.assign({}, M0, { build: (l, o) => M0.build(l, Object.assign({ centerRatio: 1.5, sideWiden: 1, contacts: 1, allowTrim: false, normalise: false }, o)) });
 const MC = { build: (l, o) => M0.build(l, Object.assign({ normalise: false }, o)) };      // (the classic geometry with today's other defaults: sections 3e and 3f read exact sizes)
