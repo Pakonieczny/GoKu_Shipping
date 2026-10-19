@@ -1998,7 +1998,7 @@ const Orders = window.Orders = (() => {
     let mode = ""; try { mode = F.setupOf(r).mode; } catch (_) { /* a line the model cannot read has no chip */ }
     return mode === "both" ? ["info", "Front + back"] : mode === "front" ? ["info", "Front only"] : ["", ""];
   }
-  const OV = { pile: null, metal: null, form: null, eng: null, q: "", view: null, sort: "activity", desc: false, limit:48 };   // what the tab is showing right now
+  const OV = { pile: null, metal: null, form: null, eng: null, act: null, q: "", view: null, sort: "activity", desc: false, limit:48 };   // what the tab is showing right now   (act: RQFILTER, null | "hold" | "qr" | "both")
   const viewMode = () => OV.view || S.settings.orderView || "list";
   /** The lines the filters leave, in ship-by order. */
   function visibleRows() {
@@ -2010,6 +2010,7 @@ const Orders = window.Orders = (() => {
       if (OV.metal && (r.material || "none") !== OV.metal) return false;
       if (OV.form && ((r.spec && r.spec.form) || "none") !== OV.form) return false;
       if (OV.eng) { const needs = !!(r.engrave && r.engrave.needed); if (OV.eng === "yes" ? !needs : needs) return false; }
+      if (actNow()) { const a = openActions().get(r.key); if (!a || !(actNow() === "hold" ? a.hold : actNow() === "qr" ? a.qr : a.hold || a.qr)) return false; }   // (RQFILTER, Paul 19 Oct 2026: the open Release Hold / Print QR filter; one OR over the two answers)
       if (!q) return true;
       const sp = r.spec || {};
       return [r.order.receiptId, sp.designSku, r.line.sku, r.line.title, (sp.personalization || []).join(" "), sp.buyerMessage, sp.staffNote, r.reason]
@@ -2039,6 +2040,46 @@ const Orders = window.Orders = (() => {
   /** Whether this line is on hold: where the cloud has said so (a hold this page has seen confirmed is the cloud's to lift: a Release made elsewhere ends it here too), else this page's own flag
    *  (a hold pressed here that the cloud has not confirmed yet: its own flow is still writing it). */
   const heldNow = r => { const pl = placeNow(r); if (pl && r.holdSeen) return pl.state === "hold"; return !!r.hold || (pl || {}).state === "hold"; };
+  /* (RQFILTER, Paul 19 Oct 2026: "You should also add a new sorting filter inside the existing Filter drop-down menu inside the Orders tab. It should show only the open 'Release Hold' and 'Print QR' Orders.")
+     The Filters panel's "Needs action" group: the lines that still wait on a Release Hold press or a Print QR label press. Nothing is read or written for it: every answer comes from the buttons' own rules,
+     over the lines already in memory, and it is asked again whenever the list is drawn (a release, a print and a completion all end in Orders.render), so a line that was acted on leaves the filter at once.
+       Release Hold, open:  the line is on hold (heldNow: the Orders card's own "Release hold" button), or a card of it in the Review tab shows a Release Hold that can be pressed (ReviewRelease.of(card).how, as
+                            ReviewRelease.decorate reads it for the card's button: a person's Send to Review, a blocked SKU, a changed order). Every open card of the line is asked, not only its first.
+       Print QR, open:      its card in the Review tab (Review.pieceItemFor: the card the order window's piece row reads too) is not completed or sent to a sheet and shows Print QR label (Review.printable).
+                            A monogram line that asks nothing is the Engraving tab's, not a Review card (MONOROUTE), so it is not one of these.
+     OV.act is null, "hold", "qr" or "both" (both chips on: the lines that wait on either). */
+  const actNow = () => (OV.act === "hold" || OV.act === "qr" || OV.act === "both" ? OV.act : null);
+  const ACT_WORDS = { hold: "Release Hold", qr: "Print QR", both: "Release Hold + Print QR" };
+  const actHas = (act, k) => act === "both" || act === k;
+  /** One chip pressed: Release Hold and Print QR each switch on and off (both on = either), the combined chip switches both. → the new OV.act. */
+  const actToggle = (cur, v) => { if (v === "both") return cur === "both" ? null : "both"; const on = new Set(cur === "both" ? ["hold", "qr"] : cur ? [cur] : []); if (on.has(v)) on.delete(v); else on.add(v); return on.size === 2 ? "both" : on.size ? [...on][0] : null; };
+  let actMemo = null;   // read once for a drawing (the head and the body ask for the same answer): kept to the end of the turn, and let go at the head of every drawing
+  /** Map line key → { hold, qr } for the open lines. */
+  function openActions(fresh) {
+    if (fresh) actMemo = null;
+    if (actMemo) return actMemo;
+    const m = new Map(), Rv = window.Review, Rr = window.ReviewRelease, rel = new Set(), carded = new Set();
+    try {   // the lines of every open Review card whose Release Hold button can be pressed (the cards ReviewRelease.decorate gives one: not completed, answered, settled, info, nested, a Custom Orders or placement card; the Engraving tab's "eng:" and the on-hold notices "held:" are not Review cards)
+      for (const it of (Rv && Rr && Rr.of ? Rv.items() : [])) {
+        if (!it) continue;
+        const rows = it.rows && it.rows.length ? it.rows : it.row ? [it.row] : [];
+        for (const r of rows) carded.add(r.key);   // (the lines some decision or mark names: the only ones a Review card can be asked of, besides the Custom Orders lines)
+        if (it.done || it.decided || it.settled || it.info || it.nested || it.kind === "customOrder" || it.kind === "placement" || /^(eng|held):/.test(String(it.key || "")) || !Rr.of(it).how) continue;
+        for (const r of rows) rel.add(r.key);
+      }
+    } catch (_) { /* no card can be read: none has a Release Hold */ }
+    for (const r of rowsOf()) {
+      if (r.state === "gone") continue;
+      let qr = false;
+      try {
+        const it = Rv && Rv.pieceItemFor && (carded.has(r.key) || (r.spec && (r.spec.special || r.spec.customDone))) ? Rv.pieceItemFor(r) : null;   // (a line in no decision and no Custom Orders card has no card: not asked)
+        qr = !!(it && !it.done && !it.decided && !(it.kind === "customOrder" && it.info && r.spec && r.spec.special && r.spec.special.monogram) && Rv.printable(it));
+      } catch (_) { /* a card that cannot be read asks for nothing */ }
+      m.set(r.key, { hold: heldNow(r) || rel.has(r.key), qr });
+    }
+    actMemo = m; Promise.resolve().then(() => { if (actMemo === m) actMemo = null; });
+    return m;
+  }
   const RUN_ON_SHEET = ["nested", "written", "labelled", "committed"];
   function stateWords(r) {
     // a line stays "pooled" in the record until its set is written; once every piece of it sits on a sheet it reads as
@@ -2144,7 +2185,7 @@ const Orders = window.Orders = (() => {
   /** "Show" in a note: the pile that holds the line now, scrolled to it and marked (filters let go when they hide it). */
   function showLine(key, pile) {
     OV.pile = pile || null;
-    if (!visibleRows().some(x => x.key === key)) { OV.metal = OV.form = OV.eng = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; }
+    if (!visibleRows().some(x => x.key === key)) { OV.metal = OV.form = OV.eng = OV.act = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; }
     if (!onScreen() && typeof setMode === "function") setMode("orders"); else renderNow();
     const i = groupsOf(visibleRows()).findIndex(g => g.rows.some(x => x.key === key));
     if (i >= (OV.limit || 48)) { OV.limit = i + 12; renderBody(); }
@@ -2324,7 +2365,7 @@ const Orders = window.Orders = (() => {
     const alive=new Set(rowsOf().map(r=>r.key));for(const key of orderNodes.keys())if(!alive.has(key))orderNodes.delete(key);
     // (the Cancelled list is the sheet window script's: searched with this tab's search box, paged down to what "Show" asked for)
     if (OV.pile === "cancelled") { drawnOn = ""; listKey = "cancelled"; if (window.Cancelled) Cancelled.renderInto(host, () => { const v = document.getElementById("ordersView"); if (v && v.querySelector("#ordChips")) renderHead(v); }, { q: OV.q, focus: cxFocus, live: () => OV.pile === "cancelled" && host.isConnected, clear: () => { OV.q = ""; const box = document.getElementById("ordQ"); if (box) box.value = ""; renderBody(); } }); else host.innerHTML = '<div class="libEmpty">The cancelled orders open with the sheet window script.</div>'; return; }
-    const nextKey=JSON.stringify([OV.pile,OV.q,OV.metal,OV.form,OV.eng,OV.sort,OV.desc,viewMode(),CNListActivity.key("orders")]);   // (what the bar can change: a change of any resets the list to its first 48)
+    const nextKey=JSON.stringify([OV.pile,OV.q,OV.metal,OV.form,OV.eng,OV.act,OV.sort,OV.desc,viewMode(),CNListActivity.key("orders")]);   // (what the bar can change: a change of any resets the list to its first 48)
     if(nextKey!==listKey){OV.limit=48;listKey=nextKey;}
     const anchor=at>0?[...host.querySelectorAll('[data-key]')].find(n=>n.getBoundingClientRect().bottom>host.getBoundingClientRect().top):null;
     const anchorKey=anchor?.dataset.key, anchorTop=anchor?.getBoundingClientRect().top;
@@ -2342,8 +2383,8 @@ const Orders = window.Orders = (() => {
       wanted.push(n);
     }
     else if (!rowsOf().length) wanted.push(blank("none", '<span>Nothing pulled yet — press <b>Pull orders</b> above.</span>'));   // one line: .libEmpty stacks its children
-    else if (!rows.length && OV.pile === "hold" && !OV.q && !OV.metal && !OV.form && !OV.eng) wanted.push(blank("hold", 'No order is on hold. An order taken off a sheet, or held from its order window, waits here until someone puts it back.'));
-    else if (!rows.length) wanted.push(blank("filters", 'Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button>', n => { n.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; render(); }; }));
+    else if (!rows.length && OV.pile === "hold" && !OV.q && !OV.metal && !OV.form && !OV.eng && !actNow()) wanted.push(blank("hold", 'No order is on hold. An order taken off a sheet, or held from its order window, waits here until someone puts it back.'));
+    else if (!rows.length) wanted.push(blank("filters", 'Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button>', n => { n.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.act = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; render(); }; }));
     else {
     let lastDay=null;
     // (ONE ORDER, ONE ROW, 13 Oct 2026: the lines of one order stand together where its first line stood; a group of one is a row as it always was)
@@ -2455,7 +2496,7 @@ const Orders = window.Orders = (() => {
     syncFind(v);
     const ct = v.querySelector("#ordCharmTotal"), done = v.querySelector("#ordFiltersPop [data-done]"), cx = OV.pile === "cancelled";
     if (cx) { cnt.removeAttribute("data-on"); cnt.textContent = ""; if (ct) { ct.innerHTML = `<b>${ordBase.charms || 0}</b> charms`; ct.title = "Charm quantity across the open orders; chain-only and packaging items are excluded"; } return; }   // (the Cancelled list counts itself: its own line says how many)
-    const t = orderTotals(rows), narrowed = !!(OV.metal || OV.form || OV.eng || OV.q.trim() || CNListActivity.state("orders").range !== "all"), of = Math.max(ordBase.orders, t.orders);
+    const t = orderTotals(rows), narrowed = !!(OV.metal || OV.form || OV.eng || actNow() || OV.q.trim() || CNListActivity.state("orders").range !== "all"), of = Math.max(ordBase.orders, t.orders);
     cnt.classList.toggle("none", narrowed && !t.orders);
     cnt.innerHTML = narrowed ? `<b>${t.orders}</b> of ${of} order${of === 1 ? "" : "s"}` : `<b>${t.orders}</b> order${t.orders === 1 ? "" : "s"}`;
     if (narrowed) cnt.setAttribute("data-on", "1"); else cnt.removeAttribute("data-on");
@@ -2500,8 +2541,8 @@ const Orders = window.Orders = (() => {
     fbtn.addEventListener("keydown", e => { if (e.key === "ArrowDown") { e.preventDefault(); ordFp.open(); } });
     fpop.addEventListener("click", e => {
       const chip = e.target.closest(".ordChip");
-      if (chip) { const f = chip.dataset.f, val = chip.dataset.v || null; narrow(fbtn, () => { OV[f] = OV[f] === val ? null : val; }); return; }
-      if (e.target.closest("[data-clear]")) { narrow(fbtn, () => { OV.metal = OV.form = OV.eng = null; }); return; }
+      if (chip) { const f = chip.dataset.f, val = chip.dataset.v || null; narrow(fbtn, () => { if (f === "act" && val) OV.act = actToggle(actNow(), val); else OV[f] = OV[f] === val ? null : val; }); return; }   // (RQFILTER: the two action chips switch on and off one by one, "Any" lets go)
+      if (e.target.closest("[data-clear]")) { narrow(fbtn, () => { OV.metal = OV.form = OV.eng = OV.act = null; }); return; }
       if (e.target.closest("[data-done]")) ordFp.close(true);
     });
     fpop.addEventListener("keydown", e => {   // arrows walk the chips; Enter or Space presses the one that has the focus; Esc is the popover's own
@@ -2514,7 +2555,7 @@ const Orders = window.Orders = (() => {
       const b = e.target.closest("[data-ax],[data-ax-all]"); if (!b) return;
       const k = b.dataset.ax, touch = k === "range" ? v.querySelector(".cnDateBtn") : fbtn;
       narrow(touch, () => {
-        if (b.hasAttribute("data-ax-all")) { OV.metal = OV.form = OV.eng = null; OV.q = ""; q.value = ""; CNListActivity.set("orders", { range: "all" }); }
+        if (b.hasAttribute("data-ax-all")) { OV.metal = OV.form = OV.eng = OV.act = null; OV.q = ""; q.value = ""; CNListActivity.set("orders", { range: "all" }); }
         else if (k === "range") CNListActivity.set("orders", { range: "all" });
         else OV[k] = null;
       }, { sync: true });
@@ -2544,6 +2585,7 @@ const Orders = window.Orders = (() => {
     if (!cx) {
       if (OV.metal) items.push(["metal", OV.metal === "none" ? "No material" : labelOf(OV.metal), "Material"]);
       if (OV.eng) items.push(["eng", OV.eng === "yes" ? "Engraved" : "Not engraved", "Engraving"]);
+      if (actNow()) items.push(["act", ACT_WORDS[actNow()], "Needs action"]);   // (RQFILTER)
     }
     const range = CNListActivity.state("orders").range;
     if (range !== "all") items.push(["range", CNListActivity.rangeLabel(range), "Last activity"]);
@@ -2553,7 +2595,7 @@ const Orders = window.Orders = (() => {
     box.innerHTML = items.map(([k, label, what]) => `<button type="button" class="ordAx" data-ax="${k}" aria-label="Remove the filter: ${esc(what)}, ${esc(label)}" title="Remove: ${esc(label)}">${esc(label)}${I.x}</button>`).join("")
       + (items.length + (OV.q.trim() ? 1 : 0) > 1 ? `<button type="button" class="ordAxAll" data-ax-all>Clear all</button>` : "");
   }
-  /** The Filters button and its panel (Metal, Engraved as chip groups), from the lines the tab holds. A group with a single answer is not drawn (it could only do nothing), as before.
+  /** The Filters button and its panel (Metal, Engraved and Needs action as chip groups), from the lines the tab holds. A group with a single answer is not drawn (it could only do nothing), as before.
    *  The panel is rebuilt only when its options or their counts change, so a chip that has the focus keeps it. */
   function renderFilters(v, d) {
     const wrap = v.querySelector("#ordFilters"), btn = v.querySelector("#ordFiltersBtn"), pop = v.querySelector("#ordFiltersPop"), badge = btn.querySelector(".cnBadge"), cx = OV.pile === "cancelled";
@@ -2561,19 +2603,26 @@ const Orders = window.Orders = (() => {
     if (d.metals.length > 1 || OV.metal) groups.push(["metal", "Metal", d.metals.map(m => [m, m === "none" ? "No material" : labelOf(m), d.byMetal[m] || 0])]);
     // (no Kind group: Paul, 18 Oct 2026, "Remove this option from the filter UI"; Metal and the rest stay)
     if ((d.engN && d.engN < d.allN) || OV.eng) groups.push(["eng", "Engraved", [["yes", "Engraved", d.engN], ["no", "Not engraved", d.allN - d.engN]]]);
+    // (RQFILTER, Paul 19 Oct 2026: "It should show only the open 'Release Hold' and 'Print QR' Orders": the first chip is his one filter (both at once, the lines that wait on either); the other two are each one of the pair, and can
+    // be switched on together too (either). A chip is drawn while it can narrow the list (some orders, not all) or while it is on, so the group, like the others, is not drawn when it could only do nothing.)
+    { const A = d.act || { hold: 0, qr: 0, either: 0 }, on = actNow(), can = n => n > 0 && n < d.orders, opts = [];
+      if (on === "both" || (A.hold > 0 && A.qr > 0 && can(A.either))) opts.push(["both", ACT_WORDS.both, A.either, "The orders that wait on a Release Hold or on a Print QR label (either one)"]);
+      if (actHas(on, "hold") || can(A.hold)) opts.push(["hold", ACT_WORDS.hold, A.hold, "The orders with an open Release Hold: on hold, or with a Release Hold that can be pressed in Review"]);
+      if (actHas(on, "qr") || can(A.qr)) opts.push(["qr", ACT_WORDS.qr, A.qr, "The orders whose Print QR label is still to print (open in Review)"]);
+      if (opts.length) groups.push(["act", "Needs action", opts]); }
     wrap.hidden = !groups.length;
     const sig = JSON.stringify(groups);
     if (pop._sig !== sig) {
       const had = document.activeElement && pop.contains(document.activeElement) ? document.activeElement : null, hadKey = had && had.dataset ? (had.dataset.f || "") + "|" + (had.dataset.v ?? "") + "|" + (had.hasAttribute("data-clear") ? "c" : had.hasAttribute("data-done") ? "d" : "") : null;
       pop._sig = sig;
-      const chip = (f, val, label, n, sw) => `<button type="button" class="ordChip" data-f="${f}" data-v="${esc(val)}" aria-pressed="false">${sw ? `<i class="sw" data-metal="${esc(val)}"></i>` : ""}${esc(label)}${n == null ? "" : `<small>${n}</small>`}</button>`;
+      const chip = (f, val, label, n, sw, tip) => `<button type="button" class="ordChip" data-f="${f}" data-v="${esc(val)}" aria-pressed="false"${tip ? ` title="${esc(tip)}"` : ""}>${sw ? `<i class="sw" data-metal="${esc(val)}"></i>` : ""}${esc(label)}${n == null ? "" : `<small>${n}</small>`}</button>`;
       pop.innerHTML = `<div class="ordFpHead"><b>Filters</b><button type="button" class="ordFpClear" data-clear>Clear</button></div><div class="ordFpBody">`
-        + groups.map(([f, title, opts]) => `<section class="ordFg"><h4 id="ordFg-${f}">${title}</h4><div class="ordChipRow" role="group" aria-labelledby="ordFg-${f}">${chip(f, "", "Any", null)}${opts.map(o => chip(f, o[0], o[1], o[2], f === "metal")).join("")}</div></section>`).join("")
+        + groups.map(([f, title, opts]) => `<section class="ordFg"><h4 id="ordFg-${f}">${title}</h4><div class="ordChipRow" role="group" aria-labelledby="ordFg-${f}">${chip(f, "", "Any", null)}${opts.map(o => chip(f, o[0], o[1], o[2], f === "metal", o[3])).join("")}</div></section>`).join("")
         + `</div><div class="ordFpFoot"><button type="button" class="btn sm" data-done></button></div>`;
       if (hadKey != null) { const [f, val, kind] = hadKey.split("|"); const back = kind === "c" ? pop.querySelector("[data-clear]") : kind === "d" ? pop.querySelector("[data-done]") : [...pop.querySelectorAll(".ordChip")].find(c => c.dataset.f === f && c.dataset.v === val); if (back) back.focus({ preventScroll: true }); }
     }
-    for (const c of pop.querySelectorAll(".ordChip")) c.setAttribute("aria-pressed", String(c.dataset.v ? OV[c.dataset.f] === c.dataset.v : !OV[c.dataset.f]));
-    const n = [OV.metal, OV.form, OV.eng].filter(Boolean).length;
+    for (const c of pop.querySelectorAll(".ordChip")) c.setAttribute("aria-pressed", String(c.dataset.f === "act" ? (c.dataset.v ? (c.dataset.v === "both" ? actNow() === "both" : actHas(actNow(), c.dataset.v)) : !actNow()) : c.dataset.v ? OV[c.dataset.f] === c.dataset.v : !OV[c.dataset.f]));   // (RQFILTER: Release Hold and Print QR are both pressed while the combined chip is)
+    const n = [OV.metal, OV.form, OV.eng, actNow()].filter(Boolean).length;
     badge.hidden = !n; badge.textContent = n || "";
     if (n) btn.setAttribute("data-on", "1"); else btn.removeAttribute("data-on");
     btn.setAttribute("aria-label", n ? `Filters, ${n} applied` : "Filters");
@@ -2607,6 +2656,9 @@ const Orders = window.Orders = (() => {
        Each one appears only when the lines on screen give it more than one answer — a filter with one option is a
        control that can only ever do nothing. */
     const engN = all.filter(r => r.engrave && r.engrave.needed).length;
+    // (RQFILTER: what the lines wait on, read afresh for this drawing; the list below asks for the same answer and gets it)
+    // (orders, not lines: a Release Hold or a Print QR label is an order's, and the chip then says what the list will count, "3 of 7 orders")
+    const act = { hold: 0, qr: 0, either: 0 }; { const am = openActions(true), on = { hold: new Set(), qr: new Set(), either: new Set() }; for (const r of all) { const a = am.get(r.key); if (!a) continue; const id = String(r.order.receiptId); if (a.hold) on.hold.add(id); if (a.qr) on.qr.add(id); if (a.hold || a.qr) on.either.add(id); } act.hold = on.hold.size; act.qr = on.qr.size; act.either = on.either.size; }
     const cxN = window.Cancelled ? Cancelled.count() : 0;
     // (Cancelled is always there, Paul 28 Sep A5: every cancelled order, Etsy's and a person's, whatever the pull holds)
     const pills = v.querySelector("#ordChips"), pillsHtml = chip(!OV.pile,"","Open Orders",totals.orders,"","Distinct open order numbers, across all materials")
@@ -2622,7 +2674,7 @@ const Orders = window.Orders = (() => {
       if (had.size && window.Motion && !Motion.reduced() && onScreen()) for (const b of pills.querySelectorAll("[data-pile]")) if (!had.has(b.dataset.pile)) b.animate([{ opacity: 0, transform: "scale(.6)" }, { opacity: 1, transform: "none" }], { duration: 560, easing: "cubic-bezier(.3,1.3,.5,1)" });
     }
     // Material and engraved are the Filters panel's chip groups (and the gold chips under the bar while one is in force)
-    renderFilters(v, { metals, byMetal, engN, allN: all.length });
+    renderFilters(v, { metals, byMetal, engN, act, orders: totals.orders, allN: all.length });
     renderActive(v);
     // another pile slides in softly from the side it lies on (pills left to right), so a switch is seen as one; the tab that was pressed shows the busy state until the list is drawn
     v.querySelectorAll("[data-pile]").forEach(b => b.onclick = () => {
@@ -2661,6 +2713,8 @@ const Orders = window.Orders = (() => {
   // The list says where each piece is from the ONE answer (placeNow: OrderPieces -> PiecePlacement), so it is drawn again when a read lands that changed it: the list had no
   // such listener, and said "1/5 pooled" for a piece the cloud had put on a sheet, and nothing for one it had put on hold, until the next Etsy check (Paul, 5 Oct).
   try { if (window.OrderPieces && OrderPieces.subscribe) OrderPieces.subscribe(() => { if (onScreen()) render(); }); } catch (_) { /* drawn when next shown */ }
+  // (RQFILTER, Paul 19 Oct 2026: a Send to Review, or an order taken out of Review, changes which orders have a Release Hold to press: the Needs action filter and its counts are drawn again then; the Review mark's own event, nothing is read)
+  try { document.addEventListener("cn-review-mark", () => { if (onScreen()) render(); }); } catch (_) { /* drawn with the next change */ }
   /** The Orders tab's count (open orders). A change while the station is in use (an order in, an order gone) shows as a
    *  soft ring round the number, not a jump: a line put on hold or released stays an open order and leaves it as it is. */
   function tabCount() {
@@ -2672,7 +2726,7 @@ const Orders = window.Orders = (() => {
   }
   /** The Orders tab on one pile (the sheet window's "In Orders"), with the search set to an order when one is given. */
   function showPile(pile, q) {
-    OV.pile = ["hold", "cancelled"].includes(pile) ? pile : null; OV.metal = OV.form = OV.eng = null; OV.q = q ? String(q) : "";
+    OV.pile = ["hold", "cancelled"].includes(pile) ? pile : null; OV.metal = OV.form = OV.eng = OV.act = null; OV.q = q ? String(q) : "";
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
