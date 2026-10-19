@@ -244,6 +244,7 @@
       `P` is CharmNestPDF (its drawCharm draws the charm exactly as every other picture does). */
   function canvasFor(P, charm, o) {
     o = o || {}; if (!P || typeof P.drawCharm !== "function" || typeof o.makeCanvas !== "function" || !charm || !okBox(charm.bbox)) return null;
+    if (o.plain === true) return null;   // (opts.plain: the design once, as drawn, no Left / Right chips: a necklace cut body by body, MOONSTARS, Paul 19 Oct 2026, whose bodies are a star and a moon, never two ears)
     if (o.pair === true && o.other && !o.side && o.body == null) return twoCanvas(P, charm, o) || singleCanvas(P, charm, o);   // (a line of two separate designs)
     const pl = plan(charm); if (!pl) return o.pair === true && !o.side && o.body == null ? (matchCanvas(P, charm, o) || singleCanvas(P, charm, o)) : singleCanvas(P, charm, o);
     if (o.body === 0 || o.body === 1) return bodyCanvas(P, charm, pl, o);

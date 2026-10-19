@@ -209,6 +209,8 @@ const ListMedia = (() => {
     const ob = sp.pair && sp.pair.oneBody; if (ob && Number.isInteger(ob.index) && ob.index >= 0) return ob.index;
     return CP.alikeDesign(e) === true ? 0 : -1;
   } catch (_) { return -1; } };
+  // (MOONSTARS: a line whose pieces are cut from DIFFERENT bodies of its design, spec.pair.pieceBodies [0, 0, 1] for 2 stars and the moon: its picture is the whole design)
+  const bodiesRow = row => { const pb = row && row.spec && row.spec.pair && row.spec.pair.pieceBodies; return Array.isArray(pb) && new Set(pb).size > 1; };
   const pairRow = row => { try { const CP = window.CharmNestPair, sku = row && ((row.spec && row.spec.designSku) || (row.line && row.line.sku)), e = CP && sku && window.Master && window.Master.entryFor ? window.Master.entryFor(sku) : null; return !!(e && e.pair && CP.isMismatched(e)) && !(CP.plainLine && CP.plainLine(row)) && oneRow(row) < 0; } catch (_) { return false; } };   // (not on a necklace, pendant or charm line of a two-body design: it is one piece, Paul 10 Oct; nor on a line that makes ONE body of a design that draws the same outline twice, Paul 11 Oct)
   // an EARRING PAIR line, matching or mismatched (Paul, 10 Oct 2026: "All earring sets (Stud and Huggie Hoop) ... one order with ... both left and right charm vectors displayed side by side"): its vector design is the
   // Left and the Right together. pairRow (above) is the mismatched design only, whose master drawing already holds two bodies; a MATCHING pair's picture is its one body drawn twice (charm-nest-pair-thumb.js, opts.pair).
@@ -317,7 +319,9 @@ const ListMedia = (() => {
       }catch(_){/* the one picture the line always had */}
     }
     const own=opts?(opts.design && inSet(row,opts.design)?String(opts.design).toUpperCase():earDesign(row,opts.side)):'';   // (one piece of a set of designs: its own design, as drawn)
-    const charm=(pairRow(row) || sideOne || both || own)?null:(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
+    // (MOONSTARS, Paul 19 Oct 2026: "The vector thumbnail should show both the moon and stars": a line cut body by body (the stars from one body, the moon from the other) is pictured as its whole master design, never its first pooled piece)
+    const whole=bodiesRow(row) && !(opts && (opts.side==='L' || opts.side==='R' || opts.highlight || opts.piece===true || opts.body===0 || opts.body===1));
+    const charm=(pairRow(row) || sideOne || both || own || whole)?null:(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
     const turn=!!opts && (opts.side==='L' || opts.side==='R') && !pairRow(row) && opts.mirror===true && !charm?.mirror;
     let ro=opts?.highlight && pairRow(row)?{highlight:opts.highlight}:turn?{mirror:true}:null;
     if(charm)return P.frontPreview ? (ro ? P.frontPreview(charm,px || 220,ro) : P.frontPreview(charm,px || 220)) : Engrave.renderFront(charm,px || 220);
@@ -326,7 +330,8 @@ const ListMedia = (() => {
     if(!entry){if(!catalog.has(sku))catalog.set(sku,Master.fetchEntry(sku).finally(()=>catalog.delete(sku)));entry=await catalog.get(sku);}
     if(!entry)return null;
     // (a line that makes ONE body of a design drawn twice (oneRow): the picture is that body alone, no Left or Right; a picture asked for one ear or one wash is not that line's)
-    const one=!own && !both && !(opts && (opts.side==='L' || opts.side==='R' || opts.highlight || opts.body===0 || opts.body===1))?oneRow(row):-1;
+    if(whole)ro={plain:true};   // (the moon and the stars as drawn: no Left / Right chips, they are no earrings)
+    const one=!own && !both && !whole && !(opts && (opts.side==='L' || opts.side==='R' || opts.highlight || opts.body===0 || opts.body===1))?oneRow(row):-1;
     if(one>=0)ro=Object.assign({},ro||{},{one});
     if(both){const g=Pool.sizeEntry(entry,row.spec?.size),f=(g&&g.facing)||entry.facing;ro={pair:true,sku:String(entry.sku||sku),...(f==='L'||f==='R'||f==='X'?{facing:f}:{})};}   // (which way the master drawing faces, a person's word: the same rule as the piece the sheet cuts)
     if(own){const turnOwn=earTurn(row,opts.side,entry)?{mirror:true}:null;return turnOwn?(px?Pool.masterFront(entry,row.spec?.size,px,turnOwn):Pool.masterPreview(entry,row.spec?.size,true,turnOwn)):(px?Pool.masterFront(entry,row.spec?.size,px):Pool.masterPreview(entry,row.spec?.size,true));}
@@ -352,7 +357,7 @@ const ListMedia = (() => {
     const sku=String((opts?(opts.design && inSet(row,opts.design)?opts.design:earDesign(row,opts.side)):'') || row.spec?.designSku || row.line?.sku || '').toUpperCase();
     // (one ear of a mismatched pair (opts.highlight "L" | "R") is its own picture: never shared with the other ear's)
     // (an earring pair line drawn as Left + Right is its own picture: never shared with one body as drawn, nor with one ear)
-    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'')+(!opts?.highlight && !opts?.side && !opts?.piece?(matchPair(row)?'|pair':twoOf(row)?'|two:'+String(twoOf(row)).toUpperCase():setOf(row).length?'|set:'+setOf(row).join('+').toUpperCase():''):'')+(!opts?.highlight && !opts?.side && oneRow(row)>=0?'|one':'');
+    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'')+(!opts?.highlight && !opts?.side && !opts?.piece?(matchPair(row)?'|pair':twoOf(row)?'|two:'+String(twoOf(row)).toUpperCase():setOf(row).length?'|set:'+setOf(row).join('+').toUpperCase():bodiesRow(row)?'|whole':''):'')+(!opts?.highlight && !opts?.side && oneRow(row)>=0?'|one':'');
     const id=(row.poolIds || []).find(x=>Pool.charmOf(x)?.outline);
     return id?'pool:'+id:'';
   }
@@ -3974,7 +3979,7 @@ const Pool = window.Pool = (() => {
     const draw=charm=>front&&P.frontPreview?P.frontPreview(oneBody(charm,opts),220,opts):P.thumbnail(one1?oneBody(charm,opts):charm,168);   // (opts.highlight "L" | "R": a mismatched pair with the other body washed out; opts.body 0 | 1: that ear alone; opts.mirror / opts.side: one piece of an earring pair turned over / with its chip; a plain call is the design once, as drawn)
     const cached=B.pool.sources.get(path);if(cached&&!one1)return front&&P.frontPreview?draw(cached.charms[0]):cached.charms[0].thumb;
     const stamp=String(entry.indexedAt||"");   // (MASTER7, Paul 15 Oct 2026: a re-index rewrote the 26 keys with their letters and the tiles already drawn kept the old pictures until the page was reloaded: this cache knew the path only)
-    const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+(opts&&opts.mirror!=null?"m"+opts.mirror:"")+(opts&&opts.side||"")+(opts&&opts.pair?"pair"+(opts.facing||""):"")+(opts&&opts.one!=null?"#one"+opts.one:"")+":":"")+path+(one1?"#one"+opts.one:"");
+    const key=(front&&P.frontPreview?"front:"+(opts&&opts.highlight||"")+(opts&&opts.body!=null?"#"+opts.body:"")+(opts&&opts.mirror!=null?"m"+opts.mirror:"")+(opts&&opts.side||"")+(opts&&opts.pair?"pair"+(opts.facing||""):"")+(opts&&opts.one!=null?"#one"+opts.one:"")+(opts&&opts.plain?"plain":"")+":":"")+path+(one1?"#one"+opts.one:"");
     const mk=key+"@"+stamp;
     if(masterPreviewCache.has(mk))return masterPreviewCache.get(mk);
     if(cached){const task=Promise.resolve(draw(cached.charms[0]));masterPreviewCache.set(mk,task);while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);try{return await task;}catch(e){masterPreviewCache.delete(mk);throw e;}}   // (a design the pool already holds: drawn from that copy at once, no download)
@@ -8457,7 +8462,7 @@ const Engrave = window.Engrave = (() => {
     if (!charm?.outline || !Array.isArray(charm.bbox) || charm.bbox.length !== 4 || !charm.bbox.every(Number.isFinite))
       return el("div", "noPic", "The charm preview is still loading.");
     // a mismatched pair design: both bodies side by side with Left / Right chips (charm-nest-pair-thumb.js); any other charm is drawn below, unchanged
-    const pairCv = window.CharmNestPairThumb?.canvasFor(P, charm, { size: px, padPt: 3 * PT, bg: "#fff", highlight: opts && opts.highlight, body: opts && opts.body, mirror: opts && opts.mirror, side: opts && opts.side, pair: opts && opts.pair, facing: opts && opts.facing, sku: opts && opts.sku, other: opts && opts.other, turnRight: opts && opts.turnRight, makeCanvas: (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; } });
+    const pairCv = window.CharmNestPairThumb?.canvasFor(P, charm, { size: px, padPt: 3 * PT, bg: "#fff", highlight: opts && opts.highlight, body: opts && opts.body, mirror: opts && opts.mirror, side: opts && opts.side, plain: opts && opts.plain, pair: opts && opts.pair, facing: opts && opts.facing, sku: opts && opts.sku, other: opts && opts.other, turnRight: opts && opts.turnRight, makeCanvas: (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; } });
     if (pairCv) return pairCv;
     const cv = document.createElement("canvas"); const b = charm.bbox, pad = 3 * PT; const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, k = px / Math.max(w, h); cv.width = Math.round(w * k); cv.height = Math.round(h * k); const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); const tx = (x, y) => [(x - b[0] + pad) * k, (b[3] + pad - y) * k]; P.drawCharm(ctx, charm, tx, k); return cv;
   }
