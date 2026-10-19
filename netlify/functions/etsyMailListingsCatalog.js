@@ -465,14 +465,28 @@ async function syncCatalog({ fullSync = true, triggeredBy = "cron" } = {}) {
 //      (lastSyncedAt). Score 0 → not returned. Only those matches are
 //      read in full.
 //
-// Firestore reads: one per active listing when an instance builds its copy,
-// then one per returned match. No Etsy calls.
+// Firestore reads: one per active listing when an instance builds its copy
+// (a dozen documents when the shared copy below is current), then one per
+// returned match. No Etsy calls.
 const SEARCH_INDEX_TTL_MS  = 30 * 60 * 1000;
 const SEARCH_INDEX_PAGE    = 1000;
 const SEARCH_INDEX_MAX     = 20000;
 // A search never waits longer than this for a copy that is still loading:
 // it scores the pages read so far and the load carries on for the next one.
 const SEARCH_INDEX_WAIT_MS = 5000;
+
+// Cost (Oct 2026): the copy below is read once per warm instance and again every 30 minutes, one document per active
+// listing (5,762 on 26 Sep), and each function that searches (the drafter, the sales agent, this one) keeps its own, so an
+// instance that sat idle read the whole catalog again for one search. The catalog changes only when a sync completes, so
+// the instance that reads it also leaves the same entries as a few JSON documents in EtsyMail_ListingsSync, tagged with the
+// sync state's lastIncrementalAt; another instance that finds that tag reads those few documents instead. A shared copy is
+// used only while its tag is the sync state's current one, it is under SHARED_COPY_MAX_AGE_MS old, every part carries the
+// same generation and the entry count adds up; while a sync is running (or when anything fails) the pages are read as before.
+const SHARED_COPY_META      = "searchCopy";
+const SHARED_COPY_PART      = "searchCopy_";            // + part number
+const SHARED_COPY_MAX_AGE_MS = 36 * 60 * 60 * 1000;
+const SHARED_COPY_PART_BYTES = 700 * 1000;               // a Firestore document holds 1 MiB
+const SHARED_COPY_MAX_PARTS  = 40;
 
 let _searchIndex        = null;   // last complete copy: { builtAt, entries }
 let _searchIndexPartial = null;   // the copy being read, filled page by page
@@ -489,10 +503,71 @@ function searchEntry(doc) {
   };
 }
 
+/** The catalog's tag as the sync state holds it now: when the last sync completed. null while a sync is (or was left) running, and when
+ *  there is no such state: the shared copy is then neither used nor written. */
+async function sharedCopyTag() {
+  const snap = await db.collection(SYNC_COLL).doc("global").get();
+  const d = snap.exists ? (snap.data() || {}) : null;
+  if (!d || d.inFlight) return null;
+  return d.lastIncrementalAt && d.lastIncrementalAt.toMillis ? d.lastIncrementalAt.toMillis() : null;
+}
+
+/** The shared copy's entries when it is current for `tag` and whole; null otherwise (the caller reads the pages). */
+async function readSharedCopy(tag) {
+  const metaSnap = await db.collection(SYNC_COLL).doc(SHARED_COPY_META).get();
+  const meta = metaSnap.exists ? (metaSnap.data() || {}) : null;
+  if (!meta || meta.v !== 1 || meta.tag !== tag || !(Date.now() - Number(meta.builtAtMs) < SHARED_COPY_MAX_AGE_MS)) return null;
+  if (!(meta.parts >= 1 && meta.parts <= SHARED_COPY_MAX_PARTS) || !meta.gen) return null;
+  const refs = [];
+  for (let i = 0; i < meta.parts; i++) refs.push(db.collection(SYNC_COLL).doc(SHARED_COPY_PART + i));
+  const snaps = await db.getAll(...refs);
+  const entries = [];
+  for (const s of snaps) {
+    const d = s.exists ? (s.data() || {}) : null;
+    if (!d || d.gen !== meta.gen || typeof d.json !== "string") return null;
+    const part = JSON.parse(d.json);
+    if (!Array.isArray(part)) return null;
+    for (const e of part) entries.push(e);
+  }
+  if (entries.length !== meta.count || !entries.length) return null;
+  if (!entries.every(e => e && typeof e.id === "string" && typeof e.title === "string" && Array.isArray(e.tags) && typeof e.desc === "string")) return null;
+  return entries;
+}
+
+/** Leave `entries` as the shared copy for `tag`: the parts first, the document that names them last. */
+async function writeSharedCopy(tag, entries) {
+  const gen = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const parts = [];
+  let cur = [], size = 0;
+  for (const e of entries) {
+    const n = Buffer.byteLength(JSON.stringify(e), "utf8") + 1;
+    if (cur.length && size + n > SHARED_COPY_PART_BYTES) { parts.push(cur); cur = []; size = 0; }
+    cur.push(e); size += n;
+  }
+  if (cur.length) parts.push(cur);
+  if (!parts.length || parts.length > SHARED_COPY_MAX_PARTS) return false;
+  for (let i = 0; i < parts.length; i++) {
+    await db.collection(SYNC_COLL).doc(SHARED_COPY_PART + i).set({ gen, n: parts[i].length, json: JSON.stringify(parts[i]) });
+  }
+  await db.collection(SYNC_COLL).doc(SHARED_COPY_META).set({ v: 1, tag, gen, parts: parts.length, count: entries.length, builtAtMs: Date.now() });
+  return true;
+}
+
 function loadSearchIndex() {
   if (_searchIndexLoad) return _searchIndexLoad;
   const partial = { builtAt: Date.now(), entries: [] };
   const load = (async () => {
+    // The tag is read BEFORE the pages: a sync that completes while they are read leaves a copy that is already out of date, never one
+    // taken for current.
+    let tag = null;
+    try { tag = await sharedCopyTag(); }
+    catch (err) { console.warn("listingsCatalog: shared search copy not used:", err && err.message); }
+    if (tag != null) {
+      try {
+        const shared = await readSharedCopy(tag);
+        if (shared) { partial.entries = shared; partial.builtAt = Date.now(); return partial; }
+      } catch (err) { console.warn("listingsCatalog: shared search copy not used:", err && err.message); }
+    }
     let last = null;
     while (partial.entries.length < SEARCH_INDEX_MAX) {
       let q = db.collection(LISTINGS_COLL)
@@ -506,6 +581,10 @@ function loadSearchIndex() {
       last = snap.docs[snap.docs.length - 1];
     }
     partial.builtAt = Date.now();
+    if (tag != null && partial.entries.length && partial.entries.length < SEARCH_INDEX_MAX) {
+      try { if (await sharedCopyTag() === tag) await writeSharedCopy(tag, partial.entries); }   // (a sync that completed meanwhile: not this copy)
+      catch (err) { console.warn("listingsCatalog: shared search copy not saved:", err && err.message); }
+    }
     return partial;
   })();
   _searchIndexPartial = partial;

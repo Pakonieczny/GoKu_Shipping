@@ -1032,7 +1032,7 @@ const DesignLink = window.DesignLink = (() => {
     });
     S_.mountedAt = Date.now();
     window.addEventListener("message", onMessage);
-    window.addEventListener("online", () => { if (S_.control && !S_.up) reloadFrame("the network is back"); });
+    window.addEventListener("online", () => { if (S_.control && !S_.up) { S_.reloadsQuiet = 0; reloadFrame("the network is back"); } });
     return f;
   }
   /* A frame that loaded while the network was down stays on the browser's error page: only "Reload frame" loaded it again,
@@ -1042,9 +1042,13 @@ const DesignLink = window.DesignLink = (() => {
      and is never reloaded under them: only one silent since its load (an error page, a page that never started) or
      silent for 5 minutes. */
   function reloadFrame(why) {
-    if (!S_.frame || S_.up || navigator.onLine === false || Date.now() - (S_.reloadedAt || 0) < 45000) return false;
+    /* COST (Oct 2026): a station that stays quiet after its reload (sent to an Etsy sign-in page, a script that stops at start) was loaded again every 45 s for as long as it stayed so:
+       a whole station start each time (about 20 reads), 1,900 a day. The first retry still comes after 45 s; then the wait doubles with each reload that did not bring it back (90 s, 3 min, 6 min,
+       10 min) and starts over once it answers (S_.up) or the network comes back (the online handler below starts the count over: that reload is given the 45 s alone, as before). */
+    const gap = Math.min(600000, 45000 * 2 ** Math.min(Math.max((S_.reloadsQuiet || 0) - 1, 0), 4));
+    if (!S_.frame || S_.up || navigator.onLine === false || Date.now() - (S_.reloadedAt || 0) < gap) return false;
     if ((S_.heardAt || 0) > (S_.loadedAt || 0) && Date.now() - S_.heardAt < 300000) return false;
-    S_.reloadedAt = Date.now(); agent({ bridge: true }, "warn", `Loading the Design Station frame again: ${why}`);
+    S_.reloadedAt = Date.now(); S_.reloadsQuiet = (S_.reloadsQuiet || 0) + 1; agent({ bridge: true }, "warn", `Loading the Design Station frame again: ${why}`);
     S_.frame.src = frameUrl(); return true;
   }
   async function open() {
@@ -1058,7 +1062,7 @@ const DesignLink = window.DesignLink = (() => {
     catch (e) { if (!/answer in time/.test(e.message)) throw e; agent({ bridge: true }, "warn", "hello unanswered — trying once more");
       // (a session opened meanwhile by the frame's reload is the answer; otherwise the frame is loaded again)
       try { st = await call("hello", { sorterClientId: S_.nonce, runId: B.run ? B.run.runId : null }, { timeoutMs: 30000 }); } catch (e2) { if (S_.up && S_.state) return S_.state; reloadFrame("two hellos went unanswered"); throw e2; } }
-    S_.state = st; S_.up = true; S_.misses = 0; S_.lastHello = Date.now(); if (st.etsy && st.etsy.meter) etsyReadout(st.etsy.meter);
+    S_.state = st; S_.up = true; S_.misses = 0; S_.reloadsQuiet = 0; S_.lastHello = Date.now(); if (st.etsy && st.etsy.meter) etsyReadout(st.etsy.meter);
     if (!!st.sandbox !== (WORKSPACE_SANDBOX)) { S_.control = false; S_.up = false; const why = `the station is in ${st.sandbox ? "SANDBOX" : "production"} mode but this sorter is in ${WORKSPACE_SANDBOX ? "SANDBOX" : "production"} mode`; agent({ bridge: true }, "warn", `Session refused: ${why}`); toast(`Session refused — ${why}. Reload the frame.`, "bad", 9000); throw new Error(why); }
     // ONE signed-in person (Paul, 18 Oct 2026): the station's own stored name (st.employee) is no longer adopted here; the station is told
     // who is signed in to the sorter instead, before anything else is asked of it, so what it records is under that person
@@ -1194,7 +1198,7 @@ const DesignLink = window.DesignLink = (() => {
     S_.hb = setInterval(async () => {
       if (!S_.control) return;
       try {
-        const pong = await call("ping", {}, { timeoutMs: Math.max(1500, every - 500), quiet: true }); if (pong && pong.etsy) etsyReadout(pong.etsy); if (!S_.up) { S_.up = true; agent({ bridge: true }, "DS", "Design Station is back"); sendEmployee(); } S_.misses = 0;
+        const pong = await call("ping", {}, { timeoutMs: Math.max(1500, every - 500), quiet: true }); if (pong && pong.etsy) etsyReadout(pong.etsy); if (!S_.up) { S_.up = true; S_.reloadsQuiet = 0; agent({ bridge: true }, "DS", "Design Station is back"); sendEmployee(); } S_.misses = 0;
         // In Auto nobody may be at the bench: a run stopped only because the station went quiet, or because the hour's
         // Etsy calls ran out, carries on by itself once the station answers again or the hour has room. It used to wait
         // for someone to press Resume while the orders piled up.
@@ -1281,7 +1285,7 @@ const DesignLink = window.DesignLink = (() => {
     const sw = host.querySelector("#dsControl"); if (sw) { sw.classList.toggle("on", S_.control); sw.textContent = S_.control ? "Release" : "Take control"; }
     const log = host.querySelector(".log"); if (shown(log)) { const rows = S_.log.slice(-200); log.innerHTML = rows.map(r => `<div class="row ${r.dir}${r.err ? " err" : ""}"><span class="d">${fmtT(r.t)}</span><span class="ty">${r.dir === "cmd" ? "→" : r.dir === "reply" ? "←" : "·"} ${esc(r.type)}</span><span class="pl">${esc(r.payload ? JSON.stringify(r.payload) : "")}</span><span class="ms">${r.ms != null ? r.ms + "ms" : ""}</span></div>`).join(""); log.scrollTop = log.scrollHeight; }
   }
-  return { mount, open, call, release, ensure, employee: sendEmployee, feed, meter, etsyBudgetOk, etsyReadout, connectEtsy, etsy: () => ({ hour: hourCalls(), cap: etsyCap(), session: E_.sessionTotal, station: E_.stationTotal, meter: E_.station }), state: () => S_.state, log: S_.log, up: () => S_.up, inControl: () => S_.control, nonce: () => S_.nonce, renderConsole, origin, frameUrl, _S: S_, _E: E_ };
+  return { mount, open, call, release, ensure, employee: sendEmployee, feed, meter, etsyBudgetOk, etsyReadout, connectEtsy, etsy: () => ({ hour: hourCalls(), cap: etsyCap(), session: E_.sessionTotal, station: E_.stationTotal, meter: E_.station }), state: () => S_.state, log: S_.log, up: () => S_.up, inControl: () => S_.control, nonce: () => S_.nonce, renderConsole, origin, frameUrl, _S: S_, _E: E_, _reloadFrame: reloadFrame };
 })();
 
 /* ── the dock: where the station frame is kept. "full" over the Design Station tab's placeholder; "live", out of sight on
@@ -1419,6 +1423,16 @@ const Orders = window.Orders = (() => {
   let mapsSig = "", mapsRead = [], mapsCut = "", customListAt = 0, customBase = null, mapsSeq = 0, mapsApplied = 0;
   const mapReply = {};   // the last whole answer of each learned map, with the signature it came with
   let mapAsk = 0;
+  /* COST (Oct 2026): a page just opened held none of them and read all three maps whole (about 3,000 + 2,000 + 300 documents) at EVERY load. The last answer of each is now kept on
+     this computer (charm-nest-master-cache.js: readMap / saveMap) and starts a page the way a read of the same visit does: it goes back to the cloud as ifSig / since, and the cloud
+     answers `unchanged` (a handful of reads) or only what was written after it; a removal, or anything it cannot vouch for, answers the whole map, as before. Production only (a
+     sandbox answer covers two collections). No IndexedDB, a copy that does not read back or any failure: the whole map is read, as it was. */
+  const mapHeld = {}, mapSaving = {};
+  const mapKept = () => { const MC = window.CharmNestMasterCache; return !WORKSPACE_SANDBOX && MC && typeof MC.readMap === "function" && typeof MC.saveMap === "function" ? MC : null; };
+  function keepMap(key) {
+    if (mapSaving[key]) return;
+    mapSaving[key] = setTimeout(() => { mapSaving[key] = 0; try { const MC = mapKept(), c = mapReply[key]; if (MC) { if (c && c.sig) MC.saveMap(key, { sig: c.sig, n: c.n, r: c.r }).catch(() => {}); else MC.forgetMap(key).catch(() => {}); } } catch (_) { /* the page does not depend on it */ } }, 3000);
+  }
   /* COST (Oct 2026): a map whose signature moved (a person's answer, by anyone, on any computer) was read whole again by every tab: about
      3,000 + 2,000 + 300 documents. The answer held is sent as `since` (its signature and how many documents it was read from), and the cloud
      answers with what was written since (`changes`, by key: null takes one away), which is put over a copy of the answer held, the same shape
@@ -1435,12 +1449,15 @@ const Orders = window.Orders = (() => {
     return Object.assign({}, had, { [field]: next });
   }
   async function readMap(key, op) {
+    // (the first read of a page asks what the copy kept on this computer held; one ask per map, every caller waits for it)
+    if (!mapReply[key] && !(key in mapHeld)) { const MC = mapKept(); mapHeld[key] = MC ? MC.readMap(key).then(h => { if (h && !mapReply[key]) mapReply[key] = { sig: h.sig, n: h.n, r: h.r, at: 0 }; }, () => {}) : null; }
+    if (mapHeld[key]) await mapHeld[key];
     const had = mapReply[key], at = ++mapAsk;
     const since = had && had.sig && Array.isArray(had.n) && !had.r.truncated ? { sig: had.sig, n: had.n } : null;
     const r = await api("charmNestLibrary", had && had.sig ? Object.assign({ op, ifSig: had.sig }, since ? { since } : {}) : { op });
     if (r && r.unchanged && had) return (mapReply[key] || had).r;   // (the newest whole answer held: one that came back meanwhile is newer)
-    if (r && r.since && since && r.sig && Array.isArray(r.n)) { const whole = Object.assign(withChanges(key, had.r, r.changes), { sig: r.sig, n: r.n }); if (!mapReply[key] || at > mapReply[key].at) mapReply[key] = { sig: r.sig, n: r.n, r: whole, at }; return whole; }
-    if (r && r.sig) { if (!mapReply[key] || at > mapReply[key].at) mapReply[key] = { sig: r.sig, n: Array.isArray(r.n) ? r.n : null, r, at }; } else delete mapReply[key];
+    if (r && r.since && since && r.sig && Array.isArray(r.n)) { const whole = Object.assign(withChanges(key, had.r, r.changes), { sig: r.sig, n: r.n }); if (!mapReply[key] || at > mapReply[key].at) { mapReply[key] = { sig: r.sig, n: r.n, r: whole, at }; keepMap(key); } return whole; }
+    if (r && r.sig) { if (!mapReply[key] || at > mapReply[key].at) { mapReply[key] = { sig: r.sig, n: Array.isArray(r.n) ? r.n : null, r, at }; keepMap(key); } } else { delete mapReply[key]; keepMap(key); }
     return r;
   }
   if (!B.maps.customDone) B.maps.customDone = {};

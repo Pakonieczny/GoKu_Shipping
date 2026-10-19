@@ -620,7 +620,7 @@ async function laserUnchanged(sheetIds, setIds, revs) {
    next read finds out (never stale, at worst one read too many). A reader sets `verify` now and then to skip the shortcut and probe
    the documents themselves: the safety net for a write that did not move the revision. The slow check that records seals asks the
    same way (ifRev of its own last pass, for the same cards), because a pass that finds nothing new reads and writes nothing. ── */
-const REV = "Charm_Nest_Rev", REV_DOC = "library";   // (beside the placement counter, Charm_Nest_Rev/placement; production only, as that one is: the sandbox keeps no counter, a leftover of every reset, and its readers ask in full)
+const REV = "Charm_Nest_Rev", REV_DOC = "library";   // (beside the placement counter, Charm_Nest_Rev/placement; the sandbox's own two are in Sandbox_Order_Rev, see SB_REV_COLL)
 // (the sandbox-only ops are not here: they write Sandbox_ records only, whatever the request says, so not even a sandbox request without its flag moves the production counter)
 const REV_OPS = new Set(["backPut", "backInvalidate", "setAllocate", "setUpdate", "runPut", "runArchive", "laserDone", "putSheet", "deleteSheet", "restoreSheet", "archiveEmptySheet", "roseRecordCut", "roseTakeOff", "roseClaim", "roseRelease", "partialClaim", "partialRelease", "flowApply", "customDecide", "customPut", "customReopen", "customDelete", "customSheetPut", "cancelPut", "cancelRestore", "noDesignPut", "noDesignDelete", "sheetPdf", "cancelSweep", "purgeHistory", "manualClaim"]);
 /* COST (Oct 2026): WHAT moved, beside THAT something moved. The revision moved for every write in REV_OPS, and a nesting run writes runPut every few
@@ -633,15 +633,18 @@ const REV_OPS = new Set(["backPut", "backInvalidate", "setAllocate", "setUpdate"
    an older instance's plain +1, or a list that could not be written) sends the reader to the documents themselves, as before. */
 const REV_CAP = 200, REV_TOUCHED = Symbol("revTouched");
 const revName = s => (s && s.exists ? `${revOf(s)}-${num((s.data() || {}).n)}` : "0");
+/* COST (Oct 2026): the sandbox keeps the same two counters (this revision and the placement gen below) in Sandbox_Order_Rev, a family its reset wipes (charm-nest-sandbox-families.js),
+   under names no order id can have. Without them every beat of a sandbox page read one document per card of its Library (~60) and every tick of its placement feed all the pieces and
+   sheets of the orders on screen (~175 reads, ~115 KB), whether anything had changed or not. After a reset the documents are gone and every reader asks in full once. */
+const SB_REV_COLL = "Order_Rev", SB_REV_LIB = "_library", SB_REV_PLACE = "_placement";
+const revRef = () => (PREFIX ? db.collection(PREFIX + SB_REV_COLL).doc(SB_REV_LIB) : db.collection(REV).doc(REV_DOC));
 /** The Library's revision now ('<update time>-<n>'), "0" before the first write, null when it cannot be read (the reader then asks in full). */
 async function readRev() {
-  if (PREFIX) return null;
-  try { const [s] = await db.getAll(db.collection(REV).doc(REV_DOC), { fieldMask: ["n"] }); return revName(s); } catch (e) { console.warn("[charmNestLibrary] revision not read:", e && e.message); return null; }
+  try { const [s] = await db.getAll(revRef(), { fieldMask: ["n"] }); return revName(s); } catch (e) { console.warn("[charmNestLibrary] revision not read:", e && e.message); return null; }
 }
 /** The revision with its list of what the recent writes touched (the second read: only for a reader whose revision moved). */
 async function readRevList() {
-  if (PREFIX) return null;
-  try { const [s] = await db.getAll(db.collection(REV).doc(REV_DOC), { fieldMask: ["n", "mapN", "floor", "changed"] }); return { rev: revName(s), doc: s.exists ? s.data() || {} : null }; } catch (e) { console.warn("[charmNestLibrary] revision list not read:", e && e.message); return null; }
+  try { const [s] = await db.getAll(revRef(), { fieldMask: ["n", "mapN", "floor", "changed"] }); return { rev: revName(s), doc: s.exists ? s.data() || {} : null }; } catch (e) { console.warn("[charmNestLibrary] revision list not read:", e && e.message); return null; }
 }
 /** True when the list says that no document named in keys was written after the revision `since` (one this reader holds); false when it cannot say. */
 function revQuiet(doc, since, keys) {
@@ -656,10 +659,9 @@ function revTouch(b, keys) { if (!b || typeof b !== "object") return; const t = 
 /** Something the Library reads was written: move the revision, and note what (keys; null: not known, '*'; an empty list moves nothing). One read and one
     write (a transaction: the list is the count's); a failure falls back to the plain +1, which readers take as "not known" (mapN), and their probe of the documents is the net. */
 async function bumpRev(keys) {
-  if (PREFIX) return;
   const list = keys == null ? ["*"] : [...keys];
   if (!list.length) return;
-  const ref = db.collection(REV).doc(REV_DOC);
+  const ref = revRef();
   try {
     await db.runTransaction(async tx => {
       const s = await tx.get(ref), d = s.exists ? s.data() || {} : {}, was = num(d.n), kept = num(d.mapN) === was && !!d.changed && typeof d.changed === "object";
@@ -1061,7 +1063,8 @@ async function op_manualClaim(b) {
   revTouch(b, ["s:" + b.id]);
   const ref = col(SHEETS).doc(b.id);
   return db.runTransaction(async tx => {
-    const snap = await tx.get(ref); if (!snap.exists) return { error: "This sheet is no longer in the Library.", status: 404 };
+    // (COST, Oct 2026: the claim is kept alive every 30 s; it reads the three fields it decides on, not the sheet record whole, which can be hundreds of KB)
+    const [snap] = await txGetAll(tx, [ref], ["manualEdit", "laserDoneAt", "roseCutAt"]); if (!snap.exists) return { error: "This sheet is no longer in the Library.", status: 404 };
     const d = snap.data(), cur = d.manualEdit && typeof d.manualEdit === "object" && d.manualEdit.tab ? d.manualEdit : null, now = Date.now();
     if (b.release === true) { if (cur && cur.tab === tab) tx.set(ref, { manualEdit: null }, { merge: true }); return { ok: true, held: null }; }
     if (cur && cur.tab !== tab && now - num(cur.at) < MANUAL_STALE_MS) return { ok: false, held: { by: str(cur.by, 80), at: num(cur.at) } };
@@ -1833,9 +1836,9 @@ async function op_getOrderPieces(b) {
   if (gen != null && ifRev && b.ifGen != null && Number(b.ifGen) === gen) return { ok: true, unchanged: true, rev: ifRev, gen };
   /* COST (Oct 2026): every sorter tab on every computer asks about the same orders on screen. An answer made at placement gen G is still the
      answer while the gen is G (every write a placement answer is made from raises it, after it lands), so a warm instance hands it to the next
-     asker of the same orders at the same gen instead of reading every pool row and sheet again. Production only (the sandbox has no gen). */
+     asker of the same orders at the same gen instead of reading every pool row and sheet again. (The sandbox's gen is its own, see SB_REV_PLACE; its key carries the prefix.) */
   // (only for a page that sent its last gen and the gen has moved: a first read, and the page's periodic full read without ifGen, always read the documents)
-  const memoKey = gen != null && b.ifGen != null ? gen + "|" + ids.slice().sort().join(",") : null, memo = memoKey && PIECES_MEMO.get(memoKey);
+  const memoKey = gen != null && b.ifGen != null ? PREFIX + gen + "|" + ids.slice().sort().join(",") : null, memo = memoKey && PIECES_MEMO.get(memoKey);
   if (memo && Date.now() - memo.at < PIECES_MEMO_MS) { const out = ifRev && memo.answer.rev === ifRev ? { ok: true, unchanged: true, rev: ifRev } : memo.answer; return Object.assign({}, out, { gen }); }
   let answer;
   try { answer = await db.runTransaction(tx => readOrderPieces({ get: q => tx.get(q), getAll: (...a) => (typeof a[a.length - 1].get === "function" ? txGetAll(tx, a) : txGetAll(tx, a.slice(0, -1), a[a.length - 1].fieldMask)) }, ids, sheetIds), { readOnly: true }); }
@@ -1858,16 +1861,25 @@ const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces
   "sandboxCancel", "sandboxPut", "sandboxPullOrders", "sandboxPullLimitSet", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
 ["customSaveGet", "customSaveCommit", "customSavePending", "customSaveIntent"].forEach(op => NO_GEN_BUMP.add(op));   // (the save writes a master entry, an alias and its own record: nothing a placement answer is made from)
 NO_GEN_BUMP.add("manualClaim");   // (Manual Control's claim writes the sheet record's manualEdit alone: nothing a placement answer is made from)
+["customPut", "customReopen", "customDelete", "customDecide", "customSheetPut", "reviewMarkPut"].forEach(op => NO_GEN_BUMP.add(op));   // (COST, Oct 2026: a Complete Order, a QR print, a Review mark, a decision and a custom design sent to a sheet write Charm_Custom_Orders / Charm_Custom_Sheet / Charm_Nest_CustomRead and the order's timeline, never a pool row or a sheet; a placement answer is made from those two alone, and the page that pressed learns of its own press without a read. Each press used to send every watching tab to a full read of the orders on screen)
 async function placementGen() {
-  if (PREFIX) return null;
+  // (the sandbox's gen is a number drawn at random at each raise, g: it never repeats one a page holds, even after a reset deleted the document and the counting began again)
+  if (PREFIX) { try { const s = await db.collection(PREFIX + SB_REV_COLL).doc(SB_REV_PLACE).get(); return s.exists ? Number((s.data() || {}).g) || 0 : 0; } catch (e) { console.warn("[charmNestLibrary] sandbox placement gen not read:", (e && e.message) || e); return null; } }
   try { const s = await db.collection(REV_COLL).doc("placement").get(); return s.exists ? Number((s.data() || {}).n) || 0 : 0; }
   catch (e) { console.warn("[charmNestLibrary] placement gen not read:", (e && e.message) || e); return null; }
 }
+/** Does the sandbox raise its counters after this op? Not after its purge (it wipes the counters with everything else: a purged sandbox is empty) and not after an answer that refuses
+    the call (a 4xx: the sweep that exists only for production, a wrong passcode, an open run: nothing was written). A throw, and every answer in production, still raise them. */
+const sbQuiet = (op, out) => !!PREFIX && (op === "purgeHistory" || (!!out && !!out.error && (out.status == null || (out.status >= 400 && out.status < 500))));
 async function bumpPlacementGen(op) {
-  if (PREFIX || NO_GEN_BUMP.has(op)) return;
+  if (NO_GEN_BUMP.has(op)) return;
   // (a second try after a short wait: a counter that is not raised leaves readers on `unchanged` until their once-a-minute full read)
   for (let tries = 0; tries < 2; tries++) {
-    try { await db.collection(REV_COLL).doc("placement").set({ n: FV.increment(1), at: FV.serverTimestamp(), op: String(op || "").slice(0, 40) }, { merge: true }); return; }
+    try {
+      if (PREFIX) await db.collection(PREFIX + SB_REV_COLL).doc(SB_REV_PLACE).set({ g: 1 + Math.floor(Math.random() * (2 ** 50)), at: Date.now(), op: String(op || "").slice(0, 40) });
+      else await db.collection(REV_COLL).doc("placement").set({ n: FV.increment(1), at: FV.serverTimestamp(), op: String(op || "").slice(0, 40) }, { merge: true });
+      return;
+    }
     catch (e) { console.warn("[charmNestLibrary] placement gen not raised:", (e && e.message) || e); if (!tries) await new Promise(r => setTimeout(r, 120)); }
   }
 }
@@ -4676,12 +4688,12 @@ exports.handler = async (event) => {
   // ZODGO (13 Oct 2026): an op that writes a listing's Etsy inventory (listingEtsySkuWrite) is refused for a listing whose ZODIAC SIGN drop-down was sent or may have landed: one Firestore read after the password door, nothing sent; see _charmNestEtsyZodiac.js "THE FENCE"
   { const fenced = await require("./_charmNestEtsyZodiac").fenceFor(body.op, body); if (fenced) return json(200, fenced); }
   try {
-    const out = await fn(body);
-    await bumpPlacementGen(body.op);   // (after the op's writes have landed, before the answer: whoever sees the answer then reads the new gen)
+    const out = await fn(body), quiet = sbQuiet(body.op, out);
+    if (!quiet) await bumpPlacementGen(body.op);   // (after the op's writes have landed, before the answer: whoever sees the answer then reads the new gen)
     if (DONE_TOUCH || DONE_BUMP_OPS.has(body.op)) await bumpDoneRev(body.op);
     // the Library's revision moves after a write it reads (see readRev: the readers' one-document question); after an error too, a write may have landed before it
     // (COST, Oct 2026: naming what the op wrote, when it says: revTouch; an op that wrote nothing the Library reads moves nothing)
-    if (REV_OPS.has(body.op)) await bumpRev(body[REV_TOUCHED] || null);
+    if (REV_OPS.has(body.op) && !quiet) await bumpRev(body[REV_TOUCHED] || null);
     return json(out && out.error ? (out.status || 400) : 200, out);
   } catch (e) {
     await bumpPlacementGen(body.op);   // (a failed op may have written some of what it meant to)

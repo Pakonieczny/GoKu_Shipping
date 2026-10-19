@@ -26,7 +26,7 @@ const crypto = require("crypto");
 const Admins = require("./_stationAdmins");
 const { json, str, safePath, header } = require("./_charmNestAuth");
 
-const C = { ATTEMPTS: "CharmRepo_AuthAttempts", ALERTS: "CharmRepo_Alerts", TOKENS: "CharmRepo_Tokens", LOCKS: "CharmRepo_Lock", OPERATORS: "EtsyMail_Operators", CONFIG: "config", CONFIG_DOC: "repoProtect", INDEX: "Charm_Master_Index", FILES: "Charm_Master_Files" };
+const C = { ATTEMPTS: "CharmRepo_AuthAttempts", ALERTS: "CharmRepo_Alerts", ALERT_REV: "CharmRepo_Rev", TOKENS: "CharmRepo_Tokens", LOCKS: "CharmRepo_Lock", OPERATORS: "EtsyMail_Operators", CONFIG: "config", CONFIG_DOC: "repoProtect", INDEX: "Charm_Master_Index", FILES: "Charm_Master_Files" };
 const MIN = 60000;
 const ACTIONS = new Set(["upload", "delete", "download", "modify", "history", "other", "settings"]);
 /* how long a token lives, and which are single use (a destructive click asks again) */
@@ -36,6 +36,13 @@ const ONCE = new Set(["delete", "history"]);
 const OPENS = { upload: ["upload", "modify"], modify: ["modify"], download: ["download"], other: ["upload", "modify", "download"], delete: ["delete-file", "delete-sku"], history: ["delete-file"], session: ["settings", "upload", "modify", "download"] };
 const WINDOW_MS = 10 * MIN, LOCK_MS = 15 * MIN, SRC_MAX = 5, ALL_MAX = 20;
 const OPERATOR_CACHE_MS = 30000, TOKEN_CACHE_MS = 30000, SESSION_CACHE_MS = 5000, SESSION_MAX_MS = 12 * 60 * MIN, ALERT_LIST = 100, ALERT_READ = 300;
+/* COST (Oct 2026): the master admin's open Sorter asks for the Alert list once a minute, and every ask read up to ALERT_READ documents (300 reads a minute for as long as
+   the tab is in view, whether anything happened or not). CharmRepo_Rev/alerts { rev, at } names the last change to the list: record() and alertClose() set it (a whole
+   document, so whatever was kept on it goes) in the batch that changes the list, so it can never be behind it. The ask that reads the list keeps its answer on that document
+   (built, with builtRev = the revision it read BEFORE the list: a change that lands meanwhile leaves rev ahead of builtRev and the next ask reads again), so the next ask, on
+   any instance, is one read of that document while it has not moved; a kept answer older than ALERT_MEMO_MS is not used (a change nothing announced is a delay of minutes,
+   never a stale card). Any doubt (the document unreadable) reads the list as before; the first ask after this shipped creates the document (rev "init"). */
+const ALERT_MEMO_MS = 15 * MIN, ALERT_REV_DOC = "alerts";
 
 /* time is replaceable so a test runs in no time */
 const deps = { now: () => Date.now() };
@@ -223,6 +230,7 @@ async function record(db, rec) {
   const ref = db.collection(C.ATTEMPTS).doc(), batch = db.batch();
   batch.set(ref, rec);
   batch.set(db.collection(C.ALERTS).doc(ref.id), Object.assign({}, rec, { closed: false, closedAt: null, closedBy: "" }));
+  batch.set(db.collection(C.ALERT_REV).doc(ALERT_REV_DOC), { rev: ref.id, at: +rec.at || deps.now() });   // (COST: the list changed; see ALERT_MEMO_MS)
   await batch.commit();
   return ref.id;
 }
@@ -311,13 +319,26 @@ async function adminGate(db, by) {
   if (is === null) return json(503, { error: "unavailable" });
   return is ? null : json(403, { error: "admin-only" });
 }
+/** The revision document: { doc } (empty when no change was recorded yet), or null when it cannot be read (the list is then read as before). */
+async function alertRevDoc(db) {
+  try { const s = await db.collection(C.ALERT_REV).doc(ALERT_REV_DOC).get(); return { doc: s.exists ? s.data() || {} : {} }; }
+  catch (e) { warn("alert revision", e); return null; }
+}
 async function alerts(db, body) {
   const no = await adminGate(db, body.by); if (no) return no;
   try {
+    // (the revision is read BEFORE the list: a change that lands during the read only makes the next ask read again)
+    const R = await alertRevDoc(db), t = deps.now();
+    let rev = R ? String(R.doc.rev || "") : "";
+    // (no change recorded since this shipped: the document is created, once, so the list can be kept on it; create() never replaces what a writer set meanwhile)
+    if (R && !rev) { try { await db.collection(C.ALERT_REV).doc(ALERT_REV_DOC).create({ rev: "init", at: t }); rev = "init"; } catch (e) { rev = ""; } }
+    if (R && rev && R.doc.builtRev === rev && R.doc.built && typeof R.doc.built === "object" && t >= +R.doc.builtAt && t - +R.doc.builtAt < ALERT_MEMO_MS) return json(200, R.doc.built);
     const snap = await db.collection(C.ALERTS).where("closed", "==", false).limit(ALERT_READ).get();
     const rows = snap.docs.map(d => { const r = d.data() || {}; return { id: d.id, at: +r.at || 0, by: str(r.by, 80), action: str(r.action, 20), target: str(r.target, 80), ok: r.ok === true, reason: str(r.reason, 20) }; });
     rows.sort((a, b) => b.at - a.at);
-    return json(200, { ok: true, alerts: rows.slice(0, ALERT_LIST), total: rows.length, more: rows.length > ALERT_LIST || snap.size >= ALERT_READ });
+    const out = { ok: true, alerts: rows.slice(0, ALERT_LIST), total: rows.length, more: rows.length > ALERT_LIST || snap.size >= ALERT_READ };
+    if (rev) { try { await db.collection(C.ALERT_REV).doc(ALERT_REV_DOC).update({ built: out, builtRev: rev, builtAt: t }); } catch (e) { warn("alert list not kept", e); } }   // (update: never creates the document, never touches rev)
+    return json(200, out);
   } catch (e) { warn("alerts", e); return json(503, { error: "unavailable" }); }
 }
 async function alertClose(db, body) {
@@ -330,7 +351,7 @@ async function alertClose(db, body) {
     const refs = ids.map(id => db.collection(C.ALERTS).doc(id)), snaps = await db.getAll(...refs), now = deps.now(), by = str(body.by, 80);
     const batch = db.batch(); let n = 0;
     snaps.forEach((s, i) => { if (s.exists && (s.data() || {}).closed !== true) { batch.update(refs[i], { closed: true, closedAt: now, closedBy: by }); n++; } });
-    if (n) await batch.commit();
+    if (n) { batch.set(db.collection(C.ALERT_REV).doc(ALERT_REV_DOC), { rev: "c" + now + "-" + crypto.randomBytes(4).toString("hex"), at: now }); await batch.commit(); }   // (COST: the list changed; see ALERT_MEMO_MS)
     return json(200, { ok: true, closed: n });
   } catch (e) { warn("alert close", e); return json(503, { error: "unavailable" }); }
 }

@@ -161,8 +161,10 @@
   const bc = "BroadcastChannel" in window ? new BroadcastChannel("cn-mail") : null;
   const TAB = uidOf();
   let syncTimer = 0, syncDue = 0, syncing = false, lastTouch = Date.now();
+  const IDLE_MS = 10 * 60000;   // no input for this long: nobody is working in this window
   // (COST, Oct 2026: the first input after a quiet spell brings a sync planned at the slow pace forward to the pace it is now)
-  const touched = () => { const was = lastTouch; lastTouch = Date.now(); if (lastTouch - was > 1000 && syncTimer && !syncing && M.key) { const ms = pace(); if (syncDue - Date.now() > ms + 250) kick(ms); } };
+  // (and the light is made fresh at once when the person comes back from a long quiet spell: while nobody was there it was checked less often, see healthEvery)
+  const touched = () => { const was = lastTouch; lastTouch = Date.now(); if (lastTouch - was > 1000 && syncTimer && !syncing && M.key) { const ms = pace(); if (syncDue - Date.now() > ms + 250) kick(ms); } if (lastTouch - was > IDLE_MS && M.key) healthSoon(); };
   ["pointerdown", "keydown", "wheel", "touchstart"].forEach(ev => document.addEventListener(ev, touched, { capture: true, passive: true }));
   window.addEventListener("focus", touched);
   /* The pace follows what the person is looking at: a conversation on screen or a message on its way is watched every
@@ -188,11 +190,16 @@
     return ms;
   }
   function kick(ms) { clearTimeout(syncTimer); if (!M.key) return; const w = ms == null ? pace() : ms; syncDue = Date.now() + w; syncTimer = setTimeout(syncNow, w); }
+  /* COST (Oct 2026): the whole re-read (every open conversation and three days of resolved ones, one read each: ~225 for 150 + 100) is the safety net under the
+     deltas, made every 15 minutes by every tab that is open. A tab nobody can see (hidden: it also hears the full answers another tab of this browser makes) makes
+     none; one nobody has touched for IDLE_MS makes it hourly. Back in sight (visibilitychange kicks a sync at 300 ms) or at the first input (which pulls the
+     next sync forward), the 15 minutes apply again, so a tab a person works in is as complete as before. The deltas (since, n) are untouched. */
+  const fullDue = () => Date.now() - M.fullAt > (document.hidden ? Infinity : Date.now() - lastTouch > IDLE_MS ? 60 * 60000 : 15 * 60000);
   async function syncNow() {
     if (syncing || !M.key) return;
     syncing = true;
     try {
-      if (Date.now() - M.fullAt > 15 * 60000) M.needFull = true;
+      if (fullDue()) M.needFull = true;
       const res = await call("sync", { n: M.n, since: M.since, sandbox: SANDBOX, full: M.needFull, qn: M.q.n, qo: !SANDBOX && moving() }, { timeout: 20000 });
       M.fails = 0; M.lastOkAt = Date.now(); setLink("ok");
       apply(res, true);
@@ -225,13 +232,17 @@
   let gapBusy = false, gapNote = null;   // the missing-messages notice: a re-check or a dismissal under way, and the line that says how it went ({ tone, text, at })
   M.health = get(LS.health, null); M.healthFails = 0; M.linkBell = null;
   const writingShown = () => !!M.key && ([...M.panes].some(P => P.visible()) || [...M.lines.values()].some(L => L.node.isConnected && !!L.node.offsetParent));
+  /* COST (Oct 2026): each check is ~55 reads when it is made (the inbox's helper, watcher, scrape, mirror and queue records); once a minute for every computer that shows a place
+     to write. A hidden tab was already a third as often; so is a window nobody has touched for IDLE_MS (and no message of ours on its way): the sync answer carries the link monitor's
+     judgement at no read, and the first input after the quiet spell makes a due check at once (touched -> healthSoon). */
+  const healthEvery = () => (document.hidden || (Date.now() - lastTouch > IDLE_MS && !moving()) ? 3 : 1) * HEALTH_EVERY;
   function healthLater() {
     clearTimeout(healthTimer); healthTimer = 0;
     if (!writingShown()) return;
     const age = M.health ? Date.now() - M.health.at : Infinity;
     // after a failed check: 5 s, 10 s, 20 s, 40 s, then once a minute (a tab in the background a third as often)
     const back = M.healthFails ? Math.min(60000, 5000 * 2 ** (M.healthFails - 1)) * (document.hidden ? 3 : 1) : 1000;
-    healthTimer = setTimeout(() => checkHealth(false), Math.max(back, (document.hidden ? 3 * HEALTH_EVERY : HEALTH_EVERY) - age));
+    healthTimer = setTimeout(() => checkHealth(false), Math.max(back, healthEvery() - age));
   }
   /** A place to write came on screen: a check that is due happens now. */
   function healthSoon() {

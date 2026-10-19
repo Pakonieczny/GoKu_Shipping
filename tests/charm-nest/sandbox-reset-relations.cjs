@@ -287,7 +287,9 @@ async function serverSection() {
   const late = await must({ op: 'aliasPut', listingId: LISTING, sku: 'LION_SANDBOX_9', title: 'late', by: 'old tab', sandbox: true });
   assert(late.verified === true && store.get(`Charm_Sku_Aliases/${LISTING}`).sku === 'LION_SANDBOX_9' && !store.has(`Sandbox_Charm_Sku_Aliases/${LISTING}`), 'a late sandbox pick is saved in the shared store, read back, and the sandbox keeps no copy of it');
   await must({ op: 'noDesignPut', sku: 'LATE_NODESIGN', note: 'late', by: 'old tab', sandbox: true });
-  assert(sandboxKeys().length === 1 && sandboxKeys()[0].startsWith('Sandbox_Charm_Sku_NoDesign/'), "any other late sandbox answer is the sandbox's copy only: " + sandboxKeys().join(', '));
+  // (COST, Oct 2026: beside it the sandbox's own two counters, Sandbox_Order_Rev/_library and /_placement, which its reset wipes with the rest)
+  const lateKeys = sandboxKeys().filter(k => !/^Sandbox_Order_Rev\/_(library|placement)$/.test(k));
+  assert(lateKeys.length === 1 && lateKeys[0].startsWith('Sandbox_Charm_Sku_NoDesign/'), "any other late sandbox answer is the sandbox's copy only: " + sandboxKeys().join(', '));
   assert((await post({ op: 'sandboxReset', sandbox: true })).body.more === false && !sandboxKeys().length, 'pressed again, the reset clears it');
   assert.deepStrictEqual((await sbGet('aliasGet')).aliases, (await prGet('aliasGet')).aliases, 'the sandbox reads exactly what production reads, the late pick included');
   assert.strictEqual((await prGet('aliasGet')).aliases[LISTING].sku, 'LION_SANDBOX_9', 'production reads the link the sandbox saved');
