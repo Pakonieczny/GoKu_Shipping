@@ -25,10 +25,10 @@ try {
   const code = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   const fn = (src, start, end) => { const i = src.indexOf(start), j = src.indexOf(end, i + 10); if (!(i > 0 && j > i)) throw new Error('markers ' + start); return src.slice(i, j); };
   const group = fn(bridge, 'function groupNode(', 'function renderBody()'), single = fn(bridge, 'const { sp, m, st, shown, due, where, fc, attn, why, gateBtn, mail, team, sealRec, seals, held, rel } = lineView(r)', 'const number=node.querySelector');
-  check(!/releaseSealHtml\(/.test(code(group)) && !/releaseSealHtml\(/.test(code(single)) && /\$\{cardSealHtml\(sealM\)\}/.test(group) && /\$\{cardSealHtml\(sealM\)\}/.test(single) && /relSig\(rel\)/.test(group) && /relSig\(rel\)/.test(single),
-    'source: a card and a list row draw the Release Hold seal once, in the seals row (cardSealHtml), not in the actions column; the seal is in the card\'s stamp (a release repaints the card)');
+  check(/ordSealsRow" data-testid="order-seals-row">\$\{releaseSealHtml\(rel\)\}/.test(group) && /lineSealsHtml\(r, e, rel\)/.test(single) && !/rowActions[^`]*releaseSealHtml/.test(code(single)) && /relSig\(rel\)/.test(group) && /relSig\(rel\)/.test(single),
+    'source: (ORDLIST) a grouped order draws the Release Hold seal once in its head, a one-line card / row first in its seals cell (lineSealsHtml), never in the actions column; the seal is in the stamp (a release repaints it)');
   const row = fn(bridge, 'const cardSeals = rows =>', '/** The pictures a node of an earlier drawing'), eg = fn(bridge, 'const releaseOfRow = row =>', '  function renderPlacementRows(');
-  check(/class="ordSealsRow"/.test(row) && /releaseSealHtml\(m\.rel\)/.test(row) && /\$\{seal\}\$\{strip\}/.test(row), 'source: the seals row holds the release seal first and the approval strip after it');
+  check(/const lineSealsHtml = \(r, e, rel\) => `<div class="egPlacementSeals">\$\{rel \? releaseSealHtml\(rel\) : ""\}\$\{e \? e\.seals : recordSealHtml\(r\)\}<\/div>`/.test(row), 'source: the seals cell holds the release seal first and the line\'s approval seals after it (no strip)');
   check(!/fetch\(|api\(|setTimeout|setInterval|requestAnimationFrame|addEventListener|onSnapshot|OrderTimeline|ensureSeals|loadSeals/.test(code(row) + code(eg)), 'source: the seals row and the Engraving rows\' lookup read what the page holds: no read, timer or listener');
   const place = fn(bridge, 'function renderPlacementRows(', 'function quietRow('), mono = fn(bridge, 'function monoPlacementRow(grp) {', 'function monoStep(');
   check(/rel\.html\(\)\+\(told\?/.test(place) && /"\|"\+rel\.sig|\+"\|"\+rel\.sig/.test(place) && /rel\.html\(\) \+ \(window\.CNMonogramSeals/.test(mono) && /"\|" \+ rel\.sig/.test(mono), 'source: the Engraving tab\'s engraved row and monogram row draw the seal first in their seals cell, and keep its signature in the cell\'s stamp');
@@ -92,7 +92,7 @@ try {
     // ── nothing is released yet: no seal anywhere ──
     const none0 = { cards: await orders(page, 'cards'), list: await orders(page, 'list'), eng: await engrave(page) };
     check(Object.values(none0.cards).length >= 6 && Object.values(none0).every(m => Object.values(m).every(o => !o.seal)), '0 · before any release: no Release Hold seal on any card, row or Engraving row');
-    check(Object.values(none0.cards).some(o => o.strip) && none0.cards[RID('back')] && none0.cards[RID('back')].strip, '0 · the approval strip is on the staged cards (the seal must stand beside it)');
+    check(Object.values(none0.cards).every(o => !o.strip), '0 · ORDLIST: no approval strip on any card (each approval seal is in its own seals cell)');
 
     // ── the press, on the Review card's Release Hold button ──
     await page.evaluate(() => { window.__toasts = []; const was = window.toast; window.toast = (m, k, ms) => { window.__toasts.push([k || '', String(m)]); return was && was(m, k, ms); }; });
