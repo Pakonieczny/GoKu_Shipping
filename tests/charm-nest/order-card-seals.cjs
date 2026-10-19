@@ -120,7 +120,7 @@ const count = (s, re) => (String(s).match(re) || []).length;
   const c = code(mod);
   check(!/setTimeout|setInterval|requestAnimationFrame|addEventListener|MutationObserver|fetch\(|XMLHttpRequest|onSnapshot|api\(|ensureSeals|loadSeals|localStorage|\.events\(/.test(c), 'source: the module makes no read, timer or listener and never asks the timeline');
   check(/charm-nest-order-seals\.js\?v=\d+-cs1/.test(html) && /"charm-nest-order-seals\.js"/.test(build) && html.indexOf('charm-nest-order-seals.js') > html.indexOf('charm-nest-monogram-seals.js') && html.indexOf('charm-nest-order-seals.js') < html.indexOf('charm-nest-bridge.js?v='), 'source: the module is loaded by the page after the two seal modules and before the bridge, and is in the published asset list');
-  for (const [file, re] of [['charm-nest-bridge.js', /charm-nest-bridge\.js\?v=[^"]*-cs1"/], ['charm-nest-activity.css', /charm-nest-activity\.css\?v=[^"]*-cs1"/]]) check(re.test(html), 'source: the cache-buster of ' + file + ' is bumped (-cs1)');
+  for (const [file, re] of [['charm-nest-bridge.js', /charm-nest-bridge\.js\?v=[^"]*-cs1[^"]*"/], ['charm-nest-activity.css', /charm-nest-activity\.css\?v=[^"]*-cs1"/]]) check(re.test(html), 'source: the cache-buster of ' + file + ' is bumped (-cs1)');
   check(/\.ordSeals\{/.test(css) && /\.ordSeal\{/.test(css) && css.indexOf('.ordSeals{') > css.indexOf('.monoSeals{display:contents}'), 'source: the strip\'s CSS lives beside the engraving / monogram seal CSS (charm-nest-activity.css)');
 }
 

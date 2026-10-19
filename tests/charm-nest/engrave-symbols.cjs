@@ -88,7 +88,7 @@ ok(/Bitstream/.test(fs.readFileSync('vendor/fonts/DejaVuSans-LICENSE.txt', 'utf8
 ok(bridge.includes('const SYMBOL_FILE = "vendor/fonts/DejaVuSans.ttf"') && bridge.includes('/HTTP 4\\d\\d/.test(e.message)'), 'the bridge loads it, and only a missing file (HTTP 4xx) is tolerated: a bad connection retries like the emoji font');
 ok(bridge.includes('opentype.Path, symbols ? [symbols] : [])') && bridge.includes('[F_.sansRaw, F_.symbolFont].filter(Boolean)'), 'the default face falls back to the symbols; every other face to Source Sans 3 and the symbols');
 ok(bridge.includes('F_.workerFonts.symbol = symbolBytes') && worker.includes('data.fonts.symbol') && worker.includes('[sansRaw,symbolFont].filter(Boolean)'), 'the worker gets the same fallbacks');
-ok(/charm-nest-engrave-worker\.js\?v=[^"]*-sy1"/.test(bridge) && /charm-nest-bridge\.js\?v=[^"]*-sy1"/.test(html), 'browsers fetch the new bridge and worker (cache tokens)');
+ok(/charm-nest-engrave-worker\.js\?v=[^"]*-sy1"/.test(bridge) && /charm-nest-bridge\.js\?v=[^"]*-sy1[^"]*"/.test(html), 'browsers fetch the new bridge and worker (cache tokens)');
 const loadFontsChecks = (async () => { // the page's loadFonts with a symbol file that is not on the site (404) and with one that cannot be fetched (offline)
   const vm = require('node:vm');
   const start = bridge.indexOf('  const FONT_FILES =', bridge.indexOf('const Engrave =')), end = bridge.indexOf('  const fontFor =', start);
