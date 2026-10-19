@@ -8,6 +8,7 @@
 //   D 4204208131  the same listing, its piece CUT on GF Sheet 2              → flagged: held for a person, the Review's Held row, nothing physical changes
 //   X 4209999990  ANOTHER listing with the same SKU, on GF Sheet 1           → untouched
 //   then: a second sweep writes nothing; a second computer (its own browser context) learns the pick through loadMaps and takes nothing off and places nothing
+//   FULLDRAFT=1 (PICKFULL, Paul 19 Oct 2026): GF Sheet 1 is FULL (releaseFull) but still a draft waiting for its set: exactly the same outcome (a full draft has gone nowhere, its pieces are swapped)
 //   node tests/charm-nest/listing-pick-relink-browser.cjs        (PW_DIR=<dir holding playwright-core>, CHROMIUM=<chrome>)
 'use strict';
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
@@ -108,6 +109,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
       });
       Object.assign(page, { status: 'complete', sheetId: sh.id, fileBase: 'GF Sheet ' + pg, sheetIndex: +pg, page: +pg, runId: RUN, dirty: false, persistedDone: true, persisted: Promise.resolve(), problem: null, density: .3, verification: { ok: true }, intakeAppend: false, appendOnly: false });
       if (sh.cut) page.laserDoneAt = Date.now() - 3600000;
+      if (opts.fullDraft && +pg === 1) Object.assign(page, { releaseFull: true, draft: true });   // (PICKFULL: full, still a draft)
       CN.renderCard(page);
     }
     const rows = [];
@@ -124,7 +126,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     B.run = { runId: RUN, day: new Date().toISOString().slice(0, 10), setId: null, releasePolicy: 2, solidIncluded: {}, step: 'nest', status: 'running', mode: 'manual', startedAt: Date.now(), updatedAt: Date.now(), lines: {}, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [...new Set(rows.map(r => r.order.receiptId))] };
     Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('orders'); Orders.render();
     return rows.map(r => [r.order.receiptId, r.spec.designSku, r.spec.skuSource]);
-  }, { LINES, PAGES, RUN, BASE_TS, SHIP, opts });
+  }, { LINES, PAGES, RUN, BASE_TS, SHIP, opts: Object.assign({ fullDraft: !!process.env.FULLDRAFT }, opts) });
   const rowsNow = (page) => page.evaluate(() => Object.fromEntries(B.orders.rows.map(r => [r.order.receiptId, { sku: r.spec.designSku, src: r.spec.skuSource, state: r.state, hold: r.hold || null, poolIds: r.poolIds.slice(), pieces: r.poolIds.map(id => (B.pool.rows.get(id) || {}).sku || null) }])));
   const sheetsNow = page => page.evaluate(() => Object.fromEntries(CN.S.sheets.gold.pages.map(p => [p.sheetId || 'page' + p.page, { charms: p.charms.map(c => [c.poolId, c.sku || null]), placed: p.placements.map(pl => (p.charms.find(c => c.id === pl.id) || {}).poolId), status: p.status }])));
   const writesFor = (from, ids) => st.calls.slice(from).filter(c => c.name === 'charmNestLibrary' && /^(poolPut|poolUpdate|putSheet)$/.test(String(c.op)) && JSON.stringify(c.body).match(new RegExp(ids.join('|'))));

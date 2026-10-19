@@ -39,7 +39,7 @@ const LONGNAME = 'Bartholomew-Maximilian Featherstonehaugh-Wolfeschlegelsteinhau
   const fn = (src, start, end) => { const i = src.indexOf(start), j = src.indexOf(end, i + start.length); return i >= 0 && j > i ? src.slice(i, j) : ''; };
   const code = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
   check(!/function paintSeals\(|function windowReleaseOf\(|paintSeals\(r\)/.test(code(bridge)) && !/id="owSeals"/.test(html) && !/\.owRelRow\{|\.owApproved\{/.test(html), 'source: the order window has no seal strip: no #owSeals, no paintSeals / windowReleaseOf, no strip CSS');
-  check(/charm-nest-bridge\.js\?v=[^"]*-ns1"/.test(html), 'source: the cache token of the changed script is bumped (-ns1)');
+  check(/charm-nest-bridge\.js\?v=[^"]*-ns1[^"]*"/.test(html), 'source: the cache token of the changed script is bumped (-ns1)');
 }
 
 (async () => {

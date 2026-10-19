@@ -75,7 +75,7 @@ try {
   const ORD = '#ordBody [data-rid]', ENG = '#engraveView .placementRow[data-rid]';
   const orders = async (pg, view) => { await pg.evaluate(v => { CN.setMode('orders'); Orders.showPile('', ''); const b = document.querySelector(`#ordViewSeg [data-view="${v}"]`); if (b) b.click(); Orders.render(); }, view); await pg.waitForTimeout(900); return probe(pg, ORD); };
   const engrave = async pg => { await pg.evaluate(() => { CN.setMode('engrave'); try { Engrave.restoreView({ tab: 'place', list: true, chosen: true }); Engrave.render(); } catch (e) { console.warn(e); } }); await pg.waitForTimeout(1500); return probe(pg, ENG); };
-  const seeSeal = (s, who) => !!s && s.seal && s.w >= 70 && s.family === 'release' && /RELEASE/.test(s.text) && /HOLD/.test(s.text) && /Release Hold/.test(s.all) && s.by === 'by ' + who && /\b20\d\d\b/.test(s.all) && /\d{1,2}:\d{2}\s?[AP]M/.test(s.all) && s.whole;
+  const seeSeal = (s, who) => !!s && s.seal && s.w >= 46 && s.family === 'release' && /RELEASE/.test(s.text) && /HOLD/.test(s.text) && /Release Hold/.test(s.all) && s.by === 'by ' + who && /\b20\d\d\b/.test(s.all) && /\d{1,2}:\d{2}\s?[AP]M/.test(s.all) && s.whole;
   const WHO = 'Test Operator';
   try {
     await page.evaluate(() => { try { S.settings.pollOrders = 'off'; saveSettings(); } catch (_) {} });

@@ -284,7 +284,7 @@
   /* ════ Seals ════ */
   const Seal = (() => {
     const BASE_SIZE = 50, META_INK = '#12294c';
-    const INK = { print: "#65737f", sheet: "#65737f", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58", monogramApproved:"#4d3f99", releaseHold:"#2f6b45" };
+    const INK = { print: "#65737f", sheet: "#65737f", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58", monogramApproved:"#4d3f99", releaseHold:"#a2591c" };   // (RELORANGE, Paul 19 Oct 2026: the Release Hold seal is orange, the Hold button's)
     /* MONOSEAL (Paul, 17 Oct 2026: "When I approved the monogram, I didn't see any stamp or seal animation, and we do not have a custom-made seal that is
        specifically for approving monograms ... a brand new seal that is specific for monograms and the stamping animation whenever a monogram is approved"):
        the MONOGRAM seal, the ninth family. How to use it from any surface (the page's other modules never need to know more than this):
@@ -320,7 +320,7 @@
       // (MONOSEAL: an arch, round above and flat below, like the frame a monogram is mounted in: the one outline of the nine with a flat foot and a round head, so it is never taken for the circle, the oval or the shield)
       monogram:{name:'Monogram',ink:'#4d3f99',d:'M8 104V60A52 52 0 0 1 112 60V104Q112 116 100 116H20Q8 116 8 104Z'},
       // (RELHOLD: the Completed rosette made over: twelve small scallops round a medallion, one at the top over the padlock, so it is never taken for the eight-lobed Fulfilment rosette or the plain Received circle)
-      release:{name:'Release Hold',ink:'#2f6b45',d:'M72.68 12.67A13.2 13.2 0 0 1 94.65 25.35A13.2 13.2 0 0 1 107.33 47.32A13.2 13.2 0 0 1 107.33 72.68A13.2 13.2 0 0 1 94.65 94.65A13.2 13.2 0 0 1 72.68 107.33A13.2 13.2 0 0 1 47.32 107.33A13.2 13.2 0 0 1 25.35 94.65A13.2 13.2 0 0 1 12.67 72.68A13.2 13.2 0 0 1 12.67 47.32A13.2 13.2 0 0 1 25.35 25.35A13.2 13.2 0 0 1 47.32 12.67A13.2 13.2 0 0 1 72.68 12.67Z'}
+      release:{name:'Release Hold',ink:'#a2591c',d:'M72.68 12.67A13.2 13.2 0 0 1 94.65 25.35A13.2 13.2 0 0 1 107.33 47.32A13.2 13.2 0 0 1 107.33 72.68A13.2 13.2 0 0 1 94.65 94.65A13.2 13.2 0 0 1 72.68 107.33A13.2 13.2 0 0 1 47.32 107.33A13.2 13.2 0 0 1 25.35 94.65A13.2 13.2 0 0 1 12.67 72.68A13.2 13.2 0 0 1 12.67 47.32A13.2 13.2 0 0 1 25.35 25.35A13.2 13.2 0 0 1 47.32 12.67A13.2 13.2 0 0 1 72.68 12.67Z'}
     };
     const SYMBOL = {
       received:'<path d="M8 2h9l4 4v11H8zM17 2v5h4M11 9h7M11 12h7M3 15h5l2 4h8l2-4h4v8H3zM14 14v4m-2-2 2 2 2-2"/>',

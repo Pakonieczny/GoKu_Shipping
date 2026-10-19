@@ -123,7 +123,7 @@ const count = (s, re) => (String(s).match(re) || []).length;
   const c = code(mod);
   check(!/setTimeout|setInterval|requestAnimationFrame|addEventListener|MutationObserver|fetch\(|XMLHttpRequest|onSnapshot|api\(|ensureSeals|loadSeals|localStorage|\.events\(/.test(c), 'source: the module makes no read, timer or listener and never asks the timeline');
   check(/charm-nest-order-seals\.js\?v=\d+-cs1/.test(html) && /"charm-nest-order-seals\.js"/.test(build) && html.indexOf('charm-nest-order-seals.js') > html.indexOf('charm-nest-monogram-seals.js') && html.indexOf('charm-nest-order-seals.js') < html.indexOf('charm-nest-bridge.js?v='), 'source: the module is loaded by the page after the two seal modules and before the bridge, and is in the published asset list');
-  for (const [file, re] of [['charm-nest-bridge.js', /charm-nest-bridge\.js\?v=[^"]*-ol1"/], ['charm-nest-activity.css', /charm-nest-activity\.css\?v=[^"]*-ol1"/]]) check(re.test(html), 'source: the cache-buster of ' + file + ' is bumped (-ol1)');
+  for (const [file, re] of [['charm-nest-bridge.js', /charm-nest-bridge\.js\?v=[^"]*-ol1[^"]*"/], ['charm-nest-activity.css', /charm-nest-activity\.css\?v=[^"]*-ol1[^"]*"/]]) check(re.test(html), 'source: the cache-buster of ' + file + ' is bumped (-ol1)');
   check(/:root\{--list-seal:57px\}/.test(css) && /\.doneRow:is\(\.placementRow,\.decidedRow\) \.sealRow\{margin:0;padding:0;--seal-fit:var\(--list-seal\)!important\}/.test(css) && /\.egPlacementSeals \.sealRow\{margin:0;padding:0;max-width:none;--seal-fit:var\(--list-seal\)!important\}/.test(css), 'source: ONE list seal size (--list-seal: 57 px = 1.5 x 38), used by the Engraving rows and the Orders rows and cards');
 }
 
@@ -172,11 +172,13 @@ const count = (s, re) => (String(s).match(re) || []).length;
     }, { rids: { back: RID('back'), both: RID('both'), discs: RID('discs'), g2: RID('g2'), m1: RID('m1'), m2: RID('m2'), m4: RID('m4') } });
     await R.settle(page, 900);
     const cards = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#ordItems > [data-rid]')].map(n => {
-      const cells = [...n.querySelectorAll('.egPlacementSeals')], seals = cells.flatMap(c => [...c.querySelectorAll('.seal')]);
+      // (ROWALIGN: a piece's seal stands at the end of its own line (.egEarSeal); a one-piece line's in the row's seals cell)
+      const cells = [...n.querySelectorAll('.egPlacementSeals, .egEarSeal')], seals = cells.flatMap(c => [...c.querySelectorAll('.seal')]).filter(x => !x.closest('.relSeal'));
       return [n.dataset.rid, {
         n: seals.length, text: n.innerText.replace(/\s+/g, ' '), html: n.innerHTML, cls: n.className,
         actions: seals.map(x => { const svg = x.querySelector('svg') || x; try { return JSON.parse(svg.getAttribute('data-seal-model')).action; } catch (_) { return '?'; } }),
-        chips: cells.flatMap(c => [...c.querySelectorAll('.egEarSeals .egPiece')].map(x => x.textContent.trim().toUpperCase())),
+        chips: [...n.querySelectorAll('.ordEngId .egEar')].filter(e => e.querySelector('.egEarSeal .seal')).map(e => e.querySelector('.egPiece').textContent.trim().toUpperCase()),
+        dupChips: n.querySelectorAll('.egPlacementSeals .egPiece').length, aligned: [...n.querySelectorAll('.ordEngId .egEar')].every(e => { const a = e.querySelector('.egPiece'), b = e.querySelector('.egEarSeal .seal'); if (!b) return true; const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect(); const re = e.getBoundingClientRect(), cy = rb.top + rb.height / 2; return cy >= re.top - 2 && cy <= re.bottom + 2 && (n.closest('.ordCards') || Math.abs((ra.top + ra.height / 2) - cy) < 6); }),   // (a list row: level with its chip; a card, whose state goes under its words: inside its own line)
         lines: [...n.querySelectorAll('.ordEngId .egEar')].map(x => x.innerText.replace(/\s+/g, ' ').trim()),
         label: [...n.querySelectorAll('.ordEngId > .purchaseLabel')].map(x => x.textContent.trim()).join('|'), mode: (n.querySelector('.ordEngId .egMode') || {}).textContent || '',
         strip: !!n.querySelector('.ordSeals, .ordSealsCount'), headSeals: n.querySelectorAll('.ogHead .egPlacementSeals .seal, .ogHead .ordSeals').length,
@@ -198,6 +200,8 @@ const count = (s, re) => (String(s).match(re) || []).length;
       check(at('back').sealPx === 57 && at('m1').sealPx === 57 && at('both').sealPx === 57, `${mode}: the engraving and monogram seals are the list size, 57 px (1.5 x 38): ${at('back').sealPx} / ${at('m1').sealPx} / ${at('both').sealPx}`);
       check(Object.values(c).every(x => !x.clipped), `${mode}: no seal runs out of its row or card`);
       check(Object.values(c).every(x => !x.strip), `${mode}: no "N of M approved" strip on any row or card`);
+      check(Object.values(c).every(x => x.dupChips === 0), `${mode}: ROWALIGN: no second chip beside a seal (each piece's chip is said once, on its own line)`);
+      check(Object.values(c).every(x => x.aligned), `${mode}: ROWALIGN: each piece's seal sits on its own line, level with its chip, words and state`);
       return c;
     };
     check(await page.evaluate(() => !!(window.CNOrderSeals && CNOrderSeals.of && CNOrderSeals.html)), 'the page loads charm-nest-order-seals.js (CNOrderSeals)');

@@ -602,6 +602,8 @@
       for (const f of this.off) tryDo(f); if (this.unsub) tryDo(this.unsub);
       this.unfocus(); tryDo(() => { const NF = root.NestFocus; if (NF) { if (NF.isOpen && NF.isOpen() && NF.close) NF.close(); if (NF.restore) NF.restore(); } });
       this.close(); if (cur === this) cur = null;
+      // (FXLEFT, Paul 19 Oct 2026: "the vector charms remain on the screen after flying to the sheet animation completed": whatever copy of a piece this film flew is gone when it ends, even one a late flight put on the page after the film let go of it)
+      if (!cur) for (const n of doc.querySelectorAll('.mGhost[data-hfx], #hfxLayer .hfxChip')) tryDo(() => n.remove());
       const res = { ok: !this.failed, skipped: this.skipped, timedOut: this.timedOut, stalled: this.stalled, steps: this.steps.length, ms: Math.round(performance.now() - this.t0), error: this.failed || undefined };
       ev("end", res); this.resolve(res);
     }

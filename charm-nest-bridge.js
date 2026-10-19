@@ -4140,7 +4140,7 @@ const Pool = window.Pool = (() => {
       if (set ? made.length === expect.length && made.every((s, i) => s === expect[i]) : made.length > 0 && made.every(s => O.sameDesign(s, want[0], k => Master.entryFor(k)))) return;   // (already made as the link says: for one design, every piece is that drawing, under whichever of its names)
       if (one && (!made.length || made.some(s => !s))) return;   // (nothing made yet: the line is simply made up from the link; a piece whose record names no design is not guessed at)
       const ids = new Set(row.poolIds || []), cut = sh => !!sh.roseCutAt || Sets.ofRun(sh.runId).some(s => s.committedAt && s.sheetIds.includes(sh.sheetId));
-      const fixed = allSheets().filter(sh => (cut(sh) || sh.releaseFull || sh.recalled || Gate.modern(sh.runId) && sh.setId && !sh.draft) && sh.charms.some(c => ids.has(c.poolId)));
+      const fixed = allSheets().filter(sh => (cut(sh) || (sh.releaseFull && !(Gate.modern(sh.runId) && (sh.draft || !sh.setId) && !(sh.label && sh.label.own))) || sh.recalled || Gate.modern(sh.runId) && sh.setId && !sh.draft) && sh.charms.some(c => ids.has(c.poolId)));   // (PICKFULL, Paul 19 Oct 2026: a sheet that is only FULL (releaseFull) but still a draft, waiting for its set, has gone nowhere: its old pieces come off and the picked charm goes in; only a sheet out of draft, cut, committed, recalled or with its own QR label is left as it is)
       if (fixed.length) {
         if (!setToldFixed.has(row.key)) {
           setToldFixed.add(row.key); const where = fixed.map(sh => sh.fileBase || sh.sheetId).join(", ");
@@ -4447,7 +4447,11 @@ const Pool = window.Pool = (() => {
       { const open = matePages.filter(p => p.metal === metal && !shut(p) && (!run || !p.runId || p.runId === run.runId)); if (open.length && !open.includes(page)) page = open[0]; }
       // (LISTPICK, Paul 18 Oct 2026: a line made up again because its listing's charm was picked goes first into the vacant space its old pieces left, on the sheet they were taken off; when
       //  that sheet is closed meanwhile the intake's own choice stands, and what does not fit there moves on to the next sheet, overflowToNextSheet)
-      if (!matePages.length && row._relink && Array.isArray(row._relink.homes)) { const home = row._relink.homes.find(p => p && p.metal === metal && pagesOf(metal).includes(p) && !shut(p) && (!run || !p.runId || p.runId === run.runId)); if (home) page = home; }
+      if (!matePages.length && row._relink && Array.isArray(row._relink.homes)) {
+        // (PICKFULL, Paul 19 Oct 2026: a home sheet that was only FULL, still a draft waiting for its set, is not full any more once the old pieces came off: it takes the picked charm back into their room; the sorter marks it full again when it is)
+        for (const p of row._relink.homes) if (p && p.metal === metal && p.releaseFull && (p.draft || !p.setId) && Gate.modern(p.runId) && !(p.label && p.label.own) && pagesOf(p.metal).includes(p)) { p.releaseFull = false; if (p.keepRelease && p.keepRelease.full) p.keepRelease = null; }   // (and the hold Gate.keep put on it when its pieces came off: a draft has no set to keep)
+        const home = row._relink.homes.find(p => p && p.metal === metal && pagesOf(metal).includes(p) && !shut(p) && (!run || !p.runId || p.runId === run.runId)); if (home) page = home;
+      }
       if((run && page.runId && page.runId!==run.runId) || shut(page))page=addPage(metal);
       S.sheets[metal].active=pagesOf(metal).indexOf(page);if(!page.el)window.CN?.showPage(metal,S.sheets[metal].active);   // the card shows the page its buttons act on
       if (run) page.runId = run.runId;
@@ -9199,17 +9203,21 @@ const Engrave = window.Engrave = (() => {
       const ps = M.pieces(r), many = ps.length > 1;
       const parts = ps.map(p => { let st = null; try { st = M.status(r, p.slot); } catch (_) { st = null; } st = st || {}; const busy = ["reading", "building"].includes(st.state); return { p, st, s: busy ? "busy" : String(st.state || ""), seals: M.list(r, p.slot), tag: monoTag(p), letters: st.letters ? String(st.letters).split("").join(" ") : "" }; });
       const chip = x => `<span class="egPiece" data-slot="${esc(x.p.slot || "")}">${esc(x.tag)}</span>`, stage = x => `<span class="dim" data-stage data-s="${esc(x.s)}">${esc(x.st.label || "")}</span>`, letters = x => `<span class="w egMonoLetters">${esc(x.letters || "Letters to confirm")}</span>`;
-      const words = many ? `<div class="egEars">${parts.map(x => `<div class="egEar">${chip(x)}${letters(x)}<span class="egEnd">${stage(x)}</span></div>`).join("")}</div>` : letters(parts[0]) + stage(parts[0]);
-      const seals = parts.map(x => { const h = M.html(r, x.p.slot); return h ? (many ? `<div class="egEarSeals" data-slot="${esc(x.p.slot || "")}">${chip(x)}${h}</div>` : h) : ""; }).join("");
+      // (ROWALIGN: a piece's seal at the end of its own line; a one-piece line's in the row's seals cell)
+      const words = many ? `<div class="egEars">${parts.map(x => `<div class="egEar">${chip(x)}${letters(x)}<span class="egEnd">${stage(x)}</span><span class="egEarSeal">${M.html(r, x.p.slot)}</span></div>`).join("")}</div>` : letters(parts[0]) + stage(parts[0]);
+      const seals = many ? "" : M.html(r, parts[0].p.slot);
       return { kind: "monogram", label: "The letters", mode: "", words, seals, sig: JSON.stringify(parts.map(x => [x.p.key, x.s, x.st.label || "", x.letters, M.signature(x.seals)])) };
     }
-    const jobs = jobsOf(r).filter(j => j && !j.editingBack && !j.archived);
+    let jobs = jobsOf(r).filter(j => j && !j.editingBack && !j.archived);
+    // (a line cut into pieces (Bar 1 of 4, Disc 2 of 3, Left ear) is told piece by piece, as its Engraving row tells it: the line's older whole-line job ("FRONT ×3", from before it was cut) is not a piece of its own)
+    if (jobs.some(j => j.slot)) jobs = jobs.filter(j => j.slot);
     if (!jobs.length || jobs.every(j => j.state === "none")) return null;
     const faced = jobs.some(isFrontJob) || lineHasFront(r), told = jobs.length > 1 || faced;
     const stageOf = j => (isWorking(j) ? (j.state === "classify" ? "Reading words…" : "Preparing preview…") : stageText(j, false)), sOf = j => (isWorking(j) ? "busy" : String(j.state || ""));
     const wordsOf_ = j => (j.lines || []).join(" / ") || "—", stage = j => `<span class="dim" data-stage data-s="${esc(sOf(j))}">${esc(stageOf(j))}</span>`;
-    const words = told ? `<div class="egEars">${jobs.map(j => `<div class="egEar" data-ear="${esc(j.key)}">${jobChipHtml(j, faced)}<span class="w">${esc(wordsOf_(j))}</span><span class="egEnd">${stage(j)}</span></div>`).join("")}</div>` : `<span class="w">${esc(wordsOf_(jobs[0]))}</span>${stage(jobs[0])}`;
-    const seals = told ? jobs.map(j => { const h = CNEngravingSeals.html(j); return h ? `<div class="egEarSeals" data-slot="${esc(j.slot || "")}">${jobChipHtml(j, faced)}${h}</div>` : ""; }).join("") : CNEngravingSeals.html(jobs[0]);
+    // (ROWALIGN: one line per piece and face: its chip, its words, its state and its seal, in that order; no second chip beside the seal)
+    const words = told ? `<div class="egEars">${jobs.map(j => `<div class="egEar" data-ear="${esc(j.key)}">${jobChipHtml(j, faced)}<span class="w">${esc(wordsOf_(j))}</span><span class="egEnd">${stage(j)}</span><span class="egEarSeal">${CNEngravingSeals.html(j)}</span></div>`).join("")}</div>` : `<span class="w">${esc(wordsOf_(jobs[0]))}</span>${stage(jobs[0])}`;
+    const seals = told ? "" : CNEngravingSeals.html(jobs[0]);
     return { kind: "engrave", label: wordsLabel(jobs), mode: faced ? modeChipHtml(r) : "", words, seals, sig: JSON.stringify(jobs.map(j => [j.key, sOf(j), stageOf(j), j.lines || [], CNEngravingSeals.list(j)])) };
   }
   function renderPlacementRows(list, queue, decided) {
@@ -9224,7 +9232,7 @@ const Engrave = window.Engrave = (() => {
       if (!row) {
         row = el("div", "doneRow placementRow hoverItem" + (told ? " earPairRow" : ""));
         row.setAttribute("role","button"); row.tabIndex=0; row.dataset.open=job.key; row.dataset.mkey="eg:"+job.key; row._sig = sig; row._faced = faced; row._mode = mode;
-        const wordsHtml = told ? '<div class="egEars' + (grp.discs ? ' egDiscs' : '') + '">' + grp.jobs.map(j => `<div class="egEar" data-ear="${esc(j.key)}">${jobChipHtml(j, faced)}<span class="w"></span><span class="egEnd">${grp.discs ? '<span class="dim" data-font></span>' : ""}<span class="dim" data-stage></span></span></div>`).join("") + '</div>' : '<span class="w"></span><span class="dim" data-stage></span>';
+        const wordsHtml = told ? '<div class="egEars' + (grp.discs ? ' egDiscs' : '') + '">' + grp.jobs.map(j => `<div class="egEar" data-ear="${esc(j.key)}">${jobChipHtml(j, faced)}<span class="w"></span><span class="egEnd">${grp.discs ? '<span class="dim" data-font></span>' : ""}<span class="dim" data-stage></span></span><span class="egEarSeal" data-ear-seal></span></div>`).join("") + '</div>' : '<span class="w"></span><span class="dim" data-stage></span>';
         row.innerHTML=ListMedia.pair(line)+'<div class="engravingIdentity"><span class="queueLabel">Engraving</span><div class="engravingOrder"><b class="mono" data-order></b><span class="sku mono"></span>'+(faced ? modeChipHtml(job.row) : "")+'<span class="mailSlot" hidden></span><span class="teamSlot" hidden></span></div><span class="purchaseLabel">'+wordsLabel(grp.jobs)+'</span>'+wordsHtml+'</div><div class="purchaseSummary" data-purchase></div><div class="egPlacementSeals"></div>';
         // (the card it opens grows out of this row: where it stands is kept for the next drawing, see cardShown)
         // (NODECIDED: a press on the line of a decided piece opens that piece; any other press opens the first piece still to settle)
@@ -9247,7 +9255,7 @@ const Engrave = window.Engrave = (() => {
       const purchase=purchaseMarkup(line);
       if(row._purchase!==purchase){row.querySelector('[data-purchase]').innerHTML=purchase;row._purchase=purchase;}
       const rel=releaseOfRow(job.row),stamp=(told?JSON.stringify(grp.jobs.map(j=>CNEngravingSeals.list(j))):JSON.stringify(CNEngravingSeals.list(job)))+"|"+rel.sig;   // (RELSEAL: the Release Hold seal stands first in the cell, the approval seals after it)
-      if(row._seals!==stamp){row.querySelector('.egPlacementSeals').innerHTML=rel.html()+(told?grp.jobs.map(j=>{const h=CNEngravingSeals.html(j);return h?`<div class="egEarSeals" data-slot="${esc(j.slot || "")}">${jobChipHtml(j,faced)}${h}</div>`:"";}).join(""):CNEngravingSeals.html(job));row._seals=stamp;}
+      if(row._seals!==stamp){row.querySelector('.egPlacementSeals').innerHTML=rel.html()+(told?"":CNEngravingSeals.html(job));if(told)for(const j of grp.jobs){const e=[...row.querySelectorAll('.egEar')].find(n=>n.dataset.ear===j.key),slot=e&&e.querySelector('[data-ear-seal]');if(slot)slot.innerHTML=CNEngravingSeals.html(j);}row._seals=stamp;}   // (ROWALIGN, Paul 19 Oct 2026: "remove the duplicate 'Bar 1 of 4 · Front' UI and align ... 'Bar 1 of 4 · Front', Sofie, 'Saved to Sheet', Seal ... in a row": a piece's seal stands at the end of its own line; the seals cell keeps the order's Release Hold seal, and a one-piece line's seal)
       if(!told){write('[data-stage]',busyAny ? (job.state === "classify" ? "Reading words…" : "Preparing preview…") : DECIDED.includes(job.state) ? stageText(job,false) : "");const st=row.querySelector('[data-stage]'),sk=busyAny?'busy':DECIDED.includes(job.state)?String(job.state):"";if(st&&(st.dataset.s||"")!==sk){if(sk)st.dataset.s=sk;else delete st.dataset.s;}}
       return row;
     }));
@@ -15016,7 +15024,7 @@ const Review = window.Review = (() => {
     // whose piece is there waits for a person, who makes the difference by hand or skips it; releasing the hold then
     // keeps the piece on that sheet (the path below for a line whose pieces are on sheets).
     const cut=sh=>!!sh.roseCutAt || Sets.ofRun(sh.runId).some(s=>s.committedAt && s.sheetIds.includes(sh.sheetId));
-    const fixedSheets=allSheets().filter(sh=>(cut(sh) || sh.releaseFull || sh.recalled || Gate.modern(sh.runId) && sh.setId && !sh.draft) && sh.charms.some(c=>old0.has(c.poolId)));
+    const fixedSheets=allSheets().filter(sh=>(cut(sh) || (sh.releaseFull && !(Gate.modern(sh.runId) && (sh.draft || !sh.setId) && !(sh.label && sh.label.own))) || sh.recalled || Gate.modern(sh.runId) && sh.setId && !sh.draft) && sh.charms.some(c=>old0.has(c.poolId)));   // (PICKFULL: a full draft sheet is not released: see noticeSet)
     if(row.repoolChanged && fixedSheets.length){
       row.changePending=false;row.repoolChanged=false;row.state="held";
       const wasCut=fixedSheets.some(cut);
@@ -15413,7 +15421,7 @@ const Review = window.Review = (() => {
       if (!sh.charms.some(c => ids.has(c.poolId))) continue;
       for (const c of sh.charms) if (ids.has(c.poolId)) seen.add(c.poolId);
       const cutNow = !!(sh.laserDoneAt || sh.roseCutAt), inSet = committed(sh);
-      const why = cutNow ? "cut" : inSet ? "in a committed set" : sh.recalled ? "recalled from the laser" : (sh.releaseFull || (Gate.modern(sh.runId) && sh.setId && !sh.draft)) ? "released to the laser"
+      const why = cutNow ? "cut" : inSet ? "in a committed set" : sh.recalled ? "recalled from the laser" : ((sh.releaseFull && !(Gate.modern(sh.runId) && (sh.draft || !sh.setId) && !(sh.label && sh.label.own))) || (Gate.modern(sh.runId) && sh.setId && !sh.draft)) ? "released to the laser"
         : contour(sh.metal) && (sh.rosePlan || sh.roseProtected) ? `inside the protected ${typeof CharmNestRose !== "undefined" && CharmNestRose.cutWord ? CharmNestRose.cutWord(sh.metal) : "Rose Gold"} contour` : "";
       if (why) out.push({ name: sh.fileBase || sheetName(sh), why, cut: cutNow || inSet, local: true, sheetId: sh.sheetId || null });
     }
