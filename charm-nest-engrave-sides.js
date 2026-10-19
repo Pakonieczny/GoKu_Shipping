@@ -372,6 +372,8 @@
     if (list.length < 2 || !list.every(x => /^D\d{1,2}$/.test(x))) return null;
     const note = o && typeof o.engravingNote === 'function' ? o.engravingNote : () => true;
     if (String(sp.staffNote || '').trim() || String(sp.buyerMessage || '').trim() || (sp.messages || []).some(m => note(m && m.text))) return null;
+    // (BARS, Paul 19 Oct 2026) a profiled listing's bars: the names the intake already read bar by bar (charm-nest-orders.js pieceProfileOf: "Bar names:" and "Bar 1: A" labels); the same words for a bar engraved on the back
+    const pp = sp.pieceProfile; if (pp && pp.sure && pp.words && list.every(x => pp.words[x])) return { ok: true, words: list.map(x => pp.words[x]), how: pp.how || 'lines' };
     const r = splitWords(sp.personalization || [], list.length);
     // SETBAR (13 Oct 2026): the two bars of a set a RULE names (spec.pair.set.source "rule", charm-nest-orders.js SET_RULES) are two necklaces, not discs of one: "coordinates / Ginger" in one box is NOT "bar 1 gets the coordinates, bar 2
     // gets Ginger". Only the words that name the bar by number ("Disc 1: ..") or say the same on both are read here; a list, lines or letters are left to the reader and a person, as the line was before.
@@ -451,6 +453,8 @@
                             is decided THERE, never here); a set a person saved has the design names only. layoutRequested: the buyer asked for another layout, so a person decides which bar is on which chain.
        setPieceOf(x, slot)  the entry of one piece (x a job: its own slot)   ·   pieceName(piece)  "Small bar" else "SKINNY 0191"   ·   skuName("SKINNY_0191") "SKINNY 0191"
        slotWord(job, short) "Left ear" | "Disc 2" | "Small bar"   ·   pieceTag(job, of) "DISC 2 of 3" | "SMALL BAR · 16″"   (the one wording every list, card and message uses for a piece)
+       nounOf(x) · nounWord(text, x)   (BARS, Paul 19 Oct 2026) the noun a line's pieces go by when its listing's profile names one ("bar": charm-nest-orders.js PIECE_LISTINGS, spec.pair.noun). The bars of such a line are cut as the
+                            discs of a counted necklace are (slots D1..Dn, one job each), so slotWord / pieceTag / pieceRecord say "Bar 2 of 3" where a disc would say "Disc 2 of 3"; a line with no noun reads exactly as it did.
      Derived, never stored, no arrays inside arrays. */
   const skuName = s => String(s == null ? '' : s).replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
   const lineOfAny = x => (x && x.row && typeof x.row === 'object' && !x.spec ? x.row : x) || null;
@@ -460,6 +464,9 @@
     return d && d.length >= 2 && d.every(Boolean) && new Set(d).size === d.length ? d : null;
   }
   const lengthOfWord = v => (v == null || v === '' ? null : String(v));
+  // (BARS, Paul 19 Oct 2026) the noun a profiled listing's pieces go by ("bar"), else ''; a piece's words with "Disc" said as that noun
+  const nounOf = x => { const sp = specOfAny(x), pr = sp && sp.pair, n = pr && typeof pr.noun === 'string' ? pr.noun.trim().toLowerCase() : ''; return /^[a-z]{2,12}$/.test(n) ? n : ''; };
+  const nounWord = (text, x) => { const n = nounOf(x); return n ? String(text == null ? '' : text).replace(/\bDisc\b/g, n[0].toUpperCase() + n.slice(1)).replace(/\bDISC\b/g, n.toUpperCase()).replace(/\bdisc\b/g, n) : text; };
   function setPieces(x) {
     const designs = setDesigns(x); if (!designs) return null;
     const l = lineOfAny(x), sp = specOfAny(x), meta = (sp.pair && sp.pair.set) || {};
@@ -487,9 +494,9 @@
   /** The chain length as said on a label: 16" → 16″. */
   const lengthText = p => (p && p.length ? String(p.length).replace(/"|''|”/g, '″') : '');
   /** The words a piece goes by in a sentence: "Left ear" / "Disc 2" (earOf), `short` "Left" (labelOf); a piece of a set of different designs: "Small bar". Every message that names a piece asks this. */
-  const slotWord = (job, short, shp) => { const sp = setPieceOf(job), u = unitOf(job && job.slot); return sp ? pieceName(sp) + (u > 1 || (shp && shp.multi) ? ' · set ' + u : '') : short ? labelOf(job && job.slot, shp) : earOf(job && job.slot, shp); };
+  const slotWord = (job, short, shp) => { const sp = setPieceOf(job), u = unitOf(job && job.slot); return sp ? pieceName(sp) + (u > 1 || (shp && shp.multi) ? ' · set ' + u : '') : nounWord(short ? labelOf(job && job.slot, shp) : earOf(job && job.slot, shp), job); };
   /** The tag of a piece as every list and card says it: "LEFT EAR", "DISC 2 of 3"; a piece of a set: "SMALL BAR · 16″" (the rule's name and the chain). '' for a job with no slot. */
-  const pieceTag = (job, of, shp) => { const sp = setPieceOf(job), u = unitOf(job && job.slot), i = slotInfo(job && job.slot); return sp ? [pieceName(sp).toUpperCase(), lengthText(sp), u > 1 || (shp && shp.multi) ? 'SET ' + u : ''].filter(Boolean).join(' · ') : job && job.slot ? tagOf(job.slot, shp && shp.multi && i && i.kind === 'disc' ? shp.per : of, shp) : ''; };
+  const pieceTag = (job, of, shp) => { const sp = setPieceOf(job), u = unitOf(job && job.slot), i = slotInfo(job && job.slot); return sp ? [pieceName(sp).toUpperCase(), lengthText(sp), u > 1 || (shp && shp.multi) ? 'SET ' + u : ''].filter(Boolean).join(' · ') : job && job.slot ? nounWord(tagOf(job.slot, shp && shp.multi && i && i.kind === 'disc' ? shp.per : of, shp), job) : ''; };
 
   /* ── the per-piece record (DISCCYCLE, DISCMODALS, the engraving cards): the existing job read as the disc it is. Derived, never stored, no nested arrays. ──
      pieceRecord(job, o) -> { index (1-based), of, slot, key, lineKey, groupKey, tag "DISC 2 of 3", label "Disc 2", poolIds, words, lines, font, fontAsked, state, approved,
@@ -509,7 +516,7 @@
     const lines = (Array.isArray(job.lines) ? job.lines : []).map(x => String(x).trim()).filter(Boolean), font = fontOf(job);
     const seals = [].concat(job.engravingSeals || [], (job.engraveRec && job.engraveRec.seals) || [], job.seals || []);
     const face = faceOf(job), lineKey = job.rowKey || parseKey(job.key).rowKey, withBack = !!(o && o.faces > 1);
-    const rec = { index: idx, of, slot, key: job.key, lineKey, groupKey: job.groupKey || '', tag: tagOf(slot, shp && shp.multi && info && info.kind === 'disc' ? shp.per : info && info.kind === 'copy' && !(o && Math.floor(+o.of)) ? 0 : of, shp), label: labelOf(slot, shp),   // (a copy piece asked without the line's count says "PIECE 2", never a made-up "of 2")
+    const rec = { index: idx, of, slot, key: job.key, lineKey, groupKey: job.groupKey || '', tag: nounWord(tagOf(slot, shp && shp.multi && info && info.kind === 'disc' ? shp.per : info && info.kind === 'copy' && !(o && Math.floor(+o.of)) ? 0 : of, shp), job), label: nounWord(labelOf(slot, shp), job),   // (a copy piece asked without the line's count says "PIECE 2", never a made-up "of 2")
       poolIds: (Array.isArray(job.copies) ? job.copies : []).slice(), words: lines.join(' / '), lines, font, fontAsked: font ? font.asked : '', state: job.state || '',
       approved: ['approved', 'written'].includes(job.state), approvedBy: job.approvedBy || (job.engraveRec && job.engraveRec.approvedBy) || '', approvedAt: +job.approvedAt || +(job.engraveRec && job.engraveRec.approvedAt) || 0, sealed: seals.length > 0, wordsSource: job.wordsSource || job.source || '' };
     // the face of the job (additive: derived, never stored). A front's tag says so only when the piece has a back besides ("DISC 2 of 3 · FRONT"); the back's tag is what it always was.
@@ -531,5 +538,5 @@
     const shp = shape(list.map(j => j.slot || (j.row && j.row.slot) || null)), shpArg = shp.multi || shp.kind === 'copy' ? shp : null;   // (a line of one unit: no shape, the records it always gave)
     return list.map(j => pieceRecord(j, Object.assign({ of, faces: front ? per.get(j.slot || (j.row && j.row.slot) || '') : 1 }, shpArg ? { shape: shpArg } : {})));
   }
-  return { faceOf, isFront, jobKey, parseKey, labelOf, earOf, tagOf, copyOf, slotOfId, slotInfo, isSlot, isCopy, baseSlot, unitOf, sideOfSlot, slotRank, shape, unitsOfRow, unitOfId, unitShape, wordsForPieces, pieceList, mirrorOfId, pieceCharm, plan, idsOfSlot, sideRow, summary, linkParent, unlinkParent, perUnitOf, splitWords, wordsForDiscs, pieceRecord, pieceRecords, setDesigns, setPieces, setPieceOf, pieceName, lengthText, slotWord, pieceTag, skuName, STATE_ORDER, SLOT: SLOT };
+  return { faceOf, isFront, jobKey, parseKey, labelOf, earOf, tagOf, copyOf, slotOfId, slotInfo, isSlot, isCopy, baseSlot, unitOf, sideOfSlot, slotRank, shape, unitsOfRow, unitOfId, unitShape, wordsForPieces, pieceList, mirrorOfId, pieceCharm, plan, idsOfSlot, sideRow, summary, linkParent, unlinkParent, perUnitOf, splitWords, wordsForDiscs, pieceRecord, pieceRecords, setDesigns, setPieces, setPieceOf, pieceName, lengthText, slotWord, pieceTag, nounOf, nounWord, skuName, STATE_ORDER, SLOT: SLOT };
 });

@@ -210,7 +210,7 @@
       return typeof O.optionView !== 'function' ? s : s.replace(/(\bthe option )\u201c([^\u201d]+)\u201d/g, (m, lead, q) => { const i = q.indexOf(': '); if (i <= 0 || /\u2026$/.test(q)) return m; const v = O.optionView(q.slice(0, i), q.slice(i + 2)); return v.changed ? lead + '\u201c' + v.line + '\u201d' : m; });
     } catch (_) { return str(t); }
   };
-  const SRC = { option: o => { const v = o && o.name ? optView(o.name, o.value) : null; return o && o.name ? `the ${(v && (v.names || v.label)) || o.name} option` : 'the option'; }, title: () => 'the listing title', note: () => "the buyer's note", person: () => 'a person', default: () => '' };
+  const SRC = { option: o => { const v = o && o.name ? optView(o.name, o.value) : null; return o && o.name ? `the ${(v && (v.names || v.label)) || o.name} option` : 'the option'; }, title: () => 'the listing title', note: () => "the buyer's note", person: () => 'a person', profile: () => "this listing's profile", default: () => '' };   // (BARS, Paul 19 Oct 2026: a bar listing's profile, charm-nest-orders.js PIECE_LISTINGS)
   /** What the control shows for a line. null when the line has nothing to say (no spec, left the pull, done by hand, mode none with no edit). */
   const SLOT_RX = /^(?:C\d{1,3}|(?:L|R|D\d{1,2})(?:\.\d{1,3})?)$/;   // (a slot: L, R, D<n>; a later unit of a line of quantity >= 2 "<slot>.<unit>"; copy n "C<n>": charm-nest-engrave-sides.js)
   const slotOfJob = j => (j && (j.slot || (Faces() && Faces().parseKey(j.key).slot))) || null;
@@ -294,8 +294,9 @@
     }
     // (a piece of a SET of different designs is "the small bar", not "disc 2": charm-nest-engrave-sides.js setPieceOf)
     const setWord = j => { const Sd = dep('CharmNestEngraveSides', './charm-nest-engrave-sides.js'), sp = Sd && Sd.setPieceOf ? Sd.setPieceOf(j) : null; return sp ? Sd.pieceName(sp).toLowerCase() : ''; };
+    const nounOfJob = j => { const Sd = dep('CharmNestEngraveSides', './charm-nest-engrave-sides.js'); return Sd && Sd.nounOf ? Sd.nounOf(j) : ''; };   // (BARS, Paul 19 Oct 2026: "the front of bar 2", not "disc 2", on a profiled listing's line)
     const slotWordOf = sl => { const Fc = Faces(); return Fc && Fc.slotLabel ? Fc.slotLabel(sl).toLowerCase() : str(sl); };   // (a piece of a line of several units: "piece 2", "left · pair 2")
-    const nm = j => FACE_NAME[faceOfJob(j)] + (j.slot ? ' of the ' + (setWord(j) || (j.slot === 'L' ? 'left ear' : j.slot === 'R' ? 'right ear' : /^D\d+$/.test(str(j.slot)) ? 'disc ' + str(j.slot).slice(1) : slotWordOf(j.slot))) : '');
+    const nm = j => FACE_NAME[faceOfJob(j)] + (j.slot ? ' of the ' + (setWord(j) || (j.slot === 'L' ? 'left ear' : j.slot === 'R' ? 'right ear' : /^D\d+$/.test(str(j.slot)) ? (nounOfJob(j) || 'disc') + ' ' + str(j.slot).slice(1) : slotWordOf(j.slot))) : '');
     for (const j of out.plain) { const by = str(j.approvedBy || j.decidedBy || (j.decision && j.decision.by)); out.lines.push(`The ${nm(j)} is already ${j.state === 'written' ? 'approved and saved' : 'approved'}${by ? ' by ' + by : ''}: saving cuts it plain (its approval seal stays, a "cut plain" seal is added and its file is withdrawn).`); }
     for (const j of out.remove) out.lines.push(`The ${nm(j)} placement that was still to check is removed.`);
     for (const j of out.none) out.lines.push(`The ${nm(j)} is set to no engraving.`);

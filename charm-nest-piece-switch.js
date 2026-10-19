@@ -56,6 +56,7 @@
    * `multi`: the line has more than one pair or set, so even the first is told by its number ("PAIR 1"). The slot's name is read by the rows module (the model's slotInfo when the page has it). */
   const infoOf = slot => { const R = Rows(); return R && R.infoOf ? R.infoOf(slot) : null; };
   const kindOfSlot = slot => { const i = infoOf(slot); return i ? (i.kind === 'ear' ? 'ear' : i.kind === 'disc' ? 'disc' : 'copy') : 'piece'; };
+  const nw = (text, x) => { const S2 = Sides(); return S2 && S2.nounWord ? S2.nounWord(text, x) : text; };   // (BARS, Paul 19 Oct 2026: the discs of a profiled listing's line are its bars: "Bar 2 of 3"; every other line says what it said)
   const unitWord = (i, multi, word) => (i && (i.unit > 1 || (multi && i.kind !== 'copy')) ? ' · ' + word + ' ' + i.unit : '');
   const labelOf = (slot, multi) => { const i = infoOf(slot); return !i ? '' : i.kind === 'ear' ? (i.side === 'L' ? 'Left' : 'Right') + unitWord(i, multi, 'pair') : i.kind === 'disc' ? 'Disc ' + i.n + unitWord(i, multi, 'set') : 'Piece ' + i.n; };
   const nameOf = (slot, multi) => { const i = infoOf(slot); return i && i.kind === 'ear' ? (i.side === 'L' ? 'Left ear' : 'Right ear') + unitWord(i, multi, 'pair') : labelOf(slot, multi); };
@@ -86,9 +87,9 @@
       // a piece of a SET of different designs (the large bar, the small bar) is told by its own name and the chain it hangs on, never "Disc 2 of 2" (charm-nest-engrave-sides.js setPieceOf; every other piece: as before)
       const sps = S && S.setPieceOf ? S.setPieceOf(job) : null, setName = sps ? S.pieceName(sps) : '', setLen = sps ? S.lengthText(sps) : '';
       const si = infoOf(slot), ofHere = si && si.kind === 'disc' && multi ? discsOf(si.unit) : of;
-      const base = sps ? [setName.toUpperCase(), setLen].filter(Boolean).join(' · ') + (multi && si && si.unit > 1 ? ' · SET ' + si.unit : '') : tagOf(slot, ofHere, multi), many = copies > 1 ? ' ×' + copies : '';
+      const base = sps ? [setName.toUpperCase(), setLen].filter(Boolean).join(' · ') + (multi && si && si.unit > 1 ? ' · SET ' + si.unit : '') : nw(tagOf(slot, ofHere, multi), job), many = copies > 1 ? ' ×' + copies : '';
       const pieceKey = rec ? rec.pieceKey : (F ? F.parseKey(job.key).pieceKey : String(job.key == null ? '' : job.key));
-      return { key: job.key, job, record: rec, slot, kind: kindOfSlot(slot), n: si && si.kind !== 'ear' ? si.n : 0, unit: si ? si.unit : 1, label: sps ? setName : labelOf(slot, multi), name: sps ? setName : nameOf(slot, multi), set: sps || null,
+      return { key: job.key, job, record: rec, slot, kind: kindOfSlot(slot), n: si && si.kind !== 'ear' ? si.n : 0, unit: si ? si.unit : 1, label: sps ? setName : nw(labelOf(slot, multi), job), name: sps ? setName : nw(nameOf(slot, multi), job), set: sps || null,
         tag: (face === 'front' && faces > 1 ? [base, 'FRONT'].filter(Boolean).join(' · ') : base) + many, baseTag: base + many, words: R ? R.wordsOf(job) : '', font,
         face, faceLabel: face === 'front' ? 'Front' : 'Back', pieceKey, faces,
         stage: o.stageOf ? o.stageOf(job, busy) : R ? R.stageOf(job, busy) : '', state: job.state, busy };
