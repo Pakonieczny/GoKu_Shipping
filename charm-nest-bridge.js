@@ -16523,8 +16523,10 @@ const Review = window.Review = (() => {
       : k === "customOrder" ? chip(k, "Custom Orders", customN, customAsk ? "warn" : "info", `${customAsk} need a decision · ${clWait.length} wait for their label, their designs or Complete Order`) : chip(k, wordOf(k), kinds.get(k))).join("");
     if(!v.querySelector('#rvList'))v.innerHTML='<div class="ordBar egBar"></div><div class="egPane grow scroll"><div class="rvList" id="rvList"></div></div>';
     // no Everything chip (it always read the same as Open): Open or Resolved, pressed, is everything in it
-    const keptFind=v.querySelector('#rvOrderFind')?.closest('label');
+    // (REVMENU, 19 Oct 2026: a redraw of the tab, which a cloud read brings every few seconds, rebuilt the date menu closed under the pointer: the bar is carried across the redraw, as the search box is)
+    const keptFind=v.querySelector('#rvOrderFind')?.closest('label'),keptTools=v.querySelector(`.ordBar>[data-activity-tools="${scope}"]`);
     v.querySelector('.ordBar').innerHTML = `${seg}${chips}<span class="spacer"></span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="rvOrderFind" type="search" inputmode="numeric" placeholder="Order #" aria-label="Search order numbers in Review" aria-controls="rvList" autocomplete="off" spellcheck="false"></label>${CustomRead.count() ? `<span class="aiReading" title="Claude reads pieces with no design of their own to tell custom orders from regular listings"><span class="spin"></span>Claude reading ${CustomRead.count()}</span>` : ""}`;
+    if(keptTools)v.querySelector('.ordBar .cnOrderFind').after(keptTools);   // (the date menu and its open popover survive a redraw)
     CNListActivity.mount(v.querySelector(".ordBar"),scope,()=>render({still:true}));
     if(keptFind)v.querySelector('#rvOrderFind').closest('label').replaceWith(keptFind);
     const find=v.querySelector('#rvOrderFind');find.value=RV.q || '';
