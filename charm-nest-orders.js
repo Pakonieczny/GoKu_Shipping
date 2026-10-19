@@ -1545,10 +1545,23 @@
     return want && masterEntry ? masterSku(want, masterEntry, masterLoose) || "" : "";
   };
   const pinnedDesign = listingId => { const id = String(listingId == null ? "" : listingId).replace(/\D/g, ""); return id && Object.prototype.hasOwnProperty.call(PINNED_LISTING_DESIGNS, id) ? PINNED_LISTING_DESIGNS[id] : ""; };
+  /* LISTING DESIGNS (LISTDESIGN, Paul, 19 Oct 2026, order 4204609963, listing 1630282472 "Astronaut Charm Necklace Space Jewelry Planet Pendant ...": "Assign this SKU (ASTRONAUT_9809) to this order/listing").
+     The listing's transactions carry NO SKU, so every order waited ("no SKU on the transaction and no alias for the listing"). THE PLACE TO LINK A LISTING TO ITS DESIGN IN CODE: one line per listing, the Etsy
+     listing number → the library SKU, read for every order of the listing WHATEVER SKU its transaction carries (none, a placeholder, a stale one). Unlike the pinned table above, a PERSON'S OWN ANSWER WINS: while the
+     listing's saved record (Charm_Sku_Aliases) names any design (a listing-wide answer, an answer for a SKU, a saved pair, a huggie set), this table is not read and the line is read exactly as before; an option a
+     person mapped to a charm still decides after it, as for any line. The link is returned as a saved link is (source "alias", listed: true), so no automatic guard takes it back. A design the library does not hold is
+     never swapped for another: the line waits as an unknown SKU ("not in any master file"). The buyer's personalisation is untouched (the astronaut necklace's "love you to the moon and back" stays the words to
+     engrave). TO ADD ONE: "<listing id>": "<library SKU>". TO TAKE ONE OUT: delete its line. */
+  const LISTING_DESIGNS = Object.freeze({ "1630282472": "ASTRONAUT_9809" });
+  const listingDesign = listingId => { const id = String(listingId == null ? "" : listingId).replace(/\D/g, ""); return id && Object.prototype.hasOwnProperty.call(LISTING_DESIGNS, id) ? LISTING_DESIGNS[id] : ""; };
+  /** Has a person saved a design for this listing (its Charm_Sku_Aliases record a)? A listing-wide answer, an answer for a SKU, a saved pair or a huggie set; a listing kind alone is no design. */
+  const aliasSaysDesign = a => { if (!a || typeof a !== "object") return false; const some = o => !!o && typeof o === "object" && Object.keys(o).some(k => !!o[k]); return !!a.sku || !!a.huggie || some(a.bySku) || some(a.pairBySku); };
   function resolveSku(line, aliases, masterEntry, noDesign, masterLoose) {
     const pinned = pinnedDesign(line.listingId); if (pinned) return { sku: pinned, source: "alias", pinned: true };
     const raw = upSku(line.sku);
     const a = aliases && aliases[String(line.listingId)], up = s => s ? String(s).trim().toUpperCase() : "";
+    // LISTDESIGN (above): the listing's design linked in code, only while no person has saved a design for the listing (a Huggie CHARM SET of the listing is its huggie design's, never this)
+    const listed = listingDesign(line.listingId); if (listed && !huggieSet(line) && !aliasSaysDesign(a)) return { sku: upSku(listed), source: "alias", listed: true };
     // (the listing's answer is its necklace charm's: never a huggie set's, which has its own for a line with no SKU)
     const own = raw && a && a.bySku ? up(bySkuOf(a.bySku, raw)) : "", whole = !a ? "" : huggieSet(line) ? (!raw ? up(a.huggie) : "") : a.sku && (!raw || !a.v) && !/\(HUGGIE\)$/.test(raw) ? up(a.sku) : "";
     // a blocked SKU's card offers "Use this charm" too: the answer for that SKU is its design (the blocked entry beat it)
@@ -2407,6 +2420,136 @@
     if (r.ambiguous) return Object.assign(out, { hold: { kind: "many", reason: `The ${one.sign} charm has more than one design of this kind in the repo (${r.ambiguous.slice(0, 3).join(", ")}): a person picks` } });
     const o = (r.other || [])[0], kind = !o ? "" : FORM_THIS[o.form === "unknown" ? "necklace" : o.form] || "";
     return Object.assign(out, { hold: { kind: "missing", reason: `The ${one.sign} charm is not in the repo yet${o ? ` (the repo has it only as ${kind}: ${o.sku})` : ""}` } });
+  }
+
+  /* ═══ 3c' · HUGGIE SYMBOL LISTINGS: a drop-down that picks one member of a NUMBERED family (HUGSYM, Paul, 19 Oct 2026) ═══════════════════════════════════════════════
+     Paul, on order 4200256896 (listing 1744307981 "Huggie Hoop Earrings with Astrological Charm …", Etsy SKU "Huggie Hoops- Zodiac" on every sign, drop-downs METAL CHOICE, HOOP SIZE and ZODIAC SIGN, "Capricorn" in
+     the box): "This order/listing is not being correctly mapped to the existing Huggie charms that were added to the Charm repo … ensure that this listing is correctly profiled and that the appropriate Huggie charms
+     get assigned to the buyer's choices from the Drop Down menu". And on order 4198076628 (listing 1730115500 "Norse Runes Charm Huggie Hoop Earrings …", Etsy SKU "HUGGIE HOOPS- VIKING RUNES", a rune drop-down,
+     the box "Rune Wunjo und Rune Algiz"): "Same for this order/listing as the one above except these are the Runes".
+     THE CAUSE: the library holds both sets as NUMBERED families (the shop's design file SKUs_CORRECTED_2024-1014.ai): Zodiac_Huggie-0 … -11 (Aries 0 … Pisces 11, the shop's own numbering, SIGN_ORDER) and
+     Rune_Huggie_Charm-0 … -11 (the first twelve runes of the Elder Futhark, Fehu 0 … Jera 11; the other twelve are NOT in the library). No name of either family carries the sign or the rune, so the generic zodiac
+     reading (section 3c: a design that NAMES the sign, or a numbered family whose own sign names agree with the numbering) could not reach them: Capricorn waited "not in the repo yet" while its charm was there, and
+     the rune SKU is in no master file at all ("No vector available").
+     THE RULE, one row of SYMBOL_LISTINGS per listing (nothing here loosens the generic rules for any other listing). A line falls under a row by its Etsy listing number, or by its Etsy SKU (compared by its loose
+     key) on a line of huggie form. TO ADD ONE: a row with the listing numbers, the SKUs, the family's base (the master SKU without its number), the names in the family's order (name i is member base+i), the
+     names the library does NOT hold (`absent`: a buyer who names one waits with a plain line instead of being ignored) and the reader of the names.
+       · a PERSON'S answer wins: a saved link for the listing or SKU (source alias), an option mapped to a charm, a saved pair, two designs a person named for the line; "the same on both ears" sets only the pair aside;
+       · the symbol is what the BUYER chose, in this order of trust: the drop-down (any option that is not the metal, a size, a length or a price), the line's own SKU when it is a member of the family, then the
+         buyer's words (the personalisation box, the buyer's note, the staff note). Never the title;
+       · ONE symbol (the drop-down's, with the buyer's words naming it or nothing else; or the one the words name): both ears are its member (a Left and a Right, as every huggie pair);
+       · TWO different symbols in the buyer's words (rows with pairFromWords: the runes), the drop-down's among them when there is one: an earring PAIR, the first named the Left, each ear its own member (the pair of
+         section 3, pairInfo: a piece per ear). The zodiac row keeps the shop's "2 symbols" reader for two signs (pairMembers: each sign's charm is then its ZODIAC_HUGGIE member, designOf) and two signs named any
+         other way wait ("Which zodiac sign?"), as they did;
+       · a symbol whose member is not in the master, or that the library does not hold at all, WAITS with ONE plain line ("The Algiz charm is not in the repo yet (the repo has the 12 runes Fehu … Jera)"), never another
+         symbol's file, and the other ear is not made alone; no symbol named, or more than the line can hold, waits ("Which rune? …"). The held line is read again when the library grows;
+       · a family the master holds NOTHING of (a library not loaded, an older test world) is no profile: the line is read exactly as before (section 3c for the zodiac SKU).
+     The symbol words are the buyer's CHOICE, never words to engrave (and no earring is ever engraved, section 3d). */
+  const RUNE_NAMES = Object.freeze(["Fehu", "Uruz", "Thurisaz", "Ansuz", "Raidho", "Kenaz", "Gebo", "Wunjo", "Hagalaz", "Nauthiz", "Isa", "Jera"]);   // Rune_Huggie_Charm-0 … -11, in this order
+  const RUNES_ABSENT = Object.freeze(["Eihwaz", "Perthro", "Algiz", "Sowilo", "Tiwaz", "Berkano", "Ehwaz", "Mannaz", "Laguz", "Ingwaz", "Dagaz", "Othala"]);   // the rest of the Elder Futhark: not in the library
+  /* The spellings read as each rune, whole words only: [strict, loose]. Strict words are read anywhere in the buyer's words; loose ones (ordinary words, or too short to be sure: "is", "ur", "man", "thorn") only
+     right after the word "rune" / "runes" or as the whole value of a drop-down. Conservative: the common Old Norse / Old English names and their usual spellings, nothing fuzzier. */
+  const RUNE_WORDS = {
+    Fehu: ["fehu feoh", "fe"], Uruz: ["uruz", "ur"], Thurisaz: ["thurisaz thurs", "thorn"], Ansuz: ["ansuz ansur", "os"], Raidho: ["raidho raido", "reid"], Kenaz: ["kenaz kaunan kaunaz", "kaun ken cen"],
+    Gebo: ["gebo gifu gyfu", ""], Wunjo: ["wunjo wynn", ""], Hagalaz: ["hagalaz hagall", "hagal"], Nauthiz: ["nauthiz naudiz", "naud nyd"], Isa: ["isa", "is"], Jera: ["jera jeran jeraz", "ar"],
+    Eihwaz: ["eihwaz eiwaz ihwaz", "eoh"], Perthro: ["perthro peorth", "perth"], Algiz: ["algiz elhaz", ""], Sowilo: ["sowilo sowelu", "sol sigel"], Tiwaz: ["tiwaz teiwaz", "tyr"], Berkano: ["berkano berkana beorc", ""],
+    Ehwaz: ["ehwaz", "eh"], Mannaz: ["mannaz", "man"], Laguz: ["laguz", "lagu"], Ingwaz: ["ingwaz inguz", "ing"], Dagaz: ["dagaz", "daeg"], Othala: ["othala othila", "odal"]
+  };
+  const RUNE_STRICT = new Map(), RUNE_LOOSE = new Map();
+  for (const [r, [s, l]] of Object.entries(RUNE_WORDS)) { for (const w of s.split(" ").filter(Boolean)) RUNE_STRICT.set(w, r); for (const w of l.split(" ").filter(Boolean)) RUNE_LOOSE.set(w, r); }
+  const runeText = s => plainText(String(s == null ? "" : s).replace(/[þÞ]/g, "th").replace(/[ðÐ]/g, "d").replace(/[æÆ]/g, "ae"));
+  /** The runes a text names, in order, each once: [{ name, word }]. whole: the text is a drop-down's whole value ("Is", "Rune Ur": a loose word alone is then the rune). */
+  function runesInText(text, whole) {
+    const toks = runeText(visible(text)).split(/[^a-z]+/).filter(Boolean), bare = toks.filter(w => w !== "rune" && w !== "runes"), out = [];
+    toks.forEach((w, i) => {
+      const after = i > 0 && (toks[i - 1] === "rune" || toks[i - 1] === "runes");
+      const r = RUNE_STRICT.get(w) || (after || (whole && bare.length === 1) ? RUNE_LOOSE.get(w) : "");
+      if (r && !out.some(x => x.name === r)) out.push({ name: r, word: w });
+    });
+    return out;
+  }
+  /** The signs a text names, as runesInText says runes: a drop-down's value exactly (English and the shop languages), the buyer's words with the misspelling tolerance of section 3c. */
+  const zodiacInText = (text, whole) => signsInText(text, !whole).map(r => ({ name: r.sign, word: r.word, typo: !!r.typo }));
+  const SYMBOL_FILLER = new Set([...SIGN_FILLER, "rune", "runes", "und", "et", "y", "e", "plus", "left", "right", "ear", "ears", "both"]);
+  /* THE TABLE. id: the profile's name; noun / nouns: what one choice is; listings: Etsy listing numbers; skus: Etsy SKUs (any listing, huggie form only); base + names: member base+i is names[i]; absent: names the
+     library does not hold; read(text, whole): the names a text gives; pairFromWords: two different names in the buyer's words are a pair of two (else they wait, as the zodiac's always did). */
+  const SYMBOL_LISTINGS = Object.freeze([
+    Object.freeze({ id: "zodiac-huggie", noun: "zodiac sign", nouns: "zodiac signs", ask: "Which zodiac sign?", listings: Object.freeze(["1744307981"]), skus: Object.freeze(["HUGGIE HOOPS-ZODIAC"]), base: "ZODIAC_HUGGIE-", names: SIGN_ORDER, absent: Object.freeze([]), read: zodiacInText, pairFromWords: false, zodiac: true }),
+    Object.freeze({ id: "rune-huggie", noun: "rune", nouns: "runes", ask: "Which rune?", listings: Object.freeze(["1730115500"]), skus: Object.freeze(["HUGGIE HOOPS- VIKING RUNES"]), base: "RUNE_HUGGIE_CHARM-", names: RUNE_NAMES, absent: RUNES_ABSENT, read: runesInText, pairFromWords: true })
+  ]);
+  const SYMBOL_BY_LISTING = new Map(), SYMBOL_BY_SKU = new Map();
+  for (const x of SYMBOL_LISTINGS) { for (const l of x.listings) SYMBOL_BY_LISTING.set(String(l), x); for (const k of x.skus) SYMBOL_BY_SKU.set(looseKey(k), x); }
+  /** The SYMBOL_LISTINGS row a line falls under: its listing number, else its Etsy SKU (the transaction's, or the one read for it) on a line of huggie form (lf: lineForm's answer). null when none. */
+  function symbolListing(line, lf, txSku) {
+    const id = String(line && line.listingId != null ? line.listingId : "").replace(/\D/g, "");
+    if (id && SYMBOL_BY_LISTING.has(id)) return SYMBOL_BY_LISTING.get(id);
+    if ((lf && typeof lf === "object" ? lf.form : lf) !== "huggie") return null;
+    for (const s of [txSku, line && line.sku]) { const k = s ? looseKey(s) : ""; if (k && SYMBOL_BY_SKU.has(k)) return SYMBOL_BY_SKU.get(k); }
+    return null;
+  }
+  /** The master SKU of a name's member (base + its place, the master's own spelling); "" when the library does not hold it or the name is not one of the family's. */
+  const symbolMember = (prof, name, me, loose) => { const i = prof.names.indexOf(name); return i < 0 || !me ? "" : masterSku(prof.base + i, me, loose) || ""; };
+  /** Does the master hold any member of the row's family? (none: the row stands aside and the line is read as before) */
+  const symbolFamilyIn = (prof, me, loose) => !!me && prof.names.some((_, i) => !!masterSku(prof.base + i, me, loose));
+  const SYMBOL_FROM = Object.assign({ sku: "the line's SKU" }, SIGN_FROM);
+  const capFirst = s => String(s || "").charAt(0).toUpperCase() + String(s || "").slice(1);
+  /** What a line of a SYMBOL_LISTINGS row reads as. o: { me, loose, sku (the SKU read so far), sameSaid (a person said "the same on both ears" for the line) }.
+   *  → null (the master holds nothing of the family) | { profile, noun, family, symbols: [{ name, from, word, text, side?, sku }], textOnly, variation?, optionSku, pick?, pair?: [{ side, sku }], hold?: { kind, reason, missing? }, note } */
+  function symbolRead(line, order, prof, o) {
+    o = o || {}; const me = o.me, loose = o.loose; if (!prof || !symbolFamilyIn(prof, me, loose)) return null;
+    line = line || {}; const opt = [], words = [], boxVals = [], add = (list, rec) => { if (!list.some(x => x.name === rec.name)) list.push(rec); };
+    let variation = null;
+    for (const v of line.variations || []) {
+      const name = lvName(v), value = lvValue(v).trim(); if (!name || !value) continue;
+      if (isPersonalisation(name)) { boxVals.push(value); continue; }
+      if (isMetalVariation(name, value) || isSizeOption(name, value) || isChainOption(name) || isPriceOption(name)) continue;
+      const hit = prof.read(value, true); if (hit.length && !variation) variation = v;
+      for (const r of hit) add(opt, Object.assign({ from: "option", optionName: name, text: value }, r));
+    }
+    // the line's own SKU when it is a member of the family (Etsy keeps the product's own SKU on the transaction): as good as the drop-down, when the drop-down names nothing
+    const m = INDEXED_SKU.exec(upSku(o.sku));
+    if (!opt.length && m && upSku(m[1] + m[2]) === upSku(prof.base) && String(+m[3]) === m[3] && prof.names[+m[3]]) opt.push({ from: "sku", name: prof.names[+m[3]], word: upSku(o.sku), text: upSku(o.sku) });
+    const box = uniqStr([].concat(line.personalization || [], boxVals).map(t => visible(t).trim()).filter(Boolean));
+    const groups = [["box", box], ["note", [line.buyerMessage || (order && order.buyerMessage) || ""]], ["staff", [line.staffNote || (order && order.staffNote) || ""]]];
+    for (const [from, texts] of groups) for (const t of texts) { const tt = visible(t).trim(); if (tt) for (const r of prof.read(tt, false)) add(words, Object.assign({ from, text: tt }, r)); }
+    // the box held nothing but the names (and filler words): the buyer's words are the choice, there is no text in it
+    const textOnly = box.length > 0 && words.some(x => x.from === "box") && box.every(t => runeText(visible(t)).split(/[^a-z]+/).filter(Boolean).every(w => SYMBOL_FILLER.has(w) || prof.read(w, false).length > 0));
+    const out = { profile: prof.id, noun: prof.noun, family: prof.base, textOnly, symbols: [], optionSku: "" };
+    if (variation) out.variation = variation;
+    const names = l => joinSigns(l.map(x => x.name)), said = x => x.from === "sku" ? "the line's SKU" : `the “${clip(x.optionName, 30)}” drop-down`;
+    let chosen = null, why = "";
+    if (opt.length > 1) why = `${prof.ask} The “${clip(opt[0].optionName, 30)}” drop-down names ${names(opt)}`;
+    else if (opt.length === 1) {
+      const S = opt[0], others = words.filter(x => x.name !== S.name);
+      if (!others.length) chosen = [S];
+      else if (prof.pairFromWords && words.length === 2 && others.length === 1) chosen = words.slice();   // ("Rune Wunjo und Rune Algiz" with Wunjo in the drop-down: the pair, in the buyer's order)
+      else why = `${prof.ask} ${capFirst(said(S))} says ${S.name} but the buyer's words name ${names(others)}`;
+    } else if (words.length === 1) chosen = [words[0]];
+    else if (words.length === 2 && prof.pairFromWords) chosen = words.slice();
+    else if (words.length) why = `${prof.ask} The buyer names ${names(words)}`;
+    else why = `${prof.ask} The buyer named none (${box.length ? `the personalisation box says “${clip(box.join(" · "), 40)}”` : "the personalisation box is empty"})`;
+    if (!chosen) return Object.assign(out, { hold: { kind: "which", reason: why }, note: why });
+    if (chosen.length === 2 && o.sameSaid) chosen = [opt[0] || chosen[0]];   // (a person said the same on both ears: the drop-down's, else the first named)
+    out.symbols = chosen.map((x, i) => Object.assign({ name: x.name, from: x.from, word: x.word, text: x.text }, x.typo ? { typo: true } : {}, x.optionName ? { optionName: x.optionName } : {}, chosen.length === 2 ? { side: i ? "R" : "L" } : {}, { sku: symbolMember(prof, x.name, me, loose) }));
+    // (the drop-down's own value is answered by its member whether the buyer's words repeat it or not: "Wunjo" in the drop-down is RUNE_HUGGIE_CHARM-7 even when the box names the pair)
+    const os = opt[0] && opt[0].from === "option" ? opt[0] : null; out.optionSku = os ? symbolMember(prof, os.name, me, loose) : "";
+    if (os) for (const x of out.symbols) if (x.name === os.name && x.from !== "option") { x.from = "option"; x.optionName = os.optionName; x.alsoIn = "the buyer's words"; }
+    const froms = uniqStr(out.symbols.map(x => x.from === "option" ? `the “${clip(x.optionName, 30)}” option` : SYMBOL_FROM[x.from] || x.from));
+    const one = out.symbols[0], two = out.symbols[1], at = x => x.sku ? ` (${x.sku})` : " (not in the repo)";
+    out.note = !two ? `${capFirst(prof.noun)}: ${one.name}${one.sku ? ` (${one.sku}, both ears)` : " (not in the repo)"}, from ${froms[0]}${one.typo ? ` (typed “${clip(one.text, 30)}”)` : ""}`
+      : `${capFirst(prof.nouns)}: Left ${one.name}${at(one)}, Right ${two.name}${at(two)}, from ${froms.join(" and ")}`;
+    const missing = out.symbols.filter(x => !x.sku);
+    if (missing.length) {
+      // (a name the library does not hold at all: what the repo has instead; a member of the family the master lacks: its SKU)
+      const held = prof.names.filter(n => !!symbolMember(prof, n, me, loose)), gone = missing.filter(x => prof.names.includes(x.name)).map(x => upSku(prof.base + prof.names.indexOf(x.name)));
+      const why = [];
+      if (missing.some(x => !prof.names.includes(x.name))) why.push(held.length === prof.names.length ? `the repo has the ${held.length} ${prof.nouns} ${held[0]} … ${held[held.length - 1]}` : `the repo has ${held.length} of the ${prof.names.length} ${prof.nouns} ${prof.names[0]} … ${prof.names[prof.names.length - 1]}`);
+      if (gone.length) why.push(`${joinSigns(gone)} ${gone.length > 1 ? "are" : "is"} not in the library`);
+      const reason = `The ${joinSigns(missing.map(x => x.name))} charm${missing.length > 1 ? "s are" : " is"} not in the repo yet (${why.join("; ")})`;
+      return Object.assign(out, { hold: { kind: "missing", reason, missing: missing.map(x => x.name) } });
+    }
+    if (two) return Object.assign(out, { pair: out.symbols.map(x => ({ side: x.side, sku: x.sku })) });
+    return Object.assign(out, { pick: one.sku });
   }
 
   /** The pair of designs a person saved for this line's listing and SKU ({ L, R }, aliasPut pair), or null. The listing's own record and the SKU as the line carries it: no other listing, no other SKU, no title. */
@@ -3519,18 +3662,22 @@
     // the charm a value of an option decides on this listing (a person's answer for it, or the SKU Etsy ties to that value alone), "" when none yet
     // (a sign read from the line's words, the buyer's note included, has no SKU on the transaction: its charm is the one the listing's own inventory keeps for that value, signValueSku; what stops it is told in report.lack)
     const report = {};
+    // HUGSYM (section 3c'): the SYMBOL_LISTINGS row the line falls under (its listing number, or its SKU on a huggie line), null for every other line
+    let symProf = null; try { symProf = symbolListing(line, lf, txSku); } catch (_) { symProf = null; }
     const designOf = v => {
       const value = String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim(), name = v.name || v.formatted_name;
       const hit = optionLookup(ctx.optionMaps, line.listingId, name, value);
       if (hit && hit.field === "design" && hit.value) return upSku(hit.value);
       if (!viaPick && tied(v)) return sku;
       const ss = signsOfText(value); if (ss.length !== 1) return "";
+      // (HUGSYM: on a profiled zodiac listing a sign's charm is its member of the listing's numbered family, ZODIAC_HUGGIE-<its place>, when the library holds it)
+      if (symProf && symProf.zodiac) { const k = symbolMember(symProf, ss[0], me, loose); if (k) return k; }
       const r = signValueSku(table, line, name, idOf(v.propertyId != null ? v.propertyId : v.property_id), ss[0], me, loose);
       if (r.sku) return r.sku;
       (report.lack = report.lack || {})[ss[0]] = { why: r.why, needNames: !!r.needNames };
       return "";
     };
-    const members = pairMembers(line, { me, loose, optionMaps: ctx.optionMaps, aliases: ctx.aliases, sku, lineId: secondId, report, designOf });
+    let members = pairMembers(line, { me, loose, optionMaps: ctx.optionMaps, aliases: ctx.aliases, sku, lineId: secondId, report, designOf });
     if (members && PIECE_RULES.mismatchedMakesTwo) { sku = members.members[0].sku; skuSource = "pair"; }
     const listed = isNoDesign(sku, ctx.noDesign) || (!sku && isNoDesign(set ? line.title + " (HUGGIE)" : line.title, ctx.noDesign));
     // a special purchase (custom, rework, chain only, add-on…): chain only is never cut, and a special line a person
@@ -3547,9 +3694,20 @@
     // ZODSIGN (section 3c): a SHARED zodiac SKU (HUGGIE HOOPS-ZODIAC, one drawing in the master, the Libra huggie, for all twelve signs) takes the sign the buyer NAMED (an option, the personalisation box, the
     // buyer's note): that sign's charm of the line's form, or a plain wait ("The Capricorn charm is not in the repo yet" / "Which zodiac sign?"), never another sign's file. Only an automatic match is replaced:
     // a person's saved answer (alias, option map, saved pair) and every other reading stand.
+    // HUGSYM (section 3c'): a line of a SYMBOL_LISTINGS row (the zodiac huggies, the rune huggies) takes the member of the listing's numbered family for the symbol the buyer chose (the drop-down, the line's own
+    // SKU, the box, the note): one symbol on both ears, two named symbols a pair (rows that allow it), or ONE plain wait, never another symbol's file. A person's answer (a saved link, an option mapped to a charm, a saved
+    // pair, two designs named for the line, a letter, a huggie set) stands: only an automatic reading, or none, is replaced. A zodiac line that says "2 symbols" stays with that reader (pairMembers, designOf above).
+    let symbol = null;
+    try {
+      const said2 = secondId ? optionLookup(ctx.optionMaps, line.listingId, SECOND_OPT, secondId) : null;
+      if (symProf && !quiet && !set && !viaPick && !viaLetter && !members && me && skuSource !== "alias" && !(symProf.zodiac && lineSignals(line).says))
+        symbol = symbolRead(line, order, symProf, { me, loose, sku, sameSaid: !!(said2 && said2.field === "ignore") });
+    } catch (_) { symbol = null; }
+    if (symbol && symbol.pair) { members = { members: symbol.pair, source: "profile", profile: symbol.profile }; sku = symbol.pair[0].sku; skuSource = PIECE_RULES.mismatchedMakesTwo ? "pair" : "profile"; }
+    else if (symbol && symbol.pick) { sku = symbol.pick; skuSource = "profile"; }
     let zodiac = null;
     try {
-      if (!quiet && !set && !viaPick && !viaLetter && !members && me && sku && ZODIAC_AUTO.has(skuSource)) zodiac = zodiacRead(line, order, sku, lf, masterForm(sku, guardCtx), ctx);
+      if (!symbol && !quiet && !set && !viaPick && !viaLetter && !members && me && sku && ZODIAC_AUTO.has(skuSource)) zodiac = zodiacRead(line, order, sku, lf, masterForm(sku, guardCtx), ctx);
     } catch (_) { zodiac = null; }
     if (zodiac && zodiac.pick) { sku = zodiac.pick.sku; skuSource = "zodiac"; }
     // HUGGIEGUARD (stage B): an automatic match never crosses forms (see section 3b). A person's answer (source alias / option / a saved pair) and a line that is not cut are never held.
@@ -3626,6 +3784,8 @@
       // the drop-down value that says "2 symbols" and leaves the signs to the note ("2 symbols-leave note"): once the note's two signs are two charms, the option is answered by them
       if (!mapped && members && members.source === "signs" && members.byNote && name === members.optionName && value === members.optionValue) mapped = { field: "design", value: members.members[0].sku, source: "rule:signs-in-note" };
       // ZODSIGN: the option that named the sign of a shared zodiac SKU is answered by that sign's charm (a sign with no charm yet leaves the option as it was, beside the line's plain wait)
+      // HUGSYM: the drop-down that named the symbol of a profiled listing is answered by its member (a symbol the library does not hold leaves it read, beside the line's ONE plain wait: never a second question)
+      if (!mapped && symbol && symbol.variation === v) mapped = symbol.optionSku ? { field: "design", value: symbol.optionSku, source: "rule:listing-profile" } : symbol.hold ? { field: "ignore", value: null, source: "rule:listing-profile-wait" } : null;
       if (!mapped && zodiac && zodiac.pick && zodiac.variation === v) mapped = { field: "design", value: zodiac.pick.sku, source: "rule:zodiac-sign" };
       // a Left-ear / Right-ear option whose value is a master design is that side's design (the pair's members): nothing to ask about it
       if (!mapped && members && members.source === "options" && SIDE_THING.test(name)) { const k = /\bleft\b/i.test(name) ? "L" : /\bright\b/i.test(name) ? "R" : "", m = k && members.members.find(x => x.side === k); if (m) mapped = { field: "design", value: m.sku, source: "rule:pair-side" }; }
@@ -3691,9 +3851,10 @@
     // an unknown SKU waits while an option is unanswered: the option may be what picks the charm (Zodiac Sign: Pisces on a
     // listing whose signs share one SKU), and a charm given to the SKU instead would be every sign's
     const optionOpen = problems.some(p => p.kind === "needsMapping");
-    if (!quiet && !sku && !optionOpen) problems.push(set ? { kind: "unmatchedSku", reason: "no SKU on the transaction · Huggie CHARM SET: pick its huggie design", huggie: true, listingId: String(line.listingId || ""), title: line.title || "" }
+    const symHeld = !!(symbol && symbol.hold);   // (HUGSYM: a profiled line that waits says so in its ONE plain line below; no unknown-SKU line beside it)
+    if (!quiet && !sku && !optionOpen && !symHeld) problems.push(set ? { kind: "unmatchedSku", reason: "no SKU on the transaction · Huggie CHARM SET: pick its huggie design", huggie: true, listingId: String(line.listingId || ""), title: line.title || "" }
       : { kind: "unmatchedSku", reason: "no SKU on the transaction and no alias for the listing", listingId: String(line.listingId || ""), title: line.title || "" });
-    if (ctx.masterEntry && sku && !quiet) {
+    if (ctx.masterEntry && sku && !quiet && !symHeld) {
       const entry = ctx.masterEntry(sku);
       if (!entry) {
         // HUGGIEGUARD: the numbered siblings of the SKU the master does hold ("X 1", "X 2" for an "X" it has not), the ones that fit the line: for whoever offers them (spec.siblings)
@@ -3733,6 +3894,12 @@
       }
     }
     // ZODSIGN: the sign the buyer chose, said once in the order's reading (the Pieces line) and kept as a fact; the sign word in the box is the buyer's choice of sign, never words to engrave (textOnly: nothing else was written)
+    // HUGSYM: the symbol(s) the buyer chose and their members, said once in the order's reading and kept as a fact (spec.listingProfile); a zodiac row's sign is also spec.zodiacSign, as section 3c says it
+    if (symbol) {
+      spec.listingProfile = { profile: symbol.profile, noun: symbol.noun, family: symbol.family, symbols: symbol.symbols.map(x => Object.assign({}, x)), textOnly: !!symbol.textOnly, held: symbol.hold ? symbol.hold.kind : "", reason: symbol.hold ? symbol.hold.reason : "", note: symbol.note };
+      if (symProf && symProf.zodiac && symbol.symbols.length === 1) { const x = symbol.symbols[0]; spec.zodiacSign = { sign: x.name, from: x.from, word: x.word, typo: !!x.typo, text: x.text, textOnly: !!symbol.textOnly, family: symbol.family, design: x.sku || null, how: "profile", held: symbol.hold ? symbol.hold.kind : "", note: symbol.note }; }
+      if (symbol.note) spec.pair.notes.push(symbol.note);
+    }
     if (zodiac && zodiac.sign) {
       spec.zodiacSign = { sign: zodiac.sign, from: zodiac.from, word: zodiac.word, typo: !!zodiac.typo, text: zodiac.text, textOnly: !!zodiac.textOnly, family: zodiac.family, design: zodiac.pick ? zodiac.pick.sku : null, how: zodiac.pick ? zodiac.pick.how : "", held: zodiac.hold ? zodiac.hold.kind : "", note: zodiac.note };
       spec.pair.notes.push(zodiac.note);
@@ -3792,7 +3959,14 @@
     } catch (_) { /* a reading that fails leaves the line as it always was */ }
     // HUGGIEGUARD: the line's form and the design's form are always told; a clash holds the line with ONE plain line and the siblings that fit (spec.formHold), and no design is on the row
     spec.lineForm = lf.form; spec.designForm = df.soft ? "unknown" : df.form;   // (a necklace read only from a distinct huggie twin is not told: it only keeps a huggie line off the plain design)
-    if (formHold) {
+    if (symHeld) {
+      // HUGSYM: a symbol the library does not hold (or no / too many symbols named): ONE plain line and no design on the row (the held line is made by no pool: the form guard's own hold, makePool). The decision is per
+      // symbol (problem.zodiac carries the profile, its kind and the names, as the zodiac holds do), and the line is read again whenever the library grows
+      const reason = symbol.hold.reason, names = (symbol.hold.missing || symbol.symbols.map(x => x.name)).join("+");
+      spec.formHold = { sku: spec.boughtSku, design: "", lineForm: lf.form, designForm: df.form, reason, siblings: [], zodiac: symbol.hold.kind, sign: names, profile: symbol.profile };
+      spec.designSku = null; spec.skuSource = null; spec.sources.sku = null;
+      problems.unshift({ kind: "unmatchedSku", reason, sku: spec.boughtSku || upSku(line.sku) || "", listingId: String(line.listingId || ""), title: line.title || "", formHold: true, zodiac: symbol.profile + ":" + symbol.hold.kind + ":" + names, profile: symbol.profile, lineForm: lf.form, designForm: df.form, siblings: [] });
+    } else if (formHold) {
       const etsy = upSku(line.sku) || spec.boughtSku, sibs = siblingsOf(etsy, guardCtx, { form: lf.form }), reason = formReason(etsy, formHold.design, formHold.df, lf);
       spec.formHold = { sku: spec.boughtSku, design: formHold.design, lineForm: lf.form, designForm: formHold.df.form, reason, siblings: sibs };
       spec.siblings = sibs; spec.designSku = null; spec.skuSource = null; spec.sources.sku = null;
@@ -4196,5 +4370,6 @@
     skuFamily, lineFamily, skuFamilyConflict, familyTwins, listingTwin, inventoryPicks, inventoryWhy, suggestCharms, letterIndex, letterFamily, letterRead, oneChar, tagOptionOf, tagOptionRead, TAG_SHAPES,
     KNOWN_SKU_NAMES, knownName, namedSku, sameDesign, designFile, FORMS, formOfText, masterForm, lineForm, formClash, siblingsOf, formOfLine, lookalikeRead, entryBlock, blockKind, blockReleased, blockFor,
     SIGN_ORDER, skuSign, sharedZodiac, signsInText, signsNamed, zodiacRead,
+    SYMBOL_LISTINGS, symbolListing, symbolRead, symbolMember, runesInText, RUNE_NAMES, RUNES_ABSENT, LISTING_DESIGNS, listingDesign,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });
