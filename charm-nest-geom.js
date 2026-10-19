@@ -804,19 +804,40 @@
   /** Alternative line splits for "Re-split lines": joined, at the customer's breaks, and between a name and a date. */
   // Word boundaries use measured glyph advances; explicit newlines are hard
   // boundaries in Auto. A chosen count deliberately reflows the whole text.
-  function wrapLines(text, count, font) {
+  /* (WORLD, Paul 19 Oct 2026) Chinese and Japanese are written without spaces: a line may break between two ideographs, kana or fullwidth marks, never before a closing mark, a small kana or the long-vowel mark, never after an opening bracket.
+     Korean, Arabic, Hebrew, the Indian scripts and Latin keep breaking at their spaces only. A line with no ideograph or kana is split exactly as before (one token per word, a space between). */
+  const CJ = /[\p{sc=Hani}\p{sc=Hira}\p{sc=Kana}\u3000-\u303F\uFF00-\uFFEF]/u, CJ_HAS = /[\p{sc=Hani}\p{sc=Hira}\p{sc=Kana}]/u;
+  const NO_BREAK_BEFORE = /^[\u3001\u3002\uFF0C\uFF0E\uFF1A\uFF1B\uFF1F\uFF01\u30FB\u30FC\u3005\u309D\u309E\u30FD\u30FE\u3041\u3043\u3045\u3047\u3049\u3063\u3083\u3085\u3087\u308E\u30A1\u30A3\u30A5\u30A7\u30A9\u30C3\u30E3\u30E5\u30E7\u30EE\uFF09\uFF3D\uFF5D\u3015\u3009\u300B\u300D\u300F\u3011\u3019\u3017\u301F\u2019\u201D\u2026\u2025\u203C\u2047\u2048\u2049]/u;
+  const NO_BREAK_AFTER = /[\uFF08\uFF3B\uFF5B\u3014\u3008\u300A\u300C\u300E\u3010\u3018\u3016\u301D\u2018\u201C]$/u;
+  function wordTokens(text) {
     const words = String(text).trim().split(/\s+/u).filter(Boolean);
+    if (!CJ_HAS.test(text)) return words.map(t => ({ t, sep: " " }));
+    const out = [];
+    for (const w of words) {
+      const g = [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(w)].map(x => x.segment);
+      let cur = "", sep = " ";
+      g.forEach((c, i) => {
+        if (i && CJ.test(g[i - 1]) && CJ.test(c) && !NO_BREAK_BEFORE.test(c) && !NO_BREAK_AFTER.test(g[i - 1])) { out.push({ t: cur, sep }); cur = ""; sep = ""; }
+        cur += c;
+      });
+      out.push({ t: cur, sep });
+    }
+    return out;
+  }
+  const joinTokens = (toks, a, b) => { let s = ""; for (let i = a; i < b; i++) s += (i > a ? toks[i].sep : "") + toks[i].t; return s; };
+  function wrapLines(text, count, font) {
+    const toks = wordTokens(text), words = toks.map(k => k.t);
     count = Math.max(1, Math.min(words.length, Number.isFinite(+count) ? Math.round(+count) : 1));
     if (!words.length) return [];
     const width = t => font.getAdvanceWidth(t, 1, {kerning:true});
-    const target = width(words.join(" ")) / count;
+    const target = width(joinTokens(toks, 0, toks.length)) / count;
     const memo = new Map();
     function solve(start, left) {
-      if (left === 1) { const line=words.slice(start).join(" "); return {cost:(width(line)-target)**2,lines:[line]}; }
+      if (left === 1) { const line=joinTokens(toks, start, toks.length); return {cost:(width(line)-target)**2,lines:[line]}; }
       const key=start+":"+left;if(memo.has(key))return memo.get(key);
       let best=null;
       for(let end=start+1;end<=words.length-left+1;end++) {
-        const line=words.slice(start,end).join(" "), rest=solve(end,left-1);
+        const line=joinTokens(toks, start, end), rest=solve(end,left-1);
         const cost=(width(line)-target)**2+rest.cost;
         if(!best||cost<best.cost)best={cost,lines:[line,...rest.lines]};
       }
@@ -835,7 +856,7 @@
     if(mode==='preserve')variants=[lines];
     else if(mode!=='auto')variants=[wrapLines(lines.join(' '),+mode,font)];
     else if(lines.length){
-      const counts=lines.map(()=>1),limits=lines.map(l=>l.split(' ').length);
+      const counts=lines.map(()=>1),limits=lines.map(l=>wordTokens(l).length);
       variants.push(lines);
       // Add a line to the paragraph with the widest remaining row. Explicit
       // customer newlines remain hard boundaries; automatic wraps can disappear.

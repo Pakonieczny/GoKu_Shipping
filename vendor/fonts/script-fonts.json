@@ -1,0 +1,723 @@
+{
+  "version": 1,
+  "fonts": [
+    {
+      "id": "arabic",
+      "name": "Noto Sans Arabic",
+      "file": "vendor/fonts/scripts/NotoSansArabic-Regular.ttf",
+      "bytes": 193948,
+      "sha256": "122807099463fe963e5f8c0712f7c15beb99bc28bdcd6f95e1c56cd53962b683",
+      "license": "vendor/fonts/scripts/NotoSansArabic-OFL.txt",
+      "scripts": ["Arab"],
+      "langs": ["ar", "fa", "ur", "ps", "sd", "ug", "ckb"],
+      "rtl": true,
+      "ranges": [
+        [1536, 1791],
+        [1872, 1919],
+        [2160, 2303],
+        [64336, 65023],
+        [65136, 65279],
+        [69312, 69375]
+      ],
+      "chain": "arabic",
+      "weight": 400,
+      "glyphs": 1711,
+      "version": "Version 2.012",
+      "coverage": "Complete upstream font: all 1711 glyphs / 1561 cmap entries kept (Latin, digits and punctuation included), GSUB/GPOS/GDEF untouched.",
+      "source": {
+        "repo": "https://github.com/google/fonts",
+        "commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+        "path": "ofl/notosansarabic/NotoSansArabic[wdth,wght].ttf",
+        "sha256": "63111b5b2e074dd48cc67692e0a2726d86ee94c1c37fe8598257b7b4e87e869e",
+        "license": "SIL OFL 1.1"
+      }
+    },
+    {
+      "id": "hebrew",
+      "name": "Noto Sans Hebrew",
+      "file": "vendor/fonts/scripts/NotoSansHebrew-Regular.ttf",
+      "bytes": 47368,
+      "sha256": "90697f8bbcd9da11e627d75ed73b3df8d55ae4b092143c8d5338ceb93bcb9f83",
+      "license": "vendor/fonts/scripts/NotoSansHebrew-OFL.txt",
+      "scripts": ["Hebr"],
+      "langs": ["he", "yi"],
+      "rtl": true,
+      "ranges": [
+        [1424, 1535],
+        [64285, 64335]
+      ],
+      "chain": "hebrew",
+      "weight": 400,
+      "glyphs": 470,
+      "version": "Version 3.001",
+      "coverage": "Complete upstream font: all 470 glyphs / 464 cmap entries kept (Latin, digits and punctuation included), GSUB/GPOS/GDEF untouched.",
+      "source": {
+        "repo": "https://github.com/google/fonts",
+        "commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+        "path": "ofl/notosanshebrew/NotoSansHebrew[wdth,wght].ttf",
+        "sha256": "7ef36a2c3593758cdb622e1bdef4f84523e92fbc3ccc667438dd80ff54c2de88",
+        "license": "SIL OFL 1.1"
+      }
+    },
+    {
+      "id": "devanagari",
+      "name": "Noto Sans Devanagari",
+      "file": "vendor/fonts/scripts/NotoSansDevanagari-Regular.ttf",
+      "bytes": 218036,
+      "sha256": "94a484de117ffea1784dc71c2aa1a96f3f554d8f90fa99de66783dbcab9c25dc",
+      "license": "vendor/fonts/scripts/NotoSansDevanagari-OFL.txt",
+      "scripts": ["Deva"],
+      "langs": ["hi", "mr", "ne", "sa", "kok", "mai", "bho"],
+      "rtl": false,
+      "ranges": [
+        [2304, 2431],
+        [7376, 7423],
+        [43232, 43263],
+        [72448, 72543]
+      ],
+      "chain": "devanagari",
+      "weight": 400,
+      "glyphs": 1117,
+      "version": "Version 2.007",
+      "coverage": "Complete upstream font: all 1117 glyphs / 551 cmap entries kept (Latin, digits and punctuation included), GSUB/GPOS/GDEF untouched.",
+      "source": {
+        "repo": "https://github.com/google/fonts",
+        "commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+        "path": "ofl/notosansdevanagari/NotoSansDevanagari[wdth,wght].ttf",
+        "sha256": "14ec4af41f27482216d1c2229f417ff9b1425e1babb014e57d1d40d03229853e",
+        "license": "SIL OFL 1.1"
+      }
+    },
+    {
+      "id": "bengali",
+      "name": "Noto Sans Bengali",
+      "file": "vendor/fonts/scripts/NotoSansBengali-Regular.ttf",
+      "bytes": 140600,
+      "sha256": "d238ac503fd6988c294e59988ccb842cf8351d52d31bc0af4398ccf05717cbf1",
+      "license": "vendor/fonts/scripts/NotoSansBengali-OFL.txt",
+      "scripts": ["Beng"],
+      "langs": ["bn", "as"],
+      "rtl": false,
+      "ranges": [
+        [2432, 2559]
+      ],
+      "chain": "bengali",
+      "weight": 400,
+      "glyphs": 730,
+      "version": "Version 3.011",
+      "coverage": "Complete upstream font: all 730 glyphs / 444 cmap entries kept (Latin, digits and punctuation included), GSUB/GPOS/GDEF untouched.",
+      "source": {
+        "repo": "https://github.com/google/fonts",
+        "commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+        "path": "ofl/notosansbengali/NotoSansBengali[wdth,wght].ttf",
+        "sha256": "dcd42978094e584a849c84a51450eeac40c8826057d566ea6d4b9627a403a05a",
+        "license": "SIL OFL 1.1"
+      }
+    },
+    {
+      "id": "gurmukhi",
+      "name": "Noto Sans Gurmukhi",
+      "file": "vendor/fonts/scripts/NotoSansGurmukhi-Regular.ttf",
+      "bytes": 67252,
+      "sha256": "6fdeabd0d6ccfe1db764ef23431b26779204efc05dbcd4584abca07c6decc9c5",
+      "license": "vendor/fonts/scripts/NotoSansGurmukhi-OFL.txt",
+      "scripts": ["Guru"],
+      "langs": ["pa"],
+      "rtl": false,
+      "ranges": [
+        [2560, 2687]
+      ],
+      "chain": "gurmukhi",
+      "weight": 400,
+      "glyphs": 615,
+      "version": "Version 2.004",
+      "coverage": "Complete upstream font: all 615 glyphs / 436 cmap entries kept (Latin, digits and punctuation included), GSUB/GPOS/GDEF untouched.",
+      "source": {
+        "repo": "https://github.com/google/fonts",
+        "commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+        "path": "ofl/notosansgurmukhi/NotoSansGurmukhi[wdth,wght].ttf",
+        "sha256": "1e6f728fa620e566f842d81e220265813faa12771214765d289c98e035adc5f2",
+        "license": "SIL OFL 1.1"
+      }
+    },
+    {
+      "id": "gujarati",
+      "name": "Noto Sans Gujarati",
+      "file": "vendor/fonts/scripts/NotoSansGujarati-Regular.ttf",
+      "bytes": 178588,
+      "sha256": "4965b97ccd2be7aa728845a99c437ca9f152fae101fa520438a5fb8777a27bed",
+      "license": "vendor/fonts/scripts/NotoSansGujarati-OFL.txt",
+      "scripts": ["Gujr"],
+      "langs": ["gu"],
+      "rtl": false,
+      "ranges": [
+        [2688, 2815]
+      ],
+      "chain": "gujarati",
+      "weight": 400,
+      "glyphs": 1110,
+      "version": "Version 2.106",
+      "coverage": "Complete upstream font: all 1110 glyphs / 442 cmap entries kept (Latin, digits and punctuation included), GSUB/GPOS/GDEF untouched.",
+      "source": {
+        "repo": "https://github.com/google/fonts",
+        "commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+        "path": "ofl/notosansgujarati/NotoSansGujarati[wdth,wght].ttf",
+        "sha256": "9901d8552f1dd5d2c50dbd4caa6f6e174e74e8264f06594ab259ae6e7b1ac428",
+        "license": "SIL OFL 1.1"
+      }
+    },
+    {
+      "id": "tamil",
+      "name": "Noto Sans Tamil",
+      "file": "vendor/fonts/scripts/NotoSansTamil-Regular.ttf",
+      "bytes": 82608,
+      "sha256": "b17018d23c148763e5ce8558086a6c899a8bcf4d0f2ae2800a73ce8ea42f2ec0",
+      "license": "vendor/fonts/scripts/NotoSansTamil-OFL.txt",
+      "scripts": ["Taml"],
+      "langs": ["ta"],
+      "rtl": false,
+      "ranges": [
+        [2944, 3071]
+      ],
+      "chain": "tamil",
+      "weight": 400,
+      "glyphs": 576,
+      "version": "Version 2.004",
+      "coverage": "Complete upstream font: all 576 glyphs / 428 cmap entries kept (Latin, digits and punctuation included), GSUB/GPOS/GDEF untouched.",
+      "source": {
+        "repo": "https://github.com/google/fonts",
+        "commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+        "path": "ofl/notosanstamil/NotoSansTamil[wdth,wght].ttf",
+        "sha256": "aa3a9b321f4b0bb2c40203ffbde9af89713227866e0e13f76e5b9eeea727cf88",
+        "license": "SIL OFL 1.1"
+      }
+    },
+    {
+      "id": "telugu",
+      "name": "Noto Sans Telugu",
+      "file": "vendor/fonts/scripts/NotoSansTelugu-Regular.ttf",
+      "bytes": 208512,
+      "sha256": "c748997bdedc5c082b222617343e6abe8f7b9812f71717067dcb92a232d3f9f2",
+      "license": "vendor/fonts/scripts/NotoSansTelugu-OFL.txt",
+      "scripts": ["Telu"],
+      "langs": ["te"],
+      "rtl": false,
+      "ranges": [
+        [3072, 3199]
+      ],
+      "chain": "telugu",
+      "weight": 400,
+      "glyphs": 1247,
+      "version": "Version 2.005",
+      "coverage": "Complete upstream font: all 1247 glyphs / 444 cmap entries kept (Latin, digits and punctuation included), GSUB/GPOS/GDEF untouched.",
+      "source": {
+        "repo": "https://github.com/google/fonts",
+        "commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+        "path": "ofl/notosanstelugu/NotoSansTelugu[wdth,wght].ttf",
+        "sha256": "e618af7bf999df192ed4f388eba2e563f2b5015034e9cbb317b5bd793bd7334d",
+        "license": "SIL OFL 1.1"
+      }
+    },
+    {
+      "id": "kannada",
+      "name": "Noto Sans Kannada",
+      "file": "vendor/fonts/scripts/NotoSansKannada-Regular.ttf",
+      "bytes": 168964,
+      "sha256": "c0bee0e79edd01c38f6bedec18b3fa68ae0cee5112a62b86bc0b35f8fe21ba28",
+      "license": "vendor/fonts/scripts/NotoSansKannada-OFL.txt",
+      "scripts": ["Knda"],
+      "langs": ["kn"],
+      "rtl": false,
+      "ranges": [
+        [3200, 3327]
+      ],
+      "chain": "kannada",
+      "weight": 400,
+      "glyphs": 933,
+      "version": "Version 2.006",
+      "coverage": "Complete upstream font: all 933 glyphs / 436 cmap entries kept (Latin, digits and punctuation included), GSUB/GPOS/GDEF untouched.",
+      "source": {
+        "repo": "https://github.com/google/fonts",
+        "commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+        "path": "ofl/notosanskannada/NotoSansKannada[wdth,wght].ttf",
+        "sha256": "cca4f3b3a8cb12fb261f1b43baf5d2f7f59d90fe123d41f0065ed3a183997ec9",
+        "license": "SIL OFL 1.1"
+      }
+    },
+    {
+      "id": "malayalam",
+      "name": "Noto Sans Malayalam",
+      "file": "vendor/fonts/scripts/NotoSansMalayalam-Regular.ttf",
+      "bytes": 111348,
+      "sha256": "2e7ddfb3aef4a3de4c77cf77d353debfbd77118481d7b455e4b9b2ec5f338e09",
+      "license": "vendor/fonts/scripts/NotoSansMalayalam-OFL.txt",
+      "scripts": ["Mlym"],
+      "langs": ["ml"],
+      "rtl": false,
+      "ranges": [
+        [3328, 3455]
+      ],
+      "chain": "malayalam",
+      "weight": 400,
+      "glyphs": 697,
+      "version": "Version 2.104",
+      "coverage": "Complete upstream font: all 697 glyphs / 467 cmap entries kept (Latin, digits and punctuation included), GSUB/GPOS/GDEF untouched.",
+      "source": {
+        "repo": "https://github.com/google/fonts",
+        "commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+        "path": "ofl/notosansmalayalam/NotoSansMalayalam[wdth,wght].ttf",
+        "sha256": "312e0e7c3cc15fa09eb42a8f749eeb246b593ed420e3c81aafe8d910c3a6fb56",
+        "license": "SIL OFL 1.1"
+      }
+    },
+    {
+      "id": "oriya",
+      "name": "Noto Sans Oriya",
+      "file": "vendor/fonts/scripts/NotoSansOriya-Regular.ttf",
+      "bytes": 171320,
+      "sha256": "00b2dcc2a211ce317c4e5a4dbae7b1b30ab5dd091a001df7382ae2236bd54e63",
+      "license": "vendor/fonts/scripts/NotoSansOriya-OFL.txt",
+      "scripts": ["Orya"],
+      "langs": ["or"],
+      "rtl": false,
+      "ranges": [
+        [2816, 2943]
+      ],
+      "chain": "oriya",
+      "weight": 400,
+      "glyphs": 901,
+      "version": "Version 2.007",
+      "coverage": "Complete upstream font: all 901 glyphs / 423 cmap entries kept (Latin, digits and punctuation included), GSUB/GPOS/GDEF untouched.",
+      "source": {
+        "repo": "https://github.com/google/fonts",
+        "commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+        "path": "ofl/notosansoriya/NotoSansOriya[wdth,wght].ttf",
+        "sha256": "910342275d619081b896b4ed25fd9ad6ff320c25591b810de1fcc4beb153ba82",
+        "license": "SIL OFL 1.1"
+      }
+    },
+    {
+      "id": "sinhala",
+      "name": "Noto Sans Sinhala",
+      "file": "vendor/fonts/scripts/NotoSansSinhala-Regular.ttf",
+      "bytes": 247156,
+      "sha256": "4ca14991ce75fe48265beaa65238d9c8aa8f8b2920640233fc9988ad6a116bb3",
+      "license": "vendor/fonts/scripts/NotoSansSinhala-OFL.txt",
+      "scripts": ["Sinh"],
+      "langs": ["si"],
+      "rtl": false,
+      "ranges": [
+        [3456, 3583],
+        [70112, 70143]
+      ],
+      "chain": "sinhala",
+      "weight": 400,
+      "glyphs": 979,
+      "version": "Version 2.006",
+      "coverage": "Complete upstream font: all 979 glyphs / 453 cmap entries kept (Latin, digits and punctuation included), GSUB/GPOS/GDEF untouched.",
+      "source": {
+        "repo": "https://github.com/google/fonts",
+        "commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+        "path": "ofl/notosanssinhala/NotoSansSinhala[wdth,wght].ttf",
+        "sha256": "9bd93e407a278075be403324063bc94a7e306c44de4df81214e932330c22eecf",
+        "license": "SIL OFL 1.1"
+      }
+    },
+    {
+      "id": "cjk-sc",
+      "name": "Noto Sans SC",
+      "file": "vendor/fonts/scripts/NotoSansSC-Regular.ttf",
+      "bytes": 1391908,
+      "sha256": "e872dd172ce0e35e656014c35f50a7ce4145d843a6c0a947a68d2c72904513dc",
+      "license": "vendor/fonts/scripts/NotoSansSC-OFL.txt",
+      "scripts": ["Hani", "Bopo"],
+      "langs": ["zh", "zh-Hans", "zh-CN", "zh-SG"],
+      "rtl": false,
+      "ranges": [
+        [12288, 12351],
+        [12544, 12591],
+        [19968, 40959],
+        [65280, 65519]
+      ],
+      "chain": "cjk",
+      "weight": 400,
+      "glyphs": 5250,
+      "version": "Version 2.004-H2;hotconv 1.0.118;makeotfexe 2.5.65603",
+      "coverage": "Simplified Chinese, common characters only: the 3,755 GB 2312 level-1 hanzi + the 3,500 of the level 1 of the 2013 通用规范汉字表, plus all GB 2312 symbols and Bopomofo. Coverage of each source table (characters in the face / characters in the table): gb2312 4554/7445 (61.17%); gb2312-l1 3755/3755 (100%); tgh 3871/8105 (47.76%); tgh-l1 3500/3500 (100%). Kept besides the ideographs: Latin, digits, punctuation, fullwidth forms, CJK symbols (and kana / Bopomofo / compatibility Jamo / the symbol rows of the national table where the language uses them); a rarer character is \"not in this font\" and a person decides.",
+      "source": {
+        "repo": "https://github.com/google/fonts",
+        "commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+        "path": "ofl/notosanssc/NotoSansSC[wght].ttf",
+        "sha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
+        "license": "SIL OFL 1.1",
+        "lists": {
+          "packages": ["togscc@1.3.1"],
+          "use": "choice of the glyphs to keep only; the lists are not redistributed"
+        }
+      },
+      "coverageStats": {
+        "gb2312": {
+          "total": 7445,
+          "ideographs": 6763,
+          "inUpstream": 7445,
+          "covered": 4554,
+          "ideographsCovered": 3872,
+          "pct": 61.17,
+          "pctOfUpstream": 61.17,
+          "ideographPct": 57.25
+        },
+        "gb2312-l1": {
+          "total": 3755,
+          "ideographs": 3755,
+          "inUpstream": 3755,
+          "covered": 3755,
+          "ideographsCovered": 3755,
+          "pct": 100,
+          "pctOfUpstream": 100,
+          "ideographPct": 100
+        },
+        "tgh": {
+          "total": 8105,
+          "ideographs": 8105,
+          "inUpstream": 8105,
+          "covered": 3871,
+          "ideographsCovered": 3871,
+          "pct": 47.76,
+          "pctOfUpstream": 47.76,
+          "ideographPct": 47.76
+        },
+        "tgh-l1": {
+          "total": 3500,
+          "ideographs": 3500,
+          "inUpstream": 3500,
+          "covered": 3500,
+          "ideographsCovered": 3500,
+          "pct": 100,
+          "pctOfUpstream": 100,
+          "ideographPct": 100
+        }
+      },
+      "keep": {
+        "ranges": [
+          [32, 126],
+          [160, 383],
+          [710, 733],
+          [8192, 8303],
+          [8364, 8364],
+          [8451, 8451],
+          [8470, 8470],
+          [8592, 8601],
+          [9312, 9331],
+          [9632, 9679],
+          [9733, 9734],
+          [9792, 9794],
+          [12288, 12351],
+          [12549, 12591],
+          [65281, 65374],
+          [65504, 65510]
+        ],
+        "symbols": ["gb2312"],
+        "ideographs": ["gb2312-l1", "tgh-l1"]
+      }
+    },
+    {
+      "id": "cjk-tc",
+      "name": "Noto Sans TC",
+      "file": "vendor/fonts/scripts/NotoSansTC-Regular.ttf",
+      "bytes": 1336104,
+      "sha256": "4dad23c6a4a585190f9ff0dfeb7a55fe4d7dc006fb77ef25809619f9931eeb39",
+      "license": "vendor/fonts/scripts/NotoSansTC-OFL.txt",
+      "scripts": ["Hani", "Bopo"],
+      "langs": ["zh-Hant", "zh-TW", "zh-HK", "zh-MO", "yue"],
+      "rtl": false,
+      "ranges": [
+        [12288, 12351],
+        [12544, 12591],
+        [19968, 40959],
+        [65280, 65519]
+      ],
+      "chain": "cjk",
+      "weight": 400,
+      "glyphs": 4492,
+      "version": "Version 2.004-H2;hotconv 1.0.118;makeotfexe 2.5.65603",
+      "coverage": "Traditional Chinese, common characters only: the Big5 level-1 hanzi (5,401 frequently used) whose simplified form is among the 3,500 commonest, + 25 everyday Hong Kong Cantonese characters, Bopomofo. Coverage of each source table (characters in the face / characters in the table): big5 3878/13706 (28.29%); big5-l1 3655/5401 (67.67%); big5-l1-common 3653/3653 (100%); cantonese 25/25 (100%). Kept besides the ideographs: Latin, digits, punctuation, fullwidth forms, CJK symbols (and kana / Bopomofo / compatibility Jamo / the symbol rows of the national table where the language uses them); a rarer character is \"not in this font\" and a person decides.",
+      "source": {
+        "repo": "https://github.com/google/fonts",
+        "commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+        "path": "ofl/notosanstc/NotoSansTC[wght].ttf",
+        "sha256": "864727d210d54f2537bbe23b3a839436c3992af72de9322af5270897246bd44f",
+        "license": "SIL OFL 1.1",
+        "lists": {
+          "packages": ["togscc@1.3.1", "opencc-python-reimplemented@0.1.7"],
+          "use": "choice of the glyphs to keep only; the lists are not redistributed"
+        }
+      },
+      "coverageStats": {
+        "big5": {
+          "total": 13706,
+          "ideographs": 13063,
+          "inUpstream": 13702,
+          "covered": 3878,
+          "ideographsCovered": 3663,
+          "pct": 28.29,
+          "pctOfUpstream": 28.3,
+          "ideographPct": 28.04
+        },
+        "big5-l1": {
+          "total": 5401,
+          "ideographs": 5401,
+          "inUpstream": 5401,
+          "covered": 3655,
+          "ideographsCovered": 3655,
+          "pct": 67.67,
+          "pctOfUpstream": 67.67,
+          "ideographPct": 67.67
+        },
+        "big5-l1-common": {
+          "total": 3653,
+          "ideographs": 3653,
+          "inUpstream": 3653,
+          "covered": 3653,
+          "ideographsCovered": 3653,
+          "pct": 100,
+          "pctOfUpstream": 100,
+          "ideographPct": 100
+        },
+        "cantonese": {
+          "total": 25,
+          "ideographs": 25,
+          "inUpstream": 25,
+          "covered": 25,
+          "ideographsCovered": 25,
+          "pct": 100,
+          "pctOfUpstream": 100,
+          "ideographPct": 100
+        }
+      },
+      "keep": {
+        "ranges": [
+          [32, 126],
+          [160, 383],
+          [710, 733],
+          [8192, 8303],
+          [8364, 8364],
+          [8451, 8451],
+          [8470, 8470],
+          [8592, 8601],
+          [9312, 9331],
+          [9632, 9679],
+          [9733, 9734],
+          [9792, 9794],
+          [12288, 12351],
+          [12549, 12591],
+          [65281, 65374],
+          [65504, 65510]
+        ],
+        "symbols": [],
+        "ideographs": ["big5-l1-common", "cantonese"]
+      }
+    },
+    {
+      "id": "cjk-jp",
+      "name": "Noto Sans JP",
+      "file": "vendor/fonts/scripts/NotoSansJP-Regular.ttf",
+      "bytes": 1429604,
+      "sha256": "b4413f2ca05322837f843b25458e5233985625a10b5f80255241b65587c4ddc2",
+      "license": "vendor/fonts/scripts/NotoSansJP-OFL.txt",
+      "scripts": ["Hani", "Hira", "Kana"],
+      "langs": ["ja"],
+      "rtl": false,
+      "ranges": [
+        [12288, 12543],
+        [12784, 12799],
+        [19968, 40959],
+        [65280, 65519]
+      ],
+      "chain": "cjk",
+      "weight": 400,
+      "glyphs": 5035,
+      "version": "Version 2.004-H2;hotconv 1.0.118;makeotfexe 2.5.65603",
+      "coverage": "Japanese, common characters only: all kana, the 2,136 Joyo kanji, the 2,965 JIS X 0208 level-1 kanji and the 863 jinmeiyo (name) kanji, plus all JIS X 0208 symbols. Coverage of each source table (characters in the face / characters in the table): jisx0208 3709/6879 (53.92%); jisx0208-l1 2965/2965 (100%); joyo 2136/2136 (100%); jinmeiyo 863/863 (100%). Kept besides the ideographs: Latin, digits, punctuation, fullwidth forms, CJK symbols (and kana / Bopomofo / compatibility Jamo / the symbol rows of the national table where the language uses them); a rarer character is \"not in this font\" and a person decides.",
+      "source": {
+        "repo": "https://github.com/google/fonts",
+        "commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+        "path": "ofl/notosansjp/NotoSansJP[wght].ttf",
+        "sha256": "c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f",
+        "license": "SIL OFL 1.1",
+        "lists": {
+          "packages": ["joyo-kanji@0.2.1", "jinmeiyo-kanji@1.0.0"],
+          "use": "choice of the glyphs to keep only; the lists are not redistributed"
+        }
+      },
+      "coverageStats": {
+        "jisx0208": {
+          "total": 6879,
+          "ideographs": 6356,
+          "inUpstream": 6878,
+          "covered": 3709,
+          "ideographsCovered": 3187,
+          "pct": 53.92,
+          "pctOfUpstream": 53.93,
+          "ideographPct": 50.14
+        },
+        "jisx0208-l1": {
+          "total": 2965,
+          "ideographs": 2965,
+          "inUpstream": 2965,
+          "covered": 2965,
+          "ideographsCovered": 2965,
+          "pct": 100,
+          "pctOfUpstream": 100,
+          "ideographPct": 100
+        },
+        "joyo": {
+          "total": 2136,
+          "ideographs": 2136,
+          "inUpstream": 2136,
+          "covered": 2136,
+          "ideographsCovered": 2136,
+          "pct": 100,
+          "pctOfUpstream": 100,
+          "ideographPct": 100
+        },
+        "jinmeiyo": {
+          "total": 863,
+          "ideographs": 863,
+          "inUpstream": 863,
+          "covered": 863,
+          "ideographsCovered": 863,
+          "pct": 100,
+          "pctOfUpstream": 100,
+          "ideographPct": 100
+        }
+      },
+      "keep": {
+        "ranges": [
+          [32, 126],
+          [160, 383],
+          [710, 733],
+          [8192, 8303],
+          [8364, 8364],
+          [8451, 8451],
+          [8470, 8470],
+          [8592, 8601],
+          [9312, 9331],
+          [9632, 9679],
+          [9733, 9734],
+          [9792, 9794],
+          [12288, 12543],
+          [12784, 12799],
+          [65281, 65374],
+          [65377, 65439],
+          [65504, 65510]
+        ],
+        "symbols": ["jisx0208"],
+        "ideographs": ["joyo", "jisx0208-l1", "jinmeiyo"]
+      }
+    },
+    {
+      "id": "cjk-kr",
+      "name": "Noto Sans KR",
+      "file": "vendor/fonts/scripts/NotoSansKR-Regular.ttf",
+      "bytes": 1226368,
+      "sha256": "5cdaf08d40838d6b30422dbfe9e36801ee70d56a63ef8ca8922765f7a94788e4",
+      "license": "vendor/fonts/scripts/NotoSansKR-OFL.txt",
+      "scripts": ["Hang", "Hani"],
+      "langs": ["ko"],
+      "rtl": false,
+      "ranges": [
+        [12288, 12351],
+        [12592, 12687],
+        [19968, 40959],
+        [44032, 55215],
+        [65280, 65519]
+      ],
+      "chain": "cjk",
+      "weight": 400,
+      "glyphs": 5567,
+      "version": "Version 2.004-H2;hotconv 1.0.118;makeotfexe 2.5.65603",
+      "coverage": "Korean, common characters only: the 2,350 KS X 1001 Hangul syllables + the KS X 1001 Hanja that are also in the level 1 of the Japanese and Taiwanese standards (2,312), compatibility Jamo. Coverage of each source table (characters in the face / characters in the table): ksx1001 4975/8225 (60.49%); ksx1001-hangul 2350/2350 (100%); ksx1001-hanja 2311/4888 (47.28%); ksx1001-hanja-common 2311/2312 (99.96%); hangul 2350/11172 (21.03%). Kept besides the ideographs: Latin, digits, punctuation, fullwidth forms, CJK symbols (and kana / Bopomofo / compatibility Jamo / the symbol rows of the national table where the language uses them); a rarer character is \"not in this font\" and a person decides.",
+      "source": {
+        "repo": "https://github.com/google/fonts",
+        "commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+        "path": "ofl/notosanskr/NotoSansKR[wght].ttf",
+        "sha256": "194018e6b2b293a7964f037b25c0249ce1418bc9ab3c971060a03aa57861e252",
+        "license": "SIL OFL 1.1"
+      },
+      "coverageStats": {
+        "ksx1001": {
+          "total": 8225,
+          "ideographs": 7238,
+          "inUpstream": 8188,
+          "covered": 4975,
+          "ideographsCovered": 4661,
+          "pct": 60.49,
+          "pctOfUpstream": 60.76,
+          "ideographPct": 64.4
+        },
+        "ksx1001-hangul": {
+          "total": 2350,
+          "ideographs": 2350,
+          "inUpstream": 2350,
+          "covered": 2350,
+          "ideographsCovered": 2350,
+          "pct": 100,
+          "pctOfUpstream": 100,
+          "ideographPct": 100
+        },
+        "ksx1001-hanja": {
+          "total": 4888,
+          "ideographs": 4888,
+          "inUpstream": 4885,
+          "covered": 2311,
+          "ideographsCovered": 2311,
+          "pct": 47.28,
+          "pctOfUpstream": 47.31,
+          "ideographPct": 47.28
+        },
+        "ksx1001-hanja-common": {
+          "total": 2312,
+          "ideographs": 2312,
+          "inUpstream": 2311,
+          "covered": 2311,
+          "ideographsCovered": 2311,
+          "pct": 99.96,
+          "pctOfUpstream": 100,
+          "ideographPct": 99.96
+        },
+        "hangul": {
+          "total": 11172,
+          "ideographs": 11172,
+          "inUpstream": 11172,
+          "covered": 2350,
+          "ideographsCovered": 2350,
+          "pct": 21.03,
+          "pctOfUpstream": 21.03,
+          "ideographPct": 21.03
+        }
+      },
+      "keep": {
+        "ranges": [
+          [32, 126],
+          [160, 383],
+          [710, 733],
+          [8192, 8303],
+          [8364, 8364],
+          [8451, 8451],
+          [8470, 8470],
+          [8592, 8601],
+          [9312, 9331],
+          [9632, 9679],
+          [9733, 9734],
+          [9792, 9794],
+          [12288, 12351],
+          [12593, 12686],
+          [65281, 65374],
+          [65504, 65510]
+        ],
+        "symbols": [],
+        "ideographs": ["ksx1001-hangul", "ksx1001-hanja-common"]
+      }
+    }
+  ]
+}
