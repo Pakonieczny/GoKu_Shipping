@@ -379,7 +379,7 @@
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egPlacementSeals{grid-area:seals;align-self:center;justify-self:end;display:flex;flex-direction:column;align-items:flex-end;gap:6px;min-width:0;overflow:visible}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egPlacementSeals:empty{display:none}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egPlacementSeals .egEarSeals{display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end;gap:8px}
-:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .sealRow{margin:0;padding:0;--seal-fit:38px!important}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .sealRow{margin:0;padding:0;--seal-fit:var(--list-seal)!important}   /* (SEAL15: the list seal, 57 px, see :root below) */
 /* the Decided row: the decision (its state, its seal, Reopen) on the right of the row, or on each piece's own line when the row has several */
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .decisionActions{grid-area:actions;align-self:center;display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px 12px;min-width:0;min-height:0;margin:0;padding:0;border:0}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .decisionStatus{display:inline-flex;align-items:center;gap:8px;min-width:0}
@@ -412,3 +412,83 @@
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .decisionActions{grid-area:actions;align-self:start;justify-content:flex-start;margin-top:10px}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow)>.doneDetail{grid-row:7;margin-top:12px}
 }
+
+/* ═══ SEAL15 (Paul, 19 Oct 2026: "enlarge both Engraving and Monogram Seals size by 1.5x in both Orders and Engraving tabs list view. Ensure all other spacing can accommodate the larger size Seals in each order card") ═══
+   The ONE size of an engraving or monogram seal in a LIST row or card (the Engrave tab's Placements / Decided / Approved rows and the Orders tab's rows and cards): 1.5 × the 38 px it was. Nothing else uses it: the engraving card's
+   header, the order window, the Sheet window, the Release Hold seal (72 px) and the Complete Order / QR label seals (28 px) keep their own sizes. */
+:root{--list-seal:57px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egPlacementSeals{gap:8px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egPlacementSeals .egEarSeals{gap:10px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow){min-height:calc(var(--list-seal) + 32px)}
+
+/* ═══ ORDLIST (Paul, 19 Oct 2026: "update the Order view list (Both List and Card) to be laid out much more like the Engraving UI list view ... Especially ... the Seals and multi-piece + Front/Back Engraving") ═══
+   The Orders tab's rows (a single-line order, and each piece of a grouped order) and cards read as an Engraving row: pictures | the order, its SKU and "Front + back", the caption, one line per piece and face (chip, words, its state),
+   ONE muted line of what was bought | the seals (one chip + seal per piece and face, the Release Hold seal first) | the order's own column (state, Qty · Ship by, Release hold, Send to Review). charm-nest-bridge.js Orders lineIdHtml / lineSealsHtml. */
+/* -- the list -- */
+.ordList .doneRow.orderListRow{--thumb-size:88px;display:grid;grid-template-columns:auto minmax(0,1fr) minmax(150px,210px);grid-template-rows:auto 1fr;grid-template-areas:"media id acts" "media sum acts";column-gap:22px;row-gap:0;align-items:start;min-height:0;padding:16px 18px}
+.ordList .doneRow.orderListRow:has(>.egPlacementSeals:not(:empty)){grid-template-columns:auto minmax(0,1fr) auto minmax(150px,210px);grid-template-areas:"media id seals acts" "media sum seals acts";min-height:calc(var(--list-seal) + 32px)}
+.ordList .doneRow.orderListRow>.comparePair{grid-area:media;align-self:start;grid-template-columns:repeat(2,var(--thumb-size));gap:8px}
+.ordList .doneRow.orderListRow>.engravingIdentity{grid-area:id;display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;row-gap:3px;align-content:start;align-self:start;min-width:0;overflow:visible}
+.ordList .doneRow.orderListRow>.engravingIdentity>*{grid-column:1/-1;min-width:0}
+.ordList .doneRow.orderListRow>.engravingIdentity>.queueLabel{display:none}
+.ordList .doneRow.orderListRow .engravingOrder{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 10px;margin:0;min-width:0}
+.ordList .doneRow.orderListRow .engravingOrder .onum{font:600 13px/1.4 var(--mono);color:var(--ink)}
+.ordList .doneRow.orderListRow .engravingOrder .sku{font:400 11.5px/1.4 var(--mono);color:var(--ink45);white-space:nowrap;overflow-wrap:normal}
+.ordList .doneRow.orderListRow>.engravingIdentity>.purchaseLabel{margin-top:9px;font:400 9.5px/1.3 var(--sans);letter-spacing:.09em;text-transform:uppercase;color:var(--ink45)}
+.ordList .doneRow.orderListRow>.engravingIdentity>.rowExcerpt{font:600 14px/1.4 var(--serif);color:var(--ink)}
+.ordList .doneRow.orderListRow>.engravingIdentity>.rowExcerpt.ordWhere{font:400 11px/1.4 var(--sans);color:var(--ink45);margin-top:6px}
+/* -- the purchase line, the engraved words and their states, in an Orders row and card alike: exactly the Engraving row's -- */
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId>.w{grid-column:1;margin-top:2px}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId>[data-stage]{grid-column:2;margin-top:2px;justify-self:end}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId .w{font:600 14px/1.4 var(--serif);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:100%}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId [data-stage]{display:inline-flex;align-items:center;gap:6px;font:400 11px/1.3 var(--sans);color:var(--ink45);white-space:nowrap}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId [data-stage]:empty{display:none}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId [data-stage]::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--ink25,#b9b3a6)}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId [data-stage][data-s=review]::before{background:var(--gold2)}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId [data-stage]:is([data-s=words],[data-s=blocked])::before{background:var(--clay)}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId [data-stage]:is([data-s=approved],[data-s=written],[data-s=sent],[data-s=nested],[data-s=sheet])::before{background:var(--sage)}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId .egEars{display:grid;grid-template-columns:max-content minmax(0,1fr) max-content;column-gap:12px;row-gap:7px;align-items:center;margin-top:3px;min-width:0;max-width:760px}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId .egEar{grid-column:1/-1;display:grid;grid-template-columns:subgrid;align-items:center;min-height:24px;min-width:0}
+@supports not (grid-template-columns:subgrid){:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId .egEar{grid-template-columns:auto minmax(0,1fr) auto;column-gap:12px}}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId .egEar .egPiece{padding:2px 9px;font:500 9.5px/1.3 var(--mono);letter-spacing:.07em}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId .egEnd{display:inline-flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0;white-space:nowrap}
+.ordList .doneRow.orderListRow>.purchaseSummary{grid-area:sum;display:block;margin:6px 0 0;padding:0;border:0;min-width:0;min-height:0;align-self:start;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font:400 12px/1.5 var(--sans);color:var(--ink45)}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece)>.purchaseSummary :is(.purchaseType,.purchaseChoices,dl,dl>div){display:contents}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece)>.purchaseSummary :is(.purchaseLabel,dt){display:none}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece)>.purchaseSummary :is(strong,dd,.purchasePair,.purchaseMissing){display:inline;margin:0;font:inherit;color:inherit}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece)>.purchaseSummary :is(dd,.purchasePair,.purchaseMissing)::before{content:"·";margin:0 .5em}
+/* -- the seals: one chip + seal per piece and face, stacked at the right, the list seal size (SEAL15); the Release Hold seal first, its own size -- */
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece)>.egPlacementSeals:empty{display:none}
+.ordList .doneRow.orderListRow>.egPlacementSeals{grid-area:seals;align-self:center;justify-self:end;display:flex;flex-direction:column;align-items:flex-end;gap:8px;min-width:0;overflow:visible}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece)>.egPlacementSeals .egEarSeals{display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end;gap:10px}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece)>.egPlacementSeals .sealRow{margin:0;padding:0;max-width:none;--seal-fit:var(--list-seal)!important}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece)>.egPlacementSeals>.relSeal{margin:0}
+/* -- the order's own column: state, Qty · Ship by and the buttons, as before -- */
+.ordList .doneRow.orderListRow>.rowActions{grid-area:acts;align-self:stretch}
+.ordList .ordGroup .ogPiece.doneRow.orderListRow{padding:14px 18px}
+.ordList .ordGroup .ogHead .ordSealsRow{margin:6px 0 0}
+/* a narrower list: the order's column goes under the row */
+@container (max-width:1100px){
+.ordList .doneRow.orderListRow{grid-template-columns:auto minmax(0,1fr);grid-template-areas:"media id" "media sum" "acts acts"}
+.ordList .doneRow.orderListRow:has(>.egPlacementSeals:not(:empty)){grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"media id seals" "media sum seals" "acts acts acts"}
+.ordList .doneRow.orderListRow>.rowActions{flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px 16px;border-left:0;border-top:1px solid var(--line2);padding:10px 0 0;margin-top:12px;min-height:0}
+}
+/* a phone, or a window with its rail open: two bands (pictures and order; the pieces, what was bought, the seals and the order's column under) */
+@container (max-width:600px){
+.ordList .doneRow.orderListRow,.ordList .doneRow.orderListRow:has(>.egPlacementSeals:not(:empty)){--thumb-size:62px;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"media id" "sum sum" "seals seals" "acts acts";column-gap:14px;padding:12px 14px}
+.ordList .doneRow.orderListRow>.egPlacementSeals{justify-self:start;align-self:start;flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px 14px;margin-top:10px}
+.ordList .doneRow.orderListRow>.egPlacementSeals .egEarSeals{justify-content:flex-start}
+:is(.ordList .doneRow.orderListRow) .ordEngId .egEars{grid-template-columns:max-content minmax(0,1fr)}
+:is(.ordList .doneRow.orderListRow) .ordEngId .egEar .egEnd{grid-column:1/-1;justify-content:flex-start}
+}
+/* -- the cards: the same parts, stacked: pictures, the order and its pieces, the muted line, the seals, the order's column -- */
+:is(.ordCards .ocard,.ordCards .ogPiece)>.engravingIdentity.ordEngId{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:10px;row-gap:3px;align-content:start;min-width:0}
+:is(.ordCards .ocard,.ordCards .ogPiece)>.engravingIdentity.ordEngId>*{grid-column:1/-1;min-width:0}
+:is(.ordCards .ocard,.ordCards .ogPiece) .ordEngId>.purchaseLabel{margin-top:6px;font:400 9.5px/1.3 var(--sans);letter-spacing:.09em;text-transform:uppercase;color:var(--ink45)}
+:is(.ordCards .ocard,.ordCards .ogPiece) .ordEngId .egEars{grid-template-columns:max-content minmax(0,1fr)}
+:is(.ordCards .ocard,.ordCards .ogPiece) .ordEngId .egEar .egEnd{grid-column:1/-1;justify-content:flex-start}
+:is(.ordCards .ocard,.ordCards .ogPiece)>.purchaseSummary{display:block;padding:8px 0 0;border:0;border-top:1px solid var(--line2);min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font:400 12px/1.5 var(--sans);color:var(--ink45)}
+:is(.ordCards .ocard,.ordCards .ogPiece)>.egPlacementSeals{justify-self:stretch;display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:8px 14px;min-width:0;overflow:visible;padding:2px 0}
+:is(.ordCards .ocard,.ordCards .ogPiece)>.egPlacementSeals .egEarSeals{justify-content:flex-start}
+.ordCards{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+.ordCards .ordGroup .ogPieces{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}

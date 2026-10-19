@@ -6,6 +6,8 @@
 //   2  node: the source: the card builders carry the strip and its signature, the repaint calls, the manifests and cache tokens, and the module makes no read, timer or listener
 //   3  the REAL page (the engraving-UI real world, _engraveRealWorld.cjs: real orders through the real intake, pool, classifier and fit) in the Orders tab, list and cards: an approved back shows its seal, front + back two,
 //      a half-approved order says "1 of 3 approved", an unapproved order none, a monogram its MONOGRAM seal (never BACK ENGRAVING), live repaint, and not one request, timer or ensureSeals call for it
+//   ORDLIST + SEAL15 (Paul, 19 Oct 2026): the Orders rows and cards are laid out like the Engraving list: each engraved line says its caption, one line per piece and face (chip, words, state), and its seals stand in the row's seals cell,
+//   one chip + seal per piece and face (the Engrave tab's own Engrave.listLine); the separate strip ("1 of 2 approved") is no longer drawn on them. The list seal is 57 px (1.5 x 38) in both tabs (--list-seal).
 //   node tests/charm-nest/order-card-seals.cjs [playwright-core dir]        (PW_DIR=<playwright node_modules> CHROMIUM=<chrome> SHOTS=<dir>)
 'use strict';
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert/strict');
@@ -113,15 +115,16 @@ const count = (s, re) => (String(s).match(re) || []).length;
   const code = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   const fn = (src, start, end) => { const i = src.indexOf(start), j = src.indexOf(end, i + 10); assert(i > 0 && j > i, 'markers ' + start); return src.slice(i, j); };
   const group = fn(bridge, 'function groupNode(', 'function renderBody()'), single = fn(bridge, 'const { sp, m, st, shown, due, where, fc, attn, why, gateBtn, mail, team, sealRec, seals, held, rel } = lineView(r)', 'const number=node.querySelector');
-  check(/sealM = cardSeals\(rows\)/.test(group) && /sealM \? sealM\.sig : ""/.test(group) && /\$\{cardSealHtml\(sealM\)\}<\/div>`\s*\+ `<div class="ogPieces">/.test(group), 'source: a grouped order\'s card draws the strip in its head and carries the strip\'s signature in its stamp');
-  check(/sealM = cardSeals\(g\.rows\)/.test(single) && /sealM \? sealM\.sig : ""\]\)/.test(single) && /\$\{cardSealHtml\(sealM\)\}<\/div>`;/.test(single), 'source: a one-line order\'s card / row draws the strip in its identity column and carries the signature in its stamp');
+  check(/for \(const v of V\) v\.e = engLine\(v\.r\)/.test(group) && /v\.e \? v\.e\.sig : ""/.test(group) && /lineSealsHtml\(v\.r, v\.e, null\)/.test(group) && !/CNOrderSeals\.html|cardSealHtml/.test(code(group)), 'source: a grouped order\'s pieces each draw their own Engraving-row lines and seals cell, with the line\'s signature in the stamp; no strip in the head');
+  check(/e = engLine\(r\)/.test(single) && /e \? e\.sig : ""\]\)/.test(single) && /lineIdHtml\(r, e,/.test(single) && !/CNOrderSeals\.html|cardSealHtml/.test(code(single)), 'source: a one-line order\'s card / row draws the Engraving-row lines and seals cell, with the line\'s signature in its stamp; no strip');
+  check(/function listLine\(row\)/.test(bridge) && /return \{ listLine, openMonogram/.test(bridge), 'source: the Engrave tab publishes listLine, the one reading both lists draw a line from');
   check(/const monoMoved|function monoMoved/.test(bridge) && /monoTimer = 0; try \{ Orders\.render\(\)/.test(bridge) && /,render,\(\)=>Orders\.render\(\)\]\)try\{show\(\);\}/.test(bridge), 'source: an engraving approval and a monogram change both repaint the Orders list (Orders.render: coalesced, drawn only while the tab is on screen)');
   check(/const cardSeals = rows =>/.test(bridge) && !/ensureSeals/.test(code(group)) && !/CNMonogramSeals|CNEngravingSeals/.test(code(group)) && !/CNMonogramSeals|CNEngravingSeals/.test(code(single)), 'source: the card builders go through CNOrderSeals only (no seal module, no ensureSeals, from a card)');
   const c = code(mod);
   check(!/setTimeout|setInterval|requestAnimationFrame|addEventListener|MutationObserver|fetch\(|XMLHttpRequest|onSnapshot|api\(|ensureSeals|loadSeals|localStorage|\.events\(/.test(c), 'source: the module makes no read, timer or listener and never asks the timeline');
   check(/charm-nest-order-seals\.js\?v=\d+-cs1/.test(html) && /"charm-nest-order-seals\.js"/.test(build) && html.indexOf('charm-nest-order-seals.js') > html.indexOf('charm-nest-monogram-seals.js') && html.indexOf('charm-nest-order-seals.js') < html.indexOf('charm-nest-bridge.js?v='), 'source: the module is loaded by the page after the two seal modules and before the bridge, and is in the published asset list');
-  for (const [file, re] of [['charm-nest-bridge.js', /charm-nest-bridge\.js\?v=[^"]*-cs1[^"]*"/], ['charm-nest-activity.css', /charm-nest-activity\.css\?v=[^"]*-cs1"/]]) check(re.test(html), 'source: the cache-buster of ' + file + ' is bumped (-cs1)');
-  check(/\.ordSeals\{/.test(css) && /\.ordSeal\{/.test(css) && css.indexOf('.ordSeals{') > css.indexOf('.monoSeals{display:contents}'), 'source: the strip\'s CSS lives beside the engraving / monogram seal CSS (charm-nest-activity.css)');
+  for (const [file, re] of [['charm-nest-bridge.js', /charm-nest-bridge\.js\?v=[^"]*-ol1"/], ['charm-nest-activity.css', /charm-nest-activity\.css\?v=[^"]*-ol1"/]]) check(re.test(html), 'source: the cache-buster of ' + file + ' is bumped (-ol1)');
+  check(/:root\{--list-seal:57px\}/.test(css) && /\.doneRow:is\(\.placementRow,\.decidedRow\) \.sealRow\{margin:0;padding:0;--seal-fit:var\(--list-seal\)!important\}/.test(css) && /\.egPlacementSeals \.sealRow\{margin:0;padding:0;max-width:none;--seal-fit:var\(--list-seal\)!important\}/.test(css), 'source: ONE list seal size (--list-seal: 57 px = 1.5 x 38), used by the Engraving rows and the Orders rows and cards');
 }
 
 // ═══ 3 · the real page ═══
@@ -168,23 +171,33 @@ const count = (s, re) => (String(s).match(re) || []).length;
       window.__ensure = 0; CN.setMode('orders'); Orders.render();
     }, { rids: { back: RID('back'), both: RID('both'), discs: RID('discs'), g2: RID('g2'), m1: RID('m1'), m2: RID('m2'), m4: RID('m4') } });
     await R.settle(page, 900);
-    const cards = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#ordItems > [data-rid]')].map(n => [n.dataset.rid, {
-      n: n.querySelectorAll('.ordSeal').length, text: n.innerText.replace(/\s+/g, ' '), html: n.innerHTML, count: (n.querySelector('.ordSealsCount') || {}).textContent || '', cls: n.className,
-      actions: [...n.querySelectorAll('.ordSeal .seal svg')].map(s => { try { return JSON.parse(s.getAttribute('data-seal-model')).action; } catch (_) { return '?'; } }),
-      inCard: !!n.querySelector('.ordSeals'), inHead: !!n.querySelector('.ogHead .ordSeals'), strip: (n.querySelector('.ordSeals') || {}).innerText || '', box: n.querySelector('.ordSeals') ? n.querySelector('.ordSeals').getBoundingClientRect().height : 0, cardBox: n.getBoundingClientRect().height, sealPx: n.querySelector('.ordSeal .seal') ? n.querySelector('.ordSeal .seal').getBoundingClientRect().width : 0 }])));
+    const cards = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#ordItems > [data-rid]')].map(n => {
+      const cells = [...n.querySelectorAll('.egPlacementSeals')], seals = cells.flatMap(c => [...c.querySelectorAll('.seal')]);
+      return [n.dataset.rid, {
+        n: seals.length, text: n.innerText.replace(/\s+/g, ' '), html: n.innerHTML, cls: n.className,
+        actions: seals.map(x => { const svg = x.querySelector('svg') || x; try { return JSON.parse(svg.getAttribute('data-seal-model')).action; } catch (_) { return '?'; } }),
+        chips: cells.flatMap(c => [...c.querySelectorAll('.egEarSeals .egPiece')].map(x => x.textContent.trim().toUpperCase())),
+        lines: [...n.querySelectorAll('.ordEngId .egEar')].map(x => x.innerText.replace(/\s+/g, ' ').trim()),
+        label: [...n.querySelectorAll('.ordEngId > .purchaseLabel')].map(x => x.textContent.trim()).join('|'), mode: (n.querySelector('.ordEngId .egMode') || {}).textContent || '',
+        strip: !!n.querySelector('.ordSeals, .ordSealsCount'), headSeals: n.querySelectorAll('.ogHead .egPlacementSeals .seal, .ogHead .ordSeals').length,
+        sealPx: seals.length ? seals[0].offsetWidth : 0,   // (the layout size: the seal is drawn turned a few degrees, so its bounding box is wider) clipped: seals.some(x => { const b = x.getBoundingClientRect(), c = n.getBoundingClientRect(); return b.top < c.top - 1 || b.bottom > c.bottom + 1 || b.right > c.right + 1; })
+      }];
+    })));
     const verify = async mode => {
       const c = await cards();
       const at = n => c[RID(n)];
-      check(!!at('back') && at('back').n === 1 && at('back').actions.join() === 'BACK ENGRAVING' && /Back engraving approved/.test(at('back').text) && /Ana Test/.test(at('back').text), `${mode}: an order with an approved back shows its BACK ENGRAVING seal, labelled, with who`);
-      check(!!at('front') && at('front').n === 0 && !at('front').inCard, `${mode}: an order whose engraving is not approved shows no seal`);
-      check(!!at('both') && at('both').n === 2 && at('both').actions.join() === 'FRONT ENGRAVING,BACK ENGRAVING' && /2 of 2 approved/.test(at('both').text), `${mode}: front + back approved: two seals, FRONT then BACK, "2 of 2 approved"`);
-      check(!!at('discs') && at('discs').n === 1 && /1 of 3 approved/.test(at('discs').text) && /Disc 1/.test(at('discs').text) && at('discs').actions.join() === 'BACK ENGRAVING', `${mode}: three discs, one approved: its seal, "Disc 1", "1 of 3 approved"`);
-      check(!!at('g2') && /\bordGroup\b/.test(at('g2').cls) && at('g2').n === 1 && at('g2').inHead && /1 of 2 approved/.test(at('g2').text) && /COMET_9427/.test(at('g2').strip) && /Hal Test/.test(at('g2').text), `${mode}: an order of two lines is one card: its head carries the strip, "1 of 2 approved", the seal named by its line`);
-      check(!!at('m1') && at('m1').n === 1 && at('m1').actions.join() === 'MONOGRAM' && /Monogram approved/.test(at('m1').text) && !/BACK ENGRAVING|Back engraving|FRONT ENGRAVING/i.test(at('m1').text) && !/BACK ENGRAVING|FRONT ENGRAVING/.test(at('m1').html.replace(/Monogram approved/g, '')), `${mode}: an approved monogram shows its MONOGRAM seal and never a BACK ENGRAVING one`);
-      check(!!at('m2') && at('m2').n === 1 && at('m2').actions.join() === 'MONOGRAM' && /1 of 2 approved/.test(at('m2').text) && /Piece 1 of 2/.test(at('m2').text), `${mode}: a monogram of two pieces, one approved: its seal, "Piece 1 of 2", "1 of 2 approved"`);
-      check(!!at('m3') && at('m3').n === 0 && !at('m3').inCard, `${mode}: a monogram nobody approved shows no seal`);
+      check(!!at('back') && at('back').n === 1 && at('back').actions.join() === 'BACK ENGRAVING' && at('back').label === 'Words on the back' && !at('back').strip, `${mode}: an approved back: "Words on the back" and its BACK ENGRAVING seal in the row's seals cell (no strip)`);
+      check(!!at('front') && at('front').n === 0 && at('front').label === 'Words on the front', `${mode}: an order whose engraving is not approved shows no seal, and says "Words on the front"`);
+      check(!!at('both') && at('both').n === 2 && at('both').actions.join() === 'FRONT ENGRAVING,BACK ENGRAVING' && at('both').chips.join() === 'FRONT,BACK' && /front \+ back/i.test(at('both').mode) && at('both').label === 'Words on the front and back' && at('both').lines.length === 2, `${mode}: front + back: the "Front + back" chip, a FRONT and a BACK line, and a chip + seal for each, FRONT then BACK: ${JSON.stringify([at('both').chips, at('both').lines])}`);
+      check(!!at('discs') && at('discs').n === 1 && at('discs').lines.length === 3 && /^DISC 1 OF 3/i.test(at('discs').lines[0]) && at('discs').chips.join() === 'DISC 1 OF 3' && at('discs').actions.join() === 'BACK ENGRAVING', `${mode}: three discs, one approved: one line per disc, and the seal beside its own "DISC 1 OF 3" chip: ${JSON.stringify([at('discs').lines, at('discs').chips])}`);
+      check(!!at('g2') && /\bordGroup\b/.test(at('g2').cls) && at('g2').n === 1 && at('g2').headSeals === 0 && !at('g2').strip && at('g2').actions.join() === 'BACK ENGRAVING', `${mode}: an order of two lines is one card: the approved piece carries its seal on its own row, nothing in the head`);
+      check(!!at('m1') && at('m1').n === 1 && at('m1').actions.join() === 'MONOGRAM' && at('m1').label === 'The letters' && !/BACK ENGRAVING|FRONT ENGRAVING/.test(at('m1').html), `${mode}: an approved monogram: "The letters" and its MONOGRAM seal, never a BACK ENGRAVING one`);
+      check(!!at('m2') && at('m2').n === 1 && at('m2').actions.join() === 'MONOGRAM' && at('m2').chips.join() === 'PIECE 1 OF 2' && at('m2').lines.length === 2, `${mode}: a monogram of two pieces, one approved: a line per piece, the seal beside "PIECE 1 of 2": ${JSON.stringify(at('m2').chips)}`);
+      check(!!at('m3') && at('m3').n === 0, `${mode}: a monogram nobody approved shows no seal`);
       check(!!at('m4') && at('m4').n === 0, `${mode}: a monogram approved on another computer, whose seal is not in memory, shows none (and asks for none)`);
-      check(at('back').sealPx >= 36 && at('back').box > 40, `${mode}: the seal is easily visible: ${Math.round(at('back').sealPx)} px seal in a ${Math.round(at('back').box)} px strip`);
+      check(at('back').sealPx === 57 && at('m1').sealPx === 57 && at('both').sealPx === 57, `${mode}: the engraving and monogram seals are the list size, 57 px (1.5 x 38): ${at('back').sealPx} / ${at('m1').sealPx} / ${at('both').sealPx}`);
+      check(Object.values(c).every(x => !x.clipped), `${mode}: no seal runs out of its row or card`);
+      check(Object.values(c).every(x => !x.strip), `${mode}: no "N of M approved" strip on any row or card`);
       return c;
     };
     check(await page.evaluate(() => !!(window.CNOrderSeals && CNOrderSeals.of && CNOrderSeals.html)), 'the page loads charm-nest-order-seals.js (CNOrderSeals)');
@@ -200,16 +213,16 @@ const count = (s, re) => (String(s).match(re) || []).length;
     await page.evaluate(({ rid }) => { window.__renders = 0; const rows = Orders.rows().filter(r => r.order.receiptId === rid); __approve(Engrave.jobsOf(rows[0])[0], 'Fay Test', Date.now()); Orders.render(); }, { rid: RID('front') });
     await R.settle(page, 700);
     let c = await cards();
-    check(c[RID('front')].n === 1 && /engraving approved/.test(c[RID('front')].text), 'live: an engraving approved in memory shows its seal on the card at the next repaint (no reload): ' + c[RID('front')].actions.join());
+    check(c[RID('front')].n === 1 && c[RID('front')].actions.join() === 'FRONT ENGRAVING', 'live: an engraving approved in memory shows its seal on the card at the next repaint (no reload): ' + c[RID('front')].actions.join());
     await page.evaluate(({ rid }) => { const j = Engrave.jobsOf(Orders.rows().filter(r => r.order.receiptId === rid)[0]).filter(x => x.face !== 'front')[0]; j.state = 'review'; Orders.render(); }, { rid: RID('both') });
     await R.settle(page, 700);
     c = await cards();
-    check(c[RID('both')].n === 1 && /1 of 2 approved/.test(c[RID('both')].text) && c[RID('both')].actions.join() === 'FRONT ENGRAVING', 'live: a back that waits for its approval again leaves its seal; the card says "1 of 2 approved"');
+    check(c[RID('both')].lines.length === 2 && !/approved/i.test(c[RID('both')].lines[1].replace(/^BACK\s*/i, '').replace(/NAME|ONE|\//g, '')) && c[RID('both')].actions[0] === 'FRONT ENGRAVING', 'live: a back that waits for its approval again says its new state on its own line (its earlier seal stays as history, as on the Engraving row); the FRONT keeps its own: ' + JSON.stringify([c[RID('both')].lines, c[RID('both')].chips]));
     await page.evaluate(({ k, rid }) => { __ma[k + '|'] = 1; Engrave.monogramUI().feedEvents(rid, [{ type: 'monogramApproved', id: 'ma3', at: Date.now(), by: 'Gus Test', lineKey: k, data: { n: 1, of: 1, letters: 'OSR' } }]); Orders.render(); },
       { k: made.m3.key, rid: RID('m3') });
     await R.settle(page, 700);
     c = await cards();
-    check(c[RID('m3')].n === 1 && c[RID('m3')].actions.join() === 'MONOGRAM' && /Gus Test/.test(c[RID('m3')].text), 'live: a monogram approved shows its seal at the next repaint');
+    check(c[RID('m3')].n === 1 && c[RID('m3')].actions.join() === 'MONOGRAM', 'live: a monogram approved shows its seal at the next repaint');
     // the cards that did not change are not built again (a card is drawn again only when its seals changed)
     await page.evaluate(({ rid }) => { document.querySelector(`#ordItems > [data-rid="${rid}"]`).dataset.mark = 'kept'; Orders.render(); }, { rid: RID('back') });
     await R.settle(page, 500);
@@ -225,7 +238,9 @@ const count = (s, re) => (String(s).match(re) || []).length;
     const off = await win(() => page.evaluate(() => { window.__cns = window.CNOrderSeals; window.CNOrderSeals = { of: () => null, html: () => '' }; Orders.render(); }));
     const on = await win(() => page.evaluate(() => { window.CNOrderSeals = window.__cns; Orders.render(); }));
     check(on.ensure <= off.ensure && on.tl <= off.tl && on.asked <= off.asked, `a full redraw of every card with the strips asks no more than one without them: with ${JSON.stringify(on)}, without ${JSON.stringify(off)}`);
-    check((await cards())[RID('back')].n === 1, 'and the strips are back after it');
+    check((await cards())[RID('back')].n === 1, 'and the seals are there after it');
+    const lineWork = await win(() => page.evaluate(() => { const rows = Orders.rows(); for (let i = 0; i < 20; i++) for (const r of rows) Engrave.listLine(r); }), 150);
+    check(lineWork.ensure === 0 && lineWork.tl === 0 && lineWork.asked === 0, `Engrave.listLine over every line, 20 times, calls no ensureSeals, reads no timeline, asks for nothing: ${JSON.stringify(lineWork)}`);
     console.log('   (who asks for the stamp of m4, the page\'s own path):', JSON.stringify(((await page.evaluate(() => window.__stacks || [])).slice(0, 1))).slice(0, 400));
     // ── a long list stays fast ──
     const ms = await page.evaluate(() => { const rows = Orders.rows(); const t0 = performance.now(); for (let i = 0; i < 40; i++) CNOrderSeals.of(rows); return (performance.now() - t0) / 40; });
@@ -237,6 +252,12 @@ const count = (s, re) => (String(s).match(re) || []).length;
     await R.settle(page, 900);
     const shot = await R.shot(w, 'order-card-seals');
     console.log('   screenshot:', shot);
+    // ── SEAL15: the Engrave tab's list rows draw the same seals at the same 57 px; nothing is clipped ──
+    await page.evaluate(() => { CN.setMode('engrave'); Engrave.restoreView({ tab: 'approved', list: true, chosen: true, focus: null, pin: null, openDone: null, q: '' }); Engrave.render(); });
+    await R.settle(page, 1200);
+    const eg = await page.evaluate(() => { const ss = [...document.querySelectorAll('.egPlacementList .egPlacementSeals .seal')]; return { n: ss.length, px: [...new Set(ss.map(x => x.offsetWidth))], clipped: ss.filter(x => { const row = x.closest('.doneRow'), b = x.getBoundingClientRect(), c = row.getBoundingClientRect(); return b.top < c.top - 1 || b.bottom > c.bottom + 1 || b.right > c.right + 1; }).length }; });
+    check(eg.n >= 4 && eg.px.length === 1 && eg.px[0] === 57 && eg.clipped === 0, `the Engrave tab's list seals are 57 px too, none clipped: ${JSON.stringify(eg)}`);
+    console.log('   screenshot:', await R.shot(w, 'engrave-list-seals'));
   } catch (e) { fails.push('crashed: ' + (e && e.stack || e)); console.log('  ✗ crashed: ' + (e && e.stack || e)); try { await R.shot(w, 'crash'); } catch (_) {} }
   finally { await Promise.resolve(w.close()).catch(() => {}); }
   finish();

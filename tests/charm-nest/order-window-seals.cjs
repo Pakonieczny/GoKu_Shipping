@@ -1,3 +1,7 @@
+// NOWINSEAL (Paul, 19 Oct 2026, of the strip this test was written for: "Remove this UI from the Detailed Order view. I did not ask for this."): the "ENGRAVING APPROVED · All 2 pieces approved" panel of seals is GONE from the order window.
+// This test now proves it stays gone in every scenario below (back, front + back, monogram, half approved, a record without a job, discs, mixed), and that the approval seals are still where they always were in the window (the Engraving
+// section's own cards). #owSeals is the order's Release Hold seal alone now (release-seal-window.cjs proves that part).
+// (the original header, kept for what the scenarios are:)
 // WINSEAL (Paul, 19 Oct 2026): "All orders that are approved for engraving, or monograms by the user must have a clear seal that is easily visible to the user whether they are inside the Detail Order view or looking at a list
 // view in the Orders tab." This is the DETAIL ORDER VIEW half (the list cards are another change). The order window now has an approval strip, `#owSeals`, across the top of the Overview (the first cell of its grid, above the pictures and the head card): one REAL seal for every
 // approved piece / face (CNEngravingSeals for an engraving, CNMonogramSeals for a monogram), labelled BACK ENGRAVING / FRONT ENGRAVING / MONOGRAM with who and when, and "N of M pieces approved" when only some pieces are. Before this the
@@ -31,11 +35,11 @@ const BAD_LEGACY = /legacy:/;
   const fn = (src, start, end) => { const i = src.indexOf(start), j = src.indexOf(end, i + start.length); return i >= 0 && j > i ? src.slice(i, j) : ''; };
   const code = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
   const paint = fn(bridge, 'function paintSeals(', '/** Paint the window from the row it is showing. */'), approved = fn(oe, 'function approvals() {', '    const id0 = ++nextId;');
-  check(paint.length > 100, 'source: the window has paintSeals (the approval strip\'s one painter)');
+  check(paint.length > 100 && !/approvals\(|owApItem|owApHd|data-ow-seal\b|ENGRAVING APPROVED|pieces approved/i.test(code(paint)), 'source: paintSeals draws no approvals panel any more (no approvals(), no seal items, no "N pieces approved")');
   check(approved.length > 100, 'source: OrderEngraving has approvals() (which pieces of the order are approved, a pure reading of what the page holds)');
   const both = code(paint) + code(approved);
   check(!/setInterval|setTimeout|requestAnimationFrame|addEventListener|\bfetch\(|XMLHttpRequest|\bapi\(|ensureSeals|loadSeals|\.load\(|\.refresh\(\)|Firestore|firebase/i.test(both), 'source: no timer, no listener, no network read, no ensureSeals / loadSeals in the strip\'s code (nothing new is read or polled)');
-  check(/paintSeals\(r\)/.test(fn(bridge, 'function paintNow(r) {', 'function splitLine')) && /paintNow\(r\);/.test(fn(bridge, 'function paint() {', '/** WRONGCHARM')), 'source: the strip is painted from paintNow(), which paint() ends in and the timeline feed calls (the paths an approval already takes)');
+  check(/paintSeals\(r\)/.test(fn(bridge, 'function paintNow(r) {', 'function splitLine')) && /paintNow\(r\);/.test(fn(bridge, 'function paint() {', '/** WRONGCHARM')), 'source: the strip (now the Release Hold seal alone) is still painted from paintNow() (the paths an approval already takes)');
   check(/id="owSeals"/.test(html) && /\.owApproved\b/.test(html) && /byId\("owSeals"\)/.test(paint) && html.indexOf('.owApproved{') > html.indexOf('.relSealWords'), 'source: the page has #owSeals and its CSS (.owApproved), right after the other seal CSS (.relSeal)');
   check(/charm-nest-bridge\.js\?v=[^"]*-ws1/.test(html) && /charm-nest-order-engraving\.js\?v=[^"]*-ws1/.test(html), 'source: the cache tokens of the changed scripts are bumped (-ws1)');
 }
@@ -233,111 +237,14 @@ const BAD_LEGACY = /legacy:/;
     const sealsIn = html => [...String(html).matchAll(/data-seal-model="([^"]*)"/g)].map(m => { try { return JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')).action; } catch (_) { return '?'; } });
     const by = (st, f) => st.items.filter(i => !f || i.face === f);
 
-    // ═══ 2 · an approved BACK engraving ═══
-    await openOv('back'); let st = await strip(), ar = await around();
-    check(st.exists && st.shown && st.items.length === 1 && st.n === '1' && st.m === '1', '2 an approved back engraving: the strip shows (n=1, m=1) with ONE item: ' + JSON.stringify([st.shown, st.items.length, st.n, st.m]));
-    check(st.items[0] && st.items[0].kind === 'engrave' && st.items[0].face === 'back' && st.items[0].action === 'BACK ENGRAVING' && st.items[0].seals === 1 && st.items[0].by === 'Paul' && Math.abs(st.items[0].at - (T - 60 * 60e3)) < 2000, '2 its seal is the real BACK ENGRAVING seal, by Paul, at the approval time: ' + JSON.stringify(st.items[0] && [st.items[0].action, st.items[0].by, st.items[0].family]));
-    check(/Engraving approved/i.test(st.head) && /BACK ENGRAVING/.test(st.text) && /Approved by Paul/.test(st.text) && /(Oct|Nov|Dec|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep) \d+ · \d+:\d\d (AM|PM)/.test(st.text) && st.count === '', '2 it says BACK ENGRAVING, who and when, and no count (every piece is approved): ' + JSON.stringify(st.text));
-    check((st.items[0] || {}).w >= 50 && st.items[0].inside && st.rect.t >= ar.sTop - 1 && st.rect.b <= ar.sBottom + 1 && ar.firstShown === 'owSeals', '2 it is visible with no hovering and no scrolling: the first thing in the Overview (width ' + st.items[0].w + 'px), inside the window and the scroll area: ' + JSON.stringify([st.rect.t, st.rect.b, ar.sTop, ar.sBottom, ar.firstShown]));
-    check(ar.chip === 'Engraving' && ar.cards === 1 && ar.now, '2 the rest of the Overview is what it was: the Engraving chip, the one Engraving card, the head card: ' + JSON.stringify(ar));
-    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'ows-back.png') });
-
-    // ═══ 3 · FRONT + BACK ═══
-    await openOv('both'); st = await strip();
-    check(st.shown && st.items.length === 2 && by(st, 'front').length === 1 && by(st, 'back').length === 1 && st.items[0].face === 'front' && st.items[1].face === 'back', '3 front + back approved: two items, the front first: ' + JSON.stringify(st.items.map(i => i.face + ':' + i.action)));
-    check((by(st, 'front')[0] || {}).action === 'FRONT ENGRAVING' && by(st, 'front')[0].by === 'Ana' && (by(st, 'back')[0] || {}).action === 'BACK ENGRAVING' && by(st, 'back')[0].by === 'Ben', '3 each its own seal, its own person: ' + JSON.stringify(st.items.map(i => [i.action, i.by])));
-    check(st.n === '1' && st.m === '1' && st.count === '' && /Front.*Approved by Ana/i.test(st.text) && /Back.*Approved by Ben/i.test(st.text), '3 one piece, both faces approved: no count; the words say FRONT ENGRAVING by Ana and BACK ENGRAVING by Ben: ' + JSON.stringify(st.text));
-    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'ows-both.png') });
-
-    // ═══ 4 · a MONOGRAM ═══
-    await openOv('mono'); st = await strip();
-    check(st.shown && st.items.length === 1 && st.items[0].kind === 'monogram' && st.items[0].action === 'MONOGRAM' && st.items[0].family === 'monogram' && st.items[0].by === 'Ana' && st.items[0].seals === 1, '4 an approved monogram: ONE item, the MONOGRAM seal (monogram family), by Ana: ' + JSON.stringify(st.items.map(i => [i.kind, i.action, i.family, i.by])));
-    check(!/BACK ENGRAVING|FRONT ENGRAVING|CUT PLAIN/.test(st.text) && !sealsIn(st.html).some(a => /ENGRAVING|CUT PLAIN/.test(a)) && !BAD_LEGACY.test(st.html) && /Monogram approved/i.test(st.head) && /Approved by Ana/.test(st.text), '4 and NEVER a BACK ENGRAVING seal (no seal model, no word of the engraving, no legacy seal): ' + JSON.stringify(sealsIn(st.html)));
-    const monoLeak = await page.evaluate(k => { const r = Orders.rows().find(x => x.key === k); return { engrave: r.engrave == null, job: !!Engrave.jobOf(r) }; }, K('mono'));
-    check(monoLeak.engrave && !monoLeak.job, '4 opening the window made no engraving of the monogram line (no r.engrave, no Engrave job)');
-    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'ows-mono.png') });
-
-    // ═══ 5 · HALF approved ═══
-    await openOv('half'); st = await strip();
-    check(st.shown && st.items.length === 1 && st.n === '1' && st.m === '3' && st.count === '1 of 3 pieces approved', '5 four lines (three engraved, one plain): "1 of 3 pieces approved" (the plain piece is no piece to approve): ' + JSON.stringify([st.count, st.n, st.m]));
-    const tip = await page.evaluate(() => (document.querySelector('#owSeals [data-ow-seals-count]') || {}).title || '');
-    check(/OWL CHARM/.test(tip) && /MOON DISC/.test(tip) && !/LEAF CHARM/.test(tip) && !/FIREBIRD/.test(tip), '5 and what is still to approve is its hover title: ' + JSON.stringify(tip));
-    check(/FIREBIRD 2/.test((st.items[0] || {}).text) && st.items[0].action === 'BACK ENGRAVING' && await page.evaluate(() => document.querySelector('#owSeals [data-ow-seals-count]').classList.contains('part')), '5 the one seal is the approved piece\'s, named, and the count is the amber "part" one: ' + JSON.stringify(st.items[0].text));
-    // one piece picked in the window (the Engraving section narrows to it): the strip is the whole order's, and still says 1 of 3
-    await page.evaluate(k => OrderWin.selectPiece(k), K('half', 1)); await sleep(900);
-    st = await strip(); const sec = await page.evaluate(() => [...document.querySelectorAll('#owEng .engCard')].map(c => c.dataset.piece.replace(/^\d+_/, '')));
-    check(sec.length === 1 && /42100000442/.test(sec[0]) && st.shown && st.items.length === 1 && st.count === '1 of 3 pieces approved', '5 with the UNAPPROVED piece picked (its card alone in the section, no seal anywhere in it) the strip still shows the order\'s one approval and "1 of 3": ' + JSON.stringify([sec, st.count]));
-    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'ows-half-picked.png') });
-    await page.evaluate(() => OrderWin.selectPiece(null)); await sleep(300);
-    // counted discs: a piece each
-    await openOv('discs'); st = await strip();
-    check(st.shown && st.items.length === 2 && st.count === '2 of 3 pieces approved' && /Disc 1/.test(st.items[0].text) && /Disc 2/.test(st.items[1].text), '5 three discs, two approved: "2 of 3 pieces approved", each seal names its disc: ' + JSON.stringify(st.items.map(i => i.text.slice(0, 60))));
-    // the mixed order: an approved monogram, an engraved piece to approve
-    await openOv('mixed'); st = await strip();
-    check(st.shown && st.items.length === 1 && st.items[0].kind === 'monogram' && st.count === '1 of 2 pieces approved' && /Monogram approved/i.test(st.head) && !/BACK ENGRAVING/.test(st.text), '9 a monogram approved + an engraved piece to approve: the monogram\'s seal only, "1 of 2 pieces approved": ' + JSON.stringify([st.head, st.count, st.items.map(i => i.action)]));
-
-    // a finished order with no Engrave job on this computer: the approval is in the line's record, or only in the order's timeline (the facts chip reads both; so does the strip)
-    await openOv('rec'); st = await strip();
-    check(st.shown && st.items.length === 1 && st.items[0].action === 'BACK ENGRAVING' && st.items[0].by === 'Rae' && /Approved by Rae/.test(st.text) && st.count === '', '8 a committed order with NO Engrave job and its approval in the line\'s record: the strip shows the BACK ENGRAVING seal by Rae: ' + JSON.stringify(st.items.map(i => [i.action, i.by])));
-    await openOv('recEv'); await page.evaluate(() => OrderWin.nudge()); await page.waitForFunction(() => { const s = document.getElementById('owSeals'); return s && !s.hidden; }, null, { timeout: 12000 }).catch(() => {}); st = await strip();
-    check(st.shown && st.items.length === 1 && st.items[0].action === 'BACK ENGRAVING' && st.items[0].by === 'Tim', '8 a committed order with no job whose record kept no seal: the approval the order\'s timeline holds (by Tim) is the strip\'s seal: ' + JSON.stringify(st.items.map(i => [i.action, i.by])));
-    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'ows-record-only.png') });
-
-    await openOv('mixedAll'); st = await strip();
-    check(st.shown && st.items.length === 2 && st.items.map(i => i.kind).join() === 'monogram,engrave' && /Engraving and monogram approved/i.test(st.head) && st.count === 'All 2 pieces approved' && st.items[0].action === 'MONOGRAM' && st.items[1].action === 'BACK ENGRAVING', '9 a monogram and an engraved piece, both approved: both seals in the lines\' order, "Engraving and monogram approved", "All 2 pieces approved": ' + JSON.stringify([st.head, st.count, st.items.map(i => i.action)]));
-    // ═══ 6 · nothing approved, nothing to approve, cut plain, an earring pair: no strip, and nothing else moves ═══
-    for (const [n, why] of [['none', 'an engraving to approve'], ['plain', 'a plain piece'], ['cut', 'a piece cut plain ("No engraving" is no approval)'], ['ears', 'an earring pair (never engraved)']]) {
-      await openOv(n); st = await strip(); ar = await around();
-      check(st.exists && !st.shown && ar.stripDisplay === 'none' && ar.stripH === 0 && st.html === '' && ar.firstShown !== 'owSeals', '6 ' + why + ': no strip (hidden, no height, nothing in it): ' + JSON.stringify([st.shown, ar.stripDisplay, ar.stripH]));
+    // ═══ 2 · NOWINSEAL: no approvals panel in the window, whatever the order holds; the Engraving section's own seals are still there ═══
+    for (const name of ['back', 'both', 'mono', 'half', 'mixed', 'mixedAll', 'rec', 'discs', 'cut', 'none']) {
+      await openOv(name);
+      const st = await strip(), inv = await inventory();
+      check(!st.shown && st.items.length === 0 && !/engraving approved|monogram approved|pieces? approved/i.test(st.text), `${name}: no "Engraving approved" panel in the Detailed Order view (${JSON.stringify([st.shown, st.items.length, st.text.slice(0, 80)])})`);
+      if (name === 'back' || name === 'both') check(inv.some(x => x.where === 'engraving card' && /ENGRAVING/.test(x.action || '')), `${name}: the approval seal is still on the window's Engraving card: ${JSON.stringify(inv.map(x => [x.where, x.action]))}`);
     }
-    const cutChip = await page.evaluate(() => 0); await openOv('cut'); ar = await around();
-    check(ar.chip === 'Engraving', '6 the cut-plain order keeps its Engraving chip and its hover card with the CUT PLAIN seal (the window\'s other seals are untouched)');
-    await openOv('none'); ar = await around();
-    check(ar.cards === 1 && ar.chip === 'Engraving', '6 the unapproved order\'s Overview is what it was (the card to approve, the chip)');
-
-    // ═══ 7 · LIVE: an approval made while the window is open shows its seal through the window's own repaint path ═══
-    await openOv('live'); st = await strip();
-    check(st.exists && !st.shown, '7 the window opens on two pieces to approve: no strip');
-    // this computer approves the first piece (the page's own settle: the verified intent, Engrave.recoverApprovals): no repaint is asked for here, the section's own tick and the window's paint do it
-    await page.evaluate(({ k, T }) => { const j = Engrave.jobOf(Orders.rows().find(r => r.key === k)); j.approvalIntent = { phase: 'verified', at: T, by: 'Live Lee', text: j.text }; Engrave.recoverApprovals(); }, { k: K('live', 0), T: Date.now() });
-    const t0 = Date.now(); await page.waitForFunction(() => { const s = document.getElementById('owSeals'); return s && !s.hidden && s.querySelectorAll('.seal').length === 1; }, null, { timeout: 12000 }).catch(() => {});
-    st = await strip();
-    check(st.shown && st.items.length === 1 && st.count === '1 of 2 pieces approved' && st.items[0].by === 'Live Lee' && st.items[0].action === 'BACK ENGRAVING', '7 live (this computer): the seal and "1 of 2 pieces approved" appear by themselves ' + (Date.now() - t0) + ' ms after the approval: ' + JSON.stringify([st.count, st.items.map(i => i.by)]));
-    // another computer approves the second piece: its event reaches the window through the order's timeline feed (the window's existing read, nudged once here instead of waited for)
-    const ev = await page.evaluate(k => { const r = Orders.rows().find(x => x.key === k), j = Engrave.jobOf(r); return { rid: r.order.receiptId, tx: r.line.transactionId, lineKey: r.key, poolId: (j.copies || [])[0], text: j.text }; }, K('live', 1));
-    const evAt = Date.now() + 500;
-    srv.st.put('Order_Timeline', ev.rid + '~engraveApproved~' + ev.poolId + '-' + evAt, { id: ev.poolId + '-' + evAt, type: 'engraveApproved', at: evAt, by: 'Far Away', orderId: ev.rid, lineKey: ev.lineKey, transactionId: ev.tx, source: 'sorter', station: 'sorter', device: 'other-computer', sheetId: '', sheet: '', setId: '', milestone: false, text: 'Placement approved', data: { text: ev.text, poolId: ev.poolId, copy: 1, sku: 'OWL_CHARM' } });
-    await sleep(600); await page.evaluate(() => OrderWin.nudge());
-    const t1 = Date.now(); await page.waitForFunction(() => { const s = document.getElementById('owSeals'); return s && !s.hidden && s.querySelectorAll('.seal').length === 2; }, null, { timeout: 15000 }).catch(() => {});
-    st = await strip();
-    check(st.shown && st.items.length === 2 && st.items.some(i => i.by === 'Far Away') && /All 2 pieces approved/.test(st.count), '7 live (another computer, through the timeline feed): its seal joins and the count reads "All 2 pieces approved" (' + (Date.now() - t1) + ' ms): ' + JSON.stringify([st.count, st.items.map(i => i.by)]));
-    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'ows-live.png') });
-    // a monogram approved while the window is open, then taken away again
-    await openOv('liveMono'); st = await strip();
-    check(st.exists && !st.shown, '7 a monogram window opens with nothing approved: no strip');
-    await page.evaluate(({ k }) => { window.__ma[k] = [['', 'Cy Late', 0.1]]; window.__syncMono(); }, { k: K('liveMono') });
-    await page.evaluate(() => OrderWin.nudge());
-    await page.waitForFunction(() => { const s = document.getElementById('owSeals'); return s && !s.hidden && s.querySelectorAll('.seal').length === 1; }, null, { timeout: 15000 }).catch(() => {});
-    st = await strip();
-    check(st.shown && st.items.length === 1 && st.items[0].kind === 'monogram' && st.items[0].by === 'Cy Late' && !sealsIn(st.html).some(a => /ENGRAVING/.test(a)), '7 live monogram: its seal appears at the window\'s next paint, never an engraving seal: ' + JSON.stringify(st.items.map(i => [i.action, i.by])));
-    await page.evaluate(({ k }) => { window.__ma[k] = []; window.__syncMono(); }, { k: K('liveMono') });
-    await page.evaluate(() => OrderWin.nudge());
-    check(await page.waitForFunction(() => { const s = document.getElementById('owSeals'); return s && s.hidden && !s.querySelector('.seal'); }, null, { timeout: 15000 }).then(() => true, () => false), '7 and the seal goes when the approval does');
-
-    // ═══ 10 · layout at three widths ═══
-    for (const [w, h] of [[1440, 900], [1024, 768], [390, 800]]) {
-      await page.setViewportSize({ width: w, height: h }); await sleep(500);
-      await openOv('half'); st = await strip(); ar = await around();
-      const lay = await page.evaluate(() => { const d = document.getElementById('orderWin'), s = document.getElementById('owSeals'), nc = document.getElementById('owNowCard'), r = s.getBoundingClientRect(), dr = d.getBoundingClientRect(); return { within: r.left >= dr.left - 1 && r.right <= dr.right + 1, aboveNow: nc.hidden || r.bottom <= nc.getBoundingClientRect().top + 1, sw: d.scrollWidth, cw: d.clientWidth, items: [...s.querySelectorAll('.owApItem')].every(i => { const q = i.getBoundingClientRect(); return q.right <= r.right + 1 && q.width > 40; }) }; });
-      check(st.shown && lay.within && lay.aboveNow && lay.sw <= lay.cw + 1 && lay.items, '10 at ' + w + ' px: the strip is inside the window, above the head card, nothing sideways: ' + JSON.stringify(lay));
-      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, `ows-half-${w}.png`) });
-    }
-    await page.setViewportSize({ width: 1440, height: 900 });
     await closeWin();
-    const reads = await page.evaluate(() => window.__reads);
-    check(Array.isArray(reads) && reads.length === 0, 'the monogram service was never asked to read seals (ensureSeals / loadSeals: none, over every window above): ' + JSON.stringify(reads));
-    check(errors.length === 0, 'no page errors: ' + errors.join(' | ').slice(0, 300));
-    check(writes.length === 0, 'no call to Etsy or an AI service');
     finish();
   } catch (e) { console.error(e); fails.push('crashed: ' + (e && e.message)); finish(); }
   finally { await browser.close(); await srv.close(); }
