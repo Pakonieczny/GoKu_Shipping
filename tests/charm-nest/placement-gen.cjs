@@ -80,13 +80,21 @@ function seed(st, pre = '') {
     await t('F1 a failed write op (a 400) raises the counter too: it may have written part of what it meant to', async () => {
       const before = gen(); await call({ op: 'poolUpdate', poolIds: ['not a pool id'], patch: {} }); assert.equal(gen(), before + 1);
     });
-    await t('G1 the sandbox keeps no counter: no gen in its answers, no Sandbox_Charm_Nest_Rev, no leftover of a reset; its asks are the full read as before', async () => {
+    await t('G1 the sandbox keeps its own gen (Sandbox_Order_Rev/_placement, a family its reset wipes): never production\'s counter, no Sandbox_Charm_Nest_Rev, one read while nothing moved, a full read after a write or a reset (COST, Oct 2026)', async () => {
       seed(st, 'Sandbox_');
-      const s1 = (await call({ op: 'getOrderPieces', orderIds: ids30 }, true)).body; assert.equal(s1.gen, undefined); assert(s1.orders);
+      const prod0 = gen();
+      const s1 = (await call({ op: 'getOrderPieces', orderIds: ids30 }, true)).body; assert.equal(s1.gen, 0, 'no sandbox write has raised it yet'); assert(s1.orders);
+      const idle = await reads(() => call({ op: 'getOrderPieces', orderIds: ids30, ifRev: s1.rev, ifGen: s1.gen }, true)); assert.equal(idle.out.body.unchanged, true); assert.equal(idle.reads, 1, 'documents read: ' + idle.reads);
       await call({ op: 'poolUpdate', poolIds: [pidOf(rid(1), 1)], patch: { note: 'sandbox' } }, true);
       assert.equal([...st.docs.keys()].filter(k => /Charm_Nest_Rev/.test(k) && k.startsWith('Sandbox_')).length, 0);
-      const { out, reads: n } = await reads(() => call({ op: 'getOrderPieces', orderIds: ids30, ifRev: s1.rev, ifGen: 0 }, true));
-      assert(n > 60, 'full read: ' + n); assert.equal(out.body.gen, undefined);
+      assert.equal(gen(), prod0, 'the sandbox write did not move production\'s counter');
+      assert(st.docs.get('Sandbox_Order_Rev/_placement') && st.docs.get('Sandbox_Order_Rev/_placement').g > 0, 'the sandbox\'s own gen was raised');
+      const { out, reads: n } = await reads(() => call({ op: 'getOrderPieces', orderIds: ids30, ifRev: s1.rev, ifGen: s1.gen }, true));
+      assert(n > 60, 'full read after the write: ' + n); assert(out.body.gen > 0 && out.body.gen !== s1.gen);
+      const after = await reads(() => call({ op: 'getOrderPieces', orderIds: ids30, ifRev: out.body.rev, ifGen: out.body.gen }, true)); assert.equal(after.out.body.unchanged, true); assert.equal(after.reads, 1);
+      st.docs.delete('Sandbox_Order_Rev/_placement');   // (a sandbox reset deletes the family)
+      const reset = await reads(() => call({ op: 'getOrderPieces', orderIds: ids30, ifRev: out.body.rev, ifGen: out.body.gen }, true));
+      assert(reset.reads > 60, 'after a reset the ask is the full read: ' + reset.reads); assert.equal(reset.out.body.gen, 0);
     });
     await t('H1 the page (OrderPieces.load) sends ifGen on a forced re-read, takes the new gen after a change, and asks in full once every five minutes', async () => {
       const vm = require('vm'); const src = require('fs').readFileSync(path.join(root, 'charm-nest-order-pieces.js'), 'utf8');
