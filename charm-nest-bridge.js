@@ -2982,9 +2982,12 @@ const Master = window.Master = (() => {
         const since = !unchanged && base && base.index && base.index.indexedAt != null && Number.isFinite(base.docs) ? { indexedAt: base.index.indexedAt, updatedAt: base.index.updatedAt, shape: base.index.shape, docs: base.docs } : null;
         const step = since ? await api("charmNestLibrary", { op: "masterList", since }, quiet).catch(() => null) : null, delta = step && step.since && step.index && Array.isArray(step.entries) ? step : null;
         const [ix, fl] = await Promise.all([unchanged || delta ? null : api("charmNestLibrary", { op: "masterList", limit: 3000 }, Object.assign({ label: "Loading the charm library", all: ["entries", "shells"] }, quiet)), first || api("charmNestLibrary", { op: "masterListFiles" }, quiet)]);
+        // (REDRAW: the library as this page knew it before this read, or as the copy kept on this computer had it: an entry whose drawing this read changes re-makes the open pieces cut from the old one, Review.redrawNoted)
+        const before = B.master.entries && B.master.entries.size ? B.master.entries : held ? new Map(held.entries.map(e => [e.sku, e])) : null;
         if (ix) { B.master.entries = new Map((ix.entries || []).map(e => [e.sku, e])); B.master.index = ix.index || null; B.master.docs = ix.index && Array.isArray(ix.shells) ? (ix.entries || []).length + ix.shells.length : null; changed = true; }
         else if (delta) { const m = new Map(base === held ? held.entries.map(e => [e.sku, e]) : B.master.entries); for (const e of delta.entries) m.set(e.sku, e); B.master.entries = m; B.master.index = delta.index; B.master.docs = delta.index.count; changed = true; }   // (the cloud counted no removal: the copy and what was written since are the index)
         else if (held) { B.master.entries = new Map(held.entries.map(e => [e.sku, e])); B.master.index = held.index; B.master.docs = Number.isFinite(held.docs) ? held.docs : null; changed = true; }   // (the signatures agree: the copy is the index)
+        if (before && B.master.entries !== before) { try { if (window.Review && Review.redrawNoted) Review.redrawNoted(before, B.master.entries); } catch (e) { console.warn("[redraw] the library was not compared:", e && e.message); } }
         if (fl.unchanged) fl.files = held ? held.files : B.master.files || [];
         if (!changed && sig(fl.files) !== sig(B.master.files)) changed = true;
         B.master.files = fl.files || []; B.master.filesSig = fl.filesSig || null; B.master.loadedAt = Date.now();
@@ -3838,8 +3841,33 @@ const Pool = window.Pool = (() => {
     const key=sizeEntry(entry,size)?.aiPath;
     if(!key)return loadMasterCharm(entry,size);
     if(masterLoads.has(key))return masterLoads.get(key);
-    const task=loadMasterCharm(entry,size).finally(()=>masterLoads.delete(key));
+    const task=loadMasterCharm(entry,size).finally(()=>{if(masterLoads.get(key)===task)masterLoads.delete(key);});   // (REDRAW: a read forgotten by forgetDrawing does not take the read that replaced it out of the map)
     masterLoads.set(key,task);return task;
+  }
+  /* REDRAW (Paul, 19 Oct 2026, order 4206638416): a SKU the library re-points to ANOTHER drawing (a newer master file added in the Library tab: the held lines of an older file are built again from it) keeps its design
+     file's path, charmnest/master/<SKU>.ai is written over, so the design this page read from that path is the OLD drawing and every line made up from it was cut as the old one (the stud T-Rex instead of the
+     necklace T-Rex with its ring). The designs held under the entry's paths that are not the new drawing are forgotten here (the map and a read under way); the next line made up reads the file again.
+     S.poolSources keeps them: a sheet holding pieces of the old drawing writes its files from its source (sourceOf), and the design read again takes an id of its own (loadMasterCharm).
+     → the hashes the old designs went by (whole, bodies, one-body charms, mirrors): a pool row holding one of them was cut from the old drawing (Review.redraw). */
+  const hashesOfSrc = src => [src && src.hash].concat(((src && src.charms) || []).map(c => c && c.hash), ((src && src.bodies) || []).map(c => c && c.hash), ((src && src.solo) || []).map(c => c && c.hash), Object.values((src && src.mirrors) || {}).map(c => c && c.hash)).filter(Boolean).map(String);
+  const entryHashes = e => (e ? [e.charmHash].concat(Object.values(e.sizes || {}).map(z => z && z.charmHash)) : []).filter(Boolean).map(String);
+  const entryPaths = e => (e ? [e.aiPath].concat(Object.values(e.sizes || {}).map(z => z && z.aiPath)) : []).filter(Boolean).map(String);
+  function forgetDrawing(was, now) {
+    const old = new Set(), fresh = new Set(entryHashes(now)), nowPaths = new Set(entryPaths(now)), anyPath = new Set(entryPaths(was).concat([...nowPaths]));
+    for (const [k, src] of [...B.pool.sources]) {
+      const base = String(k).replace(FIT_PATH, ""), fit = base !== String(k); if (!anyPath.has(base)) continue;
+      if (!fit && src && src.hash && fresh.has(String(src.hash))) continue;   // (already the new drawing)
+      for (const h of hashesOfSrc(src)) old.add(h);
+      if (nowPaths.has(base)) { B.pool.sources.delete(k); masterLoads.delete(k); }
+    }
+    return old;
+  }
+  /** REDRAW: the hashes a piece cut from this entry's drawing for `size` may hold: the record's (every size), and the design read from its file (whole, its bodies, its one-body charms, its mirrored charms). Reads the file when it is not held. */
+  async function drawingHashes(e, size) {
+    const out = new Set(entryHashes(e)), g = sizeEntry(e, size); if (g && g.charmHash) out.add(String(g.charmHash));
+    const src = await masterCharm(e, size); try { await soloBodies(src); } catch (_) { /* a design whose bodies cannot be cut alone has none */ }
+    for (const h of hashesOfSrc(src)) out.add(h);
+    return out;
   }
   async function loadMasterCharm(entry, size) {
     const geom = sizeEntry(entry, size); if (!geom || !geom.aiPath) throw new Error(`no design file for ${entry.sku}${size ? " · " + size : ""}`);
@@ -3852,14 +3880,19 @@ const Pool = window.Pool = (() => {
     const label = charm.members.find(m => m.kind === "text" && m.bbox && m.bbox[3] <= charm.outline.bbox[1] + 1 && P.parseSkuLabel(m.str, Master.skuRegex()));
     if (label) agent({ pool: true }, "warn", `${entry.sku}: its design file still has the SKU label “${String(label.str).trim()}” under the charm, so the label goes onto every sheet with it and the sheet's .dxf fails — index its master again in the Library with “rebuild every charm” chosen under SKUs already held`);
     await P.buildSilhouettes(parsed, [charm], +S.settings.silhouetteRes || 6);
-    const srcId = "pool:" + key.replace(/[^\w]+/g, "_");
-    const src = { id: srcId, pool: true, name: `${entry.sku}${size ? " · " + size : ""} (master)`, sku: entry.sku, bytes, hash: geom.scaled ? charm.hash : entry.charmHash || charm.hash, parsed, group: g, charms: [charm], metal: null, state: "ready", t0: performance.now(), cloud: { path: geom.aiPath, url }, persisting: null, usedAt: Date.now() };
+    const hash = geom.scaled ? charm.hash : entry.charmHash || charm.hash;
+    let srcId = "pool:" + key.replace(/[^\w]+/g, "_");
+    // (REDRAW: the same path read again as ANOTHER drawing keeps the old design under its id, for the sheets that hold pieces of it: the new one takes an id of its own)
+    { const had = S.poolSources && S.poolSources[srcId]; if (had && had.hash && hash && String(had.hash) !== String(hash)) srcId += "_" + String(hash).replace(/[^\w]+/g, "").slice(0, 12); }
+    const src = { id: srcId, pool: true, name: `${entry.sku}${size ? " · " + size : ""} (master)`, sku: entry.sku, bytes, hash, parsed, group: g, charms: [charm], metal: null, state: "ready", t0: performance.now(), cloud: { path: geom.aiPath, url }, persisting: null, usedAt: Date.now() };
     Object.assign(charm, { id: srcId + ":0", sourceId: srcId, sourceName: src.name, index: 0, name: entry.sku, sku: entry.sku, namedBy: "master", excluded: false, cloud: { ai: url, aiPath: geom.aiPath, png: geom.thumbUrl || null, pngPath: geom.thumbPath || null }, upAngle: entry.upAngle, engravable: true, backKeepOut: Master.keepOutOf(charm), frontKeepOut: Master.keepOutOf(charm, "front") });
     // a design that draws two DIFFERENT bodies under one label (a mismatched pair, charm-nest-pair.js) also gets one charm per body
     // which way the drawing faces, when a person set it on the master record (charm-nest-pair.js facingOf reads these two): decides which piece of a pair is the mirror image
     { const f = geom.facing || entry.facing; if (f === "L" || f === "R" || f === "X") charm.facing = f;   /* ("X": the old "reads one way" word; it no longer stops a Right being turned over) */ if (Array.isArray(entry.facings)) charm.facings = entry.facings.slice(0, 10).map(x => (x === "L" || x === "R" ? x : null)); }
     await splitBodies(src);
-    S.poolSources[srcId] = src; B.pool.sources.set(key, src);
+    S.poolSources[srcId] = src;
+    // (REDRAW: a read that began before the library re-pointed the SKU to another drawing is not kept as the design of that path)
+    { const cur = Master.entryFor(entry.sku), cg = cur && cur !== entry ? sizeEntry(cur, size) : null; if (!(cg && cg.charmHash && geom.charmHash && String(cg.charmHash) !== String(geom.charmHash))) B.pool.sources.set(key, src); }
     return src;
   }
   /* Mismatched pair (Paul, 9 Oct 2026): src.charms stays the ONE folded charm it always was (every picture of the design, the Master tab and
@@ -4725,7 +4758,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(ListMedia.oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pinPooled, wholeHashes, designLoaded, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig };
+  return { pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -11939,7 +11972,13 @@ const RunCtl = window.RunCtl = (() => {
     const x = open[+pick - 1]; if (!x) return;
     await resumeRun(x.runId);
   }
+  // (REDRAW, Paul 19 Oct 2026, order 4206638416: while a run is taken up again its lines, pieces and sheets are not all read yet, so nothing re-makes a piece for a re-pointed SKU meanwhile: B.resuming; it looks again once they are)
   async function resumeRun(runId) {
+    B.resuming = runId || true;
+    try { return await resumeRunNow(runId); }
+    finally { if (B.resuming === (runId || true)) B.resuming = null; try { if (window.Review && Review.redrawLater) Review.redrawLater(500); } catch (_) {} }
+  }
+  async function resumeRunNow(runId) {
     const rr = await api("charmNestLibrary", { op: "runGet", runId }); const rec = rr.run; if (!rec) { toast("Run record not found", "bad"); return; }
     // the orders the run is done with are in its line archive, outside the record: still counted, never taken in again
     if (rec.lineArchive) { const la = rec.lineArchive; rec.lineArchive = { parts: +la.parts || 0, at: la.at || null, base: { lines: +la.lines || 0, committed: +la.committed || 0, held: +la.held || 0, sheets: +la.sheets || 0 } }; }
@@ -15578,6 +15617,175 @@ const Review = window.Review = (() => {
     if (again) relinkLater(RELINK_RETRY_MS);
     return out;
   }
+  /* ═══ REDRAW · a SKU re-pointed to ANOTHER drawing re-makes the open pieces cut from the old one (Paul, 19 Oct 2026, order 4206638416, SKU HAPPY T-REX) ═══════════════════════════════════
+     The order was pooled with the stud T-Rex. A newer master file added in the Library ("newest", the default: the held lines of an older master file are built again from the new file; an entry is
+     keyed by SKU, so its charmHash, aiPath and geometry change) made HAPPY T-REX the necklace T-Rex with its ring, but nothing made the pieces already pooled or placed again: a sheet could cut the wrong shape.
+     WHEN: Master.load replaced the library this page holds (after an index run on this page, which reads it again, or a cloud read that brings an entry another computer wrote) and an entry now draws
+     something it did not: a charm hash, whole or of a size, it did not have. A change of what a person set (angle, engravable, pair and facing words, a block) changes no hash and is nothing here; a design
+     saved from an order (hashSource "custom-save") is never made again. The designs this page read from the entry's file path are forgotten at once (Pool.forgetDrawing: the path is written over), and
+     the hashes they went by are kept as the OLD drawing's.
+     WHICH PIECES: a live pool row of that SKU whose size's drawing changed (sizeEntry of the old and the new entry differ in hash) and that was cut from the OLD drawing (its charm hash is one the old drawing
+     went by, or its record names the old master file and not the entry's). A piece holding a hash the NEW drawing goes by (whole, any size, a body, a one-body charm, a mirror: Pool.drawingHashes reads the
+     new file) is right already and never touched: a piece cut from one BODY of a two-body design holds the body's hash, not the whole design's.
+     WHAT: the decision a listing pick, the Review drop-to-replace and "Wrong charm?" make (relinkFixed): a line whose pieces are pooled or on a sheet still open (a draft or a full draft, not cut, not in a
+     committed set, not released, not inside a protected Rose Gold / 10K / 14K contour) is made up again from the new drawing with repool and repoolChanged (its old pieces come off in ONE commit, superseded;
+     the line is made up from the library as it is now; attachPool puts it first on the sheet the old pieces left, and the sheets it joined are arranged at once, appended into that room). Its engraving
+     approval goes, as the "design changed" rule of repoolLine does. A line with a piece cut, in a committed set or released is NEVER touched: the activity log, a toast and the order's timeline say its placed
+     piece is the older drawing (row.redrawNote). An order in Review keeps its piece (REVHOLD) until its Review is resolved; a line a person holds is told and left as it is.
+     ONCE: per line and new drawing (line, SKU, size, the new hash: redrawDone). A second identical read changes no hash and queues nothing, and a line whose pieces hold the new drawing has nothing to do.
+     NOT BEFORE THE PAGE HOLDS ITS WORK: a change waits (redrawWait) until the workspace is restored (Session.ready), a run is open at the pool step or past it, and no run is being taken up again (B.resuming).
+     TWO COMPUTERS (the pool has no lock of its own for a make-up; this is the listing pick's rule): a line is made up again only by the page whose run holds its pieces (on its own sheets, or pool rows of its
+     run); right before the take-off the cloud's own pool rows are read: pieces another live run holds are that run's (the pool's contention rule), pieces taken off or already holding a hash of the new drawing
+     were made up elsewhere, and nothing is taken off twice. A piece on a sheet this page does not hold is the other page's. The timeline's note has one id per line and drawing, whichever computer writes it. */
+  const redrawWait = new Map(), redrawDone = new Set(), REDRAW_MAX = 500;
+  let redrawTimer = 0, redrawChain = Promise.resolve();
+  const rdUp = s => String(s == null ? "" : s).trim().toUpperCase();
+  const rdHashes = e => (e ? [e.charmHash].concat(Object.values(e.sizes || {}).map(z => z && z.charmHash)) : []).filter(Boolean).map(String);
+  const rdCustom = e => !!e && e.hashSource === "custom-save";
+  /** True when `now` draws something `was` did not (a charm hash, whole or of a size, it did not have). Only what a person set changed, or a design saved from an order: false. */
+  function redrawChanged(was, now) {
+    if (!was || !now || was === now || rdCustom(was) || rdCustom(now)) return false;
+    const a = new Set(rdHashes(was)), b = rdHashes(now);
+    return a.size > 0 && b.length > 0 && b.some(h => !a.has(h));
+  }
+  /** Master.load replaced the library: `prev` is what it was. Each entry whose drawing changed waits for the sweep, from the drawing it had first (a second change meanwhile keeps that). → how many */
+  function redrawNoted(prev, next) {
+    if (!prev || !next) return 0; const skus = [];
+    for (const [k, now] of next) {
+      const was = prev.get(k); if (!was || was === now || !redrawChanged(was, now)) continue;
+      const sku = rdUp(k), had = redrawWait.get(sku);
+      let old = new Set(); try { old = Pool.forgetDrawing(was, now); } catch (e) { console.warn("[redraw] the old design was not forgotten:", e && e.message); }
+      if (had) { for (const h of old) had.oldSrc.add(h); had.tries = 0; } else redrawWait.set(sku, { sku, was, oldSrc: old, at: Date.now(), tries: 0 });
+      skus.push(sku);
+    }
+    while (redrawWait.size > REDRAW_MAX) redrawWait.delete(redrawWait.keys().next().value);
+    if (skus.length) { agent({ pool: true }, "MASTER", `${skus.length} SKU(s) now draw another design in the library: ${skus.slice(0, 8).join(", ")}${skus.length > 8 ? " …" : ""}. Open pieces cut from the old drawing are made up again from the new one; a cut or committed piece is only noted`); redrawLater(0); }
+    return skus.length;
+  }
+  function redrawLater(ms) { if (!redrawWait.size) return; clearTimeout(redrawTimer); redrawTimer = setTimeout(() => { redrawTimer = 0; redrawNow().catch(() => {}); }, ms || 0); }
+  /** The sweep now (after any sweep under way). → { swapped, flagged, kept, held } */
+  function redrawNow() { clearTimeout(redrawTimer); redrawTimer = 0; const p = redrawChain.then(redrawSweep, redrawSweep); redrawChain = p.catch(() => {}); return p; }
+  function redrawRetry() { if (!redrawWait.size) return; let t = 0; for (const w of redrawWait.values()) t = Math.max(t, ++w.tries); redrawLater(t < 60 ? 5000 : 60000); }
+  // (an order whose Review is resolved is looked at again: a line kept on its sheet while it was in Review is made up now)
+  try { document.addEventListener("cn-review-mark", () => { if (redrawWait.size) redrawLater(300); }); } catch (_) {}
+  const redrawReady = () => { const run = B.run; return !!(window.Session && Session.ready && Session.ready()) && !B.resuming && !!run && !["complete", "abandoned"].includes(run.status) && O.stepIndex(run.step) >= O.stepIndex("pool"); };
+  const redrawBusy = sh => ["nesting", "finishing", "queued"].includes(sh.status) || sh._operationStarting || sh._learnedStarting || (sh.persisted && !sh.persistedDone);
+  const redrawId = (row, L, part) => `${row.key}.redraw.${part ? part + "." : ""}${TL.hash(L.sku + "|" + (L.size || "") + "|" + L.to)}`;
+  const redrawName = L => `${L.sku}${L.size ? " · " + L.size : ""}`;
+  /** One line made up again from the new drawing (the block above). → { ok, retry, made, homes, why } */
+  async function redrawSwap(row, L) {
+    let went = false, why = "", homes = [];
+    await repool(row, async r => {
+      const run = B.run;
+      if (!redrawReady()) { why = "retry: the page does not hold its run yet"; return false; }
+      const ids = new Set(r.poolIds || []);
+      if (!L.pieces.some(p => ids.has(p.poolId))) { why = "the line no longer holds those pieces"; return false; }
+      if (r.state === "committed" || relinkFixed(r).length) { why = "retry: a piece of it is cut, committed or released now"; return false; }
+      if (Pool.keepsPlace && Pool.keepsPlace(r)) { why = "retry: the order is in Review"; return false; }
+      if (r.hold) { why = "the line is held by a person"; return false; }
+      const on = allSheets().filter(sh => sh.charms.some(x => ids.has(x.poolId)));
+      // (a sheet being arranged or saved keeps its pieces until it is done: taken off in the middle, its layout came back with them)
+      if (on.some(redrawBusy)) { why = "retry: a sheet is being arranged"; return false; }
+      if (S.cloud.ok) {
+        let cloud; try { const got = await api("charmNestLibrary", { op: "poolGet", poolIds: [...ids] }, { quiet: true }); cloud = (got && got.pools) || {}; } catch (err) { why = "retry: " + ((err && err.message) || err); return false; }
+        const live = [...ids].map(id => cloud[id]).filter(p => p && !RELINK_TAKEN.has(p.state));
+        if (!on.length && live.some(p => p.runId && p.runId !== run.runId)) { why = "another run holds its pieces"; return false; }
+        // (a piece the cloud holds no row for is as this page knows it)
+        const stale = L.pieces.map(p => cloud[p.poolId] || p).filter(p => !RELINK_TAKEN.has(p.state) && !L.fresh.has(String(p.charmHash)));
+        if (!stale.length) { for (const id of ids) if (cloud[id]) B.pool.rows.set(id, Object.assign({}, B.pool.rows.get(id), cloud[id])); why = "made up elsewhere"; return false; }
+      }
+      homes = on.map(sh => sh.fileBase || sheetName(sh));
+      // the engraving fitted to the old outline is asked again, as repoolLine's "design changed" rule does for a line made up as another drawing
+      try { if (r.engrave && (r.engrave.needed || (r.spec && r.spec.engraveCandidate))) { r.engrave.invalidatedBy = "design changed"; r.engrave.approved = false; r.engrave.state = "reclassify"; Engrave.invalidate(r, "design changed"); } } catch (_) {}
+      r.repoolChanged = true; r.changePending = true;
+      went = true; return true;
+    });
+    if (!went) return { ok: !/^retry:/.test(why) && why !== "another run holds its pieces", retry: /^retry:/.test(why), why };
+    B.review.items = items().filter(x => x.key !== "chg:" + row.key);   // (no Order changed card asks about a change the library made)
+    const made = !row.hold && (row.state === "pooled" || row.state === "pulled") && !(row.problems || []).length;
+    TL.line(row, "interpreted", { id: redrawId(row, L), once: true, text: `Made again from the new drawing of ${redrawName(L)} (a newer master file in the library)${homes.length ? `: the old piece came off ${homes.join(", ")}; the new one takes its room there, or the next sheet when it does not fit` : ""}`.slice(0, 200),
+      data: { redraw: true, sku: L.sku, size: L.size || null, to: L.to, was: L.from || null, action: "swap", sheets: homes } });
+    agent({ metal: row.spec && row.spec.material, pool: true }, made ? "POOL" : "warn", `${row.order.receiptId} · ${redrawName(L)} draws another design now: ${made ? `made up again from it${homes.length ? ` (the old piece came off ${homes.join(", ")})` : ""}` : `the old pieces came off, but the line was not made up again: ${row.reason || (row.problems || []).map(p => p.kind).join(", ") || row.state}`}`);
+    return { ok: true, made, homes };
+  }
+  /** A line that keeps its piece (cut, in a committed set, released, a protected contour): told plainly (the log, the order's timeline, row.redrawNote). Nothing physical changes. */
+  function redrawFlag(row, L, fixed) {
+    const rid = String(row.order.receiptId), where = [...new Set(fixed.map(f => f.name))].join(", ") || "its sheet";
+    const cutNow = row.state === "committed" || fixed.some(f => f.cut), how = cutNow ? (fixed.find(f => f.cut) || {}).why || "cut" : fixed.map(f => f.why).find(Boolean) || "released to the laser";
+    row.redrawNote = { sku: L.sku, size: L.size || null, to: L.to, at: Date.now(), where, how };
+    agent({ metal: row.spec && row.spec.material, pool: true }, "warn", `${rid} · ${redrawName(L)} draws another design now (a newer master file in the library), but this order's piece is ${how} on ${where} with the OLDER drawing: left as it is, a person checks it`);
+    TL.line(row, "interpreted", { id: redrawId(row, L, "fixed"), once: true, text: `Placed piece is the older drawing of ${redrawName(L)}: it is ${how} on ${where}, and the library now draws it from a newer master file. Left as it is; a person checks it`.slice(0, 200),
+      data: { redraw: true, sku: L.sku, size: L.size || null, to: L.to, action: "flag", how, sheets: fixed.map(f => f.sheetId).filter(Boolean) } });
+  }
+  async function redrawSweep() {
+    const out = { swapped: [], flagged: [], kept: [], held: [] };
+    if (!redrawWait.size) return out;
+    if (!redrawReady()) { redrawRetry(); return out; }
+    const skus = new Set(redrawWait.keys()), bySku = new Map();
+    for (const p of B.pool.rows.values()) { if (!p || RELINK_TAKEN.has(p.state) || p.custom || !p.charmHash) continue; const k = rdUp(p.sku); if (skus.has(k)) (bySku.get(k) || bySku.set(k, []).get(k)).push(p); }
+    const lines = new Map(), retrySku = new Set(), fresh = new Map();
+    for (const [sku, w] of [...redrawWait]) {
+      const now = Master.entryFor(sku);
+      if (!now || !redrawChanged(w.was, now)) { redrawWait.delete(sku); continue; }   // (gone from the library, a design saved from an order now, or the old drawing again)
+      for (const p of bySku.get(sku) || []) {
+        const size = p.size || null; let gOld = null, gNew = null;
+        try { gOld = Pool.sizeEntry(w.was, size); gNew = Pool.sizeEntry(now, size); } catch (_) { /* cannot be told */ }
+        if (!gOld || !gNew || !gOld.charmHash || !gNew.charmHash || String(gOld.charmHash) === String(gNew.charmHash)) continue;   // (this size's drawing did not change, or cannot be told)
+        const fk = sku + "|" + (size || "");
+        if (!fresh.has(fk)) { try { fresh.set(fk, await Pool.drawingHashes(now, size)); } catch (e) { fresh.set(fk, null); agent({ pool: true }, "warn", `${redrawName({ sku, size })}: the new drawing could not be read (${(e && e.message) || e}); looked at again`); } }
+        const ok = fresh.get(fk); if (!ok) { retrySku.add(sku); continue; }
+        const h = String(p.charmHash); if (ok.has(h)) continue;   // (a hash the new drawing goes by: made up elsewhere, or a body of it)
+        const oldBy = new Set(rdHashes(w.was).concat([String(gOld.charmHash)], [...w.oldSrc]));
+        if (!oldBy.has(h) && !(p.masterHash && w.was.masterHash && p.masterHash === w.was.masterHash && p.masterHash !== now.masterHash)) continue;   // (not cut from the old drawing that we can tell: left as it is)
+        const row = B.orders.byKey && B.orders.byKey.get(p.lineKey); if (!row || !row.order) continue;   // (a line this page does not hold is the page's that holds it)
+        const L = lines.get(row.key) || lines.set(row.key, { row, sku, size, to: String(gNew.charmHash), from: String(gOld.charmHash), fresh: ok, pieces: [] }).get(row.key);
+        L.pieces.push(p);
+      }
+    }
+    for (const L of lines.values()) {
+      const { row } = L, done = `${row.key}|${L.sku}|${L.size || ""}|${L.to}`;
+      if (redrawDone.has(done)) continue;
+      if (["gone", "skipped", "noDesign"].includes(row.state) || (window.Cancelled && Cancelled.has && Cancelled.has(row.order.receiptId))) { redrawDone.add(done); continue; }
+      const fixed = row.state === "committed" ? [{ name: "its sheet", why: "in a committed set", cut: true, local: true }] : relinkFixed(row);
+      if (fixed.length) {
+        redrawDone.add(done);
+        if (fixed.every(f => !f.local && !f.cut)) continue;   // (its sheet is open on another computer: that page makes it up again)
+        redrawFlag(row, L, fixed); out.flagged.push(L); continue;
+      }
+      if (Pool.keepsPlace && Pool.keepsPlace(row)) {
+        TL.line(row, "interpreted", { id: redrawId(row, L, "kept"), once: true, text: `${redrawName(L)} draws another design now: its piece stays on its sheet while the order is in Review, and is made again from the new drawing when the Review is resolved`.slice(0, 200), data: { redraw: true, sku: L.sku, size: L.size || null, to: L.to, action: "kept" } });
+        retrySku.add(L.sku); out.kept.push(L); continue;
+      }
+      if (row.hold) {
+        redrawDone.add(done); row.redrawNote = { sku: L.sku, size: L.size || null, to: L.to, at: Date.now(), where: "", how: "held" };
+        agent({ metal: row.spec && row.spec.material, pool: true }, "warn", `${row.order.receiptId} · ${redrawName(L)} draws another design now, but the line is held by a person: its piece is the older drawing until it is made again`);
+        TL.line(row, "interpreted", { id: redrawId(row, L, "held"), once: true, text: `${redrawName(L)} draws another design now, but this line is on hold: its piece is the older drawing until it is made again`.slice(0, 200), data: { redraw: true, sku: L.sku, size: L.size || null, to: L.to, action: "held" } });
+        out.held.push(L); continue;
+      }
+      let r; try { r = await redrawSwap(row, L); } catch (err) { r = { ok: false, retry: true, why: (err && err.message) || String(err) }; }
+      if (r.ok) { redrawDone.add(done); out.swapped.push(Object.assign({}, L, { homes: r.homes || [], made: !!r.made })); }
+      else if (r.retry) retrySku.add(L.sku);
+      else redrawDone.add(done);
+    }
+    for (const sku of [...redrawWait.keys()]) if (!retrySku.has(sku)) redrawWait.delete(sku);
+    // the sheets the new pieces joined are arranged now, appended into the room the old ones left (the nest's own append rules; what does not fit moves on), as a listing pick's swap does
+    if (out.swapped.length) {
+      const ids = new Set(out.swapped.flatMap(x => x.row.poolIds || []));
+      for (const sh of allSheets()) {
+        const mine = sh.charms.filter(c => ids.has(c.poolId)); if (!mine.length || mine.every(c => sh.placements.some(p => p.id === c.id))) continue;
+        if (sh.runHold || redrawBusy(sh)) continue;
+        sh.status = "ready"; try { if (typeof window.startNest === "function") window.startNest(sh); } catch (e) { console.warn("[redraw] sheet not started:", e && e.message); }
+      }
+    }
+    if (out.swapped.length || out.flagged.length || out.held.length) {
+      try { syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {}
+      if (out.swapped.length) toast(`New drawing in the library (${[...new Set(out.swapped.map(redrawName))].join(", ")}): ${out.swapped.length} order line${out.swapped.length === 1 ? "" : "s"} taken off and made up again from it`, "ok", 6000);
+      for (const f of out.flagged.slice(0, 3)) toast(`Order ${f.row.order.receiptId}: its ${redrawName(f)} piece is ${f.row.redrawNote ? f.row.redrawNote.how : "cut"} with the OLDER drawing; the library now draws it from a newer master file`, "bad", 10000);
+      RunCtl.poke();
+    }
+    if (redrawWait.size) redrawRetry();
+    return out;
+  }
   /* ═══ RELTOQ · "Release to nesting queue" on every Review row and card (Paul, 17 Oct 2026, orders 4193111740 DRAGON11 and 4191826593 FLORALS2) ═══════════════════════════════════════════
      Paul: "I asked you to add a button so that I can release orders that are flagged for review back to the production/nesting queue." The Review ROW (reviewRow; the decision card() below is drawn only inside a
      Custom Orders card now) had no way out: "Unblock this SKU" sat on a card nobody sees, and "Release hold" ended in "was not fully released ... needs a look in Review".
@@ -16658,7 +16866,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -22615,6 +22823,7 @@ async function bootBridge() {
   // an automatic run over it. Navigation and the saved Library remain usable.
   if (!recoveryFailed) {
     Session.listen(); Arrivals.start(); ListMedia.start(); Upkeep.start(); window.AutoCancel?.start();
+    try { Review.redrawLater(1000); } catch (_) {}   // (REDRAW: a SKU re-pointed while the workspace was being restored is looked at now that it holds its sheets)
     CustomSheet.load().catch(e => console.warn("Custom design recovery", e)).then(() => { CustomSheet.keepKick("load"); setTimeout(() => CustomSheet.keepPending(), 4000); });   // (KEEPSAVE: the saves the person switched on before this load go on from where they stopped)
     // an approval whose back files a reload cut short is written now, not when the run next passes Engraving
     if (recovered) Engrave.resumeBacks();
