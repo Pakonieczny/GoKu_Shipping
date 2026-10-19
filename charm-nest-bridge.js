@@ -4252,9 +4252,22 @@ const Pool = window.Pool = (() => {
     const ra = row.releaseAnyway, bare = !!ra && !row.hold && !(row.poolIds || []).length && !!row.spec && !row.spec.noDesign;
     const nothing = why => { row.state = "noDesign"; row.problems = []; row.reason = `Released anyway${ra.by ? " by " + ra.by : ""}: ${String(why).replace(/[.\s]+$/, "")}, so nothing is placed for it`; return null; };
     const none = bare ? Orders.releaseAway(row) : ""; if (none) return nothing(none);
+    designRead.delete(row);
     const prep = await makePoolRead(row, run);
+    stampDesignHold(row, prep);
     if (!prep && bare && ["held", "unmatched", "oversize"].includes(row.state)) return nothing(row.reason || "it cannot be placed");
     return prep;
+  }
+  /* HELDRECHECK (Paul, 19 Oct 2026, order 4204452679): a line held by the SYSTEM for its DESIGN (read after its library entry was found: the entry blocked, no such size, a design that would not load, two bodies where one is
+     cut, fewer bodies than its listing's profile cuts (bodyPlanFor), no outline, too big for the plate, a Right that could not be mirrored) carries the version of each entry it was held against: row.designHold = { skus,
+     hashes: { SKU: [the entry's charm hashes, whole and of each size] }, charmHash, indexedAt, masterHash, at }. Review.heldRecheck reads it: when the library draws such a SKU differently (REDRAW's detection, on
+     this page or in a cloud read, or a page loaded after the change with the hold restored from its checkpoint) the line is checked again against the new drawing, without a person. Gone when the line is made up,
+     or held for anything else (a question, a person). */
+  const designRead = new WeakMap();
+  const holdStamp = es => { const sk = es.map(e => String(e.sku || "").trim().toUpperCase()); return { skus: sk, hashes: Object.fromEntries(es.map((e, i) => [sk[i], entryHashes(e)])), charmHash: es[0].charmHash || null, indexedAt: +es[0].indexedAtMs || +es[0].indexedAt || +es[0].updatedAt || 0, masterHash: es[0].masterHash || null, at: Date.now() }; };
+  function stampDesignHold(row, prep) {
+    const es = designRead.get(row);
+    if (!prep && es && es.length && !row.hold && ["held", "oversize"].includes(row.state)) row.designHold = holdStamp(es); else delete row.designHold;
   }
   async function makePoolRead(row, run) {
     const sp = row.spec;
@@ -4272,6 +4285,7 @@ const Pool = window.Pool = (() => {
     if (sp.formHold) { const hp = (sp.problems || []).find(p => p.formHold); if (hp) row.problems.push(hp); row.state = "unmatched"; row.reason = sp.formHold.reason; return null; }
     let entry = Master.entryFor(sp.designSku) || await Master.fetchEntry(sp.designSku);
     if (!entry) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push(Object.assign({ kind: "unmatchedSku", reason: "not in any master file", sku: sp.designSku, listingId: String(row.line.listingId || ""), title: row.line.title }, sp.siblings && sp.siblings.length ? { siblings: sp.siblings } : {})); agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: not in any master file`); return null; }
+    const read = [entry]; designRead.set(row, read);   // (HELDRECHECK: what is held from here on is held for a design of the library: the version it was held against is kept on the line, stampDesignHold)
     // BLOCKREL: a block that exists only because the back-view (flip) check threw does not stop cutting (O.entryBlock), and a person's "Release to nesting queue" (row.blockOverride) sets a genuine one aside for this SKU on this line
     { const why = O.blockFor(entry, sp.designSku, row.blockOverride); if (why) { row.state = "held"; row.reason = `SKU blocked: ${why}`; row.problems.push({ kind: "blockedSku", reason: why, sku: sp.designSku }); return null; } }
     { const sh = sizeHold(entry, sp.size, sp.designSku); if (sh) { row.state = "held"; row.reason = sh.reason; row.problems.push(sh.problem); return null; } }
@@ -4282,7 +4296,7 @@ const Pool = window.Pool = (() => {
        line fell to the one glued piece of the first. A line whose second design cannot be had is held, never made as the first alone. */
     const two = memberSkus(sp); let ear2 = null;
     if (two && two.L === sp.designSku) {
-      const entry2 = Master.entryFor(two.R) || await Master.fetchEntry(two.R);
+      const entry2 = Master.entryFor(two.R) || await Master.fetchEntry(two.R); if (entry2) read.push(entry2);
       const hold = (why, problem) => { row.state = "held"; row.reason = why; if (problem) row.problems.push(problem); agent({ pool: true }, "warn", `${row.order.receiptId} · ${two.R}: ${why}`); return null; };
       if (!entry2) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push({ kind: "unmatchedSku", reason: "not in any master file", sku: two.R, listingId: String(row.line.listingId || ""), title: row.line.title }); agent({ pool: true }, "warn", `${row.order.receiptId} · ${two.R}: not in any master file`); return null; }
       { const why2 = O.blockFor(entry2, two.R, row.blockOverride); if (why2) return hold(`SKU blocked: ${why2}`, { kind: "blockedSku", reason: why2, sku: two.R }); }
@@ -4299,7 +4313,7 @@ const Pool = window.Pool = (() => {
     if (setSkus && setSkus[0] === sp.designSku) {
       setDs = [{ entry, src, sku: sp.designSku }];
       for (const k of setSkus.slice(1)) {
-        const e2 = Master.entryFor(k) || await Master.fetchEntry(k), hold = (why, problem) => { row.state = "held"; row.reason = why; if (problem) row.problems.push(problem); agent({ pool: true }, "warn", `${row.order.receiptId} · ${k}: ${why}`); return null; };
+        const e2 = Master.entryFor(k) || await Master.fetchEntry(k); if (e2) read.push(e2); const hold = (why, problem) => { row.state = "held"; row.reason = why; if (problem) row.problems.push(problem); agent({ pool: true }, "warn", `${row.order.receiptId} · ${k}: ${why}`); return null; };
         if (!e2) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push({ kind: "unmatchedSku", reason: "not in any master file", sku: k, listingId: String(row.line.listingId || ""), title: row.line.title }); agent({ pool: true }, "warn", `${row.order.receiptId} · ${k}: not in any master file`); return null; }
         { const why2 = O.blockFor(e2, k, row.blockOverride); if (why2) return hold(`SKU blocked: ${why2}`, { kind: "blockedSku", reason: why2, sku: k }); }
         { const sh = sizeHold(e2, sp.size, k); if (sh) return hold(sh.reason, sh.problem); }
@@ -4609,7 +4623,7 @@ const Pool = window.Pool = (() => {
     // The design files load side by side (each is fetched, read and traced once a session); the lines are then made up in
     // order, oldest first, and recorded in one call rather than one call a line.
     let passed = false;
-    const hold = (row, e, later) => { if (tryLater(row, e)) { passed = true; return; } row.state = "held"; row.reason = e.message; if (later) { row.poolError = Date.now(); row.poolTry = trySig(row); } agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${e.message}`); };
+    const hold = (row, e, later) => { if (tryLater(row, e)) { passed = true; return; } row.state = "held"; row.reason = e.message; stampDesignHold(row, null); if (later) { row.poolError = Date.now(); row.poolTry = trySig(row); } agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${e.message}`); };
     // six at a time: a big batch after a reload started every design download at once, and they timed out against each
     // other while the page parsed them all together (audit, 25 Sep)
     const loads = work.filter(row => row.spec && !row.spec.noDesign && !row.spec.ownDesign).map(row => { const e = Master.entryFor(row.spec.designSku); return e && !O.blockFor(e, row.spec.designSku, row.blockOverride) && sizeEntry(e, row.spec.size)?.aiPath ? () => masterCharm(e, row.spec.size) : null; }).filter(Boolean);
@@ -4674,13 +4688,13 @@ const Pool = window.Pool = (() => {
     if (!entry || O.blockFor(entry, sp.designSku, row.blockOverride) || sp.noDesign || sp.ownDesign || sp.formHold || (window.CustomSheet && CustomSheet.sentOf && CustomSheet.sentOf(row)) || !sizeEntry(entry, sp.size)?.aiPath) return none();
     const src = await masterCharm(entry, sp.size), base = src.charms[0], mine = !base.poolId;
     if (mine) base.poolId = "__preview";   // (makePool then clones every copy; a real pooling that starts meanwhile clones the first copy too, and the drawing is let go clean below)
-    const keep = { state: row.state, reason: row.reason, problems: row.problems, poolTry: row.poolTry, poolError: row.poolError };
+    const keep = { state: row.state, reason: row.reason, problems: row.problems, poolTry: row.poolTry, poolError: row.poolError, designHold: row.designHold };   // (HELDRECHECK: a preview leaves the design hold's stamp as it was)
     let prep = null;
     try { row.problems = []; prep = await makePool(row, null); }   // (a line held by a question a person has yet to answer, an unmapped option or the like, still has its design: the charm it will have is made all the same, and its problems are put back as they were)
     finally {
       if (mine && base.poolId === "__preview") delete base.poolId;
       row.state = keep.state; row.reason = keep.reason; row.problems = keep.problems;
-      for (const f of ["poolTry", "poolError"]) if (keep[f] === undefined) delete row[f]; else row[f] = keep[f];
+      for (const f of ["poolTry", "poolError", "designHold"]) if (keep[f] === undefined) delete row[f]; else row[f] = keep[f];
     }
     if (!prep || !prep.pools || !prep.pools.length) return none();
     const ids = [];
@@ -15718,7 +15732,7 @@ const Review = window.Review = (() => {
       skus.push(sku);
     }
     while (redrawWait.size > REDRAW_MAX) redrawWait.delete(redrawWait.keys().next().value);
-    if (skus.length) { agent({ pool: true }, "MASTER", `${skus.length} SKU(s) now draw another design in the library: ${skus.slice(0, 8).join(", ")}${skus.length > 8 ? " …" : ""}. Open pieces cut from the old drawing are made up again from the new one; a cut or committed piece is only noted`); redrawLater(0); }
+    if (skus.length) { agent({ pool: true }, "MASTER", `${skus.length} SKU(s) now draw another design in the library: ${skus.slice(0, 8).join(", ")}${skus.length > 8 ? " …" : ""}. Open pieces cut from the old drawing are made up again from the new one; a cut or committed piece is only noted`); redrawLater(0); for (const k of skus) heldWait.add(k); heldLater(0); }   // (HELDRECHECK: and the lines the system held for the old drawing are checked again against the new one)
     return skus.length;
   }
   function redrawLater(ms) { if (!redrawWait.size) return; clearTimeout(redrawTimer); redrawTimer = setTimeout(() => { redrawTimer = 0; redrawNow().catch(() => {}); }, ms || 0); }
@@ -15843,6 +15857,67 @@ const Review = window.Review = (() => {
       RunCtl.poke();
     }
     if (redrawWait.size) redrawRetry();
+    return out;
+  }
+  /* ═══ HELDRECHECK · a line the system held for its design is checked again when the library draws it differently (Paul, 19 Oct 2026, order 4204452679, SKU BEST_4003) ═══════════════════════════════════
+     The broken heart was read while the library's BEST_4003 drew ONE heart outline with the zigzag as a line inside it: bodyPlanFor held the line ("does not give the 2 separate bodies"). Paul then indexed a corrected
+     master (BEST FRIENDS_2505: a Left + Right pair, two closed bodies, written over the same file charmnest/master/BEST_4003.ai) and the line STAYED held: REDRAW (above) walks only the POOL PIECES of a SKU whose drawing
+     changed, and a line held before it was ever pooled has none; nothing else looks at a held line but the next intake's Pool.addAll, which runs only when new orders come in or a run reaches its pool step.
+     WHICH LINES: a line held by the SYSTEM for a design (state held or oversize, no pieces, row.designHold: the entry version it was held against, Pool stampDesignHold) whose SKU the library now draws differently (a charm hash,
+     whole or of a size, the stamp does not have). A line held before the stamp existed counts when its reason is a design's (DESIGN_WHY) and its SKU just changed, or once when a page is loaded.
+     WHAT: the design this page read from the entry's file is forgotten (Pool.forgetDrawing), the old design problem, reason and stamp go, the line is back at the intake ("pulled", no pool try) and made up through repool as
+     any released line is: pooled normally from the new drawing (two halves here), its engraving asked for its own pieces. A drawing that still fails holds it again with the new reason (and a new stamp). The order's timeline says
+     it was re-checked against the new drawing. A line a PERSON holds (row.hold) stays held: told once (row.redrawNote, the timeline), its release makes it up from the new drawing.
+     ONCE: per line and drawing (heldDone); a second identical read finds no stamp older than the entry. WHEN: a change REDRAW saw (redrawNoted: this page's index run or a cloud read), and once after a page is loaded
+     (a hold restored from the checkpoint against an entry version older than the library's), each when the workspace is restored and no run is being taken up again. */
+  const heldWait = new Set(), heldDone = new Set(), DESIGN_KINDS = new Set(["blockedSku", "missingSize", "oversize"]);
+  const DESIGN_WHY = /does not give the \d+ separate bodies|draws two bodies|has no outline to cut|no outline in the master copy|^SKU blocked:|does not fit the .* plate|could not be mirrored|a hoop could not join|^no design for size/i;
+  let heldBoot = false, heldTimer = 0, heldChain = Promise.resolve(), heldTries = 0;
+  const heldSkus = row => (row.designHold && Array.isArray(row.designHold.skus) && row.designHold.skus.length ? row.designHold.skus : [row.spec && row.spec.designSku]).map(rdUp).filter(Boolean);
+  /** The SKUs of the line's stamp the library now draws differently (a charm hash the stamp does not have). */
+  const heldStale = row => { const h = row.designHold.hashes || {}; return heldSkus(row).filter(k => { const e = Master.entryFor(k), had = new Set((h[k] || []).map(String)); return !!e && !rdCustom(e) && rdHashes(e).some(x => !had.has(x)); }); };
+  function heldLater(ms, boot) { if (boot) heldBoot = true; if (!heldWait.size && !heldBoot) return; clearTimeout(heldTimer); heldTimer = setTimeout(() => { heldTimer = 0; heldRecheckNow().catch(() => {}); }, ms || 0); }
+  /** The re-check now (after any under way). → { rechecked: [{ row, sku, made }], noted: [rows] } */
+  function heldRecheckNow() { clearTimeout(heldTimer); heldTimer = 0; const p = heldChain.then(heldRecheck, heldRecheck); heldChain = p.catch(() => {}); return p; }
+  async function heldRecheck() {
+    const out = { rechecked: [], noted: [] };
+    if (!heldWait.size && !heldBoot) return out;
+    if (!(window.Session && Session.ready && Session.ready()) || B.resuming || !B.master.loadedAt || !(B.master.entries && B.master.entries.size)) { if (++heldTries < 120) heldLater(heldTries < 60 ? 2000 : 30000); return out; }
+    heldTries = 0;
+    const skus = new Set(heldWait), boot = heldBoot; heldWait.clear(); heldBoot = false;
+    for (const row of Orders.rows().slice()) {
+      if (!["held", "oversize"].includes(row.state) || (row.poolIds || []).length || !row.spec || row.spec.noDesign || row.spec.ownDesign || row.spec.customDone) continue;
+      if (window.Cancelled && Cancelled.has && Cancelled.has(row.order.receiptId)) continue;
+      const mine = heldSkus(row); let hit;
+      if (row.designHold) { hit = heldStale(row); if (!hit.length) continue; }   // (held against the drawing the library has now: nothing to look at again)
+      else { if (!DESIGN_WHY.test(String(row.reason || "")) && !(row.problems || []).some(p => DESIGN_KINDS.has(p.kind))) continue; hit = boot ? mine : mine.filter(k => skus.has(k)); if (!hit.length) continue; }   // (a line held before the stamp existed: its reason is a design's)
+      const sku = hit[0], e = Master.entryFor(sku); if (!e) continue;
+      const to = String(e.charmHash || rdHashes(e)[0] || ""), done = `${row.key}|${sku}|${to}`; if (heldDone.has(done)) continue; heldDone.add(done);
+      const fresh = !!row.designHold || skus.has(sku), what = fresh ? `the new drawing of ${sku}` : `the library's drawing of ${sku}`;
+      if (row.hold) {
+        if (!fresh) continue;   // (a person's hold made before the stamp existed: nothing says the drawing changed since)
+        row.redrawNote = { sku, size: row.spec.size || null, to, at: Date.now(), where: "", how: "held" };
+        agent({ metal: row.spec.material, pool: true }, "warn", `${row.order.receiptId} · ${sku} has a new drawing in the library, but the line is on hold by a person: it stays held until it is released`);
+        TL.line(row, "interpreted", { id: `${row.key}.heldrecheck.held.${TL.hash(sku + "|" + to)}`, once: true, text: `${sku} has a new drawing in the library, but this line is on hold by a person: it stays held, and is made up from the new drawing when it is released`.slice(0, 200), data: { heldRecheck: true, sku, to, action: "held" } });
+        out.noted.push(row); continue;
+      }
+      try { Pool.forgetDrawing(e, e); } catch (err) { console.warn("[heldrecheck] the old design was not forgotten:", err && err.message); }   // (any design held under the entry's paths that is not the drawing it has now)
+      const was = String(row.reason || "").slice(0, 160);
+      row.problems = (row.problems || []).filter(p => !DESIGN_KINDS.has(p.kind)); delete row.designHold; delete row.poolTry; delete row.poolError; row.reason = null; row.state = "pulled";
+      try { await repool(row); } catch (err) { if (row.state === "pulled") { row.state = "held"; row.reason = (err && err.message) || String(err); } }
+      const made = row.state === "pooled" || ((row.poolIds || []).length > 0 && !["held", "oversize", "unmatched"].includes(row.state));
+      if (made && row.spec && row.spec.engraving && !row.spec.engraveCandidate) { try { Engrave.classify(row).catch(() => {}); } catch (_) {} }   // (a faced line's engraving is asked for its new pieces too: repool asks only for a line read as an engraving candidate)
+      const n = (row.poolIds || []).length, now = row.state === "pulled" ? "back in line for the next intake" : made ? `made up from it: ${n} piece${n === 1 ? "" : "s"}` : `still held: ${row.reason || (row.problems || []).map(p => p.kind).join(", ") || row.state}`;
+      if (fresh || made) TL.line(row, "interpreted", { id: `${row.key}.heldrecheck.${TL.hash(sku + "|" + to)}`, once: true, text: `Re-checked against ${what} (held before for its design), ${now}`.slice(0, 200), data: { heldRecheck: true, sku, to, action: made ? "pooled" : row.state, was } });
+      agent({ metal: row.spec && row.spec.material, pool: true }, made ? "POOL" : "warn", `${row.order.receiptId} · re-checked against ${what}: ${now}`);
+      out.rechecked.push({ row, sku, made });
+    }
+    while (heldDone.size > REDRAW_MAX * 4) heldDone.delete(heldDone.values().next().value);
+    if (out.rechecked.length || out.noted.length) {
+      try { syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {}
+      const n = out.rechecked.filter(x => x.made).length; if (n) toast(`New drawing in the library: ${n} held order line${n === 1 ? "" : "s"} checked again and made up from it`, "ok", 6000);
+      RunCtl.poke();
+    }
     return out;
   }
   /* ═══ RELTOQ · "Release to nesting queue" on every Review row and card (Paul, 17 Oct 2026, orders 4193111740 DRAGON11 and 4191826593 FLORALS2) ═══════════════════════════════════════════
@@ -16931,7 +17006,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, openCount, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, openCount, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -22889,6 +22964,7 @@ async function bootBridge() {
   if (!recoveryFailed) {
     Session.listen(); Arrivals.start(); ListMedia.start(); Upkeep.start(); window.AutoCancel?.start();
     try { Review.redrawLater(1000); } catch (_) {}   // (REDRAW: a SKU re-pointed while the workspace was being restored is looked at now that it holds its sheets)
+    try { Review.heldRecheckLater(1500, true); } catch (_) {}   // (HELDRECHECK: a line held for its design against an entry version older than the library's is checked again once)
     CustomSheet.load().catch(e => console.warn("Custom design recovery", e)).then(() => { CustomSheet.keepKick("load"); setTimeout(() => CustomSheet.keepPending(), 4000); });   // (KEEPSAVE: the saves the person switched on before this load go on from where they stopped)
     // an approval whose back files a reload cut short is written now, not when the run next passes Engraving
     if (recovered) Engrave.resumeBacks();
