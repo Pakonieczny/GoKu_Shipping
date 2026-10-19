@@ -3503,6 +3503,25 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .relSealWords b{font-size:14px;font-weight:800;letter-spacing:.02em;color:#2f6b45;white-space:nowrap}
 .relSealWords .relSealBy{font-weight:600;color:var(--ink,#222);overflow-wrap:anywhere}
 .relSealWords .relSealAt{color:var(--ink70,#555);white-space:nowrap}
+/* WINSEAL (Paul, 19 Oct 2026: "All orders that are approved for engraving, or monograms by the user must have a clear seal that is easily visible to the user whether they are inside the Detail Order view or looking at a list view in the Orders tab"): the order window's
+   approval strip, #owSeals (charm-nest-bridge.js paintSeals), across the top of the Overview (the first cell of its grid, both columns wide, so on a phone it is above the pictures): one real seal, 60 px (a little over the regular 50, the RELSEAL way), for every approved piece and face, the word of each (BACK ENGRAVING / FRONT ENGRAVING / MONOGRAM), who and when beside it,
+   and "N of M pieces approved" (amber) while some pieces of the order are not. Hidden while nothing is approved. The seals are the ordinary ones (they zoom like every other, Seal.zoom); only their rows are laid flat here: no overlap, no negative margins. */
+.owApproved{--seal-fit:60px;grid-column:1 / -1;margin:0;padding:9px 14px 10px;border:1px solid rgba(41,108,88,.34);border-radius:14px;background:rgba(41,108,88,.06);min-width:0}
+.owApproved[hidden]{display:none}
+.owApHd{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;min-width:0}
+.owApHd .k{font:700 9px/12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#296c58}
+.owApCount{font:700 11.5px/16px var(--sans);color:#296c58;background:rgba(41,108,88,.12);border-radius:999px;padding:1px 9px;white-space:nowrap}
+.owApCount.part{color:var(--warn,#a2591c);background:rgba(162,89,28,.13)}
+.owApRow{display:flex;flex-wrap:wrap;gap:6px 26px;margin-top:6px;min-width:0}
+.owApItem{display:flex;align-items:center;gap:10px;min-width:0;max-width:100%}
+.owApItem .sealRow,.owApItem .monoSeals{margin:0;max-width:none;flex:none;gap:6px;--seal-fit:60px!important}
+.owApItem .sealRow>.seal{flex:0 0 60px;width:60px;height:60px;margin:0;opacity:1}
+.owApWords{display:flex;flex-direction:column;gap:1px;min-width:0;line-height:1.25;font:12px var(--sans)}
+.owApWords b{font:800 13px var(--sans);letter-spacing:.03em;color:#296c58;white-space:nowrap}
+.owApItem[data-kind="monogram"] .owApWords b{color:#4d3f99}
+.owApWords .for{font-weight:600;color:var(--ink);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.owApWords .by{color:var(--ink70)}
+.owApWords .at{color:var(--ink45);white-space:nowrap}
 .owPcRow .pcAct .owCuMore{flex:0 0 auto;border:0;background:transparent;color:var(--ink45);font:700 10.5px var(--sans);padding:3px 5px;margin-left:-4px;border-radius:6px;cursor:pointer;white-space:nowrap}
 .owPcRow .pcAct .owCuMore:hover,.owPcRow .pcAct .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
 </style>
@@ -3769,7 +3788,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-order-group.js?v=20261013-on1"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2-cg1-cost18"></script>
 <script src="charm-nest-engrave-card.js?v=20261012-ec1-sm1-r2th1-bt1-bg1-pn1-pk1-sb1-hdr1-pc1-pv1"></script>
-<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1-dm1-su1-ui2-egm1-el1-ec1-mg1-crash1-sel1-op1-pn1-tx1-pk1-ap2-sb1-ow1-pv1-pcm1-nd1-ms1"></script>
+<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1-dm1-su1-ui2-egm1-el1-ec1-mg1-crash1-sel1-op1-pn1-tx1-pk1-ap2-sb1-ow1-pv1-pcm1-nd1-ms1-ws1"></script>
 <script src="charm-nest-engrave-guide.js?v=20261013-ap2-meg1-pcm1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2-sn1-setfix1"></script>
 <script src="charm-nest-nospread.js?v=20261017-ns1"></script><!-- charm-nest-nospread.js: keep the pieces of a multi-piece or earring order on one sheet of its colour; a sheet near completion takes such an order only if all of it fits (NOSPREAD, Paul 17 Oct 2026) -->
@@ -8149,7 +8168,7 @@ boot();
 <script src="charm-nest-charm-fix.js?v=20261018-wc1"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
@@ -8289,6 +8308,8 @@ try {
     <div class="owBody">
       <section class="owView owVInfo" data-view="info" role="tabpanel" aria-label="Overview">
       <div class="owMain">
+        <!-- WINSEAL (Paul, 19 Oct 2026): the approval strip across the top of the Overview, one seal for every approved piece (charm-nest-bridge.js paintSeals); hidden while nothing is approved -->
+        <div class="owApproved" id="owSeals" data-testid="ow-seals" role="group" aria-label="Approved engraving and monograms" hidden></div>
         <div class="owPics">
           <figure><div class="owPhoto" id="owPhoto" data-zp aria-label="Etsy listing photo"><span class="ph">no image</span></div><figcaption>Etsy listing</figcaption></figure>
           <figure><div class="owVector" id="owVector" data-zp aria-label="Charm vector design"></div><div class="owSetLens" id="owSetLens" hidden></div><figcaption>Vector design</figcaption></figure>

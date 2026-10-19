@@ -5,7 +5,7 @@
  * makes shown from the timeline, "Approve" for the faces of a piece in turn, never a name typed, every wait said by a small spinner).
  *
  *   OrderEngraving.mount(host, { rid, key, rows?, nameOf?, poolId?, piece?, row?, events?, changed?, sheetEng?, label?, meta?, compact?, pieces? })
- *       -> { update(ctx), destroy(), refresh(), el, mode: 'one' | 'list' }
+ *       -> { update(ctx), destroy(), refresh(), approvals(), el, mode: 'one' | 'list' }      (WINSEAL: approvals() = which pieces of the order are approved, for the order window's approval strip)
  *       rid     the order (receipt id)           key    the order line's key
  *       rows    a function giving every line of the order; else `pieces` ([{ key, row, label }]), else the line `row`/`key`
  *       only    (ENGSEL, Paul 13 Oct 2026: "if I select a certain piece, then the back engraving should reflect the selected piece") a function (or object) saying which piece the order window is narrowed to: null
@@ -340,13 +340,13 @@
     /** The piece the window is narrowed to ({ line, side } or null for all), read now. */
     const onlyOf = () => { const o = typeof ctx.only === 'function' ? tryDo(() => ctx.only(), null) : ctx.only; return o && typeof o === 'object' && (o.line || o.side) ? { line: o.line ? String(o.line) : '', side: o.side ? String(o.side) : '' } : null; };
     /** What the cards show now, as data. */
-    function read() {
+    function read(pure) {
       const C = CARD(), only = onlyOf(), vis = visible();
       // (ENGSEL: the lines of the piece picked, or of every piece; the words block below the cards is drawn from these same rows and pieces, so it follows too)
       const every = rowsOf();
       // (ENGPICK: a line that carries an engraving but has no job yet (on hold, waiting, never nested; its setup is the plain default, so it draws no card) is asked for its job once per window, whichever piece is picked:
       //  Engrave.early makes it on the charm the piece will have and pools and moves nothing, so every engraved piece of the order has its card and none can be passed by unseen)
-      const E = root.Engrave; if (E && E.early && E.earlyWanted && E.jobsOf) for (const r of every) { const ln = (r && r.parentRow) || r; if (ln && ln.key && !asked.has(ln.key) && tryDo(() => E.earlyWanted(ln), false) && !tryDo(() => E.jobsOf(ln), []).length) { asked.add(ln.key); tryDo(() => { const p = E.early(ln); if (p && p.catch) p.catch(() => {}); }); } }
+      const E = root.Engrave; if (!pure && E && E.early && E.earlyWanted && E.jobsOf) for (const r of every) { const ln = (r && r.parentRow) || r; if (ln && ln.key && !asked.has(ln.key) && tryDo(() => E.earlyWanted(ln), false) && !tryDo(() => E.jobsOf(ln), []).length) { asked.add(ln.key); tryDo(() => { const p = E.early(ln); if (p && p.catch) p.catch(() => {}); }); } }
       const rows = every.filter(r => !only || !only.line || (((r && r.parentRow) || r || {}).key === only.line));
       const popt = { nameOf, isWorking, seen: j => vis || seen.has(j.key) };
       let pieces = []; if (C) { try { pieces = C.piecesOf(rows, popt); } catch (e) { pieces = []; for (const r of rows) { try { pieces.push(...C.piecesOf([r], popt)); } catch (e2) { tryDo(() => console.warn('order engraving: one line could not be read', e2)); } } } }   // (ENGCRASH: a line that cannot be read leaves the other lines' cards drawn)
@@ -356,7 +356,9 @@
       const monoAll = monoAllLines.length ? monoPieces(monoAllLines) : [], monoShown = monoShownLines.length ? monoPieces(monoShownLines).filter(p => !only || !only.side || !/^C\d/.test(only.side) || p.slot === only.side) : [];   // (a copy picked in the window: that piece's card alone)
       if (monoAll.length) pieces = pieces.filter(p => !isMono(p.row));
       const ev = events(); for (const p of pieces) withForeign(p, ev, seenAt);
-      return { rows, pieces, monoAll, monoShown, loading: rows.some(r => r && r.loading), only: only ? only.line + '|' + only.side : '' };
+      // (WINSEAL, Paul 19 Oct 2026: the window's approval strip counts every piece of the order, whichever the section is narrowed to; `all` is the same reading without the narrowing, made only when approvals() asks)
+      let all = pieces; if (only && pure) { all = every.flatMap(r => tryDo(() => C.piecesOf([r], popt), [])); for (const p of all) withForeign(p, ev, seenAt); }
+      return { rows, pieces, all, monoAll, monoShown, loading: rows.some(r => r && r.loading), only: only ? only.line + '|' + only.side : '' };
     }
     const keyOf = p => p.pieceKey + '|' + p.rid + '|' + p.lineKey;
     /** NOSAID (Paul 17 Oct 2026): the customer's words block that used to be the host's next sibling inside the section is no longer drawn; this only takes away one an earlier drawing left (the host's children are the cards, nothing else stands in the section after them). */
@@ -579,6 +581,44 @@
       const first = told0 === null, was = kindsSeen; told0 = kinds; kindsSeen = kinds;
       if (!first && !quiet && kinds !== was) told();
     }
+    /** WINSEAL (Paul, 19 Oct 2026: "All orders that are approved for engraving, or monograms by the user must have a clear seal that is easily visible ... inside the Detail Order view"): which pieces of the ORDER are approved, as data for the
+     *  window's approval strip (the bridge's paintSeals draws it): { m, n, pieces: [{ key, kind: 'engrave' | 'monogram', title, approved, lineKey, line, slot, stamps: [{ stamp, face }] }] }, in the lines' order.
+     *  m = the pieces that ask for an approval (every engraved piece, every monogram piece; a piece cut plain is none: "No engraving" is a decision, not an approval), n = those approved (every face the piece engraves, or the monogram).
+     *  stamps = the newest approval seal of each approved face (FRONT / BACK ENGRAVING, an approval another computer made included: the cards' own reading, withForeign), or the monogram piece's seals; an approved face whose job kept
+     *  no seal reads CNEngravingSeals.list's legacy one; a line with no job here at all is read from its record and the timeline (below). A pure reading of what the page holds: no read, no timer, nothing made (read(true) does not ask Engrave.early for anything). */
+    function approvals() {
+      const S = root.CNEngravingSeals, M = root.CNMonogramSeals, r = read(true), out = [], lines = uniqLines(rowsOf()), at = new Map(lines.map((l, i) => [l.key, i]));
+      const mono = row => !!(M && M.isMonogram && tryDo(() => M.isMonogram(row), false));
+      for (const p of S ? r.all : []) {
+        if (mono(p.row) || p.state === 'plain') continue;
+        const stamps = [];
+        for (const f of ['front', 'back']) {
+          const x = p.faces[f]; if (!x || x.state !== 'approved') continue;
+          const mine = (p.seals || []).filter(s => s.how === 'engraveApproved' && (s.face === 'front') === (f === 'front'));
+          const s = mine.length ? mine.reduce((a, b) => (+b.at >= +a.at ? b : a)) : x.job ? (tryDo(() => S.list(x.job), []) || []).filter(q => q.how === 'engraveApproved').slice(-1)[0] : null;
+          if (s) stamps.push({ stamp: s, face: f });
+        }
+        out.push({ key: p.pieceKey, kind: 'engrave', title: p.title, approved: p.state === 'approved', lineKey: p.lineKey, line: lineOfRow(p.row), slot: p.slot || null, stamps });
+      }
+      for (const line of lines) {
+        if (!mono(line)) continue;
+        for (const pc of tryDo(() => M.pieces(line), []) || []) {
+          const seals = tryDo(() => M.list(line, pc.slot), []) || [], st = tryDo(() => M.status(line, pc.slot), null);
+          out.push({ key: pc.key, kind: 'monogram', title: nameOf(line) + (pc.of > 1 ? ' · Piece ' + pc.n + ' of ' + pc.of : ''), approved: st ? !!st.approved : seals.length > 0, lineKey: line.key, line, slot: pc.slot || null, stamps: seals.length ? [{ stamp: seals[seals.length - 1], face: '' }] : [] });
+        }
+      }
+      // (a line with no job at all on this computer, approved elsewhere or before this one made its jobs: the seals its record and the order's timeline hold, as the facts chip reads them; a line with jobs is the cards' own reading above)
+      if (S) for (const line of lines) {
+        if (mono(line) || r.all.some(p => p.lineKey === line.key && p.jobs.length) || (line.engrave && line.engrave.needed === false)) continue;
+        const rec = Object.assign({}, line.engrave || {}), ss = (tryDo(() => S.list(Object.assign(rec, { seals: S.merge(line.engrave, { seals: S.fromEvents(events(), line) }) })), []) || []).filter(x => x.how === 'engraveApproved');
+        if (!ss.length) continue;
+        for (let i = out.length - 1; i >= 0; i--) if (out[i].kind === 'engrave' && out[i].lineKey === line.key) out.splice(i, 1);
+        const stamps = ['front', 'back'].map(f => ({ face: f, stamp: ss.filter(x => (x.face === 'front') === (f === 'front')).reduce((a, b) => (!a || +b.at >= +a.at ? b : a), null) })).filter(x => x.stamp);
+        out.push({ key: line.key, kind: 'engrave', title: nameOf(line), approved: true, lineKey: line.key, line, slot: null, stamps });
+      }
+      out.sort((a, b) => (at.has(a.lineKey) ? at.get(a.lineKey) : 99) - (at.has(b.lineKey) ? at.get(b.lineKey) : 99));
+      return { m: out.length, n: out.filter(x => x.approved).length, pieces: out };
+    }
     const id0 = ++nextId;
     function reset() {
       busy.clear(); seen.clear(); fails.clear(); last = new Map(); cards.clear(); waitEl = null; loading = false; told0 = null; kindsSeen = ''; seenAt = Date.now();
@@ -596,6 +636,7 @@
         if (ident(ctx) !== was) { reset(); refresh(true, true); } else refresh(false);
       },
       refresh(force, quiet) { refresh(force, quiet); },
+      approvals() { return gone ? { m: 0, n: 0, pieces: [] } : approvals(); },   // (WINSEAL)
       destroy() {
         if (gone) return; gone = true; live.delete(handle); disarm();
         if (ro) { tryDo(() => ro.disconnect()); ro = null; }
