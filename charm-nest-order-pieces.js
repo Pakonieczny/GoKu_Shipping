@@ -220,6 +220,22 @@
     const revs = new Map();         // the orders of one read (joined) -> the digest of the answer the cloud made (getOrderPieces `rev`), sent back as ifRev on the next forced read
     const gens = new Map();         // the same key -> { gen, at }: the cloud's placement counter when that answer was made (FC3: sent back as ifGen, so a counter that has not moved is `unchanged` for one small read, not a re-read of every sheet and pool row), and when the page last had a full answer
     const GEN_DEEP = 300000;        // a forced read asks in full (no ifGen) at least this often: a write nothing raised the counter for shows within five minutes (was 1 min: a full read of every sheet and pool row of 30 orders a minute per tab, for a case every charmNestLibrary write already covers)
+    /* COST (Oct 2026): the five minutes are for a page somebody is working in. A tab that has had no input for ten minutes (a screen left on over lunch or overnight) made the same deep read 12 times an
+       hour, 61 to 176 documents each, to look for a write nothing raised the counter for: it is the largest cost of a quiet tab. Past ten minutes without a click, key, wheel, touch, focus or look at the tab it asks in
+       full every GEN_DEEP_IDLE; the first input brings the five minutes back (a deep read is then due at the next ask when the last full answer is older than that). A caller may name its own interval
+       (opts.deepMs). A page with no document (a test) keeps the five minutes. */
+    const GEN_DEEP_IDLE = 1800000, QUIET_AFTER = 600000;
+    let touchedAt = Date.now();
+    const idleAware = !!(root.document && typeof root.document.addEventListener === 'function');
+    if (idleAware) {
+      try {
+        const mark = () => { touchedAt = Date.now(); };
+        for (const ev of ['pointerdown', 'keydown', 'wheel', 'touchstart']) root.document.addEventListener(ev, mark, { capture: true, passive: true });
+        root.document.addEventListener('visibilitychange', () => { if (!root.document.hidden) mark(); });
+        if (typeof root.addEventListener === 'function') root.addEventListener('focus', mark);
+      } catch (_) { /* no listener: the five minutes stand */ }
+    }
+    const deepEvery = opts => (opts && opts.deepMs > 0 ? +opts.deepMs : idleAware && Date.now() - touchedAt >= QUIET_AFTER ? GEN_DEEP_IDLE : GEN_DEEP);
     const fullSheets = new Map();   // sheetId -> the sheet's record with ALL its poolIds (loadSheet)
     const subs = new Set();
     let version = 0, lib = null;
@@ -372,7 +388,7 @@
           try {
             // (a forced re-read of orders already read sends the digest of the last answer: the cloud says `unchanged` without the payload when nothing it was made from moved: C3's ifRev)
             const key = part.join(','), ask = { op: 'getOrderPieces', orderIds: part }, last = opts.force && part.every(r => learned.get(r) && learned.get(r).ok) ? revs.get(key) : null;
-            if (last) { ask.ifRev = last; const g = gens.get(key); if (g && g.gen != null && Date.now() - g.at < GEN_DEEP) ask.ifGen = g.gen; }
+            if (last) { ask.ifRev = last; const g = gens.get(key); if (g && g.gen != null && Date.now() - g.at < deepEvery(opts)) ask.ifGen = g.gen; }
             const res = await api('charmNestLibrary', ask, { quiet: true, timeoutMs: 15000 });
             if (res && res.unchanged && last) { const g = gens.get(key); if (res.gen != null) gens.set(key, { gen: res.gen, at: ask.ifGen != null && res.gen === ask.ifGen && g ? g.at : Date.now() }); for (const r of part) { const e = entry(r); e.at = Date.now(); } continue; }
             if (res && res.rev) { revs.set(key, res.rev); if (res.gen != null) gens.set(key, { gen: res.gen, at: Date.now() }); else gens.delete(key); if (revs.size > 40) { const old = revs.keys().next().value; revs.delete(old); gens.delete(old); } } else { revs.delete(key); gens.delete(key); }

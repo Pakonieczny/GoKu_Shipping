@@ -18,7 +18,13 @@
      · a record that does not read back as it was written (truncated, not JSON, a count that is off) is removed and ignored;
      · a record older than 30 days or larger than 48 MB is not kept.
    It calls no function and reads nothing from Firestore itself. No IndexedDB (a private window, blocked site data) or any other
-   failure: read() answers null and the page reads everything, exactly as it did before this file existed. */
+   failure: read() answers null and the page reads everything, exactly as it did before this file existed.
+
+   The same is done for the three learned maps (aliases, option maps, no-design rows: about 3,000 + 2,000 + 300 documents, which a page
+   just opened read whole at EVERY load, Orders.loadMaps in the bridge; COST, Oct 2026). readMap / saveMap / forgetMap keep the last
+   answer of each, with the signature it came with, in a database of its own (cn-map-copy: save() above clears its store). The page
+   believes a kept map only through the cloud's signature (ifSig: unchanged, a few reads; since: only what was written after it; a
+   removal or anything else answers the whole map), exactly as it already does for a map it read earlier in the same visit. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(root);
   else root.CharmNestMasterCache = factory(root);
@@ -135,5 +141,71 @@
       return { kept: rows.length > 0, disk: true, records: rows.length, chars: rows.reduce((a, r) => a + ((r.entriesJson || '').length + (r.filesJson || '').length), 0), n: rows[0] ? rows[0].n : 0 };
     } catch (_) { return { kept: false, disk: false }; }
   }
-  return { read, save, saveFiles, forget, stats, revision, LIMITS, _resetRevision: () => { revCache = null; dbp = null; } };
+  /* ── the learned maps, kept apart (a database of their own: save() above clears the library's store, and the library copy's tests count its records) ── */
+  const MAPS_DB = 'cn-map-copy', MAPS_REV = 1;     // MAPS_REV: bump by hand when charmNestLibrary's aliasGet / optionMapGet / noDesignGet answer something else for the same data
+  const MAPS_FIELD = { om: 'maps', al: 'aliases', nd: 'list' }, MAPS_MAX_DAYS = 7;   // (a copy older than a week is read whole once more: a change of the cloud's answer that no signature shows heals itself within a week)
+  let mapsDbp = null;
+  function openMaps() {
+    if (mapsDbp) return mapsDbp;
+    return (mapsDbp = new Promise(res => {
+      try {
+        const idb = root.indexedDB; if (!idb) return res(null);
+        const rq = idb.open(MAPS_DB, 1);
+        rq.onupgradeneeded = () => { try { rq.result.createObjectStore(STORE, { keyPath: 'k' }); } catch (_) { /* opened below */ } };
+        rq.onsuccess = () => { const db = rq.result; db.onversionchange = () => { try { db.close(); } catch (_) {} mapsDbp = null; }; res(db); };
+        rq.onerror = rq.onblocked = () => res(null);
+      } catch (_) { res(null); }
+    })).then(db => { if (!db) mapsDbp = null; return db; });
+  }
+  const mapRowKey = key => 'map|' + MAPS_REV + '|' + key;
+  /** How many documents an answer of a map stands for, as the cloud counts them (n[0] of a production answer); -1 when the answer is not of that map's shape. */
+  function mapCount(key, r) {
+    const body = r && r[MAPS_FIELD[key]];
+    if (key === 'nd') return body && typeof body === 'object' && Array.isArray(body.rows) ? body.rows.length : -1;
+    return body && typeof body === 'object' && !Array.isArray(body) ? Object.keys(body).length : -1;
+  }
+  /** A stored map as the page uses it ({ sig, n, r }), or null when it is not good: another revision, old, cut short, or not the shape and the count its signature stands for. */
+  function decodeMap(row, key) {
+    try {
+      if (!MAPS_FIELD[key] || !row || row.v !== MAPS_REV || row.k !== mapRowKey(key) || typeof row.json !== 'string' || typeof row.sig !== 'string' || !row.sig) return null;
+      if (!(Date.now() - row.at < MAPS_MAX_DAYS * day) || row.at > Date.now() + day) return null;
+      if (!Array.isArray(row.n) || row.n.length !== 1 || !(row.n[0] >= 0)) return null;
+      const r = JSON.parse(row.json);
+      if (!r || typeof r !== 'object' || r.truncated || r.sig !== row.sig || mapCount(key, r) !== row.n[0]) return null;
+      return { sig: row.sig, n: row.n.slice(), r };
+    } catch (_) { return null; }
+  }
+  /** The last whole answer kept for a map ('om' option maps, 'al' aliases, 'nd' no-design rows), or null. It is an answer to CHECK (ifSig / since), never to show unchecked. */
+  async function readMap(key) {
+    try {
+      return await within((async () => {
+        const db = await openMaps(); if (!db) return null;
+        const row = await once(db.transaction(STORE, 'readonly').objectStore(STORE).get(mapRowKey(key)));
+        const out = decodeMap(row, key);
+        if (row && !out) forgetMap(key).catch(() => {});
+        return out;
+      })(), LIMITS.waitMs);
+    } catch (_) { return null; }
+  }
+  /** Keep the answer of a map: { sig, n, r } as the page holds it (serialised now). Answers whether it was kept; an answer that is cut short or whose count is off is not, and the old one goes. */
+  async function saveMap(key, rec) {
+    try {
+      const good = rec && MAPS_FIELD[key] && typeof rec.sig === 'string' && rec.sig && Array.isArray(rec.n) && rec.n.length === 1 && rec.r && typeof rec.r === 'object' && !rec.r.truncated && mapCount(key, rec.r) === rec.n[0];
+      if (!good) { await forgetMap(key); return false; }
+      const json = JSON.stringify(rec.r);
+      if (json.length > LIMITS.chars) { await forgetMap(key); return false; }
+      const db = await openMaps(); if (!db) return false;
+      const t = db.transaction(STORE, 'readwrite');
+      t.objectStore(STORE).put({ k: mapRowKey(key), v: MAPS_REV, at: Date.now(), sig: rec.sig, n: rec.n.slice(), json });
+      return await done(t);
+    } catch (_) { return false; }
+  }
+  async function forgetMap(key) {
+    try {
+      const db = await openMaps(); if (!db) return false;
+      const t = db.transaction(STORE, 'readwrite'); t.objectStore(STORE).delete(mapRowKey(key));
+      return await done(t);
+    } catch (_) { return false; }
+  }
+  return { read, save, saveFiles, forget, stats, revision, readMap, saveMap, forgetMap, LIMITS, _resetRevision: () => { revCache = null; dbp = null; mapsDbp = null; } };
 });
