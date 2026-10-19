@@ -106,7 +106,7 @@
     // the words of a front or back taken from the order's own reading (spec.engraving: the option and the labelled note), with no paid reading: a person's edit says who
     if(job.wordsSource==='spec.engraving'){
       const ov=job.row?.engravingOverride || job.row?.parentRow?.engravingOverride;
-      return job.source==='person' || (ov?.by && (ov.mode || ov.front || ov.back || ov.pieces))?`Words set by ${ov?.by || 'a person'}`:`Read from ${job.wordsHow==='single'?"the order's option and the buyer's note":"the order's own labels"}${pct>0?` · ${pct}% sure`:''}`;
+      return job.source==='person' || (ov?.by && (ov.mode || ov.front || ov.back || ov.pieces))?`Words set by ${ov?.by || 'a person'}`:`Read from ${job.wordsHow==='single'?"the order's option and the buyer's note":job.source==='profile'?"the order's names and this listing's profile":"the order's own labels"}${pct>0?` · ${pct}% sure`:''}`;   // (BARS, Paul 19 Oct 2026: a bar listing's profile)
     }
     return `Read from ${SOURCE[job.source] || job.source}${pct>0?` · ${pct}% sure`:''}`;
   }

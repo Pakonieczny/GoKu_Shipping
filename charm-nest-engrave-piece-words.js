@@ -22,6 +22,8 @@
  *   forSlots(spec, slots, o?)   the same for a line spec ({ personalization, buyerMessage, staffNote, messages }) and its piece slots IN PIECE ORDER (names are only keys: C1..Cn, anything). -> read(...) plus
  *        bySlot { [slot exactly as passed]: words }, deferred.  deferred: another voice spoke (a buyer message, a staff note, an engraving-like message: o.engravingNote(text) says whether a message is about the
  *        engraving; absent, every message counts): this file reads nothing then (how 'deferred', words all '', bySlot all ''), the caller asks its reader once and gives that one reading to every piece.
+ *   read(texts, n, { noun })  (BARS, Paul 19 Oct 2026: the bar listing's "Bar names:" and "Bar 1: A, Bar 2: B") a list label may carry the piece's own noun in front of it ("Bar names: Sophie, Sam, Eddy", "Bar names:" on a line of its own,
+ *        "Bar 1: A, Bar 2: B" after "Bar names:"), and a line of ONE piece has that label taken off too; without `noun` every reading below is exactly what it was.
  *   isNoWords(text)  true when the text says there is nothing to write ("N/A", "none", "no personalisation", "Not requested on this item.", "see message", only punctuation).   SAME_NOTE.
  *
  * THE RULE (in this order; the first that fits decides):
@@ -180,8 +182,16 @@
   }
   const LEADIN = /^(?:please\s+)?(?:engrav\w*|initials?|names?|text|words?|inscription|personali[sz]ation)\s*:\s*/i;   // ("Names: Anna, Ben": the label is not a piece's word)
   const LEAD = /^(?:please\s+)?(?:engrav\w*|initials?|letters?|names?|text|words?|personali[sz]ation|pieces?|charms?|tags?|discs?|each|both|as follows|like this|the following)?\s*[:\-]?\s*$/i;
+  const LABEL_LINE = /^(?:please\s+)?(?:engrav\w*|initials?|names?|text|words?|inscription|personali[sz]ation)\s*:$/i;   // (a label on a line of its own: "Names:")
+  /** The label rules of a reading: the ones above, or (BARS) the same with the piece's noun allowed in front ("Bar names:"). { LEADIN, LEAD, LABEL_LINE, noun } */
+  function leadsFor(o) {
+    const noun = o && o.noun ? str(o.noun).toLowerCase().replace(/[^a-z]/g, '') : '';
+    if (!noun) return { LEADIN, LEAD, LABEL_LINE, noun: '' };
+    const pre = '(?:' + noun + 's?\\s+)?', at = rx => new RegExp(rx.source.replace('^(?:please\\s+)?', '^(?:please\\s+)?' + pre).replace('(?:engrav\\w*|', '(?:' + noun + 's?|engrav\\w*|'), 'i');   // ("Bars:" alone is a label too)
+    return { LEADIN: at(LEADIN), LEAD: at(LEAD), LABEL_LINE: at(LABEL_LINE), MARK1: new RegExp('^' + noun + 's?\\s*#?\\s*(?:1|one|first)\\s*[:=)\\-\\u2013\\u2014.]\\s*', 'i'), noun };
+  }
   /** { words } when the text numbers or labels its pieces and fits n, { why } when it tries to and does not, null when it holds no (or only a lone) marker. */
-  function fromMarks(text, n) {
+  function fromMarks(text, n, lead0) {
     const marks = findMarks(text);
     if (marks.length < 2) return null;
     const kinds = new Set(marks.map(m => m.kind));
@@ -192,7 +202,7 @@
       return { why: kind === 's' ? `Left / Right labels, the line has ${n} pieces` : `the numbers in the text (${uniq.slice(0, 6).join(', ')}${uniq.length > 6 ? ', ..' : ''}) do not fit the ${n} pieces` };
     }
     const lead = text.slice(0, marks[0].at).trim();
-    if (lead && !LEAD.test(lead)) return { why: 'other words come before the numbered ones' };
+    if (lead && !(lead0 || LEAD).test(lead)) return { why: 'other words come before the numbered ones' };
     const words = new Array(n).fill(null);
     marks.forEach((m, i) => { words[m.k - 1] = trimWord(text.slice(m.end, i + 1 < marks.length ? marks[i + 1].at : text.length)); });
     if (words.some(w => w === null || w === '')) return { why: 'a numbered piece has no words' };
@@ -255,11 +265,17 @@
 
   function read(texts, n, o) {
     n = clampN(n);
+    const L = leadsFor(o);
     if (n < 2) {   // (a line of one piece: the text untouched, as it always was)
+      if (L.noun) {   // (BARS: one bar, one name: "Bar names:" or "Bar names: Sophie" is the label and the name)
+        const ls = linesOf(texts); if (ls.length && L.LABEL_LINE.test(ls[0]) && ls.length > 1) ls.shift(); else if (ls.length) { const w = ls[0].replace(L.LEADIN, '').replace(L.MARK1, '').trim(); if (w) ls[0] = w; else ls.shift(); }   // ("Bar 1: Sophie" is the one bar's label)
+        const raw1 = ls.join('\n'); return result(1, { words: [raw1], how: 'single', found: raw1 ? 1 : 0 });
+      }
       const raw = (Array.isArray(texts) ? texts : [texts]).map(str).join('\n');
       return result(1, { words: [raw], how: 'single', found: raw ? 1 : 0 });
     }
     const lines = linesOf(texts);
+    if (L.noun && L.LABEL_LINE.test(lines[0] || '')) { if (lines.length > 1) lines.shift(); else lines.length = 0; }   // (BARS: "Bar names:" on a line of its own is the label, never a name: two names under it are two names, not three lines)
     if (!lines.length || noLines(lines)) return result(n, { none: true, how: 'none' });
     const text = lines.join('\n');
     if (FACE.test(text)) return whole(n, lines, 1, 'the text is about the front and the back, not about separate pieces');
@@ -267,11 +283,11 @@
     const s = saidSame(text);
     if (s && hasWords(s) && !noLines([s])) return result(n, { words: new Array(n).fill(s), same: true, said: true, how: 'same', sure: true, found: 1, note: SAME_NOTE });
 
-    const mk = fromMarks(text, n);
+    const mk = fromMarks(text, n, L.LEAD);
     if (mk && mk.words) return splitDone(n, partWords(mk.words), mk.kind === 's' ? 'labelled' : 'numbered', true);
     if (mk && mk.why) return whole(n, lines, 0, mk.why);
 
-    if (lines.length === n + 1 && /^(?:please\s+)?(?:engrav\w*|initials?|names?|text|words?|inscription|personali[sz]ation)\s*:$/i.test(lines[0])) { const rest = read(lines.slice(1), n, o); if (rest.split) return rest; }   // ("Names:" on a line of its own)
+    if (lines.length === n + 1 && L.LABEL_LINE.test(lines[0])) { const rest = read(lines.slice(1), n, o); if (rest.split) return rest; }   // ("Names:" on a line of its own)
     if (lines.length === n) {
       const bad = notAList(text, true);
       if (bad) return whole(n, lines, n, bad);
@@ -279,7 +295,7 @@
     }
     if (lines.length > 1) return whole(n, lines, lines.length, `${lines.length} lines for ${n} pieces`);
 
-    const line = lines[0].replace(LEADIN, '') || lines[0];
+    const line = lines[0].replace(L.LEADIN, '') || lines[0];
     if (line.length > MAX_INLINE) return whole(n, lines, 1, 'a long text, nothing says it is for separate pieces');
     const bad = notAList(line, false);
     // (all the separators together; failing that, the strong ones alone: "Smith, Anna / Jones, Ben" is two pieces, each with a comma inside)

@@ -155,7 +155,7 @@
         if (never && !(faces.front && faces.front.job && DECIDED.includes(faces.front.job.state))) return;
         // SETBAR: a piece of a SET of different designs is its own design ("SKINNY 0191 · 16″"), never the line's joined name with "Disc 2" (charm-nest-engrave-sides.js setPieceOf; every other piece: as before)
         const S2 = Sides(), sps = S2 && S2.setPieceOf ? tryDo(() => S2.setPieceOf(line, slot), null) : null, lenWord = sps ? S2.lengthText(sps) : '', pname = sps ? sps.name : name;
-        const slotWord = sps ? (shp && shp.multi && slotInfo(slot) ? 'set ' + slotInfo(slot).unit : '') : slotTitle(slot, copyTotal, shp), title = [pname, many && metal ? metal.code : '', lenWord, slotWord].filter(Boolean).join(' · ') || slotWord || 'Piece';
+        const slotWord = sps ? (shp && shp.multi && slotInfo(slot) ? 'set ' + slotInfo(slot).unit : '') : (S2 && S2.nounWord ? S2.nounWord(slotTitle(slot, copyTotal, shp), line) : slotTitle(slot, copyTotal, shp)), title = [pname, many && metal ? metal.code : '', lenWord, slotWord].filter(Boolean).join(' · ') || slotWord || 'Piece';
         const review = present.filter(f => f.job && f.job.state === 'review');
         let approve = null;
         if (review.length) {

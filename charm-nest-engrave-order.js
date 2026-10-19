@@ -91,7 +91,7 @@
       for (const p of ps) {
         const state = STATE[p.state] || 'held'; if (state === 'none' && !o.withNone) continue;
         const S = Sides(), sps = S && S.setPieceOf ? tryDo(() => S.setPieceOf(p.row || r, p.slot), null) : null;   // (a piece of a set of different designs is "Small bar", not "Disc 2": charm-nest-engrave-sides.js)
-        const metal = p.metal || metalOf(p.row || r), sw = sps ? S.pieceName(sps) + (units && infoOf(p.slot) && infoOf(p.slot).unit > 1 ? ' · set ' + infoOf(p.slot).unit : '') : slotWord(p.slot, units);
+        const metal = p.metal || metalOf(p.row || r), sw = sps ? S.pieceName(sps) + (units && infoOf(p.slot) && infoOf(p.slot).unit > 1 ? ' · set ' + infoOf(p.slot).unit : '') : (S && S.nounWord ? S.nounWord(slotWord(p.slot, units), p.row || r) : slotWord(p.slot, units));   // (BARS: a profiled listing's piece is "Bar 2")
         const label = (many ? [metal, sw] : [sw || metal]).filter(Boolean).join(' · ') || p.name || p.title || 'Piece';
         out.push({ pieceKey: p.pieceKey, rid: p.rid || rid, lineKey: p.lineKey, slot: p.slot || null, label, title: p.title || '', metal, faces: faceList(p), jobKeys: (p.jobs || []).map(j => j.key), state, piece: p, line: li });
       }

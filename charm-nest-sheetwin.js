@@ -1874,8 +1874,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const F = FACES(), of = F && F.pieceCount && c && c.pieces.some(p => faceOfJob(p.job) === "front") ? F.pieceCount(c.pieces.map(p => p.job)) : c && c.pieces.length;
     return at ? { n: at.n, of, name: at.name } : null;
   }
+  const discWordOf = x => { const S = window.CharmNestEngraveSides, r = rowOf(x), n = S && S.nounOf && r ? tryDo(() => S.nounOf(r), "") : ""; return n ? n[0].toUpperCase() + n.slice(1) : "Disc"; };   // (BARS, Paul 19 Oct 2026: a bar listing's line says "Bar 2 of 3"; every other line says "Disc")
   // (a piece that is several charms says so after its copy: "2 charms, one piece · 18.3 × 13.8 mm", Paul 18 Oct 2026)
-  const copyText = x => { const q = sideOfPiece(x); if (q) return `${sideWord(q)} piece · `; const d = x.qty > 1 && discOfPiece(x), n = charmsIn(x); return (d ? `Disc ${d.n} of ${d.of} · ` : x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : "") + (n > 1 ? `${charmsWord(n)} · ` : ""); };
+  const copyText = x => { const q = sideOfPiece(x); if (q) return `${sideWord(q)} piece · `; const d = x.qty > 1 && discOfPiece(x), n = charmsIn(x); return (d ? `${discWordOf(x)} ${d.n} of ${d.of} · ` : x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : "") + (n > 1 ? `${charmsWord(n)} · ` : ""); };
   const sideOfId = (rid, poolId) => { for (const g of groupsOf(rid)) { const part = g.pieces.find(q => q.key === poolId); if (part) return part.side; } return null; };
   const matchesQ = (x, q) => /^[\d\s#-]+$/.test(q) ? CharmNestOrders.orderMatches(x.rid,q) : `${x.rid} ${x.sku} ${x.name}`.toLowerCase().includes(q);
 

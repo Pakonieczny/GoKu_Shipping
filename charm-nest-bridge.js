@@ -6919,7 +6919,7 @@ const Engrave = window.Engrave = (() => {
       }
       if (info.kind !== "disc") return "";
       const r = S.pieceRecord ? S.pieceRecord(job) : null;
-      return r && r.of > 1 ? `Disc ${r.index} of ${r.of}` : `Disc ${String(job.slot).slice(1)}`;
+      return S.nounWord(r && r.of > 1 ? `Disc ${r.index} of ${r.of}` : `Disc ${String(job.slot).slice(1)}`, job);   // (BARS: "Bar 2 of 3" for a profiled listing's line)
     } catch (_) { return ""; }
   }
   function needEvent(job) {
@@ -8609,7 +8609,7 @@ const Engrave = window.Engrave = (() => {
   const multiJobs = grp => (grp && ROWS() && ROWS().multi(grp) ? grp.jobs : null);
   const allDiscs = pieces => !!(pieces && pieces.length && ROWS() && pieces.every(j => ROWS().discOf(j)));
   /** PIECES (Paul, 16 Oct 2026): the pieces of a counted row are "pieces" when they are the copies of a line bought several times (C1..Cn), "discs" when they are the discs of a necklace. */
-  const countedNoun = pieces => (pieces && pieces.length && ROWS() && pieces.every(j => { const c = ROWS().countedOf(ROWS().pieceOf(j)); return c && c.kind === "copy"; }) ? "piece" : "disc");
+  const countedNoun = pieces => (pieces && pieces.length && ROWS() && pieces.every(j => { const c = ROWS().countedOf(ROWS().pieceOf(j)); return c && c.kind === "copy"; }) ? "piece" : (SIDES() && SIDES().nounOf && SIDES().nounOf(pieces[0])) || "disc");   // (BARS, Paul 19 Oct 2026: the discs of a profiled listing's line are its bars)
   const PSW = () => window.CharmNestPieceSwitch || null;
   /* ENGPIECES (13 Oct 2026, Paul: "no easy way to tell how many pieces a given order has in the detailed engraving modal ... the back and forward arrow buttons are not working ... every piece must be reached"): an ORDER owns its
      engraved pieces, whatever the line or the metal (charm-nest-engrave-order.js: piecesOf / countOf / step / groupRows / orderCounts). An SS line and a GF line of one Etsy order are two lines, ONE order, two pieces: the detail's
@@ -18326,7 +18326,7 @@ const OrderWin = window.OrderWin = (() => {
     });
     const st = box.querySelector(".owPcState"); if (!st) return;
     const p = sel && ps.find(x => x.key === sel), total = ps.reduce((n, x) => n + (x.sides ? x.sides.reduce((m, sd) => m + sd.qty, 0) : x.qty), 0);   // (a pair line counts its Left and its Right)
-    const ear = p && W.side && p.sides ? sideWord(String(W.side).slice(0, 1)) : p && W.disc && p.counted ? (() => { const S = window.CharmNestEngraveSides, r = rowOf(p.key), sp = S && S.setPieceOf && r ? tryDo(() => S.setPieceOf(r, W.disc)) : null; return sp ? S.pieceName(sp) : (String(W.disc)[0] === "C" ? "Piece " : "Disc ") + String(W.disc).slice(1); })() : "";   // (a disc picked: "Showing COMET 9427 · Disc 2"; a bar of a set: "Showing BAR 1548 + SKINNY 0191 · Small bar")
+    const ear = p && W.side && p.sides ? sideWord(String(W.side).slice(0, 1)) : p && W.disc && p.counted ? (() => { const S = window.CharmNestEngraveSides, r = rowOf(p.key), sp = S && S.setPieceOf && r ? tryDo(() => S.setPieceOf(r, W.disc)) : null; return sp ? S.pieceName(sp) : S.nounWord((String(W.disc)[0] === "C" ? "Piece " : "Disc ") + String(W.disc).slice(1), r); })() : "";   // (a disc picked: "Showing COMET 9427 · Disc 2"; a bar of a set: "Showing BAR 1548 + SKINNY 0191 · Small bar")
     const mcode = p && ps.some(x => x !== p && x.name === p.name) ? CODE[p.metal] || (p.metal ? labelOf(p.metal) : "") : "";   // (ENGPICK: two pieces of ONE design differ only by metal: "Showing NEURON 37061 · SS", as the row says it; pieces with their own names are said as they were)
     const html = p ? `Showing <b>${esc(p.name + (mcode ? " · " + mcode : "") + (ear ? " · " + ear : ""))}</b><i aria-hidden="true"> · </i><button type="button" class="owPcAll" data-pc-all>Show all</button>` : `Showing all ${total} pieces`;
     if (st._h !== html) { st._h = html; st.innerHTML = html; }
@@ -18584,7 +18584,7 @@ const OrderWin = window.OrderWin = (() => {
       if (pcs.length > 1) {
         // (SETBAR: a piece of a set of bars is its own name and chain, "Small bar · 16″", never "Piece 2 of 4"; units after the first say which set: "Small bar · 16″ · set 2". Its engraving slots are D1, D2, so its lines are picked like a disc's: one press narrows the cards to that bar)
         const S = window.CharmNestEngraveSides, set = S && S.setPieces && r ? tryDo(() => S.setPieces(r)) : null, per = set ? set.pieces.length : 0, n = pcs.length, bySet = per >= 2 && n % per === 0;
-        const noun = ((r && countedOf(r)) || {}).noun || "piece", tag = p.copies ? "C" : noun === "disc" || bySet ? "D" : "P", cnt = (r && countedOf(r)) || {}, unitN = cnt.qty > 1 && cnt.total % cnt.qty === 0 ? cnt.total / cnt.qty : n;   // (unitN: the pieces of ONE set when the line is bought more than once: "Disc 2 of 3 · set 2")
+        const noun = ((r && countedOf(r)) || {}).noun || "piece", tag = p.copies ? "C" : noun === "disc" || noun === "bar" || bySet ? "D" : "P", cnt = (r && countedOf(r)) || {}, unitN = cnt.qty > 1 && cnt.total % cnt.qty === 0 ? cnt.total / cnt.qty : n;   // (unitN: the pieces of ONE set when the line is bought more than once: "Disc 2 of 3 · set 2")
         const subs = pcs.map((c, i) => ({ key: tag === "C" || tag === "D" ? `${p.key}#${slotAtPiece(p, i, bySet ? per : unitN)}` : `${p.key}#${tag}${(bySet ? i % per : i) + 1}`, c,
           label: bySet ? [S.pieceName(set.pieces[i % per]), S.lengthText(set.pieces[i % per]), n > per ? "set " + (Math.floor(i / per) + 1) : ""].filter(Boolean).join(" · ") : unitN < n && !p.copies ? `${OR.subLabel("counted", i % unitN, unitN, { noun })} · set ${Math.floor(i / unitN) + 1}` : OR.subLabel("counted", i, n, { noun }), x, sp: pcScopeOf(c, lineScope) }));
         return { kind: "counted", x, subs, lead: null, lineScope, step: stepOf(x), placed: pcs.filter(c => c.nested).length, total: n };
