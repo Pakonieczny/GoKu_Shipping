@@ -53,10 +53,14 @@
     const out = new Map(), shut = new Map();
     const add = (rid, y) => { rid = ridOf(rid); if (OK.test(rid) && (!out.has(rid) || y < out.get(rid))) out.set(rid, y); };
     const vh = root.innerHeight || 900;
+    /* COST (Oct 2026): the NEAR band above and below the screen is there for a person who scrolls (the row they scroll to has been read already). Nobody scrolls a window that has had no
+       input for ACTIVE_FOR (or is not focused): it reads only the rows laid out on screen, a half to a third of the orders, so every read a change of the cloud causes (about 100 to 176 reads
+       for 27 to 48 orders, 61 for the 16 on screen) is that much smaller. The first input brings the band back and reads at once (see the input handler below). */
+    const near = cadence() === ACTIVE ? NEAR : 0;
     const unshown = n => { const p = n.parentElement; if (!p) return false; let v = shut.get(p); if (v === undefined) shut.set(p, v = !!p.closest(UNSHOWN)); return v; };
     for (const n of doc.querySelectorAll('[data-rid]')) {
       if (n.matches(UNSHOWN) || unshown(n)) continue;
-      const r = n.getBoundingClientRect(); if (!(r.width > 0 && r.height > 0) || r.bottom < -NEAR || r.top > vh + NEAR) continue;
+      const r = n.getBoundingClientRect(); if (!(r.width > 0 && r.height > 0) || r.bottom < -near || r.top > vh + near) continue;
       add(n.dataset.rid, Math.abs(r.top));
     }
     // the open order window (it holds its order by the row's key: receipt_transaction)
@@ -155,7 +159,7 @@
   }
   // a tab change shows other orders: read for them now (the feed finds them by what is drawn, a moment after the tab has drawn)
   doc.addEventListener('click', ev => { const t = ev.target; if (t && t.closest && t.closest('#modeSeg')) setTimeout(nudge, 350); }, true);
-  for (const ev of ['pointerdown', 'keydown', 'wheel', 'focus']) (ev === 'focus' ? root : doc).addEventListener(ev, () => { const was = cadence(); lastInput = Date.now(); if (was > ACTIVE && st.timer && !st.busy) arm(Math.max(0, st.end + GAP - Date.now())); }, { capture: true, passive: true });   // (back from idle: read now, not at the end of a 60 s wait)
+  for (const ev of ['pointerdown', 'keydown', 'wheel', 'focus']) (ev === 'focus' ? root : doc).addEventListener(ev, () => { const was = cadence(); lastInput = Date.now(); if (was > ACTIVE && st.timer && !st.busy) arm(Math.max(0, Math.max(st.start + ACTIVE, st.end + GAP) - Date.now())); }, { capture: true, passive: true });   // (back from idle: read now, not at the end of a 60 s wait. COST (Oct 2026): never sooner than ACTIVE after the last read: a window without the focus stays at the slow pace while the wheel scrolls it, so every wheel event pulled the read forward to "now", a full read of the changed rows about once a second)
   doc.addEventListener('visibilitychange', () => { if (doc.hidden) { clearTimeout(st.timer); clearTimeout(st.second); st.timer = st.second = 0; } else { st.fails = 0; arm(0); } });
   root.addEventListener && root.addEventListener('online', () => { st.fails = 0; arm(0); });
   // anything the page learns of the sheets (a load made for a window, the Library's list) is adopted into the rows too
