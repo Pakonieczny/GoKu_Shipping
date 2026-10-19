@@ -27,7 +27,9 @@ function world(o = {}) {
   put('ZODIAC ICONS LEO (HUGGIE)', 'ZODIAC_ICONS_LEO_HUGGIE_'); put('ZODIAC ICONS LEO', 'ZODIAC_ICONS_LEO', 30, 34);
   for (const k of ['ASTRONAUT_9809', 'ASTRONAUT_', 'CO-GOLDCHARMO']) put(k, 'ASTRONAUT_', 25.8, 40.3);
   for (const k of ['BLOOMING_16014', 'BLOOMING_35148', 'BLOOMING_44107']) put(k, 'BLOOMING_16014', 27, 39);
-  put('MAPLE_8065', 'MAPLE_8065', 30, 33); put('COMET_9427', 'COMET_9427', 30, 33);
+  put('MAPLE_8065', 'MAPLE_8065', 30, 33);
+  put('TEDDY BEAR (CUT OUT EARS) -CO', 'MISC_TEDDY', 25, 37); put('SEA_OTTER_4567', 'MISC_OTTER', 29, 27);   // (SKUs_CORRECTED_Misc.ai)
+  for (const k of ['CELESTIAL 16- TINY STAR(DIAMOND)', 'DIAMOND_8613', 'CELESTIAL 16 -DIAMOND SHAPE-WSUN']) put(k, 'MISC_CELESTIAL', 27, 37); put('CELESTIAL 16 -DIAMOND SHAPE-WSUN (HUGGIE)', 'MISC_CELESTIAL_H', 19, 30); put('COMET_9427', 'COMET_9427', 30, 33);
   const byFile = new Map(); for (const [k, e] of lib) { if (!byFile.has(e.aiPath)) byFile.set(e.aiPath, []); byFile.get(e.aiPath).push(k); }
   const loose = {}; for (const k of lib.keys()) { const l = O.looseKey(k); loose[l] = l in loose ? '' : k; }
   return { masterEntry: s => lib.get(String(s || '').toUpperCase()) || null, masterLoose: s => loose[O.looseKey(s)] || '', masterShared: s => { const e = lib.get(String(s || '').toUpperCase()); return e ? byFile.get(e.aiPath) || [] : []; }, masterSkus: () => [...lib.keys()] };
@@ -175,7 +177,7 @@ pass('runes: a person\'s link, option answer or saved pair wins');
   eq(O.resolveSku(astro(), {}, W.masterEntry, { patterns: [], skus: [] }, W.masterLoose), { sku: 'ASTRONAUT_9809', source: 'alias', listed: true }, 'resolveSku (the save-to-repo flow\'s) says the same');
   for (const sku of ['CO-GOLDCHARMO', 'SOMETHING ELSE', 'astronaut_']) eq(read(astro({ sku })).designSku, 'ASTRONAUT_9809', `whatever the transaction carries (${sku})`);
   eq([O.listingDesign('1630282472'), O.listingDesign(1630282472), O.listingDesign(''), O.listingDesign('constructor'), O.listingDesign(null)], ['ASTRONAUT_9809', 'ASTRONAUT_9809', '', '', ''], 'the table answers for the listing number, and nothing for junk');
-  eq(JSON.parse(JSON.stringify(O.LISTING_DESIGNS)), { 1630282472: 'ASTRONAUT_9809', 4456808584: 'BLOOMING_16014' }, 'the table holds the astronaut and the blooming listings only'); }
+  eq(JSON.parse(JSON.stringify(O.LISTING_DESIGNS)), { 1630282472: 'ASTRONAUT_9809', 4456808584: 'BLOOMING_16014', 4496765355: 'SEA_OTTER_4567' }, 'the table holds the astronaut, blooming and sea otter listings only'); }
 { const al = ctxOf(W, { aliases: { 1630282472: { sku: 'ASTRONAUT_' } } });
   eq([read(astro(), al).designSku, read(astro(), al).skuSource], ['ASTRONAUT_', 'alias'], 'a person\'s listing-wide answer wins');
   const by = ctxOf(W, { aliases: { 1630282472: { bySku: { 'CO-GOLDCHARMO': 'MAPLE_8065' } } } });
@@ -198,6 +200,19 @@ pass('astronaut: listing 1630282472 is ASTRONAUT_9809, its words stay engraving 
   const lc = ctxOf(W, { aliases: { 4456808584: { sku: 'MAPLE_8065' } } });
   eq(read(bloom(), lc).designSku, 'MAPLE_8065', 'a person\'s saved design for the listing wins'); }
 pass('blooming: listing 4456808584 is BLOOMING_16014');
+
+/* ── 9c · SKUs_CORRECTED_Misc.ai (Paul, 19 Oct 2026): the sea otter studs by listing, the teddy and the celestial charm by their Etsy SKUs ── */
+{ const L = o => Object.assign({ transactionId: String(++tx), quantity: 1, metalKey: 'gold', metalLabel: '14k Gold Filled', personalization: [], buyerMessage: '', variations: [{ name: 'Metal', value: 'Gold Filled' }] }, o);
+  let sp = read(L({ listingId: '4496765355', sku: 'SEA_96442', title: 'Sea Otter Charm Stud Earrings: Solid Gold 10K, 14K, Handmade Ocean, Coastal Gift for Her' }), null, { receiptId: '4204568396' });
+  eq([sp.designSku, sp.skuSource, sp.lineForm, sp.pieceCount, kinds(sp)], ['SEA_OTTER_4567', 'alias', 'earring', 2, []], 'order 4204568396: SEA_96442 → SEA_OTTER_4567, a stud pair, no "Unknown SKU"');
+  sp = read(L({ listingId: '1759607655', sku: 'TEDDY BEAR (CUT OUT EARS)-CO', title: 'Teddy Bear pendant available in Gold Filled, Rose Gold Filled, Sterling Silver, or 14K Solid Gold', personalization: ['Mama Bear'] }), null, { receiptId: '4204483576' });
+  eq([sp.designSku, kinds(sp).includes('unmatchedSku')], ['TEDDY BEAR (CUT OUT EARS) -CO', false], 'order 4204483576: the Etsy SKU TEDDY BEAR (CUT OUT EARS)-CO reaches the file\'s TEDDY BEAR (CUT OUT EARS) -CO (spacing set aside)');
+  const CT = 'Star Charm Add On Charm Dainty Celestial Charm Necklace Sun Jewelry Minimalist Jewelry';
+  sp = read(L({ listingId: '1801965240', sku: 'CELESTIAL 16 -Diamond Shape/wSun', title: CT, variations: [{ name: 'Charm Type', value: 'Necklace CHARM' }] }));
+  eq([sp.designSku, sp.lineForm, kinds(sp)], ['CELESTIAL 16 -DIAMOND SHAPE-WSUN', 'necklace', []], 'the celestial necklace charm reaches its drawing (the "/" read as "-")');
+  sp = read(L({ listingId: '1801965240', sku: 'CELESTIAL 16 -Diamond Shape/wSun', title: CT, variations: [{ name: 'Charm Type', value: 'Huggie CHARM SET' }] }), null, { receiptId: '4202677961' });
+  eq([sp.designSku, sp.lineForm, sp.pieceCount, kinds(sp)], ['CELESTIAL 16 -DIAMOND SHAPE-WSUN (HUGGIE)', 'huggie', 2, []], 'order 4202677961: the Huggie CHARM SET reaches the (HUGGIE) drawing, both ears'); }
+pass('misc: sea otter by listing, teddy and celestial by their Etsy SKUs');
 
 /* ── 10 · every other listing reads as before ── */
 { const plain = read({ transactionId: String(++tx), listingId: '555000111', sku: 'ASTRONAUT_9809', title: 'Astronaut Charm', quantity: 1, metalKey: 'gold', metalLabel: 'Gold', personalization: [], variations: [{ name: 'Metal', value: 'Gold' }] });
