@@ -419,14 +419,14 @@
 :root{--list-seal:57px}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egPlacementSeals{gap:8px}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egPlacementSeals .egEarSeals{gap:10px}
-:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow){min-height:calc(var(--list-seal) + 32px)}
+/* (no min-height on the row: the seals are in its flow and make it as tall as they need; a min-height drops the grid row's content-based minimum, see THE CAUSE above) */
 
 /* ═══ ORDLIST (Paul, 19 Oct 2026: "update the Order view list (Both List and Card) to be laid out much more like the Engraving UI list view ... Especially ... the Seals and multi-piece + Front/Back Engraving") ═══
    The Orders tab's rows (a single-line order, and each piece of a grouped order) and cards read as an Engraving row: pictures | the order, its SKU and "Front + back", the caption, one line per piece and face (chip, words, its state),
    ONE muted line of what was bought | the seals (one chip + seal per piece and face, the Release Hold seal first) | the order's own column (state, Qty · Ship by, Release hold, Send to Review). charm-nest-bridge.js Orders lineIdHtml / lineSealsHtml. */
 /* -- the list -- */
 .ordList .doneRow.orderListRow{--thumb-size:88px;display:grid;grid-template-columns:auto minmax(0,1fr) minmax(150px,210px);grid-template-rows:auto 1fr;grid-template-areas:"media id acts" "media sum acts";column-gap:22px;row-gap:0;align-items:start;min-height:0;padding:16px 18px}
-.ordList .doneRow.orderListRow:has(>.egPlacementSeals:not(:empty)){grid-template-columns:auto minmax(0,1fr) auto minmax(150px,210px);grid-template-areas:"media id seals acts" "media sum seals acts";min-height:calc(var(--list-seal) + 32px)}
+.ordList .doneRow.orderListRow:has(>.egPlacementSeals:not(:empty)){grid-template-columns:auto minmax(0,1fr) auto minmax(150px,210px);grid-template-areas:"media id seals acts" "media sum seals acts"}
 .ordList .doneRow.orderListRow>.comparePair{grid-area:media;align-self:start;grid-template-columns:repeat(2,var(--thumb-size));gap:8px}
 .ordList .doneRow.orderListRow>.engravingIdentity{grid-area:id;display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;row-gap:3px;align-content:start;align-self:start;min-width:0;overflow:visible}
 .ordList .doneRow.orderListRow>.engravingIdentity>*{grid-column:1/-1;min-width:0}
