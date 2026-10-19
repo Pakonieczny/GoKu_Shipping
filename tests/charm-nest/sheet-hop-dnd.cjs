@@ -433,8 +433,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       const sNow = await shownAt(s41);
       assert(sNow && Math.hypot(sNow.x - eS.cxPt, sNow.y - eS.cyPt) < .01, 'S41 is still drawn where it was moved by hand: ' + JSON.stringify(sNow));
       assert(await page.evaluate(id => CNManual._MC.edits.has(SheetWin.hopKit.W.byPool.get(id).id), s41), 'and Manual Control still holds that move');
-      const barText = await page.evaluate(() => (document.querySelector('.sheetWin [data-r=mcBar]') || {}).innerText || '');
-      assert(/\b1 charm moved\b/.test(barText), "Manual Control's bar counts only the charm still on the sheet: " + barText);
+      // (NOMCBAR, 19 Oct 2026: the bar is gone; Manual Control itself counts the charms moved by hand that are still on the sheet)
+      const movedNow = await page.evaluate(() => { const M = CNManual._MC, W = SheetWin.hopKit.W; return [...M.edits.keys()].filter(id => W.pieces.some(x => x.id === id && !x.gone)).length; });
+      assert.equal(movedNow, 1, "Manual Control counts only the charm still on the sheet: " + movedNow);
       const s41rec1 = recAt('k10-2', s41);
       assert(s41rec1 && Math.hypot(s41rec1.x - s41rec0.x, s41rec1.y - s41rec0.y) < .01 && !s41rec1.manual, "the hop wrote 10K Draft 2 as it stood: S41's move by hand is not saved yet: " + JSON.stringify(s41rec1));
       await closePops();

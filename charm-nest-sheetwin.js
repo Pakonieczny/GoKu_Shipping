@@ -4916,15 +4916,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   function mcSay(text, tone) {
     if (!MC.on) { if (text && !swNote(W.el.manual, { text })) toast(text, tone === "bad" ? "bad" : "", 6000); return; }
+    // (NOMCBAR, Paul 19 Oct 2026: "Remove this menu from the bottom of the screen": the Manual Control bar is gone, so what it said is a toast)
     MC.msg = text || ""; MC.tone = tone || ""; clearTimeout(MC.msgT);
-    if (text) MC.msgT = setTimeout(() => { MC.msg = ""; MC.tone = ""; mcRender(); }, tone === "bad" ? 4200 : 2200);
-    mcRender();
+    if (text) toast(text, tone === "bad" ? "bad" : "", tone === "bad" ? 4200 : 2200);
   }
+  const NO_MC_BAR = true;   // (NOMCBAR, Paul 19 Oct 2026)
   const mcDraftOf = x => MC.edits.get(x.id) || MC.from.get(x.id) || { cxPt: x.p.cxPt, cyPt: x.p.cyPt, angle: normDeg(x.p.angle), size: 1 };
   const movedCount = () => [...MC.edits].filter(([id, q]) => mcChanged(MC.from.get(id), q)).length;
   function mcRender() {
     const bar = W.el && W.el.mcBar; if (!bar) return;
-    if (!MC.on) { bar.hidden = true; bar.innerHTML = ""; return; }
+    // (NOMCBAR: the bar under the sheet is never shown; the charm's own handles and the toasts carry it)
+    if (!MC.on || NO_MC_BAR) { bar.hidden = true; bar.innerHTML = ""; return; }
     const x = MC.sel, q = x && (MC.drag && MC.drag.show || mcDraftOf(x)), n = movedCount();
     const hint = x ? "Drag to move · round handle turns (15°, Shift: free) · a corner resizes (80–120%)" : n ? "Press Manual Control again when you are done" : "Press a charm to move, turn or resize it";
     bar.innerHTML = `<span class="t"><b>${esc(x ? x.rid || x.name || "Charm" : "Manual Control")}</b><small>${x ? `<span data-mc="deg">${fmtDeg(q.angle)}</span> · <span data-mc="pct">${Math.round(q.size * 100)}%</span>` : `${n ? `${n} charm${n === 1 ? "" : "s"} moved` : "Nothing moved yet"}`}</small></span>` +
@@ -5098,6 +5100,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** A key with a charm in hand: the arrows nudge it (0.5 pt, Shift 2 pt), [ ] turn it 15° ({ } 1°), + − size it 1 %; a step it may not take is refused. */
   function mcKey(e) {
+    // (NOMCBAR: with the bar gone, Ctrl/⌘ + Z is its "Put back": the charm in hand goes back where it stood when Manual Control was turned on)
+    if (MC.sel && !MC.drag && !MC.spring && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && String(e.key).toLowerCase() === "z") { e.preventDefault(); mcPutBack(); return true; }
     const x = MC.sel; if (!x || MC.drag || MC.spring || e.altKey || e.ctrlKey || e.metaKey) return false;   // (Alt + Shift + ← / → is the sheet hop's: the charm onto the next sheet)
     const st = e.shiftKey ? 2 : .5, mv = { ArrowLeft: [-st, 0], ArrowRight: [st, 0], ArrowUp: [0, -st], ArrowDown: [0, st] }[e.key];
     const turn = { "[": -MC_TURN, "]": MC_TURN, "{": -1, "}": 1 }[e.key], grow = { "+": .01, "=": .01, "-": -.01, "_": -.01 }[e.key];

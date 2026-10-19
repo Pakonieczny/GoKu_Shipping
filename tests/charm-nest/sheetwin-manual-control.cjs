@@ -113,12 +113,15 @@ const root = path.join(__dirname, '../..');
     const at = (x, y) => page.evaluate(([x, y]) => CNManual._client(x, y), [x, y]);
     const drag = async (from, to, o = {}) => { await page.mouse.move(from[0], from[1]); await page.mouse.down(); if (o.shift) await page.keyboard.down('Shift'); const n = o.steps || 8; for (let i = 1; i <= n; i++) await page.mouse.move(from[0] + (to[0] - from[0]) * i / n, from[1] + (to[1] - from[1]) * i / n); await page.waitForTimeout(80); if (o.before) await o.before(); await page.mouse.up(); if (o.shift) await page.keyboard.up('Shift'); await page.waitForTimeout(150); };
     const pose = id => page.evaluate(id => { const M = CNManual._MC; return M.edits.get(id) || M.from.get(id); }, id);
-    const bar = () => page.evaluate(() => (document.querySelector('.sheetWin [data-r=mcBar]') || {}).innerText || '');
+    // (NOMCBAR, 19 Oct 2026: the bar under the sheet is gone and stays hidden; what it said is a toast, the last one Manual Control said is MC.msg)
+    const bar = () => page.evaluate(() => [CNManual._MC.msg || '', ...[...document.querySelectorAll('#toasts > *')].map(t => t.innerText)].join('\n'));
+    const barHidden = () => page.evaluate(() => { const b = document.querySelector('.sheetWin [data-r=mcBar]'); return !b || b.hidden || !b.offsetParent; });
     // move B from (90, 40) to (120, 70)
     await drag(await at(90, 40), await at(120, 70));
     let q = await pose(cB); assert(Math.abs(q.cxPt - 120) < .8 && Math.abs(q.cyPt - 70) < .8 && q.angle === 0, 'B moved: ' + JSON.stringify(q));
     assert.equal(await page.evaluate(() => CNManual._MC.sel && CNManual._MC.sel.id), cB, 'B is in hand');
     assert.match(await bar(), /Placed/);
+    assert.equal(await barHidden(), true, 'no Manual Control bar under the sheet (NOMCBAR)');
     // turn it with the knob: a quarter turn snaps to 90°; with Shift, 37° stays 37° (by the degree)
     const turn = async (deg, o) => { const t = await page.evaluate(() => CNManual._tool()), c = t.centre, k = t.knob, a0 = Math.atan2(k[1] - c[1], k[0] - c[0]), r = Math.hypot(k[0] - c[0], k[1] - c[1]), a1 = a0 + deg * Math.PI / 180;
       await drag(k, [c[0] + r * Math.cos(a1), c[1] + r * Math.sin(a1)], Object.assign({ steps: 12 }, o)); };
@@ -133,7 +136,7 @@ const root = path.join(__dirname, '../..');
     await corner(2); q = await pose(cB); assert.equal(q.size, 1.2, 'at most 120 %: ' + q.size);
     await corner(1.05 / 1.2); q = await pose(cB); assert(Math.abs(q.size - 1.05) <= .011, 'down to 105 %: ' + q.size);
     const sizeB = q.size, poseB = q;
-    assert.match(await bar(), new RegExp(`${Math.round(sizeB * 100)}%`), 'the bar reads its size');
+    assert.equal(Math.round((await pose(cB)).size * 100), Math.round(sizeB * 100), 'its size is kept (the bar that read it is gone)');
     console.log(`ok   2  on: claimed and held; B moved to (${poseB.cxPt}, ${poseB.cyPt}), a quarter turn snapped to 90°, Shift turned it to ${turned}°, a corner sized it 110 % → 120 % (the most) → ${Math.round(sizeB * 100)} %`);
     if (process.env.SHOT_DIR) await page.screenshot({ path: path.join(process.env.SHOT_DIR, 'manual-on.png') });
 
