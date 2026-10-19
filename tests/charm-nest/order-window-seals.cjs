@@ -35,12 +35,8 @@ const BAD_LEGACY = /legacy:/;
   const fn = (src, start, end) => { const i = src.indexOf(start), j = src.indexOf(end, i + start.length); return i >= 0 && j > i ? src.slice(i, j) : ''; };
   const code = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
   const paint = fn(bridge, 'function paintSeals(', '/** Paint the window from the row it is showing. */'), approved = fn(oe, 'function approvals() {', '    const id0 = ++nextId;');
-  check(paint.length > 100 && !/approvals\(|owApItem|owApHd|data-ow-seal\b|ENGRAVING APPROVED|pieces approved/i.test(code(paint)), 'source: paintSeals draws no approvals panel any more (no approvals(), no seal items, no "N pieces approved")');
-  check(approved.length > 100, 'source: OrderEngraving has approvals() (which pieces of the order are approved, a pure reading of what the page holds)');
-  const both = code(paint) + code(approved);
-  check(!/setInterval|setTimeout|requestAnimationFrame|addEventListener|\bfetch\(|XMLHttpRequest|\bapi\(|ensureSeals|loadSeals|\.load\(|\.refresh\(\)|Firestore|firebase/i.test(both), 'source: no timer, no listener, no network read, no ensureSeals / loadSeals in the strip\'s code (nothing new is read or polled)');
-  check(/paintSeals\(r\)/.test(fn(bridge, 'function paintNow(r) {', 'function splitLine')) && /paintNow\(r\);/.test(fn(bridge, 'function paint() {', '/** WRONGCHARM')), 'source: the strip (now the Release Hold seal alone) is still painted from paintNow() (the paths an approval already takes)');
-  check(/id="owSeals"/.test(html) && /\.owApproved\b/.test(html) && /byId\("owSeals"\)/.test(paint) && html.indexOf('.owApproved{') > html.indexOf('.relSealWords'), 'source: the page has #owSeals and its CSS (.owApproved), right after the other seal CSS (.relSeal)');
+  check(!paint && !/id="owSeals"/.test(html) && !/\.owApproved\{/.test(html), 'source: NOSTRIP: the window has no seal strip at all (no paintSeals, no #owSeals, no strip CSS)');
+  check(approved.length > 100 && !/setInterval|setTimeout|requestAnimationFrame|addEventListener|\bfetch\(|XMLHttpRequest|\bapi\(|ensureSeals|loadSeals/i.test(code(approved)), 'source: OrderEngraving.approvals() stays a pure reading (no timer, listener or read)');
   check(/charm-nest-bridge\.js\?v=[^"]*-ws1/.test(html) && /charm-nest-order-engraving\.js\?v=[^"]*-ws1/.test(html), 'source: the cache tokens of the changed scripts are bumped (-ws1)');
 }
 

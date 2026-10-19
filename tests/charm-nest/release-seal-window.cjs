@@ -1,3 +1,6 @@
+// NOSTRIP (Paul, 19 Oct 2026, of the Release Hold seal in the order window: "I asked for this to be completely removed from the Order Details modal"): the window has NO seal strip any more (#owSeals and paintSeals are gone).
+// This test now proves the Release Hold seal is nowhere in the Order Details modal at rest (released, released twice, released with an approved engraving, known only from the timeline, a live press, three widths),
+// while the Timeline tab still lists every release and the Orders row still carries the seal. (The original RELWIN header follows, for what the scenarios are.)
 // RELWIN (Paul, 19 Oct 2026): "The release hold seal should be visible also in the detailed Order popup modal. Make sure it's big enough to be visible and legible."
 // RELHOLD (18 Oct) put the RELEASE HOLD seal on the Orders card, 72 px, with its words (Release Hold, by whom, the date and the time in Toronto). The order window showed it nowhere at rest: its header rail seal is a
 // small hover card (charm-nest-piece-seals.js) and the Timeline tab draws the "released" step as a small lane seal. Now the window's seal strip, #owSeals (charm-nest-bridge.js paintSeals, the strip WINSEAL made for the
@@ -35,11 +38,8 @@ const LONGNAME = 'Bartholomew-Maximilian Featherstonehaugh-Wolfeschlegelsteinhau
   const bridge = read('charm-nest-bridge.js'), html = read('charm-nest-1.html');
   const fn = (src, start, end) => { const i = src.indexOf(start), j = src.indexOf(end, i + start.length); return i >= 0 && j > i ? src.slice(i, j) : ''; };
   const code = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-  const paint = fn(bridge, 'function paintSeals(', '/** Paint the window from the row it is showing. */'), stamp = fn(bridge, 'function windowReleaseOf(', 'function paintSeals(');
-  check(stamp.length > 100 && /releaseStampOf/.test(stamp) && /releaseSealHtml/.test(paint), 'source: the window has windowReleaseOf (the latest Release Hold of the order from what the page holds) and paintSeals draws the card\'s own releaseSealHtml');
-  check(!/setInterval|setTimeout|requestAnimationFrame|addEventListener|\bfetch\(|XMLHttpRequest|\bapi\(|ensureSeals|loadSeals|\.load\(|\.refresh\(\)|Firestore|firebase|\.release\(|\.mark\(/i.test(code(stamp + paint)), 'source: no timer, no listener, no network read or write in the code that draws it');
-  check(/paintSeals\(r\)/.test(fn(bridge, 'function paintNow(r) {', 'function splitLine')), 'source: it is still painted from paintNow() (the path an approval, a timeline step or a repaint already takes)');
-  check(/charm-nest-bridge\.js\?v=[^"]*-rw1/.test(html) && /\.owRelRow\{/.test(html) && /data-ow-release/.test(bridge), 'source: the cache token of the changed script is bumped (-rw1) and the page has the strip\'s release CSS');
+  check(!/function paintSeals\(|function windowReleaseOf\(|paintSeals\(r\)/.test(code(bridge)) && !/id="owSeals"/.test(html) && !/\.owRelRow\{|\.owApproved\{/.test(html), 'source: the order window has no seal strip: no #owSeals, no paintSeals / windowReleaseOf, no strip CSS');
+  check(/charm-nest-bridge\.js\?v=[^"]*-ns1"/.test(html), 'source: the cache token of the changed script is bumped (-ns1)');
 }
 
 (async () => {
@@ -132,71 +132,29 @@ const LONGNAME = 'Bartholomew-Maximilian Featherstonehaugh-Wolfeschlegelsteinhau
       await closeWin(); return finish();
     }
 
-    // ═══ 2 · a released order: the seal is in the window at rest ═══
-    await openOv(TWICE); let r = await rel(); const w3 = await when(AT3);
-    check(r.n === 1 && r.shown && r.inStrip, `2 the released order's window holds ONE Release Hold seal, in the strip, shown at rest (no hover): ${JSON.stringify([r.n, r.shown, r.inStrip])}`);
-    check(r.family === 'release' && /RELEASE/.test(r.svgText || '') && /HOLD/.test(r.svgText || '') && /seal-releaseHold/.test(r.kind || ''), `2 it is the real RELEASE HOLD seal, the card's (${r.family} · ${r.svgText})`);
-    check(r.seal && r.seal.lw >= 72 && r.seal.lh >= 72, `2 it is big: ${r.seal && r.seal.lw} x ${r.seal && r.seal.lh} px (the Orders card's seal is 72)`);
-    check(/Release Hold/.test(r.words) && r.by === 'by Second Releaser' && r.words.includes(w3.d) && r.words.includes(w3.t) && r.at === AT3 && /Hold released to the nesting queue by Second Releaser/.test(r.aria || ''), `2 with "Release Hold", who, the date and the time of the LATEST release, not the earlier one (${r.words})`);
-    check(r.inside && r.first === 'owSeals' && r.strip && r.strip.t >= 0, `2 inside the window and the scroll area, the first thing in the Overview: ${JSON.stringify([r.inside, r.first])}`);
-    await shot('02-released-1440');
-    // the Timeline keeps every release as it was (the earlier one too)
-    await tab('timeline');
+    // ═══ 2 · NOSTRIP: no Release Hold seal in the Order Details modal at rest, whatever the order's releases ═══
+    // (the head card's ONE seal is the order's current milestone, whatever it is (Approved, On sheet, Released ...): that is the card's own, older than the strip, and stays; what is gone is the strip's large Release Hold panel)
+    const atRest = async label => { const inv = (await inventory()).filter(x => x.visible && x.where !== 'head card'), x = await rel(); check(x.n === 0 && !x.shown && x.strip === null && !inv.length && !(await page.evaluate(() => !!document.querySelector('#orderWin .relSeal, #orderWin .relSealWords'))), `${label}: no Release Hold panel (seal + "Release Hold / by / when") in the Order Details modal (${JSON.stringify(inv.map(i => i.where))})`); };
+    for (const [f, label] of [[TWICE, 'released twice'], [ENG, 'released + approved engraving'], [TLONLY, 'known only from the timeline'], [PLAIN, 'never released']]) { await openOv(f); await atRest('2 ' + label); }
+    // the Timeline tab keeps every release as it was
+    await openOv(TWICE); await tab('timeline');
     const steps = await page.evaluate(() => [...document.querySelectorAll('#orderWin [data-view="timeline"] svg[data-seal-family="release"]')].length);
     check(steps >= 2, `2 the Timeline tab still lists both releases (${steps} Release Hold seals in its lanes)`);
-    await shot('02-timeline-1440'); await tab('info');
-
-    // ═══ 3 · never released: none ═══
-    await openOv(PLAIN); r = await rel();
-    check(r.n === 0 && !r.shown && r.hidden === true && r.stripHtml === 0 && r.first !== 'owSeals', `3 an order never released: no seal, the strip hidden and empty (${JSON.stringify([r.n, r.shown, r.stripHtml, r.first])})`);
-    // a hold let go the ordinary way (its timeline step carries no Release Hold seal) is not a Release Hold press
-    await openOv(HELD); r = await rel();
-    check(r.n === 0 && !r.shown, '3 an order whose hold was let go the ordinary way (a "released" step with no Release Hold seal): none');
-
-    // ═══ 6 · a released order with an approved engraving: both, one above the other, no overlap ═══
-    await openOv(ENG); r = await rel(); const w2 = await when(AT2);
-    // (NOWINSEAL, Paul 19 Oct 2026: the order window's approvals panel is removed: "Remove this UI from the Detailed Order view. I did not ask for this.": the strip holds the release seal alone)
-    check(r.shown && r.n === 1 && !r.apItems && !r.hasAp && !r.apHd, `6 released + approved engraving: the strip holds the release seal ALONE, no approvals panel (${JSON.stringify([r.n, r.apItems, r.hasAp])})`);
-    check(r.by === 'by Cy Releaser' && r.words.includes(w2.d) && r.seal.lw >= 72 && r.inside && r.aboveNow, `6 and the release seal is still the large one with who and when (${r.words}) inside the window`);
-    await shot('06-released-and-approved-1440');
-
-    // ═══ 5 · only the timeline knows (a reload on another computer): shown; the latest wins ═══
-    await openOv(TLONLY); r = await rel();
-    check(r.n === 1 && r.shown && r.by === 'by Tim Elsewhere' && r.at === AT2 && r.seal.lw >= 72, `5 a release known only from the order's timeline shows (by Tim Elsewhere): ${JSON.stringify([r.n, r.by, r.at === AT2])}`);
-    // a newer release arrives through the timeline while the window is open (another computer): the seal moves to it
-    const AT4 = AT3 + 5 * 60e3;
-    tl(TLONLY.rid, AT4, 'Late Arrival');
-    await page.evaluate(() => OrderWin.nudge());
-    const moved = await until(async () => { const x = await rel(); return x.at === AT4 && x; }, 20000, 'the newer release to show').catch(() => null);
-    check(moved && moved.n === 1 && moved.by === 'by Late Arrival', `5 live: a newer release from another computer replaces it (${moved && moved.by})`);
-
-    // ═══ 4 · LIVE: the window is open on an order in Review; the real Release Hold press ═══
-    await page.evaluate(async rid => { const m = await CharmNestReviewMark.mark(rid, { by: 'Test Operator' }); CN.setMode('review'); Review.syncOrderItems(); Review.render(); return m; }, LIVE.rid);
+    await tab('info');
+    // ═══ 4 · LIVE: the real Release Hold press with the window open: the window still shows no seal; the Orders row does ═══
+    await page.evaluate(async rid => { await CharmNestReviewMark.mark(rid, { by: 'Test Operator' }); CN.setMode('review'); Review.syncOrderItems(); Review.render(); }, LIVE.rid);
     await until(() => page.$(`#rvList .reviewListRow[data-rid="${LIVE.rid}"] [data-rel-hold]`), 20000, 'Release Hold on the marked row');
-    await openOv(LIVE); r = await rel();
-    check(r.n === 0 && !r.shown, '4 the window opens on an order in Review, not yet released: no seal');
-    const t0 = Date.now();
+    await openOv(LIVE);
     await page.evaluate(rid => document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"] [data-rel-hold]`).click(), LIVE.rid);
-    const live = await until(async () => { const x = await rel(); return x.n === 1 && x.shown && x; }, 30000, 'the seal to appear in the open window').catch(() => null);
-    check(!!live, `4 live: the seal appears in the OPEN window by itself ${Date.now() - t0} ms after the press`);
-    check(live && live.by === 'by Test Operator' && live.seal.lw >= 72 && live.at >= t0 - 1000 && live.inside, `4 and it is the press's: by Test Operator, now, large (${live && live.words})`);
-    await shot('04-live-after-press');
-    check(await page.evaluate(() => OrderWin.isOpen()), '4 the window is still open (the press did not close or reload it)');
+    const stamped = await until(async () => (await page.evaluate(rid => !!Orders.releaseStampOf(Orders.rows().filter(x => String(x.order.receiptId) === rid)), LIVE.rid)) || null, 30000, 'the release to be recorded').catch(() => null);
+    check(!!stamped, '4 the press is recorded (Orders.releaseStampOf)');
+    await sleep(800); await atRest('4 after a live press');
     await closeWin();
     await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); Orders.render(); });
-
-    // ═══ 7 · layout at three widths, a very long name ═══
-    for (const [w, h] of [[1440, 900], [1024, 768], [390, 800]]) {
-      await page.setViewportSize({ width: w, height: h }); await sleep(500);
-      await openOv(LONG); r = await rel();
-      check(r.shown && r.n === 1 && r.seal.lw >= 72 && r.inside && r.boxInside && !r.sideways, `7 at ${w} px: the large seal (>= 72 px) and its words are inside the window, nothing sideways, the long name wraps (${JSON.stringify([r.seal && r.seal.lw, r.inside, r.boxInside, r.sideways, r.box && r.box.w])})`);
-      const wrap = await page.evaluate(() => { const b = document.querySelector('#owSeals .relSealBy'), t = document.querySelector('#owSeals .relSealWords'); const lh = parseFloat(getComputedStyle(b).lineHeight) || 16; return { lines: Math.round(b.getBoundingClientRect().height / lh), clipped: t.scrollWidth > t.clientWidth + 1, size: getComputedStyle(b).fontSize }; });
-      check(!wrap.clipped && /Featherstonehaugh/.test(await page.evaluate(() => document.querySelector('#owSeals .relSealBy').textContent)), `7 at ${w} px: the whole long name is there and not clipped (${JSON.stringify(wrap)})`);
-      await shot(`07-long-${w}`);
-      await openOv(ENG); r = await rel();
-      check(r.shown && r.n === 1 && !r.apItems && r.boxInside && !r.sideways && r.aboveNow, `7 at ${w} px: an approved order too: the release seal alone, inside, nothing sideways, no approvals panel`);
-      await shot(`07-both-${w}`);
-    }
+    await sleep(900);
+    check(await page.evaluate(rid => !!document.querySelector(`#ordItems [data-rid="${rid}"] .relSeal`), LIVE.rid), '4 the Orders row still carries the Release Hold seal');
+    // ═══ 7 · three widths ═══
+    for (const [w, h] of [[1440, 900], [1024, 768], [390, 800]]) { await page.setViewportSize({ width: w, height: h }); await sleep(500); await openOv(LONG); await atRest(`7 at ${w} px`); await shot(`07-long-${w}`); }
     await page.setViewportSize({ width: 1440, height: 900 });
     await closeWin();
     const errs = W.errors.filter(e => !/ResizeObserver/.test(e));

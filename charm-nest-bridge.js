@@ -18132,29 +18132,8 @@ const OrderWin = window.OrderWin = (() => {
     // (the module did not load: the grid as it always was)
     host.innerHTML = f.loading ? '<div class="m"><i>Order</i><span>' + esc(f.order.id) + '</span></div>' : f.cells.map(c => '<div class="m"><i>' + esc(c.label) + '</i>' + (c.html != null ? c.html : '<span>' + esc(c.text) + '</span>') + '</div>').join("");
   }
-  /** RELWIN (Paul, 19 Oct 2026: "The release hold seal should be visible also in the detailed Order popup modal. Make sure it's big enough to be visible and legible."): the latest Release Hold press of the order the window shows, { how: "releaseHold", at, by, id } or null, from what the page
-   *  already holds: the Orders card's own reading (Orders.releaseStampOf: the order's lines, this page's press and the run's record, and the order's Review document in the cloud, which a reload and every other computer read) and the "released" steps of the order's timeline that the window
-   *  has already read (data.seal "releaseHold": W.events, which is also how a press made on another computer reaches an open window). The latest of them wins; the earlier ones stay in the Timeline tab as they were. No read, no timer, no listener. */
-  function windowReleaseOf(r, sibs) {
-    let best = r && r.order ? tryDo(() => Orders.releaseStampOf(sibs)) : null;
-    const evs = r && r.order && W.evFor === String(r.order.receiptId) && Array.isArray(W.events) ? W.events : [];
-    for (const e of evs) {
-      const d = e && e.type === "released" && e.data && e.data.seal === "releaseHold" ? e.data : null, at = d ? +d.sealAt || +e.at || 0 : 0;
-      if (at > 0 && (!best || at > best.at)) best = { how: "releaseHold", at, by: String(e.by || ""), id: String(d.sealId || e.id || "") };
-    }
-    return best;
-  }
-  /** The strip at the top of the Overview (#owSeals): the order's latest Release Hold seal (RELWIN), nothing else.
-   *  (NOWINSEAL, Paul 19 Oct 2026, of the "ENGRAVING APPROVED · All 2 pieces approved" panel of seals with their words: "Remove this UI from the Detailed Order view. I did not ask for this." The approval seals stay where they always were in the
-   *  window: on the Engraving section's own cards and the Pieces rows.) Hidden for an order never released with Release Hold. Drawn again only when it changes, from paintNow(). */
-  function paintSeals(r) {
-    const host = byId("owSeals"); if (!host) return;
-    // (RELWIN, Paul 19 Oct 2026: the order's latest Release Hold: the Orders card's own seal and words (Orders.releaseSealHtml), large; nothing for an order never released with it)
-    const rel = r && !r.loading && r.order ? windowReleaseOf(r, linesOf(r)) : null, relHtml = rel ? tryDo(() => Orders.releaseSealHtml(rel)) : "";
-    const html = relHtml ? `<div class="owRelRow" data-ow-release>${relHtml}</div>` : "";
-    if (host._h === html) return;
-    host._h = html; host.hidden = !html; host.classList.toggle("owRelOnly", !!relHtml); host.innerHTML = html;
-  }
+  /* NOSTRIP (Paul, 19 Oct 2026: "I asked for this to be completely removed from the Order Details modal"): the order window has no seal strip at all any more, neither the approvals panel (NOWINSEAL) nor the Release Hold seal (RELWIN):
+     #owSeals and its painter are gone. The Release Hold seal stays on the Orders and Engraving rows and in the Timeline tab; the approval seals stay on the window's Engraving cards. */
   /** Paint the window from the row it is showing. */
   function paint() {
     if(window.Seal?.defer('order-view-paint',paint))return;
@@ -19104,7 +19083,6 @@ const OrderWin = window.OrderWin = (() => {
     // (where each piece IS now, again: the timeline brought a step, a sheet's record landed, a hold was pressed or let go; the rail and the Timeline redraw on it)
     if (refreshPlacement(r) !== W.placeDrawn) { W.placeDrawn = W.placeSig; for (const m of [W.rail, W.tl]) if (m && m.setPieces) tryDo(() => m.setPieces(W.pieces || [], W.piece, 0)); }
     paintEng(r);
-    paintSeals(r);   // (WINSEAL: the approval strip, drawn again only when it changes; paint() reaches it through paintNow, as does the timeline feed when another computer approves)
     // Older compact order rows omitted approval metadata. Their permanent timeline keeps the exact signature.
     const events=W.evFor===String(r.order.receiptId)?W.events:[],historical=CNEngravingSeals.fromEvents(events,r);
     if(historical.length){
