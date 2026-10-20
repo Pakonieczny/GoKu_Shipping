@@ -452,7 +452,8 @@
       // (RELEASE, Paul 19 Oct 2026: every release a press allows records the same seal as the Review card's Release Hold: who and when on the order's lines (row.releaseHold), in the cloud's Review record, and on the timeline's "released" step)
       const at = Date.now(), seal = { how: 'releaseHold', at, by: name, id: `releaseHold:${rid}:${at}` };
       const out = await runWithFilm('release', rid, plan, name, from, feed => H.release(rid, { name, onStep: feed, seal }));
-      if (!out.failed || (out.res && out.res.released)) { const RR = root.ReviewRelease; if (RR && typeof RR.keep === 'function') { try { await RR.keep([rid], seal, 'hold'); } catch (e) { warn('release seal', e); } } }
+      // (RELNOSEAL, Paul 20 Oct 2026: a press that did not fully release the order makes no seal: "that's deceiving and could confuse the user")
+      if (!out.failed) { const RR = root.ReviewRelease; if (RR && typeof RR.keep === 'function') { try { await RR.keep([rid], seal, 'hold'); } catch (e) { warn('release seal', e); } } }
       refreshViews();
       if (out.failed) say(`Order ${rid} was not fully released: ${msgOf(out.res.error).replace(/[.\s]+$/, '')}. What was done is kept, and Release hold can be pressed again.`);   // (a reason that ends in a full stop made "..")
       // (RELEASE, Paul 19 Oct 2026: the press overrides the hold; what it set aside, and a line with nothing to place, are said, never refused)

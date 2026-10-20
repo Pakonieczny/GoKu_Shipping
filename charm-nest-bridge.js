@@ -2353,6 +2353,8 @@ const Orders = window.Orders = (() => {
      reload), else its lines (row.releaseHold: this page's press, and the run's lines). { how: "releaseHold", at, by, id } or null. */
   function releaseStampOf(rows) {
     let best = null;
+    // (RELNOSEAL: no Release Hold seal is shown on an order that is held now: a press that did not release it, or an older one before a new hold, would say what is not so)
+    if ((rows || []).some(x => !!x && (!!x.hold || (["held", "unmatched", "oversize"].includes(x.state) && !(x.poolIds || []).length && (x.problems || []).some(p => p.kind === "blockedSku" || p.kind === "unmatchedSku"))))) return null;
     const take = v => { if (v && +v.at > 0 && (!best || +v.at > best.at)) best = { how: "releaseHold", at: +v.at, by: String(v.by || ""), id: String(v.id || "") }; };
     for (const r of rows || []) take(r && r.releaseHold);
     const rid = rows && rows[0] && rows[0].order ? String(rows[0].order.receiptId) : "";
@@ -3961,13 +3963,15 @@ const Pool = window.Pool = (() => {
      (the sheet writer copies whole groups): src.solo stays null and such a line keeps both bodies, as it always did. */
   const soloBodies = src => src.soloChecked ? Promise.resolve(src.solo) : once(src, "solo", () => traceSolo(src));
   async function traceSolo(src) {
-    src.solo = null;
+    src.solo = null; src.soloWhy = "";
     try {
       const Pair = window.CharmNestPair, charm = src.charms[0];
-      if (!Pair || !Pair.bodiesOf || !Pair.isMismatched || !Pair.isMismatched(charm)) return null;
-      const bodies = Pair.bodiesOf(charm); if (bodies.length < 2) return null;
+      // (SOLOWHY, Paul 20 Oct 2026, order 4204452679: why no body could be cut alone is kept on the source, and a line held for it says so: src.soloWhy)
+      if (!Pair || !Pair.bodiesOf || !Pair.isMismatched) { src.soloWhy = "the pair code did not load"; return null; }
+      if (!Pair.isMismatched(charm)) { src.soloWhy = `the library's record of ${src.sku} is not a two-body (Left + Right) design${charm && charm.pair ? "" : " (it carries no pair field: index the master file again)"}`; return null; }
+      const bodies = Pair.bodiesOf(charm); if (bodies.length < 2) { src.soloWhy = `the drawing in the library's file gives ${bodies.length} body`; return null; }
       const tops = bodies.map(b => new Set(b.members.map(m => (m.parent != null ? m.parent : m.index)).filter(t => t != null)));
-      if (tops.some((t, i) => tops.some((u, j) => j > i && [...t].some(x => u.has(x))))) { agent({ pool: true }, "warn", `${src.sku}: its bodies are drawn in one group of the master, so one cannot be written alone — a line of it keeps both bodies`); return null; }
+      if (tops.some((t, i) => tops.some((u, j) => j > i && [...t].some(x => u.has(x))))) { src.soloWhy = "its bodies are drawn in one group of the library's file, so one cannot be written alone"; agent({ pool: true }, "warn", `${src.sku}: its bodies are drawn in one group of the master, so one cannot be written alone — a line of it keeps both bodies`); return null; }
       const made = bodies.map((b, i) => Object.assign({}, charm, { outline: b.outline, members: b.members.slice(), bbox: b.bbox.slice(), extras: (charm.extras || []).filter(x => b.members.includes(x)), topIndices: [...tops[i]], id: `${src.id}:s${i}`, oneBody: i }));
       for (const c of made) delete c.frontAt;
       await P.buildSilhouettes(src.parsed, made, +S.settings.silhouetteRes || 6);
@@ -3975,7 +3979,7 @@ const Pool = window.Pool = (() => {
       // (a design a person named as ONE body, charm-nest-pair.js 4d: the record's up angle is the other body's hole, 97 degrees for the wolf's moon; the named body keeps the up angle it is drawn with)
       const nm = Pair.onlyBodyOf && Pair.onlyBodyOf(charm.sku || src.sku); if (nm && made[nm.index] && Number.isFinite(nm.upAngle)) made[nm.index].upAngle = nm.upAngle;
       return (src.solo = made);
-    } catch (e) { src.solo = null; agent({ pool: true }, "warn", `${src.sku}: one of its bodies could not be cut alone (${e.message}) — a line of it keeps both bodies`); return null; }
+    } catch (e) { src.solo = null; src.soloWhy = `one of its bodies could not be traced (${e.message})`; agent({ pool: true }, "warn", `${src.sku}: one of its bodies could not be cut alone (${e.message}) — a line of it keeps both bodies`); return null; }
     finally { src.soloChecked = true; }
   }
   /** The charm a piece with no side is cut from, when its stored record says it is ONE body of the design: `rec` is the pool row or the sheet record's charm, and its charm hash is that body's, not the
@@ -4421,7 +4425,7 @@ const Pool = window.Pool = (() => {
     const bodies = await soloBodies(src), need = Math.max(...per) + 1;
     // (BROKENHEART, Paul 19 Oct 2026, order 4204452679: a heart broken in two whose master draws ONE outline with the zigzag as a line inside it gives one body: the line waits, it is never cut as the whole heart twice, nor as one heart)
     const named = row.spec.pair && Array.isArray(row.spec.pair.labels) && row.spec.pair.labels.length === need ? row.spec.pair.labels.map(x => "the " + String(x).toLowerCase()).join(" and ") : "";
-    if (!bodies || bodies.length < need) return { hold: `its design ${row.spec.designSku} does not give the ${need} separate bodies this listing's profile cuts (${row.spec.pair && row.spec.pair.companion ? `the ${row.spec.pair.noun || "piece"}s and the ${row.spec.pair.companion.noun}` : named ? `${named}, each its own closed outline` : "one body for each piece"}): a person checks the design` };
+    if (!bodies || bodies.length < need) return { hold: `its design ${row.spec.designSku} does not give the ${need} separate bodies this listing's profile cuts (${row.spec.pair && row.spec.pair.companion ? `the ${row.spec.pair.noun || "piece"}s and the ${row.spec.pair.companion.noun}` : named ? `${named}, each its own closed outline` : "one body for each piece"})${src.soloWhy ? ` — ${src.soloWhy}` : bodies ? ` — the drawing gives ${bodies.length}` : ""}: a person checks the design` };
     const pr = row.spec.pair || {}, unit = Array.isArray(pr.pieceBodies) ? pr.pieceBodies.length : per.length, cn = pr.companion ? Math.max(0, Math.floor(+pr.companion.n) || 0) : 0;
     return { charms: per.map(i => bodies[i]), bodies: per.slice(), blank: per.map((_, k) => cn > 0 && (k % unit) >= unit - cn) };   // (blank: the companion, the moon: its pool record says it is not engraved)
   }
@@ -16093,8 +16097,12 @@ const Review = window.Review = (() => {
   /* RELHOLD: what one Release Hold press keeps, once the orders it released are known (out.lifted): each line of them keeps { at, by, id } (row.releaseHold: the run's lines, so the Orders card has it
      at once and the run record keeps it), the order's Review document keeps it in the cloud (CharmNestReviewMark.release), and an order whose release step the engine did not write (not held: a blocked SKU
      set aside, a mark resolved, a change accepted) gets that step on its timeline now, carrying the seal. Nothing is written for an order the press did not release. */
+  // (RELNOSEAL, Paul 20 Oct 2026: "if the release hold did not work, then the seal should not be made because that's deceiving": an order still held, or still waiting in Review for a design, after the press gets no seal)
+  const relStuck = x => !!x && (!!x.hold || (x.problems || []).some(p => p.kind === "blockedSku" || p.kind === "unmatchedSku"));   // (still on hold, or still waiting for a design: the press did not release it)
+  const stillHeld = rid => rowsOfOrder(rid).some(relStuck);
   function keepRelease(seal, how, out) {
     for (const rid of out.lifted) {
+      if (stillHeld(rid)) continue;   // (RELNOSEAL)
       const st = Object.assign({}, seal, { id: `releaseHold:${rid}:${seal.at}` });
       for (const x of rowsOfOrder(rid)) x.releaseHold = { at: st.at, by: st.by, id: st.id };
       try { const M = window.CharmNestReviewMark; if (M && M.release) M.release(rid, { by: st.by, at: st.at, id: st.id, how: "releaseHold", path: how }).then(r => { if (!r.ok) console.warn("Release Hold: not kept in the cloud", rid, r.error); try { Orders.render(); } catch (_) {} }); } catch (e) { console.warn("Release Hold record", e); }
