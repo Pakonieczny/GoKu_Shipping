@@ -43,7 +43,7 @@
   const M = () => root.Motion || null;
   const reduced = () => { try { return M() ? M().reduced() : !!root.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (_) { return false; } };
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const FLY_MS = 1300, UNDO_MS = 12000, MSG_MS = 12000, SWEEP_MS = 9000;
+  const FLY_MS = 1300, UNDO_MS = 12000, MSG_MS = 12000, SWEEP_MS = 9000, STAMP_MS = 1900;   // (SEALCANCEL: the stamp and its hold, Motion's T.stamp + T.hold, before the card flies)
 
   const CSS = [
     ".cnHoldBtns{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;min-width:0;max-width:100%}",
@@ -53,6 +53,8 @@
     ".btn.ghost.cnCancelBtn:hover:not(:disabled){color:var(--ink)}",
     ".btn.ghost.cnCancelBtn:disabled{cursor:default}",
     ".cnCancelBtn .spin{margin-right:6px}",
+    // (SEALCANCEL, Paul 20 Oct 2026: the button the ORDER CANCELLED seal is stamped on takes its muted brick red, as Release Hold takes its orange)
+    ".btn.sealedCancel,.btn.ghost.cnCancelBtn.sealedCancel{background:#f6e7ea;border-color:#d6a5b0;color:#982f48}",
     ".ocard.cnBusy,.orderListRow.cnBusy,.reviewListRow.cnBusy{transform:translateY(-2px);transition:transform .24s cubic-bezier(.2,.8,.2,1)}",
     "@media (prefers-reduced-motion:reduce){.ocard.cnBusy,.orderListRow.cnBusy,.reviewListRow.cnBusy{transform:none;transition:none}}",
     ".rowActions>.cnCancelMsg{flex-basis:100%}",   // (CANCELREVIEW: the plain line under a Review card's buttons, on a row of its own)
@@ -179,7 +181,8 @@
   /** What leaves for Cancelled: the order's Review cards when it was pressed in Review (CANCELREVIEW), else its Orders card(s); one note, on the first. */
   function expectLeave(ctx) {
     const m = M(); if (!m || !m.expect) return;
-    if (ctx.mks.length) { ctx.mks.forEach((k, i) => m.expect(k, { to: toChip(ctx), plus: false, ms: FLY_MS, ttl: 120000, note: i === 0 ? noteSpec(ctx) : null })); return; }
+    // (SEALCANCEL, Paul 20 Oct 2026: pressed in Review, the card's Cancel Order is stamped with the ORDER CANCELLED seal before it flies, as Release Hold's is; a cancel that fails forgets it, so no seal: RELNOSEAL)
+    if (ctx.mks.length) { ctx.mks.forEach((k, i) => m.expect(k, { to: toChip(ctx), plus: false, ms: FLY_MS, ttl: 120000, stamp: ctx.seal ? { btn: ".cnCancelBtn", stamp: ctx.seal, label: LABEL } : null, note: i === 0 ? noteSpec(ctx) : null })); return; }
     ctx.rows.forEach((r, i) => m.expect(keyOf(r), { to: toChip(ctx), plus: i === 0 ? "+1" : false, ms: FLY_MS, ttl: 120000, note: i === 0 ? noteSpec(ctx) : null }));
   }
   function forgetLeave(ctx) { const m = M(); if (!m || !m.expect || (flights.has(ctx.rid) && flights.get(ctx.rid) !== ctx)) return; for (const r of ctx.rows) m.expect(keyOf(r), { ttl: 1 }); for (const k of ctx.mks) m.expect(k, { ttl: 1 }); }
@@ -264,7 +267,9 @@
     const rows2 = rowsOf(rid); if (!rows2.length) return { ok: false, error: "gone" };
     // (CANCELREVIEW: pressed in Review, the order's Review cards are what flies, by their names in that list; mks is empty from anywhere else)
     const mks = [...new Set(reviewCards(rid).map(n => n.dataset.mkey).filter(Boolean))];
-    const ctx = { rid, who, rows: rows2.slice(), mks, snap: snapshot(rid, rows2, who), state: "working", started: false, landed: false, plainDone: false, held: null };
+    // (SEALCANCEL, Paul 20 Oct 2026: the press's seal, who and when: stamped on the button, and kept on the order only when the cancel really went through)
+    const at = Date.now(), seal = { how: "cancel", at, by: who, id: `cancel:${rid}:${at}` };
+    const ctx = { rid, who, rows: rows2.slice(), mks, seal, snap: snapshot(rid, rows2, who), state: "working", started: false, landed: false, plainDone: false, held: null };
     flights.set(rid, ctx); paintBusy(rid); expectLeave(ctx);
     let res;
     try { res = await root.SheetWin.takeOffOrder({ orderId: rid, mode: "cancel", scope: "order", by: who, note: "" }); }
@@ -274,10 +279,20 @@
       say(rid, plainError(res)); return res || { ok: false, error: "failed" };
     }
     ctx.state = "done"; flights.delete(rid); undoable.set(rid, ctx.snap); paintBusy(rid);
-    // (the list has taken the card out by now and flown it; where it could not, the same answer is given plainly)
-    setTimeout(() => plain(ctx), reduced() ? 120 : 1800);
+    keepSeal(rid, seal);
+    // (the list has taken the card out by now and flown it, after its stamp; where it could not, the same answer is given plainly)
+    setTimeout(() => plain(ctx), reduced() ? 120 : 1800 + (ctx.mks.length ? STAMP_MS : 0));
     setTimeout(() => sweep(ctx), SWEEP_MS);
     return { ok: true };
+  }
+
+  /** (SEALCANCEL, Paul 20 Oct 2026) The ORDER CANCELLED seal kept on the order, as Release Hold keeps its own: the order's Review document, cancel { at, by, how: "cancel", id }
+   *  (CharmNestReviewMark.cancel), so every renderer that draws an order's seals by kind finds it on every computer and after a reload. Undo marks it undone (Cancelled.restore). */
+  function keepSeal(rid, seal) {
+    try {
+      const RM = root.CharmNestReviewMark; if (!RM || !RM.cancel) return;
+      RM.cancel(rid, seal).then(r => { if (!r.ok) console.warn("Cancel Order: seal not kept in the cloud", rid, r.error); try { if (root.Orders) Orders.render(); } catch (_) {} });
+    } catch (e) { console.warn("Cancel Order seal", e); }
   }
 
   /* ── Undo ── */
