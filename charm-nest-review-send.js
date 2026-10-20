@@ -28,7 +28,14 @@
    Public: ReviewSend.mount(node, row) (the Orders list calls it for every row it draws, new or kept), ReviewSend.press(rid),
    ReviewSend.button(rid, row) / ReviewSend.buttonHtml(rid) (HOLDORDER: the ONE way the button is made, for any other place that shows Hold Order: an element ready
    to put in, or its markup, whose press is taken by one listener on the page),
-   ReviewSend.sync(), ReviewSend.refresh() (SENDREVIEW: once a frame with the Review tab's count, only a changed button is drawn), ReviewSend.busy(rid), ReviewSend.LABEL / ReviewSend.IN. */
+   ReviewSend.sync(), ReviewSend.refresh() (SENDREVIEW: once a frame with the Review tab's count, only a changed button is drawn), ReviewSend.busy(rid), ReviewSend.LABEL / ReviewSend.IN.
+
+   (HOLDBTN, Paul 20 Oct 2026: "Remove the 'Hold' button everywhere in the app and replace it with the 'Send to Review' and ensure it has the same look, feel, and functionality":
+    the orange Hold stood on the order window's piece rows (HoldUI.slot / HoldUI.fill). Those rows now ask this file for its own button: ReviewSend.slot(ctx) -> one span in the
+    row's markup, ReviewSend.fill(host) -> each span becomes the element button() makes for the Orders rows too (same element, paint, press, seal and line under it).
+    The one addition, opts.offSheets (every button that stands where Hold stood): once the order is marked, its pieces on a sheet not yet laser-cut come off it, through the
+    old Hold's own engine (HoldUI.takeOff -> OrderHold.run), so a held order never stays on a sheet that gets cut. Marking alone does not do it: REVHOLD keeps the pieces where
+    they are and holds the sheet. A piece on a cut sheet is refused before anything is marked, as before.) */
 (function (root) {
   "use strict";
   const doc = root.document;
@@ -83,6 +90,8 @@
       try { if (typeof root.setMode === "function") { root.setMode("review"); return true; } } catch (_) {}
       return false;
     },
+    // (HOLDBTN, Paul 20 Oct 2026: the old Hold's path, HoldUI.takeOff: its pieces on sheets not yet cut come off them; null when that path is not on the page)
+    takeOff(rid, by) { const H = root.HoldUI; return H && typeof H.takeOff === "function" ? Promise.resolve().then(() => H.takeOff(rid, { name: by })).catch(e => ({ ok: false, off: 0, error: (e && e.message) || String(e) })) : Promise.resolve(null); },
     onChange(fn) { try { const m = MARK(); if (m && typeof m.onChange === "function") return { api: m, off: m.onChange(fn) }; } catch (_) {} return null; },
     // REVHOLD: why this order cannot be held (a piece already released, a sheet already cut or Completed), "" when it can
     cannotHold(rid) {
@@ -109,7 +118,9 @@
   };
   const rowsOf = rid => { try { return (root.Orders ? Orders.rows() : []).filter(r => String(r.order.receiptId) === String(rid) && r.state !== "gone"); } catch (_) { return []; } };
   const rowKeys = rid => rowsOf(rid).map(r => r.key);
-  const cardsOf = rid => [...doc.querySelectorAll("#ordItems [data-rid]")].filter(n => n.dataset.rid === String(rid));
+  // (HOLDBTN, Paul 20 Oct 2026: a button drawn where Hold stood (data-rev-host) has its line under it in its own cell)
+  const cardsOf = rid => [...doc.querySelectorAll("#ordItems [data-rid]")].filter(n => n.dataset.rid === String(rid))
+    .concat([...doc.querySelectorAll(".revSendBtn[data-rev-host]")].filter(b => b.dataset.rid === String(rid) && b.parentElement).map(b => b.parentElement));
   const nameNow = () => { try { return String((root.CNEmployee && CNEmployee.name && CNEmployee.name()) || "").trim(); } catch (_) { return ""; } };
   /** "set-… · SS Draft 2": the same words the row itself shows for where the piece is; "" when it is on no sheet. */
   function whereOf(rid, row) {
@@ -173,6 +184,7 @@
    *  called once a frame with the Review tab's count (LiveStrip.now, which every Review drawing and every Orders drawing asks for): Open is read once and only a button whose state
    *  changed is drawn again (paint keeps one that reads the same). Nothing is read from the cloud and nothing polls; the Orders tab out of sight is drawn when it is shown.) */
   function refresh() {
+    try { const hs = doc.querySelectorAll(".revSendBtn[data-rev-host]"); if (hs.length) { openMemo = null; for (const b of hs) paint(b, b.dataset.rid, null); } } catch (_) {}   // (HOLDBTN: the order window's buttons, wherever it is open)
     try {
       const v = doc.getElementById("ordersView"); if (!v || v.classList.contains("hidden")) return;
       const bs = doc.querySelectorAll("#ordItems .revSendBtn"); if (!bs.length) return;
@@ -201,11 +213,14 @@
     } catch (e) { console.warn("hold order button", e); }
   }
   /** (HOLDORDER, Paul 20 Oct 2026) The ONE maker of the Hold Order button: the Orders rows use it, and so can any other place that shows Hold Order. Painted for what is true now. */
-  function button(rid, row) {
+  /** (HOLDBTN, Paul 20 Oct 2026) opts.offSheets: once marked, the order's pieces on sheets not yet cut come off them (HoldUI.takeOff), for every button where Hold stood; opts.host names that place. */
+  function button(rid, row, opts) {
     css(); subscribe();
-    rid = String(rid);
+    rid = String(rid); opts = opts || {};
     const b = doc.createElement("button"); b.type = "button"; b.className = "btn ghost sm revSendBtn"; b.dataset.rid = rid;
-    b.onclick = e => { e.stopPropagation(); e.preventDefault(); press(rid, row || null).catch(err => console.warn("hold order", err)); };
+    if (opts.host) b.dataset.revHost = String(opts.host);
+    const how = opts.offSheets ? { offSheets: true } : undefined;
+    b.onclick = e => { e.stopPropagation(); e.preventDefault(); press(rid, row || null, how).catch(err => console.warn("hold order", err)); };
     paint(b, rid, row || null);
     return b;
   }
@@ -215,6 +230,24 @@
     css(); subscribe();
     const s = escA(rid), inRev = api.ready() && api.inReview(String(rid), null);
     return `<button type="button" class="btn ghost sm revSendBtn${inRev ? " revIn" : ""}" data-rid="${s}" data-rev-state="${inRev ? "in" : "idle"}" title="${escA(inRev ? "Open it in Review" : TIP)}" aria-label="${escA(inRev ? `Order ${rid} is in Review. Open it there.` : `Hold order ${rid}`)}">${inRev ? IN : LABEL}</button>`;
+  }
+  const cancelled = rid => { try { return !!(root.Cancelled && typeof Cancelled.has === "function" && Cancelled.has(rid)); } catch (_) { return false; } };
+  /** (HOLDBTN, Paul 20 Oct 2026) One span in a row drawn as text where the button goes, where Hold stood ("" for an order not in the list, cancelled, or a page without Review); fill() makes it. */
+  function slot(ctx) {
+    ctx = ctx || {};
+    const rid = String(ctx.rid || "").trim();
+    if (!rid || !api.ready() || !rowsOf(rid).length || cancelled(rid)) return "";
+    return `<span class="revSendSlot" data-rev-slot data-rid="${escA(rid)}"${ctx.offSheets === false ? "" : ' data-off="1"'}></span>`;
+  }
+  /** (HOLDBTN) Each slot under `host` becomes button() (with offSheets), with its line under it when it has one. */
+  function fill(host) {
+    const where = host && host.querySelectorAll ? host : doc;
+    for (const s of [...where.querySelectorAll("[data-rev-slot]")]) {
+      if (!api.ready()) { s.remove(); continue; }
+      const b = button(s.dataset.rid, null, { offSheets: s.dataset.off === "1", host: "orderWindow" });
+      s.replaceWith(b);
+      if (b.parentElement) drawMsg(b.parentElement, b.dataset.rid);
+    }
   }
   try {
     doc.addEventListener("click", e => {
@@ -230,7 +263,7 @@
     if ((root.navigator && navigator.onLine === false) || /failed to fetch|network|load failed|timed out|timeout|offline/i.test(msg)) return "Could not reach the server, so the order was not held. Try again when you are back online.";
     return `Not held: ${msg || "something went wrong"}. Try again.`;   // (HOLDORDER: the words of the button)
   };
-  async function press(rid, row) {
+  async function press(rid, row, opts) {
     rid = String(rid);
     if (busyRids.has(rid)) return { ok: false, error: "busy" };
     if (!api.ready()) { say(rid, "Review is not ready on this page yet. Try again in a moment."); return { ok: false, error: "not ready" }; }
@@ -246,12 +279,21 @@
     let res;
     try { res = await api.mark(rid, who); }
     catch (e) { res = { ok: false, error: (e && e.message) || String(e) }; }
+    if (res === false || (res && res.ok === false)) { busyRids.delete(rid); sync(); say(rid, plainError(res)); return res || { ok: false, error: "failed" }; }
+    // (HOLDBTN, Paul 20 Oct 2026: a button where Hold stood also takes the order's pieces off sheets not yet cut, through the old Hold's engine; the button keeps its spinner meanwhile)
+    let off = null;
+    if (opts && opts.offSheets) { sync(); off = await api.takeOff(rid, who); }
     busyRids.delete(rid);
-    if (res === false || (res && res.ok === false)) { sync(); say(rid, plainError(res)); return res || { ok: false, error: "failed" }; }
     sync();
+    if (off && off.off > 0) {
+      const names = (off.names || []).filter(Boolean), list = names.length < 2 ? names.join("") : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
+      say(rid, `Order held. Taken off ${list || "its sheet"}; it waits in Review.`);
+      return { ok: true, sheet: "", off: off.off, names };
+    }
     const sheet = whereOf(rid, row), many = sheet.includes(" + ");
-    if (sheet) say(rid, `Order held. Stays on ${sheet}. ${many ? "Those sheets are" : "That sheet is"} held until this is resolved in Review.`);
-    return { ok: true, sheet };
+    const offWhy = off && off.ok === false && (off.why || off.error) ? ` (${String(off.why || off.error).replace(/[.\s]+$/, "")})` : "";
+    if (sheet) say(rid, `Order held. Stays on ${sheet}${offWhy}. ${many ? "Those sheets are" : "That sheet is"} held until this is resolved in Review.`);
+    return { ok: true, sheet, off: off ? off.off || 0 : undefined };
   }
 
   // (the mark API's one change callback: registered the first time a button is drawn, when the script that offers it is surely loaded; again if the API object is ever replaced)
@@ -261,5 +303,5 @@
     try { if (sub && typeof sub.off === "function") sub.off(); } catch (_) {}
     sub = api.onChange(sync);
   };
-  root.ReviewSend = { mount, press, sync, refresh, button, buttonHtml, busy: rid => busyRids.has(String(rid)), LABEL, IN };
+  root.ReviewSend = { mount, press, sync, refresh, button, buttonHtml, slot, fill, busy: rid => busyRids.has(String(rid)), LABEL, IN };
 })(typeof window !== "undefined" ? window : globalThis);
