@@ -963,6 +963,7 @@ const LiveStrip = window.LiveStrip = (() => {
     // newest first, and only drawn while the disclosure is open — it used to be a permanent band that clipped the newest line
     if (b && b.parentElement && b.parentElement.open) b.innerHTML = rows.length ? rows.slice().reverse().map(r => `<div><i>${fmtT(r.t)}</i><b>${esc(r.kind)}</b> ${esc(r.text).slice(0, 160)}</div>`).join("") : "<div>nothing yet</div>";
     const n = Review.openCount ? Review.openCount() : Review.count(); /* (RVCOUNT: the tab says what Open says) */ const rb = document.getElementById("tabReviewN"); if (rb) rb.textContent = n ? String(n) : "";
+    try { if (window.ReviewSend && ReviewSend.refresh) ReviewSend.refresh(); } catch (_) { /* (SENDREVIEW, Paul 20 Oct 2026: the Orders tab's Send to Review / In Review follow Open with the count, once a frame: only a button whose state changed is drawn again) */ }
     const eb = document.getElementById("tabEngraveN"); if (eb) { const k = Engrave.pendingRows(); eb.textContent = k ? String(k) : ""; }
     if (window.Ladder) Ladder.now();
   }
@@ -2822,6 +2823,8 @@ const Orders = window.Orders = (() => {
   function renderNow() {
     if(window.Seal?.defer('orders-view',renderNow))return;
     window.CNFrame?.cancel("orders");
+    // (SENDREVIEW, Paul 20 Oct 2026: whatever changed an order here may change what Review holds: the Review tab's count, and the In Review buttons with it, are drawn again once a frame, LiveStrip)
+    try { if (window.LiveStrip) LiveStrip.render(); } catch (_) { /* drawn with the next frame that asks */ }
     const v = document.getElementById("ordersView"), wanted = bodyWanted; bodyWanted = false;
     if (!v || (v.classList.contains("hidden") && !wanted)) { tabCount(); return; }
     if (!v.dataset.built) { v.dataset.built = "1"; buildHead(v); }
@@ -17082,6 +17085,18 @@ const Review = window.Review = (() => {
     const customWaits = it => rowsOf(it).some(r => CustomSheet.sending?.(r) || !(r.poolIds || []).length);
     return { all, cl, customWaits, clWait: cl.open.filter(customWaits) };
   }
+  /* (SENDREVIEW, Paul 20 Oct 2026: "The Send to Review button is disconnected from reality ... This button should be directly linked and communicate with the orders that are already in the Review tab":
+     the Orders tab's Send to Review / In Review asked Review.items() only, the decisions; a custom order waiting on its own designs or Complete Order (a card of Open's Custom Orders, clWait) is not one
+     of them, so its card said "Send to Review" for an order Review already listed. This is Open itself, by order number: the very lists openParts gives the tab's count, so the button and the count
+     can never disagree. order number -> its first open card. Nothing is read or written.) */
+  function openOrders() {
+    const out = new Map(), { all, clWait } = openParts();
+    for (const it of all.concat(clWait)) {
+      const ids = new Set(rowsOf(it).map(r => String(r.order && r.order.receiptId || ""))); if (it.rid) ids.add(String(it.rid));
+      for (const id of ids) if (id && !out.has(id)) out.set(id, it);
+    }
+    return out;
+  }
   function customLists(decided) {
     const open = [], done = [], sent = [], recent = [], engraving = [], seen = new Set(), groups = new Map();
     const itemFor = (key, extra) => { const it = infoItems.get(key) || { kind: "customOrder", key, info: true, t: Date.now() }; Object.assign(it, extra); infoItems.set(key, it); seen.add(key); return it; };
@@ -17511,7 +17526,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, openCount, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
