@@ -14079,9 +14079,50 @@ const CustomSheet = window.CustomSheet = (() => {
       const K = keeps.get(rec.ck) || [...keeps.values()].find(k => ownsK(k, rec));
       if (K && ownsK(K, rec) && (K.intentKey === rec.key || !K.intentKey || rec.etsyOnly)) { K.intentKey = rec.key; keepApplyIntent(K, rec, ev.view); }
       // the design is in the repository: the page reads the listings' answers again, so the other open orders of this listing are associated with it now, not at the next pull (P5)
-      if (rec.repo && !rec.sandbox && rec.outcome !== "rehearsed" && !keepMapsFor.has(rec.key)) { keepMapsFor.add(rec.key); setTimeout(() => { try { Orders.loadMaps(true).catch(() => {}); } catch (_) { /* the next pull reads them */ } }, 400); }
+      if (rec.repo && !rec.sandbox && rec.outcome !== "rehearsed" && !keepMapsFor.has(rec.key)) { keepMapsFor.add(rec.key); if (!keepFlowStart(rec)) setTimeout(() => { try { Orders.loadMaps(true).catch(() => {}); } catch (_) { /* the next pull reads them */ } }, 400); }
+      // (WRONGCHARM2: a rehearsal says what the save WOULD have changed, in the same panel, and writes nothing)
+      if (rec.sandbox && rec.state === "done" && rec.outcome === "rehearsed" && !keepMapsFor.has(rec.key) && (rec.upd || 0) > Date.now() - 20000) { keepMapsFor.add(rec.key); keepRehearse(rec); }
+      keepFlowEtsy(rec);
       keepIntentToast(rec, ev.view); keepForgetBytes(rec); keepPaintLater();
     } catch (err) { console.warn("Save keeper", err); }
+  }
+  /* WRONGCHARM2 (Paul, 20 Oct 2026: "When a user selects this toggle, their charm repository and matched SKU to that particular Etsy listing, and any charms already nested on a given sheet, and all
+     thumbnails that represent the matched vector file must be updated in real time, and there must be some sort of pop-up with a progress bar that clearly identifies each place that the charm is
+     being updated"). The design is in the repository and the listing's SKU answers it (the save's alias, Charm_Sku_Aliases/{listing}.bySku[the line's SKU]): the shared relink (Review.relinkFlow)
+     reads the links again and makes every open order of that listing + SKU up again from the saved design, with its panel: the repository, the link, each order and sheet, the pictures, and Etsy
+     (this line follows the keeper: queued, set, or failed with its reason). A save read back after a reload is not announced again (it relinks quietly, as before). The order of the window itself is
+     its own design (Send to Sheet places it): it is not told. */
+  const keepFlows = new Map();
+  const keepEtsyLine = rec => rec.etsy ? { text: `Etsy SKU set on listing ${rec.listingId}`, state: "done" } : rec.state === "attention" ? { text: `Etsy SKU not set on listing ${rec.listingId}`, state: "failed", why: rec.why || "something went wrong: open the order to try again" } : { text: `Etsy SKU queued for listing ${rec.listingId}`, state: "work" };
+  const keepOwn = rec => Orders.rows().filter(r => String(r.order && r.order.receiptId) === String(rec.rid)).map(r => r.key);
+  function keepFlowStart(rec) {
+    try {
+      if (!window.Review || !Review.relinkFlow || rec.etsyOnly || !(rec.upd > Date.now() - 20000) || !rec.sku) return false;
+      const lid = String(rec.listingId || ""), old = String((rec.line && rec.line.sku) || ""), e = keepEtsyLine(rec);
+      const fl = Review.relinkFlow({ title: `Save to the charm repository · ${rec.sku}`, sub: `Order ${rec.rid} · listing ${lid}`, listingId: lid, fromSku: old, toSku: rec.sku, skip: keepOwn(rec), keepOpen: true, placeWaiting: true,
+        pre: [{ id: "repo", text: `Saved ${rec.sku} to the charm repository`, state: "done" }, { id: "link", text: old ? `Linked listing ${lid} · SKU “${old}” to ${rec.sku}` : `Linked listing ${lid} to ${rec.sku}`, state: "done" }, Object.assign({ id: "etsy" }, e)] });
+      const st = { fl, ran: null, etsy: e.state !== "work" }; keepFlows.set(rec.key, st);
+      setTimeout(() => { st.ran = fl.run({ loadMaps: true }).all.then(t => { st.tally = t; keepFlowEnd(st); }, () => keepFlowEnd(st)); }, 400);
+      return true;
+    } catch (err) { console.warn("Save keeper: relink panel", err); return false; }
+  }
+  function keepFlowEtsy(rec) {
+    const st = keepFlows.get(rec.key); if (!st) return;
+    const e = keepEtsyLine(rec); st.fl.line("etsy", e.text, e.state, e.why); st.etsy = e.state !== "work"; keepFlowEnd(st);
+  }
+  function keepFlowEnd(st) {
+    if (!st || !st.tally || !st.etsy || st.ended) return; st.ended = true;
+    const t = st.tally, n = t.orders.size, sh = t.sheets.size;
+    st.fl.done(`Saved and linked: ${n} other order${n === 1 ? "" : "s"} updated, ${sh} sheet${sh === 1 ? "" : "s"} nested again${t.held.size ? `, ${t.held.size} kept for a person` : ""}${t.failed.size ? `, ${t.failed.size} not done` : ""}`);
+  }
+  function keepRehearse(rec) {
+    try {
+      if (!window.Review || !Review.relinkFlow) return;
+      const lid = String(rec.listingId || ""), old = String((rec.line && rec.line.sku) || ""), sku = rec.sku || "the new SKU";
+      Review.relinkFlow({ sandbox: true, title: `Save to the charm repository · ${sku}`, listingId: lid, fromSku: old, toSku: sku, skip: keepOwn(rec),
+        pre: [{ id: "repo", text: `Would save ${sku} to the charm repository`, state: "would" }, { id: "link", text: old ? `Would link listing ${lid} · SKU “${old}” to ${sku}` : `Would link listing ${lid} to ${sku}`, state: "would" }],
+        after: [{ id: "etsy", text: `Would queue the Etsy SKU for listing ${lid}`, state: "would" }] }).rehearse(old);
+    } catch (err) { console.warn("Save keeper: rehearsal panel", err); }
   }
   /** What the window's strip shows follows the intent (the engine's rows fill in as they come). */
   function keepApplyIntent(K, rec, view) {
@@ -15458,10 +15499,14 @@ const Review = window.Review = (() => {
     const row = (rows && rows[0]) || rowsOf(it)[0]; sku = String(sku || "").trim().toUpperCase(); if (!row || !row.line || !sku) return;
     const who = by(); if (!who) return;
     if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; }
-    const r = await RL.pick(row, sku, { by: who });
-    if (!r || !r.ok) { toast((r && r.why) || "That charm could not be kept for this listing", "bad", 7000); return; }
+    const lidP = String(row.line.listingId || "").replace(/\D/g, "");
+    const flow = relinkFlow({ title: `Listing ${lidP} → ${sku}`, sub: "Kept for this listing only. Etsy is not changed.", listingId: lidP, fromSku: p.sku || "", toSku: sku,
+      pre: [{ id: "link", text: `Saving the link: listing ${lidP} · ${p.sku ? `SKU “${p.sku}”` : "no SKU"} → ${sku}…`, state: "work" }] });   // (WRONGCHARM2: the same progress panel as "Wrong charm?")
+    let r; try { r = await RL.pick(row, sku, { by: who }); } catch (e) { r = { ok: false, why: (e && e.message) || String(e) }; }
+    if (!r || !r.ok) { flow.fail((r && r.why) || "the link was not saved", "link", `Not linked: listing ${lidP} → ${sku}`); toast((r && r.why) || "That charm could not be kept for this listing", "bad", 7000); return; }
+    flow.line("link", `Linked listing ${lidP} · ${p.sku ? `SKU “${p.sku}”` : "no SKU"} to ${sku}`, "done");
     toast(`${p.sku || "No SKU"} → ${sku} remembered`, "ok");
-    await relinkNow().catch(() => null);   // (LISTPICK: every open order of the listing, this one too, made up again with the pick, in place on its sheet when it fits)
+    await flow.run({}).first;   // (LISTPICK: every open order of the listing, this one too, made up again with the pick, in place on its sheet when it fits)
     const lid = String(row.line.listingId);
     for (const rr of Orders.rows()) if (String(rr.line.listingId) === lid && rr.state === "unmatched") await repool(rr);
     Orders.interpretAll(); syncOrderItems(); Orders.render();
@@ -15504,11 +15549,16 @@ const Review = window.Review = (() => {
     const who = by(); if (!who) return { ok: false, why: "nobody signed in" };
     const aff = F.affectedOf(Orders.rows(), row, sku, fixHelpers()), ask = F.askText(sku, off.listingId, aff);
     if (!(o.confirm || window.confirm)(ask)) return { ok: false, why: "not confirmed", ask };
-    const r = await RL.pick(row, sku, { by: who });   // (REVLINK: ONE write under the matcher's key, read back by the server, the maps read again; it throws when it is not saved)
-    if (!r || !r.ok) return no((r && r.why) || "That charm could not be kept for this listing");
+    // (WRONGCHARM2, Paul 20 Oct 2026: the progress panel opens first and follows every sweep of the listing from the write on: relinkFlow)
+    const scope = off.via === "option" && off.option ? `option “${off.option.name}: ${off.option.value}”` : off.from ? `SKU “${off.from}”` : "no SKU";
+    const flow = relinkFlow({ title: `Wrong charm? · listing ${off.listingId} → ${sku}`, sub: "Kept for this listing and its SKU only. Etsy is not changed.", listingId: off.listingId, fromSku: off.from, toSku: sku,
+      pre: [{ id: "link", text: `Saving the link: listing ${off.listingId} · ${scope} → ${sku}…`, state: "work" }] });
+    let r; try { r = await RL.pick(row, sku, { by: who }); } catch (e) { r = { ok: false, why: (e && e.message) || String(e) }; }   // (REVLINK: ONE write under the matcher's key, read back by the server, the maps read again; it throws when it is not saved)
+    if (!r || !r.ok) { flow.fail((r && r.why) || "the link was not saved", "link", `Not linked: listing ${off.listingId} · ${scope} → ${sku}`); return no((r && r.why) || "That charm could not be kept for this listing"); }
+    flow.line("link", `Linked listing ${off.listingId} · ${scope} to ${sku} (was ${off.cur})`, "done");
     toast(`${off.from || off.cur} → ${sku} kept for listing ${off.listingId}`, "ok");
     linkHolds([row], sku);
-    await relinkNow().catch(() => null);   // (LISTPICK: every open order of the listing made up again with the pick, in place on its sheet when it fits)
+    await flow.run({}).first;   // (LISTPICK: every open order of the listing made up again with the pick, in place on its sheet when it fits; the panel follows it to the end)
     for (const rr of Orders.rows()) if (String(rr.line.listingId).replace(/\D/g, "") === off.listingId && rr.state === "unmatched") await repool(rr);
     Orders.interpretAll(); syncOrderItems(); Orders.render();
     return { ok: true, sku, key: r.key, via: r.via, ask, orders: aff.orders };
@@ -15580,6 +15630,7 @@ const Review = window.Review = (() => {
      Idempotent: every decision is read from what the line and its pieces ARE; a second sweep finds nothing to do. */
   const relinkWait = new Map(), RELINK_TRIES = 40, RELINK_RETRY_MS = 3000, RELINK_TAKEN = new Set(["abandoned", "superseded"]);
   let relinkTimer = 0, relinkChain = Promise.resolve();
+  const relinkSubs = new Set();   // (WRONGCHARM2: every sweep's result is told to these: relinkFlow)
   const relinkLib = () => window.CharmNestListingRelink || null, relinkRL = () => window.CharmNestReviewLink || null;
   /** The maps were replaced: `prev` is what they were. The live lines of every listing whose answers moved are noted as they read now (before they are read again). */
   function relinkMaps(prev) {
@@ -15704,6 +15755,122 @@ const Review = window.Review = (() => {
     const tick = () => { if (list.some(busy) && Date.now() - t0 < 120000) { setTimeout(tick, 400); return; } paintAll(); };
     setTimeout(tick, 400);
   }
+  /* WRONGCHARM2 (Paul, 20 Oct 2026) · ONE "relink everywhere" for every way a listing + SKU is linked to another design: "Wrong charm?" (fixCharm), a Review card's pick (pickSimilar) and the designs
+     window's "Save to the charm repository and link this listing" (the keeper's save, keepIntentEvent). Paul: "their charm repository and matched SKU to that particular Etsy listing, and any charms
+     already nested on a given sheet, and all thumbnails that represent the matched vector file must be updated in real time, and there must be some sort of pop-up with a progress bar that clearly
+     identifies each place that the charm is being updated".
+     It makes nothing up itself: the link is the saved link (REVLINK's pick, or the save's alias), the make-up is LISTPICK's sweep (relinkSweep: pieces on a sheet that may still change come off in
+     one commit and the line is made up from the new design, its sheets nested again and saved; a cut, committed, released or protected piece is kept and told), the pictures are remadeRepaint's.
+     This follows the sweeps for the listing (relinkSubs) and says, one line each, every place it reached: the repository and the link (the caller's lines), each order (its piece taken off which
+     sheet and made from the new design / kept, and why / not made yet), each sheet nested again and saved, the pictures, Etsy (the keeper's line). A failure is said on its line, in red, with its
+     reason. The panel can be closed at any time; the work carries on. In the sandbox it says what it WOULD do, from what the page holds, and writes nothing.
+     relinkFlow(o) → { line, fail(why), run({ loadMaps }) → { first: after the first sweep, all: once every order and sheet is settled }, rehearse(), done() }
+       o = { title, sub, listingId, fromSku, toSku, sandbox, keepOpen, pre: [{ id, text, state, why }], after: [...] (rehearsal), skip: [line keys not to tell (the designs window's own order)] } */
+  const rlSleep = ms => new Promise(r => setTimeout(r, ms));
+  const rlLid = r => String((r && r.line && r.line.listingId) || "").replace(/\D/g, "");
+  const rlName = sh => (sh && (sh.fileBase || sheetName(sh))) || "a sheet";
+  const rlBusy = sh => ["nesting", "finishing", "queued", "ready"].includes(sh.status) || !!sh._operationStarting || !!sh._learnedStarting || !!(sh.persisted && !sh.persistedDone);
+  function relinkFlow(o) {
+    o = o || {};
+    const lid = String(o.listingId || "").replace(/\D/g, ""), to = String(o.toSku || "").trim().toUpperCase(), skip = new Set(o.skip || []);
+    let fl = null; try { fl = window.CNRelinkFlow ? CNRelinkFlow.open({ title: o.title || `Listing ${lid} → ${to}`, sandbox: !!o.sandbox, sub: o.sub }) : null; } catch (e) { console.warn("[relink] panel:", e && e.message); }
+    const line = (id, text, state, why) => { try { if (fl) fl.line(id, text, state, why); } catch (_) { /* a word only */ } };
+    for (const p of o.pre || []) line(p.id, p.text, p.state, p.why);
+    const tally = { orders: new Set(), held: new Set(), failed: new Set(), sheets: new Map() };
+    const sheetDone = sh => {
+      const key = sh.sheetId || ("p" + sh.metal + sh.page); if (tally.sheets.has(key)) return tally.sheets.get(key);
+      line("s:" + key, `${rlName(sh)}: arranged again with the new piece…`, "work");
+      const p = (async () => {
+        await rlSleep(50);
+        const t0 = Date.now(); while (rlBusy(sh) && Date.now() - t0 < 180000) await rlSleep(300);
+        if (sh.problem || sh.runHold) { tally.failed.add("s:" + key); line("s:" + key, `${rlName(sh)}: not nested again`, "failed", String(sh.problem || sh.runHold)); }
+        else if (rlBusy(sh)) line("s:" + key, `${rlName(sh)}: still waiting for its turn to be nested (${sh.status})`, "warn", B.run && B.run.status === "stopped" ? "the run is stopped: Resume carries on" : "");
+        else line("s:" + key, `${rlName(sh)} nested again and its files saved`, "done");
+      })();
+      tally.sheets.set(key, p); return p;
+    };
+    const kept = new Set();
+    const sub = out => {
+      for (const x of out.swapped || []) {
+        if (rlLid(x.row) !== lid || skip.has(x.row.key)) continue; const rid = x.row.order.receiptId, k = "o:" + x.row.key, where = (x.homes || []).join(", ") || "its sheet";
+        if (x.made === false) { tally.failed.add(k); line(k, `Order ${rid}: its piece came off ${where}, but it was not made again from ${x.c.to}`, "failed", x.row.reason || (x.row.problems || []).map(p => p.kind).join(", ") || x.row.state); }
+        else { tally.orders.add(k); const now = (x.row.poolIds || []).map(id => Pool.sheetOf(id) || allSheets().find(sh => sh.charms.some(c => c.poolId === id))).filter(Boolean)[0]; line(k, `Order ${rid}: piece taken off ${where} and made from ${x.c.to}${now && !(x.homes || []).includes(rlName(now)) ? ` (onto ${rlName(now)}: it did not fit there)` : ""}`, "done"); }
+      }
+      for (const x of out.flagged || []) { if (rlLid(x.row) !== lid || skip.has(x.row.key)) continue; const k = "o:" + x.row.key, f = x.c.fixed || []; tally.held.add(k); line(k, `Order ${x.row.order.receiptId}: its piece stays ${x.c.from} on ${[...new Set(f.map(y => y.name))].join(", ") || "its sheet"}`, "warn", `${f.map(y => y.why).find(Boolean) || "cut or released"}: nothing there is changed; ${x.row.hold ? "it is held for a person (Review)" : "a person makes it"}`); }
+      for (const x of out.design || []) { if (rlLid(x.row) !== lid || skip.has(x.row.key)) continue; const k = "o:" + x.row.key; tally.orders.add(k); line(k, `Order ${x.row.order.receiptId}: reads ${x.c.to} now (not on a sheet yet)`, "done"); }
+      for (const x of out.keptC || []) { if (rlLid(x.row) !== lid || skip.has(x.row.key)) continue; const k = "o:" + x.row.key; kept.add(x.row.key); tally.held.add(k); line(k, `Order ${x.row.order.receiptId}: in Review, its piece stays until the Review is resolved`, "warn", "it is made from " + x.c.to + " then"); }
+      for (const sh of out.sheets || []) if (sh.charms.some(c => { const r = B.orders.rows.find(rr => (rr.poolIds || []).includes(c.poolId)); return r && rlLid(r) === lid && !skip.has(r.key); })) sheetDone(sh);
+    };
+    let subbed = false;
+    if (!o.sandbox) { relinkSubs.add(sub); subbed = true; }
+    const end = () => { if (subbed) { relinkSubs.delete(sub); subbed = false; } };
+    const finish = (sum, tone) => { try { if (fl) fl.finish(sum, tone); } catch (_) { /* a word only */ } };
+    return {
+      line, panel: fl,
+      fail(why, id, text) { end(); line(id || "link", text || "Not linked", "failed", why); finish("Not linked: nothing else was changed", "bad"); },
+      run(r) {
+        r = r || {};
+        const first = (async () => { if (r.loadMaps) await Orders.loadMaps(true).catch(e => line("maps", "The saved links were not read again", "failed", (e && e.message) || String(e))); await relinkNow().catch(() => null); })();
+        const all = first.then(async () => {
+          // the lines still waiting for their sheet (one being arranged) are made up by the next sweeps: followed until each is settled (a line in Review waits for its Review: told above)
+          const t0 = Date.now();
+          for (;;) {
+            const wait = [...relinkWait.values()].filter(e => e.row && rlLid(e.row) === lid && !kept.has(e.key) && !skip.has(e.key));
+            if (!wait.length) break;
+            if (Date.now() - t0 > 150000) { for (const e of wait) { tally.failed.add("o:" + e.key); line("o:" + e.key, `Order ${e.row.order.receiptId}: not made again yet`, "failed", "its sheet stayed busy; the Review's Order changed row offers it"); } break; }
+            for (const e of wait) line("o:" + e.key, `Order ${e.row.order.receiptId}: waiting for its sheet to finish arranging, then made from ${to}`, "work");
+            await rlSleep(800);
+          }
+          // (o.placeWaiting, the designs window's save: the orders of this listing + SKU that waited for a charm (no library charm answered them, so none of them was on a sheet) read the saved
+          //  design now: each is made from it and goes onto its sheet, which is nested at once, as a swap's sheet is)
+          if (o.placeWaiting) {
+            const joined = new Set();
+            for (const rr of Orders.rows()) {
+              if (rlLid(rr) !== lid || skip.has(rr.key) || (rr.poolIds || []).length || !rr.spec || String(rr.spec.designSku || "").toUpperCase() !== to || ["gone", "skipped", "noDesign", "committed", "written"].includes(rr.state) || rr.hold) continue;
+              const k = "o:" + rr.key; line(k, `Order ${rr.order.receiptId}: made from ${to}…`, "work");
+              try { await repool(rr); } catch (e) { rr.reason = rr.reason || (e && e.message); }
+              const on = (rr.poolIds || []).map(id => allSheets().find(sh => sh.charms.some(c => c.poolId === id))).filter(Boolean);
+              if (on.length) { tally.orders.add(k); on.forEach(sh => joined.add(sh)); line(k, `Order ${rr.order.receiptId}: now reads ${to} and goes onto ${[...new Set(on.map(rlName))].join(", ")}`, "done"); }
+              else if (rr.state === "pooled" || rr.state === "pulled") { tally.orders.add(k); line(k, `Order ${rr.order.receiptId}: now reads ${to} (it goes onto a sheet with the run's next step)`, "done"); }
+              else { tally.failed.add(k); line(k, `Order ${rr.order.receiptId}: reads ${to}, but it was not made`, "failed", rr.reason || (rr.problems || []).map(x => x.kind).join(", ") || rr.state); }
+            }
+            for (const sh of joined) {
+              if (!sh.charms.some(c => !sh.placements.some(pl => pl.id === c.id))) { sheetDone(sh); continue; }
+              if (!(sh.runHold || ["nesting", "finishing", "queued"].includes(sh.status) || sh._operationStarting || sh._learnedStarting || (sh.persisted && !sh.persistedDone))) { sh.status = "ready"; try { if (typeof window.startNest === "function") window.startNest(sh); } catch (e) { console.warn("[relink] sheet not started:", e && e.message); } }
+              sheetDone(sh);
+            }
+          }
+          await Promise.all([...tally.sheets.values()]);
+          end();
+          if (!tally.orders.size && !tally.held.size && !tally.failed.size) line("none", `No other open order of listing ${lid} had to change`, "done");
+          remadeRepaint([]);
+          line("pics", "Thumbnails updated (Orders, Review, order window, Engrave, sheets)", "done");
+          if (!o.keepOpen) finish(`${tally.orders.size} order${tally.orders.size === 1 ? "" : "s"} updated, ${tally.sheets.size} sheet${tally.sheets.size === 1 ? "" : "s"} nested again${tally.held.size ? `, ${tally.held.size} kept for a person` : ""}${tally.failed.size ? `, ${tally.failed.size} not done` : ""}`);
+          return tally;
+        });
+        all.catch(e => { end(); line("err", "The update stopped", "failed", (e && e.message) || String(e)); finish("Stopped: see the red line", "bad"); });
+        return { first, all };
+      },
+      /** The sandbox: what it WOULD do, read from the page as it is; nothing is written. */
+      rehearse(fromSku) {
+        const dec = t => { const x = document.createElement("textarea"); x.innerHTML = String(t == null ? "" : t); return x.value.trim().toUpperCase(); };   // (Etsy's SKU text may carry &#39; and the like)
+        const from = dec(fromSku == null ? o.fromSku || "" : fromSku); let n = 0;
+        for (const r of Orders.rows()) {
+          if (!r.line || rlLid(r) !== lid || skip.has(r.key) || ["gone", "skipped", "noDesign", "committed"].includes(r.state) || dec(r.line.sku) !== from) continue;
+          const ids = new Set(r.poolIds || []), on = allSheets().filter(sh => sh.charms.some(c => ids.has(c.poolId))), fixed = relinkFixed(r);
+          n++;
+          if (fixed.length) line("o:" + r.key, `Order ${r.order.receiptId}: would keep its piece on ${[...new Set(fixed.map(f => f.name))].join(", ")} and tell a person`, "would", fixed.map(f => f.why).find(Boolean));
+          else if (on.length) line("o:" + r.key, `Order ${r.order.receiptId}: would take its piece off ${on.map(rlName).join(", ")}, make it from ${to}, and nest ${on.map(rlName).join(", ")} again`, "would");
+          else line("o:" + r.key, `Order ${r.order.receiptId}: would read ${to} (not on a sheet yet)`, "would");
+        }
+        if (!n) line("none", `No other open order of listing ${lid} would change`, "would");
+        line("pics", "Would repaint its pictures (Orders, Review, order window, Engrave, sheets)", "would");
+        for (const p of o.after || []) line(p.id, p.text, p.state, p.why);
+        finish("Rehearsal complete. Nothing was saved.", "ok");
+      },
+      done: (sum, tone) => finish(sum, tone)
+    };
+  }
   async function relinkSweep() {
     const L = relinkLib(), RL = relinkRL(), out = { keys: new Set(), swapped: [], flagged: [], design: [], kept: [] };
     if (!relinkWait.size || !L || !RL) return out;
@@ -15723,12 +15890,12 @@ const Review = window.Review = (() => {
       const retry = () => { e0.tries = (e0.tries || 0) + 1; if (e0.tries < RELINK_TRIES) { again = true; return true; } agent({ pool: true }, "warn", `${row.order.receiptId} · listing pick ${c.to || ""}: not made up again (${c.why}); the Review's Order changed row offers it`); relinkWait.delete(k); return false; };
       if (c.action === "swap") {
         let r; try { r = await relinkSwap(row, e, c, h); } catch (err) { r = { ok: false, retry: true, why: (err && err.message) || String(err) }; }
-        if (r.ok) { relinkWait.delete(k); if (r.homes) { out.swapped.push({ row, c, homes: r.homes }); out.keys.add(k); } }
+        if (r.ok) { relinkWait.delete(k); if (r.homes) { out.swapped.push({ row, c, homes: r.homes, made: r.made !== false }); out.keys.add(k); } }
         else if (r.retry) { c.why = r.why; retry(); }
         else relinkWait.delete(k);
         continue;
       }
-      if (c.action === "kept") { const by = relinkBy(row, c.link); relinkSay(row, c, by, { part: "kept", text: "its piece stays on its sheet while the order is in Review, and is made up again when the Review is resolved" }); out.kept.push(row); continue; }
+      if (c.action === "kept") { const by = relinkBy(row, c.link); relinkSay(row, c, by, { part: "kept", text: "its piece stays on its sheet while the order is in Review, and is made up again when the Review is resolved" }); out.kept.push(row); out.keptC = (out.keptC || []).concat([{ row, c }]); continue; }
       if (c.retry) { retry(); continue; }
       relinkWait.delete(k);
       if (c.action === "design") { relinkSay(row, c, relinkBy(row, c.link), { text: "not made yet: it is made with the picked charm" }); out.design.push({ row, c }); }
@@ -15753,6 +15920,8 @@ const Review = window.Review = (() => {
       RunCtl.poke();
     }
     if (again) relinkLater(RELINK_RETRY_MS);
+    out.sheets = touched;
+    for (const f of [...relinkSubs]) { try { f(out); } catch (e) { console.warn("[relink] a follower:", e && e.message); } }   // (WRONGCHARM2: relinkFlow's progress lines)
     return out;
   }
   /* ═══ REDRAW · a SKU re-pointed to ANOTHER drawing re-makes the open pieces cut from the old one (Paul, 19 Oct 2026, order 4206638416, SKU HAPPY T-REX) ═══════════════════════════════════
@@ -17071,7 +17240,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, openCount, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, openCount, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */

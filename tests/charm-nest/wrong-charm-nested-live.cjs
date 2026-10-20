@@ -193,6 +193,21 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     assert.notEqual(d.keyD, keyAfter, 'D\'s picture (its old piece) never shares a key with MOON_3288\'s: ' + d.keyD);
     await until(async () => (await shown(one.page, selD)) === picOld, 8000, async () => 'D\'s Orders row still shows the piece it has, the old design (it shows ' + await which(one.page, selD, picOld, picNew) + ')');
     pass('D (cut) keeps its piece; its line says the piece is the old design and why; its picture is the piece it has, under a key of its own');
+    /* the progress panel: one line per place updated, a full bar, a summary; it closes over an open window */
+    await until(() => one.page.evaluate(() => !!document.querySelector('.rlFlow[data-done="1"]')), 15000, 'the progress panel finished');
+    const fl = await one.page.evaluate(() => { const el = document.querySelector('.rlFlow'); return { title: el.querySelector('h3').textContent, bar: el.querySelector('.rlBar').getAttribute('aria-valuenow'), sum: el.querySelector('.rlSum').textContent, lines: [...el.querySelectorAll('li')].map(li => [li.dataset.s, li.querySelector('.rlT').textContent]) }; });
+    const has = (state, re) => fl.lines.some(([s, t]) => s === state && re.test(t));
+    assert(/Wrong charm\? · listing 1819191541 → MOON_3288/.test(fl.title) && fl.bar === '100', 'the panel names the change and its bar is full: ' + JSON.stringify(fl));
+    assert(has('done', /^Linked listing 1819191541 · SKU “TINY MOON & STARS 2” to MOON_3288/), 'the link line: ' + JSON.stringify(fl.lines));
+    assert(has('done', new RegExp(`^Order ${A}: piece taken off GF Sheet 1 and made from MOON_3288`)), 'A\'s line names the sheet and the new design: ' + JSON.stringify(fl.lines));
+    assert(has('warn', new RegExp(`^Order ${D}: its piece stays TINY MOON & STARS 2 on GF Sheet 2.*cut`)), 'D\'s line says its piece stays, and why: ' + JSON.stringify(fl.lines));
+    assert(has('done', /^GF Sheet 1 nested again and its files saved/) && has('done', /^Thumbnails updated/), 'the sheet and the pictures have their lines: ' + JSON.stringify(fl.lines));
+    assert(!fl.lines.some(([s]) => s === 'failed') && /1 order updated, 1 sheet nested again, 1 kept for a person/.test(fl.sum), 'nothing failed; the summary: ' + fl.sum);
+    await one.page.evaluate(A => { const r = B.orders.rows.find(x => x.order.receiptId === A); OrderWin.open(r.key); }, A);
+    await until(() => one.page.evaluate(() => OrderWin.isOpen()), 8000, 'the order window again');
+    await one.page.click('.rlFlow [data-rl=close]', { timeout: 5000 });
+    assert.equal(await one.page.evaluate(() => document.querySelectorAll('.rlFlow').length), 0, 'the panel closes with its button, over the open order window');
+    pass('the progress panel says each place updated (the link, A taken off GF Sheet 1 and made from MOON_3288, D kept and why, GF Sheet 1 nested again, the pictures), fills, sums up and closes');
     assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
   } finally { await browser.close(); srv.close(); }
   console.log(`wrong-charm-nested-live: ${n} steps passed`);
