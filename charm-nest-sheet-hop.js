@@ -389,6 +389,8 @@
     const K = kit(); if (!K || H.drag || H.busy || !e.isPrimary || (e.pointerType === "mouse" && e.button !== 0)) return;
     const pg = here(); if (!pg || !manualOn(pg) || K.W.hand || K.W.add) return;
     if (!(e.target instanceof Element) || !e.target.closest("canvas")) return;
+    // (MCFREE, Paul 20 Oct 2026: a press on one of Manual Control's handles (resize, turn), which may lie over another charm or past the plate, is its own, never a hop)
+    if (window.CNManual && typeof CNManual.handleAt === "function" && tryDo(() => CNManual.handleAt(e.clientX, e.clientY))) return;
     const pt = K.toPlate(e), x = K.hitPt(pt.x, pt.y); if (!x || !x.poolId) return;
     const c = actives(pg).find(z => z.poolId === x.poolId); if (!c) return;
     H.pending = { pid: e.pointerId, x0: e.clientX, y0: e.clientY, pg, c, x, type: e.pointerType };

@@ -5303,8 +5303,12 @@ const Gate = window.Gate = (() => {
     const b = backsOf(p); return b && !b.ok ? b.line : "";
   }
   /** Why a sheet cannot join a set now, in plain words ("" when it can). `ready` = the run's sheets with saved files. */
+  // (MCFREE, Paul 20 Oct 2026: a charm may be placed by hand where it overlaps another, shown red; the charms of a sheet that overlap (Manual Control's own check, and the
+  //  sheet's verifier), so that such a sheet joins no set and never reaches the laser until they are moved clear)
+  const handOverlaps = (sh => { let n = 0; try { n = (window.CNManual && typeof CNManual.conflicts === "function" && CNManual.conflicts(sh).n) || 0; } catch (_) {} const pairs = (sh && sh.verification && sh.verification.geom && sh.verification.geom.overlappingPairs) || []; return Math.max(n, new Set([].concat(...pairs)).size); });
   function cannotJoin(p, ready) {
     const gold = goldGap(p); if (gold) return gold;
+    { const n = handOverlaps(p); if (n) return `${n} charms on it overlap (placed by hand): move them clear in Manual Control`; }   // (MCFREE)
     if (p.endedBy === "stopped") return "its nesting was stopped";
     if (p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone)) return "it is still being nested or saved";
     if (!(p.placements || []).length) return "nothing is placed on it";
@@ -11429,6 +11433,8 @@ const Sets = window.Sets = (() => {
   function validateRelease(set) {
     const pendingRelease = message => Object.assign(new Error(message), {releasePending:true});
     const sheets = sheetsOf(set);
+    // (MCFREE, Paul 20 Oct 2026: charms placed by hand where they overlap never reach the laser silently: the set is held, and the sheet named, until they are moved clear)
+    for (const sh of sheets) { const n = (sh => { let n = 0; try { n = (window.CNManual && typeof CNManual.conflicts === "function" && CNManual.conflicts(sh).n) || 0; } catch (_) {} const pairs = (sh && sh.verification && sh.verification.geom && sh.verification.geom.overlappingPairs) || []; return Math.max(n, new Set([].concat(...pairs)).size); })(sh); if (n) throw pendingRelease(`${sh.fileBase || "A sheet of this set"}: ${n} charms overlap (placed by hand in Manual Control). Move them clear before this set is committed or cut`); }
     if (sheets.some(sh => sh.runHold)) throw pendingRelease("A sheet in this set still needs attention");
     // Paul, 10 Oct: a set goes to the laser only with at least 1 completed GF sheet and 1 completed SS sheet (charm-nest-set-rules.js; a set committed before is never blocked)
     const principle = window.CharmNestSetRules && window.CharmNestSetRules.gate(set, sheets);

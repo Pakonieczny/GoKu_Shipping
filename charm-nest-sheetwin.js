@@ -398,6 +398,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swHand.swMc .k.ok{color:#cfe6c9}
 .swPlate.manual canvas.swFx{cursor:default}
 .swPlate.mcDrag canvas.swFx{cursor:grabbing!important}
+/* (MCFREE, Paul 20 Oct 2026: "Make it so these control vertices are always visible, even if they have to stick out beyond the bounds of the charm sheet"): the Manual
+   Control tool (its frame, corner squares and turning knob) is drawn on its own layer over the whole stage, never clipped by the plate; and while a charm overlaps,
+   the stage says so ("N charms overlap") */
+.swMcTool{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;z-index:6}
+.swMcWarn{position:absolute;left:50%;bottom:8px;z-index:6;transform:translateX(-50%);display:inline-flex;align-items:center;gap:7px;max-width:min(560px,92%);padding:4px 12px 4px 9px;border:1px solid #e7b9aa;border-left:3px solid var(--clay,#b0563f);border-radius:999px;background:color-mix(in srgb,var(--card) 95%,transparent);box-shadow:0 4px 14px rgba(30,24,16,.12);font:600 11.5px/1.35 var(--sans);color:#8a3a26;pointer-events:none;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.swMcWarn::before{content:"";flex:0 0 9px;width:9px;height:9px;border-radius:50%;background:var(--clay,#b0563f)}
+.swMcWarn small{font-weight:500;color:var(--ink70)}
+.swMcWarn[hidden]{display:none}
 /* motion (Paul, 27 Sep 20:09-20:24): the row about to leave is lit where it stands; a spot on the plate glows where a
    row lands (under the drawn charms); a flying candidate row keeps its panel's layout, as a card */
 .swOrd.going{background:var(--goldSoft)}.swOrd.going.cancel{background:var(--claySoft)}
@@ -451,7 +459,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       </header>
       <div class="swBody">
         <section class="swStage" data-r="stage">
-          <div class="swPlateBox" data-r="plateBox"><div class="swPlate" data-r="plate"><canvas class="swRule" data-r="rule"></canvas><img class="swPv" data-r="pv" alt="" crossorigin="anonymous"><canvas class="swBase" data-r="base"></canvas><canvas class="swFx" data-r="fx"></canvas><div class="swTip" data-r="tip"></div></div>
+          <div class="swPlateBox" data-r="plateBox"><div class="swPlate" data-r="plate"><canvas class="swRule" data-r="rule"></canvas><img class="swPv" data-r="pv" alt="" crossorigin="anonymous"><canvas class="swBase" data-r="base"></canvas><canvas class="swFx" data-r="fx"></canvas><div class="swTip" data-r="tip"></div></div><canvas class="swMcTool" data-r="mcTool" aria-hidden="true"></canvas><div class="swMcWarn" data-r="mcWarn" role="status" aria-live="polite" hidden></div>
             <div class="swHand" data-r="hand" hidden></div><div class="swHand swMc" data-r="mcBar" role="status" hidden></div><div class="swVeil" data-r="veil" hidden><span class="owSpin"></span><span data-r="veilText">Opening the sheet…</span></div></div>
           <footer class="swStrip" data-r="strip"></footer>
         </section>
@@ -518,6 +526,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     fx.addEventListener("pointerdown", e => { if (MC.on) mcDown(e); });
     fx.addEventListener("pointerup", e => { if (MC.drag) mcUp(e); });
     fx.addEventListener("pointercancel", () => { if (MC.drag) mcCancel(); });
+    // (MCFREE, Paul 20 Oct 2026: the tool's handles may stand outside the plate, over the stage round it, or over a dock: a press on one is taken here first, before the
+    //  plate (and the sheet hop's own press on a charm) or a dock sees it; the drag then follows the plate's canvas, which holds the pointer, wherever it goes)
+    E.plateBox.addEventListener("pointerdown", e => { if (MC.on && !MC.drag && !(e.button > 0) && mcHandleAt(e)) { e.stopPropagation(); mcDown(e); } }, true);
+    E.plateBox.addEventListener("pointermove", e => {
+      if (!MC.on || MC.drag) return;
+      const h = e.target === E.fx ? null : mcHandleAt(e), cur = h === "turn" ? "alias" : h === "size" ? "nwse-resize" : "";
+      if (E.plateBox.style.cursor !== cur) E.plateBox.style.cursor = cur;
+    });
+    W.dlg.addEventListener("scroll", () => { if (MC.on && MC.sel) tryDo(mcToolPaint); }, true);
     E.manual.onclick = () => mcToggle();
     fx.addEventListener("click", e => { if (MC.on) return; if (W.hand) { onMove(e); return handDrop(); } const p = hitAt(e); if (p) selectPiece(p, { from: "canvas" }); else if (W.view === "piece") showSheetPane(); });
     // (not while the order view holds the window's place or it comes back: the plate is fitted once it is in place)
@@ -1600,7 +1617,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return { f, mates };
   }
   // (one mark that cannot be drawn never stops the others, the loop that animates them, or what asked for the drawing)
-  function paintFx(now) { try { paintMarks(now); } catch (e) { console.warn("sheet window: plate marks", e); } }
+  function paintFx(now) { try { paintMarks(now); } catch (e) { console.warn("sheet window: plate marks", e); } tryDo(mcToolPaint); }   // (MCFREE: the Manual Control tool on its own layer, over the stage)
   function paintMarks(now) {
     const cv = W.el.fx, ctx = cv.getContext("2d"), k = W.k, R = W.R; if (!W.st) return;
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
@@ -2959,6 +2976,18 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const job0 = sh.jobId, running = sheetWorking(sh), prob0 = sh.problem || null, t0 = Date.now();
     // (a sheet held by Manual Control is written all the same when a person's own change asks for it, such as a charm dragged onto the next sheet
     //  (charm-nest-sheet-hop.js) while Manual Control is on: the hold keeps the run's own nests and arrivals away, never a write the person asked for)
+    // (MCFREE, Paul 20 Oct 2026: a charm placed by hand where it overlaps stays where it was put: the nest would lift a pinned charm it cannot seat, so a sheet left with
+    //  charms that overlap is written AS IT STANDS (the page's writeAsPlaced: no search, every charm where it is), its own verifier flagging it; it goes to no set and no
+    //  laser until they are moved clear (sheetClashes: Sets.validateRelease and cannotJoin, the sheet's card, the sheet window))
+    if (o.manual && !running && typeof window.writeAsPlaced === "function" && (tryDo(() => mcSheetClash(sh)) || []).length) {
+      const n = mcSheetClash(sh).length;
+      delete sh._manualHold; delete sh.runHold; if (mcFlagged(sh.problem)) sh.problem = null;
+      st.detail = "written as placed by hand, no search"; paint();
+      let wrote = false; try { wrote = !!(await window.writeAsPlaced(sh)); } catch (e) { console.warn("sheet window: write as placed", e); }
+      if (sh.problem && !mcFlagged(sh.problem)) throw new Error(`${sheetWord(sh.sheetId, sh.fileBase, sh)}: ${sh.problem}`);
+      if (!sh.persistedDone || (!wrote && !mcFlagged(sh.problem))) { st.state = "now"; st.detail = "still saving; it finishes on its card in the Nest tab"; return false; }
+      st.state = "ok"; st.detail = `${n} charms overlap: the sheet stays flagged until they are moved clear`; return true;
+    }
     if (!running) { if (!o.manual) sh._byHand = true; const held = sh._manualHold; delete sh._manualHold; try { startNest(sh); } finally { if (held && !o.manual) sh._manualHold = held; } }
     const until = t0 + 240000;
     while (Date.now() < until) {
@@ -4955,8 +4984,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      back preview's box): drag it to move it, drag the round handle above it to turn it (15° steps; Shift: by the degree), drag a corner to resize it (80 % to
      120 % of its design size, in 1 % steps, its shape kept: a resize changes the piece that is cut, so it stays within a fifth of what the buyer ordered). The
      arrow keys nudge it half a point (Shift: 2 pt), [ ] turn it 15° ({ } by 1°), + and − size it by 1 %, Esc lets it go. Every pose is put to the ONE check
-     below as it moves: sage where it may stay, clay where it may not; let go where it may not, it springs back to where it last stood (said in the bar), and
-     where it may, it snaps into the grid cell the nest itself would seat it in (within 1 pt of where it was let go when it is moved).
+     below as it moves: sage where it is clear, clay where it is not; let go where it may, it snaps into the grid cell the nest itself would seat it in (within
+     1 pt of where it was let go when it is moved). (MCFREE, Paul 20 Oct 2026: let go where it overlaps another charm or runs past the margin, it is no longer
+     sent back: it stays where it was put, red, with the charms it meets, until it is moved clear; see "free placement" below. The tool's handles are drawn on
+     their own layer over the stage, never clipped by the plate.)
      The check (mcCheck) is the nest's own: its collision grid (CharmNestSolver.makeSheetGrid / prepareVariant, fineRes 2, the run's clearance S.settings.clearancePt,
      the sheet's inset and any metal already cut away, the other charms stamped from their real outlines at their own poses and sizes), then the independent verifier
      (CharmNestSolver.verify at 6 px/pt) over the charm and its neighbours. Two outlines may touch, never cross: with the shop's clearance a charm may sit right against
@@ -5015,7 +5046,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (mcApproved(sh) || sentToStation(sh) || (rec && (rec.processReady || rec.laserSetPending))) return "This sheet's set is approved for laser cutting: its layout can no longer change.";
     if (sh.rosePlanHash || (rec && rec.rosePlanHash)) return "This sheet already has its green cut line. A charm moved by hand would no longer match that line, so its layout stays as it is.";
     if (!o.saving && (busy(sh) || sh._operationStarting || sh._learnedStarting || sh._rosePlanning || sh._roseLoading || sh._roseAction)) return "The sheet is being nested or saved right now. Try again once it has saved.";
-    if (!o.saving && sh.problem) return `The sheet has a problem to settle first: ${sh.problem}`;
+    // (MCFREE, Paul 20 Oct 2026: a sheet the run holds only because its check flagged it, such as a charm placed by hand where it overlaps, can be taken again to move it clear)
+    if (!o.saving && sh.problem && !mcFlagOnly(sh)) return `The sheet has a problem to settle first: ${sh.problem}`;
     if (!o.saving && (sh.dirty || !sh.persistedDone)) return "The sheet is waiting to be written again. Try again once it has saved.";
     if (!o.saving && !o.api && W.flow) return "Another change in this window is still running. Try again once it is done.";
     const Sv = SV(); if (!Sv || !Sv.makeSheetGrid || !Sv.prepareVariant || !Sv.verify) return "The layout check is not loaded in this page.";
@@ -5100,6 +5132,146 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return { ok: true, why: "", reason: "", pose: at, v };
   }
 
+  /* ── free placement (MCFREE, Paul 20 Oct 2026: "You should NOT prevent the user from placing a charm anywhere on a sheet, even if it conflicts/overlaps with another existing
+     charm. As long as that charm turns red when it is conflicting/overlapping with other charms, that should not prevent the user from placing that charm in a conflicted manner.
+     Green when clear, red when conflicting/overlapping."). A charm let go (or nudged, turned, resized, put back) where THE check above says no because it overlaps another
+     charm, runs past the sheet's margin or into metal cut away, stays where it was put; it and the charms it meets are clay (MC.bad) until it is moved clear, and sage again
+     then. Only what cannot be checked at all is refused (its drawing not loaded, a position that is not a number); the drag keeps the charm's middle on the sheet. The final
+     checks are untouched: such a sheet is written as it stands and its own verifier flags it, and sheetClashes() keeps it out of every set and off the laser (the sheet's
+     card, the stage's "N charms overlap", Sets.validateRelease and cannotJoin) until it is moved clear. ── */
+  const mcFree = r => !!r && ["overlap", "edge", "verify"].includes(r.why);
+  const mcAsPut = q => ({ cxPt: +(+q.cxPt).toFixed(3), cyPt: +(+q.cyPt).toFixed(3), angle: normDeg(q.angle), size: clampSize(q.size == null ? 1 : q.size) });
+  const mcFlagged = t => /^Verification flagged/.test(String(t || ""));
+  const mcFlagOnly = sh => !!sh && mcFlagged(sh.problem) && (!sh.runHold || mcFlagged(sh.runHold));
+  const mcClashWords = reason => { const t = String(reason || "").replace(/^No room there: /, "").replace(/\.$/, "") || "it overlaps another charm"; return t.replace(/^it would (\w+)/, (m, v) => "it " + (v === "run" ? "runs" : v === "go" ? "goes" : v + "s")); };
+  const mcRad = (c, size) => Math.hypot(+(c && c.widthPt) || 20, +(c && c.heightPt) || 20) / 2 * (size || 1) + 2;
+  /** The empty sheet as the nest sees it: its edge, inset and any metal cut away (kept for the same sheet). */
+  const MCE = new Map();
+  function mcEdgeOf(sh) {
+    const job = buildJob(sh), sheet = Object.assign({}, job.sheet), prof = sh.roseProtected && sh.roseProtected.profile;
+    if (prof) sheet.remnant = prof;
+    const sig = JSON.stringify([sh.sheetId || sh.page, sh.metal, job.clearancePt, sheet.wPt, sheet.hPt, sheet.insetPt, prof ? 1 : 0, sh.roseStock && sh.roseStock.revision]);
+    let E = MCE.get(sig); if (E) return E;
+    E = { edge: SV().makeSheetGrid(sheet, job.clearancePt, 2), sheet, clearancePt: job.clearancePt };
+    MCE.set(sig, E); if (MCE.size > 8) MCE.delete(MCE.keys().next().value);
+    return E;
+  }
+  /** The ids of the placed charms within reach of a charm at pose q (the ones whose colour can change when it comes or goes). */
+  function mcNearIds(sh, c, q, poses) {
+    if (!sh || !c || !q) return [];
+    const byId = new Map(sh.charms.map(z => [z.id, z])), r0 = mcRad(c, q.size), out = [];
+    for (const p of sh.placements) { if (p.id === c.id) continue; const o = mcPoseOf(sh, p.id, poses), z = byId.get(p.id); if (o && Math.hypot(o.cxPt - q.cxPt, o.cyPt - q.cyPt) <= r0 + mcRad(z, o.size) + 4) out.push(p.id); }
+    return out;
+  }
+  /** THE check's grid for one charm, with only its neighbours stamped (what it can meet), on the empty sheet's edge. */
+  function mcLocalGrid(sh, id, q, poses, E) {
+    const grid = Object.assign(E.edge.clone(), { fineRes: 2 }), others = [], byId = new Map(sh.charms.map(c => [c.id, c]));
+    const guarded = new Set(((sh.roseProtected && sh.roseProtected.placements) || []).map(p => p.id));
+    for (const oid of mcNearIds(sh, byId.get(id), q, poses)) {
+      const c = byId.get(oid), o = mcPoseOf(sh, oid, poses); if (!c || !o || !c.bits || !c.w) continue;
+      const v = mcVariant(c, o.angle, o.size, E.clearancePt); if (!v) continue;
+      grid.stamp(v.fine.bits, v.fine.w, v.fine.h, Math.round(o.cxPt * 2 - v.solid.cx), Math.round(o.cyPt * 2 - v.solid.cy));
+      others.push({ id: oid, c, q: o, guarded: guarded.has(oid) });
+    }
+    if (grid.buildSAT) grid.buildSAT();
+    return { grid, edge: E.edge, sheet: E.sheet, clearancePt: E.clearancePt, others, except: id };
+  }
+  /** Map id -> "" (clear) | why it is red, for the given placed charms (all of them when ids is null), each where it stands (poses: Manual Control's moves). */
+  function mcClashes(sh, poses, ids) {
+    const out = new Map(); if (!sh || !Array.isArray(sh.placements) || !sh.placements.length) return out;
+    const Sv = SV(); if (!Sv || !Sv.makeSheetGrid || !Sv.prepareVariant || !Sv.verify) return out;
+    const E = mcEdgeOf(sh), byId = new Map(sh.charms.map(c => [c.id, c])), placed = new Set(sh.placements.map(p => p.id));
+    for (const id of ids || placed) {
+      if (!placed.has(id) || out.has(id)) continue;
+      const c = byId.get(id), q = mcPoseOf(sh, id, poses); if (!c || !q || !c.bits || !c.w || mcLocked(sh, c)) { out.set(id, ""); continue; }
+      let r = null; try { r = mcCheck(mcLocalGrid(sh, id, q, poses, E), c, q, 0, true); } catch (e) { console.warn("sheet window: manual clash", e); }
+      out.set(id, r && !r.ok && mcFree(r) ? r.reason : "");
+    }
+    return out;
+  }
+  /** The colours again (MC.bad: the charms in clay) for the given charms and those already red; all of them when ids is null. */
+  function mcRecolour(ids) {
+    if (!MC.on || !MC.sh) return;
+    if (!MC.bad) MC.bad = new Set(); if (!MC.badWhy) MC.badWhy = new Map();
+    const res = mcClashes(MC.sh, MC.edits, ids ? [...new Set(ids.concat([...MC.bad]))] : null);
+    if (!ids) { MC.bad.clear(); MC.badWhy.clear(); }
+    for (const id of [...MC.bad]) if (!MC.sh.placements.some(p => p.id === id)) { MC.bad.delete(id); MC.badWhy.delete(id); }
+    for (const [id, why] of res) { if (why) { MC.bad.add(id); MC.badWhy.set(id, why); } else { MC.bad.delete(id); MC.badWhy.delete(id); } }
+    mcWarn();
+  }
+  /** The sheet's charms left where they overlap (or run past the margin), as its placements stand (the save, the write): kept for the same layout. */
+  const MCC = new WeakMap();
+  function mcSheetClash(sh) {
+    if (!sh || !MANUAL_METALS.includes(sh.metal) || !Array.isArray(sh.placements) || !sh.placements.length) return [];
+    const sig = JSON.stringify([+S.settings.clearancePt || 0, +S.settings.insetPt || 0, sh.placements.map(p => [p.id, +p.cxPt, +p.cyPt, +p.angle, +p.scale || 1]), sh.charms.map(c => [c.id, sizeOf(c), !!c.bits])]);
+    const hit = MCC.get(sh); if (hit && hit.sig === sig) return hit.ids;
+    const res = mcClashes(sh, null, null), ids = [...res].filter(([, w]) => w).map(([id]) => id);
+    MCC.set(sh, { sig, ids, why: new Map([...res].filter(([, w]) => w)) });
+    return ids;
+  }
+  /** The charms of a sheet that are red: as the window shows them while Manual Control is on for it, else as its placements stand (only a sheet a person moved charms on). */
+  function sheetClashes(sh) {
+    if (!sh) return [];
+    if (MC.on && MC.sh === sh) return [...(MC.bad || [])];
+    if (!MANUAL_METALS.includes(sh.metal) || !(sh.charms || []).some(c => c && c.manual)) return [];
+    return mcSheetClash(sh);
+  }
+  /** The stage's note while charms overlap: "N charms overlap". */
+  function mcWarn() {
+    const n0 = W.el && W.el.mcWarn; if (!n0) return;
+    const sh = W.dlg && W.dlg.open ? mcLive() : null, n = sh ? (tryDo(() => sheetClashes(sh)) || []).length : 0;
+    const html = n ? `<span><b>${n} charm${n === 1 ? " overlaps" : "s overlap"}</b> <small>${MC.on && MC.sh === sh ? "· red until moved clear; the sheet cannot be cut while any do" : "· this sheet cannot go to the laser until they are moved clear in Manual Control"}</small></span>` : "";
+    if (n0.hidden !== !n) n0.hidden = !n;
+    if (n0.dataset.n !== String(n) || n0.innerHTML !== html) { n0.dataset.n = String(n); n0.innerHTML = html; }
+  }
+  /* ── the tool on the stage's own layer (MCFREE, Paul 20 Oct 2026: "I'm stuck now because the parts of the square that provide the ability to resize and rotate are hidden,
+     which I cannot have. Make it so these control vertices are always visible, even if they have to stick out beyond the bounds of the charm sheet."). The frame, its four
+     corner squares and its turning knob are drawn on a canvas over the whole stage (.swMcTool, above the plate and the docks), so they stick out past the sheet's edge;
+     a handle that would still fall outside what can be seen (the stage's edge, the window, the screen) is drawn, and taken, at the nearest point 10 px inside it, tied to
+     its corner by a dotted line; the knob goes under the charm when there is no room above it. The drag itself is the same at any zoom: it works from where it was pressed. ── */
+  function mcVisible() {
+    let L = 0, T = 0, R = innerWidth, B = innerHeight;
+    for (let n = W.el.plateBox; n && n.nodeType === 1; n = n.parentElement) {
+      const cs = getComputedStyle(n);
+      if (n === W.el.plateBox || n === W.dlg || cs.overflowX !== "visible" || cs.overflowY !== "visible") { const q = n.getBoundingClientRect(); L = Math.max(L, q.left); T = Math.max(T, q.top); R = Math.min(R, q.right); B = Math.min(B, q.bottom); }
+      if (n === W.dlg) break;
+    }
+    return { left: L, top: T, right: Math.max(L, R), bottom: Math.max(T, B) };
+  }
+  function mcTool() {
+    const x = MC.sel; if (!MC.on || !x || x.gone || W.hop || !W.geom || !W.el.fx || !(W.dlg && W.dlg.open)) return null;
+    const cv = W.el.fx, r = cv.getBoundingClientRect(); if (!r.width || !cv.width) return null;
+    const s = cv.width / r.width, c = p => [r.left + p[0] / s, r.top + p[1] / s], b = mcBox(x), vis = mcVisible(), IN = 10;
+    const lo = (a, b2) => Math.min(a + IN, (a + b2) / 2), hi = (a, b2) => Math.max(b2 - IN, (a + b2) / 2);
+    const inside = p => p[0] >= lo(vis.left, vis.right) && p[0] <= hi(vis.left, vis.right) && p[1] >= lo(vis.top, vis.bottom) && p[1] <= hi(vis.top, vis.bottom);
+    const clamp = p => [Math.max(lo(vis.left, vis.right), Math.min(hi(vis.left, vis.right), p[0])), Math.max(lo(vis.top, vis.bottom), Math.min(hi(vis.top, vis.bottom), p[1]))];
+    const frame = b.corners.map(c), centre = c([b.X, b.Y]), knob0 = c(b.knob), corners = frame.map(clamp);
+    let stem = c(b.top), knob = knob0;
+    if (!inside(knob0)) { const below = c(b.knobBelow); if (inside(below)) { knob = below; stem = c(b.bottom); } else knob = clamp(knob0); }
+    // (a knob pressed into a corner's square is moved along, toward the charm's middle, so both can be taken)
+    for (let i = 0; i < 4 && corners.some(q => Math.hypot(q[0] - knob[0], q[1] - knob[1]) < 20); i++) knob = clamp([knob[0] + (centre[0] >= knob[0] ? 20 : -20), knob[1] + (Math.abs(centre[0] - knob[0]) < 4 ? (centre[1] >= knob[1] ? 20 : -20) : 0)]);
+    return { centre, frame, corners, stem, knob, raw: { corners: frame, knob: knob0 }, vis };
+  }
+  const mcBadNow = () => { const dr = MC.drag; return dr && dr.moved && dr.res ? !dr.res.ok : !!MC.springBad || !!(MC.sel && MC.bad && MC.bad.has(MC.sel.id)); };
+  function mcToolPaint() {
+    const cv = W.el && W.el.mcTool, box = W.el && W.el.plateBox; if (!cv || !box) return;
+    const t = mcTool();
+    if (!t) { if (cv.width) { cv.width = 0; cv.height = 0; } return; }
+    const o = cv.getBoundingClientRect(), dpr = W.dpr || devicePixelRatio || 1, w = Math.round(o.width * dpr), h = Math.round(o.height * dpr);
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const ctx = cv.getContext("2d"), P = p => [(p[0] - o.left) * dpr, (p[1] - o.top) * dpr], d = dpr, bad = mcBadNow();
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, w, h);
+    ctx.lineWidth = d; ctx.strokeStyle = bad ? "#b0563f" : "rgba(38,110,190,.9)"; ctx.setLineDash([]);
+    ctx.beginPath(); t.frame.forEach((p, i) => { const q = P(p); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); }); ctx.closePath(); ctx.stroke();
+    ctx.beginPath(); { const a = P(t.stem), k = P(t.knob); ctx.moveTo(a[0], a[1]); ctx.lineTo(k[0], k[1]); } ctx.stroke();
+    // a corner square kept inside the stage is tied to its corner by a dotted line
+    ctx.setLineDash([2 * d, 2 * d]);
+    t.corners.forEach((p, i) => { const f = t.frame[i]; if (Math.hypot(p[0] - f[0], p[1] - f[1]) > 1) { const a = P(f), q = P(p); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(q[0], q[1]); ctx.stroke(); } });
+    ctx.setLineDash([]); ctx.fillStyle = "#fff";
+    for (const p of t.corners) { const q = P(p); ctx.beginPath(); ctx.rect(q[0] - 4 * d, q[1] - 4 * d, 8 * d, 8 * d); ctx.fill(); ctx.stroke(); }
+    { const k = P(t.knob); ctx.beginPath(); ctx.arc(k[0], k[1], 5 * d, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+  }
+
   /* ── the switch, the bar, the tool ── */
   function mcButton() {
     const b = W.el && W.el.manual; if (!b) return;
@@ -5112,6 +5284,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const put = (k, v) => { if (b.getAttribute(k) !== v) b.setAttribute(k, v); };
     put("aria-pressed", String(MC.on)); put("aria-disabled", String(!!why || MC.claiming)); put("data-why", why); put("title", title);
     if (b.classList.contains("busy") !== MC.claiming) b.classList.toggle("busy", MC.claiming);
+    tryDo(mcWarn);   // (MCFREE)
   }
   function mcSay(text, tone) {
     if (!MC.on) { if (text && !swNote(W.el.manual, { text })) toast(text, tone === "bad" ? "bad" : "", 6000); return; }
@@ -5162,6 +5335,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     Object.assign(MC, { on: true, sh, id: sh.sheetId, who, sel: null, lift: null, drag: null, edits: new Map(), valid: null, msg: "", tone: "", owed: new Set() });
     MC.from = new Map(sh.placements.map(p => [p.id, mcPoseOf(sh, p.id, null)]));
     for (const x of W.pieces) { const q = MC.from.get(x.id); if (q) mcShow(x, q); }   // (drawn as this sorter holds them)
+    MC.bad = new Set(); MC.badWhy = new Map(); tryDo(() => mcRecolour(null));   // (MCFREE: a charm left overlapping before is red from the start)
     sh._manualHold = true;
     W.hover = null; setHover(null); tip(null); W.el.plate.classList.add("manual");
     clearInterval(MC.beat); MC.beat = setInterval(() => { if (!MC.on) return clearInterval(MC.beat); mcClaim(MC.id).then(r2 => { if (MC.on && r2 && r2.ok === false) mcSay(`${(r2.held && r2.held.by) || "Someone"} took this sheet on another screen; press Manual Control to save what you moved.`, "bad"); }).catch(() => {}); }, MC_BEAT);
@@ -5173,6 +5347,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function mcStop() {
     cancelAnimationFrame(MC.spring); MC.spring = 0; MC.springBad = false; clearInterval(MC.beat); clearTimeout(MC.msgT);
     MC.on = false; MC.sel = null; MC.lift = null; MC.drag = null; MC.valid = null; MC.G = null; MC.grids.clear(); MC.msg = "";
+    MC.bad = new Set(); MC.badWhy = new Map(); if (W.el.plateBox) W.el.plateBox.style.cursor = ""; tryDo(mcToolPaint); tryDo(mcWarn);   // (MCFREE)
     if (W.el.plate) { W.el.plate.classList.remove("manual", "mcDrag"); W.el.fx.style.cursor = ""; }
     mcRender(); mcButton();
   }
@@ -5200,6 +5375,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     MC.sel = null; MC.lift = null; MC.drag = null; MC.valid = null;
     for (const id of [...MC.edits.keys()]) if (!MC.sh.placements.some(p => p.id === id)) MC.edits.delete(id);   // (a charm dragged onto the next sheet meanwhile is no longer this sheet's move)
     for (const x of W.pieces) { const q = MC.edits.get(x.id); if (q) mcShow(x, q); }
+    tryDo(() => mcRecolour(null));   // (MCFREE)
     mcRender();
   }
   function mcShow(x, q) { x.p = Object.assign({}, x.p, { cxPt: q.cxPt, cyPt: q.cyPt, angle: q.angle, scale: scaleOf(q.size) }); }
@@ -5218,17 +5394,18 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const hw = ((c && +c.widthPt) || p.wPt / s) / 2 * s * k + 5 * d, hh = ((c && +c.heightPt) || p.hPt / s) / 2 * s * k + 5 * d;
     const a = (+p.angle || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a), X = plateX(p.cxPt), Y = W.R + p.cyPt * k;
     const at = (lx, ly) => [X + lx * ca - ly * sa, Y + lx * sa + ly * ca];
-    return { X, Y, corners: [at(-hw, -hh), at(hw, -hh), at(hw, hh), at(-hw, hh)], top: at(0, -hh), knob: at(0, -hh - 22 * d) };
+    return { X, Y, corners: [at(-hw, -hh), at(hw, -hh), at(hw, hh), at(-hw, hh)], top: at(0, -hh), knob: at(0, -hh - 22 * d), bottom: at(0, hh), knobBelow: at(0, hh + 22 * d) };   // (MCFREE: knobBelow, the knob's place when there is no room above)
   }
   function mcPx(e) { const cv = W.el.fx, r = cv.getBoundingClientRect(), s = cv.width / r.width; return [(e.clientX - r.left) * s, (e.clientY - r.top) * s]; }
-  function mcHandleAt(pt) {
-    const x = MC.sel; if (!x || x.gone) return null;
-    const b = mcBox(x), near = (a, r) => Math.hypot(pt[0] - a[0], pt[1] - a[1]) <= r * W.dpr;
-    return near(b.knob, 11) ? "turn" : b.corners.some(c => near(c, 10)) ? "size" : null;
+  // (MCFREE, Paul 20 Oct 2026: a handle is found where it is drawn, on the stage's own layer and kept inside what can be seen, not where it would fall on the plate)
+  function mcHandleAt(e) {
+    const t = mcTool(); if (!t || !e) return null;
+    const near = (a, r) => Math.hypot(e.clientX - a[0], e.clientY - a[1]) <= r;
+    return near(t.knob, 12) ? "turn" : t.corners.some(c => near(c, 11)) ? "size" : null;
   }
   function mcHover(e) {
     if (MC.drag) return mcDragMove(e);
-    const h = mcHandleAt(mcPx(e)), p = h ? null : hitAt(e), locked = p && mcLocked(MC.sh, p.c);
+    const h = mcHandleAt(e), p = h ? null : hitAt(e), locked = p && mcLocked(MC.sh, p.c);
     W.el.fx.style.cursor = h === "turn" ? "alias" : h === "size" ? "nwse-resize" : p ? (locked ? "not-allowed" : "grab") : "default";
     tip(p, e);
   }
@@ -5237,7 +5414,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     e.preventDefault();
     if (MC.spring || !W.geom) return;
     const pt = mcPx(e);
-    let mode = mcHandleAt(pt), x = MC.sel;
+    let mode = mcHandleAt(e), x = MC.sel;
     if (!mode) {
       const hit = hitAt(e);
       if (!hit) return mcSelect(null);
@@ -5268,13 +5445,19 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!d.moved || !d.raw) { if (MC.valid) mcShow(d.x, MC.valid); paintFx(); return mcRender(); }   // (a press without a move: the charm is in hand, nothing more)
     const res = mcCheck(MC.G, d.x.c, d.raw, d.mode === "move" ? MC_SNAP_PT : 0, true);
     if (res.ok) mcCommit(d.x, res.pose, res.v);
+    else if (mcFree(res)) mcCommit(d.x, mcAsPut(d.raw), res.v, res.reason);   // (MCFREE: where it overlaps or runs past the margin, it stays where it was put, red)
     else mcSpring(d.x, d.show || d.raw, MC.valid, res.reason);
   }
   function mcCancel() { const d = MC.drag; MC.drag = null; if (W.el.plate) W.el.plate.classList.remove("mcDrag"); if (d) { try { if (d.pid != null && W.el.fx.hasPointerCapture(d.pid)) W.el.fx.releasePointerCapture(d.pid); } catch (_) {} } if (d && MC.valid) mcSpring(d.x, d.show || d.raw || MC.valid, MC.valid, ""); return !!d; }
-  function mcCommit(x, q, v) {
+  function mcCommit(x, q, v, clash) {
+    const was = MC.valid;
     if (mcChanged(MC.from.get(x.id), q)) MC.edits.set(x.id, q); else MC.edits.delete(x.id);
     MC.valid = q; mcShow(x, q); if (v) { x.p.wPt = v.solid.w / 2; x.p.hPt = v.solid.h / 2; }
-    paintFx(); mcSay(MC.from.get(x.id) && !mcChanged(MC.from.get(x.id), q) ? "Back where it was" : "Placed: it fits there", "ok");
+    // (MCFREE, Paul 20 Oct 2026: "Green when clear, red when conflicting/overlapping": the charm and those round where it left and where it went take their colour again)
+    tryDo(() => mcRecolour([x.id].concat(mcNearIds(MC.sh, x.c, was, MC.edits), mcNearIds(MC.sh, x.c, q, MC.edits))));
+    paintFx();
+    if (clash || (MC.bad && MC.bad.has(x.id))) return mcSay(`Placed where you put it, but ${mcClashWords(clash || (MC.badWhy && MC.badWhy.get(x.id)) || "")}: it stays red until it is moved clear.`, "bad");
+    mcSay(MC.from.get(x.id) && !mcChanged(MC.from.get(x.id), q) ? "Back where it was" : "Placed: it fits there", "ok");
   }
   /** Let go where it may not stay: it glides back to where it last stood (at once with reduced motion), and the bar says why. */
   function mcSpring(x, from, to, reason) {
@@ -5296,9 +5479,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   function mcPutBack() {
     const x = MC.sel, q = x && MC.from.get(x.id); if (!x || !q) return;
-    const res = mcCheck(MC.G, x.c, q, 0, true);
-    if (!res.ok) return mcSay("Its old place is taken now by a charm moved after it: " + res.reason.replace(/^No room there: /, ""), "bad");
-    mcSpring(x, mcDraftOf(x), q, ""); MC.edits.delete(x.id); MC.valid = q; mcSay("Back where it was", "ok");
+    // (MCFREE, Paul 20 Oct 2026: never refused: a place taken meanwhile by a charm moved after it leaves this one red there)
+    const was = mcDraftOf(x);
+    mcSpring(x, was, q, ""); MC.edits.delete(x.id); MC.valid = q;
+    tryDo(() => mcRecolour([x.id].concat(mcNearIds(MC.sh, x.c, was, MC.edits), mcNearIds(MC.sh, x.c, q, MC.edits))));
+    if (MC.bad && MC.bad.has(x.id)) mcSay(`Back where it was, but ${mcClashWords((MC.badWhy && MC.badWhy.get(x.id)) || "")}: it stays red until it is moved clear.`, "bad"); else mcSay("Back where it was", "ok");
   }
   /** A key with a charm in hand: the arrows nudge it (0.5 pt, Shift 2 pt), [ ] turn it 15° ({ } 1°), + − size it 1 %; a step it may not take is refused. */
   function mcKey(e) {
@@ -5310,9 +5495,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!mv && !turn && !grow) return false;
     e.preventDefault();
     const q = Object.assign({}, mcDraftOf(x));
-    if (mv) { q.cxPt += mv[0]; q.cyPt += mv[1]; } else if (turn) q.angle = normDeg(Math.abs(turn) === MC_TURN ? Math.round((q.angle + turn) / MC_TURN) * MC_TURN : q.angle + turn); else q.size = clampSize(q.size + grow);
+    if (mv) { q.cxPt = Math.max(0, Math.min(W.st ? W.st.wPt : Infinity, q.cxPt + mv[0])); q.cyPt = Math.max(0, Math.min(W.st ? W.st.hPt : Infinity, q.cyPt + mv[1])); } else if (turn) q.angle = normDeg(Math.abs(turn) === MC_TURN ? Math.round((q.angle + turn) / MC_TURN) * MC_TURN : q.angle + turn); else q.size = clampSize(q.size + grow);
     const res = mcCheck(MC.G, x.c, q, 0, true);
-    if (res.ok) { mcCommit(x, res.pose, res.v); mcRender(); } else mcSay(res.reason, "bad");
+    if (res.ok) { mcCommit(x, res.pose, res.v); mcRender(); } else if (mcFree(res)) { mcCommit(x, mcAsPut(q), res.v, res.reason); mcRender(); } else mcSay(res.reason, "bad");   // (MCFREE: taken, red)
     return true;
   }
   function paintManual(ctx) {
@@ -5325,27 +5510,19 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (x.gone || x === MC.sel || !mcChanged(MC.from.get(x.id), MC.edits.get(x.id) || MC.from.get(x.id))) continue;
       ctx.beginPath(); ctx.arc(plateX(x.p.cxPt), R + x.p.cyPt * k, 3.4 * d, 0, Math.PI * 2); ctx.fillStyle = "#caa861"; ctx.fill(); ctx.lineWidth = 1.2 * d; ctx.strokeStyle = "#fffefb"; ctx.stroke();
     }
-    const x = MC.sel; if (!x || x.gone || W.hop) return;   // (while the sheet hop holds a charm the tool stays down: the charm is in its hand)
-    const dr = MC.drag, bad = !!(dr && dr.moved && dr.res && !dr.res.ok) || MC.springBad;
-    // where it goes back to if it is let go where it cannot stay
-    if (dr && dr.moved && MC.valid && mcChanged(MC.valid, dr.show)) {
-      const g = { p: Object.assign({}, x.p, { cxPt: MC.valid.cxPt, cyPt: MC.valid.cyPt, angle: MC.valid.angle, scale: scaleOf(MC.valid.size) }), c: x.c };
-      withPiece(ctx, g, () => { ctx.setLineDash([4 * d, 3 * d]); outlinePath(ctx, g); ctx.strokeStyle = "rgba(60,54,46,.45)"; ctx.lineWidth = 1.1 * d / (g.p.scale || 1); ctx.stroke(); ctx.setLineDash([]); });
+    // (MCFREE, Paul 20 Oct 2026: "Green when clear, red when conflicting/overlapping": a charm that overlaps another, or runs past the sheet's margin, stays clay where it was put)
+    for (const y of W.pieces) {
+      if (y.gone || y === MC.sel || !(MC.bad && MC.bad.has(y.id))) continue;
+      withPiece(ctx, y, () => { ctx.fillStyle = "rgba(176,86,63,.30)"; outlinePath(ctx, y, true); ctx.fill("evenodd"); outlinePath(ctx, y); ctx.strokeStyle = "#b0563f"; ctx.lineWidth = 1.5 * d / (y.p.scale || 1); ctx.stroke(); });
     }
+    const x = MC.sel; if (!x || x.gone || W.hop) return;   // (while the sheet hop holds a charm the tool stays down: the charm is in its hand)
+    const bad = mcBadNow();
     withPiece(ctx, x, () => {
       ctx.fillStyle = bad ? "rgba(176,86,63,.30)" : "rgba(95,122,91,.22)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
       if (x.c) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
       outlinePath(ctx, x); ctx.strokeStyle = bad ? "#b0563f" : "#5f7a5b"; ctx.lineWidth = 1.7 * d / (x.p.scale || 1); ctx.stroke();
     });
-    // the tool: the engraving words' box (a frame, a corner square to resize, a knob on a stem to turn), clay while the pose cannot stay
-    const b = mcBox(x);
-    ctx.save(); ctx.lineWidth = d; ctx.strokeStyle = bad ? "#b0563f" : "rgba(38,110,190,.9)"; ctx.setLineDash([]);
-    ctx.beginPath(); b.corners.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); ctx.closePath(); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(b.top[0], b.top[1]); ctx.lineTo(b.knob[0], b.knob[1]); ctx.stroke();
-    ctx.fillStyle = "#fff";
-    for (const p of b.corners) { ctx.beginPath(); ctx.rect(p[0] - 4 * d, p[1] - 4 * d, 8 * d, 8 * d); ctx.fill(); ctx.stroke(); }
-    ctx.beginPath(); ctx.arc(b.knob[0], b.knob[1], 5 * d, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    ctx.restore();
+    // (the tool itself, the engraving words' box, is drawn over the whole stage by mcToolPaint: MCFREE)
   }
 
   /* ── off: the moves saved ── */
@@ -5381,7 +5558,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         if (!c || !p) throw new Error("a charm moved by hand left the sheet meanwhile");
         const lock = mcLocked(sh, c); if (lock) throw new Error(lock.replace(/\.$/, ""));
         const res = mcCheck(mcGrid(sh, id, edits), c, q, 0, true);
-        if (!res.ok || mcChanged(res.pose, q)) throw new Error(`${ridOfC(c) ? `order ${ridOfC(c)}'s charm` : "a charm"} no longer fits where it was put (${(res.reason || "it moved").replace(/^No room there: /, "").replace(/\.$/, "")})`);
+        // (MCFREE, Paul 20 Oct 2026: a charm placed where it overlaps, or past the margin, is saved where it was put, red; the sheet's own check flags it, and it goes to no
+        //  set and no laser until it is moved clear (sheetClashes: the sheet window, its card, Sets.validateRelease). Only a charm that cannot be checked at all stops the save)
+        if (!res.ok && !mcFree(res)) throw new Error(`${ridOfC(c) ? `order ${ridOfC(c)}'s charm` : "a charm"} could not be checked where it was put (${(res.reason || "it moved").replace(/^No room there: /, "").replace(/\.$/, "")})`);
       }
       check.state = "ok"; paint();
       // 2 · each charm where the person put it, pinned there by them (the nest keeps it; no later nest, gap fill or making room lifts it), at its own size
@@ -5413,7 +5592,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       tryDo(() => log(sh, `${n} charm(s) moved by hand by ${who} (Manual Control); the sheet was checked and written again`));
       agent({ metal: sh.metal, run: sh.runId }, "nest", `${sheetName(sh)}: ${n === 1 ? "1 charm" : n + " charms"} moved by hand by ${who} (Manual Control), pinned where they were put; the sheet was written again${sh.verification && sh.verification.ok ? " and its check passed" : sh.verification ? "; its check flagged it, see its report" : ""}`);
       work.state = "done"; work.title = `${n === 1 ? "1 charm" : n + " charms"} moved by hand on ${name}`;
-      work.note = (ok ? "Checked and saved: " : "Saved: ") + `the sheet's files and QR label were made again, and ${n === 1 ? "the charm stays" : "the charms stay"} where ${n === 1 ? "it was" : "they were"} put. ` + (sh.metal && window.CharmNestRose && CharmNestRose.owesLine && CharmNestRose.owesLine(sh) ? "Its green line is drawn by Cut Sheet, as before." : "");
+      const clashN = tryDo(() => mcSheetClash(sh).length) || 0;   // (MCFREE)
+      work.note = (clashN ? `Saved where ${n === 1 ? "it was" : "they were"} put, but ${clashN} charms overlap: the sheet stays flagged, and goes to no set or laser, until they are moved clear in Manual Control. ` : "") + (ok ? "Checked and saved: " : "Saved: ") + `the sheet's files and QR label were made again, and ${n === 1 ? "the charm stays" : "the charms stay"} where ${n === 1 ? "it was" : "they were"} put. ` + (sh.metal && window.CharmNestRose && CharmNestRose.owesLine && CharmNestRose.owesLine(sh) ? "Its green line is drawn by Cut Sheet, as before." : "");
       paint(); endFlow(work);
       if (window.RunCtl) tryDo(() => RunCtl.poke());
       await restAfter();
@@ -5503,6 +5683,18 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     },
     onToggle(fn) { if (typeof fn !== "function") return () => {}; MC.subs.add(fn); return () => MC.subs.delete(fn); },
     cancelDrag() { if (!MC.drag) return false; const had = mcCancel(); tryDo(paintFx); return had; },
+    /* (MCFREE, Paul 20 Oct 2026) conflicts(sheet, { placed }) -> { n, ids, reasons }: the charms of a 10K / 14K sheet placed (by hand) where they overlap another charm or run past the
+       sheet's margin, by Manual Control's own check; while Manual Control is on for it, as they stand in the window. The sheet's card, the Sets gate (validateRelease,
+       cannotJoin) and the sheet window read it: a sheet with any never joins a set or goes to the laser. handleAt(clientX, clientY) -> "turn" | "size" | null: a press there
+       takes one of the tool's handles (the sheet hop leaves it alone). */
+    conflicts(sheet, o = {}) {
+      const sh = typeof sheet === "string" ? allSheets().find(p => p.sheetId === sheet) || null : sheet || null;
+      // (o.placed: as its placements stand, never the window's moves not saved yet: what a write of the sheet writes, as the nest's finish asks)
+      const live = !o.placed && MC.on && MC.sh === sh;
+      const ids = (o.placed ? tryDo(() => (sh && (sh.charms || []).some(c => c && c.manual) ? mcSheetClash(sh) : [])) : tryDo(() => sheetClashes(sh))) || [], why = live ? MC.badWhy : (MCC.get(sh) || {}).why || new Map();
+      return { n: ids.length, ids: ids.slice(), reasons: ids.map(id => why.get(id) || "") };
+    },
+    handleAt(x, y) { return tryDo(() => mcHandleAt({ clientX: +x, clientY: +y })) || null; },
     fromRecord(rc) {
       const m = rc && rc.manual; if (!m || typeof m !== "object") return null;
       const size = +m.size;
@@ -5511,7 +5703,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (for the tests: the window's state, a point of the sheet on the screen, and where the tool's handles are on the screen)
     _MC: MC,
     _client(xPt, yPt) { const cv = W.el.fx, r = cv.getBoundingClientRect(), s = cv.width / r.width; return [r.left + plateX(xPt) / s, r.top + (W.R + yPt * W.k) / s]; },
-    _tool() { if (!MC.sel) return null; const cv = W.el.fx, r = cv.getBoundingClientRect(), s = cv.width / r.width, c = p => [r.left + p[0] / s, r.top + p[1] / s], b = mcBox(MC.sel); return { centre: c([b.X, b.Y]), knob: c(b.knob), corners: b.corners.map(c) }; }
+    // (MCFREE: the handles where they are drawn and taken, kept inside what can be seen of the stage; raw: where they would fall; vis: the stage's visible box; plate: the plate's)
+    _tool() { const t = mcTool(); if (!t) return null; const r = W.el.fx.getBoundingClientRect(); return { centre: t.centre, knob: t.knob, corners: t.corners, raw: t.raw, vis: t.vis, plate: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } }; }
   };
 
   /* ── one order on its sheet, for the order view (OrderWin; Paul, 28 Sep: "the order window and the sheet view become

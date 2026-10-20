@@ -8,11 +8,18 @@
 //   1  the switch: shown on a 10K / 14K sheet only (not on a Gold-filled sheet), and says why it cannot start (cut, lined, approved, being written, run not here)
 //   2  on: the sheet is claimed (manualEdit on its record) and held; press-drag moves a charm, the round handle turns it in 15° steps (Shift: by the degree),
 //      a corner resizes it within 80-120 %
-//   3  dragged onto another charm: clay while it is there, refused on letting go, back where it stood (and the bar says why)
+//   2b MCFREE (Paul, 20 Oct 2026: "Make it so these control vertices are always visible, even if they have to stick out beyond the bounds of the charm sheet"): a charm
+//      at the sheet's top-right corner has its 4 corner squares and its knob drawn (on the stage's own layer) and inside what can be seen, where the plate alone would
+//      have cut at least one off; the knob, pressed where it is drawn, turns it; the same at another window size; Ctrl+Z puts it back
+//   3  MCFREE (Paul, 20 Oct 2026: "You should NOT prevent the user from placing a charm anywhere on a sheet ... Green when clear, red when conflicting/overlapping"):
+//      dragged onto another charm: clay while it is there, and let go it STAYS there, it and the charm it meets red, the stage saying "2 charms overlap"; moved clear,
+//      green again and the note gone
 //   4  edge to edge with another charm (the outlines touch, never cross): allowed; 3 pt into it: refused (CNManual.fits says the same)
 //   5  off: saved through the real nest: the moved charms pinned where they were put (pinned, no arrivalPin, manual {by}), the resized one written at its size,
 //      the sheet verified, its record carrying the new layout and the manual mark, the claim given back, a "moved" step on the timeline
 //   6  a second computer: it cannot start while the first holds the sheet ("... on another screen"), and the server refuses its claim
+//   8  MCFREE: a charm left where it overlaps is saved there (written as it stands, no search), the sheet flagged: "2 charms overlap" on its card and on the stage, the
+//      Sets gate holds any set with it; Manual Control again shows both red from the start, and moved clear and saved, the sheet verifies again
 //   7  the moved charms survive a later nest from scratch (every other charm free to move): they stay exactly where they were put
 //   node tests/charm-nest/sheetwin-manual-control.cjs     (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>; SHOT_DIR=<dir> saves pictures)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
@@ -140,15 +147,66 @@ const root = path.join(__dirname, '../..');
     console.log(`ok   2  on: claimed and held; B moved to (${poseB.cxPt}, ${poseB.cyPt}), a quarter turn snapped to 90°, Shift turned it to ${turned}°, a corner sized it 110 % → 120 % (the most) → ${Math.round(sizeB * 100)} %`);
     if (process.env.SHOT_DIR) await page.screenshot({ path: path.join(process.env.SHOT_DIR, 'manual-on.png') });
 
-    /* ── 3 · onto another charm: clay while there, refused, back where it stood ── */
+    /* ── 2b · MCFREE: the handles at the sheet's top-right corner, always there to take ── */
+    const cE = S0.charms[4], e0 = await pose(cE);
+    const toolNow = () => page.evaluate(() => CNManual._tool());
+    const allIn = async (T, what) => {
+      const vp = page.viewportSize(), pts = [...T.corners, T.knob];
+      for (const [i, p] of pts.entries()) {
+        assert(p[0] >= T.vis.left + 4 && p[0] <= T.vis.right - 4 && p[1] >= T.vis.top + 4 && p[1] <= T.vis.bottom - 4, `${what}: handle ${i} inside the stage: ${p} in ${JSON.stringify(T.vis)}`);
+        assert(p[0] >= 0 && p[1] >= 0 && p[0] <= vp.width && p[1] <= vp.height, `${what}: handle ${i} on the screen: ${p}`);
+        // drawn there: the stage's tool layer has ink under it, and a press there takes that handle
+        const ink = await page.evaluate(([x, y]) => { const cv = document.querySelector('.sheetWin .swMcTool'), r = cv.getBoundingClientRect(), k = cv.width / r.width; return cv.getContext('2d').getImageData(Math.round((x - r.left) * k), Math.round((y - r.top) * k), 1, 1).data[3]; }, p);
+        assert(ink > 0, `${what}: handle ${i} is drawn at ${p}`);
+        assert.equal(await page.evaluate(([x, y]) => CNManual.handleAt(x, y), p), i < 4 ? 'size' : 'turn', `${what}: handle ${i} is taken where it is drawn`);
+      }
+    };
+    await drag(await at(230, 45), await at(276, 12), { steps: 14 });
+    q = await pose(cE); assert(Math.abs(q.cxPt - 276) < .8 && Math.abs(q.cyPt - 12) < .8, 'E at the top-right corner: ' + JSON.stringify(q));
+    let T = await toolNow(); assert(T, 'E is in hand');
+    await allIn(T, 'top-right corner');
+    const pl = T.plate, cutOff = [...T.raw.corners, T.raw.knob].filter(p => p[0] + 4 > pl.right || p[0] - 4 < pl.left || p[1] - 4 < pl.top || p[1] + 4 > pl.bottom).length;
+    assert(cutOff >= 1, 'at least one handle would have been cut off by the plate: ' + JSON.stringify({ raw: T.raw, pl }));
+    if (process.env.SHOT_DIR) await page.screenshot({ path: path.join(process.env.SHOT_DIR, 'manual-corner.png') });
+    await turn(88);
+    q = await pose(cE); assert.equal(q.angle, 90, 'the knob, taken where it is drawn, turns E: ' + JSON.stringify(q));
+    assert(Math.abs(q.cxPt - 276) < .8 && Math.abs(q.cyPt - 12) < .8, 'turned where it stands');
+    // another window size (the plate drawn at another scale): every handle still inside what can be seen
+    const sizes = [];
+    for (const vp of [{ width: 1100, height: 720 }, { width: 1680, height: 1050 }]) {
+      await page.setViewportSize(vp); await page.waitForTimeout(500);
+      T = await toolNow(); await allIn(T, `${vp.width}×${vp.height}`); sizes.push(`${vp.width}×${vp.height}`);
+    }
+    await page.setViewportSize({ width: 1440, height: 950 }); await page.waitForTimeout(500);
+    // Ctrl+Z: back where it stood when Manual Control was turned on (nothing kept for E)
+    await page.keyboard.press('Control+z'); await page.waitForTimeout(150);
+    q = await pose(cE); assert.deepEqual([q.cxPt, q.cyPt, q.angle], [e0.cxPt, e0.cyPt, e0.angle], 'E put back');
+    assert.equal(await page.evaluate(id => CNManual._MC.edits.has(id), cE), false);
+    console.log(`ok   2b MCFREE: at the top-right corner every handle (4 corners + the knob) is drawn and taken inside the stage (${cutOff} would have been cut off by the plate), the knob turned E to 90°; the same at ${sizes.join(' and ')}; Ctrl+Z put it back`);
+
+    /* ── 3 · MCFREE: onto another charm: clay while there, and it stays there, red; moved clear, green ── */
     const c0 = await pose(cC);
+    const warn = () => page.evaluate(() => { const n = document.querySelector('.sheetWin [data-r=mcWarn]'); return n && !n.hidden && n.offsetParent ? n.innerText.replace(/\s+/g, ' ').trim() : ''; });
+    assert.equal(await page.evaluate(() => CNManual._MC.bad.size), 0, 'the nested sheet is all clear (green) as Manual Control starts');
+    assert.equal(await warn(), '', 'no overlap note while all is clear');
     let during = null;
-    await drag(await at(40, 95), await at(46, 48), { before: async () => { during = await page.evaluate(() => { const d = CNManual._MC.drag; return d && d.res ? { ok: d.res.ok, why: d.res.why } : null; }); if (process.env.SHOT_DIR) await page.screenshot({ path: path.join(process.env.SHOT_DIR, 'manual-overlap.png') }); } });
-    assert(during && during.ok === false && during.why === 'overlap', 'while it lies over A it is refused (clay): ' + JSON.stringify(during));
-    q = await pose(cC); assert.deepEqual([q.cxPt, q.cyPt, q.angle], [c0.cxPt, c0.cyPt, c0.angle], 'let go there, C springs back to where it stood');
-    assert.equal(await page.evaluate(id => CNManual._MC.edits.has(id), cC), false, 'nothing kept for C');
-    assert.match(await bar(), /overlap.*went back/i, 'the bar says why: ' + await bar());
-    console.log('ok   3  dragged onto A: clay while there, refused on letting go, C back where it stood ("' + (await bar()).split('\n').find(l => /overlap/.test(l)) + '")');
+    await drag(await at(40, 95), await at(46, 48), { before: async () => { during = await page.evaluate(() => { const d = CNManual._MC.drag; return d && d.res ? { ok: d.res.ok, why: d.res.why } : null; }); } });
+    assert(during && during.ok === false && during.why === 'overlap', 'while it lies over A it is clay: ' + JSON.stringify(during));
+    q = await pose(cC); assert(Math.abs(q.cxPt - 46) < .8 && Math.abs(q.cyPt - 48) < .8, 'let go there, C STAYS where it was put: ' + JSON.stringify(q));
+    assert.equal(await page.evaluate(id => CNManual._MC.edits.has(id), cC), true, 'kept as a move of C');
+    assert.deepEqual(await page.evaluate(([a, c]) => [CNManual._MC.bad.has(c), CNManual._MC.bad.has(a)], [cA, cC]), [true, true], 'C and A are red');
+    assert.equal(await page.evaluate(id => CNManual.conflicts(id).n, S0.id), 2, 'CNManual.conflicts says 2');
+    let w = await warn(); assert.match(w, /2 charms overlap/, 'the stage says so: ' + w);
+    assert.match(await bar(), /Placed where you put it, but it overlaps order|Placed where you put it, but it overlaps another charm/, 'the toast says it overlaps: ' + await bar());
+    if (process.env.SHOT_DIR) await page.screenshot({ path: path.join(process.env.SHOT_DIR, 'manual-overlap.png') });
+    const warnSeen = w;
+    // moved clear (pressed where only C lies): green again, the note gone
+    await drag(await at(46, 54), await at(40, 101), { steps: 10 });
+    q = await pose(cC); assert(Math.abs(q.cxPt - c0.cxPt) < .8 && Math.abs(q.cyPt - c0.cyPt) < .8, 'C moved clear: ' + JSON.stringify(q));
+    assert.equal(await page.evaluate(() => CNManual._MC.bad.size), 0, 'nothing red once C is clear');
+    assert.equal(await warn(), '', 'the overlap note is gone');
+    assert.match(await bar(), /Back where it was|Placed: it fits there/);
+    console.log(`ok   3  MCFREE: dragged onto A, clay while there; let go, C stays there, C and A red, the stage says "${warnSeen}"; moved clear, green again and the note gone`);
 
     /* ── 4 · edge to edge: touching is allowed, 3 pt into it is not ── */
     const fit = (id, x, y, a) => page.evaluate(([sid, id, x, y, a]) => CNManual.fits(sid, id, { cxPt: x, cyPt: y, angle: a }), [S0.id, id, x, y, a]);
@@ -225,6 +283,41 @@ const root = path.join(__dirname, '../..');
     assert.equal(steps.length, 1, 'one step, for the one order that moved: ' + JSON.stringify(steps));
     assert.equal(steps[0].orderId, '4205028216'); assert.equal(steps[0].by, 'Tester'); assert.equal(steps[0].data.kind, 'manual'); assert.match(steps[0].text, /2 of its charms were moved by hand \(Manual Control\)/);
     console.log(`ok   5b the order's timeline: "${steps[0].text}" by ${steps[0].by}`);
+
+    /* ── 8 · MCFREE: left overlapping, saved there; the sheet flagged until it is moved clear ── */
+    await until(settled, 60000, 'the sheet at rest before Manual Control again'); await page.waitForTimeout(1500);
+    const mcOn = async () => { await openSheet(S0.id); await until(async () => (await sw()).disabled === 'false', 10000, 'the switch free'); await page.click('.sheetWin [data-r=manual]'); await until(() => page.evaluate(() => CNManual._MC.on), 10000, 'Manual Control on'); };
+    const mcOffSaved = async what => { await page.evaluate(() => { window.__w0 = SheetWin._W.work; }); await page.click('.sheetWin [data-r=manual]'); await until(() => page.evaluate(() => !CNManual._MC.on), 5000, 'Manual Control off');
+      return until(() => page.evaluate(() => { const w = SheetWin._W.work; return w && w !== window.__w0 && /moved by hand/.test(w.title) && w.state !== 'working' && !SheetWin._W.flow ? { state: w.state, title: w.title, note: w.note } : null; }), 180000, what); };
+    await mcOn();
+    assert.equal(await page.evaluate(() => CNManual._MC.bad.size), 0, 'clear as it starts');
+    await drag(await at(170, 100), await at(233, 52), { steps: 14 });
+    const poseD = await pose(cD); assert(Math.abs(poseD.cxPt - 233) < .8 && Math.abs(poseD.cyPt - 52) < .8, 'D stays on E: ' + JSON.stringify(poseD));
+    assert.deepEqual(await page.evaluate(([d, e]) => [CNManual._MC.bad.has(d), CNManual._MC.bad.has(e)], [cD, cE]), [true, true], 'D and E red');
+    const saved8 = await mcOffSaved('the overlapping save to end');
+    assert.equal(saved8.state, 'done', 'saved, overlapping: ' + JSON.stringify(saved8)); assert.match(saved8.note, /2 charms overlap/, 'the save says so: ' + saved8.note);
+    const f8 = await page.evaluate(([d, sid]) => { const sh = CN.S.sheets.gold10k.pages.at(-1), p = sh.placements.find(z => z.id === d), c = sh.charms.find(z => z.id === d);
+      const set = { setId: 'mcfree-probe', runId: sh.runId, sheetIds: [sh.sheetId], name: 'Probe set', group: 'dispatch' }, was = sh.setId; sh.setId = set.setId; let gate = null; try { gate = Sets.releaseIssue(set); } catch (e) { gate = 'threw: ' + e.message; } finally { if (was === undefined) delete sh.setId; else sh.setId = was; }
+      return { p, pinned: c.pinned, by: c.manual && c.manual.by, n: CNManual.conflicts(sid).n, ok: sh.verification && sh.verification.ok, card: sh.el ? sh.el.innerText.replace(/\s+/g, ' ') : '', gate, n5: sh.placements.length }; }, [cD, S0.id]);
+    assert(Math.abs(f8.p.cxPt - poseD.cxPt) < 1e-6 && Math.abs(f8.p.cyPt - poseD.cyPt) < 1e-6, 'D written exactly where it was put, over E: ' + JSON.stringify(f8.p));
+    assert.equal(f8.n5, 5, 'no charm lifted off the sheet'); assert.equal(f8.by, 'Tester');
+    assert.equal(f8.n, 2, 'CNManual.conflicts: 2 charms overlap'); assert.equal(f8.ok, false, "the sheet's own verifier flags it");
+    assert.match(f8.card, /2 charms overlap/, "the sheet's card in the Nest tab says so: " + f8.card.slice(0, 300));
+    assert.match(String(f8.gate), /2 charms overlap/, 'the Sets gate holds a set with it: ' + f8.gate);
+    const r8 = st.doc(SHEETS, S0.id).placements.find(z => z.id === cD); assert(Math.abs(r8.cxPt - poseD.cxPt) < .01 && Math.abs(r8.cyPt - poseD.cyPt) < .01, 'the record holds D over E');
+    await openSheet(S0.id);
+    w = await until(async () => { const v = await warn(); return /2 charms overlap/.test(v) ? v : null; }, 8000, 'the stage note on the saved sheet');
+    // Manual Control again: both red from the start; D moved clear: green, saved, verified
+    await mcOn();
+    assert.deepEqual(await page.evaluate(([d, e]) => [CNManual._MC.bad.has(d), CNManual._MC.bad.has(e)], [cD, cE]), [true, true], 'D and E red as it starts again');
+    await drag(await at(233, 59), await at(170, 107), { steps: 14 });
+    q = await pose(cD); assert(Math.abs(q.cxPt - 170) < .8 && Math.abs(q.cyPt - 100) < .8, 'D clear again: ' + JSON.stringify(q));
+    assert.equal(await page.evaluate(() => CNManual._MC.bad.size), 0, 'all green');
+    const clear8 = await mcOffSaved('the clear save to end');
+    assert.equal(clear8.state, 'done', JSON.stringify(clear8));
+    await until(settled, 120000, 'the sheet verified again once D is clear');
+    assert.equal(await page.evaluate(id => CNManual.conflicts(id).n, S0.id), 0, 'no conflicts left');
+    console.log(`ok   8  MCFREE: D left over E saved there (written as it stands, the sheet's verifier flagged it), card and stage: "${w}", the Sets gate: "${String(f8.gate).slice(0, 90)}…"; again on, both red from the start; moved clear, saved and verified`);
 
     /* ── 7 · a later nest from scratch: the moved charms stay ── */
     await until(settled, 60000, 'the sheet at rest before it is nested again'); await page.waitForTimeout(1500);   // (the save's last writes: its QR label, its backs)
