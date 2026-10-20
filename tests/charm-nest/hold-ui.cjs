@@ -149,7 +149,7 @@ async function main() {
         let done; const p = new Promise(r => { done = r; });
         return { push: s => rec.pushed.push(s.type), finish: () => { rec.finished = true; setTimeout(done, 25); }, skip: () => { rec.skipped = true; }, done: p };
       };
-      if (!noFx) window.OrderHoldFx = { playHold: film('hold'), playRelease: film('release'), returnToOnHold: rid => { T.returns.push(rid); CN.setMode('orders'); Orders.showPile('hold', ''); } };
+      if (!noFx) window.OrderHoldFx = { playHold: film('hold'), playRelease: film('release'), returnToOnHold: rid => { T.returns.push(rid); Review.showHeld(rid); } };   // (NOHOLDPILE, Paul 20 Oct 2026: home is Review, not Orders > On hold)
       else delete window.OrderHoldFx;
     }, { plan: PLAN('x'), noFx: !!opts.noFx, noRelease: !!opts.noRelease });
     const installFake = install;
@@ -387,7 +387,7 @@ async function main() {
     assert.equal(t.fx[0].source.name, 'Paul'); assert.equal(t.fx[0].source.hasPlan, true);
     await page.waitForFunction(() => !HoldUI.busy('4170837249'), null, { timeout: 8000 });
     assert.deepEqual(await holdBtns(P.rid), [], 'a held order has no Hold button any more');
-    assert.deepEqual(await page.evaluate(() => ({ mode: CN.S.mode, pile: Orders.view().pile })), { mode: 'orders', pile: 'hold' }, 'back in Orders > On hold');
+    assert.deepEqual(await page.evaluate(() => ({ mode: CN.S.mode })), { mode: 'review' }, 'back in Review (NOHOLDPILE)');
     assert.equal(await page.evaluate(() => window.__dlg.max), 1, 'never two dialogs at once, all the way through');
 
     // ── 8 · held and cancelled orders have no button (and no Review row ever had one) ──
@@ -459,19 +459,19 @@ async function main() {
     await closeWin();
     await page.evaluate(() => { document.getElementById('toasts').innerHTML = ''; });
 
-    // ── 11 · no film: the hold still runs and ends in Orders > On hold ──
+    // ── 11 · no film: the hold still runs and ends in Review (NOHOLDPILE) ──
     await installFake({ noFx: true });
     await page.evaluate(() => { CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
     await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-cu-complete]`), cable, { timeout: 15000 });
     await pressHold();
     await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
     await page.click('dialog.holdDlg [data-k=go]');
-    await page.waitForFunction(() => window.__t.runs.length === 1 && CN.S.mode === 'orders' && Orders.view().pile === 'hold' && !HoldUI.busy('4170837249'), null, { timeout: 20000 });
+    await page.waitForFunction(() => window.__t.runs.length === 1 && CN.S.mode === 'review' && !HoldUI.busy('4170837249'), null, { timeout: 20000 });
     assert.equal((await T()).fx.length, 0);
 
     // ── 12 · Release Hold on a held order's Orders card (RHSAME, Paul 20 Oct 2026: "This Release Hold button [Orders tab] needs to be the exact same as the one in the Review tab"): the Review card's own button and
     //       press (ReviewRelease.orderButton -> ReviewRelease.press -> OrderHold.release with the seal), the seal's orange; no HoldUI.release, no plan, no film. A release that does not work makes no seal (RELNOSEAL).
-    //       Shown in Open Orders (the On hold pile is going away). Was: HoldUI.release (releasePlan, the film, home), and Review.repool without an engine release.
+    //       Shown in Open Orders (NOHOLDPILE, Paul 20 Oct 2026: there is no On hold pile). Was: HoldUI.release (releasePlan, the film, home), and Review.repool without an engine release.
     await installFake();
     await page.evaluate(() => { const fr = OrderHold.release; OrderHold.release = (rid, o) => fr(rid, Object.assign({ onStep: () => {} }, o));   // (the Review release passes no onStep: there is no film to feed; the real engine's is optional)
       window.__hu = 0; const was = HoldUI.release; HoldUI.release = (...a) => { window.__hu++; return was(...a); }; document.getElementById('toasts').innerHTML = ''; CN.setMode('orders'); Orders.showPile('', ''); Orders.render(); });

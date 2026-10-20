@@ -222,7 +222,6 @@ function judge(c, T, S) {
       const s = S[c.sheetId], want = s ? s.orders.filter(rid => Object.entries(S).some(([id, o]) => id !== c.sheetId && o.set !== c.targetSetId && o.orders.includes(rid))) : [];
       return c.rids.join() === want.join() ? [] : [`lists orders ${c.rids.join(', ') || 'none'}, the cloud's are ${want.join(', ') || 'none'}`];
     }
-    case 'holdPile': { const want = new Set(Object.values(T).filter(t => t.state === 'held').map(t => t.rid)).size; return c.count === want ? [] : [`On hold pile counts ${c.count} order(s), the cloud has ${want} held`]; }
     // NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): the Review row has no Open sheet button any more (History stays): it is never offered, on a sheet or not
     case 'openSheet': return c.shown ? [`offers Open sheet (removed from the Review row), the piece is ${tl ? tl.state : '?'}`] : [];
     case 'cancelFlag': { const want = orderT.length > 0 && orderT.every(t => t.state === 'cancelled'); return c.cancelled === want ? [] : [`says the order is ${c.cancelled ? '' : 'not '}cancelled, the cloud says ${want ? '' : 'not '}cancelled`]; }

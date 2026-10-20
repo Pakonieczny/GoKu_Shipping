@@ -280,7 +280,7 @@ async function seededSegment(browser) {
       check(tlList(srv, H).filter(x => x.type === 'held').length === 2, `1 · exactly one timeline step per sheet, not doubled (${tlList(srv, H).filter(x => x.type === 'held').length})`);
       const after = await page.evaluate(H => ({ shown: HoldUI.shown(H), mode: CN.S.mode, pile: Orders.view().pile, btn: !!(window.__btn && window.__btn.isConnected && !window.__btn.hidden), flows: HoldUI.busy(H), status: OrderHold.status(H) }), H);
       check(!after.shown && !after.btn && !after.flows && !after.status.running && !after.status.resumable, `1 · the Hold button is gone and nothing is left running (${JSON.stringify(after)})`);
-      check(after.mode === 'orders' && after.pile === 'hold', `1 · the person is back in Orders > On hold, not left in the Nest tab (${after.mode}/${after.pile})`);
+      check(after.mode === 'review', `1 · the person is in Review (NOHOLDPILE: no Orders > On hold), not left in the Nest tab (${after.mode}/${after.pile})`);
       check((await dialogs(page)) === 0, '1 · no popup is left behind');
       check(tlOnlyGrew(tl0, tlSnapshot(srv)), '1 · the timeline only grew');
       await audit(srv, page, spec, '1');
@@ -888,7 +888,7 @@ async function uiSegment(browser) {
       const held = await A.page.evaluate(H => OrderHold.run(H, { name: 'Anna' }).then(r => r.ok), H);
       await settled(srv);
       check(held === true, '2 · the order is on hold first');
-      await A.page.evaluate(() => { Orders.showPile && Orders.showPile('hold', ''); });
+      await A.page.evaluate(() => { Orders.showPile && Orders.showPile('', ''); });
       const tl0 = tlSnapshot(srv), w0 = srv.writes.length;
       await A.ctx.setOffline(true);
       const off = await A.page.evaluate(H => CancelUI.cancel(H).then(x => JSON.parse(JSON.stringify(x))), H);
@@ -915,7 +915,7 @@ async function uiSegment(browser) {
       await seedCloud(srv, spec); await seedPage(A.page, spec);
       await A.page.evaluate(() => CN.setMode('orders'));
       await A.page.evaluate(H => OrderHold.run(H, { name: 'Anna' }).then(r => r.ok), H); await settled(srv);
-      await A.page.evaluate(() => { Orders.showPile && Orders.showPile('hold', ''); });
+      await A.page.evaluate(() => { Orders.showPile && Orders.showPile('', ''); });
       st.fail.charmNestLibrary = true;
       const bad = await A.page.evaluate(H => CancelUI.cancel(H).then(x => JSON.parse(JSON.stringify(x))), H);
       st.fail.charmNestLibrary = false;
@@ -937,7 +937,7 @@ async function uiSegment(browser) {
       const res = await holdResult(B.page, 120000); await settled(srv);
       await B.page.waitForFunction(() => !window.OrderHoldFx.active(), null, { timeout: 15000 }).catch(() => {});
       const s4 = await B.page.evaluate(H => ({ mode: CN.S.mode, pile: Orders.view().pile, left: document.querySelectorAll('.hfx, .hfxCap, .hfxMark, .hfxSkip').length, dialogs: document.querySelectorAll('dialog[open], .holdInline').length }), H);
-      check(res.ok === true && s4.mode === 'orders' && s4.pile === 'hold' && s4.left === 0 && s4.dialogs === 0, `4 · Esc skips the film, the hold completes and the person lands on Orders > On hold (${JSON.stringify(s4)})`);
+      check(res.ok === true && s4.mode === 'review' && s4.left === 0 && s4.dialogs === 0, `4 · Esc skips the film, the hold completes and the person lands on Review (NOHOLDPILE) (${JSON.stringify(s4)})`);
       await audit(srv, B.page, spec, '4 esc');
       const H2 = '4170000860', spec2 = std(H2);
       await seedCloud(srv, spec2); await seedPage(B.page, spec2);

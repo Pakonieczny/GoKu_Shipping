@@ -273,7 +273,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const openWin = async key => { await page.evaluate(k => OrderWin.open(k), key); await page.waitForFunction(k => OrderWin.key() === k && document.querySelectorAll('#owPcSum .owPcRow').length >= 1, key, { timeout: 20000 }); await page.waitForFunction(() => document.querySelector('#owPcSum [data-hold-btn]'), null, { timeout: 15000 }); };
   const dlgText = () => page.evaluate(() => { const d = document.querySelector('dialog.holdDlg[open], .holdInline'); return d ? d.innerText : null; });
   const holdBtns = rid => page.evaluate(r => [...document.querySelectorAll(`[data-hold-btn][data-rid="${r}"]`)].map(b => ({ text: b.textContent.trim(), src: b.dataset.src, visible: !b.hidden && b.offsetParent !== null, where: b.closest('#owPcSum') ? 'row' : b.closest('#rvList') ? 'card' : 'other' })), rid);
-  const waitHome = async (rid, what) => { await page.waitForFunction(r => !HoldUI.busy(r) && CN.S.mode === 'orders' && Orders.view().pile === 'hold' && !document.getElementById('hfxLayer'), rid, { timeout: 120000 }).catch(async e => { throw new Error(`${what}: never home: ${JSON.stringify(await page.evaluate(() => ({ mode: CN.S.mode, pile: Orders.view().pile, layer: !!document.getElementById('hfxLayer'), busy: HoldUI.busy('x') })))}`); }); };
+  const waitHome = async (rid, what) => { await page.waitForFunction(r => !HoldUI.busy(r) && CN.S.mode === 'review' && !document.getElementById('hfxLayer'), rid, { timeout: 120000 }).catch(async e => { throw new Error(`${what}: never home: ${JSON.stringify(await page.evaluate(() => ({ mode: CN.S.mode, pile: Orders.view().pile, layer: !!document.getElementById('hfxLayer'), busy: HoldUI.busy('x') })))}`); }); };
   const keyOfLine = (rid, tx) => kOf(rid, tx);
   const onHoldCards = rid => page.evaluate(r => [...document.querySelectorAll('#ordItems > [data-rid]')].filter(n => n.dataset.rid === r).map(n => ({ text: n.innerText.replace(/\s+/g, ' ').trim(), buttons: [...n.querySelectorAll('button')].map(b => b.textContent.trim()), pill: (n.querySelector('.ost') || {}).textContent, pieces: n.querySelectorAll('.ogPiece').length || 1 })), rid);   // (ENGONE: an order of several lines is ONE card with its pieces inside, so .pieces says how many lines it holds)
 
@@ -358,12 +358,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(walks(log).length, 1, 'the way home was walked once (the film and the glue both ask for it): ' + JSON.stringify(log.filter(e => e.ev === 'home')));
     pass('the film ran the engine\'s own steps: captions in order, one lift flight per piece taken off, a flight and a settle for each piece that moved in; it ended by itself in ' + end.ms + ' ms');
     // ── where the user ended ──
-    assert.deepEqual(await page.evaluate(() => ({ mode: CN.S.mode, pile: Orders.view().pile })), { mode: 'orders', pile: 'hold' }, 'the user ends in Orders > On hold');
+    assert.deepEqual(await page.evaluate(() => ({ mode: CN.S.mode })), { mode: 'review' }, 'the user ends in Review (NOHOLDPILE: there is no Orders > On hold)');
     const cards = await onHoldCards(H1);
     assert.equal(cards.length, 1, 'the order is ONE card in On hold: ' + JSON.stringify(cards)); assert.equal(cards[0].pieces, 2, 'with its two pieces inside');
-    for (const c of cards) { assert(/HELD/i.test(c.pill || '') && /Taken off GF Sheet 2, SS Sheet 1 by Paul/.test(c.text), 'the card says Taken off ... by Paul: ' + c.text); assert(c.buttons.includes('Release hold') && c.buttons.includes('Cancel Order'), 'the card has Release hold and Cancel Order: ' + c.buttons); }
+    for (const c of cards) { assert(/HELD/i.test(c.pill || '') && /Taken off GF Sheet 2, SS Sheet 1 by Paul/.test(c.text), 'the card says Taken off ... by Paul: ' + c.text); assert(c.buttons.includes('Release hold') && !c.buttons.includes('Cancel Order'), 'the card has Release hold and no Cancel Order (NOHOLDPILE): ' + c.buttons); }
     assert.deepEqual(await holdBtns(H1), [], 'no Hold button stays visible on a held order');
-    pass('the user is back in Orders > On hold: the order\'s cards say "Taken off GF Sheet 2, SS Sheet 1 by Paul", with Release hold and Cancel Order; no Hold button remains');
+    pass('the user is in Review (NOHOLDPILE); in Open Orders the order\'s cards say "Taken off GF Sheet 2, SS Sheet 1 by Paul", with Release hold; no Hold button remains');
     // ── the data ──
     const sh = await onSheets();
     for (const id of idsOf(H1, 1, 2)) { assert(!sh['e2e-gold-2'].all.includes(id) && !sh['e2e-silver-1'].all.includes(id), id + ' is off every sheet'); const p = poolDoc(id); assert(p.state === 'abandoned' && p.heldBy === 'Paul' && !p.sheetId, 'its record: held by Paul, off its sheet: ' + JSON.stringify(p)); }
@@ -458,11 +458,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const P = promised(seen.text), D = delivered(steps); oneOrderTwoSheets(steps, tag);
     for (const k of ['off', 'spots', 'waiting', 'newer']) if (P[k] != null) assert.equal(P[k], D[k], `${tag}: the popup said ${k} = ${P[k]}, the engine did ${D[k]}: ${seen.text.replace(/\s+/g, ' ')} || steps: ` + JSON.stringify(steps.map(s => [s.type, s.sheetId || s.toSheetId, s.rid, s.source, s.fromSheetId, (s.poolIds || []).length, s.spots, s.why])));
     // where the person ended
-    assert.deepEqual(await page.evaluate(() => ({ mode: CN.S.mode, pile: Orders.view().pile })), { mode: 'orders', pile: 'hold' }, `${tag}: the person ends in Orders > On hold`);
+    assert.deepEqual(await page.evaluate(() => ({ mode: CN.S.mode })), { mode: 'review' }, `${tag}: the person ends in Review (NOHOLDPILE)`);
     const rows = await rowsOf(rid), cards = await onHoldCards(rid), why = 'Taken off ' + x.names + ' by Paul';
     assert(rows.length >= 2 && rows.every(r => r.state === 'held' && r.hold === why && r.pieces === 0), `${tag}: every line of the order is held, with one reason, no piece left: ` + JSON.stringify(rows));
     assert(cards.length === 1 && cards[0].pieces === rows.length, `${tag}: the order is ONE card in On hold, its ${rows.length} pieces inside: ` + JSON.stringify(cards));
-    for (const c of cards) { assert(/HELD/i.test(c.pill || '') && c.text.includes(why), `${tag}: the card says "${why}": ` + c.text); assert(c.buttons.includes('Release hold') && c.buttons.includes('Cancel Order'), `${tag}: Release hold and Cancel Order: ` + c.buttons); assert(!c.buttons.includes('Hold'), `${tag}: no Hold on a held card`); }
+    for (const c of cards) { assert(/HELD/i.test(c.pill || '') && c.text.includes(why), `${tag}: the card says "${why}": ` + c.text); assert(c.buttons.includes('Release hold') && !c.buttons.includes('Cancel Order'), `${tag}: Release hold, no Cancel Order (NOHOLDPILE): ` + c.buttons); assert(!c.buttons.includes('Hold'), `${tag}: no Hold on a held card`); }
     assert.deepEqual(await holdBtns(rid), [], `${tag}: no Hold button stays anywhere for a held order`);
     // the data
     const sh = await onSheets();
@@ -508,7 +508,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const stale = await page.evaluate(k => ({ card: !!document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`), btn: document.querySelectorAll('[data-hold-btn][data-rid="4170000110"]').length }), k);
     assert.deepEqual(stale, { card: false, btn: 0 }, 'B: Review is redrawn: no card and no Hold button for the held order');
     await shot('b4-review-after');
-    await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('hold', ''); });
+    await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); });
     pass('Review was redrawn: the held order has no card and no Hold button there');
   });
   await ensureHeld(H2).catch(e => fail('H2 could not be held to carry on', e));
@@ -539,7 +539,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const stale = await page.evaluate(k => ({ card: !!document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`), btn: document.querySelectorAll('[data-hold-btn][data-rid="4170000120"]').length }), k);
     assert.equal(stale.btn, 0, 'C: Review (Completed) is redrawn: no Hold button for the held order' + (stale.card ? ' (the completed card itself stays, as a record)' : ''));
     await page.evaluate(() => { document.querySelector('#reviewView .rvSeg [data-cseg="open"]') && document.querySelector('#reviewView .rvSeg [data-cseg="open"]').click(); });
-    await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('hold', ''); });
+    await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); });
     pass('the completed list was redrawn: the held order has no card and no Hold button there');
   });
   await ensureHeld(H3).catch(e => fail('H3 could not be held to carry on', e));
@@ -583,7 +583,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert(Math.max(...incIds.map(id => inc0[id].rank)) < h1Rank, 'by age alone the incoming orders rank before the held order (older): ' + JSON.stringify([incIds.map(id => inc0[id].rank), h1Rank]));
     await page.evaluate(([g, s]) => { window.__cap[g] = 2; window.__cap[s] = 2; }, [gold.sheetId, silver.sheetId]);   // (a nest here places two pieces: whoever ranks first gets them)
     // On hold, the order's cards, and its Release hold
-    await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('hold', ''); });
+    await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); });
     const rel = `#ordItems > [data-rid="${H1}"] .relHold:not([data-gate])`;
     await page.waitForFunction(s => document.querySelectorAll(s).length === 1, rel, { timeout: 20000 });   // (one order, one card, one Release hold)
     await page.evaluate(s => document.querySelector(s).scrollIntoView({ block: 'center' }), rel);
@@ -648,10 +648,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert(spin, 'the button showed a small labelled "Checking sheets…" while the plan was read');
     pass('the film followed the release steps in order (first in line, finding a spot, placing, placed, released), one flight and one settle per piece, ended by itself in ' + end.ms + ' ms, one walk home');
     // ── where the person ended ──
-    assert.deepEqual(await page.evaluate(() => ({ mode: CN.S.mode, pile: Orders.view().pile })), { mode: 'orders', pile: 'hold' }, 'the person ends in Orders > On hold');
-    assert.equal((await onHoldCards(H1)).length, 0, 'the order has left On hold');
+    assert.deepEqual(await page.evaluate(() => ({ mode: CN.S.mode })), { mode: 'review' }, 'the person ends in Review (NOHOLDPILE)');
+    assert.equal((await onHoldCards(H1)).filter(c => /HELD/i.test(c.pill || '')).length, 0, 'the order is not held any more (NOHOLDPILE: no On hold pile to leave)');
     assert(note && /Order 4170000100 is back in line/.test(note.text) && note.text.includes('placed on ' + gold.label) && note.text.includes(silver.label) && note.btns.includes('Show'), 'a note says where it went: ' + JSON.stringify(note));
-    pass('the person is back in Orders > On hold, the order has left it, and a note says "' + note.text + '"');
+    pass('the person is in Review (NOHOLDPILE), the order is not held, and a note says "' + note.text + '"');
     // ── the QR label step ──
     const qrs = steps.filter(s => s.type === 'qr');
     assert.equal(qrs.length, 2, 'one QR step per sheet');
@@ -764,8 +764,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   }
 
   await flow('E · Cancel Order on On hold cards (' + H2 + ': cancel, Undo, cancel again; ' + H3 + ': the seal through Cancel, Undo and Release hold)', async () => {
+    // (NOHOLDPILE, Paul 20 Oct 2026: Cancel Order sat on the cards of Orders > On hold only, and that pile is gone with it)
+    pass('E · skipped: there is no On hold pile, so no Cancel Order on its cards (NOHOLDPILE)'); return;
     await ensureHeld(H2); await ensureHeld(H3);
-    await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('hold', ''); });
+    await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); });
     await clearNotes();
     await page.waitForFunction(r => document.querySelectorAll(`#ordItems > [data-rid="${r}"] .cnCancelBtn`).length === 1, H2, { timeout: 20000 });
     await page.evaluate(r => document.querySelector(`#ordItems > [data-rid="${r}"] .cnCancelBtn`).scrollIntoView({ block: 'center' }), H2);
@@ -823,7 +825,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await noLoss('E-release', {});
 
     /* the first order is cancelled for good: it stays under Cancelled */
-    await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('hold', ''); });
+    await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); });
     await page.waitForFunction(r => document.querySelectorAll(`#ordItems > [data-rid="${r}"] .cnCancelBtn`).length === 1, H2, { timeout: 20000 });
     await clearNotes();   // (the list's own note for the released order, "A piece of order ... is back in line", is still up)
     const c4 =await cancelFrom(H2, 'E-cancel-2', null);
@@ -831,7 +833,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(calls('cancelRestore').length, 2, 'two restores in all (one for each Undo)'); assert.equal(await chipN('cancelled'), '1'); assert.equal(await chipN('hold'), String(onHold0 - 2), 'On hold has lost both: one cancelled, one released');
     await settleCx(); await clearNotes();
     await noLoss('E-end', {}, idsOf(H2, 2, 3));
-    await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('hold', ''); });
+    await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); });
     await sleep(500); assert.equal(await cardsIn(H3), 0, 'the released order has no card in On hold'); assert.equal(await cardsIn(H2), 0, 'the cancelled order has none either');
     await quiet('E');
     pass('cancelled again for good: it stays under Cancelled (1), On hold is empty of it, no piece of any other order is lost, nothing is left on the screen');
@@ -850,11 +852,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(seen.fr.dlg, 0, `${tag}: no dialog open while the film played`); assert.equal(seen.fr.nameBar, 0, `${tag}: no name bar over the film`);
     const P = promised(seen.text), D = delivered(steps); oneOrderTwoSheets(steps, tag);
     for (const k of ['off', 'spots', 'waiting', 'newer']) if (P[k] != null) assert.equal(P[k], D[k], `${tag}: the popup said ${k} = ${P[k]}, the engine did ${D[k]}: ${seen.text.replace(/\s+/g, ' ')} || fills: ${JSON.stringify(steps.filter(s => s.type === 'fillFrom').map(s => [s.toSheetId, s.rid, s.source, s.fromSheetId, s.poolIds.length]))}`);
-    assert.deepEqual(await page.evaluate(() => ({ mode: CN.S.mode, pile: Orders.view().pile })), { mode: 'orders', pile: 'hold' }, `${tag}: the person ends in Orders > On hold`);
+    assert.deepEqual(await page.evaluate(() => ({ mode: CN.S.mode })), { mode: 'review' }, `${tag}: the person ends in Review (NOHOLDPILE)`);
     const rows = await rowsOf(rid), cards = await onHoldCards(rid), why = 'Taken off ' + x.names + ' by Paul';
     assert(rows.length >= 2 && rows.every(r => r.state === 'held' && r.hold === why && r.pieces === 0), `${tag}: every line is held, one reason, no piece left: ` + JSON.stringify(rows));
     assert(cards.length === 1 && cards[0].pieces === rows.length, `${tag}: the order is ONE card in On hold, its ${rows.length} pieces inside`);
-    for (const c of cards) assert(/HELD/i.test(c.pill || '') && c.text.includes(why) && c.buttons.includes('Release hold') && c.buttons.includes('Cancel Order') && !c.buttons.includes('Hold'), `${tag}: the card: ` + JSON.stringify(c));
+    for (const c of cards) assert(/HELD/i.test(c.pill || '') && c.text.includes(why) && c.buttons.includes('Release hold') && !c.buttons.includes('Cancel Order') && !c.buttons.includes('Hold'), `${tag}: the card: ` + JSON.stringify(c));
     assert.deepEqual(await holdBtns(rid), [], `${tag}: no Hold button for a held order`);
     const sh = await onSheets();
     for (const id of x.pieces) { for (const sid of x.sheets) assert(!sh[sid].all.includes(id), `${tag}: ${id} is off ${sid}`); const p = poolDoc(id); assert(p.state === 'abandoned' && p.heldBy === 'Paul' && !p.sheetId, `${tag}: ${id} is held by Paul: ` + JSON.stringify(p)); }
@@ -874,7 +876,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const t1 = Date.now(); await page.click('#modeSeg [data-mode="review"]'); await page.waitForFunction(() => CN.S.mode === 'review', null, { timeout: 3000 }); const tab = Date.now() - t1;
     await page.click('#modeSeg [data-mode="orders"]'); await page.waitForFunction(() => CN.S.mode === 'orders', null, { timeout: 3000 });
     assert(rt < 500 && tab < 1500, `${what}: the page answers (a round trip ${rt} ms, a tab ${tab} ms)`);
-    await page.evaluate(() => Orders.showPile('hold', ''));
+    await page.evaluate(() => Orders.showPile('', ''));
     return { rt, tab };
   };
 

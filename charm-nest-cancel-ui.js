@@ -21,8 +21,11 @@
    A save that fails (offline, the server) leaves the card exactly where it was with one plain line under the buttons;
    nothing is lost and the button can be pressed again.
 
-   Public: CancelUI.mount(node, row) (called by the Orders list for a held row on the On hold pile), CancelUI.cancel(rid),
-   CancelUI.undo(rid), CancelUI.busy(rid). */
+   Public: CancelUI.cancel(rid), CancelUI.undo(rid), CancelUI.busy(rid), CancelUI.canUndo(rid).
+
+   (NOHOLDPILE, Paul 20 Oct 2026: "Remove the 'On hold' tab and UI from the Orders tab ... it competes with the existing Review
+   tab": the On hold pile, and with it the Cancel Order button on its cards (CancelUI.mount), is gone. The cancel itself, its
+   flight to the Cancelled chip, the note and Undo stay, called as CancelUI.cancel(rid); a held order is shown in Review.) */
 (function (root) {
   "use strict";
   const doc = root.document;
@@ -52,7 +55,6 @@
 
   /* ── what the page knows ── */
   const nameNow = () => { try { return String((root.CNEmployee && CNEmployee.name && CNEmployee.name()) || (root.B && B.employee) || localStorage.getItem("cn.employee") || "").trim(); } catch (_) { return ""; } };
-  const onHoldPile = () => { try { return !!(root.Orders && Orders.view && Orders.view().pile === "hold"); } catch (_) { return false; } };
   const rowsOf = rid => (root.Orders ? Orders.rows() : []).filter(r => String(r.order.receiptId) === String(rid) && r.state !== "gone");
   /** The pile's chip; the Orders tab button when the chip is not drawn or not showing (the tab is always in the top bar). */
   const chipEl = p => { const c = doc.querySelector(`#ordChips [data-pile="${p}"]`); return c && c.getClientRects().length ? c : doc.querySelector('#modeSeg [data-mode="orders"]'); };
@@ -98,25 +100,6 @@
     clearTimeout(msgT.get(rid)); msgT.set(rid, setTimeout(() => { msgT.delete(rid); say(rid, ""); }, Math.max(500, MSG_MS - (Date.now() - m.at))));
   }
 
-  /** Adds the button beside Release hold on a card of the On hold pile (Orders draws the card, then calls this). */
-  function mount(node, row) {
-    try {
-      if (!node || !row || !row.hold || row.state === "gone" || !onHoldPile()) return;
-      const acts = node.querySelector(".rowActions"); if (!acts || acts.querySelector(".cnCancelBtn")) return;
-      css();
-      const rid = String(row.order.receiptId), rel = acts.querySelector(".relHold:not([data-gate])");
-      let wrap = rel && rel.parentElement && rel.parentElement.classList.contains("cnHoldBtns") ? rel.parentElement : null;
-      if (!wrap) { wrap = doc.createElement("div"); wrap.className = "cnHoldBtns"; if (rel) { rel.replaceWith(wrap); wrap.appendChild(rel); } else acts.appendChild(wrap); }
-      const b = doc.createElement("button"); b.type = "button"; b.className = "btn ghost sm cnCancelBtn"; b.textContent = LABEL;
-      b.setAttribute("aria-label", `Cancel order ${rid}`);
-      b.title = "Cancel this order. Its record is kept under Cancelled, where it can be restored.";
-      b.onclick = e => { e.stopPropagation(); e.preventDefault(); cancel(rid).catch(err => console.warn("cancel order", err)); };
-      wrap.appendChild(b);
-      node.dataset.rid = node.dataset.rid || rid;
-      if (flights.has(rid)) paintBusy(rid);
-      drawMsg(node, rid);
-    } catch (e) { console.warn("cancel button", e); }
-  }
 
   /* ── the small motions: a ring on the chip, a count that ticks ── */
   function beacon(el) {
@@ -214,6 +197,7 @@
   };
   async function cancel(rid) {
     rid = String(rid);
+    css();   // (the chip's ring and ticking count; NOHOLDPILE: was put in by the On hold card's button)
     if (flights.has(rid)) return { ok: false, error: "busy" };
     const rows = rowsOf(rid); if (!rows.length) return { ok: false, error: "That order is not in the list any more." };
     if (!root.SheetWin || typeof SheetWin.takeOffOrder !== "function") { say(rid, "Cancelling is not ready on this page yet. Try again in a moment."); return { ok: false, error: "not ready" }; }
@@ -280,11 +264,13 @@
     return n;
   }
   function showCancelled(rid) { try { if (root.Orders && Orders.showCancelled) Orders.showCancelled(rid); } catch (e) { console.warn("cancel show", e); } }
+  // (NOHOLDPILE, Paul 20 Oct 2026: Orders › On hold is gone, "it competes with the existing Review tab": a held order is shown in Review)
   function showHeld(rid) {
-    try { if (typeof root.setMode === "function" && doc.getElementById("ordersView") && doc.getElementById("ordersView").classList.contains("hidden")) root.setMode("orders"); Orders.showPile("hold", rid); } catch (e) { console.warn("cancel show held", e); }
+    try { if (root.Review && Review.showHeld) Review.showHeld(rid); else if (typeof root.setMode === "function") root.setMode("review"); } catch (e) { console.warn("cancel show held", e); }
   }
   async function undo(rid) {
     rid = String(rid);
+    css();
     const snap = undoable.get(rid); if (!snap) { toastIf(`Order ${rid} can be restored from Orders > Cancelled.`, "", 6000); return { ok: false, error: "nothing to undo" }; }
     if (snap.busy) return { ok: false, error: "busy" }; snap.busy = true;
     for (const r of snap.rows) if (M() && M().expect) M().expect(keyOf(r), { ttl: 1 });   // (a cancel's flight that was never played must not meet the order's next move)
@@ -308,14 +294,14 @@
     tickChip(-1);
     const held = snap.rows.some(r => r.hold && r.state !== "gone");
     const text = n ? (held ? `Order ${rid} is back on hold` : `Order ${rid} is back in the lists`) : `Order ${rid} is no longer under Cancelled`;
-    const target = () => chipEl(held ? "hold" : "");
+    const target = () => chipEl("");   // (NOHOLDPILE: a held order is back in Open Orders, with its HELD chip)
     if (m) {
       if (!reduced()) m.pulse(target);
-      m.note(target, { text, ms: 7000, actions: held ? [{ label: "Show", title: "open On hold at this order", fn: () => showHeld(rid) }] : [] });
+      m.note(target, { text, ms: 7000, actions: held ? [{ label: "Show", title: "open Review at this order", fn: () => showHeld(rid) }] : [] });
     } else toastIf(text, "ok", 5000);
     if (root.B && B.run && root.RunCtl) RunCtl.save(B.run).catch(e => { console.warn("cancel undo: run", e); toastIf(`Order ${rid} is back; the run will save it with its next change (${e.message})`, "", 7000); });
     return { ok: true };
   }
 
-  root.CancelUI = { mount, cancel, undo, busy: rid => flights.has(String(rid)), canUndo: rid => undoable.has(String(rid)), LABEL };
+  root.CancelUI = { cancel, undo, busy: rid => flights.has(String(rid)), canUndo: rid => undoable.has(String(rid)), LABEL };
 })(typeof window !== "undefined" ? window : globalThis);

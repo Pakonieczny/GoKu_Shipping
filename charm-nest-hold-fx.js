@@ -138,13 +138,17 @@
     const b = doc.querySelector(`.topbar [data-mode="${m}"], #modeSeg [data-mode="${m}"]`); if (b) { b.click(); return true; } return false;
   }
   const tabBtn = m => rectOf(doc.querySelector(`#modeSeg [data-mode="${m}"]`) || doc.querySelector(`.topbar [data-mode="${m}"]`));
-  function showHold() {
-    const O = root.Orders;
-    if (O && typeof O.showPile === "function") { try { O.showPile("hold", ""); return true; } catch (_) {} }
-    const b = doc.querySelector('#ordChips [data-pile="hold"]'); if (b) { b.click(); return true; } return false;
+  /* (NOHOLDPILE, Paul 20 Oct 2026: Orders > On hold is gone, "it competes with the existing Review tab": the way home is Review,
+     at the order's card when it has one (Review.showHeld); an order with no card there lands on Review as it stands) */
+  function showHold(rid) {
+    const R = root.Review;
+    if (R && typeof R.showHeld === "function") { try { R.showHeld(rid); return true; } catch (_) {} }
+    return setMode("review");
   }
+  const hasCard = rid => !!tryDo(() => root.Review.items().some(x => String(x.rid || (x.row && x.row.order && x.row.order.receiptId) || "") === String(rid)));
   const holdCard = rid => {
-    const all = [...doc.querySelectorAll("#ordItems [data-rid], #ordBody [data-rid]")].filter(n => n.dataset.rid === String(rid));
+    // (the card on screen: in Orders where a Release was pressed, in Review once home)
+    const all = [...doc.querySelectorAll("#ordItems [data-rid], #ordBody [data-rid], #rvList [data-rid]")].filter(n => n.dataset.rid === String(rid) && n.getClientRects().length);
     return all.find(n => n.querySelector(".relHold")) || all[0] || null;
   };
 
@@ -807,9 +811,9 @@
     async error(s) { return HOLD.error.call(this, s); }
   };
 
-  /* ═════ the way home: Orders, On hold ═════ */
-  /** Takes the user to Orders > On hold and lands the order's card there: it flies in from the tray (else it opens its own
-   *  room), a stamp presses its HELD pill and the On hold pill answers. Safe to call twice (the film calls it and so may the
+  /* ═════ the way home: Review (NOHOLDPILE; was Orders, On hold) ═════ */
+  /** Takes the user to Review and lands the order's card there: it flies in from the tray (else it opens its own
+   *  room), a stamp presses its HELD pill and the Held chip answers. Safe to call twice (the film calls it and so may the
    *  glue): the second call gets the first one's result. opts: from (a rect the card flies in from), instant (the final
    *  state at once), released (the order is not in On hold any more: a note says where it went), text. */
   function returnToOnHold(rid, opts = {}) {
@@ -828,9 +832,10 @@
     const via = o.via || null, S = via || new Stage();
     try {
       const instant = S.ff || S.reduced || !!o.instant, was = modeNow(); ev("home", { rid, instant });
-      if (instant || was === "orders") { if (was !== "orders") { setMode("orders"); await S.settleMode("orders"); } showHold(); }
-      else await S.dipTo("orders", async () => { showHold(); await frame(); });
+      if (instant || was === "review") { if (was !== "review") { setMode("review"); await S.settleMode("review"); } showHold(rid); }
+      else await S.dipTo("review", async () => { showHold(rid); await frame(); });
       if (o.released) { note(o); return true; }
+      if (!hasCard(rid)) { ev("home", { rid, card: "none in Review" }); return true; }
       // the card (drawn from the rows the engine has just written: a moment is given for it, never long)
       let card = null; const t0 = performance.now(), spin = setTimeout(() => { if (via && !card) via.spin(true); }, 500);
       while (!card && performance.now() - t0 < 2600) { card = holdCard(rid); if (!card) await new Promise(r => setTimeout(r, 70)); }
@@ -841,7 +846,7 @@
       if (LANDED.has(rid) && Date.now() - LANDED.get(rid) < 20000) return true;
       LANDED.set(rid, Date.now());
       await landCard(S, card, o.from); stamp(S, card);
-      const b = tryDo(() => doc.querySelector('#ordChips [data-pile="hold"] b'));
+      const b = tryDo(() => doc.querySelector('#reviewView .ordBar .egTab[data-k="heldOrder"] b'));
       if (b && !S.reduced) b.animate([{ transform: "scale(1)" }, { transform: "scale(1.3)", offset: .3 }, { transform: "scale(1)" }], { duration: 760, easing: "cubic-bezier(.2,.7,.3,1)" });
       await new Promise(r => setTimeout(r, S.reduced ? 0 : 700));
       return true;
@@ -872,9 +877,9 @@
     pill.animate([{ transform: "scale(1.7) rotate(-5deg)", opacity: 0 }, { transform: "scale(.94) rotate(0)", opacity: 1, offset: .55 }, { transform: "scale(1)", opacity: 1 }], { duration: 560, easing: "cubic-bezier(.62,0,.92,.5)" });
     setTimeout(() => S.ring(rectNow(pill)), 380);
   }
-  /** A released order is not in On hold any more: a note under the pill says where it went. */
+  /** A released order is not on hold any more: a note under the Review tab says where it went. */
   function note(o) {
-    const M = motion(), at = doc.querySelector('#ordChips [data-pile="hold"]') || doc.querySelector('#modeSeg [data-mode="orders"]');
+    const M = motion(), at = doc.querySelector('#modeSeg [data-mode="review"]');
     if (!M || !at || typeof M.note !== "function" || !o.text) return;
     tryDo(() => M.note(at, { text: o.text, ms: 7000, actions: [{ label: "Show", fn: () => setMode("nest") }] }));
   }

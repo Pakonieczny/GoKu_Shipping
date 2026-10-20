@@ -118,16 +118,13 @@ async function run(mode) {
     await page.click('#ordFiltersPop .ordChip[data-f="metal"][data-v=""]'); await page.waitForTimeout(500);
     await page.keyboard.press('Escape'); await page.waitForSelector('#ordFiltersPop', { state: 'hidden' });
 
-    // 11. the On hold pile: a held piece of a grouped order; one Release hold for the order
+    // 11. a held piece of a grouped order; one Release hold for the order (NOHOLDPILE, Paul 20 Oct 2026: no On hold pile, the order stays in Open Orders)
     await page.evaluate(k => { Orders.rows().find(r => r.key === k).hold = { by: 'Test Operator', at: Date.now(), reason: 'test' }; Orders.render(); }, K('twoPiece', 1));
-    await page.waitForFunction(() => document.querySelector('#ordChips [data-pile="hold"]'));
-    const heldAll = await page.evaluate(rid => ({ rel: document.querySelectorAll(`#ordItems > [data-rid="${rid}"] .relHold:not([data-gate])`).length, hold: document.querySelector('#ordChips [data-pile="hold"] b').textContent, open: document.querySelector('#ordChips [data-pile=""] b').textContent }), O.twoPiece.rid);
-    ok('11a a held piece: ONE Release hold on the order card, On hold counts the order once, Open Orders unchanged', heldAll.rel === 1 && heldAll.hold === '1' && heldAll.open === '6', JSON.stringify(heldAll));
-    await page.click('#ordChips [data-pile="hold"]'); await page.waitForTimeout(300);
-    const onHold = await G.entries(page);
-    ok('11b the On hold pile lists the order with only its held piece (a row), and its Release hold', onHold.length === 1 && onHold[0].rid === O.twoPiece.rid && onHold[0].keys.join() === K('twoPiece', 1) && /Release hold/i.test(onHold[0].text), JSON.stringify(onHold.map(e => [e.rid, e.keys])));
-    await page.evaluate(k => { delete Orders.rows().find(r => r.key === k).hold; }, K('twoPiece', 1));
-    await page.click('#ordChips [data-pile=""]'); await page.waitForTimeout(300);
+    await page.waitForFunction(rid => document.querySelector(`#ordItems > [data-rid="${rid}"] .relHold:not([data-gate])`), O.twoPiece.rid);
+    const heldAll = await page.evaluate(rid => ({ rel: document.querySelectorAll(`#ordItems > [data-rid="${rid}"] .relHold:not([data-gate])`).length, hold: !!document.querySelector('#ordChips [data-pile="hold"]'), open: document.querySelector('#ordChips [data-pile=""] b').textContent }), O.twoPiece.rid);
+    ok('11a a held piece: ONE Release hold on the order card in Open Orders, no On hold chip, Open Orders unchanged', heldAll.rel === 1 && heldAll.hold === false && heldAll.open === '6', JSON.stringify(heldAll));
+    await page.evaluate(k => { delete Orders.rows().find(r => r.key === k).hold; Orders.render(); }, K('twoPiece', 1));
+    await page.waitForTimeout(300);
 
     // 12. the cards view groups too: one full-width card, its pieces side by side, one button
     await page.click('#ordViewSeg [data-view="cards"]'); await page.waitForSelector('#ordItems.ordCards .ordGroup');

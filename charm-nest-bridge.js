@@ -2101,7 +2101,6 @@ const Orders = window.Orders = (() => {
     const q = OV.q.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean), times = new Map(), act = CNListActivity.state("orders");
     return rowsOf().filter(r => {
       if (r.state === "gone") return false;
-      if (OV.pile === "hold" && !heldNow(r)) return false;
       if (OV.metal && (r.material || "none") !== OV.metal) return false;
       if (OV.form && ((r.spec && r.spec.form) || "none") !== OV.form) return false;
       if (OV.eng) { const needs = !!(r.engrave && r.engrave.needed); if (OV.eng === "yes" ? !needs : needs) return false; }
@@ -2327,11 +2326,6 @@ const Orders = window.Orders = (() => {
       const note = (text, fn, title) => { if (!first) return null; for (const n of document.querySelectorAll(".mNote")) if (n._anchor && n._anchor.ordRid === rid && n.close) n.close(); return { text, actions: [{ label: "Show", title, fn }] }; };
       if (!r || r.state === "gone")
         return window.Cancelled && Cancelled.has(rid) ? { to: pillOf("cancelled", rid), plus: first ? "+1" : false, note: note(`Order ${rid} is cancelled · kept under Cancelled`, () => showCancelled(rid), "open Cancelled at this order") } : null;
-      // off hold: back in line under Open Orders (which counted it already: no "+1")
-      if (OV.pile === "hold" && !heldNow(r)) {
-        const still = rowsOf().filter(x => String(x.order.receiptId) === rid && heldNow(x) && x.state !== "gone").length;
-        return { to: pillOf("", rid), plus: false, note: note(still ? `A piece of order ${rid} is back in line · ${still} still on hold` : `Order ${rid} is back in line`, () => showLine(key, ""), "open Open Orders at this order") };
-      }
       if (visibleRows().some(x => x.key === key)) return null;   // only further down: the sort took it past what is drawn
       // still in this pile, outside the filters now (a material or a kind chosen in the order window)
       return { to: pillOf(OV.pile, rid), plus: false, note: note(`Order ${rid} is outside these filters now`, () => showLine(key, OV.pile), "show it, letting go of the filters") };
@@ -2436,8 +2430,8 @@ const Orders = window.Orders = (() => {
     const held = V.filter(v => v.held), due = V[0].due, mail = V[0].mail, team = V[0].team, attn = V.some(v => v.attn), rel = releaseStampOf(rows), sealM = cardSeals(rows);
     const label = v => wordsOf(v.sp) ? "Personalisation" : "Item", text = v => wordsOf(v.sp) || v.r.line.title || "No title";
     const said = OG.sameOf(V.map(v => label(v) + "|" + text(v)));   // (what every piece says alike is said once at the top, else on each piece)
-    const total = rows.reduce((n, r) => n + (O.pieceCountOf(r) || 1), 0), cancelable = held.length > 0 && OV.pile === "hold" && !!window.CancelUI;
-    const stamp = JSON.stringify(["group", cards, first.order, due, date, mail, team, cancelable, relSig(rel), sealM ? sealM.sig : "", V.map(v => [v.r.key, v.r.line, v.r.spec, v.r.state, v.st, v.r.hold, v.held, v.r.wait, v.why, v.where, v.seals && CustomPrint.sealSig(v.sealRec), v.fc[1], v.e ? v.e.sig : ""])]);
+    const total = rows.reduce((n, r) => n + (O.pieceCountOf(r) || 1), 0);
+    const stamp = JSON.stringify(["group", cards, first.order, due, date, mail, team, relSig(rel), sealM ? sealM.sig : "", V.map(v => [v.r.key, v.r.line, v.r.spec, v.r.state, v.st, v.r.hold, v.held, v.r.wait, v.why, v.where, v.seals && CustomPrint.sealSig(v.sealRec), v.fc[1], v.e ? v.e.sig : ""])]);
     const cached = orderNodes.get(first.key);
     if (cached?.stamp === stamp) {
       orderNodes.delete(first.key); orderNodes.set(first.key, cached);
@@ -2467,7 +2461,6 @@ const Orders = window.Orders = (() => {
     }
     node.onclick = e => { if (e.target.closest("button,[role=button],a")) return; OrderWin.open(first.key, { from: node }); };
     if (held.length) wireRelHold(node, rid);   // (RHSAME: the Review card's own Release Hold, its press and its seal)
-    if (cancelable) { try { CancelUI.mount(node, (held.find(v => v.r.hold) || held[0]).r); } catch (err) { console.warn("Cancel Order button", err); } }
     if (cached?.node) { for (const r of rows) { const pair = pairIn(cached.node, r.key), n = [...node.querySelectorAll(".ogPiece")].find(x => x.dataset.key === r.key); if (pair && n) env.pairs.push([n, pair]); } env.rebuilt.push(node); }
     orderNodes.delete(first.key); orderNodes.set(first.key, { stamp, node });
     for (const n of node.querySelectorAll(".ogPiece")) env.mounts.push([n, rows.find(x => x.key === n.dataset.key), "media"]);
@@ -2508,7 +2501,6 @@ const Orders = window.Orders = (() => {
       wanted.push(n);
     }
     else if (!rowsOf().length) wanted.push(blank("none", '<span>Nothing pulled yet — press <b>Pull orders</b> above.</span>'));   // one line: .libEmpty stacks its children
-    else if (!rows.length && OV.pile === "hold" && !OV.q && !OV.metal && !OV.form && !OV.eng && !actNow()) wanted.push(blank("hold", 'No order is on hold. An order taken off a sheet, or held from its order window, waits here until someone puts it back.'));
     else if (!rows.length) wanted.push(blank("filters", 'Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button>', n => { n.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.act = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; render(); }; }));
     else {
     let lastDay=null;
@@ -2523,7 +2515,7 @@ const Orders = window.Orders = (() => {
       if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;heading.dataset.mkey='day:'+date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} order${dayCounts.get(date.key).size === 1 ? "" : "s"} · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;wanted.push(heading);lastDay=date.key;}
       if (g.rows.length > 1) { wanted.push(groupNode(g, date, cards, { mounts, pairs, rebuilt })); continue; }
       const { sp, m, st, shown, due, where, fc, attn, why, gateBtn, mail, team, sealRec, seals, held, rel } = lineView(r), sealM = cardSeals(g.rows), e = engLine(r);
-      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,held,r.wait,why,where,due,date,mail,team,held && OV.pile === "hold" && !!window.CancelUI,seals&&CustomPrint.sealSig(sealRec),fc[1],relSig(rel),sealM ? sealM.sig : "",e ? e.sig : ""]);
+      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,held,r.wait,why,where,due,date,mail,team,seals&&CustomPrint.sealSig(sealRec),fc[1],relSig(rel),sealM ? sealM.sig : "",e ? e.sig : ""]);
       const cached=orderNodes.get(r.key);
       if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);wanted.push(cached.node);mounts.push([cached.node,r]);continue;}
       const node = el("div", (cards ? "ocard" : "doneRow workRow orderListRow") + " hoverItem" + (e ? " ordEng" : "") + (attn ? " attn" : ""));
@@ -2539,8 +2531,6 @@ const Orders = window.Orders = (() => {
       // Release Hold: the Review card's own button and press (RHSAME, Paul 20 Oct 2026: one release, the same on both tabs)
       if (held) wireRelHold(node, String(r.order.receiptId));
       wireGate(node);
-      // Cancel Order beside Release hold, on the On hold pile only (charm-nest-cancel-ui.js; the stamp above carries the pile)
-      if (held && OV.pile === "hold" && window.CancelUI) { try { CancelUI.mount(node, r); } catch (err) { console.warn("Cancel Order button", err); } }
       // an order can be several lines on several cards: hovering one lifts all of them, the way the station does
       node.dataset.rid = String(r.order.receiptId);
       // (the old node's decoded pictures move over once the update has measured where the old node stood)
@@ -2757,8 +2747,9 @@ const Orders = window.Orders = (() => {
   /** Update totals and filters without rebuilding the search field. */
   function renderHead(v) {
     const all = rowsOf().filter(r=>r.state!=="gone"), totals=orderTotals(all);
-    // Open Orders, and beside it On hold and Cancelled when there are any (or one is being shown)
-    if (OV.pile && !["hold", "cancelled"].includes(OV.pile)) OV.pile = null;
+    // Open Orders, and beside it Cancelled
+    // (NOHOLDPILE, Paul 20 Oct 2026: "Remove the 'On hold' tab and UI from the Orders tab ... it competes with the existing Review tab": a held order stays in Open Orders with its HELD chip; any other pile, a stale "hold" too, is Open Orders)
+    if (OV.pile && OV.pile !== "cancelled") OV.pile = null;
     mountTools(v);
     const running = B.run && !["complete", "stopped"].includes(B.run.status);
     const pull = v.querySelector("#ordPull");
@@ -2770,9 +2761,7 @@ const Orders = window.Orders = (() => {
     // showing me two orders in the orders tab where it says 360")
     { const q = v.querySelector("#ordQ"); if (q && q.value !== OV.q && document.activeElement !== q) q.value = OV.q; syncFind(v); }
     // (the live count and the charms are drawn with the list: paintCount, from renderBody; what is known here is the size of the pile)
-    // (the orders on hold, read once per head: each row's answer is a PiecePlacement read, PERF, Oct 2026; it was read twice on the hold pile)
-    const heldN = new Set(all.filter(r => heldNow(r)).map(r => String(r.order.receiptId))).size;
-    ordBase = { orders: OV.pile === "hold" ? heldN : totals.orders, charms: totals.charms };
+    ordBase = { orders: totals.orders, charms: totals.charms };
     { const charmTotal = v.querySelector("#ordCharmTotal"); if (charmTotal && !charmTotal.firstChild) { charmTotal.innerHTML = `<b>${totals.charms}</b> charms`; charmTotal.title = "Charm quantity across the orders shown; chain-only and packaging items are excluded"; } }
     const byMetal = {}; for (const r of all) { const m = r.material || "none"; byMetal[m] = (byMetal[m] || 0) + 1; }
     const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${label === "Open Orders" ? '<span>Open<span class="ordLong"> Orders</span></span>' : esc(label)}<b class="${cls}">${n}</b></button>`;
@@ -2787,7 +2776,6 @@ const Orders = window.Orders = (() => {
     const cxN = window.Cancelled ? Cancelled.count() : 0;
     // (Cancelled is always there, Paul 28 Sep A5: every cancelled order, Etsy's and a person's, whatever the pull holds)
     const pills = v.querySelector("#ordChips"), pillsHtml = chip(!OV.pile,"","Open Orders",totals.orders,"","Distinct open order numbers, across all materials")
-      + (heldN || OV.pile === "hold" ? chip(OV.pile === "hold","hold","On hold",heldN,"","Orders a person put on hold or took off a sheet; release them from here or from the sheet window") : "")
       + chip(OV.pile === "cancelled","cancelled","Cancelled",cxN,"","Every cancelled order: the ones Etsy cancelled and the ones a person cancelled here, newest first");
     // on Cancelled the search reads order, buyer and SKU, and the narrowing and display controls (open lines only) step aside
     { const bar = v.querySelector("#ordBar"), q = v.querySelector("#ordQ"), cx = OV.pile === "cancelled"; if (bar) bar.classList.toggle("onCx", cx); if (q) q.placeholder = cx ? "order, buyer, SKU…" : "order, SKU, words…"; }
@@ -2803,7 +2791,7 @@ const Orders = window.Orders = (() => {
     renderActive(v);
     // another pile slides in softly from the side it lies on (pills left to right), so a switch is seen as one; the tab that was pressed shows the busy state until the list is drawn
     v.querySelectorAll("[data-pile]").forEach(b => b.onclick = () => {
-      const PILES = ["", "hold", "cancelled"], was = PILES.indexOf(OV.pile || ""), to = PILES.indexOf(b.dataset.pile || "");
+      const PILES = ["", "cancelled"], was = PILES.indexOf(OV.pile || ""), to = PILES.indexOf(b.dataset.pile || "");
       OV.pile = b.dataset.pile || null; renderHead(v);
       CNListActivity.react(ordBar(), () => {
         renderBody();
@@ -2851,9 +2839,11 @@ const Orders = window.Orders = (() => {
     tb.textContent = t;
     if (was && t && window.Motion && !Motion.reduced() && tb.animate) tb.animate([{ boxShadow: "0 0 0 0 rgba(169,130,63,.7)" }, { boxShadow: "0 0 0 6px rgba(169,130,63,0)" }], { duration: 1200, easing: "cubic-bezier(.2,.7,.3,1)" });
   }
-  /** The Orders tab on one pile (the sheet window's "In Orders"), with the search set to an order when one is given. */
+  /** The Orders tab on one pile (the sheet window's "In Orders"), with the search set to an order when one is given.
+   *  (NOHOLDPILE, Paul 20 Oct 2026: there is no On hold pile: "hold" opens Review at the held order, Review.showHeld) */
   function showPile(pile, q) {
-    OV.pile = ["hold", "cancelled"].includes(pile) ? pile : null; OV.metal = OV.form = OV.eng = OV.act = null; OV.q = q ? String(q) : "";
+    if (pile === "hold") { if (window.Review && Review.showHeld) Review.showHeld(q); return; }
+    OV.pile = pile === "cancelled" ? pile : null; OV.metal = OV.form = OV.eng = OV.act = null; OV.q = q ? String(q) : "";
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
@@ -15311,10 +15301,10 @@ const Review = window.Review = (() => {
     if (gone && !/^(eng|held):/.test(String(key))) {
       settled.unshift({ key, row:gone.row || gone.rows?.[0] || null, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, pieces: groupPieces((gone.rows || [gone.row]).filter(Boolean)), orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
       const d0 = settled[0], rid = d0.orders[0] || "", who = d0.orders.length > 1 ? `${d0.orders.length} orders` : rid ? "Order " + rid : "The decision";
-      // held: the order is under Orders › On hold (its decision is kept under Resolved); answered: under Resolved
+      // held: the order is on hold, shown in Review (NOHOLDPILE; its decision is kept under Resolved); answered: under Resolved
       const held = (gone.rows || [gone.row]).filter(Boolean).every(r2 => r2.hold);
       if (window.Motion) Motion.expect(mkeyOf(gone), held
-        ? { to: ORDERS_TAB, note: { text: `${who} ${d0.orders.length > 1 ? "are" : "is"} on hold under Orders · release ${d0.orders.length > 1 ? "them" : "it"} there`, actions: [{ label: "Show", fn: () => showHeld() }] } }
+        ? { to: ORDERS_TAB, note: { text: `${who} ${d0.orders.length > 1 ? "are" : "is"} on hold`, actions: [{ label: "Show", fn: () => showHeld(rid) }] } }
         : { to: DONE_SW, note: { text: `${who} moved to Resolved · ${KIND_WORDS[gone.kind] || "answered"}`, actions: [{ label: "Show", fn: () => showCard("settled:" + d0.key + ":" + d0.t, "done") }] } });
     }
     if (settled.length > 200) settled.length = 200;
@@ -15404,10 +15394,13 @@ const Review = window.Review = (() => {
     const win = document.getElementById("orderWin");
     if (win && win.open) win.addEventListener("close", () => { const m = reviewRows.get(key)?.node || n; if (m.isConnected) found(m); }, { once: true }); else found(n);
   }
-  /** "Show" for a held order: the Orders tab, its On hold pile. */
-  function showHeld() {
-    if (typeof setMode === "function") setMode("orders");
-    const b = document.querySelector('#ordChips [data-pile="hold"]'); if (b && !b.classList.contains("on")) b.click();
+  /** "Show" for a held order: Review, Open, at the order's card when it has one, else on the Held chip when a held card is
+   *  open, else Open as it stands. (NOHOLDPILE, Paul 20 Oct 2026: it opened Orders › On hold, which is gone: "it competes with the existing Review tab") */
+  function showHeld(rid) {
+    rid = rid == null ? "" : String(rid);
+    const its = rid ? items().filter(x => String(x.rid || x.row?.order?.receiptId || x.rows?.[0]?.order?.receiptId || "") === rid) : [], it = its.find(x => x.kind === "heldOrder") || its[0];
+    if (it) return showCard(mkeyOf(it), "open", it.kind);
+    showCard("", "open", items().some(x => x.kind === "heldOrder") ? "heldOrder" : null);
   }
   /** "Show" in a note: Review, the folder (and chip) the card is in now, scrolled to it and marked. */
   function showCard(mk, seg, kind) {
@@ -17540,7 +17533,7 @@ const Review = window.Review = (() => {
       if (!w && mine) {
         // answered: its lines went back to the orders (on hold, or in line for the sheets)
         const rows = Orders.rows().filter(r => String(r.order.receiptId) === String(rid)), held = rows.some(r => r.hold);
-        return { to: ORDERS_TAB, note: { text: held ? `${who} is on hold under Orders` : `${who} is back in line for the sheets`, actions: held ? [{ label: "Show", fn: () => showHeld() }] : [] } };
+        return { to: ORDERS_TAB, note: { text: held ? `${who} is on hold` : `${who} is back in line for the sheets`, actions: held ? [{ label: "Show", fn: () => showHeld(rid) }] : [] } };
       }
       return null;
     };
@@ -17606,7 +17599,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */

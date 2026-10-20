@@ -148,7 +148,7 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     //   (b) a HELD order of both lines, a run open: the engine releases it whole: the necklace is made up and placed on a sheet as ever, the chain has nothing to place
     await page.evaluate(() => {
       for (const k of ['4290000408_42900004081', '4290000408_42900004082']) { const r = B.orders.byKey.get(k); r.hold = 'Held by Test Operator'; r.state = 'held'; r.reason = r.hold; }
-      Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('orders'); Orders.showPile('hold', ''); Orders.render();
+      Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('orders'); Orders.showPile('', ''); Orders.render();
     });
     const cardM = `#ordBody [data-rid="${HELDM.rid}"] .relHold:not([data-gate])`;
     await until(() => page.$(cardM), 20000, 'the held mixed card');
@@ -162,10 +162,10 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     check(ev4 && /placed on/.test(ev4.text) && /nothing to place for 1 piece/.test(ev4.text) && ev4.data.nothing === 1 && ev4.data.anyway && /Paperclip/.test(ev4.data.anyway[0]), `4b · the timeline step says where the necklace went and that the chain had nothing to place (${JSON.stringify(ev4 && { text: ev4.text, data: ev4.data })})`);
     check((await bad()).length === 0, `4b · no error toast (${JSON.stringify(await bad())})`);
 
-    // ── 5 · a HELD order, Orders > On hold ──
+    // ── 5 · a HELD order, in Open Orders (NOHOLDPILE) ──
     await page.evaluate(() => {
       for (const k of ['4290000404_42900004041', '4290000405_42900004051']) { const r = B.orders.byKey.get(k); r.hold = 'Held by Test Operator'; r.state = 'held'; r.reason = r.hold; }
-      Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('orders'); Orders.showPile('hold', ''); Orders.render();
+      Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('orders'); Orders.showPile('', ''); Orders.render();
     });
     const card = rid => `#ordBody [data-rid="${rid}"] .relHold:not([data-gate])`;
     await until(() => page.$(card(HELDN.rid)), 20000, 'the held necklace card');
@@ -190,7 +190,7 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     check(rh5 && rh5.rh.by === 'Test Operator' && rh5.rh.at > 0 && /^releaseHold:/.test(rh5.rh.id) && cloud5 && cloud5.release.at === rh5.rh.at && cloud5.release.by === 'Test Operator' && ev5 && ev5.data.seal === 'releaseHold' && +ev5.data.sealAt === rh5.rh.at, `5 · the release seal is recorded for the Orders-card release of an unmapped option: line, cloud, timeline (${JSON.stringify({ rh: rh5 && rh5.rh, cloud: cloud5 && cloud5.release, seal: ev5 && ev5.data.seal })})`);
     check((await bad()).length === 0, `5 · no error toast (${JSON.stringify(await bad())})`);
     // the held empty chain, with a run open: released, nothing placed, no error
-    await page.evaluate(() => { B.run = window.__run; CN.setMode('orders'); Orders.showPile('hold', ''); Orders.render(); });
+    await page.evaluate(() => { B.run = window.__run; CN.setMode('orders'); Orders.showPile('', ''); Orders.render(); });
     await until(() => page.$(card(HELDC.rid)), 20000, 'the held chain card');
     check(await press(card(HELDC.rid), async () => { const a = await rowOf(keyOf(HELDC)); return !!a && (!a.hold || !!a.ra); }), '5 · the press took (the chain)');
     await until(async () => { const r = await rowOf(keyOf(HELDC)); return r && !r.hold && r.state === 'noDesign' && r.ra; }, 45000, 'the held chain to be released');

@@ -1,6 +1,6 @@
 // Browser test of the cinematic Hold and Release (charm-nest-hold-fx.js, window.OrderHoldFx), on a fixture page that has the
 // sorter's own structure (a top bar with the tab strip, a stage with the sheet cards of two metals, each with its tabs, its
-// picture and its waiting queue; the Orders view with its On hold pile) and no network. The steps it is fed are the ones the
+// picture and its waiting queue; the Orders view with the held cards; Review) and no network. The steps it is fed are the ones the
 // engine really emits (charm-nest-order-hold.js: two sheets lifted together, then each one removed, filled and made again),
 // recorded as a list: 2 sheets, 4 pieces, one refill from a newer sheet and one from the waiting list; and a Release.
 // Paul, 5 Oct 2026: "real-time detailed game-like cinematic step by step animation so the user can see the order moving and
@@ -8,8 +8,8 @@
 // What it holds to: the captions come in the order the steps came, in plain words ("pieces", never "lines"); each flight
 // sets off from the element it should (the piece where it lies, the newer sheet's tab, the waiting queue, the order's card)
 // and lands where the piece goes; Skip, Esc and a tab picked end it at once on the right screen; with reduced motion the
-// captions still step through and nothing flies; the user ends on Orders > On hold with the order's card (or a note, for a
-// release); nothing stays on the page; a click goes through the film while it plays and after; only transform, opacity and
+// captions still step through and nothing flies; the user ends on Review with the order's card (or a note, for a
+// release; NOHOLDPILE, Paul 20 Oct 2026: Review is gone, the way home is Review); nothing stays on the page; a click goes through the film while it plays and after; only transform, opacity and
 // clip-path animate; the frames stay smooth; a stalled engine and the hard cap both end it.
 //   node tests/charm-nest/hold-fx.cjs [playwright-core dir]      (PW_DIR=…, CHROMIUM=…; SHOTS=<dir> saves frames; ONLY=a,b picks scenes)
 const fs = require('fs'), path = require('path'), vm = require('vm'), assert = require('assert/strict');
@@ -69,7 +69,7 @@ const BODY = `
 <div id="stage">
   <div id="sheets" class="hidden"></div>
   <div id="ordersView"><div id="ordChips"><button data-pile="new">New <b>5</b></button><button data-pile="hold">On hold <b>2</b></button></div><div id="ordItems"></div></div>
-  <div id="reviewView" class="hidden">Review</div>
+  <div id="reviewView" class="hidden"><div id="rvList"></div></div>
 </div>
 <button id="probeBtn" onclick="window.__clicks=(window.__clicks||0)+1">probe</button>
 <script>
@@ -121,6 +121,15 @@ function drawHold() {
 }
 window.Orders = { showPile(pile) { __pile = pile; document.querySelectorAll('#ordChips button').forEach(b => b.classList.toggle('on', b.dataset.pile === pile)); setTimeout(drawHold, 120); } };
 window.sceneOrders = () => { CN.setMode('orders'); __pile = 'hold'; drawHold(); };
+/* Review (NOHOLDPILE): the held orders' cards, drawn a moment after Review.showHeld asks, as the real one does */
+function drawReview() {
+  const box = document.getElementById('rvList'); box.innerHTML = '';
+  for (const rid of [...HELD].reverse()) {
+    const c = document.createElement('div'); c.className = 'ordCard reviewListRow'; c.dataset.rid = rid; c.dataset.mkey = 'held:' + rid;
+    c.innerHTML = '<div class="rowMedia"><img alt="" src="' + IMG + '"></div><div class="meta"><b>Order ' + rid + '</b><span class="ost">HELD</span></div><button class="relHold">Release Hold</button>'; box.appendChild(c);
+  }
+}
+window.Review = { items: () => [...HELD].map(rid => ({ kind: 'heldOrder', key: 'held:' + rid, rid })), showHeld() { if (CN.S.mode !== 'review') CN.setMode('review'); setTimeout(drawReview, 120); } };
 window.engine = {
   holds(rid) { HELD.add(rid); }, releases(rid) { HELD.delete(rid); },
   takeOffGold() { P.sh2.charms = []; P.sh2.placements = []; },
@@ -231,11 +240,11 @@ const ALLOWED = new Set(['transform', 'opacity', 'clipPath', 'offset', 'easing',
   const captions = () => page.evaluate(() => OrderHoldFx.events().filter(e => e.ev === 'caption'));
   const flights = () => page.evaluate(() => OrderHoldFx.events().filter(e => e.ev === 'flight'));
   const state = () => page.evaluate(() => {
-    const card = [...document.querySelectorAll('#ordItems [data-rid]')], hide = [...document.querySelectorAll('[style*="visibility"]')].filter(n => n.style.visibility === 'hidden');
-    return { mode: CN.S.mode, pile: __pile, ordersShown: !document.getElementById('ordersView').classList.contains('hidden'), cards: card.map(c => c.dataset.rid), active: OrderHoldFx.active(),
+    const card = [...document.querySelectorAll('#rvList [data-rid]')], hide = [...document.querySelectorAll('[style*="visibility"]')].filter(n => n.style.visibility === 'hidden');
+    return { mode: CN.S.mode, reviewShown: !document.getElementById('reviewView').classList.contains('hidden'), cards: card.map(c => c.dataset.rid), active: OrderHoldFx.active(),
       layer: !!document.getElementById('hfxLayer'), ghosts: document.querySelectorAll('.mGhost').length, hfx: document.querySelectorAll('[class*="hfx"]').length, lit: document.querySelectorAll('.hfxLit,.hfxDim').length, hidden: hide.length };
   });
-  const settledAt = async (rid, mode = 'orders') => { await page.waitForFunction(rid => { const c = document.querySelector('#ordItems [data-rid="' + rid + '"]'); return !!c && getComputedStyle(c).visibility !== 'hidden'; }, rid, { timeout: 8000 }).catch(() => {}); return state(); };
+  const settledAt = async (rid, mode = 'review') => { await page.waitForFunction(rid => { const c = document.querySelector('#rvList [data-rid="' + rid + '"]'); return !!c && getComputedStyle(c).visibility !== 'hidden'; }, rid, { timeout: 8000 }).catch(() => {}); return state(); };
   const clean = (s, msg) => assert.deepEqual([s.layer, s.ghosts, s.hfx, s.lit, s.hidden, s.active], [false, 0, 0, 0, 0, false], `${msg}: nothing is left on screen: ${JSON.stringify(s)}`);
   const noWarn = msg => { assert.deepEqual(perr, [], msg + ': no page error'); assert.deepEqual(warns, [], msg + ': no step failed quietly'); };
   const plain = (caps, msg) => assert.ok(caps.every(c => !/\blines\b|line items?/i.test(c.main + ' ' + c.small)), msg + ': the words are "pieces", never "lines": ' + JSON.stringify(caps.map(c => c.main + ' ' + c.small)));
@@ -284,10 +293,10 @@ const ALLOWED = new Set(['transform', 'opacity', 'clipPath', 'offset', 'easing',
       const nf = await page.evaluate(() => __nf);
       assert.ok(nf.length >= 2 && nf.every(c => Array.isArray(c.poolIds) && c.poolIds.length === 0 && c.noCaption === true), 'NestFocus is only asked to take the sheet into the light (no pieces hidden): ' + JSON.stringify(nf));
       assert.ok(['sh1', 'sh2'].every(id => nf.some(c => c.id === id)));
-      // the end: Orders > On hold, the order's card there, nothing left
+      // the end: Review, the order's card there, nothing left (NOHOLDPILE)
       const s = await settledAt(RID);
-      assert.equal(s.mode, 'orders'); assert.equal(s.pile, 'hold'); assert.ok(s.ordersShown); assert.ok(s.cards.includes(RID), 'the order\'s card is in On hold: ' + s.cards);
-      const vis = await page.evaluate(rid => { const r = document.querySelector('#ordItems [data-rid="' + rid + '"]').getBoundingClientRect(); return r.top >= 56 && r.bottom <= innerHeight && r.width > 100; }, RID); assert.ok(vis, 'the card is in view');
+      assert.equal(s.mode, 'review'); assert.ok(s.reviewShown); assert.ok(s.cards.includes(RID), 'the order\'s card is in Review: ' + s.cards);
+      const vis = await page.evaluate(rid => { const r = document.querySelector('#rvList [data-rid="' + rid + '"]').getBoundingClientRect(); return r.top >= 56 && r.bottom <= innerHeight && r.width > 100; }, RID); assert.ok(vis, 'the card is in view');
       await shot('h4-hold-6-home');
       await sleep(400); clean(await state(), 'after the hold');
       await page.click('#probeBtn', { timeout: 4000 }); assert.equal(await page.evaluate(() => window.__clicks), 2, 'a click goes through after the film too');
@@ -310,7 +319,7 @@ const ALLOWED = new Set(['transform', 'opacity', 'clipPath', 'offset', 'easing',
       assert.ok(gh.filter(g => g.key === 'lift:sh2:g1')[0].canvas, 'a piece the page draws flies as its own drawing'); assert.ok(gh.filter(g => g.key.startsWith('lift:sh1'))[0], 'ghosts carry the flight key');
       await page.click('#modeSeg [data-mode="review"]'); assert.equal(await page.evaluate(() => CN.S.mode), 'review', 'the tabs answer at once');
       noWarn('hold-paced');
-      pass('Hold, paced: captions in order, every flight from the right element to the right spot, home on Orders > On hold, nothing left, clicks go through');
+      pass('Hold, paced: captions in order, every flight from the right element to the right spot, home on Review, nothing left, clicks go through');
     });
 
     /* 2 · Hold, every step arriving at once (an engine faster than the film), frames measured, animated properties recorded */
@@ -322,7 +331,7 @@ const ALLOWED = new Set(['transform', 'opacity', 'clipPath', 'offset', 'easing',
       const done = await finished(); const f = await page.evaluate(() => frames.stop());
       assert.equal(done.ok, true); assert.equal(done.skipped, false);
       const caps = await captions(); assert.deepEqual(caps.map(c => c.main), HOLD_CAPTIONS(RID), 'a fast engine is still shown in order');
-      const s = await settledAt(RID); assert.equal(s.mode, 'orders'); assert.equal(s.pile, 'hold'); assert.ok(s.cards.includes(RID));
+      const s = await settledAt(RID); assert.equal(s.mode, 'review'); assert.ok(s.cards.includes(RID));
       await sleep(400); clean(await state(), 'after the fast hold');
       const fl = await flights(), exp = await expected();
       assert.equal(fl.filter(x => x.key.startsWith('lift:')).length, 4);
@@ -353,7 +362,7 @@ const ALLOWED = new Set(['transform', 'opacity', 'clipPath', 'offset', 'easing',
       await watched; const done = await finished();
       assert.equal(done.ok, true); assert.equal(done.steps, 8);
       const caps = await captions(); assert.deepEqual(caps.map(c => c.main), RELEASE_CAPTIONS(RID, 'SS Sheet 1'), 'the release is told in the order of its steps'); plain(caps, 'release');
-      await sleep(500); const s = await state(); assert.equal(s.mode, 'orders'); assert.equal(s.pile, 'hold'); assert.ok(!s.cards.includes(RID), 'a released order is no longer in On hold');
+      await sleep(500); const s = await state(); assert.equal(s.mode, 'review'); assert.ok(!s.cards.includes(RID), 'a released order has no held card in Review');
       const note = await page.evaluate(() => (document.querySelector('.mNote .mNoteT') || {}).textContent || '');
       assert.match(note, /Order 555000 is back in line/); assert.match(note, /SS Sheet 1/, 'the note says where it went: ' + note);
       await shot('h4-release-4-home');
@@ -366,7 +375,7 @@ const ALLOWED = new Set(['transform', 'opacity', 'clipPath', 'offset', 'easing',
       near(fl[1].from, tray, 3, 'the pieces leave that marker'); near(fl[2].from, tray, 3, 'both');
       near(fl[1].to, exp.spot, 5, 'the first piece lands on the target spot the step names'); near(fl[2].to, { x: exp.spot.x + 14, y: exp.spot.y + 10 }, 5, 'the second a little beside it');
       noWarn('release-paced');
-      pass('Release: the card\'s design flies out to the marker, the pieces fly onto the sheet, back to On hold with a note, nothing left');
+      pass('Release: the card\'s design flies out to the marker, the pieces fly onto the sheet, back to Review with a note, nothing left');
     });
 
     /* 4 · Release onto a new sheet, steps all at once */
@@ -382,9 +391,9 @@ const ALLOWED = new Set(['transform', 'opacity', 'clipPath', 'offset', 'easing',
       const caps = await captions(); assert.deepEqual(caps.map(c => c.main), RELEASE_CAPTIONS(RID, 'SS Sheet 4'));
       assert.equal(caps[2].small, 'a new sheet');
       const bad = (await page.evaluate(() => [...__anim])).filter(p => !ALLOWED.has(p)); assert.deepEqual(bad, [], 'only transform, opacity and clip-path animate: ' + bad);
-      await sleep(500); const s = await state(); assert.equal(s.mode, 'orders'); assert.equal(s.pile, 'hold'); assert.ok(await page.evaluate(() => !!document.querySelector('.mNote')), 'a note says where it went');
+      await sleep(500); const s = await state(); assert.equal(s.mode, 'review'); assert.ok(await page.evaluate(() => !!document.querySelector('.mNote')), 'a note says where it went');
       await page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.remove())); await sleep(300); clean(await state(), 'after the new-sheet release'); noWarn('release-new-sheet');
-      pass('Release onto a new sheet: "New sheet" shown, the story in order, only transform/opacity/clip-path, back on Orders > On hold');
+      pass('Release onto a new sheet: "New sheet" shown, the story in order, only transform/opacity/clip-path, back on Review');
     });
 
     /* 5 · Skip (the call, the key, the small button): the final state at once, on the right screen */
@@ -397,9 +406,9 @@ const ALLOWED = new Set(['transform', 'opacity', 'clipPath', 'offset', 'easing',
       if (how === 'call') await page.evaluate(() => __fx.skip()); else if (how === 'esc') await page.keyboard.press('Escape'); else await page.click('.hfxSkip', { timeout: 4000 });
       const done = await finished(8000); const took = Date.now() - t0;
       assert.equal(done.skipped, true); assert.equal(done.ok, true); assert.ok(took < 2500, 'skipping ends the film at once (' + took + ' ms)');
-      const s = await settledAt(RID); assert.equal(s.mode, 'orders'); assert.equal(s.pile, 'hold'); assert.ok(s.cards.includes(RID), 'the order is in On hold after a skip: ' + s.cards);
+      const s = await settledAt(RID); assert.equal(s.mode, 'review'); assert.ok(s.cards.includes(RID), 'the order is in On hold after a skip: ' + s.cards);
       await sleep(300); clean(await state(), 'after a skip (' + how + ')'); noWarn('skip-' + how);
-      pass(`Skip (${how}): ended in ${took} ms on Orders > On hold with the order's card, nothing left`);
+      pass(`Skip (${how}): ended in ${took} ms on Review with the order's card, nothing left`);
     });
 
     /* 6 · reduced motion: the captions still step through, nothing flies */
@@ -414,9 +423,9 @@ const ALLOWED = new Set(['transform', 'opacity', 'clipPath', 'offset', 'easing',
       assert.deepEqual(await flights(), [], 'no flights');
       assert.deepEqual(await page.evaluate(() => __ghosts), [], 'no flying copies were made');
       const anim = await page.evaluate(() => [...__anim]); assert.ok(!anim.includes('transform') && !anim.includes('clipPath'), 'nothing moves or wipes, it only fades: ' + anim);
-      const s = await settledAt(RID); assert.equal(s.mode, 'orders'); assert.equal(s.pile, 'hold'); assert.ok(s.cards.includes(RID));
+      const s = await settledAt(RID); assert.equal(s.mode, 'review'); assert.ok(s.cards.includes(RID));
       await sleep(300); clean(await state(), 'after the reduced-motion hold'); noWarn('reduced');
-      pass('Reduced motion: the captions step through, no flights, only fades, home on Orders > On hold');
+      pass('Reduced motion: the captions step through, no flights, only fades, home on Review');
     });
 
     /* 7 · a tab picked ends the film where the person went */
@@ -445,9 +454,9 @@ const ALLOWED = new Set(['transform', 'opacity', 'clipPath', 'offset', 'easing',
       assert.equal(k.small, 'No waiting order fits yet');
       assert.ok(await page.evaluate(() => OrderHoldFx.events().some(e => e.ev === 'ignored' && e.type === 'mystery')), 'a step it does not know is ignored');
       assert.equal(caps[caps.length - 1].main, `Order ${RID} is on hold`);
-      const s = await settledAt(RID); assert.equal(s.mode, 'orders'); assert.equal(s.pile, 'hold'); assert.ok(s.cards.includes(RID));
+      const s = await settledAt(RID); assert.equal(s.mode, 'review'); assert.ok(s.cards.includes(RID));
       await sleep(300); clean(await state(), 'after a skipped fill'); noWarn('fill-skipped');
-      pass('A skipped fill: "Nothing fits this spot yet" with the reason; an unknown step type is ignored; home on Orders > On hold');
+      pass('A skipped fill: "Nothing fits this spot yet" with the reason; an unknown step type is ignored; home on Review');
     });
 
     /* 8 · the engine stops with an error: said plainly, then home */
@@ -458,8 +467,8 @@ const ALLOWED = new Set(['transform', 'opacity', 'clipPath', 'offset', 'easing',
       await play('hold', RID, steps, 0, { before: () => { engine.takeOffGold(); } });
       const done = await finished(); assert.equal(done.ok, false); assert.match(done.error, /Another change is still running/);
       const caps = await captions(); const last = caps[caps.length - 1]; assert.equal(last.main, 'Stopped on SS Sheet 1'); assert.match(last.small, /Another change/);
-      const s = await state(); assert.equal(s.mode, 'orders'); assert.equal(s.pile, 'hold'); await sleep(300); clean(await state(), 'after an error'); noWarn('error');
-      pass('An error step: "Stopped on SS Sheet 1" with the reason, then back on Orders > On hold');
+      const s = await state(); assert.equal(s.mode, 'review'); await sleep(300); clean(await state(), 'after an error'); noWarn('error');
+      pass('An error step: "Stopped on SS Sheet 1" with the reason, then back on Review');
     });
 
     /* 9 · the safety timers: a run that never says anything, a run that goes quiet */
@@ -467,9 +476,9 @@ const ALLOWED = new Set(['transform', 'opacity', 'clipPath', 'offset', 'easing',
       await open();
       const t0 = Date.now(); await play('hold', '4174601860', null, 0, { source: { safetyMs: 2500 } });
       const done = await finished(15000); assert.equal(done.timedOut, true); assert.ok(Date.now() - t0 < 9000, 'the hard cap ends the film');
-      const s = await state(); assert.equal(s.mode, 'orders'); assert.equal(s.pile, 'hold'); await sleep(300); clean(await state(), 'after the hard cap');
+      const s = await state(); assert.equal(s.mode, 'review'); await sleep(300); clean(await state(), 'after the hard cap');
       noWarn('safety');
-      pass('The hard cap ends a film that never gets a step, and the person is put back on Orders > On hold');
+      pass('The hard cap ends a film that never gets a step, and the person is put back on Review');
     });
 
     /* 9b · a stalled engine: a small labelled spinner, then the film ends */
@@ -479,8 +488,8 @@ const ALLOWED = new Set(['transform', 'opacity', 'clipPath', 'offset', 'easing',
       const spin = await page.waitForSelector('.hfxCap.wait', { timeout: 15000 }).then(() => true).catch(() => false); assert.ok(spin, 'a wait is a small labelled spinner');
       const label = await page.evaluate(() => (document.querySelector('.hfxCap.wait small') || {}).textContent || ''); assert.ok(label.length > 0, 'the spinner is labelled: "' + label + '"');
       const done = await finished(20000); assert.equal(done.stalled, true);
-      const s = await state(); assert.equal(s.mode, 'orders'); await sleep(300); clean(await state(), 'after a stall'); noWarn('stall');
-      pass('A stalled engine: a labelled spinner, then the film ends and the person is back on Orders');
+      const s = await state(); assert.equal(s.mode, 'review'); await sleep(300); clean(await state(), 'after a stall'); noWarn('stall');
+      pass('A stalled engine: a labelled spinner, then the film ends and the person is back on Review');
     });
 
     /* 10 · the way home alone (the glue may call it too): once, safely, from any tab */
@@ -491,10 +500,10 @@ const ALLOWED = new Set(['transform', 'opacity', 'clipPath', 'offset', 'easing',
       const same = await page.evaluate(rid => { const a = OrderHoldFx.returnToOnHold(rid), b = OrderHoldFx.returnToOnHold(rid); window.__ret = a; return a === b; }, RID);
       assert.equal(same, true, 'calling it twice gives the same walk home');
       assert.equal(await page.evaluate(() => window.__ret), true);
-      const s = await settledAt(RID); assert.equal(s.mode, 'orders'); assert.equal(s.pile, 'hold'); assert.ok(s.cards.includes(RID));
+      const s = await settledAt(RID); assert.equal(s.mode, 'review'); assert.ok(s.cards.includes(RID));
       const t0 = Date.now(); assert.equal(await page.evaluate(rid => OrderHoldFx.returnToOnHold(rid), RID), true); assert.ok(Date.now() - t0 < 500, 'a second call right after is answered at once');
       await sleep(900); clean(await state(), 'after returnToOnHold'); noWarn('return');
-      pass('returnToOnHold alone: one walk home for two calls, on Orders > On hold with the card, nothing left');
+      pass('returnToOnHold alone: one walk home for two calls, on Review with the card, nothing left');
     });
   } finally { await browser.close(); }
   if (failures.length) { console.log('\n' + failures.length + ' scene(s) failed: ' + failures.join(', ')); process.exit(1); }

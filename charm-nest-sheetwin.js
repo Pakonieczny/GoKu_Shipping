@@ -4832,7 +4832,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const why = h.rows[0].hold;
       return `<li class="swHeld" data-rid="${esc(h.rid)}" data-mkey="h:${esc(h.rid)}"${had.has("h:" + h.rid) ? ' style="animation:none"' : ""}><div class="top"><span class="no">${esc(h.rid)}</span><span class="what">${esc([...skus].map(([n, c]) => n + (c > 1 ? " ×" + c : "")).join(", "))}</span>${h.at ? `<span class="when">${esc(ago(h.at))}</span>` : ""}</div>
         <div class="why" title="${esc(why)}">${esc(why)}</div>
-        <div class="acts"><button type="button" class="btn ghost xs" data-h="back" title="Back in line: the run places it on the next sheet that fits">Release hold</button><button type="button" class="btn ghost xs" data-h="cancel">Cancel order…</button><button type="button" class="btn ghost xs" data-h="orders" title="Show it in the Orders tab">In Orders</button></div></li>`;
+        <div class="acts"><button type="button" class="btn ghost xs" data-h="back" title="Back in line: the run places it on the next sheet that fits">Release hold</button><button type="button" class="btn ghost xs" data-h="cancel">Cancel order…</button><button type="button" class="btn ghost xs" data-h="orders" title="Show it in the Review tab">In Review</button></div></li>`;
     }).join(""));
     E.orders.querySelectorAll(".swHeld").forEach(li => {
       const rid = li.dataset.rid, rows = () => rowsOfOrder(rid).filter(r => r.hold);
@@ -4850,7 +4850,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         if (went && li.isConnected) backInLine(li, rid); else if (went) toast(`Order ${rid} is back in line`, "ok", 5000);   // (its row flies to All, before the list is drawn again)
         if (W.dlg.open && W.rec) renderSheetPane();
       };
-      li.querySelector("[data-h=orders]").onclick = () => { close().then(() => { setMode("orders"); if (Orders.showPile) Orders.showPile("hold", rid); }); };
+      // (NOHOLDPILE, Paul 20 Oct 2026: Orders › On hold is gone, "it competes with the existing Review tab": the held order is shown in Review)
+      li.querySelector("[data-h=orders]").onclick = () => { close().then(() => { if (window.Review && Review.showHeld) Review.showHeld(rid); else setMode("review"); }); };
       li.querySelector("[data-h=cancel]").onclick = () => {
         const acts = li.querySelector(".acts");
         acts.innerHTML = `<input class="swNote" type="text" maxlength="200" placeholder="Why it was cancelled (optional)" aria-label="Why"><button type="button" class="btn danger xs" data-h="yes">Cancel the order</button><button type="button" class="btn ghost xs" data-h="no">Keep</button>`;

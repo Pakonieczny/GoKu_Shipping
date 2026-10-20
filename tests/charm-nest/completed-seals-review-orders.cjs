@@ -165,13 +165,14 @@ const ROWS = {
           }
         }
       });
+      // (NOHOLDPILE, Paul 20 Oct 2026: no On hold pile; the held order is in Open Orders with its seal)
       await check('orders on hold', async () => {
-        await page.evaluate(() => { CN.setMode('orders'); document.querySelector('#ordChips [data-pile="hold"]').click(); });
+        await page.evaluate(() => { CN.setMode('orders'); document.querySelector('#ordChips [data-pile=""]').click(); });
         await page.waitForSelector('#ordItems [data-key]'); await settle();
-        const rows = await sealsIn('#ordItems [data-key]');
-        assert.deepEqual(rows.map(r => r.key), [`${HD}_41700000071`], 'the held order only');
+        assert.equal(await page.evaluate(() => !!document.querySelector('#ordChips [data-pile="hold"]')), false, 'no On hold chip');
+        const rows = (await sealsIn('#ordItems [data-key]')).filter(r => r.key === `${HD}_41700000071`);
+        assert.equal(rows.length, 1, 'the held order is in Open Orders');
         assert.deepEqual(faces(rows[0].seals), [['ORDER COMPLETE', 'Ann', 0]], 'a held order keeps its seal');
-        await page.evaluate(() => document.querySelector('#ordChips [data-pile=""]').click());
       });
       await check('orders cancelled', async () => {
         await page.evaluate(() => { CN.setMode('orders'); document.querySelector('#ordChips [data-pile="cancelled"]').click(); });
@@ -188,7 +189,7 @@ const ROWS = {
     // 1 · every surface, as drawn
     const first = await checkAll();
     assert.deepEqual(first, [], 'every Completed piece and order shows its seals:\n' + first.join('\n'));
-    console.log('  ✓ Review → Completed (print + complete, complete only, older records, two lines of one SKU, one press, sent to the sheets, held, cancelled) and Orders (cards, list, On hold, Cancelled): each shows its own seals, once');
+    console.log('  ✓ Review → Completed (print + complete, complete only, older records, two lines of one SKU, one press, sent to the sheets, held, cancelled) and Orders (cards, list, a held order in Open Orders, Cancelled): each shows its own seals, once');
 
     // 2 · Complete Order and Reopen with the real buttons: the seal is on every surface, and stays after the reopen
     await page.evaluate(() => CN.setMode('review'));
@@ -239,7 +240,6 @@ const ROWS = {
       await shot('review-completed.png', async () => { await page.evaluate(() => CN.setMode('review')); await page.click('#reviewView .rvSeg [data-cseg="done"]'); }, '#reviewView');
       await shot('orders-cards.png', async () => { await page.evaluate(() => { CN.setMode('orders'); document.querySelector('#ordChips [data-pile=""]').click(); OV_VIEW('cards'); }); }, '#ordersView');
       await shot('orders-list.png', async () => { await page.evaluate(() => OV_VIEW('list')); }, '#ordersView');
-      await shot('orders-on-hold.png', async () => { await page.evaluate(() => document.querySelector('#ordChips [data-pile="hold"]').click()); }, '#ordersView');
       await shot('orders-cancelled.png', async () => { await page.evaluate(() => document.querySelector('#ordChips [data-pile="cancelled"]').click()); await page.waitForSelector('#ordBody .cxSeals .seal'); }, '#ordersView');
       await page.setViewportSize({ width: 390, height: 844 }); await fold(390); await page.waitForTimeout(300);
       await shot('review-completed-390.png', async () => { await page.evaluate(() => CN.setMode('review')); await page.click('#reviewView .rvSeg [data-cseg="done"]'); }, null);

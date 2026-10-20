@@ -11,7 +11,7 @@
 //   1  the Filters panel has a "Needs action" group: Any, "Release Hold + Print QR", "Release Hold", "Print QR", each with its live count (orders: the count the list will show)
 //   2  Release Hold shows exactly the open Release Hold orders; Print QR exactly the open Print QR orders; both chips on (or the combined chip) = either (OR), each order once
 //   3  the badge counts the group once, the gold chip under the bar says what is on ("Release Hold", "Print QR", "Release Hold + Print QR") and removes it; Clear all and Clear let go of it; a chip pressed again goes off
-//   4  the live count in the bar ("4 of 7 orders") and the list agree; the On hold pile and the filter work together; the Cancelled pile steps the filter aside and Open Orders brings it back
+//   4  the live count in the bar ("4 of 7 orders") and the list agree; no On hold pile (NOHOLDPILE); the Cancelled pile steps the filter aside and Open Orders brings it back
 //   5  live: a real press of Release hold takes the order out of the filter at once, a label printed (the record the print press writes) likewise, and the chip counts follow
 //   6  a group that could only do nothing is not drawn (while it is on, it is); the filter is part of the saved Orders view
 //   7  it reads nothing and writes nothing: no request goes out while the filter is used
@@ -130,8 +130,9 @@ const NAMES = ['rqHeld', 'rqQr', 'rqBoth', 'rqMark', 'rqRel', 'rqPrn', 'rqPlain'
 
     // ═══ 4 · the piles ═══
     await press('hold'); await closePanel();
-    await page.click('#ordChips [data-pile="hold"]'); await sleep(700);
-    check(sameSet(await rids(), ids('held', 'both')), 'on the On hold pile the filter works with the pile: the held orders that are Release Hold orders: ' + await rids());
+    // (NOHOLDPILE, Paul 20 Oct 2026: there is no On hold pile; the held orders stay in Open Orders under the filter)
+    check(await page.evaluate(() => !document.querySelector('#ordChips [data-pile="hold"]') && [...document.querySelectorAll('#ordChips [data-pile]')].map(b => b.dataset.pile).join() === ',cancelled'), 'the piles are Open Orders and Cancelled: no On hold chip');
+    check(sameSet(await rids(), ids('held', 'qr', 'both', 'marked')), 'the held orders stay in Open Orders, inside the Release Hold filter: ' + await rids());
     await page.click('#ordChips [data-pile="cancelled"]'); await sleep(700);
     check(await page.evaluate(() => { const vis = sel => { const n = document.querySelector(sel); return !!n && n.getClientRects().length > 0; }; return !vis('#ordFiltersBtn') && !vis('#ordActive .ordAx'); }), 'the Cancelled pile steps the Filters button and its chip aside');
     await page.click('#ordChips [data-pile=""]'); await sleep(700);

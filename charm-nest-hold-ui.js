@@ -10,9 +10,9 @@
  *   HoldUI.confirm(plan)      -> Promise<boolean>: the consent popup, shown BEFORE anything changes. "Continue" is the final consent, "Not now"
  *                                (or Esc, or a press outside) leaves everything as it was. A plan that cannot be held says why, with Close only.
  *   HoldUI.hold(rid, ctx)     -> the flow: plan (a small labelled spinner on the button) -> popup -> the name (the inline name bar) -> the run
- *                                (OrderHold.run) feeding the film (OrderHoldFx.playHold) -> back to Orders > On hold.
- *   HoldUI.release(rid, opts) -> the press of an existing "Release hold" button on a card in Orders > On hold: releasePlan -> OrderHold.release
- *                                feeding OrderHoldFx.playRelease -> back to Orders > On hold. One press: no popup, no question.
+ *                                (OrderHold.run) feeding the film (OrderHoldFx.playHold) -> back to Review (NOHOLDPILE; was Orders > On hold).
+ *   HoldUI.release(rid, opts) -> the press of an existing "Release hold" button on a held order's card: releasePlan -> OrderHold.release
+ *                                feeding OrderHoldFx.playRelease -> back to Review (NOHOLDPILE). One press: no popup, no question.
  *                                (RHSAME, Paul 20 Oct 2026: "These two Release Hold buttons seem to do something very different": the Orders card no longer calls this.
  *                                Its Release Hold is the Review card's own button and press, ReviewRelease.orderButton -> ReviewRelease.press, charm-nest-bridge.js.)
  *
@@ -57,7 +57,7 @@
   // ── what the page knows of an order: its pieces, whether it is held or cancelled ─────────────────────────────────────
   const rowsOf = rid => tryDo(() => (root.Orders && typeof root.Orders.rows === 'function' ? root.Orders.rows() : [])
     .filter(r => r && r.order && String(r.order.receiptId) === String(rid) && r.state !== 'gone'), []);
-  /** Every piece of the order is on hold: this page's own lines say so (their `hold`, which is what Orders > On hold lists), or the cloud's answer does (PiecePlacement: a Hold pressed on
+  /** Every piece of the order is on hold: this page's own lines say so (their `hold`, which the HELD chip in Open Orders shows), or the cloud's answer does (PiecePlacement: a Hold pressed on
    *  another computer took the pieces off their sheets, and this page's lines never heard: the Hold button was still offered on an order already on hold). */
   const isHeld = rid => {
     const rows = rowsOf(rid); if (!rows.length) return false;
@@ -322,12 +322,11 @@
   const savedName = () => tryDo(() => str(root.CNEmployee && typeof root.CNEmployee.name === 'function' ? root.CNEmployee.name() : ''), '');
   const modeNow = () => tryDo(() => (root.CN && root.CN.S && root.CN.S.mode) || '', '');
 
-  const atOnHold = () => modeNow() === 'orders' && tryDo(() => root.Orders.view().pile === 'hold', false);
-  /** Orders > On hold, as plainly as the page can show it (the way home when there is no film, or the film could not take the person there). */
+  // (NOHOLDPILE, Paul 20 Oct 2026: Orders > On hold is gone, "it competes with the existing Review tab": the way home is Review, at the order's card when it has one)
+  const atOnHold = () => modeNow() === 'review';
+  /** Review, as plainly as the page can show it (the way home when there is no film, or the film could not take the person there). */
   function showOnHold(rid) {
-    tryDo(() => { if (root.CN && typeof root.CN.setMode === 'function') root.CN.setMode('orders'); });
-    tryDo(() => { if (root.Orders && typeof root.Orders.showPile === 'function') root.Orders.showPile('hold', ''); });
-    tryDo(() => { const card = [...doc.querySelectorAll('#ordersView [data-rid]')].find(n => n.dataset.rid === String(rid)); if (card && card.scrollIntoView) card.scrollIntoView({ block: 'center' }); });
+    tryDo(() => { if (root.Review && typeof root.Review.showHeld === 'function') root.Review.showHeld(rid); else if (root.CN && typeof root.CN.setMode === 'function') root.CN.setMode('review'); });
   }
   /** Back to the work: the film's own way home when it has one, else the plain one. The person is never left in the Nest tab. */
   async function goHome(rid, from) {
@@ -335,7 +334,7 @@
     if (F && typeof F.returnToOnHold === 'function') {
       try { const p = F.returnToOnHold(rid); if (p && typeof p.then === 'function') await p; }
       catch (e) { warn('return to On hold', e); }
-    } else if (!atOnHold()) showOnHold(rid);   // (a Release hold pressed in Orders > On hold stays where it is)
+    } else if (!atOnHold()) showOnHold(rid);   // (a Release hold pressed in Review stays where it is)
     // (the film could not bring them back: the plain way does; one who started elsewhere and is still in the Nest tab goes back there)
     if (modeNow() === 'nest') { if (from && from !== 'nest' && !isHeld(rid)) tryDo(() => root.CN.setMode(from)); else showOnHold(rid); }
   }
@@ -380,7 +379,7 @@
   }
 
   // ── Hold ───────────────────────────────────────────────────────────────────────────────────────────────────────────
-  /** HoldUI.hold(rid, ctx) -> { ok, held?, cancelled?, error? }: plan -> popup -> name -> run (with its film) -> back to Orders > On hold. */
+  /** HoldUI.hold(rid, ctx) -> { ok, held?, cancelled?, error? }: plan -> popup -> name -> run (with its film) -> back to Review (NOHOLDPILE). */
   async function hold(rid, ctx) {
     rid = str(rid); ctx = ctx || {};
     if (!rid) return { ok: false, error: 'no order' };

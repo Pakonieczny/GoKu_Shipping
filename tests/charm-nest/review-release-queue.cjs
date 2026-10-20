@@ -71,8 +71,8 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     check(c0.state === 'held' && c0.problems.join() === 'blockedSku' && /SKU blocked: open outline/.test(c0.reason), `2 · the cat necklace is held for a real block, with its question (${JSON.stringify(c0)})`);
     check(u0.problems.join() === 'unmatchedSku', `2 · the unknown SKU asks its question (${JSON.stringify(u0)})`);
 
-    // ── 1 · Release hold on the earrings (Orders › On hold) ──
-    await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('hold', ''); Orders.render(); });
+    // ── 1 · Release hold on the earrings (Orders › Open Orders: NOHOLDPILE, no On hold pile) ──
+    await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); Orders.render(); });
     const relBtn = `#ordBody [data-key="${keyOf(EAR)}"] .relHold`;
     await until(() => page.$(relBtn), 20000, 'the Release hold button of the earrings');
     await shot('01-on-hold');

@@ -255,7 +255,7 @@ async function partB(browser) {
       run: async (rid, o) => { __t.runs.push({ rid, name: o && o.name }); for (const r of rowsOf(rid)) { r.hold = 'Taken off by ' + o.name; r.state = 'held'; } o.onStep && o.onStep({ type: 'done', at: Date.now() }); return { ok: true, held: true, steps: [] }; },
       status: () => ({ running: false })
     };
-    window.OrderHoldFx = { playHold: () => ({ push() {}, finish() {}, skip() {}, done: Promise.resolve() }), playRelease: () => ({ push() {}, finish() {}, skip() {}, done: Promise.resolve() }), returnToOnHold: () => { CN.setMode('orders'); Orders.showPile('hold', ''); } };
+    window.OrderHoldFx = { playHold: () => ({ push() {}, finish() {}, skip() {}, done: Promise.resolve() }), playRelease: () => ({ push() {}, finish() {}, skip() {}, done: Promise.resolve() }), returnToOnHold: () => { CN.setMode('orders'); Orders.showPile('', ''); } };
     SheetWin.takeOffOrder = async o => { __t.cancels.push({ rid: o.orderId, by: o.by, mode: o.mode }); for (const r of rowsOf(o.orderId)) { r.state = 'gone'; } return { ok: true }; };
     Review.syncOrderItems(); Review.render();
   });
@@ -284,10 +284,10 @@ async function partB(browser) {
   let t = await T();
   check(!(await bar()) && t.runs[0].rid === o2.rid && t.runs[0].name === ADMIN + '.', 'the hold ran at once under the name, no bar: ' + JSON.stringify(t.runs));
 
-  console.log('· B3: Cancel Order, signed in (the held order, in On hold)');
-  await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('hold', ''); });
-  await page.waitForSelector(`#ordItems [data-rid="${o2.rid}"] .cnCancelBtn`, { timeout: 15000 });
-  await idle(); await page.click(`#ordItems [data-rid="${o2.rid}"] .cnCancelBtn`); await page.waitForFunction(() => window.__t.cancels.length >= 1, null, { timeout: 15000 });
+  // (NOHOLDPILE, Paul 20 Oct 2026: the On hold pile and the Cancel Order button on its cards are gone: the cancel is CancelUI.cancel itself)
+  console.log('· B3: Cancel Order, signed in (the held order)');
+  await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); });
+  await idle(); await page.evaluate(r => { CancelUI.cancel(r); }, o2.rid); await page.waitForFunction(() => window.__t.cancels.length >= 1, null, { timeout: 15000 });
   t = await T();
   check(!(await bar()) && t.cancels[0].rid === o2.rid && t.cancels[0].by === ADMIN + '.' && t.cancels[0].mode === 'cancel', 'the cancel went out under the name, no bar: ' + JSON.stringify(t.cancels));
 
@@ -309,9 +309,8 @@ async function partB(browser) {
   await page.click('.cnNameBar .cnNbCont'); await page.waitForFunction(() => window.__t.runs.length >= 2, null, { timeout: 15000 });
   t = await T();
   check(t.runs[1].rid === o4.rid && t.runs[1].name === ADMIN + '.', 'one tap and the hold ran by itself under the name: ' + JSON.stringify(t.runs[1]));
-  await page.evaluate(() => { try { localStorage.removeItem('cn.employee'); } catch (_) {} B.employee = ''; CN.setMode('orders'); Orders.showPile('hold', ''); });
-  await page.waitForSelector(`#ordItems [data-rid="${o4.rid}"] .cnCancelBtn`, { timeout: 15000 });
-  await idle(); await page.click(`#ordItems [data-rid="${o4.rid}"] .cnCancelBtn`); await page.waitForSelector('.cnNameBar', { timeout: 8000 });
+  await page.evaluate(() => { try { localStorage.removeItem('cn.employee'); } catch (_) {} B.employee = ''; CN.setMode('orders'); Orders.showPile('', ''); });
+  await idle(); await page.evaluate(r => { CancelUI.cancel(r); }, o4.rid); await page.waitForSelector('.cnNameBar', { timeout: 8000 });
   b = await bar();
   check(b && /^Continue as /.test(b.chip) && (await T()).cancels.length === 1, 'Cancel Order with no name: the inline bar with Continue as; nothing cancelled before it: ' + JSON.stringify(b));
   await page.click('.cnNameBar .cnNbCont'); await page.waitForFunction(() => window.__t.cancels.length >= 2, null, { timeout: 15000 });
