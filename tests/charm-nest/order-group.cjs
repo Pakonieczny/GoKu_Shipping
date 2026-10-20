@@ -35,7 +35,7 @@ async function run(mode) {
         onChange: fn => { S.listeners.push(fn); return () => {}; }
       };
       window.CharmNestReviewHold = { canHold: () => ({ ok: true, sheets: [] }), sheetsHeldBy: () => [] };
-      window.__nat = []; Review.items = () => __nat;   // (the seeded orders raise questions of their own: this keeps them out of "In Review")
+      window.__nat = []; Review.items = () => __nat; Review.openOrders = () => new Map();   // (the seeded orders raise questions of their own: this keeps them out of "In Review")
       Orders.render();
     });
     await page.waitForFunction(() => document.querySelector('#ordItems .revSendBtn'));
