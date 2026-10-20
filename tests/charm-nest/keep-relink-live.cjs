@@ -118,7 +118,19 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     }, { ORDERS: scen.orders, RUN, SHEET, C: scen.custom, F, placed, XPATH });
     return { srv, st, ctx, page };
   };
-  const dropAndSave = async (page, rid) => {
+  const dropAndSave = async (page, rid, viaReview) => {
+    if (viaReview) {
+      // (a line matched to a library charm is no custom card: it is sent to Review and the design is dropped on its Review row, REVDROP: "overwrite the currently matched charm with a new charm")
+      await page.evaluate(async rid => { const m = await CharmNestReviewMark.mark(rid, { by: 'Paul' }); if (!m.ok) throw new Error('not marked: ' + JSON.stringify(m)); Review.syncOrderItems(); CN.setMode('review'); Review.render(); }, rid);
+      await page.waitForFunction(rid => !!document.querySelector(`#rvList > .reviewListRow[data-rid="${rid}"]`), rid, { timeout: 20000 });
+      await page.evaluate(async ({ rid, dxf }) => {
+        const r = await CharmNestDXF.toPdf(new TextEncoder().encode(dxf), 'x.dxf'), dt = new DataTransfer(); dt.items.add(new File([r.bytes], 'Oak_Leaf_new.ai'));
+        const n = document.querySelector(`#rvList > .reviewListRow[data-rid="${rid}"]`), t = n.querySelector('.engravingIdentity') || n;
+        for (const ty of ['dragenter', 'dragover', 'drop']) t.dispatchEvent(new DragEvent(ty, { bubbles: true, cancelable: true, dataTransfer: dt }));
+      }, { rid, dxf: LEAF_DXF });
+      await page.waitForFunction(() => !!document.querySelector('#cuAsk [data-ask-yes]') || !!document.querySelector('#cuDlg[open]'), null, { timeout: 15000 });
+      await page.evaluate(() => { const b = document.querySelector('#cuAsk [data-ask-yes]'); if (b) b.click(); });
+    } else {
     await page.click('#reviewView .egTab[data-k="customOrder"]').catch(() => {});
     await page.evaluate(async ({ rid, dxf }) => {
       const key = [...B.orders.byKey.keys()].find(k => k.startsWith(rid + '_')), it = Review.customItemFor(key);
@@ -126,6 +138,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
       const r = await CharmNestDXF.toPdf(new TextEncoder().encode(dxf), 'x.dxf');
       CustomSheet.add(it, [new File([r.bytes], 'Acorn_Leaf.ai')]);
     }, { rid, dxf: LEAF_DXF });
+    }
     await page.waitForFunction(() => document.querySelectorAll('#cuDlg[open] .cuFile .cuThumb img').length >= 1, null, { timeout: 30000 });
     await page.click('#cuDlg .cuFile .cuM[data-m="gold"]');
     await page.waitForFunction(() => { const h = document.getElementById('cuKeep'); return h && h.dataset.phase === 'off'; }, null, { timeout: 20000 });
@@ -169,7 +182,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     {
       const { st, ctx, page } = await mk(false, WORLD.override);
       const w0 = st.calls.length, sku = S2, wid = `${W2}_${W2}1_1`;
-      await dropAndSave(page, C2);
+      await dropAndSave(page, C2, true);
       await finished(page, 'B');
       const fl = await panel(page), has = (s, re) => fl.lines.some(([x, t]) => x === s && re.test(t));
       const e = st.doc('Charm_Master_Index', sku), xg = st.doc('Charm_Master_Index', 'OAK_LEAF_GF');
@@ -208,7 +221,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     {
       const { ctx, page, st } = await mk(true, WORLD.override);
       const before = JSON.stringify(st.list('Charm_Master_Index'));
-      await dropAndSave(page, C2);
+      await dropAndSave(page, C2, true);
       await finished(page, 'S');
       const fl = await panel(page), has = (s, re) => fl.lines.some(([x, t]) => x === s && re.test(t));
       assert(/^Rehearsal · Save to the charm repository/.test(fl.title) && fl.sum === 'Rehearsal complete. Nothing was saved.', 'the rehearsal pop-up: ' + JSON.stringify(fl));
