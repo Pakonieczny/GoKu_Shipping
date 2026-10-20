@@ -5459,6 +5459,41 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const r = mcCheck(mcGrid(sh, c.id, MC.on && MC.sh === sh ? MC.edits : null), c, { cxPt: +pose.cxPt, cyPt: +pose.cyPt, angle: +pose.angle || 0, size: pose.size == null ? sizeOf(c) : +pose.size }, +opts.snapPt || 0, true);
       return Object.assign({ ok: r.ok, why: r.why, reason: r.reason }, r.ok && r.pose ? { pose: r.pose } : {});
     },
+    /* INPLACE (Paul, 20 Oct 2026: a replaced charm goes into the spot the old one left, "if the new updated charm does not fit into the spot of the previously removed charm/charms then leave that
+       particular spot empty"). The same check as fits (mcCheck: the nest's collision grid with the shop's clearance, the sheet's inset and any metal cut away, every other charm stamped from its real
+       outline where it stands, then the independent verifier), on a sheet of ANY metal (Manual Control itself is for 10K and 14K only; the check is the nest's): only a sheet cut, recalled or in a
+       committed set, or one a person holds in Manual Control, says no. opts.snapPt: the nearest legal spot within that many points (a nudge inside the vacated room; the others never move).
+       → { ok, why, reason, pose?, wPt?, hPt?, scale? } (pose: the tested pose snapped to its grid cell; wPt/hPt/scale: the placement fields the nest writes for it) */
+    fitsSpot(sheet, piece, pose, opts = {}) {
+      const sh = typeof sheet === "string" ? allSheets().find(p => p.sheetId === sheet) || null : sheet || null;
+      if (!sh || !Array.isArray(sh.placements)) return { ok: false, why: "blocked", reason: "That sheet is not held in this sorter." };
+      // (opts.replace: a replaced charm's new piece (INPLACE, Paul 20 Oct 2026: "Unless a sheet has been marked as fully completed and laser cut then that charm needs to come off that particular
+      //  sheet and be re-added to the same sheet if it fits"): a sheet in a set sent to the station or sealed for the laser still changes; only a sheet CUT says no, window.replaceCutWhy)
+      const cutWhy = typeof window.replaceCutWhy === "function" ? window.replaceCutWhy(sh) : "";
+      if (opts.replace ? (+sh.laserDoneAt > 0 || sh.roseCutAt || sh.recalled || cutWhy) : (+sh.laserDoneAt > 0 || sh.roseCutAt || sh.recalled || sentToStation(sh) || mcApproved(sh))) return { ok: false, why: "blocked", reason: "That sheet's layout can no longer change." };
+      if (sh._manualHold || (MC.on && MC.sh === sh)) return { ok: false, why: "blocked", reason: "A person is moving this sheet's charms by hand." };
+      const Sv = SV(); if (!Sv || !Sv.makeSheetGrid || !Sv.prepareVariant || !Sv.verify) return { ok: false, why: "blocked", reason: "The layout check is not loaded in this page." };
+      const c = charmFor(sh, piece); if (!c) return { ok: false, why: "drawing", reason: "That charm is not in this sorter." };
+      const lock = mcLocked(sh, c); if (lock) return { ok: false, why: c.bits ? "blocked" : "drawing", reason: lock };
+      if (!pose || !Number.isFinite(+pose.cxPt) || !Number.isFinite(+pose.cyPt)) return { ok: false, why: "pose", reason: "No position was given." };
+      let r; try { r = mcCheck(mcGrid(sh, c.id, null), c, { cxPt: +pose.cxPt, cyPt: +pose.cyPt, angle: +pose.angle || 0, size: sizeOf(c) }, +opts.snapPt || 0, true); }
+      catch (e) { return { ok: false, why: "verify", reason: "The layout check could not be made here (" + e.message + ")." }; }
+      if (!r.ok || !r.pose) return { ok: false, why: r.why, reason: r.reason };
+      return { ok: true, why: "", reason: "", pose: r.pose, wPt: r.v ? r.v.solid.w / 2 : +c.widthPt || 0, hPt: r.v ? r.v.solid.h / 2 : +c.heightPt || 0, scale: scaleOf(r.pose.size || 1) };
+    },
+    /* INPLACE: a sheet whose replaced piece came off written as it now stands, the way Manual Control's save writes a sheet (mcSave: a released sheet kept in its set while it is written, its QR
+       label made again for the orders now on it), but with no nest at all: the page's writeAsPlaced (every charm where it is, no search). → Promise<boolean> */
+    async writeInPlace(sheet) {
+      const sh = typeof sheet === "string" ? allSheets().find(p => p.sheetId === sheet) || null : sheet || null;
+      if (!sh || typeof window.writeAsPlaced !== "function") return false;
+      holdRelease([sh]);
+      let ok = false;
+      try { ok = !!(await window.writeAsPlaced(sh)); } catch (e) { console.warn("sheet window: in-place write", e); ok = false; }
+      if (ok) await remakeLabels([sh], stepOf(""), () => {});
+      letGo([sh]);
+      tryDo(() => { if (W.dlg && W.dlg.open && W.id === sh.sheetId) open(sh.sheetId, { keepWork: true, keepSet: true }); });
+      return ok;
+    },
     onToggle(fn) { if (typeof fn !== "function") return () => {}; MC.subs.add(fn); return () => MC.subs.delete(fn); },
     cancelDrag() { if (!MC.drag) return false; const had = mcCancel(); tryDo(paintFx); return had; },
     fromRecord(rc) {

@@ -4,7 +4,8 @@
 // machine). The only stand-in is the nest (the solver), as in wrong-charm-browser.cjs. The pool pieces carry drawings of their own (an outline and a member of its own size), so every picture of a
 // line is drawn from its piece, as the page draws a real one.
 //   A 4193172538  listing 1819191541, NESTED on the draft GF Sheet 1 (not cut, in no set); its Orders row and its order window draw TINY MOON & STARS 2 from its piece
-//       → "Wrong charm?" → MOON_3288 → within seconds, no reload: the old piece superseded, a MOON_3288 piece placed on a sheet, GF Sheet 1 nested again and saved; the Orders row's Vector design,
+//       → "Wrong charm?" → MOON_3288 → within seconds, no reload: the old piece superseded, a MOON_3288 piece placed IN THE OLD SPOT (INPLACE, Paul 20 Oct 2026: the same centre and angle, every
+//         other charm where it was, no nest started), GF Sheet 1 written as it stands and saved; the Orders row's Vector design,
 //         the order window's Vector design and the shared picture (piece dots, Engrave previews: PieceMedia.vectorKey / vectorThumb) are MOON_3288's drawing, never the old one under the new name
 //   D 4193172541  the same listing, CUT on GF Sheet 2 → its piece kept, the line says its piece is the old design and why; its picture is the piece it has
 //   (a second computer learning the pick through the maps: listing-pick-relink-browser.cjs)
@@ -77,7 +78,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
             try { CN.renderCard(sh); } catch (_) {}
           }, 120);
         };
-        stub.__stub = true; window.startNest = stub; clearInterval(iv);
+        stub.__stub = true; window.startNest = stub; /* INPLACE (Paul, 20 Oct 2026): a sheet whose replaced piece came off is written as it stands (writeAsPlaced, no nest): stood in for here as the nest is, every placement kept */ const wap = sh => { window.__writes = (window.__writes || []).concat([{ sheetId: sh.sheetId, page: sh.page, placements: sh.placements.map(p => ({ id: p.id, cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle })) }]); sh.status = 'finishing'; sh.persistedDone = false; let done; sh.persisted = new Promise(r => { done = r; }); return new Promise(res => setTimeout(async () => { try { if (sh.sheetId) await api('charmNestLibrary', { op: 'putSheet', sheet: { id: sh.sheetId, metal: sh.metal, runId: sh.runId, fileBase: sh.fileBase, sheetIndex: sh.sheetIndex, draft: sh.draft || undefined, charms: sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(c => ({ id: c.id, poolId: c.poolId, order: c.order, sku: (c.orderInfo && c.orderInfo.sku) || c.sku })), placements: sh.placements.map(p => Object.assign({}, p)), poolIds: sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(c => c.poolId) } }, { quiet: true }); } catch (e) { sh.problem = e.message; } sh.status = 'complete'; sh.dirty = false; sh.intakeAppend = false; sh.appendOnly = false; sh.persistedDone = true; sh.verification = { ok: true }; done(); try { CN.renderCard(sh); } catch (_) {} res(!sh.problem); }, 120)); }; wap.__stub = true; window.writeAsPlaced = wap; clearInterval(iv);
       }, 0);
     }, who);
     const page = await ctx.newPage(); page.setDefaultTimeout(30000);
@@ -93,7 +94,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     // each design draws differently: its outline and one member of its own size (the moon pair a small hole up top, MOON_3288 a large disc), so a picture says which design it is
     const sq = (x0, y0, x1, y1) => ({ kind: 'path', closed: true, stroke: true, fill: false, strokeRGB: [0, 0, 0], lwPt: .25, bbox: [x0, y0, x1, y1], subpaths: [[['m', [x0, y0]], ['l', [x1, y0]], ['l', [x1, y1]], ['l', [x0, y1]], ['h']]] });
     const memberOf = sku => sku === 'MOON_3288' ? sq(D * .2, D * .2, D * .8, D * .8) : sku === 'TINY MOON & STARS 2' ? sq(D * .45, D * .7, D * .55, D * .8) : sq(D * .35, D * .35, D * .65, D * .65);
-    const mkCharm = (id, sku, extra) => { const outline = sq(0, 0, D, D); return Object.assign({ id, name: id, sku, sourceId: 's', ringGeometryVersion: 3, centerPt: [D / 2, D / 2], bbox: [0, 0, D, D], outline, members: [outline, memberOf(sku)], rMm: R, w: 8, h: 8, scale: 1, bits: new Uint8Array(64).fill(1), widthPt: 2 * R * MM, heightPt: 2 * R * MM, areaPt2: Math.PI * (R * MM) ** 2, hash: 'h-' + sku }, extra || {}); };
+    const mkCharm = (id, sku, extra) => { const outline = sq(0, 0, D, D); return Object.assign({ id, name: id, sku, sourceId: 's', ringGeometryVersion: 3, centerPt: [D / 2, D / 2], bbox: [0, 0, D, D], outline, members: [outline, memberOf(sku)], rMm: R, w: 16, h: 16, scale: 2, bits: new Uint8Array(256).fill(1) /* (dense at the check's 2 px/pt: INPLACE fits the new piece by its outline) */, widthPt: 2 * R * MM, heightPt: 2 * R * MM, areaPt2: Math.PI * (R * MM) ** 2, hash: 'h-' + sku }, extra || {}); };
     const reg = sku => { const key = 'test/' + sku.replace(/\W+/g, '_') + '.ai'; B.master.entries.set(sku, { sku, updatedAt: 1, aiPath: key, widthPt: 2 * R * MM, heightPt: 2 * R * MM, holes: 0, upAngle: null, labelSource: 'text', charmHash: 'h-' + sku }); B.pool.sources.set(key, { id: 'pool:' + sku, pool: true, name: sku, sku, charms: [mkCharm('pool:' + sku + ':0', sku, { name: sku })], usedAt: Date.now() }); };
     for (const sku of SKUS) reg(sku);
     const pr = CN.S.sheets.gold; pr.pages.length = 1; const p0 = pr.pages[0]; Object.assign(p0, { charms: [], placements: [], sheetId: null, fileBase: null, status: 'idle', page: 1 }); for (const k of ['laserDoneAt', 'roseCutAt', 'recalled', 'setId', 'releaseFull']) delete p0[k];
@@ -153,26 +154,33 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     /* the pick, in the order window */
     // (the cloud answers as it does in the shop, not at once: the piece read before the take-off takes a moment, and the window is painted meanwhile, as the page paints it on every change)
     await one.page.evaluate(() => { const real = window.api; window.api = (fn, body, o) => body && body.op === 'poolGet' ? new Promise(r => setTimeout(r, 400)).then(() => { try { OrderWin.paint(); } catch (_) {} return new Promise(r => setTimeout(r, 200)); }).then(() => real(fn, body, o)) : real(fn, body, o); });
-    const w0 = st.calls.length, nests0 = await one.page.evaluate(() => (window.__nests || []).length), t0 = Date.now();
+    const w0 = st.calls.length, nests0 = await one.page.evaluate(() => (window.__nests || []).length), writes0 = await one.page.evaluate(() => (window.__writes || []).length), t0 = Date.now();
+    const plate = page => page.evaluate(() => Object.fromEntries(CN.S.sheets.gold.pages.flatMap(p => p.placements.map(pl => { const c = p.charms.find(z => z.id === pl.id) || {}; return [c.poolId, [p.sheetId, +pl.cxPt, +pl.cyPt, +pl.angle || 0]]; }))));
+    const plate0 = await plate(one.page);
     await one.page.click('#owWrongCharm');
     await until(() => one.page.evaluate(() => !document.getElementById('owCharmFix').hidden && !!document.querySelector('#owCharmFix [data-f=dsku]')), 5000, 'the picker');
     await one.page.fill('#owCharmFix [data-f=dsku]', NEW);
     await one.page.click('#owCharmFix [data-a=dsku]');
     await until(() => one.page.evaluate(() => window.__asked.length === 1), 5000, 'the confirming line');
     // the piece: the old one superseded, a MOON_3288 one placed on a sheet, GF Sheet 1 nested again and saved
-    await until(() => one.page.evaluate(({ A, NEW }) => { const r = B.orders.rows.find(x => x.order.receiptId === A); const id = r.poolIds[0]; const p = id && B.pool.rows.get(id); const sh = id && Pool.sheetOf(id); const c = sh && sh.charms.find(x => x.poolId === id); return !!(p && p.sku === NEW && c && (c.orderInfo || {}).sku === NEW && sh.placements.some(pl => pl.id === c.id) && CN.S.sheets.gold.pages.every(pg => !['nesting', 'queued', 'ready'].includes(pg.status))); }, { A, NEW }), 15000,
+    await until(() => one.page.evaluate(({ A, NEW }) => { const r = B.orders.rows.find(x => x.order.receiptId === A); const id = r.poolIds[0]; const p = id && B.pool.rows.get(id); const sh = id && Pool.sheetOf(id); const c = sh && sh.charms.find(x => x.poolId === id); return !!(p && p.sku === NEW && c && (c.orderInfo || {}).sku === NEW && sh.placements.some(pl => pl.id === c.id) && CN.S.sheets.gold.pages.every(pg => !['nesting', 'finishing', 'queued', 'ready'].includes(pg.status) && !pg._inplaceWrite)); }, { A, NEW }), 15000,
       () => one.page.evaluate(A => { const r = B.orders.rows.find(x => x.order.receiptId === A); return 'A made up again from MOON_3288 and placed: ' + JSON.stringify({ state: r.state, hold: r.hold, spec: r.spec.designSku, ids: r.poolIds, pool: r.poolIds.map(id => B.pool.rows.get(id)), sheets: CN.S.sheets.gold.pages.map(p => [p.sheetId, p.status, p.charms.map(c => c.poolId + ':' + ((c.orderInfo || {}).sku || c.sku))]) }); }, A));
     const took = Date.now() - t0;
     const sup = st.calls.slice(w0).filter(c => c.op === 'poolUpdate' && JSON.stringify(c.body).includes(idA) && /superseded/.test(JSON.stringify(c.body)));
     assert(sup.length >= 1, 'the old piece of A was taken off: superseded in the cloud');
     assert.equal(st.doc(POOL, idA).sku, NEW, 'A\'s piece record is MOON_3288 now');
-    const nests = await one.page.evaluate(n0 => (window.__nests || []).slice(n0), nests0);
-    assert(nests.some(x => x.sheetId === 'wn-gold-1' && x.charms.includes(idA)), 'GF Sheet 1 was nested again with A\'s new piece: ' + JSON.stringify(nests));
+    // (INPLACE, Paul 20 Oct 2026: "you're not nesting the entire sheet because of one charm/charms change": the new piece in the old spot, every other charm where it was, no nest at all)
+    const nests = await one.page.evaluate(n0 => (window.__nests || []).slice(n0), nests0), writes = await one.page.evaluate(n0 => (window.__writes || []).slice(n0), writes0);
+    assert.deepEqual(nests, [], 'no nest was started: ' + JSON.stringify(nests));
+    assert.deepEqual(writes.map(x => x.sheetId), ['wn-gold-1'], 'GF Sheet 1 was written as it stands: ' + JSON.stringify(writes.map(x => x.sheetId)));
+    const plate1 = await plate(one.page);
+    assert.deepEqual(plate1[idA], plate0[idA], 'A\'s new piece is in A\'s old spot, at the same centre and angle: ' + JSON.stringify([plate0[idA], plate1[idA]]));
+    for (const [id, at] of Object.entries(plate0)) assert.deepEqual(plate1[id], at, `${id} did not move`);
     const putA = st.calls.slice(w0).filter(c => c.op === 'putSheet' && c.body && c.body.sheet && c.body.sheet.id === 'wn-gold-1' && JSON.stringify(c.body.sheet.charms || []).includes(NEW));
     assert(putA.length >= 1, 'GF Sheet 1 was saved again with A\'s new piece');
     const onSheet = await one.page.evaluate(id => CN.S.sheets.gold.pages.reduce((n, p) => n + p.charms.filter(c => c.poolId === id).length, 0), idA);
     assert.equal(onSheet, 1, 'one piece of A on the sheets, never two');
-    pass(`within ${(took / 1000).toFixed(1)} s, no reload: A's old piece superseded, a MOON_3288 piece placed, GF Sheet 1 nested again and saved`);
+    pass(`within ${(took / 1000).toFixed(1)} s, no reload: A's old piece superseded, a MOON_3288 piece placed in the old spot (nothing else moved, no nest), GF Sheet 1 written as it stands and saved`);
     /* every picture of A: MOON_3288's drawing */
     // (the order window is where the pick is made: its Vector design repaints at once; the Orders list behind it is drawn again when the window closes, the list's own rule)
     await until(async () => (await shown(one.page, '#owVector')) === picNew, 8000, async () => 'the order window\'s Vector design shows MOON_3288 (it shows ' + await which(one.page, '#owVector', picOld, picNew) + ')');
@@ -199,15 +207,16 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     const has = (state, re) => fl.lines.some(([s, t]) => s === state && re.test(t));
     assert(/Wrong charm\? · listing 1819191541 → MOON_3288/.test(fl.title) && fl.bar === '100', 'the panel names the change and its bar is full: ' + JSON.stringify(fl));
     assert(has('done', /^Linked listing 1819191541 · SKU “TINY MOON & STARS 2” to MOON_3288/), 'the link line: ' + JSON.stringify(fl.lines));
-    assert(has('done', new RegExp(`^Order ${A}: piece taken off GF Sheet 1 and made from MOON_3288`)), 'A\'s line names the sheet and the new design: ' + JSON.stringify(fl.lines));
+    assert(has('done', new RegExp(`^Order ${A}: new piece placed in the old spot on GF Sheet 1.*made from MOON_3288`)), 'A\'s line names the sheet, the old spot and the new design: ' + JSON.stringify(fl.lines));
     assert(has('warn', new RegExp(`^Order ${D}: its piece stays TINY MOON & STARS 2 on GF Sheet 2.*cut`)), 'D\'s line says its piece stays, and why: ' + JSON.stringify(fl.lines));
-    assert(has('done', /^GF Sheet 1 nested again and its files saved/) && has('done', /^Thumbnails updated/), 'the sheet and the pictures have their lines: ' + JSON.stringify(fl.lines));
-    assert(!fl.lines.some(([s]) => s === 'failed') && /1 order updated, 1 sheet nested again, 1 kept for a person/.test(fl.sum), 'nothing failed; the summary: ' + fl.sum);
+    assert(has('done', /^GF Sheet 1 files saved$/) && has('done', /^Thumbnails updated/), 'the sheet and the pictures have their lines: ' + JSON.stringify(fl.lines));
+    assert(!fl.lines.some(([, t]) => /nested again/.test(t)), 'no "nested again" line: ' + JSON.stringify(fl.lines));
+    assert(!fl.lines.some(([s]) => s === 'failed') && /1 order updated, 1 sheet saved \(none nested again\), 1 kept for a person/.test(fl.sum), 'nothing failed; the summary: ' + fl.sum);
     await one.page.evaluate(A => { const r = B.orders.rows.find(x => x.order.receiptId === A); OrderWin.open(r.key); }, A);
     await until(() => one.page.evaluate(() => OrderWin.isOpen()), 8000, 'the order window again');
     await one.page.click('.rlFlow [data-rl=close]', { timeout: 5000 });
     assert.equal(await one.page.evaluate(() => document.querySelectorAll('.rlFlow').length), 0, 'the panel closes with its button, over the open order window');
-    pass('the progress panel says each place updated (the link, A taken off GF Sheet 1 and made from MOON_3288, D kept and why, GF Sheet 1 nested again, the pictures), fills, sums up and closes');
+    pass('the progress panel says each place updated (the link, A\'s new piece placed in the old spot on GF Sheet 1, D kept and why, GF Sheet 1 files saved, the pictures), fills, sums up and closes');
     assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
   } finally { await browser.close(); srv.close(); }
   console.log(`wrong-charm-nested-live: ${n} steps passed`);

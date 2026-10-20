@@ -5363,7 +5363,8 @@ function buildJob(sh) {
     careful, roomCheck: careful && ["gold", "silver"].includes(sh.metal),
     // an order turned away from a sheet with room left lifts the few newest charms near the bottleneck and seats them again beside it ("making room"; Rose Gold never, see the solver's unjam)
     // (a sheet whose attempts found no arrangement tries less each time, and not at all after three)
-    unjam: careful && sh.metal !== "rose" && !sh.roseCutAt && (sh._unjamFails || 0) < 3, ...(sh._unjamFails ? { unjamMs: 15000 } : {}),
+    // (INPLACE, Paul 20 Oct 2026: a sheet that takes a replaced charm that did not fit its old spot never moves a charm already on it to make room: sh._keepPlaced)
+    unjam: careful && sh.metal !== "rose" && !sh.roseCutAt && !sh._keepPlaced && (sh._unjamFails || 0) < 3, ...(sh._unjamFails ? { unjamMs: 15000 } : {}),
     // every metal goes on as one tight block from the sheet's start, never spread along its edges (see BLOCK_WEIGHTS): Rose Gold, 10K and 14K
     // (the metals with a green line) since September, Gold-filled and Sterling Silver since 11 Oct (Paul: "nest the pieces in a somewhat straight
     // vertical line front exactly like we already do with the RG 14/20 sheet"); a sheet already saved keeps its charms, and its holes are filled first.
@@ -5398,6 +5399,7 @@ async function checkLearnedRunner(token = localStorage.getItem("cn.learnedKey") 
   finally { clearTimeout(timeout); }
 }
 function startNest(sh) {
+  if (sh._inplaceHold) { sh._inplaceAsked = true; return; }   // (INPLACE, Paul 20 Oct 2026: a replaced piece is being put back into its old spot on this sheet: no nest meanwhile; it is asked for once that is settled, Pool's inPlaceSettle)
   if (sh._manualHold) { sh._manualAsked = true; return; }   // a person is moving its charms by hand in the sheet window (Manual Control): its nest waits until they are done, and is asked for then
   if (window.NestHold && NestHold.block(sh)) return;   // a piece of it is still flying (Send to Sheet): its nest starts once the last has landed
   if(sh.roseCutAt)return toast("This layout has been cut. Start a new sheet to use its remainder.","bad");
@@ -5492,6 +5494,34 @@ function startNestReady(sh, context) {
   };
   const launchId=sh.jobId;
   launch();
+}
+/* INPLACE (Paul, 20 Oct 2026): "I just wanna make sure that you're not nesting the entire sheet because of one charm/charms change. If the new updated charm does not fit into the spot of
+   the previously removed charm/charms then leave that particular spot empty and simply add the new charm/charms to the latest unfinished sheet."
+   A sheet whose replaced piece came off (a "Wrong charm?" or listing pick, a design dropped to replace, a SKU drawn from a newer master file, an Etsy change accepted) is written AS IT STANDS:
+   no search is started (startNest is not called), every charm stays exactly where it is, at its angle and scale; the new piece is in the old spot when it fitted there (Pool's inPlaceAttach put it
+   there, checked by the sheet window's own Manual Control check) and the spot is empty when it did not. The write is the nest's own finish (finishNest): the .ai, the labelled proof, both
+   verifiers, the report, the cloud record and its pieces, the engraving reconcile, the next turn of the run; the layout handed to it is the sheet's own placements (endedBy "kept"), every one held
+   as a saved placement (appendOnly, nestInitial), so the finish keeps each one's scale and lifts none. A sheet that still has a charm waiting to be placed (it is the target of an append, or a
+   charm came on meanwhile) is not written here: its append-only nest writes it. → Promise<boolean> (true: written and saved). Window-level, so a test can stand in for it as for startNest. */
+function writeAsPlaced(sh) {
+  if (!sh || !allSheets().includes(sh) || sh.roseCutAt || sh.laserDoneAt || sh.recalled) return Promise.resolve(false);
+  if (sh._manualHold) { sh._manualAsked = true; return Promise.resolve(false); }   // (a person is moving its charms by hand: their save writes it)
+  if (["nesting", "finishing", "queued"].includes(sh.status) || sh._operationStarting || sh._learnedStarting) { sh.dirty = true; return Promise.resolve(false); }
+  const items = activeCharms(sh), byId = new Map(items.map(c => [c.id, c]));
+  sh.placements = sh.placements.filter(p => byId.has(p.id));
+  if (!sh.placements.length) { sheetDirty(sh); return Promise.resolve(false); }
+  if (items.some(c => !sh.placements.some(p => p.id === c.id))) { sh.appendOnly = sh.intakeAppend = true; sh.dirty = true; sh.status = "ready"; renderCard(sh); startNest(sh); return Promise.resolve(false); }
+  const st = stockFor(sh.metal, sh), area = c => (+c.areaPt2 || 0) * (typeof manualSize === "function" ? manualSize(c) ** 2 : 1);
+  const usablePt2 = +(sh.liveInfo && sh.liveInfo.usablePt2) || Math.max(1, st.wPt * st.hPt), placedPt2 = sh.placements.reduce((n, p) => n + area(byId.get(p.id)), 0);
+  sh.sheetId = sh.sheetId || `${sh.metal}${sh.page > 1 ? "-s" + sh.page : ""}-${Date.now().toString(36)}`;
+  window.RoseStock?.protect(sh);
+  sh.appendOnly = sh.intakeAppend = true; sh.nestInitial = sh.placements.map(p => ({ ...p })); sh.best = null; sh.bestKey = null; sh.evNest = null; sh.evSearch = null;
+  sh.jobId = uid(); sh.startedAt = performance.now(); sh.status = "nesting"; sh.persistedDone = false; sh.dirty = false; sh.problem = null; sh.movedOn = null; sh.rejects = []; delete sh._byHand;
+  const job = buildJob(sh);
+  sh.nestParams = { seed: job.seed, angles: job.angles, clearancePt: job.clearancePt, insetPt: job.sheet.insetPt, fineRes: job.fineRes, coarseRes: job.coarseRes, maxFill: job.maxFill };
+  const result = { placements: sh.placements.map(p => ({ ...p })), rejects: [], endedBy: "kept", trials: 0, elapsedMs: 0, usablePt2, placedPt2, freePt2: Math.max(0, usablePt2 - placedPt2), density: placedPt2 / usablePt2, params: Object.assign({}, sh.nestParams) };
+  log(sh, `written as it stands · ${sh.placements.length} pieces, none moved (a replaced piece; no nest search)`);
+  return finishNest(sh, { result }).then(() => sh.persisted).then(() => !!sh.persistedDone && !sh.problem, () => false);
 }
 /* A big batch goes onto a sheet a few orders at a time, oldest first, the way orders come in from Etsy (Paul, 25 Sep:
    "the charms were coming in a few at a time and then the system was placing them"). A run that took every open order
@@ -5924,6 +5954,7 @@ async function finishNest(sh, { result, error }) {
   sh.workers = []; sh.worker = null;
   // a saved charm the search lifted to make room, and did not seat again (stopped, failed), is back where it was saved
   if (sh._unjamLift) { for (const [id, p] of sh._unjamLift) if (!sh.placements.some(q => q.id === id)) sh.placements.push(p); sh._unjamLift = null; }
+  if (!sh.feedWait?.length) delete sh._keepPlaced;   // (INPLACE: the append it was set for is done)
   if (result) {
     acceptBestLayout(sh, result, { trial: result.trial });
     result = CharmNestSolver.bestResult(result, sh.best, stockFor(sh.metal, sh));
@@ -6111,7 +6142,7 @@ function pumpNestQueue() {
   const next = S.nestQueue.find(p => !heldForResume(p));
   if (next) { S.nestQueue.splice(S.nestQueue.indexOf(next), 1); next.status = "ready"; startNest(next); }
 }
-const endedText = e => ({ plateau: "paused — no additional pieces during the improvement window", "model-unavailable": "model unavailable — verified baseline retained", complete: "all pieces placed", budget: "time ceiling", stalled: "settled — nothing better for a minute", stopped: "operator stop", trials: "restart cap", cap: "fill ceiling reached", "no-room": "no room left for the rest", rounds: "planning-round cap", "claude-full": "Claude judged the sheet full" }[e] || e);
+const endedText = e => ({ plateau: "paused — no additional pieces during the improvement window", "model-unavailable": "model unavailable — verified baseline retained", complete: "all pieces placed", budget: "time ceiling", stalled: "settled — nothing better for a minute", stopped: "operator stop", trials: "restart cap", cap: "fill ceiling reached", "no-room": "no room left for the rest", rounds: "planning-round cap", "claude-full": "Claude judged the sheet full", kept: "written as it stands (nothing moved, no search)" }[e] || e);
 function buildReport(sh, result, items) {
   const byId = new Map(items.map(c => [c.id, c])); const st = stockFor(sh.metal, sh);
   return {
@@ -7037,6 +7068,8 @@ function renderCard(sh) {
   const cl = q("cloud");
   cl.innerHTML = sh.problem ? `<span class="bad">${esc(sh.problem)}</span>` : sh.outputs && !sh.cloud && !S.cloud.ok ? `<span class="bad">not saved — cloud offline</span>` : "";
   { const hn = window.LibraryReviewHold && sh.sheetId ? LibraryReviewHold.nestHtml(sh.sheetId) : ""; if (hn) cl.innerHTML += hn; }   // an order in the Review tab holds this sheet: one quiet line, its order number opens it there (charm-nest-library-review-hold.js)
+  // INPLACE (Paul, 20 Oct 2026): a replaced charm changed this sheet after its set was released (committed at the station, its labels collected): said on the card until the laser cuts it (the bridge's inPlaceRefile)
+  if (sh.releasedChange && !(+sh.laserDoneAt > 0)) cl.innerHTML += `<span class="bad" data-released-change="${esc(sh.releasedChange.setId || "")}">⚠ ${esc(sh.releasedChange.word || `${sh.releasedChange.set || "Its set"} changed after it was released — re-send its files`)}</span>`;
   cl.classList.toggle("hidden", !cl.innerHTML);
   q("dxf").classList.toggle("hidden", q("dl").classList.contains("hidden"));
   renderProgress(sh); renderSat(sh); drawPreview(sh); renderAgent(sh);
@@ -8153,14 +8186,14 @@ boot();
 <!-- REVLINK (12 Oct 2026): a charm a person picks for a listing is kept for good, in the sandbox too, and the next order of the listing is matched by it (charm-nest-review-link.js: planOf / save / pick / proof / linkOf) -->
 <script src="charm-nest-review-link.js?v=20261013-rlk2"></script>
 <!-- LISTPICK (Paul, 18 Oct 2026): a person's pick for a listing re-makes every open order of that listing in the background (charm-nest-listing-relink.js: which lines and what each needs; the bridge's Review.relinkNow does it with the page's own take-off and intake) -->
-<script src="charm-nest-listing-relink.js?v=20261018-lp1"></script>
+<script src="charm-nest-listing-relink.js?v=20261018-lp1-rp1"></script>
 <!-- WRONGCHARM (Paul, 18 Oct 2026, order 4193072538): "Wrong charm?" on a matched order's piece: whether a line can be corrected, the open orders of its listing the pick reaches, the one confirming line (charm-nest-charm-fix.js; the bridge's Review.fixCharm saves the listing's link and LISTPICK re-makes the orders) -->
-<script src="charm-nest-charm-fix.js?v=20261018-wc1"></script>
+<script src="charm-nest-charm-fix.js?v=20261018-wc1-rp1"></script>
 <!-- WRONGCHARM2 (Paul, 20 Oct 2026): the progress panel of every "relink everywhere" (a Wrong charm? pick, a listing pick, Save to the charm repository and link this listing): one line per place updated (charm-nest-relink-flow.js; the bridge's Review.relinkFlow does the work) -->
 <script src="charm-nest-relink-flow.js?v=20261020-wc5"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
@@ -8225,7 +8258,7 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-mseal1-fb1-ms3-cost18-strip1-id1-2b1-mc1-hp2-br1-ms1-bh1-nb1-mv1-wc5"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-mseal1-fb1-ms3-cost18-strip1-id1-2b1-mc1-hp2-br1-ms1-bh1-nb1-mv1-wc5-rp1"></script>
 <!-- 10K / 14K: a charm dragged onto the next or previous sheet of its metal, in the sheet window's Manual Control (SheetHop; Paul, 18 Oct 2026) -->
 <script src="charm-nest-sheet-hop.js?v=20261018-hop1-hp2-mv1"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->

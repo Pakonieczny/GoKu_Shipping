@@ -69,10 +69,10 @@
     return { key: plan.key, rows: out, orders: [...new Set(out.map(r => String(r.order && r.order.receiptId)))], made: out.filter(r => (r.poolIds || []).length).length };
   }
 
-  /** The one line a person confirms before anything is written. */
+  /** The one line a person confirms before anything is written. (INPLACE, Paul 20 Oct 2026: a made piece goes into its old spot, or onto the latest unfinished sheet; only a laser-cut one is held) */
   function askText(sku, listingId, aff) {
     const n = aff && aff.orders ? aff.orders.length : 0, made = (aff && aff.made) || 0;
-    return `Use ${up(sku)} for every order of listing ${listingId}? ${n} open order${n === 1 ? "" : "s"} of it ${n === 1 ? "changes" : "change"}${made ? ` (${made} already made: on an open sheet it is swapped, a cut or released piece is held for a person)` : ""}; the same SKU on other listings stays as it is.`;
+    return `Use ${up(sku)} for every order of listing ${listingId}? ${n} open order${n === 1 ? "" : "s"} of it ${n === 1 ? "changes" : "change"}${made ? ` (${made} already made: each new piece goes into the old one's spot, or onto the latest unfinished sheet when it does not fit; a laser-cut piece is held for a person)` : ""}; the same SKU on other listings stays as it is.`;
   }
 
   /** { aliases, optionMaps } with the planned link written into copies (the maps themselves are never changed). */

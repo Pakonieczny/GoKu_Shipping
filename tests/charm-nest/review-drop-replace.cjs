@@ -81,7 +81,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
           try { CN.renderCard(sh); } catch (_) {}
         }, 120);
       };
-      stub.__stub = true; window.startNest = stub; clearInterval(iv);
+      stub.__stub = true; window.startNest = stub; /* INPLACE (Paul, 20 Oct 2026): a sheet whose replaced piece came off is written as it stands (writeAsPlaced, no nest): stood in for here as the nest is, every placement kept */ const wap = sh => { window.__writes = (window.__writes || []).concat([{ sheetId: sh.sheetId, page: sh.page, placements: sh.placements.map(p => ({ id: p.id, cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle })) }]); sh.status = 'finishing'; sh.persistedDone = false; let done; sh.persisted = new Promise(r => { done = r; }); return new Promise(res => setTimeout(async () => { try { if (sh.sheetId) await api('charmNestLibrary', { op: 'putSheet', sheet: { id: sh.sheetId, metal: sh.metal, runId: sh.runId, fileBase: sh.fileBase, sheetIndex: sh.sheetIndex, draft: sh.draft || undefined, charms: sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(c => ({ id: c.id, poolId: c.poolId, order: c.order, sku: (c.orderInfo && c.orderInfo.sku) || c.sku })), placements: sh.placements.map(p => Object.assign({}, p)), poolIds: sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(c => c.poolId) } }, { quiet: true }); } catch (e) { sh.problem = e.message; } sh.status = 'complete'; sh.dirty = false; sh.intakeAppend = false; sh.appendOnly = false; sh.persistedDone = true; sh.verification = { ok: true }; done(); try { CN.renderCard(sh); } catch (_) {} res(!sh.problem); }, 120)); }; wap.__stub = true; window.writeAsPlaced = wap; clearInterval(iv);
     }, 0);
   });
   const page = await ctx.newPage(); page.setDefaultTimeout(30000);
@@ -126,7 +126,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
         if (sh.setId) page.setId = sh.setId;
         CN.renderCard(page);
       }
-      // GF Sheet 3 is in Set 1, committed (cut and on its way): nothing on it is changed
+      // GF Sheet 3 is in Set 1, committed at the station but not laser cut: it may change (INPLACE, Paul 20 Oct 2026), and nothing dropped on M here changes it
       B.sets.set(`${RUN}|dispatch`, { setId: SET_ID, runId: RUN, seq: 1, day: new Date().toISOString().slice(0, 10), group: 'dispatch', name: 'Set 1', committedAt: Date.now() - 1800000, savedCommit: Date.now() - 1800000, sheetIds: [PAGES[3].id], materials: ['gold'], labelFiles: [], orders: {}, status: 'committed' });
       const rows = [];
       for (const l of LINES) {
@@ -169,14 +169,19 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     assert.equal(await page.evaluate(() => document.querySelectorAll('[data-rv-markok], [data-a="markok"]').length), 0, 'no Mark OK anywhere on the page');
     pass('A (in Review, its piece on the open draft GF Sheet 1): the drop hint, cuDropOk and Send to Sheet; no Mark OK, no Open sheet; Release Hold');
 
-    /* ── C · the held orders whose piece is cut, or in a committed set: no drop ── */
-    for (const [rid, what] of [[K, 'cut GF Sheet 2'], [M, 'GF Sheet 3 in the committed Set 1']]) {
+    /* ── C · the held order whose piece is laser cut: no drop; the one in a committed set NOT cut yet takes designs (INPLACE, Paul 20 Oct 2026: only a laser-cut sheet keeps its piece) ── */
+    for (const [rid, what] of [[K, 'cut GF Sheet 2']]) {
       const r = await rowOf(rid);
       assert.equal(r.hint, false, `${rid} (on the ${what}) shows no drop hint: ${JSON.stringify(r)}`);
       assert.equal(r.dropOk, false, `${rid}'s row takes no files (no cuDropOk): ${r.cls}`);
       assert.equal(r.markOk + r.sheetBtn, 0, `${rid}: no Mark OK, no Open sheet: ${JSON.stringify(r.buttons)}`);
       assert.equal(r.release, 1, `${rid}: Release Hold: ${JSON.stringify(r.buttons)}`);
     }
+    { const r = await rowOf(M);
+      assert.equal(r.hint, true, `M (on GF Sheet 3, in the committed but uncut Set 1) shows the drop hint: ${JSON.stringify(r)}`);
+      assert.equal(r.dropOk, true, `M's row takes dropped files (cuDropOk): ${r.cls}`);
+      assert.equal(r.markOk + r.sheetBtn, 0, `M: no Mark OK, no Open sheet: ${JSON.stringify(r.buttons)}`);
+      assert.equal(r.release, 1, `M: Release Hold: ${JSON.stringify(r.buttons)}`); }
     const dropRaw = (rid, files) => page.evaluate(({ rid, files }) => {
       const dt = new DataTransfer();
       for (const f of files) dt.items.add(new File([f.text], f.name));
@@ -191,7 +196,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     { const k = await page.evaluate(() => [!!document.getElementById('cuAsk'), !!document.querySelector('#cuDlg[open]')]); if (k[0]) await answer('no');
       assert.deepEqual(k, [false, false], 'a drop on the cut order\'s row asks nothing and opens no designs window');
       assert.equal(await page.evaluate(rid => { const r = B.orders.rows.find(x => x.order.receiptId === rid); const c = (B.customDesigns || {})[Review.cardKey(r)]; return c ? c.files.length : 0; }, K), 0, 'and no design is added to K'); }
-    pass('K (cut GF Sheet 2) and M (committed Set 1), in Review: no drop hint, no cuDropOk, a drop adds nothing; Release Hold, no Mark OK, no Open sheet');
+    pass('K (laser-cut GF Sheet 2), in Review: no drop hint, no cuDropOk, a drop adds nothing; M (committed but uncut Set 1) takes designs (INPLACE); Release Hold, no Mark OK, no Open sheet');
 
     /* ── B · a design dropped on A's row replaces its matched charm ── */
     await rowOf(A);
@@ -280,7 +285,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
       assert.deepEqual(on, [sku, true], `${id} is still placed on ${sid} as ${sku}`);
     }
     { const k = await page.evaluate(rids => rids.map(rid => CharmNestReviewMark.isMarked(rid)), [K, M]); assert.deepEqual(k, [true, true], 'K and M are still in Review'); }
-    pass('K (cut) and M (committed set) keep their FEATHER pieces where they are; F on GF Sheet 1 is untouched');
+    pass('K (cut) and M (committed set, nothing dropped on it) keep their FEATHER pieces where they are; F on GF Sheet 1 is untouched');
     assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
   } finally { await browser.close(); srv.close(); }
   console.log(`review-drop-replace: ${n} steps passed`);

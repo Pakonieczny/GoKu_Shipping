@@ -1,9 +1,9 @@
 // REDRAW, the page (Paul, 19 Oct 2026, order 4206638416, SKU HAPPY T-REX): a SKU the library re-points to ANOTHER drawing (a newer master file added in the Library; the entry is keyed by SKU, so its
-// charmHash and aiPath change) re-makes the open pieces cut from the old drawing; a cut or committed piece is never touched, only noted. Real headless Chromium over the repo's fake site (bridge-server.cjs:
+// charmHash and aiPath change) re-makes the open pieces cut from the old drawing; a laser-cut piece is never touched, only noted. Real headless Chromium over the repo's fake site (bridge-server.cjs:
 // the REAL charmNestLibrary handler on an in-memory Firestore; nothing leaves the machine). The only stand-in is the nest, as in listing-pick-relink-browser.cjs / review-drop-replace.cjs.
 //   A 4206638416  HAPPY T-REX pooled on the OPEN draft GF Sheet 1, cut from the old drawing            → taken off once, made up again from the new drawing, placed on GF Sheet 1, nothing twice
 //   K 4206600002  HAPPY T-REX on GF Sheet 2, CUT                                                       → untouched, noted (log, timeline, row.redrawNote)
-//   M 4206600003  HAPPY T-REX on GF Sheet 3, in a COMMITTED set                                       → untouched, noted
+//   M 4206600003  HAPPY T-REX on GF Sheet 3, in a set COMMITTED at the station, NOT laser cut          → made again into its old spot (INPLACE, Paul 20 Oct 2026: only a cut sheet is fixed)
 //   S 4206600004  HAPPY T-REX on GF Sheet 1, its piece holds the hash of a BODY of the new design      → not remade (a one-body piece of the new drawing)
 //   F 4206600091  another SKU on GF Sheet 1                                                            → untouched
 //   first a person-field-only change (an angle) does nothing; after the redraw, the same entry read again does nothing, and a sweep run again does nothing
@@ -72,7 +72,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
           try { CN.renderCard(sh); } catch (_) {}
         }, 120);
       };
-      stub.__stub = true; window.startNest = stub; clearInterval(iv);
+      stub.__stub = true; window.startNest = stub; /* INPLACE (Paul, 20 Oct 2026): a sheet whose replaced piece came off is written as it stands (writeAsPlaced, no nest): stood in for here as the nest is, every placement kept */ const wap = sh => { window.__writes = (window.__writes || []).concat([{ sheetId: sh.sheetId, page: sh.page, placements: sh.placements.map(p => ({ id: p.id, cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle })) }]); sh.status = 'finishing'; sh.persistedDone = false; let done; sh.persisted = new Promise(r => { done = r; }); return new Promise(res => setTimeout(async () => { try { if (sh.sheetId) await api('charmNestLibrary', { op: 'putSheet', sheet: { id: sh.sheetId, metal: sh.metal, runId: sh.runId, fileBase: sh.fileBase, sheetIndex: sh.sheetIndex, draft: sh.draft || undefined, charms: sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(c => ({ id: c.id, poolId: c.poolId, order: c.order, sku: (c.orderInfo && c.orderInfo.sku) || c.sku })), placements: sh.placements.map(p => Object.assign({}, p)), poolIds: sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(c => c.poolId) } }, { quiet: true }); } catch (e) { sh.problem = e.message; } sh.status = 'complete'; sh.dirty = false; sh.intakeAppend = false; sh.appendOnly = false; sh.persistedDone = true; sh.verification = { ok: true }; done(); try { CN.renderCard(sh); } catch (_) {} res(!sh.problem); }, 120)); }; wap.__stub = true; window.writeAsPlaced = wap; clearInterval(iv);
     }, 0);
   });
   const page = await ctx.newPage(); page.setDefaultTimeout(30000);
@@ -145,8 +145,9 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     }, { BODY_H, NEW_H });
     const w1 = st.calls.length;
     st.put(INDEX, SKU, { charmHash: NEW_H, aiPath: 'test/HAPPY_T-REX-necklace.ai', masterHash: NEW_M, masterName: 'Master Oct.ai', indexedAtMs: Date.now(), replaced: { from: OLD_M, fromName: 'Master Sept.ai', at: Date.now(), by: 'Paul' } });
+    await page.evaluate(idM => { window.__idM = idM; }, idM);
     await page.evaluate(() => Master.load({ force: true }));
-    await until(() => page.evaluate(({ idA, NEW_H }) => { const s = CN.S.sheets.gold.pages.find(p => p.sheetId === 'rw-gold-1'), c = s && s.charms.find(x => x.poolId === idA), p = B.pool.rows.get(idA); return !!(c && c.hash === NEW_H && s.placements.some(pl => pl.id === c.id) && s.status === 'complete' && p && p.charmHash === NEW_H && Review.redrawPending() === 0); }, { idA, NEW_H }), 30000, 'A made up again on GF Sheet 1');
+    await until(() => page.evaluate(({ idA, NEW_H }) => { const s = CN.S.sheets.gold.pages.find(p => p.sheetId === 'rw-gold-1'), c = s && s.charms.find(x => x.poolId === idA), p = B.pool.rows.get(idA); const s3 = CN.S.sheets.gold.pages.find(p => p.sheetId === 'rw-gold-3'), m = s3 && s3.charms.find(x => x.poolId === window.__idM); return !!(c && c.hash === NEW_H && s.placements.some(pl => pl.id === c.id) && s.status === 'complete' && p && p.charmHash === NEW_H && m && m.hash === NEW_H && s3.placements.some(pl => pl.id === m.id) && !s3._inplaceWrite && Review.redrawPending() === 0); }, { idA, NEW_H }), 30000, 'A made up again on GF Sheet 1, M in its old spot on GF Sheet 3');
     await sleep(600);
     const s1 = await page.evaluate(({ idA, idS, idF, idK, idM }) => {
       const sh = id => CN.S.sheets.gold.pages.find(p => p.sheetId === id), on = (id, pidv) => sh(id).charms.filter(c => c.poolId === pidv).map(c => [c.hash, sh(id).placements.some(pl => pl.id === c.id)]);
@@ -156,23 +157,27 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     assert.deepEqual(s1.Aall, ['rw-gold-1'], 'one piece of A on all the sheets, never two');
     assert.deepEqual(s1.S, [[BODY_H, true]], 'S (a body of the new design) stays as it is');
     assert.deepEqual(s1.K, [[OLD_H, true]], 'K stays on the cut GF Sheet 2 as the old drawing');
-    assert.deepEqual(s1.M, [[OLD_H, true]], 'M stays on the committed GF Sheet 3 as the old drawing');
+    // (INPLACE, Paul 20 Oct 2026: only a laser-cut sheet keeps its piece: M, on GF Sheet 3 in a set committed at the station but NOT cut, is made again too, into its old spot, nothing else moved)
+    assert.deepEqual(s1.M, [[NEW_H, true]], 'M (committed but uncut GF Sheet 3) is made again from the new drawing, placed: ' + JSON.stringify(s1));
+    { const at = await page.evaluate(idM => { const s3 = CN.S.sheets.gold.pages.find(p => p.sheetId === 'rw-gold-3'), c = s3.charms.find(x => x.poolId === idM), p = s3.placements.find(pl => pl.id === c.id); return [p.cxPt, p.cyPt, +p.angle || 0, s3.placements.length]; }, idM);
+      assert(Math.hypot(at[0] - 16, at[1] - 16) <= 2 && at[3] === 1, 'M\'s new piece is in M\'s old spot on GF Sheet 3 (within the 2 pt nudge the check allows; the hand-placed test sheet sits against its inset, so the check may turn it): ' + JSON.stringify(at)); }
     assert.deepEqual(s1.F, [['h-GFFILL_1', true]], 'F (another SKU) untouched');
-    pass('the open draft piece is made up again from the new drawing, once, in its own room on GF Sheet 1');
+    pass('the open draft piece and the committed-but-uncut piece are made up again from the new drawing, once, each in its own old spot');
     const offs = st.calls.slice(w1).filter(c => c.op === 'poolUpdate' && c.body.patch && c.body.patch.state === 'superseded');
-    assert.deepEqual(offs.map(c => c.body.poolIds), [[idA]], 'ONE take-off commit, for A only: ' + JSON.stringify(offs.map(c => c.body.poolIds)));
+    assert.deepEqual(offs.map(c => c.body.poolIds).sort(), [[idA], [idM]].sort(), 'one take-off commit each for A and M: ' + JSON.stringify(offs.map(c => c.body.poolIds)));
     const putsA = st.calls.slice(w1).filter(c => c.op === 'poolPut' && JSON.stringify(c.body).includes(idA));
     assert(putsA.length >= 1 && st.doc(POOL, idA).charmHash === NEW_H && st.doc(POOL, idA).masterHash === NEW_M && !['superseded', 'abandoned'].includes(st.doc(POOL, idA).state), 'the cloud holds A as the new drawing: ' + JSON.stringify(st.doc(POOL, idA)));
-    assert.equal(pieceWrites(w1, [idK, idM, idS, idF]).length, 0, 'no piece record of K, M, S or F is written: ' + JSON.stringify(pieceWrites(w1, [idK, idM, idS, idF]).map(c => c.op)));
-    assert(st.doc(SHEETS, 'rw-gold-2').poolIds.includes(idK) && st.doc(SHEETS, 'rw-gold-3').poolIds.includes(idM), 'the cut and committed saved sheets still list K and M');
-    pass('the cloud: one take-off commit, A recorded as the new drawing, K, M, S and F untouched');
-    const notes = await page.evaluate(({ K, M, A, S }) => { const row = rid => B.orders.rows.find(r => r.order.receiptId === rid); return { K: row(K).redrawNote, M: row(M).redrawNote, A: row(A).redrawNote || null, S: row(S).redrawNote || null, log: AG.events.filter(e => /older drawing|OLDER drawing/.test(e.text || '')).map(e => e.text) }; }, { K, M, A, S: S_ });
-    assert(notes.K && notes.K.how === 'cut' && notes.M && notes.M.how === 'in a committed set', 'K and M carry the note: ' + JSON.stringify(notes));
-    assert(notes.log.some(t => t.startsWith(K)) && notes.log.some(t => t.startsWith(M)), 'the activity log says K and M are the older drawing: ' + JSON.stringify(notes.log));
-    assert(!notes.A && !notes.S, 'A and S carry no note');
-    await until(async () => { await page.evaluate(() => { try { OrderTimeline.flush && OrderTimeline.flush(); } catch (_) {} }); const k = rid => st.list(TLC).filter(e => e._id.startsWith(rid + '~') && /older drawing of HAPPY T-REX/.test(e.text || '')).length; return k(K) === 1 && k(M) === 1; }, 20000, 'timeline notes for K and M');
-    await until(async () => { await page.evaluate(() => { try { OrderTimeline.flush && OrderTimeline.flush(); } catch (_) {} }); return st.list(TLC).filter(e => e._id.startsWith(A + '~') && /Made again from the new drawing of HAPPY T-REX/.test(e.text || '')).length === 1; }, 20000, 'timeline event for A');
-    pass('the cut and committed lines are noted (row, activity log, order timeline); A\'s timeline says it was made again');
+    assert(st.doc(POOL, idM).charmHash === NEW_H && !['superseded', 'abandoned'].includes(st.doc(POOL, idM).state), 'the cloud holds M as the new drawing: ' + JSON.stringify(st.doc(POOL, idM)));
+    assert.equal(pieceWrites(w1, [idK, idS, idF]).length, 0, 'no piece record of K, S or F is written: ' + JSON.stringify(pieceWrites(w1, [idK, idS, idF]).map(c => c.op)));
+    assert(st.doc(SHEETS, 'rw-gold-2').poolIds.includes(idK), 'the cut saved sheet still lists K');
+    pass('the cloud: one take-off commit each for A and M, both recorded as the new drawing, K, S and F untouched');
+    const notes = await page.evaluate(({ K, M, A, S }) => { const row = rid => B.orders.rows.find(r => r.order.receiptId === rid); return { K: row(K).redrawNote, M: row(M).redrawNote || null, A: row(A).redrawNote || null, S: row(S).redrawNote || null, log: AG.events.filter(e => /older drawing|OLDER drawing/.test(e.text || '')).map(e => e.text) }; }, { K, M, A, S: S_ });
+    assert(notes.K && /cut/.test(notes.K.how), 'K carries the note: ' + JSON.stringify(notes));
+    assert(notes.log.some(t => t.startsWith(K)) && !notes.log.some(t => t.startsWith(M)), 'the activity log says K (alone) is the older drawing: ' + JSON.stringify(notes.log));
+    assert(!notes.A && !notes.S && !notes.M, 'A, S and M carry no note');
+    await until(async () => { await page.evaluate(() => { try { OrderTimeline.flush && OrderTimeline.flush(); } catch (_) {} }); const k = rid => st.list(TLC).filter(e => e._id.startsWith(rid + '~') && /older drawing of HAPPY T-REX/.test(e.text || '')).length; return k(K) === 1 && k(M) === 0; }, 20000, 'the timeline note for K alone');
+    await until(async () => { await page.evaluate(() => { try { OrderTimeline.flush && OrderTimeline.flush(); } catch (_) {} }); const k = rid => st.list(TLC).filter(e => e._id.startsWith(rid + '~') && /Made again from the new drawing of HAPPY T-REX/.test(e.text || '')).length; return k(A) === 1 && k(M) === 1; }, 20000, 'timeline events for A and M');
+    pass('the laser-cut line is noted (row, activity log, order timeline); A\'s and M\'s timelines say they were made again');
 
     /* 3 · the same entry read again, and the sweep run again: nothing */
     const w2 = st.calls.length, nests = await page.evaluate(() => (window.__nests || []).length);
