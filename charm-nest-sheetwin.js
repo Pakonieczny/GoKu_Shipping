@@ -5467,7 +5467,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     fitsSpot(sheet, piece, pose, opts = {}) {
       const sh = typeof sheet === "string" ? allSheets().find(p => p.sheetId === sheet) || null : sheet || null;
       if (!sh || !Array.isArray(sh.placements)) return { ok: false, why: "blocked", reason: "That sheet is not held in this sorter." };
-      if (+sh.laserDoneAt > 0 || sh.roseCutAt || sh.recalled || sentToStation(sh) || mcApproved(sh)) return { ok: false, why: "blocked", reason: "That sheet's layout can no longer change." };
+      // (opts.replace: a replaced charm's new piece (INPLACE, Paul 20 Oct 2026: "Unless a sheet has been marked as fully completed and laser cut then that charm needs to come off that particular
+      //  sheet and be re-added to the same sheet if it fits"): a sheet in a set sent to the station or sealed for the laser still changes; only a sheet CUT says no, window.replaceCutWhy)
+      const cutWhy = typeof window.replaceCutWhy === "function" ? window.replaceCutWhy(sh) : "";
+      if (opts.replace ? (+sh.laserDoneAt > 0 || sh.roseCutAt || sh.recalled || cutWhy) : (+sh.laserDoneAt > 0 || sh.roseCutAt || sh.recalled || sentToStation(sh) || mcApproved(sh))) return { ok: false, why: "blocked", reason: "That sheet's layout can no longer change." };
       if (sh._manualHold || (MC.on && MC.sh === sh)) return { ok: false, why: "blocked", reason: "A person is moving this sheet's charms by hand." };
       const Sv = SV(); if (!Sv || !Sv.makeSheetGrid || !Sv.prepareVariant || !Sv.verify) return { ok: false, why: "blocked", reason: "The layout check is not loaded in this page." };
       const c = charmFor(sh, piece); if (!c) return { ok: false, why: "drawing", reason: "That charm is not in this sorter." };

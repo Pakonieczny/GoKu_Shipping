@@ -3843,6 +3843,26 @@ const Master = window.Master = (() => {
   return { entryFor, looseFor, sharedFor, likeFor, thumbOf, pictureTag, mountPictures, fetchEntry, load, indexFile, unlockUpload, addFiles, downloadCharm, looksLikeMaster, render, patch, patchMany, saveCustom, sameDesign, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();
 
+/* INPLACE (Paul, 20 Oct 2026): "Unless a sheet has been marked as fully completed and laser cut then that charm needs to come off that particular sheet and be re-added to the same sheet if it
+   fits, and if it doesn't then add it to the next unfinished sheet." The ONE rule every replacement path asks (a "Wrong charm?" or listing pick, relinkSweep / relinkFixed; a design dropped to
+   replace, REVDROP; a SKU drawn from a newer master file, REDRAW; an Etsy change accepted, repoolLine; a saved link, the Order changed card): the only sheet whose piece is never taken off is one
+   the laser has CUT: the Library's "Laser done" (laserDoneAt on the sheet, or on its set), a Rose Gold layout cut (roseCutAt), a piece inside a Rose Gold / 10K / 14K green line already cut
+   (rosePlan / roseProtected), or a saved sheet only shown here from its record (recalled: its pieces are not on this page). A draft, a full sheet, a sheet in a formed set, in a set released
+   for its labels or committed at the station but not cut yet: all change (the set's files are written again, and a set already released says so: Review's inPlaceRefile).
+   ids (optional, a Set of pool ids): the pieces asked about; a Rose Gold / 10K / 14K sheet then keeps only a piece inside its saved (cut) green line, roseProtected, as repoolLine always did.
+   → "" (it may change) or the reason it may not, in a few words. */
+function replaceCutWhy(sh, ids) {
+  if (!sh) return "";
+  if (+sh.laserDoneAt > 0) return "laser cut";
+  if (sh.roseCutAt) return "cut";
+  try { if (window.Sets && sh.runId && Sets.ofRun(sh.runId).some(s => +s.laserDoneAt > 0 && (s.sheetIds || []).includes(sh.sheetId))) return "laser cut"; } catch (_) { /* no sets read yet */ }
+  if (sh.recalled) return "recalled from the library (its pieces are not open here)";
+  const inside = !ids ? true : (() => { const prot = new Set(((sh.roseProtected && sh.roseProtected.placements) || []).map(p => p.id)); return (sh.charms || []).some(c => ids.has(c.poolId) && prot.has(c.id)); })();
+  if ((sh.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(sh.metal))) && (sh.rosePlan || sh.roseProtected) && inside) return `inside the protected ${typeof CharmNestRose !== "undefined" && CharmNestRose.cutWord ? CharmNestRose.cutWord(sh.metal) : "Rose Gold"} contour (cut)`;
+  return "";
+}
+window.replaceCutWhy = replaceCutWhy;
+
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
 const Pool = window.Pool = (() => {
   const PoolPieces = window.CharmNestPoolPieces;   // the shape of a piece record (side, bodyIndex, groupKey, groupSize) and how an old record is read: charm-nest-pool-pieces.js
@@ -4228,8 +4248,8 @@ const Pool = window.Pool = (() => {
       const made = live.slice().sort((a, b) => (+a.copy || 0) - (+b.copy || 0)).map(r => String(r.sku || "").toUpperCase());
       if (set ? made.length === expect.length && made.every((s, i) => s === expect[i]) : made.length > 0 && made.every(s => O.sameDesign(s, want[0], k => Master.entryFor(k)))) return;   // (already made as the link says: for one design, every piece is that drawing, under whichever of its names)
       if (one && (!made.length || made.some(s => !s))) return;   // (nothing made yet: the line is simply made up from the link; a piece whose record names no design is not guessed at)
-      const ids = new Set(row.poolIds || []), cut = sh => !!sh.roseCutAt || Sets.ofRun(sh.runId).some(s => s.committedAt && s.sheetIds.includes(sh.sheetId));
-      const fixed = allSheets().filter(sh => (cut(sh) || (sh.releaseFull && !(Gate.modern(sh.runId) && (sh.draft || !sh.setId) && !(sh.label && sh.label.own))) || sh.recalled || Gate.modern(sh.runId) && sh.setId && !sh.draft) && sh.charms.some(c => ids.has(c.poolId)));   // (PICKFULL, Paul 19 Oct 2026: a sheet that is only FULL (releaseFull) but still a draft, waiting for its set, has gone nowhere: its old pieces come off and the picked charm goes in; only a sheet out of draft, cut, committed, recalled or with its own QR label is left as it is)
+      const ids = new Set(row.poolIds || []);
+      const fixed = allSheets().filter(sh => replaceCutWhy(sh, ids) && sh.charms.some(c => ids.has(c.poolId)));   // (INPLACE, Paul 20 Oct 2026: only a sheet the laser has CUT keeps its old piece; a draft, a full sheet, a formed, released or committed set's sheet gives it up and takes the new one in its spot, replaceCutWhy) // (PICKFULL, Paul 19 Oct 2026: a sheet that is only FULL (releaseFull) but still a draft, waiting for its set, has gone nowhere: its old pieces come off and the picked charm goes in; only a sheet out of draft, cut, committed, recalled or with its own QR label is left as it is)
       if (fixed.length) {
         if (!setToldFixed.has(row.key)) {
           setToldFixed.add(row.key); const where = fixed.map(sh => sh.fileBase || sh.sheetId).join(", ");
@@ -4537,26 +4557,33 @@ const Pool = window.Pool = (() => {
      where each stood (row._vacated: its sheet, centre, angle); the sheets they left are held (sh._inplaceHold: no nest, no arrival) until the line is settled. Here, when the new pieces join:
        1. every other charm on those sheets stays exactly where it is: nothing is nested again;
        2. the new pieces of the metal are tried in the vacated spots of ONE sheet (a pair, or any line of several pieces, goes together or not at all: never half in the old spots and half
-          elsewhere): each piece in each spot, at the same centre, the old angle first, then the old angle turned by 15° steps (as Manual Control turns a charm), 90°, 180° and 270°, each with a
+          elsewhere): each piece in each spot, at the same centre, the old angle first, then 0°, 90°, 180° and 270°, then the old angle turned by 15° steps (as Manual Control turns a charm), each with a
           nudge of up to INPLACE_NUDGE_PT inside the room it left; the check is the sheet window's own (CNManual.fitsSpot: Manual Control's mcCheck, the nest's grid with the shop's clearance and
           the sheet's inset, every other charm stamped from its outline where it stands, then the independent verifier);
        3. when they fit they are placed there (no search), and the sheet is written as it stands (repoolLine's inPlaceSettle: CNManual.writeInPlace, the page's writeAsPlaced);
        4. when they do not, the spot is left EMPTY (that sheet is written as it stands too) and the pieces go to the LATEST UNFINISHED sheet of the metal (inPlaceTarget: the newest sheet of this
-          run still open, never one cut, recalled, released, in a formed or committed set or held; NOSPREAD's room rule as the intake asks it), appended there (appendOnly: its placed charms stay;
+          run still open and unfinished, never one cut, recalled, full, in a formed or committed set or held; NOSPREAD's room rule as the intake asks it), appended there (appendOnly: its placed charms stay;
           sh._keepPlaced: no "making room" either); when none has room the intake's own new sheet takes them.
-     A line whose old pieces were not placed on any sheet (only pooled), or whose new pieces are of another metal, has no vacated spot of that metal and joins its sheet as any line does. */
-  const INPLACE_NUDGE_PT = 2, INPLACE_TURNS = [0, 15, -15, 30, -30, 45, -45, 180];
+     A line whose old pieces were not placed on any sheet (only pooled), or whose new pieces are of another metal, has no vacated spot of that metal and joins its sheet as any line does.
+     WHICH SHEETS CHANGE (Paul, 20 Oct 2026: "Unless a sheet has been marked as fully completed and laser cut then that charm needs to come off that particular sheet and be re-added to the same
+     sheet if it fits, and if it doesn't then add it to the next unfinished sheet"): every sheet the laser has not cut (replaceCutWhy): a draft, a full sheet, a sheet in a formed set, in a set
+     released for its labels or committed at the station. A set whose sheet changed has its files written again and, when it was already released, says so (Review's inPlaceRefile: "Set N
+     changed after it was released — re-send its files", in the progress panel and on the sheet). */
+  const INPLACE_NUDGE_PT = 2;
   const ipNorm = a => Math.round(((((+a || 0) % 360) + 360) % 360) * 1000) / 1000 % 360;
-  /** The angles a new piece is tried at in a spot, the old angle first. */
-  function inPlaceAngles(a0) { const out = []; for (const a of INPLACE_TURNS.map(d => a0 + d).concat([0, 90, 180, 270])) { const v = ipNorm(a); if (!out.includes(v)) out.push(v); } return out; }
+  /** The angles a new piece is tried at in a spot: the old angle first, then 0°, 90°, 180°, 270°, then the old angle turned by every 15° step (as Manual Control turns a charm), nearest first. */
+  function inPlaceAngles(a0) {
+    const out = [], add = a => { const v = ipNorm(a); if (!out.includes(v)) out.push(v); };
+    add(a0); for (const a of [0, 90, 180, 270]) add(a);
+    for (let k = 1; k <= 12; k++) { add(a0 + 15 * k); add(a0 - 15 * k); }
+    return out;
+  }
   const ipBusy = sh => ["nesting", "finishing", "queued"].includes(sh.status) || !!sh._operationStarting || !!sh._learnedStarting || !!(sh.persisted && !sh.persistedDone && !sh.problem);
-  /** A sheet that may take a new piece into an old spot: still on this page, its run's, not cut or recalled, not in a committed set, not in a formed set (a draft or a sheet outside any set only), not busy. */
+  /** A sheet that may take a new piece into an old spot: still on this page, its run's, NOT CUT (replaceCutWhy: a draft, a full sheet, a sheet in a formed, released or committed set all may; a
+   *  Rose Gold / 10K / 14K sheet with a green line is left to its own rules), not held by a person or pulled to another set, not busy. */
   function inPlaceOpen(sh, run) {
-    if (!sh || !allSheets().includes(sh) || sh.laserDoneAt || sh.roseCutAt || sh.recalled || sh.cardinalPull || sh._manualHold || ipBusy(sh)) return false;
+    if (!sh || !allSheets().includes(sh) || replaceCutWhy(sh) || sh.cardinalPull || sh._manualHold || ipBusy(sh)) return false;
     if (run && sh.runId && sh.runId !== run.runId) return false;
-    if (Sets.ofRun(sh.runId).some(set => set.committedAt && (set.sheetIds || []).includes(sh.sheetId))) return false;
-    if (Gate.modern(sh.runId) && sh.setId && !sh.draft) return false;
-    if ((sh.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(sh.metal))) && (sh.rosePlan || sh.roseProtected)) return false;
     return true;
   }
   /** Every piece of `list` into a spot of `spots` (one sheet), each spot once: [{ c, s, fit }] or null. Pieces already tried are stood on the sheet while the next is tried, then taken off again. */
@@ -4571,7 +4598,7 @@ const Pool = window.Pool = (() => {
       for (const s of spots) {
         if (used.has(s)) continue;
         for (const angle of inPlaceAngles(s.angle)) {
-          let fit; try { fit = M.fitsSpot(sh, c, { cxPt: s.cxPt, cyPt: s.cyPt, angle }, { snapPt: INPLACE_NUDGE_PT }); } catch (_) { fit = null; }
+          let fit; try { fit = M.fitsSpot(sh, c, { cxPt: s.cxPt, cyPt: s.cyPt, angle }, { snapPt: INPLACE_NUDGE_PT, replace: true }); } catch (_) { fit = null; }
           if (!fit || !fit.ok || !fit.pose) continue;
           used.add(s); got.push({ c, s, fit }); stand(c, fit);
           if (go(k + 1)) return true;
@@ -11456,7 +11483,8 @@ const Sets = window.Sets = (() => {
       const [lp, mp, jp] = await Promise.all([uploadBytes(`${set.folder}/labels/${set.name}_labels.pdf`, await labels.save({ useObjectStreams: false }), "application/pdf", "Saving the set's labels PDF"), uploadBytes(`${set.folder}/${set.name}_manifest.pdf`, await man.save({ useObjectStreams: false }), "application/pdf", "Saving the manifest"), uploadBytes(`${set.folder}/set.json`, new TextEncoder().encode(JSON.stringify(json, null, 1)), "application/json")]);
       set.labels = { pdf: { path: lp.path, url: lp.url }, manifest: { path: mp.path, url: mp.url }, json: { path: jp.path, url: jp.url }, files: files.map(f => ({ path: f.path, url: f.url, sheet: f.sheet })) };
     } else set.labels = { files: files.map(f => ({ path: f.path, url: f.url, sheet: f.sheet })) };
-    set.status = "labelled"; await save(set);
+    if (!set.committedAt) set.status = "labelled";   // (INPLACE, Paul 20 Oct 2026: a committed set whose sheet changed has its files written again here and stays committed: Review's inPlaceRefile)
+    await save(set);
     for (const id of set.sheetIds || []) window.Session?.dropBest?.(id);   // released: its sheets' best-layout records go
     agent({ run: set.runId }, "cloud", `${set.name}: ${files.length} label(s) collected in labels/${set.name}_labels.pdf · manifest and set.json saved`);
     return set;
@@ -12226,7 +12254,7 @@ const RunCtl = window.RunCtl = (() => {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: slim.id })).sheet; if (!d) continue;
       const prim = S.sheets[d.metal]; let pg = prim.pages.find(p => p.sheetId === d.id) || (prim.pages[0].charms.length ? addPage(d.metal) : prim.pages[0]);
       const set = d.draft ? null : bySet.get(d.setId);
-      pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull; pg.laserDoneAt = +d.laserDoneAt || null; pg.intakeFinalized = !!d.intakeFinalized; pg.intakeOptimized=!!d.intakeOptimized; pg.intakeOptimizedCount=+d.intakeOptimizedCount||0; pg.missRearranged=!!d.missRearranged; pg.topup=d.topup||null;
+      pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull; pg.laserDoneAt = +d.laserDoneAt || null; pg.releasedChange = d.releasedChange || null; /* (INPLACE: a set changed after it was released, said on the card) */ pg.intakeFinalized = !!d.intakeFinalized; pg.intakeOptimized=!!d.intakeOptimized; pg.intakeOptimizedCount=+d.intakeOptimizedCount||0; pg.missRearranged=!!d.missRearranged; pg.topup=d.topup||null;
       if (["gold10k","gold14k","rose"].includes(d.metal) && d.solidIncluded === true) pg.solidPick = true;   // a 10K/14K/Rose Gold sheet's own Include tick
       pg.leftSet = Gate.leftSetOf(d); if (pg.leftSet && ["gold10k","gold14k","rose"].includes(d.metal)) pg.solidPick = false;   // a sheet a person took out of a committed set stays out (and can be put back by the In current set switch)
       pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
@@ -15351,18 +15379,17 @@ const Review = window.Review = (() => {
   async function repoolLine(row) {
     CNListActivity.touch(row);
     const old0=new Set(row.poolIds || []);
-    // A piece on a sheet already released to the laser, or cut in a committed set, is not taken off its sheet (as for a
-    // cancelled order, takeOffGone): that sheet's files and labels went out as they are, and arranging it again rewrote
-    // them under the same name, moved other orders' pieces and made the unchanged copies a second time. A changed line
-    // whose piece is there waits for a person, who makes the difference by hand or skips it; releasing the hold then
-    // keeps the piece on that sheet (the path below for a line whose pieces are on sheets).
-    const cut=sh=>!!sh.roseCutAt || Sets.ofRun(sh.runId).some(s=>s.committedAt && s.sheetIds.includes(sh.sheetId));
-    const fixedSheets=allSheets().filter(sh=>(cut(sh) || (sh.releaseFull && !(Gate.modern(sh.runId) && (sh.draft || !sh.setId) && !(sh.label && sh.label.own))) || sh.recalled || Gate.modern(sh.runId) && sh.setId && !sh.draft) && sh.charms.some(c=>old0.has(c.poolId)));   // (PICKFULL: a full draft sheet is not released: see noticeSet)
+    // A piece on a sheet the laser has CUT is not taken off its sheet (as for a cancelled order, takeOffGone): it is cut
+    // already. A changed line whose piece is there waits for a person, who makes the difference by hand or skips it;
+    // releasing the hold then keeps the piece on that sheet (the path below for a line whose pieces are on sheets).
+    // (INPLACE, Paul 20 Oct 2026: "Unless a sheet has been marked as fully completed and laser cut then that charm needs to come off that particular sheet and be re-added to the same sheet if it
+    //  fits, and if it doesn't then add it to the next unfinished sheet." A sheet released to the laser, in a formed set or in a committed set not cut yet is no longer fixed here: its piece comes
+    //  off, the new one goes into its spot or the spot stays empty (Pool's inPlaceAttach), the sheet is written as it stands and its set's files written again, inPlaceRefile; replaceCutWhy)
+    const fixedSheets=allSheets().filter(sh=>replaceCutWhy(sh,old0) && sh.charms.some(c=>old0.has(c.poolId)));
     if(row.repoolChanged && fixedSheets.length){
       row.changePending=false;row.repoolChanged=false;row.state="held";
-      const wasCut=fixedSheets.some(cut);
-      // (LISTPICK: a listing pick that found the sheet released or cut between its look and this turn says so in its own words)
-      row.hold=row.reason=`${row._relink ? `The listing's charm is now ${row._relink.sku} (picked by ${row._relink.by || "a person"}), but this piece was` : "Etsy changed this piece after it was"} ${wasCut ? "cut on" : "released to the laser on"} ${fixedSheets.map(sh=>sh.fileBase || sheetName(sh)).join(", ")} — make the change by hand, then release it (the piece on that sheet is kept)${wasCut ? " or skip it" : "; its set waits for that"}`;
+      // (LISTPICK: a listing pick that found the sheet cut between its look and this turn says so in its own words)
+      row.hold=row.reason=`${row._relink ? `The listing's charm is now ${row._relink.sku} (picked by ${row._relink.by || "a person"}), but this piece was` : "Etsy changed this piece after it was"} cut on ${fixedSheets.map(sh=>sh.fileBase || sheetName(sh)).join(", ")} (${[...new Set(fixedSheets.map(sh=>replaceCutWhy(sh,old0)))].join(", ")}) — make the change by hand, then release it (the piece on that sheet is kept) or skip it`;
       add({kind:"heldOrder",key:"held:"+row.order.receiptId,rid:row.order.receiptId,why:`${row.order.receiptId} held — ${row.hold}`,line:row.key});
       agent({run:B.run?.runId},"warn",`${row.order.receiptId}: ${row.hold}`);
       syncOrderItems();Orders.render();RunCtl.poke();return;
@@ -15407,7 +15434,7 @@ const Review = window.Review = (() => {
         else Orders.keepRest(sh);
       }
       if(row._relink)row._relink.homes=homes;
-      row._vacated=held.length?{spots:spots.filter(x=>held.includes(x.sh)),homes:held,results:[],at:Date.now()}:null;
+      row._vacated=held.length?{spots:spots.filter(x=>held.includes(x.sh)),homes:held,results:[],at:Date.now(),committed:row.state==="committed"}:null;   // (committed: the line's set was committed at the station; it is again once its new pieces are back on that set's sheets, inPlaceSettle)
       try { await Pool.update([...old],{state:"superseded",sheetId:null,setId:null}); }
       catch (e) { inPlaceSettle(row); throw e; }
       for(const id of old)B.pool.rows.delete(id);
@@ -15443,14 +15470,63 @@ const Review = window.Review = (() => {
         }
         out.writes.push(name(sh));
         const M = window.CNManual, go = M && M.writeInPlace ? M.writeInPlace(sh) : typeof window.writeAsPlaced === "function" ? window.writeAsPlaced(sh) : Promise.resolve(false);
-        const p = Promise.resolve(go).catch(e => { console.warn("[inplace] write", e && e.message); return false; });
+        // (then its set: a set already released or committed has its files written again and says it changed, inPlaceRefile)
+        const p = Promise.resolve(go).catch(e => { console.warn("[inplace] write", e && e.message); return false; })
+          .then(ok => inPlaceRefile(sh, row, ok).catch(e => { console.warn("[inplace] set files", e && e.message); }).then(() => ok));
         sh._inplaceWrite = p; p.then(() => { if (sh._inplaceWrite === p) delete sh._inplaceWrite; });
+        out.waits = (out.waits || []).concat([p]);
       } catch (e) { console.warn("[inplace] settle", e && e.message); }
     }
+    // (a line whose set was committed at the station, its new pieces all back in the old spots on that set's sheets: committed again, as its station record already says; a piece that went to
+    //  an unfinished sheet leaves the line open, and it goes with that sheet into a set of its own)
+    if (V.committed && out.results.length && out.results.every(r => r.placed)) {
+      const homes = (V.results || []).map(r => r.home), inCommitted = sh => !!sh && Sets.ofRun(sh.runId).some(s => s.committedAt && (s.sheetIds || []).includes(sh.sheetId));
+      if (homes.every(inCommitted) && ["pooled", "pulled", "written"].includes(row.state) && !row.hold) {
+        row.state = "committed"; const ids = (row.poolIds || []).slice();
+        Promise.all(out.waits || []).then(() => ids.length ? Pool.update(ids, { state: "committed", committedAt: Date.now() }, stampWho()) : null).catch(e => console.warn("[inplace] committed again", e && e.message));
+      }
+    }
+    delete out.waits;
     row._inplaceLast = out;
     try {
       for (const r of out.results) agent({ metal: r.metal, pool: true }, "POOL", `${row.order.receiptId} · ${r.placed ? `new piece placed in the old spot on ${r.home}` : `did not fit the old spot (spot left empty on ${r.home}) — added to ${r.to || "the next sheet"}`}; ${out.writes.length ? out.writes.join(", ") + " written as it stands (nothing moved, no nest)" : "no sheet nested again"}`);
     } catch (_) { /* a word only */ }
+  }
+  /* INPLACE (Paul, 20 Oct 2026) · a sheet written as it stands after a replaced piece came off it, when it is in a set: "a committed set whose sheet changed must have its files/labels rewritten",
+     and a set already released (committed at the station, its labels collected for the laser, or sealed for it) says so where a person sees it: the progress panel (relinkFlow reads
+     sh._setChange), the sheet's card and its record (sh.releasedChange, kept on the sheet's record), the activity log and the order's timeline: "Set N changed after it was released — re-send its
+     files". A committed set: the sheet's QR label for its orders now (the sheet's save made it; made here when it is not current) and the set's labels PDF, manifest and set.json, written again
+     (Sets.finalize; the set stays committed). A set formed but not committed went back to "nesting" with the sheet's save, and its own assembly writes its files again. A set not released yet
+     says nothing. Never throws. → the result kept on sh._setChange, or null */
+  async function inPlaceRefile(sh, row, wrote) {
+    if (!sh || !sh.sheetId || !sh.runId) return null;
+    const set = Sets.ofRun(sh.runId).find(s => (s.sheetIds || []).includes(sh.sheetId)) || (sh.setId ? Sets.ofRun(sh.runId).find(s => s.setId === sh.setId) : null);
+    if (!set) return null;
+    const released = !!(set.committedAt || set.processReady || sh.processReady || set.laserSetPending || set.status === "labelled" || (set.labels && set.labels.pdf));
+    if (!released) return null;
+    const at = Date.now(), name = sh.fileBase || sheetName(sh), rid = String((row && row.order && row.order.receiptId) || "");
+    const word = `${set.name} changed after it was released — re-send its files`;
+    const res = { setId: set.setId, set: set.name, sheet: name, sheetId: sh.sheetId, committed: !!set.committedAt, at, ok: false, why: "", word };
+    const was = sh.releasedChange && sh.releasedChange.setId === set.setId ? sh.releasedChange : null;
+    sh.releasedChange = { setId: set.setId, set: set.name, at, by: employeeName() || null, orders: [...new Set(((was && was.orders) || []).concat(rid ? [rid] : []))].slice(0, 50), word };
+    set.changedAfterRelease = { at, sheets: [...new Set(((set.changedAfterRelease && set.changedAfterRelease.sheets) || []).concat([name]))], word };
+    sh._setChange = res;
+    try { renderCard(sh); } catch (_) { /* drawn at the next change */ }
+    if (S.cloud.ok) api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releasedChange: sh.releasedChange } }, { quiet: true }).catch(e => console.warn("[inplace] released mark", e && e.message));
+    if (!wrote) res.why = "the sheet's files were not saved";
+    else if (set.committedAt) {
+      try {
+        if (!Sets.labelsReady(sh, set)) await Sets.onSheetSaved(sh, activeCharms(sh), sh.cloud, { labelsOnly: true, setOverride: set });
+        await Sets.finalize(set);
+        res.ok = true;
+      } catch (e) { res.why = (e && e.message) || String(e); }
+    } else res.ok = true;   // (its own assembly writes them again: the sheet's save set it back to nesting)
+    try {
+      agent({ metal: sh.metal, run: sh.runId }, "warn", `${word}: ${name} was written again (a replaced piece${rid ? ` of order ${rid}` : ""})${set.committedAt ? res.ok ? "; its QR label, labels PDF, manifest and set.json are saved again" : `; its files were not all written again: ${res.why}` : ""}`);
+      if (row && rid) TL.line(row, "interpreted", { id: `${row.key}.inplace.set.${set.setId}.${Math.floor(at / 60000)}`, once: true, text: `${word} (${name})`.slice(0, 200), data: { setId: set.setId, sheetId: sh.sheetId, released: true } });
+      toast(`${word} (${name})`, "bad", 10000);
+    } catch (_) { /* words only */ }
+    return res;
   }
   const by = () => employeeName() || askEmployee();
   /** A decision saved to the library holds the card's buttons while it saves, and a failed save says so and leaves the
@@ -15806,19 +15882,15 @@ const Review = window.Review = (() => {
     const got = ids.map(id => B.pool.rows.get(id)); if (got.some(r => !r)) return null;
     return got.filter(r => !RELINK_TAKEN.has(r.state)).sort((a, b) => (+a.copy || 0) - (+b.copy || 0)).map(r => String(r.sku || "").trim().toUpperCase());
   };
-  /** The sheets that keep the line's pieces as they are: cut, in a committed set, recalled, released to the laser, or inside a protected Rose Gold / 10K / 14K contour (this page's sheets, local),
-   *  and a live piece whose record puts it on a sheet this page does not hold or past it (written, committed: not local). */
+  /** The sheets that keep the line's pieces as they are: the ones the laser has CUT (INPLACE, Paul 20 Oct 2026: replaceCutWhy; a draft, a full sheet, a formed, released or committed set's sheet
+   *  not cut yet takes the new piece: its old one comes off, Pool's inPlaceAttach) (this page's sheets, local), and a live piece whose record puts it on a sheet this page does not hold (not local). */
   function relinkFixed(row) {
     const ids = new Set((row && row.poolIds) || []), out = [], seen = new Set(); if (!ids.size) return out;
-    const committed = sh => Sets.ofRun(sh.runId).some(s => s.committedAt && (s.sheetIds || []).includes(sh.sheetId));
-    const contour = m => m === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(m));
     for (const sh of allSheets()) {
       if (!sh.charms.some(c => ids.has(c.poolId))) continue;
       for (const c of sh.charms) if (ids.has(c.poolId)) seen.add(c.poolId);
-      const cutNow = !!(sh.laserDoneAt || sh.roseCutAt), inSet = committed(sh);
-      const why = cutNow ? "cut" : inSet ? "in a committed set" : sh.recalled ? "recalled from the laser" : ((sh.releaseFull && !(Gate.modern(sh.runId) && (sh.draft || !sh.setId) && !(sh.label && sh.label.own))) || (Gate.modern(sh.runId) && sh.setId && !sh.draft)) ? "released to the laser"
-        : contour(sh.metal) && (sh.rosePlan || sh.roseProtected) ? `inside the protected ${typeof CharmNestRose !== "undefined" && CharmNestRose.cutWord ? CharmNestRose.cutWord(sh.metal) : "Rose Gold"} contour` : "";
-      if (why) out.push({ name: sh.fileBase || sheetName(sh), why, cut: cutNow || inSet, local: true, sheetId: sh.sheetId || null });
+      const why = replaceCutWhy(sh, ids);
+      if (why) out.push({ name: sh.fileBase || sheetName(sh), why, cut: true, local: true, sheetId: sh.sheetId || null });
     }
     for (const id of ids) {
       if (seen.has(id)) continue; const p = B.pool.rows.get(id); if (!p || RELINK_TAKEN.has(p.state)) continue;
@@ -15873,7 +15945,7 @@ const Review = window.Review = (() => {
     delete row._relink;
     const inplace = row._inplaceLast || null; delete row._inplaceLast;   // (INPLACE: where the new piece went: the old spot, or the latest unfinished sheet with the old spot left empty)
     B.review.items = items().filter(x => x.key !== "chg:" + row.key);   // (the Order changed card this reading raised is answered by the pick)
-    const ok = !row.hold && (row.state === "pooled" || row.state === "pulled") && !(row.problems || []).length;
+    const ok = !row.hold && (row.state === "pooled" || row.state === "pulled" || (row.state === "committed" && !!inplace)) && !(row.problems || []).length;
     relinkSay(row, c, by, { text: homes.length ? inPlaceWords(inplace, homes) : "made up again", sheets: homes });
     if (!ok) agent({ metal: row.spec && row.spec.material, pool: true }, "warn", `${row.order.receiptId} · listing pick ${c.to}: the old pieces came off, but the line was not made up again: ${row.reason || (row.problems || []).map(p => p.kind).join(", ") || row.state}`);
     return { ok: true, made: ok, homes, inplace };
@@ -15936,7 +16008,7 @@ const Review = window.Review = (() => {
     let fl = null; try { fl = window.CNRelinkFlow ? CNRelinkFlow.open({ title: o.title || `Listing ${lid} → ${to}`, sandbox: !!o.sandbox, sub: o.sub }) : null; } catch (e) { console.warn("[relink] panel:", e && e.message); }
     const line = (id, text, state, why) => { try { if (fl) fl.line(id, text, state, why); } catch (_) { /* a word only */ } };
     for (const p of o.pre || []) line(p.id, p.text, p.state, p.why);
-    const tally = { orders: new Set(), held: new Set(), failed: new Set(), sheets: new Map() };
+    const tally = { orders: new Set(), held: new Set(), failed: new Set(), sheets: new Map(), setsChanged: new Set() }, rlStart = Date.now() - 1000;
     // (INPLACE, Paul 20 Oct 2026: no sheet is nested again for a replaced charm: the sheet its old piece left is written as it stands (the new piece in the old spot, or the spot empty), and the
     //  latest unfinished sheet that took a piece that did not fit gets it appended, nothing on it moved; each says "files saved")
     const sheetDone = (sh, how) => {
@@ -15948,6 +16020,12 @@ const Review = window.Review = (() => {
         if (sh.problem || sh.runHold) { tally.failed.add("s:" + key); line("s:" + key, `${rlName(sh)}: files not saved`, "failed", String(sh.problem || sh.runHold)); }
         else if (rlBusy(sh)) line("s:" + key, `${rlName(sh)}: still waiting for its turn to be saved (${sh.status})`, "warn", B.run && B.run.status === "stopped" ? "the run is stopped: Resume carries on" : "");
         else line("s:" + key, `${rlName(sh)} files saved${how === "append" ? " (the new piece added; nothing on it moved)" : ""}`, "done");
+        // (INPLACE: its set was already released: said plainly, with whether the set's files were written again, inPlaceRefile)
+        const sc = sh._setChange;
+        if (sc && sc.at >= rlStart) {
+          tally.setsChanged.add(sc.setId);
+          line("set:" + sc.setId, sc.word, "warn", `${sc.sheet} changed${sc.committed ? sc.ok ? "; its QR label, labels PDF, manifest and set.json are saved again" : `; its files were not all written again: ${sc.why}` : "; the set's files are written again as it is assembled"}`);
+        }
       })();
       tally.sheets.set(key, p); return p;
     };
@@ -16016,7 +16094,7 @@ const Review = window.Review = (() => {
           if (!tally.orders.size && !tally.held.size && !tally.failed.size) line("none", `No other open order of listing ${lid} had to change`, "done");
           remadeRepaint([]);
           line("pics", "Thumbnails updated (Orders, Review, order window, Engrave, sheets)", "done");
-          if (!o.keepOpen) finish(`${tally.orders.size} order${tally.orders.size === 1 ? "" : "s"} updated, ${tally.sheets.size} sheet${tally.sheets.size === 1 ? "" : "s"} saved (none nested again)${tally.held.size ? `, ${tally.held.size} kept for a person` : ""}${tally.failed.size ? `, ${tally.failed.size} not done` : ""}`);
+          if (!o.keepOpen) finish(`${tally.orders.size} order${tally.orders.size === 1 ? "" : "s"} updated, ${tally.sheets.size} sheet${tally.sheets.size === 1 ? "" : "s"} saved (none nested again)${tally.setsChanged.size ? `, ${tally.setsChanged.size} released set${tally.setsChanged.size === 1 ? "" : "s"} changed: re-send ${tally.setsChanged.size === 1 ? "its" : "their"} files` : ""}${tally.held.size ? `, ${tally.held.size} kept for a person` : ""}${tally.failed.size ? `, ${tally.failed.size} not done` : ""}`);
           return tally;
         });
         all.catch(e => { end(); line("err", "The update stopped", "failed", (e && e.message) || String(e)); finish("Stopped: see the red line", "bad"); });
@@ -16027,7 +16105,7 @@ const Review = window.Review = (() => {
         const dec = t => { const x = document.createElement("textarea"); x.innerHTML = String(t == null ? "" : t); return x.value.trim().toUpperCase(); };   // (Etsy's SKU text may carry &#39; and the like)
         const from = dec(fromSku == null ? o.fromSku || "" : fromSku); let n = 0;
         for (const r of Orders.rows()) {
-          if (!r.line || rlLid(r) !== lid || skip.has(r.key) || ["gone", "skipped", "noDesign", "committed"].includes(r.state) || dec(r.line.sku) !== from) continue;
+          if (!r.line || rlLid(r) !== lid || skip.has(r.key) || ["gone", "skipped", "noDesign"].includes(r.state) || dec(r.line.sku) !== from) continue;
           const ids = new Set(r.poolIds || []), on = allSheets().filter(sh => sh.charms.some(c => ids.has(c.poolId))), fixed = relinkFixed(r);
           n++;
           if (fixed.length) line("o:" + r.key, `Order ${r.order.receiptId}: would keep its piece on ${[...new Set(fixed.map(f => f.name))].join(", ")} and tell a person`, "would", fixed.map(f => f.why).find(Boolean));
@@ -16107,8 +16185,8 @@ const Review = window.Review = (() => {
      WHICH PIECES: a live pool row of that SKU whose size's drawing changed (sizeEntry of the old and the new entry differ in hash) and that was cut from the OLD drawing (its charm hash is one the old drawing
      went by, or its record names the old master file and not the entry's). A piece holding a hash the NEW drawing goes by (whole, any size, a body, a one-body charm, a mirror: Pool.drawingHashes reads the
      new file) is right already and never touched: a piece cut from one BODY of a two-body design holds the body's hash, not the whole design's.
-     WHAT: the decision a listing pick, the Review drop-to-replace and "Wrong charm?" make (relinkFixed): a line whose pieces are pooled or on a sheet still open (a draft or a full draft, not cut, not in a
-     committed set, not released, not inside a protected Rose Gold / 10K / 14K contour) is made up again from the new drawing with repool and repoolChanged (its old pieces come off in ONE commit, superseded;
+     WHAT: the decision a listing pick, the Review drop-to-replace and "Wrong charm?" make (relinkFixed): a line whose pieces are pooled or on a sheet the laser has not cut (INPLACE, Paul 20 Oct 2026:
+     a draft, a full sheet, a sheet in a formed, released or committed set; only a laser-cut sheet or a piece inside a cut Rose Gold / 10K / 14K green line keeps its piece) is made up again from the new drawing with repool and repoolChanged (its old pieces come off in ONE commit, superseded;
      the line is made up from the library as it is now; attachPool puts it first on the sheet the old pieces left, and the sheets it joined are arranged at once, appended into that room). Its engraving
      approval goes, as the "design changed" rule of repoolLine does. A line with a piece cut, in a committed set or released is NEVER touched: the activity log, a toast and the order's timeline say its placed
      piece is the older drawing (row.redrawNote). An order in Review keeps its piece (REVHOLD) until its Review is resolved; a line a person holds is told and left as it is.
@@ -16160,7 +16238,7 @@ const Review = window.Review = (() => {
       if (!redrawReady()) { why = "retry: the page does not hold its run yet"; return false; }
       const ids = new Set(r.poolIds || []);
       if (!L.pieces.some(p => ids.has(p.poolId))) { why = "the line no longer holds those pieces"; return false; }
-      if (r.state === "committed" || relinkFixed(r).length) { why = "retry: a piece of it is cut, committed or released now"; return false; }
+      if (relinkFixed(r).length) { why = "retry: a piece of it is laser cut now"; return false; }   // (INPLACE, Paul 20 Oct 2026: only a cut sheet keeps its piece; a committed set's sheet not cut yet changes)
       if (Pool.keepsPlace && Pool.keepsPlace(r)) { why = "retry: the order is in Review"; return false; }
       if (r.hold) { why = "the line is held by a person"; return false; }
       const on = allSheets().filter(sh => sh.charms.some(x => ids.has(x.poolId)));
@@ -16183,7 +16261,7 @@ const Review = window.Review = (() => {
     if (!went) return { ok: !/^retry:/.test(why) && why !== "another run holds its pieces", retry: /^retry:/.test(why), why };
     const inplace = row._inplaceLast || null; delete row._inplaceLast;
     B.review.items = items().filter(x => x.key !== "chg:" + row.key);   // (no Order changed card asks about a change the library made)
-    const made = !row.hold && (row.state === "pooled" || row.state === "pulled") && !(row.problems || []).length;
+    const made = !row.hold && (row.state === "pooled" || row.state === "pulled" || (row.state === "committed" && !!inplace)) && !(row.problems || []).length;
     TL.line(row, "interpreted", { id: redrawId(row, L), once: true, text: `Made again from the new drawing of ${redrawName(L)} (a newer master file in the library)${homes.length ? `: ${inPlaceWords(inplace, homes)}` : ""}`.slice(0, 200),
       data: { redraw: true, sku: L.sku, size: L.size || null, to: L.to, was: L.from || null, action: "swap", sheets: homes } });
     agent({ metal: row.spec && row.spec.material, pool: true }, made ? "POOL" : "warn", `${row.order.receiptId} · ${redrawName(L)} draws another design now: ${made ? `made up again from it${homes.length ? ` (the old piece came off ${homes.join(", ")})` : ""}` : `the old pieces came off, but the line was not made up again: ${row.reason || (row.problems || []).map(p => p.kind).join(", ") || row.state}`}`);
@@ -16227,7 +16305,7 @@ const Review = window.Review = (() => {
       const { row } = L, done = `${row.key}|${L.sku}|${L.size || ""}|${L.to}`;
       if (redrawDone.has(done)) continue;
       if (["gone", "skipped", "noDesign"].includes(row.state) || (window.Cancelled && Cancelled.has && Cancelled.has(row.order.receiptId))) { redrawDone.add(done); continue; }
-      const fixed = row.state === "committed" ? [{ name: "its sheet", why: "in a committed set", cut: true, local: true }] : relinkFixed(row);
+      const fixed = relinkFixed(row);   // (INPLACE, Paul 20 Oct 2026: a line in a committed set whose sheet is not cut is made again too: only a laser-cut sheet keeps its piece)
       if (fixed.length) {
         redrawDone.add(done);
         if (fixed.every(f => !f.local && !f.cut)) continue;   // (its sheet is open on another computer: that page makes it up again)
