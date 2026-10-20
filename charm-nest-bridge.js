@@ -19457,16 +19457,17 @@ const OrderWin = window.OrderWin = (() => {
     return CustomPrint.failNote(it) + print +
       (it.kind === "reviewAct" ? rel + (c.can ? CustomPrint.keptSeals(it, "button", c.keptC) + c.moreBtn : "") : c.can ? CustomPrint.releaseButtonHtml(it, "xs") + CustomPrint.keptSeals(it, "button", c.keptC) + c.moreBtn : "") + holdSlotOf(it) + undo;   // (RELORDER, Paul 20 Oct 2026: a Custom Orders piece too has Release Hold where Complete Order stood)
   }
-  /** The place of the orange Hold button on a piece's row, last among its buttons (Paul, 5 Oct: Hold beside Print QR label / Complete Order): HoldUI.fill
-   *  makes the button once the row is drawn. It acts on the WHOLE order, whichever piece's row it is on; none for an order that is held or cancelled. */
+  /** The place of the orange Hold button on a piece's row, last among its buttons (Paul, 5 Oct: Hold beside Print QR label / Complete Order). It acts on the WHOLE order, whichever piece's row it is on.
+   *  (HOLDBTN, Paul 20 Oct 2026: "Remove the 'Hold' button everywhere in the app and replace it with the 'Send to Review'": the place holds the Send to Review button now, ReviewSend's own
+   *  (ReviewSend.slot here, ReviewSend.fill once the row is drawn: the same button, words, states and press as the Orders rows), which also takes the order's pieces off sheets not yet cut
+   *  (offSheets, HoldUI.takeOff). None for a cancelled order, or a page without Review.) */
+  const revSlotOf = r => r && r.order && window.ReviewSend && ReviewSend.slot ? tryDo(() => ReviewSend.slot({ rid: String(r.order.receiptId), label: pieceName(r), offSheets: true })) || "" : "";
   function holdSlotOf(it) {
-    const r = it && (it.row || (it.rows && it.rows[0]));
-    return r && r.order && window.HoldUI ? tryDo(() => HoldUI.slot({ rid: String(r.order.receiptId), source: "orderWindow", label: pieceName(r) })) || "" : "";
+    return revSlotOf(it && (it.row || (it.rows && it.rows[0])));
   }
   /** The same place for a piece by its key (a piece in no card has no item): the order of its row, its name for the label. */
   function holdSlotOfKey(key) {
-    const r = rowOf(key);
-    return r && r.order && window.HoldUI ? tryDo(() => HoldUI.slot({ rid: String(r.order.receiptId), source: "orderWindow", label: pieceName(r) })) || "" : "";
+    return revSlotOf(rowOf(key));
   }
   /** Complete Order in its done state: the green the button takes once its seal is on it (sealedDone), with "Completed" for its
    *  words. It answers no press (a disabled button); its title says where a completed order is reopened. */
@@ -20011,7 +20012,7 @@ const OrderWin = window.OrderWin = (() => {
     // (the small pictures of the Left and Right lines: the pair's own picture with the other body washed out, from the one renderer the other pictures use; a picture already drawn is kept)
     box.querySelectorAll("[data-pc-thumb]").forEach(h => { const pr = rowOf(h.dataset.pcThumbLine); if (pr) tryDo(() => { const o = { highlight: h.dataset.pcThumb, side: h.dataset.pcThumb, mirror: h.dataset.pcMirror === "1", px: 120 }; ListMedia.watch(h, () => ListMedia.vectorThumb(pr, o), ListMedia.vectorKey(pr, o)); }); });
     box.querySelectorAll("[data-pc-act]").forEach(h => wirePcAct(h, typed));
-    if (window.HoldUI) tryDo(() => HoldUI.fill(box));   // (the Hold of the rows that have no card's buttons)
+    if (window.ReviewSend && ReviewSend.fill) tryDo(() => ReviewSend.fill(box));   // (the Send to Review of the rows that have no card's buttons: HOLDBTN, Paul 20 Oct 2026, where Hold stood)
     markPieces();
   }
   /** What a piece's row says of where the piece is NOW, in plain short words (Paul, 5 Oct, point 4: no "next: ..." any more, the steps ahead are the
@@ -20081,7 +20082,7 @@ const OrderWin = window.OrderWin = (() => {
   /** What a press on a piece's controls does (h: the span holding them, data-pc-act its piece's key): the card as it is when pressed, not
    *  as it was drawn, of an order that is still the one the window shows. typed: the names being typed in the rows drawn before. */
   function wirePcAct(h, typed) {
-    if (window.HoldUI) tryDo(() => HoldUI.fill(h));   // (the row's Hold button: the one place the orange Hold is now, NOHOLDREV: the Review rows do not draw it)
+    if (window.ReviewSend && ReviewSend.fill) tryDo(() => ReviewSend.fill(h));   // (the row's Send to Review button, where the orange Hold stood: HOLDBTN, Paul 20 Oct 2026)
     const key = h.dataset.pcAct, here = () => { const w = W.dlg && W.dlg.open ? rowOf(W.key) : null; return w ? String(w.order.receiptId) : ""; };
     const now = () => { const r = rowOf(key), at = here(); return r && at && String(r.order.receiptId) === at ? tryDo(() => pieceItem(key)) : null; }, it = now();
     if (!it) return;

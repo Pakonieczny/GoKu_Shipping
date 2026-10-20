@@ -16,6 +16,12 @@
  *                                (RHSAME, Paul 20 Oct 2026: "These two Release Hold buttons seem to do something very different": the Orders card no longer calls this.
  *                                Its Release Hold is the Review card's own button and press, ReviewRelease.orderButton -> ReviewRelease.press, charm-nest-bridge.js.)
  *
+ * (HOLDBTN, Paul 20 Oct 2026: "Remove the 'Hold' button everywhere in the app and replace it with the 'Send to Review' ... same look, feel, and functionality": there is no
+ *  orange Hold button any more. HoldUI.button / slot / fill hand over to ReviewSend's own (charm-nest-review-send.js: ReviewSend.button / slot / fill), and the order window's
+ *  rows ask ReviewSend directly. What stays here of Hold is its engine path, HoldUI.takeOff(rid, { name }): the pieces of the order on sheets not yet cut come off them
+ *  (OrderHold.plan -> OrderHold.run, no popup, no film), which the Send to Review button that stands where Hold stood calls once the order is marked. HoldUI.hold, the
+ *  popup flow, is kept for the code that still calls it; no button calls it.)
+ *
  * Where it sits in the page: the order window's piece row asks for a slot (HoldUI.slot(ctx), one span in its markup) and
  * the finished markup is given to HoldUI.fill(root), which swaps each slot for the real button. A held or cancelled order has no slot.
  *
@@ -130,37 +136,22 @@
     }
   }
 
-  /** HoldUI.button({ rid, source, label }) -> the one orange Hold button. */
+  /** HoldUI.button({ rid, source, label }) -> (HOLDBTN, Paul 20 Oct 2026) the Send to Review button that stands where Hold stood (ReviewSend.button), null without it. */
   function button(ctx) {
     ctx = ctx || {};
-    ensureCss();
-    const rid = str(ctx.rid), src = ctx.source === 'orderWindow' ? 'orderWindow' : 'review';
-    const b = doc.createElement('button');
-    b.type = 'button';
-    b.className = 'btn ' + (src === 'orderWindow' ? 'xs' : 'sm') + ' holdBtn';
-    b.dataset.holdBtn = ''; b.dataset.rid = rid; b.dataset.src = src; b.dataset.state = 'idle';
-    b.textContent = 'Hold';
-    b.setAttribute('aria-label', 'Hold order ' + rid + (str(ctx.label) ? ' · ' + str(ctx.label) : ''));
-    b.title = 'Put the whole order on hold: all its pieces come off the sheets. You are shown what changes first.';
-    b.onclick = e => { e.preventDefault(); e.stopPropagation(); hold(rid, Object.assign({}, ctx, { source: src, button: b })); };
-    if (!shown(rid) && !flows.has(rid)) b.hidden = true;
-    paintBtn(b);
-    return b;
+    const RS = root.ReviewSend;
+    return RS && typeof RS.button === 'function' ? tryDo(() => RS.button(str(ctx.rid), { label: str(ctx.label), offSheets: true }), null) : null;
   }
-  /** One span in a card's markup where its Hold button goes ("" for an order that has none): the card is drawn as text, and fill() makes the button. */
+  /** One span in a card's markup where its button goes ("" for an order that has none): (HOLDBTN, Paul 20 Oct 2026) ReviewSend's slot, the Send to Review button that stands where Hold stood. */
   function slot(ctx) {
     ctx = ctx || {};
-    const rid = str(ctx.rid);
-    if (!rid || !shown(rid)) return '';
-    return `<span class="holdSlot" data-hold-slot data-rid="${esc(rid)}" data-src="${esc(ctx.source === 'orderWindow' ? 'orderWindow' : 'review')}" data-label="${esc(str(ctx.label))}"></span>`;
+    const RS = root.ReviewSend;
+    return RS && typeof RS.slot === 'function' ? tryDo(() => RS.slot({ rid: str(ctx.rid), label: str(ctx.label), offSheets: true }), '') || '' : '';
   }
-  /** Each slot under `host` becomes the real button. */
+  /** Each slot under `host` becomes the real button (HOLDBTN: ReviewSend.fill). */
   function fill(host) {
-    const where = host && host.querySelectorAll ? host : doc;
-    for (const s of [...where.querySelectorAll('[data-hold-slot]')]) {
-      const b = button({ rid: s.dataset.rid, source: s.dataset.src, label: s.dataset.label });
-      s.replaceWith(b);
-    }
+    const RS = root.ReviewSend;
+    if (RS && typeof RS.fill === 'function') tryDo(() => RS.fill(host));
   }
 
   // ── the consent popup ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -420,6 +411,37 @@
     }
   }
 
+  // ── the pieces off the sheets (HOLDBTN) ─────────────────────────────────────────────────────────────────────────────
+  /**
+   * (HOLDBTN, Paul 20 Oct 2026: the Send to Review button that replaces Hold "must also take those pieces off, as the old Hold did") HoldUI.takeOff(rid, { name }) ->
+   * { ok, off, names, blocked?, why?, error? }: the old Hold's engine, without its popup or film (Send to Review asks nothing and plays nothing). Read the plan; when a piece of
+   * the order is on a sheet not yet laser-cut (state 'onSheet'), OrderHold.run takes every such piece off and fills the spots, as Hold did. off: the pieces that came off
+   * (0 when none was on an uncut sheet); names: those sheets. A plan that cannot be held (a committed set, an order alone on its sheet) changes nothing here: the order is
+   * in Review, so its sheet is held (REVHOLD) and is never cut while it is.
+   */
+  async function takeOff(rid, o) {
+    rid = str(rid); o = o || {};
+    const H = engine();
+    if (!rid || !available()) return { ok: false, off: 0, error: 'Hold is not ready on this page' };
+    if (flows.has(rid)) return { ok: false, off: 0, busy: true, error: 'busy' };
+    flows.set(rid, { phase: 'plan' });
+    try {
+      const plan = await H.plan(rid, { source: 'orderWindow' });
+      const on = arr(plan && plan.pieces).filter(p => p && p.state === 'onSheet');
+      if (!plan || !on.length) return { ok: true, off: 0, names: [] };
+      const names = uniq(on.map(p => str(p.sheetLabel)));
+      if (plan.canHold === false) return { ok: false, off: 0, names, blocked: true, why: str(plan.blockedWhy) };
+      flows.set(rid, { phase: 'run' });
+      const res = await H.run(rid, { name: str(o.name) || savedName() });
+      refreshViews();
+      if (!res || res.ok === false || res.error) return { ok: false, off: 0, names, error: msgOf(res && res.error) };
+      return { ok: true, off: on.length, names };
+    } catch (e) {
+      warn('take off', e);
+      return { ok: false, off: 0, error: msgOf(e) };
+    } finally { flows.delete(rid); }
+  }
+
   // ── Release hold ───────────────────────────────────────────────────────────────────────────────────────────────────
   /**
    * HoldUI.release(rid, { button }) -> { ok, used }: the press of an existing "Release hold" button. `used: false` means the engine has no release
@@ -479,7 +501,7 @@
   })();
 
   root.HoldUI = {
-    button, slot, fill, confirm, hold, release, describe,
+    button, slot, fill, confirm, hold, release, describe, takeOff,
     shown, stamp, available, canRelease,
     busy: rid => flows.has(str(rid)),
     version: 1
