@@ -98,7 +98,7 @@ const OLD = [
     await page.waitForFunction(k => CustomSheet.sentOf(B.orders.byKey.get(k)) && !document.querySelector('#rvList .reviewListRow[data-rid="4179100001"]'), sentKey, { timeout: 30000 });
 
     // 2 · Complete Order on the other one, by hand
-    await page.click(card(HAND) + ' [data-cu-complete]');
+    await page.click(card(HAND) + ' [data-cu-release]');
     await page.waitForFunction(k => B.maps.customDone[k] && !document.querySelector('#rvList .reviewListRow[data-rid="4179100002"]'), HAND + '_41791000021', { timeout: 30000 });
     // the notes said where the cards went: Completed, never Decided
     const notes = await page.evaluate(() => window.__notes.slice());

@@ -271,7 +271,7 @@ async function partB(browser) {
   const [o1, o2, o3, o4, o5] = ONES;
 
   console.log('· B1: Complete Order, signed in');
-  await page.click(`${card(o1)} [data-cu-complete]`); await page.waitForTimeout(1500);
+  await page.click(`${card(o1)} [data-cu-release]`); await page.waitForTimeout(1500);
   check(!(await bar()) && !(await page.evaluate(() => document.querySelector('[data-cu-name]'))), 'no field, no bar');
   check(named('Paul K'), 'the completion was written under the name: ' + JSON.stringify(posts.filter(p => p.body && JSON.stringify(p.body).includes('Paul K')).map(p => p.fn).slice(0, 4)));
 
@@ -295,7 +295,7 @@ async function partB(browser) {
   await page.evaluate(() => { CN.setMode('review'); Review.render(); try { localStorage.removeItem('cn.employee'); } catch (_) {} B.employee = ''; });
   check(await page.evaluate(() => CNEmployee.name()) === '' && await page.evaluate(() => CNEmployee.last()) === ADMIN + '.', 'no name; the last name is ' + ADMIN + '.');
   await page.waitForSelector(card(o3), { timeout: 10000 });
-  await page.click(`${card(o3)} [data-cu-complete]`);
+  await page.click(`${card(o3)} [data-cu-release]`);
   await page.waitForSelector('[data-cu-name]', { timeout: 8000 });
   const field = await page.evaluate(() => document.querySelector('[data-cu-name]').value);
   check(field === ADMIN + '.' && !(await bar()), 'Complete Order with no name: the card\'s own field, last name ready, no pop-up: ' + JSON.stringify(field));

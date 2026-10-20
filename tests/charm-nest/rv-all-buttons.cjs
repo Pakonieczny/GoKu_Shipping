@@ -1,8 +1,8 @@
 // Every Review card has the Custom Orders card's action column (Paul, 28 Sep 23:55; 29 Sep 00:38: "Remove the review
 // and resolve button and make all the buttons look the same as in the other tabs … Including the drop zone purple menu").
 // An Unknown SKU or Options card has no "Review & resolve": Print QR label (the primary until its designs are ready),
-// Release Hold (RELHOLD, Paul 18 Oct 2026: it replaced Complete Order on every card but a Custom Orders one, which keeps
-// Complete Order), Send to Sheet (greyed and disabled until a design is dropped and read, the primary then) and the dashed
+// Release Hold (RELHOLD, Paul 18 Oct 2026: it replaced Complete Order on every card but a Custom Orders one; RELORDER, Paul
+// 20 Oct 2026: on a Custom Orders card too), Send to Sheet (greyed and disabled until a design is dropped and read, the primary then) and the dashed
 // drop zone, the markup, classes and sizes of a custom card's, run by the same code. No question is asked anywhere (Paul,
 // 29 Sep 01:01: the decision box removed "from the UI and the review tab, from all pop-up modals"): a click on any card,
 // a custom one's included, opens its order window, which shows no decision box, and the card unfolds nothing. A line
@@ -32,7 +32,7 @@ const DESIGN_DXF = DG(0, 'SECTION', 2, 'HEADER', 9, '$INSUNITS', 70, 4, 0, 'ENDS
   0, 'LWPOLYLINE', 8, 'CUT', 90, 4, 70, 1, 10, 0, 20, 0, 10, 18, 20, 0, 42, 0.4, 10, 18, 20, 20, 10, 0, 20, 20,
   0, 'CIRCLE', 8, 'CUT', 10, 9, 20, 16, 40, 1.2, 0, 'ENDSEC', 0, 'EOF');
 const WANT = ['Print QR label', 'Release Hold', 'Send to Sheet', 'Drop .ai / .dxf designs here'];
-const WANT_CU = ['Print QR label', 'Complete Order', 'Send to Sheet', 'Drop .ai / .dxf designs here'];   // (a Custom Orders card: made by hand, never nested, it keeps Complete Order)
+const WANT_CU = WANT;   // (RELORDER, Paul 20 Oct 2026: a Custom Orders card has Release Hold where Complete Order stood too; was 'Complete Order')
 // RELHOLD (and Paul, 18 Oct 2026, order 4204568396 SEA_96442: "Remove this 'Release to nesting queue' button since it will clash with the new 'Release Hold' button"): no such button anywhere on the page
 const NO_OLD_RELEASE = () => ({ old: [...document.querySelectorAll('button')].filter(b => /Release to nesting queue/i.test(b.textContent)).length, under: document.querySelectorAll('.rvRel').length });
 // a card's action column, as drawn: each control's classes, disabled state, primary and size
@@ -113,12 +113,12 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     // the Custom Orders card: the same column, control for control (classes, disabled state, width and height)
     await page.click('#reviewView .egTab[data-k="customOrder"]');
     const cuCol = await page.evaluate(COLUMN, card(CUSTOM));
-    // (one column, control for control, but the second: Release Hold there, Complete Order here)
-    const same = c => c.filter((_, i) => i !== 1).map(({ t, cls, dis, w, h }) => ({ t, cls: cls.replace(/\s*\bworking\b/, ''), dis, w, h }));
+    // (one column, control for control: RELORDER, Paul 20 Oct 2026, Release Hold on both, the same button; was "but the second: Complete Order here")
+    const same = c => c.map(({ t, cls, dis, w, h }) => ({ t, cls: cls.replace(/\s*\bworking\b/, ''), dis, w, h }));
     assert.deepEqual(same(skuCol), same(cuCol), 'Unknown SKU and Custom Orders: one column\n' + JSON.stringify(skuCol) + '\n' + JSON.stringify(cuCol));
-    assert.equal(skuCol[1].t, 'Release Hold'); assert.equal(cuCol[1].t, 'Complete Order');
+    assert.equal(skuCol[1].t, 'Release Hold'); assert.equal(cuCol[1].t, 'Release Hold'); assert.match(cuCol[1].cls, /\brelHoldBtn\b/); assert.equal(await page.$('#rvList [data-cu-complete]'), null, 'no Complete Order on a Custom Orders card');
     // (RELEASE, Paul 19 Oct 2026: was "an Unknown SKU cannot be released yet: Release Hold is greyed" / ghost; the press sets its question aside, so it is enabled and primary)
-    assert.notEqual(skuCol[1].dis, 'true', 'an Unknown SKU can be released: Release Hold is not greyed'); assert.match(skuCol[1].cls, /\bgold\b/); assert.equal(skuCol[1].h, cuCol[1].h, 'the same size as the button it replaced');
+    assert.notEqual(skuCol[1].dis, 'true', 'an Unknown SKU can be released: Release Hold is not greyed'); assert.match(skuCol[1].cls, /\brelHoldBtn\b/); assert.equal(skuCol[1].h, cuCol[1].h, 'the same size as the button it replaced');   // (RHSAME, Paul 20 Oct 2026: the seal orange; was gold)
     const shot = process.env.CN_SHOT || '/mnt/project-files/plans/review-buttons-2.png';
     try {
       const cuPng = await page.locator(card(CUSTOM)).screenshot();
@@ -150,9 +150,10 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     await page.waitForFunction(() => OrderWin.isOpen() && OrderWin.key() === '4174476673_41744766731', null, { timeout: 10000 });
     await page.waitForTimeout(300);
     assert.deepEqual(await asked(), none, 'Custom Orders: its order, and no question box either');
-    await page.waitForFunction(() => document.querySelector('#owPcSum [data-cu-complete]'), null, { timeout: 10000 });
+    await page.waitForFunction(() => document.querySelector('#owPcSum [data-cu-release].relHoldBtn'), null, { timeout: 10000 });   // (RELORDER: Release Hold where Complete Order stood)
+    assert.equal(await page.$('#owPcSum [data-cu-complete]'), null, 'no Complete Order in the order window either');
     assert.equal(await page.evaluate(() => !!document.getElementById('owCustom')), false, 'no tan Custom Orders bar in the window (5 Oct, round 8)');
-    assert.match(await page.evaluate(() => document.getElementById('owPcSum').textContent), /Print QR label[\s\S]*Complete Order/, 'its piece\'s own row carries its buttons');
+    assert.match(await page.evaluate(() => document.getElementById('owPcSum').textContent), /Print QR label[\s\S]*Release Hold/, 'its piece\'s own row carries its buttons');
     await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
     await page.click('#reviewView .egTab[data-k="needResolution"]');
 
@@ -283,7 +284,7 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
 
     assert.deepEqual(outside, [], 'no Etsy call');
     assert.deepEqual(errors, [], 'no page errors');
-    console.log('  ✓ every Review card: the custom card\'s column (Print QR label, Release Hold / Complete Order on a Custom Orders card, Send to Sheet greyed until ready, drop zone), no "Release to nesting queue", designs, a click opens its order, no question box anywhere (Chromium)');
+    console.log('  ✓ every Review card: the custom card\'s column (Print QR label, Release Hold, on a Custom Orders card too, Send to Sheet greyed until ready, drop zone), no "Release to nesting queue", designs, a click opens its order, no question box anywhere (Chromium)');
     console.log('Review buttons OK');
   } finally { await browser.close(); srv.close(); }
 })().catch(e => { console.error(e); process.exit(1); });

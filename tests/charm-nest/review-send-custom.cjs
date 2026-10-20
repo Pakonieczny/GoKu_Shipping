@@ -33,11 +33,11 @@ const ok = (name, cond, extra) => { assert.ok(cond, name + (extra ? ' :: ' + ext
     const opened = await page.evaluate(rid => { const it = Review.openOrders().get(rid), mk = Review.mkeyOf(it); return { card: !!document.querySelector(`#rvList .reviewListRow[data-mkey="${CSS.escape(mk)}"]`), marked: CharmNestReviewMark.isMarked(rid) }; }, rid);
     ok('3 a press opens its Review card and adds nothing', opened.card && !opened.marked, JSON.stringify(opened));
 
-    // back on the Orders tab: Complete Order pressed on the Review card (its own handler) takes it out of Review; the card follows with no reload
+    // back on the Orders tab: Release Hold pressed on the Review card (RELORDER, Paul 20 Oct 2026: it replaced Complete Order; its own press, ReviewRelease.press) takes it out of Review; the card follows with no reload
     await page.evaluate(() => CN.setMode('orders'));
     await page.waitForFunction(sel => document.querySelector(sel)?.textContent === 'In Review', btn);
     const before = await page.evaluate(() => { window.__marker = Math.random(); window.__node = document.querySelector('#ordItems'); return +(document.getElementById('tabReviewN').textContent || 0); });
-    await page.evaluate(rid => CustomPrint.complete(Review.openOrders().get(rid)), rid);
+    await page.evaluate(rid => ReviewRelease.press(Review.openOrders().get(rid)), rid);
     await page.waitForFunction(sel => document.querySelector(sel)?.textContent === 'Send to Review', btn, { timeout: 15000 });
     const after = await page.evaluate(rid => ({ same: window.__marker !== undefined && window.__node === document.querySelector('#ordItems'), open: Review.openOrders().has(rid), n: +(document.getElementById('tabReviewN').textContent || 0) }), rid);
     ok('4 resolved in Review: the Orders card says "Send to Review" at once, no reload, and the Review tab counts one less', after.same && !after.open && after.n === before - 1, JSON.stringify({ before, after }));

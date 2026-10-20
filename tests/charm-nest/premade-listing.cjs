@@ -202,7 +202,7 @@ async function browser() {
     await page.click('#owClose');
 
     // Complete Order: customPut only: nothing pooled, nothing on a sheet, nothing cut
-    await page.click(`${cardSel} [data-cu-complete]`);
+    await page.click(`${cardSel} [data-cu-release]`);
     await page.waitForFunction(k => B.maps.customDone[k], KEY18, { timeout: 30000 });
     await page.waitForFunction(k => B.orders.byKey.get(k).spec.noDesign === true, KEY18, { timeout: 15000 });
     const rec = srv.st.doc('Charm_Custom_Orders', KEY18);

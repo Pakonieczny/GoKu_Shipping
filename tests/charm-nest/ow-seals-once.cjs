@@ -112,7 +112,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     await page.evaluate(k => OrderWin.open(k), KEY);
     // reopened (the timeline says so a moment later): the Now card steps back to the order's arrival, and the bar still
     // shows one seal of the record's, small and on the button that made it, with "+1" for the other
-    await page.waitForFunction(() => document.querySelector('#owPcSum [data-cu-complete]'), null, { timeout: 10000 });
+    await page.waitForFunction(() => document.querySelector('#owPcSum [data-cu-release]'), null, { timeout: 10000 });
     await page.evaluate(({ KEY, at }) => { __evs = __evs.concat([{ id: 'reopen', key: 'reopen', orderId: '4176744752', type: 'note', at, by: 'Paul', source: 'sorter', lineKey: KEY, text: 'Reopened', data: { reopened: 'reopen' } }]); OrderWin._feed().refresh({ force: true }); }, { KEY, at: Date.now() - H });
     await page.waitForFunction(() => document.querySelector('#owPcSum [data-cu-more]'), null, { timeout: 10000 });
     await page.waitForTimeout(500);

@@ -87,7 +87,7 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     const stamped = async () => { await page.waitForTimeout(300); await page.waitForFunction(() => !Seal.busy() && !document.querySelector('#motionLayer .mGhost, .sealTool, .seal.pending'), null, { timeout: 20000 }); await page.waitForTimeout(250); };
     // Complete Order on its Custom Orders card, then Reopen under Completed
     await page.click('#reviewView .egTab[data-k="customOrder"]');
-    await page.click(`#rvList .reviewListRow[data-rid="${RID}"] [data-cu-complete]`);
+    await page.click(`#rvList .reviewListRow[data-rid="${RID}"] [data-cu-release]`);
     await page.waitForFunction(k => B.maps.customDone[k], K); await idle(); await stamped(); await calm();
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
     await page.click(`#rvList .reviewListRow[data-rid="${RID}"] [data-cu-reopen]`);
@@ -120,8 +120,8 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
     // and in the order window
     await page.evaluate(k => OrderWin.open(k), K);
-    await page.waitForSelector('#owPcSum [data-cu-complete]', { state: 'visible' });
-    await page.click('#owPcSum [data-cu-complete]');
+    await page.waitForSelector('#owPcSum [data-cu-release]', { state: 'visible' });
+    await page.click('#owPcSum [data-cu-release]');
     await page.waitForFunction(k => B.maps.customDone[k], K); await idle();
     const recorded = rid => opsOf(srv.st.list('Order_Timeline').filter(e => e.orderId === rid).sort((x, y) => x.at - y.at));
     assert.deepEqual(recorded(RID), [['complete', 'Test Operator', 'Review · Custom Orders', false], ['reopen', 'Test Operator', 'Review · Custom Orders', false], ['complete', 'Test Operator', 'Order window', false]], 'the page says where each was pressed: ' + JSON.stringify(recorded(RID)));
@@ -215,7 +215,7 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     await page.waitForFunction(k => !B.maps.customDone[k], K); await idle(); await stamped(); await calm();
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
     await page.evaluate(k => OrderWin.open(k), K);
-    await page.waitForSelector('#owPcSum [data-cu-complete]', { state: 'visible' }); await calm();
+    await page.waitForSelector('#owPcSum [data-cu-release]', { state: 'visible' }); await calm();
     await page.evaluate(() => OrderWin.setView('timeline'));
     await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key^="reopened~"]').length === 2 && document.getElementById('owNowCard').dataset.now !== 'Order completed', null, { timeout: 15000 });
     await page.waitForTimeout(500);
@@ -227,8 +227,8 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     assert.notEqual(s.k, 'Order completed', 'the Now card is open again: ' + s.card);
     console.log(`  ✓ reopened: pill "${s.pill}", step row open (next: ${s.stops.find(x => x[1] === 'c')[0]}), NOW "${s.nowLine}", ${s.ghosts} steps to come, Now card "${s.k}"; all 4 seals kept`);
     // Complete again: completed again
-    await page.evaluate(() => OrderWin.setView('info')); await page.waitForSelector('#owPcSum [data-cu-complete]', { state: 'visible' });
-    await page.click('#owPcSum [data-cu-complete]');
+    await page.evaluate(() => OrderWin.setView('info')); await page.waitForSelector('#owPcSum [data-cu-release]', { state: 'visible' });
+    await page.click('#owPcSum [data-cu-release]');
     await page.waitForFunction(k => B.maps.customDone[k], K); await idle(); await calm();
     await page.evaluate(() => OrderWin.setView('timeline'));
     await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key^="sealCompleted~"]').length === 3 && document.getElementById('owNowCard').dataset.now === 'Order completed', null, { timeout: 15000 });

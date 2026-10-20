@@ -111,7 +111,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       await A0.load(ORDERS); await B0.load(ORDERS);
       assert.equal(await A0.page.evaluate(() => typeof window.ReviewLive), 'undefined', 'the page without the feed script has no ReviewLive');
       const rid = R(5);
-      await B0.page.click(`#rvList .reviewListRow[data-rid="${rid}"] [data-cu-complete]`);
+      await B0.page.click(`#rvList .reviewListRow[data-rid="${rid}"] [data-cu-release]`);
       await dueIn(B0, { f: k => B.maps.customDone[k], a: KEY(rid) }, 'B completing');
       await sleep(7000);
       assert.equal(await A0.has(KEY(rid)), false, 'before: seven seconds on, the page of the other computer still does not hold the completion');
@@ -133,7 +133,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
     const completeOnB = async (rid, tab) => {
       if (tab) await B.page.click(`#reviewView .egTab[data-k="${tab}"]`);
       const t = Date.now();
-      await B.page.click(`#rvList .reviewListRow[data-rid="${rid}"] [data-cu-complete]`);
+      await B.page.click(`#rvList .reviewListRow[data-rid="${rid}"] [data-cu-release]`);
       return t;
     };
     const seen1 = async (rid, label, tab, how) => {
@@ -218,7 +218,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       const hidden = await A.page.evaluate(rid => { const n = document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"]`), sc = n.closest('.scroll') || n.parentElement; const out = () => { const r = n.getBoundingClientRect(), c = sc.getBoundingClientRect(); return r.bottom <= c.top || r.top >= c.bottom; }; sc.scrollTop = 0; if (out()) return true; sc.scrollTop = sc.scrollHeight; return out(); }, rid);
       assert(hidden, 'the card is out of A\'s sight');
       await A.page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close && n.close()));
-      await B.page.click(`#rvList .reviewListRow[data-rid="${rid}"] [data-cu-complete]`);
+      await B.page.click(`#rvList .reviewListRow[data-rid="${rid}"] [data-cu-release]`);
       await dueIn(A, { f: k => B.maps.customDone[k], a: KEY(rid) }, 'A holding the record');
       await dueIn(A, { f: n => __rec.slice(n).some(e => e.k === 'arrive' && e.d === 'done'), a: a0 }, 'the Completed switch answering', 15000);
       await A.calm(); await B.calm();
@@ -246,7 +246,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       const st = await A.state(), bs = await B.state(); assert.deepEqual(st, bs, 'the same counts on both: ' + JSON.stringify([st, bs]));
       assert.equal((await A.cards()).includes(rid), false, 'gone from Completed');
       await A.seg('open');
-      const kept = await A.page.evaluate(rid => { const n = document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"]`); return n && [...n.querySelectorAll('.rowActions [data-cu-complete][data-seal-btn] + .sealRow .seal')].length; }, rid);
+      const kept = await A.page.evaluate(rid => { const n = document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"]`); return n && [...n.querySelectorAll('.rowActions [data-cu-release] + .sealRow .seal')].length; }, rid);
       assert.equal(kept, 1, 'back under Open with its Complete Order seal kept on the button that made it');
       assert.equal(srv.st.doc(CUSTOM, KEY(rid)).stamps.length, 1, 'the cloud keeps the seal');
       log('Reopen from B: the card flies from Completed to Open on A with its note; the seal is kept');
@@ -347,7 +347,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       const rid = R(1), key = KEY(rid);
       await A.page.evaluate(k => { CN.setMode('orders'); OrderWin.open(k); }, key);
       await A.page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && !document.querySelector('#orderWin').classList.contains('owLoading'), key);
-      await A.page.waitForFunction(() => document.querySelector('#owPcSum [data-cu-complete]'), null, { timeout: 15000 });
+      await A.page.waitForFunction(() => document.querySelector('#owPcSum [data-cu-release]'), null, { timeout: 15000 });
       const t = Date.now(); await cloud('customPut', Object.assign(target(rid), { by: 'Maria B', how: 'button' }));
       await dueIn(A, { f: () => document.querySelector('#owPcSum [data-cu-done]'), a: null }, 'the window\'s piece row showing Completed', 6000);
       const took = Date.now() - t;
@@ -377,7 +377,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       const rid = R(0), key = KEY(rid);
       await A.seg('open'); await B.seg('open');
       assert((await A.cards()).includes(rid) && (await B.cards()).includes(rid), 'the card is under Open on both');
-      await Promise.all([A, B].map(c => c.page.evaluate(sel => document.querySelector(sel).click(), `#rvList .reviewListRow[data-rid="${rid}"] [data-cu-complete]`)));   // (both at the same instant: a click, not a pointer that waits for the page to be still)
+      await Promise.all([A, B].map(c => c.page.evaluate(sel => document.querySelector(sel).click(), `#rvList .reviewListRow[data-rid="${rid}"] [data-cu-release]`)));   // (both at the same instant: a click, not a pointer that waits for the page to be still)
       await dueIn(A, { f: k => B.maps.customDone[k], a: key }, 'A done'); await dueIn(B, { f: k => B.maps.customDone[k], a: key }, 'B done');
       await nap(4500); await A.calm(); await B.calm();
       const rec = srv.st.doc(CUSTOM, key), stamps = rec.stamps.map(s => s.at).sort((a, b) => a - b);
@@ -404,12 +404,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       const sA = await A.state(), sB = await B.state(), a0 = await A.mark();
       const failPut = /charmNestLibrary/, abortIt = r => (/"op":"customPut"/.test(r.request().postData() || '') ? r.abort() : r.fallback());
       await B.context.route(failPut, abortIt);
-      await B.page.click(`#rvList .reviewListRow[data-rid="${rid}"] [data-cu-complete]`);
+      await B.page.click(`#rvList .reviewListRow[data-rid="${rid}"] [data-cu-release]`);
       await dueIn(B, { f: () => [...document.querySelectorAll('#toasts .toast')].some(t => /was not completed|not completed/i.test(t.textContent)), a: null }, 'the error toast', 20000);
       await B.calm(); await nap(3200);
       assert.deepEqual(await B.state(), sB, 'B: nothing changed: the card is where it was');
       assert((await B.cards()).includes(rid), 'B: the card is still under Open and can be pressed again');
-      assert.equal(await B.page.evaluate(sel => !document.querySelector(sel).disabled, `#rvList .reviewListRow[data-rid="${rid}"] [data-cu-complete]`), true, 'its button is usable again');
+      assert.equal(await B.page.evaluate(sel => !document.querySelector(sel).disabled, `#rvList .reviewListRow[data-rid="${rid}"] [data-cu-release]`), true, 'its button is usable again');
       assert.equal(srv.st.doc(CUSTOM, key).state, 'open', 'the cloud still says open');
       assert.deepEqual(await A.state(), sA, 'A saw nothing'); assert.deepEqual(await A.since(a0), [], 'and nothing moved on A');
       await B.context.unroute(failPut, abortIt);

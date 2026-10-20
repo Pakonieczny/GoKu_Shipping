@@ -63,7 +63,7 @@ const MID = 4; let RID, KEY;
     assert.match(pos0, /^\d+ of 9$/, 'the order window says where it is: ' + pos0);
 
     // Complete Order on the middle card (it leaves for Completed), then Reopen there
-    await page.click(card + ' [data-cu-complete]');
+    await page.click(card + ' [data-cu-release]');
     await page.waitForFunction(k => B.maps.customDone[k] && !document.querySelector('#rvList .reviewListRow[data-rid="' + k.split('_')[0] + '"]'), KEY); await settle();
     await seg('done');
     await page.waitForSelector(card + ' [data-cu-reopen]');
@@ -75,7 +75,7 @@ const MID = 4; let RID, KEY;
     await seg('open');
     await page.waitForSelector(card);
     await page.waitForFunction(sel => { const n = document.querySelector(sel), p = n.closest('.scroll').getBoundingClientRect(), r = n.getBoundingClientRect(); return r.top >= p.top - 1 && r.bottom <= p.bottom + 1; }, card, { timeout: 5000 });
-    const seen = await page.evaluate(sel => { const n = document.querySelector(sel); return { lit: n.classList.contains('mFound'), top: n.closest('.scroll').scrollTop, seal: [...n.querySelectorAll('.rowActions [data-cu-complete][data-seal-btn] + .sealRow .seal')].length }; }, card);
+    const seen = await page.evaluate(sel => { const n = document.querySelector(sel); return { lit: n.classList.contains('mFound'), top: n.closest('.scroll').scrollTop, seal: [...n.querySelectorAll('.rowActions [data-cu-release] + .sealRow .seal')].length }; }, card);
     assert(seen.lit, 'marked where it stands'); assert(seen.top > 0, 'the list was scrolled to it');
     assert.equal(seen.seal, 1, 'its Complete Order seal stays on the button that made it');
     if (process.env.SHOTS) { fs.mkdirSync(process.env.SHOTS, { recursive: true }); await page.waitForTimeout(250); await page.screenshot({ path: path.join(process.env.SHOTS, 'reopened-at-its-place.png') }); console.log('  · screenshot: ' + path.join(process.env.SHOTS, 'reopened-at-its-place.png')); }
@@ -93,8 +93,8 @@ const MID = 4; let RID, KEY;
     // tab); closed, the card is reopened under Completed and is where it was, marked
     await page.evaluate(() => { document.querySelector('#reviewView .egPane.scroll').scrollTop = 0; });
     await page.evaluate(k => OrderWin.open(k), KEY);
-    await page.waitForSelector('#owPcSum [data-cu-complete]');
-    await page.click('#owPcSum [data-cu-complete]');
+    await page.waitForSelector('#owPcSum [data-cu-release]');
+    await page.click('#owPcSum [data-cu-release]');
     await page.waitForFunction(k => B.maps.customDone[k], KEY); await settle();
     await page.waitForSelector('#owPcSum [data-cu-done]');
     assert.equal(await page.evaluate(() => document.querySelectorAll('#orderWin [data-cu-reopen]').length), 0, 'the order window has no Reopen button');

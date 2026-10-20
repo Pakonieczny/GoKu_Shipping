@@ -165,7 +165,7 @@ async function run(browser, action, role, activityWait) {
     await sleep(3500);   // (every page has its first reads behind it)
     for (const t of targets) t.base = await t.page.evaluate(ARM, { defs: ROLES[t.role].probes.map(pr => Object.assign({ id: pr }, PROBES[pr])), K: subj.chainKey, R: subj.rid });
     M.reset(); const calls0 = calls.length, load = require('os').loadavg()[0];
-    const tp = await press.page.evaluate(({ k, sel }) => { const row = document.querySelector(`#owPcSum .owPcRow[data-piece="${k}"]`), b = row && row.querySelector(sel); if (!b) return 0; const t = Date.now(); b.click(); return t; }, { k: subj.chainKey, sel: action === 'complete' ? '[data-cu-complete]' : '[data-cu-print]' });
+    const tp = await press.page.evaluate(({ k, sel }) => { const row = document.querySelector(`#owPcSum .owPcRow[data-piece="${k}"]`), b = row && row.querySelector(sel); if (!b) return 0; const t = Date.now(); b.click(); return t; }, { k: subj.chainKey, sel: action === 'complete' ? '[data-cu-release]' : '[data-cu-print]' });
     if (!tp) throw new Error(`the ${action} button is not on the piece's row`);
     const deadline = Date.now() + 12000; let all = {};
     for (;;) {

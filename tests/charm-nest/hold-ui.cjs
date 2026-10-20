@@ -168,7 +168,7 @@ async function main() {
     // ── 2 · the button: none on the Review card (open), one on each piece row of the order window ──
     await installFake();
     await page.evaluate(() => { Review.syncOrderItems(); Review.render(); });
-    await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-cu-complete]`), cable, { timeout: 15000 });
+    await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-cu-release]`), cable, { timeout: 15000 });
     await idle(); await page.waitForTimeout(500);
     let b = await holdBtns(P.rid);
     assert.deepEqual(b, [], 'no Hold button for the order in Review, with the engine in: ' + JSON.stringify(b));
@@ -410,7 +410,7 @@ async function main() {
     await closeWin();
 
     // ── 9 · a completed card has no Hold either (Reopen and Print QR label stay) ──
-    await idle(); await page.click(`${card(solo)} [data-cu-complete]`);
+    await idle(); await page.click(`${card(solo)} [data-cu-release]`);
     await page.waitForFunction(k => B.maps.customDone[k], solo, { timeout: 20000 });
     await page.waitForFunction(k => !document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`), solo, { timeout: 15000 });
     await seg('done'); await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`), solo, { timeout: 15000 });
@@ -444,7 +444,7 @@ async function main() {
 
     // ── 10 · a failed run says so plainly, keeps what was done and never leaves the person in the Nest tab ──
     await page.evaluate(() => { for (const r of Orders.rows()) if (String(r.order.receiptId) === '4170837249') { r.hold = null; r.state = r.poolIds.length ? 'pooled' : 'pulled'; } window.__t.runs.length = 0; window.__t.returns.length = 0; window.__t.fx.length = 0; window.__t.runResult = { ok: false, error: 'the sheet could not be saved' }; window.OrderHoldFx.returnToOnHold = () => {}; B.employee = 'Test Operator'; CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
-    await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-cu-complete]`), cable, { timeout: 15000 });
+    await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-cu-release]`), cable, { timeout: 15000 });
     await pressHold();
     await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
     await page.click('dialog.holdDlg [data-k=go]');
@@ -462,7 +462,7 @@ async function main() {
     // ── 11 · no film: the hold still runs and ends in Review (NOHOLDPILE) ──
     await installFake({ noFx: true });
     await page.evaluate(() => { CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
-    await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-cu-complete]`), cable, { timeout: 15000 });
+    await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-cu-release]`), cable, { timeout: 15000 });
     await pressHold();
     await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
     await page.click('dialog.holdDlg [data-k=go]');
@@ -503,7 +503,7 @@ async function main() {
     // ── 13 · the page's own engine (when its module is in): its plan is read only, and its sentences are shown as they come ──
     if (await page.evaluate(() => !!(window.__real.hold && window.__real.hold.plan))) {
       await page.evaluate(() => { window.OrderHold = window.__real.hold; window.OrderHoldFx = window.__real.fx || undefined; if (!window.__real.fx) delete window.OrderHoldFx; for (const r of Orders.rows()) if (String(r.order.receiptId) === '4170837249') { r.hold = null; r.state = r.poolIds.length ? 'pooled' : 'pulled'; } CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
-      await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-cu-complete]`), cable, { timeout: 15000 });
+      await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-cu-release]`), cable, { timeout: 15000 });
       const w1 = writes();
       await pressHold();
       await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 30000 });

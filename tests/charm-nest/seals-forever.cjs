@@ -59,7 +59,7 @@ const ORDERS = [order(RID, [line(41767447521, 'CHAIN_8941', 'CHAIN REPLACEMENT',
     // the card's seals: each with the button just before its row, its time, its turn, and whether it waits to be pressed
     const seals = () => page.evaluate(sel => [...document.querySelectorAll(sel + ' .sealRow .seal')].map(s => {
       const r = s.closest('.sealRow'); let b = r.previousElementSibling; while (b && b.classList.contains('sealRow')) b = b.previousElementSibling;
-      return { how: s.classList.contains('seal-button') ? 'button' : 'print', at: +s.dataset.at, rot: s.style.getPropertyValue('--rot'), btn: b && b.matches('[data-seal-btn]') ? (b.matches('[data-cu-complete]') ? 'complete' : 'print') : null, pending: s.classList.contains('pending'), face: (m => [m.action, m.n])(JSON.parse(s.querySelector('svg').dataset.sealModel)) };
+      return { how: s.classList.contains('seal-button') ? 'button' : 'print', at: +s.dataset.at, rot: s.style.getPropertyValue('--rot'), btn: b && b.matches('[data-cu-release]') ? 'complete' : b && b.matches('[data-seal-btn]') ? 'print' : null, pending: s.classList.contains('pending'), face: (m => [m.action, m.n])(JSON.parse(s.querySelector('svg').dataset.sealModel)) };
     }), card);
     const rec = () => srv.st.doc('Charm_Custom_Orders', KEY);
     const stamped = () => page.evaluate(() => __stamped);
@@ -88,7 +88,7 @@ const ORDERS = [order(RID, [line(41767447521, 'CHAIN_8941', 'CHAIN REPLACEMENT',
     assert.equal(await stamped(), n0, 'never stamped again on a redraw');
 
     // 3 · Complete Order (a seal of its own), then Reopen again: both seals on the Open card, each on its button
-    await page.click(card + ' [data-cu-complete]');
+    await page.click(card + ' [data-cu-release]');
     await page.waitForFunction(k => B.maps.customDone[k] && !B.maps.customKept[k], KEY); await settle();
     await seg('done');
     assert.deepEqual((await seals()).map(s => s.how), ['print', 'button']);

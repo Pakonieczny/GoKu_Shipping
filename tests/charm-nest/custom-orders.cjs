@@ -203,9 +203,9 @@ async function browserChecks() {
     for (const o of EXAMPLES) { const r = list.find(x => x.rid === o.receiptId); assert(r, o.receiptId + ' listed'); assert.equal(r.label, WANT[o.lines[0].sku], 'its category shows'); }
     const chainRow = list.find(x => x.rid === '4176744752');
     assert.match(chainRow.cls, /cuInfo/); assert.match(chainRow.why, /not laser cut/, 'the card says chain only is not cut');
-    assert.deepEqual(chainRow.buttons, ['Print QR label', 'Complete Order'], 'nothing to decide and nothing to cut: its label, or completed as it is');
+    assert.deepEqual(chainRow.buttons, ['Print QR label', 'Release Hold'], 'nothing to decide and nothing to cut: its label, or released (completed) as it is');   // (RELORDER, Paul 20 Oct 2026: Release Hold where Complete Order stood)
     // no Review & resolve on a custom card (Paul, 27 Sep 19:45): Complete Order, and Send to Sheet for its own designs
-    for (const r of list.filter(x => x.rid !== '4176744752')) assert.deepEqual(r.buttons, ['Print QR label', 'Complete Order', 'Send to Sheet', 'Drop .ai / .dxf designs here'], r.rid + ': ' + r.buttons.join(', '));
+    for (const r of list.filter(x => x.rid !== '4176744752')) assert.deepEqual(r.buttons, ['Print QR label', 'Release Hold', 'Send to Sheet', 'Drop .ai / .dxf designs here'], r.rid + ': ' + r.buttons.join(', '));
     // one Open / Completed switch at the front of the bar, for every filter (Paul, 27 Sep)
     // no Everything chip (Paul, 27 Sep: it always read the same as Open)
     const seg = await page.evaluate(() => ({ first: document.querySelector('#reviewView .ordBar').firstElementChild.className, b: [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim()), all: !!document.querySelector('#reviewView .egTab[data-k=""]'), n: Review.count() }));
@@ -384,11 +384,12 @@ async function browserChecks() {
     assert.equal(await page.evaluate(() => !document.getElementById('owNote') && !/Engrave on the back only/.test(document.getElementById('orderWin').textContent)), true, 'a note written at another station is not shown');
     await page.click('#owClose');
 
-    // Complete Order: completed at once with no label printed, "Completed by" under Completed, and reopened again
-    await page.click('#rvList .reviewListRow[data-rid="4177425406"] [data-cu-complete]');
-    await page.waitForFunction(k => B.maps.customDone[k] && document.querySelector('#motionLayer .mGhost .seal.seal-button'), hKey, { timeout: 30000 });
+    // Release Hold (RELORDER, Paul 20 Oct 2026: it replaced Complete Order): completed at once with no label printed, "Completed by" under Completed, and reopened again
+    assert.equal(await page.$('#rvList [data-cu-complete]'), null, 'no Complete Order on a Custom Orders card');
+    await page.click('#rvList .reviewListRow[data-rid="4177425406"] .relHoldBtn');
+    await page.waitForFunction(k => B.maps.customDone[k] && document.querySelector('#motionLayer .mGhost .seal.seal-releaseHold'), hKey, { timeout: 30000 });
     if (shots) { await page.waitForTimeout(1100); await page.screenshot({ path: path.join(shots, 'seal-complete.png') }); }
-    await page.waitForFunction(() => /moved to Resolved · completed by Test Operator with no label printed$/.test(document.querySelector('.mNote .mNoteT')?.textContent || ''), null, { timeout: 8000 });
+    await page.waitForFunction(() => /moved to Resolved · released by Test Operator · Release Hold, no label printed$/.test(document.querySelector('.mNote .mNoteT')?.textContent || ''), null, { timeout: 8000 });
     const byButton = srv.st.doc('Charm_Custom_Orders', hKey);
     // (its print before the Undo is kept: that label was printed, and its seal stays with the order)
     assert(byButton && byButton.how === 'button' && byButton.completedBy === 'Test Operator' && byButton.prints === 1 && byButton.stamps.map(x => x.how).join() === 'print,button', 'completed without a new print: ' + JSON.stringify(byButton));

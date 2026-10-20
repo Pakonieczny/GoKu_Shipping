@@ -12966,10 +12966,13 @@ const CustomPrint = window.CustomPrint = (() => {
   /** Complete Order (Paul, 27 Sep 19:45): the card's lines completed at once, no label printed, and the card moves to
    *  Completed (with the same "Marked completed · Undo" for a while). The sticker is kept with each record, so it can
    *  still be printed from Completed. A line on its way to the laser is cut there: it is left as it is. */
+  // (RELORDER, Paul 20 Oct 2026: "Remove the 'Complete Order' button from the Review tab and replace it with the new 'Release Order' button": this is now what a custom card's
+  // Release Hold does, pressed through ReviewRelease.press. → a promise of true when its lines were completed; false at once when nothing ran or the card asks a name first)
   function complete(it) {
-    const key = it.key; if (busy.has(key) || asking.has(key)) return;
-    const go = anyway(it, "complete"); if (go === false) return;
-    withName(key, who => completeAs(it, who, go));
+    const key = it.key; if (busy.has(key) || asking.has(key)) return Promise.resolve(false);
+    const go = anyway(it, "complete"); if (go === false) return Promise.resolve(false);
+    let ran = null; withName(key, who => { ran = completeAs(it, who, go); });
+    return ran || Promise.resolve(false);
   }
   /* where Complete Order, Reopen or Undo was pressed, for its point on the order's timeline (Paul, 29 Sep 02:08): the
      order window (a modal: while it is open nothing behind it takes a press), else Review, by the card's tab */
@@ -12987,14 +12990,14 @@ const CustomPrint = window.CustomPrint = (() => {
     actT = setTimeout(() => { actT = 0; try { const A = window.StationActivity; if (A && A.pending && A.pending() > 0) A.flush(); } catch (_) {} }, 800);
   }
   function completeAs(it, who, cancelled) {
-    const key = it.key; if (busy.has(key)) return;
+    const key = it.key; if (busy.has(key)) return Promise.resolve(false);
     const from = pressedIn(it);
     const rows = linesOf(it).filter(r => !(r.poolIds || []).length && !(r.spec && r.spec.customDone));
-    if (!rows.length) { toast("Nothing left to complete on that card: its pieces are on their way to the laser", "bad", 6000); return; }
+    if (!rows.length) { toast("Nothing left to release on that card: its pieces are on their way to the laser", "bad", 6000); return Promise.resolve(false); }
     const held = rows.map(r => r.key).filter(k => !printing.has(k));
     for (const k of held) printing.add(k);
     const release = () => { for (const k of held) printing.delete(k); };
-    fails.delete(key); acting.set(key, "complete"); say(key, "Completing…");
+    fails.delete(key); acting.set(key, "complete"); say(key, "Releasing…");   // (RELORDER: the Release Hold button's own spinner and word)
     const mine = rows.map(r => r.key); grab(mine);
     queue = queue.then(async () => {
       let label = null; try { label = O.sortingLabel(rows[0].order, rows[0].line); } catch (_) { label = null; }
@@ -13013,14 +13016,27 @@ const CustomPrint = window.CustomPrint = (() => {
       if (done.length && cancelled) printedAnyway(cancelled, who, "complete", done.length);
       settle(); say(key, null); pressSoon(); if (done.length) tlFresh();
       agent({ bridge: true }, putErr ? "warn" : "DS", `${rid}: custom order completed by ${who} (no label printed)${putErr ? ` — not every piece was saved (${putErr.message})` : " · Review → Resolved"}`);
-      if (putErr) toast(`${rid}: ${done.length ? "not every piece was" : "the order was not"} completed: ${putErr.message} — press Complete Order to try again`, "bad", 9000);
+      if (putErr) toast(`${rid}: ${done.length ? "not every piece was" : "the order was not"} released: ${putErr.message} — press Release Hold to try again`, "bad", 9000);
       else if (cut) toast(`${rid}: ${cut} of its pieces went on a sheet meanwhile — cut on the laser, not completed`, "bad", 8000);
-    }).catch(e => { humanAct("error", { orderId: String(rows[0].order.receiptId || ""), detail: "Complete Order failed" }); failed(key, e.message); acting.delete(key); say(key, null); toast("Complete Order: " + e.message, "bad", 7000); }).finally(() => { release(); acting.delete(key); drop(mine); });
+      return done.length > 0;
+    }).catch(e => { humanAct("error", { orderId: String(rows[0].order.receiptId || ""), detail: "Complete Order failed" }); failed(key, e.message); acting.delete(key); say(key, null); toast("Release Hold: " + e.message, "bad", 7000); return false; }).finally(() => { release(); acting.delete(key); drop(mine); });
+    return queue;
   }
   /* ── the seal and the move (Paul, 27 Sep 20:09-20:24): what was pressed is stamped on the button that did it, with
      who and when; from Open the card then flies to Completed, where a note says what arrived and offers Undo ── */
   const DONE_SW = '#reviewView .rvSeg [data-cseg="done"]', OPEN_SW = '#reviewView .rvSeg [data-cseg="open"]';
   const mkeyOf = rows => "cu:" + Review.cardKey(rows[0]);
+  /* (RELORDER, Paul 20 Oct 2026) A custom card's Release Hold: the same orange button as every Release Hold (btn relHoldBtn, its label, its size, a spinner and
+     "Releasing…" while it runs) where Complete Order stood, in the Review card and the order window. data-cu-release is this card's press (ReviewRelease.press,
+     which completes it here: the record kept, Resolved, the seal); data-rel-hold is where the seal is stamped, as on every Release Hold. */
+  const REL_LABEL = "Release Hold", REL_TITLE = "Release this order: it is completed now without printing its label and moves to Resolved";
+  const relSealOf = (st, rid, who) => { const at = +(st && st.at) || Date.now(); return { how: "releaseHold", at, by: (st && st.by) || who || "", id: `releaseHold:${rid || ""}:${at}` }; };
+  function releaseButtonHtml(it, sz) {
+    const w = working(it), more = ` data-cu-release data-rel-hold="1" data-rv-release="custom" data-cu-key="${esc(it.key)}"`;
+    if (!w && ((armed.get(it.key + "|complete") || {}).until || 0) > Date.now()) return `<button type="button" class="btn danger ${sz}"${more} title="Order ${esc(ridOfCard(it))} is cancelled: press again to release it anyway">Cancelled order: release anyway?</button>`;
+    if (w && w.act === "complete") return `<button type="button" class="btn relHoldBtn ${sz} working"${more} disabled aria-busy="true"><span class="spin"></span>${esc(w.text)}</button>`;
+    return `<button type="button" class="btn relHoldBtn ${sz}"${more}${w ? " disabled" : ""} title="${esc(REL_TITLE)}" aria-label="${esc(REL_LABEL + ": " + REL_TITLE)}">${REL_LABEL}</button>`;
+  }
   function sealed(it, rows, saved, done, who, how, shown) {
     const rec = saved[done[0]] || {}, list = window.Seal ? Seal.list(rec) : [], st = list.filter(x => x.how === (how === "button" ? "button" : "print")).pop() || { how, at: Date.now(), by: who };
     // (shown: the seal already stamped on the button before the print screen; it is carried as it lies, not pressed again)
@@ -13028,12 +13044,13 @@ const CustomPrint = window.CustomPrint = (() => {
     if (it.done || !window.Motion) return;                                // printed again: stamped where the card is
     offerUndo(done, rows.filter(r => saved[r.key]), who);
     const rid = rows[0].order.receiptId, inWin = OrderWin.isOpen();
-    const what = how === "button" ? `completed by ${who} with no label printed` : `QR label printed by ${who}`;
+    const what = how === "button" ? `released by ${who} · Release Hold, no label printed` : `QR label printed by ${who}`;
     const note = inWin ? null : { text: `Order ${rid} moved to Resolved · ${what}`, ms: UNDO_MS, actions: [{ label: "Undo", title: "take the completion back (a printed label is not undone)", fn: () => undoKeys(done) }, { label: "Show", title: "open Resolved at this order", fn: () => Review.showCard(mk, "done") }] };   // (the segment reads Resolved, RVRESOLVED: Paul, 18 Oct 2026)
     // a card of another Review tab acts for the order it shows (Paul, 28 Sep 23:55): it leaves under its own name, or,
     // kept open by other orders that ask the same, stays where it is while Completed answers
     if (it.stays) { if (note) Motion.arrive(DONE_SW, { note }); return; }
-    Motion.expect(it.flyKey || mk, { to: DONE_SW, stamp: { btn: how === "button" ? "[data-cu-complete]" : "[data-cu-print]", stamp: shown || st, still: !!shown, label: how === "button" ? "Complete Order" : "Print QR label" }, note });
+    // (RELORDER, Paul 20 Oct 2026: the release is stamped as every Release Hold is, the RELEASE HOLD seal on the button; it is only ever played for lines that were completed, RELNOSEAL)
+    Motion.expect(it.flyKey || mk, { to: DONE_SW, stamp: how === "button" ? { btn: "[data-cu-release]", stamp: relSealOf(st, rid, who), label: REL_LABEL } : { btn: "[data-cu-print]", stamp: shown || st, still: !!shown, label: "Print QR label" }, note });
   }
   /** The seals just pressed are stamped where they show (the card in Completed, the order window's bar). */
   function pressSoon() { requestAnimationFrame(() => requestAnimationFrame(() => { if (window.Seal) Seal.pressPending(); fresh.clear(); })); }
@@ -13062,13 +13079,13 @@ const CustomPrint = window.CustomPrint = (() => {
     // the Completed card's seal (the record's own: who and when) is pressed where it shows, once
     if (ev.loud) fresh.set(mk, +st.at || Date.now());
     if (ev.kind !== "complete" || !ev.loud || !window.Motion) { pressSoon(); return; }
-    const what = how === "button" ? `completed by ${who} with no label printed` : `QR label printed by ${who}`;
+    const what = how === "button" ? `released by ${who} · Release Hold, no label printed` : `QR label printed by ${who}`;
     const note = { text: `Order ${rid} moved to Resolved · ${what}`, ms: 9000, actions: [{ label: "Show", title: "open Resolved at this order", fn: () => Review.showCard(mk, "done") }] };
     // a card kept open by other orders that ask the same stays where it is while Completed answers
     if (it && it.stays) { Motion.arrive(DONE_SW, { note }); pressSoon(); return; }
     // (a person typing keeps every key: the stamp holds the page's presses for a second, so it is not brought down on them)
     const a = document.activeElement, typing = !!a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable);
-    Motion.expect((it && it.flyKey) || mk, { to: DONE_SW, ttl: 15000, stamp: { btn: how === "button" ? "[data-cu-complete]" : "[data-cu-print]", stamp: st, still: typing, label: how === "button" ? "Complete Order" : "Print QR label" }, note });
+    Motion.expect((it && it.flyKey) || mk, { to: DONE_SW, ttl: 15000, stamp: how === "button" ? { btn: "[data-cu-release]", stamp: relSealOf(st, rid, who), still: typing, label: REL_LABEL } : { btn: "[data-cu-print]", stamp: st, still: typing, label: "Print QR label" }, note });   // (RELORDER)
     // (Completed is the list on show: the card comes in from the Open switch, its seal pressed on it)
     Motion.expectIn(mk, { from: OPEN_SW, ttl: 15000 });
     pressSoon();
@@ -13196,7 +13213,7 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   const keptSig = it => { const k = keptOf(it); return k ? (Array.isArray(k.stamps) ? k.stamps.map(x => x.how[0] + x.at).join() : "l") + ":" + (+k.prints || 0) : ""; };
   const stamp = it => { const f = fails.get(it.key); return [busy.get(it.key) || "", acting.get(it.key) || "", asking.has(it.key), !!undoOf(it), f ? (f.st ? "held:" + f.st.at : "") + (f.retrying ? ":r" : "") || "fail" : "", armed.has(it.key + "|print"), armed.has(it.key + "|complete"), keptSig(it)].join("|"); };
-  return { print, complete, reopen, undo, statusHtml, buttonHtml, working, freshOf, failNote, wire, stamp, keptOf, keptSeals, keptButtonHtml, PIECE_SEAL, cardRecord, sealsOfRow, sealsOfOrder, recordOfRow, sealSig, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)), touching: key => touching.has(key), remote, settle };
+  return { print, complete, reopen, undo, statusHtml, buttonHtml, releaseButtonHtml, working, freshOf, failNote, wire, stamp, keptOf, keptSeals, keptButtonHtml, PIECE_SEAL, cardRecord, sealsOfRow, sealsOfOrder, recordOfRow, sealSig, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)), touching: key => touching.has(key), remote, settle };
 })();
 
 /* ═══ 23a · Custom Orders — the order's own designs, dropped on its card and sent to the sheets ═══════════════════
@@ -16648,6 +16665,10 @@ const Review = window.Review = (() => {
   }
   /** The press. it: the Review item (a row's or a card's). → true when every order of it went back in line. */
   async function releaseToQueue(it) {
+    // (RELORDER, Paul 20 Oct 2026: "Remove the 'Complete Order' button from the Review tab and replace it with the new 'Release Order' button") A Custom Orders card's Release Hold releases it as
+    // Complete Order did: CustomPrint.complete (its own name step, a cancelled order's second press, its lines completed with no label, the record kept, Resolved, the RELEASE HOLD seal on the button).
+    // Nothing completed, no seal (RELNOSEAL: CustomPrint stamps only the lines it completed).
+    if (it && it.kind === "customOrder") return window.CustomPrint && CustomPrint.complete ? !!(await CustomPrint.complete(it)) : false;   // (the card as pressed, as Complete Order took it)
     const live = items().find(x => x.key === it.key) || it, r = releaseOf(live);
     if (!r.how) { toast(r.why, "", 6000); return false; }
     const who = by(); if (!who) return false;
@@ -16743,7 +16764,7 @@ const Review = window.Review = (() => {
   /** The release of a Review row or card (RELHOLD, Paul 18 Oct 2026): Release Hold in the card's own column of buttons, where Complete Order stood (the slot the column leaves for it, data-rel-slot), else first
    *  in the row's actions (a card with no column: a held order, a card busy printing); and, on a blocked SKU, "Unblock this SKU" right after it. Or, in the decision card (host: its first .fixes), first among
    *  the card's buttons. There is no second release button under the row's reason any more ("it will clash with the new Release Hold button"). A row that is done, decided, a Custom Order or a placement
-   *  card has none: a Custom Orders card keeps Complete Order. */
+   *  card has none: a Custom Orders card draws its own (RELORDER, Paul 20 Oct 2026: CustomPrint.releaseButtonHtml, the same Release Hold where Complete Order stood, pressed through ReviewRelease.press). */
   function decorateRelease(node, it, host) {
     try {
       if (!node || !it || it.done || it.decided || it.settled || it.info || it.nested || it.kind === "customOrder" || it.kind === "placement") { const s = node && node.querySelector("[data-rel-slot]"); if (s) s.remove(); return; }
@@ -17316,11 +17337,12 @@ const Review = window.Review = (() => {
     // greyed until its designs are ready and the primary then; while it has no design, the dashed place to drop them.
     // Its designs strip spans the card's foot once it has some.
     const ord=ax?`order ${ax.rid}'s`:"this order's";
-    // (RELHOLD, Paul 18 Oct 2026: on every card but a Custom Orders one, Release Hold stands where Complete Order stood: the slot decorateRelease fills with the one release button; a Custom Orders card,
-    // made by hand and never nested, keeps Complete Order)
+    // (RELHOLD, Paul 18 Oct 2026: on every card but a Custom Orders one, Release Hold stands where Complete Order stood: the slot decorateRelease fills with the one release button)
+    // (RELORDER, Paul 20 Oct 2026: "Remove the 'Complete Order' button from the Review tab and replace it with the new 'Release Order' button": a Custom Orders card has the same orange Release
+    // Hold there too, CustomPrint.releaseButtonHtml, pressed through ReviewRelease.press, which releases it as Complete Order did; the ORDER COMPLETE seals of an older press rest after it, for good)
     const column=x=>CustomPrint.failNote(x)
       +(printable(x)&&!cs?.busy?CustomPrint.keptButtonHtml(x,'print',sendFirst?'ghost':'gold','Print QR label',`print ${ord} 1 × 1 in QR sticker for the sorting station; ${ax?'its piece is then completed by hand and moves':'the order then moves'} to Resolved`,'sm')
-        +(ax?'':CustomPrint.keptButtonHtml(x,'complete','ghost','Complete Order','mark this order completed now without printing its label; it moves to Resolved','sm')):'')
+        +(ax?'':CustomPrint.releaseButtonHtml(x,'sm')+CustomPrint.keptSeals(x,'button')):'')
       +(ax?'<span data-rel-slot hidden></span>'+CustomPrint.keptSeals(x,'button'):'')   // (the ORDER COMPLETE seals of an older Complete Order press rest after it: a seal is for good)
       +(cs?CustomSheet.buttonsHtml(x,true):'');
     // (each button keeps the seals it made, for good: a reopened order's too, Paul 29 Sep 00:35)
@@ -17364,7 +17386,7 @@ const Review = window.Review = (() => {
    *  a custom card's, and since 28 Sep every other card's in Review. */
   function wireAct(node,cx,cs,row){
     const pb=node.querySelector('[data-cu-print]');if(pb)pb.onclick=()=>CustomPrint.print(cx);
-    const cb=node.querySelector('[data-cu-complete]');if(cb)cb.onclick=()=>CustomPrint.complete(cx);
+    const cb=node.querySelector('[data-cu-release]');if(cb)cb.onclick=e=>{e.stopPropagation();ReviewRelease.press(cx);};   // (RELORDER: a Custom Orders card's Release Hold, the one release path)
     const rb=node.querySelector('[data-cu-reopen]');if(rb)rb.onclick=()=>CustomPrint.reopen(cx);
     const sb=node.querySelector('[data-cu-sheet]');if(sb&&row)sb.onclick=()=>OrderWin.open(row.key,{view:'sheet'});
     const hb=node.querySelector('[data-cu-history]');if(hb&&row)hb.onclick=()=>OrderWin.open(row.key,{view:'timeline'});
@@ -19289,7 +19311,7 @@ const OrderWin = window.OrderWin = (() => {
     // made by hand, keeps Complete Order; the ORDER COMPLETE seals an older Complete Order press kept still rest there, after Release Hold: a seal is for good)
     const rel = it.kind === "reviewAct" && it.src && window.ReviewRelease && ReviewRelease.buttonHtml ? tryDo(() => ReviewRelease.buttonHtml(it, "xs")) || "" : "";
     return CustomPrint.failNote(it) + print +
-      (it.kind === "reviewAct" ? rel + (c.can ? CustomPrint.keptSeals(it, "button", c.keptC) + c.moreBtn : "") : c.can ? CustomPrint.keptButtonHtml(it, "complete", "ghost", "Complete Order", "mark this order completed now without printing its label; it moves to Resolved", "xs", c.keptC) + c.moreBtn : "") + holdSlotOf(it) + undo;
+      (it.kind === "reviewAct" ? rel + (c.can ? CustomPrint.keptSeals(it, "button", c.keptC) + c.moreBtn : "") : c.can ? CustomPrint.releaseButtonHtml(it, "xs") + CustomPrint.keptSeals(it, "button", c.keptC) + c.moreBtn : "") + holdSlotOf(it) + undo;   // (RELORDER, Paul 20 Oct 2026: a Custom Orders piece too has Release Hold where Complete Order stood)
   }
   /** The place of the orange Hold button on a piece's row, last among its buttons (Paul, 5 Oct: Hold beside Print QR label / Complete Order): HoldUI.fill
    *  makes the button once the row is drawn. It acts on the WHOLE order, whichever piece's row it is on; none for an order that is held or cancelled. */
@@ -19311,8 +19333,8 @@ const OrderWin = window.OrderWin = (() => {
   function wireCu(host, it, now, ex) {
     const hook = (sel, f) => { const b = host.querySelector(sel); if (b) b.onclick = () => { const current = now(); if (!current) return; if (ex && ex.press) ex.press(() => f(current)); else f(current); }; };
     hook("[data-cu-print]", c => CustomPrint.print(c));
-    hook("[data-cu-complete]", c => CustomPrint.complete(c));
-    { const rb = host.querySelector("[data-rel-hold]"); if (rb && window.ReviewRelease && ReviewRelease.wire) tryDo(() => ReviewRelease.wire(rb, now() || it, "xs")); }   // (RELHOLD: the card's own Release Hold, its press and its reasons)
+    hook("[data-cu-release]", c => ReviewRelease.press(c));   // (RELORDER: a Custom Orders piece's Release Hold, the one release path)
+    { const rb = host.querySelector("[data-rel-hold]:not([data-cu-release])"); if (rb && window.ReviewRelease && ReviewRelease.wire) tryDo(() => ReviewRelease.wire(rb, now() || it, "xs")); }   // (RELHOLD: the card's own Release Hold, its press and its reasons)
     const mb = host.querySelector("[data-cu-more]"); if (mb) mb.onclick = () => { if (now()) { if (ex && ex.more) ex.more(); else setView("timeline"); } };
     return CustomPrint.wire(host, it);
   }

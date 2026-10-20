@@ -3,7 +3,7 @@
 // clearly visible 'Release Hold' seal with the date/time and the person who released it"; and, order 4204568396 SEA_96442: "Remove this 'Release to nesting queue' button since it will clash with the new
 // 'Release Hold' button"). The real sorter in headless Chromium over the repo's fake site (bridge-server.cjs: the real charmNest* handlers over an in-memory store), motion ON. Every name is made up.
 //   1  the Review rows: Release Hold stands in the card's own column where Complete Order stood (no Complete Order on them, no "Release to nesting queue" anywhere, none under a reason): enabled (RHSAME, 20 Oct 2026: the seal orange, .btn.relHoldBtn; was gold) on an
-//      order sent to Review, and (RELEASE, Paul 19 Oct 2026) on an unknown SKU too: its old reason is the note "Releasing anyway: ..." on the title, not a grey; a Custom Orders card keeps Complete Order
+//      order sent to Review, and (RELEASE, Paul 19 Oct 2026) on an unknown SKU too: its old reason is the note "Releasing anyway: ..." on the title, not a grey; a Custom Orders card has the same Release Hold (RELORDER, Paul 20 Oct 2026; it kept Complete Order before)
 //   2  the press: the RELEASE HOLD seal is stamped on the button (Seal.stampOn, how "releaseHold", who) as the card leaves Review; the order is released (its Send to Review mark resolved: out of Review),
 //      who and when kept on its lines (row.releaseHold, in the run's line record and back from it), in the cloud (its Review document's release { at, by }) and on its timeline (a "released" step, data.seal)
 //   3  the Orders tab: the order's card shows the seal LARGE (72 px), family "release", with "Release Hold", the person and the date / time

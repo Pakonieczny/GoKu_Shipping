@@ -490,7 +490,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await flow('B · no Hold on an open Review card; Hold from the order window (order ' + H2 + ': a chain line and a piece on each sheet)', async () => {
     const k = kOf(H2, 1), card = `#rvList .reviewListRow[data-row="${k}"]`, btn = `#owPcSum [data-piece="${k}"] [data-hold-btn]`;
     await page.evaluate(() => { CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
-    await page.waitForFunction(s => document.querySelector(s + ' [data-cu-complete]'), card, { timeout: 20000 });
+    await page.waitForFunction(s => document.querySelector(s + ' [data-cu-release]'), card, { timeout: 20000 });
     // (NOHOLDREV, Paul 17 Oct 2026: "Remove the 'Hold' button from all listings inside the Review tab": the open card keeps its other buttons, and nothing in the list is a Hold)
     const ui = await page.evaluate(s => { const n = document.querySelector(s); n.scrollIntoView({ block: 'center' }); return { n: document.querySelectorAll('#rvList [data-hold-btn], #rvList .holdBtn, #rvList [data-hold-slot]').length, all: document.querySelectorAll('[data-hold-btn][data-rid="4170000110"]').length, btns: [...n.querySelectorAll('.rowActions button')].map(x => x.textContent.trim()) }; }, card);
     assert(ui.n === 0 && ui.all === 0 && ui.btns.includes('Complete Order') && !ui.btns.includes('Hold'), 'no Hold on the open Review card, nor anywhere in the list: ' + JSON.stringify(ui));
@@ -517,8 +517,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await flow('C · no Hold on a completed Review card; Hold from the order window (order ' + H3 + ')', async () => {
     const k = kOf(H3, 1), card = `#rvList .reviewListRow[data-row="${k}"]`, btn = `#owPcSum [data-piece="${k}"] [data-hold-btn]`, idle = () => page.evaluate(() => Seal.whenIdle());
     await page.evaluate(() => { CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
-    await page.waitForFunction(s => document.querySelector(s + ' [data-cu-complete]'), card, { timeout: 20000 });
-    await idle(); await page.click(card + ' [data-cu-complete]');
+    await page.waitForFunction(s => document.querySelector(s + ' [data-cu-release]'), card, { timeout: 20000 });
+    await idle(); await page.click(card + ' [data-cu-release]');
     await page.waitForFunction(k => B.maps.customDone[k], k, { timeout: 30000 });
     await page.waitForFunction(s => !document.querySelector(s), card, { timeout: 20000 });
     await idle(); await page.evaluate(() => document.querySelector('#reviewView .rvSeg [data-cseg="done"]').click());

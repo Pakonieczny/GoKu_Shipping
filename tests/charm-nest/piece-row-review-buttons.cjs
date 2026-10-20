@@ -369,7 +369,7 @@ async function main() {
     assert(await noBar(), 'no tan bar under the pieces (4171409060: its two buttons were there twice)');
     assert.deepEqual(await dupes(), { [`${longer} | Print QR label`]: 1, [`${longer} | Complete Order`]: 1 }, 'each button once');
     await layout('t-open');
-    await idle(); await page.click(`${actOf(longer)} [data-cu-complete]`);
+    await idle(); await page.click(`${actOf(longer)} [data-cu-release]`);
     await page.waitForFunction(k => B.maps.customDone[k], longer, { timeout: 20000 });
     await page.waitForFunction(k => document.querySelector(`#owPcSum [data-pc-act="${k}"] [data-cu-done]`), longer, { timeout: 15000 });
     R = await rows(); assert.deepEqual(core(R[1].btns), ['Completed', 'Print QR label'], JSON.stringify(R[1].btns)); assert.deepEqual(R[0].btns, [], 'BLUE untouched');
@@ -392,7 +392,7 @@ async function main() {
     assert.deepEqual(R[0].btns, ['Print QR label', 'Complete Order']);
     assert(await noBar(), 'no bar in a single-piece order either');
     await layout('solo-open');
-    await idle(); await page.click(`${actOf(solo)} [data-cu-complete]`);
+    await idle(); await page.click(`${actOf(solo)} [data-cu-release]`);
     await page.waitForFunction(k => B.maps.customDone[k], solo, { timeout: 20000 });
     await page.waitForFunction(k => document.querySelector(`#owPcSum [data-pc-act="${k}"] [data-cu-done]`), solo, { timeout: 15000 });
     R = await rows(); assert.deepEqual(core(R[0].btns), ['Completed', 'Print QR label'], JSON.stringify(R[0].btns));
