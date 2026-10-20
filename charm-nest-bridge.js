@@ -13236,10 +13236,13 @@ const CustomSheet = window.CustomSheet = (() => {
   const metalOfRow = row => { const e = sentOf(row), pc = e && (decisionLines(e)[row.key] || [])[0], F = pc && e.files.find(x => x.id === pc.f); return (F && F.metal) || null; };
   /** Every line of the card that can still take designs: not on a sheet, not completed. */
   /* REVDROP (Paul, 19 Oct 2026: "All orders being held inside the Review tab need to have the Drag and Drop option, so that a user can overwrite the currently matched charm with a new charm"): a line takes dropped designs
-     while it can still be cut from them: not completed, not skipped or committed, and its pieces (when it has some) on a sheet that is still open. A line whose pieces are on a sheet cut, committed, recalled or released to
-     the laser is not changed (it is left for a person). Sending designs to a line that already has pieces takes those off first (sendOnce: intent.replace), exactly as "Accept the new order" does. */
-  const lockedOnSheet = r => { const ids = new Set((r && r.poolIds) || []); if (!ids.size) return false; try { return allSheets().some(sh => sh.charms.some(c => ids.has(c.poolId)) && (!!sh.roseCutAt || !!sh.laserDoneAt || !!sh.recalled || Sets.ofRun(sh.runId).some(x => x.committedAt && (x.sheetIds || []).includes(sh.sheetId)) || (sh.releaseFull && !(Gate.modern(sh.runId) && (sh.draft || !sh.setId) && !(sh.label && sh.label.own))) || (Gate.modern(sh.runId) && sh.setId && !sh.draft))); } catch (_) { return true; } };
-  const openLines = it => linesOf(it).filter(r => !(r.spec && r.spec.customDone) && !["committed", "skipped"].includes(r.state) && !lockedOnSheet(r));
+     while it can still be cut from them: not completed or skipped, and its pieces (when it has some) on a sheet the laser has not cut (INPLACE, Paul 20 Oct 2026). A line whose pieces are on a sheet cut (or recalled)
+     is not changed (it is left for a person). Sending designs to a line that already has pieces takes those off first (sendOnce: intent.replace), exactly as "Accept the new order" does. */
+  // (INPLACE, Paul 20 Oct 2026: "Unless a sheet has been marked as fully completed and laser cut then that charm needs to come off that particular sheet": only a piece on a sheet the laser has CUT is locked,
+  //  replaceCutWhy; a sheet in a formed, released or committed set not cut yet takes the dropped design in the old piece's spot, or leaves it empty and the new piece goes to the latest unfinished sheet, Pool's
+  //  inPlaceAttach. A line committed at the station takes designs only while every piece of it is on a sheet this page holds.)
+  const lockedOnSheet = r => { const ids = new Set((r && r.poolIds) || []); if (!ids.size) return false; try { return allSheets().some(sh => sh.charms.some(c => ids.has(c.poolId)) && !!replaceCutWhy(sh, ids)) || (r.state === "committed" && ![...ids].every(id => allSheets().some(sh => sh.charms.some(c => c.poolId === id)))); } catch (_) { return true; } };
+  const openLines = it => linesOf(it).filter(r => !(r.spec && r.spec.customDone) && r.state !== "skipped" && !(r.state === "committed" && !(r.poolIds || []).length) && !lockedOnSheet(r));
   const defaultMetal = it => { const r = linesOf(it)[0], m = r && r.spec && r.spec.material; return metalOf(m) ? m : null; };
   const defaultQty = it => Math.max(1, linesOf(it).reduce((n, r) => n + ((r.spec && r.spec.quantity) || 1), 0));
   /** The pieces the order asks for, as the card says them ("2 pieces ordered"): an earring pair is a Left and a Right per unit (pairPlan, the same count notReady
