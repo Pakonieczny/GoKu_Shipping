@@ -7,13 +7,13 @@
 //   A · NO MATCH (KEEPOWNSKU, Paul 20 Oct 2026: "use the existing Etsy listing/order SKU and save/match that along with the newly uploaded charm vector to the Charm repo")
 //   C 4196640001  the custom order of listing 1800004821, SKU “Test_@” (no library charm): a design dropped in its window (gold), the switch ON → saved as TEST_@ (the order's own SKU, upper case,
 //                 nothing invented), Etsy already carries it
-//   W 4196640002  a later order of the same listing and SKU, waiting for a charm (on no sheet) → reads TEST_@, is made from it and goes onto the draft GF Sheet 1, which is nested again
+//   W 4196640002  a later order of the same listing and SKU, waiting for a charm (on no sheet) → reads TEST_@, is made from it and is appended to the draft GF Sheet 1 (INPLACE: nothing on it moves)
 //   F 4196640091  another listing, on GF Sheet 1 → untouched
 //   B · ALREADY MATCHED TO X (KEEPOVERRIDE, Paul 20 Oct 2026: "the system must remove the SKU from the offending charm and attach it to the newly uploaded charm in the Charm repo. This must also
 //       trigger the immediate updating of all related thumbnails and Nested charms on sheets")
 //   X = the library charm test/OAK.ai under OAK_LEAF and OAK_LEAF_GF; listing 1800007733 · SKU OAK_LEAF reads it
 //   C2 4196640101 the custom order: its design dropped, the switch ON → OAK_LEAF is removed from X (X keeps OAK_LEAF_GF), the new design holds OAK_LEAF, an audit record, the timeline
-//   W2 4196640102 the same listing + SKU, NESTED on the uncut GF Sheet 1 with X's piece → its piece is made again from the new design (the relink's own placement), GF Sheet 1 nested again, pictures
+//   W2 4196640102 the same listing + SKU, NESTED on the uncut GF Sheet 1 with X's piece → its piece is made again from the new design, in its old spot (the relink's own placement), GF Sheet 1 saved, pictures
 //   The pop-up: "Removed SKU OAK_LEAF from charm OAK_LEAF_GF in the charm repository", "Saved the new design as OAK_LEAF", "Linked listing … · SKU OAK_LEAF to the new design", W2's line, the sheet,
 //   the pictures, "Etsy already carries SKU OAK_LEAF"; the Library tab: X's card lists OAK_LEAF_GF alone, the new design's card OAK_LEAF.
 //   S (sandbox, world B): the same toggle is rehearsed with the same lines in "would" words; "Rehearsal complete. Nothing was saved.", no writing op
@@ -66,7 +66,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
       const iv = setInterval(() => {
         if (typeof window.startNest !== 'function' || window.startNest.__stub) return;
         const stub = sh => {
-          window.__nests = (window.__nests || []).concat([{ sheetId: sh.sheetId, charms: sh.charms.map(c => c.poolId) }]);
+          window.__nests = (window.__nests || []).concat([{ sheetId: sh.sheetId, charms: sh.charms.map(c => c.poolId), appendOnly: !!sh.appendOnly }]);
           sh.status = 'nesting'; sh.persistedDone = false; sh.persisted = Promise.resolve();
           setTimeout(async () => {
             try {
@@ -80,7 +80,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
             try { CN.renderCard(sh); } catch (_) {}
           }, 120);
         };
-        stub.__stub = true; window.startNest = stub; clearInterval(iv);
+        stub.__stub = true; window.startNest = stub; /* INPLACE (Paul, 20 Oct 2026): a sheet whose replaced piece came off is written as it stands (writeAsPlaced, no nest): stood in for here as the nest is, every placement kept */ const wap = sh => { window.__writes = (window.__writes || []).concat([{ sheetId: sh.sheetId, page: sh.page, placements: sh.placements.map(p => ({ id: p.id, cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle })) }]); sh.status = 'finishing'; sh.persistedDone = false; let done; sh.persisted = new Promise(r => { done = r; }); return new Promise(res => setTimeout(async () => { try { if (sh.sheetId) await api('charmNestLibrary', { op: 'putSheet', sheet: { id: sh.sheetId, metal: sh.metal, runId: sh.runId, fileBase: sh.fileBase, sheetIndex: sh.sheetIndex, draft: sh.draft || undefined, charms: sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(c => ({ id: c.id, poolId: c.poolId, order: c.order, sku: (c.orderInfo && c.orderInfo.sku) || c.sku })), placements: sh.placements.map(p => Object.assign({}, p)), poolIds: sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(c => c.poolId) } }, { quiet: true }); } catch (e) { sh.problem = e.message; } sh.status = 'complete'; sh.dirty = false; sh.intakeAppend = false; sh.appendOnly = false; sh.persistedDone = true; sh.verification = { ok: true }; done(); try { CN.renderCard(sh); } catch (_) {} res(!sh.problem); }, 120)); }; wap.__stub = true; window.writeAsPlaced = wap; clearInterval(iv);
       }, 0);
     }, !!sandbox);
     const page = await ctx.newPage(); page.setDefaultTimeout(30000);
@@ -162,9 +162,9 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
       assert(has('done', new RegExp('^Saved ' + esc(sku) + ' to the charm repository$')), 'the repository line: ' + JSON.stringify(fl.lines));
       assert(has('done', new RegExp('^Linked listing ' + LID + ' · SKU ' + esc(sku) + ' to the new design$')), 'the link line: ' + JSON.stringify(fl.lines));
       assert(has('done', new RegExp(`^Order ${W}: now reads ${esc(sku)} and goes onto GF Sheet 1`)), 'W\'s line: made from the saved design onto GF Sheet 1: ' + JSON.stringify(fl.lines));
-      assert(has('done', /^GF Sheet 1 nested again and its files saved/) && has('done', /^Thumbnails updated/), 'the sheet and the pictures: ' + JSON.stringify(fl.lines));
+      assert(has('done', /^GF Sheet 1 files saved \(the new piece added; nothing on it moved\)/) && has('done', /^Thumbnails updated/), 'the sheet and the pictures: ' + JSON.stringify(fl.lines));
       assert(has('done', new RegExp('^Etsy already carries SKU ' + esc(sku) + '$')), 'the Etsy line: the listing carries the SKU already: ' + JSON.stringify(fl.lines));
-      assert(!fl.lines.some(([s]) => s === 'failed') && !fl.lines.some(([, t]) => new RegExp(`^Order ${C}:`).test(t)) && /Saved and linked: 1 other order updated, 1 sheet nested again/.test(fl.sum), 'nothing failed, the window\'s own order is not told; the summary: ' + fl.sum);
+      assert(!fl.lines.some(([s]) => s === 'failed') && !fl.lines.some(([, t]) => new RegExp(`^Order ${C}:`).test(t)) && /Saved and linked: 1 other order updated, 1 sheet saved \(none nested again\)/.test(fl.sum), 'nothing failed, the window\'s own order is not told; the summary: ' + fl.sum);
       pass('no match: the design is saved under the order\'s own SKU TEST_@; the pop-up says the save, the link, W onto GF Sheet 1, the sheet, the pictures and "Etsy already carries SKU TEST_@"');
       const wNow = await page.evaluate(({ W, sku }) => { const r = B.orders.rows.find(x => x.order.receiptId === W); const id = r.poolIds[0], sh = id && Pool.sheetOf(id), c = sh && sh.charms.find(x => x.poolId === id); return { sku: r.spec.designSku, src: r.spec.skuSource, id, sheet: sh && sh.sheetId, placed: !!(c && sh.placements.some(p => p.id === c.id)), csku: c && c.orderInfo && c.orderInfo.sku, key: PieceMedia.vectorKey(r), later: CharmNestOrders.resolveSku({ listingId: r.line.listingId, sku: 'Test_@' }, B.maps.aliases, k => Master.entryFor(k)) }; }, { W, sku });
       assert.deepEqual([wNow.sku, wNow.sheet, wNow.placed, wNow.csku], [sku, SHEET, true, sku], 'W reads TEST_@ and its piece of it is placed on GF Sheet 1: ' + JSON.stringify(wNow));
@@ -194,21 +194,20 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
       assert(has('done', /^Removed SKU OAK_LEAF from charm OAK_LEAF_GF in the charm repository$/), 'the removal line: ' + JSON.stringify(fl.lines));
       assert(has('done', /^Saved the new design as OAK_LEAF$/), 'the save line: ' + JSON.stringify(fl.lines));
       assert(has('done', new RegExp('^Linked listing ' + LID2 + ' · SKU OAK_LEAF to the new design$')), 'the link line: ' + JSON.stringify(fl.lines));
-      assert(has('done', new RegExp(`^Order ${W2}: piece taken off GF Sheet 1 and made from OAK_LEAF`)), 'W2\'s line: its nested piece remade from the new design: ' + JSON.stringify(fl.lines));
-      assert(has('done', /^GF Sheet 1 nested again and its files saved/) && has('done', /^Thumbnails updated/) && has('done', /^Etsy already carries SKU OAK_LEAF$/), 'the sheet, the pictures, Etsy: ' + JSON.stringify(fl.lines));
-      assert(!fl.lines.some(([s]) => s === 'failed') && /Saved and linked: 1 other order updated, 1 sheet nested again/.test(fl.sum), 'nothing failed; the summary: ' + fl.sum + ' · ' + JSON.stringify(fl.lines));
+      assert(has('done', new RegExp(`^Order ${W2}: new piece placed in the old spot on GF Sheet 1`)), 'W2\'s line: its nested piece remade from the new design, in its old spot (the relink\'s placement step): ' + JSON.stringify(fl.lines));
+      assert(has('done', /^GF Sheet 1 files saved/) && has('done', /^Thumbnails updated/) && has('done', /^Etsy already carries SKU OAK_LEAF$/), 'the sheet, the pictures, Etsy: ' + JSON.stringify(fl.lines));
+      assert(!fl.lines.some(([s]) => s === 'failed') && /Saved and linked: 1 other order updated, 1 sheet saved \(none nested again\)/.test(fl.sum), 'nothing failed; the summary: ' + fl.sum + ' · ' + JSON.stringify(fl.lines));
       const order = ['remove', 'repo', 'link'].map(id => fl.ids.indexOf(id));
       assert(order[0] === 0 && order[1] === 1 && order[2] === 2, 'the lines come in order: removed, saved, linked: ' + JSON.stringify(fl.ids));
-      pass('already matched: OAK_LEAF is removed from X (X keeps OAK_LEAF_GF), the new design holds it, one audit record; the pop-up says removed, saved, linked, W2, the sheet, the pictures, Etsy');
-      const wNow = await page.evaluate(({ W2, sku }) => { const r = B.orders.rows.find(x => x.order.receiptId === W2); const id = r.poolIds[0], sh = id && Pool.sheetOf(id), c = sh && sh.charms.find(x => x.poolId === id), p = B.pool.rows.get(id); return { sku: r.spec.designSku, id, sheet: sh && sh.sheetId, placed: !!(c && sh.placements.some(q => q.id === c.id)), aiPath: p && p.aiPath, hash: c && (c.hash || c.charmHash), key: PieceMedia.vectorKey(r) }; }, { W2, sku });
+      pass('already matched: OAK_LEAF is removed from X (X keeps OAK_LEAF_GF), the new design holds it, one audit record; the pop-up says removed, saved, linked, Etsy, W2 in its old spot, the sheet, the pictures');
+      const wNow = await page.evaluate(({ W2, sku }) => { const r = B.orders.rows.find(x => x.order.receiptId === W2); const id = r.poolIds[0], sh = id && Pool.sheetOf(id), c = sh && sh.charms.find(x => x.poolId === id), p = B.pool.rows.get(id), pl = c && sh.placements.find(q => q.id === c.id); return { sku: r.spec.designSku, id, sheet: sh && sh.sheetId, placed: !!pl, at: pl ? [Math.round(pl.cxPt), Math.round(pl.cyPt)] : null, aiPath: p && p.aiPath, hash: c && (c.hash || c.charmHash), key: PieceMedia.vectorKey(r) }; }, { W2, sku });
       assert(wNow.sku === sku && wNow.sheet === SHEET && wNow.placed && /OAK_LEAF__k/.test(wNow.aiPath) && wNow.hash === 'h-OAK_LEAF', 'W2\'s piece is made again from the new design and placed on GF Sheet 1: ' + JSON.stringify(wNow).slice(0, 300));
       assert(wNow.key.includes('|p:OAK_LEAF#h-OAK_LEAF') && !wNow.key.includes('h-OAKX'), 'W2\'s picture key is the new design\'s piece: ' + wNow.key);
       assert(/OAK_LEAF__k/.test((st.doc('Charm_Pool', wid) || {}).aiPath || ''), 'W2\'s piece record is cut from the new design\'s file');
-      const nests = await page.evaluate(() => window.__nests || []);
-      assert(nests.some(x => x.sheetId === SHEET && x.charms.includes(wid)), 'GF Sheet 1 was nested again with W2');
+      assert.deepEqual(wNow.at, [46, 16], 'W2\'s new piece takes the old piece\'s spot (the relink\'s own placement): ' + JSON.stringify(wNow.at));
       assert(st.calls.slice(w0).some(c => c.op === 'putSheet' && c.body && c.body.sheet && c.body.sheet.id === SHEET && JSON.stringify(c.body.sheet.charms || []).includes(wid)), 'GF Sheet 1 was saved again');
       assert.equal(st.calls.slice(w0).filter(c => /^(poolPut|poolUpdate)$/.test(String(c.op)) && JSON.stringify(c.body).includes(`${F}_${F}1_1`)).length, 0, 'F\'s piece is untouched');
-      pass('W2 (nested on the uncut GF Sheet 1 with X\'s piece) is made again from the new design by the relink, GF Sheet 1 nested again and saved, its pictures the new piece; F untouched');
+      pass('W2 (nested on the uncut GF Sheet 1 with X\'s piece) is made again from the new design by the relink, placed in its old spot, GF Sheet 1 saved, its pictures the new piece; F untouched');
       // the Library tab: X's card no longer lists OAK_LEAF, the new design's card does
       await page.evaluate(() => { try { CustomSheet.shut(); } catch (_) {} CN.setMode('master'); });
       await page.waitForFunction(() => document.querySelectorAll('#mGrid .skuTile').length >= 2, null, { timeout: 20000 });

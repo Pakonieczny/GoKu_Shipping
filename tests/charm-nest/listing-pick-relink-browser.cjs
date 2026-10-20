@@ -3,7 +3,8 @@
 // waiting pieces go into the next free cell, oldest order first, __cap[sheetId] limits how many one search places; what it cannot place moves on through the page's own overflowToNextSheet.
 //   Listing 1700000001, Etsy SKU "FEATHER" (the old drawing, an exact master match); the pick: FEATHER_4102, saved by the page's own REVLINK call (CharmNestReviewLink.save: aliasPut, read back).
 //   A 4201900041  the order Paul corrected, on the open GF Sheet 1          → its old piece comes off, the new one goes into its room on GF Sheet 1
-//   C 4204208130  the same listing, nested on GF Sheet 1                     → taken off; GF Sheet 1 has room for ONE new piece (cap) → it moves on to the next open sheet, GF Sheet 3
+//   C 4204208130  the same listing, nested on GF Sheet 1                     → taken off; its new piece fits its old spot → placed there (INPLACE, Paul 20 Oct 2026: no nest, nothing
+//                                                                               else on GF Sheet 1 moves; a piece that does not fit its spot: replace-in-place.cjs)
 //   B 4201900042  the same listing, not pooled yet                           → reads FEATHER_4102, nothing written for it
 //   D 4204208131  the same listing, its piece CUT on GF Sheet 2              → flagged: held for a person, the Review's Held row, nothing physical changes
 //   X 4209999990  ANOTHER listing with the same SKU, on GF Sheet 1           → untouched
@@ -79,7 +80,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
             try { CN.renderCard(sh); } catch (_) {}
           }, 120);
         };
-        stub.__stub = true; window.startNest = stub; clearInterval(iv);
+        stub.__stub = true; window.startNest = stub; /* INPLACE (Paul, 20 Oct 2026): a sheet whose replaced piece came off is written as it stands (writeAsPlaced, no nest): stood in for here as the nest is, every placement kept */ const wap = sh => { window.__writes = (window.__writes || []).concat([{ sheetId: sh.sheetId, page: sh.page, placements: sh.placements.map(p => ({ id: p.id, cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle })) }]); sh.status = 'finishing'; sh.persistedDone = false; let done; sh.persisted = new Promise(r => { done = r; }); return new Promise(res => setTimeout(async () => { try { if (sh.sheetId) await api('charmNestLibrary', { op: 'putSheet', sheet: { id: sh.sheetId, metal: sh.metal, runId: sh.runId, fileBase: sh.fileBase, sheetIndex: sh.sheetIndex, draft: sh.draft || undefined, charms: sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(c => ({ id: c.id, poolId: c.poolId, order: c.order, sku: (c.orderInfo && c.orderInfo.sku) || c.sku })), placements: sh.placements.map(p => Object.assign({}, p)), poolIds: sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(c => c.poolId) } }, { quiet: true }); } catch (e) { sh.problem = e.message; } sh.status = 'complete'; sh.dirty = false; sh.intakeAppend = false; sh.appendOnly = false; sh.persistedDone = true; sh.verification = { ok: true }; done(); try { CN.renderCard(sh); } catch (_) {} res(!sh.problem); }, 120)); }; wap.__stub = true; window.writeAsPlaced = wap; clearInterval(iv);
       }, 0);
     }, who);
     const page = await ctx.newPage(); page.setDefaultTimeout(30000);
@@ -94,7 +95,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     window.__cap = {};
     CN.S.stockPreset = 'custom'; CN.S.settings.stock = Object.assign({}, CN.S.settings.stock, { gold: [182 / 72, 62 / 72] });
     const MM = 72 / 25.4, R = 5, D = Math.ceil(2 * R * MM) + 2, TID = tx => String(5100000000 + tx), pid = (rid, tx) => `${rid}_${TID(tx)}_1`;
-    const mkCharm = (id, extra) => Object.assign({ id, name: id, sku: '', sourceId: 's', ringGeometryVersion: 3, centerPt: [D / 2, D / 2], bbox: [0, 0, D, D], outline: { circle: 1, cx: 0, cy: 0, r: R * MM }, members: [], rMm: R, w: 8, h: 8, scale: 1, bits: new Uint8Array(64).fill(1), widthPt: 2 * R * MM, heightPt: 2 * R * MM, areaPt2: Math.PI * (R * MM) ** 2 }, extra || {});
+    const mkCharm = (id, extra) => Object.assign({ id, name: id, sku: '', sourceId: 's', ringGeometryVersion: 3, centerPt: [D / 2, D / 2], bbox: [0, 0, D, D], outline: { circle: 1, cx: 0, cy: 0, r: R * MM }, members: [], rMm: R, w: 16, h: 16, scale: 2, bits: new Uint8Array(256).fill(1) /* (dense at the check's 2 px/pt: INPLACE fits the new piece by its outline) */, widthPt: 2 * R * MM, heightPt: 2 * R * MM, areaPt2: Math.PI * (R * MM) ** 2 }, extra || {});
     window.__regSku = sku => { const key = 'test/' + sku + '.ai'; B.master.entries.set(sku, { sku, updatedAt: 1, aiPath: key, widthPt: 2 * R * MM, heightPt: 2 * R * MM, holes: 0, upAngle: null, labelSource: 'text', charmHash: 'h-' + sku }); B.pool.sources.set(key, { id: 'pool:' + sku, pool: true, name: sku, sku, charms: [mkCharm('pool:' + sku + ':0', { sku, name: sku })], usedAt: Date.now() }); };
     for (const sku of ['FEATHER', 'FEATHER_4102', 'GFFILL_1', 'GFFILL_2', 'GFFILL_3', 'GFFILL_4']) window.__regSku(sku);
     const pr = CN.S.sheets.gold; pr.pages.length = 1; const p0 = pr.pages[0]; Object.assign(p0, { charms: [], placements: [], sheetId: null, fileBase: null, status: 'idle', page: 1 }); for (const k of ['laserDoneAt', 'roseCutAt', 'recalled', 'setId', 'releaseFull']) delete p0[k];
@@ -154,9 +155,11 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     { const k = await one.page.evaluate(C => { const r = B.orders.rows.find(x => x.order.receiptId === C), s = CN.S.sheets.gold.pages.find(p => p.sheetId === 'lp-gold-1'); return { sku: r.spec.designSku, piece: (B.pool.rows.get(r.poolIds[0]) || {}).sku, on: s.charms.filter(c => c.poolId === r.poolIds[0]).map(c => c.sku), waiting: Review.relinkPending() }; }, C);
       assert.deepEqual(k, { sku: NEW, piece: OLD, on: [OLD], waiting: 1 }, 'C, in Review, reads the pick but keeps its old piece on GF Sheet 1 until its Review is resolved: ' + JSON.stringify(k)); }
     pass('an order still in Review keeps its piece on its sheet (REVHOLD) and waits; the corrected order is made up at once');
-    // C's Review is answered ("Marked OK"): it is made up again by itself; GF Sheet 1 now has no room for it in its next search, so it moves on
-    await one.page.evaluate(async C => { window.__cap = { 'lp-gold-1': 0 }; await CharmNestReviewMark.resolve(C, { by: 'Paul', how: 'ok' }); }, C);
-    await until(() => one.page.evaluate(({ A, C }) => { const s = Object.fromEntries(CN.S.sheets.gold.pages.map(p => [p.sheetId, p])); const placed = (sh, id) => sh && sh.placements.some(pl => (sh.charms.find(c => c.id === pl.id) || {}).poolId === id); return placed(s['lp-gold-1'], A + '_5100000001_1') && placed(s['lp-gold-3'], C + '_5100000002_1') && CN.S.sheets.gold.pages.every(p => !['nesting', 'queued', 'ready'].includes(p.status)); }, { A, C }), 30000, 'A placed on GF Sheet 1 and C on GF Sheet 3');
+    // C's Review is answered ("Marked OK"): it is made up again by itself; its new piece fits the spot its old one left on GF Sheet 1 (INPLACE): placed there, GF Sheet 1 written as it stands, never nested
+    const before1 = await one.page.evaluate(() => { const s = CN.S.sheets.gold.pages.find(p => p.sheetId === 'lp-gold-1'); return Object.fromEntries(s.placements.map(pl => [(s.charms.find(c => c.id === pl.id) || {}).poolId, [pl.cxPt, pl.cyPt, pl.angle]])); });
+    const nests0 = await one.page.evaluate(() => (window.__nests || []).length);
+    await one.page.evaluate(async C => { await CharmNestReviewMark.resolve(C, { by: 'Paul', how: 'ok' }); }, C);
+    await until(() => one.page.evaluate(({ A, C }) => { const s = Object.fromEntries(CN.S.sheets.gold.pages.map(p => [p.sheetId, p])); const placed = (sh, id) => sh && sh.placements.some(pl => { const c = sh.charms.find(z => z.id === pl.id) || {}; return c.poolId === id && c.sku === 'FEATHER_4102'; }); return placed(s['lp-gold-1'], A + '_5100000001_1') && placed(s['lp-gold-1'], C + '_5100000002_1') && CN.S.sheets.gold.pages.every(p => !['nesting', 'finishing', 'queued', 'ready'].includes(p.status) && !p._inplaceWrite); }, { A, C }), 30000, 'A and C placed on GF Sheet 1, each in its old spot');
     await sleep(600);
     const rows1 = await rowsNow(one.page), sh1 = await sheetsNow(one.page);
     for (const rid of [A, C, B_, D]) assert.equal(rows1[rid].sku, NEW, `${rid} reads ${NEW} now: ${JSON.stringify(rows1[rid])}`);
@@ -167,17 +170,22 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     assert.deepEqual(rows1[A].pieces, [NEW], 'A\'s piece is FEATHER_4102: ' + JSON.stringify(rows1[A]));
     assert(sh1['lp-gold-1'].placed.includes(idA) && sh1['lp-gold-1'].charms.some(([id, sku]) => id === idA && sku === NEW), 'A is on GF Sheet 1 as FEATHER_4102: ' + JSON.stringify(sh1['lp-gold-1']));
     assert.equal(sh1['lp-gold-1'].charms.filter(([id]) => id === idA).length, 1, 'one piece of A on the sheet, never two');
-    // C: GF Sheet 1 had room for one, so C moved on to the next open sheet (GF Sheet 2 is cut)
-    assert(!sh1['lp-gold-1'].charms.some(([id]) => id === idC) && sh1['lp-gold-3'].placed.includes(idC), 'C did not fit GF Sheet 1 and moved on to GF Sheet 3: ' + JSON.stringify(sh1));
+    // C: its new piece in its old spot on GF Sheet 1 (INPLACE): the same centre and angle, every other charm on the sheet exactly where it was, no nest of GF Sheet 1
+    assert(sh1['lp-gold-1'].placed.includes(idC) && !sh1['lp-gold-3'].charms.some(([id]) => id === idC), 'C went into its old spot on GF Sheet 1: ' + JSON.stringify(sh1));
+    const after1 = await one.page.evaluate(() => { const s = CN.S.sheets.gold.pages.find(p => p.sheetId === 'lp-gold-1'); return Object.fromEntries(s.placements.map(pl => [(s.charms.find(c => c.id === pl.id) || {}).poolId, [pl.cxPt, pl.cyPt, pl.angle]])); });
+    assert.deepEqual(after1, before1, 'every charm on GF Sheet 1 is exactly where it was (C\'s new piece at its old centre and angle): ' + JSON.stringify({ before1, after1 }));
+    const nested1 = await one.page.evaluate(n0 => (window.__nests || []).slice(n0).filter(x => x.sheetId === 'lp-gold-1'), nests0);
+    assert.deepEqual(nested1, [], 'GF Sheet 1 was not nested again for C: ' + JSON.stringify(nested1));
+    assert(await one.page.evaluate(() => (window.__writes || []).some(w => w.sheetId === 'lp-gold-1')), 'GF Sheet 1 was written as it stands');
     assert.deepEqual(rows1[C].pieces, [NEW], 'C\'s piece is FEATHER_4102');
     assert(!sh1['lp-gold-2'].charms.some(([id]) => id === idC || id === idA), 'nothing went onto the cut GF Sheet 2');
-    pass('A goes into its own room on GF Sheet 1; C, with no room left there, moves on to the next open sheet (GF Sheet 3, past the cut GF Sheet 2)');
+    pass('A and C each go into their own old spot on GF Sheet 1, nothing else on it moves and it is never nested again (INPLACE)');
     // the cloud: one take-off commit per line (superseded), the new rows FEATHER_4102, the saved sheets list them where they are
     const offs = st.calls.slice(w0).filter(c => c.op === 'poolUpdate' && c.body.patch && c.body.patch.state === 'superseded');
     assert.deepEqual(offs.map(c => c.body.poolIds).sort(), [[idA], [idC]], 'one take-off commit for each of A and C: ' + JSON.stringify(offs.map(c => c.body.poolIds)));
     for (const id of [idA, idC]) { const p = st.doc(POOL, id); assert(p.sku === NEW && !['superseded', 'abandoned'].includes(p.state), `${id} is FEATHER_4102 in the cloud: ${JSON.stringify(p)}`); }
-    assert(st.doc(SHEETS, 'lp-gold-1').poolIds.includes(idA) && !st.doc(SHEETS, 'lp-gold-1').poolIds.includes(idC), 'the saved GF Sheet 1 lists A, no longer C');
-    assert(st.doc(SHEETS, 'lp-gold-3').poolIds.includes(idC), 'the saved GF Sheet 3 lists C');
+    assert(st.doc(SHEETS, 'lp-gold-1').poolIds.includes(idA) && st.doc(SHEETS, 'lp-gold-1').poolIds.includes(idC), 'the saved GF Sheet 1 lists A and C');
+    assert(!(st.doc(SHEETS, 'lp-gold-3').poolIds || []).includes(idC), 'the saved GF Sheet 3 does not list C');
     pass('the cloud: one take-off commit per line, the pieces recorded as FEATHER_4102, the saved sheets list them where they are');
     // B: nothing written for it
     assert.equal(writesFor(w0, [B_]).length, 0, 'nothing is written for B (not pooled yet): ' + JSON.stringify(writesFor(w0, [B_]).map(c => c.op)));
@@ -197,8 +205,8 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     await until(async () => { await one.page.evaluate(() => { try { OrderTimeline.flush && OrderTimeline.flush(); } catch (_) {} }); const k = rid => st.list(TL).filter(e => e._id.startsWith(rid + '~') && /^Charm updated from listing pick by Paul/.test(e.text || '')).length; return [A, B_, D].every(rid => k(rid) >= 1) && k(C) >= 2; }, 20000, 'timeline events');
     const evs = rid => st.list(TL).filter(e => e._id.startsWith(rid + '~') && /^Charm updated from listing pick by Paul/.test(e.text || ''));
     for (const rid of [A, B_, D]) assert.equal(evs(rid).length, 1, `one event for ${rid}: ${JSON.stringify(evs(rid).map(e => e.text))}`);
-    assert.deepEqual(evs(C).map(e => /stays on its sheet while the order is in Review/.test(e.text) ? 'kept' : /the old piece came off GF Sheet 1/.test(e.text) ? 'made' : e.text).sort(), ['kept', 'made'], 'C: kept while in Review, then made up again: ' + JSON.stringify(evs(C).map(e => e.text)));
-    assert(/FEATHER → FEATHER_4102 · the old piece came off GF Sheet 1/.test(evs(A)[0].text) && evs(A)[0].by === 'Paul', 'A\'s event: ' + evs(A)[0].text);
+    assert.deepEqual(evs(C).map(e => /stays on its sheet while the order is in Review/.test(e.text) ? 'kept' : /the new piece was placed in the old spot on GF Sheet 1/.test(e.text) ? 'made' : e.text).sort(), ['kept', 'made'], 'C: kept while in Review, then made up again: ' + JSON.stringify(evs(C).map(e => e.text)));
+    assert(/FEATHER → FEATHER_4102 · the new piece was placed in the old spot on GF Sheet 1/.test(evs(A)[0].text) && evs(A)[0].by === 'Paul', 'A\'s event: ' + evs(A)[0].text);
     assert(/left as it was, a person must make it/.test(evs(D)[0].text), 'D\'s event says it was left: ' + evs(D)[0].text);
     assert.equal(st.list(TL).filter(e => e._id.startsWith(X + '~') && /listing pick/.test(e.text || '')).length, 0, 'X has no such event');
     pass('every affected order has "Charm updated from listing pick by Paul" on its timeline, once');

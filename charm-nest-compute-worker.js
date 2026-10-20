@@ -31,7 +31,7 @@ async function compute(type,a,progress){
     const sources=new Map();for(const [key,p] of a.spec.sources)sources.set(key,await hydrate(p));
     const spec={...a.spec,sources},bytes=await P.buildSheet(spec);return {bytes,layers:spec.placements.map(p=>p.layerName)};
   }
-  if(type==='single')return P.buildSingleCharm(a.charm,await hydrate(a.parsed));
+  if(type==='single')return P.buildSingleCharm(a.charm,await hydrate(a.parsed),a.opts);   // (a.opts.bodies: a pair folded into one design, one form per body)
   if(type==='back')return P.buildBackFile({...a.spec,parsed:await hydrate(a.spec.parsed)});
   if(type==='compose')return self.CharmNestExport.compose(a.front,a.sheet,a.backs);
   if(type==='backIndex')return self.CharmNestExport.backIndexPdf(a);

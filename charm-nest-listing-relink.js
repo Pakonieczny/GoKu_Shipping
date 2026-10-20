@@ -16,9 +16,9 @@
          "skip"    not this pick's business: no link, the link did not move for it, not read by the link, a question open, a person's own pick for this order, finished, held
          "none"    already right (its pieces already carry the picked charm, under any of its names: another computer swapped them, or this one did)
          "design"  nothing made yet (or its pieces taken off): the line simply reads the new charm; no write but its timeline event
-         "swap"    pieces pooled or on a sheet still open: the old pieces come off in one commit and the line is made up again with the picked charm (Review.repool, repoolChanged)
+         "swap"    pieces pooled or on a sheet not cut (a draft, a formed, released or committed set): the old pieces come off in one commit and the line is made up again with the picked charm (Review.repool, repoolChanged)
          "kept"    the order is in Review right now (REVHOLD keeps its piece on its sheet): left until the Review is resolved, then swapped
-         "flag"    a piece is cut, in a committed or released set, or inside a protected Rose Gold / 10K / 14K contour: nothing is changed physically; a person is told (hold: the line is held for them)
+         "flag"    a piece is laser cut (INPLACE, Paul 20 Oct 2026: only cut; fixedOf), or inside a cut Rose Gold / 10K / 14K green line: nothing is changed physically; a person is told (hold: the line is held for them)
      h = { maps, linkOf(row, maps), made(row) → [sku of each live piece] | null (not known), fixedOf(row) → [{ name, why, cut, local }], keepsPlace(row), ownPick(row) → sku | "",
            sameDesign(a, b), cancelled(row) }
    Idempotent by construction: the decision is read from what the line and its pieces ARE, never from a memory of what was done, so a second run over the same state answers "none".
@@ -108,7 +108,9 @@
     const was = [...new Set(made.map(up))].join(" + ");
     if (made.every(s => sd(s, to))) return res("none", "its pieces already carry the picked charm", { to, link, from: from || was });
     const fixed = (h.fixedOf ? h.fixedOf(row0) : []) || [];
-    if (row0.state === "committed" || fixed.length) return res("flag", fixed.length ? fixed.map(f => `${f.why} on ${f.name}`).join(", ") : "its set is committed", { to, link, from: was, fixed, hold: row0.state !== "committed" && !row0.hold && fixed.some(f => f.local) });
+    // (INPLACE, Paul 20 Oct 2026: a line in a committed set is no longer fixed by that alone: only a sheet the laser has CUT keeps its piece, as fixedOf says; the page's fixedOf also names a piece
+    //  whose sheet this page does not hold. Without a fixedOf a committed line is told, as before.)
+    if ((row0.state === "committed" && !h.fixedOf) || fixed.length) return res("flag", fixed.length ? fixed.map(f => `${f.why} on ${f.name}`).join(", ") : "its set is committed", { to, link, from: was, fixed, hold: row0.state !== "committed" && !row0.hold && fixed.some(f => f.local) });
     if (h.keepsPlace && h.keepsPlace(row0)) return res("kept", "the order is in Review: its piece stays on its sheet until the Review is resolved", { to, link, from: was });
     if (row0.hold) return res("skip", "the line is held by a person", { to, link, from: was });
     return res("swap", "its pieces are pooled or on an open sheet", { to, link, from: was });

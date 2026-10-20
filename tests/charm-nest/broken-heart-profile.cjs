@@ -209,7 +209,7 @@ K.DESIGNS.BEST_ONE = () => charmOf('BEST_ONE', [Object.assign(cut(arc(0, 2 * Mat
     eq([t.pools.length, t.charms.map(c => c.oneBody), t.pools.map(p => p.groupSize)], [4, [0, 1, 0, 1], [4, 4, 4, 4]], 'bought twice: two hearts, each a left half and a right half'); }
   { const t = await pool('SILVER·Front', 1, 'BEST_ONE');
     eq([t.row.state, t.pools.length, t.charms.length], ['held', 0, 0], '(b) one heart outline with the zigzag inside: the line waits, never two copies of the whole heart, never one heart');
-    ok(/separate bodies this listing's profile cuts \(the left half and the right half, each its own closed outline\): a person checks the design/.test(t.row.reason), t.row.reason); }
+    ok(/separate bodies this listing's profile cuts \(the left half and the right half, each its own closed outline\)[^:]*?(?: — [^:]*?\([^)]*\))?: a person checks the design/.test(t.row.reason), t.row.reason); }
 
   // ── 8 · what must not change ─────────────────────────────────────────────────────────────────────────
   { const bar = world({ transactionId: '7', listingId: '982791277', sku: 'VERTICAL BAR_1277', title: 'Skinny MINI Vertical Bar Necklace', quantity: 1, metalKey: 'gold', metalLabel: 'Gold', personalization: ['Bar names:\nSophie\nSam\nEddy'], variations: [{ name: 'Engraving & # of Bars?', value: 'gold • 3 bars ($45.60)' }] });
