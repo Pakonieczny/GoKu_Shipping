@@ -2083,10 +2083,21 @@ const Orders = window.Orders = (() => {
   }
   const OV = { pile: null, metal: null, form: null, eng: null, act: null, q: "", view: null, sort: "activity", desc: false, limit:48 };   // what the tab is showing right now   (act: RQFILTER, null | "hold" | "qr" | "both")
   const viewMode = () => OV.view || S.settings.orderView || "list";
+  /** What the order search reads on a line, lower case, Etsy's entities decoded (&#39; → '). Kept per line object. */
+  const findCache = new WeakMap();
+  function findText(r) {
+    const sp = r.spec || {}, l = r.line || {};
+    const parts = [r.order.receiptId, l.listingId, sp.designSku, l.sku, l.title, (l.variations || []).map(v => `${v.name || v.formatted_name || ""} ${v.value || v.formatted_value || ""}`).join(" "), (sp.personalization || []).join(" "), sp.buyerMessage, sp.staffNote, r.reason];
+    const sig = parts.join("\u0001"), hit = findCache.get(r);
+    if (hit && hit.sig === sig) return hit.text;
+    const text = parts.map(x => String(x || "")).join(" \u0001 ").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n)).replace(/&quot;/g, '"').replace(/&amp;/g, "&").toLowerCase();
+    findCache.set(r, { sig, text });
+    return text;
+  }
   /** The lines the filters leave, in ship-by order. */
   function visibleRows() {
     // (PERF, Oct 2026: each row's activity time is worked out once for this sort, and the date range and direction read once, not per row)
-    const q = OV.q.trim().toLowerCase(), times = new Map(), act = CNListActivity.state("orders");
+    const q = OV.q.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean), times = new Map(), act = CNListActivity.state("orders");
     return rowsOf().filter(r => {
       if (r.state === "gone") return false;
       if (OV.pile === "hold" && !heldNow(r)) return false;
@@ -2095,9 +2106,9 @@ const Orders = window.Orders = (() => {
       if (OV.eng) { const needs = !!(r.engrave && r.engrave.needed); if (OV.eng === "yes" ? !needs : needs) return false; }
       if (actNow()) { const a = openActions().get(r.key); if (!a || !(actNow() === "hold" ? a.hold : actNow() === "qr" ? a.qr : a.hold || a.qr)) return false; }   // (RQFILTER, Paul 19 Oct 2026: the open Release Hold / Print QR filter; one OR over the two answers)
       if (!q) return true;
-      const sp = r.spec || {};
-      return [r.order.receiptId, sp.designSku, r.line.sku, r.line.title, (sp.personalization || []).join(" "), sp.buyerMessage, sp.staffNote, r.reason]
-        .some(x => String(x || "").toLowerCase().includes(q));
+      // (TITLEFIND, Paul 20 Oct 2026: every typed word must appear somewhere on the line, in any order: "heart gold" finds "Gold Broken Heart Necklace"; the title, its options and the listing number count)
+      const hay = findText(r);
+      return words.every(w => hay.includes(w));
     }).filter(r => CNListActivity.matches(r, act.range)).sort((x, y) => {
       if (OV.sort === "activity") return CNListActivity.compare(x,y,act.direction,times);
       const k = OV.sort === "arrival" ? (O.orderPlacedAt(y) - O.orderPlacedAt(x)) : OV.sort === "order" ? String(x.order.receiptId).localeCompare(String(y.order.receiptId))

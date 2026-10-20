@@ -164,6 +164,22 @@ async function main() {
     console.log('  ✓ 6 a failed lookup in the Cancelled tab ends its spinner with a message');
 
     });
+    await step('7', async () => {
+    /* 7 · TITLEFIND: the Open Orders search reads the listing title word by word, in any order, as each letter is typed */
+    await page.fill('#ordQ', '');
+    await page.click('#ordChips [data-pile]:not([data-pile="cancelled"]):not([data-pile="hold"])').catch(() => page.evaluate(() => Orders.show && Orders.show(null)));
+    const ids = () => page.evaluate(() => [...new Set([...document.querySelectorAll('#ordBody [data-rid], #ordBody [data-key]')].map(n => n.dataset.rid || String(n.dataset.key || '').split(':')[0]))].filter(Boolean).sort());
+    await page.fill('#ordQ', ''); await page.keyboard.type('charm moon', { delay: 30 }); await page.waitForTimeout(600);
+    assert.deepEqual(await ids(), ['4100000020'], '"charm moon" finds the line titled "GF-MOON-1 charm"');
+    await page.fill('#ordQ', ''); await page.keyboard.type('gold filled star', { delay: 30 }); await page.waitForTimeout(600);
+    assert.deepEqual(await ids(), ['4100000002'], 'the option values count too ("14k Gold Filled") with the title words');
+    await page.fill('#ordQ', ''); await page.keyboard.type('charm', { delay: 30 }); await page.waitForTimeout(600);
+    assert.equal((await ids()).length, 3, 'one word common to every title keeps every order');
+    await page.keyboard.type(' z'); await page.waitForTimeout(600);
+    assert.deepEqual(await ids(), [], 'one more letter that matches nothing empties the list at once');
+    await page.fill('#ordQ', '');
+    console.log('  ✓ 7 the order search reads the title word by word, live');
+    });
     assert.equal(etsyCalls(), etsy0, 'no Etsy call');
     assert.deepEqual(errors, [], 'no page errors');
     assert.equal(bad, 0, bad + ' step(s) failed');
