@@ -16265,7 +16265,9 @@ const Review = window.Review = (() => {
   const rdCustom = e => !!e && e.hashSource === "custom-save";
   /** True when `now` draws something `was` did not (a charm hash, whole or of a size, it did not have). Only what a person set changed, or a design saved from an order: false. */
   function redrawChanged(was, now) {
-    if (!was || !now || was === now || rdCustom(was) || rdCustom(now)) return false;
+    // (KEEPOVERRIDE, Paul 20 Oct 2026: a SKU the designs window's switch took for another design (the entry carries `override`) is a new drawing for every computer: the one whose run holds its pieces makes them again)
+    const took = !!now && !!now.override && String((now.override.from && now.override.from.charmHash) || "") !== String(now.charmHash || "");
+    if (!was || !now || was === now || ((rdCustom(was) || rdCustom(now)) && !took)) return false;
     const a = new Set(rdHashes(was)), b = rdHashes(now);
     return a.size > 0 && b.length > 0 && b.some(h => !a.has(h));
   }
