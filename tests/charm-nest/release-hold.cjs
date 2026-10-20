@@ -2,7 +2,7 @@
 // represent 'Completed' into an updated design representing 'Release Hold'", pressed "the order is released back into the Nesting queue", and "In the Orders tab, that released order's card shows a large,
 // clearly visible 'Release Hold' seal with the date/time and the person who released it"; and, order 4204568396 SEA_96442: "Remove this 'Release to nesting queue' button since it will clash with the new
 // 'Release Hold' button"). The real sorter in headless Chromium over the repo's fake site (bridge-server.cjs: the real charmNest* handlers over an in-memory store), motion ON. Every name is made up.
-//   1  the Review rows: Release Hold stands in the card's own column where Complete Order stood (no Complete Order on them, no "Release to nesting queue" anywhere, none under a reason): enabled (gold) on an
+//   1  the Review rows: Release Hold stands in the card's own column where Complete Order stood (no Complete Order on them, no "Release to nesting queue" anywhere, none under a reason): enabled (RHSAME, 20 Oct 2026: the seal orange, .btn.relHoldBtn; was gold) on an
 //      order sent to Review, and (RELEASE, Paul 19 Oct 2026) on an unknown SKU too: its old reason is the note "Releasing anyway: ..." on the title, not a grey; a Custom Orders card keeps Complete Order
 //   2  the press: the RELEASE HOLD seal is stamped on the button (Seal.stampOn, how "releaseHold", who) as the card leaves Review; the order is released (its Send to Review mark resolved: out of Review),
 //      who and when kept on its lines (row.releaseHold, in the run's line record and back from it), in the cloud (its Review document's release { at, by }) and on its timeline (a "released" step, data.seal)
@@ -62,11 +62,22 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
       return { n: bs.length, text: b && b.textContent.trim(), cls: b && b.className, how: b && b.dataset.rvRelease, disabled: b && b.getAttribute('aria-disabled'), title: b && b.title, parent: b && b.parentElement.className, complete: !!n.querySelector('[data-cu-complete]'), col: [...n.querySelectorAll('.rowActions button')].map(x => x.textContent.trim()) };
     }, rowSel(fx));
     const m1 = await look(MARKED), u1 = await look(UNKNOWN);
-    check(m1 && m1.n === 1 && m1.text === 'Release Hold' && m1.how === 'mark' && m1.disabled === null && /\bgold\b/.test(m1.cls) && m1.parent === 'rowActions' && !m1.complete, `1 · the marked order: ONE Release Hold, enabled, in the card's column, no Complete Order (${JSON.stringify(m1)})`);
+    check(m1 && m1.n === 1 && m1.text === 'Release Hold' && m1.how === 'mark' && m1.disabled === null && /\brelHoldBtn\b/.test(m1.cls) && m1.parent === 'rowActions' && !m1.complete, `1 · the marked order: ONE Release Hold, enabled, in the card's column, no Complete Order (${JSON.stringify(m1)})`);
     // (RELEASE, Paul 19 Oct 2026: was "greyed with its one plain reason"; the unknown SKU's question is set aside by the press, so the button is enabled and the old reason is a note in its title)
-    check(u1 && u1.n === 1 && u1.text === 'Release Hold' && u1.how === 'anyway' && u1.disabled === null && /\bgold\b/.test(u1.cls) && /Releasing anyway: SKU NO_SUCH_DESIGN_78 has no design in any master file yet/.test(u1.title) && !u1.complete && u1.col[1] === 'Release Hold', `1 · the unknown SKU: Release Hold enabled, its old reason a note in the title, where Complete Order stood (${JSON.stringify(u1)})`);
+    check(u1 && u1.n === 1 && u1.text === 'Release Hold' && u1.how === 'anyway' && u1.disabled === null && /\brelHoldBtn\b/.test(u1.cls) && /Releasing anyway: SKU NO_SUCH_DESIGN_78 has no design in any master file yet/.test(u1.title) && !u1.complete && u1.col[1] === 'Release Hold', `1 · the unknown SKU: Release Hold enabled, its old reason a note in the title, where Complete Order stood (${JSON.stringify(u1)})`);
     check(JSON.stringify(await page.evaluate(OLD)) === JSON.stringify({ old: 0, under: 0 }), '1 · no "Release to nesting queue" button anywhere, none under a reason');
     await shot('01-review');
+    // (RHSAME, Paul 20 Oct 2026: "This Release Hold button [Orders tab] needs to be the exact same as the one in the Review tab", the seal's orange on both) the unknown SKU's order held for a moment: its Orders card's Release Hold
+    // is the Review card's own button (ReviewRelease.orderButton on the Review card's item, the same press), the same words, class and colour as the Review row's, the seal's orange #a2591c
+    const rh = await page.evaluate(async ({ sel, rid }) => {
+      const rvB = document.querySelector(sel + ' [data-rv-release]'), rvBg = rvB && getComputedStyle(rvB).backgroundColor;
+      const rows = B.orders.rows.filter(r => String(r.order.receiptId) === rid); for (const r of rows) r.hold = 'test hold';
+      CN.setMode('orders'); Orders.showPile('', ''); Orders.renderNow ? Orders.renderNow() : Orders.render(); await new Promise(r => setTimeout(r, 300));
+      const card = [...document.querySelectorAll('#ordBody [data-rid]')].find(x => x.dataset.rid === rid), b = card && card.querySelector('.relHold:not([data-gate])');
+      const it = ReviewRelease.itemOf(rid), out = { text: b && b.textContent.trim(), cls: b && b.className, how: b && b.dataset.rvRelease, bg: b && getComputedStyle(b).backgroundColor, rvBg, rvCls: rvB && rvB.className, item: it.key, card: Review.items().find(i => i.kind === 'unmatchedSku' && (i.rows || [i.row]).some(r => r && String(r.order.receiptId) === rid))?.key, itHow: ReviewRelease.of(it).how };
+      for (const r of rows) delete r.hold; CN.setMode('review'); Review.render(); return out;
+    }, { sel: rowSel(UNKNOWN), rid: UNKNOWN.rid });
+    check(rh.text === 'Release Hold' && /\brelHoldBtn\b/.test(rh.cls) && /\bsm\b/.test(rh.cls) && rh.how === rh.itHow && rh.how === 'anyway' && rh.item && rh.item === rh.card && rh.bg === 'rgb(162, 89, 28)' && rh.bg === rh.rvBg && /\brelHoldBtn\b/.test(rh.rvCls), `1 · RHSAME: the Orders card's Release Hold is the Review card's: same press (its item), words, class and seal orange (${JSON.stringify(rh)})`);
 
     // ── 2 · the press ──
     const t0 = Date.now();

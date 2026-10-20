@@ -13,6 +13,8 @@
  *                                (OrderHold.run) feeding the film (OrderHoldFx.playHold) -> back to Orders > On hold.
  *   HoldUI.release(rid, opts) -> the press of an existing "Release hold" button on a card in Orders > On hold: releasePlan -> OrderHold.release
  *                                feeding OrderHoldFx.playRelease -> back to Orders > On hold. One press: no popup, no question.
+ *                                (RHSAME, Paul 20 Oct 2026: "These two Release Hold buttons seem to do something very different": the Orders card no longer calls this.
+ *                                Its Release Hold is the Review card's own button and press, ReviewRelease.orderButton -> ReviewRelease.press, charm-nest-bridge.js.)
  *
  * Where it sits in the page: the order window's piece row asks for a slot (HoldUI.slot(ctx), one span in its markup) and
  * the finished markup is given to HoldUI.fill(root), which swaps each slot for the real button. A held or cancelled order has no slot.
