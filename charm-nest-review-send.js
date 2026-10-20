@@ -39,8 +39,8 @@
     ".btn.ghost.revSendBtn{border-radius:7px;font:600 12px var(--sans);color:var(--ink70);cursor:pointer;align-self:flex-start}",
     // (HOLDORDER, Paul 20 Oct 2026: "Ensure the text inside the button is white for good contrast": Hold Order is white on its own solid colour, --holdOrder (a deep plum beside Release Hold's
     //  orange --relHold, charm-nest-1.html; white on it is far past AA). "In Review" keeps the quiet look below: it is a state that opens the card, not the action)
-    ".btn.ghost.revSendBtn:not(.revIn){background:var(--holdOrder,#5b3a6e);border-color:var(--holdOrder,#5b3a6e);color:#fff}",
-    ".btn.ghost.revSendBtn:not(.revIn):hover:not(:disabled){background:var(--holdOrderHover,#4a2d5b);border-color:var(--holdOrderHover,#4a2d5b);color:#fff}",
+    ".btn.ghost.revSendBtn:not(.revIn){background:var(--holdOrder,#ea580c);border-color:var(--holdOrder,#ea580c);color:#fff}",
+    ".btn.ghost.revSendBtn:not(.revIn):hover:not(:disabled){background:var(--holdOrderHover,#c2410c);border-color:var(--holdOrderHover,#c2410c);color:#fff}",
     ".btn.ghost.revSendBtn:not(.revIn):disabled{opacity:.75;color:#fff}",
     ".btn.ghost.revSendBtn:disabled{cursor:default}",
     ".btn.ghost.revSendBtn.revIn{color:var(--ink);background:var(--paper2)}",
