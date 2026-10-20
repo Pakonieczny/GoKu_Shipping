@@ -207,6 +207,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swOrd .no{font:600 13px var(--mono);color:var(--ink)}
 .swOrd .what{font:11.5px var(--sans);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .swOrd .tags{display:flex;align-items:center;gap:4px;justify-content:flex-end}
+.swSeals{grid-column:1/-1;display:block;min-width:0}.swSeals .relSeal{padding:2px 6px 2px 2px}.swSeals .relSealWords{font-size:7.5px}.swSeals .relSealWords b{font-size:8.5px}
 .swTag{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:1px 7px;font:600 10px var(--mono);white-space:nowrap;background:var(--paper2);color:var(--ink70)}
 .swTag i{width:7px;height:7px;border-radius:50%;background:var(--c)}
 .swTag.eng{background:var(--claySoft);color:#8a3a26}
@@ -2093,6 +2094,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (redraw && !E.seg.hidden) for (const b of E.seg.querySelectorAll("[data-f]")) if (!had.has(b.dataset.f)) animate(b, [{ opacity: 0, transform: "scale(.86)" }, { opacity: 1, transform: "none" }], 520, { fill: "none" });
     renderOrders();
   }
+  /* (SEALTRAVEL, Paul 20 Oct 2026: "All of these seals must be visible in all places where a given button is relevant"): every seal an order has collected, by kind (CNSealTravel), small, under its row in this
+     window's orders list and On hold list. From what the page holds (no read). "" when it has none. */
+  const travelHtml = rid => { try { const T = window.CNSealTravel, recs = T && window.Seal ? T.of(rid) : []; return recs.length ? `<span class="swSeals">${T.html(recs, { size: 22, wordSize: 26 })}</span>` : ""; } catch (e) { console.warn("sheet window: seals", e); return ""; } };
   function renderOrders() {
     if(window.Seal?.defer('sheet-orders',renderOrders))return;
     const E = W.el, q = W.q;
@@ -2123,7 +2127,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const tags = (live.some(x => x.c && x.c.custom) ? `<span class="swTag cust" title="A custom order: its own designs, tinted plum on the sheet">Custom</span>` : "") +
         (need ? `<span class="swTag eng" title="${fr ? "Engraving" : "Back engraving"} still to approve">${need > 1 ? need + " " + engWord(need, fr) : fr ? "engraving" : "back"}</span>` : ok ? `<span class="swTag engOk" title="${fr ? "Engraving" : "Back engraving"} approved">${fr ? "engraving" : "back"}</span>` : "") +
         other.map(s => `<span class="swTag" style="--c:${colorOf(s.metal)}" title="Also on ${esc(s.name || "")}${esc(awayAt(rid, s.id))}"><i></i>${esc(CODE[s.metal] || "")} ${s.n}</span>`).join("");
-      return `<li class="swOrd${q ? " orderMatch" : ""}${go && go.keep ? " going" + (go.how === "cancel" ? " cancel" : "") : ""}" data-rid="${esc(rid)}" data-mkey="o:${esc(rid)}"><span class="no">${rid === "—" ? "No order" : esc(rid)}</span><span class="what" title="${esc(what)}">${esc(what)}</span><span class="tags">${tags}</span></li>`;
+      return `<li class="swOrd${q ? " orderMatch" : ""}${go && go.keep ? " going" + (go.how === "cancel" ? " cancel" : "") : ""}" data-rid="${esc(rid)}" data-mkey="o:${esc(rid)}"><span class="no">${rid === "—" ? "No order" : esc(rid)}</span><span class="what" title="${esc(what)}">${esc(what)}</span><span class="tags">${tags}</span>${rid === "—" ? "" : travelHtml(rid)}</li>`;
     }).join(""));
     E.orders.querySelectorAll(".swOrd").forEach(li => {
       const xs = W.orders.get(li.dataset.rid) || [];
@@ -3390,9 +3394,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     };
     /** The seals the order's pieces earned before it was cancelled (completed by hand, printed): kept for good, so they stay on
      *  its card (Paul, 29 Sep and 5 Oct: a cancel never takes a seal away). The same small seals as the Orders list. */
-    const sealsOf = rid => { try { return window.CustomPrint && window.Seal && CustomPrint.sealsOfOrder ? CustomPrint.sealsOfOrder(rid) : null; } catch (_) { return null; } };
+    /* (SEALTRAVEL, Paul 20 Oct 2026: "Print QR label and Cancel Order can be part of the same order, so both those seals would have to travel with a given order until that order's eventual conclusion"): EVERY seal the order
+       collected, by kind (CNSealTravel: its QR prints and Complete Order as before, Release Hold, ORDER CANCELLED, Sent to Sheet, any kind to come), from the custom records, the order's Review document and this cancel record. { sig, html } */
+    const sealsOf = (rid, c) => { try { const T = window.CNSealTravel; if (!T || !window.Seal) return null; const recs = T.of(rid, undefined, c); return recs.length ? { sig: T.sig(recs), html: T.html(recs, { size: 28 }) } : null; } catch (_) { return null; } };
     function rowHtml(c, openable) {
-      const etsy = isEtsy(c), rid = String(c.orderId), fates = fatesOf(c), lines = c.lines || [], seals = sealsOf(rid);
+      const etsy = isEtsy(c), rid = String(c.orderId), fates = fatesOf(c), lines = c.lines || [], seals = sealsOf(rid, c);
       const why = String(c.why || "").trim();
       // Etsy says the order is cancelled: its own record, or one noted on a person's cancel. Never restored here (the
       // stations read this record; "Fully Refunded" is not a cancel on its own, so that one can be restored)
@@ -3401,7 +3407,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         <div class="cxWhat">${lines.map(l => `<span class="mono" title="${esc(l.title || "")}">${esc(l.sku || "no SKU")}${l.quantity > 1 ? ` ×${l.quantity}` : ""}</span>`).join("") || `<i>no pieces kept</i>`}</div>
         <div class="cxWhy"><div class="cxWho"><span class="cxBadge ${etsy ? "etsy" : "person"}">${etsy ? "Cancelled on Etsy" : `Cancelled by ${esc(c.by || "someone")}`}</span>${!etsy && etsyX ? `<span class="cxBadge etsy">Cancelled on Etsy too</span>` : ""}<time datetime="${c.at ? new Date(+c.at).toISOString() : ""}">${esc(when(+c.at))}</time></div>
           <div class="cxReason${why ? "" : " none"}">${why ? esc(why) : etsy ? "Etsy gave no reason" : "No reason given"}</div>
-          ${fates.length ? `<div class="cxFates">${fates.map(f => `<span class="${f.cut ? "cut" : "off"}">${esc(f.text)}</span>`).join("")}</div>` : ""}${seals ? `<div class="cxSeals">${Seal.row(seals, { size: 28 })}</div>` : ""}</div>
+          ${fates.length ? `<div class="cxFates">${fates.map(f => `<span class="${f.cut ? "cut" : "off"}">${esc(f.text)}</span>`).join("")}</div>` : ""}${seals ? `<div class="cxSeals">${seals.html}</div>` : ""}</div>
         <div class="cxAct">${etsyX ? "" : `<button class="btn ghost sm" type="button" data-cx="restore" title="Bring the order back: it returns with the next orders check if it is still open on Etsy">Restore</button>`}${openable ? `<span class="cxGo" aria-hidden="true">›</span>` : ""}</div>`;
     }
     const nodes = new Map();                                        // orderId → { stamp, node }: rows kept, like the Orders list's
@@ -3444,7 +3450,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // the rows: kept by order, rebuilt only when what they show changed
       const out = [];
       for (const c of shown) {
-        const rid = String(c.orderId), openable = view || pulled.has(rid), sl = sealsOf(rid), stamp = JSON.stringify([c, openable, sl && CustomPrint.sealSig(sl)]); let e = nodes.get(rid);
+        const rid = String(c.orderId), openable = view || pulled.has(rid), sl = sealsOf(rid, c), stamp = JSON.stringify([c, openable, sl && sl.sig]); let e = nodes.get(rid);
         if (!e || e.stamp !== stamp) {
           const node = h("div", "cxRow" + (openable ? " open" : "") + (isEtsy(c) ? " etsy" : ""), rowHtml(c, openable));
           node.dataset.rid = rid; node.dataset.mkey = "cx:" + rid;
@@ -4831,7 +4837,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const skus = new Map(); for (const r of h.rows) { const n = r.spec?.designSku || r.line.sku || "no SKU"; skus.set(n, (skus.get(n) || 0) + (r.spec?.quantity || r.line.quantity || 1)); }
       const why = h.rows[0].hold;
       return `<li class="swHeld" data-rid="${esc(h.rid)}" data-mkey="h:${esc(h.rid)}"${had.has("h:" + h.rid) ? ' style="animation:none"' : ""}><div class="top"><span class="no">${esc(h.rid)}</span><span class="what">${esc([...skus].map(([n, c]) => n + (c > 1 ? " ×" + c : "")).join(", "))}</span>${h.at ? `<span class="when">${esc(ago(h.at))}</span>` : ""}</div>
-        <div class="why" title="${esc(why)}">${esc(why)}</div>
+        <div class="why" title="${esc(why)}">${esc(why)}</div>${travelHtml(h.rid)}
         <div class="acts"><button type="button" class="btn ghost xs" data-h="back" title="Back in line: the run places it on the next sheet that fits">Release hold</button><button type="button" class="btn ghost xs" data-h="cancel">Cancel order…</button><button type="button" class="btn ghost xs" data-h="orders" title="Show it in the Review tab">In Review</button></div></li>`;
     }).join(""));
     E.orders.querySelectorAll(".swHeld").forEach(li => {

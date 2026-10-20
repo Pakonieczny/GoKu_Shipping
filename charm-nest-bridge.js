@@ -2420,6 +2420,16 @@ const Orders = window.Orders = (() => {
   /** RELUNDER (Paul, 19 Oct 2026: "Relocate the 'Release Hold' Seal/UI to be underneath the 'Send to Review' button. Leave enough space under the button so it does not look crowded."): the order's Release Hold seal is the LAST thing of the
    *  order's own column (a one-line row's actions, a grouped order's head buttons); Send to Review is mounted right after the Qty · Ship by line (charm-nest-review-send.js), so the seal stands under it, with room above it. */
   const relSlotHtml = rel => (rel ? `<div class="relSealSlot" data-testid="order-seals-row">${releaseSealHtml(rel)}</div>` : "");
+  /* (SEALTRAVEL, Paul 20 Oct 2026: "all the particular seals must always follow this order ... visible in all places where a given button is relevant"): every OTHER seal the order has collected (Cancel Order, Send to Sheet, any
+     kind to come), drawn by kind (CNSealTravel, charm-nest-seal-travel.js), in the order's own column just before its Release Hold seal. The QR print and Complete Order seals are not drawn twice: each line already draws its record's
+     seals (lineView's seals), and the Release Hold seal has its own slot (relSlotHtml). From what the page holds: no read, no timer. { sig: in the card's stamp, html: "" when there is none } */
+  const travelSlot = rows => {
+    try {
+      const T = window.CNSealTravel, rid = rows && rows[0] && rows[0].order ? String(rows[0].order.receiptId) : ""; if (!T || !rid) return { sig: "", html: "" };
+      const recs = T.of(rid, rows).filter(x => x.src !== "record" && x.kind !== "release");
+      return { sig: T.sig(recs), html: recs.length ? `<div class="sealTravelSlot" data-testid="order-travel-seals">${T.html(recs)}</div>` : "" };
+    } catch (e) { console.warn("Orders: the order's seals", e); return { sig: "", html: "" }; }
+  };
   const lineSealsHtml = (r, e, rel) => `<div class="egPlacementSeals">${rel ? releaseSealHtml(rel) : ""}${e ? e.seals : recordSealHtml(r)}</div>`;
   /** The pictures a node of an earlier drawing holds for a line (a row, or a piece of a grouped order), to carry over when the node is drawn again. */
   const pairIn = (node, key) => { const p = node.classList.contains("ordGroup") ? [...node.querySelectorAll(".ogPiece")].find(n => n.dataset.key === key) : node; return p ? p.querySelector(".comparePair") : null; };
@@ -2427,11 +2437,11 @@ const Orders = window.Orders = (() => {
   function groupNode(g, date, cards, env) {
     const OG = window.CharmNestOrderGroup, rows = g.rows, first = rows[0], rid = String(first.order.receiptId), V = rows.map(lineView);
     for (const v of V) v.e = engLine(v.r);
-    const held = V.filter(v => v.held), due = V[0].due, mail = V[0].mail, team = V[0].team, attn = V.some(v => v.attn), rel = releaseStampOf(rows), sealM = cardSeals(rows);
+    const held = V.filter(v => v.held), due = V[0].due, mail = V[0].mail, team = V[0].team, attn = V.some(v => v.attn), rel = releaseStampOf(rows), sealM = cardSeals(rows), trav = travelSlot(rows);
     const label = v => wordsOf(v.sp) ? "Personalisation" : "Item", text = v => wordsOf(v.sp) || v.r.line.title || "No title";
     const said = OG.sameOf(V.map(v => label(v) + "|" + text(v)));   // (what every piece says alike is said once at the top, else on each piece)
     const total = rows.reduce((n, r) => n + (O.pieceCountOf(r) || 1), 0);   // (CANCELREVIEW, Paul 20 Oct 2026: no Cancel Order in Orders; it is on the held order's card in Review)
-    const stamp = JSON.stringify(["group", cards, first.order, due, date, mail, team, relSig(rel), sealM ? sealM.sig : "", V.map(v => [v.r.key, v.r.line, v.r.spec, v.r.state, v.st, v.r.hold, v.held, v.r.wait, v.why, v.where, v.seals && CustomPrint.sealSig(v.sealRec), v.fc[1], v.e ? v.e.sig : ""])]);
+    const stamp = JSON.stringify(["group", cards, first.order, due, date, mail, team, relSig(rel), sealM ? sealM.sig : "", trav.sig, V.map(v => [v.r.key, v.r.line, v.r.spec, v.r.state, v.st, v.r.hold, v.held, v.r.wait, v.why, v.where, v.seals && CustomPrint.sealSig(v.sealRec), v.fc[1], v.e ? v.e.sig : ""])]);
     const cached = orderNodes.get(first.key);
     if (cached?.stamp === stamp) {
       orderNodes.delete(first.key); orderNodes.set(first.key, cached);
@@ -2449,7 +2459,7 @@ const Orders = window.Orders = (() => {
       + `<div class="purchaseSummary">${purchaseMarkup(v.r)}</div>${lineSealsHtml(v.r, v.e, null)}<div class="rowActions">${v.shown ? `<span class="ost ${v.shown[0]}">${esc(v.shown[1])}</span>` : ""}${v.fc[1] && !v.e ? `<span class="ost ${v.fc[0]} engFaces" title="${v.fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${v.fc[1]}</span>` : ""}${v.seals}<span class="rowFacts">Qty ${qtyOf(v)}${earPairRow(v.r) ? pairFactOf(qtyOf(v)) : O.countedFact(v.r)}</span>${v.why ? `<span class="rowExcerpt reviewReason" title="${esc(v.why)}">${esc(v.why)}</span>` : ""}${v.gateBtn}</div></div>`;
     node.innerHTML = `<div class="ogHead"><div class="engravingIdentity ogId"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(rid)}</b><span class="groupScope">${OG.countWord(total)}</span></div></div>`
       + (said ? `<div class="engravingIdentity ogSaid"><span class="purchaseLabel">${label(V[0])}</span><span class="rowExcerpt" title="${esc(text(V[0]))}">${esc(text(V[0]))}</span></div>` : "")
-      + `<div class="rowActions ogActs">${team ? TeamMail.mark(first) : ""}${mail && mail !== "null" ? CustomerMail.badge(rid) : ""}<span class="rowFacts"><span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${held.length ? relHoldHtml() : ""}${relSlotHtml(rel)}</div></div>`
+      + `<div class="rowActions ogActs">${team ? TeamMail.mark(first) : ""}${mail && mail !== "null" ? CustomerMail.badge(rid) : ""}<span class="rowFacts"><span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${held.length ? relHoldHtml() : ""}${trav.html}${relSlotHtml(rel)}</div></div>`
       + `<div class="ogPieces">${V.map(piece).join("")}</div>`;
     const number = node.querySelector(".onum"); if (number) { const time = el("span", "orderTime"); time.textContent = date.time; time.title = date.label; number.appendChild(time); }
     // a press on a piece opens the order window on THAT piece (picked in "Its pieces"); a press on the top, the order
@@ -2514,8 +2524,8 @@ const Orders = window.Orders = (() => {
       const r=g.rows[0],date=dayOf(r);
       if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;heading.dataset.mkey='day:'+date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} order${dayCounts.get(date.key).size === 1 ? "" : "s"} · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;wanted.push(heading);lastDay=date.key;}
       if (g.rows.length > 1) { wanted.push(groupNode(g, date, cards, { mounts, pairs, rebuilt })); continue; }
-      const { sp, m, st, shown, due, where, fc, attn, why, gateBtn, mail, team, sealRec, seals, held, rel } = lineView(r), sealM = cardSeals(g.rows), e = engLine(r);
-      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,held,r.wait,why,where,due,date,mail,team,seals&&CustomPrint.sealSig(sealRec),fc[1],relSig(rel),sealM ? sealM.sig : "",e ? e.sig : ""]);
+      const { sp, m, st, shown, due, where, fc, attn, why, gateBtn, mail, team, sealRec, seals, held, rel } = lineView(r), sealM = cardSeals(g.rows), e = engLine(r), trav = travelSlot(g.rows);
+      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,held,r.wait,why,where,due,date,mail,team,seals&&CustomPrint.sealSig(sealRec),fc[1],relSig(rel),sealM ? sealM.sig : "",e ? e.sig : "",trav.sig]);
       const cached=orderNodes.get(r.key);
       if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);wanted.push(cached.node);mounts.push([cached.node,r]);continue;}
       const node = el("div", (cards ? "ocard" : "doneRow workRow orderListRow") + " hoverItem" + (e ? " ordEng" : "") + (attn ? " attn" : ""));
@@ -2523,7 +2533,7 @@ const Orders = window.Orders = (() => {
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
       const identity=lineIdHtml(r, e, { num: true, label: wordsOf(sp) ? "Personalisation" : "Item", text: wordsOf(sp) || r.line.title || "No title", where });
-      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div>${lineSealsHtml(r, e, null)}<div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}${shown ? `<span class="ost ${shown[0]}">${esc(shown[1])}</span>` : ""}${fc[1] && !e ? `<span class="ost ${fc[0]} engFaces" title="${fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${fc[1]}</span>` : ""}${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? pairFactOf(qty) : O.countedFact(r)} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? relHoldHtml() : ''}${gateBtn}${relSlotHtml(rel)}</div>`;
+      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div>${lineSealsHtml(r, e, null)}<div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}${shown ? `<span class="ost ${shown[0]}">${esc(shown[1])}</span>` : ""}${fc[1] && !e ? `<span class="ost ${fc[0]} engFaces" title="${fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${fc[1]}</span>` : ""}${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? pairFactOf(qty) : O.countedFact(r)} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? relHoldHtml() : ''}${trav.html}${gateBtn}${relSlotHtml(rel)}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
       // (the order view grows out of the row that was clicked)
       node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key, { from: node }); };
@@ -17335,9 +17345,17 @@ const Review = window.Review = (() => {
     const refocus=putTyped(host,was);if(refocus)refocus();
   }
   // (NOHOLDREV, Paul 17 Oct 2026: "Remove the 'Hold' button from all listings inside the Review tab": a Review row has no orange Hold, open or completed (Paul, 5 Oct, had put one last among its buttons: HoldUI.slot, source 'review'). An order is held from its order window's piece row, whose Hold (holdSlotOf, source 'orderWindow') is not the row's; Release hold stays in Orders › On hold.)
+  /* (SEALTRAVEL, Paul 20 Oct 2026: "all the particular seals must always follow this order until that order's eventual conclusion"): the seals an order has collected, by kind (CNSealTravel), on its Review card (Resolved, and Open: a held order's ORDER HELD).
+     all: every kind (a settled card draws none of its own); else only those its card does not draw already (the QR print, Complete Order and send seals of its records are its `seals` row). From what the page holds: no read. */
+  function rvTravel(rid, all) {
+    const T = window.CNSealTravel; rid = String(rid || "").replace(/\D/g, ""); if (!T || !rid) return { sig: "", html: "" };
+    try { const recs = T.of(rid).filter(x => all || x.src !== "record"); return { sig: T.sig(recs), html: recs.length ? `<div class="sealTravelSlot rvTravel" data-testid="review-travel-seals">${T.html(recs)}</div>` : "" }; }
+    catch (e) { console.warn("Review: the order's seals", e); return { sig: "", html: "" }; }
+  }
   function reviewRow(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
-    const stamp=stampOf(it);
+    const trav=rvTravel(row?.order?.receiptId || it.record?.receiptId || it.rid,false);   // (SEALTRAVEL: every card carries every seal of its order, Open (a held order's ORDER HELD) and Resolved alike)
+    const stamp=stampOf(it)+'|'+trav.sig;
     const cached=reviewRows.get(it.key);if(cached?.stamp===stamp){Orders.paintTableNotes?.(cached.node);return cached.node;}
     const cu=it.kind==='customOrder',rec=it.record || null,spc=row?.spec?.special || (rec?{label:rec.category || 'Custom order'}:null);
     // any other card: the custom card's buttons, for the order it shows (actOf); cx is what those buttons act on
@@ -17388,7 +17406,7 @@ const Review = window.Review = (() => {
       :cx&&!cx.done?column(cx)
       :(cu?CustomPrint.failNote(it):'')
       +(cu&&printable(it)&&!cs?.busy?CustomPrint.buttonHtml(it,'print',printed?'sealedPrint':'ghost',printed?'Print again':'Print QR label',`print this order's 1 × 1 in QR sticker for the sorting station${printed?' again':''}`,'sm','data-seal-btn'):'')+seals
-      +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:''))+placedActs;
+      +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:''))+placedActs+trav.html;
     // SIBLINGS (Paul, 12 Oct 2026): an unknown SKU whose numbered designs sit in the library, on a necklace (or two charms): ONE quiet tap, "Use both", with the two thumbnails, and each design as a single choice, in the row itself
     const pk=it.problem||{},sib=!cu&&!it.done&&!it.decided&&row&&(it.kind==='unmatchedSku'||it.kind==='blockedSku')?similarOffer(row,pk,group,it):null;
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
@@ -17437,7 +17455,8 @@ const Review = window.Review = (() => {
   function settledRow(d) {
     // its line still in the pull: the custom card's buttons for it while it is open, and a click opens its order
     const live=d.row&&B.orders.byKey?.get(d.row.key),row=live&&live.state!=='gone'?live:null,ax=row?actOf({row,kind:d.kind},d.kind):null;
-    const stamp=actStamp(ax)+'|'+!!row;
+    const trav=rvTravel(d.orders?.[0],true);   // (SEALTRAVEL: every seal of the order, by kind, on its Resolved card)
+    const stamp=actStamp(ax)+'|'+!!row+'|'+trav.sig;
     let node = settledRows.get(d); if (node && node._stamp === stamp) return node;
     const was=node;
     node=el('div','doneRow workRow reviewListRow rvSettled'+(ax?' rvCu':''));node.dataset.rid=String(d.orders?.[0] || '');node.dataset.mkey='settled:'+d.key+':'+d.t;node.dataset.row=row?.key || '';node._stamp=stamp;
@@ -17445,7 +17464,7 @@ const Review = window.Review = (() => {
     const acts=busy||`<span class="ost ok">Resolved</span><span class="by">${esc(d.by)}${d.t?' · '+whenOf(d.t):''}</span>`+(ax?CustomPrint.failNote(ax)
       +(printable(ax)&&!cs?.busy?CustomPrint.keptButtonHtml(ax,'print','ghost','Print QR label',`print order ${ax.rid}'s 1 × 1 in QR sticker for the sorting station; its piece is then completed by hand`,'sm'):'')   // (RELHOLD: no Complete Order here; Release Hold is the open card's)
       +(cs?CustomSheet.buttonsHtml(ax,true,false):''):'');
-    node.innerHTML=(d.row?ListMedia.pair(d.row):'<div class="compareUnavailable">Decision recorded</div>')+`<div class="engravingIdentity"><span class="queueLabel">Review · resolved</span><div class="engravingOrder"><b class="mono">${esc((d.orders || []).slice(0,2).join(' · '))}</b></div><span class="purchaseLabel">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="rowExcerpt" title="${esc(d.why)}">${esc(d.why)}</span>${d.lines>1?`<span class="groupScope">${d.pieces || d.lines} pieces</span>`:''}${d.row && earPairRow(d.row)?`<span class="groupScope">Left + Right</span>`:''}</div><div class="purchaseSummary">${d.row?purchaseMarkup(d.row):''}</div><div class="rowActions">${acts}</div>${cs?CustomSheet.stripHtml(ax):''}`;
+    node.innerHTML=(d.row?ListMedia.pair(d.row):'<div class="compareUnavailable">Decision recorded</div>')+`<div class="engravingIdentity"><span class="queueLabel">Review · resolved</span><div class="engravingOrder"><b class="mono">${esc((d.orders || []).slice(0,2).join(' · '))}</b></div><span class="purchaseLabel">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="rowExcerpt" title="${esc(d.why)}">${esc(d.why)}</span>${d.lines>1?`<span class="groupScope">${d.pieces || d.lines} pieces</span>`:''}${d.row && earPairRow(d.row)?`<span class="groupScope">Left + Right</span>`:''}</div><div class="purchaseSummary">${d.row?purchaseMarkup(d.row):''}</div><div class="rowActions">${acts}${trav.html}</div>${cs?CustomSheet.stripHtml(ax):''}`;
     if(ax||row)wireAct(node,ax||{key:'rvs:'+d.key,rows:[]},cs,row);
     if(was){const pair=was.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
     settledRows.set(d, node); return node;
