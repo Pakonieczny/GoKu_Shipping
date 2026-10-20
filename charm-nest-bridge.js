@@ -18807,6 +18807,8 @@ const OrderWin = window.OrderWin = (() => {
     // the sheet records of the order read (OrderPieces): the Sheet tab's tabs and piece list, and the Overview, follow them
     tryDo(() => window.OrderPieces && OrderPieces.subscribe(() => hold("pieces", () => { const rid = W.rid; if (!rid || !W.dlg.open || W.closing) return; pieceTabs(rid); sheetFollow(rid); if (W.view === "sheet" && SV.list) paintPanel(SV.info); const r = rowOf(W.key); if (r) { tryDo(() => paintPieces(r, linesOf(r))); paintSheetCell(r); paintNow(r); } })));
     byId("owClose").onclick = () => shut();
+    // (SEALWIN, Paul 20 Oct 2026: a seal stamped or undone while the window is open shows at once: the Review records' event, and "cn-order-seal" for any new kind of seal)
+    for (const ev of ["cn-review-mark", "cn-order-seal"]) document.addEventListener(ev, e => { const rid = ridDigits(e && e.detail && e.detail.rid); if (W.dlg && W.dlg.open && !W.closing && (!rid || rid === ridDigits(W.rid))) tryDo(paintWinSeals); });
     // Esc goes back into what was clicked, as the close button does
     // (a picture zoomed in place goes back whole first: that press does not close the window)
     W.dlg.addEventListener("cancel", e => { e.preventDefault(); if (finding()) endFind(true); else if (window.OrderFacts && tryDo(() => OrderFacts.escape(W.dlg))) return; else if (!(window.CNZoomPan && tryDo(() => CNZoomPan.resetWithin(W.dlg)))) shut(); });   // (a fact's card that is open goes first, as a zoomed picture does)
@@ -19198,6 +19200,115 @@ const OrderWin = window.OrderWin = (() => {
   }
   /* NOSTRIP (Paul, 19 Oct 2026: "I asked for this to be completely removed from the Order Details modal"): the order window has no seal strip at all any more, neither the approvals panel (NOWINSEAL) nor the Release Hold seal (RELWIN):
      #owSeals and its painter are gone. The Release Hold seal stays on the Orders and Engraving rows and in the Timeline tab; the approval seals stay on the window's Engraving cards. */
+  /* SEALWIN (Paul 20 Oct 2026: "All of these seals must be visible in all places where a given button is relevant or information about a given button's status is relevant to the user. This includes the
+     Detailed Order view modal."): every seal the order has collected is in the window, drawn by its KIND (the kind's label and ink, from SEAL_KINDS; a kind not listed there is drawn with a neutral ink and
+     the label its record stores, so a new kind shows without more work here).
+       where it sits   beside its button when that button is shown in the window (Release Hold, Cancel Order, Send to Sheet, Hold Order / Send to Review); Print QR label and Complete Order already rest their own
+                       seals beside them on a piece's row (cuControls), so those are not drawn twice. A seal whose button is not shown goes in the compact "Seals" row under the header (#owSealRow), oldest first,
+                       who and when on hover. (This replaces NOSTRIP's "no seal in the window": NOSTRIP removed the big strip; the row is small, one seal per press.)
+       what is read    only what the page already holds (no read, no timer): the pieces' records (CustomPrint: print, complete), the order's Release Hold (Orders.releaseStampOf: none while the order is held, RELNOSEAL),
+                       and every seal-shaped field ({ at, by, how?, id?, label? }) on the order's own records in B.maps.reviewMarks (the release record's pattern: release, cancel, sheet ...) and on its cancel record.
+       live            paint() draws it (every stamp and Undo already repaints an open window), and so do the document events "cn-review-mark" and "cn-order-seal" (a new kind may fire the latter with { rid }). */
+  const SEAL_KINDS = {
+    print:    { label: "QR label printed", how: "print", btn: "[data-cu-print]", rowDrawn: true },
+    complete: { label: "Order complete", how: "button", btn: "[data-cu-done],[data-cu-complete]", rowDrawn: true },
+    release:  { label: "Release Hold", how: "releaseHold", btn: "[data-rel-hold],[data-cu-release]" },
+    cancel:   { label: "Order cancelled", how: "cancel", family: "cancelled", action: "ORDER CANCELLED", btn: ".cnCancelBtn,[data-cancel-order]" },
+    sheet:    { label: "Sent to sheet", how: "sheet", btn: "#owSendSheet,[data-cu-sheet-send]" },
+    hold:     { label: "Order held", how: "holdOrder", family: "exceptions", action: "ORDER HELD", icon: "exceptions", btn: ".revSendBtn" }   // (HOLDORDER: the Hold Order press, was Send to Review; its seal is drawn from the mark, not a seal record)
+  };
+  // (the names a record may give a kind: its field name, its `kind`, or its `how`)
+  const SEAL_ALIAS = { releaseHold: "release", button: "complete", orderComplete: "complete", cancelled: "cancel", orderCancelled: "cancel", cancelOrder: "cancel", sentToSheet: "sheet", sendToSheet: "sheet", review: "hold", sendToReview: "hold", sentToReview: "hold", holdOrder: "hold", onHold: "hold", qr: "print", labelPrinted: "print" };
+  const SEAL_SKIP = new Set(["engraveApproved", "engravePlain", "monogramApproved"]);   // (drawn on the window's Engraving cards, beside their own Approve)
+  const sealKindOf = k => { k = String(k || ""); return SEAL_ALIAS[k] || k; };
+  const ridDigits = v => String(v == null ? "" : v).replace(/\D/g, "");
+  /** Every seal the order has collected, oldest first: [{ kind, at, by, id, label, how, n }]. */
+  function winSealsOf(rid) {
+    rid = ridDigits(rid); if (!rid) return [];
+    const out = [], seen = new Set();
+    const add = (kind, v) => {
+      if (!v || typeof v !== "object" || !(+v.at > 0) || +v.undoneAt > 0) return;   // (a seal its Undo marked undone, cancel.undoneAt (SEALCANCEL), is not shown)
+      kind = sealKindOf(kind); if (!kind || SEAL_SKIP.has(kind) || SEAL_SKIP.has(String(v.how || ""))) return;
+      const at = +v.at, k = kind + ":" + at; if (seen.has(k)) return; seen.add(k);
+      out.push({ kind, at, by: String(v.by || ""), id: String(v.id || ""), label: String(v.label || ""), how: String(v.how || ""), n: +v.n || 0 });
+    };
+    const rows = tryDo(() => (Orders.rows() || []).filter(r => r && r.order && String(r.order.receiptId) === rid), []) || [];
+    // the pieces' records: QR label printed, Order complete (and a record sent to its sheet)
+    if (window.CustomPrint && window.Seal) tryDo(() => {
+      const rec = CustomPrint.cardRecord(rows.map(r => CustomPrint.recordOfRow(r)).concat([CustomPrint.sealsOfOrder(rid)]));
+      for (const s of rec ? (Seal.ofPiece ? Seal.ofPiece(rec) : Seal.list(rec)) : []) add(s.how === "button" ? "complete" : s.how && s.how !== "print" ? s.how : "print", s);
+    });
+    // Release Hold: none while the order is held now (RELNOSEAL); the order's own Review record (every computer has it) else
+    const live = rows.filter(r => r.state !== "gone"), rel = tryDo(() => Orders.releaseStampOf(live.length ? live : rows), null);
+    const heldNow = !rel && live.some(r => r.hold);
+    if (rel) add("release", rel); else if (!heldNow) tryDo(() => add("release", window.CharmNestReviewMark && CharmNestReviewMark.released(rid)));
+    // (and every Release Hold press the order's timeline keeps: one released more than once has a seal for each; a release known only there, from another computer, shows too)
+    if (!heldNow && W.evFor === rid) for (const e of W.events || []) if (e && e.type === "released" && e.data && e.data.seal === "releaseHold") add("release", { at: +e.data.sealAt || e.at, by: e.by, id: e.data.sealId || e.id, how: "releaseHold" });
+    // the Review document's own reader first (SEALCANCEL: CharmNestReviewMark.sealsOf gives Release Hold and ORDER CANCELLED, an undone one left out); then the fields it does not know yet
+    tryDo(() => { const M = window.CharmNestReviewMark; for (const v of (M && M.sealsOf ? M.sealsOf(rid) : []) || []) if (v && !(v.how === "releaseHold" && heldNow)) add(v.kind || v.how, v); });
+    // the order's seal records, the release record's pattern: any { at, by } field of its own documents (cancel, sheet, ... and kinds still to come)
+    const scan = (rec, all) => {
+      if (!rec || typeof rec !== "object") return;
+      for (const [f, v] of Object.entries(rec)) {
+        if (f === "review" || (!all && f !== "seal" && f !== "seals")) continue;
+        if (Array.isArray(v)) { if (f === "seals" || f === "stamps") for (const s of v) add(s && (s.kind || s.how), s); continue; }
+        if (f === "release" && heldNow) continue;
+        if (v && typeof v === "object" && +v.at > 0 && (v.by != null || v.how || v.kind || v.id)) add(v.kind || (f === "seal" ? v.how : f), v);
+      }
+    };
+    for (const [k, rec] of Object.entries((B.maps && B.maps.reviewMarks) || {})) if (rec && ridDigits(rec.receiptId || String(k).split("_")[0]) === rid) scan(rec, true);
+    if (W.cancelled && ridDigits(W.cancelled.orderId || W.rid) === rid) scan(W.cancelled, false);
+    // ORDER HELD (HOLDORDER, Paul 20 Oct 2026): the Hold Order press (was Send to Review) is no seal record: it is the order's Review mark (markedAt / markedBy: every computer has it) and the timeline's
+    // note of it (data.reviewMark with no `how`, the note charm-nest-timeline-ui.js draws as ORDER HELD); the same press from both is one seal
+    const holds = [], hold = (at, by, id) => { at = +at || 0; if (at > 0 && !holds.some(h => Math.abs(h.at - at) < 10000)) holds.push({ at, by: String(by || ""), id: String(id || "") }); };
+    tryDo(() => { const i = window.CharmNestReviewMark && CharmNestReviewMark.info(rid); if (i) hold(i.at, i.by, ""); });
+    if (W.evFor === rid) for (const e of W.events || []) if (e && e.type === "note" && e.data && e.data.reviewMark && !e.data.how) hold(e.at, e.data.by || e.by, e.id);
+    for (const h of holds) add("hold", Object.assign({ how: "holdOrder" }, h));
+    return out.sort((a, b) => a.at - b.at);
+  }
+  /** The stamp Seal draws for one seal: Seal's own design when it knows the kind, else the kind's family and words (a kind nobody listed: neutral ink, its stored label). */
+  function winSealStamp(s) {
+    const K = SEAL_KINDS[s.kind] || null, how = s.how || (K && K.how) || s.kind;
+    const known = !!window.Seal && tryDo(() => how === "print" || (Seal.labelOf ? Seal.labelOf(how) : Seal.modelOf({ how, at: s.at }).action) !== "QR LABEL PRINTED", false);   // (Seal.labelOf, SEALCANCEL: the words Seal has for a kind)
+    const st = { how, at: s.at, by: s.by, id: s.id, n: s.n };
+    if (!known) st.model = { family: (K && K.family) || "prepared", action: String((K && K.action) || s.label || (K && K.label) || s.kind).toUpperCase().slice(0, 24), icon: (K && K.icon) || "", at: s.at, by: s.by };
+    return st;
+  }
+  const winSealWords = s => { const K = SEAL_KINDS[s.kind]; return s.label || (K && K.label) || String(s.kind).replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, c => c.toUpperCase()); };
+  const sealWhenOf = t => { try { const d = new Date(+t); return d.toLocaleString("en-US", { timeZone: "America/Toronto", month: "short", day: "numeric", year: "numeric" }) + " · " + d.toLocaleTimeString("en-US", { timeZone: "America/Toronto", hour: "numeric", minute: "2-digit" }); } catch (_) { return ""; } };
+  function winSealHtml(s) {
+    const say = `${winSealWords(s)} · ${s.by ? "by " + s.by : "who not recorded"} · ${s.at ? sealWhenOf(s.at) : "time not recorded"}`;
+    const face = window.Seal ? tryDo(() => Seal.html(winSealStamp(s), Seal.BASE_SIZE, "owWinSealFace loose"), "") : "";
+    return face ? `<span class="owWinSeal" data-testid="ow-win-seal" data-seal-kind="${esc(s.kind)}" data-seal-at="${s.at}" tabindex="0" role="img" aria-label="${esc(say)}" title="${esc(say)}">${face}</span>` : "";
+  }
+  const shownIn = (host, sel) => { if (!host || !sel) return null; return [...host.querySelectorAll(sel)].find(b => b.isConnected && !b.hidden && !b.closest("[hidden]") && !b.closest("[data-ow-btn-seals]") && getComputedStyle(b).display !== "none") || null; };
+  /** Paint the window's seals: beside their buttons, the rest in the Seals row. Cheap (nothing is redrawn while nothing changed). */
+  function paintWinSeals() {
+    const host = byId("owSealRow"); if (!host || !W.dlg) return;
+    const list = W.rid ? winSealsOf(W.rid) : [], rest = [], beside = new Map();   // (the first paint of an opening window comes before the dialog is open)
+    for (const s of list) {
+      const K = SEAL_KINDS[s.kind], btn = K ? shownIn(W.dlg, K.btn) : null;
+      if (btn && K.rowDrawn) continue;   // (its button's row already rests it there)
+      if (btn) { if (!beside.has(btn)) beside.set(btn, []); beside.get(btn).push(s); } else rest.push(s);
+    }
+    // beside a button: one small group right after it (a repaint of the row takes it away with the button; drawn again here)
+    const keep = new Set();
+    for (const [btn, ss] of beside) {
+      const sig = JSON.stringify(ss.map(s => [s.kind, s.at, s.by, s.label]));
+      let g = btn.nextElementSibling && btn.nextElementSibling.matches("[data-ow-btn-seals]") ? btn.nextElementSibling : null;
+      if (!g) { g = document.createElement("span"); g.className = "owBtnSeals"; g.setAttribute("data-ow-btn-seals", ""); btn.after(g); }
+      if (g.dataset.sig !== sig) { g.dataset.sig = sig; g.innerHTML = ss.map(winSealHtml).join(""); }
+      keep.add(g);
+    }
+    for (const g of W.dlg.querySelectorAll("[data-ow-btn-seals]")) if (!keep.has(g)) g.remove();
+    const sig = JSON.stringify(rest.map(s => [s.kind, s.at, s.by, s.label]));
+    if (host.dataset.sig !== sig) {
+      host.dataset.sig = sig;
+      host.innerHTML = rest.length ? `<span class="owSealRowHd">Seals</span><span class="owSealRowList">${rest.map(winSealHtml).join("")}</span>` : "";
+      host.setAttribute("aria-label", rest.length ? `Seals of this order: ${rest.map(winSealWords).join(", ")}` : "Seals of this order");
+    }
+    host.hidden = !rest.length;
+  }
   /** Paint the window from the row it is showing. */
   function paint() {
     if(window.Seal?.defer('order-view-paint',paint))return;
@@ -19252,6 +19363,7 @@ const OrderWin = window.OrderWin = (() => {
     paintSend(r);
     paintNow(r);
     paintWho();
+    tryDo(paintWinSeals);   // (SEALWIN, Paul 20 Oct 2026: every seal of the order, beside its button or in the Seals row)
     if (W.view === "sheet" && SV.rid && SV.rid !== String(r.order.receiptId)) sheetShow();   // (this line named a variable "rid" that paint() never had: every repaint of the order window on its Sheet tab threw a ReferenceError and stopped half way)
   }
   /** WRONGCHARM (Paul, 18 Oct 2026, order 4193072538): "Wrong charm?" beside the SKU under the Vector design, for a line matched to a library charm (Review.fixOffer); its picker
@@ -20148,6 +20260,7 @@ const OrderWin = window.OrderWin = (() => {
   function paintNow(r) {
     if(window.Seal?.defer('order-now',()=>paintNow(rowOf(W.key))))return;
     if (!r) return;
+    tryDo(paintWinSeals);   // (SEALWIN, Paul 20 Oct 2026: the timeline just brought its steps: a Release Hold or ORDER HELD only it knows shows now)
     // (where each piece IS now, again: the timeline brought a step, a sheet's record landed, a hold was pressed or let go; the rail and the Timeline redraw on it)
     if (refreshPlacement(r) !== W.placeDrawn) { W.placeDrawn = W.placeSig; for (const m of [W.rail, W.tl]) if (m && m.setPieces) tryDo(() => m.setPieces(W.pieces || [], W.piece, 0)); }
     paintEng(r);
@@ -20315,10 +20428,10 @@ const OrderWin = window.OrderWin = (() => {
       const dir = VIEWS.indexOf(v) > VIEWS.indexOf(prev) ? 1 : -1;
       from.getAnimations().forEach(a => a.cancel()); to.getAnimations().forEach(a => a.cancel());
       const out = from.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: `translateX(${-dir * 12}px)` }], { duration: 160, easing: "ease-in", fill: "forwards" });
-      out.finished.then(() => { if (W.view !== prev) from.hidden = true; out.cancel(); }, () => {});
+      out.finished.then(() => { if (W.view !== prev) { from.hidden = true; tryDo(paintWinSeals); } out.cancel(); }, () => {});   // (SEALWIN: a seal whose button just left the screen goes to the Seals row)
       to.hidden = false; to.animate([{ opacity: 0, transform: `translateX(${dir * 12}px)` }, { opacity: 1, transform: "none" }], { duration: 280, delay: 90, easing: EASE, fill: "backwards" });
     } else { for (const x of views) x.hidden = x !== to; }
-    chatTo(v);
+    chatTo(v); tryDo(paintWinSeals);   // (SEALWIN, Paul 20 Oct 2026: the seals follow which buttons the view shows)
     // (back on screen: drawn again, and the Customer tab repainted as it is — never read again: from Overview to Sheet and
     // back it never left the screen)
     if (chatHost(v)) { paintThread(true); grow(); if (!chatWas) try { const t = W.dlg.querySelector("[data-ow-tab][aria-selected=true]"); if (t && window.CustomerMail?.setTab) CustomerMail.setTab(t.dataset.owTab, false); } catch (_) {} }
@@ -21568,7 +21681,7 @@ const OrderWin = window.OrderWin = (() => {
     // the order number of the open view, and "something was just done here": its timeline reads now and again 1.5 s later
     // where the person is in this view (read-only; the way back from the Engraving tab, charm-nest-engrave-return.js, puts them here again): the line, the tab, the piece and side chosen, the sheet and charm of the Sheet tab
     where: () => { const sh = SV.list && SV.list[SV.at]; return { rid: W.rid, key: W.key, view: W.view, piece: (W.pieces || []).length > 1 ? W.piece || null : null, side: (W.side && narrowSide()) ? W.side : null, disc: W.disc || null, face: W.face, sheetId: sh && sh.id || "", sheetAt: SV.list ? SV.at : null, focus: SV.focus || "" }; },
-    rid: () => W.rid, nudge: () => { try { if (W.dlg && W.dlg.open && !W.closing && W.feed && W.feed.nudge) W.feed.nudge(); } catch (_) {} } };
+    rid: () => W.rid, seals: () => winSealsOf(W.rid), nudge: () => { try { if (W.dlg && W.dlg.open && !W.closing && W.feed && W.feed.nudge) W.feed.nudge(); } catch (_) {} } };
 })();
 
 /* ═══ 24c · RunHistory — every run that ever ran, and the way back into one ═══════════════════════════════════════════
