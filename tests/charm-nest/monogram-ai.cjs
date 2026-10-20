@@ -4,7 +4,7 @@
 //   2  the background function (charmNestMonogramAssist-background.js) through a fake Firestore: the job record goes pending -> done, a wrong mode is refused
 //   3  the loop of the page (assistLoop) with a fake engine: a round is kept only if the rules broken drop (or stay equal while the distance to ESG drops), the engine clamps, never more than 3 rounds, the model's failures leave the result
 //   4  the real page (charm-nest-1.html, fake loopback site, the page's agent call stubbed): a failing word is assembled, the 2x PNG of the candidate and the payload the server accepts, the card's one line, the cache (a second open makes
-//      no call), 3 rounds at most, "Needs a person" and Approve needing a second press, Improve again and the day's limit, a failing call keeps the automatic result, the kill switch
+//      no call), 3 rounds at most, a word that still fails (MONOAPPROVE, 20 Oct 2026: no red line, no Improve again, ONE Approve press), the day's limit, a failing call keeps the automatic result, the kill switch
 //   node tests/charm-nest/monogram-ai.cjs [playwright-core dir]        MONOAI_NO_PAGE=1 leaves out part 4
 const assert = require('assert'), fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '../..'), fnDir = path.join(root, 'netlify/functions');
@@ -238,13 +238,17 @@ require.cache[require.resolve(clientPath)] = { id: clientPath, filename: clientP
         });
       });
       const card = rid => `.mwCase[data-rid="${rid}"] .mw`;      // (the widget, mounted once per line in a test host: charm-nest-monogram-ui.js mountLine, detail mode)
-      const read = rid => page.evaluate(sel => { const h = document.querySelector(sel); if (!h) return null; const q = s => h.querySelector(s), tx = s => (q(s) && !q(s).hidden ? q(s).textContent.replace(/\s+/g, ' ').trim() : ''); return { state: h.dataset.state, meta: (tx('[data-mw-assembly]') + ' ' + tx('[data-mw-note]')).trim(), size: tx('[data-mw-size]'), spin: !q('[data-mw-spin]').hidden, spinTxt: q('[data-mw-spin] span').textContent, d: q('[data-mw-pic] svg path') ? q('[data-mw-pic] svg path').getAttribute('d') : '', approve: { text: q('[data-mw-approve]').textContent, hidden: q('[data-mw-approve]').hidden, disabled: q('[data-mw-approve]').disabled }, again: !q('[data-mw-again]').hidden, ins: [...h.querySelectorAll('[data-mw-letter]')].map(i => i.value).join('') }; }, card(rid));
+      const read = rid => page.evaluate(sel => { const h = document.querySelector(sel); if (!h) return null; const q = s => h.querySelector(s), tx = s => (q(s) && !q(s).hidden ? q(s).textContent.replace(/\s+/g, ' ').trim() : ''); return { state: h.dataset.state, meta: (tx('[data-mw-assembly]') + ' ' + tx('[data-mw-note]')).trim(), size: tx('[data-mw-size]'), spin: !q('[data-mw-spin]').hidden, spinTxt: q('[data-mw-spin] span').textContent, d: q('[data-mw-pic] svg path') ? q('[data-mw-pic] svg path').getAttribute('d') : '', approve: { text: q('[data-mw-approve]').textContent, hidden: q('[data-mw-approve]').hidden, disabled: q('[data-mw-approve]').disabled }, again: !!q('[data-mw-again]') && !q('[data-mw-again]').hidden, ins: [...h.querySelectorAll('[data-mw-letter]')].map(i => i.value).join('') }; }, card(rid));
       const until = async (rid, fn, what, ms = 25000) => { const t0 = Date.now(); let r; for (;;) { r = await read(rid); if (r && fn(r)) return r; if (Date.now() - t0 > ms) { console.log('   (waiting for ' + what + ', last: ' + JSON.stringify(r).slice(0, 300) + ')'); return r; } await sleep(80); } };
       const idle = rid => until(rid, r => !r.spin && r.state !== 'building', 'an idle card');
       const calls = () => page.evaluate(() => window.__calls.length);
       const queue = (word, items) => page.evaluate(({ word, items }) => { (window.__answers[word] = window.__answers[word] || []).push(...items); }, { word, items });
       const settings = () => page.evaluate(() => JSON.parse(JSON.stringify((S.settings && S.settings.mono) || {})));
       const clickApprove = rid => page.click(`${card(rid)} [data-mw-approve]`);
+      // (MONOAPPROVE, Paul 20 Oct 2026: a word that still fails shows no line at all: the card is done when the service says it is flagged and idle)
+      const aiOf = rid => page.evaluate(rid => { const c = [...Engrave.monogramUI().cards.values()].find(c => String((c.row.order || {}).receiptId) === rid); return c && c.ai ? c.ai.state + ':' + c.ai.status : ''; }, rid);
+      const flagWait = async (rid, ms = 40000) => { const t0 = Date.now(); for (;;) { const r = await read(rid), s = await aiOf(rid); if (r && r.state === 'check' && !r.spin && /^done:/.test(s)) return r; if (Date.now() - t0 > ms) { console.log('   (waiting for a flagged ' + rid + ', last: ' + s + ' ' + JSON.stringify(r).slice(0, 300) + ')'); return r; } await sleep(80); } };
+      const noRed = r => !!r && r.meta === '' && !r.again;
       const files = () => page.evaluate(() => Object.values(CustomSheet.entries()).map(e => e.files.map(f => f.name).join()).filter(Boolean).sort());
       // the three words all break the staged rule; what the (stubbed) model answers is queued per word BEFORE the tab opens
       //   APV: the first answer fixes it (absurd numbers: the engine clamps them) · OSR: nothing it says helps (3 rounds) · JQX: the call fails
@@ -277,7 +281,7 @@ require.cache[require.resolve(clientPath)] = { id: clientPath, filename: clientP
 
       // ── reopen: the kept answer is applied again through the engine, no call ──
       const dBefore = a.d, callsBefore = await calls();   // (the OSR and JQX cards are still working or done: wait for them first)
-      await until('4202783520', r => /Needs a person/.test(r.meta) && !r.spin, 'OSR done', 40000); await until('4200900001', r => !r.spin && /could not help|Needs a person/.test(r.meta), 'JQX done', 40000);
+      await flagWait('4202783520'); await flagWait('4200900001');
       const callsBefore2 = await calls();
       await page.evaluate(async () => { const ui = Engrave.monogramUI(), c = ui.cards.get('4200683017_42006830171'); ui.results.clear(); await ui.rebuild(c); });
       a = await until('4200683017', r => /Assembled with AI/.test(r.meta) && !r.spin, 'APV reopened');
@@ -287,31 +291,28 @@ require.cache[require.resolve(clientPath)] = { id: clientPath, filename: clientP
       a = await until('4200683017', r => !r.spin, 'APV from memory');
       check(await calls() === callsBefore2 && /Assembled with AI: Moved the A toward the P/.test(a.meta) && a.d === dBefore, 'a monogram the AI made pass keeps its line when it comes from the page\'s memory too (typing the letters back): still no call');
 
-      // ── OSR: nothing the model says helps: 3 rounds, then "Needs a person"; Approve asks twice ──
-      a = await until('4202783520', r => /Needs a person/.test(r.meta) && !r.spin, 'OSR needs a person', 40000);
+      // ── OSR: nothing the model says helps: 3 rounds, then a flagged card (MONOAPPROVE: no red line, no Improve again, ONE Approve press) ──
+      a = await flagWait('4202783520');
       const osrCalls = await page.evaluate(() => window.__calls.filter(c => c.payload.letters.join('') === 'OSR'));
       check(osrCalls.length === 3 && osrCalls.map(c => c.payload.round).join() === '1,2,3', 'never more than 3 rounds for a word: exactly 3 calls, rounds 1, 2, 3 (' + osrCalls.length + ')');
-      check(/Needs a person: the left and middle letters are not joined at both the top and the bottom/.test(a.meta) && !/Assembled with AI/.test(a.meta) && a.state === 'check', 'the card says "Needs a person:" and names the limit: ' + a.meta);
+      check(noRed(a) && a.state === 'check', 'the flagged card shows no "Needs a person" line and no Improve again: "' + a.meta + '"');
       check(osrCalls[2].payload.history.length === 2 && osrCalls[1].payload.history.length === 1, 'the refused tries went to the model in the following rounds');
-      check(a.approve.text === 'Approve' && !a.approve.disabled && a.again, 'a flagged card still has Approve, and a quiet "Improve again"');
-      await clickApprove('4202783520'); a = await until('4202783520', r => r.approve.text === 'Approve anyway', 'confirm');
-      check(a.approve.text === 'Approve anyway' && (await files()).join('|') === 'Monogram APV.ai', 'the first press only asks "Approve anyway" (nothing approved yet)');
+      check(a.approve.text === 'Approve' && !a.approve.disabled, 'a flagged card has the plain Approve');
       await clickApprove('4202783520'); await until('4202783520', r => r.state === 'approved', 'OSR approved');
-      check((await files()).join('|') === 'Monogram APV.ai|Monogram OSR.ai', 'the second press approves it: Monogram OSR.ai');
+      check((await files()).join('|') === 'Monogram APV.ai|Monogram OSR.ai', 'ONE press approves it (no "Approve anyway"): Monogram OSR.ai');
       const s2 = await settings(); const osrRec = Object.entries(s2.assist).find(([k]) => k.startsWith('4202783520'));
       check(osrRec && osrRec[1].status === 'needs' && /not held by one contact/.test(osrRec[1].limit) && s2.assistDay['4202783520_42027835201'].n === 3, 'the outcome ("needs") and the limit are kept too, 3 calls counted for the day');
 
-      // ── Improve again: the day's 3 calls are used, so no call is made ──
+      // ── the day's 3 calls are used: a rebuild makes no call ──
       const cBefore = await calls();
-      await page.evaluate(() => { const ui = Engrave.monogramUI(), c = ui.cards.get('4202783520_42027835201'); c.confirmed = false; ui.results.clear(); });
+      await page.evaluate(() => { const ui = Engrave.monogramUI(); ui.results.clear(); });
       await page.evaluate(async () => { const ui = Engrave.monogramUI(); ui.cards.get('4202783520_42027835201').draft = ['O', 'S', 'R']; await ui.rebuild(ui.cards.get('4202783520_42027835201')); });
       a = await idle('4202783520');
-      if (a.again) await page.click(`${card('4202783520')} [data-mw-again]`); await sleep(500); a = await idle('4202783520');
-      check(await calls() === cBefore && /3 tries for this order today|Needs a person/.test(a.meta), 'Improve again after the 3 calls of the day: no call is made, the card says so: ' + a.meta.slice(0, 160));
+      check(await calls() === cBefore && !a.again, 'after the 3 calls of the day no call is made (and there is no Improve again): ' + a.meta.slice(0, 160));
 
       // ── JQX: the model call fails: the automatic result stays and the card says so once ──
-      a = await until('4200900001', r => /could not help this time/.test(r.meta) && !r.spin, 'JQX failed');
-      check(a.state === 'check' && a.d.length > 500 && /Needs a person/.test(a.meta) && (a.meta.match(/could not help/g) || []).length === 1, 'a failing call leaves the automatic monogram in place, says so once and still lets a person decide: ' + a.meta.slice(0, 200));
+      a = await flagWait('4200900001');
+      check(a.state === 'check' && a.d.length > 500 && noRed(a) && /done:failed/.test(await aiOf('4200900001')) && a.approve.text === 'Approve', 'a failing call leaves the automatic monogram in place, no red line, the plain Approve: ' + a.meta.slice(0, 200));
       const jqx = await settings(); check(!Object.keys(jqx.assist).some(k => k.startsWith('4200900001')), 'a failed call keeps no answer (it may be tried again later)');
 
       // ── the kill switch: with AI assist Off, a flagged word makes no call ──
@@ -319,7 +320,7 @@ require.cache[require.resolve(clientPath)] = { id: clientPath, filename: clientP
       const k0 = await calls();
       await page.evaluate(async () => { const ui = Engrave.monogramUI(), c = ui.cards.get('4200900001_42009000011'); ui.results.clear(); c.ai = null; await ui.rebuild(c); });
       a = await idle('4200900001');
-      check(await calls() === k0 && /Needs a person/.test(a.meta) && !a.again && (await settings()).ai === 'off', 'AI assist Off: no call, the widget says Needs a person, no "Improve again"');
+      check(await calls() === k0 && noRed(a) && a.state === 'check' && (await settings()).ai === 'off', 'AI assist Off: no call, the flagged widget has no red line and no "Improve again"');
       check(w.errors.length === 0, 'no page error: ' + JSON.stringify(w.errors.slice(0, 3)));
     } catch (e) { fails.push('page crash: ' + (e && e.stack || e)); console.error(e); }
     finally { await w.close(); }

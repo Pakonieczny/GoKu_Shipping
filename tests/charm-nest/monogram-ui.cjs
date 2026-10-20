@@ -11,7 +11,7 @@
 //   6  the page is told (monogram:change, onChange, onApproved), a host can hold Approve (gate), update / destroy, status(row) for the card's dot
 //   7  the thumbnail for the Engrave piece card (thumbHtml / fillThumbs / thumb): the cut piece, still, repainted with every edit, built quietly (no bar, no AI)
 //   8  the size option: the widest the finished piece may be (charm-nest-monogram-fit.js), the line says so, the file written is that size
-//   9  the AI assembly line ("Assembled with AI: …" / "Needs a person: …", Improve again, a second press to approve anyway); the AI itself is stubbed (tests/charm-nest/monogram-ai.cjs holds the rest)
+//   9  the AI assembly line ("Assembled with AI: …"; MONOAPPROVE, 20 Oct 2026: a flagged word shows no red line, no Improve again, and ONE Approve press approves it); the AI itself is stubbed (tests/charm-nest/monogram-ai.cjs holds the rest)
 //   10 the alphabets: none, partial (the pickers appear inside the widget), chosen by hand; keys (Tab order, Enter approves, Esc), sent to the sheets, reduced motion, phone width 400, a second tab, a reload keeps the approved design
 //   12 (17 Oct 2026) MONOROUTE: a monogram line that asks nothing is NOT a card of the Review tab (approved or not; its custom card still exists and holds the design; a line with a question or a hold still is listed), and an approved one goes
 //      to the sheets from its own Approve (MONOSEND); MONOLETTERS: after a rotate or a swap the buyer's line offers "Use these" (one press puts the buyer's letters back); MONOBIG: the compact preview is 139 px beside the letters,
@@ -571,17 +571,17 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
     });
     await mountCases([FX.ai1.rid, FX.ai2.rid], ['detail', 'compact']);
     a = await until(FX.ai1.rid, r => /Assembled with AI/.test(r.asm) && !r.spin, 'PQR assembled', 40000);
-    check(a.state === 'ready' && a.asm === 'Assembled with AI: Moved the P toward the Q so a lower contact joins them.' && a.asmStatus === 'assembled' && a.again.hidden && !a.approve.disabled, 'a word the AI fixed says ONE calm line: "' + a.asm + '"');
-    a = await until(FX.ai2.rid, r => /Needs a person/.test(r.asm) && !r.spin, 'WNK needs a person', 60000);
-    check(a.state === 'check' && /^Needs a person: .+/.test(a.asm) && !a.again.hidden && !a.approve.disabled && a.approve.text === 'Approve', 'a word whose AI call failed says "Needs a person: …" (the automatic layout is kept) with a quiet Improve again: "' + a.asm + '"');
-    check((await read(FX.ai2.rid, 'compact')).state === 'check' && /Needs a person/.test((await read(FX.ai2.rid, 'compact')).asm), 'the compact widget says the same');
+    check(a.state === 'ready' && a.asm === 'Assembled with AI: Moved the P toward the Q so a lower contact joins them.' && a.asmStatus === 'assembled' && !a.again && !a.approve.disabled, 'a word the AI fixed says ONE calm line: "' + a.asm + '"');
+    // (MONOAPPROVE, Paul 20 Oct 2026: "Remove this red text and Improve again link from the UI completely" / "if the user presses it that means they approve!!")
+    await page.waitForFunction(() => window.__calls.includes('WNK'), null, { timeout: 60000 }).catch(() => {});
+    a = await until(FX.ai2.rid, r => r.state === 'check' && !r.spin, 'WNK flagged', 60000);
+    const noRed = r => !r.asm && !r.note && !r.again && !/Needs a person|Improve again|Approve anyway/.test(JSON.stringify(r));
+    check(a.state === 'check' && noRed(a) && !a.approve.hidden && !a.approve.disabled && a.approve.text === 'Approve', 'a word whose AI call failed shows no red line and no Improve again, only the plain Approve: ' + JSON.stringify({ asm: a.asm, note: a.note, approve: a.approve.text }));
+    { const k = await read(FX.ai2.rid, 'compact'); check(k.state === 'check' && noRed(k) && k.approve.text === 'Approve', 'the compact widget the same'); }
+    check(await page.evaluate(() => !document.querySelector('[data-mw-again]') && ![...document.querySelectorAll('.mw')].some(h => /Needs a person|Improve again|Approve anyway/.test(h.textContent))), 'no widget on the page has an Improve again link or says "Needs a person" / "Approve anyway"');
     await caseShots('ai', [FX.ai1.rid, FX.ai2.rid], ['detail', 'compact']);
-    await page.click(`${W(FX.ai2.rid)} [data-mw-approve]`); a = await read(FX.ai2.rid);
-    check(a.state === 'check' && a.approve.text === 'Approve anyway', 'a flagged word needs a second press: "Approve anyway"');
-    const calls0 = await page.evaluate(() => window.__calls.filter(x => x === 'WNK').length);
-    await page.click(`${W(FX.ai2.rid)} [data-mw-again]`); await page.waitForFunction(n => window.__calls.filter(x => x === 'WNK').length > n, calls0, { timeout: 20000 });
-    check(true, 'Improve again asks the AI once more (' + calls0 + ' -> ' + await page.evaluate(() => window.__calls.filter(x => x === 'WNK').length) + ' calls)');
-    await until(FX.ai2.rid, r => !r.spin && r.state === 'check', 'the second try is over', 40000);
+    await page.click(`${W(FX.ai2.rid)} [data-mw-approve]`); a = await until(FX.ai2.rid, r => r.state === 'approved' || r.state === 'sent', 'WNK approved by one press', 30000);
+    check(a.state === 'approved' || a.state === 'sent', 'ONE Approve press approves a flagged word (no "Approve anyway", no second press): ' + a.state);
     await page.evaluate(() => { window.__violate = []; });
 
     // ═══ the alphabets: none, partial, chosen by hand (the widget asks only when it has to) ═══

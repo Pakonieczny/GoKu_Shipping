@@ -468,7 +468,8 @@
     /* ── MONOUI: a monogram line's card ── one `.engMono` for each monogram line: the header the other cards have (a dot that says where it is, "Monogram") and the page's monogram widget in "compact" density (charm-nest-monogram-ui.js
      *  mountLine; its state lives in the page's one monogram service, so the Engrave tab and this window show the same letters and repaint together). The card is kept while another piece is picked and put back as it was. */
     const MONO_DOT = { letters: 'words', error: 'words', ready: 'approve', check: 'approve', approved: 'approved', sent: 'approved' };
-    const MONO_WORD = { reading: 'Reading the letters', letters: 'Letters to confirm', building: 'Making the monogram', ready: 'Ready to approve', check: 'Needs a person', approved: 'Approved', sent: 'On the sheets', error: 'Needs a look' };
+    // (MONOAPPROVE, Paul 20 Oct 2026: a flagged monogram ("check") reads "Ready to approve", never "Needs a person": its one Approve press approves it)
+    const MONO_WORD = { reading: 'Reading the letters', letters: 'Letters to confirm', building: 'Making the monogram', ready: 'Ready to approve', check: 'Ready to approve', approved: 'Approved', sent: 'On the sheets', error: 'Needs a look' };
     function monoDot(m, st) {
       const state = (st && st.state) || 'reading', dot = m.el.querySelector('[data-testid="ow-mono-dot"]'), word = MONO_WORD[state] || '';
       m.el.dataset.state = state;
