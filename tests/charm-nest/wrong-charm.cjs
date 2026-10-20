@@ -58,7 +58,7 @@ const h = { RL, O };
   const aff = F.affectedOf([a, c, b, d, x, s, g, k], a, NEW, Object.assign({ cancelled: r => r.order.receiptId === '4193070002' }, h));
   eq(aff.orders, ['4193072538', '4193072539', '4193072540', '4193072541'], 'the open orders of the listing under the same key: not another listing, another SKU, a skipped or a cancelled line');
   eq([aff.key, aff.made], [`${LID}|${OLD}`, 3], 'three already made');
-  eq(F.askText(NEW, LID, aff), `Use ${NEW} for every order of listing ${LID}? 4 open orders of it change (3 already made: on an open sheet it is swapped, a cut or released piece is held for a person); the same SKU on other listings stays as it is.`, 'the confirming line');
+  eq(F.askText(NEW, LID, aff), `Use ${NEW} for every order of listing ${LID}? 4 open orders of it change (3 already made: each new piece goes into the old one's spot, or onto the latest unfinished sheet when it does not fit; a laser-cut piece is held for a person); the same SKU on other listings stays as it is.`, 'the confirming line');
   eq(F.askText(NEW, LID, F.affectedOf([b], b, NEW, h)), `Use ${NEW} for every order of listing ${LID}? 1 open order of it changes; the same SKU on other listings stays as it is.`, 'one order, none made');
   step('the pick reaches the open orders of the listing under the same key; one confirming line with their count');
 }
