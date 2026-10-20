@@ -351,15 +351,25 @@ const ListMedia = (() => {
     const out=await vector(row,opts?.px,opts?.pair===true?opts:Object.assign({},opts,{piece:true}));
     return typeof out==='string'?out:(out&&out.toDataURL?out.toDataURL('image/png'):null);
   }
+  /* WRONGCHARM2 (Paul, 20 Oct 2026: "the thumbnails that show the vector file do not update" after a "Wrong charm?" pick on an order already nested): a line's picture is drawn from its PIECE when it has
+     one (vector: the pooled charm, outline and members), and a remade piece keeps its pool id (O.poolId: order, line, copy). The keys below named the line's design SKU and its pool ids only, so the
+     moment the pick was read (the spec already the new SKU, the old piece still on its sheet) drew the OLD piece under the NEW key, and the remade piece, same id and same SKU, matched that key: the
+     Orders row, the order window, the piece dots and the Engrave previews kept the old drawing until a reload. The pieces of a design shared that key too, so the old drawing could show for another
+     order of the new design. pieceSig names the piece a picture is drawn from (its design and drawing); designVer the library entry's version (its drawing hash and indexing time, REDRAW: the same
+     SKU drawn again). Both are in every picture key: a different piece or a new drawing is a different picture, drawn again at once. */
+  const drawnPiece=row=>(row?.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length) || null;
+  const pieceSig=row=>{const c=drawnPiece(row);return c?String(c.orderInfo?.sku || c.sku || '').toUpperCase()+'#'+String(c.hash || c.charmHash || '')+(c.mirror?'m':'')+(c.bodyIndex!=null?'b'+c.bodyIndex:''):'';};
+  const designVer=sku=>{const e=sku?Master.entryFor(sku):null;return e?String(e.charmHash || '')+'@'+String(e.indexedAt || e.updatedAt || ''):'';};
   /** What makes two lines' vector designs one picture: the pieces of one design (its SKU and size) share a thumbnail; a line with no SKU is its own pooled charm's; '' when there is nothing to draw. */
   function vectorKey(row,opts) {
     if(!row || row.spec?.noDesign || row.spec?.ownDesign)return '';
     const sku=String((opts?(opts.design && inSet(row,opts.design)?opts.design:earDesign(row,opts.side)):'') || row.spec?.designSku || row.line?.sku || '').toUpperCase();
     // (one ear of a mismatched pair (opts.highlight "L" | "R") is its own picture: never shared with the other ear's)
     // (an earring pair line drawn as Left + Right is its own picture: never shared with one body as drawn, nor with one ear)
-    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'')+(!opts?.highlight && !opts?.side && !opts?.piece?(matchPair(row)?'|pair':twoOf(row)?'|two:'+String(twoOf(row)).toUpperCase():setOf(row).length?'|set:'+setOf(row).join('+').toUpperCase():bodiesRow(row)?'|whole':''):'')+(!opts?.highlight && !opts?.side && oneRow(row)>=0?'|one':'');
+    const ver='|v:'+designVer(sku)+(pieceSig(row)?'|p:'+pieceSig(row):'');   // (WRONGCHARM2: the library entry's version and the piece the picture is drawn from)
+    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '')+ver+(opts?.highlight?'|'+opts.highlight:'')+(opts?.side?'|'+opts.side+(opts.mirror?'m':''):'')+(!opts?.highlight && !opts?.side && !opts?.piece?(matchPair(row)?'|pair':twoOf(row)?'|two:'+String(twoOf(row)).toUpperCase():setOf(row).length?'|set:'+setOf(row).join('+').toUpperCase():bodiesRow(row)?'|whole':''):'')+(!opts?.highlight && !opts?.side && oneRow(row)>=0?'|one':'');
     const id=(row.poolIds || []).find(x=>Pool.charmOf(x)?.outline);
-    return id?'pool:'+id:'';
+    return id?'pool:'+id+ver:'';
   }
   /** A line's vector design into one box: a list row's, or the order window's beside its listing photo. */
   /* MONOTHUMB (Paul, 19 Oct 2026: "Once a monogram is generated, it should be shown in the thumbnails of a given order"): a monogram line's Vector design is its monogram, the cut piece the
@@ -388,7 +398,7 @@ const ListMedia = (() => {
     if(host && host.dataset.monoKey){delete host.dataset.monoKey;host._monoMount=null;if(monoView)monoView.unobserve(host);}
     const sku=row?.spec?.designSku || row?.line?.sku || '';
     const both=matchPair(row),two=twoOf(row),one=oneRow(row),set=setOf(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again; one body once it is known to make one; the two designs of a set)
-    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[]).concat(two?['two',two,!!Master.entryFor(two),Master.entryFor(two)?.updatedAt || 0]:[]).concat(set.length?['set',set.join('+'),set.map(k=>Master.entryFor(k)?.updatedAt || 0).join('+')]:[]).concat(one>=0?['one',one]:[])),false,JSON.stringify([sku,row?.spec?.size].concat(both?['pair']:[]).concat(two?['two',two]:[]).concat(set.length?['set',set.join('+')]:[]).concat(one>=0?['one',one]:[])));
+    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline),designVer(sku),pieceSig(row)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[]).concat(two?['two',two,!!Master.entryFor(two),Master.entryFor(two)?.updatedAt || 0]:[]).concat(set.length?['set',set.join('+'),set.map(k=>Master.entryFor(k)?.updatedAt || 0).join('+')]:[]).concat(one>=0?['one',one]:[])),false,JSON.stringify([sku,row?.spec?.size,designVer(sku),pieceSig(row)].concat(both?['pair']:[]).concat(two?['two',two]:[]).concat(set.length?['set',set.join('+')]:[]).concat(one>=0?['one',one]:[])));
   }
   function mount(node,row) {
     clean();const lid=String(row?.line?.listingId || '');
@@ -407,7 +417,7 @@ const ListMedia = (() => {
     const io=window.IntersectionObserver ? new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))go();},{rootMargin:'160px'}) : null;
     button.onclick=go;host.appendChild(button);if(io){pages.set(host,io);io.observe(button);}
   }
-  return {pair,pairRow,oneRow,earPair,earMirror,mount,vectorInto,monoSweep,vectorBig,vectorThumb,vectorKey,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
+  return {pair,pairRow,oneRow,earPair,earMirror,mount,vectorInto,monoSweep,vectorBig,vectorThumb,vectorKey,pieceSig,designVer,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
 })();
 // (the piece dots' hover card, charm-nest-piece-dots.js, reads the vector design through these two only: ListMedia itself stays private to this page's code)
 window.PieceMedia = { vectorKey: (row, opts) => ListMedia.vectorKey(row, opts && opts.pair === true ? opts : Object.assign({}, opts, { piece: true })), vectorThumb: ListMedia.vectorThumb, pairRow: ListMedia.pairRow, earMirror: ListMedia.earMirror };
@@ -13425,7 +13435,7 @@ const CustomSheet = window.CustomSheet = (() => {
         await checkpoint();
       }
       // (REVDROP: the sheets a replaced line's new pieces joined are arranged now, appended into the room the old ones left, as a listing pick's swap does: relinkSweep; a sheet busy or held waits for its own turn)
-      if(intent.replace && intent.replace.length){const fresh=new Set(rows.filter(r=>intent.replace.includes(r.key)).flatMap(r=>r.poolIds || []));for(const sh of allSheets()){const mine=sh.charms.filter(c=>fresh.has(c.poolId));if(!mine.length || mine.every(c=>sh.placements.some(p=>p.id===c.id)))continue;if(sh.runHold || ["nesting","finishing","queued"].includes(sh.status) || sh._operationStarting || sh._learnedStarting || (sh.persisted && !sh.persistedDone))continue;sh.status="ready";try{if(typeof window.startNest==="function")window.startNest(sh);}catch(err){console.warn("[revdrop] sheet not started:",err && err.message);}}}
+      if(intent.replace && intent.replace.length){const fresh=new Set(rows.filter(r=>intent.replace.includes(r.key)).flatMap(r=>r.poolIds || []));for(const sh of allSheets()){const mine=sh.charms.filter(c=>fresh.has(c.poolId));if(!mine.length || mine.every(c=>sh.placements.some(p=>p.id===c.id)))continue;if(sh.runHold || ["nesting","finishing","queued"].includes(sh.status) || sh._operationStarting || sh._learnedStarting || (sh.persisted && !sh.persistedDone))continue;sh.status="ready";try{if(typeof window.startNest==="function")window.startNest(sh);}catch(err){console.warn("[revdrop] sheet not started:",err && err.message);}}try{Review.remadeRepaint(allSheets().filter(sh=>sh.charms.some(c=>fresh.has(c.poolId))));}catch(_){}}   /* (WRONGCHARM2, Paul 20 Oct 2026: every view of the replaced line painted now and once its sheets are nested: remadeRepaint) */
       // A cloud receipt and local checkpoint complete the same immutable decision; a lost reply leaves it retryable.
       await saveCloud(e,"sent");if(!current())return;
       e.sent={id:intent.id,at:intent.at,by:intent.by,lines:intent.lines};delete e.sendIntent;delete e.sendError;ver++;
@@ -15674,6 +15684,26 @@ const Review = window.Review = (() => {
     relinkSay(row, c, by, { part: "fixed", text: `but ${c.from} is ${cutNow ? "cut" : how} on ${where}: left as it was, a person must make it`, sheets: fixed.map(f => f.sheetId).filter(Boolean) });
     return true;
   }
+  /* WRONGCHARM2 (Paul, 20 Oct 2026: after "Wrong charm?" on an order nested on a sheet, "Everything should automatically update as soon as the user chooses an alternate charm, everywhere it must be
+     updated, in real time, without requiring a refresh of the browser"). A line made up again (a listing pick's swap, a design dropped to replace) keeps its pool ids, so the views that follow a piece
+     by its id saw nothing change: the order window's Sheet tab kept the sheet's record for a minute and redrew its plate only when the pool ids it holds changed, a Library sheet window open on the
+     sheet kept its plate, and the lists were drawn once, while the new piece was still waiting for its nest. Every view of the line is painted at once and again when the sheets it joined are nested
+     and saved: the Orders list, the rail and cards, the Engrave tab, the order window (its pictures and its Sheet tab, the sheets' records read again: OrderWin.remade), a sheet window open on one of
+     those sheets (read again, its plate kept until the saved sheet is drawn over it). The picture keys name the piece drawn (ListMedia pieceSig), so what is painted is the new piece. */
+  function remadeRepaint(sheets) {
+    const list = [...new Set((sheets || []).filter(Boolean))], ids = list.map(sh => sh.sheetId).filter(Boolean);
+    const paintAll = () => {
+      try { syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); } catch (_) {}
+      try { if (OrderWin.remade) OrderWin.remade(ids); else if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {}
+      try { const SW = window.SheetWin; if (SW && SW.isOpen() && ids.includes(SW.current()) && !(SW._W && SW._W.view === "piece")) SW.open(SW.current(), { keepWork: true, keepSet: true }); } catch (_) {}
+      try { if (window.Engrave && Engrave.render) Engrave.render(); } catch (_) {}
+    };
+    paintAll();
+    if (!list.length) return;
+    const t0 = Date.now(), busy = sh => ["nesting", "finishing", "queued", "ready"].includes(sh.status) || sh._operationStarting || sh._learnedStarting || (sh.persisted && !sh.persistedDone);
+    const tick = () => { if (list.some(busy) && Date.now() - t0 < 120000) { setTimeout(tick, 400); return; } paintAll(); };
+    setTimeout(tick, 400);
+  }
   async function relinkSweep() {
     const L = relinkLib(), RL = relinkRL(), out = { keys: new Set(), swapped: [], flagged: [], design: [], kept: [] };
     if (!relinkWait.size || !L || !RL) return out;
@@ -15706,16 +15736,17 @@ const Review = window.Review = (() => {
     }
     // the sheets the new pieces joined are arranged now, appended into the room the old ones left (the nest's own append rules; what does not fit moves on, overflowToNextSheet), as Release hold
     // places an order at once; a stopped run's sheet waits for Resume (startNest says so itself)
+    const touched = [];   // (WRONGCHARM2: the sheets the new pieces joined, painted again once they are nested and saved: remadeRepaint)
     if (out.swapped.length) {
       const fresh = new Set(out.swapped.flatMap(x => x.row.poolIds || []));
       for (const sh of allSheets()) {
-        const mine = sh.charms.filter(c => fresh.has(c.poolId)); if (!mine.length || mine.every(c => sh.placements.some(p => p.id === c.id))) continue;
+        const mine = sh.charms.filter(c => fresh.has(c.poolId)); if (mine.length) touched.push(sh); if (!mine.length || mine.every(c => sh.placements.some(p => p.id === c.id))) continue;
         if (sh.runHold || ["nesting", "finishing", "queued"].includes(sh.status) || sh._operationStarting || sh._learnedStarting || (sh.persisted && !sh.persistedDone)) continue;
         sh.status = "ready"; try { const go = typeof window.startNest === "function" ? window.startNest : null; if (go) go(sh); } catch (e) { console.warn("[relink] sheet not started:", e && e.message); }
       }
     }
     if (out.swapped.length || out.flagged.length || out.design.length) {
-      try { syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {}
+      remadeRepaint(touched.concat(out.swapped.flatMap(x => allSheets().filter(sh => (x.homes || []).includes(sh.fileBase || sheetName(sh))))));
       const n = new Set(out.swapped.concat(out.design).map(x => String(x.row.order.receiptId))).size, to = [...new Set(out.swapped.concat(out.design, out.flagged).map(x => x.c.to))].join(", ");
       if (n) toast(`Listing pick ${to}: ${n} order${n === 1 ? "" : "s"} of the listing updated${out.swapped.length ? `, ${out.swapped.length} piece line${out.swapped.length === 1 ? "" : "s"} taken off and made up again` : ""}`, "ok", 6000);
       for (const f of out.flagged.slice(0, 3)) toast(`Order ${f.row.order.receiptId} was ${f.row.state === "committed" || (f.c.fixed || []).some(x => x.cut) ? "cut" : "released"} with the old charm ${f.c.from}: the listing now uses ${f.c.to}. It needs a person (Review)`, "bad", 10000);
@@ -17040,7 +17071,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, openCount, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, openCount, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -18138,7 +18169,7 @@ const OrderWin = window.OrderWin = (() => {
     return [...above.map(sized), own];
   }
   const photoKey = (r, url) => JSON.stringify([r.key, url ? String(url) : ""]);
-  const vectorKey = r => JSON.stringify([r.key, r.spec && r.spec.designSku, r.spec && r.spec.size, r.poolIds]);
+  const vectorKey = r => JSON.stringify([r.key, r.spec && r.spec.designSku, r.spec && r.spec.size, r.poolIds, tryDo(() => ListMedia.pieceSig(r)) || "", tryDo(() => ListMedia.designVer(r.spec && r.spec.designSku)) || ""]);   // (WRONGCHARM2: the piece drawn and the entry's version: a remade piece keeps its pool id)
   /** A sharper Etsy photo for the zoom now: the larger sizes, the largest first (the loader takes the first that comes). */
   function sharpPhoto() {
     const ph = byId("owPhoto"), im = ph && ph.querySelector("img"), url = ph && (ph.dataset.srcUrl || (im && im.getAttribute("src"))); if (!url) return null;   // (a photo the lists' loader put there has no srcUrl: its own address)
@@ -20910,7 +20941,19 @@ const OrderWin = window.OrderWin = (() => {
     show((opts.row && opts.row.key && rows.find(r => r.key === opts.row.key)) || ofPool(rows, opts.poolId) || rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId, pick: o.pick }); shown();
   }
   // (a repaint asked from outside, an image or a record arriving, waits for the view to land)
-  return { open, openOrder, focusSearch, charmFix, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: o => shut(o && o.into), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v),
+  /** WRONGCHARM2 (Paul, 20 Oct 2026): pieces were made again on these sheets (remadeRepaint): the window paints the line as it is now, and the sheets' records the Sheet tab keeps are read again (a remade
+   *  piece keeps its pool id, so sheetFollow never saw it change); the plate is drawn again when it shows one of them. */
+  function remade(ids) {
+    const set = new Set((ids || []).filter(Boolean));
+    const reads = [...set].map(id => Promise.resolve(tryDo(() => window.SheetWin && SheetWin.refreshRecord(id))).catch(() => null));
+    if (!W.dlg || !W.dlg.open || W.closing) return;
+    paint();
+    const cur = SV.list && SV.list[SV.at];
+    if (!cur || (set.size && !set.has(cur.id))) return;
+    // (the plate drawn before is let go: the Sheet tab draws it afresh now when it is in front, else when it is next shown)
+    Promise.all(reads).then(() => { if (!(W.dlg && W.dlg.open && !W.closing && SV.list && SV.list[SV.at] === cur)) return; SV.info = null; if (W.view === "sheet") sheetDraw(); });
+  }
+  return { open, openOrder, focusSearch, charmFix, remade, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: o => shut(o && o.into), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v),
     // the piece shown in the order window (Paul, 5 Oct, round 16: the "Its pieces" rows are the selector): selectPiece(key | null for all pieces) -> whether it is shown now
     selectPiece: k => selectPiece(k), selectedPiece: () => (W.pieces || []).length > 1 ? W.piece || null : null, selectedSide: () => (W.side && narrowSide()) ? W.side : null, selectedDisc: () => W.disc || null, repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed,
     // (read-only, for the checks: the pieces of the order on screen, each with the sheets it is on, and the one in focus)

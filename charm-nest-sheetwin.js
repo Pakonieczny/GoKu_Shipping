@@ -5499,7 +5499,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const kept = orderRecs.get(id), was = kept && kept.rec;
     orderRecs.delete(id);
     let rec = null; try { rec = await recFor(id); } catch (_) { rec = null; }
-    return !rec ? !!was : !was || memberSig(rec) !== memberSig(was);
+    // (WRONGCHARM2, Paul 20 Oct 2026: and the design of each piece: a piece made again from another charm keeps its pool id. Both are whole records read by getSheet here, so their charms compare)
+    const designSig = r => JSON.stringify(((r && r.charms) || []).map(c => String((c && c.poolId) || "") + ":" + String((c && c.sku) || "").toUpperCase()).sort());
+    return !rec ? !!was : !was || memberSig(rec) !== memberSig(was) || designSig(rec) !== designSig(was);
   }
   /** The pieces of one order the kept record of a sheet lists (what the order window's plate drew), as one string; null when no record is kept for it yet. */
   function heldOf(id, rid) {
