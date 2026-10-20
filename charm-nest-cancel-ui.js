@@ -34,7 +34,8 @@
   const CSS = [
     ".cnHoldBtns{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;min-width:0;max-width:100%}",
     ".cnHoldBtns>.btn{margin:0;min-width:0}",
-    ".btn.ghost.cnCancelBtn{border-radius:7px;font:600 12px var(--sans);color:var(--ink70);cursor:pointer}",
+    // (RHSAME, Paul 20 Oct 2026: the Release Hold beside it is the Review card's .btn now, so Cancel keeps the .btn corners (9 px, was 7 px to match the old small "Release hold"): the same height and radius, still plain)
+    ".btn.ghost.cnCancelBtn{font:600 12px var(--sans);color:var(--ink70);cursor:pointer}",
     ".btn.ghost.cnCancelBtn:hover:not(:disabled){color:var(--ink)}",
     ".btn.ghost.cnCancelBtn:disabled{cursor:default}",
     ".cnCancelBtn .spin{margin-right:6px}",

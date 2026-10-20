@@ -137,7 +137,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await page.waitForFunction(() => Orders.view().pile === 'hold' && document.querySelectorAll('#ordItems .cnCancelBtn').length === 6);   // (six held orders, ONE Cancel Order each: the two lines of B2 are one card)
   });
 
-  await check('2 · same height and calm look as Release hold (plain, not orange, not red); fits 900 and 390 px', async () => {
+  // (RHSAME, Paul 20 Oct 2026: the Release Hold beside it is the Review card's orange button now: Cancel keeps its height, type size and corners, and stays plain, not orange)
+  await check('2 · same height and corners as Release Hold (Cancel plain, not orange, not red; Release Hold the seal orange); fits 900 and 390 px', async () => {
     const look = () => page.evaluate(A => {
       const n = document.querySelector(`#ordItems > [data-rid="${A}"]`), c = n.querySelector('.cnCancelBtn'), r = n.querySelector('.relHold'), cs = getComputedStyle(c), rs = getComputedStyle(r);
       const cr = c.getBoundingClientRect(), rr = r.getBoundingClientRect(), nr = n.getBoundingClientRect();
@@ -151,7 +152,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       const L = await look();
       await shot(page, `card-${name}`);
       assert.equal(L.ch, L.rh, `${w}px: the two buttons are the same height ${JSON.stringify(L)}`);
-      assert.equal(L.fs[0], L.fs[1], 'same type size'); assert.equal(L.radius[0], L.radius[1], 'same corners'); assert.equal(L.bg[0], L.bg[1], 'same plain background'); assert.equal(L.border[0], L.border[1], 'same border');
+      assert.equal(L.fs[0], L.fs[1], 'same type size'); assert.equal(L.radius[0], L.radius[1], 'same corners'); assert.equal(L.bg[1], 'rgb(162, 89, 28)', 'Release Hold is the seal orange: ' + L.bg[1]); assert.notEqual(L.bg[0], L.bg[1], 'Cancel is not orange: ' + L.bg[0]); assert.notEqual(L.border[0], L.border[1], 'nor its border');
       assert(L.inside, `${w}px: both buttons inside the card ${JSON.stringify(L)}`); assert.equal(L.overflowX, false, `${w}px: no sideways scroll`);
       const rgb = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(L.color).slice(1).map(Number), spread = Math.max(...rgb) - Math.min(...rgb);
       assert(spread < 60, 'the label is a calm neutral, not orange or red: ' + L.color);

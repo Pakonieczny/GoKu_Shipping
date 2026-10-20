@@ -2762,7 +2762,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .ordList .ordGroup:hover{border-color:var(--ink45);border-left-color:var(--slate)}
 .ordGroup.cnBusy{transform:translateY(-2px);transition:transform .24s cubic-bezier(.2,.8,.2,1)}
 @media(prefers-reduced-motion:reduce){.ordGroup.cnBusy{transform:none;transition:none}}
-.mGhost>.ordGroup.mCopy{transition:none}
+.mGhost>.ordGroup.mCopy,.mGhost>.hoverItem.mCopy{transition:none}   /* (RHSAME, Paul 20 Oct 2026: a single-line card's flying copy too: the copy of a hovered card drops its hover lift on the motion layer, and .hoverItem's box-shadow transition must not animate it; only transform and opacity fly) */
 .ordList .ordGroup .ogHead{padding:14px 16px 10px 14px}
 .ordList .ordGroup .ogPiece.doneRow.workRow{border:0;border-top:1px solid var(--line2);border-radius:0;background:transparent;box-shadow:none;min-height:0;padding:12px 16px 12px 14px}
 .ordList .ordGroup .ogPiece.doneRow.workRow:hover{background:var(--paper2)}
@@ -8298,7 +8298,7 @@ try {
 <script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1-noset1-one1-five1-pd1-psw1-al2-eu3-rvl3"></script>
 <script src="charm-nest-rail-tip.js?v=20261005-rt2-pdot1-tn1-or1"></script>
 <script src="charm-nest-piece-seals.js?v=20261005-pg1-pow1-ui2"></script>
-<script src="charm-nest-cancel-ui.js?v=20261005-cx1-pf2"></script>
+<script src="charm-nest-cancel-ui.js?v=20261005-cx1-pf2-rhs1"></script>
 <script src="charm-nest-review-send.js?v=20261012-rvb3-sr1"></script>
 <script src="charm-nest-shared-orders-modal.js?v=20261005-so5-gc2-ps1-id1"></script>
 <!-- the cadence of where-is-each-piece: every surface that says "on a sheet / not on a sheet / on hold" follows the cloud within seconds (PlacementFeed) -->

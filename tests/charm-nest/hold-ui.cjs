@@ -15,7 +15,7 @@
 //  - Continue asks the name the way Review does (the inline name bar when none is saved), runs the engine once, feeds every step to the film in order,
 //    finishes it and goes home; without a film it still runs and ends in Orders > On hold; a failed run says so plainly and never leaves the Nest tab
 //  - a plan that cannot be held shows its reason with Close only
-//  - Release hold on an On hold card goes through releasePlan, release and the film, then home; without release it is today's press (Review.repool)
+//  - Release Hold on a held order's Orders card is the Review card's own button and press (RHSAME, 20 Oct 2026: ReviewRelease.press, the seal orange, no film; no seal when it did not work)
 //  - 900 and 390 px: nothing sideways, the button inside its row, the popup inside the screen
 //   node tests/charm-nest/hold-ui.cjs   (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>, SHOTS=<dir>)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
@@ -469,38 +469,36 @@ async function main() {
     await page.waitForFunction(() => window.__t.runs.length === 1 && CN.S.mode === 'orders' && Orders.view().pile === 'hold' && !HoldUI.busy('4170837249'), null, { timeout: 20000 });
     assert.equal((await T()).fx.length, 0);
 
-    // ── 12 · Release hold on an On hold card: releasePlan, release, the film, home; without release it is today's press ──
+    // ── 12 · Release Hold on a held order's Orders card (RHSAME, Paul 20 Oct 2026: "This Release Hold button [Orders tab] needs to be the exact same as the one in the Review tab"): the Review card's own button and
+    //       press (ReviewRelease.orderButton -> ReviewRelease.press -> OrderHold.release with the seal), the seal's orange; no HoldUI.release, no plan, no film. A release that does not work makes no seal (RELNOSEAL).
+    //       Shown in Open Orders (the On hold pile is going away). Was: HoldUI.release (releasePlan, the film, home), and Review.repool without an engine release.
     await installFake();
-    await page.evaluate(() => { window.__rp = 0; const was = Review.repool; Review.repool = r => { window.__rp++; return was(r); }; window.__repool = was; });
-    await page.evaluate(() => Orders.showPile('hold', ''));
-    await page.waitForFunction(r => document.querySelector(`#ordersView [data-rid="${r}"] .relHold`), H.rid, { timeout: 15000 });
-    assert.equal(await page.evaluate(r => document.querySelector(`#ordersView [data-rid="${r}"] .relHold`).textContent.trim(), H.rid), 'Release hold');
-    await page.click(`#ordersView [data-rid="${H.rid}"] .relHold`);
-    await page.waitForFunction(() => window.__t.returns.length === 1, null, { timeout: 20000 });
+    await page.evaluate(() => { const fr = OrderHold.release; OrderHold.release = (rid, o) => fr(rid, Object.assign({ onStep: () => {} }, o));   // (the Review release passes no onStep: there is no film to feed; the real engine's is optional)
+      window.__hu = 0; const was = HoldUI.release; HoldUI.release = (...a) => { window.__hu++; return was(...a); }; document.getElementById('toasts').innerHTML = ''; CN.setMode('orders'); Orders.showPile('', ''); Orders.render(); });
+    const relB = `#ordersView [data-rid="${H.rid}"] .relHold`, toastsText = () => page.evaluate(() => (document.getElementById('toasts') || {}).textContent || '');
+    await page.waitForFunction(s => document.querySelector(s), relB, { timeout: 15000 });
+    const b12 = await page.evaluate(([s, r]) => { const b = document.querySelector(s), it = ReviewRelease.itemOf(r); return { text: b.textContent.trim(), cls: b.className, how: b.dataset.rvRelease, itHow: ReviewRelease.of(it).how, bg: getComputedStyle(b).backgroundColor }; }, [relB, H.rid]);
+    assert.equal(b12.text, 'Release Hold');
+    assert(/\brelHoldBtn\b/.test(b12.cls) && b12.how && b12.how === b12.itHow && b12.bg === 'rgb(162, 89, 28)', "the Review card's own Release Hold, in the seal's orange: " + JSON.stringify(b12));
+    // a release that does not work: still held, said plainly, no seal
+    await page.evaluate(() => { window.__relOk = OrderHold.release; OrderHold.release = async (rid, o) => { window.__t.rels.push({ rid, name: o && o.name, seal: !!(o && o.seal) }); return { ok: false, error: 'the sheet could not be saved' }; }; });
+    await page.click(relB);
+    await page.waitForFunction(() => /was not released: the sheet could not be saved/.test((document.getElementById('toasts') || {}).textContent || ''), null, { timeout: 15000 }).catch(async () => { throw new Error('the failure is said: ' + await toastsText()); });
+    t = await T(); assert.equal(t.rels.length, 1, 'the Review release asked the engine once'); assert(t.rels[0].seal, 'with the seal of the press');
+    assert.equal(await page.evaluate(h => Orders.rows().filter(r => String(r.order.receiptId) === h).every(r => r.hold && !r.releaseHold), H.rid), true, 'still held, no seal kept');
+    assert.equal(await page.evaluate(s => !!document.querySelector(s.replace(' .relHold', ' .relSeal')), relB), false, 'no seal on the card');
+    // a release that works: released under the saved name, the seal on the card, no film, HoldUI.release not used
+    await page.evaluate(() => { OrderHold.release = window.__relOk; window.__t.rels.length = 0; document.getElementById('toasts').innerHTML = ''; });
+    await page.waitForFunction(s => { const b = document.querySelector(s); return b && b.getAttribute('aria-disabled') !== 'true' && b.textContent.trim() === 'Release Hold'; }, relB, { timeout: 8000 });
+    await page.click(relB);
+    await page.waitForFunction(h => Orders.rows().filter(r => String(r.order.receiptId) === h).every(r => !r.hold && r.releaseHold), H.rid, { timeout: 20000 }).catch(async () => { throw new Error("released, with its seal: " + JSON.stringify(await page.evaluate(h => ({ rows: Orders.rows().filter(r => String(r.order.receiptId) === h).map(r => ({ hold: r.hold, state: r.state, rel: r.releaseHold, problems: (r.problems || []).map(p => p.kind) })), toasts: document.getElementById("toasts").textContent, rels: window.__t.rels }), H.rid))); });
     t = await T();
-    assert.deepEqual(t.relPlans, [H.rid], 'the release was planned'); assert.equal(t.rels.length, 1, 'released once'); assert.equal(t.rels[0].rid, H.rid); assert.equal(t.rels[0].name, 'Test Operator', 'under the saved name, none asked');
-    assert.equal(t.fx.length, 1); assert.equal(t.fx[0].kind, 'release'); assert.deepEqual(t.fx[0].pushed, ['start', 'queued', 'target', 'placed', 'released', 'done'], 'the film followed every step');
-    assert(t.fx[0].finished); assert.deepEqual(t.returns, [H.rid]);
-    assert.equal(await page.evaluate(() => window.__rp), 0, 'the old press was not used');
-    assert.equal(await page.evaluate(() => document.querySelectorAll('.cnNameBar:not([data-kind="role"])').length), 0, 'no name asked for a release');   // (the Laser or Design question of a non-Admin sign-in is the same bar in its other state: not a name asked)
-    assert.equal(await page.evaluate(() => window.__dlg.max), 1);
-    // blocked: its reason, nothing released
-    await page.evaluate(([h]) => { for (const r of Orders.rows()) if (String(r.order.receiptId) === h) { r.hold = 'Taken off GF Sheet 1 by Paul: Add to next sheet'; r.state = 'held'; } window.__t.rels.length = 0; window.__t.returns.length = 0; window.__t.relPlanResult = { canRelease: false, blockedWhy: 'Every sheet of its metal is cut: it needs a new sheet first.' }; Orders.render(); }, [H.rid]);
-    await page.waitForFunction(r => document.querySelector(`#ordersView [data-rid="${r}"] .relHold`), H.rid, { timeout: 15000 });
-    await page.click(`#ordersView [data-rid="${H.rid}"] .relHold`);
-    await page.waitForFunction(() => /Every sheet of its metal is cut/.test((document.getElementById('toasts') || {}).textContent || ''), null, { timeout: 10000 });
-    t = await T(); assert.equal(t.rels.length, 0, 'a blocked release releases nothing'); assert.equal(await page.evaluate(() => window.__rp), 0);
-    await page.waitForFunction(r => { const b = document.querySelector(`#ordersView [data-rid="${r}"] .relHold`); return b && !b.disabled && b.textContent.trim() === 'Release hold'; }, H.rid, { timeout: 8000 });
-    await page.evaluate(() => { document.getElementById('toasts').innerHTML = ''; window.__t.relPlanResult = null; });
-    // no release in the engine: today's press (Review.repool), unchanged
-    await installFake({ noRelease: true });
-    await page.evaluate(() => Orders.render());
-    await page.waitForFunction(r => document.querySelector(`#ordersView [data-rid="${r}"] .relHold`), H.rid, { timeout: 15000 });
-    assert.equal(await page.evaluate(() => HoldUI.canRelease()), false);
-    await page.click(`#ordersView [data-rid="${H.rid}"] .relHold`);
-    await page.waitForFunction(() => window.__rp === 1, null, { timeout: 10000 });
-    t = await T(); assert.equal(t.rels.length, 0); assert.equal(t.fx.length, 0, 'no film for the old press');
-    await page.waitForFunction(h => Orders.rows().filter(r => String(r.order.receiptId) === h).every(r => !r.hold), H.rid, { timeout: 15000 });
+    assert.equal(t.rels.length, 1, 'released once'); assert.equal(t.rels[0].rid, H.rid); assert.equal(t.rels[0].name, 'Test Operator', 'under the saved name');
+    assert.equal(t.fx.length, 0, 'no hold film: the Review release'); assert.deepEqual(t.relPlans, [], 'no HoldUI release plan'); assert.equal(await page.evaluate(() => window.__hu), 0, 'HoldUI.release was not used');
+    assert.equal(await page.evaluate(h => Orders.rows().find(r => String(r.order.receiptId) === h).releaseHold.by, H.rid), 'Test Operator', 'the seal: who');
+    await page.waitForFunction(s => document.querySelector(s.replace(' .relHold', ' .relSeal')), relB, { timeout: 15000 }).catch(() => { throw new Error('the RELEASE HOLD seal on the Orders card'); });
+    assert.equal(await page.evaluate(() => document.querySelectorAll('.cnNameBar:not([data-kind="role"])').length), 0, 'no name asked for a release');
+    await page.evaluate(() => { document.getElementById('toasts').innerHTML = ''; });
 
     // ── 13 · the page's own engine (when its module is in): its plan is read only, and its sentences are shown as they come ──
     if (await page.evaluate(() => !!(window.__real.hold && window.__real.hold.plan))) {

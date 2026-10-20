@@ -125,7 +125,7 @@ async function run(mode) {
     ok('11a a held piece: ONE Release hold on the order card, On hold counts the order once, Open Orders unchanged', heldAll.rel === 1 && heldAll.hold === '1' && heldAll.open === '6', JSON.stringify(heldAll));
     await page.click('#ordChips [data-pile="hold"]'); await page.waitForTimeout(300);
     const onHold = await G.entries(page);
-    ok('11b the On hold pile lists the order with only its held piece (a row), and its Release hold', onHold.length === 1 && onHold[0].rid === O.twoPiece.rid && onHold[0].keys.join() === K('twoPiece', 1) && /Release hold/.test(onHold[0].text), JSON.stringify(onHold.map(e => [e.rid, e.keys])));
+    ok('11b the On hold pile lists the order with only its held piece (a row), and its Release hold', onHold.length === 1 && onHold[0].rid === O.twoPiece.rid && onHold[0].keys.join() === K('twoPiece', 1) && /Release hold/i.test(onHold[0].text), JSON.stringify(onHold.map(e => [e.rid, e.keys])));
     await page.evaluate(k => { delete Orders.rows().find(r => r.key === k).hold; }, K('twoPiece', 1));
     await page.click('#ordChips [data-pile=""]'); await page.waitForTimeout(300);
 
