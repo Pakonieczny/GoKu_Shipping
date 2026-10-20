@@ -25,7 +25,7 @@ const keyOf = f => `${f.rid}_${f.rid}1`;
 {
   const bridge = read('charm-nest-bridge.js'), html = read('charm-nest-1.html');
   check(/tryDo\(paintWinSeals\)/.test(bridge) && /"cn-review-mark", "cn-order-seal"/.test(bridge) && /function winSealsOf\(/.test(bridge), 'source: paint() draws the seals; the window listens for the seal events');
-  check(/id="owSealRow"/.test(html) && /charm-nest-bridge\.js\?v=[^"]*-sw1"/.test(html), 'source: the Seals row is in the page; the cache token is bumped (-sw1)');
+  check(/id="owSealRow"/.test(html) && /charm-nest-bridge\.js\?v=[^"]*-sw1[-"]/.test(html), 'source: the Seals row is in the page; the cache token is bumped (-sw1)');
 }
 
 (async () => {
