@@ -324,7 +324,7 @@ async function runsOfOrders(get, orders, fresh) {
 // The caller's transaction reads the live run and every dependent sheet before it writes a seal or completion.
 // (the custom orders completed by hand that one reading looks up: at most HAND_MAX lines, one small read each; see below)
 const HAND_MAX = 200, HAND_FIELDS = ["state", "how", "completedAt", "completedBy"];
-/* Which of these orders a person sent to Review and has not resolved yet (Paul, 12 Oct 2026): Map rid -> "In Review: Sent to Review by NAME". One batch get by key on the review
+/* Which of these orders a person sent to Review and has not resolved yet (Paul, 12 Oct 2026): Map rid -> "In Review: Order held by NAME". One batch get by key on the review
    records (Charm_Custom_Orders/{rid}_review, charm-nest-review-mark.js: the same read as its op reviewMarkOpen), asked only where the server WRITES (a transaction, the Approve gate) and only
    for the orders of the sheets being gated; the Library's list reads never ask. A read that fails answers nothing and says so (the page still holds the sheet), so the shop is never stopped by it. */
 async function openReviews(rids,tx=null){
@@ -337,7 +337,7 @@ async function openReviews(rids,tx=null){
         const x=d && d.exists?d.data() || {}:null;
         if(!x || !x.review || x.review.state!=='open' || (x.kind && x.kind!=='reviewMark'))continue;
         const rid=String(x.receiptId || String(d.id).replace(/_review$/,'')).replace(/\D/g,''),by=str(x.review.markedBy,80);
-        if(rid)out.set(rid,'In Review: Sent to Review'+(by?' by '+by:''));
+        if(rid)out.set(rid,'In Review: Order held'+(by?' by '+by:''));   // (HOLDORDER, Paul 20 Oct 2026: the page's own words for a mark, charm-nest-review-mark.js reasonOf; was "Sent to Review")
       }
     }
   }catch(e){console.warn('[charmNestLibrary] the orders in Review could not be read (the page still holds them):',e && e.message);}

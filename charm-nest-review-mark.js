@@ -1,4 +1,4 @@
-/* Charm Nest · Send to Review (window.CharmNestReviewMark). Paul, 12 Oct 2026: "one button per each order ... that allows me to mark an
+/* Charm Nest · Hold Order, was Send to Review (window.CharmNestReviewMark; HOLDORDER, Paul 20 Oct 2026: the button's new name; kind and keys unchanged). Paul, 12 Oct 2026: "one button per each order ... that allows me to mark an
    order for review and add it to the review tab". This file is the model: a person puts an ORDER into the Review tab on their word, and takes it
    out again. It has no screen of its own but the small additions to a Review row (decorateRow); the button is in the Orders tab (REVBTN).
 
@@ -31,8 +31,8 @@
   const toast = (m, kind) => { try { if (typeof root.toast === "function") root.toast(m, kind); } catch (_) {} };
   const sandbox = () => { try { return typeof WORKSPACE_SANDBOX !== "undefined" && !!WORKSPACE_SANDBOX; } catch (_) { return false; } };
 
-  /** What a mark says of itself: the plain words under the card and on the Approve line ("Sent to Review by Name One"). */
-  function reasonOf(rid) { const v = isMarked(rid) ? rvOf(rid) : null; return v ? "Sent to Review" + (v.markedBy ? " by " + v.markedBy : "") : ""; }
+  /** What a mark says of itself: the plain words under the card and on the Approve line ("Order held by Name One"). (HOLDORDER, Paul 20 Oct 2026: the button is Hold Order now; was "Sent to Review by …") */
+  function reasonOf(rid) { const v = isMarked(rid) ? rvOf(rid) : null; return v ? "Order held" + (v.markedBy ? " by " + v.markedBy : "") : ""; }
   function info(rid) {
     const v = rvOf(rid); if (!v) return null;
     return { rid: ridOf(rid), state: v.state === "open" ? "open" : "done", by: v.markedBy || "", at: +v.markedAt || 0, doneBy: v.doneBy || "", doneAt: +v.doneAt || 0, how: v.how || "", sku: v.sku || "", rowKey: v.rowKey || "" };
@@ -76,14 +76,14 @@
     let n = String((opts && opts.by) || "").trim();
     if (!n) { try { if (typeof employeeName === "function") n = String(employeeName() || "").trim(); } catch (_) {} }
     if (!n) { try { n = String((root.B && root.B.employee) || "").trim(); } catch (_) {} }
-    if (!n) { try { if (typeof needEmployee === "function") n = String((await needEmployee("Kept with this Send to Review.")) || "").trim(); } catch (_) {} }
+    if (!n) { try { if (typeof needEmployee === "function") n = String((await needEmployee("Kept with this Hold Order.")) || "").trim(); } catch (_) {} }
     return n.slice(0, 80);
   }
   function told(rid, rec) {   // after the cloud answered: the other tabs of this computer hear the record (BroadcastChannel, no read), and the feed reads soon
     try { if (root.ReviewLive && root.ReviewLive.announce) root.ReviewLive.announce("customPut", { record: rec }); } catch (_) {}
     try { if (root.ReviewLive && root.ReviewLive.nudge) root.ReviewLive.nudge(); } catch (_) {}
   }
-  function line(rid, text, id, data) {   // a plain line on the order's timeline (a note: no seal)
+  function line(rid, text, id, data) {   // a plain line on the order's timeline (a note; HOLDORDER: the mark's own note, the one with no `how`, draws the ORDER HELD seal)
     try { const rows = rowsOfRid(rid); if (rows[0] && root.CNTimeline) root.CNTimeline.line(rows[0], "note", { id, text: String(text).slice(0, 200), data: Object.assign({ reviewMark: true }, data || {}) }); } catch (_) {}
   }
 
@@ -109,7 +109,8 @@
         const r = await root.api("charmNestLibrary", { op: "reviewMarkPut", action: "mark", rid, by }, { quiet: true });
         if (!r || r.error || !r.record) throw new Error((r && r.error) || "The cloud sent no record");
         put(r.record); seen.set(rid, stateSig(r.record)); told(rid, r.record); redraw();
-        if (!r.already) line(rid, "Sent to Review by " + by, `rvmark.${rid}.${(r.record.review && r.record.review.markedAt) || at}`, { by });
+        // (HOLDORDER, Paul 20 Oct 2026: the line says what the Hold Order button did; its id and data are as before, so an older line still draws its ORDER HELD seal, charm-nest-timeline-ui.js holdOrderNote)
+        if (!r.already) line(rid, "Order held by " + by, `rvmark.${rid}.${(r.record.review && r.record.review.markedAt) || at}`, { by });
         return { ok: true, already: !!r.already, rid };
       } catch (e) {   // not written: the order goes back to what it was (nothing else was touched)
         if (was) put(was); else drop(key);

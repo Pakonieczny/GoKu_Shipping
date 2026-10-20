@@ -1,7 +1,7 @@
 // SENDREVIEW (Paul, 20 Oct 2026: "The Send to Review button is disconnected from reality ... This button should be directly linked and communicate with the orders that are already in the
 // Review tab, and this communication needs to be real time"). A custom "own design" order (an add-on listing: no master design, waits for its own designs or Complete Order) is a card of
-// Review's Open (Custom Orders) the moment it is pulled: its Orders card says "In Review", not "Send to Review"; a press opens that Review card and marks nothing; Complete Order pressed on the
-// Review card takes it out of Review and the Orders card (on screen, no reload) says "Send to Review" again, with the Review tab's count one less.
+// Review's Open (Custom Orders) the moment it is pulled: its Orders card says "In Review", not "Hold Order"; a press opens that Review card and marks nothing; Complete Order pressed on the
+// Review card takes it out of Review and the Orders card (on screen, no reload) says "Hold Order" again, with the Review tab's count one less.
 // Offline only: the real sorter page in headless Chromium over the fake site (_orderFactsWorld.cjs), made-up buyers, nothing real written.
 //   node tests/charm-nest/review-send-custom.cjs [playwright-core dir]   (or PW_DIR=<dir>)
 const assert = require('assert/strict');
@@ -38,9 +38,9 @@ const ok = (name, cond, extra) => { assert.ok(cond, name + (extra ? ' :: ' + ext
     await page.waitForFunction(sel => document.querySelector(sel)?.textContent === 'In Review', btn);
     const before = await page.evaluate(() => { window.__marker = Math.random(); window.__node = document.querySelector('#ordItems'); return +(document.getElementById('tabReviewN').textContent || 0); });
     await page.evaluate(rid => ReviewRelease.press(Review.openOrders().get(rid)), rid);
-    await page.waitForFunction(sel => document.querySelector(sel)?.textContent === 'Send to Review', btn, { timeout: 15000 });
+    await page.waitForFunction(sel => document.querySelector(sel)?.textContent === 'Hold Order', btn, { timeout: 15000 });
     const after = await page.evaluate(rid => ({ same: window.__marker !== undefined && window.__node === document.querySelector('#ordItems'), open: Review.openOrders().has(rid), n: +(document.getElementById('tabReviewN').textContent || 0) }), rid);
-    ok('4 resolved in Review: the Orders card says "Send to Review" at once, no reload, and the Review tab counts one less', after.same && !after.open && after.n === before - 1, JSON.stringify({ before, after }));
+    ok('4 resolved in Review: the Orders card says "Hold Order" at once, no reload, and the Review tab counts one less', after.same && !after.open && after.n === before - 1, JSON.stringify({ before, after }));
 
     ok('5 no script error on the page throughout', w.errors.length === 0, w.errors.join(' | '));
   } finally { await w.close(); }

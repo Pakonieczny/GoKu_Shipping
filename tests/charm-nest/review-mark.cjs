@@ -76,7 +76,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.deepEqual(r1, { ok: true, already: false, rid: R1 }); log('mark answered in', Date.now() - t0, 'ms');
     assert.equal(await A.is(R1), true, 'marked at once');
     assert.deepEqual(await A.page.evaluate(() => CharmNestReviewMark.markedRids()), [R1]);
-    assert.equal(await A.page.evaluate(rid => CharmNestReviewMark.reasonOf(rid), R1), 'Sent to Review by Name Alpha');
+    assert.equal(await A.page.evaluate(rid => CharmNestReviewMark.reasonOf(rid), R1), 'Order held by Name Alpha');
     const d = rec(R1);
     assert.ok(d, 'one document in the custom-order records'); assert.equal(d.review.state, 'open'); assert.equal(d.review.markedBy, 'Name Alpha'); assert.equal(d.kind, 'reviewMark'); assert.equal(d.state, 'open');
     assert.ok(!d.stamps && !d.completedAt && !d.printedAt && !d.history, 'no seal, no completion, no print, no history');
@@ -84,7 +84,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     let rows = await A.rows(), mine = rows.find(r => r.rid === R1 && r.kind === 'Marked');
     assert.ok(mine, 'the order is a row in Review under Marked: ' + JSON.stringify(rows.map(r => [r.rid, r.kind])));
     assert.equal(mine.slots, 1, 'one slot for the one line'); // NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): no Mark OK on the row; Release Hold is there instead
-    assert.equal(mine.ok, false, 'no Mark OK on the row'); assert.equal(mine.rel, true, 'Release Hold on the row'); assert.match(mine.why, /^Sent to Review by Name A/);
+    assert.equal(mine.ok, false, 'no Mark OK on the row'); assert.equal(mine.rel, true, 'Release Hold on the row'); assert.match(mine.why, /^Order held by Name A/);
     // pressing again, and two presses together: nothing more is written
     assert.deepEqual(await A.page.evaluate(rid => CharmNestReviewMark.mark(rid), R1), { ok: true, already: true, rid: R1 });
     const both = await A.page.evaluate(rid => Promise.all([CharmNestReviewMark.mark(rid), CharmNestReviewMark.mark(rid)]), R2);
@@ -94,8 +94,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     rows = await A.rows(); assert.equal(rows.find(r => r.rid === R2 && r.kind === 'Marked').slots, 2, 'a two-line order has a slot for each line');
     // the order's timeline gets one plain line (a note), never a seal
     const tlEvents = () => srv.st.calls.filter(c => c.name === 'charmNestLibrary' && c.body && c.body.op === 'timelineAdd').flatMap(c => Array.isArray(c.body.events) ? c.body.events : []);
-    for (let i = 0; i < 60 && !tlEvents().some(e => /Sent to Review by Name Alpha/.test(e.text || '')); i++) await sleep(100);
-    const line = tlEvents().find(e => /Sent to Review by Name Alpha/.test(e.text || ''));
+    for (let i = 0; i < 60 && !tlEvents().some(e => /Order held by Name Alpha/.test(e.text || '')); i++) await sleep(100);
+    const line = tlEvents().find(e => /Order held by Name Alpha/.test(e.text || ''));
     assert.ok(line, 'a plain line on the order\'s timeline'); assert.equal(line.type, 'note'); assert.equal(String(line.orderId), R1);
     assert.ok(!tlEvents().some(e => /^seal/.test(e.type || '')), 'no seal on the timeline');
     log('marked: one document, no seal, a row with a slot per line and Release Hold (no Mark OK); a repeated or double press writes nothing more');

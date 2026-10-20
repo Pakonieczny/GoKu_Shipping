@@ -280,7 +280,10 @@
   /** The slot an engraving event names when it is a slot of a line cut by unit ("C2", "L.2", "D1.2"); "" for every other event (a slotless one, an ear L or R, a disc D<n>: those group by line as they always did). */
   const NEW_SLOT = /^(?:C\d{1,3}|(?:L|R|D\d{1,2})\.\d{1,3})$/;
   const unitSlotOf = e => { const v = e && e.data && e.data.slot; return typeof v === "string" && NEW_SLOT.test(v) ? v : ""; };
-  const sealed = e => !!e && (isPlainDecision(e) || MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type) || !!opStepOf(e));
+  // (HOLDORDER, Paul 20 Oct 2026: "update the Seal text to better reflect the new button name and the function it performs": the Hold Order press (was Send to Review) is a person's action and
+  //  draws the ORDER HELD seal. Its record is the note charm-nest-review-mark.js writes, as it always was (data.reviewMark, no `how`: the note of its resolve has one), so an older press draws it too)
+  const holdOrderNote = e => !!e && e.type === "note" && !!e.data && !!e.data.reviewMark && !e.data.how;
+  const sealed = e => !!e && (isPlainDecision(e) || MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type) || holdOrderNote(e) || !!opStepOf(e));
   /** The seals to draw, oldest first: one per rail step per piece. A step recorded again for the same line (a second
    *  sorting scan, a rose sheet's cut after its laser mark) keeps the first seal and hangs the rest on it as `same`, so
    *  nothing is lost — the explainer and the detail can still read them. Etsy's completion folds into the order's
@@ -710,6 +713,8 @@
     // (RELHOLD, Paul 18 Oct 2026: a hold released with the Review card's Release Hold button says so in its data, seal "releaseHold": its step in the lane is the RELEASE HOLD seal the card was
     //  stamped with, the release family; a hold released anywhere else (Orders › On hold, the sheet window) is drawn as it always was)
     if (e.type === "released" && e.data && e.data.seal === "releaseHold") Object.assign(m, { family: "release", action: "RELEASE HOLD", icon: "release", path: undefined });
+    // (HOLDORDER, Paul 20 Oct 2026: the Hold Order press's seal says what it did, ORDER HELD, in the family of a hold)
+    if (holdOrderNote(e)) Object.assign(m, { family: "exceptions", action: "ORDER HELD", icon: "exceptions", path: undefined });
     return m;
   }
   /** One stamp as SVG. full: the face that reads (ring words, icon, date, time, name); otherwise edge + big icon.

@@ -23,7 +23,7 @@ const CUSTOM = 'Charm_Custom_Orders';
     const btn = `#ordItems > [data-rid="${rid}"] .revSendBtn`;
     await page.waitForSelector(btn);
     const t0 = await page.evaluate(b => document.querySelector(b).textContent, btn);
-    ok('1 an ordinary order shows "Send to Review" (the real mark API is on the page)', t0 === 'Send to Review' && await page.evaluate(() => typeof CharmNestReviewMark.mark === 'function' && typeof CharmNestReviewHold.canHold === 'function'), t0);
+    ok('1 an ordinary order shows "Hold Order" (the real mark API is on the page)', t0 === 'Hold Order' && await page.evaluate(() => typeof CharmNestReviewMark.mark === 'function' && typeof CharmNestReviewHold.canHold === 'function'), t0);
     ok('1b nothing is stored yet', !srv.st.doc(CUSTOM, rid + '_review'));
 
     await page.click(btn);
@@ -38,11 +38,11 @@ const CUSTOM = 'Charm_Custom_Orders';
     await page.waitForFunction(() => { const v = document.getElementById('reviewView'); return v && !v.classList.contains('hidden'); });
     ok('3 a second press opens the Review tab at that order and writes nothing more', JSON.stringify(srv.st.list(CUSTOM)) === writes && await page.evaluate(r => !!document.querySelector(`#rvList [data-rid="${r}"]`) || Review.items().some(i => i.rid === r), rid));
 
-    // the person resolves it in Review (Mark OK / the pick): the Orders button goes back to "Send to Review" by itself
+    // the person resolves it in Review (Mark OK / the pick): the Orders button goes back to "Hold Order" by itself
     await page.evaluate(r => CharmNestReviewMark.resolve(r, { by: 'Test Operator', how: 'ok' }), rid);
     await page.evaluate(() => CN.setMode('orders'));
-    await page.waitForFunction(r => !CharmNestReviewMark.isMarked(r) && document.querySelector(`#ordItems > [data-rid="${r}"] .revSendBtn`)?.textContent === 'Send to Review', rid);
-    ok('4 resolved: the order leaves Review and its button says "Send to Review" again', true);
+    await page.waitForFunction(r => !CharmNestReviewMark.isMarked(r) && document.querySelector(`#ordItems > [data-rid="${r}"] .revSendBtn`)?.textContent === 'Hold Order', rid);
+    ok('4 resolved: the order leaves Review and its button says "Hold Order" again', true);
     ok('5 no script error on the page throughout', w.errors.length === 0, w.errors.join(' | '));
   } finally { await w.close(); }
   console.log(`review-send-real: ${results.length} checks passed`);
