@@ -284,7 +284,7 @@
   /* ════ Seals ════ */
   const Seal = (() => {
     const BASE_SIZE = 50, META_INK = '#12294c';
-    const INK = { print: "#65737f", sheet: "#65737f", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58", monogramApproved:"#4d3f99", releaseHold:"#a2591c" };   // (RELORANGE, Paul 19 Oct 2026: the Release Hold seal is orange, the Hold button's)
+    const INK = { print: "#65737f", sheet: "#65737f", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58", monogramApproved:"#4d3f99", releaseHold:"#a2591c", cancel:"#982f48" };   // (RELORANGE, Paul 19 Oct 2026: the Release Hold seal is orange, the Hold button's) (SEALCANCEL, Paul 20 Oct 2026: the ORDER CANCELLED seal is the muted brick red of the Cancelled Orders family)
     /* MONOSEAL (Paul, 17 Oct 2026: "When I approved the monogram, I didn't see any stamp or seal animation, and we do not have a custom-made seal that is
        specifically for approving monograms ... a brand new seal that is specific for monograms and the stamping animation whenever a monogram is approved"):
        the MONOGRAM seal, the ninth family. How to use it from any surface (the page's other modules never need to know more than this):
@@ -341,7 +341,7 @@
       complete:'<path d="M3 7l8-4 8 4-8 4zM3 7v12l8 4V11M19 7v5M7 5l8 4M3 19l8 4 3-1M17 20l2 2 5-6"/>',
       set:'<path d="M2 5l10-4 10 4-10 4zM2 10l10 4 10-4M2 15l10 4 10-4M2 20l10 4 10-4M15 12l3 3 5-6"/>'
     };
-    const familyOf = st => st.how==='button'?'fulfilment':st.how==='laserReady' || st.how==='laserDone'?'laser':st.how==='engraveApproved' || st.how==='engravePlain'?'engraving':st.how==='monogramApproved'?'monogram':st.how==='releaseHold'?'release':'prepared';
+    const familyOf = st => st.how==='button'?'fulfilment':st.how==='laserReady' || st.how==='laserDone'?'laser':st.how==='engraveApproved' || st.how==='engravePlain'?'engraving':st.how==='monogramApproved'?'monogram':st.how==='releaseHold'?'release':st.how==='cancel'?'cancelled':'prepared';   // (SEALCANCEL, Paul 20 Oct 2026: the Cancel Order press's seal wears the Cancelled Orders ticket)
     function face(model, opts={}) {
       model = Object.assign({}, model);
       model.family=FAMILY[model.family]?model.family:'received';
@@ -463,7 +463,12 @@
     const frontOf=st=>!!st && (st.face==='front' || !!(st.data && st.data.face==='front'));
     const monogramOf=st=>st.how==='monogramApproved';   // (MONOSEAL: the monogram approval's seal: a process seal like the engraving's)
     const releaseOf=st=>st.how==='releaseHold';   // (RELHOLD: the Release Hold press's seal: a process seal, historical wherever it is drawn)
-    const processOf = st => st.how === 'sheet' || st.how === 'laserReady' || st.how === 'laserDone' || engravingOf(st) || monogramOf(st) || releaseOf(st);
+    /* SEALCANCEL (Paul, 20 Oct 2026: every action button stamps and leaves its seal): the Cancel Order press's seal.
+         stamp  = { id: "cancel:<rid>:<at>", how: "cancel", at, by }      (kept on the order's Review document as cancel { at, by, how, id }, as Release Hold keeps release)
+         Seal.html(stamp)                              the ink face: ORDER CANCELLED, the date and the time, in the Cancelled Orders ink (INK.cancel)
+       A PROCESS seal (a click zooms; it never presses a button). Seal.labelOf(how) / Seal.INK[how] are what a renderer reads for any kind. */
+    const cancelOf=st=>st.how==='cancel';
+    const processOf = st => st.how === 'sheet' || st.how === 'laserReady' || st.how === 'laserDone' || engravingOf(st) || monogramOf(st) || releaseOf(st) || cancelOf(st);
     const kindOf = st => processOf(st) ? st.how : st.how === "button" ? "button" : "print";
     const green = k => k === 'button' || k === 'laserDone' || k === 'engraveApproved' || k === 'monogramApproved' || k === 'releaseHold';
     const rotOf = st => { const h = hash(String(st.at) + (st.by || "")); return green(kindOf(st)) ? 5 + (h % 8) : -(5 + (h % 9)); };
@@ -471,8 +476,8 @@
     function modelOf(st) {
       if (st.model) return Object.assign({}, st.model);
       if (st.family) return Object.assign({}, st);
-      const action = st.how === 'sheet' ? 'SENT TO SHEET' : st.how === 'button' ? 'ORDER COMPLETE' : st.how === 'laserReady' ? 'LASER READY' : st.how === 'laserDone' ? 'LASER CUT' : st.how === 'engraveApproved' ? (frontOf(st) ? 'FRONT ENGRAVING' : 'BACK ENGRAVING') : st.how === 'engravePlain' ? (frontOf(st) ? 'FRONT CUT PLAIN' : 'CUT PLAIN') : st.how === 'monogramApproved' ? 'MONOGRAM' : st.how === 'releaseHold' ? 'RELEASE HOLD' : 'QR LABEL PRINTED';
-      const icon = st.how === 'releaseHold' ? 'release' : st.how === 'monogramApproved' ? 'monogram' : st.how === 'sheet' ? 'prepared' : st.how === 'button' ? 'complete' : st.how === 'laserReady' ? 'laserReady' : st.how === 'laserDone' ? 'laser' : st.how === 'engravePlain' ? 'plain' : st.how === 'engraveApproved' ? 'engraving' : 'qr';
+      const action = st.how === 'sheet' ? 'SENT TO SHEET' : st.how === 'button' ? 'ORDER COMPLETE' : st.how === 'laserReady' ? 'LASER READY' : st.how === 'laserDone' ? 'LASER CUT' : st.how === 'engraveApproved' ? (frontOf(st) ? 'FRONT ENGRAVING' : 'BACK ENGRAVING') : st.how === 'engravePlain' ? (frontOf(st) ? 'FRONT CUT PLAIN' : 'CUT PLAIN') : st.how === 'monogramApproved' ? 'MONOGRAM' : st.how === 'releaseHold' ? 'RELEASE HOLD' : st.how === 'cancel' ? 'ORDER CANCELLED' : 'QR LABEL PRINTED';
+      const icon = st.how === 'cancel' ? 'cancelled' : st.how === 'releaseHold' ? 'release' : st.how === 'monogramApproved' ? 'monogram' : st.how === 'sheet' ? 'prepared' : st.how === 'button' ? 'complete' : st.how === 'laserReady' ? 'laserReady' : st.how === 'laserDone' ? 'laser' : st.how === 'engravePlain' ? 'plain' : st.how === 'engraveApproved' ? 'engraving' : 'qr';
       const m = { family:familyOf(st), action, icon, at:+st.at || 0, by:String(st.by || ''), scope:st.scope || '', n:st.n || 0 };
       if (monogramOf(st)) { const L = String(st.letters || '').toUpperCase(); if (/^[A-Z]{3}$/.test(L)) m.letters = L; if (+st.of > 1) m.of = +st.of; }   // (MONOSEAL: the three letters of THIS monogram, and the piece of a line of several)
       return m;
@@ -482,6 +487,7 @@
     function titleOf(st) {
       const d = new Date(+st.at || Date.now()), when = d.toLocaleString("en-US", { timeZone:"America/Toronto", weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
       if(st.how==='sheet')return `Sent to sheet${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
+      if(cancelOf(st))return `Order cancelled with Cancel Order${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;   // (SEALCANCEL)
       if(releaseOf(st))return `Hold released to the nesting queue${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
       if(monogramOf(st))return `Monogram${/^[A-Za-z]{3}$/.test(String(st.letters || ''))?' '+String(st.letters).toUpperCase():''} approved${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}${+st.of>1?` · piece ${+st.n || 1} of ${+st.of}`:''}`;
       if(engravingOf(st))return `${st.how==='engravePlain'?(frontOf(st)?'Front engraving waived · cut plain':'Engraving waived · cut plain'):frontOf(st)?'Front engraving placement approved':'Engraving placement approved'}${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
@@ -834,7 +840,7 @@
       const t=doc.createElement('span');t.className='sealTool';t.innerHTML=tool(kind,seal);
       Object.assign(t.style,{left:cx-size/2+'px',top:cy-size/2+'px',width:size+'px',height:size+'px'});
       host.appendChild(seal);host.appendChild(t);
-      const rot=rotOf(st),paint=()=>btn.classList.add(kind==='button' || kind==='releaseHold'?'sealedDone':'sealedPrint');   // (RELHOLD: the Release Hold button takes the green of its seal, as Complete Order did)
+      const rot=rotOf(st),paint=()=>btn.classList.add(kind==='button' || kind==='releaseHold'?'sealedDone':kind==='cancel'?'sealedCancel':'sealedPrint');   // (RELHOLD: the Release Hold button takes the green of its seal, as Complete Order did)
       if(reduced() || spec.still){seal.style.opacity='';t.remove();paint();return;}
       const down=t.animate([
         {transform:`translate(34px,-46px) rotate(${rot-16}deg) scale(1.7)`,opacity:0},
@@ -1173,7 +1179,8 @@
       return `<span class="sealRow sheetCutRow${o.cls ? " " + o.cls : ""}" data-seal-group data-seal-count="1" data-seal-max="${SHEET_SIZE}" data-seal-grow="${SHEET_GROW}" data-seal-cap="${SHEET_CAP}" role="group" aria-label="Sheet completed">` +
         html(Object.assign({}, stamp, { scope: "sheet", owner: o.owner || stamp.owner || "" }), BASE_SIZE, "sheetProcessSeal cut" + (o.pending ? " pending" : "")) + `</span>`;
     }
-    return { list, html, row, svg, face, modelOf, tool, sound:Sound, stampOn, press, pressPending, hasPrint, ofPiece, completionOf, pieceRow, titleOf, INK, FAMILY, BASE_SIZE, SHEET_SIZE, SHEET_GROW, SHEET_CAP, sheetCut, zoom, zoomScale, busy, whenIdle, defer, fit, fitGroups };
+    const labelOf = how => modelOf({ how: String(how || '') }).action;   // (SEALCANCEL: the words a seal of this kind says, e.g. labelOf('cancel') → 'ORDER CANCELLED')
+    return { list, html, row, svg, face, modelOf, labelOf, tool, sound:Sound, stampOn, press, pressPending, hasPrint, ofPiece, completionOf, pieceRow, titleOf, INK, FAMILY, BASE_SIZE, SHEET_SIZE, SHEET_GROW, SHEET_CAP, sheetCut, zoom, zoomScale, busy, whenIdle, defer, fit, fitGroups };
   })();
 
   /* ════ Pop-ups: every window grows out of what opened it, and goes back into it ════

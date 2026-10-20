@@ -16,6 +16,7 @@
      released(rid)                         RELHOLD (Paul, 18 Oct 2026): who released the order with the Review card's Release Hold, and when: { at, by, how, id } from the cloud's
                                            record (the same document; every computer has it from the maps' list and the changes feed), or null; synchronous, no read
      release(rid, {by, at, id, how, path})  -> Promise<{ok, already, error?}>  records that release (charmNestLibrary reviewMarkPut action "release"); never a mark, never resolves one
+     cancel(rid, {by, at, id}) / uncancel(rid, {by}) / cancelled(rid) / sealsOf(rid)   SEALCANCEL (Paul, 20 Oct 2026): the Cancel Order seal, kept as release is (cancel { at, by, how: "cancel", id })
      open(rid)                             the Review tab, at that order's row                                                              */
 (function (root) {
   "use strict";
@@ -103,7 +104,7 @@
       if (isMarked(rid)) return { ok: true, already: true, rid };
       const key = keyOf(rid), was = recOf(rid), at = Date.now();
       // at once: the Review list and every Hold / button that asks isMarked say so while the cloud writes (an older answer of the feed cannot undo it: customWrites)
-      put(Object.assign({ key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", review: { state: "open", markedAt: at, markedBy: by }, updatedAtMs: 0, pending: true }, was && was.release ? { release: was.release } : {}));   // (RELHOLD: a release kept on the record stays)
+      put(Object.assign({ key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", review: { state: "open", markedAt: at, markedBy: by }, updatedAtMs: 0, pending: true }, was && was.release ? { release: was.release } : {}, was && was.cancel ? { cancel: was.cancel } : {}));   // (RELHOLD: a release kept on the record stays) (SEALCANCEL, Paul 20 Oct 2026: and a cancel seal)
       seen.set(rid, stateSig(recOf(rid))); emit({ rid, kind: "marked" }); redraw();
       try {
         const r = await root.api("charmNestLibrary", { op: "reviewMarkPut", action: "mark", rid, by }, { quiet: true });
@@ -165,6 +166,42 @@
       return { ok: false, rid, error: String((e && e.message) || e || "Not saved") };
     }
   }
+
+  /* SEALCANCEL (Paul, 20 Oct 2026: "every action button stamps and leaves a custom seal beside it ... persisted on the order so the seal travels with it everywhere until its conclusion"):
+     the Cancel Order press, kept the way Release Hold is: on the order's own Review document, cancel { at, by, how: "cancel", id, earlier? } (charmNestLibrary reviewMarkPut action "cancel"),
+     riding the same maps' list and changes feed. Undo of the cancel marks it undone (action "uncancel": cancel.undoneAt / cancel.undoneBy, nothing deleted), so it no longer shows; the
+     order's other seals (release, the custom records' stamps) are never touched. cancelled(rid) → { at, by, how: "cancel", id } or null (none, or undone); synchronous, no read. */
+  function cancelled(rid) {
+    const r = recOf(ridOf(rid)), v = r && r.cancel && typeof r.cancel === "object" ? r.cancel : null;
+    return v && +v.at > 0 && !(+v.undoneAt > 0) ? { at: +v.at, by: String(v.by || ""), how: "cancel", id: String(v.id || "") } : null;
+  }
+  async function cancel(rid, opts) {
+    rid = ridOf(rid); opts = opts || {}; if (!rid) return { ok: false, rid, error: "No order number" };
+    const by = String(opts.by || "").trim().slice(0, 80); if (!by) return { ok: false, rid, error: "No name" };
+    const at = +opts.at > 0 ? +opts.at : Date.now(), id = String(opts.id || `cancel:${rid}:${at}`).slice(0, 120), key = keyOf(rid), was = recOf(rid);
+    put(Object.assign({ key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", hasLabel: false }, was || {}, { cancel: { at, by, how: "cancel", id }, updatedAtMs: 0, pending: true }));
+    try {
+      const r = await root.api("charmNestLibrary", { op: "reviewMarkPut", action: "cancel", rid, by, at, id, how: "cancel" }, { quiet: true });
+      if (!r || r.error || !r.record) throw new Error((r && r.error) || "The cloud sent no record");
+      put(r.record); told(rid, r.record);
+      return { ok: true, already: !!r.already, rid };
+    } catch (e) { return { ok: false, rid, error: String((e && e.message) || e || "Not saved") }; }   // (the page keeps what it showed; the timeline has the cancel)
+  }
+  async function uncancel(rid, opts) {
+    rid = ridOf(rid); opts = opts || {}; if (!rid) return { ok: false, rid, error: "No order number" };
+    const was = recOf(rid), c = was && was.cancel && typeof was.cancel === "object" ? was.cancel : null;
+    if (!c || +c.undoneAt > 0) return { ok: true, already: true, rid };
+    const by = String(opts.by || "").trim().slice(0, 80) || "operator", at = Date.now();
+    put(Object.assign({}, was, { cancel: Object.assign({}, c, { undoneAt: at, undoneBy: by }), updatedAtMs: 0, pending: true }));
+    try {
+      const r = await root.api("charmNestLibrary", { op: "reviewMarkPut", action: "uncancel", rid, by, id: String(c.id || "") }, { quiet: true });
+      if (!r || r.error || !r.record) throw new Error((r && r.error) || "The cloud sent no record");
+      put(r.record); told(rid, r.record);
+      return { ok: true, already: !!r.already, rid };
+    } catch (e) { return { ok: false, rid, error: String((e && e.message) || e || "Not saved") }; }
+  }
+  /** (SEALCANCEL) Every order-level seal this order's Review document keeps, oldest first, as stamps any renderer draws by kind (Seal.html, Seal.labelOf(how), Seal.INK[how]): its Release Hold and its Cancel Order. */
+  const sealsOf = rid => [released(rid), cancelled(rid)].filter(Boolean).sort((a, b) => a.at - b.at);
 
   /** The items Review.syncOrderItems adds to the list: one for each open mark whose order has a line in the pull (keys "ord:rvm:" + rid, so the list drops one the moment its mark is resolved). */
   function itemsFor(rows) {
@@ -231,5 +268,5 @@
   /** A sandbox reset cleared the records: forget them here too. */
   function reset() { const B = root.B; if (B && B.maps) B.maps.reviewMarks = {}; seen.clear(); doneCache.clear(); }
 
-  root.CharmNestReviewMark = { mark, resolve, release, released, isMarked, markedRids, openRids: markedRids, info, reasonOf, onChange, onRow, refresh, open, itemsFor, doneSettled, decorateRow, sync, reset, _key: keyOf, _sandbox: sandbox };
+  root.CharmNestReviewMark = { mark, resolve, release, released, cancel, uncancel, cancelled, sealsOf, isMarked, markedRids, openRids: markedRids, info, reasonOf, onChange, onRow, refresh, open, itemsFor, doneSettled, decorateRow, sync, reset, _key: keyOf, _sandbox: sandbox };
 })(typeof window !== "undefined" ? window : globalThis);
