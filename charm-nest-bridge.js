@@ -19225,6 +19225,9 @@ const OrderWin = window.OrderWin = (() => {
   /** Every seal the order has collected, oldest first: [{ kind, at, by, id, label, how, n }]. */
   function winSealsOf(rid) {
     rid = ridDigits(rid); if (!rid) return [];
+    // (SEALTRAVEL, Paul 20 Oct 2026: the cards and this window read an order's seals through ONE reader, CNSealTravel.of (charm-nest-seal-travel.js), so they can never disagree; the window hands in what only it
+    //  holds, the order's timeline events and its cancel record. What follows is that reader's twin, kept for a page whose script did not load)
+    if (window.CNSealTravel && CNSealTravel.of) { const got = tryDo(() => CNSealTravel.of(rid, undefined, W.cancelled && ridDigits(W.cancelled.orderId || W.rid) === rid ? W.cancelled : null, { events: W.evFor === rid ? W.events : null }), null); if (got) return got.map(s => ({ kind: s.kind, at: s.at, by: s.by, id: s.id, label: s.label || "", how: s.how, n: +s.n || 0 })); }
     const out = [], seen = new Set();
     const add = (kind, v) => {
       if (!v || typeof v !== "object" || !(+v.at > 0) || +v.undoneAt > 0) return;   // (a seal its Undo marked undone, cancel.undoneAt (SEALCANCEL), is not shown)

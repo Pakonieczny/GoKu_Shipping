@@ -5,12 +5,12 @@
  *
  * ONE reader and ONE painter, by kind, so a new kind of seal shows everywhere with no more work:
  *
- *   CNSealTravel.of(rid, rows?, extra?)  -> [records], oldest first. A record is { kind, how, at, by, id, label?, n?, src? } (src "record": from the custom records, which a line's own seals row already draws). Read from what the page already holds (no read, no timer, no listener):
+ *   CNSealTravel.of(rid, rows?, extra?, opts?) -> [records], oldest first; THE reader of an order's seals, the order window's too (winSealsOf). opts.events: the order's timeline events when the caller holds them. A record is { kind, how, at, by, id, label?, n?, src? } (src "record": from the custom records, which a line's own seals row already draws). Read from what the page already holds (no read, no timer, no listener):
  *                                          · the order's custom records (CustomPrint.sealsOfOrder: each QR print, an older Complete Order press, a send's sheet stamps), kinds "print" / "complete" / their own;
  *                                          · its Release Hold (Orders.releaseStampOf over its lines, so a hold put on again hides it as before, RELNOSEAL; the cloud's record when no line is in the pull);
  *                                          · every other seal record kept on the order's Review document ({rid}_review in the custom-order records: the same record and shape as the release one,
  *                                            { at, by, how, id }, under its own field — "cancel", "sheet", … — or listed under `seals`), which the maps' list and the changes feed bring to every computer and back after a reload;
- *                                          · its ORDER HELD seal: the Hold Order press, the Review document's own mark (review.markedAt / markedBy);
+ *                                          · its ORDER HELD seal (kind "hold"): the Hold Order press, the Review document's own mark (review.markedAt / markedBy), and the timeline's note of it;
  *                                          · extra: other objects that carry seal records under `seal` / `seals` (a Cancelled list's record).
  *   CNSealTravel.html(records, opts?)     -> the strip: each record drawn with its kind's label and ink (KINDS); print / complete exactly as Seal.row draws them (the button seals), release exactly as the Orders card
  *                                          draws it (Orders.releaseSealHtml: 72 px with its words), every other kind as the same worded seal in its own ink; a kind not in KINDS falls back to a neutral ink with its stored label.
@@ -30,9 +30,9 @@
     cancel:   { label: "Order Cancelled",  ink: "#982f48", family: "cancelled",  icon: "cancelled", action: "ORDER CANCELLED" },
     sheet:    { label: "Sent to Sheet",    ink: "#65737f", family: "prepared",   icon: "prepared",  action: "SENT TO SHEET" },
     // (HOLDORDER / SEALTRAVEL, Paul 20 Oct 2026: the Hold Order press (was Send to Review): ORDER HELD, in the family of a hold, as the timeline draws it (charm-nest-timeline-ui.js holdOrderNote))
-    held:     { label: "Order Held",       ink: "#9f483d", family: "exceptions", icon: "exceptions", action: "ORDER HELD" }
+    hold:     { label: "Order Held",       ink: "#9f483d", family: "exceptions", icon: "exceptions", action: "ORDER HELD" }
   };
-  const ALIAS = { button: "complete", releaseHold: "release", released: "release", cancelled: "cancel", cancelOrder: "cancel", orderCancelled: "cancel", sendToSheet: "sheet", sentToSheet: "sheet", holdOrder: "held", reviewMark: "held" };
+  const ALIAS = { button: "complete", releaseHold: "release", released: "release", cancelled: "cancel", cancelOrder: "cancel", orderCancelled: "cancel", sendToSheet: "sheet", sentToSheet: "sheet", holdOrder: "hold", reviewMark: "hold", sendToReview: "hold", sentToReview: "hold", onHold: "hold", orderComplete: "complete", qr: "print", labelPrinted: "print" };
   const kindOf = (how, field) => { const k = String(how || field || "").trim(); return ALIAS[k] || k || "seal"; };
   const spec = kind => KINDS[kind] || null;
   const words = s => String(s || "").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase()).trim();
@@ -44,7 +44,7 @@
 
   /** One seal record from an object kept for it ({ at, by, how, id, label? }), or null. */
   function recOf(v, field) {
-    if (!v || typeof v !== "object" || !(+v.at > 0) || +v.undoneAt > 0) return null;   // (a seal undone, e.g. a cancel taken back with Restore, SEALCANCEL: no longer shown)
+    if (!v || typeof v !== "object" || !(+v.at > 0) || +v.undoneAt > 0 || !(v.by != null || v.how || v.kind || v.id)) return null;   // (a seal undone, e.g. a cancel taken back with Restore, SEALCANCEL: no longer shown)
     const kind = kindOf(v.kind || v.how, field);
     const r = { kind, how: String(v.how || field || kind), at: +v.at, by: String(v.by || ""), id: String(v.id || "") };
     if (v.label) r.label = String(v.label).slice(0, 60);
@@ -60,36 +60,48 @@
     return out;
   }
   const reviewDoc = rid => { try { const m = root.B && root.B.maps && root.B.maps.reviewMarks; return (m && m[rid + "_review"]) || null; } catch (_) { return null; } };
-  const rowsOfRid = rid => { try { return (root.Orders && root.Orders.rows ? root.Orders.rows() : []).filter(r => r && r.order && String(r.order.receiptId) === rid && r.state !== "gone"); } catch (_) { return []; } };
+  const rowsOfAll = rid => { try { return (root.Orders && root.Orders.rows ? root.Orders.rows() : []).filter(r => r && r.order && String(r.order.receiptId) === rid); } catch (_) { return []; } };
 
-  function of(rid, rows, extra) {
+  const SKIP = new Set(["engraveApproved", "engravePlain", "monogramApproved"]);   // (the engraving and monogram approvals: drawn on their own pieces' cells and cards, beside their own Approve)
+  /* (SEALTRAVEL, Paul 20 Oct 2026, with SEALWIN: ONE reader for the cards and the order window, so they can never disagree: the window's winSealsOf asks this, handing in what only it holds, the order's timeline events
+     and its cancel record) */
+  function of(rid, rows, extra, opts) {
     rid = String(rid == null ? "" : rid).replace(/\D/g, ""); if (!rid) return [];
-    rows = Array.isArray(rows) ? rows.filter(r => r && r.state !== "gone") : rowsOfRid(rid);
-    const out = [];
-    // the custom records' stamps: each QR print (its number), an older Complete Order press, a send's sheet stamps
+    opts = opts || {};
+    const all = Array.isArray(rows) ? rows.filter(Boolean) : rowsOfAll(rid), live = all.filter(r => r.state !== "gone");
+    const out = [], events = Array.isArray(opts.events) ? opts.events : [];
+    const add = (r, src) => { if (!r || SKIP.has(r.kind) || SKIP.has(r.how)) return; if (src) r.src = src; out.push(r); };
+    // the pieces' records: each QR print (its number), an older Complete Order press, a send's sheet stamps (a line's own seals row already draws these: src "record")
     try {
-      const CP = root.CustomPrint, rec = CP && CP.sealsOfOrder ? CP.sealsOfOrder(rid) : null;
-      if (rec && root.Seal) for (const s of Seal.list(rec)) { const k = kindOf(s.how); out.push(Object.assign({}, s, { kind: k === "seal" ? "print" : k, how: s.how || "print", at: +s.at || 0, by: String(s.by || ""), src: "record" })); }
+      const CP = root.CustomPrint, S = root.Seal;
+      if (CP && S) {
+        const rec = CP.cardRecord ? CP.cardRecord(all.map(r => CP.recordOfRow ? CP.recordOfRow(r) : null).concat([CP.sealsOfOrder ? CP.sealsOfOrder(rid) : null])) : CP.sealsOfOrder(rid);
+        for (const st of rec ? (S.ofPiece ? S.ofPiece(rec) : S.list(rec)) : []) { const k = kindOf(st.how); add(Object.assign({}, st, { kind: k === "seal" ? "print" : k, how: st.how || "print", at: +st.at || 0, by: String(st.by || "") }), "record"); }
+      }
     } catch (_) {}
-    // the order-level seals its Review document keeps, through its own reader (CharmNestReviewMark.sealsOf, SEALCANCEL: Release Hold and Cancel Order, an undone cancel left out).
-    // Release Hold: the Orders card's own reading while the order has lines here (a hold put on again hides it, RELNOSEAL); the cloud's record otherwise
-    const doc = reviewDoc(rid), RM = root.CharmNestReviewMark, mine = new Set(["release", "cancel"]);
-    let kept = []; try { kept = RM && RM.sealsOf ? RM.sealsOf(rid).map(v => recOf(v, "")).filter(Boolean) : [doc && recOf(doc.release, "release"), doc && recOf(doc.cancel, "cancel")].filter(Boolean); } catch (_) {}
+    // Release Hold: the Orders card's own reading (Orders.releaseStampOf: none while the order is held now, RELNOSEAL); else the order's Review document (every computer has it), and every release its timeline keeps
+    const RM = root.CharmNestReviewMark;
+    let rel = null; try { rel = root.Orders && root.Orders.releaseStampOf ? root.Orders.releaseStampOf(live.length ? live : all) : null; } catch (_) {}
+    const heldNow = !rel && live.some(r => r.hold);
+    if (rel) add({ kind: "release", how: "releaseHold", at: +rel.at, by: String(rel.by || ""), id: String(rel.id || "") });
+    if (!heldNow) for (const e of events) if (e && e.type === "released" && e.data && e.data.seal === "releaseHold") add(recOf({ at: +e.data.sealAt || e.at, by: e.by, id: e.data.sealId || e.id, how: "releaseHold" }, ""));
+    // the Review document's own reader (CharmNestReviewMark.sealsOf, SEALCANCEL: Release Hold and ORDER CANCELLED, an undone one left out); then every seal-shaped field it does not know yet, on the order's own
+    // records in the maps (the release record's pattern: release, cancel, sheet ... and kinds still to come)
+    try { for (const v of (RM && RM.sealsOf ? RM.sealsOf(rid) : []) || []) { const r = recOf(v, ""); if (r && !(r.kind === "release" && heldNow)) add(r); } } catch (_) {}
     try {
-      const O = root.Orders, st = rows.length && O && O.releaseStampOf ? O.releaseStampOf(rows) : null;
-      if (st) out.push({ kind: "release", how: "releaseHold", at: +st.at, by: String(st.by || ""), id: String(st.id || "") });
-      else if (!rows.length) for (const r of kept) if (r.kind === "release") out.push(r);
+      for (const [k, doc] of Object.entries((root.B && root.B.maps && root.B.maps.reviewMarks) || {})) {
+        if (!doc || String(doc.receiptId || String(k).split("_")[0]).replace(/\D/g, "") !== rid) continue;
+        for (const r of gather(doc, true)) if (!(r.kind === "release" && heldNow)) add(r);
+      }
     } catch (_) {}
-    for (const r of kept) if (r.kind !== "release") out.push(r);
-    // every other seal record on the order's Review document (a kind to come: its own field, the same { at, by, how, id }), and on what the caller hands in
-    for (const r of gather(doc, true)) if (!mine.has(r.kind)) out.push(r);
-    // ORDER HELD (HOLDORDER, Paul 20 Oct 2026): the Hold Order press is the Review document's own mark (review.markedAt / markedBy, the same press the timeline's reviewMark note records, its id rvmark.<rid>.<markedAt>);
-    // kept once resolved too (the resolve keeps markedAt), so the seal travels with the order to its end
-    { const v = doc && doc.review; if (v && +v.markedAt > 0) out.push({ kind: "held", how: "holdOrder", at: +v.markedAt, by: String(v.markedBy || ""), id: `rvmark.${rid}.${+v.markedAt}` }); }
-    for (const o of [].concat(extra || [])) for (const r of gather(o, false)) out.push(r);
-    // each seal once (the same kind, by the same person, within 10 s), oldest first
+    // ORDER HELD (HOLDORDER, Paul 20 Oct 2026): the Hold Order press (was Send to Review) is the order's Review mark (markedAt / markedBy, kept once resolved too) and the timeline's note of it (data.reviewMark
+    // with no `how`, which charm-nest-timeline-ui.js draws as ORDER HELD): the same press from both is one seal
+    try { const i = RM && RM.info ? RM.info(rid) : null; if (i && +i.at > 0) add({ kind: "hold", how: "holdOrder", at: +i.at, by: String(i.by || ""), id: `rvmark.${rid}.${+i.at}` }); } catch (_) {}
+    for (const e of events) if (e && e.type === "note" && e.data && e.data.reviewMark && !e.data.how && +e.at > 0) add({ kind: "hold", how: "holdOrder", at: +e.at, by: String(e.data.by || e.by || ""), id: String(e.id || "") });
+    for (const o of [].concat(extra || [])) for (const r of gather(o, false)) add(r);
+    // each seal once (the same kind within 10 s, by the same person; a print by its number), oldest first
     const once = [];
-    for (const r of out.sort((a, b) => a.at - b.at)) if (!once.some(o => o.kind === r.kind && String(o.by) === String(r.by) && Math.abs(o.at - r.at) < 10000 && (o.n || 0) === (r.n || 0))) once.push(r);
+    for (const r of out.sort((a, b) => a.at - b.at)) if (!once.some(o => o.kind === r.kind && Math.abs(o.at - r.at) < 10000 && (r.kind === "hold" || String(o.by) === String(r.by)) && (o.n || 0) === (r.n || 0))) once.push(r);
     return once;
   }
 
