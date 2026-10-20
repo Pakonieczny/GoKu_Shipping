@@ -360,6 +360,8 @@
     if (m && m.expectIn) for (const r of snap.rows) m.expectIn(keyOf(r), { from: () => chipEl("cancelled"), ttl: 30000, ms: FLY_MS });
     if (m && m.expectIn) for (const k of snap.mks || []) m.expectIn(k, { from: () => chipEl("cancelled"), ttl: 30000, ms: FLY_MS });   // (CANCELREVIEW: its Review card flies back out of the Orders tab)
     undoable.delete(rid);
+    // (REVIEWHELD, Paul 20 Oct 2026: undone from Review, its card is found where it comes back in Open: brought into view and marked, as a reopened card is (Review's RV.back))
+    try { if (reviewCards(rid).length || (snap.mks || []).length) { const v = root.Review && Review.view && Review.view(); if (v) v.back = { keys: snap.rows.map(r => r.key), until: Date.now() + 8000 }; } } catch (_) {}
     let n = 0;
     try { n = revive(snap); } catch (e) { console.warn("cancel undo", e); }
     if (wait && wait.close) wait.close();

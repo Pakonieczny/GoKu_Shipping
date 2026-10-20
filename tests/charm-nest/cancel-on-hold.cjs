@@ -26,7 +26,7 @@ const SHOTS = process.env.SHOTS || '';
 const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 10, 17) / 1000);
 const order = (rid, buyer, lines, extra) => Object.assign({ receiptId: String(rid), orderNumber: String(rid), createTs: SHIP - 5 * DAY, updateTs: SHIP - 5 * DAY + 60, shipBy: SHIP, buyer: { name: buyer }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [], lines }, extra || {});
 const line = (tid, sku, title, extra) => Object.assign({ transactionId: String(tid), listingId: String(1800000000 + (tid % 100000)), sku, title, quantity: 1, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: '14k Gold Filled' }], metalKey: 'gold', metalLabel: 'GF 14/20', personalization: [], buyerMessage: '' }, extra || {});
-const A = '4174601819', B2 = '4174601820', C = '4174601821', D = '4174601822', E = '4174601823', F = '4174601824';
+const A = '4174601819', B2 = '4174601820', C = '4174601821', D = '4174601822', E = '4174601823', F = '4174601824', G = '4174601825';
 const HOLD = 'Taken off SS Sheet 1, GF Sheet 2 by Paul: Add to next sheet';
 const ORDERS = [
   order(A, 'Dana Duck', [line(41746018191, 'HUGGIE_DUCK', 'HUGGIE HOOPS- RUBBER DUCK(SHAPE)')], { createTs: SHIP - 2 * DAY }),
@@ -34,9 +34,12 @@ const ORDERS = [
   order(C, 'Cy Open', [line(41746018211, 'MOON_12', 'Crescent Moon Charm')], { createTs: SHIP - 4 * DAY }),
   order(D, 'Di Reduced', [line(41746018221, 'LEAF_2', 'Leaf Charm')], { createTs: SHIP - 5 * DAY }),
   order(E, 'Ed Name', [line(41746018231, 'SEA_TURTLE', 'Sea Turtle Charm')], { createTs: SHIP - 6 * DAY }),
-  order(F, 'Fay Fail', [line(41746018241, 'BUNNY5', 'Bunny Charm')], { createTs: SHIP - 7 * DAY })
+  order(F, 'Fay Fail', [line(41746018241, 'BUNNY5', 'Bunny Charm')], { createTs: SHIP - 7 * DAY }),
+  order(G, 'Gus OnlyHeld', [line(41746018251, 'ROSE_4', 'Rose Charm')], { createTs: SHIP - 8 * DAY })
 ];
-const HELD = [A, B2, D, E, F];
+const HELD = [A, B2, D, E, F, G];
+// (REVIEWHELD, Paul 20 Oct 2026: G is only on hold: nobody sent it to Review and it asks nothing, so its one card in Review is its own "Held order")
+const ONLYHELD = [G];
 const results = [];
 const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
 const check = async (name, fn) => { if (ONLY.length && !ONLY.includes(name.split(' ')[0])) return; try { await fn(); results.push([name, true]); console.log('  ✓ ' + name); } catch (e) { results.push([name, false]); console.log('  ✗ ' + name + '\n      ' + String(e && e.stack || e).split('\n').slice(0, 5).join('\n      ')); } };
@@ -76,15 +79,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     page.on('pageerror', e => { errors.push(e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 3).join(' | ')); });
     await page.goto(`${sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.CN && window.Orders && window.Cancelled && window.SheetWin && window.CancelUI && window.Motion && window.CharmNestReviewMark && CN.S.cloud.ok === true, null, { timeout: 60000 });
-    await page.evaluate(async ({ orders, held, hold }) => {
+    await page.evaluate(async ({ orders, held, hold, onlyHeld }) => {
       await Orders.loadMaps(true); await Cancelled.load(true);
       for (const order of orders) for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: order.createTs * 1000, spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); }
       Orders.interpretAll();
       for (const row of B.orders.rows) if (held.includes(row.order.receiptId)) { row.hold = hold; row.reason = row.hold; row.state = 'held'; row.heldAt = Date.now() - 3600e3; }
       // (Send to Review: each order has its "Marked" card in Review, held or not; the cancelled ones lose theirs with their lines)
-      for (const order of orders) await CharmNestReviewMark.mark(order.receiptId, { by: 'Paul' });
+      for (const order of orders) if (!onlyHeld.includes(order.receiptId)) await CharmNestReviewMark.mark(order.receiptId, { by: 'Paul' });
       Review.syncOrderItems(); CN.setMode('review'); Review.render();
-    }, { orders: o.orders || ORDERS, held: o.held || HELD, hold: HOLD });
+    }, { orders: o.orders || ORDERS, held: o.held || HELD, hold: HOLD, onlyHeld: ONLYHELD });
     await page.waitForFunction(n => document.querySelectorAll('#rvList > [data-rid] .cnCancelBtn').length >= n, (o.held || HELD).length);
     page.errors = errors; page.ctx = ctx; pages.push(page);
     return page;
@@ -230,6 +233,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(Math.max(0, ...s.s.map(x => x.ghosts.length)), 1, 'ONE card flew');
     assert.equal(new Set(s.s.flatMap(x => x.notes.filter(n => /Order 4174601820 cancelled/.test(n)))).size, 1, 'one note');
     await settle(page);
+    await page.evaluate(() => { document.querySelector('#reviewView .egPane.scroll').scrollTop = 0; });   // (an order back from Cancelled is the newest activity: its card comes back at the top of Open, on screen here, so it is seen flying back)
     await sampler(page);
     await page.evaluate(() => { const n = [...document.querySelectorAll('.mNote')].find(x => /Order 4174601820 cancelled/.test(x.textContent)); [...n.querySelectorAll('.mNoteBtn')].find(b => b.textContent === 'Undo').click(); });
     await page.waitForSelector(rvSel(B2) + ' .cnCancelBtn', { timeout: 15000 });
@@ -245,6 +249,35 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert(s.s.some(x => x.notes.some(n => /Order 4174601820 is back on hold/.test(n))), 'a note says it is back on hold');
     const ev = (await timeline(B2)).map(e => e.type); for (const t of ['held', 'cancelled', 'cancelRestored']) assert(ev.includes(t), `the timeline keeps ${t}: ` + ev);
     await shot(page, '6-undone');
+  });
+
+  await check('6b · REVIEWHELD: an order only on hold has its own Held order card in Open (Release Hold, Cancel Order, counted, its Orders card says In Review); Cancel flies it to Orders › Cancelled', async () => {
+    await settle(page); await page.evaluate(() => { for (const n of document.querySelectorAll('.mNote')) n.remove(); });
+    const card = await page.evaluate(G => { const n = [...document.querySelectorAll('#rvList > [data-rid]')].filter(x => x.dataset.rid === G); const b = n[0] && n[0].querySelector('[data-rv-release]'); return { n: n.length, mk: n[0] && n[0].dataset.mkey, rel: b && b.textContent.trim(), relCls: b && b.className, bg: b && getComputedStyle(b).backgroundColor, cancel: n[0] ? [...n[0].querySelectorAll('.cnCancelBtn')].map(x => x.textContent.trim()) : [], after: !!(b && b.nextElementSibling && b.nextElementSibling.classList.contains('cnCancelBtn')), open: Review.openOrders().has(G), chip: !!document.querySelector('#reviewView [data-k="heldOrder"]') }; }, G);
+    assert.equal(card.n, 1, 'one card: ' + JSON.stringify(card)); assert.equal(card.mk, 'held:' + G, 'its own Held order');
+    assert.equal(card.rel, 'Release Hold'); assert(/\brelHoldBtn\b/.test(card.relCls) && card.bg === 'rgb(162, 89, 28)', 'the orange Release Hold: ' + JSON.stringify(card));
+    assert.deepEqual(card.cancel, ['Cancel Order']); assert(card.after, 'Cancel Order right after it'); assert(card.open, 'Open has it (openOrders)'); assert(card.chip, 'the Held chip is there');
+    await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); Orders.renderNow(); });
+    await page.waitForFunction(G => { const n = [...document.querySelectorAll('#ordItems > [data-rid]')].find(x => x.dataset.rid === G); const b = n && n.querySelector('.revSendBtn'); return b && /In Review/.test(b.textContent); }, G, { timeout: 8000 });
+    await page.evaluate(G => { CN.setMode('review'); Review.showHeld(G); }, G);
+    await page.waitForFunction(G => { const n = document.querySelector(`#rvList > [data-rid="${G}"]`); return n && n.classList.contains('mFound'); }, G, { timeout: 8000 });
+    await page.evaluate(() => { Review.view().filter = null; Review.render(); });
+    await page.waitForSelector(rvSel(G) + ' .cnCancelBtn');
+    const c0 = await counts(page);
+    await sampler(page);
+    await press(page, G);
+    await gone(page, G);
+    await page.waitForFunction(G => [...document.querySelectorAll('.mNote')].some(n => n.textContent.includes(`Order ${G} cancelled \u2014 it's in Orders \u203a Cancelled`)), G, { timeout: 8000 });
+    await page.waitForTimeout(700);
+    const s = await stopSampler(page);
+    assert.equal(calls('cancelPut', G).length, 1); assert(st.doc('Charm_Nest_Cancelled', G), 'kept under Cancelled');
+    const air = s.s.filter(x => x.ghosts.some(g => g.key === 'held:' + G)); assert(air.length >= 15, 'its card flew: ' + air.length);
+    const g0 = air[0].ghosts.find(g => g.key === 'held:' + G), gN = air[air.length - 1].ghosts.find(g => g.key === 'held:' + G), tab = air[air.length - 1].tab;
+    assert(Math.hypot(gN.x - tab.x, gN.y - tab.y) < Math.hypot(g0.x - tab.x, g0.y - tab.y) * 0.35, 'to the Orders tab');
+    assert(s.props.every(p => ['transform', 'opacity'].includes(p)), JSON.stringify(s.props));
+    await page.waitForFunction(o => Review.openCount() === o - 1, c0.open, { timeout: 5000 }).catch(() => {});
+    assert.equal((await counts(page)).open, c0.open - 1, 'Open counts one fewer'); assert.equal(await page.evaluate(G => Review.openOrders().has(G), G), false);
+    await shot(page, '6b-only-held');
   });
 
   await check('7 · reduced motion: no flight, no ring, no tag; the note still says where', async () => {

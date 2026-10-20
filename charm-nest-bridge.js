@@ -15416,6 +15416,8 @@ const Review = window.Review = (() => {
    *  open, else Open as it stands. (NOHOLDPILE, Paul 20 Oct 2026: it opened Orders › On hold, which is gone: "it competes with the existing Review tab") */
   function showHeld(rid) {
     rid = rid == null ? "" : String(rid);
+    // (REVIEWHELD, Paul 20 Oct 2026: an order on hold always has its card in Open now, its own "Held order" or the card that covers it: that card)
+    { const open = rid ? openOrders().get(rid) : null; if (open) return showCard(mkeyOf(open), "open", open.kind); }
     const its = rid ? items().filter(x => String(x.rid || x.row?.order?.receiptId || x.rows?.[0]?.order?.receiptId || "") === rid) : [], it = its.find(x => x.kind === "heldOrder") || its[0];
     if (it) return showCard(mkeyOf(it), "open", it.kind);
     showCard("", "open", items().some(x => x.kind === "heldOrder") ? "heldOrder" : null);
@@ -17186,7 +17188,29 @@ const Review = window.Review = (() => {
     const decided = new Set(); for (const it of all) if (it.kind === "customOrder") for (const r of rowsOf(it)) decided.add(r.key);
     const cl = customLists(decided);
     const customWaits = it => rowsOf(it).some(r => CustomSheet.sending?.(r) || !(r.poolIds || []).length);
-    return { all, cl, customWaits, clWait: cl.open.filter(customWaits) };
+    const clWait = cl.open.filter(customWaits);
+    // (REVIEWHELD, Paul 20 Oct 2026: the Orders tab's On hold pile went because "it competes with the existing Review tab", and "Every order on Hold in the Review needs a 'Cancel Order' button": an order
+    // on hold that no open card here speaks for is a card of Open of its own, its "Held order" (heldCards), with Release Hold and Cancel Order; it counts in Open and the tab, and SENDREVIEW's openOrders reads it, so its Orders card says In Review)
+    const covered = new Set(); for (const it of all.concat(clWait)) { if (it.rid != null) covered.add(String(it.rid)); for (const r of rowsOf(it)) if (r && r.order) covered.add(String(r.order.receiptId)); }
+    return { all: all.concat(heldCards(covered)), cl, customWaits, clWait };
+  }
+  /** (REVIEWHELD, Paul 20 Oct 2026) The "Held order" cards of Open: one for each order with a line on hold now (Orders.heldNow, the HELD of its Orders card) that no other open card covers (`covered`: that card carries
+   *  the buttons), not cancelled. Drawn from the lines every time, so a release or a cancel takes the card out of Open at the next draw; the run's own "held:" notice, when there is one, only lends its words.
+   *  Each is the order's own item (key "held:<rid>", the order's line as its row, so it shows its picture and opens its order); nothing is added to B.review.items. */
+  const heldMade = new Map();
+  function heldCards(covered) {
+    const first = new Map();
+    for (const r of Orders.rows()) { if (!r || !r.order || ["gone", "committed"].includes(r.state)) continue; const rid = String(r.order.receiptId); if (first.has(rid) || covered.has(rid) || !Orders.heldNow(r)) continue; first.set(rid, r); }
+    const out = [];
+    for (const [rid, r] of first) {
+      if (window.Cancelled && Cancelled.has && Cancelled.has(rid)) continue;
+      const kept = items().find(x => x.key === "held:" + rid), why = `${rid} held \u2014 ${r.hold || (kept && kept.note) || "on hold"}`;
+      let it = heldMade.get(rid); if (!it) { it = { kind: "heldOrder", key: "held:" + rid, rid, t: (kept && kept.t) || +r.heldAt || Date.now() }; heldMade.set(rid, it); }
+      Object.assign(it, { row: r, rows: rowsOfOrder(rid), line: r.key, why });
+      out.push(it);
+    }
+    for (const rid of [...heldMade.keys()]) if (!first.has(rid)) heldMade.delete(rid);
+    return out;
   }
   /* (SENDREVIEW, Paul 20 Oct 2026: "The Send to Review button is disconnected from reality ... This button should be directly linked and communicate with the orders that are already in the Review tab":
      the Orders tab's Send to Review / In Review asked Review.items() only, the decisions; a custom order waiting on its own designs or Complete Order (a card of Open's Custom Orders, clWait) is not one
