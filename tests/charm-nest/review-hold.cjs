@@ -11,7 +11,7 @@ const open = new Set(), markSubs = [], pieceSubs = [], pcs = {};
 const swapSet = new Set();   // orders whose picked drawing is not on their piece yet (the bridge's Pool.swapRids answers this on the page)
 globalThis.Pool = { swapRids: () => new Set(swapSet), swapWaits: r => swapSet.has(String(r)) };
 const doneHow = new Map();   // rid -> how a resolved review was answered ('pick' | 'ok')
-globalThis.CharmNestReviewMark = { info: r => open.has(String(r)) ? { rid: String(r), state: 'open' } : doneHow.has(String(r)) ? { rid: String(r), state: 'done', how: doneHow.get(String(r)) } : null, isMarked: r => open.has(String(r)), markedRids: () => [...open], reasonOf: r => open.has(String(r)) ? 'Sent to Review by Name One' : '', onChange: f => { markSubs.push(f); return () => {}; } };
+globalThis.CharmNestReviewMark = { info: r => open.has(String(r)) ? { rid: String(r), state: 'open' } : doneHow.has(String(r)) ? { rid: String(r), state: 'done', how: doneHow.get(String(r)) } : null, isMarked: r => open.has(String(r)), markedRids: () => [...open], reasonOf: r => open.has(String(r)) ? 'Order held by Name One' : '', onChange: f => { markSubs.push(f); return () => {}; } };
 globalThis.OrderPieces = { of: rid => pcs[rid] || [], subscribe: f => { pieceSubs.push(f); }, load: () => Promise.resolve() };
 const mark = rid => { open.add(rid); markSubs.forEach(f => f({ rid, kind: 'mark' })); };
 const unmark = rid => { open.delete(rid); markSubs.forEach(f => f({ rid, kind: 'resolve' })); };
@@ -148,7 +148,7 @@ const A = '9100000001', B = '9100000002';
   reviewReads = 0; rec = (await ctx.readinessRecords([clone(sheet1)]))[0]; assert.equal(reviewReads, 0, 'a list read never asks for the reviews'); assert.equal(rec.laser.ready, true);
   const recs = [clone(sheet1)]; await ctx.productionReadiness(recs, { tx });
   assert.ok(reviewReads >= 1 && reviewReads <= 2, 'a write gate asks for the orders of the sheet only: ' + reviewReads); assert.equal(R.laserSheet(recs[0]).ready, false, 'a write gate refuses the sheet of an order in Review');
-  assert.equal(recs[0].orderReadiness[rid1].ready, false); assert.match(recs[0].orderReadiness[rid1].blocks[0].why, /^In Review: Sent to Review by Name One/); assert.equal(recs[0].orderReadiness[rid1].blocks[0].review, true);
+  assert.equal(recs[0].orderReadiness[rid1].ready, false); assert.match(recs[0].orderReadiness[rid1].blocks[0].why, /^In Review: Order held by Name One/); assert.equal(recs[0].orderReadiness[rid1].blocks[0].review, true);
   reviewDocs.get(rid1).review.state = 'done';
   const recs2 = [clone(sheet1)]; await ctx.productionReadiness(recs2, { tx }); assert.equal(R.laserSheet(recs2[0]).ready, true, 'resolved: the write gate lets it through');
   // a read that fails does not stop the shop

@@ -1,6 +1,10 @@
-/* Charm Nest · Send to Review, the button on each row of the Orders tab (Paul, 12 Oct 2026: "In the order tab, I need you to add
+/* Charm Nest · Hold Order, the button on each row of the Orders tab (Paul, 12 Oct 2026: "In the order tab, I need you to add
    one button per each order on the right hand side that allows me to mark in order for review and added it to the review
    tab").
+   (HOLDORDER, Paul 20 Oct 2026: "Rename the 'Send to Review' button everywhere in the application to 'Hold Order'. Also update the Seal text to better reflect
+   the new button name and the function it performs. Ensure the text inside the button is white for good contrast.": the button says "Hold Order", in white on
+   its own solid colour (--holdOrder, charm-nest-1.html); the order still waits in the Review tab ("In Review" is unchanged) and its timeline seal reads
+   ORDER HELD. The stored record (kind reviewMark, key rid + "_review", the note ids rvmark.*) is unchanged, so an older mark reads and draws the same.)
 
    One quiet button under "Qty · Ship by" on every order row (the list and the cards view alike). It does nothing by itself but
    call the two small APIs the Review tab keeps (CharmNestReviewMark: the model and the save; CharmNestReviewHold: the sheet
@@ -8,7 +12,7 @@
    works unchanged until they are present: with no CharmNestReviewMark the button is not drawn at all.
 
    States, in the app's own button look (.btn.ghost.sm: hover, focus ring, pressed, disabled):
-     "Send to Review"   the order is not in Review.
+     "Hold Order"       the order is not in Review (HOLDORDER: it was "Send to Review").
      spinner + the same words, disabled, aria-busy   the save is running (a small labelled spinner, no new words).
      "In Review"        the order is in the Review tab already (marked by a person here or on another computer, or one the
                         system put there): a press opens it there. It never adds a second time: the check is made before
@@ -22,15 +26,22 @@
    the buttons are redrawn by the Orders list's own redraw and by the one change callback the mark API offers.
 
    Public: ReviewSend.mount(node, row) (the Orders list calls it for every row it draws, new or kept), ReviewSend.press(rid),
+   ReviewSend.button(rid, row) / ReviewSend.buttonHtml(rid) (HOLDORDER: the ONE way the button is made, for any other place that shows Hold Order: an element ready
+   to put in, or its markup, whose press is taken by one listener on the page),
    ReviewSend.sync(), ReviewSend.refresh() (SENDREVIEW: once a frame with the Review tab's count, only a changed button is drawn), ReviewSend.busy(rid), ReviewSend.LABEL / ReviewSend.IN. */
 (function (root) {
   "use strict";
   const doc = root.document;
-  const LABEL = "Send to Review", IN = "In Review", MSG_MS = 15000;
+  const LABEL = "Hold Order", IN = "In Review", MSG_MS = 15000;   // (HOLDORDER, Paul 20 Oct 2026: the button's words; "In Review" stays)
+  const TIP = "Hold this order: it waits in the Review tab, and its sheet with it, until it is released there";
 
   const CSS = [
     ".btn.ghost.revSendBtn{border-radius:7px;font:600 12px var(--sans);color:var(--ink70);cursor:pointer;align-self:flex-start}",
-    ".btn.ghost.revSendBtn:hover:not(:disabled){color:var(--ink)}",
+    // (HOLDORDER, Paul 20 Oct 2026: "Ensure the text inside the button is white for good contrast": Hold Order is white on its own solid colour, --holdOrder (a deep plum beside Release Hold's
+    //  orange --relHold, charm-nest-1.html; white on it is far past AA). "In Review" keeps the quiet look below: it is a state that opens the card, not the action)
+    ".btn.ghost.revSendBtn:not(.revIn){background:var(--holdOrder,#5b3a6e);border-color:var(--holdOrder,#5b3a6e);color:#fff}",
+    ".btn.ghost.revSendBtn:not(.revIn):hover:not(:disabled){background:var(--holdOrderHover,#4a2d5b);border-color:var(--holdOrderHover,#4a2d5b);color:#fff}",
+    ".btn.ghost.revSendBtn:not(.revIn):disabled{opacity:.75;color:#fff}",
     ".btn.ghost.revSendBtn:disabled{cursor:default}",
     ".btn.ghost.revSendBtn.revIn{color:var(--ink);background:var(--paper2)}",
     ".btn.ghost.revSendBtn.revIn:hover:not(:disabled){background:var(--card2)}",
@@ -144,14 +155,14 @@
       b.title = "";
     } else {
       b.removeAttribute("aria-busy"); b.replaceChildren(doc.createTextNode(inRev ? IN : LABEL));
-      b.title = inRev ? "Open it in Review" : "Put this order in the Review tab";
+      b.title = inRev ? "Open it in Review" : TIP;
     }
-    b.setAttribute("aria-label", inRev ? `Order ${rid} is in Review. Open it there.` : `Send order ${rid} to Review`);
+    b.setAttribute("aria-label", inRev ? `Order ${rid} is in Review. Open it there.` : `Hold order ${rid}`);   // (HOLDORDER: was "Send order … to Review")
   }
   /** Every drawn button says what is true now (after a press, a change from another screen, a redraw). */
   function sync() {
     try {
-      for (const b of doc.querySelectorAll("#ordItems .revSendBtn")) {
+      for (const b of doc.querySelectorAll(".revSendBtn[data-rid]")) {   // (HOLDORDER: every Hold Order on the page, wherever it was put)
         const n = b.closest("[data-rid]"); if (!n) continue;
         b.dataset.revState = ""; paint(b, n.dataset.rid, null);
       }
@@ -179,9 +190,7 @@
       const rid = String(row.order.receiptId);
       let b = acts.querySelector(".revSendBtn");
       if (!b) {
-        css();
-        b = doc.createElement("button"); b.type = "button"; b.className = "btn ghost sm revSendBtn";
-        b.onclick = e => { e.stopPropagation(); e.preventDefault(); press(rid, row).catch(err => console.warn("send to review", err)); };
+        b = button(rid, row);
         const facts = acts.querySelector(".rowFacts");
         if (facts) facts.after(b); else acts.appendChild(b);
         node.dataset.rid = node.dataset.rid || rid;
@@ -189,14 +198,37 @@
       b.dataset.rid = rid;
       paint(b, rid, row);
       drawMsg(node, rid);
-    } catch (e) { console.warn("send to review button", e); }
+    } catch (e) { console.warn("hold order button", e); }
   }
+  /** (HOLDORDER, Paul 20 Oct 2026) The ONE maker of the Hold Order button: the Orders rows use it, and so can any other place that shows Hold Order. Painted for what is true now. */
+  function button(rid, row) {
+    css(); subscribe();
+    rid = String(rid);
+    const b = doc.createElement("button"); b.type = "button"; b.className = "btn ghost sm revSendBtn"; b.dataset.rid = rid;
+    b.onclick = e => { e.stopPropagation(); e.preventDefault(); press(rid, row || null).catch(err => console.warn("hold order", err)); };
+    paint(b, rid, row || null);
+    return b;
+  }
+  /** The same button as markup (for a place drawn from a string); its press is taken by the one listener below. */
+  const escA = v => String(v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  function buttonHtml(rid) {
+    css(); subscribe();
+    const s = escA(rid), inRev = api.ready() && api.inReview(String(rid), null);
+    return `<button type="button" class="btn ghost sm revSendBtn${inRev ? " revIn" : ""}" data-rid="${s}" data-rev-state="${inRev ? "in" : "idle"}" title="${escA(inRev ? "Open it in Review" : TIP)}" aria-label="${escA(inRev ? `Order ${rid} is in Review. Open it there.` : `Hold order ${rid}`)}">${inRev ? IN : LABEL}</button>`;
+  }
+  try {
+    doc.addEventListener("click", e => {
+      const b = e.target && e.target.closest ? e.target.closest(".revSendBtn[data-rid]") : null;
+      if (!b || b.onclick || b.disabled) return;   // (a button made by button() takes its own press)
+      e.stopPropagation(); e.preventDefault(); press(b.dataset.rid, null).catch(err => console.warn("hold order", err));
+    });
+  } catch (_) {}
 
   /* ── the press ── */
   const plainError = e => {
     const msg = String((e && (e.error || e.message)) || e || "").replace(/^Error:\s*/, "").trim();
-    if ((root.navigator && navigator.onLine === false) || /failed to fetch|network|load failed|timed out|timeout|offline/i.test(msg)) return "Could not reach the server, so nothing was sent. Try again when you are back online.";
-    return `Not sent: ${msg || "something went wrong"}. Try again.`;
+    if ((root.navigator && navigator.onLine === false) || /failed to fetch|network|load failed|timed out|timeout|offline/i.test(msg)) return "Could not reach the server, so the order was not held. Try again when you are back online.";
+    return `Not held: ${msg || "something went wrong"}. Try again.`;   // (HOLDORDER: the words of the button)
   };
   async function press(rid, row) {
     rid = String(rid);
@@ -218,7 +250,7 @@
     if (res === false || (res && res.ok === false)) { sync(); say(rid, plainError(res)); return res || { ok: false, error: "failed" }; }
     sync();
     const sheet = whereOf(rid, row), many = sheet.includes(" + ");
-    if (sheet) say(rid, `Stays on ${sheet}. ${many ? "Those sheets are" : "That sheet is"} held until this is resolved in Review.`);
+    if (sheet) say(rid, `Order held. Stays on ${sheet}. ${many ? "Those sheets are" : "That sheet is"} held until this is resolved in Review.`);
     return { ok: true, sheet };
   }
 
@@ -229,5 +261,5 @@
     try { if (sub && typeof sub.off === "function") sub.off(); } catch (_) {}
     sub = api.onChange(sync);
   };
-  root.ReviewSend = { mount, press, sync, refresh, busy: rid => busyRids.has(String(rid)), LABEL, IN };
+  root.ReviewSend = { mount, press, sync, refresh, button, buttonHtml, busy: rid => busyRids.has(String(rid)), LABEL, IN };
 })(typeof window !== "undefined" ? window : globalThis);

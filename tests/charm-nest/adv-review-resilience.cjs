@@ -58,7 +58,7 @@ const CARD = rid => `#reviewView [data-mkey="ord:rvm:${rid}"]`;
       await page.click(`#ordItems [data-rid="${A}"] .revSendBtn`);
       const b = await until(async () => { const x = await btn(A); return x && x.msg ? x : null; }, 8000);
       assert(b && /could not reach the server/i.test(b.msg), 'one plain line about the connection: ' + J(b));
-      assert(b.text === 'Send to Review' && !b.disabled, 'the button is back to Send to Review and can be pressed again: ' + J(b));
+      assert(b.text === 'Hold Order' && !b.disabled, 'the button is back to Send to Review and can be pressed again: ' + J(b));
       assert(!(await marked(A)), 'the page does not hold the order as marked');
       assert(!rec(A), 'and the cloud has no record');
       assert(!(await page.$(CARD(A))), 'no Review card is left behind');

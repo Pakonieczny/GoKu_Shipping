@@ -58,13 +58,13 @@ const ok = (name, cond, extra) => { assert.ok(cond, name + (extra ? ' :: ' + ext
       // (a row: under "Qty · Ship by", left aligned with it; an order of several lines: in the top of its card, after "Ship by", the order's one button)
       return { text: b.textContent, place: grouped ? (n.querySelector('.ogHead').contains(b) && br.left >= fr.right - 1 && Math.abs((br.top + br.height / 2) - (fr.top + fr.height / 2)) < 30) : (br.top >= fr.bottom - 1 && Math.abs(br.left - fr.left) <= 1.5), h: br.height, w: br.width, inside: br.right <= row.right + 1 && br.left >= row.left - 1, type: b.type, cls: b.className };
     }));
-    ok('3 the label is "Send to Review", under "Qty · Ship by" (an order of several lines: beside its Ship by at the top of its card), small, inside the row', lay.length >= 3 && lay.every(l => l.text === 'Send to Review' && l.place && l.h > 18 && l.h < 44 && l.w < 260 && l.inside && l.type === 'button' && /ghost/.test(l.cls)), JSON.stringify(lay));
+    ok('3 the label is "Hold Order", under "Qty · Ship by" (an order of several lines: beside its Ship by at the top of its card), small, inside the row', lay.length >= 3 && lay.every(l => l.text === 'Hold Order' && l.place && l.h > 18 && l.h < 44 && l.w < 260 && l.inside && l.type === 'button' && /ghost/.test(l.cls)), JSON.stringify(lay));
 
     // 4. press: busy state, one call, signed-in name, the order window stays shut
     const sel = rid => `#ordItems > [data-rid="${rid}"] .revSendBtn`;
     await page.click(sel(single));
     const busy = await page.evaluate(rid => { const b = document.querySelector(`#ordItems > [data-rid="${rid}"] .revSendBtn`); return { dis: b.disabled, busy: b.getAttribute('aria-busy'), spin: !!b.querySelector('.spin'), text: b.textContent, calls: __rv.calls.length, win: !!document.getElementById('orderWin')?.open }; }, single);
-    ok('4a pressed: disabled, aria-busy, a small spinner and the same words', busy.dis && busy.busy === 'true' && busy.spin && busy.text === 'Send to Review', JSON.stringify(busy));
+    ok('4a pressed: disabled, aria-busy, a small spinner and the same words', busy.dis && busy.busy === 'true' && busy.spin && busy.text === 'Hold Order', JSON.stringify(busy));
     ok('4b the mark call was made once, for this order, under the signed-in name; the order window did not open', busy.calls === 1 && !busy.win);
     const by = await page.evaluate(() => ({ call: __rv.calls[0], me: CNEmployee.name() }));
     ok('4c the name sent is the signed-in login', by.call.rid === single && by.call.by && by.call.by === by.me, JSON.stringify(by));
@@ -105,15 +105,15 @@ const ok = (name, cond, extra) => { assert.ok(cond, name + (extra ? ' :: ' + ext
     const before = await page.evaluate(() => __rv.calls.length);
     await page.click(sel(cut));
     const nope = await page.evaluate(rid => ({ calls: __rv.calls.length, msg: [...document.querySelectorAll(`#ordItems > [data-rid="${rid}"] .revSendMsg`)].map(n => n.textContent), text: document.querySelector(`#ordItems > [data-rid="${rid}"] .revSendBtn`).textContent, dis: document.querySelector(`#ordItems > [data-rid="${rid}"] .revSendBtn`).disabled }), cut);
-    ok('8 a piece that cannot be held: one line says so, nothing is marked, the button stays "Send to Review"', nope.calls === before && nope.msg.length === 1 && /cannot be held/.test(nope.msg[0]) && nope.text === 'Send to Review' && !nope.dis, JSON.stringify(nope));
+    ok('8 a piece that cannot be held: one line says so, nothing is marked, the button stays "Hold Order"', nope.calls === before && nope.msg.length === 1 && /cannot be held/.test(nope.msg[0]) && nope.text === 'Hold Order' && !nope.dis, JSON.stringify(nope));
 
     // 9. a failed save: said plainly, the button can be pressed again
     await page.evaluate(rid => { __rv.canHold[rid] = { ok: true, sheets: [] }; __rv.fail = 'the save did not go through'; }, cut);
     await page.click(sel(cut));
     await page.evaluate(() => __rv.gate());
-    await page.waitForFunction(rid => /Not sent/.test(document.querySelector(`#ordItems > [data-rid="${rid}"] .revSendMsg`)?.textContent || ''), cut);
+    await page.waitForFunction(rid => /Not held/.test(document.querySelector(`#ordItems > [data-rid="${rid}"] .revSendMsg`)?.textContent || ''), cut);
     const failed = await page.evaluate(rid => ({ text: document.querySelector(`#ordItems > [data-rid="${rid}"] .revSendBtn`).textContent, dis: document.querySelector(`#ordItems > [data-rid="${rid}"] .revSendBtn`).disabled, marked: __rv.marked.has(rid) }), cut);
-    ok('9 a failed save: "Not sent", nothing marked, the button is back and enabled', failed.text === 'Send to Review' && !failed.dis && !failed.marked, JSON.stringify(failed));
+    ok('9 a failed save: "Not held", nothing marked, the button is back and enabled', failed.text === 'Hold Order' && !failed.dis && !failed.marked, JSON.stringify(failed));
 
     // 10. the keyboard
     await page.keyboard.press('Shift');
@@ -129,7 +129,7 @@ const ok = (name, cond, extra) => { assert.ok(cond, name + (extra ? ' :: ' + ext
     // 11. another computer's change (the API's callback) repaints without a redraw
     const keep = await page.evaluate(rid => { const n = document.querySelector(`#ordItems > [data-rid="${rid}"]`); window.__node = n; __rv.marked.delete(rid); __fire(rid, 'resolved'); return n.querySelector('.revSendBtn').textContent; }, cut);
     const same = await page.evaluate(rid => ({ text: __node.querySelector('.revSendBtn').textContent, sameNode: document.querySelector(`#ordItems > [data-rid="${rid}"]`) === __node }), cut);
-    ok('11a resolved elsewhere: the button goes back to "Send to Review" on the same row, no redraw', same.text === 'Send to Review' && same.sameNode, keep);
+    ok('11a resolved elsewhere: the button goes back to "Hold Order" on the same row, no redraw', same.text === 'Hold Order' && same.sameNode, keep);
     await page.evaluate(rid => { __rv.marked.add(rid); __fire(rid, 'marked'); }, cut);
     ok('11b marked elsewhere: it says "In Review" at once', (await page.evaluate(() => __node.querySelector('.revSendBtn').textContent)) === 'In Review');
 
