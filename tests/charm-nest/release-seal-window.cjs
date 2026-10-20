@@ -111,7 +111,7 @@ const LONGNAME = 'Bartholomew-Maximilian Featherstonehaugh-Wolfeschlegelsteinhau
     /** the audit: every release-family seal anywhere in the window (any tab), where it is and whether it is seen at rest */
     const inventory = () => page.evaluate(() => {
       const dlg = document.getElementById('orderWin'), dr = dlg.getBoundingClientRect();
-      const where = el => el.closest('#owSeals') ? 'seal strip' : el.closest('#owNowCard') ? 'head card' : el.closest('#owEng') ? 'engraving card' : el.closest('.owfPop') ? 'chip card (hover)' : el.closest('#owMeta') ? 'facts' : el.closest('.owRail, #owRail, .owProg, [class*="rail"]') ? 'header rail' : el.closest('#owPcSum, .owPcRow') ? 'piece rows' : el.closest('[data-view="timeline"], .owVTimeline') ? 'Timeline tab' : el.closest('[data-view="sheet"]') ? 'Sheet tab' : (el.parentElement && (el.parentElement.id || el.parentElement.className)) || '?';
+      const where = el => el.closest('#owSealRow') ? 'seals row' : el.closest('[data-ow-btn-seals]') ? 'beside its button' : el.closest('#owSeals') ? 'seal strip' : el.closest('#owNowCard') ? 'head card' : el.closest('#owEng') ? 'engraving card' : el.closest('.owfPop') ? 'chip card (hover)' : el.closest('#owMeta') ? 'facts' : el.closest('.owRail, #owRail, .owProg, [class*="rail"]') ? 'header rail' : el.closest('#owPcSum, .owPcRow') ? 'piece rows' : el.closest('[data-view="timeline"], .owVTimeline') ? 'Timeline tab' : el.closest('[data-view="sheet"]') ? 'Sheet tab' : (el.parentElement && (el.parentElement.id || el.parentElement.className)) || '?';
       const vis = el => { for (let n = el; n && n.nodeType === 1; n = n.parentElement) { const cs = getComputedStyle(n); if (cs.display === 'none' || cs.visibility === 'hidden' || n.hidden || +cs.opacity === 0) return false; } const r = el.getBoundingClientRect(); return r.width > 4 && r.height > 4; };
       return [...dlg.querySelectorAll('svg[data-seal-family="release"]')].map(v => { const s = v.closest('.seal') || v, r = s.getBoundingClientRect(); return { where: where(s), w: Math.round(r.width), visible: vis(s), inView: r.top >= dr.top - 1 && r.bottom <= dr.bottom + 1, cls: (s.className && s.className.baseVal !== undefined ? s.className.baseVal : s.className) + '' }; });
     });
@@ -134,8 +134,15 @@ const LONGNAME = 'Bartholomew-Maximilian Featherstonehaugh-Wolfeschlegelsteinhau
 
     // ═══ 2 · NOSTRIP: no Release Hold seal in the Order Details modal at rest, whatever the order's releases ═══
     // (the head card's ONE seal is the order's current milestone, whatever it is (Approved, On sheet, Released ...): that is the card's own, older than the strip, and stays; what is gone is the strip's large Release Hold panel)
-    const atRest = async label => { const inv = (await inventory()).filter(x => x.visible && x.where !== 'head card'), x = await rel(); check(x.n === 0 && !x.shown && x.strip === null && !inv.length && !(await page.evaluate(() => !!document.querySelector('#orderWin .relSeal, #orderWin .relSealWords'))), `${label}: no Release Hold panel (seal + "Release Hold / by / when") in the Order Details modal (${JSON.stringify(inv.map(i => i.where))})`); };
-    for (const [f, label] of [[TWICE, 'released twice'], [ENG, 'released + approved engraving'], [TLONLY, 'known only from the timeline'], [PLAIN, 'never released']]) { await openOv(f); await atRest('2 ' + label); }
+    // (SEALWIN, Paul 20 Oct 2026: "All of these seals must be visible in all places where a given button is relevant ... This includes the Detailed Order view modal": the big panel stays gone (NOSTRIP), and the
+    //  order's Release Hold seal is in the window again as ONE compact seal, in the Seals row (#owSealRow) or beside a Release Hold button the window shows; none for an order never released)
+    const atRest = async (label, want) => {
+      const inv = (await inventory()).filter(x => x.visible && x.where !== 'head card'), x = await rel(), small = inv.filter(i => i.where === 'seals row' || i.where === 'beside its button');
+      const panel = await page.evaluate(() => !!document.querySelector('#orderWin .relSeal, #orderWin .relSealWords'));
+      check(x.n === 0 && !x.shown && x.strip === null && !panel && inv.length === small.length, `${label}: no Release Hold panel (seal + "Release Hold / by / when") in the Order Details modal (${JSON.stringify(inv.map(i => i.where))})`);
+      check(want ? small.length === want && small.every(i => i.w <= 48) : !small.length, `${label}: ${want ? want + ' Release Hold seal(s), one per press, compact, in the Seals row or beside its button' : 'no Release Hold seal'} (${JSON.stringify(small)} ${JSON.stringify(await page.evaluate(() => OrderWin.seals()))})`);
+    };
+    for (const [f, label, want] of [[TWICE, 'released twice', 2], [ENG, 'released + approved engraving', 1], [TLONLY, 'known only from the timeline', 1], [PLAIN, 'never released', 0]]) { await openOv(f); await atRest('2 ' + label, want); }
     // the Timeline tab keeps every release as it was
     await openOv(TWICE); await tab('timeline');
     const steps = await page.evaluate(() => [...document.querySelectorAll('#orderWin [data-view="timeline"] svg[data-seal-family="release"]')].length);
@@ -148,13 +155,13 @@ const LONGNAME = 'Bartholomew-Maximilian Featherstonehaugh-Wolfeschlegelsteinhau
     await page.evaluate(rid => document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"] [data-rel-hold]`).click(), LIVE.rid);
     const stamped = await until(async () => (await page.evaluate(rid => !!Orders.releaseStampOf(Orders.rows().filter(x => String(x.order.receiptId) === rid)), LIVE.rid)) || null, 30000, 'the release to be recorded').catch(() => null);
     check(!!stamped, '4 the press is recorded (Orders.releaseStampOf)');
-    await sleep(800); await atRest('4 after a live press');
+    await sleep(800); await atRest('4 after a live press', 1);
     await closeWin();
     await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); Orders.render(); });
     await sleep(900);
     check(await page.evaluate(rid => !!document.querySelector(`#ordItems [data-rid="${rid}"] .relSeal`), LIVE.rid), '4 the Orders row still carries the Release Hold seal');
     // ═══ 7 · three widths ═══
-    for (const [w, h] of [[1440, 900], [1024, 768], [390, 800]]) { await page.setViewportSize({ width: w, height: h }); await sleep(500); await openOv(LONG); await atRest(`7 at ${w} px`); await shot(`07-long-${w}`); }
+    for (const [w, h] of [[1440, 900], [1024, 768], [390, 800]]) { await page.setViewportSize({ width: w, height: h }); await sleep(500); await openOv(LONG); await atRest(`7 at ${w} px`, 1); await shot(`07-long-${w}`); }
     await page.setViewportSize({ width: 1440, height: 900 });
     await closeWin();
     const errs = W.errors.filter(e => !/ResizeObserver/.test(e));
