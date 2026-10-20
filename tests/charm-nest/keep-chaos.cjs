@@ -298,7 +298,9 @@ async function checkSaved(w, ex) {
   if (newIdx.length !== byHash.length) f.push(`entries in the repository that are not the dropped file: ${newIdx.filter(k => !byHash.some(x => x.k === k)).join(',')}`);
   const idx = byHash[0] && byHash[0].d, sku = idx && (idx.sku || byHash[0].k);
   if (idx) {
-    if (!/^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(sku)) f.push('SKU not valid: ' + sku);
+    // (KEEPOWNSKU, Paul 20 Oct 2026: "use the existing Etsy listing/order SKU": the design may be saved under the order's own SKU as the library keys it, whatever characters the shop gave it)
+    const ownKey = (() => { try { return require(path.join(root, 'charm-nest-sku.js')).etsyKey(ex_rawSku(w)); } catch (_) { return ''; } })(), ownSaved = !!ownKey && sku === ownKey;
+    if (!/^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(sku) && !ownSaved) f.push('SKU not valid: ' + sku);
     for (const p of [idx.aiPath, idx.thumbPath]) if (!p || !st.blobs.has(p)) f.push('file missing from storage: ' + p);
     const ai = idx.aiPath && st.blobs.get(idx.aiPath); if (ai && (ai.buf.length < 200 || ai.buf.slice(0, 4).toString() !== '%PDF')) f.push('the saved .ai is not a real file');
     const png = idx.thumbPath && st.blobs.get(idx.thumbPath); if (png && png.buf.slice(1, 4).toString() !== 'PNG') f.push('the picture is not a PNG');
@@ -309,7 +311,8 @@ async function checkSaved(w, ex) {
     const own = new Set([idx.aiPath, idx.thumbPath]); const litter = newBlobs.filter(b => !own.has(b)); if (litter.length) f.push('uploaded files that are not the entry\'s: ' + litter.join(','));
     // the alias: one mapping to this SKU on the listing, no key twice (case/space look-alikes)
     const al = st.docs.get('Charm_Sku_Aliases/' + listing);
-    if (!al) { if (!ex.aliasOptional) f.push('no alias for listing ' + listing); }
+    if (!al) { if (!ex.aliasOptional && !ownSaved) f.push('no alias for listing ' + listing); }   // (the order's own SKU needs no alias: the next order reads it directly)
+    else if (ownSaved) { /* (its own SKU: an alias, when there is one, is the listing's old answer put right or another key) */ }
     else { const m = al.bySku || {}, to = Object.entries(m).filter(([, v]) => v === sku); const others = Object.entries(m).filter(([, v]) => v !== sku); if (to.length < 1 && !(al.sku === sku)) f.push('the alias does not point at ' + sku + ': ' + JSON.stringify(al).slice(0, 160)); if (to.length > 1) f.push('duplicate alias keys to ' + sku + ': ' + to.map(x => x[0]).join(' | ')); if (ex.noOtherAliases !== false && others.length) f.push('other aliases on the listing: ' + others.map(x => x[0] + '->' + x[1]).join(' | ')); }
     const rec = st.docs.get('Charm_Custom_Saves/' + rid);
     if (!rec) f.push('no save record for the order ' + rid); else { if (rec.sku !== sku) f.push('the order\'s save record names ' + rec.sku + ', the entry is ' + sku); if (ex.etsy !== false && !(rec.etsy && rec.etsy.state === 'linked')) f.push('Etsy not linked in the record: ' + JSON.stringify(rec.etsy)); }
@@ -350,7 +353,7 @@ async function checkPage(w, ex) {
   if (ui.dialogs.length) f.push('a dialog is open: ' + ui.dialogs.join(','));
   if (ui.spinners) f.push('a spinner is still turning in the final state (' + ui.spinners + ' at ' + (ui.spinWhere || []).join(' ; ').slice(0, 140) + '): "' + line.slice(0, 100) + '"');
   if (ex.ui === 'linked') { if (!/Linked/i.test(line)) f.push('the card/window does not say it is linked: "' + line.slice(0, 160) + '"'); }
-  else if (ex.ui === 'nothing') { if (/Linked|Saved to the repository|Saving/i.test(line)) f.push('the page claims a save that did not happen: "' + line.slice(0, 160) + '"'); }
+  else if (ex.ui === 'nothing') { if (/Linked|Saved to the repository|Saving/i.test(line)) f.push('the page claims a save that did not happen: "' + line.slice(0, 400) + '"'); }
   else if (ex.ui === 'waiting-password') { if (!/password/i.test(line)) f.push('the page does not say it waits for the password: "' + line.slice(0, 160) + '"'); }
   else if (ex.ui === 'waiting-connection') { if (!/connection|offline|online/i.test(line)) f.push('the page does not say it waits for the connection: "' + line.slice(0, 160) + '"'); }
   return { f, line };

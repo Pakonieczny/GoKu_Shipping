@@ -59,9 +59,33 @@
   }
 
   const res = (action, why, more) => Object.assign({ action, why }, more || {});
+  /* KEEPOVERRIDE (Paul, 20 Oct 2026: the designs window's switch "must remove the SKU from the offending charm and attach it to the newly uploaded charm ... This must also trigger the immediate
+     updating of all related thumbnails and Nested charms on sheets"). The SKU keeps its name and draws another design now, so no link moved and the pieces' SKUs still read right: an entry that
+     carries `override: { sku, aiPath, hash }` (Review.relinkOverride) is decided by the DRAWING its pieces were cut from: a piece cut from the new design (its file, or its charm hash) is right,
+     any other live piece is the old drawing's and is made again, by the same rules (fixed: told, Review: kept, held: left). */
+  const freshFor = (ov, p) => !!ov && !!p && ((!!ov.aiPath && String(p.aiPath || "") === String(ov.aiPath)) || (!!ov.hash && String(p.charmHash || "") === String(ov.hash)));
+  function classifyOverride(e, h) {
+    const row0 = e.row, ov = e.override, to = up(ov.sku), link = { sku: to, key: "override:" + to, via: "override" }, more = x => Object.assign({ to, link, override: ov }, x || {});
+    if (FINISHED.has(row0.state) || (h.cancelled && h.cancelled(row0))) return res("skip", "the line is finished, cancelled or gone");
+    const sp = row0.spec;
+    if (sp.noDesign || sp.ownDesign || sp.customDone || up(sp.designSku) !== to) return res("skip", "the line does not read the SKU that was moved", more());
+    if ((sp.problems || []).length) return res("skip", "the line still asks a question", more());
+    const own = up(h.ownPick ? h.ownPick(row0) : ""); if (own && own !== to) return res("skip", `a person picked ${own} for this order`, more());
+    const ps = h.pieces ? h.pieces(row0) : null;
+    if (ps == null) return res("skip", "its pieces are not read yet", more({ retry: true }));
+    const from = to + " (the old drawing)";
+    if (!ps.length) return res("none", "nothing is made yet: it is made from the new design", more({ from: to }));
+    if (ps.every(p => freshFor(ov, p))) return res("none", "its pieces are cut from the new design already", more({ from: to }));
+    const fixed = (h.fixedOf ? h.fixedOf(row0) : []) || [];
+    if (row0.state === "committed" || fixed.length) return res("flag", fixed.length ? fixed.map(f => `${f.why} on ${f.name}`).join(", ") : "its set is committed", more({ from, fixed, hold: row0.state !== "committed" && !row0.hold && fixed.some(f => f.local) }));
+    if (h.keepsPlace && h.keepsPlace(row0)) return res("kept", "the order is in Review: its piece stays on its sheet until the Review is resolved", more({ from }));
+    if (row0.hold) return res("skip", "the line is held by a person", more({ from }));
+    return res("swap", "its pieces are cut from the old drawing and are on an open sheet or pooled", more({ from }));
+  }
   /** One line, read NOW (the new maps, its new spec), against the link it was read by before. See the header. */
   function classify(e, h) {
     const row0 = e && e.row;
+    if (e && e.override && row0 && row0.spec && row0.line) return classifyOverride(e, h);   // (KEEPOVERRIDE: a SKU moved to another design)
     if (!row0 || !row0.spec || !row0.line) return res("skip", "the line is not read");
     if (FINISHED.has(row0.state) || (h.cancelled && h.cancelled(row0))) return res("skip", "the line is finished, cancelled or gone");
     // a line cut and committed is never read again by the page (Orders.interpretAll): it is read here, on the side, only to TELL a person; nothing of it is changed
@@ -92,5 +116,5 @@
     return res("swap", "its pieces are pooled or on an open sheet", { to, link, from: was });
   }
 
-  return { changedListings, snapshot, classify, up };
+  return { changedListings, snapshot, classify, freshFor, up };
 });

@@ -61,7 +61,7 @@ async function orphans(deps, o) {
   for (let page = 0; q && page < FILE_PAGES; page++) {
     const res = await bucket.getFiles(q), files = (res && res[0]) || [];
     out.listed += files.length;
-    for (const f of files) { const m = /^charmnest\/master\/custom\/([^\/]+)\.(?:ai|png)$/.exec(String(f && f.name)); if (m) { if (!bySku.has(m[1])) bySku.set(m[1], []); bySku.get(m[1]).push(f); } }
+    for (const f of files) { const m = /^charmnest\/master\/custom\/([^\/]+)\.(?:ai|png)$/.exec(String(f && f.name)); if (m) { if (!bySku.has(m[1])) bySku.set(m[1], []); bySku.get(m[1]).push(f); } }   // (KEEPOVERRIDE: a stem {SKU}__k{tag} is kept while an entry draws from it, below)
     q = res && res[1] ? res[1] : null;
   }
   const skus = [...bySku.keys()];
@@ -69,6 +69,7 @@ async function orphans(deps, o) {
     const part = skus.slice(i, i + 100), docs = await db.getAll(...part.map(s => db.collection(INDEX).doc(s)), { fieldMask: ["sku"] });
     for (let j = 0; j < part.length; j++) {
       if (docs[j] && docs[j].exists) continue;                       // an entry's files are never touched
+      if (require("./_charmNestCustomSave").TAGGED_RE.test(part[j]) && await require("./_charmNestCustomSave").tagged(db, DIR + part[j] + ".ai")) continue;   // (KEEPOVERRIDE, Paul 20 Oct 2026: an override's or an Etsy SKU's own files, while an entry or an audit record names them)
       let old = true;
       for (const f of bySku.get(part[j])) {
         let t = NaN; try { const [m] = await f.getMetadata(); t = Date.parse((m && (m.updated || m.timeCreated)) || ""); } catch (_) { t = NaN; }
@@ -89,6 +90,7 @@ async function orphans(deps, o) {
     -> { state: null | "entry-gone" | "overtaken" | "files-missing", which?, alias: null | { kind:"cut", restore?:sku } | { kind:"put" }, etsy: bool } */
 function plan(d, entry, alias, files, now) {
   const out = { state: null, alias: null, etsy: false };
+  if (d.superseded) return out;   // (KEEPOVERRIDE, Paul 20 Oct 2026: its SKU was moved to another design by the designs window's switch: nothing to put right, nothing to cut)
   const e = d.etsy && typeof d.etsy === "object" ? d.etsy : {};
   if (e.state === "writing" && !(+e.runningUntil > now)) out.etsy = true;
   const sku = up(d.sku), mode = d.alias === "bySku" && d.oldSku ? "bySku" : d.alias === "whole" ? "whole" : "none";

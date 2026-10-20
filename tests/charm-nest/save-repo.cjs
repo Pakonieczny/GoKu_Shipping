@@ -238,7 +238,7 @@ async function server() {
 
 /* ═══ 2 · the engine ═══ */
 async function engine() {
-  const Keep = require(path.join(root, 'charm-nest-keep.js')), O = require(path.join(root, 'charm-nest-orders.js')), Sku = require(path.join(root, 'charm-nest-sku.js'));
+  const Keep = require(path.join(root, 'charm-nest-keep.js')), O = require(path.join(root, 'charm-nest-orders.js')), Sku = require(path.join(root, 'charm-nest-sku.js')), NameSku = Object.assign({}, Sku, { etsyKey: () => '' });
   const RID = '4196630529', LISTING = '1799994821', GOOD = 'good-' + crypto.randomBytes(4).toString('hex');
   function world(opt = {}) {
     const w = { calls: [], bodies: [], events: [], uploads: [], builds: 0, saves: [], dialogs: 0, password: [] };
@@ -271,7 +271,7 @@ async function engine() {
       } };
     const ctx = Object.assign({ rid: RID, listingId: LISTING, title: "Acorn&#39;s Leaf Charm", line: { sku: 'ACORN&#39;S LEAF', productId: '', variations: [{ name: 'Metal', value: 'GF 14/20', propertyId: 513, valueId: 1234 }], listingId: LISTING },
       listingKind: null, F: { name: 'Acorns_Leaf.ai', kind: 'ai', bytes: new Uint8Array(500), hash: 'ab'.repeat(32), pieces: 1, state: 'ready' }, charm: { hash: 'c1c2c3c4c5c6c7c8', open: false }, parsed: { ok: 1 }, by: 'Paul', sandbox: !!opt.sandbox,
-      S: { cloud: { ok: opt.cloud !== false } }, O, Sku, Master, aliases: opt.aliases || {}, tableFor: () => opt.table || null, api, lock, now: Date.now, designs: opt.designs }, opt.ctx || {});
+      S: { cloud: { ok: opt.cloud !== false } }, O, Sku: opt.ownSku ? Sku : NameSku, Master, aliases: opt.aliases || {}, tableFor: () => opt.table || null, api, lock, now: Date.now, designs: opt.designs }, opt.ctx || {});
     w.lock = lock; w.entries = entries; w.timers = [];
     ctx.setTimeout = (fn, ms) => { const t = { fn, ms, off: false }; w.timers.push(t); return t; }; ctx.clearTimeout = t => { if (t) t.off = true; };
     w.k = Keep.make(ctx); w.k.on(ev => w.events.push(ev));
@@ -279,6 +279,8 @@ async function engine() {
     return w;
   }
   const seq = w => w.events.filter(e => e.row).map(e => e.row + ':' + e.state);
+  // (KEEPOWNSKU, Paul 20 Oct 2026: a line whose own Etsy SKU the library can hold is saved under it (keep-override-server.cjs, keep-relink-live.cjs); the cases below are the save's OWN naming, for a
+  //  line whose SKU cannot be kept: the world's SKU rule says so (etsyKey ""), everything else is the real rule)
 
   // open: nothing written, one read, the preview
   let w = world(); let info = await w.k.open();
@@ -307,9 +309,13 @@ async function engine() {
   await why({ ctx: { F: { name: 'a.ai', kind: 'ai', bytes: new Uint8Array(9), hash: 'ab'.repeat(32), pieces: 2, state: 'ready' } } }, 'Saving works for one design at a time.');
   await why({ listingKind: null, ctx: { listingKind: { kind: 'custom', by: 'Paul' } } }, "This listing takes the buyer's own design every time, so it is not linked to one charm.");
   await why({ ctx: { title: 'Add a Lion Charm' } }, "This listing takes the buyer's own design every time, so it is not linked to one charm.");
-  await why({ entries: [['HEART_1111', { sku: 'HEART_1111' }]], ctx: { line: { sku: 'HEART_1111', variations: [], listingId: LISTING } } }, 'This listing is already linked to HEART_1111.');
-  await why({ entries: [['HEART_1111', { sku: 'HEART_1111' }]], ctx: { line: { sku: 'Heart 1111', variations: [], listingId: LISTING } } }, 'This listing is already linked to HEART_1111.');
-  await why({ entries: [['HEART_1111', { sku: 'HEART_1111' }]], aliases: { [LISTING]: { bySku: { "ACORN'S LEAF": 'HEART_1111' } } } }, 'This listing is already linked to HEART_1111.');
+  // KEEPOVERRIDE (Paul, 20 Oct 2026: "If a user engages the toggle to update the charm repository, then that's exactly what needs to happen"): a line matched to a library charm is offered the switch
+  // too; only the very same drawing (nothing to correct) stays "already linked"
+  await why({ entries: [['HEART_1111', { sku: 'HEART_1111', charmHash: 'c1c2c3c4c5c6c7c8' }]], ctx: { line: { sku: 'HEART_1111', variations: [], listingId: LISTING } } }, 'This listing is already linked to HEART_1111.');
+  { const o = await world({ entries: [['HEART_1111', { sku: 'HEART_1111', charmHash: 'otherdrawing' }]], ctx: { line: { sku: 'HEART_1111', variations: [], listingId: LISTING } } }).k.open(); eq([o.offered, o.sku, o.override && o.override.via], [true, 'HEART_1111', 'own'], 'its own SKU read as another drawing: offered, the SKU moves to this design'); }
+  { const o = await world({ entries: [['HEART_1111', { sku: 'HEART_1111', charmHash: 'otherdrawing' }]], ctx: { line: { sku: 'Heart 1111', variations: [], listingId: LISTING } } }).k.open(); eq([o.offered, o.sku, o.override && o.override.via], [true, 'HEART_1111', 'own'], 'the library\'s spelling of its SKU: the same'); }
+  { const o = await world({ entries: [['HEART_1111', { sku: 'HEART_1111', charmHash: 'otherdrawing' }]], aliases: { [LISTING]: { bySku: { "ACORN'S LEAF": 'HEART_1111' } } } }).k.open(); eq([o.offered, o.sku, o.override && o.override.via], [true, 'ACORNS_LEAF_4821', 'link'], 'read through the listing\'s link: offered, the link is replaced (HEART_1111 keeps its SKU)'); }
+  { const o = await world({ ownSku: true }).k.open(); eq([o.offered, o.sku, o.own], [true, "ACORN'S LEAF", true], 'KEEPOWNSKU: with the real rule the line\'s own SKU is the SKU'); }
   // (KEEPSAVE: offline the save is still offered; asked for, it waits for the connection: see keep-durable.cjs)
   { const o = await world({ cloud: false }).k.open(); eq([o.offered, o.offline, o.sku], [true, true, 'ACORNS_LEAF_4821'], 'offline: the save is still offered (it waits for the connection)'); }
   await why({ ctx: { listingId: '', line: { sku: 'X', variations: [] } } }, 'This order has no Etsy listing to link.');

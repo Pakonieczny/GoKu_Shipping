@@ -9,7 +9,7 @@
 'use strict';
 const path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
-const Keep = require(path.join(root, 'charm-nest-keep.js')), O = require(path.join(root, 'charm-nest-orders.js')), Sku = require(path.join(root, 'charm-nest-sku.js'));
+const Keep = require(path.join(root, 'charm-nest-keep.js')), O = require(path.join(root, 'charm-nest-orders.js')), Sku = require(path.join(root, 'charm-nest-sku.js')), NameSku = Object.assign({}, Sku, { etsyKey: () => '' })   /* (KEEPOWNSKU, Paul 20 Oct 2026: these cases run the save's own naming, for a line whose SKU cannot be kept; the order's own SKU: keep-override-server.cjs, keep-relink-live.cjs) */;
 let n = 0; const ok = (c, m) => { n++; assert(c, m); }; const eq = (a, b, m) => { n++; assert.deepStrictEqual(a, b, m); };
 const flush = async (k = 40) => { for (let i = 0; i < k; i++) await new Promise(r => setImmediate(r)); };
 
@@ -114,7 +114,7 @@ function world(opt = {}) {
     if (!w.ready) return { state: 'wait', wait: 'data', why: 'the design is being read' };
     const d = Object.assign({}, w.design, { rid: rec.rid, listingId: rec.listingId });
     return { state: 'ready', ctx: { rid: rec.rid, listingId: rec.listingId, title: d.title, line: { sku: d.sku, productId: '', variations: [{ name: 'Metal', value: 'GF', propertyId: 513, valueId: 1234 }], listingId: rec.listingId }, listingKind: null,
-      F: { name: d.name, kind: 'ai', bytes: new Uint8Array(500), hash: rec.hash, pieces: 1, state: 'ready' }, charm: { hash: d.charmHash, open: false }, parsed: { ok: 1 }, by: 'Paul', sandbox: !!rec.sandbox, S: w.S, O, Sku, Master,
+      F: { name: d.name, kind: 'ai', bytes: new Uint8Array(500), hash: rec.hash, pieces: 1, state: 'ready' }, charm: { hash: d.charmHash, open: false }, parsed: { ok: 1 }, by: 'Paul', sandbox: !!rec.sandbox, S: w.S, O, Sku: NameSku, Master,
       aliases: {}, tableFor: () => (w.tableReady ? null : null), api, lock: w.lock, designs: 1, now: () => w.now } };
   };
   w.mk = (tab) => {

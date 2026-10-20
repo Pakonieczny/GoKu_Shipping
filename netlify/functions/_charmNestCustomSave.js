@@ -25,6 +25,16 @@
  *      reuse:true (a design the page found in its library): the same, writing only the alias and the save record.
  *      Refuses sandbox:true on the way in, before any read. Expected refusals are HTTP 200 with ok:false (status:200), so the page's
  *      api() does not throw and the engine reads the answer. After a success the op best-effort removes ORPHAN files (see sweep).
+ *
+ *  KEEPOVERRIDE (Paul, 20 Oct 2026): "If a user engages the toggle to update the charm repository, then that's exactly what needs to happen ... If there is an existing charm that is incorrectly
+ *  matched to a given Etsy listing/order then the system must remove the SKU from the offending charm and attach it to the newly uploaded charm in the Charm repo." A commit that carries
+ *  override:{ via, tag, from } is that explicit act (the designs window's switch on a line that already reads a library charm X). The toggle wins over "first link wins", for THIS listing only:
+ *    via "own"   the line's own SKU S is X's (Charm_Master_Index/{S} exists with another drawing): the entry S is REPLACED by the new design (its files go to {S}~{tag}.ai|png, so X's
+ *                files are never written over), X keeps its other SKUs (the entries that share its file); S was X's only SKU: X is retired. Other save records of S are marked superseded.
+ *    via "link"  the line reads X through the listing's link (an alias, a spelling): the design is saved under its own SKU as before and the listing's answer is REPLACED (X keeps its SKUs).
+ *    either way  this order's own record of another drawing is replaced, and ONE audit record is written in the same transaction (Charm_Keep_Overrides/{rid}-{listing}-{at}: who, when,
+ *                which order, the whole old entry, the old answer, the replaced record), so the act can be read back and undone by the same switch with the old design.
+ *  Without override nothing here changes: first link wins, a SKU of another drawing is sku-taken.
  *  customSaveGet     (read only) { rid, listingId? } -> { ok, save: null | { id, rid, sku, phase, reused, etsy, at, by, ... }, intent? }, one or two reads.
  *  customSavePending (read only) {} -> { ok, pending: [{ rid, listingId, sku, etsy, at, linkNeedsEtsy }] }: saved designs whose Etsy step is not done.
  *  customSaveIntent  (no token; writes only Charm_Custom_Intents/{rid}, never the repository) { rid, listingId, hash, name, by, state }.
@@ -36,6 +46,8 @@ const { str, num } = require("./_charmNestAuth");
 const Master = require("./_charmNestMaster");
 
 const COLL = "Charm_Custom_Saves", INTENTS = "Charm_Custom_Intents", ALIASES = "Charm_Sku_Aliases", INDEX = Master.INDEX, FILES = Master.FILES;
+const OVERRIDES = "Charm_Keep_Overrides";   // KEEPOVERRIDE (Paul, 20 Oct 2026): one audit record per explicit "the toggle wins" commit (who, when, which order, what was replaced)
+const TAG_RE = /^[0-9a-z]{6,16}$/;
 const DIR = "charmnest/master/custom/";
 const ORPHAN_MS = 24 * 3600 * 1000, SWEEP_SKUS = 20, SWEEP_LIST = 200;   // (KEEP B8: files with no index entry go after a day, at most 20 SKUs a sweep)
 const PENDING_MAX = 25, COOLDOWN_MS = 60 * 1000, SCOPE_COOLDOWN_MS = 30 * 60 * 1000;
@@ -47,6 +59,16 @@ const SKU_RE = /^[A-Z0-9][A-Z0-9_-]{1,31}$/;                 // what a custom SK
 const RID_RE = /^\d{5,20}$/, LISTING_RE = /^\d{3,20}$/, ID_RE = /^\d{1,20}$/, HASH_RE = /^[0-9a-f]{8,64}$/i;
 const MIN_AI_BYTES = 200;
 const pathsOf = sku => ({ aiPath: DIR + sku + ".ai", thumbPath: DIR + sku + ".png" });
+/** KEEPOVERRIDE (Paul, 20 Oct 2026): the stem of a file under custom/: {SKU}.ai, or {SKU in file letters}__k{tag}.ai (charm-nest-sku.js fileKey). A tagged stem belongs to the entry whose file it is. */
+const stemOfFile = name => { const m = /^charmnest\/master\/custom\/([^\/]+)\.(?:ai|png)$/.exec(String(name || "")); return m ? m[1] : ""; };
+const TAGGED_RE = /__k[0-9a-z]{6,16}$/;
+/** Is a tagged file still wanted: an index entry draws from it, or an override's audit record names it (the drawing it gave a SKU, or the one it took a SKU from: what an undo restores)? Unknown is wanted. */
+async function tagged(db, aiPath) {
+  try {
+    for (const [c, f] of [[INDEX, "aiPath"], [OVERRIDES, "newAiPath"], [OVERRIDES, "removed.aiPath"]]) { const q = await db.collection(c).where(f, "==", aiPath).limit(1).get(); if (!q.empty) return true; }
+    return false;
+  } catch (e) { warn("tagged file not looked up", e); return true; }
+}
 
 /* ── answers ── */
 const refuse = (error, extra) => Object.assign({ ok: false, error, status: 200 }, extra || {});   // (status 200: an expected refusal is not an HTTP error)
@@ -87,17 +109,28 @@ function read(b, deps) {
   const rid = str(b.rid, 30).trim(), listingId = str(b.listingId, 30).trim(), sku = str(b.sku, 80).trim().toUpperCase();
   if (!RID_RE.test(rid)) return { answer: bad("rid", "the order number") };
   if (!LISTING_RE.test(listingId)) return { answer: bad("listingId", "the listing number") };
-  if (!SKU_RE.test(sku) || !Master.isSku(sku)) return { answer: bad("sku", "letters, digits, _ and - only, at most 32") };
   let rules; try { rules = skuRules(deps); } catch (e) { warn("sku rules not loaded", e); return { answer: { error: "unavailable", status: 503 } }; }
-  if (rules.reserved(sku)) return { answer: refuse("reserved", { sku }) };
   const oldSku = oldSkuOf(b.oldSku);
+  // KEEPOVERRIDE / KEEPOWNSKU (Paul, 20 Oct 2026): the design may be saved under the order's OWN Etsy SKU (etsyOwn: exactly the line's SKU as the library keys it), or under the library SKU the line
+  // already reads (override via "own"): those SKUs are the shop's, any name the library can hold; every other SKU is one the save makes (letters, digits, _ and -, 32 at most)
+  const o = b.override && typeof b.override === "object" ? b.override : null, via = o && (o.via === "own" || o.via === "link") ? o.via : "";
+  if (o && !via) return { answer: bad("override.via", "own or link") };
+  const R = rules.ownWhy && rules.fileKey ? rules : require("../../charm-nest-sku.js");
+  const etsyOwn = b.etsyOwn === true && !!oldSku && sku === oldSku.replace(/\//g, "-");
+  const shop = (etsyOwn || via === "own") && Master.isSku(sku) && !R.ownWhy(sku);
+  if (!(SKU_RE.test(sku) || shop) || !Master.isSku(sku)) return { answer: bad("sku", "letters, digits, _ and - only, at most 32") };
+  if (!shop && rules.reserved(sku)) return { answer: refuse("reserved", { sku }) };
   const productId = ID_RE.test(String(b.productId == null ? "" : b.productId)) ? String(b.productId) : "";
   const d = b.design && typeof b.design === "object" ? b.design : {}, f = b.file && typeof b.file === "object" ? b.file : {}, e = b.entry && typeof b.entry === "object" ? b.entry : {};
   const name = str(d.name || f.name, 200).trim() || sku + ".ai";
   const masterHash = str(f.masterHash || d.hash, 80).trim().toLowerCase();
   const reuse = b.reuse === true;
+  // (the files: {SKU}.ai, or {SKU in file letters}__k{tag}.ai for a SKU taken from another drawing (its files stay apart, for the audit) or one with other characters: Sku.fileKey, as the page uploads them)
+  const tag = str(b.fileTag || (o && o.tag), 20).trim().toLowerCase(), forced = via === "own" && !reuse, fileKey = R.fileKey(sku, tag, forced);
+  if (!reuse && fileKey !== sku && !TAG_RE.test(tag)) return { answer: bad("fileTag", "6 to 16 letters or digits") };
+  const override = via ? { via, from: str(o.from, 80).trim().toUpperCase() } : null;
   const declared = { aiSha256: SHA_RE.test(str(f.aiSha256, 80).trim()) ? str(f.aiSha256, 80).trim().toLowerCase() : "", aiBytes: Math.max(0, Math.floor(num(f.aiBytes))), pngSha256: SHA_RE.test(str(f.pngSha256, 80).trim()) ? str(f.pngSha256, 80).trim().toLowerCase() : "" };
-  const v = { rid, listingId, sku, oldSku, oldCut: wasCut(b.oldSku), productId, optionPairs: optionPairsOf(b.optionPairs), group: groupOf(b.group), title: str(b.title, 200), by: str(b.by, 80) || "operator", reuse, declared,
+  const v = { rid, listingId, sku, oldSku, oldCut: wasCut(b.oldSku), productId, optionPairs: optionPairsOf(b.optionPairs), group: groupOf(b.group), title: str(b.title, 200), by: str(b.by, 80) || "operator", reuse, declared, override, etsyOwn, fileKey: reuse ? sku : fileKey,
     design: { name, kind: d.kind === "dxf" ? "dxf" : "ai", hash: str(d.hash || masterHash, 80).toLowerCase(), bytes: Math.max(0, Math.floor(num(d.bytes))) } };
   const charmHash = str(e.charmHash, 80).trim();
   if (!reuse && config.requireFileHash && !declared.aiSha256) return { answer: bad("file.aiSha256", "the hash of the .ai the page built") };
@@ -144,7 +177,7 @@ function sameDrawing(d, v) {
 /* ── Storage: both files are there, the .ai is a real file, and (when the page said what it built) it is that file ── */
 const sha256 = buf => require("crypto").createHash("sha256").update(buf).digest("hex");
 async function checkFiles(bucket, v) {
-  const { aiPath, thumbPath } = pathsOf(v.sku), ai = bucket.file(aiPath), png = bucket.file(thumbPath), dec = v.declared || {};
+  const { aiPath, thumbPath } = pathsOf(v.fileKey || v.sku), ai = bucket.file(aiPath), png = bucket.file(thumbPath), dec = v.declared || {};
   let which = "ai";
   try {
     const [aiThere] = await ai.exists(); if (!aiThere) return refuse("not-uploaded", { which: "ai", why: "missing" });
@@ -183,12 +216,13 @@ async function sweep(deps) {
     const res = await bucket.getFiles({ prefix: DIR, autoPaginate: false, maxResults: SWEEP_LIST }), files = (res && res[0]) || [];
     out.listed = files.length;
     const bySku = new Map();
-    for (const f of files) { const m = /^charmnest\/master\/custom\/([^\/]+)\.(?:ai|png)$/.exec(String(f && f.name)); if (m) { if (!bySku.has(m[1])) bySku.set(m[1], []); bySku.get(m[1]).push(f); } }
+    for (const f of files) { const k = stemOfFile(f && f.name); if (k) { if (!bySku.has(k)) bySku.set(k, []); bySku.get(k).push(f); } }
     const skus = [...bySku.keys()].slice(0, 100);
     if (!skus.length) return out;
     const docs = await db.getAll(...skus.map(s => db.collection(INDEX).doc(s)), { fieldMask: ["sku"] });
     for (let i = 0; i < skus.length && out.orphans.length < SWEEP_SKUS; i++) {
       if (docs[i] && docs[i].exists) continue;
+      if (TAGGED_RE.test(skus[i]) && await tagged(db, DIR + skus[i] + ".ai")) continue;   // (KEEPOVERRIDE: a tagged file is kept while an entry draws from it or an audit record names it)
       let old = true;
       for (const f of bySku.get(skus[i])) {
         let t = NaN; try { const [m] = await f.getMetadata(); t = Date.parse((m && (m.updated || m.timeCreated)) || ""); } catch (_) { t = NaN; }
@@ -206,9 +240,9 @@ async function sweep(deps) {
 async function dropCandidate(deps, v) {
   try {
     if (v.reuse || !deps.bucket) return;
-    const held = await deps.db.collection(INDEX).doc(v.sku).get();
-    if (held.exists) return;
-    const { aiPath, thumbPath } = pathsOf(v.sku);
+    const held = await deps.db.collection(INDEX).doc(v.sku).get(), { aiPath, thumbPath } = pathsOf(v.fileKey || v.sku);
+    // (KEEPOVERRIDE: an override's own files ({SKU}~{tag}) are litter when the entry does not use them: the SKU is held, by another file)
+    if (held.exists && !(v.fileKey && v.fileKey !== v.sku && str((held.data() || {}).aiPath, 400) !== aiPath)) return;
     for (const p of [aiPath, thumbPath]) { try { await deps.bucket.file(p).delete({ ignoreNotFound: true }); } catch (e) { warn("candidate file not removed " + p, e); } }
   } catch (e) { warn("candidate files not dropped", e); }
 }
@@ -229,6 +263,7 @@ async function commit(deps, b) {
   const rules = skuRules(deps), usable = x => !!x && !!x.sku && !!x.aiPath && !x.blocked && SKU_RE.test(String(x.sku)) && !rules.reserved(String(x.sku));
   const mode = v.oldSku === "" ? "whole" : usableKey(v.oldSku) && !v.oldCut ? "bySku" : "none";   // KEEP B4: how the listing is answered (none: only the Etsy step links it)
 
+  const ov = v.override, own = !!ov && ov.via === "own", auditId = v.rid + "-" + v.listingId + "-" + now;   // KEEPOVERRIDE (Paul, 20 Oct 2026): the switch's explicit "the toggle wins"
   /* Everything is decided from what the transaction reads, so a retry (a concurrent writer, a lost reply, a record cut half way) starts from the truth. `made` holds the Storage links once the files were checked. */
   const decide = async (tx, made) => {
     const reads = [ridRef, listRef, indexRef, aliasRef, intentRef].concat(fileRef ? [fileRef] : []);
@@ -236,12 +271,16 @@ async function commit(deps, b) {
     const rec = pick(ridRef, ridSnap, listRef, listSnap, v.listingId);
 
     // 1 · this order's record: the same drawing again answers it, another drawing is refused (the first design of an order stays)
-    let stale = null;   // a record whose entry is GONE (a Library delete, a torn store): it promises a design that does not exist, so this call makes the design again and replaces the record
+    let stale = null, replaced = null;   // a record whose entry is GONE (a Library delete, a torn store): it promises a design that does not exist, so this call makes the design again and replaces the record
     if (rec.snap.exists) {
       const d = rec.snap.data() || {}, e = up(d.sku);
-      if (!sameDrawing(d, v)) return { refusal: refuse("already-saved", { sku: d.sku || "", sameFile: false, listingId: String(d.listingId || "") }) };
-      const entry = e === v.sku ? dataOf(indexSnap) : dataOf(await tx.get(col(INDEX).doc(e)));
-      if (!entry || !entry.sku) stale = d;
+      if (!sameDrawing(d, v)) {
+        if (!ov) return { refusal: refuse("already-saved", { sku: d.sku || "", sameFile: false, listingId: String(d.listingId || "") }) };
+        stale = d; replaced = d;   // KEEPOVERRIDE: the toggle wins: this order's record of ANOTHER drawing is replaced (it is kept whole in the audit record)
+      }
+      const entry = replaced ? null : e === v.sku ? dataOf(indexSnap) : dataOf(await tx.get(col(INDEX).doc(e)));
+      if (replaced) { /* (decided below, as a new save) */ }
+      else if (!entry || !entry.sku) stale = d;
       else {
         // the record is the truth: what it promised and is missing is put back (the listing's answer, when NOTHING answers it now; the intent, when it is still open)
         const old = dataOf(aliasSnap) || {}, was = d.alias === "bySku" && d.oldSku ? up(old.bySku && old.bySku[d.oldSku]) : d.alias === "whole" ? up(old.sku) : "x";
@@ -257,7 +296,7 @@ async function commit(deps, b) {
 
     // 2 · which entry carries the drawing: the design is looked for by its hash HERE, not in what a page cached
     const ex = dataOf(indexSnap);
-    let target, creating = false;
+    let target, creating = false, copyOf = null, overriding = null;
     if (v.reuse) {
       // an identical design the repository already holds: its SKU must be there, usable, and the very same drawing
       if (!ex || !ex.sku || !ex.aiPath) return { refusal: refuse("reuse-missing", { sku: v.sku }) };
@@ -268,55 +307,101 @@ async function commit(deps, b) {
       const q = await tx.get(col(INDEX).where("charmHash", "==", v.entry.charmHash).limit(8));
       const hits = q.docs.map(x => x.data() || {}).filter(x => usable(x) && String(x.charmHash || "") === v.entry.charmHash)
         .sort((a, c) => (c.sku === v.sku) - (a.sku === v.sku) || String(a.sku).localeCompare(String(c.sku)));
-      if (hits.length) target = { sku: hits[0].sku, data: hits[0] };
+      if (own || v.etsyOwn) {
+        // KEEPOVERRIDE via "own": the line's own SKU takes the new design, whatever drawing holds it now (that drawing keeps its other SKUs; it is kept whole in the audit record)
+        // KEEPOWNSKU: the order's own Etsy SKU takes it (a SKU no drawing holds: the listing had no match); the same drawing under another SKU is not stored twice (S joins it)
+        if (ex && ex.sku && str(ex.charmHash, 80) === v.entry.charmHash && ex.aiPath && !ex.blocked) target = { sku: v.sku, data: ex };
+        else if (indexSnap.exists && ex && ex.sku && !own) return { refusal: refuse("sku-taken", { sku: v.sku, by: "master" }) };
+        else {
+          const hit = hits.find(x => x.sku !== v.sku) || null;   // (the new design is in the repository already under another SKU: S joins that drawing, nothing is stored twice)
+          target = { sku: v.sku, data: null }; if (indexSnap.exists) overriding = ex || {};
+          if (hit) copyOf = hit; else creating = true;
+        }
+      }
+      else if (hits.length) target = { sku: hits[0].sku, data: hits[0] };
       else if (ex) return { refusal: refuse("sku-taken", { sku: v.sku, by: "master" }) };   // (another drawing holds the SKU: the page asks for the next candidate)
       else { creating = true; target = { sku: v.sku, data: null }; }
     }
 
     // 3 · the listing's answer is never replaced: the same drawing there is "already linked", another design there is "listing-linked" (first link wins)
     const old = dataOf(aliasSnap) || {};
-    let prior = mode === "bySku" ? up(old.bySku && old.bySku[v.oldSku]) : mode === "whole" ? up(old.sku) : "";
+    const rawPrior = mode === "bySku" ? up(old.bySku && old.bySku[v.oldSku]) : mode === "whole" ? up(old.sku) : "";
+    let prior = rawPrior, aliasWas = "";
     if (mode === "bySku" && v.oldSku === target.sku) prior = "";
     let linked = false;
     if (prior && prior !== target.sku) {
       const pe = dataOf(await tx.get(col(INDEX).doc(prior)));
       if (pe && pe.sku && !pe.blocked) {
-        if (str(pe.charmHash, 80) === v.entry.charmHash && usable(pe)) { target = { sku: pe.sku, data: pe }; creating = false; linked = true; }   // the same drawing under another SKU already answers: that SKU stays
+        if (!own && str(pe.charmHash, 80) === v.entry.charmHash && usable(pe)) { target = { sku: pe.sku, data: pe }; creating = false; copyOf = null; linked = true; }   // the same drawing under another SKU already answers: that SKU stays
+        else if (ov) aliasWas = prior;   // KEEPOVERRIDE: the toggle wins over "first link wins": this listing's answer is replaced below (the old one is kept in keep.was and the audit record)
         else return { refusal: refuse("listing-linked", { sku: pe.sku, by: pe.hashSource === "custom-save" ? "save" : "repository" }) };
       }   // (an answer whose entry is gone is dangling: it is replaced below, and kept in keep.was)
     } else if (prior && prior === target.sku && !creating) linked = true;
     const aliasOwn = mode === "bySku" && v.oldSku === target.sku;   // the line already carries the design's own SKU: nothing to alias
+    const fixOwn = !!ov && aliasOwn && !!rawPrior && rawPrior !== target.sku;   // (KEEPOVERRIDE: ... unless the listing answers that SKU with another one: the answer is put right, to the SKU itself)
 
     // 4 · a new entry needs its files, checked outside the transaction
     if (creating && !made) return { need: "files" };
 
+    // KEEPOVERRIDE: what an override replaces is read before anything is written: the SKUs that stay with the old drawing (its card), the other save records of that SKU (superseded)
+    let others = [], supersede = [];
+    if (overriding) {
+      const by = overriding.aiPath ? ["aiPath", str(overriding.aiPath, 400)] : overriding.charmHash ? ["charmHash", str(overriding.charmHash, 80)] : null;
+      if (by) { const q = await tx.get(col(INDEX).where(by[0], "==", by[1]).limit(40)); others = q.docs.map(x => x.id).filter(id => id && id !== v.sku).sort(); }
+      const ss = await tx.get(col(COLL).where("sku", "==", v.sku).limit(20));
+      supersede = ss.docs.filter(x => x.id !== rec.ref.id && !(x.data() || {}).superseded && str((x.data() || {}).charmHash, 80) !== v.entry.charmHash).map(x => x.ref);
+    }
+    const acted = !!ov && !!(overriding || aliasWas || replaced || fixOwn);
+    const stamp = acted ? { audit: auditId, via: ov.via, at: now, by: v.by, rid: v.rid, listingId: v.listingId } : null;
+    const fromOf = () => (overriding ? { sku: v.sku, skus: others.slice(0, 20), retired: !others.length, charmHash: str(overriding.charmHash, 80), aiPath: str(overriding.aiPath, 400), masterHash: str(overriding.masterHash, 80) } : null);
+
     // 5 · the writes
     let entry = target.data, masterHash = entry ? entry.masterHash || "" : v.masterHash, aiPath = entry ? entry.aiPath : "", thumbPath = entry ? entry.thumbPath || "" : "";
     if (creating) {
-      ({ aiPath, thumbPath } = pathsOf(v.sku));
+      ({ aiPath, thumbPath } = pathsOf(v.fileKey || v.sku));
       const e = v.entry;
       entry = { sku: v.sku, masterHash, masterPath: aiPath, masterName: v.design.name, charmHash: e.charmHash, widthPt: e.widthPt, heightPt: e.heightPt, areaPt2: e.areaPt2, members: e.members, holes: e.holes,
         engravable: e.engravable, engravableBy: "index", upAngle: e.upAngle, upSource: e.upSource, aiPath, thumbPath, aiUrl: str(made.aiUrl, 900), thumbUrl: str(made.thumbUrl, 900),
         open: false, labelSource: "text", confidence: null, indexedAt: FV.serverTimestamp(), indexedAtMs: now, firstIndexedAt: FV.serverTimestamp(), hashSource: "custom-save" };
-      await tx.create(indexRef, entry);
+      if (overriding) entry.override = Object.assign({}, stamp, { from: fromOf() });
+      if (indexSnap.exists) await tx.set(indexRef, entry); else await tx.create(indexRef, entry);   // (KEEPOVERRIDE: the entry of the line's own SKU is replaced whole; X's files stay where they are)
       if (!fileSnap.exists) await tx.set(fileRef, { masterHash, path: aiPath, url: str(made.aiUrl, 900), name: v.design.name, charms: 1, labelled: 1, unlabelled: [], orphans: [], duplicates: [], undecodable: 0, blocked: [],
         unlabelledCount: 0, orphanCount: 0, duplicateCount: 0, blockedCount: 0, skus: [v.sku], indexedAt: FV.serverTimestamp(), indexedAtMs: now, indexedBy: "custom-save" });
       else if ((fileSnap.data() || {}).indexedBy === "custom-save") { const skus = Array.isArray((fileSnap.data() || {}).skus) ? fileSnap.data().skus : []; if (!skus.includes(v.sku)) await tx.set(fileRef, { skus: skus.concat([v.sku]).slice(0, 2000) }, { merge: true }); }
       // (a record of a real master file that happens to hold the same bytes is left exactly as it is)
+    } else if (copyOf) {
+      // KEEPOVERRIDE: the new design is in the repository already under another SKU: the line's SKU joins that drawing (its card lists it), marked a design saved from an order so a master file never writes it back
+      entry = Object.assign({}, copyOf, { sku: v.sku, masterHash: v.masterHash || copyOf.masterHash || "", hashSource: "custom-save", attachedFrom: copyOf.sku, indexedAt: FV.serverTimestamp(), indexedAtMs: now });
+      delete entry.blocked; delete entry.conflict;
+      if (overriding) entry.override = Object.assign({}, stamp, { from: fromOf() });
+      masterHash = entry.masterHash; aiPath = entry.aiPath || ""; thumbPath = entry.thumbPath || "";
+      if (indexSnap.exists) await tx.set(indexRef, entry); else await tx.create(indexRef, entry);
     }
     const sku = target.sku;
-    if (mode !== "none" && !aliasOwn && !linked && prior !== sku) {
-      // the listing's alias: the old SKU answers with the new one (or, with no old SKU, the listing does); a dangling answer that stood there is kept in `keep.was`
-      const alias = { listingId: v.listingId, by: v.by, title: v.title, updatedAt: FV.serverTimestamp(), keep: { rid: v.rid, sku, oldSku: v.oldSku, was: prior, at: now, by: v.by } };
+    if (mode !== "none" && ((!aliasOwn && !linked && prior !== sku) || fixOwn)) {
+      // the listing's alias: the old SKU answers with the new one (or, with no old SKU, the listing does); a dangling answer that stood there is kept in `keep.was` (KEEPOVERRIDE: and the one the toggle replaced)
+      const alias = { listingId: v.listingId, by: v.by, title: v.title, updatedAt: FV.serverTimestamp(), keep: { rid: v.rid, sku, oldSku: v.oldSku, was: aliasWas || (fixOwn ? rawPrior : prior), at: now, by: v.by } };
+      if (stamp) alias.keep.override = { audit: auditId, via: ov.via };
       if (mode === "bySku") alias.bySku = { [v.oldSku]: sku }; else { alias.sku = sku; alias.v = 2; }
       await tx.set(aliasRef, alias, { merge: true });
+    }
+    if (acted) {
+      // KEEPOVERRIDE: the other save records of the moved SKU now promise a drawing it no longer has: superseded (the repair pass and the Etsy queue leave them), and ONE audit record of the act
+      for (const r of supersede) await tx.set(r, { superseded: { at: now, by: v.by, rid: v.rid, audit: auditId } }, { merge: true });
+      await tx.set(col(OVERRIDES).doc(auditId), { at: now, by: v.by, rid: v.rid, listingId: v.listingId, sku, oldSku: v.oldSku, via: ov.via, fromSku: ov.from || "", title: v.title,
+        newCharmHash: v.entry.charmHash, newAiPath: aiPath, newMasterHash: masterHash || "", attachedFrom: copyOf ? copyOf.sku : "",
+        removed: overriding ? Object.assign(fromOf(), { entry: overriding, thumbPath: str(overriding.thumbPath, 400) }) : null,
+        alias: aliasWas || fixOwn ? { listingId: v.listingId, key: mode === "bySku" ? v.oldSku : "", was: aliasWas || rawPrior, now: sku } : null,
+        replacedSave: replaced ? { id: rec.ref.id, sku: str(replaced.sku, 80), charmHash: str(replaced.charmHash, 80), at: num(replaced.at) || null, by: str(replaced.by, 80) } : null,
+        superseded: supersede.map(r => r.id), undo: "drop the old design in the designs window of an order of this listing and switch it on: the same act moves the SKU back" });
     }
     const aliasMode = mode === "bySku" && aliasOwn ? "none" : mode;
     const save = { rid: v.rid, listingId: v.listingId, sku, oldSku: v.oldSku, productId: v.productId, optionPairs: v.optionPairs, group: v.group, title: v.title, design: v.design, charmHash: v.entry.charmHash,
       masterHash, aiPath, thumbPath, by: v.by, at: now, reused: !creating, phase: "repo", etsy: stale && up(stale.sku) === sku && stale.etsy && stale.etsy.state === "linked" ? stale.etsy : { state: "pending" }, rehearsal: false, alias: aliasMode };
+    if (stamp) save.override = Object.assign({}, stamp, { fromSku: ov.from || "", from: fromOf(), alias: aliasWas || fixOwn ? { was: aliasWas || rawPrior, now: sku } : null, replaced: replaced ? str(replaced.sku, 80) : "" });
     if (stale) await tx.set(rec.ref, save); else await tx.create(rec.ref, save);   // (a stale record is replaced; any other record was refused or answered above)
     if (intentSnap.exists && (intentSnap.data() || {}).state !== "done") await tx.set(intentRef, { state: "done", sku, updatedAt: FV.serverTimestamp() }, { merge: true });
-    return { done: creating ? "saved" : "linked", how: creating ? "created" : linked ? "listing-same" : "same-design", sku, id: rec.ref.id, save, entry, created: creating };
+    return { done: creating ? "saved" : "linked", how: stamp ? "override" : creating ? "created" : linked ? "listing-same" : "same-design", sku, id: rec.ref.id, save, entry, created: creating };
   };
 
   let made = null;
@@ -332,7 +417,7 @@ async function commit(deps, b) {
     if (out.need === "files") {
       const no = await checkFiles(deps.bucket, v);
       if (no) return no;
-      const { aiPath, thumbPath } = pathsOf(v.sku), [aiUrl, thumbUrl] = await Promise.all([deps.tokenUrl(aiPath), deps.tokenUrl(thumbPath)]);
+      const { aiPath, thumbPath } = pathsOf(v.fileKey || v.sku), [aiUrl, thumbUrl] = await Promise.all([deps.tokenUrl(aiPath), deps.tokenUrl(thumbPath)]);
       made = { aiUrl: aiUrl || "", thumbUrl: thumbUrl || "" };
       continue;
     }
@@ -344,7 +429,8 @@ async function commit(deps, b) {
       } catch (e) { warn("files of a saved design not checked", e); }
     }
     const answer = { ok: true, rid: v.rid, id: out.id, listingId: v.listingId, sku: out.sku, created: out.created, how: out.how, entry: await linksOf(out.entry ? Master.slimEntry(out.entry) : null), alias: out.save.alias || (out.save.oldSku ? "bySku" : "whole") };
-    if (out.sku !== v.sku) await dropCandidate(deps, v);   // (the design lives under another SKU: the files uploaded under this call's candidate are litter)
+    if (out.save && out.save.override) answer.override = out.save.override;   // (KEEPOVERRIDE: what the toggle replaced, for the page's progress lines; a repeated call answers it again from the record)
+    if (out.sku !== v.sku || v.fileKey !== v.sku) await dropCandidate(deps, v);   // (the design lives under another SKU: the files uploaded under this call's candidate are litter)
     if (out.created || out.how !== "again") await sweep(deps);   // (best effort, never changes the answer)
     return answer;
   }
@@ -356,7 +442,8 @@ async function commit(deps, b) {
 const etsyNow = (e, now) => (e && e.state === "writing" && !(+e.runningUntil > now) ? Object.assign({}, e, { state: "unverified", reason: "interrupted", retry: true }) : e);
 const saveView = (id, d, now) => {
   const e = etsyNow(d.etsy && typeof d.etsy === "object" ? d.etsy : {}, now == null ? Date.now() : now);
-  return { id, rid: str(d.rid, 30), listingId: str(d.listingId, 30), sku: str(d.sku, 80), oldSku: str(d.oldSku, 120), phase: str(d.phase, 20), reused: d.reused === true, alias: str(d.alias, 10),
+  return { id, rid: str(d.rid, 30), listingId: str(d.listingId, 30), sku: str(d.sku, 80), oldSku: str(d.oldSku, 120), phase: str(d.phase, 20), reused: d.reused === true, alias: str(d.alias, 10), charmHash: str(d.charmHash, 80),   // (KEEPOVERRIDE: the drawing it holds: another drawing dropped later is a correction)
+    ...(d.superseded ? { superseded: true } : {}),
     etsy: Object.assign({ state: str(e.state, 20) || "pending" }, e.reason ? { reason: str(e.reason, 40) } : {}, e.text ? { text: str(e.text, 200) } : {}, e.retry === false ? { retry: false } : {}), at: num(d.at) || null, by: str(d.by, 80) };
 };
 const intentView = d => ({ rid: str(d.rid, 30), listingId: str(d.listingId, 30), hash: str(d.hash, 80), name: str(d.name, 200), by: str(d.by, 80), state: str(d.state, 12), at: num(d.at) || null, updatedAt: num(d.updatedAtMs) || null });
@@ -381,7 +468,7 @@ async function pending(deps, b) {
   const rows = [];
   for (const s of snap.docs) {
     const d = s.data() || {}, e = etsyNow(d.etsy && typeof d.etsy === "object" ? d.etsy : {}, now);
-    if (d.phase !== "repo" || d.rehearsal === true || e.state === "linked") continue;
+    if (d.phase !== "repo" || d.rehearsal === true || e.state === "linked" || d.superseded) continue;   // (KEEPOVERRIDE: a record whose SKU was moved to another design by the toggle is not finished on Etsy)
     if (e.state === "failed" && (e.retry === false || TERMINAL.has(e.reason))) continue;   // a person's matter (or nothing to retry): not listed
     if (+e.runningUntil > now) continue;                                                      // somebody is running it
     const cool = e.reason === "scope" ? SCOPE_COOLDOWN_MS : COOLDOWN_MS;
@@ -418,4 +505,4 @@ async function intent(deps, b) {
   return { ok: true, intent: out.intent };
 }
 
-module.exports = { config, COLL, INTENTS, DIR, SKU_RE, pathsOf, commit, get, pending, intent, sweep, read, recordFor, pick, optionPairsOf, groupOf, usableKey, oldSkuOf, ORPHAN_MS };
+module.exports = { config, COLL, INTENTS, OVERRIDES, DIR, SKU_RE, pathsOf, stemOfFile, tagged, TAGGED_RE, commit, get, pending, intent, sweep, read, recordFor, pick, optionPairsOf, groupOf, usableKey, oldSkuOf, ORPHAN_MS };

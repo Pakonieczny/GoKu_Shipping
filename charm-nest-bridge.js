@@ -3533,7 +3533,17 @@ const Master = window.Master = (() => {
     const fail = (reason, text, extra) => Object.assign({ ok: false, reason, text }, extra || {});
     const alive = () => { try { return !hooks.alive || hooks.alive() !== false; } catch (_) { return true; } };
     const sku = String(spec.reuse || spec.sku || "").trim().toUpperCase(), c = spec.charm, F = spec.F || {};
-    if (!/^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(sku)) return fail("bad-sku", "that SKU cannot be used");
+    // KEEPOVERRIDE / KEEPOWNSKU (Paul, 20 Oct 2026): the order's own Etsy SKU, or the library SKU the line reads, is the shop's: any name the library can hold (charm-nest-sku.js ownWhy); its files are
+    // uploaded under Sku.fileKey (the SKU itself when it has the plain shape, else in file letters + "__k" + the design's tag; always so for a SKU taken from another drawing, whose files stay)
+    const SkuR = window.CharmNestSku || null, ov = spec.override && spec.override.via ? spec.override : null, shop = !!(spec.etsyOwn || (ov && ov.via === "own")) && !!SkuR && SkuR.ownWhy && !SkuR.ownWhy(sku);
+    if (!/^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(sku) && !shop) return fail("bad-sku", "that SKU cannot be used");
+    const fileKey = SkuR && SkuR.fileKey && !spec.reuse ? SkuR.fileKey(sku, spec.fileTag || "", !!(ov && ov.via === "own")) : sku;
+    // (what the override takes the SKU from, as this page's library holds it now: the progress pop-up names it; the cloud's answer is the truth once it comes)
+    const xNow = (() => { if (!ov) return null; const was = entryFor(ov.via === "own" ? sku : ov.from); if (!was) return { sku: ov.from, skus: [], retired: false };
+      const fileOf = e => e.aiPath || (Object.values(e.sizes || {}).find(s => s && s.aiPath) || {}).aiPath || "", f = fileOf(was);
+      const skus = f ? [...B.master.entries.values()].filter(e => e && e.sku !== sku && fileOf(e) === f).map(e => e.sku).sort() : [];
+      return { sku: ov.from, skus, retired: ov.via === "own" && !skus.length, charmHash: was.charmHash || "", aiPath: f }; })();
+    const keepOv = o => { try { if (!ov) return; (B.keepOverrides || (B.keepOverrides = new Map())).set(String(spec.rid) + "|" + String(spec.listingId), Object.assign({ sku, via: ov.via, fromSku: ov.from, at: Date.now() }, o)); } catch (_) { /* a word for the pop-up only */ } };
     if (!c || !spec.parsed) return fail("error", "the design is no longer read: open the order again");
     const L = RLOCK();
     try {
@@ -3555,7 +3565,7 @@ const Master = window.Master = (() => {
         built = { ai, png: dataUrlToBytes(c.thumb) };
         try { if (hooks.built) hooks.built(built); } catch (_) { /* the engine keeps them for a retry; not needed to go on */ }
       }
-      if (spec.rehearsal) return { ok: true, rehearsed: true, sku, created: !spec.reuse, bytes: built ? built.ai.length : 0 };
+      if (spec.rehearsal) { keepOv({ rehearsal: true, from: ov && ov.via === "own" ? xNow : null, link: ov && ov.via === "link" ? xNow : null }); return { ok: true, rehearsed: true, sku, created: !spec.reuse, bytes: built ? built.ai.length : 0 }; }
       // KEEP B9: the hash of the bytes this call uploads, so the commit can tell its file from another save's (two saves that chose one SKU upload to one path)
       const sha256 = async b => [...new Uint8Array(await crypto.subtle.digest("SHA-256", b))].map(x => x.toString(16).padStart(2, "0")).join("");
       if (!S.cloud.ok) return fail("offline", "you are offline");
@@ -3577,7 +3587,7 @@ const Master = window.Master = (() => {
         }
       };
       if (!spec.reuse) {
-        try { await once("ai", `charmnest/master/custom/${sku}.ai`, built.ai, "application/illustrator"); await once("png", `charmnest/master/custom/${sku}.png`, built.png, "image/png"); }
+        try { await once("ai", `charmnest/master/custom/${fileKey}.ai`, built.ai, "application/illustrator"); await once("png", `charmnest/master/custom/${fileKey}.png`, built.png, "image/png"); }
         catch (e) { if (e && e.keepLocked) return fail("locked", "needs the repository password"); if (e && e.keepCancelled) return fail("cancelled", "switched off"); throw e; }
       }
       if (!alive()) return fail("cancelled", "switched off");   // (the switch went off before anything was written to the repository: nothing is)
@@ -3587,6 +3597,7 @@ const Master = window.Master = (() => {
       say(spec.reuse ? `Linking ${sku}…` : `Writing ${sku} to the repository…`);
       const body = () => ({ op: "customSaveCommit", repoToken: tok.token, rid: String(spec.rid), listingId: String(spec.listingId), sku, oldSku: String(spec.oldSku || ""), productId: String(spec.productId || ""), optionPairs: spec.optionPairs || [], group: spec.group || { mode: "unknown", productIds: [] }, title: String(spec.title || ""), by: String(spec.by || ""),
         design: { name: F.name, kind: F.kind === "dxf" ? "dxf" : "ai", hash: F.hash, bytes: F.bytes ? F.bytes.length : 0 }, reuse: !!spec.reuse,
+        ...(ov ? { override: { via: ov.via, from: ov.from } } : {}), ...(spec.etsyOwn ? { etsyOwn: true } : {}), ...(spec.fileTag ? { fileTag: spec.fileTag } : {}),
         entry: spec.reuse ? { charmHash: c.hash } : { charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource }, file: Object.assign({ masterHash: F.hash, name: F.name }, proof) });
       let r;
       for (let again = false; ; again = true) {
@@ -3600,7 +3611,9 @@ const Master = window.Master = (() => {
       }
       // 6 · the entry joins the page's library at once; the signature moved, so the next scheduled check reads the index (no forced load)
       if (r.entry && r.entry.sku) B.master.entries.set(r.entry.sku, r.entry);
-      return { ok: true, sku: r.sku || sku, created: r.created !== false, entry: r.entry || null, alias: r.alias || "", rehearsed: false };
+      if (r.override) keepOv({ audit: r.override.audit || "", from: r.override.from || (ov && ov.via === "own" ? xNow : null), link: ov && ov.via === "link" ? xNow : null, alias: r.override.alias || null, replaced: r.override.replaced || "" });
+      try { render(); } catch (_) { /* the Library tab paints at its next look */ }   // (KEEPOVERRIDE: the old charm's card no longer lists the SKU, the new design's card does, at once)
+      return { ok: true, sku: r.sku || sku, created: r.created !== false, entry: r.entry || null, alias: r.alias || "", rehearsed: false, override: r.override || null };
     } catch (e) {
       if (e && e.status === 409 && e.data && e.data.error === "sku-taken") return fail("sku-taken", "that SKU was just taken", { sku: e.data.sku });   // (KEEP: the file door refuses an upload over the files of another design's entry: the commit's own word, nothing was written)
       const net = !!e && (e.transient === true || /cloud offline|timed out|no answer/i.test(String(e.message || "")));   // (a passing network trouble; anything else is an error to be read)
@@ -14237,14 +14250,39 @@ const CustomSheet = window.CustomSheet = (() => {
      (this line follows the keeper: queued, set, or failed with its reason). A save read back after a reload is not announced again (it relinks quietly, as before). The order of the window itself is
      its own design (Send to Sheet places it): it is not told. */
   const keepFlows = new Map();
-  const keepEtsyLine = rec => rec.etsy ? { text: `Etsy SKU set on listing ${rec.listingId}`, state: "done" } : rec.state === "attention" ? { text: `Etsy SKU not set on listing ${rec.listingId}`, state: "failed", why: rec.why || "something went wrong: open the order to try again" } : { text: `Etsy SKU queued for listing ${rec.listingId}`, state: "work" };
+  // KEEPOWNSKU (Paul, 20 Oct 2026): a design saved under the order's own Etsy SKU needs no Etsy write: Etsy already carries it (the server's Etsy step is a no-op)
+  const keepCarried = rec => { try { const old = String((rec.line && rec.line.sku) || ""); return !!old && !!rec.sku && (window.CharmNestSku && CharmNestSku.etsyKey ? CharmNestSku.etsyKey(old) : txt(old).trim().toUpperCase()) === String(rec.sku); } catch (_) { return false; } };
+  const keepEtsyLine = rec => keepCarried(rec) ? { text: `Etsy already carries SKU ${rec.sku}`, state: "done" } : rec.etsy ? { text: `Etsy SKU set on listing ${rec.listingId}`, state: "done" } : rec.state === "attention" ? { text: `Etsy SKU not set on listing ${rec.listingId}`, state: "failed", why: rec.why || "something went wrong: open the order to try again" } : { text: `Etsy SKU queued for listing ${rec.listingId}`, state: "work" };
   const keepOwn = rec => Orders.rows().filter(r => String(r.order && r.order.receiptId) === String(rec.rid)).map(r => r.key);
+  /** KEEPOVERRIDE (Paul, 20 Oct 2026): what the save took over (Master.saveCustom keeps the cloud's answer: the SKU's old charm, the listing's old answer), for the pop-up's lines. */
+  const keepOvOf = rec => { try { const o = B.keepOverrides && B.keepOverrides.get(String(rec.rid) + "|" + String(rec.listingId)); return o && o.sku === String(rec.sku) && Date.now() - (o.at || 0) < 10 * 60 * 1000 ? o : null; } catch (_) { return null; } };
+  /** The pop-up's first lines: the charm the SKU was taken from (KEEPOVERRIDE), the save, the listing's link, then the per-order lines and Etsy. `would`: a rehearsal's words. */
+  function keepLines(rec, would) {
+    const lid = String(rec.listingId || ""), old = txt(String((rec.line && rec.line.sku) || "")).trim(), sku = rec.sku || "the new SKU", ov = keepOvOf(rec), out = [];
+    const st = would ? "would" : "done", W = (a, b) => (would ? a : b), carried = keepCarried(rec);
+    if (ov && ov.via === "own" && ov.from) {
+      const f = ov.from, name = (f.skus || []).length ? f.skus.slice(0, 3).join(", ") + (f.skus.length > 3 ? ` and ${f.skus.length - 3} more` : "") : "";
+      out.push({ id: "remove", text: name ? `${W("Would remove", "Removed")} SKU ${sku} from charm ${name} in the charm repository` : `${W("Would remove", "Removed")} SKU ${sku} from its old charm in the charm repository`, state: st,
+        why: name ? `${name} keep${(f.skus || []).length === 1 ? "s" : ""} ${(f.skus || []).length === 1 ? "its" : "their"} drawing` : `${sku} was that charm's only SKU: the old charm is retired (its file stays; the audit record keeps it)` });
+    }
+    if (ov) out.push({ id: "repo", text: `${W("Would save", "Saved")} the new design as ${sku}`, state: st });
+    else out.push({ id: "repo", text: would ? `Would save ${sku} to the charm repository` : `Saved ${sku} to the charm repository`, state: st });
+    const was = ov && ov.via === "link" && ov.alias && ov.alias.was ? ov.alias.was : ov && ov.via === "link" && ov.fromSku ? ov.fromSku : "";
+    const lk = carried ? `${W("Would link", "Linked")} listing ${lid} · SKU ${sku} to the new design` : old ? `${W("Would link", "Linked")} listing ${lid} · SKU “${old}” to the new design ${sku}` : `${W("Would link", "Linked")} listing ${lid} to the new design ${sku}`;
+    out.push({ id: "link", text: lk, state: st, why: was ? `it read ${was} before; ${was} keeps its SKUs` : "" });
+    return out;
+  }
   function keepFlowStart(rec) {
     try {
       if (!window.Review || !Review.relinkFlow || rec.etsyOnly || !(rec.upd > Date.now() - 20000) || !rec.sku) return false;
-      const lid = String(rec.listingId || ""), old = String((rec.line && rec.line.sku) || ""), e = keepEtsyLine(rec);
-      const fl = Review.relinkFlow({ title: `Save to the charm repository · ${rec.sku}`, sub: `Order ${rec.rid} · listing ${lid}`, listingId: lid, fromSku: old, toSku: rec.sku, skip: keepOwn(rec), keepOpen: true, placeWaiting: true,
-        pre: [{ id: "repo", text: `Saved ${rec.sku} to the charm repository`, state: "done" }, { id: "link", text: old ? `Linked listing ${lid} · SKU “${old}” to ${rec.sku}` : `Linked listing ${lid} to ${rec.sku}`, state: "done" }, Object.assign({ id: "etsy" }, e)] });
+      const lid = String(rec.listingId || ""), old = String((rec.line && rec.line.sku) || ""), e = keepEtsyLine(rec), ov = keepOvOf(rec);
+      // (KEEPOVERRIDE: the SKU itself now draws the new design: every line that reads it is made again from it by the same sweep, its placement step and its pictures)
+      if (ov && ov.via === "own" && Review.relinkOverride) { const en = Master.entryFor(rec.sku) || {}; Review.relinkOverride({ sku: rec.sku, aiPath: en.aiPath || "", hash: en.charmHash || "" }); }
+      // (KEEPOVERRIDE: the act is on the order's timeline; the cloud's audit record (Charm_Keep_Overrides) holds the whole of what was replaced)
+      if (ov) { const f = ov.from || {}, by = rec.by || employeeName() || "a person", what = ov.via === "own" ? `SKU ${rec.sku} taken from charm ${(f.skus || []).join(", ") || "(its only SKU: the old charm is retired)"} and given to this order's design` : `listing ${lid} linked to this order's design ${rec.sku} instead of ${(ov.alias && ov.alias.was) || ov.fromSku || "the charm it read"}`;
+        for (const r of Orders.rows()) if (String(r.order && r.order.receiptId) === String(rec.rid)) { try { TL.line(r, "interpreted", { id: `${r.key}.keepov.${ov.audit || rec.sku}`, once: true, by, text: `Charm repository corrected by ${by}: ${what}`.slice(0, 200), data: { keepOverride: true, sku: rec.sku, via: ov.via, audit: ov.audit || null, from: f.skus || [], retired: !!f.retired } }); } catch (_) { /* a note only */ } } }
+      const fl = Review.relinkFlow({ title: `Save to the charm repository · ${rec.sku}`, sub: `Order ${rec.rid} · listing ${lid}`, listingId: lid, fromSku: old, toSku: rec.sku, skip: keepOwn(rec), keepOpen: true, placeWaiting: true, alsoSku: ov && ov.via === "own" ? rec.sku : "",
+        pre: keepLines(rec, false).concat([Object.assign({ id: "etsy" }, e)]) });
       const st = { fl, ran: null, etsy: e.state !== "work" }; keepFlows.set(rec.key, st);
       setTimeout(() => { st.ran = fl.run({ loadMaps: true }).all.then(t => { st.tally = t; keepFlowEnd(st); }, () => keepFlowEnd(st)); }, 400);
       return true;
@@ -14264,8 +14302,8 @@ const CustomSheet = window.CustomSheet = (() => {
       if (!window.Review || !Review.relinkFlow) return;
       const lid = String(rec.listingId || ""), old = String((rec.line && rec.line.sku) || ""), sku = rec.sku || "the new SKU";
       Review.relinkFlow({ sandbox: true, title: `Save to the charm repository · ${sku}`, listingId: lid, fromSku: old, toSku: sku, skip: keepOwn(rec),
-        pre: [{ id: "repo", text: `Would save ${sku} to the charm repository`, state: "would" }, { id: "link", text: old ? `Would link listing ${lid} · SKU “${old}” to ${sku}` : `Would link listing ${lid} to ${sku}`, state: "would" }],
-        after: [{ id: "etsy", text: `Would queue the Etsy SKU for listing ${lid}`, state: "would" }] }).rehearse(old);
+        pre: keepLines(rec, true),   // (KEEPOVERRIDE: the charm the SKU would be taken from, too)
+        after: [keepCarried(rec) ? { id: "etsy", text: `Etsy already carries SKU ${sku}: nothing would be sent`, state: "would" } : { id: "etsy", text: `Would queue the Etsy SKU for listing ${lid}`, state: "would" }] }).rehearse(old);
     } catch (err) { console.warn("Save keeper: rehearsal panel", err); }
   }
   /** What the window's strip shows follows the intent (the engine's rows fill in as they come). */
@@ -14787,11 +14825,15 @@ const CustomSheet = window.CustomSheet = (() => {
       sB.title = finished ? "Saved to the repository. It cannot be switched off here; change it in the Library." : "";
       sB.setAttribute("aria-describedby", V ? "cuKeepLn" : "cuKeepP");
       pv.hidden = !!V;
-      const o = K.open || {}, sig = [K.sku, o.aliasWorks, o.reuse, on ? 1 : 0].join("|");
+      const o = K.open || {}, sig = [K.sku, o.aliasWorks, o.reuse, on ? 1 : 0, o.override ? o.override.via + o.override.from : "", o.own ? 1 : 0].join("|");
       if (pv._sig !== sig) {
         pv._sig = sig; pv.replaceChildren(); const sk = el("span", "cuSku"); sk.textContent = K.sku; const T = s => document.createTextNode(s);
         // (REVDROP: while the switch is off nothing is linked, so the line says what switching it on does, not what "will" happen)
-        if (o.reuse) { if (typeof o.reuse === "string" && o.reuse.length > 11) sk.textContent = txt(o.reuse); pv.append(T("Already in the repository as "), sk, T(on ? " · this listing will be linked to it" : " · switch on to link this listing to it")); }
+        // KEEPOVERRIDE (Paul, 20 Oct 2026): a line that already reads a library charm: the switch is the correction ("the toggle wins")
+        if (o.override && o.override.via === "own") pv.append(T("This listing reads "), sk, T(` with another drawing now · ${on ? "the SKU moves to this design" : "switch on to move the SKU to this design"}; the old charm keeps its other SKUs`));
+        else if (o.override) { const was = el("span", "cuSku"); was.textContent = o.override.from; pv.append(T("This listing reads "), was, T(" now · "), T(on ? "it will be linked to this design as " : "switch on to link it to this design as "), sk, T(`; ${o.override.from} keeps its SKUs`)); }
+        else if (o.own) pv.append(T("The order's own SKU "), sk, T(on ? " · this design is saved under it, so later orders of this listing use it" : " · switch on to save this design under it, so later orders of this listing use it"));   // (KEEPOWNSKU)
+        else if (o.reuse) { if (typeof o.reuse === "string" && o.reuse.length > 11) sk.textContent = txt(o.reuse); pv.append(T("Already in the repository as "), sk, T(on ? " · this listing will be linked to it" : " · switch on to link this listing to it")); }
         else if (!K.sku) pv.append(T("A new SKU is chosen when you press"));
         else pv.append(T("New SKU "), sk, T(o.aliasWorks === false ? (on ? " · Etsy gets the new SKU too, or the next order will still ask" : " · switch on to save it; Etsy gets the new SKU too, or the next order will still ask") : (on ? " · later orders of this listing will use this design" : " · switch on to make later orders of this listing use this design")));
       }
@@ -15882,10 +15924,25 @@ const Review = window.Review = (() => {
       const L = relinkLib(), RL = relinkRL(); if (!L || !RL || !prev) return;
       const entries = L.snapshot(Orders.rows(), prev, { aliases: B.maps.aliases, optionMaps: B.maps.optionMaps }, (r, m) => RL.linkOf(r, m));
       // (a line already waiting keeps what it read before the FIRST change: its pieces are still that)
-      for (const e of entries) { const had = relinkWait.get(e.key); relinkWait.set(e.key, had ? Object.assign(e, { from: had.from || e.from, was: had.was, tries: 0 }) : e); }
+      for (const e of entries) { const had = relinkWait.get(e.key); relinkWait.set(e.key, had ? Object.assign(e, { from: had.from || e.from, was: had.was, tries: 0 }, had.override ? { override: had.override } : {}) : e); }   // (KEEPOVERRIDE: a moved SKU's entry stays one)
       if (relinkWait.size > 3000) for (const k of [...relinkWait.keys()].slice(0, relinkWait.size - 3000)) relinkWait.delete(k);
       if (entries.length) relinkLater(0);
     } catch (e) { console.warn("[relink] the maps were not compared:", e && e.message); }
+  }
+  /** KEEPOVERRIDE (Paul, 20 Oct 2026: the designs window's switch "must remove the SKU from the offending charm and attach it to the newly uploaded charm ... This must also trigger the immediate
+      updating of all related thumbnails and Nested charms on sheets"). The SKU keeps its name and now draws the new design (o = { sku, aiPath, hash }): every live line that reads it waits for
+      the same sweep, decided by the drawing its pieces were cut from (CharmNestListingRelink classify, override): a piece of the old drawing comes off and the line is made again from the new
+      one, with the sweep's own placement and pictures. Every listing's lines (the SKU is one entry of the library); the progress pop-up names those of the listing and of the SKU. → how many */
+  function relinkOverride(o) {
+    const sku = String((o && o.sku) || "").trim().toUpperCase(); if (!sku) return 0;
+    const ov = { sku, aiPath: String((o && o.aiPath) || ""), hash: String((o && o.hash) || "") }; let n = 0;
+    for (const row of Orders.rows()) {
+      if (!row || !row.key || !row.spec || !row.line || row.state === "gone" || String(row.spec.designSku || "").toUpperCase() !== sku) continue;
+      const had = relinkWait.get(row.key);
+      relinkWait.set(row.key, Object.assign(had || { key: row.key, row, from: sku, was: null, at: Date.now() }, { override: ov, tries: 0 })); n++;
+    }
+    if (n) relinkLater(0);
+    return n;
   }
   function relinkLater(ms) { clearTimeout(relinkTimer); relinkTimer = setTimeout(() => { relinkTimer = 0; relinkNow().catch(() => {}); }, ms || 0); }
   /** The sweep now (after any sweep under way). → { keys: the lines it changed or held, swapped, flagged } */
@@ -15914,7 +15971,8 @@ const Review = window.Review = (() => {
     return out;
   }
   const relinkOwn = row => { try { const M = window.CharmNestReviewMark, i = M && M.info ? M.info(String(row.order.receiptId)) : null; return i && i.state === "done" && i.how === "pick" && i.sku && (!i.rowKey || i.rowKey === row.key) ? String(i.sku) : ""; } catch (_) { return ""; } };
-  const relinkHelpers = () => ({ maps: B.maps, linkOf: (r, m) => relinkRL().linkOf(r, m), made: relinkMade, fixedOf: relinkFixed, keepsPlace: r => !!(Pool.keepsPlace && Pool.keepsPlace(r)), ownPick: relinkOwn,
+  const relinkPieces = row => { const ids = (row && row.poolIds) || []; const got = ids.map(id => B.pool.rows.get(id)); return got.some(r => !r) ? null : got.filter(r => !RELINK_TAKEN.has(r.state)); };   // (KEEPOVERRIDE: the live pieces themselves, null when one is not read)
+  const relinkHelpers = () => ({ maps: B.maps, linkOf: (r, m) => relinkRL().linkOf(r, m), made: relinkMade, pieces: relinkPieces, fixedOf: relinkFixed, keepsPlace: r => !!(Pool.keepsPlace && Pool.keepsPlace(r)), ownPick: relinkOwn,
     sameDesign: (a, b) => O.sameDesign(a, b, k => Master.entryFor(k)), cancelled: r => !!(window.Cancelled && Cancelled.has && Cancelled.has(r.order.receiptId)), readNow: r => O.interpretLine(r.order, r.line, Orders.ctx()) });
   /** Who picked: the name the saved answer carries (an option value's own, or the listing's alias record's), else the person signed in here. */
   function relinkBy(row, link) {
@@ -15926,7 +15984,7 @@ const Review = window.Review = (() => {
     return employeeName() || "";
   }
   const relinkId = (row, c, part) => `${row.key}.lpick.${part ? part + "." : ""}${TL.hash(String(c.link && c.link.key) + "|" + c.to)}`;
-  const relinkSay = (row, c, by, more) => TL.line(row, "interpreted", { id: relinkId(row, c, more.part), once: true, by, text: `Charm updated from listing pick by ${by || "a person"}: ${c.from ? c.from + " → " : "now "}${c.to}${more.text ? " · " + more.text : ""}`.slice(0, 200),
+  const relinkSay = (row, c, by, more) => TL.line(row, "interpreted", { id: relinkId(row, c, more.part), once: true, by, text: (c.override ? `Charm repository corrected by ${by || "a person"}: SKU ${c.to} now draws the new design (Save to the charm repository)${more.text ? " · " + more.text : ""}` : `Charm updated from listing pick by ${by || "a person"}: ${c.from ? c.from + " → " : "now "}${c.to}${more.text ? " · " + more.text : ""}`).slice(0, 200),
     data: { listingPick: true, sku: c.to, was: c.from || null, link: c.link ? c.link.key : null, via: c.link ? c.link.via : null, by: by || null, action: c.action, sheets: more.sheets || [] } });
   /** INPLACE (Paul, 20 Oct 2026): what became of a replaced line's new pieces, in a few words (row._inplaceLast, repoolLine's inPlaceSettle). */
   function inPlaceWords(ip, homes) {
@@ -15950,7 +16008,7 @@ const Review = window.Review = (() => {
         let cloud; try { const got = await api("charmNestLibrary", { op: "poolGet", poolIds: [...ids] }, { quiet: true }); cloud = (got && got.pools) || {}; } catch (err) { why = "retry: " + ((err && err.message) || err); return false; }
         const live = [...ids].map(id => cloud[id]).filter(p => p && !RELINK_TAKEN.has(p.state));
         if (!on.length && live.some(p => p.runId && p.runId !== run.runId)) { why = "another run holds its pieces"; return false; }
-        if (live.length && live.every(p => h.sameDesign(p.sku, c.to))) { for (const id of ids) if (cloud[id]) B.pool.rows.set(id, Object.assign({}, B.pool.rows.get(id), cloud[id])); why = "made up elsewhere"; return false; }
+        if (live.length && live.every(p => (c.override ? relinkLib().freshFor(c.override, p) : h.sameDesign(p.sku, c.to)))) {   /* (KEEPOVERRIDE: a moved SKU is made up elsewhere when its pieces are cut from the new design) */ for (const id of ids) if (cloud[id]) B.pool.rows.set(id, Object.assign({}, B.pool.rows.get(id), cloud[id])); why = "made up elsewhere"; return false; }
       }
       homes = on.map(sh => sh.fileBase || sheetName(sh));
       r.repoolChanged = true; r.changePending = true; r._relink = { sku: c.to, by, at: Date.now(), from: c.from };
@@ -16020,6 +16078,7 @@ const Review = window.Review = (() => {
   function relinkFlow(o) {
     o = o || {};
     const lid = String(o.listingId || "").replace(/\D/g, ""), to = String(o.toSku || "").trim().toUpperCase(), skip = new Set(o.skip || []);
+    const also = String(o.alsoSku || "").trim().toUpperCase(), mine = r => rlLid(r) === lid || (!!also && !!r && !!r.spec && String(r.spec.designSku || "").toUpperCase() === also);   // (KEEPOVERRIDE: a moved SKU's lines of any listing)
     let fl = null; try { fl = window.CNRelinkFlow ? CNRelinkFlow.open({ title: o.title || `Listing ${lid} → ${to}`, sandbox: !!o.sandbox, sub: o.sub }) : null; } catch (e) { console.warn("[relink] panel:", e && e.message); }
     const line = (id, text, state, why) => { try { if (fl) fl.line(id, text, state, why); } catch (_) { /* a word only */ } };
     for (const p of o.pre || []) line(p.id, p.text, p.state, p.why);
@@ -16048,7 +16107,7 @@ const Review = window.Review = (() => {
     const kept = new Set();
     const sub = out => {
       for (const x of out.swapped || []) {
-        if (rlLid(x.row) !== lid || skip.has(x.row.key)) continue; const rid = x.row.order.receiptId, k = "o:" + x.row.key, where = (x.homes || []).join(", ") || "its sheet";
+        if (!mine(x.row) || skip.has(x.row.key)) continue; const rid = x.row.order.receiptId, k = "o:" + x.row.key, where = (x.homes || []).join(", ") || "its sheet";
         const ip = x.inplace, rs = (ip && ip.results) || [];
         if (x.made === false) { tally.failed.add(k); line(k, `Order ${rid}: its piece came off ${where}, but it was not made again from ${x.c.to}`, "failed", x.row.reason || (x.row.problems || []).map(p => p.kind).join(", ") || x.row.state); }
         else if (rs.length) {
@@ -16060,10 +16119,10 @@ const Review = window.Review = (() => {
         }
         else { tally.orders.add(k); const now = (x.row.poolIds || []).map(id => Pool.sheetOf(id) || allSheets().find(sh => sh.charms.some(c => c.poolId === id))).filter(Boolean)[0]; line(k, `Order ${rid}: piece taken off ${where} and made from ${x.c.to}${now && !(x.homes || []).includes(rlName(now)) ? ` (onto ${rlName(now)})` : ""}`, "done"); }
       }
-      for (const x of out.flagged || []) { if (rlLid(x.row) !== lid || skip.has(x.row.key)) continue; const k = "o:" + x.row.key, f = x.c.fixed || []; tally.held.add(k); line(k, `Order ${x.row.order.receiptId}: its piece stays ${x.c.from} on ${[...new Set(f.map(y => y.name))].join(", ") || "its sheet"}`, "warn", `${f.map(y => y.why).find(Boolean) || "cut or released"}: nothing there is changed; ${x.row.hold ? "it is held for a person (Review)" : "a person makes it"}`); }
-      for (const x of out.design || []) { if (rlLid(x.row) !== lid || skip.has(x.row.key)) continue; const k = "o:" + x.row.key; tally.orders.add(k); line(k, `Order ${x.row.order.receiptId}: reads ${x.c.to} now (not on a sheet yet)`, "done"); }
-      for (const x of out.keptC || []) { if (rlLid(x.row) !== lid || skip.has(x.row.key)) continue; const k = "o:" + x.row.key; kept.add(x.row.key); tally.held.add(k); line(k, `Order ${x.row.order.receiptId}: in Review, its piece stays until the Review is resolved`, "warn", "it is made from " + x.c.to + " then"); }
-      for (const sh of out.sheets || []) if (sh.charms.some(c => { const r = B.orders.rows.find(rr => (rr.poolIds || []).includes(c.poolId)); return r && rlLid(r) === lid && !skip.has(r.key); })) sheetDone(sh, sh.charms.some(c => c.inPlace && sh.placements.some(p => p.id === c.id)) && !sh.charms.some(c => !sh.placements.some(p => p.id === c.id)) ? "write" : "append");
+      for (const x of out.flagged || []) { if (!mine(x.row) || skip.has(x.row.key)) continue; const k = "o:" + x.row.key, f = x.c.fixed || []; tally.held.add(k); line(k, `Order ${x.row.order.receiptId}: its piece stays ${x.c.from} on ${[...new Set(f.map(y => y.name))].join(", ") || "its sheet"}`, "warn", `${f.map(y => y.why).find(Boolean) || "cut or released"}: nothing there is changed; ${x.row.hold ? "it is held for a person (Review)" : "a person makes it"}`); }
+      for (const x of out.design || []) { if (!mine(x.row) || skip.has(x.row.key)) continue; const k = "o:" + x.row.key; tally.orders.add(k); line(k, `Order ${x.row.order.receiptId}: reads ${x.c.to} now (not on a sheet yet)`, "done"); }
+      for (const x of out.keptC || []) { if (!mine(x.row) || skip.has(x.row.key)) continue; const k = "o:" + x.row.key; kept.add(x.row.key); tally.held.add(k); line(k, `Order ${x.row.order.receiptId}: in Review, its piece stays until the Review is resolved`, "warn", "it is made from " + x.c.to + " then"); }
+      for (const sh of out.sheets || []) if (sh.charms.some(c => { const r = B.orders.rows.find(rr => (rr.poolIds || []).includes(c.poolId)); return r && mine(r) && !skip.has(r.key); })) sheetDone(sh, sh.charms.some(c => c.inPlace && sh.placements.some(p => p.id === c.id)) && !sh.charms.some(c => !sh.placements.some(p => p.id === c.id)) ? "write" : "append");
     };
     let subbed = false;
     if (!o.sandbox) { relinkSubs.add(sub); subbed = true; }
@@ -16079,7 +16138,7 @@ const Review = window.Review = (() => {
           // the lines still waiting for their sheet (one being arranged) are made up by the next sweeps: followed until each is settled (a line in Review waits for its Review: told above)
           const t0 = Date.now();
           for (;;) {
-            const wait = [...relinkWait.values()].filter(e => e.row && rlLid(e.row) === lid && !kept.has(e.key) && !skip.has(e.key));
+            const wait = [...relinkWait.values()].filter(e => e.row && mine(e.row) && !kept.has(e.key) && !skip.has(e.key));
             if (!wait.length) break;
             if (Date.now() - t0 > 150000) { for (const e of wait) { tally.failed.add("o:" + e.key); line("o:" + e.key, `Order ${e.row.order.receiptId}: not made again yet`, "failed", "its sheet stayed busy; the Review's Order changed row offers it"); } break; }
             for (const e of wait) line("o:" + e.key, `Order ${e.row.order.receiptId}: waiting for its sheet to finish arranging, then made from ${to}`, "work");
@@ -16217,7 +16276,9 @@ const Review = window.Review = (() => {
   const rdCustom = e => !!e && e.hashSource === "custom-save";
   /** True when `now` draws something `was` did not (a charm hash, whole or of a size, it did not have). Only what a person set changed, or a design saved from an order: false. */
   function redrawChanged(was, now) {
-    if (!was || !now || was === now || rdCustom(was) || rdCustom(now)) return false;
+    // (KEEPOVERRIDE, Paul 20 Oct 2026: a SKU the designs window's switch took for another design (the entry carries `override`) is a new drawing for every computer: the one whose run holds its pieces makes them again)
+    const took = !!now && !!now.override && String((now.override.from && now.override.from.charmHash) || "") !== String(now.charmHash || "");
+    if (!was || !now || was === now || ((rdCustom(was) || rdCustom(now)) && !took)) return false;
     const a = new Set(rdHashes(was)), b = rdHashes(now);
     return a.size > 0 && b.length > 0 && b.some(h => !a.has(h));
   }
@@ -17511,7 +17572,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, openCount, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, openCount, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */

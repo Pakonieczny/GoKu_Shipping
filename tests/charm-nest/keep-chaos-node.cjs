@@ -19,7 +19,7 @@ const origFile = Fk.bucket.file.bind(Fk.bucket);
 const ages = new Map();   // path -> ms of the file's last update (default: now), for the age of an abandoned file
 Fk.bucket.file = p => { const f = origFile(p), gm = f.getMetadata; f.getMetadata = async () => { const [m] = await gm.call(f); return [Object.assign({}, m, { updated: new Date(ages.has(p) ? ages.get(p) : Date.now()).toISOString(), metadata: { firebaseStorageDownloadTokens: 'tok' + String(p.length) } })]; }; return f; };
 const lib = require(path.join(fnDir, 'charmNestLibrary.js')), RA = require(path.join(fnDir, '_charmNestRepoAuth.js'));
-const O = require(path.join(root, 'charm-nest-orders.js')), Sku = require(path.join(root, 'charm-nest-sku.js')), Keep = require(path.join(root, 'charm-nest-keep.js'));
+const O = require(path.join(root, 'charm-nest-orders.js')), Sku = require(path.join(root, 'charm-nest-sku.js')), NameSku = Object.assign({}, Sku, { etsyKey: () => '' })   /* (KEEPOWNSKU, Paul 20 Oct 2026: these cases run the save's own naming, for a line whose SKU cannot be kept; the order's own SKU: keep-override-server.cjs, keep-relink-live.cjs) */, Keep = require(path.join(root, 'charm-nest-keep.js'));
 const ONLY = process.env.ONLY ? new RegExp(process.env.ONLY, 'i') : null, DRIVER = process.env.DRIVER || (typeof Keep.durable === 'function' ? 'durable' : 'press');   // (the page saves through the durable keeper, charm-nest-bridge.js KeepLib().durable: the one-press engine is only what the page used before it, and fails every resume scenario by design)
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const GOOD = 'pw-' + crypto.randomBytes(5).toString('hex');
@@ -127,7 +127,10 @@ function mkMaster(w) {
     async saveCustom(spec, hooks) {
       const fail = (reason, text, extra) => Object.assign({ ok: false, reason, text }, extra || {});
       const sku = String(spec.reuse || spec.sku || '').toUpperCase(), c = spec.charm, F = spec.F;
-      if (!/^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(sku)) return fail('bad-sku', 'that SKU cannot be used');
+      // (KEEPOVERRIDE / KEEPOWNSKU, as the bridge's: the shop's own SKU may have other characters; the files go under Sku.fileKey; the override, etsyOwn and the tag go with the commit)
+      const ov = spec.override && spec.override.via ? spec.override : null, shop = !!(spec.etsyOwn || (ov && ov.via === 'own')) && !Sku.ownWhy(sku);
+      if (!/^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(sku) && !shop) return fail('bad-sku', 'that SKU cannot be used');
+      const fileKey = spec.reuse ? sku : Sku.fileKey(sku, spec.fileTag || '', !!(ov && ov.via === 'own'));
       let built = spec.built || null;
       if (!spec.reuse && !built) { w.builds++; built = { ai: Buffer.concat([Buffer.from('%PDF-1.4\nbuilt ' + sku + ' ' + c.hash + ' '), Buffer.alloc(260, 7)]), png: Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(80, 9)]) }; try { hooks.built(built); } catch (_) {} }
       if (spec.rehearsal) return { ok: true, rehearsed: true, sku, created: !spec.reuse };
@@ -142,9 +145,9 @@ function mkMaster(w) {
           catch (e) { if (!again && w.lock.isRepoLocked(e)) { w.lock.forget(); tok = await need(); if (!tok) throw Object.assign(new Error('locked'), { keepLocked: true }); continue; } throw e; }
         }
       };
-      if (!spec.reuse) { try { await once('ai', `charmnest/master/custom/${sku}.ai`, built.ai); await once('png', `charmnest/master/custom/${sku}.png`, built.png); } catch (e) { if (e && e.keepLocked) return fail('locked', 'needs the repository password'); throw e; } }
+      if (!spec.reuse) { try { await once('ai', `charmnest/master/custom/${fileKey}.ai`, built.ai); await once('png', `charmnest/master/custom/${fileKey}.png`, built.png); } catch (e) { if (e && e.keepLocked) return fail('locked', 'needs the repository password'); throw e; } }
       const body = () => ({ op: 'customSaveCommit', repoToken: tok.token, rid: String(spec.rid), listingId: String(spec.listingId), sku, oldSku: String(spec.oldSku || ''), productId: String(spec.productId || ''), optionPairs: spec.optionPairs || [], group: spec.group, title: spec.title, by: spec.by || '',
-        design: { name: F.name, kind: 'ai', hash: F.hash, bytes: F.bytes.length }, reuse: !!spec.reuse, entry: spec.reuse ? { charmHash: c.hash } : { charmHash: c.hash, widthPt: 60, heightPt: 50, areaPt2: 2400, members: 1, holes: 1, engravable: true, upAngle: 0, upSource: 'drawn' }, file: Object.assign({ masterHash: F.hash, name: F.name }, spec.reuse || !built ? {} : { aiSha256: sha(built.ai), aiBytes: built.ai.length, pngSha256: sha(built.png) }) });   // (the proof of the bytes built, as the page sends it: KEEP B3)
+        design: { name: F.name, kind: 'ai', hash: F.hash, bytes: F.bytes.length }, reuse: !!spec.reuse, ...(ov ? { override: { via: ov.via, from: ov.from } } : {}), ...(spec.etsyOwn ? { etsyOwn: true } : {}), ...(spec.fileTag ? { fileTag: spec.fileTag } : {}), entry: spec.reuse ? { charmHash: c.hash } : { charmHash: c.hash, widthPt: 60, heightPt: 50, areaPt2: 2400, members: 1, holes: 1, engravable: true, upAngle: 0, upSource: 'drawn' }, file: Object.assign({ masterHash: F.hash, name: F.name }, spec.reuse || !built ? {} : { aiSha256: sha(built.ai), aiBytes: built.ai.length, pngSha256: sha(built.png) }) });   // (the proof of the bytes built, as the page sends it: KEEP B3)
       let r;
       for (let again = false; ; again = true) {
         try { r = await w.api('charmNestLibrary', body()); break; }
@@ -162,7 +165,7 @@ function mkTab(w, o = {}) {
   const aliases = () => { const m = {}; for (const [k, v] of store.entries()) if (k.startsWith('Charm_Sku_Aliases/')) m[k.slice(18)] = v; return m; };
   const events = [], Master = mkMaster(w);
   const ctx = { rid, listingId, title: "Acorn&#39;s Leaf Charm", line: { sku, productId: o.productId || '9100000001', variations: o.variations || [{ name: 'Metal', value: 'GF 14/20', propertyId: 513, valueId: 1234 }], listingId }, listingKind: null,
-    F: { name: d.name, kind: 'ai', bytes: d.bytes, hash: d.hash, pieces: 1, state: 'ready' }, charm: { hash: d.charmHash, open: false }, parsed: { ok: 1 }, by: 'Paul', sandbox: !!o.sandbox, S: { cloud: { ok: true } }, O, Sku, Master, aliases, tableFor: () => o.table || null, api: (fn, b) => w.api(fn, b), lock: w.lock, now: Date.now };
+    F: { name: d.name, kind: 'ai', bytes: d.bytes, hash: d.hash, pieces: 1, state: 'ready' }, charm: { hash: d.charmHash, open: false }, parsed: { ok: 1 }, by: 'Paul', sandbox: !!o.sandbox, S: { cloud: { ok: true } }, O, Sku: NameSku, Master, aliases, tableFor: () => o.table || null, api: (fn, b) => w.api(fn, b), lock: w.lock, now: Date.now };
   ctx.setTimeout = w.clock.setTimeout; ctx.clearTimeout = w.clock.clearTimeout;
   const tab = { events, ctx, w, rid, listingId };
   if (DRIVER === 'durable') { w.tabs[rid] = tab; tab.k = durableTab(w, tab, o.tab ? (w['keeper_' + o.tab] = w['keeper_' + o.tab] || keeperFor(w, o.tab)) : null); return tab; }
@@ -254,13 +257,19 @@ scen('two orders of the same listing, same file, at the same moment: one entry',
   await Promise.all([a.k.run(), b.k.run()]); if (DRIVER !== 'press') { await carry(w, a); await carry(w, b); }
   const s = expectSaved(w, { saves: 2, once: false }); const r2 = store.get('Charm_Custom_Saves/' + RID2); if (!r2 || r2.sku !== s.sku) s.f.push('order 2 is not linked to ' + s.sku + ': ' + JSON.stringify(r2 && { sku: r2.sku, etsy: r2.etsy })); return s;
 });
-scen('two orders, same listing, DIFFERENT files: the first design keeps the listing', ['P2', 'P4'], async () => {
+// (KEEPOVERRIDE, Paul 20 Oct 2026: "If a user engages the toggle to update the charm repository, then that's exactly what needs to happen": a second order's switch on a listing that already reads the
+//  first design is an explicit correction and takes the listing (the first design keeps its SKU, an audit record says so); a second window that looked before the first save landed is refused calmly)
+scen('two orders, same listing, DIFFERENT files: one design answers the listing; the second switch, when it saw the first, takes it over (KEEPOVERRIDE)', ['P2', 'P4'], async () => {
   const w = mkWorld(); const a = mkTab(w, { rid: RID1, design: designs.A }), b = mkTab(w, { rid: RID2, design: designs.B }); await w.ready; await b.k.open();   // (both windows are open before either saved)
   await carry(w, a); const sA = expectSaved(w, { allowOthers: true });
   await b.k.run(); if (DRIVER !== 'press') await carry(w, b); const al = store.get('Charm_Sku_Aliases/' + LISTING), targets = Object.values((al && al.bySku) || {}); const f = [...sA.f];
-  if (targets.length !== 1 || targets[0] !== sA.sku) f.push('the listing\'s alias was taken over by the second design: ' + JSON.stringify(targets) + ' (first ' + sA.sku + ')');
   const second = store.get('Charm_Custom_Saves/' + RID2); const lines = DRIVER === 'durable' ? [b.k.phase().line, (await b.k.open()).why].filter(Boolean) : b.events.filter(e => e.done).map(e => e.text); if (!second && !lines.length) f.push('the second order ended with no line at all');
-  if (second && second.sku !== sA.sku) f.push('the second order was saved as ' + second.sku + ' (a second design for the same listing)');
+  if (targets.length !== 1) f.push('the listing answers with more than one design: ' + JSON.stringify(targets));
+  else if (second && second.sku !== sA.sku) {
+    if (targets[0] !== second.sku) f.push('the second design was saved but the listing does not read it: ' + JSON.stringify(targets));
+    if (!docs('Charm_Keep_Overrides').length) f.push('the takeover left no audit record');
+    if (!store.get('Charm_Master_Index/' + sA.sku)) f.push('the first design lost its SKU');
+  } else if (targets[0] !== sA.sku) f.push('the listing\'s alias was taken over with no save of the second design: ' + JSON.stringify(targets) + ' (first ' + sA.sku + ')');
   return { f };
 });
 scen('SKU taken by ANOTHER design (made a moment before): next free SKU, the other entry untouched', ['P2'], async () => {
@@ -281,6 +290,11 @@ scen('the same file in the repository under another listing: reused, no new file
 for (const [label, sku] of [['missing', ''], ['malformed', 'a b/c?? !!'], ['lower case', 'acorn leaf 4821'], ['reserved family (CUSTOM_6673)', 'CUSTOM_6673'], ['already a master design', 'HEART_1111']]) scen(`listing SKU ${label}: a defined calm end`, ['P2'], async () => {
   const w = mkWorld(); if (label === 'already a master design') store.set('Charm_Master_Index/HEART_1111', { sku: 'HEART_1111', charmHash: designs.B.charmHash, aiPath: 'x', thumbPath: 'y' });
   const t = mkTab(w, { sku }); const r = await carry(w, t); const f = []; const info = r.info;
+  if (label === 'already a master design' && info.offered) {   // (KEEPOVERRIDE: the line's own SKU read as ANOTHER drawing: the switch moves HEART_1111 to the dropped design, an audit record says so)
+    const e = store.get('Charm_Master_Index/HEART_1111');
+    if (r.res && r.res.done !== 'linked') f.push('ended ' + (r.res && r.res.done)); else { if (!e || e.charmHash === designs.B.charmHash) f.push('HEART_1111 still draws the old design: ' + JSON.stringify(e)); if (!docs('Charm_Keep_Overrides').length) f.push('no audit record of the override'); }
+    return { f };
+  }
   if (!info.offered) { if (!info.why) f.push('not offered and no reason'); f.push(...nothingWritten(w)); return { f }; }
   if (r.res && r.res.done !== 'linked') f.push('ended ' + (r.res && r.res.done) + ': ' + (r.res && JSON.stringify(t.events.filter(e => e.state === 'failed').map(e => e.text)))); else f.push(...expectSaved(w, { rawSku: sku, anyAlias: true, aliasWorks: info.aliasWorks }).f); return { f };
 });
