@@ -21,10 +21,10 @@
    A save that fails (offline, the server) leaves the card exactly where it was with one plain line under the buttons;
    nothing is lost and the button can be pressed again.
 
-   Public: CancelUI.cancel(rid), CancelUI.undo(rid), CancelUI.busy(rid), CancelUI.canUndo(rid).
+   Public: CancelUI.mount(node, row) (Open Orders, a held card), CancelUI.cancel(rid), CancelUI.undo(rid), CancelUI.busy(rid), CancelUI.canUndo(rid).
 
    (NOHOLDPILE, Paul 20 Oct 2026: "Remove the 'On hold' tab and UI from the Orders tab ... it competes with the existing Review
-   tab": the On hold pile, and with it the Cancel Order button on its cards (CancelUI.mount), is gone. The cancel itself, its
+   tab": the On hold pile is gone; the Cancel Order button (CancelUI.mount) moves to the held card in Open Orders. The cancel itself, its
    flight to the Cancelled chip, the note and Undo stay, called as CancelUI.cancel(rid); a held order is shown in Review.) */
 (function (root) {
   "use strict";
@@ -264,7 +264,25 @@
     return n;
   }
   function showCancelled(rid) { try { if (root.Orders && Orders.showCancelled) Orders.showCancelled(rid); } catch (e) { console.warn("cancel show", e); } }
-  // (NOHOLDPILE, Paul 20 Oct 2026: Orders › On hold is gone, "it competes with the existing Review tab": a held order is shown in Review)
+  /** Adds Cancel Order beside Release Hold on a held card in Open Orders (Orders draws the card, then calls this; NOHOLDPILE, Paul 20 Oct 2026: it lived on the On hold pile, which is gone). */
+  function mount(node, row) {
+    try {
+      if (!node || !row || !row.hold || row.state === "gone") return;
+      const acts = node.querySelector(".rowActions"); if (!acts || acts.querySelector(".cnCancelBtn")) return;
+      css();
+      const rid = String(row.order.receiptId), rel = acts.querySelector(".relHold:not([data-gate])");
+      let wrap = rel && rel.parentElement && rel.parentElement.classList.contains("cnHoldBtns") ? rel.parentElement : null;
+      if (!wrap) { wrap = doc.createElement("div"); wrap.className = "cnHoldBtns"; if (rel) { rel.replaceWith(wrap); wrap.appendChild(rel); } else acts.appendChild(wrap); }
+      const b = doc.createElement("button"); b.type = "button"; b.className = "btn ghost sm cnCancelBtn"; b.textContent = LABEL;
+      b.setAttribute("aria-label", `Cancel order ${rid}`);
+      b.title = "Cancel this order. Its record is kept under Cancelled, where it can be restored.";
+      b.onclick = e => { e.stopPropagation(); e.preventDefault(); cancel(rid).catch(err => console.warn("cancel order", err)); };
+      wrap.appendChild(b);
+      node.dataset.rid = node.dataset.rid || rid;
+      if (flights.has(rid)) paintBusy(rid);
+      drawMsg(node, rid);
+    } catch (e) { console.warn("cancel button", e); }
+  }  // (NOHOLDPILE, Paul 20 Oct 2026: Orders › On hold is gone, "it competes with the existing Review tab": a held order is shown in Review)
   function showHeld(rid) {
     try { if (root.Review && Review.showHeld) Review.showHeld(rid); else if (typeof root.setMode === "function") root.setMode("review"); } catch (e) { console.warn("cancel show held", e); }
   }
@@ -303,5 +321,5 @@
     return { ok: true };
   }
 
-  root.CancelUI = { cancel, undo, busy: rid => flights.has(String(rid)), canUndo: rid => undoable.has(String(rid)), LABEL };
+  root.CancelUI = { mount, cancel, undo, busy: rid => flights.has(String(rid)), canUndo: rid => undoable.has(String(rid)), LABEL };
 })(typeof window !== "undefined" ? window : globalThis);

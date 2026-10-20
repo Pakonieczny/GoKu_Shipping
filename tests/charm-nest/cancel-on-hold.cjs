@@ -15,7 +15,7 @@
 // timeline keeps both; a failed save keeps the card and says so plainly; an order of two lines is one card and flies as one with one note;
 // reduced motion has no flight and still the note; no name saved asks in the inline bar; nothing is left on screen.
 // (NOHOLDPILE, Paul 20 Oct 2026: "Remove the 'On hold' tab and UI from the Orders tab ... it competes with the existing Review
-// tab": the On hold pile and the Cancel Order button on its cards are gone. A held order stays in Open Orders with its HELD
+// tab": the On hold pile is gone; Cancel Order moves to the held card in Open Orders, beside Release Hold. A held order stays in Open Orders with its HELD
 // chip and a cancel is CancelUI.cancel(rid); what follows it, the flight to the Cancelled chip, the note, Undo, the record and the
 // timeline, is checked as before, from Open Orders. The checks of the button itself, its look and its line, are gone with it.)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
@@ -125,15 +125,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const page = await open({});
   const sel = rid => `#ordItems > [data-rid="${rid}"]`;
 
-  await check('1 · no On hold chip and no Cancel Order button: held orders are in Open Orders with Release Hold; "hold" opens Review', async () => {
+  await check('1 · no On hold chip; a held order in Open Orders has Release Hold and Cancel Order side by side, an order not held has neither; "hold" opens Review', async () => {
     const got = await page.evaluate(({ A, B2, C }) => {
-      const info = rid => [...document.querySelectorAll(`#ordItems > [data-rid="${rid}"]`)].map(n => ({ rel: n.querySelectorAll('.relHold:not([data-gate])').length }));
+      const info = rid => [...document.querySelectorAll(`#ordItems > [data-rid="${rid}"]`)].map(n => ({ rel: n.querySelectorAll('.relHold:not([data-gate])').length, cancel: [...n.querySelectorAll('.cnCancelBtn')].map(b => b.textContent.trim()) }));
       return { pile: Orders.view().pile, hold: !!document.querySelector('#ordChips [data-pile="hold"]'), cancel: document.querySelectorAll('#ordersView .cnCancelBtn').length, a: info(A), b: info(B2), c: info(C) };
     }, { A, B2, C });
-    assert.equal(got.pile, null); assert.equal(got.hold, false, 'no On hold chip'); assert.equal(got.cancel, 0, 'no Cancel Order button');
-    assert.equal(got.a.length, 1); assert.equal(got.a[0].rel, 1, 'a held order: its Release Hold');
+    assert.equal(got.pile, null); assert.equal(got.hold, false, 'no On hold chip'); assert.equal(got.cancel, 6, 'six held orders, one Cancel Order each (the two lines of B2 are one card): ' + got.cancel);
+    assert.equal(got.a.length, 1); assert.equal(got.a[0].rel, 1, 'a held order: its Release Hold'); assert.deepEqual(got.a[0].cancel, ['Cancel Order'], 'and its Cancel Order');
     assert.equal(got.b.length, 1, 'two lines, ONE card (one order, one row)'); assert.equal(got.b[0].rel, 1, 'one Release Hold for the order');
-    assert.equal(got.c.length, 1, 'an order that is not on hold is in Open Orders too'); assert.equal(got.c[0].rel, 0, 'with no Release Hold');
+    assert.equal(got.c.length, 1, 'an order that is not on hold is in Open Orders too'); assert.equal(got.c[0].rel, 0, 'with no Release Hold'); assert.deepEqual(got.c[0].cancel, [], 'and no Cancel Order');
     await page.evaluate(A => Orders.showPile('hold', A), A);
     assert.deepEqual(await page.evaluate(() => ({ mode: CN.S.mode, pile: Orders.view().pile })), { mode: 'review', pile: null }, 'the old way to On hold opens Review');
     await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); });
