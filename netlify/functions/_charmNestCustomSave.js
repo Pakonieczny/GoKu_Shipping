@@ -62,6 +62,13 @@ const pathsOf = sku => ({ aiPath: DIR + sku + ".ai", thumbPath: DIR + sku + ".pn
 /** KEEPOVERRIDE (Paul, 20 Oct 2026): the stem of a file under custom/: {SKU}.ai, or {SKU in file letters}__k{tag}.ai (charm-nest-sku.js fileKey). A tagged stem belongs to the entry whose file it is. */
 const stemOfFile = name => { const m = /^charmnest\/master\/custom\/([^\/]+)\.(?:ai|png)$/.exec(String(name || "")); return m ? m[1] : ""; };
 const TAGGED_RE = /__k[0-9a-z]{6,16}$/;
+/** Is a tagged file still wanted: an index entry draws from it, or an override's audit record names it (the drawing it gave a SKU, or the one it took a SKU from: what an undo restores)? Unknown is wanted. */
+async function tagged(db, aiPath) {
+  try {
+    for (const [c, f] of [[INDEX, "aiPath"], [OVERRIDES, "newAiPath"], [OVERRIDES, "removed.aiPath"]]) { const q = await db.collection(c).where(f, "==", aiPath).limit(1).get(); if (!q.empty) return true; }
+    return false;
+  } catch (e) { warn("tagged file not looked up", e); return true; }
+}
 
 /* ── answers ── */
 const refuse = (error, extra) => Object.assign({ ok: false, error, status: 200 }, extra || {});   // (status 200: an expected refusal is not an HTTP error)
@@ -215,7 +222,7 @@ async function sweep(deps) {
     const docs = await db.getAll(...skus.map(s => db.collection(INDEX).doc(s)), { fieldMask: ["sku"] });
     for (let i = 0; i < skus.length && out.orphans.length < SWEEP_SKUS; i++) {
       if (docs[i] && docs[i].exists) continue;
-      if (TAGGED_RE.test(skus[i])) { const q = await db.collection(INDEX).where("aiPath", "==", DIR + skus[i] + ".ai").limit(1).get(); if (!q.empty) continue; }   // (KEEPOVERRIDE: a tagged file is kept while an entry draws from it)
+      if (TAGGED_RE.test(skus[i]) && await tagged(db, DIR + skus[i] + ".ai")) continue;   // (KEEPOVERRIDE: a tagged file is kept while an entry draws from it or an audit record names it)
       let old = true;
       for (const f of bySku.get(skus[i])) {
         let t = NaN; try { const [m] = await f.getMetadata(); t = Date.parse((m && (m.updated || m.timeCreated)) || ""); } catch (_) { t = NaN; }
@@ -351,7 +358,7 @@ async function commit(deps, b) {
     // 5 · the writes
     let entry = target.data, masterHash = entry ? entry.masterHash || "" : v.masterHash, aiPath = entry ? entry.aiPath : "", thumbPath = entry ? entry.thumbPath || "" : "";
     if (creating) {
-      ({ aiPath, thumbPath } = pathsOf(v.sku));
+      ({ aiPath, thumbPath } = pathsOf(v.fileKey || v.sku));
       const e = v.entry;
       entry = { sku: v.sku, masterHash, masterPath: aiPath, masterName: v.design.name, charmHash: e.charmHash, widthPt: e.widthPt, heightPt: e.heightPt, areaPt2: e.areaPt2, members: e.members, holes: e.holes,
         engravable: e.engravable, engravableBy: "index", upAngle: e.upAngle, upSource: e.upSource, aiPath, thumbPath, aiUrl: str(made.aiUrl, 900), thumbUrl: str(made.thumbUrl, 900),
@@ -410,7 +417,7 @@ async function commit(deps, b) {
     if (out.need === "files") {
       const no = await checkFiles(deps.bucket, v);
       if (no) return no;
-      const { aiPath, thumbPath } = pathsOf(v.sku), [aiUrl, thumbUrl] = await Promise.all([deps.tokenUrl(aiPath), deps.tokenUrl(thumbPath)]);
+      const { aiPath, thumbPath } = pathsOf(v.fileKey || v.sku), [aiUrl, thumbUrl] = await Promise.all([deps.tokenUrl(aiPath), deps.tokenUrl(thumbPath)]);
       made = { aiUrl: aiUrl || "", thumbUrl: thumbUrl || "" };
       continue;
     }
@@ -498,4 +505,4 @@ async function intent(deps, b) {
   return { ok: true, intent: out.intent };
 }
 
-module.exports = { config, COLL, INTENTS, OVERRIDES, DIR, SKU_RE, pathsOf, stemOfFile, commit, get, pending, intent, sweep, read, recordFor, pick, optionPairsOf, groupOf, usableKey, oldSkuOf, ORPHAN_MS };
+module.exports = { config, COLL, INTENTS, OVERRIDES, DIR, SKU_RE, pathsOf, stemOfFile, tagged, TAGGED_RE, commit, get, pending, intent, sweep, read, recordFor, pick, optionPairsOf, groupOf, usableKey, oldSkuOf, ORPHAN_MS };

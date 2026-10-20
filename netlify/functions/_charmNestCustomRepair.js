@@ -69,7 +69,7 @@ async function orphans(deps, o) {
     const part = skus.slice(i, i + 100), docs = await db.getAll(...part.map(s => db.collection(INDEX).doc(s)), { fieldMask: ["sku"] });
     for (let j = 0; j < part.length; j++) {
       if (docs[j] && docs[j].exists) continue;                       // an entry's files are never touched
-      if (/__k[0-9a-z]{6,16}$/.test(part[j])) { try { const q = await db.collection(INDEX).where("aiPath", "==", DIR + part[j] + ".ai").limit(1).get(); if (!q.empty) continue; } catch (e) { warn("tagged file not looked up", e); continue; } }   // (KEEPOVERRIDE, Paul 20 Oct 2026: an override's or an Etsy SKU's own files)
+      if (require("./_charmNestCustomSave").TAGGED_RE.test(part[j]) && await require("./_charmNestCustomSave").tagged(db, DIR + part[j] + ".ai")) continue;   // (KEEPOVERRIDE, Paul 20 Oct 2026: an override's or an Etsy SKU's own files, while an entry or an audit record names them)
       let old = true;
       for (const f of bySku.get(part[j])) {
         let t = NaN; try { const [m] = await f.getMetadata(); t = Date.parse((m && (m.updated || m.timeCreated)) || ""); } catch (_) { t = NaN; }
