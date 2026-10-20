@@ -6,7 +6,7 @@
 //
 // The REAL sorter page in headless Chromium over the repo's fake site (bridge-server.cjs: the real charmNest* handlers over an in-memory Firestore; tests/charm-nest/_reviewSendWorld.cjs),
 // the master library holding the real drawings of tests/charm-nest/fixtures. Each workspace runs in its own world, in this order:
-//    1  the Orders tab has one "Send to Review" button on every row, right-hand side, under Qty / Ship by
+//    1  the Orders tab has one "Hold Order" button on every row, right-hand side, under Qty / Ship by
 //    2  a press puts the order into Review (the Review tab's Open list), once; a second press never adds it again
 //    3  the order's card offers the library's similar charms, the charm it is matched to now marked, nothing applied by itself
 //    4  an order with nothing similar has no suggestion area at all
@@ -76,12 +76,12 @@ async function scenario(mode) {
     await W.addOrders(w, ['matched', 'alone']);
     const calls0 = st.calls.length;
 
-    await step('1', 'REVBTN', 'every order row has ONE "Send to Review" button, right-hand side, under Qty / Ship by', [], async () => {
+    await step('1', 'REVBTN', 'every order row has ONE "Hold Order" button, right-hand side, under Qty / Ship by', [], async () => {
       await w.page.evaluate(() => { CN.setMode('orders'); Orders.render(); }); await W.settle(w.page, 500);
       const rows = await PAGE.rows(w), btns = await PAGE.buttons(w);
       ok(rows.length === 2 && btns.length === rows.length, `one button per row: ${btns.length} buttons for ${rows.length} rows ${J(btns.map(b => b.rid))}`);
       for (const b of btns) {
-        ok(b.text === 'Send to Review' && b.state === 'idle' && b.visible && !b.disabled, `the button says "Send to Review", idle and enabled: ${J(b)}`);
+        ok(b.text === 'Hold Order' && b.state === 'idle' && b.visible && !b.disabled, `the button says "Hold Order", idle and enabled: ${J(b)}`);
         ok(b.cx > b.rowL + (b.rowR - b.rowL) * 0.8, `the button is on the right-hand side of its row (at Paul's window width): x ${Math.round(b.cx)} of ${Math.round(b.rowL)}..${Math.round(b.rowR)}`);
         ok(b.factsBottom != null && b.btnTop >= b.factsBottom - 1 && Math.abs(b.btnLeft - b.factsLeft) <= 3, `the button sits right under "Qty . Ship by", same left edge (facts ${Math.round(b.factsLeft)}..${Math.round(b.factsBottom)}, button left ${Math.round(b.btnLeft)} top ${Math.round(b.btnTop)})`);
       }

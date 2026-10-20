@@ -1,3 +1,5 @@
+// SEALWIN (Paul 20 Oct 2026: "All of these seals must be visible in all places where a given button is relevant ... This includes the Detailed Order view modal"): the big panel stays gone, but the order's
+// Release Hold seal(s) are in the window again, compact, one per press, in the Seals row (#owSealRow) or beside a Release Hold button the window shows (tests/charm-nest/seals-window.cjs covers every kind).
 // NOSTRIP (Paul, 19 Oct 2026, of the Release Hold seal in the order window: "I asked for this to be completely removed from the Order Details modal"): the window has NO seal strip any more (#owSeals and paintSeals are gone).
 // This test now proves the Release Hold seal is nowhere in the Order Details modal at rest (released, released twice, released with an approved engraving, known only from the timeline, a live press, three widths),
 // while the Timeline tab still lists every release and the Orders row still carries the seal. (The original RELWIN header follows, for what the scenarios are.)
@@ -140,7 +142,7 @@ const LONGNAME = 'Bartholomew-Maximilian Featherstonehaugh-Wolfeschlegelsteinhau
       const inv = (await inventory()).filter(x => x.visible && x.where !== 'head card'), x = await rel(), small = inv.filter(i => i.where === 'seals row' || i.where === 'beside its button');
       const panel = await page.evaluate(() => !!document.querySelector('#orderWin .relSeal, #orderWin .relSealWords'));
       check(x.n === 0 && !x.shown && x.strip === null && !panel && inv.length === small.length, `${label}: no Release Hold panel (seal + "Release Hold / by / when") in the Order Details modal (${JSON.stringify(inv.map(i => i.where))})`);
-      check(want ? small.length === want && small.every(i => i.w <= 48) : !small.length, `${label}: ${want ? want + ' Release Hold seal(s), one per press, compact, in the Seals row or beside its button' : 'no Release Hold seal'} (${JSON.stringify(small)} ${JSON.stringify(await page.evaluate(() => OrderWin.seals()))})`);
+      check(want ? small.length === want && small.every(i => i.w <= 48) : !small.length, `${label}: ${want ? want + ' Release Hold seal(s), one per press, compact, in the Seals row or beside its button' : 'no Release Hold seal'} (${JSON.stringify(small)} ${JSON.stringify(await page.evaluate(() => OrderWin.seals()))} ${await page.evaluate(() => { const r = document.getElementById('owSealRow'); return 'row hidden=' + r.hidden + ' n=' + r.querySelectorAll('.owWinSeal').length + ' beside=' + [...document.querySelectorAll('[data-ow-btn-seals]')].map(g => (g.previousElementSibling || {}).outerHTML).join(' / ').slice(0, 300); })})`);
     };
     for (const [f, label, want] of [[TWICE, 'released twice', 2], [ENG, 'released + approved engraving', 1], [TLONLY, 'known only from the timeline', 1], [PLAIN, 'never released', 0]]) { await openOv(f); await atRest('2 ' + label, want); }
     // the Timeline tab keeps every release as it was
@@ -155,7 +157,7 @@ const LONGNAME = 'Bartholomew-Maximilian Featherstonehaugh-Wolfeschlegelsteinhau
     await page.evaluate(rid => document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"] [data-rel-hold]`).click(), LIVE.rid);
     const stamped = await until(async () => (await page.evaluate(rid => !!Orders.releaseStampOf(Orders.rows().filter(x => String(x.order.receiptId) === rid)), LIVE.rid)) || null, 30000, 'the release to be recorded').catch(() => null);
     check(!!stamped, '4 the press is recorded (Orders.releaseStampOf)');
-    await sleep(800); await atRest('4 after a live press', 1);
+    await sleep(800); const t4 = Date.now(); await page.waitForSelector('#owSealRow [data-seal-kind="release"], [data-ow-btn-seals] [data-seal-kind="release"]', { timeout: 15000 }).catch(() => {}); console.log('  (the seal showed ' + (Date.now() - t4) + ' ms after the check began)'); await atRest('4 after a live press', 1);
     await closeWin();
     await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); Orders.render(); });
     await sleep(900);

@@ -16,6 +16,9 @@
 // with Undo and Show, and Show opens Orders on Cancelled at that order. The timeline keeps its earlier steps and adds the cancel. Undo puts the
 // order back on hold, its card back in Review (flying back out of the Orders tab). Reduced motion: no flight, the note still shows. No name saved:
 // the inline bar asks, never a pop-up. Nothing is left on screen.
+// (SEALCANCEL, Paul 20 Oct 2026) The press stamps its Cancel Order with the ORDER CANCELLED seal (who and when, the Cancelled Orders ink) before the card
+// flies; the seal is kept on the order's Review document as cancel { at, by, how: "cancel", id }, as Release Hold keeps release; Undo marks it undone (it
+// no longer shows) and keeps the order's other seals; a failed cancel leaves no seal.
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
@@ -110,6 +113,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       for (const a of document.getAnimations()) {
         const t = a.effect && a.effect.target; if (!t || !t.closest) continue;
         if (!t.closest('#motionLayer, .cnBeacon, .cnTick, .cnTabTag, .mNote')) continue;
+        if (t.closest('.seal, .sealTool, .sealRing')) continue;   // (SEALCANCEL: the shared stamp's own ink, wet then dry, as every seal is pressed: charm-nest-motion.js)
         S.anims++;
         for (const k of a.effect.getKeyframes()) for (const p of Object.keys(k)) if (!['offset', 'easing', 'composite', 'computedOffset'].includes(p)) S.props.add(OK.has(p) ? p : p + '@' + (t.className || t.tagName));
       }
@@ -119,6 +123,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   });
   const stopSampler = page => page.evaluate(() => { const S = window.__cx; S.run = false; return { s: S.s, props: [...S.props], anims: S.anims }; });
   const settle = page => page.waitForFunction(() => !document.querySelector('.cnBeacon, .cnTick, .cnTabTag') && !(document.getElementById('motionLayer') || { children: [] }).children.length, null, { timeout: 12000 });
+  // (SEALCANCEL) the order's Review document, where its order-level seals are kept; the stamp watcher (every frame: a cancel seal on a card copy, its button tinted)
+  const rvDoc = rid => st.doc('Charm_Custom_Orders', rid + '_review') || null;
+  const until = async (fn, ms) => { const t = Date.now(); while (Date.now() - t < (ms || 8000)) { const v = fn(); if (v) return v; await sleep(100); } return fn(); };
+  const sealWatch = page => page.evaluate(() => { const W = window.__sw = { seen: null, run: true }; const tick = () => { const s = document.querySelector('#motionLayer .seal.seal-cancel'); if (s) { const g = s.closest('.mGhost') || s.parentElement, b = g && g.querySelector('.cnCancelBtn'); W.seen = { model: (() => { try { return JSON.parse(s.querySelector('svg').dataset.sealModel); } catch (_) { return null; } })(), title: (() => { try { return Seal.titleOf({ how: 'cancel', by: JSON.parse(s.querySelector('svg').dataset.sealModel).by, at: +s.dataset.at }); } catch (_) { return ''; } })(), fam: (s.querySelector('svg') || { dataset: {} }).dataset.sealFamily, words: s.textContent, btn: !!(b && b.classList.contains('sealedCancel')) || !!(W.seen && W.seen.btn) }; } if (W.run) requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
+  const sealSeen = page => page.evaluate(() => { const W = window.__sw; W.run = false; return W.seen; });
   const counts = page => page.evaluate(() => ({ open: Review.openCount(), seg: (document.querySelector('#reviewView .rvSeg [data-cseg="open"] b') || {}).textContent, tab: document.getElementById('tabReviewN').textContent }));
 
   const page = await open({});
@@ -153,7 +162,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await check('2 · a failed save keeps the card, says so plainly, and it can be tried again', async () => {
     let tries = 0;
     const unroute = await routeLib(page, (r, b) => { if (b.op === 'cancelPut' && String(b.orderId) === F) { tries++; return r.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'the library is down' }) }); } return r.fallback(); });
-    await sampler(page);
+    await sampler(page); await sealWatch(page);
     await press(page, F);
     await page.waitForFunction(() => document.querySelector('#rvList .cnCancelMsg'));
     const msg = await page.textContent(rvSel(F) + ' .cnCancelMsg');
@@ -161,6 +170,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert(/Not cancelled: .*still on hold/.test(msg), msg); assert.equal(tries, 1);
     assert.equal(await rvCards(page, F), 1, 'the card stays'); assert(!s.s.some(x => x.ghosts.length), 'no card flew');
     assert.equal(st.doc('Charm_Nest_Cancelled', F), undefined, 'no record');
+    // (SEALCANCEL, RELNOSEAL: the cancel failed, so no seal: none stamped, none kept)
+    await page.waitForTimeout(400);
+    assert.equal(await sealSeen(page), null, 'no ORDER CANCELLED seal was stamped');
+    assert(!(rvDoc(F) || {}).cancel, 'no cancel seal kept on the order: ' + JSON.stringify(rvDoc(F)));
+    assert.equal(await page.evaluate(F => CharmNestReviewMark.cancelled(F), F), null);
+    assert.equal(calls('reviewMarkPut').filter(c => c.body.action === 'cancel').length, 0, 'no cancel seal write');
     await unroute();
   });
 
@@ -168,7 +183,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await page.evaluate(() => { for (const n of document.querySelectorAll('.mNote')) n.remove(); });
     const unroute = await routeLib(page, async (r, b) => { if (b.op === 'cancelPut') await sleep(800); return r.fallback(); });
     const c0 = await counts(page);
-    await sampler(page);
+    await sampler(page); await sealWatch(page);
     await press(page, A);
     const waiting = await page.evaluate(A => { const n = document.querySelector(`#rvList > [data-rid="${A}"]`); return { busy: CancelUI.busy(A), lifted: n.classList.contains('cnBusy'), spin: !!n.querySelector('.cnCancelBtn .spin'), name: !!document.querySelector('.cnNameBar') }; }, A);
     assert(waiting.busy && waiting.lifted && waiting.spin, 'kept, the card lifts, the spinner: ' + JSON.stringify(waiting)); assert.equal(waiting.name, false);
@@ -176,8 +191,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await gone(page, A);
     await page.waitForFunction(() => document.querySelector('.mNote'), null, { timeout: 8000 });
     await page.waitForTimeout(900);
-    const s = await stopSampler(page);
+    const s = await stopSampler(page), seal = await sealSeen(page);
     await unroute();
+    // (SEALCANCEL: the stamp came down on the card's Cancel Order: ORDER CANCELLED, who, in the Cancelled Orders family, the button tinted)
+    assert(seal, 'an ORDER CANCELLED seal was stamped on the card');
+    assert.equal(seal.fam, 'cancelled', JSON.stringify(seal)); assert(/ORDER\s*CANCELLED/.test(seal.words), JSON.stringify(seal));
+    assert(seal.model && seal.model.by === 'Tester' && seal.model.action === 'ORDER CANCELLED' && +seal.model.at > 0 && seal.model.date && seal.model.time, 'who and when: ' + JSON.stringify(seal.model)); assert(/^Order cancelled with Cancel Order by Tester · /.test(seal.title), seal.title); assert(seal.btn, 'the button takes the seal\'s ink');
+    const kept = await until(() => { const d = rvDoc(A); return d && d.cancel && !d.pending ? d : null; });
+    assert(kept, 'the seal is kept on the order\'s Review document: ' + JSON.stringify(rvDoc(A)));
+    assert.equal(kept.cancel.how, 'cancel'); assert.equal(kept.cancel.by, 'Tester'); assert(+kept.cancel.at > 0 && kept.cancel.id === `cancel:${A}:${kept.cancel.at}`, JSON.stringify(kept.cancel));
+    assert.deepEqual(await page.evaluate(A => { const c = CharmNestReviewMark.cancelled(A); return c && [c.how, c.by, Seal.labelOf(c.how), Seal.INK[c.how], CharmNestReviewMark.sealsOf(A).map(x => x.how)]; }, A), ['cancel', 'Tester', 'ORDER CANCELLED', '#982f48', ['cancel']]);
     const puts = calls('cancelPut', A); assert.equal(puts.length, 1, 'cancelPut once'); assert.equal(puts[0].body.by, 'Tester');
     assert.equal(await page.evaluate(() => window.__prompted + window.__confirmed), 0, 'no pop-up and no confirm');
     const rec = st.doc('Charm_Nest_Cancelled', A); assert(rec && rec.by === 'Tester' && rec.orderId === A, 'kept under Charm_Nest_Cancelled');
@@ -188,7 +211,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const g0 = air[0].ghosts.find(g => g.key === 'ord:rvm:' + A), gN = air[air.length - 1].ghosts.find(g => g.key === 'ord:rvm:' + A), tab = air[air.length - 1].tab;
     const d0 = Math.hypot(g0.x - tab.x, g0.y - tab.y), dN = Math.hypot(gN.x - tab.x, gN.y - tab.y);
     assert(dN < d0 * 0.35, `the card gets to the Orders tab: ${Math.round(d0)} px away at first, ${Math.round(dN)} at the end`); assert(gN.w < g0.w * 0.6, 'and shrinks into it');
-    const ring = s.s.findIndex(x => x.beacons > 0), fly0 = s.s.findIndex(x => x.ghosts.length);
+    const ring = s.s.findIndex(x => x.beacons > 0), fly0 = s.s.findIndex(x => x.ghosts.some(g => g.key === 'ord:rvm:' + A && Math.hypot(g.x - g0.x, g.y - g0.y) > 2));   // (SEALCANCEL: after its stamp, the card sets off)
     assert(ring >= 0 && ring <= fly0 + 3, 'a ring on the Orders tab as the card sets off');
     const tags = [...new Set(s.s.map(x => x.tag).filter(Boolean))];
     assert.equal(tags[0], 'Cancelled 0', 'the tab\'s tag shows the old count while it flies: ' + JSON.stringify(tags)); assert(tags.includes('Cancelled 1'), 'and rolls to the new one: ' + JSON.stringify(tags));
@@ -223,13 +246,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await check('6 · an order of two lines: one card flies, one cancel, one note; Undo on that note puts it back on hold and its card flies back into Review', async () => {
     await page.evaluate(() => { for (const n of document.querySelectorAll('.mNote')) n.remove(); });
     const c0 = await counts(page);
+    // (SEALCANCEL: the order keeps another seal on the same document, a Release Hold, which the Undo of the cancel must not take)
+    await page.evaluate(B2 => CharmNestReviewMark.release(B2, { by: 'Paul', at: Date.now() - 60000 }), B2);
     await sampler(page);
     await press(page, B2);
     await gone(page, B2);
     await page.waitForFunction(() => [...document.querySelectorAll('.mNote')].some(n => /Order 4174601820 cancelled/.test(n.textContent)), null, { timeout: 8000 });
     await page.waitForTimeout(700);
     let s = await stopSampler(page);
-    assert.equal(calls('cancelPut', B2).length, 1, 'one cancel for the order'); assert.equal(st.doc('Charm_Nest_Cancelled', B2).lines.length, 2, 'the record keeps both lines');
+    assert.equal(calls('cancelPut', B2).length, 1, 'one cancel for the order');
+    assert(await until(() => (rvDoc(B2) || {}).cancel), 'the cancel seal is kept'); assert.equal(st.doc('Charm_Nest_Cancelled', B2).lines.length, 2, 'the record keeps both lines');
     assert.equal(Math.max(0, ...s.s.map(x => x.ghosts.length)), 1, 'ONE card flew');
     assert.equal(new Set(s.s.flatMap(x => x.notes.filter(n => /Order 4174601820 cancelled/.test(n)))).size, 1, 'one note');
     await settle(page);
@@ -248,6 +274,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert(s.props.every(p => ['transform', 'opacity'].includes(p)), 'only transform and opacity: ' + JSON.stringify(s.props));
     assert(s.s.some(x => x.notes.some(n => /Order 4174601820 is back on hold/.test(n))), 'a note says it is back on hold');
     const ev = (await timeline(B2)).map(e => e.type); for (const t of ['held', 'cancelled', 'cancelRestored']) assert(ev.includes(t), `the timeline keeps ${t}: ` + ev);
+    // (SEALCANCEL: Undo marks the seal undone, so it no longer shows; the order's Release Hold seal stays)
+    const un = await until(() => { const d = rvDoc(B2); return d && d.cancel && +d.cancel.undoneAt > 0 ? d : null; });
+    assert(un, 'the cancel seal is marked undone: ' + JSON.stringify(rvDoc(B2)));
+    assert.equal(un.cancel.how, 'cancel'); assert(un.release && un.release.by === 'Paul', 'the Release Hold seal stays: ' + JSON.stringify(un));
+    assert.deepEqual(await page.evaluate(B2 => [CharmNestReviewMark.cancelled(B2), CharmNestReviewMark.sealsOf(B2).map(x => x.how)], B2), [null, ['releaseHold']]);
     await shot(page, '6-undone');
   });
 

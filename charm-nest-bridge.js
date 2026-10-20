@@ -4285,7 +4285,7 @@ const Pool = window.Pool = (() => {
       // REVHOLD: an order in Review keeps its piece on its sheet, so the card that would take it off to make it up again is not offered: the line is left as it was and the log says so once
       if (keepsPlace(row)) {
         if (!setToldFixed.has(row.key)) {
-          setToldFixed.add(row.key); const line = `a saved link makes this line ${one ? want[0] : "a set of charms (" + want.join(" + ") + ")"}, but its piece stays on its sheet because the order was sent to Review: the sheet keeps ${[...new Set(made)].join(" + ") || "its piece"}`;
+          setToldFixed.add(row.key); const line = `a saved link makes this line ${one ? want[0] : "a set of charms (" + want.join(" + ") + ")"}, but its piece stays on its sheet because the order is held in Review: the sheet keeps ${[...new Set(made)].join(" + ") || "its piece"}`;
           agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · ${line}`);
           try { TL.line(row, "interpreted", { id: `${row.key}.relink.kept.${TL.hash(want.join("+") + "|" + made.join(","))}`, once: true, text: ("Saved link: " + line).slice(0, 200), data: { sku: want[0], was: made.slice(0, 6) } }); } catch (_) {}
         }
@@ -15476,7 +15476,7 @@ const Review = window.Review = (() => {
     if(row.repoolChanged && Pool.keepsPlace(row) && !row.replaceByDesign){   // (REVDROP: designs a person dropped on the order's Review card and sent replace its pieces even while it is in Review: that send IS the person's answer)
       
       row.repoolChanged=false;
-      const kept="Kept on its sheet with its old drawing: the order was sent to Review";
+      const kept="Kept on its sheet with its old drawing: the order is held in Review";   // (HOLDORDER, Paul 20 Oct 2026: the Hold Order button's words; was "sent to Review")
       try { toast(kept,"warn",6000); } catch(_) {}
       agent({run:B.run?.runId},"warn",`${row.order.receiptId}: ${kept}`);
       if(!Pool.onSheets(row)){ row.changePending=false;syncOrderItems();Orders.render();RunCtl.poke();return; }

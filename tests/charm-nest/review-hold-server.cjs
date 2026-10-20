@@ -29,11 +29,11 @@ const S = 'Charm_Nest_Sheets', RUN = 'Charm_Nest_Runs', CUSTOM = 'Charm_Custom_O
   p = await LF.plan({ kind: 'sheet', id: 'solo', to: { area: 'completed' } });
   const r = await LF.commit(p, { by: 'Name One' });
   assert.equal(r.ok, false, 'the server refuses the cut: ' + JSON.stringify(r).slice(0, 300)); assert.equal(st.doc(S, 'solo').laserDoneAt, undefined, 'nothing written');
-  assert.match(JSON.stringify(r), /In Review: Sent to Review by Name One/, 'the refusal names the review');
+  assert.match(JSON.stringify(r), /In Review: Order held by Name One/, 'the refusal names the review');
 
   // a page WITH the hold: the plan itself refuses, in words
   globalThis.CharmNestReviewHold = H;
-  globalThis.CharmNestReviewMark = { isMarked: x => x === order && st.doc(CUSTOM, order + '_review').review.state === 'open', markedRids: () => st.doc(CUSTOM, order + '_review').review.state === 'open' ? [order] : [], reasonOf: () => 'Sent to Review by Name One', onChange: () => () => {} };
+  globalThis.CharmNestReviewMark = { isMarked: x => x === order && st.doc(CUSTOM, order + '_review').review.state === 'open', markedRids: () => st.doc(CUSTOM, order + '_review').review.state === 'open' ? [order] : [], reasonOf: () => 'Order held by Name One', onChange: () => () => {} };
   globalThis.OrderPieces = { of: () => [], subscribe() {}, load: () => Promise.resolve() };
   p = await LF.plan({ kind: 'sheet', id: 'solo', to: { area: 'completed' } });
   assert.equal(p.ok, false); const need = p.needs.find(n => n.key === 'orders'); assert.ok(need, JSON.stringify(p.needs.map(n => n.key))); assert.match(need.label, /in Review/); assert.ok(need.items.some(i => i.id === order));

@@ -51,7 +51,7 @@ async function run(mode) {
     ok('3 each piece shows what differs: its own options, state, Qty and its own two pictures', pieces.length === 2 && /Silver \+ Engrave/.test(pieces[0].t) && /18"/.test(pieces[0].t) && /14k Gold \+ Engrave/.test(pieces[1].t) && /16"/.test(pieces[1].t) && !/14k Gold/.test(pieces[0].t) && pieces.every(p => p.pics === 2 && /^Qty 1/.test(p.qty) && /pulled/i.test(p.st)), JSON.stringify(pieces));
 
     // 4. one Send to Review for the order
-    ok('4 ONE Send to Review for the order (not one per piece), at the top, beside Ship by', two.buttons === 1 && (await page.evaluate(rid => { const n = document.querySelector(`#ordItems > [data-rid="${rid}"]`), b = n.querySelector('.revSendBtn'), head = n.querySelector('.ogHead'); return !!head && head.contains(b) && b.textContent === 'Send to Review'; }, O.twoPiece.rid)));
+    ok('4 ONE Hold Order for the order (not one per piece), at the top, beside Ship by', two.buttons === 1 && (await page.evaluate(rid => { const n = document.querySelector(`#ordItems > [data-rid="${rid}"]`), b = n.querySelector('.revSendBtn'), head = n.querySelector('.ogHead'); return !!head && head.contains(b) && b.textContent === 'Hold Order'; }, O.twoPiece.rid)));
     await page.click(`#ordItems > [data-rid="${O.twoPiece.rid}"] .revSendBtn`);
     const busy = await page.evaluate(() => ({ calls: __rv.calls.slice() }));
     await page.evaluate(() => __rv.gate());
@@ -129,7 +129,7 @@ async function run(mode) {
     // 12. the cards view groups too: one full-width card, its pieces side by side, one button
     await page.click('#ordViewSeg [data-view="cards"]'); await page.waitForSelector('#ordItems.ordCards .ordGroup');
     const cards = await page.evaluate(rid => { const n = document.querySelector(`#ordItems.ordCards > [data-rid="${rid}"]`), r = n.getBoundingClientRect(), host = document.getElementById('ordItems').getBoundingClientRect(), ps = [...n.querySelectorAll('.ogPiece')].map(p => p.getBoundingClientRect()); return { full: Math.abs(r.width - host.width) < 2, side: ps.length === 2 && Math.abs(ps[0].top - ps[1].top) < 2 && ps[1].left > ps[0].left, btn: n.querySelectorAll('.revSendBtn').length }; }, O.twoPiece.rid);
-    ok('12 the cards view: the order is one full-width card, its two pieces side by side, one Send to Review', cards.full && cards.side && cards.btn === 1, JSON.stringify(cards));
+    ok('12 the cards view: the order is one full-width card, its two pieces side by side, one Hold Order', cards.full && cards.side && cards.btn === 1, JSON.stringify(cards));
     await page.click('#ordViewSeg [data-view="list"]');
 
     // 13. a narrow screen: nothing spills out of the card and the page does not scroll sideways
