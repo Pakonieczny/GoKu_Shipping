@@ -13251,7 +13251,11 @@ const CustomSheet = window.CustomSheet = (() => {
   let asking = null;
   function askOverride(it) {
     if (asking) return Promise.resolve(false);                       // (a second drop while the question is open is the same question: the page behind it is inert)
-    const row = linesOf(it)[0], sp = row && row.spec, sku = sp && sp.designSku && !sp.ownDesign && !sp.noDesign ? txt(sp.designSku) : "";
+    // (NOMATCHASK, Paul 20 Oct 2026, order 4203691345 TEST_@: "This message should only appear when there is an actual match to an existing vector file": a SKU the library does not hold, or a line
+    //  still asking which charm it is, has no vector design selected, whatever SKU Etsy gave it)
+    const row = linesOf(it)[0], sp = row && row.spec, ds = sp && sp.designSku && !sp.ownDesign && !sp.noDesign ? String(sp.designSku) : "";
+    const matched = !!ds && !!(window.Master && Master.entryFor && Master.entryFor(ds)) && !(sp.problems || []).some(p => ["unmatchedSku", "needsMapping", "blockedSku"].includes(p.kind)) && !["unmatched"].includes(row.state);
+    const sku = matched ? txt(ds) : "";
     const d = el("dialog", "cuAsk"); d.id = "cuAsk"; d.setAttribute("aria-labelledby", "cuAskT"); d.setAttribute("aria-describedby", "cuAskB");
     const b = el("div", "dlgBody"); b.id = "cuAskB";
     const p1 = el("p", "cuAskP"), strong = t => { const x = document.createElement("b"); x.textContent = t; return x; }, T = t => document.createTextNode(t);

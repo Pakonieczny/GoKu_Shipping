@@ -195,10 +195,19 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
 
     /* ── B · a design dropped on A's row replaces its matched charm ── */
     await rowOf(A);
+    // (NOMATCHASK, Paul 20 Oct 2026: the question names a selected vector design only when the line is matched to a design the library holds; a SKU the library does not hold (TEST_@) has none)
+    { const was = await page.evaluate(k => { const r = Orders.rows().find(x => String(x.order.receiptId) === String(k)), sp = r.spec, keep = JSON.stringify({ d: sp.designSku, p: sp.problems }); sp.designSku = 'TEST_@'; sp.problems = (sp.problems || []).concat([{ kind: 'unmatchedSku', reason: 'not in any master file' }]); return keep; }, A);
+      await dropRaw(A, [{ name: FILE, text: DESIGN_DXF }]);
+      await until(() => page.evaluate(() => !!document.querySelector('#cuAsk [data-ask-no]')), 8000, 'the question for an unmatched line');
+      const t0 = await page.evaluate(() => document.getElementById('cuAskB').textContent);
+      await answer('no');
+      await page.evaluate(([k, w]) => { const r = Orders.rows().find(x => String(x.order.receiptId) === String(k)), o = JSON.parse(w); r.spec.designSku = o.d; r.spec.problems = o.p || []; }, [A, was]);
+      assert(!/already has a vector design selected/.test(t0) && /this order only/.test(t0), 'an unmatched SKU (TEST_@) is no selected design: ' + t0); }
     await dropRaw(A, [{ name: FILE, text: DESIGN_DXF }]);
     // (the first design dropped on an order asks first: this order only)
     await until(() => page.evaluate(() => !!document.querySelector('#cuAsk [data-ask-yes]') || !!document.querySelector('#cuDlg[open]')), 8000, 'the drop is taken (its question, or the designs window)')
       .catch(async e => { throw new Error(e.message + ' ' + await dump(A)); });
+    { const t1 = await page.evaluate(() => (document.getElementById('cuAskB') || {}).textContent || ''); assert(/already has a vector design selected: FEATHER/.test(t1), 'a line matched to a library design names it: ' + t1); }
     await answer('yes');
     await page.waitForFunction(() => document.querySelector('#cuDlg[open] .cuFile .cuThumb img'), null, { timeout: 30000 }).catch(async e => { throw new Error('the designs window with the read design: ' + e.message + ' ' + await dump(A)); });
     const dlg = await page.evaluate(() => ({ title: document.getElementById('cuDlgT').textContent, rows: [...document.querySelectorAll('#cuDlg .cuFile')].map(n => ({ name: n.querySelector('.cuMeta b').textContent, meta: n.querySelector('.cuMeta .dim').textContent, on: [...n.querySelectorAll('.cuM.on')].map(b => b.dataset.m) })) }));
