@@ -21,6 +21,9 @@
 //        - after the saves: both records right, Manual Control still on, on the sheet the window shows
 //        - a save the cloud refuses puts the charm back where it was, on the screen and in the records, says so in a toast, and Manual Control stays on
 //      and Manual Control turned off: both sheets written as they stand in the background (the chip, never the panel)
+//   8  MOVEINSTANT 2 (Paul 20 Oct 2026: he is never dropped out of Manual Control by moving charms or switching sheets; only his own toggle ends it): a charm moved by
+//      hand WITHIN B, not saved, then A opened from its dock (sheet writes held 3 s): Manual Control stays on, now on A, no panel; B's move is saved in the background
+//      (the chip); B opened again while that save still runs shows the charm where it was put and takes a hand once saved; B's record holds the move, pinned
 //   PW_DIR=<dir holding playwright-core> CHROMIUM=<chrome> node tests/charm-nest/manual-hop-instant.cjs        (MH_LAX=1: print the numbers, do not fail on them)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
@@ -263,6 +266,54 @@ const root = path.join(__dirname, '../..');
     check(!L7.panel.length, `7 · no steps panel at any moment of section 7 (${JSON.stringify(L7.panel.slice(0, 3))})`);
     check(!L7.mcOff.length && !L7.mcAway.length, `7 · Manual Control never went off or left the sheet the window shows (${JSON.stringify([L7.mcOff.slice(0, 3), L7.mcAway.slice(0, 3)])})`);
 
+    /* ── 8 · MOVEINSTANT 2: a move within B not saved yet, then A opened: Manual Control carries on to A, B saved in the background; back on B before that save lands ── */
+    SLOW = 3000;
+    const pm = p3, to8 = { x: 140, y: 150 };   // ((140, 95) on B since section 7, moved within B: away from the docks at the plate's sides, which would take it to the next sheet)
+    await page.evaluate(() => {
+      const L = window.__mi8 = { panel: [], mcOff: [], mcAway: [] }; const t0 = performance.now();
+      window.__mi8T = setInterval(() => {
+        const W = SheetWin.hopKit.W, M = CNManual._MC, t = Math.round(performance.now() - t0);
+        if (W.flow || (W.el.work && !W.el.work.hidden && W.el.work.querySelector('.swWork'))) L.panel.push([t, W.flow ? W.flow.title : W.work && W.work.title]);
+        if (!M.on) L.mcOff.push(t); else if (M.id !== W.id && !W.flying) L.mcAway.push([t, M.id, W.id]);
+      }, 40);
+    });
+    await until(() => page.evaluate(() => !document.querySelector('.shpDock.open') && !SheetHop.state().busy), 5000, 'the docks folded away').catch(() => {});
+    const a8 = await until(() => onPlate(pm), 10000, pm + ' drawn on B'), b8 = await page.evaluate(([x, y]) => CNManual._client(x, y), [to8.x, to8.y]);
+    await page.mouse.move(a8.x, a8.y); await page.mouse.down();
+    for (let i = 1; i <= 10; i++) await page.mouse.move(a8.x + (b8[0] - a8.x) * i / 10, a8.y + (b8[1] - a8.y) * i / 10);
+    await sleep(80);
+    await page.mouse.up(); await sleep(400);
+    const e8 = await page.evaluate(id => { const M = CNManual._MC, x = SheetWin.hopKit.W.byPool.get(id); return x && M.edits.get(x.id) ? Object.assign({}, M.edits.get(x.id)) : null; }, pm);
+    const where8 = e8 ? '' : await page.evaluate(id => JSON.stringify({ on: (CN.allSheets().find(s => s.charms.some(c => c.poolId === id)) || {}).sheetId, sel: CNManual._MC.sel && CNManual._MC.sel.poolId, edits: CNManual._MC.edits.size, hop: SheetHop.state() }), pm);
+    check(!!e8 && Math.hypot(e8.cxPt - to8.x, e8.cyPt - to8.y) < 3, `8 · a charm moved by hand within B, not saved yet (${e8 ? [e8.cxPt.toFixed(1), e8.cyPt.toFixed(1)] : where8})`);
+    const recPm0 = (() => { const r = recOf(SB.id), c = (r.charms || []).find(z => z.poolId === pm), q = c && (r.placements || []).find(z => z.id === c.id); return q ? [+q.cxPt, +q.cyPt] : null; })();
+    await until(() => page.evaluate(id => { const s = SheetHop.state(); return s.docks.prev && s.docks.prev.sheetId === id; }, SA.id), 6000, 'the previous dock is A');
+    const ta = await tabOf('prev'); await page.mouse.click(ta.x, ta.y);
+    const onA = await until(() => page.evaluate(id => { const W = SheetWin.hopKit.W, M = CNManual._MC; return W.id === id && W.rec && W.geom ? { mc: M.on, mcId: M.id, saving: (document.querySelector('[data-mh=chip]') || {}).textContent || '' } : null; }, SA.id), 8000, 'A opens').catch(() => null);
+    console.log(`  ..   B's move not saved, A opened: ${JSON.stringify(onA)}; B's record still has the charm at ${JSON.stringify(recPm0)}`);
+    check(!!onA && onA.mc && onA.mcId === SA.id, `8 · opening A with B's move unsaved keeps Manual Control on, now on A (${onA && onA.mc}, ${onA && onA.mcId === SA.id ? 'A' : onA && onA.mcId})`);
+    check(!!onA && /sav/i.test(onA.saving), `8 · B's move is being saved in the background ("${onA && onA.saving}")`);
+    // back on B before that save lands: B shows the charm where it was put, and takes a hand once it is saved
+    await sleep(300);
+    await until(() => page.evaluate(id => { const s = SheetHop.state(); return s.docks.next && s.docks.next.sheetId === id; }, SB.id), 6000, 'the next dock is B');
+    const tbb = await tabOf('next'); await page.mouse.click(tbb.x, tbb.y);
+    const backB = await until(() => page.evaluate(([id, pm]) => { const W = SheetWin.hopKit.W, M = CNManual._MC, x = W.byPool.get(pm); return W.id === id && W.rec && W.geom && x ? { mc: M.on, mcId: M.id, wait: !!M.wait, at: [x.p.cxPt, x.p.cyPt], pending: !!SheetWin.hopKit.hopState().writing } : null; }, [SB.id, pm]), 8000, 'B opens again').catch(() => null);
+    console.log(`  ..   back on B while its save runs: ${JSON.stringify(backB)}`);
+    check(!!backB && backB.mc && backB.mcId === SB.id && Math.hypot(backB.at[0] - e8.cxPt, backB.at[1] - e8.cyPt) < .01, `8 · B opened again while its save runs: Manual Control on B, the charm drawn where it was put (${backB && backB.at.map(v => v.toFixed(1))}; waiting for its save: ${backB && backB.wait})`);
+    await until(() => page.evaluate(() => { const M = CNManual._MC, K = SheetWin.hopKit; return M.on && !M.wait && !M.claiming && !K.hopState().writing && !K.hopState().pending; }), 120000, 'B saved, and taken by Manual Control again');
+    await sleep(600);
+    const s8 = await page.evaluate(([id, pm]) => { const M = CNManual._MC, W = SheetWin.hopKit.W, sh = CN.allSheets().find(p => p.sheetId === id), c = sh.charms.find(z => z.poolId === pm), q = sh.placements.find(z => z.id === c.id), x = W.byPool.get(pm); return { mc: M.on, mcId: M.id, win: W.id, hold: !!sh._manualHold, pinned: c.pinned && !c.arrivalPin ? [c.pinned.cxPt, c.pinned.cyPt] : null, manual: c.manual || null, live: [q.cxPt, q.cyPt], shown: x ? [x.p.cxPt, x.p.cyPt] : null, chip: (document.querySelector('[data-mh=chip]') || {}).textContent || '' }; }, [SB.id, pm]);
+    const recPm = (() => { const r = recOf(SB.id), c = (r.charms || []).find(z => z.poolId === pm), q = c && (r.placements || []).find(z => z.id === c.id); return q ? [+q.cxPt, +q.cyPt] : null; })();
+    console.log(`  ..   after B's background save: ${JSON.stringify(s8)}; record ${JSON.stringify(recPm)}; claim on B ${JSON.stringify(recOf(SB.id).manualEdit || null)}`);
+    const near8 = v => v && Math.hypot(v[0] - e8.cxPt, v[1] - e8.cyPt) < .01;
+    check(near8(recPm) && near8(s8.live) && near8(s8.pinned) && s8.manual && s8.manual.by === 'Tester', `8 · B's move saved in the background: on the record, live and pinned where it was put, marked by Tester (record ${JSON.stringify(recPm)})`);
+    check(s8.mc && s8.mcId === SB.id && s8.win === SB.id && s8.hold && !!recOf(SB.id).manualEdit && near8(s8.shown), `8 · after the save Manual Control holds B again (on: ${s8.mc}, held: ${s8.hold}, claimed: ${!!recOf(SB.id).manualEdit}), the charm drawn where it was put`);
+    check(/saved/i.test(s8.chip), `8 · the chip says saved ("${s8.chip}")`);
+    const L8 = await page.evaluate(() => { clearInterval(window.__mi8T); return window.__mi8; });
+    check(!L8.panel.length, `8 · no steps panel at any moment (${JSON.stringify(L8.panel.slice(0, 3))})`);
+    check(!L8.mcOff.length && !L8.mcAway.length, `8 · Manual Control never went off or away from the sheet the window shows (${JSON.stringify([L8.mcOff.slice(0, 3), L8.mcAway.slice(0, 3)])})`);
+    SLOW = 0;
+
     /* ── Manual Control off: A's own save, then a reload ── */
     await page.evaluate(() => { const L = window.__miOff = []; window.__miOffT = setInterval(() => { const W = SheetWin.hopKit.W; if (W.flow || (W.el.work && !W.el.work.hidden && W.el.work.querySelector('.swWork'))) L.push(W.flow ? W.flow.title : 'panel'); }, 40); });
     await page.click('.sheetWin [data-r=manual]');
@@ -274,7 +325,7 @@ const root = path.join(__dirname, '../..');
     const after = await page.evaluate(() => Object.fromEntries(CN.S.sheets.gold10k.pages.filter(p => p.charms.length).map(sh => [sh.sheetId, { ok: !!(sh.verification && sh.verification.ok), at: Object.fromEntries(sh.placements.map(p => [sh.charms.find(c => c.id === p.id).poolId, [p.cxPt, p.cyPt]])) }])));
     const near = (a, b) => a && b && Math.abs(a[0] - b[0]) < .01 && Math.abs(a[1] - b[1]) < .01;
     const stayedA = SA.charms.filter(c => ![p1, p2, p3, p4].includes(c.poolId)).every(c => near(after[SA.id].at[c.poolId], SA.at[c.id]));
-    const stayedB = SB.charms.every(c => near(after[SB.id].at[c.poolId], SB.at[c.id])) && near(after[SB.id].at[p1], [lv.x, lv.y]) && [p2, p3, p4].every(id => after[SB.id].at[id]);
+    const stayedB = SB.charms.filter(c => c.poolId !== pm).every(c => near(after[SB.id].at[c.poolId], SB.at[c.id])) && near(after[SB.id].at[pm], [e8.cxPt, e8.cyPt]) && near(after[SB.id].at[p1], [lv.x, lv.y]) && [p2, p3, p4].every(id => after[SB.id].at[id]);
     const offPanels = await page.evaluate(() => { clearInterval(window.__miOffT); return window.__miOff; });
     console.log(`  ..   Manual Control off: both sheets written as they stand in ${Date.now() - tOff} ms, in the background`);
     check(!offPanels.length, `7 · Manual Control off: the sheets are written as they stand in the background, no steps panel (${JSON.stringify(offPanels.slice(0, 3))})`);

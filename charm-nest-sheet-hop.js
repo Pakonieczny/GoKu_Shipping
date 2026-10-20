@@ -404,7 +404,8 @@
     if (p && e.pointerId === p.pid) {
       const far = Math.hypot(e.clientX - p.x0, e.clientY - p.y0) > (p.type === "touch" ? 8 : 5);
       // (Manual Control moves a charm inside its sheet itself: the hand is taken over only once it leaves the plate, or reaches a dock)
-      const take = CNM() ? (outsidePlate(e) || !!dockAt(e.clientX, e.clientY)) : far;
+      // (MOVEINSTANT 2, Paul 20 Oct 2026: a dock not open is reached at its tab: its card, still folding away after a move, stands over the plate and never takes a charm moved there)
+      const take = CNM() ? (outsidePlate(e) || !!dockAt(e.clientX, e.clientY, true)) : far;
       if (take) { H.pending = null; begin(p, e.clientX, e.clientY); }
       return;
     }
@@ -452,10 +453,11 @@
   /** Where a pose of a dock's sheet is on the screen, and the dock's scale. */
   const dkScale = dk => { const r = dk.cv.getBoundingClientRect(); return dk.st && r.width ? r.width / dk.st.wPt : 0; };
   function dockAtPose(dk, p) { const r = dk.cv.getBoundingClientRect(), k = dkScale(dk); return { x: r.left + p.cxPt * k, y: r.top + p.cyPt * k, kc: k }; }
-  function dockAt(x, y) {
+  function dockAt(x, y, tab) {
     for (const side of ["prev", "next"]) {
       const dk = H.docks[side]; if (!dk) continue;
-      const r = dk.el.getBoundingClientRect(), pad = 14;
+      const t = tab && !dk.el.classList.contains("open") ? dk.el.querySelector(".shpTab") : null;   // (tab: a closed dock is its tab alone)
+      const r = (t || dk.el).getBoundingClientRect(), pad = 14;
       if (x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad) return dk;
     }
     return null;
@@ -669,7 +671,7 @@
     // where each copy flies, read before the sheets change (the open view keeps its scale), and where the order's other pieces lie on this plate
     const tos = spots.map(s => dockAtPose(dk, s));
     const lying = spots.map(s => { const z = u.pieces.find(q => q.c === s.c); return z && z.p && K.W.id === d.sheetId ? { z, a: plateAt(K, z.p) } : null; });
-    const failed = why => { const dk2 = H.docks[dk.side]; popup(dk2 && dk2.sh === target ? dk2.el : K.W.el.plateBox, `Not moved: ${String(why || "it could not be saved").replace(/\.$/, "")}.`, `${u.pieces.length === 1 ? "The charm went" : "Its pieces went"} back to ${sName}.`); };
+    const failed = why => { const dk2 = H.docks[dk.side]; popup(dk2 && dk2.sh === target ? dk2.el : K.W.el.plateBox, `Not moved: ${String(why || "it could not be saved").replace(/\.$/, "")}.`, `${u.pieces.length === 1 ? "The charm went" : "Its pieces went"} back to ${sName}.`); if (!H.drag && !H.busy) { setOpen(false); refresh(true); } };   // (MOVEINSTANT 2: the open view folds away, as after any move: left open it would take the next press on the plate)
     let r; try { r = K.moveNow(k, spots.map(s => ({ c: s.c, src, placed: s.placed, cxPt: s.cxPt, cyPt: s.cyPt, angle: s.angle })), target, who, { guard: sheetRefusal, check: () => cloudCheck(u, src, target), failed }); }
     catch (e) { console.warn("sheet hop: move", e); r = { ok: false, why: e.message || "it could not be moved" }; }
     if (!r || !r.ok) return refuse(`Not moved: ${String((r && r.why) || "it could not be moved").replace(/\.$/, "")}.`, `${u.pieces.length === 1 ? "The charm" : "Its pieces"} stayed on ${sName}. Nothing was changed.`);
@@ -682,6 +684,8 @@
     spots.slice(1).forEach((s, i) => { const q = lying[i + 1]; if (!q) return; const Lm = makeLift(K, q.z, 0); Lm.place(q.a.x, q.a.y, +q.z.p.angle || 0, 1); flights.push(flyInto(Lm, { x: q.a.x, y: q.a.y, rot: +q.z.p.angle || 0, s: 1, kc: q.a.kc }, tos[i + 1], s.angle, 60 + i * 60, FLY_NOW)); });
     endHold(); paintPlateFx();
     Promise.all(flights).then(() => { if (!H.drag && !H.busy) { setOpen(false); refresh(true); } });
+    // (MOVEINSTANT 2, Paul 20 Oct 2026: and folds away in any case once the flight is over, so a dock never stays open over the plate, taking the next charm pressed there)
+    setTimeout(() => { if (!H.drag && !H.busy && H.docks[dk.side] && H.docks[dk.side].el.classList.contains("open")) { setOpen(false); refresh(true); } }, FLY_NOW + 600);
     const anchor = (H.docks[dk.side] && H.docks[dk.side].el) || K.W.el.plateBox;
     K.note(anchor, { text: `Order ${u.rid}: ${u.pieces.length === 1 ? "the charm" : u.pieces.length + " pieces"} moved to ${word(target)}`, tone: "ok", actions: [{ label: "Show it", fn: () => K.switchSheet(target.sheetId, { select: spots[0].c.poolId }) }] });
     return true;
