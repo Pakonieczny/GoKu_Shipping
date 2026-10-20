@@ -21,11 +21,22 @@
    A save that fails (offline, the server) leaves the card exactly where it was with one plain line under the buttons;
    nothing is lost and the button can be pressed again.
 
-   Public: CancelUI.mount(node, row) (Open Orders, a held card), CancelUI.cancel(rid), CancelUI.undo(rid), CancelUI.busy(rid), CancelUI.canUndo(rid).
+   Public: CancelUI.mount(node, rid | row) (a Review card of an order on hold, CANCELREVIEW; was Open Orders' held card), CancelUI.cancel(rid), CancelUI.undo(rid), CancelUI.busy(rid), CancelUI.canUndo(rid).
 
    (NOHOLDPILE, Paul 20 Oct 2026: "Remove the 'On hold' tab and UI from the Orders tab ... it competes with the existing Review
    tab": the On hold pile is gone; the Cancel Order button (CancelUI.mount) moves to the held card in Open Orders. The cancel itself, its
-   flight to the Cancelled chip, the note and Undo stay, called as CancelUI.cancel(rid); a held order is shown in Review.) */
+   flight to the Cancelled chip, the note and Undo stay, called as CancelUI.cancel(rid); a held order is shown in Review.)
+
+   (CANCELREVIEW, Paul 20 Oct 2026: "Relocate the 'Cancel Order' button to be only visible as part of the orders that are on Hold inside the Review
+   list order view. Every order on Hold in the Review needs a 'Cancel Order' button. When pressed that particular order needs to animate and fly
+   towards the Orders tab and then go into the Cancelled orders sub tab, and this needs to be easily visible by the user to understand where the
+   order ended up." The button is on the Review card of an order on hold (a held line, a lifted hold, the "Held order" item), one per card, beside
+   that card's Release Hold (the same .btn sm height and corners, plain); the Orders tab has none. Review draws the card and calls
+   CancelUI.mount(node, rid). Pressed in Review, the cancel is the same one path; the Review list's own update (Motion.expect on the card's name)
+   flies the card to the Orders tab in the top bar's tabs (the Cancelled chip when it is on screen), the tab answers with a ring and a small
+   "Cancelled N" tag whose number rolls up as the card lands, and the note says where it went: "Order N cancelled — it's in Orders › Cancelled",
+   with Undo and Show (Orders, on Cancelled, at that order). Undo puts the order back on hold and its card flies back out of the Orders tab into
+   Review. Only transform and opacity animate; prefers-reduced-motion has no flight, ring or tag, and the note still shows.) */
 (function (root) {
   "use strict";
   const doc = root.document;
@@ -42,8 +53,12 @@
     ".btn.ghost.cnCancelBtn:hover:not(:disabled){color:var(--ink)}",
     ".btn.ghost.cnCancelBtn:disabled{cursor:default}",
     ".cnCancelBtn .spin{margin-right:6px}",
-    ".ocard.cnBusy,.orderListRow.cnBusy{transform:translateY(-2px);transition:transform .24s cubic-bezier(.2,.8,.2,1)}",
-    "@media (prefers-reduced-motion:reduce){.ocard.cnBusy,.orderListRow.cnBusy{transform:none;transition:none}}",
+    ".ocard.cnBusy,.orderListRow.cnBusy,.reviewListRow.cnBusy{transform:translateY(-2px);transition:transform .24s cubic-bezier(.2,.8,.2,1)}",
+    "@media (prefers-reduced-motion:reduce){.ocard.cnBusy,.orderListRow.cnBusy,.reviewListRow.cnBusy{transform:none;transition:none}}",
+    ".rowActions>.cnCancelMsg{flex-basis:100%}",   // (CANCELREVIEW: the plain line under a Review card's buttons, on a row of its own)
+    // (CANCELREVIEW: the "Cancelled N" tag on the Orders tab while a card flies to it from Review; it lives on the motion layer, so nothing in the top bar moves)
+    ".cnTabTag{position:fixed;z-index:142;display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;background:var(--velvet,#3b2f2a);color:#f3eee4;font:700 10.5px/1.5 var(--sans);white-space:nowrap;pointer-events:none;box-shadow:0 4px 12px rgba(30,24,16,.18);will-change:transform,opacity}",
+    ".cnTabTag>b{display:inline-grid;min-width:1ch;font:800 11px var(--mono);overflow:hidden}",
     ".cnCancelMsg{display:block;max-width:36ch;margin:0;font:12px/1.4 var(--sans);color:var(--ink70)}",
     ".cnTick{display:inline-grid;position:relative}.cnTick>i{grid-area:1/1;font-style:normal;text-align:center}",
     ".cnBeacon{position:fixed;box-sizing:border-box;border:2px solid rgba(176,86,63,.6);border-radius:999px;pointer-events:none;will-change:transform,opacity}",
@@ -59,7 +74,11 @@
   /** The pile's chip; the Orders tab button when the chip is not drawn or not showing (the tab is always in the top bar). */
   const chipEl = p => { const c = doc.querySelector(`#ordChips [data-pile="${p}"]`); return c && c.getClientRects().length ? c : doc.querySelector('#modeSeg [data-mode="orders"]'); };
   const chipB = p => { const b = doc.querySelector(`#ordChips [data-pile="${p}"] b`); return b && b.getClientRects().length ? b : null; };
-  const cardsOf = rid => [...doc.querySelectorAll("#ordItems [data-rid]")].filter(n => n.dataset.rid === String(rid));
+  const cardsOf = rid => [...doc.querySelectorAll("#ordItems [data-rid], #rvList [data-rid]")].filter(n => n.dataset.rid === String(rid));
+  // (CANCELREVIEW) the Orders tab in the top bar's tabs; the Review cards of an order that carry its Cancel Order, while Review is on screen
+  const tabEl = () => doc.querySelector('#modeSeg [data-mode="orders"]');
+  const reviewCards = rid => { const v = doc.getElementById("reviewView"); if (!v || v.classList.contains("hidden") || !v.getClientRects().length) return []; return [...doc.querySelectorAll("#rvList > [data-rid]")].filter(n => n.dataset.rid === String(rid) && n.querySelector(".cnCancelBtn")); };
+  const RELSEL = '[data-rv-release], .relHold:not([data-gate])';   // (a Review card's Release Hold, or an Orders card's)
   const keyOf = r => "ord:" + r.key;
   const toastIf = (m, kind, ms) => { try { if (typeof root.toast === "function") root.toast(m, kind || "", ms || 5000); } catch (_) {} };
 
@@ -81,7 +100,7 @@
       b.disabled = on;
       b.innerHTML = on ? `<span class="spin"></span>Cancelling` : LABEL;
       // (Release hold waits while the cancel is kept: one change to an order at a time)
-      const rel = n.querySelector(".relHold:not([data-gate])");
+      const rel = n.querySelector(RELSEL);
       if (rel) { if (on && !rel.disabled) { rel.disabled = true; rel.dataset.cnOff = "1"; } else if (!on && rel.dataset.cnOff) { rel.disabled = false; delete rel.dataset.cnOff; } }
     }
   }
@@ -91,7 +110,7 @@
     for (const n of cardsOf(rid)) drawMsg(n, rid);
   }
   function drawMsg(n, rid) {
-    const wrap = n.querySelector(".cnHoldBtns"); if (!wrap) return;
+    const wrap = n.querySelector(".cnHoldBtns") || n.querySelector(".cnCancelBtn"); if (!wrap) return;   // (CANCELREVIEW: a Review card has no wrap: the line goes after its Cancel Order)
     let line = n.querySelector(".cnCancelMsg");
     const m = messages.get(String(rid)), live = m && Date.now() - m.at < MSG_MS;
     if (!live) { if (m) messages.delete(String(rid)); if (line) line.remove(); return; }
@@ -148,22 +167,28 @@
     roll(b, n - delta, n);
   }
 
-  /* ── the move to Cancelled, by the Orders list's own update (Motion.expect → reconcile → fly) ── */
+  /* ── the move to Cancelled, by the list's own update (Motion.expect → reconcile → fly): Review's card, or the Orders card ── */
   const toChip = ctx => Object.assign(() => (ctx.state === "failed" ? null : (ctx.started || start(ctx), chipEl("cancelled"))), { cancelRid: ctx.rid });
+  // (CANCELREVIEW, Paul 20 Oct 2026: "this needs to be easily visible by the user to understand where the order ended up": the note names the tab and its sub tab)
+  const WHERE = rid => `Order ${rid} cancelled \u2014 it's in Orders \u203a Cancelled`;
   function noteSpec(ctx) {
-    return { text: `Order ${ctx.rid} cancelled · kept under Cancelled`, ms: UNDO_MS, actions: [
+    return { text: WHERE(ctx.rid), ms: UNDO_MS, actions: [
       { label: "Undo", title: "put it back on hold", fn: () => { undo(ctx.rid).catch(e => console.warn("cancel undo", e)); } },
-      { label: "Show", title: "open Cancelled at this order", fn: () => showCancelled(ctx.rid) }] };
+      { label: "Show", title: "open Orders \u203a Cancelled at this order", fn: () => showCancelled(ctx.rid) }] };
   }
+  /** What leaves for Cancelled: the order's Review cards when it was pressed in Review (CANCELREVIEW), else its Orders card(s); one note, on the first. */
   function expectLeave(ctx) {
     const m = M(); if (!m || !m.expect) return;
+    if (ctx.mks.length) { ctx.mks.forEach((k, i) => m.expect(k, { to: toChip(ctx), plus: false, ms: FLY_MS, ttl: 120000, note: i === 0 ? noteSpec(ctx) : null })); return; }
     ctx.rows.forEach((r, i) => m.expect(keyOf(r), { to: toChip(ctx), plus: i === 0 ? "+1" : false, ms: FLY_MS, ttl: 120000, note: i === 0 ? noteSpec(ctx) : null }));
   }
-  function forgetLeave(ctx) { const m = M(); if (!m || !m.expect || (flights.has(ctx.rid) && flights.get(ctx.rid) !== ctx)) return; for (const r of ctx.rows) m.expect(keyOf(r), { ttl: 1 }); }
-  /** The flight begins (the list took the card out): the chip answers with a ring, and keeps its old count until it lands. */
+  function forgetLeave(ctx) { const m = M(); if (!m || !m.expect || (flights.has(ctx.rid) && flights.get(ctx.rid) !== ctx)) return; for (const r of ctx.rows) m.expect(keyOf(r), { ttl: 1 }); for (const k of ctx.mks) m.expect(k, { ttl: 1 }); }
+  /** The flight begins (the list took the card out): the chip answers with a ring, and keeps its old count until it lands; with the
+   *  Orders view hidden (pressed in Review) the Orders tab answers instead: the ring, and a "Cancelled N" tag that rolls up on landing. */
   function start(ctx) {
     if (ctx.started) return; ctx.started = true;
     const c = chipEl("cancelled"); beacon(c); holdCount(ctx);
+    if (c && c === tabEl()) tabTag(ctx);
     ctx.landT = setTimeout(() => land(ctx), Math.round(FLY_MS * .86) + 40);
   }
   function land(ctx) {
@@ -171,21 +196,44 @@
     const b = ctx.held; ctx.held = null; clearTimeout(ctx.holdT);
     const n = countOf();
     if (b && b.isConnected && n != null) roll(b, n - 1, n); else tickChip(1);
+    if (ctx.tag && ctx.tag.isConnected && n != null) roll(ctx.tag.querySelector("b"), n - 1, n);
+  }
+  /** (CANCELREVIEW) The Orders tab's "Cancelled N" tag, just over its top right corner, on the motion layer: it shows the old count
+   *  while the card flies, rolls to the new one as it lands, then fades. Transform and opacity only; none under reduced motion. */
+  function tabTag(ctx) {
+    const t = tabEl(); if (reduced() || !M() || !t || !t.getClientRects().length || ctx.tag) return;
+    const r = t.getBoundingClientRect(), n = countOf();
+    const tag = doc.createElement("span"); tag.className = "cnTabTag"; tag.setAttribute("aria-hidden", "true");
+    tag.innerHTML = `Cancelled <b>${n == null ? "" : Math.max(0, n - 1)}</b>`;
+    Object.assign(tag.style, { left: Math.round(r.right - 6) + "px", top: Math.max(2, Math.round(r.top - 9)) + "px" });
+    M().layer(t).appendChild(tag); ctx.tag = tag;
+    try { tag.animate([{ transform: "translate(-50%,6px) scale(.7)", opacity: 0 }, { transform: "translate(-50%,0) scale(1)", opacity: 1 }], { duration: 360, easing: "cubic-bezier(.3,1.3,.5,1)", fill: "both" }); } catch (_) {}
+    ctx.tagT = setTimeout(() => dropTag(ctx), FLY_MS + 2400);
+  }
+  function dropTag(ctx) {
+    clearTimeout(ctx.tagT); const tag = ctx.tag; ctx.tag = null; if (!tag) return;
+    const kill = () => tag.remove();
+    try { tag.animate([{ transform: "translate(-50%,0) scale(1)", opacity: 1 }, { transform: "translate(-50%,-6px) scale(.9)", opacity: 0 }], { duration: 320, easing: "ease-in", fill: "forwards" }).finished.then(kill, kill); } catch (_) { kill(); }
+    setTimeout(kill, 900);
   }
   /** No flight was seen (reduced motion, the list was not on screen): the same answer, without the card in the air. */
   function plain(ctx) {
     if (ctx.started || ctx.plainDone) return; ctx.plainDone = true;
     const m = M();
-    if (!m) { toastIf(`Order ${ctx.rid} cancelled · kept under Cancelled`, "ok", 6000); return; }
-    if (!reduced()) { m.pulse(() => chipEl("cancelled")); tickChip(1); }
+    if (!m) { toastIf(WHERE(ctx.rid), "ok", 6000); return; }
+    if (!reduced()) {
+      m.pulse(() => chipEl("cancelled")); tickChip(1);
+      if (chipEl("cancelled") === tabEl()) { beacon(tabEl()); tabTag(ctx); const n = countOf(); if (ctx.tag && n != null) setTimeout(() => { if (ctx.tag) roll(ctx.tag.querySelector("b"), n - 1, n); }, 380); }
+    }
     m.note(Object.assign(() => chipEl("cancelled"), { cancelRid: ctx.rid }), noteSpec(ctx));
   }
   /** Whatever of this move is still on screen is taken away, whatever happened to its animation. */
   function sweep(ctx) {
     clearTimeout(ctx.landT); letGoCount(ctx); forgetLeave(ctx);
-    const keys = new Set(ctx.rows.map(r => r.key));
-    for (const g of doc.querySelectorAll(".mGhost")) { const c = g.querySelector(".mCopy"); if (c && keys.has(c.dataset.key)) g.remove(); }
+    const keys = new Set(ctx.rows.map(r => r.key)), mks = new Set(ctx.mks);
+    for (const g of doc.querySelectorAll(".mGhost")) { const c = g.querySelector(".mCopy"); if (c && (keys.has(c.dataset.key) || mks.has(c.dataset.mkey))) g.remove(); }
     for (const x of doc.querySelectorAll(".cnBeacon")) x.remove();
+    clearTimeout(ctx.tagT); if (ctx.tag) { ctx.tag.remove(); ctx.tag = null; }
     const b = doc.querySelector('#ordChips [data-pile="cancelled"] b'); if (b && b.classList.contains("cnTick")) { b.classList.remove("cnTick"); const n = countOf(); b.textContent = String(n == null ? "" : n); }
   }
 
@@ -214,7 +262,9 @@
       if (!who) return { ok: false, error: "name" };
     }
     const rows2 = rowsOf(rid); if (!rows2.length) return { ok: false, error: "gone" };
-    const ctx = { rid, who, rows: rows2.slice(), snap: snapshot(rid, rows2, who), state: "working", started: false, landed: false, plainDone: false, held: null };
+    // (CANCELREVIEW: pressed in Review, the order's Review cards are what flies, by their names in that list; mks is empty from anywhere else)
+    const mks = [...new Set(reviewCards(rid).map(n => n.dataset.mkey).filter(Boolean))];
+    const ctx = { rid, who, rows: rows2.slice(), mks, snap: snapshot(rid, rows2, who), state: "working", started: false, landed: false, plainDone: false, held: null };
     flights.set(rid, ctx); paintBusy(rid); expectLeave(ctx);
     let res;
     try { res = await root.SheetWin.takeOffOrder({ orderId: rid, mode: "cancel", scope: "order", by: who, note: "" }); }
@@ -235,7 +285,9 @@
   function snapshot(rid, rows, who) {
     const B = root.B || {}, run = B.run || null, pool = new Map();
     for (const r of rows) for (const id of r.poolIds || []) { const p = B.pool && B.pool.rows && B.pool.rows.get(id); if (p && !(root.Pool && Pool.sheetOf(id))) pool.set(id, p); }
-    return { rid, who, rows: rows.slice(), pool, at: Date.now(), inRun: !!(run && Array.isArray(run.orders) && run.orders.some(x => String(x) === rid)), hold: run && run.holds && typeof run.holds === "object" && run.holds[rid] !== undefined ? run.holds[rid] : undefined };
+    // (CANCELREVIEW: the order's "Held order" item in Review, put back by Undo; the names of the Review cards it had, which fly back out of the Orders tab)
+    let rv = [], mks = []; try { rv = (root.Review && Review.items ? Review.items() : []).filter(x => /^held:/.test(String(x.key || "")) && String(x.rid) === String(rid)).map(x => Object.assign({}, x)); mks = reviewCards(rid).map(n => n.dataset.mkey).filter(Boolean); } catch (_) {}
+    return { rid, who, rows: rows.slice(), pool, rv, mks, at: Date.now(), inRun: !!(run && Array.isArray(run.orders) && run.orders.some(x => String(x) === rid)), hold: run && run.holds && typeof run.holds === "object" && run.holds[rid] !== undefined ? run.holds[rid] : undefined };
   }
   /** The order's lines back in the lists, held (a line the cancel took off a sheet waits on hold: it is not put back on a sheet). */
   function revive(snap) {
@@ -253,6 +305,7 @@
       run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord));
     }
     try { Orders.interpretAll(); } catch (e) { console.warn("cancel undo: interpret", e); }
+    try { for (const x of snap.rv || []) if (!Review.items().some(y => y.key === x.key)) Review.items().push(x); } catch (e) { console.warn("cancel undo: held item", e); }   // (CANCELREVIEW: its "Held order" item, as it was)
     try { Review.syncOrderItems(); } catch (e) { console.warn("cancel undo: review", e); }
     if (root.Session && Session.schedule) Session.schedule();
     return n;
@@ -264,20 +317,21 @@
     return n;
   }
   function showCancelled(rid) { try { if (root.Orders && Orders.showCancelled) Orders.showCancelled(rid); } catch (e) { console.warn("cancel show", e); } }
-  /** Adds Cancel Order beside Release Hold on a held card in Open Orders (Orders draws the card, then calls this; NOHOLDPILE, Paul 20 Oct 2026: it lived on the On hold pile, which is gone). */
-  function mount(node, row) {
+  /** Adds Cancel Order beside the card's Release Hold on the Review card of an order on hold (CANCELREVIEW, Paul 20 Oct 2026: "only visible as part of the orders that are on Hold inside the Review
+   *  list order view": Review draws the card, decides the order is on hold, then calls this with the order number, or one of its lines). One per card; the same .btn sm as Release Hold, plain, right after
+   *  it (after a Custom Orders card's Release Hold too, RELORDER), else last among the card's buttons. (NOHOLDPILE put it on the held card in Open Orders; the Orders tab has none now.) */
+  function mount(node, x) {
     try {
-      if (!node || !row || !row.hold || row.state === "gone") return;
-      const acts = node.querySelector(".rowActions"); if (!acts || acts.querySelector(".cnCancelBtn")) return;
+      const rid = String((x && typeof x === "object" ? x.order && x.order.receiptId : x) || "");
+      if (!node || !rid || !rowsOf(rid).length) return;
+      const acts = node.querySelector(".rowActions") || node.querySelector(".fixes"); if (!acts || acts.querySelector(".cnCancelBtn")) return;
       css();
-      const rid = String(row.order.receiptId), rel = acts.querySelector(".relHold:not([data-gate])");
-      let wrap = rel && rel.parentElement && rel.parentElement.classList.contains("cnHoldBtns") ? rel.parentElement : null;
-      if (!wrap) { wrap = doc.createElement("div"); wrap.className = "cnHoldBtns"; if (rel) { rel.replaceWith(wrap); wrap.appendChild(rel); } else acts.appendChild(wrap); }
+      const rel = acts.querySelector(RELSEL);
       const b = doc.createElement("button"); b.type = "button"; b.className = "btn ghost sm cnCancelBtn"; b.textContent = LABEL;
       b.setAttribute("aria-label", `Cancel order ${rid}`);
-      b.title = "Cancel this order. Its record is kept under Cancelled, where it can be restored.";
+      b.title = "Cancel this order. It moves to Orders \u203a Cancelled, where its record is kept and can be restored.";
       b.onclick = e => { e.stopPropagation(); e.preventDefault(); cancel(rid).catch(err => console.warn("cancel order", err)); };
-      wrap.appendChild(b);
+      if (rel) rel.after(b); else acts.appendChild(b);
       node.dataset.rid = node.dataset.rid || rid;
       if (flights.has(rid)) paintBusy(rid);
       drawMsg(node, rid);
@@ -291,7 +345,7 @@
     css();
     const snap = undoable.get(rid); if (!snap) { toastIf(`Order ${rid} can be restored from Orders > Cancelled.`, "", 6000); return { ok: false, error: "nothing to undo" }; }
     if (snap.busy) return { ok: false, error: "busy" }; snap.busy = true;
-    for (const r of snap.rows) if (M() && M().expect) M().expect(keyOf(r), { ttl: 1 });   // (a cancel's flight that was never played must not meet the order's next move)
+    for (const k of snap.rows.map(keyOf).concat(snap.mks || [])) if (M() && M().expect) M().expect(k, { ttl: 1 });   // (a cancel's flight that was never played must not meet the order's next move)
     const m = M(), wait = waitNote(`Putting order ${rid} back on hold…`);
     try {
       if (!root.Cancelled || typeof Cancelled.restore !== "function") throw new Error("Restoring is not ready on this page yet");
@@ -304,15 +358,19 @@
     }
     // the record is gone from Cancelled (kept in its history, and the timeline says it was restored): the lines are back
     if (m && m.expectIn) for (const r of snap.rows) m.expectIn(keyOf(r), { from: () => chipEl("cancelled"), ttl: 30000, ms: FLY_MS });
+    if (m && m.expectIn) for (const k of snap.mks || []) m.expectIn(k, { from: () => chipEl("cancelled"), ttl: 30000, ms: FLY_MS });   // (CANCELREVIEW: its Review card flies back out of the Orders tab)
     undoable.delete(rid);
     let n = 0;
     try { n = revive(snap); } catch (e) { console.warn("cancel undo", e); }
     if (wait && wait.close) wait.close();
     try { Orders.renderNow(); } catch (_) { try { Orders.render(); } catch (__) {} }
+    try { if (root.Review && Review.render) Review.render(); } catch (_) {}   // (CANCELREVIEW: its card is back in Review)
     tickChip(-1);
     const held = snap.rows.some(r => r.hold && r.state !== "gone");
-    const text = n ? (held ? `Order ${rid} is back on hold` : `Order ${rid} is back in the lists`) : `Order ${rid} is no longer under Cancelled`;
-    const target = () => chipEl("");   // (NOHOLDPILE: a held order is back in Open Orders, with its HELD chip)
+    const card = () => reviewCards(rid)[0] || null, inRv = !!card();
+    const text = n ? (held ? `Order ${rid} is back on hold${inRv ? " \u2014 its card is back in Review" : ""}` : `Order ${rid} is back in the lists`) : `Order ${rid} is no longer under Cancelled`;
+    // (NOHOLDPILE: a held order is back in Open Orders, with its HELD chip; CANCELREVIEW: undone from Review, the note stands under its card there)
+    const target = () => card() || chipEl("");
     if (m) {
       if (!reduced()) m.pulse(target);
       m.note(target, { text, ms: 7000, actions: held ? [{ label: "Show", title: "open Review at this order", fn: () => showHeld(rid) }] : [] });

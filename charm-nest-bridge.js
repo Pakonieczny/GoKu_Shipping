@@ -2430,8 +2430,8 @@ const Orders = window.Orders = (() => {
     const held = V.filter(v => v.held), due = V[0].due, mail = V[0].mail, team = V[0].team, attn = V.some(v => v.attn), rel = releaseStampOf(rows), sealM = cardSeals(rows);
     const label = v => wordsOf(v.sp) ? "Personalisation" : "Item", text = v => wordsOf(v.sp) || v.r.line.title || "No title";
     const said = OG.sameOf(V.map(v => label(v) + "|" + text(v)));   // (what every piece says alike is said once at the top, else on each piece)
-    const total = rows.reduce((n, r) => n + (O.pieceCountOf(r) || 1), 0), cancelable = held.length > 0 && !!window.CancelUI;   // (NOHOLDPILE: Cancel Order stays beside Release Hold on a held card, now in Open Orders)
-    const stamp = JSON.stringify(["group", cards, first.order, due, date, mail, team, cancelable, relSig(rel), sealM ? sealM.sig : "", V.map(v => [v.r.key, v.r.line, v.r.spec, v.r.state, v.st, v.r.hold, v.held, v.r.wait, v.why, v.where, v.seals && CustomPrint.sealSig(v.sealRec), v.fc[1], v.e ? v.e.sig : ""])]);
+    const total = rows.reduce((n, r) => n + (O.pieceCountOf(r) || 1), 0);   // (CANCELREVIEW, Paul 20 Oct 2026: no Cancel Order in Orders; it is on the held order's card in Review)
+    const stamp = JSON.stringify(["group", cards, first.order, due, date, mail, team, relSig(rel), sealM ? sealM.sig : "", V.map(v => [v.r.key, v.r.line, v.r.spec, v.r.state, v.st, v.r.hold, v.held, v.r.wait, v.why, v.where, v.seals && CustomPrint.sealSig(v.sealRec), v.fc[1], v.e ? v.e.sig : ""])]);
     const cached = orderNodes.get(first.key);
     if (cached?.stamp === stamp) {
       orderNodes.delete(first.key); orderNodes.set(first.key, cached);
@@ -2461,7 +2461,6 @@ const Orders = window.Orders = (() => {
     }
     node.onclick = e => { if (e.target.closest("button,[role=button],a")) return; OrderWin.open(first.key, { from: node }); };
     if (held.length) wireRelHold(node, rid);   // (RHSAME: the Review card's own Release Hold, its press and its seal)
-    if (cancelable) { try { CancelUI.mount(node, (held.find(v => v.r.hold) || held[0]).r); } catch (err) { console.warn("Cancel Order button", err); } }
     if (cached?.node) { for (const r of rows) { const pair = pairIn(cached.node, r.key), n = [...node.querySelectorAll(".ogPiece")].find(x => x.dataset.key === r.key); if (pair && n) env.pairs.push([n, pair]); } env.rebuilt.push(node); }
     orderNodes.delete(first.key); orderNodes.set(first.key, { stamp, node });
     for (const n of node.querySelectorAll(".ogPiece")) env.mounts.push([n, rows.find(x => x.key === n.dataset.key), "media"]);
@@ -2516,7 +2515,7 @@ const Orders = window.Orders = (() => {
       if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;heading.dataset.mkey='day:'+date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} order${dayCounts.get(date.key).size === 1 ? "" : "s"} · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;wanted.push(heading);lastDay=date.key;}
       if (g.rows.length > 1) { wanted.push(groupNode(g, date, cards, { mounts, pairs, rebuilt })); continue; }
       const { sp, m, st, shown, due, where, fc, attn, why, gateBtn, mail, team, sealRec, seals, held, rel } = lineView(r), sealM = cardSeals(g.rows), e = engLine(r);
-      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,held,r.wait,why,where,due,date,mail,team,held && !!window.CancelUI,seals&&CustomPrint.sealSig(sealRec),fc[1],relSig(rel),sealM ? sealM.sig : "",e ? e.sig : ""]);
+      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,held,r.wait,why,where,due,date,mail,team,seals&&CustomPrint.sealSig(sealRec),fc[1],relSig(rel),sealM ? sealM.sig : "",e ? e.sig : ""]);
       const cached=orderNodes.get(r.key);
       if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);wanted.push(cached.node);mounts.push([cached.node,r]);continue;}
       const node = el("div", (cards ? "ocard" : "doneRow workRow orderListRow") + " hoverItem" + (e ? " ordEng" : "") + (attn ? " attn" : ""));
@@ -2532,8 +2531,7 @@ const Orders = window.Orders = (() => {
       // Release Hold: the Review card's own button and press (RHSAME, Paul 20 Oct 2026: one release, the same on both tabs)
       if (held) wireRelHold(node, String(r.order.receiptId));
       wireGate(node);
-      // Cancel Order beside Release Hold on a held card (charm-nest-cancel-ui.js; NOHOLDPILE, Paul 20 Oct 2026: it lived on the On hold pile, which is gone, so it shows in Open Orders)
-      if (held && window.CancelUI) { try { CancelUI.mount(node, r); } catch (err) { console.warn("Cancel Order button", err); } }
+      // (CANCELREVIEW, Paul 20 Oct 2026: "Relocate the 'Cancel Order' button to be only visible as part of the orders that are on Hold inside the Review list": no Cancel Order here; Review's held card has it)
       // an order can be several lines on several cards: hovering one lifts all of them, the way the station does
       node.dataset.rid = String(r.order.receiptId);
       // (the old node's decoded pictures move over once the update has measured where the old node stood)
@@ -17118,9 +17116,17 @@ const Review = window.Review = (() => {
   }
   const actStamp = x => x ? [CustomPrint.stamp(x), CustomSheet.stamp(x), x.rows.map(r => r.key + ":" + r.state + ":" + (r.poolIds || []).length).join()].join("|") : "";
   /** What a decision card is drawn from: while it reads the same, the card (and whatever is typed in it) is kept. */
+  /** (CANCELREVIEW, Paul 20 Oct 2026: "Every order on Hold in the Review needs a 'Cancel Order' button") The order an open Review card's Cancel Order cancels: the one order the card speaks for, when it
+   *  is on hold (a line of it held, or a lifted hold's "Held order" item); "" for a card of no order on hold, of several orders, done, decided or only informing (no button). CancelUI.mount draws it. */
+  function cancelRidOf(it) {
+    if (!window.CancelUI || !it || it.done || it.decided || it.settled || it.info || it.nested || it.kind === "placement" || /^eng:/.test(String(it.key || ""))) return "";
+    const rids = [...new Set((it.kind === "heldOrder" && it.rid ? rowsOfOrder(it.rid) : rowsOf(it)).filter(r => r && r.order).map(r => String(r.order.receiptId)))];
+    if (rids.length !== 1 || (window.Cancelled && Cancelled.has && Cancelled.has(rids[0]))) return "";
+    return it.kind === "heldOrder" || rowsOfOrder(rids[0]).some(r => Orders.heldNow(r)) ? rids[0] : "";
+  }
   function stampOf(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
-    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,!!it.decided,it.record&&[it.record.lastPrintedAt,it.record.prints,it.record.stamps,it.record.completedAt,it.record.decidedAt,it.record.by],it.done&&group.length>1&&group.map(r=>{const d=r.spec?.customDone;return d&&[d.stamps,d.completedAt,d.lastPrintedAt,d.prints];}),it.alsoSent&&[it.alsoSent.at,it.alsoSent.by,it.alsoSent.stamps],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):actStamp(actOf(it)),CustomRead.stamp(row),siblingStamp(it)]);
+    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,!!it.decided,it.record&&[it.record.lastPrintedAt,it.record.prints,it.record.stamps,it.record.completedAt,it.record.decidedAt,it.record.by],it.done&&group.length>1&&group.map(r=>{const d=r.spec?.customDone;return d&&[d.stamps,d.completedAt,d.lastPrintedAt,d.prints];}),it.alsoSent&&[it.alsoSent.at,it.alsoSent.by,it.alsoSent.stamps],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):actStamp(actOf(it)),CustomRead.stamp(row),siblingStamp(it),cancelRidOf(it)]);   // (CANCELREVIEW: a card whose order goes on or off hold is drawn again, with or without its Cancel Order)
   }
   /* ── Custom Orders that ask nothing, and those completed ── */
   const infoItems = new Map();
@@ -17370,6 +17376,8 @@ const Review = window.Review = (() => {
     if(it.kind==='reviewMark'&&window.CharmNestReviewMark)CharmNestReviewMark.decorateRow(node,it);   // (a slot for each line's suggested charms, and Mark OK)
     if(it.kind==='reviewMark')fillMarkSlots(node,it);   // (REVSUGGEST: the similar charms of each line go in its slot, the charm it is matched to now marked; a line with nothing similar leaves its slot empty)
     if (typeof decorateRelease === "function") decorateRelease(node,it);   // (RELHOLD: Release Hold in the card's column where Complete Order stood, greyed with its one plain reason where the line cannot nest yet; "Unblock this SKU" after it on a blocked SKU; nothing under the reason any more)
+    // (CANCELREVIEW, Paul 20 Oct 2026: "Relocate the 'Cancel Order' button to be only visible as part of the orders that are on Hold inside the Review list order view": one Cancel Order beside this card's Release Hold when its order is on hold; pressed, the card flies to the Orders tab, into Cancelled: charm-nest-cancel-ui.js)
+    { const crid=cancelRidOf(it); if(crid)try{CancelUI.mount(node,crid);}catch(err){console.warn('Cancel Order button',err);} }
     // (its custom buttons as a custom card's, and a click on the card opens its order; one whose line has left the pull
     // opens the order by its number)
     if(cx||row)wireAct(node,cx||{key:'rv:'+it.key,rows:[]},cx?cs:null,row);
