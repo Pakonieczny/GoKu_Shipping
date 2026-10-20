@@ -132,7 +132,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     await sleep(400);
     await page.click('#cuKeepSwitch');
   };
-  const panel = page => page.evaluate(() => { const el = document.querySelector('.rlFlow'); return el ? { title: el.querySelector('h3').textContent, done: el.dataset.done === '1', bar: el.querySelector('.rlBar').getAttribute('aria-valuenow'), sum: el.querySelector('.rlSum').textContent, lines: [...el.querySelectorAll('li')].map(li => [li.dataset.s, li.querySelector('.rlT').textContent]) } : null; });
+  const panel = page => page.evaluate(() => { const el = document.querySelector('.rlFlow'); return el ? { title: el.querySelector('h3').textContent, done: el.dataset.done === '1', bar: el.querySelector('.rlBar').getAttribute('aria-valuenow'), sum: el.querySelector('.rlSum').textContent, ids: [...el.querySelectorAll('li')].map(li => li.dataset.id), lines: [...el.querySelectorAll('li')].map(li => [li.dataset.s, li.querySelector('.rlT').firstChild ? li.querySelector('.rlT').firstChild.textContent : '']) } : null; });
   const finished = async (page, what) => page.waitForFunction(() => { const el = document.querySelector('.rlFlow'); return el && el.dataset.done === '1'; }, null, { timeout: 90000 }).catch(async e => { throw new Error(what + ': the pop-up did not finish: ' + JSON.stringify(await panel(page)) + ' · keep: ' + await page.evaluate(() => (document.getElementById('cuKeep') || {}).dataset && document.getElementById('cuKeep').dataset.phase)); });
   try {
     /* ── A · no match: the order's own Etsy SKU ── */
@@ -187,7 +187,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
       const order = ['remove', 'repo', 'link'].map(id => fl.ids.indexOf(id));
       assert(order[0] === 0 && order[1] === 1 && order[2] === 2, 'the lines come in order: removed, saved, linked: ' + JSON.stringify(fl.ids));
       pass('already matched: OAK_LEAF is removed from X (X keeps OAK_LEAF_GF), the new design holds it, one audit record; the pop-up says removed, saved, linked, W2, the sheet, the pictures, Etsy');
-      const wNow = await page.evaluate(({ W2, sku }) => { const r = B.orders.rows.find(x => x.order.receiptId === W2); const id = r.poolIds[0], sh = id && Pool.sheetOf(id), c = sh && sh.charms.find(x => x.poolId === id), p = B.pool.rows.get(id); return { sku: r.spec.designSku, id, sheet: sh && sh.sheetId, placed: !!(c && sh.placements.some(q => q.id === c.id)), aiPath: p && p.aiPath, hash: c && (c.hash || c.charmHash), key: PieceMedia.vectorKey(r), tl: (window.CNTimeline && CNTimeline.eventsFor ? CNTimeline.eventsFor(r) : []) }; }, { W2, sku });
+      const wNow = await page.evaluate(({ W2, sku }) => { const r = B.orders.rows.find(x => x.order.receiptId === W2); const id = r.poolIds[0], sh = id && Pool.sheetOf(id), c = sh && sh.charms.find(x => x.poolId === id), p = B.pool.rows.get(id); return { sku: r.spec.designSku, id, sheet: sh && sh.sheetId, placed: !!(c && sh.placements.some(q => q.id === c.id)), aiPath: p && p.aiPath, hash: c && (c.hash || c.charmHash), key: PieceMedia.vectorKey(r) }; }, { W2, sku });
       assert(wNow.sku === sku && wNow.sheet === SHEET && wNow.placed && /OAK_LEAF__k/.test(wNow.aiPath) && wNow.hash === 'h-OAK_LEAF', 'W2\'s piece is made again from the new design and placed on GF Sheet 1: ' + JSON.stringify(wNow).slice(0, 300));
       assert(wNow.key.includes('|p:OAK_LEAF#h-OAK_LEAF') && !wNow.key.includes('h-OAKX'), 'W2\'s picture key is the new design\'s piece: ' + wNow.key);
       assert(/OAK_LEAF__k/.test((st.doc('Charm_Pool', wid) || {}).aiPath || ''), 'W2\'s piece record is cut from the new design\'s file');
@@ -195,7 +195,6 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
       assert(nests.some(x => x.sheetId === SHEET && x.charms.includes(wid)), 'GF Sheet 1 was nested again with W2');
       assert(st.calls.slice(w0).some(c => c.op === 'putSheet' && c.body && c.body.sheet && c.body.sheet.id === SHEET && JSON.stringify(c.body.sheet.charms || []).includes(wid)), 'GF Sheet 1 was saved again');
       assert.equal(st.calls.slice(w0).filter(c => /^(poolPut|poolUpdate)$/.test(String(c.op)) && JSON.stringify(c.body).includes(`${F}_${F}1_1`)).length, 0, 'F\'s piece is untouched');
-      const tl = await page.evaluate(({ C2, W2 }) => { const out = {}; for (const rid of [C2, W2]) { const r = B.orders.rows.find(x => x.order.receiptId === rid); out[rid] = JSON.stringify(TLdump(r)); } return out; function TLdump(r) { try { return (CNTimeline.lines ? CNTimeline.lines(r) : CNTimeline.of ? CNTimeline.of(r) : (r.timeline || r.events || [])); } catch (_) { return []; } } }, { C2, W2 });
       pass('W2 (nested on the uncut GF Sheet 1 with X\'s piece) is made again from the new design by the relink, GF Sheet 1 nested again and saved, its pictures the new piece; F untouched');
       // the Library tab: X's card no longer lists OAK_LEAF, the new design's card does
       await page.evaluate(() => { try { CustomSheet.shut(); } catch (_) {} CN.setMode('master'); });
