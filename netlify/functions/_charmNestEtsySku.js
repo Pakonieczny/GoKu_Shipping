@@ -296,11 +296,13 @@ function make(deps) {
       if (d.rehearsal === true) return { refusal: "rehearsal" };
       if (d.phase !== "repo") return { refusal: "not-saved" };
       const oldSku = d.oldSku == null ? "" : d.oldSku;
-      if (!LISTING_RE.test(String(d.listingId == null ? "" : d.listingId)) || !SKU_RE.test(String(d.sku == null ? "" : d.sku)) || typeof oldSku !== "string" || oldSku.length > 120) return { refusal: "bad-save" };
+      // KEEPOWNSKU (Paul, 20 Oct 2026): a design saved under the order's OWN Etsy SKU (as the library keys it: "/" is "-") is linked already, whatever characters the shop's SKU has: no call
+      const carried = typeof oldSku === "string" && oldSku.length <= 120 && !!d.sku && skuNorm(oldSku).replace(/\//g, "-") === String(d.sku);
+      if (!LISTING_RE.test(String(d.listingId == null ? "" : d.listingId)) || !(SKU_RE.test(String(d.sku == null ? "" : d.sku)) || carried) || typeof oldSku !== "string" || oldSku.length > 120) return { refusal: "bad-save" };
       const prev = d.etsy && typeof d.etsy === "object" ? d.etsy : { state: "pending" };
       if (prev.state === "linked") return { linked: { d, prev } };
       // KEEP B5: the line already carried the design's own SKU (the shop's SKUs have the very shape the plan makes: HEART_9491): Etsy has nothing to change, the listing IS linked, no call is made
-      if (skuNorm(oldSku) === String(d.sku)) {
+      if (carried) {
         const done = { state: "linked", at: t, calls: 0, noop: true, verified: false, productIds: [], sku: String(d.sku) };
         tx.update(ref, { etsy: clean(done) });
         return { linked: { d, prev: done } };

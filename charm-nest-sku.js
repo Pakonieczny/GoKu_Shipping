@@ -106,6 +106,30 @@
   }
   const reserved = sku => !!reservedWhy(sku);
 
+  /* ── KEEPOWNSKU (Paul, 20 Oct 2026): "In the case that a given listing has no match at all, then the system will need to use the existing Etsy listing/order SKU and save/match that along
+     with the newly uploaded charm vector to the Charm repo." The order's own Etsy SKU is the SKU the design is saved under, exactly as Etsy carries it, normalised only as the library keys
+     a SKU: entities decoded, trimmed, UPPER CASE (as every SKU the sorter reads), control characters as one space, and "/" as "-" (a Firestore key cannot hold "/"). Never a new name. ── */
+  const OWN_RE = /^[A-Z0-9][^\u0000-\u001f\u007f\/]{1,60}$/;
+  /** The order's Etsy SKU as the library keys it ("" when none). */
+  const etsyKey = raw => up(raw).replace(/[\u0000-\u001f\u007f]+/g, " ").trim().replace(/\//g, "-");
+  /** Why that SKU cannot be a saved design's ("" when it can): empty, longer than the library holds (61), characters a key cannot hold, the huggie mark, or a SKU the sorter reads as a special order (CUSTOM_…). */
+  function ownWhy(key) {
+    const s = String(key == null ? "" : key);
+    if (!s) return "empty";
+    if (!OWN_RE.test(s)) return "not a name the library can hold";
+    if (/\(HUGGIE\)/.test(s)) return "the huggie mark (HUGGIE)";
+    const sp = O().specialOf({ sku: s, title: "", variations: [] }, {});
+    if (sp) return "the sorter reads this SKU as a " + String(sp.label || sp.kind || "special order").toLowerCase();
+    return "";
+  }
+  /** The stem of the two files a saved design is uploaded as under charmnest/master/custom/: the SKU itself when it has the plain shape (A-Z 0-9 _ -, 32 at most) and `force` is not set,
+      else the SKU in file-safe letters + "__k" + the design's tag (KEEPOVERRIDE: a SKU taken from another drawing keeps that drawing's files apart; KEEPOWNSKU: an Etsy SKU with other characters). */
+  function fileKey(sku, tag, force) {
+    const s = String(sku == null ? "" : sku).toUpperCase(), t = String(tag == null ? "" : tag).toLowerCase().replace(/[^0-9a-z]/g, "").slice(0, 16);
+    if (!force && /^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(s)) return s;
+    return (s.replace(/[^A-Z0-9_-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "SKU") + "__k" + t;
+  }
+
   /* ── candidates ───────────────────────────────────────────────────────────────────────────────────────────────────── */
   /** NAME + "_" + TAIL, the name shortened when the whole would pass 32 characters. */
   function join(name, tail) {
@@ -228,5 +252,5 @@
     return out;
   }
 
-  return { nameOf, candidates, reserved, reservedWhy, group, aliasWorks, plan, aliasIndex, tableSkus, looseKey: function (s) { return O().looseKey(s); }, baseName, titleLead, MAX_LEN, NAME_MAX, SEND_MAX, FORMAT };
+  return { nameOf, candidates, reserved, reservedWhy, etsyKey, ownWhy, fileKey, group, aliasWorks, plan, aliasIndex, tableSkus, looseKey: function (s) { return O().looseKey(s); }, baseName, titleLead, MAX_LEN, NAME_MAX, SEND_MAX, FORMAT };
 });

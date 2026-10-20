@@ -12,7 +12,10 @@
 const { str, num } = require("./_charmNestAuth");
 
 const INDEX = "Charm_Master_Index", FILES = "Charm_Master_Files";
-const isSku = s => /^[A-Z0-9][A-Z0-9 _.,'&()+\-]{1,60}$/.test(String(s || ""));   // free text, as the shop's SKUs are ("T-REX_84495", "HUGGIE HOOPS- UMBRELLA")
+const isLabelSku = s => /^[A-Z0-9][A-Z0-9 _.,'&()+\-]{1,60}$/.test(String(s || ""));   // free text, as the shop's SKUs are ("T-REX_84495", "HUGGIE HOOPS- UMBRELLA"): a label read from a master file
+// KEEPOWNSKU (Paul, 20 Oct 2026): a design saved from an order under the order's OWN Etsy SKU keeps it as Etsy carries it ("TEST_@"): an index key is any upper-case name of 2 to 61 characters that
+// starts with a letter or digit and holds no "/" (a Firestore key cannot) and no control character (charm-nest-sku.js etsyKey makes it). A master file's labels stay the stricter isLabelSku.
+const isSku = s => isLabelSku(s) || /^[A-Z0-9][^\u0000-\u001f\u007f\/a-z]{1,60}$/.test(String(s || ""));
 
 /** The optional `pair` of a design that draws more than one separate body (charm-nest-pair.js, PAIRMASTER; contract.md):
     { v: 1, bodies: 2 to 8, mismatched: boolean }. undefined = the entry says nothing (what is stored stays as it is, which is
@@ -67,11 +70,11 @@ const SHAPE = require("crypto").createHash("sha1").update([slimEntry, cleanPair,
  */
 async function putIndex(db, FV, body) {
   // a name the library cannot hold is refused and SAID (`rejected`), never dropped without a word: the run that sent it shows it, and the read-back finds nothing for it
-  const sent = (body.entries || []), entries = sent.filter(e => e && isSku(String(e.sku || "").toUpperCase()));
+  const sent = (body.entries || []), entries = sent.filter(e => e && isLabelSku(String(e.sku || "").toUpperCase()));
   const masterHash = str(body.masterHash, 80), replaces = new Set((body.replaces || []).map(String).concat([masterHash]));
   // MASTERNEW (Paul, 18 Oct 2026): `newest` = the file being indexed wins over every other master file for the SKUs it carries; `by` = the signed-in person who added it (recorded with what was replaced)
   const newest = body.newest === true, by = str(body.by, 80) || null, movedOut = new Map();   // (movedOut: old master hash → the SKUs this write took from it, for its upload-history record)
-  const out = { written: 0, blocked: [], sizeMoved: [], replaced: [], pairKept: [], rejected: sent.filter(e => !(e && isSku(String(e.sku || "").toUpperCase()))).slice(0, 200).map(e => ({ sku: String((e && e.sku) || "").slice(0, 80), reason: "not a name the library can hold (2 to 61 characters: letters, digits, space and _ . , ' & ( ) + -)" })) };
+  const out = { written: 0, blocked: [], sizeMoved: [], replaced: [], pairKept: [], rejected: sent.filter(e => !(e && isLabelSku(String(e.sku || "").toUpperCase()))).slice(0, 200).map(e => ({ sku: String((e && e.sku) || "").slice(0, 80), reason: "not a name the library can hold (2 to 61 characters: letters, digits, space and _ . , ' & ( ) + -)" })) };
   // group sized designs under one SKU
   const bySku = new Map();
   for (const e of entries) { const sku = String(e.sku).toUpperCase(); if (!bySku.has(sku)) bySku.set(sku, []); bySku.get(sku).push(e); }
