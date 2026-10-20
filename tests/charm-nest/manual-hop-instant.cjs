@@ -13,6 +13,14 @@
 //   5  the save: A's record without the piece, B's record with it (pinned where it landed), the piece record on B; after a reload, the piece is on B only,
 //      nothing duplicated or lost
 //   6  a second charm moved right after the first (before the first save ends): both land, both saved, Manual Control still on
+//   7  MOVEINSTANT (Paul 20 Oct 2026: "this particular process still took about 10 seconds and the charm was not visible on the sheet where I dropped it until it fully
+//      completed ... every time I move charms between sheets, I still get removed from the manual control"): every sheet write of the cloud held 10 s (a slow network):
+//        - the charm is on B (its dock's drawing included) and off A within 150 ms of letting go; no steps panel at any moment of the save
+//        - a second charm moved while the first is still saving lands as fast; the saves queue in order
+//        - B opened from its dock while both still save (Paul's way of looking): the window shows both charms on B at once, Manual Control carries on there, no panel
+//        - after the saves: both records right, Manual Control still on, on the sheet the window shows
+//        - a save the cloud refuses puts the charm back where it was, on the screen and in the records, says so in a toast, and Manual Control stays on
+//      and Manual Control turned off: both sheets written as they stand in the background (the chip, never the panel)
 //   PW_DIR=<dir holding playwright-core> CHROMIUM=<chrome> node tests/charm-nest/manual-hop-instant.cjs        (MH_LAX=1: print the numbers, do not fail on them)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
@@ -41,6 +49,14 @@ const root = path.join(__dirname, '../..');
     window.__nests = []; const iv = setInterval(() => { if (typeof window.startNest !== 'function' || window.startNest.__spy) return; const real = window.startNest; const spy = function (sh) { window.__nests.push({ sheetId: sh && sh.sheetId, at: performance.now(), held: !!(sh && sh._manualHold) }); return real.apply(this, arguments); }; spy.__spy = true; window.startNest = spy; if (window.CN) CN.startNest = spy; clearInterval(iv); }, 0);
   });
   const page = await ctx.newPage(), errors = [];
+  // (MOVEINSTANT: a slow cloud, and a cloud that refuses a write, for section 7: each sheet write held SLOW ms; FAIL answers a sheet write with an error)
+  let SLOW = 0, FAIL = false;
+  await page.route(/\/\.netlify\/functions\/charmNestLibrary/, async r => {
+    let op = ''; try { op = JSON.parse(r.request().postData() || '{}').op || ''; } catch (_) {}
+    if (op === 'putSheet' && FAIL) return r.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ error: 'the cloud refused the write (test)' }) });
+    if (op === 'putSheet' && SLOW) await new Promise(z => setTimeout(z, SLOW));
+    return r.continue();
+  });
   page.on('pageerror', e => errors.push('page: ' + String(e.stack || e.message).split('\n').slice(0, 3).join(' | ')));
   page.on('console', m => { if (m.type() === 'error' && !/firebase stub|Failed to load resource|ERR_FAILED|net::|status of 4\d\d/.test(m.text())) errors.push('console: ' + m.text().slice(0, 300)); });
   page.setDefaultTimeout(30000);
@@ -116,15 +132,16 @@ const root = path.join(__dirname, '../..');
       requestAnimationFrame(tick);
     }, [poolId, srcId, dstId]);
     /** pick a charm of A up with the mouse, carry it over B's dock, aim at pt (B's points), let go */
-    async function carry(poolId, pt) {
-      const a = await until(() => onPlate(poolId), 10000, poolId + ' drawn on A');
+    async function carry(poolId, pt, side = 'next') {
+      const a = await until(() => onPlate(poolId), 10000, poolId + ' drawn on its sheet');
+      const dx = side === 'next' ? -40 : 40;
       await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(a.x + 12, a.y + 6, { steps: 4 });
-      const t = await tabOf('next');
-      await page.mouse.move(t.x - 40, t.y, { steps: 12 }); await page.mouse.move(t.x, t.y, { steps: 4 });
+      const t = await tabOf(side);
+      await page.mouse.move(t.x + dx, t.y, { steps: 12 }); await page.mouse.move(t.x, t.y, { steps: 4 });
       await until(() => page.evaluate(() => !!document.querySelector('.shpLift') && !!document.querySelector('.shpDock.open')), 5000, 'the charm lifts and the docks open');
-      const t2 = await tabOf('next'); await page.mouse.move(t2.x - 40, t2.y, { steps: 6 });
-      await until(async () => (await inPeek('next', pt)).peek, 4000, 'the dock opens into a view of B'); await sleep(450);
-      const b = await inPeek('next', pt); await page.mouse.move(b.x, b.y, { steps: 8 }); await sleep(250);
+      const t2 = await tabOf(side); await page.mouse.move(t2.x + dx, t2.y, { steps: 6 });
+      await until(async () => (await inPeek(side, pt)).peek, 4000, 'the dock opens into a view of the other sheet'); await sleep(450);
+      const b = await inPeek(side, pt); await page.mouse.move(b.x, b.y, { steps: 8 }); await sleep(250);
       await page.evaluate(() => { window.__mh.t0 = performance.now(); }); await page.mouse.up();
     }
     const saveDone = () => page.evaluate(() => { const K = SheetWin.hopKit; return K.hopState ? !K.hopState().pending : !K.W.flow && !SheetHop.state().busy; });
@@ -180,7 +197,74 @@ const root = path.join(__dirname, '../..');
     const nests2 = await page.evaluate(n1 => window.__nests.slice(n1), n1);
     check(nests2.length === 0, `6 · no nest started by the second move (${JSON.stringify(nests2)})`);
 
+
+    /* ── 7 · MOVEINSTANT: a slow cloud (every sheet write held 10 s): instant on B, no panel, a second move meanwhile, B opened meanwhile, the saves right, a refused save put back ── */
+    SLOW = 10000;
+    const p3 = SA.charms[2].poolId, p4 = SA.charms[1].poolId;   // ((140, 40) and (90, 40) on A)
+    // a watcher for the whole of section 7: any steps panel, Manual Control's state and sheet against the window's, sampled every 40 ms
+    await page.evaluate(() => {
+      const L = window.__mi = { panel: [], mcOff: [], mcAway: [] }; const t0 = performance.now();
+      window.__miT = setInterval(() => {
+        const W = SheetWin.hopKit.W, M = CNManual._MC, t = Math.round(performance.now() - t0);
+        const panel = !!W.flow || !!(W.el.work && !W.el.work.hidden && W.el.work.querySelector('.swWork'));
+        if (panel) L.panel.push([t, W.flow ? W.flow.title : W.work && W.work.title]);
+        if (!M.on) L.mcOff.push(t); else if (M.id !== W.id) L.mcAway.push([t, M.id, W.id]);
+      }, 40);
+    });
+    const dockCount = side => page.evaluate(s => { const dk = SheetHop._H.docks[s]; return dk ? dk.sh.placements.length : -1; }, 'next');
+    const bCount0 = await dockCount('next');
+    await arm(p3, SA.id, SB.id);
+    await carry(p3, { x: 140, y: 95 });
+    await until(() => page.evaluate(() => window.__mh.on > 0), 5000, 'the charm lands on B (slow cloud)').catch(() => {});
+    const S1 = await page.evaluate(() => ({ on: window.__mh.on, free: window.__mh.free, chip: (document.querySelector('[data-mh=chip]') || {}).textContent || '', pending: SheetWin.hopKit.hopState().pending }));
+    const bCount1 = await dockCount('next');
+    console.log(`  ..   slow move 1: on B at ${Math.round(S1.on)} ms, hand free at ${Math.round(S1.free)} ms, chip "${S1.chip}", saves pending ${S1.pending}; B's dock draws ${bCount0} -> ${bCount1} charms`);
+    check(S1.on > 0 && S1.on < 150, `7 · slow cloud: the charm is on B and off A ${Math.round(S1.on)} ms after letting go (< 150 ms)`, true);
+    check(bCount1 === bCount0 + 1 && S1.pending === 1 && /sav/i.test(S1.chip), `7 · B's dock draws it at once (${bCount0} -> ${bCount1} charms) while its save runs in the background ("${S1.chip}")`);
+    // a second charm while the first is still saving
+    await arm(p4, SA.id, SB.id);
+    await carry(p4, { x: 190, y: 40 });
+    await until(() => page.evaluate(() => window.__mh.on > 0), 5000, 'the second charm lands on B (slow cloud)').catch(() => {});
+    const S2 = await page.evaluate(() => ({ on: window.__mh.on, pending: SheetWin.hopKit.hopState().pending, chip: (document.querySelector('[data-mh=chip]') || {}).textContent || '' }));
+    console.log(`  ..   slow move 2 (the first still saving): on B at ${Math.round(S2.on)} ms, saves pending ${S2.pending}, chip "${S2.chip}"`);
+    check(S2.on > 0 && S2.on < 150, `7 · a second move while the first saves: on B ${Math.round(S2.on)} ms after letting go (< 150 ms)`, true);
+    check(S2.pending === 2 && !recHas(SB.id, p3) && !recHas(SB.id, p4), `7 · the two saves queue in order (pending ${S2.pending}; neither written yet)`);
+    // Paul's look at B: its dock pressed while both still save
+    await sleep(500);
+    const tb = await tabOf('next'); const tOpen = Date.now();
+    await page.mouse.click(tb.x, tb.y);
+    const seenB = await until(() => page.evaluate(([id, a, b]) => { const W = SheetWin.hopKit.W; return W.id === id && W.rec && W.byPool.has(a) && W.byPool.has(b) ? { mc: CNManual._MC.on, mcId: CNManual._MC.id, pending: SheetWin.hopKit.hopState().pending } : null; }, [SB.id, p3, p4]), 8000, 'B shows both moved charms').catch(() => null);
+    const tSeen = Date.now() - tOpen;
+    console.log(`  ..   B opened from its dock while saving: both charms drawn after ${tSeen} ms; ${JSON.stringify(seenB)}`);
+    check(!!seenB && seenB.pending > 0 && tSeen < 3000, `7 · B opened while both still save shows both charms at once (${tSeen} ms; saves pending ${seenB && seenB.pending})`);
+    check(!!seenB && seenB.mc && seenB.mcId === SB.id, `7 · opening B keeps Manual Control on, now on B (${seenB && seenB.mc}, ${seenB && seenB.mcId === SB.id ? 'B' : seenB && seenB.mcId})`);
+    await until(saveDone, 120000, 'the slow saves end');
+    await sleep(800);
+    const S3 = await page.evaluate(() => ({ mc: CNManual._MC.on, mcId: CNManual._MC.id, win: SheetWin.hopKit.W.id, chip: (document.querySelector('[data-mh=chip]') || {}).textContent || '', shown: [...SheetWin.hopKit.W.byPool.keys()] }));
+    check(!recHas(SA.id, p3) && !recHas(SA.id, p4) && recHas(SB.id, p3) && recHas(SB.id, p4) && (st.doc(POOL, p3) || {}).sheetId === SB.id && (st.doc(POOL, p4) || {}).sheetId === SB.id, '7 · after the slow saves: both on B\'s record and off A\'s, the piece records on B');
+    check(S3.mc && S3.mcId === S3.win && S3.win === SB.id && S3.shown.includes(p3) && S3.shown.includes(p4), `7 · after the saves Manual Control is still on, on the sheet the window shows (${S3.mc}, ${S3.mcId === S3.win}), both charms drawn; chip "${S3.chip}"`);
+    // a save the cloud refuses: a charm of B carried to A (the previous dock) comes back
+    const pf = SB.charms[0].poolId;   // ((40, 40) on B)
+    SLOW = 1500; FAIL = true;
+    await until(() => page.evaluate(id => { const s = SheetHop.state(); return s.docks.prev && s.docks.prev.sheetId === id; }, SA.id), 6000, 'the previous dock is A');
+    const recB0 = JSON.stringify(recOf(SB.id).poolIds), recA0 = JSON.stringify(recOf(SA.id).poolIds);
+    await arm(pf, SB.id, SA.id);
+    await carry(pf, { x: 90, y: 95 }, 'prev');
+    await until(() => page.evaluate(() => window.__mh.on > 0), 5000, 'the charm lands on A before its save').catch(() => {});
+    const F1 = await page.evaluate(() => ({ on: window.__mh.on }));
+    const back = await until(() => page.evaluate(([b, id]) => { const sh = CN.allSheets().find(s => s.sheetId === b); return !SheetWin.hopKit.hopState().pending && sh.charms.some(c => c.poolId === id) && SheetWin.hopKit.W.byPool.has(id) ? { toast: [...document.querySelectorAll('#toasts .toast')].map(t => t.textContent).join(' | '), mc: CNManual._MC.on, mcId: CNManual._MC.id, onA: CN.allSheets().find(s => s.charms.some(c => c.poolId === id)).sheetId } : null; }, [SB.id, pf]), 60000, 'the refused move put back').catch(() => null);
+    FAIL = false; SLOW = 0;
+    console.log(`  ..   refused save: on A at ${Math.round(F1.on)} ms, then ${JSON.stringify(back)}`);
+    check(F1.on > 0 && F1.on < 150, `7 · the move that will be refused still lands at once (${Math.round(F1.on)} ms)`, true);
+    check(!!back && back.onA === SB.id && JSON.stringify(recOf(SB.id).poolIds) === recB0 && JSON.stringify(recOf(SA.id).poolIds) === recA0, '7 · a refused save puts the charm back on B, on the screen and in the live sheets; neither record changed');
+    check(!!back && /not moved/i.test(back.toast) && /back on/i.test(back.toast), `7 · and says so in a toast ("${back && back.toast.slice(0, 160)}")`);
+    check(!!back && back.mc && back.mcId === SB.id, '7 · Manual Control stays on after a refused save');
+    const L7 = await page.evaluate(() => { clearInterval(window.__miT); return window.__mi; });
+    check(!L7.panel.length, `7 · no steps panel at any moment of section 7 (${JSON.stringify(L7.panel.slice(0, 3))})`);
+    check(!L7.mcOff.length && !L7.mcAway.length, `7 · Manual Control never went off or left the sheet the window shows (${JSON.stringify([L7.mcOff.slice(0, 3), L7.mcAway.slice(0, 3)])})`);
+
     /* ── Manual Control off: A's own save, then a reload ── */
+    await page.evaluate(() => { const L = window.__miOff = []; window.__miOffT = setInterval(() => { const W = SheetWin.hopKit.W; if (W.flow || (W.el.work && !W.el.work.hidden && W.el.work.querySelector('.swWork'))) L.push(W.flow ? W.flow.title : 'panel'); }, 40); });
     await page.click('.sheetWin [data-r=manual]');
     const tOff = Date.now();
     await sleep(400);
@@ -189,11 +273,14 @@ const root = path.join(__dirname, '../..');
     // written as they stand: nothing moved on either sheet when their files were made again
     const after = await page.evaluate(() => Object.fromEntries(CN.S.sheets.gold10k.pages.filter(p => p.charms.length).map(sh => [sh.sheetId, { ok: !!(sh.verification && sh.verification.ok), at: Object.fromEntries(sh.placements.map(p => [sh.charms.find(c => c.id === p.id).poolId, [p.cxPt, p.cyPt]])) }])));
     const near = (a, b) => a && b && Math.abs(a[0] - b[0]) < .01 && Math.abs(a[1] - b[1]) < .01;
-    const stayedA = SA.charms.filter(c => c.poolId !== p1 && c.poolId !== p2).every(c => near(after[SA.id].at[c.poolId], SA.at[c.id]));
-    const stayedB = SB.charms.every(c => near(after[SB.id].at[c.poolId], SB.at[c.id])) && near(after[SB.id].at[p1], [lv.x, lv.y]);
-    console.log(`  ..   Manual Control off: both sheets written as they stand in ${Date.now() - tOff} ms (its own steps panel, after the moves)`);
+    const stayedA = SA.charms.filter(c => ![p1, p2, p3, p4].includes(c.poolId)).every(c => near(after[SA.id].at[c.poolId], SA.at[c.id]));
+    const stayedB = SB.charms.every(c => near(after[SB.id].at[c.poolId], SB.at[c.id])) && near(after[SB.id].at[p1], [lv.x, lv.y]) && [p2, p3, p4].every(id => after[SB.id].at[id]);
+    const offPanels = await page.evaluate(() => { clearInterval(window.__miOffT); return window.__miOff; });
+    console.log(`  ..   Manual Control off: both sheets written as they stand in ${Date.now() - tOff} ms, in the background`);
+    check(!offPanels.length, `7 · Manual Control off: the sheets are written as they stand in the background, no steps panel (${JSON.stringify(offPanels.slice(0, 3))})`);
     check(stayedA && stayedB && after[SA.id].ok && after[SB.id].ok, `5 · Manual Control off: both sheets written and verified with every charm where it was (A kept its charms: ${stayedA}; B kept its own and the moved one where it landed: ${stayedB})`);
-    check(st.doc(SHEETS, SA.id).manualEdit == null, '5 · the claim on A was given back');
+    await until(() => st.doc(SHEETS, SA.id).manualEdit == null && st.doc(SHEETS, SB.id).manualEdit == null, 15000, 'the claims given back').catch(() => {});
+    check(st.doc(SHEETS, SA.id).manualEdit == null && st.doc(SHEETS, SB.id).manualEdit == null, `5 · the claims on A and B were given back (${JSON.stringify([st.doc(SHEETS, SA.id).manualEdit, st.doc(SHEETS, SB.id).manualEdit])})`);
     const allIds = W0.flatMap(s => s.charms.map(c => c.poolId));
     const oneEach = async what => {
       const docs = st.list(SHEETS);

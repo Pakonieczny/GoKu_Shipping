@@ -225,14 +225,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       assert.deepEqual([s1.docks.prev.name, s1.docks.next.name], ['10K Draft 1', '10K Draft 3']);
       const labels = await page.evaluate(() => [...document.querySelectorAll('.shpDock')].map(d => d.textContent).join(' | '));
       assert(!/14K|GF/.test(labels), 'no other metal is offered: ' + labels);
-      // a click on a dock opens that sheet (Manual Control ends on the sheet it leaves, as opening any other sheet ends it: nothing was moved, nothing is written)
+      // a click on a dock opens that sheet (MOVEINSTANT, Paul 20 Oct 2026: "every time I move charms between sheets, I still get removed from the manual control": Manual Control
+      // carries on there, on 10K Draft 3, its claim taken and 10K Draft 2's given back; nothing was moved, nothing is written)
       const w0 = writes();
       await page.click('.shpDock[data-side=next] .shpTab');
       await until(() => page.evaluate(() => SheetWin.hopKit.W.id === 'k10-3' && SheetWin.hopKit.W.geom), 15000, 'the next sheet opens');
-      await until(async () => !(await mcOn()) && !(await page.$('.shpDock')), 5000, 'Manual Control ended on 10K Draft 2; no dock on 10K Draft 3 until it is on there');
+      await until(() => page.evaluate(() => CNManual._MC.on && CNManual._MC.id === 'k10-3' && !CNManual._MC.claiming), 5000, 'Manual Control carries on, on 10K Draft 3');
       assert.equal(writes(), w0, 'nothing written');
       await until(() => page.evaluate(() => { const W = SheetWin.hopKit.W; return W.rec && W.pieces.length && !W.flying; }), 15000, 'drawn'); await sleep(400);
-      await manual(true);
+      assert.equal(await mcOn(), true, 'Manual Control is still on');
+      assert(rec('k10-3').manualEdit && !rec('k10-2').manualEdit, 'the claim moved with it: ' + JSON.stringify([rec('k10-3').manualEdit, rec('k10-2').manualEdit]));
+      assert.equal(await page.evaluate(() => !!CN.allSheets().find(p => p.sheetId === 'k10-2')._manualHold), false, '10K Draft 2 (nothing moved on it) is let go');
       await until(async () => { const s = await hopState(); return s.docks.prev && s.docks.prev.sheetId === 'k10-2' && s.docks.next && s.docks.next.sheetId === 'k10-4'; }, 5000, 'its docks are its own neighbours');
       await openSheet('gf-1');
       assert.equal((await mcBtn() || { hidden: true }).hidden, true, 'a GF sheet has no Manual Control'); assert.equal(await page.$('.shpDock'), null, 'and no dock');
@@ -240,7 +243,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       assert.equal(await page.$('.shpDock'), null, 'off again on 10K Draft 2');
       await manual(true);
       await until(() => page.evaluate(() => document.querySelectorAll('.shpDock').length === 2), 4000, 'docks once Manual Control is on again');
-      pass('1 · with Manual Control on, the previous and next 10K sheet are the docks (no 14K, no GF); a click opens one (Manual Control ends there, nothing written); a GF sheet has no Manual Control');
+      pass('1 · with Manual Control on, the previous and next 10K sheet are the docks (no 14K, no GF); a click opens one (Manual Control carries on there, nothing written); a GF sheet has no Manual Control');
     } catch (e) { fail('1 · docks', e); }
 
     /* 2 · a single charm to the next sheet where there is room */
@@ -355,8 +358,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       await settled(); await closePops();
       assert.equal(writes(), w1);
       // the green line, through the hand, from 10K Draft 3 to 10K Draft 4
-      // (MANUALHOP, 19 Oct 2026: leaving 10K Draft 2 ends its Manual Control, and the sheets charms were dragged between are written as they stand then: the count starts after)
-      await openSheet('k10-3'); await until(() => page.evaluate(() => !SheetWin.hopKit.W.flow), 60000, 'the sheets written as they stand'); await manual(true); const w2 = writes();
+      // (MOVEINSTANT, Paul 20 Oct 2026: opening 10K Draft 3 keeps Manual Control on, now there; the sheets charms were dragged between are written as they stand once it is turned off)
+      await openSheet('k10-3'); await until(() => page.evaluate(() => !SheetWin.hopKit.W.flow && !SheetWin.hopKit.hopState().writing), 60000, 'nothing being written'); await manual(true); const w2 = writes();
       const p = idOf(P, 1);
       await carry(p, 'next', null);
       await until(popText, 10000, 'the pop-up'); assert(/10K (Sheet|Draft) 4 has its green line cut/.test(await popText()), await popText());   // (a cut sheet keeps the number its file carries: charm-nest-sheet-name.js)
@@ -447,9 +450,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       const pendingAtOff = await page.evaluate(() => SheetWin.hopKit.hopState().pending);
       await page.click('.sheetWin [data-r=manual]');
       await until(async () => !(await mcOn()), 5000, 'Manual Control off');
-      await until(() => page.evaluate(() => { const W = SheetWin.hopKit.W, w = W.work; return !W.flow && (window.__flows || []).filter(Boolean).length >= 2 && !!w && w.state !== 'working'; }), 180000, 'its saves ended');
+      // (MOVEINSTANT, Paul 20 Oct 2026: the sheet the charm went to is written as it stands in the background, the chip by the plate, no steps panel)
+      await until(() => page.evaluate(() => { const W = SheetWin.hopKit.W, w = W.work; return !W.flow && (window.__flows || []).filter(Boolean).length >= 1 && !!w && w.state !== 'working' && !SheetWin.hopKit.hopState().writing && !SheetWin.hopKit.hopState().pending; }), 180000, 'its saves ended');
       const flows = await page.evaluate(() => { clearInterval(window.__fl); return window.__flows.filter(Boolean); });
-      assert(flows.length === 2 && /^Saving 1 charm moved by hand on 10K Draft 2/.test(flows[0]) && /^Writing the sheets? the charms were moved between/.test(flows[1]), 'the save waited for the hop (pending when Manual Control went off: ' + pendingAtOff + '), saved the one charm that stayed, then wrote the sheet it went to as it stands: ' + JSON.stringify(flows));
+      assert(flows.length === 1 && /^Saving 1 charm moved by hand on 10K Draft 2/.test(flows[0]), 'the save waited for the hop (pending when Manual Control went off: ' + pendingAtOff + '), saved the one charm that stayed, then wrote the sheet it went to as it stands in the background (no panel of its own): ' + JSON.stringify(flows));
       const work = await page.evaluate(() => { const w = SheetWin.hopKit.W.work; return { state: w.state, title: w.title, note: w.note }; });
       assert.equal(work.state, 'done', JSON.stringify(work));
       await settled(); await shot('9-saved');

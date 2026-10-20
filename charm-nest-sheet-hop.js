@@ -226,9 +226,10 @@
   /* ── the room: the drop point first, then near it, then anywhere free ── */
   const norm = a => ((Math.round(+a || 0) % 360) + 360) % 360;
   const angDist = (a, b) => { const d = Math.abs(norm(a) - norm(b)) % 360; return Math.min(d, 360 - d); };
-  async function findRoom(target, u, drop, breathe) {
+  async function findRoom(target, u, drop, breathe, G0) {
     const K = kit(), S2 = Sv(); if (!K || !S2) return null;
-    const G = K.plateGrid(target), grid = G.grid.clone(); grid.fineRes = 2; if (grid.buildSAT) grid.buildSAT();
+    // (MOVEINSTANT, Paul 20 Oct 2026: G0, the grid of that sheet the open view already made while the hand aimed (aim), when the sheet has not changed since: not built again on the drop)
+    const G = G0 || K.plateGrid(target), grid = G.grid.clone(); grid.fineRes = 2; if (grid.buildSAT) grid.buildSAT();
     const spots = []; let anchor = drop;
     for (let i = 0; i < u.pieces.length; i++) {
       const z = u.pieces[i], a0 = norm(z.p ? z.p.angle : 0);
@@ -241,6 +242,8 @@
             const v = K.variantOf(z.c, ang, G.clearancePt); if (!v) continue;
             const r = S2.tryPlaceTight(grid, v, anchor.x, anchor.y, R);
             if (r && r.ok) { const cx = (r.x + v.solid.cx) / 2, cy = (r.y + v.solid.cy) / 2, d = Math.hypot(cx - anchor.x, cy - anchor.y) + angDist(ang, a0) * 0.02; if (!best || d < best.d) best = { v, x: r.x, y: r.y, cxPt: cx, cyPt: cy, d, how: R === 3 ? "drop" : "near" }; }
+            // (MOVEINSTANT, Paul 20 Oct 2026: its own angle fits within 0.75 pt of where it was let go: that is the spot, the other turns are not tried, and the drop lands in the same frame)
+            if (best && ang === a0 && best.d < 0.75) break;
             await breathe();   // (MANUALHOP: a breath between angles too: a charm's first turns are each made here, and 36 of them in one go held the page ~90 ms)
           }
           await breathe();
@@ -611,7 +614,7 @@
     if (L) L.el.classList.add("think");
     let spots = null, last = performance.now();
     const breathe = async () => { if (performance.now() - last > 12) { await wait(0); last = performance.now(); } };
-    try { spots = await findRoom(target, u, pt, breathe); } catch (e) { console.warn("sheet hop: room", e); spots = null; }
+    try { spots = await findRoom(target, u, pt, breathe, dk.G && dk.G.key === dockSig(target) ? dk.G : null); } catch (e) { console.warn("sheet hop: room", e); spots = null; }
     if (L) L.el.classList.remove("think");
     if (!spots) {
       const title = u.pieces.length === 1 ? `Not enough space on ${tName} — the charm stayed on ${sName}` : `Not enough space on ${tName} — the ${u.pieces.length} pieces of order ${u.rid} stayed on ${sName}`;
