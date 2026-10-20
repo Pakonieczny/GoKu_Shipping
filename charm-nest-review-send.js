@@ -22,7 +22,7 @@
    the buttons are redrawn by the Orders list's own redraw and by the one change callback the mark API offers.
 
    Public: ReviewSend.mount(node, row) (the Orders list calls it for every row it draws, new or kept), ReviewSend.press(rid),
-   ReviewSend.sync(), ReviewSend.busy(rid), ReviewSend.LABEL / ReviewSend.IN. */
+   ReviewSend.sync(), ReviewSend.refresh() (SENDREVIEW: once a frame with the Review tab's count, only a changed button is drawn), ReviewSend.busy(rid), ReviewSend.LABEL / ReviewSend.IN. */
 (function (root) {
   "use strict";
   const doc = root.document;
@@ -49,9 +49,14 @@
     marked(rid) { try { return !!MARK().isMarked(rid); } catch (_) { return false; } },
     mark(rid, by) { return Promise.resolve().then(() => MARK().mark(rid, { by })); },
     // an order a person did not mark can be in Review all the same (the system put it there): the Review tab's own list says so (a person's mark is isMarked's: the mark API owns when it is open or resolved)
+    // (SENDREVIEW, Paul 20 Oct 2026: "This button should be directly linked and communicate with the orders that are already in the Review tab": asked of Review's Open itself, Review.openOrders, the
+    //  lists its count is made of; it asked Review.items() alone, the decisions, and a custom order waiting on its own designs or Complete Order is a card of Open that is no decision, so its
+    //  card said "Send to Review" for an order already in Review. Read once for a drawing: kept to the end of the turn, as the Orders list's own action memo)
     natural(rid, row) {
       try {
-        const R = root.Review; if (!R || typeof R.items !== "function") return null;
+        const R = root.Review; if (!R) return null;
+        if (typeof R.openOrders === "function") return openNow().get(String(rid)) || null;
+        if (typeof R.items !== "function") return null;
         const own = new Set(rowKeys(rid)); if (row && row.key) own.add(row.key);
         return R.items().find(it => it && it.kind !== "reviewMark" && !it.done && !it.decided && !/^(eng|held):/.test(String(it.key || "")) && (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).some(r => r && own.has(r.key) && r.state !== "gone")) || null;
       } catch (_) { return null; }
@@ -62,7 +67,7 @@
       try { const m = MARK(); if (m && typeof m.open === "function" && api.marked(rid) && m.open(rid) !== false) return true; } catch (e) { console.warn("review send: open", e); }
       try {
         const it = api.natural(rid, row);
-        if (it && root.Review && Review.showCard) { Review.showCard(it.kind === "customOrder" ? "cu:" + String(it.key).replace(/^[a-z]+:/, "") : String(it.key), "open"); return true; }
+        if (it && root.Review && Review.showCard) { Review.showCard(typeof Review.mkeyOf === "function" ? Review.mkeyOf(it) : it.kind === "customOrder" ? "cu:" + String(it.key).replace(/^[a-z]+:/, "") : String(it.key), "open"); return true; }   // (SENDREVIEW: the card's own key in the list, Review.mkeyOf)
       } catch (e) { console.warn("review send: show", e); }
       try { if (typeof root.setMode === "function") { root.setMode("review"); return true; } } catch (_) {}
       return false;
@@ -84,6 +89,13 @@
   };
 
   /* ── what the page knows ── */
+  let openMemo = null;   // (SENDREVIEW: Review's Open by order number, read once for a drawing and let go at the end of the turn)
+  const openNow = () => {
+    if (openMemo) return openMemo;
+    const m = openMemo = root.Review.openOrders();
+    Promise.resolve().then(() => { if (openMemo === m) openMemo = null; });
+    return m;
+  };
   const rowsOf = rid => { try { return (root.Orders ? Orders.rows() : []).filter(r => String(r.order.receiptId) === String(rid) && r.state !== "gone"); } catch (_) { return []; } };
   const rowKeys = rid => rowsOf(rid).map(r => r.key);
   const cardsOf = rid => [...doc.querySelectorAll("#ordItems [data-rid]")].filter(n => n.dataset.rid === String(rid));
@@ -146,6 +158,18 @@
     } catch (_) {}
   }
 
+  /** (SENDREVIEW, Paul 20 Oct 2026: "If the status of a given order updates from anywhere in the application, then these buttons and UI must react to the change/update in near real-time":
+   *  called once a frame with the Review tab's count (LiveStrip.now, which every Review drawing and every Orders drawing asks for): Open is read once and only a button whose state
+   *  changed is drawn again (paint keeps one that reads the same). Nothing is read from the cloud and nothing polls; the Orders tab out of sight is drawn when it is shown.) */
+  function refresh() {
+    try {
+      const v = doc.getElementById("ordersView"); if (!v || v.classList.contains("hidden")) return;
+      const bs = doc.querySelectorAll("#ordItems .revSendBtn"); if (!bs.length) return;
+      openMemo = null;
+      for (const b of bs) { const n = b.closest("[data-rid]"); if (n) paint(b, n.dataset.rid, null); }
+    } catch (_) {}
+  }
+
   /** The Orders list draws the row, then calls this (for kept rows too: it only adds what is missing and repaints the state). */
   function mount(node, row) {
     try {
@@ -205,5 +229,5 @@
     try { if (sub && typeof sub.off === "function") sub.off(); } catch (_) {}
     sub = api.onChange(sync);
   };
-  root.ReviewSend = { mount, press, sync, busy: rid => busyRids.has(String(rid)), LABEL, IN };
+  root.ReviewSend = { mount, press, sync, refresh, busy: rid => busyRids.has(String(rid)), LABEL, IN };
 })(typeof window !== "undefined" ? window : globalThis);

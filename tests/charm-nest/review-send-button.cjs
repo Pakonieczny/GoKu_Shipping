@@ -43,6 +43,8 @@ const ok = (name, cond, extra) => { assert.ok(cond, name + (extra ? ' :: ' + ext
       window.CharmNestReviewHold = { canHold: rid => S.canHold[String(rid)] || { ok: true, sheets: [] }, sheetsHeldBy: rid => S.held[String(rid)] || [] };
       window.__nat = [];                                  // what the Review tab itself holds (the seeded orders raise questions of their own: this keeps them out)
       Review.items = () => __nat;
+      // (SENDREVIEW, 20 Oct 2026: the button asks Review's Open by order number, Review.openOrders: the same stub list, by order)
+      Review.openOrders = () => { const m = new Map(); for (const it of __nat) for (const r of it.rows || [it.row]) if (r && !m.has(String(r.order.receiptId))) m.set(String(r.order.receiptId), it); return m; };
       window.__fire = (rid, kind) => { for (const f of S.listeners) f({ rid: String(rid), kind }); };
       Orders.render();
     });
