@@ -14,7 +14,7 @@
 //   8  the Order details window: the compact widget, the same state as the Engrave detail (typing in one shows in the other), no Front / Back cards for the monogram, a mixed order keeps its engraved bar's card
 //   9  on the sheets: the Review tab does not list the approved monogram (MONOROUTE, 17 Oct 2026: it is the Engraving tab's, its custom card still holds the design); the design went to the sheet from the widget's own Approve (MONOSEND, 18 Oct 2026: no link, no designs window),
 //      the widget says it is on the sheets and is read only; a reload / second tab keeps the approved design
-//  10  the AI line (stubbed agent): "Assembled with AI: …", "Needs a person: …" with Approve anyway on the second press, Improve again, a failing call, the day's 3 calls
+//  10  the AI line (stubbed agent): "Assembled with AI: …", a flagged word (MONOAPPROVE, 20 Oct 2026: no red line, no Improve again, ONE Approve press approves it), a failing call, the day's 3 calls
 //  11  phone width 400: the list, the Engrave detail and the Order window fit (no sideways scroll, nothing outside its card), reduced motion; no console error and no page error anywhere
 //   node tests/charm-nest/monogram-flow.cjs [playwright-core dir]      run it through /tmp/cn-run.sh 1500      Screenshots (1440 and 400 px) go to $SHOTS (default: monogram-flow-shots in the temp directory).
 //   MONO_REAL=0 uses stand-in alphabets (vendored fonts) instead of Paul's file.      MONO_ONLY=<n,n> runs only those sections.      It needs the page with the monogram widget (CharmNestMonogramUI.mountLine / widgets()) and says so when it is not there.
@@ -82,7 +82,7 @@ const MONO_TITLE = 'Monogram Necklace Personalized Jewelry Initials Pendant';
     const h = document.querySelector(`.mw[data-rid="${r}"]` + (mode ? `[data-mode="${mode}"]` : '')); if (!h) return null;
     const q = s => h.querySelector(s), vis = e => !!e && !e.hidden && getComputedStyle(e).display !== 'none' && getComputedStyle(e).visibility !== 'hidden';
     const t = e => (e ? e.textContent.replace(/\s+/g, ' ').trim() : '');
-    const path = q('[data-mw-pic] svg path'), hooks = ['[data-mw-spin]', '[data-mw-assembly]', '[data-mw-msg]', '[data-mw-retry]', '[data-mw-approve]', '[data-mw-approved]', '[data-mw-change]', '[data-mw-again]', '[data-mw-sheet]'];
+    const path = q('[data-mw-pic] svg path'), hooks = ['[data-mw-spin]', '[data-mw-assembly]', '[data-mw-msg]', '[data-mw-retry]', '[data-mw-approve]', '[data-mw-approved]', '[data-mw-change]', '[data-mw-sheet]'];
     const leaks = hooks.filter(s => { const e = q(s); return e && e.hidden && getComputedStyle(e).display !== 'none'; });       // (marked hidden, but CSS shows it anyway)
     const ap = q('[data-mw-approve]');
     return { state: h.dataset.state, busy: h.dataset.busy || '', mode: h.dataset.mode, ins: [...h.querySelectorAll('[data-mw-letter]')].map(i => i.value), insDisabled: [...h.querySelectorAll('[data-mw-letter]')].map(i => i.disabled), invalid: [...h.querySelectorAll('[data-mw-letter]')].map(i => i.getAttribute('aria-invalid') === 'true'),
@@ -483,22 +483,22 @@ const MONO_TITLE = 'Monogram Necklace Personalized Jewelry Initials Pendant';
       const c1 = await page.evaluate(() => window.__calls.find(c => c.mode === 'monoAssist' && c.payload.letters.join('') === 'GWX'));
       check(c1 && c1.mode === 'monoAssist' && c1.opts.background === true && c1.payload.round === 1 && /^data:image\/png;base64,/.test(c1.payload.image), 'the call is mode monoAssist, in the background, round 1, with the candidate as a PNG');
       check(x.approve && x.approve.shown && !x.approve.disabled && x.approve.text === 'Approve' && !x.again, 'the widget is ready, Approve is one press, no "Improve again" on a word that passes now');
-      await openDetail('ai2'); x = await until(rid('ai2'), 'detail', v => v.asm && /Needs a person/.test(v.asm.text) && !v.spin, 'NFZ needs a person', 180000);
+      // (MONOAPPROVE, Paul 20 Oct 2026: "Remove this red text and Improve again link from the UI completely" / "if the user presses it that means they approve!!")
+      const flagged = r => page.evaluate(r => (window.CharmNestMonogramUI.widgets() || []).some(w => { const s = w.state(); return s.rid === r && s.state === 'check' && !s.busy && s.assembly && s.assembly.status && s.assembly.status !== 'assembled'; }), r);
+      const flagWait = async (r, ms) => { const t0 = Date.now(); while (!(await flagged(r)) && Date.now() - t0 < ms) await sleep(150); return read(r, 'detail'); };
+      await openDetail('ai2'); x = await flagWait(rid('ai2'), 180000);
       const nfz = await page.evaluate(() => window.__calls.filter(c => c.mode === 'monoAssist' && c.payload.letters.join('') === 'NFZ'));
       check(nfz.length === 3 && nfz.map(c => c.payload.round).join() === '1,2,3', 'never more than 3 rounds for a word: exactly 3 calls, rounds 1, 2, 3 (' + nfz.length + ')');
-      check(x.asm && x.asm.status === 'needs' && /Needs a person: the left and middle letters are not joined at both the top and the bottom/.test(x.asm.text) && x.state === 'check' && x.again, 'the widget says "Needs a person:" naming the limit, offers Improve again: ' + (x.asm ? x.asm.text.slice(0, 140) : 'no line'));
+      const noRed = v => !!v && !v.asm && !v.again && !/Needs a person|Improve again|Approve anyway/.test(v.text);
+      check(x.state === 'check' && noRed(x) && x.approve && x.approve.shown && !x.approve.disabled && x.approve.text === 'Approve' && !x.leaks.length, 'a flagged card shows no red "Needs a person" line and no Improve again, only the plain Approve: ' + JSON.stringify({ asm: x.asm, approve: x.approve && x.approve.text, text: x.text.slice(0, 120) }));
+      check(await page.evaluate(r => !document.querySelector('[data-mw-again]') && ![...document.querySelectorAll(`.mw[data-rid="${r}"]`)].some(h => /Needs a person|Improve again|Approve anyway/.test(h.textContent)), rid('ai2')), 'no [data-mw-again] anywhere on the page, and no widget of the order says the old words');
       await shot('1440-detail-needs');
-      await page.click(`${mwSel(rid('ai2'), 'detail')} [data-mw-approve]`); x = await until(rid('ai2'), 'detail', v => v.approve && v.approve.text === 'Approve anyway', 'confirm');
-      check(x.approve.text === 'Approve anyway' && (await files(rid('ai2'))).length === 0, 'the first press only asks "Approve anyway" (nothing approved yet)');
+      const c0 = await calls();
       await page.click(`${mwSel(rid('ai2'), 'detail')} [data-mw-approve]`);
-      await page.waitForFunction(r => { const h = document.querySelector(`.mw[data-rid="${r}"]`); return !h || h.dataset.state === 'approved'; }, rid('ai2'), { timeout: 60000 }).catch(() => {}); await sleep(600);
-      check((await files(rid('ai2'))).map(f => f.name).join() === 'Monogram NFZ.ai', 'the second press approves it: Monogram NFZ.ai');
-      // Improve again with the day's 3 calls used: no call
-      await openDetail('ai2'); const c0 = await calls(); x = await read(rid('ai2'), 'detail');
-      if (x && x.again) { await page.click(`${mwSel(rid('ai2'), 'detail')} [data-mw-again]`); await sleep(800); x = await read(rid('ai2'), 'detail'); }
-      check(await calls() === c0 && (!x || !x.asm || /3 tries|Needs a person|limit/i.test(x.asm.text)), 'Improve again after the 3 calls of the day: no call is made' + (x && x.asm ? ': "' + x.asm.text.slice(0, 100) + '"' : ''));
-      await openDetail('ai3'); x = await until(rid('ai3'), 'detail', v => v.asm && /could not help|Needs a person/.test(v.asm.text) && !v.spin, 'HRY failed', 120000);
-      check(x.state === 'check' && x.points > 100 && x.asm && /Needs a person/.test(x.asm.text) && /could not help/.test(x.asm.text), 'a failing call leaves the automatic monogram in place, says so, and still lets a person decide: "' + (x.asm ? x.asm.text.slice(0, 160) : 'no line') + '"');
+      await page.waitForFunction(r => { const h = document.querySelector(`.mw[data-rid="${r}"]`); return !h || h.dataset.state === 'approved' || h.dataset.state === 'sent'; }, rid('ai2'), { timeout: 60000 }).catch(() => {}); await sleep(600);
+      check((await files(rid('ai2'))).map(f => f.name).join() === 'Monogram NFZ.ai' && await calls() === c0, 'ONE Approve press approves the flagged card (no "Approve anyway", no second press, no AI call): Monogram NFZ.ai');
+      await openDetail('ai3'); x = await flagWait(rid('ai3'), 120000);
+      check(x.state === 'check' && x.points > 100 && noRed(x) && x.approve && x.approve.text === 'Approve', 'a failing call leaves the automatic monogram in place, with no red line and the plain Approve');
       await page.evaluate(() => { window.__stage = new Set(); });
       check((await page.evaluate(() => window.__calls.every(c => ['monoAssist', 'engraveIntent'].includes(c.mode)))), 'every agent call was the stubbed monoAssist: no real call anywhere');
     }

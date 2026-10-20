@@ -6,8 +6,8 @@
  *      CharmNestMonogramUI.status(row) -> { state, label, letters, approved, sent }    ·   .widgets()   ·   .service() / .setFactory(fn)
  *  detail = the Engrave detail card (the picture beside the letters, wide); compact = the Order details window (one tight block that keeps ONE height: three single-line slots, a message may replace them). Both draw the same state
  *  (the state of a line lives in the service, per order line: a letter typed in one is in the other) with the same parts: the preview of the geometry that will be cut, in the line's metal; the three letter boxes (type one letter,
- *  swap two neighbours, rotate); the buyer's own words; ONE size line (the piece's mm, the metal, and the size the buyer chose, charm-nest-monogram-fit.js); ONE assembly line ("Assembled with AI: …" / "Needs a person: …" with a quiet
- *  Improve again); a plain message when the letters cannot be read or a letter is missing; Approve / "Approved · Monogram APV" with Change / "On the sheet". States: reading, letters, building, ready, check, approved, sent, error.
+ *  swap two neighbours, rotate); the buyer's own words; ONE size line (the piece's mm, the metal, and the size the buyer chose, charm-nest-monogram-fit.js); ONE calm assembly line ("Assembled with AI: …",
+ *  only for a word the AI made pass); a plain message when the letters cannot be read or a letter is missing; Approve / "Approved · Monogram APV" with Change / "On the sheet". States: reading, letters, building, ready, check, approved, sent, error.
  *  MONOSEND (Paul, 18 Oct 2026): there is no "Send to Sheet →" link and no designs window in the monogram's way any more: ONE press of the green Approve approves (the seal, the timeline event) AND sends the card's designs to the
  *  nesting queue (CustomSheet.send, as the window's Send to Sheet does), on the buyer's metal, one piece per piece ordered. An approved piece not on a sheet says why in its note line (status(row).queue / describe().queue: sending,
  *  wait (other pieces of the card to approve), metal (the buyer's metal cannot be read: the designs window opens, nothing is guessed), blocked, error, idle) and keeps Approve to finish it; on the sheet it is final.
@@ -57,7 +57,9 @@
  *  engine (report.metrics.violations) after Engine.autoFit is shown to a vision model beside the ESG reference (charmNestMonogramAssist-background through CN.agentCall "monoAssist"): it answers only the numbers of the engine's
  *  adjust contract { L, M, R: { scale, sx, dx, dy } } and one sentence; the page applies them ONLY through Engine.build (which clamps them), re-measures, and keeps a round only if the number of broken rules drops, or stays equal
  *  while the distance to ESG drops. At most 3 rounds per word, once per order (the final adjust, the sentence and the rounds are kept in settings.mono.assist, so reopening never pays again), at most 3 calls per order per day
- *  (also counted on the server); a word that still fails says "Needs a person: <limit>" and Approve then asks for a second press. ESG-like words never call it. A failure of the model or the network leaves the automatic result.
+ *  (also counted on the server); a word that still fails is state "check" ("Ready to approve"). ESG-like words never call it. A failure of the model or the network leaves the automatic result.
+ *  (MONOAPPROVE, Paul 20 Oct 2026: "Remove this red text and Improve again link from the UI completely" / "if the user presses it that means they approve!!": no "Needs a person: …" line, no Improve again, no
+ *  "Approve anyway" and no second press on any monogram surface; a flagged card shows the plain Approve and ONE press approves it, the same seal and result as a ready card)
  *  ═══════════════════════════════════════════════════════════════════════ */
 (function (root, factory) {
   const api = factory(root);
@@ -339,7 +341,7 @@
     const buildOpts = c => { const f = fitOf(c); return f ? { fit: f } : {}; };
     const fitKey = c => { const f = fitOf(c); return f ? "|w" + f.maxWidthMm : ""; };
     function markBuilding(c) {
-      clearTimeout(c.timer); c.seq++; c.confirmed = false; c.ai = null; c.fit = false;      // (anything still on its way for an older edit is stale from now on)
+      clearTimeout(c.timer); c.seq++; c.ai = null; c.fit = false;      // (anything still on its way for an older edit is stale from now on)
       c.status = "building"; c.err = null; paint(c);
     }
     function schedule(c, wait) {
@@ -355,7 +357,7 @@
       const abc = alphabets(); c.abcSig = abcKey(abc);
       if (!abc.ok) { c.status = "setup"; c.result = null; c.err = null; paint(c); return; }
       const key = sigOf(abc, letters) + fitKey(c), cached = results.get(key);
-      if (cached) { c.status = "ready"; c.result = cached; c.resultLetters = letters.join(""); c.resultKey = key; c.err = null; c.confirmed = false; remember(key, cached); if (wantAi(c)) assist(c, key, letters, abc, seq); paint(c); settled(c); return; }
+      if (cached) { c.status = "ready"; c.result = cached; c.resultLetters = letters.join(""); c.resultKey = key; c.err = null; remember(key, cached); if (wantAi(c)) assist(c, key, letters, abc, seq); paint(c); settled(c); return; }
       c.status = "building"; c.err = null; c.prog = { done: 0, total: 4 }; paint(c);
       const bar = d.CNProgress && !c.quiet ? d.CNProgress.start(`Building monogram ${letters.join("")}`) : null;      // (a picture asked for by a list thumbnail alone is made quietly: no bar, no AI)
       try {
@@ -382,7 +384,7 @@
         }
         if (bar && bar.set) bar.set(4, 4);
         if (!res || !res.ok) { c.status = "error"; c.result = null; c.err = { kind: "join", text: joinWhy(res && res.why) }; }
-        else { c.status = "ready"; c.result = res; c.resultLetters = letters.join(""); c.resultKey = key; c.err = null; c.confirmed = false; remember(key, res); if (wantAi(c)) assist(c, key, letters, abc, seq, { parts: trio }); }
+        else { c.status = "ready"; c.result = res; c.resultLetters = letters.join(""); c.resultKey = key; c.err = null; remember(key, res); if (wantAi(c)) assist(c, key, letters, abc, seq, { parts: trio }); }
       } catch (e) {
         if (seq !== c.seq) return;
         c.status = "error"; c.result = null;
@@ -416,7 +418,6 @@
       if (/outline lies outside|of its width beside the centre/.test(t)) return "a side letter is mostly hidden behind the middle one";
       return null;
     };
-    const plainLimit = t => { const m = /^(.*?)( \(\+\d+ more\))?$/.exec(String(t || "")); return (plainRule(m[1]) || m[1]) + (m[2] || ""); };
     const plainNote = t => { const p = plainRule(t); return p ? cap(p) + "." : String(t || ""); };
     const paintFirst = () => new Promise(r => { const raf = root.requestAnimationFrame; if (typeof raf === "function") raf.call(root, () => setTimeout(r, 0)); else setTimeout(r, 0); });
     const callAi = () => !!(d.assist || d.agentCall || (root.CN && root.CN.agentCall));
@@ -452,11 +453,11 @@
       return ans;
     }
     /** After a card's monogram is made (and fitted by the engine): a word that still breaks a rule is assembled with the AI, at most 3 rounds, once per order (what was kept is applied again, never asked again);
-     *  o.again (Improve again) asks once more from the card's current result, within the day's 3 calls. Never throws; the card keeps its picture while it waits. */
+     *  Never throws; the card keeps its picture while it waits. */
     async function assist(c, key, letters, abc, seq, o) {
       // (PIECES: two pieces of one line with the same letters are one question to the model: the second waits for the first and applies its kept answer, never asking, never paying, twice)
       const rk = recKey(c, key), other = inflight.get(rk);
-      if (other && !(o && o.again)) { c.aiKey = key; c.ai = { state: "working", round: 0, status: "" }; paint(c); try { await other; } catch (_) { /* the first one's trouble */ } if (seq !== c.seq) return; }
+      if (other) { c.aiKey = key; c.ai = { state: "working", round: 0, status: "" }; paint(c); try { await other; } catch (_) { /* the first one's trouble */ } if (seq !== c.seq) return; }
       const run = assistRun(c, key, letters, abc, seq, o);
       if (!other) { inflight.set(rk, run); run.then(() => { if (inflight.get(rk) === run) inflight.delete(rk); }, () => { if (inflight.get(rk) === run) inflight.delete(rk); }); }
       return run;
@@ -465,13 +466,13 @@
       o = o || {}; c.aiKey = key;
       const res0 = c.result, v0 = (violationsOf(res0) || null) && aiRulesOf(res0);      // (MONOHOOPS: a hoop that found no sound spot is for a person, never a question to the model)
       if (!v0 || !v0.length) {                               // (ESG-like and every word that meets the rules: never asked; one the AI made pass keeps its line when the finished monogram comes from memory)
-        const kept = (mstore().assist || {})[recKey(c, key)]; c.ai = kept && kept.status === "assembled" && !o.again ? { state: "done", status: "assembled", why: kept.why, rounds: kept.rounds, cached: true } : null; return;
+        const kept = (mstore().assist || {})[recKey(c, key)]; c.ai = kept && kept.status === "assembled" ? { state: "done", status: "assembled", why: kept.why, rounds: kept.rounds, cached: true } : null; return;
       }
-      c.ai = { state: "working", round: 0, status: "" }; c.confirmed = false;
+      c.ai = { state: "working", round: 0, status: "" };
       try {
         const parts = o.parts || await trioOf(letters, abc);
         if (seq !== c.seq) return;
-        const rec = !o.again && (mstore().assist || {})[recKey(c, key)];
+        const rec = (mstore().assist || {})[recKey(c, key)];
         if (rec) {
           const r = rec.adjust ? E().build(parts, Object.assign({ adjust: rec.adjust }, buildOpts(c))) : null, rv = r && r.ok ? violationsOf(r) : null;
           if (rv && betterThan({ v: rv.length, dist: distanceOf(r) }, { v: v0.length, dist: distanceOf(res0) })) { c.result = r; remember(key, r); }
@@ -482,7 +483,7 @@
         if (room < 1) { c.ai = { state: "done", status: "limited" }; return; }
         const out = await assistLoop({ E: E(), parts, base: res0, opts: buildOpts(c), rounds: room, cancelled: () => seq !== c.seq, ask: req => askModel(c, letters, req), onRound: n => { if (c.ai) { c.ai.round = n; paint(c); } } });
         if (seq !== c.seq) return;
-        if (out.accepted && out.res) { c.result = out.res; c.confirmed = false; remember(key, out.res); }
+        if (out.accepted && out.res) { c.result = out.res; remember(key, out.res); }
         const kept = out.status === "assembled" || out.status === "needs" || (out.status === "failed" && out.accepted);
         if (kept) keepRec(c, key, { adjust: out.adjust, why: out.why, rounds: out.rounds, status: out.remaining.length ? "needs" : "assembled", limit: limitText(out.remaining), at: Date.now() });
         if (out.status === "skipped") aiServerOff = true;
@@ -493,12 +494,7 @@
         if (seq === c.seq) { if (c.ai && c.ai.state === "working") c.ai.state = "done"; paint(c); settled(c); }
       }
     }
-    /** "Improve again" on a flagged card: the kept answer is forgotten and the AI is asked again from what the card shows (still bounded by the day's 3 calls per order). */
-    function improve(c) {
-      if (aiBusy(c) || c.status !== "ready" || !c.result || !c.resultKey) return;
-      const m = mstore(), all = Object.assign({}, m.assist); delete all[recKey(c, c.resultKey)]; m.assist = all; keepSettings();
-      assist(c, c.resultKey, c.resultLetters.split(""), alphabets(), c.seq, { again: true }); paint(c);
-    }
+    // (MONOAPPROVE, Paul 20 Oct 2026: there is no "Improve again" any more: a flagged card is approved as it is, with one press)
     function setAi(v) { const m = mstore(); m.ai = v === "off" ? "off" : "on"; keepSettings(); for (const c of cards.values()) if (c.views.size) paint(c); }
     function settled(c) { if (c.wantApprove && c.status === "ready" && !aiBusy(c)) { c.wantApprove = false; approve(c); } else { if (c.status !== "building" && !aiBusy(c)) c.wantApprove = false; if (c.status === "ready" && !aiBusy(c)) hoopsSoon(c); } }      // (MONOHOOPS: a design approved before the hoops gets them once its piece is made)
 
@@ -701,9 +697,7 @@
       if (!c.result) return;
       if (c.status === "building" || aiBusy(c)) { c.wantApprove = true; return; }
       if (c.status !== "ready") return;
-      // a monogram that still breaks a rule after the engine's search and the AI is approved only when the person confirms it (a second press), the limit named
-      const left = flaggedOf(c);
-      if (left.length && !c.confirmed) { c.confirmed = true; paint(c); return; }
+      // (MONOAPPROVE, Paul 20 Oct 2026: "if the user presses it that means they approve!!": a monogram that still breaks a rule is approved by the one press too, never asked twice)
       const it = itemOf(c, true); if (!it) { d.toast("This order has no custom card to put the monogram on", "bad", 5000); return; }
       const letters = c.resultLetters; let old = approvedFile(c, true);
       if (old && old.sent) return;
@@ -867,7 +861,7 @@
       return null;
     };
     const mm1 = x => (+x).toFixed(1), mmTxt = x => (Number.isInteger(+x) ? String(+x) : (+x).toFixed(1));
-    const LABEL = { reading: "Reading the letters", letters: "Letters to confirm", building: "Making…", ready: "Ready to approve", check: "Needs a person", approved: "Approved", sent: "On the sheets", error: "Needs a look" };
+    const LABEL = { reading: "Reading the letters", letters: "Letters to confirm", building: "Making…", ready: "Ready to approve", check: "Ready to approve", approved: "Approved", sent: "On the sheets", error: "Needs a look" };
 
     /** Everything a person (or a test) can know about one line, in one object (the contract's state()). Pure reading: it paints nothing and asks nothing. */
     function describe(c) {
@@ -902,8 +896,7 @@
         seals: cardSeals(c) && sealsFor(c), stamping: !!c.stamping, queue: settled ? queueOf(c, ap) : null,
         canApproveBase: ok && !busy && !sent && !settled && !c.stamping, approved: ap ? { letters: ap.letters, name: ap.file.name, sent } : null, dirty, locked: sent || (settled && !c.unlocked), unlocked: !!c.unlocked,
         metal, sizeMm, fit: f ? { maxWidthMm: f.maxWidthMm, scale: rf && rf.scale != null ? rf.scale : 1, applied: !!(rf && rf.applied) } : null,
-        assembly, notes: warnings, hint: c.hint || "", confirmed: !!c.confirmed, error, message, prog: c.prog ? { done: c.prog.done, total: c.prog.total } : null,
-        again: ok && !busy && left.length > 0 && !sent && aiOn() && !aiServerOff && callAi()
+        assembly, notes: warnings, hint: c.hint || "", error, message, prog: c.prog ? { done: c.prog.done, total: c.prog.total } : null
       };
     }
     const statusOf = (c, st) => ({ state: st.state, label: st.state === "building" && st.busy === "ai" ? "Assembling…" : LABEL[st.state] || "", letters: st.lettersOk ? st.letters.join("") : "", approved: !!st.approved, dirty: !!st.dirty, sent: st.state === "sent", rid: String((c.row.order || {}).receiptId || ""), lineKey: c.lineKey, pieceKey: c.key, slot: c.slot, n: c.n, of: c.of, seals: st.seals.length, queue: st.queue ? st.queue.kind : "" });
@@ -945,7 +938,7 @@
           + `<label class="mwLt" data-slot="${slot}"><input data-mw-letter="${i}" maxlength="2" inputmode="text" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="${label} letter"><span>${label}</span></label>`).join("")
         + `<button type="button" class="mwSw mwRot" data-mw-rotate aria-label="Move the first letter to the end" title="Move the first letter to the end">${ICON_ROT}</button></div>`
         + `<p class="mwSays" data-mw-says></p><p class="mwLine" data-mw-size></p>`
-        + `<p class="mwLine mwAsm" data-mw-assembly hidden><span></span> <button type="button" class="mwLink" data-mw-again hidden title="Ask the AI to adjust the letters once more">Improve again</button></p>`
+        + `<p class="mwLine mwAsm" data-mw-assembly hidden><span></span></p>`
         + `<p class="mwLine mwNote" data-mw-note hidden></p><div class="mwMsg" data-mw-msg hidden></div>`
         + `<span class="mwSr" role="status" aria-live="polite" data-mw-live></span><div class="mwAct"><button type="button" class="btn sage${small}" data-mw-approve disabled>Approve</button><span class="mwOk" data-mw-approved hidden>${ICON_OK}<span></span></span>`
         + `<button type="button" class="btn ghost${small}" data-mw-change hidden>Change</button></div></div></div>`;      // (MONOSEND, Paul 18 Oct 2026: no "Send to Sheet →" link any more: Approve puts the monogram on the next sheet)
@@ -1000,20 +993,21 @@
       if (st.fit && st.sizeMm) seg.push(st.fit.applied ? `scaled to the buyer’s ${mmTxt(st.fit.maxWidthMm)} mm` : `within the buyer’s ${mmTxt(st.fit.maxWidthMm)} mm`);
       const sz = seg.join(" · "); if (R.size.textContent !== sz) R.size.textContent = sz; R.size.hidden = !sz;
       // ONE calm line about the assembly, and one quiet note (a letter refused, the first thing the engine warns about, how to replace an approved monogram)
-      const as = st.assembly, line = !as.status ? "" : as.status === "assembled" ? `Assembled with AI: ${as.why}` : `Needs a person: ${plainLimit(as.limit)}${as.detail ? ". " + as.detail : ""}`;
+      // (MONOAPPROVE, Paul 20 Oct 2026: "Remove this red text and Improve again link from the UI completely": a word that still breaks a rule says nothing here, and the engine's warning does not take the line's place)
+      const as = st.assembly, line = as.status === "assembled" ? `Assembled with AI: ${as.why}` : "", flagged = !!as.status && as.status !== "assembled";
       const unl = st.unlocked && !st.dirty && st.approved && !st.approved.sent ? "Change a letter to replace the approved monogram." : "";
       const n0 = st.notes[0] ? plainNote(st.notes[0]) : "";
       // MONOSEND: an approved piece not on a sheet says why (a metal to pick, a send to retry, the other pieces still to approve) before the engine's warning; "on its way" and "not sent yet" only when there is no warning
       const qa = settled && st.queue ? st.queue : null, qn = qa && (qa.warn || qa.kind === "wait" || !n0) ? qa : null;
-      const note = st.hint || unl || (qn ? qn.text : "") || (line ? "" : n0) || "", noteWarn = !!st.hint || (!!qn && note === qn.text && qn.warn) || (!!n0 && note === n0);
+      const note = st.hint || unl || (qn ? qn.text : "") || (line || flagged ? "" : n0) || "", noteWarn = !!st.hint || (!!qn && note === qn.text && qn.warn) || (!!n0 && note === n0);
       if (v.mode === "compact") {      // compact: the Order window must not jump, so the assembly line, the hint and the warning share ONE single-line slot (the full text is its title) and says / size / slot keep their height when empty
-        const pick = st.hint ? { tx: st.hint, warn: true, status: "" } : qn && qn.warn ? { tx: qn.text, warn: true, status: "" } : line ? { tx: line, warn: as.status !== "assembled", status: as.status } : unl ? { tx: unl, warn: false, status: "" } : qn ? { tx: qn.text, warn: false, status: "" } : n0 ? { tx: n0, warn: true, status: "" } : null;
+        const pick = st.hint ? { tx: st.hint, warn: true, status: "" } : qn && qn.warn ? { tx: qn.text, warn: true, status: "" } : line ? { tx: line, warn: false, status: as.status } : unl ? { tx: unl, warn: false, status: "" } : qn ? { tx: qn.text, warn: false, status: "" } : n0 && !flagged ? { tx: n0, warn: true, status: "" } : null;
         R.asm.hidden = !pick; R.asm.dataset.status = pick ? pick.status : ""; R.asm.classList.toggle("warn", !!pick && pick.warn);
         const tx = pick ? pick.tx : ""; if (R.asmTx.textContent !== tx) R.asmTx.textContent = tx; R.asm.title = pick ? (pick.tx + (st.notes.length > 1 && !pick.status ? "\n" + st.notes.slice(1).map(plainNote).join("\n") : "")) : "";
-        R.again.hidden = !(st.again && !!line && !!pick && pick.status !== ""); R.note.hidden = true;
+        R.note.hidden = true;
         R.size.title = sz; R.says.title = R.says.textContent;
       } else {
-        R.asm.hidden = !line; R.asm.dataset.status = as.status || ""; if (R.asmTx.textContent !== line) R.asmTx.textContent = line; R.asm.classList.toggle("warn", as.status !== "" && as.status !== "assembled"); R.again.hidden = !(st.again && !!line);
+        R.asm.hidden = !line; R.asm.dataset.status = as.status || ""; if (R.asmTx.textContent !== line) R.asmTx.textContent = line; R.asm.classList.remove("warn");
         R.note.hidden = !note; if (R.note.textContent !== note) R.note.textContent = note; R.note.classList.toggle("warn", noteWarn); R.note.title = st.notes.length > 1 ? st.notes.map(plainNote).join("\n") : "";
       }
       // a message that needs a person
@@ -1023,12 +1017,12 @@
       // the actions: Approve, or Approved with a way to change it
       // (MONOSEND: Approve approves AND puts the monogram on the next sheet of the buyer's metal; an approved piece that is not on a sheet yet keeps it, to finish that: pick the metal, retry the send)
       const offer = !!(settled && qa && qa.can && !st.stamping);
-      R.approve.hidden = sent || (settled && !offer); R.approve.disabled = offer ? !!gate : !can; R.approve.textContent = st.stamping ? "Approved" : offer ? "Approve" : st.confirmed ? "Approve anyway" : st.dirty ? "Replace approved" : "Approve";
-      R.approve.title = st.stamping ? "" : offer ? (gate || (qa.kind === "metal" || qa.kind === "blocked" ? "Open the order’s designs to pick what is missing" : "Put this monogram on the next sheet")) : can ? (st.confirmed ? "It still has the problem named here: approve it and put it on the next sheet anyway" : "Approve this monogram and put it on the next sheet") : (gate || (busy ? "Making the monogram…" : st.state === "letters" || st.state === "error" ? "Type the three letters first" : ""));
+      R.approve.hidden = sent || (settled && !offer); R.approve.disabled = offer ? !!gate : !can; R.approve.textContent = st.stamping ? "Approved" : offer ? "Approve" : st.dirty ? "Replace approved" : "Approve";
+      R.approve.title = st.stamping ? "" : offer ? (gate || (qa.kind === "metal" || qa.kind === "blocked" ? "Open the order’s designs to pick what is missing" : "Put this monogram on the next sheet")) : can ? "Approve this monogram and put it on the next sheet" : (gate || (busy ? "Making the monogram…" : st.state === "letters" || st.state === "error" ? "Type the three letters first" : ""));
       el.dataset.queue = qa ? qa.kind : "";
       // (compact, an approved piece not on a sheet: Approve and Change share the one row with nothing else, so the Order window keeps its height; the note line and the seal say it is approved)
       R.ok.hidden = !(settled || sent) || (offer && v.mode === "compact"); const okTx = (sent ? "On the sheet" : "Approved") + (st.approved ? " · Monogram " + st.approved.letters : ""); if (R.okTx.textContent !== okTx) R.okTx.textContent = okTx;
-      { const lv = sent ? "On the sheet." : st.stamping ? "Approved." : settled ? (qa && qa.kind === "sending" ? "Approved. Going to the next sheet." : qa ? "Approved. " + qa.text : "Approved.") : busy || st.message ? "" : st.state === "ready" ? "The monogram is ready." : st.state === "check" ? "The monogram is ready, but it needs a person to look at it." : ""; if (R.live.textContent !== lv) R.live.textContent = lv; }   // (for a screen reader: what the picture and the buttons show)
+      { const lv = sent ? "On the sheet." : st.stamping ? "Approved." : settled ? (qa && qa.kind === "sending" ? "Approved. Going to the next sheet." : qa ? "Approved. " + qa.text : "Approved.") : busy || st.message ? "" : st.state === "ready" || st.state === "check" ? "The monogram is ready." : ""; if (R.live.textContent !== lv) R.live.textContent = lv; }   // (for a screen reader: what the picture and the buttons show)
       R.change.hidden = !(settled && st.locked) || !!(qa && qa.kind === "sending");      // (a piece on its way to the sheet cannot be changed: its design is being sent)
       paintSeals(c, v, st);
     }
@@ -1054,7 +1048,7 @@
     /* ── the widget's input: the same rules as the pane's boxes (one capital letter per box, a digit or an emoji is refused calmly) ── */
     function editTo(c, ls) {
       c.draft = ls; c.wantApprove = false;
-      if (lettersOk(ls)) schedule(c); else { clearTimeout(c.timer); c.seq++; c.status = "words"; c.result = null; c.err = null; c.confirmed = false; paint(c); }
+      if (lettersOk(ls)) schedule(c); else { clearTimeout(c.timer); c.seq++; c.status = "words"; c.result = null; c.err = null; paint(c); }
     }
     function typeInto(v, i, t, inputType) {
       const c = v.c, typed = String(t.value || ""), l = typed.normalize("NFD").replace(/[^A-Za-z]/g, "").slice(-1).toUpperCase();
@@ -1095,7 +1089,6 @@
         if (hit("[data-mw-approve]")) viewApprove(v);
         else if (hit("[data-mw-buyer]")) { c.hint = ""; editTo(c, buyerLetters(c).ls); }
         else if (hit("[data-mw-change]")) { c.unlocked = true; c.unlockedAt = Date.now(); paint(c); if (v.r.ins[0]) v.r.ins[0].focus(); }
-        else if (hit("[data-mw-again]")) improve(c);
         else if (hit("[data-mw-retry]")) schedule(c, 0);
       });
     }
@@ -1105,7 +1098,7 @@
       el.innerHTML = viewHtml(v.mode); v.el = el;
       const q = s => el.querySelector(s);
       v.r = { pic: q("[data-mw-pic]"), art: q(".mwArt"), spin: q("[data-mw-spin]"), spinTx: q("[data-mw-spin] span"), bar: q("[data-mw-bar]"), ins: [...el.querySelectorAll("[data-mw-letter]")], sw: [...el.querySelectorAll(".mwSw")], says: q("[data-mw-says]"), size: q("[data-mw-size]"),
-        asm: q("[data-mw-assembly]"), asmTx: q("[data-mw-assembly] > span"), again: q("[data-mw-again]"), note: q("[data-mw-note]"), msg: q("[data-mw-msg]"), approve: q("[data-mw-approve]"), ok: q("[data-mw-approved]"), okTx: q("[data-mw-approved] > span"), change: q("[data-mw-change]"), live: q("[data-mw-live]") };
+        asm: q("[data-mw-assembly]"), asmTx: q("[data-mw-assembly] > span"), note: q("[data-mw-note]"), msg: q("[data-mw-msg]"), approve: q("[data-mw-approve]"), ok: q("[data-mw-approved]"), okTx: q("[data-mw-approved] > span"), change: q("[data-mw-change]"), live: q("[data-mw-live]") };
       // MONOSEAL: the seal row. The detail widget holds it in its action row beside the Approve button (in the flow, as the Engrave card's seals rest beside theirs); the compact one (the Order window's `.engMono` card) holds it as the
       // host's next child, so the card's stylesheet can lay it across the card's top-right corner as it lays the engraving cards' seals (HDRSEAL). Empty and hidden until a stamp exists.
       const sr = doc.createElement("span"); sr.className = "sealRow mwSeal"; sr.hidden = true; sr.setAttribute("data-seal-group", ""); sr.dataset.sealCount = "0"; sr.setAttribute("role", "group"); sr.setAttribute("aria-label", "Monogram approval history"); sr.dataset.testid = "mw-seals";
@@ -1229,7 +1222,7 @@
     /** Every piece of every open monogram line: [{ key, slot, n, of, lineKey, poolId, row }], line by line, piece by piece. */
     const piecesNow = () => rowsNow().reduce((all, r) => all.concat(piecesOfLine(r).map(p => Object.assign(p, { row: r }))), []);
     const waiting = () => piecesNow().filter(p => { const c = cards.get(p.key), ap = c ? approvedFile(c) : null; return !(ap && ap.sent); });
-    const svc = { count: () => waiting().length, rows: rowsNow, pieces: row => { const r = lineOf(row); return r && isMono(r) ? piecesOfLine(r).map(p => Object.assign(p, { row: r })) : []; }, piecesNow, pieceKey: (row, ask) => { const r = lineOf(row); return r ? slotKey(r.key, slotFor(r, ask)) : ""; }, families, alphabets, lettersOf: readLetters, cards, rebuild, approve, queue, approvedFile, glyph, setAlphabet, results, improve,
+    const svc = { count: () => waiting().length, rows: rowsNow, pieces: row => { const r = lineOf(row); return r && isMono(r) ? piecesOfLine(r).map(p => Object.assign(p, { row: r })) : []; }, piecesNow, pieceKey: (row, ask) => { const r = lineOf(row); return r ? slotKey(r.key, slotFor(r, ask)) : ""; }, families, alphabets, lettersOf: readLetters, cards, rebuild, approve, queue, approvedFile, glyph, setAlphabet, results,
       mountLine, thumb, thumbHtml, fillThumbs, status, onChange, feedEvents, loadSeals, ensureSeals, upgradeCard, addHoops,
       sealsOf: (row, ask) => { const r = lineOf(row); if (!r || !isMono(r)) return []; const c = cardOf(r, askOf(ask)); cardSeals(c); return sealsFor(c); },
       sealHtml: (row, o) => {
