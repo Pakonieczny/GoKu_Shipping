@@ -143,6 +143,11 @@
       const plan = makePlan();
       st.plan = plan;
       if (plan) { info.group = (plan.group && plan.group.mode) || "unknown"; info.aliasWorks = plan.aliasWorks !== false; }
+      // KEEPOVERRIDE (Paul, 20 Oct 2026): this order was saved before with ANOTHER drawing: the switch with this design is a correction: the order's saved SKU takes this design ("the toggle wins")
+      if (rec && rec.sku && !rec.repair && rec.charmHash && ctx.charm && ctx.charm.hash && rec.charmHash !== String(ctx.charm.hash)) {
+        st.override = { from: String(rec.sku).toUpperCase(), via: "own", source: "save" }; info.override = Object.assign({}, st.override);
+        st.sku = st.override.from; st.skuDone = true; st.ownSku = true; info.sku = st.sku; info.offered = true; st.info = info; return info;
+      }
       if (rec && rec.sku && rec.repair) {   // the listing's answer was cut or the files vanished (the cloud's repair says so): the SAME save runs again under the same SKU; the commit re-creates / re-attaches
         st.sku = String(rec.sku).toUpperCase(); st.skuDone = true; st.repoDone = false; st.etsyDone = false; info.sku = st.sku; info.offered = true; st.info = info; return info;
       }
@@ -153,14 +158,32 @@
         paintSaved(rec);
         st.info = info; return info;
       }
-      // a SKU that already names a master design is not changed: the listing is linked already (a raw SKU that keeps the line a custom order does not count)
+      // KEEPOVERRIDE (Paul, 20 Oct 2026: "If a user engages the toggle to update the charm repository, then that's exactly what needs to happen"): a line that already reads a library charm X is
+      // offered the switch too. Its SKU S is the line's own when X holds it (the SKU Etsy carries, or the library's spelling of it: via "own": S is taken from X and given to this design, X keeps
+      // its other SKUs); when X answers through the listing's link (an alias, a variation, a typo), the design is saved under the order's own Etsy SKU (or a new one) and the link is replaced (via
+      // "link": X keeps every SKU). Only the very same drawing (nothing to correct) and a design linked in code (pinned) stay "already linked".
       const raw = upSku(line.sku);
-      if (raw && O && typeof O.resolveSku === "function") {
-        let custom = false; try { custom = !!O.specialOf({ listingId: "", sku: raw, title: "", variations: [] }, {}); } catch (_) { custom = false; }
-        if (!custom) {
-          let rs = null; try { rs = O.resolveSku(Object.assign({}, line, { listingId, sku: raw }), aliases, entryFor, ctx.noDesign, looseFor); } catch (_) { rs = null; }
-          if (rs && rs.sku && entryFor(rs.sku)) { const lk = no(T.linked(rs.sku)); lk.linked = rs.sku; return lk; }
+      let custom = false; if (raw && O && typeof O.specialOf === "function") { try { custom = !!O.specialOf({ listingId: "", sku: raw, title: "", variations: [] }, {}); } catch (_) { custom = false; } }
+      const tag = String((F && F.hash) || "").toLowerCase().replace(/[^0-9a-z]/g, "").slice(0, 12);
+      if (!custom && O && typeof O.resolveSku === "function") {
+        let rs = null; try { rs = O.resolveSku(Object.assign({}, line, { listingId, sku: raw }), aliases, entryFor, ctx.noDesign, looseFor); } catch (_) { rs = null; }
+        const X = rs && rs.sku ? entryFor(rs.sku) : null;
+        if (X) {
+          const sameDrawing = !!X.charmHash && !!ctx.charm && String(X.charmHash) === String(ctx.charm.hash);
+          if (rs.pinned || sameDrawing) { const lk = no(T.linked(rs.sku)); lk.linked = rs.sku; return lk; }
+          const sk = String(rs.sku).toUpperCase(), own = (rs.source === "transaction" || rs.source === "spelling") && !!Sku && typeof Sku.ownWhy === "function" && !Sku.ownWhy(sk);
+          st.override = { from: sk, via: own ? "own" : "link", source: rs.source || "" }; info.override = Object.assign({}, st.override);
+          if (own) { st.sku = sk; st.skuDone = true; st.ownSku = true; info.sku = sk; info.offered = true; st.info = info; return info; }
         }
+      }
+      // KEEPOWNSKU (Paul, 20 Oct 2026: "In the case that a given listing has no match at all, then the system will need to use the existing Etsy listing/order SKU and save/match that along with the
+      // newly uploaded charm vector to the Charm repo"): the order's own Etsy SKU, as the library keys it (Sku.etsyKey: upper case, "/" as "-"), is the SKU; a new name only for a line with no
+      // SKU (or one the sorter reads as a special order, CUSTOM_…). A SKU some drawing holds already is that drawing's (the override above), never taken here.
+      const key = !custom && raw && Sku && typeof Sku.etsyKey === "function" ? Sku.etsyKey(raw) : "";
+      if (key && typeof Sku.ownWhy === "function" && !Sku.ownWhy(key)) {
+        const held = entryFor(key);
+        if (!held) { st.sku = key; st.skuDone = true; st.ownSku = true; info.sku = key; info.own = true; info.offered = true; st.info = info; return info; }
+        if (!st.override && !(held.charmHash && ctx.charm && String(held.charmHash) === String(ctx.charm.hash))) { st.override = { from: key, via: "own", source: "key" }; info.override = Object.assign({}, st.override); st.sku = key; st.skuDone = true; st.ownSku = true; info.sku = key; info.offered = true; st.info = info; return info; }
       }
       // the very same drawing may be in the repository already: its SKU is used, nothing new is stored (D8)
       let same = ""; try { same = typeof Master.sameDesign === "function" && ctx.charm ? Master.sameDesign(ctx.charm.hash) : ""; } catch (_) { same = ""; }
@@ -203,7 +226,8 @@
     }
     const specFor = () => {
       const g = (st.plan && st.plan.group) || {};
-      return { rid: String(ctx.rid), listingId, sku: st.sku, oldSku: upSku(line.sku).replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 120), productId: idOf(g.boughtId || line.productId), group: { mode: g.mode || "unknown", productIds: g.productIds || [] },
+      return { override: st.override ? { via: st.override.via, from: st.override.from } : null, etsyOwn: !!st.ownSku && (!st.override || st.override.via === "link"), fileTag: String((F && F.hash) || "").toLowerCase().replace(/[^0-9a-z]/g, "").slice(0, 12),   // (KEEPOVERRIDE / KEEPOWNSKU, Paul 20 Oct 2026)
+        rid: String(ctx.rid), listingId, sku: st.sku, oldSku: upSku(line.sku).replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 120), productId: idOf(g.boughtId || line.productId), group: { mode: g.mode || "unknown", productIds: g.productIds || [] },
         optionPairs: (line.variations || []).map(v => [idOf(v && (v.propertyId != null ? v.propertyId : v.property_id)), idOf(v && (v.valueId != null ? v.valueId : v.value_id))]).filter(p => p[0] && p[1] && p[1] !== "0"),
         title: decode(ctx.title || ""), by: ctx.by || "", F, charm: ctx.charm, parsed: ctx.parsed, reuse: st.reuse || false, rehearsal: sandbox, built: st.built && st.builtSku === st.sku ? st.built : null, uploaded: st.built && st.builtSku === st.sku ? st.uploaded : {} };   // (a file built for another SKU carries that SKU's name inside: never reused)
     };
@@ -238,7 +262,7 @@
       if (reason === "locked") { row("repo", "locked", T.needPw, { reason: "locked" }); return { ok: false, held: "locked" }; }
       if (reason === "sku-taken") {   // someone made that SKU a moment ago: first, is THIS order saved already (another tab got there)? else the next free candidate is asked for
         try { const g = await call({ op: "customSaveGet", rid: String(ctx.rid), listingId }); if (g && g.save && g.save.sku) { st.saved = g.save; st.sku = g.save.sku; st.skuDone = true; st.repoDone = true; paintSaved(g.save); return { ok: true }; } } catch (_) { /* the next candidate */ }
-        st.exclude.add(st.sku); st.skuDone = false; st.uploaded = {}; st.built = null; persist("clear");
+        st.exclude.add(st.sku); st.skuDone = false; st.ownSku = false; st.uploaded = {}; st.built = null; persist("clear");   // (KEEPOWNSKU: the order's own SKU taken by another drawing a moment ago: a new one, as before)
         row("repo", "failed", T.notSaved((r && r.text) || "that SKU was just taken"), { reason, retry: true });
         return { ok: false, held: "taken" };
       }
