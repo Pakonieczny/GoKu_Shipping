@@ -207,7 +207,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swOrd .no{font:600 13px var(--mono);color:var(--ink)}
 .swOrd .what{font:11.5px var(--sans);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .swOrd .tags{display:flex;align-items:center;gap:4px;justify-content:flex-end}
-.swSeals{grid-column:1/-1;display:block;min-width:0}.swSeals .relSeal{padding:2px 6px 2px 2px}.swSeals .relSealWords{font-size:7.5px}.swSeals .relSealWords b{font-size:8.5px}
+.swSeals{grid-column:1/-1;display:block;min-width:0}.swSeals .sealTravelSeal{padding:2px 6px 2px 2px}.swSeals .stWords{font-size:7.5px}.swSeals .stWords b{font-size:8.5px}
 .swTag{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:1px 7px;font:600 10px var(--mono);white-space:nowrap;background:var(--paper2);color:var(--ink70)}
 .swTag i{width:7px;height:7px;border-radius:50%;background:var(--c)}
 .swTag.eng{background:var(--claySoft);color:#8a3a26}

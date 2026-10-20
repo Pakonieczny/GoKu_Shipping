@@ -36,11 +36,15 @@
   const kindOf = (how, field) => { const k = String(how || field || "").trim(); return ALIAS[k] || k || "seal"; };
   const spec = kind => KINDS[kind] || null;
   const words = s => String(s || "").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase()).trim();
-  const labelOf = r => (spec(r.kind) && spec(r.kind).label) || String(r.label || "").trim() || words(r.kind) || "Seal";
+  /** What Seal itself says of a kind (Seal.labelOf(how), SEALCANCEL), "" when Seal does not know it (its fallback, QR LABEL PRINTED). */
+  const sealWords = how => { try { const S = root.Seal, w = S && S.labelOf ? S.labelOf(how) : ""; return w && (w !== "QR LABEL PRINTED" || how === "print") ? w : ""; } catch (_) { return ""; } };
+  const labelOf = r => (spec(r.kind) && spec(r.kind).label) || String(r.label || "").trim() || words(sealWords(r.how).toLowerCase()) || words(r.kind) || "Seal";
+  /** A kind's ink: the table's, else Seal.INK[how] (SEALCANCEL), else the neutral ink. */
+  const inkOf = r => { const k = spec(r.kind); if (k) return k.ink; try { const i = root.Seal && Seal.INK && Seal.INK[r.how]; if (i) return i; } catch (_) {} return NEUTRAL; };
 
   /** One seal record from an object kept for it ({ at, by, how, id, label? }), or null. */
   function recOf(v, field) {
-    if (!v || typeof v !== "object" || !(+v.at > 0)) return null;
+    if (!v || typeof v !== "object" || !(+v.at > 0) || +v.undoneAt > 0) return null;   // (a seal undone, e.g. a cancel taken back with Restore, SEALCANCEL: no longer shown)
     const kind = kindOf(v.kind || v.how, field);
     const r = { kind, how: String(v.how || field || kind), at: +v.at, by: String(v.by || ""), id: String(v.id || "") };
     if (v.label) r.label = String(v.label).slice(0, 60);
@@ -67,15 +71,18 @@
       const CP = root.CustomPrint, rec = CP && CP.sealsOfOrder ? CP.sealsOfOrder(rid) : null;
       if (rec && root.Seal) for (const s of Seal.list(rec)) { const k = kindOf(s.how); out.push(Object.assign({}, s, { kind: k === "seal" ? "print" : k, how: s.how || "print", at: +s.at || 0, by: String(s.by || ""), src: "record" })); }
     } catch (_) {}
+    // the order-level seals its Review document keeps, through its own reader (CharmNestReviewMark.sealsOf, SEALCANCEL: Release Hold and Cancel Order, an undone cancel left out).
     // Release Hold: the Orders card's own reading while the order has lines here (a hold put on again hides it, RELNOSEAL); the cloud's record otherwise
-    const doc = reviewDoc(rid);
+    const doc = reviewDoc(rid), RM = root.CharmNestReviewMark, mine = new Set(["release", "cancel"]);
+    let kept = []; try { kept = RM && RM.sealsOf ? RM.sealsOf(rid).map(v => recOf(v, "")).filter(Boolean) : [doc && recOf(doc.release, "release"), doc && recOf(doc.cancel, "cancel")].filter(Boolean); } catch (_) {}
     try {
       const O = root.Orders, st = rows.length && O && O.releaseStampOf ? O.releaseStampOf(rows) : null;
       if (st) out.push({ kind: "release", how: "releaseHold", at: +st.at, by: String(st.by || ""), id: String(st.id || "") });
-      else if (!rows.length) { const r = doc && recOf(doc.release, "release"); if (r) out.push(r); }
+      else if (!rows.length) for (const r of kept) if (r.kind === "release") out.push(r);
     } catch (_) {}
-    // every other seal record on the order's Review document, and on what the caller hands in
-    for (const r of gather(doc, true)) if (r.kind !== "release") out.push(r);
+    for (const r of kept) if (r.kind !== "release") out.push(r);
+    // every other seal record on the order's Review document (a kind to come: its own field, the same { at, by, how, id }), and on what the caller hands in
+    for (const r of gather(doc, true)) if (!mine.has(r.kind)) out.push(r);
     // ORDER HELD (HOLDORDER, Paul 20 Oct 2026): the Hold Order press is the Review document's own mark (review.markedAt / markedBy, the same press the timeline's reviewMark note records, its id rvmark.<rid>.<markedAt>);
     // kept once resolved too (the resolve keeps markedAt), so the seal travels with the order to its end
     { const v = doc && doc.review; if (v && +v.markedAt > 0) out.push({ kind: "held", how: "holdOrder", at: +v.markedAt, by: String(v.markedBy || ""), id: `rvmark.${rid}.${+v.markedAt}` }); }
@@ -92,20 +99,20 @@
   const sealKnows = r => { try { return !!root.Seal && Seal.modelOf({ how: r.how, at: r.at }).action !== "QR LABEL PRINTED"; } catch (_) { return false; } };
   /** The ink face of one record: Seal's own when it knows the kind, else Seal.face with the kind's outline and words, in the kind's ink (neutral for a kind not in KINDS). */
   function faceOf(r, size) {
-    const S = root.Seal, k = spec(r.kind), ink = k ? k.ink : NEUTRAL, label = labelOf(r), title = `${label}${r.by ? " by " + r.by : " · operator not recorded"} · ${whenOf(r.at)}`;
+    const S = root.Seal, k = spec(r.kind), ink = inkOf(r), label = labelOf(r), title = `${label}${r.by ? " by " + r.by : " · operator not recorded"} · ${whenOf(r.at)}`;
     const sz = +size || S.BASE_SIZE;
-    if (sealKnows(r)) return S.html({ how: r.how, at: r.at, by: r.by, id: r.id }, sz, "relSealFace").replace(/aria-label="[^"]*"/, `aria-label="${esc(title)}"`);
+    if (sealKnows(r)) return S.html({ how: r.how, at: r.at, by: r.by, id: r.id }, sz, "stFace").replace(/aria-label="[^"]*"/, `aria-label="${esc(title)}"`);
     const fam = k ? k.family : "received", famInk = (S.FAMILY && S.FAMILY[fam] && S.FAMILY[fam].ink) || "";
     let svg = S.face({ family: fam, action: k ? k.action : label.toUpperCase().slice(0, 18), icon: k ? k.icon : "qr", at: r.at, by: r.by });
     if (famInk && famInk.toLowerCase() !== ink.toLowerCase()) svg = svg.split(famInk).join(ink);
-    return `<span class="seal seal-travel relSealFace" style="--rot:-6deg;--sz:${sz}px" data-at="${+r.at || 0}" tabindex="0" role="img" aria-label="${esc(title)}">${svg}</span>`;
+    return `<span class="seal seal-travel stFace" style="--rot:-6deg;--sz:${sz}px" data-at="${+r.at || 0}" tabindex="0" role="img" aria-label="${esc(title)}">${svg}</span>`;
   }
   /** One worded seal (the Release Hold seal's layout): the face, the kind's label, who and when, in the kind's ink. */
   function worded(r, size) {
     const O = root.Orders;
     if (r.kind === "release" && O && O.releaseSealHtml && !size) return O.releaseSealHtml({ how: "releaseHold", at: r.at, by: r.by, id: r.id });   // (the existing look, exactly)
-    const k = spec(r.kind), ink = k ? k.ink : NEUTRAL, label = labelOf(r), by = r.by || "someone", when = whenOf(r.at);
-    return `<span class="relSeal sealTravelSeal" data-testid="travel-seal" data-seal-kind="${esc(r.kind)}" data-seal-at="${+r.at}" style="--relOrange:${ink};border-color:${ink}61;background:${ink}12${size ? `;--seal-fit:${+size}px` : ""}" title="${esc(`${label} by ${by} · ${when}`)}">${faceOf(r, size)}<span class="relSealWords"><b>${esc(label)}</b><span class="relSealBy">by ${esc(by)}</span><span class="relSealAt">${esc(when)}</span></span></span>`;
+    const ink = inkOf(r), label = labelOf(r), by = r.by || "someone", when = whenOf(r.at);
+    return `<span class="sealTravelSeal" data-testid="travel-seal" data-seal-kind="${esc(r.kind)}" data-seal-at="${+r.at}" style="--stInk:${ink};border-color:${ink}61;background:${ink}12${size ? `;--seal-fit:${+size}px` : ""}" title="${esc(`${label} by ${by} · ${when}`)}">${faceOf(r, size)}<span class="stWords"><b>${esc(label)}</b><span class="stBy">by ${esc(by)}</span><span class="stAt">${esc(when)}</span></span></span>`;
   }
   function html(records, opts) {
     opts = opts || {}; const S = root.Seal; if (!S) return "";
@@ -121,10 +128,10 @@
   }
   const sig = records => (records || []).map(r => r.kind + ":" + r.at + ":" + r.by + ":" + (r.n || 0) + ":" + (r.label || "")).join("|");
 
-  // (SEALTRAVEL: the strip's own few rules; the worded seal is the Release Hold seal's .relSeal, coloured by its kind)
+  // (SEALTRAVEL: the strip's own few rules; the worded seal has the Release Hold seal's layout (.relSeal), coloured by its kind, under its own class so nothing that looks for the Release Hold seal takes it for one)
   try {
     const st = root.document.createElement("style"); st.id = "sealTravelCss";
-    st.textContent = ".sealTravel{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0;max-width:100%}.sealTravel>.relSeal{margin:0}.sealTravelSeal>.seal{flex:0 0 var(--seal-fit,48px);width:var(--seal-fit,48px);height:var(--seal-fit,48px)}.sealTravelSlot{margin:6px 0 0;flex:1 0 100%;min-width:0}";
+    st.textContent = ".sealTravel{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0;max-width:100%}.sealTravelSlot{margin:6px 0 0;flex:1 0 100%;min-width:0}.sealTravelSeal{--stInk:#5f625c;display:inline-flex;align-items:center;gap:7px;flex:0 1 auto;max-width:100%;min-width:0;margin:0;padding:4px 8px 4px 4px;border:1px solid;border-radius:9px;color:var(--stInk);box-sizing:border-box}.sealTravelSeal>.seal{flex:0 0 var(--seal-fit,48px);width:var(--seal-fit,48px);height:var(--seal-fit,48px);opacity:1}.stWords{display:flex;flex-direction:column;gap:0;min-width:0;line-height:1.25;font:8px var(--sans)}.stWords b{font-size:9.5px;font-weight:800;letter-spacing:.02em;color:var(--stInk);overflow-wrap:anywhere}.stWords .stBy{font-weight:600;color:var(--ink,#222);overflow-wrap:anywhere}.stWords .stAt{color:var(--ink70,#555)}";
     if (!root.document.getElementById(st.id)) root.document.head.appendChild(st);
   } catch (_) {}
 

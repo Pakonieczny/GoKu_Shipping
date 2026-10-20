@@ -99,7 +99,7 @@ const CANCEL_REC = { orderId: CXA, by: 'Name Two', why: 'Customer asked', at: T0
     }
     // 4 · a kind the page does not know: neutral ink, its stored label
     const odd = await page.evaluate(() => { const h = CNSealTravel.html([{ kind: 'giftWrap', how: 'giftWrap', at: Date.now() - 60000, by: 'Name Five', label: 'Gift Wrapped' }]); const d = document.createElement('div'); d.innerHTML = h; const s = d.querySelector('[data-seal-kind="giftWrap"]'); return s && { label: s.querySelector('b').textContent, style: s.getAttribute('style'), svg: !!s.querySelector('svg') }; });
-    ok(odd && odd.label === 'Gift Wrapped' && /--relOrange:#5f625c/.test(odd.style) && odd.svg, 'an unknown kind is drawn with its stored label in the neutral ink', JSON.stringify(odd));
+    ok(odd && odd.label === 'Gift Wrapped' && /--stInk:#5f625c/.test(odd.style) && odd.svg, 'an unknown kind is drawn with its stored label in the neutral ink', JSON.stringify(odd));
     ok(errors.length === 0, 'no page errors', JSON.stringify(errors));
   } catch (e) { fails.push('the test stopped: ' + (e && e.stack || e)); console.log('  FAIL ' + (e && e.stack || e)); }
   finally { await browser.close(); srv.close(); }
