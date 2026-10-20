@@ -2383,10 +2383,15 @@ const Orders = window.Orders = (() => {
     return best;
   }
   const relWhen = t => new Date(+t).toLocaleString("en-US", { timeZone: "America/Toronto", month: "short", day: "numeric", year: "numeric" }) + " · " + new Date(+t).toLocaleTimeString("en-US", { timeZone: "America/Toronto", hour: "numeric", minute: "2-digit" });
-  /** (RELEASE, Paul 19 Oct 2026) The Orders card's Release hold title: what the press does, and the note of what it sets aside ("Releasing anyway: the option “Style: Box” is not mapped"). The button is never greyed for a question. */
-  function relHoldTitle(rows) {
-    let note = ""; try { const RR = window.ReviewRelease; if (RR && RR.asideOf && RR.asideText) note = RR.asideText(RR.asideOf(rows)); } catch (_) { /* the plain title */ }
-    return esc(`Release the hold: the order goes back in line first and the run places it on the next sheet that fits, whatever is still open.${note ? " " + note : ""}`.slice(0, 600));
+  /* (RHSAME, Paul 20 Oct 2026: "These two Release Hold buttons seem to do something very different, which is very confusing. This Release Hold button [Orders tab] needs to be the exact same as the one in the Review tab ...
+     the same orange as the seal colour for this button"): the Orders card's Release Hold IS the Review card's. The card's markup holds a placeholder (relHoldHtml); wireRelHold swaps it for the button ReviewRelease.orderButton
+     builds: the same element the Review card gets (releaseButton: the label, btn relHoldBtn sm, the title from ReviewRelease.of, the spinner), pressing the same release (ReviewRelease.press: the name, OrderHold.release,
+     the toast, the seal kept only when the order really left its hold, RELNOSEAL). Was: a white outline "Release hold" that ran HoldUI.release (a plan check, the hold film, the saved name), a second way to release. */
+  const relHoldHtml = () => `<button class="btn relHoldBtn sm relHold" type="button" data-rel-hold="1">Release Hold</button>`;
+  function wireRelHold(node, rid) {
+    const rh = node.querySelector(".relHold:not([data-gate])"), RR = window.ReviewRelease; if (!rh) return;
+    try { if (RR && RR.orderButton) { const b = RR.orderButton(rid, node); b.classList.add("relHold"); rh.replaceWith(b); return; } } catch (e) { console.warn("Release Hold", e); }
+    rh.onclick = e => { e.stopPropagation(); toast("Release Hold is not ready on this page yet: reload the page and try again.", "bad", 6000); };
   }
   /** The seal on the Orders card, large (72 px), with its words beside it: "Release Hold", by whom, the date and the time (Toronto time, as on the seal). "" when the order was never released with it. */
   function releaseSealHtml(st) {
@@ -2449,7 +2454,7 @@ const Orders = window.Orders = (() => {
       + `<div class="purchaseSummary">${purchaseMarkup(v.r)}</div>${lineSealsHtml(v.r, v.e, null)}<div class="rowActions">${v.shown ? `<span class="ost ${v.shown[0]}">${esc(v.shown[1])}</span>` : ""}${v.fc[1] && !v.e ? `<span class="ost ${v.fc[0]} engFaces" title="${v.fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${v.fc[1]}</span>` : ""}${v.seals}<span class="rowFacts">Qty ${qtyOf(v)}${earPairRow(v.r) ? pairFactOf(qtyOf(v)) : O.countedFact(v.r)}</span>${v.why ? `<span class="rowExcerpt reviewReason" title="${esc(v.why)}">${esc(v.why)}</span>` : ""}${v.gateBtn}</div></div>`;
     node.innerHTML = `<div class="ogHead"><div class="engravingIdentity ogId"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(rid)}</b><span class="groupScope">${OG.countWord(total)}</span></div></div>`
       + (said ? `<div class="engravingIdentity ogSaid"><span class="purchaseLabel">${label(V[0])}</span><span class="rowExcerpt" title="${esc(text(V[0]))}">${esc(text(V[0]))}</span></div>` : "")
-      + `<div class="rowActions ogActs">${team ? TeamMail.mark(first) : ""}${mail && mail !== "null" ? CustomerMail.badge(rid) : ""}<span class="rowFacts"><span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${held.length ? `<button class="btn ghost sm relHold" type="button" title="${relHoldTitle(held.map(v => v.r))}">Release hold</button>` : ""}${relSlotHtml(rel)}</div></div>`
+      + `<div class="rowActions ogActs">${team ? TeamMail.mark(first) : ""}${mail && mail !== "null" ? CustomerMail.badge(rid) : ""}<span class="rowFacts"><span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${held.length ? relHoldHtml() : ""}${relSlotHtml(rel)}</div></div>`
       + `<div class="ogPieces">${V.map(piece).join("")}</div>`;
     const number = node.querySelector(".onum"); if (number) { const time = el("span", "orderTime"); time.textContent = date.time; time.title = date.label; number.appendChild(time); }
     // a press on a piece opens the order window on THAT piece (picked in "Its pieces"); a press on the top, the order
@@ -2460,7 +2465,7 @@ const Orders = window.Orders = (() => {
       wireGate(n);
     }
     node.onclick = e => { if (e.target.closest("button,[role=button],a")) return; OrderWin.open(first.key, { from: node }); };
-    { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); const back = () => { for (const v of held) Review.repool(v.r); render(); }; if (window.HoldUI && HoldUI.canRelease()) { HoldUI.release(rid, { button: rh }).then(x => { if (x && x.used === false) back(); }); return; } back(); }; }
+    if (held.length) wireRelHold(node, rid);   // (RHSAME: the Review card's own Release Hold, its press and its seal)
     if (cancelable) { try { CancelUI.mount(node, (held.find(v => v.r.hold) || held[0]).r); } catch (err) { console.warn("Cancel Order button", err); } }
     if (cached?.node) { for (const r of rows) { const pair = pairIn(cached.node, r.key), n = [...node.querySelectorAll(".ogPiece")].find(x => x.dataset.key === r.key); if (pair && n) env.pairs.push([n, pair]); } env.rebuilt.push(node); }
     orderNodes.delete(first.key); orderNodes.set(first.key, { stamp, node });
@@ -2525,13 +2530,13 @@ const Orders = window.Orders = (() => {
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
       const identity=lineIdHtml(r, e, { num: true, label: wordsOf(sp) ? "Personalisation" : "Item", text: wordsOf(sp) || r.line.title || "No title", where });
-      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div>${lineSealsHtml(r, e, null)}<div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}${shown ? `<span class="ost ${shown[0]}">${esc(shown[1])}</span>` : ""}${fc[1] && !e ? `<span class="ost ${fc[0]} engFaces" title="${fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${fc[1]}</span>` : ""}${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? pairFactOf(qty) : O.countedFact(r)} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? `<button class="btn ghost sm relHold" type="button" title="${relHoldTitle([r])}">Release hold</button>` : ''}${gateBtn}${relSlotHtml(rel)}</div>`;
+      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div>${lineSealsHtml(r, e, null)}<div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}${shown ? `<span class="ost ${shown[0]}">${esc(shown[1])}</span>` : ""}${fc[1] && !e ? `<span class="ost ${fc[0]} engFaces" title="${fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${fc[1]}</span>` : ""}${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? pairFactOf(qty) : O.countedFact(r)} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? relHoldHtml() : ''}${gateBtn}${relSlotHtml(rel)}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
       // (the order view grows out of the row that was clicked)
       node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key, { from: node }); };
       node.onkeydown=e=>{if(e.target===node && (e.key==="Enter" || e.key===" ")){e.preventDefault();OrderWin.open(r.key, { from: node });}};
-      // Release hold: the line goes back in line; drawn at once, so it is seen leaving On hold for Open Orders
-      { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); if (window.HoldUI && HoldUI.canRelease()) { HoldUI.release(String(r.order.receiptId), { button: rh }).then(x => { if (x && x.used === false) { Review.repool(r); render(); } }); return; } Review.repool(r); render(); }; }
+      // Release Hold: the Review card's own button and press (RHSAME, Paul 20 Oct 2026: one release, the same on both tabs)
+      if (held) wireRelHold(node, String(r.order.receiptId));
       wireGate(node);
       // Cancel Order beside Release hold, on the On hold pile only (charm-nest-cancel-ui.js; the stamp above carries the pile)
       if (held && OV.pile === "hold" && window.CancelUI) { try { CancelUI.mount(node, r); } catch (err) { console.warn("Cancel Order button", err); } }
@@ -16596,6 +16601,8 @@ const Review = window.Review = (() => {
     finally {
       if (out.lifted.size) { keepRelease(seal, r.how, out); await saveLinesNow(); try { Orders.render(); } catch (_) {} }
       else if (window.Motion) Motion.expect(mk, { ttl: 1 });
+      // (RHSAME, Paul 20 Oct 2026: pressed on either tab, both show it at once: the Review row leaves (or stays, when nothing was released), the Orders card draws its seal, an open order window follows)
+      try { syncOrderItems(); render(); Orders.render(); if (window.OrderWin && OrderWin.isOpen()) OrderWin.paint(); } catch (_) { /* drawn again at the next update */ }
     }
   }
   async function releaseRun(live, r, who, rows, rids, mineOf, seal, out) {
@@ -16655,11 +16662,11 @@ const Review = window.Review = (() => {
     for (const rr of lines) await repool(rr);
   }
   /** RELHOLD: the one Release Hold button for a Review item (it: the Review card's item; ReviewRelease.button draws the same for the order window's piece row), as a button element: gold when it can be
-   *  pressed, with what it does as its title; greyed (aria-disabled, so it keeps the keyboard and a press says why) with the one plain reason as its title and aria text when it cannot. data-rel-hold is
+   *  pressed (RHSAME, Paul 20 Oct 2026: the orange of its seal, .btn.relHoldBtn, the same on the Orders card; was gold), with what it does as its title; greyed (aria-disabled, so it keeps the keyboard and a press says why) with the one plain reason as its title and aria text when it cannot. data-rel-hold is
    *  where the press's seal is stamped. A press: the name, a spinner ("Releasing…"), releaseToQueue, and the button as it was if the card is still there. */
   function releaseButton(it, node, sz) {
     const r = releaseOf(it), on = !!r.how;
-    const b = document.createElement("button"); b.type = "button"; b.className = `btn ${on ? "gold" : "ghost"} ${sz || "sm"}`; b.dataset.rvRelease = r.how || "no"; b.dataset.relHold = "1"; b.textContent = RELEASE_LABEL;
+    const b = document.createElement("button"); b.type = "button"; b.className = `btn ${on ? "relHoldBtn" : "ghost"} ${sz || "sm"}`; b.dataset.rvRelease = r.how || "no"; b.dataset.relHold = "1"; b.textContent = RELEASE_LABEL;
     b.title = r.title || r.why; b.setAttribute("aria-label", on ? `${RELEASE_LABEL}: ${r.title}` : `${RELEASE_LABEL} (not possible yet): ${r.why}`);
     const rest = () => { if (on) b.removeAttribute("aria-disabled"); else b.setAttribute("aria-disabled", "true"); };
     rest();
@@ -16699,10 +16706,22 @@ const Review = window.Review = (() => {
   function releaseButtonHtml(x, sz) {
     const src = x && x.src; if (!src) return "";
     const r = releaseOf(src); if (!r.how && r.why === "This order is no longer in this run.") return "";
-    return `<button type="button" class="btn ${r.how ? "gold" : "ghost"} ${sz || "xs"}" data-rv-release="${esc(r.how || "no")}" data-rel-hold="1"${r.how ? "" : ' aria-disabled="true"'} title="${esc(r.title || r.why)}" aria-label="${esc(r.how ? `${RELEASE_LABEL}: ${r.title}` : `${RELEASE_LABEL} (not possible yet): ${r.why}`)}">${RELEASE_LABEL}</button>`;
+    return `<button type="button" class="btn ${r.how ? "relHoldBtn" : "ghost"} ${sz || "xs"}" data-rv-release="${esc(r.how || "no")}" data-rel-hold="1"${r.how ? "" : ' aria-disabled="true"'} title="${esc(r.title || r.why)}" aria-label="${esc(r.how ? `${RELEASE_LABEL}: ${r.title}` : `${RELEASE_LABEL} (not possible yet): ${r.why}`)}">${RELEASE_LABEL}</button>`;
   }
   function wireReleaseButton(old, x, sz) { if (!old || !x || !x.src) return; const { b } = releaseButton(x.src, null, sz || "xs"); old.replaceWith(b); }
-  window.ReviewRelease = { of: releaseOf, press: releaseToQueue, decorate: decorateRelease, unblock: unblockSku, label: RELEASE_LABEL, buttonHtml: releaseButtonHtml, wire: wireReleaseButton, asideOf, setAside, asideText, keep: keepReleased };
+  /** (RHSAME, Paul 20 Oct 2026: "This Release Hold button [Orders tab] needs to be the exact same as the one in the Review tab") The Review item an Orders card's Release Hold presses for order rid: the open Review card of
+   *  that order alone whose Release Hold can be pressed (the card the Review tab shows it on, the same filter openActions reads), else the order's own "Held order" item (key "held:<rid>", as the run adds it). A card that
+   *  also holds other orders is not taken: the Orders card's press releases its own order only. */
+  function releaseItemOf(rid) {
+    rid = String(rid);
+    const ridsOf = it => it.kind === "heldOrder" && it.rid ? [String(it.rid)] : [...new Set((rowsOf(it) || []).filter(r => r && r.order).map(r => String(r.order.receiptId)))];
+    const card = items().find(it => it && !it.done && !it.decided && !it.settled && !it.info && !it.nested && it.kind !== "customOrder" && it.kind !== "placement" && !/^eng:/.test(String(it.key || ""))
+      && (it.kind !== "heldOrder" || String(it.rid) === rid) && (rs => rs.length === 1 && rs[0] === rid)(ridsOf(it)) && !!releaseOf(it).how);
+    return card || { kind: "heldOrder", key: "held:" + rid, rid };
+  }
+  /** (RHSAME) The Orders card's Release Hold for order rid: the very button the Review card gets (releaseButton), on that card's item (releaseItemOf). node: the Orders card (busy while it releases). */
+  function orderReleaseButton(rid, node) { return releaseButton(releaseItemOf(rid), node, "sm").b; }
+  window.ReviewRelease = { of: releaseOf, press: releaseToQueue, itemOf: releaseItemOf, orderButton: orderReleaseButton, decorate: decorateRelease, unblock: unblockSku, label: RELEASE_LABEL, buttonHtml: releaseButtonHtml, wire: wireReleaseButton, asideOf, setAside, asideText, keep: keepReleased };
   function card(it) {
     const c = el("div", "rvItem hoverItem"); c.dataset.kind = it.kind; if (it.row) { c.dataset.row = it.row.key; c.dataset.rid = String(it.row.order.receiptId); }
     const r = it.row, sp = r && r.spec, p = it.problem || {};

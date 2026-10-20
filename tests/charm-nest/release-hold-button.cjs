@@ -2,7 +2,7 @@
 // overwriting the hold. Sometimes the user may choose to do nothing, like in the case of the attached listing example where there's an empty chain that added to the order and the user technically doesn't have to do anything to
 // release this order." (order 4203691345 TEST_@: option "Style (See photo #2): Style 8 • 9mm Disc" not mapped, no vector; order 4201047416 GOLD BRACELET CHAIN_6190: option "Style: Box" not mapped, no vector.)
 // The real sorter in headless Chromium over the repo's fake site (bridge-server.cjs: the real charmNest* handlers over an in-memory store). Every name is made up. Nothing leaves the machine.
-//   1  a line that still asks an option question: Release Hold is ENABLED (gold, no aria-disabled, focusable) on the Review card and on the order window's piece row, the same words, the old blocker sentence a note in its title
+//   1  a line that still asks an option question: Release Hold is ENABLED (the seal orange, RHSAME 20 Oct 2026; was gold, no aria-disabled, focusable) on the Review card and on the order window's piece row, the same words, the old blocker sentence a note in its title
 //      ("Releasing anyway: the option ... is not mapped"); the empty chain says there is nothing to place
 //   2  the press on a line WITH a design: no refusal, the question is set aside for that line (row.releaseAnyway, in the run's line record and back from it), the line is made up and cut as it reads (pooled), the card leaves Review,
 //      the RELEASE HOLD seal is stamped, the timeline's "released" step carries the seal and what was set aside; the cloud's Review document keeps who and when
@@ -86,7 +86,7 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     await until(() => page.$(rowSel(NECK) + ' [data-rv-release]'), 20000, 'Release Hold on the necklace row');
     await until(() => page.$(rowSel(CHAIN) + ' [data-rv-release]'), 20000, 'Release Hold on the chain row');
     const n1 = await look(rowSel(NECK)), c1 = await look(rowSel(CHAIN));
-    check(n1 && n1.text === 'Release Hold' && n1.how === 'anyway' && n1.disabled === null && !n1.dis && /\bgold\b/.test(n1.cls) && !/ghost/.test(n1.cls) && n1.pe !== 'none' && n1.cursor !== 'not-allowed' && n1.tab >= 0, `1 · the option question does not grey Release Hold: enabled, gold, focusable (${JSON.stringify(n1)})`);
+    check(n1 && n1.text === 'Release Hold' && n1.how === 'anyway' && n1.disabled === null && !n1.dis && /\brelHoldBtn\b/.test(n1.cls) && !/ghost/.test(n1.cls) && n1.pe !== 'none' && n1.cursor !== 'not-allowed' && n1.tab >= 0, `1 · the option question does not grey Release Hold: enabled, seal orange (RHSAME), focusable (${JSON.stringify(n1)})`);
     check(/Releasing anyway: the option “Style \(See photo #2\): Style 8 • 9mm Disc” is not mapped/.test(n1.title) && !/not answered yet: say what it decides first/.test(n1.title), `1 · the old blocker is a note on its title: ${n1 && n1.title}`);
     check(c1 && c1.how === 'anyway' && c1.disabled === null && /Releasing anyway: the option “Style: Box” is not mapped/.test(c1.title) && /nothing to place/.test(c1.title) && /no design in any master file/.test(c1.title), `1 · the empty chain: enabled, and it says there is nothing to place (${c1 && c1.title}) master=${JSON.stringify(await page.evaluate(() => [B.master.entries.size, B.master.loadedAt > 0, !!B.master.loading, !!Master.entryFor('COMET_9427')]))}`);
     await shot('01-review');
@@ -94,7 +94,7 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     await page.evaluate(k => OrderWin.open(k), keyOf(CHAIN));
     await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owPcSum [data-rel-hold]'), keyOf(CHAIN), { timeout: 20000 });
     const w1 = await page.evaluate(() => { const b = document.querySelector('#owPcSum [data-rel-hold]'); return b && { how: b.dataset.rvRelease, disabled: b.getAttribute('aria-disabled'), cls: b.className, title: b.title, text: b.textContent.trim() }; });
-    check(w1 && w1.text === 'Release Hold' && w1.how === 'anyway' && w1.disabled === null && /\bgold\b/.test(w1.cls) && w1.title === c1.title, `7 · the order window's piece row agrees with the Review card: same decision, same title (${JSON.stringify(w1)})`);
+    check(w1 && w1.text === 'Release Hold' && w1.how === 'anyway' && w1.disabled === null && /\brelHoldBtn\b/.test(w1.cls) && w1.title === c1.title, `7 · the order window's piece row agrees with the Review card: same decision, same title (${JSON.stringify(w1)})`);
     await shot('01-window');
     await page.evaluate(() => OrderWin.close());
     await page.waitForFunction(() => !OrderWin.isOpen(), null, { timeout: 10000 });
