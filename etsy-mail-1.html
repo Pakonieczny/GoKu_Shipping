@@ -144,6 +144,10 @@
     .em-link-alarm { cursor: pointer; }
     .em-link-alarm.warn { background: #3a2f17; border-color: #8a6a1f; color: #ffe6b0; }
     .em-link-alarm.warn .em-scrape-dot { background: #e0a526; }
+    /* "Reconnect & retry all" next to the link chip (LINKRECOVER) */
+    .em-link-fix { font: 600 12px inherit; padding: 3px 10px; border-radius: 12px; border: 1px solid #5a7d8a; background: #20343b; color: #d8eef5; cursor: pointer; margin-left: 4px; }
+    .em-link-fix[hidden] { display: none; }
+    .em-link-fix:disabled { opacity: .7; cursor: default; }
     .em-topbar-floating-toggle.em-alarm-link::after {
       content: ""; position: absolute; top: 3px; right: 3px;
       width: 7px; height: 7px; border-radius: 50%; background: #e74c3c;
@@ -6457,6 +6461,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       <span class="em-scrape-alarm em-link-alarm" id="emLinkAlarm" role="status" hidden>
         <span class="em-scrape-dot"></span><span id="emLinkAlarmLabel">Email link</span>
       </span>
+      <button type="button" class="em-link-fix" id="emLinkFix" hidden title="Re-tests every part of the email link, frees anything stuck, sends every message that never went (never one that may have gone), pulls the missed emails and re-reads what was not read">Reconnect &amp; retry all</button>
       <span id="emBackendStatus" title="Backend connection">
         <span class="em-status-dot" id="emBackendDot"></span>
         <span id="emBackendLabel" style="font-size:12px;margin-left:4px;">Backend: checking…</span>
@@ -12322,6 +12327,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           if (st) { label.textContent = "Email link: " + st.word; el.title = st.text; }
         }
         if (toggle) { toggle.classList.toggle("em-alarm-link", !!st); toggle.classList.toggle("warn", !!st && st.tone === "warn"); }
+        const fix = document.getElementById("emLinkFix");
+        if (fix) fix.hidden = !st && !fixing;
         document.title = st ? "\u26a0 " + BASE_TITLE : BASE_TITLE;
         if (next !== sig) { sig = next; if (typeof smartScheduleRender === "function") smartScheduleRender(); }
       }
@@ -12344,6 +12351,46 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       }
       const chip = document.getElementById("emLinkAlarm");
       if (chip) chip.addEventListener("click", () => { if (cur) toast(cur.text, 15000); poll(true); });
+
+      /* LINKRECOVER (Paul, 20 Oct 2026): a red line is never dismissed, it is repaired. "Reconnect & retry all" starts the server's
+         recovery run (etsyMailLinkRecover; the work and its rules are in _etsyMailLinkRecover.js), follows it every 3 seconds and says
+         how it went. The run is shared with the Charm Sorter and the link monitor's own automatic run: a press while one runs follows it. */
+      let fixing = false;
+      const fixBtn = document.getElementById("emLinkFix");
+      async function followRecover(t0) {
+        while (Date.now() - t0 < 8 * 60000) {
+          await new Promise(r => setTimeout(r, 3000));
+          let st = null;
+          try { st = (await api("etsyMailLinkRecover", { method: "POST", body: { op: "status" } })).status; } catch (_) { continue; }
+          if (!st || st.state === "running") {
+            const last = st && st.steps && st.steps.length ? st.steps[st.steps.length - 1] : null;
+            if (fixBtn && last) fixBtn.title = last.label + ": " + last.text;
+            continue;
+          }
+          return st;
+        }
+        return { state: "died" };
+      }
+      if (fixBtn) fixBtn.addEventListener("click", async () => {
+        if (fixing) return;
+        fixing = true; fixBtn.disabled = true; fixBtn.textContent = "Reconnecting…";
+        try {
+          let by = "the inbox";
+          try { by = (typeof getEmployeeName === "function" && getEmployeeName()) || by; } catch (_) {}
+          const r = await api("etsyMailLinkRecover", { method: "POST", body: { op: "start", by } });
+          toast(r && r.joined ? "A recovery is already running; following it." : "Reconnecting and retrying everything. This takes about two minutes.", 6000);
+          const st = await followRecover(Date.now());
+          const ok = st.after && st.after.level === "ok";
+          const steps = (st.steps || []).filter(x => x.level === "warn" || x.level === "down").map(x => x.label + ": " + x.text);
+          toast(st.state === "done" ? (ok ? "The email link works again." : (st.summary || "Some parts are still catching up.")) + (steps.length && !ok ? " (" + steps.join(" · ") + ")" : "")
+            : st.state === "died" ? "The recovery stopped before it finished. Press Reconnect & retry all again." : (st.error || "The recovery could not run."), ok ? 8000 : 30000);
+        } catch (e) {
+          toast("Could not start the recovery: " + ((e && e.message) || "no answer") + ". Try again in a minute.", 12000);
+        } finally {
+          fixing = false; fixBtn.disabled = false; fixBtn.textContent = "Reconnect & retry all"; fixBtn.title = "Re-tests every part of the email link, frees anything stuck, sends every message that never went (never one that may have gone), pulls the missed emails and re-reads what was not read";
+          poll(true);
+        }
+      });
       if (typeof onTabBecameVisible === "function") onTabBecameVisible(() => { if (isSignedInShown()) poll(); });
       setTimeout(poll, 5000);
       visibleInterval(poll, POLL_MS);

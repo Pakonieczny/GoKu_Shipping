@@ -10,9 +10,12 @@
  *       with the time the trouble began (downSinceMs / incidentId) so the apps can alert once per incident.
  *    3. Once a night, the consistency check (_etsyMailLinkConsistency.js) when it exists in this build; and on every run, a fresh
  *       look at the conversations that check found short (its re-reads, and the notice clearing by itself when the counts agree).
+ *    4. When sending, reading, noticing or catching up is failing, starts the recovery run (_etsyMailLinkRecover.js) by itself,
+ *       with a growing pause while the same problem lasts.
  *  A reader treats a judgement older than 12 minutes as "the monitor stopped" (amber), so this function failing is itself shown.
  *
- *  Cost: about 12 reads and 2 writes a run (about 0.12 M operations a month). No Etsy call, no AI, nothing sent to a customer.
+ *  Cost: about 13 reads and 2 writes a run (about 0.12 M operations a month). No Etsy call, no AI, nothing sent to a customer
+ *  (a recovery it starts runs in its own background function).
  *  Scheduled functions answer 403 to a direct call from outside; a person can run it with the extension secret.
  */
 "use strict";
@@ -32,7 +35,7 @@ function scheduledByNetlify(event) {
 }
 const json = (statusCode, body) => ({ statusCode, headers: CORS, body: JSON.stringify(body) });
 
-async function run({ now = Date.now(), reconcile } = {}) {
+async function run({ now = Date.now(), reconcile, recover } = {}) {
   const out = { catchUp: null, level: null, consistency: null };
   let ev = await LinkHealth.gather(db, { self: true });
 
@@ -63,6 +66,19 @@ async function run({ now = Date.now(), reconcile } = {}) {
   // 2. judge and publish (whether the inbox's shared secret is configured on the server goes with it: booleans only, never the value)
   const { doc } = await LinkHealth.publish(db, now, { ev, auth: { secretSet: !!process.env.ETSYMAIL_EXTENSION_SECRET, context: String(process.env.CONTEXT || "").slice(0, 20) } });
   out.level = doc.level; out.short = doc.short;
+
+  // 4. LINKRECOVER (Paul, 20 Oct 2026: "the system does not gracefully/automatically recover"): when sending, reading, noticing or
+  //    catching up is failing (not merely waiting for an away helper), the same recovery a person can start runs by itself: once per
+  //    problem, then again after 10, 20, 40 ... minutes (at most every 2 hours) while it lasts. See _etsyMailLinkRecover.js.
+  try {
+    const Recover = recover || require("./_etsyMailLinkRecover");
+    const rs = await db.collection("EtsyMail_Config").doc("linkRecover").get();
+    const d = Recover.shouldAuto(doc, rs.exists ? rs.data() : null, now);
+    if (d.go) {
+      const r = await Recover.request(db, { auto: true, by: "the link monitor", incident: d.incident, n: d.n, now });
+      out.recover = { started: !!r.started, why: d.why, kicked: r.kicked ? !!r.kicked.ok : null };
+    } else out.recover = { started: false, why: d.why };
+  } catch (e) { out.recover = { error: String(e && e.message).slice(0, 120) }; console.warn("linkWatchdog recover:", e && e.message); }
   return out;
 }
 

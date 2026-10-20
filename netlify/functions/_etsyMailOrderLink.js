@@ -1609,6 +1609,22 @@ async function linkPutAway(station, body = {}) {
   return { ok: true, n: r.n, health: pub.res, link: LinkHealth.summaryOf(pub.doc) };
 }
 
+/** LINKRECOVER (Paul, 20 Oct 2026): "Reconnect & retry all". A red line is never hidden: it is repaired. Starts the one recovery run
+ *  (or joins the one going) and answers with its progress; the work and its rules are in _etsyMailLinkRecover.js. */
+async function linkRecover(station) {
+  const R = require("./_etsyMailLinkRecover");
+  const r = await R.request(db, { by: (station && station.name) || "the Charm Sorter", auto: false });
+  _health = null; _recheck = { at: 0, value: null };
+  return { started: !!r.started, joined: !r.started, status: await R.status(db) };
+}
+/** The run's progress; once it has finished, the fresh judgement goes with it so the light follows at once. */
+async function linkRecoverStatus() {
+  const st = await require("./_etsyMailLinkRecover").status(db);
+  if (st.state === "running") return { status: st };
+  _health = null;
+  return { status: st, health: await health({ fresh: true }) };
+}
+
 // ─── testing the line with an Etsy account of our own ───────────────────
 
 /* "Send a test" goes through every real part (this server, the inbox, the Etsy helper, Etsy, the Gmail watcher and the
@@ -1953,7 +1969,7 @@ module.exports = {
   cancel: withFlush(cancel), markCopied: withFlush(markCopied), markSent: withFlush(markSent), read: withFlush(read),
   onQueueChange: withFlush(onQueueChange),
   setStatus: withFlush(setStatus), setLang: withFlush(setLang), linkUrl: withFlush(linkUrl),
-  simulateReply: withFlush(simulateReply), translate, health, linkRecheck, linkDismiss, linkPutAway, historyInfo, history,
+  simulateReply: withFlush(simulateReply), translate, health, linkRecheck, linkDismiss, linkPutAway, linkRecover, linkRecoverStatus, historyInfo, history,
   testInfo: withFlush(testInfo), testStart: withFlush(testStart), testCancel,
   // exposed for tests
   _internal: { foldMessages, sameText, normText, summary, cleanText, cleanId, applyPatch, friendlyFailure, parkedCopy, isDelete, SB, sbQueueView, resetRecheck: () => { _recheck = { at: 0, value: null }; } }

@@ -96,6 +96,8 @@ exports.handler = async (event) => {
       case "link_recheck": return json(200, await link.linkRecheck(station, body));
       case "link_dismiss": return json(200, await link.linkDismiss(station, body));
       case "link_putaway": return json(200, await link.linkPutAway(station, body));
+      case "link_recover": return json(200, await link.linkRecover(station));
+      case "link_recover_status": return json(200, await link.linkRecoverStatus());
       case "history_info": return json(200, await link.historyInfo(body));
       case "history":    return json(200, await link.history(body));
       case "test_info":  return json(200, await link.testInfo());

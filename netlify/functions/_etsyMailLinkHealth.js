@@ -147,7 +147,9 @@ function plainError(raw) {
  *   global, watcher, gmail, helper, scrapeHealth, mirror, bell, monitor, consistency: document data or null (null = missing)
  *   readOk: { [name]: boolean }            (false: the read itself failed; undefined counts as true)
  *   queuedDrafts: [ms]|null, scrapeJobs: [ms]|null    (ages come from these times; null: could not be read)
- *   queue: optional { queued, claimed, sending, failed, needsAttention, oldestQueuedAtMs, helperSeenAtMs, stalled }   (MAILQUEUE's summary())
+ *   queue: optional { queued, claimed, sending, failed, needsAttention, oldestQueuedAtMs, helperSeenAtMs, stalled, misses }   (MAILQUEUE's summary())
+ *   recover: optional { state, startedAtMs, finishedAtMs, auto, by, summary, error }   (the last recovery run, _etsyMailLinkRecover.js)
+ *   setAsideJobs: [ms]   (read jobs the reaper set aside because the helper stopped on them every time)
  *   self: true when the watchdog itself is judging (it does not judge its own stamp)
  * }
  */
@@ -192,12 +194,14 @@ function evaluate(ev, now) {
   // dead letters of the old "helper offline" kind (nothing was sent) are put back in the queue by the upkeep: not a job for a person
   const nDead = q ? Math.max(0, (q.failed || 0) + (q.needsAttention || 0) - (q.reviving || 0)) : 0;
   const upkeepLate = !!(q && q.maintAtMs && now - q.maintAtMs > T.upkeepLate);
+  // (LINKRECOVER) the helper is heard but keeps leaving the message it is offered: only its own computer can fix that
+  const refused = q && q.misses >= 3 ? ` The helper has been offered it ${q.misses} times and did not take it: reload the Etsy extension (chrome://extensions) or restart Chrome on its computer.` : "";
   if (g.sendDisabled) add("send", "Sending", "down", "Sending is switched off in the inbox" + (g.sendDisabledReason ? ` (${clean(g.sendDisabledReason, 120)})` : "") + ". Messages wait here until it is on again.", "Sending paused", 0);
   else if (!ok("drafts") || (!drafts && !q)) add("send", "Sending", "warn", "Could not look at the messages waiting to go out.", "Sending unknown", 2);
   else if (away && nQueued > 0 && upkeepLate) add("send", "Sending", "down", `Sending is stuck: the queue has not been looked at for ${ago(now - q.maintAtMs)}, and ${nQueued} ${nQueued === 1 ? "message is" : "messages are"} waiting.`, "Sending stuck", 2);
   else if (!away && q && q.stalled) add("send", "Sending", "down", `Sending is stuck: a message has waited ${waited ? ago(waited) : "10 min"} with no progress.`, "Sending stuck", 2);
-  else if (!away && waited > T.workDown) add("send", "Sending", "down", `A message has waited ${ago(waited)} for the inbox's Etsy helper to send it.`, "Not sending", 2);
-  else if (!away && waited > T.workWarn) add("send", "Sending", "warn", `A message has waited ${ago(waited)} for the inbox's Etsy helper.`, "Sending slowly", 2);
+  else if (!away && waited > T.workDown) add("send", "Sending", "down", `A message has waited ${ago(waited)} for the inbox's Etsy helper to send it.${refused}`, "Not sending", 2);
+  else if (!away && waited > T.workWarn) add("send", "Sending", "warn", `A message has waited ${ago(waited)} for the inbox's Etsy helper.${refused}`, "Sending slowly", 2);
   else if (nDead > 0) {
     const why = [...new Set(((q && q.dead) || []).map(d => d.plain).filter(Boolean))].slice(0, 2).join(" ");
     add("send", "Sending", "warn", `${nDead} ${nDead === 1 ? "message to a customer needs" : "messages to customers need"} a person: ${nDead === 1 ? "it" : "they"} did not go out.${why ? " " + why : ""} Open the conversation to retry or send by hand, or put ${nDead === 1 ? "it" : "them"} away.`, "Messages need attention", 2, { dead: ((q && q.dead) || []).length || nDead });
@@ -224,6 +228,8 @@ function evaluate(ev, now) {
   const sh = ev.scrapeHealth || null;
   const badRun = sh && (sh.consecutiveBad || 0) >= T.pageBadRuns && typeof sh.lastBadAtMs === "number" && now - sh.lastBadAtMs < DAY;
   const lim = readLimits(now, seen != null && seen < T.helperAlive && ok("helper"));   // longer at night, while the helper is heard from
+  // read jobs the reaper set aside in the last 3 days because the helper stopped on them every time (etsyMailReapers MAX_SCRAPE_REAPS)
+  const setAside = Array.isArray(ev.setAsideJobs) ? ev.setAsideJobs.filter(t => t && now - t < 3 * DAY).length : 0;
   const waitText = `${ns}${ns >= 40 ? "+" : ""} new Etsy ${ns === 1 ? "message is" : "messages are"} waiting to be read into the inbox, the oldest for ${ago(late)}.`;
   if (badRun) {
     const signedOut = sh.lastBadReason === "Etsy signed the extension out";
@@ -237,6 +243,7 @@ function evaluate(ev, now) {
   else if (away && ns > 0) add("read", "Reading answers", "wait", `${ns}${ns >= 40 ? "+" : ""} new Etsy ${ns === 1 ? "message is" : "messages are"} waiting to be read into the inbox; the helper reads ${ns === 1 ? "it" : "them"} when it is back.`, "Answers delayed", 4);
   else if (late > lim.down) add("read", "Reading answers", "down", waitText, "Answers delayed", 4);
   else if (late > lim.warn) add("read", "Reading answers", "warn", waitText, "Answers delayed", 4);
+  else if (setAside > 0) add("read", "Reading answers", "warn", `${setAside} ${setAside === 1 ? "conversation was" : "conversations were"} set aside because the Etsy helper stopped every time it read ${setAside === 1 ? "it" : "them"}, so newer messages could be read. "Reconnect & retry all" puts ${setAside === 1 ? "it" : "them"} back.`, "Reads set aside", 4);
   else add("read", "Reading answers", "ok", ns ? `${ns} being read now` : "Nothing waiting to be read");
 
   // ── the catch-up pass (the reaper's order_links pass): runs every five minutes and re-reads anything a scrape missed ──
@@ -291,6 +298,15 @@ function evaluate(ev, now) {
     } else if (cs && cs.atMs && now - cs.atMs < T.consistencyStale) add("consistency", "Nightly check", "ok", `${cs.mismatched ? cs.mismatched + " count" + (cs.mismatched === 1 ? "" : "s") + " do not match but were re-read already; " : ""}${cs.checked || 0} conversations checked, ${ago(now - cs.atMs)} ago`);
   }
 
+  // ── the recovery ("Reconnect & retry all", by a person or by the monitor): shown, never counted (its level is wait) ──
+  const rc = ev.recover || null;
+  if (rc && rc.state === "running" && now - (rc.startedAtMs || 0) < 6 * MIN) {
+    add("recover", "Recovery", "wait", `Reconnecting and retrying everything now (started ${ago(now - rc.startedAtMs)} ago${rc.auto ? " by the link monitor" : rc.by ? " by " + clean(rc.by, 40) : ""}).`, "", 10);
+  } else if (rc && rc.finishedAtMs && now - rc.finishedAtMs < 12 * HOUR) {
+    const how = rc.auto ? "automatically" : rc.by ? "by " + clean(rc.by, 40) : "on request";
+    add("recover", "Recovery", "wait", `Last run ${ago(now - rc.finishedAtMs)} ago, ${how}: ${clean(rc.state === "failed" ? rc.error : rc.summary, 260) || "done"}`, "", 10);
+  }
+
   const worst = checks.slice().sort((a, b) => RANK[b.level] - RANK[a.level] || a.pri - b.pri)[0];
   const level = worst && RANK[worst.level] ? worst.level : "ok";
   const problem = level !== "ok";
@@ -308,7 +324,7 @@ async function gather(db, opts = {}) {
   const soft = (name, p) => p.then(v => v, e => { readOk[name] = false; console.warn("linkHealth read " + name + ":", e && e.message); return null; });
   const doc = s => s && s.exists ? s.data() : null;
   const cfg = db.collection("EtsyMail_Config"), meta = db.collection("EtsyMail_OrderLinkMeta");
-  const [global, watcher, gmail, helper, drafts, jobs, scrapeHealth, mirror, bell, monitor, consistency] = await Promise.all([
+  const [global, watcher, gmail, helper, drafts, jobs, scrapeHealth, mirror, bell, monitor, consistency, recover, setAside] = await Promise.all([
     soft("global", cfg.doc("global").get()), soft("watcher", cfg.doc("gmailWatcher").get()), soft("gmail", cfg.doc("gmailSyncState").get()),
     soft("helper", meta.doc("helper").get()),
     soft("drafts", db.collection("EtsyMail_Drafts").where("status", "==", "queued").limit(25).get()),
@@ -316,7 +332,9 @@ async function gather(db, opts = {}) {
     soft("scrapeHealth", cfg.doc("scrapeHealth").get()), soft("mirror", cfg.doc("receiptsMirrorState").get()),
     soft("bell", meta.doc("bell").get()),
     opts.self ? Promise.resolve(null) : soft("monitor", cfg.doc("linkHealth").get()),
-    soft("consistency", cfg.doc("linkConsistency").get())
+    soft("consistency", cfg.doc("linkConsistency").get()),
+    soft("recover", cfg.doc("linkRecover").get()),
+    soft("setAside", db.collection("EtsyMail_Jobs").where("status", "==", "failed").where("jobType", "==", "scrape").limit(40).get())
   ]);
   // MAILQUEUE's send queue, when this build has it (read-only; a failing read is named, never taken as "fine")
   let queue = null;
@@ -330,6 +348,8 @@ async function gather(db, opts = {}) {
     global: doc(global), watcher: doc(watcher), gmail: doc(gmail), helper: doc(helper), scrapeHealth: doc(scrapeHealth), mirror: doc(mirror),
     bell: b ? { reconcileAtMs: b.reconcileAtMs || 0, reconcileErrorAtMs: b.reconcileErrorAtMs || 0, reconcileError: b.reconcileError || "", link: b.link || null } : null,
     monitor: doc(monitor), consistency: doc(consistency), queue,
+    recover: (r => r ? { state: r.state || "", startedAtMs: r.startedAtMs || 0, finishedAtMs: r.finishedAtMs || 0, auto: !!r.auto, by: r.by || null, summary: r.summary || "", error: r.error || "" } : null)(doc(recover)),
+    setAsideJobs: setAside ? setAside.docs.map(d => d.data() || {}).filter(j => (j.reaps || 0) > 3).map(j => tsMs(j.updatedAt) || 0) : [],
     queuedDrafts: drafts ? drafts.docs.map(d => tsMs(d.data().queuedAt) || 0) : null,
     scrapeJobs: jobs ? jobs.docs.map(d => d.data()).filter(j => j.jobType === "scrape").map(j => tsMs(j.createdAt) || 0) : null,
     readOk, self: !!opts.self

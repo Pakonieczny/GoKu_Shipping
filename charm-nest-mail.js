@@ -383,7 +383,7 @@
   }
   function warnHtml(st) {
     if (st.tone !== "warn" && st.tone !== "down") return "";
-    return `<span>${E(st.text)}</span> <button type="button" class="lnk" data-health>Details</button>`;
+    return `<span>${E(st.text)}</span> <button type="button" class="lnk" data-health>Details</button> <button type="button" class="lnk" data-health data-hrecover${recovRunning() ? " disabled" : ""}>${recovRunning() ? "Fixing…" : "Fix now"}</button>`;
   }
   /* ─── the missing-messages notice (the nightly check's open gaps; see _etsyMailLinkConsistency.js) ───
      The server sends the gap as data (which conversations by order number, how many short, where the re-read stands, last and next
@@ -493,6 +493,62 @@
       gapNote = { tone: "warn", text: `Could not dismiss just now (${e.message}). Try again in a minute.`, at: Date.now() };
     } finally { gapBusy = false; paintLights(); healthLater(); }
   }
+  /* ─── "Reconnect & retry all" (LINKRECOVER, Paul 20 Oct 2026) ───
+     A red line is a fact about the customer mail (a message has not gone, an answer has not been read), so it is never dismissed: it is
+     repaired. The server re-tests every part, frees what is stuck, puts every message that never went back on its way (never one that may
+     have gone), pulls the missed emails and re-reads what was not read, then watches the Etsy helper for up to two minutes and says what is
+     left (see _etsyMailLinkRecover.js). The run is shared: a press while one runs (from any sorter, the inbox, or the link monitor's own
+     automatic run) shows that run. Its steps are listed in the details as they finish; the light clears by itself when the parts work. */
+  let recov = null, recovTimer = 0;   // { st: the run's status from the server, at, busy, doneAt }
+  const recovRunning = () => !!(recov && (recov.busy || (recov.st && recov.st.state === "running")));
+  async function recoverNow() {
+    if (!M.key || recovRunning()) return;
+    recov = { busy: true, st: null, at: Date.now() }; gapNote = null; paintLights();
+    try {
+      const res = await call("link_recover", {}, { timeout: 30000 });
+      recov.st = res.status || null;
+    } catch (e) {
+      recov = null;
+      if (authLost(e)) return;
+      gapNote = { tone: "warn", text: e.status === 400 ? "This inbox does not offer Reconnect & retry all yet." : `Could not start the recovery (${e.message}). Try again in a minute.`, at: Date.now() };
+      paintLights(); return;
+    }
+    recov.busy = false; paintLights();
+    pollRecover();
+  }
+  function pollRecover() {
+    clearTimeout(recovTimer); recovTimer = 0;
+    if (!recov || !recov.st || recov.st.state !== "running") return finishRecover();
+    if (Date.now() - recov.at > 8 * 60000) { recov.st = Object.assign({}, recov.st, { state: "died" }); return finishRecover(); }
+    recovTimer = setTimeout(async () => {
+      try {
+        const res = await call("link_recover_status", {}, { timeout: 20000 });
+        if (recov && res.status) recov.st = res.status;
+        if (res.health) applyLinkResult({ health: res.health });
+      } catch (e) { if (authLost(e)) { recov = null; return; } }
+      paintLights(); pollRecover();
+    }, 3000);
+  }
+  function finishRecover() {
+    const st = recov && recov.st;
+    if (!st) return;
+    recov.doneAt = Date.now();
+    const ok = st.after && st.after.level === "ok";
+    gapNote = st.state === "done" ? { tone: ok ? "ok" : "warn", text: st.summary || (ok ? "Everything works again." : "Some parts are still catching up; they clear by themselves."), at: Date.now() }
+      : { tone: "warn", text: st.state === "died" ? "The recovery stopped before it finished. Press Reconnect & retry all again." : (st.error || "The recovery could not run. Try again in a minute."), at: Date.now() };
+    paintLights(); checkHealth(true);
+  }
+  const hRow = (level, label, text) => `<li class="${E(level)}"><i></i><b>${E(label)}</b><span>${E(text)}</span></li>`;
+  /** The button, and while a run goes (or just went) its steps as the server reports them. */
+  function recoverHtml(problem) {
+    const running = recovRunning(), st = recov && recov.st;
+    const recent = st && Array.isArray(st.steps) && st.steps.length && (running || (recov.doneAt && Date.now() - recov.doneAt < 10 * 60000));
+    const steps = recent ? `<ul class="cmHBl cmRecSteps">${st.steps.map(x => hRow(x.level === "run" ? "wait" : x.level, x.label, x.text)).join("")}</ul>` : "";
+    const btn = `<button type="button" class="cmRecBtn${problem ? " on" : ""}" data-hrecover${running ? " disabled" : ""}>${running ? '<span class="cmSpin" aria-hidden="true"></span> Reconnecting and retrying…' : "Reconnect &amp; retry all"}</button>`;
+    const hint = problem && !running ? '<div class="cmGapHint">Re-tests every part, frees anything stuck, sends every message that never went (nothing that may have gone is sent twice), pulls the emails that were missed and re-reads what was not read. The inbox also does this by itself while a part stays broken.</div>' : "";
+    return `<div class="cmRec">${btn}${hint}${steps}</div>`;
+  }
+
   /** The notice's two buttons and the line under it. */
   function gapButtons(sig) {
     return `<button type="button" class="lnk" data-pill-check${gapBusy || healthBusy ? " disabled" : ""}>${gapBusy ? '<span class="cmSpin" aria-hidden="true"></span> Re-reading…' : "Check now"}</button>`
@@ -520,10 +576,11 @@
     }
     const busy = healthBusy || gapBusy;
     const when0 = busy ? `<span class="cmSpin" aria-hidden="true"></span>${gapBusy ? "re-reading" : "checking"}` : M.health ? "checked " + when(M.health.at) : "";
-    return `<div class="cmHBh"><b>Email link</b><span class="cmHBat">${when0}</span><button type="button" class="lnk" data-hcheck${busy ? " disabled" : ""}>Check now</button></div><ul class="cmHBl">${rows.join("")}</ul>${gapNoteHtml()}`;
+    const problem = !!(h && h.checks && h.checks.some(c => c.level === "warn" || c.level === "down"));
+    return `<div class="cmHBh"><b>Email link</b><span class="cmHBat">${when0}</span><button type="button" class="lnk" data-hcheck${busy ? " disabled" : ""}>Check now</button></div><ul class="cmHBl">${rows.join("")}</ul>${gapNoteHtml()}${recoverHtml(problem)}`;
   }
-  function toggleHealth(box, owner) {
-    if (healthBox && healthBox.box === box) { closeHealth(); return; }
+  function toggleHealth(box, owner, keepOpen) {
+    if (healthBox && healthBox.box === box) { if (!keepOpen) closeHealth(); return; }   // (keepOpen: "Fix now" shows the details, never hides them)
     closeHealth();
     healthBox = { box, owner };
     box.hidden = false; box.innerHTML = healthRows();
@@ -545,6 +602,9 @@
     if (x && healthBox && healthBox.box.contains(x)) dismissGap(x.dataset.gapDismiss);
     const pa = e.target.closest("[data-hputaway]");
     if (pa && healthBox && healthBox.box.contains(pa)) putAway();
+    // the details' button, and "Fix now" in the line under a place to write (which opens the details too: the steps show there)
+    const rc = e.target.closest("[data-hrecover]");
+    if (rc && !rc.disabled) recoverNow();
   });
   /** One place to write: its light and its sentence, redrawn only when they changed (a redrawn button loses focus). */
   function paintLight(el, owner, cls, st) {
@@ -706,7 +766,7 @@
     const gap = lp && lp.kind === "consistency" && lp.gap && lp.gap.n > 0 ? lp.gap : null;
     const okNote = !lp && gapNote && gapNote.tone === "ok" && Date.now() - gapNote.at < 180000;
     pillMenu.innerHTML = (gap ? `<div class="mmHead">Email link</div><div class="cmWarn ${lp.tone}"><b>${E(lp.word)}.</b> ${E(gapSentence(gap))} ${gapButtons(gap.sig)}</div>${gapNoteHtml()}${gapHint}`
-      : lp ? `<div class="mmHead">Email link</div><div class="cmWarn ${lp.tone}"><b>${E(lp.word)}.</b> ${E(lp.text)} <button type="button" class="lnk" data-pill-check${healthBusy || gapBusy ? " disabled" : ""}>${gapBusy ? '<span class="cmSpin" aria-hidden="true"></span> Checking…' : "Check now"}</button>${lp.word === "Messages need attention" ? ` <button type="button" class="lnk" data-pill-putaway${healthBusy || gapBusy ? " disabled" : ""}>Put away</button>` : ""}</div>${gapNoteHtml()}`
+      : lp ? `<div class="mmHead">Email link</div><div class="cmWarn ${lp.tone}"><b>${E(lp.word)}.</b> ${E(lp.text)} <button type="button" class="lnk" data-pill-check${healthBusy || gapBusy ? " disabled" : ""}>${gapBusy ? '<span class="cmSpin" aria-hidden="true"></span> Checking…' : "Check now"}</button>${lp.word === "Messages need attention" ? ` <button type="button" class="lnk" data-pill-putaway${healthBusy || gapBusy ? " disabled" : ""}>Put away</button>` : ""} <button type="button" class="lnk" data-pill-recover${recovRunning() ? " disabled" : ""}>${recovRunning() ? '<span class="cmSpin" aria-hidden="true"></span> Reconnecting…' : "Reconnect &amp; retry all"}</button></div>${gapNoteHtml()}`
       : okNote || (gapNote && Date.now() - gapNote.at < 180000) ? `<div class="mmHead">Email link</div>${gapNote.tone === "ok" ? `<div class="cmWarn ok" role="status" aria-live="polite"><b>✓</b> ${E(gapNote.text)}</div>` : gapNoteHtml()}` : "") + `<div class="mmHead">Customers</div>` + (open.length ? open.slice(0, 12).map(s => {
       const who = (s.customer && (s.customer.name || s.customer.username)) || "Customer";
       const line = s.unread > 0 ? `“${E(plain(s.lastInboundPreview || "a photo"))}”` : s.failed > 0 ? "A message did not go — open it to retry" : s.attention > 0 ? "A message may or may not have gone — open it and check Etsy" : "Waiting to be sent by hand on Etsy";
@@ -716,6 +776,7 @@
     pillMenu.querySelectorAll("[data-pill-check]").forEach(x => x.onclick = e => { e.stopPropagation(); recheckNow(); });
     pillMenu.querySelectorAll("[data-gap-dismiss]").forEach(x => x.onclick = e => { e.stopPropagation(); dismissGap(x.dataset.gapDismiss); });
     pillMenu.querySelectorAll("[data-pill-putaway]").forEach(x => x.onclick = e => { e.stopPropagation(); putAway(); });
+    pillMenu.querySelectorAll("[data-pill-recover]").forEach(x => x.onclick = e => { e.stopPropagation(); recoverNow(); });
   }
 
   /** Show one question: in the order window when its order is in the pull, otherwise in the order window that is
@@ -1323,7 +1384,7 @@
   function paintLangBtns(P) { P.host.querySelectorAll('[data-cm="all"]').forEach(b => b.classList.toggle("on", b.dataset.l === P.lang)); }
 
   async function onPaneClick(P, e) {
-    if (e.target.closest("[data-health]")) { toggleHealth(P.el.hbox, P.host); return; }
+    if (e.target.closest("[data-health]")) { toggleHealth(P.el.hbox, P.host, !!e.target.closest("[data-hrecover]")); return; }
     const tr = e.target.closest("[data-cm-tr]");
     if (tr) {
       const id = tr.dataset.id, lang = tr.dataset.cmTr;
@@ -1750,7 +1811,7 @@
       L.el.send.onclick = () => lineSend(L);
       L.el.open.onclick = () => { const s = lineEng(L); openConversation(s || { receiptId: L.row.order.receiptId, scope: "engraving", lineId: lineIdOf(L.row) }, L.row.key); };
       node.addEventListener("click", e => {
-        if (e.target.closest("[data-health]")) { toggleHealth(L.el.hbox, node); return; }
+        if (e.target.closest("[data-health]")) { toggleHealth(L.el.hbox, node, !!e.target.closest("[data-hrecover]")); return; }
         const c = e.target.closest("[data-l-do]"); if (!c) return;
         if (c.dataset.lDo === "connect") connect();
         else if (c.dataset.lDo === "inbox" && M.pair) openInbox(M.pair.url);

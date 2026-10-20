@@ -204,6 +204,11 @@ const MAX_SCRAPE_ATTEMPTS = 10;
 // budget on one tick. Anything not handled this tick gets handled the
 // next.
 const MAX_SCRAPE_REAP_PER_RUN = 50;
+// LINKRECOVER (20 Oct 2026): a claim recovered by this reaper does not count as an attempt (etsyMailJobs.js, v0.9.17), so a
+// conversation on which the helper hangs every time was claimed, reaped and claimed again for ever. Being the oldest job it was
+// always taken first, and new messages waited behind it ("8 new Etsy messages are waiting to be read, the oldest for 65 min").
+// After this many recoveries it is set aside as failed (the link light says so, and "Reconnect & retry all" puts it back).
+const MAX_SCRAPE_REAPS = 3;
 
 // Statuses that mean "the scrape did happen, but the result might still
 // have customerName=Unknown" — sub-sweep C only retries threads that
@@ -901,7 +906,7 @@ async function reapStuckScrapeClaims() {
   const snap = await db.collection(JOBS_COLL)
     .where("jobType", "==", "scrape")
     .where("status",  "==", "claimed")
-    .select("claimedAt")
+    .select("claimedAt", "lastHeartbeatAt")
     .limit(MAX_SCRAPE_REAP_PER_RUN * 5)
     .get();
 
@@ -915,8 +920,10 @@ async function reapStuckScrapeClaims() {
     if (processed >= MAX_SCRAPE_REAP_PER_RUN) break;
 
     const data = docSnap.data() || {};
-    const claimedAtMs = data.claimedAt && data.claimedAt.toMillis
-      ? data.claimedAt.toMillis() : 0;
+    // a helper still heartbeating a long read is alive: the claim is judged from its latest sign of life (LINKRECOVER)
+    const claimedAtMs = Math.max(
+      data.claimedAt && data.claimedAt.toMillis ? data.claimedAt.toMillis() : 0,
+      data.lastHeartbeatAt && data.lastHeartbeatAt.toMillis ? data.lastHeartbeatAt.toMillis() : 0);
     // Client-side staleness filter — see comment above on why this isn't
     // in the query.
     if (!claimedAtMs || claimedAtMs > stuckCutoffMs) continue;
@@ -932,13 +939,25 @@ async function reapStuckScrapeClaims() {
 
         // Re-check staleness inside the tx — claimedAt might have been
         // updated between the query and now (worker submitted a heartbeat).
-        const fClaimedAtMs = fdata.claimedAt && fdata.claimedAt.toMillis
-          ? fdata.claimedAt.toMillis() : 0;
+        const fClaimedAtMs = Math.max(
+          fdata.claimedAt && fdata.claimedAt.toMillis ? fdata.claimedAt.toMillis() : 0,
+          fdata.lastHeartbeatAt && fdata.lastHeartbeatAt.toMillis ? fdata.lastHeartbeatAt.toMillis() : 0);
         if (Date.now() - fClaimedAtMs < SCRAPE_STUCK_CLAIM_MS) {
           return { action: "no_longer_stuck" };
         }
 
         const attempts = fdata.attempts || 0;
+        const reaps = (fdata.reaps || 0) + 1;
+        if (reaps > MAX_SCRAPE_REAPS) {
+          // the helper stops on this conversation every time: set it aside so the messages behind it are read
+          tx.update(ref, {
+            status   : "failed",
+            reaps,
+            lastError: `The Etsy helper stopped ${reaps - 1} times while reading this conversation; set aside so the others are read`,
+            updatedAt: FV.serverTimestamp()
+          });
+          return { action: "exhausted", attempts, threadId: fdata.threadId };
+        }
         if (attempts >= MAX_SCRAPE_ATTEMPTS) {
           // Don't loop — escalate to failed and let the operator look.
           tx.update(ref, {
@@ -955,6 +974,7 @@ async function reapStuckScrapeClaims() {
           claimedAt : null,
           // attempts left as-is — claimNextJob's tx in etsyMailJobs.js
           // will increment it on next claim.
+          reaps,
           lastError : `Reaped stuck claim after ${SCRAPE_STUCK_CLAIM_MS}ms (worker died?)`,
           updatedAt : FV.serverTimestamp()
         });
@@ -1105,7 +1125,9 @@ async function reapDetectedThreadsWithoutLiveJobs() {
 
     // Either no job exists or it's "failed". Decide based on attempts.
     const priorAttempts = jobData ? (jobData.attempts || 0) : 0;
-    if (priorAttempts >= MAX_SCRAPE_ATTEMPTS) {
+    // (LINKRECOVER) a job set aside because the helper stops on it every time is not put back here: it would block the
+    // messages behind it again. "Reconnect & retry all" (_etsyMailLinkRecover.js) puts it back when a person asks.
+    if (priorAttempts >= MAX_SCRAPE_ATTEMPTS || (jobData && jobData.status === "failed" && (jobData.reaps || 0) > MAX_SCRAPE_REAPS)) {
       exhausted++;
       // Tag the thread so the inbox UI can surface "scrape exhausted —
       // manual rescrape needed". Don't change status — the thread is
@@ -1137,6 +1159,7 @@ async function reapDetectedThreadsWithoutLiveJobs() {
         rescrape           : true
       },
       attempts       : priorAttempts,   // preserve history; claim tx increments
+      reaps          : jobData ? (jobData.reaps || 0) : 0,
       claimedBy      : null,
       claimedAt      : null,
       lastError      : jobData ? (jobData.lastError || null) : null,
@@ -2647,5 +2670,6 @@ module.exports.REAPABLE_STAGES             = Array.from(REAPABLE_STAGES);
 module.exports.STALE_CLAIM_THRESHOLD_MS    = STALE_CLAIM_THRESHOLD_MS;
 module.exports.SALES_SCAN_INTERVAL_MS      = SALES_SCAN_INTERVAL_MS;
 module.exports.SCRAPE_STUCK_CLAIM_MS       = SCRAPE_STUCK_CLAIM_MS;
+module.exports.MAX_SCRAPE_REAPS            = MAX_SCRAPE_REAPS;
 module.exports.SCRAPE_DETECTED_GRACE_MS    = SCRAPE_DETECTED_GRACE_MS;
 module.exports.SCRAPE_UNKNOWN_GRACE_MS     = SCRAPE_UNKNOWN_GRACE_MS;

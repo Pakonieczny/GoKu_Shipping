@@ -767,8 +767,9 @@ async function resolveHolder(opts = {}) {
       return;
     }
 
-    // 4. silence
-    if (holds && now > (L.leaseUntilMs || 0) && (it.state === "claimed" || it.state === "sending")) {
+    // 4. silence (opts.force: the recovery takes the turn back from a tab that keeps the lease alive but never reaches Send;
+    //    it is only passed for a message that was never clicked, and clickGate refuses a click once the state has moved on)
+    if (holds && (now > (L.leaseUntilMs || 0) || (opts.force === true && it.stage !== "post_click" && !it.clickedAtMs)) && (it.state === "claimed" || it.state === "sending")) {
       if (it.state === "claimed") {
         const misses = (it.helperMisses || 0) + 1;
         const delay = Math.min(2 * MIN, 15000 * misses);
@@ -934,8 +935,12 @@ async function claimGate(tx, { slot, draftId, sessionId, workerId }) {
   const L = ls.exists ? ls.data() : {};
   const reject = (status, errorCode, error, extra) => ({ reject: Object.assign({ status, errorCode, error }, extra || {}) });
   if (!slot.queueSendId) {
-    // adopt: a message that arrived without the queue (an older build wrote it) becomes the lease holder, or waits
-    if (L.holderSendId && now <= (L.leaseUntilMs || 0)) return reject(409, "QUEUE_BUSY", "Another message is being sent right now; this one goes next.", { retryAfterMs: 5000 });
+    // adopt: a message that arrived without the queue (an older build wrote it) becomes the lease holder, or waits.
+    // (LINKRECOVER, 20 Oct 2026) Any holder refuses, an expired one too: adopting over an expired holder used to overwrite
+    // holderSendId without resolving it, which stranded that message "claimed" for ever with its slot still "queued" (the
+    // line said "a message has waited 58 min" while the helper was heard every minute). The expired holder is resolved by the
+    // next pump / peek / upkeep, then this slot is adopted.
+    if (L.holderSendId) return reject(409, "QUEUE_BUSY", "Another message is being sent right now; this one goes next.", { retryAfterMs: 5000 });
     if (now < (L.paceUntilMs || 0)) return reject(429, "PACING", "Pausing between sends.", { retryAfterMs: Math.min(60000, L.paceUntilMs - now + 250) });
     const sendId = "q_legacy_" + sha1(draftId + ":" + (tsMs(slot.queuedAt) || now)).slice(0, 18);
     const leaseId = (L.leaseId || 0) + 1;
@@ -1268,7 +1273,9 @@ async function summary() {
   const L = ls.exists ? ls.data() : {};
   const count = s => items.filter(i => i.state === s).length;
   const queued = items.filter(i => i.state === "queued");
-  const oldest = queued.reduce((m, i) => (m && m < i.createdAtMs ? m : i.createdAtMs), 0);
+  // a message put back on request (Try again, recovery) waits from then, not from when it was first written
+  const waitFrom = i => Math.max(Number(i.createdAtMs) || 0, Number(i.retriedAtMs) || 0);
+  const oldest = queued.reduce((m, i) => (m && m < waitFrom(i) ? m : waitFrom(i)), 0);
   const progress = Number(L.lastProgressAtMs) || 0;
   const cfg = await getConfig();
   const seenAtMs = hs && hs.exists ? Number(hs.data().seenAtMs) || 0 : 0;
@@ -1281,6 +1288,8 @@ async function summary() {
     offline, held: offline ? queued.length + count("claimed") : 0, maintAtMs: Number(L.maintAtMs) || 0,
     reviving: items.filter(i => isRevivable(i, now, cfg)).length,
     lastProgressAtMs: progress, stalled: !!(oldest && now - oldest > 10 * MIN && now - progress > 10 * MIN),
+    // how many times the helper was offered the most-offered waiting message and did not take it (it hears from us but does not send)
+    misses: queued.concat(items.filter(i => i.state === "claimed")).reduce((m, i) => Math.max(m, Number(i.helperMisses) || 0), 0),
     holder: L.holderSendId || null, leaseUntilMs: L.leaseUntilMs || 0, paceUntilMs: L.paceUntilMs || 0,
     // (MAILAWAY, Paul 14 Oct 2026: the notice "2 messages need a person" had no way out when the Customers list showed nothing to open: the dead letters and why each one is dead)
     dead: items.filter(i => DEAD_STATES.has(i.state)).slice(0, 10).map(i => ({ sendId: i.sendId, threadId: i.threadId || null, code: i.lastErrorCode || "", plain: String(i.plain || i.lastError || "").slice(0, 160) }))
@@ -1297,6 +1306,216 @@ async function dismissAllDead(by) {
 
 /** One message by id (for the sorter and tests). */
 async function getItem(sendId) { const s = await qRef(sendId).get(); return s.exists ? s.data() : null; }
+
+// ─── repair: the recovery pass (LINKRECOVER, Paul 20 Oct 2026) ──────────────
+//
+// "A message has waited 58 min for the helper" while the helper was heard every minute: the books had a message that had lost
+// its turn but was never put back. repair() makes the books true again, whatever left them wrong, and puts every message that
+// was never clicked back on its way. It never re-sends anything that may have gone: a message at or after Etsy's Send button
+// (stage post_click, clickedAtMs, sentAtMs, a slot that says sent) only ever becomes "needs a person", or is settled when the
+// stored conversation already shows it.
+//   light  (the 3-minute upkeep): the lease, messages that lost their turn, stale slot marks, old-style slots
+//   auto   (the link monitor, when the line is failing): the same, plus recent dead letters of the kinds a broken link causes
+//   manual (a person pressed "Reconnect & retry all"): the same, plus every delay is cut short and every dead letter that was
+//          never clicked goes back in the queue
+
+const STUCK_SENDING_MS = 5 * MIN;          // a send that has not reached Etsy's Send button after this long is stuck (they take seconds)
+const AUTO_REVIVE_MS = DAY, MANUAL_REVIVE_MS = 14 * DAY, AUTO_REVIVES = 2;
+const AUTO_REVIVE_CODES = new Set([...RETRYABLE_CODES, "MAX_ATTEMPTS", "NO_HELPER", "HELPER_OFFLINE", "CLIENT_CIRCUIT_BREAKER", "QUEUE_NOT_YOURS"]);
+const neverClicked = it => !!it && it.stage !== "post_click" && !it.clickedAtMs && !it.sentAtMs && !it.unverified;
+const bumpRev = (tx, now) => tx.set(metaRef("rev"), { n: FV.increment(1), atMs: now }, { merge: true });
+
+/** A message that is "claimed" or "sending" but no longer holds the turn: back in the queue if it was never clicked, else a person looks. */
+async function takeBack(sendId) {
+  let out = null;
+  await db.runTransaction(async tx => {
+    out = null;
+    const is = await tx.get(qRef(sendId));
+    const ls = await tx.get(metaRef("lease"));
+    if (!is.exists) return;
+    const it = is.data(), L = ls.exists ? ls.data() : {};
+    if (!(it.state === "claimed" || it.state === "sending") || L.holderSendId === sendId) return;
+    const ss = await tx.get(slotRef(it.threadId));
+    const slot = ss.exists ? ss.data() : null;
+    const mine = slot && slot.queueSendId === sendId;
+    const now = nowMs();
+    let patch;
+    if (neverClicked(it) && !(mine && (SENT_SLOT.has(slot.status) || slot.sendStage === "post_click"))) {
+      patch = { state: "queued", notBeforeMs: 0, sessionId: null, helperMisses: 0, updatedAtMs: now,
+        events: eventsAppend(it.events, "queued", "it had lost its turn without being sent; put back in the queue by the recovery", now) };
+      if (mine && (slot.status === "queued" || slot.status === "sending")) tx.set(slotRef(it.threadId), { status: "draft", queuedAt: null, queueReleased: true, updatedAt: FV.serverTimestamp() }, { merge: true });
+      out = { kind: "requeued" };
+    } else {
+      const plain = plainReason("STRANDED_POST_CLICK");
+      patch = { state: "needs_attention", open: true, lastErrorCode: "STRANDED_POST_CLICK", lastError: plain, plain, updatedAtMs: now, events: eventsAppend(it.events, "needs_attention", plain, now) };
+      out = { kind: "needs_attention" };
+    }
+    tx.set(qRef(sendId), patch, { merge: true });
+    bumpRev(tx, now);
+    out.item = applied(it, patch);
+  });
+  if (out) await afterChange({ item: out.item, kind: out.kind, released: false });
+  return out ? out.kind : null;
+}
+
+/** A slot still marked "queued" for a message that does not hold the turn (finished, put back, gone): the mark is taken off. */
+async function clearSlotMark(slotDocRef) {
+  let threadId = null;
+  await db.runTransaction(async tx => {
+    threadId = null;
+    const ss = await tx.get(slotDocRef);
+    const ls = await tx.get(metaRef("lease"));
+    if (!ss.exists) return;
+    const slot = ss.data(), L = ls.exists ? ls.data() : {};
+    if (slot.status !== "queued" || !slot.queueSendId || L.holderSendId === slot.queueSendId) return;
+    const is = await tx.get(qRef(slot.queueSendId));
+    const it = is.exists ? is.data() : null;
+    if (it && (it.state === "claimed" || it.state === "sending")) return;      // takeBack's case
+    tx.set(slotDocRef, { status: "draft", queuedAt: null, queueReleased: true, updatedAt: FV.serverTimestamp() }, { merge: true });
+    threadId = slot.threadId || String(slotDocRef.id).replace(/^draft_/, "");
+  });
+  if (threadId) { try { await refreshThreadFlags(threadId); } catch (e) { /* flags follow on the next change */ } }
+  return !!threadId;
+}
+
+/** An old-style slot ("queued" with no queue id) is taken into the queue, so it waits its turn like every other message instead of
+ *  blocking its conversation. The slot is released first; if the queue does not take the message the slot is put back as it was. */
+async function adoptLegacySlot(slotDocRef) {
+  let slot = null;
+  await db.runTransaction(async tx => {
+    slot = null;
+    const ss = await tx.get(slotDocRef);
+    if (!ss.exists) return;
+    const s = ss.data();
+    if (s.status !== "queued" || s.queueSendId) return;
+    slot = s;
+    tx.set(slotDocRef, { status: "draft", queuedAt: null, queueReleased: true, queueAdoptedAtMs: nowMs(), updatedAt: FV.serverTimestamp() }, { merge: true });
+  });
+  if (!slot) return null;
+  const threadId = slot.threadId || String(slotDocRef.id).replace(/^draft_/, "");
+  try {
+    const r = await submit({
+      threadId, conversationUrl: slot.etsyConversationUrl || null, text: slot.text || "", attachments: Array.isArray(slot.attachments) ? slot.attachments : [],
+      origin: slot.sendOrigin === "auto" ? "auto" : "manual", employeeName: slot.createdBy || null, orderLink: slot.orderLink || undefined,
+      idempotencyKey: "legacy:" + slotDocRef.id + ":" + (tsMs(slot.queuedAt) || 0)
+    });
+    if (r && (r.item || r.duplicateAutoSend || r.conflict)) return r.item ? "queued" : "settled";
+    throw new Error("the queue did not take it");
+  } catch (e) {
+    await slotDocRef.set({ status: "queued", queuedAt: slot.queuedAt || FV.serverTimestamp(), queueReleased: FV.delete(), updatedAt: FV.serverTimestamp() }, { merge: true }).catch(() => {});
+    throw e;
+  }
+}
+
+/** See the section's comment. Resolves what it did, in counts; never throws (each part's error is listed and the rest still run). */
+async function repair({ mode = "light", by = null } = {}) {
+  const manual = mode === "manual", deep = mode !== "light";
+  const cfg = await getConfig({ fresh: true });
+  const out = { lease: null, stuckSend: false, tookBack: 0, stranded: 0, slots: 0, adopted: 0, unblocked: 0, revived: 0, settled: 0, attention: 0, promoted: null, errors: [] };
+  const err = (where, e) => { out.errors.push(where + ": " + String(e && e.message || e).slice(0, 120)); console.warn("sendQueue repair " + where + ":", e && e.message); };
+  const holderNow = async () => { const s = await metaRef("lease").get(); return s.exists ? s.data().holderSendId || null : null; };
+
+  // 1. the lease: its holder must be a live message that is getting somewhere
+  try {
+    const ls = await metaRef("lease").get();
+    const L = ls.exists ? ls.data() : {};
+    if (L.holderSendId) {
+      const is = await qRef(L.holderSendId).get();
+      const it = is.exists ? is.data() : null;
+      const now = nowMs();
+      if (!it || !(it.state === "claimed" || it.state === "sending")) {
+        await db.runTransaction(async tx => {
+          const l2 = await tx.get(metaRef("lease"));
+          const L2 = l2.exists ? l2.data() : {};
+          if (L2.holderSendId !== L.holderSendId) return;
+          tx.set(metaRef("lease"), releaseFields(L2, nowMs(), 0, "recovered", cfg), { merge: true });
+          bumpRev(tx, nowMs());
+        });
+        out.lease = "released";
+      } else if (it.state === "sending" && neverClicked(it) && now - (it.attemptStartedAtMs || it.updatedAtMs || now) > STUCK_SENDING_MS) {
+        const r = await resolveHolder({ reason: "recover", force: true });
+        out.stuckSend = true; out.lease = r && r.kind || "resolved";
+      } else if (now > (L.leaseUntilMs || 0)) {
+        const r = await resolveHolder({ reason: "recover" });
+        out.lease = r && r.kind || "resolved";
+      }
+    }
+  } catch (e) { err("lease", e); }
+
+  // 2. messages that are "claimed" or "sending" without holding the turn
+  try {
+    const holder = await holderNow();
+    const qs = await db.collection(Q_COLL).where("open", "==", true).limit(300).get();
+    for (const d of qs.docs) {
+      const it = d.data();
+      if (!(it.state === "claimed" || it.state === "sending") || it.sendId === holder) continue;
+      if (nowMs() - (it.updatedAtMs || 0) < 30 * 1000) continue;              // changing hands right now: the next pass looks again
+      try {
+        await resolveHolder({ sendId: it.sendId, reason: "recover" });          // a report from the helper that never landed is followed first
+        const k = await takeBack(it.sendId);
+        if (k === "requeued") out.tookBack++; else if (k === "needs_attention") out.stranded++;
+      } catch (e) { err("take back", e); }
+    }
+  } catch (e) { err("lost turns", e); }
+
+  // 3. slots that say "queued" for a message that does not hold the turn, and old-style slots
+  try {
+    const holder = await holderNow();
+    const ss = await db.collection(DRAFTS).where("status", "==", "queued").limit(60).get();
+    for (const d of ss.docs) {
+      const slot = d.data();
+      try {
+        if (slot.queueSendId) { if (slot.queueSendId !== holder && await clearSlotMark(d.ref)) out.slots++; }
+        else if (nowMs() - (tsMs(slot.queuedAt) || 0) > 2 * MIN) { const r = await adoptLegacySlot(d.ref); if (r === "queued") out.adopted++; else if (r) out.settled++; }
+      } catch (e) { err("slot", e); }
+    }
+  } catch (e) { err("slots", e); }
+
+  if (deep) {
+    // 4. (a person asked) every delay is cut short, and a helper that is heard again is trusted at once
+    if (manual) {
+      try {
+        const qs = await db.collection(Q_COLL).where("state", "==", "queued").limit(150).get();
+        const now = nowMs();
+        for (const d of qs.docs) {
+          const it = d.data();
+          if (!((it.notBeforeMs || 0) > now || (it.helperMisses || 0) > 0)) continue;
+          await d.ref.set({ notBeforeMs: 0, helperMisses: 0, updatedAtMs: now, events: eventsAppend(it.events, "queued", "waiting cut short by " + (by || "a person"), now) }, { merge: true });
+          out.unblocked++;
+        }
+        const ls = await metaRef("lease").get();
+        const L = ls.exists ? ls.data() : {};
+        const seen = await helperLastSeen(L).catch(() => 0);
+        if (L.linkState === "holding" && seen && now - seen < 90 * 1000) {
+          await metaRef("lease").set({ linkState: "online", linkBackSeenMs: FV.delete(), linkHeldAtMs: FV.delete(), linkResumedAtMs: now }, { merge: true });
+        }
+        if (out.unblocked) await metaRef("rev").set({ n: FV.increment(1), atMs: now }, { merge: true });
+      } catch (e) { err("delays", e); }
+    }
+    // 5. dead letters: never clicked -> back in the queue; may have gone -> settled when the conversation shows it, else a person decides
+    try {
+      const qs = await db.collection(Q_COLL).where("open", "==", true).limit(300).get();
+      for (const d of qs.docs) {
+        const it = d.data();
+        if (!DEAD_STATES.has(it.state)) continue;
+        const age = nowMs() - (it.createdAtMs || 0);
+        try {
+          if (await alreadyDelivered(it)) { const r = await markSent(it.sendId, { by: "the conversation", viaConversation: true }); if (r && r.item) out.settled++; continue; }
+          if (it.state !== "failed" || !neverClicked(it)) { out.attention++; continue; }
+          const ok = manual ? age < MANUAL_REVIVE_MS && it.lastErrorCode !== "CANCELLED"
+            : age < AUTO_REVIVE_MS && AUTO_REVIVE_CODES.has(it.lastErrorCode) && (it.recoverRevives || 0) < AUTO_REVIVES;
+          if (!ok) { out.attention++; continue; }
+          const r = await humanRetry(it.sendId, { by: by || "automatic recovery" });
+          if (r && r.item) { out.revived++; await qRef(it.sendId).set({ recoverRevives: FV.increment(1) }, { merge: true }).catch(() => {}); }
+        } catch (e) { err("dead letter", e); }
+      }
+    } catch (e) { err("dead letters", e); }
+  }
+
+  // 6. the next message goes
+  try { const p = await pump(); out.promoted = p && p.promoted || null; out.pump = p && p.why || null; } catch (e) { err("pump", e); }
+  return out;
+}
 
 // ─── maintenance (the 3-minute cron, and lazily from other calls) ──────────
 
@@ -1319,6 +1538,8 @@ async function maintain() {
   stats.promoted = p && p.promoted || null;
   let houseMs = Number(rv.houseMs) || 0;
   if (nowMs() >= houseMs) {
+    // the books made true: a message that lost its turn without being sent goes back in the queue, stale slot marks come off (see repair)
+    try { const rp = await repair({ mode: "light" }); stats.repaired = rp.tookBack + rp.stranded + rp.slots + rp.adopted + (rp.lease ? 1 : 0); } catch (e) { /* next time */ }
     // dead letters of the old "helper offline" kind: nothing was sent for them, so they go back in the queue (see reviveOfflineDead)
     try { stats.revived = await reviveOfflineDead(cfg); } catch (e) { /* next time */ }
     // settle messages whose conversation now shows them (a scrape that did not carry the hook)
@@ -1352,7 +1573,7 @@ module.exports = {
   orderQueue, pickNext, backoffMs, gapFor, bigGapFor, helperQuiet, helperOffline, isRevivable, classifyFail, plainReason, deriveKey, sendIdFor, viewItems, normText, sameText, ordinal, cfgFrom,
   // io
   getConfig, setConfig, isPaused, isSandboxInput, submit, pump, resolveHolder, settleSlot, claimGate, heartbeatGate, clickGate, peekGate, isManaged,
-  cancel, humanRetry, markSent, dismiss, dismissAllDead, reviveOfflineDead, slotInUse, queueMarksOf, alreadyDelivered, onThreadMessages, stateView, summary, getItem, maintain, refreshThreadFlags,
+  cancel, humanRetry, markSent, dismiss, dismissAllDead, reviveOfflineDead, repair, takeBack, slotInUse, queueMarksOf, alreadyDelivered, onThreadMessages, stateView, summary, getItem, maintain, refreshThreadFlags,
   // tests
   _setRandom, _resetCaches, lazyPump, applied
 };

@@ -1433,6 +1433,13 @@ dialog.phv.layer.phvIn{background:transparent}
 .cmHBl li.warn span{color:#6f5019}.cmHBl li.down span{color:#7a3322}
 .cmSpin{width:9px;height:9px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;display:inline-block;flex:0 0 auto;animation:cmSpin .8s linear infinite}
 @keyframes cmSpin{to{transform:rotate(360deg)}}
+/* "Reconnect & retry all" in the email link's details, and its steps as the server reports them (charm-nest-mail.js, LINKRECOVER) */
+.cmRec{display:grid;gap:6px;border-top:1px solid var(--line);padding-top:8px}
+.cmRecBtn{justify-self:start;display:inline-flex;align-items:center;gap:6px;font:600 12px var(--sans);padding:6px 12px;border-radius:9px;border:1px solid #cfdde2;background:#f3f7f8;color:var(--ink);cursor:pointer}
+.cmRecBtn.on{background:#2f6f86;border-color:#2f6f86;color:#fff}
+.cmRecBtn:disabled{cursor:default;opacity:.75}
+.cmRecBtn:focus-visible{outline:2px solid #2f6f86;outline-offset:2px}
+.cmRecSteps{padding:2px 0 0}
 @media (prefers-reduced-motion:reduce){.cmSpin{animation-duration:2.4s}}
 /* the envelope in the top bar, its list, and the Orders tab's badge */
 .mailPill{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--slate);background:var(--slate);color:#fff;border-radius:999px;padding:4px 9px 4px 8px;font:700 11.5px var(--mono);cursor:pointer;flex:0 0 auto}
@@ -8299,7 +8306,7 @@ try {
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3-fx1-oh1"></script>
 <!-- the send animation, the very same file the inbox runs (SendFlight): a sent customer message flies from its box into the thread -->
 <script src="send-flight.js?v=20261010-sf1"></script>
-<script src="charm-nest-mail.js?v=20261005-pv-seal-zp1-mr2-mq2-sf1-sm1-md1-ml1-ma1-cost18-wal1-ru2"></script>
+<script src="charm-nest-mail.js?v=20261005-pv-seal-zp1-mr2-mq2-sf1-sm1-md1-ml1-ma1-cost18-wal1-ru2-lr1"></script>
 <script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1-pf1-pp1-pn1-sn1-nestfront-setfix1"></script>
 <script src="charm-nest-partial-data.js?v=20261007-opt1-sheets"></script>
 <script src="charm-nest-partial-nest.js?v=20261007-ps2c-fit75-pso1-psc1-pp1-cg1"></script>
