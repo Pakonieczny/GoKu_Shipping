@@ -16,6 +16,7 @@
      released(rid)                         RELHOLD (Paul, 18 Oct 2026): who released the order with the Review card's Release Hold, and when: { at, by, how, id } from the cloud's
                                            record (the same document; every computer has it from the maps' list and the changes feed), or null; synchronous, no read
      release(rid, {by, at, id, how, path})  -> Promise<{ok, already, error?}>  records that release (charmNestLibrary reviewMarkPut action "release"); never a mark, never resolves one
+     sheet(rid, {by, at, id}) / sheetSent(rid) / sheetSeals(rid)   SEALSHEET (Paul, 20 Oct 2026): the Send to Sheet seal, kept as release is (sheet { at, by, how: "sheet", id, earlier? })
      cancel(rid, {by, at, id}) / uncancel(rid, {by}) / cancelled(rid) / sealsOf(rid)   SEALCANCEL (Paul, 20 Oct 2026): the Cancel Order seal, kept as release is (cancel { at, by, how: "cancel", id })
      open(rid)                             the Review tab, at that order's row                                                              */
 (function (root) {
@@ -104,7 +105,7 @@
       if (isMarked(rid)) return { ok: true, already: true, rid };
       const key = keyOf(rid), was = recOf(rid), at = Date.now();
       // at once: the Review list and every Hold / button that asks isMarked say so while the cloud writes (an older answer of the feed cannot undo it: customWrites)
-      put(Object.assign({ key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", review: { state: "open", markedAt: at, markedBy: by }, updatedAtMs: 0, pending: true }, was && was.release ? { release: was.release } : {}, was && was.cancel ? { cancel: was.cancel } : {}));   // (RELHOLD: a release kept on the record stays) (SEALCANCEL, Paul 20 Oct 2026: and a cancel seal)
+      put(Object.assign({ key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", review: { state: "open", markedAt: at, markedBy: by }, updatedAtMs: 0, pending: true }, was && was.release ? { release: was.release } : {}, was && was.cancel ? { cancel: was.cancel } : {}, was && was.sheet ? { sheet: was.sheet } : {}));   // (RELHOLD: a release kept on the record stays) (SEALCANCEL, Paul 20 Oct 2026: and a cancel seal)
       seen.set(rid, stateSig(recOf(rid))); emit({ rid, kind: "marked" }); redraw();
       try {
         const r = await root.api("charmNestLibrary", { op: "reviewMarkPut", action: "mark", rid, by }, { quiet: true });
@@ -201,8 +202,34 @@
       return { ok: true, already: !!r.already, rid };
     } catch (e) { return { ok: false, rid, error: String((e && e.message) || e || "Not saved") }; }
   }
-  /** (SEALCANCEL) Every order-level seal this order's Review document keeps, oldest first, as stamps any renderer draws by kind (Seal.html, Seal.labelOf(how), Seal.INK[how]): its Release Hold and its Cancel Order. */
-  const sealsOf = rid => [released(rid), cancelled(rid)].filter(Boolean).sort((a, b) => a.at - b.at);
+  /* SEALSHEET (Paul, 20 Oct 2026: "every action button stamps and leaves a custom seal beside it, persisted on the order so the seal travels with it everywhere until its conclusion"): the Send to
+     Sheet press, kept the way Release Hold and Cancel Order are: on the order's own Review document, sheet { at, by, how: "sheet", id, earlier? } (charmNestLibrary reviewMarkPut action "sheet"),
+     written only once the send is through (never for a failed one), once per press (its id: the send's decision id); a later send of the order keeps the one before in sheet.earlier. A seal is
+     history: pieces taken off their sheet afterwards (Wrong charm, a hold) leave it as it is. sheetSent(rid) → the latest { at, by, how: "sheet", id } or null; sheetSeals(rid) → every one kept,
+     oldest first. Synchronous, no read. */
+  const sheetOne = v => v && typeof v === "object" && +v.at > 0 ? { at: +v.at, by: String(v.by || ""), how: "sheet", id: String(v.id || "") } : null;
+  function sheetSent(rid) { const r = recOf(ridOf(rid)); return sheetOne(r && r.sheet); }
+  function sheetSeals(rid) {
+    const r = recOf(ridOf(rid)), v = r && r.sheet && typeof r.sheet === "object" ? r.sheet : null; if (!v) return [];
+    const out = []; for (const x of [v].concat(Array.isArray(v.earlier) ? v.earlier : [])) { const o = sheetOne(x); if (o && !out.some(y => (o.id && y.id === o.id) || y.at === o.at)) out.push(o); }
+    return out.sort((a, b) => a.at - b.at);
+  }
+  async function sheet(rid, opts) {
+    rid = ridOf(rid); opts = opts || {}; if (!rid) return { ok: false, rid, error: "No order number" };
+    const by = String(opts.by || "").trim().slice(0, 80); if (!by) return { ok: false, rid, error: "No name" };
+    const at = +opts.at > 0 ? +opts.at : Date.now(), id = String(opts.id || `sheet:${rid}:${at}`).slice(0, 120), key = keyOf(rid), was = recOf(rid), cur = was && was.sheet && typeof was.sheet === "object" ? was.sheet : null;
+    if (cur && cur.id === id) return { ok: true, already: true, rid };
+    const earlier = cur ? [Object.assign({}, cur)].concat(Array.isArray(cur.earlier) ? cur.earlier : []).map(e => { const o = Object.assign({}, e); delete o.earlier; return o; }).slice(0, 10) : [];
+    put(Object.assign({ key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", hasLabel: false }, was || {}, { sheet: Object.assign({ at, by, how: "sheet", id }, earlier.length ? { earlier } : {}), updatedAtMs: 0, pending: true }));
+    try {
+      const r = await root.api("charmNestLibrary", { op: "reviewMarkPut", action: "sheet", rid, by, at, id, how: "sheet" }, { quiet: true });
+      if (!r || r.error || !r.record) throw new Error((r && r.error) || "The cloud sent no record");
+      put(r.record); told(rid, r.record);
+      return { ok: true, already: !!r.already, rid };
+    } catch (e) { return { ok: false, rid, error: String((e && e.message) || e || "Not saved") }; }   // (the page keeps what it showed; the send's own record and the timeline have it)
+  }
+  /** (SEALCANCEL) Every order-level seal this order's Review document keeps, oldest first, as stamps any renderer draws by kind (Seal.html, Seal.labelOf(how), Seal.INK[how]): its Release Hold and its Cancel Order (SEALSHEET: and its Send to Sheet). */
+  const sealsOf = rid => [released(rid), cancelled(rid), sheetSent(rid)].filter(Boolean).sort((a, b) => a.at - b.at);
 
   /** The items Review.syncOrderItems adds to the list: one for each open mark whose order has a line in the pull (keys "ord:rvm:" + rid, so the list drops one the moment its mark is resolved). */
   function itemsFor(rows) {
@@ -269,5 +296,5 @@
   /** A sandbox reset cleared the records: forget them here too. */
   function reset() { const B = root.B; if (B && B.maps) B.maps.reviewMarks = {}; seen.clear(); doneCache.clear(); }
 
-  root.CharmNestReviewMark = { mark, resolve, release, released, cancel, uncancel, cancelled, sealsOf, isMarked, markedRids, openRids: markedRids, info, reasonOf, onChange, onRow, refresh, open, itemsFor, doneSettled, decorateRow, sync, reset, _key: keyOf, _sandbox: sandbox };
+  root.CharmNestReviewMark = { mark, resolve, release, released, cancel, uncancel, cancelled, sheet, sheetSent, sheetSeals, sealsOf, isMarked, markedRids, openRids: markedRids, info, reasonOf, onChange, onRow, refresh, open, itemsFor, doneSettled, decorateRow, sync, reset, _key: keyOf, _sandbox: sandbox };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -13008,6 +13008,10 @@ const CustomPrint = window.CustomPrint = (() => {
       keepDone(saved);
       release(); busy.delete(key); acting.delete(key);
       if (done.length) sealed(it, rows, saved, done, who, "button");
+      // (SEALSHEET audit, Paul 20 Oct 2026: a Custom Orders card's Release Hold stamped its RELEASE HOLD seal but kept none on the order, so the Orders card and every other surface that reads the order's
+      //  Release Hold seal showed nothing: it is kept now as every Release Hold is (ReviewRelease.keep: the lines' releaseHold, the order's Review document), with the time of the completion it made; only for lines
+      //  it completed, RELNOSEAL)
+      if (done.length && window.ReviewRelease && ReviewRelease.keep) { try { const bs = (window.Seal ? Seal.list(saved[done[0]]) : []).filter(x => x.how === "button").pop(); ReviewRelease.keep([String(rid)], relSealOf(bs, rid, who), "custom").catch(e => console.warn("Release Hold seal", e)); } catch (e) { console.warn("Release Hold seal", e); } }
       if (done.length) humanAct("complete", { orderId: String(rid), parts: piecesN(rows.filter(r => saved[r.key])) || done.length, orders: 1, detail: "Complete Order" });
       if (putErr) humanAct("error", { orderId: String(rid), detail: done.length ? "not every piece was completed" : "order not completed" });
       if (done.length && it.onDone) { try { it.onDone(who, "button"); } catch (_) {} }
@@ -13209,9 +13213,20 @@ const CustomPrint = window.CustomPrint = (() => {
     box.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); go(); } else if (e.key === "Escape") { e.preventDefault(); unask(it.key); } };
     return box;
   }
+  /* (SEALSHEET audit, Paul 20 Oct 2026) A completion made by a Custom Orders card's Release Hold is kept on the piece's record as a Complete Order stamp (how "button", the sorter's own reading of it) and
+     on the order's Review document as its Release Hold seal, at the same time: the card under Resolved draws that stamp as the RELEASE HOLD seal its button was stamped with, not ORDER COMPLETE. A Complete
+     Order pressed before Release Hold existed has no Release Hold record at its time and is drawn as it always was. */
+  function asRelease(rec, rid) {
+    if (!rec || !window.Seal) return rec;
+    const M = window.CharmNestReviewMark; rid = String(rid || rec.receiptId || ""); if (!rid || !M || !M.released) return rec;
+    let ats; try { ats = new Set([M.released(rid)].filter(Boolean).map(v => +v.at)); } catch (_) { return rec; }
+    if (!ats.size) return rec;
+    let hit = false; const st = Seal.list(rec).map(x => { if (x.how !== "button" || !ats.has(+x.at)) return x; hit = true; const o = Object.assign({}, x, { how: "releaseHold", id: `releaseHold:${rid}:${x.at}` }); delete o.n; return o; });
+    return hit ? Object.assign({}, rec, { stamps: st }) : rec;
+  }
   const keptSig = it => { const k = keptOf(it); return k ? (Array.isArray(k.stamps) ? k.stamps.map(x => x.how[0] + x.at).join() : "l") + ":" + (+k.prints || 0) : ""; };
   const stamp = it => { const f = fails.get(it.key); return [busy.get(it.key) || "", acting.get(it.key) || "", asking.has(it.key), !!undoOf(it), f ? (f.st ? "held:" + f.st.at : "") + (f.retrying ? ":r" : "") || "fail" : "", armed.has(it.key + "|print"), armed.has(it.key + "|complete"), keptSig(it)].join("|"); };
-  return { print, complete, reopen, undo, statusHtml, buttonHtml, releaseButtonHtml, working, freshOf, failNote, wire, stamp, keptOf, keptSeals, keptButtonHtml, PIECE_SEAL, cardRecord, sealsOfRow, sealsOfOrder, recordOfRow, sealSig, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)), touching: key => touching.has(key), remote, settle };
+  return { print, complete, reopen, undo, statusHtml, buttonHtml, releaseButtonHtml, working, freshOf, failNote, wire, stamp, keptOf, keptSeals, keptButtonHtml, PIECE_SEAL, cardRecord, sealsOfRow, sealsOfOrder, recordOfRow, sealSig, asRelease, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)), touching: key => touching.has(key), remote, settle };
 })();
 
 /* ═══ 23a · Custom Orders — the order's own designs, dropped on its card and sent to the sheets ═══════════════════
@@ -13344,7 +13359,7 @@ const CustomSheet = window.CustomSheet = (() => {
   }
   // the card's own designs only (one card's file being read no longer rebuilds every other custom card, which also
   // dropped the drag state of the card under the pointer)
-  const stamp = it => { const c=cardOf(it), e = c?.e; return [keepStamp(c?.ck || ckOf(it)), busy.get(c?.ck || ckOf(it)) || "", e ? e.files.map(F => F.id + F.state + F.metal + F.qty + (tooBig(F) ? "!" : "")).join() + (e.sent ? "s" + e.sent.at + (e.sent.by || "") : e.sendIntent ? "p" + e.sendIntent.at + (e.sendError || "") : "") : ""].join("|"); };
+  const stamp = it => { const c=cardOf(it), e = c?.e; return [keepStamp(c?.ck || ckOf(it)), busy.get(c?.ck || ckOf(it)) || "", sheetSig(it), e ? e.files.map(F => F.id + F.state + F.metal + F.qty + (tooBig(F) ? "!" : "")).join() + (e.sent ? "s" + e.sent.at + (e.sent.by || "") : e.sendIntent ? "p" + e.sendIntent.at + (e.sendError || "") : "") : ""].join("|"); };
 
   /* ── reading a design: its PDF (a .dxf read into one), traced as a master's is ── */
   function read(F) {
@@ -13526,6 +13541,33 @@ const CustomSheet = window.CustomSheet = (() => {
   }
   function currentRows(e) { return Object.keys(decisionLines(e)).map(k=>B.orders.byKey.get(k)).filter(Boolean); }
   function owns(e, owner, rows) { return all()===owner && owner[e.ck]===e && rows.every(r=>B.orders.byKey.get(r.key)===r && r.state!=="gone" && !window.Cancelled?.has?.(r.order.receiptId)); }
+  /* SEALSHEET (Paul, 20 Oct 2026: "every action button stamps and leaves a custom seal beside it, persisted on the order so the seal travels with it everywhere until its conclusion"): Send to Sheet
+     stamps its SENT TO SHEET seal on the button (stampSend, as before) and, once the send is through (e.sent: never for a send that failed or is still to retry), keeps it on the order's seal record,
+     the order's Review document, as Release Hold keeps its own: sheet { at, by, how: "sheet", id, earlier? } (CharmNestReviewMark.sheet, kind "sheet"; the id is the send's decision id, so a retry or a
+     recovery writes nothing twice). The seal then rests beside the button wherever it stands: the Review card (Send to Sheet in its done state, "Sent to Sheet", the seal after it), the order window's
+     header, and beside a Send to Sheet offered again (the order's pieces came off their sheet: Wrong charm, a hold) as its history. An older send, from before the record, still shows its seal: its
+     decision says who and when. Nothing is read for it: the maps' list and the changes feed bring the record. */
+  function sheetStamps(it) {
+    const rows = linesOf(it), rid = rows[0] && rows[0].order ? String(rows[0].order.receiptId) : ""; if (!rid) return [];
+    const out = [], add = v => { if (!v || !(+v.at > 0)) return; const s = { how: "sheet", at: +v.at, by: String(v.by || ""), id: String(v.id || "") }; if (out.some(o => (s.id && o.id === s.id) || (o.by === s.by && Math.abs(o.at - s.at) < 10000))) return; out.push(s); };
+    try { const M = window.CharmNestReviewMark; if (M && M.sheetSeals) for (const v of M.sheetSeals(rid)) add(v); } catch (_) {}
+    for (const r of rows) { const d = decisionOf(r); if (d) add({ at: d.at || d.decidedAt, by: d.by || d.decidedBy, id: d.id }); }
+    return out.sort((a, b) => a.at - b.at);
+  }
+  const sheetSig = it => { try { return sheetStamps(it).map(x => x.at + ":" + x.by).join(); } catch (_) { return ""; } };
+  /** The SENT TO SHEET seals of a card's order, as a row of seals (size: the small row of a window), or "". */
+  const sheetSealsHtml = (it, size) => { const st = window.Seal ? sheetStamps(it) : []; return st.length ? Seal.row({ stamps: st }, size ? { size } : {}) : ""; };
+  /** Send to Sheet in its done state: where the button stood, in its seal's teal, with the seal after it (data-seal-btn: the seal rests on it). */
+  const sentButtonHtml = sz => `<button type="button" class="btn sealedSheet ${sz || "sm"} cuSentState" data-cu-sent data-seal-btn disabled title="Sent to the sheets: the seal says who sent it and when">Sent to Sheet</button>`;
+  function keepSheetSeal(e) {
+    try {
+      const M = window.CharmNestReviewMark, s = e && e.sent; if (!M || !M.sheet || !s || !(+s.at > 0) || !String(s.by || "").trim()) return;
+      // (SEALSHEET: "cn-order-seal" {rid} tells an open order window, SEALWIN, at once (the page has the seal) and again with the cloud's answer)
+      const told = () => { try { document.dispatchEvent(new CustomEvent("cn-order-seal", { detail: { rid: String(e.rid), kind: "sheet" } })); } catch (_) {} };
+      const kept = M.sheet(e.rid, { by: s.by, at: s.at, id: s.id || `custom-sheet:${e.ck}:${s.at}` }); told();
+      kept.then(r => { if (!r.ok) console.warn("Send to Sheet: its seal was not kept in the cloud", e.rid, r.error); redraw(); told(); }).catch(() => {});
+    } catch (err) { console.warn("Send to Sheet seal", err); }
+  }
   async function stampSend(button, sent) {
     if (!button?.isConnected || !window.Seal || !window.Motion) return null;
     const host=el("div","cuSealHost");host.setAttribute("aria-hidden","true");host.style.cssText="position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none";
@@ -13581,7 +13623,7 @@ const CustomSheet = window.CustomSheet = (() => {
       await checkpoint();if(!current())return;
       const receipt=await saveCloud(e,"pending");if(!current())return;
       if(receipt?.phase==="sent"){
-        e.sent={id:intent.id,at:intent.at,by:intent.by,lines:intent.lines};delete e.sendIntent;delete e.sendError;e.sendCloudPending=false;ver++;await checkpoint();redraw();return e.sent;
+        e.sent={id:intent.id,at:intent.at,by:intent.by,lines:intent.lines};delete e.sendIntent;delete e.sendError;e.sendCloudPending=false;ver++;keepSheetSeal(e);await checkpoint();redraw();return e.sent;
       }
       const touring=!how.recover && how.tour!==false && tourOk();if(touring && !how.from)try{snap=SendTour.snap(cardNode(ck));}catch(_){}
       holdKey=touring?cardNode(ck)?.dataset.mkey || "":"";if(holdKey && window.Motion && Motion.carry)Motion.carry(holdKey,30000);
@@ -13612,6 +13654,7 @@ const CustomSheet = window.CustomSheet = (() => {
       // A cloud receipt and local checkpoint complete the same immutable decision; a lost reply leaves it retryable.
       await saveCloud(e,"sent");if(!current())return;
       e.sent={id:intent.id,at:intent.at,by:intent.by,lines:intent.lines};delete e.sendIntent;delete e.sendError;ver++;
+      keepSheetSeal(e);   // (SEALSHEET: the send is through: its seal is kept on the order, never before)
       // (the answer it records reaches the order's timeline now, as the repool that used to follow it did: not at some later sync, which a reload in between would lose)
       if(it.onDone)try{it.onDone(e.sent.by,"sheet",e.sent.at);Review.syncOrderItems();}catch(err){console.warn("Custom send review",err);}
       // (a person's press only: a send finished again after a reload, how.recover, is not logged as new work)
@@ -13828,10 +13871,12 @@ const CustomSheet = window.CustomSheet = (() => {
   function buttonsHtml(it, primary, hint = true) {
     const c = cardOf(it); if (!c) return "";
     if (c.busy) return `<button type="button" class="btn ghost sm working" data-cu-send disabled aria-busy="true"><span class="spin"></span>${esc(c.busy)}</button>`;
-    if (c.sent || !c.open || (c.cut && !c.files.length)) return "";
-    const ready = !c.why, none = !c.files.length;
+    // (SEALSHEET: sent, Send to Sheet stays where it stood in its done state with its seal; offered again, the seals of the sends before rest after it, as history)
+    if (c.sent) { const k = sheetSealsHtml(it); return k ? sentButtonHtml("sm") + k : ""; }
+    if (!c.open || (c.cut && !c.files.length)) return "";
+    const ready = !c.why, none = !c.files.length, kept = sheetSealsHtml(it);
     const tip = ready ? "Put every design on the next open sheet of its metal" : c.why;
-    return `<button type="button" class="btn ${ready && primary ? "gold" : "ghost"} sm" data-cu-send${ready ? "" : ' aria-disabled="true"'} title="${esc(tip)}">${c.e?.sendIntent ? "Retry send" : "Send to Sheet"}</button>` +
+    return `<button type="button" class="btn ${ready && primary ? "gold" : "ghost"} sm" data-cu-send${ready ? "" : ' aria-disabled="true"'} title="${esc(tip)}">${c.e?.sendIntent ? "Retry send" : "Send to Sheet"}</button>` + kept +
       (none && linesOf(it)[0]?.spec?.special?.monogram ? `<button type="button" class="btn gold sm" data-cu-mono title="Make the monogram from the buyer's three letters (Engrave tab)">Build monogram</button>` : "") +
       (none && hint ? `<button type="button" class="cuHint" data-cu-designs title="Drop the order's .ai or .dxf design files on this card, or click to choose them">${DROP_IC}<span>Drop .ai / .dxf designs here</span></button>` : "");
   }
@@ -15045,7 +15090,7 @@ const CustomSheet = window.CustomSheet = (() => {
     }, delay || 0);
     return true;
   }
-  return { add, remove, send, prepare, sentOf, decisionOf, sending, recover, load, hydrate, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
+  return { add, remove, send, prepare, sentOf, decisionOf, sending, recover, load, hydrate, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, sheetStamps, sheetSealsHtml, sentButtonHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all, keepOf: ck => { const K = keeps.get(ck || D.ck); return K ? { phase: K.phase, on: K.on, sku: K.sku, rows: K.rows, final: K.final, locked: keepLocked(K), intent: K.intent || null } : null; }, keepKick, keepPending, keepIntents: () => (keeperOf() ? keeper.list() : []), keeper: () => keeperOf() };
 })();
 
 /* ═══ 23b · Custom Orders — is this line a custom order? ════════════════════
@@ -16745,6 +16790,17 @@ const Review = window.Review = (() => {
   /** RELHOLD: the one Release Hold button for a Review item (it: the Review card's item; ReviewRelease.button draws the same for the order window's piece row), as a button element: gold when it can be
    *  pressed (RHSAME, Paul 20 Oct 2026: the orange of its seal, .btn.relHoldBtn, the same on the Orders card; was gold), with what it does as its title; greyed (aria-disabled, so it keeps the keyboard and a press says why) with the one plain reason as its title and aria text when it cannot. data-rel-hold is
    *  where the press's seal is stamped. A press: the name, a spinner ("Releasing…"), releaseToQueue, and the button as it was if the card is still there. */
+  /* (SEALSHEET audit, Paul 20 Oct 2026: Release Hold pressed on an Orders card was stamped only on the Review card, out of sight; the Orders card drew its seal with no stamp) The released order's card is
+     drawn again with its RELEASE HOLD seal where the button stood: the wooden stamp comes down on that seal (Seal.press), as on every other surface. Nothing when the order was not released (RELNOSEAL). */
+  function stampOrderSeal(rid) {
+    if (!window.Seal || !Seal.press) return;
+    const t0 = Date.now(), look = () => {
+      const s = document.querySelector(`#ordBody [data-rid="${CSS.escape(rid)}"] .relSeal .seal`);
+      if (s && !s._stamped) { s._stamped = true; s.classList.add("pending"); Seal.press(s); return; }
+      if (Date.now() - t0 < 2500) setTimeout(look, 120);
+    };
+    requestAnimationFrame(() => requestAnimationFrame(look));
+  }
   function releaseButton(it, node, sz) {
     const r = releaseOf(it), on = !!r.how;
     const b = document.createElement("button"); b.type = "button"; b.className = `btn ${on ? "relHoldBtn" : "ghost"} ${sz || "sm"}`; b.dataset.rvRelease = r.how || "no"; b.dataset.relHold = "1"; b.textContent = RELEASE_LABEL;
@@ -16757,7 +16813,8 @@ const Review = window.Review = (() => {
       const host = node || b.parentElement || b;
       if (host.dataset.saving) return;
       host.dataset.saving = "1"; const was = b.innerHTML; b.setAttribute("aria-disabled", "true"); b.setAttribute("aria-busy", "true"); b.innerHTML = '<span class="spin"></span>Releasing…';
-      releaseToQueue(it).catch(err => toast("Could not release it: " + ((err && err.message) || err), "bad", 8000)).finally(() => { delete host.dataset.saving; if (b.isConnected) { b.removeAttribute("aria-busy"); b.innerHTML = was; rest(); } });
+      const onOrders = !!(node && node.closest && node.closest("#ordBody")), rid = String(it.rid || (rowsOf(it)[0] && rowsOf(it)[0].order.receiptId) || "");
+      releaseToQueue(it).then(ok => { if (ok && onOrders && rid) stampOrderSeal(rid); }).catch(err => toast("Could not release it: " + ((err && err.message) || err), "bad", 8000)).finally(() => { delete host.dataset.saving; if (b.isConnected) { b.removeAttribute("aria-busy"); b.innerHTML = was; rest(); } });
     };
     return { b, on, r };
   }
@@ -17360,7 +17417,7 @@ const Review = window.Review = (() => {
     const sealRec=cu&&it.done&&rec?CustomPrint.cardRecord(group.length>1?group.map(r=>r.spec?.customDone):[rec]) || rec:rec;
     const mk=mkeyOf(it),printed=cu&&it.done&&sealRec&&window.Seal&&Seal.hasPrint(sealRec);
     // (a completed card of an order that was also sent to a sheet carries that send's seal too: withSheetSeals)
-    const seals=cu&&(it.done||it.decided)&&sealRec&&window.Seal?Seal.row(it.done?withSheetSeals(sealRec,it.alsoSent):sealRec,it.decided?{}:{pending:CustomPrint.freshOf(mk)}):'';
+    const seals=cu&&(it.done||it.decided)&&sealRec&&window.Seal?Seal.row(it.done?CustomPrint.asRelease(withSheetSeals(sealRec,it.alsoSent),row?.order?.receiptId):sealRec,it.decided?{}:{pending:CustomPrint.freshOf(mk)}):'';   // (SEALSHEET audit: a Release Hold completion is drawn as its RELEASE HOLD seal)
     // an open card of any tab (Paul, 29 Sep 00:38: "make all the buttons look the same as in the other tabs"): the custom
     // card's column, one code path for every tab, for what the card acts on (cx: the custom order, or the order another
     // tab's card shows): Print QR label, the primary until its designs are ready to send; Complete Order; Send to Sheet,
@@ -17376,7 +17433,7 @@ const Review = window.Review = (() => {
       +(ax?'<span data-rel-slot hidden></span>'+CustomPrint.keptSeals(x,'button'):'')   // (the ORDER COMPLETE seals of an older Complete Order press rest after it: a seal is for good)
       +(cs?CustomSheet.buttonsHtml(x,true):'');
     // (each button keeps the seals it made, for good: a reopened order's too, Paul 29 Sep 00:35)
-    const sentActs=it.decided?seals+(cs?.files?.length?'<button type="button" class="btn ghost sm" data-cu-designs>View designs</button>':'')
+    const sentActs=it.decided?CustomSheet.sentButtonHtml('sm')+seals+(cs?.files?.length?'<button type="button" class="btn ghost sm" data-cu-designs>View designs</button>':'')
       +'<button type="button" class="btn ghost sm" data-cu-history>History</button>':'';   // (NOSHEETBTN, Paul 19 Oct 2026: "remove the 'Open Sheet' button, it's not necessary")
     // Placement alone is not a recorded send. Keep its existing Open card useful while the original decision is
     // absent: these are read-only links to its actual pool/sheet membership and timeline, with no inferred seal.
@@ -17432,17 +17489,21 @@ const Review = window.Review = (() => {
       node.onclick=e=>{if(e.detail>1||e.target.closest('button,a,input,select,textarea,label,.comparePair,.cuDesigns'))return;openIt();};
       node.onkeydown=e=>{if(e.target===node&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openIt();}};}
   }
+  const tryRel = d => { try { const live = (d.rows || []).map(r => (r && B.orders.byKey && B.orders.byKey.get(r.key)) || r).filter(Boolean); return live.length ? Orders.releaseStampOf(live) : null; } catch (_) { return null; } };
   /** A decision answered, under Completed: who answered it and when (kept with the workspace, the newest 200; the segment reads Resolved now, and an order released to the nesting queue is drawn here too: releasedCards). */
   const settledRows = new WeakMap();
   function settledRow(d) {
     // its line still in the pull: the custom card's buttons for it while it is open, and a click opens its order
     const live=d.row&&B.orders.byKey?.get(d.row.key),row=live&&live.state!=='gone'?live:null,ax=row?actOf({row,kind:d.kind},d.kind):null;
-    const stamp=actStamp(ax)+'|'+!!row;
+    // (SEALSHEET audit, Paul 20 Oct 2026: an order released with Release Hold leaves Open for Resolved with its button's seal stamped on it, and its card there had none: it rests there now, the RELEASE HOLD
+    //  seal with who and when (Orders.releaseStampOf: the lines' releaseHold, the order's Review document; none for an order released another way, or held again, RELNOSEAL))
+    const relSt=d.kind==='released'&&window.Orders&&Orders.releaseStampOf?tryRel(d):null;
+    const stamp=actStamp(ax)+'|'+!!row+'|'+(relSt?relSt.at+':'+relSt.by:'');
     let node = settledRows.get(d); if (node && node._stamp === stamp) return node;
     const was=node;
     node=el('div','doneRow workRow reviewListRow rvSettled'+(ax?' rvCu':''));node.dataset.rid=String(d.orders?.[0] || '');node.dataset.mkey='settled:'+d.key+':'+d.t;node.dataset.row=row?.key || '';node._stamp=stamp;
     const cs=ax?CustomSheet.cardOf(ax):null,busy=ax?CustomPrint.statusHtml(ax,'sm'):'';
-    const acts=busy||`<span class="ost ok">Resolved</span><span class="by">${esc(d.by)}${d.t?' · '+whenOf(d.t):''}</span>`+(ax?CustomPrint.failNote(ax)
+    const acts=busy||`<span class="ost ok">Resolved</span><span class="by">${esc(d.by)}${d.t?' · '+whenOf(d.t):''}</span>`+(relSt?Orders.releaseSealHtml(relSt):'')+(ax?CustomPrint.failNote(ax)
       +(printable(ax)&&!cs?.busy?CustomPrint.keptButtonHtml(ax,'print','ghost','Print QR label',`print order ${ax.rid}'s 1 × 1 in QR sticker for the sorting station; its piece is then completed by hand`,'sm'):'')   // (RELHOLD: no Complete Order here; Release Hold is the open card's)
       +(cs?CustomSheet.buttonsHtml(ax,true,false):''):'');
     node.innerHTML=(d.row?ListMedia.pair(d.row):'<div class="compareUnavailable">Decision recorded</div>')+`<div class="engravingIdentity"><span class="queueLabel">Review · resolved</span><div class="engravingOrder"><b class="mono">${esc((d.orders || []).slice(0,2).join(' · '))}</b></div><span class="purchaseLabel">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="rowExcerpt" title="${esc(d.why)}">${esc(d.why)}</span>${d.lines>1?`<span class="groupScope">${d.pieces || d.lines} pieces</span>`:''}${d.row && earPairRow(d.row)?`<span class="groupScope">Left + Right</span>`:''}</div><div class="purchaseSummary">${d.row?purchaseMarkup(d.row):''}</div><div class="rowActions">${acts}</div>${cs?CustomSheet.stripHtml(ax):''}`;
@@ -19376,7 +19437,8 @@ const OrderWin = window.OrderWin = (() => {
   function paintSend(r) {
     let b = byId("owSendSheet"); if (b && b._busy) return;
     const it = inPull(r.key) && window.CustomSheet ? tryDo(() => Review.customItemFor(r.key) || Review.actFor(r.key)) : null, c = it ? tryDo(() => CustomSheet.cardOf(it)) : null;
-    if (!(c && c.files.length && !c.sent && c.open && !c.why && !c.busy)) { if (b) b.hidden = true; return; }
+    if (!(c && c.files.length && !c.sent && c.open && !c.why && !c.busy)) { if (b) b.hidden = true; paintSent(r, it); return; }
+    paintSent(null);
     if (!b) { const at = byId("owPos"); if (!at) return; b = el("button", "btn gold xs", "Send to Sheet"); b.type = "button"; b.id = "owSendSheet"; b.title = "Put every design on the next open sheet of its metal"; at.before(b); }
     b.hidden = false; b._it = it; b.disabled = false; if (b.textContent !== "Send to Sheet") b.textContent = "Send to Sheet";
     b.onclick = async () => {
@@ -19394,6 +19456,17 @@ const OrderWin = window.OrderWin = (() => {
         if (said && W.key === sentKey && W.dlg.open && !W.closing && !W.dlg._tourHeld && b.isConnected && window.Motion) tryDo(() => { const n = Motion.note(b.hidden ? W.dlg.querySelector(".owRight") || b : b, { text: said.dataset.msg, tone: "bad", ms: 7000 }); if (n) W.dlg.appendChild(n); });
       }
     };
+  }
+  /* SEALSHEET (Paul, 20 Oct 2026): the order sent to its sheet keeps Send to Sheet's place in the header, in its done state ("Sent to Sheet", the seal's teal) with its SENT TO SHEET seal beside it,
+     small, from the order's seal record (CustomSheet.sheetStamps: the Review document's sheet seal, else the send's own decision). Nothing for an order never sent; drawn again only when it changed. */
+  function paintSent(r, it) {
+    let n = byId("owSheetSent");
+    const html = r && window.CustomSheet && CustomSheet.sheetSealsHtml && !(byId("owSendSheet") || {})._busy ? tryDo(() => CustomSheet.sheetSealsHtml(it || { rows: [r], row: r }, 30)) || "" : "";
+    if (!html) { if (n) { n.hidden = true; n.dataset.sig = ""; } return; }
+    if (!n) { const at = byId("owPos"); if (!at) return; n = el("span", "owSheetSent"); n.id = "owSheetSent"; at.before(n); }
+    n.hidden = false; if (n.dataset.sig === html) return;
+    n.dataset.sig = html; n.innerHTML = CustomSheet.sentButtonHtml("xs") + html;
+    try { const row = n.querySelector(".sealRow"); if (row && window.Seal && Seal.fit) Seal.fit(row); } catch (_) {}
   }
   /** A piece's controls at the right end of its row under "Its pieces" (Paul, 5 Oct; the Custom Orders bar that repeated them
    *  is gone, round 8). What the card is (cuState), its buttons and seals (cuControls) and what a press does (wireCu) are the

@@ -284,7 +284,7 @@
   /* ════ Seals ════ */
   const Seal = (() => {
     const BASE_SIZE = 50, META_INK = '#12294c';
-    const INK = { print: "#65737f", sheet: "#65737f", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58", monogramApproved:"#4d3f99", releaseHold:"#a2591c", cancel:"#982f48" };   // (RELORANGE, Paul 19 Oct 2026: the Release Hold seal is orange, the Hold button's) (SEALCANCEL, Paul 20 Oct 2026: the ORDER CANCELLED seal is the muted brick red of the Cancelled Orders family)
+    const INK = { print: "#65737f", sheet: "#2f7a6c", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58", monogramApproved:"#4d3f99", releaseHold:"#a2591c", cancel:"#982f48" };   // (RELORANGE, Paul 19 Oct 2026: the Release Hold seal is orange, the Hold button's) (SEALCANCEL, Paul 20 Oct 2026: the ORDER CANCELLED seal is the muted brick red of the Cancelled Orders family)
     /* MONOSEAL (Paul, 17 Oct 2026: "When I approved the monogram, I didn't see any stamp or seal animation, and we do not have a custom-made seal that is
        specifically for approving monograms ... a brand new seal that is specific for monograms and the stamping animation whenever a monogram is approved"):
        the MONOGRAM seal, the ninth family. How to use it from any surface (the page's other modules never need to know more than this):
@@ -320,6 +320,8 @@
       // (MONOSEAL: an arch, round above and flat below, like the frame a monogram is mounted in: the one outline of the nine with a flat foot and a round head, so it is never taken for the circle, the oval or the shield)
       monogram:{name:'Monogram',ink:'#4d3f99',d:'M8 104V60A52 52 0 0 1 112 60V104Q112 116 100 116H20Q8 116 8 104Z'},
       // (RELHOLD: the Completed rosette made over: twelve small scallops round a medallion, one at the top over the padlock, so it is never taken for the eight-lobed Fulfilment rosette or the plain Received circle)
+      // (SEALSHEET, Paul 20 Oct 2026: "SENT TO SHEET" is a seal of its own, in its own muted teal ink: a sheet with its top right corner folded over, so it is never taken for the Prepared square)
+      sheet:{name:'Sent to Sheet',ink:'#2f7a6c',d:'M14 6H90L114 30V106Q114 114 106 114H14Q6 114 6 106V14Q6 6 14 6Z'},
       release:{name:'Release Hold',ink:'#a2591c',d:'M72.68 12.67A13.2 13.2 0 0 1 94.65 25.35A13.2 13.2 0 0 1 107.33 47.32A13.2 13.2 0 0 1 107.33 72.68A13.2 13.2 0 0 1 94.65 94.65A13.2 13.2 0 0 1 72.68 107.33A13.2 13.2 0 0 1 47.32 107.33A13.2 13.2 0 0 1 25.35 94.65A13.2 13.2 0 0 1 12.67 72.68A13.2 13.2 0 0 1 12.67 47.32A13.2 13.2 0 0 1 25.35 25.35A13.2 13.2 0 0 1 47.32 12.67A13.2 13.2 0 0 1 72.68 12.67Z'}
     };
     const SYMBOL = {
@@ -336,12 +338,14 @@
       monogram:'<path d="M0.8 20 4.2 9.5 7.6 20M2.2 16h4M9.4 3v17M9.4 3h3.1a3.9 3.9 0 0 1 0 7.8H9.4M17.6 9.5 20.5 20 23.4 9.5"/>',
       // (RELHOLD: a padlock with its shackle swung open, and an arrow onward: the hold is lifted and the order goes on to the nesting queue)
       release:'<path d="M2 11h12v11H2zM5 11V7a4 4 0 0 1 7.8-1.4M8 15v3M16 16.5h7.5m-3-3 3 3-3 3"/>',
+      // (SEALSHEET: a sheet with two pieces on it and an arrow onto it)
+      sheet:'<path d="M5 2h10l5 5v15H5zM15 2v5h5"/><circle cx="10" cy="11" r="2.4"/><circle cx="15" cy="16" r="2.4"/><path d="M0 6h6m-2-2 2 2-2 2"/>',
       qr:'<path d="M6 8V2h12v6M3 8h18v11h-3M6 19H3V8M6 13h12v10H6zM8 15h2v2H8zM14 15h2v2h-2zM8 19h2m3 0h3M18 10h1"/>',
       plain:'<circle cx="9" cy="15" r="7"/><circle cx="9" cy="5" r="2"/><path d="M15 7h9m-3-3 3 3-3 3"/>',
       complete:'<path d="M3 7l8-4 8 4-8 4zM3 7v12l8 4V11M19 7v5M7 5l8 4M3 19l8 4 3-1M17 20l2 2 5-6"/>',
       set:'<path d="M2 5l10-4 10 4-10 4zM2 10l10 4 10-4M2 15l10 4 10-4M2 20l10 4 10-4M15 12l3 3 5-6"/>'
     };
-    const familyOf = st => st.how==='button'?'fulfilment':st.how==='laserReady' || st.how==='laserDone'?'laser':st.how==='engraveApproved' || st.how==='engravePlain'?'engraving':st.how==='monogramApproved'?'monogram':st.how==='releaseHold'?'release':st.how==='cancel'?'cancelled':'prepared';   // (SEALCANCEL, Paul 20 Oct 2026: the Cancel Order press's seal wears the Cancelled Orders ticket)
+    const familyOf = st => st.how==='button'?'fulfilment':st.how==='laserReady' || st.how==='laserDone'?'laser':st.how==='engraveApproved' || st.how==='engravePlain'?'engraving':st.how==='monogramApproved'?'monogram':st.how==='releaseHold'?'release':st.how==='cancel'?'cancelled':st.how==='sheet'?'sheet':'prepared';   // (SEALCANCEL, Paul 20 Oct 2026: the Cancel Order press's seal wears the Cancelled Orders ticket) (SEALSHEET, Paul 20 Oct 2026: Send to Sheet's seal is its own teal sheet)
     function face(model, opts={}) {
       model = Object.assign({}, model);
       model.family=FAMILY[model.family]?model.family:'received';
@@ -360,12 +364,13 @@
         value=String(value);const natural=[...value].reduce((n,c)=>n+(widths[c] ?? (/\d/.test(c)?.6:.68)),0)*size;
         return txt(value,y,size,700,color).replace('<text ',`<text data-seal-text textLength="${Math.min(width,natural).toFixed(2)}" lengthAdjust="spacingAndGlyphs" `);
       };
-      const labelWidth=model.family==='cancelled'?62:lines.length===2?84:model.family==='prepared'?96:88;
+      const labelWidth=model.family==='cancelled'?62:lines.length===2?84:model.family==='prepared' || model.family==='sheet'?96:88;
       const signer=String(model.by || '').trim() || 'Not recorded', sigLines=signer.match(/.{1,21}(?:\s|$)|\S+/g)?.map(s=>s.trim()) || [signer];
       const H=opts.signer?137+sigLines.length*12:120;
       let trim='';
       if(model.family==='received' || model.family==='fulfilment' || model.family==='release')trim=`<path d="${f.d}" transform="translate(60 60) scale(.86) translate(-60 -60)" fill="none" stroke-width=".9" stroke-dasharray=".2 2.7" stroke-linecap="round"/>`;
       if(model.family==='prepared')trim='<path d="M15 17h8m-4-4v8M97 17h8m-4-4v8M15 103h8m-4-4v8M97 103h8m-4-4v8" fill="none" stroke-width=".8"/>';
+      if(model.family==='sheet')trim='<path d="M90 6V30H114" fill="none" stroke-width="1.1"/>';   // (SEALSHEET: the folded corner)
       if(model.family==='engraving')trim='<path d="M16 37l11-11 3 8-11 6zM104 37L93 26l-3 8 11 6zM16 83l11 11 3-8-11-6zM104 83L93 94l-3-8 11-6z" fill="none" stroke-width="1.1"/>';
       if(model.family==='laser')trim='<g fill="none" stroke-width="1.2"><circle cx="30" cy="22" r="2"/><circle cx="90" cy="22" r="2"/><circle cx="20" cy="75" r="2"/><circle cx="100" cy="75" r="2"/></g>';
       // (MONOSEAL: a flat foot under the three letters, a rule with a small diamond)
@@ -477,7 +482,7 @@
       if (st.model) return Object.assign({}, st.model);
       if (st.family) return Object.assign({}, st);
       const action = st.how === 'sheet' ? 'SENT TO SHEET' : st.how === 'button' ? 'ORDER COMPLETE' : st.how === 'laserReady' ? 'LASER READY' : st.how === 'laserDone' ? 'LASER CUT' : st.how === 'engraveApproved' ? (frontOf(st) ? 'FRONT ENGRAVING' : 'BACK ENGRAVING') : st.how === 'engravePlain' ? (frontOf(st) ? 'FRONT CUT PLAIN' : 'CUT PLAIN') : st.how === 'monogramApproved' ? 'MONOGRAM' : st.how === 'releaseHold' ? 'RELEASE HOLD' : st.how === 'cancel' ? 'ORDER CANCELLED' : 'QR LABEL PRINTED';
-      const icon = st.how === 'cancel' ? 'cancelled' : st.how === 'releaseHold' ? 'release' : st.how === 'monogramApproved' ? 'monogram' : st.how === 'sheet' ? 'prepared' : st.how === 'button' ? 'complete' : st.how === 'laserReady' ? 'laserReady' : st.how === 'laserDone' ? 'laser' : st.how === 'engravePlain' ? 'plain' : st.how === 'engraveApproved' ? 'engraving' : 'qr';
+      const icon = st.how === 'cancel' ? 'cancelled' : st.how === 'releaseHold' ? 'release' : st.how === 'monogramApproved' ? 'monogram' : st.how === 'sheet' ? 'sheet' : st.how === 'button' ? 'complete' : st.how === 'laserReady' ? 'laserReady' : st.how === 'laserDone' ? 'laser' : st.how === 'engravePlain' ? 'plain' : st.how === 'engraveApproved' ? 'engraving' : 'qr';
       const m = { family:familyOf(st), action, icon, at:+st.at || 0, by:String(st.by || ''), scope:st.scope || '', n:st.n || 0 };
       if (monogramOf(st)) { const L = String(st.letters || '').toUpperCase(); if (/^[A-Z]{3}$/.test(L)) m.letters = L; if (+st.of > 1) m.of = +st.of; }   // (MONOSEAL: the three letters of THIS monogram, and the piece of a line of several)
       return m;
@@ -726,7 +731,7 @@
       const shade=shadow(t,size,SHADE.far,SHADE.near,{duration:560,easing:'cubic-bezier(.62,0,.92,.5)'});
       await finishPhase(down,t,{transform:`translate(0,0) rotate(${rot}deg) scale(1)`,opacity:1},560);
       Sound.play();seal.classList.remove('pending');seal.classList.add('wet');
-      const btn=btnOf(seal);if(btn)btn.classList.add(green(kind)?'sealedDone':'sealedPrint');
+      const btn=btnOf(seal);if(btn)btn.classList.add(kind==='sheet'?'sealedSheet':green(kind)?'sealedDone':'sealedPrint');
       const ring=doc.createElement('span');ring.className='sealRing';ring.style.cssText=`position:fixed;left:${g.left}px;top:${g.top}px;width:${g.width}px;height:${g.height}px;--ink:${ink}`;layer(seal).appendChild(ring);
       anchor.add(ring);
       const ripple=ring.animate([{transform:'scale(.86)',opacity:.42},{transform:'scale(1.42)',opacity:0}],{duration:760,easing:'cubic-bezier(.2,.7,.3,1)',fill:'forwards'});
@@ -840,7 +845,7 @@
       const t=doc.createElement('span');t.className='sealTool';t.innerHTML=tool(kind,seal);
       Object.assign(t.style,{left:cx-size/2+'px',top:cy-size/2+'px',width:size+'px',height:size+'px'});
       host.appendChild(seal);host.appendChild(t);
-      const rot=rotOf(st),paint=()=>btn.classList.add(kind==='button' || kind==='releaseHold'?'sealedDone':kind==='cancel'?'sealedCancel':'sealedPrint');   // (RELHOLD: the Release Hold button takes the green of its seal, as Complete Order did)
+      const rot=rotOf(st),paint=()=>btn.classList.add(kind==='sheet'?'sealedSheet':kind==='button' || kind==='releaseHold'?'sealedDone':kind==='cancel'?'sealedCancel':'sealedPrint');   // (RELHOLD: the Release Hold button takes the green of its seal, as Complete Order did) (SEALSHEET, Paul 20 Oct 2026: Send to Sheet takes the teal of its seal)
       if(reduced() || spec.still){seal.style.opacity='';t.remove();paint();return;}
       const down=t.animate([
         {transform:`translate(34px,-46px) rotate(${rot-16}deg) scale(1.7)`,opacity:0},

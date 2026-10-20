@@ -145,11 +145,11 @@ async function audit() {
     host.innerHTML = w.Seal.row({ stamps: [stamp] }); d.getElementById('cards').appendChild(host);
     const seal = host.querySelector('.seal'), svg = seal.querySelector('svg'); rectFor(seal, 410 + seals.length * 120);
     const savedModel = JSON.parse(svg.dataset.sealModel), actionText = textsOf(svg)[0];
-    assert.equal(savedModel.family, 'prepared', rec.rid + ': sending is a preparation achievement');
+    assert.equal(savedModel.family, 'sheet', rec.rid + ': sending is the SENT TO SHEET seal (SEALSHEET, Paul 20 Oct 2026: its own teal family)');
     assert.equal(savedModel.action, 'SENT TO SHEET');
     assert.equal(savedModel.by, 'paul'); assert.equal(savedModel.at, rec.at);
     assert.equal(actionText, 'SENT TO SHEET');
-    assert.equal(svg.querySelector('g').getAttribute('fill'), w.Seal.FAMILY.prepared.ink);
+    assert.equal(svg.querySelector('g').getAttribute('fill'), w.Seal.FAMILY.sheet.ink);
     assert.doesNotMatch(svg.textContent, /QR LABEL|COMPLETE|LASER CUT|paul|Different current viewer/, 'a send does not claim print/completion/cutting or show identity on its small face');
     assert(textsOf(svg).includes('01 OCT 2026'), 'the send date is legible');
     assert(textsOf(svg).some(t => t === (rec.metal === 'gold' ? '5:46 PM' : '7:25 PM')), 'the original Toronto time is shown');
@@ -167,7 +167,7 @@ async function audit() {
     assert.doesNotMatch(timelineFace.textContent, /Different current viewer/);
     assert(w.OrderTimelineUI.sealed(eventOf(rec)), 'an actual send is a recorded achievement with historical ink');
     const overview = d.createElement('span'); overview.innerHTML = w.OrderTimelineUI.nowStamps([eventOf(rec)], {}).seal;
-    assert.equal(overview.querySelector('.tlNowSeal svg').dataset.sealFamily, 'prepared');
+    assert.equal(overview.querySelector('.tlNowSeal svg').dataset.sealFamily, 'sheet');
     assert.equal(textsOf(overview.querySelector('svg'))[0], 'SENT TO SHEET', 'Overview shows the genuine latest send achievement');
     assert.doesNotMatch(overview.textContent, /COMPLETE|QR LABEL|paul|Different current viewer/);
     const derived = w.OrderTimelineUI.derive([eventOf(rec)]);
@@ -175,7 +175,7 @@ async function audit() {
     assert.equal(derived.W.stage, 'waiting', 'a send alone stays queued until actual nesting records establish a sheet');
     assert.equal(derived.stages[1].first, null, 'the send seal cannot fabricate a Nested milestone');
     const tool = d.createElement('span'); tool.innerHTML = w.Seal.tool('sheet', svg);
-    assert.equal(tool.querySelector('svg').dataset.stampFamily, 'prepared', 'the wooden head matches the prepared family');
+    assert.equal(tool.querySelector('svg').dataset.stampFamily, 'sheet', 'the wooden head matches the sheet family');
     assert(tool.querySelector('path[d="' + svg.querySelector('[data-seal-outline]').getAttribute('d') + '"]'), 'the head uses the exact earned seal outline');
     seals.push(seal);
   }
@@ -201,7 +201,7 @@ async function audit() {
     await advance(0);
     const actual = historyHost.querySelector('.tlSt[data-key^="designSent~"]');
     assert(actual, 'the actual history chronology retains the send achievement');
-    assert.equal(actual.querySelector('svg').dataset.sealFamily, 'prepared');
+    assert.equal(actual.querySelector('svg').dataset.sealFamily, 'sheet');
     assert.equal(JSON.parse(actual.querySelector('svg').dataset.sealModel).at, records[0].at);
     assert.equal(presses, 0, 'historical recovery displays old ink without stamping a new approval');
   } finally { history.destroy(); w.Seal.press = originalPress; }

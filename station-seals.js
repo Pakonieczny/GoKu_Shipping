@@ -21,7 +21,7 @@
 (function () {
   "use strict";
   if (window.StationSeals) return;
-  const SRC = (() => { try { return new URL("charm-nest-motion.js?v=20261005-station-seals1", document.currentScript && document.currentScript.src ? document.currentScript.src : location.href).href; } catch (_) { return "charm-nest-motion.js"; } })();
+  const SRC = (() => { try { return new URL("charm-nest-motion.js?v=20261005-station-seals1-ss1", document.currentScript && document.currentScript.src ? document.currentScript.src : location.href).href; } catch (_) { return "charm-nest-motion.js"; } })();
   const READ_MS = 8000;
   /* The seal's own rules, the same lines the Charm Sorter's page carries (charm-nest-1.html): the size, the tilt, the
      overlap, nothing for pressing or stamping, which a pop-up that only shows what was recorded never does. */

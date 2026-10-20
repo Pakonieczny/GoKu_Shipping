@@ -692,9 +692,10 @@
     return L.st ? L.l + " station" : L.k === "etsy" ? "From Etsy" : L.l;
   }
   // Eight visual families share the same action/date/time layout. Event wording stays truthful within its family.
+  // (SEALSHEET, Paul 20 Oct 2026: a send to the sheet is the SENT TO SHEET seal's own family and icon, the teal one the Review card and Seal draw)
   const FAMILY_BY_TYPE = {
     arrived: "received", pulled: "received", interpreted: "received", decided: "received", customRead: "received", customDecided: "received",
-    designSent: "prepared", designDropped: "prepared", pooled: "prepared", placed: "prepared", moved: "prepared", renested: "prepared",
+    designSent: "sheet", designDropped: "prepared", pooled: "prepared", placed: "prepared", moved: "prepared", renested: "prepared",
     sizeChanged: "prepared", included: "prepared", excluded: "prepared", merged: "prepared", qrLabel: "prepared", setCommitted: "prepared", sealPrinted: "prepared", roseLine: "prepared",
     engraveNeeded: "engraving", engraveApproved: "engraving", engraveChanged: "engraving", monogramApproved: "monogram",
     laserDone: "laser", roseCut: "laser", laserReady: "laser", sheetCompleted: "laser", setCompleted: "laser",
@@ -703,7 +704,7 @@
     cancelled: "cancelled", etsyCancelled: "cancelled", cancelStep: "cancelled", cancelAlert: "cancelled"
   };
   const FACE_ACTION = { arrived: "ORDER RECEIVED", placed: "ON SHEET", designSent: "SENT TO SHEET", engraveApproved: "BACK ENGRAVING", monogramApproved: "MONOGRAM", laserDone: "LASER CUT", roseCut: "PARTIAL CUT", laserReady: "LASER READY", sheetCompleted: "SHEET COMPLETE", setCompleted: "SET COMPLETE", sealCompleted: "ORDER COMPLETE", etsyCompleted: "ETSY COMPLETE", cancelled: "CANCELLED", etsyCancelled: "ETSY CANCELLED", sealPrinted: "QR LABEL PRINTED" };
-  const CANONICAL_ICON = { arrived: "received", placed: "prepared", designSent: "prepared", engraveApproved: "engraving", monogramApproved: "monogram", laserDone: "laser", assembled: "finishing", shipped: "fulfilment", held: "exceptions", cancelled: "cancelled" };
+  const CANONICAL_ICON = { arrived: "received", placed: "prepared", designSent: "sheet", engraveApproved: "engraving", monogramApproved: "monogram", laserDone: "laser", assembled: "finishing", shipped: "fulfilment", held: "exceptions", cancelled: "cancelled" };
   function faceModel(e) {
     const printed = !!e.print || isPrint(e), plain = isPlainDecision(e), at = +(plain ? e.data.decidedAt ?? e.at : e.at) || 0, family = printed ? "prepared" : FAMILY_BY_TYPE[e.type] || "exceptions";
     const action = plain ? (frontEv(e) ? "FRONT CUT PLAIN" : "CUT PLAIN") : printed ? "QR LABEL PRINTED" : e.type === "engraveApproved" && frontEv(e) ? "FRONT ENGRAVING" : FACE_ACTION[e.type] || String((e.data && e.data.ring) || labelOf(e.type)).toUpperCase();

@@ -3560,7 +3560,7 @@ const lineKeyOk = s => /^[\w\-]{3,120}$/.test(String(s || ""));
 // sticker, is read by its key when that sticker is printed again. The lists read every field but the sticker (up to 20 KB
 // each); a record written before hasLabel was kept is taken to have one (every print hands one), and printing it again
 // reads it by its key and says so when there is none.
-const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "completedAt", "completedBy", "how", "stamps", "history", "reopenedAt", "reopenedBy", "updatedAtMs", "hasLabel", "review", "release", "cancel"];   // (SEALCANCEL, Paul 20 Oct 2026: cancel, the Cancel Order seal on the Review document)
+const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "completedAt", "completedBy", "how", "stamps", "history", "reopenedAt", "reopenedBy", "updatedAtMs", "hasLabel", "review", "release", "cancel", "sheet"];   // (SEALCANCEL, Paul 20 Oct 2026: cancel, the Cancel Order seal on the Review document)
 const customRow = (d, withLabel) => { const x = Object.assign({}, d); delete x.updatedAt; if (!withLabel) { x.hasLabel = typeof x.hasLabel === "boolean" ? x.hasLabel : x.label !== undefined ? !!x.label : true; delete x.label; } return x; };
 async function op_customGet(b) {
   if (b.key != null) { const key = String(b.key); if (!lineKeyOk(key)) return { error: "bad key" }; const s = await col(CUSTOM).doc(key).get(); return { record: s.exists ? customRow(s.data(), true) : null }; }
@@ -3882,7 +3882,7 @@ const STAMPS_MAX = 2000;
    release.earlier (newest first, at most 10). A mark made later keeps the release. ── */
 async function op_reviewMarkPut(b) {
   const rid = String(b.rid != null ? b.rid : b.receiptId == null ? "" : b.receiptId).replace(/\D/g, "").slice(0, 30); if (!rid) return { error: "rid (the order's receipt id) required" };
-  const action = b.action === "resolve" ? "resolve" : b.action === "mark" ? "mark" : b.action === "release" ? "release" : b.action === "cancel" ? "cancel" : b.action === "uncancel" ? "uncancel" : ""; if (!action) return { error: "action must be mark, resolve, release, cancel or uncancel" };
+  const action = b.action === "resolve" ? "resolve" : b.action === "mark" ? "mark" : b.action === "release" ? "release" : b.action === "cancel" ? "cancel" : b.action === "uncancel" ? "uncancel" : b.action === "sheet" ? "sheet" : ""; if (!action) return { error: "action must be mark, resolve, release, cancel, uncancel or sheet" };
   const key = rid + "_review", ref = col(CUSTOM).doc(key), now = Date.now(), who = str(b.by || "operator", 80);
   const snap = await ref.get(), cur = snap.exists ? snap.data() : null, rv = cur && cur.review && typeof cur.review === "object" ? cur.review : null, open = !!rv && rv.state === "open";
   if (action === "release") {   // (RELHOLD: who released the order from Review with Release Hold, and when; the mark, if any, is left as it is)
@@ -3910,6 +3910,19 @@ async function op_reviewMarkPut(b) {
     await ref.set(doc, { merge: true });
     return { ok: true, record: customRow(Object.assign({}, cur || {}, doc), false) };
   }
+  /* SEALSHEET (Paul, 20 Oct 2026): action "sheet" keeps who sent the order's designs to the sheets with Send to Sheet and when, exactly as "release" does: sheet { at, by, how: "sheet", id, earlier? }
+     on the same document (the same press, its id, once; an earlier send in sheet.earlier). Written by the page only once the send is through; the mark, the release and the cancel are never touched. */
+  if (action === "sheet") {
+    const was = cur && cur.sheet && typeof cur.sheet === "object" ? cur.sheet : null, id = str(b.id || "", 120);
+    if (was && id && was.id === id) return { ok: true, already: true, record: customRow(cur, false) };
+    const at = num(b.at) > 0 && num(b.at) <= now + 60000 ? num(b.at) : now;
+    const earlier = was ? [Object.assign({}, was)].concat(Array.isArray(was.earlier) ? was.earlier : []).map(e => { const o = Object.assign({}, e); delete o.earlier; return o; }).slice(0, 10) : [];
+    const sheet = Object.assign({ at, by: who, how: "sheet", id: id || `sheet:${rid}:${at}` }, earlier.length ? { earlier } : {});
+    const doc = cur ? { sheet, updatedAtMs: now, updatedAt: FV.serverTimestamp() }
+      : { key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", hasLabel: false, sheet, updatedAtMs: now, updatedAt: FV.serverTimestamp() };
+    await ref.set(doc, { merge: true });
+    return { ok: true, record: customRow(Object.assign({}, cur || {}, doc), false) };
+  }
   if (action === "uncancel") {
     const was = cur && cur.cancel && typeof cur.cancel === "object" ? cur.cancel : null, id = str(b.id || "", 120);
     if (!was || num(was.undoneAt) > 0 || (id && was.id !== id)) return { ok: true, already: true, record: cur ? customRow(cur, false) : null };
@@ -3928,7 +3941,7 @@ async function op_reviewMarkPut(b) {
   }
   if (open) return { ok: true, already: true, record: customRow(cur, false) };
   const earlier = rv ? [Object.assign({}, rv)].concat(Array.isArray(rv.earlier) ? rv.earlier : []).map(e => { const o = Object.assign({}, e); delete o.earlier; return o; }).slice(0, 10) : [];
-  const doc = { key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", hasLabel: false, review: Object.assign({ state: "open", markedAt: now, markedBy: who }, earlier.length ? { earlier } : {}), ...(cur && cur.release ? { release: cur.release } : {}), ...(cur && cur.cancel ? { cancel: cur.cancel } : {}), updatedAtMs: now, updatedAt: FV.serverTimestamp() };   // (RELHOLD: a mark made after a release keeps it)
+  const doc = { key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", hasLabel: false, review: Object.assign({ state: "open", markedAt: now, markedBy: who }, earlier.length ? { earlier } : {}), ...(cur && cur.release ? { release: cur.release } : {}), ...(cur && cur.cancel ? { cancel: cur.cancel } : {}), ...(cur && cur.sheet ? { sheet: cur.sheet } : {}), updatedAtMs: now, updatedAt: FV.serverTimestamp() };   // (RELHOLD: a mark made after a release keeps it)
   await ref.set(doc);
   return { ok: true, record: customRow(doc, false) };
 }
