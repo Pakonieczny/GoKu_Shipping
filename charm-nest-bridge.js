@@ -14246,7 +14246,7 @@ const CustomSheet = window.CustomSheet = (() => {
   function keepFlowEnd(st) {
     if (!st || !st.tally || !st.etsy || st.ended) return; st.ended = true;
     const t = st.tally, n = t.orders.size, sh = t.sheets.size;
-    st.fl.done(`Saved and linked: ${n} other order${n === 1 ? "" : "s"} updated, ${sh} sheet${sh === 1 ? "" : "s"} nested again${t.held.size ? `, ${t.held.size} kept for a person` : ""}${t.failed.size ? `, ${t.failed.size} not done` : ""}`);
+    st.fl.done(`Saved and linked: ${n} other order${n === 1 ? "" : "s"} updated, ${sh} sheet${sh === 1 ? "" : "s"} saved (none nested again)${t.setsChanged && t.setsChanged.size ? `, ${t.setsChanged.size} released set${t.setsChanged.size === 1 ? "" : "s"} changed: re-send ${t.setsChanged.size === 1 ? "its" : "their"} files` : ""}${t.held.size ? `, ${t.held.size} kept for a person` : ""}${t.failed.size ? `, ${t.failed.size} not done` : ""}`);
   }
   function keepRehearse(rec) {
     try {
@@ -15433,7 +15433,8 @@ const Review = window.Review = (() => {
         const at=sh.placements.filter(pl=>sh.charms.some(c=>c.id===pl.id && old.has(c.poolId)));
         for(const pl of at){const c=sh.charms.find(x=>x.id===pl.id);spots.push({sh,metal:sh.metal,id:pl.id,poolId:c.poolId,cxPt:+pl.cxPt,cyPt:+pl.cyPt,angle:+pl.angle || 0});}
         sh.charms=sh.charms.filter(c=>!old.has(c.poolId));sh.placements=sh.placements.filter(pl=>sh.charms.some(c=>c.id===pl.id));
-        if(at.length && sh.placements.length && inPlaceHolds(sh)){sh._inplaceHold=true;held.push(sh);renderCard(sh);}
+        if(at.length && inPlaceHolds(sh)){   // (a sheet the replaced line was alone on is held too: its new piece goes back into that spot when it fits)
+         sh._inplaceHold=true;held.push(sh);renderCard(sh);}
         else Orders.keepRest(sh);
       }
       if(row._relink)row._relink.homes=homes;

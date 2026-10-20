@@ -6,9 +6,9 @@
 // when the library entry arrives (as a download would).
 //   C 4196640001  the custom order: a design dropped in its window (gold), the switch ON → saved as a new SKU, listing 1800004821 · SKU “ACORN'S LEAF” linked to it, Etsy (stand-in) linked
 //   W 4196640002  the same listing and SKU, waiting for a charm (no library charm answered it, so it was in Review, on no sheet)
-//                 → reads the saved SKU, is made from it and goes onto the draft GF Sheet 1, which is nested again; its Orders row picture is the saved design's piece
+//                 → reads the saved SKU, is made from it and goes onto the draft GF Sheet 1, where it is appended (INPLACE, Paul 20 Oct 2026: nothing on it moves, never nested again); its Orders row picture is the saved design's piece
 //   F 4196640091  another listing, on GF Sheet 1 → untouched
-//   The pop-up: one line per place (the repository, the link, W onto GF Sheet 1, GF Sheet 1 nested again, the pictures, Etsy), a full bar, a summary, Close.
+//   The pop-up: one line per place (the repository, the link, W onto GF Sheet 1, GF Sheet 1 files saved, the pictures, Etsy), a full bar, a summary, Close.
 //   X (sandbox): the same toggle is rehearsed: the pop-up says what it WOULD do (W would read the SKU, Etsy would be queued), "Rehearsal complete. Nothing was saved.", no writing op
 //   node tests/charm-nest/keep-relink-live.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
 'use strict';
@@ -49,7 +49,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
       const iv = setInterval(() => {
         if (typeof window.startNest !== 'function' || window.startNest.__stub) return;
         const stub = sh => {
-          window.__nests = (window.__nests || []).concat([{ sheetId: sh.sheetId, charms: sh.charms.map(c => c.poolId) }]);
+          window.__nests = (window.__nests || []).concat([{ sheetId: sh.sheetId, charms: sh.charms.map(c => c.poolId), appendOnly: !!sh.appendOnly }]);
           sh.status = 'nesting'; sh.persistedDone = false; sh.persisted = Promise.resolve();
           setTimeout(async () => {
             try {
@@ -128,23 +128,23 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
       assert(has('done', new RegExp('^Saved ' + sku + ' to the charm repository$')), 'the repository line: ' + JSON.stringify(fl.lines));
       assert(has('done', new RegExp('^Linked listing ' + LID + ' · SKU “.+” to ' + sku)), 'the link line: ' + JSON.stringify(fl.lines));
       assert(has('done', new RegExp(`^Order ${W}: now reads ${sku} and goes onto GF Sheet 1`)), 'W\'s line: made from the saved design onto GF Sheet 1: ' + JSON.stringify(fl.lines));
-      assert(has('done', /^GF Sheet 1 nested again and its files saved/) && has('done', /^Thumbnails updated/), 'the sheet and the pictures: ' + JSON.stringify(fl.lines));
+      assert(has('done', /^GF Sheet 1 files saved \(the new piece added; nothing on it moved\)/) && has('done', /^Thumbnails updated/), 'the sheet and the pictures: ' + JSON.stringify(fl.lines));
       assert(has('done', new RegExp('^Etsy SKU set on listing ' + LID)), 'the Etsy line follows the keeper: ' + JSON.stringify(fl.lines));
-      assert(!fl.lines.some(([s]) => s === 'failed') && !fl.lines.some(([, t]) => new RegExp(`^Order ${C}:`).test(t)) && /Saved and linked: 1 other order updated, 1 sheet nested again/.test(fl.sum), 'nothing failed, the window\'s own order is not told; the summary: ' + fl.sum);
-      pass('the switch ON: the pop-up says each place updated (the repository, the link, W onto GF Sheet 1, GF Sheet 1 nested again, the pictures, Etsy), fills and sums up');
+      assert(!fl.lines.some(([s]) => s === 'failed') && !fl.lines.some(([, t]) => new RegExp(`^Order ${C}:`).test(t)) && /Saved and linked: 1 other order updated, 1 sheet saved \(none nested again\)/.test(fl.sum), 'nothing failed, the window\'s own order is not told; the summary: ' + fl.sum);
+      pass('the switch ON: the pop-up says each place updated (the repository, the link, W onto GF Sheet 1, GF Sheet 1 files saved with W added and nothing on it moved (INPLACE), the pictures, Etsy), fills and sums up');
       // W: its piece of the saved design on GF Sheet 1, nested, saved; F untouched; the pictures of W are the saved design's piece
       const wNow = await page.evaluate(({ W, sku }) => { const r = B.orders.rows.find(x => x.order.receiptId === W); const id = r.poolIds[0], sh = id && Pool.sheetOf(id), c = sh && sh.charms.find(x => x.poolId === id); return { sku: r.spec.designSku, state: r.state, id, sheet: sh && sh.sheetId, placed: !!(c && sh.placements.some(p => p.id === c.id)), csku: c && c.orderInfo && c.orderInfo.sku, key: PieceMedia.vectorKey(r) }; }, { W, sku });
       assert.deepEqual([wNow.sku, wNow.sheet, wNow.placed, wNow.csku], [sku, SHEET, true, sku], 'W reads the saved SKU and its piece of it is placed on GF Sheet 1: ' + JSON.stringify(wNow));
       assert(wNow.key.includes('sku:' + sku) && wNow.key.includes('|p:' + sku + '#'), 'W\'s picture key is the saved design\'s piece (Orders row, order window, piece dots, Engrave): ' + wNow.key);
       const nests = await page.evaluate(() => window.__nests || []);
-      assert(nests.some(x => x.sheetId === SHEET && x.charms.includes(wNow.id)), 'GF Sheet 1 was nested again with W');
+      assert(nests.some(x => x.sheetId === SHEET && x.charms.includes(wNow.id) && x.appendOnly), 'GF Sheet 1 took W append-only (nothing on it moves): ' + JSON.stringify(nests));
       assert((st.doc('Charm_Pool', wNow.id) || {}).sku === sku, 'W\'s piece record is the saved SKU');
       assert(st.calls.slice(w0).some(c => c.op === 'putSheet' && c.body && c.body.sheet && c.body.sheet.id === SHEET && JSON.stringify(c.body.sheet.charms || []).includes(wNow.id)), 'GF Sheet 1 was saved again with W');
       assert.equal(st.calls.slice(w0).filter(c => /^(poolPut|poolUpdate)$/.test(String(c.op)) && JSON.stringify(c.body).includes(`${F}_${F}1_1`)).length, 0, 'F\'s piece is untouched');
       // the Orders row of W draws the saved design
       await page.evaluate(() => { try { CustomSheet.shut(); } catch (_) {} CN.setMode('orders'); Orders.render(); });
       await page.waitForFunction(({ W, sku }) => { const r = B.orders.rows.find(x => x.order.receiptId === W); const h = document.querySelector(`[data-key="${CSS.escape(r.key)}"] [data-vector]`); return !!h && h._mvRow === r && h._mvRow.spec.designSku === sku && !!h.querySelector('img'); }, { W, sku }, { timeout: 15000 });
-      pass('W is made from the saved design onto GF Sheet 1 (nested again, saved), F untouched; W\'s pictures are the saved design\'s piece');
+      pass('W is made from the saved design onto GF Sheet 1 (appended, saved), F untouched; W\'s pictures are the saved design\'s piece');
       await page.click('.rlFlow [data-rl=close]');
       assert.equal(await page.evaluate(() => document.querySelectorAll('.rlFlow').length), 0, 'Close puts the pop-up away');
       await ctx.close();
