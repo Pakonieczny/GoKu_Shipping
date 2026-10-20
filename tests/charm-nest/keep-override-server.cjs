@@ -71,7 +71,7 @@ let n = 0; const ok = (c, m) => { assert(c, m); n++; }, eq = (a, b, m) => { asse
   eq(Repair.plan(store.get('Charm_Custom_Saves/4196600009'), S1, null, null, Date.now()), { state: null, alias: null, etsy: false }, 'the repair pass leaves a superseded record (no "overtaken", no alias cut)');
   const pend = await Save.pending({ db: Fk.db, now: () => Date.now() + 3600000 }, {});
   ok(!pend.pending.some(p => p.rid === '4196600009'), 'and the Etsy queue does not finish it');
-  ok(!Fk.fileWrites.some(w => /charmnest/master/(OAK|custom/OAK_LEAF).(ai|png)$/.test(w.path)), 'X\'s files are never written: the override uploads beside them');
+  ok(!Fk.fileWrites.some(w => /charmnest\/master\/(OAK|custom\/OAK_LEAF)\.(ai|png)$/.test(w.path)),'X\'s files are never written: the override uploads beside them');
   const r2 = await post(body({ override: { via: 'own', from: 'OAK_LEAF' } }));
   eq([r2.body.ok, r2.body.how, r2.body.override && r2.body.override.audit], [true, 'again', r.body.override.audit], 'a repeated call answers the same save and the same override');
   eq([...store.keys()].filter(k => k.startsWith('Charm_Keep_Overrides/')).length, 1, 'still one audit record');
