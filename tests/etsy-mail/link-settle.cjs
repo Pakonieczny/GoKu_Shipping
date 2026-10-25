@@ -126,6 +126,24 @@ put("EtsyMail_Config/global", {});
   check(rv.nothing, "with nothing open there is nothing to clear");
   check(!writes.some(w => /^EtsyMail_(Drafts|OrderLinks|SendQueue)/.test(w.path)), "no reply box, question or send queue was touched");
 
+  // ── 4 · reads that read NOTHING never settle; a stale pass never undoes a press (review of 25 Oct) ──
+  console.log("Signed out, and a press during a pass");
+  clean();
+  thread("nd", { messageCount: 4, lastInboundAt: T(T0 - 2 * HOUR) });
+  for (let i = 1; i <= 4; i++) msg("nd", "d" + i, i % 2 ? "inbound" : "outbound", T0 - (60 - i) * HOUR);
+  await CON.maybeRun(db, { now: T0, force: true });
+  at = T0;
+  for (let k = 0; k < 4; k++) { if (k) await CON.tick(db, { now: at, prev: cfg() }); finish("nd", at + 2 * MIN); incomplete("nd", at + 2 * MIN, "Etsy had signed the extension out"); store.set("EtsyMail_Threads/nd", Object.assign({}, store.get("EtsyMail_Threads/nd"), { readIncomplete: { atMs: at + 2 * MIN, why: "Etsy had signed the extension out", mode: "full", pageMessages: 0 } })); await CON.tick(db, { now: at + 5 * MIN, prev: cfg() }); at += 7 * HOUR; }
+  check(cfg().gaps.nd && (cfg().gaps.nd.same || 0) === 0, "four finished reads while Etsy had signed the extension out: nothing counted, nothing settled");
+  const stale = JSON.parse(JSON.stringify(cfg()));   // what a 5-minute pass read before the press
+  const sigD = judged(at).gap.sig;
+  rv = await CON.resolve(db, { sig: sigD, by: "Paul", now: at + MIN });
+  check(rv.ok && !cfg().gaps.nd, "Matches Etsy clears it");
+  await CON.recheck(db, { now: at + 2 * MIN, prev: Object.assign(stale, { tickAtMs: 0 }) });
+  check(!cfg().gaps.nd && cfg().proven.nd && cfg().proven.nd.how === "checked" && cfg().healed.some(h => h.how === "checked"), "a pass that began before the press does not bring it back, nor drop the person's note");
+  r = await CON.maybeRun(db, { now: at + 24 * HOUR });
+  check(r.ran && !r.doc.gaps.nd, "and the next night leaves it closed");
+
   console.warn = realWarn;
   console.log(fails.length ? `\nFAILED: ${fails.length}\n- ` + fails.join("\n- ") : "\nlink-settle OK");
   process.exit(fails.length ? 1 : 0);

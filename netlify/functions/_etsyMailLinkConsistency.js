@@ -194,7 +194,9 @@ async function advance(db, st, { now, manual = false, max = REPAIR_MAX, budgetMs
             if (ri && g.lastTryAtMs && ms(ri.atMs) >= g.lastTryAtMs - SLACK_MS) g.why = String(ri.why || "").slice(0, 120);   // (what kept the last re-read from being a complete one: the notice says it)
             // a finished re-read that stored nothing (the same count, the same newest message) counts towards settling; one that stored anything starts again
             // (a gap written before the newest time was kept has sn undefined: its count alone is compared, once)
-            if (readNow) g.same = v.stored === g.s && (g.sn === undefined || v.newest === g.sn) ? (g.same || 0) + 1 : 0;
+            // (a read that read NOTHING: signed out, or no message found on the page, is no evidence that nothing is missing: it does not count)
+            const blind = !!ri && !!g.lastTryAtMs && ms(ri.atMs) >= g.lastTryAtMs - SLACK_MS && (!(ri.pageMessages > 0) || /signed .*out/i.test(ri.why || ""));
+            if (readNow && !blind) g.same = v.stored === g.s && (g.sn === undefined || v.newest === g.sn) ? (g.same || 0) + 1 : 0;
             if (rc && g.lastTryAtMs && ms(rc.atMs) >= g.lastTryAtMs - SLACK_MS) {
               // Etsy's conversation was read in full after our request and every message on it was already stored (or has just been):
               // nothing is missing; the record's counter was off. Remember how far off, so the same drift is not reported again.
@@ -240,6 +242,14 @@ async function advance(db, st, { now, manual = false, max = REPAIR_MAX, budgetMs
   return { gaps, proven, healed, results, queued };
 }
 
+/** Two proven ledgers as one: for each conversation the newer entry wins (a person's Matches Etsy made during a pass is not written over by what the pass read before it). */
+function mergeProven(a, b) {
+  const out = Object.assign({}, a || {});
+  for (const [id, x] of Object.entries(b || {})) if (!out[id] || ((x && x.atMs) || 0) > ((out[id] && out[id].atMs) || 0)) out[id] = x;
+  return out;
+}
+/** The healed list of a pass with the "checked" notes a person made meanwhile kept. */
+const mergeHealed = (fresh, mine) => (fresh || []).filter(h => h && h.how === "checked" && !(mine || []).some(s => s.atMs === h.atMs && s.o === h.o)).concat(mine || []).sort((a, b) => (b.atMs || 0) - (a.atMs || 0)).slice(0, HEALED_MAX);
 /** The proven drifts worth keeping: recent, and not more than PROVEN_MAX. */
 function pruneProven(p, now) {
   const rows = Object.entries(p || {}).filter(([, v]) => v && now - (v.atMs || 0) < PROVEN_KEEP_MS).sort((a, b) => b[1].atMs - a[1].atMs).slice(0, PROVEN_MAX);
@@ -316,7 +326,13 @@ async function maybeRun(db, { now = Date.now(), force = false } = {}) {
   let doc;
   try { doc = await run(db, now, prev); }
   catch (e) { await ref.set(Object.assign({}, prev || {}, { startedAtMs: 0, lastError: String(e && e.message).slice(0, 160), lastErrorAtMs: now })); throw e; }
-  doc = await commit(db, fresh => Object.assign({}, doc, { dismissed: Object.keys(doc.gaps).length ? (fresh.dismissed || null) : null }));
+  doc = await commit(db, fresh => {
+    // a person's Matches Etsy made while this run was reading (its proven entry is newer than the run): that gap stays closed and the entry stands
+    const gaps = Object.assign({}, doc.gaps);
+    for (const [id, x] of Object.entries(fresh.proven || {})) if (x && x.how === "checked" && (x.atMs || 0) > now) delete gaps[id];
+    const open = Object.values(gaps), noAddress = open.filter(g => g.url === false).length;
+    return Object.assign({}, doc, { gaps, noAddress, unresolved: open.length - noAddress + (open.length ? doc.overflow || 0 : 0), proven: pruneProven(mergeProven(doc.proven, fresh.proven), now), healed: mergeHealed(fresh.healed, doc.healed), dismissed: open.length ? (fresh.dismissed || null) : null });
+  });
   return { ran: true, doc };
 }
 
@@ -338,7 +354,7 @@ async function recheck(db, { now = Date.now(), manual = false, prev = null } = {
     const open = Object.values(gaps);
     const noAddress = open.filter(g => g.url === false).length;
     return Object.assign({}, fresh, {
-      gaps, proven: pruneProven(Object.assign({}, fresh.proven, step.proven), now), healed: step.healed,
+      gaps, proven: pruneProven(mergeProven(step.proven, fresh.proven), now), healed: mergeHealed(fresh.healed, step.healed),
       noAddress, unresolved: open.length - noAddress + (open.length ? fresh.overflow || 0 : 0), overflow: open.length ? fresh.overflow || 0 : 0, tickAtMs: now, dismissed: open.length ? (fresh.dismissed || null) : null
     });
   });
@@ -385,7 +401,8 @@ async function resolve(db, { sig, by = "", now = Date.now() } = {}) {
     if (!gp || !gp.n) { outcome = { nothing: true }; return null; }
     if (!sig || gp.sig !== sig) { outcome = { changed: true }; return null; }
     const proven = Object.assign({}, fresh.proven || {}), healed = (fresh.healed || []).slice();
-    const ids = Object.keys(fresh.gaps || {});
+    const ids = Object.keys(fresh.gaps || {}).filter(id => (fresh.gaps[id] || {}).url !== false), keep = {};   // (a gap with no Etsy address is not in the notice: nobody compared it)
+    for (const id of Object.keys(fresh.gaps || {})) if (!ids.includes(id)) keep[id] = fresh.gaps[id];
     for (const id of ids) {
       const g = fresh.gaps[id] || {};
       proven[id] = { k: g.k, d: g.k === "inbound_missing" ? 0 : (g.c == null || g.c < 0 ? 0 : g.c) - (g.s || 0), lastIn: g.li || 0, atMs: now, how: "checked", by: who };
@@ -393,7 +410,8 @@ async function resolve(db, { sig, by = "", now = Date.now() } = {}) {
     }
     healed.length = Math.min(healed.length, HEALED_MAX);
     outcome = { ok: true, n: ids.length };
-    return Object.assign({}, fresh, { gaps: {}, proven: pruneProven(proven, now), healed, unresolved: 0, noAddress: 0, overflow: 0, dismissed: null, tickAtMs: now });
+    const left = Object.keys(keep).length;
+    return Object.assign({}, fresh, { gaps: keep, proven: pruneProven(proven, now), healed, unresolved: 0, noAddress: left, overflow: 0, dismissed: null, tickAtMs: now });
   });
   return Object.assign({ doc }, outcome);
 }
