@@ -14,7 +14,8 @@ const { VALIDATION_WAIT_MS, PREPARATION_RESERVATION_MS } = require("../../netlif
 async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 2,
   finishOne = true, validationPolls = 0, existingPending = false, pendingSentAgo = 0,
   neverValidates = false, validationError = false, finishDuringRefill = false, failedAnswers = [], extraJobs = [],
-  firstSourceError = false, rejectSource = false, priorSweepAge = 0, priorStage = "submitting queued sets" } = {}) {
+  firstSourceError = false, rejectSource = false, priorSweepAge = 0, priorStage = "submitting queued sets",
+  priorHeartbeatAge = null } = {}) {
   const T0 = Date.parse("2026-09-29T17:00:00Z");
   let clock = T0;
   let providerActive = activeCount;
@@ -31,7 +32,8 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
   ];
   const guard = {};
   if (priorSweepAge) Object.assign(guard,{stage:priorStage,
-    runningSince:{toMillis:()=>T0-priorSweepAge},lastProgressAt:{toMillis:()=>T0-priorSweepAge}});
+    runningSince:{toMillis:()=>T0-priorSweepAge},lastProgressAt:{toMillis:()=>T0-priorSweepAge},
+    ...(priorHeartbeatAge != null ? {heartbeatAt:T0-priorHeartbeatAge} : {})});
   const submissions = [], collections = [], stages = [], continuations = [], postponed = [];
   const checks = new Map();
   let validating = existingPending ? "batch_running_0" : null;
@@ -188,8 +190,13 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
   assert.equal(abandonedSweep.submissions.length,29,'a worker stopped in submission preparation can be recovered safely');
   const liveSweep = await runSweep({priorSweepAge:2*60000});
   assert.equal(liveSweep.result.skipped,'sweep already running','a working preparation is left alone');
-  const validatingSweep = await runSweep({priorSweepAge:6*60000,priorStage:'validating new job'});
-  assert.equal(validatingSweep.result.skipped,'sweep already running','provider validation is not mistaken for failed preparation');
+  // The guard is a lease with a heartbeat (2026-10-25): a run still beating is left alone however
+  // long it has run (here: six minutes validating a job), and one whose heartbeat stopped is taken over.
+  const validatingSweep = await runSweep({priorSweepAge:6*60000,priorStage:'validating new job',priorHeartbeatAge:30000});
+  assert.equal(validatingSweep.result.skipped,'sweep already running','a live run validating a job is not taken over');
+  const deadSweep = await runSweep({priorSweepAge:6*60000,priorStage:'validating new job'});
+  assert.notEqual(deadSweep.result.skipped,'sweep already running','a run whose heartbeat stopped is taken over');
+  assert.equal(deadSweep.guard.runningSince,null,'and the new run gives the lease back when it ends');
   const finishedDuring = await runSweep({ activeCount: 7, waitingCount: 40, finishOne: false, validationPolls: 2, finishDuringRefill: true });
   assert.equal(finishedDuring.submissions.length, 24, "a place freed during refill is filled before the worker stops");
   assert.equal(finishedDuring.guard.lastResult.activeAtAdmission, 30);

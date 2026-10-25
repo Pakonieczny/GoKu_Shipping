@@ -47,17 +47,38 @@ const VALIDATION_WAIT_MS = 15 * 60 * 1000;
 // An uncertain create remains reserved until provider reconciliation confirms it.
 const PREPARATION_RESERVATION_MS = 5 * 60 * 1000;
 const PREPARATION_FAILURE_LIMIT = 3;
-function preparationFailurePatch(record, message, now, timestamp) {
+// `permanent`: the same input fails the same way every time (a reference file that is not a usable
+// image, lib/listingBatchImages.cjs), so the set stops at once with the reason instead of retrying.
+function preparationFailurePatch(record, message, now, timestamp, permanent = false) {
   const failures = Number(record?.preparationFailures || 0) + 1;
-  const stopped = failures >= PREPARATION_FAILURE_LIMIT;
+  const stopped = permanent || failures >= PREPARATION_FAILURE_LIMIT;
   return { preparationFailures: failures, retryError: String(message).slice(0, 500),
     retryNotBefore: stopped ? null : now + 10 * 60000,
     retryRequested: !stopped, repairPending: false,
-    ...(stopped ? { state: 'JOB_STATE_FAILED', locallyQueued: false,
+    // A provider job's own state (a collected retry source) is history and is not rewritten.
+    ...(stopped ? { ...(record && record.batchName && !record.locallyQueued ? {} : { state: 'JOB_STATE_FAILED', locallyQueued: false }),
       retryStatus: 'preparation_failed', recoveryStatus: 'blocked',
-      recoveryReason: `Listing preparation failed ${failures} times. ${String(message).slice(0, 300)}` } : {}),
+      recoveryReason: permanent ? `Listing stopped before submission: ${String(message).slice(0, 400)}`
+        : `Listing preparation failed ${failures} times. ${String(message).slice(0, 300)}` } : {}),
     updatedAt: timestamp(), rev: timestamp() };
 }
+// A worker stopped mid-preparation is retried after 10, 20, 40 … minutes (at most 4 hours); a set
+// that has stopped the worker this many times is stopped with the reason.
+const INTERRUPTION_LIMIT = 6;
+function interruptionPatch(record, message, now, timestamp) {
+  const interruptions = Number(record?.preparationInterruptions || 0) + 1;
+  if (interruptions >= INTERRUPTION_LIMIT) {
+    return { ...preparationFailurePatch(record, `${message} This set stopped the worker ${interruptions} times.`, now, timestamp, true),
+      preparationInterruptions: interruptions };
+  }
+  return { preparationInterruptions: interruptions, retryError: String(message).slice(0, 500),
+    retryNotBefore: now + Math.min(240, 10 * 2 ** (interruptions - 1)) * 60000,
+    retryRequested: true, repairPending: false, updatedAt: timestamp(), rev: timestamp() };
+}
+// An unconfirmed create is given up (and its set queued again) only when it is this old and the
+// provider's job list reaches back past it without the job: OpenAI lists a new job within seconds.
+const CREATE_CONFIRM_MS = 15 * 60 * 1000;
+const BLOCK_TTL_MS = 45 * 60 * 1000;
 // A person can ask the collector to restart stalled jobs sooner than
 // STALL_RESTART_MS (Paul, 2026-09-29: "please restart"), never sooner than
 // this: a job under half an hour old is normal, and each restart uses one of
@@ -74,7 +95,9 @@ const stallCutoffMs = (requested) => {
 // (the work it started is safe to repeat: saves skip files that exist) and the
 // run goes on; the next run asks again. Never use this for a submission: an
 // abandoned create could be paid for twice.
-const SWEEP_CALL_LIMITS = { batch_status: 90 * 1000, batch_stall_cancel: 90 * 1000, batch_collect: 2 * 60 * 1000 };
+// A restart only queues its set (its own submission waits for admission), so it is safe to abandon too.
+const SWEEP_CALL_LIMITS = { batch_status: 90 * 1000, batch_stall_cancel: 90 * 1000, batch_collect: 2 * 60 * 1000,
+  batch_restart_stalled: 3 * 60 * 1000 };
 function withLimit(promise, ms, onTimeout) {
   let timer;
   const limit = new Promise((resolve) => { timer = setTimeout(() => resolve(onTimeout), ms); });
@@ -136,7 +159,9 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
           return { queued: true, reason: 'Waiting for provider validation' };
       }
       if (active >= 30) return { queued: true, reason: 'Waiting for an active job to finish' };
-      if (g.blockedAtActive != null && active >= g.blockedAtActive &&
+      // A refusal lowers the ceiling to the jobs active at that moment, for BLOCK_TTL_MS: it was never
+      // lifted, so every refusal could only lower it further, down to one job at a time for good.
+      if (g.blockedAtActive != null && active >= g.blockedAtActive && now() - Number(g.blockedAt || 0) < BLOCK_TTL_MS &&
           (active > 0 || now() - Number(g.blockedAt || 0) < 15 * 60000))
         return { queued: true, reason: 'Waiting for token capacity' };
       tx.set(gate, { owner: token, sourceName, startedAt: now(), phase: 'preparing',
@@ -144,11 +169,13 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
       return { token, active, sourceName };
     });
   }
+  // Each stage renews the reservation: a slow but live preparation (large references, a slow
+  // upload) is not mistaken for a dead one and taken over after PREPARATION_RESERVATION_MS.
   async function progress(claim, stage) {
     await db.runTransaction(async tx => {
       const gs = await tx.get(gate);
       if (gs.data()?.owner !== claim.token) throw new Error('Submission reservation expired; job remains queued');
-      tx.set(gate, { preparationStage: stage }, { merge: true });
+      tx.set(gate, { preparationStage: stage, startedAt: now() }, { merge: true });
     });
   }
   async function failPreparation(claim, error) {
@@ -156,7 +183,8 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
       const [gs, ss] = await Promise.all([tx.get(gate), tx.get(batches.doc(claim.sourceName))]);
       const g = gs.data() || {}, s = ss.data() || {};
       if (g.owner !== claim.token || g.phase !== 'preparing' || s.retryBatchName) return false;
-      tx.set(batches.doc(claim.sourceName), preparationFailurePatch(s, error?.message || error, now(), timestamp), { merge: true });
+      tx.set(batches.doc(claim.sourceName), preparationFailurePatch(s, error?.message || error, now(), timestamp,
+        error?.permanent === true), { merge: true });
       tx.set(gate, { owner: null, phase: 'idle', sourceName: null,
         lastError: String(error?.message || error).slice(0, 500) }, { merge: true });
       return true;
@@ -178,7 +206,10 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
       if (!s || s.retryBatchName || s.setComplete || s.retryStatus === 'preparation_failed' ||
           !s.locallyQueued || stalled?.stalledAt && Number(s.preparationFailureAt || 0) >= stalled.stalledAt) return;
       const message = `Listing preparation stopped before submission${g.preparationStage ? ` while ${g.preparationStage}` : ''}. Other listings can continue.`;
-      tx.set(batches.doc(sourceName), { ...preparationFailurePatch(s, message, now(), timestamp),
+      // The worker stopped (time limit, restart, frozen process): that says nothing against the
+      // set, so it does not count toward PREPARATION_FAILURE_LIMIT. It waits longer each time and
+      // stops only when the same set has stopped the worker INTERRUPTION_LIMIT times.
+      tx.set(batches.doc(sourceName), { ...interruptionPatch(s, message, now(), timestamp),
         preparationFailureAt: stalled?.stalledAt || now() }, { merge: true });
       if (expired) tx.set(gate, { owner: null, phase: 'idle', sourceName: null, lastError: null }, { merge: true });
     });
@@ -198,7 +229,9 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
       tx.set(batches.doc(batchName), { ...prepared, batchName, docId: batchName,
         state: 'JOB_STATE_PENDING', rawCreate: raw || null,
         createdAt: timestamp(), updatedAt: timestamp(), rev: timestamp() }, { merge: true });
-      tx.set(batches.doc(claim.sourceName), { retryBatchName: batchName, retryStatus: 'submitted',
+      // The source now only points at its job: nothing waits on it (a pointer left with
+      // retryRequested:true filled the sweep's queue read with records that are not queued).
+      tx.set(batches.doc(claim.sourceName), { retryBatchName: batchName, retryStatus: 'submitted', retryRequested: false,
         preparedSubmission: null, updatedAt: timestamp(), rev: timestamp() }, { merge: true });
       tx.set(gate, { owner: null, phase: 'idle', sourceName: null, inputFileName: null,
         probeName: batchName, lastError: null }, { merge: true });
@@ -225,6 +258,9 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
       tx.set(gate, { blockedAtActive: activeSize(live), blockedAt: now(), lastRejectedName: batchName }, { merge: true });
     });
   }
+  // listProviderBatches(inputFileName, startedAt) answers { match, covered }: the provider's job made
+  // from that input file, and whether its list reached back past the moment the create began
+  // (a bare job or null is read as { match } with nothing covered).
   async function reconcile(listProviderBatches, stalledPreparation = null) {
     await recoverPreparation(stalledPreparation);
     const gs = await gate.get();
@@ -232,13 +268,34 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
     if (!g.owner || g.phase !== 'creating' || now() - Number(g.startedAt || 0) < 3 * 60000) return;
     const ss = await batches.doc(g.sourceName).get();
     const prepared = ss.data()?.preparedSubmission;
-    if (!prepared?.inputFileName) return;
-    const raw = await listProviderBatches(prepared.inputFileName);
-    if (raw) await complete({ token: g.owner, sourceName: g.sourceName }, raw.id, prepared, raw);
+    const inputFileName = prepared?.inputFileName || g.inputFileName;
+    const answer = inputFileName ? await listProviderBatches(inputFileName, Number(g.startedAt || 0)) : { match: null, covered: true };
+    const found = answer && typeof answer === 'object' && 'covered' in answer ? answer : { match: answer || null, covered: false };
+    if (found.match && prepared) await complete({ token: g.owner, sourceName: g.sourceName }, found.match.id, prepared, found.match);
+    // 2026-10-25: a create that timed out (or got a 5xx) before OpenAI made the job left the gate in
+    // 'creating' for good: only an existing job could ever release it, so every queued set waited
+    // until someone edited the database. Once OpenAI's list reaches back past the create and the
+    // create is CREATE_CONFIRM_MS old, the job provably does not exist: the set is queued again
+    // (no strike: nothing about it failed) and admission goes on.
+    else if (!found.match && found.covered && now() - Number(g.startedAt || 0) >= CREATE_CONFIRM_MS) await abandonCreate(g);
     else await gate.set({ lastError: 'A submission has an unconfirmed provider response. Admission is paused to prevent duplicate images.' }, { merge: true });
+  }
+  async function abandonCreate(seen) {
+    await db.runTransaction(async tx => {
+      const gs = await tx.get(gate);
+      const g = gs.data() || {};
+      if (g.owner !== seen.owner || g.phase !== 'creating') return;
+      const source = batches.doc(g.sourceName);
+      const s = (await tx.get(source)).data() || {};
+      if (!s.retryBatchName) tx.set(source, { preparedSubmission: null, retryRequested: true, retryStatus: 'queued',
+        retryError: 'The submission did not reach OpenAI; it is sent again.', updatedAt: timestamp(), rev: timestamp() }, { merge: true });
+      tx.set(gate, { owner: null, phase: 'idle', sourceName: null, inputFileName: null,
+        lastError: null }, { merge: true });
+    });
   }
   return { reserve, progress, failPreparation, beforeCreate, complete, release, rejected, reconcile };
 }
 module.exports = { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
   neverStarted, stallRestartPending, SWEEP_CALL_LIMITS, withLimit, STALL_RESTART_MS, STALL_RESTART_MIN_MS, STALL_RESTART_LIMIT,
-  VALIDATION_WAIT_MS, PREPARATION_RESERVATION_MS, PREPARATION_FAILURE_LIMIT, preparationFailurePatch, stallCutoffMs };
+  VALIDATION_WAIT_MS, PREPARATION_RESERVATION_MS, PREPARATION_FAILURE_LIMIT, preparationFailurePatch, stallCutoffMs,
+  interruptionPatch, INTERRUPTION_LIMIT, CREATE_CONFIRM_MS };

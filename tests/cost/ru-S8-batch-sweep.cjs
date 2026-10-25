@@ -73,8 +73,10 @@ const CRON = { kind: 'batch_sweep', cronTriggered: true };
   console.log('idle scheduled sweep:  first run (lists the 100 newest) reads', first.reads, ' batch-record reads', first.batchReads,
     '\n                       next runs: reads', idle.reads, ' batch-record reads', idle.batchReads, ' ->  per day (144 runs): reads', idle.reads * 144, ' (before: ~', first.reads * 144, ')');
   assert(first.batchReads >= 100, 'the first run still lists the 100 newest records (got ' + first.batchReads + ')');
-  assert(idle.batchReads <= 4, 'a later idle run reads the newest record (one) and the few admission records, not the 100 newest (got ' + idle.batchReads + ')');
-  assert(idle.reads <= 15, 'an idle scheduled run reads under 15 documents (got ' + idle.reads + ')');
+  // 2026-10-25: +3 batch-record reads (the queue, saving and active-job reads, one each when empty) and a
+  // guard read per guard write (the guard is a lease written in a transaction): about 1,000 reads a day.
+  assert(idle.batchReads <= 7, 'a later idle run reads the newest record (one), the few admission records and three empty work reads, not the 100 newest (got ' + idle.batchReads + ')');
+  assert(idle.reads <= 24, 'an idle scheduled run reads under 25 documents (got ' + idle.reads + ')');
   assert.deepEqual(guard().recentSessions, ['sess_nnnnnnnn', 'sess_oooooooo', 'sess_pppppppp'], 'the kept list is not rewritten by a run that used it');
 
   // (2) the same three sessions are still checked: a session the kept list names whose summary is old IS reconciled by the run

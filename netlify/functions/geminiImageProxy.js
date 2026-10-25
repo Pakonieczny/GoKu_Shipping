@@ -177,6 +177,33 @@ exports.handler = async (event) => {
   const kind = String(body.kind || "edits");
 
   // ---------------------------------------------------------------
+  // Listing batch work never runs a paid submission or a sweep here (2026-10-25). A batch_submit
+  // from a page ("Resume empty sets" sent it without enqueueOnly) used to download, upload and
+  // create the OpenAI job inline: Netlify froze it at the time limit while it held the shared
+  // submission gate, and the queue behind it waited. Here the set is only registered (fast), and
+  // the background worker, which has the time, sends it like every other queued set.
+  // ---------------------------------------------------------------
+  if (kind === "batch_submit" || kind === "batch_sweep") {
+    const origin = selfOrigin(event);
+    const kick = (payload) => origin ? fetch(`${origin}/.netlify/functions/${BACKGROUND_FN}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
+    }).catch((err) => console.warn("[geminiImageProxy] sweep dispatch failed; the scheduled run will start it:", err?.message || err)) : null;
+    if (kind === "batch_sweep") {
+      await kick(body);
+      return json(202, { ok: true, accepted: true, background: true, kind, dispatchedTo: BACKGROUND_FN });
+    }
+    if (body.enqueueOnly !== true) {
+      const registered = { ...body, enqueueOnly: true };
+      const result = await withDeadline(impl.handler({ ...event, body: JSON.stringify(registered), isBase64Encoded: false }), INLINE_DEADLINE_MS);
+      if (result && result.__deadline) return json(504, { ok: false, timedOut: true, kind,
+        error: { code: "SYNC_TIMEOUT", message: "Registering the sets took too long. Re-check the batch panel before sending them again." } });
+      await kick({ kind: "batch_sweep", sessionId: body.sessionId || undefined });
+      return result;
+    }
+  }
+
+  // ---------------------------------------------------------------
   // Fast path: work that returns data the caller actually reads.
   // Still guarded so we never hand the browser an HTML timeout page.
   // ---------------------------------------------------------------

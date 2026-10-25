@@ -105,15 +105,18 @@ async function failedPreparationIsolationScenario() {
   now+=6*60000;
   const marker={batchName:'broken',stalledAt:now-6*60000};
   await gate.reconcile(async()=>{throw new Error('preparation has no paid provider job to reconcile');},marker);
-  assert.equal(db.data.get('batches/broken').preparationFailures,1);
+  // A worker that stopped is an interruption, not a fault of the set (2026-10-25): it is counted on
+  // its own and backed off, and never uses one of the three preparation failures.
+  assert.equal(db.data.get('batches/broken').preparationInterruptions,1);
+  assert.equal(db.data.get('batches/broken').preparationFailures,undefined);
   assert.match(db.data.get('batches/broken').retryError,/downloading reference images/);
   await gate.reconcile(async()=>null,marker);
-  assert.equal(db.data.get('batches/broken').preparationFailures,1,'same dead worker is recorded once');
+  assert.equal(db.data.get('batches/broken').preparationInterruptions,1,'same dead worker is recorded once');
   assert.equal((await gate.reserve('broken')).sourceError,true,'failed source is deferred rather than blocking healthy listings');
   const healthy=await gate.reserve('healthy'); assert(healthy.token);
   await assert.rejects(gate.beforeCreate(stopped,{inputFileName:'late-input'}),/reservation expired/);
   await gate.release(healthy,null);
-  for(let attempt=2;attempt<=3;attempt++) {
+  for(let attempt=1;attempt<=3;attempt++) {
     now+=11*60000;
     const claim=await gate.reserve('broken');assert(claim.token);
     await gate.failPreparation(claim,new Error('Reference download timed out'));
@@ -144,6 +147,8 @@ async function originalSubmissionScenario() {
     setTimeout: fn => setTimeout(fn, 0), clearTimeout,
     runBoundedConcurrent:async(items,_n,fn)=>Promise.all(items.map(async(item,i)=>{try{return await fn(item,i);}catch(__error){return {__error};}})),
     storagePathToBuffer:async path=>path === 'unreadable' ? new Promise(()=>{}) : ({mime:'image/png',buffer:Buffer.from('test image')}),
+    // The byte check has its own test (input-images.cjs); admission is about what happens around it.
+    normalizeBatchInputImage:async(buffer,{contentType})=>({buffer,mime:contentType,from:contentType,action:'as-is'}),
     buildOpenAIBatchJsonlLine:()=>({request:'test'}),listingImageSize:()=> '2048x2048',
     withCurrentBeadyCharmSize:(_set,_slot,prompt)=>prompt,
     uploadOpenAIBatchFile:async()=>{uploads++;return 'file-input';},
@@ -236,6 +241,7 @@ async function submitRefusalCountScenario() {
     process,Buffer,console:{log:()=>{}}, json:(statusCode,data)=>({statusCode,...data}), setTimeout, clearTimeout,
     runBoundedConcurrent:async(items,_n,fn)=>Promise.all(items.map(fn)),
     storagePathToBuffer:async()=>({mime:'image/png',buffer:Buffer.from('test image')}),
+    normalizeBatchInputImage:async(buffer,{contentType})=>({buffer,mime:contentType,from:contentType,action:'as-is'}),
     buildOpenAIBatchJsonlLine:()=>({request:'test'}),listingImageSize:()=> '2048x2048',
     withCurrentBeadyCharmSize:(_set,_slot,prompt)=>prompt,
     uploadOpenAIBatchFile:async()=>'file-input',

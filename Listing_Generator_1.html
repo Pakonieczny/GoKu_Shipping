@@ -5860,10 +5860,16 @@ The output must look like the input image with ONLY the user's requested change 
     // app) and the gallery modal's "+ Add files" handler.
     //
     // Returns an array of {name, blob, contentType} ready for upload.
-    // Non-ZIP files pass through unchanged. Inside a ZIP we keep
+    // Non-ZIP files keep their name. Inside a ZIP we keep
     // only image-extension files, skip macOS metadata (__MACOSX/,
     // .DS_Store) and dotfiles, and flatten any nested folder
     // structure to just the basename.
+    // contentType comes from the file's first bytes, not its name or the
+    // browser's guess: a JPEG saved as .png was stored as image/png and
+    // OpenAI rejected every request that used it ("Invalid input image
+    // file", 2026-10-24). A file whose bytes are no image at all (an HTML
+    // error page, JSON, an empty file) is left out and named in
+    // `skipped` on the returned array.
     // ============================================================
     const _ZIP_IMG_RE = /\.(png|jpe?g|webp|gif|avif|svg|bmp|tiff?)$/i;
     function _isZipFile(f) {
@@ -5872,23 +5878,44 @@ The output must look like the input image with ONLY the user's requested change 
       const t = (f.type || '').toLowerCase();
       return t === 'application/zip' || t === 'application/x-zip-compressed' || t === 'multipart/x-zip';
     }
-    function _mimeForExt(name) {
-      const ext = (name || '').toLowerCase().split('.').pop();
-      if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
-      if (ext === 'webp') return 'image/webp';
-      if (ext === 'gif')  return 'image/gif';
-      if (ext === 'avif') return 'image/avif';
-      if (ext === 'svg')  return 'image/svg+xml';
-      if (ext === 'bmp')  return 'image/bmp';
-      if (ext === 'tif' || ext === 'tiff') return 'image/tiff';
-      return 'image/png';
+    // The image format from the first 16 bytes, or null when they are no image.
+    async function _sniffImageType(blob) {
+      if (!blob || !blob.size) return null;
+      const b = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+      const at = (i, ...bytes) => bytes.every((x, k) => b[i + k] === x);
+      const ascii = (i, n) => String.fromCharCode(...b.slice(i, i + n));
+      if (at(0, 0x89, 0x50, 0x4E, 0x47)) return 'image/png';
+      if (at(0, 0xFF, 0xD8, 0xFF)) return 'image/jpeg';
+      if (ascii(0, 4) === 'RIFF' && ascii(8, 4) === 'WEBP') return 'image/webp';
+      if (ascii(0, 4) === 'GIF8') return 'image/gif';
+      if (ascii(4, 4) === 'ftyp') {
+        const brand = ascii(8, 4);
+        if (brand === 'avif' || brand === 'avis') return 'image/avif';
+        if (/^(heic|heix|hevc|hevx|heim|heis)$/.test(brand)) return 'image/heic';
+        if (brand === 'mif1' || brand === 'msf1') return 'image/heif';
+      }
+      if (at(0, 0x49, 0x49, 0x2A, 0x00) || at(0, 0x4D, 0x4D, 0x00, 0x2A)) return 'image/tiff';
+      if (at(0, 0x42, 0x4D)) return 'image/bmp';
+      // SVG is text: look a little further for the <svg> element, so HTML and other XML stay out.
+      if (/^(?:\xEF\xBB\xBF)?\s*</.test(ascii(0, 16))) {
+        const head = await blob.slice(0, 1024).text();
+        if (/<svg[\s>]/i.test(head) && !/<html[\s>]/i.test(head)) return 'image/svg+xml';
+      }
+      return null;
     }
     async function _expandFilesWithZips(files, onProgress) {
       const out = [];
+      const skipped = [];
+      out.skipped = skipped;
+      const add = async (name, blob) => {
+        const contentType = await _sniffImageType(blob).catch(() => null);
+        if (contentType) out.push({ name, blob, contentType });
+        else skipped.push(name);
+      };
       const list = Array.from(files || []);
       for (const f of list) {
         if (!_isZipFile(f)) {
-          out.push({ name: f.name, blob: f, contentType: f.type || 'application/octet-stream' });
+          await add(f.name, f);
           continue;
         }
         if (!window.JSZip) {
@@ -5920,12 +5947,13 @@ The output must look like the input image with ONLY the user's requested change 
             });
             const { baseName, entry } = entries[i];
             const blob = await entry.async('blob');
-            out.push({ name: baseName, blob, contentType: _mimeForExt(baseName) });
+            await add(baseName, blob);
           }
         } catch (e) {
           throw new Error(`Failed to extract ${f.name}: ${e?.message || e}`);
         }
       }
+      if (skipped.length) console.warn(`[upload] skipped ${skipped.length} file(s) that are not images: ${skipped.join(', ')}`);
       return out;
     }
 
@@ -5996,6 +6024,7 @@ The output must look like the input image with ONLY the user's requested change 
         if (!files?.length) return;
         await ensureStorageSignedIn();
         setStatus(`Uploading → ${title}`);
+        countEl.dataset.uploadNote = "";
 
         // PHASE 1: ZIP extraction (only if any input is a ZIP).
         // Bar fills 0 → 100% across all entries of all ZIPs combined;
@@ -6030,9 +6059,11 @@ The output must look like the input image with ONLY the user's requested change 
           setTimeout(() => _progShow(false), 1500);
           return;
         }
+        // Files whose bytes are not an image stay out; the count line says how many (names in the console).
+        if (expanded.skipped?.length) countEl.dataset.uploadNote = `${expanded.skipped.length} skipped (not images)`;
         if (expanded.length === 0) {
           _progSet(100, '⚠ no images', false);
-          countEl.textContent = '⚠ no image files found';
+          countEl.textContent = `⚠ no image files found${expanded.skipped?.length ? ` · ${expanded.skipped.length} skipped (not images)` : ''}`;
           setStatus("Idle");
           setTimeout(() => { _progShow(false); refreshCount(); }, 1500);
           return;
@@ -13405,7 +13436,6 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const total = audit?.registered ?? uniqueEffective.size;
       const finished = audit?.complete ?? [...uniqueEffective.values()].filter((b) => b.setComplete ||
         b.collected && !b.results?.failedCount).length;
-      const succeeded = states.filter((st) => st === "JOB_STATE_SUCCEEDED").length;
       const activeJobs = effective.filter((b) => !b.collected && !b.setComplete &&
         ["JOB_STATE_RUNNING", "JOB_STATE_PENDING"].includes(_normBatchState(b.state)));
       const running = activeJobs.length;
@@ -13499,10 +13529,43 @@ Click the button again to permanently delete eligible temporary files, or cancel
         ? finishedAt - session.earliest
         : (session.earliest && isFinite(session.earliest) ? Date.now() - session.earliest : 0);
       const endStr = allDone && finishedAt ? new Date(finishedAt).toLocaleString() : null;
+      // Count what the records say happened, not that a record exists: a job OpenAI finished with every request
+      // failed has nothing to save, and a set still in the local queue was never sent. On 2026-10-24 the panel said
+      // "Saving images from 326 completed job(s)" while OpenAI had rejected every request of 505 jobs.
+      const awaitingCollection = effective.filter((b) => !b.collected && _normBatchState(b.state) === "JOB_STATE_SUCCEEDED" &&
+        !_batchNoOutput(b)).length;
+      const noImages = effective.filter((b) => !b.setComplete && _normBatchState(b.state) === "JOB_STATE_SUCCEEDED" && _batchNoOutput(b));
+      const noImagesStopped = noImages.filter((b) => !_batchRetrying(b)).length;
+      const savingWithImages = Math.max(0, Number(audit?.saving || 0) -
+        noImages.filter((b) => !_batchRetrying(b) && b.recoveryStatus !== "blocked").length);
+      const unsent = effective.filter((b) => b.locallyQueued && !b.collected).length;
+      const queuedSince = Math.min(Infinity, ...effective.filter((b) => b.retryRequested && !b.retryBatchName && !b.setComplete &&
+        (b.repairPending || !b.collected)).map((b) => Number(b.retryQueuedAt || b.updatedAt || b.createdAt || Infinity)));
+      const digest = _batchErrorDigest(effective);
+      // Sets the server queued again by itself, with its reason (e.g. input images checked and converted).
+      const repairReasons = new Map();
+      for (const b of effective) {
+        if (b.setComplete || !b.recoveryReason || b.recoveryStatus !== "queued" || b.stallRestart || !_batchRetrying(b)) continue;
+        repairReasons.set(b.recoveryReason, (repairReasons.get(b.recoveryReason) || 0) + 1);
+      }
+      const repairing = [...repairReasons.values()].reduce((sum, n) => sum + n, 0);
+      const repairReason = [...repairReasons].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+      const inputFixes = session.batches.flatMap((b) => Array.isArray(b.inputFixes) ? b.inputFixes : []);
+      // Collections that failed and wait out their back-off (collectNotBefore) before the collector tries again.
+      const collectBackoff = effective.filter((b) => b.collectionPending && Number(b.collectAttempts || 0) > 0);
+      const nextCollectAt = Math.min(Infinity, ...collectBackoff.map((b) => Number(b.collectNotBefore || Infinity)));
       const sweep = _batchSweepInfo;
       const sweepIsRunning = !!sweep?.runningSince && Date.now() - sweep.runningSince < 12 * 60 * 1000;
       const refilling = waitingRetries > 0 && running < _batchRetryLimit && sweepIsRunning &&
         ["submitting queued sets", "validating new job"].includes(sweep.stage);
+      // Queued sets the collector is not sending: places are free, no collector run is active, the last run finished
+      // well after they were queued and sent none. "In progress" for 31 hours hid exactly this.
+      const queueStalled = waitingRetries > 0 && running < _batchRetryLimit && !sweepIsRunning && isFinite(queuedSince) &&
+        Date.now() - queuedSince > 25 * 60000 && Number(sweep?.lastSweepAt || 0) > queuedSince + 10 * 60000 &&
+        !sweep?.lastResult?.retriesSubmitted && !sweep?.lastResult?.refillContinuing &&
+        Number(sweep?.lastResult?.activeAtAdmission || 0) < _batchRetryLimit;
+      // Most remaining sets came back from OpenAI with no image and nothing will send them again.
+      const rejectedMost = noImagesStopped >= Math.max(3, (plannedSets - finished) / 2);
 
       // Headline.
       let headline, headlineColor;
@@ -13518,6 +13581,10 @@ Click the button again to permanently delete eligible temporary files, or cancel
         headline = "Complete"; headlineColor = "#7fdb96";
       } else if (cancelling) {
         headline = "Stopping jobs"; headlineColor = "#fde68a";
+      } else if (rejectedMost) {
+        headline = "Stopped: OpenAI rejected the requests"; headlineColor = "#fca5a5";
+      } else if (queueStalled) {
+        headline = "Stalled: queue not moving"; headlineColor = "#fca5a5";
       } else if (restarting && running === restartingActive && !refilling) {
         headline = "Restarting stalled jobs"; headlineColor = "#fde68a";
       } else if (refilling) {
@@ -13528,7 +13595,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         headline = "Waiting for images"; headlineColor = "#93c5fd";
       } else if (running > 0 || waitingRetries > 0) {
         headline = "In progress"; headlineColor = "#93c5fd";
-      } else if (audit?.saving) {
+      } else if (savingWithImages) {
         headline = "Recovering saved images"; headlineColor = "#93c5fd";
       } else if (capacityStopped.length) {
         headline = "Stopped: token limit"; headlineColor = "#fca5a5";
@@ -13558,23 +13625,30 @@ Click the button again to permanently delete eligible temporary files, or cancel
         : `${originalSubmitted}/${plannedSets} unique sets registered${notSubmitted ? ` · ${notSubmitted} not registered` : ""}`]);
       rows.push(["Progress", `${finished} saved · ${running} active provider jobs · ${waitingRetries} queued${restarting ? ` · ${restarting} restarting` : ""}${restarted ? ` · ${restarted} restarted` : ""}${attention ? ` · ${attention} need review` : ""}`]);
       if (audit) rows.push(["Saved-file check", `${audit.complete} saved or approved · ${audit.missingImages} missing images · ${new Date(audit.checkedAt).toLocaleTimeString()}`]);
-      rows.push(["Batch jobs", `${session.batches.length} submitted · ${Math.max(0, succeeded - finished)} awaiting collection${cancelled ? ` · ${cancelled} cancelled` : ""}`]);
+      // Locally queued records were never sent; a job OpenAI finished with every request failed is not awaiting collection.
+      rows.push(["Batch jobs", `${session.batches.filter((b) => !b.locallyQueued).length} sent to OpenAI${unsent ? ` · ${unsent} not sent yet` : ""} · ${awaitingCollection} awaiting collection${noImages.length ? ` · ${noImages.length} returned no images` : ""}${cancelled ? ` · ${cancelled} cancelled` : ""}`]);
+      if (digest) rows.push(["Main error", `${digest.sets} set(s) · ${digest.label}: ${digest.text}${digest.code ? ` (${digest.code})` : ""}${digest.retrying ? ` · ${digest.retrying} queued again` : ""}${digest.stopped ? ` · ${digest.stopped} stopped` : ""}`]);
+      if (inputFixes.length) rows.push(["Images corrected", `${inputFixes.length} reference image(s) before sending · ${inputFixes.filter((f) => f?.action === "relabelled").length} relabelled · ${inputFixes.filter((f) => f?.action === "converted").length} converted`]);
+      if (collectBackoff.length) rows.push(["Collection retries", `${collectBackoff.length} set(s) wait to be collected again${isFinite(nextCollectAt) ? ` · next ${new Date(nextCollectAt).toLocaleTimeString()}` : ""}`]);
+      if (waitingRetries && isFinite(queuedSince)) rows.push(["Oldest queued set", `${_formatDuration(Date.now() - queuedSince)} waiting`]);
       if (waitingRetries) rows.push(["Queue admission", `${running} active provider jobs · new jobs and retries start below ${_batchRetryLimit}`]);
       if (requestStats.reporting) rows.push(["Active image requests", `${requestStats.completed} completed · ${requestStats.pending} pending · ${requestStats.failed} failed (of ${requestStats.total}, ${requestStats.reporting}/${running} jobs reporting)`]);
       if (oldestActiveAt) rows.push(["Oldest active job", `${_formatDuration(Date.now() - oldestActiveAt)} waiting`]);
       if (lastProviderCheck) rows.push(["Last provider check", new Date(lastProviderCheck).toLocaleTimeString()]);
-      const lastSavedAt = Math.max(0, ...session.batches.map((b) => Number(b.collectedAt || 0)));
+      // A collect stamps collectedAt even when it saved nothing or is to be repeated; only a set with images counts.
+      const lastSavedAt = Math.max(0, ...session.batches.filter((b) => !b.collectionPending &&
+        (b.setComplete || Number(b.results?.succeededCount || 0) > 0)).map((b) => Number(b.collectedAt || 0)));
       if (lastSavedAt) rows.push(["Last set saved", `${new Date(lastSavedAt).toLocaleTimeString()} · ${_formatDuration(Date.now() - lastSavedAt)} ago`]);
       const sweepStale = !!sweep?.lastSweepAt && Date.now() - sweep.lastSweepAt > 25 * 60 * 1000;
       if (waitingRetries) {
         rows.push(["Collector", sweepIsRunning ? `Running · ${sweep.stage || "checking jobs"}` :
           sweep?.lastError ? `Error: ${sweep.lastError}` : sweep?.lastSweepAt ?
-          `Last completed ${new Date(sweep.lastSweepAt).toLocaleTimeString()} · ${sweep.lastResult?.retriesSubmitted || 0} retries submitted${sweep.lastResult?.collectErrors ? ` · ${sweep.lastResult.collectErrors} collection errors` : ""}` :
+          `Last completed ${new Date(sweep.lastSweepAt).toLocaleTimeString()} · ${sweep.lastResult?.retriesSubmitted || 0} retries submitted${Number.isFinite(sweep.lastResult?.waiting) && sweep.lastResult.waiting < waitingRetries ? ` · saw ${sweep.lastResult.waiting} of ${waitingRetries} queued` : ""}${sweep.lastResult?.collectErrors ? ` · ${sweep.lastResult.collectErrors} collection errors` : ""}` :
           "Waiting for first recorded sweep"]);
         if (_batchNextSweepAt) rows.push(["Next sweep", new Date(_batchNextSweepAt).toLocaleTimeString()]);
       }
       if (totalImagesGen) rows.push(["Images delivered", String(totalImagesGen)]);
-      if (totalImagesFailed) rows.push(["Failed image attempts (history)", String(totalImagesFailed)]);
+      if (totalImagesFailed) rows.push(["Failed image requests", String(totalImagesFailed)]);
       if (totalCharmsMoved) rows.push(["Charms used", String(totalCharmsMoved)]);
       rows.push([session.historyTruncated ? "First visible" : "Started", startStr]);
       if (!session.historyTruncated && allDone && endStr) rows.push(["Finished", endStr]);
@@ -13595,11 +13669,12 @@ Click the button again to permanently delete eligible temporary files, or cancel
         running > cancelling + restartingActive ? `${running - cancelling - restartingActive} active jobs` : "",
         waitingRetries ? `${waitingRetries} queued` : "", restarted ? `${restarted} restarted` : "",
         attention ? `${attention} need review` : ""].filter(Boolean).join(" · ");
-      const awaitingCollection = effective.filter((b) => !b.collected && _normBatchState(b.state) === "JOB_STATE_SUCCEEDED").length;
       const shortTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       let explanation = allDone
         ? `Batch finished. Saved listings are available in Review and Approved Sets.${issueCount ? " The issues below can be handled separately." : ""}`
         : cancelling ? "Waiting for OpenAI to confirm cancellation."
+        : rejectedMost ? `OpenAI finished ${noImages.length} job(s) without returning a single image.`
+        : queueStalled ? `${waitingRetries} set(s) are queued, but the last collector run sent none of them although ${_batchRetryLimit - running} place(s) are free.`
         : restarting ? `${restarting} cancelled job(s) are being recovered. Only missing images will be requested.`
         : refilling ? (sweep.stage === "validating new job"
           ? "OpenAI is validating the next set." : "Submitting waiting sets to OpenAI.")
@@ -13608,7 +13683,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         : awaitingCollection ? `Saving images from ${awaitingCollection} completed job(s).`
         : running ? "Waiting for OpenAI to return the next images."
         : waitingRetries ? "Queued jobs will retry automatically when capacity is available."
-        : audit?.saving ? `${audit.saving} set(s) are recovering images already generated. No new image request is needed.`
+        : savingWithImages ? `${savingWithImages} set(s) are recovering images already generated. No new image request is needed.`
         : notSubmitted ? `${notSubmitted} sets have not been registered on the server. Resume the submission to queue them.`
         : attention ? `${attention} set(s) still have missing images. The reasons and set numbers are below.`
         : "";
@@ -13624,9 +13699,22 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const sweepProblem = !allDone && (sweep?.lastError ? `Collector error: ${sweep.lastError}` :
         sweep?.runningSince && !sweepIsRunning ? "The image collector has not finished its last check." :
         sweepStale ? "The image collector has not completed a check in over 25 minutes." :
-        sweep?.lastResult?.collectErrors ? `${sweep.lastResult.collectErrors} image collection attempt(s) failed. Open Details & actions.` : "");
-      const queueExplanation = explanation ? `<p class="batch-note">${_batchSafeText(explanation)}</p>` : "";
-      const alertHtml = [capacityNote, attemptsNote, sweepProblem].filter(Boolean)
+        sweep?.lastResult?.collectErrors ? `${sweep.lastResult.collectErrors} image collection attempt(s) failed${
+          noImagesStopped >= sweep.lastResult.collectErrors ? " (error files with no images, read again on every collector run)"
+          : collectBackoff.length ? `; ${collectBackoff.length} set(s) are collected again automatically${isFinite(nextCollectAt) ? ` from ${shortTime(nextCollectAt)}` : ""}` : ""}.` : "");
+      // What happens next, in plain words: whether the batch recovers by itself (a note) or a person has to act
+      // (an alert). Both can apply at once, e.g. sets OpenAI rejected and a queue that does not move: one line each.
+      const recoveringNote = !allDone && repairing
+        ? `Recovering by itself: ${repairing} set(s) queued again. ${repairReason}`.trim() : "";
+      const nextStep = allDone ? [] : [
+        digest?.stopped ? `Needs action: ${digest.stopped} set(s) stopped and will not recover by themselves. ${digest.label}: "${digest.text.replace(/[.\s]+$/, "")}"${digest.code ? ` (${digest.code})` : ""}.${
+          _batchInputImageError(digest.text) ? " Replace or re-save the charm or template images of these sets, then queue the missing images again." : " The set numbers and reasons are in Details & actions."}` : "",
+        queueStalled ? `Needs action: queued sets have not been sent for ${_formatDuration(Date.now() - queuedSince)}. Refresh asks the collector again; if none are sent, the collector is not reaching them${
+          Number.isFinite(sweep?.lastResult?.waiting) ? ` (its last run saw ${sweep.lastResult.waiting} of ${waitingRetries} queued)` : ""}.` : "",
+      ].filter(Boolean);
+      const queueExplanation = [explanation, recoveringNote].filter(Boolean)
+        .map((text) => `<p class="batch-note">${_batchSafeText(text)}</p>`).join("");
+      const alertHtml = [...nextStep, capacityNote, attemptsNote, sweepProblem].filter(Boolean)
         .map((text) => `<div class="batch-alert" role="alert">${_batchSafeText(text)}</div>`).join("");
       // Action buttons: only show what's actionable. Cancel-all if
       // anything is still running. Recover-all if there are failed /
@@ -13663,8 +13751,23 @@ Click the button again to permanently delete eligible temporary files, or cancel
         buttons.push(`<button class="btn btnSmall" data-session-retry="${_batchSafeText(session.sessionId)}" style="font-size: 11px;">Queue missing images (${retryable.length})</button>`);
       }
       const unresolved = (audit?.issueSets ?? audit?.sets ?? []).filter(set => ["blocked", "saving", "cancelled"].includes(set.status));
-      const unresolvedHtml = unresolved.length ? `<div class="batch-alert">${unresolved.map(set =>
-        `<div><strong>Set_${set.setN}</strong> · ${_batchSafeText(set.category.replace(/_/g, " "))} · ${set.status === "blocked" ? "needs attention" : _batchSafeText(set.status)} · missing slots ${set.missingSlots.join(", ")}${set.note ? ` · ${_batchSafeText(set.note)}` : ""}</div>`).join("")}</div>` : "";
+      // The summary gives no reason for a set it is still saving; the set's own job record has OpenAI's answer.
+      const recordForSet = new Map();
+      for (const b of effective) for (const key of b.setKeys || []) if (!recordForSet.has(key)) recordForSet.set(key, b);
+      // 505 identical lines hid the one reason they shared: sets with the same status, reason and slots share a line.
+      const issueGroups = new Map();
+      for (const set of unresolved) {
+        const rec = recordForSet.get(set.outputBasePath);
+        const status = set.status === "blocked" ? "needs attention"
+          : set.status === "saving" && rec && _batchNoOutput(rec) ? "no images returned" : set.status;
+        const note = set.note || (rec ? _batchFirstError(rec) : "");
+        const label = `${_batchSafeText(String(set.category || "").replace(/_/g, " "))} · ${_batchSafeText(status)} · missing slots ${(set.missingSlots || []).join(", ")}${note ? ` · ${_batchSafeText(note)}` : ""}`;
+        if (!issueGroups.has(label)) issueGroups.set(label, []);
+        issueGroups.get(label).push(set.setN);
+      }
+      const unresolvedHtml = unresolved.length ? `<div class="batch-alert">${[...issueGroups].map(([label, sets]) => sets.length > 3
+        ? `<div><strong>${sets.length} sets</strong> (Set_${sets.slice(0, 3).join(", Set_")} and ${sets.length - 3} more) · ${label}</div>`
+        : sets.map((n) => `<div><strong>Set_${n}</strong> · ${label}</div>`).join("")).join("")}</div>` : "";
       const buttonsHtml = buttons.length
         ? `<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">${buttons.join("")}</div>`
         : "";
@@ -13684,7 +13787,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
           b.retryError || results.failures?.[0]?.error || "";
         const detail = message ? `<div style="color:#fca5a5; margin-top:3px; overflow-wrap:anywhere;">${_batchSafeText(message)}</div>` : "";
         return `<div style="padding:6px 0; border-top:1px solid var(--line); overflow-wrap:anywhere;">
-          <strong>${name}</strong> · ${_batchSafeText(state)}${b.setComplete || b.collected && !b.results?.failedCount ? " · saved" : b.collected ? " · partially saved" : ""}${b.retryBatchName ? " · retried" : ""}
+          <strong>${name}</strong> · ${_batchSafeText(state)}${b.setComplete || b.collected && !b.results?.failedCount ? " · saved" : b.collected ? (b.results?.succeededCount === 0 ? " · no images saved" : " · partially saved") : ""}${b.retryBatchName ? " · retried" : ""}
           · ${_batchSafeText(String(done))} complete · ${_batchSafeText(String(failures))} failed
           <div class="muted">Updated ${_batchSafeText(updated)} · ${_batchSafeText(b.batchName || "")}</div>${detail}
         </div>`;
@@ -13714,6 +13817,55 @@ Click the button again to permanently delete eligible temporary files, or cancel
           </details>
         </section>
       `;
+    }
+
+    // A job OpenAI finished with every request failed: there is nothing to collect or save from it.
+    function _batchNoOutput(b) {
+      const st = b?.batchStats;
+      return Number(st?.requestCount || 0) > 0 && !Number(st.successfulRequestCount || 0) && !Number(st.pendingRequestCount || 0);
+    }
+    // The server sends this set again by itself (queued retry, repair or stall restart) unless it stopped it.
+    function _batchRetrying(b) {
+      return !!(b.retryRequested || b.repairPending || _awaitingStallRestart(b)) && b.recoveryStatus !== "blocked";
+    }
+    function _batchFirstError(b) {
+      return String((b.results?.failures || []).find((f) => f?.error)?.error || b.providerError || b.statusError || "").slice(0, 200);
+    }
+    function _batchInputImageError(text) {
+      return /invalid (?:input )?image|image file|unsupported image|(?:could not|cannot|unable to) (?:decode|read|process) (?:the |an |input )?image/i.test(String(text || ""));
+    }
+    // The most common provider or collector error of the unfinished sets, each set counted once, and how many of
+    // those sets the server already queued again (they recover by themselves) or stopped (a person has to act).
+    // Failures recorded since 2026-10-25 say where they came from (`source`: provider or storage, optional `code`);
+    // older ones carry only the text, and a job that returned no image at all was answered by OpenAI.
+    function _batchErrorDigest(batches) {
+      const byText = new Map();
+      for (const b of batches) {
+        if (b.setComplete || b.retryBatchName) continue;
+        const texts = new Map();
+        for (const f of b.results?.failures || []) {
+          const text = f?.error ? String(f.error).slice(0, 200) : "";
+          if (text && !texts.has(text)) texts.set(text, f);
+        }
+        for (const t of [b.providerError, b.statusError, typeof b.error === "string" ? b.error : b.error?.message,
+          b.lastCollectError, b.recoveryStatus === "blocked" ? b.recoveryReason : ""]) {
+          const text = t ? String(t).slice(0, 200) : "";
+          if (text && !texts.has(text)) texts.set(text, t === b.lastCollectError ? { source: "storage" } : null);
+        }
+        const retrying = _batchRetrying(b);
+        const active = !b.collected && ["JOB_STATE_PENDING", "JOB_STATE_RUNNING"].includes(_normBatchState(b.state));
+        for (const [text, f] of texts) {
+          const e = byText.get(text) || { text, sets: 0, retrying: 0, stopped: 0, source: "", code: "" };
+          e.sets++;
+          if (retrying) e.retrying++; else if (!active) e.stopped++;
+          if (!e.source) e.source = f?.source || (_batchNoOutput(b) ? "provider" : "");
+          if (!e.code) e.code = f?.code || "";
+          byText.set(text, e);
+        }
+      }
+      const top = [...byText.values()].sort((a, b) => b.sets - a.sets)[0];
+      if (!top) return null;
+      return { ...top, label: top.source === "storage" ? "Saving images" : top.source === "provider" ? "OpenAI" : "Error" };
     }
 
     // Cancel every still-running batch in a session.
@@ -13941,7 +14093,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
           const initial = await refreshBatchJobsPanel();
           if (!initial?.ok) throw initial?.error || new Error("Could not load saved jobs");
         }
-        const beforeSaved = _lastBatchList.filter((b) => b.collected).length;
+        // A collect that saved no image marks its record collected too; only sets with images are "newly saved".
+        const savedSet = (b) => b.setComplete || b.collected && b.results?.succeededCount !== 0;
+        const beforeSaved = _lastBatchList.filter(savedSet).length;
         const pendingChecks = _lastBatchList.filter((b) => !b.collected && !b.setComplete && !b.retryBatchName && !b.locallyQueued &&
           !["JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED", "JOB_STATE_SUCCEEDED"]
             .includes(_normBatchState(b.state)));
@@ -13974,9 +14128,15 @@ Click the button again to permanently delete eligible temporary files, or cancel
         }
 
         // A state that became SUCCEEDED in this check can be collected now,
-        // without waiting for the next minute-long polling cycle.
+        // without waiting for the next minute-long polling cycle. A job already
+        // collected once with no image at all (every request failed) or waiting
+        // out its collection back-off is left to the collector: asking again
+        // every minute re-read the same error file and stamped it "saved".
+        const noImagesCollected = (b) => !!b.results && Number(b.batchStats?.requestCount || 0) > 0 &&
+          !Number(b.batchStats.successfulRequestCount || 0) && !Number(b.batchStats.pendingRequestCount || 0);
         for (const b of _lastBatchList) {
           if (b.collected || b.setComplete || b.retryBatchName || _normBatchState(b.state) !== "JOB_STATE_SUCCEEDED") continue;
+          if (noImagesCollected(b) || Number(b.collectNotBefore || 0) > Date.now()) continue;
           if (_autoCollectsInFlight.has(b.batchName) || _autoCollectsInFlight.size >= 3) continue;
           _autoCollectsInFlight.add(b.batchName);
           saving++;
@@ -13996,7 +14156,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const pendingRecovery = _lastBatchList.some(b => !b.retryBatchName && !b.setComplete &&
           (b.collectionPending || b.repairPending));
         if (manual && ((queued && active < _batchRetryLimit) || pendingRecovery)) {
-          _showBatchCheck(`Provider checked. ${_batchRetryLimit - active} retry place(s) open; asking the collector to fill them…`);
+          _showBatchCheck(queued && active < _batchRetryLimit
+            ? `Provider checked. ${_batchRetryLimit - active} retry place(s) open; asking the collector to send ${queued} queued set(s)…`
+            : "Provider checked. Asking the collector to save pending images…");
           const previousSweepAt = _batchSweepInfo?.lastSweepAt || 0;
           await postJson("geminiImageProxy-background", { kind: "batch_sweep" });
           for (let attempt = 0; attempt < 12; attempt++) {
@@ -14005,7 +14167,12 @@ Click the button again to permanently delete eligible temporary files, or cancel
             _batchSweepInfo = latest?.sweep || _batchSweepInfo;
             if (_batchSweepInfo?.lastError) { sweepNote = `Collector error: ${_batchSweepInfo.lastError}.`; break; }
             if ((_batchSweepInfo?.lastSweepAt || 0) > previousSweepAt) {
-              sweepNote = `${_batchSweepInfo.lastResult?.retriesSubmitted || 0} retries admitted by collector.`;
+              // Say what the run did, including when it sent nothing although sets wait and places are free.
+              const result = _batchSweepInfo.lastResult || {};
+              sweepNote = `${result.retriesSubmitted || 0} retries admitted by collector.` +
+                (queued && !result.retriesSubmitted && active < _batchRetryLimit
+                  ? ` None of ${queued} queued set(s) were sent${Number.isFinite(result.waiting) ? ` (the collector saw ${result.waiting} waiting)` : ""}.` : "") +
+                (result.collectErrors ? ` ${result.collectErrors} collection error(s).` : "");
               break;
             }
             _showBatchCheck(`Collector ${_batchSweepInfo?.stage || "starting"}… ${attempt + 1}/12 checks`);
@@ -14014,7 +14181,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
           const afterSweep = await refreshBatchJobsPanel();
           if (!afterSweep?.ok) throw afterSweep?.error || new Error("Could not refresh queued jobs");
         }
-        const savedNow = _lastBatchList.filter((b) => b.collected).length - beforeSaved;
+        const savedNow = _lastBatchList.filter(savedSet).length - beforeSaved;
         const time = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
         const outcome = savedNow > 0 ? `${savedNow} newly saved.` : saving ? `Saving images from ${saving} job(s).` :
           changed ? `${changed} job(s) updated.` : active || queued ? "Waiting for queued images." :
@@ -15228,7 +15395,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         }
         if (expanded.length === 0) {
           _galleryProgSet(100, '⚠ no images', false);
-          alert('No image files found in selection.');
+          alert(`No image files found in selection.${expanded.skipped?.length ? ` Skipped (not images): ${expanded.skipped.join(', ')}` : ''}`);
           btn.textContent = orig;
           btn.disabled = false;
           setTimeout(() => _galleryProgShow(false), 1500);
@@ -19144,7 +19311,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const f = rtFiles(path);
         for (const el of els) {
           if (!el.isConnected) { els.delete(el); continue; }
-          el.textContent = f == null ? 'Loading…' : `${f} file(s)`;
+          el.textContent = f == null ? 'Loading…' : `${f} file(s)${el.dataset?.uploadNote ? ` · ${el.dataset.uploadNote}` : ''}`;
         }
       }, { kind: 'items' });
       rtInvalidate([path]);

@@ -167,6 +167,9 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
           () => ({ data: () => ({ collected: false }) })) }) }) }) },
       guardRef: { set: async () => {} },
       checkpoint: async () => {},
+      // The sweep's per-session change tracking (7fcc45b) and the park step's lookups.
+      touch: () => {}, openRefs: new Map(), lightFields: [], compact: (r) => r,
+      guardWrite: async () => true, superseded: false,
       BATCHES_COLL: "batches", batchDocIdFromName: (x) => x,
       stallRestartPending: require("../../netlify/functions/lib/listingBatchAdmission.cjs").stallRestartPending,
       quotaFailure: require("../../netlify/functions/lib/listingBatchAdmission.cjs").quotaFailure,

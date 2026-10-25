@@ -6,9 +6,28 @@ const SESSIONS_COLL = 'ListingGenerator1Sessions';
 const ACTIVE = new Set(['JOB_STATE_PENDING', 'JOB_STATE_RUNNING']);
 const ISSUE_STATUSES = new Set(['blocked', 'saving', 'cancelled']);
 const normalizeState = value => String(value || '').replace(/^BATCH_STATE_/, 'JOB_STATE_');
-const failureKind = value => /safety system|safety_violations|moderation|content_policy/i.test(String(value || '')) ? 'content'
-  : /socket hang up|ECONN|ETIMEDOUT|storage\.googleapis|upload|download|network|fetch failed|manifest:/i.test(String(value || '')) ? 'storage'
-  : /rate.limit|overload|temporar|internal.server|timeout|no result returned|no inline_data|batch error|completion window expired|batch_expired/i.test(String(value || '')) ? 'transient' : 'other';
+// value: a failure record { error, source, code } or its error text (older records carry text only).
+// 'input': OpenAI could not read a reference image ("Invalid input image file. Please check the
+// uploaded image."). Before 2026-10-25 that text matched 'upload' below and was read as a storage
+// failure, so every such set was re-collected on every sweep for good and never retried or stopped.
+// A failure recorded with source 'provider' was answered by OpenAI and is never a storage failure.
+const INPUT_IMAGE_RE = /invalid (?:input )?image|image file|unsupported image|(?:could not|cannot|unable to|failed to) (?:decode|read|process|download|fetch|load) (?:the |an |input )?image|invalid_image|image_parse|not a (?:usable|valid|readable) (?:reference|image)/i;
+const failureKind = value => {
+  const failure = value && typeof value === 'object' ? value : { error: value };
+  const text = String(failure.error ?? failure.message ?? '');
+  if (/safety system|safety_violations|moderation|content_policy/i.test(text)) return 'content';
+  if (INPUT_IMAGE_RE.test(text) || /invalid_image|image_parse/i.test(String(failure.code || ''))) return 'input';
+  const transient = /rate.limit|overload|temporar|internal.server|timeout|no result returned|no inline_data|batch error|completion window expired|batch_expired/i;
+  if (failure.source === 'provider') return transient.test(text) ? 'transient' : 'other';
+  return /socket hang up|ECONN|ETIMEDOUT|storage\.googleapis|upload|download|network|fetch failed|manifest:/i.test(text) ? 'storage'
+    : transient.test(text) ? 'transient' : 'other';
+};
+// An input-image rejection is sent again once the images have been checked and converted
+// (lib/listingBatchImages.cjs); a set OpenAI still cannot read after that stops with the reason.
+const INPUT_REPAIR_LIMIT = 2;
+const INPUT_REPAIR_NOTE = 'OpenAI could not read an input image; it is being sent again with the images checked and converted.';
+// Collections are retried with growing waits (collectRetryPatch in geminiImageProxy-background.js).
+const COLLECT_ATTEMPT_LIMIT = 8;
 const isModelTask = task => /\/(?:Primary|Secondary)_Models\//.test(String(task?.input_storage_path || ''));
 // This changes the requested image itself: opaque clothing replaces an exposed
 // torso. It never asks a model to ignore a policy or disguise rejected content.
@@ -24,8 +43,23 @@ function tasksFor(set) { return Array.isArray(set.allTasks) ? set.allTasks : (se
 async function reconcileSession({ db, bucket, collection, sessionId, timestamp, now = Date.now, restoreLostPaidOutputs = false }) {
   if (!/^sess_[A-Za-z0-9_-]{8,80}$/.test(sessionId)) throw new Error('Invalid listing session');
   const snapshot = await db.collection(collection).where('sessionId', '==', sessionId).limit(4000).get();
-  if (snapshot.size >= 4000) throw new Error('Session history exceeds reconciliation limit');
-  const records = snapshot.docs.map(doc => ({ ref: doc.ref, ...doc.data() }));
+  let docs = snapshot.docs;
+  // Every restart adds two records, so a long session can pass 4,000 (the Oct 3 sets averaged 4.6
+  // restarts each). That used to throw here, and then nothing in the session was ever marked
+  // again. Such a session is read again in pages by document id instead.
+  if (snapshot.size >= 4000) {
+    docs = [];
+    for (let after = null, page = 0; page < 25; page++) {
+      let q = db.collection(collection).where('sessionId', '==', sessionId).orderBy('__name__').limit(1000);
+      if (after) q = q.startAfter(after);
+      const part = await q.get();
+      docs.push(...part.docs);
+      if (part.size < 1000) break;
+      after = part.docs[part.docs.length - 1].id;
+      if (page === 24) throw new Error('Session history exceeds reconciliation limit');
+    }
+  }
+  const records = docs.map(doc => ({ ref: doc.ref, ...doc.data() }));
   const groups = new Map();
   let planned = 0;
   for (const record of records) {
@@ -89,7 +123,9 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
     const manifestPresent = files.has(`${path}/manifest.json`);
     const complete = isApproved || (group.tasks.size > 0 && missing.length === 0 && manifestPresent);
     const live = leaves.find(r => !r.collected && ACTIVE.has(normalizeState(r.state)));
-    const queued = leaves.find(r => r.retryRequested && (r.locallyQueued || r.repairPending || !r.collected));
+    // A retry job inherits retryRequested; one that ended with a result file is saved first (below),
+    // not counted as queued: the sweep's queue never takes a job that has results.
+    const queued = leaves.find(r => r.retryRequested && (r.locallyQueued || r.repairPending || !r.collected && !r.responsesFile));
     const restart = leaves.find(stallRestartPending);
     let status, note = '', patch = {};
     if (complete) { status = isApproved ? 'approved' : 'complete'; summary.complete++; if (isApproved) summary.approved++;
@@ -106,20 +142,34 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
       patch = { repairPending: true, retryRequested: false, recoveryStatus: 'queued', setComplete: false,
         recoveryReason: 'Recovering unfinished images after an automatic batch cancellation.' };
     }
-    else if (latest?.retryStatus === 'complete_or_protected' || latest?.stallRestartBlocked ||
+    else if (!latest?.collected && latest?.responsesFile && !latest.filesPurgedAt && !latest.setComplete &&
+        Number(latest.batchStats?.successfulRequestCount || 0) > 0 && Number(latest.collectAttempts || 0) < COLLECT_ATTEMPT_LIMIT) {
+      // A job stopped by a person or cancelled while it was finishing still holds paid images.
+      status = 'saving'; summary.saving++;
+      patch = { collected: false, collectionPending: true, recoveryStatus: 'saving', setComplete: false };
+    }
+    else if (latest?.retryStatus === 'complete_or_protected' || latest?.retryStatus === 'cancelled' || latest?.stallRestartBlocked ||
         normalizeState(latest?.state) === 'JOB_STATE_CANCELLED' && latest?.stallRestart !== 'pending' && !latest?.stallCancelRequestedAt) {
       status = 'cancelled'; summary.cancelled++;
     } else {
       const missingKeys = new Set(missing.map(t => `s0_slot${Number(t.slotIndex)}`));
       const failures = (latest.results?.failures || []).filter(f => missingKeys.has(f.key) || String(f.key).startsWith('manifest:'));
-      const kinds = new Set(failures.map(f => failureKind(f.error)));
+      const kinds = new Set(failures.map(f => failureKind(f)));
       const failedKeys = new Set((latest.results?.failures || []).map(f => f.key));
       const paidTasks = latest.sets?.find(s => s.outputBasePath === path)?.tasks || [];
       const missingPaidOutput = paidTasks.some(task => missingKeys.has(`s0_slot${Number(task.slotIndex)}`) &&
         !failedKeys.has(`s0_slot${Number(task.slotIndex)}`));
-      // A result already paid for must be recovered, never regenerated.
-      if (latest.responsesFile && (restoreLostPaidOutputs || !latest.setComplete) &&
-          (!latest.collected || restoreLostPaidOutputs && missingPaidOutput || kinds.has('storage') || latest.collectionPending || !missing.length && !manifestPresent)) {
+      // A result already paid for must be recovered, never regenerated. Saving that failed
+      // COLLECT_ATTEMPT_LIMIT times (about 16 hours of growing waits) or whose provider files were
+      // deleted stops with its reason instead of being shown as "saving" for good.
+      const canSave = latest.responsesFile && !latest.filesPurgedAt && (restoreLostPaidOutputs || !latest.setComplete) &&
+          (!latest.collected || restoreLostPaidOutputs && missingPaidOutput || kinds.has('storage') || latest.collectionPending || !missing.length && !manifestPresent);
+      if (canSave && Number(latest.collectAttempts || 0) >= COLLECT_ATTEMPT_LIMIT) {
+        status = 'blocked'; summary.blocked++;
+        note = `Saving the finished images failed ${latest.collectAttempts} times: ${String(latest.lastCollectError ||
+          failures.find(f => failureKind(f) === 'storage')?.error || 'no answer').slice(0, 200)}. Use "Recover available results" to try again.`;
+        patch = { recoveryStatus: 'blocked', recoveryReason: note, setComplete: false, repairPending: false, retryRequested: false };
+      } else if (canSave) {
         status = 'saving'; summary.saving++;
         patch = { collected: false, collectionPending: true, recoveryStatus: 'saving', setComplete: false };
       } else if (latest.collected && !missingPaidOutput && Number(latest.retryAttempt || 0) < 5 &&
@@ -129,10 +179,20 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
         status = 'queued'; summary.queued++;
         patch = { repairPending: true, retryRequested: true, recoveryStatus: 'queued', setComplete: false,
           retryQueuedAt: timestamp() };
+      } else if (latest.collected && !missingPaidOutput && Number(latest.retryAttempt || 0) < 5 &&
+          kinds.has('input') && [...kinds].every(k => k === 'input' || k === 'transient') &&
+          Number(latest.inputRepairAttempt || 0) < INPUT_REPAIR_LIMIT) {
+        // Nothing was made, so nothing was paid: send the missing images again with checked images.
+        status = 'queued'; summary.queued++;
+        note = INPUT_REPAIR_NOTE;
+        patch = { repairPending: true, retryRequested: true, recoveryStatus: 'queued', setComplete: false,
+          recoveryReason: note, retryQueuedAt: timestamp() };
       } else {
         status = 'blocked'; summary.blocked++;
         note = missingPaidOutput ? 'Previously saved images are missing. Restore the existing provider output if this set should be kept.'
           : kinds.has('content') ? 'Model photo rejected. Choose a different reference or a product-only photo.'
+          : kinds.has('input') ? `OpenAI could not read an input image of this set, also after the images were checked and converted: ${
+            String(failures.find(f => failureKind(f) === 'input')?.error || '').slice(0, 200)} Replace the charm or template image, then queue the missing images again.`
           : latest.retryError || failures[0]?.error || 'Missing images need a source or error review.';
         patch = { recoveryStatus: 'blocked', setComplete: false, recoveryReason: note, repairPending: false, retryRequested: false };
       }
@@ -155,9 +215,13 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
   // `sets` stays in the summary for any reader of the old field.
   summary.issueSets = summary.sets.filter(set => ISSUE_STATUSES.has(set.status));
   summary.unregistered = Math.max(0, summary.planned - summary.registered);
-  summary.issues = summary.blocked + summary.cancelled;
+  // Sets the page never registered (a chunk that failed to submit) hold the session open only while
+  // the page could still be sending them; an hour after the last record they are issues.
+  const lastRegistered = Math.max(0, ...records.map(record => stampMs(record.createdAt)));
+  const unregisteredIssue = summary.unregistered > 0 && lastRegistered > 0 && now() - lastRegistered > 60 * 60 * 1000;
+  summary.issues = summary.blocked + summary.cancelled + (unregisteredIssue ? summary.unregistered : 0);
   summary.processed = summary.complete + summary.issues;
-  summary.pending = summary.active + summary.queued + summary.saving + summary.unregistered;
+  summary.pending = summary.active + summary.queued + summary.saving + (unregisteredIssue ? 0 : summary.unregistered);
   const finished = summary.planned > 0 && summary.processed === summary.planned && summary.pending === 0;
   summary.status = finished ? (summary.issues ? 'completed_with_issues' : 'completed') : 'in_progress';
   summary.finishedAt = finished ? Math.max(0, ...records.map(record =>
@@ -165,4 +229,5 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
   await db.collection(SESSIONS_COLL).doc(sessionId).set(summary);
   return summary;
 }
-module.exports = { SESSIONS_COLL, failureKind, isModelTask, compliantModelTask, CLOTHED_MODEL_BRIEF, reconcileSession };
+module.exports = { SESSIONS_COLL, failureKind, isModelTask, compliantModelTask, CLOTHED_MODEL_BRIEF, reconcileSession,
+  INPUT_REPAIR_LIMIT, INPUT_REPAIR_NOTE };

@@ -41,18 +41,26 @@ exports.handler = async () => {
 
   const targetUrl = `${String(siteOrigin).replace(/\/+$/, "")}/.netlify/functions/geminiImageProxy-background`;
 
-  try {
-    // Background functions accept with a 202 immediately; the sweep then
-    // runs with the 15-minute background budget. Fire-and-forget.
-    const resp = await fetch(targetUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind: "batch_sweep", cronTriggered: true }),
-    });
-    console.log(`charmBatchSweepCron: invocation returned ${resp.status}`);
-    return { statusCode: 200, body: JSON.stringify({ ok: true, dispatched: resp.status }) };
-  } catch (err) {
-    console.error("charmBatchSweepCron: dispatch failed:", err && err.message);
-    return { statusCode: 500, body: JSON.stringify({ ok: false, error: String(err && err.message) }) };
+  // Background functions accept with a 202 immediately; the sweep then
+  // runs with the 15-minute background budget. Fire-and-forget. A refused or
+  // failed dispatch is tried once more, and reported as a failure (it used to
+  // return 200 whatever happened, so a lost run left no trace for 10 minutes).
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const resp = await fetch(targetUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "batch_sweep", cronTriggered: true }),
+      });
+      console.log(`charmBatchSweepCron: invocation returned ${resp.status}`);
+      if (resp.status < 400) return { statusCode: 200, body: JSON.stringify({ ok: true, dispatched: resp.status }) };
+      lastError = `HTTP ${resp.status}`;
+    } catch (err) {
+      lastError = String(err && err.message);
+      console.error("charmBatchSweepCron: dispatch failed:", lastError);
+    }
+    if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 3000));
   }
+  return { statusCode: 500, body: JSON.stringify({ ok: false, error: lastError }) };
 };

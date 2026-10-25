@@ -50,8 +50,11 @@ const parked = () => Object.values(m.db.dump()).filter((d) => d && d.sweepParked
   console.log(`  run 5 (the hourly full list, nothing left to park): records listed ${e.body.openBatches}, reads ${e.reads}, writes ${e.writes}`);
   console.log(`  parked after the runs: ${parked()} of ${N}   ->  per day (120 cheap runs + 24 hourly lists, steady state): reads ~${b.reads * 120 + e.reads * 24}   (before: every run listed 2,000, 2,106 reads x 144 = ${2106 * 144})`);
   for (const x of [a, b, c, d]) assert.equal(x.res.statusCode, 200);
-  assert.equal(a.body.openBatches, 2000, 'the first run lists the 2,000 the sweep can hold');
-  assert.equal(parked(), 2000, 'and parks them');
+  // 2026-10-25: records with work flagged (here retryRequested, kept on replaced jobs) are also read by
+  // what they are, so the first run sees all 2,300, not only the 2,000 the scan holds, and parks them all
+  // (the cap had hidden 124 queued sets for 31 hours in production).
+  assert.equal(a.body.openBatches, N, 'the first run lists every record flagged for work, past the 2,000 the scan holds');
+  assert.equal(parked(), N, 'and parks them');
   assert.equal(b.body.openBatches, 0, 'the second run lists nothing that is parked');
   assert(b.reads <= 20, 'the second run is a cheap one (got ' + b.reads + ' reads)');
   assert.equal(c.body.openBatches, 1, 'a job sent since is listed by the cheap run');

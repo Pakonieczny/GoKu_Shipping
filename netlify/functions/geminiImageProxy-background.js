@@ -6,10 +6,11 @@
 const admin = require("./firebaseAdmin");
 const { capBeadyCharmSize } = require("./_beadyCharmCap");
 const { SESSIONS_COLL, failureKind, isModelTask, compliantModelTask, reconcileSession } = require("./lib/listingBatchRecovery.cjs");
-const { batchCharmPaths, readReservedCharms } = require("./lib/listingBatchReservations.cjs");
+const { batchCharmPaths, readReservedCharms, pendingBatchWork } = require("./lib/listingBatchReservations.cjs");
+const { normalizeBatchInputImage, sniffImageType } = require("./lib/listingBatchImages.cjs");
 const { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
   neverStarted, stallRestartPending, SWEEP_CALL_LIMITS, withLimit, VALIDATION_WAIT_MS, PREPARATION_RESERVATION_MS,
-  stallCutoffMs } = require("./lib/listingBatchAdmission.cjs");
+  stallCutoffMs, preparationFailurePatch } = require("./lib/listingBatchAdmission.cjs");
 // const sharp = require("sharp"); // ensure sharp is installed in package.json
 const { initializeFirestore, getFirestore } = require("firebase-admin/firestore");
 
@@ -345,6 +346,8 @@ async function storagePathToBuffer(storagePath) {
     "listing-generator-1/Bracelets/",
     "listing-generator-1/Charm_Maker/", // ✅ Updated to cover the new structure broadly
     "listing-generator-1/generated/",
+    // The page's hang-angle and hoop copies of a charm (charmPathForSlot in Listing_Generator_1.html).
+    "listing-generator-1/_gravity_cache/",
     // Custom Charm Studio: customer reference uploads and prior versions.
     // Every studio kind additionally checks the path starts with
     // custom-studio/{their own uid}/, so one customer can never read another's.
@@ -2559,27 +2562,47 @@ async function createOpenAIImageBatch(apiKey, fileName, displayName) {
 
 async function* streamOpenAIBatchFile(apiKey, fileId) {
   if (!/^file-[A-Za-z0-9_-]+$/.test(fileId)) throw new Error("Invalid OpenAI result file ID");
-  const resp = await fetch(`https://api.openai.com/v1/files/${fileId}/content`, {
-    headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(600000),
-  });
+  // A rate limit or a 5xx before the first byte is asked again twice; a break mid-file is not
+  // (the collection is tried again by the next sweep, and saves skip files that exist).
+  let resp;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      resp = await fetch(`https://api.openai.com/v1/files/${fileId}/content`, {
+        headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(600000),
+      });
+    } catch (err) {
+      if (attempt >= 2) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 3000 * (attempt + 1)));
+      continue;
+    }
+    if (resp.ok || attempt >= 2 || !(resp.status === 429 || resp.status >= 500)) break;
+    await resp.body?.cancel?.().catch?.(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 3000 * (attempt + 1)));
+  }
   if (!resp.ok) throw new Error(`OpenAI batch download failed: HTTP ${resp.status}`);
   if (!resp.body) throw new Error("OpenAI batch download has no body");
   const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let pending = "";
+  // Lines are split on the newline byte as the bytes arrive: each chunk is searched once and each
+  // line is joined once. A result line is one 2048 px image (5-11 MB of base64); appending every
+  // 16 KB chunk to a string and searching it from the start again took 12 s for a six-image job.
+  let parts = [];
   try {
     while (true) {
       const { value, done } = await reader.read();
-      pending += done ? decoder.decode() : decoder.decode(value, { stream: true });
+      if (done) break;
+      let chunk = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
       let newline;
-      while ((newline = pending.indexOf("\n")) >= 0) {
-        const line = pending.slice(0, newline).trim();
-        pending = pending.slice(newline + 1);
+      while ((newline = chunk.indexOf(10)) >= 0) {
+        parts.push(chunk.subarray(0, newline));
+        const line = (parts.length === 1 ? parts[0] : Buffer.concat(parts)).toString("utf8").trim();
+        parts = [];
+        chunk = chunk.subarray(newline + 1);
         if (line) yield JSON.parse(line);
       }
-      if (done) break;
+      if (chunk.length) parts.push(chunk);
     }
-    if (pending.trim()) yield JSON.parse(pending);
+    const tail = Buffer.concat(parts).toString("utf8").trim();
+    if (tail) yield JSON.parse(tail);
   } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
 
@@ -2777,6 +2800,15 @@ async function runBoundedConcurrent(items, limit, worker) {
   const runners = Array.from({ length: Math.min(limit, items.length) }, loop);
   await Promise.all(runners);
   return results;
+}
+
+// A collection that could not save everything (or did not answer) is tried again after 5, 10, 20 …
+// minutes, at most 6 hours apart. Before 2026-10-25 every such job was collected again on every
+// sweep: on 2026-10-24 that was 505 jobs per run, and the run never reached the queued sets.
+function collectRetryPatch(record, error) {
+  const attempts = Number(record?.collectAttempts || 0) + 1;
+  return { collectAttempts: attempts, lastCollectError: error ? String(error).slice(0, 300) : null,
+    collectNotBefore: Date.now() + Math.min(6 * 60, 5 * 2 ** (attempts - 1)) * 60000 };
 }
 
 // Sanitize a Gemini batch name "batches/abc123" → "abc123" for use as
@@ -14242,40 +14274,81 @@ async function _handlerImpl(event) {
     // one call that never answers cannot hold the whole run (see the limits).
     const inProcessLimited = (payload) => withLimit(inProcess(payload), SWEEP_CALL_LIMITS[payload.kind],
       { ok: false, error: { message: `${payload.kind} did not answer in time` } });
-    const checkpoint = (stage, batchName = null) => guardRef.set({ stage,
-      currentBatchName: batchName, lastProgressAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    // THE GUARD IS A LEASE (2026-10-25). It used to be a read then a write, and both the last write
+    // and the failure handler cleared it whoever held it: a browser Refresh, the cron and a
+    // continuation could run at once, collect the same jobs and clear each other's mark, and a run
+    // that crashed blocked the next one for twelve minutes. Now one run holds it (runId, taken in a
+    // transaction), shows it is alive every HEARTBEAT_MS, and gives it back only while it still
+    // holds it. A run whose heartbeat stopped for HEARTBEAT_STALE_MS (killed at Netlify's 15
+    // minutes, crashed, out of memory) is taken over by the next one.
+    const runId = `run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
+    const HEARTBEAT_MS = 60 * 1000, HEARTBEAT_STALE_MS = 4 * 60 * 1000, RUN_MAX_MS = 16 * 60 * 1000;
+    let superseded = false, heartbeat = null, ownsGuard = false;
+    // Writes to the guard while this run holds it; a run that was taken over stops writing (and stops).
+    const guardWrite = async (patch) => {
+      if (superseded) return false;
+      try {
+        if (typeof db.runTransaction !== "function") { await guardRef.set(patch, { merge: true }); return true; }
+        return await db.runTransaction(async (tx) => {
+          const snap = await tx.get(guardRef);
+          const holder = snap.exists ? (snap.data() || {}).runId : null;
+          if (holder && holder !== runId) { superseded = true; return false; }
+          tx.set(guardRef, patch, { merge: true });
+          return true;
+        });
+      } catch (err) { console.warn("[batch_sweep] guard write failed:", err?.message || err); return false; }
+    };
+    const checkpoint = (stage, batchName = null) => guardWrite({ stage,
+      currentBatchName: batchName, lastProgressAt: admin.firestore.FieldValue.serverTimestamp() });
     // History contains large task prompts and submission metadata. The sweep
     // only needs routing and state; each action reads its own complete record.
     const compact = (record) => ({
       ...Object.fromEntries(["batchName", "state", "collected", "locallyQueued", "retryBatchName",
         "retryRequested", "retryAttempt", "retryStatus", "setComplete", "repairPending", "collectionPending",
         "providerError", "responsesFile", "createdAt", "stallCancelRequestedAt", "stallRestartBlocked",
-        "stallRestartClosed", "stallRestarts", "retryNotBefore", "sweepParked", "sessionId"].map(key => [key, record[key]])),
+        "stallRestartClosed", "stallRestarts", "retryNotBefore", "sweepParked", "sessionId",
+        "collectAttempts", "collectNotBefore"].map(key => [key, record[key]])),
       sets: (record.sets || []).map(set => ({ outputBasePath: set.outputBasePath, setKind: set.setKind })),
     });
     const sweepFields = ["batchName", "state", "collected", "locallyQueued", "retryBatchName", "retryRequested",
       "retryAttempt", "retryStatus", "setComplete", "repairPending", "collectionPending", "providerError",
       "responsesFile", "createdAt", "stallCancelRequestedAt", "stallRestartBlocked", "stallRestartClosed",
-      "stallRestarts", "retryNotBefore", "sweepParked", "sessionId", "sets"];
+      "stallRestarts", "retryNotBefore", "sweepParked", "sessionId", "collectAttempts", "collectNotBefore", "sets"];
 
     try {
-      // Overlap guard: skip if another sweep started < 12 minutes ago.
-      const guard = await guardRef.get();
-      const guardData = guard.exists ? guard.data() : {};
-      const runningSince = guardData.runningSince?.toMillis?.() || 0;
-      const lastProgress = guardData.lastProgressAt?.toMillis?.() || runningSince;
-      const stalledSubmission = guardData.stage === "submitting queued sets" &&
-        lastProgress && Date.now() - lastProgress >= PREPARATION_RESERVATION_MS;
-      if (runningSince && Date.now() - runningSince < 12 * 60 * 1000 && !stalledSubmission) {
-        return json(200, { ok: true, skipped: "sweep already running" });
+      // Overlap guard: skip while another run holds the lease and is alive.
+      let guardData = {}, runningSince = 0, lastProgress = 0, stalledSubmission = false;
+      const decide = (d) => {
+        guardData = d || {};
+        runningSince = guardData.runningSince?.toMillis?.() || 0;
+        lastProgress = Math.max(guardData.lastProgressAt?.toMillis?.() || 0, Number(guardData.heartbeatAt || 0)) || runningSince;
+        const alive = !!runningSince && Date.now() - lastProgress < HEARTBEAT_STALE_MS && Date.now() - runningSince < RUN_MAX_MS;
+        // The run that stopped was preparing a submission: its listing is recovered (admission.reconcile).
+        stalledSubmission = !alive && guardData.stage === "submitting queued sets" && !!lastProgress;
+        return alive;
+      };
+      const startPatch = { runningSince: admin.firestore.FieldValue.serverTimestamp(), runId,
+        stage: "checking provider jobs", currentBatchName: null, heartbeatAt: Date.now(),
+        lastProgressAt: admin.firestore.FieldValue.serverTimestamp(), lastError: null };
+      const busy = typeof db.runTransaction === "function"
+        ? await db.runTransaction(async (tx) => {
+          const snap = await tx.get(guardRef);
+          if (decide(snap.exists ? snap.data() : {})) return true;
+          tx.set(guardRef, startPatch, { merge: true });
+          return false;
+        })
+        : await (async () => {
+          const snap = await guardRef.get();
+          if (decide(snap.exists ? snap.data() : {})) return true;
+          await guardRef.set(startPatch, { merge: true });
+          return false;
+        })();
+      if (busy) return json(200, { ok: true, skipped: "sweep already running" });
+      ownsGuard = true;
+      if (typeof setInterval === "function") {
+        heartbeat = setInterval(() => { guardWrite({ heartbeatAt: Date.now() }).then((held) => {
+          if (!held && superseded && heartbeat) { clearInterval(heartbeat); heartbeat = null; } }); }, HEARTBEAT_MS);
       }
-      await guardRef.set({
-        runningSince: admin.firestore.FieldValue.serverTimestamp(),
-        stage: "checking provider jobs",
-        currentBatchName: null,
-        lastProgressAt: admin.firestore.FieldValue.serverTimestamp(),
-        lastError: null,
-      }, { merge: true });
 
       // A collected job may still have missing images, or have been repaired
       // manually/approved since collection. Reconcile the current submissions.
@@ -14322,9 +14395,10 @@ async function _handlerImpl(event) {
           return !checkedAt || Date.now() - checkedAt >= (d.status === "completed" ? DONE_SESSION_RECHECK_MS : IDLE_SESSION_RECHECK_MS);
         } catch (_) { return true; }
       };
-      for (const sessionId of sessionIds) {
+      // A continuation was started by a run that has just checked these sessions: it goes straight on.
+      for (const sessionId of body?.continuation === true ? [] : sessionIds) {
         if (!(await sessionCheckDue(sessionId))) continue;
-        await guardRef.set({ stage: "checking saved listing sets" }, { merge: true });
+        await guardWrite({ stage: "checking saved listing sets" });
         try {
           await reconcileSession({ db, bucket: admin.storage().bucket(), collection: BATCHES_COLL, sessionId,
             timestamp: () => admin.firestore.FieldValue.serverTimestamp() });
@@ -14332,16 +14406,21 @@ async function _handlerImpl(event) {
       }
       const admission = admissionControl(db, BATCHES_COLL, () => admin.firestore.FieldValue.serverTimestamp());
       try {
-        await admission.reconcile(async (inputFileName) => {
+        // { match, covered }: covered once the list (newest first) reaches jobs created well before
+        // the create began, so a missing job provably was never made (admission.reconcile).
+        await admission.reconcile(async (inputFileName, startedAt) => {
           let after = "";
-          for (let page = 0; page < 5; page++) {
+          for (let page = 0; page < 10; page++) {
             const result = await openAIBatchRequest(batchApiKey("batch_probe"), `/batches?limit=100${after ? `&after=${encodeURIComponent(after)}` : ""}`);
             const match = result.data?.find((b) => b.input_file_id === inputFileName);
-            if (match) return match;
-            if (!result.has_more || !result.data?.length) break;
+            if (match) return { match, covered: true };
+            const oldest = Math.min(...(result.data || []).map((b) => Number(b.created_at || Infinity))) * 1000;
+            if (!result.has_more || !result.data?.length || startedAt > 0 && oldest < startedAt - 10 * 60000) {
+              return { match: null, covered: true };
+            }
             after = result.data[result.data.length - 1].id;
           }
-          return null;
+          return { match: null, covered: false };
         }, stalledSubmission ? { batchName: guardData.currentBatchName, stalledAt: lastProgress } : null);
       } catch (err) {
         // Admission stays paused on that submission until a later run
@@ -14376,7 +14455,7 @@ async function _handlerImpl(event) {
           !(sentAt > 0 && Date.now() - sentAt >= VALIDATION_WAIT_MS);
         let status = initialStatus || await readStatus(batchName);
         if (normState(status?.state) === "JOB_STATE_PENDING" && canWait()) {
-          await guardRef.set({ stage: "validating new job" }, { merge: true });
+          await guardWrite({ stage: "validating new job" });
           while (normState(status?.state) === "JOB_STATE_PENDING" && canWait()) {
             await new Promise((resolve) => setTimeout(resolve, 5000));
             status = await readStatus(batchName);
@@ -14453,14 +14532,57 @@ async function _handlerImpl(event) {
       // Partial collections queued for missing-only repair are collected=true.
       const repairs = await db.collection(BATCHES_COLL).where("repairPending", "==", true).limit(500).select(...sweepFields).get();
       const openNames = new Set(open.map(b => b.batchName));
-      repairs.forEach(doc => { const b = compact(doc.data()); if (!openNames.has(b.batchName)) open.push(b); });
+      repairs.forEach(doc => { const b = compact(doc.data()); if (!openNames.has(b.batchName)) { openNames.add(b.batchName); open.push(b); } });
+      // 2026-10-24: the scan above stops at 2,000 records in document-id order, and a queued set
+      // (batch_local_…) sorts after every OpenAI job id (batch_<hex>), behind thousands of restart
+      // pointers. 124 queued sets were never seen ("waiting: 0 · openBatches: 2000") for 31 hours.
+      // Work this run must do is also read by what it is (one equality or `in` filter each, no
+      // composite index), whatever the scan reached.
+      // The queue read is paged: restart pointers written before this change still carry
+      // retryRequested:true until the park step below clears them (a few runs).
+      const workQueries = [
+        { query: () => db.collection(BATCHES_COLL).where("retryRequested", "==", true), pages: 4 },
+        { query: () => db.collection(BATCHES_COLL).where("collectionPending", "==", true), pages: 1 },
+        { query: () => db.collection(BATCHES_COLL).where("state", "in",
+          ["JOB_STATE_PENDING", "JOB_STATE_RUNNING", "BATCH_STATE_PENDING", "BATCH_STATE_RUNNING"]), pages: 1 },
+      ];
+      for (const work of workQueries) for (let page = 0, after = null; page < work.pages; page++) {
+        let snap;
+        try {
+          let q = work.query();
+          if (work.pages > 1) q = q.orderBy(admin.firestore.FieldPath.documentId());
+          if (after) q = q.startAfter(after);
+          snap = await q.limit(1000).select(...lightFields).get();
+        } catch (err) { console.warn("[batch_sweep] work query failed:", err?.message || err); break; }
+        after = snap.size === 1000 ? snap.docs[snap.docs.length - 1].id : null;
+        const found = [], wanted = [];
+        snap.forEach((d) => {
+          const rec = d.data();
+          if (!rec?.batchName || rec.collected && !rec.repairPending && !rec.collectionPending || openNames.has(rec.batchName)) return;
+          openNames.add(rec.batchName);
+          found.push(rec);
+          if (d.ref) openRefs.set(rec.batchName, d.ref);
+          if (rec.sets === undefined && d.ref && usesSets(rec)) wanted.push({ ref: d.ref, rec });
+        });
+        for (let i = 0; i < wanted.length; i += 50) {
+          const part = wanted.slice(i, i + 50);
+          const snaps = await db.getAll(...part.map((w) => w.ref), { fieldMask: ["sets"] });
+          snaps.forEach((s, k) => { part[k].rec.sets = s.exists ? (s.data() || {}).sets : undefined; });
+        }
+        found.forEach((rec) => open.push(compact(rec)));
+        if (!after) break;
+      }
       // Oldest first so long-waiting batches are served before fresh ones.
       open.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
 
+      // Provider checks and collections stop starting after CHECK_PHASE_MS so the queued sets below are
+      // always reached; what is left is done by an immediate continuation (checksDeferred).
+      const CHECK_PHASE_MS = 6 * 60 * 1000;
+      let checksDeferred = false, collectsBackedOff = 0;
       for (const b of open) {
-        if (Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
+        if (Date.now() - sweepStart > CHECK_PHASE_MS) { checksDeferred = true; break; }
         if (b.state === "JOB_STATE_FAILED" && quotaFailure(b.providerError) && !b.retryRequested &&
-            b.retryStatus !== "capacity_refused" && b.retryStatus !== "attempts_exhausted" &&
+            !["capacity_refused", "attempts_exhausted", "preparation_failed", "cancelled"].includes(b.retryStatus) &&
             !b.collected && !b.retryBatchName && !b.responsesFile && b.sets?.length === 1 && b.sets[0].setKind !== "charm_maker") {
           await db.collection(BATCHES_COLL).doc(batchDocIdFromName(b.batchName)).set({ retryRequested: true,
             retryQueuedAt: admin.firestore.FieldValue.serverTimestamp(), rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
@@ -14485,6 +14607,7 @@ async function _handlerImpl(event) {
           // Same eligibility as batch_status's saved mark: a Charm Maker or
           // multi-set job would be refused by batch_retry_missing and stop the refill.
           if (state === "JOB_STATE_FAILED" && quotaFailure(st?.providerError) && !st?.responsesFile &&
+              !["capacity_refused", "attempts_exhausted", "preparation_failed", "cancelled"].includes(b.retryStatus) &&
               !b.retryBatchName && b.sets?.length === 1 && b.sets[0].setKind !== "charm_maker") b.retryRequested = true;
           // OpenAI accepted this job hours ago and has not started it. It
           // still holds a place (cancelling counts as running until OpenAI
@@ -14501,8 +14624,18 @@ async function _handlerImpl(event) {
           }
         }
         if (isSucceeded(state) || b.collectionPending && b.responsesFile) {
+          // A collection that failed before waits its turn (collectRetryPatch) instead of every run.
+          if (Number(b.collectNotBefore || 0) > Date.now()) { collectsBackedOff++; continue; }
           const col = await inProcessLimited({ kind: "batch_collect", batchName: b.batchName, force: !isSucceeded(state) });
-          if (col?.ok) { if (col.collected !== false) { collected++; touch(b); } b.collected = col.collected !== false; } else { collectErrors++; touch(b); }
+          if (col?.ok) { if (col.collected !== false) { collected++; touch(b); } b.collected = col.collected !== false; }
+          else {
+            collectErrors++; touch(b);
+            try {
+              await db.collection(BATCHES_COLL).doc(batchDocIdFromName(b.batchName)).set({
+                ...collectRetryPatch(b, col?.error?.message || "Collection did not answer"),
+                rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+            } catch (err) { console.warn("[batch_sweep] collect back-off not written:", b.batchName, err?.message || err); }
+          }
         }
       }
       // Queue the set of each job cancelled because OpenAI never started it,
@@ -14518,14 +14651,14 @@ async function _handlerImpl(event) {
         }
       }
       const restartable = open.filter((b) => stallRestartPending(b) &&
-        ["JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(normState(b.state)));
-      if (restartable.length) await guardRef.set({ stage: "restarting stalled jobs" }, { merge: true });
+        ["JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED", "JOB_STATE_FAILED"].includes(normState(b.state)));
+      if (restartable.length) await guardWrite({ stage: "restarting stalled jobs" });
       for (const b of restartable) {
         if (Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
         const path = String(b.sets?.[0]?.outputBasePath || "");
         if (!path || setsInFlight.has(path)) continue;
         await checkpoint("recovering cancelled listing", b.batchName);
-        const restart = await inProcess({ kind: "batch_restart_stalled", batchName: b.batchName });
+        const restart = await inProcessLimited({ kind: "batch_restart_stalled", batchName: b.batchName });
         if (restart?.batchName && restart.batchName !== b.batchName) {
           b.retryBatchName = restart.batchName;
           setsInFlight.add(path);
@@ -14539,7 +14672,7 @@ async function _handlerImpl(event) {
           console.warn("[batch_sweep] stalled restart postponed:", b.batchName, restart?.error?.message || "unknown error");
         }
       }
-      await guardRef.set({ stage: "checking retry capacity" }, { merge: true });
+      await guardWrite({ stage: "checking retry capacity" });
 
       // A set that has used its five retry attempts is never submitted
       // again (the refill below skips it). Mark it stopped with its reason,
@@ -14568,7 +14701,9 @@ async function _handlerImpl(event) {
         ((!b.collected && !b.responsesFile &&
           ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(normState(b.state))) ||
           b.collected && b.repairPending) && !b.setComplete && b.batchName &&
-        Number(b.retryAttempt || 0) < 5 && Number(b.retryNotBefore || 0) <= Date.now());
+        // A restart re-sends an attempt OpenAI never started, so it does not use one of the five.
+        (Number(b.retryAttempt || 0) < 5 || b.locallyQueued && Number(b.stallRestarts || 0) > 0) &&
+        Number(b.retryNotBefore || 0) <= Date.now());
       let refillNeedsContinuation = false, validationUnconfirmed = null, sourceErrors = 0;
       for (const b of waiting) {
         if (activeCount >= 30) {
@@ -14646,15 +14781,34 @@ async function _handlerImpl(event) {
       // COST (Oct 2026): park the finished records nothing waits on, so scheduled runs stop listing them (see above).
       // Final provider states never change; every other reason to look at a record again is a write that unparks it.
       // A final job replaced by a retry (retryBatchName) is skipped by every step above whatever its other flags say.
-      const parkable = (b) => !!b && !b.collected && !b.locallyQueued && !!b.batchName && isFinal(b.state) && (!!b.retryBatchName ||
+      // A queued record that has been sent (locallyQueued with retryBatchName) only points at its job;
+      // nothing reads it again, but it never reaches a final state, so it is parked as well.
+      const parkable = (b) => !!b && !b.collected && !!b.batchName && b.locallyQueued &&
+          (!!b.retryBatchName || normState(b.state) === "JOB_STATE_CANCELLED" && !b.retryRequested) ||
+        !!b && !b.collected && !b.locallyQueued && !!b.batchName && isFinal(b.state) && (!!b.retryBatchName ||
         !b.collectionPending && !b.repairPending && !b.retryRequested && !stallRestartPending(b) &&
         !(normState(b.state) === "JOB_STATE_FAILED" && quotaFailure(b.providerError) && !b.retryBatchName && !b.responsesFile &&
-          b.retryStatus !== "capacity_refused" && b.retryStatus !== "attempts_exhausted" &&
+          !["capacity_refused", "attempts_exhausted", "preparation_failed", "cancelled"].includes(b.retryStatus) &&
           b.sets?.length === 1 && b.sets[0]?.setKind !== "charm_maker"));
       let parked = 0;
+      // A record replaced by its retry (a queued set's pointer, or a final job with retryBatchName) is
+      // inert: every step above skips it. Such records are parked in plain batched writes (production
+      // holds thousands; a transaction each would use the rest of the run), and the retryRequested:true
+      // that records written before 2026-10-25 kept is cleared, so the queue read stops returning them.
+      const isPointer = (b) => !!b?.batchName && !b.collected && !!b.retryBatchName && (b.locallyQueued || isFinal(b.state));
+      const pointers = open.filter((b) => isPointer(b) && (b.sweepParked !== true || b.retryRequested) && openRefs.get(b.batchName));
+      for (let i = 0; i < pointers.length && typeof db.batch === "function"; i += 400) {
+        if (Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
+        const writes = db.batch();
+        // retryRequested:false as well: pointers written before 2026-10-25 kept it (admission.complete).
+        for (const b of pointers.slice(i, i + 400)) writes.set(openRefs.get(b.batchName), { sweepParked: true, retryRequested: false,
+          rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        try { await writes.commit(); parked += Math.min(400, pointers.length - i); }
+        catch (err) { console.warn("[batch_sweep] pointer park marks not written:", err?.message || err); }
+      }
       for (const b of open) {
         if (Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
-        if (!b.batchName || b.collected) continue;
+        if (!b.batchName || b.collected || isPointer(b)) continue;
         const want = parkable(b);
         if (b.sweepParked !== undefined && want === (b.sweepParked === true)) continue;
         const ref = openRefs.get(b.batchName);
@@ -14671,7 +14825,7 @@ async function _handlerImpl(event) {
           if (done) parked++;
         } catch (err) { console.warn("[batch_sweep] park mark not written:", b.batchName, err?.message || err); }
       }
-      await guardRef.set({ stage: "checking stalled orchestrations" }, { merge: true });
+      await guardWrite({ stage: "checking stalled orchestrations" });
 
       // Resume orchestrations whose self-chain got dropped (no update in 20m).
       const orchSnap = await db.collection(ORCH_COLL).where("status", "==", "running").limit(20).get();
@@ -14705,8 +14859,10 @@ async function _handlerImpl(event) {
           catch (err) { console.warn("[batch_sweep] saved-file check failed:", sessionId, err?.message || err); }
         }
       }
-      await guardRef.set({
+      if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
+      await guardWrite({
         runningSince: null,
+        runId: null,
         stage: "idle",
         currentBatchName: null,
         lastProgressAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -14714,7 +14870,8 @@ async function _handlerImpl(event) {
         lastResult: { statusChecked, collected, collectErrors, resumed, retriesSubmitted,
           stalledCancelled, stalledRestarted,
           waiting: waiting.length, activeAtAdmission: activeCount, openBatches: open.length,
-          refillContinuing: refillNeedsContinuation, validationUnconfirmed, sourceErrors, parked, openFullPass },
+          refillContinuing: refillNeedsContinuation, validationUnconfirmed, sourceErrors, parked, openFullPass,
+          checksDeferred, collectsBackedOff },
         // COST (Oct 2026): the hour's mark used to be written only when the list was shorter than the 2,000 the sweep can hold. With
         // 2,000 or more uncollected records no run was ever the cheap kind: every run, every ten minutes, listed the same first 2,000.
         ...(openFullPass ? { openFullPassAt: Date.now() } : {}),
@@ -14722,11 +14879,13 @@ async function _handlerImpl(event) {
       }, { merge: true });
       // Continue with a fresh background budget. The same shared admission
       // guard still validates every job and enforces the global 30-job cap.
-      if (refillNeedsContinuation && origin) {
+      // A continuation is a scheduled run (cronTriggered: the same cost rules) that goes straight on
+      // from where this one stopped, instead of re-reading every session as a person's run would.
+      if ((refillNeedsContinuation || checksDeferred) && origin && !superseded) {
         try {
           const next = await fetch(`${origin}/.netlify/functions/geminiImageProxy-background`, {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ kind: "batch_sweep" }),
+            body: JSON.stringify({ kind: "batch_sweep", cronTriggered: true, continuation: true }),
           });
           if (!next.ok) throw new Error(`HTTP ${next.status}`);
         } catch (err) {
@@ -14736,9 +14895,11 @@ async function _handlerImpl(event) {
       return json(200, { ok: true, statusChecked, collected, collectErrors, resumed,
         retriesSubmitted, stalledCancelled, stalledRestarted, waiting: waiting.length, openBatches: open.length });
     } catch (err) {
-      try { await guardRef.set({ runningSince: null, stage: "failed",
+      if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
+      // Only the run that holds the lease gives it back; a failure before taking it touches nothing.
+      if (ownsGuard) await guardWrite({ runningSince: null, runId: null, stage: "failed",
         lastFailureAt: admin.firestore.FieldValue.serverTimestamp(),
-        lastError: String(err?.message || err).slice(0, 500) }, { merge: true }); } catch (_) {}
+        lastError: String(err?.message || err).slice(0, 500) });
       console.error("[batch_sweep] failed", safeErr(err));
       return json(502, { ok: false, error: safeErr(err) });
     }
@@ -15164,6 +15325,21 @@ async function _handlerImpl(event) {
       let sourceName = String(body?.retryOf || "");
       const hasImageTasks = sets.some((set) => set.tasks.some((task) => task.type !== "copy"));
       if (hasImageTasks) {
+        if (!sourceName && sets.length <= 10) {
+          // A set that already has work pending under another name (a queued repair, a job OpenAI is
+          // running, results being saved) is not registered again: "Resume empty sets" sees only the
+          // folder, and a second record would pay for the set twice and race into the same folder.
+          for (const s of sets) {
+            let priorQ = getDb().collection(BATCHES_COLL).where("setKeys", "array-contains", String(s.outputBasePath));
+            if (typeof priorQ.select === "function") priorQ = priorQ.select("batchName", "state", "collected", "setComplete",
+              "retryBatchName", "retryRequested", "retryStatus", "repairPending", "collectionPending", "stallCancelRequestedAt",
+              "stallRestartBlocked", "stallRestartClosed");
+            const prior = await priorQ.get();
+            const busy = prior.docs.map((d) => d.data()).find((d) => pendingBatchWork(d));
+            if (busy) return json(200, { ok: true, batchName: busy.batchName, alreadySubmitted: true, queued: true,
+              reason: `Set already has pending work (${busy.batchName})`, setsCount: sets.length });
+          }
+        }
         if (!sourceName) {
           sourceName = queuedName(submitSessionId, displayName, sets);
           const queueRef = getDb().collection(BATCHES_COLL).doc(sourceName);
@@ -15286,12 +15462,24 @@ async function _handlerImpl(event) {
       // bound the temporary raw/base64/string copies while JSONL is prepared.
       const FETCH_CONCURRENCY = 2;
       if (claim?.token) await admission.progress(claim, "downloading reference images");
-      const readReference = async (path) => {
+      // Every reference is checked from its bytes before it is sent (see lib/listingBatchImages.cjs):
+      // the Storage label is not trusted. What was relabelled or converted is kept on the job record.
+      const inputFixes = [];
+      const readReference = async (path, role) => {
         let timer;
         try {
           // This deadline is before batch creation. A late storage read cannot
           // submit a job after preparation has already returned an error.
-          return await Promise.race([storagePathToBuffer(path), new Promise((_, reject) => {
+          return await Promise.race([(async () => {
+            const raw = await storagePathToBuffer(path);
+            const img = await normalizeBatchInputImage(raw.buffer, { contentType: raw.mime, path, role,
+              canonical: role === "Charm image" });
+            if (img.action !== "as-is" && inputFixes.length < 20) {
+              inputFixes.push({ path, from: img.from, to: img.mime, action: img.action, detail: img.detail });
+              console.log(`[batch_submit] ${role} ${path}: ${img.action} (${img.from} -> ${img.mime}; ${img.detail})`);
+            }
+            return { mime: img.mime, buffer: img.buffer };
+          })(), new Promise((_, reject) => {
             timer = setTimeout(() => reject(new Error("Listing reference download timed out; remaining listings can continue.")), 45000);
           })]);
         } finally { clearTimeout(timer); }
@@ -15300,8 +15488,8 @@ async function _handlerImpl(event) {
       let fetchCounter = 0;
       const preparedResults = await runBoundedConcurrent(fetchJobs, FETCH_CONCURRENCY, async (j, idx) => {
         const [ref, charm] = await Promise.all([
-          readReference(j.refPath),
-          j.charmPath ? readReference(j.charmPath) : Promise.resolve(null),
+          readReference(j.refPath, "Template image"),
+          j.charmPath ? readReference(j.charmPath, "Charm image") : Promise.resolve(null),
         ]);
         const key = `s${j.setIdx}_slot${j.slot}`;
 
@@ -15423,7 +15611,14 @@ async function _handlerImpl(event) {
 
       // Step C: Upload JSONL to Gemini Files API, then create the batch.
       if (claim?.token) await admission.progress(claim, "uploading the batch input file");
-      const fileName = await uploadOpenAIBatchFile(apiKey, jsonlBuffer, displayName);
+      let fileName;
+      try { fileName = await uploadOpenAIBatchFile(apiKey, jsonlBuffer, displayName); }
+      catch (err) {
+        // OpenAI's file service being down or slow says nothing about this listing: no strike
+        // against it, and the refill pauses until the next run instead of striking every set.
+        if (!(err?.status >= 400 && err.status < 500) || [408, 429].includes(err.status)) err.providerSide = true;
+        throw err;
+      }
       memLog(`after Files API upload`);
       // Store everything needed to reconcile an ambiguous provider response.
       const persistDoc = {
@@ -15434,6 +15629,7 @@ async function _handlerImpl(event) {
         retryAttempt: Number(body?.retryAttempt || 0),
         capacityRefusals: Number(body?.capacityRefusals || 0),
         contentRepairAttempt: Number(body?.contentRepairAttempt || 0),
+        inputRepairAttempt: Number(body?.inputRepairAttempt || 0),
         // Times this set was restarted because OpenAI never started its job.
         stallRestarts: Number(body?.stallRestarts || 0),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -15465,6 +15661,7 @@ async function _handlerImpl(event) {
         })),
         routes,
         copyStats: { copied: copiedCount, errors: copyErrors },
+        inputFixes,
       };
       await admission.beforeCreate(claim, persistDoc);
       createStarted = true;
@@ -15483,10 +15680,20 @@ async function _handlerImpl(event) {
       } catch (err) {
         if (!claim?.token) throw err;
         const refused = quotaFailure(err?.message);
-        const preparationFailed = !createStarted && !refused && await admission.failPreparation(claim, err);
+        const providerSide = !createStarted && err?.providerSide === true;
+        // OpenAI refused THIS job at creation (a 4xx that is not a token limit, rate limit or
+        // timeout): it is a fault of the listing, counted and backed off like a preparation failure.
+        // Before, nothing was counted and the sweep stopped the whole refill behind it on every run.
+        const createRefused = createStarted && !refused && err?.status >= 400 && err.status < 500 && ![408, 409, 429].includes(err.status);
+        const preparationFailed = !createStarted && !refused && !providerSide && await admission.failPreparation(claim, err);
         await admission.release(claim, err);
         if (refused) await admission.rejected(sourceName);
-        if (!preparationFailed) await getDb().collection(BATCHES_COLL).doc(batchDocIdFromName(sourceName)).set({
+        const sourceRef = getDb().collection(BATCHES_COLL).doc(batchDocIdFromName(sourceName));
+        if (createRefused) {
+          const source = (await sourceRef.get()).data() || {};
+          await sourceRef.set(preparationFailurePatch(source, `OpenAI refused the job: ${String(err?.message || err).slice(0, 300)}`,
+            Date.now(), () => admin.firestore.FieldValue.serverTimestamp()), { merge: true });
+        } else if (!preparationFailed) await sourceRef.set({
           retryError: String(err?.message || err).slice(0, 500),
           // A refusal at submission counts toward the set's refusal ceiling too.
           ...(refused ? { capacityRefusals: admin.firestore.FieldValue.increment(1) } : {}),
@@ -15494,8 +15701,9 @@ async function _handlerImpl(event) {
           rev: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
         return json(200, { ok: true, queued: true, batchName: sourceName,
-          state: "JOB_STATE_QUEUED", sourceError: !createStarted && !refused,
-          reason: "Submission saved; waiting for the next server check" });
+          state: "JOB_STATE_QUEUED", sourceError: !createStarted && !refused && !providerSide || createRefused,
+          reason: providerSide ? `OpenAI file upload unavailable: ${String(err?.message || err).slice(0, 200)}`
+            : "Submission saved; waiting for the next server check" });
       } finally {
         if (claim?.token) await admission.release(claim, null);
       }
@@ -15563,6 +15771,7 @@ async function _handlerImpl(event) {
           imageSize: original.imageSize, sessionId: original.sessionId,
           retryOf: originalName, retryRequested: true, retryAttempt: Number(original.retryAttempt || 0), capacityRefusals: refusals,
           contentRepairAttempt: Number(original.contentRepairAttempt || 0),
+          inputRepairAttempt: Number(original.inputRepairAttempt || 0),
           stallRestarts: Number(original.stallRestarts || 0),
           displayName: original.displayName,
         }) });
@@ -15616,7 +15825,11 @@ async function _handlerImpl(event) {
       }
 
       const contentSlots = new Set((original.results?.failures || [])
-        .filter(f => failureKind(f.error) === "content").map(f => Number(/_slot(\d+)$/.exec(f.key || "")?.[1])));
+        .filter(f => failureKind(f) === "content").map(f => Number(/_slot(\d+)$/.exec(f.key || "")?.[1])));
+      // OpenAI could not read an input image of this set: this retry sends checked images, and counts
+      // toward INPUT_REPAIR_LIMIT so a file it still cannot read stops the set (lib/listingBatchRecovery.cjs).
+      const needsInputRepair = (original.results?.failures || []).some(f => failureKind(f) === "input" &&
+        missingTasks.some(t => `s0_slot${Number(t.slotIndex)}` === f.key));
       const needsClothingRepair = missingTasks.some(t => contentSlots.has(Number(t.slotIndex)));
       if (needsClothingRepair) {
         if (Number(original.contentRepairAttempt || 0) >= 1 ||
@@ -15650,14 +15863,22 @@ async function _handlerImpl(event) {
           retryAttempt: Number(original.retryAttempt || 0) + (quotaFailure(original.providerError) ? 0 : 1),
           capacityRefusals: refusals,
           contentRepairAttempt: Number(original.contentRepairAttempt || 0) + (needsClothingRepair ? 1 : 0),
+          inputRepairAttempt: Number(original.inputRepairAttempt || 0) + (needsInputRepair ? 1 : 0),
           stallRestarts: Number(original.stallRestarts || 0),
           displayName: original.locallyQueued ? original.displayName : `retry-${set.category}-Set_${set.setN}-${originalName}`.slice(0, 100),
         }) });
         const result = JSON.parse(response.body || "{}");
+        if (response.statusCode === 200 && result.ok && result.queued && result.sourceError) {
+          // Preparation failed for THIS set and admission has already recorded it (a wait, or a stop
+          // such as an unreadable reference). Rewriting it as "queued" undid the stop on every run,
+          // and the answer without sourceError made the sweep stop the whole refill behind it.
+          await originalRef.set({ retryStartedAt: null, rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+          return json(200, { ok: true, queued: true, sourceError: true, reason: result.reason || null, batchName: originalName });
+        }
         if (response.statusCode === 200 && result.ok && result.queued) {
           await originalRef.set({ retryRequested: true, retryStatus: "queued", retryStartedAt: null, sweepParked: false,
             rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-          return json(200, { ok: true, queued: true, batchName: originalName });
+          return json(200, { ok: true, queued: true, reason: result.reason || null, batchName: originalName });
         }
         if (response.statusCode === 200 && result.ok && result.copyOnly) {
           await originalRef.set({ retryStatus: "complete", retryMissing: 0, repairPending: false, retryRequested: false,
@@ -15736,8 +15957,14 @@ async function _handlerImpl(event) {
       const respFile = live?.response?.responsesFile || null;
       await ref.set({ state, providerStatus: live?.providerStatus || null, batchStats: stats,
         responsesFile: respFile, updatedAt: admin.firestore.FieldValue.serverTimestamp(), rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-      // It finished after all: the collector saves it as usual.
+      // It finished after all: the collector saves it as usual. A job that ended FAILED instead of
+      // cancelled leaves the restart path too; its set is repaired like any other failure.
       if (state === "JOB_STATE_SUCCEEDED") return json(200, { ok: true, succeeded: true, state });
+      if (state === "JOB_STATE_FAILED") {
+        await ref.set({ stallRestartClosed: true, ...(respFile ? { collectionPending: true, collected: false, sweepParked: false } : {}),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(), rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        return json(200, { ok: true, closed: true, state });
+      }
       if (!["JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(state)) return json(200, { ok: true, waiting: true, state });
       const set = saved.sets[0];
       assertAllowedOutputBase(set.outputBasePath);
@@ -15768,17 +15995,25 @@ async function _handlerImpl(event) {
       // missing-only retry was cancelled. Recover those existing outputs
       // before deciding which slots actually need generation. Imports use
       // create-only storage writes and leave approval/redo images intact.
+      // An attempt whose provider files are gone (404, or "Clean temp files" deleted them) is
+      // skipped, not fatal: it used to stop the restart on every run. Only a failure to save an
+      // image that was downloaded stops the restart (importOnly answers ok:false then).
       const history = await db.collection(BATCHES_COLL).where("setKeys", "array-contains", set.outputBasePath)
-        .select("batchName", "batchStats", "responsesFile", "createdAt").get();
+        .select("batchName", "batchStats", "responsesFile", "createdAt", "filesPurgedAt").get();
       const paidAttempts = history.docs.slice().sort((a, b) =>
         (b.data().createdAt?.toMillis?.() || 0) - (a.data().createdAt?.toMillis?.() || 0));
       for (const doc of paidAttempts) {
         const attempt = doc.data();
         if (attempt.batchName === batchName || !attempt.responsesFile || !Number(attempt.batchStats?.successfulRequestCount || 0)) continue;
+        if (attempt.filesPurgedAt) continue;
         const res = await module.exports.handler({ httpMethod: "POST", headers: {},
           body: JSON.stringify({ kind: "batch_collect", batchName: attempt.batchName, force: true, importOnly: true }) });
         const imported = JSON.parse(res.body || "{}");
-        if (res.statusCode !== 200 || !imported.ok) throw new Error(imported.error?.message || "Could not recover an earlier paid image");
+        if (res.statusCode !== 200 || !imported.ok) {
+          const message = imported.error?.message || "Could not recover an earlier paid image";
+          if (/HTTP 404|No provider result file|not found/i.test(message)) { console.warn("[batch_restart_stalled] earlier attempt skipped:", attempt.batchName, message); continue; }
+          throw new Error(message);
+        }
       }
 
       const [presentFiles] = await bucket.getFiles({ prefix: `${set.outputBasePath}/` });
@@ -15826,6 +16061,7 @@ async function _handlerImpl(event) {
           state: "JOB_STATE_QUEUED", locallyQueued: true, retryRequested: true, retryAttempt: Number(saved.retryAttempt || 0),
           capacityRefusals: Number(saved.capacityRefusals || 0), stallRestarts: restarts,
           contentRepairAttempt: Number(saved.contentRepairAttempt || 0),
+          inputRepairAttempt: Number(saved.inputRepairAttempt || 0),
           collected: false, sweepParked: false, model: saved.model || null, imageSize: saved.imageSize || "2K",
           sets: [{ ...set, tasks: missingTasks, allTasks }], retryOf: batchName,
           setKeys: [set.outputBasePath], setsCount: 1, requestCount: toGenerate.length,
@@ -15908,15 +16144,18 @@ async function _handlerImpl(event) {
 
       if (state === "JOB_STATE_FAILED" && quotaFailure(providerError) && !respFile) {
         const ref = getDb().collection(BATCHES_COLL).doc(batchDocIdFromName(batchName));
+        let freshRefusal = false;
         await getDb().runTransaction(async (tx) => {
           const snap = await tx.get(ref);
           const d = snap.data();
-          if (d && !d.collected && !d.retryBatchName && d.retryStatus !== "capacity_refused" &&
-              d.retryStatus !== "attempts_exhausted" && d.sets?.length === 1 && d.sets[0].setKind !== "charm_maker")
+          // Only a job sent in the last two hours is news about capacity: re-reading an old refused
+          // job (the page's failure check polls them) must not lower admission again.
+          freshRefusal = !!d && (!d.createdAt?.toMillis || Date.now() - d.createdAt.toMillis() < 2 * 60 * 60 * 1000);
+          if (d && !d.collected && !d.retryBatchName && !["capacity_refused", "attempts_exhausted", "preparation_failed", "cancelled"].includes(d.retryStatus) && d.sets?.length === 1 && d.sets[0].setKind !== "charm_maker")
             tx.set(ref, { retryRequested: true, sweepParked: false, retryQueuedAt: admin.firestore.FieldValue.serverTimestamp(),
               rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         });
-        await admissionControl(getDb(), BATCHES_COLL, () => admin.firestore.FieldValue.serverTimestamp()).rejected(batchName);
+        if (freshRefusal) await admissionControl(getDb(), BATCHES_COLL, () => admin.firestore.FieldValue.serverTimestamp()).rejected(batchName);
       }
 
       return json(200, {
@@ -16024,6 +16263,7 @@ async function _handlerImpl(event) {
       let failedCount = 0;
       let collectionPending = false;
       let missingSlotsCount = 0;
+      const setsWithImages = new Set();
       const perSetSlotResults = new Map();
       const failures = [];
 
@@ -16033,14 +16273,17 @@ async function _handlerImpl(event) {
       // throttle in-flight uploads without buffering the whole list.
       const inFlight = new Set();
       const seenResultKeys = new Set();
-      const recordResult = (route, ok, storagePath, error) => {
+      // `source` says who failed: "provider" (OpenAI answered this request with an error: the image
+      // was never made) or "storage" (the image was made but could not be saved here). Recovery
+      // re-collects only the second kind (lib/listingBatchRecovery.cjs failureKind).
+      const recordResult = (route, ok, storagePath, error, source = "storage", extra = null) => {
         const arr = perSetSlotResults.get(route.setIndex) || [];
         if (ok) {
           succeededCount++;
           arr.push({ slotIndex: route.slotIndex, ok: true, storagePath });
         } else {
           failedCount++;
-          failures.push({ key: `s${route.setIndex}_slot${route.slotIndex}`, error });
+          failures.push({ key: `s${route.setIndex}_slot${route.slotIndex}`, error, source, ...(extra || {}) });
           arr.push({ slotIndex: route.slotIndex, ok: false, error });
         }
         perSetSlotResults.set(route.setIndex, arr);
@@ -16114,11 +16357,15 @@ async function _handlerImpl(event) {
           }
           if (seenResultKeys.has(key)) continue;
           seenResultKeys.add(key);
-          if (parsed?.error || parsed?.response?.body?.error) {
+          const providerError = parsed?.error || parsed?.response?.body?.error ||
+            (Number(parsed?.response?.status_code) >= 400 ? { message: `HTTP ${parsed.response.status_code}` } : null);
+          if (providerError) {
             const path = `${route.outputBasePath}/Slot_${route.slotIndex + 1}.png`;
             const [saved] = await bucket.file(path).exists();
+            const detail = {};
+            for (const k of ["code", "param", "type"]) if (providerError[k] != null) detail[k] = String(providerError[k]).slice(0, 120);
             recordResult(route, !!saved, saved ? path : null, saved ? null :
-              parsed.error?.message || parsed.response.body.error.message || "batch error");
+              String(providerError.message || providerError.code || "batch error").slice(0, 500), "provider", detail);
             continue;
           }
           const partsOut = parsed?.response?.candidates?.[0]?.content?.parts || [];
@@ -16126,7 +16373,7 @@ async function _handlerImpl(event) {
                           partsOut.find((p) => p?.inlineData?.data) || null;
           const b64 = parsed?.response?.body?.data?.[0]?.b64_json || imgPart?.inline_data?.data || imgPart?.inlineData?.data;
           if (!b64) {
-            recordResult(route, false, null, "no inline_data in response");
+            recordResult(route, false, null, "no inline_data in response", "provider");
             continue;
           }
 
@@ -16151,13 +16398,18 @@ async function _handlerImpl(event) {
       // finished while cancelling. The set's manifest, charm move and
       // collected mark wait for the job that completes the set.
       if (body?.importOnly) {
+        // A paid image that could not be saved must stop the caller: a restart that went on would
+        // see its slot as missing and pay for it again.
+        if (collectionPending) return json(502, { ok: false, batchName, imported: succeededCount, failedCount,
+          error: { message: `Could not save ${failures.filter((f) => f.source === "storage").length || "some"} finished image(s); nothing was regenerated` },
+          failures: failures.slice(0, 20) });
         return json(200, { ok: true, batchName, imported: succeededCount, failedCount,
           failures: failures.slice(0, 20) });
       }
 
       // Missing upstream results must remain visible as failed slots.
       for (const [key, route] of routeByKey) {
-        if (!seenResultKeys.has(key)) recordResult(route, false, null, "No result returned for this image");
+        if (!seenResultKeys.has(key)) recordResult(route, false, null, "No result returned for this image", "provider");
       }
 
       // Step: write a manifest per set, mirroring what Standard mode writes.
@@ -16177,16 +16429,26 @@ async function _handlerImpl(event) {
           const [exists] = await target.exists();
           if (!exists) {
             try { await bucket.file(task.source_storage_path).copy(target, { preconditionOpts: { ifGenerationMatch: 0 } }); }
-            catch (err) { if (!(await target.exists())[0]) collectionPending = true; }
+            catch (err) {
+              if (!(await target.exists())[0]) {
+                collectionPending = true;
+                // Said, so the set does not sit in "saving" with no reason.
+                failures.push({ key: `copy:s${setIdx}_slot${Number(task.slotIndex)}`, source: "storage",
+                  error: `Could not copy ${String(task.source_storage_path || "").split("/").pop()}: ${String(err?.message || err).slice(0, 200)}` });
+              }
+            }
           }
         }
         const [alreadySavedFiles] = await bucket.getFiles({ prefix: `${s.outputBasePath}/` });
         const savedSlots = new Set(alreadySavedFiles.map((f) =>
           /^Slot_(\d+)\.png$/i.exec(f.name.slice(s.outputBasePath.length + 1))?.[1]).filter(Boolean).map(Number));
 
+        let setMissing = 0;
         for (const task of plannedTasks) {
-          if (!savedSlots.has(Number(task.slotIndex) + 1)) missingSlotsCount++;
+          if (!savedSlots.has(Number(task.slotIndex) + 1)) { missingSlotsCount++; setMissing++; }
         }
+        // The set's charm counts as used once one of its generated pictures is saved (see the move below).
+        if (plannedTasks.some((t) => String(t?.type) !== "copy" && savedSlots.has(Number(t.slotIndex) + 1))) setsWithImages.add(setIdx);
         // Build a slotIndex → original-task lookup so we can pull source/newCharm.
         const taskBySlot = new Map();
         for (const t of plannedTasks) {
@@ -16246,7 +16508,7 @@ async function _handlerImpl(event) {
             batchMode: true,
             batchName,
             batchState: state,
-            partial: missingSlotsCount > 0 || forceMode && state !== "JOB_STATE_SUCCEEDED",
+            partial: setMissing > 0 || forceMode && state !== "JOB_STATE_SUCCEEDED",
             imageSize: docData.imageSize || "2K",
             model: (s.manifest && s.manifest.model) || docData.model || preferredCharmRenderModelId(),
             batchSlots: slotsOut,
@@ -16296,7 +16558,7 @@ async function _handlerImpl(event) {
           batchMode: true,
           batchName,
           batchState: state,
-          partial: missingSlotsCount > 0 || forceMode && state !== "JOB_STATE_SUCCEEDED",
+          partial: setMissing > 0 || forceMode && state !== "JOB_STATE_SUCCEEDED",
           imageSize: docData.imageSize || "2K",
           slots: slotsOut,
         };
@@ -16326,13 +16588,18 @@ async function _handlerImpl(event) {
       // doesn't support natively) and ignore per-charm errors so a
       // single flaky charm doesn't block the batch from being marked
       // collected.
+      //
+      // Only the charm of a set that has a generated picture saved is moved. On 2026-10-23/24 the
+      // charms of 505 sets OpenAI had made nothing for were moved too, leaving the pool at 9; a set
+      // with nothing saved keeps its charm in the pool, held for it while it is retried.
       const charmsUsed = new Set();
-      for (const s of setsMeta) {
+      setsMeta.forEach((s, setIdx) => {
+        if (!setsWithImages.has(setIdx)) return;
         for (const t of (s.tasks || [])) {
           const p = t?.input_charm_storage_path;
           if (p) charmsUsed.add(p);
         }
-      }
+      });
       const charmMoveErrors = [];
       let charmsMoved = 0;
       for (const srcPath of charmsUsed) {
@@ -16381,6 +16648,13 @@ async function _handlerImpl(event) {
           repairPending: false,
           retryRequested: false,
           recoveryStatus: collectionPending ? "saving" : failedCount ? "incomplete" : "complete",
+          // Saving that keeps failing is tried again with a growing wait (batch_sweep), never given up.
+          ...(collectionPending ? collectRetryPatch(docData, failures.find(f => f.source === "storage")?.error)
+            : { collectAttempts: 0, collectNotBefore: null, lastCollectError: null }),
+          // The watchdog asked to cancel it, but it finished: the normal repair path takes over
+          // (otherwise the set waited for a restart that only a cancelled job gets).
+          ...(docData.stallCancelRequestedAt && state === "JOB_STATE_SUCCEEDED" && !docData.retryBatchName
+            ? { stallRestartClosed: true } : {}),
           collectedAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           rev: admin.firestore.FieldValue.serverTimestamp(),
@@ -16398,6 +16672,49 @@ async function _handlerImpl(event) {
         charmsMoved, charmMoveErrors: charmMoveErrors.slice(0, 20),
         failures: failures.slice(0, 50),
       });
+    }
+
+    // Read-only: what the input images of one job really are (the Storage label, the bytes, the
+    // decoder's reading, and what a submission now sends). Answers within the inline deadline.
+    if (kind === "batch_input_check") {
+      const batchName = String(body?.batchName || "").trim();
+      if (!/^(batches\/[A-Za-z0-9_-]+|batch_[A-Za-z0-9_-]+)$/.test(batchName)) {
+        return json(400, { error: { message: "Invalid batch identifier" } });
+      }
+      const snap = await getDb().collection(BATCHES_COLL).doc(batchDocIdFromName(batchName)).get();
+      if (!snap.exists) return json(404, { error: { message: "Batch record is missing" } });
+      const d = snap.data();
+      const roles = new Map();
+      for (const t of (d.sets || []).flatMap((s) => s.allTasks || s.tasks || [])) {
+        if (t?.type === "copy") continue;
+        if (t?.input_charm_storage_path) roles.set(t.input_charm_storage_path, "Charm image");
+        if (t?.input_storage_path && !roles.has(t.input_storage_path)) roles.set(t.input_storage_path, "Template image");
+      }
+      let sharp = null;
+      try { sharp = require("sharp"); } catch (_) {}
+      const images = [];
+      for (const [path, role] of [...roles].slice(0, 14)) {
+        const row = { path, role };
+        try {
+          const raw = await storagePathToBuffer(path);
+          Object.assign(row, { storedType: raw.mime, bytes: raw.buffer.length, sniffed: sniffImageType(raw.buffer),
+            head: raw.buffer.subarray(0, 16).toString("hex") });
+          if (sharp) {
+            try {
+              const m = await sharp(raw.buffer, { failOn: "none" }).metadata();
+              row.meta = Object.fromEntries(["format", "width", "height", "depth", "space", "channels", "hasAlpha",
+                "isProgressive", "isPalette", "pages", "orientation", "density"].map((k) => [k, m[k] ?? null]));
+            } catch (err) { row.metaError = String(err?.message || err).slice(0, 300); }
+          }
+          try {
+            const n = await normalizeBatchInputImage(raw.buffer, { contentType: raw.mime, path, role, canonical: role === "Charm image" });
+            Object.assign(row, { action: n.action, sentType: n.mime, detail: n.detail });
+          } catch (err) { Object.assign(row, { action: "rejected", error: String(err?.message || err).slice(0, 400) }); }
+        } catch (err) { row.readError = String(err?.message || err).slice(0, 300); }
+        images.push(row);
+      }
+      return json(200, { ok: true, batchName, displayName: d.displayName || null, inputFixes: d.inputFixes || null,
+        failures: (d.results?.failures || []).slice(0, 8), images });
     }
 
     if (kind === "batch_list") {
@@ -16423,7 +16740,8 @@ async function _handlerImpl(event) {
         "retryBatchName", "retryRequested", "retryAttempt", "capacityRefusals", "stallCancelRequestedAt",
         "stallRestartBlocked", "stallRestartClosed", "stallRestarts", "retryStatus", "retryError",
         "createdAt", "updatedAt", "collectedAt", "setsCount", "setKeys", "setComplete",
-        "collectionPending", "repairPending", "recoveryStatus", "recoveryReason", "requestCount", "results"];
+        "collectionPending", "repairPending", "recoveryStatus", "recoveryReason", "requestCount", "results",
+        "inputFixes", "collectAttempts", "collectNotBefore", "lastCollectError", "retryQueuedAt", "inputRepairAttempt"];
       // ---- the answer around the job records: collector status, admission, session summaries ----
       const readSweepAndAdmission = () => Promise.all([
         db.collection("LG1_Config").doc("batchSweep").get().catch(err => {
@@ -16525,6 +16843,12 @@ async function _handlerImpl(event) {
         recoveryReason: d.recoveryReason || null,
         requestCount: d.requestCount ?? d.batchStats?.requestCount ?? null,
         results: d.results || null,
+        inputFixes: Array.isArray(d.inputFixes) ? d.inputFixes.slice(0, 20) : null,
+        collectAttempts: Number(d.collectAttempts || 0),
+        collectNotBefore: Number(d.collectNotBefore || 0) || null,
+        lastCollectError: d.lastCollectError || null,
+        retryQueuedAt: d.retryQueuedAt?.toMillis ? d.retryQueuedAt.toMillis() : null,
+        inputRepairAttempt: Number(d.inputRepairAttempt || 0),
       });
       // COST: every pass of the panel's poll reads up to 1,500 job records although a few dozen change. Every write to a job
       // record sets `rev` (a server timestamp), so the poll can ask for the records written since the read it already holds
@@ -16612,7 +16936,10 @@ async function _handlerImpl(event) {
           const gate = await tx.get(getDb().collection("LG1_Config").doc("batchAdmission"));
           const current = (await tx.get(cancelRef)).data() || {};
           if (current.retryBatchName || gate.data()?.sourceName === batchDocIdFromName(batchName) && gate.data()?.owner) return false;
-          tx.set(cancelRef, { retryRequested: false, updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          // retryStatus "cancelled" is what keeps it out: the sweep and batch_status re-queue a
+          // token-limit failure that has no such mark.
+          tx.set(cancelRef, { retryRequested: false, repairPending: false, retryStatus: "cancelled",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
           return true;
         });
@@ -17270,15 +17597,22 @@ async function _handlerImpl(event) {
 
       await assertCharmBelongsToSet(normalizeCategory(activeCategory), output_base_path, input_charm_storage_path);
 
-      const ref = input_storage_path
+      // Same byte check as a batch submission (lib/listingBatchImages.cjs): the stored label is not trusted.
+      const checked = async (img, path, role) => {
+        const out = await normalizeBatchInputImage(img.buffer, { contentType: img.mime, path, role,
+          canonical: role === "Charm image" });
+        if (out.action !== "as-is") console.log(`[edits] ${role} ${path || "(inline)"}: ${out.action} (${out.from} -> ${out.mime}; ${out.detail})`);
+        return { buffer: out.buffer, mime: out.mime };
+      };
+      const ref = await checked(input_storage_path
         ? await storagePathToBuffer(input_storage_path)
-        : dataUrlToBuffer(input_image);
+        : dataUrlToBuffer(input_image), input_storage_path, "Template image");
 
       let charm = null;
       if (input_charm_storage_path || input_charm_image) {
-        charm = input_charm_storage_path
+        charm = await checked(input_charm_storage_path
           ? await storagePathToBuffer(input_charm_storage_path)
-          : dataUrlToBuffer(input_charm_image);
+          : dataUrlToBuffer(input_charm_image), input_charm_storage_path, "Charm image");
       }
 
       const images = [{ buffer: ref.buffer, mime: ref.mime, filename: filenameForMime("reference", ref.mime) }];
