@@ -13536,7 +13536,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const awaitingCollection = effective.filter((b) => !b.collected && _normBatchState(b.state) === "JOB_STATE_SUCCEEDED" &&
         !_batchNoOutput(b)).length;
       const noImages = effective.filter((b) => !b.setComplete && _normBatchState(b.state) === "JOB_STATE_SUCCEEDED" && _batchNoOutput(b));
-      const noImagesStopped = noImages.filter((b) => !_batchRetrying(b)).length;
+      const noImagesStopped = noImages.filter((b) => !_batchRetrying(b) && _batchStoppedByServer(b)).length;
       const savingWithImages = Math.max(0, Number(audit?.saving || 0) -
         noImages.filter((b) => !_batchRetrying(b) && b.recoveryStatus !== "blocked").length);
       const unsent = effective.filter((b) => b.locallyQueued && !b.collected).length;
@@ -13700,9 +13700,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const sweepProblem = !allDone && (sweep?.lastError ? `Collector error: ${sweep.lastError}` :
         sweep?.runningSince && !sweepIsRunning ? "The image collector has not finished its last check." :
         sweepStale ? "The image collector has not completed a check in over 25 minutes." :
-        sweep?.lastResult?.collectErrors ? `${sweep.lastResult.collectErrors} image collection attempt(s) failed${
-          noImagesStopped >= sweep.lastResult.collectErrors ? " (error files with no images, read again on every collector run)"
-          : collectBackoff.length ? `; ${collectBackoff.length} set(s) are collected again automatically${isFinite(nextCollectAt) ? ` from ${shortTime(nextCollectAt)}` : ""}` : ""}.` : "");
+        // The server retries a failed collection by itself with a growing wait (it no longer re-reads every
+        // job on every run), so this is information, not an alarm.
+        sweep?.lastResult?.collectErrors ? `${sweep.lastResult.collectErrors} image collection attempt(s) failed; ${
+          collectBackoff.length ? `${collectBackoff.length} set(s) are collected again automatically${isFinite(nextCollectAt) ? ` from ${shortTime(nextCollectAt)}` : ""}`
+          : "they are tried again automatically"}.` : "");
       // What happens next, in plain words: whether the batch recovers by itself (a note) or a person has to act
       // (an alert). Both can apply at once, e.g. sets OpenAI rejected and a queue that does not move: one line each.
       const recoveringNote = !allDone && repairing
@@ -13829,6 +13831,13 @@ Click the button again to permanently delete eligible temporary files, or cancel
     function _batchRetrying(b) {
       return !!(b.retryRequested || b.repairPending || _awaitingStallRestart(b)) && b.recoveryStatus !== "blocked";
     }
+    // Stopped is what the server recorded, never inferred: a set collected moments ago is neither retrying
+    // nor stopped until the server's next check queues it again (2026-10-25: 12 such sets were shown as
+    // "stopped and will not recover" while the server's own summary had 0 stopped).
+    function _batchStoppedByServer(b) {
+      return b.recoveryStatus === "blocked" ||
+        ["capacity_refused", "attempts_exhausted", "preparation_failed", "cancelled"].includes(b.retryStatus);
+    }
     function _batchFirstError(b) {
       return String((b.results?.failures || []).find((f) => f?.error)?.error || b.providerError || b.statusError || "").slice(0, 200);
     }
@@ -13854,11 +13863,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
           if (text && !texts.has(text)) texts.set(text, t === b.lastCollectError ? { source: "storage" } : null);
         }
         const retrying = _batchRetrying(b);
-        const active = !b.collected && ["JOB_STATE_PENDING", "JOB_STATE_RUNNING"].includes(_normBatchState(b.state));
+        const stopped = !retrying && _batchStoppedByServer(b);
         for (const [text, f] of texts) {
           const e = byText.get(text) || { text, sets: 0, retrying: 0, stopped: 0, source: "", code: "" };
           e.sets++;
-          if (retrying) e.retrying++; else if (!active) e.stopped++;
+          if (retrying) e.retrying++; else if (stopped) e.stopped++;
           if (!e.source) e.source = f?.source || (_batchNoOutput(b) ? "provider" : "");
           if (!e.code) e.code = f?.code || "";
           byText.set(text, e);
