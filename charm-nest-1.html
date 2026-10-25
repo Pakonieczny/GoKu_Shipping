@@ -6269,7 +6269,10 @@ async function persistSheet(sh, items, context) {
   const savedRecord = outputs => Object.assign({}, snapshot, { outputs });
   // 1 · the Library record, so the sheet is on record even if a file upload fails; it goes out with the files, which
   //     take two round trips each, and is waited for before the record is completed
-  const opened = api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(savedRecord(null), { saving: true }) }, { label: "Saving sheet record" });
+  // (STUCKSHEET, Paul 25 Oct 2026: 14K Draft 1 had no preview and could not be taken by hand. This first record went out with outputs: null, which the server merges
+  //  in, so the picture and the .ai of the last save were wiped the moment a save began; a tab closed or a network lost before the second write below left the
+  //  record "saving" with no files for good. It goes out without outputs now: the last files stand until the new ones replace them.)
+  const opened = api("charmNestLibrary", { op: "putSheet", sheet: Object.assign((({ outputs, ...r }) => r)(savedRecord(null)), { saving: true }) }, { label: "Saving sheet record" });
   opened.catch(() => {});
   // 2 · the files, each retried on its own; a failure is reported, never hidden
   const up = async (path, bytes, type, label) => { let err = null; for (let t = 0; t < 3; t++) { try { return await uploadBytes(path, bytes, type, label); } catch (e) { err = e; await new Promise(r => setTimeout(r, 1500 * (t + 1))); } } throw err; };

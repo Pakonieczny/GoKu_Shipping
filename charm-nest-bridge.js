@@ -22961,7 +22961,7 @@ const Session = window.Session = (() => {
             }
           }
           p.worker = null; p.workers = []; p.pool = null; p.el = null; p.persisted = Promise.resolve();
-          if (p.persistedDone === false || p.problem) { p.status = "ready"; p.dirty = true; }
+          if (p.persistedDone === false || p.problem) { p.status = "ready"; p.dirty = true; if (p.persistedDone === false && p.placements && p.placements.length) p._writeOwed = true; }
           p.persistedDone = true;
           if (interrupted) { p.status = "ready"; p.dirty = true; p.stage = "Recovered best layout — ready to continue"; }
         }
@@ -22997,6 +22997,9 @@ const Session = window.Session = (() => {
         B.run.fix = "Your layouts and decisions are kept. Resume to continue processing.";
       }
       Orders.render(); Engrave.render(); Review.render(); RunCtl.renderBanner(); refreshAllCards(); renderRail(); updateTopSub();
+      // (STUCKSHEET, Paul 25 Oct 2026) a sheet whose save the refresh cut short is written again AS IT STANDS (writeAsPlaced: no search, no charm moved), even while the
+      // run is stopped: a 10K / 14K sheet no set has picked is nested by no run loop, so before this it stayed unsaved, with no picture and no Manual Control, for good
+      setTimeout(() => { for (const p of allSheets()) if (p._writeOwed) { delete p._writeOwed; if (p.dirty && !["nesting", "finishing", "queued"].includes(p.status) && typeof window.writeAsPlaced === "function") { p._byHand = true; Promise.resolve(window.writeAsPlaced(p)).catch(e => console.warn("restore: owed write", e)); } } }, 3000);
       setMode(d.mode || "nest");
       sweepBest(cutShort);
       toast("Workspace restored — sheets, orders and decisions kept", "ok", 4000);

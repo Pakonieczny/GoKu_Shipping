@@ -3199,6 +3199,7 @@
     if (o.skip && o.skip.has && o.skip.has(c.index)) return out("touches a body without a SKU (a possible pair)");
     if (o.sized || c.skuSize) return out("its label names a size");
     if (c.inlayLetters && c.inlayLetters.length) return out("a letter is set inside it");
+    if (c.outline.textLabel || [c.outline].concat(c.members || []).some(m => m && m.glyphMetrics)) return out("a letter of a font");   // (an alphabet keeps one height; its font metrics are written into its file)
     const V = vec(); if (!V) return out("no vector library");
     let hoops; try { hoops = findHoops(c, V).filter(h => h.members.every(m => c.members.includes(m))); } catch (_) { return out("its ring could not be read"); }
     // every hoop keeps its size: a ring beside the body, and a hanging hole punched inside it (EASTER_24934, SKULL_49072: a lone circle in the plate; scaled with the body it fell under the hoop size, 1.84 → 1.77 pt)
@@ -3210,11 +3211,13 @@
     const k = maxMm / (L * MMPT), cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2, M = [k, 0, 0, k, cx * (1 - k), cy * (1 - k)];
     const move = (m, T) => m.subpaths && m.subpaths.length ? transformSegment(m, T) : m.bbox ? Object.assign({}, m, { bbox: bboxOf([ap(T, m.bbox[0], m.bbox[1]), ap(T, m.bbox[2], m.bbox[3])]), transformed: true, original: m.original || m }) : m;
     // each ring goes where the point it hangs from goes (a hole: where its centre goes), at its own size, and is redrawn from its geometry (its source bytes are dropped: they would be scaled with the body)
-    const shift = new Map(); for (const h of rings) { const a = inside(h) ? [h.cx, h.cy] : nearestOnPolys(h.cx, h.cy, polys).p || [h.cx, h.cy], a2 = ap(M, a[0], a[1]); shift.set(h, [1, 0, 0, 1, a2[0] - a[0], a2[1] - a[1]]); }
+    // (a hole inside the body is anchored at its nearest edge point too: moved with its centre the wall to the edge thinned, MERRY_31351 from 1.20 pt to 0.57 pt)
+    const shift = new Map(); for (const h of rings) { const a = nearestOnPolys(h.cx, h.cy, polys).p || [h.cx, h.cy], a2 = ap(M, a[0], a[1]); shift.set(h, [1, 0, 0, 1, a2[0] - a[0], a2[1] - a[1]]); }
     const swapped = new Map();
     c.members = c.members.map(m => { const h = ringOf.get(m), n = h ? Object.assign(move(m, shift.get(h)), { synthetic: true }) : move(m, M); swapped.set(m, n); return n; });
     if (ringUnits.size) c.dropIndices = new Set([...(c.dropIndices || []), ...ringUnits]);
     c.outline = swapped.get(c.outline) || move(c.outline, M);
+    if (Array.isArray(c.outline.parts)) c.outline.parts = c.outline.parts.map(p => swapped.get(p) || p);   // (a chained outline's parts are its scaled members now: integrateRings replaces them by them)
     if (Array.isArray(c.extras)) c.extras = c.extras.map(m => swapped.get(m) || m);
     c.bbox = c.members.reduce((a, m) => bbUnion(a, m.bbox), null) || c.outline.bbox.slice();
     if (c.centerPt) c.centerPt = ap(M, c.centerPt[0], c.centerPt[1]);

@@ -5097,7 +5097,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!o.saving && (busy(sh) || sh._operationStarting || sh._learnedStarting || sh._rosePlanning || sh._roseLoading || sh._roseAction)) return "The sheet is being nested or saved right now. Try again once it has saved.";
     // (MCFREE, Paul 20 Oct 2026: a sheet the run holds only because its check flagged it, such as a charm placed by hand where it overlaps, can be taken again to move it clear)
     if (!o.saving && sh.problem && !mcFlagOnly(sh)) return `The sheet has a problem to settle first: ${sh.problem}`;
-    if (!o.saving && (sh.dirty || !sh.persistedDone)) return "The sheet is waiting to be written again. Try again once it has saved.";
+    if (!o.saving && (sh.dirty || !sh.persistedDone)) return MC_OWED;
     if (!o.saving && HOP.writing.has(sh)) return "The sheet's files are being written in the background after the charms moved by hand. Try again in a moment.";   // (MOVEINSTANT, Paul 20 Oct 2026: writeOwed no longer holds the window)
     if (!o.saving && !o.api && W.flow) return "Another change in this window is still running. Try again once it is done.";
     const Sv = SV(); if (!Sv || !Sv.makeSheetGrid || !Sv.prepareVariant || !Sv.verify) return "The layout check is not loaded in this page.";
@@ -5365,10 +5365,21 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const mcClaim = (id, release) => api("charmNestLibrary", Object.assign({ op: "manualClaim", id, tab: MC_TAB, by: whoAmI() || "" }, release ? { release: true } : {}), { quiet: true, timeoutMs: 12000 });
   const mcRelease = id => mcClaim(id, true).catch(e => console.warn("sheet window: manual release", e));
 
+  const MC_OWED = "The sheet is waiting to be written again. Try again once it has saved.";
   async function mcToggle() {
     if (MC.claiming && !MC.on) return;   // (MOVEINSTANT 2: on, the toggle always ends it, even while a carried-to sheet is still being claimed)
     if (MC.on) return mcOff();
     const sh = mcLive(), why = mcBlock(sh, W.rec);
+    // (STUCKSHEET, Paul 25 Oct 2026: "I can't seem to manipulate this sheet by switching it to manual control": a sheet owed a write, with nothing writing it, is written now AS IT
+    //  STANDS (the page's writeAsPlaced: no search, every charm where it is), then Manual Control can be taken as usual)
+    if (why === MC_OWED && typeof window.writeAsPlaced === "function") {
+      MC.claiming = true; mcButton(); mcSay("This sheet was not written after its last change: writing it now as it stands (no charm moves)…", "");
+      sh._byHand = true; let ok = false;
+      try { ok = !!(await window.writeAsPlaced(sh)); } catch (e) { console.warn("sheet window: owed write", e); }
+      MC.claiming = false; mcButton();
+      return ok ? mcSay("Written. Press Manual Control again to move its charms.", "ok")
+        : mcSay(sh.problem ? `It could not be written: ${sh.problem}` : "It is being written now; press Manual Control again once it has saved.", "bad");
+    }
     if (why) return mcSay(why, "bad");
     const who = needName(() => mcToggle()); if (!who) return;
     // the window shows the sheet as this sorter holds it, charm for charm (a read behind the page is read again first)
