@@ -33,7 +33,8 @@ let passed = 0; const ok = (c, m) => { assert.ok(c, m); passed++; console.log(' 
     const made = await R.build(w, NAMES);
     const read = (rid) => w.page.evaluate(rid => { const r = Orders.rows().find(x => x.order.receiptId === rid), s = r.spec, p = s.pair; return { state: r.state, hold: r.hold || null, poolIds: r.poolIds.slice(), pieceCount: s.pieceCount, earring: p.earring, kind: p.kind, sides: p.sides, legacy: !!p.legacy, lineForm: s.lineForm, never: !!s.engraveNever,
       jobs: [...Engrave.items().values()].filter(j => j.row === r || (j.row && j.row.parentRow === r)).map(j => j.slot || null) }; }, rid);
-    const text = async name => { await R.openOrderWindow(w, name); return w.page.evaluate(() => { const ow = document.getElementById('orderWin'); return { text: ow ? ow.innerText : '', cards: document.querySelectorAll('#owEng .engCard').length, sides: [...document.querySelectorAll('#orderWin .owPcSide')].map(e => e.textContent.trim()) }; }); };
+    const text = async name => { await R.openOrderWindow(w, name); return w.page.evaluate(() => { const ow = document.getElementById('orderWin'); const q = [...document.querySelectorAll('#owMeta .m')].find(m => m.querySelector('i') && m.querySelector('i').textContent === 'Quantity');
+      return { text: ow ? ow.innerText : '', meta: (document.getElementById('owMeta') || {}).textContent || '', qty: q ? q.querySelector('span').textContent.replace(/\s+/g, ' ').trim() : null, cards: document.querySelectorAll('#owEng .engCard').length, sides: [...document.querySelectorAll('#orderWin .owPcSide')].map(e => e.textContent.trim()) }; }); };
     const close = () => w.page.evaluate(() => { if (window.OrderWin && OrderWin.close) OrderWin.close(); });
 
     // ── 1 · the kite necklace, under both SKUs ──
@@ -43,7 +44,8 @@ let passed = 0; const ok = (c, m) => { assert.ok(c, m); passed++; console.log(' 
       ok(r.lineForm === 'necklace' && !r.never, `${sku}: a necklace that keeps its engraving`);
       ok(r.jobs.length === 1 && r.jobs[0] === null, `${sku}: ONE engraving job, none for a Left or a Right (${JSON.stringify(r.jobs)})`);
       const t = await text(name);
-      ok(/\b1 piece\b/.test(t.text) && !/\b2 pieces\b/.test(t.text) && !/\b1 pair\b/.test(t.text), `${sku}: the order window says 1 piece, not "2 pieces" or "1 pair"`);
+      // (HDRHEAD, Paul 16 Oct 2026: the header lost its "buyer · N pieces · ship by" line, the count is told where it already was: the Quantity fact of Details; a pair adds a "1 pair" chip)
+      ok(t.qty === '1' && !/\b2 pieces\b|\b1 pair\b/.test(t.text + ' ' + t.meta), `${sku}: the order window says Quantity 1, not "2 pieces" or "1 pair" (${JSON.stringify(t.qty)})`);
       ok(t.sides.length === 0 && !/\bLeft\b|\bRight\b/.test(t.text), `${sku}: no Left or Right anywhere in the order window`);
       ok(t.cards === 1, `${sku}: ONE engraving card (${t.cards})`);
       await close();
@@ -51,7 +53,7 @@ let passed = 0; const ok = (c, m) => { assert.ok(c, m); passed++; console.log(' 
     {   // the control: a stud earring pair beside them is still a pair, a Left and a Right, never engraved
       const r = await read(R.ORDERS.earrings.rid);
       ok(r.earring && r.pieceCount === 2 && r.sides.join('') === 'LR' && r.poolIds.length === 2 && r.jobs.length === 0, 'the stud earring pair beside them: still a pair, a Left and a Right, no engraving job');
-      const t = await text('earrings'); ok(/\b1 pair\b/.test(t.text) && t.sides.length === 2, 'its order window still says 1 pair, Left and Right'); await close();
+      const t = await text('earrings'); ok(/\b1 pair\b/.test(t.text) && /1 pair · 2 pieces: Left and Right/.test(t.qty) && t.sides.length === 2, 'its order window still says 1 pair, Left and Right (' + t.qty + ')'); await close();
     }
 
     // ── 2 · the order made as a pair before the fix ──
@@ -71,7 +73,7 @@ let passed = 0; const ok = (c, m) => { assert.ok(c, m); passed++; console.log(' 
       const now = await read(OLD);
       ok(!now.earring && now.pieceCount === 1 && now.kind === 'single' && now.sides.every(x => x === null) && now.poolIds.length === 0 && !now.legacy, `made up again at the fixed reading: ONE piece, no side (${JSON.stringify({ pieces: now.pieceCount, kind: now.kind, state: now.state })})`);
       const t = await text('kiteOld');
-      ok(/\b1 piece\b/.test(t.text) && !/\b2 pieces\b/.test(t.text) && !/\b1 pair\b/.test(t.text) && t.sides.length === 0 && !/\bLeft\b|\bRight\b/.test(t.text), 'its order window: 1 piece, no pair, no Left or Right');
+      ok(t.qty === '1' && !/\b2 pieces\b|\b1 pair\b/.test(t.text + ' ' + t.meta) && t.sides.length === 0 && !/\bLeft\b|\bRight\b/.test(t.text), 'its order window: Quantity 1 (HDRHEAD: no count in the header), no pair, no Left or Right');
       ok(t.cards === 1, `ONE engraving card for it (${t.cards})`); await close();
     }
     ok(w.errors.length === 0, 'no page error (' + w.errors.join(' | ').slice(0, 200) + ')');

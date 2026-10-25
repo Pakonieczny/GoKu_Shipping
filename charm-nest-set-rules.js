@@ -264,7 +264,7 @@
     let pool = unitsOf(want, shareGroups), open = !!hasLast && !closed(have);
     const out = { last: [], sets: [], wait: [], valid: null, closed: !!hasLast && !open };
     const take = chosen => { pool = pool.filter(u => !chosen.includes(u)); return chosen.flatMap(u => u.sheets); };
-    if (open) { const c = fewest(have, pool); if (c) { out.last = take(c); open = false; } }
+    if (open) { const c = fewest(have, have.length ? pool.filter(u => !validSet(u.sheets).ok) : pool); if (c) { out.last = take(c); open = false; } else if (have.length && pool.some(u => validSet(u.sheets).ok)) open = false; }   // (audit B, 25 Oct 2026: a short set is completed only by units that are not a set by themselves; a whole valid unit made it bigger than the minimum, R7, and forms its own set)
     while (!open && pool.length) { const c = fewest([], pool); if (!c) break; out.sets.push(take(c)); }
     const first = out.last.length ? have.concat(out.last) : out.sets[0] || null;
     const rest = pool.flatMap(u => u.sheets), left = validSet((open ? have : []).concat(rest));

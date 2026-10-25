@@ -176,10 +176,16 @@
     const name = setWord(set), nm = i => (rowOf.has(i) ? currentName(rowOf.get(i)) : i);
     const lineless = vs.filter(v => v.rule === 'notReady' && list(v.reasons).some(x => /green line/.test(str(x))));
     const cut = [...new Set(lineless.map(v => v.sheets[0]))].filter(i => rowOf.has(i)).sort((a, b) => byKindNo(rowOf.get(a), rowOf.get(b)));
-    const rest = vs.some(v => v.rule !== 'notReady' || list(v.reasons).some(x => /back engraving/.test(str(x))));
+    // (audit, 25 Oct 2026: "never a dead end". A back engraving that is not approved is no fault a Rebuild or a Cut puts right: a cut sheet never moves, so "Cut, then Rebuild" was refused
+    //  for good. Its press is approving that back engraving (the Engraving tab), said by name, first)
+    const backIds = [...new Set(vs.filter(v => v.rule === 'notReady' && list(v.reasons).some(x => /back engraving/.test(str(x)))).map(v => v.sheets[0]))].filter(i => rowOf.has(i));
+    const backs = backIds.length ? `approve the back engraving of ${and(backIds.map(nm))} (Engraving tab)` : '', Backs = backs ? backs[0].toUpperCase() + backs.slice(1) : '';
+    const rest = vs.some(v => v.rule !== 'notReady');
+    if (!cut.length && backs && !rest) return { kind: 'backs', button: '', sheets: backIds, names: backIds.map(nm), say: `${Backs}; ${name} can then be approved.`, short: backs, server: Backs };
     if (!cut.length) return { kind: 'rebuild', button: REBUILD, sheets: [], names: [], say: `Press "${REBUILD}" on its card in the Library.`, short: `press "${REBUILD}"`, server: `Press "${REBUILD}" on its card in the Library` };
     const names = cut.map(nm), one = cut.length === 1, button = `Cut ${and(names)}`, does = `the Cut Sheet press: it draws ${one ? 'its green line and records its cut' : 'their green lines and records their cuts'}`;
-    if (rest) return { kind: 'cut', then: 'rebuild', button, sheets: cut, names, say: `Press "${button}" first (${does}), then "${REBUILD}".`, short: `press "${button}", then "${REBUILD}"`, server: `Press "${button}" on its card in the Library (${does}), then "${REBUILD}"` };
+    if (rest) return { kind: 'cut', then: 'rebuild', button, sheets: cut, names, say: `${backs ? Backs + ' first, then press' : 'Press'} "${button}"${backs ? '' : ' first'} (${does}), then "${REBUILD}".`, short: `${backs ? backs + ', ' : ''}press "${button}", then "${REBUILD}"`, server: `${backs ? Backs + ', then press' : 'Press'} "${button}" on its card in the Library (${does}), then "${REBUILD}"` };
+    if (backs) return { kind: 'cut', then: 'backs', button, sheets: cut, names, say: `Press "${button}" (${does}) and ${backs}; ${name} can then be approved.`, short: `press "${button}" and ${backs}`, server: `Press "${button}" on its card in the Library (${does}) and ${backs}` };
     // (a sheet that shares no order with the rest of the set may simply leave it instead: the rebuild makes the set again without it; one that shares an order would only become the partner the set waits for)
     const loose = lineless.every(v => !list(v.tied).length);
     return { kind: 'cut', button, sheets: cut, names, say: `Press "${button}" (${does}), and ${name} can then be approved${loose ? `. Or press "${REBUILD}": ${name} is made again without ${one ? 'it' : 'them'} until ${one ? 'it is' : 'they are'} cut` : ''}.`, short: `press "${button}"`, server: `Press "${button}" on its card in the Library (${does})` };
@@ -701,7 +707,7 @@ dialog.setRepairDlg{width:min(540px,94vw)}
     } finally { running.delete('cut:' + id); env.refresh(); }
   }
   /** (SETFIX A) The remedy's first press (the button under Approve for laser cutting): the Cut Sheet press, or the rebuild. */
-  const fix = (st, o) => (st && st.setBreaks && st.setBreaks.remedy && st.setBreaks.remedy.kind === 'cut' ? cutGold(st, o) : rebuild(st, o));
+  const fix = (st, o) => { const k = st && st.setBreaks && st.setBreaks.remedy && st.setBreaks.remedy.kind; if (k === 'backs') return Promise.resolve({ ok: false, error: st.setBreaks.remedy.say }); return k === 'cut' ? cutGold(st, o) : rebuild(st, o); };   // ('backs': nothing to press here, the Engraving tab approves it)
 
   /** Wires the button of a drawn card. `card` holds lineHtml(st). */
   function wire(card, st, o) {

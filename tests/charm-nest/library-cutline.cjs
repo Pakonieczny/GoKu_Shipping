@@ -89,11 +89,16 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     const opts = (extra = {}) => ({ title: [{ b: '10K Sheet 1' }, ' needs its green dash line'], sub: 'Sub', chips: [{ label: '10K Sheet 1', here: true }, { label: 'Laser cutting' }], count: '1 sheet', note: 'Cancel changes nothing.', yes: 'Generate', no: 'Cancel', armMs: 40,
       cards: [{ key: 'g10-new', label: '10K Sheet 1', tag: 'partial sheet', facts: [['3 charms', '40% of the sheet']], lines: [{ icon: 'dash', text: 'The system generates the green dash line.' }, { icon: 'lock', text: 'A recorded cut is permanent.' }] }], ...extra });
     // B1: not before it is armed, not a script's click, then a real press is the yes
-    let got = null, a = SOM.ask(opts()).then(v => { got = v; });
+    // (the arming is counted from when ask() builds the window; under jsdom, building, showing and focusing it takes a few hundred ms (the stylesheet
+    //  is parsed, focus() works out styles), so an arming of 40 ms had passed before the first press could be made, and that press was a yes after all.
+    //  The arming here is long enough to press inside it, the button is seen still disarmed at the early press, and the test waits for it to be armed)
+    let got = null, a = SOM.ask(opts({ armMs: 2500 })).then(v => { got = v; });
     await wait(5); let d = dlg(); assert(d && d.classList.contains('soDlg') && d.querySelector('.soHead .soTitle b').textContent === '10K Sheet 1' && d.querySelectorAll('.soSheets .soChip').length === 2 && d.querySelector('.soCount').textContent === '1 sheet' && d.querySelectorAll('.soGrid .soCard').length === 1 && d.querySelector('.soCutDash') && d.querySelector('[data-no]') && d.querySelector('[data-yes]'), 'the same window markup');
     assert.equal(doc.activeElement, d.querySelector('[data-no]'), 'the safe button has the focus');
+    assert.equal(d.querySelector('[data-yes]').getAttribute('aria-disabled'), 'true', 'the yes is not armed yet when it is first pressed');
     press(d.querySelector('[data-yes]')); await wait(5); assert.equal(got, null, 'a press before it is armed is no yes');
-    await wait(60); ev(d.querySelector('[data-yes]'), 'click'); await wait(5); assert.equal(got, null, 'a click nobody pressed is no yes');
+    for (let t0 = Date.now(); d.querySelector('[data-yes]').hasAttribute('aria-disabled'); await wait(20)) assert(Date.now() - t0 < 8000, 'the yes is armed');
+    ev(d.querySelector('[data-yes]'), 'click'); await wait(5); assert.equal(got, null, 'a click nobody pressed is no yes');
     press(d.querySelector('[data-yes]')); await a; assert.equal(got, true, 'a real press after it is armed is the yes'); assert(!dlg(), 'and the window closes');
     // B2: every other way out is no
     for (const how of ['no', 'x', 'esc', 'outside']) {

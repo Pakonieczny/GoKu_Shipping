@@ -75,7 +75,9 @@ async function open(browser, { width = 1440, height = 800, n = 6, component = tr
     window.__spec = { [ORDER]: [['sh0', 1], ['sh1', 1], ['sh2', 2]], '4100000002': [['sh3', 1], ['sh4', 3]] };
     window.OrderPieces = {
       of: rid => (window.__spec[rid] || []).flatMap(([sid, k]) => [...Array(k)].map((_, j) => { const i = +sid.slice(2); return { key: `${rid}_${sid}_${j}`, lineKey: `${rid}_t${i}${j}`, poolId: `${rid}_t${i}${j}_1`, sku: 'RING-' + (rid === ORDER ? 0 : 1), label: 'RING', copy: j + 1, qty: k, nested: true, sheetId: sid, sheetLabel: `${METALS[i % METALS.length]} ${i + 1}`, sheetNo: i + 1, metal: METALS[i % METALS.length], gone: false, loading: false, unsure: false, reason: '' }; })),
-      load: () => Promise.resolve(true), subscribe: cb => { window.__opCb = cb; return () => {}; }
+      // (every subscriber is told, as the real module does (charm-nest-order-pieces.js subscribe: a Set): the window subscribes twice, its pieces' repaint
+      //  (readPieces) and its own read of the sheet (followHook, charm-nest-sheetwin.js), and keeping only the last one left the repaint unheard)
+      load: () => Promise.resolve(true), subscribe: cb => { (window.__opSubs = window.__opSubs || new Set()).add(cb); window.__opCb = () => { for (const f of [...window.__opSubs]) f(); }; return () => window.__opSubs.delete(cb); }
     };
     SheetWin.open(start);
   }, { n, METALS, ORDER, start });

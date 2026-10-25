@@ -15,7 +15,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
 (async () => {
   const srv = await start({ receipts: [] }), { st } = srv, now = Date.now(), ts = { toMillis: () => now }, day = '2026-10-03';
   const post = async body => { const r = await fetch(srv.sorterOrigin + '/.netlify/functions/charmNestLibrary', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, ...await r.json() }; };
-  const edit = (moves, extra = {}) => post({ op: 'flowApply', by: 'Paul', steps: [{ type: 'setMember', moves: moves.map(([sheetId, to, pulled]) => ({ sheetId, to, ...(pulled ? { pulled } : {}) })) }], ...extra });
+  const edit = (moves, extra = {}) => post({ op: 'flowApply', by: 'Paul', steps: [{ type: 'setMember', moves: moves.map(([sheetId, to, pulled, cut]) => ({ sheetId, to, ...(pulled ? { pulled } : {}), ...(cut ? { cut: true } : {}) })) }], ...extra });
   const image = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="30" height="20"><rect width="30" height="20"/></svg>');
   // a sheet holding `pieces` (pool ids "order_line_copy"); in a set when `setId` is given
   const mk = (id, metal, pieces, extra = {}) => st.put(S, id, { id, runId: 'run-x', metal, day, status: 'complete', draft: !extra.setId, placedCount: pieces.length, charmCount: pieces.length, density: .36, stock: { wIn: 6, hIn: 4.5 },
@@ -220,8 +220,10 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     r = await edit([['k-14k', 'set-9']]); assert.equal(r.status, 200, JSON.stringify(r));
     assert.equal(sheet('k-14k').setId, 'set-9'); assert.equal(sheet('k-14k').draft, false); assert.equal(sheet('k-14k').roseCutAt, now - 4000, 'its recorded cut is untouched'); assert.equal(sheet('k-14k').rosePlanHash, 'h-k');
     assert.equal(sheet('k-14k').solidIncluded, true); assert(set('set-9').sheetIds.includes('k-14k'));
-    r = await edit([['k-rose', 'set-9']]); assert.equal(r.status, 200, JSON.stringify(r)); assert.equal(sheet('k-rose').setId, 'set-9'); assert(!sheet('k-rose').roseCutAt, 'a join writes no cut: the Cut Sheet press is the page\'s, after the yes');
-    r = await edit([['k-10k', 'set-9'], ['k-gf', 'set-9']]); assert.equal(r.status, 200, JSON.stringify(r)); assert.equal(sheet('k-gf').setId, 'set-9', 'a GF sheet with unapproved backs joins as it always did');
+    // (R12 (a), audit 25 Oct 2026: an uncut sheet joins only with the person's yes to the Cut Sheet press, which the page's move carries; without it the server refuses)
+    await refused('K: Rose Gold, no green line and no yes', [['k-rose', 'set-9']], /RG Draft 1 cannot join a set before its green line is cut/);
+    r = await edit([['k-rose', 'set-9', false, true]]); assert.equal(r.status, 200, JSON.stringify(r)); assert.equal(sheet('k-rose').setId, 'set-9'); assert(!sheet('k-rose').roseCutAt, 'a join writes no cut: the Cut Sheet press is the page\'s, after the yes'); assert.equal(sheet('k-rose').cutApproved, true, 'the yes is recorded');
+    r = await edit([['k-10k', 'set-9', false, true], ['k-gf', 'set-9']]); assert.equal(r.status, 200, JSON.stringify(r)); assert.equal(sheet('k-gf').setId, 'set-9', 'a GF sheet with unapproved backs joins as it always did');
     assert.equal(kPerm.length > 0, true); assert.deepEqual(['k-14k', 'k-rose'].map(i => sheet(i).processSeals), [undefined, undefined], 'no seal or approval is added');
     // a cut sheet may not leave (rule B stays), and the one that joined is a member like any other
     await refused('K: it cannot leave again', [['k-14k', null]], /was already cut/);

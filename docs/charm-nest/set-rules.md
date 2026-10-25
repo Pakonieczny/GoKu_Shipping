@@ -173,3 +173,19 @@ const I = require('./charm-nest-set-invariants.js');
 const right = I.expected(sheets);                     // what the rules make of these sheets: { sets, waiting, held, partners }
 ```
 `closedJoin` (R6) needs to know when a sheet joined: stamp `joinedAt` (ms) on a sheet when it takes its `setId`, or put `formedAt` on the set; without either the rule is silent. Everything else reads the sheets and the list of sets only.
+
+## Audit fixes (25 Oct 2026, Paul: "make sure that there are no circumstances under which the system would fail to follow the set of sheets rules")
+
+Four audits replayed the rules through the real assembly, the Library plan and the server (`tests/charm-nest/audit-form-*.cjs`, `audit-cardinal-*.cjs`, `audit-gold-*.cjs`, `audit-number-*.cjs`). Fixed:
+- **Numbering after an out-of-order commit (R5).** With Set 2 committed while Set 1 still waited for its partner, the next set followed the newest OPEN set, the cloud handed Set 2 back, an open copy of it was made and later saved over the committed Set 2; no set formed again. The next set now follows the run's newest set by day and number, and a set the cloud hands back that this page already holds is that set (`Gate.assemble`, `Sets.allocate`).
+- **A short older set (R1).** When a sheet of an older set goes back to filling, the earliest open set left short of a class is the one the free sheets complete (only the newest was).
+- **Completing a short set (R7).** Only by units that are not a set by themselves; a whole valid unit forms its own set (`SetRules.formAll`).
+- **Approval (R1, R10, R15).** A set of ONE sheet is gated like any set (page, Library plan and server); the server refuses a set that still has a partner to add (the checker's `canApprove`).
+- **Rose Gold / 10K / 14K (R12).** The Include tick answers (a) only: a sheet with unapproved back engraving waits (`basePolicy`); a cut sheet in a set stays in it whatever the other sheets' ticks; a sheet whose line is calculated but not cut is asked for its Cut Sheet yes at the drop; the server's set edit (`SetEdit.verifyMoves`, `notCut`) and `putSheet` refuse an uncut, unticked, not full sheet without that yes (`cut: true` on the move, recorded as `cutApproved`); a remedy names the back engraving to approve instead of a Rebuild that a cut sheet can never pass (`remedy.kind: 'backs'`).
+- **Server numbering past midnight.** A set allocated twice keeps its own day.
+- **Offline.** A sheet nested while the cloud is away is kept in the browser, owes its set number and its save (`numberOwed`, `saveOwed`) and is numbered and saved when the cloud is back; the orders waiting their turn keep coming in.
+
+Owner decisions still open (the checker flags them, Approve stays grey, nothing is cut while they stand):
+- A late order line that pulls a whole complete unit into a formed set (R9) leaves an older unit of that set spare (R7); C6 forbids the assembly from taking it out by itself. "Rebuild this set correctly" puts it right.
+- A cut Rose Gold sheet that shares orders with two sets can join only one (the 19 Oct anchors decision); its card now says so.
+- A sheet of a formed set that goes back to filling: the set holds its place (short, or with a partial sheet tied by an order) until the sheet is full again.

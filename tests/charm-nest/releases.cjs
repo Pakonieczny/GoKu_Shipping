@@ -54,7 +54,7 @@ const page=(metal,full=false)=>({metal,runId:B.run.runId,sheetId:metal+'-id',dra
 vm.runInContext(part('Gate','/* ═══ 21'),c);
 (async()=>{
  // Exercise the actual cloud reconstruction path, including a run with no set yet.
- const recovery=vm.createContext({assert,console,CharmNestPoolPieces:require('../../charm-nest-pool-pieces.js')});
+ const recovery=vm.createContext({assert,console,CharmNestPoolPieces:require('../../charm-nest-pool-pieces.js'),window:{}});   // (restoreRunSheets reads window.CNManual: a page that has no Manual Control loaded)
  vm.runInContext(`
  const rows=[{key:'o/a',state:'written',poolIds:['p1'],order:{receiptId:'o'},line:{}}];
  const page={charms:[],placements:[],metal:'gold'};page.pages=[page];

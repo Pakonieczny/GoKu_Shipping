@@ -164,7 +164,8 @@ for (const sku of ['WOLF CHARM', 'WOLF', 'MITTENS-MIS', 'TENNIS-MIS', 'WOLF + MO
   const pool = new Map([['4170000001_5200000001_1', { poolId: '4170000001_5200000001_1' }], ['4170000001_5200000001_2', { poolId: '4170000001_5200000001_2' }]]);
   const ectx = { poolRow: id => pool.get(id), charmOf: id => null, entryFor: sku => MASTER[sku] || null, pair: CP };
   const ids = [...pool.keys()];
-  eq([Sides.plan(ectx, rowOf(q2, ids), []).split, ids.map(id => Sides.slotOfId(ectx, rowOf(q2, ids), id))], [false, [null, null]], 'engraving: a quantity-2 necklace of a two-body design is not split into Left and Right jobs');
+  // (PIECES, Paul 16 Oct 2026, charm-nest-engrave-sides.js header: a quantity-N line is cut into its units, each copy its own engraving job "C<u>": two necklaces, still never a Left and a Right)
+  eq([Sides.plan(ectx, rowOf(q2, ids), []).split, ids.map(id => Sides.slotOfId(ectx, rowOf(q2, ids), id))], [true, ['C1', 'C2']], 'engraving: a quantity-2 necklace of a two-body design is two necklace jobs (C1, C2), not Left and Right jobs');
   eq([Sides.plan(ectx, rowOf(qe, ids), []).slots, ids.map(id => Sides.slotOfId(ectx, rowOf(qe, ids), id))], [['L', 'R'], ['L', 'R']], 'engraving: the same design as earrings, a row with no stored side, is read as it always was');
 
   // the station console: a piece the page did not split is a Left and a Right only when its line is an earring line

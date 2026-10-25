@@ -93,11 +93,14 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   const already = await page.evaluate(() => CN.S.sheets.gold.status !== 'ready');
   if (already) console.log('nest started on its own from the drop'); else await page.click('.sheetCard[data-m=gold] [data-r=nest]');
   await page.waitForFunction(() => CN.S.sheets.gold.status === 'nesting' || ['complete', 'partial'].includes(CN.S.sheets.gold.status));
-  let lastPlaced = -1, t0 = Date.now();
-  while (Date.now() - t0 < 700000) {
-    const st = await page.evaluate(() => ({ status: CN.S.sheets.gold.status, placed: CN.S.sheets.gold.placements.length, stage: CN.S.sheets.gold.stage, trials: CN.S.sheets.gold.trials }));
-    if (st.placed !== lastPlaced) { lastPlaced = st.placed; console.log(' ', st.status, st.placed, 'placed ·', st.stage); }
-    if (['complete', 'partial'].includes(st.status)) break;
+  let lastPlaced = -1, t0 = Date.now(), settled = 0;
+  while (Date.now() - t0 < 1500000) {   // (a big file is nested a few orders at a time: several searches, each with its own budget)
+    // a sheet takes a big batch a few orders at a time (feedWait): between turns it reads "complete" with the next orders still to come
+    const st = await page.evaluate(() => { const sh = CN.S.sheets.gold; return { status: sh.status, placed: sh.placements.length, stage: sh.stage, trials: sh.trials, waiting: (sh.feedWait || []).length, saving: !!(sh.persisted && !sh.persistedDone) }; });
+    if (st.placed !== lastPlaced) { lastPlaced = st.placed; console.log(' ', st.status, st.placed, 'placed ·', st.stage, st.waiting ? '· ' + st.waiting + ' wait their turn' : ''); }
+    // done: every charm of the sheet placed or turned away, and nothing still waiting its turn or being saved
+    // (between two turns the sheet reads "complete" for a moment: done only when it stays so, nothing waiting or saving, for 5 s)
+    if (['complete', 'partial'].includes(st.status) && !st.waiting && !st.saving) { if ((settled = (settled || 0) + 1) >= 10) break; } else settled = 0;
     await page.waitForTimeout(500);
   }
   await page.screenshot({ path: path.join(tmp, '2-nested.png') });
@@ -125,7 +128,11 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
     assert(shown === ov.placed2 && shown > 0, 'sheet 2 tab shows its own placements');
     await page.evaluate(() => CN.showPage('gold', 0));
   }
-  else { assert.strictEqual(result.rejects, 0, 'all placed'); assert.strictEqual(result.status, 'complete'); }
+  else { assert.strictEqual(result.rejects, 0, 'all placed'); assert.strictEqual(result.status, 'complete'); assert.strictEqual(result.placed, fx.charms.length, 'every charm of the file placed, the orders that waited their turn included'); }
+  // the cloud is offline in this test (no functions): the sheet is kept in the browser and owes its save, never stuck on a finish error
+  const offline = await page.evaluate(() => { const sh = CN.S.sheets.gold; return { cloud: CN.S.cloud.ok, saveOwed: !!sh.saveOwed, problem: sh.problem || null, finishErrors: sh.log.filter(l => /finish error|output failed/.test(l)).length }; });
+  console.log('offline', JSON.stringify(offline));
+  if (!offline.cloud) assert(offline.saveOwed && !offline.problem && !offline.finishErrors, 'offline: kept in this browser and owed its save, no finish error: ' + JSON.stringify(offline));
   // check the written .ai: a PDF with one OCG per charm + sheet, original path count preserved
   const ai = await page.evaluate(() => Array.from(CN.S.sheets.gold.outputs.ai));
   const aiBytes = Buffer.from(ai); fs.writeFileSync(path.join(tmp, 'out.ai'), aiBytes);
@@ -147,7 +154,9 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   assert(Math.abs(opt.optimized.scale - 0.971) < 1e-9 && charmCms.every(k => Math.abs(k - 0.971) < 1e-3), 'the shrink is 2.9 % (Paul, 25 Oct 2026): every charm in the written .ai at 0.971: ' + JSON.stringify([opt.optimized.scale, charmCms.slice(0, 5)]));
   console.log('  shrink in the written .ai:', charmCms.length, 'charm matrices at', [...new Set(charmCms.map(k => +k.toFixed(4)))].join(', '));
   // report dialog opens and lists every charm
-  await page.click('.sheetCard[data-m=gold] [data-r=report]');
+  // the card's Report button shows only for a sheet that needs a look (a flagged check, an open path, orphan parts); a clean sheet opens it from its window
+  const reportBtnShown = await page.evaluate(() => !document.querySelector('.sheetCard[data-m=gold] [data-r=report]').classList.contains('hidden'));
+  if (reportBtnShown) await page.click('.sheetCard[data-m=gold] [data-r=report]'); else { assert(result.verification.ok, 'Report button hidden only on a clean sheet'); await page.evaluate(() => CN.openReport(CN.S.sheets.gold)); }
   await page.waitForSelector('#dlgReport[open]');
   const tiles = await page.$$eval('#dlgReport .charmTile', els => els.length);
   assert.strictEqual(tiles, process.env.CN_ALLOW_PARTIAL ? result.placed : fx.charms.length, 'report lists every charm (merged fragment gone)');

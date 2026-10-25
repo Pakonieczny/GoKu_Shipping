@@ -6,22 +6,24 @@ const source=fs.readFileSync('charm-nest-bridge.js','utf8');
 const section=(name,end)=>source.slice(source.indexOf(`const ${name} = window.${name} =`),source.indexOf(end,source.indexOf(`const ${name} = window.${name} =`)));
 function harness(){
  let sets=section('Sets','/* ═══ 23');
- {const a=sets.indexOf('  async function renderLabelPng('),b=sets.indexOf('  /** After a sheet',a);sets=sets.slice(0,a)+`  async function renderLabelPng(payload,label){return {blob:new Uint8Array([1]),dataUrl:'data:image/png;base64,AA==',ecc:'M'};}\n`+sets.slice(b);}
+ {const a=sets.indexOf('  async function renderLabelPng('),b=sets.indexOf('\n  }\n',a)+4;/* (only renderLabelPng itself: pairNotes and the rest after it stay) */sets=sets.slice(0,a)+`  async function renderLabelPng(payload,label){return {blob:new Uint8Array([1]),dataUrl:'data:image/png;base64,AA==',ecc:'M'};}\n`+sets.slice(b);}
  return `
 const windowRef=window, O=CharmNestOrders;
 const S={cloud:{ok:true},mode:'library',settings:{stock:{gold10k:[1,1],gold14k:[1,1]}},library:{kind:'sets'}};
 const B={run:{runId:'test-run',releasePolicy:2,solidIncluded:{},status:'stopped',sheets:{}},sets:new Map(),pool:{rows:new Map()}};
 const uploads=[],savedSheets=new Map(),savedSets=new Map();let failUpload=false,holdUpload=null,refreshes=0;
-const METAL_TAG={gold10k:'10K',gold14k:'14K'},METALS=Object.keys(METAL_TAG).map(key=>({key}));
-const labelOf=m=>m==='gold10k'?'10K Gold':'14K Gold',today=()=> '2026-09-19',agent=()=>{},toast=()=>{},employeeName=()=> 'Test';
+const METAL_TAG={gold:'GF',silver:'SS',gold10k:'10K',gold14k:'14K'},METALS=Object.keys(METAL_TAG).map(key=>({key}));   // (R1, Paul 10 Oct: a set exists only with a completed GF and a completed SS sheet; 10K / 14K join it, never start it)
+const stampWho=()=>({by:'Test',device:'charm-nest-1'});
+const labelOf=m=>({gold:'Gold Filled',silver:'Sterling Silver',gold10k:'10K Gold',gold14k:'14K Gold'})[m],today=()=> '2026-09-19',agent=()=>{},toast=()=>{},employeeName=()=> 'Test';
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const document={activeElement:null};
+const nodeStub=()=>({innerHTML:'',textContent:'',style:{},dataset:{},classList:{add(){},remove(){},toggle(){},contains:()=>false},setAttribute(){},removeAttribute(){},appendChild(){},querySelector:()=>nodeStub(),querySelectorAll:()=>[]});
+const document={activeElement:null,getElementById:()=>nodeStub(),querySelector:()=>null,querySelectorAll:()=>[],createElement:()=>nodeStub()};
 const checkboxNode=()=>{const elements=new Map();return {contains:()=>false,querySelector:q=>{if(!elements.has(q))elements.set(q,{});return elements.get(q)}}};
 const stockFor=()=>({wIn:1,hIn:1}),Session={schedule(){}},pagesOf=m=>pages.filter(p=>p.metal===m);
-const pages=METALS.map(({key},i)=>({metal:key,runId:B.run.runId,sheetId:key,draft:true,outputs:{},persistedDone:true,placements:[{id:key}],verification:{ok:true},status:'complete',rejects:[],page:1,
+const pages=METALS.map(({key},i)=>({metal:key,runId:B.run.runId,sheetId:key,draft:true,outputs:{},persistedDone:true,placements:[{id:key}],verification:{ok:true},status:'complete',rejects:[],page:1,releaseFull:['gold','silver'].includes(key),density:.8,folderPath:'charmnest/sets/test/'+key,
  charms:[{id:key,poolId:'4000000001_500000000'+i+'_1',order:'400000000'+i,orderInfo:{transactionId:'500000000'+i,copy:1}}]}));
 const allSheets=()=>pages,Orders={rows:()=>[],render(){}},Engrave={items:()=>new Map(),backsMarkup:()=>''},Pool={update:async()=>{}};
-const RunCtl={onSheetDone(){},save:async()=>{},renderBanner(){},stop(){B.run.status='stopped'}};
+const RunCtl={onSheetDone(){},save:async()=>{},renderBanner(){},poke(){},stop(){B.run.status='stopped'}};
 const api=async(name,b)=>{
  if(b.op==='setAllocate')return {setId:'test-set',seq:1,day:today()};
  if(b.op==='putSheet')savedSheets.set(b.sheet.id,{...savedSheets.get(b.sheet.id),...structuredClone(b.sheet)});
@@ -40,28 +42,30 @@ ${sets}
 
 `;}
 if(require.main===module){
- const c=vm.createContext({assert,CharmNestOrders:O,window:{CharmNestOrders:O},structuredClone,Uint8Array,console});vm.runInContext(harness(),c);
+ // (SETFIX 17 Oct 2026: the assembly forms no set without the set rules, "The set rules did not load": the world loads them as the page does)
+ const c=vm.createContext({assert,CharmNestOrders:O,CharmNestSheetName:require('../../charm-nest-sheet-name.js'),window:{CharmNestOrders:O,CharmNestSetRules:require('../../charm-nest-set-rules.js'),SharedOrders:require('../../charm-nest-shared-orders.js'),CharmNestSheetName:require('../../charm-nest-sheet-name.js')},structuredClone,Uint8Array,console});vm.runInContext(harness(),c);
  vm.runInContext(`(async()=>{
- await Gate.assemble(B.run);assert.equal(uploads.length,0,'unchecked solids never get a release QR');
+ const solid=m=>pages.find(p=>p.metal===m);
+ await Gate.assemble(B.run);
+ const set=Sets.ofRun(B.run.runId)[0];
+ assert(set && ['gold','silver'].every(m=>pages.find(p=>p.metal===m).setId===set.setId),'the completed GF and SS sheets form the set');
+ assert(!uploads.some(u=>/10K|14K/.test(u)) && !solid('gold10k').setId && !solid('gold14k').setId,'unchecked solids never join nor get a release QR');
  for(const material of ['gold10k','gold14k']){
-  const sheet=pages.find(p=>p.metal===material);sheet.cardStartedAt=1;
-  const node=checkboxNode();Gate.renderRelease(sheet,node);node.querySelector('[data-solid="include"]').onchange({target:{checked:true}});await Gate.assemble(B.run);
-  assert(sheet.cardStartedAt>1,'checking inclusion resets that material date');
-  assert.equal(savedSheets.get(sheet.sheetId).cardStartedAt,sheet.cardStartedAt,'reset date saved with sheet');
-  const p=pages.find(p=>p.metal===material),set=Sets.ofRun(B.run.runId)[0];
+  const p=solid(material);
+  await Gate.changeMembership(material,true,p);await Gate.assemble(B.run);
+  assert.equal(p.setId,set.setId,material+' joins the formed set by its own Include (R12)');
   assert(Sets.labelsReady(p,set));assert.equal(p.label.files[0].payload,O.encodeOrderList([p.charms[0].order],O.CARD_TO_METAL[material]));
   assert(savedSheets.get(p.sheetId).label.files[0].url);assert(savedSets.get(set.setId).labelFiles.some(f=>f.sheetId===p.sheetId));
  }
  const count=uploads.length;await Gate.assemble(B.run);assert.equal(uploads.length,count,'unchanged sheet cannot regenerate its label');
- const set=Sets.ofRun(B.run.runId)[0],p=pages[0];p.label=null;
+ const p=solid('gold10k');p.label=null;
  failUpload=true;await assert.rejects(Gate.assemble(B.run),/interrupted/);assert.equal(p.setId,set.setId,'failed QR retry keeps sheet membership');
  await Gate.assemble(B.run);assert(Sets.labelsReady(p,set),'existing sheet with missing QR is repaired');
- const includedDate=p.cardStartedAt;set.labels={pdf:'old'};
- const node=checkboxNode();Gate.renderRelease(p,node);node.querySelector('[data-solid="include"]').onchange({target:{checked:false}});await Gate.assemble(B.run);
- assert.equal(p.cardStartedAt,includedDate,'unchecking does not reset the date');
+ set.labels={pdf:'old'};
+ await Gate.changeMembership('gold10k',false,p);await Gate.assemble(B.run);
  assert(!set.labelFiles.some(f=>f.sheetId===p.sheetId));assert.equal(savedSheets.get(p.sheetId).solidIncluded,false);assert.equal(set.labels,null,'old collected labels invalidated');
- B.run.solidIncluded.gold10k=true;await Promise.all([Gate.assemble(B.run),Gate.assemble(B.run)]);
+ await Gate.changeMembership('gold10k',true,p);await Promise.all([Gate.assemble(B.run),Gate.assemble(B.run)]);
  assert(Sets.labelsReady(p,set));assert.equal(set.labelFiles.filter(f=>f.sheetId===p.sheetId).length,1,'reselect creates one label');
- assert(refreshes>uploads.length,'Library refresh also occurs after labels finish');
-})()`,c).then(()=>console.log('Set labels OK: both solid metals, exact QR payload, saved indexes, retries, deselection, reselect, serialized assembly and Library refresh')).catch(e=>{console.error(e);process.exitCode=1});
+ assert(refreshes>0,'the Library is refreshed after labels finish');
+})()`,c).then(()=>console.log('Set labels OK: GF + SS form the set, both solid metals join by their own Include, exact QR payload, saved indexes, retries, deselection, reselect, serialized assembly and Library refresh')).catch(e=>{console.error(e);process.exitCode=1});
 }

@@ -199,7 +199,8 @@ async function partB() {
     assert.equal(pv.skipped.length, 1);
     const which = !sided ? '' : fitIds[0] === 'b0' ? ' \\(the Left one; the Right one does not\\)' : ' \\(the Right one; the Left one does not\\)';
     assert.match(pv.skipped[0].why, new RegExp('^Only 1 of the 2 pieces of order 1002 fits on it' + which + ', and a pair is never split across sheets'), tag);
-    assert.equal(pv.words, 'None of the 2 pieces (1 pair) fit on the partial sheet you chose. ' + pv.splitWords, tag); assert.equal(pv.continues.n, 2);
+    // (Paul, 9 Oct: only a group has a group: an older record with no side and no group size is counted as 2 pieces, charm-nest-partial.js pieceWords; it still moves on whole, as an order)
+    assert.equal(pv.words, `None of the 2 pieces${sided ? ' (1 pair)' : ''} fit on the partial sheet you chose. ` + pv.splitWords, tag); assert.equal(pv.continues.n, 2);
     assert.equal(log.api.length, 0, 'a preview calls nothing'); assert.equal(docs.get('rgs-p').owner, null, 'and claims nothing');
   }
 
@@ -260,7 +261,8 @@ async function partB() {
   // B6. a pair that already sits on TWO sheets (split before, R3): a move says so before it is pressed, and Cut Sheet says it after
   {
     const x = world('gold14k'), { w } = x, PN = w.PartialNest, p = outlined(x, 'rgs-p', 20); x.setCards([p]);
-    const sh = seated(x, [grp('a0', 1001, 5001, 1), grp('s0', 1003, 5003, 1)]), other = x.page(2); other.charms = [grp('a1', 1001, 5001, 2)]; x.S.sheets.gold14k.pages.push(other);
+    // (Paul, 9 Oct: only a group has a group: the pair says it, groupSize 2)
+    const sh = seated(x, [grp('a0', 1001, 5001, 1, { groupSize: 2 }), grp('s0', 1003, 5003, 1)]), other = x.page(2); other.charms = [grp('a1', 1001, 5001, 2, { groupSize: 2 })]; x.S.sheets.gold14k.pages.push(other);
     canned(x, ['a0', 's0']);
     const sharedList = PN._sharedOf(sh, sh.charms);
     assert.deepEqual(plain(sharedList.map(o => [o.group, o.order, o.here, o.elsewhere, o.sheets])), [['1001:5001', '1001', 1, 1, ['14K Sheet 2']]]);

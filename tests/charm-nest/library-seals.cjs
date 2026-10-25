@@ -37,6 +37,10 @@ function seed(st, blobUrl) {
     const engraving = Object.fromEntries(poolIds.map(k => [k, { needed: true, state: 'approved', approved: true }]));
     const rec = { id, metal, metalLabel: metal, day, setId: setId || null, setSeq: setSeq || null, sheetIndex: 1, fileBase: `${metal.slice(0, 2).toUpperCase()}_${day}_Set-${setSeq || 0}_Sheet-1`, folder: `${metal}_${id}`, orders, poolIds, listings: orders.map((o, i) => String(1718000 + (i % 4))), placedCount: orders.length, charmCount: orders.length, density: 0.7, freePt2: 2000, stock: { wIn: 6, hIn: 5 }, outputs: { preview: { path: p, url: blobUrl(p) }, ai: { path: `${id}.ai`, url: blobUrl(`${id}.ai`) } }, verification: { ok: true }, names: orders.join(' '), status: 'complete', updatedAt: Timestamp.fromMillis(now - n * 1000), createdAt: Timestamp.fromMillis(now - 86400000 + n), archived: false, runId: 'run-ls', backPool, engraving, label: { files: [{ path: `${id}-qr.png`, url: blobUrl(p), payload: orders[0], orders }] } };
     orders.forEach(o => { lines[`${o}_1`] = { orderId: o, state: 'written', quantity: 1, poolIds: [`${o}_1_1`], engraveCandidate: true }; });
+    // (every sheet here is fully nested, releaseFull: a set goes to laser cutting only with a COMPLETED GF and a COMPLETED SS sheet, and the nest status
+    //  "complete" does not make a sheet Completed: Paul, 10 Oct 2026, docs/charm-nest/set-rules.md R1 / R2, charm-nest-set-rules.js isCompleted / gate.
+    //  Without it Set-1 reads as short of both, and its GF sheet cannot be completed again after the Reopen below)
+    rec.releaseFull = true;
     st.put(SHEETS, id, Object.assign(rec, extra));
   };
   // Set-1: GF completed twice (undo between), SS approved, RG partly cut

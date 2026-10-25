@@ -5212,7 +5212,7 @@ const Gate = window.Gate = (() => {
   const inSetNow = sh => !!sh.setId && !sh.draft;   // the sheet's real place: a set it is in (a draft is in none)
   const picked = (sh, choices = selected()) => typeof sh.solidPick === "boolean" ? sh.solidPick : sh.metal === "rose" ? inSetNow(sh) : choices[sh.metal] === true;
   /** A recorded green-line cut keeps a sheet in the set it is in (charm-nest-shared-orders.js fixedWhy; SetEdit sheetCut): a 10K or 14K sheet the cardinal rule pulled in and that was then cut stays, though nobody ticked it. */
-  const staysCut = sh => goldFamily(sh.metal) && !!sh.roseCutAt && inSetNow(sh) && sh.solidPick !== false;
+  const staysCut = sh => goldFamily(sh.metal) && !!sh.roseCutAt && inSetNow(sh);   // (R12: a recorded cut keeps a sheet in the set it is in. audit G4, 25 Oct 2026: it also read solidPick, which ticking ANOTHER sheet of the metal set to false on this one, and the cut sheet was drafted out of its set. Taking it out by hand drafts it first, so inSetNow is false there)
   // (the run still arranges a metal's sheets once one of them is in, as it did once the metal was: only the set is per sheet)
   const anyPicked = (m, choices = selected(), runId = B.run?.runId) => choices[m] === true || allSheets().some(p => p.metal === m && p.solidPick === true && (!runId || !p.runId || p.runId === runId));
   const nestable = (sh, run) => !modern(run?.runId) || !solid(sh.metal) || anyPicked(sh.metal, run?.solidIncluded || selected(), run?.runId) || sh.isolated;
@@ -5267,8 +5267,12 @@ const Gate = window.Gate = (() => {
     // a sheet a person took out of its committed set (the In current set switch, or the Library) stays out of every other set until it is put back: the run never pulls it in by itself
     if (sh.leftSet && !inSetNow(sh)) return { include: false, reason: "Taken out of its set" };
     if (sh.roseCutAt && staysCut(sh)) return { include: true, reason: "Cut · stays in its set" };
-    return O_.sheetRelease({ material: sh.metal, verified: !!sh.verification?.ok, placed: sh.placements.length,
+    const r = O_.sheetRelease({ material: sh.metal, verified: !!sh.verification?.ok, placed: sh.placements.length,
       stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: solid(sh.metal) ? Object.assign({}, choices, { [sh.metal]: picked(sh, choices) }) : sh.metal === "rose" ? Object.assign({}, choices, { rose: picked(sh, choices) ? true : undefined }) : choices });
+    // (audit G1, 25 Oct 2026, R12 (b): a Rose Gold / 10K / 14K sheet joins a set only with its back engraving approved: its own tick (Include, Cut Sheet) answers (a) only, and it let a sheet in
+    //  whose backs were still open. A sheet already in its set keeps its place, as before)
+    if (r && r.include && goldFamily(sh.metal) && !inSetNow(sh)) { const b = backsOf(sh); if (b && !b.ok) return Object.assign({}, r, { include: false, reason: `It joins a set once its back engraving is approved (${b.line})` }); }
+    return r;
   }
   async function upgrade(run) {
     if (!run || run.releasePolicy === 2) return;
@@ -5419,6 +5423,8 @@ const Gate = window.Gate = (() => {
       if (homes.length > 1) {
         // already spread over several sets (flagged as ever, never moved): the sheets outside wait until a person puts the group right; a sheet already in a set stays where it is
         for (const p of wanting) if (!homeOf(p)) p.cardinalHold = `Waits: sheets that share ${ordersWords(orders, tell)} are already in ${homes.map(s => s.name || `Set ${s.seq}`).join(" and ")}: put them in one set first`;
+        // (audit B3, 25 Oct 2026: a sheet outside every set that neither wants in nor can be pulled (a cut Rose Gold sheet that was the partner of two sets) said nothing on its card: it says why)
+        for (const p of need) if (!homeOf(p) && !p.cardinalHold) p.cardinalNote = `Shares ${ordersWords(orders, tell)} with sheets in ${homes.map(s => s.name || `Set ${s.seq}`).join(" and ")}: it can join only one of them, so take those orders off a sheet first`;
         for (const p of need) if (homeOf(p) && !stuckSet.has(p)) p.cardinalPull = together(p);
         out.push({ ids: g.ids, orders, state: "spread", why: homes.map(s => s.name).join(", ") });
         continue;
@@ -5511,7 +5517,7 @@ const Gate = window.Gate = (() => {
       // be in a set (opts.waiting). SETFIX (Paul, 19 Oct 2026): it is still read, because it ties the sheets it shares orders with exactly as it does in the assembly (left out, the checker split a unit
       // the assembly had rightly kept whole and called its sheets spare)
       if (!inSetNow(p) && SRp.isCompleted(p) && !goldFamily(p.metal) && (p.leftSet || !p.outputs || !p.persistedDone || basePolicy(p, 0).reason === "Nest and verify first")) waiting.push(n.id);
-      const gold = goldFamily(p.metal), b = gold && (p.roseCutAt || +p.laserDoneAt > 0) ? backsOf(p) : null;
+      const gold = goldFamily(p.metal), b = gold ? backsOf(p) : null;   // (audit G1b: the backs of every gold-family sheet, ticked or cut)
       recs.push({ id: n.id, metal: p.metal, runId: p.runId, page: p.page, sheetIndex: p.sheetIndex, draft: !!p.draft, setId: p.setId || null, releaseFull: !!p.releaseFull, laserDoneAt: p.laserDoneAt, roseCutAt: p.roseCutAt,
         density: p.density, placedCount: (p.placements || []).length, releasedAt: p.releasedAt, joinedAt: p.joinedAt, ...(p.joinedBy ? { joinedBy: p.joinedBy } : {}), pieces: n.pieces,
         ...(gold ? { cutApproved: p.solidPick === true, ...(b ? { backsApproved: !!b.ok } : {}) } : {}) });
@@ -5581,7 +5587,9 @@ const Gate = window.Gate = (() => {
     for (let round = 0; ; round++) {
     cardinalApply(run, pages, open, choices);   // (sheets that share a multi-piece order come in together; a partner that cannot join yet is named, never waited for)
     for (const p of allSheets()) if (p.runId === run.runId) delete p.setWait;
-    const last = open[open.length - 1] || null, lastClosed = !!last && SR.closed(membersOfSet(last));
+    // (audit A, 25 Oct 2026: the set the free sheets complete is the EARLIEST open set left short of a class, a sheet of it having gone back to filling; only the newest was
+    //  ever completed, so an older set that went short stayed short for good, R1)
+    const last = open.find(s => membersOfSet(s).length && !SR.closed(membersOfSet(s))) || open[open.length - 1] || null, lastClosed = !!last && SR.closed(membersOfSet(last));
     let target = null, addTarget = null, formed = 0, apart = new Set(), joinNow = null;       // target: the set the free sheets join now · addTarget: the set 10K, 14K and Rose Gold may join now · formed: sheets it takes · apart: partners that wait for another set
     {
       const free = pages.filter(p => !inOpen(p) && !p.cardinalHome && !handOf(p) && !adder(p) && release(p, last && !lastClosed ? last.seq : 0).include);
@@ -5592,7 +5600,13 @@ const Gate = window.Gate = (() => {
       const f = SR.form(last ? membersOfSet(last) : [], free, !!last, last && last.name, links);
       for (const w of f.wait) w.sheet.setWait = w.why;
       if (f.where === "last") target = last;
-      else if (f.where === "new") target = await Sets.ensure(run.runId, "dispatch", last ? { follow: last } : {});
+      else if (f.where === "new") {
+        // (Paul, 25 Oct 2026 audit, L: the next set follows the run's NEWEST set by day and number, committed or not. It followed the newest OPEN one; with Set 2
+        //  committed while Set 1 still waited for its partner, the cloud handed Set 2 back again, a second open copy of it was made, no set ever formed again and the
+        //  copy was saved over the committed Set 2.)
+        const newest = Sets.ofRun(run.runId).filter(s => s.group === "dispatch" && !/^superseded/.test(String(s.status || ""))).pop() || last;
+        target = await Sets.ensure(run.runId, "dispatch", newest ? { follow: newest } : {});
+      }
       if (f.where === "new" && !target) return;      // (the cloud deferred the number: nothing joins now)
       // (SETFIX, Paul 19 Oct 2026) a NEW set is new: when the numbering hands back a set that already holds sheets (it has formed, or it is the formed set being followed), nothing joins it and
       //  it is said once. Every round of this loop used to put the next set's sheets into that one set
@@ -10878,9 +10892,11 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       const held=holdCase(ids.filter(id=>records.get(id) && !records.get(id).laserDoneAt));if(held)return {...held,set:true};   // (a held sheet holds the whole set's Approve, said once here)
       const gate=R.setGate(st,recs.map(projected));
       // (SETFIX A, Paul 17 Oct 2026: a set that breaks the owner's rules is blocked here, never dead-ended: its grey line says what to press, and the press is offered right beside it, `fix`)
-      const fix=gate.blockers[0]?.rule==='setBreaks' && gate.rules?.remedy && window.SetRepair?.fix?gate.rules.remedy:null;
+      const fix=gate.blockers[0]?.rule==='setBreaks' && gate.rules?.remedy && gate.rules.remedy.kind!=='backs' && window.SetRepair?.fix?gate.rules.remedy:null;   // (a back engraving to approve has no press here: the line says it)
       return gate.ready?{why:'',set:true}:{why:gate.reason,set:true,blocker:gate.blockers[0]?.sheetId || '',...(fix?{fix}:{})};
     }
+    // (audit, 25 Oct 2026: a set of ONE sheet is still a set: uncommitted, it needs a completed GF and a completed SS sheet (R1), so its Approve is grey with the set's line; it was the sheet's own test only)
+    if(ids.length===1){const g=R.setGate(st,recs.map(projected));if(g.rules?.applies && !g.rules.ok)return {why:g.reason,set:true,blocker:''};}
     const rec=recs.find(r=>r.id===ids[0]) || recs[0],c=rec?approveCase([rec]):null;
     return c?{...c,blocker:rec.id}:null;
   }
@@ -11326,13 +11342,13 @@ const Sets = window.Sets = (() => {
     const k = keyOf(runId, group);
     const prior=byRun().get(k);
     // a set that was committed, or that has formed (Paul, 12 Oct: closed to automatic joining; assembleNow asks for the next set with {follow: that set}), keeps its place beside the next one
-    if(group === "dispatch" && prior && (prior.committedAt || (opts.follow && opts.follow.setId === prior.setId))){byRun().set(keyOf(runId,(prior.committedAt ? "committed:" : "closed:")+prior.setId),prior);byRun().delete(k);}
+    if(group === "dispatch" && prior && (prior.committedAt || (opts.follow && opts.follow.setId && (opts.follow.setId === prior.setId || String(prior.day || "").localeCompare(String(opts.follow.day || "")) < 0 || (prior.day === opts.follow.day && (prior.seq || 0) < (opts.follow.seq || 0)))))){byRun().set(keyOf(runId,(prior.committedAt ? "committed:" : "closed:")+prior.setId),prior);byRun().delete(k);}
     if (byRun().has(k) && !byRun().get(k).offline) return byRun().get(k);
     if (!S.cloud.ok) throw new Error("Reconnect to the cloud before numbering a new set; the layout is kept locally");
     const day = today();
     // A run keeps releasing after a commit: its next dispatch set follows the newest committed one and gets a number of
     // its own, where asking again for the run's dispatch set would hand back the set already cut.
-    const followed = group === "dispatch" ? (opts.follow && opts.follow.setId ? opts.follow : ofRun(runId).filter(s => s.group === "dispatch" && s.committedAt).sort((a, b) => (+b.committedAt || 0) - (+a.committedAt || 0))[0] || null) : null;
+    const followed = group === "dispatch" ? (opts.follow && opts.follow.setId ? opts.follow : ofRun(runId).filter(s => s.group === "dispatch" && s.committedAt).pop() || null) : null;
     const after = followed?.setId || null;
     // The server numbers a follow-on set only once the set it follows is recorded as committed. A commit whose record
     // did not save is saved again first: a refusal then names its cause, and every later set used to be refused.
@@ -11341,8 +11357,9 @@ const Sets = window.Sets = (() => {
     // later intake for good.
     if (followed && (followed.committedAt ? followed.savedCommit !== followed.committedAt : true)) await save(followed);   // (a set that formed but is not committed: its sheets are on the cloud before the next set is numbered after it)
     let set;
-    if (S.cloud.ok) { const r = await api("charmNestLibrary", { op: "setAllocate", day, runId, group: group || "", roseOnly: !!opts.roseOnly, after }, { label: "Numbering the set" }); if (r.deferred) return null; set = { setId: r.setId, seq: r.seq, day: r.day || day, runId, group: group || null, name: O.setLabel(r.seq), folder: O.setFolder(r.day || day, r.seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], sheetNos: {}, status: "open" }; }
+    if (S.cloud.ok) { const r = await api("charmNestLibrary", { op: "setAllocate", day, runId, group: group || "", roseOnly: !!opts.roseOnly, after }, { label: "Numbering the set" }); if (r.deferred) return null; if (r.existing && grouped().ids.has(r.setId)) return grouped().ids.get(r.setId); set = { setId: r.setId, seq: r.seq, day: r.day || day, runId, group: group || null, name: O.setLabel(r.seq), folder: O.setFolder(r.day || day, r.seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], sheetNos: {}, status: "open" }; }
 
+    if (!set) throw new Error("Reconnect to the cloud before numbering a new set; the layout is kept locally");   // (audit, 25 Oct 2026: the cloud went away during the save before it: an undefined set stored here broke every later look until a reload)
     byRun().set(k, set);
     if (B.run && B.run.runId === runId) { B.run.setIds = [...new Set((B.run.setIds || []).concat([set.setId]))]; B.run.setId = B.run.setId || set.setId; B.run.day = set.day; B.run.seq = B.run.seq || set.seq; RunCtl.renderBanner(); }
     agent({ run: runId }, "cloud", `${set.name} allocated for ${set.day}${group ? ` · ${group.split("+").map(m => labelOf(m)).join(" + ")}` : ""} → ${set.folder}`);

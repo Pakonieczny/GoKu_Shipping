@@ -251,8 +251,8 @@ const mitten = () => { const out = path_([[10, 0], [50, 0], [50, 60], [10, 60], 
     const plain = Readiness.decisions([{ key: ONE.key, poolIds: ONE.poolIds, spec: ONE.spec, engrave: { needed: true, state: 'review', approved: false } }]); assert.deepEqual(plain[ONE.poolIds[0]], { needed: true, state: 'review', approved: false }, 'a line with no pieces map reads exactly as before');
   });
   await t('5c the back card names the ear', () => {
-    const src = fs.readFileSync(path.join(root, 'charm-nest-backs.js'), 'utf8'); const line = /const pieceWords = [^\n]+/.exec(src)[0];
-    const pieceWords = vm.runInNewContext('(' + line.replace('const pieceWords = ', '').replace(/;\s*$/, '') + ')');
+    // (the module exports pieceWords; it grew past one line when PIECES slots L.2 / D1.2 / C2 arrived, so it is read from the export, not sliced by line)
+    const { pieceWords } = require(path.join(root, 'charm-nest-backs.js'));
     assert.deepEqual([pieceWords({ slot: 'L' }), pieceWords({ side: 'R' }), pieceWords({ slot: 'D2' }), pieceWords({}), pieceWords(null)], ['Left ear', 'Right ear', 'Disc 2', '', '']);
   });
 
@@ -319,8 +319,9 @@ const mitten = () => { const out = path_([[10, 0], [50, 0], [50, 60], [10, 60], 
     const pair = rowOf(1, 10, { spec: { form: 'earrings', quantity: 1 } }), pairs2 = rowOf(5, 50, { spec: { form: 'earrings', quantity: 2 } }), one = rowOf(4, 40, { spec: { form: 'necklace', quantity: 1 } });
     const ctx = customCtx([pair, pairs2, one]);
     assert.equal(ctx.pairPlan(pair).length, 2); assert.equal(ctx.pairPlan(pairs2).length, 4); assert.equal(ctx.pairPlan(one), null);
-    assert.deepEqual({ ...ctx.needOf({ ck: 'card:' + pair.order.receiptId }) }, { total: 2, pairs: 2 });
-    assert.deepEqual({ ...ctx.needOf({ ck: 'card:' + one.order.receiptId }) }, { total: 1, pairs: 0 }, 'a single charm: no pair, nothing changes');
+    // (needOf also counts monogram pieces since PIECES, Paul, 16 Oct 2026: a monogram line of quantity N is N pieces; none here, so mono is 0)
+    assert.deepEqual({ ...ctx.needOf({ ck: 'card:' + pair.order.receiptId }) }, { total: 2, pairs: 2, mono: 0 });
+    assert.deepEqual({ ...ctx.needOf({ ck: 'card:' + one.order.receiptId }) }, { total: 1, pairs: 0, mono: 0 }, 'a single charm: no pair, nothing changes');
     const p3 = rowOf(1, 10, { spec: { form: 'earrings', quantity: 1, pieceCount: 1 } }); assert.equal(customCtx([p3]).pairPlan(p3), null, 'an explicit count of one piece is a single ear, not a pair');
   });
   await t('9b which ear each piece is: one body twice = a Left and its mirror; two bodies of one file by where they sit; two files by the order dropped', async () => {

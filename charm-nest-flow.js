@@ -224,7 +224,7 @@
     // (SETFIX A, Paul 17 Oct 2026) a set that breaks the owner's rules says exactly what to press, and names the sheets that press is about (the press itself is on the set's card)
     const m = gate.rules && gate.rules.breaks && gate.rules.remedy ? gate.rules.remedy : null;
     const items = gate.blockers.slice(0, LISTED).filter(b => !(m && b.rule === 'setBreaks' && (m.sheets || []).length)).map(b => ({ kind: 'sheet', id: b.sheetId, label: b.sheetLabel, why: b.why }));
-    if (m) items.unshift(...(m.sheets || []).map((id, k) => ({ kind: 'sheet', id, label: (m.names || [])[k] || id, why: `press "${m.button}" on ${setName(v.set)}'s card` })));
+    if (m) items.unshift(...(m.sheets || []).map((id, k) => ({ kind: 'sheet', id, label: (m.names || [])[k] || id, why: m.kind === 'backs' ? 'approve its back engraving (Engraving tab)' : `press "${m.button}" on ${setName(v.set)}'s card` })));
     return { key: 'setGate', label: gate.reason, detail: m ? m.say : `${setName(v.set)} is approved together, so every sheet of it must be ready first.`, items, ...(m ? { remedy: m } : {}) };
   }
 
@@ -259,7 +259,7 @@
     const withSet = grouped && from === 'progress', mine = v.kind === 'set' || withSet ? v.members : [v.sheet];
     if (grouped) plan.notes.push(withSet ? `${v.label} is approved with ${setName(v.set)}: its sheets move together.` : `${v.label} travels with ${setName(v.set)}: its sheets are cut together.`);
     if (from === 'progress') {               // forwards: Laser cutting, or Completed through it
-      const several = !!v.set && (v.set.sheetIds || []).length > 1, gate = several ? setGateOf(v) : null;
+      const several = !!v.set && (v.set.sheetIds || []).length > 1, gate = v.set ? setGateOf(v) : null;   // (audit, 25 Oct 2026: a set of ONE sheet too: an uncommitted set needs a completed GF and a completed SS sheet, R1; it went to Laser cutting with one)
       const gaps = mine.map(m => sheetGaps(m, { ...env, own: new Set(v.members.map(sid)) }));
       plan.needs.push(...foldNeeds(gaps.flatMap(g => g.needs), (v.kind === 'set' || withSet) && mine.length > 1));
       for (const g of gaps) { plan.steps.push(...g.steps); plan.auto.push(...g.auto); }
@@ -338,7 +338,20 @@
   const joinNames = l => l.length <= 1 ? l[0] || '' : l.slice(0, -1).join(', ') + ' and ' + l[l.length - 1];
   /* `opt.press`: the sheets join a COMMITTED set first (the set edit, op flowApply setMember) and the Cut Sheet press follows (step `cutSheet`: the line drawn and dated, the cut recorded
      through the one writer, roseRecordCut), because the press puts a sheet in the OPEN run's set when it is in none. The yes is the same key: `roseLine`. */
+  // (audit S2, 25 Oct 2026) the moves the person said yes to the Cut Sheet press for carry it (cut: true): the server takes an uncut gold-family sheet into a set only with it, R12 (a)
+  const markCut = (plan, ids) => { for (const st of plan.steps) if (st.type === 'setMember' && st.key === 'membership') for (const m of st.moves || []) if (m.to && ids.includes(m.sheetId)) m.cut = true; };
   function roseConfirm(plan, mine, env, opt) {
+    // (audit S4, 25 Oct 2026, R12 (a): a sheet whose green line is calculated but not cut owes no LINE, so it was asked nothing and joined the committed set uncut. Joining IS the Cut Sheet
+    //  press: it is asked for its yes, and the press records the cut. A full sheet (no line) and a cut one are as before)
+    if (opt && opt.press) {
+      const lined = mine.filter(x => x && cuts(x.metal) && !x.roseCutAt && !(+x.laserDoneAt > 0) && x.roseFull !== true && !needsRoseLine(x));
+      if (lined.length) {
+        const names = lined.map(sheetName), who = names.length === 1 ? names[0] : count(names.length, 'sheet');
+        plan.confirm.push({ key: 'roseCut', label: `Cut ${who}?`, detail: `${names.length === 1 ? 'Its' : 'Their'} green dash line is already calculated. A sheet joins a set only with its green line cut: joining is the Cut Sheet press, and a recorded cut is permanent.`, button: 'Cut Sheet', count: lined.length, sheetIds: lined.map(sid) });
+        plan.steps.push({ type: 'cutSheet', sheetIds: lined.map(sid), key: 'cutSheet', label: 'Cut recorded' });
+        markCut(plan, lined.map(sid));
+      }
+    }
     const want = mine.filter(needsRoseLine);
     if (!want.length) return;
     const R = roseAnswer(env);
@@ -351,7 +364,7 @@
     }
     if (roseBlocked(plan, ask, env)) return;               // (pressing could only be refused: no yes is asked for)
     plan.confirm.push(roseLineConfirm(ask, env));
-    if (opt && opt.press) plan.steps.push({ type: 'cutSheet', sheetIds: ask.map(sid), key: 'cutSheet', label: 'Green dash line drawn and the cut recorded' });
+    if (opt && opt.press) { plan.steps.push({ type: 'cutSheet', sheetIds: ask.map(sid), key: 'cutSheet', label: 'Green dash line drawn and the cut recorded' }); markCut(plan, ask.map(sid)); }
     else plan.steps.push({ type: 'roseLine', item: plan.move ? { kind: plan.move.kind, id: plan.move.id } : null, sheetIds: ask.map(sid), key: 'roseLine', label: 'Green dash line calculated' });
   }
   /* A Rose Gold sheet into a set (Paul: "dragging and dropping a rose gold sheet between sets"). Joining a set IS the Cut Sheet
@@ -607,7 +620,7 @@
     plan.steps.push({ type: 'relabel', sheetIds: moves.map(m => m.sheetId), setId: T.setId, key: 'qrLabel' });
     // (a) a sheet that owes its green line (and the ones that come with it): the person's yes at the drop IS the Cut Sheet press, which follows the membership (the press puts a sheet in
     // the OPEN run's set when it is in none, so a committed set takes the sheet first) and nothing is drawn before that yes
-    roseConfirm(plan, (from ? [] : [s]).concat(mates.map(m => state.sheets[m.id]).filter(Boolean)), env, { press: true });       // (a sheet already in a set that moves to another keeps what it had: no new yes)
+    roseConfirm(plan, (from && !(cuts(s.metal) && !s.roseCutAt && !(+s.laserDoneAt > 0)) ? [] : [s]).concat(mates.map(m => state.sheets[m.id]).filter(Boolean)), env, { press: true });       // (a sheet already in a set that moves to another keeps what it had: no new yes)
     if (plan.needs.length) return finish(plan);
     plan.steps.push({ type: 'setFiles', setId: T.setId, key: 'setFiles' });
     if (from && how.kind === 'committed') plan.steps.push({ type: 'setFiles', setId: from.setId, key: 'setFiles:' + from.setId });

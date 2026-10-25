@@ -3813,10 +3813,10 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-engrave-guide.js?v=20261013-ap2-meg1-pcm1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2-sn1-setfix1-sets9"></script>
 <script src="charm-nest-nospread.js?v=20261017-ns1"></script><!-- charm-nest-nospread.js: keep the pieces of a multi-piece or earring order on one sheet of its colour; a sheet near completion takes such an order only if all of it fits (NOSPREAD, Paul 17 Oct 2026) -->
-<script src="charm-nest-set-rules.js?v=20261010-sf2-sp1-setr1-setfix1-sets9"></script>
-<script src="charm-nest-set-edit.js?v=20261007-ls2a-ps1-plb1-cg1-ld1-sn1-dm1-sp1"></script>
+<script src="charm-nest-set-rules.js?v=20261010-sf2-sp1-setr1-setfix1-sets9-sa25"></script>
+<script src="charm-nest-set-edit.js?v=20261007-ls2a-ps1-plb1-cg1-ld1-sn1-dm1-sp1-sa25"></script>
 <script src="charm-nest-set-invariants.js?v=20261017-setrepair1-setfix1-rv1-cost18-sets9"></script><!-- the owner's set rules as one checker (docs/charm-nest/set-rules.md) -->
-<script src="charm-nest-set-repair.js?v=20261017-setrepair1-rv1-cost18"></script><!-- the explicit one-press repair of a set that breaks them (SETREPAIR, Paul 17 Oct 2026) -->
+<script src="charm-nest-set-repair.js?v=20261017-setrepair1-rv1-cost18-sa25"></script><!-- the explicit one-press repair of a set that breaks them (SETREPAIR, Paul 17 Oct 2026) -->
 <script src="charm-nest-background.js?v=20260930-stamp-barrier-os1-hz1-bx2-hoops-col-rv71-pt1-pt2-plb2-pt3-bc2-pe2-mi1-bf1-mi3-bf2-mi4-bf3-mi5-as1-mi6-bf4-mi7-pm8-pm9-bb1-rlp1-rlp3-ba1-sx1-ba2-lv1-lm1-fb1-ef1-fb2-ml1-mfile1-mw1-bh2-bd1"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
@@ -4139,6 +4139,7 @@ async function cloudProbe(retry) {
     const r = await api("charmNestLibrary", { op: "ping" }, retry ? { quiet: true } : { label: "Checking cloud" });
     const first = S.cloud.ok !== true;
     S.cloud.ok = true; S.cloud.lib = { sheets: r.sheets || 0, charms: r.charms || 0 }; S.cloud.msg = "Cloud ok"; probeFails = 0;
+    if (first) saveOwedSheets();
     // a page opened on the Library (its address says #library) showed "Cloud offline" until it was clicked again
     if (first && S.mode === "library") loadLibrary().catch(() => {});
     if (r.calibration) S.calibration = r.calibration;
@@ -4160,6 +4161,7 @@ function cloudRecovered() {
   renderCloudStatus(); refreshAllCards(); recountLibrary();
   if (S.mode === "library") loadLibrary().catch(() => {}); else if (S.mode === "charms") loadCharms();
   window.dispatchEvent(new Event("cn-cloud-back"));
+  saveOwedSheets();
 }
 /** Upload bytes to Storage: signed URL first, base64 through the function as fallback. */
 /** A PUT that reports how much has gone up: XHR is used because fetch cannot report upload progress. */
@@ -6068,6 +6070,7 @@ async function finishNest(sh, { result, error }) {
         renderCard(sh); drawPreview(sh);
         agent({ metal: sh.metal }, "nest", `${sheetName(sh)}: no room for ${sh.rejects.length === 1 ? "the new piece" : `the ${sh.rejects.length} new pieces`}; the layout and its saved files stand as they are`);
         const updatedJob = sh.jobId;
+        if (!S.cloud.ok && !(window.B?.run && window.B.run.runId === sh.runId)) { sh.saveOwed = true; log(sh, "cloud offline: kept in this browser, saved when the cloud is back"); feedOn(sh); flushManualIntake(sh.metal); } else   // (as finishNest's save below)
         sh.persisted = api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, releaseFull: !!sh.releaseFull, topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized } }, { label: "Updating sheet record", quiet: true })
           .then(() => { sh.persistedDone = true; releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId); if (sh.jobId === updatedJob) feedOn(sh); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); })
           .catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e, { stage: "persistence", critical: true })); });
@@ -6149,7 +6152,13 @@ async function finishNest(sh, { result, error }) {
     setTimeout(() => $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.remove("pulse"), 1300);
     if (document.hidden && S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification("Charm Nesting Station", { body: msg }); } catch (_) { /* ignore */ } }
     // 5 · persist everything. The two verifiers above are the acceptance test; no further inspection runs.
-    sh.persisted = persistSheet(sh, activeCharms(sh)).then(() => { if (sh.jobId === writtenJob) sh._written = written; sh.persistedDone = true; if (sh.jobId === writtenJob) { releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId); } if (sh.resumeWait && sh.jobId === writtenJob && sh.rejects.length) resumeLater(sh); if (sh.jobId === writtenJob) feedOn(sh); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); });
+    // offline, a sheet no run owns is kept in this browser and owes its save (saveOwedSheets, when the cloud is back); the
+    // orders still waiting their turn come in as they do online. A run's sheet stops its run as before (Reconnect and Resume).
+    if (!S.cloud.ok && !(window.B?.run && window.B.run.runId === sh.runId)) {
+      sh.saveOwed = true; log(sh, "cloud offline: kept in this browser, saved when the cloud is back");
+      if (sh.resumeWait && sh.rejects.length) resumeLater(sh); feedOn(sh); flushManualIntake(sh.metal);
+    } else
+    sh.persisted = persistSheet(sh, activeCharms(sh)).then(() => { delete sh.saveOwed; if (sh.jobId === writtenJob) sh._written = written; sh.persistedDone = true; if (sh.jobId === writtenJob) { releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId); } if (sh.resumeWait && sh.jobId === writtenJob && sh.rejects.length) resumeLater(sh); if (sh.jobId === writtenJob) feedOn(sh); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); });
     // 6 · whatever did not fit under the ceiling goes to the next sheet of this metal, which nests on its own
     if (sh.rejects.length && sh.endedBy !== "stopped" && (sh.nestFlow !== "learned" || sh.verification.ok && ["cap", "plateau"].includes(sh.endedBy))) overflowToNextSheet(sh, false);
   } catch (e) {
@@ -6196,7 +6205,7 @@ function buildReport(sh, result, items) {
  *  the material in that set (design §8.1). One run = one set = one folder; a gold sheet and a silver sheet of the same
  *  run read as …_Set-3_… on both. The set number is allocated in a Firestore transaction, never by counting here. */
 const dateTag = (d = new Date()) => CharmNestOrders.dateTag(d);
-function sheetFileBase(sh) { if (sh.draft) return `${METAL_TAG[sh.metal]}_working_${sh.sheetId}`; return CharmNestOrders.sheetName(sh.metal, sh.setDay || today(), sh.seq || 1, sh.sheetIndex || sh.page || 1); }
+function sheetFileBase(sh) { if (sh.draft || sh.numberOwed) return `${METAL_TAG[sh.metal]}_working_${sh.sheetId}`; return CharmNestOrders.sheetName(sh.metal, sh.setDay || today(), sh.seq || 1, sh.sheetIndex || sh.page || 1); }
 /** The sheet's set (allocated once per run) and its index within its material in that set. */
 async function nextSheetSeq(sh) {
   if (window.Gate && (Gate.modern(sh.runId) || (["gold10k","gold14k"].includes(sh.metal) && !Gate.solidSelected(sh.metal, sh)))) {
@@ -6204,10 +6213,20 @@ async function nextSheetSeq(sh) {
     // keeps its place: the run never puts a sheet of a committed set back (Gate.assemble leaves them out) and the cloud keeps the place anyway (putSheet), so drafting it here left
     // the card reading "Filling" with no Set number and Cut Sheet refused with "Not cut: Included by you". Its set, number, day and file name stay; the save makes its QR label again.
     if (sh.setId && !sh.draft && Gate.committedSheet && Gate.committedSheet(sh)) return sh.seq || null;
-    sh.draft = true; sh.setId = null; sh.setDay = today(); sh.sheetIndex = null; return null;
+    sh.draft = true; sh.setId = null; sh.setDay = today(); sh.sheetIndex = null; delete sh.numberOwed; return null;
   }
   const runKey = sh.runId || (sh.runId = "manual-" + uid());
+  // (Paul, 25 Oct 2026: "this is a fail". Offline the card says "nesting works, nothing is saved", but numbering a new set
+  // threw here, the finish failed, and a dropped file stopped after its first few orders for good. A set is numbered only
+  // by the cloud, so offline the sheet keeps its working name and owes its number; saveOwedSheets numbers and saves it
+  // when the cloud is back. A set the run already has is used as before.)
+  if (!S.cloud.ok) {   // (the set Sets.ensure would hand back without the cloud: the run's own for this group, unless it is a placeholder or a committed dispatch set)
+    const held = window.B?.sets?.get?.(`${runKey}|${sh.group || "all"}`);
+    if (!(held && !held.offline && !(sh.group === "dispatch" && held.committedAt))) { if (sh.setId && sh.seq) return sh.seq; sh.numberOwed = true; return null; }
+  }
   const set = await Sets.ensure(runKey, sh.group || null);
+  if (!set) { if (sh.setId && sh.seq) return sh.seq; sh.numberOwed = true; return null; }   // (the server put the numbering off: owed, as offline)
+  delete sh.numberOwed;
   sh.setId = set.setId; sh.setDay = set.day;
   const taken = pagesOf(sh.metal).filter(p => p !== sh && p.setId === set.setId && p.sheetIndex).map(p => p.sheetIndex);
   const SN = window.CharmNestSheetName;
@@ -6233,6 +6252,29 @@ function listingsOf(charms) {
     out.add(String(id));
   }
   return [...out];
+}
+/** The cloud is back: each sheet kept in this browser while it was away (finishNest: saveOwed) takes the set number it owes
+    (nextSheetSeq) and is saved, oldest page first. A sheet being nested, or changed since, saves at its own finish instead. */
+let savingOwed = null;
+function saveOwedSheets() {
+  if (savingOwed || !S.cloud.ok) return savingOwed;
+  return savingOwed = (async () => {
+    for (const sh of allSheets().filter(p => p.saveOwed).sort((a, b) => (a.page || 0) - (b.page || 0))) {
+      if (!S.cloud.ok) break;
+      if (!["complete", "partial"].includes(sh.status) || !sh.outputs || sh.dirty || sh._operationStarting) continue;
+      const job = sh.jobId;
+      try {
+        if (sh.numberOwed || !sh.seq) { sh.seq = await nextSheetSeq(sh); sh.fileBase = sheetFileBase(sh); }
+        if (sh.jobId !== job) continue;
+        await (sh.persisted = persistSheet(sh, activeCharms(sh)));
+        if (sh.jobId !== job) continue;
+        delete sh.saveOwed; sh.persistedDone = true; sh.problem = null;
+        releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId);
+        log(sh, "saved to the cloud now that it is back" + (sh.numberOwed ? "" : " · " + sh.fileBase));
+      } catch (e) { log(sh, "cloud save failed: " + e.message); }
+      renderCard(sh);
+    }
+  })().finally(() => { savingOwed = null; });
 }
 async function persistSheet(sh, items, context) {
   const ops = window.CharmNestOperations;
@@ -8233,7 +8275,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
@@ -8319,7 +8361,7 @@ try {
 <script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1-gf1-pp1-sn1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done-plb2-ef1"></script>
 <script src="charm-nest-library.js?v=20261007-cutseal1-nm1-psw2-lo1-sn1"></script>
-<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5-ls1-ls2-gc2-gf1-ps1-sf2-lf1-sn1-eu3-rh1-rh2-sp1-setfix1-cost18"></script>
+<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5-ls1-ls2-gc2-gf1-ps1-sf2-lf1-sn1-eu3-rh1-rh2-sp1-setfix1-cost18-sa25"></script>
 <script src="charm-nest-library-approval-ui.js?v=20261005-so2"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-library-dnd.js?v=20261005-so2-mm1-ls1-ls2-gc2-gf1-lf1"></script>

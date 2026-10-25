@@ -33,9 +33,13 @@ function seed(st, blobUrl) {
     const orders = Array.from({ length: 3 + (n % 4) }, (_, i) => String(3700000000 + n * 10 + i));
     st.put(SHEETS, id, Object.assign({ id, metal, metalLabel: metal, day: day(d), setId, setSeq: s, sheetIndex: k + 1, fileBase: `${metal.slice(0, 2).toUpperCase()}_${day(d)}_Set-${s}_Sheet-${k + 1}`, folder: `${metal}_${id}`, orders, poolIds: orders.map(o => `${o}_1_1`), listings: orders.map((o, i) => String(1718000 + (i % 4))), placedCount: 10 + n % 7, charmCount: 10 + n % 7, density: 0.6 + (n % 30) / 100, freePt2: 2000, stock: { wIn: 6, hIn: 5 }, outputs: { preview: { path: p, url: blobUrl(p) } }, verification: { ok: true }, names: orders.map(o => `${o} · BR-TST-0${n % 6}`).join(' '), status: 'complete', updatedAt: Timestamp.fromMillis(now - d * 86400000 - s * 1000 - k), createdAt: Timestamp.fromMillis(now - d * 86400000), archived: false, runId: `run-${day(d)}` }, extra));
   };
+  // (Paul, 10 Oct 2026, docs/charm-nest/set-rules.md R1 / R2: a set exists only with a COMPLETED GF and a COMPLETED SS sheet, and "completed" is
+  //  releaseFull (fully nested), never the nest status word. So every current sheet is fully nested, every set holds a GF and an SS sheet, and the
+  //  one-sheet "sets" of before are a GF sheet in no set: the plain case of a sheet that leaves Current when it is marked)
   for (let d = 0; d < 6; d++) for (let s = 1; s <= 2; s++) {
-    const setId = `set-${day(d)}-${s}`, ids = [];
-    metals.slice(0, 1 + ((d + s) % 3)).forEach((metal, k) => { const id = `sh${d}x${s}x${k}`; ids.push(id); sheet(id, metal, d, setId, s, k); });
+    const setId = `set-${day(d)}-${s}`, ids = [], n = 1 + ((d + s) % 3);
+    if (n === 1) { sheet(`sh${d}x${s}x0`, 'gold', d, null, s, 0, { releaseFull: true, setSeq: null }); continue; }
+    metals.slice(0, n).forEach((metal, k) => { const id = `sh${d}x${s}x${k}`; ids.push(id); sheet(id, metal, d, setId, s, k, { releaseFull: true }); });
     st.put(SETS, setId, { setId, seq: s, day: day(d), runId: `run-${day(d)}`, name: `Set-${s}`, sheetIds: ids, materials: metals.slice(0, ids.length), orders: {}, labels: null, labelFiles: [], status: 'nesting', updatedAt: Timestamp.fromMillis(now - d * 86400000 - s * 1000), createdAt: Timestamp.fromMillis(now - d * 86400000) });
   }
   // Since 30 Sep a sheet or set is marked completed only once it is ready for the laser: its cutting file, its QR label, its engraving
@@ -106,17 +110,20 @@ function seed(st, blobUrl) {
   assert(b.h < 44 && b.over <= 0 && b.tabs <= b.input + 1 && Math.abs(b.tabsTop + b.tabs / 2 - (b.inputTop + b.input / 2)) < 2, 'one line of bar at 1500: ' + JSON.stringify(b));
   const current0 = await page.$$eval('#libBody .libCard[data-id]', cs => cs.map(c => c.dataset.id));
   assert(current0.length === 24 && !current0.some(id => id.startsWith('old')), 'Current holds what the laser has not done: ' + current0.length);
-  // (the Library card's seal cap of 44 px, in a real browser: the jsdom tests of it read the stylesheet through custom properties, as jsdom cannot parse min() around var())
+  // (the Library card's seals, in a real browser. Paul, 7 Oct 2026: "only one seal per each sheet and only visible when a given sheet has
+  //  completed the laser cutting process" — charm-nest-library.js cutStamp, Seal.sheetCut in charm-nest-motion.js, 72 px; the old 44 px card
+  //  cap is gone. Current holds no completed sheet and only LASER READY stamps are on record, so no card shows a seal; the size of the one
+  //  seal a completed sheet shows is checked below, once a sheet of a set is marked and stays in place)
   const caps = await page.$$eval('#libBody .libCard .seal', ss => ss.map(x => Math.round(x.offsetWidth)));
-  assert(caps.length > 0 && caps.every(w => w > 0 && w <= 44) && Math.max(...caps) === 44, 'Library card seals are capped at 44 px: ' + caps.slice(0, 12));
-  ok.push('Current lists only what is not completed; the tab counts 120 completed sheets; one line of bar at 1500; the Library card seals stand at the 44 px cap');
+  assert.deepEqual(caps, [], 'no seal on a Current card that is not completed (never LASER READY): ' + caps.slice(0, 12));
+  ok.push('Current lists only what is not completed; the tab counts 120 completed sheets; one line of bar at 1500; no seal on a sheet not yet laser cut');
   await shot('01-current-1500');
 
   // mark a sheet completed from its corner: it leaves, the count grows, the cloud records who and when; Undo brings it back
   // (since 30 Sep a sheet of a set stays in place when marked, with its seal, until its whole set is done and goes to Completed together:
-  //  a set of one sheet is the plain case of a sheet that leaves when marked)
-  const first = current0.find(id => (st.doc(SETS, st.doc(SHEETS, id).setId).sheetIds || []).length === 1);
-  assert(first, 'a set of one sheet among the current ones');
+  //  a sheet in no set is the plain case of a sheet that leaves when marked: since 10 Oct there is no set of one sheet)
+  const first = current0.find(id => !st.doc(SHEETS, id).setId);
+  assert(first, 'a sheet in no set among the current ones');
   await page.hover(`#libBody .libCard[data-id="${first}"]`);
   await page.waitForTimeout(250);
   const vis = await page.$eval(`#libBody .libCard[data-id="${first}"] .ldMark`, m => getComputedStyle(m).opacity);
@@ -169,7 +176,13 @@ function seed(st, blobUrl) {
   await tap(`#libBody .libCard[data-id="${other}"] .ldMark`);
   await page.waitForSelector('#libBody .ldPartial', { timeout: 25000 });
   assert.match(await page.textContent('#libBody .ldPartial'), /1 of \d sheets completed/);
-  ok.push('a set marked completed marks each of its sheets; a set part done says "1 of N sheets completed"');
+  // (the sheet stays in place, completed, with its ONE seal, LASER CUT, at Seal.SHEET_SIZE (72 px, Paul 7 Oct 2026), in its card's footer)
+  await page.waitForFunction(id => { const s = document.querySelectorAll(`#libBody .libCard[data-id="${id}"] .seal`); return s.length === 1 && !s[0].classList.contains('pending'); }, other, { timeout: 25000 });
+  const cut = await page.$$eval(`#libBody .libCard[data-id="${other}"] .seal`, ss => ss.map(x => [Math.round(x.offsetWidth), x.dataset.processSeal || '', !!x.closest('.m > .sheetCutRow'), Seal.SHEET_SIZE]));
+  assert(cut.length === 1 && cut[0][0] === cut[0][3] && cut[0][3] === 72 && /laserDone/.test(cut[0][1]) && cut[0][2], 'a completed sheet in Current shows one 72 px LASER CUT seal in its footer: ' + JSON.stringify(cut));
+  // (the other sheets of that set are not completed, and show none)
+  assert.equal(await page.evaluate(id => [...document.querySelectorAll('#libBody .setCard')].find(c => (c._laserSheets || []).includes(id)).querySelectorAll('.libCard:not([data-id="' + id + '"]) .seal').length, other), 0, 'no seal on the sheets of the set not yet completed');
+  ok.push('a set marked completed marks each of its sheets; a set part done says "1 of N sheets completed"; its completed sheet shows one 72 px LASER CUT seal');
   await shot('05-sets-partial');
   // the rest of that set marked, then undone: only what that mark changed is taken back
   const partSet = await page.evaluate(id => [...document.querySelectorAll('#libBody .setCard')].find(c => (c._laserSheets || []).includes(id))._laserSet.setId, other);

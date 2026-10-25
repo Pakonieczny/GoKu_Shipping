@@ -139,6 +139,7 @@
     const reasons = [], moves = {}, recs = inp.recs || {}, sets = inp.sets || {}, real = [];
     const runOpen = d => !!(d && inp.runs && inp.runs[str(d.runId)] && inp.runs[str(d.runId)].open), ownsRun = d => !!(d && (inp.owned || []).map(str).includes(str(d.runId)));
     for (const m of inp.moves || []) moves[str(m.id)] = m.to ? str(m.to) : null;
+    const cutYes = new Set((inp.moves || []).filter(m => m && m.to && m.cut === true).map(m => str(m.id)));   // (the person's yes to the Cut Sheet press, carried by the page's move)
     const add = (key, label, detail, extra) => reasons.push(Object.assign({ key, label, detail }, extra || {}));
     const leaving = new Map(), joining = new Map();
     for (const id of Object.keys(moves)) {
@@ -150,6 +151,10 @@
       if (c) { add(c.key, c.label, c.detail, { sheetId: id }); continue; }
       // (Paul, 12 Oct) a sheet with a green line joins a set once its back engraving is approved: `inp.engravings` (the server's readiness read) or the record's own report says
       if (to && !from) { const g = inp.engravings && Object.prototype.hasOwnProperty.call(inp.engravings, id) ? inp.engravings[id] : engravingGap(r); if (g) { add(g.key, g.label, g.detail, { sheetId: id }); continue; } }
+      // (audit S2, 25 Oct 2026, R12 (a)) a sheet with a green line joins a set only with the line cut, or with the person's yes to the Cut Sheet press (the move's `cut`, the press follows the move),
+      // or when it is full (it takes the rest of the metal whole and gets no line). Without one the server took it, and the set then broke R12
+      if (to) { const C = CUTS(), isCut = C && typeof C.cuts === 'function' ? C.cuts : m => m === 'rose';
+        if (isCut(r.metal) && !r.roseCutAt && !(+r.laserDoneAt > 0) && !r.releaseFull && r.cutApproved !== true && !cutYes.has(id)) { add('notCut', `${w} cannot join a set before its green line is cut`, 'Drop it on the set again and say yes to Cut Sheet, or press Cut Sheet first.', { sheetId: id }); continue; } }
       // (Paul, 13 Oct) a partial GF or SS sheet joins no set, whether it comes from outside or from another set; it may always leave one
       if (to) { const g = partialGap(r); if (g) { add(g.key, g.label, g.detail, { sheetId: id }); continue; } }
       real.push(id);

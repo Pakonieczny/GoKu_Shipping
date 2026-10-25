@@ -55,7 +55,10 @@ for (const sku of ['KITE', 'BEADY KITE']) for (const q of [1, 2]) {
   eq(PL.labelPieces(r, MASTER[sku]), null, tag + ': the sticker is the order\'s one sticker, never a LEFT and a RIGHT page');
   const ids = Array.from({ length: q }, (_, i) => `4170000001_5200000001_${i + 1}`), rowOf = { key: '4170000001_5200000001', poolIds: ids, order: { receiptId: order.receiptId }, line: r.line, spec: Object.assign({}, r.spec, { designSku: sku }) };
   const ectx = { poolRow: id => ({ poolId: id }), charmOf: id => null, entryFor: s => MASTER[s] || null, pair: CP };
-  eq([Sides.plan(ectx, rowOf, []).split, ids.map(id => Sides.slotOfId(ectx, rowOf, id))], [false, none], tag + ': engraving: not split into a Left job and a Right job');
+  // (PIECES, Paul 16 Oct 2026, charm-nest-engrave-sides.js header: a line of quantity N >= 2 is cut into its units, a unit with no ear or disc slot is "C<u>", each copy its own engraving;
+  //  quantity 1 stays whole. Either way never a Left and a Right job.)
+  const copies = q === 1 ? [false, none] : [true, ids.map((_, i) => 'C' + (i + 1))];
+  eq([Sides.plan(ectx, rowOf, []).split, ids.map(id => Sides.slotOfId(ectx, rowOf, id))], copies, tag + ': engraving: not split into a Left job and a Right job (one job per copy)');
   noNested(r.spec, tag);
 }
 // the generic SKU and the master's own read the same line the same way, whatever else the line says

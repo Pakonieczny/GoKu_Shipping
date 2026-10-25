@@ -204,10 +204,11 @@ parts.push(async () => {
     assert.equal((await LF.plan({ kind: 'set', id: 'set-1', to: { area: 'nowhere' } })).from.area, 'laser', 'the whole set reached Laser cutting together');
     const again = await LF.approve({ kind: 'set', id: 'set-1', by: 'Paul' }); assert.equal(again.approved, true); assert.deepEqual(again.applied, [], 'a second press finds everything done'); assert.deepEqual(labels, ['ss-1']);
 
-    // 5. a set of one sheet is exactly as before: its own hard needs are listed, no set gate, the server does not refuse
+    // 5. a set of one sheet (R1, Paul 10 Oct: "there must be at minimum 1 Completed GF Sheet and 1 Completed SS Sheet"; it replaced the 5 Oct reading "a set of one is its own sheet"):
+    //    an uncommitted set holding one GF sheet is not a set yet, so its approval is refused on the page (the set gate names what it lacks) and on the server (audit, 25 Oct 2026)
     p = await LF.plan({ kind: 'sheet', id: 'solo-1', to: { area: 'laser' } });
-    assert(p.needs.some(x => x.key === 'engraving') && !p.needs.some(x => x.key === 'setGate'), JSON.stringify(p.needs.map(x => x.key))); assert.deepEqual(p.steps.filter(x => x.type === 'release').flatMap(x => x.sheetIds), ['solo-1'], 'the safe steps are as they were');
-    r = await post({ op: 'flowApply', by: 'Paul', steps: [{ type: 'release', sheetIds: ['solo-1'] }] }); assert.equal(r.status, 200, 'a set of one is not refused'); assert(!held('solo-1'));
+    assert(p.needs.some(x => x.key === 'setGate'), JSON.stringify(p.needs.map(x => [x.key, x.label])));   // (here its back engraving leads: the fixture's GF record carries no completion mark, which R1 cannot read) assert.deepEqual(p.steps.filter(x => x.type === 'release').flatMap(x => x.sheetIds), ['solo-1'], 'the safe steps are as they were');
+    r = await post({ op: 'flowApply', by: 'Paul', steps: [{ type: 'release', sheetIds: ['solo-1'] }] }); assert.equal(r.status, 409, 'a set of one is refused: ' + JSON.stringify(r)); assert(held('solo-1'), 'and nothing is written');
 
     // 6. Rose Gold: its own hard needs count, its green line and its Cut Sheet are its own yes, never taken by an approval
     r = await post({ op: 'flowState', sheetIds: ['c-gf'], setIds: ['set-3', 'set-4'] }); assert.equal(r.gates['set-3'].ready, true, 'a Rose Gold sheet without its green line is soft: its own yes'); assert.equal(r.gates['set-4'].reason, 'RG Sheet 1 · back engravings 0 of 1');

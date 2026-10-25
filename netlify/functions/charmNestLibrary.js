@@ -980,6 +980,10 @@ async function op_putSheet(b) {
         // (SETFIX B, Paul 17 Oct 2026) a save that puts this sheet into a FORMED set it is not in yet: refused, and nothing written, when the set would then break the owner's rules
         // (bigger than the minimum, a partial sheet in it), whichever screen sends it. Read from the records outside this transaction; the run's own assembly never adds such a sheet.
         else if (want && want !== was && isId(want)) {
+          // (audit S1, 25 Oct 2026, R12 (a): a Rose Gold / 10K / 14K sheet goes into a set only cut, full (it takes no line) or with the person's own yes (its Include tick, solidIncluded, or the Cut Sheet
+          //  yes, cutApproved). The run's own assembly saves only such sheets into a set; a save of an uncut, unticked one was taken, and the set then broke R12)
+          const eff = { ...old, ...s }, yes = (mine("solidIncluded") ? doc.solidIncluded : old.solidIncluded) === true || eff.cutApproved === true;
+          if (CutLine.cuts(eff.metal) && !eff.roseCutAt && !(num(eff.laserDoneAt) > 0) && !eff.releaseFull && !yes) return { error: `${eff.fileBase || eff.metalLabel || "This sheet"} cannot join a set before its green line is cut: press Cut Sheet (or Include) first`, status: 409, refused: "setRules", reasons: ["notCut"] };
           const r = await joinRulesFor(want, [s.id], { rules: JOIN_RULES_AT_WRITE, overlay: { [s.id]: s } });
           if (!r.ok) return joinRefusal(r);
         }
@@ -2367,7 +2371,9 @@ async function op_setAllocate(b) {
     if (!group && !after) { const ex2 = await col(SETS).where("runId", "==", runId).limit(1).get(); if (!ex2.empty) { const d = ex2.docs[0].data(); return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; } } }
   const res = await db.runTransaction(async t => {
     const allocation = runId ? col(COUNTERS).doc("allocation-" + require("crypto").createHash("sha256").update(key).digest("hex").slice(0, 40)) : null;
-    if (allocation) { const prior = await t.get(allocation); if (prior.exists) return prior.data(); }
+    // (audit, 25 Oct 2026: the set already allocated for this key keeps ITS day: a second ask past midnight answered the new day with the old set's id, so the page named its folder and files for the wrong day.
+    //  An allocation written before it stored the day reads it from the set id, set-YYYY-MM-DD-n)
+    if (allocation) { const prior = await t.get(allocation); if (prior.exists) { const d = prior.data(), m = /^set-(\d{4}-\d{2}-\d{2})-/.exec(String(d.setId || "")); return { setId: d.setId, seq: d.seq, day: d.day || (m ? m[1] : day), existing: true }; } }
     const cref = col(COUNTERS).doc(day); const cs = await t.get(cref);
     const seq = (cs.exists ? num(cs.data().seq) : 0) + 1;
     // A rose-only attempt must not consume an odd number just to make itself eligible.
@@ -2375,7 +2381,7 @@ async function op_setAllocate(b) {
     const setId = `set-${day}-${seq}`;
     t.set(cref, { day, seq, updatedAt: FV.serverTimestamp() }, { merge: true });
     t.set(col(SETS).doc(setId), { setId, runId: runId || null, key, group: group || null, day, seq, name: `Set-${seq}`, folder: `charmnest/sets/${day}/Set-${seq}`, materials: [], sheetIds: [], orders: {}, labels: null, status: "open", current: true, createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() });   // (current: COST Oct 2026, CURRENT_MARK)
-    if (allocation) t.set(allocation, { setId, seq });
+    if (allocation) t.set(allocation, { setId, seq, day });
     return { setId, seq };
   });
   if (res && res.setId && !res.deferred) revTouch(b, ["t:" + res.setId]);   // COST (Oct 2026): a new set record (or none, revTouch above) and its counters, which the Library does not read
@@ -4344,7 +4350,7 @@ async function setGatesFor(setIds, known) {
   for (let i = 0; i < ids.length; i += 100) for (const d of await db.getAll(...ids.slice(i, i + 100).map(id => col(SETS).doc(id)))) {
     if (!d.exists) continue;
     const doc = { setId: d.id, ...d.data() }, members = [...new Set((doc.sheetIds || []).filter(isId))];
-    if (members.length < 2) continue;                                   // one sheet: its own gate, as before
+    if (!members.length) continue;   // (audit, 25 Oct 2026: a set of ONE sheet is gated too: an uncommitted set needs a completed GF and a completed SS sheet, R1; Readiness.setGate also reads that sheet's own test)
     const sheets = new Map((known || []).filter(x => x.setId === d.id).map(x => [x.id, x])), missing = members.filter(m => !sheets.has(m));
     for (let j = 0; j < missing.length; j += 100) for (const r of await db.getAll(...missing.slice(j, j + 100).map(m => col(SHEETS).doc(m)), { fieldMask: SLIM_SHEET.concat(["placements"]) })) if (r.exists && !r.data().archived) sheets.set(r.id, { ...r.data(), id: r.id });
     const records = await readinessRecords([...sheets.values()]);
@@ -4364,7 +4370,7 @@ async function ruleBreaksFor(setIds) {
     try {
       const sd = await col(SETS).doc(setId).get(); if (!sd.exists) continue;
       const doc = { ...sd.data(), setId }, members = [...new Set((doc.sheetIds || []).filter(isId))].slice(0, 300);
-      if (members.length < 2 || SetRepair.exempt(doc)) continue;
+      if (!members.length || SetRepair.exempt(doc)) continue;
       const { docs, setDocs } = await sharedSheets(members);
       const rows = docs.map(d => ({ ...d, id: d.id }));
       // the back-engraving report of a gold-family member (the green-line rule reads it): the readiness records of those sheets alone
@@ -4375,6 +4381,15 @@ async function ruleBreaksFor(setIds) {
       }
       const diag = SetRepair.diagnose([doc].concat(setDocs.filter(s => s.setId !== setId)), rows, {});
       if (diag.bySet[setId]) out.set(setId, diag.bySet[setId]);
+      else {   // (audit, 25 Oct 2026, R10 / R15: a set with a partner still to add (an uncut Rose Gold / 10K / 14K sheet, a partial sheet) cannot be approved: the checker's canApprove. The page's button
+               //  is grey for it (cardinalWait); the server approved it, so a stale or second screen could)
+        const partners = ((diag.result && diag.result.partners) || []).filter(p => p.set === setId);
+        if (partners.length) {
+          const name = doc.name || (doc.seq ? "Set " + doc.seq : "This set"), names = [...new Set(partners.map(p => p.name))];
+          const words = partners.map(p => `${p.name}: ${(p.reasons || [])[0] || "add that sheet to this set"}`).join("; ");
+          out.set(setId, { setId, name, items: partners.map(p => ({ rule: "partner", ruleNo: 10, sheets: [p.sheet], names: [p.name], message: (p.reasons || []).join("; ") })), line: `${name} shares orders with a sheet that is not in it yet (${words})`, short: `waits for ${names.join(", ")}`, rules: [10], sheets: partners.map(p => p.sheet), names });
+        }
+      }
     } catch (e) { console.warn("[charmNestLibrary] the rules of set", setId, "could not be read (the page's button is grey for it all the same):", e && e.message); }
   }
   return out;
@@ -4454,7 +4469,7 @@ async function approveGate(steps) {
 const SetEdit = require("../../charm-nest-set-edit.js");
 const JOINED_NOTE = "Put back in a set";
 // (releaseFull, placedCount: charm-nest-set-rules.js reads them, to tell a Completed sheet from one that is still filling)
-const EDIT_SHEET = SHARED_FIELDS.concat(["laserDoneBy", "laserHold", "flowHistory", "fileBase", "folder", "setSeq", "label", "releaseFull", "placedCount", "density"]);
+const EDIT_SHEET = SHARED_FIELDS.concat(["cutApproved", "laserDoneBy", "laserHold", "flowHistory", "fileBase", "folder", "setSeq", "label", "releaseFull", "placedCount", "density"]);
 const EDIT_MEMBER = SHARED_FIELDS.concat(["laserDoneBy", "releaseFull", "placedCount", "density"]);
 const isSolid = m => m === "gold10k" || m === "gold14k";
 /** What the pieces of the shared orders in a refusal ARE, from their pool rows (side, form, sku), as SharedOrders' `meta`: key -> {side, form, sku}. At most 24 rows, read inside the
@@ -4484,7 +4499,7 @@ async function applySetMembers(step, by, device, via) {
   for (const m of (Array.isArray(step.moves) ? step.moves : []).slice(0, 12)) {
     const id = str(m && m.sheetId, 80), to = m && m.to ? str(m.to, 80) : null;
     if (!isId(id) || (m && m.to && !isId(to))) return { error: "bad sheet or set id", status: 400 };
-    if (!seen.has(id)) { seen.add(id); moves.push({ id, to, pulled: !!(m && m.pulled), run: !!(m && m.run && !to) }); }
+    if (!seen.has(id)) { seen.add(id); moves.push({ id, to, pulled: !!(m && m.pulled), run: !!(m && m.run && !to), cut: !!(m && m.cut === true && to) }); }
   }
   // the runs this page holds open (Paul, 10 Oct: a sheet of the set the open run is still making may be taken out from the screen that holds that run)
   const owned = [...new Set((Array.isArray(step.owned) ? step.owned : []).map(x => str(x, 80)).filter(isId))].slice(0, 10);
@@ -4514,7 +4529,7 @@ async function applySetMembers(step, by, device, via) {
     await readSheets(near.filter(id => !rec.has(id)), SHARED_FIELDS);
     for (const m of moves) { const e = expect[m.id]; if (e && typeof e === "object" && Object.prototype.hasOwnProperty.call(e, "setId") && (e.setId || null) !== (SetEdit.inSetOf(rec.get(m.id)) || null)) return { error: "The sheet changed since this move was planned: nothing was changed. Try the move again", status: 409 }; }
     const sets = {}; for (const [id, d] of setDoc) sets[id] = { doc: d, members: d ? (Array.isArray(d.sheetIds) ? d.sheetIds : []).map(i => rec.get(String(i))).filter(r => r && !r.archived) : [] };
-    const verify = meta => SetEdit.verifyMoves({ moves: moves.map(m => ({ id: m.id, to: m.to })), recs: Object.fromEntries(moves.map(m => [m.id, rec.get(m.id)])), sets, others: [...rec.values()].filter(Boolean), runs, owned, engravings, ...(meta ? { meta } : {}) });
+    const verify = meta => SetEdit.verifyMoves({ moves: moves.map(m => ({ id: m.id, to: m.to, cut: m.cut })), recs: Object.fromEntries(moves.map(m => [m.id, rec.get(m.id)])), sets, others: [...rec.values()].filter(Boolean), runs, owned, engravings, ...(meta ? { meta } : {}) });
     let v = verify();
     // a refusal for shared orders says WHAT the pieces are (a left and a right earring, two earrings, n discs): one small read of at most 24 pool rows, only here (never on a move that goes through)
     if (!v.ok && v.shared && v.shared.length) { const meta = await pieceMeta(tx, v.shared); if (meta) v = verify(meta); }
@@ -4573,7 +4588,7 @@ async function applySetMembers(step, by, device, via) {
         if (!isHeld) { hold = { at, by, note }; view.laserHold = hold; process.push({ kind: "sheet", id: m.id, patch: { laserHold: hold } }); }
       } else {
         const T = setDoc.get(m.to), J = joinOf.get(m.to).find(j => j.id === m.id), idx = J.sheetIndex, fileBase = J.fileBase;
-        view = { draft: false, setId: m.to, setSeq: num(T.seq) || null, sheetIndex: idx, label: null, fileBase, folder: fileBase, solidIncluded: solid ? (m.pulled ? null : true) : null };
+        view = { draft: false, setId: m.to, setSeq: num(T.seq) || null, sheetIndex: idx, label: null, fileBase, folder: fileBase, solidIncluded: solid ? (m.pulled ? null : true) : null, ...(m.cut ? { cutApproved: true } : {}) };
         history.push({ id: `setJoin-${at}-${m.id}`, at, by, type: "setJoin", note: `Put in ${setWord(m.to)}`, setId: m.to, fromSetId: from, laserDoneAt: num(r.laserDoneAt) || null });
         if (isHeld && /^Taken out of /.test(str(r.laserHold.note, 200))) { view.laserHold = null; hold = FV.delete(); history.push({ id: `release-${at}-${m.id}`, at, by, type: "release", note: `Put in ${setWord(m.to)}`, setId: m.to, laserDoneAt: null }); process.push({ kind: "sheet", id: m.id, patch: { laserHold: null } }); }
       }
