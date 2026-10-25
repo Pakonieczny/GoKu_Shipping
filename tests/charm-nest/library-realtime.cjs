@@ -61,9 +61,11 @@ function bigShop() {
     shop.pool.push({ poolId: pid, orderId: rid, transactionId: String(tx(n)), lineKey: key, sku: 'TEST-' + (n % 40), material: metal, copy: 1, quantity: 1, runId: RUN, state: 'written', sheetId: sheet.id, setId: sheet.setId, sheetName: sheet.fileBase, createdAt: now - 3600e3, updatedAt: now - 600e3 });
     sheet.poolIds.push(pid); if (!sheet.orders.includes(rid)) sheet.orders.push(rid);
   };
+  /* (R2 / R3 and SETREPAIR, Paul 13 and 17 Oct 2026: "A partial GF and SS sheet should never be part of a Set of sheets"; docs/charm-nest/set-rules.md) a sheet of a set is a FULL one,
+     releaseFull: the nest status 'complete' alone does not make it so, and a set of sheets not full shows "breaks your rules" with its Approve grey (charm-nest-set-repair.js) */
   const newSheet = (id, metal, set, idx, o = {}) => {
     const fileBase = `${CODE[metal]}_${DAY}_Set-${set.seq}_Sheet-${idx}`;
-    const s = { id, metal, metalLabel: metal, day: DAY, setId: set.setId, setSeq: set.seq, sheetIndex: idx, runId: RUN, fileBase, folder: fileBase, status: 'complete', density: .7, stock: { wPt: 300, hPt: 150, wIn: 6, hIn: 4.5 }, poolIds: [], orders: [], verification: { ok: true }, archived: false, ...o };
+    const s = { id, metal, metalLabel: metal, day: DAY, setId: set.setId, setSeq: set.seq, sheetIndex: idx, runId: RUN, fileBase, folder: fileBase, status: 'complete', releaseFull: true, density: .7, stock: { wPt: 300, hPt: 150, wIn: 6, hIn: 4.5 }, poolIds: [], orders: [], verification: { ok: true }, archived: false, ...o };
     shop.sheets.push(s); set.sheetIds.push(id); return s;
   };
   const T = { setId: 'set-T', seq: 9, sheetIds: [], day: DAY, recent: 5000 }, tSheets = T_SHEETS.map(([id, metal], i) => newSheet(id, metal, T, i + 1));
@@ -199,7 +201,13 @@ async function press(pg, shop, i, how, wrote) {
   catch (e) { say('   (the order window never drew the button:', JSON.stringify(await pg.page.evaluate(() => ({ win: !!document.getElementById('owPcSum'), html: (document.getElementById('owPcSum') || {}).innerHTML?.slice(0, 400), open: !!document.querySelector('#orderWin,.orderWin,[data-order-win]'), errs: 0 }))), ')'); throw e; }
   // (the order window has just opened: its own drawing of a big shop's orders is no part of what is measured, so the press waits until the page has been quiet for a second)
   for (const t0 = Date.now(); Date.now() - t0 < 60000;) { if (await pg.page.evaluate(() => { const l = window.__long[window.__long.length - 1]; return !l || Date.now() - (l[0] + l[1]) > 1000; })) break; await sleep(250); }
-  const click = () => pg.page.evaluate(q => { const b = document.querySelector(q); if (b) b.click(); return !!b; }, q);
+  /* (Paul, 14 Oct 2026, qr-piece-label.js: the sticker of ONE piece of an order that has more pieces asks what it is for, "Label for this piece", before it prints: the person's
+     second press is its Print label, with the piece's own name the dialog offers) */
+  const click = async () => {
+    const ok = await pg.page.evaluate(q => { const b = document.querySelector(q); if (b) b.click(); return !!b; }, q);
+    if (ok && how === 'print') { try { await pg.page.waitForSelector('dialog.pieceDlg [data-k="go"]:not([disabled])', { timeout: 3000 }); await pg.page.evaluate(() => document.querySelector('dialog.pieceDlg [data-k="go"]').click()); } catch (_) { /* no dialog: an order of one piece prints at once */ } }
+    return ok;
+  };
   const t = Date.now(); await click();
   // (a press the page was not yet ready to take is pressed again, as a person would: after eight seconds with no record)
   if (wrote) for (let k = 0; k < 2; k++) { for (const t1 = Date.now(); Date.now() - t1 < 8000 && !wrote();) await sleep(100); if (wrote()) break; say('   (no record eight seconds after the press: pressed again)'); await click(); }
@@ -336,7 +344,6 @@ const closeWin = async pg => { await pg.page.evaluate(() => { try { OrderWin.clo
     const a = ra.at ? ra.at - tw : null, b = rb.at ? rb.at - tw : null; crossMs.push(a, b);
     if (!last) { check(ra.sig && ra.sig.area === 'pending' && ra.sig.approveBoxes === 1, `piece ${i + 1} of 3: the set stays ONE card in In progress with one Approve gate (it advances only when all are done)`, JSON.stringify(ra.sig)); }
     else check(ra.sig && ra.sig.area === 'ready' && ra.sig.approveBoxes <= 1 && ra.sig.states.every(s => s === 'ready' || s === 'done'), `piece 3 of 3: the set moves to Laser cutting as ONE card (rail ${ra.sig && ra.sig.states.join('/')}, ${ra.sig && ra.sig.approveBoxes} Approve gate)`, JSON.stringify(ra.sig));
-    if (last) say('DBGCARD', await A.page.evaluate(() => { const c = [...document.querySelectorAll('#libBody .setCard')].find(c => c._laserSet && c._laserSet.setId === 'set-T'); return c ? [...c.querySelectorAll('.flowBox,.approveBox')].map(b => (b.dataset.state || b.dataset.mode) + ': ' + b.textContent.replace(/\s+/g, ' ').slice(0, 300)).join(' || ') : 'no card'; }));
     say(`  piece ${i + 1} (${i === 1 ? 'print' : 'button'}): computer A ${a} ms, computer B ${b} ms after the record`);
     say(`     A: ${afterWrite(await readsOf(A), tw).text}; B: ${afterWrite(await readsOf(B), tw).text}`);
     check(a !== null && a <= CROSS_MS && b !== null && b <= CROSS_MS, `piece ${i + 1} of 3: both computers show it within ${CROSS_MS} ms of the record`, `A ${a} ms, B ${b} ms`);

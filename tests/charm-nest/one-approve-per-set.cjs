@@ -10,8 +10,8 @@
 //     joins a set loses its own and one that leaves gets it back at once; 10K / 14K Include, held, committed and cut sets; 1440 and 390 px (never
 //     clipped, no sideways scroll); no reserved gap where the sheets' buttons used to be; the '!' panel never leaves a strip of the set's button.
 //   Part 2 (Node, the real LibraryFlow over the in-memory shop running the real charmNestLibrary): the page's one press (approve kind 'set') approves
-//     the whole set (each sheet's own seal and the set's), is the same as "Move set to Laser cutting", a set of one sheet gets what its sheet always
-//     got, Rose Gold keeps its own yes, a half set is refused on the page and on the server (409) and writes nothing.
+//     the whole set (each sheet's own seal and the set's), is the same as "Move set to Laser cutting", a set of one sheet gets what its sheet gets (R1, 25 Oct 2026: refused both ways, nothing written),
+//     Rose Gold keeps its own yes, a half set is refused on the page and on the server (409) and writes nothing.
 //   Part 3: mutants that bring the old behaviour back (a button on every sheet of a set, none on a loose sheet, none on the set) are caught.
 //   node tests/charm-nest/one-approve-per-set.cjs [playwright-core dir]   (PW_DIR=…, CHROMIUM=…; NODE_PATH=<jsdom is not needed>; SHOTS=<dir> saves screenshots)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
@@ -66,7 +66,9 @@ async function scene(browser, { width = 1440, height = 900, cards, bridge = '' }
     }
     L.changed();
   }, { cards, rows: rowsOf(cards.flatMap(c => c.sheets)), picture: F.sheetPicture() });
-  await page.waitForSelector('.flowBox'); await page.waitForTimeout(500);
+  // (a DRAWN rail, one the Library made for a slot (data-flow-for): the mutant that brings a set-level box back adds an empty .flowBox first in the card, which has no height (the rail CSS is
+  //  display:grid with nothing in it) and is never visible, so a wait for the first .flowBox waited on it forever)
+  await page.waitForSelector('.flowBox[data-flow-for]'); await page.waitForTimeout(500);
   return { page, context, errors };
 }
 // what is on the page: every set card's buttons (its own and its sheets'), every sheet card's
@@ -312,7 +314,7 @@ const basicCards = () => { const p = paul(false); return [{ type: 'set', set: p.
     const { engrave: _e, noLabel, metal, ...rest } = o;
     st.put(S, id, { id, runId: 'run-s', metal: metal || 'gold', day, status: 'complete', placedCount: 1, charmCount: 1, density: .7, stock: { wIn: 6, hIn: 4.5 }, poolIds: [pool], orders: [order], verification: { ok: true },
       outputs: { ai: { path: id + '.ai', url: srv.sorterOrigin + '/' + id + '.ai' }, preview: { path: id + '.png', url: image } },
-      ...(noLabel ? {} : { label: { files: [{ path: id + '-qr.png', url: image, payload: order, orders: [order] }], orders: [order] } }), sheetIndex: 1, updatedAt: ts, createdAt: ts, ...rest });
+      ...(noLabel ? {} : { label: { files: [{ path: id + '-qr.png', url: image, payload: order, orders: [order] }], orders: [order] } }), sheetIndex: 1, releaseFull: true, updatedAt: ts, createdAt: ts, ...rest });   // (releaseFull: a sheet of a set is fully nested, R2: the nest status 'complete' alone does not make it "Completed" for R1)
     return { order, pool };
   };
   const mkSet = (setId, sheetIds, extra = {}) => st.put(SETC, setId, { setId, seq: +setId.replace(/\D/g, '') || 1, day, runId: 'run-s', sheetIds, materials: ['gold'], orders: {}, status: 'labelled', updatedAt: ts, createdAt: ts, ...extra });
@@ -328,7 +330,8 @@ const basicCards = () => { const p = paul(false); return [{ type: 'set', set: p.
     mkSet('set-3', ['one-3']); mk('one-3', { setId: 'set-3', setSeq: 3, noLabel: true, laserHold: { at: now - 500, by: 'Paul' } });
     mkSet('set-4', ['one-4']); mk('one-4', { setId: 'set-4', setSeq: 4, noLabel: true, laserHold: { at: now - 500, by: 'Paul' } });
     // set-5: Rose Gold without its green line; set-6: a half set (SS has a back engraving to approve)
-    mkSet('set-5', ['c-gf', 'c-rg']); mk('c-gf', { setId: 'set-5', setSeq: 5 }); mk('c-rg', { setId: 'set-5', setSeq: 5, metal: 'rose', roseStockId: 'stock-1' });
+    // (set-5 holds a completed SS sheet too: R1, Paul 10 Oct 2026, a set exists only with a completed GF and a completed SS sheet, and Rose Gold never makes one (R4))
+    mkSet('set-5', ['c-gf', 'c-rg', 'c-ss']); mk('c-gf', { setId: 'set-5', setSeq: 5 }); mk('c-rg', { setId: 'set-5', setSeq: 5, metal: 'rose', roseStockId: 'stock-1' }); mk('c-ss', { setId: 'set-5', setSeq: 5, metal: 'silver' });
     mkSet('set-6', ['g-gf', 'g-ss']); mk('g-gf', { setId: 'set-6', setSeq: 6 }); mk('g-ss', { setId: 'set-6', setSeq: 6, metal: 'silver', engrave: 'blocked', noLabel: true });
     st.put(RUN, 'run-s', { runId: 'run-s', status: 'complete', lines });
     LF.configure({ api: post, employee: () => 'Paul', rows: () => [], remakeLabel: async id => { labels.push(id); const rec = st.doc(S, id); st.put(S, id, { label: { files: [{ path: id + '-qr.png', url: image, payload: rec.orders[0], orders: rec.orders }], orders: rec.orders } }); },
@@ -346,11 +349,21 @@ const basicCards = () => { const p = paul(false); return [{ type: 'set', set: p.
     const again = await LF.approve({ kind: 'set', id: 'set-1', by: 'Paul' }); assert.equal(again.approved, true); assert.deepEqual(again.applied, [], 'a second press finds everything done'); assert.deepEqual(labels.sort(), ['gf-1', 'ss-1']);
     assert.equal((await LF.plan({ kind: 'set', id: 'set-1', to: { area: 'nowhere' } })).from.area, 'laser', 'the whole set reached Laser cutting together');
 
-    // b. a set of one sheet: pressed as a set it gets exactly what pressing its sheet always gave it
-    const before3 = labels.length, one3 = await LF.approve({ kind: 'sheet', id: 'one-3', by: 'Paul' }), one4 = await LF.approve({ kind: 'set', id: 'set-4', by: 'Paul' });
-    assert.equal(one3.approved, true, JSON.stringify(one3.needs)); assert.equal(one4.approved, true, JSON.stringify(one4.needs) + one4.error);
-    assert.deepEqual([held('one-4'), seals('one-4'), !!st.doc(SETC, 'set-4').processReady, (st.doc(S, 'one-4').label.files || []).length], [held('one-3'), seals('one-3').map(x => x), !!st.doc(SETC, 'set-3').processReady, (st.doc(S, 'one-3').label.files || []).length], 'the same hold lifted, QR label, seals and set seal');
-    assert.deepEqual(setSeals('set-4'), setSeals('set-3')); assert.equal(labels.length, before3 + 2, 'one QR label each');
+    // b. a set of one sheet: pressed as a set it gets exactly what pressing its sheet gives it (since the 25 Oct audit, R1: both are refused, the same way)
+    // (R1, Paul 10 Oct 2026: "In order for a Set of Sheets to be allowed to exist there must be at minimum 1 Completed GF Sheet and 1 Completed SS Sheet"; the 25 Oct audit: "A set of ONE
+    //  sheet is gated like any set (page, Library plan and server)", docs/charm-nest/set-rules.md) so a set of one GF sheet is approved neither way: pressed as its sheet or as the set, the same
+    //  plain reason ("needs a completed SS sheet"), and nothing is written (no hold lifted, no QR label made, no seal); the server refuses the same steps written by hand)
+    const before3 = labels.length, ids34 = ['one-3', 'set-3', 'one-4', 'set-4'], was34 = snap(ids34), one3 = await LF.approve({ kind: 'sheet', id: 'one-3', by: 'Paul' }), one4 = await LF.approve({ kind: 'set', id: 'set-4', by: 'Paul' });
+    for (const [name, r] of [['its sheet', one3], ['the set', one4]]) {
+      assert.equal(r.approved, false, `a set of one sheet pressed as ${name} is not approved: ${JSON.stringify(r.needs)}`); assert.deepEqual(r.applied || [], [], 'nothing applied');
+      assert.equal(r.needs[0].key, 'setGate', JSON.stringify(r.needs)); assert.match(r.needs[0].label, /needs a completed SS sheet/);
+    }
+    assert.equal(one3.needs[0].label.replace(/Set \d+/, 'Set n'), one4.needs[0].label.replace(/Set \d+/, 'Set n'), 'the same reason pressed as its sheet or as the set');
+    assert.equal(snap(ids34), was34, 'nothing was written'); assert.equal(labels.length, before3, 'no QR label made'); assert.deepEqual([held('one-3'), held('one-4')], [true, true], 'the holds stay');
+    for (const steps of [[{ type: 'seal', kind: 'set', id: 'set-4' }], [{ type: 'release', sheetIds: ['one-4'] }, { type: 'seal', kind: 'set', id: 'set-4' }]]) {
+      const r = await post({ op: 'flowApply', by: 'Paul', steps }); assert.equal(r.status, 409, JSON.stringify(steps) + ' ' + JSON.stringify(r));
+    }
+    assert.equal(snap(ids34), was34, 'the server refused them and wrote nothing');
 
     // c. Rose Gold: the green line is its own yes, never taken by the one press
     const ap = await LF.approve({ kind: 'set', id: 'set-5', by: 'Paul' });
