@@ -168,7 +168,10 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
         status = 'blocked'; summary.blocked++;
         note = `Saving the finished images failed ${latest.collectAttempts} times: ${String(latest.lastCollectError ||
           failures.find(f => failureKind(f) === 'storage')?.error || 'no answer').slice(0, 200)}. Use "Recover available results" to try again.`;
-        patch = { recoveryStatus: 'blocked', recoveryReason: note, setComplete: false, repairPending: false, retryRequested: false };
+        // collectionPending:false takes it off the sweep's saving read; the collector still tries a
+        // finished job now and then (collectNotBefore), so a later success is not lost.
+        patch = { recoveryStatus: 'blocked', recoveryReason: note, setComplete: false, repairPending: false, retryRequested: false,
+          collectionPending: false };
       } else if (canSave) {
         status = 'saving'; summary.saving++;
         patch = { collected: false, collectionPending: true, recoveryStatus: 'saving', setComplete: false };

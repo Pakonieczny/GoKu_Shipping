@@ -14383,6 +14383,11 @@ async function _handlerImpl(event) {
       // reading the summary still check at once, exactly as before.
       const cronRun = body?.cronTriggered === true;
       const IDLE_SESSION_RECHECK_MS = 30 * 60 * 1000, DONE_SESSION_RECHECK_MS = 12 * 60 * 60 * 1000;
+      // A continuation was started by a run that has just checked these sessions; it checks one again
+      // only when that check is CONTINUATION_RECHECK_MS old. Skipping it always (and the end-of-run
+      // check needing spare time that a refill never leaves) froze the panel's counts for hours while
+      // a chain of continuations ran, and left sets collected meanwhile unrepaired until the queue drained.
+      const CONTINUATION_RECHECK_MS = 10 * 60 * 1000;
       const sessionCheckDue = async (sessionId) => {
         if (!cronRun || sessionId === body?.sessionId) return true;
         try {
@@ -14390,13 +14395,13 @@ async function _handlerImpl(event) {
             { fieldMask: ["status", "checkedAt", "active", "queued", "saving"] });
           if (!snap || !snap.exists) return true;
           const d = snap.data() || {};
+          if (body?.continuation === true) return !(Number(d.checkedAt) > Date.now() - CONTINUATION_RECHECK_MS);
           if ((Number(d.active) || 0) + (Number(d.queued) || 0) + (Number(d.saving) || 0) > 0) return true;
           const checkedAt = Number(d.checkedAt) || 0;
           return !checkedAt || Date.now() - checkedAt >= (d.status === "completed" ? DONE_SESSION_RECHECK_MS : IDLE_SESSION_RECHECK_MS);
         } catch (_) { return true; }
       };
-      // A continuation was started by a run that has just checked these sessions: it goes straight on.
-      for (const sessionId of body?.continuation === true ? [] : sessionIds) {
+      for (const sessionId of sessionIds) {
         if (!(await sessionCheckDue(sessionId))) continue;
         await guardWrite({ stage: "checking saved listing sets" });
         try {
@@ -14542,7 +14547,7 @@ async function _handlerImpl(event) {
       // retryRequested:true until the park step below clears them (a few runs).
       const workQueries = [
         { query: () => db.collection(BATCHES_COLL).where("retryRequested", "==", true), pages: 4 },
-        { query: () => db.collection(BATCHES_COLL).where("collectionPending", "==", true), pages: 1 },
+        { query: () => db.collection(BATCHES_COLL).where("collectionPending", "==", true), pages: 4 },
         { query: () => db.collection(BATCHES_COLL).where("state", "in",
           ["JOB_STATE_PENDING", "JOB_STATE_RUNNING", "BATCH_STATE_PENDING", "BATCH_STATE_RUNNING"]), pages: 1 },
       ];
