@@ -5865,10 +5865,11 @@ The output must look like the input image with ONLY the user's requested change 
     // .DS_Store) and dotfiles, and flatten any nested folder
     // structure to just the basename.
     // contentType comes from the file's first bytes, not its name or the
-    // browser's guess: a JPEG saved as .png was stored as image/png and
-    // OpenAI rejected every request that used it ("Invalid input image
-    // file", 2026-10-24). A file whose bytes are no image at all (an HTML
-    // error page, JSON, an empty file) is left out and named in
+    // browser's guess: a JPEG saved as .png would be stored as image/png and
+    // sent to OpenAI under that label. (The 2026-10-24 "Invalid input image
+    // file" rejections were 8000 px charms; the server now fits every charm
+    // inside 2048 px before sending it.) A file whose bytes are no image at
+    // all (an HTML error page, JSON, an empty file) is left out and named in
     // `skipped` on the returned array.
     // ============================================================
     const _ZIP_IMG_RE = /\.(png|jpe?g|webp|gif|avif|svg|bmp|tiff?)$/i;

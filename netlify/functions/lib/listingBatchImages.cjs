@@ -2,12 +2,14 @@
 // Every reference image of a listing request passes through here before it is sent to OpenAI.
 //
 // 2026-10-23/24: OpenAI answered all six requests of 505 of the 506 Regular Necklace jobs with
-// "Invalid input image file. Please check the uploaded image." The bytes of each reference went
-// out as data:<Storage contentType>;base64,... and nothing looked at what the bytes were: the
-// contentType of an uploaded charm comes from its file NAME (_mimeForExt / File.type at upload),
-// so a JPEG or WebP saved as .png, a 16-bit or CMYK file, an animated image, a HEIC or a
-// half-uploaded file all reached OpenAI as "image/png". A browser shows such files without
-// complaint (it reads the bytes, not the label), which is why nobody could see anything wrong.
+// "Invalid input image file. Please check the uploaded image." Every one of those sets had a charm
+// from the 2026-10-07 uploads, which are 8000 x 8000 px PNGs (64 MP; batch_input_check on the live
+// jobs, 2026-10-25). The set that succeeded used the same 5000 px sizing guide, so the oversized
+// charm is what OpenAI refused. Nothing checked a reference before it was sent: the bytes went out
+// as data:<Storage contentType>;base64,... whatever their size, and the contentType itself comes
+// from the file NAME at upload, so a JPEG saved as .png, a 16-bit or CMYK file, an animated image,
+// a HEIC or a half-uploaded file would also have reached OpenAI as "image/png". A browser shows
+// all of these without complaint, which is why nobody could see anything wrong.
 //
 // Now the real format is read from the bytes. A clean PNG, JPEG or WebP is sent as it is, under
 // its real type. Anything else that can be decoded is re-encoded once as an 8-bit sRGB PNG.
@@ -80,9 +82,9 @@ function loadSharp() {
 }
 
 // buf: the bytes read from Storage. contentType: the label Storage carries (may be wrong).
-// canonical: always re-encode as an 8-bit sRGB PNG, even a file that looks clean. Used for the charm:
-// one per set, it was the only input the 505 rejected jobs had in common (every request of a set
-// failed, whichever template it used), so it is never sent in a form nobody has checked.
+// canonical: always re-encode as an 8-bit sRGB PNG fitted inside CHARM_MAX_SIDE, even a file that
+// looks clean. Used for the charm: one per set, it was the only input the 505 rejected jobs had in
+// common (every request of a set failed, whichever template it used), and it was 8000 px.
 // Returns { buffer, mime, action, from, detail } where action is 'as-is', 'relabelled' or 'converted'.
 async function normalizeBatchInputImage(buf, { contentType = '', path = '', role = '', canonical = false,
   sharp = loadSharp(), depth = 0 } = {}) {
